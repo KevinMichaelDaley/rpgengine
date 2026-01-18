@@ -5,8 +5,9 @@ JOB_SRC := $(wildcard src/job/*.c)
 MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
-SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC)
-BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests
+RENDERER_SRC := $(wildcard src/renderer/*.c)
+SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC)
+BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests build/p004_tests
 
 .PHONY: all test clean
 
@@ -24,11 +25,14 @@ build/p002_tests: $(SRC) tests/p002_memory_tests.c | build
 build/p003_tests: $(SRC) tests/p003_ecs_tests.c | build
 	$(CC) $(CFLAGS) tests/p003_ecs_tests.c $(SRC) -o $@ $(LDFLAGS)
 
+build/p004_tests: $(SRC) tests/p004_renderer_gl_loader_tests.c | build
+	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c $(SRC) -o $@ $(LDFLAGS)
+
 build:
 	@mkdir -p build
 
 test: $(BIN)
-	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests
+	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests && ./build/p004_tests
 
 clean:
 	$(RM) $(BIN)

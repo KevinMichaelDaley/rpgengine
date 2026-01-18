@@ -108,7 +108,9 @@ All public APIs must be documented using Doxygen-style comments.
 ## 4. DEPENDENCY CONSTRAINTS
 
 ### Allowed
-- Standard C library headers only.
+- Standard C library headers.
+- POSIX headers and libraries (sockets, etc).
+- OpenGL, GLEW, and SDL2 (prefer system packages to submodules or including third party code directly in the repo).
 
 ### Forbidden
 - Third-party libraries unless explicitly whitelisted.

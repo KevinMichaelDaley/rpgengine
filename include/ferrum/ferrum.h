@@ -19,5 +19,6 @@
 #include "ferrum/ecs/entity.h"
 #include "ferrum/ecs/sparse_set.h"
 #include "ferrum/ecs/world.h"
+#include "ferrum/renderer/gl_loader.h"
 
 #endif /* FERRUM_FERRUM_H */
