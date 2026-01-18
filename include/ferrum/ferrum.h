@@ -13,5 +13,7 @@
 #include "ferrum/math/vec4.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/mat4.h"
+#include "ferrum/memory/arena.h"
+#include "ferrum/memory/pool.h"
 
 #endif /* FERRUM_FERRUM_H */
