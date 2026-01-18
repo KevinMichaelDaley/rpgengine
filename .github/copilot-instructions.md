@@ -10,8 +10,7 @@ Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for a
 - `bd sync` - Sync with git (run at session end)
 
 For full workflow details: `bd prime`
-IMPORTANT: More detailed task descriptions can usually be found in ref/prompts.md.  ALWAYS read this file before implementing beads.  bd will usually only contain brief summaries or titles that can be expanded by reading ref/prompts.md.
-
+ALWAYS use `bd show` to read the full, extended description of a bead before trying to implement or continue implementing. 
 Explanations of how to do the tasks or why they exist can often be found in other places in ref/ with descriptive filenames; for example, check ref/architecture.md for architectural guidelines. 
 
 # CRITICAL DIRECTIVE (C VERSION)
@@ -64,11 +63,11 @@ Prefer deep hierarchies:
 
 #### 2-Type Rule (Headers)
 A single public header must expose **no more than 2 public types**
-(structs, enums, or typedefs).
+(structs, enums, or typedefs).  The exception to this rule is forward declarations; you can use as many forward declarations as are necessary.
 
 #### 4-Function Rule (Source Files)
 A single `.c` file must contain **no more than 4 non-static functions**.
-Static helpers are allowed but should be minimal.
+Static helpers are allowed but should be minimal.  It is preferable to create a new file than to suppress features or lengthen function bodies to satisfy this rule, especially for unit tests.  
 
 ### Module Wiring Rule
 Whenever a new module is created:
@@ -86,6 +85,10 @@ Whenever a new module is created:
   - Nullability
   - Error semantics
   - Side effects
+### Style
+- Use variable and function names that are descriptive and indicate their purpose.  Use obvious syntax and avoid
+unnecessary brevity when it detracts from readability.  
+- Comment code liberally.  Keep comments up-to-date.
 
 ### Memory Rules
 - Ownership must be explicit.

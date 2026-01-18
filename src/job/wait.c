@@ -2,6 +2,11 @@
 
 #include "internal.h"
 
+typedef struct job_counter_waiter {
+    job_fiber_t *fiber;
+    struct job_counter_waiter *next;
+} job_counter_waiter_t;
+
 job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) {
     if (!counter) {
         return JOB_WAIT_INVALID;
@@ -19,7 +24,10 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
 
     job_fiber_t *fiber = g_current_fiber;
     if (!fiber || !g_scheduler_context) {
-        return JOB_WAIT_INVALID;
+        while (atomic_load_explicit(&counter->value, memory_order_acquire) != 0) {
+            thrd_yield();
+        }
+        return JOB_WAIT_OK;
     }
 
     mtx_lock(&counter->lock);

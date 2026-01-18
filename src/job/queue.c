@@ -19,7 +19,7 @@ int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint
     sys->queue[pos].priority = priority;
     sys->queue[pos].id = id;
     sys->queue_size++;
-    cnd_signal(&sys->queue_cond);
+    cnd_broadcast(&sys->queue_cond);
     mtx_unlock(&sys->queue_lock);
     return 0;
 }

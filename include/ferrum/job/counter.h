@@ -1,14 +1,20 @@
 #ifndef FERRUM_JOB_COUNTER_H
 #define FERRUM_JOB_COUNTER_H
 
+#include <stdatomic.h>
 #include <stdint.h>
+#include <threads.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** Opaque waitable counter. */
-typedef struct job_counter job_counter_t;
+/** Waitable counter type (public layout for stack allocation). */
+typedef struct job_counter {
+    atomic_uint value;
+    mtx_t lock;
+    void *waiters; /* internal waiter list, opaque to users */
+} job_counter_t;
 
 /** Status results for wait operations. */
 typedef enum job_wait_status {

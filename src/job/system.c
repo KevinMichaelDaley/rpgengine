@@ -179,6 +179,8 @@ static void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext
             job_fiber_destroy(entry->fiber);
         }
     }
+
+    g_current_fiber = NULL;
 }
 
 static int worker_main(void *arg) {

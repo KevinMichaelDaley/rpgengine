@@ -14,17 +14,6 @@
 
 typedef struct job_fiber job_fiber_t;
 
-typedef struct job_counter_waiter {
-    job_fiber_t *fiber;
-    struct job_counter_waiter *next;
-} job_counter_waiter_t;
-
-struct job_counter {
-    atomic_uint value;
-    mtx_t lock;
-    job_counter_waiter_t *waiters;
-};
-
 struct job_entry {
     job_fiber_t *fiber;
     int priority;
@@ -47,9 +36,9 @@ struct job_system {
     uint32_t queue_tail;
 
     thrd_t *workers;
-    atomic_uint64_t next_job_id;
-    atomic_uint64_t jobs_started;
-    atomic_uint64_t jobs_completed;
+    atomic_uint_least64_t next_job_id;
+    atomic_uint_least64_t jobs_started;
+    atomic_uint_least64_t jobs_completed;
 };
 
 struct job_fiber {
