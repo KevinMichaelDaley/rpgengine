@@ -21,6 +21,30 @@ Traditional OOP “Actor” hierarchies lead to pointer chasing, cache misses, a
 
 This enables high-throughput loops with predictable memory access patterns and straightforward parallelization.
 
+### 1.4 Module Index (P_000–P_020)
+High-level modules aligned with `ref/prompts.md`:
+- P_000 Fiber Runtime & Job System
+- P_001 Core Math
+- P_002 Memory (Arena + Pool)
+- P_003 ECS Core (Sparse Set)
+- P_004 Renderer Core + Pipeline Graph
+- P_005 Geometry Clipmaps (Terrain)
+- P_006 Physics (Rigid Bodies, Collisions, Constraints)
+- P_007 Networking & Replication (RUDP, Snapshot/Delta, Prediction)
+- P_008 Inventory & Modifiers (Networked Transactions)
+- P_009 Quest System (Event Log)
+- P_010 Dialogue Graph
+- P_011 Flow Field AI
+- P_012 Scene Management & Asset Streaming (glTF, Lightmaps, Skybox, World Streaming)
+- P_013 AI & Scripting (Dynamic Modules, BT, HTN, Hierarchical Pathfinding)
+- P_014 Platform & Input Abstraction
+- P_015 Audio (Mixer & Spatialization)
+- P_016 Render Pipeline & Simplified Surface Shader
+- P_017 ECS Serialization, Save-Load & Replay
+- P_018 Asset Cooking, Hot-Reload & VFS
+- P_019 UI, Text & Localization
+- P_020 Online Services (Dedicated Server, Minimal Auth/Matchmaking)
+
 ### 1.2 The Concurrency Model: Beyond Standard Threads
 Ferrum-Engine-C does not adopt “one OS thread per subsystem.” Instead it uses a **fiber-based job system** inspired by modern AAA engine architectures:
 
@@ -147,6 +171,18 @@ Rendering targets OpenGL 4.6 features and “Approaching Zero Driver Overhead”
 - mult-draw indirect (optional) for large crowds
 - careful state change minimization
 
+### 5.0 Render Pipeline Graph (Stages & Passes)
+Core renderer exposes a pipeline graph:
+- Stages: skybox, forward shading, optional post chain stub.
+- Pass ordering deterministic; resources bound via AZDO-friendly layouts.
+- ECS/job integration: pipeline execution jobs with explicit dependencies.
+
+### 5.0.1 Simplified Surface Shader (Non-PBR)
+Materials use a minimal parameter set:
+- `base_color`, `roughness_like`, `spec_like`, `emissive`, optional `normal_map`.
+- glTF metallic-roughness mapped deterministically (e.g., `roughness_like = roughness`, `spec_like = 1 - metallic`).
+- Mapping is lossy but stable; documented for reproducibility.
+
 ### 5.1 Direct State Access (DSA) and Bindless (Optional)
 - DSA removes bind-to-edit patterns and reduces global state coupling.
 - Bindless textures can remove texture binding limits (if supported), but must be optional and capability-checked.
@@ -175,6 +211,13 @@ A dedicated IO thread:
 - stages into PBOs or persistently mapped buffers
 - render thread issues GPU uploads without stalls
 
+### 5.6 Scene Management & World Streaming (P_012)
+- World partitioned into streaming regions/chunks with dependency metadata.
+- Seamless transitions via prefetch/unload policies; cross-scene handoff preserves entity IDs/state.
+- glTF 2.0 import: meshes, skeletons/skins, materials mapped to simplified surface shader; KTX2/PNG textures, sRGB handling.
+- Lightmaps: UV2 generation and baking pipeline; lightmap volumes/zones integrate with dynamic clustered lighting.
+- Skybox integrated as a pipeline stage; asset streaming aligns with networking interest sets.
+
 ---
 
 ## 6. Physics and Simulation Architecture (No Third-Party Physics)
@@ -185,6 +228,14 @@ The engine implements its own physics subset:
 - rigid body basics (integrator + constraints as incremental milestones)
 - broadphase acceleration (spatial hash / sweep-and-prune)
 - narrowphase AABB + simple primitives as baseline
+
+### 6.1 Rigid Bodies & Constraints (P_006)
+- Integrator: semi-implicit Euler; fixed timestep; sleeping/wake based on thresholds.
+- Broadphase: spatial hash; optional sweep-and-prune.
+- Narrowphase: contacts/manifolds for primitives; restitution/friction coefficients.
+- Solver: sequential impulses; stable stacking; warm starting optional.
+- Constraints: distance, ball-and-socket, hinge (limits/motor); articulated bodies supported.
+- Sensors/ray tests: overlap sets; force fields; non-solid interactions.
 
 Synchronization:
 - physics reads transforms → simulates → writes back transforms
@@ -208,6 +259,11 @@ GPU skinning is required for crowd scale:
 - bone palette uploaded via UBO/SSBO/TBO (capability-based)
 - vertex shader applies weighted bone transforms
 
+### 7.3 Clip Import & Evaluation (P_012)
+- Import clips (translation/rotation/scale) and retarget to skeletons.
+- CPU jobs evaluate keyframes and produce bone palettes uploaded per-frame.
+- Networking: `animation_state` schema replicated for consistent animation across clients.
+
 ---
 
 ## 8. AI and Crowd Simulation
@@ -226,6 +282,11 @@ AI updates are LOD’d based on distance to players:
 - behavior tree executes goal steps
 - implemented as ECS systems operating over packed arrays, scheduled via fibers
 
+### 8.3 Scripting, HTN, and Hierarchical Pathfinding (P_013)
+- Dynamic modules via `dlopen` with versioned ABI; manifest-driven attribute registration.
+- Behavior Trees and HTN planning integrated; hierarchical pathfinding (zones→cells) for large worlds.
+- Networking: `ai_state` and `custom_attributes` replicated; server authoritative decisions.
+
 ---
 
 ## 9. Networking Architecture: Massive Co-op
@@ -243,6 +304,15 @@ AI updates are LOD’d based on distance to players:
 - client predicts local inputs, stores input history
 - server sends authoritative state
 - client reconciles and re-simulates inputs if error exceeds threshold
+
+### 9.5 Interest Management & Time Sync (P_007)
+- Interest sets derive from streamed regions (P_012); clients receive only in-range entities.
+- Deterministic time sync; server broadcasts clock; clients adjust drift and apply interpolation windows.
+
+### 9.6 Networking Aggregator: Schemas & Channel Policies
+- Standardized schemas: `transform`, `rigid_body_correction`, `inventory_container`, `quest_log`, `dialogue_state`, `animation_state`, `ai_state`, `custom_attributes`.
+- Policies: quantization, reliability channel selection, priority tiers; versioning and manifest registration for custom attributes.
+- Headers: sequence/ack/ack_bits; baselines and snapshot-deltas maintained per-entity.
 
 ### 9.4 Dynamic Level Geometry Propagation
 Terrain/geometry edits replicated as commands:
@@ -269,12 +339,23 @@ Inventory as ECS components and deterministic transactions:
 - stacking/splitting/swapping
 - networking via reliable messages + state hashes
 
+### 10.2.1 Transactions & Idempotency (P_008)
+- Server-authoritative transactions with event logs and state hashes; idempotent retries.
+- Snapshots/deltas for container state; reconciliation resolves conflicts deterministically.
+
 ### 10.3 Dialogue System
 Dialogue as node/edge graph with condition checks:
 
 - conditions evaluated against gameplay state (quests, reputation, items)
 - emits UI events (text, choices)
 - state stored in ECS components or a “blackboard” resource
+
+### 10.4 Quests (P_009)
+- Event-driven DAG; networked event log; snapshots and deltas for quest state.
+- Server authoritative; client UI reflects replicated progression.
+
+### 10.5 Flow Field AI (P_011)
+- Large-scale movement fields for crowds; integrated with ECS systems and physics constraints.
 
 ---
 
@@ -292,6 +373,31 @@ This design trades third-party convenience for total control over performance ch
 
 ---
 
+## 12. Platform, Audio, Serialization, Assets, UI, and Services
+
+### 12.1 Platform & Input (P_014)
+- Windowing, input devices (keyboard/mouse/gamepad), timers, filesystem paths; event + snapshot APIs; sandboxed asset paths.
+- Poll-driven; integrates with job system; no blocking calls in hot loops.
+
+### 12.2 Audio (P_015)
+- Mixer graph with voices/buses/submixes; simple effects; 3D spatialization and attenuation.
+- Streaming-friendly buffers; deterministic scheduling via jobs; ECS audio components.
+
+### 12.3 ECS Serialization & Replay (P_017)
+- Snapshot serialization with versioned schemas (reuse networking where possible); input recording and deterministic replay.
+
+### 12.4 Asset Cooking, Hot-Reload & VFS (P_018)
+- Cooked cache with content hashes and dependency graph; VFS mounts and path resolution; thread-safe hot-reload staging and swap.
+
+### 12.5 UI, Text & Localization (P_019)
+- Immediate-mode UI; font atlas; basic text shaping; localization tables; deterministic layout.
+
+### 12.6 Online Services (P_020)
+- Self-hosted dedicated server model; minimal authentication (session tokens) and simple matchmaking (lobbies/direct join).
+- Security via server-side validation and rate limiting; explicitly no client-side anti-cheat.
+
+---
+
 ## Subsystem Summary (C11)
 
 | System | Strategy | Key Technologies |
@@ -305,4 +411,14 @@ This design trades third-party convenience for total control over performance ch
 | Physics | Deterministic rigid body baseline | spatial hash broadphase, fixed tick |
 | AI | Utility + BT + LOD scheduler | spatial hash, chunked jobs |
 | Networking | UDP + reliable channels | snapshot delta, prediction/reconciliation |
+| Scene/Assets | Streaming, glTF import, UV2/lightmaps, skybox | world streaming, interest-aligned |
+| Materials | Simplified surface shader | deterministic glTF→shader mapping |
+| Inventory/Quests | Server-authoritative transactions/logs | snapshots/deltas, idempotency |
+| AI & Scripting | Dynamic modules, BT/HTN/pathfinding | `ai_state`/`custom_attributes` replication |
+| Platform | Input/window/timers/fs | poll + snapshot APIs |
+| Audio | Mixer/spatialization | streaming buffers |
+| Serialization | ECS snapshots + replay | versioned schemas |
+| Assets | Cooking/VFS/hot-reload | hash cache, staging swap |
+| UI/Text | Immediate-mode + localization | font atlas, shaping |
+| Services | Dedicated server | minimal auth/matchmaking, server validation |
 | UI | Immediate mode | transient mesh generation |
