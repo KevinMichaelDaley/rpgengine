@@ -1,6 +1,7 @@
 #ifndef FERRUM_RENDERER_GL_LOADER_H
 #define FERRUM_RENDERER_GL_LOADER_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /** @file

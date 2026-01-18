@@ -7,7 +7,17 @@ MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c)
 SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC)
-BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests build/p004_tests
+
+SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
+SDL2_LIBS := $(shell sdl2-config --libs 2>/dev/null)
+GLEW_LIBS := $(shell pkg-config --libs glew 2>/dev/null)
+GL_LIBS := -lGL
+RENDERER_TEST_CFLAGS := $(SDL2_CFLAGS)
+RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
+
+BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
+build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
+build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests
 
 .PHONY: all test clean
 
@@ -28,11 +38,32 @@ build/p003_tests: $(SRC) tests/p003_ecs_tests.c | build
 build/p004_tests: $(SRC) tests/p004_renderer_gl_loader_tests.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c $(SRC) -o $@ $(LDFLAGS)
 
+build/p004_shader_tests: $(SRC) tests/p004_renderer_shader_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_shader_tests.c \
+$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+build/p004_buffer_tests: $(SRC) tests/p004_renderer_buffer_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_buffer_tests.c \
+$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+build/p004_uniform_tests: $(SRC) tests/p004_renderer_uniform_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_uniform_tests.c \
+$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+build/p004_palette_tests: $(SRC) tests/p004_renderer_palette_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_palette_tests.c \
+$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+build/p004_pipeline_tests: $(SRC) tests/p004_renderer_pipeline_tests.c | build
+	$(CC) $(CFLAGS) tests/p004_renderer_pipeline_tests.c $(SRC) -o $@ $(LDFLAGS)
+
 build:
 	@mkdir -p build
 
 test: $(BIN)
-	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests && ./build/p004_tests
+	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
+&& ./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
+&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests
 
 clean:
 	$(RM) $(BIN)

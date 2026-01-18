@@ -20,5 +20,13 @@
 #include "ferrum/ecs/sparse_set.h"
 #include "ferrum/ecs/world.h"
 #include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/shader_program.h"
+#include "ferrum/renderer/vbo.h"
+#include "ferrum/renderer/vao_attribute.h"
+#include "ferrum/renderer/vao.h"
+#include "ferrum/renderer/gl_constants.h"
+#include "ferrum/renderer/shader_uniforms.h"
+#include "ferrum/renderer/bone_palette.h"
+#include "ferrum/renderer/render_pipeline.h"
 
 #endif /* FERRUM_FERRUM_H */
