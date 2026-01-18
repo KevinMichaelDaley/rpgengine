@@ -43,6 +43,19 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
     mtx_unlock(&counter->lock);
 
     swapcontext(&fiber->ctx, g_scheduler_context);
+    for (;;) {
+        if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
+            break;
+        }
+        if (!g_scheduler_context || !g_current_system) {
+            thrd_yield();
+            continue;
+        }
+        struct job_entry entry;
+        while (job_system_pop_next(g_current_system, &entry) == 0) {
+            run_entry(g_current_system, &entry, g_scheduler_context);
+        }
+    }
     return JOB_WAIT_OK;
 }
 

@@ -63,6 +63,7 @@ void job_system_wake_waiters(job_system_t *sys, job_counter_t *counter);
 int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id);
 int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry);
 void job_fiber_destroy(job_fiber_t *fiber);
+void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx);
 job_fiber_t *job_fiber_create(job_system_t *sys,
                               void (*fn)(void *),
                               void *user,

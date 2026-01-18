@@ -15,5 +15,9 @@
 #include "ferrum/math/mat4.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/memory/pool.h"
+#include "ferrum/ecs/common.h"
+#include "ferrum/ecs/entity.h"
+#include "ferrum/ecs/sparse_set.h"
+#include "ferrum/ecs/world.h"
 
 #endif /* FERRUM_FERRUM_H */

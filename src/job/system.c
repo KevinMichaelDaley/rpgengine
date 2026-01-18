@@ -12,7 +12,7 @@ struct worker_arg {
 };
 
 static int worker_main(void *arg);
-static void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx);
+void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx);
 static void cleanup_system(job_system_t *sys);
 
 job_system_t *job_system_create(uint32_t worker_count,
@@ -165,7 +165,7 @@ static void cleanup_system(job_system_t *sys) {
     free(sys);
 }
 
-static void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx) {
+void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx) {
     g_current_fiber = entry->fiber;
     g_current_system = sys;
     g_scheduler_context = sched_ctx;
