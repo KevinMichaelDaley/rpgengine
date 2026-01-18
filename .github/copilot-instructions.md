@@ -10,7 +10,8 @@ Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for a
 - `bd sync` - Sync with git (run at session end)
 
 For full workflow details: `bd prime`
-More detailed task descriptions can often be found in ref/prompts.md if needed.
+IMPORTANT: More detailed task descriptions can usually be found in ref/prompts.md.  ALWAYS read this file before implementing beads.  bd will usually only contain brief summaries or titles that can be expanded by reading ref/prompts.md.
+
 Explanations of how to do the tasks or why they exist can often be found in other places in ref/ with descriptive filenames; for example, check ref/architecture.md for architectural guidelines. 
 
 # CRITICAL DIRECTIVE (C VERSION)
