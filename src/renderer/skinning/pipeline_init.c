@@ -1,10 +1,10 @@
 #include "ferrum/renderer/skinning/pipeline.h"
+#include "pipeline_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #define SKINNING_PIPELINE_INVALID_INDEX UINT32_MAX
-
 int skinning_pipeline_init(skinning_pipeline_t *pipeline,
                            uint32_t skeleton_capacity,
                            uint32_t max_joints) {
@@ -17,8 +17,11 @@ int skinning_pipeline_init(skinning_pipeline_t *pipeline,
     pipeline->palette_indices = (uint32_t *)calloc(skeleton_capacity, sizeof(uint32_t));
     pipeline->palette_matrices = (mat4_t *)calloc((size_t)skeleton_capacity * max_joints, sizeof(mat4_t));
     pipeline->joint_counts = (uint32_t *)calloc(skeleton_capacity, sizeof(uint32_t));
+    pipeline->job_contexts = calloc(skeleton_capacity, sizeof(struct skinning_job_context));
+    pipeline->draw_list_palette_indices = (uint32_t *)calloc(skeleton_capacity, sizeof(uint32_t));
     if (pipeline->skeleton_entities == NULL || pipeline->palette_indices == NULL ||
-        pipeline->palette_matrices == NULL || pipeline->joint_counts == NULL) {
+        pipeline->palette_matrices == NULL || pipeline->joint_counts == NULL ||
+        pipeline->job_contexts == NULL || pipeline->draw_list_palette_indices == NULL) {
         skinning_pipeline_destroy(pipeline);
         return SKINNING_PIPELINE_ERR_OOM;
     }
@@ -40,10 +43,14 @@ void skinning_pipeline_destroy(skinning_pipeline_t *pipeline) {
     free(pipeline->palette_indices);
     free(pipeline->palette_matrices);
     free(pipeline->joint_counts);
+    free(pipeline->job_contexts);
+    free(pipeline->draw_list_palette_indices);
     pipeline->skeleton_entities = NULL;
     pipeline->palette_indices = NULL;
     pipeline->palette_matrices = NULL;
     pipeline->joint_counts = NULL;
+    pipeline->job_contexts = NULL;
+    pipeline->draw_list_palette_indices = NULL;
     pipeline->skeleton_count = 0u;
     pipeline->skeleton_capacity = 0u;
     pipeline->max_joints = 0u;

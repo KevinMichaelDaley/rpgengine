@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "ferrum/renderer/render_resource_views.h"
+
 /** @file
  * @brief Render pipeline graph and pass interfaces.
  */
@@ -25,10 +27,12 @@ typedef struct render_pass {
     void *user_data;
 } render_pass_t;
 
+
 /** Render pipeline with ordered passes. */
 typedef struct render_pipeline {
     render_pass_t *passes;
     size_t pass_count;
+    void (*glBindFramebuffer)(uint32_t target, uint32_t framebuffer);
 } render_pipeline_t;
 
 /**
@@ -50,6 +54,26 @@ int render_pipeline_default(render_pipeline_t *pipeline,
  * @return Status code.
  */
 int render_pipeline_execute(const render_pipeline_t *pipeline);
+
+/**
+ * @brief Bind resource views for a pipeline pass.
+ * @param pipeline Pipeline pointer.
+ * @param pass_index Pass index to bind.
+ * @param view_set Resource view set definition.
+ * @return Status code.
+ */
+int render_pipeline_bind_resources(render_pipeline_t *pipeline,
+                                   size_t pass_index,
+                                   const render_resource_view_set_t *view_set);
+
+/**
+ * @brief Unbind resources for a pipeline pass.
+ * @param pipeline Pipeline pointer.
+ * @param pass_index Pass index to unbind.
+ * @return Status code.
+ */
+int render_pipeline_unbind_resources(render_pipeline_t *pipeline,
+                                     size_t pass_index);
 
 #ifdef __cplusplus
 } /* extern "C" */

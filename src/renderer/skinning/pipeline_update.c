@@ -1,15 +1,10 @@
 #include "ferrum/renderer/skinning/pipeline.h"
+#include "pipeline_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
 
 #define SKINNING_PIPELINE_INVALID_INDEX UINT32_MAX
-
-struct skinning_job_context {
-    const skinning_skeleton_t *skeleton;
-    mat4_t *output;
-    uint32_t max_joints;
-};
 
 static void skinning_eval_job(void *user_data) {
     struct skinning_job_context *ctx = (struct skinning_job_context *)user_data;
@@ -40,7 +35,7 @@ static int skinning_joint_is_sorted(const uint32_t *parents, uint32_t joint_coun
 }
 
 static int skinning_collect_skeletons(skinning_pipeline_t *pipeline,
-                                     ecs_sparse_set_base_t *skeletons,
+                                      ecs_sparse_set_base_t *skeletons,
                                      ecs_sparse_set_base_t *skins,
                                      uint32_t *out_count) {
     uint32_t skeleton_count = 0;
@@ -104,7 +99,8 @@ int skinning_pipeline_update(skinning_pipeline_t *pipeline,
         return SKINNING_PIPELINE_ERR_INVALID;
     }
     if (pipeline->skeleton_entities == NULL || pipeline->palette_indices == NULL ||
-        pipeline->palette_matrices == NULL || pipeline->joint_counts == NULL) {
+        pipeline->palette_matrices == NULL || pipeline->joint_counts == NULL ||
+        pipeline->job_contexts == NULL) {
         return SKINNING_PIPELINE_ERR_INVALID;
     }
 
@@ -120,12 +116,7 @@ int skinning_pipeline_update(skinning_pipeline_t *pipeline,
         return SKINNING_PIPELINE_OK;
     }
 
-    struct skinning_job_context *contexts =
-        (struct skinning_job_context *)malloc(sizeof(struct skinning_job_context) * skeleton_count);
-    if (contexts == NULL) {
-        pipeline->skeleton_count = 0u;
-        return SKINNING_PIPELINE_ERR_OOM;
-    }
+    struct skinning_job_context *contexts = (struct skinning_job_context *)pipeline->job_contexts;
 
     for (uint32_t i = 0; i < skeleton_count; ++i) {
         entity_t skeleton_entity = pipeline->skeleton_entities[i];
@@ -133,12 +124,10 @@ int skinning_pipeline_update(skinning_pipeline_t *pipeline,
             (skinning_skeleton_t *)ecs_sparse_set_base_get(skeletons, skeleton_entity);
         if (skeleton == NULL || skeleton->joint_count == 0u || skeleton->joint_count > pipeline->max_joints ||
             skeleton->local_matrices == NULL || skeleton->parent_indices == NULL) {
-            free(contexts);
             pipeline->skeleton_count = 0u;
             return SKINNING_PIPELINE_ERR_INVALID;
         }
         if (!skinning_joint_is_sorted(skeleton->parent_indices, skeleton->joint_count)) {
-            free(contexts);
             pipeline->skeleton_count = 0u;
             return SKINNING_PIPELINE_ERR_INVALID;
         }
@@ -147,18 +136,15 @@ int skinning_pipeline_update(skinning_pipeline_t *pipeline,
         contexts[i].output = pipeline->palette_matrices + ((size_t)i * pipeline->max_joints);
         contexts[i].max_joints = pipeline->max_joints;
         if (job_dispatch(system, skinning_eval_job, &contexts[i], 0, NULL) == JOB_ID_INVALID) {
-            free(contexts);
             pipeline->skeleton_count = 0u;
             return SKINNING_PIPELINE_ERR_INVALID;
         }
     }
 
     if (job_system_wait_idle(system) != 0) {
-        free(contexts);
         pipeline->skeleton_count = 0u;
         return SKINNING_PIPELINE_ERR_INVALID;
     }
 
-    free(contexts);
     return SKINNING_PIPELINE_OK;
 }

@@ -13,5 +13,6 @@ int render_pipeline_default(render_pipeline_t *pipeline,
     passes[2] = *post;
     pipeline->passes = passes;
     pipeline->pass_count = 3u;
+    pipeline->glBindFramebuffer = NULL;
     return RENDER_PIPELINE_OK;
 }

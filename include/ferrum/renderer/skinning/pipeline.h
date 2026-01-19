@@ -37,6 +37,8 @@ typedef struct skinning_pipeline {
     uint32_t *palette_indices;
     mat4_t *palette_matrices;
     uint32_t *joint_counts;
+    void *job_contexts;
+    uint32_t *draw_list_palette_indices;
     uint32_t skeleton_count;
     uint32_t skeleton_capacity;
     uint32_t max_joints;
