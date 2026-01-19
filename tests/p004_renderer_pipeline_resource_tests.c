@@ -173,7 +173,9 @@ static int test_pipeline_resource_views_bind(void) {
     render_pass_t post = {"post", NULL, NULL, NULL, NULL};
 
     render_pipeline_t pipeline;
-    ASSERT_INT_EQ(RENDER_PIPELINE_OK, render_pipeline_default(&pipeline, &skybox, &forward, &post));
+    render_pass_t storage[3];
+    ASSERT_INT_EQ(RENDER_PIPELINE_OK, render_pipeline_default(&pipeline, storage,
+                                                             &skybox, &forward, &post));
     pipeline.glBindFramebuffer = glBindFramebuffer;
     ctx.pipeline = &pipeline;
     ctx.pass_index = 1u;

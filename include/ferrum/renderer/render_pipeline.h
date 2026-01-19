@@ -38,12 +38,14 @@ typedef struct render_pipeline {
 /**
  * @brief Initialize a default pipeline with skybox, forward, and post passes.
  * @param pipeline Pipeline output.
+ * @param storage Storage for pass array (length 3).
  * @param skybox Skybox pass (non-NULL).
  * @param forward Forward pass (non-NULL).
  * @param post Post pass (non-NULL).
  * @return Status code.
  */
 int render_pipeline_default(render_pipeline_t *pipeline,
+                            render_pass_t *storage,
                             render_pass_t *skybox,
                             render_pass_t *forward,
                             render_pass_t *post);
