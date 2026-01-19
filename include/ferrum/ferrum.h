@@ -32,5 +32,8 @@
 #include "ferrum/renderer/render_pipeline_graph.h"
 #include "ferrum/renderer/skinning_shader.h"
 #include "ferrum/renderer/skinning.h"
+#include "ferrum/net/test_clock.h"
+#include "ferrum/net/test_buffer.h"
+#include "ferrum/net/test_link.h"
 
 #endif /* FERRUM_FERRUM_H */
