@@ -29,6 +29,7 @@
 #include "ferrum/renderer/bone_palette.h"
 #include "ferrum/renderer/render_resource_views.h"
 #include "ferrum/renderer/render_pipeline.h"
+#include "ferrum/renderer/render_pipeline_graph.h"
 #include "ferrum/renderer/skinning_shader.h"
 #include "ferrum/renderer/skinning.h"
 

@@ -19,7 +19,7 @@ BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
 build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
-build/p004_pipeline_resource_tests
+build/p004_pipeline_resource_tests build/p004_pipeline_graph_tests
 
 .PHONY: all test clean
 
@@ -73,6 +73,10 @@ build/p004_skinning_alloc_tests: $(SRC) tests/p004_renderer_skinning_alloc_tests
 build/p004_pipeline_resource_tests: $(SRC) tests/p004_renderer_pipeline_resource_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pipeline_resource_tests.c \
 $(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+build/p004_pipeline_graph_tests: $(SRC) tests/p004_renderer_pipeline_graph_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pipeline_graph_tests.c \
+$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
 
@@ -81,7 +85,8 @@ test: $(BIN)
 && ./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
 && ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
 && ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests \
-&& ./build/p004_skinning_alloc_tests && ./build/p004_pipeline_resource_tests
+&& ./build/p004_skinning_alloc_tests && ./build/p004_pipeline_resource_tests \
+&& ./build/p004_pipeline_graph_tests
 
 clean:
 	$(RM) $(BIN)
