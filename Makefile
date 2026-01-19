@@ -5,7 +5,7 @@ JOB_SRC := $(wildcard src/job/*.c)
 MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
-RENDERER_SRC := $(wildcard src/renderer/*.c)
+RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
 SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC)
 
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
@@ -17,7 +17,8 @@ RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
 
 BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
-build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests
+build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
+build/p004_skinning_tests build/p004_ecs_skinning_tests
 
 .PHONY: all test clean
 
@@ -57,13 +58,22 @@ $(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_pipeline_tests: $(SRC) tests/p004_renderer_pipeline_tests.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_pipeline_tests.c $(SRC) -o $@ $(LDFLAGS)
 
+build/p004_skinning_tests: $(SRC) tests/p004_renderer_skinning_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_skinning_tests.c \
+$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+build/p004_ecs_skinning_tests: $(SRC) tests/p004_renderer_ecs_skinning_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_ecs_skinning_tests.c \
+$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
 build:
 	@mkdir -p build
 
 test: $(BIN)
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
 && ./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
-&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests
+&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
+&& ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests
 
 clean:
 	$(RM) $(BIN)

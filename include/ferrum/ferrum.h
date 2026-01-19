@@ -28,5 +28,7 @@
 #include "ferrum/renderer/shader_uniforms.h"
 #include "ferrum/renderer/bone_palette.h"
 #include "ferrum/renderer/render_pipeline.h"
+#include "ferrum/renderer/skinning_shader.h"
+#include "ferrum/renderer/skinning.h"
 
 #endif /* FERRUM_FERRUM_H */
