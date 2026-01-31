@@ -34,6 +34,8 @@
 #include "ferrum/renderer/skinning.h"
 #include "ferrum/net/ack_window.h"
 #include "ferrum/net/packet_header.h"
+#include "ferrum/net/bit_pack.h"
+#include "ferrum/net/schema_registry.h"
 #include "ferrum/net/unreliable_channel.h"
 #include "ferrum/net/test_clock.h"
 #include "ferrum/net/test_buffer.h"
