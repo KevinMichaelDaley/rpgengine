@@ -6,7 +6,7 @@ MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
-NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/test/*.c)
+NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/test/*.c)
 SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC) $(NET_SRC)
 
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
@@ -19,12 +19,13 @@ RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
 BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
 build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
+build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
 build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
 build/p004_pipeline_resource_tests build/p004_pipeline_graph_tests
 
-.PHONY: all test clean
+.PHONY: all test test_renderer clean
 
 all: $(BIN)
 
@@ -57,6 +58,24 @@ build/p007_net_schema_registry_tests: $(SRC) tests/p007_net_schema_registry_test
 
 build/p007_net_reliable_tests: $(SRC) tests/p007_net_reliable_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c $(SRC) -o $@ $(LDFLAGS)
+
+build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC) -o $@ $(LDFLAGS)
+
+build/p007_net_integration_server_tests: $(SRC) tests/p007_net_integration_server_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_integration_server_tests.c $(SRC) -o $@ $(LDFLAGS)
+
+build/p007_net_integration_client_tests: $(SRC) tests/p007_net_integration_client_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_integration_client_tests.c $(SRC) -o $@ $(LDFLAGS)
+
+# RED tests (may not compile until quantization module exists)
+build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c $(SRC) -o $@ $(LDFLAGS)
+.PHONY: test_red
+
+# Note: this test currently depends on reliable ordered channel implementation.
+build/p007_net_reliable_ordered_tests: $(SRC) tests/p007_net_reliable_ordered_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_reliable_ordered_tests.c $(SRC) -o $@ $(LDFLAGS)
 
 build/p004_tests: $(SRC) tests/p004_renderer_gl_loader_tests.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c $(SRC) -o $@ $(LDFLAGS)
@@ -106,11 +125,17 @@ test: $(BIN)
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
 && ./build/p007_net_schema_registry_tests \
-&& ./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
-&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
-&& ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests \
-&& ./build/p004_skinning_alloc_tests && ./build/p004_pipeline_resource_tests \
-&& ./build/p004_pipeline_graph_tests
+	&& ./build/p007_net_udp_socket_tests
+
+test_renderer: $(BIN)
+	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
+	&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
+	&& ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests \
+	&& ./build/p004_skinning_alloc_tests && ./build/p004_pipeline_resource_tests \
+	&& ./build/p004_pipeline_graph_tests
+
+test_red: build/p007_net_quantization_determinism_tests
+	./build/p007_net_quantization_determinism_tests
 
 clean:
 	$(RM) $(BIN)
