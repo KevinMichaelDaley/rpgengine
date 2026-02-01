@@ -6,7 +6,7 @@ MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
-NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/test/*.c)
+NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/replication/*.c) $(wildcard src/net/test/*.c)
 SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC) $(NET_SRC)
 
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
@@ -73,6 +73,11 @@ build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantizatio
 	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c $(SRC) -o $@ $(LDFLAGS)
 .PHONY: test_red
 
+# RED tests (may not compile until replication protocol exists)
+build/p008_net_replication_protocol_tests: $(SRC) tests/p008_net_replication_protocol_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_replication_protocol_tests.c $(SRC) -o $@ $(LDFLAGS)
+.PHONY: test_red_p008
+
 # Note: this test currently depends on reliable ordered channel implementation.
 build/p007_net_reliable_ordered_tests: $(SRC) tests/p007_net_reliable_ordered_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_reliable_ordered_tests.c $(SRC) -o $@ $(LDFLAGS)
@@ -136,6 +141,9 @@ test_renderer: $(BIN)
 
 test_red: build/p007_net_quantization_determinism_tests
 	./build/p007_net_quantization_determinism_tests
+
+test_red_p008: build/p008_net_replication_protocol_tests
+	./build/p008_net_replication_protocol_tests
 
 clean:
 	$(RM) $(BIN)
