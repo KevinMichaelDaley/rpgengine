@@ -18,7 +18,7 @@ RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
 
 BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
-build/p007_net_schema_registry_tests \
+build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
 build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
@@ -54,6 +54,9 @@ build/p007_net_unreliable_tests: $(SRC) tests/p007_net_unreliable_tests.c | buil
 
 build/p007_net_schema_registry_tests: $(SRC) tests/p007_net_schema_registry_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_schema_registry_tests.c $(SRC) -o $@ $(LDFLAGS)
+
+build/p007_net_reliable_tests: $(SRC) tests/p007_net_reliable_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c $(SRC) -o $@ $(LDFLAGS)
 
 build/p004_tests: $(SRC) tests/p004_renderer_gl_loader_tests.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c $(SRC) -o $@ $(LDFLAGS)
@@ -101,7 +104,8 @@ build:
 test: $(BIN)
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
-&& ./build/p007_net_unreliable_tests && ./build/p007_net_schema_registry_tests \
+&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
+&& ./build/p007_net_schema_registry_tests \
 && ./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
 && ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
 && ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests \

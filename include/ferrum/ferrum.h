@@ -37,6 +37,7 @@
 #include "ferrum/net/bit_pack.h"
 #include "ferrum/net/schema_registry.h"
 #include "ferrum/net/unreliable_channel.h"
+#include "ferrum/net/reliable_channel.h"
 #include "ferrum/net/test_clock.h"
 #include "ferrum/net/test_buffer.h"
 #include "ferrum/net/test_link.h"
