@@ -203,6 +203,14 @@ int job_system_numa_enabled(const job_system_t *sys);
  */
 uint32_t job_current_worker_node(void);
 
+/**
+ * @brief Auto-detect NUMA nodes from sysfs and enable sharding if >=2.
+ * Uses env `JOB_SYS_NUMA_SYSFS` to override sysfs root for testing.
+ * @param sys Job system pointer.
+ * @return 0 on success, -1 on invalid input.
+ */
+int job_system_enable_numa_auto(job_system_t *sys);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
