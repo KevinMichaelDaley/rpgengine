@@ -40,6 +40,10 @@ bool fr_client_rx_inject(fr_client_rx_t *rx, const uint8_t *data, size_t len) {
         // Capacity check (simple): allow growth; tests won't exceed
         if (!enqueue_msg(ch, data + 10, (size_t)plen)) return false;
         atomic_fetch_add(&ch->seq_next, 1u);
+        // Push to topic channel if configured
+        if (rx->topics && ch_id <= rx->num_topics && rx->topics[ch_id - 1]) {
+            (void)fr_topic_channel_push(rx->topics[ch_id - 1], data + 10, (size_t)plen);
+        }
         // Release any contiguous out-of-order buffered messages
         unsigned next = atomic_load(&ch->seq_next);
         bool progressed = true;
@@ -54,6 +58,10 @@ bool fr_client_rx_inject(fr_client_rx_t *rx, const uint8_t *data, size_t len) {
                     if (!ch->head) ch->head = n; else ch->tail->next = n;
                     ch->tail = n;
                     atomic_fetch_add(&ch->pending, 1u);
+                    // Also push to topic channel
+                    if (rx->topics && ch_id <= rx->num_topics && rx->topics[ch_id - 1]) {
+                        (void)fr_topic_channel_push(rx->topics[ch_id - 1], n->data, n->len);
+                    }
                     next++;
                     atomic_store(&ch->seq_next, next);
                     progressed = true;

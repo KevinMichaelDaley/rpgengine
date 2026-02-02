@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include "ferrum/net/udp_socket.h"
+#include "ferrum/net/topic_channel.h"
 
 typedef struct fr_msg_node {
     uint8_t *data;
@@ -29,6 +31,10 @@ typedef struct fr_client_rx_t {
     atomic_bool running;
     ssize_t (*recv_cb)(void *user, uint8_t *buf, size_t cap);
     void *recv_user;
+    net_udp_socket_t sock;
+    uint8_t sock_initialized;
+    fr_topic_channel_t **topics;
+    uint32_t num_topics;
 } fr_client_rx_t;
 
 #endif // FERRUM_NET_CLIENT_INTERNAL_H
