@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <errno.h>
+
 #include <signal.h>
 #include <time.h>
 
@@ -75,7 +77,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (net_udp_socket_bind(&sock, &bind_addr) != NET_UDP_SOCKET_OK) {
-        fprintf(stderr, "Failed to bind\n");
+        fprintf(stderr, "Failed to bind port %ld: %s\n", port_l, strerror(errno));
         net_udp_socket_close(&sock);
         return 1;
     }

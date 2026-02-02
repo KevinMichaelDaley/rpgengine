@@ -4,12 +4,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include <math.h>
 #include <string.h>
 
 #include <time.h>
 
 #include <unistd.h>
 
+#include "ferrum/net/packet_header.h"
+#include "ferrum/net/quantization.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/replication/join.h"
@@ -48,7 +51,7 @@ static int parse_ipv4_dotted(const char *s, uint8_t out[4]) {
 }
 
 static void usage(const char *argv0) {
-    fprintf(stderr, "Usage: %s <server_ipv4> <port> <duration_ms> <expected_spawns>\n", argv0);
+    fprintf(stderr, "Usage: %s <server_ipv4> <port> <duration_ms> <expected_spawns> [tick_hz]\n", argv0);
 }
 
 static uint32_t xorshift32(uint32_t *state) {
@@ -69,8 +72,38 @@ static int has_entity(const uint32_t *ids, size_t count, uint32_t id) {
     return 0;
 }
 
+static float clampf(float x, float lo, float hi) {
+    if (x < lo) {
+        return lo;
+    }
+    if (x > hi) {
+        return hi;
+    }
+    return x;
+}
+
+static float vec3_distance(vec3_t a, vec3_t b) {
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    const float dz = a.z - b.z;
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+static vec3_t expected_pos(uint16_t server_tick, uint16_t owner_client_id, uint16_t tick_hz) {
+    const float t = (float)server_tick / (float)tick_hz;
+    const float phase = (float)owner_client_id * 0.25f;
+    return (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
+}
+
+static float rot_error_degrees_identity(quat_t q) {
+    /* identity dot is q.w; canonicalization keeps w >= 0 */
+    const float w = clampf(q.w, -1.0f, 1.0f);
+    const float angle_rad = 2.0f * acosf(w);
+    return angle_rad * (180.0f / 3.14159265358979323846f);
+}
+
 int main(int argc, char **argv) {
-    if (argc != 5) {
+    if (argc != 5 && argc != 6) {
         usage(argv[0]);
         return 2;
     }
@@ -83,10 +116,15 @@ int main(int argc, char **argv) {
     long port_l = strtol(argv[2], NULL, 10);
     long duration_ms_l = strtol(argv[3], NULL, 10);
     long expected_spawns_l = strtol(argv[4], NULL, 10);
-    if (port_l <= 0 || port_l > 65535 || duration_ms_l <= 0 || expected_spawns_l <= 0) {
+    long tick_hz_l = 60;
+    if (argc == 6) {
+        tick_hz_l = strtol(argv[5], NULL, 10);
+    }
+    if (port_l <= 0 || port_l > 65535 || duration_ms_l <= 0 || expected_spawns_l <= 0 || tick_hz_l <= 0 || tick_hz_l > 1000) {
         fprintf(stderr, "Invalid arguments\n");
         return 2;
     }
+    const uint16_t tick_hz = (uint16_t)tick_hz_l;
 
     net_udp_addr_t server_addr;
     if (net_udp_addr_ipv4(&server_addr, ip[0], ip[1], ip[2], ip[3], (uint16_t)port_l) != NET_UDP_SOCKET_OK) {
@@ -105,6 +143,11 @@ int main(int argc, char **argv) {
         net_udp_socket_close(&sock);
         return 1;
     }
+
+    uint64_t tx_bytes = 0u;
+    uint64_t rx_bytes = 0u;
+    uint64_t tx_packets = 0u;
+    uint64_t rx_packets = 0u;
 
     net_rudp_peer_t peer;
     net_rudp_peer_init(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u);
@@ -132,6 +175,8 @@ int main(int argc, char **argv) {
         net_udp_socket_close(&sock);
         return 1;
     }
+    tx_bytes += (uint64_t)(NET_PACKET_HEADER_SIZE + 8u + sizeof(join_payload));
+    tx_packets += 1u;
     (void)join_seq;
 
     const uint64_t start = now_ms();
@@ -143,6 +188,19 @@ int main(int argc, char **argv) {
     uint32_t entity_ids[256];
     size_t entity_count = 0u;
     memset(entity_ids, 0, sizeof(entity_ids));
+
+    uint16_t entity_owner[256];
+    memset(entity_owner, 0, sizeof(entity_owner));
+
+    uint64_t pos_err_count = 0u;
+    double pos_err_sum = 0.0;
+    float pos_err_max = 0.0f;
+
+    uint64_t rot_err_count = 0u;
+    double rot_err_sum_deg = 0.0;
+    float rot_err_max_deg = 0.0f;
+
+    uint32_t corrections = 0u;
 
     uint8_t rx_packet[NET_RUDP_MAX_PACKET_SIZE];
     while (now_ms() < end) {
@@ -156,6 +214,8 @@ int main(int argc, char **argv) {
                                                 NET_REPL_SCHEMA_JOIN,
                                                 join_payload,
                                                 sizeof(join_payload));
+            tx_bytes += (uint64_t)(NET_PACKET_HEADER_SIZE + 8u + sizeof(join_payload));
+            tx_packets += 1u;
             next_keepalive = now + 100u;
         }
 
@@ -170,6 +230,9 @@ int main(int argc, char **argv) {
         if (rrc != NET_UDP_SOCKET_OK) {
             break;
         }
+
+        rx_bytes += (uint64_t)rx_size;
+        rx_packets += 1u;
 
         uint8_t reliable = 0u;
         uint16_t schema_id = 0u;
@@ -194,12 +257,58 @@ int main(int argc, char **argv) {
                 spawn_count++;
                 if (!has_entity(entity_ids, entity_count, sp.entity_id) && entity_count < 256u) {
                     entity_ids[entity_count++] = sp.entity_id;
+                    entity_owner[entity_count - 1u] = sp.owner_client_id;
                 }
             }
         } else if (schema_id == NET_REPL_SCHEMA_STATE_CUBE) {
             net_repl_state_cube_t st;
             if (net_repl_state_cube_decode(&st, payload, payload_size) == NET_REPL_OK) {
                 state_count++;
+
+                int found = 0;
+                uint16_t owner = 0u;
+                for (size_t i = 0u; i < entity_count; ++i) {
+                    if (entity_ids[i] == st.entity_id) {
+                        owner = entity_owner[i];
+                        found = 1;
+                        break;
+                    }
+                }
+                if (found) {
+                    net_qvec3_mm_t qv;
+                    qv.x_mm = st.pos_mm.x_mm;
+                    qv.y_mm = st.pos_mm.y_mm;
+                    qv.z_mm = st.pos_mm.z_mm;
+                    qv._magic = 0x4D4D3351u; /* 'Q3MM' */
+
+                    vec3_t pos;
+                    if (net_dequantize_vec3_mm(qv, &pos) == NET_QUANT_OK) {
+                        vec3_t exp = expected_pos(st.server_tick, owner, tick_hz);
+                        const float err = vec3_distance(pos, exp);
+                        pos_err_sum += (double)err;
+                        pos_err_count++;
+                        if (err > pos_err_max) {
+                            pos_err_max = err;
+                        }
+                    }
+
+                    net_qquat_snorm16_t qq;
+                    qq.x = st.rot_snorm16.x;
+                    qq.y = st.rot_snorm16.y;
+                    qq.z = st.rot_snorm16.z;
+                    qq.w = st.rot_snorm16.w;
+                    qq._magic = 0x4E513136u; /* 'NQ16' */
+
+                    quat_t rot;
+                    if (net_dequantize_quat_snorm16(qq, &rot) == NET_QUANT_OK) {
+                        const float deg = rot_error_degrees_identity(rot);
+                        rot_err_sum_deg += (double)deg;
+                        rot_err_count++;
+                        if (deg > rot_err_max_deg) {
+                            rot_err_max_deg = deg;
+                        }
+                    }
+                }
             }
         }
     }
@@ -219,6 +328,34 @@ int main(int argc, char **argv) {
         net_udp_socket_close(&sock);
         return 1;
     }
+
+    const double duration_s = (double)duration_ms_l / 1000.0;
+    const double rx_mbps = (duration_s > 0.0) ? ((double)rx_bytes * 8.0) / (duration_s * 1000.0 * 1000.0) : 0.0;
+    const double tx_mbps = (duration_s > 0.0) ? ((double)tx_bytes * 8.0) / (duration_s * 1000.0 * 1000.0) : 0.0;
+
+    const double pos_mean = (pos_err_count > 0u) ? (pos_err_sum / (double)pos_err_count) : 0.0;
+    const double rot_mean = (rot_err_count > 0u) ? (rot_err_sum_deg / (double)rot_err_count) : 0.0;
+
+    fprintf(stdout,
+            "P008_CLIENT_STATS tx_bytes=%llu rx_bytes=%llu tx_packets=%llu rx_packets=%llu spawns=%u states=%u "
+            "tx_mbps=%.3f rx_mbps=%.3f pos_samples=%llu pos_err_mean=%.6f pos_err_max=%.6f "
+            "rot_samples=%llu rot_err_deg_mean=%.6f rot_err_deg_max=%.6f corrections=%u\n",
+            (unsigned long long)tx_bytes,
+            (unsigned long long)rx_bytes,
+            (unsigned long long)tx_packets,
+            (unsigned long long)rx_packets,
+            (unsigned)spawn_count,
+            (unsigned)state_count,
+            tx_mbps,
+            rx_mbps,
+            (unsigned long long)pos_err_count,
+            pos_mean,
+            pos_err_max,
+            (unsigned long long)rot_err_count,
+            rot_mean,
+            rot_err_max_deg,
+            (unsigned)corrections);
+    fflush(stdout);
 
     net_udp_socket_close(&sock);
     return 0;

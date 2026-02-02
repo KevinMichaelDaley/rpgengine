@@ -19,7 +19,7 @@ Defaults:
   --host        64.176.222.213
   --user        root
   --key         ~/.ssh/vultr
-  --remote-dir  ~/rpg
+  --remote-dir  /root/rpg
   --port        40001
   --clients     4
   --duration-ms 1500
@@ -42,10 +42,15 @@ Examples:
 EOF
 }
 
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
+
 HOST="64.176.222.213"
 USER="root"
 KEY="$HOME/.ssh/vultr"
-REMOTE_DIR="~/rpg"
+# Use an absolute path by default to avoid rsync creating a literal "~/" directory.
+REMOTE_DIR="/root/rpg"
+REMOTE_DIR_RESOLVED=""
 PORT="40001"
 CLIENTS="4"
 DURATION_MS="1500"
@@ -113,9 +118,56 @@ fi
 SSH=(ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 RSYNC_SSH=(ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 
+# Prevent indefinite hangs if the remote becomes unresponsive.
+# Override via env var: SSH_TIMEOUT_SECS=30 tools/deploy_net_integration.sh ...
+SSH_TIMEOUT_SECS="${SSH_TIMEOUT_SECS:-15}"
+SSH_CONNECT_TIMEOUT_SECS="${SSH_CONNECT_TIMEOUT_SECS:-8}"
+
+SSH+=( -o ConnectTimeout="$SSH_CONNECT_TIMEOUT_SECS" -o ServerAliveInterval=5 -o ServerAliveCountMax=2 )
+RSYNC_SSH+=( -o ConnectTimeout="$SSH_CONNECT_TIMEOUT_SECS" -o ServerAliveInterval=5 -o ServerAliveCountMax=2 )
+
 remote() {
-  # shellcheck disable=SC2029
-  "${SSH[@]}" "$USER@$HOST" -- bash -lc "$1"
+  # ssh executes the remote command via /bin/sh by default, so keep quoting POSIX-safe.
+  # Also avoid `bash -l` (login shell) so remote dotfiles can't pollute output.
+  local cmd="$1"
+  local script
+  script=$'set -euo pipefail\n'
+  script+="$cmd"
+  script+=$'\n'
+
+  timeout "$SSH_TIMEOUT_SECS" "${SSH[@]}" "$USER@$HOST" -- bash -s <<< "$script"
+}
+
+resolve_remote_dir() {
+  if [[ -n "$REMOTE_DIR_RESOLVED" ]]; then
+    return 0
+  fi
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    # In dry-run mode we don't probe the remote; assume literal is OK.
+    REMOTE_DIR_RESOLVED="$REMOTE_DIR"
+    return 0
+  fi
+
+  # Resolve leading '~' using the remote HOME.
+  if [[ "$REMOTE_DIR" == ~* ]]; then
+    local remote_home
+    remote_home=$(remote 'printf %s "$HOME"')
+    if [[ -z "$remote_home" ]]; then
+      echo "Failed to resolve remote HOME" >&2
+      return 1
+    fi
+    if [[ "$REMOTE_DIR" == "~" ]]; then
+      REMOTE_DIR_RESOLVED="$remote_home"
+    elif [[ "$REMOTE_DIR" == "~/"* ]]; then
+      REMOTE_DIR_RESOLVED="$remote_home/${REMOTE_DIR#~/}"
+    else
+      # Unsupported ~user form; leave as-is.
+      REMOTE_DIR_RESOLVED="$REMOTE_DIR"
+    fi
+  else
+    REMOTE_DIR_RESOLVED="$REMOTE_DIR"
+  fi
 }
 
 run_cmd() {
@@ -127,37 +179,56 @@ run_cmd() {
 }
 
 sync_repo() {
-  echo "==> rsync repo to $USER@$HOST:$REMOTE_DIR"
+  resolve_remote_dir
+  echo "==> rsync repo to $USER@$HOST:$REMOTE_DIR_RESOLVED"
+  # Ensure the remote directory exists even on first deploy.
+  run_cmd remote "mkdir -p '$REMOTE_DIR_RESOLVED'"
   run_cmd rsync -az --delete \
     -e "${RSYNC_SSH[*]}" \
     --exclude '.git/' \
     --exclude 'build/' \
     --exclude '.beads/' \
-    --exclude '*.o' \
-    --exclude '*.a' \
-    --exclude '*.so' \
-    ./ "$USER@$HOST:$REMOTE_DIR/"
+    "$REPO_ROOT/" "$USER@$HOST:$REMOTE_DIR_RESOLVED/"
 }
 
 build_remote_headless() {
   echo "==> build headless binaries on remote"
-  run_cmd remote "cd $REMOTE_DIR && make p008_build"
+  resolve_remote_dir
+  # Force a native rebuild on the remote (rsync may have copied local build/ artifacts).
+  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests && make -B p008_build"
 }
 
 build_local_headless() {
   echo "==> build local client binaries"
-  run_cmd make p008_build
+  run_cmd make -C "$REPO_ROOT" p008_build
+}
+
+maybe_open_remote_firewall_udp() {
+  resolve_remote_dir
+  echo "==> ensure remote firewall allows UDP port $PORT (ufw)"
+  # Best-effort: don't fail if ufw isn't installed/active.
+  run_cmd remote "if command -v ufw >/dev/null 2>&1; then ufw allow ${PORT}/udp >/dev/null 2>&1 || true; fi"
+}
+
+kill_remote_udp_listeners_on_port() {
+  resolve_remote_dir
+  echo "==> kill any remote p008 server processes (best-effort)"
+  run_cmd remote "pids=''; if command -v pidof >/dev/null 2>&1; then pids=\$(pidof p008_net_repl_server || true); fi; if [[ -z \"\$pids\" ]]; then pids=\$(ps ax -o pid= -o args= | grep -F p008_net_repl_server | grep -v grep | awk '{print \$1}' | tr '\n' ' ' || true); fi; echo \"remote p008 pids: [\$pids]\"; if [[ -n \"\$pids\" ]]; then kill \$pids || true; sleep 0.2; kill -9 \$pids || true; fi"
 }
 
 start_remote_server_p008() {
-  local log_file="$REMOTE_DIR/build/p008_server_${PORT}.log"
-  local pid_file="$REMOTE_DIR/build/p008_server_${PORT}.pid"
+  resolve_remote_dir
+  local log_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.log"
+  local pid_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.pid"
 
   echo "==> start remote p008 server (port=$PORT)"
-  run_cmd remote "mkdir -p $REMOTE_DIR/build"
+  kill_remote_udp_listeners_on_port
+  run_cmd remote "mkdir -p '$REMOTE_DIR_RESOLVED/build'"
 
   # Make stdout line-buffered so READY can be detected quickly.
-  run_cmd remote "cd $REMOTE_DIR && nohup stdbuf -oL -eL ./build/p008_net_repl_server $PORT $CLIENTS 0 $TICK_HZ $WORKERS > '$log_file' 2>&1 & echo \$! > '$pid_file'"
+  # IMPORTANT: Redirect stdin from /dev/null; otherwise the backgrounded server can
+  # inherit the SSH session stdin and keep the SSH command from returning.
+  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && (nohup stdbuf -oL -eL ./build/p008_net_repl_server $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > '$log_file' 2>&1 & echo \$! > '$pid_file')"
 
   echo "==> wait for server ready"
   if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -178,16 +249,19 @@ start_remote_server_p008() {
 }
 
 stop_remote_server_p008() {
-  local log_file="$REMOTE_DIR/build/p008_server_${PORT}.log"
-  local pid_file="$REMOTE_DIR/build/p008_server_${PORT}.pid"
+  resolve_remote_dir
+  local log_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.log"
+  local pid_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.pid"
 
   echo "==> stop remote p008 server"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
 
-  remote "if [[ -f '$pid_file' ]]; then kill \$(cat '$pid_file') 2>/dev/null || true; fi"
-  remote "sleep 0.2; if [[ -f '$pid_file' ]]; then kill -9 \$(cat '$pid_file') 2>/dev/null || true; fi"
+  # Try pidfile first, then fall back to `ss` PID detection.
+  remote "if [[ -f '$pid_file' ]]; then pid=\$(cat '$pid_file' || true); if [[ -n \"\$pid\" ]]; then echo \"remote pidfile pid=\$pid\"; kill \$pid || true; fi; fi"
+  remote "sleep 0.2; if [[ -f '$pid_file' ]]; then pid=\$(cat '$pid_file' || true); if [[ -n \"\$pid\" ]]; then kill -9 \$pid || true; fi; fi"
+  kill_remote_udp_listeners_on_port
   remote "tail -n 80 '$log_file' || true"
 }
 
@@ -195,14 +269,14 @@ run_local_clients_p008() {
   echo "==> run $CLIENTS local p008 clients against $HOST:$PORT"
 
   if [[ "$DRY_RUN" -eq 1 ]]; then
-    echo "+ ./build/p008_net_repl_client $HOST $PORT $DURATION_MS $CLIENTS (x$CLIENTS)"
+    echo "+ $REPO_ROOT/build/p008_net_repl_client $HOST $PORT $DURATION_MS $CLIENTS (x$CLIENTS)"
     return 0
   fi
 
   local pids=()
   local i
   for ((i=0; i<CLIENTS; i++)); do
-    ./build/p008_net_repl_client "$HOST" "$PORT" "$DURATION_MS" "$CLIENTS" &
+    "$REPO_ROOT/build/p008_net_repl_client" "$HOST" "$PORT" "$DURATION_MS" "$CLIENTS" &
     pids+=("$!")
   done
 
@@ -226,6 +300,7 @@ run_test() {
       sync_repo
       build_remote_headless
       build_local_headless
+      maybe_open_remote_firewall_udp
       start_remote_server_p008
       if ! run_local_clients_p008; then
         echo "One or more clients failed" >&2
