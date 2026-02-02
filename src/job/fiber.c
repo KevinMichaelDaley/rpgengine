@@ -6,12 +6,10 @@
 
 _Thread_local job_fiber_t *g_current_fiber = NULL;
 _Thread_local job_system_t *g_current_system = NULL;
-_Thread_local ucontext_t *g_scheduler_context = NULL;
+_Thread_local job_context_t *g_scheduler_context = NULL;
 _Thread_local uint32_t g_worker_id = UINT32_MAX;
 
-static void job_fiber_trampoline(uintptr_t low, uintptr_t high) {
-    uintptr_t raw = low | (high << 32);
-    job_fiber_t *fiber = (job_fiber_t *)raw;
+static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     g_current_fiber = fiber;
     g_current_system = fiber->system;
 
@@ -25,8 +23,21 @@ static void job_fiber_trampoline(uintptr_t low, uintptr_t high) {
 
     cnd_broadcast(&fiber->system->queue_cond);
 
-    swapcontext(&fiber->ctx, g_scheduler_context);
+    job_context_swap(&fiber->ctx, g_scheduler_context);
 }
+
+#if defined(__aarch64__) || defined(__arm__)
+static void job_fiber_trampoline_arm(uintptr_t raw) {
+    job_fiber_t *fiber = (job_fiber_t *)raw;
+    job_fiber_trampoline_body(fiber);
+}
+#else
+static void job_fiber_trampoline(uintptr_t low, uintptr_t high) {
+    uintptr_t raw = low | (high << 32);
+    job_fiber_t *fiber = (job_fiber_t *)raw;
+    job_fiber_trampoline_body(fiber);
+}
+#endif
 
 job_fiber_t *job_fiber_create(job_system_t *sys,
                               void (*fn)(void *),
@@ -58,6 +69,13 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     fiber->waiting = 0;
     fiber->next = NULL;
 
+#if defined(__aarch64__) || defined(__arm__)
+    job_context_init(&fiber->ctx,
+                     job_fiber_trampoline_arm,
+                     (uintptr_t)fiber,
+                     fiber->stack,
+                     sys->fiber_stack_size);
+#else
     getcontext(&fiber->ctx);
     fiber->ctx.uc_stack.ss_sp = fiber->stack;
     fiber->ctx.uc_stack.ss_size = sys->fiber_stack_size;
@@ -68,6 +86,7 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     uint32_t low = (uint32_t)(raw & 0xFFFFFFFFu);
     uint32_t high = (uint32_t)(raw >> 32);
     makecontext(&fiber->ctx, (void (*)(void))job_fiber_trampoline, 2, (uintptr_t)low, (uintptr_t)high);
+#endif
 
     (void)id; /* reserved for future tracing */
     return fiber;

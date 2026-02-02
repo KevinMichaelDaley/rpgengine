@@ -200,7 +200,7 @@ build_remote_headless() {
 
 build_local_headless() {
   echo "==> build local client binaries"
-  run_cmd make -C "$REPO_ROOT" p008_build
+  run_cmd make -C "$REPO_ROOT" -B p008_build
 }
 
 maybe_open_remote_firewall_udp() {
@@ -276,7 +276,7 @@ run_local_clients_p008() {
   local pids=()
   local i
   for ((i=0; i<CLIENTS; i++)); do
-    "$REPO_ROOT/build/p008_net_repl_client" "$HOST" "$PORT" "$DURATION_MS" "$CLIENTS" &
+    "$REPO_ROOT/build/p008_net_repl_client" "$HOST" "$PORT" "$DURATION_MS" 0 &
     pids+=("$!")
   done
 

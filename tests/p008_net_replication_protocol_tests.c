@@ -4,7 +4,9 @@
 
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/spawn.h"
+#include "ferrum/net/replication/spawn_batch.h"
 #include "ferrum/net/replication/state_cube.h"
+#include "ferrum/net/replication/welcome.h"
 
 #define ASSERT_TRUE(cond)                                                                                \
     do {                                                                                                 \
@@ -140,6 +142,87 @@ static int test_state_cube_encode_byte_layout_lockin(void) {
     return 0;
 }
 
+static int test_welcome_encode_byte_layout_lockin(void) {
+    /* Layout contract (big-endian):
+     *  [0..1] expected_entities (u16)
+     *  [2..3] tick_hz (u16)
+     */
+    const net_repl_welcome_t msg = {
+        .expected_entities = 100u,
+        .tick_hz = 60u,
+    };
+
+    uint8_t payload[NET_REPL_WELCOME_PAYLOAD_SIZE];
+    ASSERT_INT_EQ(NET_REPL_OK, net_repl_welcome_encode(&msg, payload, sizeof(payload)));
+
+    const uint8_t expected[NET_REPL_WELCOME_PAYLOAD_SIZE] = {
+        0x00u, 0x64u, /* 100 */
+        0x00u, 0x3Cu, /* 60 */
+    };
+    ASSERT_TRUE(memcmp(expected, payload, sizeof(expected)) == 0);
+
+    net_repl_welcome_t decoded = {0};
+    ASSERT_INT_EQ(NET_REPL_OK, net_repl_welcome_decode(&decoded, payload, sizeof(payload)));
+    ASSERT_UINT_EQ(msg.expected_entities, decoded.expected_entities);
+    ASSERT_UINT_EQ(msg.tick_hz, decoded.tick_hz);
+    return 0;
+}
+
+static int test_spawn_batch_encode_decode_roundtrip(void) {
+    net_repl_spawn_batch_entry_t entries[2] = {
+        {.entity_id = 0x01020304u, .owner_client_id = 0x0001u, .pos_mm = {.x_mm = 1, .y_mm = 2, .z_mm = 3}},
+        {.entity_id = 0xA1B2C3D4u, .owner_client_id = 0x0002u, .pos_mm = {.x_mm = 1000, .y_mm = -2000, .z_mm = 3000}},
+    };
+
+    uint8_t payload[256];
+    size_t payload_size = 0u;
+    ASSERT_INT_EQ(NET_REPL_OK,
+                  net_repl_spawn_batch_encode(0x00F0u, entries, 2u, payload, sizeof(payload), &payload_size));
+
+    const uint8_t expected[] = {
+        0x00u, 0x02u, /* count */
+        0x00u, 0xF0u, /* server_tick */
+
+        0x01u, 0x02u, 0x03u, 0x04u,
+        0x00u, 0x01u,
+        0x00u, 0x00u, 0x00u, 0x01u,
+        0x00u, 0x00u, 0x00u, 0x02u,
+        0x00u, 0x00u, 0x00u, 0x03u,
+
+        0xA1u, 0xB2u, 0xC3u, 0xD4u,
+        0x00u, 0x02u,
+        0x00u, 0x00u, 0x03u, 0xE8u, /* 1000 */
+        0xFFu, 0xFFu, 0xF8u, 0x30u, /* -2000 */
+        0x00u, 0x00u, 0x0Bu, 0xB8u, /* 3000 */
+    };
+    ASSERT_UINT_EQ(sizeof(expected), payload_size);
+    ASSERT_TRUE(memcmp(expected, payload, payload_size) == 0);
+
+    net_repl_spawn_batch_entry_t decoded_entries[2] = {0};
+    uint16_t decoded_count = 0u;
+    uint16_t decoded_tick = 0u;
+    ASSERT_INT_EQ(NET_REPL_OK,
+                  net_repl_spawn_batch_decode(&decoded_tick,
+                                             decoded_entries,
+                                             2u,
+                                             &decoded_count,
+                                             payload,
+                                             payload_size));
+    ASSERT_UINT_EQ(2u, decoded_count);
+    ASSERT_UINT_EQ(0x00F0u, decoded_tick);
+    ASSERT_UINT_EQ(entries[0].entity_id, decoded_entries[0].entity_id);
+    ASSERT_UINT_EQ(entries[0].owner_client_id, decoded_entries[0].owner_client_id);
+    ASSERT_INT_EQ(entries[0].pos_mm.x_mm, decoded_entries[0].pos_mm.x_mm);
+    ASSERT_INT_EQ(entries[0].pos_mm.y_mm, decoded_entries[0].pos_mm.y_mm);
+    ASSERT_INT_EQ(entries[0].pos_mm.z_mm, decoded_entries[0].pos_mm.z_mm);
+    ASSERT_UINT_EQ(entries[1].entity_id, decoded_entries[1].entity_id);
+    ASSERT_UINT_EQ(entries[1].owner_client_id, decoded_entries[1].owner_client_id);
+    ASSERT_INT_EQ(entries[1].pos_mm.x_mm, decoded_entries[1].pos_mm.x_mm);
+    ASSERT_INT_EQ(entries[1].pos_mm.y_mm, decoded_entries[1].pos_mm.y_mm);
+    ASSERT_INT_EQ(entries[1].pos_mm.z_mm, decoded_entries[1].pos_mm.z_mm);
+    return 0;
+}
+
 static int test_invalid_args_are_rejected(void) {
     uint8_t payload[NET_REPL_STATE_CUBE_PAYLOAD_SIZE] = {0};
     net_repl_state_cube_t decoded = {0};
@@ -160,6 +243,8 @@ static struct test_case TESTS[] = {
     {"join_encode_byte_layout_lockin", test_join_encode_byte_layout_lockin},
     {"spawn_encode_byte_layout_lockin", test_spawn_encode_byte_layout_lockin},
     {"state_cube_encode_byte_layout_lockin", test_state_cube_encode_byte_layout_lockin},
+    {"welcome_encode_byte_layout_lockin", test_welcome_encode_byte_layout_lockin},
+    {"spawn_batch_encode_decode_roundtrip", test_spawn_batch_encode_decode_roundtrip},
     {"invalid_args_are_rejected", test_invalid_args_are_rejected},
 };
 

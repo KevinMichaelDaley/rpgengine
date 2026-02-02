@@ -55,6 +55,9 @@ Ferrum-Engine-C does not adopt “one OS thread per subsystem.” Instead it use
 
 This model minimizes kernel context switches and keeps cores busy even when tasks wait on dependencies.
 
+**Exception: networking and IO boundaries.**
+Networking must interact with OS sockets and OS scheduling. On the **client**, the network subsystem runs on dedicated OS thread(s) that do packet IO, reliability/reassembly, and then feed decoded messages into fiber-safe jobs. On the **server**, networking is modeled as one fiber per connected client, scheduled by the job system, with per-client channels bridging to simulation.
+
 ### 1.3 Networking as a First-Class Citizen
 Massive co-op with client-side prediction and dynamic geometry requires networking to be core architecture, not a bolt-on. The engine uses:
 
@@ -291,9 +294,34 @@ AI updates are LOD’d based on distance to players:
 
 ## 9. Networking Architecture: Massive Co-op
 
+This section describes the *runtime shape* of networking: which parts run on OS threads, which run on fibers, and what other subsystems are allowed to see.
+
+For a more detailed description of the runtime message flow and channel abstractions, see `ref/networking_runtime.md`.
+
 ### 9.1 Transport Layer: UDP with Reliability Channels
 - Unreliable channel for high-rate state (movement)
 - Reliable ordered channel for critical events (inventory, dialogue, terrain edits)
+
+**Important layering rule:** retransmission, reordering, and packet reconstruction happen *above* the protocol/frame parsing layer and *before* any other subsystem reads messages. Subsystems should not parse RUDP frames; they should only consume an abstracted per-channel **reliable UDP stream**.
+
+### 9.2 Client Networking Runtime (Threaded IO + Job Dispatch)
+On the client, networking runs on its own OS thread(s):
+
+- **RX / reassembly thread:** receives UDP packets, reorders/reassembles reliable streams per channel, and pumps decoded messages into subscribed jobs.
+- **TX thread:** polls outbound channels for messages to send and emits UDP packets.
+
+**Channel abstraction:** subscriptions are to a topic/channel that behaves like a socket backed by a long ring buffer. The network threads are the only writers/readers of the OS socket; gameplay subsystems only see channel streams.
+
+**Subsystem boundary:** modules like spawned-entity management run on the job system (fiber-safe) and are fed an arena (with a pool-backed backing store) for allocating entities created by server commands.
+
+### 9.3 Server Networking Runtime (One Fiber per Client)
+On the server, the network subsystem uses **one fiber per client** scheduled by the job system:
+
+- Each client fiber maintains at least two fiber-local channels: **reliable** and **unreliable** (e.g., physics/motion updates).
+- Client fibers pump decoded inputs into a **global state update queue** consumed by simulation jobs on other fibers.
+- Outbound simulation results are published into per-client channels for the client fibers to serialize and send.
+
+**Threading requirement:** allocate at least **two OS worker threads** at all times to processing client fibers (in addition to any other worker threads used for simulation/render on a dedicated server).
 
 ### 9.2 Replication and Delta Compression
 - server maintains state history (snapshots)

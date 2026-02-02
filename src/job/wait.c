@@ -42,7 +42,7 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
     counter->waiters = node;
     mtx_unlock(&counter->lock);
 
-    swapcontext(&fiber->ctx, g_scheduler_context);
+    job_context_swap(&fiber->ctx, g_scheduler_context);
     for (;;) {
         if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
             break;

@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 #include "ferrum/job/system.h"
+#include "ferrum/net/packet_header.h"
+#include "ferrum/net/replication/spawn_batch.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/server/repl_server.h"
@@ -21,6 +23,7 @@ struct server_repl_client {
     uint32_t join_nonce;
     uint8_t active;
     uint8_t joined;
+    uint8_t welcome_sent;
 };
 
 struct server_repl_entity {
@@ -39,9 +42,21 @@ struct server_repl_server {
 
     struct server_repl_send_job_ctx *send_job_ctxs;
     size_t send_job_ctx_capacity;
+    uint8_t send_job_ctxs_owned;
+
+    net_repl_spawn_batch_entry_t *spawn_batch_entries;
+    uint16_t *spawn_batch_entity_indices;
+    uint16_t spawn_batch_entry_capacity;
+    uint8_t spawn_batch_owned;
+
+    uint8_t *entity_known_bits;
+    size_t entity_known_stride_bytes;
+    uint16_t *spawn_cursor;
 
     uint8_t clients_owned;
     uint8_t entities_owned;
+    uint8_t entity_known_owned;
+    uint8_t spawn_cursor_owned;
 
     uint16_t server_tick;
     uint32_t next_entity_id;
@@ -50,6 +65,5 @@ struct server_repl_server {
 };
 
 int server_repl_find_or_add_client(server_repl_server_t *srv, const net_udp_addr_t *addr);
-void server_repl_broadcast_spawn(server_repl_server_t *srv, uint16_t new_client_id, uint64_t now_ms);
 
 #endif /* FERRUM_SERVER_REPL_INTERNAL_H */

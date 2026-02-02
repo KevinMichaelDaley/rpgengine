@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <time.h>
+
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -225,11 +227,18 @@ int main(void) {
     memset(client_pids, 0, sizeof(client_pids));
     memset(client_out, 0, sizeof(client_out));
     for (int i = 0; i < client_count; ++i) {
+        if (i == client_count - 1) {
+            /* Late joiner should still receive SPAWNs for all existing clients. */
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 350u * 1000u * 1000u;
+            (void)nanosleep(&ts, NULL);
+        }
         char client_duration_s[16];
         char expected_spawns_s[16];
         char tick_hz_s[16];
         (void)snprintf(client_duration_s, sizeof(client_duration_s), "%d", duration_ms - 200);
-        (void)snprintf(expected_spawns_s, sizeof(expected_spawns_s), "%d", client_count);
+        (void)snprintf(expected_spawns_s, sizeof(expected_spawns_s), "%d", 0);
         (void)snprintf(tick_hz_s, sizeof(tick_hz_s), "%d", tick_hz);
 
         char *client_argv[] = {"./build/p008_net_repl_client", "127.0.0.1", port_s, client_duration_s, expected_spawns_s, tick_hz_s, NULL};

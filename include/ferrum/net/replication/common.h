@@ -19,6 +19,9 @@ extern "C" {
 #define NET_REPL_SCHEMA_JOIN 0x2001u
 #define NET_REPL_SCHEMA_SPAWN 0x2002u
 #define NET_REPL_SCHEMA_STATE_CUBE 0x2003u
+#define NET_REPL_SCHEMA_WELCOME 0x2004u
+#define NET_REPL_SCHEMA_SPAWN_BATCH 0x2005u
+#define NET_REPL_SCHEMA_STATE_CUBE_BATCH 0x2006u
 
 #ifdef __cplusplus
 } /* extern "C" */

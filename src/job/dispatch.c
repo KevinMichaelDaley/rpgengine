@@ -41,7 +41,7 @@ void job_yield(void) {
     if (!g_current_fiber || !g_scheduler_context) {
         return;
     }
-    swapcontext(&g_current_fiber->ctx, g_scheduler_context);
+    job_context_swap(&g_current_fiber->ctx, g_scheduler_context);
 }
 
 uint32_t job_current_worker_id(void) {

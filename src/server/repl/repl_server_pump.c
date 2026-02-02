@@ -3,8 +3,6 @@
 
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/replication/join.h"
-#include "ferrum/net/replication/spawn.h"
-
 #include "internal.h"
 
 static int addr_equal(const net_udp_addr_t *a, const net_udp_addr_t *b) {
@@ -55,44 +53,16 @@ static void ensure_entity_for_client(server_repl_server_t *srv, uint16_t client_
             srv->entities[i].active = 1u;
             srv->entities[i].owner_client_id = client_id;
             srv->entities[i].entity_id = srv->next_entity_id++;
-            return;
-        }
-    }
-}
 
-void server_repl_broadcast_spawn(server_repl_server_t *srv, uint16_t new_client_id, uint64_t now_ms) {
-    ensure_entity_for_client(srv, new_client_id);
-
-    for (uint16_t ei = 0u; ei < srv->cfg.max_entities; ++ei) {
-        if (!srv->entities[ei].active) {
-            continue;
-        }
-
-        net_repl_spawn_t spawn;
-        spawn.entity_id = srv->entities[ei].entity_id;
-        spawn.owner_client_id = srv->entities[ei].owner_client_id;
-        spawn.join_time_u16 = srv->server_tick;
-        spawn.pos_mm = (net_repl_vec3_mm_t){0, 0, 0};
-
-        uint8_t payload[NET_REPL_SPAWN_PAYLOAD_SIZE];
-        if (net_repl_spawn_encode(&spawn, payload, sizeof(payload)) != NET_REPL_OK) {
-            continue;
-        }
-
-        for (uint16_t ci = 0u; ci < srv->cfg.max_clients; ++ci) {
-            if (!srv->clients[ci].active || !srv->clients[ci].joined) {
-                continue;
+            if (srv->entity_known_bits && srv->entity_known_stride_bytes > 0u) {
+                const size_t byte_index = (size_t)i >> 3u;
+                const uint8_t mask = (uint8_t)(1u << (i & 7u));
+                for (uint16_t ci = 0u; ci < srv->cfg.max_clients; ++ci) {
+                    uint8_t *known = srv->entity_known_bits + ((size_t)ci * srv->entity_known_stride_bytes);
+                    known[byte_index] = (uint8_t)(known[byte_index] & (uint8_t)~mask);
+                }
             }
-            (void)net_rudp_peer_send_reliable(&srv->clients[ci].peer,
-                                              srv->sock,
-                                              &srv->clients[ci].addr,
-                                              now_ms,
-                                              NET_REPL_SCHEMA_SPAWN,
-                                              payload,
-                                              sizeof(payload),
-                                              NULL);
-            srv->stats.packets_sent++;
-            srv->stats.bytes_sent += (uint64_t)(NET_PACKET_HEADER_SIZE + 8u + sizeof(payload));
+            return;
         }
     }
 }
@@ -101,6 +71,8 @@ int server_repl_server_pump(server_repl_server_t *srv, uint64_t now_ms) {
     if (!srv) {
         return SERVER_REPL_ERR_INVALID;
     }
+
+    (void)now_ms;
 
     uint8_t packet[NET_RUDP_MAX_PACKET_SIZE];
     for (;;) {
@@ -123,7 +95,7 @@ int server_repl_server_pump(server_repl_server_t *srv, uint64_t now_ms) {
 
         uint8_t reliable = 0u;
         uint16_t schema_id = 0u;
-        uint8_t payload[256];
+        uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
         size_t payload_size = 0u;
         int prc = net_rudp_peer_receive(&srv->clients[idx].peer,
                                         packet,
@@ -146,7 +118,17 @@ int server_repl_server_pump(server_repl_server_t *srv, uint64_t now_ms) {
             if (!srv->clients[idx].joined) {
                 srv->clients[idx].joined = 1u;
                 srv->clients[idx].join_nonce = join.client_nonce;
-                server_repl_broadcast_spawn(srv, (uint16_t)idx, now_ms);
+                ensure_entity_for_client(srv, (uint16_t)idx);
+
+                srv->clients[idx].welcome_sent = 0u;
+                if (srv->entity_known_bits && srv->entity_known_stride_bytes > 0u) {
+                    memset(srv->entity_known_bits + ((size_t)idx * srv->entity_known_stride_bytes),
+                           0,
+                           srv->entity_known_stride_bytes);
+                }
+                if (srv->spawn_cursor) {
+                    srv->spawn_cursor[idx] = 0u;
+                }
             }
         }
     }

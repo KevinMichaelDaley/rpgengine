@@ -12,7 +12,7 @@ struct worker_arg {
 };
 
 static int worker_main(void *arg);
-void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx);
+void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx);
 static void cleanup_system(job_system_t *sys);
 
 job_system_t *job_system_create(uint32_t worker_count,
@@ -105,7 +105,7 @@ int job_system_wait_idle(job_system_t *sys) {
     }
 
     if (sys->deterministic) {
-        ucontext_t sched_ctx;
+        job_context_t sched_ctx;
         g_scheduler_context = &sched_ctx;
         g_worker_id = 0;
         g_current_system = sys;
@@ -165,12 +165,12 @@ static void cleanup_system(job_system_t *sys) {
     free(sys);
 }
 
-void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx) {
+void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx) {
     g_current_fiber = entry->fiber;
     g_current_system = sys;
     g_scheduler_context = sched_ctx;
 
-    swapcontext(sched_ctx, &entry->fiber->ctx);
+    job_context_swap(sched_ctx, &entry->fiber->ctx);
 
     if (entry->fiber->finished) {
         job_fiber_destroy(entry->fiber);
@@ -189,7 +189,7 @@ static int worker_main(void *arg) {
     g_worker_id = wa->id;
     g_current_system = sys;
 
-    ucontext_t sched_ctx;
+    job_context_t sched_ctx;
     g_scheduler_context = &sched_ctx;
 
     struct job_entry entry;

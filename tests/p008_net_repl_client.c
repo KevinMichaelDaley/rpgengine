@@ -17,7 +17,9 @@
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/spawn.h"
+#include "ferrum/net/replication/spawn_batch.h"
 #include "ferrum/net/replication/state_cube.h"
+#include "ferrum/net/replication/welcome.h"
 
 static uint64_t now_ms(void) {
     struct timespec ts;
@@ -51,7 +53,7 @@ static int parse_ipv4_dotted(const char *s, uint8_t out[4]) {
 }
 
 static void usage(const char *argv0) {
-    fprintf(stderr, "Usage: %s <server_ipv4> <port> <duration_ms> <expected_spawns> [tick_hz]\n", argv0);
+    fprintf(stderr, "Usage: %s <server_ipv4> <port> <duration_ms> <expected_spawns|0> [tick_hz]\n", argv0);
 }
 
 static uint32_t xorshift32(uint32_t *state) {
@@ -70,6 +72,43 @@ static int has_entity(const uint32_t *ids, size_t count, uint32_t id) {
         }
     }
     return 0;
+}
+
+static int ensure_entity_capacity(uint32_t **ids,
+                                  uint16_t **owners,
+                                  size_t *capacity,
+                                  size_t needed) {
+    if (!ids || !owners || !capacity) {
+        return 0;
+    }
+    if (needed <= *capacity) {
+        return 1;
+    }
+
+    size_t new_cap = (*capacity == 0u) ? 16u : *capacity;
+    while (new_cap < needed) {
+        new_cap *= 2u;
+    }
+
+    uint32_t *new_ids = (uint32_t *)realloc(*ids, new_cap * sizeof(**ids));
+    uint16_t *new_owners = (uint16_t *)realloc(*owners, new_cap * sizeof(**owners));
+    if (!new_ids || !new_owners) {
+        free(new_ids);
+        free(new_owners);
+        return 0;
+    }
+
+    /* Zero-init new tail to preserve has_entity semantics with default zeros. */
+    if (new_cap > *capacity) {
+        const size_t old_cap = *capacity;
+        memset(new_ids + old_cap, 0, (new_cap - old_cap) * sizeof(*new_ids));
+        memset(new_owners + old_cap, 0, (new_cap - old_cap) * sizeof(*new_owners));
+    }
+
+    *ids = new_ids;
+    *owners = new_owners;
+    *capacity = new_cap;
+    return 1;
 }
 
 static float clampf(float x, float lo, float hi) {
@@ -120,12 +159,12 @@ int main(int argc, char **argv) {
     if (argc == 6) {
         tick_hz_l = strtol(argv[5], NULL, 10);
     }
-    if (port_l <= 0 || port_l > 65535 || duration_ms_l <= 0 || expected_spawns_l <= 0 || tick_hz_l <= 0 || tick_hz_l > 1000) {
+    if (port_l <= 0 || port_l > 65535 || duration_ms_l <= 0 || expected_spawns_l < 0 || tick_hz_l <= 0 || tick_hz_l > 1000) {
         fprintf(stderr, "Invalid arguments\n");
         return 2;
     }
-    const uint16_t tick_hz = (uint16_t)tick_hz_l;
-    const uint32_t expected_spawns = (uint32_t)expected_spawns_l;
+    uint16_t tick_hz = (uint16_t)tick_hz_l;
+    uint32_t expected_spawns = (uint32_t)expected_spawns_l;
 
     net_udp_addr_t server_addr;
     if (net_udp_addr_ipv4(&server_addr, ip[0], ip[1], ip[2], ip[3], (uint16_t)port_l) != NET_UDP_SOCKET_OK) {
@@ -151,7 +190,15 @@ int main(int argc, char **argv) {
     uint64_t rx_packets = 0u;
 
     net_rudp_peer_t peer;
-    net_rudp_peer_init(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u);
+    const size_t rudp_send_slot_count = (size_t)NET_RUDP_SEND_SLOTS_DEFAULT;
+    const size_t rudp_send_slot_bytes = net_rudp_send_slot_storage_size(rudp_send_slot_count);
+    net_rudp_send_slot_t *rudp_send_slots = (net_rudp_send_slot_t *)calloc(1u, rudp_send_slot_bytes);
+    if (!rudp_send_slots) {
+        fprintf(stderr, "Failed to allocate RUDP send slots\n");
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+    net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u, rudp_send_slots, rudp_send_slot_count);
 
     uint32_t rng = (uint32_t)(0xC001D00Du ^ (uint32_t)getpid());
     net_repl_join_t join;
@@ -159,6 +206,7 @@ int main(int argc, char **argv) {
     uint8_t join_payload[NET_REPL_JOIN_PAYLOAD_SIZE];
     if (net_repl_join_encode(&join, join_payload, sizeof(join_payload)) != NET_REPL_OK) {
         fprintf(stderr, "Failed to encode JOIN\n");
+        free(rudp_send_slots);
         net_udp_socket_close(&sock);
         return 1;
     }
@@ -173,6 +221,7 @@ int main(int argc, char **argv) {
                                    sizeof(join_payload),
                                    &join_seq) != NET_RUDP_OK) {
         fprintf(stderr, "Failed to send JOIN\n");
+        free(rudp_send_slots);
         net_udp_socket_close(&sock);
         return 1;
     }
@@ -186,14 +235,20 @@ int main(int argc, char **argv) {
     uint32_t spawn_count = 0u;
     uint32_t state_count = 0u;
 
-    uint32_t *entity_ids = (uint32_t *)calloc((size_t)expected_spawns, sizeof(*entity_ids));
-    uint16_t *entity_owner = (uint16_t *)calloc((size_t)expected_spawns, sizeof(*entity_owner));
-    if (!entity_ids || !entity_owner) {
-        fprintf(stderr, "Failed to allocate entity tracking arrays\n");
-        free(entity_ids);
-        free(entity_owner);
-        net_udp_socket_close(&sock);
-        return 1;
+    uint32_t *entity_ids = NULL;
+    uint16_t *entity_owner = NULL;
+    size_t entity_capacity = 0u;
+    if (expected_spawns > 0u) {
+        entity_ids = (uint32_t *)calloc((size_t)expected_spawns, sizeof(*entity_ids));
+        entity_owner = (uint16_t *)calloc((size_t)expected_spawns, sizeof(*entity_owner));
+        if (!entity_ids || !entity_owner) {
+            fprintf(stderr, "Failed to allocate entity tracking arrays\n");
+            free(entity_ids);
+            free(entity_owner);
+            free(rudp_send_slots);
+            net_udp_socket_close(&sock);
+            return 1;
+        }
     }
     size_t entity_count = 0u;
 
@@ -241,7 +296,7 @@ int main(int argc, char **argv) {
 
         uint8_t reliable = 0u;
         uint16_t schema_id = 0u;
-        uint8_t payload[256];
+        uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
         size_t payload_size = 0u;
         int prc = net_rudp_peer_receive(&peer,
                                         rx_packet,
@@ -256,13 +311,63 @@ int main(int argc, char **argv) {
         }
         (void)reliable;
 
-        if (schema_id == NET_REPL_SCHEMA_SPAWN) {
+        if (schema_id == NET_REPL_SCHEMA_WELCOME) {
+            net_repl_welcome_t w;
+            if (net_repl_welcome_decode(&w, payload, payload_size) == NET_REPL_OK) {
+                if (w.tick_hz > 0u && w.tick_hz <= 1000u) {
+                    tick_hz = w.tick_hz;
+                }
+                if (expected_spawns == 0u && w.expected_entities > 0u) {
+                    expected_spawns = (uint32_t)w.expected_entities;
+                    if (!ensure_entity_capacity(&entity_ids, &entity_owner, &entity_capacity, (size_t)expected_spawns)) {
+                        fprintf(stderr, "Failed to allocate entity tracking arrays\n");
+                        free(entity_ids);
+                        free(entity_owner);
+                        free(rudp_send_slots);
+                        net_udp_socket_close(&sock);
+                        return 1;
+                    }
+                }
+            }
+        } else if (schema_id == NET_REPL_SCHEMA_SPAWN) {
             net_repl_spawn_t sp;
             if (net_repl_spawn_decode(&sp, payload, payload_size) == NET_REPL_OK) {
                 spawn_count++;
-                if (!has_entity(entity_ids, entity_count, sp.entity_id) && entity_count < (size_t)expected_spawns) {
+                if (!has_entity(entity_ids, entity_count, sp.entity_id)) {
+                    if (!ensure_entity_capacity(&entity_ids, &entity_owner, &entity_capacity, entity_count + 1u)) {
+                        fprintf(stderr, "Failed to grow entity tracking arrays\n");
+                        free(entity_ids);
+                        free(entity_owner);
+                        free(rudp_send_slots);
+                        net_udp_socket_close(&sock);
+                        return 1;
+                    }
                     entity_ids[entity_count++] = sp.entity_id;
                     entity_owner[entity_count - 1u] = sp.owner_client_id;
+                }
+            }
+        } else if (schema_id == NET_REPL_SCHEMA_SPAWN_BATCH) {
+            net_repl_spawn_batch_entry_t entries[32];
+            uint16_t count = 0u;
+            uint16_t tick = 0u;
+            if (net_repl_spawn_batch_decode(&tick, entries, 32u, &count, payload, payload_size) == NET_REPL_OK) {
+                (void)tick;
+                spawn_count += (uint32_t)count;
+                for (uint16_t i = 0u; i < count; ++i) {
+                    const net_repl_spawn_batch_entry_t *e = &entries[i];
+                    if (has_entity(entity_ids, entity_count, e->entity_id)) {
+                        continue;
+                    }
+                    if (!ensure_entity_capacity(&entity_ids, &entity_owner, &entity_capacity, entity_count + 1u)) {
+                        fprintf(stderr, "Failed to grow entity tracking arrays\n");
+                        free(entity_ids);
+                        free(entity_owner);
+                        free(rudp_send_slots);
+                        net_udp_socket_close(&sock);
+                        return 1;
+                    }
+                    entity_ids[entity_count++] = e->entity_id;
+                    entity_owner[entity_count - 1u] = e->owner_client_id;
                 }
             }
         } else if (schema_id == NET_REPL_SCHEMA_STATE_CUBE) {
@@ -318,6 +423,15 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (expected_spawns == 0u || !entity_ids || !entity_owner) {
+        fprintf(stderr, "Client failed: did not receive WELCOME/expected_spawns\n");
+        free(entity_ids);
+        free(entity_owner);
+        free(rudp_send_slots);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+
     if (entity_count < (size_t)expected_spawns) {
         fprintf(stderr, "Client failed: expected %u spawns, got %zu (spawn_msgs=%u state_msgs=%u)\n",
                 (unsigned)expected_spawns,
@@ -326,6 +440,7 @@ int main(int argc, char **argv) {
                 (unsigned)state_count);
         free(entity_ids);
         free(entity_owner);
+        free(rudp_send_slots);
         net_udp_socket_close(&sock);
         return 1;
     }
@@ -333,6 +448,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Client failed: too few state updates (%u)\n", (unsigned)state_count);
         free(entity_ids);
         free(entity_owner);
+        free(rudp_send_slots);
         net_udp_socket_close(&sock);
         return 1;
     }
@@ -367,6 +483,7 @@ int main(int argc, char **argv) {
 
     free(entity_ids);
     free(entity_owner);
+    free(rudp_send_slots);
     net_udp_socket_close(&sock);
     return 0;
 }

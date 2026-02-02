@@ -11,6 +11,9 @@ SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
+# Legacy prerequisite variable used by some build rules.
+SRC := $(SRC_HEADLESS)
+
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
 SDL2_LIBS := $(shell sdl2-config --libs 2>/dev/null)
 GLEW_LIBS := $(shell pkg-config --libs glew 2>/dev/null)

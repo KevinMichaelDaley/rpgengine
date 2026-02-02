@@ -5,10 +5,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <threads.h>
-#include <ucontext.h>
 
 #include "ferrum/job/counter.h"
 #include "ferrum/job/system.h"
+
+#include "context.h"
 
 #define JOB_MIN_STACK (16u * 1024u)
 
@@ -42,7 +43,7 @@ struct job_system {
 };
 
 struct job_fiber {
-    ucontext_t ctx;
+    job_context_t ctx;
     job_system_t *system;
     void (*fn)(void *);
     void *user;
@@ -56,14 +57,14 @@ struct job_fiber {
 
 extern _Thread_local job_fiber_t *g_current_fiber;
 extern _Thread_local job_system_t *g_current_system;
-extern _Thread_local ucontext_t *g_scheduler_context;
+extern _Thread_local job_context_t *g_scheduler_context;
 extern _Thread_local uint32_t g_worker_id;
 
 void job_system_wake_waiters(job_system_t *sys, job_counter_t *counter);
 int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id);
 int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry);
 void job_fiber_destroy(job_fiber_t *fiber);
-void run_entry(job_system_t *sys, const struct job_entry *entry, ucontext_t *sched_ctx);
+void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx);
 job_fiber_t *job_fiber_create(job_system_t *sys,
                               void (*fn)(void *),
                               void *user,
