@@ -45,4 +45,7 @@
 #include "ferrum/net/test_buffer.h"
 #include "ferrum/net/test_link.h"
 
+// Client network runtime RX
+#include "ferrum/net/client/runtime_rx.h"
+
 #endif /* FERRUM_FERRUM_H */
