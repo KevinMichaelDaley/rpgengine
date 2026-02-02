@@ -171,6 +171,13 @@ void job_context_init(job_context_t *ctx, void (*entry)(uintptr_t), uintptr_t ar
 
     memset(ctx, 0, sizeof(*ctx));
 
+    /*
+     * Seed FP/MMX/XMM control state (incl. MXCSR) for a fresh context.
+     * Restoring an all-zero FXSAVE image can leave exceptions unmasked and
+     * cause SIGFPE in floating-point heavy code.
+     */
+    __asm__ volatile("fxsave64 %0" : "=m"(ctx->fxsave_area));
+
     uintptr_t sp = (uintptr_t)stack + stack_size;
     sp &= ~(uintptr_t)0xFu; /* SysV x86-64: 16-byte alignment */
 
