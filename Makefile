@@ -61,6 +61,9 @@ build/p002_memory_apool_tests: $(SRC) tests/p002_memory_apool_tests.c | build
 build/p003_tests: $(SRC) tests/p003_ecs_tests.c | build
 	$(CC) $(CFLAGS) tests/p003_ecs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p000_job_queue_sharding_tests: $(SRC) tests/p000_job_queue_sharding_tests.c | build
+	$(CC) $(CFLAGS) tests/p000_job_queue_sharding_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 build/p007_net_tests: $(SRC) tests/p007_net_test_utils_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_test_utils_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
@@ -155,7 +158,7 @@ build:
 	@mkdir -p build
 
 
-test: $(BIN_HEADLESS)
+test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \

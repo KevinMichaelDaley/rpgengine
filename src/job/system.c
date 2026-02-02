@@ -1,8 +1,14 @@
+#define _GNU_SOURCE
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __linux__
+#include <pthread.h>
+#include <sched.h>
+#include <unistd.h>
+#endif
 
 #include "internal.h"
 
@@ -13,6 +19,7 @@ struct worker_arg {
 static int worker_main(void *arg);
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx);
 static void cleanup_system(job_system_t *sys);
+static int pop_next_sharded(job_system_t *sys, struct job_entry *out_entry, uint32_t preferred);
 
 job_system_create_status_t job_system_create(job_system_t* sys,
                                 uint32_t worker_count,
@@ -69,7 +76,8 @@ job_system_create_status_t job_system_create(job_system_t* sys,
         return JOB_CREATE_ERR_CND_INIT;
     }
 
-    /* Initialize instrumentation: env override or default-on */
+    /* Initialize flags and instrumentation */
+    atomic_init(&sys->affinity_enabled, false);
     job_instrument_init();
 
     return JOB_CREATE_OK;
@@ -108,6 +116,18 @@ int job_system_start(job_system_t *sys) {
             }
             return -1;
         }
+        /* Optionally set CPU affinity on Linux */
+#ifdef __linux__
+        if (atomic_load(&sys->affinity_enabled)) {
+            cpu_set_t set;
+            CPU_ZERO(&set);
+            long nproc = sysconf(_SC_NPROCESSORS_ONLN);
+            if (nproc < 1) nproc = 1;
+            int cpu = (int)(i % (uint32_t)nproc);
+            CPU_SET(cpu, &set);
+            pthread_setaffinity_np((pthread_t)sys->workers[i], sizeof(set), &set);
+        }
+#endif
     }
 
     return 0;
@@ -186,6 +206,23 @@ static void cleanup_system(job_system_t *sys) {
     free(sys->workers);
     apool_destroy(&sys->fiber_stack_pool);
 }
+static int pop_next_sharded(job_system_t *sys, struct job_entry *out_entry, uint32_t preferred) {
+    /* Prefer local shard by scanning READY slots near a per-worker cursor; fall back to steals. */
+    uint32_t start = preferred % sys->queue_capacity;
+    for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
+        uint32_t idx = (start + i) % sys->queue_capacity;
+        int state = atomic_load_explicit(&sys->queue_slot_state[idx], memory_order_acquire);
+        if (state == 1) {
+            int expected = 1;
+            if (atomic_compare_exchange_strong(&sys->queue_slot_state[idx], &expected, 2)) {
+                *out_entry = sys->queue[idx];
+                atomic_store_explicit(&sys->queue_slot_state[idx], 0, memory_order_release);
+                return 0;
+            }
+        }
+    }
+    return -1;
+}
 
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx) {
     g_current_fiber = entry->fiber;
@@ -222,7 +259,7 @@ static int worker_main(void *arg) {
 
     struct job_entry entry;
     for (;;) {
-        if (job_system_pop_next(sys, &entry) != 0) {
+        if (pop_next_sharded(sys, &entry, g_worker_id) != 0) {
             if (atomic_load(&sys->shutting_down)) {
                 break;
             }
@@ -254,4 +291,66 @@ static int worker_main(void *arg) {
 int job_system_queue_is_lock_free(const job_system_t *sys) {
     (void)sys;
     return 1;
+}
+
+int job_system_queue_is_sharded(const job_system_t *sys) {
+    (void)sys;
+    return 1;
+}
+
+int job_system_enable_affinity(job_system_t *sys, int enable) {
+    if (!sys) return -1;
+    atomic_store(&sys->affinity_enabled, (enable != 0));
+    return 0;
+}
+
+int job_system_affinity_enabled(const job_system_t *sys) {
+    if (!sys) return 0;
+    return atomic_load(&sys->affinity_enabled) ? 1 : 0;
+}
+
+job_id_t job_dispatch_to(job_system_t *sys,
+                         void (*fn)(void *user_data),
+                         void *user_data,
+                         int priority,
+                         struct job_counter *counter,
+                         uint32_t preferred_worker) {
+    if (!sys || !fn || !atomic_load(&sys->running)) {
+        return JOB_ID_INVALID;
+    }
+    if (atomic_load(&sys->shutting_down)) {
+        return JOB_ID_INVALID;
+    }
+    if (counter && job_counter_add(counter, 1) != 0) {
+        return JOB_ID_INVALID;
+    }
+    uint64_t id = atomic_fetch_add_explicit(&sys->next_job_id, 1, memory_order_relaxed);
+    job_fiber_t *fiber = job_fiber_create(sys, fn, user_data, counter, priority, id);
+    if (!fiber) {
+        if (counter) {
+            job_counter_dec(counter);
+        }
+        return JOB_ID_INVALID;
+    }
+    atomic_fetch_add_explicit(&sys->jobs_started, 1, memory_order_release);
+    /* Insert into preferred region first; fall back to global scan. */
+    uint32_t start = (preferred_worker == UINT32_MAX) ? atomic_load(&sys->queue_insert_cursor) : preferred_worker % sys->queue_capacity;
+    for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
+        uint32_t idx = (start + i) % sys->queue_capacity;
+        int expected = 0;
+        if (atomic_compare_exchange_strong(&sys->queue_slot_state[idx], &expected, 2)) {
+            sys->queue[idx].fiber = fiber;
+            sys->queue[idx].priority = priority;
+            sys->queue[idx].id = id;
+            atomic_store_explicit(&sys->queue_slot_state[idx], 1, memory_order_release);
+            cnd_broadcast(&sys->queue_cond);
+            job_instrument_event("enqueue", fiber->id, id, g_worker_id, __FILE__, __LINE__);
+            return id;
+        }
+    }
+    job_fiber_destroy(fiber);
+    if (counter) {
+        job_counter_dec(counter);
+    }
+    return JOB_ID_INVALID;
 }

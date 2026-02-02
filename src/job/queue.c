@@ -9,8 +9,14 @@ int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint
     if (!sys || !fiber) {
         return -1;
     }
-
-    uint32_t start = atomic_fetch_add_explicit(&sys->queue_insert_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
+    /* Deterministic mode and non-worker contexts should append using global insert cursor.
+       Otherwise, prefer local region based on current worker id. */
+    uint32_t start;
+    if (sys->deterministic || g_worker_id == UINT32_MAX) {
+        start = atomic_fetch_add_explicit(&sys->queue_insert_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
+    } else {
+        start = g_worker_id % sys->queue_capacity;
+    }
     for (uint32_t off = 0; off < sys->queue_capacity; ++off) {
         uint32_t i = (start + off) % sys->queue_capacity;
         int expected = 0;
@@ -32,8 +38,14 @@ int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
     if (!sys || !out_entry) {
         return -1;
     }
-
-    uint32_t start = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
+    /* Deterministic mode should rotate scan start via global pop cursor to preserve fairness.
+       Non-deterministic workers prefer local region to enable sharding + stealing. */
+    uint32_t start;
+    if (sys->deterministic || g_worker_id == UINT32_MAX) {
+        start = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
+    } else {
+        start = g_worker_id % sys->queue_capacity;
+    }
     for (uint32_t attempt = 0; attempt < sys->queue_capacity; ++attempt) {
         int chosen_idx = -1;
         int best_priority = INT_MIN;
@@ -46,6 +58,7 @@ int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
                     break;
                 } else {
                     int p = sys->queue[i].priority;
+                    /* Highest priority wins; ties favor first encountered from rotated scan */
                     if (chosen_idx < 0 || p > best_priority) {
                         best_priority = p;
                         chosen_idx = (int)i;

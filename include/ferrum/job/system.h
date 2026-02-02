@@ -32,6 +32,7 @@ struct job_system {
     atomic_uint_least64_t next_job_id;
     atomic_uint_least64_t jobs_started;
     atomic_uint_least64_t jobs_completed;
+    atomic_bool affinity_enabled;
 };
 
 struct job_counter;
@@ -138,6 +139,44 @@ uint64_t job_system_jobs_completed(const job_system_t *sys);
  * use atomic operations suitable for MPMC usage; 0 otherwise.
  */
 int job_system_queue_is_lock_free(const job_system_t *sys);
+
+/**
+ * @brief Indicates whether the job queue is sharded per worker with work-stealing.
+ * @return 1 if sharded scheduling is active, 0 otherwise.
+ */
+int job_system_queue_is_sharded(const job_system_t *sys);
+
+/**
+ * @brief Dispatch a job to a preferred worker shard.
+ * @param sys Job system pointer.
+ * @param fn Function to execute on a fiber.
+ * @param user_data User pointer passed to the job.
+ * @param priority Priority hint.
+ * @param counter Optional counter.
+ * @param preferred_worker Zero-based worker id hint; UINT32_MAX for no preference.
+ * @return job_id_t Valid identifier or JOB_ID_INVALID on error.
+ */
+job_id_t job_dispatch_to(job_system_t *sys,
+                         void (*fn)(void *user_data),
+                         void *user_data,
+                         int priority,
+                         struct job_counter *counter,
+                         uint32_t preferred_worker);
+
+/**
+ * @brief Enable or disable CPU affinity pinning for worker threads.
+ * @param sys Job system pointer.
+ * @param enable Non-zero to enable, 0 to disable.
+ * @return 0 on success, -1 on invalid input.
+ */
+int job_system_enable_affinity(job_system_t *sys, int enable);
+
+/**
+ * @brief Query whether CPU affinity pinning is enabled.
+ * @param sys Job system pointer.
+ * @return 1 if enabled, 0 otherwise.
+ */
+int job_system_affinity_enabled(const job_system_t *sys);
 
 #ifdef __cplusplus
 } /* extern "C" */
