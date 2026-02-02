@@ -55,6 +55,48 @@ typedef struct job_context {
 void job_context_init(job_context_t *ctx, void (*entry)(uintptr_t), uintptr_t arg0, void *stack, size_t stack_size);
 void job_context_swap(job_context_t *from, job_context_t *to);
 
+#elif defined(__x86_64__)
+
+typedef struct job_context {
+    /* Callee-saved GPRs (SysV ABI). */
+    uint64_t rbx;
+    uint64_t rbp;
+    uint64_t r12;
+    uint64_t r13;
+    uint64_t r14;
+    uint64_t r15;
+
+    /* Stack pointer and resume address. */
+    uint64_t sp;
+    uint64_t rip;
+
+    /* Bootstrap fields for newly created contexts. */
+    uint64_t entry; /* void (*)(uintptr_t) */
+    uint64_t arg0;
+
+    /* FPU/MMX/XMM state.
+     * FXSAVE64 saves x87 + MMX + XMM0-15 + MXCSR.
+     * Requires 16-byte alignment.
+     */
+    _Alignas(16) uint8_t fxsave_area[512];
+
+#if defined(__AVX512F__)
+    /* AVX-512 state (when compiled with AVX-512 enabled).
+     * Save all ZMM0-31 and opmask k0-k7.
+     */
+    uint64_t k_mask[8];
+    _Alignas(64) uint8_t zmm[32][64];
+#elif defined(__AVX__)
+    /* AVX state (when compiled with AVX enabled).
+     * Save YMM0-15 (includes the low XMM parts).
+     */
+    _Alignas(32) uint8_t ymm[16][32];
+#endif
+} job_context_t;
+
+void job_context_init(job_context_t *ctx, void (*entry)(uintptr_t), uintptr_t arg0, void *stack, size_t stack_size);
+void job_context_swap(job_context_t *from, job_context_t *to);
+
 #else
 
 #include <ucontext.h>

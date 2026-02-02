@@ -23,10 +23,12 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
 
     cnd_broadcast(&fiber->system->queue_cond);
 
-    job_context_swap(&fiber->ctx, g_scheduler_context);
+    for (;;) {
+        job_context_swap(&fiber->ctx, g_scheduler_context);
+    }
 }
 
-#if defined(__aarch64__) || defined(__arm__)
+#if defined(__aarch64__) || defined(__arm__) || defined(__x86_64__)
 static void job_fiber_trampoline_arm(uintptr_t raw) {
     job_fiber_t *fiber = (job_fiber_t *)raw;
     job_fiber_trampoline_body(fiber);
@@ -69,7 +71,7 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     fiber->waiting = 0;
     fiber->next = NULL;
 
-#if defined(__aarch64__) || defined(__arm__)
+#if defined(__aarch64__) || defined(__arm__) || defined(__x86_64__)
     job_context_init(&fiber->ctx,
                      job_fiber_trampoline_arm,
                      (uintptr_t)fiber,
