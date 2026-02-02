@@ -31,7 +31,8 @@ ECS_DEFINE_SPARSE_SET(skinning_skeleton, skinning_skeleton_t)
 ECS_DEFINE_SPARSE_SET(skinning_skin, skinning_skin_t)
 
 static job_system_t *create_job_system(void) {
-    job_system_t *sys = job_system_create(1, 32, 64 * 1024, 1);
+    job_system_t sys_; job_system_t* sys=&sys_;
+job_system_create_status_t sys_create_status =  job_system_create(sys,1, 32, 64 * 1024, 2048, 1);
     if (sys == NULL) {
         return NULL;
     }

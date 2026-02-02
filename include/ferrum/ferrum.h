@@ -8,6 +8,7 @@
 #include "ferrum/job/system.h"
 #include "ferrum/job/counter.h"
 #include "ferrum/math/constants.h"
+#include "ferrum/job/instrumentation.h"
 #include "ferrum/math/vec2.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/vec4.h"

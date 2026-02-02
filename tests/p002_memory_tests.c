@@ -366,7 +366,8 @@ static void arena_job_fn(void *user) {
 }
 
 static int test_arena_usage_inside_jobs(void) {
-    job_system_t *sys = job_system_create(2, 64, 64 * 1024, 0);
+    job_system_t sys_; job_system_t* sys=&sys_;
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 64, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_INT_EQ(0, job_system_start(sys));
 

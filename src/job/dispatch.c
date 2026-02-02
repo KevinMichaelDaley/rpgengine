@@ -33,7 +33,8 @@ job_id_t job_dispatch(job_system_t *sys,
         return JOB_ID_INVALID;
     }
 
-    atomic_fetch_add_explicit(&sys->jobs_started, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->jobs_started, 1, memory_order_release);
+    job_instrument_event("dispatch", fiber->id, id, g_worker_id, __FILE__, __LINE__);
     return id;
 }
 

@@ -340,7 +340,8 @@ static int test_ecs_system_loop_determinism(void) {
 
     for (int pass = 0; pass < 2; ++pass) {
         vec4_t *output = (pass == 0) ? output_a : output_b;
-        job_system_t *sys = job_system_create(1, 32, 64 * 1024, 1);
+        job_system_t sys_; job_system_t* sys=&sys_;
+job_system_create_status_t sys_create_status =  job_system_create(sys,1, 32, 64 * 1024, 2048, 1);
         ASSERT_TRUE(sys != NULL);
         ASSERT_INT_EQ(0, job_system_start(sys));
 

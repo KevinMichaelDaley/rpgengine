@@ -19,7 +19,7 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     if (fiber->counter) {
         job_counter_dec(fiber->counter);
     }
-    atomic_fetch_add_explicit(&fiber->system->jobs_completed, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&fiber->system->jobs_completed, 1, memory_order_release);
 
     cnd_broadcast(&fiber->system->queue_cond);
 
@@ -50,18 +50,13 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     if (!sys || !fn) {
         return NULL;
     }
-
-    job_fiber_t *fiber = (job_fiber_t *)calloc(1, sizeof(job_fiber_t));
-    if (!fiber) {
+    pool_handle_t fiber_handle = pool_alloc(&sys->fiber_stack_pool);
+    if (fiber_handle.index == POOL_INDEX_INVALID) {
         return NULL;
     }
-
-    fiber->stack = (uint8_t *)malloc(sys->fiber_stack_size);
-    if (!fiber->stack) {
-        free(fiber);
-        return NULL;
-    }
-
+    job_fiber_t *fiber = (job_fiber_t *)pool_get(&sys->fiber_stack_pool, fiber_handle);
+    fiber->magic1=0xf183; // stack overflow guard
+    fiber->handle = fiber_handle;
     fiber->system = sys;
     fiber->fn = fn;
     fiber->user = user;
@@ -70,7 +65,10 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     fiber->finished = 0;
     fiber->waiting = 0;
     fiber->next = NULL;
-
+    fiber->id = id;
+    fiber->magic2=0x3a7f; // stack underflow guard
+    /* Stack starts immediately after the fiber struct in the pool block. */
+    fiber->stack = (uint8_t *)fiber + sizeof(job_fiber_t);
 #if defined(__aarch64__) || defined(__arm__) || defined(__x86_64__)
     job_context_init(&fiber->ctx,
                      job_fiber_trampoline_arm,
@@ -90,7 +88,7 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     makecontext(&fiber->ctx, (void (*)(void))job_fiber_trampoline, 2, (uintptr_t)low, (uintptr_t)high);
 #endif
 
-    (void)id; /* reserved for future tracing */
+    job_instrument_event("fiber_create", fiber->id, id, g_worker_id, __FILE__, __LINE__);
     return fiber;
 }
 
@@ -98,6 +96,14 @@ void job_fiber_destroy(job_fiber_t *fiber) {
     if (!fiber) {
         return;
     }
-    free(fiber->stack);
-    free(fiber);
+    fiber->magic1=0xdead; // invalidate
+    fiber->magic2=0xdead; 
+    fiber->stack = NULL;
+    job_instrument_event("fiber_destroy", fiber->id, 0, g_worker_id, __FILE__, __LINE__);
+    /* Wake any workers that might be waiting; ensures teardown makes progress
+       even if the last completions race past the broadcast in the trampoline. */
+    if (fiber->system) {
+        cnd_broadcast(&fiber->system->queue_cond);
+    }
+    pool_free(&fiber->system->fiber_stack_pool, fiber->handle);
 }

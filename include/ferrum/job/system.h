@@ -3,7 +3,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
-
+#include <stdatomic.h>
+#include "counter.h"
+#include "ferrum/memory/pool.h"
 /** @file
  * @brief Public API for the job system and fibers.
  */
@@ -11,9 +13,37 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+struct job_system {
+    uint32_t worker_count;
+    uint32_t queue_capacity;
+    size_t fiber_stack_size;
+    pool_t fiber_stack_pool;
+    int deterministic;
+    atomic_bool running;
+    atomic_bool shutting_down;
+    struct job_entry *queue;
+    atomic_int *queue_slot_state; /* 0=empty, 1=ready, 2=busy */
+    atomic_uint queue_insert_cursor;
+    atomic_uint queue_pop_cursor;
+    mtx_t queue_lock;
+    cnd_t queue_cond;
+
+    thrd_t *workers;
+    atomic_uint_least64_t next_job_id;
+    atomic_uint_least64_t jobs_started;
+    atomic_uint_least64_t jobs_completed;
+};
 
 struct job_counter;
 
+typedef enum job_system_create_status{
+    JOB_CREATE_OK = 0,
+    JOB_CREATE_ERR_INVALID,
+    JOB_CREATE_ERR_OOM,
+    JOB_CREATE_ERR_MTX_INIT,
+    JOB_CREATE_ERR_CND_INIT,
+    JOB_CREATE_POOL_INIT_ERR
+} job_system_create_status_t;
 /** Opaque handle to the job system. */
 typedef struct job_system job_system_t;
 
@@ -32,9 +62,11 @@ typedef uint64_t job_id_t;
  * @param deterministic_mode Non-zero enables single-threaded deterministic scheduling.
  * @return job_system_t* New instance or NULL on validation/allocation failure.
  */
-job_system_t *job_system_create(uint32_t worker_count,
+job_system_create_status_t job_system_create(job_system_t* sys,
+                                uint32_t worker_count,
                                 uint32_t queue_capacity,
                                 size_t fiber_stack_size,
+                                size_t fiber_count_max,
                                 int deterministic_mode);
 
 /**
@@ -98,6 +130,14 @@ uint64_t job_system_jobs_started(const job_system_t *sys);
  * @brief Instrumentation: number of jobs completed.
  */
 uint64_t job_system_jobs_completed(const job_system_t *sys);
+
+/**
+ * @brief Indicates whether the job queue implementation uses lock-free operations.
+ *
+ * This returns 1 when enqueue/dequeue avoid mutex-based critical sections and
+ * use atomic operations suitable for MPMC usage; 0 otherwise.
+ */
+int job_system_queue_is_lock_free(const job_system_t *sys);
 
 #ifdef __cplusplus
 } /* extern "C" */

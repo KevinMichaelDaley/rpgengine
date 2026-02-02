@@ -121,23 +121,24 @@ int main(int argc, char **argv) {
     }
     (void)net_udp_socket_set_nonblocking(&sock, 1);
 
-    job_system_t *jobs = job_system_create((uint32_t)workers_l, 4096u, 1u << 16, 0);
-    if (!jobs) {
+    job_system_t jobs;
+    job_system_create_status_t status = job_system_create(&jobs, (uint32_t)workers_l, 4096u, 1u << 16, 2048, 0);
+    if (status != JOB_CREATE_OK) {
         fprintf(stderr, "Failed to create job system\n");
         net_udp_socket_close(&sock);
         return 1;
     }
-    if (job_system_start(jobs) != 0) {
+    if (job_system_start(&jobs) != 0) {
         fprintf(stderr, "Failed to start job system\n");
-        job_system_shutdown(jobs);
+        job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
         return 1;
     }
 
-    server_repl_server_t *srv = server_repl_server_create(&cfg, &sock, jobs);
+    server_repl_server_t *srv = server_repl_server_create(&cfg, &sock, &jobs);
     if (!srv) {
         fprintf(stderr, "Failed to create repl server\n");
-        job_system_shutdown(jobs);
+        job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
         free(client_storage);
         free(entity_storage);
@@ -179,7 +180,7 @@ int main(int argc, char **argv) {
             (unsigned long long)st.bytes_recv);
 
     server_repl_server_destroy(srv);
-    job_system_shutdown(jobs);
+    job_system_shutdown(&jobs);
     net_udp_socket_close(&sock);
     free(client_storage);
     free(entity_storage);

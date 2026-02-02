@@ -8,10 +8,13 @@
 
 #include "ferrum/job/counter.h"
 #include "ferrum/job/system.h"
+#include "ferrum/job/instrumentation.h"
 
+#include "ferrum/memory/arena.h"
+#include "ferrum/memory/pool.h"
 #include "context.h"
 
-#define JOB_MIN_STACK (16u * 1024u)
+#define JOB_MIN_STACK (4u * 1024u)
 
 typedef struct job_fiber job_fiber_t;
 
@@ -21,38 +24,21 @@ struct job_entry {
     uint64_t id;
 };
 
-struct job_system {
-    uint32_t worker_count;
-    uint32_t queue_capacity;
-    size_t fiber_stack_size;
-    int deterministic;
-    atomic_bool running;
-    atomic_bool shutting_down;
-
-    mtx_t queue_lock;
-    cnd_t queue_cond;
-    struct job_entry *queue;
-    uint32_t queue_size;
-    uint32_t queue_head;
-    uint32_t queue_tail;
-
-    thrd_t *workers;
-    atomic_uint_least64_t next_job_id;
-    atomic_uint_least64_t jobs_started;
-    atomic_uint_least64_t jobs_completed;
-};
-
 struct job_fiber {
+    uint16_t magic1;
     job_context_t ctx;
+    pool_handle_t handle;
     job_system_t *system;
     void (*fn)(void *);
     void *user;
     struct job_counter *counter;
-    uint8_t *stack;
     int finished;
     int waiting;
     uint32_t priority;
     struct job_fiber *next;
+    uint64_t id;
+    uint8_t* stack;
+    uint16_t magic2;
 };
 
 extern _Thread_local job_fiber_t *g_current_fiber;

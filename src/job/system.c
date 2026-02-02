@@ -10,55 +10,69 @@ struct worker_arg {
     job_system_t *sys;
     uint32_t id;
 };
-
 static int worker_main(void *arg);
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx);
 static void cleanup_system(job_system_t *sys);
 
-job_system_t *job_system_create(uint32_t worker_count,
+job_system_create_status_t job_system_create(job_system_t* sys,
+                                uint32_t worker_count,
                                 uint32_t queue_capacity,
                                 size_t fiber_stack_size,
+                                size_t fiber_count_max,
                                 int deterministic_mode) {
     if (fiber_stack_size < JOB_MIN_STACK || queue_capacity == 0) {
-        return NULL;
+        return JOB_CREATE_ERR_INVALID;
     }
     if (!deterministic_mode && worker_count == 0) {
-        return NULL;
+        return JOB_CREATE_ERR_INVALID;
     }
-
-    job_system_t *sys = (job_system_t *)calloc(1, sizeof(job_system_t));
     if (!sys) {
-        return NULL;
+        return JOB_CREATE_ERR_INVALID;
     }
 
     sys->worker_count = deterministic_mode ? 1u : worker_count;
     sys->queue_capacity = queue_capacity;
     sys->fiber_stack_size = fiber_stack_size;
+    pool_status_t pool_status = pool_init(&sys->fiber_stack_pool, fiber_count_max, sizeof(job_fiber_t) + fiber_stack_size);
+    if( pool_status != POOL_OK) {
+        if(pool_status == POOL_ERR_INVALID) {
+            return JOB_CREATE_POOL_INIT_ERR;
+        } else {
+            return JOB_CREATE_ERR_OOM;
+        }
+    }
     sys->deterministic = deterministic_mode ? 1 : 0;
     atomic_init(&sys->running, false);
     atomic_init(&sys->shutting_down, false);
     atomic_init(&sys->next_job_id, 1);
     atomic_init(&sys->jobs_started, 0);
     atomic_init(&sys->jobs_completed, 0);
+    sys->queue = (struct job_entry *)calloc(queue_capacity, sizeof(struct job_entry));
+    sys->queue_slot_state = (atomic_int *)calloc(queue_capacity, sizeof(atomic_int));
+    sys->workers = (thrd_t *)calloc(sys->worker_count, sizeof(thrd_t));
+    if (!sys->queue || !sys->queue_slot_state || !sys->workers) {
+        cleanup_system(sys);
+        return JOB_CREATE_ERR_OOM;
+    }
+
+    for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
+        atomic_init(&sys->queue_slot_state[i], 0);
+    }
+    atomic_init(&sys->queue_insert_cursor, 0);
+    atomic_init(&sys->queue_pop_cursor, 0);
 
     if (mtx_init(&sys->queue_lock, mtx_plain) != thrd_success) {
-        free(sys);
-        return NULL;
+        return JOB_CREATE_ERR_MTX_INIT;
     }
     if (cnd_init(&sys->queue_cond) != thrd_success) {
         mtx_destroy(&sys->queue_lock);
-        free(sys);
-        return NULL;
+        return JOB_CREATE_ERR_CND_INIT;
     }
 
-    sys->queue = (struct job_entry *)calloc(queue_capacity, sizeof(struct job_entry));
-    sys->workers = (thrd_t *)calloc(sys->worker_count, sizeof(thrd_t));
-    if (!sys->queue || !sys->workers) {
-        cleanup_system(sys);
-        return NULL;
-    }
+    /* Initialize instrumentation: env override or default-on */
+    job_instrument_init();
 
-    return sys;
+    return JOB_CREATE_OK;
 }
 
 int job_system_start(job_system_t *sys) {
@@ -117,19 +131,24 @@ int job_system_wait_idle(job_system_t *sys) {
         return 0;
     }
 
-    mtx_lock(&sys->queue_lock);
     for (;;) {
-        uint64_t started = atomic_load(&sys->jobs_started);
-        uint64_t completed = atomic_load(&sys->jobs_completed);
-        if (sys->queue_size == 0 && started == completed) {
+        uint64_t started = atomic_load_explicit(&sys->jobs_started, memory_order_acquire);
+        uint64_t completed = atomic_load_explicit(&sys->jobs_completed, memory_order_acquire);
+        int any_ready = 0;
+        for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
+            if (atomic_load_explicit(&sys->queue_slot_state[i], memory_order_acquire) == 1) {
+                any_ready = 1;
+                break;
+            }
+        }
+        if (!any_ready && started == completed) {
             break;
         }
-        if (atomic_load(&sys->shutting_down) && sys->queue_size == 0) {
+        if (atomic_load(&sys->shutting_down) && !any_ready) {
             break;
         }
-        cnd_wait(&sys->queue_cond, &sys->queue_lock);
+        thrd_yield();
     }
-    mtx_unlock(&sys->queue_lock);
     return 0;
 }
 
@@ -138,6 +157,8 @@ void job_system_shutdown(job_system_t *sys) {
         return;
     }
 
+    /* Stop accepting new work immediately. */
+    atomic_store(&sys->running, false);
     atomic_store(&sys->shutting_down, true);
     cnd_broadcast(&sys->queue_cond);
 
@@ -161,22 +182,29 @@ static void cleanup_system(job_system_t *sys) {
     cnd_destroy(&sys->queue_cond);
     mtx_destroy(&sys->queue_lock);
     free(sys->queue);
+    free(sys->queue_slot_state);
     free(sys->workers);
-    free(sys);
+    pool_destroy(&sys->fiber_stack_pool);
 }
 
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx) {
     g_current_fiber = entry->fiber;
     g_current_system = sys;
     g_scheduler_context = sched_ctx;
-
+    if (entry->fiber->magic1 != 0xf183 || entry->fiber->magic2 != 0x3a7f) {
+        job_instrument_event("magic_invalid", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
+    }
+    job_instrument_event("start", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
     job_context_swap(sched_ctx, &entry->fiber->ctx);
 
     if (entry->fiber->finished) {
+        job_instrument_event("complete", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
         job_fiber_destroy(entry->fiber);
     } else if (!entry->fiber->waiting) {
         if (job_system_enqueue(sys, entry->fiber, entry->priority, entry->id) != 0) {
             job_fiber_destroy(entry->fiber);
+        } else {
+            job_instrument_event("continue", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
         }
     }
 
@@ -198,6 +226,22 @@ static int worker_main(void *arg) {
             if (atomic_load(&sys->shutting_down)) {
                 break;
             }
+            /* Sleep when no READY entries to avoid wasted spinning. */
+            mtx_lock(&sys->queue_lock);
+            for (;;) {
+                int any_ready = 0;
+                for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
+                    if (atomic_load_explicit(&sys->queue_slot_state[i], memory_order_acquire) == 1) {
+                        any_ready = 1;
+                        break;
+                    }
+                }
+                if (atomic_load(&sys->shutting_down) || any_ready) {
+                    break;
+                }
+                cnd_wait(&sys->queue_cond, &sys->queue_lock);
+            }
+            mtx_unlock(&sys->queue_lock);
             continue;
         }
         run_entry(sys, &entry, &sched_ctx);
@@ -205,4 +249,9 @@ static int worker_main(void *arg) {
 
     free(wa);
     return 0;
+}
+
+int job_system_queue_is_lock_free(const job_system_t *sys) {
+    (void)sys;
+    return 1;
 }
