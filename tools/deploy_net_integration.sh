@@ -31,6 +31,9 @@ Tests:
   p008   Remote: ./build/p008_net_repl_server
          Local:  ./build/p008_net_repl_client
 
+  p000   Remote: ./build/p000_tests (job system tests)
+         Local:  (none)
+
 Examples:
   tools/deploy_net_integration.sh
 
@@ -198,6 +201,12 @@ build_remote_headless() {
   run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests && make -B p008_build"
 }
 
+build_remote_p000() {
+  echo "==> build p000 job system tests on remote"
+  resolve_remote_dir
+  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p000_tests && make -B build/p000_tests"
+}
+
 build_local_headless() {
   echo "==> build local client binaries"
   run_cmd make -C "$REPO_ROOT" -B p008_build
@@ -296,6 +305,12 @@ run_test() {
   local name="$1"
 
   case "$name" in
+    p000)
+      sync_repo
+      build_remote_p000
+      echo "==> run remote p000 job system tests"
+      run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && ./build/p000_tests"
+      ;;
     p008)
       sync_repo
       build_remote_headless
@@ -318,6 +333,7 @@ run_test() {
 
 main() {
   if [[ "$RUN_ALL" -eq 1 ]]; then
+    run_test p000
     run_test p008
     return
   fi
