@@ -17,17 +17,20 @@ GL_LIBS := -lGL
 RENDERER_TEST_CFLAGS := $(SDL2_CFLAGS)
 RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
 
-BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
-build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
-build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
-build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
-build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
-build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
-build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
-build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
-build/p004_pipeline_resource_tests build/p004_pipeline_graph_tests
+BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
+	build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
+	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
+	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
+	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests
 
-.PHONY: all test test_renderer clean
+BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
+	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
+	build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
+	build/p004_pipeline_resource_tests build/p004_pipeline_graph_tests
+
+BIN := $(BIN_HEADLESS) $(BIN_RENDERER_TESTS)
+
+.PHONY: all test test_renderer clean p008_build p008_test p008_help p008_perf p008_renderer_client
 
 all: $(BIN)
 
@@ -136,14 +139,15 @@ $(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
 
-test: $(BIN)
+
+test: $(BIN_HEADLESS)
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests
 
-test_renderer: $(BIN)
+test_renderer: $(BIN_RENDERER_TESTS)
 	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
 	&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
 	&& ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests \
@@ -160,6 +164,24 @@ test_red_p008: build/p008_net_replication_protocol_tests
 
 test_p008: build/p008_net_multi_client_server_integration_tests build/p008_net_repl_server build/p008_net_repl_client
 	./build/p008_net_multi_client_server_integration_tests
+
+p008_build: build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests
+
+p008_test: test_p008
+
+p008_help:
+	@echo "P_008 targets:";
+	@echo "  make p008_build   # build headless p008 binaries";
+	@echo "  make test_p008    # run multi-process integration test";
+	@echo "  make p008_perf    # perf harness entrypoint (when implemented)";
+	@echo "  make p008_renderer_client  # renderer client entrypoint (when implemented)";
+	@echo "See: tests/p008_net_integration_README.md"
+
+p008_perf:
+	@echo "P_008 perf harness not in this repo state yet (see bead rust-rpg-pi3)."
+
+p008_renderer_client:
+	@echo "P_008 renderer client not in this repo state yet (see bead rust-rpg-128)."
 
 clean:
 	$(RM) $(BIN)
