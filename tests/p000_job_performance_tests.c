@@ -4,6 +4,7 @@
 #include <time.h>
 #include <threads.h>
 #include <stdatomic.h>
+#include <unistd.h>
 
 #include "ferrum/ferrum.h"
 
@@ -106,6 +107,15 @@ static void run_once(uint32_t worker_count) {
     if (aff && aff[0] != '\0' && aff[0] != '0') {
         (void)job_system_enable_affinity(sys, 1);
     }
+    /* Optional NUMA nodes toggle via env: JOB_SYS_NUMA_NODES=N */
+    const char *numa_env = getenv("JOB_SYS_NUMA_NODES");
+    if (numa_env && numa_env[0] != '\0') {
+        char *endp = NULL;
+        unsigned long nodes = strtoul(numa_env, &endp, 10);
+        if (endp != numa_env && nodes >= 1ul) {
+            (void)job_system_enable_numa(sys, (uint32_t)nodes);
+        }
+    }
     if (job_system_start(sys) != 0) {
         fprintf(stderr, "SKIP workers=%u start_failed\n", worker_count);
         return;
@@ -176,8 +186,12 @@ int main(void) {
     /* Ensure instrumentation is explicitly disabled for clean perf output */
     job_instrument_enable(0);
     uint32_t counts[] = {1, 2, 4, 8, 16, 32, 64};
+    long nproc = sysconf(_SC_NPROCESSORS_ONLN);
+    if (nproc < 1) nproc = 1;
     for (size_t i = 0; i < ARRAY_SIZE(counts); ++i) {
-        run_once(counts[i]);
+        uint32_t capped = counts[i];
+        if ((long)capped > nproc) capped = (uint32_t)nproc;
+        run_once(capped);
     }
     return 0;
 }
