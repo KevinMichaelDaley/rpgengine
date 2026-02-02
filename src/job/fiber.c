@@ -8,6 +8,7 @@ _Thread_local job_fiber_t *g_current_fiber = NULL;
 _Thread_local job_system_t *g_current_system = NULL;
 _Thread_local job_context_t *g_scheduler_context = NULL;
 _Thread_local uint32_t g_worker_id = UINT32_MAX;
+_Thread_local uint32_t g_worker_node = 0;
 
 static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     g_current_fiber = fiber;

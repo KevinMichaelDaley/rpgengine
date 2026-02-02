@@ -48,3 +48,7 @@ void job_yield(void) {
 uint32_t job_current_worker_id(void) {
     return g_worker_id;
 }
+
+uint32_t job_current_worker_node(void) {
+    return g_worker_node;
+}

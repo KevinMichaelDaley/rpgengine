@@ -45,6 +45,7 @@ extern _Thread_local job_fiber_t *g_current_fiber;
 extern _Thread_local job_system_t *g_current_system;
 extern _Thread_local job_context_t *g_scheduler_context;
 extern _Thread_local uint32_t g_worker_id;
+extern _Thread_local uint32_t g_worker_node;
 
 void job_system_wake_waiters(job_system_t *sys, job_counter_t *counter);
 int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id);

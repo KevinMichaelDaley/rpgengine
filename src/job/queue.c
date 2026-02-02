@@ -10,12 +10,19 @@ int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint
         return -1;
     }
     /* Deterministic mode and non-worker contexts should append using global insert cursor.
-       Otherwise, prefer local region based on current worker id. */
+       Otherwise, prefer local region based on current worker/node affinity. */
     uint32_t start;
     if (sys->deterministic || g_worker_id == UINT32_MAX) {
         start = atomic_fetch_add_explicit(&sys->queue_insert_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
     } else {
-        start = g_worker_id % sys->queue_capacity;
+        if (sys->numa_enabled && sys->numa_node_count > 1) {
+            uint32_t blocks = sys->numa_node_count ? sys->numa_node_count : 1u;
+            uint32_t block_sz = sys->queue_capacity / blocks;
+            uint32_t base = (g_worker_node % blocks) * block_sz;
+            start = base;
+        } else {
+            start = g_worker_id % sys->queue_capacity;
+        }
     }
     for (uint32_t off = 0; off < sys->queue_capacity; ++off) {
         uint32_t i = (start + off) % sys->queue_capacity;
@@ -38,13 +45,20 @@ int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
     if (!sys || !out_entry) {
         return -1;
     }
-    /* Deterministic mode should rotate scan start via global pop cursor to preserve fairness.
-       Non-deterministic workers prefer local region to enable sharding + stealing. */
+    /* Deterministic mode: rotate via global pop cursor for fairness.
+       Non-deterministic workers prefer local region (worker/node shard) with global stealing fallback. */
     uint32_t start;
     if (sys->deterministic || g_worker_id == UINT32_MAX) {
         start = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
     } else {
-        start = g_worker_id % sys->queue_capacity;
+        if (sys->numa_enabled && sys->numa_node_count > 1) {
+            uint32_t blocks = sys->numa_node_count ? sys->numa_node_count : 1u;
+            uint32_t block_sz = sys->queue_capacity / blocks;
+            uint32_t base = (g_worker_node % blocks) * block_sz;
+            start = base;
+        } else {
+            start = g_worker_id % sys->queue_capacity;
+        }
     }
     for (uint32_t attempt = 0; attempt < sys->queue_capacity; ++attempt) {
         int chosen_idx = -1;

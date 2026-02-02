@@ -101,6 +101,11 @@ static void run_once(uint32_t worker_count) {
         fprintf(stderr, "SKIP workers=%u create_status=%d\n", worker_count, st);
         return;
     }
+    /* Optional CPU affinity toggle via env: JOB_SYS_AFFINITY=1 */
+    const char *aff = getenv("JOB_SYS_AFFINITY");
+    if (aff && aff[0] != '\0' && aff[0] != '0') {
+        (void)job_system_enable_affinity(sys, 1);
+    }
     if (job_system_start(sys) != 0) {
         fprintf(stderr, "SKIP workers=%u start_failed\n", worker_count);
         return;

@@ -78,6 +78,8 @@ job_system_create_status_t job_system_create(job_system_t* sys,
 
     /* Initialize flags and instrumentation */
     atomic_init(&sys->affinity_enabled, false);
+    sys->numa_enabled = 0;
+    sys->numa_node_count = 1u;
     job_instrument_init();
 
     return JOB_CREATE_OK;
@@ -252,6 +254,7 @@ static int worker_main(void *arg) {
     struct worker_arg *wa = (struct worker_arg *)arg;
     job_system_t *sys = wa->sys;
     g_worker_id = wa->id;
+    g_worker_node = sys->numa_enabled ? (g_worker_id % (sys->numa_node_count ? sys->numa_node_count : 1u)) : 0u;
     g_current_system = sys;
 
     job_context_t sched_ctx;

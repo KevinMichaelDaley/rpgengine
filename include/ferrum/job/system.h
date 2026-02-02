@@ -33,6 +33,8 @@ struct job_system {
     atomic_uint_least64_t jobs_started;
     atomic_uint_least64_t jobs_completed;
     atomic_bool affinity_enabled;
+    int numa_enabled;            /* 0 = disabled, 1 = enabled (sim or detected) */
+    uint32_t numa_node_count;    /* number of NUMA nodes when enabled; at least 1 */
 };
 
 struct job_counter;
@@ -177,6 +179,29 @@ int job_system_enable_affinity(job_system_t *sys, int enable);
  * @return 1 if enabled, 0 otherwise.
  */
 int job_system_affinity_enabled(const job_system_t *sys);
+
+/**
+ * @brief Enable NUMA-aware sharding with a specified node count.
+ * When enabled, enqueue/pop prefer the local node's queue region, with global stealing fallback.
+ * This API simulates topology using a simple worker_id→node mapping (worker_id % node_count).
+ * @param sys Job system pointer.
+ * @param node_count Number of nodes to simulate (>=1). Use 1 to disable.
+ * @return 0 on success, -1 on invalid input.
+ */
+int job_system_enable_numa(job_system_t *sys, uint32_t node_count);
+
+/**
+ * @brief Query whether NUMA-aware sharding is enabled.
+ * @param sys Job system pointer.
+ * @return 1 if enabled, 0 otherwise.
+ */
+int job_system_numa_enabled(const job_system_t *sys);
+
+/**
+ * @brief Obtain the current worker's NUMA node index.
+ * @return Node index (zero-based). Returns 0 when not inside a job or when NUMA is disabled.
+ */
+uint32_t job_current_worker_node(void);
 
 #ifdef __cplusplus
 } /* extern "C" */
