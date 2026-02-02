@@ -1,5 +1,6 @@
 CC ?= gcc
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -g -O0 -fsanitize=address -fno-omit-frame-pointer
+
 LDFLAGS ?= -lm
 JOB_SRC := $(wildcard src/job/*.c)
 MATH_SRC := $(wildcard src/math/*.c)
@@ -25,7 +26,8 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
-	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests
+	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
+	build/p000_job_performance_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -38,8 +40,14 @@ BIN := $(BIN_HEADLESS) $(BIN_RENDERER_TESTS)
 
 all: $(BIN)
 
-build/p000_tests: $(JOB_SRC) tests/p000_fiber_job_system_tests.c | build
-	$(CC) $(CFLAGS) tests/p000_fiber_job_system_tests.c $(JOB_SRC) -o $@ $(LDFLAGS)
+build/p000_tests: $(JOB_SRC) $(MEM_SRC) tests/p000_fiber_job_system_tests.c | build
+	$(CC) $(CFLAGS) tests/p000_fiber_job_system_tests.c $(JOB_SRC) $(MEM_SRC) -o $@ $(LDFLAGS)
+
+## AddressSanitizer does not support custom fiber stacks without special hooks.
+## Build the perf harness without ASan to avoid false-positive crashes.
+CFLAGS_NO_ASAN := $(filter-out -fsanitize=address,$(CFLAGS))
+build/p000_job_performance_tests: $(SRC) tests/p000_job_performance_tests.c | build
+	$(CC) $(CFLAGS_NO_ASAN) tests/p000_job_performance_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p001_tests: $(SRC) tests/p001_core_math_tests.c | build
 	$(CC) $(CFLAGS) tests/p001_core_math_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -150,6 +158,10 @@ test: $(BIN_HEADLESS)
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests
+
+.PHONY: perf_job
+perf_job: build/p000_job_performance_tests
+	./build/p000_job_performance_tests
 
 test_renderer: $(BIN_RENDERER_TESTS)
 	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \
