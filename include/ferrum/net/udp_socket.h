@@ -48,6 +48,18 @@ int net_udp_socket_set_nonblocking(net_udp_socket_t *sock, int nonblocking);
 /** @brief Sets SO_RCVTIMEO in milliseconds (0 disables timeout). */
 int net_udp_socket_set_recv_timeout_ms(net_udp_socket_t *sock, uint32_t timeout_ms);
 
+/** @brief Sets SO_RCVBUF (receive buffer size) in bytes.
+ *
+ * Best-effort: the OS may clamp the value.
+ */
+int net_udp_socket_set_recv_buffer_bytes(net_udp_socket_t *sock, uint32_t bytes);
+
+/** @brief Sets SO_SNDBUF (send buffer size) in bytes.
+ *
+ * Best-effort: the OS may clamp the value.
+ */
+int net_udp_socket_set_send_buffer_bytes(net_udp_socket_t *sock, uint32_t bytes);
+
 /** @brief Initializes an IPv4 address from octets and port. */
 int net_udp_addr_ipv4(net_udp_addr_t *addr, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
 

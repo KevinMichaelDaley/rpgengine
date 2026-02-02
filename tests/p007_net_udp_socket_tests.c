@@ -162,6 +162,32 @@ static int test_udp_recv_timeout(void) {
     return 0;
 }
 
+static int test_udp_socket_buffer_sizes_invalid_args(void) {
+    ASSERT_INT_EQ(NET_UDP_SOCKET_ERR_INVALID, net_udp_socket_set_recv_buffer_bytes(NULL, 1024u));
+    ASSERT_INT_EQ(NET_UDP_SOCKET_ERR_INVALID, net_udp_socket_set_send_buffer_bytes(NULL, 1024u));
+
+    net_udp_socket_t sock;
+    ASSERT_INT_EQ(NET_UDP_SOCKET_OK, net_udp_socket_open(&sock));
+    net_udp_socket_close(&sock);
+
+    /* Zero is treated as invalid. */
+    ASSERT_INT_EQ(NET_UDP_SOCKET_ERR_INVALID, net_udp_socket_set_recv_buffer_bytes(&sock, 0u));
+    ASSERT_INT_EQ(NET_UDP_SOCKET_ERR_INVALID, net_udp_socket_set_send_buffer_bytes(&sock, 0u));
+    return 0;
+}
+
+static int test_udp_socket_buffer_sizes_best_effort(void) {
+    net_udp_socket_t sock;
+    ASSERT_INT_EQ(NET_UDP_SOCKET_OK, net_udp_socket_open(&sock));
+
+    /* Best-effort: OS may clamp, but setting should not error in normal cases. */
+    ASSERT_INT_EQ(NET_UDP_SOCKET_OK, net_udp_socket_set_recv_buffer_bytes(&sock, 4u * 1024u * 1024u));
+    ASSERT_INT_EQ(NET_UDP_SOCKET_OK, net_udp_socket_set_send_buffer_bytes(&sock, 4u * 1024u * 1024u));
+
+    net_udp_socket_close(&sock);
+    return 0;
+}
+
 struct test_case {
     const char *name;
     int (*fn)(void);
@@ -174,6 +200,8 @@ static struct test_case TESTS[] = {
     {"udp_nonblocking_empty", test_udp_nonblocking_empty},
     {"udp_connected_send_recv", test_udp_connected_send_recv},
     {"udp_recv_timeout", test_udp_recv_timeout},
+    {"udp_socket_buffer_sizes_invalid_args", test_udp_socket_buffer_sizes_invalid_args},
+    {"udp_socket_buffer_sizes_best_effort", test_udp_socket_buffer_sizes_best_effort},
 };
 
 int main(void) {

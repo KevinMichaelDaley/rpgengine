@@ -52,11 +52,13 @@ struct server_repl_server {
     uint8_t *entity_known_bits;
     size_t entity_known_stride_bytes;
     uint16_t *spawn_cursor;
+    uint16_t *state_cursor;
 
     uint8_t clients_owned;
     uint8_t entities_owned;
     uint8_t entity_known_owned;
     uint8_t spawn_cursor_owned;
+    uint8_t state_cursor_owned;
 
     uint16_t server_tick;
     uint32_t next_entity_id;

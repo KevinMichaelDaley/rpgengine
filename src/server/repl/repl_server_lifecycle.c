@@ -40,6 +40,7 @@ server_repl_server_t *server_repl_server_create(const server_repl_config_t *cfg,
     srv->entities_owned = 0u;
     srv->entity_known_owned = 0u;
     srv->spawn_cursor_owned = 0u;
+    srv->state_cursor_owned = 0u;
     srv->send_job_ctxs = NULL;
     srv->send_job_ctx_capacity = 0u;
     srv->send_job_ctxs_owned = 0u;
@@ -50,6 +51,7 @@ server_repl_server_t *server_repl_server_create(const server_repl_config_t *cfg,
     srv->entity_known_bits = NULL;
     srv->entity_known_stride_bytes = 0u;
     srv->spawn_cursor = NULL;
+    srv->state_cursor = NULL;
 
     size_t want_clients_bytes = server_repl_client_storage_size(cfg->max_clients);
     if (cfg->client_storage && cfg->client_storage_bytes >= want_clients_bytes) {
@@ -105,6 +107,13 @@ server_repl_server_t *server_repl_server_create(const server_repl_config_t *cfg,
     }
     srv->spawn_cursor_owned = 1u;
 
+    srv->state_cursor = (uint16_t *)calloc((size_t)cfg->max_clients, sizeof(*srv->state_cursor));
+    if (!srv->state_cursor) {
+        server_repl_server_destroy(srv);
+        return NULL;
+    }
+    srv->state_cursor_owned = 1u;
+
     const size_t max_payload = NET_RUDP_MAX_PACKET_SIZE - NET_PACKET_HEADER_SIZE - 8u;
     const size_t max_entries_z = (max_payload > 4u) ? ((max_payload - 4u) / 18u) : 0u;
     const uint16_t entry_capacity = (uint16_t)((max_entries_z > 0xffffu) ? 0xffffu : max_entries_z);
@@ -137,6 +146,9 @@ void server_repl_server_destroy(server_repl_server_t *srv) {
     }
     if (srv->spawn_cursor_owned) {
         free(srv->spawn_cursor);
+    }
+    if (srv->state_cursor_owned) {
+        free(srv->state_cursor);
     }
     if (srv->spawn_batch_owned) {
         free(srv->spawn_batch_entries);

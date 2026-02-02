@@ -184,6 +184,48 @@ static void send_state_job(void *user_data) {
                                         sizeof(payload));
 }
 
+static void server_repl_send_some_states(server_repl_server_t *srv, uint16_t client_id, uint16_t max_states, uint64_t now_ms) {
+    if (!srv || max_states == 0u) {
+        return;
+    }
+    if (!srv->state_cursor || !srv->entity_known_bits || srv->entity_known_stride_bytes == 0u) {
+        return;
+    }
+    if (!srv->clients[client_id].active || !srv->clients[client_id].joined) {
+        return;
+    }
+
+    const uint16_t total_entities = srv->cfg.max_entities;
+    if (total_entities == 0u) {
+        return;
+    }
+
+    const size_t known_stride = srv->entity_known_stride_bytes;
+    const uint8_t *known = srv->entity_known_bits + ((size_t)client_id * known_stride);
+
+    uint16_t cursor = (uint16_t)(srv->state_cursor[client_id] % total_entities);
+    uint16_t sent = 0u;
+    uint16_t scanned = 0u;
+
+    while (sent < max_states && scanned < total_entities) {
+        const uint16_t ei = (uint16_t)((cursor + scanned) % total_entities);
+        scanned++;
+
+        if (!srv->entities[ei].active) {
+            continue;
+        }
+        if (!bitset_test(known, ei)) {
+            continue;
+        }
+
+        struct server_repl_send_job_ctx ctx = {srv, client_id, ei, now_ms};
+        send_state_job(&ctx);
+        sent++;
+    }
+
+    srv->state_cursor[client_id] = (uint16_t)((cursor + scanned) % total_entities);
+}
+
 int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
     if (!srv) {
         return SERVER_REPL_ERR_INVALID;
@@ -224,28 +266,9 @@ int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
                                                    sizeof(spawn_payload),
                                                    now_ms);
         }
-    }
 
-    struct server_repl_send_job_ctx *ctxs = srv->send_job_ctxs;
-    if (ctxs) {
-        size_t job_count = 0u;
-        for (uint16_t ci = 0u; ci < srv->cfg.max_clients; ++ci) {
-            if (!srv->clients[ci].active || !srv->clients[ci].joined) {
-                continue;
-            }
-            for (uint16_t ei = 0u; ei < srv->cfg.max_entities; ++ei) {
-                if (!srv->entities[ei].active) {
-                    continue;
-                }
-                if (job_count >= srv->send_job_ctx_capacity) {
-                    break;
-                }
-                ctxs[job_count] = (struct server_repl_send_job_ctx){srv, ci, ei, now_ms};
-                (void)job_dispatch(srv->jobs, send_state_job, &ctxs[job_count], 0, NULL);
-                job_count++;
-            }
-        }
-        (void)job_system_wait_idle(srv->jobs);
+        /* Throttle state updates per-client to avoid send storms at high client counts. */
+        server_repl_send_some_states(srv, ci, 2u, now_ms);
     }
 
     srv->server_tick = (uint16_t)(srv->server_tick + 1u);
