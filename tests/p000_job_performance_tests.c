@@ -115,6 +115,8 @@ static void run_once(uint32_t worker_count) {
         if (endp != numa_env && nodes >= 1ul) {
             (void)job_system_enable_numa(sys, (uint32_t)nodes);
         }
+    } else {
+        (void)job_system_enable_numa_auto(sys);
     }
     if (job_system_start(sys) != 0) {
         fprintf(stderr, "SKIP workers=%u start_failed\n", worker_count);
