@@ -27,7 +27,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
-	build/p000_job_performance_tests
+	build/p000_job_performance_tests build/p002_memory_apool_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -54,6 +54,9 @@ build/p001_tests: $(SRC) tests/p001_core_math_tests.c | build
 
 build/p002_tests: $(SRC) tests/p002_memory_tests.c | build
 	$(CC) $(CFLAGS) tests/p002_memory_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p002_memory_apool_tests: $(SRC) tests/p002_memory_apool_tests.c | build
+	$(CC) $(CFLAGS) tests/p002_memory_apool_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p003_tests: $(SRC) tests/p003_ecs_tests.c | build
 	$(CC) $(CFLAGS) tests/p003_ecs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -153,7 +156,7 @@ build:
 
 
 test: $(BIN_HEADLESS)
-	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
+	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
 && ./build/p007_net_schema_registry_tests \

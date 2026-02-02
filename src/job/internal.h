@@ -11,7 +11,7 @@
 #include "ferrum/job/instrumentation.h"
 
 #include "ferrum/memory/arena.h"
-#include "ferrum/memory/pool.h"
+#include "ferrum/memory/apool.h"
 #include "context.h"
 
 #define JOB_MIN_STACK (4u * 1024u)
@@ -27,7 +27,7 @@ struct job_entry {
 struct job_fiber {
     uint16_t magic1;
     job_context_t ctx;
-    pool_handle_t handle;
+    apool_handle_t handle;
     job_system_t *system;
     void (*fn)(void *);
     void *user;

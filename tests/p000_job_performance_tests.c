@@ -39,7 +39,8 @@ static vec3_t vec3_rotate_by_quat(vec3_t v, quat_t q) {
 struct perf_ctx {
     vec3_t v;
     quat_t q1, q2, q3;
-    volatile float *sink;
+    volatile float *sinks;
+    uint32_t sink_count;
 };
 
 static void job_small(void *user) {
@@ -51,7 +52,9 @@ static void job_small(void *user) {
         v = vec3_rotate_by_quat(v, q2);
         v = vec3_rotate_by_quat(v, q3);
     }
-    *ctx->sink += v.x + v.y + v.z;
+    uint32_t wid = job_current_worker_id();
+    uint32_t idx = (wid == UINT32_MAX) ? 0u : (wid % ctx->sink_count);
+    ctx->sinks[idx] += v.x + v.y + v.z;
 }
 
 static void job_medium(void *user) {
@@ -63,7 +66,9 @@ static void job_medium(void *user) {
         v = vec3_rotate_by_quat(v, q2);
         v = vec3_rotate_by_quat(v, q3);
     }
-    *ctx->sink += v.x + v.y + v.z;
+    uint32_t wid = job_current_worker_id();
+    uint32_t idx = (wid == UINT32_MAX) ? 0u : (wid % ctx->sink_count);
+    ctx->sinks[idx] += v.x + v.y + v.z;
 }
 
 static void job_large(void *user) {
@@ -75,7 +80,9 @@ static void job_large(void *user) {
         v = vec3_rotate_by_quat(v, q2);
         v = vec3_rotate_by_quat(v, q3);
     }
-    *ctx->sink += v.x + v.y + v.z;
+    uint32_t wid = job_current_worker_id();
+    uint32_t idx = (wid == UINT32_MAX) ? 0u : (wid % ctx->sink_count);
+    ctx->sinks[idx] += v.x + v.y + v.z;
 }
 
 static double timespec_ms(const struct timespec *ts) {
@@ -103,13 +110,14 @@ static void run_once(uint32_t worker_count) {
     job_counter_init(&counter, 0);
 
     /* Prepare contexts */
-    volatile float sink = 0.0f;
+    volatile float sinks_local[64] = {0.0f};
     struct perf_ctx ctx = {
         .v = (vec3_t){0.3f, 1.7f, -0.9f},
         .q1 = quat_normalize_safe(quat_from_axis_angle((vec3_t){1,0,0}, 0.7f, 1e-6f), 1e-6f),
         .q2 = quat_normalize_safe(quat_from_axis_angle((vec3_t){0,1,0}, 1.3f, 1e-6f), 1e-6f),
         .q3 = quat_normalize_safe(quat_from_axis_angle((vec3_t){0,0,1}, 0.2f, 1e-6f), 1e-6f),
-        .sink = &sink
+        .sinks = sinks_local,
+        .sink_count = (worker_count < 64u ? worker_count : 64u)
     };
 
     void (*fns[])(void *) = { job_small, job_medium, job_large };
@@ -151,10 +159,17 @@ static void run_once(uint32_t worker_count) {
            (unsigned long long)started, (unsigned long long)completed, throughput);
 
     job_system_shutdown(sys);
-    (void)sink; /* prevent optimizing away */
+    /* Reduce per-worker sinks to a single value to prevent optimization. */
+    volatile float sink_total = 0.0f;
+    for (uint32_t i = 0; i < ctx.sink_count; ++i) {
+        sink_total += ctx.sinks[i];
+    }
+    (void)sink_total;
 }
 
 int main(void) {
+    /* Ensure instrumentation is explicitly disabled for clean perf output */
+    job_instrument_enable(0);
     uint32_t counts[] = {1, 2, 4, 8, 16, 32, 64};
     for (size_t i = 0; i < ARRAY_SIZE(counts); ++i) {
         run_once(counts[i]);

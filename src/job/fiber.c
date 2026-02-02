@@ -50,11 +50,11 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     if (!sys || !fn) {
         return NULL;
     }
-    pool_handle_t fiber_handle = pool_alloc(&sys->fiber_stack_pool);
-    if (fiber_handle.index == POOL_INDEX_INVALID) {
+    apool_handle_t fiber_handle = apool_alloc(&sys->fiber_stack_pool);
+    if (fiber_handle.index == APOOL_INDEX_INVALID) {
         return NULL;
     }
-    job_fiber_t *fiber = (job_fiber_t *)pool_get(&sys->fiber_stack_pool, fiber_handle);
+    job_fiber_t *fiber = (job_fiber_t *)apool_get(&sys->fiber_stack_pool, fiber_handle);
     fiber->magic1=0xf183; // stack overflow guard
     fiber->handle = fiber_handle;
     fiber->system = sys;
@@ -105,5 +105,5 @@ void job_fiber_destroy(job_fiber_t *fiber) {
     if (fiber->system) {
         cnd_broadcast(&fiber->system->queue_cond);
     }
-    pool_free(&fiber->system->fiber_stack_pool, fiber->handle);
+    apool_free(&fiber->system->fiber_stack_pool, fiber->handle);
 }

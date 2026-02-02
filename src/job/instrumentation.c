@@ -48,7 +48,7 @@ void job_instrument_init(void) {
 #ifdef JOB_SYS_INSTRUMENT_DEFAULT_ON
     atomic_store(&g_instr_on, true);
 #else
-    /* Default ON for debugging unless explicitly disabled */
-    atomic_store(&g_instr_on, true);
+    /* Default OFF unless explicitly enabled via env or macro */
+    atomic_store(&g_instr_on, false);
 #endif
 }

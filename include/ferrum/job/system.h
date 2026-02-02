@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stdatomic.h>
 #include "counter.h"
-#include "ferrum/memory/pool.h"
+#include "ferrum/memory/apool.h"
 /** @file
  * @brief Public API for the job system and fibers.
  */
@@ -17,7 +17,7 @@ struct job_system {
     uint32_t worker_count;
     uint32_t queue_capacity;
     size_t fiber_stack_size;
-    pool_t fiber_stack_pool;
+    apool_t fiber_stack_pool;
     int deterministic;
     atomic_bool running;
     atomic_bool shutting_down;

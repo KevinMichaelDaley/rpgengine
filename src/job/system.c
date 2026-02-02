@@ -33,9 +33,9 @@ job_system_create_status_t job_system_create(job_system_t* sys,
     sys->worker_count = deterministic_mode ? 1u : worker_count;
     sys->queue_capacity = queue_capacity;
     sys->fiber_stack_size = fiber_stack_size;
-    pool_status_t pool_status = pool_init(&sys->fiber_stack_pool, fiber_count_max, sizeof(job_fiber_t) + fiber_stack_size);
-    if( pool_status != POOL_OK) {
-        if(pool_status == POOL_ERR_INVALID) {
+    apool_status_t pool_status = apool_init(&sys->fiber_stack_pool, fiber_count_max, sizeof(job_fiber_t) + fiber_stack_size);
+    if( pool_status != APOOL_OK) {
+        if(pool_status == APOOL_ERR_INVALID) {
             return JOB_CREATE_POOL_INIT_ERR;
         } else {
             return JOB_CREATE_ERR_OOM;
@@ -184,7 +184,7 @@ static void cleanup_system(job_system_t *sys) {
     free(sys->queue);
     free(sys->queue_slot_state);
     free(sys->workers);
-    pool_destroy(&sys->fiber_stack_pool);
+    apool_destroy(&sys->fiber_stack_pool);
 }
 
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx) {
