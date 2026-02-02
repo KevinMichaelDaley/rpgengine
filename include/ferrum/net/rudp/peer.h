@@ -28,8 +28,18 @@ extern "C" {
 
 /** Maximum encoded UDP packet size produced by this module. */
 #define NET_RUDP_MAX_PACKET_SIZE 512u
-/** Number of reliable send slots tracked per peer. */
-#define NET_RUDP_SEND_SLOTS 64u
+
+/** Default number of reliable send slots per peer (legacy sizing). */
+#define NET_RUDP_SEND_SLOTS_DEFAULT 64u
+
+/** One tracked reliable send slot. Caller owns storage lifetime. */
+typedef struct net_rudp_send_slot {
+    uint16_t sequence;
+    uint64_t last_send_ms;
+    uint16_t size;
+    uint8_t used;
+    uint8_t packet_bytes[NET_RUDP_MAX_PACKET_SIZE];
+} net_rudp_send_slot_t;
 
 /** Per-peer RUDP state. */
 typedef struct net_rudp_peer {
@@ -38,14 +48,19 @@ typedef struct net_rudp_peer {
     net_ack_window_t recv_window;
     uint32_t resend_interval_ms;
 
-    uint16_t slot_sequence[NET_RUDP_SEND_SLOTS];
-    uint64_t slot_last_send_ms[NET_RUDP_SEND_SLOTS];
-    uint16_t slot_size[NET_RUDP_SEND_SLOTS];
-    uint8_t slot_used[NET_RUDP_SEND_SLOTS];
-    uint8_t slot_packet_bytes[NET_RUDP_SEND_SLOTS][NET_RUDP_MAX_PACKET_SIZE];
+    net_rudp_send_slot_t *send_slots;
+    size_t send_slot_count;
 } net_rudp_peer_t;
 
-void net_rudp_peer_init(net_rudp_peer_t *peer, uint32_t protocol_id, uint32_t resend_interval_ms);
+/** Returns required size (bytes) for an array of `net_rudp_send_slot_t` of length `slot_count`. */
+size_t net_rudp_send_slot_storage_size(size_t slot_count);
+
+/** Initialize a peer with caller-provided send-slot storage. */
+void net_rudp_peer_init_with_storage(net_rudp_peer_t *peer,
+                                     uint32_t protocol_id,
+                                     uint32_t resend_interval_ms,
+                                     net_rudp_send_slot_t *send_slots,
+                                     size_t send_slot_count);
 
 /**
  * @brief Process an incoming packet: validate, update recv window, and retire ACKed send slots.

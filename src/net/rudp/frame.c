@@ -43,20 +43,20 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
     /* Retire ACKed reliable sends. */
     uint16_t ack = header.ack;
     uint32_t ack_bits = header.ack_bits;
-    for (size_t i = 0u; i < NET_RUDP_SEND_SLOTS; ++i) {
-        if (!peer->slot_used[i]) {
+    for (size_t i = 0u; i < peer->send_slot_count; ++i) {
+        if (!peer->send_slots || !peer->send_slots[i].used) {
             continue;
         }
-        uint16_t seq = peer->slot_sequence[i];
+        uint16_t seq = peer->send_slots[i].sequence;
         if (seq == ack) {
-            peer->slot_used[i] = 0u;
+            peer->send_slots[i].used = 0u;
             continue;
         }
         uint16_t delta = (uint16_t)(ack - seq);
         if (delta >= 1u && delta <= 32u) {
             uint32_t bit = 1u << (uint32_t)(delta - 1u);
             if (ack_bits & bit) {
-                peer->slot_used[i] = 0u;
+                peer->send_slots[i].used = 0u;
             }
         }
     }
@@ -173,15 +173,18 @@ int net_rudp_peer_send_reliable(net_rudp_peer_t *peer,
     if (!peer || !sock || !to || !payload) {
         return NET_RUDP_ERR_INVALID;
     }
+    if (!peer->send_slots || peer->send_slot_count == 0u) {
+        return NET_RUDP_ERR_FULL;
+    }
 
-    size_t slot = NET_RUDP_SEND_SLOTS;
-    for (size_t i = 0u; i < NET_RUDP_SEND_SLOTS; ++i) {
-        if (!peer->slot_used[i]) {
+    size_t slot = peer->send_slot_count;
+    for (size_t i = 0u; i < peer->send_slot_count; ++i) {
+        if (!peer->send_slots[i].used) {
             slot = i;
             break;
         }
     }
-    if (slot == NET_RUDP_SEND_SLOTS) {
+    if (slot == peer->send_slot_count) {
         return NET_RUDP_ERR_FULL;
     }
 
@@ -193,7 +196,7 @@ int net_rudp_peer_send_reliable(net_rudp_peer_t *peer,
                           schema_id,
                           payload,
                           payload_size,
-                          peer->slot_packet_bytes[slot],
+                          peer->send_slots[slot].packet_bytes,
                           NET_RUDP_MAX_PACKET_SIZE,
                           &packet_size,
                           &sequence);
@@ -201,12 +204,12 @@ int net_rudp_peer_send_reliable(net_rudp_peer_t *peer,
         return rc;
     }
 
-    peer->slot_used[slot] = 1u;
-    peer->slot_sequence[slot] = sequence;
-    peer->slot_size[slot] = (uint16_t)packet_size;
-    peer->slot_last_send_ms[slot] = now_ms;
+    peer->send_slots[slot].used = 1u;
+    peer->send_slots[slot].sequence = sequence;
+    peer->send_slots[slot].size = (uint16_t)packet_size;
+    peer->send_slots[slot].last_send_ms = now_ms;
 
-    int src = net_udp_socket_sendto(sock, to, peer->slot_packet_bytes[slot], packet_size);
+    int src = net_udp_socket_sendto(sock, to, peer->send_slots[slot].packet_bytes, packet_size);
     if (src != NET_UDP_SOCKET_OK) {
         return NET_RUDP_ERR_PROTOCOL;
     }
@@ -224,16 +227,20 @@ int net_rudp_peer_tick_resend(net_rudp_peer_t *peer,
         return NET_RUDP_ERR_INVALID;
     }
 
-    for (size_t i = 0u; i < NET_RUDP_SEND_SLOTS; ++i) {
-        if (!peer->slot_used[i]) {
+    if (!peer->send_slots || peer->send_slot_count == 0u) {
+        return NET_RUDP_OK;
+    }
+
+    for (size_t i = 0u; i < peer->send_slot_count; ++i) {
+        if (!peer->send_slots[i].used) {
             continue;
         }
-        uint64_t elapsed = now_ms - peer->slot_last_send_ms[i];
+        uint64_t elapsed = now_ms - peer->send_slots[i].last_send_ms;
         if (elapsed < (uint64_t)peer->resend_interval_ms) {
             continue;
         }
-        peer->slot_last_send_ms[i] = now_ms;
-        (void)net_udp_socket_sendto(sock, to, peer->slot_packet_bytes[i], (size_t)peer->slot_size[i]);
+        peer->send_slots[i].last_send_ms = now_ms;
+        (void)net_udp_socket_sendto(sock, to, peer->send_slots[i].packet_bytes, (size_t)peer->send_slots[i].size);
     }
 
     return NET_RUDP_OK;

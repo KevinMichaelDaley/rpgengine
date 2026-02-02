@@ -5,15 +5,8 @@
 #include "ferrum/net/replication/state_cube.h"
 #include "internal.h"
 
-struct send_job_ctx {
-    server_repl_server_t *srv;
-    uint16_t client_index;
-    uint16_t entity_index;
-    uint64_t now_ms;
-};
-
 static void send_state_job(void *user_data) {
-    struct send_job_ctx *ctx = (struct send_job_ctx *)user_data;
+    struct server_repl_send_job_ctx *ctx = (struct server_repl_send_job_ctx *)user_data;
     server_repl_server_t *srv = ctx->srv;
     uint16_t ci = ctx->client_index;
     uint16_t ei = ctx->entity_index;
@@ -68,10 +61,16 @@ int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
         (void)net_rudp_peer_tick_resend(&srv->clients[ci].peer, srv->sock, &srv->clients[ci].addr, now_ms);
     }
 
-    const uint16_t max_jobs = (uint16_t)(srv->cfg.max_clients * srv->cfg.max_entities);
-    struct send_job_ctx *ctxs = (struct send_job_ctx *)calloc((size_t)max_jobs, sizeof(*ctxs));
+    const size_t max_jobs = (size_t)srv->cfg.max_clients * (size_t)srv->cfg.max_entities;
+    struct server_repl_send_job_ctx *ctxs = srv->send_job_ctxs;
+    uint8_t ctxs_owned = 0u;
+    if (!ctxs) {
+        ctxs = (struct server_repl_send_job_ctx *)calloc(max_jobs, sizeof(*ctxs));
+        ctxs_owned = 1u;
+    }
+
     if (ctxs) {
-        uint16_t job_count = 0u;
+        size_t job_count = 0u;
         for (uint16_t ci = 0u; ci < srv->cfg.max_clients; ++ci) {
             if (!srv->clients[ci].active || !srv->clients[ci].joined) {
                 continue;
@@ -80,13 +79,18 @@ int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
                 if (!srv->entities[ei].active) {
                     continue;
                 }
-                ctxs[job_count] = (struct send_job_ctx){srv, ci, ei, now_ms};
+                if (job_count >= max_jobs) {
+                    break;
+                }
+                ctxs[job_count] = (struct server_repl_send_job_ctx){srv, ci, ei, now_ms};
                 (void)job_dispatch(srv->jobs, send_state_job, &ctxs[job_count], 0, NULL);
                 job_count++;
             }
         }
         (void)job_system_wait_idle(srv->jobs);
-        free(ctxs);
+        if (ctxs_owned) {
+            free(ctxs);
+        }
     }
 
     srv->server_tick = (uint16_t)(srv->server_tick + 1u);

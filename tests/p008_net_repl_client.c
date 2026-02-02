@@ -125,6 +125,7 @@ int main(int argc, char **argv) {
         return 2;
     }
     const uint16_t tick_hz = (uint16_t)tick_hz_l;
+    const uint32_t expected_spawns = (uint32_t)expected_spawns_l;
 
     net_udp_addr_t server_addr;
     if (net_udp_addr_ipv4(&server_addr, ip[0], ip[1], ip[2], ip[3], (uint16_t)port_l) != NET_UDP_SOCKET_OK) {
@@ -185,12 +186,16 @@ int main(int argc, char **argv) {
     uint32_t spawn_count = 0u;
     uint32_t state_count = 0u;
 
-    uint32_t entity_ids[256];
+    uint32_t *entity_ids = (uint32_t *)calloc((size_t)expected_spawns, sizeof(*entity_ids));
+    uint16_t *entity_owner = (uint16_t *)calloc((size_t)expected_spawns, sizeof(*entity_owner));
+    if (!entity_ids || !entity_owner) {
+        fprintf(stderr, "Failed to allocate entity tracking arrays\n");
+        free(entity_ids);
+        free(entity_owner);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
     size_t entity_count = 0u;
-    memset(entity_ids, 0, sizeof(entity_ids));
-
-    uint16_t entity_owner[256];
-    memset(entity_owner, 0, sizeof(entity_owner));
 
     uint64_t pos_err_count = 0u;
     double pos_err_sum = 0.0;
@@ -255,7 +260,7 @@ int main(int argc, char **argv) {
             net_repl_spawn_t sp;
             if (net_repl_spawn_decode(&sp, payload, payload_size) == NET_REPL_OK) {
                 spawn_count++;
-                if (!has_entity(entity_ids, entity_count, sp.entity_id) && entity_count < 256u) {
+                if (!has_entity(entity_ids, entity_count, sp.entity_id) && entity_count < (size_t)expected_spawns) {
                     entity_ids[entity_count++] = sp.entity_id;
                     entity_owner[entity_count - 1u] = sp.owner_client_id;
                 }
@@ -313,18 +318,21 @@ int main(int argc, char **argv) {
         }
     }
 
-    const uint32_t expected_spawns = (uint32_t)expected_spawns_l;
     if (entity_count < (size_t)expected_spawns) {
         fprintf(stderr, "Client failed: expected %u spawns, got %zu (spawn_msgs=%u state_msgs=%u)\n",
                 (unsigned)expected_spawns,
                 entity_count,
                 (unsigned)spawn_count,
                 (unsigned)state_count);
+        free(entity_ids);
+        free(entity_owner);
         net_udp_socket_close(&sock);
         return 1;
     }
     if (state_count < expected_spawns * 5u) {
         fprintf(stderr, "Client failed: too few state updates (%u)\n", (unsigned)state_count);
+        free(entity_ids);
+        free(entity_owner);
         net_udp_socket_close(&sock);
         return 1;
     }
@@ -357,6 +365,8 @@ int main(int argc, char **argv) {
             (unsigned)corrections);
     fflush(stdout);
 
+    free(entity_ids);
+    free(entity_owner);
     net_udp_socket_close(&sock);
     return 0;
 }

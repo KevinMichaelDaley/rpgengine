@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <string.h>
 
 #include "ferrum/net/packet_header.h"
@@ -28,7 +29,14 @@ int server_repl_find_or_add_client(server_repl_server_t *srv, const net_udp_addr
             srv->clients[i].joined = 0u;
             srv->clients[i].join_nonce = 0u;
             srv->clients[i].addr = *addr;
-            net_rudp_peer_init(&srv->clients[i].peer, NET_RUDP_PROTOCOL_ID_P008, srv->cfg.resend_interval_ms);
+
+            net_rudp_send_slot_t *slots = (net_rudp_send_slot_t *)srv->cfg.rudp_send_slot_storage;
+            slots += (size_t)i * (size_t)srv->cfg.rudp_send_slots_per_client;
+            net_rudp_peer_init_with_storage(&srv->clients[i].peer,
+                                            NET_RUDP_PROTOCOL_ID_P008,
+                                            srv->cfg.resend_interval_ms,
+                                            slots,
+                                            srv->cfg.rudp_send_slots_per_client);
             srv->stats.clients_connected++;
             return (int)i;
         }

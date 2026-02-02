@@ -11,6 +11,7 @@
 #include <time.h>
 
 #include "ferrum/job/system.h"
+#include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/server/repl_server.h"
 
@@ -64,6 +65,43 @@ int main(int argc, char **argv) {
     cfg.max_entities = (uint16_t)max_clients_l;
     cfg.resend_interval_ms = 50u;
 
+    size_t client_bytes = server_repl_client_storage_size(cfg.max_clients);
+    size_t entity_bytes = server_repl_entity_storage_size(cfg.max_entities);
+    size_t ctx_bytes = server_repl_send_job_ctx_storage_size(cfg.max_clients, cfg.max_entities);
+
+    void *client_storage = calloc(1u, client_bytes);
+    void *entity_storage = calloc(1u, entity_bytes);
+    void *ctx_storage = calloc(1u, ctx_bytes);
+    if (!client_storage || !entity_storage || !ctx_storage) {
+        fprintf(stderr, "Failed to allocate server storage\n");
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        return 1;
+    }
+
+    cfg.client_storage = client_storage;
+    cfg.client_storage_bytes = client_bytes;
+    cfg.entity_storage = entity_storage;
+    cfg.entity_storage_bytes = entity_bytes;
+    cfg.send_job_ctx_storage = ctx_storage;
+    cfg.send_job_ctx_storage_bytes = ctx_bytes;
+
+    const size_t rudp_slots_per_client = (size_t)cfg.max_entities + 8u;
+    const size_t total_rudp_slots = (size_t)cfg.max_clients * rudp_slots_per_client;
+    const size_t rudp_bytes = net_rudp_send_slot_storage_size(total_rudp_slots);
+    void *rudp_storage = calloc(1u, rudp_bytes);
+    if (!rudp_storage) {
+        fprintf(stderr, "Failed to allocate RUDP send slots\n");
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        return 1;
+    }
+    cfg.rudp_send_slot_storage = rudp_storage;
+    cfg.rudp_send_slot_storage_bytes = rudp_bytes;
+    cfg.rudp_send_slots_per_client = rudp_slots_per_client;
+
     net_udp_socket_t sock;
     if (net_udp_socket_open(&sock) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to open UDP socket\n");
@@ -101,6 +139,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to create repl server\n");
         job_system_shutdown(jobs);
         net_udp_socket_close(&sock);
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        free(rudp_storage);
         return 1;
     }
 
@@ -139,5 +181,9 @@ int main(int argc, char **argv) {
     server_repl_server_destroy(srv);
     job_system_shutdown(jobs);
     net_udp_socket_close(&sock);
+    free(client_storage);
+    free(entity_storage);
+    free(ctx_storage);
+    free(rudp_storage);
     return 0;
 }

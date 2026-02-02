@@ -8,6 +8,13 @@
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/server/repl_server.h"
 
+struct server_repl_send_job_ctx {
+    struct server_repl_server *srv;
+    uint16_t client_index;
+    uint16_t entity_index;
+    uint64_t now_ms;
+};
+
 struct server_repl_client {
     net_udp_addr_t addr;
     net_rudp_peer_t peer;
@@ -29,6 +36,12 @@ struct server_repl_server {
 
     struct server_repl_client *clients;
     struct server_repl_entity *entities;
+
+    struct server_repl_send_job_ctx *send_job_ctxs;
+    size_t send_job_ctx_capacity;
+
+    uint8_t clients_owned;
+    uint8_t entities_owned;
 
     uint16_t server_tick;
     uint32_t next_entity_id;
