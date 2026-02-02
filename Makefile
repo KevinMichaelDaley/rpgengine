@@ -6,8 +6,9 @@ MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
-NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/replication/*.c) $(wildcard src/net/test/*.c)
-SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC) $(NET_SRC)
+NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/replication/*.c) $(wildcard src/net/test/*.c)
+SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c)
+SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC) $(NET_SRC) $(SERVER_SRC)
 
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
 SDL2_LIBS := $(shell sdl2-config --libs 2>/dev/null)
@@ -20,6 +21,7 @@ BIN := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
 build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
+build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
 build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
@@ -67,6 +69,15 @@ build/p007_net_integration_server_tests: $(SRC) tests/p007_net_integration_serve
 
 build/p007_net_integration_client_tests: $(SRC) tests/p007_net_integration_client_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_integration_client_tests.c $(SRC) -o $@ $(LDFLAGS)
+
+build/p008_net_repl_server: $(SRC) tests/p008_net_repl_server.c | build
+	$(CC) $(CFLAGS) tests/p008_net_repl_server.c $(SRC) -o $@ $(LDFLAGS)
+
+build/p008_net_repl_client: $(SRC) tests/p008_net_repl_client.c | build
+	$(CC) $(CFLAGS) tests/p008_net_repl_client.c $(SRC) -o $@ $(LDFLAGS)
+
+build/p008_net_multi_client_server_integration_tests: $(SRC) tests/p008_net_multi_client_server_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_multi_client_server_integration_tests.c $(SRC) -o $@ $(LDFLAGS)
 
 # RED tests (may not compile until quantization module exists)
 build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build
@@ -144,6 +155,11 @@ test_red: build/p007_net_quantization_determinism_tests
 
 test_red_p008: build/p008_net_replication_protocol_tests
 	./build/p008_net_replication_protocol_tests
+
+.PHONY: test_p008
+
+test_p008: build/p008_net_multi_client_server_integration_tests build/p008_net_repl_server build/p008_net_repl_client
+	./build/p008_net_multi_client_server_integration_tests
 
 clean:
 	$(RM) $(BIN)
