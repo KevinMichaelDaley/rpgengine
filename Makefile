@@ -8,7 +8,8 @@ ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
 NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/replication/*.c) $(wildcard src/net/test/*.c)
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c)
-SRC := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(RENDERER_SRC) $(NET_SRC) $(SERVER_SRC)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC)
+SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
 SDL2_LIBS := $(shell sdl2-config --libs 2>/dev/null)
@@ -38,104 +39,104 @@ build/p000_tests: $(JOB_SRC) tests/p000_fiber_job_system_tests.c | build
 	$(CC) $(CFLAGS) tests/p000_fiber_job_system_tests.c $(JOB_SRC) -o $@ $(LDFLAGS)
 
 build/p001_tests: $(SRC) tests/p001_core_math_tests.c | build
-	$(CC) $(CFLAGS) tests/p001_core_math_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p001_core_math_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p002_tests: $(SRC) tests/p002_memory_tests.c | build
-	$(CC) $(CFLAGS) tests/p002_memory_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p002_memory_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p003_tests: $(SRC) tests/p003_ecs_tests.c | build
-	$(CC) $(CFLAGS) tests/p003_ecs_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p003_ecs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_tests: $(SRC) tests/p007_net_test_utils_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_test_utils_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_test_utils_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_header_tests: $(SRC) tests/p007_net_header_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_header_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_header_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_ack_tests: $(SRC) tests/p007_net_ack_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_ack_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_ack_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_unreliable_tests: $(SRC) tests/p007_net_unreliable_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_unreliable_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_unreliable_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_schema_registry_tests: $(SRC) tests/p007_net_schema_registry_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_schema_registry_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_schema_registry_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_reliable_tests: $(SRC) tests/p007_net_reliable_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_integration_server_tests: $(SRC) tests/p007_net_integration_server_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_integration_server_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_integration_server_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_integration_client_tests: $(SRC) tests/p007_net_integration_client_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_integration_client_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_integration_client_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p008_net_repl_server: $(SRC) tests/p008_net_repl_server.c | build
-	$(CC) $(CFLAGS) tests/p008_net_repl_server.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p008_net_repl_server.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p008_net_repl_client: $(SRC) tests/p008_net_repl_client.c | build
-	$(CC) $(CFLAGS) tests/p008_net_repl_client.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p008_net_repl_client.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p008_net_multi_client_server_integration_tests: $(SRC) tests/p008_net_multi_client_server_integration_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_net_multi_client_server_integration_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p008_net_multi_client_server_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 # RED tests (may not compile until quantization module exists)
 build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 .PHONY: test_red
 
 # RED tests (may not compile until replication protocol exists)
 build/p008_net_replication_protocol_tests: $(SRC) tests/p008_net_replication_protocol_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_net_replication_protocol_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p008_net_replication_protocol_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 .PHONY: test_red_p008
 
 # Note: this test currently depends on reliable ordered channel implementation.
 build/p007_net_reliable_ordered_tests: $(SRC) tests/p007_net_reliable_ordered_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_reliable_ordered_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p007_net_reliable_ordered_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p004_tests: $(SRC) tests/p004_renderer_gl_loader_tests.c | build
-	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c $(SRC_ALL) -o $@ $(LDFLAGS)
 
 build/p004_shader_tests: $(SRC) tests/p004_renderer_shader_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_shader_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p004_buffer_tests: $(SRC) tests/p004_renderer_buffer_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_buffer_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p004_uniform_tests: $(SRC) tests/p004_renderer_uniform_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_uniform_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p004_palette_tests: $(SRC) tests/p004_renderer_palette_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_palette_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p004_pipeline_tests: $(SRC) tests/p004_renderer_pipeline_tests.c | build
-	$(CC) $(CFLAGS) tests/p004_renderer_pipeline_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p004_renderer_pipeline_tests.c $(SRC_ALL) -o $@ $(LDFLAGS)
 
 build/p004_skinning_tests: $(SRC) tests/p004_renderer_skinning_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_skinning_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p004_ecs_skinning_tests: $(SRC) tests/p004_renderer_ecs_skinning_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_ecs_skinning_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p004_skinning_alloc_tests: $(SRC) tests/p004_renderer_skinning_alloc_tests.c | build
-	$(CC) $(CFLAGS) tests/p004_renderer_skinning_alloc_tests.c $(SRC) -o $@ $(LDFLAGS)
+	$(CC) $(CFLAGS) tests/p004_renderer_skinning_alloc_tests.c $(SRC_ALL) -o $@ $(LDFLAGS)
 
 build/p004_pipeline_resource_tests: $(SRC) tests/p004_renderer_pipeline_resource_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pipeline_resource_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p004_pipeline_graph_tests: $(SRC) tests/p004_renderer_pipeline_graph_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pipeline_graph_tests.c \
-$(SRC) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+$(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
 
