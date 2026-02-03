@@ -2,7 +2,9 @@
 set -euo pipefail
 
 # Remote UDP replication benchmark runner
-# - Deploys server/client binaries to a remote host
+# - Two modes:
+#   (A) Upload local binaries and run on remote (default)
+#   (B) REMOTE_BUILD=1: rsync source, build on remote, then run (for arch mismatch)
 # - Runs server with configured workers and tick rate
 # - Spawns 64 clients (default) on the remote
 # - Logs CPU usage (mpstat per-CPU; pidstat for server PID)
@@ -28,6 +30,7 @@ set -euo pipefail
 #   EXPECTED_SPAWNS  Client expected spawns (default: 0 to accept WELCOME)
 #   REMOTE_DIR       Remote working dir (default: ~/bench)
 #   LOG_DIR          Local logs dir (default: bench-logs/<timestamp>_port_clients)
+#   REMOTE_BUILD     If set to 1, rsync source and build on remote (default: 0)
 #
 # Example:
 #   REMOTE=bench@10.0.0.5 PORT=40001 CLIENTS=64 DURATION_MS=30000 \
@@ -50,6 +53,7 @@ TICK_HZ="${TICK_HZ:-60}"
 WORKERS="${WORKERS:-8}"
 EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}"
 REMOTE_DIR="${REMOTE_DIR:-$HOME/bench}"
+REMOTE_BUILD="${REMOTE_BUILD:-0}"
 
 # Compute default client duration if not overridden
 if [[ -z "${CLIENT_DURATION}" ]]; then
@@ -57,28 +61,50 @@ if [[ -z "${CLIENT_DURATION}" ]]; then
   CLIENT_DURATION=$(( DURATION_MS > 500 ? DURATION_MS - 500 : DURATION_MS ))
 fi
 
-# Verify local binaries exist
 ROOT_DIR=$(pwd)
 BUILD_DIR="${ROOT_DIR}/build"
-SERVER_BIN="${BUILD_DIR}/p008_net_repl_server"
-CLIENT_BIN="${BUILD_DIR}/p008_net_repl_client"
-if [[ ! -x "${SERVER_BIN}" ]] || [[ ! -x "${CLIENT_BIN}" ]]; then
-  echo "Building p008 binaries..." >&2
-  make p008_build
-fi
-if [[ ! -x "${SERVER_BIN}" ]] || [[ ! -x "${CLIENT_BIN}" ]]; then
-  echo "ERROR: Required binaries missing in ./build (p008_net_repl_server, p008_net_repl_client)." >&2
-  exit 1
-fi
+SERVER_BIN_LOCAL="${BUILD_DIR}/p008_net_repl_server"
+CLIENT_BIN_LOCAL="${BUILD_DIR}/p008_net_repl_client"
 
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG="p008_${TS}_port${PORT}_${CLIENTS}clients"
 REMOTE_RUN_DIR="${REMOTE_DIR}/${RUN_TAG}"
 
-# Prepare remote directory and upload binaries
-echo "Uploading binaries to ${REMOTE}:${REMOTE_RUN_DIR}..." >&2
 ssh "${REMOTE}" "mkdir -p '${REMOTE_RUN_DIR}'"
-scp "${SERVER_BIN}" "${CLIENT_BIN}" "${REMOTE}:${REMOTE_RUN_DIR}/"
+
+# Prepare execution binaries: either upload local bins or build on remote
+REMOTE_BIN_DIR="${REMOTE_RUN_DIR}"
+if [[ "${REMOTE_BUILD}" == "1" ]]; then
+  echo "REMOTE_BUILD=1: rsyncing source and building on remote..." >&2
+  # rsync source tree (exclude build and VCS noise)
+  rsync -az --delete \
+    --exclude 'build/' \
+    --exclude '.git/' \
+    --exclude '.vscode/' \
+    --exclude '*.o' \
+    --exclude '*.a' \
+    ./ "${REMOTE}:${REMOTE_RUN_DIR}/srcdir/"
+  # build remotely
+  ssh "${REMOTE}" bash -lc "
+set -euo pipefail
+cd '${REMOTE_RUN_DIR}/srcdir'
+if ! command -v make >/dev/null 2>&1; then echo 'ERROR: make missing on remote' >&2; exit 2; fi
+make p008_build
+"
+  REMOTE_BIN_DIR="${REMOTE_RUN_DIR}/srcdir/build"
+else
+  # Verify local binaries and upload
+  if [[ ! -x "${SERVER_BIN_LOCAL}" ]] || [[ ! -x "${CLIENT_BIN_LOCAL}" ]]; then
+    echo "Building p008 binaries locally..." >&2
+    make p008_build
+  fi
+  if [[ ! -x "${SERVER_BIN_LOCAL}" ]] || [[ ! -x "${CLIENT_BIN_LOCAL}" ]]; then
+    echo "ERROR: Required binaries missing in ./build (p008_net_repl_server, p008_net_repl_client)." >&2
+    exit 1
+  fi
+  echo "Uploading binaries to ${REMOTE}:${REMOTE_RUN_DIR}..." >&2
+  scp "${SERVER_BIN_LOCAL}" "${CLIENT_BIN_LOCAL}" "${REMOTE}:${REMOTE_RUN_DIR}/"
+fi
 
 # Start server and CPU monitors on remote
 echo "Starting server and CPU monitors on remote..." >&2
@@ -88,7 +114,7 @@ cd '${REMOTE_RUN_DIR}'
 # Raise fd limits just in case
 ulimit -n 65536 || true
 # Start server (duration_ms controls shutdown)
-nohup ./p008_net_repl_server ${PORT} ${CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo \$! > server.pid
+nohup '${REMOTE_BIN_DIR}/p008_net_repl_server' ${PORT} ${CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo \$! > server.pid
 sleep 1
 SERVER_PID=\$(cat server.pid)
 # Start per-CPU usage logging (mpstat)
@@ -112,7 +138,7 @@ set -euo pipefail
 cd '${REMOTE_RUN_DIR}'
 : > clients.out
 for i in \$(seq 1 ${CLIENTS}); do
-  nohup ./p008_net_repl_client 127.0.0.1 ${PORT} ${CLIENT_DURATION} ${EXPECTED_SPAWNS} ${TICK_HZ} >> clients.out 2>&1 &
+  nohup '${REMOTE_BIN_DIR}/p008_net_repl_client' 127.0.0.1 ${PORT} ${CLIENT_DURATION} ${EXPECTED_SPAWNS} ${TICK_HZ} >> clients.out 2>&1 &
 done
 # Wait until all background jobs finish
 wait || true
