@@ -210,7 +210,8 @@ static void cleanup_system(job_system_t *sys) {
 }
 static int pop_next_sharded(job_system_t *sys, struct job_entry *out_entry, uint32_t preferred) {
     /* Prefer local shard by scanning READY slots near a per-worker cursor; fall back to steals. */
-    uint32_t start = preferred % sys->queue_capacity;
+    uint32_t rot = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed);
+    uint32_t start = (preferred + rot) % sys->queue_capacity;
     for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
         uint32_t idx = (start + i) % sys->queue_capacity;
         int state = atomic_load_explicit(&sys->queue_slot_state[idx], memory_order_acquire);

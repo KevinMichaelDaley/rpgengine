@@ -1,32 +1,106 @@
 #include <stdlib.h>
 #include <string.h>
 
+
+#include "ferrum/net/packet_header.h"
+#include "ferrum/net/replication/join.h"
+
 #include "runtime_internal.h"
 
-static int addr_equal_(const net_udp_addr_t *a, const net_udp_addr_t *b) {
-    if (!a || !b) {
-        return 0;
-    }
-    if (a->len != b->len) {
-        return 0;
-    }
-    return memcmp(a->storage, b->storage, a->len) == 0;
+static uint16_t read_u16_be_(const uint8_t *in) {
+    return (uint16_t)(((uint16_t)in[0] << 8) | (uint16_t)in[1]);
 }
 
-static int find_client_(fr_server_net_runtime_t *rt, const net_udp_addr_t *from) {
+static int packet_extract_join_nonce_(const uint8_t *packet, size_t packet_size, uint32_t *out_nonce) {
+    if (!packet || !out_nonce) {
+        return 0;
+    }
+    if (packet_size < NET_PACKET_HEADER_SIZE + 8u) {
+        return 0;
+    }
+
+    net_packet_header_t header;
+    if (net_packet_header_decode(&header, packet, packet_size) != NET_PACKET_HEADER_OK) {
+        return 0;
+    }
+    if (header.protocol_id != NET_RUDP_PROTOCOL_ID_P008) {
+        return 0;
+    }
+
+    const uint8_t *frame = packet + NET_PACKET_HEADER_SIZE;
+    uint16_t schema_id = read_u16_be_(frame + 2);
+    uint16_t payload_size = read_u16_be_(frame + 4);
+    const size_t total_needed = NET_PACKET_HEADER_SIZE + 8u + (size_t)payload_size;
+    if (packet_size < total_needed) {
+        return 0;
+    }
+    if (schema_id != NET_REPL_SCHEMA_JOIN) {
+        return 0;
+    }
+
+    net_repl_join_t join;
+    const uint8_t *payload = frame + 8u;
+    if (net_repl_join_decode(&join, payload, (size_t)payload_size) != NET_REPL_OK) {
+        return 0;
+    }
+    *out_nonce = join.client_nonce;
+    return 1;
+}
+
+static uint64_t fnv1a64_(const void *data, size_t size) {
+    const uint8_t *p = (const uint8_t *)data;
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0u; i < size; ++i) {
+        h ^= (uint64_t)p[i];
+        h *= 1099511628211ull;
+    }
+    return h;
+}
+
+static uint64_t transport_key_from_addr_(const net_udp_addr_t *a) {
+    if (!a || a->len == 0u) {
+        return 0ull;
+    }
+
+    /* Hash only the meaningful bytes. Do NOT compare/hash full sockaddr_storage
+       buffers (padding is unspecified). This key is transient and only used for
+       demuxing packets to a per-client fiber.
+     */
+    const size_t n = (a->len <= sizeof(a->storage)) ? (size_t)a->len : sizeof(a->storage);
+    return fnv1a64_(a->storage, n);
+}
+
+static int find_client_by_transport_key_(fr_server_net_runtime_t *rt, uint64_t key) {
+    if (!rt || key == 0ull) {
+        return -1;
+    }
     for (uint16_t i = 0u; i < rt->cfg.max_clients; ++i) {
-        if (rt->clients[i].active && addr_equal_(&rt->clients[i].addr, from)) {
+        if (rt->clients[i].active && rt->clients[i].transport_key == key) {
             return (int)i;
         }
     }
     return -1;
 }
 
-static int alloc_client_(fr_server_net_runtime_t *rt, const net_udp_addr_t *from) {
+static int find_client_by_nonce_(fr_server_net_runtime_t *rt, uint32_t client_nonce) {
+    if (!rt) {
+        return -1;
+    }
+    for (uint16_t i = 0u; i < rt->cfg.max_clients; ++i) {
+        if (rt->clients[i].active && rt->clients[i].auth_client_nonce == client_nonce) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int alloc_client_(fr_server_net_runtime_t *rt, const net_udp_addr_t *from, uint32_t client_nonce) {
     for (uint16_t i = 0u; i < rt->cfg.max_clients; ++i) {
         if (!rt->clients[i].active) {
             rt->clients[i].active = 1u;
             rt->clients[i].addr = *from;
+            rt->clients[i].auth_client_nonce = client_nonce;
+            rt->clients[i].transport_key = transport_key_from_addr_(from);
             atomic_store_explicit(&rt->clients[i].stop, false, memory_order_release);
             atomic_store_explicit(&rt->clients[i].inbox_ptr, (uintptr_t)0, memory_order_release);
             atomic_store_explicit(&rt->clients[i].pending_used, false, memory_order_release);
@@ -40,10 +114,10 @@ static int alloc_client_(fr_server_net_runtime_t *rt, const net_udp_addr_t *from
             args->rt = rt;
             args->client_id = i;
 
-                        /* Start the client fiber without hard pinning.
-                             Some sharded schedulers can starve other long-lived fibers when pinned.
-                         */
-                        if (job_dispatch(rt->cfg.jobs, fr_server_client_fiber_main, args, 0, NULL) == JOB_ID_INVALID) {
+            /* Start the client fiber without hard pinning.
+               Some sharded schedulers can starve other long-lived fibers when pinned.
+             */
+            if (job_dispatch(rt->cfg.jobs, fr_server_client_fiber_main, args, 0, NULL) == JOB_ID_INVALID) {
                 free(args);
                 rt->clients[i].active = 0u;
                 return -1;
@@ -85,11 +159,29 @@ bool fr_server_net_runtime_pump(fr_server_net_runtime_t *rt, uint64_t now_ms) {
         atomic_fetch_add_explicit(&rt->packets_in, 1u, memory_order_relaxed);
         atomic_fetch_add_explicit(&rt->bytes_in, (uint64_t)size, memory_order_relaxed);
 
-        int idx = find_client_(rt, &from);
+        const uint64_t tkey = transport_key_from_addr_(&from);
+        int idx = find_client_by_transport_key_(rt, tkey);
+
         if (idx < 0) {
-            idx = alloc_client_(rt, &from);
-            if (idx < 0) {
+            /* New transport endpoint: must be a JOIN so we can assign mocked
+               persistent identity (nonce). */
+            uint32_t nonce = 0u;
+            if (!packet_extract_join_nonce_(packet, size, &nonce)) {
                 continue;
+            }
+
+            /* If this nonce already exists, update its transport key/address.
+               Identity is the nonce; transport is expected to be stable in tests.
+             */
+            idx = find_client_by_nonce_(rt, nonce);
+            if (idx >= 0) {
+                rt->clients[idx].addr = from;
+                rt->clients[idx].transport_key = tkey;
+            } else {
+                idx = alloc_client_(rt, &from, nonce);
+                if (idx < 0) {
+                    continue;
+                }
             }
         }
 

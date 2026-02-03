@@ -23,6 +23,16 @@ typedef struct fr_server_client_t {
     uint8_t active;
     net_udp_addr_t addr;
 
+    /* Mock authentication identity until a real auth system exists.
+       For now we treat JOIN.client_nonce as the persistent identity.
+     */
+    uint32_t auth_client_nonce;
+
+        /* Transient transport key for demuxing packets to this client.
+             Must not be used as persistent identity.
+         */
+        uint64_t transport_key;
+
     atomic_uintptr_t inbox_ptr; /* (fr_server_client_inbox_t*) stored by fiber */
 
     /* One-packet staging area until fiber publishes its stack inbox pointer. */

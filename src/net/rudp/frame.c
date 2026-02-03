@@ -70,21 +70,27 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
         }
     }
 
-    /* Update receive window and drop duplicates/old. */
-    int wrc = net_ack_window_receive(&peer->recv_window, header.sequence);
-    if (wrc == NET_ACK_WINDOW_DUPLICATE || wrc == NET_ACK_WINDOW_OUT_OF_WINDOW) {
-        return NET_RUDP_EMPTY;
-    }
-    if (wrc != NET_ACK_WINDOW_OK) {
-        return NET_RUDP_ERR_PROTOCOL;
-    }
-
     const uint8_t *frame = packet + NET_PACKET_HEADER_SIZE;
     uint8_t flags = frame[0];
     (void)frame[1];
     uint16_t schema_id = read_u16_be(frame + 2);
     uint16_t payload_size = read_u16_be(frame + 4);
     (void)read_u16_be(frame + 6);
+
+    /* Only reliable packets participate in the ACK/duplicate window.
+       This prevents high-rate unreliable traffic from evicting older
+       reliable packets (WELCOME/SPAWN) and making retransmits permanently
+       out-of-window.
+     */
+    if (flags & NET_RUDP_FLAG_RELIABLE) {
+        int wrc = net_ack_window_receive(&peer->recv_window, header.sequence);
+        if (wrc == NET_ACK_WINDOW_DUPLICATE || wrc == NET_ACK_WINDOW_OUT_OF_WINDOW) {
+            return NET_RUDP_EMPTY;
+        }
+        if (wrc != NET_ACK_WINDOW_OK) {
+            return NET_RUDP_ERR_PROTOCOL;
+        }
+    }
 
     const size_t total_needed = NET_PACKET_HEADER_SIZE + NET_RUDP_FRAME_SIZE + (size_t)payload_size;
     if (packet_size < total_needed) {
