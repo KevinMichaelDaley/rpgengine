@@ -48,6 +48,9 @@
 #include "ferrum/net/topic_dispatcher.h"
 #include "ferrum/net/client/runtime_rx.h"
 
+// Reliable UDP stream API
+#include "ferrum/net/stream.h"
+
 // Client network runtime RX
 #include "ferrum/net/client/runtime_rx.h"
 
