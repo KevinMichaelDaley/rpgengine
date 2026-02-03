@@ -2,7 +2,7 @@
 
 #include "ferrum/net/stream.h"
 #include "ferrum/net/reliable_channel.h"
-#include "src/net/rudp/stream/stream_internal.h"
+#include "stream_internal.h"
 
 bool fr_rudp_stream_push_frame(fr_rudp_stream_t *s, const uint8_t *data, size_t len) {
     if (!s || !data || len < 2u) {
