@@ -125,6 +125,18 @@ set -euo pipefail
 cd '${REMOTE_RUN_DIR}'
 # Raise fd limits just in case
 ulimit -n 65536 || true
+# Ensure CPU tools present (auto-install if missing)
+if ! command -v mpstat >/dev/null 2>&1 || ! command -v pidstat >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    (apt-get update && apt-get install -y sysstat) >/dev/null 2>&1 || echo 'WARN: sysstat install failed (apt-get)' >> warn.log
+  elif command -v yum >/dev/null 2>&1; then
+    (yum install -y sysstat) >/dev/null 2>&1 || echo 'WARN: sysstat install failed (yum)' >> warn.log
+  elif command -v dnf >/dev/null 2>&1; then
+    (dnf install -y sysstat) >/dev/null 2>&1 || echo 'WARN: sysstat install failed (dnf)' >> warn.log
+  else
+    echo 'WARN: cannot auto-install sysstat; no known package manager' >> warn.log
+  fi
+fi
 # Start server (duration_ms controls shutdown)
 nohup '${REMOTE_BIN_DIR}/p008_net_repl_server' ${PORT} ${CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo \$! > server.pid
 sleep 1
