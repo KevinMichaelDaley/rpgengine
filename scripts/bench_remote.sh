@@ -63,7 +63,7 @@ if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]
       --exclude '*.o' \
       --exclude '*.a' \
       ./ "${REMOTE_SWEEP}:~/${SWEEP_BUILD_REL}/srcdir/"
-    ssh "${REMOTE_SWEEP}" env SWEEP_BUILD_REL="${SWEEP_BUILD_REL}" bash -lc 'set -euo pipefail; cd "$HOME/$SWEEP_BUILD_REL/srcdir"; if ! command -v make >/dev/null 2>&1; then echo "ERROR: make missing on remote" >&2; exit 2; fi; make p008_build'
+    ssh "${REMOTE_SWEEP}" env SWEEP_BUILD_REL="${SWEEP_BUILD_REL}" bash -lc 'set -euo pipefail; cd ~/"$SWEEP_BUILD_REL"/srcdir; if ! command -v make >/dev/null 2>&1; then echo "ERROR: make missing on remote" >&2; exit 2; fi; make p008_build'
     REMOTE_BIN_DIR_BASE_REL="${SWEEP_BUILD_REL}/srcdir/build"
   fi
   # Run each client-count sequentially, reusing built binaries
