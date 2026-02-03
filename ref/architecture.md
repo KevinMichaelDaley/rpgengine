@@ -318,8 +318,28 @@ On the client, networking runs on its own OS thread(s):
 On the server, the network subsystem uses **one fiber per client** scheduled by the job system:
 
 - Each client fiber maintains at least two fiber-local channels: **reliable** and **unreliable** (e.g., physics/motion updates).
-- Client fibers pump decoded inputs into a **global state update queue** consumed by simulation jobs on other fibers.
-- Outbound simulation results are published into per-client channels for the client fibers to serialize and send.
+- Client fibers publish decoded inbound messages into a **global inbound topic/queue** consumed by simulation/gameplay jobs on other fibers.
+- Outbound simulation results are published into per-client outbound channels for the client fibers to serialize and send.
+
+**Important distinction:** not all spawnable entities represent players.
+
+- Many entities (NPCs, props, projectiles) can spawn and replicate without any corresponding “join”.
+- Some player-like entities may join and exist, but should not necessarily spawn to every remote client (e.g., invisible players, far-away players outside interest).
+
+To avoid conflating these concepts, the server treats “player connectivity” as its own data model.
+
+**`player_connection_t` (conceptual):**
+- `player_id` (stable id for the connected player)
+- `world_pos` (plain `vec3` data stored by value, used for interest decisions)
+- `player_should_spawn_remote` (flag used to decide whether to emit player-spawn messages to a given remote client)
+
+The entity/world simulation uses this connection data to drive networking events, rather than assuming a 1:1 mapping between “connected client” and “spawned entity”.
+
+**Event taxonomy (conceptual):**
+- `EVT_PLAYER_JOIN`: a player connection is established and authorized.
+- `EVT_PLAYER_SPAWN`: the player’s in-world representation should spawn for some remote client(s) based on interest/visibility rules.
+- `EVT_ENTITY_JOIN`: reserved for non-player “remote entity processes” (e.g., audit/observer/bridge clients) that join but are not players.
+- `EVT_ENTITY_SPAWN`: non-player entity spawn events (NPCs/props/etc).
 
 **Threading requirement:** allocate at least **two OS worker threads** at all times to processing client fibers (in addition to any other worker threads used for simulation/render on a dedicated server).
 

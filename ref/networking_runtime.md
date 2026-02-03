@@ -57,6 +57,36 @@ Notes:
   - Reads packets from the client, reconstructs streams per channel, and publishes decoded inputs to a global update queue.
   - Serializes outbound updates from per-client channels.
 
+### Player Connections vs Entities
+
+Do not assume “connected client” == “spawnable player entity”.
+
+- Many entities (NPCs, props, items, projectiles) can spawn without any notion of “join”.
+- Some players may join and exist, but should not spawn to every other client (e.g., invisibility, distance-based interest).
+
+Model player connectivity separately as a plain-data record:
+
+- `player_connection_t`
+  - `player_id`
+  - `world_pos` (stored by value, not a reference)
+  - `player_should_spawn_remote` (used by interest/visibility rules)
+
+Simulation/entity subsystems use `player_connection_t` to decide when to emit join/spawn events and which outbound per-client topic(s) should receive them.
+
+### Event Taxonomy (Server)
+
+Server-side gameplay/simulation jobs should deal in high-level events, not protocol frames:
+
+- `EVT_PLAYER_JOIN`: a connected player is accepted (drives welcome/spawn setup).
+- `EVT_PLAYER_SPAWN`: a player should be spawned for some remote client(s) (interest/visibility gated).
+- `EVT_ENTITY_JOIN`: reserved for non-player remote processes that “join” the server (audit/observer/bridge clients).
+- `EVT_ENTITY_SPAWN`: non-player entity spawns (NPCs/props/etc).
+
+The per-client fiber networking runtime remains responsible only for:
+- reliable/unreliable reconstruction
+- publishing decoded inbound messages to the global inbound topic/queue
+- pumping per-client outbound topics into UDP packets
+
 - **Global update queue**
   - A lock-free or low-contention queue of decoded messages (or message references) consumed by simulation jobs.
 
