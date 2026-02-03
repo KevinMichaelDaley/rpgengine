@@ -121,6 +121,8 @@ TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG="p008_${TS}_port${PORT}_${CLIENTS}clients"
 REMOTE_RUN_DIR="${REMOTE_DIR}/${RUN_TAG}"
 
+echo "Remote run dir: ${REMOTE_RUN_DIR}" >&2
+
 ssh "${REMOTE}" bash -lc "mkdir -p ${REMOTE_RUN_DIR}"
 
 # Prepare execution binaries: reuse sweep build if requested; otherwise upload or build per run
