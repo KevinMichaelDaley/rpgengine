@@ -141,6 +141,15 @@ if command -v pidstat >/dev/null 2>&1; then
 else
   echo 'WARN: pidstat not found; skipping per-process CPU logs' >> warn.log
 fi
+# Wait for readiness
+READY_WAIT_MS=5000
+READY_START=\$(date +%s%3N)
+while true; do
+  if grep -q 'P008_REPL_SERVER_READY' server.out 2>/dev/null; then break; fi
+  NOW=\$(date +%s%3N)
+  if (( NOW - READY_START > READY_WAIT_MS )); then echo 'WARN: server did not report ready within timeout' >> warn.log; break; fi
+  sleep 0.1
+done
 "
 
 if [[ "${CLIENTS_LOCAL}" == "1" ]]; then
