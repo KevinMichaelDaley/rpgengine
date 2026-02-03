@@ -188,13 +188,13 @@ ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" bash -lc 'set -euo pipefa
 LOCAL_LOG_DIR="${ROOT_DIR}/bench-logs/${RUN_TAG}"
 mkdir -p "${LOCAL_LOG_DIR}"
 echo "Fetching server logs to ${LOCAL_LOG_DIR}..." >&2
-scp "${REMOTE}:${REMOTE_RUN_DIR}/server.out" "${LOCAL_LOG_DIR}/"
+rsync -az "${REMOTE}:${REMOTE_RUN_DIR}/server.out" "${LOCAL_LOG_DIR}/" || true
 if [[ "${CLIENTS_LOCAL}" != "1" ]]; then
-  scp "${REMOTE}:${REMOTE_RUN_DIR}/clients.out" "${LOCAL_LOG_DIR}/"
+  rsync -az "${REMOTE}:${REMOTE_RUN_DIR}/clients.out" "${LOCAL_LOG_DIR}/" || true
 fi
-scp "${REMOTE}:${REMOTE_RUN_DIR}/cpu.mpstat" "${LOCAL_LOG_DIR}/" || true
-scp "${REMOTE}:${REMOTE_RUN_DIR}/cpu.pidstat" "${LOCAL_LOG_DIR}/" || true
-scp "${REMOTE}:${REMOTE_RUN_DIR}/warn.log" "${LOCAL_LOG_DIR}/" || true
+rsync -az "${REMOTE}:${REMOTE_RUN_DIR}/cpu.mpstat" "${LOCAL_LOG_DIR}/" || true
+rsync -az "${REMOTE}:${REMOTE_RUN_DIR}/cpu.pidstat" "${LOCAL_LOG_DIR}/" || true
+rsync -az "${REMOTE}:${REMOTE_RUN_DIR}/warn.log" "${LOCAL_LOG_DIR}/" || true
 
 # Quick summary
 echo "--- Summary (${RUN_TAG}) ---"
