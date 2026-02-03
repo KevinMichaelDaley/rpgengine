@@ -123,7 +123,7 @@ REMOTE_RUN_DIR="${REMOTE_DIR}/${RUN_TAG}"
 
 echo "Remote run dir: ${REMOTE_RUN_DIR}" >&2
 
-ssh "${REMOTE}" bash -lc "mkdir -p ${REMOTE_RUN_DIR}"
+ssh "${REMOTE}" "mkdir -p ${REMOTE_RUN_DIR}"
 
 # Prepare execution binaries: reuse sweep build if requested; otherwise upload or build per run
 if [[ "${USE_SWEEP_BIN:-}" == "1" ]]; then
