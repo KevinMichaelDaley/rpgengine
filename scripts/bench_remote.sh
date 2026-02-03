@@ -40,6 +40,14 @@ set -euo pipefail
 #   REMOTE=bench@10.0.0.5 PORT=40001 CLIENTS=64 DURATION_MS=30000 \
 #   TICK_HZ=60 WORKERS=8 ./scripts/bench_remote.sh
 
+# Optional sweep: if SWEEP_MIN and SWEEP_MAX are set, run multiple CLIENTS values.
+if [[ -n "${SWEEP_MIN:-}" ]] && [[ -n "${SWEEP_MAX:-}" ]]; then
+  for ci in $(seq "${SWEEP_MIN}" "${SWEEP_MAX}"); do
+    CLIENTS="${ci}" REMOTE="${REMOTE:-${1:-}}" PORT="${PORT:-40001}" DURATION_MS="${DURATION_MS:-20000}" TICK_HZ="${TICK_HZ:-60}" WORKERS="${WORKERS:-1}" EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}" REMOTE_DIR="${REMOTE_DIR:-$HOME/bench}" REMOTE_BUILD="${REMOTE_BUILD:-1}" CLIENTS_LOCAL="${CLIENTS_LOCAL:-1}" SERVER_IPV4="${SERVER_IPV4:-}" bash "${BASH_SOURCE[0]}"
+  done
+  exit 0
+fi
+
 REMOTE="${REMOTE:-}"
 if [[ -z "${REMOTE}" ]]; then
   REMOTE="${1:-}"
@@ -221,16 +229,45 @@ scp "${REMOTE}:${REMOTE_RUN_DIR}/warn.log" "${LOCAL_LOG_DIR}/" || true
 # Quick summary
 echo "--- Summary (${RUN_TAG}) ---"
 if grep -q '^p008 stats:' "${LOCAL_LOG_DIR}/server.out"; then
-  grep '^p008 stats:' "${LOCAL_LOG_DIR}/server.out" | tail -n 1
+  SLINE=$(grep '^p008 stats:' "${LOCAL_LOG_DIR}/server.out" | tail -n 1)
+  echo "$SLINE"
+  # Extract state_jobs, net_io_ns, state_ns
+  echo "$SLINE" | awk '{
+    for (i=1; i<=NF; i++) {
+      if ($i ~ /state_jobs=/) { split($i,a,"="); jobs=a[2]; }
+      if ($i ~ /net_io_ns=/) { split($i,b,"="); net=b[2]; }
+      if ($i ~ /state_ns=/) { split($i,c,"="); st=c[2]; }
+    }
+    if (jobs!="") printf("state_jobs=%s net_io_ns=%s state_ns=%s\n", jobs, net, st);
+  }'
 else
   echo "Server stats not found in server.out" >&2
 fi
 CLIENT_STAT_FILE="${LOCAL_LOG_DIR}/clients.out"
 CLIENT_STAT_LINES=$(grep -c '^P008_CLIENT_STATS' "${CLIENT_STAT_FILE}" || true)
 echo "Clients completed: ${CLIENT_STAT_LINES}/${CLIENTS}"
-# Show average client rx/tx mbps if available
+# Show average client rx/tx mbps and latency if available
 if [[ "${CLIENT_STAT_LINES}" -gt 0 ]]; then
-  awk '/^P008_CLIENT_STATS/ {tx+=substr($0, index($0, "tx_mbps=")+8); rx+=substr($0, index($0, "rx_mbps=")+8)} END {if(NR>0){printf "Avg tx_mbps=%.3f rx_mbps=%.3f\n", tx/NR, rx/NR}}' "${CLIENT_STAT_FILE}" || true
+  awk '
+  /^P008_CLIENT_STATS/ {
+    # extract fields using regex and split
+    for (i=1; i<=NF; i++) {
+      if ($i ~ /tx_mbps=/) { split($i,a,"="); tx+=a[2]; }
+      if ($i ~ /rx_mbps=/) { split($i,b,"="); rx+=b[2]; }
+      if ($i ~ /state_inter_ms_mean=/) { split($i,c,"="); inter+=c[2]; }
+      if ($i ~ /state_lag_ms_mean=/) { split($i,d,"="); lag+=d[2]; }
+    }
+    n++
+  }
+  END { if (n>0) printf "Avg tx_mbps=%.3f rx_mbps=%.3f inter_ms=%.3f lag_ms=%.3f\n", tx/n, rx/n, inter/n, lag/n }' "${CLIENT_STAT_FILE}" || true
+fi
+
+# CPU summaries
+if [[ -f "${LOCAL_LOG_DIR}/cpu.mpstat" ]]; then
+  awk '/all/ && $3 ~ /CPU/ {next} /all/ {idle+=$NF; n++} END {if(n>0) printf "CPU idle mean=%.2f%%\n", idle/n}' "${LOCAL_LOG_DIR}/cpu.mpstat" || true
+fi
+if [[ -f "${LOCAL_LOG_DIR}/cpu.pidstat" ]]; then
+  awk '/Average:/ && $0 ~ /\%CPU/ {print $0} /^\s*[0-9]/ {sum+=$7; n++} END {if(n>0) printf "Server %%CPU mean=%.2f%%\n", sum/n}' "${LOCAL_LOG_DIR}/cpu.pidstat" || true
 fi
 
 echo "Logs: ${LOCAL_LOG_DIR}"
