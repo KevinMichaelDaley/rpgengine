@@ -41,9 +41,17 @@ set -euo pipefail
 #   TICK_HZ=60 WORKERS=8 ./scripts/bench_remote.sh
 
 # Optional sweep: if SWEEP_MIN and SWEEP_MAX are set, run multiple CLIENTS values.
-if [[ -n "${SWEEP_MIN:-}" ]] && [[ -n "${SWEEP_MAX:-}" ]]; then
+# Guard against recursive self-invocation by clearing SWEEP_* for inner calls.
+if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]; then
+  export __P008_SWEEPING=1
   for ci in $(seq "${SWEEP_MIN}" "${SWEEP_MAX}"); do
-    CLIENTS="${ci}" REMOTE="${REMOTE:-${1:-}}" PORT="${PORT:-40001}" DURATION_MS="${DURATION_MS:-20000}" TICK_HZ="${TICK_HZ:-60}" WORKERS="${WORKERS:-1}" EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}" REMOTE_DIR="${REMOTE_DIR:-$HOME/bench}" REMOTE_BUILD="${REMOTE_BUILD:-1}" CLIENTS_LOCAL="${CLIENTS_LOCAL:-1}" SERVER_IPV4="${SERVER_IPV4:-}" bash "${BASH_SOURCE[0]}"
+    CLIENTS="${ci}" SWEEP_MIN= SWEEP_MAX= __P008_SWEEPING=1 \
+      REMOTE="${REMOTE:-${1:-}}" PORT="${PORT:-40001}" \
+      DURATION_MS="${DURATION_MS:-20000}" TICK_HZ="${TICK_HZ:-60}" \
+      WORKERS="${WORKERS:-1}" EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}" \
+      REMOTE_DIR="${REMOTE_DIR:-$HOME/bench}" REMOTE_BUILD="${REMOTE_BUILD:-1}" \
+      CLIENTS_LOCAL="${CLIENTS_LOCAL:-1}" SERVER_IPV4="${SERVER_IPV4:-}" \
+      bash "${BASH_SOURCE[0]}"
   done
   exit 0
 fi
