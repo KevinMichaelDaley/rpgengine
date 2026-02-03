@@ -123,11 +123,16 @@ RSYNC_SSH=(ssh -i "$KEY" -o BatchMode=yes -o StrictHostKeyChecking=accept-new)
 
 # Prevent indefinite hangs if the remote becomes unresponsive.
 # Override via env var: SSH_TIMEOUT_SECS=30 tools/deploy_net_integration.sh ...
-SSH_TIMEOUT_SECS="${SSH_TIMEOUT_SECS:-15}"
+# NOTE: Remote builds can take >15s, so keep a reasonable default.
+SSH_TIMEOUT_SECS="${SSH_TIMEOUT_SECS:-180}"
 SSH_CONNECT_TIMEOUT_SECS="${SSH_CONNECT_TIMEOUT_SECS:-8}"
 
 SSH+=( -o ConnectTimeout="$SSH_CONNECT_TIMEOUT_SECS" -o ServerAliveInterval=5 -o ServerAliveCountMax=2 )
 RSYNC_SSH+=( -o ConnectTimeout="$SSH_CONNECT_TIMEOUT_SECS" -o ServerAliveInterval=5 -o ServerAliveCountMax=2 )
+
+# Some hosts intermittently reset SSH during kex/rsync; retry a few times.
+SSH+=( -o ConnectionAttempts=3 )
+RSYNC_SSH+=( -o ConnectionAttempts=3 )
 
 remote() {
   # ssh executes the remote command via /bin/sh by default, so keep quoting POSIX-safe.
@@ -181,12 +186,42 @@ run_cmd() {
   fi
 }
 
+run_cmd_retry() {
+  local max_attempts="$1"; shift
+  local sleep_secs="$1"; shift
+  local attempt=1
+
+  while true; do
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "+ $*"
+      return 0
+    fi
+
+    set +e
+    "$@"
+    local rc=$?
+    set -e
+
+    if [[ $rc -eq 0 ]]; then
+      return 0
+    fi
+    if [[ $attempt -ge $max_attempts ]]; then
+      return $rc
+    fi
+
+    echo "retrying ($attempt/$max_attempts) in ${sleep_secs}s: $*" >&2
+    sleep "$sleep_secs"
+    attempt=$((attempt + 1))
+    sleep_secs=$((sleep_secs * 2))
+  done
+}
+
 sync_repo() {
   resolve_remote_dir
   echo "==> rsync repo to $USER@$HOST:$REMOTE_DIR_RESOLVED"
   # Ensure the remote directory exists even on first deploy.
-  run_cmd remote "mkdir -p '$REMOTE_DIR_RESOLVED'"
-  run_cmd rsync -az --delete \
+  run_cmd_retry 3 1 remote "mkdir -p '$REMOTE_DIR_RESOLVED'"
+  run_cmd_retry 3 1 rsync -az --delete \
     -e "${RSYNC_SSH[*]}" \
     --exclude '.git/' \
     --exclude 'build/' \
@@ -198,13 +233,13 @@ build_remote_headless() {
   echo "==> build headless binaries on remote"
   resolve_remote_dir
   # Force a native rebuild on the remote (rsync may have copied local build/ artifacts).
-  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests && make -B p008_build"
+  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests && make -B p008_build"
 }
 
 build_remote_p000() {
   echo "==> build p000 job system tests on remote"
   resolve_remote_dir
-  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p000_tests && make -B build/p000_tests"
+  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p000_tests && make -B build/p000_tests"
 }
 
 build_local_headless() {
@@ -214,9 +249,31 @@ build_local_headless() {
 
 maybe_open_remote_firewall_udp() {
   resolve_remote_dir
-  echo "==> ensure remote firewall allows UDP port $PORT (ufw)"
-  # Best-effort: don't fail if ufw isn't installed/active.
-  run_cmd remote "if command -v ufw >/dev/null 2>&1; then ufw allow ${PORT}/udp >/dev/null 2>&1 || true; fi"
+  echo "==> ensure remote firewall allows UDP port $PORT (ufw/firewalld)"
+  # Best-effort: don't fail if ufw/firewalld isn't installed/active, and bound runtime.
+  # Some hosts can hang here (iptables lock), which would trigger the local SSH timeout.
+  run_cmd_retry 3 1 remote "\
+  if command -v firewall-cmd >/dev/null 2>&1; then \
+    if firewall-cmd --state 2>/dev/null | grep -qi running; then \
+      zone=\$(firewall-cmd --get-default-zone 2>/dev/null || echo public); \
+      if command -v timeout >/dev/null 2>&1; then \
+        timeout 5 firewall-cmd --zone=\"\$zone\" --add-port=${PORT}/udp >/dev/null 2>&1 || true; \
+        timeout 5 firewall-cmd --zone=\"\$zone\" --add-port=${PORT}/udp --permanent >/dev/null 2>&1 || true; \
+      else \
+        firewall-cmd --zone=\"\$zone\" --add-port=${PORT}/udp >/dev/null 2>&1 || true; \
+        firewall-cmd --zone=\"\$zone\" --add-port=${PORT}/udp --permanent >/dev/null 2>&1 || true; \
+      fi; \
+    fi; \
+  fi; \
+  if command -v ufw >/dev/null 2>&1; then \
+    if ufw status 2>/dev/null | grep -qi active; then \
+      if command -v timeout >/dev/null 2>&1; then \
+        timeout 5 ufw allow ${PORT}/udp >/dev/null 2>&1 || true; \
+      else \
+        ufw allow ${PORT}/udp >/dev/null 2>&1 || true; \
+      fi; \
+    fi; \
+  fi"
 }
 
 kill_remote_udp_listeners_on_port() {
@@ -229,6 +286,7 @@ start_remote_server_p008() {
   resolve_remote_dir
   local log_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.log"
   local pid_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.pid"
+  local unit_name="p008_net_repl_server_${PORT}"
 
   echo "==> start remote p008 server (port=$PORT)"
   kill_remote_udp_listeners_on_port
@@ -237,23 +295,41 @@ start_remote_server_p008() {
   # Make stdout line-buffered so READY can be detected quickly.
   # IMPORTANT: Redirect stdin from /dev/null; otherwise the backgrounded server can
   # inherit the SSH session stdin and keep the SSH command from returning.
-  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && (nohup stdbuf -oL -eL ./build/p008_net_repl_server $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > '$log_file' 2>&1 & echo \$! > '$pid_file')"
+  # NOTE: Some systems kill processes attached to an SSH login session/cgroup on logout.
+  # Prefer starting via systemd-run (transient unit) when available.
+  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && (\
+    : > '$log_file'; \
+    if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then \
+      systemctl stop '$unit_name' >/dev/null 2>&1 || true; \
+      systemd-run --unit='$unit_name' --collect --quiet --property=WorkingDirectory='$REMOTE_DIR_RESOLVED' \
+        bash -lc 'stdbuf -oL -eL ./build/p008_net_repl_server $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > $log_file 2>&1'; \
+      echo systemd:'$unit_name' > '$pid_file'; \
+    elif command -v setsid >/dev/null 2>&1; then \
+      nohup setsid stdbuf -oL -eL ./build/p008_net_repl_server $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > '$log_file' 2>&1 & \
+      echo \$! > '$pid_file'; \
+    else \
+      nohup stdbuf -oL -eL ./build/p008_net_repl_server $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > '$log_file' 2>&1 & \
+      echo \$! > '$pid_file'; \
+    fi\
+  )"
 
   echo "==> wait for server ready"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
 
-  local deadline=$((SECONDS + 20))
-  while (( SECONDS < deadline )); do
-    if remote "grep -q 'P008_REPL_SERVER_READY' '$log_file'"; then
-      return 0
-    fi
-    sleep 0.2
-  done
+  # Poll on the remote side to avoid opening dozens of SSH sessions.
+  if remote "log_file='$log_file'; now=\$(date +%s); deadline=\$((now + 20)); \
+    while (( \$(date +%s) < deadline )); do \
+      if grep -q 'P008_REPL_SERVER_READY' \"\$log_file\"; then exit 0; fi; \
+      sleep 0.2; \
+    done; \
+    echo 'Server did not become ready; tailing remote log:' >&2; \
+    tail -n 80 \"\$log_file\" || true; \
+    exit 1"; then
+    return 0
+  fi
 
-  echo "Server did not become ready; tailing remote log:" >&2
-  remote "tail -n 80 '$log_file' || true" >&2
   return 1
 }
 
@@ -268,8 +344,16 @@ stop_remote_server_p008() {
   fi
 
   # Try pidfile first, then fall back to `ss` PID detection.
-  remote "if [[ -f '$pid_file' ]]; then pid=\$(cat '$pid_file' || true); if [[ -n \"\$pid\" ]]; then echo \"remote pidfile pid=\$pid\"; kill \$pid || true; fi; fi"
-  remote "sleep 0.2; if [[ -f '$pid_file' ]]; then pid=\$(cat '$pid_file' || true); if [[ -n \"\$pid\" ]]; then kill -9 \$pid || true; fi; fi"
+  remote "if [[ -f '$pid_file' ]]; then pid=\$(cat '$pid_file' || true); \
+    if [[ \"\$pid\" == systemd:* ]]; then unit=\${pid#systemd:}; echo \"remote unit=\$unit\"; \
+      if command -v systemctl >/dev/null 2>&1; then systemctl kill \"\$unit\" >/dev/null 2>&1 || true; systemctl stop \"\$unit\" >/dev/null 2>&1 || true; fi; \
+    elif [[ -n \"\$pid\" ]]; then echo \"remote pidfile pid=\$pid\"; kill \$pid || true; fi; \
+  fi"
+  remote "sleep 0.2; if [[ -f '$pid_file' ]]; then pid=\$(cat '$pid_file' || true); \
+    if [[ \"\$pid\" == systemd:* ]]; then unit=\${pid#systemd:}; \
+      if command -v systemctl >/dev/null 2>&1; then systemctl kill -s KILL \"\$unit\" >/dev/null 2>&1 || true; systemctl stop \"\$unit\" >/dev/null 2>&1 || true; fi; \
+    elif [[ -n \"\$pid\" ]]; then kill -9 \$pid || true; fi; \
+  fi"
   kill_remote_udp_listeners_on_port
   remote "tail -n 80 '$log_file' || true"
 }

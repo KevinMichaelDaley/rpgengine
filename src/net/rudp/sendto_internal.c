@@ -62,7 +62,14 @@ static int build_packet_(net_rudp_peer_t *peer,
     if (out_sequence) {
         *out_sequence = header.sequence;
     }
-    peer->next_sequence = (uint16_t)(peer->next_sequence + 1u);
+    /* Only advance the sequence for reliable packets.
+       Reliable receive uses a bounded ACK/duplicate window; if unreliable traffic
+       also advances the sequence, reliable packets can become permanently
+       out-of-window under high-rate unreliable sends.
+     */
+    if (flags & NET_RUDP_FLAG_RELIABLE) {
+        peer->next_sequence = (uint16_t)(peer->next_sequence + 1u);
+    }
     return NET_RUDP_OK;
 }
 

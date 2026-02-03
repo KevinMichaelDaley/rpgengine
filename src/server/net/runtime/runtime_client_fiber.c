@@ -87,6 +87,12 @@ static void pump_outbound_topic_(fr_server_net_runtime_t *rt,
         if (rc == NET_RUDP_OK) {
             atomic_fetch_add_explicit(&rt->packets_out, 1u, memory_order_relaxed);
             atomic_fetch_add_explicit(&rt->bytes_out, (uint64_t)payload_size, memory_order_relaxed);
+        } else if (reliable && rc == NET_RUDP_ERR_FULL) {
+            /* Backpressure: reliable send window is full until we receive ACKs.
+               Requeue the message and retry later rather than dropping it.
+             */
+            (void)fr_topic_channel_push(topic, msg, len);
+            break;
         }
     }
 }
@@ -121,8 +127,10 @@ void fr_server_client_fiber_main(void *user) {
         client->pending_size = 0u;
     }
 
-    /* Stack-owned reliable resend slots (kept small to fit typical fiber stacks). */
-    net_rudp_send_slot_t send_slots[16u];
+        /* Stack-owned reliable resend slots.
+             Use the default sizing to reduce drops during join bursts.
+         */
+        net_rudp_send_slot_t send_slots[NET_RUDP_SEND_SLOTS_DEFAULT];
     memset(send_slots, 0, sizeof(send_slots));
     net_rudp_peer_t peer;
     net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u, send_slots, (size_t)(sizeof(send_slots) / sizeof(send_slots[0])));

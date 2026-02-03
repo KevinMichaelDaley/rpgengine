@@ -380,13 +380,15 @@ int main(int argc, char **argv) {
 
         if (now >= next_tick) {
             server_tick = (uint16_t)(server_tick + 1u);
-            broadcast_some_states_(rt,
-                                   joined,
-                                   (uint16_t)max_clients_l,
-                                   (uint16_t)tick_hz_l,
-                                   server_tick,
-                                   state_cursor,
-                                   2u);
+            if (clients_joined >= (uint32_t)max_clients_l) {
+                broadcast_some_states_(rt,
+                                       joined,
+                                       (uint16_t)max_clients_l,
+                                       (uint16_t)tick_hz_l,
+                                       server_tick,
+                                       state_cursor,
+                                       2u);
+            }
             next_tick += tick_ms;
         }
 

@@ -177,6 +177,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to open UDP socket\n");
         return 1;
     }
+    /* Best-effort: larger buffers reduce drops under bursty state traffic. */
+    (void)net_udp_socket_set_recv_buffer_bytes(&sock, 4u * 1024u * 1024u);
+    (void)net_udp_socket_set_send_buffer_bytes(&sock, 4u * 1024u * 1024u);
     (void)net_udp_socket_set_nonblocking(&sock, 1);
     if (net_udp_socket_connect(&sock, &server_addr) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to connect\n");
@@ -289,37 +292,39 @@ int main(int argc, char **argv) {
 
         (void)net_rudp_peer_tick_resend(&peer, &sock, &server_addr, now);
 
-        size_t rx_size = 0u;
-        int rrc = net_udp_socket_recv(&sock, rx_packet, sizeof(rx_packet), &rx_size);
-        if (rrc == NET_UDP_SOCKET_EMPTY) {
-            sleep_ms(1u);
-            continue;
-        }
-        if (rrc != NET_UDP_SOCKET_OK) {
-            break;
-        }
+        int saw_rx = 0;
+        for (;;) {
+            size_t rx_size = 0u;
+            int rrc = net_udp_socket_recv(&sock, rx_packet, sizeof(rx_packet), &rx_size);
+            if (rrc == NET_UDP_SOCKET_EMPTY) {
+                break;
+            }
+            if (rrc != NET_UDP_SOCKET_OK) {
+                goto done;
+            }
 
-        rx_bytes += (uint64_t)rx_size;
-        rx_packets += 1u;
+            saw_rx = 1;
+            rx_bytes += (uint64_t)rx_size;
+            rx_packets += 1u;
 
-        uint8_t reliable = 0u;
-        uint16_t schema_id = 0u;
-        uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
-        size_t payload_size = 0u;
-        int prc = net_rudp_peer_receive(&peer,
-                                        rx_packet,
-                                        rx_size,
-                                        &reliable,
-                                        &schema_id,
-                                        payload,
-                                        sizeof(payload),
-                                        &payload_size);
-        if (prc != NET_RUDP_OK) {
-            continue;
-        }
-        (void)reliable;
+            uint8_t reliable = 0u;
+            uint16_t schema_id = 0u;
+            uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
+            size_t payload_size = 0u;
+            int prc = net_rudp_peer_receive(&peer,
+                                            rx_packet,
+                                            rx_size,
+                                            &reliable,
+                                            &schema_id,
+                                            payload,
+                                            sizeof(payload),
+                                            &payload_size);
+            if (prc != NET_RUDP_OK) {
+                continue;
+            }
+            (void)reliable;
 
-        if (schema_id == NET_REPL_SCHEMA_WELCOME) {
+            if (schema_id == NET_REPL_SCHEMA_WELCOME) {
             net_repl_welcome_t w;
             if (net_repl_welcome_decode(&w, payload, payload_size) == NET_REPL_OK) {
                 if (w.tick_hz > 0u && w.tick_hz <= 1000u) {
@@ -337,7 +342,7 @@ int main(int argc, char **argv) {
                     }
                 }
             }
-        } else if (schema_id == NET_REPL_SCHEMA_SPAWN) {
+            } else if (schema_id == NET_REPL_SCHEMA_SPAWN) {
             net_repl_spawn_t sp;
             if (net_repl_spawn_decode(&sp, payload, payload_size) == NET_REPL_OK) {
                 spawn_count++;
@@ -354,7 +359,7 @@ int main(int argc, char **argv) {
                     entity_owner[entity_count - 1u] = sp.owner_client_id;
                 }
             }
-        } else if (schema_id == NET_REPL_SCHEMA_SPAWN_BATCH) {
+            } else if (schema_id == NET_REPL_SCHEMA_SPAWN_BATCH) {
             net_repl_spawn_batch_entry_t entries[32];
             uint16_t count = 0u;
             uint16_t tick = 0u;
@@ -378,7 +383,7 @@ int main(int argc, char **argv) {
                     entity_owner[entity_count - 1u] = e->owner_client_id;
                 }
             }
-        } else if (schema_id == NET_REPL_SCHEMA_STATE_CUBE) {
+            } else if (schema_id == NET_REPL_SCHEMA_STATE_CUBE) {
             const uint64_t recv_now = now_ms();
             if (last_state_ms > 0u) {
                 const double delta_ms = (double)(recv_now - last_state_ms);
@@ -444,8 +449,15 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+            }
+        }
+
+        if (!saw_rx) {
+            sleep_ms(1u);
         }
     }
+
+done:
 
     if (expected_spawns == 0u || !entity_ids || !entity_owner) {
         fprintf(stderr, "Client failed: did not receive WELCOME/expected_spawns\n");

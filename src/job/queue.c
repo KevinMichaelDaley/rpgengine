@@ -168,7 +168,37 @@ int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
                        ? (g_worker_id % sys->worker_count)
                        : (atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed) % sys->worker_count);
 
-    void *p = fr_ws_deque_pop(&sys->ws_deques[wid]);
+    /* IMPORTANT: injected work (enqueued from non-owner threads) must be
+       serviced even when local deques are non-empty.
+       Otherwise, long-lived fibers can keep a worker deque perpetually non-empty
+       and starve the injection ring forever.
+     */
+    void *p = try_pop_injected(sys);
+    if (p) {
+        job_fiber_t *fiber = (job_fiber_t *)p;
+        out_entry->fiber = fiber;
+        out_entry->priority = (int)fiber->priority;
+        out_entry->id = fiber->id;
+
+        (void)atomic_fetch_sub_explicit(&sys->queued_count, 1u, memory_order_relaxed);
+        job_instrument_event("pop", fiber->id, fiber->id, g_worker_id, __FILE__, __LINE__);
+
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+        atomic_fetch_add_explicit(&sys->qdiag_pop_scanned_slots, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sys->qdiag_pop_success, 1, memory_order_relaxed);
+#endif
+        return 0;
+    }
+
+    /* Fairness: long-lived fibers yield frequently and are re-enqueued.
+       Using LIFO owner-pop can repeatedly run the most recently yielded fiber
+       and starve older fibers on the same worker. Prefer top-pop (FIFO-like)
+       to keep all runnable fibers making progress.
+     */
+    p = fr_ws_deque_steal(&sys->ws_deques[wid]);
+    if (!p) {
+        p = fr_ws_deque_pop(&sys->ws_deques[wid]);
+    }
     if (!p) {
         uint32_t rot = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed);
         for (uint32_t off = 1; off < sys->worker_count + 1u; ++off) {
@@ -181,10 +211,6 @@ int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
                 break;
             }
         }
-    }
-
-    if (!p) {
-        p = try_pop_injected(sys);
     }
 
     if (!p) {

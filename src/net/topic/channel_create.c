@@ -11,6 +11,11 @@ fr_topic_channel_t *fr_topic_channel_create(const fr_topic_channel_config_t *cfg
     ch->items = (fr_topic_item *)calloc(cap, sizeof(fr_topic_item));
     if (!ch->items) { free(ch); return NULL; }
     ch->capacity = cap;
+    if (mtx_init(&ch->lock, mtx_plain) != thrd_success) {
+        free(ch->items);
+        free(ch);
+        return NULL;
+    }
     atomic_init(&ch->head, 0u);
     atomic_init(&ch->tail, 0u);
     atomic_init(&ch->count, 0u);

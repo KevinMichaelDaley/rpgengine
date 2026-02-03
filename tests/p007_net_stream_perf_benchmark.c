@@ -4,6 +4,7 @@
 #include <stdatomic.h>
 #include <time.h>
 #include "ferrum/ferrum.h"
+#include "ferrum/net/client/runtime_rx.h"
 
 static inline uint64_t now_ns(void) {
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -37,31 +38,34 @@ int main(int argc, char **argv) {
     fr_topic_dispatcher_register(disp, 0, bench_handler, &ctx, 0, UINT32_MAX);
     fr_topic_dispatcher_start(disp);
 
-    fr_rudp_stream_config_t scfg = {0};
-    scfg.reliable_channels = (unsigned)channels;
-    scfg.reliable_slot_count = 1u<<12;
-    scfg.max_payload_size = (unsigned)payload_len;
-    scfg.topics = topics;
-    scfg.num_topics = 1;
-    fr_rudp_stream_t *stream = fr_rudp_stream_create(&scfg);
-    if (!stream) return 1;
+    fr_client_rx_config_t rx_cfg;
+    memset(&rx_cfg, 0, sizeof(rx_cfg));
+    rx_cfg.max_channels = (uint32_t)channels;
+    rx_cfg.max_pending_per_channel = 1u << 12;
+    rx_cfg.topics = topics;
+    rx_cfg.num_topics = 1u;
+    fr_client_rx_t *rx = fr_client_rx_create(&rx_cfg);
+    if (!rx) return 1;
 
-    /* Craft frames: [seq:u16 LE][chan:u16 LE][payload] */
+     /* Craft frames for client RX runtime inject:
+         [channel_id:u32][seq:u32][len:u16][payload]
+         where channel_id is 1-based.
+     */
     uint8_t *payload = (uint8_t*)malloc((size_t)payload_len);
     memset(payload, 0xCD, (size_t)payload_len);
 
     uint64_t t0 = now_ns();
     for (int i=0;i<messages;i++) {
-        uint16_t seq = (uint16_t)(i+1);
-        uint16_t chan = (uint16_t)(i % channels);
-        size_t len = 4u + (size_t)payload_len;
+        uint32_t seq = (uint32_t)(i + 1);
+        uint32_t channel_id = (uint32_t)((i % channels) + 1);
+        uint16_t plen = (uint16_t)payload_len;
+        size_t len = 10u + (size_t)payload_len;
         uint8_t *frame = (uint8_t*)malloc(len);
-        frame[0] = (uint8_t)(seq & 0xFFu);
-        frame[1] = (uint8_t)((seq >> 8) & 0xFFu);
-        frame[2] = (uint8_t)(chan & 0xFFu);
-        frame[3] = (uint8_t)((chan >> 8) & 0xFFu);
-        memcpy(frame+4, payload, (size_t)payload_len);
-        while (!fr_rudp_stream_push_frame(stream, frame, len)) {
+        memcpy(frame + 0, &channel_id, sizeof(channel_id));
+        memcpy(frame + 4, &seq, sizeof(seq));
+        memcpy(frame + 8, &plen, sizeof(plen));
+        memcpy(frame + 10, payload, (size_t)payload_len);
+        while (!fr_client_rx_inject(rx, frame, len)) {
             struct timespec ts={0, 1000*1000}; nanosleep(&ts, NULL);
         }
         free(frame);
@@ -76,7 +80,7 @@ int main(int argc, char **argv) {
     double mps = (double)messages / secs;
     fprintf(stderr, "OK stream_perf_benchmark: %.2f msgs/s over %.2fs (workers=%d)\n", mps, secs, workers);
 
-    fr_rudp_stream_destroy(stream);
+    fr_client_rx_destroy(rx);
     fr_topic_dispatcher_stop(disp);
     fr_topic_dispatcher_destroy(disp);
     fr_topic_channel_destroy(topic0);

@@ -16,7 +16,10 @@ void net_rudp_peer_init_with_storage(net_rudp_peer_t *peer,
     }
     memset(peer, 0, sizeof(*peer));
     peer->protocol_id = protocol_id;
-    peer->next_sequence = 0u;
+        /* Start at 1 so ack=0 (uninitialized recv window) cannot accidentally
+             ACK the first reliable packet.
+         */
+        peer->next_sequence = 1u;
     peer->resend_interval_ms = (resend_interval_ms == 0u) ? 50u : resend_interval_ms;
     net_ack_window_init(&peer->recv_window);
 

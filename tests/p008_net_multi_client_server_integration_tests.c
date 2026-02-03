@@ -280,6 +280,9 @@ int main(void) {
         parse_client_stats(&st, out_buf);
         if (!st.parsed) {
             fprintf(stderr, "client[%d] missing stats line\n", i);
+            if (out_buf[0] != '\0') {
+                fprintf(stderr, "client[%d] output:\n%s\n", i, out_buf);
+            }
             ok = 0;
         } else {
             sum_tx_bytes += st.tx_bytes;

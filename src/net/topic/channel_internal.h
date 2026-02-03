@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <threads.h>
 
 typedef struct fr_topic_item {
     uint8_t *data;
@@ -13,6 +14,7 @@ typedef struct fr_topic_item {
 typedef struct fr_topic_channel {
     fr_topic_item *items;
     uint32_t capacity;
+    mtx_t lock;
     atomic_uint head;
     atomic_uint tail;
     atomic_uint count;
