@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/quantization.h"
@@ -31,6 +32,8 @@ static int server_repl_try_send_welcome(server_repl_server_t *srv, uint16_t clie
         return SERVER_REPL_OK;
     }
 
+    struct timespec s0, s1;
+    clock_gettime(CLOCK_MONOTONIC, &s0);
     int rc = net_rudp_peer_send_reliable(&srv->clients[client_id].peer,
                                          srv->sock,
                                          &srv->clients[client_id].addr,
@@ -39,6 +42,9 @@ static int server_repl_try_send_welcome(server_repl_server_t *srv, uint16_t clie
                                          payload,
                                          sizeof(payload),
                                          NULL);
+    clock_gettime(CLOCK_MONOTONIC, &s1);
+    uint64_t send_ns = (uint64_t)(s1.tv_sec - s0.tv_sec) * 1000000000ull + (uint64_t)(s1.tv_nsec - s0.tv_nsec);
+    srv->stats.net_io_ns_total += send_ns;
     if (rc == NET_RUDP_OK) {
         srv->clients[client_id].welcome_sent = 1u;
         srv->stats.packets_sent++;
@@ -72,6 +78,8 @@ static int server_repl_try_send_spawn_batch(server_repl_server_t *srv,
 
     for (uint16_t batch = 0u; batch < max_batches_this_tick; ++batch) {
         uint16_t count = 0u;
+        struct timespec c0, c1;
+        clock_gettime(CLOCK_MONOTONIC, &c0);
         uint16_t scanned = 0u;
 
         while (count < entry_capacity && scanned < total_entities) {
@@ -114,7 +122,12 @@ static int server_repl_try_send_spawn_batch(server_repl_server_t *srv,
         if (net_repl_spawn_batch_encode(srv->server_tick, entries, count, payload, payload_capacity, &payload_size) != NET_REPL_OK) {
             return SERVER_REPL_OK;
         }
+        clock_gettime(CLOCK_MONOTONIC, &c1);
+        uint64_t comp_ns = (uint64_t)(c1.tv_sec - c0.tv_sec) * 1000000000ull + (uint64_t)(c1.tv_nsec - c0.tv_nsec);
+        srv->stats.state_update_ns_total += comp_ns;
 
+        struct timespec s0b, s1b;
+        clock_gettime(CLOCK_MONOTONIC, &s0b);
         int rc = net_rudp_peer_send_reliable(&srv->clients[client_id].peer,
                                              srv->sock,
                                              &srv->clients[client_id].addr,
@@ -123,6 +136,9 @@ static int server_repl_try_send_spawn_batch(server_repl_server_t *srv,
                                              payload,
                                              payload_size,
                                              NULL);
+        clock_gettime(CLOCK_MONOTONIC, &s1b);
+        uint64_t send_ns_b = (uint64_t)(s1b.tv_sec - s0b.tv_sec) * 1000000000ull + (uint64_t)(s1b.tv_nsec - s0b.tv_nsec);
+        srv->stats.net_io_ns_total += send_ns_b;
         if (rc == NET_RUDP_OK) {
             for (uint16_t i = 0u; i < count; ++i) {
                 bitset_set(known, entry_entity_indices[i]);
@@ -155,8 +171,10 @@ static void send_state_job(void *user_data) {
     vec3_t pos = (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
     quat_t rot = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
 
+    struct timespec c0, c1;
     net_qvec3_mm_t qpos;
     net_qquat_snorm16_t qrot;
+    clock_gettime(CLOCK_MONOTONIC, &c0);
     if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
         return;
     }
@@ -174,7 +192,12 @@ static void send_state_job(void *user_data) {
     if (net_repl_state_cube_encode(&st, payload, sizeof(payload)) != NET_REPL_OK) {
         return;
     }
+    clock_gettime(CLOCK_MONOTONIC, &c1);
+    uint64_t comp_ns = (uint64_t)(c1.tv_sec - c0.tv_sec) * 1000000000ull + (uint64_t)(c1.tv_nsec - c0.tv_nsec);
+    srv->stats.state_update_ns_total += comp_ns;
 
+    struct timespec s0, s1;
+    clock_gettime(CLOCK_MONOTONIC, &s0);
     (void)net_rudp_peer_send_unreliable(&srv->clients[ci].peer,
                                         srv->sock,
                                         &srv->clients[ci].addr,
@@ -182,6 +205,9 @@ static void send_state_job(void *user_data) {
                                         NET_REPL_SCHEMA_STATE_CUBE,
                                         payload,
                                         sizeof(payload));
+    clock_gettime(CLOCK_MONOTONIC, &s1);
+    uint64_t send_ns = (uint64_t)(s1.tv_sec - s0.tv_sec) * 1000000000ull + (uint64_t)(s1.tv_nsec - s0.tv_nsec);
+    srv->stats.net_io_ns_total += send_ns;
 }
 
 static void server_repl_send_some_states(server_repl_server_t *srv, uint16_t client_id, uint16_t max_states, uint64_t now_ms) {
@@ -218,8 +244,24 @@ static void server_repl_send_some_states(server_repl_server_t *srv, uint16_t cli
             continue;
         }
 
-        struct server_repl_send_job_ctx ctx = {srv, client_id, ei, now_ms};
-        send_state_job(&ctx);
+        /* Prefer dispatching state-send work via the job system when available. */
+        if (srv->jobs && srv->send_job_ctxs && srv->send_job_ctx_capacity >= (size_t)srv->cfg.max_clients * (size_t)srv->cfg.max_entities) {
+            size_t idx = (size_t)client_id * (size_t)srv->cfg.max_entities + (size_t)ei;
+            struct server_repl_send_job_ctx *ctx = &srv->send_job_ctxs[idx];
+            ctx->srv = srv;
+            ctx->client_index = client_id;
+            ctx->entity_index = ei;
+            ctx->now_ms = now_ms;
+            if (job_dispatch(srv->jobs, send_state_job, ctx, 0, NULL) == JOB_ID_INVALID) {
+                /* Queue full: stop scheduling this tick to avoid busy looping. */
+                break;
+            }
+            srv->stats.state_jobs_scheduled++;
+        } else {
+            struct server_repl_send_job_ctx ctxv = {srv, client_id, ei, now_ms};
+            send_state_job(&ctxv);
+            srv->stats.state_jobs_scheduled++;
+        }
         sent++;
     }
 
@@ -240,7 +282,12 @@ int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
         if (!srv->clients[ci].active || !srv->clients[ci].joined) {
             continue;
         }
+        struct timespec r0, r1;
+        clock_gettime(CLOCK_MONOTONIC, &r0);
         (void)net_rudp_peer_tick_resend(&srv->clients[ci].peer, srv->sock, &srv->clients[ci].addr, now_ms);
+        clock_gettime(CLOCK_MONOTONIC, &r1);
+        uint64_t resend_ns = (uint64_t)(r1.tv_sec - r0.tv_sec) * 1000000000ull + (uint64_t)(r1.tv_nsec - r0.tv_nsec);
+        srv->stats.net_io_ns_total += resend_ns;
     }
 
     for (uint16_t ci = 0u; ci < srv->cfg.max_clients; ++ci) {

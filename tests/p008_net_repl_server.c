@@ -170,13 +170,16 @@ int main(int argc, char **argv) {
         }
     }
 
-    server_repl_stats_t st = server_repl_server_stats(srv);
-    fprintf(stdout, "p008 stats: clients=%u pps_out=%llu pps_in=%llu bytes_out=%llu bytes_in=%llu\n",
+        server_repl_stats_t st = server_repl_server_stats(srv);
+        fprintf(stdout, "p008 stats: clients=%u pps_out=%llu pps_in=%llu bytes_out=%llu bytes_in=%llu state_jobs=%llu net_io_ns=%llu state_ns=%llu\n",
             (unsigned)st.clients_connected,
             (unsigned long long)st.packets_sent,
             (unsigned long long)st.packets_recv,
             (unsigned long long)st.bytes_sent,
-            (unsigned long long)st.bytes_recv);
+            (unsigned long long)st.bytes_recv,
+            (unsigned long long)st.state_jobs_scheduled,
+            (unsigned long long)st.net_io_ns_total,
+            (unsigned long long)st.state_update_ns_total);
 
     server_repl_server_destroy(srv);
     job_system_shutdown(&jobs);

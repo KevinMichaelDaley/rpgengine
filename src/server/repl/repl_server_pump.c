@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <string.h>
+#include <time.h>
 
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/replication/join.h"
@@ -71,8 +72,11 @@ int server_repl_server_pump(server_repl_server_t *srv, uint64_t now_ms) {
     if (!srv) {
         return SERVER_REPL_ERR_INVALID;
     }
-
     (void)now_ms;
+
+    /* Measure time spent in network receive + decode path. */
+    struct timespec ts0, ts1;
+    clock_gettime(CLOCK_MONOTONIC, &ts0);
 
     uint8_t packet[NET_RUDP_MAX_PACKET_SIZE];
     for (;;) {
@@ -133,5 +137,8 @@ int server_repl_server_pump(server_repl_server_t *srv, uint64_t now_ms) {
         }
     }
 
+    clock_gettime(CLOCK_MONOTONIC, &ts1);
+    uint64_t d_ns = (uint64_t)(ts1.tv_sec - ts0.tv_sec) * 1000000000ull + (uint64_t)(ts1.tv_nsec - ts0.tv_nsec);
+    srv->stats.net_io_ns_total += d_ns;
     return SERVER_REPL_OK;
 }
