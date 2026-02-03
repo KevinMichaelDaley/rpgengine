@@ -25,12 +25,15 @@ static int test_channel_ids_and_topic_pump(void) {
     /* Frame format: 2-byte seq LE, 2-byte chan LE, payload */
     uint8_t f0c0[4 + 3] = {0, 0, 0, 0, 'A','A','A'};
     uint8_t f1c1[4 + 2] = {1, 0, 1, 0, 'B','B'};
+    uint8_t f0c1[4 + 2] = {0, 0, 1, 0, 'B','B'};
     uint8_t f1c1_dup[4 + 2] = {1, 0, 1, 0, 'X','X'};
 
     assert(fr_rudp_stream_push_frame(s, f0c0, sizeof f0c0));
     assert(fr_rudp_stream_push_frame(s, f1c1, sizeof f1c1));
     /* Duplicate should not result in second delivery. */
     (void)fr_rudp_stream_push_frame(s, f1c1_dup, sizeof f1c1_dup);
+    /* Now allow channel 1 to deliver by pushing seq 0. */
+    assert(fr_rudp_stream_push_frame(s, f0c1, sizeof f0c1));
 
     /* Pop from topics: channel 0 then 1 */
     uint8_t out[16];
