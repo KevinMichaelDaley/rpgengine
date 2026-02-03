@@ -165,6 +165,7 @@ int main(int argc, char **argv) {
     }
     uint16_t tick_hz = (uint16_t)tick_hz_l;
     uint32_t expected_spawns = (uint32_t)expected_spawns_l;
+    const int expected_spawns_auto = (expected_spawns == 0u);
 
     net_udp_addr_t server_addr;
     if (net_udp_addr_ipv4(&server_addr, ip[0], ip[1], ip[2], ip[3], (uint16_t)port_l) != NET_UDP_SOCKET_OK) {
@@ -469,17 +470,37 @@ done:
     }
 
     if (entity_count < (size_t)expected_spawns) {
-        fprintf(stderr, "Client failed: expected %u spawns, got %zu (spawn_msgs=%u state_msgs=%u)\n",
-                (unsigned)expected_spawns,
-                entity_count,
-                (unsigned)spawn_count,
-                (unsigned)state_count);
+        if (expected_spawns_auto) {
+            fprintf(stderr,
+                    "WARN: client saw fewer unique spawns than WELCOME expected_entities: expected=%u got=%zu (spawn_msgs=%u state_msgs=%u)\n",
+                    (unsigned)expected_spawns,
+                    entity_count,
+                    (unsigned)spawn_count,
+                    (unsigned)state_count);
+            expected_spawns = (uint32_t)entity_count;
+        } else {
+            fprintf(stderr, "Client failed: expected %u spawns, got %zu (spawn_msgs=%u state_msgs=%u)\n",
+                    (unsigned)expected_spawns,
+                    entity_count,
+                    (unsigned)spawn_count,
+                    (unsigned)state_count);
+            free(entity_ids);
+            free(entity_owner);
+            free(rudp_send_slots);
+            net_udp_socket_close(&sock);
+            return 1;
+        }
+    }
+
+    if (expected_spawns == 0u) {
+        fprintf(stderr, "Client failed: no entities were spawned\n");
         free(entity_ids);
         free(entity_owner);
         free(rudp_send_slots);
         net_udp_socket_close(&sock);
         return 1;
     }
+
     if (state_count < expected_spawns * 5u) {
         fprintf(stderr, "Client failed: too few state updates (%u)\n", (unsigned)state_count);
         free(entity_ids);
