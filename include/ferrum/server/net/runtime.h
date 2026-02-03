@@ -47,6 +47,16 @@ typedef struct fr_server_net_runtime_config_t {
      */
     fr_topic_channel_t *inbound_topic;
 
+    /** Per-client outbound reliable topic capacity (max buffered messages).
+     * 0 uses an internal default.
+     */
+    uint32_t out_reliable_capacity;
+
+    /** Per-client outbound unreliable topic capacity (max buffered messages).
+     * 0 uses an internal default.
+     */
+    uint32_t out_unreliable_capacity;
+
     /** Optional recvfrom override for tests. Signature matches net_udp_socket_recvfrom behavior. */
     int (*recvfrom_cb)(void *user,
                        net_udp_addr_t *out_from,

@@ -247,7 +247,10 @@ int main(int argc, char **argv) {
 
     fr_topic_channel_config_t tcfg;
     memset(&tcfg, 0, sizeof(tcfg));
-    tcfg.capacity = 4096u;
+        /* Integration harness: keep channels large to avoid drops when scaling
+             client count. This is not a hard product limit.
+         */
+        tcfg.capacity = 262144u;
 
     fr_topic_channel_t *inbound = fr_topic_channel_create(&tcfg);
     fr_topic_channel_t *player_events = fr_topic_channel_create(&tcfg);
@@ -272,6 +275,8 @@ int main(int argc, char **argv) {
     rt_cfg.jobs = &jobs;
     rt_cfg.socket = &sock;
     rt_cfg.inbound_topic = inbound;
+    rt_cfg.out_reliable_capacity = 8192u;
+    rt_cfg.out_unreliable_capacity = 8192u;
     rt_cfg.recvfrom_cb = recvfrom_counting;
     rt_cfg.sendto_cb = sendto_counting;
     rt_cfg.io_user = &io;

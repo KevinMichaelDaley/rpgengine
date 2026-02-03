@@ -11,6 +11,13 @@ static fr_topic_channel_t *make_topic_(uint32_t capacity) {
     return fr_topic_channel_create(&cfg);
 }
 
+static uint32_t out_topic_default_cap_(void) {
+    /* Default higher than legacy 128 to tolerate bursts.
+       Still bounded to avoid per-client memory blowups.
+     */
+    return 2048u;
+}
+
 fr_server_net_runtime_t *fr_server_net_runtime_create(const fr_server_net_runtime_config_t *cfg) {
     if (!cfg || cfg->max_clients == 0u || !cfg->inbound_topic) {
         return NULL;
@@ -60,8 +67,11 @@ fr_server_net_runtime_t *fr_server_net_runtime_create(const fr_server_net_runtim
         atomic_init(&rt->clients[i].inbox_ptr, (uintptr_t)0);
         atomic_init(&rt->clients[i].pending_used, false);
         rt->clients[i].pending_size = 0u;
-        rt->clients[i].out_reliable = make_topic_(128u);
-        rt->clients[i].out_unreliable = make_topic_(128u);
+        const uint32_t rel_cap = (rt->cfg.out_reliable_capacity == 0u) ? out_topic_default_cap_() : rt->cfg.out_reliable_capacity;
+        const uint32_t unrel_cap = (rt->cfg.out_unreliable_capacity == 0u) ? out_topic_default_cap_() : rt->cfg.out_unreliable_capacity;
+
+        rt->clients[i].out_reliable = make_topic_(rel_cap);
+        rt->clients[i].out_unreliable = make_topic_(unrel_cap);
         if (!rt->clients[i].out_reliable || !rt->clients[i].out_unreliable) {
             fr_server_net_runtime_destroy(rt);
             return NULL;

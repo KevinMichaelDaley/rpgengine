@@ -222,15 +222,20 @@ static int test_outbound_reliable_topic_sends_a_packet(void) {
     fr_server_net_runtime_t *rt = fr_server_net_runtime_create(&cfg);
     ASSERT_TRUE(rt != NULL);
 
-    /* Force-create client 0 by injecting a dummy packet from an address.
-       The runtime should allocate the client fiber + outbound topics.
-     */
+        /* Force-create client 0 by injecting a JOIN packet from an address.
+             The runtime allocates clients on first JOIN for a new transport endpoint.
+         */
     net_udp_addr_t client_addr;
     ASSERT_EQ_INT(0, net_udp_addr_ipv4(&client_addr, 10, 0, 0, 2, 40011));
-    io.in.from = client_addr;
-    io.in.used = 1;
-    io.in.packet[0] = 0; /* intentionally invalid; runtime may drop it */
-    io.in.size = 1;
+
+        net_rudp_peer_t client_peer;
+        net_rudp_send_slot_t slots[NET_RUDP_SEND_SLOTS_DEFAULT];
+        memset(slots, 0, sizeof(slots));
+        net_rudp_peer_init_with_storage(&client_peer, NET_RUDP_PROTOCOL_ID_P008, 50u, slots, NET_RUDP_SEND_SLOTS_DEFAULT);
+
+        io.in.from = client_addr;
+        io.in.used = 1;
+        ASSERT_EQ_INT(0, build_join_packet(&client_peer, 0x11112222u, io.in.packet, sizeof(io.in.packet), &io.in.size));
 
     (void)fr_server_net_runtime_pump(rt, now_ms());
     ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
@@ -266,6 +271,69 @@ static int test_outbound_reliable_topic_sends_a_packet(void) {
     return 0;
 }
 
+static int test_outbound_topic_capacity_is_configurable(void) {
+    fr_topic_channel_config_t tcfg = {.capacity = 64};
+    fr_topic_channel_t *inbox = fr_topic_channel_create(&tcfg);
+    ASSERT_TRUE(inbox != NULL);
+
+    struct test_net_io io;
+    memset(&io, 0, sizeof(io));
+
+    fr_server_net_runtime_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.max_clients = 1;
+    cfg.inbound_topic = inbox;
+    cfg.recvfrom_cb = test_recvfrom;
+    cfg.sendto_cb = test_sendto;
+    cfg.io_user = &io;
+
+    /* Configure small capacities so the test stays fast and deterministic. */
+    cfg.out_reliable_capacity = 8u;
+    cfg.out_unreliable_capacity = 9u;
+
+    fr_server_net_runtime_t *rt = fr_server_net_runtime_create(&cfg);
+    ASSERT_TRUE(rt != NULL);
+
+    /* Allocate client 0 by sending a JOIN packet from some address. */
+    net_udp_addr_t client_addr;
+    ASSERT_EQ_INT(0, net_udp_addr_ipv4(&client_addr, 10, 0, 0, 2, 40011));
+
+    net_rudp_peer_t client_peer;
+    net_rudp_send_slot_t slots[NET_RUDP_SEND_SLOTS_DEFAULT];
+    memset(slots, 0, sizeof(slots));
+    net_rudp_peer_init_with_storage(&client_peer, NET_RUDP_PROTOCOL_ID_P008, 50u, slots, NET_RUDP_SEND_SLOTS_DEFAULT);
+
+    io.in.from = client_addr;
+    io.in.used = 1;
+    ASSERT_EQ_INT(0, build_join_packet(&client_peer, 0xABCDEF01u, io.in.packet, sizeof(io.in.packet), &io.in.size));
+
+    ASSERT_TRUE(fr_server_net_runtime_pump(rt, now_ms()));
+    ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
+
+    fr_topic_channel_t *out_rel = NULL;
+    fr_topic_channel_t *out_unrel = NULL;
+    ASSERT_TRUE(fr_server_net_runtime_client_out_topics(rt, 0, &out_rel, &out_unrel));
+    ASSERT_TRUE(out_rel != NULL);
+    ASSERT_TRUE(out_unrel != NULL);
+
+    /* Push exactly capacity messages; last push should fail. */
+    uint8_t msg[3] = {0x01u, 0x02u, 0x03u};
+
+    for (uint32_t i = 0u; i < cfg.out_reliable_capacity; ++i) {
+        ASSERT_TRUE(fr_topic_channel_push(out_rel, msg, sizeof(msg)));
+    }
+    ASSERT_TRUE(!fr_topic_channel_push(out_rel, msg, sizeof(msg)));
+
+    for (uint32_t i = 0u; i < cfg.out_unreliable_capacity; ++i) {
+        ASSERT_TRUE(fr_topic_channel_push(out_unrel, msg, sizeof(msg)));
+    }
+    ASSERT_TRUE(!fr_topic_channel_push(out_unrel, msg, sizeof(msg)));
+
+    fr_server_net_runtime_destroy(rt);
+    fr_topic_channel_destroy(inbox);
+    return 0;
+}
+
 struct test_case {
     const char *name;
     int (*fn)(void);
@@ -274,6 +342,7 @@ struct test_case {
 static struct test_case TESTS[] = {
     {"inbound_join_is_published_to_global_topic", test_inbound_join_is_published_to_global_topic},
     {"outbound_reliable_topic_sends_a_packet", test_outbound_reliable_topic_sends_a_packet},
+    {"outbound_topic_capacity_is_configurable", test_outbound_topic_capacity_is_configurable},
 };
 
 int main(void) {
