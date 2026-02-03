@@ -50,8 +50,9 @@ if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]
     echo "ERROR: REMOTE not provided for sweep. Set REMOTE=user@host or pass as first arg." >&2
     exit 2
   fi
-  # Determine base remote dir and perform single build when requested
-  SWEEP_BASE_DIR="${REMOTE_DIR:-$HOME/bench}/p008_sweep_$(date +%Y%m%d_%H%M%S)"
+  # Determine base remote dir using remote HOME, then perform single build when requested
+  REMOTE_HOME=$(ssh "${REMOTE_SWEEP}" bash -lc 'echo "$HOME"')
+  SWEEP_BASE_DIR="${REMOTE_HOME}/bench/p008_sweep_$(date +%Y%m%d_%H%M%S)"
   ssh "${REMOTE_SWEEP}" "mkdir -p '${SWEEP_BASE_DIR}'"
   REMOTE_BIN_DIR_OVERRIDE=""
   if [[ "${REMOTE_BUILD:-1}" == "1" ]]; then
