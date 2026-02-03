@@ -48,6 +48,8 @@ fr_rudp_stream_t *fr_rudp_stream_create(const fr_rudp_stream_config_t *cfg) {
             fr_rudp_stream_destroy(s);
             return NULL;
         }
+        /* Client RX tests expect sequences starting at 1. */
+        s->reliable[i].next_receive_sequence = 1u;
     }
     return s;
 }
