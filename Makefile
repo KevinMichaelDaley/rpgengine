@@ -27,7 +27,8 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
-	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark
+	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark \
+	build/p008_server_compute_jobs_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -111,6 +112,9 @@ build/p008_net_repl_client: $(SRC) tests/p008_net_repl_client.c | build
 
 build/p008_net_multi_client_server_integration_tests: $(SRC) tests/p008_net_multi_client_server_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_net_multi_client_server_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p008_server_compute_jobs_tests: $(SRC) tests/p008_server_compute_jobs_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_compute_jobs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 # RED tests (may not compile until quantization module exists)
 build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build
