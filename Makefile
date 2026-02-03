@@ -7,7 +7,7 @@ MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
-NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/replication/*.c) $(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c)
+NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/replication/*.c) $(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c)
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
@@ -27,7 +27,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
-	build/p000_job_performance_tests build/p002_memory_apool_tests
+	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -97,6 +97,12 @@ build/p007_net_client_rx_tests: $(SRC) tests/p007_net_client_rx_tests.c | build
 build/p007_net_client_rx_udp_topic_tests: $(SRC) tests/p007_net_client_rx_udp_topic_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_client_rx_udp_topic_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p007_net_topic_dispatch_tests: $(SRC) tests/p007_net_topic_dispatch_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p007_net_topic_dispatch_benchmark: $(SRC) tests/p007_net_topic_dispatch_benchmark.c | build
+	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_benchmark.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 build/p008_net_repl_server: $(SRC) tests/p008_net_repl_server.c | build
 	$(CC) $(CFLAGS) tests/p008_net_repl_server.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
@@ -164,14 +170,15 @@ build:
 	@mkdir -p build
 
 
-test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests
+test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p007_net_client_rx_tests \
-	&& ./build/p007_net_client_rx_udp_topic_tests
+	&& ./build/p007_net_client_rx_udp_topic_tests \
+	&& ./build/p007_net_topic_dispatch_tests
 
 .PHONY: perf_job
 perf_job: build/p000_job_performance_tests

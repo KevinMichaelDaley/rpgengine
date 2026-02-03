@@ -45,6 +45,7 @@
 #include "ferrum/net/test_buffer.h"
 #include "ferrum/net/test_link.h"
 #include "ferrum/net/topic_channel.h"
+#include "ferrum/net/topic_dispatcher.h"
 #include "ferrum/net/client/runtime_rx.h"
 
 // Client network runtime RX
