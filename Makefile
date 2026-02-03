@@ -10,7 +10,9 @@ MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)
 ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
-NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/rudp/stream/*.c) $(wildcard src/net/quantization/*.c) $(wildcard src/net/replication/*.c) $(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c)
+NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/rudp/stream/*.c) $(wildcard src/net/quantization/*.c) \
+	$(wildcard src/net/replication/*.c) $(wildcard src/net/replication/*/*.c) \
+	$(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c)
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c) $(wildcard src/server/net/fiber/*.c) $(wildcard src/server/net/runtime/*.c) \
 	$(wildcard src/server/entity/*.c) $(wildcard src/server/entity/*/*.c) $(wildcard src/server/entity/*/*/*.c)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC)
@@ -37,6 +39,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p008_server_compute_jobs_tests build/p007_net_stream_api_tests build/p007_net_stream_channel_topic_tests \
 	build/p008_server_client_fiber_stream_tests build/p008_server_net_runtime_fiber_tests \
 	build/p008_server_entity_net_pump_tests \
+	build/p008_pose_interpolator_tests \
 	build/p000_job_queue_diagnostics_tests \
 	build/p000_ws_deque_tests
 
@@ -120,6 +123,9 @@ build/p007_net_client_rx_udp_topic_tests: $(SRC) tests/p007_net_client_rx_udp_to
 build/p007_net_topic_dispatch_tests: $(SRC) tests/p007_net_topic_dispatch_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p008_pose_interpolator_tests: $(SRC) tests/p008_pose_interpolator_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_pose_interpolator_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 build/p007_net_topic_dispatch_benchmark: $(SRC) tests/p007_net_topic_dispatch_benchmark.c | build
 	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_benchmark.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
@@ -155,6 +161,9 @@ build/p008_net_perf_server_tests: $(SRC) tests/p008_net_perf_server_tests.c | bu
 
 build/p008_net_perf_client_tests: $(SRC) tests/p008_net_perf_client_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_net_perf_client_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p008_renderer_client: $(SRC) tests/p008_renderer_client.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p008_renderer_client.c $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p008_server_compute_jobs_tests: $(SRC) tests/p008_server_compute_jobs_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_server_compute_jobs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -223,6 +232,7 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_rudp_fragmentation_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
+	&& ./build/p008_pose_interpolator_tests \
 	&& ./build/p000_job_queue_diagnostics_tests \
 	&& ./build/p000_ws_deque_tests \
 	&& ./build/p007_net_client_rx_tests \
@@ -292,7 +302,10 @@ p008_perf:
 	'
 
 p008_renderer_client:
-	@echo "P_008 renderer client not in this repo state yet (see bead rust-rpg-128)."
+	@$(MAKE) build/p008_renderer_client
+	@echo "Built: build/p008_renderer_client"
+	@echo "Run server:  ./build/p008_net_repl_server 40080 16 0 60 4"
+	@echo "Run client:  ./build/p008_renderer_client 127.0.0.1 40080 10000 --seed 123"
 
 clean:
 	$(RM) $(BIN)
