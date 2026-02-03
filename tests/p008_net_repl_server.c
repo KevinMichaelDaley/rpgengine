@@ -105,6 +105,10 @@ int main(int argc, char **argv) {
     net_udp_socket_t sock;
     if (net_udp_socket_open(&sock) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to open UDP socket\n");
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        free(rudp_storage);
         return 1;
     }
 
@@ -112,11 +116,19 @@ int main(int argc, char **argv) {
     if (net_udp_addr_ipv4(&bind_addr, 0u, 0u, 0u, 0u, (uint16_t)port_l) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to build bind address\n");
         net_udp_socket_close(&sock);
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        free(rudp_storage);
         return 1;
     }
     if (net_udp_socket_bind(&sock, &bind_addr) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to bind port %ld: %s\n", port_l, strerror(errno));
         net_udp_socket_close(&sock);
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        free(rudp_storage);
         return 1;
     }
     (void)net_udp_socket_set_nonblocking(&sock, 1);
@@ -126,12 +138,20 @@ int main(int argc, char **argv) {
     if (status != JOB_CREATE_OK) {
         fprintf(stderr, "Failed to create job system\n");
         net_udp_socket_close(&sock);
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        free(rudp_storage);
         return 1;
     }
     if (job_system_start(&jobs) != 0) {
         fprintf(stderr, "Failed to start job system\n");
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
+        free(client_storage);
+        free(entity_storage);
+        free(ctx_storage);
+        free(rudp_storage);
         return 1;
     }
 
