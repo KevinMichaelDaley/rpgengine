@@ -157,11 +157,63 @@ else
   fi
 fi
 
+# Select remote binary paths for this run.
+# - Sweep mode: binaries are already built in ${REMOTE_RUN_DIR}/build
+# - REMOTE_BUILD=1: binaries are built in ${REMOTE_RUN_DIR}/srcdir/build
+# - Upload mode: binaries were scp'd into ${REMOTE_RUN_DIR}
+REMOTE_SERVER_BIN="./p008_net_repl_server"
+REMOTE_CLIENT_BIN="./p008_net_repl_client"
+if [[ "${USE_SWEEP_BIN:-}" == "1" ]]; then
+  REMOTE_SERVER_BIN="./build/p008_net_repl_server"
+  REMOTE_CLIENT_BIN="./build/p008_net_repl_client"
+elif [[ "${REMOTE_BUILD}" == "1" ]]; then
+  REMOTE_SERVER_BIN="${REMOTE_RUN_DIR}/srcdir/build/p008_net_repl_server"
+  REMOTE_CLIENT_BIN="${REMOTE_RUN_DIR}/srcdir/build/p008_net_repl_client"
+fi
+
 # Start server and CPU monitors on remote
 echo "Starting server and CPU monitors on remote..." >&2
-ssh "${REMOTE}" "sh -c \"cd \\\"${REMOTE_RUN_DIR}\\\"; ulimit -n 65536 || true; nohup ./build/p008_net_repl_server \\\"${PORT}\\\" \\\"${CLIENTS}\\\" \\\"${DURATION_MS}\\\" \\\"${TICK_HZ}\\\" \\\"${WORKERS}\\\" > server.out 2>&1 & echo \\\"$!\\\" > server.pid; sleep 1; SERVER_PID=\\\$(cat server.pid 2>/dev/null || echo 0); if command -v mpstat >/dev/null 2>&1; then nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo \\\"$!\\\" > mpstat.pid; else echo \\\"WARN: mpstat not found; skipping per-CPU logs\\\" >> warn.log; fi; if command -v pidstat >/dev/null 2>&1 && [ \\\"$SERVER_PID\\\" != \\\"0\\\" ]; then nohup pidstat -u -p \\\"$SERVER_PID\\\" 1 > cpu.pidstat 2>&1 & echo \\\"$!\\\" > pidstat.pid; else echo \\\"WARN: pidstat not found; skipping per-process CPU logs\\\" >> warn.log; fi; i=0; while [ \\\"$i\\\" -lt 50 ]; do grep -q P008_REPL_SERVER_READY server.out && break; i=\\\$(expr \\\"$i\\\" + 1); sleep 0.1; done\""
-ssh "${REMOTE}" "sh -c \"cd \\\"${REMOTE_RUN_DIR}\\\"; : > warn.log; ulimit -n 65536 || true; nohup ./build/p008_net_repl_server \\\"${PORT}\\\" \\\"${CLIENTS}\\\" \\\"${DURATION_MS}\\\" \\\"${TICK_HZ}\\\" \\\"${WORKERS}\\\" > server.out 2>&1 & echo \\\"$!\\\" > server.pid; sleep 1; SERVER_PID=\\\$(cat server.pid 2>/dev/null || echo 0); if command -v mpstat >/dev/null 2>&1; then nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo \\\"$!\\\" > mpstat.pid; else echo \\\"WARN: mpstat not found; skipping per-CPU logs\\\" >> warn.log; fi; if command -v pidstat >/dev/null 2>&1 && [ \\\"$SERVER_PID\\\" != \\\"0\\\" ]; then nohup pidstat -u -p \\\"$SERVER_PID\\\" 1 > cpu.pidstat 2>&1 & echo \\\"$!\\\" > pidstat.pid; else echo \\\"WARN: pidstat not found; skipping per-process CPU logs\\\" >> warn.log; fi; i=0; while [ \$i -lt 50 ]; do grep -q P008_REPL_SERVER_READY server.out && break; i=\$(expr \$i + 1); sleep 0.1; done\""
+ssh "${REMOTE}" bash -s -- "${REMOTE_RUN_DIR}" "${REMOTE_SERVER_BIN}" "${PORT}" "${CLIENTS}" "${DURATION_MS}" "${TICK_HZ}" "${WORKERS}" <<'P008_REMOTE_START'
+REMOTE_RUN_DIR="$1"
+SERVER_BIN="$2"
+PORT="$3"
+CLIENTS="$4"
+DURATION_MS="$5"
+TICK_HZ="$6"
+WORKERS="$7"
 
+cd "$REMOTE_RUN_DIR" || exit 2
+
+: > warn.log
+ulimit -n 65536 || true
+
+nohup "$SERVER_BIN" "$PORT" "$CLIENTS" "$DURATION_MS" "$TICK_HZ" "$WORKERS" > server.out 2>&1 &
+echo "$!" > server.pid
+
+sleep 1
+SERVER_PID=$(cat server.pid 2>/dev/null || echo 0)
+
+if command -v mpstat >/dev/null 2>&1; then
+  nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 &
+  echo "$!" > mpstat.pid
+else
+  echo "WARN: mpstat not found; skipping per-CPU logs" >> warn.log
+fi
+
+if command -v pidstat >/dev/null 2>&1 && [ "$SERVER_PID" != "0" ]; then
+  nohup pidstat -u -p "$SERVER_PID" 1 > cpu.pidstat 2>&1 &
+  echo "$!" > pidstat.pid
+else
+  echo "WARN: pidstat not found; skipping per-process CPU logs" >> warn.log
+fi
+
+i=0
+while [ "$i" -lt 50 ]; do
+  grep -q P008_REPL_SERVER_READY server.out && break
+  sleep 0.1
+  i=$((i + 1))
+done
+P008_REMOTE_START
 if [[ "${CLIENTS_LOCAL}" == "1" ]]; then
   echo "Spawning ${CLIENTS} clients locally against ${SERVER_IPV4}:${PORT}..." >&2
   # Ensure local client binary exists
@@ -180,7 +232,26 @@ if [[ "${CLIENTS_LOCAL}" == "1" ]]; then
 else
   # Start clients on remote (loopback to server)
   echo "Spawning ${CLIENTS} clients on remote..." >&2
-  ssh "${REMOTE}" "sh -c \"cd \\\"${REMOTE_RUN_DIR}\\\"; : > clients.out; for i in \\\\$(seq 1 \\\"${CLIENTS}\\\"); do nohup ./build/p008_net_repl_client 127.0.0.1 \\\"${PORT}\\\" \\\"${CLIENT_DURATION}\\\" \\\"${EXPECTED_SPAWNS}\\\" \\\"${TICK_HZ}\\\" >> clients.out 2>&1 & done; wait || true\""
+  ssh "${REMOTE}" bash -s -- "${REMOTE_RUN_DIR}" "${REMOTE_CLIENT_BIN}" "${CLIENTS}" "${PORT}" "${CLIENT_DURATION}" "${EXPECTED_SPAWNS}" "${TICK_HZ}" <<'P008_REMOTE_CLIENTS'
+REMOTE_RUN_DIR="$1"
+CLIENT_BIN="$2"
+CLIENTS="$3"
+PORT="$4"
+CLIENT_DURATION="$5"
+EXPECTED_SPAWNS="$6"
+TICK_HZ="$7"
+
+cd "$REMOTE_RUN_DIR" || exit 2
+: > clients.out
+
+i=1
+while [ "$i" -le "$CLIENTS" ]; do
+  nohup "$CLIENT_BIN" 127.0.0.1 "$PORT" "$CLIENT_DURATION" "$EXPECTED_SPAWNS" "$TICK_HZ" >> clients.out 2>&1 &
+  i=$((i + 1))
+done
+
+wait || true
+P008_REMOTE_CLIENTS
 fi
 
 # Wait for server to exit (duration-based), then stop monitors
