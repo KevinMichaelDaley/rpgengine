@@ -31,7 +31,7 @@ WORKERS=${WORKERS:-4}
 
 START_SERVER=${START_SERVER:-0}
 
-ROOT_DIR=$(pwd)
+ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 
 # Sanity checks
 command -v rsync >/dev/null 2>&1 || { echo "ERROR: rsync not found" >&2; exit 2; }
@@ -49,30 +49,50 @@ rsync -az --delete \
   --exclude '.vscode/' \
   --exclude '*.o' \
   --exclude '*.a' \
-  ./ "${REMOTE}:${REMOTE_DIR}/"
+  "${ROOT_DIR}/" "${REMOTE}:${REMOTE_DIR}/"
 
 # Remote build steps
-echo "Building on remote via make p008_build..." >&2
-ssh "${REMOTE}" bash -lc "
+echo "Building on remote via make -B p008_build..." >&2
+ssh "${REMOTE}" env REMOTE_DIR="${REMOTE_DIR}" bash -s <<'P008_REMOTE_BUILD'
 set -euo pipefail
-cd '${REMOTE_DIR}'
-# Verify toolchain
-if ! command -v make >/dev/null 2>&1; then echo 'ERROR: make missing on remote' >&2; exit 2; fi
-# Build the p008 server/client binaries
-make p008_build
-"
+
+cd "${REMOTE_DIR}"
+
+if ! command -v make >/dev/null 2>&1; then
+  echo 'ERROR: make missing on remote' >&2
+  exit 2
+fi
+
+# Ensure we don't accidentally reuse build artifacts from another machine.
+rm -rf build
+
+make -B p008_build
+P008_REMOTE_BUILD
 
 # Optionally start server
 if [[ "${START_SERVER}" == "1" ]]; then
   echo "Starting server on remote: port=${PORT} clients=${MAX_CLIENTS} duration_ms=${DURATION_MS} tick_hz=${TICK_HZ} workers=${WORKERS}" >&2
-  ssh "${REMOTE}" bash -lc "
+  ssh "${REMOTE}" env REMOTE_DIR="${REMOTE_DIR}" PORT="${PORT}" MAX_CLIENTS="${MAX_CLIENTS}" DURATION_MS="${DURATION_MS}" TICK_HZ="${TICK_HZ}" WORKERS="${WORKERS}" bash -s <<'P008_REMOTE_START'
 set -euo pipefail
-cd '${REMOTE_DIR}'
+
+cd "${REMOTE_DIR}"
 ulimit -n 65536 || true
-nohup ./build/p008_net_perf_server_tests ${PORT} ${MAX_CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo \$! > server.pid
-sleep 1
-if grep -q 'P008_REPL_SERVER_READY' server.out; then echo 'Server ready'; else echo 'WARN: server readiness line not yet found'; fi
-"
+
+nohup ./build/p008_net_perf_server_tests "${PORT}" "${MAX_CLIENTS}" "${DURATION_MS}" "${TICK_HZ}" "${WORKERS}" > server.out 2>&1 &
+echo "$!" > server.pid
+
+i=0
+while [[ $i -lt 50 ]]; do
+  if grep -q 'P008_REPL_SERVER_READY' server.out; then
+    echo 'Server ready'
+    exit 0
+  fi
+  sleep 0.1
+  i=$((i + 1))
+done
+
+echo 'WARN: server readiness line not yet found'
+P008_REMOTE_START
   echo "Server started. To tail logs:" >&2
   echo "ssh ${REMOTE} 'cd ${REMOTE_DIR} && tail -f server.out'" >&2
 fi

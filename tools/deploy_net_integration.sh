@@ -236,14 +236,14 @@ sync_repo() {
 build_remote_headless() {
   echo "==> build headless binaries on remote"
   resolve_remote_dir
-  # Force a native rebuild on the remote (rsync may have copied local build/ artifacts).
-  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests build/p008_net_perf_server_tests build/p008_net_perf_client_tests && make -B p008_build"
+  # Force a native rebuild on the remote (arch mismatch; avoid stale artifacts).
+  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -rf build && make -B p008_build"
 }
 
 build_remote_p000() {
   echo "==> build p000 job system tests on remote"
   resolve_remote_dir
-  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p000_tests && make -B build/p000_tests"
+  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -rf build && make -B build/p000_tests"
 }
 
 build_local_headless() {
