@@ -6,92 +6,29 @@
 #include "ferrum/net/client/runtime_rx.h"
 #include "internal.h"
 
-static bool enqueue_msg(fr_channel_state *ch, const uint8_t *data, size_t len) {
-    struct fr_msg_node *n = (struct fr_msg_node *)malloc(sizeof(struct fr_msg_node));
-    if (!n) return false;
-    n->data = (uint8_t *)malloc(len);
-    if (!n->data) { free(n); return false; }
-    memcpy(n->data, data, len);
-    n->len = len;
-    n->next = NULL;
-    if (!ch->head) ch->head = n; else ch->tail->next = n;
-    ch->tail = n;
-    atomic_fetch_add(&ch->pending, 1u);
-    return true;
-}
+// Legacy enqueue removed; stream handles reassembly and topic pumping.
 
 bool fr_client_rx_inject(fr_client_rx_t *rx, const uint8_t *data, size_t len) {
-    if (!rx || !data || len < 10) return false;
+    if (!rx || !rx->stream || !data || len < 10) return false;
     // Parse test frame: [ch:u32][seq:u32][len:u16][payload]
-    uint32_t ch_id = 0, seq = 0; uint16_t plen = 0;
+    uint32_t ch_id = 0, seq32 = 0; uint16_t plen = 0;
     memcpy(&ch_id, data + 0, sizeof(uint32_t));
-    memcpy(&seq, data + 4, sizeof(uint32_t));
+    memcpy(&seq32, data + 4, sizeof(uint32_t));
     memcpy(&plen, data + 8, sizeof(uint16_t));
     if (10u + (size_t)plen != len) return false;
     if (ch_id == 0 || ch_id > rx->max_channels) return false;
-    fr_channel_state *ch = &rx->channels[ch_id - 1];
-    unsigned expected = atomic_load(&ch->seq_next);
-    if (seq < expected) {
-        // duplicate or old; drop
-        return true;
-    }
-    if (seq == expected) {
-        // enqueue and advance
-        // Capacity check (simple): allow growth; tests won't exceed
-        if (!enqueue_msg(ch, data + 10, (size_t)plen)) return false;
-        atomic_fetch_add(&ch->seq_next, 1u);
-        // Push to topic channel if configured
-        if (rx->topics && ch_id <= rx->num_topics && rx->topics[ch_id - 1]) {
-            (void)fr_topic_channel_push(rx->topics[ch_id - 1], data + 10, (size_t)plen);
-        }
-        // Release any contiguous out-of-order buffered messages
-        unsigned next = atomic_load(&ch->seq_next);
-        bool progressed = true;
-        while (progressed) {
-            progressed = false;
-            for (int i = 0; i < 8; ++i) {
-                if (ch->ooo_msgs[i] && ch->ooo_seq[i] == next) {
-                    fr_msg_node *n = ch->ooo_msgs[i];
-                    ch->ooo_msgs[i] = NULL; ch->ooo_seq[i] = 0;
-                    // Append to queue
-                    n->next = NULL;
-                    if (!ch->head) ch->head = n; else ch->tail->next = n;
-                    ch->tail = n;
-                    atomic_fetch_add(&ch->pending, 1u);
-                    // Also push to topic channel
-                    if (rx->topics && ch_id <= rx->num_topics && rx->topics[ch_id - 1]) {
-                        (void)fr_topic_channel_push(rx->topics[ch_id - 1], n->data, n->len);
-                    }
-                    next++;
-                    atomic_store(&ch->seq_next, next);
-                    progressed = true;
-                }
-            }
-        }
-        return true;
-    }
-    // out-of-order: buffer message if not already stored
-    for (int i = 0; i < 8; ++i) {
-        if (ch->ooo_msgs[i] && ch->ooo_seq[i] == seq) {
-            // duplicate
-            return true;
-        }
-    }
-    for (int i = 0; i < 8; ++i) {
-        if (!ch->ooo_msgs[i]) {
-            // store copy
-            fr_msg_node *n = (fr_msg_node *)malloc(sizeof(fr_msg_node));
-            if (!n) return false;
-            n->data = (uint8_t *)malloc(plen);
-            if (!n->data) { free(n); return false; }
-            memcpy(n->data, data + 10, plen);
-            n->len = (size_t)plen;
-            n->next = NULL;
-            ch->ooo_msgs[i] = n;
-            ch->ooo_seq[i] = seq;
-            return true;
-        }
-    }
-    // no space; drop
-    return true;
+    uint16_t seq = (uint16_t)(seq32 & 0xFFFFu);
+    uint16_t chan = (uint16_t)(ch_id - 1u);
+    // Build stream frame: [seq:u16 LE][chan:u16 LE][payload]
+    size_t frame_len = 4u + (size_t)plen;
+    uint8_t *frame = (uint8_t *)malloc(frame_len);
+    if (!frame) return false;
+    frame[0] = (uint8_t)(seq & 0xFFu);
+    frame[1] = (uint8_t)((seq >> 8) & 0xFFu);
+    frame[2] = (uint8_t)(chan & 0xFFu);
+    frame[3] = (uint8_t)((chan >> 8) & 0xFFu);
+    memcpy(frame + 4u, data + 10u, (size_t)plen);
+    bool ok = fr_rudp_stream_push_frame(rx->stream, frame, frame_len);
+    free(frame);
+    return ok;
 }

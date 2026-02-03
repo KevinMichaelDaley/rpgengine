@@ -7,12 +7,7 @@
 #include "ferrum/net/client/runtime_rx.h"
 #include "internal.h"
 
-static void channel_init(fr_channel_state *ch) {
-    atomic_init(&ch->seq_next, 1u);
-    atomic_init(&ch->pending, 0u);
-    ch->head = ch->tail = NULL;
-    for (int i = 0; i < 8; ++i) { ch->ooo_msgs[i] = NULL; ch->ooo_seq[i] = 0; }
-}
+// Using fr_rudp_stream_t for reassembly; no per-channel init required.
 
 fr_client_rx_t *fr_client_rx_create(const fr_client_rx_config_t *cfg) {
     fr_client_rx_t *rx = (fr_client_rx_t *)malloc(sizeof(fr_client_rx_t));
@@ -32,9 +27,15 @@ fr_client_rx_t *fr_client_rx_create(const fr_client_rx_config_t *cfg) {
         rx->sock.fd = -1;
         rx->sock.initialized = 0;
     }
-    rx->channels = (fr_channel_state *)calloc(rx->max_channels, sizeof(fr_channel_state));
-    if (!rx->channels) { free(rx); return NULL; }
-    for (uint32_t i = 0; i < rx->max_channels; ++i) channel_init(&rx->channels[i]);
+    // Create reliable UDP stream with topics configured for pumping
+    fr_rudp_stream_config_t scfg = {0};
+    scfg.reliable_channels = rx->max_channels;
+    scfg.reliable_slot_count = rx->max_pending;
+    scfg.max_payload_size = 1500u;
+    scfg.topics = rx->topics;
+    scfg.num_topics = rx->num_topics;
+    rx->stream = fr_rudp_stream_create(&scfg);
+    if (!rx->stream) { free(rx); return NULL; }
     atomic_init(&rx->running, false);
     return rx;
 }
@@ -55,9 +56,9 @@ void fr_client_rx_destroy(fr_client_rx_t *rx) {
     if (!rx) return;
     // Ensure stopped
     (void)fr_client_rx_stop(rx);
-    if (rx->channels) {
-        for (uint32_t i = 0; i < rx->max_channels; ++i) channel_clear(&rx->channels[i]);
-        free(rx->channels);
+    if (rx->stream) {
+        fr_rudp_stream_destroy(rx->stream);
+        rx->stream = NULL;
     }
     if (rx->sock_initialized) {
         net_udp_socket_close(&rx->sock);
