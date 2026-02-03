@@ -1,1 +1,8 @@
 build/
+
+# Benchmark and runtime logs
+bench-logs/
+*.log
+*.out
+*.mpstat
+*.pidstat
