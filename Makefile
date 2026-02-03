@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -g -O0 -fsanitize=address -fno-omit-frame-pointer
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -g -O0
 
 LDFLAGS ?= -lm
 JOB_SRC := $(wildcard src/job/*.c)
