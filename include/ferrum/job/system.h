@@ -28,6 +28,22 @@ struct job_system {
     mtx_t queue_lock;
     cnd_t queue_cond;
 
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    /* Queue contention diagnostics (only when FR_JOB_QUEUE_DIAGNOSTICS is defined). */
+    atomic_uint_least64_t qdiag_enqueue_calls;
+    atomic_uint_least64_t qdiag_enqueue_scanned_slots;
+    atomic_uint_least64_t qdiag_enqueue_claim_fail;
+    atomic_uint_least64_t qdiag_enqueue_success;
+
+    atomic_uint_least64_t qdiag_pop_calls;
+    atomic_uint_least64_t qdiag_pop_scanned_slots;
+    atomic_uint_least64_t qdiag_pop_ready_seen;
+    atomic_uint_least64_t qdiag_pop_claim_fail;
+    atomic_uint_least64_t qdiag_pop_success;
+
+    atomic_uint_least64_t qdiag_cond_waits;
+#endif
+
     thrd_t *workers;
     atomic_uint_least64_t next_job_id;
     atomic_uint_least64_t jobs_started;
@@ -55,6 +71,26 @@ typedef uint64_t job_id_t;
 
 /** Invalid job identifier sentinel. */
 #define JOB_ID_INVALID ((job_id_t)0)
+
+/**
+ * @brief Snapshot of job queue contention diagnostics.
+ *
+ * All fields are zero when diagnostics are not compiled in.
+ */
+typedef struct job_queue_diag_snapshot {
+    uint64_t enqueue_calls;
+    uint64_t enqueue_scanned_slots;
+    uint64_t enqueue_claim_fail;
+    uint64_t enqueue_success;
+
+    uint64_t pop_calls;
+    uint64_t pop_scanned_slots;
+    uint64_t pop_ready_seen;
+    uint64_t pop_claim_fail;
+    uint64_t pop_success;
+
+    uint64_t cond_waits;
+} job_queue_diag_snapshot_t;
 
 /**
  * @brief Create a job system instance.
@@ -210,6 +246,30 @@ uint32_t job_current_worker_node(void);
  * @return 0 on success, -1 on invalid input.
  */
 int job_system_enable_numa_auto(job_system_t *sys);
+
+/**
+ * @brief Returns 1 when queue contention diagnostics are compiled in.
+ *
+ * Controlled by defining `FR_JOB_QUEUE_DIAGNOSTICS` at compile time.
+ */
+int job_system_queue_diag_supported(void);
+
+/**
+ * @brief Snapshot job queue diagnostics into @p out.
+ *
+ * When diagnostics are not supported, this fills @p out with zeros.
+ * @param sys Job system pointer (may be NULL).
+ * @param out Output snapshot (must not be NULL).
+ */
+void job_system_queue_diag_snapshot(const job_system_t *sys, job_queue_diag_snapshot_t *out);
+
+/**
+ * @brief Reset all queue diagnostics counters to zero.
+ *
+ * No-op when diagnostics are not supported.
+ * @param sys Job system pointer (may be NULL).
+ */
+void job_system_queue_diag_reset(job_system_t *sys);
 
 #ifdef __cplusplus
 } /* extern "C" */

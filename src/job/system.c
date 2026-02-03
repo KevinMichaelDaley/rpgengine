@@ -68,6 +68,21 @@ job_system_create_status_t job_system_create(job_system_t* sys,
     atomic_init(&sys->queue_insert_cursor, 0);
     atomic_init(&sys->queue_pop_cursor, 0);
 
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    atomic_init(&sys->qdiag_enqueue_calls, 0);
+    atomic_init(&sys->qdiag_enqueue_scanned_slots, 0);
+    atomic_init(&sys->qdiag_enqueue_claim_fail, 0);
+    atomic_init(&sys->qdiag_enqueue_success, 0);
+
+    atomic_init(&sys->qdiag_pop_calls, 0);
+    atomic_init(&sys->qdiag_pop_scanned_slots, 0);
+    atomic_init(&sys->qdiag_pop_ready_seen, 0);
+    atomic_init(&sys->qdiag_pop_claim_fail, 0);
+    atomic_init(&sys->qdiag_pop_success, 0);
+
+    atomic_init(&sys->qdiag_cond_waits, 0);
+#endif
+
     if (mtx_init(&sys->queue_lock, mtx_plain) != thrd_success) {
         return JOB_CREATE_ERR_MTX_INIT;
     }
@@ -210,20 +225,46 @@ static void cleanup_system(job_system_t *sys) {
 }
 static int pop_next_sharded(job_system_t *sys, struct job_entry *out_entry, uint32_t preferred) {
     /* Prefer local shard by scanning READY slots near a per-worker cursor; fall back to steals. */
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    atomic_fetch_add_explicit(&sys->qdiag_pop_calls, 1, memory_order_relaxed);
+    uint64_t diag_scanned = 0;
+    uint64_t diag_ready_seen = 0;
+    uint64_t diag_claim_fail = 0;
+#endif
     uint32_t rot = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed);
     uint32_t start = (preferred + rot) % sys->queue_capacity;
     for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
         uint32_t idx = (start + i) % sys->queue_capacity;
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+        diag_scanned++;
+#endif
         int state = atomic_load_explicit(&sys->queue_slot_state[idx], memory_order_acquire);
         if (state == 1) {
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+            diag_ready_seen++;
+#endif
             int expected = 1;
             if (atomic_compare_exchange_strong(&sys->queue_slot_state[idx], &expected, 2)) {
                 *out_entry = sys->queue[idx];
                 atomic_store_explicit(&sys->queue_slot_state[idx], 0, memory_order_release);
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+                atomic_fetch_add_explicit(&sys->qdiag_pop_scanned_slots, diag_scanned, memory_order_relaxed);
+                atomic_fetch_add_explicit(&sys->qdiag_pop_ready_seen, diag_ready_seen, memory_order_relaxed);
+                atomic_fetch_add_explicit(&sys->qdiag_pop_claim_fail, diag_claim_fail, memory_order_relaxed);
+                atomic_fetch_add_explicit(&sys->qdiag_pop_success, 1, memory_order_relaxed);
+#endif
                 return 0;
             }
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+            diag_claim_fail++;
+#endif
         }
     }
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    atomic_fetch_add_explicit(&sys->qdiag_pop_scanned_slots, diag_scanned, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->qdiag_pop_ready_seen, diag_ready_seen, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->qdiag_pop_claim_fail, diag_claim_fail, memory_order_relaxed);
+#endif
     return -1;
 }
 
@@ -280,6 +321,9 @@ static int worker_main(void *arg) {
                 if (atomic_load(&sys->shutting_down) || any_ready) {
                     break;
                 }
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+                atomic_fetch_add_explicit(&sys->qdiag_cond_waits, 1, memory_order_relaxed);
+#endif
                 cnd_wait(&sys->queue_cond, &sys->queue_lock);
             }
             mtx_unlock(&sys->queue_lock);
@@ -339,8 +383,17 @@ job_id_t job_dispatch_to(job_system_t *sys,
     atomic_fetch_add_explicit(&sys->jobs_started, 1, memory_order_release);
     /* Insert into preferred region first; fall back to global scan. */
     uint32_t start = (preferred_worker == UINT32_MAX) ? atomic_load(&sys->queue_insert_cursor) : preferred_worker % sys->queue_capacity;
+
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    atomic_fetch_add_explicit(&sys->qdiag_enqueue_calls, 1, memory_order_relaxed);
+    uint64_t diag_scanned = 0;
+    uint64_t diag_claim_fail = 0;
+#endif
     for (uint32_t i = 0; i < sys->queue_capacity; ++i) {
         uint32_t idx = (start + i) % sys->queue_capacity;
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+        diag_scanned++;
+#endif
         int expected = 0;
         if (atomic_compare_exchange_strong(&sys->queue_slot_state[idx], &expected, 2)) {
             sys->queue[idx].fiber = fiber;
@@ -349,9 +402,24 @@ job_id_t job_dispatch_to(job_system_t *sys,
             atomic_store_explicit(&sys->queue_slot_state[idx], 1, memory_order_release);
             cnd_broadcast(&sys->queue_cond);
             job_instrument_event("enqueue", fiber->id, id, g_worker_id, __FILE__, __LINE__);
+
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+            atomic_fetch_add_explicit(&sys->qdiag_enqueue_scanned_slots, diag_scanned, memory_order_relaxed);
+            atomic_fetch_add_explicit(&sys->qdiag_enqueue_claim_fail, diag_claim_fail, memory_order_relaxed);
+            atomic_fetch_add_explicit(&sys->qdiag_enqueue_success, 1, memory_order_relaxed);
+#endif
             return id;
         }
+
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+        diag_claim_fail++;
+#endif
     }
+
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    atomic_fetch_add_explicit(&sys->qdiag_enqueue_scanned_slots, diag_scanned, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->qdiag_enqueue_claim_fail, diag_claim_fail, memory_order_relaxed);
+#endif
     job_fiber_destroy(fiber);
     if (counter) {
         job_counter_dec(counter);

@@ -175,6 +175,26 @@ static void run_once(uint32_t worker_count) {
            worker_count, wall_ms, cpu_ms, idle_ms, util,
            (unsigned long long)started, (unsigned long long)completed, throughput);
 
+    if (job_system_queue_diag_supported()) {
+        job_queue_diag_snapshot_t qd;
+        job_system_queue_diag_snapshot(sys, &qd);
+
+        double enq_scan_per = (qd.enqueue_calls > 0) ? ((double)qd.enqueue_scanned_slots / (double)qd.enqueue_calls) : 0.0;
+        double pop_scan_per = (qd.pop_calls > 0) ? ((double)qd.pop_scanned_slots / (double)qd.pop_calls) : 0.0;
+
+        printf("  qdiag enq_calls=%llu enq_succ=%llu enq_scan/call=%.2f enq_claim_fail=%llu pop_calls=%llu pop_succ=%llu pop_scan/call=%.2f pop_ready_seen=%llu pop_claim_fail=%llu cond_waits=%llu\n",
+               (unsigned long long)qd.enqueue_calls,
+               (unsigned long long)qd.enqueue_success,
+               enq_scan_per,
+               (unsigned long long)qd.enqueue_claim_fail,
+               (unsigned long long)qd.pop_calls,
+               (unsigned long long)qd.pop_success,
+               pop_scan_per,
+               (unsigned long long)qd.pop_ready_seen,
+               (unsigned long long)qd.pop_claim_fail,
+               (unsigned long long)qd.cond_waits);
+    }
+
     job_system_shutdown(sys);
     /* Reduce per-worker sinks to a single value to prevent optimization. */
     volatile float sink_total = 0.0f;

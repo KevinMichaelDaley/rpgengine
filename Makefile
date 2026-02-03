@@ -32,7 +32,8 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark \
 	build/p008_server_compute_jobs_tests build/p007_net_stream_api_tests build/p007_net_stream_channel_topic_tests \
 	build/p008_server_client_fiber_stream_tests build/p008_server_net_runtime_fiber_tests \
-	build/p008_server_entity_net_pump_tests
+	build/p008_server_entity_net_pump_tests \
+	build/p000_job_queue_diagnostics_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -68,6 +69,9 @@ build/p003_tests: $(SRC) tests/p003_ecs_tests.c | build
 
 build/p000_job_queue_sharding_tests: $(SRC) tests/p000_job_queue_sharding_tests.c | build
 	$(CC) $(CFLAGS) tests/p000_job_queue_sharding_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p000_job_queue_diagnostics_tests: $(SRC) tests/p000_job_queue_diagnostics_tests.c | build
+	$(CC) $(CFLAGS) tests/p000_job_queue_diagnostics_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_tests: $(SRC) tests/p007_net_test_utils_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_test_utils_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -199,12 +203,13 @@ build:
 	@mkdir -p build
 
 
-test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
+test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_rudp_fragmentation_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
+	&& ./build/p000_job_queue_diagnostics_tests \
 	&& ./build/p007_net_client_rx_tests \
 	&& ./build/p007_net_client_rx_udp_topic_tests \
 	&& ./build/p007_net_topic_dispatch_tests
