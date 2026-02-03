@@ -132,35 +132,70 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
         return -1;
     }
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    typedef struct gl_attempt {
+        int major;
+        int minor;
+        int profile_mask;
+        int flags;
+        const char *label;
+    } gl_attempt_t;
 
-    ctx->window = SDL_CreateWindow(title,
-                                   SDL_WINDOWPOS_UNDEFINED,
-                                   SDL_WINDOWPOS_UNDEFINED,
-                                   w,
-                                   h,
-                                   SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
-    if (ctx->window == NULL) {
-        fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
-        SDL_Quit();
-        return -1;
+    const gl_attempt_t attempts[] = {
+        {3, 3, SDL_GL_CONTEXT_PROFILE_CORE, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG, "GL 3.3 core (fwd)"},
+        {3, 3, SDL_GL_CONTEXT_PROFILE_CORE, 0, "GL 3.3 core"},
+        {3, 3, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY, 0, "GL 3.3 compat"},
+        {3, 0, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY, 0, "GL 3.0 compat"},
+        {2, 1, 0, 0, "GL 2.1"},
+    };
+
+    int created = 0;
+    for (size_t i = 0u; i < (sizeof(attempts) / sizeof(attempts[0])); ++i) {
+        SDL_GL_ResetAttributes();
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, attempts[i].major);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, attempts[i].minor);
+        if (attempts[i].profile_mask != 0) {
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, attempts[i].profile_mask);
+        }
+        if (attempts[i].flags != 0) {
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, attempts[i].flags);
+        }
+        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+        SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+
+        ctx->window = SDL_CreateWindow(title,
+                                       SDL_WINDOWPOS_UNDEFINED,
+                                       SDL_WINDOWPOS_UNDEFINED,
+                                       w,
+                                       h,
+                                       SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+        if (ctx->window == NULL) {
+            fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+            SDL_Quit();
+            return -1;
+        }
+
+        ctx->gl = SDL_GL_CreateContext(ctx->window);
+        if (ctx->gl == NULL) {
+            fprintf(stderr, "SDL_GL_CreateContext failed (%s): %s\n", attempts[i].label, SDL_GetError());
+            SDL_DestroyWindow(ctx->window);
+            ctx->window = NULL;
+            continue;
+        }
+        if (SDL_GL_MakeCurrent(ctx->window, ctx->gl) != 0) {
+            fprintf(stderr, "SDL_GL_MakeCurrent failed (%s): %s\n", attempts[i].label, SDL_GetError());
+            SDL_GL_DeleteContext(ctx->gl);
+            SDL_DestroyWindow(ctx->window);
+            ctx->gl = NULL;
+            ctx->window = NULL;
+            continue;
+        }
+
+        created = 1;
+        break;
     }
 
-    ctx->gl = SDL_GL_CreateContext(ctx->window);
-    if (ctx->gl == NULL) {
-        fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
-        SDL_DestroyWindow(ctx->window);
-        SDL_Quit();
-        return -1;
-    }
-    if (SDL_GL_MakeCurrent(ctx->window, ctx->gl) != 0) {
-        fprintf(stderr, "SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
-        SDL_GL_DeleteContext(ctx->gl);
-        SDL_DestroyWindow(ctx->window);
+    if (!created) {
+        fprintf(stderr, "Failed to create any OpenGL context\n");
         SDL_Quit();
         return -1;
     }
@@ -179,21 +214,60 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
     ctx->loader.get_proc_address = sdl_get_proc_address_;
     ctx->loader.user_data = NULL;
 
-    const char *vs_src =
-        "#version 330 core\n"
-        "layout(location=0) in vec3 in_pos;\n"
-        "uniform mat4 u_mvp;\n"
-        "void main() {\n"
-        "    gl_Position = u_mvp * vec4(in_pos, 1.0);\n"
-        "}\n";
+    const char *glsl_ver = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION);
+    int glsl_major = 0;
+    int glsl_minor = 0;
+    if (glsl_ver != NULL) {
+        (void)sscanf(glsl_ver, "%d.%d", &glsl_major, &glsl_minor);
+    }
 
-    const char *fs_src =
-        "#version 330 core\n"
-        "uniform vec3 u_color;\n"
-        "out vec4 out_color;\n"
-        "void main() {\n"
-        "    out_color = vec4(u_color, 1.0);\n"
-        "}\n";
+    const char *vs_src = NULL;
+    const char *fs_src = NULL;
+    if (glsl_major >= 3) {
+        vs_src =
+            "#version 330 core\n"
+            "in vec3 in_pos;\n"
+            "uniform mat4 u_mvp;\n"
+            "void main() {\n"
+            "    gl_Position = u_mvp * vec4(in_pos, 1.0);\n"
+            "}\n";
+        fs_src =
+            "#version 330 core\n"
+            "uniform vec3 u_color;\n"
+            "out vec4 out_color;\n"
+            "void main() {\n"
+            "    out_color = vec4(u_color, 1.0);\n"
+            "}\n";
+    } else if (glsl_major == 1 && glsl_minor >= 30) {
+        vs_src =
+            "#version 130\n"
+            "in vec3 in_pos;\n"
+            "uniform mat4 u_mvp;\n"
+            "void main() {\n"
+            "    gl_Position = u_mvp * vec4(in_pos, 1.0);\n"
+            "}\n";
+        fs_src =
+            "#version 130\n"
+            "uniform vec3 u_color;\n"
+            "out vec4 out_color;\n"
+            "void main() {\n"
+            "    out_color = vec4(u_color, 1.0);\n"
+            "}\n";
+    } else {
+        vs_src =
+            "#version 120\n"
+            "attribute vec3 in_pos;\n"
+            "uniform mat4 u_mvp;\n"
+            "void main() {\n"
+            "    gl_Position = u_mvp * vec4(in_pos, 1.0);\n"
+            "}\n";
+        fs_src =
+            "#version 120\n"
+            "uniform vec3 u_color;\n"
+            "void main() {\n"
+            "    gl_FragColor = vec4(u_color, 1.0);\n"
+            "}\n";
+    }
 
     char log_buffer[1024] = {0};
     shader_program_status_t sp = shader_program_create(&ctx->program, &ctx->loader, vs_src, fs_src, log_buffer,
@@ -266,8 +340,20 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
         return -1;
     }
 
+    const GLint pos_loc = glGetAttribLocation((GLuint)shader_program_handle(&ctx->program), "in_pos");
+    if (pos_loc < 0) {
+        fprintf(stderr, "glGetAttribLocation failed for in_pos\n");
+        vao_destroy(&ctx->vao);
+        vbo_destroy(&ctx->vbo);
+        shader_program_destroy(&ctx->program);
+        SDL_GL_DeleteContext(ctx->gl);
+        SDL_DestroyWindow(ctx->window);
+        SDL_Quit();
+        return -1;
+    }
+
     vao_attribute_t attrs[1];
-    attrs[0] = (vao_attribute_t){0u, 3, GL_FLOAT, 0u, 0u, 0u};
+    attrs[0] = (vao_attribute_t){(uint32_t)pos_loc, 3, GL_FLOAT, 0u, 0u, 0u};
     if (vao_bind_attributes(&ctx->vao, &ctx->vbo, attrs, 1u, 3u * sizeof(float)) != VAO_OK) {
         fprintf(stderr, "vao_bind_attributes failed\n");
         vao_destroy(&ctx->vao);
