@@ -28,7 +28,8 @@ bool fr_client_rx_inject(fr_client_rx_t *rx, const uint8_t *data, size_t len) {
     frame[2] = (uint8_t)(chan & 0xFFu);
     frame[3] = (uint8_t)((chan >> 8) & 0xFFu);
     memcpy(frame + 4u, data + 10u, (size_t)plen);
-    bool ok = fr_rudp_stream_push_frame(rx->stream, frame, frame_len);
+    (void)fr_rudp_stream_push_frame(rx->stream, frame, frame_len);
     free(frame);
-    return ok;
+    // Treat duplicates/out-of-window frames as accepted no-ops
+    return true;
 }
