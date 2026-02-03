@@ -52,10 +52,10 @@ if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]
   fi
   # Build once into a fixed remote path under $HOME to avoid re-rsync per run
   SWEEP_BUILD_REL="bench/p008_sweep_build"
-  ssh "${REMOTE_SWEEP}" bash -lc 'mkdir -p "$HOME/'"${SWEEP_BUILD_REL}"'/srcdir"'
+  ssh "${REMOTE_SWEEP}" "bash -lc 'mkdir -p \"$HOME/${SWEEP_BUILD_REL}/srcdir\"'"
   REMOTE_BIN_DIR_OVERRIDE=""
   if [[ "${REMOTE_BUILD:-1}" == "1" ]]; then
-    echo "Sweep: rsyncing source and building once on remote at ${SWEEP_BASE_DIR}..." >&2
+    echo "Sweep: rsyncing source and building once on remote at ~/${SWEEP_BUILD_REL}/srcdir..." >&2
     rsync -az --delete \
       --exclude 'build/' \
       --exclude '.git/' \
