@@ -32,6 +32,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_rudp_fragmentation_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
+	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
 	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark \
 	build/p008_server_compute_jobs_tests build/p007_net_stream_api_tests build/p007_net_stream_channel_topic_tests \
 	build/p008_server_client_fiber_stream_tests build/p008_server_net_runtime_fiber_tests \
@@ -149,6 +150,12 @@ build/p008_net_repl_client: $(SRC) tests/p008_net_repl_client.c | build
 build/p008_net_multi_client_server_integration_tests: $(SRC) tests/p008_net_multi_client_server_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_net_multi_client_server_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p008_net_perf_server_tests: $(SRC) tests/p008_net_perf_server_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_perf_server_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p008_net_perf_client_tests: $(SRC) tests/p008_net_perf_client_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_perf_client_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 build/p008_server_compute_jobs_tests: $(SRC) tests/p008_server_compute_jobs_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_server_compute_jobs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
@@ -244,7 +251,7 @@ test_red_p008: build/p008_net_replication_protocol_tests
 test_p008: build/p008_net_multi_client_server_integration_tests build/p008_net_repl_server build/p008_net_repl_client
 	./build/p008_net_multi_client_server_integration_tests
 
-p008_build: build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests
+p008_build: build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests build/p008_net_perf_server_tests build/p008_net_perf_client_tests
 
 p008_test: test_p008
 
@@ -252,12 +259,37 @@ p008_help:
 	@echo "P_008 targets:";
 	@echo "  make p008_build   # build headless p008 binaries";
 	@echo "  make test_p008    # run multi-process integration test";
-	@echo "  make p008_perf    # perf harness entrypoint (when implemented)";
+	@echo "  make p008_perf    # perf harness entrypoint";
 	@echo "  make p008_renderer_client  # renderer client entrypoint (when implemented)";
 	@echo "See: tests/p008_net_integration_README.md"
 
 p008_perf:
-	@echo "P_008 perf harness not in this repo state yet (see bead rust-rpg-pi3)."
+	@bash -euo pipefail -c ' \
+		port=40080; \
+		clients=8; \
+		duration_ms=2000; \
+		tick_hz=60; \
+		workers=4; \
+		server_duration_ms=$$((duration_ms + 500)); \
+		rm -f build/p008_perf_server.log; \
+		./build/p008_net_perf_server_tests "$$port" "$$clients" "$$server_duration_ms" "$$tick_hz" "$$workers" > build/p008_perf_server.log 2>&1 & \
+		srv_pid=$$!; \
+		i=0; \
+		while ! grep -q "P008_REPL_SERVER_READY" build/p008_perf_server.log; do \
+			i=$$((i+1)); \
+			if [ "$$i" -gt 200 ]; then \
+				echo "Server did not become ready"; \
+				kill "$$srv_pid" >/dev/null 2>&1 || true; \
+				cat build/p008_perf_server.log || true; \
+				exit 1; \
+			fi; \
+			sleep 0.01; \
+		done; \
+		./build/p008_net_perf_client_tests 127.0.0.1 "$$port" "$$clients" "$$duration_ms" "$$tick_hz"; \
+		kill "$$srv_pid" >/dev/null 2>&1 || true; \
+		wait "$$srv_pid" >/dev/null 2>&1 || true; \
+		grep -E "P008_SERVER_STATS|p008 stats:" build/p008_perf_server.log || true \
+	'
 
 p008_renderer_client:
 	@echo "P_008 renderer client not in this repo state yet (see bead rust-rpg-128)."

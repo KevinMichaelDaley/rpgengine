@@ -29,6 +29,12 @@ static uint64_t now_ms(void) {
     return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
 }
 
+static uint64_t now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
 static void sleep_ms(uint32_t ms) {
     struct timespec ts;
     ts.tv_sec = (time_t)(ms / 1000u);
@@ -347,13 +353,49 @@ int main(int argc, char **argv) {
     const uint64_t tick_ms = (uint64_t)(1000u / (uint32_t)tick_hz_l);
     uint64_t next_tick = start;
 
+    uint64_t pump_ns_sum = 0u;
+    uint64_t pump_ns_max = 0u;
+    uint64_t pump_calls = 0u;
+
+    uint64_t entity_ns_sum = 0u;
+    uint64_t entity_ns_max = 0u;
+    uint64_t entity_calls = 0u;
+
+    uint64_t broadcast_ns_sum = 0u;
+    uint64_t broadcast_ns_max = 0u;
+    uint64_t broadcast_calls = 0u;
+
+    uint64_t tick_step_ns_sum = 0u;
+    uint64_t tick_step_ns_max = 0u;
+    uint64_t tick_steps = 0u;
+
+    uint64_t loop_ns_sum = 0u;
+    uint64_t loop_ns_max = 0u;
+    uint64_t loop_iters = 0u;
+
     while (!g_stop && now_ms() < end) {
+        const uint64_t loop_start_ns = now_ns();
         uint64_t now = now_ms();
 
         const uint64_t packets_before = io.packets_recv;
+        const uint64_t pump_start_ns = now_ns();
         (void)fr_server_net_runtime_pump(rt, now);
+        const uint64_t pump_ns = now_ns() - pump_start_ns;
+        pump_ns_sum += pump_ns;
+        if (pump_ns > pump_ns_max) {
+            pump_ns_max = pump_ns;
+        }
+        pump_calls += 1u;
         const int saw_packet = (io.packets_recv != packets_before);
+
+        const uint64_t entity_start_ns = now_ns();
         (void)fr_server_entity_net_pump_tick(pump, now);
+        const uint64_t entity_ns = now_ns() - entity_start_ns;
+        entity_ns_sum += entity_ns;
+        if (entity_ns > entity_ns_max) {
+            entity_ns_max = entity_ns;
+        }
+        entity_calls += 1u;
 
         /* Drain player join events to track connected clients. */
         for (;;) {
@@ -379,8 +421,10 @@ int main(int argc, char **argv) {
         }
 
         if (now >= next_tick) {
+            const uint64_t tick_step_start_ns = now_ns();
             server_tick = (uint16_t)(server_tick + 1u);
             if (clients_joined >= (uint32_t)max_clients_l) {
+                const uint64_t bcast_start_ns = now_ns();
                 broadcast_some_states_(rt,
                                        joined,
                                        (uint16_t)max_clients_l,
@@ -388,8 +432,21 @@ int main(int argc, char **argv) {
                                        server_tick,
                                        state_cursor,
                                        2u);
+                const uint64_t bcast_ns = now_ns() - bcast_start_ns;
+                broadcast_ns_sum += bcast_ns;
+                if (bcast_ns > broadcast_ns_max) {
+                    broadcast_ns_max = bcast_ns;
+                }
+                broadcast_calls += 1u;
             }
             next_tick += tick_ms;
+
+            const uint64_t tick_step_ns = now_ns() - tick_step_start_ns;
+            tick_step_ns_sum += tick_step_ns;
+            if (tick_step_ns > tick_step_ns_max) {
+                tick_step_ns_max = tick_step_ns;
+            }
+            tick_steps += 1u;
         }
 
                 /* Yield to worker threads. Sleep only when idle to stay responsive. */
@@ -398,6 +455,13 @@ int main(int argc, char **argv) {
                 } else {
                     sched_yield();
                 }
+
+        const uint64_t loop_ns = now_ns() - loop_start_ns;
+        loop_ns_sum += loop_ns;
+        if (loop_ns > loop_ns_max) {
+            loop_ns_max = loop_ns;
+        }
+        loop_iters += 1u;
     }
 
     fprintf(stdout,
@@ -410,6 +474,39 @@ int main(int argc, char **argv) {
             (unsigned long long)0u,
             (unsigned long long)0u,
             (unsigned long long)0u);
+
+    const uint64_t pump_ns_mean = (pump_calls > 0u) ? (pump_ns_sum / pump_calls) : 0u;
+    const uint64_t entity_ns_mean = (entity_calls > 0u) ? (entity_ns_sum / entity_calls) : 0u;
+    const uint64_t broadcast_ns_mean = (broadcast_calls > 0u) ? (broadcast_ns_sum / broadcast_calls) : 0u;
+    const uint64_t tick_step_ns_mean = (tick_steps > 0u) ? (tick_step_ns_sum / tick_steps) : 0u;
+    const uint64_t loop_ns_mean = (loop_iters > 0u) ? (loop_ns_sum / loop_iters) : 0u;
+
+    fprintf(stdout,
+            "P008_SERVER_STATS port=%ld max_clients=%ld tick_hz=%ld workers=%ld duration_ms=%ld clients_joined=%u "
+            "packets_out=%llu packets_in=%llu bytes_out=%llu bytes_in=%llu "
+            "pump_ns_mean=%llu pump_ns_max=%llu entity_ns_mean=%llu entity_ns_max=%llu "
+            "broadcast_ns_mean=%llu broadcast_ns_max=%llu tick_ns_mean=%llu tick_ns_max=%llu "
+            "loop_ns_mean=%llu loop_ns_max=%llu\n",
+            port_l,
+            max_clients_l,
+            tick_hz_l,
+            workers_l,
+            duration_ms_l,
+            (unsigned)clients_joined,
+            (unsigned long long)io.packets_sent,
+            (unsigned long long)io.packets_recv,
+            (unsigned long long)io.bytes_sent,
+            (unsigned long long)io.bytes_recv,
+            (unsigned long long)pump_ns_mean,
+            (unsigned long long)pump_ns_max,
+            (unsigned long long)entity_ns_mean,
+            (unsigned long long)entity_ns_max,
+            (unsigned long long)broadcast_ns_mean,
+            (unsigned long long)broadcast_ns_max,
+            (unsigned long long)tick_step_ns_mean,
+            (unsigned long long)tick_step_ns_max,
+            (unsigned long long)loop_ns_mean,
+            (unsigned long long)loop_ns_max);
 
     free(joined);
     free(state_cursor);
