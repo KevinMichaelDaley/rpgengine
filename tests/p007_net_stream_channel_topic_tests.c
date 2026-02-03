@@ -47,6 +47,11 @@ static int test_channel_ids_and_topic_pump(void) {
     assert(cap == 2);
     assert(out[0]=='B' && out[1]=='B');
 
+    /* Channel 1 also has seq=1 buffered; ensure it is delivered exactly once. */
+    cap = sizeof out;
+    assert(fr_topic_channel_pop(topics[1], out, &cap));
+    assert(cap == 2 && out[0]=='B' && out[1]=='B');
+
     /* Out-of-order for channel 0: seq 2 then 3 (deliver only after 2 then 3). */
     uint8_t f3c0[4 + 3] = {3, 0, 0, 0, 'D','D','D'};
     uint8_t f2c0[4 + 3] = {2, 0, 0, 0, 'C','C','C'};
