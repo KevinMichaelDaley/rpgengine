@@ -10,9 +10,9 @@ static int test_out_of_order_and_duplicates(void) {
     assert(s != NULL);
 
     /* Frame format: 2-byte seq LE + 2-byte chan LE + payload */
-    uint8_t f2[4 + 3] = {2, 0, 0, 0, 'b', 'b', 'b'};
-    uint8_t f1[4 + 3] = {1, 0, 0, 0, 'a', 'a', 'a'};
-    uint8_t f2_dup[4 + 2] = {2, 0, 0, 0, 'x', 'x'};
+    uint8_t f2[4 + 3] = {1, 0, 0, 0, 'b', 'b', 'b'};
+    uint8_t f1[4 + 3] = {0, 0, 0, 0, 'a', 'a', 'a'};
+    uint8_t f2_dup[4 + 2] = {1, 0, 0, 0, 'x', 'x'};
 
     /* Push out-of-order: 2 then 1. */
     assert(fr_rudp_stream_push_frame(s, f2, sizeof f2));
