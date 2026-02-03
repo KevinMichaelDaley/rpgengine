@@ -54,4 +54,7 @@
 // Client network runtime RX
 #include "ferrum/net/client/runtime_rx.h"
 
+// Server-side client fiber networking (stream-based)
+#include "ferrum/server/net/client_fiber.h"
+
 #endif /* FERRUM_FERRUM_H */
