@@ -262,12 +262,98 @@ static void task_slot_fn(void *user) {
     (*ctx->slot)++;
 }
 
+struct stress_item {
+    uint32_t idx;
+    atomic_uint *completed;
+    atomic_uchar *seen;
+};
+
+static void stress_item_fn(void *user) {
+    struct stress_item *item = (struct stress_item *)user;
+
+    /* Deterministic per-item "randomness" to mix yield patterns. */
+    uint32_t x = item->idx * 747796405u + 2891336453u;
+    x ^= x >> 16;
+    uint32_t yields = (x & 3u);
+    for (uint32_t i = 0; i < yields; ++i) {
+        job_yield();
+    }
+
+    unsigned char prev = atomic_exchange_explicit(&item->seen[item->idx], 1, memory_order_relaxed);
+    if (prev != 0) {
+        atomic_store(&g_failure_flag, 1);
+        return;
+    }
+
+    atomic_fetch_add_explicit(item->completed, 1u, memory_order_relaxed);
+}
+
+static void stress_noise_fn(void *user) {
+    (void)user;
+    /* Keep workers busy and force more interleavings. */
+    for (int i = 0; i < 16; ++i) {
+        job_yield();
+    }
+}
+
+static int test_randomized_dispatch_yield_interleavings(void) {
+    atomic_store(&g_failure_flag, 0);
+
+    job_system_t sys_;
+    job_system_t *sys = &sys_;
+    job_system_create_status_t sys_create_status =  job_system_create(sys,4, 4096, 64 * 1024, 2048, 0);
+    ASSERT_TRUE(sys != NULL);
+    ASSERT_TRUE(sys_create_status == JOB_CREATE_OK);
+    ASSERT_EQ_INT(0, job_system_start(sys));
+
+    const uint32_t n = 1800;
+    struct stress_item *items = (struct stress_item *)calloc((size_t)n, sizeof(*items));
+    atomic_uchar *seen = (atomic_uchar *)calloc((size_t)n, sizeof(*seen));
+    ASSERT_TRUE(items != NULL);
+    ASSERT_TRUE(seen != NULL);
+
+    atomic_uint completed;
+    atomic_init(&completed, 0u);
+
+    for (uint32_t i = 0; i < n; ++i) {
+        atomic_init(&seen[i], 0);
+        items[i].idx = i;
+        items[i].completed = &completed;
+        items[i].seen = seen;
+    }
+
+    /* Add some long-lived yielders to create scheduling pressure. */
+    for (int i = 0; i < 64; ++i) {
+        ASSERT_TRUE(job_dispatch(sys, stress_noise_fn, NULL, 0, NULL) != JOB_ID_INVALID);
+    }
+
+    /* Inject work from the main thread to exercise the injection ring. */
+    for (uint32_t i = 0; i < n; ++i) {
+        ASSERT_TRUE(job_dispatch(sys, stress_item_fn, &items[i], 0, NULL) != JOB_ID_INVALID);
+        if ((i & 15u) == 0u) {
+            thrd_yield();
+        }
+    }
+
+    ASSERT_EQ_INT(0, job_system_wait_idle(sys));
+    ASSERT_EQ_INT(0, atomic_load(&g_failure_flag));
+    ASSERT_EQ_UINT(n, atomic_load_explicit(&completed, memory_order_relaxed));
+
+    for (uint32_t i = 0; i < n; ++i) {
+        ASSERT_EQ_INT(1, (int)atomic_load_explicit(&seen[i], memory_order_relaxed));
+    }
+
+    free(seen);
+    free(items);
+    job_system_shutdown(sys);
+    return 0;
+}
+
 /* ---------- Tests ---------- */
 static int test_fiber_yield_resume_ordering(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
 job_system_create_status_t sys_create_status =  job_system_create(sys,1, 32, 4 * 1024, 1024, 1);
-fprintf(stderr, "job_system_create returned %d\n", sys_create_status);
     ASSERT_TRUE(sys != NULL);
     ASSERT_TRUE(sys_create_status == JOB_CREATE_OK);
     ASSERT_EQ_INT(0, job_system_start(sys));
@@ -798,6 +884,7 @@ static struct test_case TESTS[] = {
     {"fan_out_fan_in_counter", test_fan_out_fan_in_counter},
     {"wait_parks_fiber_not_worker", test_wait_parks_fiber_not_worker},
     {"work_stealing_makes_progress", test_work_stealing_makes_progress},
+    {"randomized_dispatch_yield_interleavings", test_randomized_dispatch_yield_interleavings},
     {"priority_scheduling_respects_order", test_priority_scheduling_respects_order},
     {"deterministic_single_thread_mode", test_deterministic_single_thread_mode},
     {"wait_on_satisfied_counter_is_immediate", test_wait_on_satisfied_counter_is_immediate},
