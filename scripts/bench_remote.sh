@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Remote UDP replication benchmark runner
+# - Deploys server/client binaries to a remote host
+# - Runs server with configured workers and tick rate
+# - Spawns 64 clients (default) on the remote
+# - Logs CPU usage (mpstat per-CPU; pidstat for server PID)
+# - Captures server and client throughput/stats
+# - Fetches logs back to local bench-logs/ directory
+#
+# Requirements on remote:
+# - bash, ssh, scp
+# - mpstat (sysstat) and pidstat (sysstat) recommended
+# - UDP port open (default 40001)
+#
+# Usage:
+#   REMOTE=user@host ./scripts/bench_remote.sh [options]
+#
+# Env options:
+#   REMOTE           SSH target in form user@host (required if not first arg)
+#   PORT             UDP port (default: 40001)
+#   CLIENTS          Number of clients (default: 64)
+#   DURATION_MS      Server run duration in ms (default: 20000)
+#   CLIENT_DURATION  Client duration in ms (default: DURATION_MS-500)
+#   TICK_HZ          Server tick Hz (default: 60)
+#   WORKERS          Server worker threads (default: 8)
+#   EXPECTED_SPAWNS  Client expected spawns (default: 0 to accept WELCOME)
+#   REMOTE_DIR       Remote working dir (default: ~/bench)
+#   LOG_DIR          Local logs dir (default: bench-logs/<timestamp>_port_clients)
+#
+# Example:
+#   REMOTE=bench@10.0.0.5 PORT=40001 CLIENTS=64 DURATION_MS=30000 \
+#   TICK_HZ=60 WORKERS=8 ./scripts/bench_remote.sh
+
+REMOTE="${REMOTE:-}"
+if [[ -z "${REMOTE}" ]]; then
+  REMOTE="${1:-}"
+fi
+if [[ -z "${REMOTE}" ]]; then
+  echo "ERROR: REMOTE not provided. Set REMOTE=user@host or pass as first arg." >&2
+  exit 2
+fi
+
+PORT="${PORT:-40001}"
+CLIENTS="${CLIENTS:-64}"
+DURATION_MS="${DURATION_MS:-20000}"
+CLIENT_DURATION="${CLIENT_DURATION:-}"  # allow override
+TICK_HZ="${TICK_HZ:-60}"
+WORKERS="${WORKERS:-8}"
+EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}"
+REMOTE_DIR="${REMOTE_DIR:-$HOME/bench}"
+
+# Compute default client duration if not overridden
+if [[ -z "${CLIENT_DURATION}" ]]; then
+  # bash arithmetic requires integers
+  CLIENT_DURATION=$(( DURATION_MS > 500 ? DURATION_MS - 500 : DURATION_MS ))
+fi
+
+# Verify local binaries exist
+ROOT_DIR=$(pwd)
+BUILD_DIR="${ROOT_DIR}/build"
+SERVER_BIN="${BUILD_DIR}/p008_net_repl_server"
+CLIENT_BIN="${BUILD_DIR}/p008_net_repl_client"
+if [[ ! -x "${SERVER_BIN}" ]] || [[ ! -x "${CLIENT_BIN}" ]]; then
+  echo "Building p008 binaries..." >&2
+  make p008_build
+fi
+if [[ ! -x "${SERVER_BIN}" ]] || [[ ! -x "${CLIENT_BIN}" ]]; then
+  echo "ERROR: Required binaries missing in ./build (p008_net_repl_server, p008_net_repl_client)." >&2
+  exit 1
+fi
+
+TS=$(date +%Y%m%d_%H%M%S)
+RUN_TAG="p008_${TS}_port${PORT}_${CLIENTS}clients"
+REMOTE_RUN_DIR="${REMOTE_DIR}/${RUN_TAG}"
+
+# Prepare remote directory and upload binaries
+echo "Uploading binaries to ${REMOTE}:${REMOTE_RUN_DIR}..." >&2
+ssh "${REMOTE}" "mkdir -p '${REMOTE_RUN_DIR}'"
+scp "${SERVER_BIN}" "${CLIENT_BIN}" "${REMOTE}:${REMOTE_RUN_DIR}/"
+
+# Start server and CPU monitors on remote
+echo "Starting server and CPU monitors on remote..." >&2
+ssh "${REMOTE}" bash -lc "
+set -euo pipefail
+cd '${REMOTE_RUN_DIR}'
+# Raise fd limits just in case
+ulimit -n 65536 || true
+# Start server (duration_ms controls shutdown)
+nohup ./p008_net_repl_server ${PORT} ${CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo \$! > server.pid
+sleep 1
+SERVER_PID=\$(cat server.pid)
+# Start per-CPU usage logging (mpstat)
+if command -v mpstat >/dev/null 2>&1; then
+  nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo \$! > mpstat.pid
+else
+  echo 'WARN: mpstat not found; skipping per-CPU logs' >> warn.log
+fi
+# Start server process CPU logging (pidstat)
+if command -v pidstat >/dev/null 2>&1; then
+  nohup pidstat -u -p \$SERVER_PID 1 > cpu.pidstat 2>&1 & echo \$! > pidstat.pid
+else
+  echo 'WARN: pidstat not found; skipping per-process CPU logs' >> warn.log
+fi
+"
+
+# Start clients on remote (loopback to server)
+echo "Spawning ${CLIENTS} clients on remote..." >&2
+ssh "${REMOTE}" bash -lc "
+set -euo pipefail
+cd '${REMOTE_RUN_DIR}'
+: > clients.out
+for i in \$(seq 1 ${CLIENTS}); do
+  nohup ./p008_net_repl_client 127.0.0.1 ${PORT} ${CLIENT_DURATION} ${EXPECTED_SPAWNS} ${TICK_HZ} >> clients.out 2>&1 &
+done
+# Wait until all background jobs finish
+wait || true
+"
+
+# Wait for server to exit (duration-based), then stop monitors
+echo "Waiting for server to finish..." >&2
+ssh "${REMOTE}" bash -lc "
+set -euo pipefail
+cd '${REMOTE_RUN_DIR}'
+# Poll server pid until exit
+while kill -0 \$(cat server.pid) 2>/dev/null; do sleep 1; done
+# Stop CPU monitors if present
+if [[ -f mpstat.pid ]]; then kill \$(cat mpstat.pid) 2>/dev/null || true; fi
+if [[ -f pidstat.pid ]]; then kill \$(cat pidstat.pid) 2>/dev/null || true; fi
+"
+
+# Fetch logs
+LOCAL_LOG_DIR="${ROOT_DIR}/bench-logs/${RUN_TAG}"
+mkdir -p "${LOCAL_LOG_DIR}"
+echo "Fetching logs to ${LOCAL_LOG_DIR}..." >&2
+scp "${REMOTE}:${REMOTE_RUN_DIR}/server.out" "${LOCAL_LOG_DIR}/"
+scp "${REMOTE}:${REMOTE_RUN_DIR}/clients.out" "${LOCAL_LOG_DIR}/"
+scp "${REMOTE}:${REMOTE_RUN_DIR}/cpu.mpstat" "${LOCAL_LOG_DIR}/" || true
+scp "${REMOTE}:${REMOTE_RUN_DIR}/cpu.pidstat" "${LOCAL_LOG_DIR}/" || true
+scp "${REMOTE}:${REMOTE_RUN_DIR}/warn.log" "${LOCAL_LOG_DIR}/" || true
+
+# Quick summary
+echo "--- Summary (${RUN_TAG}) ---"
+if grep -q '^p008 stats:' "${LOCAL_LOG_DIR}/server.out"; then
+  grep '^p008 stats:' "${LOCAL_LOG_DIR}/server.out" | tail -n 1
+else
+  echo "Server stats not found in server.out" >&2
+fi
+CLIENT_STAT_LINES=$(grep -c '^P008_CLIENT_STATS' "${LOCAL_LOG_DIR}/clients.out" || true)
+echo "Clients completed: ${CLIENT_STAT_LINES}/${CLIENTS}"
+# Show average client rx/tx mbps if available
+if [[ "${CLIENT_STAT_LINES}" -gt 0 ]]; then
+  awk '/^P008_CLIENT_STATS/ {tx+=substr($0, index($0, "tx_mbps=")+8); rx+=substr($0, index($0, "rx_mbps=")+8)} END {if(NR>0){printf "Avg tx_mbps=%.3f rx_mbps=%.3f\n", tx/NR, rx/NR}}' "${LOCAL_LOG_DIR}/clients.out" || true
+fi
+
+echo "Logs: ${LOCAL_LOG_DIR}"
