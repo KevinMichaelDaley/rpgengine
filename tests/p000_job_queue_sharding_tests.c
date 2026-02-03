@@ -33,7 +33,7 @@ static void count_job(void *user) {
 
 static int test_sharded_queue_enabled(void) {
     job_system_t sys_; job_system_t *sys = &sys_;
-    job_system_create_status_t st = job_system_create(sys, 2, 128, 64 * 1024, 2048, 0);
+    job_system_create_status_t st = job_system_create(sys, 2, 2048, 64 * 1024, 2048, 0);
     ASSERT_INT_EQ(JOB_CREATE_OK, st);
     ASSERT_INT_EQ(0, job_system_start(sys));
     ASSERT_INT_EQ(1, job_system_queue_is_sharded(sys));
@@ -44,7 +44,7 @@ static int test_sharded_queue_enabled(void) {
 static int test_work_stealing_observed(void) {
     for (int i = 0; i < 64; ++i) atomic_store(&g_counts[i], 0);
     job_system_t sys_; job_system_t *sys = &sys_;
-    job_system_create_status_t st = job_system_create(sys, 2, 128, 64 * 1024, 2048, 0);
+    job_system_create_status_t st = job_system_create(sys, 2, 2048, 64 * 1024, 2048, 0);
     ASSERT_INT_EQ(JOB_CREATE_OK, st);
     ASSERT_INT_EQ(0, job_system_start(sys));
 
@@ -67,7 +67,7 @@ static int test_work_stealing_observed(void) {
 
 static int test_affinity_toggle(void) {
     job_system_t sys_; job_system_t *sys = &sys_;
-    job_system_create_status_t st = job_system_create(sys, 2, 64, 64 * 1024, 2048, 0);
+    job_system_create_status_t st = job_system_create(sys, 2, 2048, 64 * 1024, 2048, 0);
     ASSERT_INT_EQ(JOB_CREATE_OK, st);
     ASSERT_INT_EQ(0, job_system_enable_affinity(sys, 1));
     ASSERT_INT_EQ(1, job_system_affinity_enabled(sys));

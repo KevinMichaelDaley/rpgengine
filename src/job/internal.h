@@ -49,6 +49,7 @@ extern _Thread_local uint32_t g_worker_node;
 
 void job_system_wake_waiters(job_system_t *sys, job_counter_t *counter);
 int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id);
+int job_system_enqueue_preferred(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id, uint32_t preferred_worker);
 int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry);
 void job_fiber_destroy(job_fiber_t *fiber);
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx);

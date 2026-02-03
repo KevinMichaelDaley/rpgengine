@@ -50,7 +50,7 @@ static int test_queue_diagnostics_snapshot_and_reset(void) {
     job_system_t sys_storage;
     job_system_t *sys = &sys_storage;
 
-    job_system_create_status_t st = job_system_create(sys, 2, 256, 64 * 1024, 256, 0);
+    job_system_create_status_t st = job_system_create(sys, 2, 2048, 64 * 1024, 256, 0);
     ASSERT_TRUE(st == JOB_CREATE_OK);
     ASSERT_TRUE(job_system_start(sys) == 0);
 

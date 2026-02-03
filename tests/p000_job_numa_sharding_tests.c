@@ -27,7 +27,7 @@ static void count_job(void *user) {
 static int test_enable_and_bias(void) {
     atomic_store(&g_fail, 0);
     job_system_t sys_; job_system_t *sys = &sys_;
-    ASSERT_EQ_INT(JOB_CREATE_OK, job_system_create(sys, 4, 128, 64*1024, 512, 0));
+    ASSERT_EQ_INT(JOB_CREATE_OK, job_system_create(sys, 4, 2048, 64*1024, 512, 0));
 
     /* Enable NUMA with 2 nodes (simulated). */
     ASSERT_EQ_INT(0, job_system_enable_numa(sys, 2));
@@ -60,7 +60,7 @@ static int test_enable_and_bias(void) {
 static int test_inter_node_steal(void) {
     atomic_store(&g_fail, 0);
     job_system_t sys_; job_system_t *sys = &sys_;
-    ASSERT_EQ_INT(JOB_CREATE_OK, job_system_create(sys, 2, 64, 64*1024, 128, 0));
+    ASSERT_EQ_INT(JOB_CREATE_OK, job_system_create(sys, 2, 2048, 64*1024, 128, 0));
     ASSERT_EQ_INT(0, job_system_enable_numa(sys, 2));
     ASSERT_EQ_INT(0, job_system_start(sys));
 

@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include "counter.h"
 #include "ferrum/memory/apool.h"
+#include "ferrum/job/ws_deque.h"
 /** @file
  * @brief Public API for the job system and fibers.
  */
@@ -13,6 +14,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+struct job_fiber;
 struct job_system {
     uint32_t worker_count;
     uint32_t queue_capacity;
@@ -21,10 +23,23 @@ struct job_system {
     int deterministic;
     atomic_bool running;
     atomic_bool shutting_down;
+
+    /* Deterministic scheduler queue (single-thread, stable semantics). */
     struct job_entry *queue;
     atomic_int *queue_slot_state; /* 0=empty, 1=ready, 2=busy */
     atomic_uint queue_insert_cursor;
     atomic_uint queue_pop_cursor;
+
+    /* Work-stealing scheduler (non-deterministic): per-worker Chase–Lev deques. */
+    fr_ws_deque_t *ws_deques;
+    atomic_uint queued_count;
+
+    /* Non-deterministic injection queue for non-owner enqueues (MPSC under queue_lock). */
+    struct job_fiber **inject_ring;
+    uint32_t inject_head;
+    uint32_t inject_tail;
+    uint32_t inject_count;
+
     mtx_t queue_lock;
     cnd_t queue_cond;
 

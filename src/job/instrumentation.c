@@ -1,9 +1,12 @@
+#include <stdint.h>
+#include "ferrum/job/instrumentation.h"
+
+#if FR_JOB_INSTRUMENTATION
+
 #include <stdio.h>
 #include <stdatomic.h>
-#include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
-#include "ferrum/job/instrumentation.h"
 
 static atomic_bool g_instr_on = ATOMIC_VAR_INIT(false);
 static atomic_uint_least64_t g_instr_count = ATOMIC_VAR_INIT(0);
@@ -40,6 +43,7 @@ void job_instrument_init(void) {
     if (env) {
         if (env[0] == '1') {
             atomic_store(&g_instr_on, true);
+            return;
         } else if (env[0] == '0') {
             atomic_store(&g_instr_on, false);
             return;
@@ -52,3 +56,5 @@ void job_instrument_init(void) {
     atomic_store(&g_instr_on, false);
 #endif
 }
+
+#endif

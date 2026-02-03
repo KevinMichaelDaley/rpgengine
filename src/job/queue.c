@@ -1,40 +1,15 @@
 #include <limits.h>
-#include <stdlib.h>
+#include <stdint.h>
 
 #include "internal.h"
 
-/* Slot state values: 0 = empty, 1 = ready (has job), 2 = busy (claimed) */
+/* Deterministic scheduler uses a fixed slot-state queue to preserve existing ordering/priority semantics.
+   Non-deterministic uses per-worker Chase–Lev work-stealing deques (no O(queue_capacity) scan). */
 
-int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id) {
-    if (!sys || !fiber) {
-        return -1;
-    }
-
-#ifdef FR_JOB_QUEUE_DIAGNOSTICS
-    atomic_fetch_add_explicit(&sys->qdiag_enqueue_calls, 1, memory_order_relaxed);
-    uint64_t diag_scanned = 0;
-    uint64_t diag_claim_fail = 0;
-#endif
-    /* Deterministic mode and non-worker contexts should append using global insert cursor.
-       Otherwise, prefer local region based on current worker/node affinity. */
-    uint32_t start;
-    if (sys->deterministic || g_worker_id == UINT32_MAX) {
-        start = atomic_fetch_add_explicit(&sys->queue_insert_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
-    } else {
-        if (sys->numa_enabled && sys->numa_node_count > 1) {
-            uint32_t blocks = sys->numa_node_count ? sys->numa_node_count : 1u;
-            uint32_t block_sz = sys->queue_capacity / blocks;
-            uint32_t base = (g_worker_node % blocks) * block_sz;
-            start = base;
-        } else {
-            start = g_worker_id % sys->queue_capacity;
-        }
-    }
+static int enqueue_deterministic(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id) {
+    uint32_t start = atomic_fetch_add_explicit(&sys->queue_insert_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
     for (uint32_t off = 0; off < sys->queue_capacity; ++off) {
         uint32_t i = (start + off) % sys->queue_capacity;
-#ifdef FR_JOB_QUEUE_DIAGNOSTICS
-        diag_scanned++;
-#endif
         int expected = 0;
         if (atomic_compare_exchange_strong_explicit(&sys->queue_slot_state[i], &expected, 2,
                                                     memory_order_acq_rel, memory_order_acquire)) {
@@ -43,26 +18,101 @@ int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint
             sys->queue[i].id = id;
             atomic_store_explicit(&sys->queue_slot_state[i], 1, memory_order_release);
             job_instrument_event("enqueue", fiber->id, id, g_worker_id, __FILE__, __LINE__);
-            cnd_broadcast(&sys->queue_cond);
-
-#ifdef FR_JOB_QUEUE_DIAGNOSTICS
-            atomic_fetch_add_explicit(&sys->qdiag_enqueue_scanned_slots, diag_scanned, memory_order_relaxed);
-            atomic_fetch_add_explicit(&sys->qdiag_enqueue_claim_fail, diag_claim_fail, memory_order_relaxed);
-            atomic_fetch_add_explicit(&sys->qdiag_enqueue_success, 1, memory_order_relaxed);
-#endif
             return 0;
         }
+    }
+    return -1;
+}
 
-#ifdef FR_JOB_QUEUE_DIAGNOSTICS
-        diag_claim_fail++;
-#endif
+static int enqueue_ws(job_system_t *sys, job_fiber_t *fiber, uint32_t preferred_worker) {
+    uint32_t target;
+    if (preferred_worker != UINT32_MAX) {
+        target = preferred_worker % sys->worker_count;
+    } else if (g_worker_id != UINT32_MAX) {
+        target = g_worker_id % sys->worker_count;
+    } else {
+        target = atomic_fetch_add_explicit(&sys->queue_insert_cursor, 1u, memory_order_relaxed) % sys->worker_count;
+    }
+
+    /* Chase–Lev requires single-producer push/pop from the owning worker.
+       Any non-owner enqueue (including dispatch from non-worker threads) goes through a locked injection ring. */
+    if (g_worker_id != UINT32_MAX && (g_worker_id % sys->worker_count) == target) {
+        if (fr_ws_deque_push(&sys->ws_deques[target], (void *)fiber) != 0) {
+            return -1;
+        }
+
+        job_instrument_event("enqueue", fiber->id, fiber->id, g_worker_id, __FILE__, __LINE__);
+        return 0;
+    }
+
+    if (sys->inject_count >= sys->queue_capacity) {
+        return -1;
+    }
+    sys->inject_ring[sys->inject_tail] = fiber;
+    sys->inject_tail = (sys->inject_tail + 1u) % sys->queue_capacity;
+    sys->inject_count++;
+    job_instrument_event("inject", fiber->id, fiber->id, g_worker_id, __FILE__, __LINE__);
+    return 0;
+}
+
+static void *try_pop_injected(job_system_t *sys) {
+    if (!sys || !sys->inject_ring) {
+        return NULL;
+    }
+
+    void *p = NULL;
+    mtx_lock(&sys->queue_lock);
+    if (sys->inject_count > 0) {
+        p = (void *)sys->inject_ring[sys->inject_head];
+        sys->inject_ring[sys->inject_head] = NULL;
+        sys->inject_head = (sys->inject_head + 1u) % sys->queue_capacity;
+        sys->inject_count--;
+    }
+    mtx_unlock(&sys->queue_lock);
+    return p;
+}
+
+int job_system_enqueue_preferred(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id, uint32_t preferred_worker) {
+    if (!sys || !fiber) {
+        return -1;
     }
 
 #ifdef FR_JOB_QUEUE_DIAGNOSTICS
-    atomic_fetch_add_explicit(&sys->qdiag_enqueue_scanned_slots, diag_scanned, memory_order_relaxed);
-    atomic_fetch_add_explicit(&sys->qdiag_enqueue_claim_fail, diag_claim_fail, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->qdiag_enqueue_calls, 1, memory_order_relaxed);
 #endif
-    return -1;
+
+    (void)priority;
+    (void)id;
+
+    /* Enqueue and signal under queue_lock so worker wait can't miss the 0->1 transition. */
+    mtx_lock(&sys->queue_lock);
+    unsigned int prev = atomic_fetch_add_explicit(&sys->queued_count, 1u, memory_order_relaxed);
+    if (prev >= sys->queue_capacity) {
+        (void)atomic_fetch_sub_explicit(&sys->queued_count, 1u, memory_order_relaxed);
+        mtx_unlock(&sys->queue_lock);
+        return -1;
+    }
+
+    int rc = sys->deterministic ? enqueue_deterministic(sys, fiber, (int)fiber->priority, fiber->id)
+                                : enqueue_ws(sys, fiber, preferred_worker);
+    if (rc != 0) {
+        (void)atomic_fetch_sub_explicit(&sys->queued_count, 1u, memory_order_relaxed);
+        mtx_unlock(&sys->queue_lock);
+        return -1;
+    }
+
+    cnd_broadcast(&sys->queue_cond);
+    mtx_unlock(&sys->queue_lock);
+
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    atomic_fetch_add_explicit(&sys->qdiag_enqueue_scanned_slots, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->qdiag_enqueue_success, 1, memory_order_relaxed);
+#endif
+    return 0;
+}
+
+int job_system_enqueue(job_system_t *sys, job_fiber_t *fiber, int priority, uint64_t id) {
+    return job_system_enqueue_preferred(sys, fiber, priority, id, UINT32_MAX);
 }
 
 int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
@@ -72,49 +122,22 @@ int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
 
 #ifdef FR_JOB_QUEUE_DIAGNOSTICS
     atomic_fetch_add_explicit(&sys->qdiag_pop_calls, 1, memory_order_relaxed);
-    uint64_t diag_scanned = 0;
-    uint64_t diag_ready_seen = 0;
-    uint64_t diag_claim_fail = 0;
 #endif
-    /* Deterministic mode: rotate via global pop cursor for fairness.
-       Non-deterministic workers prefer local region (worker/node shard) with global stealing fallback. */
-    uint32_t start;
-    if (sys->deterministic || g_worker_id == UINT32_MAX) {
-        start = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
-    } else {
-        if (sys->numa_enabled && sys->numa_node_count > 1) {
-            uint32_t blocks = sys->numa_node_count ? sys->numa_node_count : 1u;
-            uint32_t block_sz = sys->queue_capacity / blocks;
-            uint32_t base = (g_worker_node % blocks) * block_sz;
-            start = base;
-        } else {
-            start = g_worker_id % sys->queue_capacity;
-        }
-    }
-    for (uint32_t attempt = 0; attempt < sys->queue_capacity; ++attempt) {
+
+    if (sys->deterministic) {
+        uint32_t start = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed) % sys->queue_capacity;
         int chosen_idx = -1;
         int best_priority = INT_MIN;
         for (uint32_t off = 0; off < sys->queue_capacity; ++off) {
             uint32_t i = (start + off) % sys->queue_capacity;
-#ifdef FR_JOB_QUEUE_DIAGNOSTICS
-            diag_scanned++;
-#endif
             int state = atomic_load_explicit(&sys->queue_slot_state[i], memory_order_acquire);
-            if (state == 1) {
-#ifdef FR_JOB_QUEUE_DIAGNOSTICS
-                diag_ready_seen++;
-#endif
-                if (!sys->deterministic) {
-                    chosen_idx = (int)i; /* pick first READY to reduce contention */
-                    break;
-                } else {
-                    int p = sys->queue[i].priority;
-                    /* Highest priority wins; ties favor first encountered from rotated scan */
-                    if (chosen_idx < 0 || p > best_priority) {
-                        best_priority = p;
-                        chosen_idx = (int)i;
-                    }
-                }
+            if (state != 1) {
+                continue;
+            }
+            int p = sys->queue[i].priority;
+            if (chosen_idx < 0 || p > best_priority) {
+                best_priority = p;
+                chosen_idx = (int)i;
             }
         }
 
@@ -123,31 +146,62 @@ int job_system_pop_next(job_system_t *sys, struct job_entry *out_entry) {
         }
 
         int expected = 1;
-        if (atomic_compare_exchange_strong_explicit(&sys->queue_slot_state[chosen_idx], &expected, 2,
-                                                    memory_order_acq_rel, memory_order_acquire)) {
-            *out_entry = sys->queue[chosen_idx];
-            job_instrument_event("pop", out_entry->fiber ? out_entry->fiber->id : 0, out_entry->id, g_worker_id, __FILE__, __LINE__);
-            atomic_store_explicit(&sys->queue_slot_state[chosen_idx], 0, memory_order_release);
-
-#ifdef FR_JOB_QUEUE_DIAGNOSTICS
-            atomic_fetch_add_explicit(&sys->qdiag_pop_scanned_slots, diag_scanned, memory_order_relaxed);
-            atomic_fetch_add_explicit(&sys->qdiag_pop_ready_seen, diag_ready_seen, memory_order_relaxed);
-            atomic_fetch_add_explicit(&sys->qdiag_pop_claim_fail, diag_claim_fail, memory_order_relaxed);
-            atomic_fetch_add_explicit(&sys->qdiag_pop_success, 1, memory_order_relaxed);
-#endif
-            return 0;
+        if (!atomic_compare_exchange_strong_explicit(&sys->queue_slot_state[chosen_idx], &expected, 2,
+                                                     memory_order_acq_rel, memory_order_acquire)) {
+            return -1;
         }
-        /* CAS failed due to contention; retry selection. */
 
+        *out_entry = sys->queue[chosen_idx];
+        atomic_store_explicit(&sys->queue_slot_state[chosen_idx], 0, memory_order_release);
+        (void)atomic_fetch_sub_explicit(&sys->queued_count, 1u, memory_order_relaxed);
+
+        job_instrument_event("pop", out_entry->fiber ? out_entry->fiber->id : 0, out_entry->id, g_worker_id, __FILE__, __LINE__);
 #ifdef FR_JOB_QUEUE_DIAGNOSTICS
-        diag_claim_fail++;
+        atomic_fetch_add_explicit(&sys->qdiag_pop_scanned_slots, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sys->qdiag_pop_ready_seen, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(&sys->qdiag_pop_success, 1, memory_order_relaxed);
 #endif
+        return 0;
     }
 
+    uint32_t wid = (g_worker_id != UINT32_MAX)
+                       ? (g_worker_id % sys->worker_count)
+                       : (atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed) % sys->worker_count);
+
+    void *p = fr_ws_deque_pop(&sys->ws_deques[wid]);
+    if (!p) {
+        uint32_t rot = atomic_fetch_add_explicit(&sys->queue_pop_cursor, 1u, memory_order_relaxed);
+        for (uint32_t off = 1; off < sys->worker_count + 1u; ++off) {
+            uint32_t victim = (wid + off + rot) % sys->worker_count;
+            if (victim == wid) {
+                continue;
+            }
+            p = fr_ws_deque_steal(&sys->ws_deques[victim]);
+            if (p) {
+                break;
+            }
+        }
+    }
+
+    if (!p) {
+        p = try_pop_injected(sys);
+    }
+
+    if (!p) {
+        return -1;
+    }
+
+    job_fiber_t *fiber = (job_fiber_t *)p;
+    out_entry->fiber = fiber;
+    out_entry->priority = (int)fiber->priority;
+    out_entry->id = fiber->id;
+
+    (void)atomic_fetch_sub_explicit(&sys->queued_count, 1u, memory_order_relaxed);
+    job_instrument_event("pop", fiber->id, fiber->id, g_worker_id, __FILE__, __LINE__);
+
 #ifdef FR_JOB_QUEUE_DIAGNOSTICS
-    atomic_fetch_add_explicit(&sys->qdiag_pop_scanned_slots, diag_scanned, memory_order_relaxed);
-    atomic_fetch_add_explicit(&sys->qdiag_pop_ready_seen, diag_ready_seen, memory_order_relaxed);
-    atomic_fetch_add_explicit(&sys->qdiag_pop_claim_fail, diag_claim_fail, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->qdiag_pop_scanned_slots, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&sys->qdiag_pop_success, 1, memory_order_relaxed);
 #endif
-    return -1;
+    return 0;
 }

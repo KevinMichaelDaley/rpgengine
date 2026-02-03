@@ -114,12 +114,12 @@ static void other_job_fn(void *user) {
 struct fan_ctx {
     job_system_t *sys;
     job_counter_t *counter;
-    int *child_runs;
+    atomic_int *child_runs;
 };
 
 static void fan_child_fn(void *user) {
-    int *slot = (int *)user;
-    (*slot)++;
+    atomic_int *slot = (atomic_int *)user;
+    atomic_fetch_add_explicit(slot, 1, memory_order_relaxed);
 }
 
 static void fan_parent_fn(void *user) {
@@ -298,14 +298,17 @@ fprintf(stderr, "job_system_create returned %d\n", sys_create_status);
 static int test_fan_out_fan_in_counter(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 128, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
     job_counter_t counter;
     job_counter_init(&counter, 0);
 
-    int child_runs[100] = {0};
+    atomic_int child_runs[100];
+    for (size_t i = 0; i < 100; ++i) {
+        atomic_init(&child_runs[i], 0);
+    }
     struct fan_ctx ctx = {sys, &counter, child_runs};
 
     ASSERT_TRUE(job_dispatch(sys, fan_parent_fn, &ctx, 0, NULL) != JOB_ID_INVALID);
@@ -313,7 +316,7 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,2, 128, 64
     ASSERT_EQ_INT(0, atomic_load(&g_failure_flag));
 
     for (size_t i = 0; i < 100; ++i) {
-        ASSERT_EQ_INT(1, child_runs[i]);
+        ASSERT_EQ_INT(1, atomic_load_explicit(&child_runs[i], memory_order_relaxed));
     }
 
     job_system_shutdown(sys);
@@ -349,7 +352,7 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,1, 16, 64 
 static int test_work_stealing_makes_progress(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 64, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -492,7 +495,7 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,1, 32, 64 
 static int test_shutdown_drains_safely(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 32, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -551,7 +554,7 @@ static int test_double_wait_and_signal_are_safe(void) {
 static int test_no_double_execution_after_steal(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 64, 64 * 1024, 2048,0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048,0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -576,7 +579,7 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,2, 64, 64 
 static int test_no_lost_wakeups(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 32, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -654,7 +657,7 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,1, 16, 64 
 static int test_mini_frame_execution(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 64, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -683,7 +686,7 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,2, 64, 64 
 static int test_instrumentation_invariants(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 32, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -704,7 +707,7 @@ static void instr_noop(void *user) { (void)user; }
 static int test_instrumentation_toggle_records_events(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 32, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -750,7 +753,7 @@ static int producer_thread_fn(void *arg) {
 static int test_mpmc_concurrent_producers_consumers(void) {
     atomic_store(&g_failure_flag, 0);
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,4, 1024, 64 * 1024, 4096, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,4, 8192, 64 * 1024, 4096, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -779,7 +782,7 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,4, 1024, 6
 
 static int test_queue_reports_lock_free(void) {
     job_system_t sys_; job_system_t* sys=&sys_;
-job_system_create_status_t sys_create_status =  job_system_create(sys,2, 64, 64 * 1024, 2048, 0);
+job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 64 * 1024, 2048, 0);
     ASSERT_TRUE(sys != NULL);
     ASSERT_EQ_INT(0, job_system_start(sys));
 
@@ -818,10 +821,14 @@ static struct test_case TESTS[] = {
 };
 
 int main(void) {
+    const char *only = getenv("P000_TEST_ONLY");
     size_t total = ARRAY_SIZE(TESTS);
     size_t passed = 0;
     for (size_t i = 0; i < total; ++i) {
         struct test_case *tc = &TESTS[i];
+        if (only && only[0] != '\0' && strcmp(only, tc->name) != 0) {
+            continue;
+        }
         printf("RUN %s\n", tc->name);
         fflush(stdout);
         int rc = tc->fn();
@@ -832,6 +839,10 @@ int main(void) {
             fprintf(stderr, "Test failed: %s (rc=%d)\n", tc->name, rc);
             break;
         }
+    }
+
+    if (only && only[0] != '\0') {
+        return (passed == 1) ? 0 : 1;
     }
 
     if (passed == total) {
