@@ -40,17 +40,7 @@ fr_client_rx_t *fr_client_rx_create(const fr_client_rx_config_t *cfg) {
     return rx;
 }
 
-static void channel_clear(fr_channel_state *ch) {
-    struct fr_msg_node *n = ch->head;
-    while (n) {
-        struct fr_msg_node *next = n->next;
-        free(n->data);
-        free(n);
-        n = next;
-    }
-    ch->head = ch->tail = NULL;
-    atomic_store(&ch->pending, 0u);
-}
+// Legacy channel_clear removed; stream owns buffers.
 
 void fr_client_rx_destroy(fr_client_rx_t *rx) {
     if (!rx) return;
