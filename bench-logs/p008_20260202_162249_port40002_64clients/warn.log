@@ -1,2 +1,0 @@
-WARN: mpstat not found; skipping per-CPU logs
-WARN: pidstat not found; skipping per-process CPU logs

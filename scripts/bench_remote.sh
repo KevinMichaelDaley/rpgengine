@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Avoid set -e to prevent premature aborts in remote flows
+set -o pipefail
 
 # Remote UDP replication benchmark runner
 # - Two modes:
@@ -50,20 +51,21 @@ if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]
     echo "ERROR: REMOTE not provided for sweep. Set REMOTE=user@host or pass as first arg." >&2
     exit 2
   fi
-  # Build once into a fixed remote path under $HOME to avoid re-rsync per run
-  SWEEP_BUILD_REL="bench/p008_sweep_build"
-  ssh "${REMOTE_SWEEP}" "bash -lc 'mkdir -p \"\$HOME/${SWEEP_BUILD_REL}/srcdir\"'"
+  # Build once into a fixed remote path to avoid re-rsync per run
+  ssh "${REMOTE_SWEEP}" "mkdir -p '/root/rpg'"
   REMOTE_BIN_DIR_OVERRIDE=""
   if [[ "${REMOTE_BUILD:-1}" == "1" ]]; then
-    echo "Sweep: rsyncing source and building once on remote at ~/${SWEEP_BUILD_REL}/srcdir..." >&2
+    echo "Sweep: rsyncing source and building once on remote at /root/rpg..." >&2
     rsync -az --delete \
       --exclude 'build/' \
       --exclude '.git/' \
       --exclude '.vscode/' \
       --exclude '*.o' \
       --exclude '*.a' \
-      ./ "${REMOTE_SWEEP}:~/${SWEEP_BUILD_REL}/srcdir/"
-    ssh "${REMOTE_SWEEP}" "bash -lc 'set -euo pipefail; cd \"\$HOME/${SWEEP_BUILD_REL}/srcdir\"; if ! command -v make >/dev/null 2>&1; then echo \"ERROR: make missing on remote\" >&2; exit 2; fi; make p008_build'"
+      ./ "${REMOTE_SWEEP}:/root/rpg/"
+    ssh "${REMOTE_SWEEP}" "sh -c 'cd /root/rpg && command -v make >/dev/null 2>&1 && make p008_build'" || {
+      echo "ERROR: remote build failed (make missing or compilation error)" >&2; exit 2;
+    }
   fi
   # Run each client-count sequentially, reusing built binaries
   for ci in $(seq "${SWEEP_MIN}" "${SWEEP_MAX}"); do
@@ -71,7 +73,7 @@ if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]
       REMOTE="${REMOTE_SWEEP}" PORT="${PORT:-40001}" \
       DURATION_MS="${DURATION_MS:-20000}" TICK_HZ="${TICK_HZ:-60}" \
       WORKERS="${WORKERS:-1}" EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}" \
-      REMOTE_DIR="${REMOTE_DIR:-~/bench}" REMOTE_BUILD=0 \
+      REMOTE_DIR="${REMOTE_DIR:-/root/rpg}" REMOTE_BUILD=0 \
       CLIENTS_LOCAL="${CLIENTS_LOCAL:-1}" SERVER_IPV4="${SERVER_IPV4:-}" \
       USE_SWEEP_BIN=1 \
       bash "${BASH_SOURCE[0]}"
@@ -95,7 +97,7 @@ CLIENT_DURATION="${CLIENT_DURATION:-}"  # allow override
 TICK_HZ="${TICK_HZ:-60}"
 WORKERS="${WORKERS:-1}"
 EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}"
-REMOTE_DIR="${REMOTE_DIR:-~/bench}"
+REMOTE_DIR="${REMOTE_DIR:-/root/rpg}"
 REMOTE_BUILD="${REMOTE_BUILD:-0}"
 CLIENTS_LOCAL="${CLIENTS_LOCAL:-0}"
 
@@ -119,11 +121,11 @@ CLIENT_BIN_LOCAL="${BUILD_DIR}/p008_net_repl_client"
 
 TS=$(date +%Y%m%d_%H%M%S)
 RUN_TAG="p008_${TS}_port${PORT}_${CLIENTS}clients"
-REMOTE_RUN_DIR="${REMOTE_DIR}/${RUN_TAG}"
+REMOTE_RUN_DIR="${REMOTE_DIR}"
 
 echo "Remote run dir: ${REMOTE_RUN_DIR}" >&2
 
-ssh "${REMOTE}" "mkdir -p ${REMOTE_RUN_DIR}"
+ssh "${REMOTE}" "mkdir -p \"${REMOTE_RUN_DIR}\""
 
 # Prepare execution binaries: reuse sweep build if requested; otherwise upload or build per run
 if [[ "${USE_SWEEP_BIN:-}" == "1" ]]; then
@@ -157,7 +159,8 @@ fi
 
 # Start server and CPU monitors on remote
 echo "Starting server and CPU monitors on remote..." >&2
-ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" REMOTE_BIN_DIR="${REMOTE_BIN_DIR:-}" USE_SWEEP_BIN="${USE_SWEEP_BIN:-}" PORT="${PORT}" CLIENTS="${CLIENTS}" DURATION_MS="${DURATION_MS}" TICK_HZ="${TICK_HZ}" WORKERS="${WORKERS}" bash -lc 'set -euo pipefail; cd $REMOTE_RUN_DIR; ulimit -n 65536 || true; if ! command -v mpstat >/dev/null 2>&1 || ! command -v pidstat >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then (apt-get update && apt-get install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (apt-get)" >> warn.log; elif command -v yum >/dev/null 2>&1; then (yum install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (yum)" >> warn.log; elif command -v dnf >/dev/null 2>&1; then (dnf install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (dnf)" >> warn.log; else echo "WARN: cannot auto-install sysstat; no known package manager" >> warn.log; fi; fi; if [[ -n "$USE_SWEEP_BIN" ]]; then REMOTE_BIN_DIR="$HOME/bench/p008_sweep_build/srcdir/build"; fi; nohup "$REMOTE_BIN_DIR/p008_net_repl_server" "$PORT" "$CLIENTS" "$DURATION_MS" "$TICK_HZ" "$WORKERS" > server.out 2>&1 & echo $! > server.pid; sleep 1; SERVER_PID=$(cat server.pid); if command -v mpstat >/dev/null 2>&1; then nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo $! > mpstat.pid; else echo "WARN: mpstat not found; skipping per-CPU logs" >> warn.log; fi; if command -v pidstat >/dev/null 2>&1; then nohup pidstat -u -p $SERVER_PID 1 > cpu.pidstat 2>&1 & echo $! > pidstat.pid; else echo "WARN: pidstat not found; skipping per-process CPU logs" >> warn.log; fi; READY_WAIT_MS=5000; READY_START=$(date +%s%3N); while true; do if grep -q "P008_REPL_SERVER_READY" server.out 2>/dev/null; then break; fi; NOW=$(date +%s%3N); if (( NOW - READY_START > READY_WAIT_MS )); then echo "WARN: server did not report ready within timeout" >> warn.log; break; fi; sleep 0.1; done'
+ssh "${REMOTE}" "sh -c \"cd \\\"${REMOTE_RUN_DIR}\\\"; ulimit -n 65536 || true; nohup ./build/p008_net_repl_server \\\"${PORT}\\\" \\\"${CLIENTS}\\\" \\\"${DURATION_MS}\\\" \\\"${TICK_HZ}\\\" \\\"${WORKERS}\\\" > server.out 2>&1 & echo \\\"$!\\\" > server.pid; sleep 1; SERVER_PID=\\\$(cat server.pid 2>/dev/null || echo 0); if command -v mpstat >/dev/null 2>&1; then nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo \\\"$!\\\" > mpstat.pid; else echo \\\"WARN: mpstat not found; skipping per-CPU logs\\\" >> warn.log; fi; if command -v pidstat >/dev/null 2>&1 && [ \\\"$SERVER_PID\\\" != \\\"0\\\" ]; then nohup pidstat -u -p \\\"$SERVER_PID\\\" 1 > cpu.pidstat 2>&1 & echo \\\"$!\\\" > pidstat.pid; else echo \\\"WARN: pidstat not found; skipping per-process CPU logs\\\" >> warn.log; fi; i=0; while [ \\\"$i\\\" -lt 50 ]; do grep -q P008_REPL_SERVER_READY server.out && break; i=\\\$(expr \\\"$i\\\" + 1); sleep 0.1; done\""
+ssh "${REMOTE}" "sh -c \"cd \\\"${REMOTE_RUN_DIR}\\\"; : > warn.log; ulimit -n 65536 || true; nohup ./build/p008_net_repl_server \\\"${PORT}\\\" \\\"${CLIENTS}\\\" \\\"${DURATION_MS}\\\" \\\"${TICK_HZ}\\\" \\\"${WORKERS}\\\" > server.out 2>&1 & echo \\\"$!\\\" > server.pid; sleep 1; SERVER_PID=\\\$(cat server.pid 2>/dev/null || echo 0); if command -v mpstat >/dev/null 2>&1; then nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo \\\"$!\\\" > mpstat.pid; else echo \\\"WARN: mpstat not found; skipping per-CPU logs\\\" >> warn.log; fi; if command -v pidstat >/dev/null 2>&1 && [ \\\"$SERVER_PID\\\" != \\\"0\\\" ]; then nohup pidstat -u -p \\\"$SERVER_PID\\\" 1 > cpu.pidstat 2>&1 & echo \\\"$!\\\" > pidstat.pid; else echo \\\"WARN: pidstat not found; skipping per-process CPU logs\\\" >> warn.log; fi; i=0; while [ \$i -lt 50 ]; do grep -q P008_REPL_SERVER_READY server.out && break; i=\$(expr \$i + 1); sleep 0.1; done\""
 
 if [[ "${CLIENTS_LOCAL}" == "1" ]]; then
   echo "Spawning ${CLIENTS} clients locally against ${SERVER_IPV4}:${PORT}..." >&2
@@ -177,12 +180,12 @@ if [[ "${CLIENTS_LOCAL}" == "1" ]]; then
 else
   # Start clients on remote (loopback to server)
   echo "Spawning ${CLIENTS} clients on remote..." >&2
-  ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" REMOTE_BIN_DIR="${REMOTE_BIN_DIR:-}" USE_SWEEP_BIN="${USE_SWEEP_BIN:-}" PORT="${PORT}" CLIENTS="${CLIENTS}" CLIENT_DURATION="${CLIENT_DURATION}" EXPECTED_SPAWNS="${EXPECTED_SPAWNS}" TICK_HZ="${TICK_HZ}" bash -lc 'set -euo pipefail; cd $REMOTE_RUN_DIR; : > clients.out; if [[ -n "$USE_SWEEP_BIN" ]]; then REMOTE_BIN_DIR="$HOME/bench/p008_sweep_build/srcdir/build"; fi; for i in $(seq 1 "$CLIENTS"); do nohup "$REMOTE_BIN_DIR/p008_net_repl_client" 127.0.0.1 "$PORT" "$CLIENT_DURATION" "$EXPECTED_SPAWNS" "$TICK_HZ" >> clients.out 2>&1 & done; wait || true'
+  ssh "${REMOTE}" "sh -c \"cd \\\"${REMOTE_RUN_DIR}\\\"; : > clients.out; for i in \\\\$(seq 1 \\\"${CLIENTS}\\\"); do nohup ./build/p008_net_repl_client 127.0.0.1 \\\"${PORT}\\\" \\\"${CLIENT_DURATION}\\\" \\\"${EXPECTED_SPAWNS}\\\" \\\"${TICK_HZ}\\\" >> clients.out 2>&1 & done; wait || true\""
 fi
 
 # Wait for server to exit (duration-based), then stop monitors
 echo "Waiting for server to finish..." >&2
-ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" bash -lc 'set -euo pipefail; cd $REMOTE_RUN_DIR; while kill -0 $(cat server.pid) 2>/dev/null; do sleep 1; done; if [[ -f mpstat.pid ]]; then kill $(cat mpstat.pid) 2>/dev/null || true; fi; if [[ -f pidstat.pid ]]; then kill $(cat pidstat.pid) 2>/dev/null || true; fi'
+ssh "${REMOTE}" "sh -c 'RRD=\"${REMOTE_RUN_DIR}\"; cd \"\$RRD\"; while kill -0 \$(cat server.pid) 2>/dev/null; do sleep 1; done; if [ -f mpstat.pid ]; then kill \$(cat mpstat.pid) 2>/dev/null || true; fi; if [ -f pidstat.pid ]; then kill \$(cat pidstat.pid) 2>/dev/null || true; fi'"
 
 # Fetch logs
 LOCAL_LOG_DIR="${ROOT_DIR}/bench-logs/${RUN_TAG}"
@@ -237,7 +240,7 @@ if [[ -f "${LOCAL_LOG_DIR}/cpu.mpstat" ]]; then
   awk '/all/ && $3 ~ /CPU/ {next} /all/ {idle+=$NF; n++} END {if(n>0) printf "CPU idle mean=%.2f%%\n", idle/n}' "${LOCAL_LOG_DIR}/cpu.mpstat" || true
 fi
 if [[ -f "${LOCAL_LOG_DIR}/cpu.pidstat" ]]; then
-  awk '/Average:/ && $0 ~ /\%CPU/ {print $0} /^\s*[0-9]/ {sum+=$7; n++} END {if(n>0) printf "Server %%CPU mean=%.2f%%\n", sum/n}' "${LOCAL_LOG_DIR}/cpu.pidstat" || true
+  awk 'BEGIN{cpu_col=0} /^\s*Time/ && /%CPU/ { for (i=1; i<=NF; i++) if ($i=="%CPU") cpu_col=i; next } /^[0-9]{2}:[0-9]{2}:[0-9]{2}/ && cpu_col>0 { sum+=$(cpu_col); n++ } END { if(n>0) printf "Server %%CPU mean=%.2f%%\n", sum/n }' "${LOCAL_LOG_DIR}/cpu.pidstat" || true
 fi
 
 echo "Logs: ${LOCAL_LOG_DIR}"
