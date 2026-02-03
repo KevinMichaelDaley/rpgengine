@@ -168,7 +168,6 @@ int main(int argc, char **argv) {
             (void)server_repl_server_tick(srv, now);
             next_tick += tick_ms;
         }
-        sleep_ms(1u);
     }
 
     server_repl_stats_t st = server_repl_server_stats(srv);

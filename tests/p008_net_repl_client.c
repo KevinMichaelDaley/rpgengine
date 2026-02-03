@@ -262,6 +262,14 @@ int main(int argc, char **argv) {
 
     uint32_t corrections = 0u;
 
+    /* State update latency instrumentation (inter-arrival). */
+    uint64_t last_state_ms = 0u;
+    uint64_t state_delta_count = 0u;
+    double state_delta_sum_ms = 0.0;
+    double state_delta_max_ms = 0.0;
+    double state_lag_over_expected_sum_ms = 0.0;
+    double state_lag_over_expected_max_ms = 0.0;
+
     uint8_t rx_packet[NET_RUDP_MAX_PACKET_SIZE];
     while (now_ms() < end) {
         uint64_t now = now_ms();
@@ -371,6 +379,22 @@ int main(int argc, char **argv) {
                 }
             }
         } else if (schema_id == NET_REPL_SCHEMA_STATE_CUBE) {
+            const uint64_t recv_now = now_ms();
+            if (last_state_ms > 0u) {
+                const double delta_ms = (double)(recv_now - last_state_ms);
+                state_delta_sum_ms += delta_ms;
+                state_delta_count++;
+                if (delta_ms > state_delta_max_ms) {
+                    state_delta_max_ms = delta_ms;
+                }
+                const double expected_ms = 1000.0 / (double)tick_hz;
+                const double lag_ms = (delta_ms > expected_ms) ? (delta_ms - expected_ms) : 0.0;
+                state_lag_over_expected_sum_ms += lag_ms;
+                if (lag_ms > state_lag_over_expected_max_ms) {
+                    state_lag_over_expected_max_ms = lag_ms;
+                }
+            }
+            last_state_ms = recv_now;
             net_repl_state_cube_t st;
             if (net_repl_state_cube_decode(&st, payload, payload_size) == NET_REPL_OK) {
                 state_count++;
@@ -459,11 +483,14 @@ int main(int argc, char **argv) {
 
     const double pos_mean = (pos_err_count > 0u) ? (pos_err_sum / (double)pos_err_count) : 0.0;
     const double rot_mean = (rot_err_count > 0u) ? (rot_err_sum_deg / (double)rot_err_count) : 0.0;
+    const double state_inter_mean_ms = (state_delta_count > 0u) ? (state_delta_sum_ms / (double)state_delta_count) : 0.0;
+    const double state_lag_mean_ms = (state_delta_count > 0u) ? (state_lag_over_expected_sum_ms / (double)state_delta_count) : 0.0;
 
-    fprintf(stdout,
+        fprintf(stdout,
             "P008_CLIENT_STATS tx_bytes=%llu rx_bytes=%llu tx_packets=%llu rx_packets=%llu spawns=%u states=%u "
             "tx_mbps=%.3f rx_mbps=%.3f pos_samples=%llu pos_err_mean=%.6f pos_err_max=%.6f "
-            "rot_samples=%llu rot_err_deg_mean=%.6f rot_err_deg_max=%.6f corrections=%u\n",
+            "rot_samples=%llu rot_err_deg_mean=%.6f rot_err_deg_max=%.6f corrections=%u "
+            "state_inter_ms_mean=%.3f state_inter_ms_max=%.3f state_lag_ms_mean=%.3f state_lag_ms_max=%.3f\n",
             (unsigned long long)tx_bytes,
             (unsigned long long)rx_bytes,
             (unsigned long long)tx_packets,
@@ -478,7 +505,11 @@ int main(int argc, char **argv) {
             (unsigned long long)rot_err_count,
             rot_mean,
             rot_err_max_deg,
-            (unsigned)corrections);
+            (unsigned)corrections,
+            state_inter_mean_ms,
+            state_delta_max_ms,
+            state_lag_mean_ms,
+            state_lag_over_expected_max_ms);
     fflush(stdout);
 
     free(entity_ids);
