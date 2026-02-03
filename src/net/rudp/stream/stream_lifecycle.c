@@ -3,11 +3,7 @@
 
 #include "ferrum/net/stream.h"
 #include "ferrum/net/reliable_channel.h"
-
-struct fr_rudp_stream {
-    uint32_t reliable_channels;
-    net_reliable_channel_t *reliable;
-};
+#include "src/net/rudp/stream/stream_internal.h"
 
 static uint32_t clamp_default_u32(uint32_t v, uint32_t def) {
     return v == 0u ? def : v;
