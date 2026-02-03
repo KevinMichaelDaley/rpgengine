@@ -23,11 +23,11 @@ static int test_channel_ids_and_topic_pump(void) {
     assert(s != NULL);
 
     /* Frame format: 2-byte seq LE, 2-byte chan LE, payload */
-    uint8_t f1c0[4 + 3] = {1, 0, 0, 0, 'A','A','A'};
+    uint8_t f0c0[4 + 3] = {0, 0, 0, 0, 'A','A','A'};
     uint8_t f1c1[4 + 2] = {1, 0, 1, 0, 'B','B'};
     uint8_t f1c1_dup[4 + 2] = {1, 0, 1, 0, 'X','X'};
 
-    assert(fr_rudp_stream_push_frame(s, f1c0, sizeof f1c0));
+    assert(fr_rudp_stream_push_frame(s, f0c0, sizeof f0c0));
     assert(fr_rudp_stream_push_frame(s, f1c1, sizeof f1c1));
     /* Duplicate should not result in second delivery. */
     (void)fr_rudp_stream_push_frame(s, f1c1_dup, sizeof f1c1_dup);
@@ -45,11 +45,16 @@ static int test_channel_ids_and_topic_pump(void) {
     assert(out[0]=='B' && out[1]=='B');
 
     /* Out-of-order for channel 0: seq 2 then 3 (deliver only after 2 then 3). */
-    uint8_t f2c0[4 + 3] = {2, 0, 0, 0, 'C','C','C'};
     uint8_t f3c0[4 + 3] = {3, 0, 0, 0, 'D','D','D'};
+    uint8_t f2c0[4 + 3] = {2, 0, 0, 0, 'C','C','C'};
+    uint8_t f1c0[4 + 3] = {1, 0, 0, 0, 'B','B','B'};
     assert(fr_rudp_stream_push_frame(s, f3c0, sizeof f3c0));
     assert(fr_rudp_stream_push_frame(s, f2c0, sizeof f2c0));
+    assert(fr_rudp_stream_push_frame(s, f1c0, sizeof f1c0));
 
+    cap = sizeof out;
+    assert(fr_topic_channel_pop(topics[0], out, &cap));
+    assert(cap == 3 && out[0]=='B' && out[1]=='B' && out[2]=='B');
     cap = sizeof out;
     assert(fr_topic_channel_pop(topics[0], out, &cap));
     assert(cap == 3 && out[0]=='C' && out[1]=='C' && out[2]=='C');
