@@ -29,6 +29,9 @@ extern "C" {
 /** Maximum encoded UDP packet size produced by this module. */
 #define NET_RUDP_MAX_PACKET_SIZE 512u
 
+/** Default reassembly buffer capacity (bytes) per peer when fragmentation is enabled. */
+#define NET_RUDP_REASM_DEFAULT_CAP 4096u
+
 /** Default number of reliable send slots per peer (legacy sizing). */
 #define NET_RUDP_SEND_SLOTS_DEFAULT 64u
 
@@ -50,6 +53,21 @@ typedef struct net_rudp_peer {
 
     net_rudp_send_slot_t *send_slots;
     size_t send_slot_count;
+
+    /* Optional fragmentation/reassembly support.
+       Disabled by default to preserve legacy behavior for oversized payloads.
+     */
+    uint16_t next_msg_id;
+    uint8_t frag_enabled;
+
+    uint8_t *reasm_buf;
+    size_t reasm_buf_cap;
+    uint8_t reasm_storage[NET_RUDP_REASM_DEFAULT_CAP];
+    uint16_t reasm_msg_id;
+    uint16_t reasm_schema_id;
+    uint16_t reasm_total_size;
+    uint16_t reasm_frag_count;
+    uint64_t reasm_frag_mask;
 } net_rudp_peer_t;
 
 /** Returns required size (bytes) for an array of `net_rudp_send_slot_t` of length `slot_count`. */
@@ -61,6 +79,20 @@ void net_rudp_peer_init_with_storage(net_rudp_peer_t *peer,
                                      uint32_t resend_interval_ms,
                                      net_rudp_send_slot_t *send_slots,
                                      size_t send_slot_count);
+
+/**
+ * @brief Enable/disable payload fragmentation + reassembly for this peer.
+ *
+ * When enabled:
+ * - `net_rudp_peer_send_*` can transmit payloads larger than the per-packet maximum.
+ * - `net_rudp_peer_receive` can reassemble fragmented payloads into a single contiguous buffer.
+ *
+ * @param peer Peer to configure.
+ * @param enabled Non-zero to enable.
+ * @param reasm_buf Caller-owned reassembly buffer (required to receive fragmented payloads).
+ * @param reasm_buf_cap Capacity of `reasm_buf` in bytes.
+ */
+void net_rudp_peer_enable_fragmentation(net_rudp_peer_t *peer, int enabled, uint8_t *reasm_buf, size_t reasm_buf_cap);
 
 /**
  * @brief Process an incoming packet: validate, update recv window, and retire ACKed send slots.
@@ -82,6 +114,18 @@ int net_rudp_peer_send_unreliable(net_rudp_peer_t *peer,
                                   const void *payload,
                                   size_t payload_size);
 
+/**
+ * @brief Send an unreliable message using a caller-provided sendto callback.
+ */
+int net_rudp_peer_send_unreliable_via(net_rudp_peer_t *peer,
+                                      void *io_user,
+                                      int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                      const net_udp_addr_t *to,
+                                      uint64_t now_ms,
+                                      uint16_t schema_id,
+                                      const void *payload,
+                                      size_t payload_size);
+
 int net_rudp_peer_send_reliable(net_rudp_peer_t *peer,
                                 net_udp_socket_t *sock,
                                 const net_udp_addr_t *to,
@@ -92,12 +136,34 @@ int net_rudp_peer_send_reliable(net_rudp_peer_t *peer,
                                 uint16_t *out_sequence);
 
 /**
+ * @brief Send a reliable message using a caller-provided sendto callback.
+ */
+int net_rudp_peer_send_reliable_via(net_rudp_peer_t *peer,
+                                    void *io_user,
+                                    int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                    const net_udp_addr_t *to,
+                                    uint64_t now_ms,
+                                    uint16_t schema_id,
+                                    const void *payload,
+                                    size_t payload_size,
+                                    uint16_t *out_sequence);
+
+/**
  * @brief Resend any unacknowledged reliable packets past the resend interval.
  */
 int net_rudp_peer_tick_resend(net_rudp_peer_t *peer,
                               net_udp_socket_t *sock,
                               const net_udp_addr_t *to,
                               uint64_t now_ms);
+
+/**
+ * @brief Resend any unacknowledged reliable packets past the resend interval using a sendto callback.
+ */
+int net_rudp_peer_tick_resend_via(net_rudp_peer_t *peer,
+                                  void *io_user,
+                                  int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                  const net_udp_addr_t *to,
+                                  uint64_t now_ms);
 
 #ifdef __cplusplus
 } /* extern "C" */

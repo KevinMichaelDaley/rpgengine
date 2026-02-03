@@ -7,13 +7,21 @@
 
 #include <errno.h>
 
+#include <math.h>
+
 #include <signal.h>
+#include <sched.h>
 #include <time.h>
 
 #include "ferrum/job/system.h"
 #include "ferrum/net/rudp/peer.h"
+#include "ferrum/net/quantization.h"
+#include "ferrum/net/replication/state_cube.h"
 #include "ferrum/net/udp_socket.h"
-#include "ferrum/server/repl_server.h"
+#include "ferrum/net/topic_channel.h"
+
+#include "ferrum/server/entity/net/pump.h"
+#include "ferrum/server/net/runtime.h"
 
 static uint64_t now_ms(void) {
     struct timespec ts;
@@ -42,6 +50,147 @@ static void handle_stop_signal(int signum) {
     g_stop = 1;
 }
 
+struct p008_server_io {
+    net_udp_socket_t *sock;
+
+    uint64_t packets_sent;
+    uint64_t packets_recv;
+    uint64_t bytes_sent;
+    uint64_t bytes_recv;
+};
+
+static int recvfrom_counting(void *user,
+                             net_udp_addr_t *out_from,
+                             uint8_t *out_data,
+                             size_t out_cap,
+                             size_t *out_size) {
+    struct p008_server_io *io = (struct p008_server_io *)user;
+    if (!io || !io->sock) {
+        return NET_UDP_SOCKET_ERR_INVALID;
+    }
+    int rc = net_udp_socket_recvfrom(io->sock, out_from, out_data, out_cap, out_size);
+    if (rc == NET_UDP_SOCKET_OK && out_size) {
+        io->packets_recv += 1u;
+        io->bytes_recv += (uint64_t)(*out_size);
+    }
+    return rc;
+}
+
+static int sendto_counting(void *user, const net_udp_addr_t *to, const void *data, size_t size) {
+    struct p008_server_io *io = (struct p008_server_io *)user;
+    if (!io || !io->sock) {
+        return NET_UDP_SOCKET_ERR_INVALID;
+    }
+    int rc = net_udp_socket_sendto(io->sock, to, data, size);
+    if (rc == NET_UDP_SOCKET_OK) {
+        io->packets_sent += 1u;
+        io->bytes_sent += (uint64_t)size;
+    }
+    return rc;
+}
+
+static bool get_out_topics_from_runtime(void *user,
+                                        uint16_t client_id,
+                                        fr_topic_channel_t **out_rel,
+                                        fr_topic_channel_t **out_unrel) {
+    fr_server_net_runtime_t *rt = (fr_server_net_runtime_t *)user;
+    if (!rt || !out_rel || !out_unrel) {
+        return false;
+    }
+    return fr_server_net_runtime_client_out_topics(rt, client_id, out_rel, out_unrel);
+}
+
+static void push_unreliable_(fr_server_net_runtime_t *rt,
+                             uint16_t client_id,
+                             uint16_t schema_id,
+                             const uint8_t *payload,
+                             size_t payload_size) {
+    if (!rt || !payload || payload_size == 0u) {
+        return;
+    }
+
+    fr_topic_channel_t *out_rel = NULL;
+    fr_topic_channel_t *out_unrel = NULL;
+    if (!fr_server_net_runtime_client_out_topics(rt, client_id, &out_rel, &out_unrel) || !out_unrel) {
+        return;
+    }
+
+    if (payload_size > NET_RUDP_MAX_PACKET_SIZE) {
+        return;
+    }
+
+    uint8_t msg[2u + NET_RUDP_MAX_PACKET_SIZE];
+    msg[0] = (uint8_t)(schema_id & 0xFFu);
+    msg[1] = (uint8_t)((schema_id >> 8u) & 0xFFu);
+    memcpy(msg + 2u, payload, payload_size);
+    (void)fr_topic_channel_push(out_unrel, msg, 2u + payload_size);
+}
+
+static vec3_t cube_pos_(uint16_t server_tick, uint16_t owner_client_id, uint16_t tick_hz) {
+    const float t = (tick_hz > 0u) ? ((float)server_tick / (float)tick_hz) : 0.0f;
+    const float phase = (float)owner_client_id * 0.25f;
+    return (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
+}
+
+static void broadcast_some_states_(fr_server_net_runtime_t *rt,
+                                   const uint8_t *joined,
+                                   uint16_t max_clients,
+                                   uint16_t tick_hz,
+                                   uint16_t server_tick,
+                                   uint16_t *state_cursor,
+                                   uint16_t max_states_per_client) {
+    if (!rt || !joined || !state_cursor || max_clients == 0u || tick_hz == 0u || max_states_per_client == 0u) {
+        return;
+    }
+
+    quat_t rot = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+    net_qquat_snorm16_t qrot;
+    if (net_quantize_quat_snorm16(rot, &qrot) != NET_QUANT_OK) {
+        return;
+    }
+
+    for (uint16_t ci = 0u; ci < max_clients; ++ci) {
+        if (!joined[ci]) {
+            continue;
+        }
+
+        uint16_t cursor = (uint16_t)(state_cursor[ci] % max_clients);
+        uint16_t sent = 0u;
+        uint16_t scanned = 0u;
+
+        while (sent < max_states_per_client && scanned < max_clients) {
+            const uint16_t ei = (uint16_t)((cursor + scanned) % max_clients);
+            scanned++;
+
+            if (!joined[ei]) {
+                continue;
+            }
+
+            vec3_t pos = cube_pos_(server_tick, ei, tick_hz);
+            net_qvec3_mm_t qpos;
+            if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
+                continue;
+            }
+
+            net_repl_state_cube_t st;
+            st.server_tick = server_tick;
+            st.entity_id = 1000u + (uint32_t)ei;
+            st.pos_mm = (net_repl_vec3_mm_t){qpos.x_mm, qpos.y_mm, qpos.z_mm};
+            st.rot_snorm16 = (net_repl_quat_snorm16_t){qrot.x, qrot.y, qrot.z, qrot.w};
+
+            uint8_t payload[NET_REPL_STATE_CUBE_PAYLOAD_SIZE];
+            if (net_repl_state_cube_encode(&st, payload, sizeof(payload)) != NET_REPL_OK) {
+                continue;
+            }
+
+            push_unreliable_(rt, ci, NET_REPL_SCHEMA_STATE_CUBE, payload, sizeof(payload));
+            sent++;
+        }
+
+        state_cursor[ci] = (uint16_t)((cursor + scanned) % max_clients);
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc != 6) {
         usage(argv[0]);
@@ -59,56 +208,9 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-    server_repl_config_t cfg;
-    cfg.max_clients = (uint16_t)max_clients_l;
-    cfg.tick_hz = (uint16_t)tick_hz_l;
-    cfg.max_entities = (uint16_t)max_clients_l;
-    cfg.resend_interval_ms = 50u;
-
-    size_t client_bytes = server_repl_client_storage_size(cfg.max_clients);
-    size_t entity_bytes = server_repl_entity_storage_size(cfg.max_entities);
-    size_t ctx_bytes = server_repl_send_job_ctx_storage_size(cfg.max_clients, cfg.max_entities);
-
-    void *client_storage = calloc(1u, client_bytes);
-    void *entity_storage = calloc(1u, entity_bytes);
-    void *ctx_storage = calloc(1u, ctx_bytes);
-    if (!client_storage || !entity_storage || !ctx_storage) {
-        fprintf(stderr, "Failed to allocate server storage\n");
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        return 1;
-    }
-
-    cfg.client_storage = client_storage;
-    cfg.client_storage_bytes = client_bytes;
-    cfg.entity_storage = entity_storage;
-    cfg.entity_storage_bytes = entity_bytes;
-    cfg.send_job_ctx_storage = ctx_storage;
-    cfg.send_job_ctx_storage_bytes = ctx_bytes;
-
-    const size_t rudp_slots_per_client = (size_t)cfg.max_entities + 8u;
-    const size_t total_rudp_slots = (size_t)cfg.max_clients * rudp_slots_per_client;
-    const size_t rudp_bytes = net_rudp_send_slot_storage_size(total_rudp_slots);
-    void *rudp_storage = calloc(1u, rudp_bytes);
-    if (!rudp_storage) {
-        fprintf(stderr, "Failed to allocate RUDP send slots\n");
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        return 1;
-    }
-    cfg.rudp_send_slot_storage = rudp_storage;
-    cfg.rudp_send_slot_storage_bytes = rudp_bytes;
-    cfg.rudp_send_slots_per_client = rudp_slots_per_client;
-
     net_udp_socket_t sock;
     if (net_udp_socket_open(&sock) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to open UDP socket\n");
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        free(rudp_storage);
         return 1;
     }
 
@@ -116,21 +218,17 @@ int main(int argc, char **argv) {
     if (net_udp_addr_ipv4(&bind_addr, 0u, 0u, 0u, 0u, (uint16_t)port_l) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to build bind address\n");
         net_udp_socket_close(&sock);
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        free(rudp_storage);
         return 1;
     }
     if (net_udp_socket_bind(&sock, &bind_addr) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "Failed to bind port %ld: %s\n", port_l, strerror(errno));
         net_udp_socket_close(&sock);
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        free(rudp_storage);
         return 1;
     }
+
+    /* Best-effort: larger buffers reduce packet drops under bursty load. */
+    (void)net_udp_socket_set_recv_buffer_bytes(&sock, 4u * 1024u * 1024u);
+    (void)net_udp_socket_set_send_buffer_bytes(&sock, 4u * 1024u * 1024u);
     (void)net_udp_socket_set_nonblocking(&sock, 1);
 
     job_system_t jobs;
@@ -138,34 +236,97 @@ int main(int argc, char **argv) {
     if (status != JOB_CREATE_OK) {
         fprintf(stderr, "Failed to create job system\n");
         net_udp_socket_close(&sock);
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        free(rudp_storage);
         return 1;
     }
     if (job_system_start(&jobs) != 0) {
         fprintf(stderr, "Failed to start job system\n");
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        free(rudp_storage);
         return 1;
     }
 
-    server_repl_server_t *srv = server_repl_server_create(&cfg, &sock, &jobs);
-    if (!srv) {
-        fprintf(stderr, "Failed to create repl server\n");
+    fr_topic_channel_config_t tcfg;
+    memset(&tcfg, 0, sizeof(tcfg));
+    tcfg.capacity = 4096u;
+
+    fr_topic_channel_t *inbound = fr_topic_channel_create(&tcfg);
+    fr_topic_channel_t *player_events = fr_topic_channel_create(&tcfg);
+    fr_topic_channel_t *entity_events = fr_topic_channel_create(&tcfg);
+    if (!inbound || !player_events || !entity_events) {
+        fprintf(stderr, "Failed to allocate topic channels\n");
+        fr_topic_channel_destroy(inbound);
+        fr_topic_channel_destroy(player_events);
+        fr_topic_channel_destroy(entity_events);
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
-        free(client_storage);
-        free(entity_storage);
-        free(ctx_storage);
-        free(rudp_storage);
         return 1;
     }
+
+    struct p008_server_io io;
+    memset(&io, 0, sizeof(io));
+    io.sock = &sock;
+
+    fr_server_net_runtime_config_t rt_cfg;
+    memset(&rt_cfg, 0, sizeof(rt_cfg));
+    rt_cfg.max_clients = (uint16_t)max_clients_l;
+    rt_cfg.jobs = &jobs;
+    rt_cfg.socket = &sock;
+    rt_cfg.inbound_topic = inbound;
+    rt_cfg.recvfrom_cb = recvfrom_counting;
+    rt_cfg.sendto_cb = sendto_counting;
+    rt_cfg.io_user = &io;
+
+    fr_server_net_runtime_t *rt = fr_server_net_runtime_create(&rt_cfg);
+    if (!rt) {
+        fprintf(stderr, "Failed to create server net runtime\n");
+        fr_topic_channel_destroy(inbound);
+        fr_topic_channel_destroy(player_events);
+        fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&jobs);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+
+    fr_server_entity_net_pump_config_t pump_cfg;
+    memset(&pump_cfg, 0, sizeof(pump_cfg));
+    pump_cfg.max_clients = (uint16_t)max_clients_l;
+    pump_cfg.tick_hz = (uint16_t)tick_hz_l;
+    pump_cfg.expected_entities = (uint16_t)max_clients_l;
+    pump_cfg.inbound_topic = inbound;
+    pump_cfg.player_event_topic = player_events;
+    pump_cfg.entity_event_topic = entity_events;
+    pump_cfg.get_client_out_topics_cb = get_out_topics_from_runtime;
+    pump_cfg.io_user = rt;
+
+    fr_server_entity_net_pump_t *pump = fr_server_entity_net_pump_create(&pump_cfg);
+    if (!pump) {
+        fprintf(stderr, "Failed to create server entity net pump\n");
+        fr_server_net_runtime_destroy(rt);
+        fr_topic_channel_destroy(inbound);
+        fr_topic_channel_destroy(player_events);
+        fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&jobs);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+
+    uint8_t *joined = (uint8_t *)calloc((size_t)max_clients_l, 1u);
+    uint16_t *state_cursor = (uint16_t *)calloc((size_t)max_clients_l, sizeof(*state_cursor));
+    if (!joined || !state_cursor) {
+        fprintf(stderr, "Failed to allocate server join/state tracking\n");
+        free(joined);
+        free(state_cursor);
+        fr_server_entity_net_pump_destroy(pump);
+        fr_server_net_runtime_destroy(rt);
+        fr_topic_channel_destroy(inbound);
+        fr_topic_channel_destroy(player_events);
+        fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&jobs);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+    uint16_t server_tick = 0u;
+    uint32_t clients_joined = 0u;
 
     fprintf(stdout, "P008_REPL_SERVER_READY\n");
     fflush(stdout);
@@ -183,30 +344,74 @@ int main(int argc, char **argv) {
 
     while (!g_stop && now_ms() < end) {
         uint64_t now = now_ms();
-        (void)server_repl_server_pump(srv, now);
+
+        const uint64_t packets_before = io.packets_recv;
+        (void)fr_server_net_runtime_pump(rt, now);
+        const int saw_packet = (io.packets_recv != packets_before);
+        (void)fr_server_entity_net_pump_tick(pump, now);
+
+        /* Drain player join events to track connected clients. */
+        for (;;) {
+            uint8_t evt[32];
+            size_t evt_len = sizeof(evt);
+            if (!fr_topic_channel_pop(player_events, evt, &evt_len)) {
+                break;
+            }
+            if (evt_len < 6u) {
+                continue;
+            }
+            if (evt[0] != FR_SERVER_EVT_PLAYER_JOIN) {
+                continue;
+            }
+            uint16_t client_id = (uint16_t)evt[2] | ((uint16_t)evt[3] << 8u);
+            if (client_id >= (uint16_t)max_clients_l) {
+                continue;
+            }
+            if (!joined[client_id]) {
+                joined[client_id] = 1u;
+                clients_joined += 1u;
+            }
+        }
+
         if (now >= next_tick) {
-            (void)server_repl_server_tick(srv, now);
+            server_tick = (uint16_t)(server_tick + 1u);
+            broadcast_some_states_(rt,
+                                   joined,
+                                   (uint16_t)max_clients_l,
+                                   (uint16_t)tick_hz_l,
+                                   server_tick,
+                                   state_cursor,
+                                   2u);
             next_tick += tick_ms;
         }
+
+                /* Yield to worker threads. Sleep only when idle to stay responsive. */
+                if (!saw_packet && now < next_tick) {
+                    sleep_ms(1u);
+                } else {
+                    sched_yield();
+                }
     }
 
-        server_repl_stats_t st = server_repl_server_stats(srv);
-        fprintf(stdout, "p008 stats: clients=%u pps_out=%llu pps_in=%llu bytes_out=%llu bytes_in=%llu state_jobs=%llu net_io_ns=%llu state_ns=%llu\n",
-            (unsigned)st.clients_connected,
-            (unsigned long long)st.packets_sent,
-            (unsigned long long)st.packets_recv,
-            (unsigned long long)st.bytes_sent,
-            (unsigned long long)st.bytes_recv,
-            (unsigned long long)st.state_jobs_scheduled,
-            (unsigned long long)st.net_io_ns_total,
-            (unsigned long long)st.state_update_ns_total);
+    fprintf(stdout,
+            "p008 stats: clients=%u pps_out=%llu pps_in=%llu bytes_out=%llu bytes_in=%llu state_jobs=%llu net_io_ns=%llu state_ns=%llu\n",
+            (unsigned)clients_joined,
+            (unsigned long long)io.packets_sent,
+            (unsigned long long)io.packets_recv,
+            (unsigned long long)io.bytes_sent,
+            (unsigned long long)io.bytes_recv,
+            (unsigned long long)0u,
+            (unsigned long long)0u,
+            (unsigned long long)0u);
 
-    server_repl_server_destroy(srv);
+    free(joined);
+    free(state_cursor);
+    fr_server_entity_net_pump_destroy(pump);
+    fr_server_net_runtime_destroy(rt);
+    fr_topic_channel_destroy(inbound);
+    fr_topic_channel_destroy(player_events);
+    fr_topic_channel_destroy(entity_events);
     job_system_shutdown(&jobs);
     net_udp_socket_close(&sock);
-    free(client_storage);
-    free(entity_storage);
-    free(ctx_storage);
-    free(rudp_storage);
     return 0;
 }

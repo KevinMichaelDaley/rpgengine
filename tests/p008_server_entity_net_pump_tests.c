@@ -133,6 +133,19 @@ static int test_join_publishes_player_join_and_sends_welcome(void) {
     ASSERT_EQ_INT(0, net_repl_welcome_decode(&w, out_msg + 2u, out_len - 2u));
     ASSERT_EQ_INT(60, w.tick_hz);
 
+    /* Expect SPAWN for self enqueued to client0 reliable out topic. */
+    uint8_t spawn_msg[64];
+    size_t spawn_len = sizeof(spawn_msg);
+    ASSERT_TRUE(fr_topic_channel_pop(env.clients[0].reliable, spawn_msg, &spawn_len));
+    ASSERT_TRUE(spawn_len >= 2u + NET_REPL_SPAWN_PAYLOAD_SIZE);
+    uint16_t spawn_schema_id = (uint16_t)spawn_msg[0] | ((uint16_t)spawn_msg[1] << 8u);
+    ASSERT_EQ_INT(NET_REPL_SCHEMA_SPAWN, spawn_schema_id);
+
+    net_repl_spawn_t sp;
+    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, spawn_msg + 2u, spawn_len - 2u));
+    ASSERT_EQ_INT(1000u, sp.entity_id);
+    ASSERT_EQ_INT(0u, sp.owner_client_id);
+
     /* Ensure entity_events remains empty. */
     size_t e_len = sizeof(evt);
     ASSERT_TRUE(!fr_topic_channel_pop(entity_events, evt, &e_len));
@@ -185,6 +198,8 @@ static int test_second_join_sends_cross_spawns_and_events(void) {
     uint8_t drain[128];
     size_t drain_len = sizeof(drain);
     (void)fr_topic_channel_pop(env.clients[0].reliable, drain, &drain_len);
+    drain_len = sizeof(drain);
+    (void)fr_topic_channel_pop(env.clients[0].reliable, drain, &drain_len);
 
     /* Join client 1. */
     uint8_t msg1[64];
@@ -192,44 +207,48 @@ static int test_second_join_sends_cross_spawns_and_events(void) {
     ASSERT_TRUE(fr_topic_channel_push(inbound, msg1, msg1_len));
     ASSERT_TRUE(fr_server_entity_net_pump_tick(pump, 0u));
 
-    /* Expect SPAWN for player0 -> client1 and player1 -> client0. */
+    /* Expect client0 receives SPAWN for player1. */
     uint8_t out0[128];
     size_t out0_len = sizeof(out0);
     ASSERT_TRUE(fr_topic_channel_pop(env.clients[0].reliable, out0, &out0_len));
-    ASSERT_TRUE(out0_len >= 2u);
+    ASSERT_TRUE(out0_len >= 2u + NET_REPL_SPAWN_PAYLOAD_SIZE);
     uint16_t schema0 = (uint16_t)out0[0] | ((uint16_t)out0[1] << 8u);
+    ASSERT_EQ_INT(NET_REPL_SCHEMA_SPAWN, schema0);
 
+    net_repl_spawn_t sp0;
+    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp0, out0 + 2u, out0_len - 2u));
+    ASSERT_EQ_INT(1001u, sp0.entity_id);
+    ASSERT_EQ_INT(1u, sp0.owner_client_id);
+
+    /* Expect client1 receives WELCOME and two SPAWNs (self + player0). */
     uint8_t out1[128];
     size_t out1_len = sizeof(out1);
     ASSERT_TRUE(fr_topic_channel_pop(env.clients[1].reliable, out1, &out1_len));
-    ASSERT_TRUE(out1_len >= 2u);
+    ASSERT_TRUE(out1_len >= 2u + NET_REPL_WELCOME_PAYLOAD_SIZE);
     uint16_t schema1 = (uint16_t)out1[0] | ((uint16_t)out1[1] << 8u);
+    ASSERT_EQ_INT(NET_REPL_SCHEMA_WELCOME, schema1);
 
-    /* One of these may be WELCOME, depending on ordering; ensure both clients get at least one SPAWN. */
-    int saw_spawn0 = (schema0 == NET_REPL_SCHEMA_SPAWN);
-    int saw_spawn1 = (schema1 == NET_REPL_SCHEMA_SPAWN);
-
-    if (!saw_spawn0) {
-        ASSERT_EQ_INT(NET_REPL_SCHEMA_WELCOME, schema0);
-        out0_len = sizeof(out0);
-        ASSERT_TRUE(fr_topic_channel_pop(env.clients[0].reliable, out0, &out0_len));
-        schema0 = (uint16_t)out0[0] | ((uint16_t)out0[1] << 8u);
-        saw_spawn0 = (schema0 == NET_REPL_SCHEMA_SPAWN);
-    }
-    if (!saw_spawn1) {
-        ASSERT_EQ_INT(NET_REPL_SCHEMA_WELCOME, schema1);
+    int saw_self = 0;
+    int saw_other = 0;
+    for (int i = 0; i < 2; ++i) {
         out1_len = sizeof(out1);
         ASSERT_TRUE(fr_topic_channel_pop(env.clients[1].reliable, out1, &out1_len));
+        ASSERT_TRUE(out1_len >= 2u + NET_REPL_SPAWN_PAYLOAD_SIZE);
         schema1 = (uint16_t)out1[0] | ((uint16_t)out1[1] << 8u);
-        saw_spawn1 = (schema1 == NET_REPL_SCHEMA_SPAWN);
+        ASSERT_EQ_INT(NET_REPL_SCHEMA_SPAWN, schema1);
+
+        net_repl_spawn_t sp;
+        ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, out1 + 2u, out1_len - 2u));
+        if (sp.owner_client_id == 1u) {
+            ASSERT_EQ_INT(1001u, sp.entity_id);
+            saw_self = 1;
+        } else if (sp.owner_client_id == 0u) {
+            ASSERT_EQ_INT(1000u, sp.entity_id);
+            saw_other = 1;
+        }
     }
-
-    ASSERT_TRUE(saw_spawn0);
-    ASSERT_TRUE(saw_spawn1);
-
-    net_repl_spawn_t sp;
-    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, out0 + 2u, out0_len - 2u));
-    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, out1 + 2u, out1_len - 2u));
+    ASSERT_TRUE(saw_self);
+    ASSERT_TRUE(saw_other);
 
     /* Expect at least one EVT_PLAYER_SPAWN. */
     uint8_t evt[64];
@@ -298,7 +317,7 @@ static int test_spawn_suppressed_when_player_should_not_spawn_remote(void) {
         drain_len = sizeof(drain);
     }
 
-    /* Join client 1: should NOT receive SPAWN for player 0. */
+    /* Join client 1: may receive SPAWN for self, but should NOT receive SPAWN for player 0. */
     uint8_t msg1[64];
     size_t msg1_len = build_inbound_join_msg(1u, 0x44444444u, msg1, sizeof(msg1));
     ASSERT_TRUE(fr_topic_channel_push(inbound, msg1, msg1_len));
@@ -306,16 +325,20 @@ static int test_spawn_suppressed_when_player_should_not_spawn_remote(void) {
 
     uint8_t out[128];
     size_t out_len = sizeof(out);
-    int saw_spawn = 0;
+    int saw_spawn_for_player0 = 0;
     while (fr_topic_channel_pop(env.clients[1].reliable, out, &out_len)) {
         uint16_t schema = (uint16_t)out[0] | ((uint16_t)out[1] << 8u);
         if (schema == NET_REPL_SCHEMA_SPAWN) {
-            saw_spawn = 1;
-            break;
+            net_repl_spawn_t sp;
+            ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, out + 2u, out_len - 2u));
+            if (sp.owner_client_id == 0u) {
+                saw_spawn_for_player0 = 1;
+                break;
+            }
         }
         out_len = sizeof(out);
     }
-    ASSERT_TRUE(!saw_spawn);
+    ASSERT_TRUE(!saw_spawn_for_player0);
 
     fr_server_entity_net_pump_destroy(pump);
     for (uint16_t i = 0u; i < 2u; ++i) {

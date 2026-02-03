@@ -26,6 +26,7 @@ RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
 BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 	build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
+	build/p007_net_rudp_fragmentation_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark \
@@ -85,6 +86,9 @@ build/p007_net_schema_registry_tests: $(SRC) tests/p007_net_schema_registry_test
 
 build/p007_net_reliable_tests: $(SRC) tests/p007_net_reliable_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p007_net_rudp_fragmentation_tests: $(SRC) tests/net_rudp_fragmentation_tests.c | build
+	$(CC) $(CFLAGS) tests/net_rudp_fragmentation_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -198,7 +202,7 @@ build:
 test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
-&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
+&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_rudp_fragmentation_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p007_net_client_rx_tests \

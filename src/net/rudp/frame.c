@@ -6,14 +6,23 @@
 #define NET_RUDP_FRAME_SIZE 8u
 
 #define NET_RUDP_FLAG_RELIABLE 0x01u
+#define NET_RUDP_FLAG_FRAGMENT 0x02u
 
-static void write_u16_be(uint8_t *out, uint16_t v) {
-    out[0] = (uint8_t)((v >> 8) & 0xFFu);
-    out[1] = (uint8_t)(v & 0xFFu);
-}
+#define NET_RUDP_FRAG_HDR_SIZE 8u
+#define NET_RUDP_FRAG_MAX 64u
 
 static uint16_t read_u16_be(const uint8_t *in) {
     return (uint16_t)(((uint16_t)in[0] << 8) | (uint16_t)in[1]);
+}
+
+static uint64_t mask_for_count_(uint16_t count) {
+    if (count == 0u) {
+        return 0u;
+    }
+    if (count >= 64u) {
+        return ~(uint64_t)0u;
+    }
+    return ((uint64_t)1u << (uint64_t)count) - 1u;
 }
 
 int net_rudp_peer_receive(net_rudp_peer_t *peer,
@@ -85,163 +94,87 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
         return NET_RUDP_ERR_SHORT;
     }
 
-    memcpy(out_payload, frame + NET_RUDP_FRAME_SIZE, (size_t)payload_size);
-    *out_payload_size = (size_t)payload_size;
-    *out_schema_id = schema_id;
-    *out_reliable = (uint8_t)((flags & NET_RUDP_FLAG_RELIABLE) != 0u);
-    return NET_RUDP_OK;
-}
+    const uint8_t *payload = frame + NET_RUDP_FRAME_SIZE;
 
-static int build_packet(net_rudp_peer_t *peer,
-                        uint64_t now_ms,
-                        uint8_t reliable,
-                        uint16_t schema_id,
-                        const void *payload,
-                        size_t payload_size,
-                        uint8_t *out_packet,
-                        size_t out_capacity,
-                        size_t *out_size,
-                        uint16_t *out_sequence) {
-    if (!peer || !payload || !out_packet || !out_size) {
-        return NET_RUDP_ERR_INVALID;
-    }
-    if (payload_size > (NET_RUDP_MAX_PACKET_SIZE - NET_PACKET_HEADER_SIZE - NET_RUDP_FRAME_SIZE)) {
-        return NET_RUDP_ERR_INVALID;
-    }
-    if (out_capacity < NET_PACKET_HEADER_SIZE + NET_RUDP_FRAME_SIZE + payload_size) {
-        return NET_RUDP_ERR_SHORT;
-    }
-
-    net_packet_header_t header;
-    header.protocol_id = peer->protocol_id;
-    header.sequence = peer->next_sequence;
-    header.ack = net_ack_window_ack(&peer->recv_window);
-    header.ack_bits = net_ack_window_ack_bits(&peer->recv_window);
-
-    (void)now_ms;
-
-    int rc = net_packet_header_encode(&header, out_packet, out_capacity);
-    if (rc != NET_PACKET_HEADER_OK) {
-        return NET_RUDP_ERR_PROTOCOL;
-    }
-
-    uint8_t *frame = out_packet + NET_PACKET_HEADER_SIZE;
-    frame[0] = reliable ? NET_RUDP_FLAG_RELIABLE : 0u;
-    frame[1] = 0u;
-    write_u16_be(frame + 2, schema_id);
-    write_u16_be(frame + 4, (uint16_t)payload_size);
-    write_u16_be(frame + 6, 0u);
-    memcpy(frame + NET_RUDP_FRAME_SIZE, payload, payload_size);
-
-    *out_size = NET_PACKET_HEADER_SIZE + NET_RUDP_FRAME_SIZE + payload_size;
-    if (out_sequence) {
-        *out_sequence = header.sequence;
-    }
-    peer->next_sequence = (uint16_t)(peer->next_sequence + 1u);
-    return NET_RUDP_OK;
-}
-
-int net_rudp_peer_send_unreliable(net_rudp_peer_t *peer,
-                                  net_udp_socket_t *sock,
-                                  const net_udp_addr_t *to,
-                                  uint64_t now_ms,
-                                  uint16_t schema_id,
-                                  const void *payload,
-                                  size_t payload_size) {
-    if (!peer || !sock || !to || !payload) {
-        return NET_RUDP_ERR_INVALID;
-    }
-
-    uint8_t packet[NET_RUDP_MAX_PACKET_SIZE];
-    size_t packet_size = 0u;
-    int rc = build_packet(peer, now_ms, 0u, schema_id, payload, payload_size, packet, sizeof(packet), &packet_size, NULL);
-    if (rc != NET_RUDP_OK) {
-        return rc;
-    }
-    int src = net_udp_socket_sendto(sock, to, packet, packet_size);
-    return (src == NET_UDP_SOCKET_OK) ? NET_RUDP_OK : NET_RUDP_ERR_PROTOCOL;
-}
-
-int net_rudp_peer_send_reliable(net_rudp_peer_t *peer,
-                                net_udp_socket_t *sock,
-                                const net_udp_addr_t *to,
-                                uint64_t now_ms,
-                                uint16_t schema_id,
-                                const void *payload,
-                                size_t payload_size,
-                                uint16_t *out_sequence) {
-    if (!peer || !sock || !to || !payload) {
-        return NET_RUDP_ERR_INVALID;
-    }
-    if (!peer->send_slots || peer->send_slot_count == 0u) {
-        return NET_RUDP_ERR_FULL;
-    }
-
-    size_t slot = peer->send_slot_count;
-    for (size_t i = 0u; i < peer->send_slot_count; ++i) {
-        if (!peer->send_slots[i].used) {
-            slot = i;
-            break;
+    /* Fragmented payloads are reassembled into a contiguous buffer and only
+       delivered once complete.
+     */
+    if (flags & NET_RUDP_FLAG_FRAGMENT) {
+        if (!peer->frag_enabled || !peer->reasm_buf || peer->reasm_buf_cap == 0u) {
+            return NET_RUDP_ERR_INVALID;
         }
-    }
-    if (slot == peer->send_slot_count) {
-        return NET_RUDP_ERR_FULL;
-    }
+        if (payload_size < NET_RUDP_FRAG_HDR_SIZE) {
+            return NET_RUDP_ERR_PROTOCOL;
+        }
 
-    size_t packet_size = 0u;
-    uint16_t sequence = 0u;
-    int rc = build_packet(peer,
-                          now_ms,
-                          1u,
-                          schema_id,
-                          payload,
-                          payload_size,
-                          peer->send_slots[slot].packet_bytes,
-                          NET_RUDP_MAX_PACKET_SIZE,
-                          &packet_size,
-                          &sequence);
-    if (rc != NET_RUDP_OK) {
-        return rc;
-    }
+        uint16_t msg_id = read_u16_be(payload + 0);
+        uint16_t frag_idx = read_u16_be(payload + 2);
+        uint16_t frag_count = read_u16_be(payload + 4);
+        uint16_t total_size = read_u16_be(payload + 6);
 
-    peer->send_slots[slot].used = 1u;
-    peer->send_slots[slot].sequence = sequence;
-    peer->send_slots[slot].size = (uint16_t)packet_size;
-    peer->send_slots[slot].last_send_ms = now_ms;
+        if (frag_count == 0u || frag_count > NET_RUDP_FRAG_MAX) {
+            return NET_RUDP_ERR_PROTOCOL;
+        }
+        if (frag_idx >= frag_count) {
+            return NET_RUDP_ERR_PROTOCOL;
+        }
+        if (total_size == 0u) {
+            return NET_RUDP_ERR_PROTOCOL;
+        }
+        if ((size_t)total_size > peer->reasm_buf_cap || (size_t)total_size > out_payload_capacity) {
+            return NET_RUDP_ERR_SHORT;
+        }
 
-    int src = net_udp_socket_sendto(sock, to, peer->send_slots[slot].packet_bytes, packet_size);
-    if (src != NET_UDP_SOCKET_OK) {
-        return NET_RUDP_ERR_PROTOCOL;
-    }
-    if (out_sequence) {
-        *out_sequence = sequence;
-    }
-    return NET_RUDP_OK;
-}
+        const size_t max_single = (NET_RUDP_MAX_PACKET_SIZE - NET_PACKET_HEADER_SIZE - NET_RUDP_FRAME_SIZE);
+        if (max_single <= NET_RUDP_FRAG_HDR_SIZE) {
+            return NET_RUDP_ERR_PROTOCOL;
+        }
+        const size_t max_chunk = max_single - NET_RUDP_FRAG_HDR_SIZE;
+        const size_t offset = (size_t)frag_idx * max_chunk;
+        if (offset >= (size_t)total_size) {
+            return NET_RUDP_ERR_PROTOCOL;
+        }
+        size_t chunk_size = (size_t)payload_size - NET_RUDP_FRAG_HDR_SIZE;
+        if (chunk_size > (size_t)total_size - offset) {
+            chunk_size = (size_t)total_size - offset;
+        }
 
-int net_rudp_peer_tick_resend(net_rudp_peer_t *peer,
-                              net_udp_socket_t *sock,
-                              const net_udp_addr_t *to,
-                              uint64_t now_ms) {
-    if (!peer || !sock || !to) {
-        return NET_RUDP_ERR_INVALID;
-    }
+        /* Start/replace in-progress reassembly when msg_id changes. */
+        if (peer->reasm_msg_id != msg_id || peer->reasm_frag_count != frag_count || peer->reasm_total_size != total_size || peer->reasm_schema_id != schema_id) {
+            peer->reasm_msg_id = msg_id;
+            peer->reasm_schema_id = schema_id;
+            peer->reasm_total_size = total_size;
+            peer->reasm_frag_count = frag_count;
+            peer->reasm_frag_mask = 0u;
+        }
 
-    if (!peer->send_slots || peer->send_slot_count == 0u) {
+        if (chunk_size > 0u) {
+            memcpy(peer->reasm_buf + offset, payload + NET_RUDP_FRAG_HDR_SIZE, chunk_size);
+        }
+        peer->reasm_frag_mask |= ((uint64_t)1u << (uint64_t)frag_idx);
+
+        const uint64_t want = mask_for_count_(peer->reasm_frag_count);
+        if ((peer->reasm_frag_mask & want) != want) {
+            return NET_RUDP_EMPTY;
+        }
+
+        memcpy(out_payload, peer->reasm_buf, (size_t)peer->reasm_total_size);
+        *out_payload_size = (size_t)peer->reasm_total_size;
+        *out_schema_id = peer->reasm_schema_id;
+        *out_reliable = (uint8_t)((flags & NET_RUDP_FLAG_RELIABLE) != 0u);
+
+        /* Reset reassembly state. */
+        peer->reasm_msg_id = 0u;
+        peer->reasm_schema_id = 0u;
+        peer->reasm_total_size = 0u;
+        peer->reasm_frag_count = 0u;
+        peer->reasm_frag_mask = 0u;
         return NET_RUDP_OK;
     }
 
-    for (size_t i = 0u; i < peer->send_slot_count; ++i) {
-        if (!peer->send_slots[i].used) {
-            continue;
-        }
-        uint64_t elapsed = now_ms - peer->send_slots[i].last_send_ms;
-        if (elapsed < (uint64_t)peer->resend_interval_ms) {
-            continue;
-        }
-        peer->send_slots[i].last_send_ms = now_ms;
-        (void)net_udp_socket_sendto(sock, to, peer->send_slots[i].packet_bytes, (size_t)peer->send_slots[i].size);
-    }
-
+    memcpy(out_payload, payload, (size_t)payload_size);
+    *out_payload_size = (size_t)payload_size;
+    *out_schema_id = schema_id;
+    *out_reliable = (uint8_t)((flags & NET_RUDP_FLAG_RELIABLE) != 0u);
     return NET_RUDP_OK;
 }

@@ -2,8 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "ferrum/net/packet_header.h"
-
 #include "runtime_internal.h"
 
 #define OUT_MSG_MAX (2u + NET_RUDP_MAX_PACKET_SIZE)
@@ -18,142 +16,12 @@ static int sendto_(fr_server_net_runtime_t *rt, const net_udp_addr_t *to, const 
     return net_udp_socket_sendto(rt->cfg.socket, to, data, size);
 }
 
-static void write_u16_be_(uint8_t *out, uint16_t v) {
-    out[0] = (uint8_t)((v >> 8) & 0xFFu);
-    out[1] = (uint8_t)(v & 0xFFu);
-}
-
-static int build_packet_(net_rudp_peer_t *peer,
-                         uint64_t now_ms,
-                         uint8_t reliable,
-                         uint16_t schema_id,
-                         const void *payload,
-                         size_t payload_size,
-                         uint8_t *out_packet,
-                         size_t out_capacity,
-                         size_t *out_size,
-                         uint16_t *out_sequence) {
-    if (!peer || !payload || !out_packet || !out_size) {
-        return NET_RUDP_ERR_INVALID;
+static int sendto_cb_bridge_(void *io_user, const net_udp_addr_t *to, const void *data, size_t size) {
+    fr_server_net_runtime_t *rt = (fr_server_net_runtime_t *)io_user;
+    if (!rt || !to || !data) {
+        return -1;
     }
-    (void)now_ms;
-
-    if (payload_size > (NET_RUDP_MAX_PACKET_SIZE - NET_PACKET_HEADER_SIZE - 8u)) {
-        return NET_RUDP_ERR_INVALID;
-    }
-    if (out_capacity < NET_PACKET_HEADER_SIZE + 8u + payload_size) {
-        return NET_RUDP_ERR_SHORT;
-    }
-
-    net_packet_header_t header;
-    header.protocol_id = peer->protocol_id;
-    header.sequence = peer->next_sequence;
-    header.ack = net_ack_window_ack(&peer->recv_window);
-    header.ack_bits = net_ack_window_ack_bits(&peer->recv_window);
-
-    int rc = net_packet_header_encode(&header, out_packet, out_capacity);
-    if (rc != NET_PACKET_HEADER_OK) {
-        return NET_RUDP_ERR_PROTOCOL;
-    }
-
-    uint8_t *frame = out_packet + NET_PACKET_HEADER_SIZE;
-    frame[0] = reliable ? 0x01u : 0u;
-    frame[1] = 0u;
-    write_u16_be_(frame + 2, schema_id);
-    write_u16_be_(frame + 4, (uint16_t)payload_size);
-    write_u16_be_(frame + 6, 0u);
-    memcpy(frame + 8u, payload, payload_size);
-
-    *out_size = NET_PACKET_HEADER_SIZE + 8u + payload_size;
-    if (out_sequence) {
-        *out_sequence = header.sequence;
-    }
-    peer->next_sequence = (uint16_t)(peer->next_sequence + 1u);
-    return NET_RUDP_OK;
-}
-
-static int send_unreliable_(fr_server_net_runtime_t *rt,
-                            net_rudp_peer_t *peer,
-                            const net_udp_addr_t *to,
-                            uint64_t now_ms,
-                            uint16_t schema_id,
-                            const void *payload,
-                            size_t payload_size) {
-    uint8_t packet[NET_RUDP_MAX_PACKET_SIZE];
-    size_t packet_size = 0u;
-    int rc = build_packet_(peer, now_ms, 0u, schema_id, payload, payload_size, packet, sizeof(packet), &packet_size, NULL);
-    if (rc != NET_RUDP_OK) {
-        return rc;
-    }
-    int src = sendto_(rt, to, packet, packet_size);
-    return (src == NET_UDP_SOCKET_OK) ? NET_RUDP_OK : NET_RUDP_ERR_PROTOCOL;
-}
-
-static int send_reliable_(fr_server_net_runtime_t *rt,
-                          net_rudp_peer_t *peer,
-                          const net_udp_addr_t *to,
-                          uint64_t now_ms,
-                          uint16_t schema_id,
-                          const void *payload,
-                          size_t payload_size) {
-    if (!peer->send_slots || peer->send_slot_count == 0u) {
-        return NET_RUDP_ERR_FULL;
-    }
-
-    size_t slot = peer->send_slot_count;
-    for (size_t i = 0u; i < peer->send_slot_count; ++i) {
-        if (!peer->send_slots[i].used) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot == peer->send_slot_count) {
-        return NET_RUDP_ERR_FULL;
-    }
-
-    size_t packet_size = 0u;
-    uint16_t seq = 0u;
-    int rc = build_packet_(peer,
-                           now_ms,
-                           1u,
-                           schema_id,
-                           payload,
-                           payload_size,
-                           peer->send_slots[slot].packet_bytes,
-                           NET_RUDP_MAX_PACKET_SIZE,
-                           &packet_size,
-                           &seq);
-    if (rc != NET_RUDP_OK) {
-        return rc;
-    }
-
-    peer->send_slots[slot].used = 1u;
-    peer->send_slots[slot].sequence = seq;
-    peer->send_slots[slot].size = (uint16_t)packet_size;
-    peer->send_slots[slot].last_send_ms = now_ms;
-
-    int src = sendto_(rt, to, peer->send_slots[slot].packet_bytes, packet_size);
-    return (src == NET_UDP_SOCKET_OK) ? NET_RUDP_OK : NET_RUDP_ERR_PROTOCOL;
-}
-
-static void tick_resend_(fr_server_net_runtime_t *rt,
-                         net_rudp_peer_t *peer,
-                         const net_udp_addr_t *to,
-                         uint64_t now_ms) {
-    if (!peer->send_slots || peer->send_slot_count == 0u) {
-        return;
-    }
-    for (size_t i = 0u; i < peer->send_slot_count; ++i) {
-        if (!peer->send_slots[i].used) {
-            continue;
-        }
-        uint64_t elapsed = now_ms - peer->send_slots[i].last_send_ms;
-        if (elapsed < (uint64_t)peer->resend_interval_ms) {
-            continue;
-        }
-        peer->send_slots[i].last_send_ms = now_ms;
-        (void)sendto_(rt, to, peer->send_slots[i].packet_bytes, (size_t)peer->send_slots[i].size);
-    }
+    return (sendto_(rt, to, data, size) == NET_UDP_SOCKET_OK) ? 0 : -1;
 }
 
 static void publish_inbound_(fr_server_net_runtime_t *rt,
@@ -199,8 +67,23 @@ static void pump_outbound_topic_(fr_server_net_runtime_t *rt,
         const uint8_t *payload = msg + 2u;
         size_t payload_size = len - 2u;
 
-        int rc = reliable ? send_reliable_(rt, peer, &rt->clients[client_id].addr, now_ms, schema_id, payload, payload_size)
-                          : send_unreliable_(rt, peer, &rt->clients[client_id].addr, now_ms, schema_id, payload, payload_size);
+        int rc = reliable ? net_rudp_peer_send_reliable_via(peer,
+                                                            rt,
+                                                            sendto_cb_bridge_,
+                                                            &rt->clients[client_id].addr,
+                                                            now_ms,
+                                                            schema_id,
+                                                            payload,
+                                                            payload_size,
+                                                            NULL)
+                          : net_rudp_peer_send_unreliable_via(peer,
+                                                             rt,
+                                                             sendto_cb_bridge_,
+                                                             &rt->clients[client_id].addr,
+                                                             now_ms,
+                                                             schema_id,
+                                                             payload,
+                                                             payload_size);
         if (rc == NET_RUDP_OK) {
             atomic_fetch_add_explicit(&rt->packets_out, 1u, memory_order_relaxed);
             atomic_fetch_add_explicit(&rt->bytes_out, (uint64_t)payload_size, memory_order_relaxed);
@@ -285,7 +168,7 @@ void fr_server_client_fiber_main(void *user) {
         pump_outbound_topic_(rt, client_id, client->out_unreliable, &peer, 0u, now_ms);
 
         /* Reliable resend */
-        tick_resend_(rt, &peer, &client->addr, now_ms);
+        (void)net_rudp_peer_tick_resend_via(&peer, rt, sendto_cb_bridge_, &client->addr, now_ms);
 
         job_yield();
     }

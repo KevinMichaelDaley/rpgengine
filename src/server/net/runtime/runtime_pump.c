@@ -40,11 +40,10 @@ static int alloc_client_(fr_server_net_runtime_t *rt, const net_udp_addr_t *from
             args->rt = rt;
             args->client_id = i;
 
-            /* Start the client fiber on one of the first two workers (alternating).
-               This satisfies the ">=2 dedicated workers" requirement when worker_count>=2.
-             */
-            uint32_t preferred = (uint32_t)(i % 2u);
-            if (job_dispatch_to(rt->cfg.jobs, fr_server_client_fiber_main, args, 0, NULL, preferred) == JOB_ID_INVALID) {
+                        /* Start the client fiber without hard pinning.
+                             Some sharded schedulers can starve other long-lived fibers when pinned.
+                         */
+                        if (job_dispatch(rt->cfg.jobs, fr_server_client_fiber_main, args, 0, NULL) == JOB_ID_INVALID) {
                 free(args);
                 rt->clients[i].active = 0u;
                 return -1;

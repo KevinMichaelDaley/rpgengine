@@ -16,6 +16,11 @@ struct fr_server_entity_net_pump {
         uint16_t player_id;
         bool should_spawn_remote;
     } *players;
+
+    /* spawned[dst_client_id * max_clients + src_player_id] == 1 when we've
+       enqueued a SPAWN for src_player_id to dst_client_id.
+     */
+    uint8_t *spawned;
 };
 
 static void write_u16_le_(uint8_t *out, uint16_t v) {
@@ -68,6 +73,46 @@ static bool enqueue_reliable_(fr_server_entity_net_pump_t *pump,
     return fr_topic_channel_push(out_rel, msg, 2u + payload_size);
 }
 
+static bool ensure_spawn_(fr_server_entity_net_pump_t *pump, uint16_t dst_client_id, uint16_t src_player_id) {
+    if (!pump || !pump->players || !pump->spawned) {
+        return false;
+    }
+    if (dst_client_id >= pump->cfg.max_clients || src_player_id >= pump->cfg.max_clients) {
+        return false;
+    }
+    if (!pump->players[dst_client_id].joined || !pump->players[src_player_id].joined) {
+        return false;
+    }
+    if (dst_client_id != src_player_id && !pump->players[src_player_id].should_spawn_remote) {
+        return false;
+    }
+
+    const size_t idx = (size_t)dst_client_id * (size_t)pump->cfg.max_clients + (size_t)src_player_id;
+    if (pump->spawned[idx]) {
+        return true;
+    }
+
+    net_repl_spawn_t sp;
+    memset(&sp, 0, sizeof(sp));
+    sp.entity_id = 1000u + (uint32_t)src_player_id;
+    sp.owner_client_id = src_player_id;
+    sp.join_time_u16 = 0u;
+    sp.pos_mm = (net_repl_vec3_mm_t){0, 0, 0};
+
+    uint8_t sp_payload[NET_REPL_SPAWN_PAYLOAD_SIZE];
+    if (net_repl_spawn_encode(&sp, sp_payload, sizeof(sp_payload)) != NET_REPL_OK) {
+        return false;
+    }
+
+    if (!enqueue_reliable_(pump, dst_client_id, NET_REPL_SCHEMA_SPAWN, sp_payload, sizeof(sp_payload))) {
+        return false;
+    }
+
+    pump->spawned[idx] = 1u;
+    (void)publish_player_event_(pump, (uint8_t)FR_SERVER_EVT_PLAYER_SPAWN, dst_client_id, src_player_id);
+    return true;
+}
+
 fr_server_entity_net_pump_t *fr_server_entity_net_pump_create(const fr_server_entity_net_pump_config_t *cfg) {
     if (!cfg || cfg->max_clients == 0u) {
         return NULL;
@@ -91,6 +136,13 @@ fr_server_entity_net_pump_t *fr_server_entity_net_pump_create(const fr_server_en
         return NULL;
     }
 
+    pump->spawned = (uint8_t *)calloc((size_t)cfg->max_clients * (size_t)cfg->max_clients, 1u);
+    if (!pump->spawned) {
+        free(pump->players);
+        free(pump);
+        return NULL;
+    }
+
     return pump;
 }
 
@@ -99,6 +151,7 @@ void fr_server_entity_net_pump_destroy(fr_server_entity_net_pump_t *pump) {
         return;
     }
     free(pump->players);
+    free(pump->spawned);
     free(pump);
 }
 
@@ -117,7 +170,7 @@ bool fr_server_entity_net_pump_set_player_should_spawn_remote(fr_server_entity_n
 
 bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t now_ms) {
     (void)now_ms;
-    if (!pump || !pump->players) {
+    if (!pump || !pump->players || !pump->spawned) {
         return false;
     }
 
@@ -167,6 +220,9 @@ bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t 
                 (void)enqueue_reliable_(pump, client_id, NET_REPL_SCHEMA_WELCOME, w_payload, sizeof(w_payload));
             }
 
+            /* Spawn self to self so clients always receive their own entity. */
+            (void)ensure_spawn_(pump, client_id, pump->players[client_id].player_id);
+
             /* Cross-spawn between this player and already-joined players.
                This is the first place interest/visibility gating is applied.
              */
@@ -178,38 +234,22 @@ bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t 
                     continue;
                 }
 
-                /* Spawn existing player `other` to new client if allowed. */
-                if (pump->players[other].should_spawn_remote) {
-                    net_repl_spawn_t sp;
-                    memset(&sp, 0, sizeof(sp));
-                    sp.entity_id = 1000u + (uint32_t)pump->players[other].player_id;
-                    sp.owner_client_id = pump->players[other].player_id;
-                    sp.join_time_u16 = 0u;
-                    sp.pos_mm = (net_repl_vec3_mm_t){0, 0, 0};
-
-                    uint8_t sp_payload[NET_REPL_SPAWN_PAYLOAD_SIZE];
-                    if (net_repl_spawn_encode(&sp, sp_payload, sizeof(sp_payload)) == NET_REPL_OK) {
-                        (void)enqueue_reliable_(pump, client_id, NET_REPL_SCHEMA_SPAWN, sp_payload, sizeof(sp_payload));
-                        (void)publish_player_event_(pump, (uint8_t)FR_SERVER_EVT_PLAYER_SPAWN, client_id, pump->players[other].player_id);
-                    }
-                }
-
-                /* Spawn new player to existing client if allowed. */
-                if (pump->players[client_id].should_spawn_remote) {
-                    net_repl_spawn_t sp;
-                    memset(&sp, 0, sizeof(sp));
-                    sp.entity_id = 1000u + (uint32_t)pump->players[client_id].player_id;
-                    sp.owner_client_id = pump->players[client_id].player_id;
-                    sp.join_time_u16 = 0u;
-                    sp.pos_mm = (net_repl_vec3_mm_t){0, 0, 0};
-
-                    uint8_t sp_payload[NET_REPL_SPAWN_PAYLOAD_SIZE];
-                    if (net_repl_spawn_encode(&sp, sp_payload, sizeof(sp_payload)) == NET_REPL_OK) {
-                        (void)enqueue_reliable_(pump, other, NET_REPL_SCHEMA_SPAWN, sp_payload, sizeof(sp_payload));
-                        (void)publish_player_event_(pump, (uint8_t)FR_SERVER_EVT_PLAYER_SPAWN, other, pump->players[client_id].player_id);
-                    }
-                }
+                (void)ensure_spawn_(pump, client_id, pump->players[other].player_id);
+                (void)ensure_spawn_(pump, other, pump->players[client_id].player_id);
             }
+        }
+    }
+
+    /* Reconcile: ensure every joined client has SPAWNs for all joined players. */
+    for (uint16_t dst = 0u; dst < pump->cfg.max_clients; ++dst) {
+        if (!pump->players[dst].joined) {
+            continue;
+        }
+        for (uint16_t src = 0u; src < pump->cfg.max_clients; ++src) {
+            if (!pump->players[src].joined) {
+                continue;
+            }
+            (void)ensure_spawn_(pump, dst, src);
         }
     }
 

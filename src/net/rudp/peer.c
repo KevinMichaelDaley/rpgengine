@@ -26,4 +26,45 @@ void net_rudp_peer_init_with_storage(net_rudp_peer_t *peer,
     if (peer->send_slots && peer->send_slot_count > 0u) {
         memset(peer->send_slots, 0, peer->send_slot_count * sizeof(*peer->send_slots));
     }
+
+    /* Enable fragmentation + reassembly by default.
+       This keeps fragmentation opaque to callers and provides one buffer per peer.
+     */
+    peer->frag_enabled = 1u;
+    peer->next_msg_id = 1u;
+    peer->reasm_buf = peer->reasm_storage;
+    peer->reasm_buf_cap = sizeof(peer->reasm_storage);
+    peer->reasm_msg_id = 0u;
+    peer->reasm_schema_id = 0u;
+    peer->reasm_total_size = 0u;
+    peer->reasm_frag_count = 0u;
+    peer->reasm_frag_mask = 0u;
+}
+
+void net_rudp_peer_enable_fragmentation(net_rudp_peer_t *peer, int enabled, uint8_t *reasm_buf, size_t reasm_buf_cap) {
+    if (!peer) {
+        return;
+    }
+
+    peer->frag_enabled = (uint8_t)(enabled ? 1u : 0u);
+    peer->next_msg_id = 1u;
+
+    if (peer->frag_enabled) {
+        /* If caller doesn't provide a buffer, fall back to internal storage. */
+        if (!reasm_buf || reasm_buf_cap == 0u) {
+            peer->reasm_buf = peer->reasm_storage;
+            peer->reasm_buf_cap = sizeof(peer->reasm_storage);
+        } else {
+            peer->reasm_buf = reasm_buf;
+            peer->reasm_buf_cap = reasm_buf_cap;
+        }
+    } else {
+        peer->reasm_buf = NULL;
+        peer->reasm_buf_cap = 0u;
+    }
+    peer->reasm_msg_id = 0u;
+    peer->reasm_schema_id = 0u;
+    peer->reasm_total_size = 0u;
+    peer->reasm_frag_count = 0u;
+    peer->reasm_frag_mask = 0u;
 }
