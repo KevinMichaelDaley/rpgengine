@@ -7,9 +7,9 @@ set -euo pipefail
 # - Optionally starts the server with provided args
 #
 # Defaults:
-#   REMOTE=root@64.176.222.213
+#   REMOTE=root@155.138.211.186
 #   REMOTE_DIR=/root/rpg
-#   PORT=40001 MAX_CLIENTS=16 DURATION_MS=0 TICK_HZ=60 WORKERS=8
+#   PORT=40001 MAX_CLIENTS=72 DURATION_MS=0 TICK_HZ=60 WORKERS=4
 #
 # Usage examples:
 #   ./scripts/deploy_p008_server.sh                      # sync + build only
@@ -20,14 +20,14 @@ set -euo pipefail
 # - Requires rsync and ssh locally; make + gcc on remote.
 # - Excludes local build artifacts; remote runs a clean build.
 
-REMOTE=${REMOTE:-root@64.176.222.213}
+REMOTE=${REMOTE:-root@155.138.211.186}
 REMOTE_DIR=${REMOTE_DIR:-/root/rpg}
 
 PORT=${PORT:-40001}
-MAX_CLIENTS=${MAX_CLIENTS:-16}
+MAX_CLIENTS=${MAX_CLIENTS:-72}
 DURATION_MS=${DURATION_MS:-0}
 TICK_HZ=${TICK_HZ:-60}
-WORKERS=${WORKERS:-1}
+WORKERS=${WORKERS:-4}
 
 START_SERVER=${START_SERVER:-0}
 
@@ -69,7 +69,7 @@ if [[ "${START_SERVER}" == "1" ]]; then
 set -euo pipefail
 cd '${REMOTE_DIR}'
 ulimit -n 65536 || true
-nohup ./build/p008_net_repl_server ${PORT} ${MAX_CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo \$! > server.pid
+nohup ./build/p008_net_perf_server_tests ${PORT} ${MAX_CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo \$! > server.pid
 sleep 1
 if grep -q 'P008_REPL_SERVER_READY' server.out; then echo 'Server ready'; else echo 'WARN: server readiness line not yet found'; fi
 "

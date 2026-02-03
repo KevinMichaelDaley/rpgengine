@@ -16,20 +16,24 @@ network integration server binaries on the remote, runs the server there, then
 runs local clients against it while it is running.
 
 Defaults:
-  --host        64.176.222.213
+  --host        155.138.211.186
   --user        root
   --key         ~/.ssh/vultr
   --remote-dir  /root/rpg
   --port        40001
-  --clients     4
-  --duration-ms 1500
+  --clients     72
+  --duration-ms 8000
   --tick-hz     60
-  --workers     2
-  --test        p008
+  --workers     4
+  --test        p008_perf
 
 Tests:
   p008   Remote: ./build/p008_net_repl_server
          Local:  ./build/p008_net_repl_client
+
+  p008_perf
+         Remote: ./build/p008_net_perf_server_tests (execs p008_net_repl_server)
+         Local:  ./build/p008_net_perf_client_tests (spawns N repl clients)
 
   p000   Remote: ./build/p000_tests (job system tests)
          Local:  (none)
@@ -48,18 +52,18 @@ EOF
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 
-HOST="64.176.222.213"
+HOST="155.138.211.186"
 USER="root"
 KEY="$HOME/.ssh/vultr"
 # Use an absolute path by default to avoid rsync creating a literal "~/" directory.
 REMOTE_DIR="/root/rpg"
 REMOTE_DIR_RESOLVED=""
 PORT="40001"
-CLIENTS="4"
-DURATION_MS="1500"
+CLIENTS="72"
+DURATION_MS="8000"
 TICK_HZ="60"
-WORKERS="2"
-TEST_NAME="p008"
+WORKERS="4"
+TEST_NAME="p008_perf"
 RUN_ALL=0
 DRY_RUN=0
 
@@ -233,7 +237,7 @@ build_remote_headless() {
   echo "==> build headless binaries on remote"
   resolve_remote_dir
   # Force a native rebuild on the remote (rsync may have copied local build/ artifacts).
-  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests && make -B p008_build"
+  run_cmd_retry 3 2 remote "cd '$REMOTE_DIR_RESOLVED' && rm -f build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests build/p008_net_perf_server_tests build/p008_net_perf_client_tests && make -B p008_build"
 }
 
 build_remote_p000() {
@@ -333,6 +337,51 @@ start_remote_server_p008() {
   return 1
 }
 
+start_remote_server_p008_perf() {
+  resolve_remote_dir
+  local log_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.log"
+  local pid_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.pid"
+  local unit_name="p008_net_perf_server_tests_${PORT}"
+
+  echo "==> start remote p008 perf server (port=$PORT)"
+  kill_remote_udp_listeners_on_port
+  run_cmd remote "mkdir -p '$REMOTE_DIR_RESOLVED/build'"
+
+  run_cmd remote "cd '$REMOTE_DIR_RESOLVED' && (\
+    : > '$log_file'; \
+    if command -v systemd-run >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then \
+      systemctl stop '$unit_name' >/dev/null 2>&1 || true; \
+      systemd-run --unit='$unit_name' --collect --quiet --property=WorkingDirectory='$REMOTE_DIR_RESOLVED' \
+        bash -lc 'stdbuf -oL -eL ./build/p008_net_perf_server_tests $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > $log_file 2>&1'; \
+      echo systemd:'$unit_name' > '$pid_file'; \
+    elif command -v setsid >/dev/null 2>&1; then \
+      nohup setsid stdbuf -oL -eL ./build/p008_net_perf_server_tests $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > '$log_file' 2>&1 & \
+      echo \$! > '$pid_file'; \
+    else \
+      nohup stdbuf -oL -eL ./build/p008_net_perf_server_tests $PORT $CLIENTS 0 $TICK_HZ $WORKERS </dev/null > '$log_file' 2>&1 & \
+      echo \$! > '$pid_file'; \
+    fi\
+  )"
+
+  echo "==> wait for server ready"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+
+  if remote "log_file='$log_file'; now=\$(date +%s); deadline=\$((now + 20)); \
+    while (( \$(date +%s) < deadline )); do \
+      if grep -q 'P008_REPL_SERVER_READY' \"\$log_file\"; then exit 0; fi; \
+      sleep 0.2; \
+    done; \
+    echo 'Server did not become ready; tailing remote log:' >&2; \
+    tail -n 120 \"\$log_file\" || true; \
+    exit 1"; then
+    return 0
+  fi
+
+  return 1
+}
+
 stop_remote_server_p008() {
   resolve_remote_dir
   local log_file="$REMOTE_DIR_RESOLVED/build/p008_server_${PORT}.log"
@@ -385,6 +434,17 @@ run_local_clients_p008() {
   return "$ok"
 }
 
+run_local_clients_p008_perf() {
+  echo "==> run p008 perf client harness ($CLIENTS clients) against $HOST:$PORT"
+
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "+ $REPO_ROOT/build/p008_net_perf_client_tests $HOST $PORT $CLIENTS $DURATION_MS $TICK_HZ"
+    return 0
+  fi
+
+  "$REPO_ROOT/build/p008_net_perf_client_tests" "$HOST" "$PORT" "$CLIENTS" "$DURATION_MS" "$TICK_HZ"
+}
+
 run_test() {
   local name="$1"
 
@@ -403,6 +463,19 @@ run_test() {
       start_remote_server_p008
       if ! run_local_clients_p008; then
         echo "One or more clients failed" >&2
+        stop_remote_server_p008
+        return 1
+      fi
+      stop_remote_server_p008
+      ;;
+    p008_perf)
+      sync_repo
+      build_remote_headless
+      build_local_headless
+      maybe_open_remote_firewall_udp
+      start_remote_server_p008_perf
+      if ! run_local_clients_p008_perf; then
+        echo "Perf harness failed (thresholds or client failures)" >&2
         stop_remote_server_p008
         return 1
       fi
