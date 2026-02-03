@@ -29,7 +29,7 @@ typedef struct fr_server_net_runtime_config_t {
     uint16_t max_clients;
 
     /** Job system used to schedule client fibers.
-     * When NULL, the runtime creates an internal deterministic job system.
+        * When NULL, the runtime creates an internal job system.
      */
     job_system_t *jobs;
 
@@ -79,7 +79,7 @@ void fr_server_net_runtime_destroy(fr_server_net_runtime_t *rt);
  */
 bool fr_server_net_runtime_pump(fr_server_net_runtime_t *rt, uint64_t now_ms);
 
-/** Run fibers in deterministic mode until idle or `max_spins` exhausted.
+/** Run fibers for a bounded amount of time.
  * Intended for tests; returns false on invalid args.
  */
 bool fr_server_net_runtime_run_fibers(fr_server_net_runtime_t *rt, uint32_t max_spins);
