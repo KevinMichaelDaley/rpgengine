@@ -63,7 +63,7 @@ if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]
       --exclude '*.o' \
       --exclude '*.a' \
       ./ "${REMOTE_SWEEP}:${SWEEP_BASE_DIR}/srcdir/"
-    ssh "${REMOTE_SWEEP}" "bash -lc 'set -euo pipefail; cd "${SWEEP_BASE_DIR}/srcdir"; if ! command -v make >/dev/null 2>&1; then echo "ERROR: make missing on remote" >&2; exit 2; fi; make p008_build'"
+    ssh "${REMOTE_SWEEP}" env SWEEP_BASE_DIR="${SWEEP_BASE_DIR}" bash -lc 'set -euo pipefail; cd "$SWEEP_BASE_DIR/srcdir"; if ! command -v make >/dev/null 2>&1; then echo "ERROR: make missing on remote" >&2; exit 2; fi; make p008_build'
     REMOTE_BIN_DIR_OVERRIDE="${SWEEP_BASE_DIR}/srcdir/build"
   fi
   # Run each client-count sequentially, reusing built binaries
@@ -140,7 +140,7 @@ else
       --exclude '*.a' \
       ./ "${REMOTE}:${REMOTE_RUN_DIR}/srcdir/"
     # build remotely
-    ssh "${REMOTE}" "bash -lc 'set -euo pipefail; cd "${REMOTE_RUN_DIR}/srcdir"; if ! command -v make >/dev/null 2>&1; then echo "ERROR: make missing on remote" >&2; exit 2; fi; make p008_build'"
+    ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" bash -lc 'set -euo pipefail; cd "$REMOTE_RUN_DIR/srcdir"; if ! command -v make >/dev/null 2>&1; then echo "ERROR: make missing on remote" >&2; exit 2; fi; make p008_build'
     REMOTE_BIN_DIR="${REMOTE_RUN_DIR}/srcdir/build"
   else
     # Verify local binaries and upload
@@ -159,7 +159,7 @@ fi
 
 # Start server and CPU monitors on remote
 echo "Starting server and CPU monitors on remote..." >&2
-ssh "${REMOTE}" "bash -lc 'set -euo pipefail; cd "${REMOTE_RUN_DIR}"; ulimit -n 65536 || true; if ! command -v mpstat >/dev/null 2>&1 || ! command -v pidstat >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then (apt-get update && apt-get install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (apt-get)" >> warn.log; elif command -v yum >/dev/null 2>&1; then (yum install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (yum)" >> warn.log; elif command -v dnf >/dev/null 2>&1; then (dnf install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (dnf)" >> warn.log; else echo "WARN: cannot auto-install sysstat; no known package manager" >> warn.log; fi; fi; nohup "${REMOTE_BIN_DIR}/p008_net_repl_server" ${PORT} ${CLIENTS} ${DURATION_MS} ${TICK_HZ} ${WORKERS} > server.out 2>&1 & echo $! > server.pid; sleep 1; SERVER_PID=$(cat server.pid); if command -v mpstat >/dev/null 2>&1; then nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo $! > mpstat.pid; else echo "WARN: mpstat not found; skipping per-CPU logs" >> warn.log; fi; if command -v pidstat >/dev/null 2>&1; then nohup pidstat -u -p $SERVER_PID 1 > cpu.pidstat 2>&1 & echo $! > pidstat.pid; else echo "WARN: pidstat not found; skipping per-process CPU logs" >> warn.log; fi; READY_WAIT_MS=5000; READY_START=$(date +%s%3N); while true; do if grep -q "P008_REPL_SERVER_READY" server.out 2>/dev/null; then break; fi; NOW=$(date +%s%3N); if (( NOW - READY_START > READY_WAIT_MS )); then echo "WARN: server did not report ready within timeout" >> warn.log; break; fi; sleep 0.1; done'"
+ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" REMOTE_BIN_DIR="${REMOTE_BIN_DIR}" PORT="${PORT}" CLIENTS="${CLIENTS}" DURATION_MS="${DURATION_MS}" TICK_HZ="${TICK_HZ}" WORKERS="${WORKERS}" bash -lc 'set -euo pipefail; cd "$REMOTE_RUN_DIR"; ulimit -n 65536 || true; if ! command -v mpstat >/dev/null 2>&1 || ! command -v pidstat >/dev/null 2>&1; then if command -v apt-get >/dev/null 2>&1; then (apt-get update && apt-get install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (apt-get)" >> warn.log; elif command -v yum >/dev/null 2>&1; then (yum install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (yum)" >> warn.log; elif command -v dnf >/dev/null 2>&1; then (dnf install -y sysstat) >/dev/null 2>&1 || echo "WARN: sysstat install failed (dnf)" >> warn.log; else echo "WARN: cannot auto-install sysstat; no known package manager" >> warn.log; fi; fi; nohup "$REMOTE_BIN_DIR/p008_net_repl_server" "$PORT" "$CLIENTS" "$DURATION_MS" "$TICK_HZ" "$WORKERS" > server.out 2>&1 & echo $! > server.pid; sleep 1; SERVER_PID=$(cat server.pid); if command -v mpstat >/dev/null 2>&1; then nohup mpstat -P ALL 1 > cpu.mpstat 2>&1 & echo $! > mpstat.pid; else echo "WARN: mpstat not found; skipping per-CPU logs" >> warn.log; fi; if command -v pidstat >/dev/null 2>&1; then nohup pidstat -u -p $SERVER_PID 1 > cpu.pidstat 2>&1 & echo $! > pidstat.pid; else echo "WARN: pidstat not found; skipping per-process CPU logs" >> warn.log; fi; READY_WAIT_MS=5000; READY_START=$(date +%s%3N); while true; do if grep -q "P008_REPL_SERVER_READY" server.out 2>/dev/null; then break; fi; NOW=$(date +%s%3N); if (( NOW - READY_START > READY_WAIT_MS )); then echo "WARN: server did not report ready within timeout" >> warn.log; break; fi; sleep 0.1; done'
 
 if [[ "${CLIENTS_LOCAL}" == "1" ]]; then
   echo "Spawning ${CLIENTS} clients locally against ${SERVER_IPV4}:${PORT}..." >&2
@@ -179,12 +179,12 @@ if [[ "${CLIENTS_LOCAL}" == "1" ]]; then
 else
   # Start clients on remote (loopback to server)
   echo "Spawning ${CLIENTS} clients on remote..." >&2
-  ssh "${REMOTE}" "bash -lc 'set -euo pipefail; cd "${REMOTE_RUN_DIR}"; : > clients.out; for i in $(seq 1 ${CLIENTS}); do nohup "${REMOTE_BIN_DIR}/p008_net_repl_client" 127.0.0.1 ${PORT} ${CLIENT_DURATION} ${EXPECTED_SPAWNS} ${TICK_HZ} >> clients.out 2>&1 & done; wait || true'"
+  ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" REMOTE_BIN_DIR="${REMOTE_BIN_DIR}" PORT="${PORT}" CLIENTS="${CLIENTS}" CLIENT_DURATION="${CLIENT_DURATION}" EXPECTED_SPAWNS="${EXPECTED_SPAWNS}" TICK_HZ="${TICK_HZ}" bash -lc 'set -euo pipefail; cd "$REMOTE_RUN_DIR"; : > clients.out; for i in $(seq 1 "$CLIENTS"); do nohup "$REMOTE_BIN_DIR/p008_net_repl_client" 127.0.0.1 "$PORT" "$CLIENT_DURATION" "$EXPECTED_SPAWNS" "$TICK_HZ" >> clients.out 2>&1 & done; wait || true'
 fi
 
 # Wait for server to exit (duration-based), then stop monitors
 echo "Waiting for server to finish..." >&2
-ssh "${REMOTE}" "bash -lc 'set -euo pipefail; cd "${REMOTE_RUN_DIR}"; while kill -0 $(cat server.pid) 2>/dev/null; do sleep 1; done; if [[ -f mpstat.pid ]]; then kill $(cat mpstat.pid) 2>/dev/null || true; fi; if [[ -f pidstat.pid ]]; then kill $(cat pidstat.pid) 2>/dev/null || true; fi'"
+ssh "${REMOTE}" env REMOTE_RUN_DIR="${REMOTE_RUN_DIR}" bash -lc 'set -euo pipefail; cd "$REMOTE_RUN_DIR"; while kill -0 $(cat server.pid) 2>/dev/null; do sleep 1; done; if [[ -f mpstat.pid ]]; then kill $(cat mpstat.pid) 2>/dev/null || true; fi; if [[ -f pidstat.pid ]]; then kill $(cat pidstat.pid) 2>/dev/null || true; fi'
 
 # Fetch logs
 LOCAL_LOG_DIR="${ROOT_DIR}/bench-logs/${RUN_TAG}"
