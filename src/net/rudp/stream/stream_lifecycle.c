@@ -29,6 +29,19 @@ fr_rudp_stream_t *fr_rudp_stream_create(const fr_rudp_stream_config_t *cfg) {
         free(s);
         return NULL;
     }
+    s->topics = NULL;
+    s->num_topics = 0u;
+    s->max_payload_size = max_payload;
+    s->scratch = (uint8_t *)malloc((size_t)max_payload);
+    if (!s->scratch) {
+        free(s->reliable);
+        free(s);
+        return NULL;
+    }
+    if (cfg && cfg->topics && cfg->num_topics > 0u) {
+        s->topics = cfg->topics;
+        s->num_topics = cfg->num_topics;
+    }
     for (uint32_t i = 0u; i < channels; ++i) {
         net_reliable_channel_init(&s->reliable[i], (size_t)slot_count, (size_t)max_payload);
         if (!s->reliable[i].initialized) {
@@ -50,5 +63,7 @@ void fr_rudp_stream_destroy(fr_rudp_stream_t *s) {
         free(s->reliable);
         s->reliable = NULL;
     }
+    free(s->scratch);
+    s->scratch = NULL;
     free(s);
 }

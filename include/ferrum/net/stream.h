@@ -30,6 +30,10 @@ typedef struct fr_rudp_stream_config_t {
     uint32_t reliable_slot_count;
     /** Max payload size per packet in bytes. Defaults to 1024 when 0. */
     uint32_t max_payload_size;
+    /** Optional topic channels array; when provided, decoded messages are pumped to topics. */
+    struct fr_topic_channel **topics;
+    /** Number of topic channels provided. */
+    uint32_t num_topics;
 } fr_rudp_stream_config_t;
 
 /**
