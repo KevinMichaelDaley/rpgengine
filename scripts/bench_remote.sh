@@ -40,17 +40,46 @@ set -euo pipefail
 #   REMOTE=bench@10.0.0.5 PORT=40001 CLIENTS=64 DURATION_MS=30000 \
 #   TICK_HZ=60 WORKERS=8 ./scripts/bench_remote.sh
 
-# Optional sweep: if SWEEP_MIN and SWEEP_MAX are set, run multiple CLIENTS values.
-# Guard against recursive self-invocation by clearing SWEEP_* for inner calls.
+# Optional sweep: if SWEEP_MIN and SWEEP_MAX are set, run multiple CLIENTS values sequentially.
+# Perform rsync/build ONCE, then reuse the built binaries for each run.
 if [[ -n "${SWEEP_MIN:-}" && -n "${SWEEP_MAX:-}" && -z "${__P008_SWEEPING:-}" ]]; then
   export __P008_SWEEPING=1
+  # Resolve REMOTE early
+  REMOTE_SWEEP="${REMOTE:-${1:-}}"
+  if [[ -z "${REMOTE_SWEEP}" ]]; then
+    echo "ERROR: REMOTE not provided for sweep. Set REMOTE=user@host or pass as first arg." >&2
+    exit 2
+  fi
+  # Determine base remote dir and perform single build when requested
+  SWEEP_BASE_DIR="${REMOTE_DIR:-$HOME/bench}/p008_sweep_$(date +%Y%m%d_%H%M%S)"
+  ssh "${REMOTE_SWEEP}" "mkdir -p '${SWEEP_BASE_DIR}'"
+  REMOTE_BIN_DIR_OVERRIDE=""
+  if [[ "${REMOTE_BUILD:-1}" == "1" ]]; then
+    echo "Sweep: rsyncing source and building once on remote at ${SWEEP_BASE_DIR}..." >&2
+    rsync -az --delete \
+      --exclude 'build/' \
+      --exclude '.git/' \
+      --exclude '.vscode/' \
+      --exclude '*.o' \
+      --exclude '*.a' \
+      ./ "${REMOTE_SWEEP}:${SWEEP_BASE_DIR}/srcdir/"
+    ssh "${REMOTE_SWEEP}" bash -lc "
+set -euo pipefail
+cd '${SWEEP_BASE_DIR}/srcdir'
+if ! command -v make >/dev/null 2>&1; then echo 'ERROR: make missing on remote' >&2; exit 2; fi
+make p008_build
+"
+    REMOTE_BIN_DIR_OVERRIDE="${SWEEP_BASE_DIR}/srcdir/build"
+  fi
+  # Run each client-count sequentially, reusing built binaries
   for ci in $(seq "${SWEEP_MIN}" "${SWEEP_MAX}"); do
     CLIENTS="${ci}" SWEEP_MIN= SWEEP_MAX= __P008_SWEEPING=1 \
-      REMOTE="${REMOTE:-${1:-}}" PORT="${PORT:-40001}" \
+      REMOTE="${REMOTE_SWEEP}" PORT="${PORT:-40001}" \
       DURATION_MS="${DURATION_MS:-20000}" TICK_HZ="${TICK_HZ:-60}" \
       WORKERS="${WORKERS:-1}" EXPECTED_SPAWNS="${EXPECTED_SPAWNS:-0}" \
-      REMOTE_DIR="${REMOTE_DIR:-$HOME/bench}" REMOTE_BUILD="${REMOTE_BUILD:-1}" \
+      REMOTE_DIR="${REMOTE_DIR:-$HOME/bench}" REMOTE_BUILD=0 \
       CLIENTS_LOCAL="${CLIENTS_LOCAL:-1}" SERVER_IPV4="${SERVER_IPV4:-}" \
+      REMOTE_BIN_DIR_OVERRIDE="${REMOTE_BIN_DIR_OVERRIDE}" \
       bash "${BASH_SOURCE[0]}"
   done
   exit 0
@@ -100,38 +129,42 @@ REMOTE_RUN_DIR="${REMOTE_DIR}/${RUN_TAG}"
 
 ssh "${REMOTE}" "mkdir -p '${REMOTE_RUN_DIR}'"
 
-# Prepare execution binaries: either upload local bins or build on remote
-REMOTE_BIN_DIR="${REMOTE_RUN_DIR}"
-if [[ "${REMOTE_BUILD}" == "1" ]]; then
-  echo "REMOTE_BUILD=1: rsyncing source and building on remote..." >&2
-  # rsync source tree (exclude build and VCS noise)
-  rsync -az --delete \
-    --exclude 'build/' \
-    --exclude '.git/' \
-    --exclude '.vscode/' \
-    --exclude '*.o' \
-    --exclude '*.a' \
-    ./ "${REMOTE}:${REMOTE_RUN_DIR}/srcdir/"
-  # build remotely
-  ssh "${REMOTE}" bash -lc "
+# Prepare execution binaries: reuse override if provided; otherwise upload or build
+if [[ -n "${REMOTE_BIN_DIR_OVERRIDE:-}" ]]; then
+  REMOTE_BIN_DIR="${REMOTE_BIN_DIR_OVERRIDE}"
+else
+  REMOTE_BIN_DIR="${REMOTE_RUN_DIR}"
+  if [[ "${REMOTE_BUILD}" == "1" ]]; then
+    echo "REMOTE_BUILD=1: rsyncing source and building on remote..." >&2
+    # rsync source tree (exclude build and VCS noise)
+    rsync -az --delete \
+      --exclude 'build/' \
+      --exclude '.git/' \
+      --exclude '.vscode/' \
+      --exclude '*.o' \
+      --exclude '*.a' \
+      ./ "${REMOTE}:${REMOTE_RUN_DIR}/srcdir/"
+    # build remotely
+    ssh "${REMOTE}" bash -lc "
 set -euo pipefail
 cd '${REMOTE_RUN_DIR}/srcdir'
 if ! command -v make >/dev/null 2>&1; then echo 'ERROR: make missing on remote' >&2; exit 2; fi
 make p008_build
 "
-  REMOTE_BIN_DIR="${REMOTE_RUN_DIR}/srcdir/build"
-else
-  # Verify local binaries and upload
-  if [[ ! -x "${SERVER_BIN_LOCAL}" ]] || [[ ! -x "${CLIENT_BIN_LOCAL}" ]]; then
-    echo "Building p008 binaries locally..." >&2
-    make p008_build
+    REMOTE_BIN_DIR="${REMOTE_RUN_DIR}/srcdir/build"
+  else
+    # Verify local binaries and upload
+    if [[ ! -x "${SERVER_BIN_LOCAL}" ]] || [[ ! -x "${CLIENT_BIN_LOCAL}" ]]; then
+      echo "Building p008 binaries locally..." >&2
+      make p008_build
+    fi
+    if [[ ! -x "${SERVER_BIN_LOCAL}" ]] || [[ ! -x "${CLIENT_BIN_LOCAL}" ]]; then
+      echo "ERROR: Required binaries missing in ./build (p008_net_repl_server, p008_net_repl_client)." >&2
+      exit 1
+    fi
+    echo "Uploading binaries to ${REMOTE}:${REMOTE_RUN_DIR}..." >&2
+    scp "${SERVER_BIN_LOCAL}" "${CLIENT_BIN_LOCAL}" "${REMOTE}:${REMOTE_RUN_DIR}/"
   fi
-  if [[ ! -x "${SERVER_BIN_LOCAL}" ]] || [[ ! -x "${CLIENT_BIN_LOCAL}" ]]; then
-    echo "ERROR: Required binaries missing in ./build (p008_net_repl_server, p008_net_repl_client)." >&2
-    exit 1
-  fi
-  echo "Uploading binaries to ${REMOTE}:${REMOTE_RUN_DIR}..." >&2
-  scp "${SERVER_BIN_LOCAL}" "${CLIENT_BIN_LOCAL}" "${REMOTE}:${REMOTE_RUN_DIR}/"
 fi
 
 # Start server and CPU monitors on remote
