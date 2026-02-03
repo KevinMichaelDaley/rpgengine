@@ -22,13 +22,13 @@ bool fr_rudp_stream_push_frame(fr_rudp_stream_t *s, const uint8_t *data, size_t 
         return false;
     }
     /* Pump any newly in-order messages to topic channels if configured. */
-    for (;;) {
-        size_t out_size = 0u;
-        rc = net_reliable_channel_receive(ch, s->scratch, s->max_payload_size, &out_size);
-        if (rc != NET_RELIABLE_OK) {
-            break;
-        }
-        if (s->topics && chan < s->num_topics && s->topics[chan]) {
+    if (s->topics && chan < s->num_topics && s->topics[chan]) {
+        for (;;) {
+            size_t out_size = 0u;
+            rc = net_reliable_channel_receive(ch, s->scratch, s->max_payload_size, &out_size);
+            if (rc != NET_RELIABLE_OK) {
+                break;
+            }
             (void)fr_topic_channel_push(s->topics[chan], s->scratch, out_size);
         }
     }
