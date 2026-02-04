@@ -1,5 +1,7 @@
 #include "internal.h"
 
+#include <string.h>
+
 job_id_t job_dispatch(job_system_t *sys,
                      void (*fn)(void *user_data),
                      void *user_data,
@@ -55,7 +57,9 @@ void job_yield(void) {
     #endif
 
     #ifdef TRACY_ENABLE
-        TracyCZoneN(zone, "JobSlice", true);
+        const char *zone_name = g_current_fiber->tracy_name ? g_current_fiber->tracy_name : "unnamed_fiber";
+        TracyCZone(zone, true);
+        TracyCZoneName(zone, zone_name, strlen(zone_name));
         g_current_fiber->zone = zone;
     #endif
 }

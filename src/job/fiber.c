@@ -1,6 +1,9 @@
 #include <limits.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+
+#include <string.h>
 
 #include "internal.h"
 
@@ -9,6 +12,28 @@ _Thread_local job_system_t *g_current_system = NULL;
 _Thread_local job_context_t *g_scheduler_context = NULL;
 _Thread_local uint32_t g_worker_id = UINT32_MAX;
 _Thread_local uint32_t g_worker_node = 0;
+
+#ifdef TRACY_ENABLE
+static void job_fiber_set_tracy_name(job_fiber_t *fiber, const char *debug_name) {
+    if (!fiber) {
+        return;
+    }
+
+    if (debug_name && debug_name[0] != '\0') {
+        (void)snprintf(fiber->tracy_name_storage,
+                       sizeof(fiber->tracy_name_storage),
+                       "%s",
+                       debug_name);
+    } else {
+        (void)snprintf(fiber->tracy_name_storage,
+                       sizeof(fiber->tracy_name_storage),
+                       "fiber.%llu",
+                       (unsigned long long)fiber->id);
+    }
+
+    fiber->tracy_name = fiber->tracy_name_storage;
+}
+#endif
 
 static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     g_current_fiber = fiber;
@@ -21,8 +46,10 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     #endif
 
     #ifdef TRACY_ENABLE
-        TracyCZoneN(zone, "JobSlice", true);
-        fiber->zone=zone;
+        const char *zone_name = fiber->tracy_name ? fiber->tracy_name : "unnamed_fiber";
+        TracyCZone(zone, true);
+        TracyCZoneName(zone, zone_name, strlen(zone_name));
+        fiber->zone = zone;
     #endif
 
     fiber->fn(fiber->user);
@@ -87,10 +114,6 @@ job_fiber_t *job_fiber_create_named(job_system_t *sys,
     if (!sys || !fn) {
         return NULL;
     }
-    if(debug_name==NULL){
-        static const char* default_debug_name="unnamed_fiber";
-        debug_name=&default_debug_name[0];
-    }
     apool_handle_t fiber_handle = apool_alloc(&sys->fiber_stack_pool);
     if (fiber_handle.index == APOOL_INDEX_INVALID) {
         return NULL;
@@ -109,7 +132,7 @@ job_fiber_t *job_fiber_create_named(job_system_t *sys,
     fiber->id = id;
     fiber->magic2=0x3a7f; // stack underflow guard
     #ifdef TRACY_ENABLE
-    fiber->tracy_name = debug_name;
+    job_fiber_set_tracy_name(fiber, debug_name);
     #endif
     /* Stack starts immediately after the fiber struct in the pool block. */
     fiber->stack = (uint8_t *)fiber + sizeof(job_fiber_t);

@@ -1,5 +1,7 @@
 #include <stdlib.h>
 
+#include <string.h>
+
 #include "internal.h"
 
 typedef struct job_counter_waiter {
@@ -55,7 +57,9 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
         }
     #endif
     #ifdef TRACY_ENABLE
-        TracyCZoneN(zone, "JobSlice", true);
+        const char *zone_name = fiber->tracy_name ? fiber->tracy_name : "unnamed_fiber";
+        TracyCZone(zone, true);
+        TracyCZoneName(zone, zone_name, strlen(zone_name));
         fiber->zone = zone;
     #endif
     for (;;) {

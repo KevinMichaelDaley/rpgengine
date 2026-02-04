@@ -29,6 +29,7 @@ struct job_entry {
 struct job_fiber {
     #ifdef TRACY_ENABLE
     const char* tracy_name;
+    char tracy_name_storage[64];
     TracyCZoneCtx zone;
     #endif
     uint16_t magic1;

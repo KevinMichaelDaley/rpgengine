@@ -148,18 +148,18 @@ job_id_t job_dispatch(job_system_t *sys,
                      struct job_counter *counter);
 
 /**
- * @brief Dispatch a job onto the system with a stable debug name.
+ * @brief Dispatch a job onto the system with a debug name.
  *
  * When Tracy is enabled, the job/fiber will be tagged with @p debug_name.
- * The name pointer must remain valid until the job completes; prefer string
- * literals or other static storage.
+ * The name is copied (bounded) into fiber-owned storage, so it does not need
+ * to remain valid after this call returns.
  *
  * @param sys Job system pointer.
  * @param fn Function to execute on a fiber.
  * @param user_data User pointer passed to the job.
  * @param priority Signed priority hint; higher values run first when contended.
  * @param counter Optional counter to increment before dispatch and auto-decrement on completion.
- * @param debug_name Stable debug name (may be NULL).
+ * @param debug_name Debug name (may be NULL).
  * @return job_id_t Valid identifier or JOB_ID_INVALID on error.
  */
 job_id_t job_dispatch_named(job_system_t *sys,
