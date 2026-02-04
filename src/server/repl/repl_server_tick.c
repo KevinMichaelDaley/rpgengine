@@ -256,7 +256,7 @@ static void server_repl_send_some_states(server_repl_server_t *srv, uint16_t cli
             ctx->client_index = client_id;
             ctx->entity_index = ei;
             ctx->now_ms = now_ms;
-            if (job_dispatch_named(srv->jobs, send_state_job, ctx, 0, NULL, "server.repl.send_state_job") == JOB_ID_INVALID) {
+                if (job_dispatch_named(srv->jobs, send_state_job, ctx, 0, NULL, "Net.Repl.SendingState") == JOB_ID_INVALID) {
                 /* Queue full: stop scheduling this tick to avoid busy looping. */
                 break;
             }

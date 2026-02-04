@@ -117,7 +117,7 @@ static int alloc_client_(fr_server_net_runtime_t *rt, const net_udp_addr_t *from
             /* Start the client fiber without hard pinning.
                Some sharded schedulers can starve other long-lived fibers when pinned.
              */
-            if (job_dispatch_named(rt->cfg.jobs, fr_server_client_fiber_main, args, 0, NULL, "server.net.client_fiber_main") == JOB_ID_INVALID) {
+                if (job_dispatch_named(rt->cfg.jobs, fr_server_client_fiber_main, args, 0, NULL, "Net.Server.HandlingClientUDP") == JOB_ID_INVALID) {
                 free(args);
                 rt->clients[i].active = 0u;
                 return -1;
