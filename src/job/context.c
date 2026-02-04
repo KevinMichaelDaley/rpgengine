@@ -373,7 +373,16 @@ __asm__(
 #else
 
 void job_context_swap(job_context_t *from, job_context_t *to) {
+
+#ifdef TRACY_ENABLE
+    // We are currently executing on `from`'s stack.
+    TracyFiberLeave();
+#endif
     (void)swapcontext(from, to);
+#ifdef TRACY_ENABLE
+    // We have switched back to `from`'s stack.
+    TracyFiberEnter(from->tracy_name);
+#endif
 }
 
 #endif

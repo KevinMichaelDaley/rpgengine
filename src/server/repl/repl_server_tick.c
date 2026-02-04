@@ -10,6 +10,10 @@
 #include "ferrum/net/rudp/peer.h"
 #include "internal.h"
 
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#endif
+
 static uint8_t bitset_test(const uint8_t *bits, uint16_t bit_index) {
     const size_t byte_index = (size_t)bit_index >> 3u;
     const uint8_t mask = (uint8_t)(1u << (bit_index & 7u));
@@ -252,7 +256,7 @@ static void server_repl_send_some_states(server_repl_server_t *srv, uint16_t cli
             ctx->client_index = client_id;
             ctx->entity_index = ei;
             ctx->now_ms = now_ms;
-            if (job_dispatch(srv->jobs, send_state_job, ctx, 0, NULL) == JOB_ID_INVALID) {
+            if (job_dispatch_named(srv->jobs, send_state_job, ctx, 0, NULL, "server.repl.send_state_job") == JOB_ID_INVALID) {
                 /* Queue full: stop scheduling this tick to avoid busy looping. */
                 break;
             }
@@ -319,5 +323,9 @@ int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
     }
 
     srv->server_tick = (uint16_t)(srv->server_tick + 1u);
+
+    #ifdef TRACY_ENABLE
+    TracyCFrameMarkNamed("ServerTick");
+    #endif
     return SERVER_REPL_OK;
 }

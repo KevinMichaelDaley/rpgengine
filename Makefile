@@ -1,10 +1,23 @@
 CC ?= gcc
 JOB_INSTRUMENTATION ?= 1
+TRACY ?= 0
 
 CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -g -O0
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 
 LDFLAGS ?= -lm
+
+TRACY_DIR := extern/tracy
+TRACY_BUILD_DIR := $(TRACY_DIR)/build
+TRACY_CLIENT_LIB := $(TRACY_BUILD_DIR)/libTracyClient.a
+
+ifeq ($(TRACY),1)
+	ifeq (,$(wildcard $(TRACY_CLIENT_LIB)))
+		$(error Tracy client library missing: $(TRACY_CLIENT_LIB) (build extern/tracy first))
+	endif
+	CFLAGS += -DTRACY_ENABLE -I$(TRACY_DIR)/public
+	LDFLAGS += -L$(TRACY_BUILD_DIR) -lTracyClient -lstdc++ -ldl
+endif
 JOB_SRC := $(wildcard src/job/*.c) $(wildcard src/job/*/*.c) $(wildcard src/job/*/*/*.c)
 MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC := $(wildcard src/memory/*.c)

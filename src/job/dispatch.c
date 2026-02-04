@@ -32,7 +32,6 @@ job_id_t job_dispatch(job_system_t *sys,
         }
         return JOB_ID_INVALID;
     }
-
     atomic_fetch_add_explicit(&sys->jobs_started, 1, memory_order_release);
     job_instrument_event("dispatch", fiber->id, id, g_worker_id, __FILE__, __LINE__);
     return id;
@@ -42,7 +41,23 @@ void job_yield(void) {
     if (!g_current_fiber || !g_scheduler_context) {
         return;
     }
+    #ifdef TRACY_ENABLE
+        TracyCZoneEnd(g_current_fiber->zone);
+    #endif
+    #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+        TracyCFiberLeave;
+    #endif
     job_context_swap(&g_current_fiber->ctx, g_scheduler_context);
+    #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+        if (g_current_fiber->tracy_name) {
+            TracyCFiberEnter(g_current_fiber->tracy_name);
+        }
+    #endif
+
+    #ifdef TRACY_ENABLE
+        TracyCZoneN(zone, "JobSlice", true);
+        g_current_fiber->zone = zone;
+    #endif
 }
 
 uint32_t job_current_worker_id(void) {

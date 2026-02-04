@@ -42,7 +42,22 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
     counter->waiters = node;
     mtx_unlock(&counter->lock);
 
+    #ifdef TRACY_ENABLE
+        TracyCZoneEnd(fiber->zone);
+    #endif
+    #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+        TracyCFiberLeave;
+    #endif
     job_context_swap(&fiber->ctx, g_scheduler_context);
+    #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+        if (fiber->tracy_name) {
+            TracyCFiberEnter(fiber->tracy_name);
+        }
+    #endif
+    #ifdef TRACY_ENABLE
+        TracyCZoneN(zone, "JobSlice", true);
+        fiber->zone = zone;
+    #endif
     for (;;) {
         if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
             break;

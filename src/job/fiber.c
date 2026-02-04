@@ -14,6 +14,17 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     g_current_fiber = fiber;
     g_current_system = fiber->system;
 
+    #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+        if (fiber->tracy_name) {
+            TracyCFiberEnter(fiber->tracy_name);
+        }
+    #endif
+
+    #ifdef TRACY_ENABLE
+        TracyCZoneN(zone, "JobSlice", true);
+        fiber->zone=zone;
+    #endif
+
     fiber->fn(fiber->user);
     fiber->finished = 1;
 
@@ -25,7 +36,21 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     cnd_broadcast(&fiber->system->queue_cond);
 
     for (;;) {
+
+        #ifdef TRACY_ENABLE
+            TracyCZoneEnd(fiber->zone);
+        #endif
+
+        #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+            TracyCFiberLeave;
+        #endif
         job_context_swap(&fiber->ctx, g_scheduler_context);
+
+        #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+            if (fiber->tracy_name) {
+                TracyCFiberEnter(fiber->tracy_name);
+            }
+        #endif
     }
 }
 
@@ -47,9 +72,24 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
                               void *user,
                               job_counter_t *counter,
                               int priority,
-                              uint64_t id) {
+                              uint64_t id){
+    return job_fiber_create_named(sys, fn, user, counter, priority, id, NULL);
+}
+
+job_fiber_t *job_fiber_create_named(job_system_t *sys,
+                              void (*fn)(void *),
+                              void *user,
+                              job_counter_t *counter,
+                              int priority,
+                              uint64_t id,
+                            const char* debug_name) {
+    
     if (!sys || !fn) {
         return NULL;
+    }
+    if(debug_name==NULL){
+        static const char* default_debug_name="unnamed_fiber";
+        debug_name=&default_debug_name[0];
     }
     apool_handle_t fiber_handle = apool_alloc(&sys->fiber_stack_pool);
     if (fiber_handle.index == APOOL_INDEX_INVALID) {
@@ -68,6 +108,9 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     fiber->next = NULL;
     fiber->id = id;
     fiber->magic2=0x3a7f; // stack underflow guard
+    #ifdef TRACY_ENABLE
+    fiber->tracy_name = debug_name;
+    #endif
     /* Stack starts immediately after the fiber struct in the pool block. */
     fiber->stack = (uint8_t *)fiber + sizeof(job_fiber_t);
 #if defined(__aarch64__) || defined(__arm__) || defined(__x86_64__)
@@ -88,7 +131,6 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
     uint32_t high = (uint32_t)(raw >> 32);
     makecontext(&fiber->ctx, (void (*)(void))job_fiber_trampoline, 2, (uintptr_t)low, (uintptr_t)high);
 #endif
-
     job_instrument_event("fiber_create", fiber->id, id, g_worker_id, __FILE__, __LINE__);
     return fiber;
 }

@@ -56,7 +56,7 @@ int server_repl_server_debug_schedule_state_job(server_repl_server_t *srv, uint1
     ctx->client_index = client_id;
     ctx->entity_index = entity_index;
     ctx->now_ms = now_ms;
-    if (job_dispatch(srv->jobs, debug_noop, ctx, 0, NULL) == JOB_ID_INVALID) {
+    if (job_dispatch_named(srv->jobs, debug_noop, ctx, 0, NULL, "server.repl.debug_noop") == JOB_ID_INVALID) {
         return SERVER_REPL_ERR_INVALID;
     }
     srv->stats.state_jobs_scheduled++;

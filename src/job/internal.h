@@ -13,7 +13,9 @@
 #include "ferrum/memory/arena.h"
 #include "ferrum/memory/apool.h"
 #include "context.h"
-
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#endif
 #define JOB_MIN_STACK (4u * 1024u)
 
 typedef struct job_fiber job_fiber_t;
@@ -25,6 +27,10 @@ struct job_entry {
 };
 
 struct job_fiber {
+    #ifdef TRACY_ENABLE
+    const char* tracy_name;
+    TracyCZoneCtx zone;
+    #endif
     uint16_t magic1;
     job_context_t ctx;
     apool_handle_t handle;
@@ -59,5 +65,13 @@ job_fiber_t *job_fiber_create(job_system_t *sys,
                               job_counter_t *counter,
                               int priority,
                               uint64_t id);
+job_fiber_t *job_fiber_create_named(job_system_t *sys,
+                              void (*fn)(void *),
+                              void *user,
+                              job_counter_t *counter,
+                              int priority,
+                              uint64_t id,
+                              const char* debug_name
+                            );
 
 #endif /* FERRUM_JOB_INTERNAL_H */
