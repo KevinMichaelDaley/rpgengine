@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-8b7
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-01T22:57:07.331425379-08:00

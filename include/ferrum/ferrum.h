@@ -59,4 +59,7 @@
 // Server-side client fiber networking (stream-based)
 #include "ferrum/server/net/client_fiber.h"
 
+// Server: global state update queue (network -> simulation)
+#include "ferrum/server/net/state_update_queue.h"
+
 #endif /* FERRUM_FERRUM_H */

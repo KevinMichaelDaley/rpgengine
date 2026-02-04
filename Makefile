@@ -40,6 +40,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p008_server_client_fiber_stream_tests build/p008_server_net_runtime_fiber_tests \
 	build/p008_server_entity_net_pump_tests \
 	build/p008_pose_interpolator_tests \
+	build/p009_server_state_update_queue_tests \
 	build/p000_job_queue_diagnostics_tests \
 	build/p000_ws_deque_tests
 
@@ -168,6 +169,9 @@ build/p008_renderer_client: $(SRC) tests/p008_renderer_client.c | build
 build/p008_server_compute_jobs_tests: $(SRC) tests/p008_server_compute_jobs_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_server_compute_jobs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p009_server_state_update_queue_tests: $(SRC) tests/p009_server_state_update_queue_tests.c | build
+	$(CC) $(CFLAGS) tests/p009_server_state_update_queue_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 # RED tests (may not compile until quantization module exists)
 build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -233,6 +237,7 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
+	&& ./build/p009_server_state_update_queue_tests \
 	&& ./build/p000_job_queue_diagnostics_tests \
 	&& ./build/p000_ws_deque_tests \
 	&& ./build/p007_net_client_rx_tests \

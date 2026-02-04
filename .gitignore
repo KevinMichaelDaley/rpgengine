@@ -1,5 +1,8 @@
 build/
 
+# Legacy (project uses `tk` tickets now)
+.beads/
+
 # Benchmark and runtime logs
 bench-logs/
 *.log
