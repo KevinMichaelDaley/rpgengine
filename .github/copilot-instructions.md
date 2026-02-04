@@ -1,16 +1,15 @@
 ## Issue Tracking and Task Management
 
-This project uses **bd (beads)** for issue tracking and task management.
-Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
+This project uses **tk (ticket)** for issue tracking and task management.
+Run `tk prime` for workflow context and setup instructions.
 
 **Quick reference:**
-- `bd ready` - Find unblocked work
-- `bd create "Title" --type task --priority 2` - Create issue
-- `bd close <id>` - Complete work
-- `bd sync` - Sync with git (run at session end)
+- `tk ready` - Find unblocked work
+- `tk create "Title" --type task --priority 2` - Create issue
+- `tk close <id>` - Complete work
 
-For full workflow details: `bd prime`
-ALWAYS use `bd show` to read the full, extended description of a bead before trying to implement or continue implementing. 
+For full workflow details: `tk prime`
+ALWAYS use `tk show` to read the full, extended description of a ticket before trying to implement or continue implementing. 
 Explanations of how to do the tasks or why they exist can often be found in other places in ref/ with descriptive filenames; for example, check ref/architecture.md for architectural guidelines. 
 
 # CRITICAL DIRECTIVE (C VERSION)
