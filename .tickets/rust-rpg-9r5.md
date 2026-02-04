@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-9r5
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-01T22:57:06.964157155-08:00
