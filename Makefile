@@ -16,13 +16,21 @@ ifeq ($(TRACY),1)
 		$(error Tracy client library missing: $(TRACY_CLIENT_LIB) (build extern/tracy first))
 	endif
 	CFLAGS += -DTRACY_ENABLE -I$(TRACY_DIR)/public
+	LDFLAGS += -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free -Wl,--wrap=aligned_alloc -Wl,--wrap=posix_memalign
 	LDFLAGS += -L$(TRACY_BUILD_DIR) -lTracyClient -lstdc++ -ldl
 endif
 JOB_SRC := $(wildcard src/job/*.c) $(wildcard src/job/*/*.c) $(wildcard src/job/*/*/*.c)
 MATH_SRC := $(wildcard src/math/*.c)
-MEM_SRC := $(wildcard src/memory/*.c)
+MEM_SRC_BASE := $(wildcard src/memory/*.c)
+MEM_TRACY_WRAP_SRC := $(wildcard src/memory/alloc_tracy/*.c)
+MEM_SRC := $(MEM_SRC_BASE)
+ifeq ($(TRACY),1)
+	MEM_SRC += $(MEM_TRACY_WRAP_SRC)
+endif
 ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
+RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
+RENDERER_SRC += $(RENDERER_DEBUG_LINES_SRC)
 NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/rudp/stream/*.c) $(wildcard src/net/quantization/*.c) \
 	$(wildcard src/net/replication/*.c) $(wildcard src/net/replication/*/*.c) \
 	$(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c) \
@@ -56,8 +64,13 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p008_pose_interpolator_tests \
 	build/p009_server_state_update_queue_tests \
 	build/p009_net_topic_channel_ring_tests \
+	build/p011_renderer_correction_debug_lines_tests \
 	build/p000_job_queue_diagnostics_tests \
 	build/p000_ws_deque_tests
+
+ifeq ($(TRACY),1)
+BIN_HEADLESS += build/p010_tracy_alloc_override_tests
+endif
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -190,6 +203,12 @@ build/p009_server_state_update_queue_tests: $(SRC) tests/p009_server_state_updat
 build/p009_net_topic_channel_ring_tests: $(SRC) tests/p009_net_topic_channel_ring_tests.c | build
 	$(CC) $(CFLAGS) tests/p009_net_topic_channel_ring_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p010_tracy_alloc_override_tests: $(SRC) tests/p010_tracy_alloc_override_tests.c | build
+	$(CC) $(CFLAGS) tests/p010_tracy_alloc_override_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p011_renderer_correction_debug_lines_tests: $(SRC) $(RENDERER_DEBUG_LINES_SRC) tests/p011_renderer_correction_debug_lines_tests.c | build
+	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c $(SRC_HEADLESS) $(RENDERER_DEBUG_LINES_SRC) -o $@ $(LDFLAGS)
+
 # RED tests (may not compile until quantization module exists)
 build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -260,7 +279,9 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p000_ws_deque_tests \
 	&& ./build/p007_net_client_rx_tests \
 	&& ./build/p007_net_client_rx_udp_topic_tests \
-	&& ./build/p007_net_topic_dispatch_tests
+	&& ./build/p007_net_topic_dispatch_tests \
+	&& ./build/p011_renderer_correction_debug_lines_tests \
+	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests )
 
 .PHONY: perf_job
 perf_job: build/p000_job_performance_tests

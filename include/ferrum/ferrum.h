@@ -34,6 +34,8 @@
 #include "ferrum/renderer/render_resource_views.h"
 #include "ferrum/renderer/render_pipeline.h"
 #include "ferrum/renderer/render_pipeline_graph.h"
+#include "ferrum/renderer/debug_lines.h"
+#include "ferrum/renderer/debug_correction_lines.h"
 #include "ferrum/renderer/skinning_shader.h"
 #include "ferrum/renderer/skinning.h"
 #include "ferrum/net/ack_window.h"

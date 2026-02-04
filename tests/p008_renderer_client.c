@@ -30,6 +30,8 @@
 #include "ferrum/net/replication/welcome.h"
 
 #include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/debug_correction_lines.h"
+#include "ferrum/renderer/debug_lines.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/shader_uniforms.h"
 #include "ferrum/renderer/vao.h"
@@ -43,6 +45,8 @@ struct gl_client_context {
     shader_uniform_cache_t uniforms;
     vbo_t vbo;
     vao_t vao;
+    vbo_t lines_vbo;
+    vao_t lines_vao;
 };
 
 struct entity_view {
@@ -410,6 +414,56 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
         return -1;
     }
 
+    if (vbo_create(&ctx->lines_vbo, &ctx->loader) != VBO_OK) {
+        fprintf(stderr, "vbo_create failed (lines_vbo)\n");
+        vao_destroy(&ctx->vao);
+        vbo_destroy(&ctx->vbo);
+        shader_program_destroy(&ctx->program);
+        SDL_GL_DeleteContext(ctx->gl);
+        SDL_DestroyWindow(ctx->window);
+        SDL_Quit();
+        return -1;
+    }
+
+    if (vao_create(&ctx->lines_vao, &ctx->loader) != VAO_OK) {
+        fprintf(stderr, "vao_create failed (lines_vao)\n");
+        vbo_destroy(&ctx->lines_vbo);
+        vao_destroy(&ctx->vao);
+        vbo_destroy(&ctx->vbo);
+        shader_program_destroy(&ctx->program);
+        SDL_GL_DeleteContext(ctx->gl);
+        SDL_DestroyWindow(ctx->window);
+        SDL_Quit();
+        return -1;
+    }
+
+    static const float lines_dummy[] = {0.0f, 0.0f, 0.0f};
+    if (vbo_upload(&ctx->lines_vbo, GL_ARRAY_BUFFER, lines_dummy, sizeof(lines_dummy), GL_DYNAMIC_DRAW) != VBO_OK) {
+        fprintf(stderr, "vbo_upload failed (lines_vbo)\n");
+        vao_destroy(&ctx->lines_vao);
+        vbo_destroy(&ctx->lines_vbo);
+        vao_destroy(&ctx->vao);
+        vbo_destroy(&ctx->vbo);
+        shader_program_destroy(&ctx->program);
+        SDL_GL_DeleteContext(ctx->gl);
+        SDL_DestroyWindow(ctx->window);
+        SDL_Quit();
+        return -1;
+    }
+
+    if (vao_bind_attributes(&ctx->lines_vao, &ctx->lines_vbo, attrs, 1u, 3u * sizeof(float)) != VAO_OK) {
+        fprintf(stderr, "vao_bind_attributes failed (lines_vao)\n");
+        vao_destroy(&ctx->lines_vao);
+        vbo_destroy(&ctx->lines_vbo);
+        vao_destroy(&ctx->vao);
+        vbo_destroy(&ctx->vbo);
+        shader_program_destroy(&ctx->program);
+        SDL_GL_DeleteContext(ctx->gl);
+        SDL_DestroyWindow(ctx->window);
+        SDL_Quit();
+        return -1;
+    }
+
     glEnable(GL_DEPTH_TEST);
     gl_check_("glEnable(GL_DEPTH_TEST)");
     SDL_GL_SetSwapInterval(1);
@@ -422,6 +476,8 @@ static void gl_client_shutdown_(struct gl_client_context *ctx) {
     if (!ctx) {
         return;
     }
+    vao_destroy(&ctx->lines_vao);
+    vbo_destroy(&ctx->lines_vbo);
     vao_destroy(&ctx->vao);
     vbo_destroy(&ctx->vbo);
     shader_program_destroy(&ctx->program);
@@ -585,7 +641,8 @@ static int handle_state_cube_(struct entity_view **entities,
                              size_t *count,
                              size_t *cap,
                              const net_repl_state_cube_t *st,
-                             double recv_time_s) {
+                             double recv_time_s,
+                             fr_debug_lines_t *correction_lines) {
     if (!entities || !count || !cap || !st) {
         return 0;
     }
@@ -617,6 +674,36 @@ static int handle_state_cube_(struct entity_view **entities,
             return 0;
         }
         return 1;
+    }
+
+    if (correction_lines) {
+        vec3_t est_pos = {0};
+        quat_t est_rot = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+        if (fr_pose_interpolator_sample(&(*entities)[idx].pose, recv_time_s, 1e-6f, &est_pos, &est_rot)) {
+            const vec3_t dp = vec3_sub(pos, est_pos);
+            const float pos_err = vec3_magnitude(dp);
+
+            quat_t qa = quat_normalize_safe(est_rot, 1e-6f);
+            quat_t qb = quat_normalize_safe(rot, 1e-6f);
+            float dot = qa.x * qb.x + qa.y * qb.y + qa.z * qb.z + qa.w * qb.w;
+            if (dot < 0.0f) {
+                dot = -dot;
+            }
+            if (dot > 1.0f) {
+                dot = 1.0f;
+            }
+            const float rot_err_rad = 2.0f * acosf(dot);
+
+            const float pos_threshold = 0.005f;
+            const float rot_threshold = 0.02f;
+            if (pos_err > pos_threshold || rot_err_rad > rot_threshold) {
+                vec3_t verts[16];
+                const size_t n = fr_debug_correction_lines_cube(est_pos, est_rot, pos, rot, 0.125f, verts, 16u);
+                for (size_t i = 0u; i + 1u < n; i += 2u) {
+                    (void)fr_debug_lines_add(correction_lines, verts[i + 0u], verts[i + 1u], recv_time_s, 0.35);
+                }
+            }
+        }
     }
 
     (void)fr_pose_interpolator_push(&(*entities)[idx].pose, recv_time_s, pos, rot);
@@ -757,6 +844,15 @@ int main(int argc, char **argv) {
         }
     }
 
+    fr_debug_line_t correction_line_storage[512];
+    fr_debug_lines_t correction_lines;
+    fr_debug_lines_t *correction_lines_ptr = NULL;
+    vec3_t correction_vertices[1024];
+    if (!headless) {
+        fr_debug_lines_init(&correction_lines, correction_line_storage, 512u);
+        correction_lines_ptr = &correction_lines;
+    }
+
     struct entity_view *entities = NULL;
     size_t entity_count = 0u;
     size_t entity_cap = 0u;
@@ -852,7 +948,7 @@ int main(int argc, char **argv) {
             } else if (schema_id == NET_REPL_SCHEMA_STATE_CUBE) {
                 net_repl_state_cube_t st;
                 if (net_repl_state_cube_decode(&st, payload, payload_size) == NET_REPL_OK) {
-                    (void)handle_state_cube_(&entities, &entity_count, &entity_cap, &st, recv_time_s);
+                    (void)handle_state_cube_(&entities, &entity_count, &entity_cap, &st, recv_time_s, correction_lines_ptr);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 /* nothing needed for rendering */
@@ -939,6 +1035,40 @@ int main(int argc, char **argv) {
 
                     glDrawArrays(GL_TRIANGLES, 0, 36);
                     gl_check_("glDrawArrays");
+                }
+
+                if (correction_lines_ptr) {
+                    size_t line_vertex_count = 0u;
+                    if (fr_debug_lines_collect_vertices(correction_lines_ptr,
+                                                       now_s,
+                                                       correction_vertices,
+                                                       (sizeof(correction_vertices) / sizeof(correction_vertices[0])),
+                                                       &line_vertex_count) &&
+                        line_vertex_count > 0u) {
+
+                        (void)vbo_upload(&gl.lines_vbo,
+                                         GL_ARRAY_BUFFER,
+                                         correction_vertices,
+                                         line_vertex_count * sizeof(correction_vertices[0]),
+                                         GL_DYNAMIC_DRAW);
+
+                        glBindVertexArray(vao_handle(&gl.lines_vao));
+
+                        const mat4_t vp = mat4_mul(proj, view);
+                        if (shader_uniform_set_mat4(&gl.uniforms, &gl.program, "u_mvp", vp.m, 0u) !=
+                            SHADER_UNIFORM_OK) {
+                            fprintf(stderr, "shader_uniform_set_mat4 failed for u_mvp (lines)\n");
+                        }
+                        const float red[3] = {1.0f, 0.0f, 0.0f};
+                        if (shader_uniform_set_vec3(&gl.uniforms, &gl.program, "u_color", red) != SHADER_UNIFORM_OK) {
+                            fprintf(stderr, "shader_uniform_set_vec3 failed for u_color (lines)\n");
+                        }
+
+                        glDisable(GL_DEPTH_TEST);
+                        glDrawArrays(GL_LINES, 0, (GLsizei)line_vertex_count);
+                        glEnable(GL_DEPTH_TEST);
+                        gl_check_("glDrawArrays(lines)");
+                    }
                 }
 
                 glBindVertexArray(0u);
