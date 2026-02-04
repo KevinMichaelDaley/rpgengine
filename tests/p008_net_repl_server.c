@@ -14,6 +14,7 @@
 #include <time.h>
 
 #include "ferrum/job/system.h"
+#include "ferrum/math/quat.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/quantization.h"
 #include "ferrum/net/replication/state_cube.h"
@@ -132,26 +133,75 @@ static void push_unreliable_(fr_server_net_runtime_t *rt,
     (void)fr_topic_channel_push(out_unrel, msg, 2u + payload_size);
 }
 
-static vec3_t cube_pos_(uint16_t server_tick, uint16_t owner_client_id, uint16_t tick_hz) {
-    const float t = (tick_hz > 0u) ? ((float)server_tick / (float)tick_hz) : 0.0f;
-    const float phase = (float)owner_client_id * 0.25f;
-    return (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
+static vec3_t cube_pos_(uint16_t owner_client_id, uint16_t max_clients) {
+    const float spacing = 0.75f;
+    const float center = (max_clients > 0u) ? ((float)(max_clients - 1u) * 0.5f) : 0.0f;
+    const float x = ((float)owner_client_id - center) * spacing;
+    return (vec3_t){x, 0.0f, 0.0f};
 }
 
-static void broadcast_some_states_(fr_server_net_runtime_t *rt,
-                                   const uint8_t *joined,
-                                   uint16_t max_clients,
-                                   uint16_t tick_hz,
-                                   uint16_t server_tick,
-                                   uint16_t *state_cursor,
-                                   uint16_t max_states_per_client) {
-    if (!rt || !joined || !state_cursor || max_clients == 0u || tick_hz == 0u || max_states_per_client == 0u) {
-        return;
+static uint32_t xorshift32_(uint32_t *state) {
+    uint32_t x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    return x;
+}
+
+static float u32_to_float01_(uint32_t x) {
+    return (float)((double)x / 4294967295.0);
+}
+
+static vec3_t normalize_vec3_safe_(vec3_t v, float eps) {
+    const float len2 = v.x * v.x + v.y * v.y + v.z * v.z;
+    if (len2 <= eps * eps) {
+        return (vec3_t){0.0f, 1.0f, 0.0f};
+    }
+    const float inv = 1.0f / sqrtf(len2);
+    return (vec3_t){v.x * inv, v.y * inv, v.z * inv};
+}
+
+static quat_t random_unit_quat_(uint16_t owner_client_id, uint32_t segment) {
+    uint32_t rng = (uint32_t)owner_client_id * 2654435761u ^ (segment * 2246822519u) ^ 0xA341316Cu;
+
+    vec3_t axis = {
+        u32_to_float01_(xorshift32_(&rng)) * 2.0f - 1.0f,
+        u32_to_float01_(xorshift32_(&rng)) * 2.0f - 1.0f,
+        u32_to_float01_(xorshift32_(&rng)) * 2.0f - 1.0f,
+    };
+    axis = normalize_vec3_safe_(axis, 1e-6f);
+
+    const float pi = 3.14159265358979323846f;
+    const float angle = u32_to_float01_(xorshift32_(&rng)) * 2.0f * pi;
+    const float half = 0.5f * angle;
+    const float s = sinf(half);
+
+    quat_t q = {axis.x * s, axis.y * s, axis.z * s, cosf(half)};
+    return quat_normalize_safe(q, 1e-6f);
+}
+
+static quat_t cube_rot_(uint16_t server_tick, uint16_t owner_client_id, uint16_t tick_hz) {
+    if (tick_hz == 0u) {
+        return (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
     }
 
-    quat_t rot = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-    net_qquat_snorm16_t qrot;
-    if (net_quantize_quat_snorm16(rot, &qrot) != NET_QUANT_OK) {
+    const uint16_t segment_ticks = tick_hz;
+    const uint32_t segment = (uint32_t)(server_tick / segment_ticks);
+    const uint16_t local_tick = (uint16_t)(server_tick % segment_ticks);
+    const float t = (float)local_tick / (float)segment_ticks;
+
+    const quat_t a = random_unit_quat_(owner_client_id, segment);
+    const quat_t b = random_unit_quat_(owner_client_id, segment + 1u);
+    return quat_slerp(a, b, t, 1e-6f);
+}
+
+static void broadcast_all_states_(fr_server_net_runtime_t *rt,
+                                  const uint8_t *joined,
+                                  uint16_t max_clients,
+                                  uint16_t tick_hz,
+                                  uint16_t server_tick) {
+    if (!rt || !joined || max_clients == 0u || tick_hz == 0u) {
         return;
     }
 
@@ -160,21 +210,21 @@ static void broadcast_some_states_(fr_server_net_runtime_t *rt,
             continue;
         }
 
-        uint16_t cursor = (uint16_t)(state_cursor[ci] % max_clients);
-        uint16_t sent = 0u;
-        uint16_t scanned = 0u;
-
-        while (sent < max_states_per_client && scanned < max_clients) {
-            const uint16_t ei = (uint16_t)((cursor + scanned) % max_clients);
-            scanned++;
-
+        for (uint16_t ei = 0u; ei < max_clients; ++ei) {
             if (!joined[ei]) {
                 continue;
             }
 
-            vec3_t pos = cube_pos_(server_tick, ei, tick_hz);
+            const vec3_t pos = cube_pos_(ei, max_clients);
+            const quat_t rot = cube_rot_(server_tick, ei, tick_hz);
+
             net_qvec3_mm_t qpos;
             if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
+                continue;
+            }
+
+            net_qquat_snorm16_t qrot;
+            if (net_quantize_quat_snorm16(rot, &qrot) != NET_QUANT_OK) {
                 continue;
             }
 
@@ -190,10 +240,7 @@ static void broadcast_some_states_(fr_server_net_runtime_t *rt,
             }
 
             push_unreliable_(rt, ci, NET_REPL_SCHEMA_STATE_CUBE, payload, sizeof(payload));
-            sent++;
         }
-
-        state_cursor[ci] = (uint16_t)((cursor + scanned) % max_clients);
     }
 }
 
@@ -322,11 +369,9 @@ int main(int argc, char **argv) {
     }
 
     uint8_t *joined = (uint8_t *)calloc((size_t)max_clients_l, 1u);
-    uint16_t *state_cursor = (uint16_t *)calloc((size_t)max_clients_l, sizeof(*state_cursor));
-    if (!joined || !state_cursor) {
+    if (!joined) {
         fprintf(stderr, "Failed to allocate server join/state tracking\n");
         free(joined);
-        free(state_cursor);
         fr_server_entity_net_pump_destroy(pump);
         fr_server_net_runtime_destroy(rt);
         fr_topic_channel_destroy(inbound);
@@ -423,15 +468,13 @@ int main(int argc, char **argv) {
         if (now >= next_tick) {
             const uint64_t tick_step_start_ns = now_ns();
             server_tick = (uint16_t)(server_tick + 1u);
-            if (clients_joined >= (uint32_t)max_clients_l) {
+            if (clients_joined > 0u) {
                 const uint64_t bcast_start_ns = now_ns();
-                broadcast_some_states_(rt,
-                                       joined,
-                                       (uint16_t)max_clients_l,
-                                       (uint16_t)tick_hz_l,
-                                       server_tick,
-                                       state_cursor,
-                                       2u);
+                broadcast_all_states_(rt,
+                                      joined,
+                                      (uint16_t)max_clients_l,
+                                      (uint16_t)tick_hz_l,
+                                      server_tick);
                 const uint64_t bcast_ns = now_ns() - bcast_start_ns;
                 broadcast_ns_sum += bcast_ns;
                 if (bcast_ns > broadcast_ns_max) {
@@ -509,7 +552,6 @@ int main(int argc, char **argv) {
             (unsigned long long)loop_ns_max);
 
     free(joined);
-    free(state_cursor);
     fr_server_entity_net_pump_destroy(pump);
     fr_server_net_runtime_destroy(rt);
     fr_topic_channel_destroy(inbound);

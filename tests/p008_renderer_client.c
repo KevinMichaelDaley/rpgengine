@@ -51,6 +51,39 @@ struct entity_view {
     fr_pose_interpolator_t pose;
 };
 
+static const char *gl_error_str_(GLenum err) {
+    switch (err) {
+        case GL_NO_ERROR: return "GL_NO_ERROR";
+        case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
+        case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
+        case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
+        case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
+        case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+        default: return "GL_UNKNOWN_ERROR";
+    }
+}
+
+static void gl_check_(const char *where) {
+    static int budget = 64;
+    if (budget <= 0) {
+        return;
+    }
+    for (;;) {
+        const GLenum err = glGetError();
+        if (err == GL_NO_ERROR) {
+            return;
+        }
+        if (budget > 0) {
+            fprintf(stderr, "GL error at %s: 0x%04x (%s)\n", where ? where : "?", (unsigned)err, gl_error_str_(err));
+            budget--;
+        }
+        if (budget <= 0) {
+            fprintf(stderr, "GL error budget exhausted; suppressing further GL errors\n");
+            return;
+        }
+    }
+}
+
 static uint64_t now_ns_(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -211,6 +244,18 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
     }
     (void)glGetError();
 
+        const char *gl_vendor = (const char *)glGetString(GL_VENDOR);
+        const char *gl_renderer = (const char *)glGetString(GL_RENDERER);
+        const char *gl_version = (const char *)glGetString(GL_VERSION);
+        const char *glsl_version = (const char *)glGetString(GL_SHADING_LANGUAGE_VERSION);
+        fprintf(stderr,
+            "GL: vendor=%s renderer=%s version=%s glsl=%s\n",
+            gl_vendor ? gl_vendor : "(null)",
+            gl_renderer ? gl_renderer : "(null)",
+            gl_version ? gl_version : "(null)",
+            glsl_version ? glsl_version : "(null)");
+        gl_check_("post-glew");
+
     ctx->loader.get_proc_address = sdl_get_proc_address_;
     ctx->loader.user_data = NULL;
 
@@ -366,7 +411,9 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
     }
 
     glEnable(GL_DEPTH_TEST);
+    gl_check_("glEnable(GL_DEPTH_TEST)");
     SDL_GL_SetSwapInterval(1);
+    gl_check_("gl_client_init_ done");
 
     return 0;
 }
@@ -506,7 +553,15 @@ static int handle_spawn_batch_(struct entity_view **entities,
             continue;
         }
 
-        const vec3_t pos = (vec3_t){0.0f, 0.0f, 0.0f};
+        net_qvec3_mm_t qpos;
+        qpos.x_mm = e->pos_mm.x_mm;
+        qpos.y_mm = e->pos_mm.y_mm;
+        qpos.z_mm = e->pos_mm.z_mm;
+        qpos._magic = 0x4D4D3351u; /* 'Q3MM' */
+
+        vec3_t pos = {0};
+        (void)net_dequantize_vec3_mm(qpos, &pos);
+
         const quat_t rot = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
         if (!add_entity_(entities, count, cap, e->entity_id, e->owner_client_id, recv_time_s, pos, rot)) {
             return 0;
@@ -716,6 +771,8 @@ int main(int argc, char **argv) {
     const uint64_t start_ms = now_ms_();
     const uint64_t end_ms = start_ms + (uint64_t)duration_ms_l;
 
+    uint64_t next_diag_ms = start_ms;
+
     uint64_t next_keepalive_ms = start_ms;
     uint8_t rx_packet[NET_RUDP_MAX_PACKET_SIZE];
 
@@ -804,6 +861,11 @@ int main(int argc, char **argv) {
             }
         }
 
+        if (now_ms >= next_diag_ms) {
+            fprintf(stderr, "diag: entities=%zu self_entity_id=%u\n", entity_count, (unsigned)self_entity_id);
+            next_diag_ms = now_ms + 1000u;
+        }
+
         if (!headless) {
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) {
@@ -820,6 +882,7 @@ int main(int argc, char **argv) {
             glViewport(0, 0, win_w, win_h);
             glClearColor(0.05f, 0.05f, 0.07f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            gl_check_("frame clear");
 
             if (shader_program_bind(&gl.program) == SHADER_PROGRAM_OK) {
                 glBindVertexArray(vao_handle(&gl.vao));
@@ -836,7 +899,8 @@ int main(int argc, char **argv) {
                     view = mat4_identity();
                 }
 
-                const double render_time_s = now_s - 0.05;
+                /* Render slightly behind to smooth latency/loss. */
+                const double render_time_s = now_s - 0.20;
 
                 for (size_t i = 0u; i < entity_count; ++i) {
                     struct entity_view *e = &entities[i];
@@ -858,7 +922,9 @@ int main(int argc, char **argv) {
                     const mat4_t vp = mat4_mul(proj, view);
                     const mat4_t mvp = mat4_mul(vp, model);
 
-                    (void)shader_uniform_set_mat4(&gl.uniforms, &gl.program, "u_mvp", mvp.m, 0u);
+                    if (shader_uniform_set_mat4(&gl.uniforms, &gl.program, "u_mvp", mvp.m, 0u) != SHADER_UNIFORM_OK) {
+                        fprintf(stderr, "shader_uniform_set_mat4 failed for u_mvp\n");
+                    }
 
                     float rgb[3];
                     color_from_owner_(e->owner_client_id, rgb);
@@ -867,15 +933,19 @@ int main(int argc, char **argv) {
                         rgb[1] = 1.0f;
                         rgb[2] = 1.0f;
                     }
-                    (void)shader_uniform_set_vec3(&gl.uniforms, &gl.program, "u_color", rgb);
+                    if (shader_uniform_set_vec3(&gl.uniforms, &gl.program, "u_color", rgb) != SHADER_UNIFORM_OK) {
+                        fprintf(stderr, "shader_uniform_set_vec3 failed for u_color\n");
+                    }
 
                     glDrawArrays(GL_TRIANGLES, 0, 36);
+                    gl_check_("glDrawArrays");
                 }
 
                 glBindVertexArray(0u);
             }
 
             SDL_GL_SwapWindow(gl.window);
+            gl_check_("SDL_GL_SwapWindow");
         } else {
             sleep_ms_(1u);
         }
