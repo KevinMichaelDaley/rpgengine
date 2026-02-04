@@ -12,7 +12,8 @@ ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
 NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/rudp/stream/*.c) $(wildcard src/net/quantization/*.c) \
 	$(wildcard src/net/replication/*.c) $(wildcard src/net/replication/*/*.c) \
-	$(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c)
+	$(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c) \
+	$(wildcard src/net/channel/*.c) $(wildcard src/net/channel/*/*.c) $(wildcard src/net/channel/*/*/*.c)
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c) $(wildcard src/server/net/fiber/*.c) $(wildcard src/server/net/runtime/*.c) \
 	$(wildcard src/server/entity/*.c) $(wildcard src/server/entity/*/*.c) $(wildcard src/server/entity/*/*/*.c)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC)
@@ -41,6 +42,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p008_server_entity_net_pump_tests \
 	build/p008_pose_interpolator_tests \
 	build/p009_server_state_update_queue_tests \
+	build/p009_net_topic_channel_ring_tests \
 	build/p000_job_queue_diagnostics_tests \
 	build/p000_ws_deque_tests
 
@@ -171,6 +173,9 @@ build/p008_server_compute_jobs_tests: $(SRC) tests/p008_server_compute_jobs_test
 
 build/p009_server_state_update_queue_tests: $(SRC) tests/p009_server_state_update_queue_tests.c | build
 	$(CC) $(CFLAGS) tests/p009_server_state_update_queue_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p009_net_topic_channel_ring_tests: $(SRC) tests/p009_net_topic_channel_ring_tests.c | build
+	$(CC) $(CFLAGS) tests/p009_net_topic_channel_ring_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 # RED tests (may not compile until quantization module exists)
 build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build

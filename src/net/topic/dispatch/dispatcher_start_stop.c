@@ -1,20 +1,14 @@
 #include <time.h>
-#include <stdlib.h>
+#include <string.h>
 #include "dispatcher_internal.h"
 
 static void topic_job_trampoline(void *user_data) {
-    /* user_data points to a small struct { entry*, data*, len } allocated by pump */
-    typedef struct payload {
-        fr_topic_handler_entry_t entry;
-        uint8_t *data;
-        size_t len;
-    } payload_t;
-    payload_t *p = (payload_t*)user_data;
+    fr_topic_dispatch_payload_t *p = (fr_topic_dispatch_payload_t*)user_data;
     if (p->entry.on_message) {
         p->entry.on_message(p->data, p->len, p->entry.user);
     }
-    free(p->data);
-    free(p);
+    (void)apool_free(p->data_pool, p->data_handle);
+    (void)apool_free(p->payload_pool, p->payload_handle);
 }
 
 static int pump_main(void *arg) {
@@ -23,34 +17,50 @@ static int pump_main(void *arg) {
     struct timespec ts; ts.tv_sec=0; ts.tv_nsec=1000*1000; /* 1ms */
     while (atomic_load(&d->running)) {
         int any = 0;
+        uint8_t buf[FR_TOPIC_DISPATCHER_MAX_MESSAGE_SIZE];
         for (uint32_t i=0;i<d->num_topics;i++) {
             fr_topic_handler_entry_t *h = &d->handlers[i];
             if (!h->on_message) continue; /* no handler registered, skip */
             /* Try to pop one message and dispatch */
-            size_t cap = 1024;
-            uint8_t *buf = (uint8_t*)malloc(cap);
-            if (!buf) continue;
-            size_t len = cap;
+            size_t len = sizeof(buf);
             if (fr_topic_channel_pop(d->topics[i], buf, &len)) {
                 any = 1;
-                /* Build payload */
-                typedef struct payload {
-                    fr_topic_handler_entry_t entry;
-                    uint8_t *data;
-                    size_t len;
-                } payload_t;
-                payload_t *p = (payload_t*)malloc(sizeof(payload_t));
-                if (!p) { free(buf); continue; }
+
+                apool_handle_t data_handle = apool_alloc(&d->data_pool);
+                if (data_handle.index == APOOL_INDEX_INVALID) {
+                    continue;
+                }
+                uint8_t *data = (uint8_t *)apool_get(&d->data_pool, data_handle);
+                if (!data) {
+                    (void)apool_free(&d->data_pool, data_handle);
+                    continue;
+                }
+                memcpy(data, buf, len);
+
+                apool_handle_t payload_handle = apool_alloc(&d->payload_pool);
+                if (payload_handle.index == APOOL_INDEX_INVALID) {
+                    (void)apool_free(&d->data_pool, data_handle);
+                    continue;
+                }
+                fr_topic_dispatch_payload_t *p = (fr_topic_dispatch_payload_t *)apool_get(&d->payload_pool, payload_handle);
+                if (!p) {
+                    (void)apool_free(&d->payload_pool, payload_handle);
+                    (void)apool_free(&d->data_pool, data_handle);
+                    continue;
+                }
+
                 p->entry = *h;
-                p->data = buf;
+                p->data = data;
                 p->len = len;
+                p->payload_pool = &d->payload_pool;
+                p->payload_handle = payload_handle;
+                p->data_pool = &d->data_pool;
+                p->data_handle = data_handle;
                 if (h->preferred_worker != UINT32_MAX) {
                     job_dispatch_to(d->sys, topic_job_trampoline, p, h->priority, NULL, h->preferred_worker);
                 } else {
                     job_dispatch(d->sys, topic_job_trampoline, p, h->priority, NULL);
                 }
-            } else {
-                free(buf);
             }
         }
         if (!any) nanosleep(&ts, NULL);
