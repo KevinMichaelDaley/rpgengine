@@ -1,0 +1,643 @@
+---
+id: rust-rpg-fnv
+status: closed
+deps: [rust-rpg-pi3]
+links: []
+created: 2026-02-01T15:04:07.049409763-08:00
+type: task
+priority: 2
+---
+# P_008: Build wiring + docs for perf/integration
+
+Wire new perf/integration binaries into the Makefile without breaking default headless CI.
+
+Scope
+- Add build rules for P_008 executables.
+- Ensure ./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
+&& ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
+&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
+&& ./build/p007_net_schema_registry_tests \
+&& ./build/p007_net_udp_socket_tests
+RUN fiber_yield_resume_ordering
+OK fiber_yield_resume_ordering
+RUN fan_out_fan_in_counter
+OK fan_out_fan_in_counter
+RUN wait_parks_fiber_not_worker
+OK wait_parks_fiber_not_worker
+RUN work_stealing_makes_progress
+OK work_stealing_makes_progress
+RUN priority_scheduling_respects_order
+OK priority_scheduling_respects_order
+RUN deterministic_single_thread_mode
+OK deterministic_single_thread_mode
+RUN wait_on_satisfied_counter_is_immediate
+OK wait_on_satisfied_counter_is_immediate
+RUN counter_underflow_protected
+OK counter_underflow_protected
+RUN reject_too_small_stack_size
+OK reject_too_small_stack_size
+RUN queue_wraparound_preserves_order
+OK queue_wraparound_preserves_order
+RUN shutdown_drains_safely
+OK shutdown_drains_safely
+RUN invalid_dispatch_arguments_fail
+OK invalid_dispatch_arguments_fail
+RUN queue_capacity_exhaustion_is_explicit
+OK queue_capacity_exhaustion_is_explicit
+RUN double_wait_and_signal_are_safe
+OK double_wait_and_signal_are_safe
+RUN no_double_execution_after_steal
+OK no_double_execution_after_steal
+RUN no_lost_wakeups
+OK no_lost_wakeups
+RUN no_counter_wraparound
+OK no_counter_wraparound
+RUN no_resume_after_complete
+OK no_resume_after_complete
+RUN deterministic_trace_debug_mode
+OK deterministic_trace_debug_mode
+RUN mini_frame_execution
+OK mini_frame_execution
+RUN instrumentation_invariants
+OK instrumentation_invariants
+All 21 tests passed
+RUN translation_mat4_mul_vec4
+OK translation_mat4_mul_vec4
+RUN identity_invariants
+OK identity_invariants
+RUN vec3_dot_matches_magnitude
+OK vec3_dot_matches_magnitude
+RUN vec3_normalize_safe_nonzero
+OK vec3_normalize_safe_nonzero
+RUN quat_to_mat4_axis_angle_rotates_vec
+OK quat_to_mat4_axis_angle_rotates_vec
+RUN mat4_multiplication_associative_tolerant
+OK mat4_multiplication_associative_tolerant
+RUN vec3_normalize_zero_returns_zero
+OK vec3_normalize_zero_returns_zero
+RUN vec3_normalize_epsilon_zero_is_finite
+OK vec3_normalize_epsilon_zero_is_finite
+RUN vec3_cross_basis_identities
+OK vec3_cross_basis_identities
+RUN look_at_degenerate_rejected
+OK look_at_degenerate_rejected
+RUN inverse_singular_fails
+OK inverse_singular_fails
+RUN perspective_param_validation
+OK perspective_param_validation
+RUN perspective_regression_indices
+OK perspective_regression_indices
+RUN quat_slerp_endpoints_and_norm
+OK quat_slerp_endpoints_and_norm
+RUN look_at_perspective_handedness
+OK look_at_perspective_handedness
+RUN math_under_scheduler_load
+OK math_under_scheduler_load
+All 16 tests passed
+RUN arena_reuse_address_stability
+OK arena_reuse_address_stability
+RUN arena_alignment_common
+OK arena_alignment_common
+RUN arena_sequential_allocations_do_not_overlap
+OK arena_sequential_allocations_do_not_overlap
+RUN pool_alloc_free_reuse
+OK pool_alloc_free_reuse
+RUN pool_get_stable_pointer
+OK pool_get_stable_pointer
+RUN arena_out_of_memory_returns_null
+OK arena_out_of_memory_returns_null
+RUN arena_large_alignment
+OK arena_large_alignment
+RUN arena_zero_size_allocation
+OK arena_zero_size_allocation
+RUN arena_mark_pop_nested
+OK arena_mark_pop_nested
+RUN pool_capacity_boundary
+OK pool_capacity_boundary
+RUN pool_generation_mismatch
+OK pool_generation_mismatch
+RUN pool_invalid_free
+OK pool_invalid_free
+RUN pool_double_free
+OK pool_double_free
+RUN arena_alignment_padding_regression
+OK arena_alignment_padding_regression
+RUN pool_freelist_randomized
+OK pool_freelist_randomized
+RUN pool_generation_wrap_behavior
+OK pool_generation_wrap_behavior
+RUN arena_usage_inside_jobs
+OK arena_usage_inside_jobs
+All 17 tests passed
+RUN entity_create_destroy_lifecycle
+OK entity_create_destroy_lifecycle
+RUN sparse_set_insert_get_remove_basic
+OK sparse_set_insert_get_remove_basic
+RUN swap_removal_integrity
+OK swap_removal_integrity
+RUN remove_last_element
+OK remove_last_element
+RUN iterate_dense_arrays
+OK iterate_dense_arrays
+RUN duplicate_insert
+OK duplicate_insert
+RUN remove_nonexistent
+OK remove_nonexistent
+RUN sparse_sentinel_correctness
+OK sparse_sentinel_correctness
+RUN freelist_reuse_generation_bump
+OK freelist_reuse_generation_bump
+RUN generation_mismatch_access
+OK generation_mismatch_access
+RUN invalid_entity_index
+OK invalid_entity_index
+RUN world_entity_exhaustion
+OK world_entity_exhaustion
+RUN ecs_system_loop_determinism
+OK ecs_system_loop_determinism
+All 13 tests passed
+RUN clock_advances_deterministically
+OK clock_advances_deterministically
+RUN buffer_roundtrip
+OK buffer_roundtrip
+RUN buffer_overflow_and_underflow
+OK buffer_overflow_and_underflow
+RUN link_scripted_loss_dup_reorder_jitter
+OK link_scripted_loss_dup_reorder_jitter
+All 4 tests passed
+RUN header_roundtrip
+OK header_roundtrip
+RUN header_byte_order_layout
+OK header_byte_order_layout
+RUN encode_rejects_short_buffer
+OK encode_rejects_short_buffer
+RUN decode_rejects_short_buffer
+OK decode_rejects_short_buffer
+All 4 tests passed
+RUN ack_bits_mapping_and_duplicates
+OK ack_bits_mapping_and_duplicates
+RUN out_of_window_is_ignored
+OK out_of_window_is_ignored
+RUN sequence_wraparound_updates
+OK sequence_wraparound_updates
+All 3 tests passed
+RUN unreliable_enqueue_dequeue_order
+OK unreliable_enqueue_dequeue_order
+RUN unreliable_buffer_exhaustion
+OK unreliable_buffer_exhaustion
+RUN unreliable_rejects_oversized_payload
+OK unreliable_rejects_oversized_payload
+All 3 tests passed
+RUN reliable_in_order_delivery
+OK reliable_in_order_delivery
+RUN reliable_duplicate_is_ignored
+OK reliable_duplicate_is_ignored
+RUN reliable_out_of_order_buffering
+OK reliable_out_of_order_buffering
+All 3 tests passed
+RUN bit_pack_encode_byte_layout_lockin
+OK bit_pack_encode_byte_layout_lockin
+RUN bit_pack_decode_rejects_truncated_header
+OK bit_pack_decode_rejects_truncated_header
+RUN bit_pack_decode_rejects_length_longer_than_buffer
+OK bit_pack_decode_rejects_length_longer_than_buffer
+RUN schema_registry_rejects_unknown_schema_id
+OK schema_registry_rejects_unknown_schema_id
+RUN schema_registry_rejects_payload_length_mismatch
+OK schema_registry_rejects_payload_length_mismatch
+All 5 tests passed
+RUN udp_open_close_is_idempotent
+OK udp_open_close_is_idempotent
+RUN udp_invalid_args
+OK udp_invalid_args
+RUN udp_loopback_send_recv_roundtrip
+OK udp_loopback_send_recv_roundtrip
+RUN udp_nonblocking_empty
+OK udp_nonblocking_empty
+RUN udp_connected_send_recv
+OK udp_connected_send_recv
+RUN udp_recv_timeout
+OK udp_recv_timeout
+All 6 tests passed remains headless-friendly.
+- Renderer-backed visual client MUST NOT run in default ./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
+&& ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
+&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
+&& ./build/p007_net_schema_registry_tests \
+&& ./build/p007_net_udp_socket_tests
+RUN fiber_yield_resume_ordering
+OK fiber_yield_resume_ordering
+RUN fan_out_fan_in_counter
+OK fan_out_fan_in_counter
+RUN wait_parks_fiber_not_worker
+OK wait_parks_fiber_not_worker
+RUN work_stealing_makes_progress
+OK work_stealing_makes_progress
+RUN priority_scheduling_respects_order
+OK priority_scheduling_respects_order
+RUN deterministic_single_thread_mode
+OK deterministic_single_thread_mode
+RUN wait_on_satisfied_counter_is_immediate
+OK wait_on_satisfied_counter_is_immediate
+RUN counter_underflow_protected
+OK counter_underflow_protected
+RUN reject_too_small_stack_size
+OK reject_too_small_stack_size
+RUN queue_wraparound_preserves_order
+OK queue_wraparound_preserves_order
+RUN shutdown_drains_safely
+OK shutdown_drains_safely
+RUN invalid_dispatch_arguments_fail
+OK invalid_dispatch_arguments_fail
+RUN queue_capacity_exhaustion_is_explicit
+OK queue_capacity_exhaustion_is_explicit
+RUN double_wait_and_signal_are_safe
+OK double_wait_and_signal_are_safe
+RUN no_double_execution_after_steal
+OK no_double_execution_after_steal
+RUN no_lost_wakeups
+OK no_lost_wakeups
+RUN no_counter_wraparound
+OK no_counter_wraparound
+RUN no_resume_after_complete
+OK no_resume_after_complete
+RUN deterministic_trace_debug_mode
+OK deterministic_trace_debug_mode
+RUN mini_frame_execution
+OK mini_frame_execution
+RUN instrumentation_invariants
+OK instrumentation_invariants
+All 21 tests passed
+RUN translation_mat4_mul_vec4
+OK translation_mat4_mul_vec4
+RUN identity_invariants
+OK identity_invariants
+RUN vec3_dot_matches_magnitude
+OK vec3_dot_matches_magnitude
+RUN vec3_normalize_safe_nonzero
+OK vec3_normalize_safe_nonzero
+RUN quat_to_mat4_axis_angle_rotates_vec
+OK quat_to_mat4_axis_angle_rotates_vec
+RUN mat4_multiplication_associative_tolerant
+OK mat4_multiplication_associative_tolerant
+RUN vec3_normalize_zero_returns_zero
+OK vec3_normalize_zero_returns_zero
+RUN vec3_normalize_epsilon_zero_is_finite
+OK vec3_normalize_epsilon_zero_is_finite
+RUN vec3_cross_basis_identities
+OK vec3_cross_basis_identities
+RUN look_at_degenerate_rejected
+OK look_at_degenerate_rejected
+RUN inverse_singular_fails
+OK inverse_singular_fails
+RUN perspective_param_validation
+OK perspective_param_validation
+RUN perspective_regression_indices
+OK perspective_regression_indices
+RUN quat_slerp_endpoints_and_norm
+OK quat_slerp_endpoints_and_norm
+RUN look_at_perspective_handedness
+OK look_at_perspective_handedness
+RUN math_under_scheduler_load
+OK math_under_scheduler_load
+All 16 tests passed
+RUN arena_reuse_address_stability
+OK arena_reuse_address_stability
+RUN arena_alignment_common
+OK arena_alignment_common
+RUN arena_sequential_allocations_do_not_overlap
+OK arena_sequential_allocations_do_not_overlap
+RUN pool_alloc_free_reuse
+OK pool_alloc_free_reuse
+RUN pool_get_stable_pointer
+OK pool_get_stable_pointer
+RUN arena_out_of_memory_returns_null
+OK arena_out_of_memory_returns_null
+RUN arena_large_alignment
+OK arena_large_alignment
+RUN arena_zero_size_allocation
+OK arena_zero_size_allocation
+RUN arena_mark_pop_nested
+OK arena_mark_pop_nested
+RUN pool_capacity_boundary
+OK pool_capacity_boundary
+RUN pool_generation_mismatch
+OK pool_generation_mismatch
+RUN pool_invalid_free
+OK pool_invalid_free
+RUN pool_double_free
+OK pool_double_free
+RUN arena_alignment_padding_regression
+OK arena_alignment_padding_regression
+RUN pool_freelist_randomized
+OK pool_freelist_randomized
+RUN pool_generation_wrap_behavior
+OK pool_generation_wrap_behavior
+RUN arena_usage_inside_jobs
+OK arena_usage_inside_jobs
+All 17 tests passed
+RUN entity_create_destroy_lifecycle
+OK entity_create_destroy_lifecycle
+RUN sparse_set_insert_get_remove_basic
+OK sparse_set_insert_get_remove_basic
+RUN swap_removal_integrity
+OK swap_removal_integrity
+RUN remove_last_element
+OK remove_last_element
+RUN iterate_dense_arrays
+OK iterate_dense_arrays
+RUN duplicate_insert
+OK duplicate_insert
+RUN remove_nonexistent
+OK remove_nonexistent
+RUN sparse_sentinel_correctness
+OK sparse_sentinel_correctness
+RUN freelist_reuse_generation_bump
+OK freelist_reuse_generation_bump
+RUN generation_mismatch_access
+OK generation_mismatch_access
+RUN invalid_entity_index
+OK invalid_entity_index
+RUN world_entity_exhaustion
+OK world_entity_exhaustion
+RUN ecs_system_loop_determinism
+OK ecs_system_loop_determinism
+All 13 tests passed
+RUN clock_advances_deterministically
+OK clock_advances_deterministically
+RUN buffer_roundtrip
+OK buffer_roundtrip
+RUN buffer_overflow_and_underflow
+OK buffer_overflow_and_underflow
+RUN link_scripted_loss_dup_reorder_jitter
+OK link_scripted_loss_dup_reorder_jitter
+All 4 tests passed
+RUN header_roundtrip
+OK header_roundtrip
+RUN header_byte_order_layout
+OK header_byte_order_layout
+RUN encode_rejects_short_buffer
+OK encode_rejects_short_buffer
+RUN decode_rejects_short_buffer
+OK decode_rejects_short_buffer
+All 4 tests passed
+RUN ack_bits_mapping_and_duplicates
+OK ack_bits_mapping_and_duplicates
+RUN out_of_window_is_ignored
+OK out_of_window_is_ignored
+RUN sequence_wraparound_updates
+OK sequence_wraparound_updates
+All 3 tests passed
+RUN unreliable_enqueue_dequeue_order
+OK unreliable_enqueue_dequeue_order
+RUN unreliable_buffer_exhaustion
+OK unreliable_buffer_exhaustion
+RUN unreliable_rejects_oversized_payload
+OK unreliable_rejects_oversized_payload
+All 3 tests passed
+RUN reliable_in_order_delivery
+OK reliable_in_order_delivery
+RUN reliable_duplicate_is_ignored
+OK reliable_duplicate_is_ignored
+RUN reliable_out_of_order_buffering
+OK reliable_out_of_order_buffering
+All 3 tests passed
+RUN bit_pack_encode_byte_layout_lockin
+OK bit_pack_encode_byte_layout_lockin
+RUN bit_pack_decode_rejects_truncated_header
+OK bit_pack_decode_rejects_truncated_header
+RUN bit_pack_decode_rejects_length_longer_than_buffer
+OK bit_pack_decode_rejects_length_longer_than_buffer
+RUN schema_registry_rejects_unknown_schema_id
+OK schema_registry_rejects_unknown_schema_id
+RUN schema_registry_rejects_payload_length_mismatch
+OK schema_registry_rejects_payload_length_mismatch
+All 5 tests passed
+RUN udp_open_close_is_idempotent
+OK udp_open_close_is_idempotent
+RUN udp_invalid_args
+OK udp_invalid_args
+RUN udp_loopback_send_recv_roundtrip
+OK udp_loopback_send_recv_roundtrip
+RUN udp_nonblocking_empty
+OK udp_nonblocking_empty
+RUN udp_connected_send_recv
+OK udp_connected_send_recv
+RUN udp_recv_timeout
+OK udp_recv_timeout
+All 6 tests passed; it belongs under an explicit renderer target.
+- Add a README under tests/ documenting:
+  - single-host loopback run
+  - two-host run (server on host A, client(s) on host B)
+  - expected output and thresholds
+
+Acceptance
+- ./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p003_tests \
+&& ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
+&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests \
+&& ./build/p007_net_schema_registry_tests \
+&& ./build/p007_net_udp_socket_tests
+RUN fiber_yield_resume_ordering
+OK fiber_yield_resume_ordering
+RUN fan_out_fan_in_counter
+OK fan_out_fan_in_counter
+RUN wait_parks_fiber_not_worker
+OK wait_parks_fiber_not_worker
+RUN work_stealing_makes_progress
+OK work_stealing_makes_progress
+RUN priority_scheduling_respects_order
+OK priority_scheduling_respects_order
+RUN deterministic_single_thread_mode
+OK deterministic_single_thread_mode
+RUN wait_on_satisfied_counter_is_immediate
+OK wait_on_satisfied_counter_is_immediate
+RUN counter_underflow_protected
+OK counter_underflow_protected
+RUN reject_too_small_stack_size
+OK reject_too_small_stack_size
+RUN queue_wraparound_preserves_order
+OK queue_wraparound_preserves_order
+RUN shutdown_drains_safely
+OK shutdown_drains_safely
+RUN invalid_dispatch_arguments_fail
+OK invalid_dispatch_arguments_fail
+RUN queue_capacity_exhaustion_is_explicit
+OK queue_capacity_exhaustion_is_explicit
+RUN double_wait_and_signal_are_safe
+OK double_wait_and_signal_are_safe
+RUN no_double_execution_after_steal
+OK no_double_execution_after_steal
+RUN no_lost_wakeups
+OK no_lost_wakeups
+RUN no_counter_wraparound
+OK no_counter_wraparound
+RUN no_resume_after_complete
+OK no_resume_after_complete
+RUN deterministic_trace_debug_mode
+OK deterministic_trace_debug_mode
+RUN mini_frame_execution
+OK mini_frame_execution
+RUN instrumentation_invariants
+OK instrumentation_invariants
+All 21 tests passed
+RUN translation_mat4_mul_vec4
+OK translation_mat4_mul_vec4
+RUN identity_invariants
+OK identity_invariants
+RUN vec3_dot_matches_magnitude
+OK vec3_dot_matches_magnitude
+RUN vec3_normalize_safe_nonzero
+OK vec3_normalize_safe_nonzero
+RUN quat_to_mat4_axis_angle_rotates_vec
+OK quat_to_mat4_axis_angle_rotates_vec
+RUN mat4_multiplication_associative_tolerant
+OK mat4_multiplication_associative_tolerant
+RUN vec3_normalize_zero_returns_zero
+OK vec3_normalize_zero_returns_zero
+RUN vec3_normalize_epsilon_zero_is_finite
+OK vec3_normalize_epsilon_zero_is_finite
+RUN vec3_cross_basis_identities
+OK vec3_cross_basis_identities
+RUN look_at_degenerate_rejected
+OK look_at_degenerate_rejected
+RUN inverse_singular_fails
+OK inverse_singular_fails
+RUN perspective_param_validation
+OK perspective_param_validation
+RUN perspective_regression_indices
+OK perspective_regression_indices
+RUN quat_slerp_endpoints_and_norm
+OK quat_slerp_endpoints_and_norm
+RUN look_at_perspective_handedness
+OK look_at_perspective_handedness
+RUN math_under_scheduler_load
+OK math_under_scheduler_load
+All 16 tests passed
+RUN arena_reuse_address_stability
+OK arena_reuse_address_stability
+RUN arena_alignment_common
+OK arena_alignment_common
+RUN arena_sequential_allocations_do_not_overlap
+OK arena_sequential_allocations_do_not_overlap
+RUN pool_alloc_free_reuse
+OK pool_alloc_free_reuse
+RUN pool_get_stable_pointer
+OK pool_get_stable_pointer
+RUN arena_out_of_memory_returns_null
+OK arena_out_of_memory_returns_null
+RUN arena_large_alignment
+OK arena_large_alignment
+RUN arena_zero_size_allocation
+OK arena_zero_size_allocation
+RUN arena_mark_pop_nested
+OK arena_mark_pop_nested
+RUN pool_capacity_boundary
+OK pool_capacity_boundary
+RUN pool_generation_mismatch
+OK pool_generation_mismatch
+RUN pool_invalid_free
+OK pool_invalid_free
+RUN pool_double_free
+OK pool_double_free
+RUN arena_alignment_padding_regression
+OK arena_alignment_padding_regression
+RUN pool_freelist_randomized
+OK pool_freelist_randomized
+RUN pool_generation_wrap_behavior
+OK pool_generation_wrap_behavior
+RUN arena_usage_inside_jobs
+OK arena_usage_inside_jobs
+All 17 tests passed
+RUN entity_create_destroy_lifecycle
+OK entity_create_destroy_lifecycle
+RUN sparse_set_insert_get_remove_basic
+OK sparse_set_insert_get_remove_basic
+RUN swap_removal_integrity
+OK swap_removal_integrity
+RUN remove_last_element
+OK remove_last_element
+RUN iterate_dense_arrays
+OK iterate_dense_arrays
+RUN duplicate_insert
+OK duplicate_insert
+RUN remove_nonexistent
+OK remove_nonexistent
+RUN sparse_sentinel_correctness
+OK sparse_sentinel_correctness
+RUN freelist_reuse_generation_bump
+OK freelist_reuse_generation_bump
+RUN generation_mismatch_access
+OK generation_mismatch_access
+RUN invalid_entity_index
+OK invalid_entity_index
+RUN world_entity_exhaustion
+OK world_entity_exhaustion
+RUN ecs_system_loop_determinism
+OK ecs_system_loop_determinism
+All 13 tests passed
+RUN clock_advances_deterministically
+OK clock_advances_deterministically
+RUN buffer_roundtrip
+OK buffer_roundtrip
+RUN buffer_overflow_and_underflow
+OK buffer_overflow_and_underflow
+RUN link_scripted_loss_dup_reorder_jitter
+OK link_scripted_loss_dup_reorder_jitter
+All 4 tests passed
+RUN header_roundtrip
+OK header_roundtrip
+RUN header_byte_order_layout
+OK header_byte_order_layout
+RUN encode_rejects_short_buffer
+OK encode_rejects_short_buffer
+RUN decode_rejects_short_buffer
+OK decode_rejects_short_buffer
+All 4 tests passed
+RUN ack_bits_mapping_and_duplicates
+OK ack_bits_mapping_and_duplicates
+RUN out_of_window_is_ignored
+OK out_of_window_is_ignored
+RUN sequence_wraparound_updates
+OK sequence_wraparound_updates
+All 3 tests passed
+RUN unreliable_enqueue_dequeue_order
+OK unreliable_enqueue_dequeue_order
+RUN unreliable_buffer_exhaustion
+OK unreliable_buffer_exhaustion
+RUN unreliable_rejects_oversized_payload
+OK unreliable_rejects_oversized_payload
+All 3 tests passed
+RUN reliable_in_order_delivery
+OK reliable_in_order_delivery
+RUN reliable_duplicate_is_ignored
+OK reliable_duplicate_is_ignored
+RUN reliable_out_of_order_buffering
+OK reliable_out_of_order_buffering
+All 3 tests passed
+RUN bit_pack_encode_byte_layout_lockin
+OK bit_pack_encode_byte_layout_lockin
+RUN bit_pack_decode_rejects_truncated_header
+OK bit_pack_decode_rejects_truncated_header
+RUN bit_pack_decode_rejects_length_longer_than_buffer
+OK bit_pack_decode_rejects_length_longer_than_buffer
+RUN schema_registry_rejects_unknown_schema_id
+OK schema_registry_rejects_unknown_schema_id
+RUN schema_registry_rejects_payload_length_mismatch
+OK schema_registry_rejects_payload_length_mismatch
+All 5 tests passed
+RUN udp_open_close_is_idempotent
+OK udp_open_close_is_idempotent
+RUN udp_invalid_args
+OK udp_invalid_args
+RUN udp_loopback_send_recv_roundtrip
+OK udp_loopback_send_recv_roundtrip
+RUN udp_nonblocking_empty
+OK udp_nonblocking_empty
+RUN udp_connected_send_recv
+OK udp_connected_send_recv
+RUN udp_recv_timeout
+OK udp_recv_timeout
+All 6 tests passed passes on headless machines.
+- Explicit targets exist to build/run perf harness and renderer client.
+
+
+

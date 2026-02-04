@@ -1,0 +1,12 @@
+---
+id: rust-rpg-0u2
+status: closed
+deps: []
+links: []
+created: 2026-02-02T14:23:50.096790915-08:00
+type: task
+priority: 2
+---
+# perf: per-worker sinks to reduce contention
+
+
