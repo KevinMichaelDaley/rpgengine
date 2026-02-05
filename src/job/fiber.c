@@ -58,7 +58,7 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     if (fiber->counter) {
         job_counter_dec(fiber->counter);
     }
-    atomic_fetch_add_explicit(&fiber->system->jobs_completed, 1, memory_order_release);
+    atomic_fetch_add_explicit(&fiber->system->jobs_completed, 1, memory_order_acq_rel);
 
     cnd_broadcast(&fiber->system->queue_cond);
 

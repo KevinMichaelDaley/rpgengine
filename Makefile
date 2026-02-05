@@ -54,6 +54,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 	build/p007_net_rudp_fragmentation_tests \
+	build/p012_net_rudp_reliability_boundary_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -133,6 +134,9 @@ build/p007_net_reliable_tests: $(SRC) tests/p007_net_reliable_tests.c | build
 
 build/p007_net_rudp_fragmentation_tests: $(SRC) tests/net_rudp_fragmentation_tests.c | build
 	$(CC) $(CFLAGS) tests/net_rudp_fragmentation_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p012_net_rudp_reliability_boundary_tests: $(SRC) tests/p012_net_rudp_reliability_boundary_tests.c | build
+	$(CC) $(CFLAGS) tests/p012_net_rudp_reliability_boundary_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -271,6 +275,7 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_rudp_fragmentation_tests \
+	&& ./build/p012_net_rudp_reliability_boundary_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
@@ -283,9 +288,52 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p011_renderer_correction_debug_lines_tests \
 	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests )
 
+TEST_TIMEOUT ?= 20
+
+.PHONY: test_timeout
+test_timeout: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
+	@set -e; \
+	for t in \
+		./build/p000_tests \
+		./build/p001_tests \
+		./build/p002_tests \
+		./build/p002_memory_apool_tests \
+		./build/p003_tests \
+		./build/p007_net_tests \
+		./build/p007_net_header_tests \
+		./build/p007_net_ack_tests \
+		./build/p007_net_unreliable_tests \
+		./build/p007_net_reliable_tests \
+		./build/p007_net_rudp_fragmentation_tests \
+		./build/p012_net_rudp_reliability_boundary_tests \
+		./build/p007_net_schema_registry_tests \
+		./build/p007_net_udp_socket_tests \
+		./build/p008_pose_interpolator_tests \
+		./build/p009_server_state_update_queue_tests \
+		./build/p000_job_queue_diagnostics_tests \
+		./build/p000_ws_deque_tests \
+		./build/p007_net_client_rx_tests \
+		./build/p007_net_client_rx_udp_topic_tests \
+		./build/p007_net_topic_dispatch_tests \
+		./build/p011_renderer_correction_debug_lines_tests \
+	; do \
+		echo "RUN $$t"; \
+		timeout --foreground $(TEST_TIMEOUT)s $$t; \
+	done; \
+	if [ "$(TRACY)" = "1" ]; then \
+		echo "RUN ./build/p010_tracy_alloc_override_tests"; \
+		timeout --foreground $(TEST_TIMEOUT)s ./build/p010_tracy_alloc_override_tests; \
+	fi
+
 .PHONY: perf_job
 perf_job: build/p000_job_performance_tests
 	./build/p000_job_performance_tests
+
+.PHONY: repro_p000_hang
+REPRO_ITERS ?= 100
+REPRO_TIMEOUT ?= 2
+repro_p000_hang: build/p000_tests
+	ITERS=$(REPRO_ITERS) TIMEOUT_SECS=$(REPRO_TIMEOUT) ./scripts/repro_p000_hang.sh ./build/p000_tests
 
 test_renderer: $(BIN_RENDERER_TESTS)
 	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_buffer_tests \

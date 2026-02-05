@@ -242,10 +242,15 @@ void job_system_shutdown(job_system_t *sys) {
         return;
     }
 
-    /* Stop accepting new work immediately. */
+    /* Stop accepting new work immediately.
+       IMPORTANT: broadcast under queue_lock to prevent missed wakeups.
+       Worker threads wait on queue_cond only while holding queue_lock.
+     */
+    mtx_lock(&sys->queue_lock);
     atomic_store(&sys->running, false);
     atomic_store(&sys->shutting_down, true);
     cnd_broadcast(&sys->queue_cond);
+    mtx_unlock(&sys->queue_lock);
 
     if (sys->deterministic) {
         job_system_wait_idle(sys);
@@ -402,7 +407,7 @@ job_id_t job_dispatch_to(job_system_t *sys,
         return JOB_ID_INVALID;
     }
 
-    atomic_fetch_add_explicit(&sys->jobs_started, 1, memory_order_release);
+    atomic_fetch_add_explicit(&sys->jobs_started, 1, memory_order_acq_rel);
     job_instrument_event("dispatch_to", fiber->id, id, g_worker_id, __FILE__, __LINE__);
     return id;
 }

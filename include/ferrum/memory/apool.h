@@ -25,7 +25,7 @@ typedef struct apool {
     uint8_t *storage;                       /**< Element storage */
     uint32_t *next;                         /**< Singly-linked stack next indices */
     _Atomic uint16_t *generations;          /**< Generation per slot */
-    _Atomic uint32_t free_head;             /**< Lock-free stack head */
+    _Atomic uint64_t free_head;             /**< Lock-free stack head (tagged to avoid ABA) */
     uint32_t capacity;                      /**< Number of elements */
     uint32_t stride;                        /**< Size of each element */
 } apool_t;

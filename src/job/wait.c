@@ -9,6 +9,25 @@ typedef struct job_counter_waiter {
     struct job_counter_waiter *next;
 } job_counter_waiter_t;
 
+void job_system_wake_waiters_locked(job_system_t *sys, job_counter_t *counter) {
+    if (!counter) {
+        return;
+    }
+
+    job_counter_waiter_t *cursor = (job_counter_waiter_t *)counter->waiters;
+    counter->waiters = NULL;
+
+    while (cursor) {
+        job_counter_waiter_t *next = cursor->next;
+        job_fiber_t *fiber = cursor->fiber;
+        fiber->waiting = 0;
+        job_system_t *target_sys = sys ? sys : fiber->system;
+        (void)job_system_enqueue(target_sys, fiber, (int)fiber->priority, 0);
+        free(cursor);
+        cursor = next;
+    }
+}
+
 job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) {
     if (!counter) {
         return JOB_WAIT_INVALID;
@@ -29,10 +48,22 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
         while (atomic_load_explicit(&counter->value, memory_order_acquire) != 0) {
             thrd_yield();
         }
+        /* Synchronize with the final decrement-to-zero path, which may still
+           be detaching waiters under counter->lock even after value hits 0.
+           This avoids reuse of stack-allocated counters racing the wakeup. */
+        mtx_lock(&counter->lock);
+        mtx_unlock(&counter->lock);
         return JOB_WAIT_OK;
     }
 
     mtx_lock(&counter->lock);
+    /* The counter may have reached 0 between our unlocked check above and
+       acquiring the lock. If we park after it hits 0, we can miss the only
+       wakeup and deadlock forever. */
+    if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
+        mtx_unlock(&counter->lock);
+        return JOB_WAIT_OK;
+    }
     job_counter_waiter_t *node = (job_counter_waiter_t *)malloc(sizeof(job_counter_waiter_t));
     if (!node) {
         mtx_unlock(&counter->lock);
@@ -84,17 +115,6 @@ void job_system_wake_waiters(job_system_t *sys, job_counter_t *counter) {
     }
 
     mtx_lock(&counter->lock);
-    job_counter_waiter_t *cursor = counter->waiters;
-    counter->waiters = NULL;
+    job_system_wake_waiters_locked(sys, counter);
     mtx_unlock(&counter->lock);
-
-    while (cursor) {
-        job_counter_waiter_t *next = cursor->next;
-        job_fiber_t *fiber = cursor->fiber;
-        fiber->waiting = 0;
-        job_system_t *target_sys = sys ? sys : fiber->system;
-        job_system_enqueue(target_sys, fiber, (int)fiber->priority, 0);
-        free(cursor);
-        cursor = next;
-    }
 }

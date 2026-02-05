@@ -31,6 +31,17 @@ typedef enum job_wait_status {
 void job_counter_init(job_counter_t *counter, uint32_t initial);
 
 /**
+ * @brief Destroy a counter's internal resources.
+ *
+ * Must only be called when no threads can still access the counter (typically
+ * after waiting for it to reach zero). This is required when counters are
+ * stack-allocated and re-initialized in a loop.
+ *
+ * @param counter Counter pointer (may be NULL).
+ */
+void job_counter_destroy(job_counter_t *counter);
+
+/**
  * @brief Increase counter by a positive amount.
  * @return 0 on success, -1 on invalid input or overflow attempt.
  */

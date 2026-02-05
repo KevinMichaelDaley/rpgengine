@@ -763,6 +763,8 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 6
         for (int i = 0; i < 10; ++i) {
             ASSERT_EQ_INT(1, slots[i]);
         }
+
+        job_counter_destroy(&frame_counter);
     }
 
     job_system_shutdown(sys);
