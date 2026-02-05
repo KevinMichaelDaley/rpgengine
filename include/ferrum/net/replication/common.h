@@ -22,6 +22,7 @@ extern "C" {
 #define NET_REPL_SCHEMA_WELCOME 0x2004u
 #define NET_REPL_SCHEMA_SPAWN_BATCH 0x2005u
 #define NET_REPL_SCHEMA_STATE_CUBE_BATCH 0x2006u
+#define NET_REPL_SCHEMA_INPUT_ROT 0x2007u
 
 #ifdef __cplusplus
 } /* extern "C" */

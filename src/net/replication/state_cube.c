@@ -64,6 +64,12 @@ int net_repl_state_cube_encode(const net_repl_state_cube_t *msg, uint8_t *out_pa
     write_i16_be(out_payload + 24, msg->rot_snorm16.z);
     write_i16_be(out_payload + 26, msg->rot_snorm16.w);
 
+    write_u32_be(out_payload + 28, msg->input_event_id);
+    write_i16_be(out_payload + 32, msg->omega_axis_x_snorm16);
+    write_i16_be(out_payload + 34, msg->omega_axis_y_snorm16);
+    write_i16_be(out_payload + 36, msg->omega_axis_z_snorm16);
+    write_u16_be(out_payload + 38, msg->omega_speed_millirad_per_s);
+
     return NET_REPL_OK;
 }
 
@@ -86,6 +92,12 @@ int net_repl_state_cube_decode(net_repl_state_cube_t *msg, const uint8_t *payloa
     msg->rot_snorm16.y = read_i16_be(payload + 22);
     msg->rot_snorm16.z = read_i16_be(payload + 24);
     msg->rot_snorm16.w = read_i16_be(payload + 26);
+
+    msg->input_event_id = read_u32_be(payload + 28);
+    msg->omega_axis_x_snorm16 = read_i16_be(payload + 32);
+    msg->omega_axis_y_snorm16 = read_i16_be(payload + 34);
+    msg->omega_axis_z_snorm16 = read_i16_be(payload + 36);
+    msg->omega_speed_millirad_per_s = read_u16_be(payload + 38);
 
     return NET_REPL_OK;
 }

@@ -2,9 +2,11 @@
 #include <string.h>
 
 #include "ferrum/net/replication/common.h"
+#include "ferrum/net/replication/input_rot.h"
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/spawn.h"
 #include "ferrum/net/replication/welcome.h"
+#include "ferrum/net/quantization.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/server/net/inbound_message.h"
 #include "ferrum/server/entity/net/pump.h"
@@ -27,6 +29,24 @@ struct fr_server_entity_net_pump {
 static void write_u16_le_(uint8_t *out, uint16_t v) {
     out[0] = (uint8_t)(v & 0xFFu);
     out[1] = (uint8_t)((v >> 8u) & 0xFFu);
+}
+
+static void write_i16_le_(uint8_t *out, int16_t v) {
+    write_u16_le_(out, (uint16_t)v);
+}
+
+static void write_u32_le_(uint8_t *out, uint32_t v) {
+    out[0] = (uint8_t)(v & 0xFFu);
+    out[1] = (uint8_t)((v >> 8u) & 0xFFu);
+    out[2] = (uint8_t)((v >> 16u) & 0xFFu);
+    out[3] = (uint8_t)((v >> 24u) & 0xFFu);
+}
+
+static vec3_t player_spawn_pos_(uint16_t owner_client_id, uint16_t max_clients) {
+    const float spacing = 0.75f;
+    const float center = (max_clients > 0u) ? ((float)(max_clients - 1u) * 0.5f) : 0.0f;
+    const float x = ((float)owner_client_id - center) * spacing;
+    return (vec3_t){x, 0.0f, 0.0f};
 }
 
 static bool publish_player_event_(fr_server_entity_net_pump_t *pump,
@@ -74,6 +94,38 @@ static bool enqueue_reliable_(fr_server_entity_net_pump_t *pump,
     return fr_topic_channel_push(out_rel, msg, 2u + payload_size);
 }
 
+static bool publish_entity_input_rot_event_(fr_server_entity_net_pump_t *pump,
+                                            uint16_t src_client_id,
+                                            uint32_t entity_id,
+                                            uint32_t event_id,
+                                            int16_t axis_x_snorm16,
+                                            int16_t axis_y_snorm16,
+                                            int16_t axis_z_snorm16,
+                                            uint16_t speed_millirad_per_s) {
+    if (!pump || !pump->cfg.entity_event_topic) {
+        return false;
+    }
+
+    /* Event msg format:
+       [evt_type:u8][reserved:u8][src_client_id:u16 LE]
+       [entity_id:u32 LE][event_id:u32 LE]
+       [axis_x:i16 LE][axis_y:i16 LE][axis_z:i16 LE]
+       [speed_millirad_per_s:u16 LE]
+     */
+    uint8_t evt[20];
+    evt[0] = (uint8_t)FR_SERVER_EVT_ENTITY_INPUT_ROT;
+    evt[1] = 0u;
+    write_u16_le_(evt + 2u, src_client_id);
+    write_u32_le_(evt + 4u, entity_id);
+    write_u32_le_(evt + 8u, event_id);
+    write_i16_le_(evt + 12u, axis_x_snorm16);
+    write_i16_le_(evt + 14u, axis_y_snorm16);
+    write_i16_le_(evt + 16u, axis_z_snorm16);
+    write_u16_le_(evt + 18u, speed_millirad_per_s);
+
+    return fr_topic_channel_push(pump->cfg.entity_event_topic, evt, sizeof(evt));
+}
+
 static bool ensure_spawn_(fr_server_entity_net_pump_t *pump, uint16_t dst_client_id, uint16_t src_player_id) {
     if (!pump || !pump->players || !pump->spawned) {
         return false;
@@ -98,7 +150,13 @@ static bool ensure_spawn_(fr_server_entity_net_pump_t *pump, uint16_t dst_client
     sp.entity_id = 1000u + (uint32_t)src_player_id;
     sp.owner_client_id = src_player_id;
     sp.join_time_u16 = 0u;
-    sp.pos_mm = (net_repl_vec3_mm_t){0, 0, 0};
+
+    net_qvec3_mm_t qpos;
+    vec3_t pos = player_spawn_pos_(src_player_id, pump->cfg.max_clients);
+    if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
+        return false;
+    }
+    sp.pos_mm = (net_repl_vec3_mm_t){qpos.x_mm, qpos.y_mm, qpos.z_mm};
 
     uint8_t sp_payload[NET_REPL_SPAWN_PAYLOAD_SIZE];
     if (net_repl_spawn_encode(&sp, sp_payload, sizeof(sp_payload)) != NET_REPL_OK) {
@@ -198,50 +256,82 @@ bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t 
             continue;
         }
 
-        if (schema_id != NET_REPL_SCHEMA_JOIN) {
-            continue;
-        }
+        if (schema_id == NET_REPL_SCHEMA_JOIN) {
+            net_repl_join_t join;
+            if (net_repl_join_decode(&join, payload, payload_size) != NET_REPL_OK) {
+                continue;
+            }
+            (void)join;
 
-        net_repl_join_t join;
-        if (net_repl_join_decode(&join, payload, payload_size) != NET_REPL_OK) {
-            continue;
-        }
-        (void)join;
+            /* Idempotent join: only process first join per client_id. */
+            if (!pump->players[client_id].joined) {
+                pump->players[client_id].joined = true;
+                pump->players[client_id].player_id = client_id;
+                pump->players[client_id].should_spawn_remote = true;
 
-        /* Idempotent join: only process first join per client_id. */
-        if (!pump->players[client_id].joined) {
-            pump->players[client_id].joined = true;
-            pump->players[client_id].player_id = client_id;
-            pump->players[client_id].should_spawn_remote = true;
+                (void)publish_player_event_(pump, (uint8_t)FR_SERVER_EVT_PLAYER_JOIN, client_id, pump->players[client_id].player_id);
 
-            (void)publish_player_event_(pump, (uint8_t)FR_SERVER_EVT_PLAYER_JOIN, client_id, pump->players[client_id].player_id);
+                net_repl_welcome_t w;
+                w.expected_entities = pump->cfg.expected_entities;
+                w.tick_hz = pump->cfg.tick_hz;
+                uint8_t w_payload[NET_REPL_WELCOME_PAYLOAD_SIZE];
+                if (net_repl_welcome_encode(&w, w_payload, sizeof(w_payload)) == NET_REPL_OK) {
+                    (void)enqueue_reliable_(pump, client_id, NET_REPL_SCHEMA_WELCOME, w_payload, sizeof(w_payload));
+                }
 
-            net_repl_welcome_t w;
-            w.expected_entities = pump->cfg.expected_entities;
-            w.tick_hz = pump->cfg.tick_hz;
-            uint8_t w_payload[NET_REPL_WELCOME_PAYLOAD_SIZE];
-            if (net_repl_welcome_encode(&w, w_payload, sizeof(w_payload)) == NET_REPL_OK) {
-                (void)enqueue_reliable_(pump, client_id, NET_REPL_SCHEMA_WELCOME, w_payload, sizeof(w_payload));
+                /* Spawn self to self so clients always receive their own entity. */
+                (void)ensure_spawn_(pump, client_id, pump->players[client_id].player_id);
+
+                /* Cross-spawn between this player and already-joined players.
+                   This is the first place interest/visibility gating is applied.
+                 */
+                for (uint16_t other = 0u; other < pump->cfg.max_clients; ++other) {
+                    if (other == client_id) {
+                        continue;
+                    }
+                    if (!pump->players[other].joined) {
+                        continue;
+                    }
+
+                    (void)ensure_spawn_(pump, client_id, pump->players[other].player_id);
+                    (void)ensure_spawn_(pump, other, pump->players[client_id].player_id);
+                }
             }
 
-            /* Spawn self to self so clients always receive their own entity. */
-            (void)ensure_spawn_(pump, client_id, pump->players[client_id].player_id);
+            continue;
+        }
 
-            /* Cross-spawn between this player and already-joined players.
-               This is the first place interest/visibility gating is applied.
+        if (schema_id == NET_REPL_SCHEMA_INPUT_ROT) {
+            net_repl_input_rot_t ev;
+            memset(&ev, 0, sizeof(ev));
+            if (net_repl_input_rot_decode(&ev, payload, payload_size) != NET_REPL_OK) {
+                continue;
+            }
+
+            /* Ownership gate for this harness: entity_id is 1000 + owner_client_id.
+               Allow entity_id==0 as "my entity" so clients don't need to know their assigned id.
              */
-            for (uint16_t other = 0u; other < pump->cfg.max_clients; ++other) {
-                if (other == client_id) {
-                    continue;
-                }
-                if (!pump->players[other].joined) {
-                    continue;
-                }
-
-                (void)ensure_spawn_(pump, client_id, pump->players[other].player_id);
-                (void)ensure_spawn_(pump, other, pump->players[client_id].player_id);
+            const uint32_t expected_entity_id = 1000u + (uint32_t)client_id;
+            if (ev.entity_id == 0u) {
+                ev.entity_id = expected_entity_id;
             }
+            if (ev.entity_id != expected_entity_id) {
+                continue;
+            }
+
+            (void)publish_entity_input_rot_event_(pump,
+                                                  client_id,
+                                                  ev.entity_id,
+                                                  ev.event_id,
+                                                  ev.axis_x_snorm16,
+                                                  ev.axis_y_snorm16,
+                                                  ev.axis_z_snorm16,
+                                                  ev.speed_millirad_per_s);
+            continue;
         }
+
+        /* Unknown schema IDs are ignored by this pump. */
+        continue;
     }
 
     /* Reconcile: ensure every joined client has SPAWNs for all joined players. */

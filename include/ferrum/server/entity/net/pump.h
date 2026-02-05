@@ -29,6 +29,7 @@ extern "C" {
 #define FR_SERVER_EVT_PLAYER_SPAWN 2u
 #define FR_SERVER_EVT_ENTITY_JOIN  3u
 #define FR_SERVER_EVT_ENTITY_SPAWN 4u
+#define FR_SERVER_EVT_ENTITY_INPUT_ROT 5u
 
 /** Configuration for the server entity net pump.
  *

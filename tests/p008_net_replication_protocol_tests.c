@@ -101,12 +101,20 @@ static int test_state_cube_encode_byte_layout_lockin(void) {
      *  [4..7]  entity_id (u32)
      *  [8..19] pos_mm xyz (i32,i32,i32)
      *  [20..27] quat snorm16 xyzw (i16,i16,i16,i16)
+     *  [28..31] input_event_id (u32)
+     *  [32..37] omega axis snorm16 xyz (i16,i16,i16)
+     *  [38..39] omega speed millirad/s (u16)
      */
     const net_repl_state_cube_t msg = {
         .server_tick = 0x00F0u,
         .entity_id = 0x01020304u,
         .pos_mm = {.x_mm = 1, .y_mm = 2, .z_mm = 3},
         .rot_snorm16 = {.x = 0, .y = 16384, .z = 0, .w = 16384},
+        .input_event_id = 0xAABBCCDDu,
+        .omega_axis_x_snorm16 = 0,
+        .omega_axis_y_snorm16 = 0,
+        .omega_axis_z_snorm16 = 32767,
+        .omega_speed_millirad_per_s = 1500u,
     };
 
     uint8_t payload[NET_REPL_STATE_CUBE_PAYLOAD_SIZE];
@@ -123,6 +131,11 @@ static int test_state_cube_encode_byte_layout_lockin(void) {
         0x40u, 0x00u,
         0x00u, 0x00u,
         0x40u, 0x00u,
+        0xAAu, 0xBBu, 0xCCu, 0xDDu,
+        0x00u, 0x00u,
+        0x00u, 0x00u,
+        0x7Fu, 0xFFu,
+        0x05u, 0xDCu,
     };
 
     ASSERT_TRUE(memcmp(expected, payload, sizeof(expected)) == 0);
@@ -138,6 +151,11 @@ static int test_state_cube_encode_byte_layout_lockin(void) {
     ASSERT_INT_EQ(msg.rot_snorm16.y, decoded.rot_snorm16.y);
     ASSERT_INT_EQ(msg.rot_snorm16.z, decoded.rot_snorm16.z);
     ASSERT_INT_EQ(msg.rot_snorm16.w, decoded.rot_snorm16.w);
+    ASSERT_UINT_EQ(msg.input_event_id, decoded.input_event_id);
+    ASSERT_INT_EQ(msg.omega_axis_x_snorm16, decoded.omega_axis_x_snorm16);
+    ASSERT_INT_EQ(msg.omega_axis_y_snorm16, decoded.omega_axis_y_snorm16);
+    ASSERT_INT_EQ(msg.omega_axis_z_snorm16, decoded.omega_axis_z_snorm16);
+    ASSERT_INT_EQ(msg.omega_speed_millirad_per_s, decoded.omega_speed_millirad_per_s);
 
     return 0;
 }

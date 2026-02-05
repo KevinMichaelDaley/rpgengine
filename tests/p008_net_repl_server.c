@@ -15,8 +15,10 @@
 
 #include "ferrum/job/system.h"
 #include "ferrum/math/quat.h"
+#include "ferrum/math/quat_angle.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/quantization.h"
+#include "ferrum/net/replication/input_rot.h"
 #include "ferrum/net/replication/state_cube.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/net/topic_channel.h"
@@ -140,19 +142,6 @@ static vec3_t cube_pos_(uint16_t owner_client_id, uint16_t max_clients) {
     return (vec3_t){x, 0.0f, 0.0f};
 }
 
-static uint32_t xorshift32_(uint32_t *state) {
-    uint32_t x = *state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *state = x;
-    return x;
-}
-
-static float u32_to_float01_(uint32_t x) {
-    return (float)((double)x / 4294967295.0);
-}
-
 static vec3_t normalize_vec3_safe_(vec3_t v, float eps) {
     const float len2 = v.x * v.x + v.y * v.y + v.z * v.z;
     if (len2 <= eps * eps) {
@@ -162,45 +151,17 @@ static vec3_t normalize_vec3_safe_(vec3_t v, float eps) {
     return (vec3_t){v.x * inv, v.y * inv, v.z * inv};
 }
 
-static quat_t random_unit_quat_(uint16_t owner_client_id, uint32_t segment) {
-    uint32_t rng = (uint32_t)owner_client_id * 2654435761u ^ (segment * 2246822519u) ^ 0xA341316Cu;
-
-    vec3_t axis = {
-        u32_to_float01_(xorshift32_(&rng)) * 2.0f - 1.0f,
-        u32_to_float01_(xorshift32_(&rng)) * 2.0f - 1.0f,
-        u32_to_float01_(xorshift32_(&rng)) * 2.0f - 1.0f,
-    };
-    axis = normalize_vec3_safe_(axis, 1e-6f);
-
-    const float pi = 3.14159265358979323846f;
-    const float angle = u32_to_float01_(xorshift32_(&rng)) * 2.0f * pi;
-    const float half = 0.5f * angle;
-    const float s = sinf(half);
-
-    quat_t q = {axis.x * s, axis.y * s, axis.z * s, cosf(half)};
-    return quat_normalize_safe(q, 1e-6f);
-}
-
-static quat_t cube_rot_(uint16_t server_tick, uint16_t owner_client_id, uint16_t tick_hz) {
-    if (tick_hz == 0u) {
-        return (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-    }
-
-    const uint16_t segment_ticks = tick_hz;
-    const uint32_t segment = (uint32_t)(server_tick / segment_ticks);
-    const uint16_t local_tick = (uint16_t)(server_tick % segment_ticks);
-    const float t = (float)local_tick / (float)segment_ticks;
-
-    const quat_t a = random_unit_quat_(owner_client_id, segment);
-    const quat_t b = random_unit_quat_(owner_client_id, segment + 1u);
-    return quat_slerp(a, b, t, 1e-6f);
-}
-
 static void broadcast_all_states_(fr_server_net_runtime_t *rt,
                                   const uint8_t *joined,
                                   uint16_t max_clients,
                                   uint16_t tick_hz,
-                                  uint16_t server_tick) {
+                                  uint16_t server_tick,
+                                  const quat_t *entity_rot,
+                                  const int16_t *omega_axis_x_snorm16,
+                                  const int16_t *omega_axis_y_snorm16,
+                                  const int16_t *omega_axis_z_snorm16,
+                                  const uint16_t *omega_speed_millirad_per_s,
+                                  const uint32_t *entity_input_event_id) {
     if (!rt || !joined || max_clients == 0u || tick_hz == 0u) {
         return;
     }
@@ -216,7 +177,7 @@ static void broadcast_all_states_(fr_server_net_runtime_t *rt,
             }
 
             const vec3_t pos = cube_pos_(ei, max_clients);
-            const quat_t rot = cube_rot_(server_tick, ei, tick_hz);
+            const quat_t rot = entity_rot ? entity_rot[ei] : (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
 
             net_qvec3_mm_t qpos;
             if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
@@ -233,6 +194,11 @@ static void broadcast_all_states_(fr_server_net_runtime_t *rt,
             st.entity_id = 1000u + (uint32_t)ei;
             st.pos_mm = (net_repl_vec3_mm_t){qpos.x_mm, qpos.y_mm, qpos.z_mm};
             st.rot_snorm16 = (net_repl_quat_snorm16_t){qrot.x, qrot.y, qrot.z, qrot.w};
+            st.input_event_id = entity_input_event_id ? entity_input_event_id[ei] : 0u;
+            st.omega_axis_x_snorm16 = omega_axis_x_snorm16 ? omega_axis_x_snorm16[ei] : 0;
+            st.omega_axis_y_snorm16 = omega_axis_y_snorm16 ? omega_axis_y_snorm16[ei] : 0;
+            st.omega_axis_z_snorm16 = omega_axis_z_snorm16 ? omega_axis_z_snorm16[ei] : 0;
+            st.omega_speed_millirad_per_s = omega_speed_millirad_per_s ? omega_speed_millirad_per_s[ei] : 0u;
 
             uint8_t payload[NET_REPL_STATE_CUBE_PAYLOAD_SIZE];
             if (net_repl_state_cube_encode(&st, payload, sizeof(payload)) != NET_REPL_OK) {
@@ -384,6 +350,38 @@ int main(int argc, char **argv) {
     uint16_t server_tick = 0u;
     uint32_t clients_joined = 0u;
 
+    const uint16_t max_clients_u16 = (uint16_t)max_clients_l;
+    quat_t *entity_rot = (quat_t *)calloc((size_t)max_clients_u16, sizeof(*entity_rot));
+    vec3_t *entity_omega = (vec3_t *)calloc((size_t)max_clients_u16, sizeof(*entity_omega));
+    uint32_t *entity_input_event_id = (uint32_t *)calloc((size_t)max_clients_u16, sizeof(*entity_input_event_id));
+    int16_t *omega_axis_x_snorm16 = (int16_t *)calloc((size_t)max_clients_u16, sizeof(*omega_axis_x_snorm16));
+    int16_t *omega_axis_y_snorm16 = (int16_t *)calloc((size_t)max_clients_u16, sizeof(*omega_axis_y_snorm16));
+    int16_t *omega_axis_z_snorm16 = (int16_t *)calloc((size_t)max_clients_u16, sizeof(*omega_axis_z_snorm16));
+    uint16_t *omega_speed_millirad_per_s = (uint16_t *)calloc((size_t)max_clients_u16, sizeof(*omega_speed_millirad_per_s));
+    if (!entity_rot || !entity_omega || !entity_input_event_id || !omega_axis_x_snorm16 || !omega_axis_y_snorm16 ||
+        !omega_axis_z_snorm16 || !omega_speed_millirad_per_s) {
+        fprintf(stderr, "Failed to allocate entity rotation state\n");
+        free(entity_rot);
+        free(entity_omega);
+        free(entity_input_event_id);
+        free(omega_axis_x_snorm16);
+        free(omega_axis_y_snorm16);
+        free(omega_axis_z_snorm16);
+        free(omega_speed_millirad_per_s);
+        free(joined);
+        fr_server_entity_net_pump_destroy(pump);
+        fr_server_net_runtime_destroy(rt);
+        fr_topic_channel_destroy(inbound);
+        fr_topic_channel_destroy(player_events);
+        fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&jobs);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+    for (uint16_t ei = 0u; ei < max_clients_u16; ++ei) {
+        entity_rot[ei] = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+    }
+
     fprintf(stdout, "P008_REPL_SERVER_READY\n");
     fflush(stdout);
 
@@ -465,16 +463,72 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* Drain entity input events (client->server). */
+        for (;;) {
+            uint8_t evt[64];
+            size_t evt_len = sizeof(evt);
+            if (!fr_topic_channel_pop(entity_events, evt, &evt_len)) {
+                break;
+            }
+            if (evt_len < 20u) {
+                continue;
+            }
+            if (evt[0] != (uint8_t)FR_SERVER_EVT_ENTITY_INPUT_ROT) {
+                continue;
+            }
+            const uint16_t src_client_id = (uint16_t)evt[2] | ((uint16_t)evt[3] << 8u);
+            const uint32_t entity_id = (uint32_t)evt[4] | ((uint32_t)evt[5] << 8u) | ((uint32_t)evt[6] << 16u) | ((uint32_t)evt[7] << 24u);
+            const uint32_t event_id = (uint32_t)evt[8] | ((uint32_t)evt[9] << 8u) | ((uint32_t)evt[10] << 16u) | ((uint32_t)evt[11] << 24u);
+            const int16_t ax = (int16_t)((uint16_t)evt[12] | ((uint16_t)evt[13] << 8u));
+            const int16_t ay = (int16_t)((uint16_t)evt[14] | ((uint16_t)evt[15] << 8u));
+            const int16_t az = (int16_t)((uint16_t)evt[16] | ((uint16_t)evt[17] << 8u));
+            const uint16_t speed_mrad = (uint16_t)evt[18] | ((uint16_t)evt[19] << 8u);
+
+            if (src_client_id >= max_clients_u16) {
+                continue;
+            }
+            if (entity_id != 1000u + (uint32_t)src_client_id) {
+                continue;
+            }
+            const uint16_t ei = src_client_id;
+            omega_axis_x_snorm16[ei] = ax;
+            omega_axis_y_snorm16[ei] = ay;
+            omega_axis_z_snorm16[ei] = az;
+            omega_speed_millirad_per_s[ei] = speed_mrad;
+            entity_input_event_id[ei] = event_id;
+
+            vec3_t axis = (vec3_t){(float)ax / 32767.0f, (float)ay / 32767.0f, (float)az / 32767.0f};
+            axis = normalize_vec3_safe_(axis, 1e-6f);
+            const float speed = (float)speed_mrad / 1000.0f;
+            entity_omega[ei] = (vec3_t){axis.x * speed, axis.y * speed, axis.z * speed};
+        }
+
         if (now >= next_tick) {
             const uint64_t tick_step_start_ns = now_ns();
             server_tick = (uint16_t)(server_tick + 1u);
+
+            /* Integrate authoritative rotations at tick rate. */
+            const float dt_s = 1.0f / (float)tick_hz_l;
+            for (uint16_t ei = 0u; ei < max_clients_u16; ++ei) {
+                if (!joined[ei]) {
+                    continue;
+                }
+                entity_rot[ei] = fr_quat_integrate_angular_velocity(entity_rot[ei], entity_omega[ei], dt_s, 1e-6f);
+            }
+
             if (clients_joined > 0u) {
                 const uint64_t bcast_start_ns = now_ns();
                 broadcast_all_states_(rt,
                                       joined,
                                       (uint16_t)max_clients_l,
                                       (uint16_t)tick_hz_l,
-                                      server_tick);
+                                      server_tick,
+                                      entity_rot,
+                                      omega_axis_x_snorm16,
+                                      omega_axis_y_snorm16,
+                                      omega_axis_z_snorm16,
+                                      omega_speed_millirad_per_s,
+                                      entity_input_event_id);
                 const uint64_t bcast_ns = now_ns() - bcast_start_ns;
                 broadcast_ns_sum += bcast_ns;
                 if (bcast_ns > broadcast_ns_max) {
@@ -552,6 +606,13 @@ int main(int argc, char **argv) {
             (unsigned long long)loop_ns_max);
 
     free(joined);
+    free(entity_rot);
+    free(entity_omega);
+    free(entity_input_event_id);
+    free(omega_axis_x_snorm16);
+    free(omega_axis_y_snorm16);
+    free(omega_axis_z_snorm16);
+    free(omega_speed_millirad_per_s);
     fr_server_entity_net_pump_destroy(pump);
     fr_server_net_runtime_destroy(rt);
     fr_topic_channel_destroy(inbound);

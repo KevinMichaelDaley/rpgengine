@@ -16,13 +16,22 @@
 extern "C" {
 #endif
 
-#define NET_REPL_STATE_CUBE_PAYLOAD_SIZE 28u
+#define NET_REPL_STATE_CUBE_PAYLOAD_SIZE 40u
 
 typedef struct net_repl_state_cube {
     uint16_t server_tick;
     uint32_t entity_id;
     net_repl_vec3_mm_t pos_mm;
     net_repl_quat_snorm16_t rot_snorm16;
+
+    /* Last applied input event ID that determined angular velocity. */
+    uint32_t input_event_id;
+
+    /* Authoritative angular velocity for prediction (axis snorm16 + speed). */
+    int16_t omega_axis_x_snorm16;
+    int16_t omega_axis_y_snorm16;
+    int16_t omega_axis_z_snorm16;
+    uint16_t omega_speed_millirad_per_s;
 } net_repl_state_cube_t;
 
 int net_repl_state_cube_encode(const net_repl_state_cube_t *msg, uint8_t *out_payload, size_t out_size);
