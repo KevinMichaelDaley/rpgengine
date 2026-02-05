@@ -2,11 +2,12 @@
 
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/rudp/peer.h"
+#include "ferrum/net/rudp/wire_frame.h"
 
-#define NET_RUDP_FRAME_SIZE 8u
+#define NET_RUDP_FRAME_SIZE NET_RUDP_WIRE_FRAME_HEADER_SIZE
 
-#define NET_RUDP_FLAG_RELIABLE 0x01u
-#define NET_RUDP_FLAG_FRAGMENT 0x02u
+#define NET_RUDP_FLAG_RELIABLE NET_RUDP_WIRE_FLAG_RELIABLE
+#define NET_RUDP_FLAG_FRAGMENT NET_RUDP_WIRE_FLAG_FRAGMENT
 
 #define NET_RUDP_FRAG_HDR_SIZE 8u
 #define NET_RUDP_FRAG_MAX 64u
@@ -36,14 +37,12 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
     if (!peer || !packet || !out_reliable || !out_schema_id || !out_payload || !out_payload_size) {
         return NET_RUDP_ERR_INVALID;
     }
-    if (packet_size < NET_PACKET_HEADER_SIZE + NET_RUDP_FRAME_SIZE) {
-        return NET_RUDP_ERR_SHORT;
-    }
 
     net_packet_header_t header;
-    int rc = net_packet_header_decode(&header, packet, packet_size);
-    if (rc != NET_PACKET_HEADER_OK) {
-        return NET_RUDP_ERR_PROTOCOL;
+    net_rudp_wire_frame_view_t frame_view;
+    int rc = net_rudp_wire_decode(&header, &frame_view, packet, packet_size);
+    if (rc != NET_RUDP_WIRE_OK) {
+        return (rc == NET_RUDP_WIRE_ERR_SHORT) ? NET_RUDP_ERR_SHORT : NET_RUDP_ERR_PROTOCOL;
     }
     if (header.protocol_id != peer->protocol_id) {
         return NET_RUDP_ERR_PROTOCOL;
@@ -70,12 +69,9 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
         }
     }
 
-    const uint8_t *frame = packet + NET_PACKET_HEADER_SIZE;
-    uint8_t flags = frame[0];
-    (void)frame[1];
-    uint16_t schema_id = read_u16_be(frame + 2);
-    uint16_t payload_size = read_u16_be(frame + 4);
-    (void)read_u16_be(frame + 6);
+    const uint8_t flags = frame_view.flags;
+    const uint16_t schema_id = frame_view.schema_id;
+    const size_t payload_size = frame_view.payload_size;
 
     /* Only reliable packets participate in the ACK/duplicate window.
        This prevents high-rate unreliable traffic from evicting older
@@ -92,15 +88,11 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
         }
     }
 
-    const size_t total_needed = NET_PACKET_HEADER_SIZE + NET_RUDP_FRAME_SIZE + (size_t)payload_size;
-    if (packet_size < total_needed) {
-        return NET_RUDP_ERR_SHORT;
-    }
-    if ((size_t)payload_size > out_payload_capacity) {
+    if (payload_size > out_payload_capacity) {
         return NET_RUDP_ERR_SHORT;
     }
 
-    const uint8_t *payload = frame + NET_RUDP_FRAME_SIZE;
+    const uint8_t *payload = frame_view.payload;
 
     /* Fragmented payloads are reassembled into a contiguous buffer and only
        delivered once complete.
@@ -140,7 +132,7 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
         if (offset >= (size_t)total_size) {
             return NET_RUDP_ERR_PROTOCOL;
         }
-        size_t chunk_size = (size_t)payload_size - NET_RUDP_FRAG_HDR_SIZE;
+        size_t chunk_size = payload_size - NET_RUDP_FRAG_HDR_SIZE;
         if (chunk_size > (size_t)total_size - offset) {
             chunk_size = (size_t)total_size - offset;
         }
@@ -178,8 +170,8 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
         return NET_RUDP_OK;
     }
 
-    memcpy(out_payload, payload, (size_t)payload_size);
-    *out_payload_size = (size_t)payload_size;
+    memcpy(out_payload, payload, payload_size);
+    *out_payload_size = payload_size;
     *out_schema_id = schema_id;
     *out_reliable = (uint8_t)((flags & NET_RUDP_FLAG_RELIABLE) != 0u);
     return NET_RUDP_OK;

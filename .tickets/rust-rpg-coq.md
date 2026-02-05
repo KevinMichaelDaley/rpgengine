@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-coq
-status: open
+status: in_progress
 deps: []
 links: []
 created: 2026-02-01T22:57:07.635987877-08:00
@@ -25,3 +25,9 @@ Deliverables:
 - Tests for ack/retransmit behavior at the reliability layer boundary.
 
 
+
+## Notes
+
+**2026-02-05T04:11:41Z**
+
+Starting work: audit current RUDP peer vs stream usage, add boundary tests, then split wire framing from reliability/reassembly and migrate p007/p008 call sites.

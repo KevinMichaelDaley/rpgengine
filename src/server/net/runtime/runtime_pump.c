@@ -4,43 +4,30 @@
 
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/replication/join.h"
+#include "ferrum/net/rudp/wire_frame.h"
 
 #include "runtime_internal.h"
-
-static uint16_t read_u16_be_(const uint8_t *in) {
-    return (uint16_t)(((uint16_t)in[0] << 8) | (uint16_t)in[1]);
-}
 
 static int packet_extract_join_nonce_(const uint8_t *packet, size_t packet_size, uint32_t *out_nonce) {
     if (!packet || !out_nonce) {
         return 0;
     }
-    if (packet_size < NET_PACKET_HEADER_SIZE + 8u) {
-        return 0;
-    }
 
     net_packet_header_t header;
-    if (net_packet_header_decode(&header, packet, packet_size) != NET_PACKET_HEADER_OK) {
+    net_rudp_wire_frame_view_t frame;
+    if (net_rudp_wire_decode(&header, &frame, packet, packet_size) != NET_RUDP_WIRE_OK) {
         return 0;
     }
     if (header.protocol_id != NET_RUDP_PROTOCOL_ID_P008) {
         return 0;
     }
 
-    const uint8_t *frame = packet + NET_PACKET_HEADER_SIZE;
-    uint16_t schema_id = read_u16_be_(frame + 2);
-    uint16_t payload_size = read_u16_be_(frame + 4);
-    const size_t total_needed = NET_PACKET_HEADER_SIZE + 8u + (size_t)payload_size;
-    if (packet_size < total_needed) {
-        return 0;
-    }
-    if (schema_id != NET_REPL_SCHEMA_JOIN) {
+    if (frame.schema_id != NET_REPL_SCHEMA_JOIN) {
         return 0;
     }
 
     net_repl_join_t join;
-    const uint8_t *payload = frame + 8u;
-    if (net_repl_join_decode(&join, payload, (size_t)payload_size) != NET_REPL_OK) {
+    if (net_repl_join_decode(&join, frame.payload, frame.payload_size) != NET_REPL_OK) {
         return 0;
     }
     *out_nonce = join.client_nonce;

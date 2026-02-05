@@ -1,13 +1,13 @@
 #include <string.h>
 
-#include "ferrum/net/packet_header.h"
+#include "ferrum/net/rudp/wire_frame.h"
 
 #include "sendto_internal.h"
 
-#define NET_RUDP_FRAME_SIZE 8u
+#define NET_RUDP_FRAME_SIZE NET_RUDP_WIRE_FRAME_HEADER_SIZE
 
-#define NET_RUDP_FLAG_RELIABLE 0x01u
-#define NET_RUDP_FLAG_FRAGMENT 0x02u
+#define NET_RUDP_FLAG_RELIABLE NET_RUDP_WIRE_FLAG_RELIABLE
+#define NET_RUDP_FLAG_FRAGMENT NET_RUDP_WIRE_FLAG_FRAGMENT
 
 #define NET_RUDP_FRAG_HDR_SIZE 8u
 #define NET_RUDP_FRAG_MAX 64u
@@ -45,20 +45,16 @@ static int build_packet_(net_rudp_peer_t *peer,
 
     (void)now_ms;
 
-    int rc = net_packet_header_encode(&header, out_packet, out_capacity);
-    if (rc != NET_PACKET_HEADER_OK) {
+    int rc = net_rudp_wire_encode(&header, flags, schema_id, payload, payload_size, out_packet, out_capacity, out_size);
+    if (rc != NET_RUDP_WIRE_OK) {
+        if (rc == NET_RUDP_WIRE_ERR_SHORT) {
+            return NET_RUDP_ERR_SHORT;
+        }
+        if (rc == NET_RUDP_WIRE_ERR_INVALID) {
+            return NET_RUDP_ERR_INVALID;
+        }
         return NET_RUDP_ERR_PROTOCOL;
     }
-
-    uint8_t *frame = out_packet + NET_PACKET_HEADER_SIZE;
-    frame[0] = flags;
-    frame[1] = 0u;
-    write_u16_be_(frame + 2, schema_id);
-    write_u16_be_(frame + 4, (uint16_t)payload_size);
-    write_u16_be_(frame + 6, 0u);
-    memcpy(frame + NET_RUDP_FRAME_SIZE, payload, payload_size);
-
-    *out_size = NET_PACKET_HEADER_SIZE + NET_RUDP_FRAME_SIZE + payload_size;
     if (out_sequence) {
         *out_sequence = header.sequence;
     }
