@@ -31,3 +31,7 @@ Deliverables:
 **2026-02-05T04:11:41Z**
 
 Starting work: audit current RUDP peer vs stream usage, add boundary tests, then split wire framing from reliability/reassembly and migrate p007/p008 call sites.
+
+**2026-02-05T06:28:53Z**
+
+Moved server runtime JOIN nonce extraction off wire-frame decode: runtime_pump now uses net_rudp_peer_receive() to treat JOIN as an inbound message. make test passes.
