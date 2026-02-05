@@ -43,3 +43,7 @@ Split reliability/reassembly receive path from wire decode: added net_rudp_relia
 **2026-02-05T07:06:00Z**
 
 Split send-side reliability above wire framing: added net_rudp_reliability_send_*() + net_rudp_reliability_tick_resend_via(); peer send wrappers now delegate; added p014 boundary tests (seq advance rules, ack header state, resend bytes stable). Commit: b3ade61.
+
+**2026-02-05T07:30:38Z**
+
+Standardized server runtime inbound-topic payload bytes (client_id/schema_id/reliable+payload) via fr_server_net_inbound_message_{encode,decode}(). Refactored runtime_client_fiber publish + entity net pump to use it; added p015 tests. Commit: f3ffd16.
