@@ -31,7 +31,7 @@ ECS_SRC := $(wildcard src/ecs/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_SRC += $(RENDERER_DEBUG_LINES_SRC)
-NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/rudp/stream/*.c) $(wildcard src/net/quantization/*.c) \
+NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/rudp/reliability/*.c) $(wildcard src/net/rudp/stream/*.c) $(wildcard src/net/quantization/*.c) \
 	$(wildcard src/net/replication/*.c) $(wildcard src/net/replication/*/*.c) \
 	$(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c) \
 	$(wildcard src/net/channel/*.c) $(wildcard src/net/channel/*/*.c) $(wildcard src/net/channel/*/*/*.c)
@@ -55,6 +55,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
 	build/p007_net_rudp_fragmentation_tests \
 	build/p012_net_rudp_reliability_boundary_tests \
+	build/p013_net_rudp_reliability_layer_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -137,6 +138,9 @@ build/p007_net_rudp_fragmentation_tests: $(SRC) tests/net_rudp_fragmentation_tes
 
 build/p012_net_rudp_reliability_boundary_tests: $(SRC) tests/p012_net_rudp_reliability_boundary_tests.c | build
 	$(CC) $(CFLAGS) tests/p012_net_rudp_reliability_boundary_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p013_net_rudp_reliability_layer_tests: $(SRC) tests/p013_net_rudp_reliability_layer_tests.c | build
+	$(CC) $(CFLAGS) tests/p013_net_rudp_reliability_layer_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -276,6 +280,7 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_rudp_fragmentation_tests \
 	&& ./build/p012_net_rudp_reliability_boundary_tests \
+	&& ./build/p013_net_rudp_reliability_layer_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
@@ -306,6 +311,7 @@ test_timeout: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job
 		./build/p007_net_reliable_tests \
 		./build/p007_net_rudp_fragmentation_tests \
 		./build/p012_net_rudp_reliability_boundary_tests \
+		./build/p013_net_rudp_reliability_layer_tests \
 		./build/p007_net_schema_registry_tests \
 		./build/p007_net_udp_socket_tests \
 		./build/p008_pose_interpolator_tests \

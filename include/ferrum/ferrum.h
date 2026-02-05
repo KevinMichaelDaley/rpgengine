@@ -41,6 +41,7 @@
 #include "ferrum/net/ack_window.h"
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/rudp/wire_frame.h"
+#include "ferrum/net/rudp/reliability.h"
 #include "ferrum/net/bit_pack.h"
 #include "ferrum/net/schema_registry.h"
 #include "ferrum/net/unreliable_channel.h"
