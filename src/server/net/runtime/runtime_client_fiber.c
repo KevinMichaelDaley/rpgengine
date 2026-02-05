@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ferrum/server/net/inbound_message.h"
+
 #include "runtime_internal.h"
 
 #define OUT_MSG_MAX (2u + NET_RUDP_MAX_PACKET_SIZE)
@@ -31,21 +33,24 @@ static void publish_inbound_(fr_server_net_runtime_t *rt,
                              const uint8_t *payload,
                              size_t payload_size) {
     uint8_t msg[6u + NET_RUDP_MAX_PACKET_SIZE];
+    size_t msg_size = 0u;
+
     if (!rt || !rt->cfg.inbound_topic || payload_size > NET_RUDP_MAX_PACKET_SIZE) {
         return;
     }
 
-    msg[0] = (uint8_t)(client_id & 0xFFu);
-    msg[1] = (uint8_t)((client_id >> 8u) & 0xFFu);
-    msg[2] = (uint8_t)(schema_id & 0xFFu);
-    msg[3] = (uint8_t)((schema_id >> 8u) & 0xFFu);
-    msg[4] = (uint8_t)((reliable ? 1u : 0u) & 0x1u);
-    msg[5] = 0u;
-    if (payload_size > 0u) {
-        memcpy(msg + 6u, payload, payload_size);
+    if (!fr_server_net_inbound_message_encode(client_id,
+                                              reliable ? true : false,
+                                              schema_id,
+                                              payload,
+                                              payload_size,
+                                              msg,
+                                              sizeof(msg),
+                                              &msg_size)) {
+        return;
     }
 
-    (void)fr_topic_channel_push(rt->cfg.inbound_topic, msg, 6u + payload_size);
+    (void)fr_topic_channel_push(rt->cfg.inbound_topic, msg, msg_size);
 }
 
 static void pump_outbound_topic_(fr_server_net_runtime_t *rt,

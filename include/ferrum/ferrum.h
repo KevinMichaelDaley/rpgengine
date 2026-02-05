@@ -65,6 +65,9 @@
 // Server-side client fiber networking (stream-based)
 #include "ferrum/server/net/client_fiber.h"
 
+// Server network runtime inbound message format helpers
+#include "ferrum/server/net/inbound_message.h"
+
 // Server: global state update queue (network -> simulation)
 #include "ferrum/server/net/state_update_queue.h"
 

@@ -6,6 +6,7 @@
 #include "ferrum/net/replication/spawn.h"
 #include "ferrum/net/replication/welcome.h"
 #include "ferrum/net/rudp/peer.h"
+#include "ferrum/server/net/inbound_message.h"
 #include "ferrum/server/entity/net/pump.h"
 
 struct fr_server_entity_net_pump {
@@ -181,14 +182,17 @@ bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t 
         if (!fr_topic_channel_pop(pump->cfg.inbound_topic, in, &in_len)) {
             break;
         }
-        if (in_len < 6u) {
+
+        fr_server_net_inbound_message_view_t msg;
+        memset(&msg, 0, sizeof(msg));
+        if (!fr_server_net_inbound_message_decode(&msg, in, in_len)) {
             continue;
         }
 
-        uint16_t client_id = (uint16_t)in[0] | ((uint16_t)in[1] << 8u);
-        uint16_t schema_id = (uint16_t)in[2] | ((uint16_t)in[3] << 8u);
-        const uint8_t *payload = in + 6u;
-        size_t payload_size = in_len - 6u;
+        const uint16_t client_id = msg.client_id;
+        const uint16_t schema_id = msg.schema_id;
+        const uint8_t *payload = msg.payload;
+        const size_t payload_size = msg.payload_size;
 
         if (client_id >= pump->cfg.max_clients) {
             continue;
