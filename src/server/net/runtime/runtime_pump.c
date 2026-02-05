@@ -1,10 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-
-#include "ferrum/net/packet_header.h"
 #include "ferrum/net/replication/join.h"
-#include "ferrum/net/rudp/wire_frame.h"
+#include "ferrum/net/rudp/peer.h"
 
 #include "runtime_internal.h"
 
@@ -13,21 +11,36 @@ static int packet_extract_join_nonce_(const uint8_t *packet, size_t packet_size,
         return 0;
     }
 
-    net_packet_header_t header;
-    net_rudp_wire_frame_view_t frame;
-    if (net_rudp_wire_decode(&header, &frame, packet, packet_size) != NET_RUDP_WIRE_OK) {
-        return 0;
-    }
-    if (header.protocol_id != NET_RUDP_PROTOCOL_ID_P008) {
+    /* Do not decode protocol frames here; treat JOIN as an inbound message. */
+    net_rudp_send_slot_t send_slots[1u];
+    net_rudp_peer_t peer;
+    net_rudp_peer_init_with_storage(&peer,
+                                   NET_RUDP_PROTOCOL_ID_P008,
+                                   50u,
+                                   send_slots,
+                                   (size_t)(sizeof(send_slots) / sizeof(send_slots[0])));
+
+    uint8_t reliable = 0u;
+    uint16_t schema_id = 0u;
+    uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
+    size_t payload_size = 0u;
+    if (net_rudp_peer_receive(&peer,
+                              packet,
+                              packet_size,
+                              &reliable,
+                              &schema_id,
+                              payload,
+                              sizeof(payload),
+                              &payload_size) != NET_RUDP_OK) {
         return 0;
     }
 
-    if (frame.schema_id != NET_REPL_SCHEMA_JOIN) {
+    if (schema_id != NET_REPL_SCHEMA_JOIN) {
         return 0;
     }
 
     net_repl_join_t join;
-    if (net_repl_join_decode(&join, frame.payload, frame.payload_size) != NET_REPL_OK) {
+    if (net_repl_join_decode(&join, payload, payload_size) != NET_REPL_OK) {
         return 0;
     }
     *out_nonce = join.client_nonce;
