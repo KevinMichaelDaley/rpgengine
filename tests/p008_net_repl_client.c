@@ -369,6 +369,9 @@ int main(int argc, char **argv) {
 
     uint32_t corrections = 0u;
 
+    const char *log_input_env = getenv("P008_LOG_INPUT");
+    const int log_input_events = (log_input_env && log_input_env[0] == '1');
+
     uint32_t input_events_sent = 0u;
     uint32_t input_state_echoes = 0u;
     double input_latency_sum_ms = 0.0;
@@ -445,7 +448,8 @@ int main(int argc, char **argv) {
                     local_input_seq += 1u;
                     record_input_send(ring_event_id, ring_send_ms, ring_logged, in.event_id, now);
 
-                    fprintf(stdout,
+                        if (log_input_events) {
+                        fprintf(stdout,
                             "P008_INPUT_SEND t_ms=%llu event_id=%u entity_id=%u axis_s16=(%d,%d,%d) speed_mrad_s=%u\n",
                             (unsigned long long)now,
                             (unsigned)in.event_id,
@@ -454,6 +458,7 @@ int main(int argc, char **argv) {
                             (int)in.axis_y_snorm16,
                             (int)in.axis_z_snorm16,
                             (unsigned)in.speed_millirad_per_s);
+                        }
 
                     /* Apply local prediction immediately once we know our entity. */
                     if (local_entity_id != 0u) {
@@ -740,13 +745,15 @@ int main(int argc, char **argv) {
                                         local_entity_id = st.entity_id;
                                     }
 
-                                    fprintf(stdout,
-                                            "P008_INPUT_ECHO recv_ms=%llu event_id=%u entity_id=%u latency_ms=%.3f rot_err_deg=%.6f\n",
-                                            (unsigned long long)recv_now,
-                                            (unsigned)st.input_event_id,
-                                            (unsigned)st.entity_id,
-                                            latency_ms,
-                                            (double)deg);
+                                    if (log_input_events) {
+                                        fprintf(stdout,
+                                                "P008_INPUT_ECHO recv_ms=%llu event_id=%u entity_id=%u latency_ms=%.3f rot_err_deg=%.6f\n",
+                                                (unsigned long long)recv_now,
+                                                (unsigned)st.input_event_id,
+                                                (unsigned)st.entity_id,
+                                                latency_ms,
+                                                (double)deg);
+                                    }
                                 }
                             }
 

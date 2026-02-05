@@ -48,6 +48,10 @@ REORDER_PCT="${REORDER_PCT:-20}"
 REORDER_CORR_PCT="${REORDER_CORR_PCT:-25}"
 REORDER_DELAY_MS="${REORDER_DELAY_MS:-80}"
 
+# Perf harness thresholds (tuned for impaired netem conditions).
+# Override as needed, e.g. MAX_ROT_ERR_DEG=8 scripts/p008_render_24c_netem_tracy.sh ...
+MAX_ROT_ERR_DEG="${MAX_ROT_ERR_DEG:-15}"
+
 NETEM_ARGS_DEFAULT=(
   delay "${LATENCY_MS}ms" "${JITTER_MS}ms"
   loss "${LOSS_PCT}%" "${BURST_LOSS_CORR_PCT}%"
@@ -170,6 +174,7 @@ if [ "$HEADLESS_CLIENTS" -gt 0 ]; then
   set +e
   stdbuf -oL -eL timeout $(((DURATION_MS / 1000) + 60))s \
     ./build/p008_net_perf_client_tests 127.0.0.1 "$PORT" "$HEADLESS_CLIENTS" "$DURATION_MS" "$TICK_HZ" \
+      --max-rot-err-deg "$MAX_ROT_ERR_DEG" \
     >"$HEADLESS_LOG" 2>&1 &
   HEADLESS_PID=$!
   set -e
