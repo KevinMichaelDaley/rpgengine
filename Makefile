@@ -56,6 +56,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p007_net_rudp_fragmentation_tests \
 	build/p012_net_rudp_reliability_boundary_tests \
 	build/p013_net_rudp_reliability_layer_tests \
+	build/p014_net_rudp_reliability_send_layer_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -141,6 +142,9 @@ build/p012_net_rudp_reliability_boundary_tests: $(SRC) tests/p012_net_rudp_relia
 
 build/p013_net_rudp_reliability_layer_tests: $(SRC) tests/p013_net_rudp_reliability_layer_tests.c | build
 	$(CC) $(CFLAGS) tests/p013_net_rudp_reliability_layer_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p014_net_rudp_reliability_send_layer_tests: $(SRC) tests/p014_net_rudp_reliability_send_layer_tests.c | build
+	$(CC) $(CFLAGS) tests/p014_net_rudp_reliability_send_layer_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -281,6 +285,7 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_rudp_fragmentation_tests \
 	&& ./build/p012_net_rudp_reliability_boundary_tests \
 	&& ./build/p013_net_rudp_reliability_layer_tests \
+	&& ./build/p014_net_rudp_reliability_send_layer_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
@@ -312,6 +317,7 @@ test_timeout: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job
 		./build/p007_net_rudp_fragmentation_tests \
 		./build/p012_net_rudp_reliability_boundary_tests \
 		./build/p013_net_rudp_reliability_layer_tests \
+		./build/p014_net_rudp_reliability_send_layer_tests \
 		./build/p007_net_schema_registry_tests \
 		./build/p007_net_udp_socket_tests \
 		./build/p008_pose_interpolator_tests \

@@ -1,8 +1,8 @@
 #include <string.h>
 
+#include "ferrum/net/packet_header.h"
+#include "ferrum/net/rudp/reliability_send.h"
 #include "ferrum/net/rudp/wire_frame.h"
-
-#include "sendto_internal.h"
 
 #define NET_RUDP_FRAME_SIZE NET_RUDP_WIRE_FRAME_HEADER_SIZE
 
@@ -15,6 +15,10 @@
 static void write_u16_be_(uint8_t *out, uint16_t v) {
     out[0] = (uint8_t)((v >> 8) & 0xFFu);
     out[1] = (uint8_t)(v & 0xFFu);
+}
+
+static size_t max_single_payload_(void) {
+    return (size_t)(NET_RUDP_MAX_PACKET_SIZE - NET_PACKET_HEADER_SIZE - NET_RUDP_FRAME_SIZE);
 }
 
 static int build_packet_(net_rudp_peer_t *peer,
@@ -30,7 +34,7 @@ static int build_packet_(net_rudp_peer_t *peer,
     if (!peer || !payload || !out_packet || !out_size) {
         return NET_RUDP_ERR_INVALID;
     }
-    if (payload_size > (NET_RUDP_MAX_PACKET_SIZE - NET_PACKET_HEADER_SIZE - NET_RUDP_FRAME_SIZE)) {
+    if (payload_size > max_single_payload_()) {
         return NET_RUDP_ERR_INVALID;
     }
     if (out_capacity < NET_PACKET_HEADER_SIZE + NET_RUDP_FRAME_SIZE + payload_size) {
@@ -55,9 +59,11 @@ static int build_packet_(net_rudp_peer_t *peer,
         }
         return NET_RUDP_ERR_PROTOCOL;
     }
+
     if (out_sequence) {
         *out_sequence = header.sequence;
     }
+
     /* Only advance the sequence for reliable packets.
        Reliable receive uses a bounded ACK/duplicate window; if unreliable traffic
        also advances the sequence, reliable packets can become permanently
@@ -66,21 +72,18 @@ static int build_packet_(net_rudp_peer_t *peer,
     if (flags & NET_RUDP_FLAG_RELIABLE) {
         peer->next_sequence = (uint16_t)(peer->next_sequence + 1u);
     }
+
     return NET_RUDP_OK;
 }
 
-static size_t max_single_payload_(void) {
-    return (size_t)(NET_RUDP_MAX_PACKET_SIZE - NET_PACKET_HEADER_SIZE - NET_RUDP_FRAME_SIZE);
-}
-
-int net_rudp_peer_send_unreliable_with_sendto(net_rudp_peer_t *peer,
-                                              void *io_user,
-                                              int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
-                                              const net_udp_addr_t *to,
-                                              uint64_t now_ms,
-                                              uint16_t schema_id,
-                                              const void *payload,
-                                              size_t payload_size) {
+int net_rudp_reliability_send_unreliable_via(net_rudp_peer_t *peer,
+                                            void *io_user,
+                                            int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                            const net_udp_addr_t *to,
+                                            uint64_t now_ms,
+                                            uint16_t schema_id,
+                                            const void *payload,
+                                            size_t payload_size) {
     if (!peer || !sendto_cb || !to || !payload) {
         return NET_RUDP_ERR_INVALID;
     }
@@ -152,15 +155,15 @@ int net_rudp_peer_send_unreliable_with_sendto(net_rudp_peer_t *peer,
     return NET_RUDP_OK;
 }
 
-int net_rudp_peer_send_reliable_with_sendto(net_rudp_peer_t *peer,
-                                            void *io_user,
-                                            int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
-                                            const net_udp_addr_t *to,
-                                            uint64_t now_ms,
-                                            uint16_t schema_id,
-                                            const void *payload,
-                                            size_t payload_size,
-                                            uint16_t *out_sequence) {
+int net_rudp_reliability_send_reliable_via(net_rudp_peer_t *peer,
+                                          void *io_user,
+                                          int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                          const net_udp_addr_t *to,
+                                          uint64_t now_ms,
+                                          uint16_t schema_id,
+                                          const void *payload,
+                                          size_t payload_size,
+                                          uint16_t *out_sequence) {
     if (!peer || !sendto_cb || !to || !payload) {
         return NET_RUDP_ERR_INVALID;
     }
@@ -296,11 +299,11 @@ int net_rudp_peer_send_reliable_with_sendto(net_rudp_peer_t *peer,
     return NET_RUDP_OK;
 }
 
-int net_rudp_peer_tick_resend_with_sendto(net_rudp_peer_t *peer,
-                                          void *io_user,
-                                          int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
-                                          const net_udp_addr_t *to,
-                                          uint64_t now_ms) {
+int net_rudp_reliability_tick_resend_via(net_rudp_peer_t *peer,
+                                        void *io_user,
+                                        int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                        const net_udp_addr_t *to,
+                                        uint64_t now_ms) {
     if (!peer || !sendto_cb || !to) {
         return NET_RUDP_ERR_INVALID;
     }
