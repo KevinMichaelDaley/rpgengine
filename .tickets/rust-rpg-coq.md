@@ -35,3 +35,11 @@ Starting work: audit current RUDP peer vs stream usage, add boundary tests, then
 **2026-02-05T06:28:53Z**
 
 Moved server runtime JOIN nonce extraction off wire-frame decode: runtime_pump now uses net_rudp_peer_receive() to treat JOIN as an inbound message. make test passes.
+
+**2026-02-05T06:44:27Z**
+
+Split reliability/reassembly receive path from wire decode: added net_rudp_reliability_receive() (decoded header+frame in) and refactored net_rudp_peer_receive() into wire-decode wrapper. Added p013 reliability-layer boundary tests (dup window, ack retirement, fragmentation reassembly) and wired them into make test/test_timeout. Commit: 514d261.
+
+**2026-02-05T07:06:00Z**
+
+Split send-side reliability above wire framing: added net_rudp_reliability_send_*() + net_rudp_reliability_tick_resend_via(); peer send wrappers now delegate; added p014 boundary tests (seq advance rules, ack header state, resend bytes stable). Commit: b3ade61.
