@@ -1,6 +1,6 @@
 ---
 id: phys-003b
-status: open
+status: closed
 deps: [phys-003, phys-004]
 links: [phys-000]
 created: 2026-02-06T11:09:00.000000000-08:00
