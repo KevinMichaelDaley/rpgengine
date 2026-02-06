@@ -10,6 +10,7 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/stabilization.h"
+#include "ferrum/physics/step_plan.h"
 
 void phys_stage_constraint_build(const phys_constraint_build_args_t *args)
 {
@@ -48,6 +49,10 @@ void phys_stage_constraint_build(const phys_constraint_build_args_t *args)
             c->body_b       = manifold->body_b;
             c->manifold_idx = m;
             c->point_idx    = (uint8_t)p;
+
+            /* Determine solver mode from body tiers. */
+            c->solver_mode = (uint8_t)phys_tier_cross_solver_mode(
+                (phys_tier_t)body_a->tier, (phys_tier_t)body_b->tier);
 
             /* Load warmstart impulses from manifold cache. */
             c->rows[0].lambda = manifold->normal_impulse[p];

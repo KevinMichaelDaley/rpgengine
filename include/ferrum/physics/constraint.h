@@ -53,7 +53,8 @@ typedef struct phys_constraint {
     uint32_t manifold_idx;  /**< Back-reference to manifold for warmstart writeback. */
     uint8_t point_idx;      /**< Which contact point in the manifold. */
     uint8_t row_count;      /**< Number of active rows (typically 3). */
-    uint8_t pad[2];         /**< Padding for alignment. */
+    uint8_t solver_mode;    /**< phys_solver_mode_t: 0=TGS, 1=XPBD. */
+    uint8_t pad[1];         /**< Padding for alignment. */
     phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS]; /**< Constraint rows. */
 } phys_constraint_t;
 

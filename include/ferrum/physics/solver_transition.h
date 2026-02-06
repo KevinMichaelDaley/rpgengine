@@ -9,7 +9,31 @@
  * and position-domain (XPBD) to preserve warm-start continuity.
  */
 
+#include <stdint.h>
+
 struct phys_constraint;
+
+/**
+ * @brief Apply solver mode transitions to a batch of constraints.
+ *
+ * For each constraint whose current solver_mode differs from its
+ * previous mode, applies the appropriate lambda conversion:
+ *   - prev TGS, current XPBD → phys_solver_convert_tgs_to_xpbd
+ *   - prev XPBD, current TGS → phys_solver_convert_xpbd_to_tgs
+ *
+ * @param constraints  Array of constraints. NULL-safe (no-op).
+ * @param count        Number of constraints in the array.
+ * @param prev_modes   Array of previous solver modes (one per constraint).
+ *                     NULL-safe (no-op).
+ * @param dt           Timestep (seconds). Must be > 0.
+ *
+ * @note Ownership: caller owns all pointers. No allocations performed.
+ * @note Side effects: modifies lambda values in constraints that transition.
+ */
+void phys_solver_transition_apply(struct phys_constraint *constraints,
+                                  uint32_t count,
+                                  const uint8_t *prev_modes,
+                                  float dt);
 
 /**
  * @brief Convert TGS impulse-domain warmstart to XPBD position-domain.
