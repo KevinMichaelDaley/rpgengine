@@ -115,7 +115,8 @@ static int test_stab_resting(void)
 
     phys_stage_stabilization(&args);
 
-    ASSERT_FLOAT_NEAR(3.0f, hint.friction_scale, 1e-5f);
+    /* T0 resting: base 3.0 × tier friction_boost 3.0 = 9.0 */
+    ASSERT_FLOAT_NEAR(9.0f, hint.friction_scale, 1e-5f);
     ASSERT_FLOAT_NEAR(0.0f, hint.restitution_scale, 1e-5f);
 
     return 0;
@@ -297,16 +298,16 @@ static int test_stab_multiple_manifolds(void)
 
     phys_stage_stabilization(&args);
 
-    /* Manifold 0: resting */
-    ASSERT_FLOAT_NEAR(3.0f, hints[0].friction_scale, 1e-5f);
+    /* Manifold 0: resting (T0: base 3.0 × boost 3.0 = 9.0) */
+    ASSERT_FLOAT_NEAR(9.0f, hints[0].friction_scale, 1e-5f);
     ASSERT_FLOAT_NEAR(0.0f, hints[0].restitution_scale, 1e-5f);
 
     /* Manifold 1: approaching (active) */
     ASSERT_FLOAT_NEAR(1.0f, hints[1].friction_scale, 1e-5f);
     ASSERT_FLOAT_NEAR(1.0f, hints[1].restitution_scale, 1e-5f);
 
-    /* Manifold 2: resting */
-    ASSERT_FLOAT_NEAR(3.0f, hints[2].friction_scale, 1e-5f);
+    /* Manifold 2: resting (T0: base 3.0 × boost 3.0 = 9.0) */
+    ASSERT_FLOAT_NEAR(9.0f, hints[2].friction_scale, 1e-5f);
     ASSERT_FLOAT_NEAR(0.0f, hints[2].restitution_scale, 1e-5f);
 
     return 0;

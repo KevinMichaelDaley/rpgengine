@@ -10,6 +10,8 @@
 
 #include <stdint.h>
 
+#include "ferrum/physics/tier_list.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -21,12 +23,18 @@ struct phys_body;
  * @brief Per-manifold stabilization hint.
  *
  * Multipliers applied to base friction and restitution coefficients.
- * Resting contacts get boosted friction (3.0) and suppressed bounce (0.0).
+ * Resting contacts get boosted friction and suppressed bounce (0.0).
  * Active contacts pass through unmodified (1.0, 1.0).
+ *
+ * friction_boost and velocity_damping are per-tier scaling factors
+ * determined by the highest tier (lowest fidelity) body in the pair.
+ * friction_scale already incorporates the friction_boost multiplier.
  */
 typedef struct phys_stab_hint {
-    float friction_scale;      /**< Multiplier on base friction. */
+    float friction_scale;      /**< Multiplier on base friction (includes tier boost). */
     float restitution_scale;   /**< Multiplier on base restitution. */
+    float friction_boost;      /**< Per-tier friction boost factor. */
+    float velocity_damping;    /**< Per-tier velocity damping factor. */
 } phys_stab_hint_t;
 
 /**
@@ -53,7 +61,8 @@ typedef struct phys_stabilization_args {
  *
  * For each manifold, computes relative velocity at the first contact
  * point, decomposes it into normal and tangential components, and
- * assigns stabilization hints accordingly.
+ * assigns stabilization hints accordingly.  Per-tier scaling is applied
+ * based on the higher tier (lower fidelity) body in each pair.
  *
  * @param args Stage arguments. If NULL, no-op.
  *
@@ -61,6 +70,20 @@ typedef struct phys_stabilization_args {
  * Writes to args->hints_out[0..manifold_count-1].
  */
 void phys_stage_stabilization(const phys_stabilization_args_t *args);
+
+/**
+ * @brief Look up per-tier stabilization parameters.
+ *
+ * Returns the friction boost and velocity damping factors for the
+ * given simulation tier.  Tiers beyond T4 are clamped to T4 values.
+ *
+ * @param tier            Simulation tier (0–5).
+ * @param friction_boost  Output: tier friction multiplier (must not be NULL).
+ * @param velocity_damping Output: tier velocity damping (must not be NULL).
+ */
+void phys_tier_stabilization_params(phys_tier_t tier,
+                                    float *friction_boost,
+                                    float *velocity_damping);
 
 #ifdef __cplusplus
 } /* extern "C" */

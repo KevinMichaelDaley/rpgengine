@@ -306,8 +306,9 @@ static int test_par_stab_single_manifold(void) {
     };
     phys_stage_stabilization_par(&args, &ctx);
 
-    /* Zero relative velocity → resting contact. */
-    ASSERT_FLOAT_EQ(3.0f, hint.friction_scale, 1e-5f);
+    /* Zero relative velocity → resting contact.
+     * T0: base 3.0 × tier friction_boost 3.0 = 9.0 */
+    ASSERT_FLOAT_EQ(9.0f, hint.friction_scale, 1e-5f);
     ASSERT_FLOAT_EQ(0.0f, hint.restitution_scale, 1e-5f);
 
     phys_job_context_destroy(&ctx);
@@ -349,8 +350,9 @@ static int test_par_stab_resting_contact(void) {
     };
     phys_stage_stabilization_par(&args, &ctx);
 
-    /* Relative velocity = 0.05 along normal, well below 0.5 threshold. */
-    ASSERT_FLOAT_EQ(3.0f, hint.friction_scale, 1e-5f);
+    /* Relative velocity = 0.05 along normal, well below 0.5 threshold.
+     * T0: base 3.0 × tier friction_boost 3.0 = 9.0 */
+    ASSERT_FLOAT_EQ(9.0f, hint.friction_scale, 1e-5f);
     ASSERT_FLOAT_EQ(0.0f, hint.restitution_scale, 1e-5f);
 
     phys_job_context_destroy(&ctx);

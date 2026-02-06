@@ -53,16 +53,31 @@ static void stabilization_batch_job(void *data) {
         const phys_manifold_t *m = &args->manifolds[i];
         phys_stab_hint_t *hint = &args->hints_out[i];
 
-        /* Default to active. */
+        const phys_body_t *body_a = &args->bodies[m->body_a];
+        const phys_body_t *body_b = &args->bodies[m->body_b];
+
+        /* Determine tier: use the higher tier (lower fidelity) body. */
+        uint8_t effective_tier = body_a->tier > body_b->tier
+                                     ? body_a->tier
+                                     : body_b->tier;
+
+        /* Look up per-tier stabilization factors. */
+        float tier_friction_boost;
+        float tier_velocity_damping;
+        phys_tier_stabilization_params((phys_tier_t)effective_tier,
+                                       &tier_friction_boost,
+                                       &tier_velocity_damping);
+
+        hint->friction_boost   = tier_friction_boost;
+        hint->velocity_damping = tier_velocity_damping;
+
+        /* Default to active (no resting boost). */
         hint->friction_scale    = 1.0f;
         hint->restitution_scale = 1.0f;
 
         if (m->point_count == 0) {
             continue;
         }
-
-        const phys_body_t *body_a = &args->bodies[m->body_a];
-        const phys_body_t *body_b = &args->bodies[m->body_b];
         const phys_contact_point_t *cp = &m->points[0];
 
         /* Lever arms from body centers to contact point. */
@@ -93,9 +108,9 @@ static void stabilization_batch_job(void *data) {
         }
 
         /* Classify as resting if both normal and tangential speeds
-         * are below the threshold. */
+         * are below the threshold.  Apply tier friction boost. */
         if (fabsf(v_n) < threshold && v_t_sq < threshold_sq) {
-            hint->friction_scale    = 3.0f;
+            hint->friction_scale    = 3.0f * tier_friction_boost;
             hint->restitution_scale = 0.0f;
         }
     }
