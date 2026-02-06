@@ -58,6 +58,7 @@
 
 // Physics core types
 #include "ferrum/physics/phys_types.h"
+#include "ferrum/physics/body.h"
 
 // Reliable UDP stream API
 #include "ferrum/net/stream.h"
