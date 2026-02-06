@@ -1,0 +1,156 @@
+/**
+ * @file integrate_par.c
+ * @brief Parallel integration + sleep detection.
+ *
+ * Splits the body range into batches of PHYS_INTEGRATE_BATCH_SIZE,
+ * dispatches each batch as a job.  Each job reads bodies_in + velocities
+ * (read-only shared) and writes to its own disjoint slice of bodies_out.
+ *
+ * Non-static functions: 1 (phys_stage_integrate_par).
+ */
+
+#include "ferrum/physics/par/integrate_par.h"
+
+#include <math.h>
+#include <stddef.h>
+
+#include "ferrum/math/quat.h"
+#include "ferrum/math/vec3.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/tgs_solve.h"
+
+/* ── Per-dispatch shared context ────────────────────────────────── */
+
+/**
+ * @brief Shared context passed to every integration batch job.
+ *
+ * Points to the caller-provided integrate args so each job can
+ * access the body arrays, velocities, gravity, dt, and sleep config.
+ */
+typedef struct integrate_par_shared {
+    const phys_integrate_args_t *args; /**< Borrowed integration args. */
+} integrate_par_shared_t;
+
+/* ── Job function ───────────────────────────────────────────────── */
+
+/**
+ * @brief Job function: integrate bodies [start, start+count).
+ *
+ * Reads bodies_in + velocities (read-only) and writes to
+ * bodies_out[start..start+count).  Each job's output range is
+ * disjoint so no synchronization is required.
+ */
+static void integrate_batch_job(void *data) {
+    phys_job_batch_t *batch = data;
+    integrate_par_shared_t *shared = batch->user_args;
+    const phys_integrate_args_t *args = shared->args;
+
+    const phys_body_t *bodies_in       = args->bodies_in;
+    const phys_velocity_t *velocities  = args->velocities;
+    phys_body_t *bodies_out            = args->bodies_out;
+    const float dt                     = args->dt;
+    const phys_vec3_t gravity          = args->gravity;
+    const float sleep_lin_thresh       = args->sleep_threshold_linear;
+    const float sleep_ang_thresh       = args->sleep_threshold_angular;
+    const uint32_t sleep_delay         = args->sleep_delay_frames;
+
+    uint32_t end = batch->start + batch->count;
+    for (uint32_t i = batch->start; i < end; ++i) {
+        const phys_body_t *in = &bodies_in[i];
+        phys_body_t *out      = &bodies_out[i];
+
+        /* Copy body from input to output. */
+        *out = *in;
+
+        /* Skip static and kinematic bodies. */
+        if (phys_body_is_static(in) || phys_body_is_kinematic(in)) {
+            continue;
+        }
+
+        /* Update velocity from solver output. */
+        out->linear_vel  = velocities[i].linear;
+        out->angular_vel = velocities[i].angular;
+
+        /* Apply gravity (only if body is not sleeping). */
+        if (!phys_body_is_sleeping(in)) {
+            out->linear_vel = vec3_add(out->linear_vel,
+                                       vec3_scale(gravity, dt));
+        }
+
+        /* Integrate position: position += linear_vel * dt. */
+        out->position = vec3_add(in->position,
+                                 vec3_scale(out->linear_vel, dt));
+
+        /* Integrate orientation via quaternion derivative:
+         *   omega_quat = {angular_vel.x, angular_vel.y, angular_vel.z, 0}
+         *   dq = quat_mul(omega_quat, orientation)
+         *   orientation += 0.5 * dq * dt  (component-wise)
+         *   then normalize. */
+        phys_quat_t omega_q = {
+            out->angular_vel.x,
+            out->angular_vel.y,
+            out->angular_vel.z,
+            0.0f
+        };
+        phys_quat_t dq = quat_mul(omega_q, in->orientation);
+        float half_dt = 0.5f * dt;
+        out->orientation.x = in->orientation.x + dq.x * half_dt;
+        out->orientation.y = in->orientation.y + dq.y * half_dt;
+        out->orientation.z = in->orientation.z + dq.z * half_dt;
+        out->orientation.w = in->orientation.w + dq.w * half_dt;
+        out->orientation = quat_normalize_safe(out->orientation, 1e-8f);
+
+        /* Sleep detection. */
+        float linear_speed  = vec3_magnitude(out->linear_vel);
+        float angular_speed = vec3_magnitude(out->angular_vel);
+
+        if (linear_speed < sleep_lin_thresh &&
+            angular_speed < sleep_ang_thresh) {
+            /* Body is below threshold: increment sleep counter. */
+            if (out->sleep_counter < 255) {
+                out->sleep_counter++;
+            }
+            if (out->sleep_counter >= sleep_delay) {
+                out->flags |= PHYS_BODY_FLAG_SLEEPING;
+            }
+        } else {
+            /* Body is active: reset sleep state. */
+            out->sleep_counter = 0;
+            out->flags &= ~PHYS_BODY_FLAG_SLEEPING;
+        }
+    }
+}
+
+/* ── Public API ─────────────────────────────────────────────────── */
+
+void phys_stage_integrate_par(const phys_integrate_args_t *args,
+                               phys_job_context_t *ctx) {
+    if (!args || !ctx) {
+        return;
+    }
+    if (!args->bodies_in || !args->bodies_out || !args->velocities) {
+        return;
+    }
+    if (args->body_count == 0) {
+        return;
+    }
+
+    uint32_t total = args->body_count;
+    uint32_t batch_size = PHYS_INTEGRATE_BATCH_SIZE;
+    uint32_t num_batches = (total + batch_size - 1) / batch_size;
+
+    /* Shared context lives on the stack — valid until wait completes. */
+    integrate_par_shared_t shared = {
+        .args = args,
+    };
+
+    /* Batch descriptors on the stack.  For physics body counts this
+     * is bounded (e.g. 2000 bodies / 512 = 4 batches). */
+    phys_job_batch_t batches[num_batches];
+
+    phys_dispatch_stage(ctx, PHYS_STAGE_INTEGRATE,
+                        integrate_batch_job, &shared,
+                        total, batch_size, batches);
+
+    phys_wait_stage(ctx, PHYS_STAGE_INTEGRATE);
+}
