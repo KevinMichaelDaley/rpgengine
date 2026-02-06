@@ -21,20 +21,31 @@ struct phys_game_state;
 extern "C" {
 #endif
 
+/* ── Solver mode ────────────────────────────────────────────────── */
+
+/**
+ * @brief Solver algorithm used for a given tier or cross-tier constraint.
+ */
+typedef enum phys_solver_mode {
+    PHYS_SOLVER_TGS  = 0,      /**< Temporal Gauss-Seidel. */
+    PHYS_SOLVER_XPBD = 1,      /**< Extended Position-Based Dynamics. */
+} phys_solver_mode_t;
+
 /* ── Per-tier parameters ────────────────────────────────────────── */
 
 /**
  * @brief Per-tier simulation parameters.
  *
  * Controls whether a tier is active and what solver settings it uses.
- * In Phase 1 every tier receives the same values from world config.
  *
  * Ownership: value type, no heap allocation.
  */
 typedef struct phys_tier_params {
     bool     active;            /**< Whether this tier is simulated. */
+    phys_solver_mode_t solver_mode; /**< Solver algorithm for this tier. */
     uint32_t substeps;          /**< Substeps for this tier. */
     uint32_t iterations;        /**< Solver iterations for this tier. */
+    float    compliance;        /**< XPBD compliance (ignored for TGS). */
     float    friction_boost;    /**< Friction multiplier (1.0 = default). */
     float    restitution_scale; /**< Restitution multiplier (1.0 = default). */
 } phys_tier_params_t;
@@ -76,6 +87,31 @@ typedef struct phys_step_plan {
 void phys_stage_step_plan(phys_step_plan_t *plan,
                           const struct phys_world *world,
                           const struct phys_game_state *game);
+
+/**
+ * @brief Return default solver parameters for a given tier.
+ *
+ * Pure function — no side effects, no heap allocation.
+ * For tiers outside T0–T4 (e.g. T5/sleeping), returns a
+ * default inactive entry with TGS/1 substep/1 iteration.
+ *
+ * @param tier  The simulation tier to query.
+ * @return Per-tier parameters (value type).
+ */
+phys_tier_params_t phys_get_tier_params(phys_tier_t tier);
+
+/**
+ * @brief Determine solver mode for a cross-tier constraint.
+ *
+ * Returns PHYS_SOLVER_TGS if either body is T0 or T1 (high-fidelity),
+ * otherwise returns PHYS_SOLVER_XPBD.
+ *
+ * @param tier_a  Tier of the first body.
+ * @param tier_b  Tier of the second body.
+ * @return The solver mode to use for the constraint.
+ */
+phys_solver_mode_t phys_tier_cross_solver_mode(phys_tier_t tier_a,
+                                               phys_tier_t tier_b);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -44,8 +44,10 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
     /* Phase 1: every tier gets the same parameters from world config. */
     for (int t = 0; t < PHYS_TIER_COUNT; ++t) {
         plan->tier_params[t].active            = true;
+        plan->tier_params[t].solver_mode       = PHYS_SOLVER_TGS;
         plan->tier_params[t].substeps          = cfg->default_substeps;
         plan->tier_params[t].iterations        = cfg->default_solver_iterations;
+        plan->tier_params[t].compliance        = 0.0f;
         plan->tier_params[t].friction_boost    = 1.0f;
         plan->tier_params[t].restitution_scale = 1.0f;
     }
