@@ -469,7 +469,7 @@ For a 1.5 ms physics tick budget:
 | Tier | Max Bodies | Solver | Iterations | Substeps | Notes |
 |------|------------|--------|------------|----------|-------|
 | T0 | 20 | TGS | 24 | 3 | Player interaction only |
-| T1 | 60 | TGS | 20 | 2 | Within arm's reach |
+| T1 | 60 | TGS | 20 | 2 | Same room / few seconds' walk |
 | T2 | 500 | XPBD | 8 | 1 | Visible, parallel |
 | T3 | 2,000 | XPBD | 6 | 1 | Far but consequential |
 | T4 | 10,000 | XPBD | 4 | 0.5 (amortized) | Background, aggressive sleep |

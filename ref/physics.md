@@ -81,7 +81,8 @@ T0 – Direct Manipulation
   Highest fidelity, strongest stabilization.
 
 T1 – Near Interactive
-  Within reach or soon interactable.
+  Same room, within a few seconds’ walk, or visible through a window/doorway.
+  Includes large objects seen through openings. Occluded nearby objects demote to T3.
   Stable resting, high contact quality.
 
 T2 – Visible / Potentially Hazardous
@@ -111,7 +112,9 @@ Promotion is explicit and deterministic:
 1) Base classification (once per tick):
    - distance, visibility, hazard heuristics
    - manipulation flags
-   - hysteresis to prevent flapping
+   - occlusion override: nearby but occluded bodies demote to T3+
+     (they only need to sound right and land plausibly)
+   - hysteresis to prevent flapping (includes occlusion hysteresis)
 
 2) Halo closure (each substep for Tier0, sometimes Tier3):
    - swept AABB + margin
@@ -325,12 +328,13 @@ Tier 0 – Direct Manipulation
   friction boost: ~3x
   restitution: suppressed when stabilized
 
-Tier 1 – Near Interactive
+Tier 1 – Near Interactive (same room / few seconds’ walk / visible through window)
   solver: TGS (island-based)
   substeps: 2
   iterations: 20
   manifold points: 4
   moderate stabilization
+  occlusion override: nearby but occluded bodies demote to T3
 
 Tier 2 – Visible / Hazardous
   solver: Jacobi XPBD (per-body parallel)

@@ -144,19 +144,25 @@ constraint iteration requires computing J·v (12 FMA), a lambda update, and
 applying impulses to 2 bodies (12 stores). With L1-warm sequential access
 (Gauss-Seidel pattern), this costs ~0.3–0.5 µs. We budget **0.5 µs** (worst
 case: box-box with friction rows, cold cache line on island transition).
+With constraint specialization (§4.4), the blended average drops to
+**~0.32 µs** for typical gameplay mixes (30% planar, 20% sphere, 50% generic).
 
 ```
 T_tgs ≈ max(T0/T1 island_sizes) × iterations × constraint_time
-      ≈ max_island × 22 × 0.5 µs
-      ≈ max_island × 11 µs
+      ≈ max_island × 22 × 0.5 µs       (generic, conservative)
+      ≈ max_island × 22 × 0.32 µs      (blended, with specialization)
 ```
 
-| Max T0/T1 Island Size | TGS Time | % of 3.0ms Budget |
-|------------------------|----------|-------------------|
-| 10 constraints | 110 µs | 4% |
-| 50 constraints | 550 µs | 18% |
-| 100 constraints | 1.1 ms | 37% |
-| 150 constraints | 1.65 ms | 55% |
+| Max T0/T1 Island Size | TGS (generic) | TGS (blended) | % of 3.0ms |
+|------------------------|---------------|---------------|------------|
+| 10 constraints | 110 µs | 70 µs | 2% |
+| 50 constraints | 550 µs | 352 µs | 12% |
+| 100 constraints | 1.1 ms | 704 µs | 23% |
+| 150 constraints | 1.65 ms | 1.06 ms | 35% |
+
+Note: scenarios below use the **generic 0.5 µs** cost for conservative
+budgeting. The blended cost represents achievable savings after
+specialization is implemented.
 
 **Jacobi XPBD (T2–T4): embarrassingly parallel**
 
@@ -409,8 +415,8 @@ A representative open-world game area with:
 | Tier | Body Count | Constraints | Notes |
 |------|------------|-------------|-------|
 | T0 (Direct) | 3-10 | 20-50 | Player + held objects |
-| T1 (Near) | 15-30 | 50-100 | Within reach |
-| T2 (Visible) | 40-80 | 100-200 | On-screen |
+| T1 (Near) | 15-30 | 50-100 | Same room / nearby |
+| T2 (Visible) | 40-80 | 100-200 | On-screen, next room |
 | T3 (World) | 20-50 | 40-100 | Active but distant |
 | T4 (Background) | 100-150 | 0-20 | Minimal sim: wind-sway, settling debris |
 | T5 (Sleeping) | 200-300 | 0 | No simulation |
@@ -512,17 +518,27 @@ For a 3.0 ms physics tick budget:
 | Pair explosion | Pair budget cap | Skip low-priority pairs when over budget |
 | Ragdoll piles | LOD simplification | Reduce body count at distance |
 | Wake storms | Staggered wake | Spread impulses over multiple frames |
+| Generic constraint overhead | Constraint specialization | Planar + sphere fast-paths (§4.4) |
+| Occluded objects at full fidelity | Occlusion-based tier demotion | Visibility-driven T3+ demotion (§4.5) |
 
 ### 4.2 Tier System Tuning
 
 | Tier | Max Bodies | Solver | Iterations | Substeps | Notes |
 |------|------------|--------|------------|----------|-------|
 | T0 | 30 | TGS | 24 | 3 | Player interaction only |
-| T1 | 100 | TGS | 20 | 2 | Within arm's reach |
-| T2 | 1,000 | XPBD | 8 | 1 | Visible, parallel |
-| T3 | 4,000 | XPBD | 6 | 1 | Far but consequential |
+| T1 | 100 | TGS | 20 | 2 | Same room / few seconds' walk; visible through windows |
+| T2 | 1,000 | XPBD | 8 | 1 | Visible but not immediate; next room if door open |
+| T3 | 4,000 | XPBD | 6 | 1 | Far or occluded but consequential |
 | T4 | 20,000 | XPBD | 4 | 0.5 (amortized) | Background, aggressive sleep |
 | T5 | ∞ | — | 0 | 0 | Sleeping, event-driven wake |
+
+**T1 boundary clarification:** T1 is not "arm's reach" — it is the set of
+objects the player could plausibly interact with within a few seconds. This
+includes everything in the same smallish room, large objects visible through
+a window or doorway, and objects the player is walking toward. Objects in the
+next room (behind a wall/corner) are T2 at closest. This means T1 can contain
+15–40 bodies in a cluttered room, but occlusion culling (§4.5) aggressively
+keeps hidden objects out of T1 even if they are physically close.
 
 ### 4.3 Budget Allocation by Game Type
 
@@ -533,6 +549,181 @@ For a 3.0 ms physics tick budget:
 | Puzzle | 3.0 ms | Complex mechanisms, precision |
 | Open World | 3.0 ms | Tiering, LOD, aggressive culling |
 | Fighting | 2.0 ms | Character physics, low prop count |
+
+### 4.4 Constraint Specialization
+
+The generic TGS constraint processes 3 Jacobian rows per contact point
+(1 normal + 2 friction tangents), each requiring J·v evaluation (12 FMA),
+lambda update, and impulse application (12 stores). At 0.5 µs per constraint
+iteration, this is the correct cost for the general case (arbitrary
+convex-convex with friction). But many common cases are much cheaper:
+
+**Planar contacts (coplanar manifold points):**
+
+When all manifold points on a pair share the same face normal — which is the
+common case for box-on-box, box-on-floor, and any flat-surface stacking —
+the constraint can be specialized:
+
+- Normal Jacobian J_v = ±n is identical for all contact points. Only J_w
+  differs (different lever arms r × n per point).
+- Friction tangent basis is computed once, not per-point.
+- The normal solve can be batched: one aggregate normal impulse for the
+  entire manifold, plus per-point angular residual corrections.
+
+A 4-point box-on-box contact drops from 12 Jacobian rows to ~4 effective
+rows (1 shared normal, 2 shared friction, ~1 aggregate angular correction):
+
+| Contact type | Generic rows | Specialized rows | Cost/iter | Speedup |
+|-------------|-------------|-----------------|-----------|---------|
+| 4-pt box-box planar | 12 | ~4 | ~0.17 µs | 3× |
+| 2-pt edge-edge | 6 | 6 (no specialization) | 0.50 µs | 1× |
+| 1-pt vertex | 3 | 3 (no specialization) | 0.50 µs | 1× |
+
+**Planar sleep propagation:** The bigger win is causal. If a planar contact
+is below a velocity threshold, the entire island subtree below it in the
+contact graph can remain sleeping. A stack of 5 boxes: the bottom 4 can
+sleep if the planar contact between box 4 and box 5 (the disturbed one) is
+low-velocity. This removes constraints from the solve entirely, not just
+cheapening them.
+
+A 5-box stack disturbed at the top:
+- Generic: 5 bodies × 4 contacts × 3 rows = 60 rows per iteration
+- Planar + sleep: 1 body active + 1 planar contact = ~4 rows per iteration
+- **15× reduction** in the best case (deep stable stacks)
+
+**Sphere-sphere contacts:**
+
+When both colliders are spheres (or dynamically simplified to spheres at T2+,
+see below), the constraint simplifies dramatically:
+
+- 1 manifold point per intersection (guaranteed for sphere-sphere)
+- Jacobian is trivial: J_v = ±n, J_w = ±(radius × n) — no cross products
+  needed because the lever arm is always radial
+- Effective mass is scalar (diagonal inertia for sphere)
+- Friction simplifies to rolling friction (1 scalar row, not 2 tangent rows)
+
+| Contact type | Generic rows | Specialized rows | Cost/iter | Speedup |
+|-------------|-------------|-----------------|-----------|---------|
+| Sphere-sphere | 3 | 1–2 | ~0.08 µs | 6× |
+
+**Dynamic sphere simplification at T2+:**
+
+Small objects with a bounding-sphere ratio (circumradius / inradius) below
+~1.3 can be dynamically treated as sphere colliders when demoted to T2 or
+below. This switches both the narrowphase (sphere-sphere instead of GJK/SAT)
+and the constraint solver to the fast path.
+
+Good candidates: rocks, skulls, potions, rubble chunks, small crates, bones.
+Bad candidates: pipes (ratio ~2.0), planks, bottles (ratio ~1.5+).
+
+The ratio can be precomputed at asset load time and stored as a flag on
+the collider. The tier classifier checks the flag when demoting to T2.
+
+**Blended constraint cost:**
+
+For typical March of Glaciers scenarios, the constraint mix is approximately:
+- 30% planar contacts (barricade stacks, floor resting, wall leans)
+- 20% sphere-simplifiable (skulls, rocks, small debris at T2+)
+- 50% generic (ragdolls, capsule contacts, mixed convex pairs)
+
+Blended cost per constraint iteration:
+`0.30 × 0.17 + 0.20 × 0.08 + 0.50 × 0.50 = 0.051 + 0.016 + 0.25 = **0.32 µs**`
+
+This is a **36% reduction** from the generic 0.5 µs baseline, before
+planar sleep propagation. With sleep propagation on stable stacks, effective
+constraint counts drop further (see scenario rework in §6).
+
+### 4.5 Occlusion-Based Tier Demotion
+
+Objects that are physically nearby but not visible to the player can be
+aggressively demoted to T3+ with reduced collider fidelity and iteration
+counts. They only need to:
+
+1. **Sound right** — collision events still fire for audio triggers
+2. **Fall at the right speed** — gravity integration is tier-independent
+3. **Land where they should** — post-settlement nudge corrects final position
+
+The key insight: if the player can't see it, the solver only needs to produce
+a *plausible* result, not a *precise* one. By the time the player rounds
+the corner or looks through the window, the objects have settled and can
+receive a small position correction to match the "correct" resting state.
+
+**What the renderer already knows:**
+
+The rendering pipeline performs occlusion culling every frame. This produces
+a visibility set that physics can consume directly in Stage 1 (tier
+classification). The classification algorithm becomes:
+
+```
+base_tier = classify_by_distance(body, player)
+if (base_tier <= T1 && !visibility_set.contains(body)):
+    effective_tier = max(base_tier, T3)  // demote to at least T3
+    // Keep T3 (not T4) so collision events still fire for audio
+```
+
+The hysteresis rule still applies: a body demoted by occlusion stays demoted
+for K frames (e.g., 5 frames) to prevent flapping when the player's view
+sweeps across occluders.
+
+**What changes at T3 for occluded objects:**
+
+| Parameter | T1 (visible) | T3 (occluded) | Savings |
+|-----------|-------------|---------------|---------|
+| Solver | TGS (island) | XPBD (parallel) | Island overhead eliminated |
+| Iterations | 20 | 6 | 3.3× fewer iterations |
+| Substeps | 2 | 1 | 2× fewer substeps |
+| Collider | Full (box/capsule) | Sphere (if ratio < 1.3) | ~6× cheaper narrowphase |
+| Manifold points | 4 | 2 | Fewer constraint rows |
+| Constraint cost | 0.50 µs/iter | 0.08–0.17 µs/iter | 3–6× cheaper |
+
+**Net effect:** A body that would cost `20 iter × 0.5 µs × 2 substeps = 20 µs`
+at T1 costs `6 iter × 0.08 µs × 1 substep = 0.48 µs` at occluded-T3 with
+sphere simplification. That's a **42× reduction per body**.
+
+**Post-settlement position correction:**
+
+When an occluded body becomes visible (player rounds corner), it may be in
+a slightly wrong resting position (XPBD with 6 iterations is less precise
+than TGS with 20). The correction is:
+
+1. On promotion to T1, compare current position against manifold contact
+   points. If penetration > 2mm, apply a gentle positional nudge over 3–5
+   frames (lerp toward the contact surface at 1mm/frame).
+2. The nudge is invisible because:
+   - The player is just arriving — no prior visual reference
+   - The nudge is < 5mm total, below perceptual threshold
+   - Objects are settling anyway (post-combat debris)
+
+**Scenario impact (Gang War Phase 1 — player observing from entrance):**
+
+The player is looking down a tunnel at the battle. Most combatants and
+barricade pieces are behind partial cover, pillars, or at oblique angles.
+With occlusion culling:
+
+- T1 bodies: 8 → 3 (only objects in direct line of sight)
+- Occluded-to-T3: 5 bodies that were T1 by distance, now T3 by visibility
+- T2 bodies: 60 → 40 (20 demoted to T3 by occlusion)
+- T3 (including demoted): 100 + 5 + 20 = 125
+
+TGS constraints: 30 → 12 (only 3 T1 bodies form islands)
+TGS cost: 12 × 22 × 0.5 × 2 = 264 µs (was 660 µs, **60% reduction**)
+
+**Combined with constraint specialization:** If those 12 TGS constraints
+are planar (barricade face), cost drops to 12 × 22 × 0.17 × 2 = 90 µs.
+Total tick: ~1.1 ms (was 1.9 ms) — **63% headroom**.
+
+**Level design synergy:**
+
+The subterranean setting of March of Glaciers is ideal for occlusion:
+- Tunnel geometry naturally occludes the next room
+- Corners and doorways create hard occlusion boundaries
+- Multi-level chambers hide objects above/below
+- Barricades themselves are occluders (objects behind a barricade the
+  player hasn't reached yet are invisible)
+
+Level designers can place occluders intentionally to create physics budget
+boundaries — a heavy door or a corner becomes a "physics LOD gate" where
+everything behind it drops to T3+ until the player approaches.
 
 ---
 
@@ -1044,17 +1235,21 @@ scene uses ~5 MB working set (16% of pool).
 **Primary bottleneck:** TGS Solve — the ×2 substep multiplier makes this the
 dominant cost in every near-field-heavy scenario. Only applies to T0/T1 bodies
 but constraints × 22 iterations × 0.5 µs × 2 substeps accumulates fast.
+With constraint specialization (§4.4), the blended cost drops to ~0.32 µs
+(36% reduction). With occlusion-based demotion (§4.5), the T1 body count
+shrinks further — occluded nearby bodies run at T3 XPBD instead of T1 TGS.
 
 **Secondary bottleneck:** Narrowphase (14% of tick, scales with pair count).
 At 2.0 µs/pair (conservative for 2015-era CPU), this is manageable up to
-~1500 pairs before it competes with TGS.
+~1500 pairs before it competes with TGS. Sphere simplification at T2+ (§4.4)
+reduces narrowphase cost for qualifying small objects by ~6×.
 
 **Tertiary bottleneck:** XPBD Solve (18% of tick CPU, but parallelizes
 perfectly across 8 threads and rarely dominates wall-clock even at 5000 bodies).
 
 **Safe operating envelope (3 ms budget, 32 MB pool):**
 - Active bodies: ≤ 10,000 (with tiering)
-- T0/T1 bodies: ≤ 25 (reduced from 35 due to ×2 substep cost)
+- T0/T1 bodies: ≤ 25 without specialization, ~40 with specialization + occlusion
 - Largest TGS island: ≤ 60 constraints without mitigation, ≤ 130 with island split
 - Collision pairs: ≤ 20,000
 - Near-field constraint density: ≤ 6 constraints/body
@@ -1063,16 +1258,22 @@ perfectly across 8 threads and rarely dominates wall-clock even at 5000 bodies).
 
 **For March of Glaciers:** Typical gameplay runs at 0.5–1.5 ms/tick. Dense
 barricade holdouts reach 2.7–3.9 ms without mitigation, requiring mandatory
-sleep-stabilize. The worst-case siege scenario hits 5.1 ms unmitigated but
-recovers to 2.0 ms with island splitting. The gang war explosion spike hits
-4.9 ms unmitigated but recovers to 2.6 ms with all three mitigations
-(sleep-stab, ragdoll LOD, island split).
+sleep-stabilize. With constraint specialization, the barricade holdout drops
+to ~2.0–2.5 ms (planar contacts on stacked boxes are 3× cheaper). With
+occlusion culling, objects behind barricades the player hasn't reached drop
+to T3, further reducing TGS load. The subterranean tunnel setting is ideal
+for occlusion — every corner and doorway is a natural physics LOD gate.
 
-**Key insight:** Mitigations are not optional luxuries — they are mandatory for
-any scenario with >60 TGS constraints. The good news: all mitigations are
-automatic (sleep-stabilize, ragdoll LOD, island split) and invisible to the
-player. Level design guidance (island-breaking gaps, merge static clutter,
-breakable debris LOD) is equally important for preventing problems at the source.
+**Optimization stack (cumulative):**
+1. Base mitigations (mandatory): sleep-stabilize, ragdoll LOD, island split
+2. Constraint specialization: planar fast-path (3×), sphere fast-path (6×)
+3. Occlusion demotion: nearby-but-hidden objects run at T3 XPBD (42× cheaper)
+4. Level design: island-breaking gaps, merge static clutter, debris LOD
+
+With the full stack, worst-case scenarios that currently show ❌ become
+comfortably within budget. The gang war explosion spike drops from 4.9 ms
+to ~2.0 ms (mitigations + specialization); with occlusion, the engaging
+phase drops from 3.8 ms to ~1.8 ms (many barricade pieces occluded).
 
 ---
 

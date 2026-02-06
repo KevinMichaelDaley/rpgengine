@@ -146,6 +146,7 @@ void phys_world_tick(phys_world_t *world)
 │    │       uint32_t body_count;                 [IN]  active body count
 │    │       const phys_vec3_t *player_positions; [IN]  player locations
 │    │       uint32_t player_count;               [IN]  number of players
+│    │       const uint8_t *visibility_set;       [IN]  per-body occlusion (from renderer)
 │    │       phys_tier_lists_t *tier_lists_out;   [OUT] classified indices
 │    │       phys_frame_arena_t *arena;           [IN]  allocator for lists
 │    │   }
@@ -155,7 +156,7 @@ void phys_world_tick(phys_world_t *world)
 │    │   │   ├── Compute distance to nearest player
 │    │   │   ├── Check manipulation flags
 │    │   │   ├── Apply hysteresis (keep tier for K frames unless trigger)
-│    │   │   └── Classify into T0..T5 based on distance + flags
+│    │   │   └── Classify into T0..T5 based on distance + flags + visibility
 │    │   └── Atomic append to tier lists (thread-safe)
 │    │
 │    │   PARALLELISM (future):
@@ -165,7 +166,7 @@ void phys_world_tick(phys_world_t *world)
 │    └── OUTPUT ═══════════════════════════════════════════════════════════════▶
 │                phys_tier_lists_t {
 │                    tiers[0]: { indices[], count } // T0: direct manipulation
-│                    tiers[1]: { indices[], count } // T1: near interactive
+│                    tiers[1]: { indices[], count } // T1: same room / few seconds' walk
 │                    tiers[2]: { indices[], count } // T2: visible/hazardous
 │                    tiers[3]: { indices[], count } // T3: world-shaping
 │                    tiers[4]: { indices[], count } // T4: background dynamic
