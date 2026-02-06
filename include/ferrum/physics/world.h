@@ -24,6 +24,9 @@
 extern "C" {
 #endif
 
+/* Forward declaration for impact event type (defined in cache_commit.h). */
+struct phys_impact_event;
+
 /* ── Configuration ──────────────────────────────────────────────── */
 
 /**
@@ -86,6 +89,12 @@ typedef struct phys_world {
 
     /* Tick counter. */
     uint64_t tick_count;
+
+    /* Impact event buffer (filled by cache_commit stage). */
+    struct phys_impact_event *impact_events;   /**< Dynamically allocated event buffer. */
+    uint32_t impact_event_count;               /**< Current number of events this frame. */
+    uint32_t impact_event_capacity;            /**< Allocated capacity. */
+    float    impact_threshold;                 /**< Minimum impulse to emit event. */
 } phys_world_t;
 
 /* ── Configuration API ──────────────────────────────────────────── */
@@ -255,6 +264,66 @@ const phys_aabb_t *phys_world_get_aabb(const phys_world_t *world,
  * @return Number of simulation ticks executed so far.
  */
 uint64_t phys_world_tick_count(const phys_world_t *world);
+
+/* ── Impact Event API ───────────────────────────────────────────── */
+
+/**
+ * @brief Get a read-only pointer to the impact event buffer.
+ *
+ * @param world     World (NULL returns NULL, sets *out_count to 0).
+ * @param out_count Output: number of events (may be NULL).
+ * @return Pointer to the event array, owned by the world.
+ */
+const struct phys_impact_event *phys_world_get_impact_events(
+    const phys_world_t *world, uint32_t *out_count);
+
+/**
+ * @brief Clear all impact events (sets count to 0).
+ *
+ * @param world  World (NULL-safe, no-op if NULL).
+ */
+void phys_world_clear_impact_events(phys_world_t *world);
+
+/**
+ * @brief Copy impact events involving a specific body into an output buffer.
+ *
+ * @param world      World (NULL returns 0).
+ * @param body_idx   Body index to filter by (matches body_a or body_b).
+ * @param out_events Output buffer (non-NULL).
+ * @param max_events Capacity of out_events.
+ * @return Number of events copied.
+ */
+uint32_t phys_world_get_impact_events_for_body(
+    const phys_world_t *world, uint32_t body_idx,
+    struct phys_impact_event *out_events, uint32_t max_events);
+
+/**
+ * @brief Find the strongest impact event for a specific body.
+ *
+ * @param world     World (NULL returns false).
+ * @param body_idx  Body index to filter by.
+ * @param out_event Output: the event with highest impulse (non-NULL).
+ * @return true if an event was found, false otherwise.
+ */
+bool phys_world_get_strongest_impact(
+    const phys_world_t *world, uint32_t body_idx,
+    struct phys_impact_event *out_event);
+
+/**
+ * @brief Set the minimum impulse magnitude required to emit impact events.
+ *
+ * @param world     World (NULL-safe, no-op if NULL).
+ * @param threshold Threshold value (negative values clamped to 0).
+ */
+void phys_world_set_impact_threshold(phys_world_t *world, float threshold);
+
+/**
+ * @brief Get the current impact event threshold.
+ *
+ * @param world  World (NULL returns 0.0f).
+ * @return Current threshold value.
+ */
+float phys_world_get_impact_threshold(const phys_world_t *world);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -1,7 +1,11 @@
 #include "ferrum/physics/world.h"
+#include "ferrum/physics/cache_commit.h"
 
 #include <stdlib.h>
 #include <string.h>
+
+/** Default capacity for the impact event buffer. */
+#define IMPACT_EVENT_DEFAULT_CAPACITY 256
 
 int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
     if (!world || !config) {
@@ -47,6 +51,17 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
         return -1;
     }
 
+    /* Allocate impact event buffer. */
+    world->impact_events = calloc(IMPACT_EVENT_DEFAULT_CAPACITY,
+                                  sizeof(phys_impact_event_t));
+    if (!world->impact_events) {
+        phys_world_destroy(world);
+        return -1;
+    }
+    world->impact_event_count    = 0;
+    world->impact_event_capacity = IMPACT_EVENT_DEFAULT_CAPACITY;
+    world->impact_threshold      = 1.0f;
+
     world->tick_count = 0;
     return 0;
 }
@@ -63,6 +78,7 @@ void phys_world_destroy(phys_world_t *world) {
     free(world->spheres);
     free(world->boxes);
     free(world->capsules);
+    free(world->impact_events);
 
     phys_manifold_cache_destroy(&world->manifold_cache);
     phys_frame_arena_destroy(&world->frame_arena);
