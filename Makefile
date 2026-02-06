@@ -76,6 +76,27 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p030_physics_island_tests \
 	build/p031_physics_world_tests \
 	build/p032_physics_phase0_integration_tests \
+	build/p033_physics_step_plan_tests \
+	build/p034_physics_tier_classify_tests \
+	build/p035_physics_spatial_update_tests \
+	build/p036_physics_halo_closure_tests \
+	build/p037_physics_aabb_update_tests \
+	build/p038_physics_broadphase_tests \
+	build/p039_physics_narrowphase_tests \
+	build/p040_physics_manifold_build_tests \
+	build/p041_physics_stabilization_tests \
+	build/p042_physics_constraint_build_tests \
+	build/p043_physics_island_build_tests \
+	build/p044_physics_tgs_solve_tests \
+	build/p045_physics_xpbd_solve_tests \
+	build/p046_physics_solver_transition_tests \
+	build/p047_physics_integrate_tests \
+	build/p048_physics_cache_commit_tests \
+	build/p049_physics_tick_tests \
+	build/p050_physics_impact_event_tests \
+	build/p051_physics_snapshot_tests \
+	build/p052_physics_prediction_tests \
+	build/p053_physics_phase1_integration_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -218,6 +239,69 @@ build/p031_physics_world_tests: $(SRC) tests/p031_physics_world_tests.c | build
 
 build/p032_physics_phase0_integration_tests: $(SRC) tests/p032_physics_phase0_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p032_physics_phase0_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p033_physics_step_plan_tests: $(SRC) tests/p033_physics_step_plan_tests.c | build
+	$(CC) $(CFLAGS) tests/p033_physics_step_plan_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p034_physics_tier_classify_tests: $(SRC) tests/p034_physics_tier_classify_tests.c | build
+	$(CC) $(CFLAGS) tests/p034_physics_tier_classify_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p035_physics_spatial_update_tests: $(SRC) tests/p035_physics_spatial_update_tests.c | build
+	$(CC) $(CFLAGS) tests/p035_physics_spatial_update_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p036_physics_halo_closure_tests: $(SRC) tests/p036_physics_halo_closure_tests.c | build
+	$(CC) $(CFLAGS) tests/p036_physics_halo_closure_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p037_physics_aabb_update_tests: $(SRC) tests/p037_physics_aabb_update_tests.c | build
+	$(CC) $(CFLAGS) tests/p037_physics_aabb_update_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p038_physics_broadphase_tests: $(SRC) tests/p038_physics_broadphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p038_physics_broadphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p039_physics_narrowphase_tests: $(SRC) tests/p039_physics_narrowphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p039_physics_narrowphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p040_physics_manifold_build_tests: $(SRC) tests/p040_physics_manifold_build_tests.c | build
+	$(CC) $(CFLAGS) tests/p040_physics_manifold_build_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p041_physics_stabilization_tests: $(SRC) tests/p041_physics_stabilization_tests.c | build
+	$(CC) $(CFLAGS) tests/p041_physics_stabilization_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p042_physics_constraint_build_tests: $(SRC) tests/p042_physics_constraint_build_tests.c | build
+	$(CC) $(CFLAGS) tests/p042_physics_constraint_build_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p043_physics_island_build_tests: $(SRC) tests/p043_physics_island_build_tests.c | build
+	$(CC) $(CFLAGS) tests/p043_physics_island_build_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p044_physics_tgs_solve_tests: $(SRC) tests/p044_physics_tgs_solve_tests.c | build
+	$(CC) $(CFLAGS) tests/p044_physics_tgs_solve_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p045_physics_xpbd_solve_tests: $(SRC) tests/p045_physics_xpbd_solve_tests.c | build
+	$(CC) $(CFLAGS) tests/p045_physics_xpbd_solve_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p046_physics_solver_transition_tests: $(SRC) tests/p046_physics_solver_transition_tests.c | build
+	$(CC) $(CFLAGS) tests/p046_physics_solver_transition_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p047_physics_integrate_tests: $(SRC) tests/p047_physics_integrate_tests.c | build
+	$(CC) $(CFLAGS) tests/p047_physics_integrate_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p048_physics_cache_commit_tests: $(SRC) tests/p048_physics_cache_commit_tests.c | build
+	$(CC) $(CFLAGS) tests/p048_physics_cache_commit_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p049_physics_tick_tests: $(SRC) tests/p049_physics_tick_tests.c | build
+	$(CC) $(CFLAGS) tests/p049_physics_tick_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p050_physics_impact_event_tests: $(SRC) tests/p050_physics_impact_event_tests.c | build
+	$(CC) $(CFLAGS) tests/p050_physics_impact_event_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p051_physics_snapshot_tests: $(SRC) tests/p051_physics_snapshot_tests.c | build
+	$(CC) $(CFLAGS) tests/p051_physics_snapshot_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p052_physics_prediction_tests: $(SRC) tests/p052_physics_prediction_tests.c | build
+	$(CC) $(CFLAGS) tests/p052_physics_prediction_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p053_physics_phase1_integration_tests: $(SRC) tests/p053_physics_phase1_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p053_physics_phase1_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -377,6 +461,27 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p030_physics_island_tests \
 	&& ./build/p031_physics_world_tests \
 	&& ./build/p032_physics_phase0_integration_tests \
+	&& ./build/p033_physics_step_plan_tests \
+	&& ./build/p034_physics_tier_classify_tests \
+	&& ./build/p035_physics_spatial_update_tests \
+	&& ./build/p036_physics_halo_closure_tests \
+	&& ./build/p037_physics_aabb_update_tests \
+	&& ./build/p038_physics_broadphase_tests \
+	&& ./build/p039_physics_narrowphase_tests \
+	&& ./build/p040_physics_manifold_build_tests \
+	&& ./build/p041_physics_stabilization_tests \
+	&& ./build/p042_physics_constraint_build_tests \
+	&& ./build/p043_physics_island_build_tests \
+	&& ./build/p044_physics_tgs_solve_tests \
+	&& ./build/p045_physics_xpbd_solve_tests \
+	&& ./build/p046_physics_solver_transition_tests \
+	&& ./build/p047_physics_integrate_tests \
+	&& ./build/p048_physics_cache_commit_tests \
+	&& ./build/p049_physics_tick_tests \
+	&& ./build/p050_physics_impact_event_tests \
+	&& ./build/p051_physics_snapshot_tests \
+	&& ./build/p052_physics_prediction_tests \
+	&& ./build/p053_physics_phase1_integration_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
