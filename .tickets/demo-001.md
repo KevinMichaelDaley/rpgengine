@@ -216,24 +216,87 @@ impact events) is already complete.
 
 ---
 
+## What Already Exists (reuse, don't reimplement)
+
+These systems are **done** and the demo wires them together:
+
+- **Physics pipeline**: `phys_world_tick()` — full 14-stage pipeline ✅
+- **Snapshot encoding**: `phys_snapshot_encode/decode()` ✅
+- **Prediction/reconciliation**: `phys_prediction_reconcile()` — snap/blend ✅
+- **Debug correction lines**: `fr_debug_correction_lines_cube()` — red wireframe ✅
+- **Tracy profiling**: `TRACY=1` build flag, zone markers in server/fiber code ✅
+- **Server replication**: `server_repl_server_pump/tick()` — client management,
+  SPAWN_BATCH, STATE_CUBE broadcast, INPUT_ROT receive ✅
+- **Client renderer**: SDL2+OpenGL window, cube VBO/VAO, shader pipeline,
+  `fr_pose_interpolator_t` for smooth rendering, per-entity coloring ✅
+- **Quantization**: `net_quantize_vec3_mm`, `net_quantize_quat_snorm16` ✅
+
+---
+
 ## Sub-Tickets (to be created)
 
-This epic should be broken into:
+### New code
 
-1. **demo-002**: Server-side physics world setup (ground plane, player
-   bodies, random spawner, input processing, impulse beam)
-2. **demo-003**: New network message types (INPUT_MOVE, INPUT_SPAWN,
-   extended STATE with body shape info)
-3. **demo-004**: Client renderer (first-person camera, box/sphere
-   meshes, ground plane, debug correction lines, impulse beam line)
-4. **demo-005**: Client input handling (WASD, mouse-look, left-click
-   fire, E spawn) + client-side prediction with server reconciliation
-5. **demo-006**: Server replication integration (snapshot encoding,
-   throttled state broadcast, spawn replication)
-6. **demo-007**: Tracy instrumentation (zone markers for each pipeline
-   stage, network send/recv, render frame)
-7. **demo-008**: Multi-client integration test (4 clients + server,
-   automated smoke test: connect, spawn, fire, verify state sync)
+1. **demo-002**: FPS camera controller (~300 lines, new file)
+   - Camera struct: position, yaw, pitch, move speed, mouse sensitivity
+   - `demo_camera_update(camera, mouse_dx, mouse_dy, wasd_flags, dt)`
+   - Builds view matrix via `mat4_look_at` from yaw/pitch each frame
+   - SDL relative mouse mode (`SDL_SetRelativeMouseMode`)
+   - No camera code exists anywhere in the engine today
+
+2. **demo-003**: Two new network message schemas (~300 lines)
+   - `demo_input_move_t`: yaw/pitch (snorm16) + move_flags (WASD bits)
+     + action_flags (fire/spawn bits). ~8 bytes on wire.
+   - `demo_input_spawn_t`: half-extents (mm) + color_seed. ~12 bytes.
+   - Encode/decode functions following existing `net_repl_input_rot`
+     pattern in `src/net/replication/`
+   - Existing INPUT_ROT schema is for rotation commands, not movement
+
+3. **demo-004**: Server physics world + game logic (~400 lines)
+   - Init `phys_world_t` with ground plane (static box collider),
+     4 kinematic player bodies
+   - Input handler: apply `demo_input_move_t` → update player body
+     position (kinematic, camera-relative)
+   - Impulse beam: when fire flag set, iterate bodies to find nearest
+     along forward ray, apply impulse (no raycast stage exists yet —
+     simple brute-force over active bodies is fine for 200 bodies)
+   - Box spawner: on `demo_input_spawn_t`, create dynamic body with
+     box collider at player position + 2m forward, toss velocity
+   - Random distant spawner: every 30-60 ticks, spawn large box or
+     sphere at random far position, high Y, falls under gravity
+
+4. **demo-005**: Sphere mesh + ground plane visuals (~300 lines)
+   - Generate icosphere vertex data (subdivision level 2, ~80 tris)
+   - Ground plane: large quad with grid-line pattern or checkerboard
+   - Impulse beam: single GL_LINES segment from camera to hit point
+   - Only cubes exist as renderable geometry today
+
+### Integration (wiring existing systems)
+
+5. **demo-006**: Client main loop (~500 lines, new file)
+   - Fork of `p008_renderer_client.c` structure but with:
+     - FPS camera (demo-002) instead of fixed isometric
+     - WASD/mouse/click/E input → `demo_input_move_t` sent each tick
+     - Receive STATE → `phys_prediction_reconcile()` (existing)
+     - Render bodies at reconciled poses (existing pose interpolator)
+     - `fr_debug_correction_lines_cube()` on correction (existing)
+     - Render sphere vs box mesh based on body shape type
+   - This is the main `demo_client` binary
+
+6. **demo-007**: Server main loop (~300 lines, new file)
+   - Fork of `p008_net_repl_server.c` structure but with:
+     - `phys_world_t` owned by server, ticked each frame
+     - Receive `demo_input_move_t/spawn_t` via existing pump
+     - Call `phys_world_tick()` (existing)
+     - Encode `phys_snapshot_encode()` (existing) → broadcast
+     - 4 fiber workers via existing job system
+   - This is the main `demo_server` binary
+
+7. **demo-008**: Smoke test (~200 lines)
+   - Embedded server + 4 headless clients in one binary
+   - Connect, spawn 10 boxes, fire impulse, wait 120 ticks
+   - Verify: all clients received spawns, state updates flowing,
+     no crashes, bodies came to rest on ground plane
 
 ---
 
