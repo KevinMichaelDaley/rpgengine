@@ -168,35 +168,44 @@ specialization is implemented.
 
 XPBD does not use islands. Bodies are processed independently (Jacobi pattern).
 Scaling is linear in body count and parallelizes across all available cores.
-Per-iteration cost is ~0.3 µs (position-level evaluation, gradient, Δλ, and
-correction accumulation — similar FLOPs to TGS but no sequential dependency).
+Per-iteration cost is ~0.3 µs for generic constraints (position-level
+evaluation, gradient, Δλ, and correction accumulation). With sphere
+simplification at T2+ (§4.4), qualifying bodies drop to ~0.1 µs/iteration.
+
+Iteration counts vary by tier: T2=8, T3=4, T4=2. For budgeting, we use
+a weighted average based on expected tier mix. In typical scenarios, T2
+bodies dominate the active XPBD set, so we use 6 iterations as a
+conservative blend (less than T2's 8, accounting for cheap T3/T4 bodies).
 
 ```
-T_xpbd ≈ total_constraints × iterations × cost_per / threads
-       ≈ constraints × 6 × 0.3 µs / 8
+T_xpbd ≈ total_constraints × avg_iterations × cost_per / threads
+       ≈ constraints × 6 × 0.3 µs / 8      (generic blend)
+       ≈ constraints × 6 × 0.22 µs / 8     (with ~40% sphere simplification)
 ```
 
 XPBD parallelizes per-body, not per-island. For small body counts, job
 dispatch overhead (~5 µs) means single-threading is faster. The table uses
 min(serial, parallel) for each row.
 
-| T2–T4 Bodies | Constraints (est) | XPBD Time | % of 3.0ms Budget |
-|--------------|-------------------|-----------|-------------------|
-| 200 | ~400 | 90 µs (serial: few bodies, dispatch overhead dominates) | 3% |
-| 1000 | ~2,000 | 450 µs (/8 threads) | 15% |
-| 5000 | ~10,000 | 2.25 ms (/8 threads) | 75% |
-| 10000 | ~20,000 | 4.5 ms (/8 threads) ⚠️ | 150% ❌ |
+| T2–T4 Bodies | Constraints (est) | XPBD (generic) | XPBD (sphere blend) | % of 3.0ms |
+|--------------|-------------------|-----------------|---------------------|------------|
+| 200 | ~400 | 90 µs | 66 µs | 2% |
+| 1000 | ~2,000 | 450 µs | 330 µs | 11% |
+| 5000 | ~10,000 | 2.25 ms | 1.65 ms | 55% |
+| 8000 | ~16,000 | 3.6 ms ❌ | 2.64 ms ✓ | 88% |
+| 10000 | ~20,000 | 4.5 ms ❌ | 3.3 ms ❌ | 110% ❌ |
 
 **Combined solver budget:**  
 T_solve = max(T_tgs, T_xpbd) because they run concurrently.  
 Typical case: 100 near-field constraints + 1000 far-field bodies (~2000 constraints)
-→ max(1.1ms TGS, 450µs XPBD) ≈ 1.1 ms (37%).
+→ max(1.1ms TGS, 330µs XPBD) ≈ 1.1 ms (37%).
 
-**Conclusion:** TGS is no longer the global bottleneck. The limiting factor shifts
-to XPBD body count at ~5000+ far-field bodies (where XPBD alone hits 2.25 ms),
-or TGS at ~130+ near-field island constraints. Both are well within the 3 ms
-budget for rich gameplay. At 10,000 far-field bodies, XPBD exceeds budget even
-with 8 threads — this is the true hard ceiling.
+**Conclusion:** With sphere simplification and reduced T3/T4 iterations, the
+XPBD ceiling rises from ~5000 to ~8000 active far-field bodies before hitting
+budget. TGS on the largest island remains the dominant cost in near-field-heavy
+scenarios, but constraint specialization (§4.4) and occlusion demotion (§4.5)
+reduce the effective island size dramatically. The practical ceiling for
+simultaneous active bodies is ~8000–8500 with the full optimization stack.
 
 ### 2.4 Secondary Bottleneck: Narrowphase
 
@@ -424,8 +433,9 @@ A representative open-world game area with:
 T4 bodies are the key to visual richness at low cost: a pipe that rocks in
 the wind, a shutter that bangs against its frame, trash that slowly slides
 down a slope. They run at amortized 10 Hz (every 3rd tick), use XPBD with
-4 iterations and high compliance (1e-4), and typically have 0 contacts
-(freefall or single resting contact). They cost ~0.1 µs/body/tick amortized.
+2 iterations and sphere colliders where possible, with high compliance
+(1e-4), and typically have 0 contacts (freefall or single resting contact).
+They cost ~0.05 µs/body/tick amortized.
 
 **Island structure (T0/T1 only — T2+ use XPBD, no islands):**
 - Player cluster: 1 island, 10-25 bodies, 30-80 constraints (TGS)
@@ -481,7 +491,7 @@ This represents a "player standing next to a big pile" worst case for the
 reference world. Mitigations:
 - Sleep-stabilize resting barricade contacts → 50 TGS constraints → 1.1 ms TGS
 - That brings total to ~2.4 ms (20% headroom) ✓
-- The 150 background props (T4) add only ~15 µs amortized — essentially free
+- The 150 background props (T4) add only ~8 µs amortized — essentially free
 - Parallel (4+ workers): ~2.0 ms/tick (33% headroom) ✓
 
 #### 3.3.2 Maximum Object Counts (Within Budget)
@@ -523,14 +533,14 @@ For a 3.0 ms physics tick budget:
 
 ### 4.2 Tier System Tuning
 
-| Tier | Max Bodies | Solver | Iterations | Substeps | Notes |
-|------|------------|--------|------------|----------|-------|
-| T0 | 30 | TGS | 24 | 3 | Player interaction only |
-| T1 | 100 | TGS | 20 | 2 | Same room / few seconds' walk; visible through windows |
-| T2 | 1,000 | XPBD | 8 | 1 | Visible but not immediate; next room if door open |
-| T3 | 4,000 | XPBD | 6 | 1 | Far or occluded but consequential |
-| T4 | 20,000 | XPBD | 4 | 0.5 (amortized) | Background, aggressive sleep |
-| T5 | ∞ | — | 0 | 0 | Sleeping, event-driven wake |
+| Tier | Max Bodies | Solver | Iterations | Substeps | Collider | Notes |
+|------|------------|--------|------------|----------|----------|-------|
+| T0 | 30 | TGS | 24 | 3 | Full | Player interaction only |
+| T1 | 100 | TGS | 20 | 2 | Full | Same room / few seconds' walk; visible through windows |
+| T2 | 1,000 | XPBD | 8 | 1 | Full (sphere if ratio<1.3) | Visible but not immediate; next room if door open |
+| T3 | 4,000 | XPBD | 4 | 1 | Sphere if ratio<1.3 | Far or occluded but consequential |
+| T4 | 20,000 | XPBD | 2 | 0.5 (amortized) | Sphere preferred | Background, aggressive sleep |
+| T5 | ∞ | — | 0 | 0 | — | Sleeping, event-driven wake |
 
 **T1 boundary clarification:** T1 is not "arm's reach" — it is the set of
 objects the player could plausibly interact with within a few seconds. This
@@ -820,7 +830,7 @@ TGS:   10 × 22 × 0.5 µs × 2  = 220 µs
 XPBD:  8 × 6 × 0.3 µs × 2/8  =   4 µs
 Narrow: 20 × 2.0 µs × 2 / 8  =  10 µs
 Broad:  72 × 0.5 µs × 2       =  72 µs
-T4 amortized: 60 × 0.1 µs     =   6 µs
+T4 amortized: 60 × 0.05 µs    =   3 µs
 Other stages:                   ~100 µs
                                ─────────
 Total:                          ~0.4 ms/tick ✓✓✓ (87% headroom)
@@ -844,7 +854,7 @@ TGS:   70 × 22 × 0.5 µs × 2  = 1.54 ms
 XPBD:  90 × 6 × 0.3 µs × 2/8 =  40 µs (parallel)
 Narrow: 150 × 2.0 µs × 2 / 8 =  75 µs (parallel)
 Broad:  155 × 0.5 µs × 2      = 155 µs
-T4 amortized: 100 × 0.1 µs    =  10 µs
+T4 amortized: 100 × 0.05 µs   =   5 µs
 Other stages:                   ~350 µs
                                ─────────
 Total:                          ~2.2 ms/tick ✓ (27% headroom)
@@ -874,7 +884,7 @@ TGS:   80 × 22 × 0.5 µs × 2    = 1.76 ms
 XPBD:  700 × 6 × 0.3 µs × 2/8  = 315 µs (parallel, 8 threads)
 Narrow: 1000 × 2.0 µs × 2 / 8  = 500 µs (parallel)
 Broad:  280 × 0.5 µs × 2        = 280 µs
-T4 amortized: 80 × 0.1 µs       =   8 µs
+T4 amortized: 80 × 0.05 µs      =   4 µs
 Other stages:                    ~350 µs
                                 ─────────
 Total:                           ~3.2 ms/tick ⚠️ (7% over budget)
@@ -917,7 +927,7 @@ TGS:   140 × 22 × 0.5 µs × 2    = 3.08 ms  ❌ (over budget alone!)
 XPBD:  200 × 6 × 0.3 µs × 2/8   =  90 µs
 Narrow: 450 × 2.0 µs × 2 / 8    = 225 µs
 Broad:  200 × 0.5 µs × 2         = 200 µs
-T4 amortized: 60 × 0.1 µs        =   6 µs
+T4 amortized: 60 × 0.05 µs       =   3 µs
 Other stages:                     ~400 µs
                                  ─────────
 Total (no mitigation):            ~3.9 ms/tick ❌
@@ -954,7 +964,7 @@ TGS:   40 × 22 × 0.5 µs × 2  = 0.88 ms
 XPBD:  130 × 6 × 0.3 µs × 2/8=  58 µs
 Narrow: 180 × 2.0 µs × 2 / 8 =  90 µs
 Broad:  150 × 0.5 µs × 2      = 150 µs
-T4 amortized: 80 × 0.1 µs     =   8 µs
+T4 amortized: 80 × 0.05 µs    =   4 µs
 Other stages:                   ~300 µs
                                ─────────
 Total:                          ~1.5 ms/tick ✓ (50% headroom)
@@ -1029,7 +1039,7 @@ TGS:   170 × 22 × 0.5 µs × 2    = 3.74 ms  ❌ (over budget alone)
 XPBD:  350 × 6 × 0.3 µs × 2/8   = 158 µs
 Narrow: 800 × 2.0 µs × 2 / 8    = 400 µs
 Broad:  300 × 0.5 µs × 2         = 300 µs
-T4 amortized: 80 × 0.1 µs        =   8 µs
+T4 amortized: 80 × 0.05 µs       =   4 µs
 Other stages:                     ~450 µs
                                  ─────────
 Total (no mitigation):            ~5.1 ms/tick ❌❌ (way over budget)
@@ -1254,7 +1264,7 @@ perfectly across 8 threads and rarely dominates wall-clock even at 5000 bodies).
 - Collision pairs: ≤ 20,000
 - Near-field constraint density: ≤ 6 constraints/body
 - Total pool: 32 MB (right-sized for CPU ceiling)
-- Background T4 props: up to 200 at negligible cost (~20 µs at amortized 10Hz)
+- Background T4 props: up to 500 at negligible cost (~25 µs at amortized 10Hz, 2 iterations, sphere collider)
 
 **For March of Glaciers:** Typical gameplay runs at 0.5–1.5 ms/tick. Dense
 barricade holdouts reach 2.7–3.9 ms without mitigation, requiring mandatory
@@ -1355,33 +1365,34 @@ This section quantifies the budget explicitly.
 ### 9.1 Per-Object Cost
 
 T4 bodies tick at amortized 10Hz (every 3rd physics tick at 33Hz).
-Each tick: XPBD with 4 iterations, high compliance (soft contacts).
+Each tick: XPBD with 2 iterations, sphere collider preferred, high compliance.
 
 ```
 Per T4 body per physics tick (amortized):
-  XPBD:  1 constraint × 4 iterations × 0.3 µs / 3 ticks = 0.4 µs
+  XPBD:  1 constraint × 2 iterations × 0.1 µs / 3 ticks = 0.067 µs
   Broad: 1 body × 0.5 µs / 3 = 0.17 µs
-  Narrow: (most T4 bodies are resting, ~20% have active pair) = 0.13 µs
-                                                                ─────
-  Total per T4 body per tick:                                  ~0.1 µs (amortized)
-  (varies: sleeping T4 ≈ 0, active T4 with contact ≈ 0.3 µs)
+  Narrow: sphere-sphere ~0.3 µs × 20% active / 3 = 0.02 µs
+                                                    ─────
+  Total per T4 body per tick:                       ~0.05 µs (amortized)
+  (varies: sleeping T4 ≈ 0, active T4 with contact ≈ 0.15 µs)
 ```
 
 ### 9.2 Budget Envelope
 
-At 0.1 µs/body amortized, within a 100 µs budget slice for background:
+At 0.05 µs/body amortized, within a 100 µs budget slice for background:
 
 | T4 count | Cost/tick | % of 3ms budget | Visual impact |
 |----------|-----------|-----------------|---------------|
-| 50 | 5 µs | 0.2% | Sparse — a few dangling pipes |
-| 100 | 10 µs | 0.3% | Moderate — debris, stalactites, loose panels |
-| 200 | 20 µs | 0.7% | Rich — every surface has loose detail |
-| 500 | 50 µs | 1.7% | Lavish — full environmental simulation |
+| 50 | 2.5 µs | 0.1% | Sparse — a few dangling pipes |
+| 100 | 5 µs | 0.2% | Moderate — debris, stalactites, loose panels |
+| 200 | 10 µs | 0.3% | Rich — every surface has loose detail |
+| 500 | 25 µs | 0.8% | Lavish — full environmental simulation |
+| 1000 | 50 µs | 1.7% | Extreme — densely populated world |
 
-**Recommendation:** 100–200 T4 props per loaded area. This provides rich
-environmental detail at <1% CPU cost. Beyond 200, the broadphase starts to
-notice the extra AABBs (500 bodies × 0.5 µs = 250 µs broadphase contribution,
-even amortized this is ~85 µs/tick — still small but no longer invisible).
+**Recommendation:** 200–500 T4 props per loaded area. With 2-iteration sphere
+XPBD, even 500 background props cost only 25 µs (0.8% of budget). The
+broadphase is now the limiting factor for T4 count: 1000 bodies × 0.5 µs
+= 500 µs broadphase contribution, amortized ~170 µs/tick.
 
 ### 9.3 What Makes Good T4 Props
 

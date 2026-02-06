@@ -789,7 +789,7 @@ void phys_world_tick(phys_world_t *world)
 │    │       phys_body_t *bodies_out;           [OUT]    position corrections
 │    │       phys_velocity_t *velocities_out;   [OUT]    derived velocity = Δx/dt
 │    │       uint32_t body_count;               [IN]     T2–T4 body count
-│    │       uint32_t iterations;               [IN]     4–8 typical
+│    │       uint32_t iterations;               [IN]     2–8 (T2:8, T3:4, T4:2)
 │    │       float omega;                       [IN]     Jacobi relaxation (0.5–0.8)
 │    │       float dt;                          [IN]     substep dt
 │    │   }

@@ -347,14 +347,16 @@ Tier 2 – Visible / Hazardous
 Tier 3 – World-Shaping
   solver: Jacobi XPBD (per-body parallel)
   substeps: 1–2 based on speed/impact
-  iterations: 6
+  iterations: 4
+  collider: sphere simplification if bounding-sphere ratio < 1.3
   stabilization off while moving
   compliance: 1e-5 (slightly soft)
 
 Tier 4 – Background
   solver: Jacobi XPBD (per-body parallel)
   amortized cadence (e.g. 10 Hz)
-  iterations: 4
+  iterations: 2
+  collider: sphere preferred (all small objects)
   manifold points: 1
   aggressive sleep
   compliance: 1e-4 (soft, energy-absorbing)
