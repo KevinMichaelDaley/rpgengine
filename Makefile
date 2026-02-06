@@ -64,6 +64,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p018_physics_types_tests \
 	build/p019_physics_body_tests \
 	build/p020_physics_collider_tests \
+	build/p021_physics_aabb_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -170,6 +171,9 @@ build/p019_physics_body_tests: $(SRC) tests/p019_physics_body_tests.c | build
 
 build/p020_physics_collider_tests: $(SRC) tests/p020_physics_collider_tests.c | build
 	$(CC) $(CFLAGS) tests/p020_physics_collider_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p021_physics_aabb_tests: $(SRC) tests/p021_physics_aabb_tests.c | build
+	$(CC) $(CFLAGS) tests/p021_physics_aabb_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
@@ -317,6 +321,7 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p018_physics_types_tests \
 	&& ./build/p019_physics_body_tests \
 	&& ./build/p020_physics_collider_tests \
+	&& ./build/p021_physics_aabb_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
