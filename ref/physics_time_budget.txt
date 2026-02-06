@@ -4,6 +4,12 @@
 # Percentages are of total physics tick time
 # Zone names follow pattern: Phys.Stage.DescriptiveParticiple
 #
+# NOTE: Percentages represent CPU-core-time, NOT wall-clock time.
+# TGS (12%) and XPBD (18%) run concurrently — wall-clock is max(12,18) = 18%.
+# The raw sum is 100% of total CPU work across all cores.
+# Also, parallel stages (marked [PARALLEL] in callgraph) divide by thread count
+# for wall-clock, so actual wall-clock is significantly less than the sum.
+#
 # Format: FUNCTION_NAME                          TRACY_ZONE                              %TIME
 # ----------------------------------------------------------------------------------------------
 

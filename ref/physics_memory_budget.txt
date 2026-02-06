@@ -159,6 +159,21 @@ phys_step_plan_t                                 StepPlan                       
 # =============================================================================
 # STRUCTURE SIZES (compile-time verification)
 # =============================================================================
+#
+# NOTE: The struct sizes below are FULL AoS (array-of-structs) sizes, which
+# include all fields, padding, and alignment. The budget calculations above
+# use SMALLER per-entry sizes (e.g., constraint_t: 104B in budget vs 228B
+# in struct table) because the frame arena uses packed/SoA layouts that omit
+# unused fields and cache-unfriendly padding. For example:
+#   - phys_constraint_t (228B full) → 104B packed: omits debug fields,
+#     stores Jacobian rows contiguously, packs solver_mode into bitfield
+#   - phys_manifold_t (192B full) → 80B packed: stores contact points
+#     separately, omits cache metadata (stored in cache entry)
+#   - phys_contact_candidate_t (140B full) → 48B packed: stores only
+#     the contact normal, depth, and body indices needed for manifold build
+#
+# The full struct sizes are used for static_assert verification and for
+# the persistent allocations (body pool, AABB pool) where AoS layout is used.
 
 # Structure                  Expected Size    Alignment
 # ----------------------------------------------------------

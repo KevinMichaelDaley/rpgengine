@@ -71,8 +71,12 @@ This is 8× smaller than 256 MB, freeing memory for rendering, audio, and AI.
 
 ### 2.1 Stage Complexity
 
-| Stage | Time % | Complexity | Primary Scaling Factor |
-|-------|--------|------------|------------------------|
+Percentages are of total CPU-core-time (not wall-clock). TGS (12%) and XPBD
+(18%) run concurrently, so their combined wall-clock cost is max(12, 18) = 18%.
+See `physics_time_budget.txt` for the canonical breakdown.
+
+| Stage | CPU % | Complexity | Primary Scaling Factor |
+|-------|-------|------------|------------------------|
 | Step Plan | 0.5% | O(1) | Constant |
 | Tier Classify | 3.0% | O(n) | Body count |
 | Spatial Update | 3.0% | O(n) | Body count |
@@ -83,12 +87,16 @@ This is 8× smaller than 256 MB, freeing memory for rendering, audio, and AI.
 | Manifold Build | 5.0% | O(pairs) | Pair count |
 | Stabilization | 4.0% | O(manifolds) | Manifold count |
 | Constraint Build | 5.0% | O(contacts) | Contact point count |
-| Island Build | 5.0% | O(c × α(n)) | Constraint count |
-| **TGS Solve** | **30.0%** | O(I × k × c/I) | Iterations × constraints |
+| Island Build | 4.0% | O(c × α(n)) | T0/T1 constraint count |
+| **TGS Solve (11a)** | **12.0%** | O(I × k × c/I) | Iterations × T0/T1 constraints |
+| **XPBD Solve (11b)** | **18.0%** | O(n × k) | T2–T4 body count × iterations |
 | Integrate | 5.0% | O(n) | Body count |
 | Cache Commit | 2.0% | O(manifolds) | Manifold count |
 | Buffer Swap | 0.5% | O(1) | Constant |
 | Network | 8.0% | O(changed) | Changed body count |
+
+*11a and 11b run concurrently on disjoint body sets. Wall-clock solve cost =
+max(TGS, XPBD). CPU total sums to 100% across all cores.*
 
 ### 2.2 Scaling Regimes
 
@@ -130,6 +138,13 @@ This dramatically reduces the TGS bottleneck for large scenes.
    small near-field island set.*
 
 **TGS time formula (T0/T1 only):**
+
+Per-operation cost assumes a ~2015-era 4 GHz CPU (i7-6700K class). Each
+constraint iteration requires computing J·v (12 FMA), a lambda update, and
+applying impulses to 2 bodies (12 stores). With L1-warm sequential access
+(Gauss-Seidel pattern), this costs ~0.3–0.5 µs. We budget **0.5 µs** (worst
+case: box-box with friction rows, cold cache line on island transition).
+
 ```
 T_tgs ≈ max(T0/T1 island_sizes) × iterations × constraint_time
       ≈ max_island × 22 × 0.5 µs
@@ -147,26 +162,35 @@ T_tgs ≈ max(T0/T1 island_sizes) × iterations × constraint_time
 
 XPBD does not use islands. Bodies are processed independently (Jacobi pattern).
 Scaling is linear in body count and parallelizes across all available cores.
+Per-iteration cost is ~0.3 µs (position-level evaluation, gradient, Δλ, and
+correction accumulation — similar FLOPs to TGS but no sequential dependency).
 
 ```
-T_xpbd ≈ (T2-T4 body_count / num_jobs) × iterations × constraint_time
-       ≈ (bodies / 8) × 6 × 0.3 µs  (cheaper per-iteration: position-level)
+T_xpbd ≈ total_constraints × iterations × cost_per / threads
+       ≈ constraints × 6 × 0.3 µs / 8
 ```
 
-| T2–T4 Bodies | Jobs (8 threads) | XPBD Time | % of 3.0ms Budget |
-|--------------|------------------|-----------|-------------------|
-| 200 | 2 | 225 µs | 8% |
-| 1000 | 8 | 225 µs | 8% |
-| 5000 | 40 | 1.1 ms | 37% |
-| 10000 | 80 | 2.25 ms | 75% |
+XPBD parallelizes per-body, not per-island. For small body counts, job
+dispatch overhead (~5 µs) means single-threading is faster. The table uses
+min(serial, parallel) for each row.
+
+| T2–T4 Bodies | Constraints (est) | XPBD Time | % of 3.0ms Budget |
+|--------------|-------------------|-----------|-------------------|
+| 200 | ~400 | 90 µs (serial: few bodies, dispatch overhead dominates) | 3% |
+| 1000 | ~2,000 | 450 µs (/8 threads) | 15% |
+| 5000 | ~10,000 | 2.25 ms (/8 threads) | 75% |
+| 10000 | ~20,000 | 4.5 ms (/8 threads) ⚠️ | 150% ❌ |
 
 **Combined solver budget:**  
 T_solve = max(T_tgs, T_xpbd) because they run concurrently.  
-Typical case: 100 near-field constraints + 1000 far-field bodies → max(1.1ms, 225µs) ≈ 1.1 ms (37%).
+Typical case: 100 near-field constraints + 1000 far-field bodies (~2000 constraints)
+→ max(1.1ms TGS, 450µs XPBD) ≈ 1.1 ms (37%).
 
 **Conclusion:** TGS is no longer the global bottleneck. The limiting factor shifts
-to XPBD body count at ~8000+ far-field bodies, or TGS at ~130+ near-field island
-constraints. Both are well within the 3 ms budget for rich gameplay.
+to XPBD body count at ~5000+ far-field bodies (where XPBD alone hits 2.25 ms),
+or TGS at ~130+ near-field island constraints. Both are well within the 3 ms
+budget for rich gameplay. At 10,000 far-field bodies, XPBD exceeds budget even
+with 8 threads — this is the true hard ceiling.
 
 ### 2.4 Secondary Bottleneck: Narrowphase
 
@@ -188,9 +212,12 @@ Pathological:    pairs ≈ bodies² / 2
 | Dense | 2,000 pairs | 10,000 pairs | 20,000 pairs |
 | Pathological | 5,000 pairs | 125,000 pairs ❌ | 500,000 pairs ❌ |
 
-At ~7 µs per pair (including AABB + narrowphase), budget limits:
+At ~2.0 µs per pair (including AABB + narrowphase, on a ~2015-era 4 GHz CPU;
+sphere-sphere ~0.3 µs, box-box SAT+clip ~1.5 µs, average ~1.0 µs with
+~1.0 µs for cache misses and dispatch overhead), budget limits:
 - 3.0 ms budget × 14% = 420 µs for narrowphase
-- 420 µs / 7 µs = ~60 pairs per body maximum
+- 420 µs / 2.0 µs = ~210 pairs per substep (serial)
+- Parallel (8 threads): ~1,680 pairs per substep
 
 ---
 
@@ -364,6 +391,7 @@ A representative open-world game area with:
 - Terrain mesh
 
 **Dynamic objects:**
+
 | Category | Count | Typical State |
 |----------|-------|---------------|
 | Vehicles (parked) | 40 | Sleeping |
@@ -374,7 +402,8 @@ A representative open-world game area with:
 | Props (crates, barrels) | 200 | Mostly sleeping |
 | Doors/hatches | 50 | Sleeping |
 | Destructibles | 80 | Sleeping |
-| **Total dynamic** | **~420** | |
+| **Background props (T4)** | **150** | **Slow-ticked: loose trash, distant shutters, swaying pipes** |
+| **Total dynamic** | **~570** | |
 
 **Typical frame state:**
 | Tier | Body Count | Constraints | Notes |
@@ -383,8 +412,14 @@ A representative open-world game area with:
 | T1 (Near) | 15-30 | 50-100 | Within reach |
 | T2 (Visible) | 40-80 | 100-200 | On-screen |
 | T3 (World) | 20-50 | 40-100 | Active but distant |
-| T4 (Background) | 50-80 | 0 | Minimal simulation |
+| T4 (Background) | 100-150 | 0-20 | Minimal sim: wind-sway, settling debris |
 | T5 (Sleeping) | 200-300 | 0 | No simulation |
+
+T4 bodies are the key to visual richness at low cost: a pipe that rocks in
+the wind, a shutter that bangs against its frame, trash that slowly slides
+down a slope. They run at amortized 10 Hz (every 3rd tick), use XPBD with
+4 iterations and high compliance (1e-4), and typically have 0 contacts
+(freefall or single resting contact). They cost ~0.1 µs/body/tick amortized.
 
 **Island structure (T0/T1 only — T2+ use XPBD, no islands):**
 - Player cluster: 1 island, 10-25 bodies, 30-80 constraints (TGS)
@@ -394,45 +429,54 @@ A representative open-world game area with:
 - Traffic vehicles: 10 bodies, 0 constraints
 - Distant ragdolls: 30-60 bodies, 80-160 constraints
 - Scattered debris: 20-50 bodies, 0-30 constraints
+- Background props (T4, amortized): 100-150 bodies, 0-20 constraints
 
-**Performance breakdown:**
+**Performance breakdown (per tick, 2 substeps, 8-thread parallel):**
+
+All costs below are per-tick totals. Stages 3–13 run per substep but the
+per-body costs shown are amortized over the full tick (cost × 2 substeps ÷ N
+threads for parallelizable stages). Target CPU: ~2015-era 4 GHz (i7-6700K).
+
 ```
-Tier classification:  420 bodies × 0.1 µs = 42 µs
-Spatial update:       420 bodies × 0.2 µs = 84 µs
-Halo closure:         10 T0 bodies × 10 µs = 100 µs
-AABB update:          130 active × 0.3 µs = 39 µs
-Broadphase:           130 active × 1.5 µs = 195 µs
-Narrowphase:          300 pairs × 3.0 µs = 900 µs
-Manifold build:       160 manifolds × 1.0 µs = 160 µs
-Stabilization:        160 manifolds × 0.5 µs = 80 µs
-Constraint build:     400 constraints × 0.5 µs = 200 µs
-Island build:         160 T0/T1 constraints × 0.3 µs = 48 µs
+Tier classification:  570 bodies × 0.1 µs = 57 µs       (once/tick)
+Spatial update:       570 bodies × 0.2 µs = 114 µs      (once/tick)
+Halo closure:         10 T0 bodies × 10 µs × 2 = 200 µs (per substep)
+AABB update:          180 active × 0.3 µs × 2 = 108 µs  (per substep)
+Broadphase:           180 active × 0.5 µs × 2 = 180 µs  (per substep)
+Narrowphase:          300 pairs × 2.0 µs × 2 / 8 = 150 µs (parallel)
+Manifold build:       160 manifolds × 1.0 µs × 2 / 4 = 80 µs (parallel)
+Stabilization:        160 manifolds × 0.5 µs × 2 / 4 = 40 µs (parallel)
+Constraint build:     400 constraints × 0.5 µs × 2 / 4 = 100 µs (parallel)
+Island build:         160 T0/T1 constraints × 0.3 µs × 2 = 96 µs (sync)
 Solver:               See below
-Integrate:            130 active × 0.5 µs = 65 µs
-Cache commit:         160 manifolds × 0.3 µs = 48 µs
+Integrate:            180 active × 0.5 µs × 2 / 4 = 45 µs (parallel)
+Cache commit:         160 manifolds × 0.3 µs × 2 = 96 µs (sync)
 
-TGS solve (T0/T1, per island):
-  Player cluster:     80 constraints × 22 iter × 0.5 µs = 880 µs
-  Near ragdoll 1:     40 constraints × 20 iter × 0.5 µs = 400 µs
-  Near ragdoll 2:     40 constraints × 20 iter × 0.5 µs = 400 µs
-  Subtotal TGS (parallel): max(880, 400+400) ≈ 880 µs with 3+ workers
+TGS solve (T0/T1, per island, 2 substeps):
+  Player cluster:     80 constraints × 22 iter × 0.5 µs × 2 = 1.76 ms
+  Near ragdoll 1:     40 constraints × 20 iter × 0.5 µs × 2 = 0.80 ms
+  Near ragdoll 2:     40 constraints × 20 iter × 0.5 µs × 2 = 0.80 ms
+  Subtotal TGS (parallel across islands): max(1.76, 0.80+0.80) ≈ 1.76 ms
 
-XPBD solve (T2–T4, parallel over bodies):
-  110 T2–T4 bodies, ~220 constraints × 6 iter × 0.3 µs ≈ 400 µs
-  8 threads → ~50 µs per thread
+XPBD solve (T2–T4, parallel over bodies, 2 substeps):
+  160 T2–T4 bodies, ~320 constraints × 6 iter × 0.3 µs × 2 / 8 = 144 µs
 
-Solver total: max(880, 50) ≈ 880 µs (TGS dominates, but bounded)
+Solver total: max(1.76 ms, 144 µs) ≈ 1.76 ms (TGS dominates, but bounded)
 Stages 11a+11b run concurrently.
 
-Substep total: ~1.4 ms (parallel)
-Per-tick (2 substeps): ~2.8 ms (single-threaded), ~1.8 ms (parallel)
+Non-solver total: ~1.27 ms
+Per-tick total: ~1.27 + 1.76 = ~3.0 ms (just at budget)
 ```
 
 **Conclusion for rich world:**
-- Single-threaded: ~2.8 ms/tick (within 3.0 ms budget) ✓
-- Parallel (4+ workers): ~1.8 ms/tick (40% headroom) ✓
-- Headroom for spikes: ~1.2 ms
-- The 3 ms budget allows single-threaded operation in most scenarios
+
+The 570-body reference scene is tight at 3.0 ms with 80 T0/T1 constraints.
+This represents a "player standing next to a big pile" worst case for the
+reference world. Mitigations:
+- Sleep-stabilize resting barricade contacts → 50 TGS constraints → 1.1 ms TGS
+- That brings total to ~2.4 ms (20% headroom) ✓
+- The 150 background props (T4) add only ~15 µs amortized — essentially free
+- Parallel (4+ workers): ~2.0 ms/tick (33% headroom) ✓
 
 #### 3.3.2 Maximum Object Counts (Within Budget)
 
@@ -546,67 +590,79 @@ objects.
 - 0–3 ragdolls
 - No player-built structures
 - 8–15 bodies active at any time (most sleeping)
+- 50–80 background props (T4): dripping pipes, swaying cables, loose grating
 
 **Medium Clutter** — explored area with some player fortification:
 - 120–250 dynamic bodies (scrap piles, crates, barricade pieces, skulls)
 - 3–8 ragdolls (killed enemies, creatures)
 - 1–2 active fires (heat source, light source)
 - 30–60 bodies active
+- 80–120 background props (T4): rattling vents, rocking loose tiles, swinging chains
 
 **High Clutter** — heavily fortified holdout or post-combat aftermath:
 - 300–600 dynamic bodies (dense barricade, debris fields, scattered props)
 - 8–15 ragdolls
 - 2–4 fires
 - 80–200 bodies active (barricade under stress, settling debris)
+- 100–150 background props (T4): stress-creaking supports, settling rubble, dripping condensation
 
 ### 6.3 Per-Archetype CPU Analysis
 
 All numbers assume 30 Hz tick rate, 2 substeps, 8-thread parallel.
 Budget target: 3.0 ms/tick (with 1.0 ms spike headroom).
+Per-operation costs target a ~2015-era 4 GHz CPU (i7-6700K / Ryzen 1600).
+All costs are per-tick totals (substep stages ×2, parallel stages ÷threads).
 
 #### 6.3.1 Narrow Tunnel — Low Clutter
 
 ```
 Static BVH nodes traversed:   ~50 (simple corridor)
 Active bodies:                 12 (player kicks debris, loose pipes)
+Background props (T4):         60 (dripping, swaying, amortized 10Hz)
 T0/T1:                        5 (player + nearby objects)
-T2–T4:                        7 (scattered pipes, panels)
+T2–T4:                        67 (scattered pipes, panels, background)
 Collision pairs:               20
 TGS constraints:               10 (1 small island)
 XPBD constraints:              8
 
-TGS:   10 × 22 iter × 0.5 µs  = 110 µs
-XPBD:  8 × 6 iter × 0.3 µs    =  14 µs
-Narrow: 20 × 3.0 µs            =  60 µs
+TGS:   10 × 22 × 0.5 µs × 2  = 220 µs
+XPBD:  8 × 6 × 0.3 µs × 2/8  =   4 µs
+Narrow: 20 × 2.0 µs × 2 / 8  =  10 µs
+Broad:  72 × 0.5 µs × 2       =  72 µs
+T4 amortized: 60 × 0.1 µs     =   6 µs
 Other stages:                   ~100 µs
                                ─────────
-Total:                          ~0.3 ms/tick ✓✓✓ (90% headroom)
+Total:                          ~0.4 ms/tick ✓✓✓ (87% headroom)
 ```
 
-**Risk:** None. Trivial load.
+**Risk:** None. Trivial load. Background props add ~6 µs — invisible.
 
 #### 6.3.2 Hub Chamber — Medium Clutter
 
 ```
 Static BVH nodes traversed:   ~200 (multi-level room)
 Active bodies:                 55 (barricade pieces, debris, 4 ragdolls)
+Background props (T4):         100 (rattling vents, swinging chains)
 T0/T1:                        18 (player area: fire, held object, nearby scrap)
-T2–T4:                        37 (visible crates, distant ragdolls)
+T2–T4:                        137 (visible crates, distant ragdolls, background)
 Collision pairs:               150
 TGS constraints:               70 (player cluster + 2 ragdolls near player)
 XPBD constraints:              90
 
-TGS:   70 × 22 × 0.5 µs       = 770 µs
-XPBD:  90 × 6 × 0.3 µs / 4    =  40 µs (parallel)
-Narrow: 150 × 3.0 µs           = 450 µs
+TGS:   70 × 22 × 0.5 µs × 2  = 1.54 ms
+XPBD:  90 × 6 × 0.3 µs × 2/8 =  40 µs (parallel)
+Narrow: 150 × 2.0 µs × 2 / 8 =  75 µs (parallel)
+Broad:  155 × 0.5 µs × 2      = 155 µs
+T4 amortized: 100 × 0.1 µs    =  10 µs
 Other stages:                   ~350 µs
                                ─────────
-Total:                          ~1.6 ms/tick ✓ (47% headroom)
+Total:                          ~2.2 ms/tick ✓ (27% headroom)
 ```
 
-**Risk:** Moderate. TGS dominates if player is near a ragdoll pile.
-Monitor `Phys.Solve.IteratingTGS` — if > 1.0 ms, a near-field ragdoll
-has too many constraints. Mitigate with ragdoll LOD (see §6.5).
+**Risk:** TGS at 1.54 ms is the dominant cost — one large near-field island
+(player + ragdoll pile). Monitor `Phys.Solve.IteratingTGS`. With sleep-stabilize
+on the barricade pieces (−30 constraints), TGS drops to ~0.88 ms → 1.5 ms total ✓.
+Background props (100 T4 bodies) add only ~10 µs — trivial.
 
 #### 6.3.3 Trash Drop Zone — High Clutter (Spike Event)
 
@@ -616,19 +672,28 @@ above simultaneously, bounce off geometry and each other, then settle.
 ```
 SPIKE FRAME (Frame 0 of drop):
 Active bodies:                 200 (130 new drop + 70 existing)
+Background props (T4):         80 (ambient, unaffected by drop)
 T0/T1:                        20 (player + nearby falling objects)
-T2–T4:                        180 (most drop objects are far-field)
+T2–T4:                        260 (most drop objects are far-field + background)
 Collision pairs:               1000 (dense overlap during fall)
 TGS constraints:               80 (near-field contacts)
 XPBD constraints:              700 (far-field pile-up)
 
-TGS:   80 × 22 × 0.5 µs       = 880 µs
-XPBD:  700 × 6 × 0.3 µs / 8   = 158 µs (parallel, 8 threads)
-Narrow: 1000 × 3.0 µs / 8      = 375 µs (parallel)
-Broad:  200 × 1.5 µs           = 300 µs
-Other stages:                   ~300 µs
-                               ─────────
-Total:                          ~2.0 ms/tick ✓ (33% headroom)
+TGS:   80 × 22 × 0.5 µs × 2    = 1.76 ms
+XPBD:  700 × 6 × 0.3 µs × 2/8  = 315 µs (parallel, 8 threads)
+Narrow: 1000 × 2.0 µs × 2 / 8  = 500 µs (parallel)
+Broad:  280 × 0.5 µs × 2        = 280 µs
+T4 amortized: 80 × 0.1 µs       =   8 µs
+Other stages:                    ~350 µs
+                                ─────────
+Total:                           ~3.2 ms/tick ⚠️ (7% over budget)
+
+WITH MITIGATION:
+  Stagger spawn over 3 frames → peak 70 active drop objects
+  TGS: 50 × 22 × 0.5 × 2 = 1.1 ms
+  XPBD: 400 × 6 × 0.3 × 2/8 = 180 µs
+                                ─────────
+Total (mitigated):               ~2.4 ms/tick ✓ (20% headroom)
 
 SETTLING (Frames 5–30):
 Active bodies:                 130 → 30 (progressive sleep)
@@ -636,12 +701,12 @@ Pair count:                    600 → 80 (objects separate and rest)
 Total:                         ~1.2 ms → 0.4 ms (recovers over 1 second)
 ```
 
-**Risk:** High pair count during initial contact spike. XPBD handles the
-far-field pile-up cleanly — no giant-island problem. The 3 ms budget absorbs
-the spike comfortably even without staggering.
+**Risk:** Trash drop spike is 7% over budget without mitigation. Stagger spawn
+(the simplest mitigation) brings it well under. XPBD handles the far-field
+pile-up cleanly — no giant-island problem.
 
 **Without hybrid solver:** All 700 constraints would form one TGS island.
-700 × 22 × 0.5 µs = 7.7 ms ❌. The hybrid solver is essential for this scenario.
+700 × 22 × 0.5 µs × 2 = 15.4 ms ❌. The hybrid solver is essential.
 
 #### 6.3.4 Barricaded Holdout — High Clutter (Persistent)
 
@@ -650,28 +715,36 @@ and a fire. Enemies are pushing against the barricade.
 
 ```
 Active bodies:                 140 (60 barricade, 50 loose props, 15 enemy, 15 ragdoll)
+Background props (T4):         60 (creaking beams, loose ceiling tiles)
 T0/T1:                        30 (barricade face + player + fire + enemy bodies)
-T2–T4:                        110 (back of barricade, distant debris, ragdolls)
+T2–T4:                        170 (back of barricade, distant debris, ragdolls, background)
 Collision pairs:               450
 TGS constraints:               140 (dense barricade stack near player)
 XPBD constraints:              200
 
-TGS:   140 × 22 × 0.5 µs      = 1.54 ms  (51% of budget)
-XPBD:  200 × 6 × 0.3 µs / 8   =  45 µs
-Narrow: 450 × 3.0 µs / 8       = 169 µs
-Other stages:                   ~350 µs
-                               ─────────
-Total:                          ~2.1 ms/tick ✓ (30% headroom)
+TGS:   140 × 22 × 0.5 µs × 2    = 3.08 ms  ❌ (over budget alone!)
+XPBD:  200 × 6 × 0.3 µs × 2/8   =  90 µs
+Narrow: 450 × 2.0 µs × 2 / 8    = 225 µs
+Broad:  200 × 0.5 µs × 2         = 200 µs
+T4 amortized: 60 × 0.1 µs        =   6 µs
+Other stages:                     ~400 µs
+                                 ─────────
+Total (no mitigation):            ~3.9 ms/tick ❌
+
+WITH SLEEP-STABILIZE (barricade contacts resting > 0.5s → sleep):
+  TGS: 80 × 22 × 0.5 × 2 = 1.76 ms
+                                 ─────────
+Total (mitigated):                ~2.7 ms/tick ✓ (10% headroom)
 ```
 
-**Risk:** TGS is at 51% of total budget. The barricade stack is a dense
-near-field island — many resting contacts, all at T0/T1 because the player
-is standing right next to it. This is the hardest steady-state scenario,
-but fits comfortably within the 3 ms budget.
+**Risk:** This is the hardest steady-state scenario. 140 TGS constraints
+blows the budget — sleep-stabilize is **mandatory**, not optional. The
+barricade stack has many resting contacts that can safely sleep. With
+stabilization, TGS drops to 80 constraints (1.76 ms) and total fits.
 
 **If barricade is being attacked:** Enemy pushes wake sleeping contacts,
-island grows temporarily. Could spike to 180 TGS constraints = 1.98 ms TGS.
-Total: ~2.5 ms. Still within budget ✓.
+island grows temporarily. Could spike to 120 TGS constraints = 2.64 ms TGS.
+Combined with other stages: ~3.6 ms ❌. Requires island splitting (see §6.5).
 
 #### 6.3.5 Creature Nest — Medium Clutter
 
@@ -679,18 +752,21 @@ Organic geometry with skull piles, creature bodies, and irregular shapes.
 
 ```
 Active bodies:                 70 (skull pile, creature ragdolls, loose bones)
+Background props (T4):         80 (dangling stalactites, slow-dripping fluids)
 T0/T1:                        12 (player + nearby skulls being kicked/thrown)
-T2–T4:                        58 (distant skull piles, creature bodies)
+T2–T4:                        138 (distant skull piles, creature bodies, background)
 Collision pairs:               180
 TGS constraints:               40 (small near-field contacts)
 XPBD constraints:              130
 
-TGS:   40 × 22 × 0.5 µs       = 440 µs
-XPBD:  130 × 6 × 0.3 µs / 8   =  29 µs
-Narrow: 180 × 3.0 µs           = 540 µs
+TGS:   40 × 22 × 0.5 µs × 2  = 0.88 ms
+XPBD:  130 × 6 × 0.3 µs × 2/8=  58 µs
+Narrow: 180 × 2.0 µs × 2 / 8 =  90 µs
+Broad:  150 × 0.5 µs × 2      = 150 µs
+T4 amortized: 80 × 0.1 µs     =   8 µs
 Other stages:                   ~300 µs
                                ─────────
-Total:                          ~1.3 ms/tick ✓ (57% headroom)
+Total:                          ~1.5 ms/tick ✓ (50% headroom)
 ```
 
 **Risk:** Low. Skull colliders may be complex (horns, cavities), increasing
@@ -700,14 +776,14 @@ per-pair narrowphase cost. Convex decomposition quality matters here.
 
 | Archetype | Low | Medium | High | Spike |
 |-----------|-----|--------|------|-------|
-| Narrow Tunnel | 0.3 ms ✓ | 0.6 ms ✓ | 1.2 ms ✓ | — |
-| Hub Chamber | 0.4 ms ✓ | 1.6 ms ✓ | 2.5 ms ✓ | — |
-| Trash Drop Zone | 0.4 ms ✓ | 0.9 ms ✓ | 1.6 ms ✓ | 2.0 ms ✓ |
-| Barricaded Holdout | 0.4 ms ✓ | 1.3 ms ✓ | 2.1 ms ✓ | 2.5 ms ✓ |
-| Creature Nest | 0.4 ms ✓ | 1.3 ms ✓ | 2.0 ms ✓ | — |
+| Narrow Tunnel | 0.4 ms ✓ | 0.8 ms ✓ | 1.4 ms ✓ | — |
+| Hub Chamber | 0.5 ms ✓ | 2.2 ms ✓ | 2.8 ms ✓ | — |
+| Trash Drop Zone | 0.5 ms ✓ | 1.2 ms ✓ | 2.0 ms ✓ | 3.2→2.4 ms ⚠️ |
+| Barricaded Holdout | 0.5 ms ✓ | 1.6 ms ✓ | 3.9→2.7 ms ⚠️ | 3.6 ms ❌ |
+| Creature Nest | 0.5 ms ✓ | 1.5 ms ✓ | 2.2 ms ✓ | — |
 
-⚠️ = within budget but limited headroom  
-❌ = over budget, requires mitigation
+⚠️ = requires automatic mitigation (sleep-stabilize or stagger)
+❌ = requires island splitting (barricade under active attack)
 
 ### 6.5 Technical Mitigations
 
@@ -751,34 +827,39 @@ and debris flying.
 
 ```
 Active bodies:                 220
+Background props (T4):         80
 T0/T1:                        35 (barricade face, fire, player, enemy ragdolls)
-T2–T4:                        185 (back wall, far debris, old ragdolls)
+T2–T4:                        265 (back wall, far debris, old ragdolls, background)
 Collision pairs:               800
 TGS constraints:               170 (barricade + ragdolls + enemy contacts)
 XPBD constraints:              350
 
-TGS:   170 × 22 × 0.5 µs      = 1.87 ms
-XPBD:  350 × 6 × 0.3 µs / 8   =  79 µs
-Narrow: 800 × 3.0 µs / 8       = 300 µs
-Other stages:                   ~400 µs
-                               ─────────
-Total:                          ~2.7 ms/tick ✓ (within 3 ms budget)
+TGS:   170 × 22 × 0.5 µs × 2    = 3.74 ms  ❌ (over budget alone)
+XPBD:  350 × 6 × 0.3 µs × 2/8   = 158 µs
+Narrow: 800 × 2.0 µs × 2 / 8    = 400 µs
+Broad:  300 × 0.5 µs × 2         = 300 µs
+T4 amortized: 80 × 0.1 µs        =   8 µs
+Other stages:                     ~450 µs
+                                 ─────────
+Total (no mitigation):            ~5.1 ms/tick ❌❌ (way over budget)
 ```
 
-This scenario fits within the 3 ms budget without any automatic mitigations.
-However, applying mitigations provides headroom for even worse spikes:
+This worst case REQUIRES automatic mitigations — it cannot ship unmitigated.
 
 **Recovery plan (applied in order, each reduces TGS load):**
 
-1. **Sleep-stabilize barricade** (−40 constraints): pieces resting > 0.5s
-   become sleeping contacts. TGS: 130 constraints → 1.43 ms.
+1. **Sleep-stabilize barricade** (−50 constraints): pieces resting > 0.5s
+   become sleeping contacts. TGS: 120 constraints × 22 × 0.5 × 2 = 2.64 ms.
 2. **Ragdoll LOD** (−30 constraints): enemy ragdolls at T0 drop from 15
-   to 5 bodies. TGS: 100 constraints → 1.1 ms.
+   to 5 bodies. TGS: 90 constraints × 22 × 0.5 × 2 = 1.98 ms.
 3. **Island split** (−concurrent): barricade island broken at velocity
-   boundary. Two islands of ~50 each, solved in parallel. TGS: 550 µs.
-4. **Result:** ~1.3 ms/tick ✓ (57% headroom restored)
+   boundary. Two islands of ~45 each, solved in parallel.
+   TGS: 45 × 22 × 0.5 × 2 = 0.99 ms per island, parallel → 0.99 ms total.
+4. **Result:** ~0.99 + 1.0 (other stages) = ~2.0 ms/tick ✓ (33% headroom)
 
-All four mitigations are automatic (no player-visible quality change).
+All mitigations are automatic (no player-visible quality change).
+The island split (step 3) is the most important — without it, TGS on the
+largest island dominates even after sleep-stabilize and ragdoll LOD.
 
 ### 6.8 Maximum-Scale Scenario: Gang War at the Trash Chute
 
@@ -825,13 +906,13 @@ Collision pairs:               800
 TGS constraints:               30 (small T1 cluster: nearest barricade face)
 XPBD constraints:              500 (combat zone, ragdolls, flying debris)
 
-TGS:   30 × 22 × 0.5 µs       = 330 µs
-XPBD:  500 × 6 × 0.3 µs / 8   = 113 µs (parallel)
-Narrow: 800 × 3.0 µs / 8       = 300 µs (parallel)
-Broad:  250 × 1.5 µs           = 375 µs
-Other stages:                   ~400 µs
-                               ─────────
-Total:                          ~1.5 ms/tick ✓ (50% headroom)
+TGS:   30 × 22 × 0.5 µs × 2     = 660 µs
+XPBD:  500 × 6 × 0.3 µs × 2/8   = 225 µs (parallel)
+Narrow: 800 × 2.0 µs × 2 / 8    = 400 µs (parallel)
+Broad:  250 × 0.5 µs × 2         = 250 µs
+Other stages:                     ~400 µs
+                                 ─────────
+Total:                            ~1.9 ms/tick ✓ (37% headroom)
 ```
 
 **Phase 2: Player engages, enters combat zone**
@@ -851,13 +932,18 @@ Collision pairs:               1000
 TGS constraints:               100 (player cluster + ragdolls + barricade)
 XPBD constraints:              600
 
-TGS:   100 × 22 × 0.5 µs      = 1.1 ms
-XPBD:  600 × 6 × 0.3 µs / 8   = 135 µs (parallel)
-Narrow: 1000 × 3.0 µs / 8      = 375 µs (parallel)
-Broad:  280 × 1.5 µs           = 420 µs
-Other stages:                   ~450 µs
-                               ─────────
-Total:                          ~2.5 ms/tick ✓ (17% headroom)
+TGS:   100 × 22 × 0.5 µs × 2    = 2.2 ms
+XPBD:  600 × 6 × 0.3 µs × 2/8   = 270 µs (parallel)
+Narrow: 1000 × 2.0 µs × 2 / 8   = 500 µs (parallel)
+Broad:  280 × 0.5 µs × 2         = 280 µs
+Other stages:                     ~500 µs
+                                 ─────────
+Total (no mitigation):            ~3.8 ms/tick ❌
+
+WITH SLEEP-STABILIZE (barricade contacts):
+  TGS: 60 × 22 × 0.5 × 2 = 1.32 ms
+                                 ─────────
+Total (mitigated):                ~2.9 ms/tick ✓ (3% headroom — tight!)
 ```
 
 **Phase 3: Explosion — player detonates improvised explosive**
@@ -879,20 +965,21 @@ Collision pairs:               1500 (dense overlap in blast zone)
 TGS constraints:               130 (player area: 3 ragdolls + blast debris)
 XPBD constraints:              900 (entire visible battle)
 
-TGS:   130 × 22 × 0.5 µs      = 1.43 ms
-XPBD:  900 × 6 × 0.3 µs / 8   = 203 µs (parallel)
-Narrow: 1500 × 3.0 µs / 8      = 563 µs (parallel)
-Broad:  350 × 1.5 µs           = 525 µs
-Other stages:                   ~500 µs
-                               ─────────
-Total (no mitigation):          ~3.2 ms/tick ⚠️ (7% over budget)
+TGS:   130 × 22 × 0.5 µs × 2    = 2.86 ms  ❌
+XPBD:  900 × 6 × 0.3 µs × 2/8   = 405 µs (parallel)
+Narrow: 1500 × 2.0 µs × 2 / 8   = 750 µs (parallel)
+Broad:  350 × 0.5 µs × 2         = 350 µs
+Other stages:                     ~550 µs
+                                 ─────────
+Total (no mitigation):            ~4.9 ms/tick ❌❌
 
-WITH AUTO-MITIGATION:
+WITH AUTO-MITIGATION (all three):
   Ragdoll LOD (3 ragdolls → 5 bodies each): −60 TGS constraints
   Sleep-stabilize blast debris (>0.3s): −20 TGS constraints (after 10 frames)
-  TGS: 50 × 22 × 0.5 µs = 550 µs
-                               ─────────
-Total (mitigated):              ~2.3 ms/tick ✓ (23% headroom)
+  Island split (2 islands of 25 each, parallel):
+    TGS: 25 × 22 × 0.5 × 2 = 550 µs per island
+                                 ─────────
+Total (fully mitigated):          ~2.6 ms/tick ✓ (13% headroom)
 ```
 
 **Phase 4: Aftermath — combat winds down**
@@ -912,9 +999,9 @@ Total:                         ~0.8 ms → 0.4 ms (recovers within 3 seconds)
 
 | Phase | Duration | Active | TGS | Total | Status |
 |-------|----------|--------|-----|-------|--------|
-| 1. Observing | 5-10s | 250 | 330 µs | 1.5 ms | ✓ 50% headroom |
-| 2. Engaging | 10-30s | 280 | 1.1 ms | 2.5 ms | ✓ 17% headroom |
-| 3. Explosion spike | 0.3s | 350 | 1.43 ms | 3.2 ms | ⚠️ mitigated → 2.3 ms |
+| 1. Observing | 5-10s | 250 | 660 µs | 1.9 ms | ✓ 37% headroom |
+| 2. Engaging | 10-30s | 280 | 2.2 ms | 3.8→2.9 ms | ⚠️ needs sleep-stab. |
+| 3. Explosion spike | 0.3s | 350 | 2.86 ms | 4.9→2.6 ms | ❌→✓ full mitigation |
 | 4. Aftermath | 3-5s | 150→60 | 200 µs | 0.8→0.4 ms | ✓✓ recovering |
 
 **Body count over time:**
@@ -936,12 +1023,15 @@ Bodies
 **Key takeaways:**
 - 600 total bodies in scene, 350 peak active: well within 10,000 hard limit
 - Peak memory: ~5 MB working set (16% of 32 MB pool)
-- The explosion spike (3.2 ms) is the only moment over budget, and auto-mitigation
-  handles it within 10 frames (~0.3s)
+- **TGS ×2 substep is the dominant cost** — the engaging phase (Phase 2)
+  needs sleep-stabilize to fit at all, and the explosion (Phase 3) needs
+  all three mitigations (sleep-stab, ragdoll LOD, island split)
+- Mitigations are all automatic (no player-visible quality change) but
+  **are mandatory, not optional** — without them Phase 2 and 3 fail
 - Trash drop settling before player arrival is essential: it means 180 bodies
   are sleeping (T5) and cost zero CPU when the player enters
 - The gang war itself is the physics showcase — 16 combatants, ragdolls piling
-  up, barricades shattering, explosions — and it fits in budget
+  up, barricades shattering, explosions — and it fits in budget WITH mitigations
 
 ---
 
@@ -951,24 +1041,235 @@ Bodies
 32 MB pool right-sized for the 10,000 body CPU ceiling. A 600-body gang war
 scene uses ~5 MB working set (16% of pool).
 
-**Primary bottleneck:** TGS Solve (12% of tick CPU, but dominates wall-clock
-for dense near-field islands). Only applies to T0/T1 bodies.
+**Primary bottleneck:** TGS Solve — the ×2 substep multiplier makes this the
+dominant cost in every near-field-heavy scenario. Only applies to T0/T1 bodies
+but constraints × 22 iterations × 0.5 µs × 2 substeps accumulates fast.
 
 **Secondary bottleneck:** Narrowphase (14% of tick, scales with pair count).
+At 2.0 µs/pair (conservative for 2015-era CPU), this is manageable up to
+~1500 pairs before it competes with TGS.
 
 **Tertiary bottleneck:** XPBD Solve (18% of tick CPU, but parallelizes
-perfectly and rarely dominates wall-clock).
+perfectly across 8 threads and rarely dominates wall-clock even at 5000 bodies).
 
 **Safe operating envelope (3 ms budget, 32 MB pool):**
 - Active bodies: ≤ 10,000 (with tiering)
-- T0/T1 bodies: ≤ 35
-- Largest TGS island: ≤ 200 constraints
+- T0/T1 bodies: ≤ 25 (reduced from 35 due to ×2 substep cost)
+- Largest TGS island: ≤ 60 constraints without mitigation, ≤ 130 with island split
 - Collision pairs: ≤ 20,000
 - Near-field constraint density: ≤ 6 constraints/body
 - Total pool: 32 MB (right-sized for CPU ceiling)
+- Background T4 props: up to 200 at negligible cost (~20 µs at amortized 10Hz)
 
-**For March of Glaciers:** Typical gameplay runs at 0.5–1.6 ms/tick. Dense
-barricade holdouts reach 2.1 ms. The worst-case siege scenario hits 2.7 ms
-and fits within budget without mitigations. With mitigations, it drops to
-1.3 ms. The 3 ms budget eliminates all ⚠️ and ❌ scenarios from the 1.5 ms
-variant — every archetype at every clutter level fits comfortably.
+**For March of Glaciers:** Typical gameplay runs at 0.5–1.5 ms/tick. Dense
+barricade holdouts reach 2.7–3.9 ms without mitigation, requiring mandatory
+sleep-stabilize. The worst-case siege scenario hits 5.1 ms unmitigated but
+recovers to 2.0 ms with island splitting. The gang war explosion spike hits
+4.9 ms unmitigated but recovers to 2.6 ms with all three mitigations
+(sleep-stab, ragdoll LOD, island split).
+
+**Key insight:** Mitigations are not optional luxuries — they are mandatory for
+any scenario with >60 TGS constraints. The good news: all mitigations are
+automatic (sleep-stabilize, ragdoll LOD, island split) and invisible to the
+player. Level design guidance (island-breaking gaps, merge static clutter,
+breakable debris LOD) is equally important for preventing problems at the source.
+
+---
+
+## 8. Tier Transition Effects
+
+When a body crosses the T1↔T2 boundary, its constraint representation
+must be converted between TGS (impulse-based) and XPBD (position-based).
+This section analyzes the cost and quality impact of transitions.
+
+### 8.1 Conversion Cost Per Body
+
+From the call graph (Stage 9, Solver Transition box):
+- **TGS → XPBD (demotion):** `λ_xpbd = λ_impulse * dt`
+- **XPBD → TGS (promotion):** `λ_impulse = clamp(λ_xpbd / dt, λ_min, λ_max)`
+
+Per-body conversion cost:
+- Read current constraint state (λ, constraint Jacobian)
+- Multiply/divide by dt + clamp
+- Write new λ into constraint
+- **Estimated: 2–5 µs per transitioning body** (includes cache line access
+  for constraint + body data, ~10 FLOPs for conversion, L1/L2 hit likely
+  since the body was just reclassified in Stage 1)
+
+### 8.2 Warm-Start Quality Loss
+
+The conversion formulas are mathematically exact under ideal conditions.
+In practice, quality degrades because:
+
+1. **TGS → XPBD:** TGS accumulates impulses over iterations; XPBD uses
+   positional λ. The conversion `λ_xpbd = λ_impulse * dt` is exact for
+   a single contact, but multi-body islands lose coupling information.
+   **Effect:** 1–3 frames of slightly softer contacts until XPBD converges.
+   This is invisible at T2+ distances.
+
+2. **XPBD → TGS (more problematic):** XPBD λ represents positional correction.
+   Converting to impulse via `λ_impulse = λ_xpbd / dt` can produce large
+   warm-start values that cause TGS to overshoot on the first frame.
+   The `clamp(λ_min, λ_max)` prevents explosions but wastes the warm-start.
+   **Effect:** 3–5 frames of reduced solver quality (TGS reconverges from
+   scratch or from clamped estimate). Visible as slight jitter if the body
+   is in active contact. This matters because promotion means the body is
+   now near the player.
+
+3. **Mitigation for XPBD→TGS:** Apply a warm-start ramp factor:
+   frame 0: use 50% of converted λ, frame 1: 75%, frame 2: 100%.
+   This prevents overshoot while preserving directional information.
+   Cost: one extra multiply per constraint per transitioning body (~negligible).
+
+### 8.3 Transition Frequency Scenarios
+
+| Scenario | Transitions/tick | Added cost | Quality impact |
+|----------|-----------------|------------|----------------|
+| Player walking through open area | 0-2 bodies/tick | 5-10 µs | Negligible |
+| Player circling T1/T2 boundary | 5-10 bodies/tick | 25-50 µs | Mild jitter on edge objects |
+| Explosion pushing debris outward | 10-20 bodies demoted | 50-100 µs | Invisible (demoted = far away) |
+| Player charging into combat zone | 8-15 bodies promoted | 40-75 µs | 3-5 frame jitter on promoted bodies |
+
+**Worst case: boundary flapping.** If a body oscillates across the T1/T2
+boundary every tick (e.g., player circling at exactly T1 range), conversion
+happens every frame and warm-start never stabilizes. Fix: hysteresis band.
+A body promoted to T1 stays T1 until it exceeds T1+2m; demoted to T2 stays
+T2 until it enters T1−2m. This eliminates flapping at the cost of slightly
+larger T1 sets near the boundary (1–3 extra bodies, ~30 µs TGS overhead).
+
+### 8.4 Budget Impact
+
+Transition costs are negligible in all scenarios — even the worst case of
+20 simultaneous transitions adds ~100 µs, which is 3% of the 3ms budget.
+The quality impact of XPBD→TGS promotion is the real concern, and the
+warm-start ramp mitigates it effectively.
+
+---
+
+## 9. Background Object Budget (T4 Props)
+
+Background T4 objects provide visual richness at near-zero CPU cost.
+This section quantifies the budget explicitly.
+
+### 9.1 Per-Object Cost
+
+T4 bodies tick at amortized 10Hz (every 3rd physics tick at 33Hz).
+Each tick: XPBD with 4 iterations, high compliance (soft contacts).
+
+```
+Per T4 body per physics tick (amortized):
+  XPBD:  1 constraint × 4 iterations × 0.3 µs / 3 ticks = 0.4 µs
+  Broad: 1 body × 0.5 µs / 3 = 0.17 µs
+  Narrow: (most T4 bodies are resting, ~20% have active pair) = 0.13 µs
+                                                                ─────
+  Total per T4 body per tick:                                  ~0.1 µs (amortized)
+  (varies: sleeping T4 ≈ 0, active T4 with contact ≈ 0.3 µs)
+```
+
+### 9.2 Budget Envelope
+
+At 0.1 µs/body amortized, within a 100 µs budget slice for background:
+
+| T4 count | Cost/tick | % of 3ms budget | Visual impact |
+|----------|-----------|-----------------|---------------|
+| 50 | 5 µs | 0.2% | Sparse — a few dangling pipes |
+| 100 | 10 µs | 0.3% | Moderate — debris, stalactites, loose panels |
+| 200 | 20 µs | 0.7% | Rich — every surface has loose detail |
+| 500 | 50 µs | 1.7% | Lavish — full environmental simulation |
+
+**Recommendation:** 100–200 T4 props per loaded area. This provides rich
+environmental detail at <1% CPU cost. Beyond 200, the broadphase starts to
+notice the extra AABBs (500 bodies × 0.5 µs = 250 µs broadphase contribution,
+even amortized this is ~85 µs/tick — still small but no longer invisible).
+
+### 9.3 What Makes Good T4 Props
+
+Good candidates for T4 background physics:
+- Dangling chains, pipes, stalactites (single-body pendulums)
+- Loose rubble that shifts when nearby explosions wake it
+- Floating debris in flooded chambers (buoyancy = high-compliance XPBD spring)
+- Cloth/tarp segments (simplified 2-4 body chain, not full cloth sim)
+- Small creatures (rats, insects) — 1-body with simple collision
+
+Bad candidates (should be static or particle effects instead):
+- Dense piles of small objects (high pair count, mutual contacts)
+- Anything the player might interact with (needs T0/T1 quality)
+- Persistent physics puzzles (need deterministic solving → TGS)
+
+---
+
+## 10. Call Graph Cross-Reference
+
+This section verifies that every stage in the performance analysis maps
+correctly to a stage in the call graph (`physics_tick_callgraph.md`), and
+that the timing annotations are consistent with the revised per-operation costs.
+
+### 10.1 Stage Mapping
+
+| Perf Analysis Stage | Call Graph Stage | CG Timing | PA Timing | Match? |
+|--------------------|--------------------|-----------|-----------|--------|
+| Step Plan | Stage 0: STEP PLAN [SYNC] | ~10 µs | (in "other") | ✓ |
+| Tier Classification | Stage 1: BASE TIER [PARALLEL] | 20-120 µs | (in "other") | ✓ |
+| Spatial Index Update | Stage 2: SPATIAL INDEX [PARALLEL] | 20-80 µs | (in "other") | ✓ |
+| Halo Closure | Stage 3: HALO CLOSURE [PARALLEL] | 20-120 µs | (in "other") | ✓ |
+| AABB Update | Stage 4: AABB UPDATE [PARALLEL] | 20-80 µs | (in broadphase) | ✓ |
+| Broadphase | Stage 5: BROADPHASE [PARALLEL] | 40-200 µs | 0.5 µs/body | ✓ (a) |
+| Narrowphase | Stage 6: NARROWPHASE [PARALLEL] | 80-350 µs | 2.0 µs/pair | ✓ (b) |
+| Manifold Build | Stage 7: MANIFOLD BUILD [PARALLEL] | 25-120 µs | (in "other") | ✓ |
+| Stabilization | Stage 8: STABILIZATION [PARALLEL] | 15-120 µs | (in "other") | ✓ |
+| Constraint Build | Stage 9: CONSTRAINT BUILD [PARALLEL] | ~100 µs | (in "other") | ✓ |
+| Island Build | Stage 10: ISLAND BUILD [SYNC] | 20-150 µs | (in "other") | ✓ |
+| TGS Solve | Stage 11a: TGS [PARALLEL] | 100-400 µs | 0.5 µs/iter | ✓ (c) |
+| XPBD Solve | Stage 11b: XPBD [PARALLEL, CONCURRENT] | 80-350 µs | 0.3 µs/iter | ✓ (d) |
+| Integrate + Sleep | Stage 12: INTEGRATE [PARALLEL] | 20-120 µs | (in "other") | ✓ |
+| Cache Commit | Stage 13: CACHE COMMIT [SYNC] | ~20 µs | (in "other") | ✓ |
+
+**Notes:**
+- (a) CG says 40-200 µs. At 0.5 µs/body: 80 bodies=40µs, 400 bodies=200µs. ✓ Matches.
+- (b) CG says 80-350 µs. At 2.0 µs/pair/8 threads: 320 pairs=80µs, 1400 pairs=350µs. ✓ Matches.
+- (c) CG says 100-400 µs. At 22 iter × 0.5 µs × 2 substeps: 5 constraints=110µs,
+  18 constraints=396µs. ✓ Matches range (small island baseline is ~100µs).
+- (d) CG says 80-350 µs. At 6 iter × 0.3 µs × 2/8: 180 constraints=81µs,
+  780 constraints=351µs. ✓ Matches.
+
+### 10.2 "Other Stages" Budget Verification
+
+The scenarios list an "Other stages" catch-all of 300–550 µs. This should
+account for Stages 0–4, 7–10, 12–13 (everything except broadphase, narrowphase,
+TGS, and XPBD which are itemized separately).
+
+Call graph timing ranges for "other" stages:
+```
+Stage 0  (Step Plan):         ~10 µs
+Stage 1  (Tier Classification): 20-120 µs
+Stage 2  (Spatial Index):       20-80 µs
+Stage 3  (Halo Closure):        20-120 µs
+Stage 4  (AABB Update):         20-80 µs    (partially in broadphase line)
+Stage 7  (Manifold Build):      25-120 µs
+Stage 8  (Stabilization):       15-120 µs
+Stage 9  (Constraint Build):    ~100 µs
+Stage 10 (Island Build):        20-150 µs
+Stage 12 (Integrate+Sleep):     20-120 µs
+Stage 13 (Cache Commit):        ~20 µs
+                                ──────────
+Low estimate:                   ~190 µs
+High estimate:                  ~1040 µs
+Typical (mid-range):            ~400 µs
+```
+
+The scenarios use 300–550 µs for "other stages," which is reasonable for
+typical-to-moderate load. The high estimate (~1040 µs) only occurs when
+ALL stages are at maximum simultaneously, which requires both large body
+counts AND dense contacts AND large islands — i.e., the worst-case siege
+scenario where we already account for the high cost explicitly.
+
+### 10.3 Missing from Performance Analysis
+
+All 14 call graph stages are accounted for. The Solver Transition box
+(between Stages 9 and 11) is now covered in §8 above.
+
+One item in the call graph NOT explicitly budgeted: **Stage 3 Halo Closure**
+can spike to 120 µs if many bodies are near tier boundaries. This is folded
+into "other stages" and is acceptable, but in the worst-case boundary-flapping
+scenario (§8.3), halo closure + transition conversion could add ~170 µs
+combined. Still within the "other stages" envelope.
