@@ -457,16 +457,17 @@ POOL: phys_body_pool (rigid body state)
 ---------------------------------------
 ```c
 typedef struct phys_body_t {
-    vec3_t position;         // 12 bytes
-    quat_t orientation;      // 16 bytes
-    vec3_t linear_vel;       // 12 bytes
-    vec3_t angular_vel;      // 12 bytes
-    float inv_mass;          // 4 bytes
-    vec3_t inv_inertia_diag; // 12 bytes (diagonal approx)
-    uint32_t flags;          // 4 bytes (sleeping, static, kinematic)
-    uint8_t tier;            // 1 byte
-    uint8_t pad[3];          // alignment
-} phys_body_t;               // 76 bytes → pad to 80
+    phys_vec3_t position;         // 12 bytes
+    phys_quat_t orientation;      // 16 bytes
+    phys_vec3_t linear_vel;       // 12 bytes
+    phys_vec3_t angular_vel;      // 12 bytes
+    float inv_mass;               // 4 bytes
+    phys_vec3_t inv_inertia_diag; // 12 bytes (diagonal approx)
+    uint32_t flags;               // 4 bytes (sleeping, static, kinematic)
+    uint8_t tier;                 // 1 byte
+    uint8_t sleep_counter;        // 1 byte (consecutive low-velocity frames)
+    uint8_t pad[6];               // alignment
+} phys_body_t;                    // 80 bytes
 
 pool_t phys_body_pool;       // capacity: 16k bodies
 ```

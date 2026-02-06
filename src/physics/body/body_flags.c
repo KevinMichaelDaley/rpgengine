@@ -30,5 +30,6 @@ void phys_body_set_sleeping(phys_body_t *body, bool sleeping) {
         body->flags |= PHYS_BODY_FLAG_SLEEPING;
     } else {
         body->flags &= ~PHYS_BODY_FLAG_SLEEPING;
+        body->sleep_counter = 0;
     }
 }

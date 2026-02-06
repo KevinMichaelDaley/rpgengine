@@ -23,6 +23,11 @@ extern "C" {
  * @brief Core rigid body state.
  *
  * Layout is intentionally stable and validated by size assertions.
+ * Fields total 73 bytes before padding; 7 pad bytes reach 80.
+ *
+ * sleep_counter tracks consecutive frames with velocity below the
+ * sleep threshold.  When it exceeds sleep_delay_frames (set in the
+ * integrate stage args), the body is marked SLEEPING and moved to T5.
  */
 typedef struct phys_body {
     phys_vec3_t position;
@@ -35,7 +40,8 @@ typedef struct phys_body {
 
     uint32_t flags;
     uint8_t tier;
-    uint8_t _pad[7];
+    uint8_t sleep_counter;  /**< Consecutive low-velocity frames (0–255). */
+    uint8_t _pad[6];
 } phys_body_t;
 
 _Static_assert(sizeof(phys_body_t) == 80, "phys_body_t must be exactly 80 bytes");

@@ -34,6 +34,7 @@ typedef struct phys_integrate_args_t {
     phys_vec3_t gravity;
     float sleep_threshold_linear;
     float sleep_threshold_angular;
+    uint32_t sleep_delay_frames;     // frames below threshold before sleeping
 } phys_integrate_args_t;
 
 void phys_stage_integrate(const phys_integrate_args_t *args);
@@ -85,7 +86,14 @@ void phys_stage_integrate(const phys_integrate_args_t *args) {
         
         if (linear_speed < args->sleep_threshold_linear &&
             angular_speed < args->sleep_threshold_angular) {
-            // TODO: increment sleep counter, sleep after N frames
+            if (out->sleep_counter < 255) {
+                out->sleep_counter++;
+            }
+            if (out->sleep_counter >= args->sleep_delay_frames) {
+                out->flags |= PHYS_BODY_FLAG_SLEEPING;
+            }
+        } else {
+            out->sleep_counter = 0;
         }
     }
 }

@@ -1,6 +1,6 @@
 ---
 id: phys-002
-status: closed
+status: open
 deps: [phys-001]
 links: [phys-000]
 created: 2026-02-06T05:20:00.000000000-08:00
@@ -34,8 +34,9 @@ typedef struct phys_body_t {
     phys_vec3_t inv_inertia_diag; // 12 bytes (diagonal approx)
     uint32_t flags;               // 4 bytes (sleeping, static, kinematic)
     uint8_t tier;                 // 1 byte
-    uint8_t pad[3];               // alignment
-} phys_body_t;                    // 76 bytes → pad to 80
+    uint8_t sleep_counter;        // 1 byte (consecutive low-velocity frames)
+    uint8_t pad[6];               // alignment
+} phys_body_t;                    // 80 bytes
 
 #define PHYS_BODY_FLAG_STATIC    (1 << 0)
 #define PHYS_BODY_FLAG_KINEMATIC (1 << 1)
@@ -101,3 +102,26 @@ ASSERT(b.inv_inertia_diag.x > 0);
 // test_struct_size
 ASSERT(sizeof(phys_body_t) == 80);
 ```
+
+---
+
+## Audit Note (2026-02-06)
+
+**Reopened:** Code-vs-spec audit found discrepancies fixed in this pass:
+
+1. **sleep_counter field added** — The callgraph integrate stage (Stage 12)
+   requires a per-body sleep counter to track consecutive frames below the
+   velocity threshold. Added `uint8_t sleep_counter` to the struct, reducing
+   pad from 7 to 6 bytes (still 80 bytes total).
+
+2. **Byte count corrected** — The ticket and physics.md both said "76 bytes →
+   pad to 80" with `pad[3]`, but actual field total is 73 bytes, requiring
+   `pad[7]` (now `pad[6]` with sleep_counter). Both docs corrected.
+
+3. **Type names corrected** — physics.md used raw `vec3_t`/`quat_t` types;
+   corrected to `phys_vec3_t`/`phys_quat_t` to match the implementation.
+
+4. **Wake clears sleep_counter** — `phys_body_set_sleeping(body, false)` now
+   resets `sleep_counter` to 0.
+
+All existing tests pass after changes.
