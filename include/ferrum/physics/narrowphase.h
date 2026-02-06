@@ -101,6 +101,26 @@ bool phys_sphere_vs_sphere(
     phys_vec3_t center_b, float radius_b,
     struct phys_contact_point *contact_out);
 
+/**
+ * @brief Test sphere vs oriented box intersection.
+ *
+ * @param sphere_center  World-space center of the sphere.
+ * @param sphere_radius  Radius of the sphere.
+ * @param box_center     World-space center of the box (OBB).
+ * @param box_rotation   World-space orientation of the box.
+ * @param box_half_extents  Half-extents of the box in local space.
+ * @param contact_out    Output contact point (non-NULL on true return).
+ * @return true if sphere and box overlap or touch, false otherwise.
+ *
+ * Normal points from box to sphere.  Penetration is positive for overlap.
+ * If contact_out is NULL, returns false without crashing.
+ */
+bool phys_sphere_vs_box(
+    phys_vec3_t sphere_center, float sphere_radius,
+    phys_vec3_t box_center, phys_quat_t box_rotation,
+    phys_vec3_t box_half_extents,
+    struct phys_contact_point *contact_out);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
