@@ -1,6 +1,6 @@
 ---
 id: phys-014
-status: open
+status: closed
 deps: [phys-001, phys-002]
 links: [phys-000]
 created: 2026-02-06T06:56:00.000000000-08:00
