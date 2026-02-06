@@ -56,6 +56,9 @@
 #include "ferrum/net/topic_dispatcher.h"
 #include "ferrum/net/client/runtime_rx.h"
 
+// Physics core types
+#include "ferrum/physics/phys_types.h"
+
 // Reliable UDP stream API
 #include "ferrum/net/stream.h"
 
