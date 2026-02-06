@@ -11,6 +11,34 @@ The defining goals are:
 - **Deterministic behavior where required:** physics and replication logic designed to be replayable and debuggable.
 - **Minimal dependencies:** C standard library + platform APIs + OpenGL bindings loaded manually.
 - **Data-Oriented Design (DOD):** data layout dominates design decisions to maximize cache coherency.
+- **Pure functional transformations:** systems read from input arrays and write to distinct output arrays, enabling safe parallelism and clear data flow.
+
+### 1.0.1 Pure Functional Pipeline Stages
+
+A core architectural principle is that **systems perform transformations in stages**, where each stage's inputs are distinct from its outputs. This follows a pure functional model:
+
+```
+Stage N:  read(input_buffer_A) → compute → write(output_buffer_B)
+Stage N+1: read(output_buffer_B) → compute → write(output_buffer_C)
+```
+
+**Key properties:**
+
+- **No aliasing:** A stage never reads and writes the same buffer. This eliminates data races and enables trivial parallelization.
+- **Double-buffering:** Many systems use ping-pong buffers (e.g., `positions_prev` / `positions_curr`) to maintain temporal coherence.
+- **Job decomposition:** Each stage is implemented as one or more jobs. Jobs within a stage can run in parallel because they write to disjoint regions of the output buffer.
+- **Explicit dependencies:** Stage N+1 waits on Stage N's completion counter before reading its output.
+
+**Example: Physics pipeline**
+```
+1. Broadphase:    read(positions_curr, aabbs) → write(collision_pairs)
+2. Narrowphase:   read(collision_pairs, shapes) → write(contacts)
+3. Solve:         read(contacts, velocities_in) → write(velocities_out)
+4. Integrate:     read(velocities_out, positions_curr) → write(positions_next)
+5. Swap:          positions_curr ↔ positions_next
+```
+
+This pattern applies across subsystems: animation evaluation, AI decisions, network state application, and rendering command generation all follow the same read-input/write-output discipline.
 
 ### 1.1 The Shift from OOP to DOD in C11
 Traditional OOP “Actor” hierarchies lead to pointer chasing, cache misses, and polymorphic overhead that scales poorly with thousands of entities. Ferrum-Engine-C uses a strict **Entity Component System (ECS)** to separate:
@@ -26,7 +54,7 @@ High-level modules aligned with `ref/prompts.md`:
 - P_000 Fiber Runtime & Job System
 - P_001 Core Math
 - P_002 Memory (Arena + Pool)
-- P_003 ECS Core (Sparse Set)
+- P_003 ECS Core (Sparse Sets + Homogeneous Pools)
 - P_004 Renderer Core + Pipeline Graph
 - P_005 Geometry Clipmaps (Terrain)
 - P_006 Physics (Rigid Bodies, Collisions, Constraints)
@@ -138,24 +166,94 @@ ECS storage is designed to be arena-backed or pool-backed to control fragmentati
 
 ## 4. Entity Component System (ECS) Implementation
 
-Ferrum-Engine-C uses an **archetype-based ECS** for iteration speed at scale.
+Ferrum-Engine-C uses a **hybrid ECS** combining sparse sets for general entities with **homogeneous entity pools** for high-throughput batch processing.
 
-### 4.1 Archetype Architecture
-Each unique component set forms an archetype table:
+### 4.1 Sparse Set Storage (General Entities)
 
-- Structure-of-Arrays (SoA) layout: each component type is its own packed column
-- entity moves between archetypes when components are added/removed
+The core ECS uses sparse sets for flexible component storage:
 
-This increases cost of composition changes but maximizes throughput of component updates (the common case).
+- **O(1) lookup:** sparse array maps entity index → dense index
+- **O(1) add/remove:** swap-and-pop removal, append insertion
+- **Cache-friendly iteration:** dense arrays are contiguous
+- **Generation counters:** detect use-after-destroy via entity handles
 
-### 4.2 Systems and Scheduling
-Systems are stateless functions that operate on archetype chunks:
+Sparse sets are ideal for heterogeneous entities where components are added/removed dynamically (players, unique objects, interactables).
 
-- scheduler builds an execution plan based on declared **read/write sets**
-- disjoint systems run concurrently across fibers
-- systems can be chunked (e.g., 1k entities per job) for load balancing
+### 4.2 Homogeneous Entity Pools (Batch Processing)
 
-### 4.3 Relationship/Parameterization Pattern (C11)
+For compute-intensive entities with fixed component sets, dedicated **pool-per-type** storage provides maximum throughput:
+
+```c
+// All NPCs have identical components - store together
+typedef struct npc_data {
+    vec3_t position;
+    vec3_t velocity;
+    float health;
+    uint32_t ai_state;
+} npc_data_t;
+
+pool_t npc_pool;  // 10k NPCs, contiguous memory
+
+// All projectiles have identical components
+typedef struct projectile_data {
+    vec3_t position;
+    vec3_t velocity;
+    float lifetime;
+    entity_t owner;
+} projectile_data_t;
+
+pool_t projectile_pool;  // 50k projectiles, contiguous memory
+```
+
+**Advantages:**
+
+- **Perfect cache utilization:** All data for entity type is packed
+- **No sparse lookups:** Direct index into pool storage
+- **SIMD-friendly:** Can process 4/8 entities per instruction with SoA layout
+- **Predictable memory:** Fixed capacity, no fragmentation
+
+**When to use each:**
+
+| Homogeneous Pools | Sparse Sets |
+|-------------------|-------------|
+| High-volume similar entities (NPCs, projectiles, particles) | Heterogeneous entities (player, unique objects) |
+| Hot-path systems (physics, AI batch updates) | Rarely-queried components |
+| Fixed component set at spawn | Components added/removed dynamically |
+| Thousands+ entities of same type | Dozens of unique entities |
+
+### 4.3 Systems as Pipeline Stages
+
+Systems follow the pure functional transformation model (§1.0.1):
+
+- **Input/output separation:** Systems read from source arrays, write to destination arrays
+- **Parallel chunking:** Large pools are split across jobs (e.g., 1k entities per job)
+- **Counter-based dependencies:** Stage N+1 waits on Stage N's completion counter
+
+```c
+// Example: velocity integration as parallel jobs
+void integrate_positions_job(void *user) {
+    integrate_args_t *args = user;
+    // Read from: args->velocities_in, args->positions_in
+    // Write to:  args->positions_out (disjoint from input)
+    for (uint32_t i = args->start; i < args->end; ++i) {
+        args->positions_out[i] = vec3_add(
+            args->positions_in[i],
+            vec3_scale(args->velocities_in[i], args->dt)
+        );
+    }
+}
+
+// Dispatch N parallel jobs, wait on counter
+job_counter_t done;
+job_counter_init(&done, 0);
+for (int chunk = 0; chunk < num_chunks; ++chunk) {
+    job_dispatch(sys, integrate_positions_job, &args[chunk], 0, &done);
+}
+job_counter_wait(sys, &done);
+// Now positions_out is complete; swap buffers for next frame
+```
+
+### 4.4 Relationship/Parameterization Pattern (C11)
 Relationships are modeled via components containing **entity handles**, e.g.:
 
 - `target_t { entity_t target; }`

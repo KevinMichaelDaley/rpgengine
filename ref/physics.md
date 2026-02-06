@@ -1,0 +1,873 @@
+OVERVIEW: Tiered, stabilization-first TGS physics architecture
+(for a fiber-based ECS engine with sparse interactions)
+
+==============================================================
+1) WHAT THE ARCHITECTURE IS OPTIMIZING FOR
+==============================================================
+
+- Server-authoritative physics at 30 Hz.
+- Deterministic-leaning, island-based simulation.
+- Thousands of “relevant” objects, but a sparse interaction graph.
+- Strong gameplay feel:
+  - stacks don’t creep,
+  - resting objects feel stable,
+  - player-manipulated objects feel crisp and intentional.
+- A Naughty-Dog-style engine:
+  - fixed worker threads,
+  - fibers as the unit of execution,
+  - no heavyweight external job scheduler.
+
+The key principle:
+  KEEP ONE PHYSICS PIPELINE, BUT RUN IT AT DIFFERENT FIDELITIES
+  USING TIERS, BUDGETS, AND STABILIZATION HINTS.
+
+==============================================================
+2) CORE DESIGN CHOICES
+==============================================================
+
+A) ONE WORLD STATE, MULTIPLE VIEWS
+---------------------------------
+- There is exactly one SoA physics state:
+    PoseIn / VelIn → PoseOut / VelOut
+    AABB, collider refs, mass/inertia, rest/sleep state
+- No per-tier copies of entity state.
+- Tiers are just filtered, packed lists of body indices:
+    TierList[T] = { indices into shared SoA }
+
+This keeps consistency and avoids “multiple simulations”.
+
+--------------------------------------------------------------
+
+B) STABILIZATION IS FIRST-CLASS (FROM DAY ONE)
+----------------------------------------------
+- Stabilization is NOT a post-processing hack.
+- It is a dedicated pass between:
+    Manifold build → Constraint build
+
+Stabilization produces hints, not forces:
+- friction boost near zero slip
+- restitution suppression when resting
+- optional tiny tangential soft clamp
+- tier-dependent sleep thresholds
+
+This directly shapes:
+- manifold caching quality
+- solver convergence
+- “static equilibrium” feel
+
+--------------------------------------------------------------
+
+C) ISLANDS ARE THE BASE UNIT OF SOLVE
+------------------------------------
+- Contacts/constraints form a sparse graph.
+- Union-find builds islands.
+- Each island is solved independently.
+- Solvers write only to output buffers.
+
+Result:
+- zero write contention during solve
+- natural parallelism
+- perfect fit for sparse interaction graphs
+
+--------------------------------------------------------------
+
+D) TIERS ARE ABOUT INTERACTION AUTHORITY, NOT JUST DISTANCE
+-----------------------------------------------------------
+
+Typical tier set:
+
+T0 – Direct Manipulation
+  Grabbed objects, piloted vehicles, tight player control.
+  Highest fidelity, strongest stabilization.
+
+T1 – Near Interactive
+  Within reach or soon interactable.
+  Stable resting, high contact quality.
+
+T2 – Visible / Potentially Hazardous
+  Visible behind barriers, stacks that could fall, traps.
+  Reduced fidelity, still correct.
+
+T3 – World-Shaping
+  Far but consequential: boulders, large movers, collapsing structures.
+  Fidelity based on predicted impact, not distance.
+
+T4 – Background Dynamic
+  Huge count, low consequence.
+  Amortized stepping, aggressive sleep.
+
+T5 – Sleeping / Dormant
+  Not simulated, wake via events.
+
+Tiers change PARAMETERS and SCHEDULING, not the pipeline itself.
+
+--------------------------------------------------------------
+
+E) PROMOTION IS A CLASSIFICATION PASS, NOT A SOLVER SIDE EFFECT
+--------------------------------------------------------------
+
+Promotion is explicit and deterministic:
+
+1) Base classification (once per tick):
+   - distance, visibility, hazard heuristics
+   - manipulation flags
+   - hysteresis to prevent flapping
+
+2) Halo closure (each substep for Tier0, sometimes Tier3):
+   - swept AABB + margin
+   - spatial query for neighbors
+   - promote neighbors conservatively
+
+After this:
+- TierLists are final for the substep.
+- Solvers never “discover” missing bodies mid-solve.
+
+--------------------------------------------------------------
+
+F) BROADPHASE CHOICE FOR WIDE-OPEN, SPARSE WORLDS
+-------------------------------------------------
+
+- Static world: static BVH (built once).
+- Dynamic bodies: hashed uniform grid.
+  - grid payload stored as contiguous arrays (CSR-style)
+  - cache-coherent neighbor scans
+- Existing global z-order list is reused for:
+  - stable iteration order
+  - determinism
+  - other engine systems
+
+Grid is used for:
+- broadphase DD
+- halo closure neighbor queries
+
+==============================================================
+3) DATAFLOW (DFD)
+==============================================================
+
+PER TICK (30 Hz)
+----------------
+1) Build StepPlan:
+   - which tiers step this tick
+   - substeps, iterations, budgets
+2) Base tier classification.
+3) Update / maintain spatial index for relevant bodies.
+4) Run N substeps (usually 2, sometimes 3 for Tier0).
+
+PER SUBSTEP
+-----------
+0) Halo closure / promotion.
+1) Active set + AABB update.
+2) Broadphase:
+   - dynamic vs static BVH
+   - dynamic vs dynamic grid queries
+3) Narrowphase → ContactCandidates[T].
+4) Manifold build + cache merge (≤ K points).
+5) Stabilization hint generation.
+6) Constraint build (contacts only in MVP).
+7) Island build (union-find).
+8) TGS solve (batched islands).
+9) Integrate + sleep + cache commit.
+10) Emit impact events (future fracture / gameplay).
+
+==============================================================
+4) SCHEDULING MODEL (FIBER-BASED)
+==============================================================
+
+- One fiber runtime.
+- Work is chunked into batched jobs.
+- Each tier has:
+    - a per-stage cursor
+    - an in-flight cap
+    - a time budget (microseconds)
+
+WORK PUMPING MODEL:
+- Do NOT enqueue all work for a tier.
+- Spawn jobs until:
+    inFlight < cap AND budget > 0
+- When a job completes:
+    - decrement inFlight
+    - subtract time from budget
+    - enqueue next chunk if allowed
+
+This ensures:
+- Tier0 completes quickly.
+- Tier3 isn’t starved.
+- Tier4 cannot flood the system.
+
+Optional:
+- multiple runnable queues (hi/mid/low) for fibers.
+
+==============================================================
+5) FEEL & STABILITY TUNING (BUILT-IN)
+==============================================================
+
+MINIMUM FEEL GUARANTEES:
+- persistent manifolds
+- warmstarting
+- deterministic ordering
+- stabilization hints
+- tier-aware sleep
+
+TYPICAL STARTING PARAMETERS:
+
+Tier 0 – Direct Manipulation
+  substeps: 3 (while active), else 2
+  iterations: 24
+  manifold points: 4
+  friction boost: ~3x
+  restitution: suppressed when stabilized
+
+Tier 1 – Near Interactive
+  substeps: 2
+  iterations: 20
+  manifold points: 4
+  moderate stabilization
+
+Tier 2 – Visible / Hazardous
+  substeps: 1
+  iterations: 12–16
+  manifold points: 2
+  light stabilization
+
+Tier 3 – World-Shaping
+  substeps: 1–2 based on speed/impact
+  iterations: 16–20 near impacts
+  stabilization off while moving
+
+Tier 4 – Background
+  amortized cadence (e.g. 10 Hz)
+  iterations: 8–12
+  manifold points: 1
+  aggressive sleep
+
+==============================================================
+6) PERFORMANCE TARGETS
+==============================================================
+
+NEAR-PLAYER INDOOR (≈25 interacting bodies):
+- Total physics per tick: ~0.8–2.0 ms (2 substeps)
+
+PER SUBSTEP ROUGH TARGETS:
+- tier + halo:        20–120 µs
+- AABB update:        20–80 µs
+- broadphase:         40–200 µs
+- narrowphase:        80–350 µs
+- manifold + cache:   25–120 µs
+- stabilization:      15–120 µs
+- island build:       20–150 µs
+- solve:              150–600 µs
+- integrate/sleep:    20–120 µs
+
+THOUSANDS OF BODIES, SPARSE GRAPH:
+- broadphase + halo:  0.5–2.0 ms
+- narrowphase/manifold: 0.5–3.0 ms
+- solve:              0.5–3.0 ms
+- background amortized: ≤0.5–1.0 ms
+
+==============================================================
+7) WHY THIS ARCHITECTURE SCALES WITHOUT REWRITES
+==============================================================
+
+- Pipeline shape is fixed:
+    Contacts → Manifolds → Constraints → Islands → Solve
+- Stabilization is parameterized, not hard-coded.
+- Tiers affect scheduling and quality, not correctness.
+- New features (joints, articulation, fracture, integrity):
+    - plug in as new constraint/event consumers
+    - do not change the core DFD.
+
+RESULT:
+You can build this incrementally, test it early for “feel”,
+and scale it to large worlds without replacing the solver
+or rewriting the architecture.
+
+
+==============================================================
+8) FERRUM ENGINE INTEGRATION: DETAILED DATAFLOW ARCHITECTURE
+==============================================================
+
+This section maps the physics pipeline to Ferrum's concrete
+subsystems: homogeneous pools, job system, pure functional
+stages, and memory arenas.
+
+--------------------------------------------------------------
+8.1) PHYSICS DATA POOLS (HOMOGENEOUS ENTITY STORAGE)
+--------------------------------------------------------------
+
+Physics uses dedicated homogeneous pools for maximum throughput.
+All hot-path data is stored contiguously, enabling SIMD and
+cache-optimal iteration.
+
+POOL: phys_body_pool (rigid body state)
+---------------------------------------
+```c
+typedef struct phys_body_t {
+    vec3_t position;         // 12 bytes
+    quat_t orientation;      // 16 bytes
+    vec3_t linear_vel;       // 12 bytes
+    vec3_t angular_vel;      // 12 bytes
+    float inv_mass;          // 4 bytes
+    vec3_t inv_inertia_diag; // 12 bytes (diagonal approx)
+    uint32_t flags;          // 4 bytes (sleeping, static, kinematic)
+    uint8_t tier;            // 1 byte
+    uint8_t pad[3];          // alignment
+} phys_body_t;               // 76 bytes → pad to 80
+
+pool_t phys_body_pool;       // capacity: 16k bodies
+```
+
+POOL: phys_aabb_pool (broadphase bounds)
+----------------------------------------
+```c
+typedef struct phys_aabb_t {
+    vec3_t min;
+    vec3_t max;
+} phys_aabb_t;               // 24 bytes
+
+pool_t phys_aabb_pool;       // 1:1 with body pool
+```
+
+POOL: phys_collider_pool (shape references)
+-------------------------------------------
+```c
+typedef struct phys_collider_t {
+    uint32_t shape_type;     // sphere, box, capsule, convex, mesh
+    uint32_t shape_index;    // into shape-specific pool
+    vec3_t local_offset;
+    quat_t local_rotation;
+} phys_collider_t;           // 36 bytes
+
+pool_t phys_collider_pool;   // 1:1 with body pool
+```
+
+ARENA: phys_frame_arena (per-tick transients)
+---------------------------------------------
+Used for all temporary allocations that don't persist across ticks:
+- collision pairs
+- contact candidates
+- manifold scratch
+- constraint Jacobians
+- island membership lists
+
+Reset at end of physics tick. Size: ~4 MB typical.
+
+ARENA: phys_substep_arena (per-substep transients)
+--------------------------------------------------
+Nested arena within frame arena for substep-local allocations.
+Reset after each substep. Avoids fragmentation within substeps.
+
+--------------------------------------------------------------
+8.2) DOUBLE-BUFFERED STATE (PURE FUNCTIONAL I/O)
+--------------------------------------------------------------
+
+Following Ferrum's core principle: stages read from input buffers
+and write to distinct output buffers.
+
+POSE/VELOCITY BUFFERS (ping-pong):
+```c
+// Allocated from level arena (persists across frames)
+phys_body_t *bodies_curr;    // read by solver/integrate
+phys_body_t *bodies_next;    // written by integrate
+
+// Swap at end of tick
+void phys_swap_buffers(void) {
+    phys_body_t *tmp = bodies_curr;
+    bodies_curr = bodies_next;
+    bodies_next = tmp;
+}
+```
+
+For solver iterations within a substep, we use in-place updates
+to velocity (TGS pattern) but position integration is staged.
+
+--------------------------------------------------------------
+8.3) TIER LISTS (FILTERED VIEWS)
+--------------------------------------------------------------
+
+Tier lists are packed index arrays pointing into the shared pools.
+Built once per tick (base classification) and refined per substep
+(halo closure).
+
+```c
+typedef struct phys_tier_list_t {
+    uint32_t *indices;       // arena-allocated
+    uint32_t count;
+    uint32_t capacity;
+} phys_tier_list_t;
+
+phys_tier_list_t tier_lists[6];  // T0–T5
+```
+
+--------------------------------------------------------------
+8.4) COMPLETE DATAFLOW DIAGRAM
+--------------------------------------------------------------
+
+```
+═══════════════════════════════════════════════════════════════════════════════
+PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
+═══════════════════════════════════════════════════════════════════════════════
+
+                    ┌─────────────────────────────────────────────────────────┐
+                    │                    TICK START                           │
+                    │  reset phys_frame_arena                                 │
+                    │  bodies_curr = last frame's bodies_next                 │
+                    └─────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 0: STEP PLAN                                                   [SYNC] │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  game_state (player pos, camera, manipulation flags)                  │
+│ write: step_plan_t (substep counts, iteration counts, budgets per tier)     │
+│                                                                             │
+│ Single job, ~10 µs. Determines simulation fidelity for this tick.           │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 1: BASE TIER CLASSIFICATION                                  [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  bodies_curr (positions), player_positions[], manipulation_flags[]    │
+│ write: tier_lists[0..5] (arena-allocated index arrays)                      │
+│                                                                             │
+│ Jobs: N parallel (1k bodies/job)                                            │
+│ Counter: tier_class_done                                                    │
+│                                                                             │
+│ Hysteresis: bodies keep tier for K frames unless triggered to change.       │
+│ Output: packed index arrays per tier.                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 2: SPATIAL INDEX UPDATE                                      [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  bodies_curr (positions), colliders (for AABB computation)            │
+│ write: aabbs[], spatial_grid (hash grid cells)                              │
+│                                                                             │
+│ Jobs: N parallel (512 bodies/job)                                           │
+│ Counter: spatial_done                                                       │
+│                                                                             │
+│ Grid: uniform hash grid with CSR-style cell storage.                        │
+│ Static BVH: updated incrementally or skipped if unchanged.                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+                    ╔═════════════════════════════════════════════════════════╗
+                    ║         SUBSTEP LOOP (repeat N times per tick)          ║
+                    ║         reset phys_substep_arena each iteration         ║
+                    ╚═════════════════════════════════════════════════════════╝
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 3: HALO CLOSURE                                              [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  tier_lists[T0], bodies_curr (velocities), spatial_grid              │
+│ write: tier_lists[T0..T1] (expanded with promoted neighbors)                │
+│                                                                             │
+│ For T0 bodies: swept AABB + margin → query grid → promote neighbors to T1   │
+│                                                                             │
+│ Jobs: 1 per T0 body (small count, high priority)                            │
+│ Counter: halo_done                                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 4: AABB UPDATE (ACTIVE SET)                                  [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  tier_lists[T0..T4], bodies_curr, colliders                           │
+│ write: aabbs[] (only for active bodies)                                     │
+│                                                                             │
+│ Jobs: per-tier parallel batches                                             │
+│ Counter: aabb_done                                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 5: BROADPHASE                                                [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  aabbs[], spatial_grid, static_bvh                                    │
+│ write: collision_pairs[] (arena-allocated pair array)                       │
+│                                                                             │
+│ Sub-stages:                                                                 │
+│   5a) Dynamic vs Static BVH queries                                         │
+│   5b) Dynamic vs Dynamic grid queries (self-collision)                      │
+│                                                                             │
+│ Jobs: grid cells partitioned across jobs                                    │
+│ Counter: broad_done                                                         │
+│                                                                             │
+│ Output: unsorted pair list, may contain duplicates (dedupe in narrowphase). │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 6: NARROWPHASE                                               [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  collision_pairs[], bodies_curr, colliders, shape_pools              │
+│ write: contact_candidates[] (arena-allocated)                               │
+│                                                                             │
+│ Per-pair: GJK/EPA or specialized primitive tests.                           │
+│ Output: contact point, normal, penetration depth.                           │
+│                                                                             │
+│ Jobs: N parallel (64 pairs/job)                                             │
+│ Counter: narrow_done                                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 7: MANIFOLD BUILD + CACHE MERGE                              [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  contact_candidates[], manifold_cache (persistent)                    │
+│ write: manifolds[] (arena-allocated), manifold_cache (updated)              │
+│                                                                             │
+│ Merge new contacts with cached contacts (≤ K points, typically 4).          │
+│ Persistent IDs enable warmstarting.                                         │
+│                                                                             │
+│ Jobs: N parallel (32 pairs/job)                                             │
+│ Counter: manifold_done                                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 8: STABILIZATION HINTS                                       [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  manifolds[], bodies_curr (velocities), tier_lists                    │
+│ write: stab_hints[] (per-manifold hints: friction boost, restitution mod)   │
+│                                                                             │
+│ Classify each contact:                                                      │
+│   - resting (low relative velocity) → boost friction, suppress bounce       │
+│   - separating → normal contact response                                    │
+│   - sliding → dynamic friction                                              │
+│                                                                             │
+│ Jobs: N parallel (64 manifolds/job)                                         │
+│ Counter: stab_done                                                          │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 9: CONSTRAINT BUILD                                          [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  manifolds[], stab_hints[], bodies_curr (mass, inertia)               │
+│ write: constraints[] (arena-allocated Jacobian rows)                        │
+│                                                                             │
+│ For each contact point: build contact constraint (normal + 2 friction).     │
+│ Future: joint constraints plug in here.                                     │
+│                                                                             │
+│ Jobs: N parallel                                                            │
+│ Counter: constraint_done                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 10: ISLAND BUILD                                                [SYNC] │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  constraints[] (body pairs)                                           │
+│ write: islands[] (list of constraint/body index ranges)                     │
+│                                                                             │
+│ Union-find over constraint graph.                                           │
+│ Output: island_count, per-island body/constraint ranges.                    │
+│                                                                             │
+│ Single job (fast union-find, ~50 µs for 1k constraints).                    │
+│ Counter: island_done                                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 11: TGS SOLVE                                                [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  islands[], constraints[], bodies_curr                                │
+│ write: velocities_solved[] (or in-place velocity update)                    │
+│                                                                             │
+│ Per-island TGS (Temporal Gauss-Seidel):                                     │
+│   for iter in 0..N:                                                         │
+│       for constraint in island:                                             │
+│           compute impulse, apply to velocities                              │
+│                                                                             │
+│ Islands are independent → one job per island (or batched small islands).    │
+│ Warmstarting: initial impulse from cached manifold lambdas.                 │
+│                                                                             │
+│ Jobs: M parallel (1 per large island, batched for small islands)            │
+│ Counter: solve_done                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 12: INTEGRATE + SLEEP                                        [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  velocities_solved[], bodies_curr (positions)                         │
+│ write: bodies_next (positions, orientations), sleep_flags[]                 │
+│                                                                             │
+│ Semi-implicit Euler:                                                        │
+│   position_next = position_curr + velocity * dt                             │
+│   orientation_next = integrate_angular(orientation_curr, angular_vel, dt)   │
+│                                                                             │
+│ Sleep detection:                                                            │
+│   if linear_vel < threshold && angular_vel < threshold for K substeps:      │
+│       mark as sleeping, skip in future substeps                             │
+│                                                                             │
+│ Jobs: N parallel (512 bodies/job)                                           │
+│ Counter: integrate_done                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 13: CACHE COMMIT + EVENTS                                       [SYNC] │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  manifolds[], solver lambda values                                    │
+│ write: manifold_cache (persist warmstart data), impact_events[]             │
+│                                                                             │
+│ Commit solved impulse magnitudes to cache for next frame warmstart.         │
+│ Emit impact events for gameplay (damage, sound, fracture triggers).         │
+│                                                                             │
+│ Single job, ~20 µs.                                                         │
+│ Counter: cache_done                                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                    ╔═════════════════════════════════════════════════════════╗
+                    ║                 END SUBSTEP LOOP                        ║
+                    ║         repeat stages 3-13 for remaining substeps       ║
+                    ╚═════════════════════════════════════════════════════════╝
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 14: BUFFER SWAP                                                 [SYNC] │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ swap(bodies_curr, bodies_next)                                              │
+│                                                                             │
+│ Next tick reads from what is now bodies_curr.                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+                    ┌─────────────────────────────────────────────────────────┐
+                    │                     TICK END                            │
+                    │  phys_frame_arena reset happens at next tick start      │
+                    └─────────────────────────────────────────────────────────┘
+```
+
+--------------------------------------------------------------
+8.5) JOB DEPENDENCY GRAPH
+--------------------------------------------------------------
+
+```
+    TICK START
+         │
+         ▼
+    ┌─────────┐
+    │ StepPlan│ (single job)
+    └────┬────┘
+         │
+         ▼
+    ┌────────────────┐
+    │TierClassify    │───────────────────┐
+    │(N parallel)    │                   │
+    └───────┬────────┘                   │
+            │                            │
+            ▼                            ▼
+    ┌────────────────┐           ┌────────────────┐
+    │SpatialUpdate   │           │ (other systems │
+    │(N parallel)    │           │  can run here) │
+    └───────┬────────┘           └────────────────┘
+            │
+            │◄──────────── SUBSTEP LOOP ────────────────────┐
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │HaloClosure     │                                      │
+    │(small N)       │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │AABBUpdate      │                                      │
+    │(N parallel)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │Broadphase      │                                      │
+    │(N parallel)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │Narrowphase     │                                      │
+    │(N parallel)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │ManifoldBuild   │                                      │
+    │(N parallel)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │Stabilization   │                                      │
+    │(N parallel)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │ConstraintBuild │                                      │
+    │(N parallel)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │IslandBuild     │                                      │
+    │(single job)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │TGS Solve       │                                      │
+    │(M parallel,    │                                      │
+    │ 1 per island)  │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │Integrate+Sleep │                                      │
+    │(N parallel)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            ▼                                               │
+    ┌────────────────┐                                      │
+    │CacheCommit     │                                      │
+    │(single job)    │                                      │
+    └───────┬────────┘                                      │
+            │                                               │
+            └──────────────── if more substeps ─────────────┘
+            │
+            ▼
+    ┌────────────────┐
+    │BufferSwap      │
+    │(single job)    │
+    └───────┬────────┘
+            │
+            ▼
+       TICK END
+```
+
+--------------------------------------------------------------
+8.6) COUNTER USAGE PATTERN
+--------------------------------------------------------------
+
+Each stage uses a job_counter_t for synchronization:
+
+```c
+// Example: Broadphase → Narrowphase dependency
+job_counter_t broad_done, narrow_done;
+job_counter_init(&broad_done, 0);
+job_counter_init(&narrow_done, 0);
+
+// Dispatch broadphase jobs
+for (int i = 0; i < num_broad_jobs; ++i) {
+    job_dispatch(sys, broadphase_job, &broad_args[i], PRIORITY_HIGH, &broad_done);
+}
+
+// Wait for broadphase, then dispatch narrowphase
+job_wait_counter(&broad_done, 0);
+job_counter_destroy(&broad_done);
+
+for (int i = 0; i < num_narrow_jobs; ++i) {
+    job_dispatch(sys, narrowphase_job, &narrow_args[i], PRIORITY_HIGH, &narrow_done);
+}
+
+job_wait_counter(&narrow_done, 0);
+job_counter_destroy(&narrow_done);
+```
+
+--------------------------------------------------------------
+8.7) MEMORY LAYOUT SUMMARY
+--------------------------------------------------------------
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    PERSISTENT (LEVEL ARENA)                 │
+├─────────────────────────────────────────────────────────────┤
+│ phys_body_pool        [16k × 80 bytes = 1.28 MB]           │
+│ phys_aabb_pool        [16k × 24 bytes = 384 KB]            │
+│ phys_collider_pool    [16k × 36 bytes = 576 KB]            │
+│ manifold_cache        [8k entries × 64 bytes = 512 KB]     │
+│ bodies_curr / bodies_next (double buffer aliased to pool)  │
+│ static_bvh            [~1-4 MB depending on world]         │
+│ spatial_grid          [cell storage, ~512 KB]              │
+├─────────────────────────────────────────────────────────────┤
+│                    TOTAL PERSISTENT: ~4-8 MB                │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                    TRANSIENT (FRAME ARENA)                  │
+├─────────────────────────────────────────────────────────────┤
+│ tier_lists[6]         [6 × 16k × 4 bytes = 384 KB max]     │
+│ collision_pairs       [~50k pairs × 8 bytes = 400 KB]      │
+│ contact_candidates    [~10k × 48 bytes = 480 KB]           │
+│ manifolds             [~5k × 64 bytes = 320 KB]            │
+│ stab_hints            [~5k × 8 bytes = 40 KB]              │
+│ constraints           [~15k × 96 bytes = 1.44 MB]          │
+│ islands               [~500 × 16 bytes = 8 KB]             │
+│ impact_events         [~1k × 32 bytes = 32 KB]             │
+├─────────────────────────────────────────────────────────────┤
+│                    TOTAL TRANSIENT: ~3-4 MB                 │
+│              (reset each tick, reused next tick)            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+--------------------------------------------------------------
+8.8) NETWORKING INTEGRATION
+--------------------------------------------------------------
+
+Physics state replication follows the pure functional model:
+
+```
+Server Tick:
+  physics_tick() → bodies_next (authoritative)
+       │
+       ▼
+  snapshot_encode(bodies_next) → delta packets
+       │
+       ▼
+  reliable_channel_send() → clients
+
+Client Tick:
+  reliable_channel_recv() → delta packets
+       │
+       ▼
+  snapshot_decode() → server_bodies_snapshot
+       │
+       ▼
+  prediction_reconcile(local_bodies, server_snapshot)
+       │
+       ▼
+  physics_tick() with reconciled state
+```
+
+Replication uses existing quantization:
+- `vec3_mm.h`: 16-bit quantized positions (min/max encoding)
+- `quat_snorm16.h`: 16-bit quantized orientations
+- Delta compression: only changed bodies sent
+
+--------------------------------------------------------------
+8.9) EXTENSION POINTS
+--------------------------------------------------------------
+
+The pipeline is designed for incremental feature addition:
+
+JOINTS (future):
+- Add joint pool alongside manifold_cache
+- ConstraintBuild stage generates joint constraints
+- No changes to Island/Solve stages
+
+ARTICULATED BODIES (future):
+- Add articulation pool (parent/child links)
+- Pre-solve stage applies joint limits
+- Solve stage handles articulation constraints
+
+FRACTURE (future):
+- Impact events feed fracture system
+- Fracture generates new bodies/colliders
+- Bodies added to pool, spatial index updated next tick
+
+CONTINUOUS COLLISION (future):
+- Broadphase detects fast movers
+- CCD sweep test before integrate
+- Sub-step if tunnel detected
