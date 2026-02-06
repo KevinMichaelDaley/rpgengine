@@ -122,6 +122,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p076_physics_tier_stabilization_tests \
 	build/p077_physics_amortized_t4_tests \
 	build/p079_physics_sphere_simplify_tests \
+	build/p078_physics_occlusion_demotion_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -403,6 +404,9 @@ build/p077_physics_amortized_t4_tests: $(SRC) tests/p077_physics_amortized_t4_te
 build/p079_physics_sphere_simplify_tests: $(SRC) tests/p079_physics_sphere_simplify_tests.c | build
 	$(CC) $(CFLAGS) tests/p079_physics_sphere_simplify_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p078_physics_occlusion_demotion_tests: $(SRC) tests/p078_physics_occlusion_demotion_tests.c | build
+	$(CC) $(CFLAGS) tests/p078_physics_occlusion_demotion_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
@@ -607,6 +611,7 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p076_physics_tier_stabilization_tests \
 	&& ./build/p077_physics_amortized_t4_tests \
 	&& ./build/p079_physics_sphere_simplify_tests \
+	&& ./build/p078_physics_occlusion_demotion_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \

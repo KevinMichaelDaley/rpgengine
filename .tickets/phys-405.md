@@ -1,6 +1,6 @@
 ---
 id: phys-405
-status: open
+status: closed
 deps: [phys-402]
 links: [phys-400]
 created: 2026-02-06T11:09:00.000000000-08:00
