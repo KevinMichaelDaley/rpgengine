@@ -53,13 +53,18 @@ phys_stage_stabilization                         Phys.Stab.ComputingHints       
 phys_stage_constraint_build                      Phys.Constraint.BuildingJacobians        5.0
   phys_constraint_build_contact                  Phys.Constraint.ContactRow               -
 
-# STAGE 10: ISLAND BUILD (per substep)
-phys_stage_island_build                          Phys.Island.BuildingComponents           5.0
+# STAGE 10: ISLAND BUILD (T0/T1 only, per substep)
+phys_stage_island_build                          Phys.Island.BuildingComponents           4.0
   uf_find                                        Phys.Island.UnionFind                    -
   uf_union                                       Phys.Island.UnionMerge                   -
 
-# STAGE 11: TGS SOLVE (per substep)
-phys_stage_tgs_solve                             Phys.Solve.IteratingTGS                 30.0
+# STAGE 11a: TGS SOLVE (T0/T1, per substep)
+# STAGE 11b: XPBD SOLVE (T2-T4, per substep)
+# 11a and 11b run CONCURRENTLY — total is max(11a, 11b)
+phys_stage_tgs_solve                             Phys.Solve.IteratingTGS                 12.0
+phys_stage_xpbd_solve                            Phys.Solve.IteratingXPBD                18.0
+  phys_solver_convert_tgs_to_xpbd               Phys.Solve.ConvertingTGStoXPBD           -
+  phys_solver_convert_xpbd_to_tgs               Phys.Solve.ConvertingXPBDtoTGS           -
 
 # STAGE 12: INTEGRATE (per substep)
 phys_stage_integrate                             Phys.Integrate.UpdatingPositions         5.0
@@ -98,8 +103,10 @@ phys_snapshot_decode_delta                       Phys.Net.DecodingDelta         
 # Manifold Build (7)           2.5             2           5.0
 # Stabilization (8)            2.0             2           4.0
 # Constraint Build (9)         2.5             2           5.0
-# Island Build (10)            2.5             2           5.0
-# TGS Solve (11)              15.0             2          30.0
+# Island Build (10)            2.0             2           4.0
+# TGS Solve (11a)             6.0             2          12.0
+# XPBD Solve (11b)            9.0             2          18.0
+# (11a/11b concurrent: effective = max(12,18) = 18.0 wall-clock)
 # Integrate (12)               2.5             2           5.0
 # Cache Commit (13)            1.0             2           2.0
 # Buffer Swap (14)              -              1           0.5
@@ -119,6 +126,7 @@ manifold_build_job                               Phys.Job.ManifoldBuild         
 stabilization_job                                Phys.Job.Stabilization                   -
 constraint_build_job                             Phys.Job.ConstraintBuild                 -
 tgs_solve_island_job                             Phys.Job.SolveIsland                     -
+xpbd_solve_body_job                              Phys.Job.SolveXPBD                       -
 integrate_job                                    Phys.Job.Integrate                       -
 
 # BARRIER ZONES (synchronization points)
@@ -132,4 +140,5 @@ phys_wait_manifold_done                          Phys.Barrier.ManifoldDone      
 phys_wait_stab_done                              Phys.Barrier.StabDone                    -
 phys_wait_constraint_done                        Phys.Barrier.ConstraintDone              -
 phys_wait_solve_done                             Phys.Barrier.SolveDone                   -
+phys_wait_xpbd_done                              Phys.Barrier.XPBDDone                    -
 phys_wait_integrate_done                         Phys.Barrier.IntegrateDone               -

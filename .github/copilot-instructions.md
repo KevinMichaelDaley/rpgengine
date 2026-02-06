@@ -141,3 +141,145 @@ For every feature request, respond in this exact order:
 5. **Verification**
    - Confirm test coverage
    - Confirm structure and dependency constraints
+
+---
+
+## 6. TRACY PROFILING
+
+This project uses [Tracy](https://github.com/wolfpld/tracy) for real-time profiling.
+Tracy is conditionally compiled via `TRACY_ENABLE` and `TRACY_FIBERS`.
+
+### Enabling Tracy
+
+Build with Tracy enabled:
+```bash
+make TRACY=1          # Basic Tracy zones
+make TRACY=1 FIBERS=1 # Tracy + fiber context tracking
+```
+
+### Zone Naming Convention
+
+All Tracy zones must follow the hierarchical naming pattern:
+
+```
+Subsystem.Stage.DescriptiveParticiple
+```
+
+**Examples:**
+- `Phys.Solve.IteratingTGS`
+- `Phys.Broad.FindingPairs`
+- `Net.Repl.EncodingSnapshot`
+- `Job.Dispatch.QueuingFiber`
+
+**Rules:**
+- Use PascalCase for each segment
+- Participle form for the action (e.g., `Building`, `Computing`, `Updating`)
+- Keep total length under 40 characters
+- Subsystem prefixes: `Phys`, `Net`, `Job`, `Mem`, `Render`, `Audio`, `Game`
+
+### Zone Instrumentation Pattern
+
+```c
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#endif
+
+void phys_stage_broadphase(const phys_broadphase_args_t *args) {
+    #ifdef TRACY_ENABLE
+    TracyCZoneN(zone, "Phys.Broad.FindingPairs", true);
+    #endif
+
+    // ... implementation ...
+
+    #ifdef TRACY_ENABLE
+    TracyCZoneEnd(zone);
+    #endif
+}
+```
+
+For parallel jobs with fibers:
+```c
+#if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
+    TracyCFiberEnter(fiber->tracy_name);
+#endif
+```
+
+### Budget Files
+
+Reference files for comparing Tracy output against expected budgets:
+
+| File | Purpose |
+|------|---------|
+| `ref/physics_time_budget.txt` | Function → zone mapping, time % targets |
+| `ref/physics_memory_budget.txt` | Struct → memory % targets |
+| `ref/physics_performance_analysis.md` | Scaling analysis, bottleneck identification |
+
+### Key Zones to Monitor
+
+**Physics tick (target: 1.5 ms):**
+```
+Phys.Solve.IteratingTGS      > 600 µs → Island size problem
+Phys.Narrow.TestingCollisions > 300 µs → Pair count explosion
+Phys.Broad.FindingPairs      > 150 µs → Spatial index tuning needed
+Phys.Barrier.*               > 100 µs → Job scheduling overhead
+```
+
+**Network (target: 0.5 ms):**
+```
+Net.Repl.EncodingSnapshot    > 200 µs → Too many changed bodies
+Net.Rudp.SendingPackets      > 300 µs → Bandwidth saturation
+```
+
+### Memory Tracking
+
+Use Tracy's memory profiling for arena and pool allocations:
+```c
+#ifdef TRACY_ENABLE
+    TracyCAlloc(ptr, size);
+    TracyCFree(ptr);
+#endif
+```
+
+For named memory pools:
+```c
+#ifdef TRACY_ENABLE
+    TracyCAllocN(ptr, size, "phys_body_pool");
+#endif
+```
+
+### Frame Markers
+
+Mark physics ticks and server frames for timeline correlation:
+```c
+#ifdef TRACY_ENABLE
+    TracyCFrameMarkNamed("PhysTick");
+    TracyCFrameMarkNamed("ServerTick");
+#endif
+```
+
+### Profiling Workflow
+
+1. **Baseline capture:** Run `make bench TRACY=1`, capture 10-second trace
+2. **Identify hotspots:** Sort zones by total time, look for > 10% contributors
+3. **Check against budget:** Compare zone times to `ref/physics_time_budget.txt`
+4. **Investigate anomalies:** Zones exceeding 2× budget indicate problems
+5. **Verify fixes:** Re-capture, confirm zone times within budget
+
+### Automated Budget Comparison
+
+The profiling budget files are designed for programmatic comparison:
+```bash
+# Export Tracy data and compare (future tooling)
+tracy-export trace.tracy | scripts/compare_budget.py ref/physics_time_budget.txt
+```
+
+### Common Issues
+
+| Symptom | Likely Cause | Check |
+|---------|--------------|-------|
+| `Phys.Solve.*` spikes | Large islands | Island count in Tracy, look for single huge island |
+| `Phys.Narrow.*` spikes | Dense collisions | Pair count, body clustering |
+| `Phys.Barrier.*` high | Job imbalance | Worker thread utilization |
+| Missing fiber context | `TRACY_FIBERS` not set | Rebuild with `FIBERS=1` |
+| Zones not appearing | `TRACY_ENABLE` not set | Verify build flags |
+

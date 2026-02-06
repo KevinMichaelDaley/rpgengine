@@ -96,39 +96,65 @@ accumulate. The "working set" is what must fit in cache for good performance.
 - Tiered simulation essential
 - Target: < 5.0 ms/tick (with aggressive tiering)
 
-### 2.3 The Primary Bottleneck: TGS Solve
+### 2.3 The Primary Bottleneck: Hybrid Solver (TGS + XPBD)
 
-The TGS solver consumes 30% of the physics tick and has the worst scaling
-characteristics in dense scenarios.
+The solver stage consumes ~30% of the physics tick. With the hybrid architecture,
+TGS applies only to T0/T1 (near-field) and Jacobi XPBD handles T2–T4 (far-field).
+This dramatically reduces the TGS bottleneck for large scenes.
 
-**Why TGS is problematic:**
+**Why TGS was problematic (now mitigated):**
 
-1. **Sequential within islands** - Gauss-Seidel iteration requires each
+1. **Sequential within islands** — Gauss-Seidel iteration requires each
    constraint to see the result of the previous. No parallelism within
-   an island.
+   an island. *But islands are now limited to T0/T1 bodies, which are
+   spatially near the player and typically small.*
 
-2. **Scales with largest island** - 100 bodies in 1 island is 100× slower
-   than 100 bodies in 100 islands.
+2. **Scales with largest island** — 100 bodies in 1 island is 100× slower
+   than 100 bodies in 100 islands. *Worst case is now bounded by T0/T1
+   body count (typically 20–80 near the player).*
 
-3. **Iteration multiplier** - Each constraint processed 8-24 times per
-   substep. With 2 substeps, that's 16-48 passes over the constraint set.
+3. **Iteration multiplier** — Each constraint processed 20-24 times per
+   substep. With 2-3 substeps, that's 40-72 passes. *But only for the
+   small near-field island set.*
 
-**TGS time formula:**
+**TGS time formula (T0/T1 only):**
 ```
-T_solve ≈ max(island_sizes) × iterations × constraint_time
-        ≈ max_island × 16 × 0.5 µs
-        ≈ max_island × 8 µs
+T_tgs ≈ max(T0/T1 island_sizes) × iterations × constraint_time
+      ≈ max_island × 22 × 0.5 µs
+      ≈ max_island × 11 µs
 ```
 
-| Max Island Size | TGS Time | % of 1.5ms Budget |
-|-----------------|----------|-------------------|
-| 10 constraints | 80 µs | 5% |
-| 50 constraints | 400 µs | 27% |
-| 100 constraints | 800 µs | 53% |
-| 200 constraints | 1.6 ms | 107% ❌ |
-| 500 constraints | 4.0 ms | 267% ❌ |
+| Max T0/T1 Island Size | TGS Time | % of 1.5ms Budget |
+|------------------------|----------|-------------------|
+| 10 constraints | 110 µs | 7% |
+| 30 constraints | 330 µs | 22% |
+| 50 constraints | 550 µs | 37% |
+| 80 constraints | 880 µs | 59% |
 
-**Conclusion:** Keep maximum island size under 150 constraints to stay in budget.
+**Jacobi XPBD (T2–T4): embarrassingly parallel**
+
+XPBD does not use islands. Bodies are processed independently (Jacobi pattern).
+Scaling is linear in body count and parallelizes across all available cores.
+
+```
+T_xpbd ≈ (T2-T4 body_count / num_jobs) × iterations × constraint_time
+       ≈ (bodies / 8) × 6 × 0.3 µs  (cheaper per-iteration: position-level)
+```
+
+| T2–T4 Bodies | Jobs (8 threads) | XPBD Time | % of 1.5ms Budget |
+|--------------|------------------|-----------|-------------------|
+| 100 | 1 | 180 µs | 12% |
+| 500 | 4 | 225 µs | 15% |
+| 2000 | 16 | 450 µs | 30% |
+| 5000 | 40 | 1.1 ms | 73% |
+
+**Combined solver budget:**  
+T_solve = max(T_tgs, T_xpbd) because they run concurrently.  
+Typical case: 50 near-field constraints + 500 far-field bodies → max(550µs, 225µs) ≈ 550 µs (37%).
+
+**Conclusion:** TGS is no longer the global bottleneck. The limiting factor shifts
+to XPBD body count at ~3000+ far-field bodies, or TGS at ~60+ near-field island
+constraints. Both are well within budget for typical gameplay.
 
 ### 2.4 Secondary Bottleneck: Narrowphase
 
@@ -167,14 +193,17 @@ At ~7 µs per pair (including AABB + narrowphase), budget limits:
 **Problem:**
 - All 50 boxes become one island (connected through resting contacts)
 - Each box has ~4 contacts = 200 manifolds
-- 200 manifolds × 3 constraints = 600 constraints in one island
-- TGS time: 600 × 16 iterations × 0.5 µs = 4.8 ms ❌
+- If near player (T0/T1): 200 manifolds × 3 constraints = 600 constraints in TGS
+- TGS time: 600 × 22 iterations × 0.5 µs = 6.6 ms ❌
 
-**Mitigation:**
+**Mitigation with hybrid solver:**
+- Only boxes within 15m (T0/T1) use TGS — maybe 10–15 boxes = 60 constraints
+- Remaining boxes at T2+ use Jacobi XPBD: 40 bodies / 8 jobs ≈ 90 µs
+- TGS: 60 × 22 × 0.5 µs ≈ 660 µs ✓
+- Combined: max(660, 90) ≈ 660 µs ✓
 - Position-based stabilization for resting stacks
 - Aggressive sleep detection
 - Island splitting when velocity disparity detected
-- Tier demotion: only T0 bodies (player-touched) get full solve
 
 #### 3.1.2 The Explosion
 
@@ -186,16 +215,18 @@ At ~7 µs per pair (including AABB + narrowphase), budget limits:
 - Massive spike in active body count
 - Broadphase/narrowphase spike as all AABBs overlap
 
-**Timeline:**
-- Frame 0: 100 bodies wake, 500+ pairs detected
-- Frame 1-5: Bodies separating, pair count still high
-- Frame 6+: Bodies spread out, performance recovers
+**Hybrid solver advantage:**
+- Most of the 100 props are at T2+ (only a few near the player)
+- Far-field props go through Jacobi XPBD: parallelizes perfectly
+- No giant-island problem — XPBD doesn't use islands
+- 80 T2+ bodies / 8 threads ≈ 180 µs (XPBD)
+- 20 T0/T1 bodies, small islands ≈ 200 µs (TGS)
+- Combined: max(200, 180) ≈ 200 µs ✓
 
-**Mitigation:**
+**Additional mitigation:**
 - Stagger wake impulses over 2-3 frames
 - Radial wake: center bodies first, edge bodies delayed
-- Temporary iteration reduction during explosion
-- Budget cap: skip low-priority pairs if over budget
+- XPBD compliance absorbs some explosion energy naturally
 
 #### 3.1.3 The Ragdoll Pile
 
@@ -204,12 +235,17 @@ At ~7 µs per pair (including AABB + narrowphase), budget limits:
 **Problem:**
 - 150 bodies in one location
 - Each ragdoll has internal joints + inter-ragdoll contacts
-- Single island with ~400 constraints
+- Single island with ~400 constraints if all in T0/T1
 - Ragdoll joint constraints are stiff (need high iterations)
 
-**Mitigation:**
+**Hybrid solver advantage:**
+- Only ragdolls near player (T0/T1) get TGS — maybe 2-3 ragdolls = 45 bodies
+- Remaining 7-8 ragdolls at T2+ use XPBD: 105 bodies / 8 jobs ≈ 240 µs
+- XPBD is unconditionally stable, so distant ragdolls won't explode
+- Distant ragdolls look slightly softer (compliance) — acceptable
+
+**Additional mitigation:**
 - Ragdoll simplification at distance (reduce to 5 bodies)
-- Separate "ragdoll tier" with reduced iterations
 - Limit ragdoll count in pile (oldest despawn first)
 - LOD: distant ragdolls become static meshes
 
@@ -223,11 +259,16 @@ At ~7 µs per pair (including AABB + narrowphase), budget limits:
 - 200 bodies × 2 contacts each = 400 manifolds = 1200 constraints
 - Sustained high load every frame
 
+**Hybrid solver advantage:**
+- Conveyor belt is mostly far from player → T2–T4 XPBD
+- XPBD doesn't build islands, so the "giant island" problem vanishes
+- 200 XPBD bodies / 8 threads ≈ 450 µs
+- Only boxes near player (maybe 10–20) go through TGS
+
 **Mitigation:**
 - Kinematic conveyor (not simulated, applies velocity directly)
-- Island breaking at conveyor segment boundaries
-- Reduced iteration count for conveyor-touching objects
-- Hybrid: simulate only boxes near player, fake the rest
+- Reduced iteration count for conveyor-touching objects at T2+
+- XPBD compliance naturally absorbs chain instability
 
 #### 3.1.5 The Rain of Debris
 
@@ -239,7 +280,12 @@ At ~7 µs per pair (including AABB + narrowphase), budget limits:
 - But spatial index update for 500 bodies = slow
 - As they land: massive contact spike
 
-**Mitigation:**
+**Hybrid solver advantage:**
+- Most debris is at T2–T4: XPBD handles 450+ bodies in parallel
+- No island explosion — Jacobi processes each body independently
+- Only debris near player (T0/T1) needs TGS: ~20 bodies
+
+**Additional mitigation:**
 - Visual-only debris (particles) for most pieces
 - Only 20-50 pieces get physics simulation
 - Debris pooling with aggressive despawn
@@ -328,11 +374,14 @@ A representative open-world game area with:
 | T4 (Background) | 30-50 | 0 | Minimal simulation |
 | T5 (Sleeping) | 100-150 | 0 | No simulation |
 
-**Island structure:**
-- Player cluster: 1 island, 5-15 bodies, 20-50 constraints
-- Traffic vehicles: 5 islands, 1 body each, 0 constraints
-- Active ragdolls: 3 islands, 15 bodies each, 40 constraints each
-- Scattered debris: 10 islands, 1-3 bodies each, 0-5 constraints each
+**Island structure (T0/T1 only — T2+ use XPBD, no islands):**
+- Player cluster: 1 island, 5-15 bodies, 20-50 constraints (TGS)
+- Active ragdolls near player: 1-2 islands, 15 bodies each, 40 constraints (TGS)
+
+**XPBD body set (T2–T4):**
+- Traffic vehicles: 5 bodies, 0 constraints
+- Distant ragdolls: 15-30 bodies, 40-80 constraints
+- Scattered debris: 10-30 bodies, 0-15 constraints
 
 **Performance breakdown:**
 ```
@@ -345,28 +394,32 @@ Narrowphase:          150 pairs × 3.0 µs = 450 µs
 Manifold build:       80 manifolds × 1.0 µs = 80 µs
 Stabilization:        80 manifolds × 0.5 µs = 40 µs
 Constraint build:     200 constraints × 0.5 µs = 100 µs
-Island build:         200 constraints × 0.3 µs = 60 µs
-TGS solve:            See below
+Island build:         90 T0/T1 constraints × 0.3 µs = 27 µs
+Solver:               See below
 Integrate:            70 active × 0.5 µs = 35 µs
 Cache commit:         80 manifolds × 0.3 µs = 24 µs
 
-TGS solve (per island):
-  Player cluster:     50 constraints × 16 iter × 0.5 µs = 400 µs
-  Ragdoll 1:          40 constraints × 12 iter × 0.5 µs = 240 µs
-  Ragdoll 2:          40 constraints × 12 iter × 0.5 µs = 240 µs
-  Ragdoll 3:          40 constraints × 12 iter × 0.5 µs = 240 µs
-  Small islands (×10): 5 constraints × 8 iter × 0.5 µs × 10 = 200 µs
-  Subtotal TGS (parallel): max(400, 240+240+240, 200) ≈ 720 µs sequential
-                           ≈ 400 µs with 4 workers (islands parallel)
+TGS solve (T0/T1, per island):
+  Player cluster:     50 constraints × 22 iter × 0.5 µs = 550 µs
+  Near ragdoll:       40 constraints × 20 iter × 0.5 µs = 400 µs
+  Subtotal TGS (parallel): max(550, 400) ≈ 550 µs with 2+ workers
 
-Substep total: ~1.0 ms (single-threaded), ~0.7 ms (parallel)
-Per-tick (2 substeps): ~2.0 ms (single-threaded), ~1.4 ms (parallel)
+XPBD solve (T2–T4, parallel over bodies):
+  55 T2–T4 bodies, ~110 constraints × 6 iter × 0.3 µs ≈ 200 µs
+  8 threads → ~25 µs per thread
+
+Solver total: max(550, 25) ≈ 550 µs (TGS dominates, but bounded)
+Stages 11a+11b run concurrently.
+
+Substep total: ~0.85 ms (parallel)
+Per-tick (2 substeps): ~1.7 ms (single-threaded), ~1.1 ms (parallel)
 ```
 
 **Conclusion for rich world:**
-- Single-threaded: ~2.0 ms/tick (above 1.5 ms budget, needs optimization)
-- Parallel (4 workers): ~1.4 ms/tick (within budget) ✓
-- Headroom for spikes: ~0.5 ms
+- Single-threaded: ~1.7 ms/tick (slightly above 1.5 ms budget)
+- Parallel (4+ workers): ~1.1 ms/tick (well within budget) ✓
+- Headroom for spikes: ~0.9 ms
+- The hybrid solver provides ~30% more headroom vs pure TGS
 
 #### 3.3.2 Maximum Object Counts (Within Budget)
 

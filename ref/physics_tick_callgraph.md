@@ -642,7 +642,7 @@ void phys_world_tick(phys_world_t *world)
 │                constraint_count: uint32_t
 │
 ├──────────────────────────────────────────────────────────────────────────────
-│ STAGE 10: ISLAND BUILD [SYNC] — 20-150 µs
+│ STAGE 10: ISLAND BUILD (T0/T1 ONLY) [SYNC] — 20-150 µs
 ├──────────────────────────────────────────────────────────────────────────────
 │
 ├──▶ phys_stage_island_build(&island_build_args)
@@ -650,8 +650,8 @@ void phys_world_tick(phys_world_t *world)
 │    │   void phys_stage_island_build(const phys_island_build_args_t *args)
 │    │
 │    │   typedef struct phys_island_build_args_t {
-│    │       const phys_constraint_t *constraints;  [IN]  constraint graph
-│    │       uint32_t constraint_count;             [IN]  count
+│    │       const phys_constraint_t *constraints;  [IN]  T0/T1 constraints only
+│    │       uint32_t constraint_count;             [IN]  count (T0/T1)
 │    │       uint32_t body_count;                   [IN]  total bodies
 │    │       phys_island_list_t *islands_out;       [OUT] connected components
 │    │       phys_frame_arena_t *arena;             [IN]  allocator
@@ -672,9 +672,12 @@ void phys_world_tick(phys_world_t *world)
 │    │       uint32_t *rank;
 │    │   }
 │    │
+│    │   Only T0/T1 (TGS) constraints participate in island build.
+│    │   T2–T4 constraints skip island build entirely — they go to XPBD.
+│    │
 │    │   ALGORITHM (Union-Find):
 │    │   ├── Initialize: parent[i] = i for all bodies
-│    │   ├── For each constraint:
+│    │   ├── For each T0/T1 constraint:
 │    │   │   └── union(body_a, body_b)
 │    │   ├── Group bodies by root:
 │    │   │   ├── For each body: find root
@@ -698,22 +701,28 @@ void phys_world_tick(phys_world_t *world)
 │                islands: phys_island_list_t
 │                    Each island has lists of body indices and constraint indices
 │                    Islands are independent (can be solved in parallel)
+│                    Only T0/T1 bodies appear in islands
 │
 ├──────────────────────────────────────────────────────────────────────────────
-│ STAGE 11: TGS SOLVE [PARALLEL] — 150-600 µs
+│ STAGE 11a: TGS SOLVE (T0/T1) [PARALLEL] — 100-400 µs
+│ STAGE 11b: XPBD SOLVE (T2–T4) [PARALLEL, CONCURRENT WITH 11a] — 80-350 µs
 ├──────────────────────────────────────────────────────────────────────────────
 │
-├──▶ phys_stage_tgs_solve(&tgs_solve_args)
+│   Stages 11a and 11b run CONCURRENTLY on disjoint body sets:
+│   • 11a: TGS (island-based, Gauss-Seidel) for near-field (T0/T1)
+│   • 11b: Jacobi XPBD (per-body parallel) for far-field (T2–T4)
+│
+├──▶ phys_stage_tgs_solve(&tgs_solve_args)                  [Stage 11a]
 │    │
 │    │   void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
 │    │
 │    │   typedef struct phys_tgs_solve_args_t {
-│    │       const phys_island_list_t *islands;   [IN]  connected components
+│    │       const phys_island_list_t *islands;   [IN]  connected components (T0/T1)
 │    │       phys_constraint_t *constraints;      [IN/OUT] lambda updated
 │    │       const phys_body_t *bodies_in;        [IN]  current velocities
 │    │       phys_velocity_t *velocities_out;     [OUT] delta velocities
 │    │       uint32_t body_count;                 [IN]  total bodies
-│    │       uint32_t iterations;                 [IN]  solver iterations
+│    │       uint32_t iterations;                 [IN]  solver iterations (20-24)
 │    │   }
 │    │
 │    │   typedef struct phys_velocity_t {
@@ -745,7 +754,7 @@ void phys_world_tick(phys_world_t *world)
 │    │   │   │   │   ├── Δλ = λ_new - λ_old
 │    │   │   │   │   ├── row.lambda = λ_new
 │    │   │   │   │   │
-│    │   │   │   │   │   // Apply impulse to velocities
+│    │   │   │   │   │   // Apply impulse to velocities (Gauss-Seidel: immediate)
 │    │   │   │   │   ├── v_a += inv_mass_a * J_va * Δλ
 │    │   │   │   │   ├── ω_a += inv_inertia_a * J_wa * Δλ
 │    │   │   │   │   ├── v_b += inv_mass_b * J_vb * Δλ
@@ -764,9 +773,86 @@ void phys_world_tick(phys_world_t *world)
 │    │   └── No synchronization needed (islands are independent)
 │    │
 │    └── OUTPUT ═══════════════════════════════════════════════════════════════▶
-│                velocities_out[]: phys_velocity_t
+│                velocities_out[]: phys_velocity_t (T0/T1 bodies)
 │                    Solved linear and angular velocities
 │                constraints[]: lambda values updated for warmstarting
+│
+├──▶ phys_stage_xpbd_solve(&xpbd_solve_args)                [Stage 11b]
+│    │
+│    │   void phys_stage_xpbd_solve(const phys_xpbd_solve_args_t *args)
+│    │
+│    │   typedef struct phys_xpbd_solve_args_t {
+│    │       phys_constraint_t *constraints;    [IN/OUT] lambda updated
+│    │       uint32_t constraint_count;         [IN]     T2–T4 constraints
+│    │       const phys_body_t *bodies_in;      [IN]     start-of-step positions
+│    │       phys_body_t *bodies_out;           [OUT]    position corrections
+│    │       phys_velocity_t *velocities_out;   [OUT]    derived velocity = Δx/dt
+│    │       uint32_t body_count;               [IN]     T2–T4 body count
+│    │       uint32_t iterations;               [IN]     4–8 typical
+│    │       float omega;                       [IN]     Jacobi relaxation (0.5–0.8)
+│    │       float dt;                          [IN]     substep dt
+│    │   }
+│    │
+│    │   ALGORITHM (Jacobi XPBD, no island dependency):
+│    │   │
+│    │   │   // Copy initial positions
+│    │   ├── For each T2–T4 body:
+│    │   │   └── predicted_pos[body] = bodies_in[body].position
+│    │   │
+│    │   │   // XPBD iteration loop
+│    │   ├── For iter in 0..iterations:
+│    │   │   │
+│    │   │   │   // Zero per-body correction accumulators
+│    │   │   ├── For each body: Δx_accum[body] = 0
+│    │   │   │
+│    │   │   │   // Evaluate all constraints (Jacobi: read from current positions)
+│    │   │   ├── For each constraint:
+│    │   │   │   ├── C = evaluate_constraint(predicted_pos[body_a], predicted_pos[body_b])
+│    │   │   │   ├── ∇C = constraint gradient
+│    │   │   │   ├── α̃ = compliance / dt²
+│    │   │   │   ├── Δλ = (-C - α̃ · λ) / (∇C^T M⁻¹ ∇C + α̃)
+│    │   │   │   ├── λ += Δλ
+│    │   │   │   ├── Δx_accum[body_a] += inv_mass_a * ∇C_a * Δλ
+│    │   │   │   └── Δx_accum[body_b] += inv_mass_b * ∇C_b * Δλ
+│    │   │   │
+│    │   │   │   // Apply corrections with Jacobi relaxation
+│    │   │   └── For each body:
+│    │   │       └── predicted_pos[body] += ω * Δx_accum[body]
+│    │   │
+│    │   │   // Derive velocities from position change
+│    │   └── For each body:
+│    │       ├── velocities_out[body].linear = (predicted_pos - original_pos) / dt
+│    │       ├── velocities_out[body].angular = quat_delta_to_angular_vel(...)
+│    │       └── bodies_out[body].position = predicted_pos
+│    │
+│    │   PARALLELISM:
+│    │   ├── Split bodies across jobs (128 bodies/job)
+│    │   ├── Jacobi pattern: no order dependency within iteration
+│    │   ├── Per-body corrections accumulated atomically or with double-buffering
+│    │   └── Embarrassingly parallel — ideal for far-field with many scattered bodies
+│    │
+│    │   KEY DIFFERENCE FROM TGS:
+│    │   ├── TGS: velocity-level, sequential within island, best convergence
+│    │   ├── XPBD: position-level, parallel over bodies, unconditionally stable
+│    │   └── XPBD is less accurate but acceptable for T2–T4 distances
+│    │
+│    └── OUTPUT ═══════════════════════════════════════════════════════════════▶
+│                velocities_out[]: phys_velocity_t (T2–T4 bodies)
+│                    Derived velocities from position corrections
+│                bodies_out[]: corrected positions
+│                constraints[]: lambda values updated for warmstarting
+│
+│   ┌────────────────────────────────────────────────────────────────────────┐
+│   │ SOLVER TRANSITION (runs during constraint build, Stage 9):           │
+│   │                                                                      │
+│   │ When a body's tier crosses the T1↔T2 boundary:                      │
+│   │                                                                      │
+│   │ TGS → XPBD (demotion):  λ_xpbd = λ_impulse * dt                   │
+│   │ XPBD → TGS (promotion): λ_impulse = clamp(λ_xpbd / dt, λ_min,max) │
+│   │                                                                      │
+│   │ void phys_solver_convert_tgs_to_xpbd(phys_constraint_t *c, float dt)│
+│   │ void phys_solver_convert_xpbd_to_tgs(phys_constraint_t *c, float dt)│
+│   └────────────────────────────────────────────────────────────────────────┘
 │
 ├──────────────────────────────────────────────────────────────────────────────
 │ STAGE 12: INTEGRATE + SLEEP [PARALLEL] — 20-120 µs
@@ -1237,6 +1323,8 @@ TICK EPILOGUE
 | Constraint Build | `include/ferrum/physics/constraint_build.h` | `src/physics/stages/constraint_build.c` | `tests/physics/constraint_build_tests.c` |
 | Island Build | `include/ferrum/physics/island_build.h` | `src/physics/stages/island_build.c` | `tests/physics/island_build_tests.c` |
 | TGS Solve | `include/ferrum/physics/tgs_solve.h` | `src/physics/solver/tgs_solve.c` | `tests/physics/tgs_solve_tests.c` |
+| XPBD Solve | `include/ferrum/physics/xpbd_solve.h` | `src/physics/solver/xpbd_solve.c` | `tests/physics/xpbd_solve_tests.c` |
+| Solver Transition | — (internal) | `src/physics/solver/solver_transition.c` | `tests/physics/solver_transition_tests.c` |
 | Integrate | `include/ferrum/physics/integrate.h` | `src/physics/stages/integrate.c` | `tests/physics/integrate_tests.c` |
 | Cache Commit | `include/ferrum/physics/cache_commit.h` | `src/physics/stages/cache_commit.c` | `tests/physics/cache_commit_tests.c` |
 | Snapshot | `include/ferrum/physics/snapshot.h` | `src/physics/net/snapshot_encode.c`, `snapshot_decode.c` | `tests/physics/snapshot_tests.c` |
@@ -1261,8 +1349,8 @@ This call graph implements all stages defined in `ref/physics_plan.md`:
 | Phase 1, Step 1.8 (Stage 7) | STAGE 7: MANIFOLD BUILD |
 | Phase 1, Step 1.9 (Stage 8) | STAGE 8: STABILIZATION |
 | Phase 1, Step 1.10 (Stage 9) | STAGE 9: CONSTRAINT BUILD |
-| Phase 1, Step 1.11 (Stage 10) | STAGE 10: ISLAND BUILD |
-| Phase 1, Step 1.12 (Stage 11) | STAGE 11: TGS SOLVE |
+| Phase 1, Step 1.11 (Stage 10) | STAGE 10: ISLAND BUILD (T0/T1 ONLY) |
+| Phase 1, Step 1.12 (Stage 11a/11b) | STAGE 11a: TGS SOLVE / STAGE 11b: XPBD SOLVE |
 | Phase 1, Step 1.13 (Stage 12) | STAGE 12: INTEGRATE |
 | Phase 1, Step 1.14 (Stage 13) | STAGE 13: CACHE COMMIT |
 | Phase 1, Step 1.15 (Stage 14) | STAGE 14: BUFFER SWAP |

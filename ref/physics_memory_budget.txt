@@ -35,7 +35,9 @@ phys_capsule_t                                   CapsuleShapes                  
 
 # MANIFOLD CACHE
 phys_manifold_cache_t                            PersistentCache                          8.0
-  # Calculation: 8k entries × ~128 bytes = 1 MB
+  # Calculation: 8k entries × ~136 bytes = 1.06 MB
+  # Each entry stores: lambda_impulse[3] + lambda_xpbd[3] + solver_mode(u8)
+  # (13 extra bytes per entry for dual warm-start + solver mode flag)
 phys_manifold_cache_entry_t                      CacheEntry                               -
 
 # SPATIAL GRID (persistent structure, cells refilled each frame)
@@ -88,20 +90,27 @@ phys_manifold_t                                  FrameManifolds                 
 phys_stab_hint_t                                 StabilizationHints                       0.5
   # Calculation: 5k × 8 bytes = 40 KB
 
-# CONSTRAINTS (Jacobian rows)
+# CONSTRAINTS (Jacobian rows + solver metadata)
 phys_constraint_t                                Constraints                             10.0
-  # Calculation: 15k × 96 bytes = 1.44 MB
+  # Calculation: 15k × 104 bytes = 1.52 MB
+  # Each constraint now includes: solver_mode(u8), compliance(float)
 phys_jacobian_row_t                              JacobianRow                              -
 
-# ISLAND DATA
-phys_island_list_t                               IslandList                               1.0
-  # Calculation: 500 islands × 16 bytes + workspace = 100 KB
+# ISLAND DATA (T0/T1 only)
+phys_island_list_t                               IslandList                               0.5
+  # Calculation: 200 islands × 16 bytes + workspace = 50 KB
+  # (reduced: only T0/T1 constraints build islands)
 phys_island_t                                    SingleIsland                             -
 
 # VELOCITY DELTAS (solver output)
 phys_velocity_t                                  SolvedVelocities                         1.0
   # Calculation: 16k × 24 bytes = 384 KB
   # (only active bodies need velocities, typically <4k)
+
+# XPBD POSITION SCRATCH (T2-T4 bodies, Jacobi iteration)
+phys_xpbd_scratch_t                              XPBDPositionScratch                      1.5
+  # Calculation: 8k bodies × 28 bytes (pos + accum Δx + count) = 224 KB
+  # Double-buffered for Jacobi: 2 × 224 KB = 448 KB
 
 # IMPACT EVENTS (gameplay output)
 phys_impact_event_t                              ImpactEvents                             0.5
@@ -122,12 +131,12 @@ phys_step_plan_t                                 StepPlan                       
 #
 # CATEGORY                  SIZE (typical)      % OF BUDGET
 # ----------------------------------------------------------
-# Persistent Pools           ~5.0 MB             ~50%
+# Persistent Pools           ~5.1 MB             ~50%
 #   - Body pool (2×)          2.56 MB
 #   - AABB pool               0.38 MB
 #   - Collider pool           0.58 MB
 #   - Shape pools             0.19 MB
-#   - Manifold cache          1.00 MB
+#   - Manifold cache          1.06 MB  (includes dual warm-start)
 #   - World container         0.01 MB
 #
 # Static Geometry            ~2.0 MB             ~20%
@@ -136,9 +145,10 @@ phys_step_plan_t                                 StepPlan                       
 #
 # Frame Arena                ~4.0 MB             ~30%
 #   - (transient allocations)
+#   - Includes XPBD position scratch buffer (~0.45 MB)
 #
 # ----------------------------------------------------------
-# TOTAL BUDGET               ~11.0 MB            100%
+# TOTAL BUDGET               ~11.1 MB            100%
 # ----------------------------------------------------------
 #
 # Note: Frame arena memory is reused each tick, so actual
@@ -163,10 +173,11 @@ phys_box_t                                       12               4
 phys_capsule_t                                    8               4
 phys_contact_point_t                             32               4
 phys_manifold_t                                 192               4
-phys_manifold_cache_entry_t                     208               8
+phys_manifold_cache_entry_t                     224               8
 phys_stab_hint_t                                  8               4
-phys_jacobian_row_t                              68               4
-phys_constraint_t                               216               4
+phys_jacobian_row_t                              72               4
+phys_constraint_t                               228               4
+phys_xpbd_solve_args_t                           48               8
 phys_island_t                                    24               8
 phys_collision_pair_t                             8               4
 phys_contact_candidate_t                        140               4

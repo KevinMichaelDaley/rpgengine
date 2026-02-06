@@ -10,7 +10,7 @@ then extend with modular features (mesh colliders, joints, fracture).
 **Core principles:**
 - Every phase delivers the complete pipeline at that scope
 - Network replication is tested and benchmarked at each phase
-- No corners cut on the core loop—stabilization, tier lists, islands, TGS all present from Phase 1
+- No corners cut on the core loop—stabilization, tier lists, islands, hybrid TGS/XPBD all present from Phase 1
 - Extensions are purely additive—they plug into existing stages
 
 ---
@@ -117,18 +117,24 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
                                               │
                                               ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 10: ISLAND BUILD                                                [SYNC] │
+│ STAGE 10: ISLAND BUILD (T0/T1 ONLY)                                  [SYNC] │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ read:  constraints[] (body pairs)                                           │
-│ write: islands[] (list of constraint/body index ranges)                     │
+│ read:  constraints[] (T0/T1 body pairs only)                                │
+│ write: islands[] (T0/T1 constraint/body index ranges)                       │
 └─────────────────────────────────────────────────────────────────────────────┘
                                               │
                                               ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 11: TGS SOLVE                                                [PARALLEL]│
+│ STAGE 11a: TGS SOLVE (T0/T1)                                       [PARALLEL]│
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ read:  islands[], constraints[], bodies_curr                                │
-│ write: velocities_solved[]                                                  │
+│ read:  islands[], constraints[] (T0/T1), bodies_curr                        │
+│ write: velocities_solved[] (T0/T1)                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ STAGE 11b: JACOBI XPBD SOLVE (T2–T4)                       [PARALLEL, concurrent with 11a]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  constraints[] (T2–T4), bodies_curr                                   │
+│ write: positions_solved[], velocities_solved[] (T2–T4)                      │
+│ Parallelized over bodies (128/job), NOT islands.                            │
 └─────────────────────────────────────────────────────────────────────────────┘
                                               │
                                               ▼
@@ -143,8 +149,9 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ STAGE 13: CACHE COMMIT + EVENTS                                       [SYNC] │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ read:  manifolds[], solver lambda values                                    │
-│ write: manifold_cache (persist warmstart data), impact_events[]             │
+│ read:  manifolds[], solver lambda values (TGS + XPBD)                       │
+│ write: manifold_cache (persist warmstart data for both solvers),             │
+│        impact_events[]                                                      │
 └─────────────────────────────────────────────────────────────────────────────┘
                                               │
                     ╔═════════════════════════════════════════════════════════╗
@@ -574,15 +581,17 @@ typedef struct phys_jacobian_row_t {
     phys_vec3_t J_wb;    // angular Jacobian for body B
     float effective_mass;
     float bias;
-    float lambda;        // accumulated impulse
+    float lambda;        // accumulated impulse (TGS) or Lagrange mult (XPBD)
     float lambda_min;
     float lambda_max;
+    float compliance;    // XPBD: α (0 = rigid, >0 = soft). Ignored by TGS.
 } phys_jacobian_row_t;
 
 typedef struct phys_constraint_t {
     uint32_t body_a;
     uint32_t body_b;
-    uint8_t row_count;   // 1 for normal, 3 for normal + 2 friction
+    uint8_t row_count;       // 1 for normal, 3 for normal + 2 friction
+    uint8_t solver_mode;     // 0 = TGS, 1 = XPBD (set by constraint build)
     phys_jacobian_row_t rows[3];
 } phys_constraint_t;
 ```
@@ -1121,7 +1130,7 @@ For each manifold contact:
 
 ---
 
-### Step 1.11: Island Build Stage (Stage 10)
+### Step 1.11: Island Build Stage (Stage 10, T0/T1 only)
 
 **Files:**
 - `include/ferrum/physics/island_build.h`
@@ -1132,7 +1141,7 @@ For each manifold contact:
 ```c
 typedef struct phys_island_build_args_t {
     const phys_constraint_t *constraints;
-    uint32_t constraint_count;
+    uint32_t constraint_count;       // T0/T1 constraints only
     uint32_t body_count;
     phys_island_list_t *islands_out;
     phys_frame_arena_t *arena;
@@ -1141,11 +1150,14 @@ typedef struct phys_island_build_args_t {
 void phys_stage_island_build(const phys_island_build_args_t *args);
 ```
 
-Union-find algorithm:
+Union-find algorithm (T0/T1 constraints only):
 1. Initialize each body as its own set
-2. For each constraint, union body_a and body_b
+2. For each T0/T1 constraint, union body_a and body_b
 3. Group constraints and bodies by root
 4. Output island structures
+
+T2–T4 constraints are NOT included in island build—they go directly
+to the Jacobi XPBD solver which does not need island decomposition.
 
 **Acceptance Criteria:**
 - [ ] Connected components correctly identified
@@ -1155,12 +1167,17 @@ Union-find algorithm:
 
 ---
 
-### Step 1.12: TGS Solve Stage (Stage 11)
+### Step 1.12: Hybrid Solve Stage (Stage 11a/11b)
 
 **Files:**
 - `include/ferrum/physics/tgs_solve.h`
+- `include/ferrum/physics/xpbd_solve.h`
 - `src/physics/solver/tgs_solve.c`
+- `src/physics/solver/xpbd_solve.c`
+- `src/physics/solver/solver_transition.c`
 - `tests/physics/tgs_solve_tests.c`
+- `tests/physics/xpbd_solve_tests.c`
+- `tests/physics/solver_transition_tests.c`
 
 **API:**
 ```c
@@ -1168,6 +1185,8 @@ typedef struct phys_velocity_t {
     phys_vec3_t linear;
     phys_vec3_t angular;
 } phys_velocity_t;
+
+// --- Stage 11a: TGS Solve (T0/T1, island-based) ---
 
 typedef struct phys_tgs_solve_args_t {
     const phys_island_list_t *islands;
@@ -1179,9 +1198,33 @@ typedef struct phys_tgs_solve_args_t {
 } phys_tgs_solve_args_t;
 
 void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args);
+
+// --- Stage 11b: Jacobi XPBD Solve (T2–T4, per-body parallel) ---
+
+typedef struct phys_xpbd_solve_args_t {
+    phys_constraint_t *constraints;    // modified (lambda updated)
+    uint32_t constraint_count;
+    const phys_body_t *bodies_in;
+    phys_body_t *bodies_out;           // position corrections written here
+    phys_velocity_t *velocities_out;   // velocity derived from Δx/dt
+    uint32_t body_count;
+    uint32_t iterations;               // 4–8 typical
+    float omega;                       // Jacobi relaxation factor (0.5–0.8)
+    float dt;                          // substep dt
+} phys_xpbd_solve_args_t;
+
+void phys_stage_xpbd_solve(const phys_xpbd_solve_args_t *args);
+
+// --- Solver transition (warm-start conversion) ---
+
+// Convert TGS impulse lambdas to XPBD Lagrange multipliers (T1→T2 demotion)
+void phys_solver_convert_tgs_to_xpbd(phys_constraint_t *c, float dt);
+
+// Convert XPBD Lagrange multipliers to TGS impulse lambdas (T2→T1 promotion)
+void phys_solver_convert_xpbd_to_tgs(phys_constraint_t *c, float dt);
 ```
 
-TGS (Temporal Gauss-Seidel) algorithm:
+**TGS** (Temporal Gauss-Seidel) algorithm (T0/T1):
 ```
 for each island:
     copy velocities from bodies_in
@@ -1196,11 +1239,45 @@ for each island:
     write final velocities to velocities_out
 ```
 
+**Jacobi XPBD** algorithm (T2–T4):
+```
+for iter in 0..K:
+    // Read from start-of-iteration positions (Jacobi: no order dependency)
+    for each constraint:
+        C = evaluate_constraint(positions)
+        α̃ = compliance / dt²
+        Δλ = (-C - α̃ · λ) / (∇C^T M^-1 ∇C + α̃)
+        λ += Δλ
+        Δx_a = inv_M_a * ∇C_a^T * Δλ  // accumulate per body
+        Δx_b = inv_M_b * ∇C_b^T * Δλ
+
+    // Blend corrections (Jacobi relaxation)
+    for each body:
+        position += ω * accumulated_Δx
+
+// Derive velocities from position change
+for each body:
+    velocity = (position_new - position_old) / dt
+```
+
+**Transition logic:**
+```
+// TGS → XPBD (body demoted T1 → T2):
+λ_xpbd = λ_impulse * dt
+
+// XPBD → TGS (body promoted T2 → T1):
+λ_impulse = clamp(λ_xpbd / dt, λ_min, λ_max)
+```
+
 **Acceptance Criteria:**
-- [ ] Converges for stable stacking
-- [ ] Friction prevents sliding on resting contacts
-- [ ] Restitution produces correct bounce velocity
-- [ ] Islands solved independently
+- [ ] TGS converges for stable stacking (T0/T1 bodies)
+- [ ] XPBD is unconditionally stable for far-field explosions
+- [ ] Friction prevents sliding on resting contacts (both solvers)
+- [ ] Restitution produces correct bounce velocity (TGS)
+- [ ] Islands solved independently (TGS)
+- [ ] XPBD parallelizes over bodies, not islands
+- [ ] Transition TGS→XPBD preserves warm-start continuity
+- [ ] Transition XPBD→TGS clamps to avoid energy injection
 
 ---
 
@@ -1618,10 +1695,20 @@ Split manifold list across jobs.
 
 ---
 
-### Step 3.9: Parallelize TGS Solve
+### Step 3.9: Parallelize TGS Solve (T0/T1)
 
 One job per island (or batched small islands).
 Islands are independent—zero write contention.
+Only T0/T1 constraints participate.
+
+---
+
+### Step 3.9b: Parallelize XPBD Solve (T2–T4)
+
+Split T2–T4 bodies across jobs (128 bodies/job).
+Each body processed independently (Jacobi pattern).
+No island dependency—embarrassingly parallel.
+Safe for large far-field events (explosions, collapses).
 
 ---
 
@@ -1675,30 +1762,69 @@ Hysteresis to prevent flapping.
 
 ### Step 4.2: Per-Tier Solver Parameters
 
-Different substeps/iterations per tier:
-- T0: 3 substeps, 24 iterations
-- T1: 2 substeps, 20 iterations
-- T2: 1 substep, 16 iterations
-- T3: 1 substep, 12 iterations
-- T4: amortized (10 Hz), 8 iterations
+Different solver mode, substeps, and iterations per tier:
+- T0: TGS, 3 substeps, 24 iterations
+- T1: TGS, 2 substeps, 20 iterations
+- T2: Jacobi XPBD, 1 substep, 8 iterations, compliance 1e-6
+- T3: Jacobi XPBD, 1 substep, 6 iterations, compliance 1e-5
+- T4: Jacobi XPBD, amortized (10 Hz), 4 iterations, compliance 1e-4
+
+The constraint build stage sets `solver_mode` on each constraint based on
+the tier of the involved bodies. Cross-tier constraints (e.g., T1 body
+touching T2 body) use TGS if either body is T0/T1.
 
 ---
 
-### Step 4.3: Per-Tier Stabilization
+### Step 4.3: Solver Transition Logic (TGS ↔ XPBD)
+
+When a body's tier changes across the TGS/XPBD boundary (T1↔T2), cached
+warm-start data must be converted. This runs once per affected constraint
+during the constraint build stage.
+
+**TGS → XPBD (demotion, e.g., body moves from T1 to T2):**
+```
+λ_xpbd = λ_impulse * dt
+```
+The XPBD Lagrange multiplier has units of impulse×time. Multiply the
+cached TGS accumulated impulse by the timestep.
+
+**XPBD → TGS (promotion, e.g., body moves from T2 to T1):**
+```
+λ_impulse = clamp(λ_xpbd / dt, λ_min, λ_max)
+```
+Divide by timestep and clamp to the constraint's force limits.
+Clamping is essential: XPBD with compliance > 0 produces softer solutions,
+and injecting the raw value as a TGS warm-start could inject energy.
+
+**Files:**
+- `src/physics/solver/solver_transition.c`
+- `tests/physics/solver_transition_tests.c`
+
+**Test Cases:**
+```c
+// test_tgs_to_xpbd_conversion_roundtrip
+// test_xpbd_to_tgs_clamping
+// test_cross_tier_constraint_assignment
+// test_no_energy_injection_on_promotion
+```
+
+---
+
+### Step 4.4: Per-Tier Stabilization
 
 T0 gets strongest stabilization (3x friction boost).
 T4 gets minimal stabilization.
 
 ---
 
-### Step 4.4: Amortized Ticking for T4
+### Step 4.5: Amortized Ticking for T4
 
 T4 bodies tick every 3rd frame (10 Hz instead of 30 Hz).
 Interpolate visually.
 
 ---
 
-### Step 4.5: Phase 4 Integration Test + Benchmark
+### Step 4.6: Phase 4 Integration Test + Benchmark
 
 **Test Cases:**
 ```c

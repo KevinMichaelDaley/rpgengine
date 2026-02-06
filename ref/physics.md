@@ -1,4 +1,4 @@
-OVERVIEW: Tiered, stabilization-first TGS physics architecture
+OVERVIEW: Tiered, hybrid TGS/XPBD physics architecture
 (for a fiber-based ECS engine with sparse interactions)
 
 ==============================================================
@@ -99,7 +99,7 @@ T4 – Background Dynamic
 T5 – Sleeping / Dormant
   Not simulated, wake via events.
 
-Tiers change PARAMETERS and SCHEDULING, not the pipeline itself.
+Tiers change PARAMETERS, SCHEDULING, and SOLVER MODE, not the pipeline itself.
 
 --------------------------------------------------------------
 
@@ -124,7 +124,112 @@ After this:
 
 --------------------------------------------------------------
 
-F) BROADPHASE CHOICE FOR WIDE-OPEN, SPARSE WORLDS
+F) HYBRID SOLVER: TGS (NEAR-FIELD) + JACOBI-XPBD (FAR-FIELD)
+--------------------------------------------------------------
+
+The solver stage is split by tier:
+
+  T0, T1  →  TGS (Temporal Gauss-Seidel), island-based
+  T2–T4   →  Jacobi-style XPBD, per-body parallel
+
+Why two solvers?
+
+TGS gives the best convergence and "feel" for near-field objects:
+stable resting contacts, crisp manipulation, no visible drift.
+But it is sequential within islands (Gauss-Seidel ordering) and
+its cost scales with the largest island—which means a far-field
+explosion that merges 200 bodies into one island can blow the
+budget even though the player doesn't notice the difference.
+
+Jacobi-style XPBD solves this by being unconditionally stable
+and embarrassingly parallel: every body can be processed
+independently in the same iteration pass. The tradeoff is slower
+convergence and mushier stacking, but for T2–T4 objects this is
+invisible to the player. More importantly, it parallelizes over
+bodies, not islands, so an explosion of 200 far-field objects
+costs the same as 200 independent bodies—no giant-island
+bottleneck at all.
+
+F.1) XPBD RECAP
+- Position-based: constraints produce positional corrections Δx
+  and accumulated Lagrange multipliers λ (not impulses).
+- Compliance α controls stiffness:
+    Δλ = (-C - α̃·λ) / (∇C^T M^-1 ∇C + α̃)
+    Δx = M^-1 ∇C^T Δλ
+  where α̃ = α / dt².
+- Jacobi variant: all corrections computed from start-of-iteration
+  state, then blended (ω ≈ 0.5–0.8 for damping). This removes
+  ordering dependency at the cost of slower convergence, but enables
+  full per-body parallelism.
+
+F.2) TRANSITION LOGIC (TGS ↔ XPBD)
+
+When a body transitions between solver domains (tier demotion T1→T2
+or promotion T2→T1), its cached solver state must be converted so
+warm-starting remains effective.
+
+TGS → XPBD (body demoted from T1 to T2):
+  The TGS solver stores accumulated impulses λ_impulse per constraint
+  row. To seed XPBD warm-start multipliers:
+    1. Recover the positional correction that impulse would have produced:
+         Δx ≈ M^-1 · J^T · λ_impulse · dt
+    2. Compute the equivalent XPBD multiplier:
+         λ_xpbd = λ_impulse · dt
+       XPBD multipliers have units of [impulse × time] (they accumulate
+       position-scaled corrections). The compliance term α̃ is then
+       applied naturally during the first XPBD iteration, so no explicit
+       compliance conversion is needed here.
+    3. Store λ_xpbd in the manifold cache alongside the contact ID.
+
+XPBD → TGS (body promoted from T2 to T1):
+  The XPBD solver stores Lagrange multipliers λ_xpbd.
+  To seed TGS warm-start impulses:
+    1. Compute the impulse that would produce the same velocity change:
+         λ_impulse = λ_xpbd / dt
+    2. Clamp to TGS lambda bounds [λ_min, λ_max] to avoid injecting
+       energy from the softer XPBD solution.
+    3. Apply λ_impulse as initial warm-start in the first TGS iteration.
+
+  The clamping in step 2 is essential: XPBD with compliance > 0 may
+  have accumulated multipliers that correspond to softer-than-rigid
+  behavior. Injecting them as rigid impulses would over-correct.
+  Clamping ensures the TGS solver converges from a safe starting point.
+
+Cache storage:
+  The manifold cache stores both representations:
+    phys_manifold_cache_entry_t {
+        ...
+        float lambda_impulse[3];   // TGS warm-start (normal + 2 friction)
+        float lambda_xpbd[3];     // XPBD warm-start (same layout)
+        uint8_t last_solver_mode;  // 0 = TGS, 1 = XPBD
+    }
+  On transition, the conversion runs once (in the constraint build
+  stage) and overwrites the destination field. The last_solver_mode
+  flag tells constraint build which conversion to apply.
+
+F.3) WHY THIS SCALES
+
+  T0/T1 (TGS):
+    - Typically < 50 near-field bodies → small islands
+    - 24 iterations, sequential per island, but islands are small
+    - Best convergence for player-visible interactions
+
+  T2–T4 (Jacobi XPBD):
+    - Hundreds or thousands of far-field bodies
+    - 4–8 iterations (convergence is slower but adequate)
+    - Each body processed independently → one job per 128 bodies
+    - A 200-body explosion is just 2 jobs, not one giant island
+    - Unconditionally stable: overshooting never diverges, it just
+      looks mushy (acceptable in the far field)
+
+  The transition boundary (T1↔T2) is where the conversion runs.
+  Because tier classification has hysteresis (bodies keep their tier
+  for K frames), transitions are rare—typically single-digit bodies
+  per tick during steady state.
+
+--------------------------------------------------------------
+
+G) BROADPHASE CHOICE FOR WIDE-OPEN, SPARSE WORLDS
 -------------------------------------------------
 
 - Static world: static BVH (built once).
@@ -164,8 +269,10 @@ PER SUBSTEP
 4) Manifold build + cache merge (≤ K points).
 5) Stabilization hint generation.
 6) Constraint build (contacts only in MVP).
-7) Island build (union-find).
-8) TGS solve (batched islands).
+7) Island build (union-find, T0/T1 only).
+8) Solve:
+   - T0/T1: TGS solve (batched islands)
+   - T2–T4: Jacobi XPBD solve (per-body parallel)
 9) Integrate + sleep + cache commit.
 10) Emit impact events (future fracture / gameplay).
 
@@ -211,6 +318,7 @@ MINIMUM FEEL GUARANTEES:
 TYPICAL STARTING PARAMETERS:
 
 Tier 0 – Direct Manipulation
+  solver: TGS (island-based)
   substeps: 3 (while active), else 2
   iterations: 24
   manifold points: 4
@@ -218,27 +326,34 @@ Tier 0 – Direct Manipulation
   restitution: suppressed when stabilized
 
 Tier 1 – Near Interactive
+  solver: TGS (island-based)
   substeps: 2
   iterations: 20
   manifold points: 4
   moderate stabilization
 
 Tier 2 – Visible / Hazardous
+  solver: Jacobi XPBD (per-body parallel)
   substeps: 1
-  iterations: 12–16
+  iterations: 8
   manifold points: 2
   light stabilization
+  compliance: 1e-6 (near-rigid)
 
 Tier 3 – World-Shaping
+  solver: Jacobi XPBD (per-body parallel)
   substeps: 1–2 based on speed/impact
-  iterations: 16–20 near impacts
+  iterations: 6
   stabilization off while moving
+  compliance: 1e-5 (slightly soft)
 
 Tier 4 – Background
+  solver: Jacobi XPBD (per-body parallel)
   amortized cadence (e.g. 10 Hz)
-  iterations: 8–12
+  iterations: 4
   manifold points: 1
   aggressive sleep
+  compliance: 1e-4 (soft, energy-absorbing)
 
 ==============================================================
 6) PERFORMANCE TARGETS
@@ -255,13 +370,14 @@ PER SUBSTEP ROUGH TARGETS:
 - manifold + cache:   25–120 µs
 - stabilization:      15–120 µs
 - island build:       20–150 µs
-- solve:              150–600 µs
+- solve (TGS+XPBD):   150–600 µs
 - integrate/sleep:    20–120 µs
 
 THOUSANDS OF BODIES, SPARSE GRAPH:
 - broadphase + halo:  0.5–2.0 ms
 - narrowphase/manifold: 0.5–3.0 ms
-- solve:              0.5–3.0 ms
+- solve (TGS T0/T1): 0.1–0.5 ms (small island count)
+- solve (XPBD T2–T4): 0.3–2.0 ms (parallel over bodies)
 - background amortized: ≤0.5–1.0 ms
 
 ==============================================================
@@ -269,9 +385,9 @@ THOUSANDS OF BODIES, SPARSE GRAPH:
 ==============================================================
 
 - Pipeline shape is fixed:
-    Contacts → Manifolds → Constraints → Islands → Solve
+    Contacts → Manifolds → Constraints → Islands(T0/T1) → Solve(TGS|XPBD)
 - Stabilization is parameterized, not hard-coded.
-- Tiers affect scheduling and quality, not correctness.
+- Tiers affect scheduling, quality, and solver mode, not correctness.
 - New features (joints, articulation, fracture, integrity):
     - plug in as new constraint/event consumers
     - do not change the core DFD.
@@ -377,8 +493,11 @@ void phys_swap_buffers(void) {
 }
 ```
 
-For solver iterations within a substep, we use in-place updates
-to velocity (TGS pattern) but position integration is staged.
+For solver iterations within a substep:
+- TGS (T0/T1): in-place velocity updates (Gauss-Seidel pattern),
+  position integration is staged.
+- XPBD (T2–T4): positional corrections accumulated per body
+  (Jacobi pattern), velocities derived from position change / dt.
 
 --------------------------------------------------------------
 8.3) TIER LISTS (FILTERED VIEWS)
@@ -558,24 +677,25 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
                                               │
                                               ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 10: ISLAND BUILD                                                [SYNC] │
+│ STAGE 10: ISLAND BUILD (T0/T1 ONLY)                                  [SYNC] │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ read:  constraints[] (body pairs)                                           │
+│ read:  constraints[] (body pairs, filtered to T0/T1 bodies)                 │
 │ write: islands[] (list of constraint/body index ranges)                     │
 │                                                                             │
-│ Union-find over constraint graph.                                           │
+│ Union-find over T0/T1 constraint graph only.                                │
+│ T2–T4 constraints are NOT islanded—they go to the XPBD solver.             │
 │ Output: island_count, per-island body/constraint ranges.                    │
 │                                                                             │
-│ Single job (fast union-find, ~50 µs for 1k constraints).                    │
+│ Single job (fast union-find, ~20 µs for T0/T1 constraints).                 │
 │ Counter: island_done                                                        │
 └─────────────────────────────────────────────────────────────────────────────┘
                                               │
                                               ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ STAGE 11: TGS SOLVE                                                [PARALLEL]│
+│ STAGE 11a: TGS SOLVE (T0/T1)                                       [PARALLEL]│
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ read:  islands[], constraints[], bodies_curr                                │
-│ write: velocities_solved[] (or in-place velocity update)                    │
+│ read:  islands[], constraints[] (T0/T1), bodies_curr                        │
+│ write: velocities_solved[] (T0/T1 bodies)                                   │
 │                                                                             │
 │ Per-island TGS (Temporal Gauss-Seidel):                                     │
 │   for iter in 0..N:                                                         │
@@ -584,9 +704,31 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
 │                                                                             │
 │ Islands are independent → one job per island (or batched small islands).    │
 │ Warmstarting: initial impulse from cached manifold lambdas.                 │
+│ Typically < 50 near-field bodies.                                           │
 │                                                                             │
 │ Jobs: M parallel (1 per large island, batched for small islands)            │
-│ Counter: solve_done                                                         │
+│ Counter: tgs_solve_done                                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ STAGE 11b: JACOBI XPBD SOLVE (T2–T4)                               [PARALLEL]│
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  constraints[] (T2–T4), bodies_curr                                   │
+│ write: positions_solved[], velocities_solved[] (T2–T4 bodies)               │
+│                                                                             │
+│ Jacobi-style XPBD (per-body parallel, no island dependency):                │
+│   for iter in 0..K (K=4–8):                                                │
+│       for each constraint (Jacobi: read from start-of-iter state):          │
+│           Δλ = (-C - α̃·λ) / (∇C^T M^-1 ∇C + α̃)                          │
+│           accumulate Δx per body                                            │
+│       blend corrections: x += ω · Δx_accumulated  (ω ≈ 0.5–0.8)           │
+│                                                                             │
+│ Parallelized over bodies, NOT islands. No ordering dependency.              │
+│ Unconditionally stable: safe for far-field explosions.                      │
+│ Warmstarting: λ_xpbd from manifold cache.                                   │
+│                                                                             │
+│ Jobs: N parallel (128 bodies/job)                                           │
+│ Counter: xpbd_solve_done                                                    │
+│                                                                             │
+│ NOTE: 11a and 11b can run concurrently (independent body sets).             │
 └─────────────────────────────────────────────────────────────────────────────┘
                                               │
                                               ▼
@@ -713,17 +855,19 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
             ▼                                               │
     ┌────────────────┐                                      │
     │IslandBuild     │                                      │
-    │(single job)    │                                      │
+    │(T0/T1 only,   │                                      │
+    │ single job)    │                                      │
     └───────┬────────┘                                      │
             │                                               │
             ▼                                               │
-    ┌────────────────┐                                      │
-    │TGS Solve       │                                      │
-    │(M parallel,    │                                      │
-    │ 1 per island)  │                                      │
-    └───────┬────────┘                                      │
-            │                                               │
-            ▼                                               │
+    ┌────────────────┐   ┌────────────────┐                 │
+    │TGS Solve       │   │XPBD Solve      │                 │
+    │(T0/T1,         │   │(T2–T4,         │                 │
+    │ M per island)  │   │ N per 128 body) │                 │
+    └───────┬────────┘   └───────┬────────┘                 │
+            │                    │                          │
+            └────────┬───────────┘                          │
+                     ▼                                      │
     ┌────────────────┐                                      │
     │Integrate+Sleep │                                      │
     │(N parallel)    │                                      │
@@ -788,6 +932,7 @@ job_counter_destroy(&narrow_done);
 │ phys_aabb_pool        [16k × 24 bytes = 384 KB]            │
 │ phys_collider_pool    [16k × 36 bytes = 576 KB]            │
 │ manifold_cache        [8k entries × 64 bytes = 512 KB]     │
+│   (includes lambda_impulse, lambda_xpbd, solver_mode)     │
 │ bodies_curr / bodies_next (double buffer aliased to pool)  │
 │ static_bvh            [~1-4 MB depending on world]         │
 │ spatial_grid          [cell storage, ~512 KB]              │
