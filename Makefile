@@ -103,6 +103,19 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p057_physics_box_capsule_tests \
 	build/p058_physics_capsule_capsule_tests \
 	build/p059_physics_phase2_integration_tests \
+	build/p060_physics_job_infra_tests \
+	build/p061_physics_par_tier_tests \
+	build/p062_physics_par_spatial_tests \
+	build/p063_physics_par_broadphase_tests \
+	build/p064_physics_par_narrowphase_tests \
+	build/p065_physics_par_manifold_tests \
+	build/p066_physics_par_stabilization_tests \
+	build/p067_physics_par_constraint_tests \
+	build/p068_physics_par_tgs_tests \
+	build/p069_physics_par_xpbd_tests \
+	build/p070_physics_par_integrate_tests \
+	build/p071_physics_par_tick_tests \
+	build/p072_physics_phase3_integration_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -327,6 +340,45 @@ build/p058_physics_capsule_capsule_tests: $(SRC) tests/p058_physics_capsule_caps
 build/p059_physics_phase2_integration_tests: $(SRC) tests/p059_physics_phase2_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p059_physics_phase2_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p060_physics_job_infra_tests: $(SRC) tests/p060_physics_job_infra_tests.c | build
+	$(CC) $(CFLAGS) tests/p060_physics_job_infra_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p061_physics_par_tier_tests: $(SRC) tests/p061_physics_par_tier_tests.c | build
+	$(CC) $(CFLAGS) tests/p061_physics_par_tier_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p062_physics_par_spatial_tests: $(SRC) tests/p062_physics_par_spatial_tests.c | build
+	$(CC) $(CFLAGS) tests/p062_physics_par_spatial_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p063_physics_par_broadphase_tests: $(SRC) tests/p063_physics_par_broadphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p063_physics_par_broadphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p064_physics_par_narrowphase_tests: $(SRC) tests/p064_physics_par_narrowphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p064_physics_par_narrowphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p065_physics_par_manifold_tests: $(SRC) tests/p065_physics_par_manifold_tests.c | build
+	$(CC) $(CFLAGS) tests/p065_physics_par_manifold_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p066_physics_par_stabilization_tests: $(SRC) tests/p066_physics_par_stabilization_tests.c | build
+	$(CC) $(CFLAGS) tests/p066_physics_par_stabilization_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p067_physics_par_constraint_tests: $(SRC) tests/p067_physics_par_constraint_tests.c | build
+	$(CC) $(CFLAGS) tests/p067_physics_par_constraint_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p068_physics_par_tgs_tests: $(SRC) tests/p068_physics_par_tgs_tests.c | build
+	$(CC) $(CFLAGS) tests/p068_physics_par_tgs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p069_physics_par_xpbd_tests: $(SRC) tests/p069_physics_par_xpbd_tests.c | build
+	$(CC) $(CFLAGS) tests/p069_physics_par_xpbd_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p070_physics_par_integrate_tests: $(SRC) tests/p070_physics_par_integrate_tests.c | build
+	$(CC) $(CFLAGS) tests/p070_physics_par_integrate_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p071_physics_par_tick_tests: $(SRC) tests/p071_physics_par_tick_tests.c | build
+	$(CC) $(CFLAGS) tests/p071_physics_par_tick_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p072_physics_phase3_integration_tests: $(SRC) tests/p072_physics_phase3_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p072_physics_phase3_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
@@ -512,6 +564,19 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p057_physics_box_capsule_tests \
 	&& ./build/p058_physics_capsule_capsule_tests \
 	&& ./build/p059_physics_phase2_integration_tests \
+	&& ./build/p060_physics_job_infra_tests \
+	&& ./build/p061_physics_par_tier_tests \
+	&& ./build/p062_physics_par_spatial_tests \
+	&& ./build/p063_physics_par_broadphase_tests \
+	&& ./build/p064_physics_par_narrowphase_tests \
+	&& ./build/p065_physics_par_manifold_tests \
+	&& ./build/p066_physics_par_stabilization_tests \
+	&& ./build/p067_physics_par_constraint_tests \
+	&& ./build/p068_physics_par_tgs_tests \
+	&& ./build/p069_physics_par_xpbd_tests \
+	&& ./build/p070_physics_par_integrate_tests \
+	&& ./build/p071_physics_par_tick_tests \
+	&& ./build/p072_physics_phase3_integration_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
