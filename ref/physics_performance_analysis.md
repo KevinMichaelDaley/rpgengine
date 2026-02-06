@@ -458,7 +458,7 @@ For a 1.5 ms physics tick budget:
 | Problem | Mitigation | Implementation |
 |---------|------------|----------------|
 | Large islands | Island splitting | Detect velocity clusters, break weak contacts |
-| TGS sequential | Per-island parallelism | Job per island, batch small islands |
+| Single large island dominates | Island splitting + sleep-stabilize | Break monolithic island at weak contacts, sleep resting pairs |
 | Dense broadphase | Spatial hashing | Tune cell size to average body size |
 | Pair explosion | Pair budget cap | Skip low-priority pairs when over budget |
 | Ragdoll piles | LOD simplification | Reduce body count at distance |
