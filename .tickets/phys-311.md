@@ -1,6 +1,6 @@
 ---
 id: phys-311
-status: open
+status: closed
 deps: [phys-312]
 links: [phys-300]
 created: 2026-02-06T11:09:00.000000000-08:00
