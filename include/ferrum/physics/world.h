@@ -1,0 +1,263 @@
+#ifndef FERRUM_PHYSICS_WORLD_H
+#define FERRUM_PHYSICS_WORLD_H
+
+/** @file
+ * @brief Top-level physics world container.
+ *
+ * Owns body pools, colliders, shape arrays, manifold cache, and
+ * per-frame arena.  Provides the main interface for creating and
+ * destroying rigid bodies and attaching collider shapes.
+ */
+
+#include "ferrum/physics/phys_types.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/collider.h"
+#include "ferrum/physics/aabb.h"
+#include "ferrum/physics/manifold_cache.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ── Configuration ──────────────────────────────────────────────── */
+
+/**
+ * @brief Physics world configuration.
+ *
+ * Controls pool sizes, solver parameters, and sleep thresholds.
+ * Obtain reasonable defaults with phys_world_config_default().
+ */
+typedef struct phys_world_config {
+    uint32_t max_bodies;               /**< Maximum number of rigid bodies. */
+    uint32_t max_colliders;            /**< Maximum number of colliders. */
+    uint32_t manifold_cache_size;      /**< Manifold cache capacity. */
+    size_t   frame_arena_size;         /**< Per-frame arena size in bytes. */
+    float    fixed_dt;                 /**< Fixed timestep (seconds). */
+    phys_vec3_t gravity;               /**< Gravity vector. */
+    uint32_t default_substeps;         /**< Physics substeps per tick. */
+    uint32_t default_solver_iterations;/**< Constraint solver iterations. */
+    float    baumgarte;                /**< Baumgarte stabilisation factor. */
+    float    slop;                     /**< Penetration slop. */
+    float    sleep_threshold_linear;   /**< Linear velocity sleep threshold. */
+    float    sleep_threshold_angular;  /**< Angular velocity sleep threshold. */
+    uint32_t sleep_delay_frames;       /**< Frames below threshold before sleep. */
+} phys_world_config_t;
+
+/* ── World container ────────────────────────────────────────────── */
+
+/**
+ * @brief Top-level physics world container.
+ *
+ * Owns all simulation state.  Caller must call phys_world_init()
+ * before use and phys_world_destroy() when done.
+ *
+ * Ownership: the world owns all internal arrays and sub-structures.
+ * Pointers returned by get_body / get_collider / get_aabb are owned
+ * by the world and are invalidated by destroy.
+ */
+typedef struct phys_world {
+    phys_world_config_t config;
+
+    /* Double-buffered body pool. */
+    phys_body_pool_t body_pool;
+
+    /* Per-body colliders and AABBs (indexed by body pool slot). */
+    phys_collider_t *colliders;  /**< Array of size max_bodies. */
+    phys_aabb_t     *aabbs;      /**< Array of size max_bodies. */
+
+    /* Shape storage (indexed by collider.shape_index). */
+    phys_sphere_t  *spheres;     /**< Sphere shapes array. */
+    phys_box_t     *boxes;       /**< Box shapes array. */
+    phys_capsule_t *capsules;    /**< Capsule shapes array. */
+    uint32_t sphere_count;       /**< Number of allocated spheres. */
+    uint32_t box_count;          /**< Number of allocated boxes. */
+    uint32_t capsule_count;      /**< Number of allocated capsules. */
+
+    /* Persistent manifold cache. */
+    phys_manifold_cache_t manifold_cache;
+
+    /* Per-frame arena. */
+    phys_frame_arena_t frame_arena;
+
+    /* Tick counter. */
+    uint64_t tick_count;
+} phys_world_t;
+
+/* ── Configuration API ──────────────────────────────────────────── */
+
+/**
+ * @brief Return a default world configuration with reasonable values.
+ * @return Default configuration struct.
+ */
+phys_world_config_t phys_world_config_default(void);
+
+/* ── Lifecycle API ──────────────────────────────────────────────── */
+
+/**
+ * @brief Initialize a physics world from configuration.
+ *
+ * Allocates body pool, collider/AABB arrays, shape arrays, manifold
+ * cache, and frame arena.
+ *
+ * @param world  World to initialize (non-NULL).
+ * @param config Configuration (non-NULL).
+ * @return 0 on success, -1 on failure (NULL args or allocation failure).
+ *
+ * Ownership: caller owns the world and must call phys_world_destroy().
+ * Side effects: allocates heap memory.
+ */
+int phys_world_init(phys_world_t *world, const phys_world_config_t *config);
+
+/**
+ * @brief Destroy a physics world and free all memory.
+ *
+ * @param world  World to destroy (NULL-safe, no-op if NULL).
+ *
+ * Side effects: frees all internal memory; zeroes the struct.
+ */
+void phys_world_destroy(phys_world_t *world);
+
+/* ── Body management API ────────────────────────────────────────── */
+
+/**
+ * @brief Create a new rigid body in the world.
+ *
+ * The body is initialized with safe defaults (static, identity
+ * orientation, zero velocity).
+ *
+ * @param world  World (non-NULL).
+ * @return Body index, or UINT32_MAX on failure (NULL world or pool full).
+ *
+ * Ownership: the world owns the body.
+ */
+uint32_t phys_world_create_body(phys_world_t *world);
+
+/**
+ * @brief Remove a body from the world.
+ *
+ * Marks the body slot inactive.  The collider and AABB at that index
+ * remain allocated but become inactive.
+ *
+ * @param world  World (NULL-safe, no-op if NULL).
+ * @param index  Body index (out-of-range is a no-op).
+ */
+void phys_world_destroy_body(phys_world_t *world, uint32_t index);
+
+/**
+ * @brief Get a mutable pointer to a body by index.
+ *
+ * @param world  World (NULL returns NULL).
+ * @param index  Body index.
+ * @return Pointer to the body in the current-frame buffer, or NULL
+ *         if inactive / out-of-range / NULL world.
+ *
+ * Ownership: the returned pointer is owned by the world.
+ */
+phys_body_t *phys_world_get_body(phys_world_t *world, uint32_t index);
+
+/**
+ * @brief Return the number of active bodies.
+ *
+ * @param world  World (NULL returns 0).
+ * @return Active body count.
+ */
+uint32_t phys_world_body_count(const phys_world_t *world);
+
+/* ── Collider management API ────────────────────────────────────── */
+
+/**
+ * @brief Attach a sphere collider to a body.
+ *
+ * Allocates a sphere shape and sets up the collider reference.
+ *
+ * @param world       World (NULL-safe, no-op if NULL).
+ * @param body_index  Body index.
+ * @param radius      Sphere radius.
+ * @param offset      Local offset from body origin.
+ *
+ * Side effects: increments sphere_count; writes colliders[body_index].
+ */
+void phys_world_set_sphere_collider(phys_world_t *world, uint32_t body_index,
+                                    float radius, phys_vec3_t offset);
+
+/**
+ * @brief Attach a box collider to a body.
+ *
+ * Allocates a box shape and sets up the collider reference.
+ *
+ * @param world        World (NULL-safe, no-op if NULL).
+ * @param body_index   Body index.
+ * @param half_extents Box half-extents along local axes.
+ * @param offset       Local offset from body origin.
+ * @param rotation     Local rotation relative to body.
+ *
+ * Side effects: increments box_count; writes colliders[body_index].
+ */
+void phys_world_set_box_collider(phys_world_t *world, uint32_t body_index,
+                                 phys_vec3_t half_extents, phys_vec3_t offset,
+                                 phys_quat_t rotation);
+
+/**
+ * @brief Attach a capsule collider to a body.
+ *
+ * Allocates a capsule shape and sets up the collider reference.
+ *
+ * @param world       World (NULL-safe, no-op if NULL).
+ * @param body_index  Body index.
+ * @param radius      Capsule radius.
+ * @param half_height Half of the cylinder segment length.
+ * @param offset      Local offset from body origin.
+ * @param rotation    Local rotation relative to body.
+ *
+ * Side effects: increments capsule_count; writes colliders[body_index].
+ */
+void phys_world_set_capsule_collider(phys_world_t *world, uint32_t body_index,
+                                     float radius, float half_height,
+                                     phys_vec3_t offset, phys_quat_t rotation);
+
+/**
+ * @brief Get a read-only pointer to a body's collider.
+ *
+ * @param world       World (NULL returns NULL).
+ * @param body_index  Body index.
+ * @return Pointer to the collider, or NULL if body is inactive,
+ *         out-of-range, or world is NULL.
+ *
+ * Ownership: the returned pointer is owned by the world.
+ */
+const phys_collider_t *phys_world_get_collider(const phys_world_t *world,
+                                               uint32_t body_index);
+
+/* ── Query API ──────────────────────────────────────────────────── */
+
+/**
+ * @brief Get a read-only pointer to a body's AABB.
+ *
+ * @param world       World (NULL returns NULL).
+ * @param body_index  Body index.
+ * @return Pointer to the AABB, or NULL if body is inactive,
+ *         out-of-range, or world is NULL.
+ *
+ * Ownership: the returned pointer is owned by the world.
+ */
+const phys_aabb_t *phys_world_get_aabb(const phys_world_t *world,
+                                       uint32_t body_index);
+
+/**
+ * @brief Return the current tick count.
+ *
+ * @param world  World (NULL returns 0).
+ * @return Number of simulation ticks executed so far.
+ */
+uint64_t phys_world_tick_count(const phys_world_t *world);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
+
+#endif /* FERRUM_PHYSICS_WORLD_H */

@@ -1,6 +1,6 @@
 ---
 id: phys-012
-status: open
+status: closed
 deps: [phys-002, phys-003, phys-004, phys-005, phys-006, phys-007, phys-008, phys-009, phys-010, phys-011]
 links: [phys-000]
 created: 2026-02-06T05:20:00.000000000-08:00
