@@ -45,7 +45,7 @@ phys_world_t                     Main world container
 ├── phys_body_pool_t             Double-buffered body storage
 │   ├── bodies_curr: phys_body_t*    Read buffer (current tick input)
 │   └── bodies_next: phys_body_t*    Write buffer (integration output)
-├── collider_pool: pool_t        Shape reference per body
+├── collider_pool: pool_t        Shape reference per body (includes sphere_simplify flag)
 ├── sphere_pool: pool_t          Shape data (radius)
 ├── box_pool: pool_t             Shape data (half_extents)
 ├── capsule_pool: pool_t         Shape data (radius, half_height)
@@ -130,7 +130,13 @@ void phys_world_tick(phys_world_t *world)
 │                    substeps: uint32_t,        // e.g., 2
 │                    solver_iterations: uint32_t, // e.g., 8
 │                    dt: float,                 // e.g., 1/30 / 2 = 0.0167
-│                    tier_params[6]: { active, iterations }
+│                    tier_params[6]:
+│                        T0: { iterations: 24, substeps: 3, solver: TGS, collider: full }
+│                        T1: { iterations: 20, substeps: 2, solver: TGS, collider: full }
+│                        T2: { iterations:  8, substeps: 1, solver: XPBD, collider: sphere if ratio<1.3 }
+│                        T3: { iterations:  4, substeps: 1, solver: XPBD, collider: sphere if ratio<1.3 }
+│                        T4: { iterations:  2, substeps: 0.5 (amort 10Hz), solver: XPBD, collider: sphere preferred }
+│                        T5: { iterations:  0, substeps: 0, solver: none, collider: event-driven wake }
 │                }
 │
 ├──────────────────────────────────────────────────────────────────────────────
@@ -391,13 +397,16 @@ void phys_world_tick(phys_world_t *world)
 │    │   ALGORITHM:
 │    │   ├── For each pair in parallel (64 pairs/job):
 │    │   │   ├── Lookup collider types for body_a, body_b
+│    │   │   ├── Sphere simplification override:
+│    │   │   │   If tier >= T3 and collider.sphere_simplify: use sphere collider
+│    │   │   │   If tier >= T2 and both bodies sphere_simplify: sphere-sphere path
 │    │   │   ├── Dispatch to appropriate primitive test:
-│    │   │   │   ├── sphere-sphere
-│    │   │   │   ├── sphere-box
-│    │   │   │   ├── sphere-capsule
-│    │   │   │   ├── box-box
-│    │   │   │   ├── box-capsule
-│    │   │   │   └── capsule-capsule
+│    │   │   │   ├── sphere-sphere     (~0.3 µs, trivial)
+│    │   │   │   ├── sphere-box        (~0.8 µs)
+│    │   │   │   ├── sphere-capsule    (~0.5 µs)
+│    │   │   │   ├── box-box           (~1.5 µs, SAT + clip)
+│    │   │   │   ├── box-capsule       (~1.2 µs)
+│    │   │   │   └── capsule-capsule   (~1.0 µs)
 │    │   │   ├── If contact found:
 │    │   │   │   └── Append contact_candidate to output
 │    │   │   └── Continue
@@ -559,7 +568,7 @@ void phys_world_tick(phys_world_t *world)
 │                    Per-manifold friction/restitution modifiers
 │
 ├──────────────────────────────────────────────────────────────────────────────
-│ STAGE 9: CONSTRAINT BUILD [PARALLEL] — ~100 µs
+│ STAGE 9: CONSTRAINT BUILD + SPECIALIZATION [PARALLEL] — ~100 µs
 ├──────────────────────────────────────────────────────────────────────────────
 │
 ├──▶ phys_stage_constraint_build(&constraint_build_args)
@@ -599,29 +608,51 @@ void phys_world_tick(phys_world_t *world)
 │    │
 │    │   ALGORITHM:
 │    │   ├── For each manifold:
-│    │   │   ├── For each contact point:
-│    │   │   │   ├── Build normal constraint row:
-│    │   │   │   │   ├── J_va = -normal
-│    │   │   │   │   ├── J_wa = -(r_a × normal)
-│    │   │   │   │   ├── J_vb = +normal
-│    │   │   │   │   ├── J_wb = +(r_b × normal)
-│    │   │   │   │   ├── effective_mass = 1 / (J M^-1 J^T)
-│    │   │   │   │   ├── bias = baumgarte * penetration / dt
-│    │   │   │   │       + restitution * hints[i].restitution_scale * v_rel_n
-│    │   │   │   │   ├── lambda = cached_normal_impulse (warmstart)
-│    │   │   │   │   ├── lambda_min = 0 (no pull)
-│    │   │   │   │   └── lambda_max = +∞
-│    │   │   │   ├── Build friction constraint row 1 (tangent1):
-│    │   │   │   │   ├── tangent1 = orthogonal to normal
-│    │   │   │   │   ├── J_va = -tangent1, J_wa = -(r_a × tangent1)
-│    │   │   │   │   ├── J_vb = +tangent1, J_wb = +(r_b × tangent1)
-│    │   │   │   │   ├── lambda = cached_tangent_impulse[0]
-│    │   │   │   │   ├── lambda_min = -µ * λ_normal * hints[i].friction_scale
-│    │   │   │   │   └── lambda_max = +µ * λ_normal * hints[i].friction_scale
-│    │   │   │   └── Build friction constraint row 2 (tangent2):
-│    │   │   │       └── (same pattern, orthogonal to both normal and tangent1)
-│    │   │   └── Output constraint
-│    │   └── Continue
+│    │   │   ├── Detect specialization:
+│    │   │   │   ├── PLANAR: all contact normals within ε of each other
+│    │   │   │   ├── SPHERE: both colliders are spheres (or sphere-simplified)
+│    │   │   │   └── GENERIC: anything else
+│    │   │   │
+│    │   │   ├── If SPHERE (both sphere colliders):
+│    │   │   │   ├── 1 contact point, trivial Jacobian:
+│    │   │   │   │   J_va = -n, J_vb = +n
+│    │   │   │   │   J_wa = -(radius_a * n), J_wb = +(radius_b * n)
+│    │   │   │   │   effective_mass = scalar (diagonal inertia)
+│    │   │   │   ├── 1 normal row + optional rolling friction row
+│    │   │   │   └── row_count = 1–2 (vs 3 generic). ~6× cheaper per iteration.
+│    │   │   │
+│    │   │   ├── If PLANAR (coplanar normals, e.g. box-on-box):
+│    │   │   │   ├── Shared normal J_v = ±n for all contact points
+│    │   │   │   ├── 1 aggregate normal row + 2 shared friction rows
+│    │   │   │   ├── Per-point angular residual corrections (cheap)
+│    │   │   │   ├── 4-pt manifold: ~4 effective rows (vs 12 generic). ~3× cheaper.
+│    │   │   │   └── Enables planar sleep propagation: if contact velocity < threshold,
+│    │   │   │       entire subtree below in contact graph stays sleeping
+│    │   │   │
+│    │   │   ├── GENERIC path (unchanged):
+│    │   │   │   ├── For each contact point:
+│    │   │   │   │   ├── Build normal constraint row:
+│    │   │   │   │   │   ├── J_va = -normal
+│    │   │   │   │   │   ├── J_wa = -(r_a × normal)
+│    │   │   │   │   │   ├── J_vb = +normal
+│    │   │   │   │   │   ├── J_wb = +(r_b × normal)
+│    │   │   │   │   │   ├── effective_mass = 1 / (J M^-1 J^T)
+│    │   │   │   │   │   ├── bias = baumgarte * penetration / dt
+│    │   │   │   │   │       + restitution * hints[i].restitution_scale * v_rel_n
+│    │   │   │   │   │   ├── lambda = cached_normal_impulse (warmstart)
+│    │   │   │   │   │   ├── lambda_min = 0 (no pull)
+│    │   │   │   │   │   └── lambda_max = +∞
+│    │   │   │   │   ├── Build friction constraint row 1 (tangent1):
+│    │   │   │   │   │   ├── tangent1 = orthogonal to normal
+│    │   │   │   │   │   ├── J_va = -tangent1, J_wa = -(r_a × tangent1)
+│    │   │   │   │   │   ├── J_vb = +tangent1, J_wb = +(r_b × tangent1)
+│    │   │   │   │   │   ├── lambda = cached_tangent_impulse[0]
+│    │   │   │   │   │   ├── lambda_min = -µ * λ_normal * hints[i].friction_scale
+│    │   │   │   │   │   └── lambda_max = +µ * λ_normal * hints[i].friction_scale
+│    │   │   │   │   └── Build friction constraint row 2 (tangent2):
+│    │   │   │   │       └── (same pattern, orthogonal to both normal and tangent1)
+│    │   │   │   └── Output constraint
+│    │   │   └── Continue
 │    │
 │    │   CALLS:
 │    │   └──▶ phys_constraint_build_contact(&constraint, body_a, body_b,

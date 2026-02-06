@@ -112,7 +112,8 @@ Promotion is explicit and deterministic:
 1) Base classification (once per tick):
    - distance, visibility, hazard heuristics
    - manipulation flags
-   - occlusion override: nearby but occluded bodies demote to T3+
+   - occlusion override: renderer provides visibility_set bitfield;
+     nearby but occluded bodies demote to T3+
      (they only need to sound right and land plausibly)
    - hysteresis to prevent flapping (includes occlusion hysteresis)
 
@@ -219,16 +220,48 @@ F.3) WHY THIS SCALES
 
   T2–T4 (Jacobi XPBD):
     - Hundreds or thousands of far-field bodies
-    - 4–8 iterations (convergence is slower but adequate)
+    - 2–8 iterations: T2:8, T3:4, T4:2 (reduced at distance for throughput)
     - Each body processed independently → one job per 128 bodies
     - A 200-body explosion is just 2 jobs, not one giant island
     - Unconditionally stable: overshooting never diverges, it just
       looks mushy (acceptable in the far field)
+    - Sphere simplification at T2+: bodies with bounding-sphere ratio
+      (circumradius/inradius) < 1.3 use sphere collider + sphere-sphere
+      narrowphase + simplified constraint (1 row, scalar effective_mass)
+    - T4 bodies prefer sphere collider unconditionally for small objects
 
   The transition boundary (T1↔T2) is where the conversion runs.
   Because tier classification has hysteresis (bodies keep their tier
   for K frames), transitions are rare—typically single-digit bodies
   per tick during steady state.
+
+F.4) CONSTRAINT SPECIALIZATION
+
+  The generic constraint processes 3 Jacobian rows per contact point
+  (1 normal + 2 friction tangents). Two common cases have fast-paths:
+
+  PLANAR CONTACTS (coplanar manifold points, e.g. box-on-box):
+    - All contact points share the same face normal
+    - Normal Jacobian J_v is identical; only J_w differs per point
+    - Build 1 shared normal solve + 1 shared friction solve +
+      cheap per-point angular residuals
+    - 4-point box-on-box: 12 rows → ~4 effective rows (3× cheaper)
+    - SLEEP PROPAGATION: if all planar contact points are below a
+      velocity threshold, the entire contact-graph subtree below
+      can remain sleeping. A 5-box stack disturbed at top: only the
+      top box needs full solve (15× reduction for deep stacks)
+
+  SPHERE-SPHERE CONTACTS:
+    - 1 manifold point per intersection (guaranteed)
+    - Trivial Jacobian: J_v = ±n, J_w = ±(radius × n), no cross products
+    - Effective mass is scalar (diagonal inertia for sphere)
+    - 1–2 rows instead of 3, each ~2× cheaper = ~6× total speedup
+
+  Constraint build (Stage 9) detects these cases:
+    - Planar: all manifold normals within ε of each other
+    - Sphere: both colliders are spheres (or sphere-simplified at T2+)
+  The specialized constraint uses the same phys_constraint_t struct
+  but with fewer active rows and precomputed shared Jacobians.
 
 --------------------------------------------------------------
 
@@ -631,6 +664,8 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
 │ write: contact_candidates[] (arena-allocated)                               │
 │                                                                             │
 │ Per-pair: GJK/EPA or specialized primitive tests.                           │
+│ Sphere simplification: if tier >= T3 and sphere_simplify flag set, override │
+│ collider to bounding sphere. Both T2+ bodies qualifying → sphere-sphere.   │
 │ Output: contact point, normal, penetration depth.                           │
 │                                                                             │
 │ Jobs: N parallel (64 pairs/job)                                             │
