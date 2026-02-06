@@ -121,6 +121,36 @@ bool phys_sphere_vs_box(
     phys_vec3_t box_half_extents,
     struct phys_contact_point *contact_out);
 
+/**
+ * @brief Test sphere vs capsule intersection.
+ *
+ * The capsule is defined by a center, orientation quaternion, radius,
+ * and half-height.  Its line segment goes from
+ * center - axis*half_height to center + axis*half_height, where
+ * axis = rotate((0,1,0), capsule_rotation).
+ *
+ * @param sphere_center      World-space center of the sphere.
+ * @param sphere_radius      Radius of the sphere.
+ * @param capsule_center     World-space center of the capsule.
+ * @param capsule_rotation   World-space orientation of the capsule.
+ * @param capsule_radius     Radius of the capsule cylinder/caps.
+ * @param capsule_half_height Half the cylinder segment length.
+ * @param contact_out        Output contact point (non-NULL on true return).
+ * @return true if shapes overlap or touch, false otherwise.
+ *
+ * Normal points from capsule closest point toward sphere center.
+ * Penetration is positive for overlap.
+ * If sphere center lies exactly on the capsule segment, normal
+ * defaults to (0,1,0).
+ *
+ * NULL-safe: returns false if contact_out is NULL.
+ */
+bool phys_sphere_vs_capsule(
+    phys_vec3_t sphere_center, float sphere_radius,
+    phys_vec3_t capsule_center, phys_quat_t capsule_rotation,
+    float capsule_radius, float capsule_half_height,
+    struct phys_contact_point *contact_out);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
