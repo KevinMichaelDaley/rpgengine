@@ -11,6 +11,7 @@
 
 struct phys_world;
 struct phys_game_state;
+struct phys_job_context;
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +33,21 @@ extern "C" {
  */
 void phys_world_tick(struct phys_world *world,
                      const struct phys_game_state *game);
+
+/**
+ * @brief Parallel tick — dispatches pipeline stages as jobs.
+ *
+ * Produces identical results to phys_world_tick() but uses the job system
+ * for parallelism.  Sync stages (step plan, island build, cache commit)
+ * run on the calling thread.  TGS and XPBD solve concurrently.
+ *
+ * @param world  Physics world (non-NULL).
+ * @param game   Game state input (may be NULL).
+ * @param jobs   Physics job context (non-NULL).
+ */
+void phys_world_tick_parallel(struct phys_world *world,
+                              const struct phys_game_state *game,
+                              struct phys_job_context *jobs);
 
 #ifdef __cplusplus
 } /* extern "C" */
