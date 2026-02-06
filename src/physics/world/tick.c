@@ -1,0 +1,320 @@
+/**
+ * @file tick.c
+ * @brief Master tick function — orchestrates all 14 physics pipeline stages.
+ *
+ * Stages 0-13 execute in order within a substep loop.  Buffer swap
+ * occurs at the end of each substep.  The frame arena is reset once
+ * at the start of the tick.
+ */
+
+#include "ferrum/physics/tick.h"
+#include "ferrum/physics/world.h"
+#include "ferrum/physics/game_state.h"
+#include "ferrum/physics/step_plan.h"
+#include "ferrum/physics/tier_classify.h"
+#include "ferrum/physics/tier_list.h"
+#include "ferrum/physics/spatial_update.h"
+#include "ferrum/physics/spatial_grid.h"
+#include "ferrum/physics/halo_closure.h"
+#include "ferrum/physics/aabb_update.h"
+#include "ferrum/physics/broadphase.h"
+#include "ferrum/physics/narrowphase.h"
+#include "ferrum/physics/manifold_build.h"
+#include "ferrum/physics/manifold_cache.h"
+#include "ferrum/physics/stabilization.h"
+#include "ferrum/physics/constraint_stage.h"
+#include "ferrum/physics/constraint.h"
+#include "ferrum/physics/island_build.h"
+#include "ferrum/physics/island.h"
+#include "ferrum/physics/tgs_solve.h"
+#include "ferrum/physics/xpbd_solve.h"
+#include "ferrum/physics/integrate.h"
+#include "ferrum/physics/cache_commit.h"
+#include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/manifold.h"
+
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+/** Number of spatial grid hash buckets (must be power of 2). */
+#define GRID_CELL_COUNT 256
+
+/** World-space size of each spatial grid cell. */
+#define GRID_CELL_SIZE 2.0f
+
+/** Maximum broadphase pairs per substep. */
+#define MAX_PAIRS_PER_SUBSTEP 10000
+
+void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
+    if (!world) {
+        return;
+    }
+
+    /* Clear impact events from last frame. */
+    world->impact_event_count = 0;
+
+    /* Reset the per-frame arena so all arena pointers are fresh. */
+    phys_frame_arena_reset(&world->frame_arena);
+
+    const uint32_t body_cap = world->body_pool.capacity;
+
+    /* ── Stage 0: Step Plan ────────────────────────────────────── */
+    phys_step_plan_t plan;
+    phys_stage_step_plan(&plan, world, game);
+
+    /* Build active flags array (mirrors body pool activity). */
+    uint8_t *active = phys_frame_arena_alloc(&world->frame_arena,
+                                             body_cap * sizeof(uint8_t),
+                                             _Alignof(uint8_t));
+    if (!active && body_cap > 0) {
+        return; /* Arena exhausted — skip this tick. */
+    }
+    for (uint32_t i = 0; i < body_cap; i++) {
+        active[i] = world->body_pool.active[i];
+    }
+
+    /* ── Stage 1: Tier Classification ──────────────────────────── */
+    phys_tier_lists_t tier_lists;
+    phys_stage_tier_classify(&(phys_tier_classify_args_t){
+        .bodies         = world->body_pool.bodies_curr,
+        .active         = active,
+        .body_count     = body_cap,
+        .game           = game,
+        .tier_lists_out = &tier_lists,
+        .arena          = &world->frame_arena,
+    });
+
+    /* ── Stage 2: Spatial Index Update ─────────────────────────── */
+    phys_spatial_grid_t grid;
+    phys_spatial_grid_init(&grid, GRID_CELL_COUNT, GRID_CELL_SIZE,
+                           &world->frame_arena);
+
+    phys_stage_spatial_update(&(phys_spatial_update_args_t){
+        .bodies    = world->body_pool.bodies_curr,
+        .colliders = world->colliders,
+        .spheres   = world->spheres,
+        .boxes     = world->boxes,
+        .capsules  = world->capsules,
+        .aabbs_out = world->aabbs,
+        .grid_out  = &grid,
+        .active    = active,
+        .body_count = body_cap,
+    });
+
+    /* ── Substep loop ──────────────────────────────────────────── */
+    const uint32_t substeps = plan.substeps > 0 ? plan.substeps : 1;
+    const float substep_dt = plan.substep_dt > 0.0f
+                                 ? plan.substep_dt
+                                 : world->config.fixed_dt;
+
+    for (uint32_t sub = 0; sub < substeps; sub++) {
+        /* ── Stage 3: Halo Closure ─────────────────────────────── */
+        phys_stage_halo_closure(&(phys_halo_closure_args_t){
+            .bodies          = world->body_pool.bodies_curr,
+            .aabbs           = world->aabbs,
+            .grid            = &grid,
+            .tier_lists      = &tier_lists,
+            .velocity_margin = 0.1f,
+            .dt              = substep_dt,
+            .body_count      = body_cap,
+        });
+
+        /* ── Stage 4: AABB Update (skip on first substep) ──────── */
+        if (sub > 0) {
+            phys_stage_aabb_update(&(phys_aabb_update_args_t){
+                .bodies     = world->body_pool.bodies_curr,
+                .colliders  = world->colliders,
+                .spheres    = world->spheres,
+                .boxes      = world->boxes,
+                .capsules   = world->capsules,
+                .aabbs_out  = world->aabbs,
+                .tier_lists = &tier_lists,
+            });
+        }
+
+        /* ── Stage 5: Broadphase ───────────────────────────────── */
+        uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
+        if (max_pairs > body_cap * 4) {
+            max_pairs = body_cap * 4 > 0 ? body_cap * 4 : 1;
+        }
+        phys_collision_pair_t *pairs = phys_frame_arena_alloc(
+            &world->frame_arena,
+            max_pairs * sizeof(phys_collision_pair_t),
+            _Alignof(phys_collision_pair_t));
+        uint32_t pair_count = 0;
+
+        if (pairs) {
+            phys_stage_broadphase(&(phys_broadphase_args_t){
+                .bodies         = world->body_pool.bodies_curr,
+                .aabbs          = world->aabbs,
+                .grid           = &grid,
+                .tier_lists     = &tier_lists,
+                .pairs_out      = pairs,
+                .max_pairs      = max_pairs,
+                .pair_count_out = &pair_count,
+            });
+        }
+
+        /* ── Stage 6: Narrowphase ──────────────────────────────── */
+        uint32_t max_candidates = pair_count > 0 ? pair_count : 1;
+        phys_contact_candidate_t *candidates = phys_frame_arena_alloc(
+            &world->frame_arena,
+            max_candidates * sizeof(phys_contact_candidate_t),
+            _Alignof(phys_contact_candidate_t));
+        uint32_t candidate_count = 0;
+
+        if (candidates && pair_count > 0) {
+            phys_stage_narrowphase(&(phys_narrowphase_args_t){
+                .bodies              = world->body_pool.bodies_curr,
+                .colliders           = world->colliders,
+                .spheres             = world->spheres,
+                .boxes               = world->boxes,
+                .capsules            = world->capsules,
+                .pairs               = pairs,
+                .pair_count          = pair_count,
+                .candidates_out      = candidates,
+                .candidate_count_out = &candidate_count,
+                .max_candidates      = max_candidates,
+            });
+        }
+
+        /* ── Stage 7: Manifold Build ───────────────────────────── */
+        uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
+        phys_manifold_t *manifolds = phys_frame_arena_alloc(
+            &world->frame_arena,
+            max_manifolds * sizeof(phys_manifold_t),
+            _Alignof(phys_manifold_t));
+        uint32_t manifold_count = 0;
+
+        if (manifolds && candidate_count > 0) {
+            phys_stage_manifold_build(&(phys_manifold_build_args_t){
+                .candidates         = candidates,
+                .candidate_count    = candidate_count,
+                .cache              = &world->manifold_cache,
+                .manifolds_out      = manifolds,
+                .manifold_count_out = &manifold_count,
+                .max_manifolds      = max_manifolds,
+                .tick               = world->tick_count,
+            });
+        }
+
+        /* ── Stage 8: Stabilization ────────────────────────────── */
+        uint32_t hint_count = manifold_count > 0 ? manifold_count : 1;
+        phys_stab_hint_t *hints = phys_frame_arena_alloc(
+            &world->frame_arena,
+            hint_count * sizeof(phys_stab_hint_t),
+            _Alignof(phys_stab_hint_t));
+
+        if (hints && manifold_count > 0) {
+            phys_stage_stabilization(&(phys_stabilization_args_t){
+                .manifolds                  = manifolds,
+                .manifold_count             = manifold_count,
+                .bodies                     = world->body_pool.bodies_curr,
+                .hints_out                  = hints,
+                .resting_velocity_threshold = 0.5f,
+            });
+        }
+
+        /* ── Stage 9: Constraint Build ─────────────────────────── */
+        uint32_t max_constraints = manifold_count * PHYS_MAX_MANIFOLD_POINTS;
+        if (max_constraints == 0) {
+            max_constraints = 1;
+        }
+        phys_constraint_t *constraints = phys_frame_arena_alloc(
+            &world->frame_arena,
+            max_constraints * sizeof(phys_constraint_t),
+            _Alignof(phys_constraint_t));
+        uint32_t constraint_count = 0;
+
+        if (constraints && manifold_count > 0) {
+            phys_stage_constraint_build(&(phys_constraint_build_args_t){
+                .manifolds            = manifolds,
+                .hints                = hints,
+                .manifold_count       = manifold_count,
+                .bodies               = world->body_pool.bodies_curr,
+                .constraints_out      = constraints,
+                .constraint_count_out = &constraint_count,
+                .max_constraints      = max_constraints,
+                .dt                   = substep_dt,
+                .baumgarte            = world->config.baumgarte,
+                .slop                 = world->config.slop,
+            });
+        }
+
+        /* ── Stage 10: Island Build ────────────────────────────── */
+        phys_island_list_t islands;
+        phys_island_list_init(&islands, &world->frame_arena,
+                              body_cap, body_cap);
+
+        phys_stage_island_build(&(phys_island_build_args_t){
+            .constraints      = constraints,
+            .constraint_count = constraint_count,
+            .bodies           = world->body_pool.bodies_curr,
+            .body_count       = body_cap,
+            .islands_out      = &islands,
+            .arena            = &world->frame_arena,
+        });
+
+        /* ── Stage 11: TGS Solve ───────────────────────────────── */
+        phys_velocity_t *velocities = phys_frame_arena_alloc(
+            &world->frame_arena,
+            (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+            _Alignof(phys_velocity_t));
+
+        if (velocities) {
+            /* Zero-initialize velocities. */
+            memset(velocities, 0,
+                   (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
+
+            phys_stage_tgs_solve(&(phys_tgs_solve_args_t){
+                .islands    = &islands,
+                .constraints = constraints,
+                .bodies     = world->body_pool.bodies_curr,
+                .velocities = velocities,
+                .body_count = body_cap,
+                .iterations = plan.solver_iterations,
+            });
+        }
+
+        /* ── Stage 12: Integrate ───────────────────────────────── */
+        if (velocities) {
+            phys_stage_integrate(&(phys_integrate_args_t){
+                .bodies_in              = world->body_pool.bodies_curr,
+                .velocities             = velocities,
+                .bodies_out             = world->body_pool.bodies_next,
+                .body_count             = body_cap,
+                .dt                     = substep_dt,
+                .gravity                = world->config.gravity,
+                .sleep_threshold_linear = world->config.sleep_threshold_linear,
+                .sleep_threshold_angular = world->config.sleep_threshold_angular,
+                .sleep_delay_frames     = world->config.sleep_delay_frames,
+            });
+        }
+
+        /* ── Stage 13: Cache Commit ────────────────────────────── */
+        if (constraints && constraint_count > 0) {
+            phys_stage_cache_commit(&(phys_cache_commit_args_t){
+                .manifolds        = manifolds,
+                .constraints      = constraints,
+                .constraint_count = constraint_count,
+                .cache            = &world->manifold_cache,
+                .events_out       = world->impact_events,
+                .event_count_out  = &world->impact_event_count,
+                .max_events       = world->impact_event_capacity,
+                .impact_threshold = world->impact_threshold,
+            });
+        }
+
+        /* ── Buffer swap for next substep ──────────────────────── */
+        phys_body_pool_swap_buffers(&world->body_pool);
+    }
+
+    /* Increment tick counter. */
+    world->tick_count++;
+
+    /* Expire old manifold cache entries (keep for 30 ticks). */
+    phys_manifold_cache_expire(&world->manifold_cache,
+                               (uint32_t)world->tick_count, 30);
+}
