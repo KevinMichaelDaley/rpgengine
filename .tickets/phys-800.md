@@ -3,36 +3,22 @@ id: phys-800
 status: open
 deps: [phys-400]
 links: []
-created: 2026-02-06T05:20:00.000000000-08:00
+created: 2026-02-06T11:09:00.000000000-08:00
 type: epic
-priority: 3
+priority: 2
 ---
 # Phase 8: Joints
 
-**Goal:** Non-contact constraints (joints).
 
-## Overview
-
-Add constraint types for connected bodies:
-- Distance joint (spring-damper)
-- Hinge joint (1 DOF rotation)
-- Ball joint (3 DOF rotation)
-- Fixed joint (weld)
-
-Joints plug into existing constraint pipeline (Stage 9).
+**Goal:** Non-contact constraints (distance, hinge, ball joints) + ragdoll transition.
 
 ## Subtasks
 
-- phys-801: Joint Structure and Pool
-- phys-802: Distance Joint
-- phys-803: Hinge Joint
-- phys-804: Ball Joint
-- phys-805: Joint in Island Build
-- phys-806: Phase 8 Integration Test
+- phys-801: Joint Structures
+- phys-802: Joint Constraint Build
+- phys-803: Joint in Island Build
+- phys-804: Phase 8 Integration Test (includes ragdoll)
 
-## Test Cases
+Ragdoll: compound collider → individual bodies + ball joints at bone pivots.
+Requires both compound collider (Phase 0, Step 0.3b) and joints.
 
-- Pendulum simulation
-- Chain of bodies
-- Door hinge
-- Ragdoll skeleton

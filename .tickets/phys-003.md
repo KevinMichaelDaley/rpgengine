@@ -29,6 +29,7 @@ typedef enum phys_shape_type_t {
     PHYS_SHAPE_SPHERE = 0,
     PHYS_SHAPE_BOX,
     PHYS_SHAPE_CAPSULE,
+    PHYS_SHAPE_COMPOUND,  // tree of child colliders (animated kinematic hierarchy)
     PHYS_SHAPE_CONVEX,    // future
     PHYS_SHAPE_MESH,      // future
     PHYS_SHAPE_COUNT
@@ -52,7 +53,9 @@ typedef struct phys_collider_t {
     uint32_t shape_index;         // into shape-specific pool
     phys_vec3_t local_offset;     // offset from body origin
     phys_quat_t local_rotation;   // rotation relative to body
-} phys_collider_t;  // 36 bytes
+    uint8_t sphere_simplify;      // 1 if bounding-sphere ratio < 1.3 (precomputed)
+    uint8_t pad[3];
+} phys_collider_t;  // 40 bytes
 ```
 
 ## API
@@ -72,6 +75,7 @@ phys_quat_t phys_collider_world_rotation(const phys_collider_t *c, phys_quat_t b
 - [ ] All three primitive types defined
 - [ ] Local transform (offset + rotation) supported
 - [ ] Shape index indirection to shape-specific pools
+- [ ] `sphere_simplify` flag computed from bounding-sphere ratio at init
 - [ ] World transform helpers work correctly
 
 ## Test Cases

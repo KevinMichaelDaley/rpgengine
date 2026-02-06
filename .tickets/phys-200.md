@@ -3,25 +3,25 @@ id: phys-200
 status: open
 deps: [phys-100]
 links: []
-created: 2026-02-06T05:20:00.000000000-08:00
+created: 2026-02-06T11:09:00.000000000-08:00
 type: epic
 priority: 2
 ---
 # Phase 2: Box and Capsule Colliders
 
-**Goal:** Complete narrowphase for all 9 primitive collision pairs.
 
-## Overview
+**Goal:** Complete narrowphase for all 9 primitive collision pairs + compound collider integration.
 
-This phase adds box and capsule colliders to the existing pipeline:
+## Collision Pairs
+
 - Sphere-Sphere ✓ (Phase 1)
-- Sphere-Box
-- Sphere-Capsule
-- Box-Box (SAT with 15 axes)
-- Box-Capsule
-- Capsule-Capsule
+- Sphere-Box (~0.8 µs)
+- Sphere-Capsule (~0.5 µs)
+- Box-Box (~1.5 µs, SAT with 15 axes)
+- Box-Capsule (~1.2 µs)
+- Capsule-Capsule (~1.0 µs)
 
-All other pipeline stages remain unchanged—we're just expanding Stage 6 (Narrowphase).
+Plus AABB computation for rotated shapes and compound collider integration testing.
 
 ## Subtasks
 
@@ -30,21 +30,12 @@ All other pipeline stages remain unchanged—we're just expanding Stage 6 (Narro
 - phys-203: Box-Box Narrowphase (SAT)
 - phys-204: Box-Capsule Narrowphase
 - phys-205: Capsule-Capsule Narrowphase
-- phys-206: AABB Update for Rotated Shapes
+- phys-206: AABB for Rotated Shapes
 - phys-207: Phase 2 Integration Test + Benchmark
-
-## Key Algorithms
-
-- **Box-Box:** Separating Axis Theorem with 15 axes (3+3+9)
-- **Capsule:** Line segment closest point + sphere test
 
 ## Performance Targets
 
-- 100 boxes, 30 Hz, 2 substeps: < 2 ms/tick
-- 100 capsules, 30 Hz, 2 substeps: < 2 ms/tick
-- 100 mixed primitives: < 2 ms/tick
+- 100 boxes, 30 Hz: < 1.0 ms/tick
+- 100 capsules, 30 Hz: < 1.0 ms/tick
+- 100 mixed primitives: < 1.0 ms/tick
 
-## Network Tests
-
-- Snapshot encode/decode with all primitive types
-- Delta compression with mixed types
