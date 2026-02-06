@@ -1,7 +1,7 @@
 ---
 id: phys-101
 status: open
-deps: [phys-013]
+deps: [phys-013, phys-014]
 links: [phys-100]
 created: 2026-02-06T05:20:00.000000000-08:00
 type: task
@@ -24,14 +24,9 @@ based on world config and game state.
 
 ## Structures
 
+Uses `phys_game_state_t` from phys-014.
+
 ```c
-typedef struct phys_game_state_t {
-    phys_vec3_t *player_positions;
-    uint32_t player_count;
-    pool_handle_t *manipulated_bodies;
-    uint32_t manipulated_count;
-    // Future: camera position, manipulation flags, etc.
-} phys_game_state_t;
 
 typedef struct phys_tier_params_t {
     bool active;

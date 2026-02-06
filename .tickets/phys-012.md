@@ -62,6 +62,12 @@ typedef struct phys_world_t {
     // Per-tick arena
     phys_frame_arena_t frame_arena;
     
+    // Impact events (populated by tick, consumed by gameplay)
+    phys_impact_event_t *impact_events;
+    uint32_t impact_event_count;
+    uint32_t impact_event_capacity;
+    float impact_threshold;
+    
     // Tick state
     uint64_t tick_count;
 } phys_world_t;
@@ -91,6 +97,11 @@ const phys_collider_t *phys_world_get_collider(const phys_world_t *world, pool_h
 
 // AABB access (computed by tick)
 const phys_aabb_t *phys_world_get_aabb(const phys_world_t *world, pool_handle_t body);
+
+// Impact events (see phys-119 for full API)
+const phys_impact_event_t *phys_world_get_impact_events(const phys_world_t *world, uint32_t *out_count);
+void phys_world_clear_impact_events(phys_world_t *world);
+void phys_world_set_impact_threshold(phys_world_t *world, float threshold);
 
 // Stats
 uint32_t phys_world_body_count(const phys_world_t *world);
