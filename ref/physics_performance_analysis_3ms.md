@@ -1234,6 +1234,208 @@ Bodies
 - The gang war itself is the physics showcase — 16 combatants, ragdolls piling
   up, barricades shattering, explosions — and it fits in budget WITH mitigations
 
+### 6.9 Fantasy Scenario: Siege of the Keep
+
+This scenario demonstrates the engine on a different genre: a fantasy siege
+with large-scale destruction, mounted combat, and projectile physics. The
+player defends a stone keep from an orc assault.
+
+**Setup:**
+- Stone keep courtyard, ~40m × 30m, with walls, gate, and battlements
+- Orc siege: 12 orc warriors at the gate, 4 orc rock-throwers behind them
+- Rocks (sphere-simplified, ~0.5m) tearing chunks out of stone walls
+- Wall chunks: each rock impact spawns 5–15 debris pieces (box colliders)
+- 6 mounted knights (horse + rider = 2 rigid bodies each, jointed)
+- Ragdolls: trampled footsoldiers, dead orcs, unseated riders
+- Shields: wooden shields on both sides, splinter into 3–5 pieces on heavy impact
+- Background: banners flapping, loose chain links, torch sconces (T4)
+
+**Phase 1: Opening bombardment — player on battlements, observing**
+
+Rocks arc over the wall. Each impact spawns wall debris. Player is above
+and behind the impact zone — most destruction is T2/T3.
+
+```
+Total bodies in scene:         450
+  Wall structure (static):     ∞ (level geometry, not physics bodies)
+  Wall debris (spawned):       60 (4 impacts × 15 chunks, settling)
+  Rocks in flight:             4 (one per thrower, staggered)
+  Orc warriors:                12 × 1 body = 12 (pre-ragdoll NPCs)
+  Mounted knights:             6 × 2 bodies = 12 (horse + rider, jointed)
+  Shield pieces:               20 (from prior shield breaks)
+  Footsoldier ragdolls:        4 × 12 bodies = 48 (already dead, settling)
+  Background props (T4):       120 (banners, chains, torch brackets, dust)
+  Gate structure:              10 (hinged, breakable planks)
+  Loose rubble (sleeping):     80 (prior impact debris, settled)
+
+Active bodies:                 200 (everything not sleeping)
+T0:                            3 (player + held crossbow + loaded bolt)
+T1:                            8 (nearby battlement debris, 1 ragdoll at feet)
+T2:                            45 (visible courtyard: rocks landing, knights)
+T3:                            60 (orcs at gate, far debris, distant ragdolls)
+T4:                            84 (banners, chains, background rubble)
+T5:                            250 (settled rubble, old ragdolls)
+
+Collision pairs:               500
+TGS constraints:               25 (player cluster + nearby rubble)
+XPBD constraints:              350 (courtyard debris, ragdolls, mounted units)
+
+TGS:   25 × 22 × 0.5 µs × 2     = 550 µs
+XPBD:  350 × 5 × 0.22 µs × 2/8  = 96 µs (sphere blend, T3 at 4 iter)
+Narrow: 500 × 1.5 µs × 2 / 8    = 188 µs (many sphere-sphere: rocks, rubble)
+Broad:  200 × 0.5 µs × 2         = 200 µs
+T4 amortized: 84 × 0.05 µs       =   4 µs
+Other stages:                     ~350 µs
+                                 ─────────
+Total:                            ~1.4 ms/tick ✓ (53% headroom)
+```
+
+Note: rocks and wall debris are mostly sphere-simplified at T2/T3, so
+narrowphase averages ~1.5 µs/pair (below the 2.0 µs generic budget).
+The orc throwers are T3 (far, partially occluded by the wall) — their
+rocks only promote to T2 when arcing over the wall into view.
+
+**Phase 2: Cavalry charge — knights engage orcs at the gate**
+
+The player descends to the courtyard. 6 knights charge into the orc line.
+Horse-orc collisions generate ragdolls. Shields splinter on impact.
+
+```
+Active bodies:                 300 (mass wake from charge impact)
+T0:                            8 (player + sword + nearby orc + shield debris)
+T1:                            30 (melee zone: 3 horses, 4 orcs, ragdolls,
+                                   shield fragments, gate pieces)
+T2:                            80 (wider battle, remaining knights, debris)
+T3:                            70 (rock throwers, far wall debris)
+T4:                            112 (banners, ambient rubble)
+T5:                            180 (settled old debris)
+
+Collision pairs:               1200
+TGS constraints:               120 (melee cluster: ragdolls being trampled,
+                                     shield splinters, horse-orc contacts)
+XPBD constraints:              700
+
+TGS:   120 × 22 × 0.5 µs × 2    = 2.64 ms  ❌
+XPBD:  700 × 5 × 0.22 µs × 2/8  = 193 µs
+Narrow: 1200 × 1.5 µs × 2 / 8   = 450 µs
+Broad:  300 × 0.5 µs × 2         = 300 µs
+T4 amortized: 112 × 0.05 µs      =   6 µs
+Other stages:                     ~500 µs
+                                 ─────────
+Total (no mitigation):            ~4.1 ms/tick ❌
+
+WITH MITIGATIONS:
+  Planar sleep-stabilize (gate floor contacts, resting rubble): −30 constraints
+  Ragdoll LOD (trampled ragdolls → 4 bodies each): −25 constraints
+  Planar specialization (floor contacts ~30%): 0.17 µs for 20 constraints
+  Remaining TGS: 45 generic + 20 planar = 45×22×0.5×2 + 20×22×0.17×2
+               = 990 µs + 150 µs = 1.14 ms
+                                 ─────────
+Total (mitigated):                ~2.6 ms/tick ✓ (13% headroom)
+```
+
+The trampled ragdolls are the main TGS cost. A horse stepping on a 12-body
+ragdoll creates ~8 contacts per frame. With ragdoll LOD reducing to 4 bodies,
+that drops to ~3 contacts. The shield splinters are short-lived: they fly
+outward and leave T1 within 0.5s (promoted to T2 XPBD).
+
+**Phase 3: Rock hits the gate — catastrophic destruction**
+
+A large boulder (2m diameter, sphere collider) strikes the weakened gate.
+The gate shatters into 15 pieces. Wall section above collapses (20 debris
+chunks). 3 defenders are buried.
+
+```
+SPIKE FRAME:
+Active bodies:                 400 (massive wake from gate destruction)
+T0:                            10 (player dodging debris)
+T1:                            40 (gate explosion zone, buried defenders,
+                                   2 horse ragdolls, flying planks)
+T2:                            100 (secondary debris, shrapnel, charge debris)
+T3:                            80 (orcs pushing through, rock throwers)
+T4:                            100 (background)
+T5:                            150
+
+Collision pairs:               1800 (dense overlap in gate zone)
+TGS constraints:               180 (gate debris + buried ragdolls + player)
+XPBD constraints:              1000
+
+TGS:   180 × 22 × 0.5 µs × 2    = 3.96 ms  ❌❌
+XPBD:  1000 × 5 × 0.22 µs × 2/8 = 275 µs
+Narrow: 1800 × 1.5 µs × 2 / 8   = 675 µs
+Broad:  400 × 0.5 µs × 2         = 400 µs
+T4 amortized: 100 × 0.05 µs      =   5 µs
+Other stages:                     ~550 µs
+                                 ─────────
+Total (no mitigation):            ~5.9 ms/tick ❌❌
+
+WITH FULL MITIGATION STACK:
+  1. Sleep-stabilize (gate debris hitting ground): −50 constraints (after 5 frames)
+  2. Ragdoll LOD (3 buried defenders → 4 bodies each): −30 constraints
+  3. Planar specialization (debris resting on floor, ~40%): 40 planar + 60 generic
+  4. Occlusion (debris behind collapsed wall section): −20 constraints (demoted T3)
+  5. Island split (gate zone vs courtyard melee):
+     Island A (gate): 40 constraints, Island B (melee): 20 constraints, parallel
+     TGS: max(40×22×0.5×2, 20×22×0.5×2) = 880 µs
+  6. With planar on Island A: 15 planar + 25 generic
+     TGS: max(25×22×0.5×2 + 15×22×0.17×2, 440) = max(550+112, 440) = 662 µs
+                                 ─────────
+Total (fully mitigated):          ~2.6 ms/tick ✓ (13% headroom)
+```
+
+**Phase 4: Aftermath — orcs breach, player retreats**
+
+Gate is open. Orcs pour through. Debris settling. Ragdolls everywhere.
+Player falls back to inner keep. Most of the courtyard drops to T3/T4.
+
+```
+Active bodies:                 180 → 80 (progressive sleep over 3 seconds)
+T0/T1:                        12 (player + sword + retreating allies)
+T2:                            30 (orcs in breach, near ragdolls)
+T3–T4:                        138 → 48 (settling debris, sleeping ragdolls)
+T5:                            320 → 520
+
+Total:                         ~1.0 ms → 0.5 ms (recovers within 3 seconds)
+```
+
+**Full timeline:**
+
+| Phase | Duration | Active | TGS | Total | Status |
+|-------|----------|--------|-----|-------|--------|
+| 1. Bombardment | 10-20s | 200 | 550 µs | 1.4 ms | ✓ 53% headroom |
+| 2. Cavalry charge | 10-15s | 300 | 2.64 ms | 4.1→2.6 ms | ❌→✓ mitigated |
+| 3. Gate destruction | 0.5s | 400 | 3.96 ms | 5.9→2.6 ms | ❌❌→✓ full stack |
+| 4. Retreat | 3-5s | 180→80 | 200 µs | 1.0→0.5 ms | ✓✓ recovering |
+
+**Physics highlights by object type:**
+
+| Object | Count | Collider | Tier | Notes |
+|--------|-------|----------|------|-------|
+| Thrown rocks | 4 | Sphere | T2→T3 | Sphere-simplified, arc trajectory |
+| Wall debris | 60-80 | Box (T1), Sphere (T2+) | T1→T2→T5 | Spawned on impact, settle fast |
+| Horse+rider | 12 | Capsule (body), box (rider) | T1-T2 | Jointed pair, ragdoll on death |
+| Orc warriors | 12 | Capsule | T2-T3 | Simple collider, ragdoll on death |
+| Ragdolls | 4-10 | 12-body chain | T1 (near), T3 (far) | LOD: 4 bodies at T2+ |
+| Shield splinters | 15-25 | Sphere | T1→T2 (fast) | 3-5 pieces per break, leave T1 quickly |
+| Gate pieces | 15 | Box | T1→T5 | Sleep-stabilize once resting |
+| Background | 120 | Sphere | T4 | Banners, chains: 6 µs total |
+
+**Key takeaways:**
+- 450 total bodies, 400 peak active: well within limits
+- The gate destruction spike (5.9 ms unmitigated) is the worst moment but
+  recovers to 2.6 ms with the full mitigation stack
+- Sphere simplification is essential: rocks, rubble, shield splinters all
+  qualify, reducing narrowphase and XPBD cost by 3-6×
+- Ragdoll LOD is critical for trampling scenes: horses create many contacts
+  against multi-body ragdolls, and LOD at T2+ is invisible (player sees
+  the trampling happen but doesn't scrutinize joint articulation)
+- Shield splinters demonstrate fast T1→T2 demotion: they fly outward from
+  the player and leave the near-field within 0.3-0.5s, naturally shedding
+  TGS cost
+- The bombardment phase is the most common state (53% headroom) — the
+  engine cruises during the "spectacle" and only works hard during
+  close-quarters melee and catastrophic destruction
+
 ---
 
 ## 7. Summary
