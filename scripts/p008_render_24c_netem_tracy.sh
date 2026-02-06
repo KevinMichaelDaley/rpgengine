@@ -30,7 +30,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 #   NS            (default netem1)
 #   HOST_IP       (default 10.200.1.1)
 
-CLIENTS_TOTAL="${CLIENTS_TOTAL:-24}"
+CLIENTS_TOTAL="${CLIENTS_TOTAL:-8}"
 DURATION_MS="${1:-180000}"
 TICK_HZ="${2:-60}"
 WORKERS="${3:-8}"
