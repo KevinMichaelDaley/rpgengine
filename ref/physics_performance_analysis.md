@@ -508,19 +508,293 @@ Phys.Barrier.*               > 100 µs → Job scheduling problem
 
 ---
 
-## 6. Summary
+## 6. Game-Specific Analysis: "The March of Glaciers"
 
-**Memory:** ~1.4 KB per active rigid body (248 B persistent + 1.2 KB transient)
+The design document (see `design/the_march_of_glaciers.md`) describes a
+physics-first immersive sim with barricade building, ragdolls, debris,
+environmental destruction, and freeform stacking. Every gameplay system
+routes through the physics engine. This section analyzes expected CPU usage
+across representative level archetypes at different clutter densities.
 
-**Primary bottleneck:** TGS Solve (30% of tick, scales with largest island size)
+### 6.1 Level Archetypes
 
-**Secondary bottleneck:** Narrowphase (14% of tick, scales with pair count)
+The game world is underground: tunnels, maintenance corridors, abandoned
+infrastructure. Geometry is modular and industrial. Five representative
+archetypes capture the range of physics scenarios:
+
+| Archetype | Description | Static Geo | Typical Dynamic |
+|-----------|-------------|-----------|-----------------|
+| **Narrow Tunnel** | Single-corridor passage, low ceiling | Low | Low |
+| **Hub Chamber** | Multi-entrance room, vertical space | Medium | Medium–High |
+| **Trash Drop Zone** | Open area under drop chute | Medium | Extreme (spike) |
+| **Barricaded Holdout** | Player-fortified room with fire | Low–Medium | High (persistent) |
+| **Creature Nest** | Organic geometry, bodies, skull piles | Medium | Medium |
+
+### 6.2 Clutter Density Levels
+
+Three density tiers model the range of level dressing and player-created
+clutter. Each tier includes both placed-by-designer and accumulated-by-player
+objects.
+
+**Low Clutter** — freshly entered, minimal player modification:
+- 20–40 dynamic bodies (pipes, loose panels, small debris)
+- 0–2 ragdolls
+- No player-built structures
+- 5–10 bodies active at any time (most sleeping)
+
+**Medium Clutter** — explored area with some player fortification:
+- 80–150 dynamic bodies (scrap piles, crates, barricade pieces, skulls)
+- 2–5 ragdolls (killed enemies, creatures)
+- 1 active fire (heat source, light source)
+- 20–40 bodies active
+
+**High Clutter** — heavily fortified holdout or post-combat aftermath:
+- 200–400 dynamic bodies (dense barricade, debris fields, scattered props)
+- 5–10 ragdolls
+- 1–3 fires
+- 50–120 bodies active (barricade under stress, settling debris)
+
+### 6.3 Per-Archetype CPU Analysis
+
+All numbers assume 30 Hz tick rate, 2 substeps, 8-thread parallel.
+Budget target: 1.5 ms/tick (with 0.5 ms spike headroom).
+
+#### 6.3.1 Narrow Tunnel — Low Clutter
+
+```
+Static BVH nodes traversed:   ~50 (simple corridor)
+Active bodies:                 8 (player kicks debris)
+T0/T1:                        3 (player + 2 kicked objects)
+T2–T4:                        5 (scattered pipes, panels)
+Collision pairs:               12
+TGS constraints:               6 (1 small island)
+XPBD constraints:              4
+
+TGS:   6 × 22 iter × 0.5 µs   =  66 µs
+XPBD:  4 × 6 iter × 0.3 µs    =   7 µs
+Narrow: 12 × 3.0 µs            =  36 µs
+Other stages:                   ~80 µs
+                               ─────────
+Total:                          ~0.2 ms/tick ✓✓✓ (87% headroom)
+```
+
+**Risk:** None. Trivial load.
+
+#### 6.3.2 Hub Chamber — Medium Clutter
+
+```
+Static BVH nodes traversed:   ~200 (multi-level room)
+Active bodies:                 35 (barricade pieces, debris, 2 ragdolls)
+T0/T1:                        12 (player area: fire, held object, nearby scrap)
+T2–T4:                        23 (visible crates, distant ragdolls)
+Collision pairs:               90
+TGS constraints:               40 (player cluster + 1 ragdoll near player)
+XPBD constraints:              55
+
+TGS:   40 × 22 × 0.5 µs       = 440 µs
+XPBD:  55 × 6 × 0.3 µs / 4    =  25 µs (parallel)
+Narrow: 90 × 3.0 µs            = 270 µs
+Other stages:                   ~250 µs
+                               ─────────
+Total:                          ~1.0 ms/tick ✓ (33% headroom)
+```
+
+**Risk:** Moderate. TGS dominates if player is near a ragdoll pile.
+Monitor `Phys.Solve.IteratingTGS` — if > 500 µs, a near-field ragdoll
+has too many constraints. Mitigate with ragdoll LOD (see §6.5).
+
+#### 6.3.3 Trash Drop Zone — High Clutter (Spike Event)
+
+A trash drop is the worst-case physics spike: 50–100 new objects fall from
+above simultaneously, bounce off geometry and each other, then settle.
+
+```
+SPIKE FRAME (Frame 0 of drop):
+Active bodies:                 120 (80 new drop + 40 existing)
+T0/T1:                        15 (player + nearby falling objects)
+T2–T4:                        105 (most drop objects are far-field)
+Collision pairs:               600 (dense overlap during fall)
+TGS constraints:               50 (near-field contacts)
+XPBD constraints:              400 (far-field pile-up)
+
+TGS:   50 × 22 × 0.5 µs       = 550 µs
+XPBD:  400 × 6 × 0.3 µs / 8   =  90 µs (parallel, 8 threads)
+Narrow: 600 × 3.0 µs / 8       = 225 µs (parallel)
+Broad:  120 × 1.5 µs           = 180 µs
+Other stages:                   ~200 µs
+                               ─────────
+Total:                          ~1.2 ms/tick ✓ (within spike budget)
+
+SETTLING (Frames 5–30):
+Active bodies:                 80 → 20 (progressive sleep)
+Pair count:                    400 → 50 (objects separate and rest)
+Total:                         ~0.8 ms → 0.3 ms (recovers over 1 second)
+```
+
+**Risk:** High pair count during initial contact spike. XPBD handles the
+far-field pile-up cleanly — no giant-island problem. The real risk is
+narrowphase if many objects land in a small area simultaneously.
+
+**Without hybrid solver:** All 400 constraints would form one TGS island.
+400 × 22 × 0.5 µs = 4.4 ms ❌. The hybrid solver is essential for this scenario.
+
+#### 6.3.4 Barricaded Holdout — High Clutter (Persistent)
+
+Player has fortified a room with stacked scrap, wedged doors, skull anchors,
+and a fire. Enemies are pushing against the barricade.
+
+```
+Active bodies:                 85 (40 barricade, 30 loose props, 10 enemy, 5 ragdoll)
+T0/T1:                        20 (barricade face + player + fire)
+T2–T4:                        65 (back of barricade, distant debris, ragdolls)
+Collision pairs:               250
+TGS constraints:               90 (dense barricade stack near player)
+XPBD constraints:              120
+
+TGS:   90 × 22 × 0.5 µs       = 990 µs  ⚠️ (66% of budget)
+XPBD:  120 × 6 × 0.3 µs / 8   =  27 µs
+Narrow: 250 × 3.0 µs / 8       =  94 µs
+Other stages:                   ~200 µs
+                               ─────────
+Total:                          ~1.3 ms/tick ⚠️ (tight but in budget)
+```
+
+**Risk:** TGS is at 66% of total budget. The barricade stack is a dense
+near-field island — many resting contacts, all at T0/T1 because the player
+is standing right next to it. This is the hardest steady-state scenario.
+
+**If barricade is being attacked:** Enemy pushes wake sleeping contacts,
+island grows temporarily. Could spike to 120 TGS constraints = 1.32 ms TGS
+alone ❌. Requires mitigation (see §6.5).
+
+#### 6.3.5 Creature Nest — Medium Clutter
+
+Organic geometry with skull piles, creature bodies, and irregular shapes.
+
+```
+Active bodies:                 45 (skull pile, creature ragdolls, loose bones)
+T0/T1:                        8 (player + nearby skulls being kicked/thrown)
+T2–T4:                        37 (distant skull piles, creature bodies)
+Collision pairs:               100
+TGS constraints:               25 (small near-field contacts)
+XPBD constraints:              80
+
+TGS:   25 × 22 × 0.5 µs       = 275 µs
+XPBD:  80 × 6 × 0.3 µs / 8    =  18 µs
+Narrow: 100 × 3.0 µs           = 300 µs
+Other stages:                   ~200 µs
+                               ─────────
+Total:                          ~0.8 ms/tick ✓ (47% headroom)
+```
+
+**Risk:** Low. Skull colliders may be complex (horns, cavities), increasing
+per-pair narrowphase cost. Convex decomposition quality matters here.
+
+### 6.4 Clutter Scaling Summary
+
+| Archetype | Low | Medium | High | Spike |
+|-----------|-----|--------|------|-------|
+| Narrow Tunnel | 0.2 ms ✓ | 0.4 ms ✓ | 0.8 ms ✓ | — |
+| Hub Chamber | 0.3 ms ✓ | 1.0 ms ✓ | 1.5 ms ⚠️ | — |
+| Trash Drop Zone | 0.3 ms ✓ | 0.6 ms ✓ | 1.0 ms ✓ | 1.2 ms ✓ |
+| Barricaded Holdout | 0.3 ms ✓ | 0.8 ms ✓ | 1.3 ms ⚠️ | 1.6 ms ❌ |
+| Creature Nest | 0.3 ms ✓ | 0.8 ms ✓ | 1.2 ms ✓ | — |
+
+⚠️ = within budget but limited headroom  
+❌ = over budget, requires mitigation
+
+### 6.5 Technical Mitigations
+
+These are engine-level solutions for physics-heavy scenarios.
+
+| Problem | Fix | Effect |
+|---------|-----|--------|
+| **Dense barricade island** | Sleep-stabilize resting contacts after 0.5s of low velocity | Barricade pieces sleep → leave TGS island |
+| **Barricade under attack** | Island splitting: detect velocity gradient, break island at weak contacts | Reduce max island to ~50 constraints |
+| **Ragdoll pile near player** | Ragdoll LOD: reduce to 5 bodies at T1, 3 bodies at T2+ | Cut ragdoll constraints by 60% |
+| **Trash drop spike** | Staggered spawn: spread 80 objects over 3–5 frames (16–26/frame) | Peak active count halved |
+| **Skull convex hull cost** | Precomputed convex decomposition, max 4 hulls per skull type | Bound narrowphase cost |
+| **Post-combat debris** | Aggressive sleep timeout: 0.3s for T3+ debris | Rapid return to baseline |
+| **Fire particle bodies** | Use trigger volumes for heat, not physics bodies for embers | Remove 10–20 bodies per fire |
+| **Persistent clutter growth** | Hard cap: max 300 dynamic bodies per loaded area | Designer and player budget |
+
+### 6.6 Artistic / Level-Design Mitigations
+
+These are design and content-level solutions that reduce physics load without
+changing the engine. These are arguably more important than technical fixes
+because they prevent the problem at the source.
+
+| Principle | Implementation | Why It Works |
+|-----------|----------------|--------------|
+| **Merge static clutter** | Rubble piles, pipe bundles, and debris fields that look dynamic but are baked static meshes | 80% of environmental detail needs no simulation |
+| **Breakable → debris LOD** | When a structure breaks, spawn 3–5 physics pieces + a particle effect, not 20 individual shards | Controls spike object count |
+| **Barricade piece granularity** | Make barricade materials medium-sized (crate, shelf, pipe) not small (individual bricks, bolts) | Fewer bodies per barricade for same visual density |
+| **Skull size variety** | Larger skulls = fewer needed for same barricade weight | Reduces body count in fortifications |
+| **Chokepoint geometry** | Tunnels and doorways naturally limit contact surface area | Barricades need fewer pieces to be effective |
+| **Fire radius design** | Fire warmth radius is small enough that the "hot zone" contains ≤ 15 dynamic bodies | Bounds T0/T1 body count |
+| **Trash drop funnel** | Drop zone geometry funnels falling objects outward, not into a single pile | Prevents O(n²) pair counts |
+| **Creature body despawn** | Dead creatures begin dissolving after 60s (visual fade + body removal) | Caps persistent ragdoll count |
+| **Sleeping visual trick** | Sleeping objects get a subtle "settled dust" particle, making freeze less obvious | Allows aggressive sleep thresholds |
+| **Island-breaking gaps** | Leave 5cm gaps in pre-placed debris piles so resting stacks form multiple small islands instead of one large one | Directly reduces TGS island size |
+
+### 6.7 Worst-Case Scenario: Full Holdout Under Siege
+
+The absolute worst case combines every problem: dense barricade, active fire,
+player at the barricade, enemies pushing through, ragdolls accumulating,
+and debris flying.
+
+```
+Active bodies:                 140
+T0/T1:                        25 (barricade face, fire, player, enemy ragdoll)
+T2–T4:                        115 (back wall, far debris, old ragdolls)
+Collision pairs:               500
+TGS constraints:               110 (barricade + ragdoll + enemy contacts)
+XPBD constraints:              200
+
+TGS:   110 × 22 × 0.5 µs      = 1.21 ms  ❌
+XPBD:  200 × 6 × 0.3 µs / 8   =  45 µs
+Narrow: 500 × 3.0 µs / 8       = 188 µs
+Other stages:                   ~250 µs
+                               ─────────
+Total:                          ~1.7 ms/tick ❌ (over budget)
+```
+
+**Recovery plan (applied in order, each reduces TGS load):**
+
+1. **Sleep-stabilize barricade** (−30 constraints): pieces resting > 0.5s
+   become sleeping contacts. TGS: 80 constraints → 880 µs.
+2. **Ragdoll LOD** (−20 constraints): enemy ragdoll at T0 drops from 15
+   to 5 bodies. TGS: 60 constraints → 660 µs.
+3. **Island split** (−concurrent): barricade island broken at velocity
+   boundary. Two islands of ~30 each, solved in parallel. TGS: 330 µs.
+4. **Result:** ~0.8 ms/tick ✓ (47% headroom restored)
+
+All four mitigations are automatic (no player-visible quality change).
+
+---
+
+## 7. Summary
+
+**Memory:** ~1.4 KB per active rigid body (248 B persistent + 1.2 KB transient).
+256 MB pool supports 175k total bodies; CPU time is the limiting factor.
+
+**Primary bottleneck:** TGS Solve (12% of tick CPU, but dominates wall-clock
+for dense near-field islands). Only applies to T0/T1 bodies.
+
+**Secondary bottleneck:** Narrowphase (14% of tick, scales with pair count).
+
+**Tertiary bottleneck:** XPBD Solve (18% of tick CPU, but parallelizes
+perfectly and rarely dominates wall-clock).
 
 **Safe operating envelope:**
-- Active bodies: ≤ 150
-- Largest island: ≤ 100 constraints
-- Collision pairs: ≤ 1500
-- T0 bodies: ≤ 15
+- Active bodies: ≤ 5,000 (with tiering)
+- T0/T1 bodies: ≤ 25
+- Largest TGS island: ≤ 100 constraints
+- Collision pairs: ≤ 10,000
+- Near-field constraint density: ≤ 6 constraints/body
 
-**For rich open world:** Expect ~1.4-2.0 ms per tick with proper tiering and
-parallelization. Budget 1.5 ms, reserve 0.5 ms for spikes.
+**For March of Glaciers:** Typical gameplay runs at 0.5–1.0 ms/tick. Dense
+barricade holdouts reach 1.3 ms. The worst-case siege scenario hits 1.7 ms
+before automatic mitigations bring it back to 0.8 ms. Level design choices
+(barricade granularity, chokepoint geometry, debris despawn) are the most
+effective controls on physics cost.
