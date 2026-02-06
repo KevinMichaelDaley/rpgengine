@@ -1,6 +1,6 @@
 ---
 id: phys-312
-status: open
+status: closed
 deps: [phys-301, phys-302, phys-303, phys-304, phys-305, phys-306, phys-307, phys-308, phys-309, phys-309b, phys-310]
 links: [phys-300]
 created: 2026-02-06T11:47:00.000000000-08:00
