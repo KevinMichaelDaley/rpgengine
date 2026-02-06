@@ -1,0 +1,180 @@
+# Physics Memory Budget
+# ======================
+# Total physics heap: ~8-12 MB typical (configurable)
+# Percentages are of total physics memory budget
+#
+# Format: C_STRUCT_NAME                          DESCRIPTION                              %MEM
+# ----------------------------------------------------------------------------------------------
+
+# =============================================================================
+# PERSISTENT MEMORY (level arena, survives across frames)
+# Total: ~70% of physics budget
+# =============================================================================
+
+# BODY POOL (double-buffered)
+phys_body_t                                      RigidBodyState                          16.0
+  # bodies_curr: phys_body_t*                    ReadBuffer                               8.0
+  # bodies_next: phys_body_t*                    WriteBuffer                              8.0
+  # Calculation: 16k bodies × 80 bytes × 2 = 2.56 MB
+
+# AABB POOL
+phys_aabb_t                                      BoundingBoxes                            5.0
+  # Calculation: 16k bodies × 24 bytes = 384 KB
+
+# COLLIDER POOL
+phys_collider_t                                  ShapeReferences                          7.0
+  # Calculation: 16k bodies × 36 bytes = 576 KB
+
+# SHAPE POOLS
+phys_sphere_t                                    SphereShapes                             0.5
+  # Calculation: 8k spheres × 4 bytes = 32 KB
+phys_box_t                                       BoxShapes                                1.0
+  # Calculation: 8k boxes × 12 bytes = 96 KB
+phys_capsule_t                                   CapsuleShapes                            0.5
+  # Calculation: 8k capsules × 8 bytes = 64 KB
+
+# MANIFOLD CACHE
+phys_manifold_cache_t                            PersistentCache                          8.0
+  # Calculation: 8k entries × ~128 bytes = 1 MB
+phys_manifold_cache_entry_t                      CacheEntry                               -
+
+# SPATIAL GRID (persistent structure, cells refilled each frame)
+phys_spatial_grid_t                              HashGrid                                 6.0
+  # Calculation: 4k cells × 128 bytes avg = 512 KB
+phys_grid_cell_t                                 GridCell                                 -
+
+# STATIC BVH (built once per level load)
+phys_static_bvh_t                                StaticGeometry                          20.0
+  # Calculation: ~2-4 MB depending on level complexity
+phys_bvh_node_t                                  BVHNode                                  -
+
+# WORLD CONTAINER
+phys_world_t                                     WorldState                               1.0
+  # Calculation: ~8 KB for config + pointers
+
+# FRAME ARENA (preallocated, reused each tick)
+phys_frame_arena_t                               TransientArena                           5.0
+  # Calculation: 4 MB preallocated
+  # Note: Contents reset each frame, but arena memory is persistent
+
+# ----------------------------------------------------------------------------------------------
+# PERSISTENT SUBTOTAL                                                                    70.0
+# ----------------------------------------------------------------------------------------------
+
+
+# =============================================================================
+# TRANSIENT MEMORY (frame arena, reset each tick)
+# Total: ~30% of physics budget (reused, not additive to persistent)
+# =============================================================================
+
+# TIER LISTS (arena-allocated indices)
+phys_tier_lists_t                                TierLists                                4.0
+  # Calculation: 6 tiers × 16k indices × 4 bytes = 384 KB max
+phys_tier_list_t                                 SingleTier                               -
+
+# COLLISION PAIRS (broadphase output)
+phys_collision_pair_t                            CollisionPairs                           4.0
+  # Calculation: 50k pairs × 8 bytes = 400 KB
+
+# CONTACT CANDIDATES (narrowphase output)
+phys_contact_candidate_t                         ContactCandidates                        5.0
+  # Calculation: 10k × 48 bytes = 480 KB
+
+# MANIFOLDS (per-frame working set)
+phys_manifold_t                                  FrameManifolds                           4.0
+  # Calculation: 5k × 80 bytes = 400 KB
+
+# STABILIZATION HINTS
+phys_stab_hint_t                                 StabilizationHints                       0.5
+  # Calculation: 5k × 8 bytes = 40 KB
+
+# CONSTRAINTS (Jacobian rows)
+phys_constraint_t                                Constraints                             10.0
+  # Calculation: 15k × 96 bytes = 1.44 MB
+phys_jacobian_row_t                              JacobianRow                              -
+
+# ISLAND DATA
+phys_island_list_t                               IslandList                               1.0
+  # Calculation: 500 islands × 16 bytes + workspace = 100 KB
+phys_island_t                                    SingleIsland                             -
+
+# VELOCITY DELTAS (solver output)
+phys_velocity_t                                  SolvedVelocities                         1.0
+  # Calculation: 16k × 24 bytes = 384 KB
+  # (only active bodies need velocities, typically <4k)
+
+# IMPACT EVENTS (gameplay output)
+phys_impact_event_t                              ImpactEvents                             0.5
+  # Calculation: 1k × 32 bytes = 32 KB
+
+# STEP PLAN
+phys_step_plan_t                                 StepPlan                                 0.0
+  # Calculation: 64 bytes
+
+# ----------------------------------------------------------------------------------------------
+# TRANSIENT SUBTOTAL (reused each frame)                                                30.0
+# ----------------------------------------------------------------------------------------------
+
+
+# =============================================================================
+# MEMORY SUMMARY
+# =============================================================================
+#
+# CATEGORY                  SIZE (typical)      % OF BUDGET
+# ----------------------------------------------------------
+# Persistent Pools           ~5.0 MB             ~50%
+#   - Body pool (2×)          2.56 MB
+#   - AABB pool               0.38 MB
+#   - Collider pool           0.58 MB
+#   - Shape pools             0.19 MB
+#   - Manifold cache          1.00 MB
+#   - World container         0.01 MB
+#
+# Static Geometry            ~2.0 MB             ~20%
+#   - Static BVH              2.00 MB
+#   - Spatial grid            0.50 MB
+#
+# Frame Arena                ~4.0 MB             ~30%
+#   - (transient allocations)
+#
+# ----------------------------------------------------------
+# TOTAL BUDGET               ~11.0 MB            100%
+# ----------------------------------------------------------
+#
+# Note: Frame arena memory is reused each tick, so actual
+# resident memory is persistent + static + 1 × frame arena,
+# not persistent + static + (frames × frame arena).
+#
+
+# =============================================================================
+# STRUCTURE SIZES (compile-time verification)
+# =============================================================================
+
+# Structure                  Expected Size    Alignment
+# ----------------------------------------------------------
+phys_vec3_t                                      12               4
+phys_quat_t                                      16               4
+phys_mat3_t                                      36               4
+phys_body_t                                      80               4
+phys_aabb_t                                      24               4
+phys_collider_t                                  36               4
+phys_sphere_t                                     4               4
+phys_box_t                                       12               4
+phys_capsule_t                                    8               4
+phys_contact_point_t                             32               4
+phys_manifold_t                                 192               4
+phys_manifold_cache_entry_t                     208               8
+phys_stab_hint_t                                  8               4
+phys_jacobian_row_t                              68               4
+phys_constraint_t                               216               4
+phys_island_t                                    24               8
+phys_collision_pair_t                             8               4
+phys_contact_candidate_t                        140               4
+phys_velocity_t                                  24               4
+phys_impact_event_t                              36               4
+phys_tier_list_t                                 16               8
+phys_tier_lists_t                                96               8
+phys_grid_cell_t                                 16               8
+phys_spatial_grid_t                              32               8
+phys_step_plan_t                                 64               4
+phys_snapshot_body_t                             19               1
