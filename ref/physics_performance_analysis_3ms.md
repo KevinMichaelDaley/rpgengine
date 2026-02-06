@@ -45,12 +45,11 @@ for the 1.5 ms baseline.
 | 1,000 | 248 KB | 1.2 MB | ~1.5 MB |
 | 5,000 | 1.24 MB | 6.0 MB | ~7.2 MB |
 | 10,000 | 2.48 MB | 12.0 MB | ~14.5 MB |
-| 50,000 | 12.4 MB | 60.0 MB | ~72 MB |
-| 100,000 | 24.8 MB | 120.0 MB | ~145 MB |
 
 **Note:** Transient memory is reused each tick (arena reset), so it doesn't
 accumulate. The "working set" is what must fit in cache for good performance.
-With a 256 MB pool, memory is not the limiting factor — CPU time is.
+With a 3 ms budget the CPU-time hard limit is ~10,000 active bodies, which
+requires only ~14.5 MB of working set.
 
 ### 1.4 Memory Pressure Thresholds
 
@@ -58,13 +57,13 @@ With a 256 MB pool, memory is not the limiting factor — CPU time is.
 |-----------|------------|-------------|
 | L2 cache (256 KB) | ~200 bodies | Hot path stays in L2 |
 | L3 cache (8 MB) | ~5,500 bodies | Hot path stays in L3 |
-| Frame arena (64 MB) | ~53,000 bodies | Arena overflow risk |
-| Total budget (256 MB) | ~175,000 bodies | Hard limit (memory) |
+| Frame arena (10 MB) | ~8,300 bodies | Arena overflow risk |
+| Total budget (32 MB) | ~10,000 bodies | Hard limit (CPU + memory) |
 
-With a 256 MB physics pool on PC/server, the practical limit is CPU time,
-not memory. Even at 50,000 bodies the memory footprint is only ~72 MB.
-The frame arena is sized at 64 MB (25% of pool), leaving 192 MB for
-persistent structures, static BVH, and manifold cache.
+With a 32 MB physics pool, the pool is right-sized for the 10,000 body
+CPU-time ceiling. A 10,000-body scene needs ~21.5 MB (persistent + transient),
+leaving ~10 MB headroom for large static BVH and manifold cache spikes.
+This is 8× smaller than 256 MB, freeing memory for rendering, audio, and AI.
 
 ---
 
@@ -453,7 +452,7 @@ For a 3.0 ms physics tick budget:
 - Maximum pair count: 20,000 pairs (narrowphase CPU budget)
 - Maximum T0 bodies: 30 (high-fidelity budget)
 - Maximum active bodies: 10,000 (CPU time budget with tiering + XPBD)
-- Maximum total bodies: 175,000 (256 MB pool capacity)
+- Maximum total bodies: 10,000 (32 MB pool capacity, CPU-matched)
 
 ---
 
@@ -781,12 +780,176 @@ However, applying mitigations provides headroom for even worse spikes:
 
 All four mitigations are automatic (no player-visible quality change).
 
+### 6.8 Maximum-Scale Scenario: Gang War at the Trash Chute
+
+This scenario pushes the engine to its design ceiling. A scripted gang war
+erupts at a major trash drop site. The player approaches after the trash has
+already landed (it settles a few frames before the player arrives, so no
+T0/T1 spike from falling objects). The gang war is in full swing: enemies
+fighting each other, barricades being destroyed, bodies accumulating.
+
+**Setup:**
+- Large multi-level chamber under a trash chute
+- A trash drop of 200 objects has already settled (mostly sleeping)
+- 2 rival factions fighting: 8 active combatants per side (16 total)
+- Each combatant is a full 15-body ragdoll on death → bodies accumulate
+- Barricades on both sides (40 pieces each, 80 total)
+- Improvised explosives and thrown debris
+- Player observes from a tunnel entrance, then engages
+
+**Phase 1: Player arrives, observing from entrance (worst-case steady state)**
+
+The player is at T1 distance (~10-15m) from the nearest combat.
+Most of the battlefield is T2–T4.
+
+```
+Total bodies in scene:         600
+  Trash pile (sleeping):       180 (settled, T5)
+  Barricade pieces:            80 (40 per side, mixed sleeping/active)
+  Active combatants:           16 × 1 body = 16 active ragdoll-ready NPCs
+  Dead combatants:             6 ragdolls × 15 bodies = 90 ragdoll bodies
+  Thrown debris / explosives:  20 in flight
+  Loose props (pipes, crates): 50 (scattered, mostly sleeping)
+  Structural debris:           40 (from barricade destruction)
+  Fire/heat sources:           4 (2 per faction)
+
+Active bodies:                 250 (everything not sleeping)
+T0:                            0 (player observing)
+T1:                            8 (nearest barricade, nearest combatant)
+T2:                            60 (visible combatants, near ragdolls, debris)
+T3:                            100 (far side of battle, distant ragdolls)
+T4:                            82 (edge debris, far barricade remnants)
+T5:                            350 (settled trash, sleeping props)
+
+Collision pairs:               800
+TGS constraints:               30 (small T1 cluster: nearest barricade face)
+XPBD constraints:              500 (combat zone, ragdolls, flying debris)
+
+TGS:   30 × 22 × 0.5 µs       = 330 µs
+XPBD:  500 × 6 × 0.3 µs / 8   = 113 µs (parallel)
+Narrow: 800 × 3.0 µs / 8       = 300 µs (parallel)
+Broad:  250 × 1.5 µs           = 375 µs
+Other stages:                   ~400 µs
+                               ─────────
+Total:                          ~1.5 ms/tick ✓ (50% headroom)
+```
+
+**Phase 2: Player engages, enters combat zone**
+
+Player pushes into the fight. Nearby objects shift to T0/T1.
+
+```
+Active bodies:                 280 (more wakes from player proximity)
+T0:                            10 (player + held weapon + nearby debris)
+T1:                            25 (surrounding barricade, 2 ragdolls, combatants)
+T2:                            80 (wider combat zone)
+T3:                            90 (far side)
+T4:                            75
+T5:                            320
+
+Collision pairs:               1000
+TGS constraints:               100 (player cluster + ragdolls + barricade)
+XPBD constraints:              600
+
+TGS:   100 × 22 × 0.5 µs      = 1.1 ms
+XPBD:  600 × 6 × 0.3 µs / 8   = 135 µs (parallel)
+Narrow: 1000 × 3.0 µs / 8      = 375 µs (parallel)
+Broad:  280 × 1.5 µs           = 420 µs
+Other stages:                   ~450 µs
+                               ─────────
+Total:                          ~2.5 ms/tick ✓ (17% headroom)
+```
+
+**Phase 3: Explosion — player detonates improvised explosive**
+
+The player throws a gas canister into a barricade. 30 objects fly outward,
+3 combatants ragdoll simultaneously, fire spreads.
+
+```
+SPIKE FRAME:
+Active bodies:                 350 (mass wake from explosion)
+T0:                            12 (player + blast debris)
+T1:                            30 (blast zone, 3 fresh ragdolls)
+T2:                            120 (secondary debris, shrapnel)
+T3:                            100 (far combatants react)
+T4:                            88
+T5:                            250 (distant trash still sleeping)
+
+Collision pairs:               1500 (dense overlap in blast zone)
+TGS constraints:               130 (player area: 3 ragdolls + blast debris)
+XPBD constraints:              900 (entire visible battle)
+
+TGS:   130 × 22 × 0.5 µs      = 1.43 ms
+XPBD:  900 × 6 × 0.3 µs / 8   = 203 µs (parallel)
+Narrow: 1500 × 3.0 µs / 8      = 563 µs (parallel)
+Broad:  350 × 1.5 µs           = 525 µs
+Other stages:                   ~500 µs
+                               ─────────
+Total (no mitigation):          ~3.2 ms/tick ⚠️ (7% over budget)
+
+WITH AUTO-MITIGATION:
+  Ragdoll LOD (3 ragdolls → 5 bodies each): −60 TGS constraints
+  Sleep-stabilize blast debris (>0.3s): −20 TGS constraints (after 10 frames)
+  TGS: 50 × 22 × 0.5 µs = 550 µs
+                               ─────────
+Total (mitigated):              ~2.3 ms/tick ✓ (23% headroom)
+```
+
+**Phase 4: Aftermath — combat winds down**
+
+Combatants are dead or fled. Debris settling. Player looting.
+
+```
+Active bodies:                 150 → 60 (progressive sleep over 2-3 seconds)
+T0/T1:                        10 (player + loot interaction)
+T2–T4:                        50 → 20
+T5:                           440 → 540
+
+Total:                         ~0.8 ms → 0.4 ms (recovers within 3 seconds)
+```
+
+**Full timeline:**
+
+| Phase | Duration | Active | TGS | Total | Status |
+|-------|----------|--------|-----|-------|--------|
+| 1. Observing | 5-10s | 250 | 330 µs | 1.5 ms | ✓ 50% headroom |
+| 2. Engaging | 10-30s | 280 | 1.1 ms | 2.5 ms | ✓ 17% headroom |
+| 3. Explosion spike | 0.3s | 350 | 1.43 ms | 3.2 ms | ⚠️ mitigated → 2.3 ms |
+| 4. Aftermath | 3-5s | 150→60 | 200 µs | 0.8→0.4 ms | ✓✓ recovering |
+
+**Body count over time:**
+
+```
+Bodies
+  600 ┤·····················
+      │ ╭──────╮ Phase 2    ╭─ Phase 3 spike
+  400 ┤─╯      ╰────────────╯╲
+      │                       ╲
+  200 ┤                        ╲───── Phase 4 settling
+      │                              ╲
+   60 ┤                               ╰────── steady state
+      └──┬──┬──┬──┬──┬──┬──┬──┬──┬──┬──
+        0s  5s 10s 15s 20s 25s 30s 35s 40s
+             observe  engage  boom  loot
+```
+
+**Key takeaways:**
+- 600 total bodies in scene, 350 peak active: well within 10,000 hard limit
+- Peak memory: ~5 MB working set (16% of 32 MB pool)
+- The explosion spike (3.2 ms) is the only moment over budget, and auto-mitigation
+  handles it within 10 frames (~0.3s)
+- Trash drop settling before player arrival is essential: it means 180 bodies
+  are sleeping (T5) and cost zero CPU when the player enters
+- The gang war itself is the physics showcase — 16 combatants, ragdolls piling
+  up, barricades shattering, explosions — and it fits in budget
+
 ---
 
 ## 7. Summary
 
 **Memory:** ~1.4 KB per active rigid body (248 B persistent + 1.2 KB transient).
-256 MB pool supports 175k total bodies; CPU time is the limiting factor.
+32 MB pool right-sized for the 10,000 body CPU ceiling. A 600-body gang war
+scene uses ~5 MB working set (16% of pool).
 
 **Primary bottleneck:** TGS Solve (12% of tick CPU, but dominates wall-clock
 for dense near-field islands). Only applies to T0/T1 bodies.
@@ -796,12 +959,13 @@ for dense near-field islands). Only applies to T0/T1 bodies.
 **Tertiary bottleneck:** XPBD Solve (18% of tick CPU, but parallelizes
 perfectly and rarely dominates wall-clock).
 
-**Safe operating envelope (3 ms budget):**
+**Safe operating envelope (3 ms budget, 32 MB pool):**
 - Active bodies: ≤ 10,000 (with tiering)
 - T0/T1 bodies: ≤ 35
 - Largest TGS island: ≤ 200 constraints
 - Collision pairs: ≤ 20,000
 - Near-field constraint density: ≤ 6 constraints/body
+- Total pool: 32 MB (right-sized for CPU ceiling)
 
 **For March of Glaciers:** Typical gameplay runs at 0.5–1.6 ms/tick. Dense
 barricade holdouts reach 2.1 ms. The worst-case siege scenario hits 2.7 ms
