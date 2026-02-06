@@ -40,9 +40,12 @@ gameplay scenarios for the Ferrum physics engine.
 | 1,000 | 248 KB | 1.2 MB | ~1.5 MB |
 | 5,000 | 1.24 MB | 6.0 MB | ~7.2 MB |
 | 10,000 | 2.48 MB | 12.0 MB | ~14.5 MB |
+| 50,000 | 12.4 MB | 60.0 MB | ~72 MB |
+| 100,000 | 24.8 MB | 120.0 MB | ~145 MB |
 
 **Note:** Transient memory is reused each tick (arena reset), so it doesn't
 accumulate. The "working set" is what must fit in cache for good performance.
+With a 256 MB pool, memory is not the limiting factor — CPU time is.
 
 ### 1.4 Memory Pressure Thresholds
 
@@ -50,8 +53,13 @@ accumulate. The "working set" is what must fit in cache for good performance.
 |-----------|------------|-------------|
 | L2 cache (256 KB) | ~200 bodies | Hot path stays in L2 |
 | L3 cache (8 MB) | ~5,500 bodies | Hot path stays in L3 |
-| Frame arena (4 MB) | ~3,300 bodies | Arena overflow risk |
-| Total budget (12 MB) | ~8,000 bodies | Hard limit |
+| Frame arena (64 MB) | ~53,000 bodies | Arena overflow risk |
+| Total budget (256 MB) | ~175,000 bodies | Hard limit (memory) |
+
+With a 256 MB physics pool on PC/server, the practical limit is CPU time,
+not memory. Even at 50,000 bodies the memory footprint is only ~72 MB.
+The frame arena is sized at 64 MB (25% of pool), leaving 192 MB for
+persistent structures, static BVH, and manifold cache.
 
 ---
 
@@ -427,19 +435,19 @@ For a 1.5 ms physics tick budget:
 
 | Scenario | Max Active Bodies | Max Constraints | Notes |
 |----------|-------------------|-----------------|-------|
-| Sparse outdoor | 150 | 300 | Many small islands |
-| Dense indoor | 80 | 400 | Fewer bodies, more contacts |
-| Combat (explosions) | 60 | 350 | High pair count |
-| Ragdoll heavy | 45 | 500 | 3 full ragdolls max |
-| Vehicle physics | 100 | 250 | Stiff wheel constraints |
-| Puzzle physics | 50 | 600 | Large connected mechanism |
+| Sparse outdoor | 2,000 | 4,000 | Most at T2–T4, XPBD parallel |
+| Dense indoor | 500 | 2,500 | Tight clusters, more TGS near player |
+| Combat (explosions) | 1,000 | 3,000 | XPBD absorbs far-field blast |
+| Ragdoll heavy | 300 | 4,000 | 20 full ragdolls, most at T2+ |
+| Vehicle physics | 800 | 2,000 | Stiff wheel constraints near player |
+| Puzzle physics | 200 | 3,000 | Large connected mechanism (TGS) |
 
 **Hard limits for stability:**
-- Maximum island size: 150 constraints (TGS bottleneck)
-- Maximum pair count: 2000 pairs (narrowphase bottleneck)
+- Maximum island size: 150 constraints (TGS bottleneck — T0/T1 only)
+- Maximum pair count: 10,000 pairs (narrowphase CPU budget)
 - Maximum T0 bodies: 20 (high-fidelity budget)
-- Maximum active bodies: 200 (memory + iteration budget)
-- Maximum total bodies: 8000 (pool capacity)
+- Maximum active bodies: 5,000 (CPU time budget with tiering + XPBD)
+- Maximum total bodies: 175,000 (256 MB pool capacity)
 
 ---
 
@@ -458,14 +466,14 @@ For a 1.5 ms physics tick budget:
 
 ### 4.2 Tier System Tuning
 
-| Tier | Max Bodies | Iterations | Substeps | Notes |
-|------|------------|------------|----------|-------|
-| T0 | 20 | 24 | 3 | Player interaction only |
-| T1 | 40 | 16 | 2 | Within arm's reach |
-| T2 | 60 | 12 | 2 | Visible, potentially hazardous |
-| T3 | 80 | 8 | 1 | Far but consequential |
-| T4 | 200 | 4 | 0.5 (amortized) | Background, aggressive sleep |
-| T5 | ∞ | 0 | 0 | Sleeping, event-driven wake |
+| Tier | Max Bodies | Solver | Iterations | Substeps | Notes |
+|------|------------|--------|------------|----------|-------|
+| T0 | 20 | TGS | 24 | 3 | Player interaction only |
+| T1 | 60 | TGS | 20 | 2 | Within arm's reach |
+| T2 | 500 | XPBD | 8 | 1 | Visible, parallel |
+| T3 | 2,000 | XPBD | 6 | 1 | Far but consequential |
+| T4 | 10,000 | XPBD | 4 | 0.5 (amortized) | Background, aggressive sleep |
+| T5 | ∞ | — | 0 | 0 | Sleeping, event-driven wake |
 
 ### 4.3 Budget Allocation by Game Type
 
@@ -483,10 +491,10 @@ For a 1.5 ms physics tick budget:
 
 When performance issues occur, check in order:
 
-1. **Island sizes** - Is there one huge island? (TGS bottleneck)
+1. **Island sizes** - Is there one huge island? (TGS bottleneck, T0/T1 only)
 2. **Pair count** - Pair count vs body count ratio > 10? (Broadphase/narrowphase)
 3. **T0 count** - More than 20 T0 bodies? (High-fidelity overload)
-4. **Active count** - More than 200 active bodies? (Memory pressure)
+4. **Active count** - More than 5,000 active bodies? (CPU time pressure)
 5. **Wake rate** - Bodies waking faster than sleeping? (Stability issue)
 6. **Cache hit rate** - Manifold cache misses > 20%? (Warmstarting failing)
 
