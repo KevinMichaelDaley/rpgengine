@@ -1,7 +1,7 @@
 ---
 id: demo-001
 status: open
-deps: [phys-201, phys-203, phys-207]
+deps: [phys-400]
 links: []
 created: 2026-02-06T14:17:00.000000000-08:00
 type: epic
@@ -205,14 +205,19 @@ Produces:
 
 ## Dependencies
 
-This demo requires **Phase 2 box collider support**:
+This demo requires **Phase 4** (Tiered Simulation) so that the parallel
+job pipeline and basic optimization stack are in place:
 
-- **phys-201**: Sphere-Box Narrowphase (sphere projectiles hitting boxes)
-- **phys-203**: Box-Box Narrowphase (SAT) (boxes stacking/colliding)
-- **phys-207**: Phase 2 Integration Test (validates full box pipeline)
+- **phys-400**: Phase 4: Tiered Simulation (includes parallel jobs from
+  Phase 3, all Phase 2 colliders, and distance-based tier classification)
 
 All Phase 1 infrastructure (tick function, snapshots, prediction,
-impact events) is already complete.
+impact events) and Phase 2 colliders (sphere, box, capsule) are already
+complete.
+
+> **Note:** This is the single canonical demo for the Ferrum engine.
+> Subsequent tickets (e.g. demo-009) upgrade *this same demo* to use
+> newer physics phases — they are not separate demos.
 
 ---
 
@@ -234,6 +239,10 @@ These systems are **done** and the demo wires them together:
 ---
 
 ## Sub-Tickets (to be created)
+
+> All sub-tickets below are parts of **this single demo**.  They are
+> not separate demos — they build incrementally on the same binaries
+> (`demo_server` / `demo_client`).
 
 ### New code
 
@@ -297,6 +306,18 @@ These systems are **done** and the demo wires them together:
    - Connect, spawn 10 boxes, fire impulse, wait 120 ticks
    - Verify: all clients received spawns, state updates flowing,
      no crashes, bodies came to rest on ground plane
+
+### Upgrade (same demo, later phases)
+
+8. **demo-009**: Upgrade demo to Phase 7 (Advanced Stability)
+   - Same demo binaries, same gameplay, same network protocol
+   - Wire in manifold point reduction, speculative contacts,
+     position-level solve from Phase 7
+   - Add stress-test scenario: 20-box tower that must stay stable
+   - Add high-velocity projectile test (100 m/s, no tunneling)
+   - Increase random spawn rate and body cap to stress new stability
+   - Update perf targets: < 2ms physics tick at 300 active bodies
+   - Depends on phys-700 (Phase 7: Advanced Stability)
 
 ---
 
