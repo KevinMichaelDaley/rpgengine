@@ -97,6 +97,12 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p051_physics_snapshot_tests \
 	build/p052_physics_prediction_tests \
 	build/p053_physics_phase1_integration_tests \
+	build/p054_physics_sphere_box_tests \
+	build/p055_physics_sphere_capsule_tests \
+	build/p056_physics_box_box_tests \
+	build/p057_physics_box_capsule_tests \
+	build/p058_physics_capsule_capsule_tests \
+	build/p059_physics_phase2_integration_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -303,6 +309,24 @@ build/p052_physics_prediction_tests: $(SRC) tests/p052_physics_prediction_tests.
 build/p053_physics_phase1_integration_tests: $(SRC) tests/p053_physics_phase1_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p053_physics_phase1_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
+build/p054_physics_sphere_box_tests: $(SRC) tests/p054_physics_sphere_box_tests.c | build
+	$(CC) $(CFLAGS) tests/p054_physics_sphere_box_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p055_physics_sphere_capsule_tests: $(SRC) tests/p055_physics_sphere_capsule_tests.c | build
+	$(CC) $(CFLAGS) tests/p055_physics_sphere_capsule_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p056_physics_box_box_tests: $(SRC) tests/p056_physics_box_box_tests.c | build
+	$(CC) $(CFLAGS) tests/p056_physics_box_box_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p057_physics_box_capsule_tests: $(SRC) tests/p057_physics_box_capsule_tests.c | build
+	$(CC) $(CFLAGS) tests/p057_physics_box_capsule_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p058_physics_capsule_capsule_tests: $(SRC) tests/p058_physics_capsule_capsule_tests.c | build
+	$(CC) $(CFLAGS) tests/p058_physics_capsule_capsule_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/p059_physics_phase2_integration_tests: $(SRC) tests/p059_physics_phase2_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p059_physics_phase2_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
 
@@ -482,6 +506,12 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p051_physics_snapshot_tests \
 	&& ./build/p052_physics_prediction_tests \
 	&& ./build/p053_physics_phase1_integration_tests \
+	&& ./build/p054_physics_sphere_box_tests \
+	&& ./build/p055_physics_sphere_capsule_tests \
+	&& ./build/p056_physics_box_box_tests \
+	&& ./build/p057_physics_box_capsule_tests \
+	&& ./build/p058_physics_capsule_capsule_tests \
+	&& ./build/p059_physics_phase2_integration_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
