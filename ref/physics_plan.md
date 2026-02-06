@@ -264,6 +264,7 @@ typedef enum phys_shape_type_t {
     PHYS_SHAPE_SPHERE = 0,
     PHYS_SHAPE_BOX,
     PHYS_SHAPE_CAPSULE,
+    PHYS_SHAPE_COMPOUND,  // tree of child colliders (animated kinematic hierarchy)
     PHYS_SHAPE_CONVEX,    // future
     PHYS_SHAPE_MESH,      // future
 } phys_shape_type_t;
@@ -286,6 +287,8 @@ typedef struct phys_collider_t {
     uint32_t shape_index;      // into shape-specific pool
     phys_vec3_t local_offset;  // offset from body origin
     phys_quat_t local_rotation;
+    uint8_t sphere_simplify;   // 1 if bounding-sphere ratio < 1.3 (precomputed)
+    uint8_t pad[3];
 } phys_collider_t;
 ```
 
@@ -300,6 +303,76 @@ void phys_collider_init_capsule(phys_collider_t *c, uint32_t capsule_idx, phys_v
 - [ ] All three primitive types defined
 - [ ] Local transform (offset + rotation) supported
 - [ ] Shape index indirection to shape-specific pools
+- [ ] `sphere_simplify` flag computed from bounding-sphere ratio at init
+
+---
+
+### Step 0.3b: Compound Collider (Animated Hierarchy)
+
+**Files:**
+- `include/ferrum/physics/compound_collider.h`
+- `src/physics/collider/compound_collider.c`
+- `tests/physics/compound_collider_tests.c`
+
+**Structures:**
+```c
+// A compound collider is a tree of primitive child colliders.
+// Each child has a local transform relative to the parent body.
+// When attached to an animated entity, the skeleton drives child
+// transforms each frame (kinematic). On entity death, the compound
+// converts to individual rigid bodies (ragdoll — Phase 2 extension).
+
+typedef struct phys_compound_child_t {
+    phys_collider_t collider;        // child primitive (sphere/box/capsule)
+    uint16_t bone_index;             // skeleton bone driving this child (0xFFFF = static)
+    uint16_t flags;                  // KINEMATIC, DETACHABLE, etc.
+} phys_compound_child_t;
+
+typedef struct phys_compound_collider_t {
+    phys_compound_child_t *children;
+    uint16_t child_count;
+    uint16_t max_children;
+    phys_aabb_t cached_aabb;         // union of all child AABBs (recomputed per frame)
+} phys_compound_collider_t;
+```
+
+**API:**
+```c
+void phys_compound_init(phys_compound_collider_t *cc, phys_compound_child_t *storage, uint16_t max);
+void phys_compound_add_child(phys_compound_collider_t *cc, const phys_collider_t *child, uint16_t bone);
+void phys_compound_update_transforms(phys_compound_collider_t *cc,
+                                     const phys_mat3_t *bone_transforms,
+                                     const phys_vec3_t *bone_positions,
+                                     uint16_t bone_count);
+void phys_compound_compute_aabb(phys_compound_collider_t *cc, phys_aabb_t *out);
+```
+
+The skeleton provides bone transforms each frame. The compound collider
+updates each child's world-space collider from `bone_transform * local_offset`.
+Narrowphase tests each child independently (broadphase uses the compound AABB
+to cull, then per-child tests for actual contacts).
+
+**Animated → Ragdoll transition (Phase 2 extension):**
+When the owning entity dies, each child with DETACHABLE flag is spawned as
+an independent rigid body with the child's current velocity inherited from
+the skeleton animation. Joint constraints (ball joints at bone pivot points)
+connect the pieces into a ragdoll chain. This is deferred to Phase 8
+(Joints) since it requires the joint constraint system.
+
+**Test Cases:**
+```c
+// test_compound_init_and_add
+// test_compound_bone_update_moves_children
+// test_compound_aabb_encloses_all_children
+// test_compound_separated_child_no_false_positive
+// test_compound_narrowphase_per_child
+```
+
+**Acceptance Criteria:**
+- [ ] Compound stores tree of primitive children
+- [ ] Bone-driven transform update works correctly
+- [ ] Compound AABB is tight union of child AABBs
+- [ ] Narrowphase dispatches per-child, not per-compound
 
 ---
 
@@ -737,12 +810,24 @@ for (int i = 0; i < 100; ++i) {
 
 ASSERT(phys_body_pool_active_count(&world.body_pool) == 100);
 
+// test_create_compound_collider
+pool_handle_t npc = phys_world_create_body(&world);
+phys_compound_child_t children[4];
+phys_compound_collider_t cc;
+phys_compound_init(&cc, children, 4);
+// torso (box), head (sphere), left arm (capsule), right arm (capsule)
+phys_collider_t torso; phys_collider_init_box(&torso, /*box_idx=*/0, ...);
+phys_compound_add_child(&cc, &torso, /*bone=*/0);
+// ... add head, arms
+ASSERT(cc.child_count == 4);
+
 phys_world_destroy(&world);
 // Verify no leaks with valgrind/ASan
 ```
 
 **Acceptance Criteria:**
 - [ ] All data structures work together
+- [ ] Compound collider with bone-driven children works
 - [ ] No memory leaks
 - [ ] Clean initialization and destruction
 
@@ -1006,11 +1091,19 @@ bool phys_box_vs_capsule(...);
 
 **Phase 1:** Sphere-sphere only. Box and capsule added in Phase 2.
 
+**Sphere simplification override:** At T2+ tiers, bodies with
+`collider.sphere_simplify == 1` use their bounding sphere instead of their
+original primitive. At T3+, any single body with the flag set gets overridden.
+At T2, both bodies must have the flag for sphere-sphere fast path. This
+reduces narrowphase cost from ~2.0 µs to ~0.3 µs per pair. The override
+is a collider-type substitution before dispatch—no new narrowphase code needed.
+
 **Acceptance Criteria:**
 - [ ] Correct contact point, normal, penetration
 - [ ] Normal points from A to B
 - [ ] Feature IDs computed for persistent tracking
 - [ ] No contact generated for separated shapes
+- [ ] Sphere simplification override produces correct contacts for simplified bodies
 
 ---
 
@@ -1116,17 +1209,35 @@ typedef struct phys_constraint_build_args_t {
 void phys_stage_constraint_build(const phys_constraint_build_args_t *args);
 ```
 
-For each manifold contact:
+For each manifold, detect specialization type:
+
+**PLANAR** (all manifold normals within ε): shared normal Jacobian J_v = ±n.
+1 aggregate normal row + 2 shared friction rows + cheap per-point angular
+residuals. A 4-point box-on-box goes from 12 rows to ~4 effective (~3× cheaper).
+Enables planar sleep propagation: if contact velocity < threshold, entire
+subtree below in contact graph stays sleeping (15× for deep stacks).
+
+**SPHERE** (both colliders are spheres or sphere-simplified): 1 manifold point,
+trivial Jacobian (J_v = ±n, J_w = ±radius×n), scalar effective mass. 1–2 rows
+instead of 3, each ~2× cheaper = ~6× total speedup.
+
+**GENERIC** (default): For each manifold contact:
 - Build 1 normal constraint row
 - Build 2 friction constraint rows (tangent directions)
 - Apply stabilization hints (scaled friction/restitution)
 - Warmstart: initialize lambda from cache
 
+**Blended cost:** ~0.32 µs per constraint iteration (vs 0.50 µs generic)
+assuming typical mix of 30% planar + 20% sphere + 50% generic contacts.
+
 **Acceptance Criteria:**
-- [ ] 3 rows per contact (normal + 2 friction)
-- [ ] Jacobians computed correctly
+- [ ] Generic path: 3 rows per contact (normal + 2 friction)
+- [ ] Planar path: detects coplanar normals, builds shared constraint
+- [ ] Sphere path: detects sphere-sphere, builds 1-row constraint
+- [ ] Jacobians computed correctly for all three paths
 - [ ] Effective mass precomputed
 - [ ] Warmstart impulses loaded
+- [ ] Planar sleep propagation: subtree stays sleeping below low-velocity planar contact
 
 ---
 
@@ -1208,7 +1319,7 @@ typedef struct phys_xpbd_solve_args_t {
     phys_body_t *bodies_out;           // position corrections written here
     phys_velocity_t *velocities_out;   // velocity derived from Δx/dt
     uint32_t body_count;
-    uint32_t iterations;               // 4–8 typical
+    uint32_t iterations;               // 2–8 (T2:8, T3:4, T4:2)
     float omega;                       // Jacobi relaxation factor (0.5–0.8)
     float dt;                          // substep dt
 } phys_xpbd_solve_args_t;
@@ -1484,10 +1595,10 @@ int phys_snapshot_decode_delta(const phys_snapshot_t *prev, phys_snapshot_t *cur
 **Benchmarks:**
 ```c
 // bench_100_spheres_30hz_2substeps
-// Target: < 1.5 ms per tick
+// Target: < 0.5 ms per tick (sphere-only, no box/capsule overhead)
 
-// bench_1000_spheres_30hz_2substeps
-// Target: < 10 ms per tick
+// bench_300_spheres_30hz_2substeps
+// Target: < 1.5 ms per tick
 
 // bench_snapshot_encode_100_bodies
 // Target: < 50 µs
@@ -1498,7 +1609,7 @@ int phys_snapshot_decode_delta(const phys_snapshot_t *prev, phys_snapshot_t *cur
 
 **Acceptance Criteria:**
 - [ ] All functional tests pass
-- [ ] Stacking is stable (no drift or collapse)
+- [ ] 5-sphere stack stable for 1000 frames (no drift or collapse)
 - [ ] Performance within targets
 - [ ] Network round-trip accurate
 
@@ -1608,17 +1719,21 @@ Extend `phys_stage_aabb_update` to compute correct AABBs for rotated boxes and c
 
 **Test Cases:**
 ```c
-// test_box_stack_stable
+// test_box_stack_stable (10 boxes, 1000 frames)
 // test_capsule_rolls_on_floor
-// test_mixed_primitive_pile
-// test_all_primitive_pairs_collide
+// test_mixed_primitive_pile (sphere + box + capsule, 50 bodies)
+// test_all_primitive_pairs_collide (6 pair types)
+// test_compound_vs_primitive_collisions
+// test_compound_animated_walk_cycle (bone-driven compound on floor)
 ```
 
 **Benchmarks:**
 ```c
-// bench_100_boxes_30hz
-// bench_100_capsules_30hz
-// bench_100_mixed_primitives
+// bench_100_boxes_30hz               Target: < 1.0 ms
+// bench_100_capsules_30hz            Target: < 1.0 ms
+// bench_100_mixed_primitives         Target: < 1.0 ms
+// bench_narrowphase_all_pair_types   Per-pair timing validation:
+//   sphere-sphere ~0.3 µs, box-box ~1.5 µs, capsule-capsule ~1.0 µs
 ```
 
 **Network Tests:**
@@ -1732,12 +1847,14 @@ Split body range across jobs (512 bodies/job).
 
 **Benchmarks:**
 ```c
-// bench_1000_bodies_4_threads
-// bench_5000_bodies_8_threads
-// bench_scaling_1_to_8_threads
+// bench_1000_bodies_4_threads         Target: < 1.5 ms/tick
+// bench_3000_bodies_8_threads         Target: < 2.5 ms/tick
+// bench_5000_bodies_8_threads         Target: < 3.0 ms/tick
+// bench_scaling_1_to_8_threads        Expect ~3.5× speedup at 8 threads
+//                                     (memory bandwidth limited beyond 4)
 
 // Network benchmark with parallel physics
-// bench_snapshot_encode_parallel
+// bench_snapshot_encode_parallel       Target: < 100 µs for 1000 bodies
 ```
 
 ---
@@ -1750,7 +1867,7 @@ Split body range across jobs (512 bodies/job).
 
 Bodies classified by distance to nearest player:
 - T0: < 5m (direct manipulation)
-- T1: < 15m (near interactive)
+- T1: same room / few seconds' walk / visible through window (near interactive)
 - T2: < 50m (visible)
 - T3: < 200m (world-shaping)
 - T4: > 200m (background)
@@ -1766,8 +1883,8 @@ Different solver mode, substeps, and iterations per tier:
 - T0: TGS, 3 substeps, 24 iterations
 - T1: TGS, 2 substeps, 20 iterations
 - T2: Jacobi XPBD, 1 substep, 8 iterations, compliance 1e-6
-- T3: Jacobi XPBD, 1 substep, 6 iterations, compliance 1e-5
-- T4: Jacobi XPBD, amortized (10 Hz), 4 iterations, compliance 1e-4
+- T3: Jacobi XPBD, 1 substep, 4 iterations, compliance 1e-5, sphere simplify if ratio < 1.3
+- T4: Jacobi XPBD, amortized (10 Hz), 2 iterations, compliance 1e-4, sphere collider preferred
 
 The constraint build stage sets `solver_mode` on each constraint based on
 the tier of the involved bodies. Cross-tier constraints (e.g., T1 body
@@ -1820,11 +1937,88 @@ T4 gets minimal stabilization.
 ### Step 4.5: Amortized Ticking for T4
 
 T4 bodies tick every 3rd frame (10 Hz instead of 30 Hz).
-Interpolate visually.
+Interpolate visually. T4 amortized cost: ~0.05 µs/body/tick (2 iterations,
+sphere collider, amortized 10 Hz). 500 background props = 25 µs.
 
 ---
 
-### Step 4.6: Phase 4 Integration Test + Benchmark
+### Step 4.6: Occlusion-Based Tier Demotion
+
+**Files:**
+- `src/physics/stages/tier_classify.c` (extend existing)
+- `tests/physics/tier_classify_occlusion_tests.c`
+
+The renderer provides a `visibility_set` bitfield each frame indicating which
+bodies are currently visible to the player camera (after occlusion culling).
+Bodies that would be T1 by distance but are NOT visible (behind walls, around
+corners, in the next room) are demoted to T3 or lower.
+
+**Algorithm addition to Stage 1:**
+```
+for each body in T1:
+    if !visibility_set[body_id]:
+        demote to T3 (XPBD, 4 iterations, sphere simplify)
+```
+
+**On re-promotion (body becomes visible again):**
+- Position nudge: lerp body to corrected position over 3–5 frames (< 5mm)
+- Solver transition: XPBD→TGS warm-start conversion (Step 4.3)
+- Visual: indistinguishable from full-fidelity if nudge is small
+
+Cost ratio: T1 at full TGS = ~14.0 µs/body, T3 at XPBD = ~0.33 µs/body.
+Demotion saves ~42× per body. A room with 20 nearby-but-occluded bodies
+saves ~270 µs per tick.
+
+**Test Cases:**
+```c
+// test_occluded_body_demotes_to_t3
+// test_visible_body_stays_t1
+// test_re_promotion_position_nudge
+// test_solver_transition_on_visibility_change
+```
+
+**Acceptance Criteria:**
+- [ ] Occluded T1 bodies demoted to T3
+- [ ] Re-promotion triggers position nudge (< 5mm correction over 3–5 frames)
+- [ ] Solver warm-start conversion on tier change
+- [ ] No visual pop on re-promotion
+
+---
+
+### Step 4.7: Sphere Simplification at Distance
+
+**Files:**
+- `src/physics/collision/narrowphase.c` (extend dispatch)
+- `tests/physics/sphere_simplify_tests.c`
+
+At asset load, compute bounding-sphere ratio = circumradius / inradius.
+If ratio < 1.3, set `collider.sphere_simplify = 1`. Good candidates: rocks,
+skulls, potions, rubble chunks (~1.1–1.2). Bad: pipes (~2.0), planks, bottles.
+
+**Runtime behavior:**
+- T2+: both bodies with flag → sphere-sphere narrowphase (~0.3 µs vs ~2.0 µs)
+- T3+: any single body with flag → use bounding sphere for that body
+- T4: sphere collider preferred unconditionally for small objects
+
+**Test Cases:**
+```c
+// test_sphere_ratio_computation
+// test_sphere_simplify_flag_set_for_near_sphere
+// test_sphere_simplify_flag_clear_for_elongated
+// test_narrowphase_sphere_override_at_t3
+// test_narrowphase_both_sphere_override_at_t2
+// test_sphere_simplified_contact_reasonable_accuracy
+```
+
+**Acceptance Criteria:**
+- [ ] Ratio correctly computed from shape geometry
+- [ ] Flag set at init, immutable at runtime
+- [ ] Narrowphase dispatch respects tier + flag combination
+- [ ] Contact positions within ~5% of full-fidelity for near-spherical bodies
+
+---
+
+### Step 4.8: Phase 4 Integration Test + Benchmark
 
 **Test Cases:**
 ```c
@@ -1832,17 +2026,33 @@ Interpolate visually.
 // test_tier_demotion_on_distance
 // test_hysteresis_prevents_flapping
 // test_t0_stability_vs_t4
+// test_occluded_t1_demotes_to_t3
+// test_sphere_simplify_at_t3_contacts_valid
+// test_planar_constraint_specialization
+// test_sphere_constraint_specialization
+// test_planar_sleep_propagation_deep_stack
+// test_compound_collider_narrowphase_per_child
+// test_compound_bone_driven_update
 ```
 
 **Benchmarks:**
 ```c
-// bench_5000_bodies_tiered
-// Compare tiered vs all-T0
+// bench_5000_bodies_tiered               Target: < 3 ms/tick (3ms budget)
+// bench_8000_bodies_far_field_xpbd       Target: < 3 ms/tick (XPBD ceiling)
+// bench_500_t4_background_props          Target: < 25 µs contribution
+// bench_constraint_specialization_vs_generic
+//   Measure blended cost (30% planar + 20% sphere + 50% generic)
+//   Target: ~0.32 µs/constraint vs ~0.50 µs generic
+// bench_occlusion_demotion_20_bodies     Target: ~270 µs savings
+// bench_sphere_simplify_narrowphase      Target: ~0.3 µs vs ~2.0 µs
+// bench_compound_collider_10_children    Target: < 20 µs per compound
+// Compare tiered vs all-T0 (expect >10× speedup at 5000 bodies)
 ```
 
 **Network Tests:**
 ```c
 // test_snapshot_with_tiered_bodies
+// test_snapshot_with_compound_colliders
 // Verify tier state replicated correctly
 ```
 
@@ -1983,9 +2193,10 @@ Separate velocity and position correction for cleaner stacking.
 
 **Test Cases:**
 ```c
-// test_10_sphere_stack_1000_frames
-// test_box_tower_20_high
-// test_fast_object_no_tunnel
+// test_10_sphere_stack_1000_frames     (must not drift > 1mm after 1000 frames)
+// test_box_tower_20_high               (planar sleep propagation should keep base sleeping)
+// test_fast_object_no_tunnel           (speculative contacts catch 100 m/s projectile)
+// test_mixed_pile_100_bodies_stable    (sphere + box + capsule pile settles in < 5s)
 ```
 
 ---
@@ -2063,8 +2274,12 @@ Sphere/box/capsule vs triangle.
 ```
 include/ferrum/physics/
 ├── phys_types.h
+├── phys_vec3.h
+├── phys_quat.h
+├── phys_mat3.h
 ├── body.h
 ├── collider.h
+├── compound_collider.h
 ├── aabb.h
 ├── phys_pool.h
 ├── tier_list.h
@@ -2086,6 +2301,7 @@ include/ferrum/physics/
 ├── constraint_build.h
 ├── island_build.h
 ├── tgs_solve.h
+├── xpbd_solve.h
 ├── integrate.h
 ├── cache_commit.h
 ├── snapshot.h
@@ -2095,9 +2311,14 @@ include/ferrum/physics/
 
 src/physics/
 ├── body/
-│   └── body.c
+│   ├── body_core.c
+│   ├── body_flags.c
+│   ├── body_inertia_sphere.c
+│   ├── body_inertia_box.c
+│   └── body_inertia_capsule.c
 ├── collider/
-│   └── collider.c
+│   ├── collider.c
+│   └── compound_collider.c
 ├── memory/
 │   ├── phys_pool.c
 │   └── phys_arena.c
@@ -2118,8 +2339,12 @@ src/physics/
 │   └── manifold_cache.c
 ├── solver/
 │   ├── constraint.c
+│   ├── constraint_planar.c
+│   ├── constraint_sphere.c
 │   ├── island.c
-│   └── tgs_solve.c
+│   ├── tgs_solve.c
+│   ├── xpbd_solve.c
+│   └── solver_transition.c
 ├── stages/
 │   ├── step_plan.c
 │   ├── tier_classify.c
@@ -2152,6 +2377,7 @@ src/physics/
 tests/physics/
 ├── body_tests.c
 ├── collider_tests.c
+├── compound_collider_tests.c
 ├── aabb_tests.c
 ├── phys_pool_tests.c
 ├── tier_list_tests.c
@@ -2159,22 +2385,30 @@ tests/physics/
 ├── manifold_tests.c
 ├── manifold_cache_tests.c
 ├── constraint_tests.c
+├── constraint_planar_tests.c
+├── constraint_sphere_tests.c
 ├── island_tests.c
 ├── world_tests.c
 ├── step_plan_tests.c
 ├── tier_classify_tests.c
+├── tier_classify_occlusion_tests.c
+├── sphere_simplify_tests.c
 ├── spatial_update_tests.c
 ├── halo_closure_tests.c
 ├── broadphase_tests.c
 ├── narrowphase_tests.c
 ├── narrowphase_sphere_box_tests.c
+├── narrowphase_sphere_capsule_tests.c
 ├── narrowphase_box_box_tests.c
-├── ... (all narrowphase pairs)
+├── narrowphase_box_capsule_tests.c
+├── narrowphase_capsule_capsule_tests.c
 ├── manifold_build_tests.c
 ├── stabilization_tests.c
 ├── constraint_build_tests.c
 ├── island_build_tests.c
 ├── tgs_solve_tests.c
+├── xpbd_solve_tests.c
+├── solver_transition_tests.c
 ├── integrate_tests.c
 ├── cache_commit_tests.c
 ├── snapshot_tests.c
@@ -2186,24 +2420,42 @@ tests/physics/
 ├── phase2_bench.c
 ├── phase3_integration_tests.c
 ├── phase3_bench.c
-└── ... (subsequent phases)
+├── phase4_integration_tests.c
+└── phase4_bench.c
 ```
 
 ---
 
 ## Performance Targets Summary
 
-| Scenario | Target |
-|----------|--------|
-| 100 bodies, 30 Hz, 2 substeps | < 1.5 ms/tick |
-| 1000 bodies, 30 Hz, 2 substeps | < 10 ms/tick |
-| 5000 bodies, tiered, 8 threads | < 8 ms/tick |
-| Broadphase 10k AABBs | < 2 ms |
-| Narrowphase 1k pairs | < 1 ms |
-| Solve 1k constraints, 8 iter | < 3 ms |
-| Snapshot encode 100 bodies | < 50 µs |
-| Snapshot delta 100 bodies | < 20 µs |
-| Raycast 1000 casts, 1000 bodies | < 5 ms |
+**Budget:** 3.0 ms per tick at 30 Hz on a ~2015-era CPU (i7-6700K / Ryzen 1600).
+32 MB memory pool. 10,000 body hard maximum.
+
+| Scenario | Target | Notes |
+|----------|--------|-------|
+| 100 spheres, 30 Hz, 2 substeps | < 0.5 ms/tick | Phase 1 baseline |
+| 300 mixed primitives, 30 Hz | < 1.5 ms/tick | Phase 2 baseline |
+| 1000 bodies, 4 threads | < 1.5 ms/tick | Phase 3 parallel |
+| 3000 bodies, 8 threads, tiered | < 2.5 ms/tick | Phase 4 tiered |
+| 5000 bodies, 8 threads, tiered | < 3.0 ms/tick | Full stack |
+| 8000 far-field (XPBD only) | < 3.0 ms/tick | XPBD ceiling |
+| 500 T4 background props | < 25 µs | 0.05 µs/body amortized |
+| Broadphase 5k bodies (grid) | < 500 µs | 0.5 µs/body spatial hash |
+| Narrowphase 1k pairs (mixed) | < 1.5 ms | ~1.5 µs/pair blended |
+| Narrowphase 1k pairs (sphere) | < 0.3 ms | ~0.3 µs/pair sphere-sphere |
+| Constraint solve blended | ~0.32 µs/iter | 30% planar + 20% sphere |
+| Constraint solve generic | ~0.50 µs/iter | Worst case (no specialization) |
+| Snapshot encode 100 bodies | < 50 µs | |
+| Snapshot delta 100 bodies | < 20 µs | |
+| Raycast 1000 casts, 1000 bodies | < 5 ms | BVH + grid |
+| Compound collider (10 children) | < 20 µs | Per-compound per-tick |
+
+**Optimization stack (cumulative, all required for 5000+ body counts):**
+1. Base mitigations: sleep-stabilize, ragdoll LOD, island split
+2. Constraint specialization: planar 3×, sphere 6×, planar sleep propagation 15×
+3. Occlusion demotion: visibility_set → T3 (42× cheaper per body)
+4. Reduced iterations: T3: 4, T4: 2, with sphere collider simplification
+5. Level design: island-breaking gaps, merge static clutter, debris LOD
 
 ---
 
