@@ -51,4 +51,9 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
         plan->tier_params[t].friction_boost    = 1.0f;
         plan->tier_params[t].restitution_scale = 1.0f;
     }
+
+    /* T4 amortized ticking: only active every 3rd frame. */
+    if (world->tick_count % 3 != 0) {
+        plan->tier_params[PHYS_TIER_4_BACKGROUND].active = false;
+    }
 }
