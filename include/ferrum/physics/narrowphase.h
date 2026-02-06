@@ -15,6 +15,7 @@
 #include <stdint.h>
 
 #include "ferrum/physics/phys_types.h"
+#include "ferrum/physics/manifold.h"
 
 struct phys_body;
 struct phys_collider;
@@ -22,7 +23,6 @@ struct phys_sphere;
 struct phys_box;
 struct phys_capsule;
 struct phys_collision_pair;
-struct phys_contact_point;
 
 #ifdef __cplusplus
 extern "C" {
