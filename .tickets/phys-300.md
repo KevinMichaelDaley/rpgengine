@@ -25,6 +25,7 @@ priority: 2
 - phys-309: Parallelize TGS Solve (T0/T1)
 - phys-309b: Parallelize XPBD Solve (T2–T4)
 - phys-310: Parallelize Integrate
+- phys-312: Parallel Tick Entry Point
 - phys-311: Phase 3 Integration Test + Benchmark
 
 ## Performance Targets
