@@ -350,7 +350,9 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                                                   proj_result.position_deltas[idx]);
                     }
 
-                    /* Replace constraint-normal velocity component. */
+                    /* Sparse GS velocity sync: solve per-island
+                     * velocity-level system to match correction velocities
+                     * along constraint normals. */
                     phys_velocity_sync_normals(&(phys_velocity_sync_args_t){
                         .island          = isle,
                         .constraints     = constraints,
