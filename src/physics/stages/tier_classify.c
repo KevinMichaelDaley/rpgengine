@@ -14,6 +14,8 @@
 
 #include "ferrum/physics/tier_classify.h"
 
+#include <stdbool.h>
+
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/game_state.h"
 #include "ferrum/physics/phys_pool.h"
@@ -109,6 +111,28 @@ void phys_stage_tier_classify(const phys_tier_classify_args_t *args) {
             phys_tier_t raw_tier = tier_from_distance(dist);
             phys_tier_t current_tier = (phys_tier_t)body->tier;
             new_tier = apply_hysteresis(raw_tier, current_tier, dist);
+        }
+
+        phys_tier_t old_tier = (phys_tier_t)body->tier;
+
+        /* Occlusion demotion: T0–T1 bodies that are not visible → demote to T3. */
+        if (args->visibility_set && new_tier <= PHYS_TIER_1_NEAR) {
+            uint32_t byte_idx = i / 8;
+            uint8_t  bit_mask = (uint8_t)(1u << (i % 8));
+            bool visible = (args->visibility_set[byte_idx] & bit_mask) != 0;
+            if (!visible) {
+                new_tier = PHYS_TIER_3_WORLD;
+            }
+        }
+
+        /* Re-promotion: body was T3 (occluded) but is now visible and
+         * distance says T0–T1 → flag for position nudge. */
+        if (args->visibility_set &&
+            old_tier == PHYS_TIER_3_WORLD &&
+            new_tier <= PHYS_TIER_1_NEAR) {
+            if (args->repromotion_flags) {
+                args->repromotion_flags[i] = 1;
+            }
         }
 
         phys_tier_list_add(

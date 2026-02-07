@@ -41,6 +41,14 @@ typedef struct phys_tier_classify_args {
     struct phys_tier_lists *tier_lists_out; /**< Output tier lists to populate. */
     struct phys_frame_arena *arena;    /**< Frame arena for tier list allocation. */
     uint8_t *tier_out;                 /**< Optional per-body tier output (size >= body_count). */
+
+    /** Bitfield: bit i is set if body i is visible.  NULL = all visible (backward compat). */
+    const uint8_t *visibility_set;
+
+    /** Output: bodies that just re-promoted from occlusion need position nudge.
+     *  Caller allocates (size >= body_count).  Set to 1 for bodies that just re-promoted.
+     *  NULL = skip re-promotion tracking. */
+    uint8_t *repromotion_flags;
 } phys_tier_classify_args_t;
 
 /**
