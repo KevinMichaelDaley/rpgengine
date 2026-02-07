@@ -1,6 +1,6 @@
 ---
 id: rpg-gtak
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-07T01:50:37Z

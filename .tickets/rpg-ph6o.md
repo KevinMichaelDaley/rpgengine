@@ -1,6 +1,6 @@
 ---
 id: rpg-ph6o
-status: open
+status: closed
 deps: [rpg-gtak]
 links: []
 created: 2026-02-07T01:50:37Z
