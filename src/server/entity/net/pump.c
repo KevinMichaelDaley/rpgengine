@@ -330,6 +330,25 @@ bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t 
             continue;
         }
 
+        /* Forward INPUT_MOVE and INPUT_SPAWN to entity_event_topic for
+           game-specific processing (e.g. demo server world).
+           Event format: [evt_type:u8][reserved:u8][client_id:u16 LE][payload...]
+         */
+        if (schema_id == NET_REPL_SCHEMA_INPUT_MOVE || schema_id == NET_REPL_SCHEMA_INPUT_SPAWN) {
+            const uint8_t evt_type = (schema_id == NET_REPL_SCHEMA_INPUT_MOVE)
+                                         ? (uint8_t)FR_SERVER_EVT_ENTITY_INPUT_MOVE
+                                         : (uint8_t)FR_SERVER_EVT_ENTITY_INPUT_SPAWN;
+            if (payload_size <= 252u && pump->cfg.entity_event_topic) {
+                uint8_t fwd[256];
+                fwd[0] = evt_type;
+                fwd[1] = 0u;
+                write_u16_le_(fwd + 2u, client_id);
+                memcpy(fwd + 4u, payload, payload_size);
+                (void)fr_topic_channel_push(pump->cfg.entity_event_topic, fwd, 4u + payload_size);
+            }
+            continue;
+        }
+
         /* Unknown schema IDs are ignored by this pump. */
         continue;
     }
