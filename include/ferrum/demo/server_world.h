@@ -42,8 +42,12 @@ typedef struct demo_server_world {
 
     /* Spawning state. */
     uint32_t rng_state;           /**< xorshift32 RNG state. */
-    uint32_t ticks_since_spawn;   /**< Ticks since last random distant spawn. */
+    uint32_t ticks_since_spawn;   /**< Ticks since last stack spawn. */
     uint32_t dynamic_body_count;  /**< Number of dynamic bodies spawned. */
+
+    /* Stack spawn tracking. */
+    float    stack_positions[64][2]; /**< XZ center of each spawned stack. */
+    uint32_t stack_count;           /**< Number of stacks spawned so far. */
 
     /* Body metadata for replication. */
     uint8_t  body_shape_type[DEMO_MAX_BODIES]; /**< 0=box, 1=sphere. */

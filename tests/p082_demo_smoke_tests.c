@@ -233,9 +233,9 @@ static int test_random_spawner(void) {
     demo_server_world_t sw;
     ASSERT_TRUE(demo_server_world_init(&sw, 42) == 0);
 
-    /* Tick 100 times — the random spawner fires every 30-60 ticks,
-     * so at least one distant body should appear. */
-    for (int i = 0; i < 100; i++) {
+    /* Tick 310 times — the stack spawner fires every 180-300 ticks,
+     * so at least one box stack should appear. */
+    for (int i = 0; i < 310; i++) {
         demo_server_world_tick(&sw);
     }
 

@@ -1,6 +1,6 @@
 ---
 id: rpg-1bul
-status: open
+status: in_progress
 deps: [demo-001]
 links: []
 created: 2026-02-07T19:43:55Z
