@@ -231,7 +231,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .manifold_count             = manifold_count,
                 .bodies                     = world->body_pool.bodies_curr,
                 .hints_out                  = hints,
-                .resting_velocity_threshold = 0.5f,
+                .resting_velocity_threshold = 0.1f,
             }, jobs);
         }
 

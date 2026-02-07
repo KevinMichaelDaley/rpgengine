@@ -21,6 +21,7 @@ void net_rudp_peer_init_with_storage(net_rudp_peer_t *peer,
          */
         peer->next_sequence = 1u;
     peer->resend_interval_ms = (resend_interval_ms == 0u) ? 50u : resend_interval_ms;
+    peer->max_slot_age_ms = 5000u; /* 5 seconds default TTL for unACKed slots. */
     net_ack_window_init(&peer->recv_window);
 
     peer->send_slots = send_slots;

@@ -176,6 +176,81 @@ static int test_tick_resend_resends_tracked_packet(void) {
     return 0;
 }
 
+/**
+ * Test: Slots that exceed max_slot_age_ms are expired (freed) during
+ * tick_resend rather than retransmitted forever.
+ */
+static int test_tick_resend_expires_old_slots(void) {
+    net_rudp_send_slot_t slots[2];
+    memset(slots, 0, sizeof(slots));
+
+    net_rudp_peer_t peer;
+    net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 10u, slots, ARRAY_SIZE(slots));
+    peer.max_slot_age_ms = 100u; /* expire after 100 ms */
+
+    struct cap c;
+    memset(&c, 0, sizeof(c));
+    net_udp_addr_t dummy;
+    memset(&dummy, 0, sizeof(dummy));
+
+    const uint8_t payload[] = {0xAAu, 0xBBu};
+
+    /* Send a reliable message at t=0, filling slot 0. */
+    ASSERT_INT_EQ(NET_RUDP_OK,
+                  net_rudp_reliability_send_reliable_via(&peer, &c, capture_sendto, &dummy, 0u, 0x4444u, payload, sizeof(payload), NULL));
+    ASSERT_INT_EQ(1, (int)c.count);
+    ASSERT_TRUE(slots[0].used);
+
+    /* At t=50 (before max_slot_age_ms), resend fires normally. */
+    ASSERT_INT_EQ(NET_RUDP_OK, net_rudp_reliability_tick_resend_via(&peer, &c, capture_sendto, &dummy, 50u));
+    ASSERT_INT_EQ(2, (int)c.count); /* resent once */
+    ASSERT_TRUE(slots[0].used);     /* still tracked */
+
+    /* At t=150 (past max_slot_age_ms=100 from last_send_ms=50), slot is expired. */
+    ASSERT_INT_EQ(NET_RUDP_OK, net_rudp_reliability_tick_resend_via(&peer, &c, capture_sendto, &dummy, 150u));
+    ASSERT_INT_EQ(2, (int)c.count); /* NOT resent again */
+    ASSERT_TRUE(!slots[0].used);    /* slot freed */
+
+    /* Slot is now available for reuse. */
+    ASSERT_INT_EQ(NET_RUDP_OK,
+                  net_rudp_reliability_send_reliable_via(&peer, &c, capture_sendto, &dummy, 200u, 0x5555u, payload, sizeof(payload), NULL));
+    ASSERT_INT_EQ(3, (int)c.count);
+    ASSERT_TRUE(slots[0].used);
+
+    return 0;
+}
+
+/**
+ * Test: When max_slot_age_ms is 0, slots are never expired (legacy behavior).
+ */
+static int test_tick_resend_no_expiry_when_zero(void) {
+    net_rudp_send_slot_t slots[2];
+    memset(slots, 0, sizeof(slots));
+
+    net_rudp_peer_t peer;
+    net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 10u, slots, ARRAY_SIZE(slots));
+    peer.max_slot_age_ms = 0u; /* no expiry */
+
+    struct cap c;
+    memset(&c, 0, sizeof(c));
+    net_udp_addr_t dummy;
+    memset(&dummy, 0, sizeof(dummy));
+
+    const uint8_t payload[] = {0xCCu};
+
+    /* Send at t=0. */
+    ASSERT_INT_EQ(NET_RUDP_OK,
+                  net_rudp_reliability_send_reliable_via(&peer, &c, capture_sendto, &dummy, 0u, 0x6666u, payload, sizeof(payload), NULL));
+    ASSERT_INT_EQ(1, (int)c.count);
+
+    /* Even at t=999999, slot is still alive (resent, not expired). */
+    ASSERT_INT_EQ(NET_RUDP_OK, net_rudp_reliability_tick_resend_via(&peer, &c, capture_sendto, &dummy, 999999u));
+    ASSERT_INT_EQ(2, (int)c.count); /* resent */
+    ASSERT_TRUE(slots[0].used);     /* NOT expired */
+
+    return 0;
+}
+
 int main(void) {
     struct {
         const char *name;
@@ -184,6 +259,8 @@ int main(void) {
         {"unreliable_does_not_advance_sequence", test_unreliable_does_not_advance_sequence},
         {"reliable_includes_current_ack_state", test_reliable_includes_current_ack_state},
         {"tick_resend_resends_tracked_packet", test_tick_resend_resends_tracked_packet},
+        {"tick_resend_expires_old_slots", test_tick_resend_expires_old_slots},
+        {"tick_resend_no_expiry_when_zero", test_tick_resend_no_expiry_when_zero},
     };
 
     for (size_t i = 0u; i < ARRAY_SIZE(tests); ++i) {

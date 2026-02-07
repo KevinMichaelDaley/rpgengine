@@ -51,6 +51,12 @@ typedef struct net_rudp_peer {
     net_ack_window_t recv_window;
     uint32_t resend_interval_ms;
 
+    /** Maximum age (ms) for an unACKed send slot before it is expired.
+     *  When a slot's age exceeds this limit the slot is silently discarded
+     *  to prevent permanent accumulation when ACKs fall outside the
+     *  32-sequence ACK window.  0 means no expiry (not recommended). */
+    uint32_t max_slot_age_ms;
+
     net_rudp_send_slot_t *send_slots;
     size_t send_slot_count;
 

@@ -317,6 +317,15 @@ int net_rudp_reliability_tick_resend_via(net_rudp_peer_t *peer,
             continue;
         }
         uint64_t elapsed = now_ms - peer->send_slots[i].last_send_ms;
+
+        /* Expire slots that have exceeded the maximum age without an ACK.
+         * This prevents permanent slot accumulation when sequence numbers
+         * fall outside the 33-wide ACK window (ack + 32 ack_bits). */
+        if (peer->max_slot_age_ms > 0u && elapsed >= (uint64_t)peer->max_slot_age_ms) {
+            peer->send_slots[i].used = 0u;
+            continue;
+        }
+
         if (elapsed < (uint64_t)peer->resend_interval_ms) {
             continue;
         }
