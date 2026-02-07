@@ -38,7 +38,9 @@ NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/ne
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c) $(wildcard src/server/net/fiber/*.c) $(wildcard src/server/net/runtime/*.c) \
 	$(wildcard src/server/entity/*.c) $(wildcard src/server/entity/*/*.c) $(wildcard src/server/entity/*/*/*.c)
 PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard src/physics/*/*/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC)
+DEMO_SRC := $(wildcard src/demo/*.c)
+DEMO_LIB_SRC := $(filter-out src/demo/demo_server.c src/demo/demo_client.c, $(DEMO_SRC))
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(DEMO_LIB_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -743,5 +745,19 @@ p008_renderer_client:
 	@echo "Run server:  ./build/p008_net_repl_server 40080 16 0 60 4"
 	@echo "Run client:  ./build/p008_renderer_client 127.0.0.1 40080 10000 --seed 123"
 
+# ── Demo binaries ────────────────────────────────────────────────
+.PHONY: demo demo_server demo_client
+
+build/demo_server: $(SRC) src/demo/demo_server.c | build
+	$(CC) $(CFLAGS) src/demo/demo_server.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+
+build/demo_client: $(SRC) src/demo/demo_client.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) src/demo/demo_client.c $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+demo: build/demo_server build/demo_client
+	@echo "Built: build/demo_server build/demo_client"
+	@echo "Run server:  ./build/demo_server 40080"
+	@echo "Run client:  ./build/demo_client 127.0.0.1 40080"
+
 clean:
-	$(RM) $(BIN)
+	$(RM) $(BIN) build/demo_server build/demo_client

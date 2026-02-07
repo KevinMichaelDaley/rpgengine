@@ -1,6 +1,6 @@
 ---
 id: rpg-ecx9
-status: open
+status: closed
 deps: [rpg-twoe, rpg-ph6o]
 links: []
 created: 2026-02-07T01:50:37Z
