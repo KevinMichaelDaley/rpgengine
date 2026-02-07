@@ -46,6 +46,9 @@ typedef struct phys_position_projection_result {
  * - island, constraints, bodies: borrowed, read-only.
  * - arena: borrowed, allocations made for output arrays.
  * - result: caller-owned output struct.
+ * - shared_pos_deltas / shared_vel_deltas: optional pre-allocated arrays
+ *   (sized to body_count) to avoid per-island arena allocation.  If NULL,
+ *   the function allocates from the arena.
  */
 typedef struct phys_position_projection_args {
     const struct phys_island *island;    /**< Island to project. */
@@ -56,6 +59,8 @@ typedef struct phys_position_projection_args {
     float slop;                          /**< Penetration slop (no correction below this). */
     struct phys_frame_arena *arena;      /**< Arena for output allocations. */
     phys_position_projection_result_t *result; /**< Output. */
+    phys_vec3_t *shared_pos_deltas;      /**< Optional shared position delta array. */
+    struct phys_velocity *shared_vel_deltas; /**< Optional shared velocity delta array. */
 } phys_position_projection_args_t;
 
 /**

@@ -1,12 +1,16 @@
 /**
  * @file position_projection.c
- * @brief Per-island position projection: assemble J, Phi, form A=JM^-1J^T,
- *        solve, and apply corrections.
+ * @brief Per-island position projection using sparse iterative Gauss-Seidel.
  *
- * Non-static functions (2):
+ * Replaces the original dense A = J M^-1 J^T + LDLT factorization with
+ * a sparse Gauss-Seidel iteration that uses the pre-computed per-constraint
+ * effective_mass (diagonal of A).  Complexity is O(nc × iterations) instead
+ * of O(nc³).
+ *
+ * Non-static functions (1):
  *   1. phys_position_projection — main entry point
  *
- * (phys_dense_ldlt_solve is in ldlt_solve.c)
+ * (phys_dense_ldlt_solve remains in ldlt_solve.c for unit test coverage)
  */
 
 #include "ferrum/physics/position_projection.h"
@@ -25,6 +29,9 @@
 /** Minimum penetration to correct (in addition to slop). */
 #define MIN_CORRECTION 1e-6f
 
+/** Number of Gauss-Seidel iterations for position correction. */
+#define PP_GS_ITERATIONS 8
+
 /**
  * @brief Extract the penetration depth from a constraint for position
  *        projection, applying slop threshold.
@@ -40,34 +47,56 @@ static float compute_phi(const phys_constraint_t *c,
     if (excess < MIN_CORRECTION) {
         return 0.0f;
     }
-    /* Return negative Phi: constraint violation is negative
-     * (bodies are overlapping, gap is negative). */
-    return -excess;
+    return excess;
 }
 
 /**
- * @brief Apply M^-1 * J^T * lambda to compute position deltas for one
- *        constraint row.
+ * @brief Compute the current position-space constraint error for a
+ *        single normal constraint, accounting for corrections already
+ *        accumulated in pos_deltas.
+ *
+ * Returns the residual penetration after applying current deltas:
+ *   residual = phi - J * delta_pos
+ *
+ * A positive residual means the constraint is still violated.
  */
-static void accumulate_position_delta(
-    phys_vec3_t *pos_deltas,
-    const phys_constraint_t *c,
-    const phys_body_t *bodies,
-    float lambda_val)
+static float compute_residual(const phys_constraint_t *c,
+                              const phys_vec3_t *pos_deltas,
+                              float phi)
 {
     const phys_jacobian_row_t *row = &c->rows[0];
     uint32_t a = c->body_a;
     uint32_t b = c->body_b;
 
-    /* delta_pos_a += inv_mass_a * J_va^T * lambda */
+    /* J * delta_pos = J_va · delta_a + J_vb · delta_b
+     * (ignoring angular for position projection). */
+    float j_delta = vec3_dot(row->J_va, pos_deltas[a])
+                  + vec3_dot(row->J_vb, pos_deltas[b]);
+
+    return phi - j_delta;
+}
+
+/**
+ * @brief Apply a position correction impulse to both bodies of a
+ *        constraint: delta_pos += M^-1 * J^T * delta_lambda.
+ */
+static void apply_position_impulse(
+    phys_vec3_t *pos_deltas,
+    const phys_constraint_t *c,
+    const phys_body_t *bodies,
+    float delta_lambda)
+{
+    const phys_jacobian_row_t *row = &c->rows[0];
+    uint32_t a = c->body_a;
+    uint32_t b = c->body_b;
+
     float inv_ma = bodies[a].inv_mass;
     pos_deltas[a] = vec3_add(pos_deltas[a],
-                             vec3_scale(row->J_va, inv_ma * lambda_val));
+                             vec3_scale(row->J_va, inv_ma * delta_lambda));
 
-    /* delta_pos_b += inv_mass_b * J_vb^T * lambda */
     float inv_mb = bodies[b].inv_mass;
     pos_deltas[b] = vec3_add(pos_deltas[b],
-                             vec3_scale(row->J_vb, inv_mb * lambda_val));
+                             vec3_scale(row->J_vb, inv_mb * delta_lambda));
 }
 
 void phys_position_projection(const phys_position_projection_args_t *args)
@@ -91,18 +120,30 @@ void phys_position_projection(const phys_position_projection_args_t *args)
     const float dt = args->dt;
     const float slop = args->slop;
 
-    /* Allocate output arrays from arena. */
-    phys_vec3_t *pos_deltas = phys_frame_arena_alloc(
-        args->arena, body_count * sizeof(phys_vec3_t),
-        _Alignof(phys_vec3_t));
-    phys_velocity_t *vel_deltas = phys_frame_arena_alloc(
-        args->arena, body_count * sizeof(phys_velocity_t),
-        _Alignof(phys_velocity_t));
+    /* Use caller-provided shared arrays if available, otherwise allocate. */
+    phys_vec3_t *pos_deltas = args->shared_pos_deltas;
+    phys_velocity_t *vel_deltas = args->shared_vel_deltas;
+
+    if (!pos_deltas) {
+        pos_deltas = phys_frame_arena_alloc(
+            args->arena, body_count * sizeof(phys_vec3_t),
+            _Alignof(phys_vec3_t));
+    }
+    if (!vel_deltas) {
+        vel_deltas = phys_frame_arena_alloc(
+            args->arena, body_count * sizeof(phys_velocity_t),
+            _Alignof(phys_velocity_t));
+    }
 
     if (!pos_deltas || !vel_deltas) { return; }
 
-    memset(pos_deltas, 0, body_count * sizeof(phys_vec3_t));
-    memset(vel_deltas, 0, body_count * sizeof(phys_velocity_t));
+    /* Zero only the island's body entries, not the entire array. */
+    for (uint32_t bi = 0; bi < island->body_count; bi++) {
+        uint32_t idx = island->body_indices[bi];
+        pos_deltas[idx] = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        vel_deltas[idx] = (phys_velocity_t){{0.0f, 0.0f, 0.0f},
+                                             {0.0f, 0.0f, 0.0f}};
+    }
 
     result->position_deltas = pos_deltas;
     result->velocity_deltas = vel_deltas;
@@ -114,135 +155,69 @@ void phys_position_projection(const phys_position_projection_args_t *args)
     const uint32_t nc = island->constraint_count;
     if (nc == 0) { return; }
 
-    /* ── Step 1: Assemble Phi vector (penetration depths) ──────── */
+    /* ── Step 1: Compute Phi vector (penetration excess above slop) ─ */
     float *phi = phys_frame_arena_alloc(
         args->arena, nc * sizeof(float), _Alignof(float));
-    if (!phi) { return; }
+    float *lambda = phys_frame_arena_alloc(
+        args->arena, nc * sizeof(float), _Alignof(float));
+    if (!phi || !lambda) { return; }
 
     uint32_t active_count = 0;
     for (uint32_t i = 0; i < nc; i++) {
         uint32_t ci = island->constraint_indices[i];
         phi[i] = compute_phi(&args->constraints[ci], slop);
-        if (phi[i] < -MIN_CORRECTION) { active_count++; }
+        lambda[i] = 0.0f;
+        if (phi[i] > MIN_CORRECTION) { active_count++; }
     }
 
     /* If no active penetrations, we're done (zero corrections). */
     if (active_count == 0) { return; }
 
-    /* ── Step 2: Build A = J M^-1 J^T (dense, nc × nc) ────────── */
-    float *A = phys_frame_arena_alloc(
-        args->arena, nc * nc * sizeof(float), _Alignof(float));
-    if (!A) { return; }
-    memset(A, 0, nc * nc * sizeof(float));
+    /* ── Step 2: Gauss-Seidel iterations ───────────────────────────
+     * For each constraint, compute the residual position error and
+     * apply a diagonal correction using the pre-computed effective_mass.
+     * This is O(nc × iterations) instead of O(nc³) for dense LDLT. */
+    for (uint32_t iter = 0; iter < PP_GS_ITERATIONS; iter++) {
+        for (uint32_t i = 0; i < nc; i++) {
+            if (phi[i] <= MIN_CORRECTION) { continue; }
 
-    /* For each pair of constraints (i, j), A[i][j] = sum over shared
-     * bodies of J_i_body * M^-1_body * J_j_body^T.
-     *
-     * Each normal constraint row has:
-     *   J_va (linear A), J_wa (angular A), J_vb (linear B), J_wb (angular B)
-     *
-     * For body k shared between constraints i and j:
-     *   contribution = inv_mass_k * dot(J_i_vk, J_j_vk)
-     *                + dot(inv_I_k * J_i_wk, J_j_wk)
-     *
-     * This is symmetric: A[i][j] = A[j][i]. */
-    for (uint32_t i = 0; i < nc; i++) {
-        uint32_t ci = island->constraint_indices[i];
-        const phys_constraint_t *ci_con = &args->constraints[ci];
-        const phys_jacobian_row_t *ri = &ci_con->rows[0];
+            uint32_t ci = island->constraint_indices[i];
+            const phys_constraint_t *con = &args->constraints[ci];
 
-        for (uint32_t j = i; j < nc; j++) {
-            uint32_t cj = island->constraint_indices[j];
-            const phys_constraint_t *cj_con = &args->constraints[cj];
-            const phys_jacobian_row_t *rj = &cj_con->rows[0];
+            /* Compute residual = phi - J * current_delta_pos. */
+            float residual = compute_residual(con, pos_deltas, phi[i]);
 
-            float val = 0.0f;
+            /* No correction needed if residual is non-positive. */
+            if (residual <= MIN_CORRECTION) { continue; }
 
-            /* Check body A of constraint i against both bodies of constraint j. */
-            uint32_t ai = ci_con->body_a;
-            uint32_t bi = ci_con->body_b;
-            uint32_t aj = cj_con->body_a;
-            uint32_t bj = cj_con->body_b;
+            /* Gauss-Seidel update: delta_lambda = effective_mass * residual.
+             * effective_mass = 1 / (J M^-1 J^T) for this constraint's
+             * diagonal entry. */
+            float eff_mass = con->rows[0].effective_mass;
+            if (eff_mass <= 0.0f) { continue; }
 
-            /* Body ai shared with constraint j? */
-            if (ai == aj) {
-                float im = args->bodies[ai].inv_mass;
-                const phys_vec3_t *ii = &args->bodies[ai].inv_inertia_diag;
-                val += im * vec3_dot(ri->J_va, rj->J_va);
-                val += ii->x * ri->J_wa.x * rj->J_wa.x
-                     + ii->y * ri->J_wa.y * rj->J_wa.y
-                     + ii->z * ri->J_wa.z * rj->J_wa.z;
-            } else if (ai == bj) {
-                float im = args->bodies[ai].inv_mass;
-                const phys_vec3_t *ii = &args->bodies[ai].inv_inertia_diag;
-                val += im * vec3_dot(ri->J_va, rj->J_vb);
-                val += ii->x * ri->J_wa.x * rj->J_wb.x
-                     + ii->y * ri->J_wa.y * rj->J_wb.y
-                     + ii->z * ri->J_wa.z * rj->J_wb.z;
-            }
+            float delta_lambda = eff_mass * residual;
 
-            /* Body bi shared with constraint j? */
-            if (bi == aj) {
-                float im = args->bodies[bi].inv_mass;
-                const phys_vec3_t *ii = &args->bodies[bi].inv_inertia_diag;
-                val += im * vec3_dot(ri->J_vb, rj->J_va);
-                val += ii->x * ri->J_wb.x * rj->J_wa.x
-                     + ii->y * ri->J_wb.y * rj->J_wa.y
-                     + ii->z * ri->J_wb.z * rj->J_wa.z;
-            } else if (bi == bj) {
-                float im = args->bodies[bi].inv_mass;
-                const phys_vec3_t *ii = &args->bodies[bi].inv_inertia_diag;
-                val += im * vec3_dot(ri->J_vb, rj->J_vb);
-                val += ii->x * ri->J_wb.x * rj->J_wb.x
-                     + ii->y * ri->J_wb.y * rj->J_wb.y
-                     + ii->z * ri->J_wb.z * rj->J_wb.z;
-            }
+            /* Clamp accumulated lambda to be non-negative (contacts push apart). */
+            float new_lambda = lambda[i] + delta_lambda;
+            if (new_lambda < 0.0f) { new_lambda = 0.0f; }
+            delta_lambda = new_lambda - lambda[i];
+            lambda[i] = new_lambda;
 
-            A[i * nc + j] = val;
-            A[j * nc + i] = val;
+            if (fabsf(delta_lambda) < 1e-10f) { continue; }
+
+            /* Apply position impulse: delta_pos += M^-1 J^T delta_lambda. */
+            apply_position_impulse(pos_deltas, con, args->bodies,
+                                   delta_lambda);
         }
     }
 
-    /* ── Step 3: Solve A * lambda = -Phi (negate Phi for RHS) ──── */
-    float *rhs = phys_frame_arena_alloc(
-        args->arena, nc * sizeof(float), _Alignof(float));
-    float *lambda = phys_frame_arena_alloc(
-        args->arena, nc * sizeof(float), _Alignof(float));
-    if (!rhs || !lambda) { return; }
-
-    for (uint32_t i = 0; i < nc; i++) {
-        rhs[i] = -phi[i];
-    }
-
-    bool solved = phys_dense_ldlt_solve(A, rhs, lambda, nc);
-    if (!solved) { return; }
-
-    /* Clamp lambda to be non-negative (contacts can only push apart).
-     * With Phi < 0 (penetration), RHS = -Phi > 0, so lambda > 0. */
-    for (uint32_t i = 0; i < nc; i++) {
-        if (lambda[i] < 0.0f) {
-            lambda[i] = 0.0f;
-        }
-    }
-
-    /* ── Step 4: Apply position corrections: Δq = M^-1 J^T λ ──── */
-    for (uint32_t i = 0; i < nc; i++) {
-        if (fabsf(lambda[i]) < 1e-10f) { continue; }
-        uint32_t ci = island->constraint_indices[i];
-        accumulate_position_delta(pos_deltas, &args->constraints[ci],
-                                  args->bodies, lambda[i]);
-    }
-
-    /* ── Step 5: Velocity sync: v_delta = Δq / dt ─────────────── */
+    /* ── Step 3: Velocity sync: v_delta = delta_pos / dt ───────── */
     if (dt > 0.0f) {
         float inv_dt = 1.0f / dt;
         for (uint32_t bi = 0; bi < island->body_count; bi++) {
             uint32_t idx = island->body_indices[bi];
             vel_deltas[idx].linear = vec3_scale(pos_deltas[idx], inv_dt);
-            /* Angular velocity sync would require computing angular
-             * deltas from the Jacobian angular rows; for contacts the
-             * angular contribution is typically small and we omit it
-             * in the first version. */
         }
     }
 }

@@ -13,6 +13,7 @@
 #include "ferrum/physics/game_state.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/step_plan.h"
+#include "ferrum/physics/tier_list.h"
 #include "ferrum/physics/tier_classify.h"
 #include "ferrum/physics/tier_list.h"
 #include "ferrum/physics/spatial_update.h"
@@ -312,12 +313,37 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         /* ── Stage 12b: Position Projection [SYNC per island] ──── */
         if (constraint_count > 0) {
+            /* Allocate shared output arrays once for all islands. */
+            phys_vec3_t *shared_pos = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_vec3_t),
+                _Alignof(phys_vec3_t));
+            phys_velocity_t *shared_vel = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+
             for (uint32_t i = 0; i < islands.count; i++) {
+                const phys_island_t *isle = &islands.islands[i];
+
+                /* Skip islands where all bodies are in the lowest-priority
+                 * tier (TIER_4_BACKGROUND) — Baumgarte is sufficient. */
+                bool all_background = true;
+                for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                    uint32_t idx = isle->body_indices[bi];
+                    if (world->body_pool.bodies_next[idx].tier
+                            < PHYS_TIER_4_BACKGROUND) {
+                        all_background = false;
+                        break;
+                    }
+                }
+                if (all_background) { continue; }
+
                 phys_position_projection_result_t proj_result;
                 memset(&proj_result, 0, sizeof(proj_result));
 
                 phys_position_projection(&(phys_position_projection_args_t){
-                    .island      = &islands.islands[i],
+                    .island      = isle,
                     .constraints = constraints,
                     .bodies      = world->body_pool.bodies_next,
                     .body_count  = body_cap,
@@ -325,11 +351,11 @@ void phys_world_tick_parallel(phys_world_t *world,
                     .slop        = world->config.slop,
                     .arena       = &world->frame_arena,
                     .result      = &proj_result,
+                    .shared_pos_deltas = shared_pos,
+                    .shared_vel_deltas = shared_vel,
                 });
 
                 if (proj_result.success && proj_result.position_deltas) {
-                    const phys_island_t *isle = &islands.islands[i];
-
                     /* Apply position corrections to integrated bodies. */
                     for (uint32_t bi = 0; bi < isle->body_count; bi++) {
                         uint32_t idx = isle->body_indices[bi];

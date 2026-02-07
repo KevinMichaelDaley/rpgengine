@@ -1,0 +1,4734 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+The content has been processed where comments have been removed, empty lines have been removed.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: include/**/*.h, docs/**/*.md
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Code comments have been removed from supported file types
+- Empty lines have been removed from all files
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+include/
+  ferrum/
+    demo/
+      camera.h
+      geometry.h
+      input_move.h
+      input_spawn.h
+      server_world.h
+    ecs/
+      common.h
+      entity.h
+      sparse_set.h
+      world.h
+    job/
+      counter.h
+      instrumentation.h
+      system.h
+      ws_deque.h
+    math/
+      constants.h
+      mat4.h
+      quat_angle.h
+      quat.h
+      vec2.h
+      vec3.h
+      vec4.h
+    memory/
+      apool.h
+      arena.h
+      pool.h
+    net/
+      client/
+        runtime_rx.h
+      replication/
+        interp/
+          pose_interpolator.h
+        common.h
+        input_rot.h
+        join.h
+        quat_snorm16.h
+        spawn_batch.h
+        spawn.h
+        state_cube.h
+        vec3_mm.h
+        welcome.h
+      rudp/
+        peer.h
+        reliability_send.h
+        reliability.h
+        wire_frame.h
+      ack_window.h
+      bit_pack.h
+      packet_header.h
+      quantization.h
+      reliable_channel.h
+      reliable_ordered_channel.h
+      schema_registry.h
+      stream.h
+      test_buffer.h
+      test_clock.h
+      test_link.h
+      topic_channel.h
+      topic_dispatcher.h
+      udp_socket.h
+      unreliable_channel.h
+    physics/
+      collision/
+        box_box.h
+        box_capsule.h
+        capsule_capsule.h
+        sphere_simplify.h
+      par/
+        broadphase_par.h
+        constraint_build_par.h
+        integrate_par.h
+        manifold_build_par.h
+        narrowphase_par.h
+        spatial_update_par.h
+        stabilization_par.h
+        tgs_solve_par.h
+        tier_classify_par.h
+        xpbd_solve_par.h
+      aabb_update.h
+      aabb.h
+      amortized.h
+      body.h
+      broadphase.h
+      cache_commit.h
+      collider.h
+      compound_collider.h
+      constraint_stage.h
+      constraint.h
+      game_state.h
+      halo_closure.h
+      integrate.h
+      island_build.h
+      island.h
+      manifold_build.h
+      manifold_cache.h
+      manifold.h
+      narrowphase.h
+      occlusion_nudge.h
+      phys_jobs.h
+      phys_mat3.h
+      phys_pool.h
+      phys_quat.h
+      phys_types.h
+      phys_vec3.h
+      position_projection.h
+      prediction.h
+      snapshot.h
+      solver_transition.h
+      spatial_grid.h
+      spatial_update.h
+      stabilization.h
+      step_plan.h
+      tgs_solve.h
+      tick.h
+      tier_classify.h
+      tier_list.h
+      velocity_sync.h
+      world.h
+      xpbd_solve.h
+    renderer/
+      skinning/
+        components.h
+        pipeline.h
+        skin.h
+      bone_palette.h
+      debug_correction_lines.h
+      debug_lines.h
+      gl_constants.h
+      gl_loader.h
+      render_pipeline_graph.h
+      render_pipeline.h
+      render_resource_views.h
+      shader_program.h
+      shader_uniforms.h
+      skinning_shader.h
+      skinning.h
+      vao_attribute.h
+      vao.h
+      vbo.h
+    server/
+      entity/
+        net/
+          pump.h
+      net/
+        client_fiber.h
+        inbound_message.h
+        runtime.h
+        state_update_queue.h
+      player/
+        connection.h
+      entity.h
+      player.h
+      repl_server.h
+    ferrum.h
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="include/ferrum/ecs/common.h">
+#ifndef FERRUM_ECS_COMMON_H
+#define FERRUM_ECS_COMMON_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum ecs_status {
+    ECS_OK = 0,
+    ECS_ERR_OOM = 1,
+    ECS_ERR_INVALID = 2,
+    ECS_ERR_EXISTS = 3,
+    ECS_ERR_NOT_FOUND = 4,
+    ECS_ERR_FULL = 5
+} ecs_status_t;
+#define ECS_SPARSE_INVALID UINT32_MAX
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/ecs/entity.h">
+#ifndef FERRUM_ECS_ENTITY_H
+#define FERRUM_ECS_ENTITY_H
+#include <stdint.h>
+#include "ferrum/ecs/common.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct entity {
+    uint32_t index;
+    uint32_t generation;
+} entity_t;
+typedef struct ecs_entity_pool {
+    uint32_t capacity;
+    uint32_t live_count;
+    uint32_t *free_list;
+    uint32_t free_head;
+    uint32_t *generations;
+} ecs_entity_pool_t;
+ecs_status_t ecs_entity_pool_init(ecs_entity_pool_t *pool, uint32_t capacity);
+void ecs_entity_pool_destroy(ecs_entity_pool_t *pool);
+ecs_status_t ecs_entity_create(ecs_entity_pool_t *pool, entity_t *out_entity);
+ecs_status_t ecs_entity_destroy(ecs_entity_pool_t *pool, entity_t entity);
+int ecs_entity_is_alive(const ecs_entity_pool_t *pool, entity_t entity);
+uint32_t ecs_entity_live_count(const ecs_entity_pool_t *pool);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/ecs/sparse_set.h">
+#ifndef FERRUM_ECS_SPARSE_SET_H
+#define FERRUM_ECS_SPARSE_SET_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/ecs/common.h"
+#include "ferrum/ecs/entity.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct ecs_sparse_set_base {
+    void *dense;
+    entity_t *dense_entities;
+    uint32_t *sparse;
+    uint32_t capacity;
+    uint32_t size;
+    size_t stride;
+} ecs_sparse_set_base_t;
+#define ECS_DEFINE_SPARSE_SET(name, type)                                                              \
+    typedef struct ecs_sparse_set_##name {                                                             \
+        ecs_sparse_set_base_t base;                                                                    \
+    } ecs_sparse_set_##name##_t;                                                                       \
+                                                                                                       \
+    static inline ecs_status_t ecs_sparse_set_##name##_init(ecs_sparse_set_##name##_t *set,            \
+                                                            uint32_t capacity) {                       \
+        return ecs_sparse_set_base_init(&set->base, capacity, sizeof(type));                            \
+    }                                                                                                  \
+    static inline void ecs_sparse_set_##name##_destroy(ecs_sparse_set_##name##_t *set) {               \
+        ecs_sparse_set_base_destroy(&set->base);                                                       \
+    }                                                                                                  \
+    static inline ecs_status_t ecs_sparse_set_##name##_insert(ecs_sparse_set_##name##_t *set,          \
+                                                              entity_t entity, const type *value) {    \
+        return ecs_sparse_set_base_insert(&set->base, entity, value);                                   \
+    }                                                                                                  \
+    static inline ecs_status_t ecs_sparse_set_##name##_remove(ecs_sparse_set_##name##_t *set,          \
+                                                              entity_t entity) {                       \
+        return ecs_sparse_set_base_remove(&set->base, entity);                                          \
+    }                                                                                                  \
+    static inline type *ecs_sparse_set_##name##_get(ecs_sparse_set_##name##_t *set, entity_t entity) { \
+        return (type *)ecs_sparse_set_base_get(&set->base, entity);                                     \
+    }                                                                                                  \
+    static inline uint32_t ecs_sparse_set_##name##_size(const ecs_sparse_set_##name##_t *set) {        \
+        return set->base.size;                                                                         \
+    }                                                                                                  \
+    static inline type *ecs_sparse_set_##name##_dense(ecs_sparse_set_##name##_t *set) {                \
+        return (type *)set->base.dense;                                                                 \
+    }                                                                                                  \
+    static inline entity_t *ecs_sparse_set_##name##_entities(ecs_sparse_set_##name##_t *set) {         \
+        return set->base.dense_entities;                                                                \
+    }                                                                                                  \
+    static inline const uint32_t *ecs_sparse_set_##name##_sparse(const ecs_sparse_set_##name##_t *set) { \
+        return set->base.sparse;                                                                         \
+    }
+ecs_status_t ecs_sparse_set_base_init(ecs_sparse_set_base_t *base, uint32_t capacity, size_t stride);
+void ecs_sparse_set_base_destroy(ecs_sparse_set_base_t *base);
+ecs_status_t ecs_sparse_set_base_insert(ecs_sparse_set_base_t *base, entity_t entity, const void *value);
+ecs_status_t ecs_sparse_set_base_remove(ecs_sparse_set_base_t *base, entity_t entity);
+void *ecs_sparse_set_base_get(ecs_sparse_set_base_t *base, entity_t entity);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/ecs/world.h">
+#ifndef FERRUM_ECS_WORLD_H
+#define FERRUM_ECS_WORLD_H
+#include <stdint.h>
+#include "ferrum/ecs/common.h"
+#include "ferrum/ecs/entity.h"
+#include "ferrum/ecs/sparse_set.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct ecs_world {
+    ecs_entity_pool_t entity_pool;
+    ecs_sparse_set_base_t **sets;
+    uint32_t set_count;
+    uint32_t set_capacity;
+} ecs_world_t;
+ecs_status_t ecs_world_init(ecs_world_t *world, uint32_t entity_capacity);
+void ecs_world_destroy(ecs_world_t *world);
+ecs_status_t ecs_world_create_entity(ecs_world_t *world, entity_t *out_entity);
+ecs_status_t ecs_world_destroy_entity(ecs_world_t *world, entity_t entity);
+ecs_status_t ecs_world_register_set(ecs_world_t *world, ecs_sparse_set_base_t *set);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/job/counter.h">
+#ifndef FERRUM_JOB_COUNTER_H
+#define FERRUM_JOB_COUNTER_H
+#include <stdatomic.h>
+#include <stdint.h>
+#include <threads.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct job_counter {
+    atomic_uint value;
+    mtx_t lock;
+    void *waiters;
+} job_counter_t;
+typedef enum job_wait_status {
+    JOB_WAIT_OK = 0,
+    JOB_WAIT_TIMEOUT = 1,
+    JOB_WAIT_INVALID = 2
+} job_wait_status_t;
+void job_counter_init(job_counter_t *counter, uint32_t initial);
+void job_counter_destroy(job_counter_t *counter);
+int job_counter_add(job_counter_t *counter, uint32_t value);
+int job_counter_dec(job_counter_t *counter);
+uint32_t job_counter_value(const job_counter_t *counter);
+job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/job/instrumentation.h">
+#ifndef FERRUM_JOB_INSTRUMENTATION_H
+#define FERRUM_JOB_INSTRUMENTATION_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#ifndef FR_JOB_INSTRUMENTATION
+#define FR_JOB_INSTRUMENTATION 1
+#endif
+#if FR_JOB_INSTRUMENTATION
+void job_instrument_enable(int on);
+#else
+static inline void job_instrument_enable(int on) { (void)on; }
+#endif
+#if FR_JOB_INSTRUMENTATION
+uint64_t job_instrument_count(void);
+#else
+static inline uint64_t job_instrument_count(void) { return 0; }
+#endif
+#if FR_JOB_INSTRUMENTATION
+void job_instrument_event(const char *event,
+                          uint64_t fiber_id,
+                          uint64_t job_id,
+                          uint32_t worker_id,
+                          const char *file,
+                          int line);
+#else
+static inline void job_instrument_event(const char *event,
+                                        uint64_t fiber_id,
+                                        uint64_t job_id,
+                                        uint32_t worker_id,
+                                        const char *file,
+                                        int line) {
+    (void)event;
+    (void)fiber_id;
+    (void)job_id;
+    (void)worker_id;
+    (void)file;
+    (void)line;
+}
+#endif
+#if FR_JOB_INSTRUMENTATION
+void job_instrument_init(void);
+#else
+static inline void job_instrument_init(void) {}
+#endif
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/job/system.h">
+#ifndef FERRUM_JOB_SYSTEM_H
+#define FERRUM_JOB_SYSTEM_H
+#include <stddef.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#include "counter.h"
+#include "ferrum/memory/apool.h"
+#include "ferrum/job/ws_deque.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct job_fiber;
+struct job_system {
+    uint32_t worker_count;
+    uint32_t queue_capacity;
+    size_t fiber_stack_size;
+    apool_t fiber_stack_pool;
+    int deterministic;
+    atomic_bool running;
+    atomic_bool shutting_down;
+    struct job_entry *queue;
+    atomic_int *queue_slot_state;
+    atomic_uint queue_insert_cursor;
+    atomic_uint queue_pop_cursor;
+    fr_ws_deque_t *ws_deques;
+    atomic_uint queued_count;
+    struct job_fiber **inject_ring;
+    uint32_t inject_head;
+    uint32_t inject_tail;
+    uint32_t inject_count;
+    mtx_t queue_lock;
+    cnd_t queue_cond;
+#ifdef FR_JOB_QUEUE_DIAGNOSTICS
+    atomic_uint_least64_t qdiag_enqueue_calls;
+    atomic_uint_least64_t qdiag_enqueue_scanned_slots;
+    atomic_uint_least64_t qdiag_enqueue_claim_fail;
+    atomic_uint_least64_t qdiag_enqueue_success;
+    atomic_uint_least64_t qdiag_pop_calls;
+    atomic_uint_least64_t qdiag_pop_scanned_slots;
+    atomic_uint_least64_t qdiag_pop_ready_seen;
+    atomic_uint_least64_t qdiag_pop_claim_fail;
+    atomic_uint_least64_t qdiag_pop_success;
+    atomic_uint_least64_t qdiag_cond_waits;
+#endif
+    thrd_t *workers;
+    atomic_uint_least64_t next_job_id;
+    atomic_uint_least64_t jobs_started;
+    atomic_uint_least64_t jobs_completed;
+    atomic_bool affinity_enabled;
+    int numa_enabled;
+    uint32_t numa_node_count;
+};
+struct job_counter;
+typedef enum job_system_create_status{
+    JOB_CREATE_OK = 0,
+    JOB_CREATE_ERR_INVALID,
+    JOB_CREATE_ERR_OOM,
+    JOB_CREATE_ERR_MTX_INIT,
+    JOB_CREATE_ERR_CND_INIT,
+    JOB_CREATE_POOL_INIT_ERR
+} job_system_create_status_t;
+typedef struct job_system job_system_t;
+typedef uint64_t job_id_t;
+#define JOB_ID_INVALID ((job_id_t)0)
+typedef struct job_queue_diag_snapshot {
+    uint64_t enqueue_calls;
+    uint64_t enqueue_scanned_slots;
+    uint64_t enqueue_claim_fail;
+    uint64_t enqueue_success;
+    uint64_t pop_calls;
+    uint64_t pop_scanned_slots;
+    uint64_t pop_ready_seen;
+    uint64_t pop_claim_fail;
+    uint64_t pop_success;
+    uint64_t cond_waits;
+} job_queue_diag_snapshot_t;
+job_system_create_status_t job_system_create(job_system_t* sys,
+                                uint32_t worker_count,
+                                uint32_t queue_capacity,
+                                size_t fiber_stack_size,
+                                size_t fiber_count_max,
+                                int deterministic_mode);
+int job_system_start(job_system_t *sys);
+job_id_t job_dispatch(job_system_t *sys,
+                     void (*fn)(void *user_data),
+                     void *user_data,
+                     int priority,
+                     struct job_counter *counter);
+job_id_t job_dispatch_named(job_system_t *sys,
+                           void (*fn)(void *user_data),
+                           void *user_data,
+                           int priority,
+                           struct job_counter *counter,
+                           const char *debug_name);
+int job_system_wait_idle(job_system_t *sys);
+void job_system_shutdown(job_system_t *sys);
+void job_yield(void);
+uint32_t job_current_worker_id(void);
+uint64_t job_system_jobs_started(const job_system_t *sys);
+uint64_t job_system_jobs_completed(const job_system_t *sys);
+int job_system_queue_is_lock_free(const job_system_t *sys);
+int job_system_queue_is_sharded(const job_system_t *sys);
+job_id_t job_dispatch_to(job_system_t *sys,
+                         void (*fn)(void *user_data),
+                         void *user_data,
+                         int priority,
+                         struct job_counter *counter,
+                         uint32_t preferred_worker);
+int job_system_enable_affinity(job_system_t *sys, int enable);
+int job_system_affinity_enabled(const job_system_t *sys);
+int job_system_enable_numa(job_system_t *sys, uint32_t node_count);
+int job_system_numa_enabled(const job_system_t *sys);
+uint32_t job_current_worker_node(void);
+int job_system_enable_numa_auto(job_system_t *sys);
+int job_system_queue_diag_supported(void);
+void job_system_queue_diag_snapshot(const job_system_t *sys, job_queue_diag_snapshot_t *out);
+void job_system_queue_diag_reset(job_system_t *sys);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/job/ws_deque.h">
+#ifndef FERRUM_JOB_WS_DEQUE_H
+#define FERRUM_JOB_WS_DEQUE_H
+#include <stddef.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct fr_ws_deque {
+    size_t capacity;
+    size_t mask;
+    _Atomic size_t top;
+    _Atomic size_t bottom;
+    void **buffer;
+} fr_ws_deque_t;
+int fr_ws_deque_init(fr_ws_deque_t *dq, size_t capacity);
+void fr_ws_deque_destroy(fr_ws_deque_t *dq);
+int fr_ws_deque_push(fr_ws_deque_t *dq, void *item);
+void *fr_ws_deque_pop(fr_ws_deque_t *dq);
+void *fr_ws_deque_steal(fr_ws_deque_t *dq);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/math/constants.h">
+#ifndef FERRUM_MATH_CONSTANTS_H
+#define FERRUM_MATH_CONSTANTS_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define FERRUM_PI 3.14159265359f
+#define FERRUM_PI_2 1.57079632679f
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/math/mat4.h">
+#ifndef FERRUM_MATH_MAT4_H
+#define FERRUM_MATH_MAT4_H
+#include "ferrum/math/vec3.h"
+#include "ferrum/math/vec4.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct mat4 {
+    float m[16];
+} mat4_t;
+mat4_t mat4_identity(void);
+mat4_t mat4_translation(float x, float y, float z);
+mat4_t mat4_scaling(float x, float y, float z);
+mat4_t mat4_rotation_x(float radians);
+mat4_t mat4_rotation_y(float radians);
+mat4_t mat4_rotation_z(float radians);
+int mat4_look_at(vec3_t eye, vec3_t target, vec3_t up, mat4_t *out);
+int mat4_perspective(float fov_radians, float aspect, float near_plane, float far_plane, mat4_t *out);
+mat4_t mat4_ortho(float left, float right, float bottom, float top, float near_plane, float far_plane);
+mat4_t mat4_mul(mat4_t a, mat4_t b);
+vec4_t mat4_mul_vec4(mat4_t m, vec4_t v);
+mat4_t mat4_transpose(mat4_t m);
+int mat4_inverse(mat4_t m, mat4_t *out);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/math/quat_angle.h">
+#ifndef FERRUM_MATH_QUAT_ANGLE_H
+#define FERRUM_MATH_QUAT_ANGLE_H
+#include "ferrum/math/quat.h"
+#include "ferrum/math/vec3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+float fr_quat_angle_degrees_between(quat_t a, quat_t b);
+quat_t fr_quat_integrate_angular_velocity(quat_t q, vec3_t omega_rad_s, float dt_s, float epsilon);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/math/quat.h">
+#ifndef FERRUM_MATH_QUAT_H
+#define FERRUM_MATH_QUAT_H
+#include "ferrum/math/vec3.h"
+#include "ferrum/math/mat4.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct quat {
+    float x;
+    float y;
+    float z;
+    float w;
+} quat_t;
+quat_t quat_from_axis_angle(vec3_t axis, float radians, float epsilon);
+quat_t quat_normalize_safe(quat_t q, float epsilon);
+quat_t quat_conjugate(quat_t q);
+quat_t quat_mul(quat_t a, quat_t b);
+quat_t quat_slerp(quat_t a, quat_t b, float t, float epsilon);
+int quat_to_mat4(quat_t q, mat4_t *out);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/math/vec2.h">
+#ifndef FERRUM_MATH_VEC2_H
+#define FERRUM_MATH_VEC2_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct vec2 {
+    float x;
+    float y;
+} vec2_t;
+float vec2_dot(vec2_t a, vec2_t b);
+vec2_t vec2_add(vec2_t a, vec2_t b);
+vec2_t vec2_sub(vec2_t a, vec2_t b);
+vec2_t vec2_scale(vec2_t v, float s);
+float vec2_magnitude(vec2_t v);
+vec2_t vec2_normalize_safe(vec2_t v, float epsilon);
+vec2_t vec2_lerp(vec2_t a, vec2_t b, float t);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/math/vec3.h">
+#ifndef FERRUM_MATH_VEC3_H
+#define FERRUM_MATH_VEC3_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct vec3 {
+    float x;
+    float y;
+    float z;
+} vec3_t;
+float vec3_dot(vec3_t a, vec3_t b);
+vec3_t vec3_add(vec3_t a, vec3_t b);
+vec3_t vec3_sub(vec3_t a, vec3_t b);
+vec3_t vec3_scale(vec3_t v, float s);
+float vec3_magnitude(vec3_t v);
+vec3_t vec3_normalize_safe(vec3_t v, float epsilon);
+vec3_t vec3_lerp(vec3_t a, vec3_t b, float t);
+vec3_t vec3_cross(vec3_t a, vec3_t b);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/math/vec4.h">
+#ifndef FERRUM_MATH_VEC4_H
+#define FERRUM_MATH_VEC4_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct vec4 {
+    float x;
+    float y;
+    float z;
+    float w;
+} vec4_t;
+float vec4_dot(vec4_t a, vec4_t b);
+vec4_t vec4_add(vec4_t a, vec4_t b);
+vec4_t vec4_sub(vec4_t a, vec4_t b);
+vec4_t vec4_scale(vec4_t v, float s);
+float vec4_magnitude(vec4_t v);
+vec4_t vec4_normalize_safe(vec4_t v, float epsilon);
+vec4_t vec4_lerp(vec4_t a, vec4_t b, float t);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/memory/apool.h">
+#ifndef FERRUM_MEMORY_APOOL_H
+#define FERRUM_MEMORY_APOOL_H
+#include <stddef.h>
+#include <stdint.h>
+#include <stdatomic.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct apool_handle {
+    uint32_t index;
+    uint16_t generation;
+    uint16_t flags;
+} apool_handle_t;
+typedef struct apool {
+    uint8_t *storage;
+    uint32_t *next;
+    _Atomic uint16_t *generations;
+    _Atomic uint64_t free_head;
+    uint32_t capacity;
+    uint32_t stride;
+} apool_t;
+typedef enum apool_status {
+    APOOL_OK = 0,
+    APOOL_ERR_OOM = 1,
+    APOOL_ERR_INVALID = 2
+} apool_status_t;
+#define APOOL_INDEX_INVALID UINT32_MAX
+apool_status_t apool_init(apool_t *pool, uint32_t capacity, uint32_t stride);
+void apool_destroy(apool_t *pool);
+apool_handle_t apool_alloc(apool_t *pool);
+apool_status_t apool_free(apool_t *pool, apool_handle_t handle);
+void *apool_get(const apool_t *pool, apool_handle_t handle);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/memory/arena.h">
+#ifndef FERRUM_MEMORY_ARENA_H
+#define FERRUM_MEMORY_ARENA_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct arena {
+    uint8_t *buffer;
+    size_t capacity;
+    size_t offset;
+} arena_t;
+void arena_init(arena_t *arena, void *buffer, size_t capacity);
+void *arena_alloc(arena_t *arena, size_t alignment, size_t size);
+void arena_reset(arena_t *arena);
+size_t arena_mark(const arena_t *arena);
+int arena_pop_to_mark(arena_t *arena, size_t mark);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/memory/pool.h">
+#ifndef FERRUM_MEMORY_POOL_H
+#define FERRUM_MEMORY_POOL_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct pool_handle {
+    uint32_t index;
+    uint16_t generation;
+    uint16_t flags;
+} pool_handle_t;
+typedef struct pool {
+    uint8_t *storage;
+    uint32_t *free_list;
+    uint16_t *generations;
+    uint32_t capacity;
+    uint32_t stride;
+    uint32_t free_head;
+} pool_t;
+typedef enum pool_status {
+    POOL_OK = 0,
+    POOL_ERR_OOM = 1,
+    POOL_ERR_INVALID = 2
+} pool_status_t;
+#define POOL_INDEX_INVALID UINT32_MAX
+pool_status_t pool_init(pool_t *pool, uint32_t capacity, uint32_t stride);
+void pool_destroy(pool_t *pool);
+pool_handle_t pool_alloc(pool_t *pool);
+pool_status_t pool_free(pool_t *pool, pool_handle_t handle);
+void *pool_get(const pool_t *pool, pool_handle_t handle);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/client/runtime_rx.h">
+#ifndef FERRUM_NET_CLIENT_RUNTIME_RX_H
+#define FERRUM_NET_CLIENT_RUNTIME_RX_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
+#include "ferrum/net/udp_socket.h"
+#include "ferrum/net/topic_channel.h"
+typedef struct fr_client_rx_config_t {
+    uint32_t max_channels;
+    uint32_t max_pending_per_channel;
+    ssize_t (*recv_cb)(void *user, uint8_t *buf, size_t cap);
+    void *recv_user;
+    net_udp_socket_t *socket;
+    fr_topic_channel_t **topics;
+    uint32_t num_topics;
+} fr_client_rx_config_t;
+typedef struct fr_client_rx_t fr_client_rx_t;
+fr_client_rx_t *fr_client_rx_create(const fr_client_rx_config_t *cfg);
+void fr_client_rx_destroy(fr_client_rx_t *rx);
+bool fr_client_rx_start(fr_client_rx_t *rx);
+bool fr_client_rx_stop(fr_client_rx_t *rx);
+bool fr_client_rx_inject(fr_client_rx_t *rx, const uint8_t *data, size_t len);
+bool fr_client_rx_pop_message(fr_client_rx_t *rx, uint32_t channel_id, uint8_t *out, size_t *inout_len);
+bool fr_client_rx_bind_ipv4(fr_client_rx_t *rx, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/interp/pose_interpolator.h">
+#ifndef FERRUM_NET_REPLICATION_INTERP_POSE_INTERPOLATOR_H
+#define FERRUM_NET_REPLICATION_INTERP_POSE_INTERPOLATOR_H
+#include <stdbool.h>
+#include "ferrum/math/quat.h"
+#include "ferrum/math/vec3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct fr_pose_interpolator {
+    bool has_prev;
+    bool has_curr;
+    double prev_time_s;
+    double curr_time_s;
+    vec3_t prev_pos;
+    vec3_t curr_pos;
+    quat_t prev_rot;
+    quat_t curr_rot;
+} fr_pose_interpolator_t;
+void fr_pose_interpolator_reset(fr_pose_interpolator_t *interp);
+bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_s, vec3_t pos, quat_t rot);
+bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
+                                double now_time_s,
+                                float quat_epsilon,
+                                vec3_t *out_pos,
+                                quat_t *out_rot);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/input_rot.h">
+#ifndef FERRUM_NET_REPLICATION_INPUT_ROT_H
+#define FERRUM_NET_REPLICATION_INPUT_ROT_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_REPL_INPUT_ROT_PAYLOAD_SIZE 16u
+typedef struct net_repl_input_rot {
+    uint32_t entity_id;
+    uint32_t event_id;
+    int16_t axis_x_snorm16;
+    int16_t axis_y_snorm16;
+    int16_t axis_z_snorm16;
+    uint16_t speed_millirad_per_s;
+} net_repl_input_rot_t;
+int net_repl_input_rot_encode(const net_repl_input_rot_t *msg, uint8_t *out_payload, size_t out_size);
+int net_repl_input_rot_decode(net_repl_input_rot_t *msg, const uint8_t *payload, size_t payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/join.h">
+#ifndef FERRUM_NET_REPLICATION_JOIN_H
+#define FERRUM_NET_REPLICATION_JOIN_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_REPL_JOIN_PAYLOAD_SIZE 4u
+typedef struct net_repl_join {
+    uint32_t client_nonce;
+} net_repl_join_t;
+int net_repl_join_encode(const net_repl_join_t *msg, uint8_t *out_payload, size_t out_size);
+int net_repl_join_decode(net_repl_join_t *msg, const uint8_t *payload, size_t payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/quat_snorm16.h">
+#ifndef FERRUM_NET_REPLICATION_QUAT_SNORM16_H
+#define FERRUM_NET_REPLICATION_QUAT_SNORM16_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct net_repl_quat_snorm16 {
+    int16_t x;
+    int16_t y;
+    int16_t z;
+    int16_t w;
+} net_repl_quat_snorm16_t;
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/spawn_batch.h">
+#ifndef FERRUM_NET_REPLICATION_SPAWN_BATCH_H
+#define FERRUM_NET_REPLICATION_SPAWN_BATCH_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#include "ferrum/net/replication/vec3_mm.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct net_repl_spawn_batch_entry {
+    uint32_t entity_id;
+    uint16_t owner_client_id;
+    net_repl_vec3_mm_t pos_mm;
+} net_repl_spawn_batch_entry_t;
+int net_repl_spawn_batch_encode(uint16_t server_tick,
+                               const net_repl_spawn_batch_entry_t *entries,
+                               uint16_t entry_count,
+                               uint8_t *out_payload,
+                               size_t out_capacity,
+                               size_t *out_payload_size);
+int net_repl_spawn_batch_decode(uint16_t *out_server_tick,
+                               net_repl_spawn_batch_entry_t *out_entries,
+                               uint16_t out_entry_capacity,
+                               uint16_t *out_entry_count,
+                               const uint8_t *payload,
+                               size_t payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/spawn.h">
+#ifndef FERRUM_NET_REPLICATION_SPAWN_H
+#define FERRUM_NET_REPLICATION_SPAWN_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#include "ferrum/net/replication/vec3_mm.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_REPL_SPAWN_PAYLOAD_SIZE 20u
+typedef struct net_repl_spawn {
+    uint32_t entity_id;
+    uint16_t owner_client_id;
+    uint16_t join_time_u16;
+    net_repl_vec3_mm_t pos_mm;
+} net_repl_spawn_t;
+int net_repl_spawn_encode(const net_repl_spawn_t *msg, uint8_t *out_payload, size_t out_size);
+int net_repl_spawn_decode(net_repl_spawn_t *msg, const uint8_t *payload, size_t payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/state_cube.h">
+#ifndef FERRUM_NET_REPLICATION_STATE_CUBE_H
+#define FERRUM_NET_REPLICATION_STATE_CUBE_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#include "ferrum/net/replication/quat_snorm16.h"
+#include "ferrum/net/replication/vec3_mm.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_REPL_STATE_CUBE_PAYLOAD_SIZE 40u
+typedef struct net_repl_state_cube {
+    uint16_t server_tick;
+    uint32_t entity_id;
+    net_repl_vec3_mm_t pos_mm;
+    net_repl_quat_snorm16_t rot_snorm16;
+    uint32_t input_event_id;
+    int16_t omega_axis_x_snorm16;
+    int16_t omega_axis_y_snorm16;
+    int16_t omega_axis_z_snorm16;
+    uint16_t omega_speed_millirad_per_s;
+} net_repl_state_cube_t;
+int net_repl_state_cube_encode(const net_repl_state_cube_t *msg, uint8_t *out_payload, size_t out_size);
+int net_repl_state_cube_decode(net_repl_state_cube_t *msg, const uint8_t *payload, size_t payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/vec3_mm.h">
+#ifndef FERRUM_NET_REPLICATION_VEC3_MM_H
+#define FERRUM_NET_REPLICATION_VEC3_MM_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct net_repl_vec3_mm {
+    int32_t x_mm;
+    int32_t y_mm;
+    int32_t z_mm;
+} net_repl_vec3_mm_t;
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/welcome.h">
+#ifndef FERRUM_NET_REPLICATION_WELCOME_H
+#define FERRUM_NET_REPLICATION_WELCOME_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_REPL_WELCOME_PAYLOAD_SIZE 4u
+typedef struct net_repl_welcome {
+    uint16_t expected_entities;
+    uint16_t tick_hz;
+} net_repl_welcome_t;
+int net_repl_welcome_encode(const net_repl_welcome_t *msg, uint8_t *out_payload, size_t out_size);
+int net_repl_welcome_decode(net_repl_welcome_t *msg, const uint8_t *payload, size_t payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/rudp/peer.h">
+#ifndef FERRUM_NET_RUDP_PEER_H
+#define FERRUM_NET_RUDP_PEER_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/ack_window.h"
+#include "ferrum/net/udp_socket.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_RUDP_OK 0
+#define NET_RUDP_EMPTY 1
+#define NET_RUDP_ERR_INVALID -1
+#define NET_RUDP_ERR_SHORT -2
+#define NET_RUDP_ERR_PROTOCOL -3
+#define NET_RUDP_ERR_FULL -4
+#define NET_RUDP_PROTOCOL_ID_P008 0x52555038u
+#define NET_RUDP_MAX_PACKET_SIZE 512u
+#define NET_RUDP_REASM_DEFAULT_CAP 4096u
+#define NET_RUDP_SEND_SLOTS_DEFAULT 64u
+typedef struct net_rudp_send_slot {
+    uint16_t sequence;
+    uint64_t last_send_ms;
+    uint16_t size;
+    uint8_t used;
+    uint8_t packet_bytes[NET_RUDP_MAX_PACKET_SIZE];
+} net_rudp_send_slot_t;
+typedef struct net_rudp_peer {
+    uint32_t protocol_id;
+    uint16_t next_sequence;
+    net_ack_window_t recv_window;
+    uint32_t resend_interval_ms;
+    net_rudp_send_slot_t *send_slots;
+    size_t send_slot_count;
+    uint16_t next_msg_id;
+    uint8_t frag_enabled;
+    uint8_t *reasm_buf;
+    size_t reasm_buf_cap;
+    uint8_t reasm_storage[NET_RUDP_REASM_DEFAULT_CAP];
+    uint16_t reasm_msg_id;
+    uint16_t reasm_schema_id;
+    uint16_t reasm_total_size;
+    uint16_t reasm_frag_count;
+    uint64_t reasm_frag_mask;
+} net_rudp_peer_t;
+size_t net_rudp_send_slot_storage_size(size_t slot_count);
+void net_rudp_peer_init_with_storage(net_rudp_peer_t *peer,
+                                     uint32_t protocol_id,
+                                     uint32_t resend_interval_ms,
+                                     net_rudp_send_slot_t *send_slots,
+                                     size_t send_slot_count);
+void net_rudp_peer_enable_fragmentation(net_rudp_peer_t *peer, int enabled, uint8_t *reasm_buf, size_t reasm_buf_cap);
+int net_rudp_peer_receive(net_rudp_peer_t *peer,
+                          const uint8_t *packet,
+                          size_t packet_size,
+                          uint8_t *out_reliable,
+                          uint16_t *out_schema_id,
+                          uint8_t *out_payload,
+                          size_t out_payload_capacity,
+                          size_t *out_payload_size);
+int net_rudp_peer_send_unreliable(net_rudp_peer_t *peer,
+                                  net_udp_socket_t *sock,
+                                  const net_udp_addr_t *to,
+                                  uint64_t now_ms,
+                                  uint16_t schema_id,
+                                  const void *payload,
+                                  size_t payload_size);
+int net_rudp_peer_send_unreliable_via(net_rudp_peer_t *peer,
+                                      void *io_user,
+                                      int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                      const net_udp_addr_t *to,
+                                      uint64_t now_ms,
+                                      uint16_t schema_id,
+                                      const void *payload,
+                                      size_t payload_size);
+int net_rudp_peer_send_reliable(net_rudp_peer_t *peer,
+                                net_udp_socket_t *sock,
+                                const net_udp_addr_t *to,
+                                uint64_t now_ms,
+                                uint16_t schema_id,
+                                const void *payload,
+                                size_t payload_size,
+                                uint16_t *out_sequence);
+int net_rudp_peer_send_reliable_via(net_rudp_peer_t *peer,
+                                    void *io_user,
+                                    int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                    const net_udp_addr_t *to,
+                                    uint64_t now_ms,
+                                    uint16_t schema_id,
+                                    const void *payload,
+                                    size_t payload_size,
+                                    uint16_t *out_sequence);
+int net_rudp_peer_tick_resend(net_rudp_peer_t *peer,
+                              net_udp_socket_t *sock,
+                              const net_udp_addr_t *to,
+                              uint64_t now_ms);
+int net_rudp_peer_tick_resend_via(net_rudp_peer_t *peer,
+                                  void *io_user,
+                                  int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                  const net_udp_addr_t *to,
+                                  uint64_t now_ms);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/rudp/reliability_send.h">
+#ifndef FERRUM_NET_RUDP_RELIABILITY_SEND_H
+#define FERRUM_NET_RUDP_RELIABILITY_SEND_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/rudp/peer.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+int net_rudp_reliability_send_unreliable_via(net_rudp_peer_t *peer,
+                                            void *io_user,
+                                            int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                            const net_udp_addr_t *to,
+                                            uint64_t now_ms,
+                                            uint16_t schema_id,
+                                            const void *payload,
+                                            size_t payload_size);
+int net_rudp_reliability_send_reliable_via(net_rudp_peer_t *peer,
+                                          void *io_user,
+                                          int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                          const net_udp_addr_t *to,
+                                          uint64_t now_ms,
+                                          uint16_t schema_id,
+                                          const void *payload,
+                                          size_t payload_size,
+                                          uint16_t *out_sequence);
+int net_rudp_reliability_tick_resend_via(net_rudp_peer_t *peer,
+                                        void *io_user,
+                                        int (*sendto_cb)(void *io_user, const net_udp_addr_t *to, const void *data, size_t size),
+                                        const net_udp_addr_t *to,
+                                        uint64_t now_ms);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/rudp/reliability.h">
+#ifndef FERRUM_NET_RUDP_RELIABILITY_H
+#define FERRUM_NET_RUDP_RELIABILITY_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/packet_header.h"
+#include "ferrum/net/rudp/peer.h"
+#include "ferrum/net/rudp/wire_frame.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+int net_rudp_reliability_receive(net_rudp_peer_t *peer,
+                                const net_packet_header_t *header,
+                                const net_rudp_wire_frame_view_t *frame_view,
+                                uint8_t *out_reliable,
+                                uint16_t *out_schema_id,
+                                uint8_t *out_payload,
+                                size_t out_payload_capacity,
+                                size_t *out_payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/rudp/wire_frame.h">
+#ifndef FERRUM_NET_RUDP_WIRE_FRAME_H
+#define FERRUM_NET_RUDP_WIRE_FRAME_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/packet_header.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_RUDP_WIRE_OK 0
+#define NET_RUDP_WIRE_ERR_INVALID -1
+#define NET_RUDP_WIRE_ERR_SHORT -2
+#define NET_RUDP_WIRE_ERR_PROTOCOL -3
+#define NET_RUDP_WIRE_FRAME_HEADER_SIZE 8u
+#define NET_RUDP_WIRE_FLAG_RELIABLE 0x01u
+#define NET_RUDP_WIRE_FLAG_FRAGMENT 0x02u
+typedef struct net_rudp_wire_frame_view {
+    uint8_t flags;
+    uint16_t schema_id;
+    const uint8_t *payload;
+    size_t payload_size;
+} net_rudp_wire_frame_view_t;
+int net_rudp_wire_decode(net_packet_header_t *out_header,
+                         net_rudp_wire_frame_view_t *out_frame,
+                         const uint8_t *packet,
+                         size_t packet_size);
+int net_rudp_wire_encode(const net_packet_header_t *header,
+                         uint8_t flags,
+                         uint16_t schema_id,
+                         const void *payload,
+                         size_t payload_size,
+                         uint8_t *out_packet,
+                         size_t out_capacity,
+                         size_t *out_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/ack_window.h">
+#ifndef FERRUM_NET_ACK_WINDOW_H
+#define FERRUM_NET_ACK_WINDOW_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_ACK_WINDOW_OK 0
+#define NET_ACK_WINDOW_ERR_INVALID -1
+#define NET_ACK_WINDOW_DUPLICATE 1
+#define NET_ACK_WINDOW_OUT_OF_WINDOW 2
+typedef struct net_ack_window {
+    uint16_t ack;
+    uint32_t ack_bits;
+    uint8_t initialized;
+} net_ack_window_t;
+void net_ack_window_init(net_ack_window_t *window);
+int net_ack_window_receive(net_ack_window_t *window, uint16_t sequence);
+uint16_t net_ack_window_ack(const net_ack_window_t *window);
+uint32_t net_ack_window_ack_bits(const net_ack_window_t *window);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/bit_pack.h">
+#ifndef FERRUM_NET_BIT_PACK_H
+#define FERRUM_NET_BIT_PACK_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_BIT_PACK_OK 0
+#define NET_BIT_PACK_ERR_INVALID -1
+#define NET_BIT_PACK_ERR_SHORT -2
+#define NET_BIT_PACK_ERR_MALFORMED -3
+#define NET_BIT_PACK_HEADER_SIZE 4u
+typedef struct net_bit_pack_header {
+    uint16_t schema_id;
+    uint16_t payload_size;
+} net_bit_pack_header_t;
+int net_bit_pack_encode(const net_bit_pack_header_t *header,
+                        const uint8_t *payload,
+                        size_t payload_size,
+                        uint8_t *out_bytes,
+                        size_t out_size,
+                        size_t *out_written);
+int net_bit_pack_decode(net_bit_pack_header_t *header,
+                        const uint8_t *bytes,
+                        size_t size,
+                        const uint8_t **out_payload,
+                        size_t *out_payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/packet_header.h">
+#ifndef FERRUM_NET_PACKET_HEADER_H
+#define FERRUM_NET_PACKET_HEADER_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_PACKET_HEADER_OK 0
+#define NET_PACKET_HEADER_ERR_INVALID -1
+#define NET_PACKET_HEADER_ERR_SHORT -2
+#define NET_PACKET_HEADER_SIZE 12u
+typedef struct net_packet_header {
+    uint32_t protocol_id;
+    uint16_t sequence;
+    uint16_t ack;
+    uint32_t ack_bits;
+} net_packet_header_t;
+int net_packet_header_encode(const net_packet_header_t *header, uint8_t *out_bytes, size_t out_size);
+int net_packet_header_decode(net_packet_header_t *header, const uint8_t *bytes, size_t size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/quantization.h">
+#ifndef FERRUM_NET_QUANTIZATION_H
+#define FERRUM_NET_QUANTIZATION_H
+#include <stdint.h>
+#include "ferrum/math/quat.h"
+#include "ferrum/math/vec3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_QUANT_OK 0
+#define NET_QUANT_ERR_INVALID -1
+#define NET_QUANT_ERR_RANGE -2
+typedef struct net_qvec3_mm {
+    int32_t x_mm;
+    int32_t y_mm;
+    int32_t z_mm;
+    uint32_t _magic;
+} net_qvec3_mm_t;
+typedef struct net_qquat_snorm16 {
+    int16_t x;
+    int16_t y;
+    int16_t z;
+    int16_t w;
+    uint32_t _magic;
+} net_qquat_snorm16_t;
+int net_quantize_vec3_mm(vec3_t v, net_qvec3_mm_t *out);
+int net_dequantize_vec3_mm(net_qvec3_mm_t q, vec3_t *out);
+uint16_t net_anim_time_u16_add_wrap(uint16_t t, uint16_t delta);
+int net_anim_time_u16_delta_signed(uint16_t a, uint16_t b);
+int net_quantize_quat_snorm16(quat_t q, net_qquat_snorm16_t *out);
+int net_dequantize_quat_snorm16(net_qquat_snorm16_t q, quat_t *out);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/reliable_channel.h">
+#ifndef FERRUM_NET_RELIABLE_CHANNEL_H
+#define FERRUM_NET_RELIABLE_CHANNEL_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_RELIABLE_OK 0
+#define NET_RELIABLE_EMPTY 1
+#define NET_RELIABLE_ERR_INVALID -1
+#define NET_RELIABLE_ERR_FULL -2
+#define NET_RELIABLE_ERR_NOT_FOUND -3
+typedef struct net_reliable_channel {
+    uint8_t *payloads;
+    size_t *sizes;
+    uint16_t *sequences;
+    uint8_t *occupied;
+    size_t slot_count;
+    size_t max_payload_size;
+    size_t count;
+    uint16_t next_send_sequence;
+    uint16_t next_receive_sequence;
+    uint8_t initialized;
+} net_reliable_channel_t;
+void net_reliable_channel_init(net_reliable_channel_t *channel,
+                               size_t slot_count,
+                               size_t max_payload_size);
+void net_reliable_channel_destroy(net_reliable_channel_t *channel);
+int net_reliable_channel_send(net_reliable_channel_t *channel,
+                              const void *payload,
+                              size_t payload_size);
+int net_reliable_channel_send_sequence(net_reliable_channel_t *channel,
+                                       uint16_t sequence,
+                                       const void *payload,
+                                       size_t payload_size);
+int net_reliable_channel_resend(net_reliable_channel_t *channel, uint16_t sequence);
+int net_reliable_channel_receive(net_reliable_channel_t *channel,
+                                 void *out_payload,
+                                 size_t out_capacity,
+                                 size_t *out_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/reliable_ordered_channel.h">
+#ifndef FERRUM_NET_RELIABLE_ORDERED_CHANNEL_H
+#define FERRUM_NET_RELIABLE_ORDERED_CHANNEL_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct net_reliable_ordered_channel net_reliable_ordered_channel_t;
+enum {
+    NET_RELIABLE_ORDERED_OK = 0,
+    NET_RELIABLE_ORDERED_EMPTY = 1,
+    NET_RELIABLE_ORDERED_ERR_INVALID_ARGUMENT = -1,
+    NET_RELIABLE_ORDERED_ERR_OUT_OF_MEMORY = -2,
+    NET_RELIABLE_ORDERED_ERR_BUFFER_TOO_SMALL = -3,
+    NET_RELIABLE_ORDERED_ERR_MALFORMED_PACKET = -4,
+};
+int net_reliable_ordered_channel_init(net_reliable_ordered_channel_t *channel,
+                                     uint32_t protocol_id,
+                                     uint32_t max_packet_size,
+                                     uint32_t max_reassembly_bytes,
+                                     uint64_t resend_timeout_ns);
+void net_reliable_ordered_channel_destroy(net_reliable_ordered_channel_t *channel);
+int net_reliable_ordered_channel_send(net_reliable_ordered_channel_t *channel, const void *data, size_t size);
+int net_reliable_ordered_channel_next_packet(net_reliable_ordered_channel_t *channel,
+                                            uint64_t now_ns,
+                                            void *out_packet,
+                                            size_t out_packet_capacity,
+                                            size_t *out_packet_size);
+int net_reliable_ordered_channel_handle_packet(net_reliable_ordered_channel_t *channel,
+                                              const void *packet,
+                                              size_t packet_size,
+                                              uint64_t now_ns);
+int net_reliable_ordered_channel_receive(net_reliable_ordered_channel_t *channel,
+                                        void *out_message,
+                                        size_t out_message_capacity,
+                                        size_t *out_message_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/schema_registry.h">
+#ifndef FERRUM_NET_SCHEMA_REGISTRY_H
+#define FERRUM_NET_SCHEMA_REGISTRY_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_SCHEMA_REGISTRY_OK 0
+#define NET_SCHEMA_REGISTRY_ERR_INVALID -1
+#define NET_SCHEMA_REGISTRY_ERR_UNKNOWN_SCHEMA -2
+#define NET_SCHEMA_REGISTRY_ERR_PAYLOAD_LENGTH -3
+#define NET_SCHEMA_REGISTRY_ERR_FULL -4
+#define NET_SCHEMA_REGISTRY_ERR_PACKET -5
+#define NET_SCHEMA_REGISTRY_MAX_SCHEMAS 256u
+typedef struct net_schema_registry {
+    uint16_t schema_ids[NET_SCHEMA_REGISTRY_MAX_SCHEMAS];
+    uint16_t payload_sizes[NET_SCHEMA_REGISTRY_MAX_SCHEMAS];
+    size_t count;
+} net_schema_registry_t;
+void net_schema_registry_init(net_schema_registry_t *registry);
+int net_schema_registry_register(net_schema_registry_t *registry, uint16_t schema_id, size_t payload_size_bytes);
+int net_schema_registry_decode_packet(const net_schema_registry_t *registry,
+                                     const uint8_t *bytes,
+                                     size_t size,
+                                     uint16_t *out_schema_id,
+                                     const uint8_t **out_payload,
+                                     size_t *out_payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/stream.h">
+#ifndef FERRUM_NET_STREAM_H
+#define FERRUM_NET_STREAM_H
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+typedef struct fr_rudp_stream_config_t {
+    uint32_t reliable_channels;
+    uint32_t reliable_slot_count;
+    uint32_t max_payload_size;
+    struct fr_topic_channel **topics;
+    uint32_t num_topics;
+} fr_rudp_stream_config_t;
+typedef struct fr_rudp_stream fr_rudp_stream_t;
+fr_rudp_stream_t *fr_rudp_stream_create(const fr_rudp_stream_config_t *cfg);
+void fr_rudp_stream_destroy(fr_rudp_stream_t *s);
+bool fr_rudp_stream_push_frame(fr_rudp_stream_t *s, const uint8_t *data, size_t len);
+bool fr_rudp_stream_pop(fr_rudp_stream_t *s, uint32_t channel_id, uint8_t *out, size_t *inout_len);
+#endif
+</file>
+
+<file path="include/ferrum/net/test_buffer.h">
+#ifndef FERRUM_NET_TEST_BUFFER_H
+#define FERRUM_NET_TEST_BUFFER_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_TEST_BUFFER_OK 0
+#define NET_TEST_BUFFER_ERR_INVALID -1
+#define NET_TEST_BUFFER_ERR_OVERFLOW -2
+#define NET_TEST_BUFFER_ERR_UNDERFLOW -3
+typedef struct net_test_buffer {
+    uint8_t *data;
+    size_t capacity;
+    size_t size;
+    size_t cursor;
+} net_test_buffer_t;
+void net_test_buffer_init(net_test_buffer_t *buffer, uint8_t *storage, size_t capacity);
+void net_test_buffer_reset(net_test_buffer_t *buffer);
+int net_test_buffer_write(net_test_buffer_t *buffer, const void *data, size_t size);
+int net_test_buffer_read(net_test_buffer_t *buffer, void *out, size_t size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/test_clock.h">
+#ifndef FERRUM_NET_TEST_CLOCK_H
+#define FERRUM_NET_TEST_CLOCK_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct net_test_clock {
+    uint64_t now_ns;
+} net_test_clock_t;
+void net_test_clock_init(net_test_clock_t *clock, uint64_t start_ns);
+uint64_t net_test_clock_now_ns(const net_test_clock_t *clock);
+void net_test_clock_advance(net_test_clock_t *clock, uint64_t delta_ns);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/test_link.h">
+#ifndef FERRUM_NET_TEST_LINK_H
+#define FERRUM_NET_TEST_LINK_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/test_clock.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_TEST_LINK_OK 0
+#define NET_TEST_LINK_EMPTY 1
+#define NET_TEST_LINK_ERR_INVALID -1
+#define NET_TEST_LINK_ERR_OOM -2
+#define NET_TEST_LINK_ERR_FULL -3
+typedef struct net_test_step {
+    uint32_t copies;
+    uint64_t delay_ns;
+    uint64_t duplicate_delay_ns;
+} net_test_step_t;
+typedef struct net_test_link {
+    net_test_clock_t *clock;
+    const net_test_step_t *steps;
+    size_t step_count;
+    size_t step_index;
+    uint8_t *payload_storage;
+    uint16_t *payload_sizes;
+    uint64_t *deliver_times;
+    uint8_t *slot_used;
+    size_t slot_count;
+    size_t payload_stride;
+} net_test_link_t;
+int net_test_link_init(net_test_link_t *link,
+                       net_test_clock_t *clock,
+                       const net_test_step_t *steps,
+                       size_t step_count,
+                       size_t slot_count,
+                       size_t max_payload_size);
+void net_test_link_destroy(net_test_link_t *link);
+int net_test_link_send(net_test_link_t *link, const void *payload, size_t payload_size);
+int net_test_link_receive(net_test_link_t *link,
+                          void *out_payload,
+                          size_t out_capacity,
+                          size_t *out_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/topic_channel.h">
+#ifndef FERRUM_NET_TOPIC_CHANNEL_H
+#define FERRUM_NET_TOPIC_CHANNEL_H
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+typedef struct fr_topic_channel_config_t {
+    uint32_t capacity;
+    uint32_t capacity_bytes;
+    uint32_t max_message_size;
+    uint32_t backpressure;
+} fr_topic_channel_config_t;
+#define FR_TOPIC_BACKPRESSURE_FAIL 0u
+#define FR_TOPIC_BACKPRESSURE_DROP_OLDEST 1u
+#define FR_TOPIC_BACKPRESSURE_DROP_NEWEST 2u
+typedef struct fr_topic_channel fr_topic_channel_t;
+fr_topic_channel_t *fr_topic_channel_create(const fr_topic_channel_config_t *cfg);
+void fr_topic_channel_destroy(fr_topic_channel_t *ch);
+bool fr_topic_channel_push(fr_topic_channel_t *ch, const uint8_t *data, size_t len);
+bool fr_topic_channel_pop(fr_topic_channel_t *ch, uint8_t *out, size_t *inout_len);
+uint64_t fr_topic_channel_stat_dropped(const fr_topic_channel_t *ch);
+#endif
+</file>
+
+<file path="include/ferrum/net/topic_dispatcher.h">
+#ifndef FERRUM_NET_TOPIC_DISPATCHER_H
+#define FERRUM_NET_TOPIC_DISPATCHER_H
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct job_system;
+typedef struct job_system job_system_t;
+struct fr_topic_channel;
+typedef struct fr_topic_channel fr_topic_channel_t;
+typedef struct fr_topic_dispatcher fr_topic_dispatcher_t;
+fr_topic_dispatcher_t *fr_topic_dispatcher_create(job_system_t *sys,
+                                                  fr_topic_channel_t **topics,
+                                                  uint32_t num_topics);
+void fr_topic_dispatcher_destroy(fr_topic_dispatcher_t *disp);
+int fr_topic_dispatcher_register(fr_topic_dispatcher_t *disp,
+                                 uint32_t topic_index,
+                                 void (*on_message)(const uint8_t *data, size_t len, void *user),
+                                 void *user,
+                                 int priority,
+                                 uint32_t preferred_worker);
+int fr_topic_dispatcher_start(fr_topic_dispatcher_t *disp);
+void fr_topic_dispatcher_stop(fr_topic_dispatcher_t *disp);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/udp_socket.h">
+#ifndef FERRUM_NET_UDP_SOCKET_H
+#define FERRUM_NET_UDP_SOCKET_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_UDP_SOCKET_OK 0
+#define NET_UDP_SOCKET_EMPTY 1
+#define NET_UDP_SOCKET_TIMEOUT 2
+#define NET_UDP_SOCKET_ERR_INVALID -1
+#define NET_UDP_SOCKET_ERR_SYS -2
+#define NET_UDP_SOCKET_ERR_ADDR -3
+typedef struct net_udp_socket {
+    int fd;
+    uint8_t initialized;
+} net_udp_socket_t;
+typedef struct net_udp_addr {
+    uint8_t storage[128];
+    uint32_t len;
+} net_udp_addr_t;
+int net_udp_socket_open(net_udp_socket_t *sock);
+void net_udp_socket_close(net_udp_socket_t *sock);
+int net_udp_socket_set_nonblocking(net_udp_socket_t *sock, int nonblocking);
+int net_udp_socket_set_recv_timeout_ms(net_udp_socket_t *sock, uint32_t timeout_ms);
+int net_udp_socket_set_recv_buffer_bytes(net_udp_socket_t *sock, uint32_t bytes);
+int net_udp_socket_set_send_buffer_bytes(net_udp_socket_t *sock, uint32_t bytes);
+int net_udp_addr_ipv4(net_udp_addr_t *addr, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint16_t port);
+int net_udp_socket_bind(net_udp_socket_t *sock, const net_udp_addr_t *local_addr);
+int net_udp_socket_local_addr(net_udp_socket_t *sock, net_udp_addr_t *out_local_addr);
+int net_udp_socket_sendto(net_udp_socket_t *sock, const net_udp_addr_t *to, const void *data, size_t size);
+int net_udp_socket_connect(net_udp_socket_t *sock, const net_udp_addr_t *peer);
+int net_udp_socket_send(net_udp_socket_t *sock, const void *data, size_t size);
+int net_udp_socket_recv(net_udp_socket_t *sock, void *out_data, size_t out_capacity, size_t *out_size);
+int net_udp_socket_recvfrom(net_udp_socket_t *sock,
+                            net_udp_addr_t *out_from,
+                            void *out_data,
+                            size_t out_capacity,
+                            size_t *out_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/unreliable_channel.h">
+#ifndef FERRUM_NET_UNRELIABLE_CHANNEL_H
+#define FERRUM_NET_UNRELIABLE_CHANNEL_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_UNRELIABLE_OK 0
+#define NET_UNRELIABLE_ERR_INVALID -1
+#define NET_UNRELIABLE_ERR_FULL -2
+#define NET_UNRELIABLE_EMPTY 1
+typedef struct net_unreliable_channel {
+    uint8_t *payloads;
+    size_t *sizes;
+    size_t slot_count;
+    size_t max_payload_size;
+    size_t head;
+    size_t tail;
+    size_t count;
+} net_unreliable_channel_t;
+void net_unreliable_channel_init(net_unreliable_channel_t *channel,
+                                 size_t slot_count,
+                                 size_t max_payload_size);
+void net_unreliable_channel_destroy(net_unreliable_channel_t *channel);
+int net_unreliable_channel_send(net_unreliable_channel_t *channel,
+                                const void *payload,
+                                size_t payload_size);
+int net_unreliable_channel_receive(net_unreliable_channel_t *channel,
+                                   void *out_payload,
+                                   size_t out_capacity,
+                                   size_t *out_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/aabb.h">
+#ifndef FERRUM_PHYSICS_AABB_H
+#define FERRUM_PHYSICS_AABB_H
+#include <stdbool.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_aabb {
+    phys_vec3_t min;
+    phys_vec3_t max;
+} phys_aabb_t;
+_Static_assert(sizeof(phys_aabb_t) == 24, "phys_aabb_t must be 24 bytes");
+void phys_aabb_from_sphere(phys_aabb_t *aabb, phys_vec3_t center, float radius);
+void phys_aabb_from_box(phys_aabb_t *aabb, phys_vec3_t center,
+                        phys_quat_t rotation, phys_vec3_t half_extents);
+void phys_aabb_from_capsule(phys_aabb_t *aabb, phys_vec3_t center,
+                            phys_quat_t rotation, float radius,
+                            float half_height);
+bool phys_aabb_overlap(const phys_aabb_t *a, const phys_aabb_t *b);
+void phys_aabb_merge(phys_aabb_t *out, const phys_aabb_t *a,
+                     const phys_aabb_t *b);
+void phys_aabb_expand(phys_aabb_t *aabb, float margin);
+phys_vec3_t phys_aabb_center(const phys_aabb_t *aabb);
+phys_vec3_t phys_aabb_extents(const phys_aabb_t *aabb);
+float phys_aabb_surface_area(const phys_aabb_t *aabb);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/body.h">
+#ifndef FERRUM_PHYSICS_BODY_H
+#define FERRUM_PHYSICS_BODY_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_BODY_FLAG_STATIC (1u << 0)
+#define PHYS_BODY_FLAG_KINEMATIC (1u << 1)
+#define PHYS_BODY_FLAG_SLEEPING (1u << 2)
+typedef struct phys_body {
+    phys_vec3_t position;
+    phys_quat_t orientation;
+    phys_vec3_t linear_vel;
+    phys_vec3_t angular_vel;
+    float inv_mass;
+    phys_vec3_t inv_inertia_diag;
+    uint32_t flags;
+    uint8_t tier;
+    uint8_t sleep_counter;
+    uint8_t _pad[6];
+} phys_body_t;
+_Static_assert(sizeof(phys_body_t) == 80, "phys_body_t must be exactly 80 bytes");
+void phys_body_init(phys_body_t *body);
+void phys_body_set_mass(phys_body_t *body, float mass);
+void phys_body_set_box_inertia(phys_body_t *body, float mass, phys_vec3_t half_extents);
+void phys_body_set_sphere_inertia(phys_body_t *body, float mass, float radius);
+void phys_body_set_capsule_inertia(phys_body_t *body, float mass, float radius, float half_height);
+bool phys_body_is_static(const phys_body_t *body);
+bool phys_body_is_kinematic(const phys_body_t *body);
+bool phys_body_is_sleeping(const phys_body_t *body);
+void phys_body_set_sleeping(phys_body_t *body, bool sleeping);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/collider.h">
+#ifndef FERRUM_PHYSICS_COLLIDER_H
+#define FERRUM_PHYSICS_COLLIDER_H
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum phys_shape_type {
+    PHYS_SHAPE_SPHERE  = 0,
+    PHYS_SHAPE_BOX     = 1,
+    PHYS_SHAPE_CAPSULE = 2,
+    PHYS_SHAPE_COMPOUND = 3,
+    PHYS_SHAPE_CONVEX  = 4,
+    PHYS_SHAPE_MESH    = 5,
+    PHYS_SHAPE_COUNT
+} phys_shape_type_t;
+typedef struct phys_sphere {
+    float radius;
+} phys_sphere_t;
+_Static_assert(sizeof(phys_sphere_t) == 4, "phys_sphere_t must be 4 bytes");
+typedef struct phys_box {
+    phys_vec3_t half_extents;
+} phys_box_t;
+_Static_assert(sizeof(phys_box_t) == 12, "phys_box_t must be 12 bytes");
+typedef struct phys_capsule {
+    float radius;
+    float half_height;
+} phys_capsule_t;
+_Static_assert(sizeof(phys_capsule_t) == 8, "phys_capsule_t must be 8 bytes");
+typedef struct phys_collider {
+    phys_shape_type_t type;
+    uint32_t shape_index;
+    phys_vec3_t local_offset;
+    phys_quat_t local_rotation;
+    uint8_t sphere_simplify;
+    uint8_t _pad[3];
+} phys_collider_t;
+_Static_assert(sizeof(phys_collider_t) == 40, "phys_collider_t must be 40 bytes");
+void phys_collider_init_sphere(phys_collider_t *c,
+                               uint32_t sphere_idx,
+                               phys_vec3_t offset);
+void phys_collider_init_box(phys_collider_t *c,
+                            uint32_t box_idx,
+                            phys_vec3_t offset,
+                            phys_quat_t rotation);
+void phys_collider_init_capsule(phys_collider_t *c,
+                                uint32_t capsule_idx,
+                                phys_vec3_t offset,
+                                phys_quat_t rotation);
+phys_vec3_t phys_collider_world_center(const phys_collider_t *c,
+                                       phys_vec3_t body_pos,
+                                       phys_quat_t body_rot);
+phys_quat_t phys_collider_world_rotation(const phys_collider_t *c,
+                                         phys_quat_t body_rot);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/game_state.h">
+#ifndef FERRUM_PHYSICS_GAME_STATE_H
+#define FERRUM_PHYSICS_GAME_STATE_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ferrum/memory/pool.h"
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_MAX_PLAYERS 16
+#define PHYS_MAX_HAZARDS 64
+typedef struct phys_player_state {
+    phys_vec3_t position;
+    phys_vec3_t velocity;
+    phys_vec3_t look_direction;
+    float interaction_radius;
+    pool_handle_t manipulation_body;
+    uint8_t manipulation_type;
+    bool has_manipulation;
+    uint8_t pad[2];
+} phys_player_state_t;
+typedef struct phys_game_state {
+    phys_player_state_t players[PHYS_MAX_PLAYERS];
+    uint32_t player_count;
+    phys_vec3_t camera_position;
+    phys_vec3_t camera_forward;
+    float camera_fov_rad;
+    uint32_t hazard_indices[PHYS_MAX_HAZARDS];
+    uint32_t hazard_count;
+    float game_time;
+    float time_scale;
+} phys_game_state_t;
+void phys_game_state_init(phys_game_state_t *state);
+void phys_game_state_set_player(phys_game_state_t *state, uint32_t index,
+                                const phys_player_state_t *player);
+void phys_game_state_set_camera(phys_game_state_t *state,
+                                phys_vec3_t position, phys_vec3_t forward,
+                                float fov);
+void phys_game_state_add_hazard(phys_game_state_t *state, uint32_t body_index);
+bool phys_game_state_is_manipulated(const phys_game_state_t *state,
+                                    pool_handle_t body);
+float phys_game_state_distance_to_nearest_player(const phys_game_state_t *state,
+                                                 phys_vec3_t pos);
+bool phys_game_state_is_in_view(const phys_game_state_t *state,
+                                phys_vec3_t pos, float radius);
+void phys_game_state_clear_hazards(phys_game_state_t *state);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/manifold.h">
+#ifndef FERRUM_PHYSICS_MANIFOLD_H
+#define FERRUM_PHYSICS_MANIFOLD_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_contact_point {
+    phys_vec3_t point_world;
+    phys_vec3_t local_a;
+    phys_vec3_t local_b;
+    phys_vec3_t normal;
+    float penetration;
+    uint32_t feature_id;
+} phys_contact_point_t;
+#define PHYS_MAX_MANIFOLD_POINTS 4
+typedef struct phys_manifold {
+    uint32_t body_a;
+    uint32_t body_b;
+    uint8_t point_count;
+    uint8_t pad[3];
+    phys_contact_point_t points[PHYS_MAX_MANIFOLD_POINTS];
+    float friction;
+    float restitution;
+    float normal_impulse[PHYS_MAX_MANIFOLD_POINTS];
+    float tangent_impulse[PHYS_MAX_MANIFOLD_POINTS][2];
+} phys_manifold_t;
+void phys_manifold_init(phys_manifold_t *m, uint32_t body_a, uint32_t body_b);
+void phys_manifold_add_point(phys_manifold_t *m, const phys_contact_point_t *point);
+void phys_manifold_reduce_points(phys_manifold_t *m);
+void phys_manifold_clear(phys_manifold_t *m);
+float phys_combine_friction(float f1, float f2);
+float phys_combine_restitution(float r1, float r2);
+uint32_t phys_feature_id_edge(uint8_t face, uint8_t edge);
+uint32_t phys_feature_id_face(uint8_t face);
+uint32_t phys_feature_id_vertex(uint8_t vertex);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/phys_mat3.h">
+#ifndef FERRUM_PHYSICS_PHYS_MAT3_H
+#define FERRUM_PHYSICS_PHYS_MAT3_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_mat3 {
+    float m[9];
+} phys_mat3_t;
+_Static_assert(sizeof(phys_mat3_t) == 36, "phys_mat3_t must be 36 bytes");
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/phys_pool.h">
+#ifndef FERRUM_PHYSICS_PHYS_POOL_H
+#define FERRUM_PHYSICS_PHYS_POOL_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/physics/body.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_body_pool {
+    phys_body_t *bodies_curr;
+    phys_body_t *bodies_next;
+    uint32_t capacity;
+    uint32_t count;
+    uint8_t *active;
+} phys_body_pool_t;
+typedef struct phys_frame_arena {
+    uint8_t *base;
+    size_t capacity;
+    size_t offset;
+} phys_frame_arena_t;
+int phys_body_pool_init(phys_body_pool_t *pool, uint32_t capacity);
+void phys_body_pool_destroy(phys_body_pool_t *pool);
+int phys_body_pool_add(phys_body_pool_t *pool, const phys_body_t *body, uint32_t *index_out);
+bool phys_body_pool_is_active(const phys_body_pool_t *pool, uint32_t index);
+phys_body_t *phys_body_pool_get_curr(phys_body_pool_t *pool, uint32_t index);
+phys_body_t *phys_body_pool_get_next(phys_body_pool_t *pool, uint32_t index);
+void phys_body_pool_swap_buffers(phys_body_pool_t *pool);
+void phys_body_pool_remove(phys_body_pool_t *pool, uint32_t index);
+uint32_t phys_body_pool_active_count(const phys_body_pool_t *pool);
+int phys_frame_arena_init(phys_frame_arena_t *arena, size_t size);
+void phys_frame_arena_destroy(phys_frame_arena_t *arena);
+void *phys_frame_arena_alloc(phys_frame_arena_t *arena, size_t size, size_t align);
+void phys_frame_arena_reset(phys_frame_arena_t *arena);
+size_t phys_frame_arena_used(const phys_frame_arena_t *arena);
+size_t phys_frame_arena_remaining(const phys_frame_arena_t *arena);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/phys_quat.h">
+#ifndef FERRUM_PHYSICS_PHYS_QUAT_H
+#define FERRUM_PHYSICS_PHYS_QUAT_H
+#include <stdint.h>
+#include "ferrum/math/quat.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef quat_t phys_quat_t;
+#define PHYS_QUAT_FROM_QUAT(q) ((phys_quat_t){(q).x, (q).y, (q).z, (q).w})
+#define QUAT_FROM_PHYS_QUAT(q) ((quat_t){(q).x, (q).y, (q).z, (q).w})
+_Static_assert(sizeof(phys_quat_t) == 16, "phys_quat_t must be 16 bytes");
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/phys_types.h">
+#ifndef FERRUM_PHYSICS_PHYS_TYPES_H
+#define FERRUM_PHYSICS_PHYS_TYPES_H
+#include "ferrum/physics/phys_vec3.h"
+#include "ferrum/physics/phys_quat.h"
+#include "ferrum/physics/phys_mat3.h"
+#endif
+</file>
+
+<file path="include/ferrum/physics/phys_vec3.h">
+#ifndef FERRUM_PHYSICS_PHYS_VEC3_H
+#define FERRUM_PHYSICS_PHYS_VEC3_H
+#include <stdint.h>
+#include "ferrum/math/vec3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef vec3_t phys_vec3_t;
+#define PHYS_VEC3_FROM_VEC3(v) ((phys_vec3_t){(v).x, (v).y, (v).z})
+#define VEC3_FROM_PHYS_VEC3(v) ((vec3_t){(v).x, (v).y, (v).z})
+_Static_assert(sizeof(phys_vec3_t) == 12, "phys_vec3_t must be 12 bytes");
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/skinning/components.h">
+#ifndef FERRUM_RENDERER_SKINNING_COMPONENTS_H
+#define FERRUM_RENDERER_SKINNING_COMPONENTS_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/ecs/entity.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define SKINNING_SKELETON_NO_PARENT UINT32_MAX
+typedef struct skinning_skeleton {
+    uint32_t joint_count;
+    const struct mat4 *local_matrices;
+    const uint32_t *parent_indices;
+} skinning_skeleton_t;
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/skinning/pipeline.h">
+#ifndef FERRUM_RENDERER_SKINNING_PIPELINE_H
+#define FERRUM_RENDERER_SKINNING_PIPELINE_H
+#include <stdint.h>
+#include "ferrum/ecs/entity.h"
+#include "ferrum/ecs/sparse_set.h"
+#include "ferrum/job/system.h"
+#include "ferrum/math/mat4.h"
+#include "ferrum/renderer/bone_palette.h"
+#include "ferrum/renderer/skinning/components.h"
+#include "ferrum/renderer/skinning/skin.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define SKINNING_PIPELINE_OK 0
+#define SKINNING_PIPELINE_ERR_INVALID 1
+#define SKINNING_PIPELINE_ERR_OOM 2
+#define SKINNING_PIPELINE_ERR_NOT_FOUND 3
+typedef struct skinning_draw_list {
+    entity_t *entities;
+    uint32_t count;
+} skinning_draw_list_t;
+typedef struct skinning_pipeline {
+    entity_t *skeleton_entities;
+    uint32_t *palette_indices;
+    mat4_t *palette_matrices;
+    uint32_t *joint_counts;
+    void *job_contexts;
+    uint32_t *draw_list_palette_indices;
+    uint32_t skeleton_count;
+    uint32_t skeleton_capacity;
+    uint32_t max_joints;
+} skinning_pipeline_t;
+int skinning_pipeline_init(skinning_pipeline_t *pipeline,
+                           uint32_t skeleton_capacity,
+                           uint32_t max_joints);
+void skinning_pipeline_destroy(skinning_pipeline_t *pipeline);
+int skinning_pipeline_update(skinning_pipeline_t *pipeline,
+                             job_system_t *system,
+                             ecs_sparse_set_base_t *skeletons,
+                             ecs_sparse_set_base_t *skins);
+int skinning_pipeline_palette_index(const skinning_pipeline_t *pipeline,
+                                   entity_t entity,
+                                   uint32_t *out_index);
+int skinning_pipeline_upload_palette(const skinning_pipeline_t *pipeline,
+                                    bone_palette_buffer_t *palette,
+                                    uint32_t palette_index);
+int skinning_pipeline_build_draw_list(const skinning_pipeline_t *pipeline,
+                                      ecs_sparse_set_base_t *skins,
+                                      skinning_draw_list_t *out_list,
+                                      entity_t *storage,
+                                      uint32_t storage_capacity);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/skinning/skin.h">
+#ifndef FERRUM_RENDERER_SKINNING_SKIN_H
+#define FERRUM_RENDERER_SKINNING_SKIN_H
+#include <stdint.h>
+#include "ferrum/ecs/entity.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct skinning_skin {
+    entity_t skeleton_entity;
+} skinning_skin_t;
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/bone_palette.h">
+#ifndef FERRUM_RENDERER_BONE_PALETTE_H
+#define FERRUM_RENDERER_BONE_PALETTE_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/gl_loader.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define BONE_PALETTE_MATRIX_FLOATS 16u
+#define BONE_PALETTE_BUFFER_SSBO 0u
+#define BONE_PALETTE_BUFFER_UBO 1u
+#define BONE_PALETTE_BUFFER_TBO 2u
+typedef enum bone_palette_status {
+    BONE_PALETTE_OK = 0,
+    BONE_PALETTE_ERR_INVALID = 1,
+    BONE_PALETTE_ERR_MISSING_GL = 2,
+    BONE_PALETTE_ERR_TOO_LARGE = 3
+} bone_palette_status_t;
+typedef struct bone_palette_buffer {
+    uint32_t handle;
+    uint32_t texture_handle;
+    uint8_t type;
+    uint32_t binding_point;
+    uint32_t max_bones;
+    void (*glGenBuffers)(int32_t count, uint32_t *buffers);
+    void (*glDeleteBuffers)(int32_t count, const uint32_t *buffers);
+    void (*glBindBuffer)(uint32_t target, uint32_t buffer);
+    void (*glBufferData)(uint32_t target, size_t size, const void *data, uint32_t usage);
+    void (*glBufferSubData)(uint32_t target, size_t offset, size_t size, const void *data);
+    void (*glBindBufferBase)(uint32_t target, uint32_t index, uint32_t buffer);
+    void (*glGenTextures)(int32_t count, uint32_t *textures);
+    void (*glDeleteTextures)(int32_t count, const uint32_t *textures);
+    void (*glBindTexture)(uint32_t target, uint32_t texture);
+    void (*glTexBuffer)(uint32_t target, uint32_t internalformat, uint32_t buffer);
+    void (*glActiveTexture)(uint32_t texture);
+} bone_palette_buffer_t;
+bone_palette_status_t bone_palette_buffer_init(bone_palette_buffer_t *palette,
+                                               const gl_loader_t *loader,
+                                               uint32_t max_bones,
+                                               uint32_t binding_point,
+                                               int supports_ssbo,
+                                               int supports_tbo);
+void bone_palette_buffer_destroy(bone_palette_buffer_t *palette);
+bone_palette_status_t bone_palette_buffer_update(bone_palette_buffer_t *palette,
+                                                 const void *data,
+                                                 size_t size);
+bone_palette_status_t bone_palette_buffer_bind(const bone_palette_buffer_t *palette);
+uint32_t bone_palette_buffer_type(const bone_palette_buffer_t *palette);
+uint32_t bone_palette_buffer_handle(const bone_palette_buffer_t *palette);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/debug_correction_lines.h">
+#ifndef FERRUM_RENDERER_DEBUG_CORRECTION_LINES_H
+#define FERRUM_RENDERER_DEBUG_CORRECTION_LINES_H
+#include <stddef.h>
+#include "ferrum/math/quat.h"
+#include "ferrum/math/vec3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+size_t fr_debug_correction_lines_cube(vec3_t est_pos,
+                                     quat_t est_rot,
+                                     vec3_t true_pos,
+                                     quat_t true_rot,
+                                     float half_extent,
+                                     vec3_t *out_vertices,
+                                     size_t out_vertices_cap);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/debug_lines.h">
+#ifndef FERRUM_RENDERER_DEBUG_LINES_H
+#define FERRUM_RENDERER_DEBUG_LINES_H
+#include <stdbool.h>
+#include <stddef.h>
+#include "ferrum/math/vec3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct fr_debug_line {
+    vec3_t a;
+    vec3_t b;
+    double expire_time_s;
+} fr_debug_line_t;
+typedef struct fr_debug_lines {
+    fr_debug_line_t *lines;
+    size_t capacity;
+    size_t count;
+    size_t head;
+} fr_debug_lines_t;
+void fr_debug_lines_init(fr_debug_lines_t *store, fr_debug_line_t *storage, size_t capacity);
+bool fr_debug_lines_add(fr_debug_lines_t *store, vec3_t a, vec3_t b, double now_time_s, double ttl_s);
+bool fr_debug_lines_collect_vertices(fr_debug_lines_t *store,
+                                   double now_time_s,
+                                   vec3_t *out_vertices,
+                                   size_t out_vertices_cap,
+                                   size_t *out_vertex_count);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/gl_constants.h">
+#ifndef FERRUM_RENDERER_GL_CONSTANTS_H
+#define FERRUM_RENDERER_GL_CONSTANTS_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#ifndef GL_ARRAY_BUFFER
+#define GL_ARRAY_BUFFER 0x8892
+#endif
+#ifndef GL_FLOAT
+#define GL_FLOAT 0x1406
+#endif
+#ifndef GL_INT
+#define GL_INT 0x1404
+#endif
+#ifndef GL_VERTEX_SHADER
+#define GL_VERTEX_SHADER 0x8B31
+#endif
+#ifndef GL_FRAGMENT_SHADER
+#define GL_FRAGMENT_SHADER 0x8B30
+#endif
+#ifndef GL_COMPILE_STATUS
+#define GL_COMPILE_STATUS 0x8B81
+#endif
+#ifndef GL_LINK_STATUS
+#define GL_LINK_STATUS 0x8B82
+#endif
+#ifndef GL_UNIFORM_BUFFER
+#define GL_UNIFORM_BUFFER 0x8A11
+#endif
+#ifndef GL_SHADER_STORAGE_BUFFER
+#define GL_SHADER_STORAGE_BUFFER 0x90D2
+#endif
+#ifndef GL_DYNAMIC_DRAW
+#define GL_DYNAMIC_DRAW 0x88E8
+#endif
+#ifndef GL_TEXTURE_BUFFER
+#define GL_TEXTURE_BUFFER 0x8C2A
+#endif
+#ifndef GL_RGBA32F
+#define GL_RGBA32F 0x8814
+#endif
+#ifndef GL_TEXTURE0
+#define GL_TEXTURE0 0x84C0
+#endif
+#ifndef GL_TEXTURE_2D
+#define GL_TEXTURE_2D 0x0DE1
+#endif
+#ifndef GL_RGBA8
+#define GL_RGBA8 0x8058
+#endif
+#ifndef GL_DEPTH24_STENCIL8
+#define GL_DEPTH24_STENCIL8 0x88F0
+#endif
+#ifndef GL_UNSIGNED_BYTE
+#define GL_UNSIGNED_BYTE 0x1401
+#endif
+#ifndef GL_NEAREST
+#define GL_NEAREST 0x2600
+#endif
+#ifndef GL_RGBA
+#define GL_RGBA 0x1908
+#endif
+#ifndef GL_DRAW_FRAMEBUFFER_BINDING
+#define GL_DRAW_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+#ifndef GL_FRAMEBUFFER
+#define GL_FRAMEBUFFER 0x8D40
+#endif
+#ifndef GL_DRAW_FRAMEBUFFER
+#define GL_DRAW_FRAMEBUFFER 0x8CA9
+#endif
+#ifndef GL_RENDERBUFFER
+#define GL_RENDERBUFFER 0x8D41
+#endif
+#ifndef GL_COLOR_ATTACHMENT0
+#define GL_COLOR_ATTACHMENT0 0x8CE0
+#endif
+#ifndef GL_DEPTH_STENCIL_ATTACHMENT
+#define GL_DEPTH_STENCIL_ATTACHMENT 0x821A
+#endif
+#ifndef GL_FRAMEBUFFER_COMPLETE
+#define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+#endif
+#ifndef GL_TEXTURE_MIN_FILTER
+#define GL_TEXTURE_MIN_FILTER 0x2801
+#endif
+#ifndef GL_TEXTURE_MAG_FILTER
+#define GL_TEXTURE_MAG_FILTER 0x2800
+#endif
+#ifndef GL_TRUE
+#define GL_TRUE 1
+#endif
+#ifndef GL_FALSE
+#define GL_FALSE 0
+#endif
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/gl_loader.h">
+#ifndef FERRUM_RENDERER_GL_LOADER_H
+#define FERRUM_RENDERER_GL_LOADER_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum gl_loader_status {
+    GL_LOADER_OK = 0,
+    GL_LOADER_ERR_MISSING = 1
+} gl_loader_status_t;
+typedef struct gl_loader {
+    void *(*get_proc_address)(const char *name, void *user_data);
+    void *user_data;
+} gl_loader_t;
+gl_loader_status_t gl_loader_validate(const gl_loader_t *loader, const char **out_missing);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/render_pipeline_graph.h">
+#ifndef FERRUM_RENDERER_RENDER_PIPELINE_GRAPH_H
+#define FERRUM_RENDERER_RENDER_PIPELINE_GRAPH_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/render_pipeline.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define RENDER_PIPELINE_NODE_FLAG_DEPTH_PREPASS 1u
+typedef struct render_pipeline_graph_node {
+    render_pass_t *pass;
+    const char **dependencies;
+    size_t dependency_count;
+    uint32_t flags;
+} render_pipeline_graph_node_t;
+typedef struct render_pipeline_graph {
+    render_pipeline_graph_node_t *nodes;
+    size_t node_count;
+} render_pipeline_graph_t;
+int render_pipeline_graph_execute(const render_pipeline_graph_t *graph, int depth_prepass_enabled);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/render_pipeline.h">
+#ifndef FERRUM_RENDERER_RENDER_PIPELINE_H
+#define FERRUM_RENDERER_RENDER_PIPELINE_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/render_resource_views.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define RENDER_PIPELINE_OK 0
+#define RENDER_PIPELINE_ERR_INVALID 1
+typedef struct render_pass {
+    const char *name;
+    void (*begin)(void *user_data);
+    void (*submit)(void *user_data);
+    void (*end)(void *user_data);
+    void *user_data;
+} render_pass_t;
+typedef struct render_pipeline {
+    render_pass_t *passes;
+    size_t pass_count;
+    void (*glBindFramebuffer)(uint32_t target, uint32_t framebuffer);
+} render_pipeline_t;
+int render_pipeline_default(render_pipeline_t *pipeline,
+                            render_pass_t *storage,
+                            render_pass_t *skybox,
+                            render_pass_t *forward,
+                            render_pass_t *post);
+int render_pipeline_execute(const render_pipeline_t *pipeline);
+int render_pipeline_bind_resources(render_pipeline_t *pipeline,
+                                   size_t pass_index,
+                                   const render_resource_view_set_t *view_set);
+int render_pipeline_unbind_resources(render_pipeline_t *pipeline,
+                                     size_t pass_index);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/render_resource_views.h">
+#ifndef FERRUM_RENDERER_RENDER_RESOURCE_VIEWS_H
+#define FERRUM_RENDERER_RENDER_RESOURCE_VIEWS_H
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum render_resource_attachment_type {
+    RENDER_RESOURCE_ATTACHMENT_COLOR = 0,
+    RENDER_RESOURCE_ATTACHMENT_DEPTH = 1
+} render_resource_attachment_type_t;
+typedef enum render_resource_format {
+    RENDER_RESOURCE_FORMAT_RGBA8 = 0,
+    RENDER_RESOURCE_FORMAT_DEPTH24_STENCIL8 = 1
+} render_resource_format_t;
+typedef struct render_resource_attachment {
+    render_resource_attachment_type_t type;
+    render_resource_format_t format;
+    uint32_t handle;
+    uint32_t width;
+    uint32_t height;
+} render_resource_attachment_t;
+typedef enum render_resource_type {
+    RENDER_RESOURCE_TYPE_BUFFER = 0
+} render_resource_type_t;
+typedef enum render_resource_usage {
+    RENDER_RESOURCE_USAGE_VERTEX = 0,
+    RENDER_RESOURCE_USAGE_UNIFORM = 1
+} render_resource_usage_t;
+typedef struct render_resource {
+    render_resource_type_t type;
+    uint32_t handle;
+    size_t size;
+    render_resource_usage_t usage;
+} render_resource_t;
+typedef enum render_resource_view_kind {
+    RENDER_RESOURCE_VIEW_ATTACHMENT = 0,
+    RENDER_RESOURCE_VIEW_TRANSIENT = 1
+} render_resource_view_kind_t;
+typedef struct render_resource_view {
+    render_resource_view_kind_t kind;
+    uint32_t index;
+} render_resource_view_t;
+typedef struct render_resource_view_set {
+    const render_resource_attachment_t *attachments;
+    size_t attachment_count;
+    const render_resource_t *transients;
+    size_t transient_count;
+    const render_resource_view_t *inputs;
+    size_t input_count;
+    const render_resource_view_t *outputs;
+    size_t output_count;
+} render_resource_view_set_t;
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/shader_program.h">
+#ifndef FERRUM_RENDERER_SHADER_PROGRAM_H
+#define FERRUM_RENDERER_SHADER_PROGRAM_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/gl_loader.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum shader_program_status {
+    SHADER_PROGRAM_OK = 0,
+    SHADER_PROGRAM_ERR_INVALID = 1,
+    SHADER_PROGRAM_ERR_MISSING_GL = 2,
+    SHADER_PROGRAM_ERR_COMPILE = 3,
+    SHADER_PROGRAM_ERR_LINK = 4
+} shader_program_status_t;
+typedef struct shader_program {
+    uint32_t handle;
+    uint32_t (*glCreateShader)(uint32_t type);
+    void (*glShaderSource)(uint32_t shader, int32_t count, const char *const *string, const int32_t *length);
+    void (*glCompileShader)(uint32_t shader);
+    void (*glGetShaderiv)(uint32_t shader, uint32_t pname, int32_t *params);
+    void (*glGetShaderInfoLog)(uint32_t shader, int32_t buf_size, int32_t *length, char *info_log);
+    void (*glDeleteShader)(uint32_t shader);
+    uint32_t (*glCreateProgram)(void);
+    void (*glAttachShader)(uint32_t program, uint32_t shader);
+    void (*glLinkProgram)(uint32_t program);
+    void (*glGetProgramiv)(uint32_t program, uint32_t pname, int32_t *params);
+    void (*glGetProgramInfoLog)(uint32_t program, int32_t buf_size, int32_t *length, char *info_log);
+    void (*glUseProgram)(uint32_t program);
+    void (*glDeleteProgram)(uint32_t program);
+    int32_t (*glGetUniformLocation)(uint32_t program, const char *name);
+    void (*glUniformMatrix4fv)(int32_t location, int32_t count, uint8_t transpose, const float *value);
+    void (*glUniform3fv)(int32_t location, int32_t count, const float *value);
+    void (*glUniform1i)(int32_t location, int32_t v0);
+    void (*glUniform1f)(int32_t location, float v0);
+} shader_program_t;
+shader_program_status_t shader_program_create(shader_program_t *program,
+                                              const gl_loader_t *loader,
+                                              const char *vertex_source,
+                                              const char *fragment_source,
+                                              char *log_buffer,
+                                              size_t log_capacity);
+void shader_program_destroy(shader_program_t *program);
+shader_program_status_t shader_program_bind(const shader_program_t *program);
+uint32_t shader_program_handle(const shader_program_t *program);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/shader_uniforms.h">
+#ifndef FERRUM_RENDERER_SHADER_UNIFORMS_H
+#define FERRUM_RENDERER_SHADER_UNIFORMS_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/shader_program.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define SHADER_UNIFORM_CACHE_CAPACITY 64u
+#define SHADER_UNIFORM_TYPE_MAT4 1u
+#define SHADER_UNIFORM_TYPE_VEC3 2u
+#define SHADER_UNIFORM_TYPE_INT 3u
+#define SHADER_UNIFORM_TYPE_FLOAT 4u
+typedef enum shader_uniform_status {
+    SHADER_UNIFORM_OK = 0,
+    SHADER_UNIFORM_ERR_INVALID = 1,
+    SHADER_UNIFORM_ERR_MISSING_GL = 2,
+    SHADER_UNIFORM_ERR_NOT_FOUND = 3,
+    SHADER_UNIFORM_ERR_CACHE_FULL = 4,
+    SHADER_UNIFORM_ERR_TYPE_MISMATCH = 5
+} shader_uniform_status_t;
+typedef struct shader_uniform_cache {
+    struct {
+        const char *name;
+        int32_t location;
+        uint8_t type;
+    } entries[SHADER_UNIFORM_CACHE_CAPACITY];
+    uint32_t count;
+    int32_t (*glGetUniformLocation)(uint32_t program, const char *name);
+    void (*glUniformMatrix4fv)(int32_t location, int32_t count, uint8_t transpose, const float *value);
+    void (*glUniform3fv)(int32_t location, int32_t count, const float *value);
+    void (*glUniform1i)(int32_t location, int32_t v0);
+    void (*glUniform1f)(int32_t location, float v0);
+} shader_uniform_cache_t;
+shader_uniform_status_t shader_uniform_cache_init(shader_uniform_cache_t *cache,
+                                                  const shader_program_t *program);
+uint32_t shader_uniform_cache_count(const shader_uniform_cache_t *cache);
+shader_uniform_status_t shader_uniform_set_mat4(shader_uniform_cache_t *cache,
+                                                const shader_program_t *program,
+                                                const char *name,
+                                                const float *value,
+                                                uint8_t transpose);
+shader_uniform_status_t shader_uniform_set_vec3(shader_uniform_cache_t *cache,
+                                                const shader_program_t *program,
+                                                const char *name,
+                                                const float *value);
+shader_uniform_status_t shader_uniform_set_int(shader_uniform_cache_t *cache,
+                                               const shader_program_t *program,
+                                               const char *name,
+                                               int32_t value);
+shader_uniform_status_t shader_uniform_set_float(shader_uniform_cache_t *cache,
+                                                 const shader_program_t *program,
+                                                 const char *name,
+                                                 float value);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/skinning_shader.h">
+#ifndef FERRUM_RENDERER_SKINNING_SHADER_H
+#define FERRUM_RENDERER_SKINNING_SHADER_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/bone_palette.h"
+#include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/shader_program.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define SKINNING_ATTRIBUTE_POSITION 0u
+#define SKINNING_ATTRIBUTE_NORMAL 1u
+#define SKINNING_ATTRIBUTE_TEXCOORD 2u
+#define SKINNING_ATTRIBUTE_BONE_WEIGHTS 3u
+#define SKINNING_ATTRIBUTE_BONE_INDICES 4u
+typedef enum skinning_shader_status {
+    SKINNING_SHADER_OK = 0,
+    SKINNING_SHADER_ERR_INVALID = 1,
+    SKINNING_SHADER_ERR_MISSING_GL = 2,
+    SKINNING_SHADER_ERR_COMPILE = 3,
+    SKINNING_SHADER_ERR_LINK = 4
+} skinning_shader_status_t;
+typedef struct skinning_shader {
+    shader_program_t program;
+    int32_t palette_location;
+} skinning_shader_t;
+skinning_shader_status_t skinning_shader_create(skinning_shader_t *shader,
+                                                const gl_loader_t *loader,
+                                                char *log_buffer,
+                                                size_t log_capacity);
+skinning_shader_status_t skinning_shader_create_from_source(skinning_shader_t *shader,
+                                                            const gl_loader_t *loader,
+                                                            const char *vertex_source,
+                                                            const char *fragment_source,
+                                                            char *log_buffer,
+                                                            size_t log_capacity);
+skinning_shader_status_t skinning_shader_bind(const skinning_shader_t *shader,
+                                              const bone_palette_buffer_t *palette);
+void skinning_shader_destroy(skinning_shader_t *shader);
+uint32_t skinning_shader_program_handle(const skinning_shader_t *shader);
+uint32_t skinning_attribute_location(uint32_t attribute);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/skinning.h">
+#ifndef FERRUM_RENDERER_SKINNING_H
+#define FERRUM_RENDERER_SKINNING_H
+#include "ferrum/renderer/skinning/components.h"
+#include "ferrum/renderer/skinning/skin.h"
+#include "ferrum/renderer/skinning/pipeline.h"
+#endif
+</file>
+
+<file path="include/ferrum/renderer/vao_attribute.h">
+#ifndef FERRUM_RENDERER_VAO_ATTRIBUTE_H
+#define FERRUM_RENDERER_VAO_ATTRIBUTE_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct vao_attribute {
+    uint32_t index;
+    int components;
+    uint32_t type;
+    uint8_t normalized;
+    uint32_t offset;
+    uint8_t integer;
+} vao_attribute_t;
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/vao.h">
+#ifndef FERRUM_RENDERER_VAO_H
+#define FERRUM_RENDERER_VAO_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/vbo.h"
+#include "ferrum/renderer/vao_attribute.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum vao_status {
+    VAO_OK = 0,
+    VAO_ERR_INVALID = 1,
+    VAO_ERR_MISSING_GL = 2
+} vao_status_t;
+typedef struct vao {
+    uint32_t handle;
+    void (*glGenVertexArrays)(int32_t count, uint32_t *arrays);
+    void (*glDeleteVertexArrays)(int32_t count, const uint32_t *arrays);
+    void (*glBindVertexArray)(uint32_t array);
+    void (*glEnableVertexAttribArray)(uint32_t index);
+    void (*glVertexAttribPointer)(uint32_t index,
+                                  int32_t size,
+                                  uint32_t type,
+                                  uint8_t normalized,
+                                  size_t stride,
+                                  const void *pointer);
+    void (*glVertexAttribIPointer)(uint32_t index,
+                                   int32_t size,
+                                   uint32_t type,
+                                   size_t stride,
+                                   const void *pointer);
+    void (*glBindBuffer)(uint32_t target, uint32_t buffer);
+} vao_t;
+vao_status_t vao_create(vao_t *vao, const gl_loader_t *loader);
+void vao_destroy(vao_t *vao);
+vao_status_t vao_bind_attributes(vao_t *vao,
+                                const vbo_t *vbo,
+                                const vao_attribute_t *attributes,
+                                size_t attribute_count,
+                                size_t stride);
+uint32_t vao_handle(const vao_t *vao);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/renderer/vbo.h">
+#ifndef FERRUM_RENDERER_VBO_H
+#define FERRUM_RENDERER_VBO_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/gl_constants.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum vbo_status {
+    VBO_OK = 0,
+    VBO_ERR_INVALID = 1,
+    VBO_ERR_MISSING_GL = 2,
+    VBO_ERR_ZERO_SIZE = 3
+} vbo_status_t;
+typedef struct vbo {
+    uint32_t handle;
+    void (*glGenBuffers)(int32_t count, uint32_t *buffers);
+    void (*glDeleteBuffers)(int32_t count, const uint32_t *buffers);
+    void (*glBindBuffer)(uint32_t target, uint32_t buffer);
+    void (*glBufferData)(uint32_t target, size_t size, const void *data, uint32_t usage);
+} vbo_t;
+vbo_status_t vbo_create(vbo_t *vbo, const gl_loader_t *loader);
+void vbo_destroy(vbo_t *vbo);
+vbo_status_t vbo_upload(vbo_t *vbo, uint32_t target, const void *data, size_t size, uint32_t usage);
+uint32_t vbo_handle(const vbo_t *vbo);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/server/net/client_fiber.h">
+#ifndef FERRUM_SERVER_NET_CLIENT_FIBER_H
+#define FERRUM_SERVER_NET_CLIENT_FIBER_H
+#include <stdbool.h>
+#include <stddef.h>
+#include "ferrum/net/topic_channel.h"
+typedef struct fr_server_client_fiber_t fr_server_client_fiber_t;
+typedef struct fr_server_client_fiber_config_t {
+    unsigned reliable_channels;
+    unsigned reliable_slot_count;
+    unsigned max_payload_size;
+    fr_topic_channel_t **topics;
+    unsigned num_topics;
+} fr_server_client_fiber_config_t;
+fr_server_client_fiber_t *fr_server_client_fiber_create(const fr_server_client_fiber_config_t *cfg);
+void fr_server_client_fiber_destroy(fr_server_client_fiber_t *fiber);
+bool fr_server_client_fiber_inject_frame(fr_server_client_fiber_t *fiber, const unsigned char *frame, size_t len);
+#endif
+</file>
+
+<file path="include/ferrum/server/net/inbound_message.h">
+#ifndef FERRUM_SERVER_NET_INBOUND_MESSAGE_H
+#define FERRUM_SERVER_NET_INBOUND_MESSAGE_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct fr_server_net_inbound_message_view_t {
+    uint16_t client_id;
+    uint16_t schema_id;
+    bool reliable;
+    const uint8_t *payload;
+    size_t payload_size;
+} fr_server_net_inbound_message_view_t;
+bool fr_server_net_inbound_message_encode(uint16_t client_id,
+                                         bool reliable,
+                                         uint16_t schema_id,
+                                         const void *payload,
+                                         size_t payload_size,
+                                         uint8_t *out,
+                                         size_t out_cap,
+                                         size_t *out_size);
+bool fr_server_net_inbound_message_decode(fr_server_net_inbound_message_view_t *out,
+                                         const uint8_t *msg,
+                                         size_t msg_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/server/net/runtime.h">
+#ifndef FERRUM_SERVER_NET_RUNTIME_H
+#define FERRUM_SERVER_NET_RUNTIME_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/topic_channel.h"
+#include "ferrum/net/udp_socket.h"
+#include "ferrum/job/system.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct fr_server_net_runtime_config_t {
+    uint16_t max_clients;
+    job_system_t *jobs;
+    net_udp_socket_t *socket;
+    fr_topic_channel_t *inbound_topic;
+    uint32_t out_reliable_capacity;
+    uint32_t out_unreliable_capacity;
+    int (*recvfrom_cb)(void *user,
+                       net_udp_addr_t *out_from,
+                       uint8_t *out_data,
+                       size_t out_cap,
+                       size_t *out_size);
+    int (*sendto_cb)(void *user, const net_udp_addr_t *to, const void *data, size_t size);
+    void *io_user;
+} fr_server_net_runtime_config_t;
+typedef struct fr_server_net_runtime fr_server_net_runtime_t;
+fr_server_net_runtime_t *fr_server_net_runtime_create(const fr_server_net_runtime_config_t *cfg);
+void fr_server_net_runtime_destroy(fr_server_net_runtime_t *rt);
+bool fr_server_net_runtime_pump(fr_server_net_runtime_t *rt, uint64_t now_ms);
+bool fr_server_net_runtime_run_fibers(fr_server_net_runtime_t *rt, uint32_t max_spins);
+bool fr_server_net_runtime_client_out_topics(fr_server_net_runtime_t *rt,
+                                             uint16_t client_id,
+                                             fr_topic_channel_t **out_reliable,
+                                             fr_topic_channel_t **out_unreliable);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/server/net/state_update_queue.h">
+#ifndef FERRUM_SERVER_NET_STATE_UPDATE_QUEUE_H
+#define FERRUM_SERVER_NET_STATE_UPDATE_QUEUE_H
+#include <stdbool.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct fr_state_update_queue_config_t {
+    uint32_t capacity;
+    uint32_t max_payload_size;
+} fr_state_update_queue_config_t;
+typedef struct fr_state_update_queue fr_state_update_queue_t;
+fr_state_update_queue_t *fr_state_update_queue_create(const fr_state_update_queue_config_t *cfg);
+void fr_state_update_queue_destroy(fr_state_update_queue_t *q);
+bool fr_state_update_queue_push(fr_state_update_queue_t *q,
+                               uint16_t client_id,
+                               uint16_t schema_id,
+                               const uint8_t *payload,
+                               uint16_t payload_size);
+bool fr_state_update_queue_pop(fr_state_update_queue_t *q,
+                              uint16_t *out_client_id,
+                              uint16_t *out_schema_id,
+                              uint8_t *out_payload,
+                              uint16_t *inout_payload_size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/server/player/connection.h">
+#ifndef FERRUM_SERVER_PLAYER_CONNECTION_H
+#define FERRUM_SERVER_PLAYER_CONNECTION_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ferrum/math/vec3.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct player_connection {
+    uint16_t player_id;
+    vec3_t world_pos;
+    bool player_should_spawn_remote;
+} player_connection_t;
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/server/entity.h">
+#ifndef FERRUM_SERVER_ENTITY_H
+#define FERRUM_SERVER_ENTITY_H
+#include "ferrum/server/entity/net/pump.h"
+#endif
+</file>
+
+<file path="include/ferrum/server/player.h">
+#ifndef FERRUM_SERVER_PLAYER_H
+#define FERRUM_SERVER_PLAYER_H
+#include "ferrum/server/player/connection.h"
+#endif
+</file>
+
+<file path="include/ferrum/server/repl_server.h">
+#ifndef FERRUM_SERVER_REPL_SERVER_H
+#define FERRUM_SERVER_REPL_SERVER_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/job/system.h"
+#include "ferrum/net/udp_socket.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define SERVER_REPL_OK 0
+#define SERVER_REPL_ERR_INVALID -1
+typedef struct server_repl_config {
+    uint16_t max_clients;
+    uint16_t tick_hz;
+    uint16_t max_entities;
+    uint32_t resend_interval_ms;
+    void *client_storage;
+    size_t client_storage_bytes;
+    void *entity_storage;
+    size_t entity_storage_bytes;
+    void *send_job_ctx_storage;
+    size_t send_job_ctx_storage_bytes;
+    void *rudp_send_slot_storage;
+    size_t rudp_send_slot_storage_bytes;
+    size_t rudp_send_slots_per_client;
+} server_repl_config_t;
+typedef struct server_repl_stats {
+    uint32_t clients_connected;
+    uint64_t packets_sent;
+    uint64_t packets_recv;
+    uint64_t bytes_sent;
+    uint64_t bytes_recv;
+    uint64_t state_jobs_scheduled;
+    uint64_t net_io_ns_total;
+    uint64_t state_update_ns_total;
+} server_repl_stats_t;
+typedef struct server_repl_server server_repl_server_t;
+size_t server_repl_client_storage_size(uint16_t max_clients);
+size_t server_repl_entity_storage_size(uint16_t max_entities);
+size_t server_repl_send_job_ctx_storage_size(uint16_t max_clients, uint16_t max_entities);
+server_repl_server_t *server_repl_server_create(const server_repl_config_t *cfg,
+                                                net_udp_socket_t *sock,
+                                                job_system_t *jobs);
+void server_repl_server_destroy(server_repl_server_t *srv);
+int server_repl_server_pump(server_repl_server_t *srv, uint64_t now_ms);
+int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms);
+server_repl_stats_t server_repl_server_stats(const server_repl_server_t *srv);
+int server_repl_server_debug_force_client_joined(server_repl_server_t *srv, uint16_t client_id);
+int server_repl_server_debug_add_active_entity(server_repl_server_t *srv, uint16_t owner_client_id, uint32_t entity_id_hint, uint16_t *out_index);
+int server_repl_server_debug_force_entity_known(server_repl_server_t *srv, uint16_t client_id, uint16_t entity_index);
+int server_repl_server_debug_schedule_state_job(server_repl_server_t *srv, uint16_t client_id, uint16_t entity_index, uint64_t now_ms);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/ferrum.h">
+#ifndef FERRUM_FERRUM_H
+#define FERRUM_FERRUM_H
+#include "ferrum/job/system.h"
+#include "ferrum/job/counter.h"
+#include "ferrum/job/counter.h"
+#include "ferrum/math/constants.h"
+#include "ferrum/job/instrumentation.h"
+#include "ferrum/job/ws_deque.h"
+#include "ferrum/math/vec2.h"
+#include "ferrum/math/vec3.h"
+#include "ferrum/math/vec4.h"
+#include "ferrum/math/quat.h"
+#include "ferrum/math/mat4.h"
+#include "ferrum/memory/arena.h"
+#include "ferrum/memory/pool.h"
+#include "ferrum/memory/apool.h"
+#include "ferrum/ecs/common.h"
+#include "ferrum/ecs/entity.h"
+#include "ferrum/ecs/sparse_set.h"
+#include "ferrum/ecs/world.h"
+#include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/shader_program.h"
+#include "ferrum/renderer/vbo.h"
+#include "ferrum/renderer/vao_attribute.h"
+#include "ferrum/renderer/vao.h"
+#include "ferrum/renderer/gl_constants.h"
+#include "ferrum/renderer/shader_uniforms.h"
+#include "ferrum/renderer/bone_palette.h"
+#include "ferrum/renderer/render_resource_views.h"
+#include "ferrum/renderer/render_pipeline.h"
+#include "ferrum/renderer/render_pipeline_graph.h"
+#include "ferrum/renderer/debug_lines.h"
+#include "ferrum/renderer/debug_correction_lines.h"
+#include "ferrum/renderer/skinning_shader.h"
+#include "ferrum/renderer/skinning.h"
+#include "ferrum/net/ack_window.h"
+#include "ferrum/net/packet_header.h"
+#include "ferrum/net/rudp/wire_frame.h"
+#include "ferrum/net/rudp/reliability.h"
+#include "ferrum/net/rudp/reliability_send.h"
+#include "ferrum/net/bit_pack.h"
+#include "ferrum/net/schema_registry.h"
+#include "ferrum/net/unreliable_channel.h"
+#include "ferrum/net/reliable_channel.h"
+#include "ferrum/net/rudp/peer.h"
+#include "ferrum/net/test_clock.h"
+#include "ferrum/net/test_buffer.h"
+#include "ferrum/net/test_link.h"
+#include "ferrum/net/replication/interp/pose_interpolator.h"
+#include "ferrum/net/topic_channel.h"
+#include "ferrum/net/topic_dispatcher.h"
+#include "ferrum/net/client/runtime_rx.h"
+#include "ferrum/physics/phys_types.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/net/stream.h"
+#include "ferrum/net/client/runtime_rx.h"
+#include "ferrum/server/net/client_fiber.h"
+#include "ferrum/server/net/inbound_message.h"
+#include "ferrum/server/net/state_update_queue.h"
+#endif
+</file>
+
+<file path="include/ferrum/demo/camera.h">
+#ifndef FERRUM_DEMO_CAMERA_H
+#define FERRUM_DEMO_CAMERA_H
+#include <stdint.h>
+#include "ferrum/math/vec3.h"
+#include "ferrum/math/mat4.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct demo_camera {
+    vec3_t position;
+    float yaw;
+    float pitch;
+    float move_speed;
+    float sensitivity;
+} demo_camera_t;
+void demo_camera_init(demo_camera_t *cam);
+void demo_camera_update(demo_camera_t *cam, float mouse_dx, float mouse_dy,
+                        uint8_t wasd_flags, float dt);
+void demo_camera_view_matrix(const demo_camera_t *cam, mat4_t *out);
+vec3_t demo_camera_forward(const demo_camera_t *cam);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/demo/geometry.h">
+#ifndef FERRUM_DEMO_GEOMETRY_H
+#define FERRUM_DEMO_GEOMETRY_H
+#include <stdint.h>
+#include <stddef.h>
+int demo_generate_icosphere(float *out_vertices, uint32_t *out_count);
+uint32_t demo_generate_ground_plane(float *out_vertices, float half_size);
+#endif
+</file>
+
+<file path="include/ferrum/demo/input_move.h">
+#ifndef FERRUM_DEMO_INPUT_MOVE_H
+#define FERRUM_DEMO_INPUT_MOVE_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define DEMO_INPUT_MOVE_PAYLOAD_SIZE 8u
+#define DEMO_MOVE_W    (1u << 0)
+#define DEMO_MOVE_A    (1u << 1)
+#define DEMO_MOVE_S    (1u << 2)
+#define DEMO_MOVE_D    (1u << 3)
+#define DEMO_ACTION_FIRE      (1u << 0)
+#define DEMO_ACTION_SPAWN_BOX (1u << 1)
+typedef struct demo_input_move {
+    uint16_t event_id;
+    int16_t  yaw_snorm16;
+    int16_t  pitch_snorm16;
+    uint8_t  move_flags;
+    uint8_t  action_flags;
+} demo_input_move_t;
+int demo_input_move_encode(const demo_input_move_t *msg, uint8_t *out, size_t out_size);
+int demo_input_move_decode(demo_input_move_t *msg, const uint8_t *payload, size_t size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/demo/input_spawn.h">
+#ifndef FERRUM_DEMO_INPUT_SPAWN_H
+#define FERRUM_DEMO_INPUT_SPAWN_H
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/replication/common.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define DEMO_INPUT_SPAWN_PAYLOAD_SIZE 12u
+typedef struct demo_input_spawn {
+    uint16_t event_id;
+    uint16_t half_x_mm;
+    uint16_t half_y_mm;
+    uint16_t half_z_mm;
+    uint32_t color_seed;
+} demo_input_spawn_t;
+int demo_input_spawn_encode(const demo_input_spawn_t *msg, uint8_t *out, size_t out_size);
+int demo_input_spawn_decode(demo_input_spawn_t *msg, const uint8_t *payload, size_t size);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/net/replication/common.h">
+#ifndef FERRUM_NET_REPLICATION_COMMON_H
+#define FERRUM_NET_REPLICATION_COMMON_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define NET_REPL_OK 0
+#define NET_REPL_ERR_INVALID -1
+#define NET_REPL_ERR_SHORT -2
+#define NET_REPL_SCHEMA_JOIN 0x2001u
+#define NET_REPL_SCHEMA_SPAWN 0x2002u
+#define NET_REPL_SCHEMA_STATE_CUBE 0x2003u
+#define NET_REPL_SCHEMA_WELCOME 0x2004u
+#define NET_REPL_SCHEMA_SPAWN_BATCH 0x2005u
+#define NET_REPL_SCHEMA_STATE_CUBE_BATCH 0x2006u
+#define NET_REPL_SCHEMA_INPUT_ROT 0x2007u
+#define NET_REPL_SCHEMA_INPUT_MOVE  0x2008u
+#define NET_REPL_SCHEMA_INPUT_SPAWN 0x2009u
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/collision/box_box.h">
+#ifndef FERRUM_PHYSICS_COLLISION_BOX_BOX_H
+#define FERRUM_PHYSICS_COLLISION_BOX_BOX_H
+#include "ferrum/physics/manifold.h"
+#include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+int phys_box_vs_box(
+    phys_vec3_t center_a, phys_quat_t rotation_a, phys_vec3_t half_extents_a,
+    phys_vec3_t center_b, phys_quat_t rotation_b, phys_vec3_t half_extents_b,
+    struct phys_contact_point *contact_out, int max_contacts);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/collision/box_capsule.h">
+#ifndef FERRUM_PHYSICS_COLLISION_BOX_CAPSULE_H
+#define FERRUM_PHYSICS_COLLISION_BOX_CAPSULE_H
+#include "ferrum/physics/manifold.h"
+#include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
+bool phys_box_vs_capsule(
+    phys_vec3_t box_center, phys_quat_t box_rotation, phys_vec3_t box_half_extents,
+    phys_vec3_t capsule_center, phys_quat_t capsule_rotation,
+    float capsule_radius, float capsule_half_height,
+    struct phys_contact_point *contact_out);
+#endif
+</file>
+
+<file path="include/ferrum/physics/collision/capsule_capsule.h">
+#ifndef FERRUM_PHYSICS_COLLISION_CAPSULE_CAPSULE_H
+#define FERRUM_PHYSICS_COLLISION_CAPSULE_CAPSULE_H
+#include <stdbool.h>
+#include "ferrum/physics/manifold.h"
+#include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+bool phys_capsule_vs_capsule(
+    phys_vec3_t center_a, phys_quat_t rotation_a,
+    float radius_a, float half_height_a,
+    phys_vec3_t center_b, phys_quat_t rotation_b,
+    float radius_b, float half_height_b,
+    struct phys_contact_point *contact_out);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/collision/sphere_simplify.h">
+#ifndef FERRUM_PHYSICS_COLLISION_SPHERE_SIMPLIFY_H
+#define FERRUM_PHYSICS_COLLISION_SPHERE_SIMPLIFY_H
+#include "ferrum/physics/collider.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+float phys_sphere_ratio(const phys_collider_t *collider,
+                        const phys_sphere_t *spheres,
+                        const phys_box_t *boxes,
+                        const phys_capsule_t *capsules);
+float phys_sphere_simplify_radius(const phys_collider_t *collider,
+                                   const phys_sphere_t *spheres,
+                                   const phys_box_t *boxes,
+                                   const phys_capsule_t *capsules);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/broadphase_par.h">
+#ifndef FERRUM_PHYSICS_PAR_BROADPHASE_PAR_H
+#define FERRUM_PHYSICS_PAR_BROADPHASE_PAR_H
+#include "ferrum/physics/broadphase.h"
+#include "ferrum/physics/phys_jobs.h"
+struct phys_frame_arena;
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_BROADPHASE_PAR_BATCH_SIZE 64
+void phys_stage_broadphase_par(const phys_broadphase_args_t *args,
+                                phys_job_context_t *ctx,
+                                struct phys_frame_arena *arena);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/constraint_build_par.h">
+#ifndef FERRUM_PHYSICS_PAR_CONSTRAINT_BUILD_PAR_H
+#define FERRUM_PHYSICS_PAR_CONSTRAINT_BUILD_PAR_H
+#include "ferrum/physics/constraint_stage.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_CONSTRAINT_BUILD_BATCH_SIZE 32u
+void phys_stage_constraint_build_par(const phys_constraint_build_args_t *args,
+                                      phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/integrate_par.h">
+#ifndef FERRUM_PHYSICS_PAR_INTEGRATE_PAR_H
+#define FERRUM_PHYSICS_PAR_INTEGRATE_PAR_H
+#include "ferrum/physics/integrate.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_INTEGRATE_BATCH_SIZE 512
+void phys_stage_integrate_par(const phys_integrate_args_t *args,
+                               phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/manifold_build_par.h">
+#ifndef FERRUM_PHYSICS_PAR_MANIFOLD_BUILD_PAR_H
+#define FERRUM_PHYSICS_PAR_MANIFOLD_BUILD_PAR_H
+#include "ferrum/physics/manifold_build.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_MANIFOLD_BUILD_BATCH_SIZE 32
+void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
+                                    phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/narrowphase_par.h">
+#ifndef FERRUM_PHYSICS_PAR_NARROWPHASE_PAR_H
+#define FERRUM_PHYSICS_PAR_NARROWPHASE_PAR_H
+#include "ferrum/physics/narrowphase.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+void phys_stage_narrowphase_par(const phys_narrowphase_args_t *args,
+                                phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/spatial_update_par.h">
+#ifndef FERRUM_PHYSICS_PAR_SPATIAL_UPDATE_PAR_H
+#define FERRUM_PHYSICS_PAR_SPATIAL_UPDATE_PAR_H
+#include "ferrum/physics/spatial_update.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_SPATIAL_UPDATE_BATCH_SIZE 512u
+void phys_stage_spatial_update_par(const phys_spatial_update_args_t *args,
+                                    phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/stabilization_par.h">
+#ifndef FERRUM_PHYSICS_PAR_STABILIZATION_PAR_H
+#define FERRUM_PHYSICS_PAR_STABILIZATION_PAR_H
+#include "ferrum/physics/stabilization.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_STABILIZATION_BATCH_SIZE 64
+void phys_stage_stabilization_par(const phys_stabilization_args_t *args,
+                                   phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/tgs_solve_par.h">
+#ifndef FERRUM_PHYSICS_PAR_TGS_SOLVE_PAR_H
+#define FERRUM_PHYSICS_PAR_TGS_SOLVE_PAR_H
+#include "ferrum/physics/tgs_solve.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
+                               phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/tier_classify_par.h">
+#ifndef FERRUM_PHYSICS_PAR_TIER_CLASSIFY_PAR_H
+#define FERRUM_PHYSICS_PAR_TIER_CLASSIFY_PAR_H
+#include "ferrum/physics/tier_classify.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_TIER_CLASSIFY_BATCH_SIZE 1024
+void phys_stage_tier_classify_par(const phys_tier_classify_args_t *args,
+                                   phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/par/xpbd_solve_par.h">
+#ifndef FERRUM_PHYSICS_PAR_XPBD_SOLVE_PAR_H
+#define FERRUM_PHYSICS_PAR_XPBD_SOLVE_PAR_H
+#include "ferrum/physics/xpbd_solve.h"
+#include "ferrum/physics/phys_jobs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_XPBD_SOLVE_BATCH_SIZE 128
+void phys_stage_xpbd_solve_par(const phys_xpbd_solve_args_t *args,
+                                phys_job_context_t *ctx);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/aabb_update.h">
+#ifndef FERRUM_PHYSICS_AABB_UPDATE_H
+#define FERRUM_PHYSICS_AABB_UPDATE_H
+#include <stdint.h>
+struct phys_body;
+struct phys_collider;
+struct phys_sphere;
+struct phys_box;
+struct phys_capsule;
+struct phys_aabb;
+struct phys_tier_lists;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_aabb_update_args {
+    const struct phys_body *bodies;
+    const struct phys_collider *colliders;
+    const struct phys_sphere *spheres;
+    const struct phys_box *boxes;
+    const struct phys_capsule *capsules;
+    struct phys_aabb *aabbs_out;
+    const struct phys_tier_lists *tier_lists;
+} phys_aabb_update_args_t;
+void phys_stage_aabb_update(const phys_aabb_update_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/amortized.h">
+#ifndef FERRUM_PHYSICS_AMORTIZED_H
+#define FERRUM_PHYSICS_AMORTIZED_H
+#include "ferrum/physics/phys_types.h"
+#include "ferrum/physics/body.h"
+#include <stdbool.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_T4_TICK_INTERVAL 3
+typedef struct phys_amortized_state {
+    uint32_t     body_capacity;
+    phys_vec3_t *prev_positions;
+    phys_quat_t *prev_orientations;
+    uint32_t     last_tick_frame;
+} phys_amortized_state_t;
+bool phys_amortized_init(phys_amortized_state_t *state,
+                         uint32_t body_capacity);
+void phys_amortized_destroy(phys_amortized_state_t *state);
+void phys_amortized_snapshot(phys_amortized_state_t *state,
+                             const phys_body_t *bodies,
+                             uint32_t body_count,
+                             uint32_t current_frame);
+void phys_amortized_interpolate(const phys_amortized_state_t *state,
+                                const phys_body_t *bodies,
+                                uint32_t body_count,
+                                uint32_t current_frame,
+                                phys_vec3_t *visual_pos,
+                                phys_quat_t *visual_rot);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/broadphase.h">
+#ifndef FERRUM_PHYSICS_BROADPHASE_H
+#define FERRUM_PHYSICS_BROADPHASE_H
+#include <stdint.h>
+struct phys_aabb;
+struct phys_spatial_grid;
+struct phys_tier_lists;
+struct phys_frame_arena;
+struct phys_body;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_collision_pair {
+    uint32_t body_a;
+    uint32_t body_b;
+} phys_collision_pair_t;
+typedef struct phys_broadphase_args {
+    const struct phys_body *bodies;
+    const struct phys_aabb *aabbs;
+    const struct phys_spatial_grid *grid;
+    const struct phys_tier_lists *tier_lists;
+    phys_collision_pair_t *pairs_out;
+    uint32_t max_pairs;
+    uint32_t *pair_count_out;
+} phys_broadphase_args_t;
+void phys_stage_broadphase(const phys_broadphase_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/cache_commit.h">
+#ifndef FERRUM_PHYSICS_CACHE_COMMIT_H
+#define FERRUM_PHYSICS_CACHE_COMMIT_H
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_manifold;
+struct phys_constraint;
+struct phys_manifold_cache;
+typedef struct phys_impact_event {
+    uint32_t body_a;
+    uint32_t body_b;
+    phys_vec3_t point;
+    phys_vec3_t normal;
+    float impulse_magnitude;
+} phys_impact_event_t;
+typedef struct phys_cache_commit_args {
+    const struct phys_manifold *manifolds;
+    const struct phys_constraint *constraints;
+    uint32_t constraint_count;
+    struct phys_manifold_cache *cache;
+    phys_impact_event_t *events_out;
+    uint32_t *event_count_out;
+    uint32_t max_events;
+    float impact_threshold;
+} phys_cache_commit_args_t;
+void phys_stage_cache_commit(const phys_cache_commit_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/compound_collider.h">
+#ifndef FERRUM_PHYSICS_COMPOUND_COLLIDER_H
+#define FERRUM_PHYSICS_COMPOUND_COLLIDER_H
+#include <stdint.h>
+#include "ferrum/physics/collider.h"
+#include "ferrum/physics/aabb.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_compound_child {
+    phys_collider_t collider;
+    union {
+        phys_sphere_t  sphere;
+        phys_box_t     box;
+        phys_capsule_t capsule;
+    } shape;
+    uint16_t bone_index;
+    uint16_t flags;
+} phys_compound_child_t;
+typedef struct phys_compound_collider {
+    phys_compound_child_t *children;
+    uint16_t child_count;
+    uint16_t max_children;
+    phys_aabb_t cached_aabb;
+} phys_compound_collider_t;
+void phys_compound_init(phys_compound_collider_t *cc,
+                        phys_compound_child_t *storage,
+                        uint16_t max);
+void phys_compound_add_child(phys_compound_collider_t *cc,
+                             const phys_collider_t *child,
+                             const void *shape_data,
+                             uint16_t bone);
+void phys_compound_update_transforms(phys_compound_collider_t *cc,
+                                     const phys_quat_t *bone_rotations,
+                                     const phys_vec3_t *bone_positions,
+                                     uint16_t bone_count);
+void phys_compound_compute_aabb(const phys_compound_collider_t *cc,
+                                phys_vec3_t body_pos,
+                                phys_quat_t body_rot,
+                                phys_aabb_t *out);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/constraint_stage.h">
+#ifndef FERRUM_PHYSICS_CONSTRAINT_STAGE_H
+#define FERRUM_PHYSICS_CONSTRAINT_STAGE_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_manifold;
+struct phys_stab_hint;
+struct phys_body;
+struct phys_constraint;
+typedef struct phys_constraint_build_args {
+    const struct phys_manifold *manifolds;
+    const struct phys_stab_hint *hints;
+    uint32_t manifold_count;
+    const struct phys_body *bodies;
+    struct phys_constraint *constraints_out;
+    uint32_t *constraint_count_out;
+    uint32_t max_constraints;
+    float dt;
+    float baumgarte;
+    float slop;
+} phys_constraint_build_args_t;
+void phys_stage_constraint_build(const phys_constraint_build_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/halo_closure.h">
+#ifndef FERRUM_PHYSICS_HALO_CLOSURE_H
+#define FERRUM_PHYSICS_HALO_CLOSURE_H
+#include <stdint.h>
+struct phys_body;
+struct phys_aabb;
+struct phys_spatial_grid;
+struct phys_tier_lists;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_halo_closure_args {
+    const struct phys_body *bodies;
+    const struct phys_aabb *aabbs;
+    const struct phys_spatial_grid *grid;
+    struct phys_tier_lists *tier_lists;
+    float velocity_margin;
+    float dt;
+    uint32_t body_count;
+} phys_halo_closure_args_t;
+void phys_stage_halo_closure(const phys_halo_closure_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/integrate.h">
+#ifndef FERRUM_PHYSICS_INTEGRATE_H
+#define FERRUM_PHYSICS_INTEGRATE_H
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_body;
+struct phys_velocity;
+typedef struct phys_integrate_args {
+    const struct phys_body *bodies_in;
+    const struct phys_velocity *velocities;
+    struct phys_body *bodies_out;
+    uint32_t body_count;
+    float dt;
+    phys_vec3_t gravity;
+    float sleep_threshold_linear;
+    float sleep_threshold_angular;
+    uint32_t sleep_delay_frames;
+} phys_integrate_args_t;
+void phys_stage_integrate(const phys_integrate_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/island_build.h">
+#ifndef FERRUM_PHYSICS_ISLAND_BUILD_H
+#define FERRUM_PHYSICS_ISLAND_BUILD_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_constraint;
+struct phys_island_list;
+struct phys_frame_arena;
+struct phys_body;
+typedef struct phys_island_build_args {
+    const struct phys_constraint *constraints;
+    uint32_t constraint_count;
+    const struct phys_body *bodies;
+    uint32_t body_count;
+    struct phys_island_list *islands_out;
+    struct phys_frame_arena *arena;
+} phys_island_build_args_t;
+void phys_stage_island_build(const phys_island_build_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/island.h">
+#ifndef FERRUM_PHYSICS_ISLAND_H
+#define FERRUM_PHYSICS_ISLAND_H
+#include <stdint.h>
+#include <stdbool.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_frame_arena;
+struct phys_constraint;
+typedef struct phys_island {
+    uint32_t *body_indices;
+    uint32_t body_count;
+    uint32_t *constraint_indices;
+    uint32_t constraint_count;
+    bool sleeping;
+} phys_island_t;
+typedef struct phys_island_list {
+    phys_island_t *islands;
+    uint32_t count;
+    uint32_t capacity;
+    uint32_t *parent;
+    uint32_t *rank;
+    uint32_t uf_size;
+} phys_island_list_t;
+void phys_island_list_init(phys_island_list_t *list,
+                           struct phys_frame_arena *arena,
+                           uint32_t max_bodies,
+                           uint32_t max_islands);
+void phys_island_list_clear(phys_island_list_t *list);
+void phys_island_list_build(phys_island_list_t *list,
+                            const struct phys_constraint *constraints,
+                            uint32_t constraint_count,
+                            uint32_t body_count,
+                            struct phys_frame_arena *arena);
+uint32_t phys_uf_find(phys_island_list_t *list, uint32_t x);
+void phys_uf_union(phys_island_list_t *list, uint32_t x, uint32_t y);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/manifold_build.h">
+#ifndef FERRUM_PHYSICS_MANIFOLD_BUILD_H
+#define FERRUM_PHYSICS_MANIFOLD_BUILD_H
+#include <stdint.h>
+struct phys_contact_candidate;
+struct phys_manifold_cache;
+struct phys_manifold;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_manifold_build_args {
+    const struct phys_contact_candidate *candidates;
+    uint32_t candidate_count;
+    struct phys_manifold_cache *cache;
+    struct phys_manifold *manifolds_out;
+    uint32_t *manifold_count_out;
+    uint32_t max_manifolds;
+    uint64_t tick;
+} phys_manifold_build_args_t;
+void phys_stage_manifold_build(const phys_manifold_build_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/manifold_cache.h">
+#ifndef FERRUM_PHYSICS_MANIFOLD_CACHE_H
+#define FERRUM_PHYSICS_MANIFOLD_CACHE_H
+#include "ferrum/physics/manifold.h"
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_CACHE_INVALID_INDEX 0xFFFFFFFF
+typedef struct phys_manifold_cache_entry {
+    uint64_t pair_key;
+    phys_manifold_t manifold;
+    uint32_t last_used_tick;
+    uint32_t flags;
+} phys_manifold_cache_entry_t;
+typedef struct phys_manifold_cache {
+    phys_manifold_cache_entry_t *entries;
+    uint32_t capacity;
+    uint32_t count;
+    uint32_t *hash_table;
+    uint32_t hash_size;
+    uint32_t hash_mask;
+} phys_manifold_cache_t;
+int phys_manifold_cache_init(phys_manifold_cache_t *cache, uint32_t capacity);
+void phys_manifold_cache_destroy(phys_manifold_cache_t *cache);
+phys_manifold_t *phys_manifold_cache_find(phys_manifold_cache_t *cache,
+                                          uint32_t body_a, uint32_t body_b);
+phys_manifold_t *phys_manifold_cache_get_or_create(phys_manifold_cache_t *cache,
+                                                   uint32_t body_a,
+                                                   uint32_t body_b,
+                                                   uint32_t tick);
+void phys_manifold_cache_expire(phys_manifold_cache_t *cache,
+                                uint32_t current_tick, uint32_t max_age);
+void phys_manifold_cache_touch(phys_manifold_cache_t *cache,
+                               uint32_t body_a, uint32_t body_b,
+                               uint32_t tick);
+uint32_t phys_manifold_cache_count(const phys_manifold_cache_t *cache);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/occlusion_nudge.h">
+#ifndef FERRUM_PHYSICS_OCCLUSION_NUDGE_H
+#define FERRUM_PHYSICS_OCCLUSION_NUDGE_H
+#include <stdint.h>
+struct phys_body;
+struct vec3;
+#ifdef __cplusplus
+extern "C" {
+#endif
+void phys_occlusion_nudge_apply(struct phys_body *bodies,
+                                const uint8_t *repromotion_flags,
+                                const struct vec3 *target_positions,
+                                uint32_t body_count,
+                                uint32_t nudge_frames);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/phys_jobs.h">
+#ifndef FERRUM_PHYSICS_PHYS_JOBS_H
+#define FERRUM_PHYSICS_PHYS_JOBS_H
+#include <stdint.h>
+#include "ferrum/job/system.h"
+#include "ferrum/job/counter.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum phys_stage_id {
+    PHYS_STAGE_STEP_PLAN       = 0,
+    PHYS_STAGE_TIER_CLASSIFY   = 1,
+    PHYS_STAGE_SPATIAL_UPDATE  = 2,
+    PHYS_STAGE_HALO_CLOSURE    = 3,
+    PHYS_STAGE_AABB_UPDATE     = 4,
+    PHYS_STAGE_BROADPHASE      = 5,
+    PHYS_STAGE_NARROWPHASE     = 6,
+    PHYS_STAGE_MANIFOLD_BUILD  = 7,
+    PHYS_STAGE_STABILIZATION   = 8,
+    PHYS_STAGE_CONSTRAINT_BUILD = 9,
+    PHYS_STAGE_ISLAND_BUILD    = 10,
+    PHYS_STAGE_TGS_SOLVE       = 11,
+    PHYS_STAGE_XPBD_SOLVE      = 12,
+    PHYS_STAGE_INTEGRATE       = 13,
+    PHYS_STAGE_CACHE_COMMIT    = 14,
+    PHYS_STAGE_COUNT           = 15
+} phys_stage_id_t;
+typedef struct phys_job_batch {
+    void     *user_args;
+    uint32_t  start;
+    uint32_t  count;
+} phys_job_batch_t;
+typedef struct phys_job_context {
+    job_system_t  *job_sys;
+    job_counter_t  counters[PHYS_STAGE_COUNT];
+} phys_job_context_t;
+void phys_job_context_init(phys_job_context_t *ctx, job_system_t *sys);
+void phys_job_context_destroy(phys_job_context_t *ctx);
+uint32_t phys_dispatch_stage(phys_job_context_t *ctx,
+                             phys_stage_id_t stage,
+                             void (*fn)(void *user_data),
+                             void *user_args,
+                             uint32_t total_items,
+                             uint32_t batch_size,
+                             phys_job_batch_t *batches);
+void phys_wait_stage(phys_job_context_t *ctx, phys_stage_id_t stage);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/position_projection.h">
+#ifndef FERRUM_PHYSICS_POSITION_PROJECTION_H
+#define FERRUM_PHYSICS_POSITION_PROJECTION_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_island;
+struct phys_constraint;
+struct phys_body;
+struct phys_frame_arena;
+struct phys_velocity;
+typedef struct phys_position_projection_result {
+    bool success;
+    phys_vec3_t *position_deltas;
+    struct phys_velocity *velocity_deltas;
+} phys_position_projection_result_t;
+typedef struct phys_position_projection_args {
+    const struct phys_island *island;
+    const struct phys_constraint *constraints;
+    const struct phys_body *bodies;
+    uint32_t body_count;
+    float dt;
+    float slop;
+    struct phys_frame_arena *arena;
+    phys_position_projection_result_t *result;
+} phys_position_projection_args_t;
+void phys_position_projection(const phys_position_projection_args_t *args);
+bool phys_dense_ldlt_solve(float *A, float *b, float *x, uint32_t n);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/prediction.h">
+#ifndef FERRUM_PHYSICS_PREDICTION_H
+#define FERRUM_PHYSICS_PREDICTION_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_world;
+struct phys_snapshot;
+typedef struct phys_prediction_config {
+    float position_snap_threshold;
+    float position_blend_rate;
+    float rotation_snap_threshold;
+    float rotation_blend_rate;
+} phys_prediction_config_t;
+typedef struct phys_prediction_result {
+    uint32_t bodies_snapped;
+    uint32_t bodies_blended;
+    uint32_t bodies_correct;
+    float max_position_error;
+    float max_rotation_error;
+} phys_prediction_result_t;
+phys_prediction_config_t phys_prediction_config_default(void);
+phys_prediction_result_t phys_prediction_reconcile(
+    struct phys_world *local_world,
+    const struct phys_snapshot *server_snapshot,
+    const phys_prediction_config_t *config);
+bool phys_prediction_body_diverged(
+    const phys_vec3_t *local_pos,
+    const phys_vec3_t *server_pos,
+    float snap_threshold);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/snapshot.h">
+#ifndef FERRUM_PHYSICS_SNAPSHOT_H
+#define FERRUM_PHYSICS_SNAPSHOT_H
+#include <stdint.h>
+#include <stddef.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_world;
+typedef struct phys_snapshot_body {
+    int16_t position[3];
+    int16_t orientation[3];
+    int16_t linear_vel[3];
+    int16_t angular_vel[3];
+    uint8_t flags;
+    uint8_t tier;
+} phys_snapshot_body_t;
+typedef struct phys_snapshot {
+    uint64_t tick;
+    uint32_t body_count;
+    phys_snapshot_body_t *bodies;
+} phys_snapshot_t;
+void phys_quantize_vec3(phys_vec3_t v, int16_t out[3], float scale);
+phys_vec3_t phys_dequantize_vec3(const int16_t in[3], float inv_scale);
+void phys_quantize_quat(phys_quat_t q, int16_t out[3]);
+phys_quat_t phys_dequantize_quat(const int16_t in[3]);
+size_t phys_snapshot_encode(const struct phys_world *world,
+                            uint8_t *buffer, size_t max_size);
+int phys_snapshot_decode(const uint8_t *buffer, size_t size,
+                         phys_snapshot_t *snapshot_out);
+int phys_snapshot_apply(struct phys_world *world,
+                        const phys_snapshot_t *snapshot);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/spatial_grid.h">
+#ifndef FERRUM_PHYSICS_SPATIAL_GRID_H
+#define FERRUM_PHYSICS_SPATIAL_GRID_H
+#include "ferrum/physics/aabb.h"
+#include <stdbool.h>
+#include <stdint.h>
+struct phys_frame_arena;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_grid_cell {
+    uint32_t *body_indices;
+    uint32_t count;
+    uint32_t capacity;
+} phys_grid_cell_t;
+typedef struct phys_spatial_grid {
+    phys_grid_cell_t *cells;
+    uint32_t          cell_count;
+    uint32_t          cell_mask;
+    float             cell_size;
+    float             inv_cell_size;
+    struct phys_frame_arena *arena;
+} phys_spatial_grid_t;
+void phys_spatial_grid_init(phys_spatial_grid_t *grid, uint32_t cell_count,
+                            float cell_size, struct phys_frame_arena *arena);
+void phys_spatial_grid_clear(phys_spatial_grid_t *grid);
+void phys_spatial_grid_insert(phys_spatial_grid_t *grid, uint32_t body_index,
+                              const phys_aabb_t *aabb);
+uint32_t phys_spatial_grid_query(const phys_spatial_grid_t *grid,
+                                 const phys_aabb_t *aabb,
+                                 uint32_t *out_indices, uint32_t max_results);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/spatial_update.h">
+#ifndef FERRUM_PHYSICS_SPATIAL_UPDATE_H
+#define FERRUM_PHYSICS_SPATIAL_UPDATE_H
+#include <stdint.h>
+struct phys_body;
+struct phys_collider;
+struct phys_sphere;
+struct phys_box;
+struct phys_capsule;
+struct phys_aabb;
+struct phys_spatial_grid;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_spatial_update_args {
+    const struct phys_body *bodies;
+    const struct phys_collider *colliders;
+    const struct phys_sphere *spheres;
+    const struct phys_box *boxes;
+    const struct phys_capsule *capsules;
+    struct phys_aabb *aabbs_out;
+    struct phys_spatial_grid *grid_out;
+    const uint8_t *active;
+    uint32_t body_count;
+} phys_spatial_update_args_t;
+void phys_stage_spatial_update(const phys_spatial_update_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/tgs_solve.h">
+#ifndef FERRUM_PHYSICS_TGS_SOLVE_H
+#define FERRUM_PHYSICS_TGS_SOLVE_H
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_island_list;
+struct phys_constraint;
+struct phys_body;
+typedef struct phys_velocity {
+    phys_vec3_t linear;
+    phys_vec3_t angular;
+} phys_velocity_t;
+typedef struct phys_tgs_solve_args {
+    const struct phys_island_list *islands;
+    struct phys_constraint *constraints;
+    const struct phys_body *bodies;
+    phys_velocity_t *velocities;
+    uint32_t body_count;
+    uint32_t iterations;
+} phys_tgs_solve_args_t;
+void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/tier_list.h">
+#ifndef FERRUM_PHYSICS_TIER_LIST_H
+#define FERRUM_PHYSICS_TIER_LIST_H
+#include <stdbool.h>
+#include <stdint.h>
+struct phys_frame_arena;
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_TIER_COUNT 6
+typedef enum phys_tier {
+    PHYS_TIER_0_DIRECT = 0,
+    PHYS_TIER_1_NEAR,
+    PHYS_TIER_2_VISIBLE,
+    PHYS_TIER_3_WORLD,
+    PHYS_TIER_4_BACKGROUND,
+    PHYS_TIER_5_SLEEPING,
+} phys_tier_t;
+typedef struct phys_tier_list {
+    uint32_t *indices;
+    uint32_t count;
+    uint32_t capacity;
+} phys_tier_list_t;
+typedef struct phys_tier_lists {
+    phys_tier_list_t tiers[PHYS_TIER_COUNT];
+} phys_tier_lists_t;
+void phys_tier_lists_init(phys_tier_lists_t *lists,
+                          struct phys_frame_arena *arena,
+                          uint32_t max_bodies);
+void phys_tier_list_add(phys_tier_list_t *list, uint32_t body_index);
+void phys_tier_list_clear(phys_tier_list_t *list);
+void phys_tier_lists_clear_all(phys_tier_lists_t *lists);
+uint32_t phys_tier_lists_total_active(const phys_tier_lists_t *lists);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/velocity_sync.h">
+#ifndef FERRUM_PHYSICS_VELOCITY_SYNC_H
+#define FERRUM_PHYSICS_VELOCITY_SYNC_H
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_island;
+struct phys_constraint;
+struct phys_body;
+typedef struct phys_velocity_sync_args {
+    const struct phys_island *island;
+    const struct phys_constraint *constraints;
+    struct phys_body *bodies;
+    const phys_vec3_t *position_deltas;
+    float dt;
+} phys_velocity_sync_args_t;
+void phys_velocity_sync_normals(const phys_velocity_sync_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/xpbd_solve.h">
+#ifndef FERRUM_PHYSICS_XPBD_SOLVE_H
+#define FERRUM_PHYSICS_XPBD_SOLVE_H
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_constraint;
+struct phys_body;
+struct phys_velocity;
+typedef struct phys_xpbd_solve_args {
+    struct phys_constraint *constraints;
+    uint32_t constraint_count;
+    const struct phys_body *bodies_in;
+    struct phys_body *bodies_out;
+    struct phys_velocity *velocities_out;
+    uint32_t body_count;
+    uint32_t iterations;
+    float omega;
+    float dt;
+} phys_xpbd_solve_args_t;
+void phys_stage_xpbd_solve(const phys_xpbd_solve_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/server/entity/net/pump.h">
+#ifndef FERRUM_SERVER_ENTITY_NET_PUMP_H
+#define FERRUM_SERVER_ENTITY_NET_PUMP_H
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include "ferrum/net/topic_channel.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define FR_SERVER_EVT_PLAYER_JOIN  1u
+#define FR_SERVER_EVT_PLAYER_SPAWN 2u
+#define FR_SERVER_EVT_ENTITY_JOIN  3u
+#define FR_SERVER_EVT_ENTITY_SPAWN 4u
+#define FR_SERVER_EVT_ENTITY_INPUT_ROT 5u
+#define FR_SERVER_EVT_ENTITY_INPUT_MOVE 6u
+#define FR_SERVER_EVT_ENTITY_INPUT_SPAWN 7u
+typedef struct fr_server_entity_net_pump_config_t {
+    uint16_t max_clients;
+    uint16_t tick_hz;
+    uint16_t expected_entities;
+    fr_topic_channel_t *inbound_topic;
+    fr_topic_channel_t *player_event_topic;
+    fr_topic_channel_t *entity_event_topic;
+    bool (*get_client_out_topics_cb)(void *user,
+                                    uint16_t client_id,
+                                    fr_topic_channel_t **out_reliable,
+                                    fr_topic_channel_t **out_unreliable);
+    void *io_user;
+} fr_server_entity_net_pump_config_t;
+typedef struct fr_server_entity_net_pump fr_server_entity_net_pump_t;
+fr_server_entity_net_pump_t *fr_server_entity_net_pump_create(const fr_server_entity_net_pump_config_t *cfg);
+void fr_server_entity_net_pump_destroy(fr_server_entity_net_pump_t *pump);
+bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t now_ms);
+bool fr_server_entity_net_pump_set_player_should_spawn_remote(fr_server_entity_net_pump_t *pump,
+                                                              uint16_t client_id,
+                                                              bool should_spawn_remote);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/demo/server_world.h">
+#ifndef FERRUM_DEMO_SERVER_WORLD_H
+#define FERRUM_DEMO_SERVER_WORLD_H
+#include "ferrum/physics/world.h"
+#include "ferrum/demo/input_move.h"
+#include "ferrum/demo/input_spawn.h"
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define DEMO_MAX_CLIENTS     4
+#define DEMO_MAX_BODIES    512
+#define DEMO_GROUND_BODY     0
+typedef struct demo_server_world {
+    phys_world_t physics;
+    uint32_t player_body[DEMO_MAX_CLIENTS];
+    float    player_yaw[DEMO_MAX_CLIENTS];
+    float    player_pitch[DEMO_MAX_CLIENTS];
+    uint8_t  player_connected[DEMO_MAX_CLIENTS];
+    uint32_t rng_state;
+    uint32_t ticks_since_spawn;
+    uint32_t dynamic_body_count;
+    float    stack_positions[64][2];
+    uint32_t stack_count;
+    uint8_t  body_shape_type[DEMO_MAX_BODIES];
+    uint32_t body_color_seed[DEMO_MAX_BODIES];
+} demo_server_world_t;
+int demo_server_world_init(demo_server_world_t *sw, uint32_t rng_seed);
+void demo_server_world_destroy(demo_server_world_t *sw);
+int demo_server_world_add_player(demo_server_world_t *sw);
+void demo_server_world_remove_player(demo_server_world_t *sw, int client_slot);
+void demo_server_world_apply_input(demo_server_world_t *sw, int client_slot,
+                                    const demo_input_move_t *input, float dt);
+uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
+                                      const demo_input_spawn_t *spawn);
+void demo_server_world_tick(demo_server_world_t *sw);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/solver_transition.h">
+#ifndef FERRUM_PHYSICS_SOLVER_TRANSITION_H
+#define FERRUM_PHYSICS_SOLVER_TRANSITION_H
+#include <stdint.h>
+struct phys_constraint;
+void phys_solver_transition_apply(struct phys_constraint *constraints,
+                                  uint32_t count,
+                                  const uint8_t *prev_modes,
+                                  float dt);
+void phys_solver_convert_tgs_to_xpbd(struct phys_constraint *c, float dt);
+void phys_solver_convert_xpbd_to_tgs(struct phys_constraint *c, float dt);
+#endif
+</file>
+
+<file path="include/ferrum/physics/stabilization.h">
+#ifndef FERRUM_PHYSICS_STABILIZATION_H
+#define FERRUM_PHYSICS_STABILIZATION_H
+#include <stdint.h>
+#include "ferrum/physics/tier_list.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_manifold;
+struct phys_body;
+typedef struct phys_stab_hint {
+    float friction_scale;
+    float restitution_scale;
+    float friction_boost;
+    float velocity_damping;
+} phys_stab_hint_t;
+typedef struct phys_stabilization_args {
+    const struct phys_manifold *manifolds;
+    uint32_t manifold_count;
+    const struct phys_body *bodies;
+    phys_stab_hint_t *hints_out;
+    float resting_velocity_threshold;
+} phys_stabilization_args_t;
+void phys_stage_stabilization(const phys_stabilization_args_t *args);
+void phys_tier_stabilization_params(phys_tier_t tier,
+                                    float *friction_boost,
+                                    float *velocity_damping);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/step_plan.h">
+#ifndef FERRUM_PHYSICS_STEP_PLAN_H
+#define FERRUM_PHYSICS_STEP_PLAN_H
+#include "ferrum/physics/tier_list.h"
+#include <stdbool.h>
+#include <stdint.h>
+struct phys_world;
+struct phys_game_state;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef enum phys_solver_mode {
+    PHYS_SOLVER_TGS  = 0,
+    PHYS_SOLVER_XPBD = 1,
+} phys_solver_mode_t;
+typedef struct phys_tier_params {
+    bool     active;
+    phys_solver_mode_t solver_mode;
+    uint32_t substeps;
+    uint32_t iterations;
+    float    compliance;
+    float    friction_boost;
+    float    restitution_scale;
+} phys_tier_params_t;
+typedef struct phys_step_plan {
+    uint32_t substeps;
+    uint32_t solver_iterations;
+    float    dt;
+    float    substep_dt;
+    phys_tier_params_t tier_params[PHYS_TIER_COUNT];
+} phys_step_plan_t;
+void phys_stage_step_plan(phys_step_plan_t *plan,
+                          const struct phys_world *world,
+                          const struct phys_game_state *game);
+phys_tier_params_t phys_get_tier_params(phys_tier_t tier);
+phys_solver_mode_t phys_tier_cross_solver_mode(phys_tier_t tier_a,
+                                               phys_tier_t tier_b);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/tick.h">
+#ifndef FERRUM_PHYSICS_TICK_H
+#define FERRUM_PHYSICS_TICK_H
+struct phys_world;
+struct phys_game_state;
+struct phys_job_context;
+#ifdef __cplusplus
+extern "C" {
+#endif
+void phys_world_tick(struct phys_world *world,
+                     const struct phys_game_state *game);
+void phys_world_tick_parallel(struct phys_world *world,
+                              const struct phys_game_state *game,
+                              struct phys_job_context *jobs);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/world.h">
+#ifndef FERRUM_PHYSICS_WORLD_H
+#define FERRUM_PHYSICS_WORLD_H
+#include "ferrum/physics/phys_types.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/collider.h"
+#include "ferrum/physics/aabb.h"
+#include "ferrum/physics/manifold_cache.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_impact_event;
+typedef struct phys_world_config {
+    uint32_t max_bodies;
+    uint32_t max_colliders;
+    uint32_t manifold_cache_size;
+    size_t   frame_arena_size;
+    float    fixed_dt;
+    phys_vec3_t gravity;
+    uint32_t default_substeps;
+    uint32_t default_solver_iterations;
+    float    baumgarte;
+    float    slop;
+    float    sleep_threshold_linear;
+    float    sleep_threshold_angular;
+    uint32_t sleep_delay_frames;
+} phys_world_config_t;
+typedef struct phys_world {
+    phys_world_config_t config;
+    phys_body_pool_t body_pool;
+    phys_collider_t *colliders;
+    phys_aabb_t     *aabbs;
+    phys_sphere_t  *spheres;
+    phys_box_t     *boxes;
+    phys_capsule_t *capsules;
+    uint32_t sphere_count;
+    uint32_t box_count;
+    uint32_t capsule_count;
+    phys_manifold_cache_t manifold_cache;
+    phys_frame_arena_t frame_arena;
+    uint64_t tick_count;
+    struct phys_impact_event *impact_events;
+    uint32_t impact_event_count;
+    uint32_t impact_event_capacity;
+    float    impact_threshold;
+} phys_world_t;
+phys_world_config_t phys_world_config_default(void);
+int phys_world_init(phys_world_t *world, const phys_world_config_t *config);
+void phys_world_destroy(phys_world_t *world);
+uint32_t phys_world_create_body(phys_world_t *world);
+void phys_world_destroy_body(phys_world_t *world, uint32_t index);
+phys_body_t *phys_world_get_body(phys_world_t *world, uint32_t index);
+uint32_t phys_world_body_count(const phys_world_t *world);
+void phys_world_set_sphere_collider(phys_world_t *world, uint32_t body_index,
+                                    float radius, phys_vec3_t offset);
+void phys_world_set_box_collider(phys_world_t *world, uint32_t body_index,
+                                 phys_vec3_t half_extents, phys_vec3_t offset,
+                                 phys_quat_t rotation);
+void phys_world_set_capsule_collider(phys_world_t *world, uint32_t body_index,
+                                     float radius, float half_height,
+                                     phys_vec3_t offset, phys_quat_t rotation);
+const phys_collider_t *phys_world_get_collider(const phys_world_t *world,
+                                               uint32_t body_index);
+const phys_aabb_t *phys_world_get_aabb(const phys_world_t *world,
+                                       uint32_t body_index);
+uint64_t phys_world_tick_count(const phys_world_t *world);
+const struct phys_impact_event *phys_world_get_impact_events(
+    const phys_world_t *world, uint32_t *out_count);
+void phys_world_clear_impact_events(phys_world_t *world);
+uint32_t phys_world_get_impact_events_for_body(
+    const phys_world_t *world, uint32_t body_idx,
+    struct phys_impact_event *out_events, uint32_t max_events);
+bool phys_world_get_strongest_impact(
+    const phys_world_t *world, uint32_t body_idx,
+    struct phys_impact_event *out_event);
+void phys_world_set_impact_threshold(phys_world_t *world, float threshold);
+float phys_world_get_impact_threshold(const phys_world_t *world);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/constraint.h">
+#ifndef FERRUM_PHYSICS_CONSTRAINT_H
+#define FERRUM_PHYSICS_CONSTRAINT_H
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+struct phys_body;
+struct phys_contact_point;
+typedef struct phys_jacobian_row {
+    phys_vec3_t J_va;
+    phys_vec3_t J_wa;
+    phys_vec3_t J_vb;
+    phys_vec3_t J_wb;
+    float effective_mass;
+    float bias;
+    float lambda;
+    float lambda_min;
+    float lambda_max;
+} phys_jacobian_row_t;
+#define PHYS_MAX_CONSTRAINT_ROWS 3
+typedef struct phys_constraint {
+    uint32_t body_a;
+    uint32_t body_b;
+    uint32_t manifold_idx;
+    uint8_t point_idx;
+    uint8_t row_count;
+    uint8_t solver_mode;
+    float friction;
+    float penetration;
+    phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS];
+} phys_constraint_t;
+void phys_constraint_build_contact(
+    phys_constraint_t *c,
+    const struct phys_body *body_a,
+    const struct phys_body *body_b,
+    const struct phys_contact_point *contact,
+    float friction,
+    float restitution,
+    float dt,
+    float baumgarte,
+    float slop);
+void phys_compute_tangent_basis(
+    phys_vec3_t normal,
+    phys_vec3_t *tangent1,
+    phys_vec3_t *tangent2);
+float phys_compute_effective_mass(
+    const phys_jacobian_row_t *row,
+    float inv_mass_a, const phys_vec3_t *inv_inertia_a,
+    float inv_mass_b, const phys_vec3_t *inv_inertia_b);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/tier_classify.h">
+#ifndef FERRUM_PHYSICS_TIER_CLASSIFY_H
+#define FERRUM_PHYSICS_TIER_CLASSIFY_H
+#include <stdint.h>
+struct phys_body;
+struct phys_game_state;
+struct phys_tier_lists;
+struct phys_frame_arena;
+#ifdef __cplusplus
+extern "C" {
+#endif
+#define PHYS_TIER_HYSTERESIS_FRAMES 8
+typedef struct phys_tier_classify_args {
+    const struct phys_body *bodies;
+    const uint8_t *active;
+    uint32_t body_count;
+    const struct phys_game_state *game;
+    struct phys_tier_lists *tier_lists_out;
+    struct phys_frame_arena *arena;
+    uint8_t *tier_out;
+    const uint8_t *visibility_set;
+    uint8_t *repromotion_flags;
+} phys_tier_classify_args_t;
+void phys_stage_tier_classify(const phys_tier_classify_args_t *args);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+<file path="include/ferrum/physics/narrowphase.h">
+#ifndef FERRUM_PHYSICS_NARROWPHASE_H
+#define FERRUM_PHYSICS_NARROWPHASE_H
+#include <stdbool.h>
+#include <stdint.h>
+#include "ferrum/physics/phys_types.h"
+#include "ferrum/physics/manifold.h"
+struct phys_body;
+struct phys_collider;
+struct phys_sphere;
+struct phys_box;
+struct phys_capsule;
+struct phys_collision_pair;
+#ifdef __cplusplus
+extern "C" {
+#endif
+typedef struct phys_contact_candidate {
+    uint32_t body_a;
+    uint32_t body_b;
+    struct phys_contact_point contacts[4];
+    uint8_t contact_count;
+} phys_contact_candidate_t;
+typedef struct phys_narrowphase_args {
+    const struct phys_body *bodies;
+    const struct phys_collider *colliders;
+    const struct phys_sphere *spheres;
+    const struct phys_box *boxes;
+    const struct phys_capsule *capsules;
+    const struct phys_collision_pair *pairs;
+    uint32_t pair_count;
+    phys_contact_candidate_t *candidates_out;
+    uint32_t *candidate_count_out;
+    uint32_t max_candidates;
+} phys_narrowphase_args_t;
+void phys_stage_narrowphase(const phys_narrowphase_args_t *args);
+bool phys_sphere_vs_sphere(
+    phys_vec3_t center_a, float radius_a,
+    phys_vec3_t center_b, float radius_b,
+    struct phys_contact_point *contact_out);
+bool phys_sphere_vs_box(
+    phys_vec3_t sphere_center, float sphere_radius,
+    phys_vec3_t box_center, phys_quat_t box_rotation,
+    phys_vec3_t box_half_extents,
+    struct phys_contact_point *contact_out);
+bool phys_sphere_vs_capsule(
+    phys_vec3_t sphere_center, float sphere_radius,
+    phys_vec3_t capsule_center, phys_quat_t capsule_rotation,
+    float capsule_radius, float capsule_half_height,
+    struct phys_contact_point *contact_out);
+#ifdef __cplusplus
+}
+#endif
+#endif
+</file>
+
+</files>
