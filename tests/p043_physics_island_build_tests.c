@@ -199,10 +199,10 @@ static int test_island_two_islands(void)
 
 /**
  * Body 0 is static; constraints 0-1 and 0-2.
- * Since static bodies are filtered, neither constraint survives filtering.
- * Bodies 1 and 2 end up in separate islands (or no islands if isolated
- * bodies aren't tracked — phys_island_list_build only tracks connected bodies).
- * With filtering, 0 constraints remain → 0 islands.
+ * Static bodies do NOT merge islands, so bodies 1 and 2 end up in
+ * separate islands.  Each island contains one dynamic body and its
+ * constraint against the static body (so the solver can resolve
+ * static-dynamic contacts like ground collisions).
  */
 static int test_island_static_breaks(void)
 {
@@ -234,17 +234,18 @@ static int test_island_static_breaks(void)
 
     phys_stage_island_build(&args);
 
-    /*
-     * All constraints involve static body 0, so after filtering no
-     * constraints remain.  phys_island_list_build produces 0 islands
-     * when constraint_count is 0.  Bodies 1 and 2 are not merged.
-     */
-    ASSERT_UINT_EQ(0, islands.count);
+    /* Two separate islands: one for body 1, one for body 2.
+     * Each has 1 constraint against the static body. */
+    ASSERT_UINT_EQ(2, islands.count);
 
-    /* Bodies 1 and 2 must NOT be in the same island. */
+    /* Bodies 1 and 2 must be in different islands. */
     uint32_t i1 = find_island_of_body(&islands, 1);
     uint32_t i2 = find_island_of_body(&islands, 2);
-    ASSERT_TRUE(i1 == UINT32_MAX || i2 == UINT32_MAX || i1 != i2);
+    ASSERT_TRUE(i1 != UINT32_MAX && i2 != UINT32_MAX && i1 != i2);
+
+    /* Each island should have 1 constraint. */
+    ASSERT_UINT_EQ(1, islands.islands[i1].constraint_count);
+    ASSERT_UINT_EQ(1, islands.islands[i2].constraint_count);
 
     phys_frame_arena_destroy(&arena);
     return 0;

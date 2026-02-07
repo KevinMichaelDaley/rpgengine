@@ -1021,6 +1021,15 @@ int main(int argc, char **argv) {
                 color_from_owner_(e->owner_client_id, rgb);
                 if (e->entity_id == self_entity_id) {
                     rgb[0] = 1.0f; rgb[1] = 1.0f; rgb[2] = 1.0f;
+                } else if (e->owner_client_id == 0u) {
+                    /* Physics bodies have no owner — derive color from entity_id
+                     * so they're visible against the dark background. */
+                    color_from_owner_((uint16_t)(e->entity_id & 0xFFFFu), rgb);
+                    /* Ensure minimum brightness. */
+                    float brightness = rgb[0] * 0.299f + rgb[1] * 0.587f + rgb[2] * 0.114f;
+                    if (brightness < 0.25f) {
+                        rgb[0] += 0.3f; rgb[1] += 0.3f; rgb[2] += 0.3f;
+                    }
                 }
                 if (shader_uniform_set_vec3(&gl.uniforms, &gl.program, "u_color", rgb) != SHADER_UNIFORM_OK) {
                     fprintf(stderr, "shader_uniform_set_vec3 failed for u_color\n");
