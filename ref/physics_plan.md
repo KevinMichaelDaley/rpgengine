@@ -680,7 +680,8 @@ void phys_constraint_build_contact(phys_constraint_t *c,
 **Acceptance Criteria:**
 - [ ] Contact constraint generates 1 normal + 2 friction rows
 - [ ] Effective mass computed correctly for point constraints
-- [ ] Bias includes Baumgarte stabilization and restitution
+- [ ] Bias includes Baumgarte velocity-level stabilization and restitution
+  (position-level correction is handled by position projection post-solve)
 
 ---
 
@@ -1203,7 +1204,8 @@ typedef struct phys_constraint_build_args_t {
     uint32_t *constraint_count_out;
     uint32_t max_constraints;
     float dt;
-    float baumgarte;
+    float baumgarte;        // velocity-level bias factor
+                            // (position correction handled by position projection post-solve)
 } phys_constraint_build_args_t;
 
 void phys_stage_constraint_build(const phys_constraint_build_args_t *args);
@@ -2183,9 +2185,17 @@ Generate contacts for close-but-not-touching pairs to prevent tunneling.
 
 ---
 
-### Step 7.3: Position-Level Solve (Split Impulse)
+### Step 7.3: Position-Level Solve (Sparse Position Projection) ✅ IMPLEMENTED
 
-Separate velocity and position correction for cleaner stacking.
+Position projection replaces Baumgarte-only position correction with a
+per-island dense LDL^T solve for T0/T1 bodies.  See:
+- `include/ferrum/physics/position_projection.h`
+- `include/ferrum/physics/velocity_sync.h`
+- `src/physics/solver/position_projection/`
+- `tests/p083_physics_position_projection_tests.c`
+
+Velocity synchronization preserves tangential friction velocity from TGS
+by replacing only the constraint-normal velocity component.
 
 ---
 

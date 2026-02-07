@@ -72,6 +72,12 @@ phys_stage_xpbd_solve                            Phys.Solve.IteratingXPBD       
   phys_solver_convert_tgs_to_xpbd               Phys.Solve.ConvertingTGStoXPBD           -
   phys_solver_convert_xpbd_to_tgs               Phys.Solve.ConvertingXPBDtoTGS           -
 
+# STAGE 11c: POSITION PROJECTION (T0/T1, per substep, after TGS solve)
+# Per-island dense LDL^T solve replaces Baumgarte for position correction.
+phys_position_projection                         Phys.Solve.ProjectingPositions           2.0
+  phys_dense_ldlt_solve                          Phys.Solve.FactoringLDLT                -
+phys_velocity_sync_normals                       Phys.Solve.SyncingNormals                1.0
+
 # STAGE 12: INTEGRATE (per substep)
 phys_stage_integrate                             Phys.Integrate.UpdatingPositions         5.0
 
@@ -113,6 +119,8 @@ phys_snapshot_decode_delta                       Phys.Net.DecodingDelta         
 # TGS Solve (11a)             6.0             2          12.0
 # XPBD Solve (11b)            9.0             2          18.0
 # (11a/11b concurrent: effective = max(12,18) = 18.0 wall-clock)
+# Pos Projection (11c)        1.5             2           3.0
+# (11c runs after 11a, T0/T1 only; includes velocity sync)
 # Integrate (12)               2.5             2           5.0
 # Cache Commit (13)            1.0             2           2.0
 # Buffer Swap (14)              -              1           0.5
@@ -133,6 +141,8 @@ stabilization_job                                Phys.Job.Stabilization         
 constraint_build_job                             Phys.Job.ConstraintBuild                 -
 tgs_solve_island_job                             Phys.Job.SolveIsland                     -
 xpbd_solve_body_job                              Phys.Job.SolveXPBD                       -
+position_projection_job                          Phys.Job.PosProjection                   -
+velocity_sync_job                                Phys.Job.VelocitySync                    -
 integrate_job                                    Phys.Job.Integrate                       -
 
 # BARRIER ZONES (synchronization points)
@@ -147,4 +157,5 @@ phys_wait_stab_done                              Phys.Barrier.StabDone          
 phys_wait_constraint_done                        Phys.Barrier.ConstraintDone              -
 phys_wait_solve_done                             Phys.Barrier.SolveDone                   -
 phys_wait_xpbd_done                              Phys.Barrier.XPBDDone                    -
+phys_wait_projection_done                        Phys.Barrier.ProjectionDone              -
 phys_wait_integrate_done                         Phys.Barrier.IntegrateDone               -

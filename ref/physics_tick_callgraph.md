@@ -584,7 +584,9 @@ void phys_world_tick(phys_world_t *world)
 │    │       uint32_t *constraint_count_out;      [OUT] count
 │    │       uint32_t max_constraints;            [IN]  buffer size
 │    │       float dt;                            [IN]  timestep
-│    │       float baumgarte;                     [IN]  penetration correction
+│    │       float baumgarte;                     [IN]  velocity-level bias factor
+│    │                                            //     (position correction now handled
+│    │                                            //      by position projection post-solve)
 │    │   }
 │    │
 │    │   typedef struct phys_jacobian_row_t {
@@ -595,14 +597,17 @@ void phys_world_tick(phys_world_t *world)
 │    │       float effective_mass; // 1 / (J M^-1 J^T)
 │    │       float bias;           // velocity bias (baumgarte + restitution)
 │    │       float lambda;         // accumulated impulse
-│    │       float lambda_min;     // clamp min (0 for normal, -inf for friction)
-│    │       float lambda_max;     // clamp max
+│    │       float lambda_min;     // clamp min (0 for normal, -µ*λ_n for friction)
+│    │       float lambda_max;     // clamp max (+∞ for normal, +µ*λ_n for friction)
 │    │   }
 │    │
 │    │   typedef struct phys_constraint_t {
 │    │       uint32_t body_a;
 │    │       uint32_t body_b;
 │    │       uint8_t row_count;   // 3 for contact (normal + 2 friction)
+│    │       uint8_t solver_mode; // 0=TGS, 1=XPBD
+│    │       float friction;      // combined Coulomb friction coefficient µ
+│    │       float penetration;   // raw depth for position projection
 │    │       phys_jacobian_row_t rows[3];
 │    │   }
 │    │
@@ -639,6 +644,10 @@ void phys_world_tick(phys_world_t *world)
 │    │   │   │   │   │   ├── effective_mass = 1 / (J M^-1 J^T)
 │    │   │   │   │   │   ├── bias = baumgarte * penetration / dt
 │    │   │   │   │   │       + restitution * hints[i].restitution_scale * v_rel_n
+│    │   │   │   │   │       (velocity-level only; position correction done by
+│    │   │   │   │   │        position projection post-solve for T0/T1)
+│    │   │   │   │   │   ├── constraint.penetration = raw penetration depth
+│    │   │   │   │   │       (stored for position projection to use post-solve)
 │    │   │   │   │   │   ├── lambda = cached_normal_impulse (warmstart)
 │    │   │   │   │   │   ├── lambda_min = 0 (no pull)
 │    │   │   │   │   │   └── lambda_max = +∞
@@ -885,6 +894,80 @@ void phys_world_tick(phys_world_t *world)
 │   │ void phys_solver_convert_tgs_to_xpbd(phys_constraint_t *c, float dt)│
 │   │ void phys_solver_convert_xpbd_to_tgs(phys_constraint_t *c, float dt)│
 │   └────────────────────────────────────────────────────────────────────────┘
+│
+├──────────────────────────────────────────────────────────────────────────────
+│ STAGE 11c: POSITION PROJECTION + VELOCITY SYNC (T0/T1) — 50-200 µs
+├──────────────────────────────────────────────────────────────────────────────
+│
+│ Runs per-island after TGS solve.  Replaces Baumgarte as the primary
+│ mechanism for correcting positional penetration in near-field bodies.
+│
+│ Baumgarte bias (Stage 9) still provides velocity-level convergence
+│ assistance; position projection corrects remaining geometric overlap.
+│
+├──▶ phys_position_projection(&projection_args)   // per island
+│    │
+│    │   void phys_position_projection(const phys_position_projection_args_t *args)
+│    │
+│    │   typedef struct phys_position_projection_args_t {
+│    │       const phys_island_t *island;         [IN]  island to project
+│    │       const phys_constraint_t *constraints;[IN]  global constraint array
+│    │       const phys_body_t *bodies;           [IN]  global body array
+│    │       uint32_t body_count;                 [IN]  total body count
+│    │       float dt;                            [IN]  timestep
+│    │       float slop;                          [IN]  penetration slop
+│    │       phys_frame_arena_t *arena;           [IN]  arena for allocations
+│    │       phys_position_projection_result_t *result; [OUT]
+│    │   }
+│    │
+│    │   typedef struct phys_position_projection_result_t {
+│    │       bool success;
+│    │       phys_vec3_t *position_deltas;        [OUT] per-body Δq (arena)
+│    │       phys_velocity_t *velocity_deltas;    [OUT] per-body Δq/dt (arena)
+│    │   }
+│    │
+│    │   ALGORITHM:
+│    │   ├── Extract Φ(q) from each normal constraint row (penetration - slop)
+│    │   ├── Build dense A = J M⁻¹ Jᵀ (nc × nc, symmetric)
+│    │   ├── Solve A · λ = −Φ(q) via dense LDL^T factorization
+│    │   │   └── phys_dense_ldlt_solve(A, rhs, lambda, nc)
+│    │   ├── Clamp λ ≥ 0 (contacts only push apart)
+│    │   └── Compute Δq = M⁻¹ Jᵀ λ (per-body position corrections)
+│    │
+│    │   NOTES:
+│    │   - Dense O(nc³) solve is fast for small T0/T1 islands (< 50 constraints)
+│    │   - Sleeping islands return zero corrections immediately
+│    │   - All allocations from frame arena (no heap)
+│    │
+│    └── OUTPUT: position_deltas[], velocity_deltas[]
+│
+├──▶ phys_velocity_sync_normals(&sync_args)   // per island
+│    │
+│    │   void phys_velocity_sync_normals(const phys_velocity_sync_args_t *args)
+│    │
+│    │   typedef struct phys_velocity_sync_args_t {
+│    │       const phys_island_t *island;         [IN]
+│    │       const phys_constraint_t *constraints;[IN]
+│    │       phys_body_t *bodies;                 [IN/OUT] velocities modified
+│    │       const phys_vec3_t *position_deltas;  [IN]  from projection result
+│    │       float dt;                            [IN]
+│    │   }
+│    │
+│    │   ALGORITHM:
+│    │   ├── For each dynamic body in island:
+│    │   │   ├── Compute v_corr = position_deltas[idx] / dt
+│    │   │   ├── For each constraint touching this body:
+│    │   │   │   ├── Extract contact normal from rows[0].J_vb
+│    │   │   │   ├── Remove old normal component: v -= (v · n) * n
+│    │   │   │   └── Add correction normal component: v += (v_corr · n) * n
+│    │   │   └── Result: tangential friction velocity preserved, normal corrected
+│    │   └── Skip static/kinematic bodies (inv_mass == 0)
+│    │
+│    │   WHY: Naive v = Δq/dt would destroy tangential friction velocity
+│    │   from TGS.  Normal-only replacement preserves friction quality.
+│    │   See ref/sparse_stabilization.tex Section 5b.
+│    │
+│    └── OUTPUT: bodies[].linear_vel updated in place
 │
 ├──────────────────────────────────────────────────────────────────────────────
 │ STAGE 12: INTEGRATE + SLEEP [PARALLEL] — 20-120 µs
@@ -1314,10 +1397,16 @@ TICK PROLOGUE
 ║               └───────────┘                └───────────┘                     ║
 ║                                                   │                          ║
 ║                                                   ▼                          ║
-║  islands      ┌───────────┐   velocities   ┌───────────┐   bodies_out        ║
-║  + const ───▶ │ TGS Solve │ ─────────────▶ │ Integrate │ ────────────▶       ║
-║               │ [PARALLEL]│                │ [PARALLEL]│                     ║
-║               └───────────┘                └───────────┘                     ║
+║  islands      ┌───────────┐               ┌───────────┐   velocities'        ║
+║  + const ───▶ │ TGS Solve │ ─────────────▶ │PosProject │ ────────────▶       ║
+║               │ [PARALLEL]│                │+ VelSync  │                     ║
+║               └───────────┘                └─────┬─────┘                     ║
+║                                                  │                          ║
+║                                                  ▼                          ║
+║  velocities   ┌───────────┐   bodies_out                                     ║
+║  ───────────▶ │ Integrate │ ────────────▶                                    ║
+║               │ [PARALLEL]│                                                  ║
+║               └───────────┘                                                  ║
 ║                                                   │                          ║
 ║                                                   ▼                          ║
 ║  manifolds    ┌───────────┐   cache'                                         ║
@@ -1356,6 +1445,8 @@ TICK EPILOGUE
 | Island Build | `include/ferrum/physics/island_build.h` | `src/physics/stages/island_build.c` | `tests/physics/island_build_tests.c` |
 | TGS Solve | `include/ferrum/physics/tgs_solve.h` | `src/physics/solver/tgs_solve.c` | `tests/physics/tgs_solve_tests.c` |
 | XPBD Solve | `include/ferrum/physics/xpbd_solve.h` | `src/physics/solver/xpbd_solve.c` | `tests/physics/xpbd_solve_tests.c` |
+| Position Projection | `include/ferrum/physics/position_projection.h` | `src/physics/solver/position_projection/position_projection.c`, `ldlt_solve.c` | `tests/p083_physics_position_projection_tests.c` |
+| Velocity Sync | `include/ferrum/physics/velocity_sync.h` | `src/physics/solver/position_projection/velocity_sync.c` | `tests/p083_physics_position_projection_tests.c` |
 | Solver Transition | — (internal) | `src/physics/solver/solver_transition.c` | `tests/physics/solver_transition_tests.c` |
 | Integrate | `include/ferrum/physics/integrate.h` | `src/physics/stages/integrate.c` | `tests/physics/integrate_tests.c` |
 | Cache Commit | `include/ferrum/physics/cache_commit.h` | `src/physics/stages/cache_commit.c` | `tests/physics/cache_commit_tests.c` |
@@ -1383,6 +1474,7 @@ This call graph implements all stages defined in `ref/physics_plan.md`:
 | Phase 1, Step 1.10 (Stage 9) | STAGE 9: CONSTRAINT BUILD |
 | Phase 1, Step 1.11 (Stage 10) | STAGE 10: ISLAND BUILD (T0/T1 ONLY) |
 | Phase 1, Step 1.12 (Stage 11a/11b) | STAGE 11a: TGS SOLVE / STAGE 11b: XPBD SOLVE |
+| (Stage 11c) | STAGE 11c: POSITION PROJECTION + VELOCITY SYNC |
 | Phase 1, Step 1.13 (Stage 12) | STAGE 12: INTEGRATE |
 | Phase 1, Step 1.14 (Stage 13) | STAGE 13: CACHE COMMIT |
 | Phase 1, Step 1.15 (Stage 14) | STAGE 14: BUFFER SWAP |

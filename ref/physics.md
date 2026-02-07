@@ -50,6 +50,10 @@ Stabilization produces hints, not forces:
 - optional tiny tangential soft clamp
 - tier-dependent sleep thresholds
 
+Friction uses a Coulomb cone model: friction constraint lambda bounds are
+clamped to ±µ · λ_normal · friction_scale, where µ is the combined friction
+coefficient and friction_scale incorporates tier-dependent boosting.
+
 This directly shapes:
 - manifold caching quality
 - solver convergence
@@ -211,7 +215,46 @@ Cache storage:
   stage) and overwrites the destination field. The last_solver_mode
   flag tells constraint build which conversion to apply.
 
-F.3) WHY THIS SCALES
+F.3) POSITION PROJECTION (REPLACES BAUMGARTE FOR T0/T1)
+
+  TGS solves velocity-level constraints, but velocity-level Baumgarte bias
+  alone produces soft, drifty position correction that causes visible
+  penetration under stacking loads.
+
+  Position projection is a post-solve pass that directly corrects
+  penetration at the position level for T0/T1 islands. It runs per-island
+  after the TGS solve and before integration:
+
+  1. For each island, extract the penetration depth Φ(q) from each normal
+     constraint row (row 0), applying slop threshold.
+  2. Assemble the per-island Schur complement:
+       A = J · M⁻¹ · Jᵀ    (dense, nc × nc where nc = island constraint count)
+  3. Solve for correction multipliers:
+       A · λ = −Φ(q)         (dense LDL^T factorization)
+  4. Clamp λ ≥ 0 (contacts only push apart).
+  5. Compute position corrections:
+       Δq = M⁻¹ · Jᵀ · λ
+  6. Velocity synchronization: replace only the constraint-normal component
+     of each body's velocity with the correction velocity (Δq/dt).
+     Tangential velocity from TGS friction solving is preserved.
+
+  The velocity sync step (step 6) is critical: naive v = Δq/dt would
+  destroy the tangential friction velocity that TGS computed. Instead,
+  for each body, we scan its contact normals, strip the old normal
+  component of velocity, and replace it with the correction's normal
+  component. See ref/sparse_stabilization.tex Section 5b.
+
+  Implementation:
+    - position_projection.h / position_projection.c: main entry point
+    - ldlt_solve.c: dense LDL^T factorization (O(nc³), fast for small islands)
+    - velocity_sync.h / velocity_sync.c: normal-component replacement
+
+  Note: Baumgarte bias is still computed in constraint_build.c and used
+  by TGS for velocity-level warm convergence. Position projection
+  supplements it with direct geometric correction. The `penetration`
+  field on phys_constraint_t stores the raw depth for this purpose.
+
+F.4) WHY THIS SCALES
 
   T0/T1 (TGS):
     - Typically < 50 near-field bodies → small islands
@@ -235,7 +278,7 @@ F.3) WHY THIS SCALES
   for K frames), transitions are rare—typically single-digit bodies
   per tick during steady state.
 
-F.4) CONSTRAINT SPECIALIZATION
+F.5) CONSTRAINT SPECIALIZATION
 
   The generic constraint processes 3 Jacobian rows per contact point
   (1 normal + 2 friction tangents). Two common cases have fast-paths:
@@ -416,6 +459,7 @@ THOUSANDS OF BODIES, SPARSE GRAPH:
 - broadphase + halo:  0.5–2.0 ms
 - narrowphase/manifold: 0.5–3.0 ms
 - solve (TGS T0/T1): 0.1–0.5 ms (small island count)
+- position projection (T0/T1): 0.05–0.2 ms (dense LDL^T per island)
 - solve (XPBD T2–T4): 0.3–2.0 ms (parallel over bodies)
 - background amortized: ≤0.5–1.0 ms
 
@@ -425,6 +469,7 @@ THOUSANDS OF BODIES, SPARSE GRAPH:
 
 - Pipeline shape is fixed:
     Contacts → Manifolds → Constraints → Islands(T0/T1) → Solve(TGS|XPBD)
+    → PositionProjection(T0/T1) → Integrate
 - Stabilization is parameterized, not hard-coded.
 - Tiers affect scheduling, quality, and solver mode, not correctness.
 - New features (joints, articulation, fracture, integrity):
@@ -775,6 +820,28 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
                                               │
                                               ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│ STAGE 11c: POSITION PROJECTION + VELOCITY SYNC (T0/T1)                [SYNC] │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ read:  islands[], constraints[] (T0/T1), bodies_curr                        │
+│ write: position_deltas[], bodies_curr (velocity update in place)            │
+│                                                                             │
+│ Per-island dense position projection (replaces Baumgarte position drift):   │
+│   1. Extract Φ(q) from normal constraint rows (penetration - slop)          │
+│   2. Assemble A = J M⁻¹ Jᵀ (dense, per-island)                            │
+│   3. Solve A · λ = −Φ(q) via LDL^T factorization                           │
+│   4. Clamp λ ≥ 0, compute Δq = M⁻¹ Jᵀ λ                                   │
+│   5. Velocity sync: replace normal component of v with Δq/dt               │
+│      (preserves tangential friction velocity from TGS)                      │
+│                                                                             │
+│ Sleeping islands produce zero corrections (fast path).                      │
+│ All allocations from frame arena.                                           │
+│                                                                             │
+│ Single job per island (sequential within island, parallel across islands).  │
+│ Counter: projection_done                                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
 │ STAGE 12: INTEGRATE + SLEEP                                        [PARALLEL]│
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ read:  velocities_solved[], bodies_curr (positions)                         │
@@ -908,6 +975,14 @@ PHYSICS TICK (30 Hz) - COMPLETE DATAFLOW
     │ M per island)  │   │ N per 128 body) │                 │
     └───────┬────────┘   └───────┬────────┘                 │
             │                    │                          │
+            ▼                    │                          │
+    ┌────────────────┐           │                          │
+    │PosProjection   │           │                          │
+    │+ VelocitySync  │           │                          │
+    │(T0/T1, per     │           │                          │
+    │ island)        │           │                          │
+    └───────┬────────┘           │                          │
+            │                    │                          │
             └────────┬───────────┘                          │
                      ▼                                      │
     ┌────────────────┐                                      │
@@ -992,6 +1067,8 @@ job_counter_destroy(&narrow_done);
 │ stab_hints            [~5k × 8 bytes = 40 KB]              │
 │ constraints           [~15k × 96 bytes = 1.44 MB]          │
 │ islands               [~500 × 16 bytes = 8 KB]             │
+│ pos_projection        [per-island: Φ, A, rhs, λ, Δq, Δv]  │
+│   (dense nc×nc matrix + vectors, ~few KB per island)       │
 │ impact_events         [~1k × 32 bytes = 32 KB]             │
 ├─────────────────────────────────────────────────────────────┤
 │                    TOTAL TRANSIENT: ~3-4 MB                 │
