@@ -1,6 +1,6 @@
 ---
 id: rpg-7jri
-status: open
+status: closed
 deps: [rpg-und4, rpg-ecx9]
 links: []
 created: 2026-02-07T01:50:37Z

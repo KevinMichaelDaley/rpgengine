@@ -1,6 +1,6 @@
 ---
 id: demo-001
-status: in_progress
+status: closed
 deps: [phys-400]
 links: []
 created: 2026-02-06T14:17:00.000000000-08:00
