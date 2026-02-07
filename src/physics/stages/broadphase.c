@@ -49,26 +49,45 @@ void phys_stage_broadphase(const phys_broadphase_args_t *args) {
             for (uint32_t j = 0; j < cand_count; ++j) {
                 uint32_t body_b = candidates[j];
 
-                /* Skip self-pairs and enforce canonical order. */
-                if (body_a >= body_b) {
+                /* Skip self-pairs. */
+                if (body_a == body_b) {
                     continue;
                 }
 
+                /* Canonical order: lo < hi.  For dynamic-dynamic pairs,
+                 * skip when body_a > body_b to avoid duplicates (the
+                 * reverse iteration will emit this pair).  For pairs
+                 * involving a static body we always emit because
+                 * static bodies are not in tier lists. */
+                uint32_t lo, hi;
+                if (body_a < body_b) {
+                    lo = body_a;
+                    hi = body_b;
+                } else {
+                    /* body_a > body_b.  Only emit if body_b is static
+                     * (since it won't be iterated from a tier list). */
+                    if (!phys_body_is_static(&args->bodies[body_b])) {
+                        continue; /* dynamic-dynamic: skip, will be emitted when body_b iterates */
+                    }
+                    lo = body_b;
+                    hi = body_a;
+                }
+
                 /* Skip static-static pairs (both inv_mass == 0, non-kinematic). */
-                if (phys_body_is_static(&args->bodies[body_a]) &&
-                    phys_body_is_static(&args->bodies[body_b])) {
+                if (phys_body_is_static(&args->bodies[lo]) &&
+                    phys_body_is_static(&args->bodies[hi])) {
                     continue;
                 }
 
                 /* Precise AABB overlap test. */
-                if (!phys_aabb_overlap(aabb_a, &args->aabbs[body_b])) {
+                if (!phys_aabb_overlap(&args->aabbs[lo], &args->aabbs[hi])) {
                     continue;
                 }
 
                 /* Emit pair if buffer has room. */
                 if (pair_count < args->max_pairs) {
-                    args->pairs_out[pair_count].body_a = body_a;
-                    args->pairs_out[pair_count].body_b = body_b;
+                    args->pairs_out[pair_count].body_a = lo;
+                    args->pairs_out[pair_count].body_b = hi;
                     pair_count++;
                 }
             }

@@ -531,7 +531,7 @@ static int add_entity_(struct entity_view **entities, size_t *count, size_t *cap
     e->entity_id = entity_id;
     e->owner_client_id = owner_client_id;
     e->shape_type = 0; /* box for now */
-    e->scale = 0.5f;
+    e->scale = 1.0f;
     fr_pose_interpolator_reset(&e->pose);
     (void)fr_pose_interpolator_push(&e->pose, recv_time_s, pos, rot);
     *count += 1u;
@@ -897,9 +897,9 @@ int main(int argc, char **argv) {
             memset(&spawn_msg, 0, sizeof(spawn_msg));
             spawn_msg.event_id = input_event_id++;
             /* Random half-extents in mm (100..500 mm = 0.1..0.5 m). */
-            spawn_msg.half_x_mm = (uint16_t)(100u + (xorshift32_(&rng) % 400u));
-            spawn_msg.half_y_mm = (uint16_t)(100u + (xorshift32_(&rng) % 400u));
-            spawn_msg.half_z_mm = (uint16_t)(100u + (xorshift32_(&rng) % 400u));
+            spawn_msg.half_x_mm = (uint16_t)(300u + (xorshift32_(&rng) % 700u));
+            spawn_msg.half_y_mm = (uint16_t)(300u + (xorshift32_(&rng) % 700u));
+            spawn_msg.half_z_mm = (uint16_t)(300u + (xorshift32_(&rng) % 700u));
             spawn_msg.color_seed = xorshift32_(&rng);
 
             uint8_t spawn_payload[DEMO_INPUT_SPAWN_PAYLOAD_SIZE];

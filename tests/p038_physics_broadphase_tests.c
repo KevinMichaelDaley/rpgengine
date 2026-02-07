@@ -420,6 +420,61 @@ static int test_broadphase_null_safe(void) {
     return 0;
 }
 
+/**
+ * Test 8: Static body (not in tier list) overlapping a dynamic body
+ * that IS in a tier list → 1 pair with canonical order.
+ *
+ * This simulates the ground-plane scenario: body 0 is static and
+ * inserted into the spatial grid but not into any tier list.  Body 1
+ * is dynamic and in T0.  The broadphase should still emit pair (0,1).
+ */
+static int test_broadphase_static_dynamic_pair(void) {
+    phys_body_t bodies[2];
+    make_static_at(&bodies[0], 0, 0, 0);          /* ground plane */
+    make_dynamic_at(&bodies[1], 1.0f, 0, 0.5f, 0); /* sitting on ground */
+    bodies[1].tier = PHYS_TIER_0_DIRECT;
+
+    phys_aabb_t aabbs[2];
+    compute_sphere_aabb(&aabbs[0], &bodies[0]);
+    compute_sphere_aabb(&aabbs[1], &bodies[1]);
+
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, TEST_ARENA_SIZE);
+
+    phys_spatial_grid_t grid;
+    phys_spatial_grid_init(&grid, TEST_GRID_CELLS, TEST_GRID_CELL_SIZE, &arena);
+    phys_spatial_grid_insert(&grid, 0, &aabbs[0]);
+    phys_spatial_grid_insert(&grid, 1, &aabbs[1]);
+
+    /* Only the dynamic body goes into a tier list.  The static body
+     * is in the grid but NOT in any tier list — matching the real
+     * pipeline where tier_classify skips static bodies. */
+    phys_tier_lists_t lists;
+    phys_tier_lists_init(&lists, &arena, 2);
+    phys_tier_list_add(&lists.tiers[PHYS_TIER_0_DIRECT], 1);
+
+    phys_collision_pair_t pairs[TEST_MAX_PAIRS];
+    uint32_t pair_count = 0;
+
+    phys_broadphase_args_t args = {
+        .bodies = bodies,
+        .aabbs = aabbs,
+        .grid = &grid,
+        .tier_lists = &lists,
+        .pairs_out = pairs,
+        .max_pairs = TEST_MAX_PAIRS,
+        .pair_count_out = &pair_count,
+    };
+    phys_stage_broadphase(&args);
+
+    ASSERT_INT_EQ(1, (int)pair_count);
+    ASSERT_INT_EQ(0, (int)pairs[0].body_a);
+    ASSERT_INT_EQ(1, (int)pairs[0].body_b);
+
+    phys_frame_arena_destroy(&arena);
+    return 0;
+}
+
 /* ── Runner ─────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -435,6 +490,7 @@ int main(void) {
     RUN_TEST(test_broadphase_skips_sleeping);
     RUN_TEST(test_broadphase_static_static_excluded);
     RUN_TEST(test_broadphase_null_safe);
+    RUN_TEST(test_broadphase_static_dynamic_pair);
 
     printf("\n%d/%d tests passed\n", test_count - fail_count, test_count);
     return fail_count ? 1 : 0;

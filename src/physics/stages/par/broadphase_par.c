@@ -69,19 +69,35 @@ static void broadphase_par_batch_job(void *data) {
         for (uint32_t j = 0; j < cand_count; ++j) {
             uint32_t body_b = candidates[j];
 
-            /* Skip self-pairs and enforce canonical order. */
-            if (body_a >= body_b) {
+            /* Skip self-pairs. */
+            if (body_a == body_b) {
                 continue;
             }
 
+            /* Canonical order: lo < hi.  For dynamic-dynamic pairs,
+             * skip when body_a > body_b to avoid duplicates.  For
+             * pairs involving a static body we always emit because
+             * static bodies are not in tier lists. */
+            uint32_t lo, hi;
+            if (body_a < body_b) {
+                lo = body_a;
+                hi = body_b;
+            } else {
+                if (!phys_body_is_static(&shared->bodies[body_b])) {
+                    continue;
+                }
+                lo = body_b;
+                hi = body_a;
+            }
+
             /* Skip static-static pairs. */
-            if (phys_body_is_static(&shared->bodies[body_a]) &&
-                phys_body_is_static(&shared->bodies[body_b])) {
+            if (phys_body_is_static(&shared->bodies[lo]) &&
+                phys_body_is_static(&shared->bodies[hi])) {
                 continue;
             }
 
             /* Precise AABB overlap test. */
-            if (!phys_aabb_overlap(aabb_a, &shared->aabbs[body_b])) {
+            if (!phys_aabb_overlap(&shared->aabbs[lo], &shared->aabbs[hi])) {
                 continue;
             }
 
@@ -89,8 +105,8 @@ static void broadphase_par_batch_job(void *data) {
             uint32_t slot = atomic_fetch_add_explicit(
                 &shared->atomic_pair_count, 1, memory_order_relaxed);
             if (slot < shared->max_pairs) {
-                shared->pairs_out[slot].body_a = body_a;
-                shared->pairs_out[slot].body_b = body_b;
+                shared->pairs_out[slot].body_a = lo;
+                shared->pairs_out[slot].body_b = hi;
             }
         }
     }
