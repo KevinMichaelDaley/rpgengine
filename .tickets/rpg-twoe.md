@@ -1,6 +1,6 @@
 ---
 id: rpg-twoe
-status: open
+status: closed
 deps: [rpg-ph6o]
 links: []
 created: 2026-02-07T01:50:37Z
