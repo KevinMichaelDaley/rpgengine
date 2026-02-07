@@ -1,0 +1,36 @@
+\section*{Global Position Projection for Constrained Systems}
+
+To achieve a "one-shot" stable stack (replacing Baumgarte stabilization), we formulate the position correction as a global linear system for each independent island.
+
+\subsection*{1. Linearized Constraint Equation}
+Let $\Phi(q) = 0$ represent the position-level constraint (e.g., non-penetration). If $\Phi(q) \neq 0$ due to numerical drift, we seek a displacement $\Delta q$ such that:
+$$ \Phi(q + \Delta q) = 0 $$
+Using a first-order Taylor expansion:
+$$ \Phi(q) + J \Delta q \approx 0 \implies J \Delta q = -\Phi(q) $$
+where $J = \frac{\partial \Phi}{\partial q}$ is the Jacobian matrix mapping configuration space to constraint space.
+
+\subsection*{2. Principle of Least Constraint}
+The correction $\Delta q$ must be consistent with the system's mass distribution. We express the displacement as a function of the Lagrange multipliers $\lambda$ (geometric impulses):
+$$ \Delta q = M^{-1} J^T \lambda $$
+where $M^{-1}$ is the inverse mass and inertia matrix.
+
+\subsection*{3. The System Matrix (Schur Complement)}
+Substituting the displacement into the linearized constraint equation yields the system of equations for the island:
+$$ J (M^{-1} J^T \lambda) = -\Phi(q) $$
+Let $A = J M^{-1} J^T$ be the symmetric, positive-definite (SPD) system matrix. The final system to solve for $\lambda$ is:
+$$ A \lambda = -\Phi(q) $$
+
+\subsection*{4. Sparsity and Parallelization}
+\begin{itemize}
+    \item \textbf{Pairwise Sparsity:} Since each constraint connects exactly two bodies, each row of $J$ contains only two non-zero blocks. 
+    \item \textbf{Structure:} The resulting matrix $A$ is sparse, with non-zero entries existing only where bodies share a common constraint.
+    \item \textbf{Solving:} Use a Sparse $LDL^T$ or Cholesky factorization per island for "infinite" stiffness.
+\end{itemize}
+
+\subsection*{5. State Synchronization}
+Once $\lambda$ is found, the final state is updated to ensure the velocity matches the corrected geometry:
+\begin{enumerate}
+    \item \textbf{Position Update:} $q_{new} = q_{old} + M^{-1} J^T \lambda$
+    \item \textbf{Velocity Synchronization:} $v_{new} = \frac{q_{new} - q_{old}}{\Delta t}$
+\end{enumerate}
+

@@ -67,6 +67,7 @@ void phys_constraint_build_contact(
 
     memset(c, 0, sizeof(*c));
     c->row_count = 3;
+    c->friction  = friction;
 
     /* Lever arms from body centers to the contact point. */
     phys_vec3_t rA = vec3_sub(contact->point_world, body_a->position);
@@ -107,8 +108,8 @@ void phys_constraint_build_contact(
 
     /* ── Row 1: Friction tangent 1 ────────────────────────────────── */
     build_row_for_direction(&c->rows[1], rA, rB, tangent1);
-    c->rows[1].lambda_min = -friction * CONSTRAINT_LAMBDA_BIG;
-    c->rows[1].lambda_max =  friction * CONSTRAINT_LAMBDA_BIG;
+    c->rows[1].lambda_min = -CONSTRAINT_LAMBDA_BIG;
+    c->rows[1].lambda_max =  CONSTRAINT_LAMBDA_BIG;
     c->rows[1].bias = 0.0f;
     c->rows[1].effective_mass = phys_compute_effective_mass(
         &c->rows[1],
@@ -117,8 +118,8 @@ void phys_constraint_build_contact(
 
     /* ── Row 2: Friction tangent 2 ────────────────────────────────── */
     build_row_for_direction(&c->rows[2], rA, rB, tangent2);
-    c->rows[2].lambda_min = -friction * CONSTRAINT_LAMBDA_BIG;
-    c->rows[2].lambda_max =  friction * CONSTRAINT_LAMBDA_BIG;
+    c->rows[2].lambda_min = -CONSTRAINT_LAMBDA_BIG;
+    c->rows[2].lambda_max =  CONSTRAINT_LAMBDA_BIG;
     c->rows[2].bias = 0.0f;
     c->rows[2].effective_mass = phys_compute_effective_mass(
         &c->rows[2],

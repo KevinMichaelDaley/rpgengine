@@ -54,7 +54,7 @@ typedef struct phys_constraint {
     uint8_t point_idx;      /**< Which contact point in the manifold. */
     uint8_t row_count;      /**< Number of active rows (typically 3). */
     uint8_t solver_mode;    /**< phys_solver_mode_t: 0=TGS, 1=XPBD. */
-    uint8_t pad[1];         /**< Padding for alignment. */
+    float friction;         /**< Combined friction coefficient for Coulomb cone. */
     phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS]; /**< Constraint rows. */
 } phys_constraint_t;
 

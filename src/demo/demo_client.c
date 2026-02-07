@@ -433,7 +433,7 @@ static int gl_demo_init_(struct gl_demo_context *ctx, int w, int h) {
     }
     {
         float ground_verts[18];
-        uint32_t ground_count = demo_generate_ground_plane(ground_verts, 50.0f);
+        uint32_t ground_count = demo_generate_ground_plane(ground_verts, 200.0f);
         if (vbo_upload(&ctx->ground_vbo, GL_ARRAY_BUFFER, ground_verts,
                        ground_count * sizeof(float), GL_STATIC_DRAW) != VBO_OK) {
             fprintf(stderr, "ground VBO upload failed\n");

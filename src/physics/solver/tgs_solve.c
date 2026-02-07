@@ -112,8 +112,17 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                 const phys_vec3_t *inv_i_b =
                     &args->bodies[c->body_b].inv_inertia_diag;
 
-                /* Solve each Jacobian row. */
-                for (uint8_t r = 0; r < c->row_count; r++) {
+                /* Solve normal row first (row 0). */
+                solve_row(&c->rows[0], va, vb,
+                          inv_mass_a, inv_i_a,
+                          inv_mass_b, inv_i_b);
+
+                /* Coulomb friction cone: clamp tangent impulses to
+                 * ±friction * accumulated_normal_impulse. */
+                float friction_limit = c->friction * c->rows[0].lambda;
+                for (uint8_t r = 1; r < c->row_count; r++) {
+                    c->rows[r].lambda_min = -friction_limit;
+                    c->rows[r].lambda_max =  friction_limit;
                     solve_row(&c->rows[r], va, vb,
                               inv_mass_a, inv_i_a,
                               inv_mass_b, inv_i_b);

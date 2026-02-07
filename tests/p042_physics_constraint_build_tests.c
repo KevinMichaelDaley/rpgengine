@@ -274,21 +274,19 @@ static int test_constraint_build_stab_hints(void)
 
     /*
      * The effective friction passed to phys_constraint_build_contact
-     * is 0.5 * 3.0 = 1.5.  The friction tangent rows use
-     * lambda_max = friction * 1e10, lambda_min = -friction * 1e10.
+     * is 0.5 * 3.0 = 1.5.  The friction coefficient is stored on the
+     * constraint; Coulomb clamping (±friction * normal_lambda) happens
+     * in the solver.  Initial tangent bounds are ±1e10.
      */
     float expected_friction = 0.5f * 3.0f;  /* 1.5 */
     float big = 1e10f;
-    ASSERT_FLOAT_NEAR( expected_friction * big,
-                       constraints[0].rows[1].lambda_max, 1e4f);
-    ASSERT_FLOAT_NEAR(-expected_friction * big,
-                       constraints[0].rows[1].lambda_min, 1e4f);
+    ASSERT_FLOAT_NEAR(expected_friction, constraints[0].friction, 1e-6f);
+    ASSERT_FLOAT_NEAR( big, constraints[0].rows[1].lambda_max, 1e4f);
+    ASSERT_FLOAT_NEAR(-big, constraints[0].rows[1].lambda_min, 1e4f);
 
     /* Also verify for row 2 (second tangent). */
-    ASSERT_FLOAT_NEAR( expected_friction * big,
-                       constraints[0].rows[2].lambda_max, 1e4f);
-    ASSERT_FLOAT_NEAR(-expected_friction * big,
-                       constraints[0].rows[2].lambda_min, 1e4f);
+    ASSERT_FLOAT_NEAR( big, constraints[0].rows[2].lambda_max, 1e4f);
+    ASSERT_FLOAT_NEAR(-big, constraints[0].rows[2].lambda_min, 1e4f);
 
     return 0;
 }

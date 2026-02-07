@@ -107,7 +107,17 @@ static void solve_island(const tgs_solve_shared_t *shared,
             const phys_vec3_t *inv_i_b =
                 &shared->bodies[c->body_b].inv_inertia_diag;
 
-            for (uint8_t r = 0; r < c->row_count; r++) {
+            /* Solve normal row first (row 0). */
+            solve_row(&c->rows[0], va, vb,
+                      inv_mass_a, inv_i_a,
+                      inv_mass_b, inv_i_b);
+
+            /* Coulomb friction cone: clamp tangent impulses to
+             * ±friction * accumulated_normal_impulse. */
+            float friction_limit = c->friction * c->rows[0].lambda;
+            for (uint8_t r = 1; r < c->row_count; r++) {
+                c->rows[r].lambda_min = -friction_limit;
+                c->rows[r].lambda_max =  friction_limit;
                 solve_row(&c->rows[r], va, vb,
                           inv_mass_a, inv_i_a,
                           inv_mass_b, inv_i_b);

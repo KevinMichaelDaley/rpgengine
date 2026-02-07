@@ -34,7 +34,8 @@ int demo_server_world_init(demo_server_world_t *sw, uint32_t rng_seed) {
         return -1;
     }
 
-    /* Create the static ground plane: box at y = -0.5 with half-extents (50, 0.5, 50). */
+    /* Create the static ground plane: box at y = -0.5 with half-extents (200, 0.5, 200).
+     * Must be large enough to catch all distant spawns (up to ~100m from origin). */
     uint32_t ground = phys_world_create_body(&sw->physics);
     if (ground == UINT32_MAX) {
         phys_world_destroy(&sw->physics);
@@ -51,7 +52,7 @@ int demo_server_world_init(demo_server_world_t *sw, uint32_t rng_seed) {
     *gb_next = *gb;
 
     phys_world_set_box_collider(&sw->physics, ground,
-                                (phys_vec3_t){50.0f, 0.5f, 50.0f},
+                                (phys_vec3_t){200.0f, 0.5f, 200.0f},
                                 (phys_vec3_t){0.0f, 0.0f, 0.0f},
                                 (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
 
