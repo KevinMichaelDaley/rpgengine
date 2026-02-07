@@ -66,8 +66,9 @@ void phys_constraint_build_contact(
     if (!c || !body_a || !body_b || !contact) { return; }
 
     memset(c, 0, sizeof(*c));
-    c->row_count = 3;
-    c->friction  = friction;
+    c->row_count    = 3;
+    c->friction     = friction;
+    c->penetration  = contact->penetration;
 
     /* Lever arms from body centers to the contact point. */
     phys_vec3_t rA = vec3_sub(contact->point_world, body_a->position);

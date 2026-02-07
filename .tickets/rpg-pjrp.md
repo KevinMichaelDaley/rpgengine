@@ -1,6 +1,6 @@
 ---
 id: rpg-pjrp
-status: open
+status: closed
 deps: [rpg-7qjh]
 links: []
 created: 2026-02-07T19:44:41Z

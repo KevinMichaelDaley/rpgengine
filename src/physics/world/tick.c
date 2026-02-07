@@ -28,11 +28,14 @@
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/physics/xpbd_solve.h"
+#include "ferrum/physics/position_projection.h"
+#include "ferrum/physics/velocity_sync.h"
 #include "ferrum/physics/integrate.h"
 #include "ferrum/physics/cache_commit.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
+#include "ferrum/math/vec3.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -291,6 +294,46 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .sleep_threshold_angular = world->config.sleep_threshold_angular,
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
             });
+        }
+
+        /* ── Stage 12b: Position Projection (post-integrate) ───── */
+        if (constraint_count > 0) {
+            for (uint32_t i = 0; i < islands.count; i++) {
+                phys_position_projection_result_t proj_result;
+                memset(&proj_result, 0, sizeof(proj_result));
+
+                phys_position_projection(&(phys_position_projection_args_t){
+                    .island      = &islands.islands[i],
+                    .constraints = constraints,
+                    .bodies      = world->body_pool.bodies_next,
+                    .body_count  = body_cap,
+                    .dt          = substep_dt,
+                    .slop        = world->config.slop,
+                    .arena       = &world->frame_arena,
+                    .result      = &proj_result,
+                });
+
+                if (proj_result.success && proj_result.position_deltas) {
+                    const phys_island_t *isle = &islands.islands[i];
+
+                    /* Apply position corrections to integrated bodies. */
+                    for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                        uint32_t idx = isle->body_indices[bi];
+                        phys_body_t *body = &world->body_pool.bodies_next[idx];
+                        body->position = vec3_add(body->position,
+                                                  proj_result.position_deltas[idx]);
+                    }
+
+                    /* Replace constraint-normal velocity component. */
+                    phys_velocity_sync_normals(&(phys_velocity_sync_args_t){
+                        .island          = isle,
+                        .constraints     = constraints,
+                        .bodies          = world->body_pool.bodies_next,
+                        .position_deltas = proj_result.position_deltas,
+                        .dt              = substep_dt,
+                    });
+                }
+            }
         }
 
         /* ── Stage 13: Cache Commit ────────────────────────────── */

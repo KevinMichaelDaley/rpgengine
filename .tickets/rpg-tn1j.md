@@ -1,6 +1,6 @@
 ---
 id: rpg-tn1j
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-07T19:44:41Z

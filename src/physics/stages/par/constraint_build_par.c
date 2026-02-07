@@ -14,6 +14,7 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/stabilization.h"
+#include "ferrum/physics/step_plan.h"
 
 #include <stdatomic.h>
 #include <stddef.h>
@@ -113,6 +114,22 @@ static void constraint_build_job(void *data) {
             c->body_b       = manifold->body_b;
             c->manifold_idx = m;
             c->point_idx    = (uint8_t)p;
+
+            /* Determine solver mode from body tiers. */
+            c->solver_mode = (uint8_t)phys_tier_cross_solver_mode(
+                (phys_tier_t)body_a->tier, (phys_tier_t)body_b->tier);
+
+            /* For TGS-tier constraints, remove Baumgarte bias from the
+             * normal row.  Position projection handles penetration
+             * correction instead, which avoids energy injection. */
+            if (c->solver_mode == 0 && args->dt > 0.0f) {
+                float pen_excess = manifold->points[p].penetration
+                                 - args->slop;
+                if (pen_excess < 0.0f) { pen_excess = 0.0f; }
+                float baumgarte_bias = (args->baumgarte / args->dt)
+                                     * pen_excess;
+                c->rows[0].bias -= baumgarte_bias;
+            }
 
             /* Load warmstart impulses from manifold cache. */
             c->rows[0].lambda = manifold->normal_impulse[p];

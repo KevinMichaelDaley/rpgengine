@@ -28,9 +28,28 @@ $$ A \lambda = -\Phi(q) $$
 \end{itemize}
 
 \subsection*{5. State Synchronization}
-Once $\lambda$ is found, the final state is updated to ensure the velocity matches the corrected geometry:
+Once $\lambda$ is found, the final state is updated to ensure the velocity matches the corrected geometry.
+
+\subsubsection*{5a. Position Update}
+Apply position corrections after the integration stage (not before), writing directly to the integrated body state:
+$$ q_{new} = q_{integrated} + \Delta q, \qquad \Delta q = M^{-1} J^T \lambda $$
+Applying corrections \textit{before} integration causes double-application: the integrate stage computes $q = q_{old} + v \cdot \Delta t$, so any correction folded into $v$ before integration gets integrated into position a second time, producing exponential energy growth.
+
+\subsubsection*{5b. Velocity Synchronization (Normal-Component Replacement)}
+The naive formulation $v_{new} = \Delta q / \Delta t$ replaces the \textit{entire} velocity, which destroys tangential velocity computed by the iterative solver (TGS). For contact constraints, the correction $\Delta q$ lies entirely in the constraint-normal subspace (since only normal rows participate in position projection), but the body's velocity also contains tangential components from friction solving that must be preserved.
+
+The correct procedure for each body $k$ in the island:
 \begin{enumerate}
-    \item \textbf{Position Update:} $q_{new} = q_{old} + M^{-1} J^T \lambda$
-    \item \textbf{Velocity Synchronization:} $v_{new} = \frac{q_{new} - q_{old}}{\Delta t}$
+    \item Compute the correction velocity: $v_{corr,k} = \Delta q_k / \Delta t$
+    \item Gather all contact normals $\{n_i\}$ from constraints touching body $k$.
+    \item For each unique contact normal $n_i$:
+    \begin{enumerate}
+        \item Remove the old normal component: $v_k \leftarrow v_k - (v_k \cdot n_i)\, n_i$
+        \item Add the correction's normal component: $v_k \leftarrow v_k + (v_{corr,k} \cdot n_i)\, n_i$
+    \end{enumerate}
 \end{enumerate}
+This projects out the pre-existing constraint-normal velocity and replaces it with the velocity implied by the position correction, while leaving the tangential (friction) velocity intact. The result is a velocity field that is consistent with the corrected geometry without injecting energy or destroying solver work.
+
+\subsubsection*{5c. Why Not Simply Add?}
+Adding $v_{corr}$ to the existing velocity would double-count the normal impulse already applied by the iterative solver during TGS. The solver already produced a velocity that \textit{attempts} to resolve penetration; position projection then fixes the residual. Replacing the normal component ensures only the corrected residual is reflected in velocity, avoiding energy injection that would destabilize stacks.
 

@@ -17,3 +17,9 @@ Run the box stack demo (rpg-1bul) with Baumgarte stabilization, record stacking 
 
 Side-by-side comparison documented; sparse projection produces taller stable stacks than Baumgarte; no visible jitter in 20+ box stacks with uneven masses; physics budget not exceeded
 
+
+## Notes
+
+**2026-02-07T21:06:06Z**
+
+NOTE: Velocity sync uses constraint-normal replacement (not naive v=dq/dt). Updated in ref/sparse_stabilization.tex Section 5. When validating, pay attention to tangential sliding behavior on stacks — the normal-component replacement should preserve friction velocity correctly.

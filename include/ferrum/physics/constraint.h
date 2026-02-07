@@ -55,6 +55,7 @@ typedef struct phys_constraint {
     uint8_t row_count;      /**< Number of active rows (typically 3). */
     uint8_t solver_mode;    /**< phys_solver_mode_t: 0=TGS, 1=XPBD. */
     float friction;         /**< Combined friction coefficient for Coulomb cone. */
+    float penetration;      /**< Raw penetration depth for position projection. */
     phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS]; /**< Constraint rows. */
 } phys_constraint_t;
 
