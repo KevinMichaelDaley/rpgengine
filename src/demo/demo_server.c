@@ -155,11 +155,18 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         return;
     }
 
-    /* Iterate all body pool slots and broadcast active bodies. */
+    /* Iterate all body pool slots and broadcast active dynamic bodies.
+     * Skip body 0 (ground plane) and any static/kinematic bodies. */
     const uint32_t capacity = sw->physics.body_pool.capacity;
     for (uint32_t i = 0u; i < capacity; ++i) {
+        if (i == DEMO_GROUND_BODY) {
+            continue;
+        }
         phys_body_t *b = phys_world_get_body(&sw->physics, i);
         if (!b) {
+            continue;
+        }
+        if (phys_body_is_static(b) || phys_body_is_kinematic(b)) {
             continue;
         }
 

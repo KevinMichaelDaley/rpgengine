@@ -531,7 +531,7 @@ static int add_entity_(struct entity_view **entities, size_t *count, size_t *cap
     e->entity_id = entity_id;
     e->owner_client_id = owner_client_id;
     e->shape_type = 0; /* box for now */
-    e->scale = 0.25f;
+    e->scale = 0.5f;
     fr_pose_interpolator_reset(&e->pose);
     (void)fr_pose_interpolator_push(&e->pose, recv_time_s, pos, rot);
     *count += 1u;
