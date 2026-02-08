@@ -53,6 +53,8 @@ static void integrate_batch_job(void *data) {
     const float sleep_lin_thresh       = args->sleep_threshold_linear;
     const float sleep_ang_thresh       = args->sleep_threshold_angular;
     const uint32_t sleep_delay         = args->sleep_delay_frames;
+    const uint32_t cur_sub             = args->current_substep;
+    const uint32_t *tier_subs          = args->tier_substep_counts;
 
     uint32_t end = batch->start + batch->count;
     for (uint32_t i = batch->start; i < end; ++i) {
@@ -65,6 +67,13 @@ static void integrate_batch_job(void *data) {
         /* Skip static and kinematic bodies. */
         if (phys_body_is_static(in) || phys_body_is_kinematic(in)) {
             continue;
+        }
+
+        /* Skip bodies whose tier doesn't need this substep. */
+        if (tier_subs) {
+            uint32_t ts = tier_subs[in->tier];
+            if (ts == 0) { ts = 1; }
+            if (cur_sub >= ts) { continue; }
         }
 
         /* Update velocity from solver output. */

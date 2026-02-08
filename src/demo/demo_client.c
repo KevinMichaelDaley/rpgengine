@@ -1308,10 +1308,16 @@ int main(int argc, char **argv) {
 
         /* ---- Diagnostics ---- */
         if (now_ms >= next_diag_ms) {
-            fprintf(stderr, "diag: entities=%zu bodies=%u self_entity=%u cam=(%.1f,%.1f,%.1f)\n",
+            uint64_t corr_dropped = fr_topic_channel_stat_dropped(client_corrections);
+            uint64_t cmd_dropped  = fr_topic_channel_stat_dropped(client_cmds);
+            fprintf(stderr, "diag: entities=%zu bodies=%u rtt=%ums "
+                    "corr_drop=%llu cmd_drop=%llu "
+                    "cam=(%.1f,%.1f,%.1f)\n",
                     entity_count,
                     (unsigned)phys_world_body_count(&client_world),
-                    (unsigned)self_entity_id,
+                    (unsigned)peer.smoothed_rtt_ms,
+                    (unsigned long long)corr_dropped,
+                    (unsigned long long)cmd_dropped,
                     (double)cam.position.x, (double)cam.position.y, (double)cam.position.z);
             next_diag_ms = now_ms + 1000u;
         }
@@ -1325,8 +1331,9 @@ int main(int argc, char **argv) {
             if (phys_tick_runner_done(&tick_runner)) {
                 phys_tick_runner_consume(&tick_runner);
                 phys_tick_runner_kick(&tick_runner);
+                client_next_tick += client_tick_ms;
             }
-            client_next_tick += client_tick_ms;
+            /* If tick not done, don't advance — retry next frame. */
         }
 
         /* ---- (f) Render ---- */

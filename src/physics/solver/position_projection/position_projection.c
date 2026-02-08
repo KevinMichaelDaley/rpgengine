@@ -150,7 +150,7 @@ void phys_position_projection(const phys_position_projection_args_t *args)
     result->success = true;
 
     /* Sleeping islands produce zero corrections. */
-    if (island->sleeping) { return; }
+    if (island->sleeping || island->skip) { return; }
 
     const uint32_t nc = island->constraint_count;
     if (nc == 0) { return; }

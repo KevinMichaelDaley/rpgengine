@@ -48,7 +48,7 @@ void phys_velocity_sync_normals(
     const phys_island_t *island = args->island;
     const float dt = args->dt;
     if (dt <= 0.0f) { return; }
-    if (island->sleeping) { return; }
+    if (island->sleeping || island->skip) { return; }
 
     const uint32_t nc = island->constraint_count;
     if (nc == 0) { return; }

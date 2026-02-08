@@ -90,7 +90,7 @@ static void solve_row(phys_jacobian_row_t *row,
 static void solve_island(const tgs_solve_shared_t *shared,
                           const phys_island_t *island)
 {
-    if (island->sleeping) return;
+    if (island->sleeping || island->skip) return;
 
     for (uint32_t iter = 0; iter < shared->iterations; iter++) {
         for (uint32_t ci = 0; ci < island->constraint_count; ci++) {

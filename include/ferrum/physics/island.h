@@ -34,6 +34,7 @@ typedef struct phys_island {
     uint32_t *constraint_indices; /**< Arena-allocated array of constraint indices. */
     uint32_t constraint_count;    /**< Number of constraints in this island. */
     bool sleeping;                /**< True if all bodies in the island are sleeping. */
+    bool skip;                    /**< Transient flag: skip this island for the current substep. */
 } phys_island_t;
 
 /**

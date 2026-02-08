@@ -107,23 +107,56 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         .body_count = body_cap,
     });
 
-    /* ── Substep loop ──────────────────────────────────────────── */
-    const uint32_t substeps = plan.substeps > 0 ? plan.substeps : 1;
-    const float substep_dt = plan.substep_dt > 0.0f
-                                 ? plan.substep_dt
-                                 : world->config.fixed_dt;
+    /* ── Stage 3: Halo Closure (once per tick) ────────────────── */
+    phys_stage_halo_closure(&(phys_halo_closure_args_t){
+        .bodies          = world->body_pool.bodies_curr,
+        .aabbs           = world->aabbs,
+        .grid            = &grid,
+        .tier_lists      = &tier_lists,
+        .velocity_margin = 0.1f,
+        .dt              = plan.dt,
+        .body_count      = body_cap,
+    });
 
-    for (uint32_t sub = 0; sub < substeps; sub++) {
-        /* ── Stage 3: Halo Closure ─────────────────────────────── */
-        phys_stage_halo_closure(&(phys_halo_closure_args_t){
-            .bodies          = world->body_pool.bodies_curr,
-            .aabbs           = world->aabbs,
-            .grid            = &grid,
-            .tier_lists      = &tier_lists,
-            .velocity_margin = 0.1f,
-            .dt              = substep_dt,
-            .body_count      = body_cap,
+    /* ── Stage 5: Broadphase (once per tick) ───────────────────── */
+    uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
+    if (max_pairs > body_cap * 4) {
+        max_pairs = body_cap * 4 > 0 ? body_cap * 4 : 1;
+    }
+    phys_collision_pair_t *pairs = phys_frame_arena_alloc(
+        &world->frame_arena,
+        max_pairs * sizeof(phys_collision_pair_t),
+        _Alignof(phys_collision_pair_t));
+    uint32_t pair_count = 0;
+
+    if (pairs) {
+        phys_stage_broadphase(&(phys_broadphase_args_t){
+            .bodies         = world->body_pool.bodies_curr,
+            .aabbs          = world->aabbs,
+            .grid           = &grid,
+            .tier_lists     = &tier_lists,
+            .pairs_out      = pairs,
+            .max_pairs      = max_pairs,
+            .pair_count_out = &pair_count,
         });
+    }
+
+    /* ── Per-tier substep loop ─────────────────────────────────── */
+    /* Compute max substeps across all tiers.  Only the narrowphase,
+     * solver, and integrate stages run multiple times; broadphase and
+     * halo stay outside this loop.  Islands whose tier needs fewer
+     * substeps are marked skip on later iterations. */
+    uint32_t max_substeps = 1;
+    uint32_t tier_substep_counts[PHYS_TIER_COUNT];
+    for (int t = 0; t < PHYS_TIER_COUNT; ++t) {
+        uint32_t ts = plan.tier_params[t].substeps;
+        if (ts == 0) { ts = 1; }
+        tier_substep_counts[t] = ts;
+        if (ts > max_substeps) { max_substeps = ts; }
+    }
+    const float substep_dt = plan.dt / (float)max_substeps;
+
+    for (uint32_t sub = 0; sub < max_substeps; sub++) {
 
         /* ── Stage 4: AABB Update (skip on first substep) ──────── */
         if (sub > 0) {
@@ -135,29 +168,6 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .capsules   = world->capsules,
                 .aabbs_out  = world->aabbs,
                 .tier_lists = &tier_lists,
-            });
-        }
-
-        /* ── Stage 5: Broadphase ───────────────────────────────── */
-        uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
-        if (max_pairs > body_cap * 4) {
-            max_pairs = body_cap * 4 > 0 ? body_cap * 4 : 1;
-        }
-        phys_collision_pair_t *pairs = phys_frame_arena_alloc(
-            &world->frame_arena,
-            max_pairs * sizeof(phys_collision_pair_t),
-            _Alignof(phys_collision_pair_t));
-        uint32_t pair_count = 0;
-
-        if (pairs) {
-            phys_stage_broadphase(&(phys_broadphase_args_t){
-                .bodies         = world->body_pool.bodies_curr,
-                .aabbs          = world->aabbs,
-                .grid           = &grid,
-                .tier_lists     = &tier_lists,
-                .pairs_out      = pairs,
-                .max_pairs      = max_pairs,
-                .pair_count_out = &pair_count,
             });
         }
 
@@ -277,6 +287,22 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             .arena            = &world->frame_arena,
         });
 
+        /* Mark islands whose tier needs fewer substeps than the
+         * current iteration.  Tier promotion guarantees all bodies
+         * in an island share the same tier, so we read the first
+         * body's tier to look up the per-tier substep count. */
+        if (sub > 0) {
+            for (uint32_t i = 0; i < islands.count; i++) {
+                phys_island_t *isle = &islands.islands[i];
+                if (isle->body_count == 0) { continue; }
+                uint8_t tier = world->body_pool.bodies_curr[
+                                   isle->body_indices[0]].tier;
+                uint32_t tier_subs = plan.tier_params[tier].substeps;
+                if (tier_subs == 0) { tier_subs = 1; }
+                isle->skip = (sub >= tier_subs);
+            }
+        }
+
         /* ── Stage 11: TGS Solve ───────────────────────────────── */
         velocities = phys_frame_arena_alloc(
             &world->frame_arena,
@@ -330,6 +356,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .sleep_threshold_linear = world->config.sleep_threshold_linear,
                 .sleep_threshold_angular = world->config.sleep_threshold_angular,
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
+                .current_substep        = sub,
+                .tier_substep_counts    = tier_substep_counts,
             });
         }
 

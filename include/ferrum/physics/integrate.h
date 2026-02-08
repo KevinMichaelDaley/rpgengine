@@ -40,6 +40,13 @@ typedef struct phys_integrate_args {
     float sleep_threshold_linear;          /**< Speed below which linear is "at rest". */
     float sleep_threshold_angular;         /**< Speed below which angular is "at rest". */
     uint32_t sleep_delay_frames;           /**< Frames below threshold before sleeping. */
+
+    /** Current substep index (0-based).  Bodies whose tier's substep
+     *  count is <= current_substep are skipped (copy-only).  When
+     *  tier_substep_counts is NULL, all bodies integrate every substep. */
+    uint32_t current_substep;
+    /** Per-tier substep counts, indexed by body tier.  May be NULL. */
+    const uint32_t *tier_substep_counts;
 } phys_integrate_args_t;
 
 /**

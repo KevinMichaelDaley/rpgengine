@@ -94,7 +94,7 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
     /* Process each island independently. */
     for (uint32_t i = 0; i < islands->count; i++) {
         const phys_island_t *island = &islands->islands[i];
-        if (island->sleeping) continue;
+        if (island->sleeping || island->skip) continue;
 
         /* Iterate the sequential impulse solver. */
         for (uint32_t iter = 0; iter < args->iterations; iter++) {

@@ -181,6 +181,7 @@ void phys_island_list_build(phys_island_list_t *list,
         island->body_count = 0; /* Will fill in second pass. */
         island->constraint_count = 0;
         island->sleeping = false;
+        island->skip     = false;
 
         island->body_indices = phys_frame_arena_alloc(
             (phys_frame_arena_t *)arena,
