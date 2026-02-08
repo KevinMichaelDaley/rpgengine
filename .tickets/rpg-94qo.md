@@ -1,6 +1,6 @@
 ---
 id: rpg-94qo
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-07T23:47:28Z
