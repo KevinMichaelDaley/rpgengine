@@ -2,7 +2,7 @@
 #define FERRUM_NET_TOPIC_DISPATCHER_INTERNAL_H
 
 #include <stdatomic.h>
-#include <threads.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -39,7 +39,7 @@ struct fr_topic_dispatcher {
     apool_t payload_pool;
     apool_t data_pool;
 
-    thrd_t pump_thread;
+    pthread_t pump_thread;
     atomic_bool running;
 };
 

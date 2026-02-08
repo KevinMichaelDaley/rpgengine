@@ -8,7 +8,7 @@ void job_counter_init(job_counter_t *counter, uint32_t initial) {
     }
     atomic_init(&counter->value, initial);
     counter->waiters = NULL;
-    mtx_init(&counter->lock, mtx_plain);
+    job_spinlock_init(&counter->lock);
 }
 
 void job_counter_destroy(job_counter_t *counter) {
@@ -17,7 +17,7 @@ void job_counter_destroy(job_counter_t *counter) {
     }
     /* Caller must ensure no concurrent access. */
     counter->waiters = NULL;
-    (void)mtx_destroy(&counter->lock);
+    job_spinlock_destroy(&counter->lock);
 }
 
 int job_counter_add(job_counter_t *counter, uint32_t value) {
@@ -46,10 +46,10 @@ int job_counter_dec(job_counter_t *counter) {
            waiter observing value==0 can't race reuse/destruction with the
            wake-up path (which also uses counter->lock). */
         if (current == 1u) {
-            mtx_lock(&counter->lock);
+            job_spinlock_lock(&counter->lock);
             current = atomic_load_explicit(&counter->value, memory_order_relaxed);
             if (current == 0u) {
-                mtx_unlock(&counter->lock);
+                job_spinlock_unlock(&counter->lock);
                 return -1;
             }
             if (current == 1u) {
@@ -59,10 +59,10 @@ int job_counter_dec(job_counter_t *counter) {
                    job-side writes that happened-before earlier decrements. */
                 (void)atomic_fetch_sub_explicit(&counter->value, 1u, memory_order_acq_rel);
                 job_system_wake_waiters_locked(NULL, counter);
-                mtx_unlock(&counter->lock);
+                job_spinlock_unlock(&counter->lock);
                 return 0;
             }
-            mtx_unlock(&counter->lock);
+            job_spinlock_unlock(&counter->lock);
             continue;
         }
 

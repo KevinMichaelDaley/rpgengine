@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <threads.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 
 #include "ferrum/ferrum.h"
@@ -331,7 +332,7 @@ static int test_randomized_dispatch_yield_interleavings(void) {
     for (uint32_t i = 0; i < n; ++i) {
         ASSERT_TRUE(job_dispatch(sys, stress_item_fn, &items[i], 0, NULL) != JOB_ID_INVALID);
         if ((i & 15u) == 0u) {
-            thrd_yield();
+            sched_yield();
         }
     }
 
@@ -827,15 +828,15 @@ static void inc_fn(void *user) {
     atomic_fetch_add_explicit(ctx->counter, 1, memory_order_relaxed);
 }
 
-static int producer_thread_fn(void *arg) {
+static void *producer_thread_fn(void *arg) {
     struct producer_ctx *c = (struct producer_ctx *)arg;
     for (int j = 0; j < c->jobs_per_producer; ++j) {
         if (job_dispatch(c->sys, inc_fn, c, 0, NULL) == JOB_ID_INVALID) {
             atomic_store(&g_failure_flag, 1);
-            return -1;
+            return (void *)(intptr_t)-1;
         }
     }
-    return 0;
+    return NULL;
 }
 
 static int test_mpmc_concurrent_producers_consumers(void) {
@@ -850,14 +851,14 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,4, 8192, 6
 
     const int producers = 4;
     const int jobs_each = 1000;
-    thrd_t threads[producers];
+    pthread_t threads[producers];
     struct producer_ctx ctx = {sys, &completed, jobs_each};
     for (int i = 0; i < producers; ++i) {
-        thrd_create(&threads[i], producer_thread_fn, &ctx);
+        pthread_create(&threads[i], NULL, producer_thread_fn, &ctx);
     }
 
     for (int i = 0; i < producers; ++i) {
-        thrd_join(threads[i], NULL);
+        pthread_join(threads[i], NULL);
     }
 
     ASSERT_EQ_INT(0, job_system_wait_idle(sys));

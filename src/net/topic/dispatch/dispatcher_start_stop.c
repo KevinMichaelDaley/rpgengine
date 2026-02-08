@@ -11,7 +11,7 @@ static void topic_job_trampoline(void *user_data) {
     (void)apool_free(p->payload_pool, p->payload_handle);
 }
 
-static int pump_main(void *arg) {
+static void *pump_main(void *arg) {
     fr_topic_dispatcher_t *d = (fr_topic_dispatcher_t*)arg;
     atomic_store(&d->running, true);
     struct timespec ts; ts.tv_sec=0; ts.tv_nsec=1000*1000; /* 1ms */
@@ -65,19 +65,17 @@ static int pump_main(void *arg) {
         }
         if (!any) nanosleep(&ts, NULL);
     }
-    return 0;
+    return NULL;
 }
 
 int fr_topic_dispatcher_start(fr_topic_dispatcher_t *disp) {
     if (!disp) return -1;
-    thrd_t t;
-    if (thrd_create(&t, (thrd_start_t)pump_main, disp) != thrd_success) return -1;
-    disp->pump_thread = t;
+    if (pthread_create(&disp->pump_thread, NULL, pump_main, disp) != 0) return -1;
     return 0;
 }
 
 void fr_topic_dispatcher_stop(fr_topic_dispatcher_t *disp) {
     if (!disp) return;
     atomic_store(&disp->running, false);
-    thrd_join(disp->pump_thread, NULL);
+    pthread_join(disp->pump_thread, NULL);
 }

@@ -3,7 +3,8 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
-#include <threads.h>
+
+#include "ferrum/job/spinlock.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,7 +13,7 @@ extern "C" {
 /** Waitable counter type (public layout for stack allocation). */
 typedef struct job_counter {
     atomic_uint value;
-    mtx_t lock;
+    job_spinlock_t lock;
     void *waiters; /* internal waiter list, opaque to users */
 } job_counter_t;
 

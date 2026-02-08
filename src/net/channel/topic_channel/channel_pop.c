@@ -38,23 +38,23 @@ static void fr_topic_ring_read_bytes(fr_topic_channel_t *ch, void *dst, uint32_t
 bool fr_topic_channel_pop(fr_topic_channel_t *ch, uint8_t *out, size_t *inout_len) {
     if (!ch || !out || !inout_len) return false;
 
-    (void)mtx_lock(&ch->lock);
+    pthread_mutex_lock(&ch->lock);
     if (ch->count == 0u) {
-        (void)mtx_unlock(&ch->lock);
+        pthread_mutex_unlock(&ch->lock);
         return false;
     }
 
     uint32_t msg_len = 0u;
     if (!fr_topic_ring_peek_u32(ch, &msg_len)) {
-        (void)mtx_unlock(&ch->lock);
+        pthread_mutex_unlock(&ch->lock);
         return false;
     }
     if ((size_t)msg_len > *inout_len) {
-        (void)mtx_unlock(&ch->lock);
+        pthread_mutex_unlock(&ch->lock);
         return false;
     }
     if (ch->used_bytes < (4u + msg_len)) {
-        (void)mtx_unlock(&ch->lock);
+        pthread_mutex_unlock(&ch->lock);
         return false;
     }
 
@@ -63,6 +63,6 @@ bool fr_topic_channel_pop(fr_topic_channel_t *ch, uint8_t *out, size_t *inout_le
     *inout_len = (size_t)msg_len;
     ch->used_bytes -= (4u + msg_len);
     ch->count -= 1u;
-    (void)mtx_unlock(&ch->lock);
+    pthread_mutex_unlock(&ch->lock);
     return true;
 }

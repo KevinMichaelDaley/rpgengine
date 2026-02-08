@@ -1,7 +1,8 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <threads.h>
+#include <pthread.h>
+#include <sched.h>
 
 #include "ferrum/ferrum.h"
 

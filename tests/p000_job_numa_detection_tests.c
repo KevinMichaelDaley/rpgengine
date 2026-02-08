@@ -3,7 +3,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <threads.h>
+#include <pthread.h>
+#include <sched.h>
 #include <sys/stat.h>
 #include <unistd.h>
 

@@ -16,7 +16,7 @@ struct worker_arg {
     job_system_t *sys;
     uint32_t id;
 };
-static int worker_main(void *arg);
+static void *worker_main(void *arg);
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx);
 static void cleanup_system(job_system_t *sys);
 
@@ -39,7 +39,15 @@ job_system_create_status_t job_system_create(job_system_t* sys,
     sys->worker_count = deterministic_mode ? 1u : worker_count;
     sys->queue_capacity = queue_capacity;
     sys->fiber_stack_size = fiber_stack_size;
-    apool_status_t pool_status = apool_init(&sys->fiber_stack_pool, fiber_count_max, sizeof(job_fiber_t) + fiber_stack_size);
+    apool_status_t pool_status = apool_init(&sys->fiber_ctx_pool, fiber_count_max, sizeof(job_fiber_t));
+    if( pool_status != APOOL_OK) {
+        if(pool_status == APOOL_ERR_INVALID) {
+            return JOB_CREATE_POOL_INIT_ERR;
+        } else {
+            return JOB_CREATE_ERR_OOM;
+        }
+    }
+    pool_status = apool_init(&sys->fiber_stack_pool, fiber_count_max, fiber_stack_size);
     if( pool_status != APOOL_OK) {
         if(pool_status == APOOL_ERR_INVALID) {
             return JOB_CREATE_POOL_INIT_ERR;
@@ -70,7 +78,7 @@ job_system_create_status_t job_system_create(job_system_t* sys,
         sys->queue_slot_state = NULL;
     }
 
-    sys->workers = (thrd_t *)calloc(sys->worker_count, sizeof(thrd_t));
+    sys->workers = (pthread_t *)calloc(sys->worker_count, sizeof(pthread_t));
 
     if (!sys->workers || (sys->deterministic && (!sys->queue || !sys->queue_slot_state))) {
         cleanup_system(sys);
@@ -125,11 +133,12 @@ job_system_create_status_t job_system_create(job_system_t* sys,
     atomic_init(&sys->qdiag_cond_waits, 0);
 #endif
 
-    if (mtx_init(&sys->queue_lock, mtx_plain) != thrd_success) {
+    job_spinlock_init(&sys->queue_lock);
+    if (pthread_mutex_init(&sys->sleep_mtx, NULL) != 0) {
         return JOB_CREATE_ERR_MTX_INIT;
     }
-    if (cnd_init(&sys->queue_cond) != thrd_success) {
-        mtx_destroy(&sys->queue_lock);
+    if (pthread_cond_init(&sys->sleep_cnd, NULL) != 0) {
+        pthread_mutex_destroy(&sys->sleep_mtx);
         return JOB_CREATE_ERR_CND_INIT;
     }
 
@@ -158,20 +167,24 @@ int job_system_start(job_system_t *sys) {
         struct worker_arg *wa = (struct worker_arg *)malloc(sizeof(struct worker_arg));
         if (!wa) {
             atomic_store(&sys->shutting_down, true);
-            cnd_broadcast(&sys->queue_cond);
+            pthread_mutex_lock(&sys->sleep_mtx);
+            pthread_cond_broadcast(&sys->sleep_cnd);
+            pthread_mutex_unlock(&sys->sleep_mtx);
             for (uint32_t j = 0; j < i; ++j) {
-                thrd_join(sys->workers[j], NULL);
+                pthread_join(sys->workers[j], NULL);
             }
             return -1;
         }
         wa->sys = sys;
         wa->id = i;
-        if (thrd_create(&sys->workers[i], worker_main, wa) != thrd_success) {
+        if (pthread_create(&sys->workers[i], NULL, worker_main, wa) != 0) {
             atomic_store(&sys->shutting_down, true);
-            cnd_broadcast(&sys->queue_cond);
+            pthread_mutex_lock(&sys->sleep_mtx);
+            pthread_cond_broadcast(&sys->sleep_cnd);
+            pthread_mutex_unlock(&sys->sleep_mtx);
             free(wa);
             for (uint32_t j = 0; j < i; ++j) {
-                thrd_join(sys->workers[j], NULL);
+                pthread_join(sys->workers[j], NULL);
             }
             return -1;
         }
@@ -184,7 +197,7 @@ int job_system_start(job_system_t *sys) {
             if (nproc < 1) nproc = 1;
             int cpu = (int)(i % (uint32_t)nproc);
             CPU_SET(cpu, &set);
-            pthread_setaffinity_np((pthread_t)sys->workers[i], sizeof(set), &set);
+            pthread_setaffinity_np(sys->workers[i], sizeof(set), &set);
         }
 #endif
     }
@@ -232,7 +245,7 @@ int job_system_wait_idle(job_system_t *sys) {
         if (atomic_load(&sys->shutting_down) && queued == 0u) {
             break;
         }
-        thrd_yield();
+        sched_yield();
     }
     return 0;
 }
@@ -243,14 +256,14 @@ void job_system_shutdown(job_system_t *sys) {
     }
 
     /* Stop accepting new work immediately.
-       IMPORTANT: broadcast under queue_lock to prevent missed wakeups.
-       Worker threads wait on queue_cond only while holding queue_lock.
+       IMPORTANT: broadcast under sleep_mtx to prevent missed wakeups.
+       Worker threads wait on sleep_cnd only while holding sleep_mtx.
      */
-    mtx_lock(&sys->queue_lock);
+    pthread_mutex_lock(&sys->sleep_mtx);
     atomic_store(&sys->running, false);
     atomic_store(&sys->shutting_down, true);
-    cnd_broadcast(&sys->queue_cond);
-    mtx_unlock(&sys->queue_lock);
+    pthread_cond_broadcast(&sys->sleep_cnd);
+    pthread_mutex_unlock(&sys->sleep_mtx);
 
     if (sys->deterministic) {
         job_system_wait_idle(sys);
@@ -259,7 +272,7 @@ void job_system_shutdown(job_system_t *sys) {
     }
 
     for (uint32_t i = 0; i < sys->worker_count; ++i) {
-        thrd_join(sys->workers[i], NULL);
+        pthread_join(sys->workers[i], NULL);
     }
 
     cleanup_system(sys);
@@ -269,8 +282,9 @@ static void cleanup_system(job_system_t *sys) {
     if (!sys) {
         return;
     }
-    cnd_destroy(&sys->queue_cond);
-    mtx_destroy(&sys->queue_lock);
+    pthread_cond_destroy(&sys->sleep_cnd);
+    pthread_mutex_destroy(&sys->sleep_mtx);
+    job_spinlock_destroy(&sys->queue_lock);
     free(sys->queue);
     free(sys->queue_slot_state);
     free(sys->workers);
@@ -290,33 +304,77 @@ static void cleanup_system(job_system_t *sys) {
     }
 
     apool_destroy(&sys->fiber_stack_pool);
+    apool_destroy(&sys->fiber_ctx_pool);
 }
 
 void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *sched_ctx) {
+    job_fiber_t *prev = g_current_fiber; /* fiber that was running before (may be NULL) */
     g_current_fiber = entry->fiber;
     g_current_system = sys;
     g_scheduler_context = sched_ctx;
+
+    /* Record debug trace on the fiber we're about to resume. */
+    entry->fiber->prev_fiber = prev;
+    entry->fiber->last_worker = g_worker_id;
+
     if (entry->fiber->magic1 != 0xf183 || entry->fiber->magic2 != 0x3a7f) {
         job_instrument_event("magic_invalid", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
     }
     job_instrument_event("start", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
     job_context_swap(sched_ctx, &entry->fiber->ctx);
 
+    /* After the fiber yields/finishes, verify its stack wasn't overflowed. */
+    job_stack_canary_check(entry->fiber->stack, sys->fiber_stack_size,
+                           entry->fiber->id, "run_entry:post_swap");
+
     if (entry->fiber->finished) {
         job_instrument_event("complete", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
         job_fiber_destroy(entry->fiber);
-    } else if (!entry->fiber->waiting) {
-        if (job_system_enqueue(sys, entry->fiber, entry->priority, entry->id) != 0) {
-            job_fiber_destroy(entry->fiber);
+    } else {
+        int wait_state = atomic_load_explicit(&entry->fiber->waiting, memory_order_acquire);
+        if (wait_state == 0) {
+            /* Normal yield (not waiting on counter). Re-enqueue. */
+            if (job_system_enqueue(sys, entry->fiber, entry->priority, entry->id) != 0) {
+                job_fiber_destroy(entry->fiber);
+            } else {
+                job_instrument_event("continue", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
+            }
+        } else if (wait_state == 2) {
+            /* Counter already reached 0 while fiber was parking.  The waker
+             * set waiting=2 but did NOT enqueue (to prevent the race).
+             * We re-enqueue now that the fiber has safely yielded. */
+            atomic_store_explicit(&entry->fiber->waiting, 0, memory_order_release);
+            if (job_system_enqueue(sys, entry->fiber, entry->priority, entry->id) != 0) {
+                job_fiber_destroy(entry->fiber);
+            } else {
+                job_instrument_event("wake_requeue", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
+            }
         } else {
-            job_instrument_event("continue", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
+            /* wait_state == 1: fiber is parked waiting for counter.
+             * The swap is now complete, so transition 1→3 (parked-and-yielded).
+             * The waker will CAS 3→0 and enqueue safely. */
+            int exp = 1;
+            if (!atomic_compare_exchange_strong_explicit(&entry->fiber->waiting, &exp, 3,
+                                                         memory_order_acq_rel,
+                                                         memory_order_acquire)) {
+                /* Raced with waker: waiting is now 2 (woken-before-observed).
+                 * The waker couldn't enqueue because it wasn't 3 yet, so
+                 * we must re-enqueue. */
+                atomic_store_explicit(&entry->fiber->waiting, 0, memory_order_release);
+                if (job_system_enqueue(sys, entry->fiber, entry->priority, entry->id) != 0) {
+                    job_fiber_destroy(entry->fiber);
+                } else {
+                    job_instrument_event("wake_requeue_cas", entry->fiber->id, entry->id, g_worker_id, __FILE__, __LINE__);
+                }
+            }
+            /* If CAS succeeded (1→3), the waker will enqueue when it fires. */
         }
     }
 
     g_current_fiber = NULL;
 }
 
-static int worker_main(void *arg) {
+static void *worker_main(void *arg) {
     struct worker_arg *wa = (struct worker_arg *)arg;
     job_system_t *sys = wa->sys;
     g_worker_id = wa->id;
@@ -333,7 +391,7 @@ static int worker_main(void *arg) {
                 break;
             }
             /* Sleep when no READY entries to avoid wasted spinning. */
-            mtx_lock(&sys->queue_lock);
+            pthread_mutex_lock(&sys->sleep_mtx);
             for (;;) {
                 unsigned int queued = atomic_load_explicit(&sys->queued_count, memory_order_acquire);
                 if (atomic_load(&sys->shutting_down) || queued != 0u) {
@@ -342,16 +400,16 @@ static int worker_main(void *arg) {
 #ifdef FR_JOB_QUEUE_DIAGNOSTICS
                 atomic_fetch_add_explicit(&sys->qdiag_cond_waits, 1, memory_order_relaxed);
 #endif
-                cnd_wait(&sys->queue_cond, &sys->queue_lock);
+                pthread_cond_wait(&sys->sleep_cnd, &sys->sleep_mtx);
             }
-            mtx_unlock(&sys->queue_lock);
+            pthread_mutex_unlock(&sys->sleep_mtx);
             continue;
         }
         run_entry(sys, &entry, &sched_ctx);
     }
 
     free(wa);
-    return 0;
+    return NULL;
 }
 
 int job_system_queue_is_lock_free(const job_system_t *sys) {

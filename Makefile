@@ -1,9 +1,11 @@
-CC ?= gcc
+CC ?= clang
 JOB_INSTRUMENTATION ?= 1
 TRACY ?= 0
+STACK_CANARY ?= 1
 
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -g -O0
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -g3 -O0
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
+CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
 
 LDFLAGS ?= -lm
 

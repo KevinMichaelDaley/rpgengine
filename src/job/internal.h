@@ -4,11 +4,13 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <threads.h>
+#include <pthread.h>
 
 #include "ferrum/job/counter.h"
 #include "ferrum/job/system.h"
+#include "ferrum/job/spinlock.h"
 #include "ferrum/job/instrumentation.h"
+#include "ferrum/job/stack_canary.h"
 
 #include "ferrum/memory/arena.h"
 #include "ferrum/memory/apool.h"
@@ -27,24 +29,44 @@ struct job_entry {
 };
 
 struct job_fiber {
+    uint16_t magic1;
     #ifdef TRACY_ENABLE
     const char* tracy_name;
     char tracy_name_storage[64];
     TracyCZoneCtx zone;
     #endif
-    uint16_t magic1;
     job_context_t ctx;
     apool_handle_t handle;
+    apool_handle_t stack_handle;
     job_system_t *system;
     void (*fn)(void *);
     void *user;
     struct job_counter *counter;
     int finished;
-    int waiting;
+
+    /* Wait/wake states (atomic to prevent double-enqueue race).
+     *   0 = not waiting (running or finished)
+     *   1 = parked (fiber has yielded, waiting for counter)
+     *   2 = woken-before-park-observed (counter hit 0 before run_entry saw waiting=1)
+     * Only run_entry re-enqueues a woken fiber, ensuring the fiber has actually
+     * yielded before it can be scheduled on another worker. */
+    atomic_int waiting;
     uint32_t priority;
     struct job_fiber *next;
     uint64_t id;
     uint8_t* stack;
+
+    /* Debug trace: saved at each context swap for post-mortem diagnosis.
+     * swap_caller:  __builtin_return_address(0) of the function that swapped.
+     * swap_site:    human-readable label of the swap point.
+     * prev_fiber:   the fiber that was running on this worker immediately before
+     *               this fiber was scheduled (set in run_entry).
+     * last_worker:  worker id that last ran this fiber. */
+    void *swap_caller;
+    const char *swap_site;
+    struct job_fiber *prev_fiber;
+    uint32_t last_worker;
+
     uint16_t magic2;
 };
 

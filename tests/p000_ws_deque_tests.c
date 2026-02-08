@@ -4,7 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
+#include <pthread.h>
+#include <sched.h>
 
 #include "ferrum/job/ws_deque.h"
 
@@ -107,30 +108,30 @@ struct steal_ctx {
     atomic_uint *stolen;
 };
 
-static int thief_main(void *arg) {
+static void *thief_main(void *arg) {
     struct steal_ctx *ctx = (struct steal_ctx *)arg;
     while (atomic_load_explicit(ctx->stolen, memory_order_relaxed) < ctx->n) {
         void *p = fr_ws_deque_steal(ctx->dq);
         if (!p) {
-            thrd_yield();
+            sched_yield();
             continue;
         }
 
         int *ip = (int *)p;
         ptrdiff_t idx = ip - ctx->items;
         if (idx < 0 || (uint32_t)idx >= ctx->n) {
-            return 1;
+            return (void *)(intptr_t)1;
         }
 
         unsigned char prev = atomic_exchange_explicit(&ctx->seen[idx], 1, memory_order_relaxed);
         if (prev != 0) {
-            return 2; /* duplicate */
+            return (void *)(intptr_t)2; /* duplicate */
         }
 
         atomic_fetch_add_explicit(ctx->stolen, 1, memory_order_relaxed);
     }
 
-    return 0;
+    return NULL;
 }
 
 static int test_concurrent_steal_removes_all_exactly_once(void) {
@@ -159,14 +160,14 @@ static int test_concurrent_steal_removes_all_exactly_once(void) {
         .stolen = &stolen,
     };
 
-    thrd_t thieves[4];
+    pthread_t thieves[4];
     for (size_t i = 0; i < ARRAY_SIZE(thieves); ++i) {
-        ASSERT_TRUE(thrd_create(&thieves[i], thief_main, &ctx) == thrd_success);
+        ASSERT_TRUE(pthread_create(&thieves[i], NULL, thief_main, &ctx) == 0);
     }
 
     for (size_t i = 0; i < ARRAY_SIZE(thieves); ++i) {
         int rc = 0;
-        ASSERT_TRUE(thrd_join(thieves[i], &rc) == thrd_success);
+        ASSERT_TRUE(pthread_join(thieves[i], NULL) == 0);
         ASSERT_EQ_U32(0, (uint32_t)rc);
     }
 

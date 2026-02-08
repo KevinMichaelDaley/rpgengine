@@ -49,6 +49,11 @@ void job_yield(void) {
     #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
         TracyCFiberLeave;
     #endif
+    /* Verify stack canary before yielding. */
+    job_stack_canary_check(g_current_fiber->stack, g_current_fiber->system->fiber_stack_size,
+                           g_current_fiber->id, "job_yield");
+    g_current_fiber->swap_caller = __builtin_return_address(0);
+    g_current_fiber->swap_site = "job_yield";
     job_context_swap(&g_current_fiber->ctx, g_scheduler_context);
     #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
         if (g_current_fiber->tracy_name) {

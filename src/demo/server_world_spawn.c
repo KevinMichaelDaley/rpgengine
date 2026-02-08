@@ -15,7 +15,7 @@
 #include "ferrum/job/system.h"
 
 #include <math.h>
-#include <threads.h>
+#include <stdatomic.h>
 
 /** Spawn distance in front of the player (meters). */
 #define SPAWN_DISTANCE 2.0f
@@ -377,21 +377,16 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
 typedef struct tick_job_args {
     phys_world_t       *world;
     phys_job_context_t *jobs;
-    mtx_t              *done_mtx;
-    cnd_t              *done_cnd;
-    int                *done_flag;
+    atomic_int         *done_flag;
 } tick_job_args_t;
 
 /** Job function: runs the parallel tick inside a fiber context, then
- *  signals completion to the waiting main thread. */
+ *  signals completion to the waiting main thread via atomic store. */
 static void tick_job_fn_(void *user_data) {
     tick_job_args_t *a = (tick_job_args_t *)user_data;
     phys_world_tick_parallel(a->world, NULL, a->jobs);
 
-    mtx_lock(a->done_mtx);
-    *a->done_flag = 1;
-    cnd_signal(a->done_cnd);
-    mtx_unlock(a->done_mtx);
+    atomic_store(a->done_flag, 1);
 }
 
 void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
@@ -401,34 +396,23 @@ void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
 
     if (jobs) {
         /* Dispatch the parallel tick as a single job so it runs inside a
-         * fiber context.  The main thread waits on a condvar until the
-         * tick is complete. */
-        mtx_t done_mtx;
-        cnd_t done_cnd;
-        int   done_flag = 0;
-        mtx_init(&done_mtx, mtx_plain);
-        cnd_init(&done_cnd);
+         * fiber context.  The main thread busy-waits (short tick) until
+         * the fiber sets the atomic done flag. */
+        atomic_int done_flag = 0;
 
         tick_job_args_t args = {
             .world     = &sw->physics,
             .jobs      = jobs,
-            .done_mtx  = &done_mtx,
-            .done_cnd  = &done_cnd,
             .done_flag = &done_flag,
         };
 
         job_dispatch_named(jobs->job_sys, tick_job_fn_, &args,
                            0, NULL, "Phys.Tick.Parallel");
 
-        /* Wait for the job to signal completion. */
-        mtx_lock(&done_mtx);
-        while (!done_flag) {
-            cnd_wait(&done_cnd, &done_mtx);
+        /* Busy-wait for the job to signal completion. */
+        while (!atomic_load(&done_flag)) {
+            /* Spin — tick should complete within a few ms. */
         }
-        mtx_unlock(&done_mtx);
-
-        mtx_destroy(&done_mtx);
-        cnd_destroy(&done_cnd);
     } else {
         phys_world_tick(&sw->physics, NULL);
     }

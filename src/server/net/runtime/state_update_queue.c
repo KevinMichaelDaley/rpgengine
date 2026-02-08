@@ -1,6 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
-#include <threads.h>
+#include <pthread.h>
 
 #include "ferrum/server/net/state_update_queue.h"
 
@@ -18,7 +18,7 @@ struct fr_state_update_queue {
     uint32_t head;
     uint32_t tail;
     uint32_t count;
-    mtx_t lock;
+    pthread_mutex_t lock;
 };
 
 static uint32_t u32_or_default_(uint32_t v, uint32_t def) {
@@ -49,7 +49,7 @@ fr_state_update_queue_t *fr_state_update_queue_create(const fr_state_update_queu
     q->tail = 0u;
     q->count = 0u;
 
-    if (mtx_init(&q->lock, mtx_plain) != thrd_success) {
+    if (pthread_mutex_init(&q->lock, NULL) != 0) {
         free(q->ring);
         free(q);
         return NULL;
@@ -63,7 +63,7 @@ void fr_state_update_queue_destroy(fr_state_update_queue_t *q) {
         return;
     }
 
-    (void)mtx_lock(&q->lock);
+    pthread_mutex_lock(&q->lock);
     if (q->ring) {
         for (uint32_t i = 0u; i < q->capacity; ++i) {
             free(q->ring[i]);
@@ -77,9 +77,9 @@ void fr_state_update_queue_destroy(fr_state_update_queue_t *q) {
     q->head = 0u;
     q->tail = 0u;
     q->count = 0u;
-    (void)mtx_unlock(&q->lock);
+    pthread_mutex_unlock(&q->lock);
 
-    mtx_destroy(&q->lock);
+    pthread_mutex_destroy(&q->lock);
     free(q);
 }
 
@@ -105,15 +105,15 @@ bool fr_state_update_queue_push(fr_state_update_queue_t *q,
     node->payload_size = payload_size;
     memcpy(node->payload, payload, payload_size);
 
-    (void)mtx_lock(&q->lock);
+    pthread_mutex_lock(&q->lock);
     if (q->count >= q->capacity) {
-        (void)mtx_unlock(&q->lock);
+        pthread_mutex_unlock(&q->lock);
         free(node);
         return false;
     }
 
     if (q->ring[q->tail] != NULL) {
-        (void)mtx_unlock(&q->lock);
+        pthread_mutex_unlock(&q->lock);
         free(node);
         return false;
     }
@@ -121,7 +121,7 @@ bool fr_state_update_queue_push(fr_state_update_queue_t *q,
     q->ring[q->tail] = node;
     q->tail = (q->tail + 1u) % q->capacity;
     q->count++;
-    (void)mtx_unlock(&q->lock);
+    pthread_mutex_unlock(&q->lock);
 
     return true;
 }
@@ -135,27 +135,27 @@ bool fr_state_update_queue_pop(fr_state_update_queue_t *q,
         return false;
     }
 
-    (void)mtx_lock(&q->lock);
+    pthread_mutex_lock(&q->lock);
     if (q->count == 0u) {
-        (void)mtx_unlock(&q->lock);
+        pthread_mutex_unlock(&q->lock);
         return false;
     }
 
     fr_state_update_node_t *node = q->ring[q->head];
     if (!node) {
-        (void)mtx_unlock(&q->lock);
+        pthread_mutex_unlock(&q->lock);
         return false;
     }
 
     if (node->payload_size > *inout_payload_size) {
-        (void)mtx_unlock(&q->lock);
+        pthread_mutex_unlock(&q->lock);
         return false;
     }
 
     q->ring[q->head] = NULL;
     q->head = (q->head + 1u) % q->capacity;
     q->count--;
-    (void)mtx_unlock(&q->lock);
+    pthread_mutex_unlock(&q->lock);
 
     *out_client_id = node->client_id;
     *out_schema_id = node->schema_id;

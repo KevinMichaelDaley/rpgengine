@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <threads.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 
 #include "ferrum/ferrum.h"

@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdatomic.h>
-#include <threads.h>
+#include <pthread.h>
+#include <sched.h>
 
 #include "ferrum/server/net/state_update_queue.h"
 
@@ -110,7 +111,7 @@ struct producer_args {
     uint32_t producer_index;
 };
 
-static int producer_main(void *arg) {
+static void *producer_main(void *arg) {
     struct producer_args *pa = (struct producer_args *)arg;
     struct prod_cons_ctx *ctx = pa->ctx;
 
@@ -126,18 +127,18 @@ static int producer_main(void *arg) {
 
         while (!fr_state_update_queue_push(ctx->q, client_id, schema_id, payload, (uint16_t)sizeof(payload))) {
             if (atomic_load_explicit(&ctx->failure, memory_order_relaxed)) {
-                return -1;
+                return (void *)(intptr_t)-1;
             }
-            thrd_yield();
+            sched_yield();
         }
 
         atomic_fetch_add_explicit(&ctx->produced, 1u, memory_order_relaxed);
     }
 
-    return 0;
+    return NULL;
 }
 
-static int consumer_main(void *arg) {
+static void *consumer_main(void *arg) {
     struct prod_cons_ctx *ctx = (struct prod_cons_ctx *)arg;
 
     const uint32_t total = ctx->producers * ctx->per_producer;
@@ -149,13 +150,13 @@ static int consumer_main(void *arg) {
         uint16_t cap = (uint16_t)sizeof(payload);
 
         if (!fr_state_update_queue_pop(ctx->q, &client_id, &schema_id, payload, &cap)) {
-            thrd_yield();
+            sched_yield();
             continue;
         }
 
         if (schema_id != 1u || cap != 4u || client_id < 100u) {
             atomic_store_explicit(&ctx->failure, 1, memory_order_relaxed);
-            return -1;
+            return (void *)(intptr_t)-1;
         }
 
         const uint32_t seq = (uint32_t)payload[0] | ((uint32_t)payload[1] << 8u) | ((uint32_t)payload[2] << 16u) |
@@ -163,19 +164,19 @@ static int consumer_main(void *arg) {
         const uint32_t idx = (uint32_t)(client_id - 100u);
         if (idx >= ctx->producers) {
             atomic_store_explicit(&ctx->failure, 1, memory_order_relaxed);
-            return -1;
+            return (void *)(intptr_t)-1;
         }
 
         const uint32_t prev = atomic_exchange_explicit(&ctx->last_seq[idx], seq, memory_order_relaxed);
         if (seq != 0u && seq <= prev) {
             atomic_store_explicit(&ctx->failure, 1, memory_order_relaxed);
-            return -1;
+            return (void *)(intptr_t)-1;
         }
 
         atomic_fetch_add_explicit(&ctx->consumed, 1u, memory_order_relaxed);
     }
 
-    return 0;
+    return NULL;
 }
 
 static int test_multi_producer_preserves_per_client_order(void) {
@@ -204,22 +205,22 @@ static int test_multi_producer_preserves_per_client_order(void) {
     atomic_init(&ctx.failure, 0);
     ctx.last_seq = last_seq;
 
-    thrd_t prod_threads[producers];
+    pthread_t prod_threads[producers];
     struct producer_args args[producers];
     for (uint32_t i = 0u; i < producers; ++i) {
         args[i].ctx = &ctx;
         args[i].producer_index = i;
-        ASSERT_TRUE(thrd_create(&prod_threads[i], producer_main, &args[i]) == thrd_success);
+        ASSERT_TRUE(pthread_create(&prod_threads[i], NULL, producer_main, &args[i]) == 0);
     }
 
-    thrd_t consumer_thread;
-    ASSERT_TRUE(thrd_create(&consumer_thread, consumer_main, &ctx) == thrd_success);
+    pthread_t consumer_thread;
+    ASSERT_TRUE(pthread_create(&consumer_thread, NULL, consumer_main, &ctx) == 0);
 
     for (uint32_t i = 0u; i < producers; ++i) {
-        thrd_join(prod_threads[i], NULL);
+        pthread_join(prod_threads[i], NULL);
     }
 
-    thrd_join(consumer_thread, NULL);
+    pthread_join(consumer_thread, NULL);
 
     ASSERT_INT_EQ(0, atomic_load_explicit(&ctx.failure, memory_order_relaxed));
     ASSERT_UINT_EQ((uint64_t)(producers * per_producer), atomic_load_explicit(&ctx.produced, memory_order_relaxed));

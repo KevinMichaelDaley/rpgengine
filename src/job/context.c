@@ -127,13 +127,14 @@ __asm__(
 #define JOB_CTX_X86_OFF_RIP 56
 #define JOB_CTX_X86_OFF_ENTRY 64
 #define JOB_CTX_X86_OFF_ARG0 72
-#define JOB_CTX_X86_OFF_FXSAVE 80
+#define JOB_CTX_X86_OFF_CANARY 80
+#define JOB_CTX_X86_OFF_FXSAVE 96
 
 #if defined(__AVX512F__)
-#define JOB_CTX_X86_OFF_KMASK 592
-#define JOB_CTX_X86_OFF_ZMM 704
+#define JOB_CTX_X86_OFF_KMASK 608
+#define JOB_CTX_X86_OFF_ZMM 720
 #elif defined(__AVX__)
-#define JOB_CTX_X86_OFF_YMM 608
+#define JOB_CTX_X86_OFF_YMM 624
 #endif
 
 _Static_assert(offsetof(job_context_t, rbx) == JOB_CTX_X86_OFF_RBX, "job_context_t rbx offset");
@@ -146,6 +147,7 @@ _Static_assert(offsetof(job_context_t, sp) == JOB_CTX_X86_OFF_SP, "job_context_t
 _Static_assert(offsetof(job_context_t, rip) == JOB_CTX_X86_OFF_RIP, "job_context_t rip offset");
 _Static_assert(offsetof(job_context_t, entry) == JOB_CTX_X86_OFF_ENTRY, "job_context_t entry offset");
 _Static_assert(offsetof(job_context_t, arg0) == JOB_CTX_X86_OFF_ARG0, "job_context_t arg0 offset");
+_Static_assert(offsetof(job_context_t, stack_canary) == JOB_CTX_X86_OFF_CANARY, "job_context_t stack_canary offset");
 _Static_assert(offsetof(job_context_t, fxsave_area) == JOB_CTX_X86_OFF_FXSAVE, "job_context_t fxsave_area offset");
 _Static_assert((JOB_CTX_X86_OFF_FXSAVE % 16) == 0, "fxsave_area offset must be 16-byte aligned");
 
@@ -153,13 +155,13 @@ _Static_assert((JOB_CTX_X86_OFF_FXSAVE % 16) == 0, "fxsave_area offset must be 1
 _Static_assert(offsetof(job_context_t, k_mask) == JOB_CTX_X86_OFF_KMASK, "job_context_t k_mask offset");
 _Static_assert(offsetof(job_context_t, zmm) == JOB_CTX_X86_OFF_ZMM, "job_context_t zmm offset");
 _Static_assert((JOB_CTX_X86_OFF_ZMM % 64) == 0, "zmm offset must be 64-byte aligned");
-_Static_assert(sizeof(job_context_t) == 2752u, "job_context_t size must match asm layout (avx512)");
+_Static_assert(sizeof(job_context_t) == 2768u, "job_context_t size must match asm layout (avx512)");
 #elif defined(__AVX__)
 _Static_assert(offsetof(job_context_t, ymm) == JOB_CTX_X86_OFF_YMM, "job_context_t ymm offset");
 _Static_assert((JOB_CTX_X86_OFF_YMM % 32) == 0, "ymm offset must be 32-byte aligned");
-_Static_assert(sizeof(job_context_t) == 1120u, "job_context_t size must match asm layout (avx)");
+_Static_assert(sizeof(job_context_t) == 1136u, "job_context_t size must match asm layout (avx)");
 #else
-_Static_assert(sizeof(job_context_t) == 592u, "job_context_t size must match asm layout (sse)");
+_Static_assert(sizeof(job_context_t) == 608u, "job_context_t size must match asm layout (sse)");
 #endif
 
 extern void job_context_x86_bootstrap(void);
@@ -177,6 +179,10 @@ void job_context_init(job_context_t *ctx, void (*entry)(uintptr_t), uintptr_t ar
      * cause SIGFPE in floating-point heavy code.
      */
     __asm__ volatile("fxsave64 %0" : "=m"(ctx->fxsave_area));
+
+    /* Capture the creating thread's stack-protector canary so that the
+     * fiber starts with a valid canary even before its first swap. */
+    __asm__ volatile("movq %%fs:40, %0" : "=r"(ctx->stack_canary));
 
     uintptr_t sp = (uintptr_t)stack + stack_size;
     sp &= ~(uintptr_t)0xFu; /* SysV x86-64: 16-byte alignment */
@@ -198,6 +204,9 @@ __asm__(
     ".type job_context_x86_bootstrap,%function\n"
     "job_context_x86_bootstrap:\n"
     /* r12 holds job_context_t* (set in job_context_init and preserved by swap). */
+    /* Restore the stack-protector canary for this fiber before calling entry. */
+    "movq " XSTR(JOB_CTX_X86_OFF_CANARY) "(%r12), %rax\n"
+    "movq %rax, %fs:40\n"
     "movq " XSTR(JOB_CTX_X86_OFF_ARG0) "(%r12), %rdi\n" /* arg0 */
     "movq " XSTR(JOB_CTX_X86_OFF_ENTRY) "(%r12), %rax\n" /* entry */
     "call *%rax\n"
@@ -218,6 +227,10 @@ __asm__(
     "movq %rsp, " XSTR(JOB_CTX_X86_OFF_SP) "(%rdi)\n"
     "leaq 0f(%rip), %rax\n"
     "movq %rax, " XSTR(JOB_CTX_X86_OFF_RIP) "(%rdi)\n"
+
+    /* Save GCC stack-protector canary (%fs:40 == %fs:0x28). */
+    "movq %fs:40, %rax\n"
+    "movq %rax, " XSTR(JOB_CTX_X86_OFF_CANARY) "(%rdi)\n"
 
     /* Save FP/MMX/XMM state. */
     "fxsave64 " XSTR(JOB_CTX_X86_OFF_FXSAVE) "(%rdi)\n"
@@ -363,6 +376,10 @@ __asm__(
     "vmovdqu " XSTR(JOB_CTX_X86_OFF_YMM) "+(14*32)(%rsi), %ymm14\n"
     "vmovdqu " XSTR(JOB_CTX_X86_OFF_YMM) "+(15*32)(%rsi), %ymm15\n"
 #endif
+
+    /* Restore GCC stack-protector canary into %fs:40 for the target fiber. */
+    "movq " XSTR(JOB_CTX_X86_OFF_CANARY) "(%rsi), %rax\n"
+    "movq %rax, %fs:40\n"
 
     "movq " XSTR(JOB_CTX_X86_OFF_RIP) "(%rsi), %rax\n"
     "jmp *%rax\n"

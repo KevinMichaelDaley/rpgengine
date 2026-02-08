@@ -2,7 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-#include <threads.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdatomic.h>
 #include <unistd.h>
 

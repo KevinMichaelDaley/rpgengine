@@ -13,8 +13,8 @@
 
 #include <stdatomic.h>
 #include <string.h>
-#include <threads.h>
 
+#include "ferrum/job/spinlock.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/manifold_cache.h"
@@ -36,7 +36,7 @@ typedef struct manifold_build_shared {
     uint32_t max_manifolds;                      /**< Capacity of manifolds_out. */
     uint64_t tick;                               /**< Current simulation tick. */
     const phys_body_t *bodies;                   /**< Body array for material lookups. */
-    mtx_t cache_mtx;                             /**< Mutex protecting cache access. */
+    job_spinlock_t cache_mtx;                    /**< Spinlock protecting cache access (fiber-safe). */
     atomic_uint output_index;                    /**< Atomic counter for output slot allocation. */
 } manifold_build_shared_t;
 
@@ -61,14 +61,14 @@ static void manifold_build_batch_job(void *data) {
         const phys_contact_candidate_t *cand = &shared->candidates[i];
 
         /* Lock cache for get_or_create + warmstart save + rebuild. */
-        mtx_lock(&shared->cache_mtx);
+        job_spinlock_lock(&shared->cache_mtx);
 
         /* 1. Get or create cached manifold for this body pair. */
         phys_manifold_t *cached = phys_manifold_cache_get_or_create(
             shared->cache, cand->body_a, cand->body_b,
             (uint32_t)shared->tick);
         if (!cached) {
-            mtx_unlock(&shared->cache_mtx);
+            job_spinlock_unlock(&shared->cache_mtx);
             continue; /* cache full */
         }
 
@@ -126,7 +126,7 @@ static void manifold_build_batch_job(void *data) {
         /* Take a local copy of the manifold before unlocking. */
         phys_manifold_t local_copy = *cached;
 
-        mtx_unlock(&shared->cache_mtx);
+        job_spinlock_unlock(&shared->cache_mtx);
 
         /* 6. Atomically claim an output slot and copy. */
         uint32_t slot = atomic_fetch_add(&shared->output_index, 1);
@@ -170,7 +170,7 @@ void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
         .tick          = args->tick,
         .bodies        = args->bodies,
     };
-    mtx_init(&shared.cache_mtx, mtx_plain);
+    job_spinlock_init(&shared.cache_mtx);
     atomic_store(&shared.output_index, 0);
 
     /* Calculate batch count. */
@@ -183,7 +183,7 @@ void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
         _Alignof(phys_job_batch_t));
     if (!batches) {
         /* Fallback to sequential if arena allocation fails. */
-        mtx_destroy(&shared.cache_mtx);
+        job_spinlock_destroy(&shared.cache_mtx);
         phys_stage_manifold_build(args);
         return;
     }
@@ -203,5 +203,5 @@ void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
     }
     *args->manifold_count_out = final_count;
 
-    mtx_destroy(&shared.cache_mtx);
+    job_spinlock_destroy(&shared.cache_mtx);
 }

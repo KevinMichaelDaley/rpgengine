@@ -69,17 +69,17 @@ bool fr_topic_channel_push(fr_topic_channel_t *ch, const uint8_t *data, size_t l
 
     const uint32_t msg_len = (uint32_t)len;
 
-    (void)mtx_lock(&ch->lock);
+    pthread_mutex_lock(&ch->lock);
     if (msg_len > ch->max_message_size) {
         (void)atomic_fetch_add(&ch->stat_dropped, 1u);
-        (void)mtx_unlock(&ch->lock);
+        pthread_mutex_unlock(&ch->lock);
         return false;
     }
 
     const uint32_t needed = 4u + msg_len;
     if (needed > ch->ring_capacity_bytes) {
         (void)atomic_fetch_add(&ch->stat_dropped, 1u);
-        (void)mtx_unlock(&ch->lock);
+        pthread_mutex_unlock(&ch->lock);
         return false;
     }
 
@@ -91,7 +91,7 @@ bool fr_topic_channel_push(fr_topic_channel_t *ch, const uint8_t *data, size_t l
 
     if (ch->count >= ch->message_capacity || fr_topic_ring_free_bytes(ch) < needed) {
         (void)atomic_fetch_add(&ch->stat_dropped, 1u);
-        (void)mtx_unlock(&ch->lock);
+        pthread_mutex_unlock(&ch->lock);
         return false;
     }
 
@@ -99,6 +99,6 @@ bool fr_topic_channel_push(fr_topic_channel_t *ch, const uint8_t *data, size_t l
     fr_topic_ring_write_bytes(ch, data, msg_len);
     ch->used_bytes += needed;
     ch->count += 1u;
-    (void)mtx_unlock(&ch->lock);
+    pthread_mutex_unlock(&ch->lock);
     return true;
 }

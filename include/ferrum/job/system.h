@@ -4,9 +4,11 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <pthread.h>
 #include "counter.h"
 #include "ferrum/memory/apool.h"
 #include "ferrum/job/ws_deque.h"
+#include "ferrum/job/spinlock.h"
 /** @file
  * @brief Public API for the job system and fibers.
  */
@@ -20,6 +22,7 @@ struct job_system {
     uint32_t queue_capacity;
     size_t fiber_stack_size;
     apool_t fiber_stack_pool;
+    apool_t fiber_ctx_pool;
     int deterministic;
     atomic_bool running;
     atomic_bool shutting_down;
@@ -40,8 +43,9 @@ struct job_system {
     uint32_t inject_tail;
     uint32_t inject_count;
 
-    mtx_t queue_lock;
-    cnd_t queue_cond;
+    job_spinlock_t queue_lock;
+    pthread_mutex_t sleep_mtx;
+    pthread_cond_t  sleep_cnd;
 
 #ifdef FR_JOB_QUEUE_DIAGNOSTICS
     /* Queue contention diagnostics (only when FR_JOB_QUEUE_DIAGNOSTICS is defined). */
@@ -59,7 +63,7 @@ struct job_system {
     atomic_uint_least64_t qdiag_cond_waits;
 #endif
 
-    thrd_t *workers;
+    pthread_t *workers;
     atomic_uint_least64_t next_job_id;
     atomic_uint_least64_t jobs_started;
     atomic_uint_least64_t jobs_completed;

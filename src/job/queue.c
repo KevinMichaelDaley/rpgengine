@@ -61,14 +61,14 @@ static void *try_pop_injected(job_system_t *sys) {
     }
 
     void *p = NULL;
-    mtx_lock(&sys->queue_lock);
+    job_spinlock_lock(&sys->queue_lock);
     if (sys->inject_count > 0) {
         p = (void *)sys->inject_ring[sys->inject_head];
         sys->inject_ring[sys->inject_head] = NULL;
         sys->inject_head = (sys->inject_head + 1u) % sys->queue_capacity;
         sys->inject_count--;
     }
-    mtx_unlock(&sys->queue_lock);
+    job_spinlock_unlock(&sys->queue_lock);
     return p;
 }
 
@@ -84,12 +84,12 @@ int job_system_enqueue_preferred(job_system_t *sys, job_fiber_t *fiber, int prio
     (void)priority;
     (void)id;
 
-    /* Enqueue and signal under queue_lock so worker wait can't miss the 0->1 transition. */
-    mtx_lock(&sys->queue_lock);
+    /* Enqueue and signal so worker wait can't miss the 0->1 transition. */
+    job_spinlock_lock(&sys->queue_lock);
     unsigned int prev = atomic_fetch_add_explicit(&sys->queued_count, 1u, memory_order_relaxed);
     if (prev >= sys->queue_capacity) {
         (void)atomic_fetch_sub_explicit(&sys->queued_count, 1u, memory_order_relaxed);
-        mtx_unlock(&sys->queue_lock);
+        job_spinlock_unlock(&sys->queue_lock);
         return -1;
     }
 
@@ -97,12 +97,16 @@ int job_system_enqueue_preferred(job_system_t *sys, job_fiber_t *fiber, int prio
                                 : enqueue_ws(sys, fiber, preferred_worker);
     if (rc != 0) {
         (void)atomic_fetch_sub_explicit(&sys->queued_count, 1u, memory_order_relaxed);
-        mtx_unlock(&sys->queue_lock);
+        job_spinlock_unlock(&sys->queue_lock);
         return -1;
     }
 
-    cnd_broadcast(&sys->queue_cond);
-    mtx_unlock(&sys->queue_lock);
+    job_spinlock_unlock(&sys->queue_lock);
+
+    /* Wake sleeping workers via the pthread condvar (OS-thread safe). */
+    pthread_mutex_lock(&sys->sleep_mtx);
+    pthread_cond_broadcast(&sys->sleep_cnd);
+    pthread_mutex_unlock(&sys->sleep_mtx);
 
 #ifdef FR_JOB_QUEUE_DIAGNOSTICS
     atomic_fetch_add_explicit(&sys->qdiag_enqueue_scanned_slots, 1, memory_order_relaxed);

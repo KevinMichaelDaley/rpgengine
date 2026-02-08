@@ -4,9 +4,9 @@
 
 void fr_topic_channel_destroy(fr_topic_channel_t *ch) {
     if (!ch) return;
-    (void)mtx_lock(&ch->lock);
+    pthread_mutex_lock(&ch->lock);
     if (ch->ring) free(ch->ring);
-    (void)mtx_unlock(&ch->lock);
-    mtx_destroy(&ch->lock);
+    pthread_mutex_unlock(&ch->lock);
+    pthread_mutex_destroy(&ch->lock);
     free(ch);
 }

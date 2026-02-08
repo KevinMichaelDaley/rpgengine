@@ -74,6 +74,12 @@ typedef struct job_context {
     uint64_t entry; /* void (*)(uintptr_t) */
     uint64_t arg0;
 
+    /* GCC stack-protector canary from %fs:0x28.
+     * Saved/restored across context swaps so that fibers migrating
+     * between OS threads do not trigger false __stack_chk_fail. */
+    uint64_t stack_canary;
+    uint64_t _pad0; /* Pad to keep fxsave_area 16-byte aligned. */
+
     /* FPU/MMX/XMM state.
      * FXSAVE64 saves x87 + MMX + XMM0-15 + MXCSR.
      * Requires 16-byte alignment.
