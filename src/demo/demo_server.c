@@ -7,7 +7,7 @@
  * fixed rate, and broadcasts body state (STATE_CUBE) to all clients.
  *
  * Usage: ./build/demo_server <port> [tick_hz] [workers]
- *   Default: port=40080 tick_hz=60 workers=4
+ *   Default: port=40080 tick_hz=500 workers=4
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -460,7 +460,7 @@ static void *net_pump_thread_fn(void *arg) {
 static void usage(const char *argv0) {
     fprintf(stderr,
             "Usage: %s <port> [tick_hz] [sim_workers] [net_workers]\n"
-            "  Default: port=40080 tick_hz=60 sim_workers=4 net_workers=1\n"
+            "  Default: port=40080 tick_hz=500 sim_workers=4 net_workers=1\n"
             "  net_workers: dedicated threads for networking fibers\n",
             argv0);
 }
@@ -475,7 +475,7 @@ int main(int argc, char **argv) {
 
     /* Parse arguments. */
     long port_l        = strtol(argv[1], NULL, 10);
-    long tick_hz_l     = (argc >= 3) ? strtol(argv[2], NULL, 10) : 60;
+    long tick_hz_l     = (argc >= 3) ? strtol(argv[2], NULL, 10) : 500;
     long workers_l     = (argc >= 4) ? strtol(argv[3], NULL, 10) : 4;
     long net_workers_l = (argc >= 5) ? strtol(argv[4], NULL, 10) : 1;
 
@@ -794,18 +794,23 @@ int main(int argc, char **argv) {
                 demo_server_world_tick(&sw, &phys_jobs);
             }
 
-            /* (e) Broadcast body states from the last completed frame.
+            /* (e) Broadcast body states at ~60 Hz (every Nth physics tick).
              *     bodies_curr always holds valid committed state —
              *     either from the just-consumed tick or the previous
              *     one if physics is still running.  This is safe because
              *     the tick writes to bodies_next, not bodies_curr. */
-            if (clients_joined > 0u) {
-                broadcast_body_states_(rt, &sw, client_connected,
-                                       max_clients, server_tick);
+            {
+                uint32_t broadcast_divisor = (uint32_t)(tick_hz_l / 60);
+                if (broadcast_divisor == 0) { broadcast_divisor = 1; }
+                if (clients_joined > 0u &&
+                    (server_tick % broadcast_divisor) == 0u) {
+                    broadcast_body_states_(rt, &sw, client_connected,
+                                           max_clients, server_tick);
+                }
             }
 
-            /* Status line every 60 ticks. */
-            if ((server_tick % 60u) == 0u) {
+            /* Status line every ~1 second. */
+            if ((server_tick % (uint16_t)tick_hz_l) == 0u) {
                 uint64_t tick_end = now_ms();
                 uint32_t body_count = phys_world_body_count(&sw.physics);
                 fprintf(stderr, "tick %u: %u bodies, %u clients  "

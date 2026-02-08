@@ -6,7 +6,7 @@ phys_world_config_t phys_world_config_default(void) {
         .max_colliders           = 10000,
         .manifold_cache_size     = 4096,
         .frame_arena_size        = 32u * 1024u * 1024u, /* 32 MB */
-        .fixed_dt                = 1.0f / 60.0f,
+        .fixed_dt                = 0.002f,            /* 2 ms / 500 Hz */
         .gravity                 = {0.0f, -9.81f, 0.0f},
         .default_substeps        = 1,
         .default_solver_iterations = 8,

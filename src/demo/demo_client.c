@@ -1103,7 +1103,7 @@ int main(int argc, char **argv) {
                           client_spawn_cb_, &spawn_ctx);
 
     /* Fixed timestep tracking for client physics. */
-    const uint64_t client_tick_ms = 16u; /* ~60 Hz */
+    const uint64_t client_tick_ms = 2u; /* 500 Hz, matches physics fixed_dt */
     uint64_t client_next_tick = now_ms_();
 
     /* ---- FPS camera ---- */
