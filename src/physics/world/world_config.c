@@ -15,6 +15,8 @@ phys_world_config_t phys_world_config_default(void) {
         .sleep_threshold_linear  = 0.05f,
         .sleep_threshold_angular = 0.05f,
         .sleep_delay_frames      = 120,
+        .warmstart_decay         = 0.85f,
+        .velocity_damping        = 0.99f,
     };
     return cfg;
 }

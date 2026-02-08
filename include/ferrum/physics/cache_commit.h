@@ -53,6 +53,7 @@ typedef struct phys_cache_commit_args {
     uint32_t *event_count_out;               /**< Output: number of events emitted. */
     uint32_t max_events;                     /**< Capacity of events_out. */
     float impact_threshold;                  /**< Minimum impulse to emit event. */
+    float warmstart_decay;                   /**< Impulse decay factor (0-1, 1=no decay). */
 } phys_cache_commit_args_t;
 
 /**

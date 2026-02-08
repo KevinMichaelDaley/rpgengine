@@ -353,6 +353,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
                 .current_substep        = sub,
                 .tier_substep_counts    = tier_substep_counts,
+                .velocity_damping       = world->config.velocity_damping,
             }, jobs, &world->frame_arena);
         }
 
@@ -451,6 +452,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .event_count_out  = &world->impact_event_count,
                 .max_events       = world->impact_event_capacity,
                 .impact_threshold = world->impact_threshold,
+                .warmstart_decay  = world->config.warmstart_decay,
             });
         }
 

@@ -49,6 +49,8 @@ typedef struct phys_world_config {
     float    sleep_threshold_linear;   /**< Linear velocity sleep threshold. */
     float    sleep_threshold_angular;  /**< Angular velocity sleep threshold. */
     uint32_t sleep_delay_frames;       /**< Frames below threshold before sleep. */
+    float    warmstart_decay;          /**< Impulse decay per cache commit (0-1). */
+    float    velocity_damping;         /**< Per-substep velocity damping (0-1). */
 } phys_world_config_t;
 
 /* ── World container ────────────────────────────────────────────── */

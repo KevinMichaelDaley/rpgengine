@@ -22,6 +22,7 @@ void phys_stage_cache_commit(const phys_cache_commit_args_t *args)
     }
 
     uint32_t event_count = 0;
+    const float decay = args->warmstart_decay;
 
     for (uint32_t i = 0; i < args->constraint_count; ++i) {
         const phys_constraint_t *c = &args->constraints[i];
@@ -33,9 +34,9 @@ void phys_stage_cache_commit(const phys_cache_commit_args_t *args)
         /* Write back solved impulses for warmstarting.
          * Guard against NaN/Inf to prevent corruption across frames. */
         if (cached && c->point_idx < cached->point_count) {
-            float nl = c->rows[0].lambda;
-            float t0 = c->rows[1].lambda;
-            float t1 = c->rows[2].lambda;
+            float nl = c->rows[0].lambda * decay;
+            float t0 = c->rows[1].lambda * decay;
+            float t1 = c->rows[2].lambda * decay;
             if (isnan(nl) || isinf(nl)) { nl = 0.0f; }
             if (isnan(t0) || isinf(t0)) { t0 = 0.0f; }
             if (isnan(t1) || isinf(t1)) { t1 = 0.0f; }

@@ -359,6 +359,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
                 .current_substep        = sub,
                 .tier_substep_counts    = tier_substep_counts,
+                .velocity_damping       = world->config.velocity_damping,
             });
         }
 
@@ -456,6 +457,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .event_count_out  = &world->impact_event_count,
                 .max_events       = world->impact_event_capacity,
                 .impact_threshold = world->impact_threshold,
+                .warmstart_decay  = world->config.warmstart_decay,
             });
         }
 

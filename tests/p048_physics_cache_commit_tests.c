@@ -129,16 +129,17 @@ static int test_cache_commit_warmstart(void)
         .event_count_out  = &event_count,
         .max_events       = 4,
         .impact_threshold = 100.0f, /* high threshold: no events expected */
+        .warmstart_decay  = 0.85f,
     };
 
     phys_stage_cache_commit(&args);
 
-    /* Verify cache has updated impulses. */
+    /* Verify cache has updated impulses (decayed by 0.85). */
     phys_manifold_t *result = phys_manifold_cache_find(&cache, 1, 2);
     ASSERT_TRUE(result != NULL);
-    ASSERT_FLOAT_NEAR(5.0f,  result->normal_impulse[0],     1e-5f);
-    ASSERT_FLOAT_NEAR(1.5f,  result->tangent_impulse[0][0], 1e-5f);
-    ASSERT_FLOAT_NEAR(-0.3f, result->tangent_impulse[0][1], 1e-5f);
+    ASSERT_FLOAT_NEAR(5.0f  * 0.85f, result->normal_impulse[0],     1e-5f);
+    ASSERT_FLOAT_NEAR(1.5f  * 0.85f, result->tangent_impulse[0][0], 1e-5f);
+    ASSERT_FLOAT_NEAR(-0.3f * 0.85f, result->tangent_impulse[0][1], 1e-5f);
 
     phys_manifold_cache_destroy(&cache);
     return 0;
@@ -175,6 +176,7 @@ static int test_cache_commit_impact_event(void)
         .event_count_out  = &event_count,
         .max_events       = 4,
         .impact_threshold = 10.0f,
+        .warmstart_decay  = 1.0f,
     };
 
     phys_stage_cache_commit(&args);
@@ -227,6 +229,7 @@ static int test_cache_commit_threshold_filter(void)
         .event_count_out  = &event_count,
         .max_events       = 4,
         .impact_threshold = 10.0f,
+        .warmstart_decay  = 1.0f,
     };
 
     phys_stage_cache_commit(&args);
@@ -276,6 +279,7 @@ static int test_cache_commit_multiple_constraints(void)
         .event_count_out  = &event_count,
         .max_events       = 8,
         .impact_threshold = 10.0f,
+        .warmstart_decay  = 1.0f,
     };
 
     phys_stage_cache_commit(&args);
@@ -334,6 +338,7 @@ static int test_cache_commit_max_events(void)
         .event_count_out  = &event_count,
         .max_events       = 2,
         .impact_threshold = 5.0f,
+        .warmstart_decay  = 1.0f,
     };
 
     phys_stage_cache_commit(&args);

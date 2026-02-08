@@ -47,6 +47,8 @@ typedef struct phys_integrate_args {
     uint32_t current_substep;
     /** Per-tier substep counts, indexed by body tier.  May be NULL. */
     const uint32_t *tier_substep_counts;
+    /** Per-substep velocity damping factor (0-1, 1=no damping). */
+    float velocity_damping;
 } phys_integrate_args_t;
 
 /**

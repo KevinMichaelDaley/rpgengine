@@ -798,6 +798,8 @@ p008_renderer_client:
 
 # ── Demo binaries ────────────────────────────────────────────────
 .PHONY: demo demo_server demo_client
+demo_server: build/demo_server
+demo_client: build/demo_client
 
 build/demo_server: build/libheadless.a src/demo/demo_server.c | build
 	$(CC) $(CFLAGS) src/demo/demo_server.c build/libheadless.a -o $@ $(LDFLAGS)

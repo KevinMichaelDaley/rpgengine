@@ -307,7 +307,9 @@ int phys_box_vs_box(
         contact_out[0].point_world = vec3_scale(vec3_add(pt_a, pt_b), 0.5f);
         contact_out[0].normal = normal;
         contact_out[0].penetration = min_pen;
-        contact_out[0].feature_id = 0;
+        /* Stable feature ID encoding the edge pair axis indices. */
+        contact_out[0].feature_id =
+            ((uint32_t)best_axis << 16) | ((uint32_t)ei << 8) | (uint32_t)ej;
         contact_out[0].local_a = (phys_vec3_t){0, 0, 0};
         contact_out[0].local_b = (phys_vec3_t){0, 0, 0};
         return 1;
@@ -431,7 +433,21 @@ int phys_box_vs_box(
             contact_out[num_contacts].point_world = buf_a[i];
             contact_out[num_contacts].normal = normal;
             contact_out[num_contacts].penetration = -sep;
-            contact_out[num_contacts].feature_id = (uint32_t)num_contacts;
+
+            /* Stable feature ID: encode the reference face, incident face,
+             * and the quadrant of the clipped point on the incident face.
+             * This prevents warmstart impulse mismatch when the clipping
+             * filters out different points between frames. */
+            phys_vec3_t rel = vec3_sub(buf_a[i], inc_face_center);
+            int q0 = (vec3_dot(rel, inc_axes[t0]) >= 0.0f) ? 1 : 0;
+            int q1 = (vec3_dot(rel, inc_axes[t1]) >= 0.0f) ? 1 : 0;
+            uint32_t quadrant = (uint32_t)((q0 << 1) | q1);
+            contact_out[num_contacts].feature_id =
+                ((uint32_t)best_axis << 16)
+              | ((uint32_t)inc_face_axis << 8)
+              | (quadrant << 4)
+              | (uint32_t)i;
+
             contact_out[num_contacts].local_a = (phys_vec3_t){0, 0, 0};
             contact_out[num_contacts].local_b = (phys_vec3_t){0, 0, 0};
             num_contacts++;
@@ -445,7 +461,7 @@ int phys_box_vs_box(
         contact_out[0].point_world = midpoint;
         contact_out[0].normal = normal;
         contact_out[0].penetration = min_pen;
-        contact_out[0].feature_id = 0;
+        contact_out[0].feature_id = 0xFFFF0000u | (uint32_t)best_axis;
         contact_out[0].local_a = (phys_vec3_t){0, 0, 0};
         contact_out[0].local_b = (phys_vec3_t){0, 0, 0};
         num_contacts = 1;

@@ -37,6 +37,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
     const uint32_t sleep_delay         = args->sleep_delay_frames;
     const uint32_t cur_sub             = args->current_substep;
     const uint32_t *tier_subs          = args->tier_substep_counts;
+    const float vel_damp               = args->velocity_damping;
 
     for (uint32_t i = 0; i < args->body_count; ++i) {
         const phys_body_t *in = &bodies_in[i];
@@ -80,6 +81,12 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
                                        vec3_scale(gravity, dt));
         }
 
+        /* Apply velocity damping to dissipate energy over time. */
+        if (vel_damp < 1.0f) {
+            out->linear_vel  = vec3_scale(out->linear_vel, vel_damp);
+            out->angular_vel = vec3_scale(out->angular_vel, vel_damp);
+        }
+
         /* Clamp velocity magnitude to prevent runaway speeds.
          * 100 m/s linear, 50 rad/s angular are generous limits. */
         {
@@ -98,6 +105,16 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
         /* Integrate position: position += linear_vel * dt. */
         out->position = vec3_add(in->position,
                                  vec3_scale(out->linear_vel, dt));
+
+        /* Sanitize NaN/Inf positions — revert to input to prevent
+         * cascading corruption from position projection or solver. */
+        if (isnan(out->position.x) || isnan(out->position.y) ||
+            isnan(out->position.z) || isinf(out->position.x) ||
+            isinf(out->position.y) || isinf(out->position.z)) {
+            out->position = in->position;
+            out->linear_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+            out->angular_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        }
 
         /* Integrate orientation via quaternion derivative:
          *   omega_quat = {angular_vel.x, angular_vel.y, angular_vel.z, 0}
