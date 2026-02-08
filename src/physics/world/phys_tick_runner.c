@@ -21,17 +21,29 @@
 /* ── Tick job function (runs on a fiber) ─────────────────────────── */
 
 /** Job function dispatched by kick().  Drains commands, runs the
- *  parallel tick, and signals completion via atomic store. */
+ *  parallel tick, and signals completion via atomic store.
+ *
+ *  In prediction mode (client), drain happens AFTER the tick so that
+ *  server corrections override the just-simulated state rather than
+ *  being immediately overwritten by integration.
+ *  On the server, drain happens BEFORE so spawned bodies exist for
+ *  the simulation step. */
 static void tick_runner_job_fn_(void *user_data) {
     phys_tick_runner_t *r = (phys_tick_runner_t *)user_data;
 
-    /* Drain all pending commands before stepping physics. */
-    if (r->cmd_channel) {
+    /* Server path: drain before tick (spawns must precede simulation). */
+    if (r->cmd_channel && !r->tick_args_.world->prediction_mode) {
         phys_cmd_drain(r->tick_args_.world, r->cmd_channel,
                        r->spawn_cb, r->spawn_cb_user);
     }
 
     phys_world_tick_parallel(r->tick_args_.world, NULL, r->tick_args_.jobs);
+
+    /* Client path: drain after tick (corrections override prediction). */
+    if (r->cmd_channel && r->tick_args_.world->prediction_mode) {
+        phys_cmd_drain(r->tick_args_.world, r->cmd_channel,
+                       r->spawn_cb, r->spawn_cb_user);
+    }
 
     atomic_store_explicit(&r->tick_done, 1, memory_order_release);
 }
