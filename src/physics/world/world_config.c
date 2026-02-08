@@ -10,7 +10,7 @@ phys_world_config_t phys_world_config_default(void) {
         .gravity                 = {0.0f, -9.81f, 0.0f},
         .default_substeps        = 1,
         .default_solver_iterations = 8,
-        .baumgarte               = 0.4f,
+        .baumgarte               = 0.1f,
         .slop                    = 0.001f,
         .sleep_threshold_linear  = 0.05f,
         .sleep_threshold_angular = 0.05f,
