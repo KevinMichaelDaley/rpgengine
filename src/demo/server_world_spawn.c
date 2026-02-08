@@ -12,10 +12,8 @@
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_pool.h"
-#include "ferrum/job/system.h"
 
 #include <math.h>
-#include <stdatomic.h>
 #include <string.h>
 
 /** Spawn distance in front of the player (meters). */
@@ -326,15 +324,11 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
     return 0u;
 }
 
-/* ── Parallel tick wrapper ─────────────────────────────────────────
+
+/* ── Spawn callback + tick wrappers ────────────────────────────────
  *
- * phys_world_tick_parallel must run inside a fiber so that its internal
- * phys_wait_stage calls use the fiber-park path.  We dispatch it as a
- * single job on the simulation job system.  The main thread does NOT
- * busy-wait; instead it continues processing network events and
- * broadcasts the previous frame's state.  Before the next tick, the
- * main thread calls demo_server_world_tick_wait() to ensure the
- * previous tick has finished.
+ * The actual async dispatch lives in phys_tick_runner.  These wrappers
+ * add demo-specific spawn metadata recording and stack spawning.
  */
 
 /** Tag type encoded in bits 63..56 of user_tag. */
@@ -370,40 +364,19 @@ static void spawn_callback_(uint32_t body_index, uint64_t user_tag, void *user) 
     }
 }
 
-/** Job function: drains the command queue, runs the parallel tick,
- *  then signals completion via atomic store (fiber-safe). */
-static void tick_job_fn_(void *user_data) {
-    demo_server_world_t *sw = (demo_server_world_t *)user_data;
-
-    /* Drain all pending commands before stepping physics. */
-    phys_cmd_drain(sw->tick_args_.world, sw->cmd_channel,
-                   spawn_callback_, sw);
-
-    phys_world_tick_parallel(sw->tick_args_.world, NULL, sw->tick_args_.jobs);
-    atomic_store_explicit(&sw->tick_done, 1, memory_order_release);
-}
-
 void demo_server_world_tick_wait(demo_server_world_t *sw) {
-    if (!sw || !sw->tick_in_flight) {
-        return;
-    }
-    /* Spin-wait — only used at shutdown when we must drain. */
-    while (!atomic_load_explicit(&sw->tick_done, memory_order_acquire)) {
-        /* empty */
-    }
-    sw->tick_in_flight = 0;
+    if (!sw) { return; }
+    phys_tick_runner_wait(&sw->tick_runner);
 }
 
 int demo_server_world_tick_done(const demo_server_world_t *sw) {
-    if (!sw || !sw->tick_in_flight) {
-        return 1;
-    }
-    return atomic_load_explicit(&((demo_server_world_t *)sw)->tick_done,
-                                memory_order_acquire);
+    if (!sw) { return 1; }
+    return phys_tick_runner_done(&sw->tick_runner);
 }
 
 void demo_server_world_tick_consume(demo_server_world_t *sw) {
-    sw->tick_in_flight = 0;
+    if (!sw) { return; }
+    phys_tick_runner_consume(&sw->tick_runner);
 }
 
 void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
@@ -423,17 +396,12 @@ void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
     }
 
     if (jobs) {
-        /* Dispatch the parallel tick as a non-blocking job.  The main
-         * thread continues processing network I/O and broadcasts the
-         * last completed body state while physics runs. */
-        atomic_store_explicit(&sw->tick_done, 0, memory_order_release);
-        sw->tick_in_flight = 1;
-
-        sw->tick_args_.world = &sw->physics;
-        sw->tick_args_.jobs  = jobs;
-
-        job_dispatch_named(jobs->job_sys, tick_job_fn_, sw,
-                           0, NULL, "Phys.Tick.Parallel");
+        /* Ensure the runner is wired up (first tick may need this). */
+        if (!sw->tick_runner.world) {
+            phys_tick_runner_init(&sw->tick_runner, &sw->physics, jobs,
+                                 sw->cmd_channel, spawn_callback_, sw);
+        }
+        phys_tick_runner_kick(&sw->tick_runner);
     } else {
         phys_world_tick(&sw->physics, NULL);
     }

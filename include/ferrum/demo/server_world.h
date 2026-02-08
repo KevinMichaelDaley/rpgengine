@@ -14,11 +14,11 @@
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_cmd.h"
+#include "ferrum/physics/phys_tick_runner.h"
 #include "ferrum/demo/input_move.h"
 #include "ferrum/demo/input_spawn.h"
 #include "ferrum/net/topic_channel.h"
 
-#include <stdatomic.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -53,21 +53,11 @@ typedef struct demo_server_world {
     float    stack_positions[64][2]; /**< XZ center of each spawned stack. */
     uint32_t stack_count;           /**< Number of stacks spawned so far. */
 
-    /* Async physics tick state.
-     * The tick runs as a fiber job.  tick_done is set atomically by the
-     * job when complete.  The main thread polls it — never blocks. */
-    atomic_int tick_done;           /**< Set to 1 when parallel tick completes. */
-    uint8_t    tick_in_flight;      /**< 1 if a parallel tick is in progress. */
-
-    /** Persistent storage for tick job arguments (must outlive the
-     *  async job dispatch since demo_server_world_tick returns immediately). */
-    struct {
-        phys_world_t       *world;
-        phys_job_context_t *jobs;
-    } tick_args_;
+    /* Async physics tick runner (generic engine module). */
+    phys_tick_runner_t tick_runner;
 
     /** Command channel for deferred physics mutations.  Owned externally;
-     *  the tick job drains it at the start of each step. */
+     *  the tick runner drains it at the start of each step. */
     fr_topic_channel_t *cmd_channel;
 
     /* Body metadata for replication. */

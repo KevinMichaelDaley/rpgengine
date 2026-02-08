@@ -47,6 +47,17 @@
 #include "ferrum/net/replication/state_cube.h"
 #include "ferrum/net/replication/welcome.h"
 
+#include "ferrum/physics/world.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/tick.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/phys_cmd.h"
+#include "ferrum/physics/phys_tick_runner.h"
+#include "ferrum/physics/collider.h"
+#include "ferrum/job/system.h"
+#include "ferrum/net/topic_channel.h"
+
 #include "ferrum/demo/camera.h"
 #include "ferrum/demo/geometry.h"
 #include "ferrum/demo/input_move.h"
@@ -64,16 +75,20 @@
 /*  Structures                                                        */
 /* ------------------------------------------------------------------ */
 
+/** Maximum bodies the client physics world can hold. */
+#define CLIENT_MAX_BODIES 512u
+
 /** Client-side view of a replicated entity. */
 struct entity_view {
-    uint32_t entity_id;
+    uint32_t entity_id;          /**< Server body_id. */
+    uint32_t phys_body;          /**< Index in client physics world (UINT32_MAX = none). */
     uint16_t owner_client_id;
-    fr_pose_interpolator_t pose;
-    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule */
-    uint8_t  flags;       /**< Body flags (kinematic, etc.) */
-    uint32_t color_seed;  /**< Color seed from server. */
-    float    half_ext[3]; /**< Shape half-extents in meters. */
-    float    scale;       /**< Uniform scale for rendering (fallback) */
+    fr_pose_interpolator_t pose; /**< Fallback interpolator (legacy path). */
+    uint8_t  shape_type;         /**< 0=box, 1=sphere, 2=capsule */
+    uint8_t  flags;              /**< Body flags (kinematic, etc.) */
+    uint32_t color_seed;         /**< Color seed from server. */
+    float    half_ext[3];        /**< Shape half-extents in meters. */
+    float    scale;              /**< Uniform scale for rendering (fallback) */
 };
 
 /** OpenGL resource context for the demo client. */
@@ -534,6 +549,7 @@ static int add_entity_(struct entity_view **entities, size_t *count, size_t *cap
     struct entity_view *e = &(*entities)[*count];
     *e = (struct entity_view){0};
     e->entity_id = entity_id;
+    e->phys_body = UINT32_MAX;
     e->owner_client_id = owner_client_id;
     e->shape_type = 0; /* box for now */
     e->scale = 1.0f;
@@ -677,11 +693,19 @@ static int handle_state_cube_(struct entity_view **entities, size_t *count, size
 
 static int handle_body_spawn_(struct entity_view **entities, size_t *count,
                               size_t *cap, const net_repl_body_spawn_t *sp,
-                              double recv_time_s) {
+                              double recv_time_s, phys_world_t *cw) {
     if (!entities || !count || !cap || !sp) return 0;
 
     /* Use body_id as entity_id. */
     const uint32_t eid = (uint32_t)sp->body_id;
+
+    /* Dequantize position and half-extents. */
+    const float px = (float)sp->pos_mm.x_mm * 0.001f;
+    const float py = (float)sp->pos_mm.y_mm * 0.001f;
+    const float pz = (float)sp->pos_mm.z_mm * 0.001f;
+    const float hx = (float)sp->half_x_mm * 0.001f;
+    const float hy = (float)sp->half_y_mm * 0.001f;
+    const float hz = (float)sp->half_z_mm * 0.001f;
 
     /* If we already know this body, just update metadata. */
     int idx = entity_find_(*entities, *count, eid);
@@ -690,19 +714,13 @@ static int handle_body_spawn_(struct entity_view **entities, size_t *count,
         e->shape_type  = sp->shape_type;
         e->flags       = sp->flags;
         e->color_seed  = sp->color_seed;
-        e->half_ext[0] = (float)sp->half_x_mm * 0.001f;
-        e->half_ext[1] = (float)sp->half_y_mm * 0.001f;
-        e->half_ext[2] = (float)sp->half_z_mm * 0.001f;
+        e->half_ext[0] = hx;
+        e->half_ext[1] = hy;
+        e->half_ext[2] = hz;
         return 1;
     }
 
-    /* Dequantize position. */
-    vec3_t pos;
-    pos.x = (float)sp->pos_mm.x_mm * 0.001f;
-    pos.y = (float)sp->pos_mm.y_mm * 0.001f;
-    pos.z = (float)sp->pos_mm.z_mm * 0.001f;
-
-    /* Rotation comes unpacked in the struct. */
+    vec3_t pos = {px, py, pz};
     quat_t rot = {sp->rot_x, sp->rot_y, sp->rot_z, sp->rot_w};
 
     if (!add_entity_(entities, count, cap, eid, 0u, recv_time_s, pos, rot))
@@ -713,27 +731,71 @@ static int handle_body_spawn_(struct entity_view **entities, size_t *count,
     e->shape_type  = sp->shape_type;
     e->flags       = sp->flags;
     e->color_seed  = sp->color_seed;
-    e->half_ext[0] = (float)sp->half_x_mm * 0.001f;
-    e->half_ext[1] = (float)sp->half_y_mm * 0.001f;
-    e->half_ext[2] = (float)sp->half_z_mm * 0.001f;
+    e->half_ext[0] = hx;
+    e->half_ext[1] = hy;
+    e->half_ext[2] = hz;
+
+    /* Create a matching body in the client physics world so the client
+     * can run the same simulation for prediction. */
+    if (cw) {
+        uint32_t bi = phys_world_create_body(cw);
+        if (bi != UINT32_MAX) {
+            phys_body_t *b = phys_world_get_body(cw, bi);
+            b->position    = (phys_vec3_t){px, py, pz};
+            b->orientation = (phys_quat_t){sp->rot_x, sp->rot_y,
+                                           sp->rot_z, sp->rot_w};
+            b->flags       = sp->flags;
+
+            /* Compute mass from volume * default density (500 kg/m³). */
+            if (!(sp->flags & PHYS_BODY_FLAG_KINEMATIC) &&
+                !(sp->flags & PHYS_BODY_FLAG_STATIC)) {
+                float vol = (2.0f * hx) * (2.0f * hy) * (2.0f * hz);
+                float mass = vol * 500.0f;
+                if (mass < 0.1f) mass = 0.1f;
+                phys_body_set_mass(b, mass);
+                phys_body_set_box_inertia(b, mass,
+                    (phys_vec3_t){hx, hy, hz});
+            }
+
+            /* Copy to next buffer for consistency. */
+            phys_body_t *bn = phys_body_pool_get_next(&cw->body_pool, bi);
+            if (bn) { *bn = *b; }
+
+            /* Attach collider. */
+            phys_vec3_t zero = {0, 0, 0};
+            phys_quat_t ident = {0, 0, 0, 1};
+            if (sp->shape_type == 0) { /* box */
+                phys_world_set_box_collider(cw, bi,
+                    (phys_vec3_t){hx, hy, hz}, zero, ident);
+            } else if (sp->shape_type == 1) { /* sphere */
+                phys_world_set_sphere_collider(cw, bi, hx, zero);
+            }
+
+            e->phys_body = bi;
+        }
+    }
+
     return 1;
 }
 
 static int handle_body_state_(struct entity_view **entities, size_t *count,
                               size_t *cap, const net_repl_body_state_t *st,
                               double recv_time_s,
-                              fr_debug_lines_t *correction_lines) {
+                              fr_debug_lines_t *correction_lines,
+                              phys_world_t *cw) {
     if (!entities || !count || !cap || !st) return 0;
 
     const uint32_t eid = (uint32_t)st->body_id;
 
-    /* Dequantize position. */
-    vec3_t pos;
-    pos.x = (float)st->pos_mm.x_mm * 0.001f;
-    pos.y = (float)st->pos_mm.y_mm * 0.001f;
-    pos.z = (float)st->pos_mm.z_mm * 0.001f;
+    /* Dequantize position and velocity. */
+    const float px = (float)st->pos_mm.x_mm * 0.001f;
+    const float py = (float)st->pos_mm.y_mm * 0.001f;
+    const float pz = (float)st->pos_mm.z_mm * 0.001f;
+    const float vx = (float)st->vel_x_mm_s * 0.001f;
+    const float vy = (float)st->vel_y_mm_s * 0.001f;
+    const float vz = (float)st->vel_z_mm_s * 0.001f;
 
-    /* Rotation comes unpacked. */
+    vec3_t pos = {px, py, pz};
     quat_t rot = {st->rot_x, st->rot_y, st->rot_z, st->rot_w};
 
     int idx = entity_find_(*entities, *count, eid);
@@ -745,11 +807,29 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
         return 1;
     }
 
-    /* Debug correction lines. */
+    struct entity_view *e = &(*entities)[idx];
+
+    /* Correct the client physics body to match server state. */
+    if (cw && e->phys_body != UINT32_MAX) {
+        phys_body_t *b = phys_world_get_body(cw, e->phys_body);
+        if (b) {
+            b->position    = (phys_vec3_t){px, py, pz};
+            b->orientation = (phys_quat_t){st->rot_x, st->rot_y,
+                                           st->rot_z, st->rot_w};
+            b->linear_vel  = (phys_vec3_t){vx, vy, vz};
+
+            /* Mirror to next buffer. */
+            phys_body_t *bn = phys_body_pool_get_next(&cw->body_pool,
+                                                       e->phys_body);
+            if (bn) { *bn = *b; }
+        }
+    }
+
+    /* Still push to the pose interpolator for debug correction lines. */
     if (correction_lines) {
         vec3_t est_pos = {0};
         quat_t est_rot = {0.0f, 0.0f, 0.0f, 1.0f};
-        if (fr_pose_interpolator_sample(&(*entities)[idx].pose, recv_time_s,
+        if (fr_pose_interpolator_sample(&e->pose, recv_time_s,
                                         1e-6f, &est_pos, &est_rot)) {
             const vec3_t dp = vec3_sub(pos, est_pos);
             const float pos_err = vec3_magnitude(dp);
@@ -767,7 +847,7 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
         }
     }
 
-    (void)fr_pose_interpolator_push(&(*entities)[idx].pose, recv_time_s, pos, rot);
+    (void)fr_pose_interpolator_push(&e->pose, recv_time_s, pos, rot);
     return 1;
 }
 
@@ -887,6 +967,70 @@ int main(int argc, char **argv) {
 
     uint16_t self_owner_client_id = UINT16_MAX;
     uint32_t self_entity_id = 0u;
+
+    /* ---- Client-side physics (prediction) ---- */
+    job_system_t phys_job_sys;
+    {
+        job_system_create_status_t js = job_system_create(
+            &phys_job_sys, 2u, 2048u, 1u << 18, 1024, 0);
+        if (js != JOB_CREATE_OK) {
+            fprintf(stderr, "Failed to create client job system\n");
+            gl_demo_shutdown_(&gl);
+            free(send_slots);
+            net_udp_socket_close(&sock);
+            return 1;
+        }
+        if (job_system_start(&phys_job_sys) != 0) {
+            fprintf(stderr, "Failed to start client job system\n");
+            job_system_shutdown(&phys_job_sys);
+            gl_demo_shutdown_(&gl);
+            free(send_slots);
+            net_udp_socket_close(&sock);
+            return 1;
+        }
+    }
+
+    phys_world_t client_world;
+    {
+        phys_world_config_t wcfg = phys_world_config_default();
+        wcfg.max_bodies = CLIENT_MAX_BODIES;
+        wcfg.gravity = (phys_vec3_t){0.0f, -9.81f, 0.0f};
+        wcfg.fixed_dt = 1.0f / 60.0f;
+        if (phys_world_init(&client_world, &wcfg) != 0) {
+            fprintf(stderr, "Failed to init client physics world\n");
+            job_system_shutdown(&phys_job_sys);
+            gl_demo_shutdown_(&gl);
+            free(send_slots);
+            net_udp_socket_close(&sock);
+            return 1;
+        }
+
+        /* Create ground plane matching server. */
+        uint32_t ground = phys_world_create_body(&client_world);
+        phys_body_t *gb = phys_world_get_body(&client_world, ground);
+        gb->position = (phys_vec3_t){0.0f, -0.5f, 0.0f};
+        gb->flags = PHYS_BODY_FLAG_STATIC;
+        gb->inv_mass = 0.0f;
+        phys_world_set_box_collider(&client_world, ground,
+            (phys_vec3_t){200.0f, 0.5f, 200.0f},
+            (phys_vec3_t){0.0f, 0.0f, 0.0f},
+            (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
+
+        /* Copy ground to next buffer. */
+        phys_body_t *gbn = phys_body_pool_get_next(&client_world.body_pool, ground);
+        if (gbn) { *gbn = *gb; }
+    }
+
+    phys_job_context_t phys_jobs;
+    phys_job_context_init(&phys_jobs, &phys_job_sys);
+
+    phys_tick_runner_t tick_runner;
+    phys_tick_runner_init(&tick_runner, &client_world, &phys_jobs,
+                          NULL, NULL, NULL);
+
+    /* Fixed timestep tracking for client physics. */
+    const uint64_t client_tick_ms = 16u; /* ~60 Hz */
+    uint64_t client_next_tick = now_ms_();
 
     /* ---- FPS camera ---- */
     demo_camera_t cam;
@@ -1070,13 +1214,14 @@ int main(int argc, char **argv) {
                 net_repl_body_spawn_t sp;
                 if (net_repl_body_spawn_decode(&sp, payload, payload_size) == NET_REPL_OK) {
                     (void)handle_body_spawn_(&entities, &entity_count, &entity_cap,
-                                             &sp, recv_time_s);
+                                             &sp, recv_time_s, &client_world);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_BODY_STATE) {
                 net_repl_body_state_t st;
                 if (net_repl_body_state_decode(&st, payload, payload_size) == NET_REPL_OK) {
                     (void)handle_body_state_(&entities, &entity_count, &entity_cap,
-                                             &st, recv_time_s, &correction_lines);
+                                             &st, recv_time_s, &correction_lines,
+                                             &client_world);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 net_repl_welcome_t w;
@@ -1088,10 +1233,25 @@ int main(int argc, char **argv) {
 
         /* ---- Diagnostics ---- */
         if (now_ms >= next_diag_ms) {
-            fprintf(stderr, "diag: entities=%zu self_entity=%u cam=(%.1f,%.1f,%.1f)\n",
-                    entity_count, (unsigned)self_entity_id,
+            fprintf(stderr, "diag: entities=%zu bodies=%u self_entity=%u cam=(%.1f,%.1f,%.1f)\n",
+                    entity_count,
+                    (unsigned)phys_world_body_count(&client_world),
+                    (unsigned)self_entity_id,
                     (double)cam.position.x, (double)cam.position.y, (double)cam.position.z);
             next_diag_ms = now_ms + 1000u;
+        }
+
+        /* ---- Client physics tick (non-blocking) ---- */
+        if (now_ms >= client_next_tick) {
+            /* Cap catch-up to 3 ticks. */
+            if (now_ms - client_next_tick > client_tick_ms * 3u) {
+                client_next_tick = now_ms;
+            }
+            if (phys_tick_runner_done(&tick_runner)) {
+                phys_tick_runner_consume(&tick_runner);
+                phys_tick_runner_kick(&tick_runner);
+            }
+            client_next_tick += client_tick_ms;
         }
 
         /* ---- (f) Render ---- */
@@ -1120,8 +1280,27 @@ int main(int argc, char **argv) {
                 struct entity_view *e = &entities[i];
                 vec3_t pos;
                 quat_t rot;
-                if (!fr_pose_interpolator_sample(&e->pose, render_time_s, 1e-6f, &pos, &rot))
-                    continue;
+
+                /* Prefer reading from the client physics world (last
+                 * completed tick).  Fall back to the pose interpolator
+                 * for entities that don't have a local body yet. */
+                int have_pose = 0;
+                if (e->phys_body != UINT32_MAX) {
+                    const phys_body_t *b = phys_world_get_body(
+                        &client_world, e->phys_body);
+                    if (b) {
+                        pos = (vec3_t){b->position.x, b->position.y,
+                                       b->position.z};
+                        rot = (quat_t){b->orientation.x, b->orientation.y,
+                                       b->orientation.z, b->orientation.w};
+                        have_pose = 1;
+                    }
+                }
+                if (!have_pose) {
+                    if (!fr_pose_interpolator_sample(&e->pose, render_time_s,
+                                                     1e-6f, &pos, &rot))
+                        continue;
+                }
 
                 /* Use half-extents for non-uniform scale if available,
                  * otherwise fall back to uniform scale. */
@@ -1244,6 +1423,11 @@ int main(int argc, char **argv) {
     }
 
     /* ---- Cleanup ---- */
+    phys_tick_runner_wait(&tick_runner);
+    phys_tick_runner_destroy(&tick_runner);
+    phys_job_context_destroy(&phys_jobs);
+    phys_world_destroy(&client_world);
+    job_system_shutdown(&phys_job_sys);
     free(entities);
     gl_demo_shutdown_(&gl);
     free(send_slots);
