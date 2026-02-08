@@ -22,6 +22,14 @@
 /** Small epsilon to handle parallel edges in the rotation matrix. */
 #define SAT_EPSILON 1e-6f
 
+/** Relative bias applied to edge-edge penetration depths before comparing
+ *  against face axes.  Face contacts produce higher-quality manifolds
+ *  (multiple contact points vs. a single edge midpoint), so we prefer
+ *  them when penetrations are nearly equal.  Without this bias, floating-
+ *  point noise from SAT_EPSILON inflation in face-axis projections causes
+ *  edge-edge axes to win spuriously for axis-aligned boxes. */
+#define EDGE_BIAS 1.05f
+
 /* ── Static helpers ─────────────────────────────────────────────── */
 
 /**
@@ -235,8 +243,10 @@ int phys_box_vs_box(
             float sep = proj_d - (ra + rb);
             if (sep > 0.0f) return 0;
 
-            /* Normalize penetration by axis length. */
-            float pen = -(sep) * inv_len;
+            /* Normalize penetration by axis length.  Apply a small
+             * relative bias so that face axes are preferred over edge-edge
+             * axes when penetrations are nearly equal. */
+            float pen = -(sep) * inv_len * EDGE_BIAS;
             if (pen < min_pen) {
                 min_pen = pen;
                 best_axis = 6 + i * 3 + j;
