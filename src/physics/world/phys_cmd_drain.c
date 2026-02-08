@@ -117,14 +117,24 @@ static void apply_set_state_(phys_world_t *world,
     phys_body_t *b = phys_world_get_body(world, cmd->body_index);
     if (!b) { return; }
 
-    /* Always wake the body so corrections take effect. */
-    b->flags &= ~(uint32_t)PHYS_BODY_FLAG_SLEEPING;
-    b->sleep_counter = 0;
-
     b->position    = cmd->position;
     b->orientation = cmd->orientation;
     b->linear_vel  = cmd->linear_vel;
     b->angular_vel = cmd->angular_vel;
+
+    /* If the server sent zero velocity the body is at rest — mark it
+     * sleeping so prediction mode doesn't keep integrating gravity.
+     * Otherwise wake it so the corrected velocity takes effect. */
+    const float lx = cmd->linear_vel.x, ly = cmd->linear_vel.y, lz = cmd->linear_vel.z;
+    const float ax = cmd->angular_vel.x, ay = cmd->angular_vel.y, az = cmd->angular_vel.z;
+    const float speed_sq = lx*lx + ly*ly + lz*lz + ax*ax + ay*ay + az*az;
+    if (speed_sq < 1e-6f) {
+        b->flags |= (uint32_t)PHYS_BODY_FLAG_SLEEPING;
+        b->sleep_counter = 255u;
+    } else {
+        b->flags &= ~(uint32_t)PHYS_BODY_FLAG_SLEEPING;
+        b->sleep_counter = 0;
+    }
 
     phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
                                                      cmd->body_index);

@@ -70,6 +70,10 @@ typedef struct demo_server_world {
 
     /** Per-body half-extents in mm for replication (set by spawn callback). */
     uint16_t body_half_mm[DEMO_MAX_BODIES][3];
+
+    /** Per-body bitset: was the body sleeping last tick?  Used to detect
+     *  sleep→awake and awake→sleep transitions for replication. */
+    uint8_t body_was_sleeping[DEMO_MAX_BODIES / 8];
 } demo_server_world_t;
 
 /**

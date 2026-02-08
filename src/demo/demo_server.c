@@ -191,7 +191,7 @@ static void push_reliable_(fr_server_net_runtime_t *rt,
  *  as body count grows. */
 #define DEMO_SEND_BUDGET_PER_TICK 256u
 
-/** Entry used by broadcast_body_states_ to rank awake bodies by speed. */
+/** Entry used by broadcast_body_states_ to collect sendable bodies. */
 struct body_rank_ {
     uint32_t index;
     float    speed_sq;   /* linear speed squared for sorting */
@@ -276,7 +276,11 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         return;
     }
 
-    /* ── Pass 1: collect active non-ground bodies, rank awake by speed ── */
+    /* ── Pass 1: collect bodies that need state updates this tick.
+     *    - All awake bodies are sent every tick.
+     *    - Bodies that just fell asleep get one final correction so the
+     *      client can mark them sleeping too.
+     *    - Already-sleeping bodies are skipped. ─────────────────────── */
     const uint32_t capacity = sw->physics.body_pool.capacity;
 
     struct body_rank_ ranked[512];
@@ -300,10 +304,23 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
             continue;
         }
 
-        /* Sleeping dynamic bodies still need spawns sent, but skip
-         * state updates for them.  Rank 0 speed so they sort last. */
+        const int sleeping_now = phys_body_is_sleeping(b);
+        const int was_sleeping = (sw->body_was_sleeping[i / 8u] >> (i & 7u)) & 1u;
+
+        if (sleeping_now && was_sleeping) {
+            /* Already sleeping, already notified — skip. */
+            continue;
+        }
+
+        /* Update the was-sleeping bitset. */
+        if (sleeping_now) {
+            sw->body_was_sleeping[i / 8u] |= (uint8_t)(1u << (i & 7u));
+        } else {
+            sw->body_was_sleeping[i / 8u] &= (uint8_t)~(1u << (i & 7u));
+        }
+
         float spd_sq = 0.0f;
-        if (!phys_body_is_sleeping(b)) {
+        if (!sleeping_now) {
             float sx = b->linear_vel.x;
             float sy = b->linear_vel.y;
             float sz = b->linear_vel.z;
@@ -372,11 +389,6 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
                     bk_set_(known, bi);
                 }
                 continue; /* State will follow next tick. */
-            }
-
-            /* Skip state updates for sleeping bodies. */
-            if (ranked[ri].speed_sq <= 0.0f) {
-                continue;
             }
 
             /* Build BODY_STATE. */
