@@ -64,7 +64,6 @@ void phys_constraint_build_contact(
     float slop)
 {
     if (!c || !body_a || !body_b || !contact) { return; }
-    (void)dt; (void)baumgarte; (void)slop;
 
     memset(c, 0, sizeof(*c));
     c->row_count    = 3;
@@ -84,10 +83,7 @@ void phys_constraint_build_contact(
     /* Restitution bias: when objects are approaching (vn_rel < 0),
      * add a positive bias proportional to the closing speed to create
      * bounce.  Only apply when closing speed exceeds a threshold
-     * to avoid jitter at rest.
-     *
-     * Penetration correction is handled entirely by position projection
-     * + velocity sync after integration — no Baumgarte bias needed. */
+     * to avoid jitter at rest. */
     float vn_rel = compute_relative_normal_velocity(body_a, body_b,
                                                      rA, rB, normal);
     float restitution_bias = 0.0f;
@@ -95,7 +91,19 @@ void phys_constraint_build_contact(
         restitution_bias = -restitution * vn_rel;
     }
 
-    c->rows[0].bias = restitution_bias;
+    /* Baumgarte positional correction bias: injects a corrective
+     * velocity proportional to penetration depth (above slop) to
+     * push overlapping bodies apart.  Without this, the solver only
+     * prevents further approach but doesn't correct existing overlap.
+     * Position projection handles bulk correction; Baumgarte prevents
+     * accumulated drift from gravity integration. */
+    float baumgarte_bias = 0.0f;
+    float pen_excess = contact->penetration - slop;
+    if (pen_excess > 0.0f && dt > 0.0f) {
+        baumgarte_bias = (baumgarte / dt) * pen_excess;
+    }
+
+    c->rows[0].bias = restitution_bias + baumgarte_bias;
 
     /* Compute effective mass for normal row. */
     c->rows[0].effective_mass = phys_compute_effective_mass(

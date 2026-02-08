@@ -273,7 +273,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .constraints_out      = constraints,
                 .constraint_count_out = &constraint_count,
                 .max_constraints      = max_constraints,
-                .dt                   = plan.dt,
+                .dt                   = substep_dt,
                 .baumgarte            = world->config.baumgarte,
                 .slop                 = world->config.slop,
             }, jobs, &world->frame_arena);

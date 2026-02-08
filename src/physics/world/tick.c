@@ -271,7 +271,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .constraints_out      = constraints,
                 .constraint_count_out = &constraint_count,
                 .max_constraints      = max_constraints,
-                .dt                   = plan.dt,
+                .dt                   = substep_dt,
                 .baumgarte            = world->config.baumgarte,
                 .slop                 = world->config.slop,
             });
