@@ -81,13 +81,15 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
         memset(&contact, 0, sizeof(contact));
         bool hit = false;
 
-        /* Sphere simplification: if both bodies are T2+ and both have
-         * sphere_simplify flag, use cheap sphere-sphere test instead
-         * of full shape-specific dispatch. */
+        /* Sphere simplification: only for complex shape types (mesh,
+         * convex hull, compound/articulated) at T2+ distances.
+         * Primitives (sphere, box, capsule) always use exact tests. */
         uint8_t tier_a = args->bodies[ba].tier;
         uint8_t tier_b = args->bodies[bb].tier;
         if (tier_a >= PHYS_TIER_2_VISIBLE && tier_b >= PHYS_TIER_2_VISIBLE
-            && c0->sphere_simplify && c1->sphere_simplify) {
+            && c0->sphere_simplify && c1->sphere_simplify
+            && c0->type >= PHYS_SHAPE_COMPOUND
+            && c1->type >= PHYS_SHAPE_COMPOUND) {
             float ra = phys_sphere_simplify_radius(
                 c0, args->spheres, args->boxes, args->capsules);
             float rb = phys_sphere_simplify_radius(
