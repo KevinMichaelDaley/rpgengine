@@ -44,6 +44,8 @@ typedef struct phys_tgs_solve_args {
     phys_velocity_t *velocities;            /**< In/out: solver velocity workspace. */
     uint32_t body_count;                    /**< Number of bodies. */
     uint32_t iterations;                    /**< Solver iterations (typically 20–24). */
+    phys_vec3_t gravity;                    /**< Gravity vector (m/s²). */
+    float dt;                               /**< Substep time step (s). */
 } phys_tgs_solve_args_t;
 
 /**

@@ -194,6 +194,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         phys_island_list_init(&islands, &world->frame_arena,
                               body_cap, body_cap);
         phys_velocity_t *velocities = NULL;
+        float *body_max_pen = NULL;
 
         if (!world->prediction_mode) {
 
@@ -280,6 +281,31 @@ void phys_world_tick_parallel(phys_world_t *world,
         }
 
 
+        /* Compute per-body max penetration from constraints for sleep
+         * blocking.  Bodies with penetration > slop must stay awake so
+         * Baumgarte + position projection can correct the overlap. */
+        if (constraints && constraint_count > 0) {
+            body_max_pen = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(float),
+                _Alignof(float));
+            if (body_max_pen) {
+                memset(body_max_pen, 0,
+                       (body_cap > 0 ? body_cap : 1) * sizeof(float));
+                for (uint32_t ci = 0; ci < constraint_count; ci++) {
+                    float pen = constraints[ci].penetration;
+                    uint32_t a = constraints[ci].body_a;
+                    uint32_t b = constraints[ci].body_b;
+                    if (a < body_cap && pen > body_max_pen[a]) {
+                        body_max_pen[a] = pen;
+                    }
+                    if (b < body_cap && pen > body_max_pen[b]) {
+                        body_max_pen[b] = pen;
+                    }
+                }
+            }
+        }
+
         phys_stage_island_build(&(phys_island_build_args_t){
             .constraints      = constraints,
             .constraint_count = constraint_count,
@@ -321,21 +347,31 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .velocities = velocities,
                 .body_count = body_cap,
                 .iterations = plan.solver_iterations,
+                .gravity    = world->config.gravity,
+                .dt         = substep_dt,
             }, jobs, &world->frame_arena);
         }
         } /* end if (!world->prediction_mode) */
 
         /* In prediction mode, seed velocities from bodies' current state
-         * so integration preserves server-corrected velocities. */
+         * so integration preserves server-corrected velocities.
+         * Apply gravity here since it's normally done in TGS init. */
         if (!velocities) {
             velocities = phys_frame_arena_alloc(
                 &world->frame_arena,
                 (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
                 _Alignof(phys_velocity_t));
             if (velocities) {
+                const phys_vec3_t grav_dv = vec3_scale(
+                    world->config.gravity, substep_dt);
                 for (uint32_t i = 0; i < body_cap; ++i) {
                     velocities[i].linear  = world->body_pool.bodies_curr[i].linear_vel;
                     velocities[i].angular = world->body_pool.bodies_curr[i].angular_vel;
+                    if (world->body_pool.bodies_curr[i].inv_mass > 0.0f &&
+                        !phys_body_is_sleeping(&world->body_pool.bodies_curr[i])) {
+                        velocities[i].linear = vec3_add(
+                            velocities[i].linear, grav_dv);
+                    }
                 }
             }
         }
@@ -354,6 +390,8 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .current_substep        = sub,
                 .tier_substep_counts    = tier_substep_counts,
                 .velocity_damping       = world->config.velocity_damping,
+                .max_penetration        = body_max_pen,
+                .slop                   = world->config.slop,
             }, jobs, &world->frame_arena);
         }
 

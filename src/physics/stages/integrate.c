@@ -10,6 +10,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "ferrum/math/quat.h"
@@ -32,13 +33,14 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
     }
 
     const float dt                     = args->dt;
-    const phys_vec3_t gravity          = args->gravity;
     const float sleep_lin_thresh       = args->sleep_threshold_linear;
     const float sleep_ang_thresh       = args->sleep_threshold_angular;
     const uint32_t sleep_delay         = args->sleep_delay_frames;
     const uint32_t cur_sub             = args->current_substep;
     const uint32_t *tier_subs          = args->tier_substep_counts;
     const float vel_damp               = args->velocity_damping;
+    const float *max_pen               = args->max_penetration;
+    const float slop                   = args->slop;
 
     for (uint32_t i = 0; i < args->body_count; ++i) {
         const phys_body_t *in = &bodies_in[i];
@@ -74,11 +76,9 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
                !isinf(out->angular_vel.y) && !isinf(out->angular_vel.z) &&
                "NaN/Inf angular velocity from solver");
 
-        /* Apply gravity (only if body is not sleeping). */
-        if (!phys_body_is_sleeping(in)) {
-            out->linear_vel = vec3_add(out->linear_vel,
-                                       vec3_scale(gravity, dt));
-        }
+        /* Gravity is pre-applied in TGS velocity init (before the
+         * solver) so that contact constraints can counteract it in
+         * the same substep.  Do NOT apply gravity here. */
 
         /* Apply velocity damping to dissipate energy over time.
          * The configured value is the fraction retained per second;
@@ -138,8 +138,12 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
         float linear_speed  = vec3_magnitude(out->linear_vel);
         float angular_speed = vec3_magnitude(out->angular_vel);
 
+        /* Block sleep while the body has contact penetration above slop. */
+        bool penetrating = (max_pen && max_pen[i] > slop);
+
         if (linear_speed < sleep_lin_thresh &&
-            angular_speed < sleep_ang_thresh) {
+            angular_speed < sleep_ang_thresh &&
+            !penetrating) {
             /* Body is below threshold: increment sleep counter. */
             if (out->sleep_counter < 255) {
                 out->sleep_counter++;
@@ -148,7 +152,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
                 out->flags |= PHYS_BODY_FLAG_SLEEPING;
             }
         } else {
-            /* Body is active: reset sleep state. */
+            /* Body is active or still penetrating: reset sleep state. */
             out->sleep_counter = 0;
             out->flags &= ~PHYS_BODY_FLAG_SLEEPING;
         }

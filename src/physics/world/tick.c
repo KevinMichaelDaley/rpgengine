@@ -186,6 +186,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                               body_cap, body_cap);
 
         phys_velocity_t *velocities = NULL;
+        float *body_max_pen = NULL;
 
         if (!world->prediction_mode) {
 
@@ -277,6 +278,30 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             });
         }
 
+        /* Compute per-body max penetration from constraints for sleep
+         * blocking.  Bodies with penetration > slop must stay awake. */
+        if (constraints && constraint_count > 0) {
+            body_max_pen = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(float),
+                _Alignof(float));
+            if (body_max_pen) {
+                memset(body_max_pen, 0,
+                       (body_cap > 0 ? body_cap : 1) * sizeof(float));
+                for (uint32_t ci = 0; ci < constraint_count; ci++) {
+                    float pen = constraints[ci].penetration;
+                    uint32_t a = constraints[ci].body_a;
+                    uint32_t b = constraints[ci].body_b;
+                    if (a < body_cap && pen > body_max_pen[a]) {
+                        body_max_pen[a] = pen;
+                    }
+                    if (b < body_cap && pen > body_max_pen[b]) {
+                        body_max_pen[b] = pen;
+                    }
+                }
+            }
+        }
+
         /* ── Stage 10: Island Build ────────────────────────────── */
 
         phys_stage_island_build(&(phys_island_build_args_t){
@@ -322,15 +347,16 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .velocities = velocities,
                 .body_count = body_cap,
                 .iterations = plan.solver_iterations,
+                .gravity    = world->config.gravity,
+                .dt         = substep_dt,
             });
         }
 
         } /* end if (!world->prediction_mode) — stages 6–11 */
 
         /* In prediction mode the solver didn't run, so seed the
-         * velocity array from the bodies' current velocities.  This
-         * ensures integration preserves server-corrected velocities
-         * rather than zeroing them out. */
+         * velocity array from the bodies' current velocities.
+         * Apply gravity here since it's normally done in TGS init. */
         phys_velocity_t *pred_velocities = velocities;
         if (!pred_velocities) {
             pred_velocities = phys_frame_arena_alloc(
@@ -338,9 +364,16 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
                 _Alignof(phys_velocity_t));
             if (pred_velocities) {
+                const phys_vec3_t grav_dv = vec3_scale(
+                    world->config.gravity, substep_dt);
                 for (uint32_t i = 0; i < body_cap; ++i) {
                     pred_velocities[i].linear  = world->body_pool.bodies_curr[i].linear_vel;
                     pred_velocities[i].angular = world->body_pool.bodies_curr[i].angular_vel;
+                    if (world->body_pool.bodies_curr[i].inv_mass > 0.0f &&
+                        !phys_body_is_sleeping(&world->body_pool.bodies_curr[i])) {
+                        pred_velocities[i].linear = vec3_add(
+                            pred_velocities[i].linear, grav_dv);
+                    }
                 }
             }
         }
@@ -360,6 +393,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .current_substep        = sub,
                 .tier_substep_counts    = tier_substep_counts,
                 .velocity_damping       = world->config.velocity_damping,
+                .max_penetration        = body_max_pen,
+                .slop                   = world->config.slop,
             });
         }
 

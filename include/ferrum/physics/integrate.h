@@ -49,6 +49,14 @@ typedef struct phys_integrate_args {
     const uint32_t *tier_substep_counts;
     /** Per-substep velocity damping factor (0-1, 1=no damping). */
     float velocity_damping;
+    /** Per-body maximum contact penetration depth.  May be NULL.
+     *  When present, bodies with penetration > slop are prevented
+     *  from sleeping so that Baumgarte/position projection can
+     *  finish correcting the overlap. */
+    const float *max_penetration;
+    /** Allowed penetration (slop).  Bodies with max_penetration > slop
+     *  are considered still overlapping and won't be put to sleep. */
+    float slop;
 } phys_integrate_args_t;
 
 /**

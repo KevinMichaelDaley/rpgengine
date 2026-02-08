@@ -20,7 +20,12 @@
 
 /**
  * @brief Copy linear and angular velocities from bodies into the
- *        solver's velocity workspace array.
+ *        solver's velocity workspace array, and pre-apply gravity.
+ *
+ * Gravity is applied here (before the solver) so that the solver
+ * can counteract gravitational acceleration in the same substep.
+ * Without this, the integrator applies gravity after the solver,
+ * causing bodies to slowly sink through resting contacts.
  *
  * @param args  Solver arguments.  Must not be NULL (caller checks).
  */
@@ -28,9 +33,20 @@ static void phys_tgs_init_velocities(const phys_tgs_solve_args_t *args)
 {
     if (!args->bodies || !args->velocities) return;
 
+    const phys_vec3_t grav_dv = vec3_scale(args->gravity, args->dt);
+
     for (uint32_t i = 0; i < args->body_count; i++) {
         args->velocities[i].linear  = args->bodies[i].linear_vel;
         args->velocities[i].angular = args->bodies[i].angular_vel;
+
+        /* Pre-apply gravity so the solver sees the full velocity
+         * including gravitational acceleration.  Static/sleeping
+         * bodies are skipped. */
+        if (args->bodies[i].inv_mass > 0.0f &&
+            !phys_body_is_sleeping(&args->bodies[i])) {
+            args->velocities[i].linear = vec3_add(
+                args->velocities[i].linear, grav_dv);
+        }
     }
 }
 

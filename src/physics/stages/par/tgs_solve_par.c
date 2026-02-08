@@ -150,11 +150,18 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
 {
     if (!args || !ctx || !arena || !args->islands) return;
 
-    /* Initialize velocities from body state (same as sequential). */
+    /* Initialize velocities from body state and pre-apply gravity
+     * so the solver can counteract gravitational acceleration. */
     if (args->bodies && args->velocities) {
+        const phys_vec3_t grav_dv = vec3_scale(args->gravity, args->dt);
         for (uint32_t i = 0; i < args->body_count; i++) {
             args->velocities[i].linear  = args->bodies[i].linear_vel;
             args->velocities[i].angular = args->bodies[i].angular_vel;
+            if (args->bodies[i].inv_mass > 0.0f &&
+                !phys_body_is_sleeping(&args->bodies[i])) {
+                args->velocities[i].linear = vec3_add(
+                    args->velocities[i].linear, grav_dv);
+            }
         }
     }
 
