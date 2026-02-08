@@ -97,6 +97,11 @@ typedef struct phys_world {
     /* Tick counter. */
     uint64_t tick_count;
 
+    /** Timestamp (nanoseconds, CLOCK_MONOTONIC) of the last tick
+     *  completion.  Used to enforce a minimum wall-clock interval
+     *  between ticks so the simulation runs at a fixed rate. */
+    uint64_t last_tick_ns;
+
     /* Impact event buffer (filled by cache_commit stage). */
     struct phys_impact_event *impact_events;   /**< Dynamically allocated event buffer. */
     uint32_t impact_event_count;               /**< Current number of events this frame. */
