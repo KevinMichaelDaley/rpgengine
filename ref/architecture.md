@@ -104,6 +104,7 @@ A **fiber** is a lightweight execution context with its own stack, cooperatively
 **Key properties**
 - Cooperative (explicit yield), deterministic scheduling possible in debug mode
 - Fixed stacks (typically 256KB for sim fibers, 256KB for net fibers), recycled from pools via `apool_t`
+- **Tracy builds require larger stacks** — Tracy instrumentation adds significant frame overhead; use ≥128KB for any fiber that runs instrumented code (see `TRACY_ENABLE` guard in `p008_net_repl_server.c` for example)
 - Fiber stacks are allocated in a separate pool from fiber context/metadata to preserve debuggable call stacks
 - GCC stack-protector canary (`%fs:0x28` on x86-64) is saved/restored across context swaps to prevent false stack-smash detection
 - No blocking on OS primitives inside fibers; waiting yields to scheduler

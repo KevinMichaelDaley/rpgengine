@@ -463,6 +463,30 @@ THOUSANDS OF BODIES, SPARSE GRAPH:
 - solve (XPBD T2–T4): 0.3–2.0 ms (parallel over bodies)
 - background amortized: ≤0.5–1.0 ms
 
+--------------------------------------------------------------
+6.1) DEFAULT CONFIG VALUES (phys_world_config_default)
+--------------------------------------------------------------
+
+| Parameter                | Value  | Notes                                     |
+|--------------------------|--------|-------------------------------------------|
+| fixed_dt                 | 1/60   | 60 Hz tick rate                           |
+| gravity                  | -9.81  | Y-down                                    |
+| default_substeps         | 1      | Per-tier substep counts override this     |
+| default_solver_iterations| 8      | TGS constraint iterations per substep     |
+| baumgarte                | 0.02   | Position correction bias strength         |
+| slop                     | 0.005  | 5 mm penetration tolerance before bias    |
+| sleep_threshold_linear   | 0.10   | m/s — body sleeps below this              |
+| sleep_threshold_angular  | 0.10   | rad/s — body sleeps below this            |
+| sleep_delay_frames       | 60     | Frames below threshold before sleep (1s)  |
+| warmstart_decay          | 0.95   | Impulse carry-over decay per frame        |
+| velocity_damping         | 0.99   | Fraction retained per second              |
+
+Tuning notes:
+- baumgarte too high (>0.05) causes ground-contact oscillation/jitter.
+- slop too low (<0.002) blocks sleep via persistent micro-penetration.
+- sleep thresholds too tight (<0.05) prevent resting objects from sleeping
+  due to solver noise at contact points.
+
 ==============================================================
 7) WHY THIS ARCHITECTURE SCALES WITHOUT REWRITES
 ==============================================================

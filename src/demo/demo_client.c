@@ -865,10 +865,10 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
         const int colliding = st->flags & NET_REPL_BODY_STATE_FLAG_COLLIDING;
 
         if (!colliding && tier < 4u) {
-            /* Skip extrapolation for near-stationary bodies — their
+            /* Skip extrapolation for slow bodies — their
              * tiny residual velocity would just add visual jitter. */
             const float speed_sq = vx*vx + vy*vy + vz*vz;
-            const float extrap_speed_thresh = 0.15f; /* m/s */
+            const float extrap_speed_thresh = 0.5f; /* m/s */
             if (speed_sq > extrap_speed_thresh * extrap_speed_thresh) {
                 /* Compute one-way server→client latency from wall clocks. */
                 const uint32_t recv_wall = wall_ms_();
