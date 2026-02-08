@@ -27,7 +27,6 @@
  *
  * With 32 manifolds/batch and 128 batches, supports up to 4096 manifolds.
  */
-#define MAX_CONSTRAINT_BUILD_BATCHES 128u
 
 /* ── Shared context for parallel jobs ───────────────────────────── */
 
@@ -149,13 +148,14 @@ static void constraint_build_job(void *data) {
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void phys_stage_constraint_build_par(const phys_constraint_build_args_t *args,
-                                      phys_job_context_t *ctx) {
+                                      phys_job_context_t *ctx,
+                                      phys_frame_arena_t *arena) {
     if (!args) {
         return;
     }
 
     /* Fall back to sequential if no job context is provided. */
-    if (!ctx) {
+    if (!ctx || !arena) {
         phys_stage_constraint_build(args);
         return;
     }
@@ -179,8 +179,17 @@ void phys_stage_constraint_build_par(const phys_constraint_build_args_t *args,
     par_ctx.args = args;
     atomic_init(&par_ctx.out_idx, 0);
 
-    /* Dispatch parallel manifold processing. */
-    phys_job_batch_t batches[MAX_CONSTRAINT_BUILD_BATCHES];
+    /* Allocate batch descriptors from the frame arena. */
+    uint32_t num_batches = (args->manifold_count + PHYS_CONSTRAINT_BUILD_BATCH_SIZE - 1)
+                           / PHYS_CONSTRAINT_BUILD_BATCH_SIZE;
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, num_batches * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) {
+        phys_stage_constraint_build(args);
+        return;
+    }
+
     uint32_t num_jobs = phys_dispatch_stage(
         ctx,
         PHYS_STAGE_CONSTRAINT_BUILD,

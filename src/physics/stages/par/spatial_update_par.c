@@ -19,16 +19,6 @@
 
 #include <stddef.h>
 
-/* ── Maximum batch count ────────────────────────────────────────── */
-
-/**
- * @brief Maximum number of batches we support.
- *
- * With 512 bodies/batch and 64 batches, supports up to 32768 bodies.
- * Increase if needed for larger worlds.
- */
-#define MAX_SPATIAL_BATCHES 64u
-
 /* ── Phase A job function ───────────────────────────────────────── */
 
 /**
@@ -111,13 +101,14 @@ static void spatial_grid_insert_all(const phys_spatial_update_args_t *args) {
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void phys_stage_spatial_update_par(const phys_spatial_update_args_t *args,
-                                    phys_job_context_t *ctx) {
+                                    phys_job_context_t *ctx,
+                                    phys_frame_arena_t *arena) {
     if (!args) {
         return;
     }
 
     /* Fall back to sequential if no job context is provided. */
-    if (!ctx) {
+    if (!ctx || !arena) {
         phys_stage_spatial_update(args);
         return;
     }
@@ -130,12 +121,22 @@ void phys_stage_spatial_update_par(const phys_spatial_update_args_t *args,
     }
 
     /* Phase A: dispatch parallel AABB computation. */
-    phys_job_batch_t batches[MAX_SPATIAL_BATCHES];
+    uint32_t num_batches = (args->body_count + PHYS_SPATIAL_UPDATE_BATCH_SIZE - 1)
+                           / PHYS_SPATIAL_UPDATE_BATCH_SIZE;
+
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, num_batches * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) {
+        phys_stage_spatial_update(args);
+        return;
+    }
+
     uint32_t num_jobs = phys_dispatch_stage(
         ctx,
         PHYS_STAGE_SPATIAL_UPDATE,
         spatial_aabb_job,
-        (void *)(uintptr_t)args, /* cast away const for user_args void* */
+        (void *)(uintptr_t)args,
         args->body_count,
         PHYS_SPATIAL_UPDATE_BATCH_SIZE,
         batches);

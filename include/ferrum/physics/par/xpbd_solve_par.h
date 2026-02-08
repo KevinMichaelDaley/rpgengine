@@ -13,6 +13,7 @@
 
 #include "ferrum/physics/xpbd_solve.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,7 +38,8 @@ extern "C" {
  * Error semantics: falls back to sequential if ctx is NULL.
  */
 void phys_stage_xpbd_solve_par(const phys_xpbd_solve_args_t *args,
-                                phys_job_context_t *ctx);
+                                phys_job_context_t *ctx,
+                                phys_frame_arena_t *arena);
 
 #ifdef __cplusplus
 } /* extern "C" */

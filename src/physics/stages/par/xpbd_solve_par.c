@@ -126,11 +126,12 @@ static void derive_velocities(const phys_body_t *bodies_in,
 /* ── Public API ────────────────────────────────────────────────── */
 
 void phys_stage_xpbd_solve_par(const phys_xpbd_solve_args_t *args,
-                                phys_job_context_t *ctx)
+                                phys_job_context_t *ctx,
+                                phys_frame_arena_t *arena)
 {
-    if (!args || !ctx) {
+    if (!args || !ctx || !arena) {
         /* Fall back to sequential if no job context. */
-        if (args && !ctx) {
+        if (args && (!ctx || !arena)) {
             phys_stage_xpbd_solve(args);
         }
         return;
@@ -169,10 +170,11 @@ void phys_stage_xpbd_solve_par(const phys_xpbd_solve_args_t *args,
     uint32_t batch_size  = PHYS_XPBD_SOLVE_BATCH_SIZE;
     uint32_t num_batches = (args->constraint_count + batch_size - 1) / batch_size;
 
-    /* Allocate batch descriptors on the stack (max reasonable batch count). */
-    phys_job_batch_t batches[256];
-    if (num_batches > 256) {
-        /* Extremely large constraint set — fall back to sequential. */
+    /* Allocate batch descriptors from the frame arena. */
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, num_batches * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) {
         phys_stage_xpbd_solve(args);
         return;
     }

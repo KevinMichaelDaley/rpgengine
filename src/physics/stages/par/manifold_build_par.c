@@ -12,7 +12,6 @@
 #include "ferrum/physics/par/manifold_build_par.h"
 
 #include <stdatomic.h>
-#include <stdlib.h>
 #include <string.h>
 #include <threads.h>
 
@@ -140,8 +139,9 @@ static void manifold_build_batch_job(void *data) {
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
-                                    phys_job_context_t *ctx) {
-    if (!args || !ctx) {
+                                    phys_job_context_t *ctx,
+                                    phys_frame_arena_t *arena) {
+    if (!args || !ctx || !arena) {
         if (args && args->manifold_count_out) {
             *args->manifold_count_out = 0;
         }
@@ -177,20 +177,15 @@ void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
     uint32_t batch_size  = PHYS_MANIFOLD_BUILD_BATCH_SIZE;
     uint32_t num_batches = (args->candidate_count + batch_size - 1) / batch_size;
 
-    /* Allocate batch descriptors on the stack for small counts,
-     * or on the heap for larger dispatches. */
-    phys_job_batch_t stack_batches[16];
-    phys_job_batch_t *batches = stack_batches;
-    int heap_allocated = 0;
-    if (num_batches > 16) {
-        batches = calloc(num_batches, sizeof(phys_job_batch_t));
-        if (!batches) {
-            /* Fallback to sequential. */
-            mtx_destroy(&shared.cache_mtx);
-            phys_stage_manifold_build(args);
-            return;
-        }
-        heap_allocated = 1;
+    /* Allocate batch descriptors from the frame arena. */
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, num_batches * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) {
+        /* Fallback to sequential if arena allocation fails. */
+        mtx_destroy(&shared.cache_mtx);
+        phys_stage_manifold_build(args);
+        return;
     }
 
     /* Dispatch all batches. */
@@ -209,7 +204,4 @@ void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
     *args->manifold_count_out = final_count;
 
     mtx_destroy(&shared.cache_mtx);
-    if (heap_allocated) {
-        free(batches);
-    }
 }

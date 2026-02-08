@@ -23,9 +23,6 @@
 /** Batch size: number of broadphase pairs per job. */
 #define NP_PAR_BATCH_SIZE 64
 
-/** Maximum number of batches (ceil(max_pairs / 64)). */
-#define NP_PAR_MAX_BATCHES 256
-
 /* ── Internal shared state ─────────────────────────────────────── */
 
 /**
@@ -167,7 +164,8 @@ static void np_par_job_fn(void *user_data)
 /* ── Public API ────────────────────────────────────────────────── */
 
 void phys_stage_narrowphase_par(const phys_narrowphase_args_t *args,
-                                phys_job_context_t *ctx)
+                                phys_job_context_t *ctx,
+                                phys_frame_arena_t *arena)
 {
     if (!args || !args->bodies || !args->colliders || !args->pairs
         || !args->candidates_out || !args->candidate_count_out) {
@@ -175,7 +173,7 @@ void phys_stage_narrowphase_par(const phys_narrowphase_args_t *args,
     }
 
     /* Fall back to sequential if no job context. */
-    if (!ctx) {
+    if (!ctx || !arena) {
         phys_stage_narrowphase(args);
         return;
     }
@@ -193,11 +191,15 @@ void phys_stage_narrowphase_par(const phys_narrowphase_args_t *args,
 
     /* Compute number of batches. */
     uint32_t num_batches = (args->pair_count + NP_PAR_BATCH_SIZE - 1) / NP_PAR_BATCH_SIZE;
-    if (num_batches > NP_PAR_MAX_BATCHES) {
-        num_batches = NP_PAR_MAX_BATCHES;
-    }
 
-    phys_job_batch_t batches[NP_PAR_MAX_BATCHES];
+    /* Allocate batch descriptors from the frame arena. */
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, num_batches * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) {
+        phys_stage_narrowphase(args);
+        return;
+    }
 
     phys_dispatch_stage(ctx, PHYS_STAGE_NARROWPHASE,
                         np_par_job_fn, &shared,

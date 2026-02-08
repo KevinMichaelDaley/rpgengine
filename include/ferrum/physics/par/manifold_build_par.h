@@ -13,6 +13,7 @@
 
 #include "ferrum/physics/manifold_build.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,7 +40,8 @@ extern "C" {
  * Error semantics: sets manifold_count_out to 0 on invalid input.
  */
 void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
-                                    phys_job_context_t *ctx);
+                                    phys_job_context_t *ctx,
+                                    phys_frame_arena_t *arena);
 
 #ifdef __cplusplus
 } /* extern "C" */

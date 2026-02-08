@@ -119,7 +119,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         .grid_out  = &grid,
         .active    = active,
         .body_count = body_cap,
-    }, jobs);
+    }, jobs, &world->frame_arena);
     const uint32_t substeps = plan.substeps > 0 ? plan.substeps : 1;
     const float substep_dt = plan.substep_dt > 0.0f
                                  ? plan.substep_dt
@@ -191,7 +191,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .candidates_out      = candidates,
                 .candidate_count_out = &candidate_count,
                 .max_candidates      = max_candidates,
-            }, jobs);
+            }, jobs, &world->frame_arena);
         }
         uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
         phys_manifold_t *manifolds = phys_frame_arena_alloc(
@@ -210,7 +210,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .max_manifolds      = max_manifolds,
                 .tick               = world->tick_count,
                 .bodies             = world->body_pool.bodies_curr,
-            }, jobs);
+            }, jobs, &world->frame_arena);
         }
         uint32_t hint_count = manifold_count > 0 ? manifold_count : 1;
         phys_stab_hint_t *hints = phys_frame_arena_alloc(
@@ -251,7 +251,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .dt                   = substep_dt,
                 .baumgarte            = world->config.baumgarte,
                 .slop                 = world->config.slop,
-            }, jobs);
+            }, jobs, &world->frame_arena);
         }
         phys_island_list_t islands;
         phys_island_list_init(&islands, &world->frame_arena,

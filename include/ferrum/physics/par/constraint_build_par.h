@@ -16,6 +16,7 @@
 
 #include "ferrum/physics/constraint_stage.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,7 +44,8 @@ extern "C" {
  * Side effects: writes to args->constraints_out and *args->constraint_count_out.
  */
 void phys_stage_constraint_build_par(const phys_constraint_build_args_t *args,
-                                      phys_job_context_t *ctx);
+                                      phys_job_context_t *ctx,
+                                      phys_frame_arena_t *arena);
 
 #ifdef __cplusplus
 } /* extern "C" */
