@@ -108,13 +108,10 @@ static void apply_impulse_(phys_world_t *world,
 
 /** Apply a single SET_STATE command (full authoritative correction).
  *
- *  For dynamic bodies we blend position toward the server and set
- *  velocity directly.  When the error is small (< SNAP_THRESHOLD)
- *  we interpolate smoothly; when large we hard-snap to avoid bodies
- *  drifting for a long time.  The velocity nudge is clamped so large
- *  position errors don't inject energy and launch bodies.
- *
- *  Static/kinematic bodies are hard-snapped (no local simulation). */
+ *  Hard-snaps position, orientation, and velocity to the server's
+ *  authoritative values.  The client simulation is purely cosmetic
+ *  between corrections — there is no rollback, so blending creates
+ *  oscillation.  We clear the sleep flag so resting bodies respond. */
 static void apply_set_state_(phys_world_t *world,
                               const phys_cmd_set_state_t *cmd) {
     phys_body_t *b = phys_world_get_body(world, cmd->body_index);
@@ -124,45 +121,9 @@ static void apply_set_state_(phys_world_t *world,
     b->flags &= ~(uint32_t)PHYS_BODY_FLAG_SLEEPING;
     b->sleep_counter = 0;
 
-    const int is_dynamic = (b->inv_mass > 0.0f) &&
-                           !(b->flags & PHYS_BODY_FLAG_STATIC) &&
-                           !(b->flags & PHYS_BODY_FLAG_KINEMATIC);
-
-    if (is_dynamic) {
-        float dx = cmd->position.x - b->position.x;
-        float dy = cmd->position.y - b->position.y;
-        float dz = cmd->position.z - b->position.z;
-        float err_sq = dx * dx + dy * dy + dz * dz;
-
-        /* Beyond this threshold, hard-snap instead of blending. */
-        const float SNAP_THRESHOLD = 2.0f;     /* meters */
-        const float SNAP_SQ = SNAP_THRESHOLD * SNAP_THRESHOLD;
-
-        if (err_sq > SNAP_SQ) {
-            /* Too far — teleport to server position. */
-            b->position = cmd->position;
-        } else {
-            /* Blend position: move 30% toward server per correction.
-             * At 60 Hz corrections this converges very quickly without
-             * overshooting. */
-            const float BLEND = 0.3f;
-            b->position.x += dx * BLEND;
-            b->position.y += dy * BLEND;
-            b->position.z += dz * BLEND;
-        }
-
-        /* Set velocity directly from server — no nudge added, so
-         * there is no energy injection from position error. */
-        b->linear_vel = cmd->linear_vel;
-
-        /* Hard-set orientation (rotational drift is visually obvious). */
-        b->orientation = cmd->orientation;
-    } else {
-        /* Kinematic / static: hard snap. */
-        b->position    = cmd->position;
-        b->orientation = cmd->orientation;
-        b->linear_vel  = cmd->linear_vel;
-    }
+    b->position    = cmd->position;
+    b->orientation = cmd->orientation;
+    b->linear_vel  = cmd->linear_vel;
 
     phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
                                                      cmd->body_index);

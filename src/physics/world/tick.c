@@ -161,6 +161,23 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             });
         }
 
+        /* ── Stages 6–11: collision response pipeline ──────────── */
+        /* In prediction mode (client-side), skip narrowphase through
+         * TGS solve.  Bodies integrate under gravity + current velocity
+         * only.  The server sends authoritative corrections for any
+         * colliding bodies. */
+        phys_constraint_t *constraints = NULL;
+        uint32_t constraint_count = 0;
+        phys_manifold_t *manifolds = NULL;
+        uint32_t manifold_count = 0;
+        phys_island_list_t islands;
+        phys_island_list_init(&islands, &world->frame_arena,
+                              body_cap, body_cap);
+
+        phys_velocity_t *velocities = NULL;
+
+        if (!world->prediction_mode) {
+
         /* ── Stage 6: Narrowphase ──────────────────────────────── */
         uint32_t max_candidates = pair_count > 0 ? pair_count : 1;
         phys_contact_candidate_t *candidates = phys_frame_arena_alloc(
@@ -186,11 +203,11 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
 
         /* ── Stage 7: Manifold Build ───────────────────────────── */
         uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
-        phys_manifold_t *manifolds = phys_frame_arena_alloc(
+        manifolds = phys_frame_arena_alloc(
             &world->frame_arena,
             max_manifolds * sizeof(phys_manifold_t),
             _Alignof(phys_manifold_t));
-        uint32_t manifold_count = 0;
+        manifold_count = 0;
 
         if (manifolds && candidate_count > 0) {
             phys_stage_manifold_build(&(phys_manifold_build_args_t){
@@ -229,11 +246,10 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         if (max_constraints == 0) {
             max_constraints = 1;
         }
-        phys_constraint_t *constraints = phys_frame_arena_alloc(
+        constraints = phys_frame_arena_alloc(
             &world->frame_arena,
             max_constraints * sizeof(phys_constraint_t),
             _Alignof(phys_constraint_t));
-        uint32_t constraint_count = 0;
 
         if (constraints && manifold_count > 0) {
             phys_stage_constraint_build(&(phys_constraint_build_args_t){
@@ -251,9 +267,6 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         }
 
         /* ── Stage 10: Island Build ────────────────────────────── */
-        phys_island_list_t islands;
-        phys_island_list_init(&islands, &world->frame_arena,
-                              body_cap, body_cap);
 
         phys_stage_island_build(&(phys_island_build_args_t){
             .constraints      = constraints,
@@ -265,7 +278,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         });
 
         /* ── Stage 11: TGS Solve ───────────────────────────────── */
-        phys_velocity_t *velocities = phys_frame_arena_alloc(
+        velocities = phys_frame_arena_alloc(
             &world->frame_arena,
             (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
             _Alignof(phys_velocity_t));
@@ -285,11 +298,26 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             });
         }
 
+        } /* end if (!world->prediction_mode) — stages 6–11 */
+
+        /* Allocate zeroed velocities for prediction mode (no solver). */
+        phys_velocity_t *pred_velocities = velocities;
+        if (!pred_velocities) {
+            pred_velocities = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+            if (pred_velocities) {
+                memset(pred_velocities, 0,
+                       (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
+            }
+        }
+
         /* ── Stage 12: Integrate ───────────────────────────────── */
-        if (velocities) {
+        if (pred_velocities) {
             phys_stage_integrate(&(phys_integrate_args_t){
                 .bodies_in              = world->body_pool.bodies_curr,
-                .velocities             = velocities,
+                .velocities             = pred_velocities,
                 .bodies_out             = world->body_pool.bodies_next,
                 .body_count             = body_cap,
                 .dt                     = substep_dt,
@@ -299,6 +327,9 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
             });
         }
+
+        /* ── Stage 12b + 13: skipped in prediction mode ───────── */
+        if (!world->prediction_mode) {
 
         /* ── Stage 12b: Position Projection (post-integrate) ───── */
         if (constraint_count > 0) {
@@ -380,6 +411,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .impact_threshold = world->impact_threshold,
             });
         }
+
+        } /* end if (!world->prediction_mode) — stages 12b–13 */
 
         /* ── Buffer swap for next substep ──────────────────────── */
         phys_body_pool_swap_buffers(&world->body_pool);

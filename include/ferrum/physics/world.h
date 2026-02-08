@@ -66,6 +66,13 @@ typedef struct phys_world_config {
 typedef struct phys_world {
     phys_world_config_t config;
 
+    /** When true, the tick skips narrowphase collision response (stages
+     *  6–11: narrowphase, manifold, stabilization, constraints, islands,
+     *  TGS solve).  Bodies still integrate under gravity and broadphase
+     *  still runs.  Used on the client for server-authoritative
+     *  prediction — the server sends corrections for colliding bodies. */
+    uint8_t prediction_mode;
+
     /* Double-buffered body pool. */
     phys_body_pool_t body_pool;
 

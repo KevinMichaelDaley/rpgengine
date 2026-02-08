@@ -189,7 +189,7 @@ static void push_reliable_(fr_server_net_runtime_t *rt,
  *  The fastest-moving bodies are prioritized.  Bodies beyond this cap
  *  simply wait for the next tick.  This prevents bandwidth explosion
  *  as body count grows. */
-#define DEMO_SEND_BUDGET_PER_TICK 64u
+#define DEMO_SEND_BUDGET_PER_TICK 256u
 
 /** Entry used by broadcast_body_states_ to rank awake bodies by speed. */
 struct body_rank_ {

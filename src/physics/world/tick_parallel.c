@@ -172,6 +172,18 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .pair_count_out = &pair_count,
             }, jobs, &world->frame_arena);
         }
+        /* Stages 6-11 skipped in prediction mode. */
+        phys_constraint_t *constraints = NULL;
+        uint32_t constraint_count = 0;
+        phys_manifold_t *manifolds = NULL;
+        uint32_t manifold_count = 0;
+        phys_island_list_t islands;
+        phys_island_list_init(&islands, &world->frame_arena,
+                              body_cap, body_cap);
+        phys_velocity_t *velocities = NULL;
+
+        if (!world->prediction_mode) {
+
         uint32_t max_candidates = pair_count > 0 ? pair_count : 1;
         phys_contact_candidate_t *candidates = phys_frame_arena_alloc(
             &world->frame_arena,
@@ -194,11 +206,11 @@ void phys_world_tick_parallel(phys_world_t *world,
             }, jobs, &world->frame_arena);
         }
         uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
-        phys_manifold_t *manifolds = phys_frame_arena_alloc(
+        manifolds = phys_frame_arena_alloc(
             &world->frame_arena,
             max_manifolds * sizeof(phys_manifold_t),
             _Alignof(phys_manifold_t));
-        uint32_t manifold_count = 0;
+        manifold_count = 0;
 
         if (manifolds && candidate_count > 0) {
             phys_stage_manifold_build_par(&(phys_manifold_build_args_t){
@@ -233,11 +245,11 @@ void phys_world_tick_parallel(phys_world_t *world,
         if (max_constraints == 0) {
             max_constraints = 1;
         }
-        phys_constraint_t *constraints = phys_frame_arena_alloc(
+        constraints = phys_frame_arena_alloc(
             &world->frame_arena,
             max_constraints * sizeof(phys_constraint_t),
             _Alignof(phys_constraint_t));
-        uint32_t constraint_count = 0;
+        constraint_count = 0;
 
         if (constraints && manifold_count > 0) {
             phys_stage_constraint_build_par(&(phys_constraint_build_args_t){
@@ -253,9 +265,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .slop                 = world->config.slop,
             }, jobs, &world->frame_arena);
         }
-        phys_island_list_t islands;
-        phys_island_list_init(&islands, &world->frame_arena,
-                              body_cap, body_cap);
+
 
         phys_stage_island_build(&(phys_island_build_args_t){
             .constraints      = constraints,
@@ -265,7 +275,7 @@ void phys_world_tick_parallel(phys_world_t *world,
             .islands_out      = &islands,
             .arena            = &world->frame_arena,
         });
-        phys_velocity_t *velocities = phys_frame_arena_alloc(
+        velocities = phys_frame_arena_alloc(
             &world->frame_arena,
             (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
             _Alignof(phys_velocity_t));
@@ -284,6 +294,20 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .iterations = plan.solver_iterations,
             }, jobs, &world->frame_arena);
         }
+        } /* end if (!world->prediction_mode) */
+
+        /* Allocate zeroed velocities for prediction mode. */
+        if (!velocities) {
+            velocities = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+            if (velocities) {
+                memset(velocities, 0,
+                       (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
+            }
+        }
+
         if (velocities) {
             phys_stage_integrate_par(&(phys_integrate_args_t){
                 .bodies_in              = world->body_pool.bodies_curr,
@@ -297,6 +321,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
             }, jobs, &world->frame_arena);
         }
+
+        if (!world->prediction_mode) {
+
         if (constraint_count > 0) {
             /* Allocate shared output arrays once for all islands. */
             phys_vec3_t *shared_pos = phys_frame_arena_alloc(
@@ -376,6 +403,8 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .impact_threshold = world->impact_threshold,
             });
         }
+
+        } /* end if (!world->prediction_mode) — 12b+13 */
 
         /* ── Buffer swap for next substep ──────────────────────── */
         phys_body_pool_swap_buffers(&world->body_pool);

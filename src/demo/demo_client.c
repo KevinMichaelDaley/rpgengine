@@ -1030,6 +1030,11 @@ int main(int argc, char **argv) {
             return 1;
         }
 
+        /* Client runs prediction mode: integrate + gravity only,
+         * no narrowphase collision response.  Server corrections
+         * override local state for colliding bodies. */
+        client_world.prediction_mode = 1;
+
         /* Create ground plane matching server. */
         uint32_t ground = phys_world_create_body(&client_world);
         phys_body_t *gb = phys_world_get_body(&client_world, ground);
