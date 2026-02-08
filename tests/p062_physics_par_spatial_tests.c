@@ -202,7 +202,7 @@ static int test_par_spatial_identical_to_seq(void) {
         .active     = td.active,
         .body_count = td.body_count,
     };
-    phys_stage_spatial_update_par(&par_args, &td.job_ctx);
+    phys_stage_spatial_update_par(&par_args, &td.job_ctx, &td.arena_par);
 
     /* Compare AABBs. */
     int cmp = compare_aabbs(td.aabbs_seq, td.aabbs_par,
@@ -231,7 +231,7 @@ static int test_par_spatial_single_batch(void) {
         .active     = td.active,
         .body_count = td.body_count,
     };
-    phys_stage_spatial_update_par(&args, &td.job_ctx);
+    phys_stage_spatial_update_par(&args, &td.job_ctx, &td.arena_par);
 
     /* Verify AABBs were computed — spot check first and last. */
     ASSERT_FLOAT_EQ(-1.0f, td.aabbs_par[0].min.x);
@@ -276,7 +276,7 @@ static int test_par_spatial_multiple_batches(void) {
         .active     = td.active,
         .body_count = td.body_count,
     };
-    phys_stage_spatial_update_par(&par_args, &td.job_ctx);
+    phys_stage_spatial_update_par(&par_args, &td.job_ctx, &td.arena_par);
 
     /* All AABBs must match. */
     int cmp = compare_aabbs(td.aabbs_seq, td.aabbs_par,
@@ -307,10 +307,10 @@ static int test_par_spatial_zero_bodies(void) {
     };
 
     /* Should not crash. */
-    phys_stage_spatial_update_par(&args, &td.job_ctx);
+    phys_stage_spatial_update_par(&args, &td.job_ctx, &td.arena_par);
 
     /* Also test NULL args path. */
-    phys_stage_spatial_update_par(NULL, &td.job_ctx);
+    phys_stage_spatial_update_par(NULL, &td.job_ctx, &td.arena_par);
 
     teardown_test_data(&td);
     return 0;
@@ -334,7 +334,7 @@ static int test_par_spatial_grid_populated(void) {
         .active     = td.active,
         .body_count = td.body_count,
     };
-    phys_stage_spatial_update_par(&args, &td.job_ctx);
+    phys_stage_spatial_update_par(&args, &td.job_ctx, &td.arena_par);
 
     /* Query the grid with a large AABB that should overlap all bodies. */
     phys_aabb_t query = {
@@ -433,7 +433,7 @@ static int test_par_spatial_mixed_shapes(void) {
         .active     = td.active,
         .body_count = count,
     };
-    phys_stage_spatial_update_par(&par_args, &td.job_ctx);
+    phys_stage_spatial_update_par(&par_args, &td.job_ctx, &td.arena_par);
 
     /* Compare all AABBs. */
     int cmp = compare_aabbs(td.aabbs_seq, td.aabbs_par, td.active, count);

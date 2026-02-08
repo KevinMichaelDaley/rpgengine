@@ -18,6 +18,7 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/par/xpbd_solve_par.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/physics/xpbd_solve.h"
 
@@ -240,7 +241,13 @@ static int test_par_xpbd_identical_to_seq(void)
         .omega            = 0.7f,
         .dt               = 1.0f / 60.0f,
     };
-    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx);
+
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
+
+    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
 
     int cmp = compare_results(td.bodies_out_seq, td.bodies_out_par,
                               td.vel_seq, td.vel_par, td.body_count);
@@ -275,7 +282,12 @@ static int test_par_xpbd_batch_128(void)
         .omega            = 0.6f,
         .dt               = 1.0f / 60.0f,
     };
-    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
+
+    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
 
     /* Verify that some position correction occurred. */
     int any_moved = 0;
@@ -312,11 +324,16 @@ static int test_par_xpbd_zero_bodies(void)
         .dt               = 1.0f / 60.0f,
     };
 
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
+
     /* Should not crash. */
-    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx);
+    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx, &arena);
 
     /* Also test NULL args. */
-    phys_stage_xpbd_solve_par(NULL, &td.job_ctx);
+    phys_stage_xpbd_solve_par(NULL, &td.job_ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
 
     teardown_test_data(&td);
     return 0;
@@ -379,7 +396,13 @@ static int test_par_xpbd_single_body(void)
         .omega            = 0.7f,
         .dt               = 1.0f / 60.0f,
     };
-    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx);
+
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
+
+    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
 
     int cmp = compare_results(td.bodies_out_seq, td.bodies_out_par,
                               td.vel_seq, td.vel_par, 1);
@@ -429,7 +452,12 @@ static int test_par_xpbd_no_constraints(void)
         .omega            = 0.7f,
         .dt               = 1.0f / 60.0f,
     };
-    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
+
+    phys_stage_xpbd_solve_par(&par_args, &td.job_ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
 
     /* Positions should be copied through unchanged. */
     for (uint32_t i = 0; i < 5; i++) {
@@ -483,6 +511,9 @@ static int test_par_xpbd_deterministic(void)
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
 
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
+
     /* Run A. */
     phys_xpbd_solve_args_t args_a = {
         .constraints      = constraints_a,
@@ -495,7 +526,7 @@ static int test_par_xpbd_deterministic(void)
         .omega            = 0.7f,
         .dt               = 1.0f / 60.0f,
     };
-    phys_stage_xpbd_solve_par(&args_a, &ctx);
+    phys_stage_xpbd_solve_par(&args_a, &ctx, &arena);
 
     /* Run B. */
     phys_xpbd_solve_args_t args_b = {
@@ -509,7 +540,9 @@ static int test_par_xpbd_deterministic(void)
         .omega            = 0.7f,
         .dt               = 1.0f / 60.0f,
     };
-    phys_stage_xpbd_solve_par(&args_b, &ctx);
+    phys_stage_xpbd_solve_par(&args_b, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
 
     int cmp = compare_results(bodies_out_a, bodies_out_b,
                               vel_a, vel_b, 10);

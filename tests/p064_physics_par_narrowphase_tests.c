@@ -23,6 +23,7 @@
 #include "ferrum/physics/narrowphase.h"
 #include "ferrum/physics/par/narrowphase_par.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
 
@@ -230,8 +231,12 @@ static int test_par_np_identical_to_seq(void)
     phys_job_context_t ctx;
     make_job_infra(&sys, &ctx);
 
-    phys_stage_narrowphase_par(&args_par, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_narrowphase_par(&args_par, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     tear_job_infra(&sys, &ctx);
 
     ASSERT_EQ_UINT(count_seq, count_par);
@@ -282,8 +287,12 @@ static int test_par_np_batch_64(void)
     phys_job_context_t ctx;
     make_job_infra(&sys, &ctx);
 
-    phys_stage_narrowphase_par(&args_par, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_narrowphase_par(&args_par, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     tear_job_infra(&sys, &ctx);
 
     ASSERT_EQ_UINT(count_seq, count_par);
@@ -324,9 +333,13 @@ static int test_par_np_zero_pairs(void)
     phys_job_context_t ctx;
     make_job_infra(&sys, &ctx);
 
-    /* pair_count=0 but pairs is NULL — should be a safe no-op. */
-    phys_stage_narrowphase_par(&args, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    /* pair_count=0 but pairs is NULL — should be a safe no-op. */
+    phys_stage_narrowphase_par(&args, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     tear_job_infra(&sys, &ctx);
 
     /* Sequential treats NULL pairs as no-op, so count stays untouched.
@@ -378,8 +391,12 @@ static int test_par_np_no_contacts(void)
     phys_job_context_t ctx;
     make_job_infra(&sys, &ctx);
 
-    phys_stage_narrowphase_par(&args_par, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_narrowphase_par(&args_par, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     tear_job_infra(&sys, &ctx);
 
     ASSERT_EQ_UINT(0, count_par);
@@ -467,8 +484,12 @@ static int test_par_np_mixed_shapes(void)
     phys_job_context_t ctx;
     make_job_infra(&sys, &ctx);
 
-    phys_stage_narrowphase_par(&args_par, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_narrowphase_par(&args_par, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     tear_job_infra(&sys, &ctx);
 
     /* Both pairs should produce contacts. */
@@ -508,8 +529,12 @@ static int test_par_np_max_candidates(void)
     phys_job_context_t ctx;
     make_job_infra(&sys, &ctx);
 
-    phys_stage_narrowphase_par(&args_par, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_narrowphase_par(&args_par, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     tear_job_infra(&sys, &ctx);
 
     /* Must not exceed buffer capacity. */

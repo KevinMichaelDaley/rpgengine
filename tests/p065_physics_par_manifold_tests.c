@@ -19,6 +19,7 @@
 #include "ferrum/physics/manifold_cache.h"
 #include "ferrum/physics/narrowphase.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/par/manifold_build_par.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
@@ -140,8 +141,12 @@ static int test_par_manifold_identical_to_seq(void) {
     phys_job_context_t ctx;
     setup_job_ctx(&sys, &ctx);
 
-    phys_stage_manifold_build_par(&args_par, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_manifold_build_par(&args_par, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     teardown_job_ctx(&sys, &ctx);
 
     /* Both should produce the same number of manifolds. */
@@ -185,8 +190,12 @@ static int test_par_manifold_batch_32(void) {
     phys_job_context_t ctx;
     setup_job_ctx(&sys, &ctx);
 
-    phys_stage_manifold_build_par(&args, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_manifold_build_par(&args, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     teardown_job_ctx(&sys, &ctx);
 
     /* All 100 unique pairs should produce 100 manifolds. */
@@ -221,8 +230,12 @@ static int test_par_manifold_zero_candidates(void) {
     phys_job_context_t ctx;
     setup_job_ctx(&sys, &ctx);
 
-    phys_stage_manifold_build_par(&args, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_manifold_build_par(&args, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     teardown_job_ctx(&sys, &ctx);
 
     ASSERT_EQ_UINT(0, count);
@@ -266,8 +279,11 @@ static int test_par_manifold_cache_warmstart(void) {
     phys_job_context_t ctx;
     setup_job_ctx(&sys, &ctx);
 
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
+
     /* Tick 0: build manifolds to populate the cache. */
-    phys_stage_manifold_build_par(&args, &ctx);
+    phys_stage_manifold_build_par(&args, &ctx, &arena);
     ASSERT_EQ_UINT(N, count);
 
     /* Inject a warmstart impulse into the cache for pair (0, 1000). */
@@ -278,8 +294,9 @@ static int test_par_manifold_cache_warmstart(void) {
     /* Tick 1: rebuild with same candidates — should warmstart from cache. */
     count = 0;
     args.tick = 1;
-    phys_stage_manifold_build_par(&args, &ctx);
+    phys_stage_manifold_build_par(&args, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     teardown_job_ctx(&sys, &ctx);
 
     ASSERT_EQ_UINT(N, count);
@@ -337,8 +354,12 @@ static int test_par_manifold_no_overflow(void) {
     phys_job_context_t ctx;
     setup_job_ctx(&sys, &ctx);
 
-    phys_stage_manifold_build_par(&args, &ctx);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
+    phys_stage_manifold_build_par(&args, &ctx, &arena);
+
+    phys_frame_arena_destroy(&arena);
     teardown_job_ctx(&sys, &ctx);
 
     /* Must not exceed max_manifolds. */
@@ -383,8 +404,12 @@ static int test_par_manifold_deterministic(void) {
         phys_job_context_t ctx;
         setup_job_ctx(&sys, &ctx);
 
-        phys_stage_manifold_build_par(&args, &ctx);
+        phys_frame_arena_t arena;
+        phys_frame_arena_init(&arena, 1024 * 1024);
 
+        phys_stage_manifold_build_par(&args, &ctx, &arena);
+
+        phys_frame_arena_destroy(&arena);
         teardown_job_ctx(&sys, &ctx);
 
         phys_manifold_cache_destroy(&cache);

@@ -18,6 +18,7 @@
 #include "ferrum/physics/constraint_stage.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/stabilization.h"
 #include "ferrum/physics/par/constraint_build_par.h"
 
@@ -105,15 +106,18 @@ static void init_neutral_hint(phys_stab_hint_t *hint) {
 typedef struct test_env {
     job_system_t       sys;
     phys_job_context_t ctx;
+    phys_frame_arena_t arena;
 } test_env_t;
 
 static void env_setup(test_env_t *env) {
     job_system_create(&env->sys, 2, 256, 65536, 64, 0);
     job_system_start(&env->sys);
     phys_job_context_init(&env->ctx, &env->sys);
+    phys_frame_arena_init(&env->arena, 1024 * 1024);
 }
 
 static void env_teardown(test_env_t *env) {
+    phys_frame_arena_destroy(&env->arena);
     phys_job_context_destroy(&env->ctx);
     job_system_shutdown(&env->sys);
 }
@@ -178,7 +182,7 @@ static int test_par_cb_identical_to_seq(void) {
         .baumgarte          = 0.2f,
         .slop               = 0.005f,
     };
-    phys_stage_constraint_build_par(&args_par, &env.ctx);
+    phys_stage_constraint_build_par(&args_par, &env.ctx, &env.arena);
 
     /* Same constraint count. */
     ASSERT_EQ_UINT(seq_count, par_count);
@@ -228,7 +232,7 @@ static int test_par_cb_batch_32(void) {
         .baumgarte          = 0.2f,
         .slop               = 0.005f,
     };
-    phys_stage_constraint_build_par(&args, &env.ctx);
+    phys_stage_constraint_build_par(&args, &env.ctx, &env.arena);
 
     /* 100 manifolds × 1 point each = 100 constraints. */
     ASSERT_EQ_UINT(100, par_count);
@@ -266,7 +270,7 @@ static int test_par_cb_zero_manifolds(void) {
         .baumgarte          = 0.2f,
         .slop               = 0.005f,
     };
-    phys_stage_constraint_build_par(&args, &env.ctx);
+    phys_stage_constraint_build_par(&args, &env.ctx, &env.arena);
 
     ASSERT_EQ_UINT(0, par_count);
 
@@ -308,7 +312,7 @@ static int test_par_cb_single_manifold(void) {
         .baumgarte          = 0.2f,
         .slop               = 0.005f,
     };
-    phys_stage_constraint_build_par(&args, &env.ctx);
+    phys_stage_constraint_build_par(&args, &env.ctx, &env.arena);
 
     ASSERT_EQ_UINT(POINTS_PER, par_count);
 
@@ -361,7 +365,7 @@ static int test_par_cb_max_constraints(void) {
         .baumgarte          = 0.2f,
         .slop               = 0.005f,
     };
-    phys_stage_constraint_build_par(&args, &env.ctx);
+    phys_stage_constraint_build_par(&args, &env.ctx, &env.arena);
 
     /* Must not exceed buffer capacity. */
     ASSERT_TRUE(par_count <= MAX_C);
@@ -408,7 +412,7 @@ static int test_par_cb_deterministic(void) {
         .baumgarte          = 0.2f,
         .slop               = 0.005f,
     };
-    phys_stage_constraint_build_par(&args1, &env.ctx);
+    phys_stage_constraint_build_par(&args1, &env.ctx, &env.arena);
 
     /* Run 2. */
     phys_constraint_t out2[MAX_C];
@@ -427,7 +431,7 @@ static int test_par_cb_deterministic(void) {
         .baumgarte          = 0.2f,
         .slop               = 0.005f,
     };
-    phys_stage_constraint_build_par(&args2, &env.ctx);
+    phys_stage_constraint_build_par(&args2, &env.ctx, &env.arena);
 
     /* Same count both runs. */
     ASSERT_EQ_UINT(count1, count2);
