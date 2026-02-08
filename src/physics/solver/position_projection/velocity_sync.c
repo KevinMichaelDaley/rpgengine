@@ -55,6 +55,14 @@ void phys_velocity_sync_normals(
 
     const float inv_dt = 1.0f / dt;
 
+    /* Velocity sync fraction (ERP-like): controls how aggressively
+     * velocity is adjusted to match position corrections.  A value of
+     * 1.0 converts the full position correction into velocity, which
+     * injects too much energy and causes rubber-ball bouncing.  A
+     * smaller value (0.2) gently nudges velocities so bodies separate
+     * over several substeps without creating visible bounce. */
+    const float vel_sync_erp = 0.2f;
+
     /* Gauss-Seidel iterations over the island's constraint system.
      * For each constraint, compute the target relative normal velocity
      * (from position deltas) and adjust body velocities to match. */
@@ -70,13 +78,15 @@ void phys_velocity_sync_normals(
             phys_body_t *body_b = &args->bodies[idx_b];
 
             /* Target relative normal velocity from position correction:
-             * target_vn = J · (delta_q / dt)
-             *           = -n · (delta_q_a / dt) + n · (delta_q_b / dt). */
+             * target_vn = J · (delta_q / dt) * erp
+             *           = (-n · delta_q_a + n · delta_q_b) / dt * erp.
+             * Scaled by vel_sync_erp to avoid injecting excessive energy. */
             float target_vn =
-                vec3_dot(row->J_va,
+                (vec3_dot(row->J_va,
                          vec3_scale(args->position_deltas[idx_a], inv_dt))
-              + vec3_dot(row->J_vb,
-                         vec3_scale(args->position_deltas[idx_b], inv_dt));
+               + vec3_dot(row->J_vb,
+                         vec3_scale(args->position_deltas[idx_b], inv_dt)))
+                * vel_sync_erp;
 
             /* If the position correction produced no target velocity along
              * this constraint normal, skip it — no velocity sync needed. */
