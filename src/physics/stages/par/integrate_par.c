@@ -49,6 +49,7 @@ static void integrate_batch_job(void *data) {
 
     const phys_body_t *bodies_in       = args->bodies_in;
     const phys_velocity_t *velocities  = args->velocities;
+    const phys_velocity_t *pseudo      = args->pseudo_velocities;
     phys_body_t *bodies_out            = args->bodies_out;
     const float dt                     = args->dt;
     const float sleep_lin_thresh       = args->sleep_threshold_linear;
@@ -133,9 +134,15 @@ static void integrate_batch_job(void *data) {
             }
         }
 
-        /* Integrate position: position += linear_vel * body_dt. */
+        /* Integrate position: position += (linear_vel + pseudo_vel) * body_dt.
+         * Pseudo-velocity from split impulse corrects penetration without
+         * being written to the body's stored velocity. */
+        phys_vec3_t integrate_vel = out->linear_vel;
+        if (pseudo) {
+            integrate_vel = vec3_add(integrate_vel, pseudo[i].linear);
+        }
         out->position = vec3_add(in->position,
-                                 vec3_scale(out->linear_vel, body_dt));
+                                 vec3_scale(integrate_vel, body_dt));
 
         /* Assert on NaN/Inf positions — indicates a bug in velocity
          * integration or upstream solver producing bad velocities. */
@@ -148,11 +155,16 @@ static void integrate_batch_job(void *data) {
          *   omega_quat = {angular_vel.x, angular_vel.y, angular_vel.z, 0}
          *   dq = quat_mul(omega_quat, orientation)
          *   orientation += 0.5 * dq * dt  (component-wise)
-         *   then normalize. */
+         *   then normalize.
+         * Include pseudo angular velocity for position correction. */
+        phys_vec3_t integrate_ang = out->angular_vel;
+        if (pseudo) {
+            integrate_ang = vec3_add(integrate_ang, pseudo[i].angular);
+        }
         phys_quat_t omega_q = {
-            out->angular_vel.x,
-            out->angular_vel.y,
-            out->angular_vel.z,
+            integrate_ang.x,
+            integrate_ang.y,
+            integrate_ang.z,
             0.0f
         };
         phys_quat_t dq = quat_mul(omega_q, in->orientation);

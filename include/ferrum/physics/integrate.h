@@ -33,6 +33,7 @@ struct phys_velocity;
 typedef struct phys_integrate_args {
     const struct phys_body *bodies_in;     /**< Input body array (read-only). */
     const struct phys_velocity *velocities; /**< Solved velocity pairs. */
+    const struct phys_velocity *pseudo_velocities; /**< Split-impulse position correction (may be NULL). */
     struct phys_body *bodies_out;          /**< Output body array. */
     uint32_t body_count;                   /**< Number of bodies. */
     float dt;                              /**< Time step (seconds) — global substep dt. */

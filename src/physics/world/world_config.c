@@ -9,14 +9,14 @@ phys_world_config_t phys_world_config_default(void) {
         .fixed_dt                = 1.0f / 60.0f,      /* ~16.7 ms / 60 Hz */
         .gravity                 = {0.0f, -9.81f, 0.0f},
         .default_substeps        = 1,
-        .default_solver_iterations = 8,
+        .default_solver_iterations = 10,
         .baumgarte               = 0.0f,
         .slop                    = 0.005f,
-        .sleep_threshold_linear  = 0.10f,
-        .sleep_threshold_angular = 0.10f,
+        .sleep_threshold_linear  = 0.08f,
+        .sleep_threshold_angular = 0.08f,
         .sleep_delay_frames      = 60,
         .warmstart_decay         = 0.95f,
-        .velocity_damping        = 0.99f,
+        .velocity_damping        = 0.96f,
     };
     return cfg;
 }

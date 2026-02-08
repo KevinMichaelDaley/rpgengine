@@ -37,6 +37,7 @@ typedef struct phys_jacobian_row {
     float lambda;           /**< Accumulated impulse (warmstarted). */
     float lambda_min;       /**< Clamp minimum (0 for normal, -friction*big for tangent). */
     float lambda_max;       /**< Clamp maximum (+big for normal, +friction*big for tangent). */
+    float pseudo_lambda;    /**< Accumulated split-impulse (position correction, not warmstarted). */
 } phys_jacobian_row_t;
 
 /** Maximum constraint rows per contact (1 normal + 2 friction). */

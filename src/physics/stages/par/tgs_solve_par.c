@@ -1,6 +1,6 @@
 /**
  * @file tgs_solve_par.c
- * @brief Parallel TGS velocity solver — one job per island.
+ * @brief Parallel TGS velocity solver with split impulse — one job per island.
  *
  * Dispatches one job per island.  Each job runs the iterative
  * sequential impulse solver on a single island's constraints.
@@ -12,12 +12,16 @@
 
 #include "ferrum/physics/par/tgs_solve_par.h"
 
+#include <math.h>
 #include <stddef.h>
 
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/math/vec3.h"
+
+/** Minimum penetration excess to correct (avoids micro-jitter). */
+#define SPLIT_MIN_PHI 1e-6f
 
 /* ── Shared context for all island jobs ────────────────────────── */
 
@@ -32,7 +36,10 @@ typedef struct tgs_solve_shared {
     phys_constraint_t        *constraints;  /**< Constraint array (lambda updated). */
     const phys_body_t        *bodies;       /**< Body array (read-only). */
     phys_velocity_t          *velocities;   /**< Solver velocity workspace. */
+    phys_velocity_t          *pseudo_velocities; /**< Split-impulse workspace (may be NULL). */
     uint32_t                  iterations;   /**< Solver iteration count. */
+    float                     slop;         /**< Penetration slop threshold. */
+    float                     inv_dt;       /**< 1 / substep dt. */
 } tgs_solve_shared_t;
 
 /* ── Solve a single Jacobian row (static helper) ──────────────── */
@@ -81,6 +88,58 @@ static void solve_row(phys_jacobian_row_t *row,
     vb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
 }
 
+/* ── Solve split-impulse position correction row (static helper) ─ */
+
+/**
+ * @brief Solve the position correction pseudo-impulse for a normal row.
+ *
+ * See tgs_solve.c for detailed documentation.
+ */
+static void solve_position_row(phys_jacobian_row_t *row,
+                                phys_velocity_t *pva,
+                                phys_velocity_t *pvb,
+                                float penetration,
+                                float slop,
+                                float inv_dt,
+                                float inv_mass_a,
+                                const phys_vec3_t *inv_i_a,
+                                float inv_mass_b,
+                                const phys_vec3_t *inv_i_b)
+{
+    float excess = penetration - slop;
+    if (excess < SPLIT_MIN_PHI) { return; }
+
+    float pos_bias = excess * inv_dt;
+
+    float jv = vec3_dot(row->J_va, pva->linear)
+             + vec3_dot(row->J_wa, pva->angular)
+             + vec3_dot(row->J_vb, pvb->linear)
+             + vec3_dot(row->J_wb, pvb->angular);
+
+    float delta_lambda = (pos_bias - jv) * row->effective_mass;
+
+    float old_lambda = row->pseudo_lambda;
+    float new_lambda = old_lambda + delta_lambda;
+    if (new_lambda < 0.0f) { new_lambda = 0.0f; }
+    delta_lambda = new_lambda - old_lambda;
+    row->pseudo_lambda = new_lambda;
+
+    if (fabsf(delta_lambda) < 1e-10f) { return; }
+
+    pva->linear = vec3_add(pva->linear,
+                           vec3_scale(row->J_va, inv_mass_a * delta_lambda));
+    pvb->linear = vec3_add(pvb->linear,
+                           vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
+
+    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
+    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
+    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+
+    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
+    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
+    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+}
+
 /* ── Solve a single island (static helper) ────────────────────── */
 
 /**
@@ -91,6 +150,8 @@ static void solve_island(const tgs_solve_shared_t *shared,
                           const phys_island_t *island)
 {
     if (island->sleeping || island->skip) return;
+
+    phys_velocity_t *pseudo = shared->pseudo_velocities;
 
     for (uint32_t iter = 0; iter < shared->iterations; iter++) {
         for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
@@ -111,6 +172,17 @@ static void solve_island(const tgs_solve_shared_t *shared,
             solve_row(&c->rows[0], va, vb,
                       inv_mass_a, inv_i_a,
                       inv_mass_b, inv_i_b);
+
+            /* Split impulse: solve position correction into
+             * pseudo-velocities using the same constraint normal. */
+            if (pseudo) {
+                solve_position_row(
+                    &c->rows[0],
+                    &pseudo[c->body_a], &pseudo[c->body_b],
+                    c->penetration, shared->slop, shared->inv_dt,
+                    inv_mass_a, inv_i_a,
+                    inv_mass_b, inv_i_b);
+            }
 
             /* Coulomb friction cone: clamp tangent impulses to
              * ±friction * accumulated_normal_impulse. */
@@ -175,16 +247,29 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
         }
     }
 
+    /* Zero pseudo-velocities if split impulse is active. */
+    phys_velocity_t *pseudo = args->pseudo_velocities;
+    if (pseudo) {
+        for (uint32_t i = 0; i < args->body_count; i++) {
+            pseudo[i] = (phys_velocity_t){{0,0,0},{0,0,0}};
+        }
+    }
+
+    const float inv_dt = (args->dt > 0.0f) ? (1.0f / args->dt) : 0.0f;
+
     uint32_t island_count = args->islands->count;
     if (island_count == 0) return;
 
     /* Set up shared context for all island jobs. */
     tgs_solve_shared_t shared = {
-        .islands     = args->islands,
-        .constraints = args->constraints,
-        .bodies      = args->bodies,
-        .velocities  = args->velocities,
-        .iterations  = args->iterations,
+        .islands          = args->islands,
+        .constraints      = args->constraints,
+        .bodies           = args->bodies,
+        .velocities       = args->velocities,
+        .pseudo_velocities = pseudo,
+        .iterations       = args->iterations,
+        .slop             = args->slop,
+        .inv_dt           = inv_dt,
     };
 
     /* Allocate batch descriptors from the frame arena (one per island). */

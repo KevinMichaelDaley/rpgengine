@@ -29,8 +29,6 @@
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/physics/xpbd_solve.h"
-#include "ferrum/physics/position_projection.h"
-#include "ferrum/physics/velocity_sync.h"
 #include "ferrum/physics/integrate.h"
 #include "ferrum/physics/cache_commit.h"
 #include "ferrum/physics/phys_pool.h"
@@ -186,6 +184,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                               body_cap, body_cap);
 
         phys_velocity_t *velocities = NULL;
+        phys_velocity_t *pseudo_velocities = NULL;
         float *body_max_pen = NULL;
 
         if (!world->prediction_mode) {
@@ -335,6 +334,12 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
             _Alignof(phys_velocity_t));
 
+        /* Allocate pseudo-velocities for split impulse position correction. */
+        pseudo_velocities = phys_frame_arena_alloc(
+            &world->frame_arena,
+            (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+            _Alignof(phys_velocity_t));
+
         if (velocities) {
             /* Zero-initialize velocities. */
             memset(velocities, 0,
@@ -345,11 +350,13 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .constraints = constraints,
                 .bodies     = world->body_pool.bodies_curr,
                 .velocities = velocities,
+                .pseudo_velocities = pseudo_velocities,
                 .body_count = body_cap,
                 .iterations = plan.solver_iterations,
                 .gravity    = world->config.gravity,
                 .dt         = substep_dt,
                 .tick_dt    = plan.dt,
+                .slop       = world->config.slop,
                 .tier_substep_counts = tier_substep_counts,
             });
         }
@@ -388,6 +395,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             phys_stage_integrate(&(phys_integrate_args_t){
                 .bodies_in              = world->body_pool.bodies_curr,
                 .velocities             = pred_velocities,
+                .pseudo_velocities      = pseudo_velocities,
                 .bodies_out             = world->body_pool.bodies_next,
                 .body_count             = body_cap,
                 .dt                     = substep_dt,
@@ -407,85 +415,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         /* ── Stage 12b + 13: skipped in prediction mode ───────── */
         if (!world->prediction_mode) {
 
-        /* ── Stage 12b: Position Projection (post-integrate) ───── */
-        if (constraint_count > 0) {
-            /* Allocate shared output array once for all islands. */
-            phys_velocity_t *shared_deltas = phys_frame_arena_alloc(
-                &world->frame_arena,
-                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
-                _Alignof(phys_velocity_t));
-
-            for (uint32_t i = 0; i < islands.count; i++) {
-                const phys_island_t *isle = &islands.islands[i];
-
-                /* Skip islands where all bodies are in the lowest-priority
-                 * tier (TIER_4_BACKGROUND) — Baumgarte is sufficient. */
-                bool all_background = true;
-                for (uint32_t bi = 0; bi < isle->body_count; bi++) {
-                    uint32_t idx = isle->body_indices[bi];
-                    if (world->body_pool.bodies_next[idx].tier
-                            < PHYS_TIER_4_BACKGROUND) {
-                        all_background = false;
-                        break;
-                    }
-                }
-                if (all_background) { continue; }
-
-                phys_position_projection_result_t proj_result;
-                memset(&proj_result, 0, sizeof(proj_result));
-
-                phys_position_projection(&(phys_position_projection_args_t){
-                    .island      = isle,
-                    .constraints = constraints,
-                    .bodies      = world->body_pool.bodies_next,
-                    .body_count  = body_cap,
-                    .dt          = substep_dt,
-                    .slop        = world->config.slop,
-                    .arena       = &world->frame_arena,
-                    .result      = &proj_result,
-                    .shared_deltas = shared_deltas,
-                });
-
-                if (proj_result.success && proj_result.correction_deltas) {
-                    /* Apply generalized corrections to integrated bodies. */
-                    for (uint32_t bi = 0; bi < isle->body_count; bi++) {
-                        uint32_t idx = isle->body_indices[bi];
-                        phys_body_t *body = &world->body_pool.bodies_next[idx];
-                        const phys_velocity_t *d = &proj_result.correction_deltas[idx];
-
-                        /* Linear position correction. */
-                        body->position = vec3_add(body->position, d->linear);
-
-                        /* Angular orientation correction via quaternion
-                         * derivative: q += 0.5 * (delta_ang, 0) * q. */
-                        float ang_mag = vec3_magnitude(d->angular);
-                        if (ang_mag > 1e-8f) {
-                            phys_quat_t dq_quat = {
-                                d->angular.x, d->angular.y, d->angular.z, 0.0f
-                            };
-                            phys_quat_t rot = quat_mul(dq_quat, body->orientation);
-                            body->orientation.x += 0.5f * rot.x;
-                            body->orientation.y += 0.5f * rot.y;
-                            body->orientation.z += 0.5f * rot.z;
-                            body->orientation.w += 0.5f * rot.w;
-                            body->orientation = quat_normalize_safe(
-                                body->orientation, 1e-8f);
-                        }
-                    }
-
-                    /* Sparse GS velocity sync: solve per-island
-                     * velocity-level system to match correction velocities
-                     * along constraint normals (linear + angular). */
-                    phys_velocity_sync_normals(&(phys_velocity_sync_args_t){
-                        .island            = isle,
-                        .constraints       = constraints,
-                        .bodies            = world->body_pool.bodies_next,
-                        .correction_deltas = proj_result.correction_deltas,
-                        .dt                = substep_dt,
-                    });
-                }
-            }
-        }
+        /* Position projection and velocity sync are no longer separate
+         * stages — they are fused into the TGS solver via split impulse. */
 
         /* ── Stage 13: Cache Commit ────────────────────────────── */
         if (constraints && constraint_count > 0) {
@@ -502,7 +433,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             });
         }
 
-        } /* end if (!world->prediction_mode) — stages 12b–13 */
+        } /* end if (!world->prediction_mode) — stage 13 */
 
         /* ── Buffer swap for next substep ──────────────────────── */
         phys_body_pool_swap_buffers(&world->body_pool);

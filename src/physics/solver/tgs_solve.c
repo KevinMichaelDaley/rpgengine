@@ -1,20 +1,32 @@
 /**
  * @file tgs_solve.c
- * @brief TGS (Temporal Gauss-Seidel) velocity solver implementation.
+ * @brief TGS (Temporal Gauss-Seidel) velocity solver with split impulse.
  *
  * Two non-static functions:
  *   1. phys_tgs_init_velocities  — copy body velocities into workspace
  *   2. phys_stage_tgs_solve      — the main solver entry point
+ *
+ * Split impulse: after solving each normal row's velocity constraint,
+ * a separate position-correction pseudo-impulse is solved into a
+ * pseudo_velocities array.  The integrator adds pseudo_velocities to
+ * position integration only — they are NOT written to body velocity.
+ * This corrects penetration without injecting energy into the velocity
+ * field, eliminating the upward drift that plagued the old separate
+ * position projection + velocity sync pipeline.
  */
 
 #include "ferrum/physics/tgs_solve.h"
 
+#include <math.h>
 #include <stddef.h>
 
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/math/vec3.h"
+
+/** Minimum penetration excess to correct (avoids micro-jitter). */
+#define SPLIT_MIN_PHI 1e-6f
 
 /* ── Internal: initialize velocity workspace from body state ──── */
 
@@ -103,6 +115,76 @@ static void solve_row(phys_jacobian_row_t *row,
     vb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
 }
 
+/* ── Solve split-impulse position correction row (static helper) ─ */
+
+/**
+ * @brief Solve the position correction pseudo-impulse for a normal row.
+ *
+ * Computes the penetration bias (Φ - slop) / dt, then solves a PGS
+ * row against the pseudo_velocities workspace (not the real velocities).
+ * The accumulated pseudo_lambda is clamped ≥ 0 (contacts only push apart).
+ *
+ * @param row           Normal Jacobian row (pseudo_lambda is updated).
+ * @param pva           Pseudo-velocity for body A.
+ * @param pvb           Pseudo-velocity for body B.
+ * @param penetration   Raw penetration depth from contact.
+ * @param slop          Penetration slop threshold.
+ * @param inv_dt        1 / dt.
+ * @param inv_mass_a    Inverse mass of body A.
+ * @param inv_i_a       Diagonal inverse inertia of body A.
+ * @param inv_mass_b    Inverse mass of body B.
+ * @param inv_i_b       Diagonal inverse inertia of body B.
+ */
+static void solve_position_row(phys_jacobian_row_t *row,
+                                phys_velocity_t *pva,
+                                phys_velocity_t *pvb,
+                                float penetration,
+                                float slop,
+                                float inv_dt,
+                                float inv_mass_a,
+                                const phys_vec3_t *inv_i_a,
+                                float inv_mass_b,
+                                const phys_vec3_t *inv_i_b)
+{
+    float excess = penetration - slop;
+    if (excess < SPLIT_MIN_PHI) { return; }
+
+    /* Position correction bias: target pseudo-velocity to resolve
+     * the penetration excess within one substep. */
+    float pos_bias = excess * inv_dt;
+
+    /* Current pseudo-velocity along constraint normal. */
+    float jv = vec3_dot(row->J_va, pva->linear)
+             + vec3_dot(row->J_wa, pva->angular)
+             + vec3_dot(row->J_vb, pvb->linear)
+             + vec3_dot(row->J_wb, pvb->angular);
+
+    float delta_lambda = (pos_bias - jv) * row->effective_mass;
+
+    /* Clamp accumulated pseudo-lambda ≥ 0 (contacts only separate). */
+    float old_lambda = row->pseudo_lambda;
+    float new_lambda = old_lambda + delta_lambda;
+    if (new_lambda < 0.0f) { new_lambda = 0.0f; }
+    delta_lambda = new_lambda - old_lambda;
+    row->pseudo_lambda = new_lambda;
+
+    if (fabsf(delta_lambda) < 1e-10f) { return; }
+
+    /* Apply pseudo-velocity corrections. */
+    pva->linear = vec3_add(pva->linear,
+                           vec3_scale(row->J_va, inv_mass_a * delta_lambda));
+    pvb->linear = vec3_add(pvb->linear,
+                           vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
+
+    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
+    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
+    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+
+    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
+    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
+    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+}
+
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
@@ -111,6 +193,17 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
 
     /* Copy body velocities into solver workspace. */
     phys_tgs_init_velocities(args);
+
+    /* Zero pseudo-velocities if split impulse is active. */
+    phys_velocity_t *pseudo = args->pseudo_velocities;
+    if (pseudo) {
+        for (uint32_t i = 0; i < args->body_count; i++) {
+            pseudo[i] = (phys_velocity_t){{0,0,0},{0,0,0}};
+        }
+    }
+
+    const float inv_dt = (args->dt > 0.0f) ? (1.0f / args->dt) : 0.0f;
+    const float slop = args->slop;
 
     const phys_island_list_t *islands = args->islands;
 
@@ -139,6 +232,17 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                 solve_row(&c->rows[0], va, vb,
                           inv_mass_a, inv_i_a,
                           inv_mass_b, inv_i_b);
+
+                /* Split impulse: solve position correction into
+                 * pseudo-velocities using the same constraint normal. */
+                if (pseudo) {
+                    solve_position_row(
+                        &c->rows[0],
+                        &pseudo[c->body_a], &pseudo[c->body_b],
+                        c->penetration, slop, inv_dt,
+                        inv_mass_a, inv_i_a,
+                        inv_mass_b, inv_i_b);
+                }
 
                 /* Coulomb friction cone: clamp tangent impulses to
                  * ±friction * accumulated_normal_impulse. */

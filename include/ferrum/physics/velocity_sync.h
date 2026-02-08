@@ -51,6 +51,10 @@ typedef struct phys_velocity_sync_args {
  * velocity via impulse to match.  Tangential velocity from friction
  * solving is preserved.
  *
+ * The solver is fully bilateral (lambda may be positive or negative)
+ * to find the true least-squares velocity match without directional
+ * bias.  Controlled by the PHYS_VELOCITY_SYNC_ENABLED compile flag.
+ *
  * See ref/sparse_stabilization.tex Section 5b.
  *
  * @param args  Sync arguments. NULL-safe (no-op).

@@ -462,7 +462,7 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         }
     }
 
-    sort_by_speed_desc_(ranked, awake_count);
+    //sort_by_speed_desc_(ranked, awake_count);
 
     /* Build collision-prediction bitset from manifold cache +
      * per-body AABB sweep / raycast (tier-dependent). */
@@ -619,7 +619,7 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
                 continue;
             }
 
-            const int use_reliable = (ri < DEMO_RELIABLE_BODY_BUDGET);
+            const int use_reliable = false;//(ri < DEMO_RELIABLE_BODY_BUDGET);
             if (use_reliable) {
                 push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_STATE,
                                payload, sizeof(payload));
@@ -974,10 +974,7 @@ int main(int argc, char **argv) {
          *     calls it's a no-op for physics but still spawns boxes. */
         demo_server_world_tick(&sw, &phys_jobs);
 
-        /* (e) Broadcast body states at ~60 Hz.  Physics writes to
-         *     bodies_next and swaps; bodies_curr is always safe to
-         *     read from the main thread. */
-        #define BROADCAST_INTERVAL_MS 16u
+        #define BROADCAST_INTERVAL_MS (dt_s*1000.0)
         {
             static uint64_t next_broadcast = 0u;
             if (next_broadcast == 0u) { next_broadcast = now; }
@@ -1036,7 +1033,7 @@ int main(int argc, char **argv) {
         }
 
         /* (f) Sleep briefly to avoid busy-spinning the main thread. */
-        sleep_ms(1u);
+        //sleep_ms(1u);
     }
 
     /* ── Cleanup ──────────────────────────────────────────────────── */

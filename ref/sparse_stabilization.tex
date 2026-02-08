@@ -50,6 +50,9 @@ The correct procedure for each body $k$ in the island:
 \end{enumerate}
 This projects out the pre-existing constraint-normal velocity and replaces it with the velocity implied by the position correction, while leaving the tangential (friction) velocity intact. The result is a velocity field that is consistent with the corrected geometry without injecting energy or destroying solver work.
 
+\subsubsection*{5b-ii. Bilateral Solver}
+The velocity sync GS solver is fully bilateral: $\lambda$ may be positive or negative so the solver finds the true least-squares velocity field matching the position corrections. A unilateral clamp ($\lambda \geq 0$) was previously used but biased body velocities in the separating direction, causing persistent stack hovering on clients that replay server velocities without a local solver. The bilateral formulation eliminates this directional bias. The stage is guarded by the \texttt{PHYS\_VELOCITY\_SYNC\_ENABLED} compile flag (default on; disable with \texttt{make VSYNC=0}).
+
 \subsubsection*{5c. Why Not Simply Add?}
 Adding $v_{corr}$ to the existing velocity would double-count the normal impulse already applied by the iterative solver during TGS. The solver already produced a velocity that \textit{attempts} to resolve penetration; position projection then fixes the residual. Replacing the normal component ensures only the corrected residual is reflected in velocity, avoiding energy injection that would destabilize stacks.
 

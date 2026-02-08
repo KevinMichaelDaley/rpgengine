@@ -20,6 +20,13 @@
  * This naturally handles bodies touched by multiple constraints because
  * GS propagates corrections through shared bodies across iterations.
  *
+ * The solver is fully bilateral — lambda may be positive or negative —
+ * so it finds the true least-squares velocity field matching the
+ * position corrections without directional bias.  A unilateral clamp
+ * (lambda ≥ 0) was previously used but caused upward velocity bias
+ * that manifested as stack hovering on clients replaying server
+ * velocities without a local solver.
+ *
  * See ref/sparse_stabilization.tex Section 5b.
  *
  * Non-static functions (1):
@@ -100,14 +107,10 @@ void phys_velocity_sync_normals(
 
             float residual = target_vn - current_vn;
 
-            /* Only apply correction if it would push bodies apart. */
             float eff_mass = row->effective_mass;
             if (eff_mass <= 0.0f) { continue; }
 
             float delta_lambda = eff_mass * residual;
-
-            /* Clamp: velocity sync should only push apart, not pull together. */
-            if (delta_lambda < 0.0f) { continue; }
             if (fabsf(delta_lambda) < 1e-10f) { continue; }
 
             /* Apply linear velocity impulse: v_lin += M^-1 * J_v^T * dλ. */
