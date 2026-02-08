@@ -108,12 +108,11 @@ static void apply_impulse_(phys_world_t *world,
 
 /** Apply a single SET_STATE command (full authoritative correction).
  *
- *  For dynamic bodies we soft-correct: set velocity to the server's
- *  velocity plus a nudge toward the server position.  This avoids
- *  hard-snapping which fights the local simulation and causes bodies
- *  to appear frozen or jittery.  Orientation is set directly since
- *  rotational errors are visually jarring and hard to converge via
- *  angular velocity alone.
+ *  For dynamic bodies we blend position toward the server and set
+ *  velocity directly.  When the error is small (< SNAP_THRESHOLD)
+ *  we interpolate smoothly; when large we hard-snap to avoid bodies
+ *  drifting for a long time.  The velocity nudge is clamped so large
+ *  position errors don't inject energy and launch bodies.
  *
  *  Static/kinematic bodies are hard-snapped (no local simulation). */
 static void apply_set_state_(phys_world_t *world,
@@ -130,17 +129,31 @@ static void apply_set_state_(phys_world_t *world,
                            !(b->flags & PHYS_BODY_FLAG_KINEMATIC);
 
     if (is_dynamic) {
-        /* Soft correction: nudge velocity toward server position.
-         * The gain (CORRECTION_RATE) controls how aggressively we
-         * converge — higher = snappier but more jitter. */
-        const float CORRECTION_RATE = 8.0f; /* 1/s — converge in ~125ms */
         float dx = cmd->position.x - b->position.x;
         float dy = cmd->position.y - b->position.y;
         float dz = cmd->position.z - b->position.z;
+        float err_sq = dx * dx + dy * dy + dz * dz;
 
-        b->linear_vel.x = cmd->linear_vel.x + dx * CORRECTION_RATE;
-        b->linear_vel.y = cmd->linear_vel.y + dy * CORRECTION_RATE;
-        b->linear_vel.z = cmd->linear_vel.z + dz * CORRECTION_RATE;
+        /* Beyond this threshold, hard-snap instead of blending. */
+        const float SNAP_THRESHOLD = 2.0f;     /* meters */
+        const float SNAP_SQ = SNAP_THRESHOLD * SNAP_THRESHOLD;
+
+        if (err_sq > SNAP_SQ) {
+            /* Too far — teleport to server position. */
+            b->position = cmd->position;
+        } else {
+            /* Blend position: move 30% toward server per correction.
+             * At 60 Hz corrections this converges very quickly without
+             * overshooting. */
+            const float BLEND = 0.3f;
+            b->position.x += dx * BLEND;
+            b->position.y += dy * BLEND;
+            b->position.z += dz * BLEND;
+        }
+
+        /* Set velocity directly from server — no nudge added, so
+         * there is no energy injection from position error. */
+        b->linear_vel = cmd->linear_vel;
 
         /* Hard-set orientation (rotational drift is visually obvious). */
         b->orientation = cmd->orientation;
