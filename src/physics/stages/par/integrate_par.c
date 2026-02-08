@@ -152,8 +152,9 @@ static void integrate_batch_job(void *data) {
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void phys_stage_integrate_par(const phys_integrate_args_t *args,
-                               phys_job_context_t *ctx) {
-    if (!args || !ctx) {
+                               phys_job_context_t *ctx,
+                               phys_frame_arena_t *arena) {
+    if (!args || !ctx || !arena) {
         return;
     }
     if (!args->bodies_in || !args->bodies_out || !args->velocities) {
@@ -172,9 +173,11 @@ void phys_stage_integrate_par(const phys_integrate_args_t *args,
         .args = args,
     };
 
-    /* Batch descriptors on the stack.  For physics body counts this
-     * is bounded (e.g. 2000 bodies / 512 = 4 batches). */
-    phys_job_batch_t batches[num_batches];
+    /* Allocate batch descriptors from the frame arena. */
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, num_batches * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) return;
 
     phys_dispatch_stage(ctx, PHYS_STAGE_INTEGRATE,
                         integrate_batch_job, &shared,

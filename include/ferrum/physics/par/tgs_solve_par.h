@@ -13,6 +13,7 @@
 
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,8 +26,9 @@ extern "C" {
  * one job per non-sleeping island.  Each job runs the iterative
  * sequential impulse solver on its island's constraints.
  *
- * @param args  Solver arguments (same as sequential version). NULL-safe (no-op).
- * @param ctx   Physics job context (non-NULL).
+ * @param args   Solver arguments (same as sequential version). NULL-safe (no-op).
+ * @param ctx    Physics job context (non-NULL).
+ * @param arena  Frame arena for temporary batch allocations (non-NULL).
  *
  * Ownership: borrows all pointers from args; does not free anything.
  * Nullability: no-op if args or ctx is NULL.
@@ -34,7 +36,8 @@ extern "C" {
  * Error semantics: falls back to sequential if island count is 0.
  */
 void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
-                               phys_job_context_t *ctx);
+                               phys_job_context_t *ctx,
+                               phys_frame_arena_t *arena);
 
 #ifdef __cplusplus
 } /* extern "C" */

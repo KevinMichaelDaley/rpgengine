@@ -15,6 +15,7 @@
 
 #include "ferrum/job/system.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/par/stabilization_par.h"
 #include "ferrum/physics/phys_jobs.h"
@@ -159,6 +160,8 @@ static int test_par_stab_identical_to_seq(void) {
     job_system_start(&sys);
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_stabilization_args_t args_par = {
         .manifolds = manifolds,
@@ -167,12 +170,14 @@ static int test_par_stab_identical_to_seq(void) {
         .hints_out = hints_par,
         .resting_velocity_threshold = TEST_THRESHOLD,
     };
-    phys_stage_stabilization_par(&args_par, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_stabilization_par(&args_par, &ctx, &arena);
 
     /* Compare. */
     int cmp = compare_hints(hints_seq, hints_par, N);
     ASSERT_TRUE(cmp == 0);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
     free(hints_par);
@@ -227,6 +232,8 @@ static int test_par_stab_batch_64(void) {
     job_system_start(&sys);
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_stabilization_args_t args_par = {
         .manifolds = manifolds,
@@ -235,11 +242,13 @@ static int test_par_stab_batch_64(void) {
         .hints_out = hints_par,
         .resting_velocity_threshold = TEST_THRESHOLD,
     };
-    phys_stage_stabilization_par(&args_par, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_stabilization_par(&args_par, &ctx, &arena);
 
     int cmp = compare_hints(hints_seq, hints_par, N);
     ASSERT_TRUE(cmp == 0);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
     free(hints_par);
@@ -258,6 +267,8 @@ static int test_par_stab_zero_manifolds(void) {
     job_system_start(&sys);
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_stabilization_args_t args = {
         .manifolds = NULL,
@@ -267,8 +278,10 @@ static int test_par_stab_zero_manifolds(void) {
         .resting_velocity_threshold = TEST_THRESHOLD,
     };
     /* Should not crash. */
-    phys_stage_stabilization_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_stabilization_par(&args, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
     return 0;
@@ -296,6 +309,8 @@ static int test_par_stab_single_manifold(void) {
     job_system_start(&sys);
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_stabilization_args_t args = {
         .manifolds = &manifold,
@@ -304,13 +319,15 @@ static int test_par_stab_single_manifold(void) {
         .hints_out = &hint,
         .resting_velocity_threshold = TEST_THRESHOLD,
     };
-    phys_stage_stabilization_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_stabilization_par(&args, &ctx, &arena);
 
     /* Zero relative velocity → resting contact.
      * T0: base 3.0 × tier friction_boost 3.0 = 9.0 */
     ASSERT_FLOAT_EQ(9.0f, hint.friction_scale, 1e-5f);
     ASSERT_FLOAT_EQ(0.0f, hint.restitution_scale, 1e-5f);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
     return 0;
@@ -340,6 +357,8 @@ static int test_par_stab_resting_contact(void) {
     job_system_start(&sys);
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_stabilization_args_t args = {
         .manifolds = &manifold,
@@ -348,13 +367,15 @@ static int test_par_stab_resting_contact(void) {
         .hints_out = &hint,
         .resting_velocity_threshold = TEST_THRESHOLD,
     };
-    phys_stage_stabilization_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_stabilization_par(&args, &ctx, &arena);
 
     /* Relative velocity = 0.05 along normal, well below 0.5 threshold.
      * T0: base 3.0 × tier friction_boost 3.0 = 9.0 */
     ASSERT_FLOAT_EQ(9.0f, hint.friction_scale, 1e-5f);
     ASSERT_FLOAT_EQ(0.0f, hint.restitution_scale, 1e-5f);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
     return 0;
@@ -384,6 +405,8 @@ static int test_par_stab_fast_contact(void) {
     job_system_start(&sys);
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_stabilization_args_t args = {
         .manifolds = &manifold,
@@ -392,12 +415,14 @@ static int test_par_stab_fast_contact(void) {
         .hints_out = &hint,
         .resting_velocity_threshold = TEST_THRESHOLD,
     };
-    phys_stage_stabilization_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_stabilization_par(&args, &ctx, &arena);
 
     /* High relative velocity → active contact (pass-through). */
     ASSERT_FLOAT_EQ(1.0f, hint.friction_scale, 1e-5f);
     ASSERT_FLOAT_EQ(1.0f, hint.restitution_scale, 1e-5f);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
     return 0;

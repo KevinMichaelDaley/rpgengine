@@ -145,9 +145,10 @@ static void tgs_solve_island_job(void *data)
 /* ── Public API ───────────────────────────────────────────────── */
 
 void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
-                               phys_job_context_t *ctx)
+                               phys_job_context_t *ctx,
+                               phys_frame_arena_t *arena)
 {
-    if (!args || !ctx || !args->islands) return;
+    if (!args || !ctx || !arena || !args->islands) return;
 
     /* Initialize velocities from body state (same as sequential). */
     if (args->bodies && args->velocities) {
@@ -169,10 +170,11 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
         .iterations  = args->iterations,
     };
 
-    /* Allocate batch descriptors on the stack (one per island).
-     * For very large island counts a VLA is used; the island count
-     * is bounded by body count which is bounded by simulation limits. */
-    phys_job_batch_t batches[island_count];
+    /* Allocate batch descriptors from the frame arena (one per island). */
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, island_count * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) return;
 
     /* Dispatch one job per island: total_items = island_count, batch_size = 1. */
     phys_dispatch_stage(ctx, PHYS_STAGE_TGS_SOLVE,

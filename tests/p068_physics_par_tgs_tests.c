@@ -18,6 +18,7 @@
 #include "ferrum/physics/par/tgs_solve_par.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/island.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
@@ -208,6 +209,8 @@ static int test_par_tgs_identical_to_seq(void)
 
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_velocity_t vel_par[8];
     phys_tgs_solve_args_t args_par = {
@@ -218,8 +221,10 @@ static int test_par_tgs_identical_to_seq(void)
         .body_count  = body_count,
         .iterations  = iterations,
     };
-    phys_stage_tgs_solve_par(&args_par, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_tgs_solve_par(&args_par, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
 
@@ -278,11 +283,15 @@ static int test_par_tgs_single_island(void)
 
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_velocity_t vel_par[4];
     args.velocities = vel_par;
-    phys_stage_tgs_solve_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_tgs_solve_par(&args, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
 
@@ -351,11 +360,15 @@ static int test_par_tgs_many_islands(void)
 
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_velocity_t vel_par[20];
     args.velocities = vel_par;
-    phys_stage_tgs_solve_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_tgs_solve_par(&args, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
 
@@ -392,10 +405,14 @@ static int test_par_tgs_zero_islands(void)
 
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     /* Should return without crashing. */
-    phys_stage_tgs_solve_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_tgs_solve_par(&args, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
 
@@ -432,6 +449,8 @@ static int test_par_tgs_no_constraints(void)
 
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     phys_velocity_t velocities[4];
     phys_tgs_solve_args_t args = {
@@ -439,8 +458,10 @@ static int test_par_tgs_no_constraints(void)
         .bodies = bodies, .velocities = velocities,
         .body_count = body_count, .iterations = 10,
     };
-    phys_stage_tgs_solve_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_tgs_solve_par(&args, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
 
@@ -503,6 +524,8 @@ static int test_par_tgs_deterministic(void)
 
     phys_job_context_t ctx;
     phys_job_context_init(&ctx, &sys);
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 1024 * 1024);
 
     /* Run 1. */
     phys_velocity_t vel_run1[6];
@@ -511,7 +534,8 @@ static int test_par_tgs_deterministic(void)
         .bodies = bodies, .velocities = vel_run1,
         .body_count = body_count, .iterations = iterations,
     };
-    phys_stage_tgs_solve_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_tgs_solve_par(&args, &ctx, &arena);
 
     phys_velocity_t saved[6];
     memcpy(saved, vel_run1, sizeof(saved));
@@ -522,8 +546,10 @@ static int test_par_tgs_deterministic(void)
     /* Run 2. */
     phys_velocity_t vel_run2[6];
     args.velocities = vel_run2;
-    phys_stage_tgs_solve_par(&args, &ctx);
+    phys_frame_arena_reset(&arena);
+    phys_stage_tgs_solve_par(&args, &ctx, &arena);
 
+    phys_frame_arena_destroy(&arena);
     phys_job_context_destroy(&ctx);
     job_system_shutdown(&sys);
 

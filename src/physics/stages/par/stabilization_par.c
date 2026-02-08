@@ -187,8 +187,9 @@ static void stabilization_batch_job(void *data) {
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void phys_stage_stabilization_par(const phys_stabilization_args_t *args,
-                                   phys_job_context_t *ctx) {
-    if (!args || !ctx) {
+                                   phys_job_context_t *ctx,
+                                   phys_frame_arena_t *arena) {
+    if (!args || !ctx || !arena) {
         return;
     }
     if (!args->manifolds || !args->hints_out || !args->bodies) {
@@ -207,10 +208,11 @@ void phys_stage_stabilization_par(const phys_stabilization_args_t *args,
         .args = args,
     };
 
-    /* Batch descriptors on the stack (max ~4 for 200 manifolds).
-     * For very large counts this should use arena allocation, but
-     * physics manifold counts are bounded in practice. */
-    phys_job_batch_t batches[num_batches];
+    /* Allocate batch descriptors from the frame arena. */
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, num_batches * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) return;
 
     phys_dispatch_stage(ctx, PHYS_STAGE_STABILIZATION,
                         stabilization_batch_job, &shared,

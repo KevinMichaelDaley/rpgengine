@@ -84,6 +84,8 @@ Whenever a new module is created:
   - Nullability
   - Error semantics
   - Side effects
+### VLAs are illegal!
+Do not use variable-length arrays.  They are extremely unsafe and lead to buffer overruns frequently.  Also, note that our stack sizes are small for any function that runs on a fiber (which could be most functions).  The preferred pattern for functions that manipulate arrays is to perform allocations outside of the array and pass a pointer and a capacity (or a pool/arena) as an argument.  I.e., allocations should be moved as far up the call stack as possible.  Also, never call calloc/malloc/free/other dynamic memory management functions in functions that execute once or more per frame.  Always use pre-allocated heaps, pools, arenas, etc to manage memory that gets rapidly allocated and deallocated.
 ### Style
 - Use variable and function names that are descriptive and indicate their purpose.  Use obvious syntax and avoid
 unnecessary brevity when it detracts from readability.  

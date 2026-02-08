@@ -15,6 +15,7 @@
 
 #include "ferrum/job/system.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/integrate.h"
 #include "ferrum/physics/par/integrate_par.h"
 #include "ferrum/physics/phys_jobs.h"
@@ -99,14 +100,17 @@ static int bodies_match(const phys_body_t *a, const phys_body_t *b,
 
 static job_system_t g_sys;
 static phys_job_context_t g_ctx;
+static phys_frame_arena_t g_arena;
 
 static void setup_job_system(void) {
     job_system_create(&g_sys, 2, 256, 65536, 64, 0);
     job_system_start(&g_sys);
     phys_job_context_init(&g_ctx, &g_sys);
+    phys_frame_arena_init(&g_arena, 1024 * 1024);
 }
 
 static void teardown_job_system(void) {
+    phys_frame_arena_destroy(&g_arena);
     phys_job_context_destroy(&g_ctx);
     job_system_shutdown(&g_sys);
 }
@@ -151,7 +155,8 @@ static int test_par_integrate_identical_to_seq(void) {
 
     /* Parallel. */
     args.bodies_out = out_par;
-    phys_stage_integrate_par(&args, &g_ctx);
+    phys_frame_arena_reset(&g_arena);
+    phys_stage_integrate_par(&args, &g_ctx, &g_arena);
 
     ASSERT_TRUE(bodies_match(out_seq, out_par, N, 1e-6f));
 
@@ -197,7 +202,8 @@ static int test_par_integrate_single_batch(void) {
     phys_stage_integrate(&args);
 
     args.bodies_out = out_par;
-    phys_stage_integrate_par(&args, &g_ctx);
+    phys_frame_arena_reset(&g_arena);
+    phys_stage_integrate_par(&args, &g_ctx, &g_arena);
 
     /* All 200 bodies in one batch → must match. */
     ASSERT_TRUE(bodies_match(out_seq, out_par, N, 1e-6f));
@@ -245,7 +251,8 @@ static int test_par_integrate_multiple_batches(void) {
     phys_stage_integrate(&args);
 
     args.bodies_out = out_par;
-    phys_stage_integrate_par(&args, &g_ctx);
+    phys_frame_arena_reset(&g_arena);
+    phys_stage_integrate_par(&args, &g_ctx, &g_arena);
 
     ASSERT_TRUE(bodies_match(out_seq, out_par, N, 1e-6f));
 
@@ -281,7 +288,8 @@ static int test_par_integrate_zero_bodies(void) {
     };
 
     /* Must not crash or hang. */
-    phys_stage_integrate_par(&args, &g_ctx);
+    phys_frame_arena_reset(&g_arena);
+    phys_stage_integrate_par(&args, &g_ctx, &g_arena);
 
     teardown_job_system();
     return 0;
@@ -315,7 +323,8 @@ static int test_par_integrate_gravity(void) {
         .sleep_delay_frames     = 60,
     };
 
-    phys_stage_integrate_par(&args, &g_ctx);
+    phys_frame_arena_reset(&g_arena);
+    phys_stage_integrate_par(&args, &g_ctx, &g_arena);
 
     /* After one frame: velocity should be gravity * dt downward. */
     float expected_vy = -9.81f * dt;
@@ -363,7 +372,8 @@ static int test_par_integrate_sleep(void) {
         .sleep_delay_frames     = 60,
     };
 
-    phys_stage_integrate_par(&args, &g_ctx);
+    phys_frame_arena_reset(&g_arena);
+    phys_stage_integrate_par(&args, &g_ctx, &g_arena);
 
     /* sleep_counter should increment from 5 to 6. */
     ASSERT_EQ_UINT(6, body_out.sleep_counter);

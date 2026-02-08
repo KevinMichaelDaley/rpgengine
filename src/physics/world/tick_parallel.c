@@ -227,7 +227,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .boxes                      = world->boxes,
                 .hints_out                  = hints,
                 .resting_velocity_threshold = 0.1f,
-            }, jobs);
+            }, jobs, &world->frame_arena);
         }
         uint32_t max_constraints = manifold_count * PHYS_MAX_MANIFOLD_POINTS;
         if (max_constraints == 0) {
@@ -282,7 +282,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .velocities = velocities,
                 .body_count = body_cap,
                 .iterations = plan.solver_iterations,
-            }, jobs);
+            }, jobs, &world->frame_arena);
         }
         if (velocities) {
             phys_stage_integrate_par(&(phys_integrate_args_t){
@@ -295,7 +295,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .sleep_threshold_linear = world->config.sleep_threshold_linear,
                 .sleep_threshold_angular = world->config.sleep_threshold_angular,
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
-            }, jobs);
+            }, jobs, &world->frame_arena);
         }
         if (constraint_count > 0) {
             /* Allocate shared output arrays once for all islands. */

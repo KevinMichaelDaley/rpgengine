@@ -13,6 +13,7 @@
 
 #include "ferrum/physics/stabilization.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,8 +29,9 @@ extern "C" {
  * dispatches each batch as a job.  Each job computes hints for its
  * slice of manifolds, writing directly to hints_out[start..start+count).
  *
- * @param args  Stage arguments (non-NULL).  Same as sequential version.
- * @param ctx   Physics job context (non-NULL).
+ * @param args   Stage arguments (non-NULL).  Same as sequential version.
+ * @param ctx    Physics job context (non-NULL).
+ * @param arena  Frame arena for temporary batch allocations (non-NULL).
  *
  * Ownership: borrows all pointers from args; does not free anything.
  * Nullability: no-op if args or ctx is NULL.
@@ -37,7 +39,8 @@ extern "C" {
  * Error semantics: no-op on NULL inputs or zero manifold count.
  */
 void phys_stage_stabilization_par(const phys_stabilization_args_t *args,
-                                   phys_job_context_t *ctx);
+                                   phys_job_context_t *ctx,
+                                   phys_frame_arena_t *arena);
 
 #ifdef __cplusplus
 } /* extern "C" */
