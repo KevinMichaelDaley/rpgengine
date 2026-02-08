@@ -166,6 +166,15 @@ static double now_s_(void) {
     return (double)now_ns_() / 1000000000.0;
 }
 
+/** Wall-clock milliseconds (CLOCK_REALTIME) — matches server timestamps
+ *  for one-way latency measurement.  Truncated to 32 bits. */
+static uint32_t wall_ms_(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    uint64_t ms = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+    return (uint32_t)(ms & 0xFFFFFFFFu);
+}
+
 static void usage_(const char *argv0) {
     fprintf(stderr, "Usage: %s <server_ipv4> <port>\n", argv0);
 }
@@ -802,8 +811,7 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
                               size_t *cap, const net_repl_body_state_t *st,
                               double recv_time_s,
                               fr_debug_lines_t *correction_lines,
-                              fr_topic_channel_t *cmd_channel,
-                              uint32_t rtt_ms) {
+                              fr_topic_channel_t *cmd_channel) {
     if (!entities || !count || !cap || !st) return 0;
 
     const uint32_t eid = (uint32_t)st->body_id;
@@ -844,19 +852,30 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
     /* Push authoritative correction through the command queue so it
      * is applied on the tick fiber -- no direct mutation from main.
      *
-     * Extrapolate the server position forward by velocity to compensate
-     * for network latency.  Uses measured RTT / 2 (one-way estimate)
-     * with a 16ms minimum floor.  We do NOT add gravity here because
-     * the client's integration stage applies gravity on every tick —
-     * adding it to the extrapolation too would double-count it. */
+     * Extrapolation strategy (tier-dependent):
+     *   - T4 / colliding bodies: no extrapolation — use server pos directly.
+     *   - T0-T3 non-colliding:   extrapolate by velocity * one-way latency.
+     *
+     * One-way latency is measured from the server's CLOCK_REALTIME
+     * timestamp embedded in the packet. */
     if (cmd_channel && e->phys_body != UINT32_MAX) {
-        /* One-way latency ≈ RTT/2, floor at one tick (16 ms). */
-        const float lat_s = (rtt_ms > 0u)
-            ? (float)rtt_ms * 0.0005f   /* RTT/2 in seconds */
-            : 0.016f;                    /* fallback: 1 tick */
-        const float ex = px + vx * lat_s;
-        const float ey = py + vy * lat_s;
-        const float ez = pz + vz * lat_s;
+        float ex = px, ey = py, ez = pz;
+
+        const uint8_t tier = net_repl_body_state_tier(st->flags);
+        const int colliding = st->flags & NET_REPL_BODY_STATE_FLAG_COLLIDING;
+
+        if (!colliding && tier < 4u) {
+            /* Compute one-way server→client latency from wall clocks. */
+            const uint32_t recv_wall = wall_ms_();
+            int32_t lat_ms = (int32_t)(recv_wall - st->send_time_ms);
+            if (lat_ms < 0)   lat_ms = 0;    /* clock skew guard */
+            if (lat_ms > 200) lat_ms = 200;   /* cap at 200 ms */
+            const float lat_s = (float)lat_ms * 0.001f;
+
+            ex += vx * lat_s;
+            ey += vy * lat_s;
+            ez += vz * lat_s;
+        }
 
         phys_cmd_set_state_t cmd;
         cmd.body_index  = e->phys_body;
@@ -1102,9 +1121,8 @@ int main(int argc, char **argv) {
                           client_cmds, client_corrections,
                           client_spawn_cb_, &spawn_ctx);
 
-    /* Fixed timestep tracking for client physics. */
-    const uint64_t client_tick_ms = 2u; /* 500 Hz, matches physics fixed_dt */
-    uint64_t client_next_tick = now_ms_();
+    /* Start the physics fiber — it runs continuously at fixed_dt. */
+    phys_tick_runner_start(&tick_runner);
 
     /* ---- FPS camera ---- */
     demo_camera_t cam;
@@ -1235,9 +1253,10 @@ int main(int argc, char **argv) {
 
         /* ---- Keepalive / resend ---- */
         if (now_ms >= next_keepalive_ms) {
-            (void)net_rudp_peer_send_unreliable(&peer, &sock, &server_addr, now_ms,
+            (void)net_rudp_peer_send_reliable(&peer, &sock, &server_addr, now_ms,
                                                 NET_REPL_SCHEMA_JOIN,
-                                                join_payload, sizeof(join_payload));
+                                                join_payload, sizeof(join_payload),
+                                                NULL);
             next_keepalive_ms = now_ms + 100u;
         }
         (void)net_rudp_peer_tick_resend(&peer, &sock, &server_addr, now_ms);
@@ -1295,8 +1314,7 @@ int main(int argc, char **argv) {
                 if (net_repl_body_state_decode(&st, payload, payload_size) == NET_REPL_OK) {
                     (void)handle_body_state_(&entities, &entity_count, &entity_cap,
                                              &st, recv_time_s, &correction_lines,
-                                             client_corrections,
-                                             peer.smoothed_rtt_ms);
+                                             client_corrections);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 net_repl_welcome_t w;
@@ -1322,19 +1340,8 @@ int main(int argc, char **argv) {
             next_diag_ms = now_ms + 1000u;
         }
 
-        /* ---- Client physics tick (non-blocking) ---- */
-        if (now_ms >= client_next_tick) {
-            /* Cap catch-up to 3 ticks. */
-            if (now_ms - client_next_tick > client_tick_ms * 3u) {
-                client_next_tick = now_ms;
-            }
-            if (phys_tick_runner_done(&tick_runner)) {
-                phys_tick_runner_consume(&tick_runner);
-                phys_tick_runner_kick(&tick_runner);
-                client_next_tick += client_tick_ms;
-            }
-            /* If tick not done, don't advance — retry next frame. */
-        }
+        /* Physics runs continuously on its own fiber — nothing to
+         * kick/poll here.  bodies_curr is always safe to read. */
 
         /* ---- (f) Render ---- */
         glViewport(0, 0, win_w, win_h);

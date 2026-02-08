@@ -6,6 +6,8 @@
  * for physics stacking stability stress tests.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include "ferrum/demo/server_world.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/tick.h"
@@ -15,6 +17,14 @@
 
 #include <math.h>
 #include <string.h>
+#include <time.h>
+
+/** Return wall-clock milliseconds (CLOCK_MONOTONIC). */
+static uint64_t spawn_now_ms_(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+}
 
 /** Spawn distance in front of the player (meters). */
 #define SPAWN_DISTANCE 2.0f
@@ -31,11 +41,11 @@
 /** Pi constant. */
 #define PI_F 3.14159265358979323846f
 
-/** Minimum ticks between stack spawns (3 seconds at 60Hz). */
-#define STACK_SPAWN_MIN 180u
+/** Minimum milliseconds between stack spawns. */
+#define STACK_SPAWN_MIN_MS 3000u
 
-/** Range of random extra ticks above minimum for stack spawns. */
-#define STACK_SPAWN_RANGE 121u  /* 180-300 ticks = 3-5 seconds */
+/** Range of random extra milliseconds above minimum for stack spawns. */
+#define STACK_SPAWN_RANGE_MS 2000u  /* 3-5 seconds */
 
 /** Maximum radius from origin for stack placement (meters). */
 #define STACK_SPAWN_RADIUS 30.0f
@@ -384,15 +394,22 @@ void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
         return;
     }
 
-    /* Spawn new stacks BEFORE kicking the next tick so that newly
-     * created bodies are included in the upcoming simulation step.
-     * Caller must ensure no tick is in flight (call tick_consume first). */
-    sw->ticks_since_spawn++;
-    uint32_t threshold = STACK_SPAWN_MIN +
-                         (xorshift32(&sw->rng_state) % STACK_SPAWN_RANGE);
-    if (sw->ticks_since_spawn >= threshold) {
-        spawn_box_stack(sw);
-        sw->ticks_since_spawn = 0;
+    /* Spawn new stacks on a wall-clock timer (independent of call rate).
+     * Commands go through the channel so the physics fiber picks them up. */
+    {
+        uint64_t now = spawn_now_ms_();
+        if (sw->next_spawn_ms == 0u) {
+            /* First call — schedule initial spawn 3-5s from now. */
+            uint32_t delay = STACK_SPAWN_MIN_MS +
+                             (xorshift32(&sw->rng_state) % STACK_SPAWN_RANGE_MS);
+            sw->next_spawn_ms = now + delay;
+        }
+        if (now >= sw->next_spawn_ms) {
+            spawn_box_stack(sw);
+            uint32_t delay = STACK_SPAWN_MIN_MS +
+                             (xorshift32(&sw->rng_state) % STACK_SPAWN_RANGE_MS);
+            sw->next_spawn_ms = now + delay;
+        }
     }
 
     if (jobs) {

@@ -56,18 +56,6 @@ void phys_stage_constraint_build(const phys_constraint_build_args_t *args)
             c->solver_mode = (uint8_t)phys_tier_cross_solver_mode(
                 (phys_tier_t)body_a->tier, (phys_tier_t)body_b->tier);
 
-            /* For TGS-tier constraints, remove Baumgarte bias from the
-             * normal row.  Position projection handles penetration
-             * correction instead, which avoids energy injection. */
-            if (c->solver_mode == 0 && args->dt > 0.0f) {
-                float pen_excess = manifold->points[p].penetration
-                                 - args->slop;
-                if (pen_excess < 0.0f) { pen_excess = 0.0f; }
-                float baumgarte_bias = (args->baumgarte / args->dt)
-                                     * pen_excess;
-                c->rows[0].bias -= baumgarte_bias;
-            }
-
             /* Load warmstart impulses from manifold cache.
              * Sanitize NaN/Inf to prevent solver corruption. */
             c->rows[0].lambda = manifold->normal_impulse[p];

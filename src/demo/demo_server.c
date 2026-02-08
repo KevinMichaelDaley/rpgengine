@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include <errno.h>
+#include <math.h>
 #include <pthread.h>
 #include <signal.h>
 #include <sched.h>
@@ -36,9 +37,11 @@
 #include "ferrum/server/net/runtime.h"
 
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_tick_runner.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/collider.h"
 #include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/manifold_cache.h"
 
 #include "ferrum/demo/server_world.h"
 #include "ferrum/demo/input_move.h"
@@ -50,6 +53,15 @@ static uint64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+}
+
+/** Wall-clock milliseconds (CLOCK_REALTIME) for cross-machine timestamps.
+ *  Truncated to 32 bits in the wire format — wraps every ~49 days. */
+static uint32_t wall_ms_(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    uint64_t ms = (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+    return (uint32_t)(ms & 0xFFFFFFFFu);
 }
 
 static void sleep_ms(uint32_t ms) {
@@ -267,6 +279,115 @@ static int16_t angvel_to_mrad_s_(float v) {
     return (int16_t)mr;
 }
 
+/* ── Collision prediction for extrapolation gating ─────────────── */
+
+/** Prediction window for AABB sweep / raycast (seconds). */
+#define COLLISION_PREDICT_WINDOW_S 0.05f
+
+/** Build a bitset of body indices that are currently in the manifold
+ *  cache (i.e. have active contacts this tick). */
+static void build_colliding_bitset_(const phys_manifold_cache_t *cache,
+                                    uint8_t *bits, uint32_t capacity) {
+    if (!cache || !bits) return;
+    memset(bits, 0, (capacity + 7u) / 8u);
+    for (uint32_t i = 0; i < cache->count; ++i) {
+        const phys_manifold_cache_entry_t *e = &cache->entries[i];
+        if (e->manifold.point_count == 0) continue;
+        uint32_t a = e->manifold.body_a;
+        uint32_t b = e->manifold.body_b;
+        if (a < capacity) bits[a >> 3] |= (uint8_t)(1u << (a & 7u));
+        if (b < capacity) bits[b >> 3] |= (uint8_t)(1u << (b & 7u));
+    }
+}
+
+/** Test whether a ray (origin, direction, max_t) hits an AABB.
+ *  Uses slab method.  Returns true if intersection exists at t < max_t. */
+static int ray_hits_aabb_(phys_vec3_t origin, phys_vec3_t inv_dir,
+                          const phys_aabb_t *box, float max_t) {
+    float tmin = 0.0f, tmax = max_t;
+    const float *o  = &origin.x;
+    const float *id = &inv_dir.x;
+    const float *bmin = &box->min.x;
+    const float *bmax = &box->max.x;
+    for (int i = 0; i < 3; ++i) {
+        float t1 = (bmin[i] - o[i]) * id[i];
+        float t2 = (bmax[i] - o[i]) * id[i];
+        if (t1 > t2) { float tmp = t1; t1 = t2; t2 = tmp; }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) return 0;
+    }
+    return 1;
+}
+
+/** Predict whether body bi will collide within the prediction window.
+ *
+ *  Strategy varies by tier:
+ *    T0-T2: expand AABB by velocity * window, test overlap vs all others.
+ *    T3:    cast a ray from body center along velocity, test vs all AABBs.
+ *    T4:    always returns 1 (no extrapolation for background bodies).
+ *
+ *  Also returns 1 if the body is already colliding (bitset). */
+static int predict_collision_(const phys_world_t *world, uint32_t bi,
+                              const uint8_t *colliding_bits, float window_s) {
+    /* Already in contact — definitely colliding. */
+    if ((colliding_bits[bi >> 3] >> (bi & 7u)) & 1u) return 1;
+
+    const phys_body_t *b = phys_world_get_body((phys_world_t *)(uintptr_t)world, bi);
+    if (!b) return 1;
+
+    /* T4 background: always flag colliding → client won't extrapolate. */
+    if (b->tier >= 4u) return 1;
+
+    const phys_aabb_t *my_aabb = phys_world_get_aabb(world, bi);
+    if (!my_aabb) return 1;
+
+    const uint32_t cap = world->body_pool.capacity;
+    const float vx = b->linear_vel.x, vy = b->linear_vel.y, vz = b->linear_vel.z;
+    const float speed_sq = vx*vx + vy*vy + vz*vz;
+
+    /* Nearly stationary — no collision prediction needed. */
+    if (speed_sq < 0.01f) return 0;
+
+    if (b->tier <= 2u) {
+        /* T0-T2: swept AABB overlap test. */
+        phys_aabb_t swept = *my_aabb;
+        float dx = vx * window_s, dy = vy * window_s, dz = vz * window_s;
+        if (dx > 0) swept.max.x += dx; else swept.min.x += dx;
+        if (dy > 0) swept.max.y += dy; else swept.min.y += dy;
+        if (dz > 0) swept.max.z += dz; else swept.min.z += dz;
+
+        for (uint32_t j = 0; j < cap; ++j) {
+            if (j == bi) continue;
+            if (!phys_body_pool_is_active(&world->body_pool, j)) continue;
+            const phys_aabb_t *other = phys_world_get_aabb(world, j);
+            if (!other) continue;
+            if (phys_aabb_overlap(&swept, other)) return 1;
+        }
+    } else {
+        /* T3: raycast along velocity direction vs all AABBs. */
+        float inv_speed = 1.0f / sqrtf(speed_sq);
+        phys_vec3_t dir = {vx * inv_speed, vy * inv_speed, vz * inv_speed};
+        float max_t = sqrtf(speed_sq) * window_s;
+        /* Compute inverse direction for slab test (avoid div-by-zero). */
+        phys_vec3_t inv_dir = {
+            (fabsf(dir.x) > 1e-8f) ? 1.0f / dir.x : 1e8f,
+            (fabsf(dir.y) > 1e-8f) ? 1.0f / dir.y : 1e8f,
+            (fabsf(dir.z) > 1e-8f) ? 1.0f / dir.z : 1e8f,
+        };
+        phys_vec3_t origin = b->position;
+
+        for (uint32_t j = 0; j < cap; ++j) {
+            if (j == bi) continue;
+            if (!phys_body_pool_is_active(&world->body_pool, j)) continue;
+            const phys_aabb_t *other = phys_world_get_aabb(world, j);
+            if (!other) continue;
+            if (ray_hits_aabb_(origin, inv_dir, other, max_t)) return 1;
+        }
+    }
+    return 0;
+}
+
 static void broadcast_body_states_(fr_server_net_runtime_t *rt,
                                    demo_server_world_t *sw,
                                    const uint8_t *client_connected,
@@ -335,6 +456,13 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
     }
 
     sort_by_speed_desc_(ranked, awake_count);
+
+    /* Build collision-prediction bitset from manifold cache +
+     * per-body AABB sweep / raycast (tier-dependent). */
+    uint8_t coll_bits[(512 + 7) / 8];
+    build_colliding_bitset_(&sw->physics.manifold_cache, coll_bits, capacity);
+
+    const uint32_t send_time = wall_ms_();
 
     /* ── Pass 2: for each client, send BODY_SPAWN for unknown bodies,
      *            then BODY_STATE for known awake bodies ──────────── */
@@ -414,6 +542,20 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
             st.ang_y_mrad_s = angvel_to_mrad_s_(b->angular_vel.y);
             st.ang_z_mrad_s = angvel_to_mrad_s_(b->angular_vel.z);
 
+            st.send_time_ms = send_time;
+
+            /* Pack tier + colliding flag.  For T0-T3 the collision
+             * predictor does an AABB sweep (T0-T2) or raycast (T3).
+             * T4 is always flagged colliding so the client skips
+             * extrapolation for background bodies. */
+            uint8_t sf = 0;
+            sf = net_repl_body_state_set_tier(sf, b->tier);
+            if (predict_collision_(&sw->physics, bi, coll_bits,
+                                   COLLISION_PREDICT_WINDOW_S)) {
+                sf |= NET_REPL_BODY_STATE_FLAG_COLLIDING;
+            }
+            st.flags = sf;
+
             uint8_t payload[NET_REPL_BODY_STATE_PAYLOAD_SIZE];
             if (net_repl_body_state_encode(&st, payload, sizeof(payload))
                 != NET_REPL_OK) {
@@ -475,7 +617,7 @@ int main(int argc, char **argv) {
 
     /* Parse arguments. */
     long port_l        = strtol(argv[1], NULL, 10);
-    long tick_hz_l     = (argc >= 3) ? strtol(argv[2], NULL, 10) : 500;
+    long tick_hz_l     = (argc >= 3) ? strtol(argv[2], NULL, 10) : 60;
     long workers_l     = (argc >= 4) ? strtol(argv[3], NULL, 10) : 4;
     long net_workers_l = (argc >= 5) ? strtol(argv[4], NULL, 10) : 1;
 
@@ -690,10 +832,8 @@ int main(int argc, char **argv) {
     }
 
     /* ── Main loop ────────────────────────────────────────────────── */
-    const uint64_t tick_ms  = (uint64_t)(1000u / (uint32_t)tick_hz_l);
     const float    dt_s     = 1.0f / (float)tick_hz_l;
     uint16_t       server_tick = 0u;
-    uint64_t       next_tick   = now_ms();
 
     fprintf(stderr, "DEMO_SERVER_READY\n");
 
@@ -771,70 +911,52 @@ int main(int argc, char **argv) {
             /* Other entity events (INPUT_ROT etc.) are ignored in this demo. */
         }
 
-        /* (d,e) Fixed-timestep tick.
-         * Cap catch-up to MAX_CATCHUP_TICKS so that a long physics
-         * frame doesn't cause an unbounded burst of sim ticks. */
-        #define MAX_CATCHUP_TICKS 3u
-        if (now >= next_tick) {
-            /* Clamp: if we've fallen behind by more than MAX_CATCHUP
-             * ticks, skip ahead rather than running all of them back
-             * to back. */
-            if (now - next_tick > tick_ms * MAX_CATCHUP_TICKS) {
-                next_tick = now;
-            }
+        /* (d) Physics runs continuously on its own fiber.  We call
+         *     demo_server_world_tick each iteration — it starts the
+         *     runner on the first call (kick → start), and on later
+         *     calls it's a no-op for physics but still spawns boxes. */
+        demo_server_world_tick(&sw, &phys_jobs);
 
-            server_tick = (uint16_t)(server_tick + 1u);
-
-            /* (d) If the previous physics tick has finished, consume it
-             *     and kick a new one.  If physics is still running, we
-             *     skip the kick — we'll catch up on the next iteration.
-             *     This means the main loop NEVER blocks on physics. */
-            if (demo_server_world_tick_done(&sw)) {
-                demo_server_world_tick_consume(&sw);
-                demo_server_world_tick(&sw, &phys_jobs);
-            }
-
-            /* (e) Broadcast body states at ~60 Hz (every Nth physics tick).
-             *     bodies_curr always holds valid committed state —
-             *     either from the just-consumed tick or the previous
-             *     one if physics is still running.  This is safe because
-             *     the tick writes to bodies_next, not bodies_curr. */
-            {
-                uint32_t broadcast_divisor = (uint32_t)(tick_hz_l / 60);
-                if (broadcast_divisor == 0) { broadcast_divisor = 1; }
-                if (clients_joined > 0u &&
-                    (server_tick % broadcast_divisor) == 0u) {
-                    broadcast_body_states_(rt, &sw, client_connected,
-                                           max_clients, server_tick);
+        /* (e) Broadcast body states at ~60 Hz.  Physics writes to
+         *     bodies_next and swaps; bodies_curr is always safe to
+         *     read from the main thread. */
+        #define BROADCAST_INTERVAL_MS 16u
+        {
+            static uint64_t next_broadcast = 0u;
+            if (next_broadcast == 0u) { next_broadcast = now; }
+            if (clients_joined > 0u && now >= next_broadcast) {
+                server_tick = (uint16_t)(server_tick + 1u);
+                broadcast_body_states_(rt, &sw, client_connected,
+                                       max_clients, server_tick);
+                next_broadcast += BROADCAST_INTERVAL_MS;
+                if (now - next_broadcast > BROADCAST_INTERVAL_MS * 3u) {
+                    next_broadcast = now;
                 }
             }
+        }
 
-            /* Status line every ~1 second. */
-            if ((server_tick % (uint16_t)tick_hz_l) == 0u) {
-                uint64_t tick_end = now_ms();
+        /* Status line every ~1 second. */
+        {
+            static uint64_t next_status = 0u;
+            if (next_status == 0u) { next_status = now + 1000u; }
+            if (now >= next_status) {
                 uint32_t body_count = phys_world_body_count(&sw.physics);
-                fprintf(stderr, "tick %u: %u bodies, %u clients  "
-                        "tick_dt=%lums  lag=%ldms  "
+                fprintf(stderr, "tick %lu: %u bodies, %u clients  "
                         "rx=%lu tx=%lu\n",
-                        (unsigned)server_tick, (unsigned)body_count,
+                        (unsigned long)phys_tick_runner_tick_id(
+                            &sw.tick_runner),
+                        (unsigned)body_count,
                         (unsigned)clients_joined,
-                        (unsigned long)(tick_end - now),
-                        (long)(tick_end - next_tick),
                         (unsigned long)atomic_load_explicit(&io.packets_recv,
                                                            memory_order_relaxed),
                         (unsigned long)atomic_load_explicit(&io.packets_sent,
                                                            memory_order_relaxed));
+                next_status = now + 1000u;
             }
-
-            next_tick += tick_ms;
         }
 
-        /* (f) Yield or sleep until next tick. */
-        if (now_ms() < next_tick) {
-            sleep_ms(1u);
-        } else {
-            sched_yield();
-        }
+        /* (f) Sleep briefly to avoid busy-spinning the main thread. */
+        sleep_ms(1u);
     }
 
     /* ── Cleanup ──────────────────────────────────────────────────── */

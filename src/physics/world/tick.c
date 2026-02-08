@@ -7,8 +7,6 @@
  * at the start of the tick.
  */
 
-#define _POSIX_C_SOURCE 200809L
-
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/game_state.h"
@@ -43,7 +41,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <time.h>
 
 /** Number of spatial grid hash buckets (must be power of 2). */
 #define GRID_CELL_COUNT 256
@@ -54,31 +51,10 @@
 /** Maximum broadphase pairs per substep. */
 #define MAX_PAIRS_PER_SUBSTEP 10000
 
-/** Read CLOCK_MONOTONIC in nanoseconds. */
-static uint64_t clock_ns_(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-}
-
-/** Busy-wait until fixed_dt has elapsed since the last tick. */
-static void pace_tick_(phys_world_t *world) {
-    if (world->last_tick_ns == 0) { return; } /* First tick — no wait. */
-    uint64_t target_ns = (uint64_t)(world->config.fixed_dt * 1e9f);
-    uint64_t now;
-    while ((now = clock_ns_()) - world->last_tick_ns < target_ns) {
-        /* spin */
-    }
-}
-
 void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
     if (!world) {
         return;
     }
-
-    /* Enforce fixed-rate pacing: wait until fixed_dt has elapsed
-     * since the previous tick completed. */
-    pace_tick_(world);
 
     /* Clear impact events from last frame. */
     world->impact_event_count = 0;
@@ -477,9 +453,6 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
 
     /* Increment tick counter. */
     world->tick_count++;
-
-    /* Record completion time for pacing. */
-    world->last_tick_ns = clock_ns_();
 
     /* Expire old manifold cache entries (keep for 30 ticks). */
     phys_manifold_cache_expire(&world->manifold_cache,

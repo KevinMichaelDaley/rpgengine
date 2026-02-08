@@ -8,6 +8,10 @@
 
 /* ── Wire helpers ──────────────────────────────────────────────── */
 
+static void write_u32_be(uint8_t *out, uint32_t v) {
+    out[0] = (uint8_t)(v >> 24); out[1] = (uint8_t)(v >> 16);
+    out[2] = (uint8_t)(v >> 8);  out[3] = (uint8_t)v;
+}
 static void write_u16_be(uint8_t *out, uint16_t v) {
     out[0] = (uint8_t)(v >> 8); out[1] = (uint8_t)v;
 }
@@ -17,6 +21,10 @@ static void write_i32_be(uint8_t *out, int32_t v) {
 }
 static void write_i16_be(uint8_t *out, int16_t v) {
     write_u16_be(out, (uint16_t)v);
+}
+static uint32_t read_u32_be(const uint8_t *b) {
+    return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) |
+           ((uint32_t)b[2] << 8)  | (uint32_t)b[3];
 }
 static uint16_t read_u16_be(const uint8_t *b) {
     return (uint16_t)(((uint16_t)b[0] << 8) | (uint16_t)b[1]);
@@ -56,6 +64,9 @@ int net_repl_body_state_encode(const net_repl_body_state_t *msg,
     write_i16_be(out + o, msg->ang_y_mrad_s);   o += 2;
     write_i16_be(out + o, msg->ang_z_mrad_s);   o += 2;
 
+    write_u32_be(out + o, msg->send_time_ms);    o += 4;
+    out[o] = msg->flags;                         o += 1;
+
     return NET_REPL_OK;
 }
 
@@ -84,6 +95,9 @@ int net_repl_body_state_decode(net_repl_body_state_t *msg,
     msg->ang_x_mrad_s = read_i16_be(payload + o);  o += 2;
     msg->ang_y_mrad_s = read_i16_be(payload + o);  o += 2;
     msg->ang_z_mrad_s = read_i16_be(payload + o);  o += 2;
+
+    msg->send_time_ms = read_u32_be(payload + o);   o += 4;
+    msg->flags        = payload[o];                  o += 1;
 
     return NET_REPL_OK;
 }

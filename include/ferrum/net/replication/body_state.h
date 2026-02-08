@@ -21,8 +21,26 @@
 extern "C" {
 #endif
 
-/** Wire size: 2+2+12+7+6+6 = 35 bytes. */
-#define NET_REPL_BODY_STATE_PAYLOAD_SIZE 35u
+/** Body-state flags transmitted on the wire (bits 0-3). */
+#define NET_REPL_BODY_STATE_FLAG_COLLIDING (1u << 0)
+
+/** Simulation tier is packed into bits 4-6 (0-5). */
+#define NET_REPL_BODY_STATE_TIER_SHIFT 4u
+#define NET_REPL_BODY_STATE_TIER_MASK  0x70u  /* 0b0111_0000 */
+
+/** Extract tier from flags byte. */
+static inline uint8_t net_repl_body_state_tier(uint8_t flags) {
+    return (flags & NET_REPL_BODY_STATE_TIER_MASK) >> NET_REPL_BODY_STATE_TIER_SHIFT;
+}
+
+/** Pack tier into flags byte (preserves other bits). */
+static inline uint8_t net_repl_body_state_set_tier(uint8_t flags, uint8_t tier) {
+    return (uint8_t)((flags & ~NET_REPL_BODY_STATE_TIER_MASK) |
+                     ((tier << NET_REPL_BODY_STATE_TIER_SHIFT) & NET_REPL_BODY_STATE_TIER_MASK));
+}
+
+/** Wire size: 2+2+12+7+6+6+4+1 = 40 bytes. */
+#define NET_REPL_BODY_STATE_PAYLOAD_SIZE 40u
 
 typedef struct net_repl_body_state {
     uint16_t server_tick;        /**< Server tick counter. */
@@ -45,6 +63,13 @@ typedef struct net_repl_body_state {
     int16_t ang_x_mrad_s;
     int16_t ang_y_mrad_s;
     int16_t ang_z_mrad_s;
+
+    /** Wall-clock send time (ms since epoch, truncated to 32 bits).
+     *  Client uses this to measure true one-way server→client latency. */
+    uint32_t send_time_ms;
+
+    /** Per-body flags (see NET_REPL_BODY_STATE_FLAG_*). */
+    uint8_t flags;
 } net_repl_body_state_t;
 
 /**
