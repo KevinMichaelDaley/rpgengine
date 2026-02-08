@@ -300,7 +300,10 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
 
         } /* end if (!world->prediction_mode) — stages 6–11 */
 
-        /* Allocate zeroed velocities for prediction mode (no solver). */
+        /* In prediction mode the solver didn't run, so seed the
+         * velocity array from the bodies' current velocities.  This
+         * ensures integration preserves server-corrected velocities
+         * rather than zeroing them out. */
         phys_velocity_t *pred_velocities = velocities;
         if (!pred_velocities) {
             pred_velocities = phys_frame_arena_alloc(
@@ -308,8 +311,10 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
                 _Alignof(phys_velocity_t));
             if (pred_velocities) {
-                memset(pred_velocities, 0,
-                       (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
+                for (uint32_t i = 0; i < body_cap; ++i) {
+                    pred_velocities[i].linear  = world->body_pool.bodies_curr[i].linear_vel;
+                    pred_velocities[i].angular = world->body_pool.bodies_curr[i].angular_vel;
+                }
             }
         }
 

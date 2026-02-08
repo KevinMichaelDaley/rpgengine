@@ -296,15 +296,18 @@ void phys_world_tick_parallel(phys_world_t *world,
         }
         } /* end if (!world->prediction_mode) */
 
-        /* Allocate zeroed velocities for prediction mode. */
+        /* In prediction mode, seed velocities from bodies' current state
+         * so integration preserves server-corrected velocities. */
         if (!velocities) {
             velocities = phys_frame_arena_alloc(
                 &world->frame_arena,
                 (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
                 _Alignof(phys_velocity_t));
             if (velocities) {
-                memset(velocities, 0,
-                       (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
+                for (uint32_t i = 0; i < body_cap; ++i) {
+                    velocities[i].linear  = world->body_pool.bodies_curr[i].linear_vel;
+                    velocities[i].angular = world->body_pool.bodies_curr[i].angular_vel;
+                }
             }
         }
 
