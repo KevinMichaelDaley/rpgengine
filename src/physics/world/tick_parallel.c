@@ -38,6 +38,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
 
 /* Parallel stage headers. */
 #include "ferrum/physics/par/tier_classify_par.h"
@@ -358,12 +359,8 @@ void phys_world_tick_parallel(phys_world_t *world,
         if (!world->prediction_mode) {
 
         if (constraint_count > 0) {
-            /* Allocate shared output arrays once for all islands. */
-            phys_vec3_t *shared_pos = phys_frame_arena_alloc(
-                &world->frame_arena,
-                (body_cap > 0 ? body_cap : 1) * sizeof(phys_vec3_t),
-                _Alignof(phys_vec3_t));
-            phys_velocity_t *shared_vel = phys_frame_arena_alloc(
+            /* Allocate shared output array once for all islands. */
+            phys_velocity_t *shared_deltas = phys_frame_arena_alloc(
                 &world->frame_arena,
                 (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
                 _Alignof(phys_velocity_t));
@@ -396,28 +393,48 @@ void phys_world_tick_parallel(phys_world_t *world,
                     .slop        = world->config.slop,
                     .arena       = &world->frame_arena,
                     .result      = &proj_result,
-                    .shared_pos_deltas = shared_pos,
-                    .shared_vel_deltas = shared_vel,
+                    .shared_deltas = shared_deltas,
                 });
 
-                if (proj_result.success && proj_result.position_deltas) {
-                    /* Apply position corrections to integrated bodies. */
+                if (proj_result.success && proj_result.correction_deltas) {
+                    /* Apply generalized corrections to integrated bodies. */
                     for (uint32_t bi = 0; bi < isle->body_count; bi++) {
                         uint32_t idx = isle->body_indices[bi];
                         phys_body_t *body = &world->body_pool.bodies_next[idx];
-                        body->position = vec3_add(body->position,
-                                                  proj_result.position_deltas[idx]);
+                        const phys_velocity_t *d = &proj_result.correction_deltas[idx];
+
+                        /* Linear position correction. */
+                        body->position = vec3_add(body->position, d->linear);
+
+                        /* Angular orientation correction via quaternion
+                         * derivative: q += 0.5 * (delta_ang, 0) * q.
+                         * This is the same integration formula used by
+                         * the integrator, treating the angular delta as
+                         * a small rotation pseudo-vector. */
+                        float ang_mag = vec3_magnitude(d->angular);
+                        if (ang_mag > 1e-8f) {
+                            phys_quat_t dq_quat = {
+                                d->angular.x, d->angular.y, d->angular.z, 0.0f
+                            };
+                            phys_quat_t rot = quat_mul(dq_quat, body->orientation);
+                            body->orientation.x += 0.5f * rot.x;
+                            body->orientation.y += 0.5f * rot.y;
+                            body->orientation.z += 0.5f * rot.z;
+                            body->orientation.w += 0.5f * rot.w;
+                            body->orientation = quat_normalize_safe(
+                                body->orientation, 1e-8f);
+                        }
                     }
 
                     /* Sparse GS velocity sync: solve per-island
                      * velocity-level system to match correction velocities
-                     * along constraint normals. */
+                     * along constraint normals (linear + angular). */
                     phys_velocity_sync_normals(&(phys_velocity_sync_args_t){
-                        .island          = isle,
-                        .constraints     = constraints,
-                        .bodies          = world->body_pool.bodies_next,
-                        .position_deltas = proj_result.position_deltas,
-                        .dt              = substep_dt,
+                        .island            = isle,
+                        .constraints       = constraints,
+                        .bodies            = world->body_pool.bodies_next,
+                        .correction_deltas = proj_result.correction_deltas,
+                        .dt                = substep_dt,
                     });
                 }
             }

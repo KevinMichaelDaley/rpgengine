@@ -2,10 +2,9 @@
  * @file position_projection.c
  * @brief Per-island position projection using sparse iterative Gauss-Seidel.
  *
- * Replaces the original dense A = J M^-1 J^T + LDLT factorization with
- * a sparse Gauss-Seidel iteration that uses the pre-computed per-constraint
- * effective_mass (diagonal of A).  Complexity is O(nc × iterations) instead
- * of O(nc³).
+ * Uses the full block-diagonal Jacobian (linear J_v + angular J_w) so
+ * that rotational constraint violations are corrected alongside
+ * translational ones.  Complexity is O(nc × iterations).
  *
  * Non-static functions (1):
  *   1. phys_position_projection — main entry point
@@ -39,10 +38,7 @@
 static float compute_phi(const phys_constraint_t *c,
                          float slop)
 {
-    /* Use the raw penetration stored on the constraint. */
     float penetration = c->penetration;
-
-    /* Apply slop threshold. */
     float excess = penetration - slop;
     if (excess < MIN_CORRECTION) {
         return 0.0f;
@@ -52,36 +48,40 @@ static float compute_phi(const phys_constraint_t *c,
 
 /**
  * @brief Compute the current position-space constraint error for a
- *        single normal constraint, accounting for corrections already
- *        accumulated in pos_deltas.
+ *        single normal constraint, accounting for both linear and
+ *        angular corrections already accumulated in deltas.
  *
  * Returns the residual penetration after applying current deltas:
- *   residual = phi - J * delta_pos
+ *   residual = phi - (J_va · delta_lin_a + J_wa · delta_ang_a
+ *                    + J_vb · delta_lin_b + J_wb · delta_ang_b)
  *
  * A positive residual means the constraint is still violated.
  */
 static float compute_residual(const phys_constraint_t *c,
-                              const phys_vec3_t *pos_deltas,
+                              const phys_velocity_t *deltas,
                               float phi)
 {
     const phys_jacobian_row_t *row = &c->rows[0];
     uint32_t a = c->body_a;
     uint32_t b = c->body_b;
 
-    /* J * delta_pos = J_va · delta_a + J_vb · delta_b
-     * (ignoring angular for position projection). */
-    float j_delta = vec3_dot(row->J_va, pos_deltas[a])
-                  + vec3_dot(row->J_vb, pos_deltas[b]);
+    /* Full Jacobian dot product: J · delta_q (linear + angular). */
+    float j_delta = vec3_dot(row->J_va, deltas[a].linear)
+                  + vec3_dot(row->J_wa, deltas[a].angular)
+                  + vec3_dot(row->J_vb, deltas[b].linear)
+                  + vec3_dot(row->J_wb, deltas[b].angular);
 
     return phi - j_delta;
 }
 
 /**
- * @brief Apply a position correction impulse to both bodies of a
- *        constraint: delta_pos += M^-1 * J^T * delta_lambda.
+ * @brief Apply a generalized position correction impulse to both bodies
+ *        of a constraint:
+ *          delta_lin += M^-1  * J_v^T * delta_lambda
+ *          delta_ang += I^-1  * J_w^T * delta_lambda
  */
 static void apply_position_impulse(
-    phys_vec3_t *pos_deltas,
+    phys_velocity_t *deltas,
     const phys_constraint_t *c,
     const phys_body_t *bodies,
     float delta_lambda)
@@ -90,13 +90,27 @@ static void apply_position_impulse(
     uint32_t a = c->body_a;
     uint32_t b = c->body_b;
 
+    /* Body A: linear correction. */
     float inv_ma = bodies[a].inv_mass;
-    pos_deltas[a] = vec3_add(pos_deltas[a],
-                             vec3_scale(row->J_va, inv_ma * delta_lambda));
+    deltas[a].linear = vec3_add(deltas[a].linear,
+                                vec3_scale(row->J_va, inv_ma * delta_lambda));
 
+    /* Body A: angular correction (diagonal inverse inertia). */
+    const phys_vec3_t *inv_ia = &bodies[a].inv_inertia_diag;
+    deltas[a].angular.x += inv_ia->x * row->J_wa.x * delta_lambda;
+    deltas[a].angular.y += inv_ia->y * row->J_wa.y * delta_lambda;
+    deltas[a].angular.z += inv_ia->z * row->J_wa.z * delta_lambda;
+
+    /* Body B: linear correction. */
     float inv_mb = bodies[b].inv_mass;
-    pos_deltas[b] = vec3_add(pos_deltas[b],
-                             vec3_scale(row->J_vb, inv_mb * delta_lambda));
+    deltas[b].linear = vec3_add(deltas[b].linear,
+                                vec3_scale(row->J_vb, inv_mb * delta_lambda));
+
+    /* Body B: angular correction (diagonal inverse inertia). */
+    const phys_vec3_t *inv_ib = &bodies[b].inv_inertia_diag;
+    deltas[b].angular.x += inv_ib->x * row->J_wb.x * delta_lambda;
+    deltas[b].angular.y += inv_ib->y * row->J_wb.y * delta_lambda;
+    deltas[b].angular.z += inv_ib->z * row->J_wb.z * delta_lambda;
 }
 
 void phys_position_projection(const phys_position_projection_args_t *args)
@@ -107,8 +121,7 @@ void phys_position_projection(const phys_position_projection_args_t *args)
     if (!result) { return; }
 
     result->success = false;
-    result->position_deltas  = NULL;
-    result->velocity_deltas  = NULL;
+    result->correction_deltas = NULL;
 
     const struct phys_island *island = args->island;
     if (!island || !args->constraints || !args->bodies ||
@@ -117,36 +130,27 @@ void phys_position_projection(const phys_position_projection_args_t *args)
     }
 
     const uint32_t body_count = args->body_count;
-    const float dt = args->dt;
     const float slop = args->slop;
 
-    /* Use caller-provided shared arrays if available, otherwise allocate. */
-    phys_vec3_t *pos_deltas = args->shared_pos_deltas;
-    phys_velocity_t *vel_deltas = args->shared_vel_deltas;
+    /* Use caller-provided shared array if available, otherwise allocate. */
+    phys_velocity_t *deltas = args->shared_deltas;
 
-    if (!pos_deltas) {
-        pos_deltas = phys_frame_arena_alloc(
-            args->arena, body_count * sizeof(phys_vec3_t),
-            _Alignof(phys_vec3_t));
-    }
-    if (!vel_deltas) {
-        vel_deltas = phys_frame_arena_alloc(
+    if (!deltas) {
+        deltas = phys_frame_arena_alloc(
             args->arena, body_count * sizeof(phys_velocity_t),
             _Alignof(phys_velocity_t));
     }
 
-    if (!pos_deltas || !vel_deltas) { return; }
+    if (!deltas) { return; }
 
     /* Zero only the island's body entries, not the entire array. */
     for (uint32_t bi = 0; bi < island->body_count; bi++) {
         uint32_t idx = island->body_indices[bi];
-        pos_deltas[idx] = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        vel_deltas[idx] = (phys_velocity_t){{0.0f, 0.0f, 0.0f},
-                                             {0.0f, 0.0f, 0.0f}};
+        deltas[idx] = (phys_velocity_t){{0.0f, 0.0f, 0.0f},
+                                         {0.0f, 0.0f, 0.0f}};
     }
 
-    result->position_deltas = pos_deltas;
-    result->velocity_deltas = vel_deltas;
+    result->correction_deltas = deltas;
     result->success = true;
 
     /* Sleeping islands produce zero corrections. */
@@ -174,9 +178,11 @@ void phys_position_projection(const phys_position_projection_args_t *args)
     if (active_count == 0) { return; }
 
     /* ── Step 2: Gauss-Seidel iterations ───────────────────────────
-     * For each constraint, compute the residual position error and
-     * apply a diagonal correction using the pre-computed effective_mass.
-     * This is O(nc × iterations) instead of O(nc³) for dense LDLT. */
+     * For each constraint, compute the residual position error using
+     * the full Jacobian (linear + angular) and apply a diagonal
+     * correction using the pre-computed effective_mass.  The
+     * effective_mass already accounts for both linear and angular
+     * contributions (J M^-1 J^T includes I^-1 terms). */
     for (uint32_t iter = 0; iter < PP_GS_ITERATIONS; iter++) {
         for (uint32_t i = 0; i < nc; i++) {
             if (phi[i] <= MIN_CORRECTION) { continue; }
@@ -184,15 +190,12 @@ void phys_position_projection(const phys_position_projection_args_t *args)
             uint32_t ci = island->constraint_indices[i];
             const phys_constraint_t *con = &args->constraints[ci];
 
-            /* Compute residual = phi - J * current_delta_pos. */
-            float residual = compute_residual(con, pos_deltas, phi[i]);
+            /* Compute residual = phi - J * current_delta (full Jacobian). */
+            float residual = compute_residual(con, deltas, phi[i]);
 
             /* No correction needed if residual is non-positive. */
             if (residual <= MIN_CORRECTION) { continue; }
 
-            /* Gauss-Seidel update: delta_lambda = effective_mass * residual.
-             * effective_mass = 1 / (J M^-1 J^T) for this constraint's
-             * diagonal entry. */
             float eff_mass = con->rows[0].effective_mass;
             if (eff_mass <= 0.0f) { continue; }
 
@@ -206,18 +209,9 @@ void phys_position_projection(const phys_position_projection_args_t *args)
 
             if (fabsf(delta_lambda) < 1e-10f) { continue; }
 
-            /* Apply position impulse: delta_pos += M^-1 J^T delta_lambda. */
-            apply_position_impulse(pos_deltas, con, args->bodies,
+            /* Apply generalized position impulse (linear + angular). */
+            apply_position_impulse(deltas, con, args->bodies,
                                    delta_lambda);
-        }
-    }
-
-    /* ── Step 3: Velocity sync: v_delta = delta_pos / dt ───────── */
-    if (dt > 0.0f) {
-        float inv_dt = 1.0f / dt;
-        for (uint32_t bi = 0; bi < island->body_count; bi++) {
-            uint32_t idx = island->body_indices[bi];
-            vel_deltas[idx].linear = vec3_scale(pos_deltas[idx], inv_dt);
         }
     }
 }

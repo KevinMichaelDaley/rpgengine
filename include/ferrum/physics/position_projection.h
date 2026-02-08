@@ -5,8 +5,10 @@
  * @brief Sparse per-island position projection (replaces Baumgarte).
  *
  * Solves A * lambda = -Phi(q) per island where A = J M^-1 J^T,
- * then applies position corrections delta_q = M^-1 J^T lambda
- * and synchronizes velocities v_delta = delta_q / dt.
+ * using the full block-diagonal Jacobian (linear + angular).
+ * Applies generalized position corrections:
+ *   delta_q.linear  = M^-1   * J_v^T * lambda  (translation)
+ *   delta_q.angular = I^-1   * J_w^T * lambda  (orientation)
  *
  * Only operates on normal constraint rows (row 0 of each constraint).
  * Friction rows are unaffected.
@@ -31,12 +33,15 @@ struct phys_velocity;
 /**
  * @brief Output of position projection for a single island.
  *
+ * The correction_deltas array stores per-body generalized corrections:
+ *   .linear  = translational position delta
+ *   .angular = angular (pseudo-vector) orientation delta
+ *
  * Ownership: arrays are arena-allocated and valid until arena reset.
  */
 typedef struct phys_position_projection_result {
-    bool success;                    /**< True if projection succeeded. */
-    phys_vec3_t *position_deltas;    /**< Per-body position correction (indexed by body_index). */
-    struct phys_velocity *velocity_deltas; /**< Per-body velocity correction (delta_q / dt). */
+    bool success;                        /**< True if projection succeeded. */
+    struct phys_velocity *correction_deltas; /**< Per-body generalized correction (linear + angular). */
 } phys_position_projection_result_t;
 
 /**
@@ -46,9 +51,9 @@ typedef struct phys_position_projection_result {
  * - island, constraints, bodies: borrowed, read-only.
  * - arena: borrowed, allocations made for output arrays.
  * - result: caller-owned output struct.
- * - shared_pos_deltas / shared_vel_deltas: optional pre-allocated arrays
- *   (sized to body_count) to avoid per-island arena allocation.  If NULL,
- *   the function allocates from the arena.
+ * - shared_deltas: optional pre-allocated phys_velocity_t array (sized to
+ *   body_count) to avoid per-island arena allocation.  If NULL, the
+ *   function allocates from the arena.
  */
 typedef struct phys_position_projection_args {
     const struct phys_island *island;    /**< Island to project. */
@@ -59,8 +64,7 @@ typedef struct phys_position_projection_args {
     float slop;                          /**< Penetration slop (no correction below this). */
     struct phys_frame_arena *arena;      /**< Arena for output allocations. */
     phys_position_projection_result_t *result; /**< Output. */
-    phys_vec3_t *shared_pos_deltas;      /**< Optional shared position delta array. */
-    struct phys_velocity *shared_vel_deltas; /**< Optional shared velocity delta array. */
+    struct phys_velocity *shared_deltas; /**< Optional shared generalized delta array. */
 } phys_position_projection_args_t;
 
 /**

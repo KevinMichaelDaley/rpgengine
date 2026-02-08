@@ -163,9 +163,9 @@ static int test_jacobian_build_two_body(void) {
     ASSERT_TRUE(result.success);
 
     /* Check that position deltas are applied: body 0 down, body 1 up. */
-    ASSERT_TRUE(result.position_deltas != NULL);
-    float dy0 = result.position_deltas[0].y;  /* should be negative */
-    float dy1 = result.position_deltas[1].y;  /* should be positive */
+    ASSERT_TRUE(result.correction_deltas != NULL);
+    float dy0 = result.correction_deltas[0].linear.y;  /* should be negative */
+    float dy1 = result.correction_deltas[1].linear.y;  /* should be positive */
     ASSERT_TRUE(dy0 < 0.0f);
     ASSERT_TRUE(dy1 > 0.0f);
 
@@ -228,13 +228,13 @@ static int test_static_dynamic_pair(void) {
     ASSERT_TRUE(result.success);
 
     /* Static body should not move. */
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[0].x, 1e-6f);
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[0].y, 1e-6f);
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[0].z, 1e-6f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[0].linear.x, 1e-6f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[0].linear.y, 1e-6f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[0].linear.z, 1e-6f);
 
     /* Dynamic body should move up by ~0.2 (full penetration). */
-    ASSERT_TRUE(result.position_deltas[1].y > 0.0f);
-    ASSERT_FLOAT_NEAR(0.2f, result.position_deltas[1].y, 0.05f);
+    ASSERT_TRUE(result.correction_deltas[1].linear.y > 0.0f);
+    ASSERT_FLOAT_NEAR(0.2f, result.correction_deltas[1].linear.y, 0.05f);
 
     phys_frame_arena_destroy(&arena);
     return 0;
@@ -297,19 +297,19 @@ static int test_three_body_stack(void) {
     ASSERT_TRUE(result.success);
 
     /* Ground should not move. */
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[0].y, 1e-6f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[0].linear.y, 1e-6f);
 
     /* Body 1 should move up (away from ground). */
-    ASSERT_TRUE(result.position_deltas[1].y > 0.0f);
+    ASSERT_TRUE(result.correction_deltas[1].linear.y > 0.0f);
 
     /* Body 2 should move up even more (chain effect). */
-    ASSERT_TRUE(result.position_deltas[2].y > 0.0f);
+    ASSERT_TRUE(result.correction_deltas[2].linear.y > 0.0f);
 
     /* The corrections should resolve the penetrations:
      * After correction, gap between ground and body 1 >= 0,
      * and gap between body 1 and body 2 >= 0. */
-    float new_y1 = bodies[1].position.y + result.position_deltas[1].y;
-    float new_y2 = bodies[2].position.y + result.position_deltas[2].y;
+    float new_y1 = bodies[1].position.y + result.correction_deltas[1].linear.y;
+    float new_y2 = bodies[2].position.y + result.correction_deltas[2].linear.y;
     /* Body 1 bottom = new_y1 - 0.5, ground top = 0.0 */
     float gap_01 = (new_y1 - 0.5f) - 0.0f;
     ASSERT_TRUE(gap_01 >= -0.01f);  /* Should be ~0 or slightly positive. */
@@ -369,8 +369,8 @@ static int test_no_penetration(void) {
     ASSERT_TRUE(result.success);
 
     /* No penetration → deltas should be essentially zero. */
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[0].y, 1e-4f);
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[1].y, 1e-4f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[0].linear.y, 1e-4f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[1].linear.y, 1e-4f);
 
     phys_frame_arena_destroy(&arena);
     return 0;
@@ -381,7 +381,10 @@ static int test_no_penetration(void) {
 /* ================================================================== */
 
 static int test_velocity_sync(void) {
-    /* Same as static-dynamic test but check velocity output. */
+    /* Same as static-dynamic test — verify that position projection
+     * produces correction deltas with both linear and angular
+     * components, and that the linear correction pushes the dynamic
+     * body upward while the static body is unchanged. */
     phys_body_t bodies[2];
     setup_static_body(&bodies[0], 0.0f, -0.5f, 0.0f);
     setup_dynamic_body(&bodies[1], 1.0f, 0.0f, 0.3f, 0.0f,
@@ -422,14 +425,15 @@ static int test_velocity_sync(void) {
     });
 
     ASSERT_TRUE(result.success);
-    ASSERT_TRUE(result.velocity_deltas != NULL);
+    ASSERT_TRUE(result.correction_deltas != NULL);
 
-    /* Velocity sync: v_delta = position_delta / dt. */
-    float expected_vy = result.position_deltas[1].y / dt;
-    ASSERT_FLOAT_NEAR(expected_vy, result.velocity_deltas[1].linear.y, 0.1f);
+    /* Dynamic body should get a positive Y linear correction (~0.2). */
+    ASSERT_TRUE(result.correction_deltas[1].linear.y > 0.0f);
+    ASSERT_FLOAT_NEAR(0.2f, result.correction_deltas[1].linear.y, 0.05f);
 
-    /* Static body velocity delta should be zero. */
-    ASSERT_FLOAT_NEAR(0.0f, result.velocity_deltas[0].linear.y, 1e-6f);
+    /* Static body correction should be zero (inv_mass == 0). */
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[0].linear.y, 1e-6f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[0].angular.y, 1e-6f);
 
     phys_frame_arena_destroy(&arena);
     return 0;
@@ -484,12 +488,12 @@ static int test_uneven_masses(void) {
     ASSERT_TRUE(result.success);
 
     /* Body 0 (heavy) should move down, body 1 (light) should move up. */
-    float dy0 = fabsf(result.position_deltas[0].y);
-    float dy1 = fabsf(result.position_deltas[1].y);
+    float dy0 = fabsf(result.correction_deltas[0].linear.y);
+    float dy1 = fabsf(result.correction_deltas[1].linear.y);
     ASSERT_TRUE(dy1 > dy0 * 2.0f);  /* Light body moves much more. */
 
     /* Total correction ≈ penetration. */
-    float total = result.position_deltas[1].y - result.position_deltas[0].y;
+    float total = result.correction_deltas[1].linear.y - result.correction_deltas[0].linear.y;
     ASSERT_FLOAT_NEAR(0.1f, total, 0.02f);
 
     phys_frame_arena_destroy(&arena);
@@ -543,7 +547,7 @@ static int test_slop_threshold(void) {
     ASSERT_TRUE(result.success);
 
     /* Below slop → no correction. */
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[1].y, 1e-4f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[1].linear.y, 1e-4f);
 
     phys_frame_arena_destroy(&arena);
     return 0;
@@ -687,7 +691,7 @@ static int test_sleeping_island(void) {
 
     /* Sleeping island should produce no corrections. */
     ASSERT_TRUE(result.success);
-    ASSERT_FLOAT_NEAR(0.0f, result.position_deltas[1].y, 1e-6f);
+    ASSERT_FLOAT_NEAR(0.0f, result.correction_deltas[1].linear.y, 1e-6f);
 
     phys_frame_arena_destroy(&arena);
     return 0;
@@ -745,14 +749,14 @@ static int test_velocity_sync_preserves_tangential(void) {
     });
 
     ASSERT_TRUE(result.success);
-    ASSERT_TRUE(result.position_deltas != NULL);
+    ASSERT_TRUE(result.correction_deltas != NULL);
 
     /* Apply velocity sync. */
     phys_velocity_sync_normals(&(phys_velocity_sync_args_t){
         .island          = &island,
         .constraints     = constraints,
         .bodies          = bodies,
-        .position_deltas = result.position_deltas,
+        .correction_deltas = result.correction_deltas,
         .dt              = dt,
     });
 
@@ -841,7 +845,7 @@ static int test_velocity_sync_angled_normal(void) {
         .island          = &island,
         .constraints     = constraints,
         .bodies          = bodies,
-        .position_deltas = result.position_deltas,
+        .correction_deltas = result.correction_deltas,
         .dt              = dt,
     });
 
@@ -851,7 +855,7 @@ static int test_velocity_sync_angled_normal(void) {
 
     /* Normal component should match ERP-scaled correction (erp = 0.2). */
     float v_corr_n = vec3_dot(
-        vec3_scale(result.position_deltas[1], 0.2f / dt), normal);
+        vec3_scale(result.correction_deltas[1].linear, 0.2f / dt), normal);
     float v_after_n = vec3_dot(bodies[1].linear_vel, normal);
     ASSERT_FLOAT_NEAR(v_corr_n, v_after_n, 0.1f);
 
@@ -912,7 +916,7 @@ static int test_velocity_sync_no_correction(void) {
         .island          = &island,
         .constraints     = constraints,
         .bodies          = bodies,
-        .position_deltas = result.position_deltas,
+        .correction_deltas = result.correction_deltas,
         .dt              = dt,
     });
 
