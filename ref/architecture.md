@@ -103,7 +103,9 @@ A **fiber** is a lightweight execution context with its own stack, cooperatively
 
 **Key properties**
 - Cooperative (explicit yield), deterministic scheduling possible in debug mode
-- Small fixed stacks (e.g., 64KB, configurable), recycled from pools
+- Fixed stacks (typically 256KB for sim fibers, 256KB for net fibers), recycled from pools via `apool_t`
+- Fiber stacks are allocated in a separate pool from fiber context/metadata to preserve debuggable call stacks
+- GCC stack-protector canary (`%fs:0x28` on x86-64) is saved/restored across context swaps to prevent false stack-smash detection
 - No blocking on OS primitives inside fibers; waiting yields to scheduler
 
 ### 2.1.1 Implementation Strategy (C11)
@@ -419,7 +421,11 @@ On the server, the network subsystem uses **one fiber per client** scheduled by 
 - Client fibers publish decoded inbound messages into a **global inbound topic/queue** consumed by simulation/gameplay jobs on other fibers.
 - Outbound simulation results are published into per-client outbound channels for the client fibers to serialize and send.
 
-**Threading requirement:** client fibers run on a **separate `job_system_t`** with dedicated OS worker threads (typically 1, configurable via CLI). This ensures that physics tick latency spikes cannot starve client fiber scheduling. The main-thread tick catch-up loop is capped (default: 3 ticks) to prevent unbounded physics-only bursts from blocking the network pump.
+**Threading requirement:** client fibers run on a **separate `job_system_t`** with dedicated OS worker threads (typically 1, configurable via CLI). This ensures that physics tick latency spikes cannot starve client fiber scheduling. The main-thread tick catch-up loop is capped (default: 3 ticks) to prevent unbounded physics-only bursts from blocking the network pump. UDP receive runs on a **dedicated OS thread** (`net_pump_thread`) separate from the main loop and job system workers.
+
+**Async physics tick:** the main server loop dispatches each physics tick as a non-blocking job on the simulation job system. While the tick runs on worker fibers, the main thread broadcasts the previous frame's body state (physics double-buffers via `bodies_curr`/`bodies_next`) and processes network events. The main thread calls `demo_server_world_tick_wait()` before the next tick to ensure completion. This eliminates the prior busy-wait deadlock where the main thread could spin indefinitely if workers missed a condvar wake.
+
+**Synchronization:** fiber-code paths use `job_spinlock_t` (compare-and-swap spinlocks) instead of C11 `mtx_t` which can block the OS thread and deadlock fibers. OS-thread sleep/wake uses `pthread_mutex_t` + `pthread_cond_t`. The fiber wait/wake path uses a 4-state atomic protocol (`RUNNING → WAITING → SIGNALED → RUNNING`) to prevent double-enqueue races.
 
 **Important distinction:** not all spawnable entities represent players.
 
@@ -550,7 +556,7 @@ This design trades third-party convenience for total control over performance ch
 
 | System | Strategy | Key Technologies |
 |---|---|---|
-| Concurrency | Fiber job system | C11 threads/atomics + user-space fibers |
+| Concurrency | Fiber job system | pthread + C11 atomics + user-space fibers |
 | Memory | Frame/Level arenas + pools | custom allocators |
 | ECS | Archetype-based SoA | handles + generation |
 | Rendering | OpenGL 4.6 AZDO, clustered forward | DSA, SSBO/UBO, compute shaders |

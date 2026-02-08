@@ -10,7 +10,7 @@
 #include "ferrum/server/net/runtime.h"
 
 /* Keep per-client inbox stack usage modest; tune as needed for throughput. */
-#define FR_SERVER_CLIENT_INBOX_SLOTS 16u
+#define FR_SERVER_CLIENT_INBOX_SLOTS 64u
 
 typedef struct fr_server_client_inbox_t {
     atomic_uint read_idx;

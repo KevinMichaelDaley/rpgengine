@@ -39,11 +39,7 @@ fr_topic_channel_t *fr_topic_channel_create(const fr_topic_channel_config_t *cfg
     ch->max_message_size = max_message_size;
     ch->backpressure = backpressure;
 
-    if (pthread_mutex_init(&ch->lock, NULL) != 0) {
-        free(ch->ring);
-        free(ch);
-        return NULL;
-    }
+    job_spinlock_init(&ch->lock);
 
     ch->head = 0u;
     ch->tail = 0u;

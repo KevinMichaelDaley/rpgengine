@@ -39,7 +39,7 @@ fr_server_net_runtime_t *fr_server_net_runtime_create(const fr_server_net_runtim
     rt->owns_jobs = 0u;
     if (!rt->cfg.jobs) {
         const uint32_t queue_capacity = 256u;
-        const size_t fiber_stack_size = 64u * 1024u;
+        const size_t fiber_stack_size = 128u * 1024u;
         const size_t fiber_count_max = 2048u;
         /* Non-deterministic mode so long-lived fibers can run without wait_idle deadlocks. */
         job_system_create_status_t st = job_system_create(&rt->owned_jobs, 1u, queue_capacity, fiber_stack_size, fiber_count_max, 0);

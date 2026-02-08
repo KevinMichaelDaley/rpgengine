@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
-#include <pthread.h>
+#include "ferrum/job/spinlock.h"
 
 typedef struct fr_topic_channel {
     uint8_t *ring;
@@ -13,7 +13,7 @@ typedef struct fr_topic_channel {
     uint32_t max_message_size;
     uint32_t backpressure;
 
-    pthread_mutex_t lock;
+    job_spinlock_t lock;
 
     uint32_t head;
     uint32_t tail;

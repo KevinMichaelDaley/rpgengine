@@ -13,9 +13,12 @@
 
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_cmd.h"
 #include "ferrum/demo/input_move.h"
 #include "ferrum/demo/input_spawn.h"
+#include "ferrum/net/topic_channel.h"
 
+#include <stdatomic.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -50,9 +53,33 @@ typedef struct demo_server_world {
     float    stack_positions[64][2]; /**< XZ center of each spawned stack. */
     uint32_t stack_count;           /**< Number of stacks spawned so far. */
 
+    /* Async physics tick state.
+     * The tick runs as a fiber job.  tick_done is set atomically by the
+     * job when complete.  The main thread polls it — never blocks. */
+    atomic_int tick_done;           /**< Set to 1 when parallel tick completes. */
+    uint8_t    tick_in_flight;      /**< 1 if a parallel tick is in progress. */
+
+    /** Persistent storage for tick job arguments (must outlive the
+     *  async job dispatch since demo_server_world_tick returns immediately). */
+    struct {
+        phys_world_t       *world;
+        phys_job_context_t *jobs;
+    } tick_args_;
+
+    /** Command channel for deferred physics mutations.  Owned externally;
+     *  the tick job drains it at the start of each step. */
+    fr_topic_channel_t *cmd_channel;
+
     /* Body metadata for replication. */
     uint8_t  body_shape_type[DEMO_MAX_BODIES]; /**< 0=box, 1=sphere. */
     uint32_t body_color_seed[DEMO_MAX_BODIES]; /**< Color seed per body. */
+
+    /** Per-client bitset tracking which bodies have been BODY_SPAWN'd.
+     *  Indexed as body_known[client][byte], bit = body_index & 7. */
+    uint8_t body_known[DEMO_MAX_CLIENTS][DEMO_MAX_BODIES / 8];
+
+    /** Per-body half-extents in mm for replication (set by spawn callback). */
+    uint16_t body_half_mm[DEMO_MAX_BODIES][3];
 } demo_server_world_t;
 
 /**
@@ -134,11 +161,17 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
                                       const demo_input_spawn_t *spawn);
 
 /**
- * @brief Tick physics and the random distant object spawner.
+ * @brief Kick off the physics tick asynchronously.
  *
- * When @p jobs is non-NULL, uses phys_world_tick_parallel() to dispatch
- * physics stages across multiple worker threads.  When NULL, falls back
- * to the sequential phys_world_tick().
+ * When @p jobs is non-NULL, dispatches phys_world_tick_parallel() as a
+ * job and returns immediately.  When @p jobs is NULL, runs the tick
+ * synchronously.
+ *
+ * Caller must ensure no tick is already in flight (poll with
+ * demo_server_world_tick_done() and consume with
+ * demo_server_world_tick_consume() first).
+ *
+ * Also runs the random distant object spawner each call.
  *
  * @param sw    Server world. Must not be NULL.
  * @param jobs  Physics job context for parallel dispatch (may be NULL).
@@ -146,6 +179,33 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
  * Side effects: advances physics, may create new bodies.
  */
 void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs);
+
+/**
+ * @brief Poll whether the in-flight tick has completed.
+ *
+ * @param sw  Server world. NULL-safe (returns 1).
+ * @return 1 if no tick is in flight or the tick has finished, 0 if still running.
+ */
+int demo_server_world_tick_done(const demo_server_world_t *sw);
+
+/**
+ * @brief Mark the in-flight tick as consumed after tick_done returns 1.
+ *
+ * Resets tick_in_flight so a new tick can be dispatched.
+ *
+ * @param sw  Server world. Must not be NULL.
+ */
+void demo_server_world_tick_consume(demo_server_world_t *sw);
+
+/**
+ * @brief Block until an in-flight tick completes (shutdown only).
+ *
+ * Spins on the atomic flag.  Only intended for clean shutdown, not
+ * the hot path.  No-op if no tick is in flight.
+ *
+ * @param sw  Server world. NULL-safe.
+ */
+void demo_server_world_tick_wait(demo_server_world_t *sw);
 
 #ifdef __cplusplus
 } /* extern "C" */

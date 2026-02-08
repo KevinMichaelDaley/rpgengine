@@ -26,9 +26,9 @@
 
 #include "ferrum/job/system.h"
 #include "ferrum/net/rudp/peer.h"
-#include "ferrum/net/quantization.h"
 #include "ferrum/net/replication/common.h"
-#include "ferrum/net/replication/state_cube.h"
+#include "ferrum/net/replication/body_spawn.h"
+#include "ferrum/net/replication/body_state.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/net/topic_channel.h"
 
@@ -36,6 +36,9 @@
 #include "ferrum/server/net/runtime.h"
 
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/collider.h"
+#include "ferrum/physics/phys_pool.h"
 
 #include "ferrum/demo/server_world.h"
 #include "ferrum/demo/input_move.h"
@@ -207,6 +210,55 @@ static void sort_by_speed_desc_(struct body_rank_ *arr, uint32_t n) {
     }
 }
 
+/** Bitset helpers for per-client body_known tracking. */
+static int bk_test_(const uint8_t *bits, uint32_t idx) {
+    return (bits[idx >> 3u] >> (idx & 7u)) & 1u;
+}
+static void bk_set_(uint8_t *bits, uint32_t idx) {
+    bits[idx >> 3u] |= (uint8_t)(1u << (idx & 7u));
+}
+
+/** Read shape half-extents from the collider/shape pools.  Writes to
+ *  out_x/y/z in millimeters.  Returns 0 on success. */
+static int read_half_mm_(const phys_world_t *w, uint32_t bi,
+                         uint16_t *ox, uint16_t *oy, uint16_t *oz) {
+    const phys_collider_t *c = &w->colliders[bi];
+    switch (c->type) {
+    case PHYS_SHAPE_BOX: {
+        const phys_box_t *box = &w->boxes[c->shape_index];
+        *ox = (uint16_t)(box->half_extents.x * 1000.0f);
+        *oy = (uint16_t)(box->half_extents.y * 1000.0f);
+        *oz = (uint16_t)(box->half_extents.z * 1000.0f);
+        return 0;
+    }
+    case PHYS_SHAPE_SPHERE: {
+        const phys_sphere_t *s = &w->spheres[c->shape_index];
+        *ox = (uint16_t)(s->radius * 1000.0f);
+        *oy = 0;
+        *oz = 0;
+        return 0;
+    }
+    case PHYS_SHAPE_CAPSULE: {
+        const phys_capsule_t *cap = &w->capsules[c->shape_index];
+        *ox = (uint16_t)(cap->radius * 1000.0f);
+        *oy = (uint16_t)(cap->half_height * 1000.0f);
+        *oz = 0;
+        return 0;
+    }
+    default:
+        *ox = *oy = *oz = 0;
+        return -1;
+    }
+}
+
+/** Clamp a float velocity (m/s) to int16 (mm/s, ±32 m/s). */
+static int16_t vel_to_mm_s_(float v) {
+    float mm = v * 1000.0f;
+    if (mm >  32767.0f) mm =  32767.0f;
+    if (mm < -32767.0f) mm = -32767.0f;
+    return (int16_t)mm;
+}
+
 static void broadcast_body_states_(fr_server_net_runtime_t *rt,
                                    demo_server_world_t *sw,
                                    const uint8_t *client_connected,
@@ -216,12 +268,9 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         return;
     }
 
-    /* ── Pass 1: collect awake dynamic bodies and rank by speed ──── */
+    /* ── Pass 1: collect active non-ground bodies, rank awake by speed ── */
     const uint32_t capacity = sw->physics.body_pool.capacity;
 
-    /* Stack array large enough for the pool.  Bodies beyond 512 are
-     * unlikely in this demo; if capacity is larger, only the first 512
-     * awake bodies are considered for reliable promotion. */
     struct body_rank_ ranked[512];
     uint32_t awake_count = 0u;
 
@@ -229,87 +278,130 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         if (i == DEMO_GROUND_BODY) {
             continue;
         }
-        phys_body_t *b = phys_world_get_body(&sw->physics, i);
+        if (!phys_body_pool_is_active(&sw->physics.body_pool, i)) {
+            continue;
+        }
+        const phys_body_t *b = phys_world_get_body(&sw->physics, i);
         if (!b) {
             continue;
         }
-        if (phys_body_is_static(b) || phys_body_is_kinematic(b)) {
+
+        /* Include kinematic bodies (players) — they need spawn/state too.
+         * Skip fully static bodies (ground is already excluded above). */
+        if (phys_body_is_static(b) && !phys_body_is_kinematic(b)) {
             continue;
         }
 
-        /* Skip sleeping bodies entirely — they aren't moving. */
-        if (phys_body_is_sleeping(b)) {
-            continue;
-        }
-
-        if (awake_count < 512u) {
+        /* Sleeping dynamic bodies still need spawns sent, but skip
+         * state updates for them.  Rank 0 speed so they sort last. */
+        float spd_sq = 0.0f;
+        if (!phys_body_is_sleeping(b)) {
             float sx = b->linear_vel.x;
             float sy = b->linear_vel.y;
             float sz = b->linear_vel.z;
+            spd_sq = sx * sx + sy * sy + sz * sz;
+        }
+
+        if (awake_count < 512u) {
             ranked[awake_count].index    = i;
-            ranked[awake_count].speed_sq = sx * sx + sy * sy + sz * sz;
+            ranked[awake_count].speed_sq = spd_sq;
             awake_count++;
         }
     }
 
-    /* Sort descending by speed so the fastest bodies come first. */
     sort_by_speed_desc_(ranked, awake_count);
 
-    /* ── Pass 2: encode and broadcast (up to send budget) ──────── */
+    /* ── Pass 2: for each client, send BODY_SPAWN for unknown bodies,
+     *            then BODY_STATE for known awake bodies ──────────── */
     uint32_t send_count = awake_count;
     if (send_count > DEMO_SEND_BUDGET_PER_TICK) {
         send_count = DEMO_SEND_BUDGET_PER_TICK;
     }
-    for (uint32_t ri = 0u; ri < send_count; ++ri) {
-        const uint32_t bi = ranked[ri].index;
-        phys_body_t *b = phys_world_get_body(&sw->physics, bi);
-        if (!b) {
+
+    for (uint16_t ci = 0u; ci < max_clients; ++ci) {
+        if (!client_connected[ci]) {
             continue;
         }
 
-        /* Quantize position. */
-        vec3_t pos = VEC3_FROM_PHYS_VEC3(b->position);
-        net_qvec3_mm_t qpos;
-        if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
-            continue;
-        }
+        uint8_t *known = sw->body_known[ci];
 
-        /* Quantize rotation. */
-        quat_t rot = QUAT_FROM_PHYS_QUAT(b->orientation);
-        net_qquat_snorm16_t qrot;
-        if (net_quantize_quat_snorm16(rot, &qrot) != NET_QUANT_OK) {
-            continue;
-        }
-
-        /* Build STATE_CUBE message. */
-        net_repl_state_cube_t st;
-        memset(&st, 0, sizeof(st));
-        st.server_tick = server_tick;
-        st.entity_id   = bi;
-        st.pos_mm      = (net_repl_vec3_mm_t){qpos.x_mm, qpos.y_mm, qpos.z_mm};
-        st.rot_snorm16 = (net_repl_quat_snorm16_t){qrot.x, qrot.y, qrot.z, qrot.w};
-
-        uint8_t payload[NET_REPL_STATE_CUBE_PAYLOAD_SIZE];
-        if (net_repl_state_cube_encode(&st, payload, sizeof(payload)) != NET_REPL_OK) {
-            continue;
-        }
-
-        /* Top DEMO_RELIABLE_BODY_BUDGET bodies go reliable;
-         * the rest go unreliable.  This ensures the fastest-moving
-         * objects are delivered with guaranteed ordering while
-         * avoiding send-slot exhaustion for the long tail. */
-        const int use_reliable = (ri < DEMO_RELIABLE_BODY_BUDGET);
-
-        /* Send to every connected client. */
-        for (uint16_t ci = 0u; ci < max_clients; ++ci) {
-            if (!client_connected[ci]) {
+        for (uint32_t ri = 0u; ri < send_count; ++ri) {
+            const uint32_t bi = ranked[ri].index;
+            const phys_body_t *b = phys_world_get_body(&sw->physics, bi);
+            if (!b) {
                 continue;
             }
+
+            /* If client hasn't seen this body yet, send BODY_SPAWN. */
+            if (!bk_test_(known, bi)) {
+                net_repl_body_spawn_t sp;
+                memset(&sp, 0, sizeof(sp));
+                sp.body_id    = (uint16_t)bi;
+                sp.flags      = (uint8_t)b->flags;
+                sp.shape_type = sw->body_shape_type[bi];
+                sp.color_seed = sw->body_color_seed[bi];
+
+                /* Quantize position. */
+                sp.pos_mm.x_mm = (int32_t)(b->position.x * 1000.0f);
+                sp.pos_mm.y_mm = (int32_t)(b->position.y * 1000.0f);
+                sp.pos_mm.z_mm = (int32_t)(b->position.z * 1000.0f);
+
+                /* Orientation. */
+                sp.rot_x = b->orientation.x;
+                sp.rot_y = b->orientation.y;
+                sp.rot_z = b->orientation.z;
+                sp.rot_w = b->orientation.w;
+
+                /* Shape extents from collider. */
+                read_half_mm_(&sw->physics, bi,
+                              &sp.half_x_mm, &sp.half_y_mm, &sp.half_z_mm);
+
+                uint8_t payload[NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];
+                if (net_repl_body_spawn_encode(&sp, payload, sizeof(payload))
+                    == NET_REPL_OK) {
+                    push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_SPAWN,
+                                   payload, sizeof(payload));
+                    bk_set_(known, bi);
+                }
+                continue; /* State will follow next tick. */
+            }
+
+            /* Skip state updates for sleeping bodies. */
+            if (ranked[ri].speed_sq <= 0.0f) {
+                continue;
+            }
+
+            /* Build BODY_STATE. */
+            net_repl_body_state_t st;
+            memset(&st, 0, sizeof(st));
+            st.server_tick = server_tick;
+            st.body_id     = (uint16_t)bi;
+
+            st.pos_mm.x_mm = (int32_t)(b->position.x * 1000.0f);
+            st.pos_mm.y_mm = (int32_t)(b->position.y * 1000.0f);
+            st.pos_mm.z_mm = (int32_t)(b->position.z * 1000.0f);
+
+            st.rot_x = b->orientation.x;
+            st.rot_y = b->orientation.y;
+            st.rot_z = b->orientation.z;
+            st.rot_w = b->orientation.w;
+
+            st.vel_x_mm_s = vel_to_mm_s_(b->linear_vel.x);
+            st.vel_y_mm_s = vel_to_mm_s_(b->linear_vel.y);
+            st.vel_z_mm_s = vel_to_mm_s_(b->linear_vel.z);
+
+            uint8_t payload[NET_REPL_BODY_STATE_PAYLOAD_SIZE];
+            if (net_repl_body_state_encode(&st, payload, sizeof(payload))
+                != NET_REPL_OK) {
+                continue;
+            }
+
+            const int use_reliable = (ri < DEMO_RELIABLE_BODY_BUDGET);
             if (use_reliable) {
-                push_reliable_(rt, ci, NET_REPL_SCHEMA_STATE_CUBE,
+                push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_STATE,
                                payload, sizeof(payload));
             } else {
-                push_unreliable_(rt, ci, NET_REPL_SCHEMA_STATE_CUBE,
+                push_unreliable_(rt, ci, NET_REPL_SCHEMA_BODY_STATE,
                                  payload, sizeof(payload));
             }
         }
@@ -430,7 +522,7 @@ int main(int argc, char **argv) {
     job_system_t net_jobs;
     job_system_create_status_t njstatus =
         job_system_create(&net_jobs, (uint32_t)net_workers_l, 1024u,
-                          1u << 16, 256, 0);
+                          1u << 18, 256, 0);
     if (njstatus != JOB_CREATE_OK) {
         fprintf(stderr, "Failed to create network job system\n");
         job_system_shutdown(&jobs);
@@ -453,8 +545,17 @@ int main(int argc, char **argv) {
     fr_topic_channel_t *inbound       = fr_topic_channel_create(&tcfg);
     fr_topic_channel_t *player_events = fr_topic_channel_create(&tcfg);
     fr_topic_channel_t *entity_events = fr_topic_channel_create(&tcfg);
-    if (!inbound || !player_events || !entity_events) {
+
+    /* Command channel for deferred physics mutations.  Sized to hold
+     * a full stack spawn burst (~50 commands × ~128 bytes each). */
+    fr_topic_channel_config_t cmd_tcfg;
+    memset(&cmd_tcfg, 0, sizeof(cmd_tcfg));
+    cmd_tcfg.capacity = 65536u;
+    fr_topic_channel_t *physics_cmds  = fr_topic_channel_create(&cmd_tcfg);
+
+    if (!inbound || !player_events || !entity_events || !physics_cmds) {
         fprintf(stderr, "Failed to allocate topic channels\n");
+        fr_topic_channel_destroy(physics_cmds);
         fr_topic_channel_destroy(inbound);
         fr_topic_channel_destroy(player_events);
         fr_topic_channel_destroy(entity_events);
@@ -525,6 +626,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to initialize demo server world\n");
         fr_server_entity_net_pump_destroy(pump);
         fr_server_net_runtime_destroy(rt);
+        fr_topic_channel_destroy(physics_cmds);
         fr_topic_channel_destroy(inbound);
         fr_topic_channel_destroy(player_events);
         fr_topic_channel_destroy(entity_events);
@@ -533,6 +635,7 @@ int main(int argc, char **argv) {
         net_udp_socket_close(&sock);
         return 1;
     }
+    sw.cmd_channel = physics_cmds;
 
     /* Per-client connection tracking. */
     uint8_t client_connected[DEMO_MAX_CLIENTS];
@@ -552,6 +655,7 @@ int main(int argc, char **argv) {
         demo_server_world_destroy(&sw);
         fr_server_entity_net_pump_destroy(pump);
         fr_server_net_runtime_destroy(rt);
+        fr_topic_channel_destroy(physics_cmds);
         fr_topic_channel_destroy(inbound);
         fr_topic_channel_destroy(player_events);
         fr_topic_channel_destroy(entity_events);
@@ -657,10 +761,20 @@ int main(int argc, char **argv) {
 
             server_tick = (uint16_t)(server_tick + 1u);
 
-            /* (d) Tick physics world (parallel). */
-            demo_server_world_tick(&sw, &phys_jobs);
+            /* (d) If the previous physics tick has finished, consume it
+             *     and kick a new one.  If physics is still running, we
+             *     skip the kick — we'll catch up on the next iteration.
+             *     This means the main loop NEVER blocks on physics. */
+            if (demo_server_world_tick_done(&sw)) {
+                demo_server_world_tick_consume(&sw);
+                demo_server_world_tick(&sw, &phys_jobs);
+            }
 
-            /* (e) Broadcast body states to all connected clients. */
+            /* (e) Broadcast body states from the last completed frame.
+             *     bodies_curr always holds valid committed state —
+             *     either from the just-consumed tick or the previous
+             *     one if physics is still running.  This is safe because
+             *     the tick writes to bodies_next, not bodies_curr. */
             if (clients_joined > 0u) {
                 broadcast_body_states_(rt, &sw, client_connected,
                                        max_clients, server_tick);
@@ -697,6 +811,9 @@ int main(int argc, char **argv) {
     /* ── Cleanup ──────────────────────────────────────────────────── */
     fprintf(stderr, "demo_server: shutting down (tick %u)\n", (unsigned)server_tick);
 
+    /* Wait for any in-flight physics tick before tearing down. */
+    demo_server_world_tick_wait(&sw);
+
     /* Stop and join the network pump thread. */
     (void)pthread_join(net_pump_tid, NULL);
 
@@ -704,6 +821,7 @@ int main(int argc, char **argv) {
     demo_server_world_destroy(&sw);
     fr_server_entity_net_pump_destroy(pump);
     fr_server_net_runtime_destroy(rt);
+    fr_topic_channel_destroy(physics_cmds);
     fr_topic_channel_destroy(inbound);
     fr_topic_channel_destroy(player_events);
     fr_topic_channel_destroy(entity_events);

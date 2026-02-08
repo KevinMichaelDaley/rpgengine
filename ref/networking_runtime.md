@@ -91,7 +91,9 @@ The per-client fiber networking runtime remains responsible only for:
   - A lock-free or low-contention queue of decoded messages (or message references) consumed by simulation jobs.
 
 - **Threading requirement**
-  - At least **two** OS worker threads must be allocated to ensure client fibers make progress under load.
+  - At least **one** dedicated OS worker thread in the networking job system for client fiber progress. For higher client counts, increase to 2+.
+  - A separate **UDP receive thread** (`net_pump_thread`) runs `recvfrom` in a loop and pushes decoded packets into topic channels, independent of both job systems.
+  - Client fiber stacks must be at least 256KB since `fr_server_client_fiber_main` stack-allocates ~68KB (inbox + send_slots).
 
 ## Memory / Ownership Rules
 

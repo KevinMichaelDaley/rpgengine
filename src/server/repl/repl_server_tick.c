@@ -306,7 +306,7 @@ int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
         }
 
         if (spawn_entries && spawn_entry_entity_indices && entry_capacity > 0u) {
-            const uint16_t max_batches_this_tick = 2u;
+            const uint16_t max_batches_this_tick = 8u;
             (void)server_repl_try_send_spawn_batch(srv,
                                                    ci,
                                                    max_batches_this_tick,
@@ -319,7 +319,7 @@ int server_repl_server_tick(server_repl_server_t *srv, uint64_t now_ms) {
         }
 
         /* Throttle state updates per-client to avoid send storms at high client counts. */
-        server_repl_send_some_states(srv, ci, 2u, now_ms);
+        server_repl_send_some_states(srv, ci, 16u, now_ms);
     }
 
     srv->server_tick = (uint16_t)(srv->server_tick + 1u);

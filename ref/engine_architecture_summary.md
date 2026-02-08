@@ -106,35 +106,44 @@ Server Process:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                                                                             │
 │  Thread 0 [MAIN]           Server main loop                                │
-│  ├── fr_server_net_runtime_pump()      Demux inbound UDP                   │
-│  ├── phys_world_tick()                 Dispatches physics jobs              │
-│  ├── simulation_update()              Game logic (ECS queries)             │
-│  └── outbound_replication()           Push to per-client out topics        │
-│      ├── Sleeping bodies skipped (zero bandwidth)                         │
-│      ├── Top 16 fastest awake bodies → reliable topic                     │
-│      └── Remaining awake bodies → unreliable topic                        │
+│  ├── process_events()                 Drain player/entity events           │
+│  ├── demo_server_world_tick()         Kick async physics (non-blocking)    │
+│  ├── broadcast_body_states_()         Send prev frame state to clients     │
+│  ├── demo_server_world_tick_wait()    Wait for physics completion          │
+│  └── sleep until next tick                                                 │
+│      NOTE: Main thread does NOT busy-wait on physics.  Physics runs       │
+│      as a fiber job; main thread broadcasts and processes events while     │
+│      the tick executes.  Tick catch-up capped to 3 ticks.                 │
+│                                                                             │
+│  Thread 1 [NET PUMP]      Dedicated UDP receive thread                     │
+│  └── fr_server_entity_net_pump_recv_loop()  recvfrom + topic push         │
 │                                                                             │
 │  ── Simulation job system (job_system_t) ──                                │
-│  Thread 1..N [SIM WORKER]   Simulation workers                             │
+│  Thread 2..N [SIM WORKER]   Simulation workers (typically 2)               │
 │  ├── Physics stage jobs    (broadphase, narrowphase, solver chunks)        │
+│  ├── Physics tick wrapper  (dispatched by main, runs on fiber)             │
 │  ├── Skinning evaluation   (skeleton joint computation)                   │
 │  └── Simulation jobs       (gameplay handlers via topic dispatch)          │
 │                                                                             │
 │  ── Network job system (job_system_t) ──                                   │
 │  Thread N+1..N+M [NET WORKER]  Dedicated networking workers               │
 │  └── Client fiber jobs     (per-client RUDP RX/TX processing)             │
+│      Fiber stacks: 256KB.  Client fibers stack-allocate ~68KB             │
+│      (inbox + send_slots), so stacks must be >> 68KB.                     │
 │      These run on their own job system so that physics tick latency        │
 │      can never starve client fiber scheduling.                             │
 │                                                                             │
 │  Thread N+M+1 [TOPIC PUMP]   Topic dispatcher background thread           │
 │  └── Polls topics → dispatches handler jobs                               │
 │                                                                             │
-│  MINIMUM: 4 threads (main + 1 sim worker + 1 net worker + topic pump)     │
-│  RECOMMENDED: main + (num_cores - 2) sim workers + 1 net worker           │
+│  MINIMUM: 5 threads (main + net_pump + 1 sim worker + 1 net worker        │
+│           + topic pump)                                                    │
+│  RECOMMENDED: main + net_pump + (num_cores - 3) sim workers               │
+│               + 1 net worker + topic pump                                  │
 │                                                                             │
-│  NOTE: tick catch-up is capped to 3 ticks so that a slow physics          │
-│  frame doesn't cause an unbounded burst of sim-only iterations that       │
-│  starves the main-thread network pump.                                     │
+│  NOTE: Physics tick dispatched as async fiber job.  Main thread            │
+│  broadcasts previous frame's double-buffered state while tick runs.        │
+│  Tick catch-up capped to 3 ticks.                                          │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -289,8 +298,9 @@ JOB SYSTEM owns:
 │   └── Lock-free alloc/free across all worker threads
 ├── ws_deques[]: fr_ws_deque_t (per-worker)
 ├── inject_ring[]: job_fiber_t*
-├── workers[]: thrd_t
-└── Sync primitives: queue_lock, queue_cond
+├── workers[]: pthread_t
+└── Sync primitives: queue_lock (pthread_mutex_t), queue_cond (pthread_cond_t)
+    └── Fiber-code uses job_spinlock_t (CAS), not mtx_t (which blocks OS thread)
 
 PHYSICS SYSTEM owns:
 ├── body_pool: pool_t (persistent across ticks)
@@ -316,7 +326,7 @@ NETWORKING (Server) owns:
 NETWORKING (Client) owns:
 ├── client_rx: fr_client_rx_t
 │   ├── channels[max_channels]: net_reliable_channel_t
-│   └── rx_thread: thrd_t
+│   └── rx_thread: pthread_t
 ├── rudp_peer: net_rudp_peer_t (send_slots for retransmit)
 └── topic_channels[]: fr_topic_channel_t*
 

@@ -38,6 +38,8 @@
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/udp_socket.h"
 
+#include "ferrum/net/replication/body_spawn.h"
+#include "ferrum/net/replication/body_state.h"
 #include "ferrum/net/replication/interp/pose_interpolator.h"
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/spawn.h"
@@ -67,8 +69,11 @@ struct entity_view {
     uint32_t entity_id;
     uint16_t owner_client_id;
     fr_pose_interpolator_t pose;
-    uint8_t  shape_type;  /**< 0=box, 1=sphere */
-    float    scale;       /**< Uniform scale for rendering */
+    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule */
+    uint8_t  flags;       /**< Body flags (kinematic, etc.) */
+    uint32_t color_seed;  /**< Color seed from server. */
+    float    half_ext[3]; /**< Shape half-extents in meters. */
+    float    scale;       /**< Uniform scale for rendering (fallback) */
 };
 
 /** OpenGL resource context for the demo client. */
@@ -667,6 +672,106 @@ static int handle_state_cube_(struct entity_view **entities, size_t *count, size
 }
 
 /* ------------------------------------------------------------------ */
+/*  BODY_SPAWN / BODY_STATE handlers (new protocol)                   */
+/* ------------------------------------------------------------------ */
+
+static int handle_body_spawn_(struct entity_view **entities, size_t *count,
+                              size_t *cap, const net_repl_body_spawn_t *sp,
+                              double recv_time_s) {
+    if (!entities || !count || !cap || !sp) return 0;
+
+    /* Use body_id as entity_id. */
+    const uint32_t eid = (uint32_t)sp->body_id;
+
+    /* If we already know this body, just update metadata. */
+    int idx = entity_find_(*entities, *count, eid);
+    if (idx >= 0) {
+        struct entity_view *e = &(*entities)[idx];
+        e->shape_type  = sp->shape_type;
+        e->flags       = sp->flags;
+        e->color_seed  = sp->color_seed;
+        e->half_ext[0] = (float)sp->half_x_mm * 0.001f;
+        e->half_ext[1] = (float)sp->half_y_mm * 0.001f;
+        e->half_ext[2] = (float)sp->half_z_mm * 0.001f;
+        return 1;
+    }
+
+    /* Dequantize position. */
+    vec3_t pos;
+    pos.x = (float)sp->pos_mm.x_mm * 0.001f;
+    pos.y = (float)sp->pos_mm.y_mm * 0.001f;
+    pos.z = (float)sp->pos_mm.z_mm * 0.001f;
+
+    /* Rotation comes unpacked in the struct. */
+    quat_t rot = {sp->rot_x, sp->rot_y, sp->rot_z, sp->rot_w};
+
+    if (!add_entity_(entities, count, cap, eid, 0u, recv_time_s, pos, rot))
+        return 0;
+
+    /* Fill in shape metadata on the newly created entity. */
+    struct entity_view *e = &(*entities)[*count - 1u];
+    e->shape_type  = sp->shape_type;
+    e->flags       = sp->flags;
+    e->color_seed  = sp->color_seed;
+    e->half_ext[0] = (float)sp->half_x_mm * 0.001f;
+    e->half_ext[1] = (float)sp->half_y_mm * 0.001f;
+    e->half_ext[2] = (float)sp->half_z_mm * 0.001f;
+    return 1;
+}
+
+static int handle_body_state_(struct entity_view **entities, size_t *count,
+                              size_t *cap, const net_repl_body_state_t *st,
+                              double recv_time_s,
+                              fr_debug_lines_t *correction_lines) {
+    if (!entities || !count || !cap || !st) return 0;
+
+    const uint32_t eid = (uint32_t)st->body_id;
+
+    /* Dequantize position. */
+    vec3_t pos;
+    pos.x = (float)st->pos_mm.x_mm * 0.001f;
+    pos.y = (float)st->pos_mm.y_mm * 0.001f;
+    pos.z = (float)st->pos_mm.z_mm * 0.001f;
+
+    /* Rotation comes unpacked. */
+    quat_t rot = {st->rot_x, st->rot_y, st->rot_z, st->rot_w};
+
+    int idx = entity_find_(*entities, *count, eid);
+    if (idx < 0) {
+        /* Body state arrived before spawn (unreliable ordering).
+         * Create a placeholder entity. */
+        if (!add_entity_(entities, count, cap, eid, 0u, recv_time_s, pos, rot))
+            return 0;
+        return 1;
+    }
+
+    /* Debug correction lines. */
+    if (correction_lines) {
+        vec3_t est_pos = {0};
+        quat_t est_rot = {0.0f, 0.0f, 0.0f, 1.0f};
+        if (fr_pose_interpolator_sample(&(*entities)[idx].pose, recv_time_s,
+                                        1e-6f, &est_pos, &est_rot)) {
+            const vec3_t dp = vec3_sub(pos, est_pos);
+            const float pos_err = vec3_magnitude(dp);
+            const float pos_threshold = 0.005f;
+            if (pos_err > pos_threshold) {
+                vec3_t verts[16];
+                const size_t n = fr_debug_correction_lines_cube(
+                    est_pos, est_rot, pos, rot, 0.125f, verts, 16u);
+                for (size_t vi = 0u; vi + 1u < n; vi += 2u) {
+                    (void)fr_debug_lines_add(correction_lines,
+                                             verts[vi], verts[vi + 1u],
+                                             recv_time_s, 0.35);
+                }
+            }
+        }
+    }
+
+    (void)fr_pose_interpolator_push(&(*entities)[idx].pose, recv_time_s, pos, rot);
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Quantize yaw/pitch to snorm16 range                              */
 /* ------------------------------------------------------------------ */
 
@@ -961,6 +1066,18 @@ int main(int argc, char **argv) {
                     (void)handle_state_cube_(&entities, &entity_count, &entity_cap,
                                              &st, recv_time_s, &correction_lines);
                 }
+            } else if (schema_id == NET_REPL_SCHEMA_BODY_SPAWN) {
+                net_repl_body_spawn_t sp;
+                if (net_repl_body_spawn_decode(&sp, payload, payload_size) == NET_REPL_OK) {
+                    (void)handle_body_spawn_(&entities, &entity_count, &entity_cap,
+                                             &sp, recv_time_s);
+                }
+            } else if (schema_id == NET_REPL_SCHEMA_BODY_STATE) {
+                net_repl_body_state_t st;
+                if (net_repl_body_state_decode(&st, payload, payload_size) == NET_REPL_OK) {
+                    (void)handle_body_state_(&entities, &entity_count, &entity_cap,
+                                             &st, recv_time_s, &correction_lines);
+                }
             } else if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 net_repl_welcome_t w;
                 (void)net_repl_welcome_decode(&w, payload, payload_size);
@@ -1006,29 +1123,36 @@ int main(int argc, char **argv) {
                 if (!fr_pose_interpolator_sample(&e->pose, render_time_s, 1e-6f, &pos, &rot))
                     continue;
 
-                const mat4_t t = mat4_translation(pos.x, pos.y, pos.z);
-                const mat4_t r = mat4_from_quat_(rot);
-                const mat4_t s = mat4_scaling(e->scale, e->scale, e->scale);
-                const mat4_t model = mat4_mul(t, mat4_mul(r, s));
+                /* Use half-extents for non-uniform scale if available,
+                 * otherwise fall back to uniform scale. */
+                float sx = (e->half_ext[0] > 0.0f) ? e->half_ext[0] : e->scale;
+                float sy = (e->half_ext[1] > 0.0f) ? e->half_ext[1] : e->scale;
+                float sz = (e->half_ext[2] > 0.0f) ? e->half_ext[2] : e->scale;
+
+                const mat4_t t_mat = mat4_translation(pos.x, pos.y, pos.z);
+                const mat4_t r_mat = mat4_from_quat_(rot);
+                const mat4_t s_mat = mat4_scaling(sx, sy, sz);
+                const mat4_t model = mat4_mul(t_mat, mat4_mul(r_mat, s_mat));
                 const mat4_t mvp = mat4_mul(vp, model);
 
                 if (shader_uniform_set_mat4(&gl.uniforms, &gl.program, "u_mvp", mvp.m, 0u) != SHADER_UNIFORM_OK) {
                     fprintf(stderr, "shader_uniform_set_mat4 failed for u_mvp\n");
                 }
 
+                /* Derive color from color_seed if nonzero, else entity_id. */
                 float rgb[3];
-                color_from_owner_(e->owner_client_id, rgb);
+                if (e->color_seed != 0u) {
+                    color_from_owner_((uint16_t)(e->color_seed & 0xFFFFu), rgb);
+                } else {
+                    color_from_owner_((uint16_t)(e->entity_id & 0xFFFFu), rgb);
+                }
                 if (e->entity_id == self_entity_id) {
                     rgb[0] = 1.0f; rgb[1] = 1.0f; rgb[2] = 1.0f;
-                } else if (e->owner_client_id == 0u) {
-                    /* Physics bodies have no owner — derive color from entity_id
-                     * so they're visible against the dark background. */
-                    color_from_owner_((uint16_t)(e->entity_id & 0xFFFFu), rgb);
-                    /* Ensure minimum brightness. */
-                    float brightness = rgb[0] * 0.299f + rgb[1] * 0.587f + rgb[2] * 0.114f;
-                    if (brightness < 0.25f) {
-                        rgb[0] += 0.3f; rgb[1] += 0.3f; rgb[2] += 0.3f;
-                    }
+                }
+                /* Ensure minimum brightness. */
+                float brightness = rgb[0] * 0.299f + rgb[1] * 0.587f + rgb[2] * 0.114f;
+                if (brightness < 0.25f) {
+                    rgb[0] += 0.3f; rgb[1] += 0.3f; rgb[2] += 0.3f;
                 }
                 if (shader_uniform_set_vec3(&gl.uniforms, &gl.program, "u_color", rgb) != SHADER_UNIFORM_OK) {
                     fprintf(stderr, "shader_uniform_set_vec3 failed for u_color\n");

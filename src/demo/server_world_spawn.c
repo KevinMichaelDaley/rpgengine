@@ -16,6 +16,7 @@
 
 #include <math.h>
 #include <stdatomic.h>
+#include <string.h>
 
 /** Spawn distance in front of the player (meters). */
 #define SPAWN_DISTANCE 2.0f
@@ -120,7 +121,7 @@ static bool stack_position_valid(const demo_server_world_t *sw,
  * impulse is applied to a randomly chosen box in the stack.
  */
 static void spawn_box_stack(demo_server_world_t *sw) {
-    if (sw->stack_count >= STACK_MAX_COUNT) {
+    if (sw->stack_count >= STACK_MAX_COUNT || !sw->cmd_channel) {
         return;
     }
 
@@ -163,21 +164,29 @@ static void spawn_box_stack(demo_server_world_t *sw) {
      * (heavy/large on top, small on bottom). */
     uint32_t personality = xorshift32(&sw->rng_state) % 4u;
 
-    /* Track body indices for the impulse step. */
-    uint32_t first_body = UINT32_MAX;
-    uint32_t body_count_in_stack = 0;
+    /* Pick which box in the stack receives the random impulse (baked
+     * into its initial linear_vel since we don't know body indices). */
+    uint32_t impulse_target = xorshift32(&sw->rng_state) % stack_height;
+
+    /* Pre-compute the impulse velocity for the target box.
+     * impulse_mag = mass * scale, applied as vel += impulse_mag * inv_mass
+     * = scale.  So the velocity boost is just the scaled direction. */
+    float dir_x = rand_float(&sw->rng_state, -1.0f, 1.0f);
+    float dir_y = rand_float(&sw->rng_state, -0.5f, 1.0f);
+    float dir_z = rand_float(&sw->rng_state, -1.0f, 1.0f);
+    float dir_len = sqrtf(dir_x * dir_x + dir_y * dir_y + dir_z * dir_z);
+    if (dir_len > 0.001f) {
+        dir_x /= dir_len;
+        dir_y /= dir_len;
+        dir_z /= dir_len;
+    }
+    float impulse_scale = rand_float(&sw->rng_state,
+                                     IMPULSE_MASS_SCALE_MIN,
+                                     IMPULSE_MASS_SCALE_MAX);
+
     float stack_y = 0.0f; /* Current top of the stack (starts at ground). */
 
     for (uint32_t i = 0; i < stack_height; i++) {
-        uint32_t body_idx = phys_world_create_body(&sw->physics);
-        if (body_idx == UINT32_MAX || body_idx >= DEMO_MAX_BODIES) {
-            break;
-        }
-
-        if (first_body == UINT32_MAX) {
-            first_body = body_idx;
-        }
-
         /* Determine half-extents based on personality. */
         float half;
         switch (personality) {
@@ -208,7 +217,6 @@ static void spawn_box_stack(demo_server_world_t *sw) {
         float hx = half * rand_float(&sw->rng_state, 0.8f, 1.2f);
         float hy = half * rand_float(&sw->rng_state, 0.8f, 1.2f);
         float hz = half * rand_float(&sw->rng_state, 0.8f, 1.2f);
-        phys_vec3_t half_ext = {hx, hy, hz};
 
         /* Random density for this box. */
         float density = rand_float(&sw->rng_state, DENSITY_MIN, DENSITY_MAX);
@@ -216,68 +224,35 @@ static void spawn_box_stack(demo_server_world_t *sw) {
         float mass = density * volume;
         if (mass < 0.1f) mass = 0.1f;
 
-        /* Position: centered on stack XZ, bottom touching current stack top. */
-        float body_y = stack_y + hy;
+        /* Build spawn command. */
+        phys_cmd_spawn_body_t cmd;
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.position.x  = cx;
+        cmd.position.y  = stack_y + hy;
+        cmd.position.z  = cz;
+        cmd.orientation  = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+        cmd.mass         = mass;
+        cmd.flags        = 0;
+        cmd.shape        = PHYS_CMD_SHAPE_BOX;
+        cmd.shape_data.box_half = (phys_vec3_t){hx, hy, hz};
 
-        phys_body_t *b = phys_world_get_body(&sw->physics, body_idx);
-        if (!b) break;
+        /* Bake impulse velocity into the target box's initial velocity. */
+        if (i == impulse_target) {
+            cmd.linear_vel.x = dir_x * impulse_scale;
+            cmd.linear_vel.y = dir_y * impulse_scale;
+            cmd.linear_vel.z = dir_z * impulse_scale;
+        }
 
-        b->position.x = cx;
-        b->position.y = body_y;
-        b->position.z = cz;
+        /* Encode demo metadata: low 8 bits = shape (0=box),
+         * bits 8..39 = color seed. */
+        uint32_t color = xorshift32(&sw->rng_state);
+        cmd.user_tag = (uint64_t)color << 8u;
 
-        phys_body_set_mass(b, mass);
-        phys_body_set_box_inertia(b, mass, half_ext);
-
-        /* Copy to next buffer. */
-        phys_body_t *b_next = phys_body_pool_get_next(&sw->physics.body_pool,
-                                                       body_idx);
-        if (b_next) *b_next = *b;
-
-        /* Attach collider. */
-        phys_world_set_box_collider(&sw->physics, body_idx, half_ext,
-                                    (phys_vec3_t){0.0f, 0.0f, 0.0f},
-                                    (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
-
-        sw->body_shape_type[body_idx] = 0;
-        sw->body_color_seed[body_idx] = xorshift32(&sw->rng_state);
-        sw->dynamic_body_count++;
-        body_count_in_stack++;
+        phys_cmd_push(sw->cmd_channel, PHYS_CMD_SPAWN_BODY,
+                      &cmd, sizeof(cmd));
 
         /* Advance stack top by the full height of this box. */
         stack_y += 2.0f * hy;
-    }
-
-    /* Apply a random impulse to a random box in the stack. */
-    if (body_count_in_stack > 0 && first_body != UINT32_MAX) {
-        uint32_t target_offset = xorshift32(&sw->rng_state) % body_count_in_stack;
-        uint32_t target_body = first_body + target_offset;
-
-        phys_body_t *tb = phys_world_get_body(&sw->physics, target_body);
-        if (tb && !phys_body_is_static(tb)) {
-            /* Random 3D impulse direction. */
-            float ix = rand_float(&sw->rng_state, -1.0f, 1.0f);
-            float iy = rand_float(&sw->rng_state, -0.5f, 1.0f);
-            float iz = rand_float(&sw->rng_state, -1.0f, 1.0f);
-            float len = sqrtf(ix * ix + iy * iy + iz * iz);
-            if (len > 0.001f) {
-                ix /= len; iy /= len; iz /= len;
-            }
-
-            /* Scale impulse by target mass. */
-            float scale = rand_float(&sw->rng_state,
-                                     IMPULSE_MASS_SCALE_MIN,
-                                     IMPULSE_MASS_SCALE_MAX);
-            float impulse_mag = (1.0f / tb->inv_mass) * scale;
-            tb->linear_vel.x += ix * impulse_mag * tb->inv_mass;
-            tb->linear_vel.y += iy * impulse_mag * tb->inv_mass;
-            tb->linear_vel.z += iz * impulse_mag * tb->inv_mass;
-
-            /* Update next buffer too. */
-            phys_body_t *tb_next = phys_body_pool_get_next(
-                &sw->physics.body_pool, target_body);
-            if (tb_next) *tb_next = *tb;
-        }
     }
 
     /* Record stack position. */
@@ -290,15 +265,11 @@ static void spawn_box_stack(demo_server_world_t *sw) {
 
 uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
                                       const demo_input_spawn_t *spawn) {
-    if (!sw || !spawn || client_slot < 0 || client_slot >= DEMO_MAX_CLIENTS) {
+    if (!sw || !spawn || !sw->cmd_channel ||
+        client_slot < 0 || client_slot >= DEMO_MAX_CLIENTS) {
         return UINT32_MAX;
     }
     if (!sw->player_connected[client_slot]) {
-        return UINT32_MAX;
-    }
-
-    uint32_t body_idx = phys_world_create_body(&sw->physics);
-    if (body_idx == UINT32_MAX || body_idx >= DEMO_MAX_BODIES) {
         return UINT32_MAX;
     }
 
@@ -312,81 +283,127 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
     float volume = (2.0f * hx) * (2.0f * hy) * (2.0f * hz);
     float mass   = volume * PLAYER_BOX_DENSITY;
     if (mass < 0.01f) {
-        mass = 0.01f; /* minimum mass */
+        mass = 0.01f;
     }
 
-    /* Position: 2m in front of player at eye height. */
-    phys_body_t *player = phys_world_get_body(&sw->physics,
-                                               sw->player_body[client_slot]);
+    /* Read player position from last completed tick (safe — bodies_curr
+     * is stable while the tick writes to bodies_next). */
+    const phys_body_t *player = phys_world_get_body(&sw->physics,
+                                                     sw->player_body[client_slot]);
     if (!player) {
-        phys_world_destroy_body(&sw->physics, body_idx);
         return UINT32_MAX;
     }
 
-    float yaw = sw->player_yaw[client_slot];
+    float yaw   = sw->player_yaw[client_slot];
     float fwd_x =  sinf(yaw);
     float fwd_z = -cosf(yaw);
 
-    phys_body_t *b = phys_world_get_body(&sw->physics, body_idx);
-    if (!b) {
+    /* Build spawn command. */
+    phys_cmd_spawn_body_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.position.x  = player->position.x + fwd_x * SPAWN_DISTANCE;
+    cmd.position.y  = player->position.y + 0.9f;
+    cmd.position.z  = player->position.z + fwd_z * SPAWN_DISTANCE;
+    cmd.orientation  = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+    cmd.linear_vel.x = fwd_x * SPAWN_VEL_FORWARD;
+    cmd.linear_vel.y = SPAWN_VEL_UP;
+    cmd.linear_vel.z = fwd_z * SPAWN_VEL_FORWARD;
+    cmd.mass         = mass;
+    cmd.flags        = 0;
+    cmd.shape        = PHYS_CMD_SHAPE_BOX;
+    cmd.shape_data.box_half = half_ext;
+
+    /* Encode demo metadata in user_tag: low 8 = shape, bits 8..39 = color. */
+    cmd.user_tag = (uint64_t)0u | ((uint64_t)spawn->color_seed << 8u);
+
+    if (!phys_cmd_push(sw->cmd_channel, PHYS_CMD_SPAWN_BODY,
+                       &cmd, sizeof(cmd))) {
         return UINT32_MAX;
     }
 
-    b->position.x = player->position.x + fwd_x * SPAWN_DISTANCE;
-    b->position.y = player->position.y + 0.9f; /* eye height offset */
-    b->position.z = player->position.z + fwd_z * SPAWN_DISTANCE;
-
-    /* Set mass and inertia. */
-    phys_body_set_mass(b, mass);
-    phys_body_set_box_inertia(b, mass, half_ext);
-
-    /* Initial velocity: forward + upward. */
-    b->linear_vel.x = fwd_x * SPAWN_VEL_FORWARD;
-    b->linear_vel.y = SPAWN_VEL_UP;
-    b->linear_vel.z = fwd_z * SPAWN_VEL_FORWARD;
-
-    /* Copy to next buffer. */
-    phys_body_t *b_next = phys_body_pool_get_next(&sw->physics.body_pool,
-                                                   body_idx);
-    if (b_next) {
-        *b_next = *b;
-    }
-
-    /* Attach box collider. */
-    phys_world_set_box_collider(&sw->physics, body_idx, half_ext,
-                                (phys_vec3_t){0.0f, 0.0f, 0.0f},
-                                (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
-
-    /* Store replication metadata. */
-    sw->body_shape_type[body_idx] = 0; /* box */
-    sw->body_color_seed[body_idx] = spawn->color_seed;
-    sw->dynamic_body_count++;
-
-    return body_idx;
+    /* Body index is assigned asynchronously by the tick job; return 0
+     * as a placeholder (the caller only uses this for success/fail). */
+    return 0u;
 }
 
 /* ── Parallel tick wrapper ─────────────────────────────────────────
  *
  * phys_world_tick_parallel must run inside a fiber so that its internal
  * phys_wait_stage calls use the fiber-park path.  We dispatch it as a
- * single job on the simulation job system and wait on a condvar from
- * the main thread.
+ * single job on the simulation job system.  The main thread does NOT
+ * busy-wait; instead it continues processing network events and
+ * broadcasts the previous frame's state.  Before the next tick, the
+ * main thread calls demo_server_world_tick_wait() to ensure the
+ * previous tick has finished.
  */
 
-/** Arguments passed to the wrapper job that runs the parallel tick. */
-typedef struct tick_job_args {
-    phys_world_t       *world;
-    phys_job_context_t *jobs;
-    atomic_int         *done_flag;
-} tick_job_args_t;
+/** Tag type encoded in bits 63..56 of user_tag. */
+#define TAG_TYPE_DYNAMIC  0u  /**< Dynamic body (box/sphere). */
+#define TAG_TYPE_PLAYER   1u  /**< Player kinematic body. */
 
-/** Job function: runs the parallel tick inside a fiber context, then
- *  signals completion to the waiting main thread via atomic store. */
+/** Extract tag type from user_tag. */
+static uint8_t tag_get_type(uint64_t tag) {
+    return (uint8_t)((tag >> 56u) & 0xFFu);
+}
+
+/** Callback for phys_cmd_drain: records demo metadata for spawned bodies. */
+static void spawn_callback_(uint32_t body_index, uint64_t user_tag, void *user) {
+    demo_server_world_t *sw = (demo_server_world_t *)user;
+    if (body_index == UINT32_MAX || body_index >= DEMO_MAX_BODIES) {
+        return;
+    }
+
+    uint8_t tag_type = tag_get_type(user_tag);
+
+    if (tag_type == TAG_TYPE_PLAYER) {
+        /* Bits 7..0 = client slot index. */
+        uint8_t slot = (uint8_t)(user_tag & 0xFFu);
+        if (slot < DEMO_MAX_CLIENTS) {
+            sw->player_body[slot] = body_index;
+        }
+    } else {
+        /* Dynamic body: bits 7..0 = shape type, bits 8..39 = color seed. */
+        sw->body_shape_type[body_index] = (uint8_t)(user_tag & 0xFFu);
+        sw->body_color_seed[body_index] =
+            (uint32_t)((user_tag >> 8u) & 0xFFFFFFFFu);
+        sw->dynamic_body_count++;
+    }
+}
+
+/** Job function: drains the command queue, runs the parallel tick,
+ *  then signals completion via atomic store (fiber-safe). */
 static void tick_job_fn_(void *user_data) {
-    tick_job_args_t *a = (tick_job_args_t *)user_data;
-    phys_world_tick_parallel(a->world, NULL, a->jobs);
+    demo_server_world_t *sw = (demo_server_world_t *)user_data;
 
-    atomic_store(a->done_flag, 1);
+    /* Drain all pending commands before stepping physics. */
+    phys_cmd_drain(sw->tick_args_.world, sw->cmd_channel,
+                   spawn_callback_, sw);
+
+    phys_world_tick_parallel(sw->tick_args_.world, NULL, sw->tick_args_.jobs);
+    atomic_store_explicit(&sw->tick_done, 1, memory_order_release);
+}
+
+void demo_server_world_tick_wait(demo_server_world_t *sw) {
+    if (!sw || !sw->tick_in_flight) {
+        return;
+    }
+    /* Spin-wait — only used at shutdown when we must drain. */
+    while (!atomic_load_explicit(&sw->tick_done, memory_order_acquire)) {
+        /* empty */
+    }
+    sw->tick_in_flight = 0;
+}
+
+int demo_server_world_tick_done(const demo_server_world_t *sw) {
+    if (!sw || !sw->tick_in_flight) {
+        return 1;
+    }
+    return atomic_load_explicit(&((demo_server_world_t *)sw)->tick_done,
+                                memory_order_acquire);
+}
+
+void demo_server_world_tick_consume(demo_server_world_t *sw) {
+    sw->tick_in_flight = 0;
 }
 
 void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
@@ -394,37 +411,30 @@ void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
         return;
     }
 
-    if (jobs) {
-        /* Dispatch the parallel tick as a single job so it runs inside a
-         * fiber context.  The main thread busy-waits (short tick) until
-         * the fiber sets the atomic done flag. */
-        atomic_int done_flag = 0;
-
-        tick_job_args_t args = {
-            .world     = &sw->physics,
-            .jobs      = jobs,
-            .done_flag = &done_flag,
-        };
-
-        job_dispatch_named(jobs->job_sys, tick_job_fn_, &args,
-                           0, NULL, "Phys.Tick.Parallel");
-
-        /* Busy-wait for the job to signal completion. */
-        while (!atomic_load(&done_flag)) {
-            /* Spin — tick should complete within a few ms. */
-        }
-    } else {
-        phys_world_tick(&sw->physics, NULL);
-    }
-
+    /* Spawn new stacks BEFORE kicking the next tick so that newly
+     * created bodies are included in the upcoming simulation step.
+     * Caller must ensure no tick is in flight (call tick_consume first). */
     sw->ticks_since_spawn++;
-
-    /* Spawn a new box stack every 3-5 seconds (180-300 ticks). */
     uint32_t threshold = STACK_SPAWN_MIN +
                          (xorshift32(&sw->rng_state) % STACK_SPAWN_RANGE);
-
     if (sw->ticks_since_spawn >= threshold) {
         spawn_box_stack(sw);
         sw->ticks_since_spawn = 0;
+    }
+
+    if (jobs) {
+        /* Dispatch the parallel tick as a non-blocking job.  The main
+         * thread continues processing network I/O and broadcasts the
+         * last completed body state while physics runs. */
+        atomic_store_explicit(&sw->tick_done, 0, memory_order_release);
+        sw->tick_in_flight = 1;
+
+        sw->tick_args_.world = &sw->physics;
+        sw->tick_args_.jobs  = jobs;
+
+        job_dispatch_named(jobs->job_sys, tick_job_fn_, sw,
+                           0, NULL, "Phys.Tick.Parallel");
+    } else {
+        phys_world_tick(&sw->physics, NULL);
     }
 }
