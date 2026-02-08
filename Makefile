@@ -55,6 +55,20 @@ GL_LIBS := -lGL
 RENDERER_TEST_CFLAGS := $(SDL2_CFLAGS)
 RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
 
+# ── Incremental compilation via object files ─────────────────────
+# Compile each .c → build/obj/<path>.o, then archive into static libs.
+# Changing one .c only recompiles that .o and re-links affected binaries.
+
+OBJDIR := build/obj
+
+OBJ_HEADLESS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRC_HEADLESS))
+OBJ_RENDERER := $(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC))
+OBJ_ALL      := $(OBJ_HEADLESS) $(OBJ_RENDERER)
+
+# Auto-generate per-file dependency tracking (.d files).
+DEPFLAGS = -MMD -MP -MF $(OBJDIR)/$*.d
+ALL_DEPS := $(OBJ_ALL:.o=.d)
+
 BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 	build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests \
@@ -159,397 +173,422 @@ BIN := $(BIN_HEADLESS) $(BIN_RENDERER_TESTS)
 
 all: $(BIN)
 
-build/p000_tests: $(JOB_SRC) $(MEM_SRC) tests/p000_fiber_job_system_tests.c | build
-	$(CC) $(CFLAGS) tests/p000_fiber_job_system_tests.c $(JOB_SRC) $(MEM_SRC) -o $@ $(LDFLAGS)
+# Include auto-generated dependency files (after default target to avoid
+# .d file targets from overriding the default goal).
+-include $(ALL_DEPS)
+
+# ── Object compilation rules (after default target) ──────────────
+
+# Pattern rule: src/foo/bar.c → build/obj/src/foo/bar.o
+$(OBJDIR)/%.o: %.c | build
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# Renderer sources need SDL2 flags.
+$(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC)): $(OBJDIR)/%.o: %.c | build
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# Static libraries.
+build/libheadless.a: $(OBJ_HEADLESS) | build
+	$(AR) rcs $@ $?
+
+build/liball.a: $(OBJ_ALL) | build
+	$(AR) rcs $@ $?
+
+# ── Binary targets ───────────────────────────────────────────────
+
+build/p000_tests: build/libheadless.a tests/p000_fiber_job_system_tests.c | build
+	$(CC) $(CFLAGS) tests/p000_fiber_job_system_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 ## AddressSanitizer does not support custom fiber stacks without special hooks.
 ## Build the perf harness without ASan to avoid false-positive crashes.
 CFLAGS_NO_ASAN := $(filter-out -fsanitize=address,$(CFLAGS))
-build/p000_job_performance_tests: $(SRC) tests/p000_job_performance_tests.c | build
-	$(CC) $(CFLAGS_NO_ASAN) tests/p000_job_performance_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p000_job_performance_tests: build/libheadless.a tests/p000_job_performance_tests.c | build
+	$(CC) $(CFLAGS_NO_ASAN) tests/p000_job_performance_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p001_tests: $(SRC) tests/p001_core_math_tests.c | build
-	$(CC) $(CFLAGS) tests/p001_core_math_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p001_tests: build/libheadless.a tests/p001_core_math_tests.c | build
+	$(CC) $(CFLAGS) tests/p001_core_math_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p002_tests: $(SRC) tests/p002_memory_tests.c | build
-	$(CC) $(CFLAGS) tests/p002_memory_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p002_tests: build/libheadless.a tests/p002_memory_tests.c | build
+	$(CC) $(CFLAGS) tests/p002_memory_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p002_memory_apool_tests: $(SRC) tests/p002_memory_apool_tests.c | build
-	$(CC) $(CFLAGS) tests/p002_memory_apool_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p002_memory_apool_tests: build/libheadless.a tests/p002_memory_apool_tests.c | build
+	$(CC) $(CFLAGS) tests/p002_memory_apool_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p003_tests: $(SRC) tests/p003_ecs_tests.c | build
-	$(CC) $(CFLAGS) tests/p003_ecs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p003_tests: build/libheadless.a tests/p003_ecs_tests.c | build
+	$(CC) $(CFLAGS) tests/p003_ecs_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p000_job_queue_sharding_tests: $(SRC) tests/p000_job_queue_sharding_tests.c | build
-	$(CC) $(CFLAGS) tests/p000_job_queue_sharding_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p000_job_queue_sharding_tests: build/libheadless.a tests/p000_job_queue_sharding_tests.c | build
+	$(CC) $(CFLAGS) tests/p000_job_queue_sharding_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p000_job_queue_diagnostics_tests: $(SRC) tests/p000_job_queue_diagnostics_tests.c | build
-	$(CC) $(CFLAGS) tests/p000_job_queue_diagnostics_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p000_job_queue_diagnostics_tests: build/libheadless.a tests/p000_job_queue_diagnostics_tests.c | build
+	$(CC) $(CFLAGS) tests/p000_job_queue_diagnostics_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p000_ws_deque_tests: $(SRC) tests/p000_ws_deque_tests.c | build
-	$(CC) $(CFLAGS) tests/p000_ws_deque_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p000_ws_deque_tests: build/libheadless.a tests/p000_ws_deque_tests.c | build
+	$(CC) $(CFLAGS) tests/p000_ws_deque_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_tests: $(SRC) tests/p007_net_test_utils_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_test_utils_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_tests: build/libheadless.a tests/p007_net_test_utils_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_test_utils_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_header_tests: $(SRC) tests/p007_net_header_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_header_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_header_tests: build/libheadless.a tests/p007_net_header_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_header_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_ack_tests: $(SRC) tests/p007_net_ack_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_ack_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_ack_tests: build/libheadless.a tests/p007_net_ack_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_ack_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_unreliable_tests: $(SRC) tests/p007_net_unreliable_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_unreliable_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_unreliable_tests: build/libheadless.a tests/p007_net_unreliable_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_unreliable_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_schema_registry_tests: $(SRC) tests/p007_net_schema_registry_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_schema_registry_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_schema_registry_tests: build/libheadless.a tests/p007_net_schema_registry_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_schema_registry_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_reliable_tests: $(SRC) tests/p007_net_reliable_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_reliable_tests: build/libheadless.a tests/p007_net_reliable_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_rudp_fragmentation_tests: $(SRC) tests/net_rudp_fragmentation_tests.c | build
-	$(CC) $(CFLAGS) tests/net_rudp_fragmentation_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_rudp_fragmentation_tests: build/libheadless.a tests/net_rudp_fragmentation_tests.c | build
+	$(CC) $(CFLAGS) tests/net_rudp_fragmentation_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p012_net_rudp_reliability_boundary_tests: $(SRC) tests/p012_net_rudp_reliability_boundary_tests.c | build
-	$(CC) $(CFLAGS) tests/p012_net_rudp_reliability_boundary_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p012_net_rudp_reliability_boundary_tests: build/libheadless.a tests/p012_net_rudp_reliability_boundary_tests.c | build
+	$(CC) $(CFLAGS) tests/p012_net_rudp_reliability_boundary_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p013_net_rudp_reliability_layer_tests: $(SRC) tests/p013_net_rudp_reliability_layer_tests.c | build
-	$(CC) $(CFLAGS) tests/p013_net_rudp_reliability_layer_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p013_net_rudp_reliability_layer_tests: build/libheadless.a tests/p013_net_rudp_reliability_layer_tests.c | build
+	$(CC) $(CFLAGS) tests/p013_net_rudp_reliability_layer_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p014_net_rudp_reliability_send_layer_tests: $(SRC) tests/p014_net_rudp_reliability_send_layer_tests.c | build
-	$(CC) $(CFLAGS) tests/p014_net_rudp_reliability_send_layer_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p014_net_rudp_reliability_send_layer_tests: build/libheadless.a tests/p014_net_rudp_reliability_send_layer_tests.c | build
+	$(CC) $(CFLAGS) tests/p014_net_rudp_reliability_send_layer_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p015_server_net_inbound_message_tests: $(SRC) tests/p015_server_net_inbound_message_tests.c | build
-	$(CC) $(CFLAGS) tests/p015_server_net_inbound_message_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p015_server_net_inbound_message_tests: build/libheadless.a tests/p015_server_net_inbound_message_tests.c | build
+	$(CC) $(CFLAGS) tests/p015_server_net_inbound_message_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p016_net_repl_input_rot_tests: $(SRC) tests/p016_net_repl_input_rot_tests.c | build
-	$(CC) $(CFLAGS) tests/p016_net_repl_input_rot_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p016_net_repl_input_rot_tests: build/libheadless.a tests/p016_net_repl_input_rot_tests.c | build
+	$(CC) $(CFLAGS) tests/p016_net_repl_input_rot_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p017_math_quat_angle_tests: $(SRC) tests/p017_math_quat_angle_tests.c | build
-	$(CC) $(CFLAGS) tests/p017_math_quat_angle_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p017_math_quat_angle_tests: build/libheadless.a tests/p017_math_quat_angle_tests.c | build
+	$(CC) $(CFLAGS) tests/p017_math_quat_angle_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p018_physics_types_tests: $(SRC) tests/p018_physics_types_tests.c | build
-	$(CC) $(CFLAGS) tests/p018_physics_types_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p018_physics_types_tests: build/libheadless.a tests/p018_physics_types_tests.c | build
+	$(CC) $(CFLAGS) tests/p018_physics_types_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p019_physics_body_tests: $(SRC) tests/p019_physics_body_tests.c | build
-	$(CC) $(CFLAGS) tests/p019_physics_body_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p019_physics_body_tests: build/libheadless.a tests/p019_physics_body_tests.c | build
+	$(CC) $(CFLAGS) tests/p019_physics_body_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p020_physics_collider_tests: $(SRC) tests/p020_physics_collider_tests.c | build
-	$(CC) $(CFLAGS) tests/p020_physics_collider_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p020_physics_collider_tests: build/libheadless.a tests/p020_physics_collider_tests.c | build
+	$(CC) $(CFLAGS) tests/p020_physics_collider_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p021_physics_aabb_tests: $(SRC) tests/p021_physics_aabb_tests.c | build
-	$(CC) $(CFLAGS) tests/p021_physics_aabb_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p021_physics_aabb_tests: build/libheadless.a tests/p021_physics_aabb_tests.c | build
+	$(CC) $(CFLAGS) tests/p021_physics_aabb_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p022_physics_pool_arena_tests: $(SRC) tests/p022_physics_pool_arena_tests.c | build
-	$(CC) $(CFLAGS) tests/p022_physics_pool_arena_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p022_physics_pool_arena_tests: build/libheadless.a tests/p022_physics_pool_arena_tests.c | build
+	$(CC) $(CFLAGS) tests/p022_physics_pool_arena_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p023_physics_manifold_tests: $(SRC) tests/p023_physics_manifold_tests.c | build
-	$(CC) $(CFLAGS) tests/p023_physics_manifold_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p023_physics_manifold_tests: build/libheadless.a tests/p023_physics_manifold_tests.c | build
+	$(CC) $(CFLAGS) tests/p023_physics_manifold_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p024_physics_constraint_tests: $(SRC) tests/p024_physics_constraint_tests.c | build
-	$(CC) $(CFLAGS) tests/p024_physics_constraint_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p024_physics_constraint_tests: build/libheadless.a tests/p024_physics_constraint_tests.c | build
+	$(CC) $(CFLAGS) tests/p024_physics_constraint_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p025_physics_game_state_tests: $(SRC) tests/p025_physics_game_state_tests.c | build
-	$(CC) $(CFLAGS) tests/p025_physics_game_state_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p025_physics_game_state_tests: build/libheadless.a tests/p025_physics_game_state_tests.c | build
+	$(CC) $(CFLAGS) tests/p025_physics_game_state_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p026_physics_compound_collider_tests: $(SRC) tests/p026_physics_compound_collider_tests.c | build
-	$(CC) $(CFLAGS) tests/p026_physics_compound_collider_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p026_physics_compound_collider_tests: build/libheadless.a tests/p026_physics_compound_collider_tests.c | build
+	$(CC) $(CFLAGS) tests/p026_physics_compound_collider_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p027_physics_tier_list_tests: $(SRC) tests/p027_physics_tier_list_tests.c | build
-	$(CC) $(CFLAGS) tests/p027_physics_tier_list_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p027_physics_tier_list_tests: build/libheadless.a tests/p027_physics_tier_list_tests.c | build
+	$(CC) $(CFLAGS) tests/p027_physics_tier_list_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p028_physics_spatial_grid_tests: $(SRC) tests/p028_physics_spatial_grid_tests.c | build
-	$(CC) $(CFLAGS) tests/p028_physics_spatial_grid_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p028_physics_spatial_grid_tests: build/libheadless.a tests/p028_physics_spatial_grid_tests.c | build
+	$(CC) $(CFLAGS) tests/p028_physics_spatial_grid_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p029_physics_manifold_cache_tests: $(SRC) tests/p029_physics_manifold_cache_tests.c | build
-	$(CC) $(CFLAGS) tests/p029_physics_manifold_cache_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p029_physics_manifold_cache_tests: build/libheadless.a tests/p029_physics_manifold_cache_tests.c | build
+	$(CC) $(CFLAGS) tests/p029_physics_manifold_cache_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p030_physics_island_tests: $(SRC) tests/p030_physics_island_tests.c | build
-	$(CC) $(CFLAGS) tests/p030_physics_island_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p030_physics_island_tests: build/libheadless.a tests/p030_physics_island_tests.c | build
+	$(CC) $(CFLAGS) tests/p030_physics_island_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p031_physics_world_tests: $(SRC) tests/p031_physics_world_tests.c | build
-	$(CC) $(CFLAGS) tests/p031_physics_world_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p031_physics_world_tests: build/libheadless.a tests/p031_physics_world_tests.c | build
+	$(CC) $(CFLAGS) tests/p031_physics_world_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p032_physics_phase0_integration_tests: $(SRC) tests/p032_physics_phase0_integration_tests.c | build
-	$(CC) $(CFLAGS) tests/p032_physics_phase0_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p032_physics_phase0_integration_tests: build/libheadless.a tests/p032_physics_phase0_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p032_physics_phase0_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p033_physics_step_plan_tests: $(SRC) tests/p033_physics_step_plan_tests.c | build
-	$(CC) $(CFLAGS) tests/p033_physics_step_plan_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p033_physics_step_plan_tests: build/libheadless.a tests/p033_physics_step_plan_tests.c | build
+	$(CC) $(CFLAGS) tests/p033_physics_step_plan_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p034_physics_tier_classify_tests: $(SRC) tests/p034_physics_tier_classify_tests.c | build
-	$(CC) $(CFLAGS) tests/p034_physics_tier_classify_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p034_physics_tier_classify_tests: build/libheadless.a tests/p034_physics_tier_classify_tests.c | build
+	$(CC) $(CFLAGS) tests/p034_physics_tier_classify_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p035_physics_spatial_update_tests: $(SRC) tests/p035_physics_spatial_update_tests.c | build
-	$(CC) $(CFLAGS) tests/p035_physics_spatial_update_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p035_physics_spatial_update_tests: build/libheadless.a tests/p035_physics_spatial_update_tests.c | build
+	$(CC) $(CFLAGS) tests/p035_physics_spatial_update_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p036_physics_halo_closure_tests: $(SRC) tests/p036_physics_halo_closure_tests.c | build
-	$(CC) $(CFLAGS) tests/p036_physics_halo_closure_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p036_physics_halo_closure_tests: build/libheadless.a tests/p036_physics_halo_closure_tests.c | build
+	$(CC) $(CFLAGS) tests/p036_physics_halo_closure_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p037_physics_aabb_update_tests: $(SRC) tests/p037_physics_aabb_update_tests.c | build
-	$(CC) $(CFLAGS) tests/p037_physics_aabb_update_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p037_physics_aabb_update_tests: build/libheadless.a tests/p037_physics_aabb_update_tests.c | build
+	$(CC) $(CFLAGS) tests/p037_physics_aabb_update_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p038_physics_broadphase_tests: $(SRC) tests/p038_physics_broadphase_tests.c | build
-	$(CC) $(CFLAGS) tests/p038_physics_broadphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p038_physics_broadphase_tests: build/libheadless.a tests/p038_physics_broadphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p038_physics_broadphase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p039_physics_narrowphase_tests: $(SRC) tests/p039_physics_narrowphase_tests.c | build
-	$(CC) $(CFLAGS) tests/p039_physics_narrowphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p039_physics_narrowphase_tests: build/libheadless.a tests/p039_physics_narrowphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p039_physics_narrowphase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p040_physics_manifold_build_tests: $(SRC) tests/p040_physics_manifold_build_tests.c | build
-	$(CC) $(CFLAGS) tests/p040_physics_manifold_build_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p040_physics_manifold_build_tests: build/libheadless.a tests/p040_physics_manifold_build_tests.c | build
+	$(CC) $(CFLAGS) tests/p040_physics_manifold_build_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p041_physics_stabilization_tests: $(SRC) tests/p041_physics_stabilization_tests.c | build
-	$(CC) $(CFLAGS) tests/p041_physics_stabilization_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p041_physics_stabilization_tests: build/libheadless.a tests/p041_physics_stabilization_tests.c | build
+	$(CC) $(CFLAGS) tests/p041_physics_stabilization_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p042_physics_constraint_build_tests: $(SRC) tests/p042_physics_constraint_build_tests.c | build
-	$(CC) $(CFLAGS) tests/p042_physics_constraint_build_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p042_physics_constraint_build_tests: build/libheadless.a tests/p042_physics_constraint_build_tests.c | build
+	$(CC) $(CFLAGS) tests/p042_physics_constraint_build_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p043_physics_island_build_tests: $(SRC) tests/p043_physics_island_build_tests.c | build
-	$(CC) $(CFLAGS) tests/p043_physics_island_build_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p043_physics_island_build_tests: build/libheadless.a tests/p043_physics_island_build_tests.c | build
+	$(CC) $(CFLAGS) tests/p043_physics_island_build_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p044_physics_tgs_solve_tests: $(SRC) tests/p044_physics_tgs_solve_tests.c | build
-	$(CC) $(CFLAGS) tests/p044_physics_tgs_solve_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p044_physics_tgs_solve_tests: build/libheadless.a tests/p044_physics_tgs_solve_tests.c | build
+	$(CC) $(CFLAGS) tests/p044_physics_tgs_solve_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p045_physics_xpbd_solve_tests: $(SRC) tests/p045_physics_xpbd_solve_tests.c | build
-	$(CC) $(CFLAGS) tests/p045_physics_xpbd_solve_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p045_physics_xpbd_solve_tests: build/libheadless.a tests/p045_physics_xpbd_solve_tests.c | build
+	$(CC) $(CFLAGS) tests/p045_physics_xpbd_solve_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p046_physics_solver_transition_tests: $(SRC) tests/p046_physics_solver_transition_tests.c | build
-	$(CC) $(CFLAGS) tests/p046_physics_solver_transition_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p046_physics_solver_transition_tests: build/libheadless.a tests/p046_physics_solver_transition_tests.c | build
+	$(CC) $(CFLAGS) tests/p046_physics_solver_transition_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p047_physics_integrate_tests: $(SRC) tests/p047_physics_integrate_tests.c | build
-	$(CC) $(CFLAGS) tests/p047_physics_integrate_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p047_physics_integrate_tests: build/libheadless.a tests/p047_physics_integrate_tests.c | build
+	$(CC) $(CFLAGS) tests/p047_physics_integrate_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p048_physics_cache_commit_tests: $(SRC) tests/p048_physics_cache_commit_tests.c | build
-	$(CC) $(CFLAGS) tests/p048_physics_cache_commit_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p048_physics_cache_commit_tests: build/libheadless.a tests/p048_physics_cache_commit_tests.c | build
+	$(CC) $(CFLAGS) tests/p048_physics_cache_commit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p049_physics_tick_tests: $(SRC) tests/p049_physics_tick_tests.c | build
-	$(CC) $(CFLAGS) tests/p049_physics_tick_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p049_physics_tick_tests: build/libheadless.a tests/p049_physics_tick_tests.c | build
+	$(CC) $(CFLAGS) tests/p049_physics_tick_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p050_physics_impact_event_tests: $(SRC) tests/p050_physics_impact_event_tests.c | build
-	$(CC) $(CFLAGS) tests/p050_physics_impact_event_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p050_physics_impact_event_tests: build/libheadless.a tests/p050_physics_impact_event_tests.c | build
+	$(CC) $(CFLAGS) tests/p050_physics_impact_event_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p051_physics_snapshot_tests: $(SRC) tests/p051_physics_snapshot_tests.c | build
-	$(CC) $(CFLAGS) tests/p051_physics_snapshot_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p051_physics_snapshot_tests: build/libheadless.a tests/p051_physics_snapshot_tests.c | build
+	$(CC) $(CFLAGS) tests/p051_physics_snapshot_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p052_physics_prediction_tests: $(SRC) tests/p052_physics_prediction_tests.c | build
-	$(CC) $(CFLAGS) tests/p052_physics_prediction_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p052_physics_prediction_tests: build/libheadless.a tests/p052_physics_prediction_tests.c | build
+	$(CC) $(CFLAGS) tests/p052_physics_prediction_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p053_physics_phase1_integration_tests: $(SRC) tests/p053_physics_phase1_integration_tests.c | build
-	$(CC) $(CFLAGS) tests/p053_physics_phase1_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p053_physics_phase1_integration_tests: build/libheadless.a tests/p053_physics_phase1_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p053_physics_phase1_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p054_physics_sphere_box_tests: $(SRC) tests/p054_physics_sphere_box_tests.c | build
-	$(CC) $(CFLAGS) tests/p054_physics_sphere_box_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p054_physics_sphere_box_tests: build/libheadless.a tests/p054_physics_sphere_box_tests.c | build
+	$(CC) $(CFLAGS) tests/p054_physics_sphere_box_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p055_physics_sphere_capsule_tests: $(SRC) tests/p055_physics_sphere_capsule_tests.c | build
-	$(CC) $(CFLAGS) tests/p055_physics_sphere_capsule_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p055_physics_sphere_capsule_tests: build/libheadless.a tests/p055_physics_sphere_capsule_tests.c | build
+	$(CC) $(CFLAGS) tests/p055_physics_sphere_capsule_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p056_physics_box_box_tests: $(SRC) tests/p056_physics_box_box_tests.c | build
-	$(CC) $(CFLAGS) tests/p056_physics_box_box_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p056_physics_box_box_tests: build/libheadless.a tests/p056_physics_box_box_tests.c | build
+	$(CC) $(CFLAGS) tests/p056_physics_box_box_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p057_physics_box_capsule_tests: $(SRC) tests/p057_physics_box_capsule_tests.c | build
-	$(CC) $(CFLAGS) tests/p057_physics_box_capsule_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p057_physics_box_capsule_tests: build/libheadless.a tests/p057_physics_box_capsule_tests.c | build
+	$(CC) $(CFLAGS) tests/p057_physics_box_capsule_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p058_physics_capsule_capsule_tests: $(SRC) tests/p058_physics_capsule_capsule_tests.c | build
-	$(CC) $(CFLAGS) tests/p058_physics_capsule_capsule_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p058_physics_capsule_capsule_tests: build/libheadless.a tests/p058_physics_capsule_capsule_tests.c | build
+	$(CC) $(CFLAGS) tests/p058_physics_capsule_capsule_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p059_physics_phase2_integration_tests: $(SRC) tests/p059_physics_phase2_integration_tests.c | build
-	$(CC) $(CFLAGS) tests/p059_physics_phase2_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p059_physics_phase2_integration_tests: build/libheadless.a tests/p059_physics_phase2_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p059_physics_phase2_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p060_physics_job_infra_tests: $(SRC) tests/p060_physics_job_infra_tests.c | build
-	$(CC) $(CFLAGS) tests/p060_physics_job_infra_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p060_physics_job_infra_tests: build/libheadless.a tests/p060_physics_job_infra_tests.c | build
+	$(CC) $(CFLAGS) tests/p060_physics_job_infra_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p061_physics_par_tier_tests: $(SRC) tests/p061_physics_par_tier_tests.c | build
-	$(CC) $(CFLAGS) tests/p061_physics_par_tier_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p061_physics_par_tier_tests: build/libheadless.a tests/p061_physics_par_tier_tests.c | build
+	$(CC) $(CFLAGS) tests/p061_physics_par_tier_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p062_physics_par_spatial_tests: $(SRC) tests/p062_physics_par_spatial_tests.c | build
-	$(CC) $(CFLAGS) tests/p062_physics_par_spatial_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p062_physics_par_spatial_tests: build/libheadless.a tests/p062_physics_par_spatial_tests.c | build
+	$(CC) $(CFLAGS) tests/p062_physics_par_spatial_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p063_physics_par_broadphase_tests: $(SRC) tests/p063_physics_par_broadphase_tests.c | build
-	$(CC) $(CFLAGS) tests/p063_physics_par_broadphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p063_physics_par_broadphase_tests: build/libheadless.a tests/p063_physics_par_broadphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p063_physics_par_broadphase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p064_physics_par_narrowphase_tests: $(SRC) tests/p064_physics_par_narrowphase_tests.c | build
-	$(CC) $(CFLAGS) tests/p064_physics_par_narrowphase_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p064_physics_par_narrowphase_tests: build/libheadless.a tests/p064_physics_par_narrowphase_tests.c | build
+	$(CC) $(CFLAGS) tests/p064_physics_par_narrowphase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p065_physics_par_manifold_tests: $(SRC) tests/p065_physics_par_manifold_tests.c | build
-	$(CC) $(CFLAGS) tests/p065_physics_par_manifold_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p065_physics_par_manifold_tests: build/libheadless.a tests/p065_physics_par_manifold_tests.c | build
+	$(CC) $(CFLAGS) tests/p065_physics_par_manifold_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p066_physics_par_stabilization_tests: $(SRC) tests/p066_physics_par_stabilization_tests.c | build
-	$(CC) $(CFLAGS) tests/p066_physics_par_stabilization_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p066_physics_par_stabilization_tests: build/libheadless.a tests/p066_physics_par_stabilization_tests.c | build
+	$(CC) $(CFLAGS) tests/p066_physics_par_stabilization_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p067_physics_par_constraint_tests: $(SRC) tests/p067_physics_par_constraint_tests.c | build
-	$(CC) $(CFLAGS) tests/p067_physics_par_constraint_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p067_physics_par_constraint_tests: build/libheadless.a tests/p067_physics_par_constraint_tests.c | build
+	$(CC) $(CFLAGS) tests/p067_physics_par_constraint_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p068_physics_par_tgs_tests: $(SRC) tests/p068_physics_par_tgs_tests.c | build
-	$(CC) $(CFLAGS) tests/p068_physics_par_tgs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p068_physics_par_tgs_tests: build/libheadless.a tests/p068_physics_par_tgs_tests.c | build
+	$(CC) $(CFLAGS) tests/p068_physics_par_tgs_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p069_physics_par_xpbd_tests: $(SRC) tests/p069_physics_par_xpbd_tests.c | build
-	$(CC) $(CFLAGS) tests/p069_physics_par_xpbd_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p069_physics_par_xpbd_tests: build/libheadless.a tests/p069_physics_par_xpbd_tests.c | build
+	$(CC) $(CFLAGS) tests/p069_physics_par_xpbd_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p070_physics_par_integrate_tests: $(SRC) tests/p070_physics_par_integrate_tests.c | build
-	$(CC) $(CFLAGS) tests/p070_physics_par_integrate_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p070_physics_par_integrate_tests: build/libheadless.a tests/p070_physics_par_integrate_tests.c | build
+	$(CC) $(CFLAGS) tests/p070_physics_par_integrate_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p071_physics_par_tick_tests: $(SRC) tests/p071_physics_par_tick_tests.c | build
-	$(CC) $(CFLAGS) tests/p071_physics_par_tick_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p071_physics_par_tick_tests: build/libheadless.a tests/p071_physics_par_tick_tests.c | build
+	$(CC) $(CFLAGS) tests/p071_physics_par_tick_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p072_physics_phase3_integration_tests: $(SRC) tests/p072_physics_phase3_integration_tests.c | build
-	$(CC) $(CFLAGS) tests/p072_physics_phase3_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p072_physics_phase3_integration_tests: build/libheadless.a tests/p072_physics_phase3_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p072_physics_phase3_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p073_physics_tier_distance_tests: $(SRC) tests/p073_physics_tier_distance_tests.c | build
-	$(CC) $(CFLAGS) tests/p073_physics_tier_distance_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p073_physics_tier_distance_tests: build/libheadless.a tests/p073_physics_tier_distance_tests.c | build
+	$(CC) $(CFLAGS) tests/p073_physics_tier_distance_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p074_physics_tier_params_tests: $(SRC) tests/p074_physics_tier_params_tests.c | build
-	$(CC) $(CFLAGS) tests/p074_physics_tier_params_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p074_physics_tier_params_tests: build/libheadless.a tests/p074_physics_tier_params_tests.c | build
+	$(CC) $(CFLAGS) tests/p074_physics_tier_params_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p075_physics_solver_transition_tests: $(SRC) tests/p075_physics_solver_transition_tests.c | build
-	$(CC) $(CFLAGS) tests/p075_physics_solver_transition_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p075_physics_solver_transition_tests: build/libheadless.a tests/p075_physics_solver_transition_tests.c | build
+	$(CC) $(CFLAGS) tests/p075_physics_solver_transition_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p076_physics_tier_stabilization_tests: $(SRC) tests/p076_physics_tier_stabilization_tests.c | build
-	$(CC) $(CFLAGS) tests/p076_physics_tier_stabilization_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p076_physics_tier_stabilization_tests: build/libheadless.a tests/p076_physics_tier_stabilization_tests.c | build
+	$(CC) $(CFLAGS) tests/p076_physics_tier_stabilization_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p077_physics_amortized_t4_tests: $(SRC) tests/p077_physics_amortized_t4_tests.c | build
-	$(CC) $(CFLAGS) tests/p077_physics_amortized_t4_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p077_physics_amortized_t4_tests: build/libheadless.a tests/p077_physics_amortized_t4_tests.c | build
+	$(CC) $(CFLAGS) tests/p077_physics_amortized_t4_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p079_physics_sphere_simplify_tests: $(SRC) tests/p079_physics_sphere_simplify_tests.c | build
-	$(CC) $(CFLAGS) tests/p079_physics_sphere_simplify_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p079_physics_sphere_simplify_tests: build/libheadless.a tests/p079_physics_sphere_simplify_tests.c | build
+	$(CC) $(CFLAGS) tests/p079_physics_sphere_simplify_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p078_physics_occlusion_demotion_tests: $(SRC) tests/p078_physics_occlusion_demotion_tests.c | build
-	$(CC) $(CFLAGS) tests/p078_physics_occlusion_demotion_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p078_physics_occlusion_demotion_tests: build/libheadless.a tests/p078_physics_occlusion_demotion_tests.c | build
+	$(CC) $(CFLAGS) tests/p078_physics_occlusion_demotion_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p080_physics_phase4_integration_tests: $(SRC) tests/p080_physics_phase4_integration_tests.c | build
-	$(CC) $(CFLAGS) tests/p080_physics_phase4_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p080_physics_phase4_integration_tests: build/libheadless.a tests/p080_physics_phase4_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p080_physics_phase4_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p082_demo_smoke_tests: $(SRC) tests/p082_demo_smoke_tests.c | build
-	$(CC) $(CFLAGS) tests/p082_demo_smoke_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p082_demo_smoke_tests: build/libheadless.a tests/p082_demo_smoke_tests.c | build
+	$(CC) $(CFLAGS) tests/p082_demo_smoke_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p083_physics_position_projection_tests: $(SRC) tests/p083_physics_position_projection_tests.c | build
-	$(CC) $(CFLAGS) tests/p083_physics_position_projection_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p083_physics_position_projection_tests: build/libheadless.a tests/p083_physics_position_projection_tests.c | build
+	$(CC) $(CFLAGS) tests/p083_physics_position_projection_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_udp_socket_tests: $(SRC) tests/p007_net_udp_socket_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_integration_server_tests: $(SRC) tests/p007_net_integration_server_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_integration_server_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_integration_server_tests: build/libheadless.a tests/p007_net_integration_server_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_integration_server_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_integration_client_tests: $(SRC) tests/p007_net_integration_client_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_integration_client_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_integration_client_tests: build/libheadless.a tests/p007_net_integration_client_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_integration_client_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_client_rx_tests: $(SRC) tests/p007_net_client_rx_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_client_rx_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_client_rx_tests: build/libheadless.a tests/p007_net_client_rx_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_client_rx_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_client_rx_udp_topic_tests: $(SRC) tests/p007_net_client_rx_udp_topic_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_client_rx_udp_topic_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_client_rx_udp_topic_tests: build/libheadless.a tests/p007_net_client_rx_udp_topic_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_client_rx_udp_topic_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_topic_dispatch_tests: $(SRC) tests/p007_net_topic_dispatch_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_topic_dispatch_tests: build/libheadless.a tests/p007_net_topic_dispatch_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_pose_interpolator_tests: $(SRC) tests/p008_pose_interpolator_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_pose_interpolator_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_pose_interpolator_tests: build/libheadless.a tests/p008_pose_interpolator_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_pose_interpolator_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_topic_dispatch_benchmark: $(SRC) tests/p007_net_topic_dispatch_benchmark.c | build
-	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_benchmark.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_topic_dispatch_benchmark: build/libheadless.a tests/p007_net_topic_dispatch_benchmark.c | build
+	$(CC) $(CFLAGS) tests/p007_net_topic_dispatch_benchmark.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_stream_api_tests: $(SRC) tests/p007_net_stream_api_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_stream_api_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_stream_api_tests: build/libheadless.a tests/p007_net_stream_api_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_stream_api_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_stream_channel_topic_tests: $(SRC) tests/p007_net_stream_channel_topic_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_stream_channel_topic_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_stream_channel_topic_tests: build/libheadless.a tests/p007_net_stream_channel_topic_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_stream_channel_topic_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p007_net_stream_perf_benchmark: $(SRC) tests/p007_net_stream_perf_benchmark.c | build
-	$(CC) $(CFLAGS) tests/p007_net_stream_perf_benchmark.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_stream_perf_benchmark: build/libheadless.a tests/p007_net_stream_perf_benchmark.c | build
+	$(CC) $(CFLAGS) tests/p007_net_stream_perf_benchmark.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_server_client_fiber_stream_tests: $(SRC) tests/p008_server_client_fiber_stream_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_server_client_fiber_stream_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_server_client_fiber_stream_tests: build/libheadless.a tests/p008_server_client_fiber_stream_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_client_fiber_stream_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_server_net_runtime_fiber_tests: $(SRC) tests/p008_server_net_runtime_fiber_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_server_net_runtime_fiber_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_server_net_runtime_fiber_tests: build/libheadless.a tests/p008_server_net_runtime_fiber_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_net_runtime_fiber_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_server_entity_net_pump_tests: $(SRC) tests/p008_server_entity_net_pump_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_server_entity_net_pump_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_server_entity_net_pump_tests: build/libheadless.a tests/p008_server_entity_net_pump_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_entity_net_pump_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_net_repl_server: $(SRC) tests/p008_net_repl_server.c | build
-	$(CC) $(CFLAGS) tests/p008_net_repl_server.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_net_repl_server: build/libheadless.a tests/p008_net_repl_server.c | build
+	$(CC) $(CFLAGS) tests/p008_net_repl_server.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_net_repl_client: $(SRC) tests/p008_net_repl_client.c | build
-	$(CC) $(CFLAGS) tests/p008_net_repl_client.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_net_repl_client: build/libheadless.a tests/p008_net_repl_client.c | build
+	$(CC) $(CFLAGS) tests/p008_net_repl_client.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_net_multi_client_server_integration_tests: $(SRC) tests/p008_net_multi_client_server_integration_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_net_multi_client_server_integration_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_net_multi_client_server_integration_tests: build/libheadless.a tests/p008_net_multi_client_server_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_multi_client_server_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_net_perf_server_tests: $(SRC) tests/p008_net_perf_server_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_net_perf_server_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_net_perf_server_tests: build/libheadless.a tests/p008_net_perf_server_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_perf_server_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_net_perf_client_tests: $(SRC) tests/p008_net_perf_client_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_net_perf_client_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_net_perf_client_tests: build/libheadless.a tests/p008_net_perf_client_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_perf_client_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p008_renderer_client: $(SRC) tests/p008_renderer_client.c | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p008_renderer_client.c $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p008_renderer_client: build/liball.a tests/p008_renderer_client.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p008_renderer_client.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p008_server_compute_jobs_tests: $(SRC) tests/p008_server_compute_jobs_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_server_compute_jobs_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_server_compute_jobs_tests: build/libheadless.a tests/p008_server_compute_jobs_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_compute_jobs_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p009_server_state_update_queue_tests: $(SRC) tests/p009_server_state_update_queue_tests.c | build
-	$(CC) $(CFLAGS) tests/p009_server_state_update_queue_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p009_server_state_update_queue_tests: build/libheadless.a tests/p009_server_state_update_queue_tests.c | build
+	$(CC) $(CFLAGS) tests/p009_server_state_update_queue_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p009_net_topic_channel_ring_tests: $(SRC) tests/p009_net_topic_channel_ring_tests.c | build
-	$(CC) $(CFLAGS) tests/p009_net_topic_channel_ring_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p009_net_topic_channel_ring_tests: build/libheadless.a tests/p009_net_topic_channel_ring_tests.c | build
+	$(CC) $(CFLAGS) tests/p009_net_topic_channel_ring_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p010_tracy_alloc_override_tests: $(SRC) tests/p010_tracy_alloc_override_tests.c | build
-	$(CC) $(CFLAGS) tests/p010_tracy_alloc_override_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p010_tracy_alloc_override_tests: build/libheadless.a tests/p010_tracy_alloc_override_tests.c | build
+	$(CC) $(CFLAGS) tests/p010_tracy_alloc_override_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p011_renderer_correction_debug_lines_tests: $(SRC) $(RENDERER_DEBUG_LINES_SRC) tests/p011_renderer_correction_debug_lines_tests.c | build
-	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c $(SRC_HEADLESS) $(RENDERER_DEBUG_LINES_SRC) -o $@ $(LDFLAGS)
+build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
+	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
 # RED tests (may not compile until quantization module exists)
-build/p007_net_quantization_determinism_tests: $(SRC) tests/p007_net_quantization_determinism_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_quantization_determinism_tests: build/libheadless.a tests/p007_net_quantization_determinism_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_quantization_determinism_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 .PHONY: test_red
 
 # RED tests (may not compile until replication protocol exists)
-build/p008_net_replication_protocol_tests: $(SRC) tests/p008_net_replication_protocol_tests.c | build
-	$(CC) $(CFLAGS) tests/p008_net_replication_protocol_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p008_net_replication_protocol_tests: build/libheadless.a tests/p008_net_replication_protocol_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_replication_protocol_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 .PHONY: test_red_p008
 
 # Note: this test currently depends on reliable ordered channel implementation.
-build/p007_net_reliable_ordered_tests: $(SRC) tests/p007_net_reliable_ordered_tests.c | build
-	$(CC) $(CFLAGS) tests/p007_net_reliable_ordered_tests.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/p007_net_reliable_ordered_tests: build/libheadless.a tests/p007_net_reliable_ordered_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_reliable_ordered_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p004_tests: $(SRC) tests/p004_renderer_gl_loader_tests.c | build
-	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c $(SRC_ALL) -o $@ $(LDFLAGS)
+build/p004_tests: build/liball.a tests/p004_renderer_gl_loader_tests.c | build
+	$(CC) $(CFLAGS) tests/p004_renderer_gl_loader_tests.c build/liball.a -o $@ $(LDFLAGS)
 
-build/p004_shader_tests: $(SRC) tests/p004_renderer_shader_tests.c | build
+build/p004_shader_tests: build/libheadless.a tests/p004_renderer_shader_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_shader_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p004_buffer_tests: $(SRC) tests/p004_renderer_buffer_tests.c | build
+build/p004_buffer_tests: build/libheadless.a tests/p004_renderer_buffer_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_buffer_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p004_uniform_tests: $(SRC) tests/p004_renderer_uniform_tests.c | build
+build/p004_uniform_tests: build/libheadless.a tests/p004_renderer_uniform_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_uniform_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p004_palette_tests: $(SRC) tests/p004_renderer_palette_tests.c | build
+build/p004_palette_tests: build/libheadless.a tests/p004_renderer_palette_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_palette_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p004_pipeline_tests: $(SRC) tests/p004_renderer_pipeline_tests.c | build
-	$(CC) $(CFLAGS) tests/p004_renderer_pipeline_tests.c $(SRC_ALL) -o $@ $(LDFLAGS)
+build/p004_pipeline_tests: build/liball.a tests/p004_renderer_pipeline_tests.c | build
+	$(CC) $(CFLAGS) tests/p004_renderer_pipeline_tests.c build/liball.a -o $@ $(LDFLAGS)
 
-build/p004_skinning_tests: $(SRC) tests/p004_renderer_skinning_tests.c | build
+build/p004_skinning_tests: build/libheadless.a tests/p004_renderer_skinning_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_skinning_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p004_ecs_skinning_tests: $(SRC) tests/p004_renderer_ecs_skinning_tests.c | build
+build/p004_ecs_skinning_tests: build/libheadless.a tests/p004_renderer_ecs_skinning_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_ecs_skinning_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p004_skinning_alloc_tests: $(SRC) tests/p004_renderer_skinning_alloc_tests.c | build
-	$(CC) $(CFLAGS) tests/p004_renderer_skinning_alloc_tests.c $(SRC_ALL) -o $@ $(LDFLAGS)
+build/p004_skinning_alloc_tests: build/liball.a tests/p004_renderer_skinning_alloc_tests.c | build
+	$(CC) $(CFLAGS) tests/p004_renderer_skinning_alloc_tests.c build/liball.a -o $@ $(LDFLAGS)
 
-build/p004_pipeline_resource_tests: $(SRC) tests/p004_renderer_pipeline_resource_tests.c | build
+build/p004_pipeline_resource_tests: build/libheadless.a tests/p004_renderer_pipeline_resource_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pipeline_resource_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
-build/p004_pipeline_graph_tests: $(SRC) tests/p004_renderer_pipeline_graph_tests.c | build
+build/p004_pipeline_graph_tests: build/libheadless.a tests/p004_renderer_pipeline_graph_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pipeline_graph_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
@@ -760,11 +799,11 @@ p008_renderer_client:
 # ── Demo binaries ────────────────────────────────────────────────
 .PHONY: demo demo_server demo_client
 
-build/demo_server: $(SRC) src/demo/demo_server.c | build
-	$(CC) $(CFLAGS) src/demo/demo_server.c $(SRC_HEADLESS) -o $@ $(LDFLAGS)
+build/demo_server: build/libheadless.a src/demo/demo_server.c | build
+	$(CC) $(CFLAGS) src/demo/demo_server.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/demo_client: $(SRC) src/demo/demo_client.c | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) src/demo/demo_client.c $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/demo_client: build/liball.a src/demo/demo_client.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) src/demo/demo_client.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 demo: build/demo_server build/demo_client
 	@echo "Built: build/demo_server build/demo_client"
@@ -772,4 +811,5 @@ demo: build/demo_server build/demo_client
 	@echo "Run client:  ./build/demo_client 127.0.0.1 40080"
 
 clean:
-	$(RM) $(BIN) build/demo_server build/demo_client
+	$(RM) $(BIN) build/demo_server build/demo_client build/libheadless.a build/liball.a
+	$(RM) -r build/obj

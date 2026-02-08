@@ -87,8 +87,10 @@ static int test_dispatch_single_batch(void) {
     uint32_t num = phys_dispatch_stage(&ctx, PHYS_STAGE_BROADPHASE,
                                        count_job, &shared_counter,
                                        10, 10, batches);
-    ASSERT_EQ_UINT(1, num);
+    /* Single batch runs inline (no fiber dispatch), returns 0. */
+    ASSERT_EQ_UINT(0, num);
 
+    /* Wait is a no-op since work ran inline, but calling it must not hang. */
     phys_wait_stage(&ctx, PHYS_STAGE_BROADPHASE);
     ASSERT_EQ_UINT(10, atomic_load(&shared_counter));
 
@@ -214,11 +216,12 @@ static int test_dispatch_names_tracy(void) {
     atomic_uint dummy = 0;
     phys_job_batch_t batches[1];
 
-    /* Dispatch with a named stage — verifies no crash from debug_name path. */
+    /* Dispatch with a named stage — verifies no crash from debug_name path.
+       Single batch runs inline, returning 0. */
     uint32_t num = phys_dispatch_stage(&ctx, PHYS_STAGE_STEP_PLAN,
                                        count_job, &dummy,
                                        1, 1, batches);
-    ASSERT_EQ_UINT(1, num);
+    ASSERT_EQ_UINT(0, num);
     phys_wait_stage(&ctx, PHYS_STAGE_STEP_PLAN);
 
     phys_job_context_destroy(&ctx);

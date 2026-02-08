@@ -54,6 +54,14 @@ void job_system_wake_waiters_locked(job_system_t *sys, job_counter_t *counter) {
     }
 }
 
+static void counter_sync_zero_(job_counter_t *counter) {
+    /* Synchronize with the final decrement-to-zero path, which may still
+       be detaching waiters under counter->lock even after value hits 0.
+       This avoids reuse of counters racing the wakeup. */
+    job_spinlock_lock(&counter->lock);
+    job_spinlock_unlock(&counter->lock);
+}
+
 job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) {
     if (!counter) {
         return JOB_WAIT_INVALID;
@@ -61,11 +69,13 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
 
     for (uint32_t i = 0; i < spin_count; ++i) {
         if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
+            counter_sync_zero_(counter);
             return JOB_WAIT_OK;
         }
     }
 
     if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
+        counter_sync_zero_(counter);
         return JOB_WAIT_OK;
     }
 
@@ -74,12 +84,30 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
         while (atomic_load_explicit(&counter->value, memory_order_acquire) != 0) {
             sched_yield();
         }
-        /* Synchronize with the final decrement-to-zero path, which may still
-           be detaching waiters under counter->lock even after value hits 0.
-           This avoids reuse of stack-allocated counters racing the wakeup. */
-        job_spinlock_lock(&counter->lock);
-        job_spinlock_unlock(&counter->lock);
+        counter_sync_zero_(counter);
         return JOB_WAIT_OK;
+    }
+
+    /* Work-assist: before parking, try running queued entries inline.
+       The job we're waiting for may be in our local deque; processing it
+       directly avoids a costly park/wake round-trip and prevents lost-wakeup
+       races with the counter waiter state machine. */
+    if (g_current_system) {
+        for (uint32_t assists = 0; assists < spin_count; ++assists) {
+            if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
+                counter_sync_zero_(counter);
+                return JOB_WAIT_OK;
+            }
+            struct job_entry entry;
+            if (job_system_pop_next(g_current_system, &entry) == 0) {
+                run_entry(g_current_system, &entry, g_scheduler_context);
+            }
+        }
+        /* Re-check after work-assist phase. */
+        if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
+            counter_sync_zero_(counter);
+            return JOB_WAIT_OK;
+        }
     }
 
     job_spinlock_lock(&counter->lock);
@@ -96,6 +124,8 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
         return JOB_WAIT_INVALID;
     }
     atomic_store_explicit(&fiber->waiting, 1, memory_order_release);
+    job_instrument_event("wait_counter:park", fiber->id, fiber->id, g_worker_id,
+                         __FILE__, __LINE__);
     node->fiber = fiber;
     node->next = counter->waiters;
     counter->waiters = node;
@@ -124,6 +154,8 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
         TracyCZoneName(zone, zone_name, strlen(zone_name));
         fiber->zone = zone;
     #endif
+    job_instrument_event("wait_counter:resume", fiber->id, fiber->id, g_worker_id,
+                         __FILE__, __LINE__);
     for (;;) {
         if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
             break;
@@ -137,6 +169,7 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
             run_entry(g_current_system, &entry, g_scheduler_context);
         }
     }
+    counter_sync_zero_(counter);
     return JOB_WAIT_OK;
 }
 

@@ -9,6 +9,9 @@
 
 #include "ferrum/physics/phys_jobs.h"
 
+#include "ferrum/job/instrumentation.h"
+#include "ferrum/job/system.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -29,6 +32,63 @@ static const char *stage_names[PHYS_STAGE_COUNT] = {
     "phys:xpbd_solve",
     "phys:integrate",
     "phys:cache_commit",
+};
+
+/* Job-system instrumentation event names.
+   Using pre-baked strings avoids allocations and gives us a clear "last stage"
+   breadcrumb when the physics tick appears to freeze. */
+static const char *stage_dispatch_ev[PHYS_STAGE_COUNT] = {
+    "phys_dispatch:step_plan",
+    "phys_dispatch:tier_classify",
+    "phys_dispatch:spatial_update",
+    "phys_dispatch:halo_closure",
+    "phys_dispatch:aabb_update",
+    "phys_dispatch:broadphase",
+    "phys_dispatch:narrowphase",
+    "phys_dispatch:manifold_build",
+    "phys_dispatch:stabilization",
+    "phys_dispatch:constraint_build",
+    "phys_dispatch:island_build",
+    "phys_dispatch:tgs_solve",
+    "phys_dispatch:xpbd_solve",
+    "phys_dispatch:integrate",
+    "phys_dispatch:cache_commit",
+};
+
+static const char *stage_wait_begin_ev[PHYS_STAGE_COUNT] = {
+    "phys_wait_begin:step_plan",
+    "phys_wait_begin:tier_classify",
+    "phys_wait_begin:spatial_update",
+    "phys_wait_begin:halo_closure",
+    "phys_wait_begin:aabb_update",
+    "phys_wait_begin:broadphase",
+    "phys_wait_begin:narrowphase",
+    "phys_wait_begin:manifold_build",
+    "phys_wait_begin:stabilization",
+    "phys_wait_begin:constraint_build",
+    "phys_wait_begin:island_build",
+    "phys_wait_begin:tgs_solve",
+    "phys_wait_begin:xpbd_solve",
+    "phys_wait_begin:integrate",
+    "phys_wait_begin:cache_commit",
+};
+
+static const char *stage_wait_end_ev[PHYS_STAGE_COUNT] = {
+    "phys_wait_end:step_plan",
+    "phys_wait_end:tier_classify",
+    "phys_wait_end:spatial_update",
+    "phys_wait_end:halo_closure",
+    "phys_wait_end:aabb_update",
+    "phys_wait_end:broadphase",
+    "phys_wait_end:narrowphase",
+    "phys_wait_end:manifold_build",
+    "phys_wait_end:stabilization",
+    "phys_wait_end:constraint_build",
+    "phys_wait_end:island_build",
+    "phys_wait_end:tgs_solve",
+    "phys_wait_end:xpbd_solve",
+    "phys_wait_end:integrate",
+    "phys_wait_end:cache_commit",
 };
 
 /* ── Public API (4 non-static functions) ────────────────────────── */
@@ -67,6 +127,18 @@ uint32_t phys_dispatch_stage(phys_job_context_t *ctx,
     /* Number of batches: ceil(total_items / batch_size). */
     uint32_t num_jobs = (total_items + batch_size - 1) / batch_size;
 
+    /* Fast path: single batch — run inline to avoid dispatch/wait overhead
+       and eliminate any fiber-scheduling races for the trivial case. */
+    if (num_jobs == 1) {
+        batches[0].user_args = user_args;
+        batches[0].start     = 0;
+        batches[0].count     = total_items;
+        fn(&batches[0]);
+        return 0; /* Return 0 so caller knows no wait is needed. */
+    }
+
+    job_instrument_event(stage_dispatch_ev[stage], 0, 0, job_current_worker_id(), __FILE__, __LINE__);
+
     /* Reset the counter for this stage.  Initialize to 0 because
        job_dispatch_named() auto-increments the counter for each job. */
     job_counter_destroy(&ctx->counters[stage]);
@@ -90,5 +162,7 @@ uint32_t phys_dispatch_stage(phys_job_context_t *ctx,
 }
 
 void phys_wait_stage(phys_job_context_t *ctx, phys_stage_id_t stage) {
+    job_instrument_event(stage_wait_begin_ev[stage], 0, 0, job_current_worker_id(), __FILE__, __LINE__);
     job_wait_counter(&ctx->counters[stage], 128);
+    job_instrument_event(stage_wait_end_ev[stage], 0, 0, job_current_worker_id(), __FILE__, __LINE__);
 }

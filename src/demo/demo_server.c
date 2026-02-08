@@ -203,6 +203,13 @@ static void push_reliable_(fr_server_net_runtime_t *rt,
  *  as body count grows. */
 #define DEMO_SEND_BUDGET_PER_TICK 256u
 
+/** Maximum number of BODY_SPAWN messages sent per tick per client.
+ *
+ * Newly-joined clients may otherwise miss already-sleeping bodies entirely
+ * (they won't enter the "awake" ranked list), resulting in a connected
+ * client that sees an empty world. */
+#define DEMO_SPAWN_BUDGET_PER_TICK 64u
+
 /** Entry used by broadcast_body_states_ to collect sendable bodies. */
 struct body_rank_ {
     uint32_t index;
@@ -477,6 +484,56 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         }
 
         uint8_t *known = sw->body_known[ci];
+
+        /* Ensure newly-joined clients eventually see *all* bodies, even if
+         * they are already sleeping (and thus won't be present in ranked[]). */
+        uint32_t spawn_sent = 0u;
+        for (uint32_t bi = 0u; bi < capacity && spawn_sent < DEMO_SPAWN_BUDGET_PER_TICK; ++bi) {
+            if (bi == DEMO_GROUND_BODY) {
+                continue;
+            }
+            if (!phys_body_pool_is_active(&sw->physics.body_pool, bi)) {
+                continue;
+            }
+            if (bk_test_(known, bi)) {
+                continue;
+            }
+
+            const phys_body_t *b = phys_world_get_body(&sw->physics, bi);
+            if (!b) {
+                continue;
+            }
+            if (phys_body_is_static(b) && !phys_body_is_kinematic(b)) {
+                continue;
+            }
+
+            net_repl_body_spawn_t sp;
+            memset(&sp, 0, sizeof(sp));
+            sp.body_id    = (uint16_t)bi;
+            sp.flags      = (uint8_t)b->flags;
+            sp.shape_type = sw->body_shape_type[bi];
+            sp.color_seed = sw->body_color_seed[bi];
+
+            sp.pos_mm.x_mm = (int32_t)(b->position.x * 1000.0f);
+            sp.pos_mm.y_mm = (int32_t)(b->position.y * 1000.0f);
+            sp.pos_mm.z_mm = (int32_t)(b->position.z * 1000.0f);
+
+            sp.rot_x = b->orientation.x;
+            sp.rot_y = b->orientation.y;
+            sp.rot_z = b->orientation.z;
+            sp.rot_w = b->orientation.w;
+
+            read_half_mm_(&sw->physics, bi,
+                          &sp.half_x_mm, &sp.half_y_mm, &sp.half_z_mm);
+
+            uint8_t payload[NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];
+            if (net_repl_body_spawn_encode(&sp, payload, sizeof(payload)) == NET_REPL_OK) {
+                push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_SPAWN,
+                               payload, sizeof(payload));
+                bk_set_(known, bi);
+                spawn_sent++;
+            }
+        }
 
         for (uint32_t ri = 0u; ri < send_count; ++ri) {
             const uint32_t bi = ranked[ri].index;
@@ -941,8 +998,18 @@ int main(int argc, char **argv) {
             if (next_status == 0u) { next_status = now + 1000u; }
             if (now >= next_status) {
                 uint32_t body_count = phys_world_body_count(&sw.physics);
+                /* Show first dynamic body position for debugging. */
+                const phys_body_t *dbg_b = NULL;
+                uint32_t dbg_idx = 0;
+                for (uint32_t di = 2; di < sw.physics.body_pool.capacity; ++di) {
+                    if (!phys_body_pool_is_active(&sw.physics.body_pool, di)) continue;
+                    const phys_body_t *tb = phys_world_get_body(&sw.physics, di);
+                    if (tb && !phys_body_is_static(tb) && !phys_body_is_kinematic(tb)) {
+                        dbg_b = tb; dbg_idx = di; break;
+                    }
+                }
                 fprintf(stderr, "tick %lu: %u bodies, %u clients  "
-                        "rx=%lu tx=%lu\n",
+                        "rx=%lu tx=%lu",
                         (unsigned long)phys_tick_runner_tick_id(
                             &sw.tick_runner),
                         (unsigned)body_count,
@@ -951,6 +1018,19 @@ int main(int argc, char **argv) {
                                                            memory_order_relaxed),
                         (unsigned long)atomic_load_explicit(&io.packets_sent,
                                                            memory_order_relaxed));
+                if (dbg_b) {
+                    fprintf(stderr, "  b%u=(%.2f,%.2f,%.2f v=%.2f,%.2f,%.2f t%u%s)",
+                            dbg_idx,
+                            (double)dbg_b->position.x,
+                            (double)dbg_b->position.y,
+                            (double)dbg_b->position.z,
+                            (double)dbg_b->linear_vel.x,
+                            (double)dbg_b->linear_vel.y,
+                            (double)dbg_b->linear_vel.z,
+                            (unsigned)dbg_b->tier,
+                            phys_body_is_sleeping(dbg_b) ? " ZZZ" : "");
+                }
+                fprintf(stderr, "\n");
                 next_status = now + 1000u;
             }
         }
