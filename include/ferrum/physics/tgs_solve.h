@@ -46,6 +46,8 @@ typedef struct phys_tgs_solve_args {
     uint32_t iterations;                    /**< Solver iterations (typically 20–24). */
     phys_vec3_t gravity;                    /**< Gravity vector (m/s²). */
     float dt;                               /**< Substep time step (s). */
+    float tick_dt;                          /**< Full tick dt (s), for per-tier gravity. */
+    const uint32_t *tier_substep_counts;    /**< Per-tier substep counts (may be NULL). */
 } phys_tgs_solve_args_t;
 
 /**

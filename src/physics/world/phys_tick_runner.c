@@ -61,7 +61,7 @@ static void tick_loop_fn_(void *user_data) {
         }
 
         /* Run one physics tick. */
-        phys_world_tick_parallel(r->world, NULL, r->jobs);
+        phys_world_tick_parallel(r->world, r->game_state, r->jobs);
 
         /* Drain corrections after tick. */
         if (r->correction_channel) {

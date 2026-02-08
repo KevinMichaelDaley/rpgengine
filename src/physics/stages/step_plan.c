@@ -55,8 +55,8 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
     /* T0 (direct) and T1 (near) get extra substeps for stability.
      * The tick loop runs narrowphase + solver multiple times for tiers
      * that request more than the global substep count. */
-    plan->tier_params[PHYS_TIER_0_DIRECT].substeps = 4;
-    plan->tier_params[PHYS_TIER_1_NEAR].substeps   = 4;
+    plan->tier_params[PHYS_TIER_0_DIRECT].substeps = 2;
+    plan->tier_params[PHYS_TIER_1_NEAR].substeps   = 2;
 
     /* T4 amortized ticking: only active every 3rd frame. */
     if (world->tick_count % 3 != 0) {

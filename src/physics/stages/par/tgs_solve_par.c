@@ -151,16 +151,26 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
     if (!args || !ctx || !arena || !args->islands) return;
 
     /* Initialize velocities from body state and pre-apply gravity
-     * so the solver can counteract gravitational acceleration. */
+     * so the solver can counteract gravitational acceleration.
+     * Each body's gravity impulse uses its tier-specific dt
+     * (tick_dt / tier_substeps) so that bodies with fewer substeps
+     * receive the correct per-substep gravity increment. */
     if (args->bodies && args->velocities) {
-        const phys_vec3_t grav_dv = vec3_scale(args->gravity, args->dt);
         for (uint32_t i = 0; i < args->body_count; i++) {
             args->velocities[i].linear  = args->bodies[i].linear_vel;
             args->velocities[i].angular = args->bodies[i].angular_vel;
             if (args->bodies[i].inv_mass > 0.0f &&
                 !phys_body_is_sleeping(&args->bodies[i])) {
+                float body_dt = args->dt;
+                if (args->tier_substep_counts && args->tick_dt > 0.0f) {
+                    uint8_t tier = args->bodies[i].tier;
+                    uint32_t ts = args->tier_substep_counts[tier];
+                    if (ts == 0) { ts = 1; }
+                    body_dt = args->tick_dt / (float)ts;
+                }
                 args->velocities[i].linear = vec3_add(
-                    args->velocities[i].linear, grav_dv);
+                    args->velocities[i].linear,
+                    vec3_scale(args->gravity, body_dt));
             }
         }
     }

@@ -22,6 +22,7 @@ int demo_server_world_init(demo_server_world_t *sw, uint32_t rng_seed) {
 
     memset(sw, 0, sizeof(*sw));
     sw->rng_state = rng_seed ? rng_seed : 12345u;
+    phys_game_state_init(&sw->game_state);
 
     /* Configure the physics world for the demo scene. */
     phys_world_config_t cfg = phys_world_config_default();

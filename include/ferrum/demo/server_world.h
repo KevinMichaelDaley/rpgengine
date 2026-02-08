@@ -15,6 +15,7 @@
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/phys_tick_runner.h"
+#include "ferrum/physics/game_state.h"
 #include "ferrum/demo/input_move.h"
 #include "ferrum/demo/input_spawn.h"
 #include "ferrum/net/topic_channel.h"
@@ -37,6 +38,7 @@ extern "C" {
  */
 typedef struct demo_server_world {
     phys_world_t physics;                      /**< Physics world container. */
+    phys_game_state_t game_state;              /**< Game state for tier classification. */
 
     /* Player tracking. */
     uint32_t player_body[DEMO_MAX_CLIENTS];    /**< Body index per client slot. */

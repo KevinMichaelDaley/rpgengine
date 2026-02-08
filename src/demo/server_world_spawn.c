@@ -418,8 +418,27 @@ void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
             phys_tick_runner_init(&sw->tick_runner, &sw->physics, jobs,
                                  sw->cmd_channel, NULL,
                                  spawn_callback_, sw);
+            sw->tick_runner.game_state = &sw->game_state;
         }
         phys_tick_runner_kick(&sw->tick_runner);
+
+        /* Sync player positions into game_state so tier classification
+         * can compute distance-based tiers.  Reads bodies_curr which
+         * is stable while the tick writes to bodies_next. */
+        uint32_t pc = 0;
+        for (int i = 0; i < DEMO_MAX_CLIENTS; i++) {
+            if (!sw->player_connected[i]) { continue; }
+            uint32_t bi = sw->player_body[i];
+            if (bi == UINT32_MAX) { continue; }
+            const phys_body_t *pb = phys_world_get_body(&sw->physics, bi);
+            if (!pb) { continue; }
+            phys_player_state_t ps;
+            memset(&ps, 0, sizeof(ps));
+            ps.position = pb->position;
+            phys_game_state_set_player(&sw->game_state, pc, &ps);
+            pc++;
+        }
+        sw->game_state.player_count = pc;
     } else {
         phys_world_tick(&sw->physics, NULL);
     }

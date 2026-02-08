@@ -865,16 +865,22 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
         const int colliding = st->flags & NET_REPL_BODY_STATE_FLAG_COLLIDING;
 
         if (!colliding && tier < 4u) {
-            /* Compute one-way server→client latency from wall clocks. */
-            const uint32_t recv_wall = wall_ms_();
-            int32_t lat_ms = (int32_t)(recv_wall - st->send_time_ms);
-            if (lat_ms < 0)   lat_ms = 0;    /* clock skew guard */
-            if (lat_ms > 200) lat_ms = 200;   /* cap at 200 ms */
-            const float lat_s = (float)lat_ms * 0.001f;
+            /* Skip extrapolation for near-stationary bodies — their
+             * tiny residual velocity would just add visual jitter. */
+            const float speed_sq = vx*vx + vy*vy + vz*vz;
+            const float extrap_speed_thresh = 0.15f; /* m/s */
+            if (speed_sq > extrap_speed_thresh * extrap_speed_thresh) {
+                /* Compute one-way server→client latency from wall clocks. */
+                const uint32_t recv_wall = wall_ms_();
+                int32_t lat_ms = (int32_t)(recv_wall - st->send_time_ms);
+                if (lat_ms < 0)   lat_ms = 0;    /* clock skew guard */
+                if (lat_ms > 200) lat_ms = 200;   /* cap at 200 ms */
+                const float lat_s = (float)lat_ms * 0.001f;
 
-            ex += vx * lat_s;
-            ey += vy * lat_s;
-            ez += vz * lat_s;
+                ex += vx * lat_s;
+                ey += vy * lat_s;
+                ez += vz * lat_s;
+            }
         }
 
         phys_cmd_set_state_t cmd;
@@ -1392,10 +1398,12 @@ int main(int argc, char **argv) {
                 }
 
                 /* Use half-extents for non-uniform scale if available,
-                 * otherwise fall back to uniform scale. */
-                float sx = (e->half_ext[0] > 0.0f) ? e->half_ext[0] : e->scale;
-                float sy = (e->half_ext[1] > 0.0f) ? e->half_ext[1] : e->scale;
-                float sz = (e->half_ext[2] > 0.0f) ? e->half_ext[2] : e->scale;
+                 * otherwise fall back to uniform scale.  The unit cube
+                 * mesh spans ±0.5, so multiply half-extents by 2 to
+                 * get the correct full-extent scale. */
+                float sx = (e->half_ext[0] > 0.0f) ? e->half_ext[0] * 2.0f : e->scale;
+                float sy = (e->half_ext[1] > 0.0f) ? e->half_ext[1] * 2.0f : e->scale;
+                float sz = (e->half_ext[2] > 0.0f) ? e->half_ext[2] * 2.0f : e->scale;
 
                 const mat4_t t_mat = mat4_translation(pos.x, pos.y, pos.z);
                 const mat4_t r_mat = mat4_from_quat_(rot);

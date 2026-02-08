@@ -43,6 +43,7 @@ extern "C" {
 struct phys_world;
 struct phys_job_context;
 struct fr_topic_channel;
+struct phys_game_state;
 
 /**
  * @brief Continuous physics tick runner.
@@ -59,6 +60,11 @@ typedef struct phys_tick_runner {
     /** Optional callback invoked for each SPAWN_BODY during drain. */
     phys_cmd_spawn_callback_t spawn_cb;
     void                     *spawn_cb_user;
+
+    /** Optional game state for tier classification (borrowed, may be NULL).
+     *  When NULL, all bodies default to T0.  Updated externally before
+     *  each tick — the benign data race on positions is acceptable. */
+    struct phys_game_state   *game_state;
 
     /** Monotonically increasing tick counter — incremented by the
      *  fiber after each tick completes.  Main thread reads this to

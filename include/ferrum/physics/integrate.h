@@ -35,7 +35,8 @@ typedef struct phys_integrate_args {
     const struct phys_velocity *velocities; /**< Solved velocity pairs. */
     struct phys_body *bodies_out;          /**< Output body array. */
     uint32_t body_count;                   /**< Number of bodies. */
-    float dt;                              /**< Time step (seconds). */
+    float dt;                              /**< Time step (seconds) — global substep dt. */
+    float tick_dt;                         /**< Full tick dt (seconds) for per-tier dt. */
     phys_vec3_t gravity;                   /**< Gravitational acceleration. */
     float sleep_threshold_linear;          /**< Speed below which linear is "at rest". */
     float sleep_threshold_angular;         /**< Speed below which angular is "at rest". */

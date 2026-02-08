@@ -61,6 +61,14 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
             if (cur_sub >= ts) { continue; }
         }
 
+        /* Compute per-body dt from tier substep count. */
+        float body_dt = dt;
+        if (tier_subs && args->tick_dt > 0.0f) {
+            uint32_t ts = tier_subs[in->tier];
+            if (ts == 0) { ts = 1; }
+            body_dt = args->tick_dt / (float)ts;
+        }
+
         /* Update velocity from solver output. */
         out->linear_vel  = velocities[i].linear;
         out->angular_vel = velocities[i].angular;
@@ -84,7 +92,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
          * The configured value is the fraction retained per second;
          * we exponentiate by dt so damping is substep-independent. */
         if (vel_damp < 1.0f && vel_damp > 0.0f) {
-            float d = powf(vel_damp, dt);
+            float d = powf(vel_damp, body_dt);
             out->linear_vel  = vec3_scale(out->linear_vel, d);
             out->angular_vel = vec3_scale(out->angular_vel, d);
         }
@@ -104,9 +112,9 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
             }
         }
 
-        /* Integrate position: position += linear_vel * dt. */
+        /* Integrate position: position += linear_vel * body_dt. */
         out->position = vec3_add(in->position,
-                                 vec3_scale(out->linear_vel, dt));
+                                 vec3_scale(out->linear_vel, body_dt));
 
         /* Assert on NaN/Inf positions — indicates a bug in velocity
          * integration or upstream solver producing bad velocities. */
@@ -127,7 +135,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
             0.0f
         };
         phys_quat_t dq = quat_mul(omega_q, in->orientation);
-        float half_dt = 0.5f * dt;
+        float half_dt = 0.5f * body_dt;
         out->orientation.x = in->orientation.x + dq.x * half_dt;
         out->orientation.y = in->orientation.y + dq.y * half_dt;
         out->orientation.z = in->orientation.z + dq.z * half_dt;

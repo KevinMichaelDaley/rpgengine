@@ -349,6 +349,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .iterations = plan.solver_iterations,
                 .gravity    = world->config.gravity,
                 .dt         = substep_dt,
+                .tick_dt    = plan.dt,
+                .tier_substep_counts = tier_substep_counts,
             });
         }
 
@@ -364,15 +366,18 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
                 _Alignof(phys_velocity_t));
             if (pred_velocities) {
-                const phys_vec3_t grav_dv = vec3_scale(
-                    world->config.gravity, substep_dt);
                 for (uint32_t i = 0; i < body_cap; ++i) {
                     pred_velocities[i].linear  = world->body_pool.bodies_curr[i].linear_vel;
                     pred_velocities[i].angular = world->body_pool.bodies_curr[i].angular_vel;
                     if (world->body_pool.bodies_curr[i].inv_mass > 0.0f &&
                         !phys_body_is_sleeping(&world->body_pool.bodies_curr[i])) {
+                        uint8_t tier = world->body_pool.bodies_curr[i].tier;
+                        uint32_t ts = tier_substep_counts[tier];
+                        if (ts == 0) { ts = 1; }
+                        float body_dt = plan.dt / (float)ts;
                         pred_velocities[i].linear = vec3_add(
-                            pred_velocities[i].linear, grav_dv);
+                            pred_velocities[i].linear,
+                            vec3_scale(world->config.gravity, body_dt));
                     }
                 }
             }
@@ -386,6 +391,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .bodies_out             = world->body_pool.bodies_next,
                 .body_count             = body_cap,
                 .dt                     = substep_dt,
+                .tick_dt                = plan.dt,
                 .gravity                = world->config.gravity,
                 .sleep_threshold_linear = world->config.sleep_threshold_linear,
                 .sleep_threshold_angular = world->config.sleep_threshold_angular,

@@ -251,7 +251,13 @@ int main(int argc, char **argv) {
     (void)net_udp_socket_set_nonblocking(&sock, 1);
 
     job_system_t jobs;
-    job_system_create_status_t status = job_system_create(&jobs, (uint32_t)workers_l, 4096u, 1u << 16, 2048, 0);
+    /* Tracy instrumentation increases per-fiber stack usage; use larger stacks. */
+#ifdef TRACY_ENABLE
+    const size_t fiber_stack_sz = 1u << 17; /* 128 KB */
+#else
+    const size_t fiber_stack_sz = 1u << 16; /* 64 KB */
+#endif
+    job_system_create_status_t status = job_system_create(&jobs, (uint32_t)workers_l, 4096u, fiber_stack_sz, 2048, 0);
     if (status != JOB_CREATE_OK) {
         fprintf(stderr, "Failed to create job system\n");
         net_udp_socket_close(&sock);
