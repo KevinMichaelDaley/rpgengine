@@ -45,7 +45,12 @@ typedef enum phys_cmd_type {
 
     /** Destroy a body by index.
      *  Payload: phys_cmd_destroy_body_t. */
-    PHYS_CMD_DESTROY_BODY = 4
+    PHYS_CMD_DESTROY_BODY = 4,
+
+    /** Set a body's full state (position, orientation, velocity).
+     *  Used for authoritative server corrections on the client.
+     *  Payload: phys_cmd_set_state_t. */
+    PHYS_CMD_SET_STATE = 5
 } phys_cmd_type_t;
 
 /** Shape tag for spawn commands. */
@@ -94,6 +99,14 @@ typedef struct phys_cmd_apply_impulse {
 typedef struct phys_cmd_destroy_body {
     uint32_t body_index;         /**< Body to destroy. */
 } phys_cmd_destroy_body_t;
+
+/** Set a body's full authoritative state. */
+typedef struct phys_cmd_set_state {
+    uint32_t    body_index;      /**< Target body. */
+    phys_vec3_t position;        /**< New position. */
+    phys_quat_t orientation;     /**< New orientation. */
+    phys_vec3_t linear_vel;      /**< New linear velocity. */
+} phys_cmd_set_state_t;
 
 /**
  * @brief Callback invoked for each SPAWN_BODY command after the body

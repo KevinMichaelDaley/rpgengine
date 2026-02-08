@@ -83,6 +83,7 @@ struct entity_view {
     uint32_t entity_id;          /**< Server body_id. */
     uint32_t phys_body;          /**< Index in client physics world (UINT32_MAX = none). */
     uint16_t owner_client_id;
+    uint16_t last_server_tick;   /**< Most recent server_tick applied (for ordering). */
     fr_pose_interpolator_t pose; /**< Fallback interpolator (legacy path). */
     uint8_t  shape_type;         /**< 0=box, 1=sphere, 2=capsule */
     uint8_t  flags;              /**< Body flags (kinematic, etc.) */
@@ -687,13 +688,35 @@ static int handle_state_cube_(struct entity_view **entities, size_t *count, size
     return 1;
 }
 
-/* ------------------------------------------------------------------ */
-/*  BODY_SPAWN / BODY_STATE handlers (new protocol)                   */
-/* ------------------------------------------------------------------ */
+/** Return true if sequence 'a' is newer than 'b' (uint16 wrapping). */
+static int seq_newer_(uint16_t a, uint16_t b) {
+    return (int16_t)(a - b) > 0;
+}
+
+/** Context passed to the client-side spawn callback so it can map
+ *  the newly created physics body index back to the entity system. */
+struct client_spawn_ctx {
+    struct entity_view **entities;
+    size_t              *count;
+};
+
+/** Spawn callback invoked by phys_cmd_drain on the tick fiber.
+ *  user_tag carries the entity_id so we can write back phys_body. */
+static void client_spawn_cb_(uint32_t body_index, uint64_t user_tag,
+                              void *user) {
+    struct client_spawn_ctx *ctx = (struct client_spawn_ctx *)user;
+    if (!ctx || !ctx->entities || !ctx->count) return;
+    const uint32_t eid = (uint32_t)(user_tag & 0xFFFFFFFFu);
+    int idx = entity_find_(*ctx->entities, *ctx->count, eid);
+    if (idx >= 0) {
+        (*ctx->entities)[idx].phys_body = body_index;
+    }
+}
 
 static int handle_body_spawn_(struct entity_view **entities, size_t *count,
                               size_t *cap, const net_repl_body_spawn_t *sp,
-                              double recv_time_s, phys_world_t *cw) {
+                              double recv_time_s,
+                              fr_topic_channel_t *cmd_channel) {
     if (!entities || !count || !cap || !sp) return 0;
 
     /* Use body_id as entity_id. */
@@ -723,10 +746,10 @@ static int handle_body_spawn_(struct entity_view **entities, size_t *count,
     vec3_t pos = {px, py, pz};
     quat_t rot = {sp->rot_x, sp->rot_y, sp->rot_z, sp->rot_w};
 
+    /* Create entity in entity system first (phys_body = UINT32_MAX). */
     if (!add_entity_(entities, count, cap, eid, 0u, recv_time_s, pos, rot))
         return 0;
 
-    /* Fill in shape metadata on the newly created entity. */
     struct entity_view *e = &(*entities)[*count - 1u];
     e->shape_type  = sp->shape_type;
     e->flags       = sp->flags;
@@ -735,44 +758,41 @@ static int handle_body_spawn_(struct entity_view **entities, size_t *count,
     e->half_ext[1] = hy;
     e->half_ext[2] = hz;
 
-    /* Create a matching body in the client physics world so the client
-     * can run the same simulation for prediction. */
-    if (cw) {
-        uint32_t bi = phys_world_create_body(cw);
-        if (bi != UINT32_MAX) {
-            phys_body_t *b = phys_world_get_body(cw, bi);
-            b->position    = (phys_vec3_t){px, py, pz};
-            b->orientation = (phys_quat_t){sp->rot_x, sp->rot_y,
-                                           sp->rot_z, sp->rot_w};
-            b->flags       = sp->flags;
+    /* Push a SPAWN_BODY command to the physics command queue.  The tick
+     * fiber will drain it, create the body, and invoke client_spawn_cb_
+     * to write back the phys_body index on the entity. */
+    if (cmd_channel) {
+        phys_cmd_spawn_body_t cmd;
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.position    = (phys_vec3_t){px, py, pz};
+        cmd.orientation = (phys_quat_t){sp->rot_x, sp->rot_y,
+                                        sp->rot_z, sp->rot_w};
+        cmd.linear_vel  = (phys_vec3_t){0, 0, 0};
+        cmd.flags       = sp->flags;
 
-            /* Compute mass from volume * default density (500 kg/m³). */
-            if (!(sp->flags & PHYS_BODY_FLAG_KINEMATIC) &&
-                !(sp->flags & PHYS_BODY_FLAG_STATIC)) {
-                float vol = (2.0f * hx) * (2.0f * hy) * (2.0f * hz);
-                float mass = vol * 500.0f;
-                if (mass < 0.1f) mass = 0.1f;
-                phys_body_set_mass(b, mass);
-                phys_body_set_box_inertia(b, mass,
-                    (phys_vec3_t){hx, hy, hz});
-            }
-
-            /* Copy to next buffer for consistency. */
-            phys_body_t *bn = phys_body_pool_get_next(&cw->body_pool, bi);
-            if (bn) { *bn = *b; }
-
-            /* Attach collider. */
-            phys_vec3_t zero = {0, 0, 0};
-            phys_quat_t ident = {0, 0, 0, 1};
-            if (sp->shape_type == 0) { /* box */
-                phys_world_set_box_collider(cw, bi,
-                    (phys_vec3_t){hx, hy, hz}, zero, ident);
-            } else if (sp->shape_type == 1) { /* sphere */
-                phys_world_set_sphere_collider(cw, bi, hx, zero);
-            }
-
-            e->phys_body = bi;
+        /* Compute mass from volume * default density (500 kg/m³). */
+        if (!(sp->flags & PHYS_BODY_FLAG_KINEMATIC) &&
+            !(sp->flags & PHYS_BODY_FLAG_STATIC)) {
+            float vol = (2.0f * hx) * (2.0f * hy) * (2.0f * hz);
+            float mass = vol * 500.0f;
+            if (mass < 0.1f) mass = 0.1f;
+            cmd.mass = mass;
         }
+
+        /* Shape. */
+        if (sp->shape_type == 0) {
+            cmd.shape = PHYS_CMD_SHAPE_BOX;
+            cmd.shape_data.box_half = (phys_vec3_t){hx, hy, hz};
+        } else if (sp->shape_type == 1) {
+            cmd.shape = PHYS_CMD_SHAPE_SPHERE;
+            cmd.shape_data.sphere_r = hx;
+        }
+
+        /* Encode entity_id in user_tag so the spawn callback can map it. */
+        cmd.user_tag = (uint64_t)eid;
+
+        phys_cmd_push(cmd_channel, PHYS_CMD_SPAWN_BODY,
+                      &cmd, sizeof(cmd));
     }
 
     return 1;
@@ -782,7 +802,7 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
                               size_t *cap, const net_repl_body_state_t *st,
                               double recv_time_s,
                               fr_debug_lines_t *correction_lines,
-                              phys_world_t *cw) {
+                              fr_topic_channel_t *cmd_channel) {
     if (!entities || !count || !cap || !st) return 0;
 
     const uint32_t eid = (uint32_t)st->body_id;
@@ -809,20 +829,25 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
 
     struct entity_view *e = &(*entities)[idx];
 
-    /* Correct the client physics body to match server state. */
-    if (cw && e->phys_body != UINT32_MAX) {
-        phys_body_t *b = phys_world_get_body(cw, e->phys_body);
-        if (b) {
-            b->position    = (phys_vec3_t){px, py, pz};
-            b->orientation = (phys_quat_t){st->rot_x, st->rot_y,
-                                           st->rot_z, st->rot_w};
-            b->linear_vel  = (phys_vec3_t){vx, vy, vz};
+    /* Drop stale out-of-order packets — only apply if this server_tick
+     * is newer than the last one we accepted for this body. */
+    if (e->last_server_tick != 0u &&
+        !seq_newer_(st->server_tick, e->last_server_tick)) {
+        return 1; /* silently discard */
+    }
+    e->last_server_tick = st->server_tick;
 
-            /* Mirror to next buffer. */
-            phys_body_t *bn = phys_body_pool_get_next(&cw->body_pool,
-                                                       e->phys_body);
-            if (bn) { *bn = *b; }
-        }
+    /* Push authoritative correction through the command queue so it
+     * is applied on the tick fiber -- no direct mutation from main. */
+    if (cmd_channel && e->phys_body != UINT32_MAX) {
+        phys_cmd_set_state_t cmd;
+        cmd.body_index  = e->phys_body;
+        cmd.position    = (phys_vec3_t){px, py, pz};
+        cmd.orientation = (phys_quat_t){st->rot_x, st->rot_y,
+                                        st->rot_z, st->rot_w};
+        cmd.linear_vel  = (phys_vec3_t){vx, vy, vz};
+        phys_cmd_push(cmd_channel, PHYS_CMD_SET_STATE,
+                      &cmd, sizeof(cmd));
     }
 
     /* Still push to the pose interpolator for debug correction lines. */
@@ -1024,9 +1049,25 @@ int main(int argc, char **argv) {
     phys_job_context_t phys_jobs;
     phys_job_context_init(&phys_jobs, &phys_job_sys);
 
+    /* Command channel for client physics corrections from the network.
+     * BODY_SPAWN and BODY_STATE push commands here; the tick runner
+     * drains them at the start of each tick — no direct mutation. */
+    fr_topic_channel_config_t client_cmd_cfg;
+    memset(&client_cmd_cfg, 0, sizeof(client_cmd_cfg));
+    client_cmd_cfg.capacity = 8192u;
+    fr_topic_channel_t *client_cmds = fr_topic_channel_create(&client_cmd_cfg);
+
+    /* Spawn callback context — the tick fiber uses this to map newly
+     * created physics body indices back to entity_view entries.
+     * The pointers are kept current because entities/entity_count are
+     * stable across ticks (main thread only mutates between ticks). */
+    struct client_spawn_ctx spawn_ctx;
+    spawn_ctx.entities = &entities;
+    spawn_ctx.count    = &entity_count;
+
     phys_tick_runner_t tick_runner;
     phys_tick_runner_init(&tick_runner, &client_world, &phys_jobs,
-                          NULL, NULL, NULL);
+                          client_cmds, client_spawn_cb_, &spawn_ctx);
 
     /* Fixed timestep tracking for client physics. */
     const uint64_t client_tick_ms = 16u; /* ~60 Hz */
@@ -1214,14 +1255,14 @@ int main(int argc, char **argv) {
                 net_repl_body_spawn_t sp;
                 if (net_repl_body_spawn_decode(&sp, payload, payload_size) == NET_REPL_OK) {
                     (void)handle_body_spawn_(&entities, &entity_count, &entity_cap,
-                                             &sp, recv_time_s, &client_world);
+                                             &sp, recv_time_s, client_cmds);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_BODY_STATE) {
                 net_repl_body_state_t st;
                 if (net_repl_body_state_decode(&st, payload, payload_size) == NET_REPL_OK) {
                     (void)handle_body_state_(&entities, &entity_count, &entity_cap,
                                              &st, recv_time_s, &correction_lines,
-                                             &client_world);
+                                             client_cmds);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 net_repl_welcome_t w;
@@ -1425,6 +1466,7 @@ int main(int argc, char **argv) {
     /* ---- Cleanup ---- */
     phys_tick_runner_wait(&tick_runner);
     phys_tick_runner_destroy(&tick_runner);
+    if (client_cmds) { fr_topic_channel_destroy(client_cmds); }
     phys_job_context_destroy(&phys_jobs);
     phys_world_destroy(&client_world);
     job_system_shutdown(&phys_job_sys);

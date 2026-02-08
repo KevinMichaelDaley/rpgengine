@@ -106,6 +106,20 @@ static void apply_impulse_(phys_world_t *world,
     if (b_next) { *b_next = *b; }
 }
 
+/** Apply a single SET_STATE command (full authoritative correction). */
+static void apply_set_state_(phys_world_t *world,
+                              const phys_cmd_set_state_t *cmd) {
+    phys_body_t *b = phys_world_get_body(world, cmd->body_index);
+    if (!b) { return; }
+    b->position    = cmd->position;
+    b->orientation = cmd->orientation;
+    b->linear_vel  = cmd->linear_vel;
+
+    phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
+                                                     cmd->body_index);
+    if (b_next) { *b_next = *b; }
+}
+
 /* ── Public API (1 non-static function) ────────────────────────── */
 
 void phys_cmd_drain(phys_world_t *world,
@@ -158,6 +172,14 @@ void phys_cmd_drain(phys_world_t *world,
                 phys_cmd_destroy_body_t cmd;
                 memcpy(&cmd, payload, sizeof(cmd));
                 phys_world_destroy_body(world, cmd.body_index);
+            }
+            break;
+
+        case PHYS_CMD_SET_STATE:
+            if (payload_len >= sizeof(phys_cmd_set_state_t)) {
+                phys_cmd_set_state_t cmd;
+                memcpy(&cmd, payload, sizeof(cmd));
+                apply_set_state_(world, &cmd);
             }
             break;
 
