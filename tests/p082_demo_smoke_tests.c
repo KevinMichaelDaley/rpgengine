@@ -211,7 +211,7 @@ static int test_physics_tick_gravity(void) {
 
     /* Tick 60 times (~1 second of simulation). */
     for (int i = 0; i < 60; i++) {
-        demo_server_world_tick(&sw);
+        demo_server_world_tick(&sw, NULL);
     }
 
     /* Re-fetch after ticks (double-buffered). */
@@ -236,7 +236,7 @@ static int test_random_spawner(void) {
     /* Tick 310 times — the stack spawner fires every 180-300 ticks,
      * so at least one box stack should appear. */
     for (int i = 0; i < 310; i++) {
-        demo_server_world_tick(&sw);
+        demo_server_world_tick(&sw, NULL);
     }
 
     ASSERT_TRUE(sw.dynamic_body_count > 0);

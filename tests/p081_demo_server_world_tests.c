@@ -318,7 +318,7 @@ static int test_tick_advances_physics(void) {
     ASSERT_EQ_INT(0, demo_server_world_init(&sw, 100));
 
     uint64_t before = sw.physics.tick_count;
-    demo_server_world_tick(&sw);
+    demo_server_world_tick(&sw, NULL);
     ASSERT_TRUE(sw.physics.tick_count > before);
 
     demo_server_world_destroy(&sw);
@@ -330,9 +330,9 @@ static int test_tick_increments_spawn_counter(void) {
     ASSERT_EQ_INT(0, demo_server_world_init(&sw, 100));
 
     ASSERT_EQ_U32(0u, sw.ticks_since_spawn);
-    demo_server_world_tick(&sw);
+    demo_server_world_tick(&sw, NULL);
     ASSERT_EQ_U32(1u, sw.ticks_since_spawn);
-    demo_server_world_tick(&sw);
+    demo_server_world_tick(&sw, NULL);
     ASSERT_EQ_U32(2u, sw.ticks_since_spawn);
 
     demo_server_world_destroy(&sw);
@@ -348,7 +348,7 @@ static int test_tick_spawns_distant_object_eventually(void) {
 
     /* Tick enough times that the random spawner should fire at least once. */
     for (int i = 0; i < 120; i++) {
-        demo_server_world_tick(&sw);
+        demo_server_world_tick(&sw, NULL);
     }
 
     uint32_t bodies_after = phys_world_body_count(&sw.physics);

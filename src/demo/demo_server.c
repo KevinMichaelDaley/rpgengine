@@ -12,12 +12,14 @@
 
 #define _POSIX_C_SOURCE 200809L
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <errno.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sched.h>
 #include <time.h>
@@ -32,6 +34,8 @@
 
 #include "ferrum/server/entity/net/pump.h"
 #include "ferrum/server/net/runtime.h"
+
+#include "ferrum/physics/phys_jobs.h"
 
 #include "ferrum/demo/server_world.h"
 #include "ferrum/demo/input_move.h"
@@ -65,10 +69,10 @@ static void handle_stop_signal(int signum) {
 
 struct demo_server_io {
     net_udp_socket_t *sock;
-    uint64_t packets_sent;
-    uint64_t packets_recv;
-    uint64_t bytes_sent;
-    uint64_t bytes_recv;
+    atomic_uint_least64_t packets_sent;
+    atomic_uint_least64_t packets_recv;
+    atomic_uint_least64_t bytes_sent;
+    atomic_uint_least64_t bytes_recv;
 };
 
 static int recvfrom_counting(void *user,
@@ -82,8 +86,8 @@ static int recvfrom_counting(void *user,
     }
     int rc = net_udp_socket_recvfrom(io->sock, out_from, out_data, out_cap, out_size);
     if (rc == NET_UDP_SOCKET_OK && out_size) {
-        io->packets_recv += 1u;
-        io->bytes_recv += (uint64_t)(*out_size);
+        atomic_fetch_add_explicit(&io->packets_recv, 1u, memory_order_relaxed);
+        atomic_fetch_add_explicit(&io->bytes_recv, (uint64_t)(*out_size), memory_order_relaxed);
     }
     return rc;
 }
@@ -96,8 +100,8 @@ static int sendto_counting(void *user, const net_udp_addr_t *to,
     }
     int rc = net_udp_socket_sendto(io->sock, to, data, size);
     if (rc == NET_UDP_SOCKET_OK) {
-        io->packets_sent += 1u;
-        io->bytes_sent += (uint64_t)size;
+        atomic_fetch_add_explicit(&io->packets_sent, 1u, memory_order_relaxed);
+        atomic_fetch_add_explicit(&io->bytes_sent, (uint64_t)size, memory_order_relaxed);
     }
     return rc;
 }
@@ -302,6 +306,29 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
     }
 }
 
+/* ── Dedicated network pump thread ──────────────────────────────── */
+
+/** Arguments for the network pump thread. */
+struct net_pump_thread_args {
+    fr_server_net_runtime_t *rt;
+    volatile sig_atomic_t   *stop;
+};
+
+/**
+ * @brief Thread entry point: receives UDP packets and routes them to
+ *        per-client fibers independently of the physics/gameplay loop.
+ */
+static void *net_pump_thread_fn(void *arg) {
+    struct net_pump_thread_args *a = (struct net_pump_thread_args *)arg;
+    struct timespec ts = {0, 1000000}; /* 1 ms */
+
+    while (!(*a->stop)) {
+        (void)fr_server_net_runtime_pump(a->rt, now_ms());
+        nanosleep(&ts, NULL);
+    }
+    return NULL;
+}
+
 /* ── Usage ──────────────────────────────────────────────────────── */
 
 static void usage(const char *argv0) {
@@ -502,6 +529,28 @@ int main(int argc, char **argv) {
     memset(client_connected, 0, sizeof(client_connected));
     uint32_t clients_joined = 0u;
 
+    /* ── Physics job context (parallel tick) ──────────────────────── */
+    phys_job_context_t phys_jobs;
+    phys_job_context_init(&phys_jobs, &jobs);
+
+    /* ── Dedicated network receive thread ─────────────────────────── */
+    struct net_pump_thread_args pump_thr_args = { .rt = rt, .stop = &g_stop };
+    pthread_t net_pump_tid;
+    if (pthread_create(&net_pump_tid, NULL, net_pump_thread_fn, &pump_thr_args) != 0) {
+        fprintf(stderr, "Failed to start network pump thread\n");
+        phys_job_context_destroy(&phys_jobs);
+        demo_server_world_destroy(&sw);
+        fr_server_entity_net_pump_destroy(pump);
+        fr_server_net_runtime_destroy(rt);
+        fr_topic_channel_destroy(inbound);
+        fr_topic_channel_destroy(player_events);
+        fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&net_jobs);
+        job_system_shutdown(&jobs);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+
     /* ── Main loop ────────────────────────────────────────────────── */
     const uint64_t tick_ms  = (uint64_t)(1000u / (uint32_t)tick_hz_l);
     const float    dt_s     = 1.0f / (float)tick_hz_l;
@@ -513,15 +562,12 @@ int main(int argc, char **argv) {
     while (!g_stop) {
         uint64_t now = now_ms();
 
-        /* (a) Receive packets from network. */
-        const uint64_t pkts_before = io.packets_recv;
-        (void)fr_server_net_runtime_pump(rt, now);
-        const int saw_packet = (io.packets_recv != pkts_before);
-
-        /* (b) Route inbound messages through entity pump. */
+        /* (a) Route inbound messages through entity pump.
+         *     The network receive pump runs on a dedicated thread;
+         *     we only drain decoded messages here. */
         (void)fr_server_entity_net_pump_tick(pump, now);
 
-        /* (c) Drain player events (JOIN). */
+        /* (b) Drain player events (JOIN). */
         for (;;) {
             uint8_t evt[32];
             size_t evt_len = sizeof(evt);
@@ -587,10 +633,9 @@ int main(int argc, char **argv) {
             /* Other entity events (INPUT_ROT etc.) are ignored in this demo. */
         }
 
-        /* (d,e,f) Fixed-timestep tick.
+        /* (d,e) Fixed-timestep tick.
          * Cap catch-up to MAX_CATCHUP_TICKS so that a long physics
-         * frame doesn't cause an unbounded burst of sim ticks that
-         * starves the main-thread network pump above. */
+         * frame doesn't cause an unbounded burst of sim ticks. */
         #define MAX_CATCHUP_TICKS 3u
         if (now >= next_tick) {
             /* Clamp: if we've fallen behind by more than MAX_CATCHUP
@@ -602,8 +647,8 @@ int main(int argc, char **argv) {
 
             server_tick = (uint16_t)(server_tick + 1u);
 
-            /* (d) Tick physics world. */
-            demo_server_world_tick(&sw);
+            /* (d) Tick physics world (parallel). */
+            demo_server_world_tick(&sw, &phys_jobs);
 
             /* (e) Broadcast body states to all connected clients. */
             if (clients_joined > 0u) {
@@ -613,20 +658,26 @@ int main(int argc, char **argv) {
 
             /* Status line every 60 ticks. */
             if ((server_tick % 60u) == 0u) {
+                uint64_t tick_end = now_ms();
                 uint32_t body_count = phys_world_body_count(&sw.physics);
-                fprintf(stderr, "tick %u: %u bodies, %u clients\n",
+                fprintf(stderr, "tick %u: %u bodies, %u clients  "
+                        "tick_dt=%lums  lag=%ldms  "
+                        "rx=%lu tx=%lu\n",
                         (unsigned)server_tick, (unsigned)body_count,
-                        (unsigned)clients_joined);
+                        (unsigned)clients_joined,
+                        (unsigned long)(tick_end - now),
+                        (long)(tick_end - next_tick),
+                        (unsigned long)atomic_load_explicit(&io.packets_recv,
+                                                           memory_order_relaxed),
+                        (unsigned long)atomic_load_explicit(&io.packets_sent,
+                                                           memory_order_relaxed));
             }
 
             next_tick += tick_ms;
         }
 
-        /* (f) Send outbound packets. */
-        (void)fr_server_net_runtime_pump(rt, now_ms());
-
-        /* (g) Yield or sleep until next tick. */
-        if (!saw_packet && now_ms() < next_tick) {
+        /* (f) Yield or sleep until next tick. */
+        if (now_ms() < next_tick) {
             sleep_ms(1u);
         } else {
             sched_yield();
@@ -636,6 +687,10 @@ int main(int argc, char **argv) {
     /* ── Cleanup ──────────────────────────────────────────────────── */
     fprintf(stderr, "demo_server: shutting down (tick %u)\n", (unsigned)server_tick);
 
+    /* Stop and join the network pump thread. */
+    (void)pthread_join(net_pump_tid, NULL);
+
+    phys_job_context_destroy(&phys_jobs);
     demo_server_world_destroy(&sw);
     fr_server_entity_net_pump_destroy(pump);
     fr_server_net_runtime_destroy(rt);
@@ -647,7 +702,9 @@ int main(int argc, char **argv) {
     net_udp_socket_close(&sock);
 
     fprintf(stderr, "demo_server: clean shutdown. pkts_in=%llu pkts_out=%llu\n",
-            (unsigned long long)io.packets_recv,
-            (unsigned long long)io.packets_sent);
+            (unsigned long long)atomic_load_explicit(&io.packets_recv,
+                                                     memory_order_relaxed),
+            (unsigned long long)atomic_load_explicit(&io.packets_sent,
+                                                     memory_order_relaxed));
     return 0;
 }

@@ -12,6 +12,7 @@
  */
 
 #include "ferrum/physics/world.h"
+#include "ferrum/physics/phys_jobs.h"
 #include "ferrum/demo/input_move.h"
 #include "ferrum/demo/input_spawn.h"
 
@@ -135,14 +136,16 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
 /**
  * @brief Tick physics and the random distant object spawner.
  *
- * Calls phys_world_tick, increments ticks_since_spawn, and spawns
- * a random distant body when the spawn interval elapses.
+ * When @p jobs is non-NULL, uses phys_world_tick_parallel() to dispatch
+ * physics stages across multiple worker threads.  When NULL, falls back
+ * to the sequential phys_world_tick().
  *
- * @param sw  Server world. Must not be NULL.
+ * @param sw    Server world. Must not be NULL.
+ * @param jobs  Physics job context for parallel dispatch (may be NULL).
  *
  * Side effects: advances physics, may create new bodies.
  */
-void demo_server_world_tick(demo_server_world_t *sw);
+void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs);
 
 #ifdef __cplusplus
 } /* extern "C" */

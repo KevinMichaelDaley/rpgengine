@@ -10,6 +10,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/world.h"
+#include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_pool.h"
 
 #include <math.h>
@@ -362,12 +363,16 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
     return body_idx;
 }
 
-void demo_server_world_tick(demo_server_world_t *sw) {
+void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
     if (!sw) {
         return;
     }
 
-    phys_world_tick(&sw->physics, NULL);
+    if (jobs) {
+        phys_world_tick_parallel(&sw->physics, NULL, jobs);
+    } else {
+        phys_world_tick(&sw->physics, NULL);
+    }
 
     sw->ticks_since_spawn++;
 

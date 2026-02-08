@@ -1,0 +1,9 @@
+demo_server: listening on port 40082  tick_hz=30  sim_workers=2  net_workers=1
+DEMO_SERVER_READY
+tick 60: 1 bodies, 0 clients  tick_dt=1ms  lag=1ms  rx=0 tx=0
+demo_server: client 0 joined (slot 0), 1 total
+tick 120: 2 bodies, 1 clients  tick_dt=1ms  lag=1ms  rx=396 tx=4
+tick 180: 2 bodies, 1 clients  tick_dt=1ms  lag=1ms  rx=1460 tx=4
+tick 240: 27 bodies, 1 clients  tick_dt=1ms  lag=1ms  rx=2442 tx=1404
+tick 300: 27 bodies, 1 clients  tick_dt=0ms  lag=0ms  rx=3392 tx=2904
+tick 360: 27 bodies, 1 clients  tick_dt=1ms  lag=1ms  rx=4322 tx=4404
