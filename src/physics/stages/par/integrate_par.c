@@ -11,6 +11,7 @@
 
 #include "ferrum/physics/par/integrate_par.h"
 
+#include <assert.h>
 #include <math.h>
 #include <stddef.h>
 
@@ -81,18 +82,16 @@ static void integrate_batch_job(void *data) {
         out->linear_vel  = velocities[i].linear;
         out->angular_vel = velocities[i].angular;
 
-        /* Sanitize NaN/Inf velocities — clamp to zero to prevent
-         * cascading corruption across ticks. */
-        if (isnan(out->linear_vel.x) || isnan(out->linear_vel.y) ||
-            isnan(out->linear_vel.z) || isinf(out->linear_vel.x) ||
-            isinf(out->linear_vel.y) || isinf(out->linear_vel.z)) {
-            out->linear_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        }
-        if (isnan(out->angular_vel.x) || isnan(out->angular_vel.y) ||
-            isnan(out->angular_vel.z) || isinf(out->angular_vel.x) ||
-            isinf(out->angular_vel.y) || isinf(out->angular_vel.z)) {
-            out->angular_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        }
+        /* Assert on NaN/Inf velocities — these indicate a solver bug
+         * upstream (TGS, position projection, or velocity sync). */
+        assert(!isnan(out->linear_vel.x) && !isnan(out->linear_vel.y) &&
+               !isnan(out->linear_vel.z) && !isinf(out->linear_vel.x) &&
+               !isinf(out->linear_vel.y) && !isinf(out->linear_vel.z) &&
+               "NaN/Inf linear velocity from solver");
+        assert(!isnan(out->angular_vel.x) && !isnan(out->angular_vel.y) &&
+               !isnan(out->angular_vel.z) && !isinf(out->angular_vel.x) &&
+               !isinf(out->angular_vel.y) && !isinf(out->angular_vel.z) &&
+               "NaN/Inf angular velocity from solver");
 
         /* Apply gravity (only if body is not sleeping). */
         if (!phys_body_is_sleeping(in)) {
@@ -128,15 +127,12 @@ static void integrate_batch_job(void *data) {
         out->position = vec3_add(in->position,
                                  vec3_scale(out->linear_vel, dt));
 
-        /* Sanitize NaN/Inf positions — revert to input to prevent
-         * cascading corruption from position projection or solver. */
-        if (isnan(out->position.x) || isnan(out->position.y) ||
-            isnan(out->position.z) || isinf(out->position.x) ||
-            isinf(out->position.y) || isinf(out->position.z)) {
-            out->position = in->position;
-            out->linear_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-            out->angular_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        }
+        /* Assert on NaN/Inf positions — indicates a bug in velocity
+         * integration or upstream solver producing bad velocities. */
+        assert(!isnan(out->position.x) && !isnan(out->position.y) &&
+               !isnan(out->position.z) && !isinf(out->position.x) &&
+               !isinf(out->position.y) && !isinf(out->position.z) &&
+               "NaN/Inf position after integration");
 
         /* Integrate orientation via quaternion derivative:
          *   omega_quat = {angular_vel.x, angular_vel.y, angular_vel.z, 0}

@@ -150,6 +150,25 @@ void phys_position_projection(const phys_position_projection_args_t *args)
                                          {0.0f, 0.0f, 0.0f}};
     }
 
+    /* Also zero deltas for static bodies referenced by constraints.
+     * Static bodies aren't in body_indices (only dynamic bodies are),
+     * but their deltas are read by velocity_sync for target velocity
+     * computation.  Without this, static body deltas contain
+     * uninitialized arena garbage, causing NaN propagation. */
+    for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+        uint32_t con_idx = island->constraint_indices[ci];
+        const phys_constraint_t *c = &args->constraints[con_idx];
+        uint32_t a = c->body_a, b = c->body_b;
+        if (a < body_count && args->bodies[a].inv_mass == 0.0f) {
+            deltas[a] = (phys_velocity_t){{0.0f, 0.0f, 0.0f},
+                                           {0.0f, 0.0f, 0.0f}};
+        }
+        if (b < body_count && args->bodies[b].inv_mass == 0.0f) {
+            deltas[b] = (phys_velocity_t){{0.0f, 0.0f, 0.0f},
+                                           {0.0f, 0.0f, 0.0f}};
+        }
+    }
+
     result->correction_deltas = deltas;
     result->success = true;
 
