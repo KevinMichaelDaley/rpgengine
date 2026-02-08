@@ -27,6 +27,7 @@ static int packet_extract_join_nonce_(const uint8_t *packet, size_t packet_size,
     if (net_rudp_peer_receive(&peer,
                               packet,
                               packet_size,
+                              0u, /* now_ms — not needed for temp peer */
                               &reliable,
                               &schema_id,
                               payload,

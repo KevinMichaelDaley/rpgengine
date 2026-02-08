@@ -52,6 +52,10 @@ int net_repl_body_state_encode(const net_repl_body_state_t *msg,
     write_i16_be(out + o, msg->vel_y_mm_s);     o += 2;
     write_i16_be(out + o, msg->vel_z_mm_s);     o += 2;
 
+    write_i16_be(out + o, msg->ang_x_mrad_s);   o += 2;
+    write_i16_be(out + o, msg->ang_y_mrad_s);   o += 2;
+    write_i16_be(out + o, msg->ang_z_mrad_s);   o += 2;
+
     return NET_REPL_OK;
 }
 
@@ -76,6 +80,10 @@ int net_repl_body_state_decode(net_repl_body_state_t *msg,
     msg->vel_x_mm_s = read_i16_be(payload + o);    o += 2;
     msg->vel_y_mm_s = read_i16_be(payload + o);    o += 2;
     msg->vel_z_mm_s = read_i16_be(payload + o);    o += 2;
+
+    msg->ang_x_mrad_s = read_i16_be(payload + o);  o += 2;
+    msg->ang_y_mrad_s = read_i16_be(payload + o);  o += 2;
+    msg->ang_z_mrad_s = read_i16_be(payload + o);  o += 2;
 
     return NET_REPL_OK;
 }

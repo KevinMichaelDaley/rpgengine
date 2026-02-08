@@ -30,6 +30,7 @@ static uint64_t mask_for_count_(uint16_t count) {
 int net_rudp_reliability_receive(net_rudp_peer_t *peer,
                                 const net_packet_header_t *header,
                                 const net_rudp_wire_frame_view_t *frame_view,
+                                uint64_t now_ms,
                                 uint8_t *out_reliable,
                                 uint16_t *out_schema_id,
                                 uint8_t *out_payload,
@@ -39,7 +40,7 @@ int net_rudp_reliability_receive(net_rudp_peer_t *peer,
         return NET_RUDP_ERR_INVALID;
     }
 
-    /* Retire ACKed reliable sends. */
+    /* Retire ACKed reliable sends and measure RTT. */
     uint16_t ack = header->ack;
     uint32_t ack_bits = header->ack_bits;
     for (size_t i = 0u; i < peer->send_slot_count; ++i) {
@@ -47,16 +48,31 @@ int net_rudp_reliability_receive(net_rudp_peer_t *peer,
             continue;
         }
         uint16_t seq = peer->send_slots[i].sequence;
+        int acked = 0;
         if (seq == ack) {
-            peer->send_slots[i].used = 0u;
-            continue;
-        }
-        uint16_t delta = (uint16_t)(ack - seq);
-        if (delta >= 1u && delta <= 32u) {
-            uint32_t bit = 1u << (uint32_t)(delta - 1u);
-            if (ack_bits & bit) {
-                peer->send_slots[i].used = 0u;
+            acked = 1;
+        } else {
+            uint16_t delta = (uint16_t)(ack - seq);
+            if (delta >= 1u && delta <= 32u) {
+                uint32_t bit = 1u << (uint32_t)(delta - 1u);
+                if (ack_bits & bit) {
+                    acked = 1;
+                }
             }
+        }
+        if (acked) {
+            /* Measure RTT from the original send time (not resend). */
+            uint64_t first = peer->send_slots[i].first_send_ms;
+            if (first > 0u && now_ms >= first) {
+                uint32_t sample = (uint32_t)(now_ms - first);
+                if (peer->smoothed_rtt_ms == 0u) {
+                    peer->smoothed_rtt_ms = sample;
+                } else {
+                    /* EWMA: rtt = rtt * 7/8 + sample * 1/8 */
+                    peer->smoothed_rtt_ms = (peer->smoothed_rtt_ms * 7u + sample) / 8u;
+                }
+            }
+            peer->send_slots[i].used = 0u;
         }
     }
 

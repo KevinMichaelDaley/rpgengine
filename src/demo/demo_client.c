@@ -802,18 +802,22 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
                               size_t *cap, const net_repl_body_state_t *st,
                               double recv_time_s,
                               fr_debug_lines_t *correction_lines,
-                              fr_topic_channel_t *cmd_channel) {
+                              fr_topic_channel_t *cmd_channel,
+                              uint32_t rtt_ms) {
     if (!entities || !count || !cap || !st) return 0;
 
     const uint32_t eid = (uint32_t)st->body_id;
 
-    /* Dequantize position and velocity. */
+    /* Dequantize position, linear velocity, and angular velocity. */
     const float px = (float)st->pos_mm.x_mm * 0.001f;
     const float py = (float)st->pos_mm.y_mm * 0.001f;
     const float pz = (float)st->pos_mm.z_mm * 0.001f;
     const float vx = (float)st->vel_x_mm_s * 0.001f;
     const float vy = (float)st->vel_y_mm_s * 0.001f;
     const float vz = (float)st->vel_z_mm_s * 0.001f;
+    const float ax = (float)st->ang_x_mrad_s * 0.001f;
+    const float ay = (float)st->ang_y_mrad_s * 0.001f;
+    const float az = (float)st->ang_z_mrad_s * 0.001f;
 
     vec3_t pos = {px, py, pz};
     quat_t rot = {st->rot_x, st->rot_y, st->rot_z, st->rot_w};
@@ -841,21 +845,21 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
      * is applied on the tick fiber -- no direct mutation from main.
      *
      * Extrapolate the server position forward by velocity to compensate
-     * for network latency.  Without RTT measurement we use a fixed
-     * estimate (~3 ticks at 60 Hz ≈ 50 ms).  This keeps corrections
-     * roughly where the body "should be now" rather than where it was
-     * when the server sent the packet, dramatically reducing
-     * rubber-banding. */
+     * for network latency.  Uses measured RTT / 2 (one-way estimate)
+     * with a 16ms minimum floor. */
     if (cmd_channel && e->phys_body != UINT32_MAX) {
-        const float latency_estimate_s = 0.050f; /* ~50 ms */
+        /* One-way latency ≈ RTT/2, floor at one tick (16 ms). */
+        const float lat_s = (rtt_ms > 0u)
+            ? (float)rtt_ms * 0.0005f   /* RTT/2 in seconds */
+            : 0.016f;                    /* fallback: 1 tick */
         /* Extrapolate position: p' = p + v*t + 0.5*g*t² */
-        const float half_t2 = 0.5f * latency_estimate_s * latency_estimate_s;
+        const float half_t2 = 0.5f * lat_s * lat_s;
         const float grav_y = -9.81f;
-        const float ex = px + vx * latency_estimate_s;
-        const float ey = py + vy * latency_estimate_s + grav_y * half_t2;
-        const float ez = pz + vz * latency_estimate_s;
+        const float ex = px + vx * lat_s;
+        const float ey = py + vy * lat_s + grav_y * half_t2;
+        const float ez = pz + vz * lat_s;
         /* Extrapolate velocity: v' = v + g*t */
-        const float evy = vy + grav_y * latency_estimate_s;
+        const float evy = vy + grav_y * lat_s;
 
         phys_cmd_set_state_t cmd;
         cmd.body_index  = e->phys_body;
@@ -863,6 +867,7 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
         cmd.orientation = (phys_quat_t){st->rot_x, st->rot_y,
                                         st->rot_z, st->rot_w};
         cmd.linear_vel  = (phys_vec3_t){vx, evy, vz};
+        cmd.angular_vel = (phys_vec3_t){ax, ay, az};
         phys_cmd_push(cmd_channel, PHYS_CMD_SET_STATE,
                       &cmd, sizeof(cmd));
     }
@@ -1245,7 +1250,7 @@ int main(int argc, char **argv) {
             uint16_t schema_id = 0u;
             uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
             size_t payload_size = 0u;
-            if (net_rudp_peer_receive(&peer, rx_packet, rx_size,
+            if (net_rudp_peer_receive(&peer, rx_packet, rx_size, now_ms,
                                       &reliable, &schema_id,
                                       payload, sizeof(payload), &payload_size) != NET_RUDP_OK) {
                 continue;
@@ -1287,7 +1292,8 @@ int main(int argc, char **argv) {
                 if (net_repl_body_state_decode(&st, payload, payload_size) == NET_REPL_OK) {
                     (void)handle_body_state_(&entities, &entity_count, &entity_cap,
                                              &st, recv_time_s, &correction_lines,
-                                             client_corrections);
+                                             client_corrections,
+                                             peer.smoothed_rtt_ms);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 net_repl_welcome_t w;

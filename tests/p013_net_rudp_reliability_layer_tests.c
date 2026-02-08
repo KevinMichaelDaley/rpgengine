@@ -72,7 +72,7 @@ static int test_reliable_duplicate_dropped(void) {
     size_t out_payload_size = 0u;
 
     ASSERT_INT_EQ(NET_RUDP_OK,
-                  net_rudp_reliability_receive(&peer, &header, &frame, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
+                  net_rudp_reliability_receive(&peer, &header, &frame, 0u, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
                                                &out_payload_size));
     ASSERT_TRUE(out_reliable != 0u);
     ASSERT_INT_EQ(0x1234u, out_schema);
@@ -81,7 +81,7 @@ static int test_reliable_duplicate_dropped(void) {
 
     /* Same reliable sequence again => duplicate => dropped. */
     ASSERT_INT_EQ(NET_RUDP_EMPTY,
-                  net_rudp_reliability_receive(&peer, &header, &frame, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
+                  net_rudp_reliability_receive(&peer, &header, &frame, 0u, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
                                                &out_payload_size));
     return 0;
 }
@@ -118,7 +118,7 @@ static int test_ack_retire_send_slots(void) {
     size_t out_payload_size = 0u;
 
     ASSERT_INT_EQ(NET_RUDP_OK,
-                  net_rudp_reliability_receive(&peer, &header, &frame, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
+                  net_rudp_reliability_receive(&peer, &header, &frame, 0u, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
                                                &out_payload_size));
     ASSERT_INT_EQ(0, (int)out_reliable);
     ASSERT_INT_EQ(0x7777u, out_schema);
@@ -204,11 +204,11 @@ static int test_fragment_reassembly_yields_message(void) {
     frame1.payload_size = frag1_size;
 
     ASSERT_INT_EQ(NET_RUDP_EMPTY,
-                  net_rudp_reliability_receive(&peer, &header0, &frame0, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
+                  net_rudp_reliability_receive(&peer, &header0, &frame0, 0u, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
                                                &out_payload_size));
 
     ASSERT_INT_EQ(NET_RUDP_OK,
-                  net_rudp_reliability_receive(&peer, &header1, &frame1, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
+                  net_rudp_reliability_receive(&peer, &header1, &frame1, 0u, &out_reliable, &out_schema, out_payload, sizeof(out_payload),
                                                &out_payload_size));
 
     ASSERT_TRUE(out_reliable != 0u);

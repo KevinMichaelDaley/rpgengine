@@ -518,8 +518,7 @@ int main(int argc, char **argv) {
             size_t payload_size = 0u;
             int prc = net_rudp_peer_receive(&peer,
                                             rx_packet,
-                                            rx_size,
-                                            &reliable,
+                                            rx_size, 0u, &reliable,
                                             &schema_id,
                                             payload,
                                             sizeof(payload),

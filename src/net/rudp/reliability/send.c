@@ -205,6 +205,7 @@ int net_rudp_reliability_send_reliable_via(net_rudp_peer_t *peer,
         peer->send_slots[slot].used = 1u;
         peer->send_slots[slot].sequence = sequence;
         peer->send_slots[slot].size = (uint16_t)packet_size;
+        peer->send_slots[slot].first_send_ms = now_ms;
         peer->send_slots[slot].last_send_ms = now_ms;
 
         if (sendto_cb(io_user, to, peer->send_slots[slot].packet_bytes, packet_size) != 0) {
@@ -282,6 +283,7 @@ int net_rudp_reliability_send_reliable_via(net_rudp_peer_t *peer,
         peer->send_slots[slot].used = 1u;
         peer->send_slots[slot].sequence = sequence;
         peer->send_slots[slot].size = (uint16_t)packet_size;
+        peer->send_slots[slot].first_send_ms = now_ms;
         peer->send_slots[slot].last_send_ms = now_ms;
 
         if (sendto_cb(io_user, to, peer->send_slots[slot].packet_bytes, packet_size) != 0) {

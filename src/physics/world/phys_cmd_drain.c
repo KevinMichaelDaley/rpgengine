@@ -124,6 +124,7 @@ static void apply_set_state_(phys_world_t *world,
     b->position    = cmd->position;
     b->orientation = cmd->orientation;
     b->linear_vel  = cmd->linear_vel;
+    b->angular_vel = cmd->angular_vel;
 
     phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
                                                      cmd->body_index);

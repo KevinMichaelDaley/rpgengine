@@ -259,6 +259,14 @@ static int16_t vel_to_mm_s_(float v) {
     return (int16_t)mm;
 }
 
+/** Quantize angular velocity (rad/s) to mrad/s as int16. */
+static int16_t angvel_to_mrad_s_(float v) {
+    float mr = v * 1000.0f;
+    if (mr >  32767.0f) mr =  32767.0f;
+    if (mr < -32767.0f) mr = -32767.0f;
+    return (int16_t)mr;
+}
+
 static void broadcast_body_states_(fr_server_net_runtime_t *rt,
                                    demo_server_world_t *sw,
                                    const uint8_t *client_connected,
@@ -389,6 +397,10 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
             st.vel_x_mm_s = vel_to_mm_s_(b->linear_vel.x);
             st.vel_y_mm_s = vel_to_mm_s_(b->linear_vel.y);
             st.vel_z_mm_s = vel_to_mm_s_(b->linear_vel.z);
+
+            st.ang_x_mrad_s = angvel_to_mrad_s_(b->angular_vel.x);
+            st.ang_y_mrad_s = angvel_to_mrad_s_(b->angular_vel.y);
+            st.ang_z_mrad_s = angvel_to_mrad_s_(b->angular_vel.z);
 
             uint8_t payload[NET_REPL_BODY_STATE_PAYLOAD_SIZE];
             if (net_repl_body_state_encode(&st, payload, sizeof(payload))

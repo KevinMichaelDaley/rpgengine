@@ -104,6 +104,7 @@ int server_repl_server_pump(server_repl_server_t *srv, uint64_t now_ms) {
         int prc = net_rudp_peer_receive(&srv->clients[idx].peer,
                                         packet,
                                         packet_size,
+                                        now_ms,
                                         &reliable,
                                         &schema_id,
                                         payload,

@@ -38,7 +38,8 @@ extern "C" {
 /** One tracked reliable send slot. Caller owns storage lifetime. */
 typedef struct net_rudp_send_slot {
     uint16_t sequence;
-    uint64_t last_send_ms;
+    uint64_t first_send_ms;  /**< Timestamp of original send (for RTT). */
+    uint64_t last_send_ms;   /**< Timestamp of most recent send/resend. */
     uint16_t size;
     uint8_t used;
     uint8_t packet_bytes[NET_RUDP_MAX_PACKET_SIZE];
@@ -50,6 +51,11 @@ typedef struct net_rudp_peer {
     uint16_t next_sequence;
     net_ack_window_t recv_window;
     uint32_t resend_interval_ms;
+
+    /** Smoothed round-trip time in milliseconds (EWMA, α=0.125).
+     *  Updated each time a reliable send slot is ACKed.  Initialized
+     *  to 0 (no measurement yet). */
+    uint32_t smoothed_rtt_ms;
 
     /** Maximum age (ms) for an unACKed send slot before it is expired.
      *  When a slot's age exceeds this limit the slot is silently discarded
@@ -101,11 +107,13 @@ void net_rudp_peer_init_with_storage(net_rudp_peer_t *peer,
 void net_rudp_peer_enable_fragmentation(net_rudp_peer_t *peer, int enabled, uint8_t *reasm_buf, size_t reasm_buf_cap);
 
 /**
- * @brief Process an incoming packet: validate, update recv window, and retire ACKed send slots.
+ * @brief Process an incoming packet: validate, update recv window, retire ACKed send slots,
+ *        and measure RTT.
  */
 int net_rudp_peer_receive(net_rudp_peer_t *peer,
                           const uint8_t *packet,
                           size_t packet_size,
+                          uint64_t now_ms,
                           uint8_t *out_reliable,
                           uint16_t *out_schema_id,
                           uint8_t *out_payload,

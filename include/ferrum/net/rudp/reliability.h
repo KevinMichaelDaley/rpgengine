@@ -41,6 +41,7 @@ extern "C" {
 int net_rudp_reliability_receive(net_rudp_peer_t *peer,
                                 const net_packet_header_t *header,
                                 const net_rudp_wire_frame_view_t *frame_view,
+                                uint64_t now_ms,
                                 uint8_t *out_reliable,
                                 uint16_t *out_schema_id,
                                 uint8_t *out_payload,

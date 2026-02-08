@@ -21,8 +21,8 @@
 extern "C" {
 #endif
 
-/** Wire size: 2+2+12+7+6 = 29 bytes. */
-#define NET_REPL_BODY_STATE_PAYLOAD_SIZE 29u
+/** Wire size: 2+2+12+7+6+6 = 35 bytes. */
+#define NET_REPL_BODY_STATE_PAYLOAD_SIZE 35u
 
 typedef struct net_repl_body_state {
     uint16_t server_tick;        /**< Server tick counter. */
@@ -40,6 +40,11 @@ typedef struct net_repl_body_state {
     int16_t vel_x_mm_s;
     int16_t vel_y_mm_s;
     int16_t vel_z_mm_s;
+
+    /** Angular velocity in mrad/s, clamped to ±32767 (~±32 rad/s). */
+    int16_t ang_x_mrad_s;
+    int16_t ang_y_mrad_s;
+    int16_t ang_z_mrad_s;
 } net_repl_body_state_t;
 
 /**

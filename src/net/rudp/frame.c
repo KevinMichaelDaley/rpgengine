@@ -6,6 +6,7 @@
 int net_rudp_peer_receive(net_rudp_peer_t *peer,
                           const uint8_t *packet,
                           size_t packet_size,
+                          uint64_t now_ms,
                           uint8_t *out_reliable,
                           uint16_t *out_schema_id,
                           uint8_t *out_payload,
@@ -25,6 +26,7 @@ int net_rudp_peer_receive(net_rudp_peer_t *peer,
         return NET_RUDP_ERR_PROTOCOL;
     }
 
-    return net_rudp_reliability_receive(peer, &header, &frame_view, out_reliable, out_schema_id, out_payload, out_payload_capacity,
-                                        out_payload_size);
+    return net_rudp_reliability_receive(peer, &header, &frame_view, now_ms,
+                                        out_reliable, out_schema_id, out_payload,
+                                        out_payload_capacity, out_payload_size);
 }

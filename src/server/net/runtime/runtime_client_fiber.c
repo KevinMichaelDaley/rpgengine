@@ -165,6 +165,7 @@ void fr_server_client_fiber_main(void *user) {
             int prc = net_rudp_peer_receive(&peer,
                                             packet,
                                             packet_size,
+                                            now_ms,
                                             &reliable,
                                             &schema_id,
                                             payload,

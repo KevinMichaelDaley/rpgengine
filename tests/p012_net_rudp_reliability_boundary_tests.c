@@ -79,7 +79,7 @@ static int deliver_packet(net_rudp_peer_t *peer, const struct pkt *p) {
     uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
     size_t payload_size = 0u;
 
-    int rc = net_rudp_peer_receive(peer, p->bytes, p->size, &reliable, &schema_id, payload, sizeof(payload), &payload_size);
+    int rc = net_rudp_peer_receive(peer, p->bytes, p->size, 0u, &reliable, &schema_id, payload, sizeof(payload), &payload_size);
     (void)reliable;
     (void)schema_id;
     (void)payload;

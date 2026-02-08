@@ -106,6 +106,7 @@ typedef struct phys_cmd_set_state {
     phys_vec3_t position;        /**< New position. */
     phys_quat_t orientation;     /**< New orientation. */
     phys_vec3_t linear_vel;      /**< New linear velocity. */
+    phys_vec3_t angular_vel;     /**< New angular velocity. */
 } phys_cmd_set_state_t;
 
 /**
