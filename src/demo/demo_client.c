@@ -846,27 +846,24 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
      *
      * Extrapolate the server position forward by velocity to compensate
      * for network latency.  Uses measured RTT / 2 (one-way estimate)
-     * with a 16ms minimum floor. */
+     * with a 16ms minimum floor.  We do NOT add gravity here because
+     * the client's integration stage applies gravity on every tick —
+     * adding it to the extrapolation too would double-count it. */
     if (cmd_channel && e->phys_body != UINT32_MAX) {
         /* One-way latency ≈ RTT/2, floor at one tick (16 ms). */
         const float lat_s = (rtt_ms > 0u)
             ? (float)rtt_ms * 0.0005f   /* RTT/2 in seconds */
             : 0.016f;                    /* fallback: 1 tick */
-        /* Extrapolate position: p' = p + v*t + 0.5*g*t² */
-        const float half_t2 = 0.5f * lat_s * lat_s;
-        const float grav_y = -9.81f;
         const float ex = px + vx * lat_s;
-        const float ey = py + vy * lat_s + grav_y * half_t2;
+        const float ey = py + vy * lat_s;
         const float ez = pz + vz * lat_s;
-        /* Extrapolate velocity: v' = v + g*t */
-        const float evy = vy + grav_y * lat_s;
 
         phys_cmd_set_state_t cmd;
         cmd.body_index  = e->phys_body;
         cmd.position    = (phys_vec3_t){ex, ey, ez};
         cmd.orientation = (phys_quat_t){st->rot_x, st->rot_y,
                                         st->rot_z, st->rot_w};
-        cmd.linear_vel  = (phys_vec3_t){vx, evy, vz};
+        cmd.linear_vel  = (phys_vec3_t){vx, vy, vz};
         cmd.angular_vel = (phys_vec3_t){ax, ay, az};
         phys_cmd_push(cmd_channel, PHYS_CMD_SET_STATE,
                       &cmd, sizeof(cmd));
@@ -1084,7 +1081,13 @@ int main(int argc, char **argv) {
     client_cmd_cfg.capacity = 8192u;
     fr_topic_channel_t *client_cmds = fr_topic_channel_create(&client_cmd_cfg);
 
-    fr_topic_channel_t *client_corrections = fr_topic_channel_create(&client_cmd_cfg);
+    /* Correction channel needs more capacity — the server sends state
+     * for every awake body every tick, and multiple ticks of corrections
+     * can accumulate before the client's tick fiber drains them. */
+    fr_topic_channel_config_t corr_cfg;
+    memset(&corr_cfg, 0, sizeof(corr_cfg));
+    corr_cfg.capacity = 65536u;
+    fr_topic_channel_t *client_corrections = fr_topic_channel_create(&corr_cfg);
 
     /* Spawn callback context — the tick fiber uses this to map newly
      * created physics body indices back to entity_view entries.
