@@ -106,14 +106,50 @@ static void apply_impulse_(phys_world_t *world,
     if (b_next) { *b_next = *b; }
 }
 
-/** Apply a single SET_STATE command (full authoritative correction). */
+/** Apply a single SET_STATE command (full authoritative correction).
+ *
+ *  For dynamic bodies we soft-correct: set velocity to the server's
+ *  velocity plus a nudge toward the server position.  This avoids
+ *  hard-snapping which fights the local simulation and causes bodies
+ *  to appear frozen or jittery.  Orientation is set directly since
+ *  rotational errors are visually jarring and hard to converge via
+ *  angular velocity alone.
+ *
+ *  Static/kinematic bodies are hard-snapped (no local simulation). */
 static void apply_set_state_(phys_world_t *world,
                               const phys_cmd_set_state_t *cmd) {
     phys_body_t *b = phys_world_get_body(world, cmd->body_index);
     if (!b) { return; }
-    b->position    = cmd->position;
-    b->orientation = cmd->orientation;
-    b->linear_vel  = cmd->linear_vel;
+
+    /* Always wake the body so corrections take effect. */
+    b->flags &= ~(uint32_t)PHYS_BODY_FLAG_SLEEPING;
+    b->sleep_counter = 0;
+
+    const int is_dynamic = (b->inv_mass > 0.0f) &&
+                           !(b->flags & PHYS_BODY_FLAG_STATIC) &&
+                           !(b->flags & PHYS_BODY_FLAG_KINEMATIC);
+
+    if (is_dynamic) {
+        /* Soft correction: nudge velocity toward server position.
+         * The gain (CORRECTION_RATE) controls how aggressively we
+         * converge — higher = snappier but more jitter. */
+        const float CORRECTION_RATE = 8.0f; /* 1/s — converge in ~125ms */
+        float dx = cmd->position.x - b->position.x;
+        float dy = cmd->position.y - b->position.y;
+        float dz = cmd->position.z - b->position.z;
+
+        b->linear_vel.x = cmd->linear_vel.x + dx * CORRECTION_RATE;
+        b->linear_vel.y = cmd->linear_vel.y + dy * CORRECTION_RATE;
+        b->linear_vel.z = cmd->linear_vel.z + dz * CORRECTION_RATE;
+
+        /* Hard-set orientation (rotational drift is visually obvious). */
+        b->orientation = cmd->orientation;
+    } else {
+        /* Kinematic / static: hard snap. */
+        b->position    = cmd->position;
+        b->orientation = cmd->orientation;
+        b->linear_vel  = cmd->linear_vel;
+    }
 
     phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
                                                      cmd->body_index);
