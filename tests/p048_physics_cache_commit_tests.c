@@ -129,17 +129,17 @@ static int test_cache_commit_warmstart(void)
         .event_count_out  = &event_count,
         .max_events       = 4,
         .impact_threshold = 100.0f, /* high threshold: no events expected */
-        .warmstart_decay  = 0.85f,
+        .warmstart_decay  = 0.95f,
     };
 
     phys_stage_cache_commit(&args);
 
-    /* Verify cache has updated impulses (decayed by 0.85). */
+    /* Verify cache has updated impulses (decayed by 0.95). */
     phys_manifold_t *result = phys_manifold_cache_find(&cache, 1, 2);
     ASSERT_TRUE(result != NULL);
-    ASSERT_FLOAT_NEAR(5.0f  * 0.85f, result->normal_impulse[0],     1e-5f);
-    ASSERT_FLOAT_NEAR(1.5f  * 0.85f, result->tangent_impulse[0][0], 1e-5f);
-    ASSERT_FLOAT_NEAR(-0.3f * 0.85f, result->tangent_impulse[0][1], 1e-5f);
+    ASSERT_FLOAT_NEAR(5.0f  * 0.95f, result->normal_impulse[0],     1e-5f);
+    ASSERT_FLOAT_NEAR(1.5f  * 0.95f, result->tangent_impulse[0][0], 1e-5f);
+    ASSERT_FLOAT_NEAR(-0.3f * 0.95f, result->tangent_impulse[0][1], 1e-5f);
 
     phys_manifold_cache_destroy(&cache);
     return 0;

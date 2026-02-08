@@ -100,10 +100,13 @@ static void integrate_batch_job(void *data) {
                                        vec3_scale(gravity, dt));
         }
 
-        /* Apply velocity damping to dissipate energy over time. */
-        if (vel_damp < 1.0f) {
-            out->linear_vel  = vec3_scale(out->linear_vel, vel_damp);
-            out->angular_vel = vec3_scale(out->angular_vel, vel_damp);
+        /* Apply velocity damping to dissipate energy over time.
+         * The configured value is the fraction retained per second;
+         * we exponentiate by dt so damping is substep-independent. */
+        if (vel_damp < 1.0f && vel_damp > 0.0f) {
+            float d = powf(vel_damp, dt);
+            out->linear_vel  = vec3_scale(out->linear_vel, d);
+            out->angular_vel = vec3_scale(out->angular_vel, d);
         }
 
         /* Clamp velocity magnitude to prevent runaway speeds.
