@@ -11,12 +11,12 @@ size_t phys_frame_arena_used(const phys_frame_arena_t *arena) {
     if (!arena) {
         return 0;
     }
-    return arena->offset;
+    return arena->arena.offset;
 }
 
 size_t phys_frame_arena_remaining(const phys_frame_arena_t *arena) {
     if (!arena) {
         return 0;
     }
-    return arena->capacity - arena->offset;
+    return arena->arena.capacity - arena->arena.offset;
 }

@@ -269,7 +269,7 @@ static int test_frame_arena_init(void) {
     phys_frame_arena_t arena;
     int rc = phys_frame_arena_init(&arena, 4096);
     ASSERT_INT_EQ(0, rc);
-    ASSERT_INT_EQ(4096, (int)arena.capacity);
+    ASSERT_INT_EQ(4096, (int)arena.arena.capacity);
     ASSERT_INT_EQ(0, (int)phys_frame_arena_used(&arena));
     phys_frame_arena_destroy(&arena);
     return 0;

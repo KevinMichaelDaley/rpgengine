@@ -71,7 +71,10 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
     }
 
     float t = (float)((now_time_s - interp->prev_time_s) / dt);
-    t = clampf_(t, 0.0f, 1.0f);
+    /* Clamp to [0, 1.5]: allow modest extrapolation beyond the latest
+     * snapshot so the client can coast forward when packets are late,
+     * but cap at 1.5 to avoid runaway drift. */
+    t = clampf_(t, 0.0f, 1.5f);
 
     const vec3_t a = interp->prev_pos;
     const vec3_t b = interp->curr_pos;

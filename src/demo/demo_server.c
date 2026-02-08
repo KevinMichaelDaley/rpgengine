@@ -182,6 +182,12 @@ static void push_reliable_(fr_server_net_runtime_t *rt,
 /** Maximum number of high-priority bodies sent reliably per tick. */
 #define DEMO_RELIABLE_BODY_BUDGET 16u
 
+/** Maximum total bodies broadcast per tick regardless of awake count.
+ *  The fastest-moving bodies are prioritized.  Bodies beyond this cap
+ *  simply wait for the next tick.  This prevents bandwidth explosion
+ *  as body count grows. */
+#define DEMO_SEND_BUDGET_PER_TICK 64u
+
 /** Entry used by broadcast_body_states_ to rank awake bodies by speed. */
 struct body_rank_ {
     uint32_t index;
@@ -249,8 +255,12 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
     /* Sort descending by speed so the fastest bodies come first. */
     sort_by_speed_desc_(ranked, awake_count);
 
-    /* ── Pass 2: encode and broadcast ───────────────────────────── */
-    for (uint32_t ri = 0u; ri < awake_count; ++ri) {
+    /* ── Pass 2: encode and broadcast (up to send budget) ──────── */
+    uint32_t send_count = awake_count;
+    if (send_count > DEMO_SEND_BUDGET_PER_TICK) {
+        send_count = DEMO_SEND_BUDGET_PER_TICK;
+    }
+    for (uint32_t ri = 0u; ri < send_count; ++ri) {
         const uint32_t bi = ranked[ri].index;
         phys_body_t *b = phys_world_get_body(&sw->physics, bi);
         if (!b) {
@@ -401,7 +411,7 @@ int main(int argc, char **argv) {
     /* Simulation job system: runs physics stages and gameplay jobs. */
     job_system_t jobs;
     job_system_create_status_t jstatus =
-        job_system_create(&jobs, (uint32_t)workers_l, 4096u, 1u << 16, 2048, 0);
+        job_system_create(&jobs, (uint32_t)workers_l, 4096u, 1u << 18, 2048, 0);
     if (jstatus != JOB_CREATE_OK) {
         fprintf(stderr, "Failed to create simulation job system\n");
         net_udp_socket_close(&sock);

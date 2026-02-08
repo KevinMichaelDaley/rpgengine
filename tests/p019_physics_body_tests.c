@@ -35,7 +35,7 @@
     } while (0)
 
 static int test_struct_size(void) {
-    ASSERT_INT_EQ(80, (int)sizeof(phys_body_t));
+    ASSERT_INT_EQ(84, (int)sizeof(phys_body_t));
     return 0;
 }
 

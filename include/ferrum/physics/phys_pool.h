@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "ferrum/memory/arena.h"
 #include "ferrum/physics/body.h"
 
 /** @file
@@ -45,15 +46,16 @@ typedef struct phys_body_pool {
 /**
  * @brief Bump-pointer arena for per-frame transient allocations.
  *
- * Ownership: the arena owns its backing buffer.  Pointers returned
- * by phys_frame_arena_alloc are invalidated after reset or destroy.
+ * Wraps the general-purpose arena_t allocator and adds ownership of
+ * the backing buffer (malloc'd on init, freed on destroy).  Pointers
+ * returned by phys_frame_arena_alloc are invalidated after reset or
+ * destroy.
  *
  * Nullability: all public functions are NULL-safe on the arena pointer.
  */
 typedef struct phys_frame_arena {
-    uint8_t *base;     /**< Backing buffer (malloc'd). */
-    size_t capacity;   /**< Total size in bytes. */
-    size_t offset;     /**< Current allocation offset. */
+    arena_t  arena;    /**< Underlying linear arena. */
+    uint8_t *buffer;   /**< Owned backing buffer (malloc'd). */
 } phys_frame_arena_t;
 
 /* ── Body pool API ──────────────────────────────────────────────── */

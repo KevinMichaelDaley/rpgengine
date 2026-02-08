@@ -2,6 +2,9 @@
  * @file phys_arena.c
  * @brief Frame arena lifecycle and allocation.
  *
+ * Delegates to the general-purpose arena_t allocator while owning
+ * the backing buffer via malloc/free.
+ *
  * Non-static functions: init, destroy, alloc, reset (4).
  */
 
@@ -15,13 +18,12 @@ int phys_frame_arena_init(phys_frame_arena_t *arena, size_t size) {
         return -1;
     }
 
-    arena->base = malloc(size);
-    if (!arena->base) {
+    arena->buffer = malloc(size);
+    if (!arena->buffer) {
         return -1;
     }
 
-    arena->capacity = size;
-    arena->offset = 0;
+    arena_init(&arena->arena, arena->buffer, size);
     return 0;
 }
 
@@ -29,32 +31,21 @@ void phys_frame_arena_destroy(phys_frame_arena_t *arena) {
     if (!arena) {
         return;
     }
-    free(arena->base);
+    free(arena->buffer);
     memset(arena, 0, sizeof(*arena));
 }
 
 void *phys_frame_arena_alloc(phys_frame_arena_t *arena, size_t size, size_t align) {
-    if (!arena || !arena->base) {
+    if (!arena || !arena->buffer) {
         return NULL;
     }
 
-    /* Compute aligned offset. align must be a power of two. */
-    uintptr_t current = (uintptr_t)(arena->base + arena->offset);
-    uintptr_t aligned = (current + (align - 1)) & ~(align - 1);
-    size_t padding = (size_t)(aligned - current);
-    size_t total = padding + size;
-
-    if (arena->offset + total > arena->capacity) {
-        return NULL;
-    }
-
-    arena->offset += total;
-    return (void *)aligned;
+    return arena_alloc(&arena->arena, align, size);
 }
 
 void phys_frame_arena_reset(phys_frame_arena_t *arena) {
     if (!arena) {
         return;
     }
-    arena->offset = 0;
+    arena_reset(&arena->arena);
 }
