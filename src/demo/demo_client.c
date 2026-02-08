@@ -838,14 +838,31 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
     e->last_server_tick = st->server_tick;
 
     /* Push authoritative correction through the command queue so it
-     * is applied on the tick fiber -- no direct mutation from main. */
+     * is applied on the tick fiber -- no direct mutation from main.
+     *
+     * Extrapolate the server position forward by velocity to compensate
+     * for network latency.  Without RTT measurement we use a fixed
+     * estimate (~3 ticks at 60 Hz ≈ 50 ms).  This keeps corrections
+     * roughly where the body "should be now" rather than where it was
+     * when the server sent the packet, dramatically reducing
+     * rubber-banding. */
     if (cmd_channel && e->phys_body != UINT32_MAX) {
+        const float latency_estimate_s = 0.050f; /* ~50 ms */
+        /* Extrapolate position: p' = p + v*t + 0.5*g*t² */
+        const float half_t2 = 0.5f * latency_estimate_s * latency_estimate_s;
+        const float grav_y = -9.81f;
+        const float ex = px + vx * latency_estimate_s;
+        const float ey = py + vy * latency_estimate_s + grav_y * half_t2;
+        const float ez = pz + vz * latency_estimate_s;
+        /* Extrapolate velocity: v' = v + g*t */
+        const float evy = vy + grav_y * latency_estimate_s;
+
         phys_cmd_set_state_t cmd;
         cmd.body_index  = e->phys_body;
-        cmd.position    = (phys_vec3_t){px, py, pz};
+        cmd.position    = (phys_vec3_t){ex, ey, ez};
         cmd.orientation = (phys_quat_t){st->rot_x, st->rot_y,
                                         st->rot_z, st->rot_w};
-        cmd.linear_vel  = (phys_vec3_t){vx, vy, vz};
+        cmd.linear_vel  = (phys_vec3_t){vx, evy, vz};
         phys_cmd_push(cmd_channel, PHYS_CMD_SET_STATE,
                       &cmd, sizeof(cmd));
     }
