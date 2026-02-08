@@ -399,7 +399,8 @@ void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
         /* Ensure the runner is wired up (first tick may need this). */
         if (!sw->tick_runner.world) {
             phys_tick_runner_init(&sw->tick_runner, &sw->physics, jobs,
-                                 sw->cmd_channel, spawn_callback_, sw);
+                                 sw->cmd_channel, NULL,
+                                 spawn_callback_, sw);
         }
         phys_tick_runner_kick(&sw->tick_runner);
     } else {

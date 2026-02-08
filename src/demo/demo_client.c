@@ -1055,12 +1055,14 @@ int main(int argc, char **argv) {
     phys_job_context_init(&phys_jobs, &phys_job_sys);
 
     /* Command channel for client physics corrections from the network.
-     * BODY_SPAWN and BODY_STATE push commands here; the tick runner
-     * drains them at the start of each tick — no direct mutation. */
+     * BODY_SPAWN pushes to cmd_channel (drained before tick).
+     * BODY_STATE pushes to correction_channel (drained after tick). */
     fr_topic_channel_config_t client_cmd_cfg;
     memset(&client_cmd_cfg, 0, sizeof(client_cmd_cfg));
     client_cmd_cfg.capacity = 8192u;
     fr_topic_channel_t *client_cmds = fr_topic_channel_create(&client_cmd_cfg);
+
+    fr_topic_channel_t *client_corrections = fr_topic_channel_create(&client_cmd_cfg);
 
     /* Spawn callback context — the tick fiber uses this to map newly
      * created physics body indices back to entity_view entries.
@@ -1072,7 +1074,8 @@ int main(int argc, char **argv) {
 
     phys_tick_runner_t tick_runner;
     phys_tick_runner_init(&tick_runner, &client_world, &phys_jobs,
-                          client_cmds, client_spawn_cb_, &spawn_ctx);
+                          client_cmds, client_corrections,
+                          client_spawn_cb_, &spawn_ctx);
 
     /* Fixed timestep tracking for client physics. */
     const uint64_t client_tick_ms = 16u; /* ~60 Hz */
@@ -1267,7 +1270,7 @@ int main(int argc, char **argv) {
                 if (net_repl_body_state_decode(&st, payload, payload_size) == NET_REPL_OK) {
                     (void)handle_body_state_(&entities, &entity_count, &entity_cap,
                                              &st, recv_time_s, &correction_lines,
-                                             client_cmds);
+                                             client_corrections);
                 }
             } else if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 net_repl_welcome_t w;
@@ -1472,6 +1475,7 @@ int main(int argc, char **argv) {
     phys_tick_runner_wait(&tick_runner);
     phys_tick_runner_destroy(&tick_runner);
     if (client_cmds) { fr_topic_channel_destroy(client_cmds); }
+    if (client_corrections) { fr_topic_channel_destroy(client_corrections); }
     phys_job_context_destroy(&phys_jobs);
     phys_world_destroy(&client_world);
     job_system_shutdown(&phys_job_sys);

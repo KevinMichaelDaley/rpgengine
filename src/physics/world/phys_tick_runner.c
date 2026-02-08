@@ -20,29 +20,23 @@
 
 /* ── Tick job function (runs on a fiber) ─────────────────────────── */
 
-/** Job function dispatched by kick().  Drains commands, runs the
- *  parallel tick, and signals completion via atomic store.
- *
- *  In prediction mode (client), drain happens AFTER the tick so that
- *  server corrections override the just-simulated state rather than
- *  being immediately overwritten by integration.
- *  On the server, drain happens BEFORE so spawned bodies exist for
- *  the simulation step. */
+/** Job function dispatched by kick().  Drains spawn commands, runs the
+ *  parallel tick, drains corrections, and signals completion. */
 static void tick_runner_job_fn_(void *user_data) {
     phys_tick_runner_t *r = (phys_tick_runner_t *)user_data;
 
-    /* Server path: drain before tick (spawns must precede simulation). */
-    if (r->cmd_channel && !r->tick_args_.world->prediction_mode) {
+    /* Drain spawns/mutations before tick so new bodies exist for sim. */
+    if (r->cmd_channel) {
         phys_cmd_drain(r->tick_args_.world, r->cmd_channel,
                        r->spawn_cb, r->spawn_cb_user);
     }
 
     phys_world_tick_parallel(r->tick_args_.world, NULL, r->tick_args_.jobs);
 
-    /* Client path: drain after tick (corrections override prediction). */
-    if (r->cmd_channel && r->tick_args_.world->prediction_mode) {
-        phys_cmd_drain(r->tick_args_.world, r->cmd_channel,
-                       r->spawn_cb, r->spawn_cb_user);
+    /* Drain corrections after tick so they override simulated state. */
+    if (r->correction_channel) {
+        phys_cmd_drain(r->tick_args_.world, r->correction_channel,
+                       NULL, NULL);
     }
 
     atomic_store_explicit(&r->tick_done, 1, memory_order_release);
@@ -54,16 +48,18 @@ void phys_tick_runner_init(phys_tick_runner_t *r,
                            phys_world_t *world,
                            phys_job_context_t *jobs,
                            fr_topic_channel_t *cmd_channel,
+                           fr_topic_channel_t *correction_channel,
                            phys_cmd_spawn_callback_t spawn_cb,
                            void *spawn_cb_user) {
     if (!r) { return; }
     memset(r, 0, sizeof(*r));
 
-    r->world         = world;
-    r->jobs          = jobs;
-    r->cmd_channel   = cmd_channel;
-    r->spawn_cb      = spawn_cb;
-    r->spawn_cb_user = spawn_cb_user;
+    r->world              = world;
+    r->jobs               = jobs;
+    r->cmd_channel        = cmd_channel;
+    r->correction_channel = correction_channel;
+    r->spawn_cb           = spawn_cb;
+    r->spawn_cb_user      = spawn_cb_user;
 
     atomic_init(&r->tick_done, 1); /* No tick in flight initially. */
     r->tick_in_flight = 0;

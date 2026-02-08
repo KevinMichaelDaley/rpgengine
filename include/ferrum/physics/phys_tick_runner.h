@@ -49,7 +49,8 @@ struct fr_topic_channel;
 typedef struct phys_tick_runner {
     struct phys_world        *world;      /**< Borrowed physics world. */
     struct phys_job_context  *jobs;       /**< Borrowed job context. */
-    struct fr_topic_channel  *cmd_channel;/**< Borrowed command channel (may be NULL). */
+    struct fr_topic_channel  *cmd_channel;/**< Spawns + mutations (drained before tick). */
+    struct fr_topic_channel  *correction_channel; /**< SET_STATE corrections (drained after tick, may be NULL). */
 
     /** Optional callback invoked for each SPAWN_BODY during drain. */
     phys_cmd_spawn_callback_t spawn_cb;
@@ -75,7 +76,8 @@ typedef struct phys_tick_runner {
  * @param r              Runner to initialize.  Must not be NULL.
  * @param world          Physics world to tick.  Must not be NULL.
  * @param jobs           Job context for parallel dispatch.  Must not be NULL.
- * @param cmd_channel    Command channel to drain (may be NULL — no drain).
+ * @param cmd_channel    Command channel for spawns/mutations (drained before tick, may be NULL).
+ * @param correction_channel  Command channel for SET_STATE corrections (drained after tick, may be NULL).
  * @param spawn_cb       Callback for SPAWN_BODY results (may be NULL).
  * @param spawn_cb_user  Opaque pointer forwarded to spawn_cb.
  */
@@ -83,6 +85,7 @@ void phys_tick_runner_init(phys_tick_runner_t *r,
                            struct phys_world *world,
                            struct phys_job_context *jobs,
                            struct fr_topic_channel *cmd_channel,
+                           struct fr_topic_channel *correction_channel,
                            phys_cmd_spawn_callback_t spawn_cb,
                            void *spawn_cb_user);
 
