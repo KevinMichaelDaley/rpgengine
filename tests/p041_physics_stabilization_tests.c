@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/collider.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/stabilization.h"
 
@@ -329,6 +330,222 @@ static int test_stab_null_safe(void)
     return 0;
 }
 
+/**
+ * Test 7: Box resting on a face (flat on surface).  Contact point
+ * local_a is at the -Y half-extent boundary, with X and Z well
+ * inside the box.  This is a stable configuration — resting hints
+ * should apply.
+ */
+static int test_stab_box_face_resting(void)
+{
+    /* Body 0: a box resting flat, near-zero velocity. */
+    phys_body_t bodies[2];
+    bodies[0] = make_body(0.0f, 0.5f, 0.0f,
+                          0.0f, 0.001f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    /* Body 1: static ground. */
+    bodies[1] = make_body(0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    bodies[1].inv_mass = 0.0f;   /* static */
+    bodies[1].flags    = PHYS_BODY_FLAG_STATIC;
+
+    /* Box collider with half-extents (0.5, 0.5, 0.5). */
+    phys_collider_t colliders[2];
+    memset(colliders, 0, sizeof(colliders));
+    colliders[0].type        = PHYS_SHAPE_BOX;
+    colliders[0].shape_index = 0;
+    colliders[1].type        = PHYS_SHAPE_BOX;
+    colliders[1].shape_index = 1;
+
+    phys_box_t boxes[2];
+    boxes[0].half_extents = (phys_vec3_t){0.5f, 0.5f, 0.5f};
+    boxes[1].half_extents = (phys_vec3_t){100.0f, 0.1f, 100.0f}; /* ground */
+
+    /* Contact on the bottom face of body 0: local_a.y = -0.5 (at boundary),
+     * but local_a.x and local_a.z are well inside. */
+    phys_vec3_t contact_pt = {0.0f, 0.0f, 0.0f};
+    phys_vec3_t normal     = {0.0f, 1.0f, 0.0f};
+    phys_manifold_t manifold = make_manifold_one_point(0, 1, contact_pt, normal);
+    manifold.points[0].local_a = (phys_vec3_t){0.1f, -0.5f, 0.1f};
+
+    phys_stab_hint_t hint;
+    memset(&hint, 0, sizeof(hint));
+
+    phys_stabilization_args_t args;
+    memset(&args, 0, sizeof(args));
+    args.manifolds                  = &manifold;
+    args.manifold_count             = 1;
+    args.bodies                     = bodies;
+    args.colliders                  = colliders;
+    args.boxes                      = boxes;
+    args.hints_out                  = &hint;
+    args.resting_velocity_threshold = 0.1f;
+
+    phys_stage_stabilization(&args);
+
+    /* Face contact, low velocity → resting. */
+    ASSERT_TRUE(hint.friction_scale > 1.0f);
+    ASSERT_FLOAT_NEAR(0.0f, hint.restitution_scale, 1e-5f);
+
+    return 0;
+}
+
+/**
+ * Test 8: Box balanced on a corner.  Contact point local_a is near
+ * all three half-extent boundaries.  Even though relative velocity is
+ * small, the box cannot be in stable equilibrium on a corner — the
+ * stabilization stage must NOT classify this as resting.
+ */
+static int test_stab_box_corner_not_resting(void)
+{
+    /* Body 0: a box tilted so it sits on a corner, very low velocity. */
+    phys_body_t bodies[2];
+    bodies[0] = make_body(0.0f, 0.7f, 0.0f,
+                          0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    bodies[1] = make_body(0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    bodies[1].inv_mass = 0.0f;
+    bodies[1].flags    = PHYS_BODY_FLAG_STATIC;
+
+    phys_collider_t colliders[2];
+    memset(colliders, 0, sizeof(colliders));
+    colliders[0].type        = PHYS_SHAPE_BOX;
+    colliders[0].shape_index = 0;
+    colliders[1].type        = PHYS_SHAPE_BOX;
+    colliders[1].shape_index = 1;
+
+    phys_box_t boxes[2];
+    boxes[0].half_extents = (phys_vec3_t){0.5f, 0.5f, 0.5f};
+    boxes[1].half_extents = (phys_vec3_t){100.0f, 0.1f, 100.0f};
+
+    /* Contact on a corner: local_a is at all three boundaries. */
+    phys_vec3_t contact_pt = {0.0f, 0.0f, 0.0f};
+    phys_vec3_t normal     = {0.0f, 1.0f, 0.0f};
+    phys_manifold_t manifold = make_manifold_one_point(0, 1, contact_pt, normal);
+    manifold.points[0].local_a = (phys_vec3_t){0.48f, -0.48f, 0.48f};
+
+    phys_stab_hint_t hint;
+    memset(&hint, 0, sizeof(hint));
+
+    phys_stabilization_args_t args;
+    memset(&args, 0, sizeof(args));
+    args.manifolds                  = &manifold;
+    args.manifold_count             = 1;
+    args.bodies                     = bodies;
+    args.colliders                  = colliders;
+    args.boxes                      = boxes;
+    args.hints_out                  = &hint;
+    args.resting_velocity_threshold = 0.1f;
+
+    phys_stage_stabilization(&args);
+
+    /* Corner contact → NOT resting, must stay active. */
+    ASSERT_FLOAT_NEAR(1.0f, hint.friction_scale, 1e-5f);
+    ASSERT_FLOAT_NEAR(1.0f, hint.restitution_scale, 1e-5f);
+
+    return 0;
+}
+
+/**
+ * Test 9: Box balanced on an edge.  Contact point local_a has two
+ * coordinates near ±half-extent.  This is also an unstable
+ * configuration — should NOT be classified as resting.
+ */
+static int test_stab_box_edge_not_resting(void)
+{
+    phys_body_t bodies[2];
+    bodies[0] = make_body(0.0f, 0.5f, 0.0f,
+                          0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    bodies[1] = make_body(0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    bodies[1].inv_mass = 0.0f;
+    bodies[1].flags    = PHYS_BODY_FLAG_STATIC;
+
+    phys_collider_t colliders[2];
+    memset(colliders, 0, sizeof(colliders));
+    colliders[0].type        = PHYS_SHAPE_BOX;
+    colliders[0].shape_index = 0;
+    colliders[1].type        = PHYS_SHAPE_BOX;
+    colliders[1].shape_index = 1;
+
+    phys_box_t boxes[2];
+    boxes[0].half_extents = (phys_vec3_t){0.5f, 0.5f, 0.5f};
+    boxes[1].half_extents = (phys_vec3_t){100.0f, 0.1f, 100.0f};
+
+    /* Contact on an edge: two of three local coords near boundary. */
+    phys_vec3_t contact_pt = {0.0f, 0.0f, 0.0f};
+    phys_vec3_t normal     = {0.0f, 1.0f, 0.0f};
+    phys_manifold_t manifold = make_manifold_one_point(0, 1, contact_pt, normal);
+    manifold.points[0].local_a = (phys_vec3_t){0.49f, -0.49f, 0.05f};
+
+    phys_stab_hint_t hint;
+    memset(&hint, 0, sizeof(hint));
+
+    phys_stabilization_args_t args;
+    memset(&args, 0, sizeof(args));
+    args.manifolds                  = &manifold;
+    args.manifold_count             = 1;
+    args.bodies                     = bodies;
+    args.colliders                  = colliders;
+    args.boxes                      = boxes;
+    args.hints_out                  = &hint;
+    args.resting_velocity_threshold = 0.1f;
+
+    phys_stage_stabilization(&args);
+
+    /* Edge contact → NOT resting, must stay active. */
+    ASSERT_FLOAT_NEAR(1.0f, hint.friction_scale, 1e-5f);
+    ASSERT_FLOAT_NEAR(1.0f, hint.restitution_scale, 1e-5f);
+
+    return 0;
+}
+
+/**
+ * Test 10: When colliders/boxes are NULL, the stage should fall back
+ * to the original velocity-only classification (no crash).
+ */
+static int test_stab_no_collider_data_fallback(void)
+{
+    /* Same setup as test_stab_resting but without collider data. */
+    phys_body_t bodies[2];
+    bodies[0] = make_body(0.0f, 1.0f, 0.0f,
+                          0.0f, 0.001f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+    bodies[1] = make_body(0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f,
+                          0.0f, 0.0f, 0.0f);
+
+    phys_vec3_t contact_pt = {0.0f, 0.5f, 0.0f};
+    phys_vec3_t normal     = {0.0f, 1.0f, 0.0f};
+    phys_manifold_t manifold = make_manifold_one_point(0, 1, contact_pt, normal);
+
+    phys_stab_hint_t hint;
+    memset(&hint, 0, sizeof(hint));
+
+    phys_stabilization_args_t args;
+    memset(&args, 0, sizeof(args));
+    args.manifolds                  = &manifold;
+    args.manifold_count             = 1;
+    args.bodies                     = bodies;
+    args.colliders                  = NULL;
+    args.boxes                      = NULL;
+    args.hints_out                  = &hint;
+    args.resting_velocity_threshold = 0.01f;
+
+    phys_stage_stabilization(&args);
+
+    /* No collider data → velocity-only resting, same as original behavior. */
+    ASSERT_TRUE(hint.friction_scale > 1.0f);
+    ASSERT_FLOAT_NEAR(0.0f, hint.restitution_scale, 1e-5f);
+
+    return 0;
+}
+
 /* ── Main ───────────────────────────────────────────────────────── */
 
 int main(void)
@@ -344,6 +561,10 @@ int main(void)
     RUN_TEST(test_stab_sliding);
     RUN_TEST(test_stab_multiple_manifolds);
     RUN_TEST(test_stab_null_safe);
+    RUN_TEST(test_stab_box_face_resting);
+    RUN_TEST(test_stab_box_corner_not_resting);
+    RUN_TEST(test_stab_box_edge_not_resting);
+    RUN_TEST(test_stab_no_collider_data_fallback);
 
     printf("\n  %d/%d passed\n", test_count - fail_count, test_count);
     return fail_count ? 1 : 0;

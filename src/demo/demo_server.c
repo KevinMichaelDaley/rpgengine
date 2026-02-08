@@ -306,25 +306,28 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-            "Usage: %s <port> [tick_hz] [workers]\n"
-            "  Default: port=40080 tick_hz=60 workers=4\n",
+            "Usage: %s <port> [tick_hz] [sim_workers] [net_workers]\n"
+            "  Default: port=40080 tick_hz=60 sim_workers=4 net_workers=1\n"
+            "  net_workers: dedicated threads for networking fibers\n",
             argv0);
 }
 
 /* ── Main ───────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
-    if (argc < 2 || argc > 4) {
+    if (argc < 2 || argc > 5) {
         usage(argv[0]);
         return 2;
     }
 
     /* Parse arguments. */
-    long port_l    = strtol(argv[1], NULL, 10);
-    long tick_hz_l = (argc >= 3) ? strtol(argv[2], NULL, 10) : 60;
-    long workers_l = (argc >= 4) ? strtol(argv[3], NULL, 10) : 4;
+    long port_l        = strtol(argv[1], NULL, 10);
+    long tick_hz_l     = (argc >= 3) ? strtol(argv[2], NULL, 10) : 60;
+    long workers_l     = (argc >= 4) ? strtol(argv[3], NULL, 10) : 4;
+    long net_workers_l = (argc >= 5) ? strtol(argv[4], NULL, 10) : 1;
 
-    if (port_l < 1 || port_l > 65535 || tick_hz_l <= 0 || workers_l <= 0) {
+    if (port_l < 1 || port_l > 65535 || tick_hz_l <= 0 || workers_l <= 0 ||
+        net_workers_l <= 0) {
         fprintf(stderr, "Invalid arguments\n");
         return 2;
     }
@@ -362,20 +365,44 @@ int main(int argc, char **argv) {
     (void)net_udp_socket_set_send_buffer_bytes(&sock, 4u * 1024u * 1024u);
     (void)net_udp_socket_set_nonblocking(&sock, 1);
 
-    fprintf(stderr, "demo_server: listening on port %ld  tick_hz=%ld  workers=%ld\n",
-            port_l, tick_hz_l, workers_l);
+    fprintf(stderr, "demo_server: listening on port %ld  tick_hz=%ld"
+            "  sim_workers=%ld  net_workers=%ld\n",
+            port_l, tick_hz_l, workers_l, net_workers_l);
 
-    /* ── Job system ───────────────────────────────────────────────── */
+    /* ── Job systems ─────────────────────────────────────────────── */
+
+    /* Simulation job system: runs physics stages and gameplay jobs. */
     job_system_t jobs;
     job_system_create_status_t jstatus =
         job_system_create(&jobs, (uint32_t)workers_l, 4096u, 1u << 16, 2048, 0);
     if (jstatus != JOB_CREATE_OK) {
-        fprintf(stderr, "Failed to create job system\n");
+        fprintf(stderr, "Failed to create simulation job system\n");
         net_udp_socket_close(&sock);
         return 1;
     }
     if (job_system_start(&jobs) != 0) {
-        fprintf(stderr, "Failed to start job system\n");
+        fprintf(stderr, "Failed to start simulation job system\n");
+        job_system_shutdown(&jobs);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+
+    /* Dedicated networking job system: runs per-client RUDP fibers on
+     * their own OS threads so that physics tick latency can never
+     * starve network I/O. */
+    job_system_t net_jobs;
+    job_system_create_status_t njstatus =
+        job_system_create(&net_jobs, (uint32_t)net_workers_l, 1024u,
+                          1u << 16, 256, 0);
+    if (njstatus != JOB_CREATE_OK) {
+        fprintf(stderr, "Failed to create network job system\n");
+        job_system_shutdown(&jobs);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+    if (job_system_start(&net_jobs) != 0) {
+        fprintf(stderr, "Failed to start network job system\n");
+        job_system_shutdown(&net_jobs);
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
         return 1;
@@ -394,6 +421,7 @@ int main(int argc, char **argv) {
         fr_topic_channel_destroy(inbound);
         fr_topic_channel_destroy(player_events);
         fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&net_jobs);
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
         return 1;
@@ -408,7 +436,7 @@ int main(int argc, char **argv) {
     fr_server_net_runtime_config_t rt_cfg;
     memset(&rt_cfg, 0, sizeof(rt_cfg));
     rt_cfg.max_clients            = max_clients;
-    rt_cfg.jobs                   = &jobs;
+    rt_cfg.jobs                   = &net_jobs;
     rt_cfg.socket                 = &sock;
     rt_cfg.inbound_topic          = inbound;
     rt_cfg.out_reliable_capacity  = 8192u;
@@ -423,6 +451,7 @@ int main(int argc, char **argv) {
         fr_topic_channel_destroy(inbound);
         fr_topic_channel_destroy(player_events);
         fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&net_jobs);
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
         return 1;
@@ -447,6 +476,7 @@ int main(int argc, char **argv) {
         fr_topic_channel_destroy(inbound);
         fr_topic_channel_destroy(player_events);
         fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&net_jobs);
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
         return 1;
@@ -461,6 +491,7 @@ int main(int argc, char **argv) {
         fr_topic_channel_destroy(inbound);
         fr_topic_channel_destroy(player_events);
         fr_topic_channel_destroy(entity_events);
+        job_system_shutdown(&net_jobs);
         job_system_shutdown(&jobs);
         net_udp_socket_close(&sock);
         return 1;
@@ -556,8 +587,19 @@ int main(int argc, char **argv) {
             /* Other entity events (INPUT_ROT etc.) are ignored in this demo. */
         }
 
-        /* (d,e,f) Fixed-timestep tick. */
+        /* (d,e,f) Fixed-timestep tick.
+         * Cap catch-up to MAX_CATCHUP_TICKS so that a long physics
+         * frame doesn't cause an unbounded burst of sim ticks that
+         * starves the main-thread network pump above. */
+        #define MAX_CATCHUP_TICKS 3u
         if (now >= next_tick) {
+            /* Clamp: if we've fallen behind by more than MAX_CATCHUP
+             * ticks, skip ahead rather than running all of them back
+             * to back. */
+            if (now - next_tick > tick_ms * MAX_CATCHUP_TICKS) {
+                next_tick = now;
+            }
+
             server_tick = (uint16_t)(server_tick + 1u);
 
             /* (d) Tick physics world. */
@@ -600,6 +642,7 @@ int main(int argc, char **argv) {
     fr_topic_channel_destroy(inbound);
     fr_topic_channel_destroy(player_events);
     fr_topic_channel_destroy(entity_events);
+    job_system_shutdown(&net_jobs);
     job_system_shutdown(&jobs);
     net_udp_socket_close(&sock);
 

@@ -142,7 +142,7 @@ fr_server_client_fiber_t (opaque)    Per-client fiber state
 
 fr_server_net_runtime_t (opaque)     Server demux + client fiber manager
 ├── config: fr_server_net_runtime_config_t
-├── jobs: job_system_t*              Fiber scheduler (owned or borrowed)
+├── jobs: job_system_t*              Fiber scheduler (dedicated net job system)
 ├── socket: net_udp_socket_t*        UDP socket (or callback-based)
 ├── inbound_topic: fr_topic_channel_t*  Global inbound decoded messages
 ├── client_fibers[max_clients]: fr_server_client_fiber_t*

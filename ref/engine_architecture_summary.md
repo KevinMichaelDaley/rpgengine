@@ -79,12 +79,17 @@ See the detailed callgraphs for per-stage breakdowns:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                       JOB / MEMORY SYSTEM                                   │
 │                                                                             │
-│  job_system_t                    Memory Allocators                          │
-│  ├── workers[N]                  ├── arena_t     (linear, per-frame)       │
-│  ├── ws_deques[N]                ├── pool_t      (generation, single-thrd) │
-│  ├── fiber_stack_pool (apool_t)  └── apool_t     (lock-free, concurrent)   │
+│  job_system_t (sim)                Memory Allocators                        │
+│  ├── workers[N]                    ├── arena_t     (linear, per-frame)     │
+│  ├── ws_deques[N]                  ├── pool_t      (generation, single-thrd)│
+│  ├── fiber_stack_pool (apool_t)    └── apool_t     (lock-free, concurrent) │
 │  ├── job_counter_t (sync)                                                   │
-│  └── context_swap (asm)          Platform: x86-64 fiber context + FXSAVE   │
+│  └── context_swap (asm)            Platform: x86-64 fiber context + FXSAVE │
+│                                                                             │
+│  job_system_t (net)                Dedicated networking workers             │
+│  ├── workers[M]                    (typically M=1)                          │
+│  ├── ws_deques[M]                  Runs client fiber RUDP RX/TX jobs       │
+│  └── fiber_stack_pool (apool_t)    Isolated from sim latency spikes        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -109,17 +114,27 @@ Server Process:
 │      ├── Top 16 fastest awake bodies → reliable topic                     │
 │      └── Remaining awake bodies → unreliable topic                        │
 │                                                                             │
-│  Thread 1..N [WORKER]      Job system workers                              │
+│  ── Simulation job system (job_system_t) ──                                │
+│  Thread 1..N [SIM WORKER]   Simulation workers                             │
 │  ├── Physics stage jobs    (broadphase, narrowphase, solver chunks)        │
-│  ├── Client fiber jobs     (per-client RUDP RX/TX processing)             │
 │  ├── Skinning evaluation   (skeleton joint computation)                   │
 │  └── Simulation jobs       (gameplay handlers via topic dispatch)          │
 │                                                                             │
-│  Thread N+1 [TOPIC PUMP]   Topic dispatcher background thread             │
+│  ── Network job system (job_system_t) ──                                   │
+│  Thread N+1..N+M [NET WORKER]  Dedicated networking workers               │
+│  └── Client fiber jobs     (per-client RUDP RX/TX processing)             │
+│      These run on their own job system so that physics tick latency        │
+│      can never starve client fiber scheduling.                             │
+│                                                                             │
+│  Thread N+M+1 [TOPIC PUMP]   Topic dispatcher background thread           │
 │  └── Polls topics → dispatches handler jobs                               │
 │                                                                             │
-│  MINIMUM: 3 threads (main + 2 workers for client fiber progress)          │
-│  RECOMMENDED: main + (num_cores - 1) workers                              │
+│  MINIMUM: 4 threads (main + 1 sim worker + 1 net worker + topic pump)     │
+│  RECOMMENDED: main + (num_cores - 2) sim workers + 1 net worker           │
+│                                                                             │
+│  NOTE: tick catch-up is capped to 3 ticks so that a slow physics          │
+│  frame doesn't cause an unbounded burst of sim-only iterations that       │
+│  starves the main-thread network pump.                                     │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 

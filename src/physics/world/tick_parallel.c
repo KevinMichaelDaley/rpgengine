@@ -230,6 +230,8 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .manifolds                  = manifolds,
                 .manifold_count             = manifold_count,
                 .bodies                     = world->body_pool.bodies_curr,
+                .colliders                  = world->colliders,
+                .boxes                      = world->boxes,
                 .hints_out                  = hints,
                 .resting_velocity_threshold = 0.1f,
             }, jobs);

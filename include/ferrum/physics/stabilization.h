@@ -18,6 +18,8 @@ extern "C" {
 
 struct phys_manifold;
 struct phys_body;
+struct phys_collider;
+struct phys_box;
 
 /**
  * @brief Per-manifold stabilization hint.
@@ -52,6 +54,8 @@ typedef struct phys_stabilization_args {
     const struct phys_manifold *manifolds;   /**< Array of manifolds. */
     uint32_t manifold_count;                 /**< Number of manifolds. */
     const struct phys_body *bodies;           /**< Body array (indexed by manifold body_a/body_b). */
+    const struct phys_collider *colliders;    /**< Collider array (one per body, may be NULL). */
+    const struct phys_box *boxes;             /**< Box shape pool (indexed by collider shape_index, may be NULL). */
     phys_stab_hint_t *hints_out;             /**< Output: one hint per manifold. */
     float resting_velocity_threshold;        /**< Speed below which contact is "resting". */
 } phys_stabilization_args_t;

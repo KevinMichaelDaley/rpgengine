@@ -6,6 +6,9 @@
  * dispatches each batch as a job.  Each job reads body state (read-only)
  * and writes to its own disjoint slice of hints_out — no merge needed.
  *
+ * Box contacts on edges or corners are never classified as resting
+ * because those configurations are inherently unstable.
+ *
  * Non-static functions: 1 (phys_stage_stabilization_par).
  */
 
@@ -16,7 +19,67 @@
 
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/collider.h"
 #include "ferrum/physics/manifold.h"
+
+/* ── Shared unstable-box helper (same logic as stabilization.c) ─── */
+
+/** Tolerance: coordinate is "at boundary" when |coord| >= he * (1 - TOL). */
+#define FACE_TOL 0.05f
+
+/**
+ * @brief Check if a box contact is on an edge or corner (unstable).
+ *
+ * Returns true if ≥2 of the local-space coordinates are near the
+ * half-extent boundary.
+ */
+static int box_contact_unstable_(phys_vec3_t local, phys_vec3_t half_ext)
+{
+    int boundary_count = 0;
+    const float coords[3] = { local.x, local.y, local.z };
+    const float extents[3] = { half_ext.x, half_ext.y, half_ext.z };
+
+    for (int a = 0; a < 3; ++a) {
+        if (extents[a] <= 0.0f) {
+            continue;
+        }
+        float limit = extents[a] * (1.0f - FACE_TOL);
+        if (fabsf(coords[a]) >= limit) {
+            boundary_count++;
+        }
+    }
+    return boundary_count >= 2;
+}
+
+/**
+ * @brief Check if a manifold contact is on an unstable box support.
+ */
+static int contact_on_unstable_box_(const phys_stabilization_args_t *args,
+                                    const phys_manifold_t *m,
+                                    const phys_contact_point_t *cp)
+{
+    if (!args->colliders || !args->boxes) {
+        return 0;
+    }
+
+    const phys_collider_t *ca = &args->colliders[m->body_a];
+    if (ca->type == PHYS_SHAPE_BOX) {
+        phys_vec3_t he = args->boxes[ca->shape_index].half_extents;
+        if (box_contact_unstable_(cp->local_a, he)) {
+            return 1;
+        }
+    }
+
+    const phys_collider_t *cb = &args->colliders[m->body_b];
+    if (cb->type == PHYS_SHAPE_BOX) {
+        phys_vec3_t he = args->boxes[cb->shape_index].half_extents;
+        if (box_contact_unstable_(cp->local_b, he)) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
 
 /* ── Per-dispatch shared context ────────────────────────────────── */
 
@@ -108,10 +171,15 @@ static void stabilization_batch_job(void *data) {
         }
 
         /* Classify as resting if both normal and tangential speeds
-         * are below the threshold.  Apply tier friction boost. */
+         * are below the threshold.  Apply tier friction boost.
+         *
+         * Exception: box contacts on edges or corners are inherently
+         * unstable and must not receive resting treatment. */
         if (fabsf(v_n) < threshold && v_t_sq < threshold_sq) {
-            hint->friction_scale    = 3.0f * tier_friction_boost;
-            hint->restitution_scale = 0.0f;
+            if (!contact_on_unstable_box_(args, m, cp)) {
+                hint->friction_scale    = 3.0f * tier_friction_boost;
+                hint->restitution_scale = 0.0f;
+            }
         }
     }
 }

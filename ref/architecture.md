@@ -413,11 +413,13 @@ On the client, networking runs on its own OS thread(s):
 **Subsystem boundary:** modules like spawned-entity management run on the job system (fiber-safe) and are fed an arena (with a pool-backed backing store) for allocating entities created by server commands.
 
 ### 9.3 Server Networking Runtime (One Fiber per Client)
-On the server, the network subsystem uses **one fiber per client** scheduled by the job system:
+On the server, the network subsystem uses **one fiber per client** scheduled by a **dedicated networking job system**:
 
 - Each client fiber maintains at least two fiber-local channels: **reliable** and **unreliable** (e.g., physics/motion updates).
 - Client fibers publish decoded inbound messages into a **global inbound topic/queue** consumed by simulation/gameplay jobs on other fibers.
 - Outbound simulation results are published into per-client outbound channels for the client fibers to serialize and send.
+
+**Threading requirement:** client fibers run on a **separate `job_system_t`** with dedicated OS worker threads (typically 1, configurable via CLI). This ensures that physics tick latency spikes cannot starve client fiber scheduling. The main-thread tick catch-up loop is capped (default: 3 ticks) to prevent unbounded physics-only bursts from blocking the network pump.
 
 **Important distinction:** not all spawnable entities represent players.
 
@@ -439,7 +441,7 @@ The entity/world simulation uses this connection data to drive networking events
 - `EVT_ENTITY_JOIN`: reserved for non-player “remote entity processes” (e.g., audit/observer/bridge clients) that join but are not players.
 - `EVT_ENTITY_SPAWN`: non-player entity spawn events (NPCs/props/etc).
 
-**Threading requirement:** allocate at least **two OS worker threads** at all times to processing client fibers (in addition to any other worker threads used for simulation/render on a dedicated server).
+**Threading requirement:** allocate at least **one dedicated OS worker thread** in the networking job system for client fiber progress. For higher client counts, increase to 2+. The simulation job system uses separate workers for physics, skinning, and gameplay jobs.
 
 ### 9.2 Replication and Delta Compression
 - server maintains state history (snapshots)

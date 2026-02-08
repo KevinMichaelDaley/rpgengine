@@ -6,6 +6,10 @@
  * relative velocity at the first contact point, and writes per-manifold
  * friction/restitution scale hints.  Per-tier scaling is applied using
  * the higher tier (lower fidelity) body in each pair.
+ *
+ * Box contacts on edges or corners are never classified as resting
+ * because those configurations are inherently unstable — gravity will
+ * always topple the box eventually.
  */
 
 #include "ferrum/physics/stabilization.h"
@@ -15,7 +19,93 @@
 
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/collider.h"
 #include "ferrum/physics/manifold.h"
+
+/**
+ * @brief Tolerance factor for face-contact classification.
+ *
+ * A local-space coordinate is "at the boundary" of a box half-extent
+ * when  |coord| >= half_extent * (1 - FACE_TOL).
+ * With 0.05 this means within 5% of the edge.
+ */
+#define FACE_TOL 0.05f
+
+/**
+ * @brief Check if a box contact is geometrically unstable (edge/corner).
+ *
+ * Returns true if the contact point lies on an edge or corner of the
+ * box — i.e. two or more of its local-space coordinates are near the
+ * half-extent boundary.  Such contacts cannot provide stable support
+ * and should not receive resting stabilization hints.
+ *
+ * @param local       Contact point in body-local space.
+ * @param half_ext    Box half-extents.
+ * @return true if contact is on an edge or corner (unstable).
+ */
+static int box_contact_unstable_(phys_vec3_t local, phys_vec3_t half_ext)
+{
+    /* Count how many axes have the contact point near the boundary. */
+    int boundary_count = 0;
+    const float coords[3] = { local.x, local.y, local.z };
+    const float extents[3] = { half_ext.x, half_ext.y, half_ext.z };
+
+    for (int a = 0; a < 3; ++a) {
+        if (extents[a] <= 0.0f) {
+            continue;
+        }
+        float limit = extents[a] * (1.0f - FACE_TOL);
+        if (fabsf(coords[a]) >= limit) {
+            boundary_count++;
+        }
+    }
+
+    /* Face contact: exactly 1 axis at the boundary.
+     * Edge contact: 2 axes at the boundary.
+     * Corner contact: 3 axes at the boundary.
+     * 0 axes: interior point (treat as stable). */
+    return boundary_count >= 2;
+}
+
+/**
+ * @brief Check if a manifold contact is on an unstable box support.
+ *
+ * If collider/box data is available and either body is a box whose
+ * contact point sits on an edge or corner, this returns true.
+ *
+ * @param args  Stage arguments (colliders/boxes may be NULL).
+ * @param m     The manifold to check.
+ * @param cp    The first contact point.
+ * @return true if contact is geometrically unstable for a box body.
+ */
+static int contact_on_unstable_box_(const phys_stabilization_args_t *args,
+                                    const phys_manifold_t *m,
+                                    const phys_contact_point_t *cp)
+{
+    if (!args->colliders || !args->boxes) {
+        return 0;
+    }
+
+    /* Check body A. */
+    const phys_collider_t *ca = &args->colliders[m->body_a];
+    if (ca->type == PHYS_SHAPE_BOX) {
+        phys_vec3_t he = args->boxes[ca->shape_index].half_extents;
+        if (box_contact_unstable_(cp->local_a, he)) {
+            return 1;
+        }
+    }
+
+    /* Check body B. */
+    const phys_collider_t *cb = &args->colliders[m->body_b];
+    if (cb->type == PHYS_SHAPE_BOX) {
+        phys_vec3_t he = args->boxes[cb->shape_index].half_extents;
+        if (box_contact_unstable_(cp->local_b, he)) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
 
 void phys_stage_stabilization(const phys_stabilization_args_t *args)
 {
@@ -86,10 +176,16 @@ void phys_stage_stabilization(const phys_stabilization_args_t *args)
         }
 
         /* Classify as resting if both normal and tangential speeds
-         * are below the threshold.  Apply tier friction boost. */
+         * are below the threshold.  Apply tier friction boost.
+         *
+         * Exception: if a box body is supported only on an edge or
+         * corner, the configuration is inherently unstable and must
+         * not receive resting treatment — gravity will topple it. */
         if (fabsf(v_n) < threshold && v_t_sq < threshold_sq) {
-            hint->friction_scale    = 3.0f * tier_friction_boost;
-            hint->restitution_scale = 0.0f;
+            if (!contact_on_unstable_box_(args, m, cp)) {
+                hint->friction_scale    = 3.0f * tier_friction_boost;
+                hint->restitution_scale = 0.0f;
+            }
         }
     }
 }
