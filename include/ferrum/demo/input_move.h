@@ -9,7 +9,7 @@
 /** @file
  * @brief Demo input: player movement + actions.
  *
- * Client -> Server (reliable). 8 bytes on wire.
+ * Client -> Server (unreliable). 8 bytes on wire.
  */
 
 #ifdef __cplusplus

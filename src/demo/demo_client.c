@@ -884,10 +884,9 @@ int main(int argc, char **argv) {
 
             uint8_t move_payload[DEMO_INPUT_MOVE_PAYLOAD_SIZE];
             if (demo_input_move_encode(&move_msg, move_payload, sizeof(move_payload)) == NET_REPL_OK) {
-                uint16_t seq = 0u;
-                (void)net_rudp_peer_send_reliable(&peer, &sock, &server_addr, now_ms,
-                                                  NET_REPL_SCHEMA_INPUT_MOVE,
-                                                  move_payload, sizeof(move_payload), &seq);
+                (void)net_rudp_peer_send_unreliable(&peer, &sock, &server_addr, now_ms,
+                                                    NET_REPL_SCHEMA_INPUT_MOVE,
+                                                    move_payload, sizeof(move_payload));
             }
         }
 

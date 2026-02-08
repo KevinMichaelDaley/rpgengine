@@ -144,7 +144,58 @@ static void push_unreliable_(fr_server_net_runtime_t *rt,
     (void)fr_topic_channel_push(out_unrel, msg, 2u + payload_size);
 }
 
+/* ── Reliable push helper ──────────────────────────────────────── */
+
+static void push_reliable_(fr_server_net_runtime_t *rt,
+                            uint16_t client_id,
+                            uint16_t schema_id,
+                            const uint8_t *payload,
+                            size_t payload_size) {
+    if (!rt || !payload || payload_size == 0u) {
+        return;
+    }
+
+    fr_topic_channel_t *out_rel  = NULL;
+    fr_topic_channel_t *out_unrel = NULL;
+    if (!fr_server_net_runtime_client_out_topics(rt, client_id,
+                                                 &out_rel, &out_unrel) || !out_rel) {
+        return;
+    }
+
+    if (payload_size > NET_RUDP_MAX_PACKET_SIZE) {
+        return;
+    }
+
+    uint8_t msg[2u + NET_RUDP_MAX_PACKET_SIZE];
+    msg[0] = (uint8_t)(schema_id & 0xFFu);
+    msg[1] = (uint8_t)((schema_id >> 8u) & 0xFFu);
+    memcpy(msg + 2u, payload, payload_size);
+    (void)fr_topic_channel_push(out_rel, msg, 2u + payload_size);
+}
+
 /* ── Broadcast body states to all connected clients ─────────────── */
+
+/** Maximum number of high-priority bodies sent reliably per tick. */
+#define DEMO_RELIABLE_BODY_BUDGET 16u
+
+/** Entry used by broadcast_body_states_ to rank awake bodies by speed. */
+struct body_rank_ {
+    uint32_t index;
+    float    speed_sq;   /* linear speed squared for sorting */
+};
+
+/** Simple insertion sort (N is small, typically < 128). */
+static void sort_by_speed_desc_(struct body_rank_ *arr, uint32_t n) {
+    for (uint32_t i = 1u; i < n; ++i) {
+        struct body_rank_ key = arr[i];
+        uint32_t j = i;
+        while (j > 0u && arr[j - 1u].speed_sq < key.speed_sq) {
+            arr[j] = arr[j - 1u];
+            --j;
+        }
+        arr[j] = key;
+    }
+}
 
 static void broadcast_body_states_(fr_server_net_runtime_t *rt,
                                    demo_server_world_t *sw,
@@ -155,9 +206,15 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         return;
     }
 
-    /* Iterate all body pool slots and broadcast active dynamic bodies.
-     * Skip body 0 (ground plane) and any static/kinematic bodies. */
+    /* ── Pass 1: collect awake dynamic bodies and rank by speed ──── */
     const uint32_t capacity = sw->physics.body_pool.capacity;
+
+    /* Stack array large enough for the pool.  Bodies beyond 512 are
+     * unlikely in this demo; if capacity is larger, only the first 512
+     * awake bodies are considered for reliable promotion. */
+    struct body_rank_ ranked[512];
+    uint32_t awake_count = 0u;
+
     for (uint32_t i = 0u; i < capacity; ++i) {
         if (i == DEMO_GROUND_BODY) {
             continue;
@@ -167,6 +224,32 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
             continue;
         }
         if (phys_body_is_static(b) || phys_body_is_kinematic(b)) {
+            continue;
+        }
+
+        /* Skip sleeping bodies entirely — they aren't moving. */
+        if (phys_body_is_sleeping(b)) {
+            continue;
+        }
+
+        if (awake_count < 512u) {
+            float sx = b->linear_vel.x;
+            float sy = b->linear_vel.y;
+            float sz = b->linear_vel.z;
+            ranked[awake_count].index    = i;
+            ranked[awake_count].speed_sq = sx * sx + sy * sy + sz * sz;
+            awake_count++;
+        }
+    }
+
+    /* Sort descending by speed so the fastest bodies come first. */
+    sort_by_speed_desc_(ranked, awake_count);
+
+    /* ── Pass 2: encode and broadcast ───────────────────────────── */
+    for (uint32_t ri = 0u; ri < awake_count; ++ri) {
+        const uint32_t bi = ranked[ri].index;
+        phys_body_t *b = phys_world_get_body(&sw->physics, bi);
+        if (!b) {
             continue;
         }
 
@@ -188,7 +271,7 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
         net_repl_state_cube_t st;
         memset(&st, 0, sizeof(st));
         st.server_tick = server_tick;
-        st.entity_id   = i;
+        st.entity_id   = bi;
         st.pos_mm      = (net_repl_vec3_mm_t){qpos.x_mm, qpos.y_mm, qpos.z_mm};
         st.rot_snorm16 = (net_repl_quat_snorm16_t){qrot.x, qrot.y, qrot.z, qrot.w};
 
@@ -197,13 +280,24 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
             continue;
         }
 
+        /* Top DEMO_RELIABLE_BODY_BUDGET bodies go reliable;
+         * the rest go unreliable.  This ensures the fastest-moving
+         * objects are delivered with guaranteed ordering while
+         * avoiding send-slot exhaustion for the long tail. */
+        const int use_reliable = (ri < DEMO_RELIABLE_BODY_BUDGET);
+
         /* Send to every connected client. */
         for (uint16_t ci = 0u; ci < max_clients; ++ci) {
             if (!client_connected[ci]) {
                 continue;
             }
-            push_unreliable_(rt, ci, NET_REPL_SCHEMA_STATE_CUBE,
-                             payload, sizeof(payload));
+            if (use_reliable) {
+                push_reliable_(rt, ci, NET_REPL_SCHEMA_STATE_CUBE,
+                               payload, sizeof(payload));
+            } else {
+                push_unreliable_(rt, ci, NET_REPL_SCHEMA_STATE_CUBE,
+                                 payload, sizeof(payload));
+            }
         }
     }
 }
