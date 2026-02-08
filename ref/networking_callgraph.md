@@ -82,6 +82,7 @@ net_rudp_peer_t                      Per-peer RUDP state
 ├── next_sequence: uint16_t          Next outbound sequence
 ├── recv_window: net_ack_window_t    Inbound ACK tracking
 ├── resend_interval_ms: uint32_t     Retransmission timeout
+├── max_slot_age_ms: uint32_t        TTL for unACKed slots (0 = no expiry)
 ├── send_slots: net_rudp_send_slot_t*  Reliable send ring buffer
 ├── send_slot_count: size_t          Number of send slots
 ├── frag_enabled: uint8_t            Fragmentation/reassembly toggle
@@ -340,13 +341,15 @@ Quantization:
 │    │   │        │            │
 │    │   │        │            │   ALGORITHM:
 │    │   │        │            │   ├── For each occupied send_slot:
+│    │   │        │            │   │   ├── IF age > max_slot_age_ms (default 5s):
+│    │   │        │            │   │   │   └── Expire slot (slot->used = 0), skip
 │    │   │        │            │   │   ├── IF now_ms - slot->last_send_ms > resend_interval_ms:
 │    │   │        │            │   │   │   ├── sendto_cb(io_user, &to, slot->packet_bytes, slot->size)
 │    │   │        │            │   │   │   └── slot->last_send_ms = now_ms
 │    │   │        │            │   │   └── ELSE: skip
 │    │   │        │            │   └── RETURNS: count of resent packets
 │    │   │        │            │
-│    │   │        │            └── EFFECT: Unacknowledged reliable packets retransmitted
+│    │   │        │            └── EFFECT: Unacknowledged reliable packets retransmitted or expired
 │    │   │        │
 │    │   │        └── Fiber completes → job_counter_dec(&counter)
 │    │   │
@@ -572,7 +575,7 @@ Quantization:
 ├──▶ net_rudp_peer_send_reliable(peer, sock, &server_addr, now_ms,
 │    │                            schema_id, payload, size, &out_seq)
 │    │
-│    │   Client sends reliable messages (e.g., input_rot, join):
+│    │   Client sends reliable messages (e.g., input_spawn, join):
 │    │   ├── Encode packet with ACK piggyback
 │    │   ├── Buffer in send slot for retransmit
 │    │   └── net_udp_socket_sendto(sock, &server_addr, packet, packet_size)
@@ -582,7 +585,7 @@ Quantization:
 ├──▶ net_rudp_peer_send_unreliable(peer, sock, &server_addr, now_ms,
 │    │                              schema_id, payload, size)
 │    │
-│    │   Client sends unreliable messages (e.g., high-rate input):
+│    │   Client sends unreliable messages (e.g., input_move, keepalive):
 │    │   ├── Encode packet with ACK piggyback (no send slot buffering)
 │    │   └── net_udp_socket_sendto(sock, &server_addr, packet, packet_size)
 │    │
@@ -590,10 +593,11 @@ Quantization:
 │
 ├──▶ net_rudp_peer_tick_resend(peer, sock, &server_addr, now_ms)
 │    │
-│    │   Retransmit any unacknowledged reliable packets past interval:
-│    │   └── For each occupied send_slot past resend_interval_ms: resend
+│    │   Retransmit unacknowledged reliable packets past interval;
+│    │   expire slots older than max_slot_age_ms (default 5s):
+│    │   └── For each occupied send_slot: expire if too old, else resend
 │    │
-│    └── EFFECT: Reliable retransmission
+│    └── EFFECT: Reliable retransmission + slot expiry
 
 ═══════════════════════════════════════════════════════════════════════════════
               REPLICATION ENCODE/DECODE PIPELINE

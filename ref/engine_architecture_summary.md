@@ -105,6 +105,9 @@ Server Process:
 │  ├── phys_world_tick()                 Dispatches physics jobs              │
 │  ├── simulation_update()              Game logic (ECS queries)             │
 │  └── outbound_replication()           Push to per-client out topics        │
+│      ├── Sleeping bodies skipped (zero bandwidth)                         │
+│      ├── Top 16 fastest awake bodies → reliable topic                     │
+│      └── Remaining awake bodies → unreliable topic                        │
 │                                                                             │
 │  Thread 1..N [WORKER]      Job system workers                              │
 │  ├── Physics stage jobs    (broadphase, narrowphase, solver chunks)        │
