@@ -12,8 +12,10 @@
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_pool.h"
+#include "ferrum/job/system.h"
 
 #include <math.h>
+#include <threads.h>
 
 /** Spawn distance in front of the player (meters). */
 #define SPAWN_DISTANCE 2.0f
@@ -363,13 +365,70 @@ uint32_t demo_server_world_spawn_box(demo_server_world_t *sw, int client_slot,
     return body_idx;
 }
 
+/* ── Parallel tick wrapper ─────────────────────────────────────────
+ *
+ * phys_world_tick_parallel must run inside a fiber so that its internal
+ * phys_wait_stage calls use the fiber-park path.  We dispatch it as a
+ * single job on the simulation job system and wait on a condvar from
+ * the main thread.
+ */
+
+/** Arguments passed to the wrapper job that runs the parallel tick. */
+typedef struct tick_job_args {
+    phys_world_t       *world;
+    phys_job_context_t *jobs;
+    mtx_t              *done_mtx;
+    cnd_t              *done_cnd;
+    int                *done_flag;
+} tick_job_args_t;
+
+/** Job function: runs the parallel tick inside a fiber context, then
+ *  signals completion to the waiting main thread. */
+static void tick_job_fn_(void *user_data) {
+    tick_job_args_t *a = (tick_job_args_t *)user_data;
+    phys_world_tick_parallel(a->world, NULL, a->jobs);
+
+    mtx_lock(a->done_mtx);
+    *a->done_flag = 1;
+    cnd_signal(a->done_cnd);
+    mtx_unlock(a->done_mtx);
+}
+
 void demo_server_world_tick(demo_server_world_t *sw, phys_job_context_t *jobs) {
     if (!sw) {
         return;
     }
 
     if (jobs) {
-        phys_world_tick_parallel(&sw->physics, NULL, jobs);
+        /* Dispatch the parallel tick as a single job so it runs inside a
+         * fiber context.  The main thread waits on a condvar until the
+         * tick is complete. */
+        mtx_t done_mtx;
+        cnd_t done_cnd;
+        int   done_flag = 0;
+        mtx_init(&done_mtx, mtx_plain);
+        cnd_init(&done_cnd);
+
+        tick_job_args_t args = {
+            .world     = &sw->physics,
+            .jobs      = jobs,
+            .done_mtx  = &done_mtx,
+            .done_cnd  = &done_cnd,
+            .done_flag = &done_flag,
+        };
+
+        job_dispatch_named(jobs->job_sys, tick_job_fn_, &args,
+                           0, NULL, "Phys.Tick.Parallel");
+
+        /* Wait for the job to signal completion. */
+        mtx_lock(&done_mtx);
+        while (!done_flag) {
+            cnd_wait(&done_cnd, &done_mtx);
+        }
+        mtx_unlock(&done_mtx);
+
+        mtx_destroy(&done_mtx);
+        cnd_destroy(&done_cnd);
     } else {
         phys_world_tick(&sw->physics, NULL);
     }

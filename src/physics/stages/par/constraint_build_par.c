@@ -16,6 +16,7 @@
 #include "ferrum/physics/stabilization.h"
 #include "ferrum/physics/step_plan.h"
 
+#include <math.h>
 #include <stdatomic.h>
 #include <stddef.h>
 
@@ -131,10 +132,16 @@ static void constraint_build_job(void *data) {
                 c->rows[0].bias -= baumgarte_bias;
             }
 
-            /* Load warmstart impulses from manifold cache. */
+            /* Load warmstart impulses from manifold cache.
+             * Sanitize NaN/Inf to prevent solver corruption. */
             c->rows[0].lambda = manifold->normal_impulse[p];
             c->rows[1].lambda = manifold->tangent_impulse[p][0];
             c->rows[2].lambda = manifold->tangent_impulse[p][1];
+            for (uint8_t r = 0; r < 3; ++r) {
+                if (isnan(c->rows[r].lambda) || isinf(c->rows[r].lambda)) {
+                    c->rows[r].lambda = 0.0f;
+                }
+            }
         }
     }
 }

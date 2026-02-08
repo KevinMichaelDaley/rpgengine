@@ -41,10 +41,13 @@ typedef struct phys_body {
     uint32_t flags;
     uint8_t tier;
     uint8_t sleep_counter;  /**< Consecutive low-velocity frames (0–255). */
-    uint8_t _pad[6];
+    uint8_t _pad[2];
+
+    float friction;         /**< Surface friction coefficient (0–1+). */
+    float restitution;      /**< Coefficient of restitution / bounciness (0–1). */
 } phys_body_t;
 
-_Static_assert(sizeof(phys_body_t) == 80, "phys_body_t must be exactly 80 bytes");
+_Static_assert(sizeof(phys_body_t) == 84, "phys_body_t size check");
 
 /** Initialize body to safe defaults (static, identity orientation). */
 void phys_body_init(phys_body_t *body);

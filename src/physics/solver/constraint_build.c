@@ -88,11 +88,16 @@ void phys_constraint_build_contact(
         baumgarte_bias = (baumgarte / dt) * pen_excess;
     }
 
-    /* Restitution bias: restitution * relative_normal_velocity
-     * (positive when objects are separating, adds bounce). */
+    /* Restitution bias: when objects are approaching (vn_rel < 0),
+     * add a positive bias proportional to the closing speed to create
+     * bounce.  Only apply when closing speed exceeds a small threshold
+     * to avoid jitter at rest. */
     float vn_rel = compute_relative_normal_velocity(body_a, body_b,
                                                      rA, rB, normal);
-    float restitution_bias = restitution * vn_rel;
+    float restitution_bias = 0.0f;
+    if (vn_rel < -0.5f) {
+        restitution_bias = -restitution * vn_rel;
+    }
 
     /* Total bias pushes bodies apart. */
     c->rows[0].bias = baumgarte_bias + restitution_bias;

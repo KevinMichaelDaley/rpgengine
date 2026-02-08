@@ -11,6 +11,8 @@ void phys_body_init(phys_body_t *body) {
     body->orientation.w = 1.0f;
     body->flags = PHYS_BODY_FLAG_STATIC;
     body->tier = 0;
+    body->friction = 0.5f;
+    body->restitution = 0.2f;
 }
 
 void phys_body_set_mass(phys_body_t *body, float mass) {

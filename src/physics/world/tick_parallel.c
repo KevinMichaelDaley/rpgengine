@@ -120,8 +120,6 @@ void phys_world_tick_parallel(phys_world_t *world,
         .active    = active,
         .body_count = body_cap,
     }, jobs);
-
-    /* ── Substep loop ──────────────────────────────────────────── */
     const uint32_t substeps = plan.substeps > 0 ? plan.substeps : 1;
     const float substep_dt = plan.substep_dt > 0.0f
                                  ? plan.substep_dt
@@ -174,8 +172,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .pair_count_out = &pair_count,
             }, jobs, &world->frame_arena);
         }
-
-        /* ── Stage 6: Narrowphase [PARALLEL] ───────────────────── */
         uint32_t max_candidates = pair_count > 0 ? pair_count : 1;
         phys_contact_candidate_t *candidates = phys_frame_arena_alloc(
             &world->frame_arena,
@@ -197,8 +193,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .max_candidates      = max_candidates,
             }, jobs);
         }
-
-        /* ── Stage 7: Manifold Build [PARALLEL] ────────────────── */
         uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
         phys_manifold_t *manifolds = phys_frame_arena_alloc(
             &world->frame_arena,
@@ -215,10 +209,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .manifold_count_out = &manifold_count,
                 .max_manifolds      = max_manifolds,
                 .tick               = world->tick_count,
+                .bodies             = world->body_pool.bodies_curr,
             }, jobs);
         }
-
-        /* ── Stage 8: Stabilization [PARALLEL] ─────────────────── */
         uint32_t hint_count = manifold_count > 0 ? manifold_count : 1;
         phys_stab_hint_t *hints = phys_frame_arena_alloc(
             &world->frame_arena,
@@ -236,8 +229,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .resting_velocity_threshold = 0.1f,
             }, jobs);
         }
-
-        /* ── Stage 9: Constraint Build [PARALLEL] ──────────────── */
         uint32_t max_constraints = manifold_count * PHYS_MAX_MANIFOLD_POINTS;
         if (max_constraints == 0) {
             max_constraints = 1;
@@ -262,8 +253,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .slop                 = world->config.slop,
             }, jobs);
         }
-
-        /* ── Stage 10: Island Build [SYNC] ─────────────────────── */
         phys_island_list_t islands;
         phys_island_list_init(&islands, &world->frame_arena,
                               body_cap, body_cap);
@@ -276,8 +265,6 @@ void phys_world_tick_parallel(phys_world_t *world,
             .islands_out      = &islands,
             .arena            = &world->frame_arena,
         });
-
-        /* ── Stage 11: TGS Solve [PARALLEL] ────────────────────── */
         phys_velocity_t *velocities = phys_frame_arena_alloc(
             &world->frame_arena,
             (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
@@ -297,8 +284,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .iterations = plan.solver_iterations,
             }, jobs);
         }
-
-        /* ── Stage 12: Integrate [PARALLEL] ────────────────────── */
         if (velocities) {
             phys_stage_integrate_par(&(phys_integrate_args_t){
                 .bodies_in              = world->body_pool.bodies_curr,
@@ -312,8 +297,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .sleep_delay_frames     = world->config.sleep_delay_frames,
             }, jobs);
         }
-
-        /* ── Stage 12b: Position Projection [SYNC per island] ──── */
         if (constraint_count > 0) {
             /* Allocate shared output arrays once for all islands. */
             phys_vec3_t *shared_pos = phys_frame_arena_alloc(

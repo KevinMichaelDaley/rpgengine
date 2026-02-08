@@ -6,6 +6,8 @@
 
 #include "ferrum/physics/constraint_stage.h"
 
+#include <math.h>
+
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/manifold.h"
@@ -66,10 +68,16 @@ void phys_stage_constraint_build(const phys_constraint_build_args_t *args)
                 c->rows[0].bias -= baumgarte_bias;
             }
 
-            /* Load warmstart impulses from manifold cache. */
+            /* Load warmstart impulses from manifold cache.
+             * Sanitize NaN/Inf to prevent solver corruption. */
             c->rows[0].lambda = manifold->normal_impulse[p];
             c->rows[1].lambda = manifold->tangent_impulse[p][0];
             c->rows[2].lambda = manifold->tangent_impulse[p][1];
+            for (uint8_t r = 0; r < 3; ++r) {
+                if (isnan(c->rows[r].lambda) || isinf(c->rows[r].lambda)) {
+                    c->rows[r].lambda = 0.0f;
+                }
+            }
         }
     }
 

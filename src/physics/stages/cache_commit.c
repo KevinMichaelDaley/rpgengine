@@ -30,11 +30,18 @@ void phys_stage_cache_commit(const phys_cache_commit_args_t *args)
         phys_manifold_t *cached = phys_manifold_cache_find(
             args->cache, c->body_a, c->body_b);
 
-        /* Write back solved impulses for warmstarting. */
+        /* Write back solved impulses for warmstarting.
+         * Guard against NaN/Inf to prevent corruption across frames. */
         if (cached && c->point_idx < cached->point_count) {
-            cached->normal_impulse[c->point_idx]      = c->rows[0].lambda;
-            cached->tangent_impulse[c->point_idx][0]   = c->rows[1].lambda;
-            cached->tangent_impulse[c->point_idx][1]   = c->rows[2].lambda;
+            float nl = c->rows[0].lambda;
+            float t0 = c->rows[1].lambda;
+            float t1 = c->rows[2].lambda;
+            if (isnan(nl) || isinf(nl)) { nl = 0.0f; }
+            if (isnan(t0) || isinf(t0)) { t0 = 0.0f; }
+            if (isnan(t1) || isinf(t1)) { t1 = 0.0f; }
+            cached->normal_impulse[c->point_idx]      = nl;
+            cached->tangent_impulse[c->point_idx][0]   = t0;
+            cached->tangent_impulse[c->point_idx][1]   = t1;
         }
 
         /* Emit impact event if normal impulse exceeds threshold. */

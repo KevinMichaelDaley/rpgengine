@@ -8,6 +8,7 @@
 
 #include "ferrum/physics/manifold_build.h"
 
+#include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/manifold_cache.h"
 #include "ferrum/physics/narrowphase.h"
@@ -60,6 +61,16 @@ void phys_stage_manifold_build(const phys_manifold_build_args_t *args)
         }
         cached->body_a = cand->body_a;
         cached->body_b = cand->body_b;
+
+        /* Combine surface material from both bodies. */
+        if (args->bodies) {
+            cached->friction = phys_combine_friction(
+                args->bodies[cand->body_a].friction,
+                args->bodies[cand->body_b].friction);
+            cached->restitution = phys_combine_restitution(
+                args->bodies[cand->body_a].restitution,
+                args->bodies[cand->body_b].restitution);
+        }
 
         /* 4. Add new contact points from the candidate. */
         for (uint8_t j = 0; j < cand->contact_count; ++j) {

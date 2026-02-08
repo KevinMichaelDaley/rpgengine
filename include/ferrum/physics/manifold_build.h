@@ -13,6 +13,7 @@
 struct phys_contact_candidate;
 struct phys_manifold_cache;
 struct phys_manifold;
+struct phys_body;
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,6 +36,7 @@ typedef struct phys_manifold_build_args {
     uint32_t *manifold_count_out;     /**< Receives number of manifolds written. */
     uint32_t max_manifolds;           /**< Capacity of manifolds_out. */
     uint64_t tick;                    /**< Current simulation tick. */
+    const struct phys_body *bodies;   /**< Body array for material lookups. */
 } phys_manifold_build_args_t;
 
 /**

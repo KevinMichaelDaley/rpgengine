@@ -52,10 +52,38 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
         out->linear_vel  = velocities[i].linear;
         out->angular_vel = velocities[i].angular;
 
+        /* Sanitize NaN/Inf velocities — clamp to zero to prevent
+         * cascading corruption across ticks. */
+        if (isnan(out->linear_vel.x) || isnan(out->linear_vel.y) ||
+            isnan(out->linear_vel.z) || isinf(out->linear_vel.x) ||
+            isinf(out->linear_vel.y) || isinf(out->linear_vel.z)) {
+            out->linear_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        }
+        if (isnan(out->angular_vel.x) || isnan(out->angular_vel.y) ||
+            isnan(out->angular_vel.z) || isinf(out->angular_vel.x) ||
+            isinf(out->angular_vel.y) || isinf(out->angular_vel.z)) {
+            out->angular_vel = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        }
+
         /* Apply gravity (only if body is not sleeping). */
         if (!phys_body_is_sleeping(in)) {
             out->linear_vel = vec3_add(out->linear_vel,
                                        vec3_scale(gravity, dt));
+        }
+
+        /* Clamp velocity magnitude to prevent runaway speeds.
+         * 100 m/s linear, 50 rad/s angular are generous limits. */
+        {
+            float lin_speed = vec3_magnitude(out->linear_vel);
+            if (lin_speed > 100.0f) {
+                out->linear_vel = vec3_scale(out->linear_vel,
+                                             100.0f / lin_speed);
+            }
+            float ang_speed = vec3_magnitude(out->angular_vel);
+            if (ang_speed > 50.0f) {
+                out->angular_vel = vec3_scale(out->angular_vel,
+                                              50.0f / ang_speed);
+            }
         }
 
         /* Integrate position: position += linear_vel * dt. */

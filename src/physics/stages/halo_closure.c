@@ -9,6 +9,8 @@
 
 #include "ferrum/physics/halo_closure.h"
 
+#include <math.h>
+
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/aabb.h"
 #include "ferrum/physics/body.h"
@@ -37,6 +39,13 @@ void phys_stage_halo_closure(const phys_halo_closure_args_t *args) {
 
         /* Step 2: Extend by velocity * dt in the direction of motion. */
         vec3_t motion = vec3_scale(body->linear_vel, args->dt);
+
+        /* Guard: if velocity contains NaN/Inf, skip this body to avoid
+         * generating an invalid swept AABB. */
+        if (isnan(motion.x) || isnan(motion.y) || isnan(motion.z) ||
+            isinf(motion.x) || isinf(motion.y) || isinf(motion.z)) {
+            continue;
+        }
         if (motion.x > 0.0f) { swept.max.x += motion.x; }
         else                  { swept.min.x += motion.x; }
         if (motion.y > 0.0f) { swept.max.y += motion.y; }

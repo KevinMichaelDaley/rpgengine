@@ -16,6 +16,7 @@
 #include <string.h>
 #include <threads.h>
 
+#include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/manifold_cache.h"
 #include "ferrum/physics/narrowphase.h"
@@ -35,6 +36,7 @@ typedef struct manifold_build_shared {
     phys_manifold_t *manifolds_out;              /**< Output buffer for manifolds. */
     uint32_t max_manifolds;                      /**< Capacity of manifolds_out. */
     uint64_t tick;                               /**< Current simulation tick. */
+    const phys_body_t *bodies;                   /**< Body array for material lookups. */
     mtx_t cache_mtx;                             /**< Mutex protecting cache access. */
     atomic_uint output_index;                    /**< Atomic counter for output slot allocation. */
 } manifold_build_shared_t;
@@ -93,6 +95,16 @@ static void manifold_build_batch_job(void *data) {
         }
         cached->body_a = cand->body_a;
         cached->body_b = cand->body_b;
+
+        /* Combine surface material from both bodies. */
+        if (shared->bodies) {
+            cached->friction = phys_combine_friction(
+                shared->bodies[cand->body_a].friction,
+                shared->bodies[cand->body_b].friction);
+            cached->restitution = phys_combine_restitution(
+                shared->bodies[cand->body_a].restitution,
+                shared->bodies[cand->body_b].restitution);
+        }
 
         /* 4. Add new contact points from the candidate. */
         for (uint8_t j = 0; j < cand->contact_count; ++j) {
@@ -156,6 +168,7 @@ void phys_stage_manifold_build_par(const phys_manifold_build_args_t *args,
         .manifolds_out = args->manifolds_out,
         .max_manifolds = args->max_manifolds,
         .tick          = args->tick,
+        .bodies        = args->bodies,
     };
     mtx_init(&shared.cache_mtx, mtx_plain);
     atomic_store(&shared.output_index, 0);

@@ -114,6 +114,15 @@ void phys_spatial_grid_insert(phys_spatial_grid_t *grid, uint32_t body_index,
         return;
     }
 
+    /* Guard against NaN/Inf AABBs — would produce undefined cell ranges
+     * and potentially infinite iteration. */
+    if (isnan(aabb->min.x) || isnan(aabb->min.y) || isnan(aabb->min.z) ||
+        isnan(aabb->max.x) || isnan(aabb->max.y) || isnan(aabb->max.z) ||
+        isinf(aabb->min.x) || isinf(aabb->min.y) || isinf(aabb->min.z) ||
+        isinf(aabb->max.x) || isinf(aabb->max.y) || isinf(aabb->max.z)) {
+        return;
+    }
+
     /* Compute cell coordinate range for the AABB. */
     int32_t min_cx = (int32_t)floorf(aabb->min.x * grid->inv_cell_size);
     int32_t min_cy = (int32_t)floorf(aabb->min.y * grid->inv_cell_size);
@@ -121,6 +130,12 @@ void phys_spatial_grid_insert(phys_spatial_grid_t *grid, uint32_t body_index,
     int32_t max_cx = (int32_t)floorf(aabb->max.x * grid->inv_cell_size);
     int32_t max_cy = (int32_t)floorf(aabb->max.y * grid->inv_cell_size);
     int32_t max_cz = (int32_t)floorf(aabb->max.z * grid->inv_cell_size);
+
+    /* Cap cell range to avoid degenerate insertions from huge AABBs. */
+    int32_t max_cells_per_axis = (int32_t)grid->cell_count;
+    if ((max_cx - min_cx) > max_cells_per_axis) { max_cx = min_cx + max_cells_per_axis; }
+    if ((max_cy - min_cy) > max_cells_per_axis) { max_cy = min_cy + max_cells_per_axis; }
+    if ((max_cz - min_cz) > max_cells_per_axis) { max_cz = min_cz + max_cells_per_axis; }
 
     /* Insert into every cell the AABB overlaps. */
     for (int32_t cz = min_cz; cz <= max_cz; ++cz) {
@@ -141,6 +156,15 @@ uint32_t phys_spatial_grid_query(const phys_spatial_grid_t *grid,
         return 0;
     }
 
+    /* Guard against NaN/Inf AABBs — would produce undefined cell ranges
+     * and potentially infinite iteration. */
+    if (isnan(aabb->min.x) || isnan(aabb->min.y) || isnan(aabb->min.z) ||
+        isnan(aabb->max.x) || isnan(aabb->max.y) || isnan(aabb->max.z) ||
+        isinf(aabb->min.x) || isinf(aabb->min.y) || isinf(aabb->min.z) ||
+        isinf(aabb->max.x) || isinf(aabb->max.y) || isinf(aabb->max.z)) {
+        return 0;
+    }
+
     /* Compute cell coordinate range for the query AABB. */
     int32_t min_cx = (int32_t)floorf(aabb->min.x * grid->inv_cell_size);
     int32_t min_cy = (int32_t)floorf(aabb->min.y * grid->inv_cell_size);
@@ -148,6 +172,14 @@ uint32_t phys_spatial_grid_query(const phys_spatial_grid_t *grid,
     int32_t max_cx = (int32_t)floorf(aabb->max.x * grid->inv_cell_size);
     int32_t max_cy = (int32_t)floorf(aabb->max.y * grid->inv_cell_size);
     int32_t max_cz = (int32_t)floorf(aabb->max.z * grid->inv_cell_size);
+
+    /* Cap cell range to avoid degenerate queries from extremely large AABBs.
+     * The grid uses hashing so iterating more than cell_count cells is
+     * wasteful — we'd just revisit the same hash buckets. */
+    int32_t max_cells_per_axis = (int32_t)grid->cell_count;
+    if ((max_cx - min_cx) > max_cells_per_axis) { max_cx = min_cx + max_cells_per_axis; }
+    if ((max_cy - min_cy) > max_cells_per_axis) { max_cy = min_cy + max_cells_per_axis; }
+    if ((max_cz - min_cz) > max_cells_per_axis) { max_cz = min_cz + max_cells_per_axis; }
 
     uint32_t result_count = 0;
 

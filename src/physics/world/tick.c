@@ -201,6 +201,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .manifold_count_out = &manifold_count,
                 .max_manifolds      = max_manifolds,
                 .tick               = world->tick_count,
+                .bodies             = world->body_pool.bodies_curr,
             });
         }
 
