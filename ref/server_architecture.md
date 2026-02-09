@@ -104,15 +104,49 @@ The main fiber yields (via `job_yield()`) until
 This guarantees that body positions are up-to-date before replication
 reads them.
 
-### Stage 5 — Encode & Broadcast Spawns (Reliable)
+### Stage 5 — Encode & Broadcast Reliable Events
 
-New ECS entities and physics bodies that appeared this tick are sent to
-each client **reliably** via the RUDP stream:
+All events that **must** arrive are sent through a single reliable event
+system.  Each event is tagged with a type enum and carries a type-specific
+payload via a union:
+
+```c
+/** Event types sent reliably to clients. */
+typedef enum server_event_type {
+    SERVER_EVENT_SPAWN,        /* Entity/body entered the world            */
+    SERVER_EVENT_DESPAWN,      /* Entity/body removed from the world       */
+    SERVER_EVENT_DEATH,        /* Entity died (may trigger client FX/UI)   */
+    SERVER_EVENT_HEALTH,       /* HP changed (damage, heal)                */
+    SERVER_EVENT_STATUS,       /* Status effect applied/removed            */
+    SERVER_EVENT_INVENTORY,    /* Inventory mutation                       */
+    SERVER_EVENT_COUNT
+} server_event_type_t;
+
+/** Union payload — sized by largest variant. */
+typedef struct server_event {
+    server_event_type_t type;
+    entity_t            entity;   /* Which entity this event concerns */
+    union {
+        net_repl_body_spawn_t   spawn;    /* position, shape, flags      */
+        struct { uint16_t body_id; }                          despawn;
+        struct { uint16_t body_id; uint8_t cause; }           death;
+        struct { int16_t delta; int16_t current; }            health;
+        struct { uint8_t effect_id; bool applied; }           status;
+        struct { uint16_t slot; uint16_t item_id; int16_t qty; } inventory;
+    } data;
+} server_event_t;
+```
+
+The enum and union live in a single header
+(`include/ferrum/server/event.h`).  Adding a new reliable event type
+means adding an enum value and a union variant — no new transport code.
+
+**Broadcast path (unchanged transport):**
 
 ```
-server_repl_try_send_spawn_batch(rt, client_id, ...)
-  → net_repl_spawn_batch_encode(...)
-  → fr_topic_channel_push(client->out_reliable, [SPAWN_BATCH | payload])
+server_event_queue_push(&eq, &event)
+  → server_event_encode(&event, buf, &len)
+  → fr_topic_channel_push(client->out_reliable, [EVENT schema | payload])
      ↓ (client fiber pumps)
   → fr_rudp_stream_send(stream, channel=0, data, len)
   → fr_rudp_stream_flush_send(stream, stream_sendto_, user)
@@ -120,9 +154,27 @@ server_repl_try_send_spawn_batch(rt, client_id, ...)
   → net_rudp_peer_send_reliable_via(peer, STREAM_FRAME, frame)
 ```
 
-Spawns use `NET_REPL_SCHEMA_SPAWN_BATCH` (0x2005) or `NET_REPL_SCHEMA_BODY_SPAWN`
-(0x200A).  The client reassembles stream frames in-order and processes spawns
-before applying any state updates.
+Events are accumulated into a per-tick queue (`server_event_queue_t`,
+a simple ring or arena-backed array) during stages 1–4.  At stage 5
+the queue is drained and broadcast to each client.  The existing RUDP
+stream provides ordered, retransmitted delivery — individual event types
+do not need their own reliability logic.
+
+**Wire format:**
+
+```
+[event_type : u8] [entity_id : u32] [payload : variable]
+```
+
+Payload encoding is type-specific and uses fixed-size fields (no
+variable-length data in the initial set).  The client decodes by
+switching on `event_type` and reading the corresponding fixed-size
+struct.
+
+**Spawn** and **despawn** replace the previous spawn-only path.
+`NET_REPL_SCHEMA_SPAWN_BATCH` (0x2005) and `NET_REPL_SCHEMA_BODY_SPAWN`
+(0x200A) are retained as wire schema IDs for backward compatibility;
+a new `NET_REPL_SCHEMA_EVENT` schema ID wraps the generic event format.
 
 ### Stage 6 — Encode & Broadcast Body State (Unreliable, Tiered)
 
@@ -258,17 +310,23 @@ server loop epic (`rpg-2ob4`):
    `INPUT_MOVE`/`INPUT_ROT` into `phys_game_state_t.players[]`.  The
    schemas and physics game_state struct exist; the glue does not.
 
-3. **Tiered send frequency** — `repl_server_tick` currently sends every
+3. **Reliable event system** — `server_event_type_t` enum,
+   `server_event_t` union, event queue, and encode/decode functions.
+   Header: `include/ferrum/server/event.h`.  Replaces the spawn-only
+   reliable path with a general-purpose event broadcast that also
+   covers despawn, death, health, status effects, and inventory.
+
+4. **Tiered send frequency** — `repl_server_tick` currently sends every
    body every tick.  Tier-based decimation (T2 every 2nd, T3 every 4th,
    T4 every 8th) needs to be added.
 
-4. **Tiered quantization selection** — T0/T1 should use full-float
+5. **Tiered quantization selection** — T0/T1 should use full-float
    `STATE_CUBE` encoding; T2–T4 can use the existing quantized
    `BODY_STATE` format.
 
-5. **Tick pacing / catch-up policy** — max catch-up ticks, fixed timestep
+6. **Tick pacing / catch-up policy** — max catch-up ticks, fixed timestep
    accumulator, and backpressure (skip replication if physics is behind).
 
-6. **Integration tests** — a headless test that proves the loop advances
+7. **Integration tests** — a headless test that proves the loop advances
    ticks, dispatches physics, and produces replication output without
    SDL or graphics.
