@@ -1,6 +1,6 @@
 ---
 id: rpg-9cvi
-status: open
+status: closed
 deps: [rpg-e54l, rpg-1bul]
 links: []
 created: 2026-02-07T19:44:41Z

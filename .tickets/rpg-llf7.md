@@ -10,7 +10,7 @@ assignee: KMD
 parent: rpg-d3sq
 tags: [physics, perf]
 ---
-# Wire XPBD solve for T3/T4
+# Wire XPBD solve for T2/T3/T4
 
 Implement XPBD solve path for far-field tiers (T3/T4):
 - Decide scratch buffers + integration hookup

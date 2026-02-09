@@ -9,11 +9,11 @@ priority: 2
 assignee: KMD
 tags: [physics, perf]
 ---
-# Physics optimizations: XPBD T3/T4 + island coloring
+# Physics optimizations: XPBD T2/T3/T4 + island coloring
 
 Implement two major physics performance upgrades:
 
-1) Wire XPBD solve for far-field tiers (T3/T4)
+1) Wire XPBD solve for far-field tiers (T2/T3/T4)
 2) Add greedy lowest-degree-first graph coloring for large islands to enable parallel constraint processing / island splitting
 
 Context (current repo state): src/physics/world/tick*.c currently runs TGS-only; XPBD modules exist but are not wired. The solver also uses split impulse (pseudo_velocities[]) so there is no separate position projection stage.
@@ -23,9 +23,9 @@ Context (current repo state): src/physics/world/tick*.c currently runs TGS-only;
 
 Design sketch:
 
-A) XPBD for T3/T4
-- Add a Stage 11b XPBD path that operates only on bodies in tiers T3/T4 (and optionally T2 later).
-- Keep TGS for near-field tiers (T0/T1, possibly T2).
+A) XPBD for T2/T3/T4
+- Add a Stage 11b XPBD path that operates on bodies in tiers T2/T3/T4.
+- Keep TGS for near-field tiers (T0/T1).
 - Data flow: constraint build produces constraint rows tagged with solver mode and tier; XPBD accumulates positional corrections into per-body scratch; integrate consumes corrections (likely via pseudo_velocities[] or a dedicated xpbd_delta_pos[] buffer).
 - Ensure determinism constraints and bounded memory via frame_arena allocations.
 
@@ -41,7 +41,7 @@ Tracy:
 ## Acceptance Criteria
 
 Acceptance criteria:
-- XPBD solve is executed for T3/T4 bodies and produces stable stacks/contacts at distance without destabilizing near-field.
+- XPBD solve is executed for T2/T3/T4 bodies and produces stable stacks/contacts at distance without destabilizing near-field.
 - Large-island coloring reduces wall-clock time in synthetic dense scenarios (documented with a bench + Tracy capture).
 - Unit/regression tests cover:
   - XPBD path activation by tier
