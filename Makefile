@@ -148,7 +148,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
 	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark \
-	build/p008_server_compute_jobs_tests build/p007_net_stream_api_tests build/p007_net_stream_channel_topic_tests \
+	build/p008_server_compute_jobs_tests build/p007_net_stream_api_tests build/p007_net_stream_flush_send_tests build/p007_net_stream_channel_topic_tests \
 	build/p008_server_client_fiber_stream_tests build/p008_server_net_runtime_fiber_tests \
 	build/p008_server_entity_net_pump_tests \
 	build/p008_pose_interpolator_tests \
@@ -489,6 +489,9 @@ build/p007_net_topic_dispatch_benchmark: build/libheadless.a tests/p007_net_topi
 build/p007_net_stream_api_tests: build/libheadless.a tests/p007_net_stream_api_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_stream_api_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p007_net_stream_flush_send_tests: build/libheadless.a tests/p007_net_stream_flush_send_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_stream_flush_send_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_stream_channel_topic_tests: build/libheadless.a tests/p007_net_stream_channel_topic_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_stream_channel_topic_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -603,6 +606,11 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p013_net_rudp_reliability_layer_tests \
 	&& ./build/p014_net_rudp_reliability_send_layer_tests \
 	&& ./build/p015_server_net_inbound_message_tests \
+	&& ./build/p007_net_stream_api_tests \
+	&& ./build/p007_net_stream_flush_send_tests \
+	&& ./build/p007_net_stream_channel_topic_tests \
+	&& ./build/p008_server_client_fiber_stream_tests \
+	&& ./build/p008_server_net_runtime_fiber_tests \
 	&& ./build/p016_net_repl_input_rot_tests \
 	&& ./build/p017_math_quat_angle_tests \
 	&& ./build/p018_physics_types_tests \

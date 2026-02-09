@@ -81,18 +81,33 @@ uint32_t fr_rudp_stream_flush_send(fr_rudp_stream_t *s,
 
     for (uint32_t chan = 0u; chan < s->reliable_channels; ++chan) {
         net_reliable_channel_t *ch = &s->outbound[chan];
+        if (!ch->initialized) {
+            continue;
+        }
+
         for (;;) {
-            size_t payload_size = 0u;
-            /* Receive pops the next in-order message from the channel. */
-            int rc = net_reliable_channel_receive(ch, s->scratch, s->max_payload_size, &payload_size);
-            if (rc != NET_RELIABLE_OK) {
+            uint16_t seq = ch->next_receive_sequence;
+            size_t index = 0u;
+            bool found = false;
+
+            for (size_t i = 0u; i < ch->slot_count; ++i) {
+                if (ch->occupied[i] && ch->sequences[i] == seq) {
+                    index = i;
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
                 break;
             }
 
-            /* The sequence of the message we just popped is
-             * (next_receive_sequence - 1) because receive() already
-             * advanced next_receive_sequence. */
-            uint16_t seq = (uint16_t)(ch->next_receive_sequence - 1u);
+            size_t payload_size = ch->sizes[index];
+            if (payload_size > s->max_payload_size || payload_size > ch->max_payload_size) {
+                break;
+            }
+
+            const uint8_t *payload_ptr = ch->payloads + index * ch->max_payload_size;
 
             /* Build frame: [seq_lo][seq_hi][chan_lo][chan_hi][payload] */
             s->frame_scratch[0] = (uint8_t)(seq & 0xFFu);
@@ -100,12 +115,20 @@ uint32_t fr_rudp_stream_flush_send(fr_rudp_stream_t *s,
             s->frame_scratch[2] = (uint8_t)(chan & 0xFFu);
             s->frame_scratch[3] = (uint8_t)((chan >> 8u) & 0xFFu);
             if (payload_size > 0u) {
-                memcpy(s->frame_scratch + frame_hdr, s->scratch, payload_size);
+                memcpy(s->frame_scratch + frame_hdr, payload_ptr, payload_size);
             }
 
             if (sendto(user, s->frame_scratch, frame_hdr + payload_size) != 0) {
-                break; /* stop on send failure */
+                break; /* stop on send failure; do not dequeue */
             }
+
+            /* Commit dequeue only after successful transmission. */
+            ch->occupied[index] = 0u;
+            ch->sizes[index] = 0u;
+            if (ch->count > 0u) {
+                ch->count--;
+            }
+            ch->next_receive_sequence = (uint16_t)(ch->next_receive_sequence + 1u);
             flushed++;
         }
     }

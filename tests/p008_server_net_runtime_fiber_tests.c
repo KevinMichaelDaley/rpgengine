@@ -7,7 +7,9 @@
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/welcome.h"
+#include "ferrum/net/replication/common.h"
 #include "ferrum/net/rudp/peer.h"
+#include "ferrum/net/rudp/wire_frame.h"
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/server/net/runtime.h"
@@ -265,6 +267,14 @@ static int test_outbound_reliable_topic_sends_a_packet(void) {
 
     ASSERT_TRUE(io.out.used);
     ASSERT_TRUE(io.out.size > 0);
+
+    net_packet_header_t out_header;
+    net_rudp_wire_frame_view_t out_frame;
+    ASSERT_EQ_INT(NET_RUDP_WIRE_OK, net_rudp_wire_decode(&out_header, &out_frame, io.out.packet, io.out.size));
+    (void)out_header;
+
+    ASSERT_EQ_INT(NET_REPL_SCHEMA_STREAM_FRAME, out_frame.schema_id);
+    ASSERT_TRUE((out_frame.flags & NET_RUDP_WIRE_FLAG_RELIABLE) != 0u);
 
     fr_server_net_runtime_destroy(rt);
     fr_topic_channel_destroy(inbox);

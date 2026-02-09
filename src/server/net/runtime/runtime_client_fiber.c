@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -17,6 +18,7 @@ typedef struct flush_ctx_ {
     net_rudp_peer_t *peer;
     uint16_t client_id;
     uint64_t now_ms;
+    FILE *log;
 } flush_ctx_t;
 
 static int sendto_(fr_server_net_runtime_t *rt, const net_udp_addr_t *to, const void *data, size_t size) {
@@ -65,7 +67,7 @@ static void publish_inbound_(fr_server_net_runtime_t *rt,
 }
 
 /**
- * Stream flush callback: wraps each stream frame as an unreliable RUDP
+ * Stream flush callback: wraps each stream frame as a reliable RUDP
  * packet with schema STREAM_FRAME so the client can demux it.
  */
 static int stream_sendto_(void *user, const uint8_t *data, size_t len) {
@@ -73,13 +75,26 @@ static int stream_sendto_(void *user, const uint8_t *data, size_t len) {
     if (!ctx || !ctx->rt || !ctx->peer) {
         return -1;
     }
-    int rc = net_rudp_peer_send_unreliable_via(ctx->peer,
-                                               ctx->rt,
-                                               sendto_cb_bridge_,
-                                               &ctx->rt->clients[ctx->client_id].addr,
-                                               ctx->now_ms,
-                                               NET_REPL_SCHEMA_STREAM_FRAME,
-                                               data, len);
+    /* Log: [seq_lo][seq_hi][chan_lo][chan_hi][payload...] */
+    if (ctx->log && len >= 4u) {
+        uint16_t seq = (uint16_t)(data[0] | ((uint16_t)data[1] << 8u));
+        uint16_t chan = (uint16_t)(data[2] | ((uint16_t)data[3] << 8u));
+        fprintf(ctx->log, "SEND seq=%u chan=%u payload_len=%zu\n",
+                (unsigned)seq, (unsigned)chan, len - 4u);
+        fflush(ctx->log);
+    }
+
+    uint16_t rudp_sequence = 0u;
+    int rc = net_rudp_peer_send_reliable_via(ctx->peer,
+                                             ctx->rt,
+                                             sendto_cb_bridge_,
+                                             &ctx->rt->clients[ctx->client_id].addr,
+                                             ctx->now_ms,
+                                             NET_REPL_SCHEMA_STREAM_FRAME,
+                                             data, len,
+                                             &rudp_sequence);
+    (void)rudp_sequence;
+
     if (rc == NET_RUDP_OK) {
         atomic_fetch_add_explicit(&ctx->rt->packets_out, 1u, memory_order_relaxed);
         atomic_fetch_add_explicit(&ctx->rt->bytes_out, (uint64_t)len, memory_order_relaxed);
@@ -197,6 +212,9 @@ void fr_server_client_fiber_main(void *user) {
         return;
     }
 
+    /* Diagnostic: log every stream frame sent. */
+    FILE *stream_log = fopen("/tmp/stream_server_send.log", "w");
+
     uint8_t packet[NET_RUDP_MAX_PACKET_SIZE];
     uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
 
@@ -238,7 +256,8 @@ void fr_server_client_fiber_main(void *user) {
         pump_reliable_to_stream_(out_stream, client->out_reliable);
 
         flush_ctx_t fctx = { .rt = rt, .peer = &peer,
-                             .client_id = client_id, .now_ms = now_ms };
+                             .client_id = client_id, .now_ms = now_ms,
+                             .log = stream_log };
         (void)fr_rudp_stream_flush_send(out_stream, stream_sendto_, &fctx);
 
         /* Unreliable outbound: send directly via RUDP peer */
@@ -250,5 +269,6 @@ void fr_server_client_fiber_main(void *user) {
         job_yield();
     }
 
+    if (stream_log) fclose(stream_log);
     fr_rudp_stream_destroy(out_stream);
 }

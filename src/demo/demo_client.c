@@ -1001,6 +1001,7 @@ int main(int argc, char **argv) {
         net_udp_socket_close(&sock);
         return 1;
     }
+    FILE *rx_stream_log = fopen("/tmp/stream_client_recv.log", "w");
 
     uint32_t rng = (uint32_t)(0xA5A5A5A5u ^ (uint32_t)getpid());
 
@@ -1352,7 +1353,16 @@ int main(int argc, char **argv) {
                         (unsigned)w.expected_entities, (unsigned)w.tick_hz);
             } else if (schema_id == NET_REPL_SCHEMA_STREAM_FRAME) {
                 /* Push stream frame into reassembly; dispatch below. */
-                (void)fr_rudp_stream_push_frame(rx_stream, payload, payload_size);
+                if (payload_size >= 4u) {
+                    uint16_t fseq = (uint16_t)(payload[0] | ((uint16_t)payload[1] << 8u));
+                    uint16_t fchan = (uint16_t)(payload[2] | ((uint16_t)payload[3] << 8u));
+                    bool accepted = fr_rudp_stream_push_frame(rx_stream, payload, payload_size);
+                    if (rx_stream_log) {
+                        fprintf(rx_stream_log, "RECV seq=%u chan=%u payload_len=%zu accepted=%d\n",
+                                (unsigned)fseq, (unsigned)fchan, payload_size - 4u, (int)accepted);
+                        fflush(rx_stream_log);
+                    }
+                }
             }
         }
 
@@ -1612,6 +1622,7 @@ int main(int argc, char **argv) {
     job_system_shutdown(&phys_job_sys);
     free(entities);
     gl_demo_shutdown_(&gl);
+    if (rx_stream_log) fclose(rx_stream_log);
     fr_rudp_stream_destroy(rx_stream);
     free(send_slots);
     net_udp_socket_close(&sock);
