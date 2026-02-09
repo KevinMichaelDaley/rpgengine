@@ -3,6 +3,9 @@
 This document analyzes memory usage, performance scaling, bottlenecks, and
 gameplay scenarios for the Ferrum physics engine.
 
+NOTE (current repo state): the tick orchestrators in `src/physics/world/tick*.c`
+currently run TGS-only; XPBD discussion in this document is forward-looking.
+
 ---
 
 ## 1. Memory Budget Per Rigid Body

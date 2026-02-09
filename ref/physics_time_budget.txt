@@ -1,161 +1,75 @@
-# Physics Tick Time Budget
-# =========================
-# Total tick target: ~1.5-2.0 ms at 30 Hz (2 substeps)
-# Percentages are of total physics tick time
-# Zone names follow pattern: Phys.Stage.DescriptiveParticiple
+# Physics Tick Time Budget (Current)
+# ================================
+# Target: ~1.5–2.0 ms at 30 Hz (typical: 2 substeps)
+# Percentages are of total physics tick CPU time (not wall-clock).
 #
-# NOTE: Percentages represent CPU-core-time, NOT wall-clock time.
-# TGS (12%) and XPBD (18%) run concurrently — wall-clock is max(12,18) = 18%.
-# The raw sum is 100% of total CPU work across all cores.
-# Also, parallel stages (marked [PARALLEL] in callgraph) divide by thread count
-# for wall-clock, so actual wall-clock is significantly less than the sum.
+# NOTE:
+# - Halo closure and broadphase are executed once per tick (outside the substep loop).
+# - Buffer swap happens once per substep.
+# - XPBD + explicit position-projection stages are not currently part of tick.c; split impulse
+#   position correction is fused into TGS via pseudo-velocities.
+#
+# Zone names follow pattern: Phys.Stage.DescriptiveParticiple
 #
 # Format: FUNCTION_NAME                          TRACY_ZONE                              %TIME
 # ----------------------------------------------------------------------------------------------
 
-# TICK PROLOGUE (once per tick)
+# TICK PROLOGUE
 phys_frame_arena_reset                           Phys.Tick.ResettingArena                 0.5
 
-# STAGE 0: STEP PLAN (once per tick)
+# STAGE 0: STEP PLAN
 phys_stage_step_plan                             Phys.Plan.ComputingStepPlan              0.5
 
-# STAGE 1: TIER CLASSIFICATION (once per tick)
+# STAGE 1: TIER CLASSIFICATION
 phys_stage_tier_classify                         Phys.Tier.ClassifyingBodies              3.0
 
-# STAGE 2: SPATIAL INDEX UPDATE (once per tick)
+# STAGE 2: SPATIAL UPDATE (AABBs + grid build)
 phys_stage_spatial_update                        Phys.Spatial.UpdatingGrid                3.0
 
-# --- SUBSTEP LOOP (stages 3-13 run N times, percentages are per-substep × N) ---
-# Assuming 2 substeps, multiply per-substep by 2 for total
-
-# STAGE 3: HALO CLOSURE (per substep)
+# STAGE 3: HALO CLOSURE (once per tick)
 phys_stage_halo_closure                          Phys.Halo.ClosingNeighbors               4.0
 
-# STAGE 4: AABB UPDATE (per substep)
-phys_stage_aabb_update                           Phys.AABB.UpdatingBounds                 3.0
-
-# STAGE 5: BROADPHASE (per substep)
+# STAGE 5: BROADPHASE (once per tick)
 phys_stage_broadphase                            Phys.Broad.FindingPairs                  8.0
 
-# STAGE 6: NARROWPHASE (per substep)
+# --- SUBSTEP LOOP (typically 2 substeps) ---
+
+# STAGE 4: AABB UPDATE (substep>0)
+phys_stage_aabb_update                           Phys.AABB.UpdatingBounds                 3.0
+
+# STAGE 6: NARROWPHASE
 phys_stage_narrowphase                           Phys.Narrow.TestingCollisions           14.0
-  phys_sphere_vs_sphere                          Phys.Narrow.SphereSphere                 -
-  phys_box_vs_box                                Phys.Narrow.BoxBox                       -
-  phys_capsule_vs_capsule                        Phys.Narrow.CapsuleCapsule               -
-  phys_sphere_vs_box                             Phys.Narrow.SphereBox                    -
-  phys_sphere_vs_capsule                         Phys.Narrow.SphereCapsule                -
-  phys_box_vs_capsule                            Phys.Narrow.BoxCapsule                   -
 
-# STAGE 7: MANIFOLD BUILD (per substep)
+# STAGE 7: MANIFOLD BUILD
 phys_stage_manifold_build                        Phys.Manifold.BuildingContacts           5.0
-  phys_manifold_cache_find                       Phys.Manifold.CacheLookup                -
-  phys_manifold_reduce                           Phys.Manifold.ReducingPoints             -
-  phys_manifold_cache_insert                     Phys.Manifold.CacheInsert                -
 
-# STAGE 8: STABILIZATION (per substep)
+# STAGE 8: STABILIZATION
 phys_stage_stabilization                         Phys.Stab.ComputingHints                 4.0
 
-# STAGE 9: CONSTRAINT BUILD (per substep)
+# STAGE 9: CONSTRAINT BUILD
 phys_stage_constraint_build                      Phys.Constraint.BuildingJacobians        5.0
-  phys_constraint_build_contact                  Phys.Constraint.ContactRow               -
 
-# STAGE 10: ISLAND BUILD (T0/T1 only, per substep)
-phys_stage_island_build                          Phys.Island.BuildingComponents           4.0
-  uf_find                                        Phys.Island.UnionFind                    -
-  uf_union                                       Phys.Island.UnionMerge                   -
+# STAGE 10: ISLAND BUILD (T0/T1)
+phys_stage_island_build                          Phys.Island.BuildingComponents           5.0
 
-# STAGE 11a: TGS SOLVE (T0/T1, per substep)
-# STAGE 11b: XPBD SOLVE (T2-T4, per substep)
-# 11a and 11b run CONCURRENTLY — total is max(11a, 11b)
-phys_stage_tgs_solve                             Phys.Solve.IteratingTGS                 12.0
-phys_stage_xpbd_solve                            Phys.Solve.IteratingXPBD                18.0
-  phys_solver_convert_tgs_to_xpbd               Phys.Solve.ConvertingTGStoXPBD           -
-  phys_solver_convert_xpbd_to_tgs               Phys.Solve.ConvertingXPBDtoTGS           -
+# STAGE 11: TGS SOLVE (includes split impulse position correction)
+phys_stage_tgs_solve                             Phys.Solve.IteratingTGS                 30.0
 
-# STAGE 11c: POSITION PROJECTION (T0/T1, per substep, after TGS solve)
-# Per-island dense LDL^T solve replaces Baumgarte for position correction.
-phys_position_projection                         Phys.Solve.ProjectingPositions           2.0
-  phys_dense_ldlt_solve                          Phys.Solve.FactoringLDLT                -
-phys_velocity_sync_normals                       Phys.Solve.SyncingNormals                1.0
-
-# STAGE 12: INTEGRATE (per substep)
+# STAGE 12: INTEGRATE
 phys_stage_integrate                             Phys.Integrate.UpdatingPositions         5.0
 
-# STAGE 13: CACHE COMMIT (per substep)
+# STAGE 13: CACHE COMMIT
 phys_stage_cache_commit                          Phys.Cache.CommittingImpulses            2.0
-  phys_manifold_cache_expire_old                 Phys.Cache.ExpiringOld                   -
 
-# --- END SUBSTEP LOOP ---
-
-# STAGE 14: BUFFER SWAP (once per tick)
+# BUFFER SWAP (per substep)
 phys_body_pool_swap_buffers                      Phys.Tick.SwappingBuffers                0.5
 
-# TICK EPILOGUE
-# (tick_count++ is negligible)                                                            0.0
+# EPILOGUE
+phys_manifold_cache_expire                       Phys.Cache.ExpiringOld                   0.5
 
-# NETWORK SNAPSHOT (optional, outside main tick)
+# NETWORK (outside physics tick; budget shown here for convenience)
+# This is not part of `phys_world_tick*()`, but commonly paired with it in a server tick.
 phys_snapshot_encode                             Phys.Net.EncodingSnapshot                3.0
 phys_snapshot_decode                             Phys.Net.DecodingSnapshot                2.0
 phys_snapshot_encode_delta                       Phys.Net.EncodingDelta                   2.0
 phys_snapshot_decode_delta                       Phys.Net.DecodingDelta                   1.5
-
-# ----------------------------------------------------------------------------------------------
-# STAGE SUMMARY (for 2-substep tick)
-# ----------------------------------------------------------------------------------------------
-# Stage                    Per-Substep %    × Substeps    Total %
-# -------------------------------------------------------------------
-# Prologue                      -              1           0.5
-# Step Plan (0)                 -              1           0.5
-# Tier Classify (1)             -              1           3.0
-# Spatial Update (2)            -              1           3.0
-# Halo Closure (3)             2.0             2           4.0
-# AABB Update (4)              1.5             2           3.0
-# Broadphase (5)               4.0             2           8.0
-# Narrowphase (6)              7.0             2          14.0
-# Manifold Build (7)           2.5             2           5.0
-# Stabilization (8)            2.0             2           4.0
-# Constraint Build (9)         2.5             2           5.0
-# Island Build (10)            2.0             2           4.0
-# TGS Solve (11a)             6.0             2          12.0
-# XPBD Solve (11b)            9.0             2          18.0
-# (11a/11b concurrent: effective = max(12,18) = 18.0 wall-clock)
-# Pos Projection (11c)        1.5             2           3.0
-# (11c runs after 11a, T0/T1 only; includes velocity sync)
-# Integrate (12)               2.5             2           5.0
-# Cache Commit (13)            1.0             2           2.0
-# Buffer Swap (14)              -              1           0.5
-# Net Snapshot (opt)            -              1           8.5
-# -------------------------------------------------------------------
-# TOTAL                                                  100.0
-# ----------------------------------------------------------------------------------------------
-
-# JOB-LEVEL ZONES (for parallel execution in Phase 3+)
-tier_classify_job                                Phys.Job.TierClassify                    -
-spatial_update_job                               Phys.Job.SpatialUpdate                   -
-halo_closure_job                                 Phys.Job.HaloClosure                     -
-aabb_update_job                                  Phys.Job.AABBUpdate                      -
-broadphase_job                                   Phys.Job.Broadphase                      -
-narrowphase_job                                  Phys.Job.Narrowphase                     -
-manifold_build_job                               Phys.Job.ManifoldBuild                   -
-stabilization_job                                Phys.Job.Stabilization                   -
-constraint_build_job                             Phys.Job.ConstraintBuild                 -
-tgs_solve_island_job                             Phys.Job.SolveIsland                     -
-xpbd_solve_body_job                              Phys.Job.SolveXPBD                       -
-position_projection_job                          Phys.Job.PosProjection                   -
-velocity_sync_job                                Phys.Job.VelocitySync                    -
-integrate_job                                    Phys.Job.Integrate                       -
-
-# BARRIER ZONES (synchronization points)
-phys_wait_tier_done                              Phys.Barrier.TierDone                    -
-phys_wait_spatial_done                           Phys.Barrier.SpatialDone                 -
-phys_wait_halo_done                              Phys.Barrier.HaloDone                    -
-phys_wait_aabb_done                              Phys.Barrier.AABBDone                    -
-phys_wait_broad_done                             Phys.Barrier.BroadDone                   -
-phys_wait_narrow_done                            Phys.Barrier.NarrowDone                  -
-phys_wait_manifold_done                          Phys.Barrier.ManifoldDone                -
-phys_wait_stab_done                              Phys.Barrier.StabDone                    -
-phys_wait_constraint_done                        Phys.Barrier.ConstraintDone              -
-phys_wait_solve_done                             Phys.Barrier.SolveDone                   -
-phys_wait_xpbd_done                              Phys.Barrier.XPBDDone                    -
-phys_wait_projection_done                        Phys.Barrier.ProjectionDone              -
-phys_wait_integrate_done                         Phys.Barrier.IntegrateDone               -

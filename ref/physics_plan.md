@@ -7,6 +7,10 @@ implement simplified versions and iterate—we implement the full architecture
 for basic shape colliders (sphere, box, capsule) with all 14 pipeline stages,
 then extend with modular features (mesh colliders, joints, fracture).
 
+NOTE (current repo state): `src/physics/world/tick*.c` currently runs TGS-only
+and fuses position correction into TGS via split impulse (no separate position
+projection stage). XPBD modules exist but are not wired into the tick yet.
+
 **Core principles:**
 - Every phase delivers the complete pipeline at that scope
 - Network replication is tested and benchmarked at each phase

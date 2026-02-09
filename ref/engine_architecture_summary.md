@@ -8,7 +8,7 @@ threading model, and the memory ownership boundaries.
 See the detailed callgraphs for per-stage breakdowns:
 - `ref/job_memory_callgraph.md` — Fiber lifecycle, work-stealing, allocators
 - `ref/networking_callgraph.md` — RUDP, topic channels, replication
-- `ref/physics_tick_callgraph.md` — 13-stage physics pipeline
+- `ref/physics_tick_callgraph.md` — 14-stage physics pipeline (XPBD not currently wired)
 
 ---
 
@@ -63,7 +63,7 @@ See the detailed callgraphs for per-stage breakdowns:
 │ ├── manifold_cache    │  │ │   └── out_topics[][]    │  │                 │
 │ └── frame_arena       │  │ ├── state_update_queue    │  │ Skinning:       │
 │                       │  │ └── topic_dispatcher      │  │ ├── pipeline    │
-│ 13 pipeline stages    │  │                            │  │ ├── skeletons   │
+│ 14 pipeline stages    │  │                            │  │ ├── skeletons   │
 │ (see callgraph)       │  │ Client:                    │  │ └── bone_palette│
 │                       │  │ ├── client_rx              │  │                 │
 │ Tiered simulation:    │  │ ├── rudp_peer              │  │ Renderer:       │
@@ -107,9 +107,9 @@ Server Process:
 │                                                                             │
 │  Thread 0 [MAIN]           Server main loop                                │
 │  ├── process_events()                 Drain player/entity events           │
-│  ├── demo_server_world_tick()         Kick async physics (non-blocking)    │
-│  ├── broadcast_body_states_()         Send prev frame state to clients     │
-│  ├── demo_server_world_tick_wait()    Wait for physics completion          │
+│  ├── dispatch phys_world_tick_parallel() as a fiber job (non-blocking)     │
+│  ├── outbound replication / broadcast prev frame state to clients          │
+│  ├── wait on physics tick barrier before advancing tick                    │
 │  └── sleep until next tick                                                 │
 │      NOTE: Main thread does NOT busy-wait on physics.  Physics runs       │
 │      as a fiber job; main thread broadcasts and processes events while     │
@@ -197,21 +197,21 @@ Client Process:
   │  ├── Apply to ECS world (entity transforms, input state)               │
   │  │   └── ecs_sparse_set_*_insert/get()                                │
   │  │                                                                     │
-  │  ├── Physics Tick (13 stages):                   [JOB dispatch]        │
+  │  ├── Physics Tick (14 stages):                   [JOB dispatch]        │
   │  │   ├── Stage 0: Step plan                                            │
-  │  │   ├── Stage 1: Tier classify (distance + occlusion)                │
-  │  │   ├── Stage 2: Spatial grid update                                  │
-  │  │   ├── Stage 3: AABB compute                                        │
-  │  │   ├── Stage 4: Broadphase (grid-accelerated)                       │
-  │  │   ├── Stage 5: Merge + warmstart (manifold cache)                  │
-  │  │   ├── Stage 6: Narrowphase (sphere simplification at distance)     │
-  │  │   ├── Stage 7: Manifold merge                                      │
-  │  │   ├── Stage 8: Stability analysis                                  │
-  │  │   ├── Stage 9: Constraint build + specialization                   │
-  │  │   ├── Stage 10: Island detection                                    │
-  │  │   ├── Stage 11: Solve (TGS T0-T1 / XPBD T2-T4)                   │
-  │  │   ├── Stage 12: Integration                                         │
-  │  │   └── Stage 13: Buffer swap + events                               │
+  │  │   ├── Stage 1: Tier classify                                        │
+  │  │   ├── Stage 2: Spatial update (AABBs + grid)                         │
+  │  │   ├── Stage 3: Halo closure (once per tick)                          │
+  │  │   ├── Stage 4: AABB update (substep>0)                               │
+  │  │   ├── Stage 5: Broadphase (once per tick)                            │
+  │  │   ├── Stage 6: Narrowphase                                          │
+  │  │   ├── Stage 7: Manifold build + warmstart                            │
+  │  │   ├── Stage 8: Stabilization hints                                  │
+  │  │   ├── Stage 9: Constraint build                                     │
+  │  │   ├── Stage 10: Island build                                        │
+  │  │   ├── Stage 11: TGS solve (includes split impulse position correction)│
+  │  │   ├── Stage 12: Integrate                                           │
+  │  │   └── Stage 13: Cache commit + buffer swap                          │
   │  │                                                                     │
   │  │   Memory: frame_arena (per-tick), body_pool (persistent)           │
   │  │   Jobs: fork-join per stage, counter-based barriers                │

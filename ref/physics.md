@@ -1,5 +1,10 @@
-OVERVIEW: Tiered, hybrid TGS/XPBD physics architecture
+OVERVIEW: Tiered TGS physics architecture (XPBD planned)
 (for a fiber-based ECS engine with sparse interactions)
+
+CURRENT IMPLEMENTATION STATUS (source-of-truth: src/physics/world/tick*.c)
+- Tick orchestrators currently run TGS only; XPBD modules exist but are not wired.
+- Position projection / velocity sync are fused into TGS via split impulse (pseudo_velocities[]).
+- Halo closure + broadphase run once per tick (outside the substep loop).
 
 ==============================================================
 1) WHAT THE ARCHITECTURE IS OPTIMIZING FOR
@@ -121,7 +126,7 @@ Promotion is explicit and deterministic:
      (they only need to sound right and land plausibly)
    - hysteresis to prevent flapping (includes occlusion hysteresis)
 
-2) Halo closure (each substep for Tier0, sometimes Tier3):
+2) Halo closure (currently once per tick in tick.c; Tier0/T1-focused):
    - swept AABB + margin
    - spatial query for neighbors
    - promote neighbors conservatively
@@ -132,13 +137,13 @@ After this:
 
 --------------------------------------------------------------
 
-F) HYBRID SOLVER: TGS (NEAR-FIELD) + JACOBI-XPBD (FAR-FIELD)
+F) SOLVER: TGS (CURRENT) + XPBD (PLANNED)
 --------------------------------------------------------------
 
-The solver stage is split by tier:
+Current `tick.c` / `tick_parallel.c` behavior:
 
-  T0, T1  →  TGS (Temporal Gauss-Seidel), island-based
-  T2–T4   →  Jacobi-style XPBD, per-body parallel
+  All tiers  →  TGS (Temporal Gauss-Seidel), island-based
+  (XPBD modules exist but are not currently invoked by the tick orchestrators)
 
 Why two solvers?
 

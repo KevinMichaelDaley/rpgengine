@@ -3,6 +3,9 @@
 This document analyzes memory usage, performance scaling, bottlenecks, and
 gameplay scenarios for the Ferrum physics engine.
 
+NOTE (current repo state): the tick orchestrators in `src/physics/world/tick*.c`
+currently run TGS-only; XPBD discussion in this document is forward-looking.
+
 **Budget variant: 3.0 ms/tick at 30 Hz.** This doubles the physics budget
 compared to the 1.5 ms baseline, allowing richer scenes with more active
 bodies, denser barricades, and heavier combat. See `physics_performance_analysis.md`
