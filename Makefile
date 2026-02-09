@@ -40,9 +40,7 @@ NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/ne
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c) $(wildcard src/server/net/fiber/*.c) $(wildcard src/server/net/runtime/*.c) \
 	$(wildcard src/server/entity/*.c) $(wildcard src/server/entity/*/*.c) $(wildcard src/server/entity/*/*/*.c)
 PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard src/physics/*/*/*.c)
-DEMO_SRC := $(wildcard src/demo/*.c)
-DEMO_LIB_SRC := $(filter-out src/demo/demo_server.c src/demo/demo_client.c, $(DEMO_SRC))
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(DEMO_LIB_SRC)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -142,7 +140,6 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p079_physics_sphere_simplify_tests \
 	build/p078_physics_occlusion_demotion_tests \
 	build/p080_physics_phase4_integration_tests \
-	build/p082_demo_smoke_tests \
 	build/p083_physics_position_projection_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
@@ -456,9 +453,6 @@ build/p078_physics_occlusion_demotion_tests: build/libheadless.a tests/p078_phys
 build/p080_physics_phase4_integration_tests: build/libheadless.a tests/p080_physics_phase4_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p080_physics_phase4_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/p082_demo_smoke_tests: build/libheadless.a tests/p082_demo_smoke_tests.c | build
-	$(CC) $(CFLAGS) tests/p082_demo_smoke_tests.c build/libheadless.a -o $@ $(LDFLAGS)
-
 build/p083_physics_position_projection_tests: build/libheadless.a tests/p083_physics_position_projection_tests.c | build
 	$(CC) $(CFLAGS) tests/p083_physics_position_projection_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -676,7 +670,6 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p079_physics_sphere_simplify_tests \
 	&& ./build/p078_physics_occlusion_demotion_tests \
 	&& ./build/p080_physics_phase4_integration_tests \
-	&& ./build/p082_demo_smoke_tests \
 	&& ./build/p083_physics_position_projection_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
@@ -804,22 +797,6 @@ p008_renderer_client:
 	@echo "Run server:  ./build/p008_net_repl_server 40080 16 0 60 4"
 	@echo "Run client:  ./build/p008_renderer_client 127.0.0.1 40080 10000 --seed 123"
 
-# ── Demo binaries ────────────────────────────────────────────────
-.PHONY: demo demo_server demo_client
-demo_server: build/demo_server
-demo_client: build/demo_client
-
-build/demo_server: build/libheadless.a src/demo/demo_server.c | build
-	$(CC) $(CFLAGS) src/demo/demo_server.c build/libheadless.a -o $@ $(LDFLAGS)
-
-build/demo_client: build/liball.a src/demo/demo_client.c | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) src/demo/demo_client.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
-
-demo: build/demo_server build/demo_client
-	@echo "Built: build/demo_server build/demo_client"
-	@echo "Run server:  ./build/demo_server 40080"
-	@echo "Run client:  ./build/demo_client 127.0.0.1 40080"
-
 clean:
-	$(RM) $(BIN) build/demo_server build/demo_client build/libheadless.a build/liball.a
+	$(RM) $(BIN) build/libheadless.a build/liball.a
 	$(RM) -r build/obj
