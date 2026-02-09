@@ -165,31 +165,31 @@ static void push_unreliable_(fr_server_net_runtime_t *rt,
 
 /* ── Reliable push helper ──────────────────────────────────────── */
 
-static void push_reliable_(fr_server_net_runtime_t *rt,
+static bool push_reliable_(fr_server_net_runtime_t *rt,
                             uint16_t client_id,
                             uint16_t schema_id,
                             const uint8_t *payload,
                             size_t payload_size) {
     if (!rt || !payload || payload_size == 0u) {
-        return;
+        return false;
     }
 
     fr_topic_channel_t *out_rel  = NULL;
     fr_topic_channel_t *out_unrel = NULL;
     if (!fr_server_net_runtime_client_out_topics(rt, client_id,
                                                  &out_rel, &out_unrel) || !out_rel) {
-        return;
+        return false;
     }
 
     if (payload_size > NET_RUDP_MAX_PACKET_SIZE) {
-        return;
+        return false;
     }
 
     uint8_t msg[2u + NET_RUDP_MAX_PACKET_SIZE];
     msg[0] = (uint8_t)(schema_id & 0xFFu);
     msg[1] = (uint8_t)((schema_id >> 8u) & 0xFFu);
     memcpy(msg + 2u, payload, payload_size);
-    (void)fr_topic_channel_push(out_rel, msg, 2u + payload_size);
+    return fr_topic_channel_push(out_rel, msg, 2u + payload_size);
 }
 
 /* ── Broadcast body states to all connected clients ─────────────── */
@@ -528,10 +528,15 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
 
             uint8_t payload[NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];
             if (net_repl_body_spawn_encode(&sp, payload, sizeof(payload)) == NET_REPL_OK) {
-                push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_SPAWN,
-                               payload, sizeof(payload));
-                bk_set_(known, bi);
-                spawn_sent++;
+                if (push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_SPAWN,
+                                   payload, sizeof(payload))) {
+                    bk_set_(known, bi);
+                    spawn_sent++;
+                } else {
+                    fprintf(stderr, "SPAWN PUSH FAILED: body=%u client=%u\n",
+                            (unsigned)bi, (unsigned)ci);
+                    break;  /* channel full — stop trying this tick */
+                }
             }
         }
 
@@ -569,9 +574,10 @@ static void broadcast_body_states_(fr_server_net_runtime_t *rt,
                 uint8_t payload[NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];
                 if (net_repl_body_spawn_encode(&sp, payload, sizeof(payload))
                     == NET_REPL_OK) {
-                    push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_SPAWN,
-                                   payload, sizeof(payload));
-                    bk_set_(known, bi);
+                    if (push_reliable_(rt, ci, NET_REPL_SCHEMA_BODY_SPAWN,
+                                       payload, sizeof(payload))) {
+                        bk_set_(known, bi);
+                    }
                 }
                 continue; /* State will follow next tick. */
             }

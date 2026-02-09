@@ -3,6 +3,7 @@
  *
  * Provides an opaque stream context that reassembles reliable, ordered
  * messages from raw frames and exposes a simple pop interface per channel.
+ * Also provides outbound message queuing and frame serialization.
  *
  * Concurrency: single-producer (RX thread) pushing frames, single-consumer
  * (gameplay/job side) popping messages, per stream. For multi-consumer
@@ -18,6 +19,17 @@
 /** \file
  * Public API for reliable UDP stream reassembly and message delivery.
  */
+
+/**
+ * Callback invoked by fr_rudp_stream_flush_send to transmit a serialized
+ * frame.  The frame contains the full wire data ready to send over UDP.
+ *
+ * @param user   Opaque user pointer passed to flush_send.
+ * @param data   Frame bytes: [seq:u16 LE][chan:u16 LE][payload].
+ * @param len    Total frame length.
+ * @return 0 on success, non-zero on failure (flush stops on failure).
+ */
+typedef int (*fr_rudp_stream_sendto_fn)(void *user, const uint8_t *data, size_t len);
 
 /**
  * Configuration for a reliable UDP stream.
@@ -80,5 +92,36 @@ bool fr_rudp_stream_push_frame(fr_rudp_stream_t *s, const uint8_t *data, size_t 
  *\return true when a message is written to `out`; false if empty or invalid.
  */
 bool fr_rudp_stream_pop(fr_rudp_stream_t *s, uint32_t channel_id, uint8_t *out, size_t *inout_len);
+
+/**
+ * Queue a message for outbound reliable delivery on a channel.
+ *
+ * The message is buffered internally with an auto-assigned sequence number.
+ * Call fr_rudp_stream_flush_send() to serialize and transmit queued messages.
+ *
+ * @param s           Stream pointer (non-NULL).
+ * @param channel_id  Channel index (0-based).
+ * @param payload     Message payload bytes.
+ * @param payload_len Payload length in bytes.
+ * @return true on success, false if channel full or invalid.
+ */
+bool fr_rudp_stream_send(fr_rudp_stream_t *s, uint32_t channel_id,
+                         const uint8_t *payload, size_t payload_len);
+
+/**
+ * Flush all queued outbound messages as serialized frames.
+ *
+ * For each queued message, constructs a frame [seq:u16 LE][chan:u16 LE][payload]
+ * and invokes the sendto callback. Messages are removed from the outbound
+ * buffer after successful transmission.
+ *
+ * @param s      Stream pointer (non-NULL).
+ * @param sendto Callback to transmit each frame.
+ * @param user   Opaque pointer forwarded to sendto.
+ * @return Number of frames flushed, or 0 if nothing to send or error.
+ */
+uint32_t fr_rudp_stream_flush_send(fr_rudp_stream_t *s,
+                                   fr_rudp_stream_sendto_fn sendto,
+                                   void *user);
 
 #endif /* FERRUM_NET_STREAM_H */

@@ -25,7 +25,10 @@ fr_rudp_stream_t *fr_rudp_stream_create(const fr_rudp_stream_config_t *cfg) {
     }
     s->reliable_channels = channels;
     s->reliable = (net_reliable_channel_t *)calloc(channels, sizeof(net_reliable_channel_t));
-    if (!s->reliable) {
+    s->outbound = (net_reliable_channel_t *)calloc(channels, sizeof(net_reliable_channel_t));
+    if (!s->reliable || !s->outbound) {
+        free(s->reliable);
+        free(s->outbound);
         free(s);
         return NULL;
     }
@@ -33,8 +36,12 @@ fr_rudp_stream_t *fr_rudp_stream_create(const fr_rudp_stream_config_t *cfg) {
     s->num_topics = 0u;
     s->max_payload_size = max_payload;
     s->scratch = (uint8_t *)malloc((size_t)max_payload);
-    if (!s->scratch) {
+    s->frame_scratch = (uint8_t *)malloc(4u + (size_t)max_payload);
+    if (!s->scratch || !s->frame_scratch) {
+        free(s->scratch);
+        free(s->frame_scratch);
         free(s->reliable);
+        free(s->outbound);
         free(s);
         return NULL;
     }
@@ -50,6 +57,15 @@ fr_rudp_stream_t *fr_rudp_stream_create(const fr_rudp_stream_config_t *cfg) {
         }
         /* Client RX tests expect sequences starting at 1. */
         s->reliable[i].next_receive_sequence = 1u;
+
+        net_reliable_channel_init(&s->outbound[i], (size_t)slot_count, (size_t)max_payload);
+        if (!s->outbound[i].initialized) {
+            fr_rudp_stream_destroy(s);
+            return NULL;
+        }
+        /* Outbound sequences start at 1 to match receiver expectations. */
+        s->outbound[i].next_send_sequence = 1u;
+        s->outbound[i].next_receive_sequence = 1u;
     }
     return s;
 }
@@ -65,7 +81,16 @@ void fr_rudp_stream_destroy(fr_rudp_stream_t *s) {
         free(s->reliable);
         s->reliable = NULL;
     }
+    if (s->outbound) {
+        for (uint32_t i = 0u; i < s->reliable_channels; ++i) {
+            net_reliable_channel_destroy(&s->outbound[i]);
+        }
+        free(s->outbound);
+        s->outbound = NULL;
+    }
     free(s->scratch);
     s->scratch = NULL;
+    free(s->frame_scratch);
+    s->frame_scratch = NULL;
     free(s);
 }

@@ -27,6 +27,7 @@ extern "C" {
 #define NET_REPL_SCHEMA_INPUT_SPAWN 0x2009u
 #define NET_REPL_SCHEMA_BODY_SPAWN 0x200Au
 #define NET_REPL_SCHEMA_BODY_STATE 0x200Bu
+#define NET_REPL_SCHEMA_STREAM_FRAME 0x200Cu
 
 #ifdef __cplusplus
 } /* extern "C" */

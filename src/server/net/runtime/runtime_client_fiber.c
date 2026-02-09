@@ -1,12 +1,23 @@
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "ferrum/net/stream.h"
+#include "ferrum/net/replication/common.h"
 #include "ferrum/server/net/inbound_message.h"
 
 #include "runtime_internal.h"
 
 #define OUT_MSG_MAX (2u + NET_RUDP_MAX_PACKET_SIZE)
+
+/** Context passed to stream flush sendto callback. */
+typedef struct flush_ctx_ {
+    fr_server_net_runtime_t *rt;
+    net_rudp_peer_t *peer;
+    uint16_t client_id;
+    uint64_t now_ms;
+} flush_ctx_t;
 
 static int sendto_(fr_server_net_runtime_t *rt, const net_udp_addr_t *to, const void *data, size_t size) {
     if (!rt || !to || !data) {
@@ -53,12 +64,63 @@ static void publish_inbound_(fr_server_net_runtime_t *rt,
     (void)fr_topic_channel_push(rt->cfg.inbound_topic, msg, msg_size);
 }
 
-static void pump_outbound_topic_(fr_server_net_runtime_t *rt,
-                                 uint16_t client_id,
-                                 fr_topic_channel_t *topic,
-                                 net_rudp_peer_t *peer,
-                                 uint8_t reliable,
-                                 uint64_t now_ms) {
+/**
+ * Stream flush callback: wraps each stream frame as an unreliable RUDP
+ * packet with schema STREAM_FRAME so the client can demux it.
+ */
+static int stream_sendto_(void *user, const uint8_t *data, size_t len) {
+    flush_ctx_t *ctx = (flush_ctx_t *)user;
+    if (!ctx || !ctx->rt || !ctx->peer) {
+        return -1;
+    }
+    int rc = net_rudp_peer_send_unreliable_via(ctx->peer,
+                                               ctx->rt,
+                                               sendto_cb_bridge_,
+                                               &ctx->rt->clients[ctx->client_id].addr,
+                                               ctx->now_ms,
+                                               NET_REPL_SCHEMA_STREAM_FRAME,
+                                               data, len);
+    if (rc == NET_RUDP_OK) {
+        atomic_fetch_add_explicit(&ctx->rt->packets_out, 1u, memory_order_relaxed);
+        atomic_fetch_add_explicit(&ctx->rt->bytes_out, (uint64_t)len, memory_order_relaxed);
+    }
+    return (rc == NET_RUDP_OK) ? 0 : -1;
+}
+
+/**
+ * Drain the reliable outbound topic into the stream's outbound channel.
+ * Each topic message is [schema_id:u16 LE][payload].  We queue the entire
+ * topic message (including schema_id prefix) as the stream payload so the
+ * receiver can decode schema + payload after reassembly.
+ */
+static void pump_reliable_to_stream_(fr_rudp_stream_t *stream,
+                                     fr_topic_channel_t *topic) {
+    uint8_t msg[OUT_MSG_MAX];
+    for (;;) {
+        size_t len = sizeof(msg);
+        if (!fr_topic_channel_pop(topic, msg, &len)) {
+            break;
+        }
+        if (len < 2u) {
+            continue;
+        }
+        /* Queue the full message (schema_id + payload) into stream channel 0. */
+        if (!fr_rudp_stream_send(stream, 0u, msg, len)) {
+            /* Stream channel full -- push back and retry next tick. */
+            (void)fr_topic_channel_push(topic, msg, len);
+            break;
+        }
+    }
+}
+
+/**
+ * Drain the unreliable outbound topic and send directly via the RUDP peer.
+ */
+static void pump_unreliable_topic_(fr_server_net_runtime_t *rt,
+                                   uint16_t client_id,
+                                   fr_topic_channel_t *topic,
+                                   net_rudp_peer_t *peer,
+                                   uint64_t now_ms) {
     uint8_t msg[OUT_MSG_MAX];
     for (;;) {
         size_t len = sizeof(msg);
@@ -72,32 +134,17 @@ static void pump_outbound_topic_(fr_server_net_runtime_t *rt,
         const uint8_t *payload = msg + 2u;
         size_t payload_size = len - 2u;
 
-        int rc = reliable ? net_rudp_peer_send_reliable_via(peer,
-                                                            rt,
-                                                            sendto_cb_bridge_,
-                                                            &rt->clients[client_id].addr,
-                                                            now_ms,
-                                                            schema_id,
-                                                            payload,
-                                                            payload_size,
-                                                            NULL)
-                          : net_rudp_peer_send_unreliable_via(peer,
-                                                             rt,
-                                                             sendto_cb_bridge_,
-                                                             &rt->clients[client_id].addr,
-                                                             now_ms,
-                                                             schema_id,
-                                                             payload,
-                                                             payload_size);
+        int rc = net_rudp_peer_send_unreliable_via(peer,
+                                                   rt,
+                                                   sendto_cb_bridge_,
+                                                   &rt->clients[client_id].addr,
+                                                   now_ms,
+                                                   schema_id,
+                                                   payload,
+                                                   payload_size);
         if (rc == NET_RUDP_OK) {
             atomic_fetch_add_explicit(&rt->packets_out, 1u, memory_order_relaxed);
             atomic_fetch_add_explicit(&rt->bytes_out, (uint64_t)payload_size, memory_order_relaxed);
-        } else if (reliable && rc == NET_RUDP_ERR_FULL) {
-            /* Backpressure: reliable send window is full until we receive ACKs.
-               Requeue the message and retry later rather than dropping it.
-             */
-            (void)fr_topic_channel_push(topic, msg, len);
-            break;
         }
     }
 }
@@ -132,13 +179,23 @@ void fr_server_client_fiber_main(void *user) {
         client->pending_size = 0u;
     }
 
-        /* Stack-owned reliable resend slots.
-             Use the default sizing to reduce drops during join bursts.
-         */
-        net_rudp_send_slot_t send_slots[NET_RUDP_SEND_SLOTS_DEFAULT];
-    memset(send_slots, 0, sizeof(send_slots));
+    /* RUDP peer for inbound decoding and unreliable outbound. */
     net_rudp_peer_t peer;
-    net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u, send_slots, (size_t)(sizeof(send_slots) / sizeof(send_slots[0])));
+    net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u,
+                                    client->send_slots, client->send_slot_count);
+
+    /* Stream for reliable outbound: messages are sequenced, framed, and
+     * sent as unreliable RUDP packets with STREAM_FRAME schema.  The
+     * client's stream layer reassembles them in order. */
+    fr_rudp_stream_config_t scfg;
+    memset(&scfg, 0, sizeof(scfg));
+    scfg.reliable_channels = 1u;
+    scfg.reliable_slot_count = 512u;  /* large window for spawn bursts */
+    scfg.max_payload_size = NET_RUDP_MAX_PACKET_SIZE;
+    fr_rudp_stream_t *out_stream = fr_rudp_stream_create(&scfg);
+    if (!out_stream) {
+        return;
+    }
 
     uint8_t packet[NET_RUDP_MAX_PACKET_SIZE];
     uint8_t payload[NET_RUDP_MAX_PACKET_SIZE];
@@ -177,13 +234,21 @@ void fr_server_client_fiber_main(void *user) {
             publish_inbound_(rt, client_id, reliable, schema_id, payload, payload_size);
         }
 
-        /* Outbound topics */
-        pump_outbound_topic_(rt, client_id, client->out_reliable, &peer, 1u, now_ms);
-        pump_outbound_topic_(rt, client_id, client->out_unreliable, &peer, 0u, now_ms);
+        /* Reliable outbound: drain topic -> stream -> flush as RUDP frames */
+        pump_reliable_to_stream_(out_stream, client->out_reliable);
 
-        /* Reliable resend */
+        flush_ctx_t fctx = { .rt = rt, .peer = &peer,
+                             .client_id = client_id, .now_ms = now_ms };
+        (void)fr_rudp_stream_flush_send(out_stream, stream_sendto_, &fctx);
+
+        /* Unreliable outbound: send directly via RUDP peer */
+        pump_unreliable_topic_(rt, client_id, client->out_unreliable, &peer, now_ms);
+
+        /* Reliable resend for any peer-level reliable traffic */
         (void)net_rudp_peer_tick_resend_via(&peer, rt, sendto_cb_bridge_, &client->addr, now_ms);
 
         job_yield();
     }
+
+    fr_rudp_stream_destroy(out_stream);
 }

@@ -8,6 +8,12 @@ static fr_topic_channel_t *make_topic_(uint32_t capacity) {
     fr_topic_channel_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.capacity = (capacity == 0u) ? 64u : capacity;
+    /* Scale the byte ring so it can hold all message slots.  Each message
+     * takes (4 + payload) bytes in the ring; use 128 B/slot as a
+     * conservative upper bound for typical replication messages. */
+    const uint32_t default_ring = 64u * 1024u;
+    const uint32_t needed = cfg.capacity * 128u;
+    cfg.capacity_bytes = (needed > default_ring) ? needed : default_ring;
     return fr_topic_channel_create(&cfg);
 }
 
@@ -72,7 +78,17 @@ fr_server_net_runtime_t *fr_server_net_runtime_create(const fr_server_net_runtim
 
         rt->clients[i].out_reliable = make_topic_(rel_cap);
         rt->clients[i].out_unreliable = make_topic_(unrel_cap);
-        if (!rt->clients[i].out_reliable || !rt->clients[i].out_unreliable) {
+
+        /* Pre-allocate reliable send window.  The RUDP ACK window
+         * covers ack + 32 ack_bits = 33 sequences, so 32 send slots
+         * keeps all in-flight sequences within the ACK-able range. */
+        #define SEND_SLOTS_PER_CLIENT 32u
+        rt->clients[i].send_slot_count = SEND_SLOTS_PER_CLIENT;
+        rt->clients[i].send_slots = (net_rudp_send_slot_t *)calloc(
+            SEND_SLOTS_PER_CLIENT, sizeof(net_rudp_send_slot_t));
+
+        if (!rt->clients[i].out_reliable || !rt->clients[i].out_unreliable
+            || !rt->clients[i].send_slots) {
             fr_server_net_runtime_destroy(rt);
             return NULL;
         }
@@ -107,6 +123,7 @@ void fr_server_net_runtime_destroy(fr_server_net_runtime_t *rt) {
         for (uint16_t i = 0u; i < rt->cfg.max_clients; ++i) {
             fr_topic_channel_destroy(rt->clients[i].out_reliable);
             fr_topic_channel_destroy(rt->clients[i].out_unreliable);
+            free(rt->clients[i].send_slots);
         }
         free(rt->clients);
     }

@@ -57,6 +57,8 @@
 #include "ferrum/physics/collider.h"
 #include "ferrum/job/system.h"
 #include "ferrum/net/topic_channel.h"
+#include "ferrum/net/stream.h"
+#include "ferrum/net/replication/common.h"
 
 #include "ferrum/demo/camera.h"
 #include "ferrum/demo/geometry.h"
@@ -661,8 +663,7 @@ static int handle_state_cube_(struct entity_view **entities, size_t *count, size
 
     int idx = entity_find_(*entities, *count, st->entity_id);
     if (idx < 0) {
-        if (!add_entity_(entities, count, cap, st->entity_id, 0u, recv_time_s, pos, rot))
-            return 0;
+        /* State arrived before spawn — discard. */
         return 1;
     }
 
@@ -832,10 +833,8 @@ static int handle_body_state_(struct entity_view **entities, size_t *count,
 
     int idx = entity_find_(*entities, *count, eid);
     if (idx < 0) {
-        /* Body state arrived before spawn (unreliable ordering).
-         * Create a placeholder entity. */
-        if (!add_entity_(entities, count, cap, eid, 0u, recv_time_s, pos, rot))
-            return 0;
+        /* Body state arrived before spawn — discard.  The reliable
+         * BODY_SPAWN will create the entity with correct half-extents. */
         return 1;
     }
 
@@ -989,6 +988,20 @@ int main(int argc, char **argv) {
     }
     net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u, send_slots, send_slots_count);
 
+    /* Stream for reassembling reliable messages from server. */
+    fr_rudp_stream_config_t rx_scfg;
+    memset(&rx_scfg, 0, sizeof(rx_scfg));
+    rx_scfg.reliable_channels = 1u;
+    rx_scfg.reliable_slot_count = 512u;
+    rx_scfg.max_payload_size = NET_RUDP_MAX_PACKET_SIZE;
+    fr_rudp_stream_t *rx_stream = fr_rudp_stream_create(&rx_scfg);
+    if (!rx_stream) {
+        fprintf(stderr, "Failed to create RX stream\n");
+        free(send_slots);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+
     uint32_t rng = (uint32_t)(0xA5A5A5A5u ^ (uint32_t)getpid());
 
     /* Send JOIN. */
@@ -997,6 +1010,7 @@ int main(int argc, char **argv) {
     uint8_t join_payload[NET_REPL_JOIN_PAYLOAD_SIZE];
     if (net_repl_join_encode(&join, join_payload, sizeof(join_payload)) != NET_REPL_OK) {
         fprintf(stderr, "Failed to encode JOIN\n");
+        fr_rudp_stream_destroy(rx_stream);
         free(send_slots);
         net_udp_socket_close(&sock);
         return 1;
@@ -1007,6 +1021,7 @@ int main(int argc, char **argv) {
                                     NET_REPL_SCHEMA_JOIN, join_payload,
                                     sizeof(join_payload), &join_seq) != NET_RUDP_OK) {
         fprintf(stderr, "Failed to send JOIN\n");
+        fr_rudp_stream_destroy(rx_stream);
         free(send_slots);
         net_udp_socket_close(&sock);
         return 1;
@@ -1018,6 +1033,7 @@ int main(int argc, char **argv) {
     const int win_h = 720;
     struct gl_demo_context gl = {0};
     if (gl_demo_init_(&gl, win_w, win_h) != 0) {
+        fr_rudp_stream_destroy(rx_stream);
         free(send_slots);
         net_udp_socket_close(&sock);
         return 1;
@@ -1045,6 +1061,7 @@ int main(int argc, char **argv) {
         if (js != JOB_CREATE_OK) {
             fprintf(stderr, "Failed to create client job system\n");
             gl_demo_shutdown_(&gl);
+            fr_rudp_stream_destroy(rx_stream);
             free(send_slots);
             net_udp_socket_close(&sock);
             return 1;
@@ -1053,6 +1070,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Failed to start client job system\n");
             job_system_shutdown(&phys_job_sys);
             gl_demo_shutdown_(&gl);
+            fr_rudp_stream_destroy(rx_stream);
             free(send_slots);
             net_udp_socket_close(&sock);
             return 1;
@@ -1069,6 +1087,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Failed to init client physics world\n");
             job_system_shutdown(&phys_job_sys);
             gl_demo_shutdown_(&gl);
+            fr_rudp_stream_destroy(rx_stream);
             free(send_slots);
             net_udp_socket_close(&sock);
             return 1;
@@ -1268,6 +1287,7 @@ int main(int argc, char **argv) {
         (void)net_rudp_peer_tick_resend(&peer, &sock, &server_addr, now_ms);
 
         /* ---- (e) Receive network messages ---- */
+        uint8_t got_reliable = 0u;
         for (;;) {
             size_t rx_size = 0u;
             const int rrc = net_udp_socket_recv(&sock, rx_packet, sizeof(rx_packet), &rx_size);
@@ -1283,7 +1303,7 @@ int main(int argc, char **argv) {
                                       payload, sizeof(payload), &payload_size) != NET_RUDP_OK) {
                 continue;
             }
-            (void)reliable;
+            if (reliable) got_reliable = 1u;
             const double recv_time_s = now_s_();
 
             if (schema_id == NET_REPL_SCHEMA_SPAWN) {
@@ -1312,6 +1332,9 @@ int main(int argc, char **argv) {
             } else if (schema_id == NET_REPL_SCHEMA_BODY_SPAWN) {
                 net_repl_body_spawn_t sp;
                 if (net_repl_body_spawn_decode(&sp, payload, payload_size) == NET_REPL_OK) {
+                    fprintf(stderr, "BODY_SPAWN: id=%u half_mm=%u,%u,%u\n",
+                            (unsigned)sp.body_id, (unsigned)sp.half_x_mm,
+                            (unsigned)sp.half_y_mm, (unsigned)sp.half_z_mm);
                     (void)handle_body_spawn_(&entities, &entity_count, &entity_cap,
                                              &sp, recv_time_s, client_cmds);
                 }
@@ -1327,7 +1350,66 @@ int main(int argc, char **argv) {
                 (void)net_repl_welcome_decode(&w, payload, payload_size);
                 fprintf(stderr, "WELCOME: expected_entities=%u tick_hz=%u\n",
                         (unsigned)w.expected_entities, (unsigned)w.tick_hz);
+            } else if (schema_id == NET_REPL_SCHEMA_STREAM_FRAME) {
+                /* Push stream frame into reassembly; dispatch below. */
+                (void)fr_rudp_stream_push_frame(rx_stream, payload, payload_size);
             }
+        }
+
+        /* Drain reassembled stream messages and dispatch them. */
+        {
+            uint8_t sm[NET_RUDP_MAX_PACKET_SIZE];
+            for (;;) {
+                size_t sm_len = sizeof(sm);
+                if (!fr_rudp_stream_pop(rx_stream, 0u, sm, &sm_len)) {
+                    break;
+                }
+                /* Stream payload is [schema_id:u16 LE][inner_payload]. */
+                if (sm_len < 2u) continue;
+                uint16_t inner_schema = (uint16_t)sm[0] | ((uint16_t)sm[1] << 8u);
+                const uint8_t *inner_payload = sm + 2u;
+                size_t inner_size = sm_len - 2u;
+                const double recv_time_s = now_s_();
+
+                if (inner_schema == NET_REPL_SCHEMA_BODY_SPAWN) {
+                    net_repl_body_spawn_t sp;
+                    if (net_repl_body_spawn_decode(&sp, inner_payload, inner_size) == NET_REPL_OK) {
+                        fprintf(stderr, "BODY_SPAWN(stream): id=%u half_mm=%u,%u,%u\n",
+                                (unsigned)sp.body_id, (unsigned)sp.half_x_mm,
+                                (unsigned)sp.half_y_mm, (unsigned)sp.half_z_mm);
+                        (void)handle_body_spawn_(&entities, &entity_count, &entity_cap,
+                                                 &sp, recv_time_s, client_cmds);
+                    }
+                } else if (inner_schema == NET_REPL_SCHEMA_BODY_STATE) {
+                    net_repl_body_state_t st;
+                    if (net_repl_body_state_decode(&st, inner_payload, inner_size) == NET_REPL_OK) {
+                        (void)handle_body_state_(&entities, &entity_count, &entity_cap,
+                                                 &st, recv_time_s, &correction_lines,
+                                                 client_corrections);
+                    }
+                } else if (inner_schema == NET_REPL_SCHEMA_SPAWN) {
+                    net_repl_spawn_t sp;
+                    if (net_repl_spawn_decode(&sp, inner_payload, inner_size) == NET_REPL_OK) {
+                        (void)handle_spawn_(&entities, &entity_count, &entity_cap,
+                                            &sp, recv_time_s, &self_owner_client_id, &self_entity_id);
+                    }
+                } else if (inner_schema == NET_REPL_SCHEMA_WELCOME) {
+                    net_repl_welcome_t w;
+                    (void)net_repl_welcome_decode(&w, inner_payload, inner_size);
+                    fprintf(stderr, "WELCOME(stream): expected_entities=%u tick_hz=%u\n",
+                            (unsigned)w.expected_entities, (unsigned)w.tick_hz);
+                }
+            }
+        }
+
+        /* Flush ACKs immediately when we received reliable data so the
+         * server can free send slots without waiting for our next
+         * keepalive.  An unreliable send piggybacks the latest ack/ack_bits
+         * in the packet header, which is all the server needs. */
+        if (got_reliable) {
+            uint8_t ping = 0u;
+            (void)net_rudp_peer_send_unreliable(&peer, &sock, &server_addr,
+                                                now_ms, 0u, &ping, 1u);
         }
 
         /* ---- Diagnostics ---- */
@@ -1408,6 +1490,7 @@ int main(int argc, char **argv) {
                 const mat4_t t_mat = mat4_translation(pos.x, pos.y, pos.z);
                 const mat4_t r_mat = mat4_from_quat_(rot);
                 const mat4_t s_mat = mat4_scaling(sx, sy, sz);
+                printf("%f %f %f==%f %f %f\n",sx,sy,sz,e->half_ext[0],e->half_ext[1],e->half_ext[2]);
                 const mat4_t model = mat4_mul(t_mat, mat4_mul(r_mat, s_mat));
                 const mat4_t mvp = mat4_mul(vp, model);
 
@@ -1529,6 +1612,7 @@ int main(int argc, char **argv) {
     job_system_shutdown(&phys_job_sys);
     free(entities);
     gl_demo_shutdown_(&gl);
+    fr_rudp_stream_destroy(rx_stream);
     free(send_slots);
     net_udp_socket_close(&sock);
     return 0;

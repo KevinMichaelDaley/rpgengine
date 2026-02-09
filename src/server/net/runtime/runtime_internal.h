@@ -43,6 +43,10 @@ typedef struct fr_server_client_t {
     fr_topic_channel_t *out_reliable;
     fr_topic_channel_t *out_unreliable;
 
+    /** Pre-allocated RUDP reliable send slots for the client fiber. */
+    net_rudp_send_slot_t *send_slots;
+    size_t send_slot_count;
+
     atomic_bool stop;
     atomic_uint_least64_t now_ms;
 } fr_server_client_t;
