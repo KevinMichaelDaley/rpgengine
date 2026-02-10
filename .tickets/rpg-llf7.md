@@ -1,6 +1,6 @@
 ---
 id: rpg-llf7
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-09T04:33:51Z
