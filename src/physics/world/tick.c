@@ -499,6 +499,102 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             });
         }
 
+        /* ── Stage 11b: XPBD Solve (T2-T4 islands) ────────────── */
+        /* Count XPBD constraints across all non-sleeping islands. */
+        uint32_t xpbd_count = 0;
+        for (uint32_t i = 0; i < islands.count; ++i) {
+            const phys_island_t *isle = &islands.islands[i];
+            if (isle->sleeping || isle->skip) { continue; }
+            if (isle->constraint_count == 0) { continue; }
+            uint32_t first_ci = isle->constraint_indices[0];
+            if (constraints[first_ci].solver_mode == PHYS_SOLVER_XPBD) {
+                xpbd_count += isle->constraint_count;
+            }
+        }
+
+        if (xpbd_count > 0 && velocities) {
+            /* Gather XPBD constraints into a contiguous arena array. */
+            phys_constraint_t *xpbd_constraints = phys_frame_arena_alloc(
+                &world->frame_arena,
+                xpbd_count * sizeof(phys_constraint_t),
+                _Alignof(phys_constraint_t));
+
+            /* Scratch body array for XPBD position solving. */
+            phys_body_t *xpbd_bodies = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_body_t),
+                _Alignof(phys_body_t));
+
+            /* Scratch velocity array — XPBD derives velocities from
+             * position deltas; we merge into the shared array after. */
+            phys_velocity_t *xpbd_velocities = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+
+            if (xpbd_constraints && xpbd_bodies && xpbd_velocities) {
+                /* Copy XPBD constraints. */
+                uint32_t xc = 0;
+                for (uint32_t i = 0; i < islands.count; ++i) {
+                    const phys_island_t *isle = &islands.islands[i];
+                    if (isle->sleeping || isle->skip) { continue; }
+                    if (isle->constraint_count == 0) { continue; }
+                    uint32_t first_ci = isle->constraint_indices[0];
+                    if (constraints[first_ci].solver_mode != PHYS_SOLVER_XPBD) {
+                        continue;
+                    }
+                    for (uint32_t c = 0; c < isle->constraint_count; ++c) {
+                        xpbd_constraints[xc++] = constraints[isle->constraint_indices[c]];
+                    }
+                }
+
+                /* Determine XPBD iterations and compliance from the
+                 * highest-fidelity XPBD tier (lowest tier number). */
+                uint32_t xpbd_iters = 2;
+                float xpbd_compliance = 1e-4f;
+                for (int t = PHYS_TIER_2_VISIBLE; t <= PHYS_TIER_4_BACKGROUND; ++t) {
+                    if (plan.tier_params[t].solver_mode == PHYS_SOLVER_XPBD &&
+                        plan.tier_params[t].iterations > xpbd_iters) {
+                        xpbd_iters = plan.tier_params[t].iterations;
+                        xpbd_compliance = plan.tier_params[t].compliance;
+                    }
+                }
+
+                phys_stage_xpbd_solve(&(phys_xpbd_solve_args_t){
+                    .constraints      = xpbd_constraints,
+                    .constraint_count = xpbd_count,
+                    .bodies_in        = world->body_pool.bodies_curr,
+                    .bodies_out       = xpbd_bodies,
+                    .velocities_out   = xpbd_velocities,
+                    .body_count       = body_cap,
+                    .iterations       = xpbd_iters,
+                    .omega            = 0.7f,
+                    .dt               = substep_dt,
+                    .compliance       = xpbd_compliance,
+                });
+
+                /* Merge XPBD velocities into shared array for bodies
+                 * that belong to XPBD islands.  TGS init_velocities
+                 * already seeded gravity for these bodies, so we
+                 * add the XPBD-derived delta on top. */
+                for (uint32_t i = 0; i < islands.count; ++i) {
+                    const phys_island_t *isle = &islands.islands[i];
+                    if (isle->sleeping || isle->skip) { continue; }
+                    if (isle->constraint_count == 0) { continue; }
+                    uint32_t first_ci = isle->constraint_indices[0];
+                    if (constraints[first_ci].solver_mode != PHYS_SOLVER_XPBD) {
+                        continue;
+                    }
+                    for (uint32_t b = 0; b < isle->body_count; ++b) {
+                        uint32_t idx = isle->body_indices[b];
+                        if (idx < body_cap) {
+                            velocities[idx] = xpbd_velocities[idx];
+                        }
+                    }
+                }
+            }
+        }
+
         } /* end if (!world->prediction_mode) — stages 6–11 */
 
         /* In prediction mode the solver didn't run, so seed the

@@ -23,6 +23,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/step_plan.h"
 #include "ferrum/math/vec3.h"
 
 /** Minimum penetration excess to correct (avoids micro-jitter). */
@@ -211,6 +212,14 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
     for (uint32_t i = 0; i < islands->count; i++) {
         const phys_island_t *island = &islands->islands[i];
         if (island->sleeping || island->skip) continue;
+
+        /* Skip XPBD islands — they are handled by Stage 11b. */
+        if (island->constraint_count > 0) {
+            uint32_t first_ci = island->constraint_indices[0];
+            if (args->constraints[first_ci].solver_mode == PHYS_SOLVER_XPBD) {
+                continue;
+            }
+        }
 
         /* Iterate the sequential impulse solver. */
         for (uint32_t iter = 0; iter < args->iterations; iter++) {

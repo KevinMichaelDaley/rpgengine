@@ -34,6 +34,7 @@ typedef struct xpbd_solve_shared {
     phys_body_t       *bodies;       /**< Working body positions (read/write). */
     float              omega;        /**< Jacobi relaxation factor. */
     float              dt;           /**< Timestep in seconds. */
+    float              compliance;   /**< XPBD compliance (α); 0 = stiff. */
 } xpbd_solve_shared_t;
 
 /* ── Static helpers ────────────────────────────────────────────── */
@@ -47,7 +48,8 @@ typedef struct xpbd_solve_shared {
 static void solve_contact_position(phys_constraint_t *c,
                                    phys_body_t *bodies,
                                    float omega,
-                                   float dt)
+                                   float dt,
+                                   float compliance)
 {
     phys_body_t *ba = &bodies[c->body_a];
     phys_body_t *bb = &bodies[c->body_b];
@@ -69,8 +71,8 @@ static void solve_contact_position(phys_constraint_t *c,
     /* Position error from bias term. */
     float C = -row->bias * dt;
 
-    /* Stiff contact: compliance = 0, alpha_tilde = 0. */
-    float alpha_tilde = 0.0f;
+    /* XPBD regularization: alpha_tilde = compliance / dt^2. */
+    float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
     float w_sum = w_a + w_b + alpha_tilde;
 
     float delta_lambda = (-C - alpha_tilde * row->lambda) / w_sum;
@@ -101,7 +103,8 @@ static void xpbd_batch_job(void *data)
         solve_contact_position(&shared->constraints[ci],
                                shared->bodies,
                                shared->omega,
-                               shared->dt);
+                               shared->dt,
+                               shared->compliance);
     }
 }
 
@@ -164,6 +167,7 @@ void phys_stage_xpbd_solve_par(const phys_xpbd_solve_args_t *args,
         .bodies      = args->bodies_out,
         .omega       = args->omega,
         .dt          = args->dt,
+        .compliance  = args->compliance,
     };
 
     /* Calculate number of batches. */

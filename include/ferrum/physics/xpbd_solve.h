@@ -35,6 +35,7 @@ typedef struct phys_xpbd_solve_args {
     uint32_t iterations;                  /**< Solver iterations (typically 2-8). */
     float omega;                          /**< Jacobi relaxation factor (0.5-0.8). */
     float dt;                             /**< Timestep in seconds. */
+    float compliance;                     /**< XPBD compliance (α); 0 = stiff. */
 } phys_xpbd_solve_args_t;
 
 /**

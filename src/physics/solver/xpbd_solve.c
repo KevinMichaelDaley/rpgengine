@@ -36,17 +36,19 @@ static void copy_bodies(const phys_body_t *src, phys_body_t *dst,
  * Computes a position-level correction using the XPBD formulation:
  *   delta_lambda = (-C - alpha_tilde * lambda) / (w_a + w_b + alpha_tilde)
  * where C is the remaining penetration projected along the contact normal,
- * and alpha_tilde = compliance / dt^2 (zero for stiff contacts).
+ * and alpha_tilde = compliance / dt^2.
  *
- * @param c         Constraint to solve (lambda updated in row 0).
- * @param bodies    Working body array (positions modified in-place).
- * @param omega     Relaxation factor (0.5-1.0).
- * @param dt        Timestep in seconds.
+ * @param c           Constraint to solve (lambda updated in row 0).
+ * @param bodies      Working body array (positions modified in-place).
+ * @param omega       Relaxation factor (0.5-1.0).
+ * @param dt          Timestep in seconds.
+ * @param compliance  XPBD compliance (α); 0 = perfectly stiff.
  */
 static void solve_contact_position(phys_constraint_t *c,
                                    phys_body_t *bodies,
                                    float omega,
-                                   float dt)
+                                   float dt,
+                                   float compliance)
 {
     phys_body_t *ba = &bodies[c->body_a];
     phys_body_t *bb = &bodies[c->body_b];
@@ -80,8 +82,8 @@ static void solve_contact_position(phys_constraint_t *c,
      * Project the body-to-body vector onto the normal and compare with
      * the original separation to find remaining penetration. */
 
-    /* Stiff contact: compliance = 0, alpha_tilde = 0. */
-    float alpha_tilde = 0.0f;
+    /* XPBD regularization: alpha_tilde = compliance / dt^2. */
+    float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
     float w_sum = w_a + w_b + alpha_tilde;
 
     float delta_lambda = (-C - alpha_tilde * row->lambda) / w_sum;
@@ -137,7 +139,8 @@ void phys_stage_xpbd_solve(const phys_xpbd_solve_args_t *args)
             solve_contact_position(&args->constraints[ci],
                                    args->bodies_out,
                                    args->omega,
-                                   args->dt);
+                                   args->dt,
+                                   args->compliance);
         }
     }
 
