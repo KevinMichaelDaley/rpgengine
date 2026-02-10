@@ -1,6 +1,6 @@
 ---
 id: rpg-74u4
-status: in_progress
+status: closed
 deps: [rpg-p1y1, rpg-q3xn, rpg-c0ss]
 links: []
 created: 2026-02-09T07:33:29Z
