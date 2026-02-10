@@ -47,8 +47,10 @@ fr_server_net_runtime_t *fr_server_net_runtime_create(const fr_server_net_runtim
         const uint32_t queue_capacity = 256u;
         const size_t fiber_stack_size = 128u * 1024u;
         const size_t fiber_count_max = 2048u;
-        /* Non-deterministic mode so long-lived fibers can run without wait_idle deadlocks. */
-        job_system_create_status_t st = job_system_create(&rt->owned_jobs, 1u, queue_capacity, fiber_stack_size, fiber_count_max, 0);
+        /* In test mode (callbacks provided), prefer deterministic scheduling so fibers only
+           run when fr_server_net_runtime_run_fibers() is called. */
+        const int deterministic_mode = (rt->cfg.recvfrom_cb && rt->cfg.sendto_cb) ? 1 : 0;
+        job_system_create_status_t st = job_system_create(&rt->owned_jobs, 1u, queue_capacity, fiber_stack_size, fiber_count_max, deterministic_mode);
         if (st != JOB_CREATE_OK) {
             free(rt);
             return NULL;
@@ -152,6 +154,10 @@ bool fr_server_net_runtime_run_fibers(fr_server_net_runtime_t *rt, uint32_t max_
     }
     if (max_spins == 0u) {
         max_spins = 1u;
+    }
+
+    if (rt->cfg.jobs && rt->cfg.jobs->deterministic) {
+        return job_system_run_for(rt->cfg.jobs, max_spins) == 0;
     }
 
     /* Best-effort: give workers time to run long-lived fibers. */

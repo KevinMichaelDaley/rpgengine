@@ -250,6 +250,43 @@ int job_system_wait_idle(job_system_t *sys) {
     return 0;
 }
 
+int job_system_run_for(job_system_t *sys, uint32_t max_entries) {
+    if (!sys) {
+        return -1;
+    }
+    if (!sys->deterministic) {
+        return -1;
+    }
+    if (max_entries == 0u) {
+        max_entries = 1u;
+    }
+
+    job_context_t *prev_sched_ctx = g_scheduler_context;
+    job_system_t *prev_sys = g_current_system;
+    uint32_t prev_worker_id = g_worker_id;
+    uint32_t prev_worker_node = g_worker_node;
+
+    job_context_t sched_ctx;
+    g_scheduler_context = &sched_ctx;
+    g_worker_id = 0;
+    g_worker_node = 0;
+    g_current_system = sys;
+
+    struct job_entry entry;
+    for (uint32_t i = 0u; i < max_entries; ++i) {
+        if (job_system_pop_next(sys, &entry) != 0) {
+            break;
+        }
+        run_entry(sys, &entry, &sched_ctx);
+    }
+
+    g_scheduler_context = prev_sched_ctx;
+    g_current_system = prev_sys;
+    g_worker_id = prev_worker_id;
+    g_worker_node = prev_worker_node;
+    return 0;
+}
+
 void job_system_shutdown(job_system_t *sys) {
     if (!sys) {
         return;

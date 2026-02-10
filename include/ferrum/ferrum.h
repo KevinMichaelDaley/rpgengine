@@ -51,6 +51,7 @@
 #include "ferrum/net/test_clock.h"
 #include "ferrum/net/test_buffer.h"
 #include "ferrum/net/test_link.h"
+#include "ferrum/net/test_client.h"
 #include "ferrum/net/replication/interp/pose_interpolator.h"
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/net/topic_dispatcher.h"

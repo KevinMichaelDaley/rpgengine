@@ -182,6 +182,18 @@ job_id_t job_dispatch_named(job_system_t *sys,
 int job_system_wait_idle(job_system_t *sys);
 
 /**
+ * @brief Run up to max_entries runnable jobs on the calling thread.
+ *
+ * This is intended for deterministic-mode schedulers in tests, where no worker
+ * threads are running and the caller wants bounded progress.
+ *
+ * @param sys Job system pointer.
+ * @param max_entries Maximum number of runnable entries to execute (0 -> 1).
+ * @return 0 on success; -1 on invalid input or unsupported mode.
+ */
+int job_system_run_for(job_system_t *sys, uint32_t max_entries);
+
+/**
  * @brief Request graceful shutdown and join workers. Blocks until completion.
  *
  * @param sys Job system pointer. NULL is ignored.
