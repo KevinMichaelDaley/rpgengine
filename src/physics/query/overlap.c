@@ -93,15 +93,15 @@ static uint32_t overlap_prim_(const phys_world_t *world,
 
         if (b->type == PHYS_SHAPE_SPHERE && b->shape_index < world->sphere_count) {
             float rb = world->spheres[b->shape_index].radius;
-            return phys_sphere_vs_sphere(ca, ra, cb, rb, &cp) ? 1u : 0u;
+            return phys_sphere_vs_sphere(ca, ra, cb, rb, 0.0f, &cp) ? 1u : 0u;
         }
         if (b->type == PHYS_SHAPE_BOX && b->shape_index < world->box_count) {
             phys_vec3_t he = world->boxes[b->shape_index].half_extents;
-            return phys_sphere_vs_box(ca, ra, cb, qb, he, &cp) ? 1u : 0u;
+            return phys_sphere_vs_box(ca, ra, cb, qb, he, 0.0f, &cp) ? 1u : 0u;
         }
         if (b->type == PHYS_SHAPE_CAPSULE && b->shape_index < world->capsule_count) {
             phys_capsule_t cap = world->capsules[b->shape_index];
-            return phys_sphere_vs_capsule(ca, ra, cb, qb, cap.radius, cap.half_height, &cp) ? 1u : 0u;
+            return phys_sphere_vs_capsule(ca, ra, cb, qb, cap.radius, cap.half_height, 0.0f, &cp) ? 1u : 0u;
         }
         return 0u;
     }
@@ -111,16 +111,16 @@ static uint32_t overlap_prim_(const phys_world_t *world,
 
         if (b->type == PHYS_SHAPE_SPHERE && b->shape_index < world->sphere_count) {
             float rb = world->spheres[b->shape_index].radius;
-            return phys_sphere_vs_box(cb, rb, ca, qa, ha, &cp) ? 1u : 0u;
+            return phys_sphere_vs_box(cb, rb, ca, qa, ha, 0.0f, &cp) ? 1u : 0u;
         }
         if (b->type == PHYS_SHAPE_BOX && b->shape_index < world->box_count) {
             phys_vec3_t hb = world->boxes[b->shape_index].half_extents;
             phys_contact_point_t cps[1];
-            return phys_box_vs_box(ca, qa, ha, cb, qb, hb, cps, 1) > 0 ? 1u : 0u;
+            return phys_box_vs_box(ca, qa, ha, cb, qb, hb, cps, 1, 0.0f) > 0 ? 1u : 0u;
         }
         if (b->type == PHYS_SHAPE_CAPSULE && b->shape_index < world->capsule_count) {
             phys_capsule_t cap = world->capsules[b->shape_index];
-            return phys_box_vs_capsule(ca, qa, ha, cb, qb, cap.radius, cap.half_height, &cp) ? 1u : 0u;
+            return phys_box_vs_capsule(ca, qa, ha, cb, qb, cap.radius, cap.half_height, 0.0f, &cp) ? 1u : 0u;
         }
         return 0u;
     }
@@ -130,16 +130,16 @@ static uint32_t overlap_prim_(const phys_world_t *world,
 
         if (b->type == PHYS_SHAPE_SPHERE && b->shape_index < world->sphere_count) {
             float rb = world->spheres[b->shape_index].radius;
-            return phys_sphere_vs_capsule(cb, rb, ca, qa, cap_a.radius, cap_a.half_height, &cp) ? 1u : 0u;
+            return phys_sphere_vs_capsule(cb, rb, ca, qa, cap_a.radius, cap_a.half_height, 0.0f, &cp) ? 1u : 0u;
         }
         if (b->type == PHYS_SHAPE_BOX && b->shape_index < world->box_count) {
             phys_vec3_t hb = world->boxes[b->shape_index].half_extents;
-            return phys_box_vs_capsule(cb, qb, hb, ca, qa, cap_a.radius, cap_a.half_height, &cp) ? 1u : 0u;
+            return phys_box_vs_capsule(cb, qb, hb, ca, qa, cap_a.radius, cap_a.half_height, 0.0f, &cp) ? 1u : 0u;
         }
         if (b->type == PHYS_SHAPE_CAPSULE && b->shape_index < world->capsule_count) {
             phys_capsule_t cap_b = world->capsules[b->shape_index];
             return phys_capsule_vs_capsule(ca, qa, cap_a.radius, cap_a.half_height,
-                                           cb, qb, cap_b.radius, cap_b.half_height, &cp) ? 1u : 0u;
+                                           cb, qb, cap_b.radius, cap_b.half_height, 0.0f, &cp) ? 1u : 0u;
         }
         return 0u;
     }

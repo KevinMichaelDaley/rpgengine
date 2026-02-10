@@ -109,7 +109,7 @@ static int test_box_capsule_side(void)
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
         (phys_vec3_t){1.4f, 0.0f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.1f, contact.penetration, 0.01f);
@@ -144,7 +144,7 @@ static int test_box_capsule_end_cap(void)
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
         (phys_vec3_t){0.0f, 1.9f, 0.0f}, QUAT_IDENTITY,
         0.5f, 0.5f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.1f, contact.penetration, 0.01f);
@@ -170,7 +170,7 @@ static int test_box_capsule_separated(void)
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
         (phys_vec3_t){10.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(!hit);
     return 0;
@@ -200,7 +200,7 @@ static int test_box_capsule_resting(void)
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
         (phys_vec3_t){0.0f, 2.4f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.1f, contact.penetration, 0.01f);
@@ -235,7 +235,7 @@ static int test_box_capsule_rotated(void)
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
         (phys_vec3_t){2.3f, 0.0f, 0.0f}, capsule_rot,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.2f, contact.penetration, 0.02f);
@@ -262,7 +262,7 @@ static int test_box_capsule_penetrating(void)
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
         (phys_vec3_t){0.5f, 0.0f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_TRUE(contact.penetration > 0.0f);
@@ -284,7 +284,7 @@ static int test_box_capsule_null_safe(void)
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
         (phys_vec3_t){1.4f, 0.0f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        NULL);
+        0.0f, NULL);
 
     ASSERT_TRUE(!hit);
     return 0;

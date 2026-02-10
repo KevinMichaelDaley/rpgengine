@@ -98,12 +98,27 @@ void phys_constraint_build_contact(
      * Position projection handles bulk correction; Baumgarte prevents
      * accumulated drift from gravity integration. */
     float baumgarte_bias = 0.0f;
-    float pen_excess = contact->penetration - slop;
-    if (pen_excess > 0.0f && dt > 0.0f) {
-        baumgarte_bias = (baumgarte / dt) * pen_excess;
+
+    /* Speculative contacts (negative penetration) use velocity-level
+     * clamping: bias = penetration/dt clamps the closing velocity to
+     * exactly reach the contact surface this frame. */
+    float speculative_bias = 0.0f;
+
+    if (contact->penetration < 0.0f) {
+        /* Speculative: clamp closing velocity. */
+        if (dt > 0.0f) {
+            speculative_bias = contact->penetration / dt;
+        }
+        /* No restitution for speculative contacts. */
+        restitution_bias = 0.0f;
+    } else {
+        float pen_excess = contact->penetration - slop;
+        if (pen_excess > 0.0f && dt > 0.0f) {
+            baumgarte_bias = (baumgarte / dt) * pen_excess;
+        }
     }
 
-    c->rows[0].bias = restitution_bias + baumgarte_bias;
+    c->rows[0].bias = restitution_bias + baumgarte_bias + speculative_bias;
 
     /* Compute effective mass for normal row. */
     c->rows[0].effective_mass = phys_compute_effective_mass(

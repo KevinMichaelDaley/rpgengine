@@ -33,10 +33,12 @@ extern "C" {
  * @param rotation_b    World-space orientation of capsule B.
  * @param radius_b      Radius of capsule B.
  * @param half_height_b Half the cylinder height of capsule B.
+ * @param speculative_margin Max separation for speculative contacts (0 = disabled).
  * @param contact_out   Output contact point (must be non-NULL for true return).
- * @return true if capsules overlap or touch, false otherwise.
+ * @return true if capsules overlap/touch or are within speculative margin.
  *
- * Normal points from A to B.  Penetration is positive for overlap.
+ * Normal points from A to B.  Penetration is positive for overlap,
+ * negative for speculative contacts.
  * If closest points coincide, normal defaults to (0,1,0).
  * Returns false if contact_out is NULL.
  */
@@ -45,6 +47,7 @@ bool phys_capsule_vs_capsule(
     float radius_a, float half_height_a,
     phys_vec3_t center_b, phys_quat_t rotation_b,
     float radius_b, float half_height_b,
+    float speculative_margin,
     struct phys_contact_point *contact_out);
 
 #ifdef __cplusplus

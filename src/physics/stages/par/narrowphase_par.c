@@ -98,25 +98,29 @@ static void np_par_job_fn(void *user_data)
         if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_SPHERE) {
             float r0 = args->spheres[c0->shape_index].radius;
             float r1 = args->spheres[c1->shape_index].radius;
-            hit = phys_sphere_vs_sphere(w0, r0, w1, r1, &contact);
+            hit = phys_sphere_vs_sphere(w0, r0, w1, r1,
+                                        args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_BOX) {
             float rs = args->spheres[c0->shape_index].radius;
             phys_vec3_t he = args->boxes[c1->shape_index].half_extents;
-            hit = phys_sphere_vs_box(w0, rs, w1, q1, he, &contact);
+            hit = phys_sphere_vs_box(w0, rs, w1, q1, he,
+                                    args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_CAPSULE) {
             float rs = args->spheres[c0->shape_index].radius;
             float rc = args->capsules[c1->shape_index].radius;
             float hh = args->capsules[c1->shape_index].half_height;
-            hit = phys_sphere_vs_capsule(w0, rs, w1, q1, rc, hh, &contact);
+            hit = phys_sphere_vs_capsule(w0, rs, w1, q1, rc, hh,
+                                        args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_BOX && c1->type == PHYS_SHAPE_BOX) {
             phys_vec3_t he0 = args->boxes[c0->shape_index].half_extents;
             phys_vec3_t he1 = args->boxes[c1->shape_index].half_extents;
             phys_contact_point_t contacts_buf[4];
             int nc = phys_box_vs_box(w0, q0, he0, w1, q1, he1,
-                                     contacts_buf, 4);
+                                     contacts_buf, 4,
+                                     args->speculative_margin);
             if (nc > 0) {
                 /* Claim a slot atomically. */
                 uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
@@ -136,7 +140,8 @@ static void np_par_job_fn(void *user_data)
             phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
             float rc = args->capsules[c1->shape_index].radius;
             float hh = args->capsules[c1->shape_index].half_height;
-            hit = phys_box_vs_capsule(w0, q0, he, w1, q1, rc, hh, &contact);
+            hit = phys_box_vs_capsule(w0, q0, he, w1, q1, rc, hh,
+                                      args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_CAPSULE && c1->type == PHYS_SHAPE_CAPSULE) {
             float r0c = args->capsules[c0->shape_index].radius;
@@ -144,7 +149,8 @@ static void np_par_job_fn(void *user_data)
             float r1c = args->capsules[c1->shape_index].radius;
             float h1  = args->capsules[c1->shape_index].half_height;
             hit = phys_capsule_vs_capsule(w0, q0, r0c, h0,
-                                          w1, q1, r1c, h1, &contact);
+                                          w1, q1, r1c, h1,
+                                          args->speculative_margin, &contact);
         }
 
         if (hit) {

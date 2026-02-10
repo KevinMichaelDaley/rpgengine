@@ -334,6 +334,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .candidates_out      = candidates,
                 .candidate_count_out = &candidate_count,
                 .max_candidates      = max_candidates,
+                .speculative_margin  = world->config.speculative_margin,
             });
         }
 

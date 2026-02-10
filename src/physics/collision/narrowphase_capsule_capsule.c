@@ -46,6 +46,7 @@ bool phys_capsule_vs_capsule(
     float radius_a, float half_height_a,
     phys_vec3_t center_b, phys_quat_t rotation_b,
     float radius_b, float half_height_b,
+    float speculative_margin,
     phys_contact_point_t *contact_out)
 {
     if (!contact_out) {
@@ -127,8 +128,9 @@ bool phys_capsule_vs_capsule(
     phys_vec3_t diff = vec3_sub(closest_b, closest_a);
     float dist_sq = vec3_dot(diff, diff);
     float combined_radius = radius_a + radius_b;
+    float threshold = combined_radius + speculative_margin;
 
-    if (dist_sq > combined_radius * combined_radius) {
+    if (dist_sq > threshold * threshold) {
         return false;
     }
 

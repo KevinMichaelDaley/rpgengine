@@ -93,7 +93,8 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
             float rb = phys_sphere_simplify_radius(
                 c1, args->spheres, args->boxes, args->capsules);
             if (ra > 0.0f && rb > 0.0f) {
-                hit = phys_sphere_vs_sphere(w0, ra, w1, rb, &contact);
+                hit = phys_sphere_vs_sphere(w0, ra, w1, rb,
+                                            args->speculative_margin, &contact);
                 if (hit) {
                     emit_single(&args->candidates_out[count], ba, bb, &contact);
                     count++;
@@ -106,25 +107,29 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
         if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_SPHERE) {
             float r0 = args->spheres[c0->shape_index].radius;
             float r1 = args->spheres[c1->shape_index].radius;
-            hit = phys_sphere_vs_sphere(w0, r0, w1, r1, &contact);
+            hit = phys_sphere_vs_sphere(w0, r0, w1, r1,
+                                        args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_BOX) {
             float rs = args->spheres[c0->shape_index].radius;
             phys_vec3_t he = args->boxes[c1->shape_index].half_extents;
-            hit = phys_sphere_vs_box(w0, rs, w1, q1, he, &contact);
+            hit = phys_sphere_vs_box(w0, rs, w1, q1, he,
+                                    args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_CAPSULE) {
             float rs = args->spheres[c0->shape_index].radius;
             float rc = args->capsules[c1->shape_index].radius;
             float hh = args->capsules[c1->shape_index].half_height;
-            hit = phys_sphere_vs_capsule(w0, rs, w1, q1, rc, hh, &contact);
+            hit = phys_sphere_vs_capsule(w0, rs, w1, q1, rc, hh,
+                                        args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_BOX && c1->type == PHYS_SHAPE_BOX) {
             phys_vec3_t he0 = args->boxes[c0->shape_index].half_extents;
             phys_vec3_t he1 = args->boxes[c1->shape_index].half_extents;
             phys_contact_point_t contacts_buf[4];
             int nc = phys_box_vs_box(w0, q0, he0, w1, q1, he1,
-                                     contacts_buf, 4);
+                                     contacts_buf, 4,
+                                     args->speculative_margin);
             if (nc > 0) {
                 phys_contact_candidate_t *cand = &args->candidates_out[count];
                 cand->body_a = ba;
@@ -141,7 +146,8 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
             phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
             float rc = args->capsules[c1->shape_index].radius;
             float hh = args->capsules[c1->shape_index].half_height;
-            hit = phys_box_vs_capsule(w0, q0, he, w1, q1, rc, hh, &contact);
+            hit = phys_box_vs_capsule(w0, q0, he, w1, q1, rc, hh,
+                                      args->speculative_margin, &contact);
         }
         else if (c0->type == PHYS_SHAPE_CAPSULE && c1->type == PHYS_SHAPE_CAPSULE) {
             float r0c = args->capsules[c0->shape_index].radius;
@@ -149,7 +155,8 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
             float r1c = args->capsules[c1->shape_index].radius;
             float h1  = args->capsules[c1->shape_index].half_height;
             hit = phys_capsule_vs_capsule(w0, q0, r0c, h0,
-                                          w1, q1, r1c, h1, &contact);
+                                          w1, q1, r1c, h1,
+                                          args->speculative_margin, &contact);
         }
 
         if (hit) {

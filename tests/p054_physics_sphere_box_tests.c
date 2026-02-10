@@ -81,7 +81,7 @@ static int test_sphere_box_face_contact(void)
         (phys_vec3_t){2.0f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.0f, contact.penetration, 0.01f);
@@ -106,7 +106,7 @@ static int test_sphere_box_edge_contact(void)
         (phys_vec3_t){1.5f, 1.5f, 0.0f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     /* dist = sqrt(0.5^2 + 0.5^2) = sqrt(0.5) ≈ 0.7071 */
@@ -134,7 +134,7 @@ static int test_sphere_box_corner_contact(void)
         (phys_vec3_t){1.5f, 1.5f, 1.5f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     float expected_pen = 1.0f - sqrtf(0.75f);
@@ -159,7 +159,7 @@ static int test_sphere_box_separated(void)
         (phys_vec3_t){5.0f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(!hit);
     return 0;
@@ -178,7 +178,7 @@ static int test_sphere_box_resting_on_top(void)
         (phys_vec3_t){0.0f, 2.0f, 0.0f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.0f, contact.penetration, 0.01f);
@@ -201,7 +201,7 @@ static int test_sphere_box_penetrating(void)
         (phys_vec3_t){1.5f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.5f, contact.penetration, 0.01f);
@@ -225,7 +225,7 @@ static int test_sphere_inside_box(void)
         (phys_vec3_t){0.5f, 0.0f, 0.0f}, 0.25f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.75f, contact.penetration, 0.01f);
@@ -242,7 +242,7 @@ static int test_sphere_box_null_safe(void)
         (phys_vec3_t){1.5f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         (phys_vec3_t){1.0f, 1.0f, 1.0f},
-        NULL);
+        0.0f, NULL);
 
     ASSERT_TRUE(!hit);
     return 0;

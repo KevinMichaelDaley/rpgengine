@@ -110,7 +110,7 @@ static int test_capsule_capsule_parallel(void)
         0.5f, 1.0f,
         (phys_vec3_t){0.8f, 0.0f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.2f, contact.penetration, 0.01f);
@@ -140,7 +140,7 @@ static int test_capsule_capsule_perpendicular(void)
         0.5f, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, rot_z90,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     /* Closest points coincide at origin → fallback normal (0,1,0). */
@@ -166,7 +166,7 @@ static int test_capsule_capsule_end_to_end(void)
         0.5f, 1.0f,
         (phys_vec3_t){0.0f, 2.5f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.5f, contact.penetration, 0.01f);
@@ -190,7 +190,7 @@ static int test_capsule_capsule_separated(void)
         0.5f, 1.0f,
         (phys_vec3_t){10.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(!hit);
     return 0;
@@ -214,7 +214,7 @@ static int test_capsule_capsule_colinear(void)
         0.3f, 1.0f,
         (phys_vec3_t){0.0f, 1.5f, 0.0f}, QUAT_IDENTITY,
         0.3f, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     /* Colinear segments overlap → closest points coincide → fallback. */
@@ -239,7 +239,7 @@ static int test_capsule_capsule_touching(void)
         1.0f, 0.5f,
         (phys_vec3_t){2.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         1.0f, 0.5f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.0f, contact.penetration, 0.01f);
@@ -256,7 +256,7 @@ static int test_capsule_capsule_null_safe(void)
         0.5f, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, QUAT_IDENTITY,
         0.5f, 1.0f,
-        NULL);
+        0.0f, NULL);
 
     ASSERT_TRUE(!hit);
     return 0;

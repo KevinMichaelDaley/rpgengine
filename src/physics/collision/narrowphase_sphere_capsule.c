@@ -47,6 +47,7 @@ bool phys_sphere_vs_capsule(
     phys_vec3_t sphere_center, float sphere_radius,
     phys_vec3_t capsule_center, phys_quat_t capsule_rotation,
     float capsule_radius, float capsule_half_height,
+    float speculative_margin,
     phys_contact_point_t *contact_out)
 {
     if (!contact_out) {
@@ -74,8 +75,9 @@ bool phys_sphere_vs_capsule(
     phys_vec3_t diff = vec3_sub(sphere_center, closest);
     float dist_sq = vec3_dot(diff, diff);
     float r_sum = sphere_radius + capsule_radius;
+    float threshold = r_sum + speculative_margin;
 
-    if (dist_sq > r_sum * r_sum) {
+    if (dist_sq > threshold * threshold) {
         return false;
     }
 
@@ -86,7 +88,8 @@ bool phys_sphere_vs_capsule(
         contact_out->normal = (phys_vec3_t){0.0f, 1.0f, 0.0f};
         contact_out->penetration = r_sum;
     } else {
-        /* Normal from closest point toward sphere center. */
+        /* Normal from closest point toward sphere center.
+         * Negative penetration = separated (speculative). */
         contact_out->normal = vec3_scale(diff, 1.0f / dist);
         contact_out->penetration = r_sum - dist;
     }

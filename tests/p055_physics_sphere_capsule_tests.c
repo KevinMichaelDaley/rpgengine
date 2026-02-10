@@ -87,7 +87,7 @@ static int test_sphere_capsule_side(void)
         sphere_center, sphere_radius,
         capsule_center, capsule_rot,
         capsule_radius, capsule_half_height,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     /* Normal should point from capsule toward sphere: roughly +X. */
@@ -120,7 +120,7 @@ static int test_sphere_capsule_top_cap(void)
         sphere_center, sphere_radius,
         capsule_center, capsule_rot,
         capsule_radius, capsule_half_height,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     /* Normal should point upward (+Y). */
@@ -151,7 +151,7 @@ static int test_sphere_capsule_bottom_cap(void)
         sphere_center, sphere_radius,
         capsule_center, capsule_rot,
         capsule_radius, capsule_half_height,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     /* Normal should point downward (-Y). */
@@ -180,7 +180,7 @@ static int test_sphere_capsule_separated(void)
         sphere_center, sphere_radius,
         capsule_center, capsule_rot,
         capsule_radius, capsule_half_height,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_FALSE(hit);
     return 0;
@@ -205,7 +205,7 @@ static int test_sphere_capsule_touching(void)
         sphere_center, sphere_radius,
         capsule_center, capsule_rot,
         capsule_radius, capsule_half_height,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.0f, contact.penetration, 0.01f);
@@ -236,7 +236,7 @@ static int test_sphere_capsule_rotated(void)
         sphere_center, sphere_radius,
         capsule_center, capsule_rot,
         capsule_radius, capsule_half_height,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     /* Normal should point upward (+Y) from capsule toward sphere. */
@@ -261,7 +261,7 @@ static int test_sphere_capsule_null_safe(void)
         sphere_center, 1.0f,
         capsule_center, capsule_rot,
         1.0f, 2.0f,
-        NULL);
+        0.0f, NULL);
 
     ASSERT_FALSE(hit);
     return 0;

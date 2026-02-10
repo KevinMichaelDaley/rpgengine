@@ -43,6 +43,7 @@ bool phys_sphere_vs_box(
     phys_vec3_t sphere_center, float sphere_radius,
     phys_vec3_t box_center, phys_quat_t box_rotation,
     phys_vec3_t box_half_extents,
+    float speculative_margin,
     phys_contact_point_t *contact_out)
 {
     if (!contact_out) {
@@ -66,11 +67,12 @@ bool phys_sphere_vs_box(
     float dist_sq = vec3_dot(diff, diff);
 
     const float epsilon = 1e-6f;
+    float threshold = sphere_radius + speculative_margin;
     phys_vec3_t normal_local;
     float penetration;
 
-    if (dist_sq > sphere_radius * sphere_radius) {
-        /* Separated — no contact. */
+    if (dist_sq > threshold * threshold) {
+        /* Separated beyond speculative margin. */
         return false;
     }
 
@@ -102,7 +104,8 @@ bool phys_sphere_vs_box(
 
         penetration = min_depth + sphere_radius;
     } else {
-        /* Step 7: Sphere center outside box. */
+        /* Step 7: Sphere center outside box.
+         * Penetration is negative when separated (speculative). */
         float dist = sqrtf(dist_sq);
         normal_local = vec3_scale(diff, 1.0f / dist);
         penetration = sphere_radius - dist;

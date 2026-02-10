@@ -12,6 +12,7 @@
 bool phys_sphere_vs_sphere(
     phys_vec3_t center_a, float radius_a,
     phys_vec3_t center_b, float radius_b,
+    float speculative_margin,
     phys_contact_point_t *contact_out)
 {
     if (!contact_out) {
@@ -22,9 +23,10 @@ bool phys_sphere_vs_sphere(
     phys_vec3_t diff = vec3_sub(center_b, center_a);
     float dist_sq = vec3_dot(diff, diff);
     float r_sum = radius_a + radius_b;
+    float threshold = r_sum + speculative_margin;
 
-    /* No contact if separated. */
-    if (dist_sq > r_sum * r_sum) {
+    /* No contact if separated beyond speculative margin. */
+    if (dist_sq > threshold * threshold) {
         return false;
     }
 
@@ -35,12 +37,13 @@ bool phys_sphere_vs_sphere(
         contact_out->normal = (phys_vec3_t){0.0f, 1.0f, 0.0f};
         contact_out->penetration = r_sum;
     } else {
-        /* Normal from A toward B, penetration = overlap depth. */
+        /* Normal from A toward B, penetration = overlap depth.
+         * Negative penetration means separated (speculative). */
         contact_out->normal = vec3_scale(diff, 1.0f / dist);
         contact_out->penetration = r_sum - dist;
     }
 
-    /* Contact point: midpoint of overlap region. */
+    /* Contact point: midpoint of overlap/gap region. */
     contact_out->point_world = vec3_add(
         center_a,
         vec3_scale(contact_out->normal,

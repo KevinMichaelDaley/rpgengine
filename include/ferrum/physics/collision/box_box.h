@@ -29,16 +29,18 @@ extern "C" {
  *                       for max_contacts entries. May be NULL if
  *                       max_contacts is 0.
  * @param max_contacts   Maximum number of contacts to generate.
- * @return Number of contacts found (0 if separated or invalid input).
+ * @param speculative_margin Max separation for speculative contacts (0 = disabled).
+ * @return Number of contacts found (0 if separated beyond margin or invalid input).
  *
  * Normal in each contact points from A toward B.
- * Penetration is positive for overlap.
+ * Penetration is positive for overlap, negative for speculative contacts.
  * Returns 0 if contact_out is NULL and max_contacts > 0.
  */
 int phys_box_vs_box(
     phys_vec3_t center_a, phys_quat_t rotation_a, phys_vec3_t half_extents_a,
     phys_vec3_t center_b, phys_quat_t rotation_b, phys_vec3_t half_extents_b,
-    struct phys_contact_point *contact_out, int max_contacts);
+    struct phys_contact_point *contact_out, int max_contacts,
+    float speculative_margin);
 
 #ifdef __cplusplus
 } /* extern "C" */

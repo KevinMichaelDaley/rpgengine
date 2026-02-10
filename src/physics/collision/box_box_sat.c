@@ -139,7 +139,8 @@ static void closest_points_segments(
 int phys_box_vs_box(
     phys_vec3_t center_a, phys_quat_t rotation_a, phys_vec3_t half_extents_a,
     phys_vec3_t center_b, phys_quat_t rotation_b, phys_vec3_t half_extents_b,
-    phys_contact_point_t *contact_out, int max_contacts)
+    phys_contact_point_t *contact_out, int max_contacts,
+    float speculative_margin)
 {
     /* NULL safety. */
     if (max_contacts <= 0) return 0;
@@ -177,9 +178,13 @@ int phys_box_vs_box(
         da[i] = vec3_dot(d, ax_a[i]);
     }
 
-    /* Track the axis with minimum penetration. */
+    /* Track the axis with minimum penetration (may be negative = speculative).
+     * For overlapping boxes, min_pen gives the contact normal axis.
+     * For speculative, we track max_pen (least separation = first collision). */
     float min_pen = 1e30f;
+    float max_pen = -1e30f;
     int best_axis = -1;
+    int spec_axis = -1;
 
     /* ── Test 15 separating axes ────────────────────────────────── */
 
@@ -188,11 +193,15 @@ int phys_box_vs_box(
         float ra = ea[i];
         float rb = eb[0] * AbsR[i][0] + eb[1] * AbsR[i][1] + eb[2] * AbsR[i][2];
         float sep = fabsf(da[i]) - (ra + rb);
-        if (sep > 0.0f) return 0; /* Separating axis found. */
+        if (sep > speculative_margin) return 0;
         float pen = -(sep);
         if (pen < min_pen) {
             min_pen = pen;
             best_axis = i;
+        }
+        if (pen > max_pen) {
+            max_pen = pen;
+            spec_axis = i;
         }
     }
 
@@ -207,11 +216,15 @@ int phys_box_vs_box(
         float ra = ea[0] * AbsR[0][i] + ea[1] * AbsR[1][i] + ea[2] * AbsR[2][i];
         float rb = eb[i];
         float sep = fabsf(db[i]) - (ra + rb);
-        if (sep > 0.0f) return 0;
+        if (sep > speculative_margin) return 0;
         float pen = -(sep);
         if (pen < min_pen) {
             min_pen = pen;
             best_axis = 3 + i;
+        }
+        if (pen > max_pen) {
+            max_pen = pen;
+            spec_axis = 3 + i;
         }
     }
 
@@ -241,7 +254,7 @@ int phys_box_vs_box(
 
             float proj_d = fabsf(vec3_dot(d, cross));
             float sep = proj_d - (ra + rb);
-            if (sep > 0.0f) return 0;
+            if (sep > speculative_margin) return 0;
 
             /* Normalize penetration by axis length.  Apply a small
              * relative bias so that face axes are preferred over edge-edge
@@ -251,10 +264,44 @@ int phys_box_vs_box(
                 min_pen = pen;
                 best_axis = 6 + i * 3 + j;
             }
+            if (pen > max_pen) {
+                max_pen = pen;
+                spec_axis = 6 + i * 3 + j;
+            }
         }
     }
 
     if (best_axis < 0) return 0; /* Should not happen. */
+
+    /* ── Speculative contact (separated but within margin) ──────── */
+    if (min_pen < 0.0f) {
+        /* Boxes are separated; emit a single speculative contact at
+         * the midpoint.  Use spec_axis (least-separated axis) for the
+         * contact normal since that's where they'll collide first. */
+        int sa = spec_axis;
+        phys_vec3_t normal;
+        if (sa < 3) {
+            normal = ax_a[sa];
+        } else if (sa < 6) {
+            normal = ax_b[sa - 3];
+        } else {
+            int ei = (sa - 6) / 3;
+            int ej = (sa - 6) % 3;
+            normal = vec3_cross(ax_a[ei], ax_b[ej]);
+            normal = vec3_normalize_safe(normal, SAT_EPSILON);
+        }
+        /* Ensure normal points from A toward B. */
+        if (vec3_dot(normal, d) < 0.0f) {
+            normal = vec3_scale(normal, -1.0f);
+        }
+        contact_out[0].point_world = vec3_scale(vec3_add(center_a, center_b), 0.5f);
+        contact_out[0].normal = normal;
+        contact_out[0].penetration = max_pen; /* negative = separated (speculative) */
+        contact_out[0].feature_id = 0xFFFE0000u | (uint32_t)sa;
+        contact_out[0].local_a = (phys_vec3_t){0, 0, 0};
+        contact_out[0].local_b = (phys_vec3_t){0, 0, 0};
+        return 1;
+    }
 
     /* ── Compute contact normal ─────────────────────────────────── */
 

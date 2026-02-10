@@ -107,7 +107,7 @@ static int test_box_box_face_contact(void)
     phys_contact_point_t contacts[4];
     int n = phys_box_vs_box(ca, QUAT_IDENTITY, ha,
                             cb, QUAT_IDENTITY, hb,
-                            contacts, 4);
+                            contacts, 4, 0.0f);
     ASSERT_TRUE(n >= 1);
 
     /* Normal should point from A to B, approximately along +X. */
@@ -134,7 +134,7 @@ static int test_box_box_separated(void)
     phys_contact_point_t contacts[4];
     int n = phys_box_vs_box(ca, QUAT_IDENTITY, ha,
                             cb, QUAT_IDENTITY, hb,
-                            contacts, 4);
+                            contacts, 4, 0.0f);
     ASSERT_INT_EQ(0, n);
     return 0;
 }
@@ -157,7 +157,7 @@ static int test_box_box_edge_contact(void)
     phys_contact_point_t contacts[4];
     int n = phys_box_vs_box(ca, QUAT_IDENTITY, ha,
                             cb, rot_b, hb,
-                            contacts, 4);
+                            contacts, 4, 0.0f);
     ASSERT_TRUE(n >= 1);
 
     /* Penetration should be small positive. */
@@ -183,7 +183,7 @@ static int test_box_box_resting(void)
     phys_contact_point_t contacts[4];
     int n = phys_box_vs_box(ca, QUAT_IDENTITY, ha,
                             cb, QUAT_IDENTITY, hb,
-                            contacts, 4);
+                            contacts, 4, 0.0f);
     ASSERT_TRUE(n >= 1);
 
     /* Normal should be approximately (0, 1, 0). */
@@ -212,7 +212,7 @@ static int test_box_box_corner(void)
     phys_contact_point_t contacts[4];
     int n = phys_box_vs_box(ca, QUAT_IDENTITY, ha,
                             cb, QUAT_IDENTITY, hb,
-                            contacts, 4);
+                            contacts, 4, 0.0f);
     ASSERT_TRUE(n >= 1);
 
     /* Normal should point upward. */
@@ -238,7 +238,7 @@ static int test_box_box_identical_overlap(void)
     phys_contact_point_t contacts[4];
     int n = phys_box_vs_box(c, QUAT_IDENTITY, h,
                             c, QUAT_IDENTITY, h,
-                            contacts, 4);
+                            contacts, 4, 0.0f);
     ASSERT_TRUE(n >= 1);
 
     /* Penetration should be full overlap = 2.0 (twice the half-extent). */
@@ -262,7 +262,7 @@ static int test_box_box_rotated_45(void)
     phys_contact_point_t contacts[4];
     int n = phys_box_vs_box(ca, QUAT_IDENTITY, ha,
                             cb, rot_b, hb,
-                            contacts, 4);
+                            contacts, 4, 0.0f);
     /* The rotated box's effective extent along X is sqrt(2) ≈ 1.414.
      * Total = 1.0 + 1.414 = 2.414 > 2.0 → overlap.
      */
@@ -284,14 +284,14 @@ static int test_box_box_null_safe(void)
     /* NULL output with max > 0 → safe, return 0. */
     int n = phys_box_vs_box(c, QUAT_IDENTITY, h,
                             c, QUAT_IDENTITY, h,
-                            NULL, 4);
+                            NULL, 4, 0.0f);
     ASSERT_INT_EQ(0, n);
 
     /* max_contacts = 0 → return 0. */
     phys_contact_point_t contacts[4];
     n = phys_box_vs_box(c, QUAT_IDENTITY, h,
                         c, QUAT_IDENTITY, h,
-                        contacts, 0);
+                        contacts, 0, 0.0f);
     ASSERT_INT_EQ(0, n);
 
     return 0;

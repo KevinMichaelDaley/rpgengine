@@ -99,7 +99,7 @@ static int test_sphere_overlap(void)
     bool hit = phys_sphere_vs_sphere(
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){1.5f, 0.0f, 0.0f}, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.5f, contact.penetration, 0.001f);
@@ -116,7 +116,7 @@ static int test_sphere_separated(void)
     bool hit = phys_sphere_vs_sphere(
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){5.0f, 0.0f, 0.0f}, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(!hit);
     return 0;
@@ -131,7 +131,7 @@ static int test_sphere_touching(void)
     bool hit = phys_sphere_vs_sphere(
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){2.0f, 0.0f, 0.0f}, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.0f, contact.penetration, 0.001f);
@@ -147,7 +147,7 @@ static int test_sphere_coincident(void)
     bool hit = phys_sphere_vs_sphere(
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, 1.0f,
         (phys_vec3_t){0.0f, 0.0f, 0.0f}, 1.0f,
-        &contact);
+        0.0f, &contact);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(2.0f, contact.penetration, 0.001f);
@@ -291,7 +291,7 @@ static int test_narrowphase_null_safe(void)
     bool hit = phys_sphere_vs_sphere(
         (phys_vec3_t){0, 0, 0}, 1.0f,
         (phys_vec3_t){0, 0, 0}, 1.0f,
-        NULL);
+        0.0f, NULL);
     ASSERT_TRUE(!hit);
 
     return 0;

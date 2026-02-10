@@ -96,6 +96,7 @@ bool phys_box_vs_capsule(
     phys_vec3_t box_center, phys_quat_t box_rotation, phys_vec3_t box_half_extents,
     phys_vec3_t capsule_center, phys_quat_t capsule_rotation,
     float capsule_radius, float capsule_half_height,
+    float speculative_margin,
     phys_contact_point_t *contact_out)
 {
     if (!contact_out) {
@@ -141,8 +142,9 @@ bool phys_box_vs_capsule(
     /* ── Step 4: Distance check ────────────────────────────────── */
     phys_vec3_t diff = vec3_sub(closest_on_seg, closest_on_box);
     float dist_sq = vec3_dot(diff, diff);
+    float threshold = capsule_radius + speculative_margin;
 
-    if (dist_sq > capsule_radius * capsule_radius) {
+    if (dist_sq > threshold * threshold) {
         return false;
     }
 
@@ -163,11 +165,10 @@ bool phys_box_vs_capsule(
     /* ── Step 6: Transform normal to world space ───────────────── */
     phys_vec3_t world_normal = quat_rotate_vec3(box_rotation, local_normal);
 
-    /* ── Step 7: Penetration depth ─────────────────────────────── */
+    /* ── Step 7: Penetration depth (negative = speculative) ────── */
     float penetration = capsule_radius - dist;
 
-    /* ── Step 8: Contact point (midpoint of overlap region) ────── */
-    /* In box local space: point on box surface + offset along normal. */
+    /* ── Step 8: Contact point (midpoint of overlap/gap region) ── */
     phys_vec3_t local_contact = vec3_add(
         closest_on_box,
         vec3_scale(local_normal, penetration * 0.5f));

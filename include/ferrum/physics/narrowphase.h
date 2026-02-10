@@ -66,6 +66,7 @@ typedef struct phys_narrowphase_args {
     phys_contact_candidate_t *candidates_out;     /**< Caller-allocated output. */
     uint32_t *candidate_count_out;                /**< Receives candidate count. */
     uint32_t max_candidates;                      /**< Capacity of output buffer. */
+    float speculative_margin;                     /**< Max separation for speculative contacts (0 = disabled). */
 } phys_narrowphase_args_t;
 
 /* ── Public API ─────────────────────────────────────────────────── */
@@ -90,15 +91,18 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args);
  * @param radius_a  Radius of sphere A.
  * @param center_b  World-space center of sphere B.
  * @param radius_b  Radius of sphere B.
+ * @param speculative_margin  Max separation for speculative contacts (0 = disabled).
  * @param contact_out  Output contact point (non-NULL on true return).
- * @return true if spheres overlap or touch, false otherwise.
+ * @return true if spheres overlap/touch or are within speculative margin.
  *
- * Normal points from A to B.  Penetration is positive for overlap.
+ * Normal points from A to B.  Penetration is positive for overlap,
+ * negative for speculative (separated) contacts.
  * If centers coincide, normal defaults to (0,1,0).
  */
 bool phys_sphere_vs_sphere(
     phys_vec3_t center_a, float radius_a,
     phys_vec3_t center_b, float radius_b,
+    float speculative_margin,
     struct phys_contact_point *contact_out);
 
 /**
@@ -109,16 +113,19 @@ bool phys_sphere_vs_sphere(
  * @param box_center     World-space center of the box (OBB).
  * @param box_rotation   World-space orientation of the box.
  * @param box_half_extents  Half-extents of the box in local space.
+ * @param speculative_margin  Max separation for speculative contacts (0 = disabled).
  * @param contact_out    Output contact point (non-NULL on true return).
- * @return true if sphere and box overlap or touch, false otherwise.
+ * @return true if sphere and box overlap/touch or are within speculative margin.
  *
- * Normal points from box to sphere.  Penetration is positive for overlap.
+ * Normal points from box to sphere.  Penetration is positive for overlap,
+ * negative for speculative contacts.
  * If contact_out is NULL, returns false without crashing.
  */
 bool phys_sphere_vs_box(
     phys_vec3_t sphere_center, float sphere_radius,
     phys_vec3_t box_center, phys_quat_t box_rotation,
     phys_vec3_t box_half_extents,
+    float speculative_margin,
     struct phys_contact_point *contact_out);
 
 /**
@@ -135,11 +142,12 @@ bool phys_sphere_vs_box(
  * @param capsule_rotation   World-space orientation of the capsule.
  * @param capsule_radius     Radius of the capsule cylinder/caps.
  * @param capsule_half_height Half the cylinder segment length.
+ * @param speculative_margin  Max separation for speculative contacts (0 = disabled).
  * @param contact_out        Output contact point (non-NULL on true return).
- * @return true if shapes overlap or touch, false otherwise.
+ * @return true if shapes overlap/touch or are within speculative margin.
  *
  * Normal points from capsule closest point toward sphere center.
- * Penetration is positive for overlap.
+ * Penetration is positive for overlap, negative for speculative contacts.
  * If sphere center lies exactly on the capsule segment, normal
  * defaults to (0,1,0).
  *
@@ -149,6 +157,7 @@ bool phys_sphere_vs_capsule(
     phys_vec3_t sphere_center, float sphere_radius,
     phys_vec3_t capsule_center, phys_quat_t capsule_rotation,
     float capsule_radius, float capsule_half_height,
+    float speculative_margin,
     struct phys_contact_point *contact_out);
 
 #ifdef __cplusplus
