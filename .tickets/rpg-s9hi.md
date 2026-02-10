@@ -1,6 +1,6 @@
 ---
 id: rpg-s9hi
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-09T04:35:45Z
