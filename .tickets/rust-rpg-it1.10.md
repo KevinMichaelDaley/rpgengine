@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-it1.10
-status: open
+status: in_progress
 deps: [rust-rpg-it1.1, rust-rpg-it1.9]
 links: []
 created: 2026-01-18T22:10:20.967939347-08:00

@@ -151,6 +151,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p090_physics_static_bvh_rebuild_tests \
 	build/p091_physics_phase6_integration_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
+	build/p007_net_rtt_retransmit_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
 	build/p000_job_performance_tests build/p002_memory_apool_tests build/p007_net_topic_dispatch_tests build/p007_net_topic_dispatch_benchmark \
@@ -537,6 +538,9 @@ build/p097_speculative_contact_tests: build/libheadless.a tests/p097_speculative
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p007_net_rtt_retransmit_tests: build/libheadless.a tests/p007_net_rtt_retransmit_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_rtt_retransmit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_integration_server_tests: build/libheadless.a tests/p007_net_integration_server_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_integration_server_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -780,6 +784,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p097_speculative_contact_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
+	&& ./build/p007_net_rtt_retransmit_tests \
 	&& ./build/p008_pose_interpolator_tests \
 	&& ./build/p009_server_state_update_queue_tests \
 	&& ./build/p000_job_queue_diagnostics_tests \
