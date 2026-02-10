@@ -7,5 +7,6 @@
 
 #include "ferrum/physics/raycast.h"
 #include "ferrum/physics/overlap.h"
+#include "ferrum/physics/closest_point.h"
 
 #endif /* FERRUM_PHYSICS_QUERY_H */

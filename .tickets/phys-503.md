@@ -1,6 +1,6 @@
 ---
 id: phys-503
-status: open
+status: closed
 deps: [phys-501]
 links: [phys-500]
 created: 2026-02-06T11:09:00.000000000-08:00
