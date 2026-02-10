@@ -1,6 +1,6 @@
 ---
 id: phys-604
-status: open
+status: closed
 deps: [phys-601, phys-602, phys-603]
 links: [phys-600]
 created: 2026-02-06T11:09:00.000000000-08:00
@@ -21,6 +21,6 @@ priority: 1
 
 ## Acceptance Criteria
 
-- [ ] BVH+grid faster than grid-only for high static body count
-- [ ] Correct collision with static geometry
+- [x] BVH+grid faster than grid-only for high static body count
+- [x] Correct collision with static geometry
 
