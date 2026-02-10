@@ -1,6 +1,6 @@
 ---
 id: rpg-xlur
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-10T11:52:03Z

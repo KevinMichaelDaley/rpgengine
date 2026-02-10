@@ -4,8 +4,9 @@
  *
  * Spawns a ground plane and periodically rains stacks of boxes.
  * Physics runs via the real tick runner (all 15 stages, tier system,
- * island coloring).  State is replicated to clients via repl_server
- * with a pose callback that reads body positions from the physics world.
+ * island coloring).  State is replicated to clients via the new
+ * server net runtime (fr_server_net_runtime), entity net pump,
+ * tick loop, and body state broadcaster.
  *
  * Usage:  ./demo_server <port> [duration_s]
  * Example: ./demo_server 40080 60
@@ -16,6 +17,7 @@
 #include <math.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,7 +28,10 @@
 #include "ferrum/job/system.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
-#include "ferrum/net/rudp/peer.h"
+#include "ferrum/net/quantization.h"
+#include "ferrum/net/replication/body_spawn.h"
+#include "ferrum/net/replication/body_state.h"
+#include "ferrum/net/replication/common.h"
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/physics/body.h"
@@ -34,25 +39,29 @@
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_tick_runner.h"
 #include "ferrum/physics/world.h"
-#include "ferrum/server/repl_server.h"
+#include "ferrum/server/entity/net/pump.h"
+#include "ferrum/server/net/inbound_message.h"
+#include "ferrum/server/net/runtime.h"
+#include "ferrum/server/physics/net/body_state_broadcast.h"
+#include "ferrum/server/tick_loop.h"
 
 /* ── Constants ──────────────────────────────────────────────────── */
 
-#define DEMO_MAX_CLIENTS   4u
-#define DEMO_MAX_ENTITIES  1024u
-#define DEMO_TICK_HZ       60u
+#define DEMO_MAX_CLIENTS       4u
+#define DEMO_MAX_BODIES        1024u
+#define DEMO_TICK_HZ           60u
 #define DEMO_SPAWN_INTERVAL_S  5.0
-#define DEMO_SPAWN_MIN    20u
-#define DEMO_SPAWN_MAX    50u
-#define DEMO_SPAWN_Y_LO   20.0f
-#define DEMO_SPAWN_Y_HI   40.0f
-#define DEMO_SPAWN_AREA    10.0f
-#define DEMO_BOX_HALF      0.5f
-#define DEMO_BOX_MASS      1.0f
-#define DEMO_GROUND_HALF_X 100.0f
-#define DEMO_GROUND_HALF_Y 0.1f
-#define DEMO_GROUND_HALF_Z 100.0f
-#define DEMO_FIBER_STACK   (256u * 1024u)
+#define DEMO_SPAWN_MIN         20u
+#define DEMO_SPAWN_MAX         50u
+#define DEMO_SPAWN_Y_LO        20.0f
+#define DEMO_SPAWN_Y_HI        40.0f
+#define DEMO_SPAWN_AREA        10.0f
+#define DEMO_BOX_HALF          0.5f
+#define DEMO_BOX_MASS          1.0f
+#define DEMO_GROUND_HALF_X     100.0f
+#define DEMO_GROUND_HALF_Y     0.1f
+#define DEMO_GROUND_HALF_Z     100.0f
+#define DEMO_FIBER_STACK       (256u * 1024u)
 
 /* ── Globals for signal handling ────────────────────────────────── */
 
@@ -63,105 +72,62 @@ static void handle_sigint(int sig) {
     g_running = 0;
 }
 
-/* ── Body → entity mapping ──────────────────────────────────────── */
+/* ── Demo context (forward declaration) ─────────────────────────── */
 
-/**
- * Maps physics body indices to repl_server entity indices.
- * Populated by the spawn callback.
- */
-typedef struct body_entity_map {
-    uint16_t *entity_index;   /**< body_index → entity_index (UINT16_MAX = unmapped). */
-    uint32_t  capacity;
-} body_entity_map_t;
+typedef struct demo_ctx demo_ctx_t;
 
-static void body_entity_map_init(body_entity_map_t *m, uint16_t *storage, uint32_t cap) {
-    m->entity_index = storage;
-    m->capacity = cap;
-    for (uint32_t i = 0; i < cap; ++i) {
-        storage[i] = UINT16_MAX;
-    }
-}
-
-/* ── Demo context ───────────────────────────────────────────────── */
-
-typedef struct demo_ctx {
+struct demo_ctx {
     /* Physics */
-    phys_world_t          world;
-    phys_job_context_t    phys_jobs;
-    phys_tick_runner_t    tick_runner;
-    fr_topic_channel_t   *cmd_channel;
+    phys_world_t                        world;
+    phys_job_context_t                  phys_jobs;
+    phys_tick_runner_t                  tick_runner;
+    fr_topic_channel_t                 *cmd_channel;
 
-    /* Replication */
-    server_repl_server_t *repl;
-    net_udp_socket_t      sock;
+    /* Networking: new runtime */
+    net_udp_socket_t                    sock;
+    fr_server_net_runtime_t            *net_rt;
+    fr_server_entity_net_pump_t        *entity_pump;
+    fr_server_body_state_broadcast_t   *broadcaster;
+
+    /* Topic channels */
+    fr_topic_channel_t                 *inbound_topic;
+    fr_topic_channel_t                 *player_event_topic;
+    fr_topic_channel_t                 *entity_event_topic;
+
+    /* Tick loop */
+    fr_server_tick_loop_t               tick_loop;
 
     /* Jobs */
-    job_system_t          job_sys;
+    job_system_t                        job_sys;
 
-    /* Mapping */
-    body_entity_map_t     map;
-    uint32_t              next_entity_id;
+    /* Client tracking */
+    bool                                client_joined[DEMO_MAX_CLIENTS];
+    uint32_t                            clients_connected;
 
-    /* Timing */
-    double                last_spawn_time;
-    uint32_t              total_spawned;
-} demo_ctx_t;
+    /* Spawned body tracking: which bodies have been announced to clients.
+     * spawned_to_client[client_id * DEMO_MAX_BODIES + body_index] = 1
+     * when BODY_SPAWN has been sent for that body to that client. */
+    uint8_t                            *spawned_to_client;
 
-/* ── Pose callback ──────────────────────────────────────────────── */
+    /* Timing / spawn */
+    double                              last_spawn_time;
+    uint32_t                            total_spawned;
+    uint32_t                            server_tick;
+};
 
-/**
- * Called by repl_server to fetch an entity's current position and
- * rotation from the physics world.
- */
-static bool demo_get_entity_pose(void *user,
-                                 uint32_t entity_id,
-                                 uint16_t entity_index,
-                                 vec3_t *out_pos,
-                                 quat_t *out_rot) {
-    (void)entity_id;
-    demo_ctx_t *ctx = (demo_ctx_t *)user;
+/* ── Helpers ────────────────────────────────────────────────────── */
 
-    /* entity_index is used as body_index (1:1 mapping in this demo). */
-    const phys_body_t *body = phys_world_get_body(&ctx->world, (uint32_t)entity_index);
-    if (!body) {
-        return false;
-    }
-
-    *out_pos = body->position;
-    *out_rot = body->orientation;
-    return true;
+static double now_seconds(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
-/* ── Spawn callback ─────────────────────────────────────────────── */
-
-/**
- * Physics tick runner invokes this after creating a body.
- * We register the body as an entity in the repl_server.
- */
-static void demo_spawn_callback(uint32_t body_index,
-                                uint64_t user_tag,
-                                void *user) {
-    demo_ctx_t *ctx = (demo_ctx_t *)user;
-    if (body_index == UINT32_MAX) {
-        return;  /* spawn failed */
-    }
-
-    uint32_t entity_id = (uint32_t)user_tag;
-    uint16_t entity_idx = 0;
-    int rc = server_repl_server_debug_add_active_entity(
-        ctx->repl, 0u /* owner=server */, entity_id, &entity_idx);
-    if (rc != 0) {
-        fprintf(stderr, "warn: failed to register entity %u for body %u\n",
-                entity_id, body_index);
-        return;
-    }
-
-    if (body_index < ctx->map.capacity) {
-        ctx->map.entity_index[body_index] = entity_idx;
-    }
+static uint64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
 }
-
-/* ── Box rain spawner ───────────────────────────────────────────── */
 
 static uint32_t xorshift32(uint32_t *state) {
     uint32_t x = *state;
@@ -176,20 +142,118 @@ static float randf(uint32_t *rng, float lo, float hi) {
     return lo + (float)(xorshift32(rng) % 10000u) / 10000.0f * (hi - lo);
 }
 
+/* ── Topic-out callback (for entity pump + broadcaster) ─────────── */
+
+/**
+ * Callback shared by entity pump and body state broadcaster to obtain
+ * per-client outbound topic channels from the net runtime.
+ */
+static bool get_client_out_topics_cb(void *user,
+                                     uint16_t client_id,
+                                     fr_topic_channel_t **out_reliable,
+                                     fr_topic_channel_t **out_unreliable) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user;
+    return fr_server_net_runtime_client_out_topics(
+        ctx->net_rt, client_id, out_reliable, out_unreliable);
+}
+
+/* ── Send BODY_SPAWN for all known bodies to a newly-joined client ── */
+
+static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
+    fr_topic_channel_t *reliable = NULL;
+    fr_topic_channel_t *unreliable = NULL;
+    if (!fr_server_net_runtime_client_out_topics(
+            ctx->net_rt, client_id, &reliable, &unreliable)) {
+        return;
+    }
+
+    uint32_t body_count = phys_world_body_count(&ctx->world);
+    for (uint32_t bi = 0; bi < body_count; ++bi) {
+        const phys_body_t *body = phys_world_get_body(&ctx->world, bi);
+        if (!body) {
+            continue;
+        }
+
+        size_t idx = (size_t)client_id * DEMO_MAX_BODIES + bi;
+        if (ctx->spawned_to_client[idx]) {
+            continue;
+        }
+
+        /* Build and encode BODY_SPAWN message. */
+        net_repl_body_spawn_t spawn_msg;
+        memset(&spawn_msg, 0, sizeof(spawn_msg));
+        spawn_msg.body_id = (uint16_t)bi;
+        spawn_msg.flags = (body->flags & PHYS_BODY_FLAG_STATIC) ? 1u : 0u;
+        spawn_msg.shape_type = 0u; /* box */
+        spawn_msg.color_seed = bi;
+
+        net_qvec3_mm_t qpos;
+        net_quantize_vec3_mm(
+            (vec3_t){body->position.x, body->position.y, body->position.z},
+            &qpos);
+        spawn_msg.pos_mm = (net_repl_vec3_mm_t){qpos.x_mm, qpos.y_mm, qpos.z_mm};
+
+        spawn_msg.rot_x = body->orientation.x;
+        spawn_msg.rot_y = body->orientation.y;
+        spawn_msg.rot_z = body->orientation.z;
+        spawn_msg.rot_w = body->orientation.w;
+
+        /* Ground plane gets its actual half-extents; boxes get DEMO_BOX_HALF. */
+        if (body->flags & PHYS_BODY_FLAG_STATIC) {
+            spawn_msg.half_x_mm = (uint16_t)(DEMO_GROUND_HALF_X * 1000.0f);
+            spawn_msg.half_y_mm = (uint16_t)(DEMO_GROUND_HALF_Y * 1000.0f);
+            spawn_msg.half_z_mm = (uint16_t)(DEMO_GROUND_HALF_Z * 1000.0f);
+        } else {
+            spawn_msg.half_x_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
+            spawn_msg.half_y_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
+            spawn_msg.half_z_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
+        }
+
+        uint8_t wire[2u + NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];
+        wire[0] = (uint8_t)(NET_REPL_SCHEMA_BODY_SPAWN & 0xFFu);
+        wire[1] = (uint8_t)((NET_REPL_SCHEMA_BODY_SPAWN >> 8u) & 0xFFu);
+        if (net_repl_body_spawn_encode(&spawn_msg, wire + 2u,
+                                       NET_REPL_BODY_SPAWN_PAYLOAD_SIZE) == NET_REPL_OK) {
+            fr_topic_channel_push(reliable, wire, sizeof(wire));
+            ctx->spawned_to_client[idx] = 1u;
+        }
+    }
+}
+
+/* ── Physics spawn callback ─────────────────────────────────────── */
+
+/**
+ * Physics tick runner invokes this after creating a body via phys_cmd.
+ * We don't register with repl_server anymore; instead body spawns are
+ * sent to clients in the drain callback when we detect new bodies.
+ */
+static void demo_spawn_callback(uint32_t body_index,
+                                uint64_t user_tag,
+                                void *user) {
+    (void)user_tag;
+    (void)user;
+    if (body_index == UINT32_MAX) {
+        return; /* spawn failed */
+    }
+    /* Body is now in the world; send_body_spawns_to_client will pick it up. */
+}
+
+/* ── Box rain spawner ───────────────────────────────────────────── */
+
 static void demo_spawn_box_rain(demo_ctx_t *ctx, uint32_t *rng) {
-    uint32_t count = DEMO_SPAWN_MIN + (xorshift32(rng) % (DEMO_SPAWN_MAX - DEMO_SPAWN_MIN + 1u));
+    uint32_t count = DEMO_SPAWN_MIN +
+        (xorshift32(rng) % (DEMO_SPAWN_MAX - DEMO_SPAWN_MIN + 1u));
 
     /* Clamp to remaining entity budget. */
-    if (ctx->total_spawned + count > DEMO_MAX_ENTITIES - 1u) {
-        count = (DEMO_MAX_ENTITIES - 1u > ctx->total_spawned)
-              ? (DEMO_MAX_ENTITIES - 1u - ctx->total_spawned) : 0u;
+    if (ctx->total_spawned + count > DEMO_MAX_BODIES - 1u) {
+        count = (DEMO_MAX_BODIES - 1u > ctx->total_spawned)
+              ? (DEMO_MAX_BODIES - 1u - ctx->total_spawned) : 0u;
     }
     if (count == 0u) {
         return;
     }
 
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t eid = ctx->next_entity_id++;
         phys_cmd_spawn_body_t spawn = {
             .position = {
                 randf(rng, -DEMO_SPAWN_AREA, DEMO_SPAWN_AREA),
@@ -202,7 +266,7 @@ static void demo_spawn_box_rain(demo_ctx_t *ctx, uint32_t *rng) {
             .flags       = 0u,
             .shape       = PHYS_CMD_SHAPE_BOX,
             .shape_data.box_half = {DEMO_BOX_HALF, DEMO_BOX_HALF, DEMO_BOX_HALF},
-            .user_tag    = (uint64_t)eid
+            .user_tag    = 0u
         };
 
         if (!phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
@@ -216,18 +280,93 @@ static void demo_spawn_box_rain(demo_ctx_t *ctx, uint32_t *rng) {
     printf("[server] spawned %u boxes (total: %u)\n", count, ctx->total_spawned);
 }
 
-/* ── Time helpers ───────────────────────────────────────────────── */
+/* ── Tick loop callbacks ────────────────────────────────────────── */
 
-static double now_seconds(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+/**
+ * Stage 1: drain inbound messages.
+ * Pumps the net runtime and entity pump, then processes player/entity events.
+ */
+static void on_drain(void *user) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user;
+    uint64_t now = now_ms();
+
+    /* Pump UDP receive and per-client fiber processing. */
+    fr_server_net_runtime_pump(ctx->net_rt, now);
+
+    /* Route decoded inbound messages to player/entity event topics. */
+    fr_server_entity_net_pump_tick(ctx->entity_pump, now);
+
+    /* Drain player events (JOINs). */
+    for (;;) {
+        uint8_t evt[64];
+        size_t evt_len = sizeof(evt);
+        if (!fr_topic_channel_pop(ctx->player_event_topic, evt, &evt_len)) {
+            break;
+        }
+        if (evt[0] == FR_SERVER_EVT_PLAYER_JOIN && evt_len >= 4u) {
+            uint16_t client_id = (uint16_t)evt[2] | ((uint16_t)evt[3] << 8u);
+            if (client_id < DEMO_MAX_CLIENTS && !ctx->client_joined[client_id]) {
+                ctx->client_joined[client_id] = true;
+                ctx->clients_connected++;
+                printf("[server] client %u joined (total: %u)\n",
+                       client_id, ctx->clients_connected);
+
+                /* Tell entity pump to spawn this player to remote clients. */
+                fr_server_entity_net_pump_set_player_should_spawn_remote(
+                    ctx->entity_pump, client_id, true);
+
+                /* Send all existing body spawns to the new client. */
+                send_body_spawns_to_client(ctx, client_id);
+            }
+        }
+    }
+
+    /* Send any new body spawns to already-connected clients. */
+    for (uint16_t ci = 0; ci < DEMO_MAX_CLIENTS; ++ci) {
+        if (ctx->client_joined[ci]) {
+            send_body_spawns_to_client(ctx, ci);
+        }
+    }
+
+    /* Drain entity events (INPUT_MOVE).
+     * Format: [evt_type:u8][reserved:u8][client_id:u16 LE][payload...]
+     * INPUT_MOVE payload: [tick:u32 LE][move_x:f32 LE][move_y:f32 LE][move_z:f32 LE]
+     */
+    for (;;) {
+        uint8_t evt[256];
+        size_t evt_len = sizeof(evt);
+        if (!fr_topic_channel_pop(ctx->entity_event_topic, evt, &evt_len)) {
+            break;
+        }
+        /* For now, we acknowledge but don't process move inputs.
+         * The physics world is server-authoritative for box rain;
+         * future: apply kinematic intent from INPUT_MOVE to player bodies. */
+        (void)evt;
+    }
 }
 
-static uint64_t now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+/**
+ * Stage 2: physics (no-op—tick runner is async fiber).
+ */
+static void on_physics(void *user) {
+    (void)user;
+}
+
+/**
+ * Stage 3: encode replication (body state broadcast).
+ */
+static void on_encode(void *user) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user;
+    ctx->server_tick++;
+    fr_server_body_state_broadcast_tick(
+        ctx->broadcaster, (uint16_t)ctx->server_tick, now_ms());
+}
+
+/**
+ * Stage 4: flush (no-op—net runtime fibers handle outbound).
+ */
+static void on_flush(void *user) {
+    (void)user;
 }
 
 /* ── Main ───────────────────────────────────────────────────────── */
@@ -244,10 +383,10 @@ int main(int argc, char **argv) {
 
     demo_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
-    ctx.next_entity_id = 1u;
 
     /* ── 1. Job system ─────────────────────────────────────────── */
-    if (job_system_create(&ctx.job_sys, 4u, 256u, DEMO_FIBER_STACK, 64u, 0) != JOB_CREATE_OK) {
+    if (job_system_create(&ctx.job_sys, 4u, 256u, DEMO_FIBER_STACK,
+                          64u, 0) != JOB_CREATE_OK) {
         fprintf(stderr, "error: job_system_create failed\n");
         return 1;
     }
@@ -259,13 +398,13 @@ int main(int argc, char **argv) {
 
     /* ── 2. Physics world ──────────────────────────────────────── */
     phys_world_config_t wcfg = phys_world_config_default();
-    wcfg.max_bodies = DEMO_MAX_ENTITIES;
-    wcfg.max_colliders = DEMO_MAX_ENTITIES;
+    wcfg.max_bodies = DEMO_MAX_BODIES;
+    wcfg.max_colliders = DEMO_MAX_BODIES;
     if (phys_world_init(&ctx.world, &wcfg) != 0) {
         fprintf(stderr, "error: phys_world_init failed\n");
         return 1;
     }
-    printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_ENTITIES);
+    printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_BODIES);
 
     /* Ground plane: large static box at y=0. */
     {
@@ -301,15 +440,7 @@ int main(int argc, char **argv) {
     phys_tick_runner_start(&ctx.tick_runner);
     printf("[server] physics tick runner started\n");
 
-    /* ── 4. Body → entity map (heap-allocated) ────────────────── */
-    uint16_t *map_storage = (uint16_t *)calloc(DEMO_MAX_ENTITIES, sizeof(uint16_t));
-    if (!map_storage) {
-        fprintf(stderr, "error: map_storage alloc failed\n");
-        return 1;
-    }
-    body_entity_map_init(&ctx.map, map_storage, DEMO_MAX_ENTITIES);
-
-    /* ── 5. UDP socket ─────────────────────────────────────────── */
+    /* ── 4. UDP socket ─────────────────────────────────────────── */
     if (net_udp_socket_open(&ctx.sock) != NET_UDP_SOCKET_OK) {
         fprintf(stderr, "error: net_udp_socket_open failed\n");
         return 1;
@@ -325,56 +456,104 @@ int main(int argc, char **argv) {
     net_udp_socket_set_send_buffer_bytes(&ctx.sock, 4u * 1024u * 1024u);
     printf("[server] listening on 0.0.0.0:%u\n", port);
 
-    /* ── 6. Replication server ─────────────────────────────────── */
-    size_t rudp_slots_per_client = (size_t)DEMO_MAX_ENTITIES + 8u;
-    size_t total_rudp_slots = (size_t)DEMO_MAX_CLIENTS * rudp_slots_per_client;
-    size_t rudp_bytes = net_rudp_send_slot_storage_size(total_rudp_slots);
-    void *rudp_mem = calloc(1u, rudp_bytes);
-    if (!rudp_mem) {
-        fprintf(stderr, "error: rudp slot alloc failed\n");
-        return 1;
-    }
-
-    server_repl_config_t rcfg = {
-        .max_clients = DEMO_MAX_CLIENTS,
-        .tick_hz     = DEMO_TICK_HZ,
-        .max_entities = DEMO_MAX_ENTITIES,
-        .resend_interval_ms = 50u,
-        .get_entity_pose = demo_get_entity_pose,
-        .get_entity_pose_user = &ctx,
-        .rudp_send_slot_storage = rudp_mem,
-        .rudp_send_slot_storage_bytes = rudp_bytes,
-        .rudp_send_slots_per_client = rudp_slots_per_client
+    /* ── 5. Topic channels ─────────────────────────────────────── */
+    fr_topic_channel_config_t tc_cfg = {
+        .capacity = 4096u,
+        .capacity_bytes = 256u * 1024u,
+        .max_message_size = 1472u,
+        .backpressure = FR_TOPIC_BACKPRESSURE_DROP_OLDEST
     };
-
-    ctx.repl = server_repl_server_create(&rcfg, &ctx.sock, &ctx.job_sys);
-    if (!ctx.repl) {
-        fprintf(stderr, "error: server_repl_server_create failed\n");
+    ctx.inbound_topic = fr_topic_channel_create(&tc_cfg);
+    ctx.player_event_topic = fr_topic_channel_create(&tc_cfg);
+    ctx.entity_event_topic = fr_topic_channel_create(&tc_cfg);
+    if (!ctx.inbound_topic || !ctx.player_event_topic || !ctx.entity_event_topic) {
+        fprintf(stderr, "error: topic channel creation failed\n");
         return 1;
     }
-    printf("[server] replication server ready (max %u clients)\n", DEMO_MAX_CLIENTS);
 
-    /* ── 7. Main loop ──────────────────────────────────────────── */
+    /* ── 6. Server net runtime ─────────────────────────────────── */
+    fr_server_net_runtime_config_t rt_cfg = {
+        .max_clients = DEMO_MAX_CLIENTS,
+        .jobs = &ctx.job_sys,
+        .socket = &ctx.sock,
+        .inbound_topic = ctx.inbound_topic,
+        .out_reliable_capacity = 8192u,
+        .out_unreliable_capacity = 8192u,
+    };
+    ctx.net_rt = fr_server_net_runtime_create(&rt_cfg);
+    if (!ctx.net_rt) {
+        fprintf(stderr, "error: fr_server_net_runtime_create failed\n");
+        return 1;
+    }
+    printf("[server] net runtime created (max %u clients)\n", DEMO_MAX_CLIENTS);
+
+    /* ── 7. Entity net pump ────────────────────────────────────── */
+    fr_server_entity_net_pump_config_t pump_cfg = {
+        .max_clients = DEMO_MAX_CLIENTS,
+        .tick_hz = DEMO_TICK_HZ,
+        .expected_entities = (uint16_t)DEMO_MAX_BODIES,
+        .inbound_topic = ctx.inbound_topic,
+        .player_event_topic = ctx.player_event_topic,
+        .entity_event_topic = ctx.entity_event_topic,
+        .get_client_out_topics_cb = get_client_out_topics_cb,
+        .io_user = &ctx,
+    };
+    ctx.entity_pump = fr_server_entity_net_pump_create(&pump_cfg);
+    if (!ctx.entity_pump) {
+        fprintf(stderr, "error: fr_server_entity_net_pump_create failed\n");
+        return 1;
+    }
+    printf("[server] entity net pump created\n");
+
+    /* ── 8. Body state broadcaster ─────────────────────────────── */
+    fr_server_body_state_broadcast_config_t bc_cfg = {
+        .max_clients = DEMO_MAX_CLIENTS,
+        .world = &ctx.world,
+        .get_client_out_topics_cb = get_client_out_topics_cb,
+        .io_user = &ctx,
+    };
+    ctx.broadcaster = fr_server_body_state_broadcast_create(&bc_cfg);
+    if (!ctx.broadcaster) {
+        fprintf(stderr, "error: fr_server_body_state_broadcast_create failed\n");
+        return 1;
+    }
+    printf("[server] body state broadcaster created\n");
+
+    /* ── 9. Spawned-to-client tracking ─────────────────────────── */
+    ctx.spawned_to_client = (uint8_t *)calloc(
+        (size_t)DEMO_MAX_CLIENTS * (size_t)DEMO_MAX_BODIES, 1u);
+    if (!ctx.spawned_to_client) {
+        fprintf(stderr, "error: spawned_to_client alloc failed\n");
+        return 1;
+    }
+
+    /* ── 10. Tick loop ─────────────────────────────────────────── */
+    fr_server_tick_loop_config_t tl_cfg = {
+        .tick_hz = DEMO_TICK_HZ,
+        .max_catchup_ticks = 5u,
+        .on_drain = on_drain,
+        .on_physics = on_physics,
+        .on_encode = on_encode,
+        .on_flush = on_flush,
+        .user = &ctx,
+    };
+    if (fr_server_tick_loop_init(&ctx.tick_loop, &tl_cfg) != 0) {
+        fprintf(stderr, "error: fr_server_tick_loop_init failed\n");
+        return 1;
+    }
+
+    /* ── 11. Main loop ─────────────────────────────────────────── */
     uint32_t rng = 12345u;
     ctx.last_spawn_time = now_seconds();
-    const double tick_period = 1.0 / (double)DEMO_TICK_HZ;
-    double last_tick_time = now_seconds();
-    double accumulator = 0.0;
     const double start_time = now_seconds();
-    uint64_t tick_count = 0;
+    double last_step_time = now_seconds();
 
     printf("[server] entering main loop (Ctrl-C to stop)\n");
 
     while (g_running) {
         double now = now_seconds();
-        double elapsed = now - last_tick_time;
-        last_tick_time = now;
-        accumulator += elapsed;
-
-        /* Cap catch-up to prevent spiral of death. */
-        if (accumulator > tick_period * 5.0) {
-            accumulator = tick_period * 5.0;
-        }
+        uint64_t elapsed_us = (uint64_t)((now - last_step_time) * 1e6);
+        last_step_time = now;
 
         /* Duration limit. */
         if (duration > 0.0 && (now - start_time) >= duration) {
@@ -387,72 +566,61 @@ int main(int argc, char **argv) {
             ctx.last_spawn_time = now;
         }
 
-        /* Fixed-rate server ticks. */
-        while (accumulator >= tick_period) {
-            accumulator -= tick_period;
-
-            /* Pump inbound network. */
-            server_repl_server_pump(ctx.repl, now_ms());
-
-            /* Replicate state to clients. */
-            server_repl_server_tick(ctx.repl, now_ms());
-
-            tick_count++;
-        }
+        /* Fixed-rate server ticks via tick loop. */
+        fr_server_tick_loop_step(&ctx.tick_loop, elapsed_us);
 
         /* Periodic stats. */
-        if (tick_count > 0 && tick_count % (DEMO_TICK_HZ * 5u) == 0) {
-            server_repl_stats_t st = server_repl_server_stats(ctx.repl);
+        uint64_t tick_id = fr_server_tick_loop_tick_id(&ctx.tick_loop);
+        if (tick_id > 0 && tick_id % (DEMO_TICK_HZ * 5u) == 0) {
             uint64_t phys_tick = phys_tick_runner_tick_id(&ctx.tick_runner);
-            printf("[server] tick=%lu phys=%lu clients=%u entities=%u pkts_out=%lu\n",
-                   (unsigned long)tick_count, (unsigned long)phys_tick,
-                   st.clients_connected, ctx.total_spawned,
-                   (unsigned long)st.packets_sent);
+            printf("[server] tick=%lu phys=%lu clients=%u entities=%u\n",
+                   (unsigned long)tick_id, (unsigned long)phys_tick,
+                   ctx.clients_connected, ctx.total_spawned);
         }
 
         /* Yield to avoid busy spin. */
-        {
-            struct timespec ts = {0, 500000};  /* 0.5 ms */
-            nanosleep(&ts, NULL);
-        }
+        struct timespec ts = {0, 500000}; /* 0.5 ms */
+        nanosleep(&ts, NULL);
     }
 
-    /* ── 8. Shutdown ───────────────────────────────────────────── */
+    /* ── 12. Shutdown ──────────────────────────────────────────── */
     printf("\n[server] shutting down...\n");
 
-    /* Signal the tick runner to stop.  The fiber checks this flag in
-     * its pacing loop between ticks (NOT during a tick). */
-    atomic_store_explicit(&ctx.tick_runner.stop_requested, 1, memory_order_release);
-
-    /* Wait for the fiber to actually finish (it will set stopped=1
-     * after its current tick completes and it re-checks stop_requested).
-     * We MUST wait here; shutting down the job system while a physics
-     * tick is in-flight causes use-after-free of job counters. */
+    /* Stop physics tick runner fiber. */
+    atomic_store_explicit(&ctx.tick_runner.stop_requested, 1,
+                          memory_order_release);
     int waited_ms = 0;
-    while (!atomic_load_explicit(&ctx.tick_runner.stopped, memory_order_acquire)) {
+    while (!atomic_load_explicit(&ctx.tick_runner.stopped,
+                                 memory_order_acquire)) {
         struct timespec ts = {0, 1000000}; /* 1 ms */
         nanosleep(&ts, NULL);
         waited_ms++;
         if (waited_ms > 5000) {
-            fprintf(stderr, "[server] warn: tick runner did not stop in 5s, forcing exit\n");
+            fprintf(stderr,
+                    "[server] warn: tick runner did not stop in 5s\n");
             break;
         }
     }
     ctx.tick_runner.running = 0;
     printf("[server] tick runner stopped after %d ms\n", waited_ms);
 
-    /* Now safe to tear down: no fibers in flight. */
+    /* Tear down in reverse init order. */
+    fr_server_body_state_broadcast_destroy(ctx.broadcaster);
+    fr_server_entity_net_pump_destroy(ctx.entity_pump);
+    fr_server_net_runtime_destroy(ctx.net_rt);
     job_system_shutdown(&ctx.job_sys);
     phys_tick_runner_destroy(&ctx.tick_runner);
     phys_job_context_destroy(&ctx.phys_jobs);
     phys_world_destroy(&ctx.world);
     fr_topic_channel_destroy(ctx.cmd_channel);
-    server_repl_server_destroy(ctx.repl);
+    fr_topic_channel_destroy(ctx.inbound_topic);
+    fr_topic_channel_destroy(ctx.player_event_topic);
+    fr_topic_channel_destroy(ctx.entity_event_topic);
     net_udp_socket_close(&ctx.sock);
-    free(rudp_mem);
-    free(map_storage);
+    free(ctx.spawned_to_client);
 
+    uint64_t final_tick = fr_server_tick_loop_tick_id(&ctx.tick_loop);
     printf("[server] done. %lu ticks, %u bodies spawned.\n",
-           (unsigned long)tick_count, ctx.total_spawned);
+           (unsigned long)final_tick, ctx.total_spawned);
     return 0;
 }

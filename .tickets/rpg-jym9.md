@@ -1,6 +1,6 @@
 ---
 id: rpg-jym9
-status: open
+status: closed
 deps: [rpg-1u68]
 links: []
 created: 2026-02-10T11:54:06Z

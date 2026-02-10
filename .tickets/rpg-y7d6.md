@@ -1,6 +1,6 @@
 ---
 id: rpg-y7d6
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-10T11:54:06Z

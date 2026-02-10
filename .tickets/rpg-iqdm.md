@@ -1,6 +1,6 @@
 ---
 id: rpg-iqdm
-status: open
+status: closed
 deps: [rpg-jym9]
 links: []
 created: 2026-02-10T11:54:06Z

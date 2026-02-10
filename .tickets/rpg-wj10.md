@@ -1,6 +1,6 @@
 ---
 id: rpg-wj10
-status: open
+status: closed
 deps: [rpg-xtt4, rpg-iqdm]
 links: []
 created: 2026-02-10T11:54:06Z

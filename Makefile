@@ -198,7 +198,7 @@ BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer
 
 BIN := $(BIN_HEADLESS) $(BIN_RENDERER_TESTS)
 
-.PHONY: all test test_renderer clean p008_build p008_test p008_help p008_perf p008_renderer_client
+.PHONY: all test test_renderer clean p008_build p008_test p008_help p008_perf p008_renderer_client demo_server demo_client
 
 all: $(BIN)
 
@@ -980,6 +980,22 @@ p008_renderer_client:
 	@echo "Built: build/p008_renderer_client"
 	@echo "Run server:  ./build/p008_net_repl_server 40080 16 0 60 4"
 	@echo "Run client:  ./build/p008_renderer_client 127.0.0.1 40080 10000 --seed 123"
+
+build/demo_server: build/libheadless.a tests/examples/demo_server.c | build
+	$(CC) $(CFLAGS) tests/examples/demo_server.c build/libheadless.a -o $@ $(LDFLAGS)
+
+demo_server:
+	@$(MAKE) build/demo_server
+	@echo "Built: build/demo_server"
+	@echo "Usage: ./build/demo_server <port> [duration_s]"
+
+build/demo_client: build/liball.a tests/examples/demo_client.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+demo_client:
+	@$(MAKE) build/demo_client
+	@echo "Built: build/demo_client"
+	@echo "Usage: ./build/demo_client <server_ip> <port> [duration_s] [--headless]"
 
 clean:
 	$(RM) $(BIN) build/libheadless.a build/liball.a
