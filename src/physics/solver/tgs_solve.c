@@ -18,11 +18,14 @@
 #include "ferrum/physics/tgs_solve.h"
 
 #include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
+#include "ferrum/physics/constraint_color.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/step_plan.h"
 #include "ferrum/math/vec3.h"
 
@@ -186,6 +189,113 @@ static void solve_position_row(phys_jacobian_row_t *row,
     pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
 }
 
+/* ── Solve one constraint (all rows) ──────────────────────────────── */
+
+/**
+ * @brief Solve all rows of a single constraint: normal + friction + split.
+ */
+static void solve_one_constraint(phys_constraint_t *c,
+                                  phys_velocity_t *velocities,
+                                  phys_velocity_t *pseudo,
+                                  const struct phys_body *bodies,
+                                  float slop,
+                                  float inv_dt)
+{
+    phys_velocity_t *va = &velocities[c->body_a];
+    phys_velocity_t *vb = &velocities[c->body_b];
+
+    float inv_mass_a = bodies[c->body_a].inv_mass;
+    float inv_mass_b = bodies[c->body_b].inv_mass;
+    const phys_vec3_t *inv_i_a = &bodies[c->body_a].inv_inertia_diag;
+    const phys_vec3_t *inv_i_b = &bodies[c->body_b].inv_inertia_diag;
+
+    /* Solve normal row first (row 0). */
+    solve_row(&c->rows[0], va, vb,
+              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+
+    /* Split impulse: position correction into pseudo-velocities. */
+    if (pseudo) {
+        solve_position_row(
+            &c->rows[0],
+            &pseudo[c->body_a], &pseudo[c->body_b],
+            c->penetration, slop, inv_dt,
+            inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+    }
+
+    /* Coulomb friction cone. */
+    float friction_limit = c->friction * c->rows[0].lambda;
+    for (uint8_t r = 1; r < c->row_count; r++) {
+        c->rows[r].lambda_min = -friction_limit;
+        c->rows[r].lambda_max =  friction_limit;
+        solve_row(&c->rows[r], va, vb,
+                  inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+    }
+}
+
+/* ── Colored island solve ────────────────────────────────────────── */
+
+/**
+ * @brief Solve an island using graph coloring for constraint ordering.
+ *
+ * For each solver iteration, constraints are processed color-by-color.
+ * All constraints within the same color batch are independent (share no
+ * bodies) and thus the ordering within a batch does not matter.  This
+ * enables future parallelization: same-color constraints can be solved
+ * by different threads without synchronization.
+ *
+ * Currently the per-color batch is solved sequentially, but the
+ * coloring structure is in place for parallel dispatch.
+ *
+ * @return true if coloring succeeded, false to fall back to sequential.
+ */
+static bool solve_island_colored(const phys_island_t *island,
+                                  const phys_tgs_solve_args_t *args,
+                                  float slop,
+                                  float inv_dt)
+{
+    /* Build a temporary constraint array pointing to this island's
+     * constraints so that the coloring algorithm can index them
+     * contiguously (0..island->constraint_count-1). */
+    phys_frame_arena_t *arena = args->frame_arena;
+
+    /* We need the coloring to reference body indices from the island's
+     * constraints.  phys_constraint_color works on a contiguous constraint
+     * array, so we pass the full world constraint array and use the island's
+     * constraint_indices to build a local contiguous copy. */
+    uint32_t n = island->constraint_count;
+    phys_constraint_t *local = phys_frame_arena_alloc(
+        arena, n * sizeof(phys_constraint_t), _Alignof(phys_constraint_t));
+    if (!local) { return false; }
+
+    /* Copy island constraints into contiguous local array (only body_a/body_b
+     * are needed for coloring, but we copy the full struct for later solve). */
+    for (uint32_t ci = 0; ci < n; ++ci) {
+        local[ci] = args->constraints[island->constraint_indices[ci]];
+    }
+
+    phys_color_result_t coloring;
+    int rc = phys_constraint_color(local, n, args->body_count, arena, &coloring);
+    if (rc != 0) { return false; }
+
+    /* Solve per iteration, per color batch. */
+    phys_velocity_t *pseudo = args->pseudo_velocities;
+
+    for (uint32_t iter = 0; iter < args->iterations; ++iter) {
+        for (uint32_t color = 0; color < coloring.num_colors; ++color) {
+            /* Solve all constraints with this color. */
+            for (uint32_t ci = 0; ci < n; ++ci) {
+                if (coloring.colors[ci] != color) { continue; }
+                uint32_t c_idx = island->constraint_indices[ci];
+                solve_one_constraint(&args->constraints[c_idx],
+                                     args->velocities, pseudo,
+                                     args->bodies, slop, inv_dt);
+            }
+        }
+    }
+
+    return true;
+}
+
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
@@ -221,48 +331,23 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
         }
 
-        /* Iterate the sequential impulse solver. */
+        /* For large islands with coloring enabled, use graph-colored
+         * constraint ordering.  Falls back to sequential on failure. */
+        if (args->frame_arena &&
+            args->island_color_threshold > 0 &&
+            island->constraint_count >= args->island_color_threshold) {
+            if (solve_island_colored(island, args, slop, inv_dt)) {
+                continue;
+            }
+        }
+
+        /* Sequential solve (default path). */
         for (uint32_t iter = 0; iter < args->iterations; iter++) {
             for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
                 uint32_t c_idx = island->constraint_indices[ci];
-                phys_constraint_t *c = &args->constraints[c_idx];
-
-                phys_velocity_t *va = &args->velocities[c->body_a];
-                phys_velocity_t *vb = &args->velocities[c->body_b];
-
-                float inv_mass_a = args->bodies[c->body_a].inv_mass;
-                float inv_mass_b = args->bodies[c->body_b].inv_mass;
-                const phys_vec3_t *inv_i_a =
-                    &args->bodies[c->body_a].inv_inertia_diag;
-                const phys_vec3_t *inv_i_b =
-                    &args->bodies[c->body_b].inv_inertia_diag;
-
-                /* Solve normal row first (row 0). */
-                solve_row(&c->rows[0], va, vb,
-                          inv_mass_a, inv_i_a,
-                          inv_mass_b, inv_i_b);
-
-                /* Split impulse: solve position correction into
-                 * pseudo-velocities using the same constraint normal. */
-                if (pseudo) {
-                    solve_position_row(
-                        &c->rows[0],
-                        &pseudo[c->body_a], &pseudo[c->body_b],
-                        c->penetration, slop, inv_dt,
-                        inv_mass_a, inv_i_a,
-                        inv_mass_b, inv_i_b);
-                }
-
-                /* Coulomb friction cone: clamp tangent impulses to
-                 * ±friction * accumulated_normal_impulse. */
-                float friction_limit = c->friction * c->rows[0].lambda;
-                for (uint8_t r = 1; r < c->row_count; r++) {
-                    c->rows[r].lambda_min = -friction_limit;
-                    c->rows[r].lambda_max =  friction_limit;
-                    solve_row(&c->rows[r], va, vb,
-                              inv_mass_a, inv_i_a,
-                              inv_mass_b, inv_i_b);
-                }
+                solve_one_constraint(&args->constraints[c_idx],
+                                     args->velocities, pseudo,
+                                     args->bodies, slop, inv_dt);
             }
         }
     }

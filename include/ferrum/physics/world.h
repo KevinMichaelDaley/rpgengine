@@ -53,6 +53,7 @@ typedef struct phys_world_config {
     uint32_t sleep_delay_frames;       /**< Frames below threshold before sleep. */
     float    warmstart_decay;          /**< Impulse decay per cache commit (0-1). */
     float    velocity_damping;         /**< Velocity fraction retained per second (0-1). */
+    uint32_t island_color_threshold;   /**< Min constraints per island for graph coloring (0 = disabled). */
 } phys_world_config_t;
 
 /* ── World container ────────────────────────────────────────────── */

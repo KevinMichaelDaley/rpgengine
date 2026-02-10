@@ -168,7 +168,9 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p000_ws_deque_tests \
 	build/p092_server_pre_physics_sync_tests \
 	build/p093_island_tier_promote_tests \
-	build/p094_xpbd_dispatch_tests
+	build/p094_xpbd_dispatch_tests \
+	build/p095_constraint_color_tests \
+	build/p096_tgs_coloring_tests
 
 ifeq ($(TRACY),1)
 BIN_HEADLESS += build/p010_tracy_alloc_override_tests
@@ -522,6 +524,12 @@ build/p093_island_tier_promote_tests: build/libheadless.a tests/p093_island_tier
 build/p094_xpbd_dispatch_tests: build/libheadless.a tests/p094_xpbd_dispatch_tests.c | build
 	$(CC) $(CFLAGS) tests/p094_xpbd_dispatch_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p095_constraint_color_tests: build/libheadless.a tests/p095_constraint_color_tests.c | build
+	$(CC) $(CFLAGS) tests/p095_constraint_color_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p096_tgs_coloring_tests: build/libheadless.a tests/p096_tgs_coloring_tests.c | build
+	$(CC) $(CFLAGS) tests/p096_tgs_coloring_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -763,6 +771,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p092_server_pre_physics_sync_tests \
 	&& ./build/p093_island_tier_promote_tests \
 	&& ./build/p094_xpbd_dispatch_tests \
+	&& ./build/p095_constraint_color_tests \
+	&& ./build/p096_tgs_coloring_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \

@@ -1,6 +1,6 @@
 ---
 id: rpg-vvz2
-status: open
+status: in_progress
 deps: []
 links: []
 created: 2026-02-09T04:33:51Z

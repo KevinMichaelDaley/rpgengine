@@ -20,6 +20,7 @@ extern "C" {
 struct phys_island_list;
 struct phys_constraint;
 struct phys_body;
+struct phys_frame_arena;
 
 /**
  * @brief Linear and angular velocity pair for a single body.
@@ -50,6 +51,8 @@ typedef struct phys_tgs_solve_args {
     float tick_dt;                          /**< Full tick dt (s), for per-tier gravity. */
     float slop;                             /**< Penetration slop (no position correction below this). */
     const uint32_t *tier_substep_counts;    /**< Per-tier substep counts (may be NULL). */
+    struct phys_frame_arena *frame_arena;   /**< Frame arena for per-island coloring workspace (may be NULL). */
+    uint32_t island_color_threshold;        /**< Min constraints per island to enable coloring (0 = disabled). */
 } phys_tgs_solve_args_t;
 
 /**

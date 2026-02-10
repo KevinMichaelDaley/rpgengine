@@ -496,6 +496,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .tick_dt    = plan.dt,
                 .slop       = world->config.slop,
                 .tier_substep_counts = tier_substep_counts,
+                .frame_arena = &world->frame_arena,
+                .island_color_threshold = world->config.island_color_threshold,
             });
         }
 
