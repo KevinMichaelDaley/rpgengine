@@ -54,6 +54,7 @@
 #include "ferrum/net/test_transport.h"
 #include "ferrum/net/test_client.h"
 #include "ferrum/net/replication/interp/pose_interpolator.h"
+#include "ferrum/net/replication/body_state_inbox.h"
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/net/topic_dispatcher.h"
 #include "ferrum/net/client/runtime_rx.h"
