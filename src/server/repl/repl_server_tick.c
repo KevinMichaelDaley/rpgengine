@@ -98,9 +98,21 @@ static int server_repl_try_send_spawn_batch(server_repl_server_t *srv,
             }
 
             const uint16_t owner = srv->entities[ei].owner_client_id;
-            const float t = (float)srv->server_tick / (float)srv->cfg.tick_hz;
-            const float phase = (float)owner * 0.25f;
-            vec3_t pos = (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
+
+            /* Fetch entity pose via callback or fall back to placeholder. */
+            vec3_t pos;
+            if (srv->cfg.get_entity_pose) {
+                quat_t rot_unused;
+                if (!srv->cfg.get_entity_pose(srv->cfg.get_entity_pose_user,
+                                              srv->entities[ei].entity_id, ei,
+                                              &pos, &rot_unused)) {
+                    continue;
+                }
+            } else {
+                const float t = (float)srv->server_tick / (float)srv->cfg.tick_hz;
+                const float phase = (float)owner * 0.25f;
+                pos = (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
+            }
             net_qvec3_mm_t qpos;
             if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
                 continue;
@@ -170,10 +182,21 @@ static void send_state_job(void *user_data) {
         return;
     }
 
-    const float t = (float)srv->server_tick / (float)srv->cfg.tick_hz;
-    const float phase = (float)srv->entities[ei].owner_client_id * 0.25f;
-    vec3_t pos = (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
-    quat_t rot = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+    /* Fetch entity pose via callback or fall back to placeholder motion. */
+    vec3_t pos;
+    quat_t rot;
+    if (srv->cfg.get_entity_pose) {
+        if (!srv->cfg.get_entity_pose(srv->cfg.get_entity_pose_user,
+                                      srv->entities[ei].entity_id, ei,
+                                      &pos, &rot)) {
+            return;
+        }
+    } else {
+        const float t = (float)srv->server_tick / (float)srv->cfg.tick_hz;
+        const float phase = (float)srv->entities[ei].owner_client_id * 0.25f;
+        pos = (vec3_t){cosf(t + phase), 0.0f, sinf(t + phase)};
+        rot = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+    }
 
     struct timespec c0, c1;
     net_qvec3_mm_t qpos;

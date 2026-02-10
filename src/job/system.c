@@ -408,7 +408,7 @@ void run_entry(job_system_t *sys, const struct job_entry *entry, job_context_t *
         }
     }
 
-    g_current_fiber = NULL;
+    g_current_fiber = prev;
 }
 
 static void *worker_main(void *arg) {

@@ -91,18 +91,29 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
     /* Work-assist: before parking, try running queued entries inline.
        The job we're waiting for may be in our local deque; processing it
        directly avoids a costly park/wake round-trip and prevents lost-wakeup
-       races with the counter waiter state machine. */
+       races with the counter waiter state machine.
+
+       IMPORTANT: use a local scheduler context for work-assist swaps.
+       run_entry saves the current state into its sched_ctx parameter via
+       job_context_swap.  If we passed g_scheduler_context directly, we'd
+       overwrite the worker's saved state that the *calling* fiber needs
+       to yield back to the worker loop. */
     if (g_current_system) {
+        job_context_t assist_ctx;
+        job_context_t *prev_sched = g_scheduler_context;
+        g_scheduler_context = &assist_ctx;
         for (uint32_t assists = 0; assists < spin_count; ++assists) {
             if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
+                g_scheduler_context = prev_sched;
                 counter_sync_zero_(counter);
                 return JOB_WAIT_OK;
             }
             struct job_entry entry;
             if (job_system_pop_next(g_current_system, &entry) == 0) {
-                run_entry(g_current_system, &entry, g_scheduler_context);
+                run_entry(g_current_system, &entry, &assist_ctx);
             }
         }
+        g_scheduler_context = prev_sched;
         /* Re-check after work-assist phase. */
         if (atomic_load_explicit(&counter->value, memory_order_relaxed) == 0) {
             counter_sync_zero_(counter);
@@ -164,10 +175,16 @@ job_wait_status_t job_wait_counter(job_counter_t *counter, uint32_t spin_count) 
             sched_yield();
             continue;
         }
+        /* Use a local scheduler context for work-assist swaps to avoid
+         * overwriting the worker's saved state (see comment above). */
+        job_context_t assist_ctx2;
+        job_context_t *prev_sched2 = g_scheduler_context;
+        g_scheduler_context = &assist_ctx2;
         struct job_entry entry;
         while (job_system_pop_next(g_current_system, &entry) == 0) {
-            run_entry(g_current_system, &entry, g_scheduler_context);
+            run_entry(g_current_system, &entry, &assist_ctx2);
         }
+        g_scheduler_context = prev_sched2;
     }
     counter_sync_zero_(counter);
     return JOB_WAIT_OK;

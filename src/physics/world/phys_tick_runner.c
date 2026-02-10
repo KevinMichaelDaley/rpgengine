@@ -114,11 +114,16 @@ void phys_tick_runner_start(phys_tick_runner_t *r) {
                        0, NULL, "Phys.Tick.Loop");
 }
 
+static void noop_wakeup_job_(void *user_data) { (void)user_data; }
+
 void phys_tick_runner_stop(phys_tick_runner_t *r) {
     if (!r || !r->running) { return; }
     atomic_store_explicit(&r->stop_requested, 1, memory_order_release);
     while (!atomic_load_explicit(&r->stopped, memory_order_acquire)) {
-        /* Yield the main thread briefly so worker threads can finish. */
+        /* Dispatch a no-op job to wake a sleeping worker so the tick
+         * fiber gets a chance to be resumed and observe stop_requested. */
+        job_dispatch_named(r->jobs->job_sys, noop_wakeup_job_, NULL,
+                           0, NULL, "Phys.Tick.StopWakeup");
         struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1 ms */
         nanosleep(&ts, NULL);
     }

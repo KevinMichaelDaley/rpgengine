@@ -1,10 +1,13 @@
 #ifndef FERRUM_SERVER_REPL_SERVER_H
 #define FERRUM_SERVER_REPL_SERVER_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "ferrum/job/system.h"
+#include "ferrum/math/quat.h"
+#include "ferrum/math/vec3.h"
 #include "ferrum/net/udp_socket.h"
 
 /** @file
@@ -18,11 +21,26 @@ extern "C" {
 #define SERVER_REPL_OK 0
 #define SERVER_REPL_ERR_INVALID -1
 
+/** Optional callback to fetch an entity's world-space pose for replication.
+ *  When set, the repl server calls this instead of its built-in placeholder
+ *  motion.  Return true and fill out_pos/out_rot; return false to skip.
+ */
+typedef bool (*server_repl_get_entity_pose_fn)(void *user,
+                                               uint32_t entity_id,
+                                               uint16_t entity_index,
+                                               vec3_t *out_pos,
+                                               quat_t *out_rot);
+
 typedef struct server_repl_config {
     uint16_t max_clients;
     uint16_t tick_hz;
     uint16_t max_entities;
     uint32_t resend_interval_ms;
+
+    /** Optional pose callback.  When non-NULL, replaces the default circular-
+     *  motion placeholder with real entity positions (e.g. from physics). */
+    server_repl_get_entity_pose_fn get_entity_pose;
+    void *get_entity_pose_user;
 
     /** Optional caller-provided storage for internal client state array.
      * If provided, must be at least `server_repl_client_storage_size(max_clients)` bytes.
