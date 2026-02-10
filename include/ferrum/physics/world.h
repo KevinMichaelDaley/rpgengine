@@ -15,6 +15,8 @@
 #include "ferrum/physics/collider.h"
 #include "ferrum/physics/aabb.h"
 #include "ferrum/physics/manifold_cache.h"
+#include "ferrum/physics/spatial_grid.h"
+#include "ferrum/physics/static_bvh.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -95,6 +97,10 @@ typedef struct phys_world {
 
     /* Per-frame arena. */
     phys_frame_arena_t frame_arena;
+
+    /* Cached spatial grid for queries (valid when query_grid_valid != 0). */
+    phys_spatial_grid_t query_grid;
+    uint8_t query_grid_valid;
 
     /* Tick counter. */
     uint64_t tick_count;

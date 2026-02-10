@@ -157,30 +157,38 @@ bool phys_closest_point(const struct phys_world *world, phys_vec3_t point,
 
     size_t mark = arena_mark(&world->frame_arena.arena);
 
+    const phys_spatial_grid_t *gridp = NULL;
+    phys_spatial_grid_t grid_tmp;
+
     uint32_t body_cap = world->body_pool.capacity;
-    phys_aabb_t *aabbs = phys_frame_arena_alloc((phys_frame_arena_t *)&world->frame_arena,
-                                                body_cap * sizeof(phys_aabb_t),
-                                                _Alignof(phys_aabb_t));
-    if (!aabbs && body_cap > 0) {
-        (void)arena_pop_to_mark(&world->frame_arena.arena, mark);
-        return false;
+    if (world->query_grid_valid && world->query_grid.cells) {
+        gridp = &world->query_grid;
+    } else {
+        phys_aabb_t *aabbs = phys_frame_arena_alloc((phys_frame_arena_t *)&world->frame_arena,
+                                                    body_cap * sizeof(phys_aabb_t),
+                                                    _Alignof(phys_aabb_t));
+        if (!aabbs && body_cap > 0) {
+            (void)arena_pop_to_mark(&world->frame_arena.arena, mark);
+            return false;
+        }
+
+        phys_spatial_grid_init(&grid_tmp, CLOSEST_GRID_CELL_COUNT, CLOSEST_GRID_CELL_SIZE,
+                               (phys_frame_arena_t *)&world->frame_arena);
+
+        phys_stage_spatial_update(&(phys_spatial_update_args_t){
+            .bodies      = world->body_pool.bodies_curr,
+            .colliders   = world->colliders,
+            .spheres     = world->spheres,
+            .boxes       = world->boxes,
+            .capsules    = world->capsules,
+            .aabbs_out   = aabbs,
+            .grid_out    = &grid_tmp,
+            .active      = world->body_pool.active,
+            .body_count  = body_cap,
+        });
+
+        gridp = &grid_tmp;
     }
-
-    phys_spatial_grid_t grid;
-    phys_spatial_grid_init(&grid, CLOSEST_GRID_CELL_COUNT, CLOSEST_GRID_CELL_SIZE,
-                           (phys_frame_arena_t *)&world->frame_arena);
-
-    phys_stage_spatial_update(&(phys_spatial_update_args_t){
-        .bodies      = world->body_pool.bodies_curr,
-        .colliders   = world->colliders,
-        .spheres     = world->spheres,
-        .boxes       = world->boxes,
-        .capsules    = world->capsules,
-        .aabbs_out   = aabbs,
-        .grid_out    = &grid,
-        .active      = world->body_pool.active,
-        .body_count  = body_cap,
-    });
 
     uint32_t *candidates = phys_frame_arena_alloc((phys_frame_arena_t *)&world->frame_arena,
                                                   body_cap * sizeof(uint32_t),
@@ -190,7 +198,7 @@ bool phys_closest_point(const struct phys_world *world, phys_vec3_t point,
         return false;
     }
 
-    uint32_t cand_count = phys_spatial_grid_query(&grid, &query, candidates, body_cap);
+    uint32_t cand_count = phys_spatial_grid_query(gridp, &query, candidates, body_cap);
     sort_u32_(candidates, cand_count);
 
     for (uint32_t ci = 0; ci < cand_count; ci++) {

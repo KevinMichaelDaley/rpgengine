@@ -145,6 +145,8 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p084_physics_raycast_tests \
 	build/p085_physics_overlap_tests \
 	build/p086_physics_closest_point_tests \
+	build/p087_physics_phase5_integration_tests \
+	build/p088_physics_static_bvh_build_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -481,6 +483,18 @@ build/p085_physics_overlap_tests: build/libheadless.a tests/p085_physics_overlap
 build/p086_physics_closest_point_tests: build/libheadless.a tests/p086_physics_closest_point_tests.c | build
 	$(CC) $(CFLAGS) tests/p086_physics_closest_point_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p087_physics_phase5_integration_tests: build/libheadless.a tests/p087_physics_phase5_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p087_physics_phase5_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p087_physics_phase5_benchmarks: build/libheadless.a tests/p087_physics_phase5_benchmarks.c | build
+	$(CC) $(CFLAGS) tests/p087_physics_phase5_benchmarks.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p088_physics_static_bvh_build_tests: build/libheadless.a tests/p088_physics_static_bvh_build_tests.c | build
+	$(CC) $(CFLAGS) tests/p088_physics_static_bvh_build_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p088_physics_static_bvh_build_benchmarks: build/libheadless.a tests/p088_physics_static_bvh_build_benchmarks.c | build
+	$(CC) $(CFLAGS) tests/p088_physics_static_bvh_build_benchmarks.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -714,6 +728,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p084_physics_raycast_tests \
 	&& ./build/p085_physics_overlap_tests \
 	&& ./build/p086_physics_closest_point_tests \
+	&& ./build/p087_physics_phase5_integration_tests \
+	&& ./build/p088_physics_static_bvh_build_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
@@ -772,6 +788,14 @@ test_timeout: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job
 .PHONY: perf_job
 perf_job: build/p000_job_performance_tests
 	./build/p000_job_performance_tests
+
+.PHONY: perf_phys5
+perf_phys5: build/p087_physics_phase5_benchmarks
+	./build/p087_physics_phase5_benchmarks
+
+.PHONY: perf_phys6
+perf_phys6: build/p088_physics_static_bvh_build_benchmarks
+	./build/p088_physics_static_bvh_build_benchmarks
 
 .PHONY: repro_p000_hang
 REPRO_ITERS ?= 100

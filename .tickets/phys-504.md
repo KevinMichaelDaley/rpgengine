@@ -1,6 +1,6 @@
 ---
 id: phys-504
-status: open
+status: in_progress
 deps: [phys-501, phys-502, phys-503]
 links: [phys-500]
 created: 2026-02-06T11:09:00.000000000-08:00

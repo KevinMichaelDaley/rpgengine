@@ -58,6 +58,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
     /* Clear impact events from last frame. */
     world->impact_event_count = 0;
 
+    world->query_grid_valid = 0;
+
     /* Reset the per-frame arena so all arena pointers are fresh. */
     phys_frame_arena_reset(&world->frame_arena);
 
@@ -105,6 +107,9 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         .active    = active,
         .body_count = body_cap,
     });
+
+    world->query_grid = grid;
+    world->query_grid_valid = 1;
 
     /* ── Stage 3: Halo Closure (once per tick) ────────────────── */
     phys_stage_halo_closure(&(phys_halo_closure_args_t){
