@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-rk2
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-01T22:57:06.669443268-08:00
