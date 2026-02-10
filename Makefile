@@ -148,6 +148,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p008_server_compute_jobs_tests build/p007_net_stream_api_tests build/p007_net_stream_flush_send_tests build/p007_net_stream_channel_topic_tests \
 	build/p008_server_client_fiber_stream_tests build/p008_server_net_runtime_fiber_tests \
 	build/p008_server_entity_net_pump_tests \
+	build/p008_net_join_spawn_integration_tests \
 	build/p008_pose_interpolator_tests \
 	build/p009_server_state_update_queue_tests \
 	build/p009_net_topic_channel_ring_tests \
@@ -510,6 +511,9 @@ build/p008_server_net_runtime_fiber_tests: build/libheadless.a tests/p008_server
 build/p008_server_entity_net_pump_tests: build/libheadless.a tests/p008_server_entity_net_pump_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_server_entity_net_pump_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p008_net_join_spawn_integration_tests: build/libheadless.a tests/p008_net_join_spawn_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_net_join_spawn_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p008_net_repl_server: build/libheadless.a tests/p008_net_repl_server.c | build
 	$(CC) $(CFLAGS) tests/p008_net_repl_server.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -616,6 +620,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p008_server_client_fiber_stream_tests \
 	&& ./build/p008_server_net_runtime_fiber_tests \
 	&& ./build/p008_server_entity_net_pump_tests \
+	&& ./build/p008_net_join_spawn_integration_tests \
 	&& ./build/p008_net_replication_protocol_tests \
 	&& ./build/p016_net_repl_input_rot_tests \
 	&& ./build/p017_math_quat_angle_tests \

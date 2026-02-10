@@ -1,6 +1,6 @@
 ---
 id: rpg-h2dz
-status: open
+status: closed
 deps: [rpg-6tey, rpg-ma1x, rpg-dqq7]
 links: []
 created: 2026-02-09T07:33:29Z
