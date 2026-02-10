@@ -69,12 +69,10 @@ _Static_assert(sizeof(phys_capsule_t) == 8, "phys_capsule_t must be 8 bytes");
  * Ownership: the collider does NOT own the shape data; it merely
  * references it by index into the world's shape-specific pools.
  *
- * The sphere_simplify flag is set at asset load time for complex
- * shapes (mesh, convex hull, compound) when the bounding-sphere
- * ratio (circumradius / inradius) is < 1.3.  Primitives (sphere,
- * box, capsule) always use exact narrowphase tests and must never
- * have this flag set.
- * At T2+ distances, bodies with this flag use cheap sphere-sphere
+ * The sphere_simplify flag may be set at asset load time for
+ * near-spherical shapes when the bounding-sphere ratio
+ * (circumradius / inradius) is < 1.3.
+ * At T2+ distances, bodies with this flag use a cheap bounding-sphere
  * narrowphase instead of full shape tests.
  */
 typedef struct phys_collider {

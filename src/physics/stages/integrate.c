@@ -2,8 +2,8 @@
  * @file integrate.c
  * @brief Stage 12: Integrate + Sleep.
  *
- * Updates body positions/orientations from solved velocities, applies
- * gravity, and detects sleeping bodies based on velocity thresholds.
+ * Updates body positions/orientations from solved velocities and
+ * detects sleeping bodies based on velocity thresholds.
  */
 
 #include "ferrum/physics/integrate.h"

@@ -307,10 +307,14 @@ static int test_par_integrate_gravity(void) {
     phys_body_t out_par;
 
     make_dynamic_body(&body_in, 0.0f, 10.0f, 0.0f, 0.0f, 0.0f, 0.0f);
-    vel.linear  = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+
+    /* Gravity is pre-applied before this stage (e.g. in TGS init). */
+    float dt = 1.0f / 60.0f;
+    float expected_vy = -9.81f * dt;
+
+    vel.linear  = (phys_vec3_t){0.0f, expected_vy, 0.0f};
     vel.angular = (phys_vec3_t){0.0f, 0.0f, 0.0f};
 
-    float dt = 1.0f / 60.0f;
     phys_integrate_args_t args = {
         .bodies_in              = &body_in,
         .velocities             = &vel,
@@ -326,8 +330,6 @@ static int test_par_integrate_gravity(void) {
     phys_frame_arena_reset(&g_arena);
     phys_stage_integrate_par(&args, &g_ctx, &g_arena);
 
-    /* After one frame: velocity should be gravity * dt downward. */
-    float expected_vy = -9.81f * dt;
     ASSERT_NEAR(expected_vy, out_par.linear_vel.y, 1e-5f);
 
     /* Position: y = 10 + expected_vy * dt */

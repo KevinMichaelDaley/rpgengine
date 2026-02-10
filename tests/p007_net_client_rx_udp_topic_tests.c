@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
+#include <time.h>
 #include "ferrum/ferrum.h"
 
 static int tests_run = 0, tests_failed = 0;
@@ -41,12 +41,24 @@ static void test_udp_recv_to_topics(void) {
     size_t f1 = make_frame(1, 1, p1, (uint16_t)sizeof(p1), buf1);
     expect_true(net_udp_socket_sendto(&sender, &to, buf1, f1) == NET_UDP_SOCKET_OK, "send_frame1");
 
-    // Give RX thread time to process
-    usleep(10000);
+    // Poll for delivery: thread scheduling can vary under load.
+    uint8_t out[8];
+    size_t out_len = sizeof(out);
+    int got = 0;
+    for (int i = 0; i < 200; ++i) {
+        out_len = sizeof(out);
+        if (fr_topic_channel_pop(topic1, out, &out_len)) {
+            got = 1;
+            break;
+        }
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 };
+        nanosleep(&ts, NULL);
+    }
 
-    uint8_t out[8]; size_t out_len = sizeof(out);
-    expect_true(fr_topic_channel_pop(topic1, out, &out_len), "topic_pop");
-    expect_true(out_len == 1 && out[0] == 'T', "topic_payload_T");
+    expect_true(got, "topic_pop");
+    if (got) {
+        expect_true(out_len == 1 && out[0] == 'T', "topic_payload_T");
+    }
 
     net_udp_socket_close(&sender);
     expect_true(fr_client_rx_stop(rx), "rx_stop");

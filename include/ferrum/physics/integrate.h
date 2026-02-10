@@ -4,8 +4,9 @@
 /** @file
  * @brief Stage 12: Integrate + Sleep.
  *
- * Updates body positions and orientations from solved velocities,
- * applies gravity, and detects sleeping bodies.
+ * Updates body positions and orientations from solved velocities and
+ * detects sleeping bodies. (Gravity is pre-applied before the solver so
+ * contact constraints can counteract it in the same substep.)
  */
 
 #include <stdint.h>
@@ -66,8 +67,9 @@ typedef struct phys_integrate_args {
  *
  * For each dynamic (non-static, non-kinematic) body:
  * - Copies solved velocity from the velocities array.
- * - Applies gravity to the linear velocity.
  * - Integrates position: position += linear_vel * dt.
+ *
+ * @note Gravity is not applied here; it is pre-applied before solving.
  * - Integrates orientation via quaternion derivative.
  * - Detects sleeping bodies based on velocity thresholds.
  *

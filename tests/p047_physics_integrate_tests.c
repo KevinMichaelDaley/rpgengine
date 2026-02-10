@@ -114,13 +114,16 @@ static int test_integrate_gravity(void)
     phys_body_t body_in = make_dynamic_body(0.0f, 10.0f, 0.0f,
                                             0.0f, 0.0f, 0.0f, 1.0f);
     phys_body_t body_out;
-    /* Solver outputs zero velocity (no constraints). */
+    /* Gravity is pre-applied before this stage (e.g. in TGS init).
+     * So the "solver output" velocity already includes the gravity step. */
+    float dt = 1.0f / 60.0f;
+    float expected_vy = -9.81f * dt;
+
     phys_velocity_t vel = {
-        .linear  = {0.0f, 0.0f, 0.0f},
+        .linear  = {0.0f, expected_vy, 0.0f},
         .angular = {0.0f, 0.0f, 0.0f}
     };
 
-    float dt = 1.0f / 60.0f;
     phys_integrate_args_t args = {
         .bodies_in             = &body_in,
         .velocities            = &vel,
@@ -134,8 +137,6 @@ static int test_integrate_gravity(void)
     };
     phys_stage_integrate(&args);
 
-    /* After gravity: linear_vel.y should be -9.81 * dt. */
-    float expected_vy = -9.81f * dt;
     ASSERT_FLOAT_NEAR(expected_vy, body_out.linear_vel.y, 1e-5f);
 
     /* Position should move: y = 10.0 + expected_vy * dt. */

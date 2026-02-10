@@ -81,25 +81,25 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
         memset(&contact, 0, sizeof(contact));
         bool hit = false;
 
-        /* Sphere simplification: only for complex shape types (mesh,
-         * convex hull, compound/articulated) at T2+ distances.
-         * Primitives (sphere, box, capsule) always use exact tests. */
+        /* Sphere simplification at distance (T2+): if both colliders are
+         * flagged, run a cheap sphere-sphere test using their bounding
+         * spheres instead of the full shape test. */
         uint8_t tier_a = args->bodies[ba].tier;
         uint8_t tier_b = args->bodies[bb].tier;
         if (tier_a >= PHYS_TIER_2_VISIBLE && tier_b >= PHYS_TIER_2_VISIBLE
-            && c0->sphere_simplify && c1->sphere_simplify
-            && c0->type >= PHYS_SHAPE_COMPOUND
-            && c1->type >= PHYS_SHAPE_COMPOUND) {
+            && c0->sphere_simplify && c1->sphere_simplify) {
             float ra = phys_sphere_simplify_radius(
                 c0, args->spheres, args->boxes, args->capsules);
             float rb = phys_sphere_simplify_radius(
                 c1, args->spheres, args->boxes, args->capsules);
-            hit = phys_sphere_vs_sphere(w0, ra, w1, rb, &contact);
-            if (hit) {
-                emit_single(&args->candidates_out[count], ba, bb, &contact);
-                count++;
+            if (ra > 0.0f && rb > 0.0f) {
+                hit = phys_sphere_vs_sphere(w0, ra, w1, rb, &contact);
+                if (hit) {
+                    emit_single(&args->candidates_out[count], ba, bb, &contact);
+                    count++;
+                }
+                continue;
             }
-            continue;
         }
 
         /* Dispatch on normalized (type_lo, type_hi) pair. */
