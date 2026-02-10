@@ -1,6 +1,7 @@
 #ifndef FERRUM_NET_TEST_LINK_H
 #define FERRUM_NET_TEST_LINK_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -90,6 +91,14 @@ int net_test_link_receive(net_test_link_t *link,
                           void *out_payload,
                           size_t out_capacity,
                           size_t *out_size);
+
+/**
+ * @brief Query the earliest queued delivery time for the link.
+ * @param link Link pointer.
+ * @param out_time_ns Output earliest delivery timestamp in nanoseconds.
+ * @return true if a packet is queued, false if none or on invalid args.
+ */
+bool net_test_link_next_delivery_time_ns(const net_test_link_t *link, uint64_t *out_time_ns);
 
 #ifdef __cplusplus
 } /* extern "C" */

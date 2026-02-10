@@ -70,7 +70,7 @@ ALL_DEPS := $(OBJ_ALL:.o=.d)
 BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_tests \
 	build/p007_net_tests build/p007_net_header_tests build/p007_net_ack_tests build/p007_net_unreliable_tests \
 	build/p007_net_reliable_tests build/p007_net_schema_registry_tests build/p007_net_test_client_api_tests \
-	build/p007_net_rudp_fragmentation_tests \
+	build/p007_net_test_transport_tests build/p007_net_rudp_fragmentation_tests \
 	build/p012_net_rudp_reliability_boundary_tests \
 	build/p013_net_rudp_reliability_layer_tests \
 	build/p014_net_rudp_reliability_send_layer_tests \
@@ -242,6 +242,9 @@ build/p007_net_schema_registry_tests: build/libheadless.a tests/p007_net_schema_
 
 build/p007_net_test_client_api_tests: build/libheadless.a tests/p007_net_test_client_api_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_test_client_api_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p007_net_test_transport_tests: build/libheadless.a tests/p007_net_test_transport_tests.c | build
+	$(CC) $(CFLAGS) tests/p007_net_test_transport_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 build/p007_net_reliable_tests: build/libheadless.a tests/p007_net_reliable_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_reliable_tests.c build/libheadless.a -o $@ $(LDFLAGS)
@@ -598,7 +601,8 @@ build:
 test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
-&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests && ./build/p007_net_rudp_fragmentation_tests \
+&& ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests \
+&& ./build/p007_net_test_transport_tests && ./build/p007_net_rudp_fragmentation_tests \
 	&& ./build/p012_net_rudp_reliability_boundary_tests \
 	&& ./build/p013_net_rudp_reliability_layer_tests \
 	&& ./build/p014_net_rudp_reliability_send_layer_tests \
@@ -703,6 +707,7 @@ test_timeout: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job
 		./build/p007_net_unreliable_tests \
 		./build/p007_net_reliable_tests \
 		./build/p007_net_test_client_api_tests \
+		./build/p007_net_test_transport_tests \
 		./build/p007_net_rudp_fragmentation_tests \
 		./build/p012_net_rudp_reliability_boundary_tests \
 		./build/p013_net_rudp_reliability_layer_tests \
