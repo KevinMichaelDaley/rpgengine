@@ -1,6 +1,6 @@
 ---
 id: rpg-m9nw
-status: open
+status: closed
 deps: []
 links: [phys-703]
 created: 2026-02-07T19:44:11Z

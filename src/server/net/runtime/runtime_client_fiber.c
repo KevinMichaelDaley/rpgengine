@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ferrum/net/packet_header.h"
 #include "ferrum/net/stream.h"
 #include "ferrum/net/replication/common.h"
 #include "ferrum/server/net/inbound_message.h"
@@ -11,6 +12,20 @@
 #include "runtime_internal.h"
 
 #define OUT_MSG_MAX (2u + NET_RUDP_MAX_PACKET_SIZE)
+
+/**
+ * Read the first 4 bytes of a packet as a big-endian uint32.
+ * Returns 0 if the packet is too short.
+ */
+static uint32_t read_protocol_id_(const uint8_t *packet, size_t size) {
+    if (size < 4u) {
+        return 0u;
+    }
+    return ((uint32_t)packet[0] << 24u)
+         | ((uint32_t)packet[1] << 16u)
+         | ((uint32_t)packet[2] << 8u)
+         | ((uint32_t)packet[3]);
+}
 
 /** Context passed to stream flush sendto callback. */
 typedef struct flush_ctx_ {
@@ -228,28 +243,42 @@ void fr_server_client_fiber_main(void *user) {
 
         uint64_t now_ms = atomic_load_explicit(&client->now_ms, memory_order_acquire);
 
-        /* Inbound packets */
+        /* Inbound packets: demux RUDP vs raw UDP datagrams.
+         * RUDP packets start with the protocol_id (big-endian).
+         * Raw datagrams start with [schema_id:u16 LE][payload]. */
         for (;;) {
             size_t packet_size = 0u;
             if (!fr_server_client_inbox_try_pop(&inbox, packet, sizeof(packet), &packet_size)) {
                 break;
             }
-            uint8_t reliable = 0u;
-            uint16_t schema_id = 0u;
-            size_t payload_size = 0u;
-            int prc = net_rudp_peer_receive(&peer,
-                                            packet,
-                                            packet_size,
-                                            now_ms,
-                                            &reliable,
-                                            &schema_id,
-                                            payload,
-                                            sizeof(payload),
-                                            &payload_size);
-            if (prc != NET_RUDP_OK) {
-                continue;
+
+            const uint32_t proto = read_protocol_id_(packet, packet_size);
+            if (proto == NET_RUDP_PROTOCOL_ID_P008) {
+                /* RUDP path: feed through peer for ack/reliability handling. */
+                uint8_t reliable = 0u;
+                uint16_t schema_id = 0u;
+                size_t payload_size = 0u;
+                int prc = net_rudp_peer_receive(&peer,
+                                                packet,
+                                                packet_size,
+                                                now_ms,
+                                                &reliable,
+                                                &schema_id,
+                                                payload,
+                                                sizeof(payload),
+                                                &payload_size);
+                if (prc != NET_RUDP_OK) {
+                    continue;
+                }
+                publish_inbound_(rt, client_id, reliable, schema_id, payload, payload_size);
+            } else if (packet_size >= 2u) {
+                /* Raw unreliable datagram: [schema_id:u16 LE][payload]. */
+                uint16_t schema_id = (uint16_t)packet[0] | ((uint16_t)packet[1] << 8u);
+                const uint8_t *raw_payload = packet + 2u;
+                size_t raw_payload_size = packet_size - 2u;
+                publish_inbound_(rt, client_id, 0u, schema_id, raw_payload, raw_payload_size);
             }
-            publish_inbound_(rt, client_id, reliable, schema_id, payload, payload_size);
+            /* Packets < 2 bytes are silently dropped. */
         }
 
         /* Reliable outbound: drain topic -> stream -> flush as RUDP frames */

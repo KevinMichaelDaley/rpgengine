@@ -8,6 +8,7 @@
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/welcome.h"
 #include "ferrum/net/replication/common.h"
+#include "ferrum/server/net/inbound_message.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/rudp/wire_frame.h"
 #include "ferrum/net/topic_channel.h"
@@ -344,6 +345,156 @@ static int test_outbound_topic_capacity_is_configurable(void) {
     return 0;
 }
 
+/**
+ * Verify that a raw (non-RUDP) UDP datagram is demuxed and published to the
+ * global inbound_topic with the correct schema_id and payload.
+ */
+static int test_raw_udp_datagram_published_to_inbound_topic(void) {
+    fr_topic_channel_config_t tcfg = {.capacity = 64};
+    fr_topic_channel_t *inbox = fr_topic_channel_create(&tcfg);
+    ASSERT_TRUE(inbox != NULL);
+
+    struct test_net_io io;
+    memset(&io, 0, sizeof(io));
+
+    net_udp_addr_t client_addr;
+    ASSERT_EQ_INT(0, net_udp_addr_ipv4(&client_addr, 10, 0, 0, 2, 40011));
+
+    /* First establish the client with a normal RUDP JOIN packet. */
+    net_rudp_peer_t client_peer;
+    net_rudp_send_slot_t slots[NET_RUDP_SEND_SLOTS_DEFAULT];
+    memset(slots, 0, sizeof(slots));
+    net_rudp_peer_init_with_storage(&client_peer, NET_RUDP_PROTOCOL_ID_P008, 50u,
+                                     slots, NET_RUDP_SEND_SLOTS_DEFAULT);
+
+    io.in.from = client_addr;
+    io.in.used = 1;
+    ASSERT_EQ_INT(0, build_join_packet(&client_peer, 0xAABBCCDDu,
+                                        io.in.packet, sizeof(io.in.packet), &io.in.size));
+
+    fr_server_net_runtime_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.max_clients = 4;
+    cfg.inbound_topic = inbox;
+    cfg.recvfrom_cb = test_recvfrom;
+    cfg.sendto_cb = test_sendto;
+    cfg.io_user = &io;
+
+    fr_server_net_runtime_t *rt = fr_server_net_runtime_create(&cfg);
+    ASSERT_TRUE(rt != NULL);
+
+    ASSERT_TRUE(fr_server_net_runtime_pump(rt, now_ms()));
+    ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
+
+    /* Drain the JOIN message from the inbound topic. */
+    {
+        uint8_t tmp[256];
+        size_t tmp_len = sizeof(tmp);
+        ASSERT_TRUE(fr_topic_channel_pop(inbox, tmp, &tmp_len));
+    }
+
+    /* Now inject a raw (non-RUDP) datagram: [schema_id:u16 LE][payload].
+     * The first 4 bytes must NOT match the RUDP protocol_id. */
+    const uint16_t raw_schema = NET_REPL_SCHEMA_BODY_STATE;
+    const uint8_t raw_payload[] = {0xDE, 0xAD, 0xBE, 0xEF};
+    io.in.from = client_addr;
+    io.in.used = 1;
+    io.in.packet[0] = (uint8_t)(raw_schema & 0xFFu);
+    io.in.packet[1] = (uint8_t)((raw_schema >> 8u) & 0xFFu);
+    memcpy(io.in.packet + 2, raw_payload, sizeof(raw_payload));
+    io.in.size = 2u + sizeof(raw_payload);
+
+    ASSERT_TRUE(fr_server_net_runtime_pump(rt, now_ms()));
+    ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
+
+    /* Expect a single inbound message with schema BODY_STATE and the raw payload. */
+    uint8_t msg[256];
+    size_t msg_len = sizeof(msg);
+    ASSERT_TRUE(fr_topic_channel_pop(inbox, msg, &msg_len));
+
+    fr_server_net_inbound_message_view_t view;
+    ASSERT_TRUE(fr_server_net_inbound_message_decode(&view, msg, msg_len));
+    ASSERT_EQ_INT(raw_schema, view.schema_id);
+    ASSERT_TRUE(!view.reliable);
+    ASSERT_EQ_INT(sizeof(raw_payload), (int)view.payload_size);
+    ASSERT_TRUE(memcmp(view.payload, raw_payload, sizeof(raw_payload)) == 0);
+
+    /* No more messages should be pending. */
+    msg_len = sizeof(msg);
+    ASSERT_TRUE(!fr_topic_channel_pop(inbox, msg, &msg_len));
+
+    fr_server_net_runtime_destroy(rt);
+    fr_topic_channel_destroy(inbox);
+    return 0;
+}
+
+/**
+ * Verify that a packet smaller than 2 bytes (too small even for a raw schema_id)
+ * is silently dropped and does not crash or publish anything.
+ */
+static int test_tiny_packet_is_silently_dropped(void) {
+    fr_topic_channel_config_t tcfg = {.capacity = 64};
+    fr_topic_channel_t *inbox = fr_topic_channel_create(&tcfg);
+    ASSERT_TRUE(inbox != NULL);
+
+    struct test_net_io io;
+    memset(&io, 0, sizeof(io));
+
+    net_udp_addr_t client_addr;
+    ASSERT_EQ_INT(0, net_udp_addr_ipv4(&client_addr, 10, 0, 0, 2, 40011));
+
+    /* Establish client via JOIN. */
+    net_rudp_peer_t client_peer;
+    net_rudp_send_slot_t slots[NET_RUDP_SEND_SLOTS_DEFAULT];
+    memset(slots, 0, sizeof(slots));
+    net_rudp_peer_init_with_storage(&client_peer, NET_RUDP_PROTOCOL_ID_P008, 50u,
+                                     slots, NET_RUDP_SEND_SLOTS_DEFAULT);
+
+    io.in.from = client_addr;
+    io.in.used = 1;
+    ASSERT_EQ_INT(0, build_join_packet(&client_peer, 0x11223344u,
+                                        io.in.packet, sizeof(io.in.packet), &io.in.size));
+
+    fr_server_net_runtime_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.max_clients = 4;
+    cfg.inbound_topic = inbox;
+    cfg.recvfrom_cb = test_recvfrom;
+    cfg.sendto_cb = test_sendto;
+    cfg.io_user = &io;
+
+    fr_server_net_runtime_t *rt = fr_server_net_runtime_create(&cfg);
+    ASSERT_TRUE(rt != NULL);
+
+    ASSERT_TRUE(fr_server_net_runtime_pump(rt, now_ms()));
+    ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
+
+    /* Drain JOIN message. */
+    {
+        uint8_t tmp[256];
+        size_t tmp_len = sizeof(tmp);
+        ASSERT_TRUE(fr_topic_channel_pop(inbox, tmp, &tmp_len));
+    }
+
+    /* Inject a 1-byte packet (too small for schema_id or RUDP header). */
+    io.in.from = client_addr;
+    io.in.used = 1;
+    io.in.packet[0] = 0xFFu;
+    io.in.size = 1u;
+
+    ASSERT_TRUE(fr_server_net_runtime_pump(rt, now_ms()));
+    ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
+
+    /* Nothing should have been published. */
+    uint8_t msg[256];
+    size_t msg_len = sizeof(msg);
+    ASSERT_TRUE(!fr_topic_channel_pop(inbox, msg, &msg_len));
+
+    fr_server_net_runtime_destroy(rt);
+    fr_topic_channel_destroy(inbox);
+    return 0;
+}
+
 struct test_case {
     const char *name;
     int (*fn)(void);
@@ -353,6 +504,8 @@ static struct test_case TESTS[] = {
     {"inbound_join_is_published_to_global_topic", test_inbound_join_is_published_to_global_topic},
     {"outbound_reliable_topic_sends_a_packet", test_outbound_reliable_topic_sends_a_packet},
     {"outbound_topic_capacity_is_configurable", test_outbound_topic_capacity_is_configurable},
+    {"raw_udp_datagram_published_to_inbound_topic", test_raw_udp_datagram_published_to_inbound_topic},
+    {"tiny_packet_is_silently_dropped", test_tiny_packet_is_silently_dropped},
 };
 
 int main(void) {
