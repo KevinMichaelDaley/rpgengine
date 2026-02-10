@@ -12,11 +12,15 @@ priority: 1
 
 **Parent Epic:** phys-600 (Phase 6: Static BVH)
 
-Handle static body addition/removal without full rebuild.
-Refit affected subtrees, rebuild if quality degrades.
+Handle static body addition/removal for level editing.
+Rebuild the static BVH lazily on the next tick when static geometry changes.
 
 ## Acceptance Criteria
 
-- [ ] Add/remove static body without full rebuild
-- [ ] Quality threshold triggers partial rebuild
+- [ ] Adding/removing a static body marks the BVH dirty and rebuilds on next tick
+- [ ] Editing a static body's collider marks the BVH dirty and rebuilds on next tick
+
+## Notes
+
+Incremental refit / quality-based partial rebuild can be revisited later if level-edit workflows need it.
 

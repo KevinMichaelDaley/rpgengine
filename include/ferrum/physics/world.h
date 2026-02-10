@@ -158,6 +158,19 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config);
  */
 void phys_world_destroy(phys_world_t *world);
 
+/* ── Static BVH management API ──────────────────────────────────── */
+
+/**
+ * @brief Mark the persistent static BVH as invalid.
+ *
+ * The static BVH is rebuilt lazily on the next tick (after AABB update).
+ * Call this when static bodies are added/removed or when their collider
+ * geometry changes.
+ *
+ * @param world World (NULL-safe, no-op if NULL).
+ */
+void phys_world_static_bvh_invalidate(phys_world_t *world);
+
 /* ── Body management API ────────────────────────────────────────── */
 
 /**

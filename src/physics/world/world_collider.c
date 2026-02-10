@@ -17,6 +17,11 @@ void phys_world_set_sphere_collider(phys_world_t *world, uint32_t body_index,
 
     /* Set collider reference. */
     phys_collider_init_sphere(&world->colliders[body_index], si, offset);
+
+    phys_body_t *b = phys_body_pool_get_curr(&world->body_pool, body_index);
+    if (b && world->static_bvh_valid && phys_body_is_static(b)) {
+        phys_world_static_bvh_invalidate(world);
+    }
 }
 
 void phys_world_set_box_collider(phys_world_t *world, uint32_t body_index,
@@ -35,6 +40,11 @@ void phys_world_set_box_collider(phys_world_t *world, uint32_t body_index,
 
     /* Set collider reference. */
     phys_collider_init_box(&world->colliders[body_index], si, offset, rotation);
+
+    phys_body_t *b = phys_body_pool_get_curr(&world->body_pool, body_index);
+    if (b && world->static_bvh_valid && phys_body_is_static(b)) {
+        phys_world_static_bvh_invalidate(world);
+    }
 }
 
 void phys_world_set_capsule_collider(phys_world_t *world, uint32_t body_index,
@@ -54,6 +64,11 @@ void phys_world_set_capsule_collider(phys_world_t *world, uint32_t body_index,
 
     /* Set collider reference. */
     phys_collider_init_capsule(&world->colliders[body_index], si, offset, rotation);
+
+    phys_body_t *b = phys_body_pool_get_curr(&world->body_pool, body_index);
+    if (b && world->static_bvh_valid && phys_body_is_static(b)) {
+        phys_world_static_bvh_invalidate(world);
+    }
 }
 
 const phys_collider_t *phys_world_get_collider(const phys_world_t *world,

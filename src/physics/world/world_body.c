@@ -21,6 +21,12 @@ void phys_world_destroy_body(phys_world_t *world, uint32_t index) {
     if (!world) {
         return;
     }
+
+    phys_body_t *b = phys_body_pool_get_curr(&world->body_pool, index);
+    if (b && phys_body_is_static(b)) {
+        phys_world_static_bvh_invalidate(world);
+    }
+
     phys_body_pool_remove(&world->body_pool, index);
 }
 

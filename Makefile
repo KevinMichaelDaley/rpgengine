@@ -148,6 +148,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p087_physics_phase5_integration_tests \
 	build/p088_physics_static_bvh_build_tests \
 	build/p089_physics_static_bvh_query_tests \
+	build/p090_physics_static_bvh_rebuild_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -499,6 +500,9 @@ build/p088_physics_static_bvh_build_benchmarks: build/libheadless.a tests/p088_p
 build/p089_physics_static_bvh_query_tests: build/libheadless.a tests/p089_physics_static_bvh_query_tests.c | build
 	$(CC) $(CFLAGS) tests/p089_physics_static_bvh_query_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p090_physics_static_bvh_rebuild_tests: build/libheadless.a tests/p090_physics_static_bvh_rebuild_tests.c | build
+	$(CC) $(CFLAGS) tests/p090_physics_static_bvh_rebuild_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -735,6 +739,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p087_physics_phase5_integration_tests \
 	&& ./build/p088_physics_static_bvh_build_tests \
 	&& ./build/p089_physics_static_bvh_query_tests \
+	&& ./build/p090_physics_static_bvh_rebuild_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
