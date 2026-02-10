@@ -98,6 +98,13 @@ typedef struct phys_world {
     /* Per-frame arena. */
     phys_frame_arena_t frame_arena;
 
+    /* Persistent static-geometry BVH (built once, used every tick). */
+    phys_static_bvh_t static_bvh;
+    phys_frame_arena_t static_bvh_arena;
+    uint8_t static_bvh_valid;
+    uint8_t *static_bucket_flags;
+    uint32_t static_bucket_flag_count;
+
     /* Cached spatial grid for queries (valid when query_grid_valid != 0). */
     phys_spatial_grid_t query_grid;
     uint8_t query_grid_valid;

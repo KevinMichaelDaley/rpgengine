@@ -6,6 +6,7 @@
 #include "ferrum/physics/static_bvh.h"
 
 #include <float.h>
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -324,4 +325,156 @@ void phys_static_bvh_build(phys_static_bvh_t *out_bvh,
     out_bvh->nodes = nodes;
     out_bvh->node_count = next_node;
     out_bvh->root = 0;
+}
+
+/* ── Queries / helpers ───────────────────────────────────────────── */
+
+#define STATIC_BVH_QUERY_STACK_CAP 128u
+
+static uint32_t static_bvh_grid_hash(int32_t x, int32_t y, int32_t z) {
+    return ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^
+           ((uint32_t)z * 83492791u);
+}
+
+uint32_t phys_static_bvh_query_aabb(const phys_static_bvh_t *bvh,
+                                   const phys_aabb_t *query_aabb,
+                                   uint32_t *out_item_ids,
+                                   uint32_t max_results) {
+    if (!bvh || !bvh->nodes || bvh->node_count == 0 || !query_aabb ||
+        !out_item_ids || max_results == 0) {
+        return 0;
+    }
+
+    if (isnan(query_aabb->min.x) || isnan(query_aabb->min.y) ||
+        isnan(query_aabb->min.z) || isnan(query_aabb->max.x) ||
+        isnan(query_aabb->max.y) || isnan(query_aabb->max.z) ||
+        isinf(query_aabb->min.x) || isinf(query_aabb->min.y) ||
+        isinf(query_aabb->min.z) || isinf(query_aabb->max.x) ||
+        isinf(query_aabb->max.y) || isinf(query_aabb->max.z)) {
+        return 0;
+    }
+
+    uint32_t stack[STATIC_BVH_QUERY_STACK_CAP];
+    uint32_t sp = 0;
+
+    if (bvh->root >= bvh->node_count) {
+        return 0;
+    }
+
+    stack[sp++] = bvh->root;
+
+    uint32_t out_count = 0;
+
+    bool fallback_linear = false;
+
+    while (sp) {
+        uint32_t node_idx = stack[--sp];
+        if (node_idx >= bvh->node_count) {
+            continue;
+        }
+
+        const phys_static_bvh_node_t *n = &bvh->nodes[node_idx];
+        if (!phys_aabb_overlap(&n->bounds, query_aabb)) {
+            continue;
+        }
+
+        if (phys_static_bvh_node_is_leaf(n)) {
+            if (out_count < max_results) {
+                out_item_ids[out_count++] = n->item_id;
+            } else {
+                return out_count;
+            }
+        } else {
+            if (sp + 2u > STATIC_BVH_QUERY_STACK_CAP) {
+                fallback_linear = true;
+                break;
+            }
+            stack[sp++] = n->left;
+            stack[sp++] = n->right;
+        }
+    }
+
+    if (!fallback_linear) {
+        return out_count;
+    }
+
+    /* Fallback: linear scan of leaves (correct but slower). */
+    out_count = 0;
+    for (uint32_t i = 0; i < bvh->node_count; ++i) {
+        const phys_static_bvh_node_t *n = &bvh->nodes[i];
+        if (!phys_static_bvh_node_is_leaf(n)) {
+            continue;
+        }
+        if (!phys_aabb_overlap(&n->bounds, query_aabb)) {
+            continue;
+        }
+        if (out_count >= max_results) {
+            return out_count;
+        }
+        out_item_ids[out_count++] = n->item_id;
+    }
+
+    return out_count;
+}
+
+void phys_static_bvh_build_bucket_flags(const phys_static_bvh_t *bvh,
+                                       uint32_t bucket_count,
+                                       float cell_size,
+                                       uint8_t *out_bucket_flags) {
+    if (!out_bucket_flags || bucket_count == 0) {
+        return;
+    }
+
+    memset(out_bucket_flags, 0, (size_t)bucket_count * sizeof(uint8_t));
+
+    if (!bvh || !bvh->nodes || bvh->node_count == 0 || cell_size <= 0.0f) {
+        return;
+    }
+
+    const float inv_cell_size = 1.0f / cell_size;
+    const uint32_t mask = bucket_count - 1u;
+
+    for (uint32_t i = 0; i < bvh->node_count; ++i) {
+        const phys_static_bvh_node_t *n = &bvh->nodes[i];
+        if (!phys_static_bvh_node_is_leaf(n)) {
+            continue;
+        }
+
+        const phys_aabb_t *aabb = &n->bounds;
+
+        if (isnan(aabb->min.x) || isnan(aabb->min.y) || isnan(aabb->min.z) ||
+            isnan(aabb->max.x) || isnan(aabb->max.y) || isnan(aabb->max.z) ||
+            isinf(aabb->min.x) || isinf(aabb->min.y) || isinf(aabb->min.z) ||
+            isinf(aabb->max.x) || isinf(aabb->max.y) || isinf(aabb->max.z)) {
+            continue;
+        }
+
+        int32_t min_cx = (int32_t)floorf(aabb->min.x * inv_cell_size);
+        int32_t min_cy = (int32_t)floorf(aabb->min.y * inv_cell_size);
+        int32_t min_cz = (int32_t)floorf(aabb->min.z * inv_cell_size);
+        int32_t max_cx = (int32_t)floorf(aabb->max.x * inv_cell_size);
+        int32_t max_cy = (int32_t)floorf(aabb->max.y * inv_cell_size);
+        int32_t max_cz = (int32_t)floorf(aabb->max.z * inv_cell_size);
+
+        int32_t max_cells_per_axis = (int32_t)bucket_count;
+        if ((max_cx - min_cx) > max_cells_per_axis) {
+            max_cx = min_cx + max_cells_per_axis;
+        }
+        if ((max_cy - min_cy) > max_cells_per_axis) {
+            max_cy = min_cy + max_cells_per_axis;
+        }
+        if ((max_cz - min_cz) > max_cells_per_axis) {
+            max_cz = min_cz + max_cells_per_axis;
+        }
+
+        for (int32_t cz = min_cz; cz <= max_cz; ++cz) {
+            for (int32_t cy = min_cy; cy <= max_cy; ++cy) {
+                for (int32_t cx = min_cx; cx <= max_cx; ++cx) {
+                    uint32_t hash = static_bvh_grid_hash(cx, cy, cz);
+                    uint32_t idx = hash & mask;
+                    out_bucket_flags[idx] = 1u;
+                }
+            }
+        }
+    }
 }

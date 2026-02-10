@@ -85,6 +85,40 @@ void phys_static_bvh_build(phys_static_bvh_t *out_bvh,
                           uint32_t item_count,
                           struct phys_frame_arena *arena);
 
+/* ── Query API ──────────────────────────────────────────────────── */
+
+/**
+ * @brief Query the BVH for leaf items whose bounds overlap @p query_aabb.
+ *
+ * @param bvh          BVH to query (NULL-safe; returns 0 if NULL/empty).
+ * @param query_aabb   Query AABB (NULL-safe; returns 0 if NULL).
+ * @param out_item_ids Output array of item IDs.
+ * @param max_results  Capacity of @p out_item_ids.
+ *
+ * @return Number of item IDs written (may be < total overlaps if capped).
+ */
+uint32_t phys_static_bvh_query_aabb(const phys_static_bvh_t *bvh,
+                                   const phys_aabb_t *query_aabb,
+                                   uint32_t *out_item_ids,
+                                   uint32_t max_results);
+
+/**
+ * @brief Precompute which spatial-grid hash buckets intersect any static BVH leaf.
+ *
+ * This builds a flag array indexed by the grid's hash bucket index (same hashing
+ * as the dynamic spatial grid), so broadphase can skip BVH queries when a body's
+ * AABB touches only buckets with no static geometry.
+ *
+ * @param bvh              BVH to rasterize (NULL-safe; fills zeros if NULL/empty).
+ * @param bucket_count     Number of hash buckets in the spatial grid.
+ * @param cell_size        Spatial grid cell size.
+ * @param out_bucket_flags Output array of length @p bucket_count (filled with 0/1).
+ */
+void phys_static_bvh_build_bucket_flags(const phys_static_bvh_t *bvh,
+                                       uint32_t bucket_count,
+                                       float cell_size,
+                                       uint8_t *out_bucket_flags);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

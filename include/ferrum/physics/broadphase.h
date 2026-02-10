@@ -18,6 +18,7 @@ struct phys_spatial_grid;
 struct phys_tier_lists;
 struct phys_frame_arena;
 struct phys_body;
+struct phys_static_bvh;
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,9 +53,25 @@ typedef struct phys_broadphase_args {
     const struct phys_aabb *aabbs;            /**< Per-body AABB array. */
     const struct phys_spatial_grid *grid;     /**< Spatial hash grid. */
     const struct phys_tier_lists *tier_lists; /**< Active tier lists. */
-    phys_collision_pair_t *pairs_out;         /**< Caller-allocated output buffer. */
-    uint32_t max_pairs;                       /**< Capacity of pairs_out. */
-    uint32_t *pair_count_out;                 /**< Receives final pair count. */
+
+    /** Optional: static BVH for generating dynamic-vs-static pairs when static
+     * bodies are excluded from the spatial grid.
+     *
+     * When non-NULL, broadphase will NOT emit pairs against static bodies found
+     * via the grid query; static pairs are emitted via BVH instead.
+     */
+    const struct phys_static_bvh *static_bvh;
+
+    /** Optional: per-grid-bucket (hash bucket) flags indicating presence of any
+     * static BVH leaf. When provided and sized to grid->cell_count, broadphase
+     * can skip BVH queries for bodies whose AABB touches only unflagged buckets.
+     */
+    const uint8_t *static_bucket_flags;
+    uint32_t static_bucket_flag_count;
+
+    phys_collision_pair_t *pairs_out; /**< Caller-allocated output buffer. */
+    uint32_t max_pairs;               /**< Capacity of pairs_out. */
+    uint32_t *pair_count_out;         /**< Receives final pair count. */
 } phys_broadphase_args_t;
 
 /* ── Public API ─────────────────────────────────────────────────── */

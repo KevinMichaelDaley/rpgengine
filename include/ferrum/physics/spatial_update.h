@@ -52,6 +52,13 @@ typedef struct phys_spatial_update_args {
     struct phys_spatial_grid *grid_out;
     const uint8_t *active;
     uint32_t body_count;
+
+    /** When non-zero, static bodies (inv_mass==0 and not kinematic) are NOT
+     * inserted into the spatial grid. AABBs are still computed.
+     *
+     * Default (0): preserve legacy behavior (static bodies are inserted).
+     */
+    uint8_t exclude_static_from_grid;
 } phys_spatial_update_args_t;
 
 /**

@@ -65,7 +65,10 @@ void phys_stage_spatial_update(const phys_spatial_update_args_t *args) {
                 break;
         }
 
-        /* Insert the body into the spatial grid. */
-        phys_spatial_grid_insert(args->grid_out, i, aabb);
+        /* Insert the body into the spatial grid unless we're excluding
+         * static bodies (static geometry is handled via BVH). */
+        if (!(args->exclude_static_from_grid && phys_body_is_static(body))) {
+            phys_spatial_grid_insert(args->grid_out, i, aabb);
+        }
     }
 }

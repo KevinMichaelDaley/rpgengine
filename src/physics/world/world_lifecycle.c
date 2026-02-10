@@ -80,7 +80,10 @@ void phys_world_destroy(phys_world_t *world) {
     free(world->capsules);
     free(world->impact_events);
 
+    free(world->static_bucket_flags);
+
     phys_manifold_cache_destroy(&world->manifold_cache);
+    phys_frame_arena_destroy(&world->static_bvh_arena);
     phys_frame_arena_destroy(&world->frame_arena);
 
     memset(world, 0, sizeof(*world));

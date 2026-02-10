@@ -12,6 +12,7 @@
 
 #include "ferrum/physics/par/broadphase_par.h"
 
+#include <math.h>
 #include <stdatomic.h>
 #include <stddef.h>
 
@@ -19,10 +20,64 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/spatial_grid.h"
+#include "ferrum/physics/static_bvh.h"
 #include "ferrum/physics/tier_list.h"
 
 /** Maximum candidates returned by a single grid query. */
 #define BROADPHASE_PAR_MAX_CANDIDATES 256
+
+#define BROADPHASE_PAR_STATIC_QUERY_STACK_CAP 128u
+
+static uint32_t broadphase_par_grid_hash(int32_t x, int32_t y, int32_t z) {
+    return ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^
+           ((uint32_t)z * 83492791u);
+}
+
+static bool broadphase_par_aabb_touches_static_bucket_flags(
+    const phys_spatial_grid_t *grid,
+    const phys_aabb_t *aabb,
+    const uint8_t *bucket_flags,
+    uint32_t bucket_flag_count) {
+
+    if (!grid || !aabb || !bucket_flags || bucket_flag_count == 0) {
+        return true;
+    }
+    if (!grid->cells || grid->cell_count != bucket_flag_count) {
+        return true;
+    }
+
+    if (isnan(aabb->min.x) || isnan(aabb->min.y) || isnan(aabb->min.z) ||
+        isnan(aabb->max.x) || isnan(aabb->max.y) || isnan(aabb->max.z) ||
+        isinf(aabb->min.x) || isinf(aabb->min.y) || isinf(aabb->min.z) ||
+        isinf(aabb->max.x) || isinf(aabb->max.y) || isinf(aabb->max.z)) {
+        return false;
+    }
+
+    int32_t min_cx = (int32_t)floorf(aabb->min.x * grid->inv_cell_size);
+    int32_t min_cy = (int32_t)floorf(aabb->min.y * grid->inv_cell_size);
+    int32_t min_cz = (int32_t)floorf(aabb->min.z * grid->inv_cell_size);
+    int32_t max_cx = (int32_t)floorf(aabb->max.x * grid->inv_cell_size);
+    int32_t max_cy = (int32_t)floorf(aabb->max.y * grid->inv_cell_size);
+    int32_t max_cz = (int32_t)floorf(aabb->max.z * grid->inv_cell_size);
+
+    int32_t max_cells_per_axis = (int32_t)grid->cell_count;
+    if ((max_cx - min_cx) > max_cells_per_axis) { max_cx = min_cx + max_cells_per_axis; }
+    if ((max_cy - min_cy) > max_cells_per_axis) { max_cy = min_cy + max_cells_per_axis; }
+    if ((max_cz - min_cz) > max_cells_per_axis) { max_cz = min_cz + max_cells_per_axis; }
+
+    for (int32_t cz = min_cz; cz <= max_cz; ++cz) {
+        for (int32_t cy = min_cy; cy <= max_cy; ++cy) {
+            for (int32_t cx = min_cx; cx <= max_cx; ++cx) {
+                uint32_t idx = broadphase_par_grid_hash(cx, cy, cz) & grid->cell_mask;
+                if (bucket_flags[idx]) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
 
 /* ── Shared context ─────────────────────────────────────────────── */
 
@@ -38,6 +93,11 @@ typedef struct broadphase_par_shared {
     const phys_aabb_t        *aabbs;        /**< Per-body AABB array. */
     const phys_spatial_grid_t *grid;        /**< Spatial hash grid (read-only). */
     const uint32_t           *active_indices; /**< Flat array of active body indices. */
+
+    const phys_static_bvh_t  *static_bvh;
+    const uint8_t            *static_bucket_flags;
+    uint32_t                  static_bucket_flag_count;
+
     phys_collision_pair_t    *pairs_out;     /**< Shared output buffer. */
     uint32_t                  max_pairs;     /**< Capacity of pairs_out. */
     atomic_uint               atomic_pair_count; /**< Atomic write index. */
@@ -55,6 +115,10 @@ typedef struct broadphase_par_shared {
 static void broadphase_par_batch_job(void *data) {
     phys_job_batch_t *batch = data;
     broadphase_par_shared_t *shared = batch->user_args;
+
+    const bool use_static_bvh =
+        (shared->static_bvh && shared->static_bvh->nodes &&
+         shared->static_bvh->node_count > 0);
 
     uint32_t end = batch->start + batch->count;
     for (uint32_t idx = batch->start; idx < end; ++idx) {
@@ -74,15 +138,26 @@ static void broadphase_par_batch_job(void *data) {
                 continue;
             }
 
-            /* Canonical order: lo < hi.  For dynamic-dynamic pairs,
-             * skip when body_a > body_b to avoid duplicates.  For
-             * pairs involving a static body we always emit because
-             * static bodies are not in tier lists. */
+            /* When a static BVH is provided, static pairs are emitted via
+             * BVH query (not grid candidates). */
+            if (use_static_bvh && phys_body_is_static(&shared->bodies[body_b])) {
+                continue;
+            }
+
+            /* Canonical order: lo < hi.
+             *
+             * - dynamic-dynamic: skip when body_a > body_b to avoid duplicates.
+             * - dynamic-static: if not using static BVH, emit even when
+             *   body_a > body_b (static bodies are not in tier lists).
+             */
             uint32_t lo, hi;
             if (body_a < body_b) {
                 lo = body_a;
                 hi = body_b;
             } else {
+                if (use_static_bvh) {
+                    continue;
+                }
                 if (!phys_body_is_static(&shared->bodies[body_b])) {
                     continue;
                 }
@@ -107,6 +182,64 @@ static void broadphase_par_batch_job(void *data) {
             if (slot < shared->max_pairs) {
                 shared->pairs_out[slot].body_a = lo;
                 shared->pairs_out[slot].body_b = hi;
+            }
+        }
+
+        if (use_static_bvh) {
+            if (shared->static_bucket_flags &&
+                shared->static_bucket_flag_count == shared->grid->cell_count) {
+                if (!broadphase_par_aabb_touches_static_bucket_flags(
+                        shared->grid, aabb_a, shared->static_bucket_flags,
+                        shared->static_bucket_flag_count)) {
+                    continue;
+                }
+            }
+
+            uint32_t stack[BROADPHASE_PAR_STATIC_QUERY_STACK_CAP];
+            uint32_t sp = 0;
+
+            if (shared->static_bvh->root < shared->static_bvh->node_count) {
+                stack[sp++] = shared->static_bvh->root;
+            }
+
+            while (sp) {
+                uint32_t node_idx = stack[--sp];
+                if (node_idx >= shared->static_bvh->node_count) {
+                    continue;
+                }
+
+                const phys_static_bvh_node_t *n =
+                    &shared->static_bvh->nodes[node_idx];
+                if (!phys_aabb_overlap(&n->bounds, aabb_a)) {
+                    continue;
+                }
+
+                if (phys_static_bvh_node_is_leaf(n)) {
+                    uint32_t body_b = n->item_id;
+                    if (body_b == body_a) {
+                        continue;
+                    }
+
+                    uint32_t lo = (body_a < body_b) ? body_a : body_b;
+                    uint32_t hi = (body_a < body_b) ? body_b : body_a;
+
+                    if (!phys_aabb_overlap(&shared->aabbs[lo], &shared->aabbs[hi])) {
+                        continue;
+                    }
+
+                    uint32_t slot = atomic_fetch_add_explicit(
+                        &shared->atomic_pair_count, 1, memory_order_relaxed);
+                    if (slot < shared->max_pairs) {
+                        shared->pairs_out[slot].body_a = lo;
+                        shared->pairs_out[slot].body_b = hi;
+                    }
+                } else {
+                    if (sp + 2u > BROADPHASE_PAR_STATIC_QUERY_STACK_CAP) {
+                        break;
+                    }
+                    stack[sp++] = n->left;
+                    stack[sp++] = n->right;
+                }
             }
         }
     }
@@ -178,6 +311,11 @@ void phys_stage_broadphase_par(const phys_broadphase_args_t *args,
         .aabbs          = args->aabbs,
         .grid           = args->grid,
         .active_indices = active_indices,
+
+        .static_bvh              = args->static_bvh,
+        .static_bucket_flags     = args->static_bucket_flags,
+        .static_bucket_flag_count = args->static_bucket_flag_count,
+
         .pairs_out      = args->pairs_out,
         .max_pairs      = args->max_pairs,
         .atomic_pair_count = 0,

@@ -94,6 +94,9 @@ static void spatial_grid_insert_all(const phys_spatial_update_args_t *args) {
         if (args->active && !args->active[i]) {
             continue;
         }
+        if (args->exclude_static_from_grid && phys_body_is_static(&args->bodies[i])) {
+            continue;
+        }
         phys_spatial_grid_insert(args->grid_out, i, &args->aabbs_out[i]);
     }
 }

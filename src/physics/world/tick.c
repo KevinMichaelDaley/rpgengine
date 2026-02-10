@@ -39,6 +39,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /** Number of spatial grid hash buckets (must be power of 2). */
@@ -49,6 +50,98 @@
 
 /** Maximum broadphase pairs per substep. */
 #define MAX_PAIRS_PER_SUBSTEP 10000
+
+static size_t static_bvh_arena_size_bytes(uint32_t item_count) {
+    if (item_count == 0) {
+        return 0;
+    }
+    const uint32_t max_nodes = 2u * item_count - 1u;
+    /* Build allocates: nodes + indices + build stack.
+     * The stack element type is internal, so we over-approximate. */
+    return (size_t)max_nodes * sizeof(phys_static_bvh_node_t) +
+           (size_t)item_count * sizeof(uint32_t) +
+           (size_t)max_nodes * 32u + 4096u;
+}
+
+static uint8_t phys_world_try_build_static_bvh(phys_world_t *world,
+                                              const uint8_t *active,
+                                              uint32_t body_cap) {
+    if (!world || world->static_bvh_valid) {
+        return 0;
+    }
+
+    uint32_t static_count = 0;
+    for (uint32_t i = 0; i < body_cap; ++i) {
+        if (active && !active[i]) {
+            continue;
+        }
+        if (phys_body_is_static(&world->body_pool.bodies_curr[i])) {
+            static_count++;
+        }
+    }
+
+    if (static_count == 0) {
+        return 0;
+    }
+
+    phys_aabb_t *static_aabbs = phys_frame_arena_alloc(
+        &world->frame_arena, (size_t)static_count * sizeof(phys_aabb_t),
+        _Alignof(phys_aabb_t));
+    uint32_t *static_ids = phys_frame_arena_alloc(
+        &world->frame_arena, (size_t)static_count * sizeof(uint32_t),
+        _Alignof(uint32_t));
+    if (!static_aabbs || !static_ids) {
+        return 0;
+    }
+
+    uint32_t k = 0;
+    for (uint32_t i = 0; i < body_cap; ++i) {
+        if (active && !active[i]) {
+            continue;
+        }
+        if (!phys_body_is_static(&world->body_pool.bodies_curr[i])) {
+            continue;
+        }
+        static_aabbs[k] = world->aabbs[i];
+        static_ids[k] = i;
+        k++;
+    }
+
+    phys_frame_arena_destroy(&world->static_bvh_arena);
+
+    const size_t arena_bytes = static_bvh_arena_size_bytes(static_count);
+    if (arena_bytes == 0) {
+        return 0;
+    }
+    if (phys_frame_arena_init(&world->static_bvh_arena, arena_bytes) != 0) {
+        return 0;
+    }
+
+    phys_static_bvh_build(&world->static_bvh, static_aabbs, static_ids,
+                          static_count, &world->static_bvh_arena);
+
+    if (!world->static_bvh.nodes || world->static_bvh.node_count == 0) {
+        phys_frame_arena_destroy(&world->static_bvh_arena);
+        world->static_bvh = (phys_static_bvh_t){0};
+        return 0;
+    }
+
+    free(world->static_bucket_flags);
+    world->static_bucket_flags = calloc(GRID_CELL_COUNT, sizeof(uint8_t));
+    if (!world->static_bucket_flags) {
+        phys_frame_arena_destroy(&world->static_bvh_arena);
+        world->static_bvh = (phys_static_bvh_t){0};
+        return 0;
+    }
+
+    world->static_bucket_flag_count = GRID_CELL_COUNT;
+    phys_static_bvh_build_bucket_flags(
+        &world->static_bvh, world->static_bucket_flag_count, GRID_CELL_SIZE,
+        world->static_bucket_flags);
+
+    world->static_bvh_valid = 1;
+    return 1;
+}
 
 void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
     if (!world) {
@@ -96,6 +189,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
     phys_spatial_grid_init(&grid, GRID_CELL_COUNT, GRID_CELL_SIZE,
                            &world->frame_arena);
 
+    const uint8_t exclude_static_from_grid = world->static_bvh_valid;
+
     phys_stage_spatial_update(&(phys_spatial_update_args_t){
         .bodies    = world->body_pool.bodies_curr,
         .colliders = world->colliders,
@@ -106,7 +201,28 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         .grid_out  = &grid,
         .active    = active,
         .body_count = body_cap,
+        .exclude_static_from_grid = exclude_static_from_grid,
     });
+
+    /* If the static BVH isn't built yet, try to build it now (after AABBs are
+     * computed). If build succeeds, rebuild the grid excluding static bodies so
+     * halo closure doesn't see static geometry. */
+    if (!exclude_static_from_grid) {
+        if (phys_world_try_build_static_bvh(world, active, body_cap)) {
+            phys_stage_spatial_update(&(phys_spatial_update_args_t){
+                .bodies    = world->body_pool.bodies_curr,
+                .colliders = world->colliders,
+                .spheres   = world->spheres,
+                .boxes     = world->boxes,
+                .capsules  = world->capsules,
+                .aabbs_out = world->aabbs,
+                .grid_out  = &grid,
+                .active    = active,
+                .body_count = body_cap,
+                .exclude_static_from_grid = 1,
+            });
+        }
+    }
 
     world->query_grid = grid;
     world->query_grid_valid = 1;
@@ -139,6 +255,9 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             .aabbs          = world->aabbs,
             .grid           = &grid,
             .tier_lists     = &tier_lists,
+            .static_bvh     = world->static_bvh_valid ? &world->static_bvh : NULL,
+            .static_bucket_flags = world->static_bucket_flags,
+            .static_bucket_flag_count = world->static_bucket_flag_count,
             .pairs_out      = pairs,
             .max_pairs      = max_pairs,
             .pair_count_out = &pair_count,
