@@ -166,7 +166,8 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p011_renderer_correction_debug_lines_tests \
 	build/p000_job_queue_diagnostics_tests \
 	build/p000_ws_deque_tests \
-	build/p092_server_pre_physics_sync_tests
+	build/p092_server_pre_physics_sync_tests \
+	build/p093_island_tier_promote_tests
 
 ifeq ($(TRACY),1)
 BIN_HEADLESS += build/p010_tracy_alloc_override_tests
@@ -514,6 +515,9 @@ build/p091_physics_phase6_benchmarks: build/libheadless.a tests/p091_physics_pha
 build/p092_server_pre_physics_sync_tests: build/libheadless.a tests/p092_server_pre_physics_sync_tests.c | build
 	$(CC) $(CFLAGS) tests/p092_server_pre_physics_sync_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p093_island_tier_promote_tests: build/libheadless.a tests/p093_island_tier_promote_tests.c | build
+	$(CC) $(CFLAGS) tests/p093_island_tier_promote_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -753,6 +757,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p090_physics_static_bvh_rebuild_tests \
 	&& ./build/p091_physics_phase6_integration_tests \
 	&& ./build/p092_server_pre_physics_sync_tests \
+	&& ./build/p093_island_tier_promote_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \

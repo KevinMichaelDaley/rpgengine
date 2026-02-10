@@ -27,6 +27,7 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island_build.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/island_tier_promote.h"
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/physics/xpbd_solve.h"
 #include "ferrum/physics/integrate.h"
@@ -434,6 +435,19 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             .body_count       = body_cap,
             .islands_out      = &islands,
             .arena            = &world->frame_arena,
+        });
+
+        /* ── Stage 10b: Island Tier Promotion ──────────────────── */
+        /* Promote all dynamic bodies in each island to the
+         * highest-fidelity (lowest-numbered) tier in that island.
+         * This ensures per-island solver-mode uniformity and
+         * correct substep-skip decisions below. */
+        phys_stage_island_tier_promote(&(phys_island_tier_promote_args_t){
+            .islands          = &islands,
+            .bodies           = world->body_pool.bodies_curr,
+            .body_count       = body_cap,
+            .constraints      = constraints,
+            .constraint_count = constraint_count,
         });
 
         /* Mark islands whose tier needs fewer substeps than the
