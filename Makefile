@@ -184,7 +184,8 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p096_tgs_coloring_tests \
 	build/p097_speculative_contact_tests \
 	build/p008_server_tick_loop_tests \
-	build/p008_server_tick_encoder_tests
+	build/p008_server_tick_encoder_tests \
+	build/p008_server_loop_integration_tests
 
 ifeq ($(TRACY),1)
 BIN_HEADLESS += build/p010_tracy_alloc_override_tests
@@ -631,6 +632,9 @@ build/p008_server_tick_loop_tests: build/libheadless.a tests/p008_server_tick_lo
 build/p008_server_tick_encoder_tests: build/libheadless.a tests/p008_server_tick_encoder_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_server_tick_encoder_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p008_server_loop_integration_tests: build/libheadless.a tests/p008_server_loop_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_loop_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p008_net_join_spawn_integration_tests: build/libheadless.a tests/p008_net_join_spawn_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_net_join_spawn_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -848,6 +852,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p007_net_topic_dispatch_tests \
 	&& ./build/p008_server_tick_loop_tests \
 	&& ./build/p008_server_tick_encoder_tests \
+	&& ./build/p008_server_loop_integration_tests \
 	&& ./build/p011_renderer_correction_debug_lines_tests \
 	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests )
 
