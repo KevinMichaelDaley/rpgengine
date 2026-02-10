@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-it1.30
-status: open
+status: closed
 deps: [rust-rpg-it1.23, rust-rpg-it1.25, rust-rpg-it1.27, rust-rpg-it1.29]
 links: []
 created: 2026-01-18T22:10:23.674787866-08:00
