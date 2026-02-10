@@ -13,6 +13,7 @@ void phys_body_init(phys_body_t *body) {
     body->tier = 0;
     body->friction = 0.5f;
     body->restitution = 0.0f;
+    body->entity_index = UINT32_MAX;
 }
 
 void phys_body_set_mass(phys_body_t *body, float mass) {

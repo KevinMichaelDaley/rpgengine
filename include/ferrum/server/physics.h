@@ -6,5 +6,6 @@
  */
 
 #include "ferrum/server/physics/net/body_state_broadcast.h"
+#include "ferrum/server/physics/sync/pre_physics_sync.h"
 
 #endif /* FERRUM_SERVER_PHYSICS_H */

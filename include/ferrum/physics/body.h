@@ -45,9 +45,13 @@ typedef struct phys_body {
 
     float friction;         /**< Surface friction coefficient (0–1+). */
     float restitution;      /**< Coefficient of restitution / bounciness (0–1). */
+
+    /** ECS entity index that owns this body (UINT32_MAX = unlinked).
+     *  Set by the pre-physics ECS→physics sync pass. */
+    uint32_t entity_index;
 } phys_body_t;
 
-_Static_assert(sizeof(phys_body_t) == 84, "phys_body_t size check");
+_Static_assert(sizeof(phys_body_t) == 88, "phys_body_t size check");
 
 /** Initialize body to safe defaults (static, identity orientation). */
 void phys_body_init(phys_body_t *body);
