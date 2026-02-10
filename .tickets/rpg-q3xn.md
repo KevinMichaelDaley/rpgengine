@@ -1,6 +1,6 @@
 ---
 id: rpg-q3xn
-status: open
+status: in_progress
 deps: []
 links: []
 created: 2026-02-09T07:33:29Z

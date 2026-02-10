@@ -39,7 +39,8 @@ NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/ne
 	$(wildcard src/net/channel/*.c) $(wildcard src/net/channel/*/*.c) $(wildcard src/net/channel/*/*/*.c)
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c) $(wildcard src/server/net/fiber/*.c) $(wildcard src/server/net/runtime/*.c) \
 	$(wildcard src/server/entity/*.c) $(wildcard src/server/entity/*/*.c) $(wildcard src/server/entity/*/*/*.c) \
-	$(wildcard src/server/physics/*.c) $(wildcard src/server/physics/*/*.c) $(wildcard src/server/physics/*/*/*.c)
+	$(wildcard src/server/physics/*.c) $(wildcard src/server/physics/*/*.c) $(wildcard src/server/physics/*/*/*.c) \
+	$(wildcard src/server/tick/*.c)
 PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard src/physics/*/*/*.c)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
@@ -181,7 +182,9 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p094_xpbd_dispatch_tests \
 	build/p095_constraint_color_tests \
 	build/p096_tgs_coloring_tests \
-	build/p097_speculative_contact_tests
+	build/p097_speculative_contact_tests \
+	build/p008_server_tick_loop_tests \
+	build/p008_server_tick_encoder_tests
 
 ifeq ($(TRACY),1)
 BIN_HEADLESS += build/p010_tracy_alloc_override_tests
@@ -622,6 +625,12 @@ build/p008_server_entity_net_pump_tests: build/libheadless.a tests/p008_server_e
 build/p008_server_body_state_broadcast_tests: build/libheadless.a tests/p008_server_body_state_broadcast_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_server_body_state_broadcast_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p008_server_tick_loop_tests: build/libheadless.a tests/p008_server_tick_loop_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_tick_loop_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p008_server_tick_encoder_tests: build/libheadless.a tests/p008_server_tick_encoder_tests.c | build
+	$(CC) $(CFLAGS) tests/p008_server_tick_encoder_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p008_net_join_spawn_integration_tests: build/libheadless.a tests/p008_net_join_spawn_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_net_join_spawn_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -837,6 +846,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p007_net_client_tx_tests \
 	&& ./build/p007_net_client_rx_udp_topic_tests \
 	&& ./build/p007_net_topic_dispatch_tests \
+	&& ./build/p008_server_tick_loop_tests \
+	&& ./build/p008_server_tick_encoder_tests \
 	&& ./build/p011_renderer_correction_debug_lines_tests \
 	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests )
 
