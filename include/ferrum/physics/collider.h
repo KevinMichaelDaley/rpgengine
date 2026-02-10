@@ -81,7 +81,8 @@ typedef struct phys_collider {
     phys_vec3_t local_offset;     /**< Offset from body origin. */
     phys_quat_t local_rotation;   /**< Rotation relative to body. */
     uint8_t sphere_simplify;      /**< 1 if eligible for sphere approximation. */
-    uint8_t _pad[3];
+    uint8_t layer_id;             /**< Query layer index (0–31). */
+    uint8_t _pad[2];
 } phys_collider_t;
 
 _Static_assert(sizeof(phys_collider_t) == 40, "phys_collider_t must be 40 bytes");

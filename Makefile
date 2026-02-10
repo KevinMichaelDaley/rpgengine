@@ -142,6 +142,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p078_physics_occlusion_demotion_tests \
 	build/p080_physics_phase4_integration_tests \
 	build/p083_physics_position_projection_tests \
+	build/p084_physics_raycast_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p008_net_repl_server build/p008_net_repl_client build/p008_net_multi_client_server_integration_tests \
 	build/p008_net_perf_server_tests build/p008_net_perf_client_tests \
@@ -469,6 +470,9 @@ build/p080_physics_phase4_integration_tests: build/libheadless.a tests/p080_phys
 build/p083_physics_position_projection_tests: build/libheadless.a tests/p083_physics_position_projection_tests.c | build
 	$(CC) $(CFLAGS) tests/p083_physics_position_projection_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p084_physics_raycast_tests: build/libheadless.a tests/p084_physics_raycast_tests.c | build
+	$(CC) $(CFLAGS) tests/p084_physics_raycast_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -699,6 +703,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p078_physics_occlusion_demotion_tests \
 	&& ./build/p080_physics_phase4_integration_tests \
 	&& ./build/p083_physics_position_projection_tests \
+	&& ./build/p084_physics_raycast_tests \
 && ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p008_pose_interpolator_tests \
