@@ -6,5 +6,6 @@
  */
 
 #include "ferrum/physics/raycast.h"
+#include "ferrum/physics/overlap.h"
 
 #endif /* FERRUM_PHYSICS_QUERY_H */
