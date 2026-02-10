@@ -1,6 +1,6 @@
 ---
 id: rpg-ma1x
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-09T07:33:29Z
