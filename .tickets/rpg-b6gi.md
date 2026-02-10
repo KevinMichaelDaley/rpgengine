@@ -1,6 +1,6 @@
 ---
 id: rpg-b6gi
-status: open
+status: closed
 deps: [rpg-6tey]
 links: []
 created: 2026-02-09T07:33:29Z
