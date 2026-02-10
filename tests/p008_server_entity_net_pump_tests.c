@@ -6,6 +6,7 @@
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/spawn.h"
 #include "ferrum/net/replication/welcome.h"
+#include "ferrum/net/replication/event_batch.h"
 #include "ferrum/net/topic_channel.h"
 
 #include "ferrum/server/entity/net/pump.h"
@@ -133,16 +134,28 @@ static int test_join_publishes_player_join_and_sends_welcome(void) {
     ASSERT_EQ_INT(0, net_repl_welcome_decode(&w, out_msg + 2u, out_len - 2u));
     ASSERT_EQ_INT(60, w.tick_hz);
 
-    /* Expect SPAWN for self enqueued to client0 reliable out topic. */
-    uint8_t spawn_msg[64];
-    size_t spawn_len = sizeof(spawn_msg);
-    ASSERT_TRUE(fr_topic_channel_pop(env.clients[0].reliable, spawn_msg, &spawn_len));
-    ASSERT_TRUE(spawn_len >= 2u + NET_REPL_SPAWN_PAYLOAD_SIZE);
-    uint16_t spawn_schema_id = (uint16_t)spawn_msg[0] | ((uint16_t)spawn_msg[1] << 8u);
-    ASSERT_EQ_INT(NET_REPL_SCHEMA_SPAWN, spawn_schema_id);
+    /* Expect EVENT batch (SPAWN for self) enqueued to client0 reliable out topic. */
+    uint8_t evt_msg[128];
+    size_t evt_msg_len = sizeof(evt_msg);
+    ASSERT_TRUE(fr_topic_channel_pop(env.clients[0].reliable, evt_msg, &evt_msg_len));
+    ASSERT_TRUE(evt_msg_len >= 2u + 4u);
+    uint16_t evt_schema_id = (uint16_t)evt_msg[0] | ((uint16_t)evt_msg[1] << 8u);
+    ASSERT_EQ_INT(NET_REPL_SCHEMA_EVENT, evt_schema_id);
+
+    net_repl_event_entry_view_t entries[4] = {0};
+    uint16_t entry_count = 0u;
+    uint16_t server_tick = 0u;
+    ASSERT_EQ_INT(0, net_repl_event_batch_decode(&server_tick,
+                                                 entries,
+                                                 4u,
+                                                 &entry_count,
+                                                 evt_msg + 2u,
+                                                 evt_msg_len - 2u));
+    ASSERT_EQ_INT(1u, entry_count);
+    ASSERT_EQ_INT(NET_REPL_EVENT_SPAWN, entries[0].type);
 
     net_repl_spawn_t sp;
-    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, spawn_msg + 2u, spawn_len - 2u));
+    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, entries[0].payload, entries[0].payload_size));
     ASSERT_EQ_INT(1000u, sp.entity_id);
     ASSERT_EQ_INT(0u, sp.owner_client_id);
 
@@ -207,16 +220,23 @@ static int test_second_join_sends_cross_spawns_and_events(void) {
     ASSERT_TRUE(fr_topic_channel_push(inbound, msg1, msg1_len));
     ASSERT_TRUE(fr_server_entity_net_pump_tick(pump, 0u));
 
-    /* Expect client0 receives SPAWN for player1. */
-    uint8_t out0[128];
+    /* Expect client0 receives EVENT batch with SPAWN for player1. */
+    uint8_t out0[256];
     size_t out0_len = sizeof(out0);
     ASSERT_TRUE(fr_topic_channel_pop(env.clients[0].reliable, out0, &out0_len));
-    ASSERT_TRUE(out0_len >= 2u + NET_REPL_SPAWN_PAYLOAD_SIZE);
+    ASSERT_TRUE(out0_len >= 2u + 4u);
     uint16_t schema0 = (uint16_t)out0[0] | ((uint16_t)out0[1] << 8u);
-    ASSERT_EQ_INT(NET_REPL_SCHEMA_SPAWN, schema0);
+    ASSERT_EQ_INT(NET_REPL_SCHEMA_EVENT, schema0);
+
+    net_repl_event_entry_view_t entries0[4] = {0};
+    uint16_t count0 = 0u;
+    uint16_t tick0 = 0u;
+    ASSERT_EQ_INT(0, net_repl_event_batch_decode(&tick0, entries0, 4u, &count0, out0 + 2u, out0_len - 2u));
+    ASSERT_EQ_INT(1u, count0);
+    ASSERT_EQ_INT(NET_REPL_EVENT_SPAWN, entries0[0].type);
 
     net_repl_spawn_t sp0;
-    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp0, out0 + 2u, out0_len - 2u));
+    ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp0, entries0[0].payload, entries0[0].payload_size));
     ASSERT_EQ_INT(1001u, sp0.entity_id);
     ASSERT_EQ_INT(1u, sp0.owner_client_id);
 
@@ -228,17 +248,25 @@ static int test_second_join_sends_cross_spawns_and_events(void) {
     uint16_t schema1 = (uint16_t)out1[0] | ((uint16_t)out1[1] << 8u);
     ASSERT_EQ_INT(NET_REPL_SCHEMA_WELCOME, schema1);
 
+    /* Expect one EVENT batch containing both SPAWNs. */
+    out1_len = sizeof(out1);
+    ASSERT_TRUE(fr_topic_channel_pop(env.clients[1].reliable, out1, &out1_len));
+    ASSERT_TRUE(out1_len >= 2u + 4u);
+    schema1 = (uint16_t)out1[0] | ((uint16_t)out1[1] << 8u);
+    ASSERT_EQ_INT(NET_REPL_SCHEMA_EVENT, schema1);
+
+    net_repl_event_entry_view_t entries1[4] = {0};
+    uint16_t count1 = 0u;
+    uint16_t tick1 = 0u;
+    ASSERT_EQ_INT(0, net_repl_event_batch_decode(&tick1, entries1, 4u, &count1, out1 + 2u, out1_len - 2u));
+    ASSERT_EQ_INT(2u, count1);
+
     int saw_self = 0;
     int saw_other = 0;
-    for (int i = 0; i < 2; ++i) {
-        out1_len = sizeof(out1);
-        ASSERT_TRUE(fr_topic_channel_pop(env.clients[1].reliable, out1, &out1_len));
-        ASSERT_TRUE(out1_len >= 2u + NET_REPL_SPAWN_PAYLOAD_SIZE);
-        schema1 = (uint16_t)out1[0] | ((uint16_t)out1[1] << 8u);
-        ASSERT_EQ_INT(NET_REPL_SCHEMA_SPAWN, schema1);
-
+    for (uint16_t i = 0u; i < count1; ++i) {
+        ASSERT_EQ_INT(NET_REPL_EVENT_SPAWN, entries1[i].type);
         net_repl_spawn_t sp;
-        ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, out1 + 2u, out1_len - 2u));
+        ASSERT_EQ_INT(0, net_repl_spawn_decode(&sp, entries1[i].payload, entries1[i].payload_size));
         if (sp.owner_client_id == 1u) {
             ASSERT_EQ_INT(1001u, sp.entity_id);
             saw_self = 1;

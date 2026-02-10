@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "ferrum/net/replication/common.h"
+#include "ferrum/net/replication/event_batch.h"
 #include "ferrum/net/replication/input_rot.h"
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/spawn.h"
@@ -24,6 +25,12 @@ struct fr_server_entity_net_pump {
        enqueued a SPAWN for src_player_id to dst_client_id.
      */
     uint8_t *spawned;
+
+    /* Scratch buffers for per-tick spawn batching (allocated once, reused). */
+    net_repl_event_entry_view_t *scratch_entries;
+    uint16_t *scratch_src_player_ids;
+    uint8_t *scratch_spawn_payloads;
+    uint8_t *scratch_event_payload;
 };
 
 static void write_u16_le_(uint8_t *out, uint16_t v) {
@@ -126,23 +133,12 @@ static bool publish_entity_input_rot_event_(fr_server_entity_net_pump_t *pump,
     return fr_topic_channel_push(pump->cfg.entity_event_topic, evt, sizeof(evt));
 }
 
-static bool ensure_spawn_(fr_server_entity_net_pump_t *pump, uint16_t dst_client_id, uint16_t src_player_id) {
-    if (!pump || !pump->players || !pump->spawned) {
+static bool build_spawn_payload_(fr_server_entity_net_pump_t *pump,
+                                 uint16_t src_player_id,
+                                 uint8_t *out_payload,
+                                 size_t out_capacity) {
+    if (!pump || !out_payload || out_capacity < (size_t)NET_REPL_SPAWN_PAYLOAD_SIZE) {
         return false;
-    }
-    if (dst_client_id >= pump->cfg.max_clients || src_player_id >= pump->cfg.max_clients) {
-        return false;
-    }
-    if (!pump->players[dst_client_id].joined || !pump->players[src_player_id].joined) {
-        return false;
-    }
-    if (dst_client_id != src_player_id && !pump->players[src_player_id].should_spawn_remote) {
-        return false;
-    }
-
-    const size_t idx = (size_t)dst_client_id * (size_t)pump->cfg.max_clients + (size_t)src_player_id;
-    if (pump->spawned[idx]) {
-        return true;
     }
 
     net_repl_spawn_t sp;
@@ -152,23 +148,108 @@ static bool ensure_spawn_(fr_server_entity_net_pump_t *pump, uint16_t dst_client
     sp.join_time_u16 = 0u;
 
     net_qvec3_mm_t qpos;
-    vec3_t pos = player_spawn_pos_(src_player_id, pump->cfg.max_clients);
+    const vec3_t pos = player_spawn_pos_(src_player_id, pump->cfg.max_clients);
     if (net_quantize_vec3_mm(pos, &qpos) != NET_QUANT_OK) {
         return false;
     }
     sp.pos_mm = (net_repl_vec3_mm_t){qpos.x_mm, qpos.y_mm, qpos.z_mm};
 
-    uint8_t sp_payload[NET_REPL_SPAWN_PAYLOAD_SIZE];
-    if (net_repl_spawn_encode(&sp, sp_payload, sizeof(sp_payload)) != NET_REPL_OK) {
+    return net_repl_spawn_encode(&sp, out_payload, out_capacity) == NET_REPL_OK;
+}
+
+static bool reconcile_spawns_for_dst_(fr_server_entity_net_pump_t *pump, uint16_t dst_client_id) {
+    if (!pump || !pump->players || !pump->spawned) {
+        return false;
+    }
+    if (dst_client_id >= pump->cfg.max_clients) {
+        return false;
+    }
+    if (!pump->players[dst_client_id].joined) {
+        return true;
+    }
+    if (!pump->scratch_entries || !pump->scratch_src_player_ids || !pump->scratch_spawn_payloads || !pump->scratch_event_payload) {
         return false;
     }
 
-    if (!enqueue_reliable_(pump, dst_client_id, NET_REPL_SCHEMA_SPAWN, sp_payload, sizeof(sp_payload))) {
-        return false;
+    /* Build a list of missing SPAWNs for this destination client, then send
+       them as one or more NET_REPL_SCHEMA_EVENT batches.
+     */
+    uint16_t pending = 0u;
+    for (uint16_t src = 0u; src < pump->cfg.max_clients; ++src) {
+        if (!pump->players[src].joined) {
+            continue;
+        }
+        if (dst_client_id != src && !pump->players[src].should_spawn_remote) {
+            continue;
+        }
+
+        const size_t idx = (size_t)dst_client_id * (size_t)pump->cfg.max_clients + (size_t)src;
+        if (pump->spawned[idx]) {
+            continue;
+        }
+
+        uint8_t *sp_payload = pump->scratch_spawn_payloads + (size_t)pending * (size_t)NET_REPL_SPAWN_PAYLOAD_SIZE;
+        if (!build_spawn_payload_(pump, src, sp_payload, NET_REPL_SPAWN_PAYLOAD_SIZE)) {
+            continue;
+        }
+
+        pump->scratch_entries[pending] = (net_repl_event_entry_view_t){
+            .type = NET_REPL_EVENT_SPAWN,
+            .entity_key = (uint64_t)(1000u + (uint32_t)src),
+            .payload = sp_payload,
+            .payload_size = NET_REPL_SPAWN_PAYLOAD_SIZE,
+        };
+        pump->scratch_src_player_ids[pending] = src;
+        pending++;
     }
 
-    pump->spawned[idx] = 1u;
-    (void)publish_player_event_(pump, (uint8_t)FR_SERVER_EVT_PLAYER_SPAWN, dst_client_id, src_player_id);
+    uint16_t offset = 0u;
+    while (offset < pending) {
+        /* Fit as many entries as possible in a single stream message payload. */
+        size_t cap = (size_t)NET_RUDP_MAX_PACKET_SIZE;
+        size_t total = 4u;
+        uint16_t count = 0u;
+        while (offset + count < pending) {
+            const net_repl_event_entry_view_t *e = &pump->scratch_entries[offset + count];
+            const size_t need = 12u + (size_t)e->payload_size;
+            if (total + need > cap) {
+                break;
+            }
+            total += need;
+            count++;
+        }
+        if (count == 0u) {
+            break;
+        }
+
+        size_t payload_size = 0u;
+        if (net_repl_event_batch_encode(0u,
+                                       pump->scratch_entries + offset,
+                                       count,
+                                       pump->scratch_event_payload,
+                                       NET_RUDP_MAX_PACKET_SIZE,
+                                       &payload_size) != NET_REPL_OK) {
+            break;
+        }
+
+        if (!enqueue_reliable_(pump,
+                               dst_client_id,
+                               NET_REPL_SCHEMA_EVENT,
+                               pump->scratch_event_payload,
+                               payload_size)) {
+            break; /* backpressure; retry next tick */
+        }
+
+        for (uint16_t i = 0u; i < count; ++i) {
+            const uint16_t src = pump->scratch_src_player_ids[offset + i];
+            const size_t idx = (size_t)dst_client_id * (size_t)pump->cfg.max_clients + (size_t)src;
+            pump->spawned[idx] = 1u;
+            (void)publish_player_event_(pump, (uint8_t)FR_SERVER_EVT_PLAYER_SPAWN, dst_client_id, src);
+        }
+
+        offset = (uint16_t)(offset + count);
+    }
+
     return true;
 }
 
@@ -202,6 +283,22 @@ fr_server_entity_net_pump_t *fr_server_entity_net_pump_create(const fr_server_en
         return NULL;
     }
 
+    pump->scratch_entries = (net_repl_event_entry_view_t *)calloc((size_t)cfg->max_clients, sizeof(*pump->scratch_entries));
+    pump->scratch_src_player_ids = (uint16_t *)calloc((size_t)cfg->max_clients, sizeof(*pump->scratch_src_player_ids));
+    pump->scratch_spawn_payloads = (uint8_t *)calloc((size_t)cfg->max_clients * (size_t)NET_REPL_SPAWN_PAYLOAD_SIZE, 1u);
+    pump->scratch_event_payload = (uint8_t *)calloc((size_t)NET_RUDP_MAX_PACKET_SIZE, 1u);
+
+    if (!pump->scratch_entries || !pump->scratch_src_player_ids || !pump->scratch_spawn_payloads || !pump->scratch_event_payload) {
+        free(pump->scratch_entries);
+        free(pump->scratch_src_player_ids);
+        free(pump->scratch_spawn_payloads);
+        free(pump->scratch_event_payload);
+        free(pump->spawned);
+        free(pump->players);
+        free(pump);
+        return NULL;
+    }
+
     return pump;
 }
 
@@ -211,6 +308,10 @@ void fr_server_entity_net_pump_destroy(fr_server_entity_net_pump_t *pump) {
     }
     free(pump->players);
     free(pump->spawned);
+    free(pump->scratch_entries);
+    free(pump->scratch_src_player_ids);
+    free(pump->scratch_spawn_payloads);
+    free(pump->scratch_event_payload);
     free(pump);
 }
 
@@ -279,23 +380,9 @@ bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t 
                     (void)enqueue_reliable_(pump, client_id, NET_REPL_SCHEMA_WELCOME, w_payload, sizeof(w_payload));
                 }
 
-                /* Spawn self to self so clients always receive their own entity. */
-                (void)ensure_spawn_(pump, client_id, pump->players[client_id].player_id);
-
-                /* Cross-spawn between this player and already-joined players.
-                   This is the first place interest/visibility gating is applied.
+                /* SPAWNs are produced by the end-of-tick reconcile pass so they
+                   can be batched and retried under backpressure.
                  */
-                for (uint16_t other = 0u; other < pump->cfg.max_clients; ++other) {
-                    if (other == client_id) {
-                        continue;
-                    }
-                    if (!pump->players[other].joined) {
-                        continue;
-                    }
-
-                    (void)ensure_spawn_(pump, client_id, pump->players[other].player_id);
-                    (void)ensure_spawn_(pump, other, pump->players[client_id].player_id);
-                }
             }
 
             continue;
@@ -353,17 +440,11 @@ bool fr_server_entity_net_pump_tick(fr_server_entity_net_pump_t *pump, uint64_t 
         continue;
     }
 
-    /* Reconcile: ensure every joined client has SPAWNs for all joined players. */
+    /* Reconcile: ensure every joined client has SPAWNs for all joined players.
+       This runs every tick so missed spawns (backpressure) will retry.
+     */
     for (uint16_t dst = 0u; dst < pump->cfg.max_clients; ++dst) {
-        if (!pump->players[dst].joined) {
-            continue;
-        }
-        for (uint16_t src = 0u; src < pump->cfg.max_clients; ++src) {
-            if (!pump->players[src].joined) {
-                continue;
-            }
-            (void)ensure_spawn_(pump, dst, src);
-        }
+        (void)reconcile_spawns_for_dst_(pump, dst);
     }
 
     return true;

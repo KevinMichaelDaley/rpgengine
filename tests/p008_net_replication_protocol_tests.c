@@ -7,6 +7,7 @@
 #include "ferrum/net/replication/spawn_batch.h"
 #include "ferrum/net/replication/state_cube.h"
 #include "ferrum/net/replication/welcome.h"
+#include "ferrum/net/replication/event_batch.h"
 
 #define ASSERT_TRUE(cond)                                                                                \
     do {                                                                                                 \
@@ -241,6 +242,64 @@ static int test_spawn_batch_encode_decode_roundtrip(void) {
     return 0;
 }
 
+static int test_event_batch_encode_decode_roundtrip(void) {
+    const uint8_t p0[] = {0xDEu, 0xADu, 0xBEu};
+    const uint8_t p1[] = {0x01u};
+
+    net_repl_event_entry_view_t entries[2] = {
+        {.type = NET_REPL_EVENT_SPAWN, .entity_key = 0x0102030405060708ull, .payload = p0, .payload_size = (uint16_t)sizeof(p0)},
+        {.type = NET_REPL_EVENT_DEATH, .entity_key = 0x1112131415161718ull, .payload = p1, .payload_size = (uint16_t)sizeof(p1)},
+    };
+
+    uint8_t payload[256];
+    size_t payload_size = 0u;
+    ASSERT_INT_EQ(NET_REPL_OK,
+                  net_repl_event_batch_encode(0x00F0u, entries, 2u, payload, sizeof(payload), &payload_size));
+
+    const uint8_t expected[] = {
+        0x00u, 0x02u, /* count */
+        0x00u, 0xF0u, /* server_tick */
+
+        NET_REPL_EVENT_SPAWN, 0x00u,
+        0x01u, 0x02u, 0x03u, 0x04u, 0x05u, 0x06u, 0x07u, 0x08u,
+        0x00u, 0x03u,
+        0xDEu, 0xADu, 0xBEu,
+
+        NET_REPL_EVENT_DEATH, 0x00u,
+        0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u, 0x18u,
+        0x00u, 0x01u,
+        0x01u,
+    };
+
+    ASSERT_UINT_EQ(sizeof(expected), payload_size);
+    ASSERT_TRUE(memcmp(expected, payload, payload_size) == 0);
+
+    net_repl_event_entry_view_t decoded_entries[2] = {0};
+    uint16_t decoded_count = 0u;
+    uint16_t decoded_tick = 0u;
+    ASSERT_INT_EQ(NET_REPL_OK,
+                  net_repl_event_batch_decode(&decoded_tick,
+                                             decoded_entries,
+                                             2u,
+                                             &decoded_count,
+                                             payload,
+                                             payload_size));
+
+    ASSERT_UINT_EQ(2u, decoded_count);
+    ASSERT_UINT_EQ(0x00F0u, decoded_tick);
+    ASSERT_UINT_EQ(NET_REPL_EVENT_SPAWN, decoded_entries[0].type);
+    ASSERT_UINT_EQ(0x0102030405060708ull, decoded_entries[0].entity_key);
+    ASSERT_UINT_EQ(sizeof(p0), decoded_entries[0].payload_size);
+    ASSERT_TRUE(memcmp(p0, decoded_entries[0].payload, sizeof(p0)) == 0);
+
+    ASSERT_UINT_EQ(NET_REPL_EVENT_DEATH, decoded_entries[1].type);
+    ASSERT_UINT_EQ(0x1112131415161718ull, decoded_entries[1].entity_key);
+    ASSERT_UINT_EQ(sizeof(p1), decoded_entries[1].payload_size);
+    ASSERT_TRUE(memcmp(p1, decoded_entries[1].payload, sizeof(p1)) == 0);
+
+    return 0;
+}
+
 static int test_invalid_args_are_rejected(void) {
     uint8_t payload[NET_REPL_STATE_CUBE_PAYLOAD_SIZE] = {0};
     net_repl_state_cube_t decoded = {0};
@@ -263,6 +322,7 @@ static struct test_case TESTS[] = {
     {"state_cube_encode_byte_layout_lockin", test_state_cube_encode_byte_layout_lockin},
     {"welcome_encode_byte_layout_lockin", test_welcome_encode_byte_layout_lockin},
     {"spawn_batch_encode_decode_roundtrip", test_spawn_batch_encode_decode_roundtrip},
+    {"event_batch_encode_decode_roundtrip", test_event_batch_encode_decode_roundtrip},
     {"invalid_args_are_rejected", test_invalid_args_are_rejected},
 };
 

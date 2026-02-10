@@ -601,7 +601,7 @@ build:
 	@mkdir -p build
 
 
-test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
+test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests \
@@ -615,6 +615,8 @@ test: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job_queue_d
 	&& ./build/p007_net_stream_channel_topic_tests \
 	&& ./build/p008_server_client_fiber_stream_tests \
 	&& ./build/p008_server_net_runtime_fiber_tests \
+	&& ./build/p008_server_entity_net_pump_tests \
+	&& ./build/p008_net_replication_protocol_tests \
 	&& ./build/p016_net_repl_input_rot_tests \
 	&& ./build/p017_math_quat_angle_tests \
 	&& ./build/p018_physics_types_tests \
