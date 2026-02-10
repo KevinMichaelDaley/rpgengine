@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-uca
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-01-17T19:14:00.329483043-08:00

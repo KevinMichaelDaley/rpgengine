@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-wpe
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-01T22:57:06.458224093-08:00

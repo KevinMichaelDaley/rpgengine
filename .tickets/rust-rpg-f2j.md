@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-f2j
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-01T22:57:06.816020267-08:00

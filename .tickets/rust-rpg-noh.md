@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-noh
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-02T14:23:50.251573216-08:00

@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-51w
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-01T08:27:20.694690422-08:00

@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-coq
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-01T22:57:07.635987877-08:00
