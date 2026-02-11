@@ -123,7 +123,17 @@ typedef struct entity_view {
     float    half_y;      /**< Half-extent Y in meters. */
     float    half_z;      /**< Half-extent Z in meters. */
     fr_pose_interpolator_t interp;
+
+    /* Correction debug lines: when a new server state pushes the
+     * interpolator, we snapshot the old rendered pose.  The renderer
+     * draws lines from old corners → new corners, fading over time. */
+    vec3_t  corr_old_pos;   /**< Position before correction. */
+    quat_t  corr_old_rot;   /**< Rotation before correction. */
+    double  corr_time_s;    /**< Time the correction was recorded. */
+    float   corr_alpha;     /**< Fade-out alpha (1→0 over ~0.5s). */
 } entity_view_t;
+
+#define CORR_FADE_DURATION 0.5  /* seconds to show correction lines */
 
 /* ── GL context ─────────────────────────────────────────────────── */
 
@@ -267,6 +277,129 @@ static void gl_shutdown(gl_ctx_t *ctx) {
         SDL_DestroyWindow(ctx->window);
     }
     SDL_Quit();
+}
+
+/* ── Correction debug line helpers ──────────────────────────────── */
+
+/** Rotate a vector by a quaternion: q * v * q⁻¹ */
+static vec3_t quat_rotate_vec3(quat_t q, vec3_t v) {
+    /* t = 2 * cross(q.xyz, v) */
+    float tx = 2.0f * (q.y * v.z - q.z * v.y);
+    float ty = 2.0f * (q.z * v.x - q.x * v.z);
+    float tz = 2.0f * (q.x * v.y - q.y * v.x);
+    return (vec3_t){
+        v.x + q.w * tx + (q.y * tz - q.z * ty),
+        v.y + q.w * ty + (q.z * tx - q.x * tz),
+        v.z + q.w * tz + (q.x * ty - q.y * tx),
+    };
+}
+
+/** Compute the 8 corners of an axis-aligned box transformed by pos+rot. */
+static void box_corners(vec3_t pos, quat_t rot,
+                        float hx, float hy, float hz,
+                        vec3_t out[8]) {
+    const float sx[8] = {-1, 1, 1,-1,-1, 1, 1,-1};
+    const float sy[8] = {-1,-1, 1, 1,-1,-1, 1, 1};
+    const float sz[8] = {-1,-1,-1,-1, 1, 1, 1, 1};
+    for (int i = 0; i < 8; ++i) {
+        vec3_t local = {sx[i] * hx, sy[i] * hy, sz[i] * hz};
+        vec3_t world = quat_rotate_vec3(rot, local);
+        out[i] = (vec3_t){pos.x + world.x, pos.y + world.y, pos.z + world.z};
+    }
+}
+
+/**
+ * Draw correction debug lines: one line per box corner from old pose
+ * to new (current) pose.  Uses the existing shader with u_mvp = vp
+ * (identity model) and a bright color.
+ *
+ * Max bodies to draw lines for per frame, to avoid GPU stalls.
+ */
+#define CORR_MAX_LINES_PER_FRAME 128u
+
+static void draw_correction_lines(gl_ctx_t *glc,
+                                  const entity_view_t *entities,
+                                  uint32_t entity_count,
+                                  double now_time,
+                                  double render_time,
+                                  mat4_t vp) {
+    /* Gather line vertices: pairs of vec3 (old_corner, new_corner). */
+    float line_verts[CORR_MAX_LINES_PER_FRAME * 8 * 2 * 3]; /* 8 corners * 2 endpoints * xyz */
+    uint32_t line_vert_count = 0;
+    uint32_t line_pair_count = 0;
+
+    for (uint32_t i = 0; i < entity_count; ++i) {
+        if (line_pair_count >= CORR_MAX_LINES_PER_FRAME) { break; }
+        const entity_view_t *e = &entities[i];
+        if (e->is_static) { continue; }
+        if (e->corr_alpha <= 0.0f) { continue; }
+
+        /* Sample current rendered pose. */
+        vec3_t new_pos;
+        quat_t new_rot;
+        if (!fr_pose_interpolator_sample(&e->interp, render_time, 1e-6f,
+                                          &new_pos, &new_rot)) {
+            continue;
+        }
+
+        vec3_t old_corners[8], new_corners[8];
+        box_corners(e->corr_old_pos, e->corr_old_rot,
+                    e->half_x, e->half_y, e->half_z, old_corners);
+        box_corners(new_pos, new_rot,
+                    e->half_x, e->half_y, e->half_z, new_corners);
+
+        for (int c = 0; c < 8; ++c) {
+            /* Skip nearly-zero corrections. */
+            float dx = new_corners[c].x - old_corners[c].x;
+            float dy = new_corners[c].y - old_corners[c].y;
+            float dz = new_corners[c].z - old_corners[c].z;
+            if (dx*dx + dy*dy + dz*dz < 0.0001f) { continue; }
+
+            uint32_t base = line_vert_count * 3;
+            if (base + 6 > sizeof(line_verts)/sizeof(float)) { break; }
+            line_verts[base + 0] = old_corners[c].x;
+            line_verts[base + 1] = old_corners[c].y;
+            line_verts[base + 2] = old_corners[c].z;
+            line_verts[base + 3] = new_corners[c].x;
+            line_verts[base + 4] = new_corners[c].y;
+            line_verts[base + 5] = new_corners[c].z;
+            line_vert_count += 2;
+        }
+        line_pair_count++;
+    }
+
+    if (line_vert_count == 0) { return; }
+
+    /* Upload line vertices to a temporary VBO and draw. */
+    GLuint line_vbo = 0;
+    glGenBuffers(1, &line_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, line_vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(line_vert_count * 3 * sizeof(float)),
+                 line_verts, GL_STREAM_DRAW);
+
+    /* Use identity model matrix — vertices are already in world space. */
+    shader_uniform_set_mat4(&glc->uniforms, &glc->program,
+                            "u_mvp", vp.m, 0u);
+
+    /* Bright yellow for correction lines. */
+    float corr_color[3] = {1.0f, 1.0f, 0.0f};
+    shader_uniform_set_vec3(&glc->uniforms, &glc->program,
+                            "u_color", corr_color);
+
+    GLuint line_vao = 0;
+    glGenVertexArrays(1, &line_vao);
+    glBindVertexArray(line_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, line_vbo);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, NULL);
+
+    glLineWidth(2.0f);
+    glDrawArrays(GL_LINES, 0, (GLsizei)line_vert_count);
+
+    glBindVertexArray(0);
+    glDeleteVertexArrays(1, &line_vao);
+    glDeleteBuffers(1, &line_vbo);
+    (void)now_time;
 }
 
 /* ── Prediction sim step callback ───────────────────────────────── */
@@ -539,6 +672,18 @@ int main(int argc, char **argv) {
                         (float)bs.pos_mm.z_mm / 1000.0f,
                     };
                     quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
+
+                    /* Snapshot current rendered pose before correction. */
+                    vec3_t old_pos;
+                    quat_t old_rot;
+                    if (fr_pose_interpolator_sample(&e->interp, recv_time,
+                                                    1e-6f, &old_pos, &old_rot)) {
+                        e->corr_old_pos = old_pos;
+                        e->corr_old_rot = old_rot;
+                        e->corr_time_s  = recv_time;
+                        e->corr_alpha   = 1.0f;
+                    }
+
                     fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
                     dbg_state_applied++;
                 }
@@ -565,6 +710,18 @@ int main(int argc, char **argv) {
                     (float)bs.pos_mm.z_mm / 1000.0f,
                 };
                 quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
+
+                /* Snapshot current rendered pose before correction. */
+                vec3_t old_pos;
+                quat_t old_rot;
+                if (fr_pose_interpolator_sample(&e->interp, recv_time,
+                                                1e-6f, &old_pos, &old_rot)) {
+                    e->corr_old_pos = old_pos;
+                    e->corr_old_rot = old_rot;
+                    e->corr_time_s  = recv_time;
+                    e->corr_alpha   = 1.0f;
+                }
+
                 fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
             }
 
@@ -707,6 +864,17 @@ int main(int argc, char **argv) {
         }
 
         /* ── Stage 7-10: Render ────────────────────────────────── */
+
+        /* Decay correction debug line alpha. */
+        for (uint32_t i = 0; i < entity_count; ++i) {
+            entity_view_t *e = &entities[i];
+            if (e->corr_alpha > 0.0f) {
+                double age = now_time - e->corr_time_s;
+                e->corr_alpha = (age < CORR_FADE_DURATION)
+                    ? 1.0f - (float)(age / CORR_FADE_DURATION) : 0.0f;
+            }
+        }
+
         if (!headless) {
             glViewport(0, 0, CLIENT_WIN_W, CLIENT_WIN_H);
             glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
@@ -775,6 +943,10 @@ int main(int argc, char **argv) {
                 }
 
                 glBindVertexArray(0);
+
+                /* Draw correction debug lines (old corner → new corner). */
+                draw_correction_lines(&gl, entities, entity_count,
+                                      now_time, render_time, vp);
             }
 
             SDL_GL_SwapWindow(gl.window);

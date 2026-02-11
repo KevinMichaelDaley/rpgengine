@@ -166,4 +166,21 @@ void phys_stage_island_build(const phys_island_build_args_t *args)
             isl->constraint_count++;
         }
     }
+
+    /* ── Step 7: Mark islands sleeping when ALL bodies are asleep ── */
+    for (uint32_t i = 0; i < island_count; ++i) {
+        phys_island_t *isl = &args->islands_out->islands[i];
+        if (isl->body_count == 0) { continue; }
+
+        bool all_sleeping = true;
+        for (uint32_t j = 0; j < isl->body_count; ++j) {
+            uint32_t bi = isl->body_indices[j];
+            if (bi < args->body_count &&
+                !phys_body_is_sleeping(&args->bodies[bi])) {
+                all_sleeping = false;
+                break;
+            }
+        }
+        isl->sleeping = all_sleeping;
+    }
 }

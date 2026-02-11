@@ -38,6 +38,7 @@
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_tick_runner.h"
+#include "ferrum/physics/game_state.h"
 #include "ferrum/physics/world.h"
 #include "ferrum/server/entity/net/pump.h"
 #include "ferrum/server/net/inbound_message.h"
@@ -100,6 +101,9 @@ struct demo_ctx {
     /* Jobs */
     job_system_t                        job_sys;      /**< Networking fibers. */
     job_system_t                        phys_job_sys; /**< Physics parallel stages. */
+
+    /* Tier classification */
+    phys_game_state_t                   game_state;   /**< Player position for tiers. */
 
     /* Client tracking */
     bool                                client_joined[DEMO_MAX_CLIENTS];
@@ -479,6 +483,18 @@ int main(int argc, char **argv) {
     phys_tick_runner_init(&ctx.tick_runner, &ctx.world, &ctx.phys_jobs,
                           ctx.cmd_channel, NULL,
                           demo_spawn_callback, &ctx);
+
+    /* Set up game state for tier classification.
+     * Place a "player" at the origin so bodies near the spawn area get
+     * high-fidelity tiers while distant/sleeping ones drop to T4/T5. */
+    phys_game_state_init(&ctx.game_state);
+    phys_player_state_t player0 = {
+        .position = {0.0f, 0.0f, 0.0f},
+        .interaction_radius = 5.0f,
+    };
+    phys_game_state_set_player(&ctx.game_state, 0, &player0);
+    ctx.tick_runner.game_state = &ctx.game_state;
+
     phys_tick_runner_start(&ctx.tick_runner);
     printf("[server] physics tick runner started\n");
 
