@@ -1,20 +1,85 @@
 /**
  * @file island_build.c
  * @brief Stage 10: Island Build — groups connected bodies into islands
- *        using union-find.
+ *        using union-find with max-island-size splitting.
  *
  * Static bodies do NOT merge islands (two dynamic bodies connected
  * only through a static body remain in separate islands).  However,
  * constraints involving one static body ARE assigned to the dynamic
  * body's island so the solver can resolve them.
+ *
+ * When max_island_bodies > 0, a two-pass union strategy is used:
+ *   Pass 1 (strong): merge edges where at least one body has
+ *     significant velocity, respecting the size cap.
+ *   Pass 2 (weak): merge remaining edges only if the result stays
+ *     within the cap.
+ * This ensures tightly-coupled active groups stay together while
+ * long resting chains naturally fragment.
  */
 
 #include "ferrum/physics/island_build.h"
+
+#include <math.h>
 
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/phys_pool.h"
+
+/** Speed threshold below which a body is considered "resting" for
+ *  island splitting.  Both bodies must be below this for the edge
+ *  to be classified as weak. */
+#define ISLAND_SPLIT_SPEED_THRESH 0.5f
+
+/* ── Helpers for size-capped union ─────────────────────────────── */
+
+/**
+ * @brief Union x and y only if the merged component stays within cap.
+ *
+ * @return true if the union was performed, false if skipped.
+ */
+static bool capped_union(phys_island_list_t *uf,
+                          uint32_t *sizes,
+                          uint32_t x, uint32_t y,
+                          uint32_t cap)
+{
+    uint32_t rx = phys_uf_find(uf, x);
+    uint32_t ry = phys_uf_find(uf, y);
+    if (rx == ry) { return true; } /* already same component */
+
+    uint32_t merged = sizes[rx] + sizes[ry];
+    if (merged > cap) { return false; }
+
+    /* Perform the union and update sizes on the new root. */
+    phys_uf_union(uf, x, y);
+    uint32_t new_root = phys_uf_find(uf, x);
+    sizes[new_root] = merged;
+    return true;
+}
+
+/**
+ * @brief Compute linear speed (magnitude of linear_vel).
+ */
+static float body_speed(const phys_body_t *b)
+{
+    float vx = b->linear_vel.x;
+    float vy = b->linear_vel.y;
+    float vz = b->linear_vel.z;
+    return sqrtf(vx * vx + vy * vy + vz * vz);
+}
+
+/**
+ * @brief Check if a constraint edge is "strong" — at least one body
+ *        has significant velocity.
+ */
+static bool is_strong_edge(const phys_body_t *bodies,
+                           uint32_t a, uint32_t b)
+{
+    return body_speed(&bodies[a]) >= ISLAND_SPLIT_SPEED_THRESH ||
+           body_speed(&bodies[b]) >= ISLAND_SPLIT_SPEED_THRESH;
+}
+
+/* ── Main entry point ─────────────────────────────────────────── */
 
 void phys_stage_island_build(const phys_island_build_args_t *args)
 {
@@ -27,22 +92,74 @@ void phys_stage_island_build(const phys_island_build_args_t *args)
         return;
     }
 
+    const uint32_t max_cap = args->max_island_bodies;
+    const bool splitting = (max_cap > 0);
+
     /* ── Step 1: Initialize union-find ─────────────────────────── */
     phys_island_list_init(args->islands_out, args->arena,
                           args->body_count, args->body_count);
 
-    /* ── Step 2: Union ONLY dynamic-dynamic constraint pairs ───── */
-    for (uint32_t i = 0; i < args->constraint_count; ++i) {
-        uint32_t a = args->constraints[i].body_a;
-        uint32_t b = args->constraints[i].body_b;
-        if (a >= args->body_count || b >= args->body_count) { continue; }
+    /* Per-component size array (only needed when splitting). */
+    uint32_t *sizes = NULL;
+    if (splitting) {
+        sizes = phys_frame_arena_alloc(
+            args->arena, args->body_count * sizeof(uint32_t),
+            _Alignof(uint32_t));
+        if (!sizes) { return; }
+        for (uint32_t i = 0; i < args->body_count; ++i) { sizes[i] = 1; }
+    }
 
-        /* Skip if either body is static — static bodies must not
-         * merge islands together. */
-        if (phys_body_is_static(&args->bodies[a])) { continue; }
-        if (phys_body_is_static(&args->bodies[b])) { continue; }
+    /* ── Step 2: Union dynamic-dynamic constraint pairs ────────── */
+    if (!splitting) {
+        /* Original path: unconditional merge. */
+        for (uint32_t i = 0; i < args->constraint_count; ++i) {
+            uint32_t a = args->constraints[i].body_a;
+            uint32_t b = args->constraints[i].body_b;
+            if (a >= args->body_count || b >= args->body_count) { continue; }
+            if (phys_body_is_static(&args->bodies[a])) { continue; }
+            if (phys_body_is_static(&args->bodies[b])) { continue; }
+            phys_uf_union(args->islands_out, a, b);
+        }
+    } else {
+        /* Two-pass merge with size cap.
+         *
+         * Pass 1 (strong edges): merge pairs where at least one body
+         * has significant velocity, subject to the size cap.  These
+         * represent active collisions that need coupled solving.
+         *
+         * Pass 2 (weak edges): merge remaining pairs (both bodies
+         * near rest) only if the merged island stays within cap.
+         * Resting chains naturally fragment here. */
 
-        phys_uf_union(args->islands_out, a, b);
+        /* Pass 1: strong edges first. */
+        for (uint32_t i = 0; i < args->constraint_count; ++i) {
+            uint32_t a = args->constraints[i].body_a;
+            uint32_t b = args->constraints[i].body_b;
+            if (a >= args->body_count || b >= args->body_count) { continue; }
+            if (phys_body_is_static(&args->bodies[a])) { continue; }
+            if (phys_body_is_static(&args->bodies[b])) { continue; }
+
+            if (is_strong_edge(args->bodies, a, b)) {
+                capped_union(args->islands_out, sizes, a, b, max_cap);
+            }
+        }
+
+        /* Pass 2: weak edges (both bodies near rest). */
+        for (uint32_t i = 0; i < args->constraint_count; ++i) {
+            uint32_t a = args->constraints[i].body_a;
+            uint32_t b = args->constraints[i].body_b;
+            if (a >= args->body_count || b >= args->body_count) { continue; }
+            if (phys_body_is_static(&args->bodies[a])) { continue; }
+            if (phys_body_is_static(&args->bodies[b])) { continue; }
+
+            /* Only process edges not already merged in pass 1. */
+            if (phys_uf_find(args->islands_out, a) ==
+                phys_uf_find(args->islands_out, b)) {
+                continue;
+            }
+
+            capped_union(args->islands_out, sizes, a, b, max_cap);
+        }
     }
 
     /* ── Step 3: Map roots → island indices ────────────────────── */

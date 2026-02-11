@@ -50,7 +50,7 @@
 
 #define DEMO_MAX_CLIENTS       4u
 #define DEMO_MAX_BODIES        1024u
-#define DEMO_TICK_HZ           60u
+#define DEMO_TICK_HZ           30u
 #define DEMO_SPAWN_INTERVAL_S  5.0
 #define DEMO_SPAWN_MIN         20u
 #define DEMO_SPAWN_MAX         50u
@@ -431,7 +431,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     /* Physics job system: parallel stages (broadphase, narrow, solve, etc). */
-    if (job_system_create(&ctx.phys_job_sys, 4u, 4096u, DEMO_FIBER_STACK,
+    if (job_system_create(&ctx.phys_job_sys, 6u, 4096u, DEMO_FIBER_STACK,
                           4096u, 0) != JOB_CREATE_OK) {
         fprintf(stderr, "error: job_system_create (phys) failed\n");
         return 1;
@@ -440,7 +440,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: job_system_start (phys) failed\n");
         return 1;
     }
-    printf("[server] job systems started (net=2 workers, phys=4 workers)\n");
+    printf("[server] job systems started (net=2 workers, phys=6 workers)\n");
 
     /* ── 2. Physics world ──────────────────────────────────────── */
     phys_world_config_t wcfg = phys_world_config_default();

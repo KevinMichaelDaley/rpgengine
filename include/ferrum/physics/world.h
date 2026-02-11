@@ -55,6 +55,7 @@ typedef struct phys_world_config {
     float    velocity_damping;         /**< Velocity fraction retained per second (0-1). */
     uint32_t island_color_threshold;   /**< Min constraints per island for graph coloring (0 = disabled). */
     float    speculative_margin;       /**< Max separation for speculative contacts (0 = disabled). */
+    uint32_t max_island_bodies;        /**< Max bodies per island for splitting (0 = unlimited). */
 } phys_world_config_t;
 
 /* ── World container ────────────────────────────────────────────── */

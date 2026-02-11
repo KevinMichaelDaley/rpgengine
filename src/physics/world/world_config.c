@@ -17,6 +17,7 @@ phys_world_config_t phys_world_config_default(void) {
         .sleep_delay_frames      = 60,
         .warmstart_decay         = 0.95f,
         .velocity_damping        = 0.96f,
+        .max_island_bodies       = 64,
     };
     return cfg;
 }

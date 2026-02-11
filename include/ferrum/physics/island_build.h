@@ -38,6 +38,7 @@ typedef struct phys_island_build_args {
     uint32_t body_count;                       /**< Total number of bodies. */
     struct phys_island_list *islands_out;       /**< Island list to populate. */
     struct phys_frame_arena *arena;             /**< Frame arena for allocations. */
+    uint32_t max_island_bodies;                /**< Max bodies per island (0 = unlimited). */
 } phys_island_build_args_t;
 
 /**

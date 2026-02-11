@@ -54,6 +54,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#endif
+
 /** Number of spatial grid hash buckets (must be power of 2). */
 #define GRID_CELL_COUNT 256
 
@@ -160,6 +164,10 @@ void phys_world_tick_parallel(phys_world_t *world,
         return;
     }
 
+#ifdef TRACY_ENABLE
+    TracyCZoneN(z_tick, "Phys.Tick.Total", true);
+#endif
+
     /* With <= 1 worker, the job system provides no parallelism and
      * its scheduling order may differ from the sequential pipeline.
      * Fall back to the sequential tick so results match exactly. */
@@ -177,8 +185,14 @@ void phys_world_tick_parallel(phys_world_t *world,
     const uint32_t body_cap = world->body_pool.capacity;
 
     /* ── Stage 0: Step Plan [SYNC] ─────────────────────────────── */
+#ifdef TRACY_ENABLE
+    TracyCZoneN(z_plan, "Phys.Plan.Computing", true);
+#endif
     phys_step_plan_t plan;
     phys_stage_step_plan(&plan, world, game);
+#ifdef TRACY_ENABLE
+    TracyCZoneEnd(z_plan);
+#endif
 
     /* Build active flags array (mirrors body pool activity). */
     uint8_t *active = phys_frame_arena_alloc(&world->frame_arena,
@@ -192,6 +206,9 @@ void phys_world_tick_parallel(phys_world_t *world,
     }
 
     /* ── Stage 1: Tier Classification [PARALLEL] ───────────────── */
+#ifdef TRACY_ENABLE
+    TracyCZoneN(z_tier, "Phys.Tier.Classifying", true);
+#endif
     phys_tier_lists_t tier_lists;
     phys_stage_tier_classify_par(&(phys_tier_classify_args_t){
         .bodies         = world->body_pool.bodies_curr,
@@ -201,8 +218,14 @@ void phys_world_tick_parallel(phys_world_t *world,
         .tier_lists_out = &tier_lists,
         .arena          = &world->frame_arena,
     }, jobs);
+#ifdef TRACY_ENABLE
+    TracyCZoneEnd(z_tier);
+#endif
 
     /* ── Stage 2: Spatial Index Update [PARALLEL] ──────────────── */
+#ifdef TRACY_ENABLE
+    TracyCZoneN(z_spatial, "Phys.Spatial.Updating", true);
+#endif
     phys_spatial_grid_t grid;
     phys_spatial_grid_init(&grid, GRID_CELL_COUNT, GRID_CELL_SIZE,
                            &world->frame_arena);
@@ -238,8 +261,14 @@ void phys_world_tick_parallel(phys_world_t *world,
             }, jobs, &world->frame_arena);
         }
     }
+#ifdef TRACY_ENABLE
+    TracyCZoneEnd(z_spatial);
+#endif
 
     /* ── Stage 3: Halo Closure [SYNC] (once per tick) ──────────── */
+#ifdef TRACY_ENABLE
+    TracyCZoneN(z_halo, "Phys.Halo.Closing", true);
+#endif
     phys_stage_halo_closure(&(phys_halo_closure_args_t){
         .bodies          = world->body_pool.bodies_curr,
         .aabbs           = world->aabbs,
@@ -249,8 +278,14 @@ void phys_world_tick_parallel(phys_world_t *world,
         .dt              = plan.dt,
         .body_count      = body_cap,
     });
+#ifdef TRACY_ENABLE
+    TracyCZoneEnd(z_halo);
+#endif
 
     /* ── Stage 5: Broadphase [PARALLEL] (once per tick) ────────── */
+#ifdef TRACY_ENABLE
+    TracyCZoneN(z_broad, "Phys.Broad.FindingPairs", true);
+#endif
     uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
     if (max_pairs > body_cap * 4) {
         max_pairs = body_cap * 4 > 0 ? body_cap * 4 : 1;
@@ -275,6 +310,9 @@ void phys_world_tick_parallel(phys_world_t *world,
             .pair_count_out = &pair_count,
         }, jobs, &world->frame_arena);
     }
+#ifdef TRACY_ENABLE
+    TracyCZoneEnd(z_broad);
+#endif
 
     /* ── Per-tier substep loop ─────────────────────────────────── */
     /* Compute max substeps across all tiers.  Only narrowphase,
@@ -327,6 +365,9 @@ void phys_world_tick_parallel(phys_world_t *world,
         uint32_t candidate_count = 0;
 
         if (candidates && pair_count > 0) {
+#ifdef TRACY_ENABLE
+            TracyCZoneN(z_narrow, "Phys.Narrow.Testing", true);
+#endif
             phys_stage_narrowphase_par(&(phys_narrowphase_args_t){
                 .bodies              = world->body_pool.bodies_curr,
                 .colliders           = world->colliders,
@@ -339,6 +380,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .candidate_count_out = &candidate_count,
                 .max_candidates      = max_candidates,
             }, jobs, &world->frame_arena);
+#ifdef TRACY_ENABLE
+            TracyCZoneEnd(z_narrow);
+#endif
         }
         uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
         manifolds = phys_frame_arena_alloc(
@@ -348,6 +392,9 @@ void phys_world_tick_parallel(phys_world_t *world,
         manifold_count = 0;
 
         if (manifolds && candidate_count > 0) {
+#ifdef TRACY_ENABLE
+            TracyCZoneN(z_mani, "Phys.Manifold.Building", true);
+#endif
             phys_stage_manifold_build_par(&(phys_manifold_build_args_t){
                 .candidates         = candidates,
                 .candidate_count    = candidate_count,
@@ -358,6 +405,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .tick               = world->tick_count,
                 .bodies             = world->body_pool.bodies_curr,
             }, jobs, &world->frame_arena);
+#ifdef TRACY_ENABLE
+            TracyCZoneEnd(z_mani);
+#endif
         }
         uint32_t hint_count = manifold_count > 0 ? manifold_count : 1;
         phys_stab_hint_t *hints = phys_frame_arena_alloc(
@@ -366,6 +416,9 @@ void phys_world_tick_parallel(phys_world_t *world,
             _Alignof(phys_stab_hint_t));
 
         if (hints && manifold_count > 0) {
+#ifdef TRACY_ENABLE
+            TracyCZoneN(z_stab, "Phys.Stab.Computing", true);
+#endif
             phys_stage_stabilization_par(&(phys_stabilization_args_t){
                 .manifolds                  = manifolds,
                 .manifold_count             = manifold_count,
@@ -375,6 +428,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .hints_out                  = hints,
                 .resting_velocity_threshold = 0.1f,
             }, jobs, &world->frame_arena);
+#ifdef TRACY_ENABLE
+            TracyCZoneEnd(z_stab);
+#endif
         }
         uint32_t max_constraints = manifold_count * PHYS_MAX_MANIFOLD_POINTS;
         if (max_constraints == 0) {
@@ -387,6 +443,9 @@ void phys_world_tick_parallel(phys_world_t *world,
         constraint_count = 0;
 
         if (constraints && manifold_count > 0) {
+#ifdef TRACY_ENABLE
+            TracyCZoneN(z_cbuild, "Phys.Constraint.Building", true);
+#endif
             phys_stage_constraint_build_par(&(phys_constraint_build_args_t){
                 .manifolds            = manifolds,
                 .hints                = hints,
@@ -399,6 +458,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .baumgarte            = world->config.baumgarte,
                 .slop                 = world->config.slop,
             }, jobs, &world->frame_arena);
+#ifdef TRACY_ENABLE
+            TracyCZoneEnd(z_cbuild);
+#endif
         }
 
 
@@ -427,6 +489,9 @@ void phys_world_tick_parallel(phys_world_t *world,
             }
         }
 
+#ifdef TRACY_ENABLE
+        TracyCZoneN(z_island, "Phys.Island.Building", true);
+#endif
         phys_stage_island_build(&(phys_island_build_args_t){
             .constraints      = constraints,
             .constraint_count = constraint_count,
@@ -434,7 +499,11 @@ void phys_world_tick_parallel(phys_world_t *world,
             .body_count       = body_cap,
             .islands_out      = &islands,
             .arena            = &world->frame_arena,
+            .max_island_bodies = world->config.max_island_bodies,
         });
+#ifdef TRACY_ENABLE
+        TracyCZoneEnd(z_island);
+#endif
 
         /* Mark islands whose tier needs fewer substeps than the
          * current iteration.  Tier promotion guarantees all bodies
@@ -467,6 +536,9 @@ void phys_world_tick_parallel(phys_world_t *world,
             memset(velocities, 0,
                    (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
 
+#ifdef TRACY_ENABLE
+            TracyCZoneN(z_tgs, "Phys.Solve.IteratingTGS", true);
+#endif
             phys_stage_tgs_solve_par(&(phys_tgs_solve_args_t){
                 .islands    = &islands,
                 .constraints = constraints,
@@ -481,6 +553,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .slop       = world->config.slop,
                 .tier_substep_counts = tier_substep_counts,
             }, jobs, &world->frame_arena);
+#ifdef TRACY_ENABLE
+            TracyCZoneEnd(z_tgs);
+#endif
         }
         } /* end if (!world->prediction_mode) */
 
@@ -511,6 +586,9 @@ void phys_world_tick_parallel(phys_world_t *world,
         }
 
         if (velocities) {
+#ifdef TRACY_ENABLE
+            TracyCZoneN(z_integ, "Phys.Integrate.Stepping", true);
+#endif
             phys_stage_integrate_par(&(phys_integrate_args_t){
                 .bodies_in              = world->body_pool.bodies_curr,
                 .velocities             = velocities,
@@ -529,6 +607,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .max_penetration        = body_max_pen,
                 .slop                   = world->config.slop,
             }, jobs, &world->frame_arena);
+#ifdef TRACY_ENABLE
+            TracyCZoneEnd(z_integ);
+#endif
         }
 
         if (!world->prediction_mode) {
@@ -540,6 +621,9 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         /* ── Stage 13: Cache Commit [SYNC] ─────────────────────── */
         if (constraints && constraint_count > 0) {
+#ifdef TRACY_ENABLE
+            TracyCZoneN(z_cache, "Phys.Cache.Committing", true);
+#endif
             phys_stage_cache_commit(&(phys_cache_commit_args_t){
                 .manifolds        = manifolds,
                 .constraints      = constraints,
@@ -551,6 +635,9 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .impact_threshold = world->impact_threshold,
                 .warmstart_decay  = world->config.warmstart_decay,
             });
+#ifdef TRACY_ENABLE
+            TracyCZoneEnd(z_cache);
+#endif
         }
 
         } /* end if (!world->prediction_mode) — 13 */
@@ -565,4 +652,8 @@ void phys_world_tick_parallel(phys_world_t *world,
     /* Expire old manifold cache entries (keep for 30 ticks). */
     phys_manifold_cache_expire(&world->manifold_cache,
                                (uint32_t)world->tick_count, 30);
+
+#ifdef TRACY_ENABLE
+    TracyCZoneEnd(z_tick);
+#endif
 }

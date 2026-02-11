@@ -17,7 +17,7 @@ ifeq ($(TRACY),1)
 	ifeq (,$(wildcard $(TRACY_CLIENT_LIB)))
 		$(error Tracy client library missing: $(TRACY_CLIENT_LIB) (build extern/tracy first))
 	endif
-	CFLAGS += -DTRACY_ENABLE -I$(TRACY_DIR)/public
+	CFLAGS += -DTRACY_ENABLE -DTRACY_ON_DEMAND -I$(TRACY_DIR)/public
 	LDFLAGS += -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free -Wl,--wrap=aligned_alloc -Wl,--wrap=posix_memalign
 	LDFLAGS += -L$(TRACY_BUILD_DIR) -lTracyClient -lstdc++ -ldl
 endif
@@ -183,6 +183,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p095_constraint_color_tests \
 	build/p096_tgs_coloring_tests \
 	build/p097_speculative_contact_tests \
+	build/p098_island_split_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -548,6 +549,9 @@ build/p096_tgs_coloring_tests: build/libheadless.a tests/p096_tgs_coloring_tests
 build/p097_speculative_contact_tests: build/libheadless.a tests/p097_speculative_contact_tests.c | build
 	$(CC) $(CFLAGS) tests/p097_speculative_contact_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p098_island_split_tests: build/libheadless.a tests/p098_island_split_tests.c | build
+	$(CC) $(CFLAGS) tests/p098_island_split_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -831,6 +835,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p095_constraint_color_tests \
 	&& ./build/p096_tgs_coloring_tests \
 	&& ./build/p097_speculative_contact_tests \
+	&& ./build/p098_island_split_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p007_net_rtt_retransmit_tests \
