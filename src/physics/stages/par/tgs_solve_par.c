@@ -287,20 +287,31 @@ static void solve_island(const tgs_solve_shared_t *shared,
     }
 }
 
-/* ── Job function ─────────────────────────────────────────────── */
+/* ── Job function: solve a range of small islands ─────────────── */
 
 /**
- * @brief Job function: solve a single island identified by batch->start.
+ * @brief Job function: solve multiple islands in one fiber.
+ *
+ * batch->start is the first index into small_island_indices[],
+ * batch->count is how many islands to solve.
+ * user_args points to a tgs_island_batch_ctx_t.
  */
-static void tgs_solve_island_job(void *data)
+typedef struct tgs_island_batch_ctx {
+    const tgs_solve_shared_t *shared;
+    const uint32_t           *island_indices; /**< Array of island indices. */
+} tgs_island_batch_ctx_t;
+
+static void tgs_solve_island_batch_job(void *data)
 {
     phys_job_batch_t *batch = data;
-    tgs_solve_shared_t *shared = batch->user_args;
+    tgs_island_batch_ctx_t *bctx = batch->user_args;
 
-    uint32_t island_idx = batch->start;
-    const phys_island_t *island = &shared->islands->islands[island_idx];
-
-    solve_island(shared, island);
+    for (uint32_t i = 0; i < batch->count; ++i) {
+        uint32_t island_idx = bctx->island_indices[batch->start + i];
+        const phys_island_t *island =
+            &bctx->shared->islands->islands[island_idx];
+        solve_island(bctx->shared, island);
+    }
 }
 
 /* ── Graph-colored parallel solve for a single large island ───── */
@@ -515,12 +526,12 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
         }
     }
 
-    /* Second pass: dispatch all small islands as one-job-per-island. */
+    /* Second pass: batch small islands into fewer fiber dispatches. */
     if (small_count > 0) {
-        phys_job_batch_t *small_batches = phys_frame_arena_alloc(
-            arena, small_count * sizeof(phys_job_batch_t),
-            _Alignof(phys_job_batch_t));
-        if (!small_batches) {
+        /* Collect small island indices into a contiguous array. */
+        uint32_t *small_indices = phys_frame_arena_alloc(
+            arena, small_count * sizeof(uint32_t), _Alignof(uint32_t));
+        if (!small_indices) {
             /* Arena exhausted — solve remaining islands inline. */
             for (uint32_t i = 0; i < island_count; ++i) {
                 const phys_island_t *island = &args->islands->islands[i];
@@ -531,34 +542,39 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
             return;
         }
 
-        /* Build batch list for small islands only. */
         uint32_t si = 0;
         for (uint32_t i = 0; i < island_count; ++i) {
-            const phys_island_t *island = &args->islands->islands[i];
-            if (island->constraint_count < threshold) {
-                small_batches[si].user_args = &shared;
-                small_batches[si].start     = i;
-                small_batches[si].count     = 1;
-                si++;
+            if (args->islands->islands[i].constraint_count < threshold) {
+                small_indices[si++] = i;
             }
         }
 
-        /* Dispatch + wait. We manually dispatch so each batch's start
-         * is the island index, not a sequential offset. */
-        if (small_count == 1) {
-            /* Single island — solve inline. */
-            tgs_solve_island_job(&small_batches[0]);
-        } else {
-            job_counter_destroy(&ctx->counters[PHYS_STAGE_TGS_SOLVE]);
-            job_counter_init(&ctx->counters[PHYS_STAGE_TGS_SOLVE], 0);
+        /* Batch context shared by all small-island jobs. */
+        tgs_island_batch_ctx_t bctx = {
+            .shared         = &shared,
+            .island_indices = small_indices,
+        };
 
-            for (uint32_t j = 0; j < small_count; ++j) {
-                job_dispatch_named(ctx->job_sys,
-                                   tgs_solve_island_job, &small_batches[j], 0,
-                                   &ctx->counters[PHYS_STAGE_TGS_SOLVE],
-                                   "phys:tgs_solve");
+        /* Batch size: group ~8 islands per fiber to reduce dispatch
+         * overhead while maintaining parallelism across workers. */
+        uint32_t batch_size = 8;
+        uint32_t num_batches = (small_count + batch_size - 1) / batch_size;
+        phys_job_batch_t *small_batches = phys_frame_arena_alloc(
+            arena, num_batches * sizeof(phys_job_batch_t),
+            _Alignof(phys_job_batch_t));
+        if (!small_batches) {
+            /* Arena exhausted — solve inline. */
+            for (uint32_t i = 0; i < small_count; ++i) {
+                const phys_island_t *island =
+                    &args->islands->islands[small_indices[i]];
+                solve_island(&shared, island);
             }
-            phys_wait_stage(ctx, PHYS_STAGE_TGS_SOLVE);
+            return;
         }
+
+        phys_dispatch_stage(ctx, PHYS_STAGE_TGS_SOLVE,
+                            tgs_solve_island_batch_job, &bctx,
+                            small_count, batch_size, small_batches);
+        phys_wait_stage(ctx, PHYS_STAGE_TGS_SOLVE);
     }
 }
