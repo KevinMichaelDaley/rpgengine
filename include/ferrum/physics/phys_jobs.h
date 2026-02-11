@@ -39,7 +39,8 @@ typedef enum phys_stage_id {
     PHYS_STAGE_XPBD_SOLVE      = 12,
     PHYS_STAGE_INTEGRATE       = 13,
     PHYS_STAGE_CACHE_COMMIT    = 14,
-    PHYS_STAGE_COUNT           = 15
+    PHYS_STAGE_COLLISION_FUSED = 15,  /**< Fused narrow→manifold→stab→constraint. */
+    PHYS_STAGE_COUNT           = 16
 } phys_stage_id_t;
 
 /**

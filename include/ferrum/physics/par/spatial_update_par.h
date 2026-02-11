@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
 /** Batch size for parallel spatial update: 512 bodies per job. */
-#define PHYS_SPATIAL_UPDATE_BATCH_SIZE 512u
+#define PHYS_SPATIAL_UPDATE_BATCH_SIZE 64u
 
 /**
  * @brief Execute the spatial update stage in parallel.

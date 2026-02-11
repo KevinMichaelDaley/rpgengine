@@ -69,8 +69,9 @@ static void integrate_batch_job(void *data) {
         /* Copy body from input to output. */
         *out = *in;
 
-        /* Skip static and kinematic bodies. */
-        if (phys_body_is_static(in) || phys_body_is_kinematic(in)) {
+        /* Skip static, kinematic, and sleeping bodies. */
+        if (phys_body_is_static(in) || phys_body_is_kinematic(in) ||
+            phys_body_is_sleeping(in)) {
             continue;
         }
 

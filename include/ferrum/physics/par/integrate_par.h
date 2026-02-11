@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 /** Number of bodies processed per parallel batch. */
-#define PHYS_INTEGRATE_BATCH_SIZE 512
+#define PHYS_INTEGRATE_BATCH_SIZE 64
 
 /**
  * @brief Parallel integration + sleep detection.

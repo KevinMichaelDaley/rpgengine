@@ -23,7 +23,7 @@ extern "C" {
 #endif
 
 /** Batch size for parallel constraint build: 32 manifolds per job. */
-#define PHYS_CONSTRAINT_BUILD_BATCH_SIZE 32u
+#define PHYS_CONSTRAINT_BUILD_BATCH_SIZE 64u
 
 /**
  * @brief Execute the constraint build stage in parallel.

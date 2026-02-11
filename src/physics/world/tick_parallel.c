@@ -42,10 +42,7 @@
 #include "ferrum/physics/par/tier_classify_par.h"
 #include "ferrum/physics/par/spatial_update_par.h"
 #include "ferrum/physics/par/broadphase_par.h"
-#include "ferrum/physics/par/narrowphase_par.h"
-#include "ferrum/physics/par/manifold_build_par.h"
-#include "ferrum/physics/par/stabilization_par.h"
-#include "ferrum/physics/par/constraint_build_par.h"
+#include "ferrum/physics/par/collision_fused_par.h"
 #include "ferrum/physics/par/tgs_solve_par.h"
 #include "ferrum/physics/par/integrate_par.h"
 
@@ -357,18 +354,27 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         if (!world->prediction_mode) {
 
-        uint32_t max_candidates = pair_count > 0 ? pair_count : 1;
-        phys_contact_candidate_t *candidates = phys_frame_arena_alloc(
+        /* ── Fused collision pipeline: narrow→manifold→stab→constraint ── */
+        uint32_t max_manifolds = pair_count > 0 ? pair_count : 1;
+        manifolds = phys_frame_arena_alloc(
             &world->frame_arena,
-            max_candidates * sizeof(phys_contact_candidate_t),
-            _Alignof(phys_contact_candidate_t));
-        uint32_t candidate_count = 0;
+            max_manifolds * sizeof(phys_manifold_t),
+            _Alignof(phys_manifold_t));
+        manifold_count = 0;
 
-        if (candidates && pair_count > 0) {
+        uint32_t max_constraints = pair_count * PHYS_MAX_MANIFOLD_POINTS;
+        if (max_constraints == 0) max_constraints = 1;
+        constraints = phys_frame_arena_alloc(
+            &world->frame_arena,
+            max_constraints * sizeof(phys_constraint_t),
+            _Alignof(phys_constraint_t));
+        constraint_count = 0;
+
+        if (manifolds && constraints && pair_count > 0) {
 #ifdef TRACY_ENABLE
-            TracyCZoneN(z_narrow, "Phys.Narrow.Testing", true);
+            TracyCZoneN(z_fused, "Phys.Collision.Fused", true);
 #endif
-            phys_stage_narrowphase_par(&(phys_narrowphase_args_t){
+            phys_stage_collision_fused_par(&(phys_collision_fused_args_t){
                 .bodies              = world->body_pool.bodies_curr,
                 .colliders           = world->colliders,
                 .spheres             = world->spheres,
@@ -376,90 +382,22 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .capsules            = world->capsules,
                 .pairs               = pairs,
                 .pair_count          = pair_count,
-                .candidates_out      = candidates,
-                .candidate_count_out = &candidate_count,
-                .max_candidates      = max_candidates,
-            }, jobs, &world->frame_arena);
-#ifdef TRACY_ENABLE
-            TracyCZoneEnd(z_narrow);
-#endif
-        }
-        uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
-        manifolds = phys_frame_arena_alloc(
-            &world->frame_arena,
-            max_manifolds * sizeof(phys_manifold_t),
-            _Alignof(phys_manifold_t));
-        manifold_count = 0;
-
-        if (manifolds && candidate_count > 0) {
-#ifdef TRACY_ENABLE
-            TracyCZoneN(z_mani, "Phys.Manifold.Building", true);
-#endif
-            phys_stage_manifold_build_par(&(phys_manifold_build_args_t){
-                .candidates         = candidates,
-                .candidate_count    = candidate_count,
-                .cache              = &world->manifold_cache,
-                .manifolds_out      = manifolds,
-                .manifold_count_out = &manifold_count,
-                .max_manifolds      = max_manifolds,
-                .tick               = world->tick_count,
-                .bodies             = world->body_pool.bodies_curr,
-            }, jobs, &world->frame_arena);
-#ifdef TRACY_ENABLE
-            TracyCZoneEnd(z_mani);
-#endif
-        }
-        uint32_t hint_count = manifold_count > 0 ? manifold_count : 1;
-        phys_stab_hint_t *hints = phys_frame_arena_alloc(
-            &world->frame_arena,
-            hint_count * sizeof(phys_stab_hint_t),
-            _Alignof(phys_stab_hint_t));
-
-        if (hints && manifold_count > 0) {
-#ifdef TRACY_ENABLE
-            TracyCZoneN(z_stab, "Phys.Stab.Computing", true);
-#endif
-            phys_stage_stabilization_par(&(phys_stabilization_args_t){
-                .manifolds                  = manifolds,
-                .manifold_count             = manifold_count,
-                .bodies                     = world->body_pool.bodies_curr,
-                .colliders                  = world->colliders,
-                .boxes                      = world->boxes,
-                .hints_out                  = hints,
+                .speculative_margin  = 0.0f,
+                .cache               = &world->manifold_cache,
+                .tick                = world->tick_count,
                 .resting_velocity_threshold = 0.1f,
-            }, jobs, &world->frame_arena);
-#ifdef TRACY_ENABLE
-            TracyCZoneEnd(z_stab);
-#endif
-        }
-        uint32_t max_constraints = manifold_count * PHYS_MAX_MANIFOLD_POINTS;
-        if (max_constraints == 0) {
-            max_constraints = 1;
-        }
-        constraints = phys_frame_arena_alloc(
-            &world->frame_arena,
-            max_constraints * sizeof(phys_constraint_t),
-            _Alignof(phys_constraint_t));
-        constraint_count = 0;
-
-        if (constraints && manifold_count > 0) {
-#ifdef TRACY_ENABLE
-            TracyCZoneN(z_cbuild, "Phys.Constraint.Building", true);
-#endif
-            phys_stage_constraint_build_par(&(phys_constraint_build_args_t){
-                .manifolds            = manifolds,
-                .hints                = hints,
-                .manifold_count       = manifold_count,
-                .bodies               = world->body_pool.bodies_curr,
-                .constraints_out      = constraints,
+                .dt                  = substep_dt,
+                .baumgarte           = world->config.baumgarte,
+                .slop                = world->config.slop,
+                .manifolds_out       = manifolds,
+                .manifold_count_out  = &manifold_count,
+                .max_manifolds       = max_manifolds,
+                .constraints_out     = constraints,
                 .constraint_count_out = &constraint_count,
-                .max_constraints      = max_constraints,
-                .dt                   = substep_dt,
-                .baumgarte            = world->config.baumgarte,
-                .slop                 = world->config.slop,
+                .max_constraints     = max_constraints,
             }, jobs, &world->frame_arena);
 #ifdef TRACY_ENABLE
-            TracyCZoneEnd(z_cbuild);
+            TracyCZoneEnd(z_fused);
 #endif
         }
 

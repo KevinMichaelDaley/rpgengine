@@ -19,7 +19,7 @@ extern "C" {
 #endif
 
 /** Number of bodies processed per parallel batch. */
-#define PHYS_TIER_CLASSIFY_BATCH_SIZE 1024
+#define PHYS_TIER_CLASSIFY_BATCH_SIZE 64
 
 /**
  * @brief Parallel tier classification — splits bodies across jobs.

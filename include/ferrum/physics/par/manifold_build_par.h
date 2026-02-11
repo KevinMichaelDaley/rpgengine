@@ -20,7 +20,7 @@ extern "C" {
 #endif
 
 /** Number of contact candidates processed per parallel batch. */
-#define PHYS_MANIFOLD_BUILD_BATCH_SIZE 32
+#define PHYS_MANIFOLD_BUILD_BATCH_SIZE 64
 
 /**
  * @brief Parallel manifold build — splits candidates across jobs.
