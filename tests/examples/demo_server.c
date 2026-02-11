@@ -415,8 +415,8 @@ int main(int argc, char **argv) {
     memset(&ctx, 0, sizeof(ctx));
 
     /* ── 1. Job system ─────────────────────────────────────────── */
-    if (job_system_create(&ctx.job_sys, 4u, 256u, DEMO_FIBER_STACK,
-                          64u, 0) != JOB_CREATE_OK) {
+    if (job_system_create(&ctx.job_sys, 4u, 4096u, DEMO_FIBER_STACK,
+                          4096u, 0) != JOB_CREATE_OK) {
         fprintf(stderr, "error: job_system_create failed\n");
         return 1;
     }

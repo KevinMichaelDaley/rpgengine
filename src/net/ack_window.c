@@ -9,12 +9,18 @@ static int sequence_more_recent(uint16_t a, uint16_t b) {
     return sequence_diff(a, b) < 32768u;
 }
 
-/** Shift the 256-bit bitfield left by `count` positions, then set bit 0. */
-static void shift_left_and_set_lsb_(uint64_t bits[NET_ACK_WINDOW_WORDS], uint16_t count) {
+/**
+ * Shift the 256-bit bitfield left by `count` positions, then mark the
+ * old ack (which was definitely received) at its new bit position.
+ *
+ * After shifting by `count`, the old ack sits at 1-based position `count`.
+ * Bit 0 (representing ack-1) is NOT set because that sequence may never
+ * have been received — only the old ack is guaranteed.
+ */
+static void shift_left_and_mark_old_ack_(uint64_t bits[NET_ACK_WINDOW_WORDS], uint16_t count) {
     if (count >= NET_ACK_WINDOW_BITS) {
-        /* Entire window is cleared; only bit 0 survives. */
+        /* Old ack is outside the window; clear everything. */
         memset(bits, 0, sizeof(uint64_t) * NET_ACK_WINDOW_WORDS);
-        bits[0] = 1u;
         return;
     }
 
@@ -38,8 +44,10 @@ static void shift_left_and_set_lsb_(uint64_t bits[NET_ACK_WINDOW_WORDS], uint16_
         }
     }
 
-    /* Set bit 0 (the ack-1 position). */
-    bits[0] |= 1u;
+    /* Mark the old ack at 1-based position `count`. */
+    unsigned idx = (count - 1u) / 64u;
+    unsigned bit = (count - 1u) % 64u;
+    bits[idx] |= ((uint64_t)1u << bit);
 }
 
 /** Test whether bit `pos` (1-based, 1..256) is set. */
@@ -89,7 +97,7 @@ int net_ack_window_receive(net_ack_window_t *window, uint16_t sequence) {
 
     if (sequence_more_recent(sequence, window->ack)) {
         uint16_t delta = sequence_diff(sequence, window->ack);
-        shift_left_and_set_lsb_(window->ack_bits, delta);
+        shift_left_and_mark_old_ack_(window->ack_bits, delta);
         window->ack = sequence;
         return NET_ACK_WINDOW_OK;
     }

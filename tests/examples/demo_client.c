@@ -412,6 +412,9 @@ int main(int argc, char **argv) {
     uint64_t next_diag_ms = now_ms_val() + 1000u;
     uint32_t client_tick = 0;
     uint64_t last_frame_ns = now_ns();
+    uint32_t dbg_batch_rx = 0;
+    uint32_t dbg_state_applied = 0;
+    uint32_t dbg_stream_frames = 0;
     uint8_t rx_buf[1500];
 
     printf("[client] entering main loop\n");
@@ -489,12 +492,23 @@ int main(int argc, char **argv) {
 
             /* Reliable stream frames: push into stream for reassembly. */
             if (schema_id == NET_REPL_SCHEMA_STREAM_FRAME) {
-                fr_rudp_stream_push_frame(rx_stream, payload, payload_size);
+                dbg_stream_frames++;
+                if (payload_size >= 4u) {
+                    uint16_t sseq = (uint16_t)(payload[0] | ((uint16_t)payload[1] << 8));
+                    bool ok = fr_rudp_stream_push_frame(rx_stream, payload, payload_size);
+                    if (!ok) {
+                        fprintf(stderr, "[client] push_frame REJECTED sseq=%u len=%zu\n",
+                                (unsigned)sseq, payload_size);
+                    }
+                } else {
+                    fprintf(stderr, "[client] STREAM_FRAME too short: %zu\n", payload_size);
+                }
                 continue;
             }
 
             /* Unreliable BODY_STATE_BATCH: decode and apply each entry. */
             if (schema_id == NET_REPL_SCHEMA_BODY_STATE_BATCH) {
+                dbg_batch_rx++;
                 uint16_t batch_count = 0u;
                 const uint8_t *entries = NULL;
                 if (net_repl_body_state_batch_decode(payload, payload_size,
@@ -526,6 +540,7 @@ int main(int argc, char **argv) {
                     };
                     quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
                     fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
+                    dbg_state_applied++;
                 }
             }
 
@@ -678,8 +693,16 @@ int main(int argc, char **argv) {
 
         /* ── Stage 6: Diagnostics ──────────────────────────────── */
         if (now_ms >= next_diag_ms) {
-            printf("[client] entities=%u cam=(%.1f, %.1f, %.1f)\n",
-                   entity_count, cam_pos.x, cam_pos.y, cam_pos.z);
+            printf("[client] entities=%u cam=(%.1f, %.1f, %.1f) batches=%u applied=%u stream_frames=%u\n",
+                   entity_count, cam_pos.x, cam_pos.y, cam_pos.z,
+                   dbg_batch_rx, dbg_state_applied, dbg_stream_frames);
+            if (entity_count > 1u) {
+                entity_view_t *e1 = &entities[1];
+                printf("[client] body1 interp: prev=(%.2f,%.2f,%.2f)@%.3f curr=(%.2f,%.2f,%.2f)@%.3f render_t=%.3f\n",
+                       e1->interp.prev_pos.x, e1->interp.prev_pos.y, e1->interp.prev_pos.z, e1->interp.prev_time_s,
+                       e1->interp.curr_pos.x, e1->interp.curr_pos.y, e1->interp.curr_pos.z, e1->interp.curr_time_s,
+                       now_time - CLIENT_RENDER_DELAY);
+            }
             next_diag_ms = now_ms + 2000u;
         }
 
