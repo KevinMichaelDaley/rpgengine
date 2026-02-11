@@ -79,6 +79,10 @@ typedef struct phys_tick_runner {
     /** Set to 1 by the thread when it has exited its loop. */
     atomic_int stopped;
 
+    /** Duration of the most recent physics tick in nanoseconds.
+     *  Written by the tick thread, read by the main thread. */
+    atomic_uint_fast64_t last_tick_duration_ns;
+
     /** Dedicated OS thread handle. */
     pthread_t thread;
 
@@ -137,6 +141,14 @@ void phys_tick_runner_stop(phys_tick_runner_t *r);
  * @return Number of completed ticks since start().
  */
 uint64_t phys_tick_runner_tick_id(const phys_tick_runner_t *r);
+
+/**
+ * @brief Read the duration of the most recent physics tick (non-blocking).
+ *
+ * @param r  Runner (NULL-safe, returns 0).
+ * @return Duration of the last completed tick in nanoseconds.
+ */
+uint64_t phys_tick_runner_last_tick_ns(const phys_tick_runner_t *r);
 
 /* ── Backward compatibility (kick/done/consume API) ─────────────── */
 /* These thin wrappers exist so existing callers don't break.

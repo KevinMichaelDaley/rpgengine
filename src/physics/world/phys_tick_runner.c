@@ -69,7 +69,12 @@ static void *tick_thread_fn_(void *user_data) {
         }
 
         /* Run one physics tick (dispatches parallel jobs to workers). */
+        uint64_t tick_start_ns = runner_clock_ns_();
         phys_world_tick_parallel(r->world, r->game_state, r->jobs);
+        uint64_t tick_end_ns = runner_clock_ns_();
+        atomic_store_explicit(&r->last_tick_duration_ns,
+                              tick_end_ns - tick_start_ns,
+                              memory_order_relaxed);
 
         /* Drain corrections after tick. */
         if (r->correction_channel) {
@@ -132,6 +137,12 @@ uint64_t phys_tick_runner_tick_id(const phys_tick_runner_t *r) {
     if (!r) { return 0; }
     return atomic_load_explicit(
         &((phys_tick_runner_t *)r)->completed_ticks, memory_order_acquire);
+}
+
+uint64_t phys_tick_runner_last_tick_ns(const phys_tick_runner_t *r) {
+    if (!r) { return 0; }
+    return atomic_load_explicit(
+        &((phys_tick_runner_t *)r)->last_tick_duration_ns, memory_order_relaxed);
 }
 
 /* ── Backward compatibility wrappers ─────────────────────────────── */

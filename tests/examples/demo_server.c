@@ -633,9 +633,11 @@ int main(int argc, char **argv) {
         uint64_t tick_id = fr_server_tick_loop_tick_id(&ctx.tick_loop);
         if (tick_id > 0 && tick_id % (DEMO_TICK_HZ * 5u) == 0) {
             uint64_t phys_tick = phys_tick_runner_tick_id(&ctx.tick_runner);
-            printf("[server] tick=%lu phys=%lu clients=%u entities=%u\n",
+            uint64_t tick_ns = phys_tick_runner_last_tick_ns(&ctx.tick_runner);
+            printf("[server] tick=%lu phys=%lu clients=%u entities=%u tick_us=%lu\n",
                    (unsigned long)tick_id, (unsigned long)phys_tick,
-                   ctx.clients_connected, ctx.total_spawned);
+                   ctx.clients_connected, ctx.total_spawned,
+                   (unsigned long)(tick_ns / 1000u));
         }
 
         /* Yield to avoid busy spin. */
