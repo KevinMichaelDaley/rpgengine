@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ferrum/net/replication/body_state.h"
+#include "ferrum/net/replication/body_state_batch.h"
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/welcome.h"
 #include "ferrum/net/rudp/peer.h"
@@ -247,20 +248,28 @@ static int test_body_state_broadcast_sends_and_quantizes(void) {
 
     ASSERT_EQ_INT(0, setup_connected_client_(t, rt, pump, bcast, cl));
 
-    /* Tick 1: expect one BODY_STATE message with correct quantization. */
+    /* Tick 1: expect one BODY_STATE_BATCH message with correct quantization. */
     transport_advance_ms_(t, 1u);
     ASSERT_EQ_INT(0, drive_one_tick_(t, rt, pump, bcast, 1u, cl));
 
     uint16_t schema = 0u;
-    uint8_t payload[NET_REPL_BODY_STATE_PAYLOAD_SIZE];
-    size_t payload_len = sizeof(payload);
-    ASSERT_TRUE(fr_test_client_pop_unreliable(cl, &schema, payload, &payload_len));
-    ASSERT_EQ_U16(NET_REPL_SCHEMA_BODY_STATE, schema);
-    ASSERT_EQ_INT((int)NET_REPL_BODY_STATE_PAYLOAD_SIZE, (int)payload_len);
+    uint8_t raw_payload[NET_REPL_BODY_STATE_BATCH_MAX_SIZE];
+    size_t raw_payload_len = sizeof(raw_payload);
+    ASSERT_TRUE(fr_test_client_pop_unreliable(cl, &schema, raw_payload, &raw_payload_len));
+    ASSERT_EQ_U16(NET_REPL_SCHEMA_BODY_STATE_BATCH, schema);
+
+    uint16_t batch_count = 0u;
+    const uint8_t *entries = NULL;
+    ASSERT_EQ_INT(NET_REPL_OK,
+                  net_repl_body_state_batch_decode(raw_payload, raw_payload_len,
+                                                   &batch_count, &entries));
+    ASSERT_EQ_INT(1, (int)batch_count);
 
     net_repl_body_state_t st;
     memset(&st, 0, sizeof(st));
-    ASSERT_EQ_INT(NET_REPL_OK, net_repl_body_state_decode(&st, payload, payload_len));
+    ASSERT_EQ_INT(NET_REPL_OK,
+                  net_repl_body_state_decode(&st, entries,
+                                             NET_REPL_BODY_STATE_PAYLOAD_SIZE));
     ASSERT_EQ_U16(1u, st.server_tick);
     ASSERT_EQ_U16((uint16_t)body_idx, st.body_id);
     ASSERT_EQ_INT(1235, st.pos_mm.x_mm);
@@ -381,23 +390,35 @@ static int test_body_state_broadcast_tiered_rate(void) {
 
         for (;;) {
             uint16_t schema = 0u;
-            uint8_t payload[NET_REPL_BODY_STATE_PAYLOAD_SIZE];
-            size_t payload_len = sizeof(payload);
-            if (!fr_test_client_pop_unreliable(cl, &schema, payload, &payload_len)) {
+            uint8_t raw_payload[NET_REPL_BODY_STATE_BATCH_MAX_SIZE];
+            size_t raw_payload_len = sizeof(raw_payload);
+            if (!fr_test_client_pop_unreliable(cl, &schema, raw_payload, &raw_payload_len)) {
                 break;
             }
-            ASSERT_EQ_U16(NET_REPL_SCHEMA_BODY_STATE, schema);
+            ASSERT_EQ_U16(NET_REPL_SCHEMA_BODY_STATE_BATCH, schema);
 
-            net_repl_body_state_t st;
-            memset(&st, 0, sizeof(st));
-            ASSERT_EQ_INT(NET_REPL_OK, net_repl_body_state_decode(&st, payload, payload_len));
+            uint16_t batch_count = 0u;
+            const uint8_t *entries = NULL;
+            ASSERT_EQ_INT(NET_REPL_OK,
+                          net_repl_body_state_batch_decode(raw_payload, raw_payload_len,
+                                                           &batch_count, &entries));
 
-            if (st.body_id == (uint16_t)b0) {
-                got0++;
-            } else if (st.body_id == (uint16_t)b1) {
-                got1++;
-            } else {
-                TEST_FAIL("unexpected body_id %u", (unsigned)st.body_id);
+            for (uint16_t bi = 0u; bi < batch_count; ++bi) {
+                net_repl_body_state_t st;
+                memset(&st, 0, sizeof(st));
+                ASSERT_EQ_INT(NET_REPL_OK,
+                              net_repl_body_state_decode(
+                                  &st,
+                                  entries + (size_t)bi * NET_REPL_BODY_STATE_PAYLOAD_SIZE,
+                                  NET_REPL_BODY_STATE_PAYLOAD_SIZE));
+
+                if (st.body_id == (uint16_t)b0) {
+                    got0++;
+                } else if (st.body_id == (uint16_t)b1) {
+                    got1++;
+                } else {
+                    TEST_FAIL("unexpected body_id %u", (unsigned)st.body_id);
+                }
             }
         }
     }

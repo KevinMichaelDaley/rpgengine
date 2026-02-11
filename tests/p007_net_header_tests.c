@@ -37,7 +37,8 @@ static int test_header_roundtrip(void) {
         .protocol_id = 0x11223344u,
         .sequence = 0x1234u,
         .ack = 0x5678u,
-        .ack_bits = 0x90ABCDEFu
+        .ack_bits = {0x90ABCDEFull, 0x1122334455667788ull,
+                     0xAABBCCDDEEFF0011ull, 0xDEADBEEFCAFEBABEull}
     };
     uint8_t buffer[NET_PACKET_HEADER_SIZE];
     ASSERT_INT_EQ(NET_PACKET_HEADER_OK, net_packet_header_encode(&header, buffer, sizeof(buffer)));
@@ -47,7 +48,10 @@ static int test_header_roundtrip(void) {
     ASSERT_UINT_EQ(header.protocol_id, decoded.protocol_id);
     ASSERT_UINT_EQ(header.sequence, decoded.sequence);
     ASSERT_UINT_EQ(header.ack, decoded.ack);
-    ASSERT_UINT_EQ(header.ack_bits, decoded.ack_bits);
+    ASSERT_UINT_EQ(header.ack_bits[0], decoded.ack_bits[0]);
+    ASSERT_UINT_EQ(header.ack_bits[1], decoded.ack_bits[1]);
+    ASSERT_UINT_EQ(header.ack_bits[2], decoded.ack_bits[2]);
+    ASSERT_UINT_EQ(header.ack_bits[3], decoded.ack_bits[3]);
     return 0;
 }
 
@@ -56,16 +60,20 @@ static int test_header_byte_order_layout(void) {
         .protocol_id = 0x01020304u,
         .sequence = 0x0506u,
         .ack = 0x0708u,
-        .ack_bits = 0x0A0B0C0Du
+        .ack_bits = {0x0A0B0C0D0E0F1011ull, 0x1213141516171819ull,
+                     0x1A1B1C1D1E1F2021ull, 0x2223242526272829ull}
     };
     uint8_t buffer[NET_PACKET_HEADER_SIZE];
     ASSERT_INT_EQ(NET_PACKET_HEADER_OK, net_packet_header_encode(&header, buffer, sizeof(buffer)));
 
     const uint8_t expected[] = {
-        0x01u, 0x02u, 0x03u, 0x04u,
-        0x05u, 0x06u,
-        0x07u, 0x08u,
-        0x0Au, 0x0Bu, 0x0Cu, 0x0Du
+        0x01u, 0x02u, 0x03u, 0x04u,  /* protocol_id */
+        0x05u, 0x06u,                /* sequence */
+        0x07u, 0x08u,                /* ack */
+        0x0Au, 0x0Bu, 0x0Cu, 0x0Du, 0x0Eu, 0x0Fu, 0x10u, 0x11u, /* ack_bits[0] */
+        0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u, 0x18u, 0x19u, /* ack_bits[1] */
+        0x1Au, 0x1Bu, 0x1Cu, 0x1Du, 0x1Eu, 0x1Fu, 0x20u, 0x21u, /* ack_bits[2] */
+        0x22u, 0x23u, 0x24u, 0x25u, 0x26u, 0x27u, 0x28u, 0x29u, /* ack_bits[3] */
     };
     ASSERT_TRUE(sizeof(expected) == NET_PACKET_HEADER_SIZE);
     ASSERT_TRUE(memcmp(expected, buffer, NET_PACKET_HEADER_SIZE) == 0);
@@ -77,7 +85,7 @@ static int test_encode_rejects_short_buffer(void) {
         .protocol_id = 0xAABBCCDDu,
         .sequence = 0x0102u,
         .ack = 0x0304u,
-        .ack_bits = 0x05060708u
+        .ack_bits = {0x05060708u}
     };
     uint8_t buffer[NET_PACKET_HEADER_SIZE - 1u];
     memset(buffer, 0xCD, sizeof(buffer));
@@ -93,14 +101,14 @@ static int test_decode_rejects_short_buffer(void) {
         .protocol_id = 1u,
         .sequence = 2u,
         .ack = 3u,
-        .ack_bits = 4u
+        .ack_bits = {4u}
     };
 
     ASSERT_INT_EQ(NET_PACKET_HEADER_ERR_SHORT, net_packet_header_decode(&decoded, buffer, sizeof(buffer)));
     ASSERT_UINT_EQ(1u, decoded.protocol_id);
     ASSERT_UINT_EQ(2u, decoded.sequence);
     ASSERT_UINT_EQ(3u, decoded.ack);
-    ASSERT_UINT_EQ(4u, decoded.ack_bits);
+    ASSERT_UINT_EQ(4u, decoded.ack_bits[0]);
     return 0;
 }
 

@@ -122,7 +122,8 @@ static int test_reliable_includes_current_ack_state(void) {
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&peer.recv_window, 101u));
 
     const uint16_t expect_ack = net_ack_window_ack(&peer.recv_window);
-    const uint32_t expect_bits = net_ack_window_ack_bits(&peer.recv_window);
+    uint64_t expect_bits[NET_ACK_WINDOW_WORDS];
+    net_ack_window_ack_bits_all(&peer.recv_window, expect_bits);
 
     struct cap c;
     memset(&c, 0, sizeof(c));
@@ -142,7 +143,7 @@ static int test_reliable_includes_current_ack_state(void) {
     ASSERT_INT_EQ(0, decode_header(&c.pkts[0], &header, &frame));
     ASSERT_INT_EQ((int)NET_RUDP_PROTOCOL_ID_P008, (int)header.protocol_id);
     ASSERT_INT_EQ((int)expect_ack, (int)header.ack);
-    ASSERT_U32_EQ(expect_bits, header.ack_bits);
+    ASSERT_U32_EQ((uint32_t)expect_bits[0], (uint32_t)header.ack_bits[0]);
     ASSERT_TRUE((frame.flags & NET_RUDP_WIRE_FLAG_RELIABLE) != 0u);
     return 0;
 }

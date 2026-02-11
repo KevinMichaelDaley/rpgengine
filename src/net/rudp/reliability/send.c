@@ -45,7 +45,7 @@ static int build_packet_(net_rudp_peer_t *peer,
     header.protocol_id = peer->protocol_id;
     header.sequence = peer->next_sequence;
     header.ack = net_ack_window_ack(&peer->recv_window);
-    header.ack_bits = net_ack_window_ack_bits(&peer->recv_window);
+    net_ack_window_ack_bits_all(&peer->recv_window, header.ack_bits);
 
     (void)now_ms;
 

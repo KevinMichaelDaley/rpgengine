@@ -19,15 +19,16 @@ extern "C" {
 /** Status: buffer too small. */
 #define NET_PACKET_HEADER_ERR_SHORT -2
 
-/** Fixed size in bytes of the packet header. */
-#define NET_PACKET_HEADER_SIZE 12u
+/** Fixed size in bytes of the packet header.
+ *  Layout: [protocol_id:4][sequence:2][ack:2][ack_bits:4×8=32] = 40 bytes. */
+#define NET_PACKET_HEADER_SIZE 40u
 
 /** Packet header fields in host byte order. */
 typedef struct net_packet_header {
     uint32_t protocol_id;
     uint16_t sequence;
     uint16_t ack;
-    uint32_t ack_bits;
+    uint64_t ack_bits[4]; /**< 256-bit ACK bitfield (4 × uint64_t). */
 } net_packet_header_t;
 
 /**

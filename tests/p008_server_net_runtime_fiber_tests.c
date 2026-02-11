@@ -129,7 +129,7 @@ static int build_join_packet(net_rudp_peer_t *client_peer,
     header.protocol_id = client_peer->protocol_id;
     header.sequence = client_peer->next_sequence;
     header.ack = net_ack_window_ack(&client_peer->recv_window);
-    header.ack_bits = net_ack_window_ack_bits(&client_peer->recv_window);
+    net_ack_window_ack_bits_all(&client_peer->recv_window, header.ack_bits);
     ASSERT_EQ_INT(0, net_packet_header_encode(&header, out_packet, out_cap));
 
     uint8_t *frame = out_packet + NET_PACKET_HEADER_SIZE;

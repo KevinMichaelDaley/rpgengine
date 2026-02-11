@@ -54,7 +54,7 @@
 #define DEMO_SPAWN_MIN         20u
 #define DEMO_SPAWN_MAX         50u
 #define DEMO_SPAWN_Y_LO        20.0f
-#define DEMO_SPAWN_Y_HI        40.0f
+#define DEMO_SPAWN_Y_HI        30.0f
 #define DEMO_SPAWN_AREA        10.0f
 #define DEMO_BOX_HALF          0.5f
 #define DEMO_BOX_MASS          1.0f
@@ -157,6 +157,11 @@ static bool get_client_out_topics_cb(void *user,
         ctx->net_rt, client_id, out_reliable, out_unreliable);
 }
 
+/* Maximum spawn messages to send per client per drain tick.
+ * This rate-limits the reliable pipe to prevent overwhelming the
+ * RUDP send window during large spawn bursts. */
+#define DEMO_SPAWN_SEND_RATE 8u
+
 /* ── Send BODY_SPAWN for all known bodies to a newly-joined client ── */
 
 static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
@@ -168,7 +173,11 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
     }
 
     uint32_t body_count = phys_world_body_count(&ctx->world);
+    uint32_t sent_this_tick = 0u;
     for (uint32_t bi = 0; bi < body_count; ++bi) {
+        if (sent_this_tick >= DEMO_SPAWN_SEND_RATE) {
+            break; /* Rate limit — remaining bodies picked up next drain. */
+        }
         const phys_body_t *body = phys_world_get_body(&ctx->world, bi);
         if (!body) {
             continue;
@@ -214,8 +223,13 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         wire[1] = (uint8_t)((NET_REPL_SCHEMA_BODY_SPAWN >> 8u) & 0xFFu);
         if (net_repl_body_spawn_encode(&spawn_msg, wire + 2u,
                                        NET_REPL_BODY_SPAWN_PAYLOAD_SIZE) == NET_REPL_OK) {
-            fr_topic_channel_push(reliable, wire, sizeof(wire));
-            ctx->spawned_to_client[idx] = 1u;
+            if (fr_topic_channel_push(reliable, wire, sizeof(wire))) {
+                ctx->spawned_to_client[idx] = 1u;
+                sent_this_tick++;
+            } else {
+                fprintf(stderr, "[server] WARN: reliable topic full for client %u body %u\n",
+                        client_id, bi);
+            }
         }
     }
 }
@@ -253,12 +267,27 @@ static void demo_spawn_box_rain(demo_ctx_t *ctx, uint32_t *rng) {
         return;
     }
 
+    /* Spawn boxes in vertical stacks (columns).
+     * Pick 1-2 random XZ positions, then stack boxes upward from SPAWN_Y_LO. */
+    uint32_t num_stacks = 1u + (xorshift32(rng) % 2u); /* 1 or 2 stacks */
+    float stack_x[2];
+    float stack_z[2];
+    for (uint32_t s = 0; s < num_stacks; ++s) {
+        stack_x[s] = randf(rng, -DEMO_SPAWN_AREA, DEMO_SPAWN_AREA);
+        stack_z[s] = randf(rng, -DEMO_SPAWN_AREA, DEMO_SPAWN_AREA);
+    }
+
     for (uint32_t i = 0; i < count; ++i) {
+        uint32_t stack_idx = i % num_stacks;
+        uint32_t layer = i / num_stacks;
+        float y = DEMO_BOX_HALF + (float)layer * (DEMO_BOX_HALF * 2.0f + 0.01f)
+                  + DEMO_SPAWN_Y_LO;
+
         phys_cmd_spawn_body_t spawn = {
             .position = {
-                randf(rng, -DEMO_SPAWN_AREA, DEMO_SPAWN_AREA),
-                randf(rng, DEMO_SPAWN_Y_LO, DEMO_SPAWN_Y_HI),
-                randf(rng, -DEMO_SPAWN_AREA, DEMO_SPAWN_AREA)
+                stack_x[stack_idx],
+                y,
+                stack_z[stack_idx]
             },
             .orientation = {0.0f, 0.0f, 0.0f, 1.0f},
             .linear_vel  = {0.0f, 0.0f, 0.0f},
@@ -277,7 +306,8 @@ static void demo_spawn_box_rain(demo_ctx_t *ctx, uint32_t *rng) {
     }
 
     ctx->total_spawned += count;
-    printf("[server] spawned %u boxes (total: %u)\n", count, ctx->total_spawned);
+    printf("[server] spawned %u boxes in %u stacks (total: %u)\n",
+           count, num_stacks, ctx->total_spawned);
 }
 
 /* ── Tick loop callbacks ────────────────────────────────────────── */
@@ -544,7 +574,7 @@ int main(int argc, char **argv) {
 
     /* ── 11. Main loop ─────────────────────────────────────────── */
     uint32_t rng = 12345u;
-    ctx.last_spawn_time = now_seconds();
+    ctx.last_spawn_time = 0.0;  /* Force immediate first spawn. */
     const double start_time = now_seconds();
     double last_step_time = now_seconds();
 

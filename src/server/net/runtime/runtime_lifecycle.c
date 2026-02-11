@@ -84,7 +84,7 @@ fr_server_net_runtime_t *fr_server_net_runtime_create(const fr_server_net_runtim
         /* Pre-allocate reliable send window.  The RUDP ACK window
          * covers ack + 32 ack_bits = 33 sequences, so 32 send slots
          * keeps all in-flight sequences within the ACK-able range. */
-        #define SEND_SLOTS_PER_CLIENT 32u
+        #define SEND_SLOTS_PER_CLIENT 256u
         rt->clients[i].send_slot_count = SEND_SLOTS_PER_CLIENT;
         rt->clients[i].send_slots = (net_rudp_send_slot_t *)calloc(
             SEND_SLOTS_PER_CLIENT, sizeof(net_rudp_send_slot_t));

@@ -102,7 +102,7 @@ static int test_ack_retire_send_slots(void) {
     memset(&header, 0, sizeof(header));
     header.protocol_id = NET_RUDP_PROTOCOL_ID_P008;
     header.ack = 101u;
-    header.ack_bits = 0x00000001u; /* delta=1 => ack seq=100 */
+    header.ack_bits[0] = 0x00000001ull; /* delta=1 => ack seq=100 */
 
     uint8_t dummy_payload_byte = 0u;
     net_rudp_wire_frame_view_t frame;

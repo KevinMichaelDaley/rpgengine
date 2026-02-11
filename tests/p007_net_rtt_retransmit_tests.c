@@ -80,13 +80,14 @@ static int fake_sendto(void *io_user, const net_udp_addr_t *to,
  *  We build it as if sent by 'sender', carrying ack/ack_bits that
  *  acknowledge sequences from 'receiver'. */
 static size_t build_ack_packet(net_rudp_peer_t *sender,
-                                uint16_t ack, uint32_t ack_bits,
+                                uint16_t ack, uint64_t ack_bits_word0,
                                 uint8_t *out, size_t out_cap) {
     net_packet_header_t hdr;
+    memset(&hdr, 0, sizeof(hdr));
     hdr.protocol_id = sender->protocol_id;
     hdr.sequence = sender->next_sequence;
     hdr.ack = ack;
-    hdr.ack_bits = ack_bits;
+    hdr.ack_bits[0] = ack_bits_word0;
 
     /* Encode a minimal unreliable frame with 1-byte payload. */
     uint8_t payload = 0xAA;

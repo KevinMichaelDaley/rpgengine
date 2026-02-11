@@ -42,7 +42,6 @@ int net_rudp_reliability_receive(net_rudp_peer_t *peer,
 
     /* Retire ACKed reliable sends and measure RTT. */
     uint16_t ack = header->ack;
-    uint32_t ack_bits = header->ack_bits;
     for (size_t i = 0u; i < peer->send_slot_count; ++i) {
         if (!peer->send_slots || !peer->send_slots[i].used) {
             continue;
@@ -53,9 +52,10 @@ int net_rudp_reliability_receive(net_rudp_peer_t *peer,
             acked = 1;
         } else {
             uint16_t delta = (uint16_t)(ack - seq);
-            if (delta >= 1u && delta <= 32u) {
-                uint32_t bit = 1u << (uint32_t)(delta - 1u);
-                if (ack_bits & bit) {
+            if (delta >= 1u && delta <= NET_ACK_WINDOW_BITS) {
+                unsigned word = (delta - 1u) / 64u;
+                unsigned bit  = (delta - 1u) % 64u;
+                if (header->ack_bits[word] & ((uint64_t)1u << bit)) {
                     acked = 1;
                 }
             }

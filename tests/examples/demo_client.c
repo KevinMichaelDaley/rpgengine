@@ -31,18 +31,18 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 
-#include "ferrum/net/client/runtime_rx.h"
-#include "ferrum/net/client/runtime_tx.h"
 #include "ferrum/net/ghost_table.h"
 #include "ferrum/net/prediction.h"
 #include "ferrum/net/quantization.h"
 #include "ferrum/net/replication/body_spawn.h"
 #include "ferrum/net/replication/body_state.h"
+#include "ferrum/net/replication/body_state_batch.h"
 #include "ferrum/net/replication/common.h"
 #include "ferrum/net/replication/interp/pose_interpolator.h"
 #include "ferrum/net/replication/join.h"
 #include "ferrum/net/replication/welcome.h"
 #include "ferrum/net/rudp/peer.h"
+#include "ferrum/net/stream.h"
 #include "ferrum/net/udp_socket.h"
 
 #include "ferrum/renderer/gl_loader.h"
@@ -346,6 +346,19 @@ int main(int argc, char **argv) {
     net_rudp_peer_init_with_storage(&peer, NET_RUDP_PROTOCOL_ID_P008, 50u,
                                     send_slots, send_slots_count);
 
+    /* Reliable stream reassembly for STREAM_FRAME messages from the server. */
+    fr_rudp_stream_config_t stream_cfg = {0};
+    stream_cfg.reliable_channels = 1u;
+    stream_cfg.reliable_slot_count = 512u;
+    stream_cfg.max_payload_size = 1400u;
+    fr_rudp_stream_t *rx_stream = fr_rudp_stream_create(&stream_cfg);
+    if (!rx_stream) {
+        fprintf(stderr, "error: stream create failed\n");
+        free(send_slots);
+        net_udp_socket_close(&sock);
+        return 1;
+    }
+
     net_repl_join_t join_msg;
     join_msg.client_nonce = (uint32_t)(now_ms_val() ^ (uint32_t)getpid());
     uint8_t join_payload[NET_REPL_JOIN_PAYLOAD_SIZE];
@@ -443,6 +456,7 @@ int main(int argc, char **argv) {
 
         /* ── Stage 2: Network receive ──────────────────────────── */
         net_rudp_peer_tick_resend(&peer, &sock, &server_addr, now_ms);
+        const double recv_time = now_s();
 
         /* Send keepalive/JOIN every 100ms. */
         if (now_ms >= next_keepalive_ms) {
@@ -452,7 +466,7 @@ int main(int argc, char **argv) {
             next_keepalive_ms = now_ms + 100u;
         }
 
-        /* Drain all pending packets. */
+        /* Drain all pending RUDP packets. */
         for (;;) {
             size_t rx_size = 0;
             int rc = net_udp_socket_recv(&sock, rx_buf, sizeof(rx_buf),
@@ -465,58 +479,57 @@ int main(int argc, char **argv) {
             uint16_t schema_id = 0;
             uint8_t payload[1472];
             size_t payload_size = 0;
-            if (net_rudp_peer_receive(&peer, rx_buf, rx_size, 0u,
+            int rudp_rc = net_rudp_peer_receive(&peer, rx_buf, rx_size, now_ms,
                                       &reliable, &schema_id,
                                       payload, sizeof(payload),
-                                      &payload_size) != NET_RUDP_OK) {
+                                      &payload_size);
+            if (rudp_rc != NET_RUDP_OK) {
                 continue;
             }
 
-            const double recv_time = now_s();
-
-            /* ── Stage 3: Process reliable events ──────────────── */
-            if (schema_id == NET_REPL_SCHEMA_BODY_SPAWN) {
-                net_repl_body_spawn_t sp;
-                if (net_repl_body_spawn_decode(&sp, payload,
-                                               payload_size) != NET_REPL_OK) {
-                    continue;
-                }
-
-                /* Already known? */
-                net_ghost_entity_t existing;
-                if (net_ghost_table_lookup(&ghosts, sp.body_id,
-                                           &existing) == NET_GHOST_OK) {
-                    continue;
-                }
-
-                if (entity_count >= CLIENT_MAX_BODIES) {
-                    continue;
-                }
-
-                uint32_t idx = entity_count++;
-                entity_view_t *e = &entities[idx];
-                e->body_id    = sp.body_id;
-                e->is_static  = (sp.flags & 1u) ? 1 : 0;
-                e->shape_type = sp.shape_type;
-                e->half_x     = (float)sp.half_x_mm / 1000.0f;
-                e->half_y     = (float)sp.half_y_mm / 1000.0f;
-                e->half_z     = (float)sp.half_z_mm / 1000.0f;
-                fr_pose_interpolator_reset(&e->interp);
-
-                /* Dequantize initial pose. */
-                vec3_t pos = {
-                    (float)sp.pos_mm.x_mm / 1000.0f,
-                    (float)sp.pos_mm.y_mm / 1000.0f,
-                    (float)sp.pos_mm.z_mm / 1000.0f,
-                };
-                quat_t rot = {sp.rot_x, sp.rot_y, sp.rot_z, sp.rot_w};
-                fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
-
-                net_ghost_entity_t ghost = {.index = idx, .generation = 1};
-                net_ghost_table_create(&ghosts, sp.body_id, ghost);
+            /* Reliable stream frames: push into stream for reassembly. */
+            if (schema_id == NET_REPL_SCHEMA_STREAM_FRAME) {
+                fr_rudp_stream_push_frame(rx_stream, payload, payload_size);
+                continue;
             }
 
-            /* ── Stage 4: Apply unreliable state updates ───────── */
+            /* Unreliable BODY_STATE_BATCH: decode and apply each entry. */
+            if (schema_id == NET_REPL_SCHEMA_BODY_STATE_BATCH) {
+                uint16_t batch_count = 0u;
+                const uint8_t *entries = NULL;
+                if (net_repl_body_state_batch_decode(payload, payload_size,
+                                                     &batch_count,
+                                                     &entries) != NET_REPL_OK) {
+                    continue;
+                }
+
+                for (uint16_t bi = 0u; bi < batch_count; ++bi) {
+                    net_repl_body_state_t bs;
+                    if (net_repl_body_state_decode(
+                            &bs,
+                            entries + (size_t)bi * NET_REPL_BODY_STATE_PAYLOAD_SIZE,
+                            NET_REPL_BODY_STATE_PAYLOAD_SIZE) != NET_REPL_OK) {
+                        continue;
+                    }
+
+                    net_ghost_entity_t ghost;
+                    if (net_ghost_table_lookup(&ghosts, bs.body_id,
+                                               &ghost) != NET_GHOST_OK) {
+                        continue;
+                    }
+
+                    entity_view_t *e = &entities[ghost.index];
+                    vec3_t pos = {
+                        (float)bs.pos_mm.x_mm / 1000.0f,
+                        (float)bs.pos_mm.y_mm / 1000.0f,
+                        (float)bs.pos_mm.z_mm / 1000.0f,
+                    };
+                    quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
+                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
+                }
+            }
+
+            /* Legacy: individual BODY_STATE (fallback). */
             if (schema_id == NET_REPL_SCHEMA_BODY_STATE) {
                 net_repl_body_state_t bs;
                 if (net_repl_body_state_decode(&bs, payload,
@@ -527,11 +540,10 @@ int main(int argc, char **argv) {
                 net_ghost_entity_t ghost;
                 if (net_ghost_table_lookup(&ghosts, bs.body_id,
                                            &ghost) != NET_GHOST_OK) {
-                    continue; /* state before spawn — drop */
+                    continue;
                 }
 
                 entity_view_t *e = &entities[ghost.index];
-
                 vec3_t pos = {
                     (float)bs.pos_mm.x_mm / 1000.0f,
                     (float)bs.pos_mm.y_mm / 1000.0f,
@@ -539,15 +551,77 @@ int main(int argc, char **argv) {
                 };
                 quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
                 fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
-
-                /* Reconcile prediction if this is a body we're tracking
-                 * for prediction (future: per-body prediction). */
             }
 
             if (schema_id == NET_REPL_SCHEMA_WELCOME) {
                 net_repl_welcome_t w;
                 net_repl_welcome_decode(&w, payload, payload_size);
                 printf("[client] WELCOME received (tick_hz=%u)\n", w.tick_hz);
+            }
+        }
+
+        /* Pop reassembled reliable messages from the stream.
+         * Each message is [schema_id:u16 LE][payload]. */
+        {
+            uint8_t stream_msg[1400];
+            for (;;) {
+                size_t msg_len = sizeof(stream_msg);
+                if (!fr_rudp_stream_pop(rx_stream, 0u, stream_msg, &msg_len)) {
+                    break;
+                }
+                if (msg_len < 2u) { continue; }
+
+                uint16_t inner_schema = (uint16_t)stream_msg[0]
+                                      | ((uint16_t)stream_msg[1] << 8u);
+                const uint8_t *inner_payload = stream_msg + 2u;
+                size_t inner_len = msg_len - 2u;
+
+                if (inner_schema == NET_REPL_SCHEMA_BODY_SPAWN) {
+                    net_repl_body_spawn_t sp;
+                    if (net_repl_body_spawn_decode(&sp, inner_payload,
+                                                   inner_len) != NET_REPL_OK) {
+                        continue;
+                    }
+
+                    net_ghost_entity_t existing;
+                    if (net_ghost_table_lookup(&ghosts, sp.body_id,
+                                               &existing) == NET_GHOST_OK) {
+                        continue;
+                    }
+
+                    if (entity_count >= CLIENT_MAX_BODIES) { continue; }
+
+                    uint32_t idx = entity_count++;
+                    entity_view_t *e = &entities[idx];
+                    e->body_id    = sp.body_id;
+                    e->is_static  = (sp.flags & 1u) ? 1 : 0;
+                    e->shape_type = sp.shape_type;
+                    e->half_x     = (float)sp.half_x_mm / 1000.0f;
+                    e->half_y     = (float)sp.half_y_mm / 1000.0f;
+                    e->half_z     = (float)sp.half_z_mm / 1000.0f;
+                    fr_pose_interpolator_reset(&e->interp);
+
+                    vec3_t pos = {
+                        (float)sp.pos_mm.x_mm / 1000.0f,
+                        (float)sp.pos_mm.y_mm / 1000.0f,
+                        (float)sp.pos_mm.z_mm / 1000.0f,
+                    };
+                    quat_t rot = {sp.rot_x, sp.rot_y, sp.rot_z, sp.rot_w};
+                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
+
+                    net_ghost_entity_t ghost = {.index = idx, .generation = 1};
+                    net_ghost_table_create(&ghosts, sp.body_id, ghost);
+
+                    printf("[client] SPAWN body=%u half=(%.2f,%.2f,%.2f)\n",
+                           sp.body_id, e->half_x, e->half_y, e->half_z);
+                }
+
+                if (inner_schema == NET_REPL_SCHEMA_WELCOME) {
+                    net_repl_welcome_t w;
+                    net_repl_welcome_decode(&w, inner_payload, inner_len);
+                    printf("[client] WELCOME received (tick_hz=%u)\n",
+                           w.tick_hz);
+                }
             }
         }
 
@@ -695,6 +769,7 @@ done:
         gl_shutdown(&gl);
     }
 
+    fr_rudp_stream_destroy(rx_stream);
     free(send_slots);
     net_udp_socket_close(&sock);
 

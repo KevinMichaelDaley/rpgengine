@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "ferrum/net/replication/body_state.h"
+#include "ferrum/net/replication/body_state_batch.h"
 #include "ferrum/server/physics/net/body_state_broadcast.h"
 
 struct fr_server_body_state_broadcast {
@@ -73,6 +74,50 @@ void fr_server_body_state_broadcast_destroy(fr_server_body_state_broadcast_t *b)
     free(b);
 }
 
+/**
+ * Flush a batch of encoded body states to all connected clients.
+ * Pushes a single [schema:u16 LE][batch_payload] message to each client's
+ * unreliable topic, drastically reducing per-body packet overhead.
+ */
+static void flush_batch_(fr_server_body_state_broadcast_t *b,
+                         uint8_t batch[][NET_REPL_BODY_STATE_PAYLOAD_SIZE],
+                         uint16_t count) {
+    if (count == 0u) {
+        return;
+    }
+
+    /* Encode the batch payload: [count:u16 LE][entries...] */
+    uint8_t batch_payload[NET_REPL_BODY_STATE_BATCH_MAX_SIZE];
+    size_t batch_len = 0u;
+    if (net_repl_body_state_batch_encode(
+            (const uint8_t (*)[NET_REPL_BODY_STATE_PAYLOAD_SIZE])batch,
+            count,
+            batch_payload, sizeof(batch_payload),
+            &batch_len) != NET_REPL_OK) {
+        return;
+    }
+
+    /* Wrap with schema prefix: [schema:u16 LE][batch_payload] */
+    uint8_t msg[2u + NET_REPL_BODY_STATE_BATCH_MAX_SIZE];
+    msg[0] = (uint8_t)(NET_REPL_SCHEMA_BODY_STATE_BATCH & 0xFFu);
+    msg[1] = (uint8_t)((NET_REPL_SCHEMA_BODY_STATE_BATCH >> 8u) & 0xFFu);
+    memcpy(msg + 2u, batch_payload, batch_len);
+    const size_t msg_len = 2u + batch_len;
+
+    for (uint16_t client_id = 0u; client_id < b->cfg.max_clients; ++client_id) {
+        fr_topic_channel_t *out_rel = NULL;
+        fr_topic_channel_t *out_unrel = NULL;
+        if (!b->cfg.get_client_out_topics_cb(b->cfg.io_user, client_id,
+                                              &out_rel, &out_unrel)) {
+            continue;
+        }
+        if (!out_unrel) {
+            continue;
+        }
+        (void)fr_topic_channel_push(out_unrel, msg, msg_len);
+    }
+}
+
 bool fr_server_body_state_broadcast_tick(fr_server_body_state_broadcast_t *b,
                                         uint16_t server_tick,
                                         uint64_t now_ms) {
@@ -82,6 +127,10 @@ bool fr_server_body_state_broadcast_tick(fr_server_body_state_broadcast_t *b,
 
     phys_world_t *world = b->cfg.world;
     const uint32_t cap = world->body_pool.capacity;
+
+    /* Accumulate encoded body states and flush in batches. */
+    uint8_t batch[NET_REPL_BODY_STATE_BATCH_MAX][NET_REPL_BODY_STATE_PAYLOAD_SIZE];
+    uint16_t batch_count = 0u;
 
     for (uint32_t body_idx = 0u; body_idx < cap; ++body_idx) {
         if (!phys_body_pool_is_active(&world->body_pool, body_idx)) {
@@ -124,28 +173,22 @@ bool fr_server_body_state_broadcast_tick(fr_server_body_state_broadcast_t *b,
         st.send_time_ms = (uint32_t)now_ms;
         st.flags = net_repl_body_state_set_tier(0u, tier);
 
-        uint8_t payload[NET_REPL_BODY_STATE_PAYLOAD_SIZE];
-        if (net_repl_body_state_encode(&st, payload, sizeof(payload)) != NET_REPL_OK) {
+        if (net_repl_body_state_encode(&st, batch[batch_count],
+                                       NET_REPL_BODY_STATE_PAYLOAD_SIZE)
+            != NET_REPL_OK) {
             continue;
         }
+        batch_count++;
 
-        uint8_t msg[2u + NET_REPL_BODY_STATE_PAYLOAD_SIZE];
-        msg[0] = (uint8_t)(NET_REPL_SCHEMA_BODY_STATE & 0xFFu);
-        msg[1] = (uint8_t)((NET_REPL_SCHEMA_BODY_STATE >> 8u) & 0xFFu);
-        memcpy(msg + 2u, payload, sizeof(payload));
-
-        for (uint16_t client_id = 0u; client_id < b->cfg.max_clients; ++client_id) {
-            fr_topic_channel_t *out_rel = NULL;
-            fr_topic_channel_t *out_unrel = NULL;
-            if (!b->cfg.get_client_out_topics_cb(b->cfg.io_user, client_id, &out_rel, &out_unrel)) {
-                continue;
-            }
-            if (!out_unrel) {
-                continue;
-            }
-            (void)fr_topic_channel_push(out_unrel, msg, sizeof(msg));
+        /* Flush when the batch is full. */
+        if (batch_count >= NET_REPL_BODY_STATE_BATCH_MAX) {
+            flush_batch_(b, batch, batch_count);
+            batch_count = 0u;
         }
     }
+
+    /* Flush remaining states. */
+    flush_batch_(b, batch, batch_count);
 
     return true;
 }

@@ -37,17 +37,17 @@ static int test_ack_bits_mapping_and_duplicates(void) {
 
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 100u));
     ASSERT_UINT_EQ(100u, net_ack_window_ack(&window));
-    ASSERT_UINT_EQ(0u, net_ack_window_ack_bits(&window));
+    ASSERT_UINT_EQ(0u, net_ack_window_ack_bits_word(&window, 0));
 
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 99u));
     ASSERT_UINT_EQ(100u, net_ack_window_ack(&window));
-    ASSERT_UINT_EQ(0x1u, net_ack_window_ack_bits(&window));
+    ASSERT_UINT_EQ(0x1u, net_ack_window_ack_bits_word(&window, 0));
 
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 98u));
-    ASSERT_UINT_EQ(0x3u, net_ack_window_ack_bits(&window));
+    ASSERT_UINT_EQ(0x3u, net_ack_window_ack_bits_word(&window, 0));
 
     ASSERT_INT_EQ(NET_ACK_WINDOW_DUPLICATE, net_ack_window_receive(&window, 99u));
-    ASSERT_UINT_EQ(0x3u, net_ack_window_ack_bits(&window));
+    ASSERT_UINT_EQ(0x3u, net_ack_window_ack_bits_word(&window, 0));
     return 0;
 }
 
@@ -58,9 +58,13 @@ static int test_out_of_window_is_ignored(void) {
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 100u));
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 99u));
 
-    ASSERT_INT_EQ(NET_ACK_WINDOW_OUT_OF_WINDOW, net_ack_window_receive(&window, 60u));
-    ASSERT_UINT_EQ(100u, net_ack_window_ack(&window));
-    ASSERT_UINT_EQ(0x1u, net_ack_window_ack_bits(&window));
+    /* 60 is only 40 behind 100 — within 256-bit window now. */
+    ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 60u));
+
+    /* Jump ahead so old sequences fall out of the 256-bit window. */
+    ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 500u));
+    /* 100 is 400 behind 500 → out of window. */
+    ASSERT_INT_EQ(NET_ACK_WINDOW_OUT_OF_WINDOW, net_ack_window_receive(&window, 100u));
     return 0;
 }
 
@@ -71,15 +75,15 @@ static int test_sequence_wraparound_updates(void) {
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 65534u));
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 65535u));
     ASSERT_UINT_EQ(65535u, net_ack_window_ack(&window));
-    ASSERT_UINT_EQ(0x1u, net_ack_window_ack_bits(&window));
+    ASSERT_UINT_EQ(0x1u, net_ack_window_ack_bits_word(&window, 0));
 
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 0u));
     ASSERT_UINT_EQ(0u, net_ack_window_ack(&window));
-    ASSERT_UINT_EQ(0x3u, net_ack_window_ack_bits(&window));
+    ASSERT_UINT_EQ(0x3u, net_ack_window_ack_bits_word(&window, 0));
 
     ASSERT_INT_EQ(NET_ACK_WINDOW_OK, net_ack_window_receive(&window, 1u));
     ASSERT_UINT_EQ(1u, net_ack_window_ack(&window));
-    ASSERT_UINT_EQ(0x7u, net_ack_window_ack_bits(&window));
+    ASSERT_UINT_EQ(0x7u, net_ack_window_ack_bits_word(&window, 0));
     return 0;
 }
 
