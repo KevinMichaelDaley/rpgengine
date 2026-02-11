@@ -1,11 +1,14 @@
 /**
  * @file tgs_solve_par.c
- * @brief Parallel TGS velocity solver with split impulse — one job per island.
+ * @brief Parallel TGS velocity solver with split impulse and graph coloring.
  *
- * Dispatches one job per island.  Each job runs the iterative
- * sequential impulse solver on a single island's constraints.
- * Islands access disjoint body indices, so no write contention
- * on the shared velocities array.
+ * Two dispatch strategies:
+ *   1. Small islands (< color_threshold constraints): one job per island,
+ *      sequential solve within each job.
+ *   2. Large islands (>= color_threshold): graph-color the constraints,
+ *      then for each solver iteration, dispatch same-color batches in
+ *      parallel with a barrier between each color.  Same-color constraints
+ *      share no bodies, so no write contention.
  *
  * Non-static functions: 1 (phys_stage_tgs_solve_par).
  */
@@ -13,15 +16,24 @@
 #include "ferrum/physics/par/tgs_solve_par.h"
 
 #include <math.h>
+#include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
+#include "ferrum/physics/constraint_color.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/phys_pool.h"
+#include "ferrum/job/counter.h"
+#include "ferrum/job/system.h"
 #include "ferrum/math/vec3.h"
 
 /** Minimum penetration excess to correct (avoids micro-jitter). */
 #define SPLIT_MIN_PHI 1e-6f
+
+/** Min constraints per island to use graph-colored parallel dispatch. */
+#define COLOR_THRESHOLD 16
 
 /* ── Shared context for all island jobs ────────────────────────── */
 
@@ -41,6 +53,22 @@ typedef struct tgs_solve_shared {
     float                     slop;         /**< Penetration slop threshold. */
     float                     inv_dt;       /**< 1 / substep dt. */
 } tgs_solve_shared_t;
+
+/**
+ * @brief Context for a single colored-constraint job.
+ *
+ * batch->start indexes into color_constraint_indices.
+ * batch->count is the number of constraints to solve.
+ */
+typedef struct tgs_color_shared {
+    phys_constraint_t *constraints;        /**< Full constraint array. */
+    const phys_body_t *bodies;             /**< Body array (read-only). */
+    phys_velocity_t   *velocities;         /**< Solver velocity workspace. */
+    phys_velocity_t   *pseudo_velocities;  /**< Split-impulse workspace (may be NULL). */
+    float              slop;               /**< Penetration slop threshold. */
+    float              inv_dt;             /**< 1 / substep dt. */
+    const uint32_t    *constraint_indices; /**< Global constraint indices for this color batch. */
+} tgs_color_shared_t;
 
 /* ── Solve a single Jacobian row (static helper) ──────────────── */
 
@@ -140,6 +168,67 @@ static void solve_position_row(phys_jacobian_row_t *row,
     pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
 }
 
+/* ── Solve a single constraint (used by colored job) ──────────── */
+
+/**
+ * @brief Solve one constraint: all rows including friction cone
+ *        and split-impulse position correction.
+ */
+static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
+{
+    phys_constraint_t *c = &shared->constraints[c_idx];
+
+    phys_velocity_t *va = &shared->velocities[c->body_a];
+    phys_velocity_t *vb = &shared->velocities[c->body_b];
+
+    float inv_mass_a = shared->bodies[c->body_a].inv_mass;
+    float inv_mass_b = shared->bodies[c->body_b].inv_mass;
+    const phys_vec3_t *inv_i_a = &shared->bodies[c->body_a].inv_inertia_diag;
+    const phys_vec3_t *inv_i_b = &shared->bodies[c->body_b].inv_inertia_diag;
+
+    /* Normal row. */
+    solve_row(&c->rows[0], va, vb,
+              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+
+    /* Split impulse position correction. */
+    if (shared->pseudo_velocities) {
+        solve_position_row(
+            &c->rows[0],
+            &shared->pseudo_velocities[c->body_a],
+            &shared->pseudo_velocities[c->body_b],
+            c->penetration, shared->slop, shared->inv_dt,
+            inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+    }
+
+    /* Friction cone. */
+    float friction_limit = c->friction * c->rows[0].lambda;
+    for (uint8_t r = 1; r < c->row_count; r++) {
+        c->rows[r].lambda_min = -friction_limit;
+        c->rows[r].lambda_max =  friction_limit;
+        solve_row(&c->rows[r], va, vb,
+                  inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+    }
+}
+
+/* ── Job function for colored constraint batch ───────────────── */
+
+/**
+ * @brief Job function: solve a batch of same-color constraints.
+ *
+ * batch->start is the offset into color_constraint_indices,
+ * batch->count is how many constraints in this batch.
+ */
+static void tgs_color_batch_job(void *data)
+{
+    phys_job_batch_t *batch = data;
+    tgs_color_shared_t *shared = batch->user_args;
+
+    for (uint32_t i = 0; i < batch->count; ++i) {
+        uint32_t c_idx = shared->constraint_indices[batch->start + i];
+        solve_one_full(shared, c_idx);
+    }
+}
+
 /* ── Solve a single island (static helper) ────────────────────── */
 
 /**
@@ -214,6 +303,140 @@ static void tgs_solve_island_job(void *data)
     solve_island(shared, island);
 }
 
+/* ── Graph-colored parallel solve for a single large island ───── */
+
+/**
+ * @brief Solve a large island using graph coloring for parallelism.
+ *
+ * Colors the island's constraints so same-color constraints share no
+ * bodies.  For each solver iteration, dispatches each color batch as
+ * parallel jobs with a barrier between colors.
+ *
+ * @return true if coloring succeeded, false to fall back to sequential.
+ */
+static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
+                                      const phys_island_t *island,
+                                      phys_job_context_t *ctx,
+                                      phys_frame_arena_t *arena)
+{
+    uint32_t n = island->constraint_count;
+    if (n == 0) { return true; }
+
+    /* Build contiguous constraint copy for coloring (coloring needs
+     * contiguous body_a/body_b indexing). */
+    phys_constraint_t *local = phys_frame_arena_alloc(
+        arena, n * sizeof(phys_constraint_t), _Alignof(phys_constraint_t));
+    if (!local) { return false; }
+
+    for (uint32_t ci = 0; ci < n; ++ci) {
+        local[ci] = shared->constraints[island->constraint_indices[ci]];
+    }
+
+    /* Color the local constraints. */
+    phys_color_result_t coloring;
+    if (phys_constraint_color(local, n, shared->islands->uf_size,
+                               arena, &coloring) != 0) {
+        return false;
+    }
+
+    /* Build per-color index lists (global constraint indices grouped
+     * by color for dispatch). */
+    uint32_t *color_counts = phys_frame_arena_alloc(
+        arena, coloring.num_colors * sizeof(uint32_t), _Alignof(uint32_t));
+    uint32_t *color_offsets = phys_frame_arena_alloc(
+        arena, coloring.num_colors * sizeof(uint32_t), _Alignof(uint32_t));
+    uint32_t *sorted_indices = phys_frame_arena_alloc(
+        arena, n * sizeof(uint32_t), _Alignof(uint32_t));
+    if (!color_counts || !color_offsets || !sorted_indices) { return false; }
+
+    memset(color_counts, 0, coloring.num_colors * sizeof(uint32_t));
+    for (uint32_t ci = 0; ci < n; ++ci) {
+        color_counts[coloring.colors[ci]]++;
+    }
+
+    /* Prefix sum for offsets. */
+    color_offsets[0] = 0;
+    for (uint32_t c = 1; c < coloring.num_colors; ++c) {
+        color_offsets[c] = color_offsets[c - 1] + color_counts[c - 1];
+    }
+
+    /* Fill sorted_indices: global constraint index grouped by color. */
+    uint32_t *fill = phys_frame_arena_alloc(
+        arena, coloring.num_colors * sizeof(uint32_t), _Alignof(uint32_t));
+    if (!fill) { return false; }
+    memcpy(fill, color_offsets, coloring.num_colors * sizeof(uint32_t));
+
+    for (uint32_t ci = 0; ci < n; ++ci) {
+        uint32_t color = coloring.colors[ci];
+        sorted_indices[fill[color]++] = island->constraint_indices[ci];
+    }
+
+    /* Allocate batch array (reused across colors/iterations). */
+    uint32_t max_batch_count = n; /* upper bound */
+    phys_job_batch_t *batches = phys_frame_arena_alloc(
+        arena, max_batch_count * sizeof(phys_job_batch_t),
+        _Alignof(phys_job_batch_t));
+    if (!batches) { return false; }
+
+    /* Shared context for colored constraint jobs. */
+    tgs_color_shared_t color_shared = {
+        .constraints      = shared->constraints,
+        .bodies           = shared->bodies,
+        .velocities       = shared->velocities,
+        .pseudo_velocities = shared->pseudo_velocities,
+        .slop             = shared->slop,
+        .inv_dt           = shared->inv_dt,
+        .constraint_indices = sorted_indices,
+    };
+
+    /* Solve: for each iteration, for each color, dispatch + barrier. */
+    for (uint32_t iter = 0; iter < shared->iterations; ++iter) {
+        for (uint32_t color = 0; color < coloring.num_colors; ++color) {
+            uint32_t count = color_counts[color];
+            if (count == 0) { continue; }
+
+            uint32_t offset = color_offsets[color];
+
+            if (count <= 4) {
+                /* Small color batch — solve inline, no dispatch overhead. */
+                for (uint32_t i = 0; i < count; ++i) {
+                    solve_one_full(&color_shared,
+                                   sorted_indices[offset + i]);
+                }
+                continue;
+            }
+
+            /* Dispatch same-color constraints as parallel jobs.
+             * Batch size of 4 constraints per job. */
+            uint32_t batch_size = 4;
+            uint32_t num_batches = (count + batch_size - 1) / batch_size;
+
+            /* Reset counter for this dispatch. */
+            job_counter_destroy(&ctx->counters[PHYS_STAGE_TGS_SOLVE]);
+            job_counter_init(&ctx->counters[PHYS_STAGE_TGS_SOLVE], 0);
+
+            uint32_t remaining = count;
+            for (uint32_t b = 0; b < num_batches; ++b) {
+                uint32_t bc = (remaining < batch_size) ? remaining : batch_size;
+                batches[b].user_args = &color_shared;
+                batches[b].start     = offset + b * batch_size;
+                batches[b].count     = bc;
+
+                job_dispatch_named(ctx->job_sys,
+                                   tgs_color_batch_job, &batches[b], 0,
+                                   &ctx->counters[PHYS_STAGE_TGS_SOLVE],
+                                   "phys:tgs_color");
+                remaining -= bc;
+            }
+
+            /* Barrier: wait for all same-color jobs before next color. */
+            job_wait_counter(&ctx->counters[PHYS_STAGE_TGS_SOLVE], 128);
+        }
+    }
+
+    return true;
+}
+
 /* ── Public API ───────────────────────────────────────────────── */
 
 void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
@@ -272,17 +495,70 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
         .inv_dt           = inv_dt,
     };
 
-    /* Allocate batch descriptors from the frame arena (one per island). */
-    phys_job_batch_t *batches = phys_frame_arena_alloc(
-        arena, island_count * sizeof(phys_job_batch_t),
-        _Alignof(phys_job_batch_t));
-    if (!batches) return;
+    /* Separate large islands (colored parallel) from small (one-job). */
+    uint32_t threshold = args->island_color_threshold;
+    if (threshold == 0) { threshold = COLOR_THRESHOLD; }
 
-    /* Dispatch one job per island: total_items = island_count, batch_size = 1. */
-    phys_dispatch_stage(ctx, PHYS_STAGE_TGS_SOLVE,
-                        tgs_solve_island_job, &shared,
-                        island_count, 1, batches);
+    /* First pass: solve large islands with colored parallel dispatch.
+     * Track which islands are small for the second pass. */
+    uint32_t small_count = 0;
+    for (uint32_t i = 0; i < island_count; ++i) {
+        const phys_island_t *island = &args->islands->islands[i];
+        if (island->constraint_count >= threshold) {
+            /* Large island: colored parallel solve. */
+            if (!solve_island_colored_par(&shared, island, ctx, arena)) {
+                /* Coloring failed — fall back to sequential for this island. */
+                solve_island(&shared, island);
+            }
+        } else {
+            small_count++;
+        }
+    }
 
-    /* Wait for all island jobs to complete. */
-    phys_wait_stage(ctx, PHYS_STAGE_TGS_SOLVE);
+    /* Second pass: dispatch all small islands as one-job-per-island. */
+    if (small_count > 0) {
+        phys_job_batch_t *small_batches = phys_frame_arena_alloc(
+            arena, small_count * sizeof(phys_job_batch_t),
+            _Alignof(phys_job_batch_t));
+        if (!small_batches) {
+            /* Arena exhausted — solve remaining islands inline. */
+            for (uint32_t i = 0; i < island_count; ++i) {
+                const phys_island_t *island = &args->islands->islands[i];
+                if (island->constraint_count < threshold) {
+                    solve_island(&shared, island);
+                }
+            }
+            return;
+        }
+
+        /* Build batch list for small islands only. */
+        uint32_t si = 0;
+        for (uint32_t i = 0; i < island_count; ++i) {
+            const phys_island_t *island = &args->islands->islands[i];
+            if (island->constraint_count < threshold) {
+                small_batches[si].user_args = &shared;
+                small_batches[si].start     = i;
+                small_batches[si].count     = 1;
+                si++;
+            }
+        }
+
+        /* Dispatch + wait. We manually dispatch so each batch's start
+         * is the island index, not a sequential offset. */
+        if (small_count == 1) {
+            /* Single island — solve inline. */
+            tgs_solve_island_job(&small_batches[0]);
+        } else {
+            job_counter_destroy(&ctx->counters[PHYS_STAGE_TGS_SOLVE]);
+            job_counter_init(&ctx->counters[PHYS_STAGE_TGS_SOLVE], 0);
+
+            for (uint32_t j = 0; j < small_count; ++j) {
+                job_dispatch_named(ctx->job_sys,
+                                   tgs_solve_island_job, &small_batches[j], 0,
+                                   &ctx->counters[PHYS_STAGE_TGS_SOLVE],
+                                   "phys:tgs_solve");
+            }
+            phys_wait_stage(ctx, PHYS_STAGE_TGS_SOLVE);
+        }
+    }
 }

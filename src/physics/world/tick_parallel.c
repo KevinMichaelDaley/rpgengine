@@ -552,6 +552,8 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .tick_dt    = plan.dt,
                 .slop       = world->config.slop,
                 .tier_substep_counts = tier_substep_counts,
+                .frame_arena = &world->frame_arena,
+                .island_color_threshold = world->config.island_color_threshold,
             }, jobs, &world->frame_arena);
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_tgs);
