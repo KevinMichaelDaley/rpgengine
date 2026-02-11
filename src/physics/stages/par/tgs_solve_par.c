@@ -33,7 +33,7 @@
 #define SPLIT_MIN_PHI 1e-6f
 
 /** Min constraints per island to use graph-colored parallel dispatch. */
-#define COLOR_THRESHOLD 16
+#define COLOR_THRESHOLD 128
 
 /* ── Shared context for all island jobs ────────────────────────── */
 
