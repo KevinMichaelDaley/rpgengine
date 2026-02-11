@@ -124,8 +124,9 @@ void phys_stage_spatial_update_par(const phys_spatial_update_args_t *args,
     }
 
     /* Phase A: dispatch parallel AABB computation. */
-    uint32_t num_batches = (args->body_count + PHYS_SPATIAL_UPDATE_BATCH_SIZE - 1)
-                           / PHYS_SPATIAL_UPDATE_BATCH_SIZE;
+    uint32_t batch_size = phys_batch_size(ctx, args->body_count,
+                                          PHYS_SPATIAL_UPDATE_BATCH_SIZE, 0);
+    uint32_t num_batches = (args->body_count + batch_size - 1) / batch_size;
 
     phys_job_batch_t *batches = phys_frame_arena_alloc(
         arena, num_batches * sizeof(phys_job_batch_t),
@@ -141,7 +142,7 @@ void phys_stage_spatial_update_par(const phys_spatial_update_args_t *args,
         spatial_aabb_job,
         (void *)(uintptr_t)args,
         args->body_count,
-        PHYS_SPATIAL_UPDATE_BATCH_SIZE,
+        batch_size,
         batches);
 
     /* Wait for all AABB jobs to finish. */

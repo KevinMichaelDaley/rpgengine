@@ -408,19 +408,19 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
 
             uint32_t offset = color_offsets[color];
 
-            if (count <= 4) {
-                /* Small color batch — solve inline, no dispatch overhead. */
+            /* Dynamic batch size for per-color dispatch. Inline
+             * threshold matches the serial fast path (1 batch). */
+            uint32_t batch_size = phys_batch_size(ctx, count, 8, 0);
+
+            /* If only one batch would result, solve inline. */
+            uint32_t num_batches = (count + batch_size - 1) / batch_size;
+            if (num_batches <= 1) {
                 for (uint32_t i = 0; i < count; ++i) {
                     solve_one_full(&color_shared,
                                    sorted_indices[offset + i]);
                 }
                 continue;
             }
-
-            /* Dispatch same-color constraints as parallel jobs.
-             * Batch size of 4 constraints per job. */
-            uint32_t batch_size = 4;
-            uint32_t num_batches = (count + batch_size - 1) / batch_size;
 
             /* Reset counter for this dispatch. */
             job_counter_destroy(&ctx->counters[PHYS_STAGE_TGS_SOLVE]);
@@ -429,9 +429,10 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
             uint32_t remaining = count;
             for (uint32_t b = 0; b < num_batches; ++b) {
                 uint32_t bc = (remaining < batch_size) ? remaining : batch_size;
-                batches[b].user_args = &color_shared;
-                batches[b].start     = offset + b * batch_size;
-                batches[b].count     = bc;
+                batches[b].user_args  = &color_shared;
+                batches[b].start      = offset + b * batch_size;
+                batches[b].count      = bc;
+                batches[b].batch_idx  = b;
 
                 job_dispatch_named(ctx->job_sys,
                                    tgs_color_batch_job, &batches[b], 0,
@@ -555,9 +556,8 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
             .island_indices = small_indices,
         };
 
-        /* Batch size: group ~8 islands per fiber to reduce dispatch
-         * overhead while maintaining parallelism across workers. */
-        uint32_t batch_size = 8;
+        /* Dynamic batch size — target 2× workers, floor at 8 islands. */
+        uint32_t batch_size = phys_batch_size(ctx, small_count, 8, 0);
         uint32_t num_batches = (small_count + batch_size - 1) / batch_size;
         phys_job_batch_t *small_batches = phys_frame_arena_alloc(
             arena, num_batches * sizeof(phys_job_batch_t),

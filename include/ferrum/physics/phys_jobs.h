@@ -57,6 +57,7 @@ typedef struct phys_job_batch {
     void     *user_args; /**< Caller-provided context pointer. */
     uint32_t  start;     /**< First item index for this batch. */
     uint32_t  count;     /**< Number of items in this batch.   */
+    uint32_t  batch_idx; /**< Zero-based batch ordinal.        */
 } phys_job_batch_t;
 
 /**
@@ -92,6 +93,24 @@ void phys_job_context_init(phys_job_context_t *ctx, job_system_t *sys);
  * @param ctx  Context to destroy (may be NULL).
  */
 void phys_job_context_destroy(phys_job_context_t *ctx);
+
+/**
+ * @brief Compute a dynamic batch size that targets ~(2 * worker_count) jobs.
+ *
+ * Avoids both extremes: too many tiny jobs (dispatch overhead) and too few
+ * jobs (poor parallelism).  The result is clamped to [min_batch, max_batch].
+ *
+ * @param ctx           Non-NULL physics job context (used to read worker_count).
+ * @param total_items   Total number of items to process.
+ * @param min_batch     Minimum items per batch (floor for parallelism).
+ * @param max_batch     Maximum items per batch (cap for stack-limited stages).
+ *                      Pass 0 to use total_items as the cap.
+ * @return Batch size to use with phys_dispatch_stage().
+ */
+uint32_t phys_batch_size(const phys_job_context_t *ctx,
+                         uint32_t total_items,
+                         uint32_t min_batch,
+                         uint32_t max_batch);
 
 /**
  * @brief Dispatch a physics stage as batched jobs.

@@ -322,7 +322,8 @@ void phys_stage_broadphase_par(const phys_broadphase_args_t *args,
     };
 
     /* Calculate number of batches. */
-    uint32_t batch_size = PHYS_BROADPHASE_PAR_BATCH_SIZE;
+    uint32_t batch_size = phys_batch_size(ctx, total_active,
+                                          PHYS_BROADPHASE_PAR_BATCH_SIZE, 0);
     uint32_t num_batches = (total_active + batch_size - 1) / batch_size;
 
     /* Allocate batch descriptors from the arena. */

@@ -31,7 +31,7 @@ extern "C" {
 #endif
 
 /** Batch size: broadphase pairs per fused job. */
-#define PHYS_COLLISION_FUSED_BATCH_SIZE 64
+#define PHYS_COLLISION_FUSED_BATCH_SIZE 128
 
 /**
  * @brief Arguments for the fused collision pipeline.

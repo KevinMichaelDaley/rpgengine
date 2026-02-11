@@ -219,7 +219,8 @@ void phys_stage_integrate_par(const phys_integrate_args_t *args,
     }
 
     uint32_t total = args->body_count;
-    uint32_t batch_size = PHYS_INTEGRATE_BATCH_SIZE;
+    uint32_t batch_size = phys_batch_size(ctx, total,
+                                          PHYS_INTEGRATE_BATCH_SIZE, 0);
     uint32_t num_batches = (total + batch_size - 1) / batch_size;
 
     /* Shared context lives on the stack — valid until wait completes. */

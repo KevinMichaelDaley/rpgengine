@@ -508,7 +508,8 @@ void phys_stage_collision_fused_par(const phys_collision_fused_args_t *args,
     job_spinlock_init(&shared.cache_mtx);
 
     /* Allocate batch descriptors. */
-    uint32_t batch_size = PHYS_COLLISION_FUSED_BATCH_SIZE;
+    uint32_t batch_size = phys_batch_size(ctx, args->pair_count,
+                                          64, PHYS_COLLISION_FUSED_BATCH_SIZE);
     uint32_t num_batches = (args->pair_count + batch_size - 1) / batch_size;
 
     phys_job_batch_t *batches = phys_frame_arena_alloc(

@@ -42,8 +42,8 @@ static void tier_classify_batch_job(void *data) {
     phys_job_batch_t *batch = data;
     tier_classify_shared_t *shared = batch->user_args;
 
-    /* Determine which batch index this is from the start offset. */
-    uint32_t batch_index = batch->start / PHYS_TIER_CLASSIFY_BATCH_SIZE;
+    /* Determine which batch index this is. */
+    uint32_t batch_index = batch->batch_idx;
     phys_tier_lists_t *local_lists = &shared->per_batch_lists[batch_index];
 
     uint32_t end = batch->start + batch->count;
@@ -109,8 +109,9 @@ void phys_stage_tier_classify_par(const phys_tier_classify_args_t *args,
         return;
     }
 
-    /* Calculate number of batches. */
-    uint32_t batch_size = PHYS_TIER_CLASSIFY_BATCH_SIZE;
+    /* Calculate dynamic batch size targeting 2× worker count jobs. */
+    uint32_t batch_size = phys_batch_size(ctx, body_count,
+                                          PHYS_TIER_CLASSIFY_BATCH_SIZE, 0);
     uint32_t num_batches = (body_count + batch_size - 1) / batch_size;
 
     /* Allocate per-batch tier lists from the arena. */

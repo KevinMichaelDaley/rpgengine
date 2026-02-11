@@ -133,6 +133,7 @@ uint32_t phys_dispatch_stage(phys_job_context_t *ctx,
         batches[0].user_args = user_args;
         batches[0].start     = 0;
         batches[0].count     = total_items;
+        batches[0].batch_idx = 0;
         fn(&batches[0]);
         return 0; /* Return 0 so caller knows no wait is needed. */
     }
@@ -148,9 +149,10 @@ uint32_t phys_dispatch_stage(phys_job_context_t *ctx,
     uint32_t remaining = total_items;
     for (uint32_t j = 0; j < num_jobs; j++) {
         uint32_t count = (remaining < batch_size) ? remaining : batch_size;
-        batches[j].user_args = user_args;
-        batches[j].start     = j * batch_size;
-        batches[j].count     = count;
+        batches[j].user_args  = user_args;
+        batches[j].start      = j * batch_size;
+        batches[j].count      = count;
+        batches[j].batch_idx  = j;
 
         job_dispatch_named(ctx->job_sys, fn, &batches[j], 0,
                            &ctx->counters[stage], stage_names[stage]);
