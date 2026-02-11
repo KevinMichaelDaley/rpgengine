@@ -2,10 +2,11 @@
  * @file phys_tick_runner.c
  * @brief Continuous physics tick runner implementation.
  *
- * Dispatches a single persistent fiber that loops forever (until
- * stop is requested).  Each iteration: pace → drain commands → tick →
- * drain corrections → signal.  Pacing yields the fiber between ticks
- * so other fibers on the same job system can run.
+ * Spawns a dedicated OS thread that loops forever (until stop is
+ * requested).  Each iteration: pace → drain commands → tick →
+ * drain corrections → signal.  Pacing uses nanosleep between ticks.
+ * Parallel physics stages are dispatched to the job system's worker
+ * pool from the tick thread.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -18,12 +19,12 @@
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/job/system.h"
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <string.h>
-
-/* ── Persistent tick loop (runs on a fiber) ──────────────────────── */
-
 #include <time.h>
+
+/* ── Persistent tick loop (runs on a dedicated OS thread) ────────── */
 
 /** Read CLOCK_MONOTONIC in nanoseconds. */
 static uint64_t runner_clock_ns_(void) {
@@ -32,9 +33,9 @@ static uint64_t runner_clock_ns_(void) {
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-/** Fiber job function: loops continuously, one tick per iteration.
- *  Pacing is handled here — tick functions run without internal waits. */
-static void tick_loop_fn_(void *user_data) {
+/** Thread entry point: loops continuously, one tick per iteration.
+ *  Pacing uses nanosleep — no fiber yield needed. */
+static void *tick_thread_fn_(void *user_data) {
     phys_tick_runner_t *r = (phys_tick_runner_t *)user_data;
     uint64_t last_tick_ns = 0;
     const uint64_t target_ns =
@@ -42,14 +43,21 @@ static void tick_loop_fn_(void *user_data) {
 
     while (!atomic_load_explicit(&r->stop_requested, memory_order_acquire)) {
 
-        /* Pace: yield until fixed_dt has elapsed since last tick. */
+        /* Pace: sleep until fixed_dt has elapsed since last tick. */
         if (last_tick_ns != 0) {
-            while (runner_clock_ns_() - last_tick_ns < target_ns) {
-                if (atomic_load_explicit(&r->stop_requested,
-                                         memory_order_acquire)) {
-                    goto done;
-                }
-                job_yield();
+            uint64_t now = runner_clock_ns_();
+            uint64_t elapsed = now - last_tick_ns;
+            if (elapsed < target_ns) {
+                uint64_t remain = target_ns - elapsed;
+                struct timespec ts = {
+                    .tv_sec  = (time_t)(remain / 1000000000ULL),
+                    .tv_nsec = (long)(remain % 1000000000ULL)
+                };
+                nanosleep(&ts, NULL);
+            }
+            if (atomic_load_explicit(&r->stop_requested,
+                                     memory_order_acquire)) {
+                break;
             }
         }
         last_tick_ns = runner_clock_ns_();
@@ -60,7 +68,7 @@ static void tick_loop_fn_(void *user_data) {
                            r->spawn_cb, r->spawn_cb_user);
         }
 
-        /* Run one physics tick. */
+        /* Run one physics tick (dispatches parallel jobs to workers). */
         phys_world_tick_parallel(r->world, r->game_state, r->jobs);
 
         /* Drain corrections after tick. */
@@ -74,8 +82,8 @@ static void tick_loop_fn_(void *user_data) {
                                   memory_order_release);
     }
 
-done:
     atomic_store_explicit(&r->stopped, 1, memory_order_release);
+    return NULL;
 }
 
 /* ── Public API ──────────────────────────────────────────────────── */
@@ -110,23 +118,13 @@ void phys_tick_runner_destroy(phys_tick_runner_t *r) {
 void phys_tick_runner_start(phys_tick_runner_t *r) {
     if (!r || !r->world || !r->jobs || r->running) { return; }
     r->running = 1;
-    job_dispatch_named(r->jobs->job_sys, tick_loop_fn_, r,
-                       0, NULL, "Phys.Tick.Loop");
+    pthread_create(&r->thread, NULL, tick_thread_fn_, r);
 }
-
-static void noop_wakeup_job_(void *user_data) { (void)user_data; }
 
 void phys_tick_runner_stop(phys_tick_runner_t *r) {
     if (!r || !r->running) { return; }
     atomic_store_explicit(&r->stop_requested, 1, memory_order_release);
-    while (!atomic_load_explicit(&r->stopped, memory_order_acquire)) {
-        /* Dispatch a no-op job to wake a sleeping worker so the tick
-         * fiber gets a chance to be resumed and observe stop_requested. */
-        job_dispatch_named(r->jobs->job_sys, noop_wakeup_job_, NULL,
-                           0, NULL, "Phys.Tick.StopWakeup");
-        struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 }; /* 1 ms */
-        nanosleep(&ts, NULL);
-    }
+    pthread_join(r->thread, NULL);
     r->running = 0;
 }
 

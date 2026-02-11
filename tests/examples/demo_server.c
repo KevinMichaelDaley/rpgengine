@@ -98,7 +98,8 @@ struct demo_ctx {
     fr_server_tick_loop_t               tick_loop;
 
     /* Jobs */
-    job_system_t                        job_sys;
+    job_system_t                        job_sys;      /**< Networking fibers. */
+    job_system_t                        phys_job_sys; /**< Physics parallel stages. */
 
     /* Client tracking */
     bool                                client_joined[DEMO_MAX_CLIENTS];
@@ -414,17 +415,28 @@ int main(int argc, char **argv) {
     demo_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
 
-    /* ── 1. Job system ─────────────────────────────────────────── */
-    if (job_system_create(&ctx.job_sys, 4u, 4096u, DEMO_FIBER_STACK,
-                          4096u, 0) != JOB_CREATE_OK) {
-        fprintf(stderr, "error: job_system_create failed\n");
+    /* ── 1. Job systems ───────────────────────────────────────────── */
+    /* Networking job system: client fibers, demux pump, entity pump. */
+    if (job_system_create(&ctx.job_sys, 2u, 256u, DEMO_FIBER_STACK,
+                          256u, 0) != JOB_CREATE_OK) {
+        fprintf(stderr, "error: job_system_create (net) failed\n");
         return 1;
     }
     if (job_system_start(&ctx.job_sys) != 0) {
-        fprintf(stderr, "error: job_system_start failed\n");
+        fprintf(stderr, "error: job_system_start (net) failed\n");
         return 1;
     }
-    printf("[server] job system started (4 workers)\n");
+    /* Physics job system: parallel stages (broadphase, narrow, solve, etc). */
+    if (job_system_create(&ctx.phys_job_sys, 4u, 4096u, DEMO_FIBER_STACK,
+                          4096u, 0) != JOB_CREATE_OK) {
+        fprintf(stderr, "error: job_system_create (phys) failed\n");
+        return 1;
+    }
+    if (job_system_start(&ctx.phys_job_sys) != 0) {
+        fprintf(stderr, "error: job_system_start (phys) failed\n");
+        return 1;
+    }
+    printf("[server] job systems started (net=2 workers, phys=4 workers)\n");
 
     /* ── 2. Physics world ──────────────────────────────────────── */
     phys_world_config_t wcfg = phys_world_config_default();
@@ -463,7 +475,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    phys_job_context_init(&ctx.phys_jobs, &ctx.job_sys);
+    phys_job_context_init(&ctx.phys_jobs, &ctx.phys_job_sys);
     phys_tick_runner_init(&ctx.tick_runner, &ctx.world, &ctx.phys_jobs,
                           ctx.cmd_channel, NULL,
                           demo_spawn_callback, &ctx);
@@ -616,23 +628,9 @@ int main(int argc, char **argv) {
     /* ── 12. Shutdown ──────────────────────────────────────────── */
     printf("\n[server] shutting down...\n");
 
-    /* Stop physics tick runner fiber. */
-    atomic_store_explicit(&ctx.tick_runner.stop_requested, 1,
-                          memory_order_release);
-    int waited_ms = 0;
-    while (!atomic_load_explicit(&ctx.tick_runner.stopped,
-                                 memory_order_acquire)) {
-        struct timespec ts = {0, 1000000}; /* 1 ms */
-        nanosleep(&ts, NULL);
-        waited_ms++;
-        if (waited_ms > 5000) {
-            fprintf(stderr,
-                    "[server] warn: tick runner did not stop in 5s\n");
-            break;
-        }
-    }
-    ctx.tick_runner.running = 0;
-    printf("[server] tick runner stopped after %d ms\n", waited_ms);
+    /* Stop physics tick runner thread (joins the dedicated thread). */
+    phys_tick_runner_stop(&ctx.tick_runner);
+    printf("[server] tick runner stopped\n");
 
     /* Tear down in reverse init order. */
     fr_server_body_state_broadcast_destroy(ctx.broadcaster);
@@ -641,6 +639,7 @@ int main(int argc, char **argv) {
     job_system_shutdown(&ctx.job_sys);
     phys_tick_runner_destroy(&ctx.tick_runner);
     phys_job_context_destroy(&ctx.phys_jobs);
+    job_system_shutdown(&ctx.phys_job_sys);
     phys_world_destroy(&ctx.world);
     fr_topic_channel_destroy(ctx.cmd_channel);
     fr_topic_channel_destroy(ctx.inbound_topic);

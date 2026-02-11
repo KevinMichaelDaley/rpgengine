@@ -1,35 +1,37 @@
 /**
  * @file phys_tick_runner.h
- * @brief Continuous physics tick runner — runs as a persistent fiber.
+ * @brief Continuous physics tick runner — runs on a dedicated OS thread.
  *
- * The runner dispatches a single long-lived fiber job that loops
- * continuously, self-pacing at fixed_dt.  Each iteration:
+ * The runner spawns a dedicated pthread that loops continuously,
+ * self-pacing at fixed_dt.  Each iteration:
  *   1. Drain spawn/mutation commands
  *   2. Run phys_world_tick_parallel()
  *   3. Drain corrections
  *   4. Signal tick completion (atomic counter)
- *   5. Yield to let other fibers run
+ *   5. Sleep until next tick interval
  *
  * The main thread communicates via channels and reads bodies_curr
  * (always valid — the tick writes to bodies_next, then swaps).
  *
  * Lifecycle:
  *   1. phys_tick_runner_init()    — bind world, jobs, channels, callback
- *   2. phys_tick_runner_start()   — launch the persistent fiber
+ *   2. phys_tick_runner_start()   — launch the dedicated thread
  *   3. phys_tick_runner_tick_id() — read latest completed tick (non-blocking)
- *   4. phys_tick_runner_stop()    — request stop + spin until done
+ *   4. phys_tick_runner_stop()    — request stop + join thread
  *   5. phys_tick_runner_destroy() — cleanup
  *
  * Ownership: the runner borrows all pointers (world, jobs, channels).
  * The caller must keep them alive for the runner's lifetime.
  *
  * Thread safety: start/stop must be called from the main thread.
- * The fiber loop runs on a worker thread.
+ * The tick loop runs on its own OS thread and dispatches parallel
+ * physics jobs to the job system's worker pool.
  */
 
 #ifndef FERRUM_PHYSICS_PHYS_TICK_RUNNER_H
 #define FERRUM_PHYSICS_PHYS_TICK_RUNNER_H
 
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 
@@ -67,15 +69,18 @@ typedef struct phys_tick_runner {
     struct phys_game_state   *game_state;
 
     /** Monotonically increasing tick counter — incremented by the
-     *  fiber after each tick completes.  Main thread reads this to
+     *  thread after each tick completes.  Main thread reads this to
      *  detect new ticks. */
     atomic_uint_fast64_t completed_ticks;
 
-    /** Stop flag — main thread sets to 1, fiber exits on next iteration. */
+    /** Stop flag — main thread sets to 1, thread exits on next iteration. */
     atomic_int stop_requested;
 
-    /** Set to 1 by the fiber when it has exited its loop. */
+    /** Set to 1 by the thread when it has exited its loop. */
     atomic_int stopped;
+
+    /** Dedicated OS thread handle. */
+    pthread_t thread;
 
     /** True after start() has been called. */
     uint8_t running;
@@ -108,10 +113,11 @@ void phys_tick_runner_init(phys_tick_runner_t *r,
 void phys_tick_runner_destroy(phys_tick_runner_t *r);
 
 /**
- * @brief Launch the persistent physics fiber.
+ * @brief Launch the dedicated physics thread.
  *
- * Dispatches a long-lived job that loops forever (until stop is
- * requested), self-pacing at fixed_dt and yielding between ticks.
+ * Spawns an OS thread that loops forever (until stop is requested),
+ * self-pacing at fixed_dt and dispatching parallel physics jobs to
+ * the job system's worker pool.
  *
  * @param r  Runner.  Must not be NULL.  Must be initialized.
  */
