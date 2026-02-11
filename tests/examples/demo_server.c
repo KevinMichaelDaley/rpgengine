@@ -212,19 +212,17 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.rot_z = body->orientation.z;
         spawn_msg.rot_w = body->orientation.w;
 
-        /* Ground plane gets its actual half-extents; boxes get DEMO_BOX_HALF.
-         * Clamp to uint16_t max (65535 mm ≈ 65 m) for the wire format. */
+        /* Encode half-extents as float16 (meters).  float16 can
+         * represent up to 65504 with ~3 sig digits — plenty for
+         * both 0.5 m boxes and 1000 m ground planes. */
         if (body->flags & PHYS_BODY_FLAG_STATIC) {
-            float gx = DEMO_GROUND_HALF_X * 1000.0f;
-            float gy = DEMO_GROUND_HALF_Y * 1000.0f;
-            float gz = DEMO_GROUND_HALF_Z * 1000.0f;
-            spawn_msg.half_x_mm = (uint16_t)(gx > 65535.0f ? 65535.0f : gx);
-            spawn_msg.half_y_mm = (uint16_t)(gy > 65535.0f ? 65535.0f : gy);
-            spawn_msg.half_z_mm = (uint16_t)(gz > 65535.0f ? 65535.0f : gz);
+            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_GROUND_HALF_X);
+            spawn_msg.half_y_f16 = net_float16_from_float(DEMO_GROUND_HALF_Y);
+            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_GROUND_HALF_Z);
         } else {
-            spawn_msg.half_x_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
-            spawn_msg.half_y_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
-            spawn_msg.half_z_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
+            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_BOX_HALF);
+            spawn_msg.half_y_f16 = net_float16_from_float(DEMO_BOX_HALF);
+            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_BOX_HALF);
         }
 
         uint8_t wire[2u + NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];

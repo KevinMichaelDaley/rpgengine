@@ -34,9 +34,9 @@ typedef struct net_repl_body_spawn {
     float    rot_y;
     float    rot_z;
     float    rot_w;
-    uint16_t half_x_mm;          /**< Shape half-extent X in mm. */
-    uint16_t half_y_mm;          /**< Shape half-extent Y in mm. */
-    uint16_t half_z_mm;          /**< Shape half-extent Z in mm. */
+    uint16_t half_x_f16;          /**< Shape half-extent X (float16, meters). */
+    uint16_t half_y_f16;          /**< Shape half-extent Y (float16, meters). */
+    uint16_t half_z_f16;          /**< Shape half-extent Z (float16, meters). */
 } net_repl_body_spawn_t;
 
 /**

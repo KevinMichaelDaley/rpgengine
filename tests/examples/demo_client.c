@@ -768,9 +768,9 @@ int main(int argc, char **argv) {
                     e->body_id    = sp.body_id;
                     e->is_static  = (sp.flags & 1u) ? 1 : 0;
                     e->shape_type = sp.shape_type;
-                    e->half_x     = (float)sp.half_x_mm / 1000.0f;
-                    e->half_y     = (float)sp.half_y_mm / 1000.0f;
-                    e->half_z     = (float)sp.half_z_mm / 1000.0f;
+                    e->half_x     = net_float16_to_float(sp.half_x_f16);
+                    e->half_y     = net_float16_to_float(sp.half_y_f16);
+                    e->half_z     = net_float16_to_float(sp.half_z_f16);
                     fr_pose_interpolator_reset(&e->interp);
 
                     vec3_t pos = {

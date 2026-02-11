@@ -105,6 +105,29 @@ int net_quantize_quat_snorm16(quat_t q, net_qquat_snorm16_t *out);
  */
 int net_dequantize_quat_snorm16(net_qquat_snorm16_t q, quat_t *out);
 
+/**
+ * @brief Convert a float32 to IEEE 754 binary16 (half-precision).
+ *
+ * Range: ±65504 with ~3 significant digits.  Values exceeding
+ * float16 max are clamped to ±65504.  Very small values flush to
+ * ±0.  Rounding: nearest, ties to even.
+ *
+ * @param f  Input float32 value.
+ * @return   The float16 bit pattern stored in a uint16_t.
+ */
+uint16_t net_float16_from_float(float f);
+
+/**
+ * @brief Convert an IEEE 754 binary16 (half-precision) to float32.
+ *
+ * Exact conversion — every float16 value is exactly representable
+ * in float32.
+ *
+ * @param h  The float16 bit pattern in a uint16_t.
+ * @return   The corresponding float32 value.
+ */
+float net_float16_to_float(uint16_t h);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
