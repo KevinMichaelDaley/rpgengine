@@ -51,17 +51,17 @@
 #define DEMO_MAX_CLIENTS       4u
 #define DEMO_MAX_BODIES        1024u
 #define DEMO_TICK_HZ           30u
-#define DEMO_SPAWN_INTERVAL_S  5.0
+#define DEMO_SPAWN_INTERVAL_S  10.0
 #define DEMO_SPAWN_MIN         20u
 #define DEMO_SPAWN_MAX         50u
 #define DEMO_SPAWN_Y_LO        20.0f
 #define DEMO_SPAWN_Y_HI        30.0f
-#define DEMO_SPAWN_AREA        10.0f
+#define DEMO_SPAWN_AREA        100.0f
 #define DEMO_BOX_HALF          0.5f
 #define DEMO_BOX_MASS          1.0f
-#define DEMO_GROUND_HALF_X     100.0f
+#define DEMO_GROUND_HALF_X     1000.0f
 #define DEMO_GROUND_HALF_Y     0.1f
-#define DEMO_GROUND_HALF_Z     100.0f
+#define DEMO_GROUND_HALF_Z     1000.0f
 #define DEMO_FIBER_STACK       (256u * 1024u)
 
 /* ── Globals for signal handling ────────────────────────────────── */
@@ -212,11 +212,15 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.rot_z = body->orientation.z;
         spawn_msg.rot_w = body->orientation.w;
 
-        /* Ground plane gets its actual half-extents; boxes get DEMO_BOX_HALF. */
+        /* Ground plane gets its actual half-extents; boxes get DEMO_BOX_HALF.
+         * Clamp to uint16_t max (65535 mm ≈ 65 m) for the wire format. */
         if (body->flags & PHYS_BODY_FLAG_STATIC) {
-            spawn_msg.half_x_mm = (uint16_t)(DEMO_GROUND_HALF_X * 1000.0f);
-            spawn_msg.half_y_mm = (uint16_t)(DEMO_GROUND_HALF_Y * 1000.0f);
-            spawn_msg.half_z_mm = (uint16_t)(DEMO_GROUND_HALF_Z * 1000.0f);
+            float gx = DEMO_GROUND_HALF_X * 1000.0f;
+            float gy = DEMO_GROUND_HALF_Y * 1000.0f;
+            float gz = DEMO_GROUND_HALF_Z * 1000.0f;
+            spawn_msg.half_x_mm = (uint16_t)(gx > 65535.0f ? 65535.0f : gx);
+            spawn_msg.half_y_mm = (uint16_t)(gy > 65535.0f ? 65535.0f : gy);
+            spawn_msg.half_z_mm = (uint16_t)(gz > 65535.0f ? 65535.0f : gz);
         } else {
             spawn_msg.half_x_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
             spawn_msg.half_y_mm = (uint16_t)(DEMO_BOX_HALF * 1000.0f);
