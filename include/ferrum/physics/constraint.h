@@ -40,9 +40,8 @@ typedef struct phys_jacobian_row {
     float pseudo_lambda;    /**< Accumulated split-impulse (position correction, not warmstarted). */
     float damping;          /**< Velocity damping coefficient (0 = none).
                              *   Applied as: delta = (bias - jv*(1+damping)) * eff_mass.
-                             *   Values ~0.1–0.5 add viscous resistance to
-                             *   relative motion along the constraint axis,
-                             *   reducing jitter at high speeds. */
+                             *   Must be < 1 for PGS convergence; typical
+                             *   range 0.1–0.5.  Higher values risk oscillation. */
 } phys_jacobian_row_t;
 
 /** Maximum constraint rows per contact (1 normal + 2 friction). */

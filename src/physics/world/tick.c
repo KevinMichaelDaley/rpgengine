@@ -753,19 +753,6 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                                 b->angular_vel = vec3_scale(b->angular_vel, d);
                             }
 
-                            /* Speed-dependent angular damping: at high linear
-                             * speeds, aggressively damp angular velocity to
-                             * prevent whipping / tumbling in chains.
-                             * Factor: 1 / (1 + k * speed²) where k scales
-                             * so damping is ~0.5 at 50 m/s. */
-                            {
-                                float spd2 = vec3_dot(b->linear_vel,
-                                                      b->linear_vel);
-                                float ang_damp = 1.0f / (1.0f + 0.0004f * spd2);
-                                b->angular_vel = vec3_scale(b->angular_vel,
-                                                            ang_damp);
-                            }
-
                             /* Velocity clamping. */
                             {
                                 float ls = vec3_magnitude(b->linear_vel);

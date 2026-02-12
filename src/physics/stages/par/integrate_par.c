@@ -125,17 +125,6 @@ static void integrate_batch_job(void *data) {
             out->angular_vel = vec3_scale(out->angular_vel, d);
         }
 
-        /* Speed-dependent angular damping: at high linear speeds,
-         * aggressively damp angular velocity to prevent whipping.
-         * Factor: 1 / (1 + k * speed²), ~0.5 at 50 m/s. */
-        {
-            float spd2 = vec3_dot(out->linear_vel, out->linear_vel);
-            if (spd2 > 25.0f) {
-                float ang_damp = 1.0f / (1.0f + 0.0004f * spd2);
-                out->angular_vel = vec3_scale(out->angular_vel, ang_damp);
-            }
-        }
-
         /* Clamp velocity magnitude to prevent runaway speeds.
          * 100 m/s linear, 50 rad/s angular are generous limits. */
         {
