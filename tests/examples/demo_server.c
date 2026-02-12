@@ -35,6 +35,7 @@
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_tick_runner.h"
@@ -63,6 +64,17 @@
 #define DEMO_GROUND_HALF_Y     0.1f
 #define DEMO_GROUND_HALF_Z     1000.0f
 #define DEMO_FIBER_STACK       (256u * 1024u)
+
+/* Capsule chain parameters. */
+#define DEMO_CHAIN_LENGTH      20u
+#define DEMO_CHAIN_RADIUS      0.3f
+#define DEMO_CHAIN_HALF_H      0.4f
+#define DEMO_CHAIN_MASS        2.0f
+#define DEMO_CHAIN_ANCHOR_X    5.0f
+#define DEMO_CHAIN_ANCHOR_Y    20.0f
+#define DEMO_CHAIN_ANCHOR_Z    0.0f
+/* Total capsule length along Y: 2*(half_height + radius) */
+#define DEMO_CHAIN_LINK_LEN    (2.0f * (DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS))
 
 /* ── Globals for signal handling ────────────────────────────────── */
 
@@ -466,6 +478,67 @@ int main(int argc, char **argv) {
             (phys_vec3_t){0.0f, 0.0f, 0.0f},
             (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
         printf("[server] ground plane body %u\n", gi);
+    }
+
+    /* Articulated capsule chain hanging from a static anchor. */
+    {
+        /* Static anchor point. */
+        uint32_t anchor = phys_world_create_body(&ctx.world);
+        phys_body_t *ab = phys_world_get_body(&ctx.world, anchor);
+        ab->position = (phys_vec3_t){
+            DEMO_CHAIN_ANCHOR_X, DEMO_CHAIN_ANCHOR_Y, DEMO_CHAIN_ANCHOR_Z};
+        ab->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+        ab->flags |= PHYS_BODY_FLAG_STATIC;
+        phys_body_t *ab_next =
+            phys_body_pool_get_next(&ctx.world.body_pool, anchor);
+        *ab_next = *ab;
+
+        uint32_t prev_body = anchor;
+        for (uint32_t ci = 0; ci < DEMO_CHAIN_LENGTH; ci++) {
+            /* Each capsule hangs directly below the previous link. */
+            float y = DEMO_CHAIN_ANCHOR_Y
+                      - (float)(ci + 1) * DEMO_CHAIN_LINK_LEN;
+
+            uint32_t bi = phys_world_create_body(&ctx.world);
+            phys_body_t *cb = phys_world_get_body(&ctx.world, bi);
+            cb->position = (phys_vec3_t){
+                DEMO_CHAIN_ANCHOR_X, y, DEMO_CHAIN_ANCHOR_Z};
+            cb->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+            phys_body_set_mass(cb, DEMO_CHAIN_MASS);
+            phys_body_set_capsule_inertia(cb, DEMO_CHAIN_MASS,
+                                          DEMO_CHAIN_RADIUS,
+                                          DEMO_CHAIN_HALF_H);
+
+            /* Copy to next buffer for double-buffered init. */
+            phys_body_t *cb_next =
+                phys_body_pool_get_next(&ctx.world.body_pool, bi);
+            *cb_next = *cb;
+
+            phys_world_set_capsule_collider(&ctx.world, bi,
+                DEMO_CHAIN_RADIUS, DEMO_CHAIN_HALF_H,
+                (phys_vec3_t){0.0f, 0.0f, 0.0f},
+                (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
+
+            /* Ball joint connecting top of this capsule to bottom of
+             * the previous one (or to the anchor). */
+            phys_joint_t joint;
+            memset(&joint, 0, sizeof(joint));
+            joint.type = PHYS_JOINT_BALL;
+            joint.body_a = prev_body;
+            joint.body_b = bi;
+            /* Anchor on previous body: bottom end (or center for anchor). */
+            joint.local_anchor_a = (prev_body == anchor)
+                ? (phys_vec3_t){0.0f, 0.0f, 0.0f}
+                : (phys_vec3_t){0.0f, -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f};
+            /* Anchor on this body: top end. */
+            joint.local_anchor_b = (phys_vec3_t){
+                0.0f, DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f};
+
+            phys_world_add_joint(&ctx.world, &joint);
+            prev_body = bi;
+        }
+        printf("[server] capsule chain: %u links from body %u\n",
+               DEMO_CHAIN_LENGTH, anchor);
     }
 
     /* ── 3. Physics command channel + tick runner ───────────────── */
