@@ -117,7 +117,8 @@ static void solve_joint_position(phys_constraint_t *c,
         float dir_len_sq = vec3_dot(dir, dir);
         if (dir_len_sq < 1e-10f) continue;
 
-        float C = row->bias * dt;
+        /* Joint bias holds raw position error (meters, signed). */
+        float C = row->bias;
         float delta_lambda = (-C - alpha_tilde * row->lambda) / w_sum;
 
         float old_lambda = row->lambda;
@@ -130,6 +131,9 @@ static void solve_joint_position(phys_constraint_t *c,
         phys_vec3_t corr_b = vec3_scale(dir, w_b * delta_lambda * omega);
         ba->position = vec3_sub(ba->position, corr_a);
         bb->position = vec3_add(bb->position, corr_b);
+
+        /* Update bias to reflect reduced error after correction. */
+        row->bias += (w_a + w_b) * delta_lambda * omega;
     }
 }
 

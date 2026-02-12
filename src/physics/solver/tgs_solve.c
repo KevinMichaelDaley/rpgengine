@@ -189,6 +189,72 @@ static void solve_position_row(phys_jacobian_row_t *row,
     pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
 }
 
+/* ── Solve joint split-impulse position correction row ────────────── */
+
+/**
+ * @brief Solve one joint row's position error via split impulse.
+ *
+ * Joint rows store the raw position error (meters) in the bias field.
+ * Unlike contacts (unilateral, clamp ≥ 0), joints use bilateral
+ * clamping so the pseudo-impulse can push or pull.
+ *
+ * @param row         Jacobian row (pseudo_lambda is updated).
+ * @param pva         Pseudo-velocity for body A.
+ * @param pvb         Pseudo-velocity for body B.
+ * @param inv_dt      1 / dt.
+ * @param inv_mass_a  Inverse mass of body A.
+ * @param inv_i_a     Diagonal inverse inertia of body A.
+ * @param inv_mass_b  Inverse mass of body B.
+ * @param inv_i_b     Diagonal inverse inertia of body B.
+ */
+static void solve_joint_position_row(phys_jacobian_row_t *row,
+                                      phys_velocity_t *pva,
+                                      phys_velocity_t *pvb,
+                                      float inv_dt,
+                                      float inv_mass_a,
+                                      const phys_vec3_t *inv_i_a,
+                                      float inv_mass_b,
+                                      const phys_vec3_t *inv_i_b)
+{
+    /* row->bias holds the raw position error (meters, signed). */
+    float error = row->bias;
+    if (fabsf(error) < 1e-7f) { return; }
+
+    /* Target pseudo-velocity to correct the error in one substep.
+     * Negative sign: positive error means anchors are separated, so
+     * correction drives the relative anchor velocity negative. */
+    float pos_bias = -error * inv_dt;
+
+    /* Current pseudo-velocity along constraint direction. */
+    float jv = vec3_dot(row->J_va, pva->linear)
+             + vec3_dot(row->J_wa, pva->angular)
+             + vec3_dot(row->J_vb, pvb->linear)
+             + vec3_dot(row->J_wb, pvb->angular);
+
+    float delta_lambda = (pos_bias - jv) * row->effective_mass;
+
+    /* Bilateral clamp (joints can push and pull). */
+    float old_lambda = row->pseudo_lambda;
+    row->pseudo_lambda = old_lambda + delta_lambda;
+    delta_lambda = row->pseudo_lambda - old_lambda;
+
+    if (fabsf(delta_lambda) < 1e-10f) { return; }
+
+    /* Apply pseudo-velocity corrections. */
+    pva->linear = vec3_add(pva->linear,
+                           vec3_scale(row->J_va, inv_mass_a * delta_lambda));
+    pvb->linear = vec3_add(pvb->linear,
+                           vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
+
+    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
+    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
+    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+
+    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
+    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
+    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+}
+
 /* ── Solve one constraint (all rows) ──────────────────────────────── */
 
 /**
@@ -209,18 +275,45 @@ static void solve_one_constraint(phys_constraint_t *c,
     const phys_vec3_t *inv_i_a = &bodies[c->body_a].inv_inertia_diag;
     const phys_vec3_t *inv_i_b = &bodies[c->body_b].inv_inertia_diag;
 
+    if (c->is_joint) {
+        /* Joint constraints: velocity-level solve with bias=0 (pure
+         * velocity constraint), then split-impulse position correction
+         * using the position error stored in each row's bias field. */
+
+        /* Save bias values (position errors) and zero for velocity solve. */
+        float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
+        for (uint8_t r = 0; r < c->row_count; r++) {
+            saved_bias[r] = c->rows[r].bias;
+            c->rows[r].bias = 0.0f;
+        }
+
+        /* Velocity-level solve: all rows with bilateral bounds. */
+        for (uint8_t r = 0; r < c->row_count; r++) {
+            solve_row(&c->rows[r], va, vb,
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
+
+        /* Restore bias and apply split-impulse position correction. */
+        for (uint8_t r = 0; r < c->row_count; r++) {
+            c->rows[r].bias = saved_bias[r];
+        }
+        if (pseudo) {
+            for (uint8_t r = 0; r < c->row_count; r++) {
+                solve_joint_position_row(
+                    &c->rows[r],
+                    &pseudo[c->body_a], &pseudo[c->body_b],
+                    inv_dt,
+                    inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+            }
+        }
+        return;
+    }
+
     /* Solve normal row first (row 0). */
     solve_row(&c->rows[0], va, vb,
               inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
 
-    if (c->is_joint) {
-        /* Joint constraints: solve all remaining rows with their
-         * pre-set bilateral lambda bounds (no friction cone). */
-        for (uint8_t r = 1; r < c->row_count; r++) {
-            solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
-        }
-    } else {
+    {
         /* Split impulse: position correction into pseudo-velocities. */
         if (pseudo) {
             solve_position_row(

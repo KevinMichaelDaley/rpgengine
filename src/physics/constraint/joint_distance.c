@@ -18,8 +18,7 @@
 /** Large clamp value for bilateral lambda bounds. */
 #define JOINT_LAMBDA_BIG 1e10f
 
-/** Baumgarte factor for joint positional correction. */
-#define JOINT_BAUMGARTE 0.2f
+
 
 /**
  * @brief Rotate a vector by a quaternion: q * v * q^-1.
@@ -87,9 +86,11 @@ void phys_joint_build_distance(phys_joint_t *joint,
     row->lambda_max =  JOINT_LAMBDA_BIG;
     row->lambda = 0.0f;
 
-    /* Baumgarte bias: correct distance error. */
+    /* Position error stored in bias for split-impulse correction.
+     * The velocity-level solve sees bias=0 (set by the solver);
+     * position correction uses this raw error value. */
     float error = dist - joint->rest_length;
-    row->bias = (JOINT_BAUMGARTE / dt) * error;
+    row->bias = error;
 
     /* Effective mass. */
     row->effective_mass = phys_compute_effective_mass(

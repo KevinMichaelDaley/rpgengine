@@ -27,6 +27,9 @@ void phys_stage_cache_commit(const phys_cache_commit_args_t *args)
     for (uint32_t i = 0; i < args->constraint_count; ++i) {
         const phys_constraint_t *c = &args->constraints[i];
 
+        /* Joint constraints have no manifold — skip cache commit. */
+        if (c->is_joint) { continue; }
+
         /* Look up the cached manifold for this body pair. */
         phys_manifold_t *cached = phys_manifold_cache_find(
             args->cache, c->body_a, c->body_b);

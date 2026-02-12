@@ -137,11 +137,11 @@ static void solve_joint_position(phys_constraint_t *c,
         float dir_len_sq = vec3_dot(dir, dir);
         if (dir_len_sq < 1e-10f) continue;
 
-        /* Joint bias convention: bias = (baumgarte/dt) * error, where
-         * error > 0 means anchor_b is too far from anchor_a along dir.
-         * The constraint value C should be positive to drive correction
-         * toward closing the gap. */
-        float C = row->bias * dt;
+        /* Joint bias holds the raw position error (meters, signed).
+         * Re-evaluate the constraint value from accumulated corrections:
+         * each correction changes the error along this row's direction
+         * by the total position delta projected onto J_vb. */
+        float C = row->bias;
         float delta_lambda = (-C - alpha_tilde * row->lambda) / w_sum;
 
         /* Bilateral clamp using the row's lambda bounds. */
@@ -155,6 +155,11 @@ static void solve_joint_position(phys_constraint_t *c,
         phys_vec3_t corr_b = vec3_scale(dir, w_b * delta_lambda * omega);
         ba->position = vec3_sub(ba->position, corr_a);
         bb->position = vec3_add(bb->position, corr_b);
+
+        /* Update bias to reflect reduced error after position correction.
+         * The relative displacement change along the constraint direction
+         * is (w_a + w_b) * delta_lambda * omega. */
+        row->bias += (w_a + w_b) * delta_lambda * omega;
     }
 }
 

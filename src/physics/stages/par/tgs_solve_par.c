@@ -168,6 +168,53 @@ static void solve_position_row(phys_jacobian_row_t *row,
     pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
 }
 
+/**
+ * @brief Solve one joint row's position error via split impulse.
+ *
+ * Bilateral clamping (joints can push and pull).  The row's bias
+ * field holds the raw position error in meters.
+ */
+static void solve_joint_position_row(phys_jacobian_row_t *row,
+                                      phys_velocity_t *pva,
+                                      phys_velocity_t *pvb,
+                                      float inv_dt,
+                                      float inv_mass_a,
+                                      const phys_vec3_t *inv_i_a,
+                                      float inv_mass_b,
+                                      const phys_vec3_t *inv_i_b)
+{
+    float error = row->bias;
+    if (fabsf(error) < 1e-7f) { return; }
+
+    float pos_bias = -error * inv_dt;
+
+    float jv = vec3_dot(row->J_va, pva->linear)
+             + vec3_dot(row->J_wa, pva->angular)
+             + vec3_dot(row->J_vb, pvb->linear)
+             + vec3_dot(row->J_wb, pvb->angular);
+
+    float delta_lambda = (pos_bias - jv) * row->effective_mass;
+
+    float old_lambda = row->pseudo_lambda;
+    row->pseudo_lambda = old_lambda + delta_lambda;
+    delta_lambda = row->pseudo_lambda - old_lambda;
+
+    if (fabsf(delta_lambda) < 1e-10f) { return; }
+
+    pva->linear = vec3_add(pva->linear,
+                           vec3_scale(row->J_va, inv_mass_a * delta_lambda));
+    pvb->linear = vec3_add(pvb->linear,
+                           vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
+
+    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
+    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
+    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+
+    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
+    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
+    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+}
+
 /* ── Solve a single constraint (used by colored job) ──────────── */
 
 /**
@@ -186,17 +233,41 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
     const phys_vec3_t *inv_i_a = &shared->bodies[c->body_a].inv_inertia_diag;
     const phys_vec3_t *inv_i_b = &shared->bodies[c->body_b].inv_inertia_diag;
 
+    if (c->is_joint) {
+        /* Joint: velocity-level solve with bias=0, then split-impulse
+         * position correction using error stored in each row's bias. */
+        float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
+        for (uint8_t r = 0; r < c->row_count; r++) {
+            saved_bias[r] = c->rows[r].bias;
+            c->rows[r].bias = 0.0f;
+        }
+
+        for (uint8_t r = 0; r < c->row_count; r++) {
+            solve_row(&c->rows[r], va, vb,
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
+
+        for (uint8_t r = 0; r < c->row_count; r++) {
+            c->rows[r].bias = saved_bias[r];
+        }
+        if (shared->pseudo_velocities) {
+            for (uint8_t r = 0; r < c->row_count; r++) {
+                solve_joint_position_row(
+                    &c->rows[r],
+                    &shared->pseudo_velocities[c->body_a],
+                    &shared->pseudo_velocities[c->body_b],
+                    shared->inv_dt,
+                    inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+            }
+        }
+        return;
+    }
+
     /* Normal row. */
     solve_row(&c->rows[0], va, vb,
               inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
 
-    if (c->is_joint) {
-        /* Joint constraints: solve remaining rows with bilateral bounds. */
-        for (uint8_t r = 1; r < c->row_count; r++) {
-            solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
-        }
-    } else {
+    {
         /* Split impulse position correction. */
         if (shared->pseudo_velocities) {
             solve_position_row(
@@ -265,19 +336,39 @@ static void solve_island(const tgs_solve_shared_t *shared,
             const phys_vec3_t *inv_i_b =
                 &shared->bodies[c->body_b].inv_inertia_diag;
 
-            /* Solve normal row first (row 0). */
-            solve_row(&c->rows[0], va, vb,
-                      inv_mass_a, inv_i_a,
-                      inv_mass_b, inv_i_b);
-
             if (c->is_joint) {
-                /* Joint: solve remaining rows with bilateral bounds. */
-                for (uint8_t r = 1; r < c->row_count; r++) {
+                /* Joint: velocity-level solve with bias=0, then
+                 * split-impulse position correction per row. */
+                float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
+                for (uint8_t r = 0; r < c->row_count; r++) {
+                    saved_bias[r] = c->rows[r].bias;
+                    c->rows[r].bias = 0.0f;
+                }
+
+                for (uint8_t r = 0; r < c->row_count; r++) {
                     solve_row(&c->rows[r], va, vb,
                               inv_mass_a, inv_i_a,
                               inv_mass_b, inv_i_b);
                 }
+
+                for (uint8_t r = 0; r < c->row_count; r++) {
+                    c->rows[r].bias = saved_bias[r];
+                }
+                if (pseudo) {
+                    for (uint8_t r = 0; r < c->row_count; r++) {
+                        solve_joint_position_row(
+                            &c->rows[r],
+                            &pseudo[c->body_a], &pseudo[c->body_b],
+                            shared->inv_dt,
+                            inv_mass_a, inv_i_a,
+                            inv_mass_b, inv_i_b);
+                    }
+                }
             } else {
+                /* Solve normal row first (row 0). */
+                solve_row(&c->rows[0], va, vb,
+                          inv_mass_a, inv_i_a,
+                          inv_mass_b, inv_i_b);
                 /* Split impulse: solve position correction into
                  * pseudo-velocities using the same constraint normal. */
                 if (pseudo) {

@@ -17,8 +17,7 @@
 /** Large clamp value for bilateral lambda bounds. */
 #define JOINT_LAMBDA_BIG 1e10f
 
-/** Baumgarte factor for joint positional correction. */
-#define JOINT_BAUMGARTE 0.2f
+
 
 /**
  * @brief Rotate a vector by a quaternion: q * v * q^-1.
@@ -45,8 +44,7 @@ static void build_positional_row(phys_jacobian_row_t *row,
                                  phys_vec3_t rA, phys_vec3_t rB,
                                  phys_vec3_t axis, float error,
                                  const struct phys_body *body_a,
-                                 const struct phys_body *body_b,
-                                 float dt) {
+                                 const struct phys_body *body_b) {
     memset(row, 0, sizeof(*row));
 
     row->J_va = vec3_scale(axis, -1.0f);
@@ -58,7 +56,10 @@ static void build_positional_row(phys_jacobian_row_t *row,
     row->lambda_max =  JOINT_LAMBDA_BIG;
     row->lambda = 0.0f;
 
-    row->bias = (JOINT_BAUMGARTE / dt) * error;
+    /* Position error stored in bias for split-impulse correction.
+     * The velocity-level solve sees bias=0 (set by the solver);
+     * position correction uses this raw error value. */
+    row->bias = error;
 
     row->effective_mass = phys_compute_effective_mass(
         row,
@@ -100,7 +101,7 @@ void phys_joint_build_ball(phys_joint_t *joint,
     for (int i = 0; i < 3; ++i) {
         float axis_error = vec3_dot(error, axes[i]);
         build_positional_row(&joint->rows[i], rA, rB, axes[i],
-                             axis_error, body_a, body_b, dt);
+                             axis_error, body_a, body_b);
     }
 
     joint->row_count = 3;
