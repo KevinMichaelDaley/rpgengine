@@ -60,6 +60,10 @@ typedef struct phys_integrate_args {
     /** Allowed penetration (slop).  Bodies with max_penetration > slop
      *  are considered still overlapping and won't be put to sleep. */
     float slop;
+    /** Per-body skip mask.  May be NULL.  When non-NULL, bodies with
+     *  skip_body[i] != 0 are copied unchanged (no integration).
+     *  Used to exclude bodies already integrated by sub-substeps. */
+    const uint8_t *skip_body;
 } phys_integrate_args_t;
 
 /**

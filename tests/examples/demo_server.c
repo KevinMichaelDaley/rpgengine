@@ -67,8 +67,8 @@
 
 /* Capsule chain parameters. */
 #define DEMO_CHAIN_LENGTH      20u
-#define DEMO_CHAIN_RADIUS      0.3f
-#define DEMO_CHAIN_HALF_H      0.4f
+#define DEMO_CHAIN_RADIUS      0.5f
+#define DEMO_CHAIN_HALF_H      0.8f
 #define DEMO_CHAIN_MASS        2.0f
 #define DEMO_CHAIN_ANCHOR_X    5.0f
 #define DEMO_CHAIN_ANCHOR_Y    20.0f
@@ -133,6 +133,9 @@ struct demo_ctx {
 
     /* Capsule chain anchor (kinematic, driven in a circle). */
     uint32_t                            chain_anchor_id;
+
+    /* Per-body shape type (0=box, 1=sphere, 2=capsule). */
+    uint8_t                             body_shape_type[DEMO_MAX_BODIES];
 };
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -213,7 +216,7 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         memset(&spawn_msg, 0, sizeof(spawn_msg));
         spawn_msg.body_id = (uint16_t)bi;
         spawn_msg.flags = (body->flags & PHYS_BODY_FLAG_STATIC) ? 1u : 0u;
-        spawn_msg.shape_type = 0u; /* box */
+        spawn_msg.shape_type = ctx->body_shape_type[bi];
         spawn_msg.color_seed = bi;
 
         net_qvec3_mm_t qpos;
@@ -227,13 +230,17 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.rot_z = body->orientation.z;
         spawn_msg.rot_w = body->orientation.w;
 
-        /* Encode half-extents as float16 (meters).  float16 can
-         * represent up to 65504 with ~3 sig digits — plenty for
-         * both 0.5 m boxes and 1000 m ground planes. */
+        /* Encode half-extents as float16 (meters). */
         if (body->flags & PHYS_BODY_FLAG_STATIC) {
             spawn_msg.half_x_f16 = net_float16_from_float(DEMO_GROUND_HALF_X);
             spawn_msg.half_y_f16 = net_float16_from_float(DEMO_GROUND_HALF_Y);
             spawn_msg.half_z_f16 = net_float16_from_float(DEMO_GROUND_HALF_Z);
+        } else if (ctx->body_shape_type[bi] == 2u) {
+            /* Capsule: half_x = half_z = radius, half_y = half_height + radius. */
+            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_CHAIN_RADIUS);
+            spawn_msg.half_y_f16 = net_float16_from_float(
+                DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS);
+            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_CHAIN_RADIUS);
         } else {
             spawn_msg.half_x_f16 = net_float16_from_float(DEMO_BOX_HALF);
             spawn_msg.half_y_f16 = net_float16_from_float(DEMO_BOX_HALF);
@@ -403,9 +410,12 @@ static void on_drain(void *user) {
         float omega = 1.5f + 0.5f * t;
         /* Integrated angle: θ = 1.5*t + 0.25*t² */
         float angle = 1.5f * t + 0.25f * t * t;
-        float radius = 4.0f;
+        float radius = 10.0f;
         float cx = DEMO_CHAIN_ANCHOR_X + radius * cosf(angle);
         float cz = DEMO_CHAIN_ANCHOR_Z + radius * sinf(angle);
+        /* Kinematic velocity: derivative of position. */
+        float vx = -radius * omega * sinf(angle);
+        float vz =  radius * omega * cosf(angle);
 
         if (ctx->server_tick % (DEMO_TICK_HZ * 5) == 0) {
             printf("[server] chain omega=%.1f rad/s (%.1f RPM) t=%.1fs\n",
@@ -416,10 +426,12 @@ static void on_drain(void *user) {
                                                ctx->chain_anchor_id);
         ab->position.x = cx;
         ab->position.z = cz;
+        ab->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
         phys_body_t *ab_next = phys_body_pool_get_next(
             &ctx->world.body_pool, ctx->chain_anchor_id);
         ab_next->position.x = cx;
         ab_next->position.z = cz;
+        ab_next->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
     }
 }
 
@@ -550,21 +562,23 @@ int main(int argc, char **argv) {
                 DEMO_CHAIN_RADIUS, DEMO_CHAIN_HALF_H,
                 (phys_vec3_t){0.0f, 0.0f, 0.0f},
                 (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
+            ctx.body_shape_type[bi] = 2u; /* capsule */
 
-            /* Ball joint connecting top of this capsule to bottom of
-             * the previous one (or to the anchor). */
+            /* Ball joint connecting tip of this capsule to tip of the
+             * previous one (or to the anchor).  Capsule long axis is
+             * local Y; tips are at ±(half_h + radius) along Y. */
             phys_joint_t joint;
             memset(&joint, 0, sizeof(joint));
             joint.type = PHYS_JOINT_BALL;
             joint.body_a = prev_body;
             joint.body_b = bi;
-            /* Anchor on previous body: +X end (or center for anchor). */
+            /* Anchor on previous body: +Y tip (or center for anchor). */
             joint.local_anchor_a = (prev_body == anchor)
                 ? (phys_vec3_t){0.0f, 0.0f, 0.0f}
-                : (phys_vec3_t){DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f, 0.0f};
-            /* Anchor on this body: -X end. */
+                : (phys_vec3_t){0.0f, DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f};
+            /* Anchor on this body: -Y tip. */
             joint.local_anchor_b = (phys_vec3_t){
-                -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f, 0.0f};
+                0.0f, -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f};
 
             phys_world_add_joint(&ctx.world, &joint);
             prev_body = bi;

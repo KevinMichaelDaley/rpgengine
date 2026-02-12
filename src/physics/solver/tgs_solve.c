@@ -32,6 +32,64 @@
 /** Minimum penetration excess to correct (avoids micro-jitter). */
 #define SPLIT_MIN_PHI 1e-6f
 
+/** Speed (m/s) above which we start adding solver iterations. */
+#define ADAPTIVE_SPEED_LOW  5.0f
+/** Speed (m/s) at which we reach maximum solver iterations. */
+#define ADAPTIVE_SPEED_HIGH 200.0f
+/** Maximum multiplier on base iteration count for fast islands. */
+#define ADAPTIVE_ITER_MULT  10
+
+/* ── Internal: compute per-island iteration count ─────────────── */
+
+/**
+ * @brief Compute a per-island solver iteration count scaled by the
+ *        maximum body speed in the island.
+ *
+ * Islands where every body is slow use the base iteration count.
+ * Islands with fast-moving bodies get up to ADAPTIVE_ITER_MULT × base
+ * iterations, linearly interpolated between ADAPTIVE_SPEED_LOW and
+ * ADAPTIVE_SPEED_HIGH.
+ *
+ * @param island       The island to inspect.
+ * @param bodies       Body array (read-only).
+ * @param velocities   Solver velocity workspace (post-gravity).
+ * @param base_iters   Configured base iteration count.
+ * @return Iteration count for this island (>= base_iters).
+ */
+static uint32_t compute_island_iterations(
+    const phys_island_t *island,
+    const phys_body_t *bodies,
+    const phys_velocity_t *velocities,
+    uint32_t base_iters)
+{
+    float max_speed_sq = 0.0f;
+    for (uint32_t bi = 0; bi < island->body_count; bi++) {
+        uint32_t idx = island->body_indices[bi];
+        if (bodies[idx].inv_mass == 0.0f) continue; /* skip static */
+        phys_vec3_t v = velocities[idx].linear;
+        float speed_sq = vec3_dot(v, v);
+        if (speed_sq > max_speed_sq) {
+            max_speed_sq = speed_sq;
+        }
+    }
+
+    const float lo2 = ADAPTIVE_SPEED_LOW  * ADAPTIVE_SPEED_LOW;
+    const float hi2 = ADAPTIVE_SPEED_HIGH * ADAPTIVE_SPEED_HIGH;
+
+    if (max_speed_sq <= lo2) {
+        return base_iters;
+    }
+    if (max_speed_sq >= hi2) {
+        return base_iters * ADAPTIVE_ITER_MULT;
+    }
+
+    /* Sqrt ramp: aggressive at moderate speeds, plateaus at extremes. */
+    float t = (max_speed_sq - lo2) / (hi2 - lo2);
+    t = sqrtf(t);
+    uint32_t extra = (uint32_t)(t * (float)(base_iters * (ADAPTIVE_ITER_MULT - 1)));
+    return base_iters + extra;
+}
+
 /* ── Internal: initialize velocity workspace from body state ──── */
 
 /**
@@ -352,6 +410,7 @@ static void solve_one_constraint(phys_constraint_t *c,
  */
 static bool solve_island_colored(const phys_island_t *island,
                                   const phys_tgs_solve_args_t *args,
+                                  uint32_t iters,
                                   float slop,
                                   float inv_dt)
 {
@@ -382,7 +441,7 @@ static bool solve_island_colored(const phys_island_t *island,
     /* Solve per iteration, per color batch. */
     phys_velocity_t *pseudo = args->pseudo_velocities;
 
-    for (uint32_t iter = 0; iter < args->iterations; ++iter) {
+    for (uint32_t iter = 0; iter < iters; ++iter) {
         for (uint32_t color = 0; color < coloring.num_colors; ++color) {
             /* Solve all constraints with this color. */
             for (uint32_t ci = 0; ci < n; ++ci) {
@@ -433,18 +492,22 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
         }
 
+        /* Adaptive iteration count based on island body velocity. */
+        uint32_t iters = compute_island_iterations(
+            island, args->bodies, args->velocities, args->iterations);
+
         /* For large islands with coloring enabled, use graph-colored
          * constraint ordering.  Falls back to sequential on failure. */
         if (args->frame_arena &&
             args->island_color_threshold > 0 &&
             island->constraint_count >= args->island_color_threshold) {
-            if (solve_island_colored(island, args, slop, inv_dt)) {
+            if (solve_island_colored(island, args, iters, slop, inv_dt)) {
                 continue;
             }
         }
 
         /* Sequential solve (default path). */
-        for (uint32_t iter = 0; iter < args->iterations; iter++) {
+        for (uint32_t iter = 0; iter < iters; iter++) {
             for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
                 uint32_t c_idx = island->constraint_indices[ci];
                 solve_one_constraint(&args->constraints[c_idx],

@@ -42,6 +42,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
     const float vel_damp               = args->velocity_damping;
     const float *max_pen               = args->max_penetration;
     const float slop                   = args->slop;
+    const uint8_t *skip_body           = args->skip_body;
 
     for (uint32_t i = 0; i < args->body_count; ++i) {
         const phys_body_t *in = &bodies_in[i];
@@ -52,6 +53,11 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
 
         /* Skip static and kinematic bodies. */
         if (phys_body_is_static(in) || phys_body_is_kinematic(in)) {
+            continue;
+        }
+
+        /* Skip bodies already integrated by solver sub-substeps. */
+        if (skip_body && skip_body[i]) {
             continue;
         }
 

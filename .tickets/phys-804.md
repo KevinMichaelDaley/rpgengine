@@ -1,6 +1,6 @@
 ---
 id: phys-804
-status: in_progress
+status: closed
 deps: [phys-801, phys-802, phys-803]
 links: [phys-800]
 created: 2026-02-06T11:09:00.000000000-08:00

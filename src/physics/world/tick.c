@@ -38,6 +38,7 @@
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -51,6 +52,131 @@
 
 /** Maximum broadphase pairs per substep. */
 #define MAX_PAIRS_PER_SUBSTEP 10000
+
+/* ── Adaptive solver sub-substeps ──────────────────────────────── */
+
+/** Speed (m/s) above which solver sub-substeps kick in. */
+#define SUBSUB_SPEED_LOW  15.0f
+/** Speed (m/s) at which we reach maximum sub-substeps. */
+#define SUBSUB_SPEED_HIGH 150.0f
+/** Maximum solver sub-substeps for fast islands. */
+#define SUBSUB_MAX        8
+
+/**
+ * @brief Compute the number of solver sub-substeps for an island
+ *        based on the maximum body speed.
+ *
+ * Islands where every body is below SUBSUB_SPEED_LOW get 1 sub-substep
+ * (the normal path).  Faster islands get up to SUBSUB_MAX, with a
+ * sqrt ramp for early onset.
+ *
+ * @param island     Island to inspect.
+ * @param bodies     Body array (read-only).
+ * @param body_count Total body count.
+ * @return Sub-substep count (1..SUBSUB_MAX).
+ */
+static uint32_t compute_island_sub_substeps(
+    const phys_island_t *island,
+    const phys_body_t *bodies,
+    uint32_t body_count)
+{
+    (void)body_count;
+    float max_speed_sq = 0.0f;
+    for (uint32_t bi = 0; bi < island->body_count; bi++) {
+        uint32_t idx = island->body_indices[bi];
+        if (bodies[idx].inv_mass == 0.0f) continue;
+        phys_vec3_t v = bodies[idx].linear_vel;
+        float speed_sq = vec3_dot(v, v);
+        if (speed_sq > max_speed_sq) {
+            max_speed_sq = speed_sq;
+        }
+    }
+
+    const float lo2 = SUBSUB_SPEED_LOW  * SUBSUB_SPEED_LOW;
+    const float hi2 = SUBSUB_SPEED_HIGH * SUBSUB_SPEED_HIGH;
+
+    if (max_speed_sq <= lo2) { return 1; }
+    if (max_speed_sq >= hi2) { return SUBSUB_MAX; }
+
+    float t = (max_speed_sq - lo2) / (hi2 - lo2);
+    t = sqrtf(t);
+    return 1 + (uint32_t)(t * (float)(SUBSUB_MAX - 1));
+}
+
+/**
+ * @brief Rebuild joint constraint rows for joints whose bodies are
+ *        in the given island, then pack into the constraint array.
+ *
+ * Only rebuilds joints — contact constraints are left frozen from
+ * the narrowphase.
+ *
+ * @param island       Island whose joints to rebuild.
+ * @param constraints  Full constraint array (joint entries overwritten).
+ * @param constraint_count  Total constraint count.
+ * @param joints       World joint array.
+ * @param joint_count  Number of joints.
+ * @param bodies       Current body positions.
+ * @param dt           Sub-substep dt.
+ */
+static void rebuild_island_joint_constraints(
+    const phys_island_t *island,
+    phys_constraint_t *constraints,
+    uint32_t constraint_count,
+    phys_joint_t *joints,
+    uint32_t joint_count,
+    const phys_body_t *bodies,
+    float dt)
+{
+    /* For each constraint in this island that is a joint, find
+     * the corresponding joint, rebuild its rows, and update the
+     * constraint in-place. */
+    for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+        uint32_t c_idx = island->constraint_indices[ci];
+        if (c_idx >= constraint_count) continue;
+        phys_constraint_t *c = &constraints[c_idx];
+        if (!c->is_joint) continue;
+
+        /* Find the joint by matching body_a/body_b. */
+        for (uint32_t ji = 0; ji < joint_count; ji++) {
+            phys_joint_t *j = &joints[ji];
+            if (j->body_a == c->body_a && j->body_b == c->body_b) {
+                /* Rebuild Jacobian rows from updated positions. */
+                switch (j->type) {
+                case PHYS_JOINT_DISTANCE:
+                    phys_joint_build_distance(j, &bodies[j->body_a],
+                                               &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_BALL:
+                    phys_joint_build_ball(j, &bodies[j->body_a],
+                                          &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_HINGE:
+                    phys_joint_build_hinge(j, &bodies[j->body_a],
+                                           &bodies[j->body_b], dt);
+                    break;
+                }
+                /* Repack into constraint. */
+                phys_constraint_t tmp[2];
+                uint32_t written = phys_joint_build_constraints(
+                    j, tmp, 2, c->solver_mode);
+                if (written >= 1) {
+                    *c = tmp[0];
+                }
+                /* If hinge produced a second constraint, update the
+                 * next constraint entry in the island if present. */
+                if (written >= 2 && ci + 1 < island->constraint_count) {
+                    uint32_t next_idx = island->constraint_indices[ci + 1];
+                    if (next_idx < constraint_count &&
+                        constraints[next_idx].is_joint) {
+                        constraints[next_idx] = tmp[1];
+                        ci++; /* skip the second entry */
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
 
 static size_t static_bvh_arena_size_bytes(uint32_t item_count) {
     if (item_count == 0) {
@@ -312,6 +438,10 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         phys_velocity_t *pseudo_velocities = NULL;
         float *body_max_pen = NULL;
 
+        /* Per-body flag: set to 1 for bodies integrated by solver
+         * sub-substeps so the main integrate stage skips them. */
+        uint8_t *body_sub_substepped = NULL;
+
         if (!world->prediction_mode) {
 
         /* ── Stage 6: Narrowphase ──────────────────────────────── */
@@ -503,6 +633,178 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             }
         }
 
+        /* ── Stage 10c: Solver sub-substeps for fast islands ───── */
+        /* Islands with high body velocities get multiple solver+integrate
+         * sub-substeps with a finer dt.  Contact constraints stay frozen
+         * from the narrowphase; only joint rows are rebuilt each sub-substep
+         * to track updated body positions.
+         *
+         * Integration is done inline per-body (not via phys_stage_integrate)
+         * so only island bodies are touched.  The main integrate stage
+         * skips these bodies via body_sub_substepped[]. */
+        body_sub_substepped = phys_frame_arena_alloc(
+            &world->frame_arena,
+            (body_cap > 0 ? body_cap : 1) * sizeof(uint8_t),
+            _Alignof(uint8_t));
+        if (body_sub_substepped) {
+            memset(body_sub_substepped, 0,
+                   (body_cap > 0 ? body_cap : 1) * sizeof(uint8_t));
+        }
+
+        {
+            phys_velocity_t *ss_vel = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+            phys_velocity_t *ss_pseudo = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+
+            if (ss_vel && ss_pseudo && body_sub_substepped) {
+                for (uint32_t ii = 0; ii < islands.count; ii++) {
+                    phys_island_t *isle = &islands.islands[ii];
+                    if (isle->sleeping || isle->skip) continue;
+                    if (isle->body_count == 0) continue;
+
+                    uint32_t nsub = compute_island_sub_substeps(
+                        isle, world->body_pool.bodies_curr, body_cap);
+                    if (nsub <= 1) continue;
+
+                    float ss_dt = substep_dt / (float)nsub;
+                    float vel_damp = world->config.velocity_damping;
+
+                    for (uint32_t ss = 0; ss < nsub; ss++) {
+
+                        /* Rebuild joint rows from current positions
+                         * (skip first pass — rows are fresh from build). */
+                        if (ss > 0) {
+                            rebuild_island_joint_constraints(
+                                isle, constraints, constraint_count,
+                                world->joints, world->joint_count,
+                                world->body_pool.bodies_curr, ss_dt);
+                        }
+
+                        /* Init velocity workspace from body state. */
+                        for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                            uint32_t idx = isle->body_indices[bi];
+                            ss_vel[idx].linear  =
+                                world->body_pool.bodies_curr[idx].linear_vel;
+                            ss_vel[idx].angular =
+                                world->body_pool.bodies_curr[idx].angular_vel;
+                            ss_pseudo[idx] = (phys_velocity_t){{0,0,0},{0,0,0}};
+                            if (world->body_pool.bodies_curr[idx].inv_mass > 0.0f &&
+                                !phys_body_is_sleeping(
+                                    &world->body_pool.bodies_curr[idx])) {
+                                ss_vel[idx].linear = vec3_add(
+                                    ss_vel[idx].linear,
+                                    vec3_scale(world->config.gravity, ss_dt));
+                            }
+                        }
+
+                        /* Wrap island in a single-island list for solver. */
+                        phys_island_list_t ss_islands = {
+                            .islands  = isle,
+                            .count    = 1,
+                            .capacity = 1,
+                            .parent   = NULL,
+                            .rank     = NULL,
+                            .uf_size  = body_cap,
+                        };
+
+                        phys_stage_tgs_solve(&(phys_tgs_solve_args_t){
+                            .islands    = &ss_islands,
+                            .constraints = constraints,
+                            .bodies     = world->body_pool.bodies_curr,
+                            .velocities = ss_vel,
+                            .pseudo_velocities = ss_pseudo,
+                            .body_count = body_cap,
+                            .iterations = plan.solver_iterations,
+                            .gravity    = world->config.gravity,
+                            .dt         = ss_dt,
+                            .tick_dt    = plan.dt,
+                            .slop       = world->config.slop,
+                            .tier_substep_counts = tier_substep_counts,
+                            .frame_arena = &world->frame_arena,
+                            .island_color_threshold =
+                                world->config.island_color_threshold,
+                        });
+
+                        /* Integrate island bodies inline (in-place on
+                         * bodies_curr so next sub-substep sees updates). */
+                        for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                            uint32_t idx = isle->body_indices[bi];
+                            phys_body_t *b =
+                                &world->body_pool.bodies_curr[idx];
+
+                            if (phys_body_is_static(b) ||
+                                phys_body_is_kinematic(b)) {
+                                continue;
+                            }
+
+                            /* Write solved velocity back. */
+                            b->linear_vel  = ss_vel[idx].linear;
+                            b->angular_vel = ss_vel[idx].angular;
+
+                            /* Velocity damping. */
+                            if (vel_damp < 1.0f && vel_damp > 0.0f) {
+                                float d = powf(vel_damp, ss_dt);
+                                b->linear_vel  = vec3_scale(b->linear_vel, d);
+                                b->angular_vel = vec3_scale(b->angular_vel, d);
+                            }
+
+                            /* Velocity clamping. */
+                            {
+                                float ls = vec3_magnitude(b->linear_vel);
+                                if (ls > 100.0f) {
+                                    b->linear_vel = vec3_scale(
+                                        b->linear_vel, 100.0f / ls);
+                                }
+                                float as = vec3_magnitude(b->angular_vel);
+                                if (as > 50.0f) {
+                                    b->angular_vel = vec3_scale(
+                                        b->angular_vel, 50.0f / as);
+                                }
+                            }
+
+                            /* Position integration with pseudo-velocity. */
+                            phys_vec3_t int_vel = b->linear_vel;
+                            int_vel = vec3_add(int_vel,
+                                               ss_pseudo[idx].linear);
+                            b->position = vec3_add(
+                                b->position,
+                                vec3_scale(int_vel, ss_dt));
+
+                            /* Orientation integration via quat derivative. */
+                            phys_vec3_t int_ang = b->angular_vel;
+                            int_ang = vec3_add(int_ang,
+                                               ss_pseudo[idx].angular);
+                            phys_quat_t omega_q = {
+                                int_ang.x, int_ang.y, int_ang.z, 0.0f
+                            };
+                            phys_quat_t dq = quat_mul(omega_q,
+                                                       b->orientation);
+                            float half_dt = 0.5f * ss_dt;
+                            b->orientation.x += dq.x * half_dt;
+                            b->orientation.y += dq.y * half_dt;
+                            b->orientation.z += dq.z * half_dt;
+                            b->orientation.w += dq.w * half_dt;
+                            b->orientation = quat_normalize_safe(
+                                b->orientation, 1e-8f);
+                        }
+                    }
+
+                    /* Mark bodies so the main integrate stage skips them. */
+                    for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                        body_sub_substepped[isle->body_indices[bi]] = 1;
+                    }
+
+                    /* Mark skip so main TGS solve doesn't repeat. */
+                    isle->skip = true;
+                }
+            }
+        }
+
         /* ── Stage 11: TGS Solve ───────────────────────────────── */
         velocities = phys_frame_arena_alloc(
             &world->frame_arena,
@@ -682,6 +984,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .velocity_damping       = world->config.velocity_damping,
                 .max_penetration        = body_max_pen,
                 .slop                   = world->config.slop,
+                .skip_body              = body_sub_substepped,
             });
         }
 

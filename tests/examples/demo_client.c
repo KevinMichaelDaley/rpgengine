@@ -118,7 +118,7 @@ static void color_from_body(uint16_t body_id, float out_rgb[3]) {
 typedef struct entity_view {
     uint16_t body_id;     /**< Server physics body index. */
     uint8_t  is_static;   /**< Static body (ground plane). */
-    uint8_t  shape_type;  /**< 0=box. */
+    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule. */
     float    half_x;      /**< Half-extent X in meters. */
     float    half_y;      /**< Half-extent Y in meters. */
     float    half_z;      /**< Half-extent Z in meters. */
@@ -143,8 +143,11 @@ typedef struct gl_ctx {
     gl_loader_t       loader;
     shader_program_t  program;
     shader_uniform_cache_t uniforms;
-    vbo_t             vbo;
+    vbo_t             vbo;       /* cube mesh */
     vao_t             vao;
+    vbo_t             cap_vbo;   /* capsule mesh */
+    vao_t             cap_vao;
+    uint32_t          cap_vert_count; /* number of capsule vertices */
 } gl_ctx_t;
 
 static void *sdl_get_proc(const char *name, void *user) {
@@ -158,6 +161,83 @@ static mat4_t mat4_from_quat(quat_t q) {
         return mat4_identity();
     }
     return out;
+}
+
+/* ── Capsule mesh generator ──────────────────────────────────────── */
+
+/** Segments around the cylinder axis. */
+#define CAP_SLICES 12
+/** Rings per hemisphere. */
+#define CAP_HEMI_RINGS 4
+
+/**
+ * @brief Generate a unit capsule mesh (radius 0.5, total height 1.0)
+ *        oriented along the Y axis.  Caller scales to actual size.
+ *
+ * @param out     Output buffer for triangle vertices (xyz).
+ * @param max_verts  Maximum vertices that fit in out.
+ * @return Number of vertices written, or 0 on overflow.
+ */
+static uint32_t gen_capsule_mesh(float *out, uint32_t max_verts)
+{
+    uint32_t v = 0;
+    const float r = 0.5f;
+    const float half_h = 0.0f; /* unit capsule: hemispheres meet at center */
+
+#define EMIT(px,py,pz) do { \
+    if (v >= max_verts) return 0; \
+    out[v*3+0]=(px); out[v*3+1]=(py); out[v*3+2]=(pz); v++; \
+} while(0)
+
+    /* Cylinder body (2 triangles per slice). */
+    for (int i = 0; i < CAP_SLICES; i++) {
+        float a0 = (float)i / CAP_SLICES * 2.0f * FERRUM_PI;
+        float a1 = (float)(i+1) / CAP_SLICES * 2.0f * FERRUM_PI;
+        float c0 = cosf(a0)*r, s0 = sinf(a0)*r;
+        float c1 = cosf(a1)*r, s1 = sinf(a1)*r;
+        EMIT(c0, -half_h, s0); EMIT(c1, -half_h, s1); EMIT(c1,  half_h, s1);
+        EMIT(c0, -half_h, s0); EMIT(c1,  half_h, s1); EMIT(c0,  half_h, s0);
+    }
+
+    /* Top hemisphere (+Y). */
+    for (int ring = 0; ring < CAP_HEMI_RINGS; ring++) {
+        float phi0 = (float)ring / CAP_HEMI_RINGS * (FERRUM_PI / 2.0f);
+        float phi1 = (float)(ring+1) / CAP_HEMI_RINGS * (FERRUM_PI / 2.0f);
+        float y0 = half_h + sinf(phi0)*r, r0 = cosf(phi0)*r;
+        float y1 = half_h + sinf(phi1)*r, r1 = cosf(phi1)*r;
+        for (int i = 0; i < CAP_SLICES; i++) {
+            float a0 = (float)i / CAP_SLICES * 2.0f * FERRUM_PI;
+            float a1 = (float)(i+1) / CAP_SLICES * 2.0f * FERRUM_PI;
+            float x00=cosf(a0)*r0, z00=sinf(a0)*r0;
+            float x10=cosf(a1)*r0, z10=sinf(a1)*r0;
+            float x01=cosf(a0)*r1, z01=sinf(a0)*r1;
+            float x11=cosf(a1)*r1, z11=sinf(a1)*r1;
+            EMIT(x00,y0,z00); EMIT(x10,y0,z10); EMIT(x11,y1,z11);
+            EMIT(x00,y0,z00); EMIT(x11,y1,z11); EMIT(x01,y1,z01);
+        }
+    }
+
+    /* Bottom hemisphere (-Y). */
+    for (int ring = 0; ring < CAP_HEMI_RINGS; ring++) {
+        float phi0 = (float)ring / CAP_HEMI_RINGS * (FERRUM_PI / 2.0f);
+        float phi1 = (float)(ring+1) / CAP_HEMI_RINGS * (FERRUM_PI / 2.0f);
+        float y0 = -half_h - sinf(phi0)*r, r0 = cosf(phi0)*r;
+        float y1 = -half_h - sinf(phi1)*r, r1 = cosf(phi1)*r;
+        for (int i = 0; i < CAP_SLICES; i++) {
+            float a0 = (float)i / CAP_SLICES * 2.0f * FERRUM_PI;
+            float a1 = (float)(i+1) / CAP_SLICES * 2.0f * FERRUM_PI;
+            float x00=cosf(a0)*r0, z00=sinf(a0)*r0;
+            float x10=cosf(a1)*r0, z10=sinf(a1)*r0;
+            float x01=cosf(a0)*r1, z01=sinf(a0)*r1;
+            float x11=cosf(a1)*r1, z11=sinf(a1)*r1;
+            /* Winding reversed for bottom hemisphere. */
+            EMIT(x00,y0,z00); EMIT(x11,y1,z11); EMIT(x10,y0,z10);
+            EMIT(x00,y0,z00); EMIT(x01,y1,z01); EMIT(x11,y1,z11);
+        }
+    }
+
+#undef EMIT
+    return v;
 }
 
 /* ── GL init / shutdown ─────────────────────────────────────────── */
@@ -257,6 +337,21 @@ static int gl_init(gl_ctx_t *ctx) {
     vao_attribute_t attr = {(uint32_t)pos_loc, 3, GL_FLOAT, 0u, 0u, 0u};
     vao_bind_attributes(&ctx->vao, &ctx->vbo, &attr, 1u, 3u * sizeof(float));
 
+    /* Capsule mesh VBO + VAO. */
+    {
+        #define CAP_MAX_VERTS 4096
+        float cap_verts[CAP_MAX_VERTS * 3];
+        ctx->cap_vert_count = gen_capsule_mesh(cap_verts, CAP_MAX_VERTS);
+        #undef CAP_MAX_VERTS
+
+        vbo_create(&ctx->cap_vbo, &ctx->loader);
+        vbo_upload(&ctx->cap_vbo, GL_ARRAY_BUFFER, cap_verts,
+                   ctx->cap_vert_count * 3 * sizeof(float), GL_STATIC_DRAW);
+        vao_create(&ctx->cap_vao, &ctx->loader);
+        vao_bind_attributes(&ctx->cap_vao, &ctx->cap_vbo, &attr, 1u,
+                            3u * sizeof(float));
+    }
+
     glEnable(GL_DEPTH_TEST);
     SDL_GL_SetSwapInterval(1);
 
@@ -267,6 +362,8 @@ static int gl_init(gl_ctx_t *ctx) {
 }
 
 static void gl_shutdown(gl_ctx_t *ctx) {
+    vao_destroy(&ctx->cap_vao);
+    vbo_destroy(&ctx->cap_vbo);
     vao_destroy(&ctx->vao);
     vbo_destroy(&ctx->vbo);
     shader_program_destroy(&ctx->program);
@@ -673,10 +770,14 @@ int main(int argc, char **argv) {
                     };
                     quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
 
-                    /* Snapshot current rendered pose before correction. */
+                    /* Snapshot current rendered pose before correction.
+                     * Sample at render time (behind recv_time by the
+                     * render delay) so the correction line length
+                     * matches what the user actually sees on screen. */
                     vec3_t old_pos;
                     quat_t old_rot;
-                    if (fr_pose_interpolator_sample(&e->interp, recv_time,
+                    double sample_t = recv_time - CLIENT_RENDER_DELAY;
+                    if (fr_pose_interpolator_sample(&e->interp, sample_t,
                                                     1e-6f, &old_pos, &old_rot)) {
                         e->corr_old_pos = old_pos;
                         e->corr_old_rot = old_rot;
@@ -711,10 +812,14 @@ int main(int argc, char **argv) {
                 };
                 quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
 
-                /* Snapshot current rendered pose before correction. */
+                /* Snapshot current rendered pose before correction.
+                 * Sample at render time (behind recv_time by the
+                 * render delay) so the correction line length
+                 * matches what the user actually sees on screen. */
                 vec3_t old_pos;
                 quat_t old_rot;
-                if (fr_pose_interpolator_sample(&e->interp, recv_time,
+                double sample_t = recv_time - CLIENT_RENDER_DELAY;
+                if (fr_pose_interpolator_sample(&e->interp, sample_t,
                                                 1e-6f, &old_pos, &old_rot)) {
                     e->corr_old_pos = old_pos;
                     e->corr_old_rot = old_rot;
@@ -939,7 +1044,15 @@ int main(int argc, char **argv) {
                     shader_uniform_set_vec3(&gl.uniforms, &gl.program,
                                             "u_color", rgb);
 
-                    glDrawArrays(GL_TRIANGLES, 0, 36);
+                    if (e->shape_type == 2) {
+                        /* Capsule. */
+                        glBindVertexArray(vao_handle(&gl.cap_vao));
+                        glDrawArrays(GL_TRIANGLES, 0,
+                                     (GLsizei)gl.cap_vert_count);
+                        glBindVertexArray(vao_handle(&gl.vao));
+                    } else {
+                        glDrawArrays(GL_TRIANGLES, 0, 36);
+                    }
                 }
 
                 glBindVertexArray(0);

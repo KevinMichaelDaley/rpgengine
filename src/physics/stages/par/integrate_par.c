@@ -75,6 +75,11 @@ static void integrate_batch_job(void *data) {
             continue;
         }
 
+        /* Skip bodies already integrated by solver sub-substeps. */
+        if (args->skip_body && args->skip_body[i]) {
+            continue;
+        }
+
         /* Skip bodies whose tier doesn't need this substep. */
         if (tier_subs) {
             uint32_t ts = tier_subs[in->tier];

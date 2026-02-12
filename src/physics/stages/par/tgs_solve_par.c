@@ -35,6 +35,59 @@
 /** Min constraints per island to use graph-colored parallel dispatch. */
 #define COLOR_THRESHOLD 128
 
+/** Speed (m/s) above which we start adding solver iterations. */
+#define ADAPTIVE_SPEED_LOW  5.0f
+/** Speed (m/s) at which we reach maximum solver iterations. */
+#define ADAPTIVE_SPEED_HIGH 200.0f
+/** Maximum multiplier on base iteration count for fast islands. */
+#define ADAPTIVE_ITER_MULT  10
+
+/* ── Internal: compute per-island iteration count ─────────────── */
+
+/**
+ * @brief Compute a per-island solver iteration count scaled by the
+ *        maximum body speed in the island.
+ *
+ * @param island       The island to inspect.
+ * @param bodies       Body array (read-only).
+ * @param velocities   Solver velocity workspace (post-gravity).
+ * @param base_iters   Configured base iteration count.
+ * @return Iteration count for this island (>= base_iters).
+ */
+static uint32_t compute_island_iterations(
+    const phys_island_t *island,
+    const phys_body_t *bodies,
+    const phys_velocity_t *velocities,
+    uint32_t base_iters)
+{
+    float max_speed_sq = 0.0f;
+    for (uint32_t bi = 0; bi < island->body_count; bi++) {
+        uint32_t idx = island->body_indices[bi];
+        if (bodies[idx].inv_mass == 0.0f) continue;
+        phys_vec3_t v = velocities[idx].linear;
+        float speed_sq = vec3_dot(v, v);
+        if (speed_sq > max_speed_sq) {
+            max_speed_sq = speed_sq;
+        }
+    }
+
+    const float lo2 = ADAPTIVE_SPEED_LOW  * ADAPTIVE_SPEED_LOW;
+    const float hi2 = ADAPTIVE_SPEED_HIGH * ADAPTIVE_SPEED_HIGH;
+
+    if (max_speed_sq <= lo2) {
+        return base_iters;
+    }
+    if (max_speed_sq >= hi2) {
+        return base_iters * ADAPTIVE_ITER_MULT;
+    }
+
+    /* Sqrt ramp: aggressive at moderate speeds, plateaus at extremes. */
+    float t = (max_speed_sq - lo2) / (hi2 - lo2);
+    t = sqrtf(t);
+    uint32_t extra = (uint32_t)(t * (float)(base_iters * (ADAPTIVE_ITER_MULT - 1)));
+    return base_iters + extra;
+}
+
 /* ── Shared context for all island jobs ────────────────────────── */
 
 /**
@@ -319,9 +372,13 @@ static void solve_island(const tgs_solve_shared_t *shared,
 {
     if (island->sleeping || island->skip) return;
 
+    /* Adaptive iteration count based on island body velocity. */
+    uint32_t iters = compute_island_iterations(
+        island, shared->bodies, shared->velocities, shared->iterations);
+
     phys_velocity_t *pseudo = shared->pseudo_velocities;
 
-    for (uint32_t iter = 0; iter < shared->iterations; iter++) {
+    for (uint32_t iter = 0; iter < iters; iter++) {
         for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
             uint32_t c_idx = island->constraint_indices[ci];
             phys_constraint_t *c = &shared->constraints[c_idx];
@@ -508,8 +565,12 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
         .constraint_indices = sorted_indices,
     };
 
+    /* Adaptive iteration count based on island body velocity. */
+    uint32_t iters = compute_island_iterations(
+        island, shared->bodies, shared->velocities, shared->iterations);
+
     /* Solve: for each iteration, for each color, dispatch + barrier. */
-    for (uint32_t iter = 0; iter < shared->iterations; ++iter) {
+    for (uint32_t iter = 0; iter < iters; ++iter) {
         for (uint32_t color = 0; color < coloring.num_colors; ++color) {
             uint32_t count = color_counts[color];
             if (count == 0) { continue; }
