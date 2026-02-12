@@ -153,6 +153,71 @@ static void clamp_joint_separation(phys_joint_t *joints,
     }
 }
 
+/** Maximum relative angular velocity (rad/s) between jointed bodies.
+ *  Beyond this, the relative angular velocity is clamped. */
+#define JOINT_MAX_REL_ANGULAR_VEL 30.0f
+
+/**
+ * @brief Damp excessive relative angular velocity between jointed bodies.
+ *
+ * When two jointed bodies spin relative to each other faster than
+ * JOINT_MAX_REL_ANGULAR_VEL, the excess is removed (weighted by
+ * inverse inertia).  This prevents angular "popping" where one body
+ * tumbles wildly between solver steps.
+ *
+ * @param joints       Joint array.
+ * @param joint_count  Number of joints.
+ * @param bodies       Mutable body array (angular_vel may be adjusted).
+ * @param body_count   Total body count.
+ */
+static void clamp_joint_angular_velocity(phys_joint_t *joints,
+                                          uint32_t joint_count,
+                                          phys_body_t *bodies,
+                                          uint32_t body_count)
+{
+    for (uint32_t i = 0; i < joint_count; i++) {
+        const phys_joint_t *j = &joints[i];
+        if (j->body_a >= body_count || j->body_b >= body_count) continue;
+
+        phys_body_t *ba = &bodies[j->body_a];
+        phys_body_t *bb = &bodies[j->body_b];
+
+        /* Relative angular velocity. */
+        phys_vec3_t rel_w = vec3_sub(bb->angular_vel, ba->angular_vel);
+        float rel_speed = vec3_magnitude(rel_w);
+        if (rel_speed <= JOINT_MAX_REL_ANGULAR_VEL) continue;
+
+        /* Fraction to remove from relative angular velocity. */
+        float excess = rel_speed - JOINT_MAX_REL_ANGULAR_VEL;
+        phys_vec3_t correction = vec3_scale(rel_w, excess / rel_speed);
+
+        /* Distribute correction by inverse inertia (use trace as proxy). */
+        float ii_a = (ba->inv_mass > 0.0f)
+            ? (ba->inv_inertia_diag.x + ba->inv_inertia_diag.y +
+               ba->inv_inertia_diag.z)
+            : 0.0f;
+        float ii_b = (bb->inv_mass > 0.0f)
+            ? (bb->inv_inertia_diag.x + bb->inv_inertia_diag.y +
+               bb->inv_inertia_diag.z)
+            : 0.0f;
+        float ii_total = ii_a + ii_b;
+        if (ii_total < 1e-12f) continue;
+
+        float frac_a = ii_a / ii_total;
+        float frac_b = ii_b / ii_total;
+
+        /* Body A gets pushed toward B's angular velocity, and vice versa. */
+        if (ba->inv_mass > 0.0f) {
+            ba->angular_vel = vec3_add(ba->angular_vel,
+                vec3_scale(correction, frac_a));
+        }
+        if (bb->inv_mass > 0.0f) {
+            bb->angular_vel = vec3_sub(bb->angular_vel,
+                vec3_scale(correction, frac_b));
+        }
+    }
+}
+
 /**
  * @brief Compute the number of solver sub-substeps for an island
  *        based on the maximum body speed.
@@ -889,6 +954,9 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                         clamp_joint_separation(
                             world->joints, world->joint_count,
                             world->body_pool.bodies_curr, body_cap);
+                        clamp_joint_angular_velocity(
+                            world->joints, world->joint_count,
+                            world->body_pool.bodies_curr, body_cap);
                     }
 
                     /* Mark bodies so the main integrate stage skips them. */
@@ -1089,6 +1157,9 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
          * to prevent bodies from overshooting their joint sockets. */
         if (world->joint_count > 0) {
             clamp_joint_separation(
+                world->joints, world->joint_count,
+                world->body_pool.bodies_next, body_cap);
+            clamp_joint_angular_velocity(
                 world->joints, world->joint_count,
                 world->body_pool.bodies_next, body_cap);
         }
