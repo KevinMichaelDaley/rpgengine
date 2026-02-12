@@ -290,12 +290,29 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
     const phys_vec3_t *inv_i_b = &shared->bodies[c->body_b].inv_inertia_diag;
 
     if (c->is_joint) {
-        /* Joint: velocity-level solve with bias=0, then split-impulse
-         * position correction using error stored in each row's bias. */
+        /* Joint: velocity-level solve with speed-dependent Baumgarte
+         * leak, then split-impulse position correction. */
+        phys_vec3_t vel_a = va->linear;
+        phys_vec3_t vel_b = vb->linear;
+        float spd_a = vec3_dot(vel_a, vel_a);
+        float spd_b = vec3_dot(vel_b, vel_b);
+        float max_spd2 = spd_a > spd_b ? spd_a : spd_b;
+
+        const float baumgarte_lo2 = 10.0f * 10.0f;
+        const float baumgarte_hi2 = 100.0f * 100.0f;
+        const float baumgarte_max = 0.3f;
+        float baumgarte = 0.0f;
+        if (max_spd2 > baumgarte_lo2) {
+            float t = (max_spd2 - baumgarte_lo2)
+                    / (baumgarte_hi2 - baumgarte_lo2);
+            if (t > 1.0f) { t = 1.0f; }
+            baumgarte = baumgarte_max * t;
+        }
+
         float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
         for (uint8_t r = 0; r < c->row_count; r++) {
             saved_bias[r] = c->rows[r].bias;
-            c->rows[r].bias = 0.0f;
+            c->rows[r].bias = -saved_bias[r] * shared->inv_dt * baumgarte;
         }
 
         for (uint8_t r = 0; r < c->row_count; r++) {

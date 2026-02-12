@@ -338,15 +338,40 @@ static void solve_one_constraint(phys_constraint_t *c,
     const phys_vec3_t *inv_i_b = &bodies[c->body_b].inv_inertia_diag;
 
     if (c->is_joint) {
-        /* Joint constraints: velocity-level solve with bias=0 (pure
-         * velocity constraint), then split-impulse position correction
-         * using the position error stored in each row's bias field. */
+        /* Joint constraints: velocity-level solve with a small Baumgarte
+         * leak proportional to body speed, then split-impulse position
+         * correction using the position error stored in each row's bias.
+         *
+         * At low speeds, bias → 0 (pure split-impulse).  At high speeds,
+         * leak a fraction of -error*inv_dt into the velocity bias so the
+         * solver actively steers anchors together during velocity solve,
+         * preventing drift that split-impulse alone can't catch. */
 
-        /* Save bias values (position errors) and zero for velocity solve. */
+        /* Compute max body speed for Baumgarte leak scaling. */
+        phys_vec3_t vel_a = va->linear;
+        phys_vec3_t vel_b = vb->linear;
+        float spd_a = vec3_dot(vel_a, vel_a);
+        float spd_b = vec3_dot(vel_b, vel_b);
+        float max_spd2 = spd_a > spd_b ? spd_a : spd_b;
+
+        /* Baumgarte fraction: 0 below 10 m/s, ramps to 0.3 at 100 m/s. */
+        const float baumgarte_lo2 = 10.0f * 10.0f;   /* 100 */
+        const float baumgarte_hi2 = 100.0f * 100.0f;  /* 10000 */
+        const float baumgarte_max = 0.3f;
+        float baumgarte = 0.0f;
+        if (max_spd2 > baumgarte_lo2) {
+            float t = (max_spd2 - baumgarte_lo2)
+                    / (baumgarte_hi2 - baumgarte_lo2);
+            if (t > 1.0f) { t = 1.0f; }
+            baumgarte = baumgarte_max * t;
+        }
+
+        /* Save bias values (position errors), set velocity-level bias
+         * to Baumgarte leak: -error * inv_dt * baumgarte_fraction. */
         float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
         for (uint8_t r = 0; r < c->row_count; r++) {
             saved_bias[r] = c->rows[r].bias;
-            c->rows[r].bias = 0.0f;
+            c->rows[r].bias = -saved_bias[r] * inv_dt * baumgarte;
         }
 
         /* Velocity-level solve: all rows with bilateral bounds. */
