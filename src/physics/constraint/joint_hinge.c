@@ -37,7 +37,8 @@ static void build_positional_row(phys_jacobian_row_t *row,
                                  phys_vec3_t rA, phys_vec3_t rB,
                                  phys_vec3_t axis, float error,
                                  const struct phys_body *body_a,
-                                 const struct phys_body *body_b) {
+                                 const struct phys_body *body_b,
+                                 float row_damping) {
     memset(row, 0, sizeof(*row));
 
     row->J_va = vec3_scale(axis, -1.0f);
@@ -51,6 +52,7 @@ static void build_positional_row(phys_jacobian_row_t *row,
 
     /* Position error stored in bias for split-impulse correction. */
     row->bias = error;
+    row->damping = row_damping;
 
     row->effective_mass = phys_compute_effective_mass(
         row,
@@ -109,7 +111,8 @@ void phys_joint_build_hinge(phys_joint_t *joint,
     for (int i = 0; i < 3; ++i) {
         float axis_error = vec3_dot(pos_error, axes[i]);
         build_positional_row(&joint->rows[i], rA, rB, axes[i],
-                             axis_error, body_a, body_b);
+                             axis_error, body_a, body_b,
+                             joint->damping);
     }
 
     /* ── Angular rows (3–4): lock rotation off the hinge axis ───── */
@@ -140,6 +143,7 @@ void phys_joint_build_hinge(phys_joint_t *joint,
         row->lambda_max =  JOINT_LAMBDA_BIG;
         row->lambda = 0.0f;
         row->bias = 0.0f;  /* No angular drift correction for now. */
+        row->damping = joint->damping;
 
         row->effective_mass = phys_compute_effective_mass(
             row,

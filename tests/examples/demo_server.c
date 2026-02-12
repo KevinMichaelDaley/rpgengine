@@ -579,6 +579,7 @@ int main(int argc, char **argv) {
             /* Anchor on this body: -Y tip. */
             joint.local_anchor_b = (phys_vec3_t){
                 0.0f, -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f};
+            joint.damping = 0.3f; /* Viscous damping to reduce high-speed jitter. */
 
             phys_world_add_joint(&ctx.world, &joint);
             prev_body = bi;

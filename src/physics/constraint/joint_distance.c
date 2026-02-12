@@ -91,6 +91,7 @@ void phys_joint_build_distance(phys_joint_t *joint,
      * position correction uses this raw error value. */
     float error = dist - joint->rest_length;
     row->bias = error;
+    row->damping = joint->damping;
 
     /* Effective mass. */
     row->effective_mass = phys_compute_effective_mass(

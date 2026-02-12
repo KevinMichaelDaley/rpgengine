@@ -143,8 +143,11 @@ static void solve_row(phys_jacobian_row_t *row,
              + vec3_dot(row->J_vb, vb->linear)
              + vec3_dot(row->J_wb, vb->angular);
 
-    /* Impulse delta from constraint violation. */
-    float delta_lambda = (row->bias - jv) * row->effective_mass;
+    /* Impulse delta from constraint violation.
+     * The damping term opposes relative velocity along the constraint
+     * axis — acts as viscous drag to reduce high-speed jitter. */
+    float jv_damped = jv * (1.0f + row->damping);
+    float delta_lambda = (row->bias - jv_damped) * row->effective_mass;
 
     /* Clamp accumulated impulse within bounds. */
     float old_lambda = row->lambda;
