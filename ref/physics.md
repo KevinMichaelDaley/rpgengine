@@ -2,9 +2,12 @@ OVERVIEW: Tiered TGS physics architecture (XPBD planned)
 (for a fiber-based ECS engine with sparse interactions)
 
 CURRENT IMPLEMENTATION STATUS (source-of-truth: src/physics/world/tick*.c)
-- Tick orchestrators currently run TGS only; XPBD modules exist but are not wired.
+- Tick orchestrators run TGS with split impulse; XPBD modules exist but are not wired.
 - Position projection / velocity sync are fused into TGS via split impulse (pseudo_velocities[]).
 - Halo closure + broadphase run once per tick (outside the substep loop).
+- Joint system is implemented: distance, ball, and hinge joints.
+- TGS solver has adaptive per-island iteration scaling and sub-substeps.
+- Nonlinear joint position projection runs after TGS iterations.
 
 ==============================================================
 1) WHAT THE ARCHITECTURE IS OPTIMIZING FOR
@@ -486,11 +489,36 @@ THOUSANDS OF BODIES, SPARSE GRAPH:
 | warmstart_decay          | 0.95   | Impulse carry-over decay per frame        |
 | velocity_damping         | 0.99   | Fraction retained per second              |
 
+Adaptive solver tuning (compile-time constants in tgs_solve.c):
+| Parameter                | Value  | Notes                                     |
+|--------------------------|--------|-------------------------------------------|
+| ADAPTIVE_SPEED_LOW       | 5 m/s  | Below this: use base iterations           |
+| ADAPTIVE_SPEED_HIGH      | 200 m/s| At this: max iterations (10× base)        |
+| ADAPTIVE_ITER_MULT       | 10     | Max multiplier on base iteration count    |
+| SUBSUB_SPEED_LOW         | 15 m/s | Below this: 1 sub-substep                 |
+| SUBSUB_SPEED_HIGH        | 150 m/s| At this: max sub-substeps                 |
+| SUBSUB_MAX               | 8      | Maximum solver sub-substeps per island    |
+| NL_PROJ_PASSES           | 4      | Nonlinear projection passes after TGS     |
+| NL_PROJ_FRACTION         | 0.8    | Error fraction corrected per pass         |
+| NL_PROJ_MIN_ERROR        | 0.01 m | Min anchor error to trigger projection    |
+
+Joint constraint tuning (set per-joint at creation):
+| Parameter                | Value  | Notes                                     |
+|--------------------------|--------|-------------------------------------------|
+| joint.damping            | 0.1–0.5| Row-level viscous damping (must be < 1)   |
+| Baumgarte leak lo        | 5 m/s  | Speed below which leak = 0                |
+| Baumgarte leak hi        | 60 m/s | Speed at which leak = 0.6                 |
+| Predictive blend lo      | 5 m/s  | Speed below which blend = 0              |
+| Predictive blend hi      | 80 m/s | Speed at which blend = 0.5               |
+
 Tuning notes:
 - baumgarte too high (>0.05) causes ground-contact oscillation/jitter.
 - slop too low (<0.002) blocks sleep via persistent micro-penetration.
 - sleep thresholds too tight (<0.05) prevent resting objects from sleeping
   due to solver noise at contact points.
+- Joint damping > 1.0 causes PGS divergence/oscillation.
+- Nonlinear (quadratic) damping was tried and failed — use linear only.
+- Adaptive iterations use sqrt ramp for fast convergence at moderate speeds.
 
 ==============================================================
 7) WHY THIS ARCHITECTURE SCALES WITHOUT REWRITES
@@ -1145,15 +1173,34 @@ Replication uses existing quantization:
 
 The pipeline is designed for incremental feature addition:
 
-JOINTS (future):
-- Add joint pool alongside manifold_cache
-- ConstraintBuild stage generates joint constraints
-- No changes to Island/Solve stages
+JOINTS (implemented):
+- Joint pool on phys_world_t: world->joints[], world->joint_count
+- Three joint types: DISTANCE (1 row), BALL (3 rows), HINGE (5 rows)
+- Joint build functions (joint_ball.c, joint_distance.c, joint_hinge.c)
+  produce Jacobian rows each substep, packed into phys_constraint_t via
+  phys_joint_build_constraints()
+- Joint constraints have is_joint=1, bilateral lambda bounds (push+pull)
+- Joints participate in island build and are solved by TGS alongside contacts
+- Per-row viscous damping (joint->damping, range 0.1–0.5, applied as
+  delta = (bias - jv*(1+damping)) * eff_mass; must stay < 1 for PGS convergence)
+- Speed-dependent Baumgarte leak for joints: at high body speeds (5–60 m/s),
+  a fraction (0–0.6) of position error leaks into velocity-level bias so the
+  solver actively steers anchors together during velocity solve
+- Predictive anchor correction (ball joints): blends current and predicted
+  (pos + vel*dt) anchor error, blend factor 0–0.5 over 5–80 m/s
+- Nonlinear position projection: after TGS iterations, 4 extra passes
+  recompute world anchors from predicted body state (pos + pseudo*dt,
+  orientation integrated by pseudo angular vel), measure residual error,
+  apply coupled position + angular corrections to pseudo-velocities;
+  angular correction uses r×e/|r|² to swing lever arms toward targets
+- Sub-substep support: fast islands (15–150 m/s) get up to 8 solver
+  sub-substeps with inline per-body integration; joint constraints are
+  rebuilt each sub-substep but contact constraints stay frozen
 
 ARTICULATED BODIES (future):
-- Add articulation pool (parent/child links)
-- Pre-solve stage applies joint limits
-- Solve stage handles articulation constraints
+- Extend joint system with parent/child links
+- Joint limits (angular, linear)
+- Reduced-coordinate articulations
 
 FRACTURE (future):
 - Impact events feed fracture system

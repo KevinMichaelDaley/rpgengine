@@ -46,16 +46,29 @@ phys_stage_manifold_build                        Phys.Manifold.BuildingContacts 
 # STAGE 8: STABILIZATION
 phys_stage_stabilization                         Phys.Stab.ComputingHints                 4.0
 
-# STAGE 9: CONSTRAINT BUILD
+# STAGE 9: CONSTRAINT BUILD (includes joint constraint build)
 phys_stage_constraint_build                      Phys.Constraint.BuildingJacobians        5.0
+# Joint rows: phys_joint_build_ball/distance/hinge -> phys_joint_build_constraints
 
 # STAGE 10: ISLAND BUILD (T0/T1)
 phys_stage_island_build                          Phys.Island.BuildingComponents           5.0
 
-# STAGE 11: TGS SOLVE (includes split impulse position correction)
-phys_stage_tgs_solve                             Phys.Solve.IteratingTGS                 30.0
+# STAGE 10b: SUB-SUBSTEPS (fast islands only, before main TGS)
+# Islands with max body speed > 15 m/s get 1–8 sub-substeps.
+# Each sub-substep: rebuild joint constraints, TGS solve, inline integrate.
+compute_island_sub_substeps                      Phys.SubSub.ComputingCount               0.5
+rebuild_island_joint_constraints                 Phys.SubSub.RebuildingJoints             1.0
+# (sub-substep TGS + integrate time varies with island speed)
 
-# STAGE 12: INTEGRATE
+# STAGE 11: TGS SOLVE (includes split impulse + nonlinear joint projection)
+# Adaptive iterations: 1×–10× base, sqrt ramp based on max island body speed.
+# Speed-dependent Baumgarte leak for joints (0–0.6 over 5–60 m/s).
+# Per-row viscous damping for joint constraints (damping < 1).
+# After iterations: 4 nonlinear joint projection passes.
+phys_stage_tgs_solve                             Phys.Solve.IteratingTGS                 30.0
+project_joints_nonlinear                         Phys.Solve.ProjectingJoints              2.0
+
+# STAGE 12: INTEGRATE (sub-substepped bodies are skipped)
 phys_stage_integrate                             Phys.Integrate.UpdatingPositions         5.0
 
 # STAGE 13: CACHE COMMIT
