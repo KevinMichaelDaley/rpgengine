@@ -62,162 +62,6 @@
 /** Maximum solver sub-substeps for fast islands. */
 #define SUBSUB_MAX        8
 
-/** Maximum allowed joint anchor separation (meters) after integration.
- *  If anchors separate farther than this, the dynamic body is pulled
- *  back to keep the gap within budget. */
-#define JOINT_MAX_SEPARATION 0.5f
-
-/**
- * @brief Rotate a vector by a quaternion: q * v * q^-1.
- */
-static phys_vec3_t tick_quat_rotate(phys_quat_t q, phys_vec3_t v) {
-    phys_vec3_t qv = {q.x, q.y, q.z};
-    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
-    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
-}
-
-/**
- * @brief Post-integration joint projection: clamp anchor separation.
- *
- * For each joint, compute the world-space anchor positions from the
- * current body state.  If the anchors are farther apart than
- * JOINT_MAX_SEPARATION, move the dynamic body (or both, weighted by
- * inverse mass) so the separation is within budget.
- *
- * This prevents a single large integration step from popping a body
- * out of its socket, which the solver then has to violently correct.
- *
- * @param joints       Joint array.
- * @param joint_count  Number of joints.
- * @param bodies       Mutable body array (positions may be adjusted).
- * @param body_count   Total body count (for bounds checking).
- */
-static void clamp_joint_separation(phys_joint_t *joints,
-                                    uint32_t joint_count,
-                                    phys_body_t *bodies,
-                                    uint32_t body_count)
-{
-    for (uint32_t i = 0; i < joint_count; i++) {
-        const phys_joint_t *j = &joints[i];
-        if (j->body_a >= body_count || j->body_b >= body_count) continue;
-
-        phys_body_t *ba = &bodies[j->body_a];
-        phys_body_t *bb = &bodies[j->body_b];
-
-        /* Compute world-space anchors. */
-        phys_vec3_t wa = vec3_add(ba->position,
-            tick_quat_rotate(ba->orientation, j->local_anchor_a));
-        phys_vec3_t wb = vec3_add(bb->position,
-            tick_quat_rotate(bb->orientation, j->local_anchor_b));
-
-        phys_vec3_t delta = vec3_sub(wb, wa);
-        float dist = sqrtf(vec3_dot(delta, delta));
-
-        /* Target distance: rest_length for distance joints, 0 for others. */
-        float target = (j->type == PHYS_JOINT_DISTANCE) ? j->rest_length : 0.0f;
-
-        /* Excess separation beyond target + budget. */
-        float error = dist - target;
-        if (error < -JOINT_MAX_SEPARATION) {
-            error = -error - JOINT_MAX_SEPARATION; /* compressed too much */
-        } else if (error > JOINT_MAX_SEPARATION) {
-            error = error - JOINT_MAX_SEPARATION;  /* stretched too much */
-        } else {
-            continue; /* within budget */
-        }
-
-        if (dist < 1e-7f) continue; /* degenerate — skip */
-        phys_vec3_t dir = vec3_scale(delta, 1.0f / dist);
-
-        /* Weight correction by inverse mass so lighter bodies move more. */
-        float im_a = ba->inv_mass;
-        float im_b = bb->inv_mass;
-        float im_total = im_a + im_b;
-        if (im_total < 1e-12f) continue; /* both kinematic/static */
-
-        float wa_frac = im_a / im_total;
-        float wb_frac = im_b / im_total;
-
-        /* Determine sign: if anchors are too far apart, pull together;
-         * if too close (compressed), push apart. */
-        float sign = (dist > target + JOINT_MAX_SEPARATION) ? 1.0f : -1.0f;
-
-        if (im_a > 0.0f) {
-            ba->position = vec3_add(ba->position,
-                vec3_scale(dir, sign * error * wa_frac));
-        }
-        if (im_b > 0.0f) {
-            bb->position = vec3_add(bb->position,
-                vec3_scale(dir, -sign * error * wb_frac));
-        }
-    }
-}
-
-/** Maximum relative angular velocity (rad/s) between jointed bodies.
- *  Beyond this, the relative angular velocity is clamped. */
-#define JOINT_MAX_REL_ANGULAR_VEL 30.0f
-
-/**
- * @brief Damp excessive relative angular velocity between jointed bodies.
- *
- * When two jointed bodies spin relative to each other faster than
- * JOINT_MAX_REL_ANGULAR_VEL, the excess is removed (weighted by
- * inverse inertia).  This prevents angular "popping" where one body
- * tumbles wildly between solver steps.
- *
- * @param joints       Joint array.
- * @param joint_count  Number of joints.
- * @param bodies       Mutable body array (angular_vel may be adjusted).
- * @param body_count   Total body count.
- */
-static void clamp_joint_angular_velocity(phys_joint_t *joints,
-                                          uint32_t joint_count,
-                                          phys_body_t *bodies,
-                                          uint32_t body_count)
-{
-    for (uint32_t i = 0; i < joint_count; i++) {
-        const phys_joint_t *j = &joints[i];
-        if (j->body_a >= body_count || j->body_b >= body_count) continue;
-
-        phys_body_t *ba = &bodies[j->body_a];
-        phys_body_t *bb = &bodies[j->body_b];
-
-        /* Relative angular velocity. */
-        phys_vec3_t rel_w = vec3_sub(bb->angular_vel, ba->angular_vel);
-        float rel_speed = vec3_magnitude(rel_w);
-        if (rel_speed <= JOINT_MAX_REL_ANGULAR_VEL) continue;
-
-        /* Fraction to remove from relative angular velocity. */
-        float excess = rel_speed - JOINT_MAX_REL_ANGULAR_VEL;
-        phys_vec3_t correction = vec3_scale(rel_w, excess / rel_speed);
-
-        /* Distribute correction by inverse inertia (use trace as proxy). */
-        float ii_a = (ba->inv_mass > 0.0f)
-            ? (ba->inv_inertia_diag.x + ba->inv_inertia_diag.y +
-               ba->inv_inertia_diag.z)
-            : 0.0f;
-        float ii_b = (bb->inv_mass > 0.0f)
-            ? (bb->inv_inertia_diag.x + bb->inv_inertia_diag.y +
-               bb->inv_inertia_diag.z)
-            : 0.0f;
-        float ii_total = ii_a + ii_b;
-        if (ii_total < 1e-12f) continue;
-
-        float frac_a = ii_a / ii_total;
-        float frac_b = ii_b / ii_total;
-
-        /* Body A gets pushed toward B's angular velocity, and vice versa. */
-        if (ba->inv_mass > 0.0f) {
-            ba->angular_vel = vec3_add(ba->angular_vel,
-                vec3_scale(correction, frac_a));
-        }
-        if (bb->inv_mass > 0.0f) {
-            bb->angular_vel = vec3_sub(bb->angular_vel,
-                vec3_scale(correction, frac_b));
-        }
-    }
-}
-
 /**
  * @brief Compute the number of solver sub-substeps for an island
  *        based on the maximum body speed.
@@ -884,6 +728,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                             .frame_arena = &world->frame_arena,
                             .island_color_threshold =
                                 world->config.island_color_threshold,
+                            .joints      = world->joints,
+                            .joint_count = world->joint_count,
                         });
 
                         /* Integrate island bodies inline (in-place on
@@ -949,14 +795,6 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                                 b->orientation, 1e-8f);
                         }
 
-                        /* Clamp joint anchor separation after integration
-                         * to prevent bodies from popping out of sockets. */
-                        clamp_joint_separation(
-                            world->joints, world->joint_count,
-                            world->body_pool.bodies_curr, body_cap);
-                        clamp_joint_angular_velocity(
-                            world->joints, world->joint_count,
-                            world->body_pool.bodies_curr, body_cap);
                     }
 
                     /* Mark bodies so the main integrate stage skips them. */
@@ -1002,6 +840,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .tier_substep_counts = tier_substep_counts,
                 .frame_arena = &world->frame_arena,
                 .island_color_threshold = world->config.island_color_threshold,
+                .joints      = world->joints,
+                .joint_count = world->joint_count,
             });
         }
 
@@ -1151,17 +991,6 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .slop                   = world->config.slop,
                 .skip_body              = body_sub_substepped,
             });
-        }
-
-        /* Clamp joint separation on the just-integrated output buffer
-         * to prevent bodies from overshooting their joint sockets. */
-        if (world->joint_count > 0) {
-            clamp_joint_separation(
-                world->joints, world->joint_count,
-                world->body_pool.bodies_next, body_cap);
-            clamp_joint_angular_velocity(
-                world->joints, world->joint_count,
-                world->body_pool.bodies_next, body_cap);
         }
 
         /* ── Stage 12b + 13: skipped in prediction mode ───────── */

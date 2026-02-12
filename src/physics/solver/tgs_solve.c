@@ -25,9 +25,11 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/constraint_color.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/step_plan.h"
 #include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
 
 /** Minimum penetration excess to correct (avoids micro-jitter). */
 #define SPLIT_MIN_PHI 1e-6f
@@ -317,6 +319,189 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
     pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
 }
 
+/* ── Nonlinear joint position projection ──────────────────────────── */
+
+/** Minimum anchor error (meters) to trigger nonlinear projection. */
+#define NL_PROJ_MIN_ERROR 0.01f
+
+/** Number of nonlinear projection passes after TGS iterations. */
+#define NL_PROJ_PASSES 4
+
+/** Fraction of error corrected per nonlinear projection pass. */
+#define NL_PROJ_FRACTION 0.8f
+
+/**
+ * @brief Rotate a vector by a quaternion: q * v * q^-1.
+ */
+static phys_vec3_t tgs_quat_rotate(phys_quat_t q, phys_vec3_t v) {
+    phys_vec3_t qv = {q.x, q.y, q.z};
+    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
+    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
+}
+
+/**
+ * @brief Integrate a quaternion by an angular velocity over dt.
+ *
+ * Uses the standard quaternion derivative: dq = 0.5 * omega_q * q.
+ * The result is normalized.
+ */
+static phys_quat_t tgs_quat_integrate(phys_quat_t q, phys_vec3_t w,
+                                       float dt) {
+    phys_quat_t omega_q = { w.x, w.y, w.z, 0.0f };
+    phys_quat_t dq = quat_mul(omega_q, q);
+    float half_dt = 0.5f * dt;
+    phys_quat_t result = {
+        q.x + dq.x * half_dt,
+        q.y + dq.y * half_dt,
+        q.z + dq.z * half_dt,
+        q.w + dq.w * half_dt,
+    };
+    return quat_normalize_safe(result, 1e-8f);
+}
+
+/**
+ * @brief Nonlinear position projection for joints after TGS iterations.
+ *
+ * After the iterative velocity solve, pseudo-velocities encode a linear
+ * approximation of position correction.  For joints with large errors,
+ * this linearization is inaccurate because the Jacobians were computed
+ * at the start of the substep and don't account for how rotation changes
+ * the lever arm direction.
+ *
+ * This function does extra passes that:
+ *   1. Predict each body's state after integrating pseudo-velocity.
+ *   2. Recompute world anchors from that predicted state.
+ *   3. Measure the actual residual anchor error.
+ *   4. Apply a correction to pseudo-velocities that accounts for both
+ *      translation and the angular swing needed to redirect the lever arm.
+ *
+ * This is essentially TGS position-level solve with nonlinear re-
+ * linearization — the key insight being that we recompute the constraint
+ * direction each pass instead of using stale Jacobians.
+ *
+ * @param joints       Joint array.
+ * @param joint_count  Number of joints.
+ * @param bodies       Body array (read-only positions/orientations).
+ * @param pseudo       Pseudo-velocity workspace (modified in-place).
+ * @param body_count   Number of bodies.
+ * @param dt           Substep timestep.
+ */
+static void project_joints_nonlinear(const phys_joint_t *joints,
+                                      uint32_t joint_count,
+                                      const struct phys_body *bodies,
+                                      phys_velocity_t *pseudo,
+                                      uint32_t body_count,
+                                      float dt)
+{
+    if (!joints || joint_count == 0 || !pseudo || dt <= 0.0f) return;
+
+    const float inv_dt = 1.0f / dt;
+
+    for (uint32_t pass = 0; pass < NL_PROJ_PASSES; pass++) {
+        for (uint32_t ji = 0; ji < joint_count; ji++) {
+            const phys_joint_t *j = &joints[ji];
+            if (j->body_a >= body_count || j->body_b >= body_count) continue;
+
+            const phys_body_t *ba = &bodies[j->body_a];
+            const phys_body_t *bb = &bodies[j->body_b];
+
+            /* Predict body state after integrating pseudo-velocities. */
+            phys_vec3_t pos_a = vec3_add(ba->position,
+                vec3_scale(pseudo[j->body_a].linear, dt));
+            phys_vec3_t pos_b = vec3_add(bb->position,
+                vec3_scale(pseudo[j->body_b].linear, dt));
+
+            phys_quat_t ori_a = tgs_quat_integrate(
+                ba->orientation, pseudo[j->body_a].angular, dt);
+            phys_quat_t ori_b = tgs_quat_integrate(
+                bb->orientation, pseudo[j->body_b].angular, dt);
+
+            /* Compute world anchors from predicted state. */
+            phys_vec3_t rA = tgs_quat_rotate(ori_a, j->local_anchor_a);
+            phys_vec3_t rB = tgs_quat_rotate(ori_b, j->local_anchor_b);
+            phys_vec3_t wa = vec3_add(pos_a, rA);
+            phys_vec3_t wb = vec3_add(pos_b, rB);
+
+            /* Compute anchor error vector: wb - wa. */
+            phys_vec3_t error = vec3_sub(wb, wa);
+
+            /* For distance joints, error is along the separation axis
+             * with magnitude = current_dist - rest_length. */
+            float target = 0.0f;
+            if (j->type == PHYS_JOINT_DISTANCE) {
+                target = j->rest_length;
+                float dist = vec3_magnitude(error);
+                if (dist < 1e-7f) continue;
+                /* Scalar error: how far off from rest length. */
+                float scalar_err = dist - target;
+                if (fabsf(scalar_err) < NL_PROJ_MIN_ERROR) continue;
+                /* Direction from A to B. */
+                phys_vec3_t dir = vec3_scale(error, 1.0f / dist);
+                error = vec3_scale(dir, scalar_err);
+            } else {
+                /* Ball/hinge: target is zero separation. */
+                float err_mag = vec3_magnitude(error);
+                if (err_mag < NL_PROJ_MIN_ERROR) continue;
+            }
+
+            /* Inverse masses. */
+            float im_a = ba->inv_mass;
+            float im_b = bb->inv_mass;
+            float im_total = im_a + im_b;
+            if (im_total < 1e-12f) continue;
+
+            /* --- Linear correction --- */
+            /* Distribute error correction weighted by inverse mass.
+             * Convert position correction to pseudo-velocity: dp/dt. */
+            float frac_a = im_a / im_total;
+            float frac_b = im_b / im_total;
+            phys_vec3_t correction = vec3_scale(error, NL_PROJ_FRACTION);
+
+            if (im_a > 0.0f) {
+                pseudo[j->body_a].linear = vec3_add(
+                    pseudo[j->body_a].linear,
+                    vec3_scale(correction, frac_a * inv_dt));
+            }
+            if (im_b > 0.0f) {
+                pseudo[j->body_b].linear = vec3_sub(
+                    pseudo[j->body_b].linear,
+                    vec3_scale(correction, frac_b * inv_dt));
+            }
+
+            /* --- Angular correction --- */
+            /* For each body with a nonzero lever arm, compute the angular
+             * impulse needed to swing the lever arm toward the target.
+             *
+             * The idea: if the world anchor is off by 'e', and the lever
+             * arm is 'r', then a small rotation 'dtheta' about axis
+             * (r × e) / |r × e| would move the anchor by |dtheta| * |r|
+             * in the direction of e (projected perpendicular to r).
+             *
+             * delta_omega = (r × e) / |r|^2, scaled by fraction and inv_dt. */
+            float rA_len2 = vec3_dot(rA, rA);
+            if (im_a > 0.0f && rA_len2 > 1e-6f) {
+                /* r × error gives rotation axis × angle (small-angle). */
+                phys_vec3_t r_cross_e = vec3_cross(rA, correction);
+                phys_vec3_t ang_corr = vec3_scale(r_cross_e,
+                    frac_a * inv_dt / rA_len2);
+                pseudo[j->body_a].angular = vec3_add(
+                    pseudo[j->body_a].angular, ang_corr);
+            }
+
+            float rB_len2 = vec3_dot(rB, rB);
+            if (im_b > 0.0f && rB_len2 > 1e-6f) {
+                phys_vec3_t r_cross_e = vec3_cross(rB, correction);
+                /* Body B correction is opposite: we want B's anchor to
+                 * move toward A's, so subtract. */
+                phys_vec3_t ang_corr = vec3_scale(r_cross_e,
+                    -frac_b * inv_dt / rB_len2);
+                pseudo[j->body_b].angular = vec3_add(
+                    pseudo[j->body_b].angular, ang_corr);
+            }
+        }
+    }
+}
+
 /* ── Solve one constraint (all rows) ──────────────────────────────── */
 
 /**
@@ -544,5 +729,16 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                                      args->bodies, slop, inv_dt);
             }
         }
+    }
+
+    /* Nonlinear joint position projection: after all TGS iterations,
+     * recompute world anchors from predicted body state and apply
+     * corrections that account for how rotation affects lever arms.
+     * This fixes the angular popping that stale-Jacobian split impulse
+     * can't handle for large joint violations at high speed. */
+    if (pseudo && args->joints && args->joint_count > 0) {
+        project_joints_nonlinear(args->joints, args->joint_count,
+                                  args->bodies, pseudo,
+                                  args->body_count, args->dt);
     }
 }

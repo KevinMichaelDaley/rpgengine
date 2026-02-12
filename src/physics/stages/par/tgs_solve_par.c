@@ -24,10 +24,12 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/constraint_color.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/job/counter.h"
 #include "ferrum/job/system.h"
 #include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
 
 /** Minimum penetration excess to correct (avoids micro-jitter). */
 #define SPLIT_MIN_PHI 1e-6f
@@ -638,6 +640,137 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
     return true;
 }
 
+/* ── Nonlinear joint position projection ──────────────────────────── */
+
+/** Minimum anchor error (meters) to trigger nonlinear projection. */
+#define NL_PROJ_MIN_ERROR 0.01f
+/** Number of nonlinear projection passes after TGS iterations. */
+#define NL_PROJ_PASSES 4
+/** Fraction of error corrected per nonlinear projection pass. */
+#define NL_PROJ_FRACTION 0.8f
+
+/**
+ * @brief Rotate a vector by a quaternion: q * v * q^-1.
+ */
+static phys_vec3_t tgs_par_quat_rotate(phys_quat_t q, phys_vec3_t v) {
+    phys_vec3_t qv = {q.x, q.y, q.z};
+    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
+    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
+}
+
+/**
+ * @brief Integrate a quaternion by an angular velocity over dt.
+ */
+static phys_quat_t tgs_par_quat_integrate(phys_quat_t q, phys_vec3_t w,
+                                            float dt) {
+    phys_quat_t omega_q = { w.x, w.y, w.z, 0.0f };
+    phys_quat_t dq = quat_mul(omega_q, q);
+    float half_dt = 0.5f * dt;
+    phys_quat_t result = {
+        q.x + dq.x * half_dt,
+        q.y + dq.y * half_dt,
+        q.z + dq.z * half_dt,
+        q.w + dq.w * half_dt,
+    };
+    return quat_normalize_safe(result, 1e-8f);
+}
+
+/**
+ * @brief Nonlinear position projection for joints after TGS iterations.
+ *
+ * Recomputes world anchors from predicted body state (pos + pseudo*dt)
+ * and applies corrections to pseudo-velocities that account for lever
+ * arm rotation.  See tgs_solve.c project_joints_nonlinear for details.
+ */
+static void tgs_project_joints_nonlinear(const phys_joint_t *joints,
+                                          uint32_t joint_count,
+                                          const struct phys_body *bodies,
+                                          phys_velocity_t *pseudo,
+                                          uint32_t body_count,
+                                          float dt)
+{
+    if (!joints || joint_count == 0 || !pseudo || dt <= 0.0f) return;
+
+    const float inv_dt = 1.0f / dt;
+
+    for (uint32_t pass = 0; pass < NL_PROJ_PASSES; pass++) {
+        for (uint32_t ji = 0; ji < joint_count; ji++) {
+            const phys_joint_t *j = &joints[ji];
+            if (j->body_a >= body_count || j->body_b >= body_count) continue;
+
+            const phys_body_t *ba = &bodies[j->body_a];
+            const phys_body_t *bb = &bodies[j->body_b];
+
+            phys_vec3_t pos_a = vec3_add(ba->position,
+                vec3_scale(pseudo[j->body_a].linear, dt));
+            phys_vec3_t pos_b = vec3_add(bb->position,
+                vec3_scale(pseudo[j->body_b].linear, dt));
+
+            phys_quat_t ori_a = tgs_par_quat_integrate(
+                ba->orientation, pseudo[j->body_a].angular, dt);
+            phys_quat_t ori_b = tgs_par_quat_integrate(
+                bb->orientation, pseudo[j->body_b].angular, dt);
+
+            phys_vec3_t rA = tgs_par_quat_rotate(ori_a, j->local_anchor_a);
+            phys_vec3_t rB = tgs_par_quat_rotate(ori_b, j->local_anchor_b);
+            phys_vec3_t wa = vec3_add(pos_a, rA);
+            phys_vec3_t wb = vec3_add(pos_b, rB);
+
+            phys_vec3_t error = vec3_sub(wb, wa);
+
+            if (j->type == PHYS_JOINT_DISTANCE) {
+                float dist = vec3_magnitude(error);
+                if (dist < 1e-7f) continue;
+                float scalar_err = dist - j->rest_length;
+                if (fabsf(scalar_err) < NL_PROJ_MIN_ERROR) continue;
+                phys_vec3_t dir = vec3_scale(error, 1.0f / dist);
+                error = vec3_scale(dir, scalar_err);
+            } else {
+                float err_mag = vec3_magnitude(error);
+                if (err_mag < NL_PROJ_MIN_ERROR) continue;
+            }
+
+            float im_a = ba->inv_mass;
+            float im_b = bb->inv_mass;
+            float im_total = im_a + im_b;
+            if (im_total < 1e-12f) continue;
+
+            float frac_a = im_a / im_total;
+            float frac_b = im_b / im_total;
+            phys_vec3_t correction = vec3_scale(error, NL_PROJ_FRACTION);
+
+            if (im_a > 0.0f) {
+                pseudo[j->body_a].linear = vec3_add(
+                    pseudo[j->body_a].linear,
+                    vec3_scale(correction, frac_a * inv_dt));
+            }
+            if (im_b > 0.0f) {
+                pseudo[j->body_b].linear = vec3_sub(
+                    pseudo[j->body_b].linear,
+                    vec3_scale(correction, frac_b * inv_dt));
+            }
+
+            float rA_len2 = vec3_dot(rA, rA);
+            if (im_a > 0.0f && rA_len2 > 1e-6f) {
+                phys_vec3_t r_cross_e = vec3_cross(rA, correction);
+                phys_vec3_t ang_corr = vec3_scale(r_cross_e,
+                    frac_a * inv_dt / rA_len2);
+                pseudo[j->body_a].angular = vec3_add(
+                    pseudo[j->body_a].angular, ang_corr);
+            }
+
+            float rB_len2 = vec3_dot(rB, rB);
+            if (im_b > 0.0f && rB_len2 > 1e-6f) {
+                phys_vec3_t r_cross_e = vec3_cross(rB, correction);
+                phys_vec3_t ang_corr = vec3_scale(r_cross_e,
+                    -frac_b * inv_dt / rB_len2);
+                pseudo[j->body_b].angular = vec3_add(
+                    pseudo[j->body_b].angular, ang_corr);
+            }
+        }
+    }
+}
+
 /* ── Public API ───────────────────────────────────────────────── */
 
 void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
@@ -765,5 +898,15 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
                             tgs_solve_island_batch_job, &bctx,
                             small_count, batch_size, small_batches);
         phys_wait_stage(ctx, PHYS_STAGE_TGS_SOLVE);
+    }
+
+    /* Nonlinear joint position projection: after all TGS iterations,
+     * recompute world anchors from predicted body state and apply
+     * corrections that account for how rotation affects lever arms.
+     * Runs single-threaded since it's a small number of joints. */
+    if (pseudo && args->joints && args->joint_count > 0) {
+        tgs_project_joints_nonlinear(args->joints, args->joint_count,
+                                      args->bodies, pseudo,
+                                      args->body_count, args->dt);
     }
 }

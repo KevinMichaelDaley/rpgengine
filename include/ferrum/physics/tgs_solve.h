@@ -21,6 +21,7 @@ struct phys_island_list;
 struct phys_constraint;
 struct phys_body;
 struct phys_frame_arena;
+struct phys_joint;
 
 /**
  * @brief Linear and angular velocity pair for a single body.
@@ -53,6 +54,8 @@ typedef struct phys_tgs_solve_args {
     const uint32_t *tier_substep_counts;    /**< Per-tier substep counts (may be NULL). */
     struct phys_frame_arena *frame_arena;   /**< Frame arena for per-island coloring workspace (may be NULL). */
     uint32_t island_color_threshold;        /**< Min constraints per island to enable coloring (0 = disabled). */
+    struct phys_joint *joints;              /**< Joint array for nonlinear position projection (may be NULL). */
+    uint32_t joint_count;                   /**< Number of joints in the array. */
 } phys_tgs_solve_args_t;
 
 /**
