@@ -379,7 +379,11 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         }
 
         /* ── Stage 9: Constraint Build ─────────────────────────── */
-        uint32_t max_constraints = manifold_count * PHYS_MAX_MANIFOLD_POINTS;
+        /* Reserve space for contact constraints plus joint constraints.
+         * Each joint can produce up to 2 phys_constraint_t entries. */
+        uint32_t max_contact_constraints = manifold_count * PHYS_MAX_MANIFOLD_POINTS;
+        uint32_t max_joint_constraints = world->joint_count * 2;
+        uint32_t max_constraints = max_contact_constraints + max_joint_constraints;
         if (max_constraints == 0) {
             max_constraints = 1;
         }
@@ -401,6 +405,38 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .baumgarte            = world->config.baumgarte,
                 .slop                 = world->config.slop,
             });
+        }
+
+        /* Build joint constraints and append after contact constraints. */
+        if (constraints && world->joint_count > 0) {
+            const phys_body_t *bodies = world->body_pool.bodies_curr;
+            for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                phys_joint_t *j = &world->joints[ji];
+
+                /* Build Jacobian rows for this joint type. */
+                switch (j->type) {
+                case PHYS_JOINT_DISTANCE:
+                    phys_joint_build_distance(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_BALL:
+                    phys_joint_build_ball(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_HINGE:
+                    phys_joint_build_hinge(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                }
+
+                /* Convert to solver constraints and append. */
+                if (constraint_count < max_constraints) {
+                    uint32_t remaining = max_constraints - constraint_count;
+                    uint32_t written = phys_joint_build_constraints(
+                        j, &constraints[constraint_count], remaining, 0);
+                    constraint_count += written;
+                }
+            }
         }
 
         /* Compute per-body max penetration from constraints for sleep

@@ -19,6 +19,7 @@ phys_world_config_t phys_world_config_default(void) {
         .velocity_damping        = 0.96f,
         .max_island_bodies       = 128,
         .island_color_threshold  = 128,
+        .max_joints              = 1024,
     };
     return cfg;
 }

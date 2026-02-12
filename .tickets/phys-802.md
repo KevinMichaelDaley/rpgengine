@@ -1,6 +1,6 @@
 ---
 id: phys-802
-status: open
+status: in_progress
 deps: [phys-801]
 links: [phys-800]
 created: 2026-02-06T11:09:00.000000000-08:00

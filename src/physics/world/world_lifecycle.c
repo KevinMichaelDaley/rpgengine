@@ -62,6 +62,18 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
     world->impact_event_capacity = IMPACT_EVENT_DEFAULT_CAPACITY;
     world->impact_threshold      = 1.0f;
 
+    /* Allocate joint array. */
+    uint32_t max_joints = config->max_joints;
+    if (max_joints > 0) {
+        world->joints = calloc(max_joints, sizeof(phys_joint_t));
+        if (!world->joints) {
+            phys_world_destroy(world);
+            return -1;
+        }
+    }
+    world->joint_count    = 0;
+    world->joint_capacity = max_joints;
+
     world->tick_count = 0;
     return 0;
 }
@@ -79,6 +91,7 @@ void phys_world_destroy(phys_world_t *world) {
     free(world->boxes);
     free(world->capsules);
     free(world->impact_events);
+    free(world->joints);
 
     free(world->static_bucket_flags);
 

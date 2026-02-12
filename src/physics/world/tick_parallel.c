@@ -362,7 +362,9 @@ void phys_world_tick_parallel(phys_world_t *world,
             _Alignof(phys_manifold_t));
         manifold_count = 0;
 
-        uint32_t max_constraints = pair_count * PHYS_MAX_MANIFOLD_POINTS;
+        uint32_t max_contact_constraints = pair_count * PHYS_MAX_MANIFOLD_POINTS;
+        uint32_t max_joint_constraints = world->joint_count * 2;
+        uint32_t max_constraints = max_contact_constraints + max_joint_constraints;
         if (max_constraints == 0) max_constraints = 1;
         constraints = phys_frame_arena_alloc(
             &world->frame_arena,
@@ -401,6 +403,36 @@ void phys_world_tick_parallel(phys_world_t *world,
 #endif
         }
 
+
+        /* Build joint constraints and append after contact constraints. */
+        if (constraints && world->joint_count > 0) {
+            const phys_body_t *bodies = world->body_pool.bodies_curr;
+            for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                phys_joint_t *j = &world->joints[ji];
+
+                switch (j->type) {
+                case PHYS_JOINT_DISTANCE:
+                    phys_joint_build_distance(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_BALL:
+                    phys_joint_build_ball(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_HINGE:
+                    phys_joint_build_hinge(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                }
+
+                if (constraint_count < max_constraints) {
+                    uint32_t remaining = max_constraints - constraint_count;
+                    uint32_t written = phys_joint_build_constraints(
+                        j, &constraints[constraint_count], remaining, 0);
+                    constraint_count += written;
+                }
+            }
+        }
 
         /* Compute per-body max penetration from constraints for sleep
          * blocking.  Bodies with penetration > slop must stay awake so

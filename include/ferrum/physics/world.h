@@ -17,6 +17,7 @@
 #include "ferrum/physics/manifold_cache.h"
 #include "ferrum/physics/spatial_grid.h"
 #include "ferrum/physics/static_bvh.h"
+#include "ferrum/physics/joint.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -56,6 +57,7 @@ typedef struct phys_world_config {
     uint32_t island_color_threshold;   /**< Min constraints per island for graph coloring (0 = disabled). */
     float    speculative_margin;       /**< Max separation for speculative contacts (0 = disabled). */
     uint32_t max_island_bodies;        /**< Max bodies per island for splitting (0 = unlimited). */
+    uint32_t max_joints;               /**< Maximum number of joints. */
 } phys_world_config_t;
 
 /* ── World container ────────────────────────────────────────────── */
@@ -125,6 +127,11 @@ typedef struct phys_world {
     uint32_t impact_event_count;               /**< Current number of events this frame. */
     uint32_t impact_event_capacity;            /**< Allocated capacity. */
     float    impact_threshold;                 /**< Minimum impulse to emit event. */
+
+    /* Joint array (persistent, not per-frame). */
+    phys_joint_t *joints;                      /**< Array of active joints. */
+    uint32_t joint_count;                      /**< Number of active joints. */
+    uint32_t joint_capacity;                   /**< Allocated joint capacity. */
 } phys_world_t;
 
 /* ── Configuration API ──────────────────────────────────────────── */
@@ -367,6 +374,53 @@ void phys_world_set_impact_threshold(phys_world_t *world, float threshold);
  * @return Current threshold value.
  */
 float phys_world_get_impact_threshold(const phys_world_t *world);
+
+/* ── Joint management API ───────────────────────────────────────── */
+
+/**
+ * @brief Add a joint to the world.
+ *
+ * The joint is copied into the world's joint array.  The caller should
+ * have already set type, body indices, anchors, and parameters.
+ *
+ * @param world  World (non-NULL).
+ * @param joint  Joint to add (non-NULL, fully configured).
+ * @return Joint index, or UINT32_MAX on failure (NULL args, capacity full,
+ *         or invalid body indices).
+ *
+ * Ownership: the world owns the copied joint data.
+ */
+uint32_t phys_world_add_joint(phys_world_t *world, const phys_joint_t *joint);
+
+/**
+ * @brief Remove a joint from the world by index.
+ *
+ * Swap-removes the joint at the given index.  Joint indices may change
+ * after removal.
+ *
+ * @param world  World (NULL-safe, no-op if NULL).
+ * @param index  Joint index (out-of-range is a no-op).
+ */
+void phys_world_remove_joint(phys_world_t *world, uint32_t index);
+
+/**
+ * @brief Get a mutable pointer to a joint by index.
+ *
+ * @param world  World (NULL returns NULL).
+ * @param index  Joint index.
+ * @return Pointer to joint, or NULL if out-of-range / NULL world.
+ *
+ * Ownership: the returned pointer is owned by the world.
+ */
+phys_joint_t *phys_world_get_joint(phys_world_t *world, uint32_t index);
+
+/**
+ * @brief Return the number of active joints.
+ *
+ * @param world  World (NULL returns 0).
+ * @return Active joint count.
+ */
+uint32_t phys_world_joint_count(const phys_world_t *world);
 
 #ifdef __cplusplus
 } /* extern "C" */

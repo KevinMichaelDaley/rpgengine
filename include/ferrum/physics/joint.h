@@ -146,6 +146,38 @@ void phys_joint_build_hinge(phys_joint_t *joint,
                             const struct phys_body *body_b,
                             float dt);
 
+/* Forward declaration for constraint output. */
+struct phys_constraint;
+
+/**
+ * @brief Convert a built joint into solver-compatible constraint(s).
+ *
+ * Call one of the build functions first to populate joint->rows and
+ * joint->row_count.  This function then packs those rows into one or
+ * two phys_constraint_t entries (max 3 rows each).
+ *
+ * - Distance joint (1 row) → 1 constraint.
+ * - Ball joint (3 rows)    → 1 constraint.
+ * - Hinge joint (5 rows)   → 2 constraints (3 positional + 2 angular).
+ *
+ * Each output constraint has is_joint=1, friction=0, penetration=0,
+ * and bilateral lambda bounds preserved from the build step.
+ *
+ * @param joint          Built joint (row_count > 0).  If NULL, returns 0.
+ * @param out            Output constraint array.  Must have capacity
+ *                       for at least 2 entries.  If NULL, returns 0.
+ * @param max_out        Capacity of the output array.
+ * @param solver_mode    Solver mode to assign (0=TGS, 1=XPBD).
+ * @return Number of constraints written (0, 1, or 2).
+ *
+ * @par Ownership: caller owns all pointers.  No allocations.
+ * @par Side effects: writes to out[0] and possibly out[1].
+ */
+uint32_t phys_joint_build_constraints(const phys_joint_t *joint,
+                                      struct phys_constraint *out,
+                                      uint32_t max_out,
+                                      uint8_t solver_mode);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

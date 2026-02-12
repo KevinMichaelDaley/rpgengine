@@ -213,22 +213,31 @@ static void solve_one_constraint(phys_constraint_t *c,
     solve_row(&c->rows[0], va, vb,
               inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
 
-    /* Split impulse: position correction into pseudo-velocities. */
-    if (pseudo) {
-        solve_position_row(
-            &c->rows[0],
-            &pseudo[c->body_a], &pseudo[c->body_b],
-            c->penetration, slop, inv_dt,
-            inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
-    }
+    if (c->is_joint) {
+        /* Joint constraints: solve all remaining rows with their
+         * pre-set bilateral lambda bounds (no friction cone). */
+        for (uint8_t r = 1; r < c->row_count; r++) {
+            solve_row(&c->rows[r], va, vb,
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
+    } else {
+        /* Split impulse: position correction into pseudo-velocities. */
+        if (pseudo) {
+            solve_position_row(
+                &c->rows[0],
+                &pseudo[c->body_a], &pseudo[c->body_b],
+                c->penetration, slop, inv_dt,
+                inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
 
-    /* Coulomb friction cone. */
-    float friction_limit = c->friction * c->rows[0].lambda;
-    for (uint8_t r = 1; r < c->row_count; r++) {
-        c->rows[r].lambda_min = -friction_limit;
-        c->rows[r].lambda_max =  friction_limit;
-        solve_row(&c->rows[r], va, vb,
-                  inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        /* Coulomb friction cone. */
+        float friction_limit = c->friction * c->rows[0].lambda;
+        for (uint8_t r = 1; r < c->row_count; r++) {
+            c->rows[r].lambda_min = -friction_limit;
+            c->rows[r].lambda_max =  friction_limit;
+            solve_row(&c->rows[r], va, vb,
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
     }
 }
 

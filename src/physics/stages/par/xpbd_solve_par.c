@@ -91,6 +91,49 @@ static void solve_contact_position(phys_constraint_t *c,
 }
 
 /**
+ * @brief Solve a joint constraint at the position level (all rows, bilateral).
+ */
+static void solve_joint_position(phys_constraint_t *c,
+                                 phys_body_t *bodies,
+                                 float omega,
+                                 float dt,
+                                 float compliance)
+{
+    phys_body_t *ba = &bodies[c->body_a];
+    phys_body_t *bb = &bodies[c->body_b];
+
+    float w_a = ba->inv_mass;
+    float w_b = bb->inv_mass;
+
+    if (w_a + w_b < 1e-10f) return;
+
+    float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
+    float w_sum = w_a + w_b + alpha_tilde;
+
+    for (uint8_t r = 0; r < c->row_count; ++r) {
+        phys_jacobian_row_t *row = &c->rows[r];
+
+        phys_vec3_t dir = row->J_vb;
+        float dir_len_sq = vec3_dot(dir, dir);
+        if (dir_len_sq < 1e-10f) continue;
+
+        float C = row->bias * dt;
+        float delta_lambda = (-C - alpha_tilde * row->lambda) / w_sum;
+
+        float old_lambda = row->lambda;
+        row->lambda = old_lambda + delta_lambda;
+        if (row->lambda < row->lambda_min) row->lambda = row->lambda_min;
+        if (row->lambda > row->lambda_max) row->lambda = row->lambda_max;
+        delta_lambda = row->lambda - old_lambda;
+
+        phys_vec3_t corr_a = vec3_scale(dir, w_a * delta_lambda * omega);
+        phys_vec3_t corr_b = vec3_scale(dir, w_b * delta_lambda * omega);
+        ba->position = vec3_sub(ba->position, corr_a);
+        bb->position = vec3_add(bb->position, corr_b);
+    }
+}
+
+/**
  * @brief Job function: solve constraints in [start, start+count).
  */
 static void xpbd_batch_job(void *data)
@@ -100,11 +143,16 @@ static void xpbd_batch_job(void *data)
 
     uint32_t end = batch->start + batch->count;
     for (uint32_t ci = batch->start; ci < end; ++ci) {
-        solve_contact_position(&shared->constraints[ci],
-                               shared->bodies,
-                               shared->omega,
-                               shared->dt,
-                               shared->compliance);
+        phys_constraint_t *c = &shared->constraints[ci];
+        if (c->is_joint) {
+            solve_joint_position(c, shared->bodies,
+                                 shared->omega, shared->dt,
+                                 shared->compliance);
+        } else {
+            solve_contact_position(c, shared->bodies,
+                                   shared->omega, shared->dt,
+                                   shared->compliance);
+        }
     }
 }
 

@@ -190,23 +190,31 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
     solve_row(&c->rows[0], va, vb,
               inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
 
-    /* Split impulse position correction. */
-    if (shared->pseudo_velocities) {
-        solve_position_row(
-            &c->rows[0],
-            &shared->pseudo_velocities[c->body_a],
-            &shared->pseudo_velocities[c->body_b],
-            c->penetration, shared->slop, shared->inv_dt,
-            inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
-    }
+    if (c->is_joint) {
+        /* Joint constraints: solve remaining rows with bilateral bounds. */
+        for (uint8_t r = 1; r < c->row_count; r++) {
+            solve_row(&c->rows[r], va, vb,
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
+    } else {
+        /* Split impulse position correction. */
+        if (shared->pseudo_velocities) {
+            solve_position_row(
+                &c->rows[0],
+                &shared->pseudo_velocities[c->body_a],
+                &shared->pseudo_velocities[c->body_b],
+                c->penetration, shared->slop, shared->inv_dt,
+                inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
 
-    /* Friction cone. */
-    float friction_limit = c->friction * c->rows[0].lambda;
-    for (uint8_t r = 1; r < c->row_count; r++) {
-        c->rows[r].lambda_min = -friction_limit;
-        c->rows[r].lambda_max =  friction_limit;
-        solve_row(&c->rows[r], va, vb,
-                  inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        /* Friction cone. */
+        float friction_limit = c->friction * c->rows[0].lambda;
+        for (uint8_t r = 1; r < c->row_count; r++) {
+            c->rows[r].lambda_min = -friction_limit;
+            c->rows[r].lambda_max =  friction_limit;
+            solve_row(&c->rows[r], va, vb,
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+        }
     }
 }
 
@@ -262,26 +270,35 @@ static void solve_island(const tgs_solve_shared_t *shared,
                       inv_mass_a, inv_i_a,
                       inv_mass_b, inv_i_b);
 
-            /* Split impulse: solve position correction into
-             * pseudo-velocities using the same constraint normal. */
-            if (pseudo) {
-                solve_position_row(
-                    &c->rows[0],
-                    &pseudo[c->body_a], &pseudo[c->body_b],
-                    c->penetration, shared->slop, shared->inv_dt,
-                    inv_mass_a, inv_i_a,
-                    inv_mass_b, inv_i_b);
-            }
+            if (c->is_joint) {
+                /* Joint: solve remaining rows with bilateral bounds. */
+                for (uint8_t r = 1; r < c->row_count; r++) {
+                    solve_row(&c->rows[r], va, vb,
+                              inv_mass_a, inv_i_a,
+                              inv_mass_b, inv_i_b);
+                }
+            } else {
+                /* Split impulse: solve position correction into
+                 * pseudo-velocities using the same constraint normal. */
+                if (pseudo) {
+                    solve_position_row(
+                        &c->rows[0],
+                        &pseudo[c->body_a], &pseudo[c->body_b],
+                        c->penetration, shared->slop, shared->inv_dt,
+                        inv_mass_a, inv_i_a,
+                        inv_mass_b, inv_i_b);
+                }
 
-            /* Coulomb friction cone: clamp tangent impulses to
-             * ±friction * accumulated_normal_impulse. */
-            float friction_limit = c->friction * c->rows[0].lambda;
-            for (uint8_t r = 1; r < c->row_count; r++) {
-                c->rows[r].lambda_min = -friction_limit;
-                c->rows[r].lambda_max =  friction_limit;
-                solve_row(&c->rows[r], va, vb,
-                          inv_mass_a, inv_i_a,
-                          inv_mass_b, inv_i_b);
+                /* Coulomb friction cone: clamp tangent impulses to
+                 * ±friction * accumulated_normal_impulse. */
+                float friction_limit = c->friction * c->rows[0].lambda;
+                for (uint8_t r = 1; r < c->row_count; r++) {
+                    c->rows[r].lambda_min = -friction_limit;
+                    c->rows[r].lambda_max =  friction_limit;
+                    solve_row(&c->rows[r], va, vb,
+                              inv_mass_a, inv_i_a,
+                              inv_mass_b, inv_i_b);
+                }
             }
         }
     }
