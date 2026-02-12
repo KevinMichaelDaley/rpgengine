@@ -123,6 +123,11 @@ void phys_stage_island_build(const phys_island_build_args_t *args)
     } else {
         /* Two-pass merge with size cap.
          *
+         * Pass 0 (joints): merge joint-connected pairs unconditionally.
+         * Joints are structural constraints that must never be split
+         * across islands — doing so would prevent the solver from
+         * maintaining the joint.
+         *
          * Pass 1 (strong edges): merge pairs where at least one body
          * has significant velocity, subject to the size cap.  These
          * represent active collisions that need coupled solving.
@@ -130,6 +135,36 @@ void phys_stage_island_build(const phys_island_build_args_t *args)
          * Pass 2 (weak edges): merge remaining pairs (both bodies
          * near rest) only if the merged island stays within cap.
          * Resting chains naturally fragment here. */
+
+        /* Pass 0: joints — unconditional merge (ignore cap). */
+        for (uint32_t i = 0; i < args->constraint_count; ++i) {
+            if (!args->constraints[i].is_joint) { continue; }
+            uint32_t a = args->constraints[i].body_a;
+            uint32_t b = args->constraints[i].body_b;
+            if (a >= args->body_count || b >= args->body_count) { continue; }
+            if (phys_body_is_static(&args->bodies[a])) { continue; }
+            if (phys_body_is_static(&args->bodies[b])) { continue; }
+
+            phys_uf_union(args->islands_out, a, b);
+            /* Update sizes for the merged root. */
+            uint32_t root = phys_uf_find(args->islands_out, a);
+            uint32_t rb   = phys_uf_find(args->islands_out, b);
+            if (root != rb) {
+                sizes[root] += sizes[rb];
+            } else {
+                /* Already merged (duplicate joint pair). */
+                uint32_t ra = phys_uf_find(args->islands_out, a);
+                sizes[ra] = sizes[ra]; /* no-op, already correct */
+            }
+        }
+
+        /* Recompute sizes after joint merges (union may have reshuffled
+         * roots).  Re-derive from find to be safe. */
+        for (uint32_t i = 0; i < args->body_count; ++i) { sizes[i] = 0; }
+        for (uint32_t i = 0; i < args->body_count; ++i) {
+            uint32_t r = phys_uf_find(args->islands_out, i);
+            sizes[r]++;
+        }
 
         /* Pass 1: strong edges first. */
         for (uint32_t i = 0; i < args->constraint_count; ++i) {
