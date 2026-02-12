@@ -184,6 +184,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p096_tgs_coloring_tests \
 	build/p097_speculative_contact_tests \
 	build/p098_island_split_tests \
+	build/p099_physics_joint_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -552,6 +553,9 @@ build/p097_speculative_contact_tests: build/libheadless.a tests/p097_speculative
 build/p098_island_split_tests: build/libheadless.a tests/p098_island_split_tests.c | build
 	$(CC) $(CFLAGS) tests/p098_island_split_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p099_physics_joint_tests: build/libheadless.a tests/p099_physics_joint_tests.c | build
+	$(CC) $(CFLAGS) tests/p099_physics_joint_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -836,6 +840,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p096_tgs_coloring_tests \
 	&& ./build/p097_speculative_contact_tests \
 	&& ./build/p098_island_split_tests \
+	&& ./build/p099_physics_joint_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p007_net_rtt_retransmit_tests \
