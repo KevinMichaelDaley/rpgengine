@@ -396,13 +396,21 @@ static void on_drain(void *user) {
         (void)evt;
     }
 
-    /* Drive chain anchor in a horizontal circle. */
+    /* Drive chain anchor in a horizontal circle, speeding up over time. */
     {
         float t = (float)ctx->server_tick / (float)DEMO_TICK_HZ;
-        float omega = 1.5f; /* rad/s */
+        /* Ramp angular velocity: start at 1.5 rad/s, add 0.5 rad/s² */
+        float omega = 1.5f + 0.5f * t;
+        /* Integrated angle: θ = 1.5*t + 0.25*t² */
+        float angle = 1.5f * t + 0.25f * t * t;
         float radius = 4.0f;
-        float cx = DEMO_CHAIN_ANCHOR_X + radius * cosf(omega * t);
-        float cz = DEMO_CHAIN_ANCHOR_Z + radius * sinf(omega * t);
+        float cx = DEMO_CHAIN_ANCHOR_X + radius * cosf(angle);
+        float cz = DEMO_CHAIN_ANCHOR_Z + radius * sinf(angle);
+
+        if (ctx->server_tick % (DEMO_TICK_HZ * 5) == 0) {
+            printf("[server] chain omega=%.1f rad/s (%.1f RPM) t=%.1fs\n",
+                   (double)omega, (double)(omega * 60.0f / 6.2832f), (double)t);
+        }
 
         phys_body_t *ab = phys_world_get_body(&ctx->world,
                                                ctx->chain_anchor_id);
