@@ -298,9 +298,9 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
         float spd_b = vec3_dot(vel_b, vel_b);
         float max_spd2 = spd_a > spd_b ? spd_a : spd_b;
 
-        const float baumgarte_lo2 = 10.0f * 10.0f;
-        const float baumgarte_hi2 = 100.0f * 100.0f;
-        const float baumgarte_max = 0.3f;
+        const float baumgarte_lo2 = 5.0f * 5.0f;
+        const float baumgarte_hi2 = 60.0f * 60.0f;
+        const float baumgarte_max = 0.6f;
         float baumgarte = 0.0f;
         if (max_spd2 > baumgarte_lo2) {
             float t = (max_spd2 - baumgarte_lo2)

@@ -354,10 +354,10 @@ static void solve_one_constraint(phys_constraint_t *c,
         float spd_b = vec3_dot(vel_b, vel_b);
         float max_spd2 = spd_a > spd_b ? spd_a : spd_b;
 
-        /* Baumgarte fraction: 0 below 10 m/s, ramps to 0.3 at 100 m/s. */
-        const float baumgarte_lo2 = 10.0f * 10.0f;   /* 100 */
-        const float baumgarte_hi2 = 100.0f * 100.0f;  /* 10000 */
-        const float baumgarte_max = 0.3f;
+        /* Baumgarte fraction: 0 below 5 m/s, ramps to 0.6 at 60 m/s. */
+        const float baumgarte_lo2 = 5.0f * 5.0f;      /* 25 */
+        const float baumgarte_hi2 = 60.0f * 60.0f;     /* 3600 */
+        const float baumgarte_max = 0.6f;
         float baumgarte = 0.0f;
         if (max_spd2 > baumgarte_lo2) {
             float t = (max_spd2 - baumgarte_lo2)
