@@ -130,6 +130,9 @@ struct demo_ctx {
     double                              last_spawn_time;
     uint32_t                            total_spawned;
     uint32_t                            server_tick;
+
+    /* Capsule chain anchor (kinematic, driven in a circle). */
+    uint32_t                            chain_anchor_id;
 };
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -392,6 +395,24 @@ static void on_drain(void *user) {
          * future: apply kinematic intent from INPUT_MOVE to player bodies. */
         (void)evt;
     }
+
+    /* Drive chain anchor in a horizontal circle. */
+    {
+        float t = (float)ctx->server_tick / (float)DEMO_TICK_HZ;
+        float omega = 1.5f; /* rad/s */
+        float radius = 4.0f;
+        float cx = DEMO_CHAIN_ANCHOR_X + radius * cosf(omega * t);
+        float cz = DEMO_CHAIN_ANCHOR_Z + radius * sinf(omega * t);
+
+        phys_body_t *ab = phys_world_get_body(&ctx->world,
+                                               ctx->chain_anchor_id);
+        ab->position.x = cx;
+        ab->position.z = cz;
+        phys_body_t *ab_next = phys_body_pool_get_next(
+            &ctx->world.body_pool, ctx->chain_anchor_id);
+        ab_next->position.x = cx;
+        ab_next->position.z = cz;
+    }
 }
 
 /**
@@ -488,22 +509,25 @@ int main(int argc, char **argv) {
         ab->position = (phys_vec3_t){
             DEMO_CHAIN_ANCHOR_X, DEMO_CHAIN_ANCHOR_Y, DEMO_CHAIN_ANCHOR_Z};
         ab->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-        ab->flags |= PHYS_BODY_FLAG_STATIC;
+        ab->flags |= PHYS_BODY_FLAG_KINEMATIC;
         phys_body_t *ab_next =
             phys_body_pool_get_next(&ctx.world.body_pool, anchor);
         *ab_next = *ab;
+        ctx.chain_anchor_id = anchor;
 
         uint32_t prev_body = anchor;
         for (uint32_t ci = 0; ci < DEMO_CHAIN_LENGTH; ci++) {
-            /* Each capsule hangs directly below the previous link. */
-            float y = DEMO_CHAIN_ANCHOR_Y
-                      - (float)(ci + 1) * DEMO_CHAIN_LINK_LEN;
+            /* Spawn links extending horizontally (+X) from the anchor
+             * so the chain swings down and settles gradually. */
+            float x = DEMO_CHAIN_ANCHOR_X
+                      + (float)(ci + 1) * DEMO_CHAIN_LINK_LEN;
 
             uint32_t bi = phys_world_create_body(&ctx.world);
             phys_body_t *cb = phys_world_get_body(&ctx.world, bi);
             cb->position = (phys_vec3_t){
-                DEMO_CHAIN_ANCHOR_X, y, DEMO_CHAIN_ANCHOR_Z};
-            cb->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+                x, DEMO_CHAIN_ANCHOR_Y, DEMO_CHAIN_ANCHOR_Z};
+            /* Rotate capsule 90° around Z so it lies along X. */
+            cb->orientation = (phys_quat_t){0.0f, 0.0f, 0.7071068f, 0.7071068f};
             phys_body_set_mass(cb, DEMO_CHAIN_MASS);
             phys_body_set_capsule_inertia(cb, DEMO_CHAIN_MASS,
                                           DEMO_CHAIN_RADIUS,
@@ -526,13 +550,13 @@ int main(int argc, char **argv) {
             joint.type = PHYS_JOINT_BALL;
             joint.body_a = prev_body;
             joint.body_b = bi;
-            /* Anchor on previous body: bottom end (or center for anchor). */
+            /* Anchor on previous body: +X end (or center for anchor). */
             joint.local_anchor_a = (prev_body == anchor)
                 ? (phys_vec3_t){0.0f, 0.0f, 0.0f}
-                : (phys_vec3_t){0.0f, -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f};
-            /* Anchor on this body: top end. */
+                : (phys_vec3_t){DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f, 0.0f};
+            /* Anchor on this body: -X end. */
             joint.local_anchor_b = (phys_vec3_t){
-                0.0f, DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f};
+                -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f, 0.0f};
 
             phys_world_add_joint(&ctx.world, &joint);
             prev_body = bi;
