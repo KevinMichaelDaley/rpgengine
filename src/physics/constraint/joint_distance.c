@@ -84,7 +84,7 @@ void phys_joint_build_distance(phys_joint_t *joint,
     /* Bilateral lambda bounds (can push and pull). */
     row->lambda_min = -JOINT_LAMBDA_BIG;
     row->lambda_max =  JOINT_LAMBDA_BIG;
-    row->lambda = 0.0f;
+    row->lambda = joint->cached_lambda[0]; /* Warmstart from previous substep. */
 
     /* Position error stored in bias for split-impulse correction.
      * The velocity-level solve sees bias=0 (set by the solver);

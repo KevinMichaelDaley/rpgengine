@@ -42,7 +42,11 @@
 /** Speed (m/s) at which we reach maximum solver iterations. */
 #define ADAPTIVE_SPEED_HIGH 200.0f
 /** Maximum multiplier on base iteration count for fast islands. */
-#define ADAPTIVE_ITER_MULT  10
+#define ADAPTIVE_ITER_MULT  5
+
+/** Successive over-relaxation factor.  Values > 1.0 accelerate
+ *  convergence; typical range 1.1–1.5.  Too high causes oscillation. */
+#define SOR_OMEGA 1.3f
 
 /* ── Internal: compute per-island iteration count ─────────────── */
 
@@ -150,6 +154,9 @@ static void solve_row(phys_jacobian_row_t *row,
      * constraint axis proportional to speed. */
     float jv_damped = jv * (1.0f + row->damping);
     float delta_lambda = (row->bias - jv_damped) * row->effective_mass;
+
+    /* Successive over-relaxation: scale impulse to accelerate convergence. */
+    delta_lambda *= SOR_OMEGA;
 
     /* Clamp accumulated impulse within bounds. */
     float old_lambda = row->lambda;

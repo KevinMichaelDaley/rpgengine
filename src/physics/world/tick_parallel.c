@@ -405,6 +405,7 @@ void phys_world_tick_parallel(phys_world_t *world,
 
 
         /* Build joint constraints and append after contact constraints. */
+        uint32_t joint_constraint_start = constraint_count;
         if (constraints && world->joint_count > 0) {
             const phys_body_t *bodies = world->body_pool.bodies_curr;
             for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
@@ -530,6 +531,25 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_tgs);
 #endif
+
+            /* Write back solved lambdas to joint cache for warmstarting
+             * the next substep.  Joint constraints start at
+             * joint_constraint_start in the constraint array. */
+            if (world->joint_count > 0 && constraints) {
+                uint32_t jci = joint_constraint_start;
+                for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                    phys_joint_t *j = &world->joints[ji];
+                    uint32_t num_c = (j->row_count <= PHYS_MAX_CONSTRAINT_ROWS)
+                                   ? 1u : 2u;
+                    uint8_t row_idx = 0;
+                    for (uint32_t ci = 0; ci < num_c && jci < constraint_count; ci++, jci++) {
+                        const phys_constraint_t *c = &constraints[jci];
+                        for (uint8_t r = 0; r < c->row_count && row_idx < j->row_count; r++, row_idx++) {
+                            j->cached_lambda[row_idx] = c->rows[r].lambda;
+                        }
+                    }
+                }
+            }
         }
         } /* end if (!world->prediction_mode) */
 

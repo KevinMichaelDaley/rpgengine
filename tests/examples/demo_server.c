@@ -475,11 +475,28 @@ static void on_flush(void *user) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <port> [duration_s]\n", argv[0]);
+        fprintf(stderr,
+            "Usage: %s <port> [duration_s] [--net-workers N] [--phys-workers N]\n",
+            argv[0]);
         return 1;
     }
     uint16_t port = (uint16_t)atoi(argv[1]);
-    double duration = (argc >= 3) ? atof(argv[2]) : 0.0;
+    double duration = (argc >= 3 && argv[2][0] != '-') ? atof(argv[2]) : 0.0;
+
+    /* Default worker counts. */
+    uint32_t net_workers  = 1u;
+    uint32_t phys_workers = 6u;
+
+    /* Parse optional flags. */
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--net-workers") == 0 && i + 1 < argc) {
+            net_workers = (uint32_t)atoi(argv[++i]);
+            if (net_workers < 1u) net_workers = 1u;
+        } else if (strcmp(argv[i], "--phys-workers") == 0 && i + 1 < argc) {
+            phys_workers = (uint32_t)atoi(argv[++i]);
+            if (phys_workers < 1u) phys_workers = 1u;
+        }
+    }
 
     signal(SIGINT, handle_sigint);
 
@@ -488,7 +505,7 @@ int main(int argc, char **argv) {
 
     /* ── 1. Job systems ───────────────────────────────────────────── */
     /* Networking job system: client fibers, demux pump, entity pump. */
-    if (job_system_create(&ctx.job_sys, 2u, 256u, DEMO_FIBER_STACK,
+    if (job_system_create(&ctx.job_sys, net_workers, 256u, DEMO_FIBER_STACK,
                           256u, 0) != JOB_CREATE_OK) {
         fprintf(stderr, "error: job_system_create (net) failed\n");
         return 1;
@@ -498,7 +515,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     /* Physics job system: parallel stages (broadphase, narrow, solve, etc). */
-    if (job_system_create(&ctx.phys_job_sys, 6u, 4096u, DEMO_FIBER_STACK,
+    if (job_system_create(&ctx.phys_job_sys, phys_workers, 4096u, DEMO_FIBER_STACK,
                           4096u, 0) != JOB_CREATE_OK) {
         fprintf(stderr, "error: job_system_create (phys) failed\n");
         return 1;
@@ -507,7 +524,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "error: job_system_start (phys) failed\n");
         return 1;
     }
-    printf("[server] job systems started (net=2 workers, phys=6 workers)\n");
+    printf("[server] job systems started (net=%u workers, phys=%u workers)\n",
+           net_workers, phys_workers);
 
     /* ── 2. Physics world ──────────────────────────────────────── */
     phys_world_config_t wcfg = phys_world_config_default();

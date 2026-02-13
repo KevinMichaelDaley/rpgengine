@@ -113,6 +113,8 @@ void phys_joint_build_hinge(phys_joint_t *joint,
         build_positional_row(&joint->rows[i], rA, rB, axes[i],
                              axis_error, body_a, body_b,
                              joint->damping);
+        /* Warmstart from previous substep. */
+        joint->rows[i].lambda = joint->cached_lambda[i];
     }
 
     /* ── Angular rows (3–4): lock rotation off the hinge axis ───── */
@@ -141,7 +143,7 @@ void phys_joint_build_hinge(phys_joint_t *joint,
 
         row->lambda_min = -JOINT_LAMBDA_BIG;
         row->lambda_max =  JOINT_LAMBDA_BIG;
-        row->lambda = 0.0f;
+        row->lambda = joint->cached_lambda[3 + k]; /* Warmstart. */
         row->bias = 0.0f;  /* No angular drift correction for now. */
         row->damping = joint->damping;
 

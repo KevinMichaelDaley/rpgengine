@@ -1012,7 +1012,7 @@ build/demo_server: build/libheadless.a tests/examples/demo_server.c | build
 demo_server:
 	@$(MAKE) build/demo_server
 	@echo "Built: build/demo_server"
-	@echo "Usage: ./build/demo_server <port> [duration_s]"
+	@echo "Usage: ./build/demo_server <port> [duration_s] [--net-workers N] [--phys-workers N]"
 
 build/demo_client: build/liball.a tests/examples/demo_client.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)

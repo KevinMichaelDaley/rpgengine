@@ -55,7 +55,7 @@ static void build_positional_row(phys_jacobian_row_t *row,
 
     row->lambda_min = -JOINT_LAMBDA_BIG;
     row->lambda_max =  JOINT_LAMBDA_BIG;
-    row->lambda = 0.0f;
+    row->lambda = 0.0f;  /* Overwritten by warmstart in build functions. */
 
     /* Position error stored in bias for split-impulse correction.
      * The velocity-level solve sees bias=0 (set by the solver);
@@ -137,6 +137,8 @@ void phys_joint_build_ball(phys_joint_t *joint,
         build_positional_row(&joint->rows[i], rA, rB, axes[i],
                              axis_error, body_a, body_b,
                              joint->damping);
+        /* Warmstart: seed lambda from previous substep's cached value. */
+        joint->rows[i].lambda = joint->cached_lambda[i];
     }
 
     joint->row_count = 3;

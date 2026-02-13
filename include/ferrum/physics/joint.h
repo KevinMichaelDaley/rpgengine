@@ -65,6 +65,10 @@ typedef struct phys_joint {
     float stiffness;            /**< Spring stiffness (0 = rigid). */
     float damping;              /**< Damping coefficient. */
 
+    /* Warmstarting: cached accumulated impulses from previous substep.
+     * Seeded into rows at build time, written back after solve. */
+    float cached_lambda[PHYS_JOINT_MAX_ROWS]; /**< Cached lambda per row. */
+
     /* Solver output (populated by build functions). */
     uint8_t row_count;          /**< Number of active rows after build. */
     phys_jacobian_row_t rows[PHYS_JOINT_MAX_ROWS]; /**< Jacobian rows. */
