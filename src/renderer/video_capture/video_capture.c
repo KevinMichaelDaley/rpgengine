@@ -3,6 +3,8 @@
  * @brief Public API glue for GPU-buffered video capture.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include "ferrum/renderer/video_capture.h"
 #include "pbo_ring.h"
 #include "frame_ring.h"
@@ -10,6 +12,14 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+/** Read CLOCK_MONOTONIC in nanoseconds. */
+static uint64_t vc_clock_ns_(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
 
 /** Full video capture context. */
 struct fr_video_capture {
@@ -18,13 +28,16 @@ struct fr_video_capture {
     fr_encode_thread_t  encoder;
     int                 width;
     int                 height;
+    uint64_t            capture_interval_ns; /**< Min ns between captures. */
+    uint64_t            last_capture_ns;     /**< Timestamp of last readback. */
 };
 
 /** Callback from PBO harvest: copies pixels into the frame ring. */
 static void pbo_harvest_cb_(const uint8_t *pixels, uint32_t frame_bytes,
-                             void *user_data) {
+                             uint64_t timestamp_ns, void *user_data) {
+    (void)timestamp_ns;
     fr_frame_ring_t *ring = (fr_frame_ring_t *)user_data;
-    fr_frame_ring_push(ring, pixels, frame_bytes);
+    fr_frame_ring_push(ring, pixels, frame_bytes, 0);
 }
 
 fr_video_capture_t *fr_video_capture_create(
@@ -48,8 +61,10 @@ fr_video_capture_t *fr_video_capture_create(
     /* Initialize CPU frame ring. */
     fr_frame_ring_init(&cap->frame_ring, frame_bytes);
 
-    /* Start encoder thread. */
+    /* Set up decimation: only capture at target FPS rate. */
     int fps = desc->fps > 0 ? desc->fps : 60;
+    cap->capture_interval_ns = 1000000000ULL / (uint64_t)fps;
+    cap->last_capture_ns = 0;
     if (fr_encode_thread_start(&cap->encoder, &cap->frame_ring,
                                desc->width, desc->height, fps,
                                desc->output_path) != 0) {
@@ -70,8 +85,14 @@ void fr_video_capture_submit_frame(fr_video_capture_t *cap) {
     fr_pbo_ring_harvest(&cap->pbo_ring, pbo_harvest_cb_,
                         &cap->frame_ring);
 
-    /* Step 2: Initiate a new async readback for this frame. */
-    fr_pbo_ring_begin_readback(&cap->pbo_ring);
+    /* Step 2: Decimate — only initiate a readback if enough time has
+     * elapsed since the last one to match the target FPS. */
+    uint64_t now = vc_clock_ns_();
+    if (cap->last_capture_ns == 0 ||
+        (now - cap->last_capture_ns) >= cap->capture_interval_ns) {
+        fr_pbo_ring_begin_readback(&cap->pbo_ring);
+        cap->last_capture_ns = now;
+    }
 }
 
 void fr_video_capture_destroy(fr_video_capture_t *cap) {

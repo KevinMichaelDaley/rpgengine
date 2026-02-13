@@ -20,6 +20,7 @@
 typedef struct fr_frame_slot {
     uint8_t *pixels;       /**< Heap-allocated RGBA pixel buffer. */
     uint32_t frame_bytes;  /**< Size of pixel data in bytes. */
+    uint64_t timestamp_ns; /**< CLOCK_MONOTONIC timestamp when frame was captured. */
 } fr_frame_slot_t;
 
 /** SPSC frame ring buffer. */
@@ -48,13 +49,15 @@ void fr_frame_ring_destroy(fr_frame_ring_t *ring);
  * Copies pixel data into the next available slot.  If the ring is
  * full, the write overwrites the oldest unread frame (tail advances).
  *
- * @param ring        Frame ring.
- * @param pixels      Source pixel data (RGBA, bottom-up).
- * @param frame_bytes Number of bytes to copy.
+ * @param ring         Frame ring.
+ * @param pixels       Source pixel data (RGBA, bottom-up).
+ * @param frame_bytes  Number of bytes to copy.
+ * @param timestamp_ns CLOCK_MONOTONIC timestamp of the frame.
  * @return 1 if pushed normally, 0 if a frame was dropped to make room.
  */
 int fr_frame_ring_push(fr_frame_ring_t *ring,
-                       const uint8_t *pixels, uint32_t frame_bytes);
+                       const uint8_t *pixels, uint32_t frame_bytes,
+                       uint64_t timestamp_ns);
 
 /**
  * @brief Pop a frame from the ring (consumer / encode thread).
@@ -62,12 +65,14 @@ int fr_frame_ring_push(fr_frame_ring_t *ring,
  * Returns a pointer to the oldest unread frame's pixel data.  The
  * pointer is valid until the next call to fr_frame_ring_pop().
  *
- * @param ring         Frame ring.
- * @param out_bytes    Receives the frame size in bytes.
+ * @param ring            Frame ring.
+ * @param out_bytes       Receives the frame size in bytes.
+ * @param out_timestamp_ns Receives the frame timestamp (may be NULL).
  * @return Pointer to pixel data, or NULL if ring is empty.
  */
 const uint8_t *fr_frame_ring_pop(fr_frame_ring_t *ring,
-                                 uint32_t *out_bytes);
+                                 uint32_t *out_bytes,
+                                 uint64_t *out_timestamp_ns);
 
 /**
  * @brief Query how many frames are available to read.

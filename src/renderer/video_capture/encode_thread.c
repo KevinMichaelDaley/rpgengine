@@ -59,12 +59,14 @@ static void *encode_thread_fn_(void *user_data) {
     while (!atomic_load_explicit(&enc->stop_requested,
                                   memory_order_acquire)) {
         uint32_t nbytes = 0;
-        const uint8_t *pixels = fr_frame_ring_pop(enc->ring, &nbytes);
+        uint64_t ts_ns = 0;
+        const uint8_t *pixels = fr_frame_ring_pop(enc->ring, &nbytes, &ts_ns);
         if (!pixels) {
             nanosleep(&idle_ts, NULL);
             continue;
         }
 
+        /* Write the frame. */
         size_t written = fwrite(pixels, 1, nbytes, enc->pipe);
         if (written == nbytes) {
             atomic_fetch_add_explicit(&enc->frames_written, 1,
@@ -75,8 +77,10 @@ static void *encode_thread_fn_(void *user_data) {
     /* Drain remaining frames. */
     for (;;) {
         uint32_t nbytes = 0;
-        const uint8_t *pixels = fr_frame_ring_pop(enc->ring, &nbytes);
+        uint64_t ts_ns = 0;
+        const uint8_t *pixels = fr_frame_ring_pop(enc->ring, &nbytes, &ts_ns);
         if (!pixels) { break; }
+
         size_t written = fwrite(pixels, 1, nbytes, enc->pipe);
         if (written == nbytes) {
             atomic_fetch_add_explicit(&enc->frames_written, 1,

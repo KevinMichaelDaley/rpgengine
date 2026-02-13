@@ -26,7 +26,8 @@ void fr_frame_ring_destroy(fr_frame_ring_t *ring) {
 }
 
 int fr_frame_ring_push(fr_frame_ring_t *ring,
-                       const uint8_t *pixels, uint32_t frame_bytes) {
+                       const uint8_t *pixels, uint32_t frame_bytes,
+                       uint64_t timestamp_ns) {
     if (!ring || !pixels) { return 0; }
 
     uint32_t h = atomic_load_explicit(&ring->head, memory_order_relaxed);
@@ -44,13 +45,15 @@ int fr_frame_ring_push(fr_frame_ring_t *ring,
                               ? frame_bytes
                               : ring->slots[idx].frame_bytes;
     memcpy(ring->slots[idx].pixels, pixels, copy_bytes);
+    ring->slots[idx].timestamp_ns = timestamp_ns;
 
     atomic_store_explicit(&ring->head, h + 1, memory_order_release);
     return dropped ? 0 : 1;
 }
 
 const uint8_t *fr_frame_ring_pop(fr_frame_ring_t *ring,
-                                 uint32_t *out_bytes) {
+                                 uint32_t *out_bytes,
+                                 uint64_t *out_timestamp_ns) {
     if (!ring) { return NULL; }
 
     uint32_t t = atomic_load_explicit(&ring->tail, memory_order_relaxed);
@@ -60,6 +63,7 @@ const uint8_t *fr_frame_ring_pop(fr_frame_ring_t *ring,
 
     uint32_t idx = t & (FR_FRAME_RING_CAPACITY - 1);
     if (out_bytes) { *out_bytes = ring->slots[idx].frame_bytes; }
+    if (out_timestamp_ns) { *out_timestamp_ns = ring->slots[idx].timestamp_ns; }
 
     /* Advance tail after caller is done — but since we return a pointer
      * into the slot, we advance now.  The slot won't be reused until

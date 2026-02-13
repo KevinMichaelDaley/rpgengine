@@ -39,12 +39,12 @@ static int test_push_pop_one(void) {
     uint8_t data[16];
     memset(data, 0xAB, sizeof(data));
 
-    int ok = fr_frame_ring_push(&ring, data, frame_bytes);
+    int ok = fr_frame_ring_push(&ring, data, frame_bytes, 0);
     ASSERT_INT_EQ(1, ok);
     ASSERT_INT_EQ(1, (int)fr_frame_ring_count(&ring));
 
     uint32_t out_bytes = 0;
-    const uint8_t *pixels = fr_frame_ring_pop(&ring, &out_bytes);
+    const uint8_t *pixels = fr_frame_ring_pop(&ring, &out_bytes, NULL);
     ASSERT_TRUE(pixels != NULL);
     ASSERT_INT_EQ((int)frame_bytes, (int)out_bytes);
     ASSERT_INT_EQ(0xAB, pixels[0]);
@@ -65,14 +65,14 @@ static int test_fill_and_drain(void) {
     for (int i = 0; i < FR_FRAME_RING_CAPACITY; i++) {
         uint8_t data[8];
         memset(data, (uint8_t)i, sizeof(data));
-        int ok = fr_frame_ring_push(&ring, data, frame_bytes);
+        int ok = fr_frame_ring_push(&ring, data, frame_bytes, 0);
         ASSERT_INT_EQ(1, ok);
     }
     ASSERT_INT_EQ(FR_FRAME_RING_CAPACITY, (int)fr_frame_ring_count(&ring));
 
     for (int i = 0; i < FR_FRAME_RING_CAPACITY; i++) {
         uint32_t nb = 0;
-        const uint8_t *p = fr_frame_ring_pop(&ring, &nb);
+        const uint8_t *p = fr_frame_ring_pop(&ring, &nb, NULL);
         ASSERT_TRUE(p != NULL);
         ASSERT_INT_EQ((int)frame_bytes, (int)nb);
         ASSERT_INT_EQ(i, p[0]);
@@ -91,7 +91,7 @@ static int test_pop_empty(void) {
     fr_frame_ring_init(&ring, 4);
 
     uint32_t nb = 99;
-    const uint8_t *p = fr_frame_ring_pop(&ring, &nb);
+    const uint8_t *p = fr_frame_ring_pop(&ring, &nb, NULL);
     ASSERT_TRUE(p == NULL);
 
     fr_frame_ring_destroy(&ring);
@@ -107,12 +107,12 @@ static int test_overflow_drops_oldest(void) {
     /* Fill to capacity. */
     for (int i = 0; i < FR_FRAME_RING_CAPACITY; i++) {
         uint8_t data[4] = { (uint8_t)i, 0, 0, 0 };
-        fr_frame_ring_push(&ring, data, frame_bytes);
+        fr_frame_ring_push(&ring, data, frame_bytes, 0);
     }
 
     /* Push one more — should drop frame 0. */
     uint8_t extra[4] = { 0xFF, 0, 0, 0 };
-    int ok = fr_frame_ring_push(&ring, extra, frame_bytes);
+    int ok = fr_frame_ring_push(&ring, extra, frame_bytes, 0);
     ASSERT_INT_EQ(0, ok); /* 0 = dropped a frame */
 
     /* Count should still be capacity. */
@@ -120,7 +120,7 @@ static int test_overflow_drops_oldest(void) {
 
     /* First pop should be frame 1 (frame 0 was dropped). */
     uint32_t nb = 0;
-    const uint8_t *p = fr_frame_ring_pop(&ring, &nb);
+    const uint8_t *p = fr_frame_ring_pop(&ring, &nb, NULL);
     ASSERT_TRUE(p != NULL);
     ASSERT_INT_EQ(1, p[0]);
 
@@ -136,11 +136,11 @@ static int test_wraparound(void) {
 
     for (int round = 0; round < 100; round++) {
         uint8_t data[4] = { (uint8_t)(round & 0xFF), 0, 0, 0 };
-        int ok = fr_frame_ring_push(&ring, data, frame_bytes);
+        int ok = fr_frame_ring_push(&ring, data, frame_bytes, 0);
         ASSERT_INT_EQ(1, ok);
 
         uint32_t nb = 0;
-        const uint8_t *p = fr_frame_ring_pop(&ring, &nb);
+        const uint8_t *p = fr_frame_ring_pop(&ring, &nb, NULL);
         ASSERT_TRUE(p != NULL);
         ASSERT_INT_EQ((uint8_t)(round & 0xFF), p[0]);
     }
@@ -155,7 +155,7 @@ static int test_wraparound(void) {
 /** NULL ring is safe. */
 static int test_null_safety(void) {
     ASSERT_INT_EQ(0, (int)fr_frame_ring_count(NULL));
-    ASSERT_TRUE(fr_frame_ring_pop(NULL, NULL) == NULL);
+    ASSERT_TRUE(fr_frame_ring_pop(NULL, NULL, NULL) == NULL);
     fr_frame_ring_destroy(NULL); /* Should not crash. */
     return 0;
 }

@@ -671,7 +671,7 @@ int main(int argc, char **argv) {
         video_cap = fr_video_capture_create(&(fr_video_capture_desc_t){
             .width  = CLIENT_WIN_W,
             .height = CLIENT_WIN_H,
-            .fps    = 60,
+            .fps    = 30,
             .output_path = record_path,
         });
         if (video_cap) {

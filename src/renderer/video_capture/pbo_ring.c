@@ -7,6 +7,14 @@
 
 #include "pbo_ring.h"
 #include <string.h>
+#include <time.h>
+
+/** Read CLOCK_MONOTONIC in nanoseconds. */
+static uint64_t pbo_clock_ns_(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
 
 void fr_pbo_ring_init(fr_pbo_ring_t *ring, int width, int height) {
     if (!ring) { return; }
@@ -56,6 +64,7 @@ int fr_pbo_ring_begin_readback(fr_pbo_ring_t *ring) {
     /* Place a fence to know when the transfer completes. */
     slot->fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     slot->state = FR_PBO_SLOT_PENDING;
+    slot->timestamp_ns = pbo_clock_ns_();
 
     ring->head = (ring->head + 1) % FR_PBO_RING_CAPACITY;
     ring->count++;
@@ -66,6 +75,7 @@ int fr_pbo_ring_begin_readback(fr_pbo_ring_t *ring) {
 int fr_pbo_ring_harvest(fr_pbo_ring_t *ring,
                         void (*on_frame)(const uint8_t *pixels,
                                          uint32_t frame_bytes,
+                                         uint64_t timestamp_ns,
                                          void *user_data),
                         void *user_data) {
     if (!ring || !on_frame) { return 0; }
@@ -99,7 +109,8 @@ int fr_pbo_ring_harvest(fr_pbo_ring_t *ring,
             GL_PIXEL_PACK_BUFFER, 0, ring->frame_bytes, GL_MAP_READ_BIT);
 
         if (pixels) {
-            on_frame(pixels, ring->frame_bytes, user_data);
+            on_frame(pixels, ring->frame_bytes, slot->timestamp_ns,
+                     user_data);
             glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
         }
 

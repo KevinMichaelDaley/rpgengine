@@ -25,9 +25,10 @@ typedef enum fr_pbo_slot_state {
 
 /** A single PBO slot in the ring. */
 typedef struct fr_pbo_slot {
-    GLuint              pbo;    /**< PBO name. */
-    GLsync              fence;  /**< Fence sync (NULL if free). */
-    fr_pbo_slot_state_t state;  /**< Current slot state. */
+    GLuint              pbo;          /**< PBO name. */
+    GLsync              fence;        /**< Fence sync (NULL if free). */
+    fr_pbo_slot_state_t state;        /**< Current slot state. */
+    uint64_t            timestamp_ns; /**< When readback was initiated. */
 } fr_pbo_slot_t;
 
 /** PBO ring context. */
@@ -75,14 +76,16 @@ int fr_pbo_ring_begin_readback(fr_pbo_ring_t *ring);
  * after the callback returns (PBO is unmapped).
  *
  * @param ring      PBO ring.
- * @param on_frame  Callback receiving (pixels, frame_bytes, user_data).
+ * @param on_frame  Callback receiving (pixels, frame_bytes, timestamp_ns, user_data).
  *                  pixels is width*height*4 RGBA bytes, bottom-up.
+ *                  timestamp_ns is CLOCK_MONOTONIC time when readback was issued.
  * @param user_data Passed through to callback.
  * @return Number of frames harvested.
  */
 int fr_pbo_ring_harvest(fr_pbo_ring_t *ring,
                         void (*on_frame)(const uint8_t *pixels,
                                          uint32_t frame_bytes,
+                                         uint64_t timestamp_ns,
                                          void *user_data),
                         void *user_data);
 
