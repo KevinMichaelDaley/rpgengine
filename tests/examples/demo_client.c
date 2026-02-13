@@ -134,6 +134,10 @@ typedef struct entity_view {
      * draws lines from old corners → new corners, fading over time. */
     vec3_t  corr_old_pos;   /**< Position before correction. */
     quat_t  corr_old_rot;   /**< Rotation before correction. */
+    vec3_t  corr_raw_pos;   /**< Raw server correction position. */
+    quat_t  corr_raw_rot;   /**< Raw server correction rotation. */
+    vec3_t  corr_vel;       /**< Server velocity at correction time. */
+    vec3_t  corr_ang_vel;   /**< Server angular velocity at correction time. */
     double  corr_time_s;    /**< Time the correction was recorded. */
     float   corr_alpha;     /**< Fade-out alpha (1→0 over ~0.5s). */
 } entity_view_t;
@@ -411,9 +415,38 @@ static void box_corners(vec3_t pos, quat_t rot,
 }
 
 /**
- * Draw correction debug lines: one line per box corner from old pose
- * to new (current) pose.  Uses the existing shader with u_mvp = vp
- * (identity model) and a bright color.
+ * Extrapolate a pose forward by dt using linear + angular velocity.
+ */
+static void extrapolate_pose_(vec3_t pos, quat_t rot,
+                              vec3_t vel, vec3_t ang_vel,
+                              float dt,
+                              vec3_t *out_pos, quat_t *out_rot) {
+    *out_pos = (vec3_t){
+        pos.x + vel.x * dt,
+        pos.y + vel.y * dt,
+        pos.z + vel.z * dt,
+    };
+    float ang_speed = sqrtf(ang_vel.x * ang_vel.x +
+                            ang_vel.y * ang_vel.y +
+                            ang_vel.z * ang_vel.z);
+    if (ang_speed > 1e-6f) {
+        vec3_t axis = {
+            ang_vel.x / ang_speed,
+            ang_vel.y / ang_speed,
+            ang_vel.z / ang_speed,
+        };
+        quat_t dq = quat_from_axis_angle(axis, ang_speed * dt, 1e-8f);
+        *out_rot = quat_normalize_safe(quat_mul(dq, rot), 1e-6f);
+    } else {
+        *out_rot = quat_normalize_safe(rot, 1e-6f);
+    }
+}
+
+/**
+ * Draw correction debug lines.
+ *
+ * Yellow lines: old rendered pose → extrapolated server pose.
+ * Red lines:    raw server pose → extrapolated server pose.
  *
  * Max bodies to draw lines for per frame, to avoid GPU stalls.
  */
@@ -425,82 +458,115 @@ static void draw_correction_lines(gl_ctx_t *glc,
                                   double now_time,
                                   double render_time,
                                   mat4_t vp) {
-    /* Gather line vertices: pairs of vec3 (old_corner, new_corner). */
-    float line_verts[CORR_MAX_LINES_PER_FRAME * 8 * 2 * 3]; /* 8 corners * 2 endpoints * xyz */
-    uint32_t line_vert_count = 0;
-    uint32_t line_pair_count = 0;
+    /* Two arrays: yellow (old→extrap) and red (raw→extrap). */
+    float yellow_verts[CORR_MAX_LINES_PER_FRAME * 8 * 2 * 3];
+    float red_verts[CORR_MAX_LINES_PER_FRAME * 8 * 2 * 3];
+    uint32_t yellow_count = 0;
+    uint32_t red_count = 0;
+    uint32_t pair_count = 0;
 
     for (uint32_t i = 0; i < entity_count; ++i) {
-        if (line_pair_count >= CORR_MAX_LINES_PER_FRAME) { break; }
+        if (pair_count >= CORR_MAX_LINES_PER_FRAME) { break; }
         const entity_view_t *e = &entities[i];
         if (e->is_static) { continue; }
         if (e->corr_alpha <= 0.0f) { continue; }
 
-        /* Sample current rendered pose. */
-        vec3_t new_pos;
-        quat_t new_rot;
-        if (!fr_pose_interpolator_sample(&e->interp, render_time, 1e-6f,
-                                          &new_pos, &new_rot)) {
-            continue;
-        }
+        /* Extrapolate raw server pose forward to render_time. */
+        float extrap_dt = (float)(render_time - e->corr_time_s);
+        if (extrap_dt < 0.0f) { extrap_dt = 0.0f; }
+        vec3_t extrap_pos;
+        quat_t extrap_rot;
+        extrapolate_pose_(e->corr_raw_pos, e->corr_raw_rot,
+                          e->corr_vel, e->corr_ang_vel,
+                          extrap_dt, &extrap_pos, &extrap_rot);
 
-        vec3_t old_corners[8], new_corners[8];
+        vec3_t old_corners[8], raw_corners[8], ext_corners[8];
         box_corners(e->corr_old_pos, e->corr_old_rot,
                     e->half_x, e->half_y, e->half_z, old_corners);
-        box_corners(new_pos, new_rot,
-                    e->half_x, e->half_y, e->half_z, new_corners);
+        box_corners(e->corr_raw_pos, e->corr_raw_rot,
+                    e->half_x, e->half_y, e->half_z, raw_corners);
+        box_corners(extrap_pos, extrap_rot,
+                    e->half_x, e->half_y, e->half_z, ext_corners);
 
         for (int c = 0; c < 8; ++c) {
-            /* Skip nearly-zero corrections. */
-            float dx = new_corners[c].x - old_corners[c].x;
-            float dy = new_corners[c].y - old_corners[c].y;
-            float dz = new_corners[c].z - old_corners[c].z;
-            if (dx*dx + dy*dy + dz*dz < 0.0001f) { continue; }
+            /* Yellow: old rendered → extrapolated. */
+            float dx = ext_corners[c].x - old_corners[c].x;
+            float dy = ext_corners[c].y - old_corners[c].y;
+            float dz = ext_corners[c].z - old_corners[c].z;
+            if (dx*dx + dy*dy + dz*dz > 0.0001f) {
+                uint32_t base = yellow_count * 3;
+                if (base + 6 <= sizeof(yellow_verts)/sizeof(float)) {
+                    yellow_verts[base + 0] = old_corners[c].x;
+                    yellow_verts[base + 1] = old_corners[c].y;
+                    yellow_verts[base + 2] = old_corners[c].z;
+                    yellow_verts[base + 3] = ext_corners[c].x;
+                    yellow_verts[base + 4] = ext_corners[c].y;
+                    yellow_verts[base + 5] = ext_corners[c].z;
+                    yellow_count += 2;
+                }
+            }
 
-            uint32_t base = line_vert_count * 3;
-            if (base + 6 > sizeof(line_verts)/sizeof(float)) { break; }
-            line_verts[base + 0] = old_corners[c].x;
-            line_verts[base + 1] = old_corners[c].y;
-            line_verts[base + 2] = old_corners[c].z;
-            line_verts[base + 3] = new_corners[c].x;
-            line_verts[base + 4] = new_corners[c].y;
-            line_verts[base + 5] = new_corners[c].z;
-            line_vert_count += 2;
+            /* Red: raw server → extrapolated. */
+            dx = ext_corners[c].x - raw_corners[c].x;
+            dy = ext_corners[c].y - raw_corners[c].y;
+            dz = ext_corners[c].z - raw_corners[c].z;
+            if (dx*dx + dy*dy + dz*dz > 0.0001f) {
+                uint32_t base = red_count * 3;
+                if (base + 6 <= sizeof(red_verts)/sizeof(float)) {
+                    red_verts[base + 0] = raw_corners[c].x;
+                    red_verts[base + 1] = raw_corners[c].y;
+                    red_verts[base + 2] = raw_corners[c].z;
+                    red_verts[base + 3] = ext_corners[c].x;
+                    red_verts[base + 4] = ext_corners[c].y;
+                    red_verts[base + 5] = ext_corners[c].z;
+                    red_count += 2;
+                }
+            }
         }
-        line_pair_count++;
+        pair_count++;
     }
 
-    if (line_vert_count == 0) { return; }
-
-    /* Upload line vertices to a temporary VBO and draw. */
-    GLuint line_vbo = 0;
-    glGenBuffers(1, &line_vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, line_vbo);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(line_vert_count * 3 * sizeof(float)),
-                 line_verts, GL_STREAM_DRAW);
+    if (yellow_count == 0 && red_count == 0) { return; }
 
     /* Use identity model matrix — vertices are already in world space. */
     shader_uniform_set_mat4(&glc->uniforms, &glc->program,
                             "u_mvp", vp.m, 0u);
 
-    /* Bright yellow for correction lines. */
-    float corr_color[3] = {1.0f, 1.0f, 0.0f};
-    shader_uniform_set_vec3(&glc->uniforms, &glc->program,
-                            "u_color", corr_color);
-
-    GLuint line_vao = 0;
-    glGenVertexArrays(1, &line_vao);
-    glBindVertexArray(line_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, line_vbo);
+    GLuint vao = 0;
+    glGenVertexArrays(1, &vao);
+    GLuint vbo = 0;
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, NULL);
-
     glLineWidth(2.0f);
-    glDrawArrays(GL_LINES, 0, (GLsizei)line_vert_count);
+
+    /* Draw yellow lines: old rendered → extrapolated. */
+    if (yellow_count > 0) {
+        float color[3] = {1.0f, 1.0f, 0.0f};
+        shader_uniform_set_vec3(&glc->uniforms, &glc->program,
+                                "u_color", color);
+        glBufferData(GL_ARRAY_BUFFER,
+                     (GLsizeiptr)(yellow_count * 3 * sizeof(float)),
+                     yellow_verts, GL_STREAM_DRAW);
+        glDrawArrays(GL_LINES, 0, (GLsizei)yellow_count);
+    }
+
+    /* Draw red lines: raw server → extrapolated. */
+    if (red_count > 0) {
+        float color[3] = {1.0f, 0.0f, 0.0f};
+        shader_uniform_set_vec3(&glc->uniforms, &glc->program,
+                                "u_color", color);
+        glBufferData(GL_ARRAY_BUFFER,
+                     (GLsizeiptr)(red_count * 3 * sizeof(float)),
+                     red_verts, GL_STREAM_DRAW);
+        glDrawArrays(GL_LINES, 0, (GLsizei)red_count);
+    }
 
     glBindVertexArray(0);
-    glDeleteVertexArrays(1, &line_vao);
-    glDeleteBuffers(1, &line_vbo);
+    glDeleteVertexArrays(1, &vao);
+    glDeleteBuffers(1, &vbo);
     (void)now_time;
 }
 
@@ -845,17 +911,24 @@ int main(int argc, char **argv) {
                         e->corr_alpha   = 1.0f;
                     }
 
+                    vec3_t vel = {
+                        (float)bs.vel_x_mm_s / 1000.0f,
+                        (float)bs.vel_y_mm_s / 1000.0f,
+                        (float)bs.vel_z_mm_s / 1000.0f,
+                    };
+                    vec3_t ang_vel = {
+                        (float)bs.ang_x_mrad_s / 1000.0f,
+                        (float)bs.ang_y_mrad_s / 1000.0f,
+                        (float)bs.ang_z_mrad_s / 1000.0f,
+                    };
+
+                    e->corr_raw_pos  = pos;
+                    e->corr_raw_rot  = rot;
+                    e->corr_vel      = vel;
+                    e->corr_ang_vel  = ang_vel;
+
                     fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
-                                              (vec3_t){
-                                                  (float)bs.vel_x_mm_s / 1000.0f,
-                                                  (float)bs.vel_y_mm_s / 1000.0f,
-                                                  (float)bs.vel_z_mm_s / 1000.0f,
-                                              },
-                                              (vec3_t){
-                                                  (float)bs.ang_x_mrad_s / 1000.0f,
-                                                  (float)bs.ang_y_mrad_s / 1000.0f,
-                                                  (float)bs.ang_z_mrad_s / 1000.0f,
-                                              });
+                                              vel, ang_vel);
                     dbg_state_applied++;
                 }
             }
@@ -897,17 +970,24 @@ int main(int argc, char **argv) {
                     e->corr_alpha   = 1.0f;
                 }
 
+                vec3_t vel = {
+                    (float)bs.vel_x_mm_s / 1000.0f,
+                    (float)bs.vel_y_mm_s / 1000.0f,
+                    (float)bs.vel_z_mm_s / 1000.0f,
+                };
+                vec3_t ang_vel = {
+                    (float)bs.ang_x_mrad_s / 1000.0f,
+                    (float)bs.ang_y_mrad_s / 1000.0f,
+                    (float)bs.ang_z_mrad_s / 1000.0f,
+                };
+
+                e->corr_raw_pos  = pos;
+                e->corr_raw_rot  = rot;
+                e->corr_vel      = vel;
+                e->corr_ang_vel  = ang_vel;
+
                 fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
-                                          (vec3_t){
-                                              (float)bs.vel_x_mm_s / 1000.0f,
-                                              (float)bs.vel_y_mm_s / 1000.0f,
-                                              (float)bs.vel_z_mm_s / 1000.0f,
-                                          },
-                                          (vec3_t){
-                                              (float)bs.ang_x_mrad_s / 1000.0f,
-                                              (float)bs.ang_y_mrad_s / 1000.0f,
-                                              (float)bs.ang_z_mrad_s / 1000.0f,
-                                          });
+                                          vel, ang_vel);
             }
 
             if (schema_id == NET_REPL_SCHEMA_WELCOME) {
