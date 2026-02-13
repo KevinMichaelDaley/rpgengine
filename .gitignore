@@ -9,3 +9,4 @@ bench-logs/
 *.out
 *.mpstat
 *.pidstat
+*.mp4
