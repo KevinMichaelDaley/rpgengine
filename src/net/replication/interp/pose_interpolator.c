@@ -56,7 +56,8 @@ void fr_pose_interpolator_reset(fr_pose_interpolator_t *interp) {
     *interp = (fr_pose_interpolator_t){0};
 }
 
-bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_s, vec3_t pos, quat_t rot) {
+bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_s,
+                               vec3_t pos, quat_t rot, vec3_t vel, vec3_t ang_vel) {
     if (!interp) {
         return false;
     }
@@ -68,6 +69,8 @@ bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_
         interp->curr_rot = rot;
         interp->implied_vel = (vec3_t){0, 0, 0};
         interp->implied_ang_vel = (vec3_t){0, 0, 0};
+        interp->server_vel = vel;
+        interp->server_ang_vel = ang_vel;
         return true;
     }
 
@@ -80,6 +83,8 @@ bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_
     interp->curr_time_s = recv_time_s;
     interp->curr_pos = pos;
     interp->curr_rot = rot;
+    interp->server_vel = vel;
+    interp->server_ang_vel = ang_vel;
 
     /* Compute implied velocities from the two snapshots. */
     double dt = interp->curr_time_s - interp->prev_time_s;
@@ -140,29 +145,29 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
         *out_rot = quat_slerp(interp->prev_rot, interp->curr_rot, t,
                                quat_epsilon);
     } else {
-        /* Extrapolation beyond curr — use implied velocity.
-         * Cap at 1.5× to avoid runaway drift on packet loss. */
-        float extrap = clampf_(t - 1.0f, 0.0f, 0.8f);
+        /* Extrapolation beyond curr — use server-authoritative velocity.
+         * Cap at 0.5× dt (half a tick) to balance latency vs overshoot. */
+        float extrap = clampf_(t - 1.0f, 0.0f, 0.5f);
         float extrap_dt = extrap * (float)dt;
 
-        /* Linear: curr_pos + vel * extrap_dt. */
+        /* Linear: curr_pos + server_vel * extrap_dt. */
         *out_pos = (vec3_t){
-            interp->curr_pos.x + interp->implied_vel.x * extrap_dt,
-            interp->curr_pos.y + interp->implied_vel.y * extrap_dt,
-            interp->curr_pos.z + interp->implied_vel.z * extrap_dt,
+            interp->curr_pos.x + interp->server_vel.x * extrap_dt,
+            interp->curr_pos.y + interp->server_vel.y * extrap_dt,
+            interp->curr_pos.z + interp->server_vel.z * extrap_dt,
         };
 
-        /* Angular: apply angular velocity as axis-angle rotation.
-         * omega = implied_ang_vel, angle = |omega| * extrap_dt. */
+        /* Angular: apply server angular velocity as axis-angle rotation.
+         * omega = server_ang_vel, angle = |omega| * extrap_dt. */
         float ang_speed = sqrtf(
-            interp->implied_ang_vel.x * interp->implied_ang_vel.x +
-            interp->implied_ang_vel.y * interp->implied_ang_vel.y +
-            interp->implied_ang_vel.z * interp->implied_ang_vel.z);
+            interp->server_ang_vel.x * interp->server_ang_vel.x +
+            interp->server_ang_vel.y * interp->server_ang_vel.y +
+            interp->server_ang_vel.z * interp->server_ang_vel.z);
         if (ang_speed > 1e-6f) {
             vec3_t axis = {
-                interp->implied_ang_vel.x / ang_speed,
-                interp->implied_ang_vel.y / ang_speed,
-                interp->implied_ang_vel.z / ang_speed,
+                interp->server_ang_vel.x / ang_speed,
+                interp->server_ang_vel.y / ang_speed,
+                interp->server_ang_vel.z / ang_speed,
             };
             float angle = ang_speed * extrap_dt;
             quat_t dq = quat_from_axis_angle(axis, angle, 1e-8f);

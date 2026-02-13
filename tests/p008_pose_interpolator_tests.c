@@ -33,8 +33,8 @@ static int test_pose_interpolator_samples_midpoint(void) {
     const vec3_t p1 = {1.0f, 0.0f, 0.0f};
     const quat_t qI = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
 
-    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 0.0, p0, qI));
-    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 1.0, p1, qI));
+    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 0.0, p0, qI, (vec3_t){0,0,0}, (vec3_t){0,0,0}));
+    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 1.0, p1, qI, (vec3_t){0,0,0}, (vec3_t){0,0,0}));
 
     vec3_t out_p;
     quat_t out_q;
@@ -60,8 +60,8 @@ static int test_pose_interpolator_clamps_outside_window(void) {
     const vec3_t p1 = {3.0f, 0.0f, 0.0f};
     const quat_t qI = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
 
-    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 10.0, p0, qI));
-    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 20.0, p1, qI));
+    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 10.0, p0, qI, (vec3_t){0,0,0}, (vec3_t){0,0,0}));
+    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 20.0, p1, qI, (vec3_t){0.5f,0,0}, (vec3_t){0,0,0}));
 
     vec3_t out_p;
     quat_t out_q;
@@ -70,17 +70,17 @@ static int test_pose_interpolator_clamps_outside_window(void) {
     ASSERT_TRUE(fr_pose_interpolator_sample(&interp, 9.0, 1e-6f, &out_p, &out_q));
     ASSERT_FLOAT_NEAR(-2.0f, out_p.x, 1e-5f);
 
-    /* Beyond window: extrapolates using implied velocity.
-     * t = (25-10)/(20-10) = 1.5, extrap = clamp(0.5, 0, 0.8) = 0.5
-     * vel = (3-(-2))/10 = 0.5, result = 3 + 0.5*(0.5*10) = 5.5 */
+    /* Beyond window: extrapolates using server velocity.
+     * t = (25-10)/(20-10) = 1.5, extrap = clamp(0.5, 0, 0.5) = 0.5
+     * server_vel.x = 0.5, result = 3 + 0.5*(0.5*10) = 5.5 */
     ASSERT_TRUE(fr_pose_interpolator_sample(&interp, 25.0, 1e-6f, &out_p, &out_q));
     ASSERT_FLOAT_NEAR(5.5f, out_p.x, 1e-5f);
 
-    /* Far beyond window: extrap clamped at 0.8 (cap).
-     * t = (50-10)/10 = 4.0, extrap = clamp(3.0, 0, 0.8) = 0.8
-     * result = 3 + 0.5*(0.8*10) = 7.0 */
+    /* Far beyond window: extrap clamped at 0.5 (half-tick cap).
+     * t = (50-10)/10 = 4.0, extrap = clamp(3.0, 0, 0.5) = 0.5
+     * result = 3 + 0.5*(0.5*10) = 5.5 */
     ASSERT_TRUE(fr_pose_interpolator_sample(&interp, 50.0, 1e-6f, &out_p, &out_q));
-    ASSERT_FLOAT_NEAR(7.0f, out_p.x, 1e-5f);
+    ASSERT_FLOAT_NEAR(5.5f, out_p.x, 1e-5f);
 
     return 0;
 }
@@ -92,13 +92,39 @@ static int test_pose_interpolator_rejects_invalid_args(void) {
     const vec3_t p = {0.0f, 0.0f, 0.0f};
     const quat_t q = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
 
-    ASSERT_TRUE(!fr_pose_interpolator_push(NULL, 0.0, p, q));
+    ASSERT_TRUE(!fr_pose_interpolator_push(NULL, 0.0, p, q, (vec3_t){0,0,0}, (vec3_t){0,0,0}));
 
     vec3_t out_p;
     quat_t out_q;
     ASSERT_TRUE(!fr_pose_interpolator_sample(NULL, 0.0, 1e-6f, &out_p, &out_q));
     ASSERT_TRUE(!fr_pose_interpolator_sample(&interp, 0.0, 1e-6f, NULL, &out_q));
     ASSERT_TRUE(!fr_pose_interpolator_sample(&interp, 0.0, 1e-6f, &out_p, NULL));
+
+    return 0;
+}
+
+static int test_pose_interpolator_server_vel_extrapolation(void) {
+    fr_pose_interpolator_t interp;
+    fr_pose_interpolator_reset(&interp);
+
+    const vec3_t p0 = {0.0f, 0.0f, 0.0f};
+    const vec3_t p1 = {1.0f, 0.0f, 0.0f};
+    const quat_t qI = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+
+    /* implied_vel.x would be (1-0)/1 = 1.0, but server says 5.0 m/s.
+     * Extrapolation should use server velocity, not implied. */
+    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 0.0, p0, qI,
+                                          (vec3_t){0,0,0}, (vec3_t){0,0,0}));
+    ASSERT_TRUE(fr_pose_interpolator_push(&interp, 1.0, p1, qI,
+                                          (vec3_t){5.0f,0,0}, (vec3_t){0,0,0}));
+
+    vec3_t out_p;
+    quat_t out_q;
+
+    /* t = (1.5-0.0)/1.0 = 1.5, extrap = clamp(0.5, 0, 0.5) = 0.5
+     * result = 1.0 + 5.0 * (0.5 * 1.0) = 3.5  (not 1.5 as implied would give) */
+    ASSERT_TRUE(fr_pose_interpolator_sample(&interp, 1.5, 1e-6f, &out_p, &out_q));
+    ASSERT_FLOAT_NEAR(3.5f, out_p.x, 1e-5f);
 
     return 0;
 }
@@ -111,6 +137,9 @@ int main(void) {
         return 1;
     }
     if (test_pose_interpolator_rejects_invalid_args() != 0) {
+        return 1;
+    }
+    if (test_pose_interpolator_server_vel_extrapolation() != 0) {
         return 1;
     }
 

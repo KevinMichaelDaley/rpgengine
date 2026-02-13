@@ -27,6 +27,8 @@ typedef struct fr_pose_interpolator {
     quat_t curr_rot;
     vec3_t implied_vel;     /**< Linear velocity implied by last two snapshots. */
     vec3_t implied_ang_vel; /**< Angular velocity (axis * angle/dt) implied by last two snapshots. */
+    vec3_t server_vel;      /**< Server-authoritative linear velocity (m/s). */
+    vec3_t server_ang_vel;  /**< Server-authoritative angular velocity (rad/s). */
 } fr_pose_interpolator_t;
 
 /**
@@ -47,9 +49,12 @@ void fr_pose_interpolator_reset(fr_pose_interpolator_t *interp);
  * @param recv_time_s Monotonic receive timestamp in seconds.
  * @param pos Position.
  * @param rot Rotation quaternion.
+ * @param vel Server-authoritative linear velocity (m/s).
+ * @param ang_vel Server-authoritative angular velocity (rad/s).
  * @return true on success.
  */
-bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_s, vec3_t pos, quat_t rot);
+bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_s,
+                               vec3_t pos, quat_t rot, vec3_t vel, vec3_t ang_vel);
 
 /**
  * @brief Sample interpolated pose at a given time.

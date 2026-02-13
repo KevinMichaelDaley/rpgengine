@@ -845,7 +845,17 @@ int main(int argc, char **argv) {
                         e->corr_alpha   = 1.0f;
                     }
 
-                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
+                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
+                                              (vec3_t){
+                                                  (float)bs.vel_x_mm_s / 1000.0f,
+                                                  (float)bs.vel_y_mm_s / 1000.0f,
+                                                  (float)bs.vel_z_mm_s / 1000.0f,
+                                              },
+                                              (vec3_t){
+                                                  (float)bs.ang_x_mrad_s / 1000.0f,
+                                                  (float)bs.ang_y_mrad_s / 1000.0f,
+                                                  (float)bs.ang_z_mrad_s / 1000.0f,
+                                              });
                     dbg_state_applied++;
                 }
             }
@@ -887,7 +897,17 @@ int main(int argc, char **argv) {
                     e->corr_alpha   = 1.0f;
                 }
 
-                fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
+                fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
+                                          (vec3_t){
+                                              (float)bs.vel_x_mm_s / 1000.0f,
+                                              (float)bs.vel_y_mm_s / 1000.0f,
+                                              (float)bs.vel_z_mm_s / 1000.0f,
+                                          },
+                                          (vec3_t){
+                                              (float)bs.ang_x_mrad_s / 1000.0f,
+                                              (float)bs.ang_y_mrad_s / 1000.0f,
+                                              (float)bs.ang_z_mrad_s / 1000.0f,
+                                          });
             }
 
             if (schema_id == NET_REPL_SCHEMA_WELCOME) {
@@ -944,7 +964,8 @@ int main(int argc, char **argv) {
                         (float)sp.pos_mm.z_mm / 1000.0f,
                     };
                     quat_t rot = {sp.rot_x, sp.rot_y, sp.rot_z, sp.rot_w};
-                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot);
+                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
+                                              (vec3_t){0,0,0}, (vec3_t){0,0,0});
 
                     net_ghost_entity_t ghost = {.index = idx, .generation = 1};
                     net_ghost_table_create(&ghosts, sp.body_id, ghost);

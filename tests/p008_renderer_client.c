@@ -542,7 +542,8 @@ static int add_entity_(struct entity_view **entities,
     e->entity_id = entity_id;
     e->owner_client_id = owner_client_id;
     fr_pose_interpolator_reset(&e->pose);
-    (void)fr_pose_interpolator_push(&e->pose, recv_time_s, pos, rot);
+    (void)fr_pose_interpolator_push(&e->pose, recv_time_s, pos, rot,
+                                    (vec3_t){0,0,0}, (vec3_t){0,0,0});
 
     *count += 1u;
     return 1;
@@ -706,7 +707,8 @@ static int handle_state_cube_(struct entity_view **entities,
         }
     }
 
-    (void)fr_pose_interpolator_push(&(*entities)[idx].pose, recv_time_s, pos, rot);
+    (void)fr_pose_interpolator_push(&(*entities)[idx].pose, recv_time_s, pos, rot,
+                                    (vec3_t){0,0,0}, (vec3_t){0,0,0});
     return 1;
 }
 
