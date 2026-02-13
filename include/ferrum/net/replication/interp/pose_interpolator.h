@@ -25,10 +25,13 @@ typedef struct fr_pose_interpolator {
     vec3_t curr_pos;
     quat_t prev_rot;
     quat_t curr_rot;
-    vec3_t implied_vel;     /**< Linear velocity implied by last two snapshots. */
-    vec3_t implied_ang_vel; /**< Angular velocity (axis * angle/dt) implied by last two snapshots. */
-    vec3_t server_vel;      /**< Server-authoritative linear velocity (m/s). */
-    vec3_t server_ang_vel;  /**< Server-authoritative angular velocity (rad/s). */
+    vec3_t implied_vel;         /**< Linear velocity implied by last two snapshots. */
+    vec3_t implied_ang_vel;     /**< Angular velocity (axis * angle/dt) implied by last two snapshots. */
+    vec3_t prev_server_vel;     /**< Server velocity at prev snapshot (m/s). */
+    vec3_t prev_server_ang_vel; /**< Server angular velocity at prev snapshot (rad/s). */
+    vec3_t server_vel;          /**< Server velocity at curr snapshot (m/s). */
+    vec3_t server_ang_vel;      /**< Server angular velocity at curr snapshot (rad/s). */
+    double server_time_s;       /**< Server send timestamp (monotonic seconds). */
 } fr_pose_interpolator_t;
 
 /**
@@ -51,10 +54,12 @@ void fr_pose_interpolator_reset(fr_pose_interpolator_t *interp);
  * @param rot Rotation quaternion.
  * @param vel Server-authoritative linear velocity (m/s).
  * @param ang_vel Server-authoritative angular velocity (rad/s).
+ * @param server_time_s Server send timestamp (monotonic seconds, 0 if unknown).
  * @return true on success.
  */
 bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_s,
-                               vec3_t pos, quat_t rot, vec3_t vel, vec3_t ang_vel);
+                               vec3_t pos, quat_t rot, vec3_t vel, vec3_t ang_vel,
+                               double server_time_s);
 
 /**
  * @brief Sample interpolated pose at a given time.

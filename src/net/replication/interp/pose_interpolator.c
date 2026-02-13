@@ -57,7 +57,8 @@ void fr_pose_interpolator_reset(fr_pose_interpolator_t *interp) {
 }
 
 bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_s,
-                               vec3_t pos, quat_t rot, vec3_t vel, vec3_t ang_vel) {
+                               vec3_t pos, quat_t rot, vec3_t vel, vec3_t ang_vel,
+                               double server_time_s) {
     if (!interp) {
         return false;
     }
@@ -71,6 +72,7 @@ bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_
         interp->implied_ang_vel = (vec3_t){0, 0, 0};
         interp->server_vel = vel;
         interp->server_ang_vel = ang_vel;
+        interp->server_time_s = server_time_s;
         return true;
     }
 
@@ -78,6 +80,8 @@ bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_
     interp->prev_time_s = interp->curr_time_s;
     interp->prev_pos = interp->curr_pos;
     interp->prev_rot = interp->curr_rot;
+    interp->prev_server_vel = interp->server_vel;
+    interp->prev_server_ang_vel = interp->server_ang_vel;
 
     interp->has_curr = true;
     interp->curr_time_s = recv_time_s;
@@ -85,6 +89,7 @@ bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_
     interp->curr_rot = rot;
     interp->server_vel = vel;
     interp->server_ang_vel = ang_vel;
+    interp->server_time_s = server_time_s;
 
     /* Compute implied velocities from the two snapshots. */
     double dt = interp->curr_time_s - interp->prev_time_s;
@@ -131,51 +136,90 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
     float t = (float)((now_time_s - interp->prev_time_s) / dt);
 
     if (t <= 1.0f) {
-        /* Interpolation between prev and curr — simple lerp/slerp. */
+        /* Interpolation between prev and curr using cubic hermite.
+         * Tangents are server-authoritative velocities scaled by dt,
+         * giving a smooth arc that respects the physics trajectory. */
         t = clampf_(t, 0.0f, 1.0f);
 
-        const vec3_t a = interp->prev_pos;
-        const vec3_t b = interp->curr_pos;
-        *out_pos = (vec3_t){
-            a.x + (b.x - a.x) * t,
-            a.y + (b.y - a.y) * t,
-            a.z + (b.z - a.z) * t,
+        const float t2 = t * t;
+        const float t3 = t2 * t;
+        /* Hermite basis: h00, h10, h01, h11 */
+        const float h00 =  2.0f * t3 - 3.0f * t2 + 1.0f;
+        const float h10 =         t3 - 2.0f * t2 + t;
+        const float h01 = -2.0f * t3 + 3.0f * t2;
+        const float h11 =         t3 -        t2;
+
+        /* Tangents = velocity * dt (displacement over the interval). */
+        const float fdt = (float)dt;
+        const vec3_t m0 = {
+            interp->prev_server_vel.x * fdt,
+            interp->prev_server_vel.y * fdt,
+            interp->prev_server_vel.z * fdt,
+        };
+        const vec3_t m1 = {
+            interp->server_vel.x * fdt,
+            interp->server_vel.y * fdt,
+            interp->server_vel.z * fdt,
         };
 
-        *out_rot = quat_slerp(interp->prev_rot, interp->curr_rot, t,
-                               quat_epsilon);
-    } else {
-        /* Extrapolation beyond curr — use server-authoritative velocity.
-         * Cap at 0.5× dt (half a tick) to balance latency vs overshoot. */
-        float extrap = clampf_(t - 1.0f, 0.0f, 0.5f);
-        float extrap_dt = extrap * (float)dt;
-
-        /* Linear: curr_pos + server_vel * extrap_dt. */
         *out_pos = (vec3_t){
-            interp->curr_pos.x + interp->server_vel.x * extrap_dt,
-            interp->curr_pos.y + interp->server_vel.y * extrap_dt,
-            interp->curr_pos.z + interp->server_vel.z * extrap_dt,
+            h00 * interp->prev_pos.x + h10 * m0.x +
+            h01 * interp->curr_pos.x + h11 * m1.x,
+            h00 * interp->prev_pos.y + h10 * m0.y +
+            h01 * interp->curr_pos.y + h11 * m1.y,
+            h00 * interp->prev_pos.z + h10 * m0.z +
+            h01 * interp->curr_pos.z + h11 * m1.z,
         };
 
-        /* Angular: apply server angular velocity as axis-angle rotation.
-         * omega = server_ang_vel, angle = |omega| * extrap_dt. */
-        float ang_speed = sqrtf(
-            interp->server_ang_vel.x * interp->server_ang_vel.x +
-            interp->server_ang_vel.y * interp->server_ang_vel.y +
-            interp->server_ang_vel.z * interp->server_ang_vel.z);
-        if (ang_speed > 1e-6f) {
-            vec3_t axis = {
-                interp->server_ang_vel.x / ang_speed,
-                interp->server_ang_vel.y / ang_speed,
-                interp->server_ang_vel.z / ang_speed,
-            };
-            float angle = ang_speed * extrap_dt;
-            quat_t dq = quat_from_axis_angle(axis, angle, 1e-8f);
-            *out_rot = quat_normalize_safe(
-                quat_mul(dq, interp->curr_rot), quat_epsilon);
-        } else {
-            *out_rot = quat_normalize_safe(interp->curr_rot, quat_epsilon);
+        /* Rotation: velocity-aware interpolation.
+         * Integrate angular velocity forward from prev by t*dt,
+         * and backward from curr by (1-t)*dt, then slerp between
+         * the two estimates for a smooth arc. */
+        const float fwd_dt = t * fdt;
+        const float bwd_dt = (1.0f - t) * fdt;
+
+        /* Forward estimate: prev_rot rotated by prev_ang_vel * fwd_dt. */
+        quat_t rot_fwd = interp->prev_rot;
+        {
+            float w = sqrtf(interp->prev_server_ang_vel.x * interp->prev_server_ang_vel.x +
+                            interp->prev_server_ang_vel.y * interp->prev_server_ang_vel.y +
+                            interp->prev_server_ang_vel.z * interp->prev_server_ang_vel.z);
+            if (w > 1e-6f) {
+                vec3_t ax = {
+                    interp->prev_server_ang_vel.x / w,
+                    interp->prev_server_ang_vel.y / w,
+                    interp->prev_server_ang_vel.z / w,
+                };
+                quat_t dq = quat_from_axis_angle(ax, w * fwd_dt, 1e-8f);
+                rot_fwd = quat_mul(dq, interp->prev_rot);
+            }
         }
+
+        /* Backward estimate: curr_rot rotated by -curr_ang_vel * bwd_dt. */
+        quat_t rot_bwd = interp->curr_rot;
+        {
+            float w = sqrtf(interp->server_ang_vel.x * interp->server_ang_vel.x +
+                            interp->server_ang_vel.y * interp->server_ang_vel.y +
+                            interp->server_ang_vel.z * interp->server_ang_vel.z);
+            if (w > 1e-6f) {
+                vec3_t ax = {
+                    interp->server_ang_vel.x / w,
+                    interp->server_ang_vel.y / w,
+                    interp->server_ang_vel.z / w,
+                };
+                quat_t dq = quat_from_axis_angle(ax, -w * bwd_dt, 1e-8f);
+                rot_bwd = quat_mul(dq, interp->curr_rot);
+            }
+        }
+
+        *out_rot = quat_slerp(rot_fwd, rot_bwd, t, quat_epsilon);
+    } else {
+        /* Beyond the latest snapshot — hold curr pose.
+         * Extrapolation is intentionally disabled: at any meaningful
+         * velocity the displacement per frame exceeds constraint
+         * tolerances, producing visible artifacts. */
+        *out_pos = interp->curr_pos;
+        *out_rot = quat_normalize_safe(interp->curr_rot, quat_epsilon);
     }
     return true;
 }
