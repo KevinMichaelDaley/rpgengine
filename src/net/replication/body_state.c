@@ -65,6 +65,7 @@ int net_repl_body_state_encode(const net_repl_body_state_t *msg,
     write_i16_be(out + o, msg->ang_z_mrad_s);   o += 2;
 
     write_u32_be(out + o, msg->send_time_ms);    o += 4;
+    write_u32_be(out + o, msg->tick_time_ms);    o += 4;
     out[o] = msg->flags;                         o += 1;
 
     return NET_REPL_OK;
@@ -97,6 +98,7 @@ int net_repl_body_state_decode(net_repl_body_state_t *msg,
     msg->ang_z_mrad_s = read_i16_be(payload + o);  o += 2;
 
     msg->send_time_ms = read_u32_be(payload + o);   o += 4;
+    msg->tick_time_ms = read_u32_be(payload + o);   o += 4;
     msg->flags        = payload[o];                  o += 1;
 
     return NET_REPL_OK;

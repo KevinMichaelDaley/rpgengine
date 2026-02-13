@@ -39,8 +39,8 @@ static inline uint8_t net_repl_body_state_set_tier(uint8_t flags, uint8_t tier) 
                      ((tier << NET_REPL_BODY_STATE_TIER_SHIFT) & NET_REPL_BODY_STATE_TIER_MASK));
 }
 
-/** Wire size: 2+2+12+7+6+6+4+1 = 40 bytes. */
-#define NET_REPL_BODY_STATE_PAYLOAD_SIZE 40u
+/** Wire size: 2+2+12+7+6+6+4+4+1 = 44 bytes. */
+#define NET_REPL_BODY_STATE_PAYLOAD_SIZE 44u
 
 typedef struct net_repl_body_state {
     uint16_t server_tick;        /**< Server tick counter. */
@@ -67,6 +67,12 @@ typedef struct net_repl_body_state {
     /** Wall-clock send time (ms since epoch, truncated to 32 bits).
      *  Client uses this to measure true one-way server→client latency. */
     uint32_t send_time_ms;
+
+    /** Physics tick completion time (ms, monotonic, truncated to 32 bits).
+     *  The position/orientation in this message correspond to this moment.
+     *  Client uses this to sample the interpolator at the correct time
+     *  for correction debug visualization. */
+    uint32_t tick_time_ms;
 
     /** Per-body flags (see NET_REPL_BODY_STATE_FLAG_*). */
     uint8_t flags;

@@ -107,9 +107,9 @@ Unreliable body state updates carry the full rigid body pose plus velocity:
 
 ```
 [server_tick:u16] [body_id:u16] [pos_mm:3×i32] [rot_smallest3:7B]
-[vel_mm_s:3×i16] [ang_mrad_s:3×i16] [send_time_ms:u32] [flags:u8]
+[vel_mm_s:3×i16] [ang_mrad_s:3×i16] [send_time_ms:u32] [tick_time_ms:u32] [flags:u8]
 ```
-Total: 40 bytes per body.
+Total: 44 bytes per body.
 
 - **Velocity** (`vel_mm_s`, `ang_mrad_s`): server-authoritative linear (mm/s) and
   angular (mrad/s) velocity, quantized to int16 (±32 m/s / ±32 rad/s range).
@@ -117,6 +117,11 @@ Total: 40 bytes per body.
 - **send_time_ms**: server monotonic clock (truncated to u32 ms).  On localhost
   this shares the clock base with the client; with real latency it provides a
   lower bound on packet age.
+- **tick_time_ms**: CLOCK_MONOTONIC timestamp (truncated to u32 ms) of when
+  the physics tick that produced this position/orientation completed.  The client
+  uses this to sample the interpolator at the exact physics moment for correction
+  debug visualization (comparing interpolated pose vs true server pose at the
+  same instant).
 
 ## Memory / Ownership Rules
 

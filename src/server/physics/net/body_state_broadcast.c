@@ -120,7 +120,8 @@ static void flush_batch_(fr_server_body_state_broadcast_t *b,
 
 bool fr_server_body_state_broadcast_tick(fr_server_body_state_broadcast_t *b,
                                         uint16_t server_tick,
-                                        uint64_t now_ms) {
+                                        uint64_t now_ms,
+                                        uint64_t tick_time_ms) {
     if (!b || !b->cfg.world) {
         return false;
     }
@@ -171,6 +172,7 @@ bool fr_server_body_state_broadcast_tick(fr_server_body_state_broadcast_t *b,
         st.ang_y_mrad_s = quantize_i16_sat_(body->angular_vel.y, 1000.0f);
         st.ang_z_mrad_s = quantize_i16_sat_(body->angular_vel.z, 1000.0f);
         st.send_time_ms = (uint32_t)now_ms;
+        st.tick_time_ms = (uint32_t)tick_time_ms;
         st.flags = net_repl_body_state_set_tier(0u, tier);
 
         if (net_repl_body_state_encode(&st, batch[batch_count],

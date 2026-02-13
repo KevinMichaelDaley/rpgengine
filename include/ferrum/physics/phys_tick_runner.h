@@ -83,6 +83,11 @@ typedef struct phys_tick_runner {
      *  Written by the tick thread, read by the main thread. */
     atomic_uint_fast64_t last_tick_duration_ns;
 
+    /** CLOCK_MONOTONIC timestamp (ms) when the most recent physics tick
+     *  completed.  Written by the tick thread, read by the main thread.
+     *  Used to stamp body-state messages with the physics time. */
+    atomic_uint_fast64_t last_tick_completion_ms;
+
     /** Dedicated OS thread handle. */
     pthread_t thread;
 
@@ -149,6 +154,15 @@ uint64_t phys_tick_runner_tick_id(const phys_tick_runner_t *r);
  * @return Duration of the last completed tick in nanoseconds.
  */
 uint64_t phys_tick_runner_last_tick_ns(const phys_tick_runner_t *r);
+
+/**
+ * @brief Read the CLOCK_MONOTONIC timestamp (ms) when the most recent
+ *        physics tick completed (non-blocking).
+ *
+ * @param r  Runner (NULL-safe, returns 0).
+ * @return Wall-clock completion time of the last tick in milliseconds.
+ */
+uint64_t phys_tick_runner_last_tick_completion_ms(const phys_tick_runner_t *r);
 
 /* ── Backward compatibility (kick/done/consume API) ─────────────── */
 /* These thin wrappers exist so existing callers don't break.

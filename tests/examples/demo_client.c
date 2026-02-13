@@ -129,18 +129,16 @@ typedef struct entity_view {
     float    half_z;      /**< Half-extent Z in meters. */
     fr_pose_interpolator_t interp;
 
-    /* Correction debug lines: when a new server state pushes the
-     * interpolator, we snapshot the old rendered pose.  The renderer
-     * draws lines from old corners → new corners, fading over time. */
-    vec3_t  corr_old_pos;   /**< Position before correction. */
-    quat_t  corr_old_rot;   /**< Rotation before correction. */
-    vec3_t  corr_raw_pos;   /**< Raw server correction position. */
-    quat_t  corr_raw_rot;   /**< Raw server correction rotation. */
-    vec3_t  corr_vel;       /**< Server velocity at correction time. */
-    vec3_t  corr_ang_vel;   /**< Server angular velocity at correction time. */
+    /* Correction debug lines: when a new server state arrives, we
+     * sample the interpolator at the current render time (before push)
+     * and store that as corr_old.  The raw server pos/rot is corr_new.
+     * At render time, yellow lines go from corr_old → corr_new. */
+    vec3_t  corr_old_pos;   /**< Interpolated pos at render_time before push. */
+    quat_t  corr_old_rot;   /**< Interpolated rot at render_time before push. */
+    vec3_t  corr_new_pos;   /**< Raw server correction position. */
+    quat_t  corr_new_rot;   /**< Raw server correction rotation. */
     double  corr_time_s;    /**< Receive time the correction was recorded. */
-    double  corr_server_time_s; /**< Server send time (monotonic seconds). */
-    float   corr_alpha;     /**< Fade-out alpha (1→0 over ~0.5s). */
+    float   corr_alpha;     /**< Fade-out alpha (1→0 over fade duration). */
 } entity_view_t;
 
 #define CORR_FADE_DURATION 0.5  /* seconds to show correction lines */
@@ -430,9 +428,7 @@ static void draw_correction_lines(gl_ctx_t *glc,
                                   double now_time,
                                   double render_time,
                                   mat4_t vp) {
-    /* Yellow lines: pre-correction interpolated pose → raw server pose.
-     * corr_old_pos/rot was sampled from the interpolator at render_time
-     * *before* the push, so it reflects what was on screen last frame. */
+    /* Yellow lines: interpolated pos (before push) → raw server pos. */
     float line_verts[CORR_MAX_LINES_PER_FRAME * 8 * 2 * 3];
     uint32_t vert_count = 0;
     uint32_t pair_count = 0;
@@ -443,16 +439,16 @@ static void draw_correction_lines(gl_ctx_t *glc,
         if (e->is_static) { continue; }
         if (e->corr_alpha <= 0.0f) { continue; }
 
-        vec3_t old_corners[8], raw_corners[8];
+        vec3_t old_corners[8], new_corners[8];
         box_corners(e->corr_old_pos, e->corr_old_rot,
                     e->half_x, e->half_y, e->half_z, old_corners);
-        box_corners(e->corr_raw_pos, e->corr_raw_rot,
-                    e->half_x, e->half_y, e->half_z, raw_corners);
+        box_corners(e->corr_new_pos, e->corr_new_rot,
+                    e->half_x, e->half_y, e->half_z, new_corners);
 
         for (int c = 0; c < 8; ++c) {
-            float dx = raw_corners[c].x - old_corners[c].x;
-            float dy = raw_corners[c].y - old_corners[c].y;
-            float dz = raw_corners[c].z - old_corners[c].z;
+            float dx = new_corners[c].x - old_corners[c].x;
+            float dy = new_corners[c].y - old_corners[c].y;
+            float dz = new_corners[c].z - old_corners[c].z;
             if (dx*dx + dy*dy + dz*dz < 0.0001f) { continue; }
 
             uint32_t base = vert_count * 3;
@@ -460,9 +456,9 @@ static void draw_correction_lines(gl_ctx_t *glc,
             line_verts[base + 0] = old_corners[c].x;
             line_verts[base + 1] = old_corners[c].y;
             line_verts[base + 2] = old_corners[c].z;
-            line_verts[base + 3] = raw_corners[c].x;
-            line_verts[base + 4] = raw_corners[c].y;
-            line_verts[base + 5] = raw_corners[c].z;
+            line_verts[base + 3] = new_corners[c].x;
+            line_verts[base + 4] = new_corners[c].y;
+            line_verts[base + 5] = new_corners[c].z;
             vert_count += 2;
         }
         pair_count++;
@@ -822,9 +818,10 @@ int main(int argc, char **argv) {
                     };
                     quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
 
-                    /* Snapshot the interpolated pose at current render time,
-                     * *before* pushing the new snapshot.  This is what's
-                     * on screen right now. */
+                    /* Correction debug: compare what the interpolator
+                     * predicted for this moment (extrapolating the old
+                     * trajectory) against what the server actually sent.
+                     * On localhost with no jitter this should be ~zero. */
                     vec3_t vel = {
                         (float)bs.vel_x_mm_s / 1000.0f,
                         (float)bs.vel_y_mm_s / 1000.0f,
@@ -836,35 +833,26 @@ int main(int argc, char **argv) {
                         (float)bs.ang_z_mrad_s / 1000.0f,
                     };
 
-                    /* Correction debug: sample before and after push at
-                     * the same render-time so the line shows the actual
-                     * correction jump, not the natural travel distance. */
-                    double sample_t = recv_time - CLIENT_RENDER_DELAY;
-                    vec3_t old_pos;
-                    quat_t old_rot;
-                    bool had_old = fr_pose_interpolator_sample(
-                        &e->interp, sample_t, 1e-6f, &old_pos, &old_rot);
-
-                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
-                                              vel, ang_vel,
-                                              (double)bs.send_time_ms / 1000.0);
-
-                    if (had_old) {
-                        vec3_t new_pos;
-                        quat_t new_rot;
-                        fr_pose_interpolator_sample(
-                            &e->interp, sample_t, 1e-6f, &new_pos, &new_rot);
-                        e->corr_old_pos = old_pos;
-                        e->corr_old_rot = old_rot;
-                        e->corr_raw_pos = new_pos;
-                        e->corr_raw_rot = new_rot;
+                    /* Correction debug: sample the interpolator at the
+                     * server's tick completion time (before push) — that's
+                     * the exact moment the server computed this pose.
+                     * Compare against the actual server pos at that moment. */
+                    double server_t = (double)bs.tick_time_ms / 1000.0;
+                    vec3_t interp_pos;
+                    quat_t interp_rot;
+                    if (fr_pose_interpolator_sample(&e->interp, server_t,
+                                                    1e-6f, &interp_pos, &interp_rot)) {
+                        e->corr_old_pos = interp_pos;
+                        e->corr_old_rot = interp_rot;
+                        e->corr_new_pos = pos;
+                        e->corr_new_rot = rot;
                         e->corr_time_s  = recv_time;
                         e->corr_alpha   = 1.0f;
                     }
 
-                    e->corr_vel      = vel;
-                    e->corr_ang_vel  = ang_vel;
-                    e->corr_server_time_s = (double)bs.send_time_ms / 1000.0;
+                    fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
+                                              vel, ang_vel,
+                                              (double)bs.send_time_ms / 1000.0);
                     dbg_state_applied++;
                 }
             }
@@ -902,33 +890,23 @@ int main(int argc, char **argv) {
                     (float)bs.ang_z_mrad_s / 1000.0f,
                 };
 
-                /* Correction debug: sample before and after push. */
-                double sample_t = recv_time - CLIENT_RENDER_DELAY;
-                vec3_t old_pos;
-                quat_t old_rot;
-                bool had_old = fr_pose_interpolator_sample(
-                    &e->interp, sample_t, 1e-6f, &old_pos, &old_rot);
-
-                fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
-                                          vel, ang_vel,
-                                          (double)bs.send_time_ms / 1000.0);
-
-                if (had_old) {
-                    vec3_t new_pos;
-                    quat_t new_rot;
-                    fr_pose_interpolator_sample(
-                        &e->interp, sample_t, 1e-6f, &new_pos, &new_rot);
-                    e->corr_old_pos = old_pos;
-                    e->corr_old_rot = old_rot;
-                    e->corr_raw_pos = new_pos;
-                    e->corr_raw_rot = new_rot;
+                /* Correction debug: interpolator(tick_time) vs actual. */
+                double server_t = (double)bs.tick_time_ms / 1000.0;
+                vec3_t interp_pos;
+                quat_t interp_rot;
+                if (fr_pose_interpolator_sample(&e->interp, server_t,
+                                                1e-6f, &interp_pos, &interp_rot)) {
+                    e->corr_old_pos = interp_pos;
+                    e->corr_old_rot = interp_rot;
+                    e->corr_new_pos = pos;
+                    e->corr_new_rot = rot;
                     e->corr_time_s  = recv_time;
                     e->corr_alpha   = 1.0f;
                 }
 
-                e->corr_vel      = vel;
-                e->corr_ang_vel  = ang_vel;
-                e->corr_server_time_s = (double)bs.send_time_ms / 1000.0;
+                fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
+                                          vel, ang_vel,
+                                          (double)bs.send_time_ms / 1000.0);
             }
 
             if (schema_id == NET_REPL_SCHEMA_WELCOME) {

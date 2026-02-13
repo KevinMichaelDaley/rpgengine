@@ -465,8 +465,11 @@ static void on_physics(void *user) {
 static void on_encode(void *user) {
     demo_ctx_t *ctx = (demo_ctx_t *)user;
     ctx->server_tick++;
+    uint64_t tick_completion_ms =
+        phys_tick_runner_last_tick_completion_ms(&ctx->tick_runner);
     fr_server_body_state_broadcast_tick(
-        ctx->broadcaster, (uint16_t)ctx->server_tick, now_ms());
+        ctx->broadcaster, (uint16_t)ctx->server_tick, now_ms(),
+        tick_completion_ms);
 }
 
 /**

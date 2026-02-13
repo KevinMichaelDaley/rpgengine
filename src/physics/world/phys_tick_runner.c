@@ -120,6 +120,9 @@ static void *tick_thread_fn_(void *user_data) {
         atomic_store_explicit(&r->last_tick_duration_ns,
                               tick_end_ns - tick_start_ns,
                               memory_order_relaxed);
+        atomic_store_explicit(&r->last_tick_completion_ms,
+                              tick_end_ns / 1000000u,
+                              memory_order_relaxed);
 
         /* Drain corrections after tick. */
         if (r->correction_channel) {
@@ -188,6 +191,12 @@ uint64_t phys_tick_runner_last_tick_ns(const phys_tick_runner_t *r) {
     if (!r) { return 0; }
     return atomic_load_explicit(
         &((phys_tick_runner_t *)r)->last_tick_duration_ns, memory_order_relaxed);
+}
+
+uint64_t phys_tick_runner_last_tick_completion_ms(const phys_tick_runner_t *r) {
+    if (!r) { return 0; }
+    return atomic_load_explicit(
+        &((phys_tick_runner_t *)r)->last_tick_completion_ms, memory_order_relaxed);
 }
 
 /* ── Backward compatibility wrappers ─────────────────────────────── */

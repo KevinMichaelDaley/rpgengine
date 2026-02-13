@@ -81,7 +81,8 @@ static int drive_one_tick_(fr_test_transport_t *t,
     ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
 
     ASSERT_TRUE(fr_server_entity_net_pump_tick(pump, now_ms));
-    ASSERT_TRUE(fr_server_body_state_broadcast_tick(bcast, server_tick, now_ms));
+    ASSERT_TRUE(fr_server_body_state_broadcast_tick(bcast, server_tick, now_ms,
+                                                     now_ms));
 
     ASSERT_TRUE(fr_server_net_runtime_run_fibers(rt, 1000u));
     ASSERT_TRUE(fr_test_client_pump_rx(cl, now_ms));

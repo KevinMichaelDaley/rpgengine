@@ -54,11 +54,13 @@ void fr_server_body_state_broadcast_destroy(fr_server_body_state_broadcast_t *b)
  * @param b Broadcaster.
  * @param server_tick Server tick counter (encoded into BODY_STATE).
  * @param now_ms Wall clock time in ms (truncated to u32 in BODY_STATE).
+ * @param tick_time_ms Physics tick completion time in ms (monotonic).
  * @return false on invalid args.
  */
 bool fr_server_body_state_broadcast_tick(fr_server_body_state_broadcast_t *b,
                                         uint16_t server_tick,
-                                        uint64_t now_ms);
+                                        uint64_t now_ms,
+                                        uint64_t tick_time_ms);
 
 #ifdef __cplusplus
 } /* extern "C" */
