@@ -519,12 +519,16 @@ SOR tuning notes:
   fewer iterations (base 8 vs 10) while maintaining stability.
 
 Variable-dt fallback (phys_tick_runner.c):
-- The tick runner tracks a rolling 16-tick history of overrun vs on-time ticks.
-- When 12+ of the last 16 ticks exceeded the target period, the runner switches
-  to variable-dt mode: dt_override is set to actual wall-clock elapsed time.
+- The tick runner tracks a rolling 64-tick history of overrun vs on-time ticks.
+- A tick is only considered "overrun" if wall elapsed exceeds the target period
+  by more than 10% (tolerates nanosleep jitter and OS scheduling noise).
+- Hysteresis with asymmetric thresholds prevents flapping:
+  - ENTER overload: 48+ of the last 64 ticks overran (75%, ~1 second of
+    sustained overload at 60 Hz).
+  - EXIT overload: 6 of the most recent 8 ticks were on-time (recovers
+    within ~130 ms once load drops).
+- In overload mode, dt_override is set to actual wall-clock elapsed time.
 - dt_override is clamped to max_dt_override × fixed_dt (default 3×, i.e. 50 ms).
-- When performance recovers (< 12 overruns), dt_override resets to 0 and the
-  simulation returns to fixed timestep.
 - This prevents time accumulation debt (the "spiral of death") under sustained
   load by letting the simulation run slower but without skipping simulation time.
 
