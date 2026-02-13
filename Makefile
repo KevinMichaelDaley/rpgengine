@@ -4,7 +4,7 @@ TRACY ?= 0
 STACK_CANARY ?= 0
 EMU ?= 0
 
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -O2
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -O3
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
 
@@ -1045,5 +1045,5 @@ demo_client:
 	@echo "Usage: ./build/demo_client <server_ip> <port> [duration_s] [--headless]"
 
 clean:
-	$(RM) $(BIN) build/libheadless.a build/liball.a
+	$(RM) $(BIN) build/libheadless.a build/liball.a build/demo_server build/demo_client
 	$(RM) -r build/obj

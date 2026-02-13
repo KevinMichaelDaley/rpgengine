@@ -35,15 +35,25 @@ static uint64_t runner_clock_ns_(void) {
 
 /* ── Overload detection ──────────────────────────────────────────── */
 
-/** Rolling window size for overload detection (must fit in uint16_t). */
-#define OVERLOAD_WINDOW 16
+/** Rolling window size for overload detection (64-tick history). */
+#define OVERLOAD_WINDOW 64
 
-/** Number of overrun ticks (out of OVERLOAD_WINDOW) to trigger
- *  variable-dt mode. */
-#define OVERLOAD_THRESHOLD 12
+/** Fraction of overrun ticks to ENTER variable-dt mode (48/64 = 75%). */
+#define OVERLOAD_ON_THRESHOLD 48
 
-/** Count set bits in a 16-bit value. */
-static int popcount16_(uint16_t v) {
+/** Fraction of recent ticks that must be clean to EXIT variable-dt
+ *  mode.  Uses only the most recent 8 ticks — if 6/8 are on-time,
+ *  we recover quickly. */
+#define OVERLOAD_OFF_WINDOW 8
+#define OVERLOAD_OFF_THRESHOLD 6
+
+/** Tolerance: a tick is only "overrun" if it exceeds target by more
+ *  than 10% (accounts for nanosleep jitter). */
+#define OVERLOAD_TOLERANCE_NUM 11
+#define OVERLOAD_TOLERANCE_DEN 10
+
+/** Count set bits in a 64-bit value. */
+static int popcount64_(uint64_t v) {
     int c = 0;
     while (v) { c += v & 1; v >>= 1; }
     return c;
@@ -57,38 +67,26 @@ static void *tick_thread_fn_(void *user_data) {
     const uint64_t target_ns =
         (uint64_t)(r->world->config.fixed_dt * 1e9f);
 
-    /* Minimum idle time (ns) between tick end and next tick start.
-     * Prevents the physics thread from starving other threads (net,
-     * render) when ticks overrun.  1 ms is enough for the OS scheduler
-     * to run waiting threads. */
-    const uint64_t min_idle_ns = 1000000ULL; /* 1 ms */
-
     /* Rolling bitfield: bit i = 1 if i-th most recent tick overran. */
-    uint16_t overload_history = 0;
+    uint64_t overload_history = 0;
+    int in_overload = 0;
 
     while (!atomic_load_explicit(&r->stop_requested, memory_order_acquire)) {
 
-        /* Pace: sleep until fixed_dt has elapsed since last tick start,
-         * but always guarantee at least min_idle_ns of idle time after
-         * the previous tick ended (prevents starving other threads). */
+        /* Pace: sleep until fixed_dt has elapsed since last tick. */
         uint64_t wall_elapsed_ns = 0;
         if (last_tick_ns != 0) {
             uint64_t now = runner_clock_ns_();
             wall_elapsed_ns = now - last_tick_ns;
-            uint64_t sleep_ns = 0;
             if (wall_elapsed_ns < target_ns) {
-                sleep_ns = target_ns - wall_elapsed_ns;
+                uint64_t remain = target_ns - wall_elapsed_ns;
+                struct timespec ts = {
+                    .tv_sec  = (time_t)(remain / 1000000000ULL),
+                    .tv_nsec = (long)(remain % 1000000000ULL)
+                };
+                nanosleep(&ts, NULL);
+                wall_elapsed_ns = target_ns; /* slept to target */
             }
-            /* Enforce minimum idle: if we'd sleep less than min_idle_ns,
-             * extend to min_idle_ns so the OS can schedule other work. */
-            if (sleep_ns < min_idle_ns) {
-                sleep_ns = min_idle_ns;
-            }
-            struct timespec ts = {
-                .tv_sec  = (time_t)(sleep_ns / 1000000000ULL),
-                .tv_nsec = (long)(sleep_ns % 1000000000ULL)
-            };
-            nanosleep(&ts, NULL);
             if (atomic_load_explicit(&r->stop_requested,
                                      memory_order_acquire)) {
                 break;
@@ -103,16 +101,33 @@ static void *tick_thread_fn_(void *user_data) {
         }
         last_tick_ns = tick_wall_start;
 
-        /* Update overload history: shift in a 1 if we overran, 0 if not. */
+        /* Update overload history: shift in a 1 if we overran beyond
+         * tolerance, 0 if on-time. */
         if (wall_elapsed_ns > 0) {
-            int overran = (wall_elapsed_ns > target_ns) ? 1 : 0;
-            overload_history = (uint16_t)((overload_history << 1) |
-                                          (uint16_t)overran);
+            uint64_t threshold_ns = (uint64_t)target_ns *
+                OVERLOAD_TOLERANCE_NUM / OVERLOAD_TOLERANCE_DEN;
+            int overran = (wall_elapsed_ns > threshold_ns) ? 1 : 0;
+            overload_history = (overload_history << 1) | (uint64_t)overran;
         }
 
-        /* Decide whether to use variable dt. */
-        int overload_count = popcount16_(overload_history);
-        if (overload_count >= OVERLOAD_THRESHOLD && wall_elapsed_ns > 0) {
+        /* Hysteresis: hard to enter overload, easy to leave. */
+        if (!in_overload) {
+            /* Need sustained overload across full window to enter. */
+            int total = popcount64_(overload_history);
+            if (total >= OVERLOAD_ON_THRESHOLD) {
+                in_overload = 1;
+            }
+        } else {
+            /* Check only recent ticks — recover quickly once load drops. */
+            uint64_t recent = overload_history &
+                ((1ULL << OVERLOAD_OFF_WINDOW) - 1);
+            int recent_clean = OVERLOAD_OFF_WINDOW - popcount64_(recent);
+            if (recent_clean >= OVERLOAD_OFF_THRESHOLD) {
+                in_overload = 0;
+            }
+        }
+
+        if (in_overload && wall_elapsed_ns > 0) {
             /* Sustained overload: use actual wall time as dt. */
             r->world->dt_override = (float)wall_elapsed_ns * 1e-9f;
         } else {
