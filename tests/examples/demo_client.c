@@ -58,7 +58,7 @@
 #define CLIENT_WIN_H        540
 #define CLIENT_MOVE_SPEED   5.0f
 #define CLIENT_MOUSE_SENS   0.002f
-#define CLIENT_RENDER_DELAY 0.10  /* seconds behind to smooth interpolation */
+#define CLIENT_RENDER_DELAY 0.066  /* seconds behind to smooth interpolation */
 #define CLIENT_PREDICT_RING 128u
 
 /* ── Globals for signal handling ────────────────────────────────── */
@@ -992,7 +992,7 @@ int main(int argc, char **argv) {
                 mat4_t proj;
                 float aspect = (float)CLIENT_WIN_W / (float)CLIENT_WIN_H;
                 mat4_perspective(70.0f * (FERRUM_PI / 180.0f), aspect,
-                                 0.1f, 500.0f, &proj);
+                                 0.1f, 5000.0f, &proj);
 
                 /* FPS camera view matrix. */
                 vec3_t look_dir = {

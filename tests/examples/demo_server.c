@@ -66,13 +66,11 @@
 #define DEMO_FIBER_STACK       (256u * 1024u)
 
 /* Capsule chain parameters. */
-#define DEMO_CHAIN_LENGTH      20u
+#define DEMO_NUM_CHAINS        3u
+#define DEMO_CHAIN_LENGTH      40u
 #define DEMO_CHAIN_RADIUS      0.5f
 #define DEMO_CHAIN_HALF_H      0.8f
 #define DEMO_CHAIN_MASS        2.0f
-#define DEMO_CHAIN_ANCHOR_X    5.0f
-#define DEMO_CHAIN_ANCHOR_Y    20.0f
-#define DEMO_CHAIN_ANCHOR_Z    0.0f
 /* Total capsule length along Y: 2*(half_height + radius) */
 #define DEMO_CHAIN_LINK_LEN    (2.0f * (DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS))
 
@@ -131,8 +129,8 @@ struct demo_ctx {
     uint32_t                            total_spawned;
     uint32_t                            server_tick;
 
-    /* Capsule chain anchor (kinematic, driven in a circle). */
-    uint32_t                            chain_anchor_id;
+    /* Capsule chain anchors (kinematic, driven in circles). */
+    uint32_t                            chain_anchor_ids[DEMO_NUM_CHAINS];
 
     /* Per-body shape type (0=box, 1=sphere, 2=capsule). */
     uint8_t                             body_shape_type[DEMO_MAX_BODIES];
@@ -403,35 +401,49 @@ static void on_drain(void *user) {
         (void)evt;
     }
 
-    /* Drive chain anchor in a horizontal circle, speeding up over time. */
+    /* Drive chain anchors in horizontal circles, speeding up over time.
+     * Each chain has a different orbit sign so they collide. */
     {
+        static const float chain_cfg[DEMO_NUM_CHAINS][4] = {
+            /*  anchor_x, anchor_y, anchor_z, orbit_sign */
+            {   0.0f,     20.0f,    0.0f,      1.0f },
+            {  15.0f,     20.0f,   10.0f,     -1.0f },
+            { -15.0f,     20.0f,  -10.0f,      1.0f },
+        };
+
         float t = (float)ctx->server_tick / (float)DEMO_TICK_HZ;
-        /* Ramp angular velocity: start at 1.5 rad/s, add 0.5 rad/s² */
-        float omega = 1.5f + 0.5f * t;
-        /* Integrated angle: θ = 1.5*t + 0.25*t² */
-        float angle = 1.5f * t + 0.25f * t * t;
+        /* Faster ramp: start at 1.5 rad/s, add 1.5 rad/s² */
+        float omega = 1.5f + 1.5f * t;
+        /* Integrated angle: θ = 1.5*t + 0.75*t² */
+        float base_angle = 1.5f * t + 0.75f * t * t;
         float radius = 10.0f;
-        float cx = DEMO_CHAIN_ANCHOR_X + radius * cosf(angle);
-        float cz = DEMO_CHAIN_ANCHOR_Z + radius * sinf(angle);
-        /* Kinematic velocity: derivative of position. */
-        float vx = -radius * omega * sinf(angle);
-        float vz =  radius * omega * cosf(angle);
 
         if (ctx->server_tick % (DEMO_TICK_HZ * 5) == 0) {
-            printf("[server] chain omega=%.1f rad/s (%.1f RPM) t=%.1fs\n",
+            printf("[server] chains omega=%.1f rad/s (%.1f RPM) t=%.1fs\n",
                    (double)omega, (double)(omega * 60.0f / 6.2832f), (double)t);
         }
 
-        phys_body_t *ab = phys_world_get_body(&ctx->world,
-                                               ctx->chain_anchor_id);
-        ab->position.x = cx;
-        ab->position.z = cz;
-        ab->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
-        phys_body_t *ab_next = phys_body_pool_get_next(
-            &ctx->world.body_pool, ctx->chain_anchor_id);
-        ab_next->position.x = cx;
-        ab_next->position.z = cz;
-        ab_next->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
+        for (uint32_t ch = 0; ch < DEMO_NUM_CHAINS; ch++) {
+            float ax = chain_cfg[ch][0];
+            float az = chain_cfg[ch][2];
+            float sign = chain_cfg[ch][3];
+            float angle = sign * base_angle;
+            float cx = ax + radius * cosf(angle);
+            float cz = az + radius * sinf(angle);
+            float vx = -radius * omega * sign * sinf(angle);
+            float vz =  radius * omega * sign * cosf(angle);
+
+            phys_body_t *ab = phys_world_get_body(&ctx->world,
+                                                    ctx->chain_anchor_ids[ch]);
+            ab->position.x = cx;
+            ab->position.z = cz;
+            ab->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
+            phys_body_t *ab_next = phys_body_pool_get_next(
+                &ctx->world.body_pool, ctx->chain_anchor_ids[ch]);
+            ab_next->position.x = cx;
+            ab_next->position.z = cz;
+            ab_next->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
+        }
     }
 }
 
@@ -521,71 +533,116 @@ int main(int argc, char **argv) {
         printf("[server] ground plane body %u\n", gi);
     }
 
-    /* Articulated capsule chain hanging from a static anchor. */
+    /* Articulated capsule chains hanging from kinematic anchors.
+     * Three chains positioned so they sweep through each other. */
     {
-        /* Static anchor point. */
-        uint32_t anchor = phys_world_create_body(&ctx.world);
-        phys_body_t *ab = phys_world_get_body(&ctx.world, anchor);
-        ab->position = (phys_vec3_t){
-            DEMO_CHAIN_ANCHOR_X, DEMO_CHAIN_ANCHOR_Y, DEMO_CHAIN_ANCHOR_Z};
-        ab->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-        ab->flags |= PHYS_BODY_FLAG_KINEMATIC;
-        phys_body_t *ab_next =
-            phys_body_pool_get_next(&ctx.world.body_pool, anchor);
-        *ab_next = *ab;
-        ctx.chain_anchor_id = anchor;
+        /* Chain anchor positions and orbit directions. */
+        static const float chain_cfg[DEMO_NUM_CHAINS][4] = {
+            /*  anchor_x, anchor_y, anchor_z, orbit_sign */
+            {   0.0f,     20.0f,    0.0f,      1.0f },
+            {  15.0f,     20.0f,   10.0f,     -1.0f },
+            { -15.0f,     20.0f,  -10.0f,      1.0f },
+        };
 
-        uint32_t prev_body = anchor;
-        for (uint32_t ci = 0; ci < DEMO_CHAIN_LENGTH; ci++) {
-            /* Spawn links extending horizontally (+X) from the anchor
-             * so the chain swings down and settles gradually. */
-            float x = DEMO_CHAIN_ANCHOR_X
-                      + (float)(ci + 1) * DEMO_CHAIN_LINK_LEN;
+        for (uint32_t ch = 0; ch < DEMO_NUM_CHAINS; ch++) {
+            float ax = chain_cfg[ch][0];
+            float ay = chain_cfg[ch][1];
+            float az = chain_cfg[ch][2];
 
-            uint32_t bi = phys_world_create_body(&ctx.world);
-            phys_body_t *cb = phys_world_get_body(&ctx.world, bi);
-            cb->position = (phys_vec3_t){
-                x, DEMO_CHAIN_ANCHOR_Y, DEMO_CHAIN_ANCHOR_Z};
-            /* Rotate capsule 90° around Z so it lies along X. */
-            cb->orientation = (phys_quat_t){0.0f, 0.0f, 0.7071068f, 0.7071068f};
-            phys_body_set_mass(cb, DEMO_CHAIN_MASS);
-            phys_body_set_capsule_inertia(cb, DEMO_CHAIN_MASS,
-                                          DEMO_CHAIN_RADIUS,
-                                          DEMO_CHAIN_HALF_H);
+            /* Static anchor point. */
+            uint32_t anchor = phys_world_create_body(&ctx.world);
+            phys_body_t *ab = phys_world_get_body(&ctx.world, anchor);
+            ab->position = (phys_vec3_t){ax, ay, az};
+            ab->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+            ab->flags |= PHYS_BODY_FLAG_KINEMATIC;
+            phys_body_t *ab_next =
+                phys_body_pool_get_next(&ctx.world.body_pool, anchor);
+            *ab_next = *ab;
+            ctx.chain_anchor_ids[ch] = anchor;
 
-            /* Copy to next buffer for double-buffered init. */
-            phys_body_t *cb_next =
-                phys_body_pool_get_next(&ctx.world.body_pool, bi);
-            *cb_next = *cb;
+            uint32_t prev_body = anchor;
+            for (uint32_t ci = 0; ci < DEMO_CHAIN_LENGTH; ci++) {
+                float x = ax + (float)(ci + 1) * DEMO_CHAIN_LINK_LEN;
 
-            phys_world_set_capsule_collider(&ctx.world, bi,
-                DEMO_CHAIN_RADIUS, DEMO_CHAIN_HALF_H,
-                (phys_vec3_t){0.0f, 0.0f, 0.0f},
-                (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
-            ctx.body_shape_type[bi] = 2u; /* capsule */
+                uint32_t bi = phys_world_create_body(&ctx.world);
+                phys_body_t *cb = phys_world_get_body(&ctx.world, bi);
+                cb->position = (phys_vec3_t){x, ay, az};
+                /* Rotate capsule 90° around Z so it lies along X. */
+                cb->orientation = (phys_quat_t){
+                    0.0f, 0.0f, 0.7071068f, 0.7071068f};
+                phys_body_set_mass(cb, DEMO_CHAIN_MASS);
+                phys_body_set_capsule_inertia(cb, DEMO_CHAIN_MASS,
+                                              DEMO_CHAIN_RADIUS,
+                                              DEMO_CHAIN_HALF_H);
 
-            /* Ball joint connecting tip of this capsule to tip of the
-             * previous one (or to the anchor).  Capsule long axis is
-             * local Y; tips are at ±(half_h + radius) along Y. */
-            phys_joint_t joint;
-            memset(&joint, 0, sizeof(joint));
-            joint.type = PHYS_JOINT_BALL;
-            joint.body_a = prev_body;
-            joint.body_b = bi;
-            /* Anchor on previous body: +Y tip (or center for anchor). */
-            joint.local_anchor_a = (prev_body == anchor)
-                ? (phys_vec3_t){0.0f, 0.0f, 0.0f}
-                : (phys_vec3_t){0.0f, DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f};
-            /* Anchor on this body: -Y tip. */
-            joint.local_anchor_b = (phys_vec3_t){
-                0.0f, -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f};
-            joint.damping = 0.5f; /* Linear viscous damping for high-speed stability. */
+                /* Copy to next buffer for double-buffered init. */
+                phys_body_t *cb_next =
+                    phys_body_pool_get_next(&ctx.world.body_pool, bi);
+                *cb_next = *cb;
 
-            phys_world_add_joint(&ctx.world, &joint);
-            prev_body = bi;
+                phys_world_set_capsule_collider(&ctx.world, bi,
+                    DEMO_CHAIN_RADIUS, DEMO_CHAIN_HALF_H,
+                    (phys_vec3_t){0.0f, 0.0f, 0.0f},
+                    (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
+                ctx.body_shape_type[bi] = 2u; /* capsule */
+
+                phys_joint_t joint;
+                memset(&joint, 0, sizeof(joint));
+                joint.type = PHYS_JOINT_BALL;
+                joint.body_a = prev_body;
+                joint.body_b = bi;
+                joint.local_anchor_a = (prev_body == anchor)
+                    ? (phys_vec3_t){0.0f, 0.0f, 0.0f}
+                    : (phys_vec3_t){0.0f, DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f};
+                joint.local_anchor_b = (phys_vec3_t){
+                    0.0f, -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f};
+                joint.damping = 0.5f;
+
+                phys_world_add_joint(&ctx.world, &joint);
+                prev_body = bi;
+            }
+            printf("[server] chain %u: %u links from body %u\n",
+                   ch, DEMO_CHAIN_LENGTH, anchor);
         }
-        printf("[server] capsule chain: %u links from body %u\n",
-               DEMO_CHAIN_LENGTH, anchor);
+    }
+
+    /* Static box stacks placed in chain sweep paths for collision. */
+    {
+        static const float stack_pos[][2] = {
+            {  8.0f,   5.0f },   /* between chain 0 and 1 */
+            { -8.0f,  -5.0f },   /* between chain 0 and 2 */
+            {  0.0f,   0.0f },   /* center, all chains sweep through */
+            { 10.0f,  -8.0f },   /* outer sweep zone */
+        };
+        uint32_t num_stacks = sizeof(stack_pos) / sizeof(stack_pos[0]);
+        uint32_t stack_height = 5u;
+        float box_half = DEMO_BOX_HALF;
+        float box_mass = DEMO_BOX_MASS;
+
+        for (uint32_t s = 0; s < num_stacks; s++) {
+            for (uint32_t layer = 0; layer < stack_height; layer++) {
+                float y = box_half + (float)layer * (box_half * 2.0f + 0.01f)
+                          + DEMO_GROUND_HALF_Y;
+                uint32_t bi = phys_world_create_body(&ctx.world);
+                phys_body_t *b = phys_world_get_body(&ctx.world, bi);
+                b->position = (phys_vec3_t){
+                    stack_pos[s][0], y, stack_pos[s][1]};
+                b->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+                phys_body_set_mass(b, box_mass);
+                phys_body_set_box_inertia(b, box_mass,
+                    (phys_vec3_t){box_half, box_half, box_half});
+                phys_body_t *bn = phys_body_pool_get_next(
+                    &ctx.world.body_pool, bi);
+                *bn = *b;
+                phys_world_set_box_collider(&ctx.world, bi,
+                    (phys_vec3_t){box_half, box_half, box_half},
+                    (phys_vec3_t){0.0f, 0.0f, 0.0f},
+                    (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
+                ctx.body_shape_type[bi] = 0u; /* box */
+            }
+        }
+        printf("[server] placed %u box stacks (%u boxes total) in sweep paths\n",
+               num_stacks, num_stacks * stack_height);
     }
 
     /* ── 3. Physics command channel + tick runner ───────────────── */

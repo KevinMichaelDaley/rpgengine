@@ -14,7 +14,8 @@
 extern "C" {
 #endif
 
-/** Pose interpolator tracking the last two received snapshots. */
+/** Pose interpolator tracking the last two received snapshots.
+ *  Stores implied linear and angular velocity for extrapolation. */
 typedef struct fr_pose_interpolator {
     bool has_prev;
     bool has_curr;
@@ -24,6 +25,8 @@ typedef struct fr_pose_interpolator {
     vec3_t curr_pos;
     quat_t prev_rot;
     quat_t curr_rot;
+    vec3_t implied_vel;     /**< Linear velocity implied by last two snapshots. */
+    vec3_t implied_ang_vel; /**< Angular velocity (axis * angle/dt) implied by last two snapshots. */
 } fr_pose_interpolator_t;
 
 /**
