@@ -31,7 +31,7 @@ but the I/O-thread + encoder-job layout is the intended end state.
 
 | Concern | Module(s) | Notes |
 |---|---|---|
-| Physics simulation | `src/physics/world/phys_tick_runner.c`, `tick_parallel.c` | runner fiber + parallel tick |
+| Physics simulation | `src/physics/world/phys_tick_runner.c`, `tick_parallel.c` | dedicated pthread + parallel tick |
 | Reliable transport | `src/net/rudp/stream/stream_io.c` + RUDP peer | reliable stream frames over UDP (and later TCP) |
 | Unreliable transport | `net_udp_socket_sendto/recvfrom` | raw datagrams, MTU-sized |
 | Replication encode | `src/server/repl/repl_server_tick.c` | reused; split into “event encoder” + “state encoder” loops |
@@ -145,8 +145,10 @@ physics barrier.
 
 ### Stage 4/5 — Physics runner + barrier
 
-Physics runs in the `phys_tick_runner` fiber and updates the world.
-The main tick yields until the runner’s `completed_ticks` advances.
+Physics runs on a dedicated pthread (`phys_tick_runner`) with its own pacing
+(nanosleep to fixed_dt).  Overload detection uses a 64-tick rolling history with
+10% tolerance and hysteretic thresholds (48/64 to enter variable-dt, 6/8 recent
+clean to exit).  The main tick yields until the runner's `completed_ticks` advances.
 
 ### Stage 6 — Post-physics observe (read-only)
 

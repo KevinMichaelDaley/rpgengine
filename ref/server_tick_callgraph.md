@@ -53,7 +53,12 @@ server_tick(srv)
   │         └─ body_next.entity_index = entity.index
   │
   ├─ Stage 4: kick_physics_tick(srv)
-  │    └─ physics runner fiber loop (independent pacing):
+  │    └─ physics runner thread loop (dedicated pthread, independent pacing):
+  │         ├─ pace: nanosleep until fixed_dt elapsed since last tick
+  │         ├─ overload detection (64-tick rolling history, 10% tolerance):
+  │         │    ├─ enter variable-dt: 48/64 ticks overran (75%, ~1s sustained)
+  │         │    ├─ exit variable-dt: 6/8 recent ticks on-time (~130ms recovery)
+  │         │    └─ sets world->dt_override = wall_elapsed (or 0 if normal)
   │         ├─ phys_cmd_drain(world, cmd_channel, spawn_cb, user)
   │         ├─ phys_world_tick_parallel(world, &srv->game_state, jobs)
   │         └─ completed_ticks++
