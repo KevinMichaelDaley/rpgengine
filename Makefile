@@ -2,10 +2,15 @@ CC ?= clang
 JOB_INSTRUMENTATION ?= 1
 TRACY ?= 0
 STACK_CANARY ?= 1
+EMU ?= 0
 
 CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -g3 -O0
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
+
+ifeq ($(EMU),1)
+	CFLAGS += -DFR_NET_EMULATION
+endif
 
 LDFLAGS ?= -lm
 
@@ -36,13 +41,15 @@ RENDERER_SRC += $(RENDERER_DEBUG_LINES_SRC)
 NET_SRC := $(wildcard src/net/*.c) $(wildcard src/net/udp/*.c) $(wildcard src/net/rudp/*.c) $(wildcard src/net/rudp/reliability/*.c) $(wildcard src/net/rudp/stream/*.c) $(wildcard src/net/quantization/*.c) \
 	$(wildcard src/net/replication/*.c) $(wildcard src/net/replication/*/*.c) \
 	$(wildcard src/net/test/*.c) $(wildcard src/net/client/*.c) $(wildcard src/net/topic/*.c) $(wildcard src/net/topic/dispatch/*.c) \
-	$(wildcard src/net/channel/*.c) $(wildcard src/net/channel/*/*.c) $(wildcard src/net/channel/*/*/*.c)
+	$(wildcard src/net/channel/*.c) $(wildcard src/net/channel/*/*.c) $(wildcard src/net/channel/*/*/*.c) \
+	$(wildcard src/net/emulation/*.c)
 SERVER_SRC := $(wildcard src/server/repl/repl_server_*.c) $(wildcard src/server/net/fiber/*.c) $(wildcard src/server/net/runtime/*.c) \
 	$(wildcard src/server/entity/*.c) $(wildcard src/server/entity/*/*.c) $(wildcard src/server/entity/*/*/*.c) \
 	$(wildcard src/server/physics/*.c) $(wildcard src/server/physics/*/*.c) $(wildcard src/server/physics/*/*/*.c) \
 	$(wildcard src/server/tick/*.c)
 PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard src/physics/*/*/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC)
+ENGINE_SRC := src/engine_settings.c
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(ENGINE_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -188,6 +195,8 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p100_physics_joint_constraint_tests \
 	build/p101_physics_joint_island_tests \
 	build/p102_physics_joint_integration_tests \
+	build/p103_net_emulator_tests \
+	build/p104_engine_settings_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -568,6 +577,12 @@ build/p101_physics_joint_island_tests: build/libheadless.a tests/p101_physics_jo
 build/p102_physics_joint_integration_tests: build/libheadless.a tests/p102_physics_joint_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p102_physics_joint_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p103_net_emulator_tests: build/libheadless.a tests/p103_net_emulator_tests.c | build
+	$(CC) $(CFLAGS) tests/p103_net_emulator_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p104_engine_settings_tests: build/libheadless.a tests/p104_engine_settings_tests.c | build
+	$(CC) $(CFLAGS) tests/p104_engine_settings_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -856,6 +871,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p100_physics_joint_constraint_tests \
 	&& ./build/p101_physics_joint_island_tests \
 	&& ./build/p102_physics_joint_integration_tests \
+	&& ./build/p103_net_emulator_tests \
+	&& ./build/p104_engine_settings_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p007_net_rtt_retransmit_tests \

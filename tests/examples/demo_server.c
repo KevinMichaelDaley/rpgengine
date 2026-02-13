@@ -47,6 +47,11 @@
 #include "ferrum/server/physics/net/body_state_broadcast.h"
 #include "ferrum/server/tick_loop.h"
 
+#ifdef FR_NET_EMULATION
+#include "ferrum/engine_settings.h"
+#include "ferrum/net/emulation/net_emulator.h"
+#endif
+
 /* ── Constants ──────────────────────────────────────────────────── */
 
 #define DEMO_MAX_CLIENTS       4u
@@ -476,8 +481,13 @@ static void on_flush(void *user) {
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
-            "Usage: %s <port> [duration_s] [--net-workers N] [--phys-workers N]\n",
-            argv[0]);
+            "Usage: %s <port> [duration_s] [--net-workers N] [--phys-workers N]"
+#ifdef FR_NET_EMULATION
+            " [--emu-delay MS] [--emu-jitter MS] [--emu-loss PCT]"
+            " [--emu-reorder PCT] [--emu-duplicate PCT]"
+            " [--emu-dist uniform|normal|lognormal]"
+#endif
+            "\n", argv[0]);
         return 1;
     }
     uint16_t port = (uint16_t)atoi(argv[1]);
@@ -486,6 +496,13 @@ int main(int argc, char **argv) {
     /* Default worker counts. */
     uint32_t net_workers  = 1u;
     uint32_t phys_workers = 6u;
+
+#ifdef FR_NET_EMULATION
+    /* Network emulation parameters (all zero = disabled). */
+    float emu_delay = 0.0f, emu_jitter = 0.0f, emu_loss = 0.0f;
+    float emu_reorder = 0.0f, emu_duplicate = 0.0f;
+    net_emu_distribution_t emu_dist = NET_EMU_DIST_UNIFORM;
+#endif
 
     /* Parse optional flags. */
     for (int i = 2; i < argc; i++) {
@@ -496,7 +513,50 @@ int main(int argc, char **argv) {
             phys_workers = (uint32_t)atoi(argv[++i]);
             if (phys_workers < 1u) phys_workers = 1u;
         }
+#ifdef FR_NET_EMULATION
+        else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
+            emu_delay = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "--emu-jitter") == 0 && i + 1 < argc) {
+            emu_jitter = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "--emu-loss") == 0 && i + 1 < argc) {
+            emu_loss = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "--emu-reorder") == 0 && i + 1 < argc) {
+            emu_reorder = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "--emu-duplicate") == 0 && i + 1 < argc) {
+            emu_duplicate = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "--emu-dist") == 0 && i + 1 < argc) {
+            i++;
+            if (strcmp(argv[i], "normal") == 0)        emu_dist = NET_EMU_DIST_NORMAL;
+            else if (strcmp(argv[i], "lognormal") == 0) emu_dist = NET_EMU_DIST_LOG_NORMAL;
+            else                                        emu_dist = NET_EMU_DIST_UNIFORM;
+        }
+#endif
     }
+
+#ifdef FR_NET_EMULATION
+    /* Configure engine settings before any threads start. */
+    fr_engine_settings_init();
+    {
+        fr_engine_settings_t *s = fr_engine_settings_mut();
+        int has_emu = (emu_delay > 0.0f || emu_jitter > 0.0f ||
+                       emu_loss > 0.0f || emu_reorder > 0.0f ||
+                       emu_duplicate > 0.0f);
+        s->net_emu_enabled = has_emu ? 1 : 0;
+        s->net_emu.delay_ms      = emu_delay;
+        s->net_emu.jitter_ms     = emu_jitter;
+        s->net_emu.loss_pct      = emu_loss;
+        s->net_emu.reorder_pct   = emu_reorder;
+        s->net_emu.duplicate_pct = emu_duplicate;
+        s->net_emu.distribution  = emu_dist;
+        if (has_emu) {
+            printf("[server] net emulation: delay=%.1fms jitter=%.1fms "
+                   "loss=%.1f%% reorder=%.1f%% dup=%.1f%% dist=%d\n",
+                   emu_delay, emu_jitter, emu_loss,
+                   emu_reorder, emu_duplicate, (int)emu_dist);
+        }
+    }
+    fr_engine_settings_freeze();
+#endif
 
     signal(SIGINT, handle_sigint);
 
