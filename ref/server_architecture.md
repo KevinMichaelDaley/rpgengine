@@ -180,6 +180,9 @@ in `net_repl_body_state_t.flags`.
 Network sockets should not run on job workers. Instead:
 
 - One dedicated I/O thread owns the UDP socket(s) (and TCP listener/client sockets when needed).
+- When built with `FR_NET_EMULATION` (`make EMU=1`), outbound `sendto` calls
+  route through the in-process net_emulator delay queue, configured via
+  engine settings before launch. See `ref/networking_callgraph.md`.
 - The I/O thread:
   - receives UDP
   - demuxes reliable-stream frames vs raw unreliable datagrams

@@ -13,6 +13,12 @@ This document defines where reliability, reassembly, and message dispatch live, 
 1. **Socket IO (OS boundary)**
    - Owns OS socket handles.
    - Performs `recvfrom`/`sendto`.
+   - When built with `FR_NET_EMULATION` (`make EMU=1`), sendto routes packets
+     through a delay queue (net_emulator) configured via engine settings.
+     Supports configurable latency, jitter (uniform/normal/log-normal),
+     packet loss, reorder, and duplicate.  The old env-var impairment
+     (`P008_NET_DROP_PCT`, `P008_NET_JITTER_MS`) is retained when the
+     flag is not defined.
 
 2. **Protocol/frame parsing (wire boundary)**
    - Validates protocol id, header integrity, and extracts per-packet payload units.

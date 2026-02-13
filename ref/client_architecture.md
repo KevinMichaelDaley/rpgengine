@@ -44,6 +44,9 @@ but the “network I/O thread that demuxes RUDP vs raw UDP” is an architectura
 
 The OpenGL context stays on the main thread.
 The I/O thread is the only thread allowed to touch sockets.
+When built with `FR_NET_EMULATION` (`make EMU=1`), outbound `sendto` calls
+route through the in-process net_emulator delay queue (configured via engine
+settings before launch). See `ref/networking_callgraph.md`.
 
 ---
 

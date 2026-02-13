@@ -492,15 +492,30 @@ THOUSANDS OF BODIES, SPARSE GRAPH:
 Adaptive solver tuning (compile-time constants in tgs_solve.c):
 | Parameter                | Value  | Notes                                     |
 |--------------------------|--------|-------------------------------------------|
+| SOR_OMEGA                | 1.1    | Successive over-relaxation factor         |
 | ADAPTIVE_SPEED_LOW       | 5 m/s  | Below this: use base iterations           |
-| ADAPTIVE_SPEED_HIGH      | 200 m/s| At this: max iterations (10× base)        |
-| ADAPTIVE_ITER_MULT       | 10     | Max multiplier on base iteration count    |
+| ADAPTIVE_SPEED_HIGH      | 200 m/s| At this: max iterations (capped by island)|
+| ADAPTIVE_ITER_MULT       | 5      | Max multiplier on base iteration count    |
 | SUBSUB_SPEED_LOW         | 15 m/s | Below this: 1 sub-substep                 |
 | SUBSUB_SPEED_HIGH        | 150 m/s| At this: max sub-substeps                 |
 | SUBSUB_MAX               | 8      | Maximum solver sub-substeps per island    |
 | NL_PROJ_PASSES           | 4      | Nonlinear projection passes after TGS     |
 | NL_PROJ_FRACTION         | 0.8    | Error fraction corrected per pass         |
 | NL_PROJ_MIN_ERROR        | 0.01 m | Min anchor error to trigger projection    |
+
+Large-island adaptive iteration caps (constraint count based):
+| Constraint count         | Mult   | Notes                                     |
+|--------------------------|--------|-------------------------------------------|
+| ≤ 256                    | 5×     | Full adaptive multiplier                  |
+| 257–512                  | 3×     | Moderate cap to control worst-case        |
+| > 512                    | 2×     | Minimal cap for very large islands        |
+
+SOR tuning notes:
+- SOR omega=1.1 provides mild over-relaxation that accelerates convergence
+  without overshooting Coulomb cone friction bounds.
+- Omega ≥ 1.3 causes friction rows to overshoot, resulting in box sliding.
+- Warmstarting lambda writeback provides a better initial guess, allowing
+  fewer iterations (base 8 vs 10) while maintaining stability.
 
 Joint constraint tuning (set per-joint at creation):
 | Parameter                | Value  | Notes                                     |

@@ -45,6 +45,11 @@ See the detailed callgraphs for per-stage breakdowns:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          APPLICATION LAYER                                  │
 │                                                                             │
+│  Engine Settings (frozen at launch)                                        │
+│  └── fr_engine_settings_init() → _mut() → _freeze() → _get()              │
+│      Configured before threads start; read-only after freeze.              │
+│      Includes net emulation config (gated by FR_NET_EMULATION).            │
+│                                                                             │
 │  Server Main Loop              Client Main Loop                            │
 │  ├── Network pump              ├── Render frame                            │
 │  ├── Physics tick               ├── Network RX poll                         │
@@ -72,7 +77,10 @@ See the detailed callgraphs for per-stage breakdowns:
 │ Constraint special:   │  │ Replication:               │  │ ├── vbo/vao     │
 │ Planar/Sphere/Generic │  │ ├── schema_registry        │  │ └── gl_loader   │
 │                       │  │ ├── quantization           │  │                 │
-└───────────┬───────────┘  │ └── spawn/state_cube/etc.  │  └────────┬────────┘
+│                       │  │ ├── spawn/state_cube/etc.  │  │                 │
+└───────────┬───────────┘  │ Network Emulation (opt):   │  └────────┬────────┘
+            │              │ └── net_emulator_t          │           │
+            │              │     (FR_NET_EMULATION)      │           │
             │              └────────────┬───────────────┘           │
             │                           │                           │
             ▼                           ▼                           ▼

@@ -710,6 +710,41 @@ Quantization:
 
 ---
 
+## Network Emulation Layer (Optional, `FR_NET_EMULATION`)
+
+When built with `make EMU=1`, the socket I/O layer (`socket_io.c`) routes
+outbound packets through an in-process network condition emulator before
+calling the real `sendto()`.  This is gated by `#ifdef FR_NET_EMULATION`.
+
+```
+Caller ──▶ net_udp_socket_sendto()
+               │
+               ├── net_emulator_submit(emu, pkt, len, now_us)
+               │   ├── Loss check (drop silently)
+               │   ├── Sample delay from distribution (uniform/normal/log-normal)
+               │   ├── Reorder: subtract random offset from release time
+               │   └── Duplicate: insert second copy with independent delay
+               │
+               ├── net_emulator_pop(emu, now_us, &pkt, &len, &addr)
+               │   └── Flush all packets whose release_time ≤ now_us
+               │       └── real sendto() for each
+               │
+               └── Recv path: unmodified (emulation is send-side only)
+```
+
+**Configuration:** Set via `fr_engine_settings_mut()` before `freeze()`:
+- `net_emu_delay_us` — base one-way delay (µs)
+- `net_emu_jitter_us` — jitter amplitude (µs)
+- `net_emu_loss_pct` — packet loss probability (0.0–1.0)
+- `net_emu_reorder_pct` — out-of-order probability (0.0–1.0)
+- `net_emu_duplicate_pct` — duplication probability (0.0–1.0)
+- `net_emu_dist` — jitter distribution (UNIFORM / NORMAL / LOG_NORMAL)
+
+Demo CLI flags: `--emu-delay`, `--emu-jitter`, `--emu-loss`, `--emu-reorder`,
+`--emu-duplicate`, `--emu-dist`.
+
+---
+
 ## End-to-End Data Flow Summary
 
 ```

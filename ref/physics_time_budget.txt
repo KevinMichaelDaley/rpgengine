@@ -61,7 +61,10 @@ rebuild_island_joint_constraints                 Phys.SubSub.RebuildingJoints   
 # (sub-substep TGS + integrate time varies with island speed)
 
 # STAGE 11: TGS SOLVE (includes split impulse + nonlinear joint projection)
-# Adaptive iterations: 1×–10× base, sqrt ramp based on max island body speed.
+# Adaptive iterations: 1×–5× base (8 iters), sqrt ramp based on max island speed.
+# Large-island caps: ≤256 constraints → 5×, 257-512 → 3×, >512 → 2×.
+# SOR omega=1.1 (successive over-relaxation for faster convergence).
+# Warmstarting: lambda writeback to manifold cache for initial guess.
 # Speed-dependent Baumgarte leak for joints (0–0.6 over 5–60 m/s).
 # Per-row viscous damping for joint constraints (damping < 1).
 # After iterations: 4 nonlinear joint projection passes.

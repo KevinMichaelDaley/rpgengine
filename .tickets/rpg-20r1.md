@@ -1,6 +1,6 @@
 ---
 id: rpg-20r1
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-13T07:27:03Z

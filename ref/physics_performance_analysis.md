@@ -124,23 +124,25 @@ This dramatically reduces the TGS bottleneck for large scenes.
    than 100 bodies in 100 islands. *Worst case is now bounded by T0/T1
    body count (typically 20–80 near the player).*
 
-3. **Iteration multiplier** — Each constraint processed 20-24 times per
-   substep. With 2-3 substeps, that's 40-72 passes. *But only for the
-   small near-field island set.*
+3. **Iteration multiplier** — Each constraint processed up to 8×5=40 times per
+   substep (base 8 iterations × up to 5× adaptive multiplier for fast islands).
+   Large islands are further capped: ≤256 constraints get 5×, 257-512 get 3×,
+   >512 get 2×. SOR (omega=1.1) accelerates convergence, and warmstarting
+   reduces the effective work per pass.
 
 **TGS time formula (T0/T1 only):**
 ```
 T_tgs ≈ max(T0/T1 island_sizes) × iterations × constraint_time
-      ≈ max_island × 22 × 0.5 µs
-      ≈ max_island × 11 µs
+      ≈ max_island × 16 × 0.5 µs     (typical: 8 base × 2× adaptive)
+      ≈ max_island × 8 µs
 ```
 
 | Max T0/T1 Island Size | TGS Time | % of 1.5ms Budget |
 |------------------------|----------|-------------------|
-| 10 constraints | 110 µs | 7% |
-| 30 constraints | 330 µs | 22% |
-| 50 constraints | 550 µs | 37% |
-| 80 constraints | 880 µs | 59% |
+| 10 constraints | 80 µs | 5% |
+| 30 constraints | 240 µs | 16% |
+| 50 constraints | 400 µs | 27% |
+| 80 constraints | 640 µs | 43% |
 
 **Jacobi XPBD (T2–T4): embarrassingly parallel**
 
@@ -205,12 +207,13 @@ At ~7 µs per pair (including AABB + narrowphase), budget limits:
 - All 50 boxes become one island (connected through resting contacts)
 - Each box has ~4 contacts = 200 manifolds
 - If near player (T0/T1): 200 manifolds × 3 constraints = 600 constraints in TGS
-- TGS time: 600 × 22 iterations × 0.5 µs = 6.6 ms ❌
+- TGS time: 600 × 16 iterations × 0.5 µs = 4.8 ms ❌
+  (capped at 2× for >512 constraints: 600 × 16 × 0.5 µs)
 
 **Mitigation with hybrid solver:**
 - Only boxes within 15m (T0/T1) use TGS — maybe 10–15 boxes = 60 constraints
 - Remaining boxes at T2+ use Jacobi XPBD: 40 bodies / 8 jobs ≈ 90 µs
-- TGS: 60 × 22 × 0.5 µs ≈ 660 µs ✓
+- TGS: 60 × 16 × 0.5 µs ≈ 480 µs ✓
 - Combined: max(660, 90) ≈ 660 µs ✓
 - Position-based stabilization for resting stacks
 - Aggressive sleep detection

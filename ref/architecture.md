@@ -73,6 +73,17 @@ High-level modules aligned with `ref/prompts.md`:
 - P_019 UI, Text & Localization
 - P_020 Online Services (Dedicated Server, Minimal Auth/Matchmaking)
 
+### 1.3 Engine Settings (Frozen-at-Launch Configuration)
+
+Global engine configuration is managed via `engine_settings.h`:
+- `fr_engine_settings_init()` → `fr_engine_settings_mut()` to configure →
+  `fr_engine_settings_freeze()` → `fr_engine_settings_get()` (read-only).
+- After `freeze()`, all writes are rejected — the settings become immutable
+  before any threads or job systems start.
+- Currently holds network emulation parameters (gated by `FR_NET_EMULATION`).
+- Designed to hold any application-wide configuration that must be set once
+  at startup and never changed at runtime.
+
 ### 1.2 The Concurrency Model: Beyond Standard Threads
 Ferrum-Engine-C does not adopt “one OS thread per subsystem.” Instead it uses a **fiber-based job system** inspired by modern AAA engine architectures:
 
@@ -404,6 +415,8 @@ For a more detailed description of the runtime message flow and channel abstract
 - Reliable ordered channel for critical events (inventory, dialogue, terrain edits)
 
 **Important layering rule:** retransmission, reordering, and packet reconstruction happen *above* the protocol/frame parsing layer and *before* any other subsystem reads messages. Subsystems should not parse RUDP frames; they should only consume an abstracted per-channel **reliable UDP stream**.
+
+**Network condition emulation:** When built with `FR_NET_EMULATION` (`make EMU=1`), the socket IO layer routes outbound packets through an in-process delay queue that simulates latency, jitter, loss, reorder, and duplication. Configuration is set via `fr_engine_settings_mut()` before `freeze()`. See `ref/networking_callgraph.md` for the emulator call graph.
 
 ### 9.2 Client Networking Runtime (Threaded IO + Job Dispatch)
 On the client, networking runs on its own OS thread(s):
