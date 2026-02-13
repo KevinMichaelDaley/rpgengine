@@ -46,7 +46,7 @@
 
 /** Successive over-relaxation factor.  Values > 1.0 accelerate
  *  convergence; typical range 1.1–1.5.  Too high causes oscillation. */
-#define SOR_OMEGA 1.3f
+#define SOR_OMEGA 1.1f
 
 /* ── Internal: compute per-island iteration count ─────────────── */
 
@@ -83,14 +83,25 @@ static uint32_t compute_island_iterations(
     if (max_speed_sq <= lo2) {
         return base_iters;
     }
+
+    /* Scale down the adaptive multiplier for large islands to bound
+     * worst-case cost (iterations × colors × barriers).  Small islands
+     * are cheap regardless, so let them use the full multiplier. */
+    uint32_t mult = ADAPTIVE_ITER_MULT;
+    if (island->constraint_count > 512) {
+        mult = 2;
+    } else if (island->constraint_count > 256) {
+        mult = (mult > 3) ? 3 : mult;
+    }
+
     if (max_speed_sq >= hi2) {
-        return base_iters * ADAPTIVE_ITER_MULT;
+        return base_iters * mult;
     }
 
     /* Sqrt ramp: aggressive at moderate speeds, plateaus at extremes. */
     float t = (max_speed_sq - lo2) / (hi2 - lo2);
     t = sqrtf(t);
-    uint32_t extra = (uint32_t)(t * (float)(base_iters * (ADAPTIVE_ITER_MULT - 1)));
+    uint32_t extra = (uint32_t)(t * (float)(base_iters * (mult - 1)));
     return base_iters + extra;
 }
 
