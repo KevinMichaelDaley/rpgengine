@@ -430,7 +430,9 @@ static void draw_correction_lines(gl_ctx_t *glc,
                                   double now_time,
                                   double render_time,
                                   mat4_t vp) {
-    /* Yellow lines: interpolated (old rendered) → raw server position. */
+    /* Yellow lines: pre-correction interpolated pose → raw server pose.
+     * corr_old_pos/rot was sampled from the interpolator at render_time
+     * *before* the push, so it reflects what was on screen last frame. */
     float line_verts[CORR_MAX_LINES_PER_FRAME * 8 * 2 * 3];
     uint32_t vert_count = 0;
     uint32_t pair_count = 0;
@@ -820,21 +822,9 @@ int main(int argc, char **argv) {
                     };
                     quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
 
-                    /* Snapshot current rendered pose before correction.
-                     * Sample at render time (behind recv_time by the
-                     * render delay) so the correction line length
-                     * matches what the user actually sees on screen. */
-                    vec3_t old_pos;
-                    quat_t old_rot;
-                    double sample_t = recv_time - CLIENT_RENDER_DELAY;
-                    if (fr_pose_interpolator_sample(&e->interp, sample_t,
-                                                    1e-6f, &old_pos, &old_rot)) {
-                        e->corr_old_pos = old_pos;
-                        e->corr_old_rot = old_rot;
-                        e->corr_time_s  = recv_time;
-                        e->corr_alpha   = 1.0f;
-                    }
-
+                    /* Snapshot the interpolated pose at current render time,
+                     * *before* pushing the new snapshot.  This is what's
+                     * on screen right now. */
                     vec3_t vel = {
                         (float)bs.vel_x_mm_s / 1000.0f,
                         (float)bs.vel_y_mm_s / 1000.0f,
@@ -846,15 +836,35 @@ int main(int argc, char **argv) {
                         (float)bs.ang_z_mrad_s / 1000.0f,
                     };
 
-                    e->corr_raw_pos  = pos;
-                    e->corr_raw_rot  = rot;
-                    e->corr_vel      = vel;
-                    e->corr_ang_vel  = ang_vel;
-                    e->corr_server_time_s = (double)bs.send_time_ms / 1000.0;
+                    /* Correction debug: sample before and after push at
+                     * the same render-time so the line shows the actual
+                     * correction jump, not the natural travel distance. */
+                    double sample_t = recv_time - CLIENT_RENDER_DELAY;
+                    vec3_t old_pos;
+                    quat_t old_rot;
+                    bool had_old = fr_pose_interpolator_sample(
+                        &e->interp, sample_t, 1e-6f, &old_pos, &old_rot);
 
                     fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
                                               vel, ang_vel,
                                               (double)bs.send_time_ms / 1000.0);
+
+                    if (had_old) {
+                        vec3_t new_pos;
+                        quat_t new_rot;
+                        fr_pose_interpolator_sample(
+                            &e->interp, sample_t, 1e-6f, &new_pos, &new_rot);
+                        e->corr_old_pos = old_pos;
+                        e->corr_old_rot = old_rot;
+                        e->corr_raw_pos = new_pos;
+                        e->corr_raw_rot = new_rot;
+                        e->corr_time_s  = recv_time;
+                        e->corr_alpha   = 1.0f;
+                    }
+
+                    e->corr_vel      = vel;
+                    e->corr_ang_vel  = ang_vel;
+                    e->corr_server_time_s = (double)bs.send_time_ms / 1000.0;
                     dbg_state_applied++;
                 }
             }
@@ -881,21 +891,6 @@ int main(int argc, char **argv) {
                 };
                 quat_t rot = {bs.rot_x, bs.rot_y, bs.rot_z, bs.rot_w};
 
-                /* Snapshot current rendered pose before correction.
-                 * Sample at render time (behind recv_time by the
-                 * render delay) so the correction line length
-                 * matches what the user actually sees on screen. */
-                vec3_t old_pos;
-                quat_t old_rot;
-                double sample_t = recv_time - CLIENT_RENDER_DELAY;
-                if (fr_pose_interpolator_sample(&e->interp, sample_t,
-                                                1e-6f, &old_pos, &old_rot)) {
-                    e->corr_old_pos = old_pos;
-                    e->corr_old_rot = old_rot;
-                    e->corr_time_s  = recv_time;
-                    e->corr_alpha   = 1.0f;
-                }
-
                 vec3_t vel = {
                     (float)bs.vel_x_mm_s / 1000.0f,
                     (float)bs.vel_y_mm_s / 1000.0f,
@@ -907,15 +902,33 @@ int main(int argc, char **argv) {
                     (float)bs.ang_z_mrad_s / 1000.0f,
                 };
 
-                e->corr_raw_pos  = pos;
-                e->corr_raw_rot  = rot;
-                e->corr_vel      = vel;
-                e->corr_ang_vel  = ang_vel;
-                e->corr_server_time_s = (double)bs.send_time_ms / 1000.0;
+                /* Correction debug: sample before and after push. */
+                double sample_t = recv_time - CLIENT_RENDER_DELAY;
+                vec3_t old_pos;
+                quat_t old_rot;
+                bool had_old = fr_pose_interpolator_sample(
+                    &e->interp, sample_t, 1e-6f, &old_pos, &old_rot);
 
                 fr_pose_interpolator_push(&e->interp, recv_time, pos, rot,
                                           vel, ang_vel,
                                           (double)bs.send_time_ms / 1000.0);
+
+                if (had_old) {
+                    vec3_t new_pos;
+                    quat_t new_rot;
+                    fr_pose_interpolator_sample(
+                        &e->interp, sample_t, 1e-6f, &new_pos, &new_rot);
+                    e->corr_old_pos = old_pos;
+                    e->corr_old_rot = old_rot;
+                    e->corr_raw_pos = new_pos;
+                    e->corr_raw_rot = new_rot;
+                    e->corr_time_s  = recv_time;
+                    e->corr_alpha   = 1.0f;
+                }
+
+                e->corr_vel      = vel;
+                e->corr_ang_vel  = ang_vel;
+                e->corr_server_time_s = (double)bs.send_time_ms / 1000.0;
             }
 
             if (schema_id == NET_REPL_SCHEMA_WELCOME) {

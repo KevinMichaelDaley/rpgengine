@@ -42,17 +42,22 @@ client_frame(cl)
   │    └─ while (state_update_pop(&bs)):
   │         ├─ decode BODY_STATE/STATE_CUBE
   │         ├─ entity = entity_by_body_id[bs.body_id] (derived cache)
-  │         └─ pose_interp_push(entity.pose, now_s, pos, rot)
+  │         ├─ snapshot correction debug: sample interp BEFORE push (old_pos)
+  │         ├─ pose_interp_push(entity.pose, now_s, pos, rot, vel, ang_vel, server_time_s)
+  │         └─ sample interp AFTER push at same time → corr_raw_pos (correction jump)
   │
   ├─ Stage 5: update_fps_controller_and_camera()
   ├─ Stage 6: enqueue_input_packets_for_io()
   │    └─ io_tx_queue_push([schema_id:u16][payload...])
   │
   ├─ Stage 7: interpolate_poses()
+  │    └─ pose_interp_sample(entity.pose, render_time, &pos, &rot)
+  │         ├─ t ∈ [0,1]: semi-physical blend (fwd from prev + bwd from curr using vel)
+  │         └─ t > 1: hold curr pose (extrapolation disabled)
   ├─ Stage 8: build_render_lists()
   │    ├─ cubes / static meshes
   │    ├─ skinned meshes (later)
-  │    └─ debug primitives (wireframe colliders, grid)
+  │    └─ debug primitives (wireframe colliders, grid, correction lines)
   ├─ Stage 9: render_pipeline_execute()
   └─ Stage 10: SDL_GL_SwapWindow()
 

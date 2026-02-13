@@ -136,82 +136,66 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
     float t = (float)((now_time_s - interp->prev_time_s) / dt);
 
     if (t <= 1.0f) {
-        /* Interpolation between prev and curr using cubic hermite.
-         * Tangents are server-authoritative velocities scaled by dt,
-         * giving a smooth arc that respects the physics trajectory. */
+        /* Semi-physical interpolation: integrate the full rigid body
+         * state forward from prev and backward from curr, then lerp/
+         * slerp between the two estimates.  This keeps position and
+         * rotation coupled through their velocities. */
         t = clampf_(t, 0.0f, 1.0f);
-
-        const float t2 = t * t;
-        const float t3 = t2 * t;
-        /* Hermite basis: h00, h10, h01, h11 */
-        const float h00 =  2.0f * t3 - 3.0f * t2 + 1.0f;
-        const float h10 =         t3 - 2.0f * t2 + t;
-        const float h01 = -2.0f * t3 + 3.0f * t2;
-        const float h11 =         t3 -        t2;
-
-        /* Tangents = velocity * dt (displacement over the interval). */
         const float fdt = (float)dt;
-        const vec3_t m0 = {
-            interp->prev_server_vel.x * fdt,
-            interp->prev_server_vel.y * fdt,
-            interp->prev_server_vel.z * fdt,
-        };
-        const vec3_t m1 = {
-            interp->server_vel.x * fdt,
-            interp->server_vel.y * fdt,
-            interp->server_vel.z * fdt,
-        };
+        const float fwd_t = t * fdt;       /* time forward from prev */
+        const float bwd_t = (1.0f - t) * fdt; /* time backward from curr */
 
-        *out_pos = (vec3_t){
-            h00 * interp->prev_pos.x + h10 * m0.x +
-            h01 * interp->curr_pos.x + h11 * m1.x,
-            h00 * interp->prev_pos.y + h10 * m0.y +
-            h01 * interp->curr_pos.y + h11 * m1.y,
-            h00 * interp->prev_pos.z + h10 * m0.z +
-            h01 * interp->curr_pos.z + h11 * m1.z,
+        /* Forward estimate: prev + prev_vel * fwd_t. */
+        vec3_t pos_fwd = {
+            interp->prev_pos.x + interp->prev_server_vel.x * fwd_t,
+            interp->prev_pos.y + interp->prev_server_vel.y * fwd_t,
+            interp->prev_pos.z + interp->prev_server_vel.z * fwd_t,
         };
-
-        /* Rotation: velocity-aware interpolation.
-         * Integrate angular velocity forward from prev by t*dt,
-         * and backward from curr by (1-t)*dt, then slerp between
-         * the two estimates for a smooth arc. */
-        const float fwd_dt = t * fdt;
-        const float bwd_dt = (1.0f - t) * fdt;
-
-        /* Forward estimate: prev_rot rotated by prev_ang_vel * fwd_dt. */
         quat_t rot_fwd = interp->prev_rot;
         {
-            float w = sqrtf(interp->prev_server_ang_vel.x * interp->prev_server_ang_vel.x +
-                            interp->prev_server_ang_vel.y * interp->prev_server_ang_vel.y +
-                            interp->prev_server_ang_vel.z * interp->prev_server_ang_vel.z);
+            float w = sqrtf(
+                interp->prev_server_ang_vel.x * interp->prev_server_ang_vel.x +
+                interp->prev_server_ang_vel.y * interp->prev_server_ang_vel.y +
+                interp->prev_server_ang_vel.z * interp->prev_server_ang_vel.z);
             if (w > 1e-6f) {
                 vec3_t ax = {
                     interp->prev_server_ang_vel.x / w,
                     interp->prev_server_ang_vel.y / w,
                     interp->prev_server_ang_vel.z / w,
                 };
-                quat_t dq = quat_from_axis_angle(ax, w * fwd_dt, 1e-8f);
+                quat_t dq = quat_from_axis_angle(ax, w * fwd_t, 1e-8f);
                 rot_fwd = quat_mul(dq, interp->prev_rot);
             }
         }
 
-        /* Backward estimate: curr_rot rotated by -curr_ang_vel * bwd_dt. */
+        /* Backward estimate: curr - curr_vel * bwd_t. */
+        vec3_t pos_bwd = {
+            interp->curr_pos.x - interp->server_vel.x * bwd_t,
+            interp->curr_pos.y - interp->server_vel.y * bwd_t,
+            interp->curr_pos.z - interp->server_vel.z * bwd_t,
+        };
         quat_t rot_bwd = interp->curr_rot;
         {
-            float w = sqrtf(interp->server_ang_vel.x * interp->server_ang_vel.x +
-                            interp->server_ang_vel.y * interp->server_ang_vel.y +
-                            interp->server_ang_vel.z * interp->server_ang_vel.z);
+            float w = sqrtf(
+                interp->server_ang_vel.x * interp->server_ang_vel.x +
+                interp->server_ang_vel.y * interp->server_ang_vel.y +
+                interp->server_ang_vel.z * interp->server_ang_vel.z);
             if (w > 1e-6f) {
                 vec3_t ax = {
                     interp->server_ang_vel.x / w,
                     interp->server_ang_vel.y / w,
                     interp->server_ang_vel.z / w,
                 };
-                quat_t dq = quat_from_axis_angle(ax, -w * bwd_dt, 1e-8f);
+                quat_t dq = quat_from_axis_angle(ax, -w * bwd_t, 1e-8f);
                 rot_bwd = quat_mul(dq, interp->curr_rot);
             }
         }
 
+        /* Blend forward and backward estimates.  At t=0 we trust
+         * the forward estimate fully; at t=1 the backward. */
+        out_pos->x = pos_fwd.x * (1.0f - t) + pos_bwd.x * t;
+        out_pos->y = pos_fwd.y * (1.0f - t) + pos_bwd.y * t;
+        out_pos->z = pos_fwd.z * (1.0f - t) + pos_bwd.z * t;
         *out_rot = quat_slerp(rot_fwd, rot_bwd, t, quat_epsilon);
     } else {
         /* Beyond the latest snapshot — hold curr pose.

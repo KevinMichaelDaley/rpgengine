@@ -101,6 +101,23 @@ The per-client fiber networking runtime remains responsible only for:
   - A separate **UDP receive thread** (`net_pump_thread`) runs `recvfrom` in a loop and pushes decoded packets into topic channels, independent of both job systems.
   - Client fiber stacks must be at least 256KB since `fr_server_client_fiber_main` stack-allocates ~68KB (inbox + send_slots).
 
+## Body State Wire Format
+
+Unreliable body state updates carry the full rigid body pose plus velocity:
+
+```
+[server_tick:u16] [body_id:u16] [pos_mm:3×i32] [rot_smallest3:7B]
+[vel_mm_s:3×i16] [ang_mrad_s:3×i16] [send_time_ms:u32] [flags:u8]
+```
+Total: 40 bytes per body.
+
+- **Velocity** (`vel_mm_s`, `ang_mrad_s`): server-authoritative linear (mm/s) and
+  angular (mrad/s) velocity, quantized to int16 (±32 m/s / ±32 rad/s range).
+  Used by the pose interpolator for semi-physical interpolation.
+- **send_time_ms**: server monotonic clock (truncated to u32 ms).  On localhost
+  this shares the clock base with the client; with real latency it provides a
+  lower bound on packet age.
+
 ## Memory / Ownership Rules
 
 - Network threads/fibers may use `malloc`/`free` for internal buffering; they do not run on gameplay fibers.

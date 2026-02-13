@@ -112,6 +112,56 @@ A derived cache `entity_by_body_id[]` is allowed for O(1) lookup.
 
 ---
 
+## Pose Interpolation
+
+The pose interpolator (`fr_pose_interpolator_t`) smooths replicated body movement
+between server ticks.  Each entity maintains its own interpolator instance.
+
+### Push / Sample API
+
+```
+push(recv_time, pos, rot, vel, ang_vel, server_time_s)
+sample(render_time, &out_pos, &out_rot)
+```
+
+- `push()` promotes the current snapshot to `prev` and stores the new one as `curr`.
+  Server-authoritative linear and angular velocity are stored alongside the position
+  and orientation at each endpoint.
+- `sample()` computes a normalized `t` in the `[prev, curr]` time window.
+
+### Interpolation (t ≤ 1)
+
+Position and rotation are interpolated as a coupled rigid body attitude:
+
+1. **Forward estimate:** integrate `prev` forward by `t × dt` using `prev_vel` / `prev_ang_vel`.
+2. **Backward estimate:** integrate `curr` backward by `(1−t) × dt` using `curr_vel` / `curr_ang_vel`.
+3. **Blend:** lerp positions and slerp rotations with weight `t`.
+
+This keeps translation and rotation physically consistent — a rotating body's CoM
+traces the correct arc rather than cutting a straight line between snapshots.
+
+With zero velocities (or a stationary body) the estimates collapse to `prev`/`curr`
+and the blend degenerates to plain lerp/slerp.
+
+### Extrapolation (t > 1)
+
+Extrapolation is **disabled**.  When `t > 1` the interpolator holds `curr` pose.
+At any meaningful velocity the per-frame displacement exceeds constraint tolerances,
+producing visible joint popping.
+
+### Correction Debug Lines
+
+Yellow lines visualize the correction jump when a new server snapshot arrives:
+
+1. Sample the interpolator at `render_time` **before** the push → `old_pos`.
+2. Push the new snapshot.
+3. Sample the interpolator at the **same** `render_time` after the push → `new_pos`.
+4. Draw yellow lines from `old_pos` corners to `new_pos` corners, fading over 0.5 s.
+
+This shows the actual instantaneous correction, not the natural travel distance.
+
+---
+
 ## Rendering Scope
 
 ### Phase 1 rendering (physics test client)
