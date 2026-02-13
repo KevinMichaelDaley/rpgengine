@@ -17,6 +17,7 @@
 #include <SDL2/SDL.h>
 
 #include <math.h>
+#include <inttypes.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -50,6 +51,7 @@
 #include "ferrum/renderer/shader_uniforms.h"
 #include "ferrum/renderer/vao.h"
 #include "ferrum/renderer/vbo.h"
+#include "ferrum/renderer/video_capture.h"
 
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
@@ -513,6 +515,7 @@ int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr,
                 "Usage: %s <server_ip> <port> [duration_s] [--headless]"
+                " [--record FILE]"
 #ifdef FR_NET_EMULATION
                 " [--emu-delay MS] [--emu-jitter MS] [--emu-loss PCT]"
                 " [--emu-reorder PCT] [--emu-duplicate PCT]"
@@ -527,6 +530,7 @@ int main(int argc, char **argv) {
     double duration = (argc >= 4 && strcmp(argv[3], "--headless") != 0)
                           ? atof(argv[3]) : 0.0;
     int headless = 0;
+    const char *record_path = NULL;
 
 #ifdef FR_NET_EMULATION
     float emu_delay = 0.0f, emu_jitter = 0.0f, emu_loss = 0.0f;
@@ -537,6 +541,8 @@ int main(int argc, char **argv) {
     for (int i = 3; i < argc; ++i) {
         if (strcmp(argv[i], "--headless") == 0) {
             headless = 1;
+        } else if (strcmp(argv[i], "--record") == 0 && i + 1 < argc) {
+            record_path = argv[++i];
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -656,6 +662,22 @@ int main(int argc, char **argv) {
             free(send_slots);
             net_udp_socket_close(&sock);
             return 1;
+        }
+    }
+
+    /* ── 3b. Video capture (if --record) ──────────────────────── */
+    fr_video_capture_t *video_cap = NULL;
+    if (record_path && !headless) {
+        video_cap = fr_video_capture_create(&(fr_video_capture_desc_t){
+            .width  = CLIENT_WIN_W,
+            .height = CLIENT_WIN_H,
+            .fps    = 60,
+            .output_path = record_path,
+        });
+        if (video_cap) {
+            printf("[client] recording to %s\n", record_path);
+        } else {
+            fprintf(stderr, "[client] warning: video capture init failed\n");
         }
     }
 
@@ -1142,6 +1164,11 @@ int main(int argc, char **argv) {
                                       now_time, render_time, vp);
             }
 
+            /* Submit frame for video capture (async PBO readback). */
+            if (video_cap) {
+                fr_video_capture_submit_frame(video_cap);
+            }
+
             SDL_GL_SwapWindow(gl.window);
         } else {
             /* Headless: sleep to avoid busy-spin. */
@@ -1152,6 +1179,15 @@ int main(int argc, char **argv) {
 
 done:
     printf("[client] shutting down...\n");
+
+    /* Flush and destroy video capture before GL context is torn down. */
+    if (video_cap) {
+        uint64_t written = fr_video_capture_frames_written(video_cap);
+        fr_video_capture_destroy(video_cap);
+        printf("[client] recorded %" PRIu64 " frames to %s\n",
+               written, record_path);
+        video_cap = NULL;
+    }
 
     if (!headless) {
         gl_shutdown(&gl);
