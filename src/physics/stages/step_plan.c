@@ -72,4 +72,7 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
     if (world->tick_count % 3 != 0) {
         plan->tier_params[PHYS_TIER_4_BACKGROUND].active = false;
     }
+
+    /* T5 (sleeping) is never simulated — bodies must be woken first. */
+    plan->tier_params[PHYS_TIER_5_SLEEPING].active = false;
 }

@@ -66,7 +66,7 @@ static int test_step_plan_defaults(void) {
 }
 
 /**
- * Test that all 6 tiers are marked active in Phase 1.
+ * Test that tiers T0–T4 are active, T5 (sleeping) is inactive.
  */
 static int test_step_plan_all_tiers_active(void) {
     phys_world_config_t cfg = phys_world_config_default();
@@ -79,7 +79,12 @@ static int test_step_plan_all_tiers_active(void) {
     memset(&plan, 0, sizeof(plan));
     phys_stage_step_plan(&plan, &world, NULL);
 
+    /* T0–T4 should be active with default params. */
     for (int t = 0; t < PHYS_TIER_COUNT; ++t) {
+        if (t == PHYS_TIER_5_SLEEPING) {
+            ASSERT_TRUE(!plan.tier_params[t].active);
+            continue;
+        }
         ASSERT_TRUE(plan.tier_params[t].active);
         ASSERT_INT_EQ((int)cfg.default_substeps, (int)plan.tier_params[t].substeps);
         ASSERT_INT_EQ((int)cfg.default_solver_iterations, (int)plan.tier_params[t].iterations);
@@ -151,9 +156,13 @@ static int test_step_plan_null_game_state(void) {
     ASSERT_FLOAT_NEAR(1.0f / 30.0f, plan.dt, 0.0001f);
     ASSERT_FLOAT_NEAR(1.0f / 60.0f, plan.substep_dt, 0.0001f);
 
-    /* Tiers should still be active. */
+    /* Tiers T0–T4 should still be active; T5 inactive. */
     for (int t = 0; t < PHYS_TIER_COUNT; ++t) {
-        ASSERT_TRUE(plan.tier_params[t].active);
+        if (t == PHYS_TIER_5_SLEEPING) {
+            ASSERT_TRUE(!plan.tier_params[t].active);
+        } else {
+            ASSERT_TRUE(plan.tier_params[t].active);
+        }
     }
 
     phys_world_destroy(&world);

@@ -1,6 +1,6 @@
 ---
 id: rpg-0ga2
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-13T08:05:11Z

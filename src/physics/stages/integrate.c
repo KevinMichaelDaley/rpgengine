@@ -61,11 +61,11 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
             continue;
         }
 
-        /* Skip bodies whose tier doesn't need this substep. */
+        /* Skip bodies whose tier is inactive (substeps == 0) or
+         * doesn't need this substep iteration. */
         if (tier_subs) {
             uint32_t ts = tier_subs[in->tier];
-            if (ts == 0) { ts = 1; }
-            if (cur_sub >= ts) { continue; }
+            if (ts == 0 || cur_sub >= ts) { continue; }
         }
 
         /* Compute per-body dt from tier substep count. */

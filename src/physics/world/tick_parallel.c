@@ -319,6 +319,10 @@ void phys_world_tick_parallel(phys_world_t *world,
     uint32_t max_substeps = 1;
     uint32_t tier_substep_counts[PHYS_TIER_COUNT];
     for (int t = 0; t < PHYS_TIER_COUNT; ++t) {
+        if (!plan.tier_params[t].active) {
+            tier_substep_counts[t] = 0; /* Inactive tiers are skipped. */
+            continue;
+        }
         uint32_t ts = plan.tier_params[t].substeps;
         if (ts == 0) { ts = 1; }
         tier_substep_counts[t] = ts;
