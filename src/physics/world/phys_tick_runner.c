@@ -57,25 +57,38 @@ static void *tick_thread_fn_(void *user_data) {
     const uint64_t target_ns =
         (uint64_t)(r->world->config.fixed_dt * 1e9f);
 
+    /* Minimum idle time (ns) between tick end and next tick start.
+     * Prevents the physics thread from starving other threads (net,
+     * render) when ticks overrun.  1 ms is enough for the OS scheduler
+     * to run waiting threads. */
+    const uint64_t min_idle_ns = 1000000ULL; /* 1 ms */
+
     /* Rolling bitfield: bit i = 1 if i-th most recent tick overran. */
     uint16_t overload_history = 0;
 
     while (!atomic_load_explicit(&r->stop_requested, memory_order_acquire)) {
 
-        /* Pace: sleep until fixed_dt has elapsed since last tick. */
+        /* Pace: sleep until fixed_dt has elapsed since last tick start,
+         * but always guarantee at least min_idle_ns of idle time after
+         * the previous tick ended (prevents starving other threads). */
         uint64_t wall_elapsed_ns = 0;
         if (last_tick_ns != 0) {
             uint64_t now = runner_clock_ns_();
             wall_elapsed_ns = now - last_tick_ns;
+            uint64_t sleep_ns = 0;
             if (wall_elapsed_ns < target_ns) {
-                uint64_t remain = target_ns - wall_elapsed_ns;
-                struct timespec ts = {
-                    .tv_sec  = (time_t)(remain / 1000000000ULL),
-                    .tv_nsec = (long)(remain % 1000000000ULL)
-                };
-                nanosleep(&ts, NULL);
-                wall_elapsed_ns = target_ns; /* slept to target */
+                sleep_ns = target_ns - wall_elapsed_ns;
             }
+            /* Enforce minimum idle: if we'd sleep less than min_idle_ns,
+             * extend to min_idle_ns so the OS can schedule other work. */
+            if (sleep_ns < min_idle_ns) {
+                sleep_ns = min_idle_ns;
+            }
+            struct timespec ts = {
+                .tv_sec  = (time_t)(sleep_ns / 1000000000ULL),
+                .tv_nsec = (long)(sleep_ns % 1000000000ULL)
+            };
+            nanosleep(&ts, NULL);
             if (atomic_load_explicit(&r->stop_requested,
                                      memory_order_acquire)) {
                 break;
