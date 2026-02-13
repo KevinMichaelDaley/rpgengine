@@ -40,10 +40,16 @@ but the “network I/O thread that demuxes RUDP vs raw UDP” is an architectura
 ┌─────────────▼────────────┐
 │ I/O thread (sockets)     │  recvfrom/sendto, demux, reassembly, queues
 └──────────────────────────┘
+              │
+┌─────────────▼────────────┐
+│ Encode thread (optional) │  video capture: reads CPU frame ring → ffmpeg pipe
+└──────────────────────────┘
 ```
 
 The OpenGL context stays on the main thread.
 The I/O thread is the only thread allowed to touch sockets.
+The encode thread (spawned by `fr_video_capture_create`) never touches GL;
+it consumes pixel data from a lock-free SPSC ring and pipes it to ffmpeg.
 When built with `FR_NET_EMULATION` (`make EMU=1`), outbound `sendto` calls
 route through the in-process net_emulator delay queue (configured via engine
 settings before launch). See `ref/networking_callgraph.md`.
@@ -159,6 +165,50 @@ Yellow lines visualize the correction jump when a new server snapshot arrives:
 4. Draw yellow lines from `old_pos` corners to `new_pos` corners, fading over 0.5 s.
 
 This shows the actual instantaneous correction, not the natural travel distance.
+
+---
+
+## Video Capture
+
+The optional video capture module (`fr_video_capture_t`) records the rendered
+framebuffer to an MP4 file without stalling the render loop.
+
+### Architecture
+
+```
+Render thread (GL)          CPU ring (SPSC)        Encode thread
+  glReadPixels → PBO ──►  frame_ring_push() ──►  fwrite → ffmpeg pipe
+  (4-slot PBO ring)         (8-slot ring)          (libx264, CRF 20)
+```
+
+- **PBO ring** (4 slots): async GPU→CPU readback via `GL_PIXEL_PACK_BUFFER`
+  with fence sync.  Non-blocking — never stalls the render loop.
+- **Frame ring** (8 slots, SPSC lock-free): transfers completed pixel buffers
+  from render thread to encode thread.  Backpressure drops oldest frame.
+- **Encode thread**: pipes raw RGBA to ffmpeg for H.264 encoding.  Falls back
+  to raw `.raw` file if ffmpeg is not on PATH.
+
+### Frame Decimation
+
+The capture module decimates to the target FPS (`desc.fps`, default 30).
+`submit_frame()` checks `CLOCK_MONOTONIC` and only initiates a PBO readback
+when at least `1/fps` seconds have elapsed since the last capture.  This
+produces exactly one unique frame per output video frame — no duplication,
+no temporal aliasing.
+
+### Usage
+
+```c
+fr_video_capture_t *cap = fr_video_capture_create(&(fr_video_capture_desc_t){
+    .width = W, .height = H, .fps = 30, .output_path = "out.mp4",
+});
+// per frame, after draw, before swap:
+fr_video_capture_submit_frame(cap);
+// on shutdown:
+fr_video_capture_destroy(cap);  // flushes + joins encode thread
+```
+
+Demo client: `./build/demo_client IP PORT SECS --record capture.mp4`
 
 ---
 

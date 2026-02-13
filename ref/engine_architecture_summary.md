@@ -75,11 +75,13 @@ See the detailed callgraphs for per-stage breakdowns:
 │ T0..T5 distance-based │  │ └── topic_channels         │  │ ├── pipeline    │
 │                       │  │                            │  │ ├── shader_prog │
 │ Constraint special:   │  │ Replication:               │  │ ├── vbo/vao     │
-│ Planar/Sphere/Generic │  │ ├── schema_registry        │  │ └── gl_loader   │
-│                       │  │ ├── quantization           │  │                 │
-│                       │  │ ├── spawn/state_cube/etc.  │  │                 │
-└───────────┬───────────┘  │ Network Emulation (opt):   │  └────────┬────────┘
-            │              │ └── net_emulator_t          │           │
+│ Planar/Sphere/Generic │  │ ├── schema_registry        │  │ ├── gl_loader   │
+│                       │  │ ├── quantization           │  │ │               │
+│                       │  │ ├── spawn/state_cube/etc.  │  │ Video Capture:  │
+└───────────┬───────────┘  │ Network Emulation (opt):   │  │ ├── pbo_ring    │
+            │              │ └── net_emulator_t          │  │ ├── frame_ring  │
+            │              │     (FR_NET_EMULATION)      │  │ └── encode_thrd │
+            │              └────────────┬───────────────┘  └────────┬────────┘
             │              │     (FR_NET_EMULATION)      │           │
             │              └────────────┬───────────────┘           │
             │                           │                           │
@@ -421,6 +423,7 @@ RENDERER owns:
                 │  Renderer           │
                 │ render_pipeline_t   │
                 │ skinning_pipeline_t │
+                │ video_capture_t     │
                 │ (reads ECS data,    │
                 │  uses job_system_t  │
                 │  for skinning jobs) │

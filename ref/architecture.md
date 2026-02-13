@@ -298,6 +298,15 @@ Materials use a minimal parameter set:
 - glTF metallic-roughness mapped deterministically (e.g., `roughness_like = roughness`, `spec_like = 1 - metallic`).
 - Mapping is lossy but stable; documented for reproducibility.
 
+### 5.0.2 Video Capture Module
+GPU-buffered video capture (`fr_video_capture_t`) records the framebuffer
+to MP4 without stalling the render loop.  Architecture:
+- 4-slot PBO ring for async GPU→CPU readback (fence-sync, non-blocking).
+- 8-slot SPSC lock-free frame ring for render→encode thread transfer.
+- Dedicated encode pthread pipes raw RGBA to ffmpeg (H.264 / libx264).
+- Render-side decimation to target FPS (default 30) — only unique frames.
+- Source: `src/renderer/video_capture/`, header: `include/ferrum/renderer/video_capture.h`.
+
 ### 5.1 Direct State Access (DSA) and Bindless (Optional)
 - DSA removes bind-to-edit patterns and reduces global state coupling.
 - Bindless textures can remove texture binding limits (if supported), but must be optional and capability-checked.

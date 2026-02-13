@@ -59,7 +59,10 @@ client_frame(cl)
   │    ├─ skinned meshes (later)
   │    └─ debug primitives (wireframe colliders, grid, correction lines)
   ├─ Stage 9: render_pipeline_execute()
-  └─ Stage 10: SDL_GL_SwapWindow()
+  ├─ Stage 10: fr_video_capture_submit_frame(cap) [optional]
+  │    ├─ harvest completed PBO fences → map → frame_ring_push
+  │    └─ if elapsed ≥ 1/target_fps: begin_readback (glReadPixels → PBO)
+  └─ Stage 11: SDL_GL_SwapWindow()
 
 IO thread: io_thread_main()
   ├─ RX:
@@ -73,6 +76,11 @@ IO thread: io_thread_main()
   │         push raw datagram → unreliable_inbox
   └─ TX:
        drain io_tx_queue → sendto(udp)   (input packets)
+
+Encode thread (optional, spawned by video_capture_create):
+  └─ while (!stop):
+       ├─ fr_frame_ring_pop() → pixels
+       └─ fwrite(pixels) → ffmpeg pipe (H.264)
 ```
 
 ---
