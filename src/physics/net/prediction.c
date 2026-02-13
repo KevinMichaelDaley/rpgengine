@@ -19,15 +19,21 @@
 /** Small epsilon below which position error is considered negligible. */
 #define PREDICTION_EPSILON 0.001f
 
+/** Scale for dequantizing snapshot velocity (mm/s → m/s). */
+#define VEL_INV_SCALE (1.0f / 1000.0f)
+
+/** Velocity blend rate — higher than position to reduce jitter fast. */
+#define VEL_BLEND_RATE 0.3f
+
 /* ── Public API ─────────────────────────────────────────────────── */
 
 phys_prediction_config_t phys_prediction_config_default(void)
 {
     phys_prediction_config_t cfg;
     cfg.position_snap_threshold = 0.5f;
-    cfg.position_blend_rate     = 0.1f;
+    cfg.position_blend_rate     = 0.2f;
     cfg.rotation_snap_threshold = 0.5f;
-    cfg.rotation_blend_rate     = 0.1f;
+    cfg.rotation_blend_rate     = 0.2f;
     return cfg;
 }
 
@@ -89,9 +95,13 @@ phys_prediction_result_t phys_prediction_reconcile(
         /* Decide: snap, blend, or correct. */
         if (pos_error > config->position_snap_threshold ||
             rot_error > config->rotation_snap_threshold) {
-            /* Snap: teleport to server state. */
+            /* Snap: teleport to server state including velocities. */
             body->position    = server_pos;
             body->orientation = server_ori;
+            body->linear_vel  = phys_dequantize_vec3(
+                snap_body->linear_vel, VEL_INV_SCALE);
+            body->angular_vel = phys_dequantize_vec3(
+                snap_body->angular_vel, VEL_INV_SCALE);
             result.bodies_snapped++;
         } else if (pos_error > PREDICTION_EPSILON) {
             /* Blend: lerp position toward server, slerp orientation. */
@@ -107,6 +117,18 @@ phys_prediction_result_t phys_prediction_reconcile(
                 config->rotation_blend_rate,
                 1e-6f);
             body->orientation = PHYS_QUAT_FROM_QUAT(blended_ori);
+
+            /* Blend velocities toward server to reduce drift. */
+            phys_vec3_t srv_lv = phys_dequantize_vec3(
+                snap_body->linear_vel, VEL_INV_SCALE);
+            phys_vec3_t srv_av = phys_dequantize_vec3(
+                snap_body->angular_vel, VEL_INV_SCALE);
+            body->linear_vel.x += (srv_lv.x - body->linear_vel.x) * VEL_BLEND_RATE;
+            body->linear_vel.y += (srv_lv.y - body->linear_vel.y) * VEL_BLEND_RATE;
+            body->linear_vel.z += (srv_lv.z - body->linear_vel.z) * VEL_BLEND_RATE;
+            body->angular_vel.x += (srv_av.x - body->angular_vel.x) * VEL_BLEND_RATE;
+            body->angular_vel.y += (srv_av.y - body->angular_vel.y) * VEL_BLEND_RATE;
+            body->angular_vel.z += (srv_av.z - body->angular_vel.z) * VEL_BLEND_RATE;
 
             result.bodies_blended++;
         } else {

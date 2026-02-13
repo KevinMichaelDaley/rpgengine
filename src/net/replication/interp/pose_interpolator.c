@@ -142,7 +142,7 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
     } else {
         /* Extrapolation beyond curr — use implied velocity.
          * Cap at 1.5× to avoid runaway drift on packet loss. */
-        float extrap = clampf_(t - 1.0f, 0.0f, 0.5f);
+        float extrap = clampf_(t - 1.0f, 0.0f, 0.8f);
         float extrap_dt = extrap * (float)dt;
 
         /* Linear: curr_pos + vel * extrap_dt. */

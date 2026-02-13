@@ -90,9 +90,9 @@ static int test_prediction_config_default(void)
     phys_prediction_config_t cfg = phys_prediction_config_default();
 
     ASSERT_FLOAT_NEAR(0.5f, cfg.position_snap_threshold, 0.001f);
-    ASSERT_FLOAT_NEAR(0.1f, cfg.position_blend_rate, 0.001f);
+    ASSERT_FLOAT_NEAR(0.2f, cfg.position_blend_rate, 0.001f);
     ASSERT_FLOAT_NEAR(0.5f, cfg.rotation_snap_threshold, 0.001f);
-    ASSERT_FLOAT_NEAR(0.1f, cfg.rotation_blend_rate, 0.001f);
+    ASSERT_FLOAT_NEAR(0.2f, cfg.rotation_blend_rate, 0.001f);
 
     return 0;
 }
