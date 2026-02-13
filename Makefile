@@ -197,6 +197,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p102_physics_joint_integration_tests \
 	build/p103_net_emulator_tests \
 	build/p104_engine_settings_tests \
+	build/p105_variable_dt_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -583,6 +584,9 @@ build/p103_net_emulator_tests: build/libheadless.a tests/p103_net_emulator_tests
 build/p104_engine_settings_tests: build/libheadless.a tests/p104_engine_settings_tests.c | build
 	$(CC) $(CFLAGS) tests/p104_engine_settings_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p105_variable_dt_tests: build/libheadless.a tests/p105_variable_dt_tests.c | build
+	$(CC) $(CFLAGS) tests/p105_variable_dt_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -873,6 +877,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p102_physics_joint_integration_tests \
 	&& ./build/p103_net_emulator_tests \
 	&& ./build/p104_engine_settings_tests \
+	&& ./build/p105_variable_dt_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \
 	&& ./build/p007_net_rtt_retransmit_tests \

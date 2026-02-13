@@ -58,6 +58,7 @@ typedef struct phys_world_config {
     float    speculative_margin;       /**< Max separation for speculative contacts (0 = disabled). */
     uint32_t max_island_bodies;        /**< Max bodies per island for splitting (0 = unlimited). */
     uint32_t max_joints;               /**< Maximum number of joints. */
+    float    max_dt_override;          /**< Max dt when using variable timestep (multiplier of fixed_dt, default 3.0). */
 } phys_world_config_t;
 
 /* ── World container ────────────────────────────────────────────── */
@@ -116,6 +117,12 @@ typedef struct phys_world {
 
     /* Tick counter. */
     uint64_t tick_count;
+
+    /** When positive, overrides fixed_dt for the next tick.  Set by
+     *  the tick runner when sustained overload is detected.  Clamped to
+     *  config.max_dt_override × fixed_dt.  Reset to 0 when performance
+     *  recovers.  Written only by the tick thread. */
+    float dt_override;
 
     /** Timestamp (nanoseconds, CLOCK_MONOTONIC) of the last tick
      *  completion.  Used to enforce a minimum wall-clock interval

@@ -29,10 +29,20 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
 
     const phys_world_config_t *cfg = &world->config;
 
-    /* Global timing. */
+    /* Global timing.
+     * When dt_override > 0, use it instead of fixed_dt (variable timestep
+     * under sustained overload).  Clamp to max_dt_override × fixed_dt to
+     * prevent physics explosions from a single huge frame. */
+    float dt = cfg->fixed_dt;
+    if (world->dt_override > 0.0f) {
+        float max_dt = cfg->max_dt_override * cfg->fixed_dt;
+        dt = world->dt_override;
+        if (dt > max_dt) { dt = max_dt; }
+    }
+
     plan->substeps          = cfg->default_substeps;
     plan->solver_iterations = cfg->default_solver_iterations;
-    plan->dt                = cfg->fixed_dt;
+    plan->dt                = dt;
 
     /* Guard against zero substeps to avoid division by zero. */
     if (plan->substeps > 0) {

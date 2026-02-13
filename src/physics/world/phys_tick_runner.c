@@ -33,6 +33,22 @@ static uint64_t runner_clock_ns_(void) {
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
+/* ── Overload detection ──────────────────────────────────────────── */
+
+/** Rolling window size for overload detection (must fit in uint16_t). */
+#define OVERLOAD_WINDOW 16
+
+/** Number of overrun ticks (out of OVERLOAD_WINDOW) to trigger
+ *  variable-dt mode. */
+#define OVERLOAD_THRESHOLD 12
+
+/** Count set bits in a 16-bit value. */
+static int popcount16_(uint16_t v) {
+    int c = 0;
+    while (v) { c += v & 1; v >>= 1; }
+    return c;
+}
+
 /** Thread entry point: loops continuously, one tick per iteration.
  *  Pacing uses nanosleep — no fiber yield needed. */
 static void *tick_thread_fn_(void *user_data) {
@@ -41,26 +57,55 @@ static void *tick_thread_fn_(void *user_data) {
     const uint64_t target_ns =
         (uint64_t)(r->world->config.fixed_dt * 1e9f);
 
+    /* Rolling bitfield: bit i = 1 if i-th most recent tick overran. */
+    uint16_t overload_history = 0;
+
     while (!atomic_load_explicit(&r->stop_requested, memory_order_acquire)) {
 
         /* Pace: sleep until fixed_dt has elapsed since last tick. */
+        uint64_t wall_elapsed_ns = 0;
         if (last_tick_ns != 0) {
             uint64_t now = runner_clock_ns_();
-            uint64_t elapsed = now - last_tick_ns;
-            if (elapsed < target_ns) {
-                uint64_t remain = target_ns - elapsed;
+            wall_elapsed_ns = now - last_tick_ns;
+            if (wall_elapsed_ns < target_ns) {
+                uint64_t remain = target_ns - wall_elapsed_ns;
                 struct timespec ts = {
                     .tv_sec  = (time_t)(remain / 1000000000ULL),
                     .tv_nsec = (long)(remain % 1000000000ULL)
                 };
                 nanosleep(&ts, NULL);
+                wall_elapsed_ns = target_ns; /* slept to target */
             }
             if (atomic_load_explicit(&r->stop_requested,
                                      memory_order_acquire)) {
                 break;
             }
         }
-        last_tick_ns = runner_clock_ns_();
+
+        uint64_t tick_wall_start = runner_clock_ns_();
+        if (last_tick_ns != 0) {
+            /* Recompute actual elapsed since last tick_wall_start, including
+             * any sleep.  This is the true wall-clock interval. */
+            wall_elapsed_ns = tick_wall_start - last_tick_ns;
+        }
+        last_tick_ns = tick_wall_start;
+
+        /* Update overload history: shift in a 1 if we overran, 0 if not. */
+        if (wall_elapsed_ns > 0) {
+            int overran = (wall_elapsed_ns > target_ns) ? 1 : 0;
+            overload_history = (uint16_t)((overload_history << 1) |
+                                          (uint16_t)overran);
+        }
+
+        /* Decide whether to use variable dt. */
+        int overload_count = popcount16_(overload_history);
+        if (overload_count >= OVERLOAD_THRESHOLD && wall_elapsed_ns > 0) {
+            /* Sustained overload: use actual wall time as dt. */
+            r->world->dt_override = (float)wall_elapsed_ns * 1e-9f;
+        } else {
+            /* Normal operation or recovery: use fixed dt. */
+            r->world->dt_override = 0.0f;
+        }
 
         /* Drain spawns/mutations before tick. */
         if (r->cmd_channel) {

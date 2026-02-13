@@ -478,6 +478,7 @@ THOUSANDS OF BODIES, SPARSE GRAPH:
 | Parameter                | Value  | Notes                                     |
 |--------------------------|--------|-------------------------------------------|
 | fixed_dt                 | 1/60   | 60 Hz tick rate                           |
+| max_dt_override          | 3.0    | Variable-dt cap (multiplier of fixed_dt)  |
 | gravity                  | -9.81  | Y-down                                    |
 | default_substeps         | 1      | Per-tier substep counts override this     |
 | default_solver_iterations| 8      | TGS constraint iterations per substep     |
@@ -516,6 +517,16 @@ SOR tuning notes:
 - Omega ≥ 1.3 causes friction rows to overshoot, resulting in box sliding.
 - Warmstarting lambda writeback provides a better initial guess, allowing
   fewer iterations (base 8 vs 10) while maintaining stability.
+
+Variable-dt fallback (phys_tick_runner.c):
+- The tick runner tracks a rolling 16-tick history of overrun vs on-time ticks.
+- When 12+ of the last 16 ticks exceeded the target period, the runner switches
+  to variable-dt mode: dt_override is set to actual wall-clock elapsed time.
+- dt_override is clamped to max_dt_override × fixed_dt (default 3×, i.e. 50 ms).
+- When performance recovers (< 12 overruns), dt_override resets to 0 and the
+  simulation returns to fixed timestep.
+- This prevents time accumulation debt (the "spiral of death") under sustained
+  load by letting the simulation run slower but without skipping simulation time.
 
 Joint constraint tuning (set per-joint at creation):
 | Parameter                | Value  | Notes                                     |

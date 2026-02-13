@@ -8,6 +8,8 @@
 # - Buffer swap happens once per substep.
 # - XPBD + explicit position-projection stages are not currently part of tick.c; split impulse
 #   position correction is fused into TGS via pseudo-velocities.
+# - Under sustained overload (12+ of last 16 ticks overrun), the tick runner
+#   switches to variable-dt mode using actual wall time (capped at 3× fixed_dt).
 #
 # Zone names follow pattern: Phys.Stage.DescriptiveParticiple
 #
