@@ -28,7 +28,7 @@ static FILE *open_ffmpeg_pipe_(int width, int height, int fps,
              "-video_size %dx%d -framerate %d "
              "-i pipe:0 "
              "-vf vflip "
-             "-c:v libx264 -preset fast -crf 20 -pix_fmt yuv420p "
+             "-c:v libx264 -preset fast -crf 18 -pix_fmt yuv444p "
              "%s 2>/dev/null",
              width, height, fps, output_path);
     return popen(cmd, "w");
