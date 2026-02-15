@@ -350,5 +350,28 @@ void phys_stage_broadphase_par(const phys_broadphase_args_t *args,
     if (final_count > args->max_pairs) {
         final_count = args->max_pairs;
     }
+
+    /* ── Halfspace pass (sequential, few halfspaces) ───────────── */
+    for (uint32_t h = 0; h < args->halfspace_body_count; ++h) {
+        uint32_t hs_body = args->halfspace_bodies[h];
+
+        for (int tier = PHYS_TIER_0_DIRECT; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
+            const phys_tier_list_t *list = &args->tier_lists->tiers[tier];
+            for (uint32_t i = 0; i < list->count; ++i) {
+                uint32_t dyn = list->indices[i];
+                if (dyn == hs_body) continue;
+
+                uint32_t lo = (dyn < hs_body) ? dyn : hs_body;
+                uint32_t hi = (dyn < hs_body) ? hs_body : dyn;
+
+                if (final_count < args->max_pairs) {
+                    args->pairs_out[final_count].body_a = lo;
+                    args->pairs_out[final_count].body_b = hi;
+                    final_count++;
+                }
+            }
+        }
+    }
+
     *args->pair_count_out = final_count;
 }

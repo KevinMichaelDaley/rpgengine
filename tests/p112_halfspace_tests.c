@@ -164,8 +164,9 @@ static int test_sphere_vs_halfspace_overlap(void)
     ASSERT_INT_EQ(1, (int)candidates[0].contact_count);
     /* Penetration = radius - distance_from_plane = 1.0 - 0.5 = 0.5 */
     ASSERT_FLOAT_NEAR(0.5f, candidates[0].contacts[0].penetration, 0.01f);
-    /* Normal should point from halfspace to sphere: (0,1,0) */
-    ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, 1.0f, 0.0f}),
+    /* Normal points from shape (body_a) toward halfspace (body_b),
+     * i.e. into the solid half = (0,-1,0). */
+    ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, -1.0f, 0.0f}),
                      candidates[0].contacts[0].normal, 0.01f);
     return 0;
 }
@@ -337,7 +338,7 @@ static int test_capsule_vs_halfspace_overlap(void)
     /* Deepest point is at bottom of capsule: Y = 0.5 - 1.0 - 0.3 = -0.8
      * Penetration = 0.8 */
     ASSERT_FLOAT_NEAR(0.8f, candidates[0].contacts[0].penetration, 0.01f);
-    ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, 1.0f, 0.0f}),
+    ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, -1.0f, 0.0f}),
                      candidates[0].contacts[0].normal, 0.01f);
     return 0;
 }
@@ -429,10 +430,10 @@ static int test_box_vs_halfspace_overlap(void)
      * All 4 penetrate by 0.2. */
     ASSERT_TRUE(candidates[0].contact_count >= 1);
     ASSERT_TRUE(candidates[0].contact_count <= 4);
-    /* All contacts should have penetration ~0.2 and normal (0,1,0). */
+    /* All contacts should have penetration ~0.2 and normal (0,-1,0). */
     for (int j = 0; j < candidates[0].contact_count; j++) {
         ASSERT_FLOAT_NEAR(0.2f, candidates[0].contacts[j].penetration, 0.01f);
-        ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, 1.0f, 0.0f}),
+        ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, -1.0f, 0.0f}),
                          candidates[0].contacts[j].normal, 0.01f);
     }
     return 0;
@@ -524,7 +525,7 @@ static int test_sphere_vs_tilted_halfspace(void)
 
     ASSERT_INT_EQ(1, (int)count);
     ASSERT_FLOAT_NEAR(1.0f, candidates[0].contacts[0].penetration, 0.01f);
-    ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, inv_sqrt2, inv_sqrt2}),
+    ASSERT_VEC3_NEAR(((phys_vec3_t){0.0f, -inv_sqrt2, -inv_sqrt2}),
                      candidates[0].contacts[0].normal, 0.01f);
     return 0;
 }

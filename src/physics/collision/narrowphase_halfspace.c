@@ -54,7 +54,10 @@ bool phys_sphere_vs_halfspace(
     phys_vec3_t contact_pt = vec3_sub(sphere_center,
                                        vec3_scale(plane_normal, signed_dist));
 
-    contact_out->normal = plane_normal;
+    /* Normal points from the shape (body_a after type-swap) toward the
+     * halfspace (body_b), i.e. INTO the solid half.  The plane_normal
+     * points outward, so we negate it. */
+    contact_out->normal = vec3_scale(plane_normal, -1.0f);
     contact_out->penetration = pen;
     contact_out->point_world = contact_pt;
     contact_out->local_a = (phys_vec3_t){0, 0, 0};
@@ -108,7 +111,9 @@ bool phys_capsule_vs_halfspace(
     phys_vec3_t contact_pt = vec3_sub(deepest_center,
                                        vec3_scale(plane_normal, deepest_dist));
 
-    contact_out->normal = plane_normal;
+    /* Normal points from the shape (body_a) toward the halfspace (body_b),
+     * i.e. into the solid half.  Negate the outward plane_normal. */
+    contact_out->normal = vec3_scale(plane_normal, -1.0f);
     contact_out->penetration = pen;
     contact_out->point_world = contact_pt;
     contact_out->local_a = (phys_vec3_t){0, 0, 0};
@@ -188,7 +193,7 @@ int phys_box_vs_halfspace(
         phys_vec3_t contact_pt = vec3_sub(verts[i],
                                            vec3_scale(plane_normal, signed_dist));
 
-        contacts_out[i].normal = plane_normal;
+        contacts_out[i].normal = vec3_scale(plane_normal, -1.0f);
         contacts_out[i].penetration = pens[i];
         contacts_out[i].point_world = contact_pt;
         contacts_out[i].local_a = (phys_vec3_t){0, 0, 0};

@@ -69,6 +69,15 @@ typedef struct phys_broadphase_args {
     const uint8_t *static_bucket_flags;
     uint32_t static_bucket_flag_count;
 
+    /** Halfspace body indices.  Halfspaces are infinite planes that cannot
+     * participate in spatial grids or BVHs, so broadphase pairs every active
+     * dynamic/kinematic body with each halfspace body directly.
+     *
+     * May be NULL when halfspace_body_count == 0.
+     */
+    const uint32_t *halfspace_bodies;
+    uint32_t halfspace_body_count;
+
     phys_collision_pair_t *pairs_out; /**< Caller-allocated output buffer. */
     uint32_t max_pairs;               /**< Capacity of pairs_out. */
     uint32_t *pair_count_out;         /**< Receives final pair count. */

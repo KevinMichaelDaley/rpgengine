@@ -234,5 +234,30 @@ void phys_stage_broadphase(const phys_broadphase_args_t *args) {
         }
     }
 
+    /* ── Halfspace pass ──────────────────────────────────────────── */
+    /* Halfspaces are infinite planes — they cannot participate in a
+     * spatial grid or BVH.  Pair every active tiered body with each
+     * halfspace body directly. */
+    for (uint32_t h = 0; h < args->halfspace_body_count; ++h) {
+        uint32_t hs_body = args->halfspace_bodies[h];
+
+        for (int tier = PHYS_TIER_0_DIRECT; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
+            const phys_tier_list_t *list = &args->tier_lists->tiers[tier];
+            for (uint32_t i = 0; i < list->count; ++i) {
+                uint32_t dyn = list->indices[i];
+                if (dyn == hs_body) continue;
+
+                uint32_t lo = (dyn < hs_body) ? dyn : hs_body;
+                uint32_t hi = (dyn < hs_body) ? hs_body : dyn;
+
+                if (pair_count < args->max_pairs) {
+                    args->pairs_out[pair_count].body_a = lo;
+                    args->pairs_out[pair_count].body_b = hi;
+                    pair_count++;
+                }
+            }
+        }
+    }
+
     *args->pair_count_out = pair_count;
 }

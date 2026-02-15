@@ -203,7 +203,8 @@ static uint8_t phys_world_try_build_static_bvh(phys_world_t *world,
         if (active && !active[i]) {
             continue;
         }
-        if (phys_body_is_static(&world->body_pool.bodies_curr[i])) {
+        if (phys_body_is_static(&world->body_pool.bodies_curr[i])
+            && world->colliders[i].type != PHYS_SHAPE_HALFSPACE) {
             static_count++;
         }
     }
@@ -228,6 +229,9 @@ static uint8_t phys_world_try_build_static_bvh(phys_world_t *world,
             continue;
         }
         if (!phys_body_is_static(&world->body_pool.bodies_curr[i])) {
+            continue;
+        }
+        if (world->colliders[i].type == PHYS_SHAPE_HALFSPACE) {
             continue;
         }
         static_aabbs[k] = world->aabbs[i];
@@ -371,6 +375,25 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
     });
 
     /* ── Stage 5: Broadphase (once per tick) ───────────────────── */
+    /* Collect halfspace body indices — they need a separate broadphase
+     * pass since infinite planes have no bounding volume. */
+    uint32_t *hs_bodies = NULL;
+    uint32_t hs_count = 0;
+    if (world->halfspace_count > 0) {
+        hs_bodies = phys_frame_arena_alloc(
+            &world->frame_arena,
+            (size_t)world->halfspace_count * sizeof(uint32_t),
+            _Alignof(uint32_t));
+        if (hs_bodies) {
+            for (uint32_t i = 0; i < body_cap; ++i) {
+                if (active && !active[i]) continue;
+                if (world->colliders[i].type == PHYS_SHAPE_HALFSPACE) {
+                    hs_bodies[hs_count++] = i;
+                }
+            }
+        }
+    }
+
     uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
     if (max_pairs > body_cap * 4) {
         max_pairs = body_cap * 4 > 0 ? body_cap * 4 : 1;
@@ -390,6 +413,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             .static_bvh     = world->static_bvh_valid ? &world->static_bvh : NULL,
             .static_bucket_flags = world->static_bucket_flags,
             .static_bucket_flag_count = world->static_bucket_flag_count,
+            .halfspace_bodies = hs_bodies,
+            .halfspace_body_count = hs_count,
             .pairs_out      = pairs,
             .max_pairs      = max_pairs,
             .pair_count_out = &pair_count,

@@ -95,6 +95,12 @@ void phys_stage_spatial_update(const phys_spatial_update_args_t *args) {
                 break;
         }
 
+        /* Never insert halfspaces into the spatial grid — they are
+         * infinite and handled via a separate broadphase pass. */
+        if (collider->type == PHYS_SHAPE_HALFSPACE) {
+            continue;
+        }
+
         /* Insert the body into the spatial grid unless we're excluding
          * static bodies (static geometry is handled via BVH). */
         if (!(args->exclude_static_from_grid && phys_body_is_static(body))) {
