@@ -1,5 +1,8 @@
 build/
 
+# Large binary test assets
+assets/test/
+
 # Legacy (project uses `tk` tickets now)
 .beads/
 

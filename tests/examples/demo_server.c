@@ -33,11 +33,14 @@
 #include "ferrum/net/replication/body_state.h"
 #include "ferrum/net/replication/common.h"
 #include "ferrum/net/topic_channel.h"
+#include "ferrum/mesh/obj_loader.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/joint.h"
+#include "ferrum/physics/mesh_collider.h"
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/phys_tick_runner.h"
 #include "ferrum/physics/game_state.h"
 #include "ferrum/physics/world.h"
@@ -78,6 +81,11 @@
 #define DEMO_CHAIN_MASS        2.0f
 /* Total capsule length along Y: 2*(half_height + radius) */
 #define DEMO_CHAIN_LINK_LEN    (2.0f * (DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS))
+
+/* Armadillo mesh parameters. */
+#define DEMO_ARMADILLO_OBJ     "assets/test/armadillo.obj"
+#define DEMO_ARMADILLO_SCALE   3.0f
+#define DEMO_ARMADILLO_TRI_MAX 220000u
 
 /* ── Globals for signal handling ────────────────────────────────── */
 
@@ -137,8 +145,15 @@ struct demo_ctx {
     /* Capsule chain anchors (kinematic, driven in circles). */
     uint32_t                            chain_anchor_ids[DEMO_NUM_CHAINS];
 
-    /* Per-body shape type (0=box, 1=sphere, 2=capsule). */
+    /* Per-body shape type (0=box, 1=sphere, 2=capsule, 3=mesh). */
     uint8_t                             body_shape_type[DEMO_MAX_BODIES];
+
+    /* Armadillo mesh data (kept alive for mesh collider's borrowed pointer). */
+    phys_triangle_t                    *armadillo_tris;
+    uint32_t                            armadillo_tri_count;
+    phys_mesh_bvh_t                     armadillo_bvh;
+    phys_frame_arena_t                  armadillo_bvh_arena;
+    float                               armadillo_half[3]; /* bounding half-extents */
 };
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -234,7 +249,12 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.rot_w = body->orientation.w;
 
         /* Encode half-extents as float16 (meters). */
-        if (body->flags & PHYS_BODY_FLAG_STATIC) {
+        if (ctx->body_shape_type[bi] == 3u) {
+            /* Mesh: use pre-computed bounding half-extents. */
+            spawn_msg.half_x_f16 = net_float16_from_float(ctx->armadillo_half[0]);
+            spawn_msg.half_y_f16 = net_float16_from_float(ctx->armadillo_half[1]);
+            spawn_msg.half_z_f16 = net_float16_from_float(ctx->armadillo_half[2]);
+        } else if (body->flags & PHYS_BODY_FLAG_STATIC) {
             spawn_msg.half_x_f16 = net_float16_from_float(DEMO_GROUND_HALF_X);
             spawn_msg.half_y_f16 = net_float16_from_float(DEMO_GROUND_HALF_Y);
             spawn_msg.half_z_f16 = net_float16_from_float(DEMO_GROUND_HALF_Z);
@@ -726,6 +746,99 @@ int main(int argc, char **argv) {
                num_stacks, num_stacks * stack_height);
     }
 
+    /* ── Armadillo mesh collider ──────────────────────────────────── */
+    {
+        /* Pass 1: query triangle count. */
+        uint32_t tri_count = 0;
+        int rc = obj_load_triangles(DEMO_ARMADILLO_OBJ, DEMO_ARMADILLO_SCALE,
+                                    NULL, 0, &tri_count);
+        if (rc != 0 && tri_count > 0 && tri_count <= DEMO_ARMADILLO_TRI_MAX) {
+            /* Allocate render vertices (9 floats per tri) and physics tris. */
+            float *verts = (float *)malloc(
+                (size_t)tri_count * 9 * sizeof(float));
+            ctx.armadillo_tris = (phys_triangle_t *)malloc(
+                (size_t)tri_count * sizeof(phys_triangle_t));
+
+            if (verts && ctx.armadillo_tris) {
+                uint32_t loaded = 0;
+                rc = obj_load_triangles(DEMO_ARMADILLO_OBJ, DEMO_ARMADILLO_SCALE,
+                                        verts, tri_count, &loaded);
+                if (rc == 0 && loaded > 0) {
+                    ctx.armadillo_tri_count = loaded;
+
+                    /* Convert flat vertex buffer to phys_triangle_t array
+                     * and compute bounding box. */
+                    float bmin[3] = { 1e30f,  1e30f,  1e30f};
+                    float bmax[3] = {-1e30f, -1e30f, -1e30f};
+                    for (uint32_t i = 0; i < loaded; i++) {
+                        const float *tv = verts + (size_t)i * 9;
+                        for (int vi = 0; vi < 3; vi++) {
+                            float x = tv[vi * 3 + 0];
+                            float y = tv[vi * 3 + 1];
+                            float z = tv[vi * 3 + 2];
+                            ctx.armadillo_tris[i].v[vi] =
+                                (phys_vec3_t){x, y, z};
+                            if (x < bmin[0]) bmin[0] = x;
+                            if (y < bmin[1]) bmin[1] = y;
+                            if (z < bmin[2]) bmin[2] = z;
+                            if (x > bmax[0]) bmax[0] = x;
+                            if (y > bmax[1]) bmax[1] = y;
+                            if (z > bmax[2]) bmax[2] = z;
+                        }
+                    }
+
+                    /* Store half-extents for spawn messages. */
+                    ctx.armadillo_half[0] = (bmax[0] - bmin[0]) * 0.5f;
+                    ctx.armadillo_half[1] = (bmax[1] - bmin[1]) * 0.5f;
+                    ctx.armadillo_half[2] = (bmax[2] - bmin[2]) * 0.5f;
+
+                    /* Build BVH. */
+                    phys_frame_arena_init(&ctx.armadillo_bvh_arena,
+                                          8u * 1024u * 1024u);
+                    phys_mesh_bvh_build(&ctx.armadillo_bvh,
+                                        ctx.armadillo_tris, loaded,
+                                        &ctx.armadillo_bvh_arena);
+
+                    /* Create static body at center, raised so base
+                     * sits on ground (Y=0.1 = ground top). */
+                    float center_y = (bmin[1] + bmax[1]) * 0.5f;
+                    float base_offset = center_y - bmin[1];
+                    (void)base_offset;
+
+                    uint32_t bi = phys_world_create_body(&ctx.world);
+                    phys_body_t *ab = phys_world_get_body(&ctx.world, bi);
+                    /* Place so the mesh min-Y aligns with ground top. */
+                    ab->position = (phys_vec3_t){
+                        5.0f, DEMO_GROUND_HALF_Y - bmin[1], 5.0f};
+                    ab->orientation =
+                        (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+                    ab->flags |= PHYS_BODY_FLAG_STATIC;
+                    phys_body_t *abn = phys_body_pool_get_next(
+                        &ctx.world.body_pool, bi);
+                    *abn = *ab;
+
+                    phys_world_set_mesh_collider(
+                        &ctx.world, bi,
+                        ctx.armadillo_tris, loaded,
+                        &ctx.armadillo_bvh,
+                        (phys_vec3_t){0.0f, 0.0f, 0.0f});
+                    ctx.body_shape_type[bi] = 3u; /* mesh */
+
+                    printf("[server] armadillo mesh body %u: %u tris, "
+                           "half=(%.1f, %.1f, %.1f)\n",
+                           bi, loaded,
+                           (double)ctx.armadillo_half[0],
+                           (double)ctx.armadillo_half[1],
+                           (double)ctx.armadillo_half[2]);
+                }
+            }
+            free(verts);
+        } else {
+            fprintf(stderr, "[server] WARN: could not load %s (rc=%d, "
+                    "tris=%u)\n", DEMO_ARMADILLO_OBJ, rc, tri_count);
+        }
+    }
+
     /* ── 3. Physics command channel + tick runner ───────────────── */
     fr_topic_channel_config_t chan_cfg = {
         .capacity = 256u,
@@ -925,6 +1038,8 @@ int main(int argc, char **argv) {
     fr_topic_channel_destroy(ctx.entity_event_topic);
     net_udp_socket_close(&ctx.sock);
     free(ctx.spawned_to_client);
+    free(ctx.armadillo_tris);
+    phys_frame_arena_destroy(&ctx.armadillo_bvh_arena);
 
     uint64_t final_tick = fr_server_tick_loop_tick_id(&ctx.tick_loop);
     printf("[server] done. %lu ticks, %u bodies spawned.\n",

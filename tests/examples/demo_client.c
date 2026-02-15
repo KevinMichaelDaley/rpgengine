@@ -32,6 +32,8 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 
+#include "ferrum/mesh/obj_loader.h"
+
 #include "ferrum/net/ghost_table.h"
 #include "ferrum/net/prediction.h"
 #include "ferrum/net/quantization.h"
@@ -125,7 +127,7 @@ static void color_from_body(uint16_t body_id, float out_rgb[3]) {
 typedef struct entity_view {
     uint16_t body_id;     /**< Server physics body index. */
     uint8_t  is_static;   /**< Static body (ground plane). */
-    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule. */
+    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule, 3=mesh. */
     float    half_x;      /**< Half-extent X in meters. */
     float    half_y;      /**< Half-extent Y in meters. */
     float    half_z;      /**< Half-extent Z in meters. */
@@ -158,6 +160,9 @@ typedef struct gl_ctx {
     vbo_t             cap_vbo;   /* capsule mesh */
     vao_t             cap_vao;
     uint32_t          cap_vert_count; /* number of capsule vertices */
+    vbo_t             arm_vbo;   /* armadillo mesh */
+    vao_t             arm_vao;
+    uint32_t          arm_vert_count; /* number of armadillo vertices */
 } gl_ctx_t;
 
 static void *sdl_get_proc(const char *name, void *user) {
@@ -362,6 +367,37 @@ static int gl_init(gl_ctx_t *ctx) {
                             3u * sizeof(float));
     }
 
+    /* Armadillo mesh VBO + VAO. */
+    {
+        uint32_t tri_count = 0;
+        int rc = obj_load_triangles("assets/test/armadillo.obj",
+                                    3.0f, NULL, 0, &tri_count);
+        if (rc != 0 && tri_count > 0) {
+            float *arm_verts = (float *)malloc(
+                (size_t)tri_count * 9 * sizeof(float));
+            if (arm_verts) {
+                uint32_t loaded = 0;
+                rc = obj_load_triangles("assets/test/armadillo.obj",
+                                        3.0f, arm_verts, tri_count, &loaded);
+                if (rc == 0 && loaded > 0) {
+                    ctx->arm_vert_count = loaded * 3;
+                    vbo_create(&ctx->arm_vbo, &ctx->loader);
+                    vbo_upload(&ctx->arm_vbo, GL_ARRAY_BUFFER, arm_verts,
+                               (size_t)loaded * 9 * sizeof(float),
+                               GL_STATIC_DRAW);
+                    vao_create(&ctx->arm_vao, &ctx->loader);
+                    vao_bind_attributes(&ctx->arm_vao, &ctx->arm_vbo,
+                                        &attr, 1u, 3u * sizeof(float));
+                    printf("[client] armadillo mesh loaded: %u tris, "
+                           "%u verts\n", loaded, ctx->arm_vert_count);
+                }
+                free(arm_verts);
+            }
+        } else {
+            fprintf(stderr, "[client] WARN: could not load armadillo.obj\n");
+        }
+    }
+
     glEnable(GL_DEPTH_TEST);
     SDL_GL_SetSwapInterval(1);
 
@@ -372,6 +408,10 @@ static int gl_init(gl_ctx_t *ctx) {
 }
 
 static void gl_shutdown(gl_ctx_t *ctx) {
+    if (ctx->arm_vert_count > 0) {
+        vao_destroy(&ctx->arm_vao);
+        vbo_destroy(&ctx->arm_vbo);
+    }
     vao_destroy(&ctx->cap_vao);
     vbo_destroy(&ctx->cap_vbo);
     vao_destroy(&ctx->vao);
@@ -1128,9 +1168,16 @@ int main(int argc, char **argv) {
 
                     mat4_t t = mat4_translation(pos.x, pos.y, pos.z);
                     mat4_t r = mat4_from_quat(rot);
-                    mat4_t s = mat4_scaling(e->half_x * 2.0f,
-                                            e->half_y * 2.0f,
-                                            e->half_z * 2.0f);
+                    mat4_t s;
+                    if (e->shape_type == 3) {
+                        /* Mesh: vertices are pre-scaled, no additional
+                         * scaling needed. */
+                        s = mat4_scaling(1.0f, 1.0f, 1.0f);
+                    } else {
+                        s = mat4_scaling(e->half_x * 2.0f,
+                                         e->half_y * 2.0f,
+                                         e->half_z * 2.0f);
+                    }
                     mat4_t model = mat4_mul(t, mat4_mul(r, s));
                     mat4_t mvp = mat4_mul(vp, model);
 
@@ -1146,7 +1193,13 @@ int main(int argc, char **argv) {
                     shader_uniform_set_vec3(&gl.uniforms, &gl.program,
                                             "u_color", rgb);
 
-                    if (e->shape_type == 2) {
+                    if (e->shape_type == 3 && gl.arm_vert_count > 0) {
+                        /* Armadillo mesh. */
+                        glBindVertexArray(vao_handle(&gl.arm_vao));
+                        glDrawArrays(GL_TRIANGLES, 0,
+                                     (GLsizei)gl.arm_vert_count);
+                        glBindVertexArray(vao_handle(&gl.vao));
+                    } else if (e->shape_type == 2) {
                         /* Capsule. */
                         glBindVertexArray(vao_handle(&gl.cap_vao));
                         glDrawArrays(GL_TRIANGLES, 0,
