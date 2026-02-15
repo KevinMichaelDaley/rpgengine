@@ -61,11 +61,98 @@ bool phys_ray_vs_triangle(
 
 /* ── Swept Sphere vs Triangle ──────────────────────────────────── */
 
+/* ── Helpers for edge/vertex swept-sphere tests ────────────────── */
+
 /**
- * Swept sphere test: offset the triangle plane by radius along its
- * normal, then ray-test the sphere center against the inflated plane.
- * Also tests swept sphere against the three triangle edges and vertices
- * for edge-grazing cases.
+ * Solve the quadratic a*t^2 + b*t + c = 0 for the smallest root
+ * in [0, cap).  Returns false if no valid root exists.
+ */
+static bool solve_quadratic_smallest(float a, float b, float c,
+                                     float cap, float *t_out)
+{
+    if (fabsf(a) < 1e-12f) {
+        /* Degenerate: linear. */
+        if (fabsf(b) < 1e-12f) return false;
+        float t = -c / b;
+        if (t >= 0.0f && t < cap) { *t_out = t; return true; }
+        return false;
+    }
+    float disc = b * b - 4.0f * a * c;
+    if (disc < 0.0f) return false;
+    float sq = sqrtf(disc);
+    float inv2a = 1.0f / (2.0f * a);
+    float t0 = (-b - sq) * inv2a;
+    float t1 = (-b + sq) * inv2a;
+    if (t0 >= 0.0f && t0 < cap) { *t_out = t0; return true; }
+    if (t1 >= 0.0f && t1 < cap) { *t_out = t1; return true; }
+    return false;
+}
+
+/**
+ * Swept sphere vs single vertex: find earliest t where
+ * |center(t) - vertex|^2 = radius^2.
+ * center(t) = start + t * motion.
+ */
+static bool swept_sphere_vs_vertex(
+    phys_vec3_t start, phys_vec3_t motion,
+    phys_vec3_t vertex, float radius,
+    float cap, float *t_out)
+{
+    phys_vec3_t m = vec3_sub(start, vertex);
+    float a = vec3_dot(motion, motion);
+    float b = 2.0f * vec3_dot(m, motion);
+    float c = vec3_dot(m, m) - radius * radius;
+    return solve_quadratic_smallest(a, b, c, cap, t_out);
+}
+
+/**
+ * Swept sphere vs edge segment (v0→v1): find earliest t where
+ * distance from center(t) to the line segment equals radius,
+ * AND the projection along the edge is within [0, 1].
+ *
+ * We decompose into components along and perpendicular to the edge.
+ * The perpendicular distance squared = radius^2 gives a quadratic in t.
+ */
+static bool swept_sphere_vs_edge(
+    phys_vec3_t start, phys_vec3_t motion,
+    phys_vec3_t v0, phys_vec3_t v1,
+    float radius, float cap, float *t_out)
+{
+    phys_vec3_t edge = vec3_sub(v1, v0);
+    float edge_sq = vec3_dot(edge, edge);
+    if (edge_sq < 1e-12f) {
+        return swept_sphere_vs_vertex(start, motion, v0, radius, cap, t_out);
+    }
+    float inv_edge_sq = 1.0f / edge_sq;
+
+    phys_vec3_t m = vec3_sub(start, v0);
+    float m_dot_e = vec3_dot(m, edge);
+    float d_dot_e = vec3_dot(motion, edge);
+
+    /* Perpendicular components of m and motion relative to edge. */
+    phys_vec3_t m_perp = vec3_sub(m, vec3_scale(edge, m_dot_e * inv_edge_sq));
+    phys_vec3_t d_perp = vec3_sub(motion, vec3_scale(edge, d_dot_e * inv_edge_sq));
+
+    float a = vec3_dot(d_perp, d_perp);
+    float b = 2.0f * vec3_dot(m_perp, d_perp);
+    float c = vec3_dot(m_perp, m_perp) - radius * radius;
+
+    float t;
+    if (!solve_quadratic_smallest(a, b, c, cap, &t)) return false;
+
+    /* Verify contact point projects within the edge segment [0, 1]. */
+    float s = (m_dot_e + t * d_dot_e) * inv_edge_sq;
+    if (s < 0.0f || s > 1.0f) return false;
+
+    *t_out = t;
+    return true;
+}
+
+/**
+ * Swept sphere vs single triangle — full feature test.
+ *
+ * Tests the face (inflated plane), the 3 edges (cylinder test),
+ * and the 3 vertices (sphere test).  Returns the earliest TOI.
  */
 bool phys_swept_sphere_vs_triangle(
     phys_vec3_t start,
@@ -90,23 +177,31 @@ bool phys_swept_sphere_vs_triangle(
     /* Signed distances from start/end to the triangle plane. */
     float d_start = vec3_dot(vec3_sub(start, tri->v[0]), n);
     float d_end   = vec3_dot(vec3_sub(end,   tri->v[0]), n);
-
-    /* We want to find t where |d(t)| = radius.
-     * d(t) = d_start + t * (d_end - d_start).
-     * Two solutions: d(t) = +radius and d(t) = -radius. */
     float d_delta = d_end - d_start;
-    float best_t = 2.0f; /* sentinel > 1 */
 
-    /* Test both plane offsets: +radius (approaching from front) and
-     * -radius (approaching from back). */
+    float best_t = 1.0f + 1e-5f; /* sentinel > 1 */
+    phys_vec3_t best_normal = n;
+
+    /* ── Face test: find t where signed distance = ±radius ───── */
     for (int side = 0; side < 2; side++) {
         float target = (side == 0) ? radius : -radius;
         if (fabsf(d_delta) < 1e-9f) {
-            /* Moving parallel to plane. Check if already within radius. */
-            if (fabsf(d_start) <= radius) {
-                /* Already intersecting at t=0. */
-                if (0.0f < best_t) {
-                    best_t = 0.0f;
+            if (fabsf(d_start) <= radius && 0.0f < best_t) {
+                /* Already within radius — check face containment. */
+                phys_vec3_t proj = vec3_sub(start, vec3_scale(n, d_start));
+                phys_vec3_t v0p = vec3_sub(proj, tri->v[0]);
+                float d00 = vec3_dot(e0, e0), d01 = vec3_dot(e0, e1);
+                float d11 = vec3_dot(e1, e1);
+                float d20 = vec3_dot(v0p, e0), d21 = vec3_dot(v0p, e1);
+                float denom = d00 * d11 - d01 * d01;
+                if (fabsf(denom) > 1e-9f) {
+                    float bv = (d11 * d20 - d01 * d21) / denom;
+                    float bw = (d00 * d21 - d01 * d20) / denom;
+                    float bu = 1.0f - bv - bw;
+                    if (bu >= -0.01f && bv >= -0.01f && bw >= -0.01f) {
+                        best_t = 0.0f;
+                        best_normal = (d_start >= 0.0f) ? n : vec3_scale(n, -1.0f);
+                    }
                 }
             }
             continue;
@@ -114,35 +209,71 @@ bool phys_swept_sphere_vs_triangle(
         float t = (target - d_start) / d_delta;
         if (t < 0.0f || t > 1.0f || t >= best_t) continue;
 
-        /* Check if the contact point is inside the triangle. */
         phys_vec3_t center_at_t = vec3_add(start, vec3_scale(motion, t));
         phys_vec3_t proj = vec3_sub(center_at_t, vec3_scale(n, target));
 
-        /* Barycentric test on the projected point. */
         phys_vec3_t v0p = vec3_sub(proj, tri->v[0]);
-        float d00 = vec3_dot(e0, e0);
-        float d01 = vec3_dot(e0, e1);
+        float d00 = vec3_dot(e0, e0), d01 = vec3_dot(e0, e1);
         float d11 = vec3_dot(e1, e1);
-        float d20 = vec3_dot(v0p, e0);
-        float d21 = vec3_dot(v0p, e1);
+        float d20 = vec3_dot(v0p, e0), d21 = vec3_dot(v0p, e1);
         float denom = d00 * d11 - d01 * d01;
         if (fabsf(denom) < 1e-9f) continue;
         float bary_v = (d11 * d20 - d01 * d21) / denom;
         float bary_w = (d00 * d21 - d01 * d20) / denom;
         float bary_u = 1.0f - bary_v - bary_w;
 
-        /* Small tolerance for edge cases. */
         if (bary_u >= -0.01f && bary_v >= -0.01f && bary_w >= -0.01f) {
             best_t = t;
+            float d_at_hit = d_start + t * d_delta;
+            best_normal = (d_at_hit >= 0.0f) ? n : vec3_scale(n, -1.0f);
+        }
+    }
+
+    /* ── Edge tests: swept sphere vs each of the 3 edges ─────── */
+    static const int edge_idx[3][2] = {{0,1}, {1,2}, {2,0}};
+    for (int ei = 0; ei < 3; ei++) {
+        float t;
+        if (swept_sphere_vs_edge(start, motion,
+                                  tri->v[edge_idx[ei][0]],
+                                  tri->v[edge_idx[ei][1]],
+                                  radius, best_t, &t)) {
+            best_t = t;
+            /* Normal: from closest point on edge toward sphere center. */
+            phys_vec3_t center_at_t = vec3_add(start, vec3_scale(motion, t));
+            phys_vec3_t ev = vec3_sub(tri->v[edge_idx[ei][1]],
+                                       tri->v[edge_idx[ei][0]]);
+            float ev_sq = vec3_dot(ev, ev);
+            phys_vec3_t cv = vec3_sub(center_at_t, tri->v[edge_idx[ei][0]]);
+            float s = vec3_dot(cv, ev) / ev_sq;
+            if (s < 0.0f) s = 0.0f;
+            if (s > 1.0f) s = 1.0f;
+            phys_vec3_t closest = vec3_add(tri->v[edge_idx[ei][0]],
+                                            vec3_scale(ev, s));
+            phys_vec3_t diff = vec3_sub(center_at_t, closest);
+            float diff_len = sqrtf(vec3_dot(diff, diff));
+            best_normal = (diff_len > 1e-9f)
+                ? vec3_scale(diff, 1.0f / diff_len) : n;
+        }
+    }
+
+    /* ── Vertex tests: swept sphere vs each of the 3 vertices ── */
+    for (int vi = 0; vi < 3; vi++) {
+        float t;
+        if (swept_sphere_vs_vertex(start, motion, tri->v[vi],
+                                    radius, best_t, &t)) {
+            best_t = t;
+            phys_vec3_t center_at_t = vec3_add(start, vec3_scale(motion, t));
+            phys_vec3_t diff = vec3_sub(center_at_t, tri->v[vi]);
+            float diff_len = sqrtf(vec3_dot(diff, diff));
+            best_normal = (diff_len > 1e-9f)
+                ? vec3_scale(diff, 1.0f / diff_len) : n;
         }
     }
 
     if (best_t > 1.0f) return false;
 
     *t_out = best_t;
-    /* Normal points toward the sphere (away from triangle surface). */
-    float d_at_hit = d_start + best_t * d_delta;
-    *normal_out = (d_at_hit >= 0.0f) ? n : vec3_scale(n, -1.0f);
+    *normal_out = best_normal;
     return true;
 }
 
