@@ -1185,7 +1185,10 @@ int main(int argc, char **argv) {
                                             "u_mvp", mvp.m, 0u);
 
                     float rgb[3];
-                    if (e->is_static) {
+                    if (e->shape_type == 3) {
+                        /* Armadillo: warm orange-brown. */
+                        rgb[0] = 0.85f; rgb[1] = 0.55f; rgb[2] = 0.25f;
+                    } else if (e->is_static) {
                         rgb[0] = 0.3f; rgb[1] = 0.6f; rgb[2] = 0.3f;
                     } else {
                         color_from_body(e->body_id, rgb);

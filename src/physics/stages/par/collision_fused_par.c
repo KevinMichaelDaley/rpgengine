@@ -203,8 +203,10 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
     else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_MESH) {
         float rs = args->spheres[c0->shape_index].radius;
         const phys_mesh_shape_t *ms = &args->meshes[c1->shape_index];
+        /* Transform primitive into mesh-local space. */
+        phys_vec3_t local_w0 = vec3_sub(w0, w1);
         phys_contact_point_t contacts_buf[4];
-        int nc = phys_sphere_vs_mesh(w0, rs, ms->triangles, &ms->bvh,
+        int nc = phys_sphere_vs_mesh(local_w0, rs, ms->triangles, &ms->bvh,
                                       args->speculative_margin,
                                       contacts_buf, 4);
         if (nc > 0) {
@@ -213,6 +215,8 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
             cand_out->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
             for (int j = 0; j < cand_out->contact_count; j++) {
                 cand_out->contacts[j] = contacts_buf[j];
+                cand_out->contacts[j].point_world = vec3_add(
+                    cand_out->contacts[j].point_world, w1);
                 cand_out->contacts[j].normal = vec3_scale(
                     cand_out->contacts[j].normal, -1.0f);
             }
@@ -223,8 +227,9 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
     else if (c0->type == PHYS_SHAPE_BOX && c1->type == PHYS_SHAPE_MESH) {
         phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
         const phys_mesh_shape_t *ms = &args->meshes[c1->shape_index];
+        phys_vec3_t local_w0 = vec3_sub(w0, w1);
         phys_contact_point_t contacts_buf[4];
-        int nc = phys_box_vs_mesh(w0, q0, he, ms->triangles, &ms->bvh,
+        int nc = phys_box_vs_mesh(local_w0, q0, he, ms->triangles, &ms->bvh,
                                    args->speculative_margin,
                                    contacts_buf, 4);
         if (nc > 0) {
@@ -233,6 +238,8 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
             cand_out->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
             for (int j = 0; j < cand_out->contact_count; j++) {
                 cand_out->contacts[j] = contacts_buf[j];
+                cand_out->contacts[j].point_world = vec3_add(
+                    cand_out->contacts[j].point_world, w1);
                 cand_out->contacts[j].normal = vec3_scale(
                     cand_out->contacts[j].normal, -1.0f);
             }
@@ -243,8 +250,9 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
     else if (c0->type == PHYS_SHAPE_CAPSULE && c1->type == PHYS_SHAPE_MESH) {
         const phys_capsule_t *cap = &args->capsules[c0->shape_index];
         const phys_mesh_shape_t *ms = &args->meshes[c1->shape_index];
+        phys_vec3_t local_w0 = vec3_sub(w0, w1);
         phys_contact_point_t contacts_buf[4];
-        int nc = phys_capsule_vs_mesh(w0, q0, cap->radius, cap->half_height,
+        int nc = phys_capsule_vs_mesh(local_w0, q0, cap->radius, cap->half_height,
                                        ms->triangles, &ms->bvh,
                                        args->speculative_margin,
                                        contacts_buf, 4);
@@ -254,6 +262,8 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
             cand_out->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
             for (int j = 0; j < cand_out->contact_count; j++) {
                 cand_out->contacts[j] = contacts_buf[j];
+                cand_out->contacts[j].point_world = vec3_add(
+                    cand_out->contacts[j].point_world, w1);
                 cand_out->contacts[j].normal = vec3_scale(
                     cand_out->contacts[j].normal, -1.0f);
             }
