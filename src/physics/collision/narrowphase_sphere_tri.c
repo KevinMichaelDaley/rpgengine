@@ -84,23 +84,44 @@ bool phys_sphere_vs_triangle(
 
     phys_vec3_t diff = vec3_sub(center, closest);
     float dist_sq = vec3_dot(diff, diff);
-    float threshold = radius + spec_margin;
-
-    if (dist_sq > threshold * threshold) return false;
-
     float dist = sqrtf(dist_sq);
 
+    /* Compute triangle face normal. */
+    phys_vec3_t e0 = vec3_sub(tri->v[1], tri->v[0]);
+    phys_vec3_t e1 = vec3_sub(tri->v[2], tri->v[0]);
+    phys_vec3_t tri_normal = vec3_cross(e0, e1);
+    float tri_len = sqrtf(vec3_dot(tri_normal, tri_normal));
+    if (tri_len > 1e-9f) {
+        tri_normal = vec3_scale(tri_normal, 1.0f / tri_len);
+    } else {
+        tri_normal = (phys_vec3_t){0, 1, 0};
+    }
+
+    /* Check which side of the triangle the sphere center is on.
+     * Negative dot means the center is on the backface side
+     * (behind the triangle), indicating the sphere has penetrated
+     * through the surface — treat the mesh as solid by pushing the
+     * sphere back toward the front face. */
+    float side = vec3_dot(vec3_sub(center, tri->v[0]), tri_normal);
+    bool backface = (side < 0.0f);
+
+    if (backface) {
+        /* Sphere has penetrated through the triangle surface.
+         * Push it back toward the front face (flip the normal). */
+        contact_out->normal = vec3_scale(tri_normal, -1.0f);
+        contact_out->penetration = radius + fabsf(side);
+        contact_out->point_world = closest;
+        contact_out->feature_id = 0;
+        return true;
+    }
+
+    /* Front-face: standard closest-point overlap test. */
+    float threshold = radius + spec_margin;
+    if (dist_sq > threshold * threshold) return false;
+
     if (dist < 1e-6f) {
-        /* Center is on the triangle — use triangle normal. */
-        phys_vec3_t e0 = vec3_sub(tri->v[1], tri->v[0]);
-        phys_vec3_t e1 = vec3_sub(tri->v[2], tri->v[0]);
-        phys_vec3_t n = vec3_cross(e0, e1);
-        float len = sqrtf(vec3_dot(n, n));
-        if (len > 1e-9f) {
-            contact_out->normal = vec3_scale(n, 1.0f / len);
-        } else {
-            contact_out->normal = (phys_vec3_t){0, 1, 0};
-        }
+        /* Center is on the triangle surface. */
+        contact_out->normal = tri_normal;
         contact_out->penetration = radius;
     } else {
         contact_out->normal = vec3_scale(diff, 1.0f / dist);
