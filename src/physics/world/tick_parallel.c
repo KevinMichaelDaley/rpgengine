@@ -31,6 +31,7 @@
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/physics/integrate.h"
+#include "ferrum/physics/ccd.h"
 #include "ferrum/physics/cache_commit.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
@@ -612,6 +613,21 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_integ);
 #endif
+        }
+
+        /* ── Stage 12c: CCD (swept sphere vs static mesh) ─────── */
+        if (world->mesh_count > 0) {
+            phys_stage_ccd(&(phys_ccd_args_t){
+                .bodies_prev = world->body_pool.bodies_curr,
+                .bodies_curr = world->body_pool.bodies_next,
+                .colliders   = world->colliders,
+                .meshes      = world->meshes,
+                .mesh_count  = world->mesh_count,
+                .body_count  = body_cap,
+                .dt          = substep_dt,
+                .spheres     = world->spheres,
+                .capsules    = world->capsules,
+            });
         }
 
         if (!world->prediction_mode) {

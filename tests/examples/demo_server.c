@@ -675,6 +675,7 @@ int main(int argc, char **argv) {
                 phys_body_set_capsule_inertia(cb, DEMO_CHAIN_MASS,
                                               DEMO_CHAIN_RADIUS,
                                               DEMO_CHAIN_HALF_H);
+                cb->flags |= PHYS_BODY_FLAG_CCD;
 
                 /* Copy to next buffer for double-buffered init. */
                 phys_body_t *cb_next =

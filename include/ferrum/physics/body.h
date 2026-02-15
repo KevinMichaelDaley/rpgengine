@@ -18,6 +18,7 @@ extern "C" {
 #define PHYS_BODY_FLAG_STATIC (1u << 0)
 #define PHYS_BODY_FLAG_KINEMATIC (1u << 1)
 #define PHYS_BODY_FLAG_SLEEPING (1u << 2)
+#define PHYS_BODY_FLAG_CCD (1u << 3)  /**< Enable swept CCD vs static mesh. */
 
 /**
  * @brief Core rigid body state.
