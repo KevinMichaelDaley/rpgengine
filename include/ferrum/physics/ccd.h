@@ -28,6 +28,8 @@
 
 struct phys_body;
 struct phys_collider;
+struct phys_constraint;
+struct phys_frame_arena;
 struct phys_mesh_shape;
 
 #ifdef __cplusplus
@@ -114,6 +116,9 @@ typedef struct phys_ccd_args {
     struct phys_body *bodies_curr;     /**< Post-integration write buffer (modified in-place). */
     const struct phys_collider *colliders;
     const struct phys_mesh_shape *meshes;
+    const struct phys_constraint *constraints; /**< Constraint array for neighbor propagation. */
+    struct phys_frame_arena *arena;    /**< Frame arena for scratch allocations. */
+    uint32_t constraint_count;
     uint32_t mesh_count;
     uint32_t body_count;
     float dt;

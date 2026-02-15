@@ -22,7 +22,9 @@
 #include "ferrum/physics/aabb.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/collider.h"
+#include "ferrum/physics/constraint.h"
 #include "ferrum/physics/mesh_collider.h"
+#include "ferrum/physics/phys_pool.h"
 
 /* ── Ray vs Triangle (Möller–Trumbore) ─────────────────────────── */
 
@@ -1061,24 +1063,166 @@ static bool ccd_depenetrate_capsule_vs_meshes(
 }
 
 
+/** Slight radius inflation for CCD.  Adds safety margin at constraint
+ *  junctions where capsule cross-sections are thinnest. */
+#define CCD_INFLATE 0.02f
+
+/**
+ * Process a single body for CCD (depenetration + swept test).
+ * Extracted so the main loop stays readable.
+ */
+static int ccd_process_body(
+    uint32_t i, const phys_ccd_args_t *args,
+    float radius, float half_h, float ccd_radius, float margin)
+{
+    phys_body_t *prev = &args->bodies_prev[i];
+    phys_body_t *curr = &args->bodies_curr[i];
+    const phys_collider_t *col = &args->colliders[i];
+
+    /* ── Phase 1: Depenetration ──────────────────────────────
+     * If the post-integration position is already penetrating
+     * the mesh, push it out.  Catches solver/joint drift. */
+    {
+        float depth = 0.0f;
+        phys_vec3_t normal = {0, 1, 0};
+        bool penetrating = false;
+
+        if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
+            phys_vec3_t offset = ccd_quat_rotate(
+                curr->orientation, col->local_offset);
+            phys_vec3_t center = vec3_add(curr->position, offset);
+            phys_quat_t wr = ccd_quat_mul(
+                curr->orientation, col->local_rotation);
+            phys_vec3_t ax = ccd_quat_rotate(
+                wr, (phys_vec3_t){0, half_h, 0});
+            phys_vec3_t ep_a = vec3_add(center, ax);
+            phys_vec3_t ep_b = vec3_sub(center, ax);
+
+            penetrating = ccd_depenetrate_capsule_vs_meshes(
+                ep_a, ep_b, ccd_radius, args, &depth, &normal);
+        } else {
+            phys_vec3_t center = vec3_add(
+                curr->position, col->local_offset);
+            penetrating = ccd_depenetrate_sphere_vs_meshes(
+                center, ccd_radius, args, &depth, &normal);
+        }
+
+        if (penetrating) {
+            curr->position = vec3_add(curr->position,
+                vec3_scale(normal, depth + 0.01f));
+            float vn = vec3_dot(curr->linear_vel, normal);
+            if (vn < 0.0f) {
+                curr->linear_vel = vec3_sub(
+                    curr->linear_vel, vec3_scale(normal, vn));
+            }
+            return 1;
+        }
+    }
+
+    /* ── Phase 2: Swept CCD ──────────────────────────────── */
+    phys_vec3_t displacement = vec3_sub(curr->position, prev->position);
+    float disp_len = sqrtf(vec3_dot(displacement, displacement));
+    if (disp_len < radius * 0.5f) return 0;
+
+    float best_t = 2.0f;
+    phys_vec3_t best_normal = {0, 1, 0};
+
+    if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
+        ccd_swept_capsule_vs_meshes(
+            prev, curr, col, ccd_radius, half_h,
+            args, margin, &best_t, &best_normal);
+    } else {
+        phys_vec3_t start = vec3_add(prev->position, col->local_offset);
+        phys_vec3_t end_pos = vec3_add(curr->position, col->local_offset);
+        phys_vec3_t best_hit = {0, 0, 0};
+        ccd_sweep_sphere_vs_meshes(
+            start, end_pos, ccd_radius, margin, args,
+            &best_t, &best_normal, &best_hit);
+    }
+
+    if (best_t <= 1.01f) {
+        if (best_t > 1.0f) best_t = 1.0f;
+        phys_vec3_t safe_pos = vec3_add(prev->position,
+            vec3_scale(displacement, best_t));
+        safe_pos = vec3_add(safe_pos,
+            vec3_scale(best_normal, 0.01f));
+        curr->position = safe_pos;
+
+        float vn = vec3_dot(curr->linear_vel, best_normal);
+        if (vn < 0.0f) {
+            curr->linear_vel = vec3_sub(
+                curr->linear_vel, vec3_scale(best_normal, vn));
+        }
+        return 1;
+    }
+    return 0;
+}
+
 int phys_stage_ccd(const phys_ccd_args_t *args) {
     if (!args) return 0;
     if (!args->bodies_prev || !args->bodies_curr || !args->bodies_read)
         return 0;
     if (!args->colliders || args->mesh_count == 0) return 0;
 
-    int clamped = 0;
+    const uint32_t n = args->body_count;
+    const uint32_t mask_words = (n + 31) / 32;
 
-    for (uint32_t i = 0; i < args->body_count; i++) {
-        phys_body_t *prev = &args->bodies_prev[i];
+    /* Arena-allocated bitmask: which bodies to run CCD on.
+     * Reclaimed automatically when the frame arena resets. */
+    if (!args->arena) return 0;
+    uint32_t *ccd_mask = phys_frame_arena_alloc(
+        args->arena, mask_words * sizeof(uint32_t), 4);
+    if (!ccd_mask) return 0;
+    memset(ccd_mask, 0, mask_words * sizeof(uint32_t));
+
+    /* Pass 1: mark bodies that are explicitly CCD-enabled and dynamic. */
+    for (uint32_t i = 0; i < n; i++) {
         const phys_body_t *read = &args->bodies_read[i];
-        phys_body_t *curr = &args->bodies_curr[i];
-
-        /* Read flags/mass from the safe read buffer. */
         if (!(read->flags & PHYS_BODY_FLAG_CCD)) continue;
         if (read->flags & (PHYS_BODY_FLAG_STATIC | PHYS_BODY_FLAG_KINEMATIC))
             continue;
         if (read->inv_mass <= 0.0f) continue;
+        ccd_mask[i / 32] |= (1u << (i % 32));
+    }
+
+    /* Pass 2: propagate to immediate constraint neighbors.
+     * If body A is marked, also mark body B (and vice versa),
+     * but only if the neighbor is dynamic and has a supported shape. */
+    if (args->constraints) {
+        for (uint32_t ci = 0; ci < args->constraint_count; ci++) {
+            const phys_constraint_t *c = &args->constraints[ci];
+            uint32_t a = c->body_a, b = c->body_b;
+            if (a >= n || b >= n) continue;
+
+            bool a_marked = (ccd_mask[a / 32] >> (a % 32)) & 1u;
+            bool b_marked = (ccd_mask[b / 32] >> (b % 32)) & 1u;
+            if (!a_marked && !b_marked) continue;
+
+            /* Propagate to the unmarked neighbor if it's dynamic. */
+            if (a_marked && !b_marked) {
+                const phys_body_t *rb = &args->bodies_read[b];
+                if (rb->inv_mass > 0.0f &&
+                    !(rb->flags & (PHYS_BODY_FLAG_STATIC |
+                                   PHYS_BODY_FLAG_KINEMATIC))) {
+                    ccd_mask[b / 32] |= (1u << (b % 32));
+                }
+            }
+            if (b_marked && !a_marked) {
+                const phys_body_t *ra = &args->bodies_read[a];
+                if (ra->inv_mass > 0.0f &&
+                    !(ra->flags & (PHYS_BODY_FLAG_STATIC |
+                                   PHYS_BODY_FLAG_KINEMATIC))) {
+                    ccd_mask[a / 32] |= (1u << (a % 32));
+                }
+            }
+        }
+    }
+
+    /* Pass 3: run CCD on all marked bodies. */
+    int clamped = 0;
+
+    for (uint32_t i = 0; i < n; i++) {
+        if (!((ccd_mask[i / 32] >> (i % 32)) & 1u)) continue;
 
         const phys_collider_t *col = &args->colliders[i];
 
@@ -1097,93 +1241,14 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
             continue;
         }
 
-        /* Sweep margin: extend by one radius in each direction. */
-        float margin = radius;
+        /* Slight inflate for safety at constraint junctions. */
+        float ccd_radius = radius + CCD_INFLATE;
+        float margin = ccd_radius;
 
-        /* ── Phase 1: Depenetration ──────────────────────────────
-         * If the post-integration position is already penetrating
-         * the mesh, push it out.  Catches solver/joint drift. */
-        {
-            float depth = 0.0f;
-            phys_vec3_t normal = {0, 1, 0};
-            bool penetrating = false;
-
-            if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
-                /* Full capsule depenetration using segment distance. */
-                phys_vec3_t offset = ccd_quat_rotate(
-                    curr->orientation, col->local_offset);
-                phys_vec3_t center = vec3_add(curr->position, offset);
-                phys_quat_t wr = ccd_quat_mul(
-                    curr->orientation, col->local_rotation);
-                phys_vec3_t ax = ccd_quat_rotate(
-                    wr, (phys_vec3_t){0, half_h, 0});
-                phys_vec3_t ep_a = vec3_add(center, ax);
-                phys_vec3_t ep_b = vec3_sub(center, ax);
-
-                penetrating = ccd_depenetrate_capsule_vs_meshes(
-                    ep_a, ep_b, radius, args, &depth, &normal);
-            } else {
-                /* Sphere depenetration. */
-                phys_vec3_t center = vec3_add(
-                    curr->position, col->local_offset);
-                penetrating = ccd_depenetrate_sphere_vs_meshes(
-                    center, radius, args, &depth, &normal);
-            }
-
-            if (penetrating) {
-                curr->position = vec3_add(curr->position,
-                    vec3_scale(normal, depth + 0.01f));
-                float vn = vec3_dot(curr->linear_vel, normal);
-                if (vn < 0.0f) {
-                    curr->linear_vel = vec3_sub(
-                        curr->linear_vel, vec3_scale(normal, vn));
-                }
-                clamped++;
-                continue;
-            }
-        }
-
-        /* ── Phase 2: Swept CCD ──────────────────────────────── */
-        phys_vec3_t displacement = vec3_sub(curr->position, prev->position);
-        float disp_len = sqrtf(vec3_dot(displacement, displacement));
-        if (disp_len < radius * 0.5f) continue;
-
-        float best_t = 2.0f;
-        phys_vec3_t best_normal = {0, 1, 0};
-
-        if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
-            /* Discrete subsampled swept capsule. */
-            ccd_swept_capsule_vs_meshes(
-                prev, curr, col, radius, half_h,
-                args, margin, &best_t, &best_normal);
-        } else {
-            /* Analytic swept sphere. */
-            phys_vec3_t start = vec3_add(prev->position, col->local_offset);
-            phys_vec3_t end_pos = vec3_add(curr->position, col->local_offset);
-            phys_vec3_t best_hit = {0, 0, 0};
-            ccd_sweep_sphere_vs_meshes(
-                start, end_pos, radius, margin, args,
-                &best_t, &best_normal, &best_hit);
-        }
-
-        if (best_t <= 1.01f) {
-            /* Clamp position to safe point just before impact.
-             * Threshold slightly > 1.0 to catch margin remap rounding. */
-            if (best_t > 1.0f) best_t = 1.0f;
-            phys_vec3_t safe_pos = vec3_add(prev->position,
-                vec3_scale(displacement, best_t));
-            safe_pos = vec3_add(safe_pos,
-                vec3_scale(best_normal, 0.01f));
-            curr->position = safe_pos;
-
-            float vn = vec3_dot(curr->linear_vel, best_normal);
-            if (vn < 0.0f) {
-                curr->linear_vel = vec3_sub(
-                    curr->linear_vel, vec3_scale(best_normal, vn));
-            }
-            clamped++;
-        }
+        clamped += ccd_process_body(i, args, radius, half_h,
+                                     ccd_radius, margin);
     }
 
+    /* No free needed — arena memory reclaimed on frame reset. */
     return clamped;
 }
