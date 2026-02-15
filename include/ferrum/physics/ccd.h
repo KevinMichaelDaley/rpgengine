@@ -109,8 +109,9 @@ bool phys_swept_sphere_vs_mesh(
  * @brief Arguments for the CCD stage.
  */
 typedef struct phys_ccd_args {
-    struct phys_body *bodies_prev;     /**< Pre-integration positions. */
-    struct phys_body *bodies_curr;     /**< Post-integration positions (modified in-place). */
+    struct phys_body *bodies_prev;     /**< CCD snapshot from previous tick (sweep origin). */
+    const struct phys_body *bodies_read; /**< Current-frame read buffer (flags, mass). */
+    struct phys_body *bodies_curr;     /**< Post-integration write buffer (modified in-place). */
     const struct phys_collider *colliders;
     const struct phys_mesh_shape *meshes;
     uint32_t mesh_count;

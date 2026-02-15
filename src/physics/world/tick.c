@@ -1030,6 +1030,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         if (world->mesh_count > 0) {
             phys_stage_ccd(&(phys_ccd_args_t){
                 .bodies_prev = world->bodies_ccd_prev,
+                .bodies_read = world->body_pool.bodies_curr,
                 .bodies_curr = world->body_pool.bodies_next,
                 .colliders   = world->colliders,
                 .meshes      = world->meshes,

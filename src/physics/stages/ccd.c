@@ -1063,20 +1063,22 @@ static bool ccd_depenetrate_capsule_vs_meshes(
 
 int phys_stage_ccd(const phys_ccd_args_t *args) {
     if (!args) return 0;
-    if (!args->bodies_prev || !args->bodies_curr) return 0;
+    if (!args->bodies_prev || !args->bodies_curr || !args->bodies_read)
+        return 0;
     if (!args->colliders || args->mesh_count == 0) return 0;
 
     int clamped = 0;
 
     for (uint32_t i = 0; i < args->body_count; i++) {
         phys_body_t *prev = &args->bodies_prev[i];
+        const phys_body_t *read = &args->bodies_read[i];
         phys_body_t *curr = &args->bodies_curr[i];
 
-        /* Only CCD-enabled dynamic bodies. */
-        if (!(prev->flags & PHYS_BODY_FLAG_CCD)) continue;
-        if (prev->flags & (PHYS_BODY_FLAG_STATIC | PHYS_BODY_FLAG_KINEMATIC))
+        /* Read flags/mass from the safe read buffer. */
+        if (!(read->flags & PHYS_BODY_FLAG_CCD)) continue;
+        if (read->flags & (PHYS_BODY_FLAG_STATIC | PHYS_BODY_FLAG_KINEMATIC))
             continue;
-        if (prev->inv_mass <= 0.0f) continue;
+        if (read->inv_mass <= 0.0f) continue;
 
         const phys_collider_t *col = &args->colliders[i];
 
