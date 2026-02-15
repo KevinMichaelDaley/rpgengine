@@ -1237,7 +1237,28 @@ FRACTURE (future):
 - Fracture generates new bodies/colliders
 - Bodies added to pool, spatial index updated next tick
 
-CONTINUOUS COLLISION (future):
-- Broadphase detects fast movers
-- CCD sweep test before integrate
-- Sub-step if tunnel detected
+CONTINUOUS COLLISION DETECTION (implemented):
+- Runs as Stage 12c after integration, before buffer swap.
+- Bodies opt in via PHYS_BODY_FLAG_CCD.
+- Propagates CCD to immediate constraint neighbors (1-hop).
+- Two phases per body:
+  1. Depenetration: if post-integration position is inside mesh, push out.
+  2. Swept test: discrete subsampling along prev→curr trajectory.
+- Supported shapes:
+  - Sphere: continuous swept-sphere vs triangle (Möller–Trumbore).
+  - Capsule: discrete SDF subsampling (4–16 samples along spine sweep).
+  - Box: discrete SDF subsampling with inflated OBB; 3-pass depth test
+    (triangle verts vs box SDF, closest-point-on-triangle vs box SDF,
+    box corners vs triangle plane).
+- On hit: position clamped to safe point, velocity projected along contact normal.
+- Displacement threshold: disp < radius * 0.5 → skip (too slow to tunnel).
+- Files: src/physics/stages/ccd.c, include/ferrum/physics/ccd.h
+
+HALFSPACE COLLIDER (implemented):
+- Infinite planes defined by normal + distance (ax + by + cz = d).
+- Cannot go in spatial grid or BVH (infinite extent).
+- Separate broadphase pass: pairs every active tiered body with each halfspace.
+- Contact convention: normal negated (points into solid half) for solver compatibility.
+- Used for ground planes, invisible walls, ocean surfaces.
+- Files: src/physics/collision/narrowphase_halfspace.c,
+         include/ferrum/physics/halfspace.h

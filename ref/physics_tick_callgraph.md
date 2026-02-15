@@ -90,6 +90,9 @@ phys_world_tick(world, game)
   ├─ Stage 2: phys_stage_spatial_update(... -> world->aabbs, grid)
   ├─ Stage 3: phys_stage_halo_closure(... tier_lists, grid)
   ├─ Stage 5: phys_stage_broadphase(... grid, tier_lists -> pairs[], pair_count)
+  │    ├─ Spatial grid + static BVH overlap tests
+  │    └─ Halfspace pass: pair every active body with each halfspace body
+  │         (halfspaces are infinite, cannot go in grid or BVH)
   └─ for sub in [0..max_substeps):
        ├─ Stage 4: if (sub>0) phys_stage_aabb_update(...)
        ├─ if (!world->prediction_mode):
@@ -116,6 +119,16 @@ phys_world_tick(world, game)
        │    └─ Stage 13: phys_stage_cache_commit(... -> impact_events)
        ├─ Stage 12: phys_stage_integrate(
        │      bodies_curr + velocities (+ pseudo_velocities) -> bodies_next)
+       ├─ Stage 12c: phys_stage_ccd(
+       │      bodies_ccd_prev, bodies_curr, bodies_next,
+       │      colliders, meshes, spheres, capsules, boxes,
+       │      constraints, arena -> clamp fast movers)
+       │    ├─ Pass 1: mark CCD-enabled dynamic bodies
+       │    ├─ Pass 2: propagate to constraint neighbors (1-hop)
+       │    └─ Pass 3: per-body depenetration + swept test
+       │         ├─ sphere: swept-sphere vs triangle (Möller–Trumbore)
+       │         ├─ capsule: discrete SDF subsampling (4–16 samples)
+       │         └─ box: discrete SDF subsampling with inflated OBB
        ├─ phys_body_pool_swap_buffers(&world->body_pool)
        └─ (next substep)
   ├─ world->tick_count++

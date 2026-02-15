@@ -2257,29 +2257,63 @@ Joints contribute to island connectivity.
 
 ---
 
-## Phase 9: Extension - Mesh Colliders
+## Phase 9: Extension - Mesh Colliders ✅ COMPLETE
 
 **Goal:** Triangle mesh collision for static geometry.
 
-### Step 9.1: Mesh Collider Structure
+### Step 9.1: Mesh Collider Structure ✅
 
-BVH over triangles.
-
----
-
-### Step 9.2: Primitive-vs-Mesh Narrowphase
-
-Sphere/box/capsule vs triangle.
+BVH over triangles. Implemented in `mesh_collider.h/c`.
 
 ---
 
-### Step 9.3: Phase 9 Integration Test
+### Step 9.2: Primitive-vs-Mesh Narrowphase ✅
 
-**Test Cases:**
-```c
-// test_sphere_on_terrain_mesh
-// test_box_slides_down_ramp
-```
+Sphere/box/capsule vs triangle. Implemented in:
+- `narrowphase_mesh.c` (sphere, capsule vs mesh)
+- `narrowphase_box_tri.c` (OBB vs triangle, 13-axis SAT)
+
+---
+
+### Step 9.3: Phase 9 Integration Test ✅
+
+Tests: `p107_mesh_collider_bvh_tests.c`, `p108_mesh_narrowphase_tests.c`
+
+---
+
+### Step 9.4: Halfspace Collider ✅
+
+Infinite plane collider for ground/walls. Separate broadphase pass.
+- `halfspace.h`, `narrowphase_halfspace.c`
+- Tests: `p112_halfspace_tests.c`
+
+---
+
+## Phase 10: Continuous Collision Detection ✅ COMPLETE
+
+**Goal:** Prevent fast-moving bodies from tunneling through static mesh geometry.
+
+### Step 10.1: Swept Sphere CCD ✅
+
+Continuous swept-sphere vs triangle (Möller–Trumbore ray-triangle with inflated plane).
+
+### Step 10.2: Swept Capsule CCD ✅
+
+Discrete SDF subsampling (4–16 samples along capsule sweep). Depenetration + swept test.
+
+### Step 10.3: Swept Box CCD ✅
+
+Discrete SDF subsampling with inflated OBB. 3-pass depth test:
+1. Triangle vertices against box SDF
+2. Closest point on triangle to box center against box SDF
+3. Box corners projected onto triangle plane
+
+### Step 10.4: CCD Neighbor Propagation ✅
+
+CCD flag propagates to immediate constraint neighbors (1-hop) to prevent
+chain links from tunneling when only one end has CCD enabled.
+
+Files: `ccd.h`, `ccd.c`. Tests: `p111_ccd_tests.c` (12 tests).
 
 ---
 
@@ -2321,7 +2355,11 @@ include/ferrum/physics/
 ├── snapshot.h
 ├── raycast.h
 ├── phys_jobs.h
-└── joint.h
+├── joint.h
+├── mesh_collider.h
+├── mesh_narrowphase.h
+├── halfspace.h
+└── ccd.h
 
 src/physics/
 ├── body/
@@ -2349,6 +2387,9 @@ src/physics/
 │   ├── narrowphase_sphere_box.c
 │   ├── narrowphase_sphere_capsule.c
 │   ├── narrowphase_box_capsule.c
+│   ├── narrowphase_mesh.c
+│   ├── narrowphase_box_tri.c
+│   ├── narrowphase_halfspace.c
 │   ├── manifold.c
 │   └── manifold_cache.c
 ├── solver/
@@ -2372,10 +2413,12 @@ src/physics/
 │   ├── constraint_build.c
 │   ├── island_build.c
 │   ├── integrate.c
-│   └── cache_commit.c
+│   ├── cache_commit.c
+│   └── ccd.c
 ├── world/
 │   ├── world.c
-│   └── tick.c
+│   ├── tick.c
+│   └── tick_parallel.c
 ├── net/
 │   ├── snapshot_encode.c
 │   └── snapshot_decode.c

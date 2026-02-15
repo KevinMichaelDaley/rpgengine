@@ -1,6 +1,6 @@
 ---
 id: rpg-rnxm
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-15T09:44:09Z

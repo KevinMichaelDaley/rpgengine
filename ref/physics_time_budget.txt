@@ -33,6 +33,9 @@ phys_stage_spatial_update                        Phys.Spatial.UpdatingGrid      
 phys_stage_halo_closure                          Phys.Halo.ClosingNeighbors               4.0
 
 # STAGE 5: BROADPHASE (once per tick)
+# Spatial grid + static BVH overlap tests.
+# Separate halfspace pass: pairs every active body with each halfspace
+# (halfspaces are infinite; skipped from grid and BVH).
 phys_stage_broadphase                            Phys.Broad.FindingPairs                  8.0
 
 # --- SUBSTEP LOOP (typically 2 substeps) ---
@@ -76,6 +79,14 @@ project_joints_nonlinear                         Phys.Solve.ProjectingJoints    
 
 # STAGE 12: INTEGRATE (sub-substepped bodies are skipped)
 phys_stage_integrate                             Phys.Integrate.UpdatingPositions         5.0
+
+# STAGE 12c: CONTINUOUS COLLISION DETECTION (per substep)
+# Runs after integration. Tests CCD-flagged bodies against static meshes.
+# Two phases: depenetration (push out if inside mesh) + swept test.
+# Sphere: continuous Möller–Trumbore.
+# Capsule: discrete SDF subsampling (4–16 samples).
+# Box: discrete SDF subsampling with inflated OBB (up to 16 samples).
+phys_stage_ccd                                   Phys.CCD.ClampingTunnelers               2.0
 
 # STAGE 13: CACHE COMMIT
 phys_stage_cache_commit                          Phys.Cache.CommittingImpulses            2.0
