@@ -665,6 +665,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .dt               = substep_dt,
                 .spheres          = world->spheres,
                 .capsules         = world->capsules,
+                .boxes            = world->boxes,
             });
         }
 
@@ -672,7 +673,6 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         /* Position projection and velocity sync are no longer separate
          * stages — they are fused into the TGS solver via split impulse.
-         * The pseudo_velocities array carries position corrections through
          * the integrator without polluting body velocities. */
 
         /* ── Stage 13: Cache Commit [SYNC] ─────────────────────── */

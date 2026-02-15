@@ -1071,6 +1071,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .dt               = substep_dt,
                 .spheres          = world->spheres,
                 .capsules         = world->capsules,
+                .boxes            = world->boxes,
             });
         }
 

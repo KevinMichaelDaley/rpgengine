@@ -1,10 +1,11 @@
 /**
  * @file ccd.c
- * @brief Continuous collision detection: swept sphere/capsule vs static mesh.
+ * @brief Continuous collision detection: swept sphere/capsule/box vs static mesh.
  *
- * Implements Möller–Trumbore ray-triangle intersection and inflated-plane
- * swept-sphere tests.  The CCD stage runs after integration and clamps
- * fast-moving bodies that would tunnel through static mesh geometry.
+ * Implements Möller–Trumbore ray-triangle intersection, inflated-plane
+ * swept-sphere tests, and discrete SDF-subsampled swept-box tests.
+ * The CCD stage runs after integration and clamps fast-moving bodies
+ * that would tunnel through static mesh geometry.
  *
  * Non-static functions: 4
  *   phys_ray_vs_triangle, phys_swept_sphere_vs_triangle,
@@ -24,6 +25,7 @@
 #include "ferrum/physics/collider.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/mesh_collider.h"
+#include "ferrum/physics/mesh_narrowphase.h"
 #include "ferrum/physics/phys_pool.h"
 
 /* ── Ray vs Triangle (Möller–Trumbore) ─────────────────────────── */
@@ -1062,10 +1064,369 @@ static bool ccd_depenetrate_capsule_vs_meshes(
     return any;
 }
 
-
 /** Slight radius inflation for CCD.  Adds safety margin at constraint
  *  junctions where capsule cross-sections are thinnest. */
 #define CCD_INFLATE 0.02f
+
+/* ── Box SDF depth test ─────────────────────────────────────────── */
+
+/** Rotate vector by conjugate quaternion: q^-1 * v * q. */
+static phys_vec3_t ccd_quat_inv_rotate(phys_quat_t q, phys_vec3_t v) {
+    phys_quat_t conj = {-q.x, -q.y, -q.z, q.w};
+    return ccd_quat_rotate(conj, v);
+}
+
+/**
+ * Signed distance from a point to the surface of an axis-aligned box
+ * centered at origin with the given half-extents.
+ * Negative = inside, positive = outside.
+ * Also writes the outward face normal of the closest face.
+ */
+static float box_sdf(phys_vec3_t local_p, phys_vec3_t he,
+                      phys_vec3_t *normal_out) {
+    /* Per-axis signed distances to each face pair. */
+    float dx = fabsf(local_p.x) - he.x;
+    float dy = fabsf(local_p.y) - he.y;
+    float dz = fabsf(local_p.z) - he.z;
+
+    if (dx <= 0.0f && dy <= 0.0f && dz <= 0.0f) {
+        /* Inside: closest face is the axis with largest (least negative) d. */
+        if (dx >= dy && dx >= dz) {
+            *normal_out = (phys_vec3_t){(local_p.x >= 0.0f) ? 1.0f : -1.0f, 0, 0};
+            return dx;
+        } else if (dy >= dz) {
+            *normal_out = (phys_vec3_t){0, (local_p.y >= 0.0f) ? 1.0f : -1.0f, 0};
+            return dy;
+        } else {
+            *normal_out = (phys_vec3_t){0, 0, (local_p.z >= 0.0f) ? 1.0f : -1.0f};
+            return dz;
+        }
+    }
+
+    /* Outside: Euclidean distance to nearest surface point. */
+    float cx = (dx > 0.0f) ? dx : 0.0f;
+    float cy = (dy > 0.0f) ? dy : 0.0f;
+    float cz = (dz > 0.0f) ? dz : 0.0f;
+    float dist = sqrtf(cx * cx + cy * cy + cz * cz);
+
+    /* Normal: direction from surface to the point. */
+    if (dist > 1e-9f) {
+        *normal_out = (phys_vec3_t){
+            (dx > 0.0f) ? ((local_p.x >= 0.0f) ? 1.0f : -1.0f) : 0.0f,
+            (dy > 0.0f) ? ((local_p.y >= 0.0f) ? 1.0f : -1.0f) : 0.0f,
+            (dz > 0.0f) ? ((local_p.z >= 0.0f) ? 1.0f : -1.0f) : 0.0f,
+        };
+        float nl = sqrtf(vec3_dot(*normal_out, *normal_out));
+        if (nl > 1e-9f) *normal_out = vec3_scale(*normal_out, 1.0f / nl);
+    } else {
+        *normal_out = (phys_vec3_t){0, 1, 0};
+    }
+    return dist;
+}
+
+/**
+ * Test a triangle against an oriented box using the box SDF.
+ *
+ * Two tests are performed:
+ *   1. Each triangle vertex is tested against the box SDF.
+ *   2. The closest point on the triangle to the box center is tested
+ *      against the box SDF (catches face-interior penetration).
+ *
+ * Returns the deepest penetration (positive = overlap) and the
+ * outward normal in world space.  Returns -1 if nothing penetrates.
+ */
+static float box_vs_triangle_sdf(
+    phys_vec3_t box_center, phys_quat_t box_rot, phys_vec3_t half_extents,
+    const phys_triangle_t *tri, phys_vec3_t *normal_out)
+{
+    float deepest = -1.0f;
+    phys_vec3_t best_local_n = {0, 1, 0};
+
+    /* Test 1: triangle vertices against box SDF.
+     * The SDF normal points outward from the box face, which is the
+     * direction to push the triangle vertex OUT of the box.  For CCD
+     * we negate: the box should move in the opposite direction. */
+    for (int vi = 0; vi < 3; vi++) {
+        phys_vec3_t local_p = ccd_quat_inv_rotate(
+            box_rot, vec3_sub(tri->v[vi], box_center));
+
+        phys_vec3_t local_n;
+        float sd = box_sdf(local_p, half_extents, &local_n);
+
+        if (sd < 0.0f) {
+            float pen = -sd;
+            if (pen > deepest) {
+                deepest = pen;
+                /* Negate: push box away from the penetrating vertex. */
+                best_local_n = vec3_scale(local_n, -1.0f);
+            }
+        }
+    }
+
+    /* Test 2: closest point on triangle to box center.
+     * Same normal convention as test 1: negate the SDF normal. */
+    phys_vec3_t tri_normal;
+    phys_vec3_t cp = closest_point_on_triangle(box_center, tri, &tri_normal);
+    phys_vec3_t local_cp = ccd_quat_inv_rotate(
+        box_rot, vec3_sub(cp, box_center));
+
+    phys_vec3_t cp_local_n;
+    float cp_sd = box_sdf(local_cp, half_extents, &cp_local_n);
+    if (cp_sd < 0.0f) {
+        float pen = -cp_sd;
+        if (pen > deepest) {
+            deepest = pen;
+            best_local_n = vec3_scale(cp_local_n, -1.0f);
+        }
+    }
+
+    /* Test 3: 8 box corners projected onto triangle plane.
+     * If a corner is on the front side and the projection lands
+     * inside the triangle, it's penetrating. */
+    phys_vec3_t box_axes[3];
+    box_axes[0] = ccd_quat_rotate(box_rot, (phys_vec3_t){1, 0, 0});
+    box_axes[1] = ccd_quat_rotate(box_rot, (phys_vec3_t){0, 1, 0});
+    box_axes[2] = ccd_quat_rotate(box_rot, (phys_vec3_t){0, 0, 1});
+
+    float signs[8][3] = {
+        { 1, 1, 1}, { 1, 1,-1}, { 1,-1, 1}, { 1,-1,-1},
+        {-1, 1, 1}, {-1, 1,-1}, {-1,-1, 1}, {-1,-1,-1},
+    };
+    for (int ci = 0; ci < 8; ci++) {
+        phys_vec3_t corner = vec3_add(box_center,
+            vec3_add(vec3_scale(box_axes[0], signs[ci][0] * half_extents.x),
+            vec3_add(vec3_scale(box_axes[1], signs[ci][1] * half_extents.y),
+                     vec3_scale(box_axes[2], signs[ci][2] * half_extents.z))));
+
+        /* Signed distance of corner from triangle plane. */
+        float plane_dist = vec3_dot(vec3_sub(corner, tri->v[0]), tri_normal);
+        if (plane_dist < 0.0f || plane_dist > half_extents.x + half_extents.y + half_extents.z)
+            continue;
+
+        /* Check if the projected point is inside the triangle. */
+        phys_vec3_t cp2_n;
+        phys_vec3_t cp2 = closest_point_on_triangle(corner, tri, &cp2_n);
+        phys_vec3_t diff = vec3_sub(cp2, corner);
+        float dist2 = vec3_dot(diff, diff);
+
+        /* If closest point ≈ projection, corner projects inside tri. */
+        if (dist2 < 1e-6f || fabsf(sqrtf(dist2) - plane_dist) < 0.01f) {
+            /* This corner penetrates the triangle. */
+            float pen = plane_dist;
+            if (pen < 1e-6f) continue;
+
+            /* Normal: negate triangle normal so it points from wall
+             * toward the safe side (same convention as tests 1-2). */
+            phys_vec3_t local_n_tri = ccd_quat_inv_rotate(
+                box_rot, vec3_scale(tri_normal, -1.0f));
+            if (pen > deepest) {
+                deepest = pen;
+                best_local_n = local_n_tri;
+            }
+        }
+    }
+
+    if (deepest > 0.0f) {
+        *normal_out = ccd_quat_rotate(box_rot, best_local_n);
+    }
+    return deepest;
+}
+
+/* ── Depenetrate box vs all meshes ─────────────────────────────── */
+
+/**
+ * If the box at its current position overlaps any mesh triangle vertex,
+ * return the deepest penetration depth and outward normal.
+ */
+static bool ccd_depenetrate_box_vs_meshes(
+    phys_vec3_t center, phys_quat_t rotation, phys_vec3_t half_extents,
+    const phys_ccd_args_t *args, float *depth_out, phys_vec3_t *normal_out)
+{
+    float extent_radius = sqrtf(half_extents.x * half_extents.x +
+                                half_extents.y * half_extents.y +
+                                half_extents.z * half_extents.z);
+    phys_aabb_t query = {
+        .min = vec3_sub(center, (phys_vec3_t){extent_radius, extent_radius, extent_radius}),
+        .max = vec3_add(center, (phys_vec3_t){extent_radius, extent_radius, extent_radius}),
+    };
+
+    float deepest = 0.0f;
+    phys_vec3_t best_normal = {0, 1, 0};
+    bool any = false;
+
+    for (uint32_t m = 0; m < args->mesh_count; m++) {
+        const phys_mesh_shape_t *ms =
+            &((const phys_mesh_shape_t *)args->meshes)[m];
+        if (!ms->triangles || ms->bvh.node_count == 0) continue;
+
+        phys_vec3_t mesh_origin = {0, 0, 0};
+        for (uint32_t b = 0; b < args->body_count; b++) {
+            if (args->colliders[b].type == PHYS_SHAPE_MESH &&
+                args->colliders[b].shape_index == m) {
+                mesh_origin = args->bodies_prev[b].position;
+                break;
+            }
+        }
+
+        phys_aabb_t local_query;
+        local_query.min = vec3_sub(query.min, mesh_origin);
+        local_query.max = vec3_sub(query.max, mesh_origin);
+
+        uint32_t cands[CCD_MAX_CANDIDATES];
+        uint32_t nc = ccd_collect_candidates(
+            &ms->bvh, &local_query, cands, CCD_MAX_CANDIDATES);
+
+        phys_vec3_t local_center = vec3_sub(center, mesh_origin);
+
+        for (uint32_t ci = 0; ci < nc; ci++) {
+            if (cands[ci] >= ms->bvh.tri_count) continue;
+            const phys_triangle_t *tri = &ms->triangles[cands[ci]];
+
+            phys_vec3_t hit_normal;
+            float pen = box_vs_triangle_sdf(
+                local_center, rotation, half_extents, tri, &hit_normal);
+            if (pen > deepest) {
+                deepest = pen;
+                best_normal = hit_normal;
+                any = true;
+            }
+        }
+    }
+
+    if (any) {
+        *depth_out = deepest;
+        *normal_out = best_normal;
+    }
+    return any;
+}
+
+/* ── Swept box vs meshes (discrete SDF subsampling) ────────────── */
+
+/**
+ * Sweep a box from prev to curr position against all meshes using
+ * discrete subsampling.  At each sample the triangle vertices are
+ * tested against the box SDF.
+ *
+ * Returns true if any sample penetrates, with earliest parametric t.
+ */
+static bool ccd_swept_box_vs_meshes(
+    const phys_body_t *prev, const phys_body_t *curr,
+    const phys_collider_t *col, phys_vec3_t half_extents,
+    const phys_ccd_args_t *args, float margin,
+    float *best_t_out, phys_vec3_t *best_normal_out)
+{
+    phys_vec3_t displacement = vec3_sub(curr->position, prev->position);
+    float disp_len = sqrtf(vec3_dot(displacement, displacement));
+
+    float extent_radius = sqrtf(half_extents.x * half_extents.x +
+                                half_extents.y * half_extents.y +
+                                half_extents.z * half_extents.z);
+
+    /* Number of subsamples: ensure world-space step ≤ half the minimum
+     * half-extent so we can't skip over a full box width between samples. */
+    float min_he = half_extents.x;
+    if (half_extents.y < min_he) min_he = half_extents.y;
+    if (half_extents.z < min_he) min_he = half_extents.z;
+    if (min_he < 0.01f) min_he = 0.01f;
+    float half_min = min_he * 0.5f;
+    float total_sweep = disp_len + 2.0f * margin;
+    int n_samples = (int)(total_sweep / half_min) + 2;
+    if (n_samples > CCD_MAX_SUBSAMPLES) n_samples = CCD_MAX_SUBSAMPLES;
+    if (n_samples < 4) n_samples = 4;
+
+    /* Conservative AABB covering the full swept volume. */
+    float sweep_radius = extent_radius + margin;
+    phys_aabb_t swept_aabb;
+    swept_aabb.min.x = fminf(prev->position.x, curr->position.x) - sweep_radius;
+    swept_aabb.min.y = fminf(prev->position.y, curr->position.y) - sweep_radius;
+    swept_aabb.min.z = fminf(prev->position.z, curr->position.z) - sweep_radius;
+    swept_aabb.max.x = fmaxf(prev->position.x, curr->position.x) + sweep_radius;
+    swept_aabb.max.y = fmaxf(prev->position.y, curr->position.y) + sweep_radius;
+    swept_aabb.max.z = fmaxf(prev->position.z, curr->position.z) + sweep_radius;
+
+    bool any_hit = false;
+    float best_t = 2.0f;
+    phys_vec3_t best_normal = {0, 1, 0};
+
+    for (uint32_t m = 0; m < args->mesh_count; m++) {
+        const phys_mesh_shape_t *ms =
+            &((const phys_mesh_shape_t *)args->meshes)[m];
+        if (!ms->triangles || ms->bvh.node_count == 0) continue;
+
+        phys_vec3_t mesh_origin = {0, 0, 0};
+        for (uint32_t b = 0; b < args->body_count; b++) {
+            if (args->colliders[b].type == PHYS_SHAPE_MESH &&
+                args->colliders[b].shape_index == m) {
+                mesh_origin = args->bodies_prev[b].position;
+                break;
+            }
+        }
+
+        phys_aabb_t local_aabb;
+        local_aabb.min = vec3_sub(swept_aabb.min, mesh_origin);
+        local_aabb.max = vec3_sub(swept_aabb.max, mesh_origin);
+
+        uint32_t cands[CCD_MAX_CANDIDATES];
+        uint32_t nc = ccd_collect_candidates(
+            &ms->bvh, &local_aabb, cands, CCD_MAX_CANDIDATES);
+        if (nc == 0) continue;
+
+        for (int si = 0; si < n_samples; si++) {
+            /* Limit margin extension to 10% of the sweep to keep
+             * samples concentrated in the [0,1] interval. */
+            float margin_t = (disp_len > 1e-6f)
+                ? fminf(margin / disp_len, 0.1f) : 0.0f;
+            float t = -margin_t + (1.0f + 2.0f * margin_t)
+                    * ((float)si / (float)(n_samples - 1));
+
+            /* Interpolate position and orientation. */
+            phys_vec3_t pos = vec3_add(prev->position,
+                vec3_scale(displacement, t));
+            float clamp_t = (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
+            phys_quat_t ori = ccd_quat_slerp(
+                prev->orientation, curr->orientation, clamp_t);
+
+            /* Box center in world space (apply collider offset). */
+            phys_vec3_t offset = ccd_quat_rotate(ori, col->local_offset);
+            phys_vec3_t center = vec3_add(pos, offset);
+            phys_quat_t world_rot = ccd_quat_mul(ori, col->local_rotation);
+
+            /* Transform to mesh-local space. */
+            phys_vec3_t local_center = vec3_sub(center, mesh_origin);
+
+            for (uint32_t ci = 0; ci < nc; ci++) {
+                if (cands[ci] >= ms->bvh.tri_count) continue;
+                const phys_triangle_t *tri = &ms->triangles[cands[ci]];
+
+                phys_vec3_t hit_normal;
+                /* Inflate half-extents slightly for the SDF test to
+                 * catch grazing contacts between sample points. */
+                phys_vec3_t inflated_he = {
+                    half_extents.x + CCD_INFLATE,
+                    half_extents.y + CCD_INFLATE,
+                    half_extents.z + CCD_INFLATE,
+                };
+                float pen = box_vs_triangle_sdf(
+                    local_center, world_rot, inflated_he, tri, &hit_normal);
+
+                if (pen > 0.0f && t < best_t) {
+                    best_t = t;
+                    best_normal = hit_normal;
+                    any_hit = true;
+                    break;
+                }
+            }
+            if (any_hit && best_t <= t) break;
+        }
+    }
+
+    if (any_hit) {
+        if (best_t < 0.0f) best_t = 0.0f;
+        *best_t_out = best_t;
+        *best_normal_out = best_normal;
+    }
+    return any_hit;
+}
 
 /**
  * Process a single body for CCD (depenetration + swept test).
@@ -1073,7 +1434,8 @@ static bool ccd_depenetrate_capsule_vs_meshes(
  */
 static int ccd_process_body(
     uint32_t i, const phys_ccd_args_t *args,
-    float radius, float half_h, float ccd_radius, float margin)
+    float radius, float half_h, phys_vec3_t half_extents,
+    float ccd_radius, float margin)
 {
     phys_body_t *prev = &args->bodies_prev[i];
     phys_body_t *curr = &args->bodies_curr[i];
@@ -1087,7 +1449,15 @@ static int ccd_process_body(
         phys_vec3_t normal = {0, 1, 0};
         bool penetrating = false;
 
-        if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
+        if (col->type == PHYS_SHAPE_BOX) {
+            phys_vec3_t offset = ccd_quat_rotate(
+                curr->orientation, col->local_offset);
+            phys_vec3_t center = vec3_add(curr->position, offset);
+            phys_quat_t wr = ccd_quat_mul(
+                curr->orientation, col->local_rotation);
+            penetrating = ccd_depenetrate_box_vs_meshes(
+                center, wr, half_extents, args, &depth, &normal);
+        } else if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
             phys_vec3_t offset = ccd_quat_rotate(
                 curr->orientation, col->local_offset);
             phys_vec3_t center = vec3_add(curr->position, offset);
@@ -1127,7 +1497,11 @@ static int ccd_process_body(
     float best_t = 2.0f;
     phys_vec3_t best_normal = {0, 1, 0};
 
-    if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
+    if (col->type == PHYS_SHAPE_BOX) {
+        ccd_swept_box_vs_meshes(
+            prev, curr, col, half_extents,
+            args, margin, &best_t, &best_normal);
+    } else if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
         ccd_swept_capsule_vs_meshes(
             prev, curr, col, ccd_radius, half_h,
             args, margin, &best_t, &best_normal);
@@ -1228,6 +1602,7 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
 
         float radius = 0.0f;
         float half_h = 0.0f;
+        phys_vec3_t half_extents = {0, 0, 0};
         if (col->type == PHYS_SHAPE_SPHERE) {
             const phys_sphere_t *s =
                 &((const phys_sphere_t *)args->spheres)[col->shape_index];
@@ -1237,6 +1612,13 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
                 &((const phys_capsule_t *)args->capsules)[col->shape_index];
             radius = cap->radius;
             half_h = cap->half_height;
+        } else if (col->type == PHYS_SHAPE_BOX && args->boxes) {
+            const phys_box_t *box =
+                &((const phys_box_t *)args->boxes)[col->shape_index];
+            half_extents = box->half_extents;
+            radius = sqrtf(half_extents.x * half_extents.x +
+                           half_extents.y * half_extents.y +
+                           half_extents.z * half_extents.z);
         } else {
             continue;
         }
@@ -1246,7 +1628,7 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
         float margin = ccd_radius;
 
         clamped += ccd_process_body(i, args, radius, half_h,
-                                     ccd_radius, margin);
+                                     half_extents, ccd_radius, margin);
     }
 
     /* No free needed — arena memory reclaimed on frame reset. */

@@ -11,7 +11,7 @@
  * ## Conventions
  * - Only static-dynamic pairs are tested.
  * - CCD is opt-in per body via PHYS_BODY_FLAG_CCD.
- * - Only sphere and capsule shapes are supported.
+ * - Only sphere, capsule, and box shapes are supported.
  *
  * ## Ownership
  * All functions are stateless and borrow their inputs.
@@ -126,6 +126,7 @@ typedef struct phys_ccd_args {
     /* Shape pools for radius lookup. */
     const void *spheres;    /**< phys_sphere_t array. */
     const void *capsules;   /**< phys_capsule_t array. */
+    const void *boxes;      /**< phys_box_t array. */
 } phys_ccd_args_t;
 
 /**

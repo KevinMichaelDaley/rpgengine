@@ -302,6 +302,146 @@ static int test_ccd_skips_slow_bodies(void) {
     return 0;
 }
 
+/** CCD stage clamps a fast box that tunnels through a wall. */
+static int test_ccd_stage_clamps_fast_box(void) {
+    phys_world_t world;
+    phys_world_config_t cfg = phys_world_config_default();
+    cfg.max_bodies = 16;
+    phys_world_init(&world, &cfg);
+
+    /* Create wall mesh at X=5. */
+    phys_triangle_t wall[2];
+    make_wall(wall);
+    phys_frame_arena_t bvh_arena;
+    phys_frame_arena_init(&bvh_arena, 4096);
+    phys_mesh_bvh_t bvh;
+    phys_mesh_bvh_build(&bvh, wall, 2, &bvh_arena);
+
+    uint32_t wall_id = phys_world_create_body(&world);
+    phys_body_t *wall_body = phys_world_get_body(&world, wall_id);
+    wall_body->position = (phys_vec3_t){0, 0, 0};
+    wall_body->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
+    phys_world_set_mesh_collider(&world, wall_id, wall, 2, &bvh,
+                                  (phys_vec3_t){0, 0, 0}, true);
+
+    /* Create fast box with CCD: 1×1×1 box moving at 100 m/s toward wall. */
+    uint32_t box_id = phys_world_create_body(&world);
+    phys_body_t *box = phys_world_get_body(&world, box_id);
+    box->position = (phys_vec3_t){2, 5, 0};
+    box->linear_vel = (phys_vec3_t){100, 0, 0};
+    box->flags |= PHYS_BODY_FLAG_CCD;
+    phys_body_set_mass(box, 1.0f);
+    phys_world_set_box_collider(&world, box_id,
+                                 (phys_vec3_t){0.5f, 0.5f, 0.5f},
+                                 (phys_vec3_t){0, 0, 0},
+                                 (phys_quat_t){0, 0, 0, 1});
+
+    /* Run a few ticks — box should be clamped before the wall. */
+    for (int i = 0; i < 5; i++) {
+        phys_world_tick(&world, NULL);
+    }
+
+    box = phys_world_get_body(&world, box_id);
+    /* Box half-extent is 0.5, so center should be ≤ 4.5 (wall at X=5). */
+    ASSERT_FLOAT_LT(box->position.x, 5.0f);
+
+    phys_frame_arena_destroy(&bvh_arena);
+    phys_world_destroy(&world);
+    return 0;
+}
+
+/** Fast box moving into floor mesh is clamped (vertical tunnel). */
+static int test_ccd_stage_clamps_fast_box_floor(void) {
+    phys_world_t world;
+    phys_world_config_t cfg = phys_world_config_default();
+    cfg.max_bodies = 16;
+    phys_world_init(&world, &cfg);
+
+    /* Create floor mesh at Y=0. */
+    phys_triangle_t floor[2];
+    make_floor(floor);
+    phys_frame_arena_t bvh_arena;
+    phys_frame_arena_init(&bvh_arena, 4096);
+    phys_mesh_bvh_t bvh;
+    phys_mesh_bvh_build(&bvh, floor, 2, &bvh_arena);
+
+    uint32_t floor_id = phys_world_create_body(&world);
+    phys_body_t *floor_body = phys_world_get_body(&world, floor_id);
+    floor_body->position = (phys_vec3_t){0, 0, 0};
+    floor_body->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
+    phys_world_set_mesh_collider(&world, floor_id, floor, 2, &bvh,
+                                  (phys_vec3_t){0, 0, 0}, true);
+
+    /* Box dropping fast downward from Y=10, velocity -200 m/s. */
+    uint32_t box_id = phys_world_create_body(&world);
+    phys_body_t *box = phys_world_get_body(&world, box_id);
+    box->position = (phys_vec3_t){0, 10, 0};
+    box->linear_vel = (phys_vec3_t){0, -200, 0};
+    box->flags |= PHYS_BODY_FLAG_CCD;
+    phys_body_set_mass(box, 1.0f);
+    phys_world_set_box_collider(&world, box_id,
+                                 (phys_vec3_t){0.5f, 0.5f, 0.5f},
+                                 (phys_vec3_t){0, 0, 0},
+                                 (phys_quat_t){0, 0, 0, 1});
+
+    for (int i = 0; i < 5; i++) {
+        phys_world_tick(&world, NULL);
+    }
+
+    box = phys_world_get_body(&world, box_id);
+    /* Box should not have gone below the floor. */
+    ASSERT_FLOAT_GT(box->position.y, -0.5f);
+
+    phys_frame_arena_destroy(&bvh_arena);
+    phys_world_destroy(&world);
+    return 0;
+}
+
+/** Slow box should NOT trigger CCD sweep (handled by discrete narrowphase). */
+static int test_ccd_skips_slow_box(void) {
+    phys_world_t world;
+    phys_world_config_t cfg = phys_world_config_default();
+    cfg.max_bodies = 16;
+    phys_world_init(&world, &cfg);
+
+    phys_triangle_t wall[2];
+    make_wall(wall);
+    phys_frame_arena_t bvh_arena;
+    phys_frame_arena_init(&bvh_arena, 4096);
+    phys_mesh_bvh_t bvh;
+    phys_mesh_bvh_build(&bvh, wall, 2, &bvh_arena);
+
+    uint32_t wall_id = phys_world_create_body(&world);
+    phys_body_t *wall_body = phys_world_get_body(&world, wall_id);
+    wall_body->position = (phys_vec3_t){0, 0, 0};
+    wall_body->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
+    phys_world_set_mesh_collider(&world, wall_id, wall, 2, &bvh,
+                                  (phys_vec3_t){0, 0, 0}, true);
+
+    /* Slow box: 1 m/s is well below CCD threshold. */
+    uint32_t box_id = phys_world_create_body(&world);
+    phys_body_t *box = phys_world_get_body(&world, box_id);
+    box->position = (phys_vec3_t){4, 5, 0};
+    box->linear_vel = (phys_vec3_t){1, 0, 0};
+    box->flags |= PHYS_BODY_FLAG_CCD;
+    phys_body_set_mass(box, 1.0f);
+    phys_world_set_box_collider(&world, box_id,
+                                 (phys_vec3_t){0.5f, 0.5f, 0.5f},
+                                 (phys_vec3_t){0, 0, 0},
+                                 (phys_quat_t){0, 0, 0, 1});
+
+    for (int i = 0; i < 10; i++) {
+        phys_world_tick(&world, NULL);
+    }
+
+    box = phys_world_get_body(&world, box_id);
+    ASSERT_FLOAT_LT(box->position.x, 5.5f);
+
+    phys_frame_arena_destroy(&bvh_arena);
+    phys_world_destroy(&world);
+    return 0;
+}
+
 /** NULL safety — stage should not crash with NULL inputs. */
 static int test_ccd_null_safe(void) {
     int result = phys_stage_ccd(NULL);
@@ -328,6 +468,9 @@ int main(void) {
     RUN(test_swept_sphere_vs_mesh);
     RUN(test_ccd_stage_clamps_fast_sphere);
     RUN(test_ccd_skips_slow_bodies);
+    RUN(test_ccd_stage_clamps_fast_box);
+    RUN(test_ccd_stage_clamps_fast_box_floor);
+    RUN(test_ccd_skips_slow_box);
     RUN(test_ccd_null_safe);
 
     printf("\n%d/%d tests passed\n", g_pass, g_pass + g_fail);
