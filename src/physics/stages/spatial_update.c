@@ -76,6 +76,19 @@ void phys_stage_spatial_update(const phys_spatial_update_args_t *args) {
                 }
                 break;
             }
+            case PHYS_SHAPE_HALFSPACE: {
+                /* Halfspace is infinite — huge AABB for broadphase. */
+                const float HS_EXTENT = 1.0e6f;
+                aabb->min = (phys_vec3_t){
+                    -HS_EXTENT + center.x,
+                    -HS_EXTENT + center.y,
+                    -HS_EXTENT + center.z};
+                aabb->max = (phys_vec3_t){
+                     HS_EXTENT + center.x,
+                     HS_EXTENT + center.y,
+                     HS_EXTENT + center.z};
+                break;
+            }
             default:
                 /* Unknown shape — produce a zero-volume AABB at the center. */
                 *aabb = (phys_aabb_t){center, center};

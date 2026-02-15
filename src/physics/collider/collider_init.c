@@ -55,3 +55,16 @@ void phys_collider_init_mesh(phys_collider_t *c,
     c->local_offset = offset;
     c->local_rotation = (phys_quat_t){0, 0, 0, 1};
 }
+
+void phys_collider_init_halfspace(phys_collider_t *c,
+                                   uint32_t halfspace_idx,
+                                   phys_vec3_t offset)
+{
+    if (!c) { return; }
+
+    *c = (phys_collider_t){0};
+    c->type = PHYS_SHAPE_HALFSPACE;
+    c->shape_index = halfspace_idx;
+    c->local_offset = offset;
+    c->local_rotation = (phys_quat_t){0, 0, 0, 1};
+}

@@ -24,6 +24,7 @@ struct phys_sphere;
 struct phys_box;
 struct phys_capsule;
 struct phys_mesh_shape;
+struct phys_halfspace;
 struct phys_aabb;
 struct phys_spatial_grid;
 
@@ -50,6 +51,7 @@ typedef struct phys_spatial_update_args {
     const struct phys_box *boxes;
     const struct phys_capsule *capsules;
     const struct phys_mesh_shape *meshes;
+    const struct phys_halfspace *halfspaces;
     struct phys_aabb *aabbs_out;
     struct phys_spatial_grid *grid_out;
     const uint8_t *active;

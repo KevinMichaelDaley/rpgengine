@@ -95,10 +95,12 @@ typedef struct phys_world {
     phys_box_t     *boxes;       /**< Box shapes array. */
     phys_capsule_t *capsules;    /**< Capsule shapes array. */
     phys_mesh_shape_t *meshes;   /**< Mesh shapes array. */
+    phys_halfspace_t *halfspaces; /**< Halfspace shapes array. */
     uint32_t sphere_count;       /**< Number of allocated spheres. */
     uint32_t box_count;          /**< Number of allocated boxes. */
     uint32_t capsule_count;      /**< Number of allocated capsules. */
     uint32_t mesh_count;         /**< Number of allocated meshes. */
+    uint32_t halfspace_count;    /**< Number of allocated halfspaces. */
 
     /* Persistent manifold cache. */
     phys_manifold_cache_t manifold_cache;

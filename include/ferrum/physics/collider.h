@@ -33,6 +33,7 @@ typedef enum phys_shape_type {
     PHYS_SHAPE_COMPOUND = 3,  /**< Tree of child colliders (Phase 0.3b). */
     PHYS_SHAPE_CONVEX  = 4,   /**< Future — convex hull. */
     PHYS_SHAPE_MESH    = 5,   /**< Future — triangle mesh (Phase 9). */
+    PHYS_SHAPE_HALFSPACE = 6, /**< Infinite plane (normal + distance). */
     PHYS_SHAPE_COUNT
 } phys_shape_type_t;
 
@@ -73,6 +74,24 @@ typedef struct phys_mesh_shape {
     bool solid;                              /**< Treat as solid volume (closed mesh). */
     struct phys_mesh_bvh bvh;                /**< Pre-built BVH over triangles. */
 } phys_mesh_shape_t;
+
+/**
+ * @brief Half-space (infinite plane) shape data.
+ *
+ * Defines a plane by normal and signed distance from origin.
+ * The plane equation is: dot(normal, point) = distance.
+ * Everything with dot(normal, point) < distance is "behind" the plane
+ * (penetrating).  Half-spaces are always solid by definition.
+ *
+ * The normal must be unit-length.  The distance is the signed offset
+ * from the origin along the normal direction.
+ */
+typedef struct phys_halfspace {
+    phys_vec3_t normal;    /**< Outward-facing unit normal. */
+    float       distance;  /**< Signed distance from origin. */
+} phys_halfspace_t;
+
+_Static_assert(sizeof(phys_halfspace_t) == 16, "phys_halfspace_t must be 16 bytes");
 
 /* ── Collider reference ─────────────────────────────────────────── */
 
@@ -151,6 +170,20 @@ void phys_collider_init_capsule(phys_collider_t *c,
 void phys_collider_init_mesh(phys_collider_t *c,
                               uint32_t mesh_idx,
                               phys_vec3_t offset);
+
+/**
+ * @brief Initialize a halfspace collider reference.
+ * @param c             Collider to initialize (non-NULL).
+ * @param halfspace_idx Index into the world's halfspace shape pool.
+ * @param offset        Local offset from body origin.
+ *
+ * Sets local_rotation to identity.  Half-spaces are always solid
+ * and have no rotation (the plane orientation is defined by the
+ * shape's normal vector).
+ */
+void phys_collider_init_halfspace(phys_collider_t *c,
+                                   uint32_t halfspace_idx,
+                                   phys_vec3_t offset);
 
 /* ── World-space transform helpers ──────────────────────────────── */
 

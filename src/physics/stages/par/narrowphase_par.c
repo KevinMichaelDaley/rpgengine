@@ -21,6 +21,7 @@
 #include "ferrum/physics/collision/box_box.h"
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
+#include "ferrum/physics/collision/halfspace.h"
 
 /** Batch size: number of broadphase pairs per job. */
 #define NP_PAR_BATCH_SIZE 64
@@ -233,6 +234,44 @@ static void np_par_job_fn(void *user_data)
                 continue;
             }
         }
+        else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_HALFSPACE) {
+            float rs = args->spheres[c0->shape_index].radius;
+            const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
+            hit = phys_sphere_vs_halfspace(w0, rs,
+                                            hs->normal, hs->distance,
+                                            args->speculative_margin, &contact);
+        }
+        else if (c0->type == PHYS_SHAPE_BOX && c1->type == PHYS_SHAPE_HALFSPACE) {
+            phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
+            const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
+            phys_contact_point_t contacts_buf[4];
+            int nc = phys_box_vs_halfspace(w0, q0, he,
+                                            hs->normal, hs->distance,
+                                            args->speculative_margin,
+                                            contacts_buf, 4);
+            if (nc > 0) {
+                uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                if (slot < args->max_candidates) {
+                    phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                    cand->body_a = ba;
+                    cand->body_b = bb;
+                    cand->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
+                    for (int j = 0; j < cand->contact_count; j++) {
+                        cand->contacts[j] = contacts_buf[j];
+                    }
+                }
+                continue;
+            }
+        }
+        else if (c0->type == PHYS_SHAPE_CAPSULE && c1->type == PHYS_SHAPE_HALFSPACE) {
+            float rc = args->capsules[c0->shape_index].radius;
+            float hh = args->capsules[c0->shape_index].half_height;
+            const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
+            hit = phys_capsule_vs_halfspace(w0, q0, rc, hh,
+                                             hs->normal, hs->distance,
+                                             args->speculative_margin, &contact);
+        }
+        /* mesh-halfspace and halfspace-halfspace: no collision. */
 
         if (hit) {
             /* Claim a slot atomically. */
