@@ -118,6 +118,7 @@ int phys_sphere_vs_mesh(
     const phys_triangle_t *triangles,
     const phys_mesh_bvh_t *bvh,
     float spec_margin,
+    bool solid,
     phys_contact_point_t *contacts_out,
     int max_contacts)
 {
@@ -134,7 +135,7 @@ int phys_sphere_vs_mesh(
         memset(&c, 0, sizeof(c));
         if (phys_sphere_vs_triangle(center, radius,
                                      &triangles[cands[i]],
-                                     spec_margin, &c)) {
+                                     spec_margin, solid, &c)) {
             contacts_out[out++] = c;
         }
     }
@@ -183,6 +184,7 @@ int phys_capsule_vs_mesh(
     const phys_triangle_t *triangles,
     const phys_mesh_bvh_t *bvh,
     float spec_margin,
+    bool solid,
     phys_contact_point_t *contacts_out,
     int max_contacts)
 {
@@ -202,7 +204,7 @@ int phys_capsule_vs_mesh(
         if (phys_capsule_vs_triangle(cap_center, cap_rotation,
                                       cap_radius, cap_half_height,
                                       &triangles[cands[i]],
-                                      spec_margin, &c)) {
+                                      spec_margin, solid, &c)) {
             contacts_out[out++] = c;
         }
     }

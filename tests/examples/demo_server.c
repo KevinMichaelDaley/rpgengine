@@ -824,7 +824,8 @@ int main(int argc, char **argv) {
                         &ctx.world, bi,
                         ctx.armadillo_tris, loaded,
                         &ctx.armadillo_bvh,
-                        (phys_vec3_t){0.0f, 0.0f, 0.0f});
+                        (phys_vec3_t){0.0f, 0.0f, 0.0f},
+                        true);  /* solid — closed mesh volume */
                     ctx.body_shape_type[bi] = 3u; /* mesh */
 
                     printf("[server] armadillo mesh body %u: %u tris, "

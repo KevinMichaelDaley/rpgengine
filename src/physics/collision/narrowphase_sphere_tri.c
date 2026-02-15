@@ -75,6 +75,7 @@ bool phys_sphere_vs_triangle(
     phys_vec3_t center, float radius,
     const phys_triangle_t *tri,
     float spec_margin,
+    bool solid,
     phys_contact_point_t *contact_out)
 {
     if (!tri || !contact_out) return false;
@@ -98,17 +99,22 @@ bool phys_sphere_vs_triangle(
     }
 
     /* Check which side of the triangle the sphere center is on.
-     * Negative dot means the center is on the backface side
-     * (behind the triangle), indicating the sphere has penetrated
-     * through the surface — treat the mesh as solid by pushing the
-     * sphere back toward the front face. */
+     * Negative dot means the center is on the backface side. */
     float side = vec3_dot(vec3_sub(center, tri->v[0]), tri_normal);
     bool backface = (side < 0.0f);
 
     if (backface) {
-        /* Sphere has penetrated through the triangle surface.
-         * Push it back toward the front face (flip the normal). */
-        contact_out->normal = vec3_scale(tri_normal, -1.0f);
+        /* Sphere is behind the triangle surface.
+         *
+         * For solid meshes (closed volumes): the sphere is inside the mesh.
+         * Normal = +tri_normal (outward from surface), so after the dispatch
+         * flip the solver pushes the sphere OUT of the volume.
+         *
+         * For thin shells (non-solid): the sphere approached from the
+         * backface side. Normal = -tri_normal (toward the sphere), so
+         * after the dispatch flip the solver pushes it back the way it came. */
+        contact_out->normal = solid ? tri_normal
+                                    : vec3_scale(tri_normal, -1.0f);
         contact_out->penetration = radius + fabsf(side);
         contact_out->point_world = closest;
         contact_out->feature_id = 0;

@@ -45,6 +45,8 @@ extern "C" {
  * @param radius       Sphere radius.
  * @param tri          Triangle (must not be NULL).
  * @param spec_margin  Max separation for speculative contacts (0 = disabled).
+ * @param solid        If true, mesh is a closed solid volume; backface normals
+ *                     point outward to push primitives out of the interior.
  * @param contact_out  Output contact point.
  * @return true if contact generated.
  */
@@ -52,6 +54,7 @@ bool phys_sphere_vs_triangle(
     phys_vec3_t center, float radius,
     const phys_triangle_t *tri,
     float spec_margin,
+    bool solid,
     struct phys_contact_point *contact_out);
 
 /**
@@ -89,6 +92,7 @@ int phys_box_vs_triangle(
  * @param cap_half_height Capsule half-height (segment half-length).
  * @param tri            Triangle (must not be NULL).
  * @param spec_margin    Max separation for speculative contacts.
+ * @param solid          If true, mesh is a closed solid volume.
  * @param contact_out    Output contact point.
  * @return true if contact generated.
  */
@@ -97,6 +101,7 @@ bool phys_capsule_vs_triangle(
     float cap_radius, float cap_half_height,
     const phys_triangle_t *tri,
     float spec_margin,
+    bool solid,
     struct phys_contact_point *contact_out);
 
 /* ── Primitive vs Mesh (BVH-accelerated) ───────────────────────── */
@@ -104,6 +109,7 @@ bool phys_capsule_vs_triangle(
 /**
  * @brief Sphere vs triangle mesh with BVH traversal.
  *
+ * @param solid  If true, closed solid volume.
  * @return Number of contacts generated.
  */
 int phys_sphere_vs_mesh(
@@ -111,6 +117,7 @@ int phys_sphere_vs_mesh(
     const phys_triangle_t *triangles,
     const phys_mesh_bvh_t *bvh,
     float spec_margin,
+    bool solid,
     struct phys_contact_point *contacts_out,
     int max_contacts);
 
@@ -131,6 +138,7 @@ int phys_box_vs_mesh(
 /**
  * @brief Capsule vs triangle mesh with BVH traversal.
  *
+ * @param solid  If true, closed solid volume.
  * @return Number of contacts generated.
  */
 int phys_capsule_vs_mesh(
@@ -139,6 +147,7 @@ int phys_capsule_vs_mesh(
     const phys_triangle_t *triangles,
     const phys_mesh_bvh_t *bvh,
     float spec_margin,
+    bool solid,
     struct phys_contact_point *contacts_out,
     int max_contacts);
 

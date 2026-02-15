@@ -301,6 +301,10 @@ void phys_world_set_capsule_collider(phys_world_t *world, uint32_t body_index,
  * @param tri_count   Number of triangles.
  * @param bvh         Pre-built BVH over the triangles.
  * @param offset      Local offset from body origin.
+ * @param solid       If true, treat as a closed solid volume (backface
+ *                    contacts push primitives outward). If false, treat
+ *                    as a thin shell (backface contacts push back toward
+ *                    the front face).
  *
  * Side effects: increments mesh_count; writes colliders[body_index].
  */
@@ -308,7 +312,8 @@ void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
                                    const phys_triangle_t *triangles,
                                    uint32_t tri_count,
                                    const phys_mesh_bvh_t *bvh,
-                                   phys_vec3_t offset);
+                                   phys_vec3_t offset,
+                                   bool solid);
 
 /**
  * @brief Get a read-only pointer to a body's collider.

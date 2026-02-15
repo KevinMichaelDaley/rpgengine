@@ -207,7 +207,7 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         phys_vec3_t local_w0 = vec3_sub(w0, w1);
         phys_contact_point_t contacts_buf[4];
         int nc = phys_sphere_vs_mesh(local_w0, rs, ms->triangles, &ms->bvh,
-                                      args->speculative_margin,
+                                      args->speculative_margin, ms->solid,
                                       contacts_buf, 4);
         if (nc > 0) {
             cand_out->body_a = ba;
@@ -254,7 +254,7 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         phys_contact_point_t contacts_buf[4];
         int nc = phys_capsule_vs_mesh(local_w0, q0, cap->radius, cap->half_height,
                                        ms->triangles, &ms->bvh,
-                                       args->speculative_margin,
+                                       args->speculative_margin, ms->solid,
                                        contacts_buf, 4);
         if (nc > 0) {
             cand_out->body_a = ba;

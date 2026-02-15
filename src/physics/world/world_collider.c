@@ -75,7 +75,8 @@ void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
                                    const phys_triangle_t *triangles,
                                    uint32_t tri_count,
                                    const phys_mesh_bvh_t *bvh,
-                                   phys_vec3_t offset) {
+                                   phys_vec3_t offset,
+                                   bool solid) {
     if (!world || !bvh) {
         return;
     }
@@ -87,6 +88,7 @@ void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
     uint32_t si = world->mesh_count++;
     world->meshes[si].triangles = triangles;
     world->meshes[si].tri_count = tri_count;
+    world->meshes[si].solid = solid;
     world->meshes[si].bvh = *bvh;
 
     /* Set collider reference. */

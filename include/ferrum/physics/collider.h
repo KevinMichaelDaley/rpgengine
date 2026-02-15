@@ -1,6 +1,7 @@
 #ifndef FERRUM_PHYSICS_COLLIDER_H
 #define FERRUM_PHYSICS_COLLIDER_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "ferrum/physics/mesh_collider.h"
@@ -69,6 +70,7 @@ _Static_assert(sizeof(phys_capsule_t) == 8, "phys_capsule_t must be 8 bytes");
 typedef struct phys_mesh_shape {
     const struct phys_triangle *triangles;   /**< Borrowed triangle array. */
     uint32_t tri_count;                      /**< Number of triangles. */
+    bool solid;                              /**< Treat as solid volume (closed mesh). */
     struct phys_mesh_bvh bvh;                /**< Pre-built BVH over triangles. */
 } phys_mesh_shape_t;
 

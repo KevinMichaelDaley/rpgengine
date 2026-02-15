@@ -92,6 +92,7 @@ bool phys_capsule_vs_triangle(
     float cap_radius, float cap_half_height,
     const phys_triangle_t *tri,
     float spec_margin,
+    bool solid,
     phys_contact_point_t *contact_out)
 {
     if (!tri || !contact_out) return false;
@@ -130,19 +131,20 @@ bool phys_capsule_vs_triangle(
         tri_normal = (phys_vec3_t){0, 1, 0};
     }
 
-    /* Check which side of the triangle the capsule segment point is on.
-     * Negative dot means the segment point is on the backface side
-     * (behind the triangle), indicating the capsule has penetrated
-     * through the surface — treat the mesh as solid by pushing the
-     * capsule back toward the front face. */
+    /* Check which side of the triangle the capsule segment point is on. */
     float side = vec3_dot(vec3_sub(seg_pt, tri->v[0]), tri_normal);
     bool backface = (side < 0.0f);
 
     if (backface) {
-        /* Capsule has penetrated through the triangle surface.
-         * Push it back toward the front face (flip the normal).
-         * Penetration depth = how far through the capsule surface is. */
-        contact_out->normal = vec3_scale(tri_normal, -1.0f);
+        /* Capsule is behind the triangle surface.
+         *
+         * For solid meshes: normal = +tri_normal (outward), so after the
+         * dispatch flip the solver pushes the capsule OUT of the volume.
+         *
+         * For thin shells: normal = -tri_normal (toward the capsule), so
+         * after the dispatch flip the solver pushes it back the way it came. */
+        contact_out->normal = solid ? tri_normal
+                                    : vec3_scale(tri_normal, -1.0f);
         contact_out->penetration = cap_radius + fabsf(side);
         contact_out->point_world = tri_pt;
         contact_out->feature_id = 0;

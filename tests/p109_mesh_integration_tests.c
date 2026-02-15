@@ -140,7 +140,7 @@ static int test_sphere_on_terrain_mesh(void) {
     floor_body->position = (phys_vec3_t){0, 0, 0};
     floor_body->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
     phys_world_set_mesh_collider(&world, floor_id, floor_tris, 2, &bvh,
-                                  (phys_vec3_t){0, 0, 0});
+                                  (phys_vec3_t){0, 0, 0}, false);
 
     /* Create dynamic sphere above the floor. */
     uint32_t sphere_id = phys_world_create_body(&world);
@@ -193,7 +193,7 @@ static int test_box_slides_down_ramp(void) {
     ramp_body->position = (phys_vec3_t){0, 0, 0};
     ramp_body->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
     phys_world_set_mesh_collider(&world, ramp_id, ramp_tris, 2, &bvh,
-                                  (phys_vec3_t){0, 0, 0});
+                                  (phys_vec3_t){0, 0, 0}, false);
 
     /* Create dynamic box near the top of the ramp. */
     uint32_t box_id = phys_world_create_body(&world);
@@ -254,7 +254,7 @@ static int test_no_tunneling_through_thin_wall(void) {
     wall_body->position = (phys_vec3_t){0, 0, 0};
     wall_body->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
     phys_world_set_mesh_collider(&world, wall_id, wall_tris, 2, &bvh,
-                                  (phys_vec3_t){0, 0, 0});
+                                  (phys_vec3_t){0, 0, 0}, false);
 
     /* Also place a floor so the sphere doesn't just fall forever. */
     phys_triangle_t floor_tris[2];
@@ -268,7 +268,7 @@ static int test_no_tunneling_through_thin_wall(void) {
     floor_body->position = (phys_vec3_t){0, 0, 0};
     floor_body->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
     phys_world_set_mesh_collider(&world, floor_id, floor_tris, 2, &floor_bvh,
-                                  (phys_vec3_t){0, 0, 0});
+                                  (phys_vec3_t){0, 0, 0}, false);
 
     /* Sphere starting at X=2, heading toward wall at X=5. */
     uint32_t sphere_id = phys_world_create_body(&world);
@@ -302,17 +302,17 @@ static int test_mesh_collider_null_safe(void) {
 
     /* NULL world. */
     phys_world_set_mesh_collider(NULL, 0, NULL, 0, NULL,
-                                  (phys_vec3_t){0, 0, 0});
+                                  (phys_vec3_t){0, 0, 0}, false);
 
     /* NULL bvh. */
     phys_world_set_mesh_collider(&world, 0, NULL, 0, NULL,
-                                  (phys_vec3_t){0, 0, 0});
+                                  (phys_vec3_t){0, 0, 0}, false);
 
     /* Out of range body index. */
     phys_mesh_bvh_t bvh;
     memset(&bvh, 0, sizeof(bvh));
     phys_world_set_mesh_collider(&world, 9999, NULL, 0, &bvh,
-                                  (phys_vec3_t){0, 0, 0});
+                                  (phys_vec3_t){0, 0, 0}, false);
 
     phys_world_destroy(&world);
     return 0;

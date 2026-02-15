@@ -167,7 +167,7 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
             phys_vec3_t local_w0 = vec3_sub(w0, w1);
             phys_contact_point_t contacts_buf[4];
             int nc = phys_sphere_vs_mesh(local_w0, rs, ms->triangles, &ms->bvh,
-                                          args->speculative_margin,
+                                          args->speculative_margin, ms->solid,
                                           contacts_buf, 4);
             if (nc > 0) {
                 phys_contact_candidate_t *cand = &args->candidates_out[count];
@@ -218,7 +218,7 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
             phys_contact_point_t contacts_buf[4];
             int nc = phys_capsule_vs_mesh(local_w0, q0, cap->radius, cap->half_height,
                                            ms->triangles, &ms->bvh,
-                                           args->speculative_margin,
+                                           args->speculative_margin, ms->solid,
                                            contacts_buf, 4);
             if (nc > 0) {
                 phys_contact_candidate_t *cand = &args->candidates_out[count];

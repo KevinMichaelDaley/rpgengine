@@ -160,7 +160,7 @@ static void np_par_job_fn(void *user_data)
             phys_vec3_t local_w0 = vec3_sub(w0, w1);
             phys_contact_point_t contacts_buf[4];
             int nc = phys_sphere_vs_mesh(local_w0, rs, ms->triangles, &ms->bvh,
-                                          args->speculative_margin,
+                                          args->speculative_margin, ms->solid,
                                           contacts_buf, 4);
             if (nc > 0) {
                 uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
@@ -213,7 +213,7 @@ static void np_par_job_fn(void *user_data)
             phys_contact_point_t contacts_buf[4];
             int nc = phys_capsule_vs_mesh(local_w0, q0, cap->radius, cap->half_height,
                                            ms->triangles, &ms->bvh,
-                                           args->speculative_margin,
+                                           args->speculative_margin, ms->solid,
                                            contacts_buf, 4);
             if (nc > 0) {
                 uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
