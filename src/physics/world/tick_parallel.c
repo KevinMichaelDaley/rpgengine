@@ -333,6 +333,12 @@ void phys_world_tick_parallel(phys_world_t *world,
     }
     const float substep_dt = plan.dt / (float)max_substeps;
 
+    /* Initialize CCD prev buffer on first tick (no prior snapshot). */
+    if (world->tick_count == 0 && world->bodies_ccd_prev && world->mesh_count > 0) {
+        memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
+               body_cap * sizeof(phys_body_t));
+    }
+
     for (uint32_t sub = 0; sub < max_substeps; sub++) {
 
         /* ── Stage 4: AABB Update [SYNC, skip first substep] ──── */
@@ -618,7 +624,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         /* ── Stage 12c: CCD (swept sphere vs static mesh) ─────── */
         if (world->mesh_count > 0) {
             phys_stage_ccd(&(phys_ccd_args_t){
-                .bodies_prev = world->body_pool.bodies_curr,
+                .bodies_prev = world->bodies_ccd_prev,
                 .bodies_curr = world->body_pool.bodies_next,
                 .colliders   = world->colliders,
                 .meshes      = world->meshes,
@@ -662,6 +668,12 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         /* ── Buffer swap for next substep ──────────────────────── */
         phys_body_pool_swap_buffers(&world->body_pool);
+    }
+
+    /* Snapshot post-tick body positions for next tick's CCD. */
+    if (world->bodies_ccd_prev && world->mesh_count > 0) {
+        memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
+               body_cap * sizeof(phys_body_t));
     }
 
     /* Increment tick counter. */
