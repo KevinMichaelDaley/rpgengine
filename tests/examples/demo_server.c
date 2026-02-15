@@ -792,9 +792,12 @@ int main(int argc, char **argv) {
                     ctx.armadillo_half[1] = (bmax[1] - bmin[1]) * 0.5f;
                     ctx.armadillo_half[2] = (bmax[2] - bmin[2]) * 0.5f;
 
-                    /* Build BVH. */
+                    /* Build BVH.  Arena sized from triangle count:
+                     * ~120 bytes per triangle covers nodes, indices,
+                     * per-tri AABBs, and build stack. */
+                    size_t bvh_arena_bytes = (size_t)loaded * 128u;
                     phys_frame_arena_init(&ctx.armadillo_bvh_arena,
-                                          8u * 1024u * 1024u);
+                                          bvh_arena_bytes);
                     phys_mesh_bvh_build(&ctx.armadillo_bvh,
                                         ctx.armadillo_tris, loaded,
                                         &ctx.armadillo_bvh_arena);
