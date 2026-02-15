@@ -11,11 +11,13 @@
 #include <stdatomic.h>
 #include <string.h>
 
+#include "ferrum/math/vec3.h"
 #include "ferrum/physics/par/narrowphase_par.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/broadphase.h"
 #include "ferrum/physics/collider.h"
 #include "ferrum/physics/manifold.h"
+#include "ferrum/physics/mesh_narrowphase.h"
 #include "ferrum/physics/collision/box_box.h"
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
@@ -151,6 +153,76 @@ static void np_par_job_fn(void *user_data)
             hit = phys_capsule_vs_capsule(w0, q0, r0c, h0,
                                           w1, q1, r1c, h1,
                                           args->speculative_margin, &contact);
+        }
+        else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_MESH) {
+            float rs = args->spheres[c0->shape_index].radius;
+            const phys_mesh_shape_t *ms = &args->meshes[c1->shape_index];
+            phys_contact_point_t contacts_buf[4];
+            int nc = phys_sphere_vs_mesh(w0, rs, ms->triangles, &ms->bvh,
+                                          args->speculative_margin,
+                                          contacts_buf, 4);
+            if (nc > 0) {
+                uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                if (slot < args->max_candidates) {
+                    phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                    cand->body_a = ba;
+                    cand->body_b = bb;
+                    cand->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
+                    for (int j = 0; j < cand->contact_count; j++) {
+                        cand->contacts[j] = contacts_buf[j];
+                        cand->contacts[j].normal = vec3_scale(
+                            cand->contacts[j].normal, -1.0f);
+                    }
+                }
+                continue;
+            }
+        }
+        else if (c0->type == PHYS_SHAPE_BOX && c1->type == PHYS_SHAPE_MESH) {
+            phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
+            const phys_mesh_shape_t *ms = &args->meshes[c1->shape_index];
+            phys_contact_point_t contacts_buf[4];
+            int nc = phys_box_vs_mesh(w0, q0, he, ms->triangles, &ms->bvh,
+                                       args->speculative_margin,
+                                       contacts_buf, 4);
+            if (nc > 0) {
+                uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                if (slot < args->max_candidates) {
+                    phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                    cand->body_a = ba;
+                    cand->body_b = bb;
+                    cand->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
+                    for (int j = 0; j < cand->contact_count; j++) {
+                        cand->contacts[j] = contacts_buf[j];
+                        cand->contacts[j].normal = vec3_scale(
+                            cand->contacts[j].normal, -1.0f);
+                    }
+                }
+                continue;
+            }
+        }
+        else if (c0->type == PHYS_SHAPE_CAPSULE && c1->type == PHYS_SHAPE_MESH) {
+            const phys_capsule_t *cap = &args->capsules[c0->shape_index];
+            const phys_mesh_shape_t *ms = &args->meshes[c1->shape_index];
+            phys_contact_point_t contacts_buf[4];
+            int nc = phys_capsule_vs_mesh(w0, q0, cap->radius, cap->half_height,
+                                           ms->triangles, &ms->bvh,
+                                           args->speculative_margin,
+                                           contacts_buf, 4);
+            if (nc > 0) {
+                uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                if (slot < args->max_candidates) {
+                    phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                    cand->body_a = ba;
+                    cand->body_b = bb;
+                    cand->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
+                    for (int j = 0; j < cand->contact_count; j++) {
+                        cand->contacts[j] = contacts_buf[j];
+                        cand->contacts[j].normal = vec3_scale(
+                            cand->contacts[j].normal, -1.0f);
+                    }
+                }
+                continue;
+            }
         }
 
         if (hit) {

@@ -16,6 +16,7 @@ struct phys_collider;
 struct phys_sphere;
 struct phys_box;
 struct phys_capsule;
+struct phys_mesh_shape;
 struct phys_aabb;
 struct phys_tier_lists;
 
@@ -40,6 +41,7 @@ typedef struct phys_aabb_update_args {
     const struct phys_sphere *spheres;
     const struct phys_box *boxes;
     const struct phys_capsule *capsules;
+    const struct phys_mesh_shape *meshes;
     struct phys_aabb *aabbs_out;
     const struct phys_tier_lists *tier_lists;
 } phys_aabb_update_args_t;

@@ -46,6 +46,7 @@ typedef struct phys_collision_fused_args {
     const phys_sphere_t        *spheres;      /**< Sphere shape array. */
     const phys_box_t           *boxes;        /**< Box shape array. */
     const phys_capsule_t       *capsules;     /**< Capsule shape array. */
+    const phys_mesh_shape_t    *meshes;       /**< Mesh shape array. */
     const phys_collision_pair_t *pairs;       /**< Broadphase pair array. */
     uint32_t                    pair_count;   /**< Number of broadphase pairs. */
     float                       speculative_margin; /**< Speculative contact margin. */

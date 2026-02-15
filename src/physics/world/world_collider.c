@@ -71,6 +71,33 @@ void phys_world_set_capsule_collider(phys_world_t *world, uint32_t body_index,
     }
 }
 
+void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
+                                   const phys_triangle_t *triangles,
+                                   uint32_t tri_count,
+                                   const phys_mesh_bvh_t *bvh,
+                                   phys_vec3_t offset) {
+    if (!world || !bvh) {
+        return;
+    }
+    if (body_index >= world->body_pool.capacity) {
+        return;
+    }
+
+    /* Store shape data. */
+    uint32_t si = world->mesh_count++;
+    world->meshes[si].triangles = triangles;
+    world->meshes[si].tri_count = tri_count;
+    world->meshes[si].bvh = *bvh;
+
+    /* Set collider reference. */
+    phys_collider_init_mesh(&world->colliders[body_index], si, offset);
+
+    phys_body_t *b = phys_body_pool_get_curr(&world->body_pool, body_index);
+    if (b && world->static_bvh_valid && phys_body_is_static(b)) {
+        phys_world_static_bvh_invalidate(world);
+    }
+}
+
 const phys_collider_t *phys_world_get_collider(const phys_world_t *world,
                                                uint32_t body_index) {
     if (!world) {

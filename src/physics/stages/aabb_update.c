@@ -61,6 +61,26 @@ void phys_stage_aabb_update(const phys_aabb_update_args_t *args) {
                         aabb, center, rotation, cap->radius, cap->half_height);
                     break;
                 }
+                case PHYS_SHAPE_MESH: {
+                    /* Use the BVH root node's bounds, offset by center. */
+                    const phys_mesh_shape_t *ms =
+                        &args->meshes[collider->shape_index];
+                    if (ms->bvh.nodes && ms->bvh.node_count > 0
+                        && ms->bvh.root < ms->bvh.node_count) {
+                        phys_aabb_t root = ms->bvh.nodes[ms->bvh.root].bounds;
+                        /* Offset by collider world center (mesh is in local space). */
+                        phys_vec3_t off = center;
+                        aabb->min = (phys_vec3_t){
+                            root.min.x + off.x, root.min.y + off.y,
+                            root.min.z + off.z};
+                        aabb->max = (phys_vec3_t){
+                            root.max.x + off.x, root.max.y + off.y,
+                            root.max.z + off.z};
+                    } else {
+                        *aabb = (phys_aabb_t){center, center};
+                    }
+                    break;
+                }
                 default:
                     /* Unknown shape — zero-volume AABB at center. */
                     *aabb = (phys_aabb_t){center, center};

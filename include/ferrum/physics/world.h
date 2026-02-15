@@ -94,9 +94,11 @@ typedef struct phys_world {
     phys_sphere_t  *spheres;     /**< Sphere shapes array. */
     phys_box_t     *boxes;       /**< Box shapes array. */
     phys_capsule_t *capsules;    /**< Capsule shapes array. */
+    phys_mesh_shape_t *meshes;   /**< Mesh shapes array. */
     uint32_t sphere_count;       /**< Number of allocated spheres. */
     uint32_t box_count;          /**< Number of allocated boxes. */
     uint32_t capsule_count;      /**< Number of allocated capsules. */
+    uint32_t mesh_count;         /**< Number of allocated meshes. */
 
     /* Persistent manifold cache. */
     phys_manifold_cache_t manifold_cache;
@@ -285,6 +287,28 @@ void phys_world_set_box_collider(phys_world_t *world, uint32_t body_index,
 void phys_world_set_capsule_collider(phys_world_t *world, uint32_t body_index,
                                      float radius, float half_height,
                                      phys_vec3_t offset, phys_quat_t rotation);
+
+/**
+ * @brief Attach a mesh collider to a body.
+ *
+ * Stores a pre-built BVH and borrowed triangle array. The caller must
+ * keep the triangle array alive for the lifetime of the world.
+ * Mesh colliders should only be attached to static bodies.
+ *
+ * @param world       World (NULL-safe, no-op if NULL).
+ * @param body_index  Body index.
+ * @param triangles   Triangle array (borrowed, caller-owned).
+ * @param tri_count   Number of triangles.
+ * @param bvh         Pre-built BVH over the triangles.
+ * @param offset      Local offset from body origin.
+ *
+ * Side effects: increments mesh_count; writes colliders[body_index].
+ */
+void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
+                                   const phys_triangle_t *triangles,
+                                   uint32_t tri_count,
+                                   const phys_mesh_bvh_t *bvh,
+                                   phys_vec3_t offset);
 
 /**
  * @brief Get a read-only pointer to a body's collider.

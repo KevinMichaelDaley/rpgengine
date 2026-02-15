@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "ferrum/physics/mesh_collider.h"
 #include "ferrum/physics/phys_types.h"
 
 /** @file
@@ -57,6 +58,19 @@ typedef struct phys_capsule {
 } phys_capsule_t;
 
 _Static_assert(sizeof(phys_capsule_t) == 8, "phys_capsule_t must be 8 bytes");
+
+/**
+ * @brief Mesh shape data.
+ *
+ * Stores a BVH and triangle array for static mesh collision.
+ * The BVH and triangle array are caller-owned; the mesh shape
+ * merely stores the pointers for the narrowphase to use.
+ */
+typedef struct phys_mesh_shape {
+    const struct phys_triangle *triangles;   /**< Borrowed triangle array. */
+    uint32_t tri_count;                      /**< Number of triangles. */
+    struct phys_mesh_bvh bvh;                /**< Pre-built BVH over triangles. */
+} phys_mesh_shape_t;
 
 /* ── Collider reference ─────────────────────────────────────────── */
 
@@ -125,6 +139,16 @@ void phys_collider_init_capsule(phys_collider_t *c,
                                 uint32_t capsule_idx,
                                 phys_vec3_t offset,
                                 phys_quat_t rotation);
+
+/**
+ * @brief Initialize a mesh collider reference.
+ * @param c         Collider to initialize (non-NULL).
+ * @param mesh_idx  Index into the world's mesh shape pool.
+ * @param offset    Local offset from body origin.
+ */
+void phys_collider_init_mesh(phys_collider_t *c,
+                              uint32_t mesh_idx,
+                              phys_vec3_t offset);
 
 /* ── World-space transform helpers ──────────────────────────────── */
 

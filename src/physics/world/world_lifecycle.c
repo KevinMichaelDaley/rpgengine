@@ -32,7 +32,8 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
     world->spheres  = calloc(config->max_bodies, sizeof(phys_sphere_t));
     world->boxes    = calloc(config->max_bodies, sizeof(phys_box_t));
     world->capsules = calloc(config->max_bodies, sizeof(phys_capsule_t));
-    if (!world->spheres || !world->boxes || !world->capsules) {
+    world->meshes   = calloc(config->max_bodies, sizeof(phys_mesh_shape_t));
+    if (!world->spheres || !world->boxes || !world->capsules || !world->meshes) {
         phys_world_destroy(world);
         return -1;
     }
@@ -90,6 +91,7 @@ void phys_world_destroy(phys_world_t *world) {
     free(world->spheres);
     free(world->boxes);
     free(world->capsules);
+    free(world->meshes);
     free(world->impact_events);
     free(world->joints);
 

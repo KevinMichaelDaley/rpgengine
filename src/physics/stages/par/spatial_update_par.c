@@ -73,6 +73,23 @@ static void spatial_aabb_job(void *data) {
                     aabb, center, rotation, cap->radius, cap->half_height);
                 break;
             }
+            case PHYS_SHAPE_MESH: {
+                const phys_mesh_shape_t *ms =
+                    &args->meshes[collider->shape_index];
+                if (ms->bvh.nodes && ms->bvh.node_count > 0
+                    && ms->bvh.root < ms->bvh.node_count) {
+                    phys_aabb_t root = ms->bvh.nodes[ms->bvh.root].bounds;
+                    aabb->min = (phys_vec3_t){
+                        root.min.x + center.x, root.min.y + center.y,
+                        root.min.z + center.z};
+                    aabb->max = (phys_vec3_t){
+                        root.max.x + center.x, root.max.y + center.y,
+                        root.max.z + center.z};
+                } else {
+                    *aabb = (phys_aabb_t){center, center};
+                }
+                break;
+            }
             default:
                 /* Unknown shape — produce a zero-volume AABB at the center. */
                 *aabb = (phys_aabb_t){center, center};
