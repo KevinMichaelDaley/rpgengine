@@ -100,6 +100,30 @@ void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
     }
 }
 
+void phys_world_set_halfspace_collider(phys_world_t *world, uint32_t body_index,
+                                       phys_vec3_t normal, float distance) {
+    if (!world) {
+        return;
+    }
+    if (body_index >= world->body_pool.capacity) {
+        return;
+    }
+
+    /* Store shape data. */
+    uint32_t si = world->halfspace_count++;
+    world->halfspaces[si].normal   = normal;
+    world->halfspaces[si].distance = distance;
+
+    /* Set collider reference (offset unused for halfspaces). */
+    phys_collider_init_halfspace(&world->colliders[body_index], si,
+                                 (phys_vec3_t){0.0f, 0.0f, 0.0f});
+
+    phys_body_t *b = phys_body_pool_get_curr(&world->body_pool, body_index);
+    if (b && world->static_bvh_valid && phys_body_is_static(b)) {
+        phys_world_static_bvh_invalidate(world);
+    }
+}
+
 const phys_collider_t *phys_world_get_collider(const phys_world_t *world,
                                                uint32_t body_index) {
     if (!world) {

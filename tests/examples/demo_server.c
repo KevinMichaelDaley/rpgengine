@@ -249,7 +249,12 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.rot_w = body->orientation.w;
 
         /* Encode half-extents as float16 (meters). */
-        if (ctx->body_shape_type[bi] == 3u) {
+        if (ctx->body_shape_type[bi] == 4u) {
+            /* Halfspace: send large visual extents for client plane. */
+            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_GROUND_HALF_X);
+            spawn_msg.half_y_f16 = net_float16_from_float(0.0f);
+            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_GROUND_HALF_Z);
+        } else if (ctx->body_shape_type[bi] == 3u) {
             /* Mesh: use pre-computed bounding half-extents. */
             spawn_msg.half_x_f16 = net_float16_from_float(ctx->armadillo_half[0]);
             spawn_msg.half_y_f16 = net_float16_from_float(ctx->armadillo_half[1]);
@@ -620,18 +625,17 @@ int main(int argc, char **argv) {
     }
     printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_BODIES);
 
-    /* Ground plane: large static box at y=0. */
+    /* Ground plane: infinite half-space at y=0, normal pointing up. */
     {
         uint32_t gi = phys_world_create_body(&ctx.world);
         phys_body_t *gb = phys_world_get_body(&ctx.world, gi);
         gb->position = (phys_vec3_t){0.0f, 0.0f, 0.0f};
         gb->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
         gb->flags |= PHYS_BODY_FLAG_STATIC;
-        phys_world_set_box_collider(&ctx.world, gi,
-            (phys_vec3_t){DEMO_GROUND_HALF_X, DEMO_GROUND_HALF_Y, DEMO_GROUND_HALF_Z},
-            (phys_vec3_t){0.0f, 0.0f, 0.0f},
-            (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
-        printf("[server] ground plane body %u\n", gi);
+        phys_world_set_halfspace_collider(&ctx.world, gi,
+            (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
+        ctx.body_shape_type[gi] = 4u; /* halfspace */
+        printf("[server] ground halfspace body %u\n", gi);
     }
 
     /* Articulated capsule chains hanging from kinematic anchors.
@@ -723,8 +727,7 @@ int main(int argc, char **argv) {
 
         for (uint32_t s = 0; s < num_stacks; s++) {
             for (uint32_t layer = 0; layer < stack_height; layer++) {
-                float y = box_half + (float)layer * (box_half * 2.0f + 0.01f)
-                          + DEMO_GROUND_HALF_Y;
+                float y = box_half + (float)layer * (box_half * 2.0f + 0.01f);
                 uint32_t bi = phys_world_create_body(&ctx.world);
                 phys_body_t *b = phys_world_get_body(&ctx.world, bi);
                 b->position = (phys_vec3_t){
@@ -813,7 +816,7 @@ int main(int argc, char **argv) {
                     phys_body_t *ab = phys_world_get_body(&ctx.world, bi);
                     /* Place so the mesh min-Y aligns with ground top. */
                     ab->position = (phys_vec3_t){
-                        5.0f, DEMO_GROUND_HALF_Y - bmin[1], 5.0f};
+                        5.0f, -bmin[1], 5.0f};
                     ab->orientation =
                         (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
                     ab->flags |= PHYS_BODY_FLAG_STATIC;

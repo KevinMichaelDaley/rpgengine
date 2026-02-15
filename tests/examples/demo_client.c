@@ -127,7 +127,7 @@ static void color_from_body(uint16_t body_id, float out_rgb[3]) {
 typedef struct entity_view {
     uint16_t body_id;     /**< Server physics body index. */
     uint8_t  is_static;   /**< Static body (ground plane). */
-    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule, 3=mesh. */
+    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule, 3=mesh, 4=halfspace. */
     float    half_x;      /**< Half-extent X in meters. */
     float    half_y;      /**< Half-extent Y in meters. */
     float    half_z;      /**< Half-extent Z in meters. */
@@ -163,6 +163,8 @@ typedef struct gl_ctx {
     vbo_t             arm_vbo;   /* armadillo mesh */
     vao_t             arm_vao;
     uint32_t          arm_vert_count; /* number of armadillo vertices */
+    vbo_t             plane_vbo;  /* ground plane quad */
+    vao_t             plane_vao;
 } gl_ctx_t;
 
 static void *sdl_get_proc(const char *name, void *user) {
@@ -398,6 +400,24 @@ static int gl_init(gl_ctx_t *ctx) {
         }
     }
 
+    /* Ground plane quad VBO + VAO (unit quad in XZ, Y=0). */
+    {
+        static const float plane_verts[] = {
+            -0.5f, 0.0f, -0.5f,
+             0.5f, 0.0f, -0.5f,
+             0.5f, 0.0f,  0.5f,
+            -0.5f, 0.0f, -0.5f,
+             0.5f, 0.0f,  0.5f,
+            -0.5f, 0.0f,  0.5f,
+        };
+        vbo_create(&ctx->plane_vbo, &ctx->loader);
+        vbo_upload(&ctx->plane_vbo, GL_ARRAY_BUFFER, plane_verts,
+                   sizeof(plane_verts), GL_STATIC_DRAW);
+        vao_create(&ctx->plane_vao, &ctx->loader);
+        vao_bind_attributes(&ctx->plane_vao, &ctx->plane_vbo, &attr, 1u,
+                            3u * sizeof(float));
+    }
+
     glEnable(GL_DEPTH_TEST);
     SDL_GL_SetSwapInterval(1);
 
@@ -408,6 +428,8 @@ static int gl_init(gl_ctx_t *ctx) {
 }
 
 static void gl_shutdown(gl_ctx_t *ctx) {
+    vao_destroy(&ctx->plane_vao);
+    vbo_destroy(&ctx->plane_vbo);
     if (ctx->arm_vert_count > 0) {
         vao_destroy(&ctx->arm_vao);
         vbo_destroy(&ctx->arm_vbo);
@@ -1173,6 +1195,12 @@ int main(int argc, char **argv) {
                         /* Mesh: vertices are pre-scaled, no additional
                          * scaling needed. */
                         s = mat4_scaling(1.0f, 1.0f, 1.0f);
+                    } else if (e->shape_type == 4) {
+                        /* Halfspace: scale the unit quad to cover the
+                         * visible ground area. */
+                        s = mat4_scaling(e->half_x * 2.0f,
+                                         1.0f,
+                                         e->half_z * 2.0f);
                     } else {
                         s = mat4_scaling(e->half_x * 2.0f,
                                          e->half_y * 2.0f,
@@ -1196,7 +1224,12 @@ int main(int argc, char **argv) {
                     shader_uniform_set_vec3(&gl.uniforms, &gl.program,
                                             "u_color", rgb);
 
-                    if (e->shape_type == 3 && gl.arm_vert_count > 0) {
+                    if (e->shape_type == 4) {
+                        /* Halfspace ground plane. */
+                        glBindVertexArray(vao_handle(&gl.plane_vao));
+                        glDrawArrays(GL_TRIANGLES, 0, 6);
+                        glBindVertexArray(vao_handle(&gl.vao));
+                    } else if (e->shape_type == 3 && gl.arm_vert_count > 0) {
                         /* Armadillo mesh. */
                         glBindVertexArray(vao_handle(&gl.arm_vao));
                         glDrawArrays(GL_TRIANGLES, 0,

@@ -323,6 +323,19 @@ void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
                                    bool solid);
 
 /**
+ * @brief Attach a half-space (infinite plane) collider to a body.
+ *
+ * @param world       World to modify (NULL is a no-op).
+ * @param body_index  Index of the body to attach the collider to.
+ * @param normal      Outward-facing unit normal of the plane.
+ * @param distance    Signed distance from origin along the normal.
+ *
+ * Side effects: increments halfspace_count; writes colliders[body_index].
+ */
+void phys_world_set_halfspace_collider(phys_world_t *world, uint32_t body_index,
+                                       phys_vec3_t normal, float distance);
+
+/**
  * @brief Get a read-only pointer to a body's collider.
  *
  * @param world       World (NULL returns NULL).

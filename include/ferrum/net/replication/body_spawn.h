@@ -27,7 +27,7 @@ extern "C" {
 typedef struct net_repl_body_spawn {
     uint16_t body_id;            /**< Physics body index. */
     uint8_t  flags;              /**< Body flags (kinematic, static, etc). */
-    uint8_t  shape_type;         /**< 0=box, 1=sphere, 2=capsule. */
+    uint8_t  shape_type;         /**< 0=box, 1=sphere, 2=capsule, 3=mesh, 4=halfspace. */
     uint32_t color_seed;         /**< Color seed for rendering. */
     net_repl_vec3_mm_t pos_mm;   /**< Initial position in millimeters. */
     float    rot_x;              /**< Initial orientation (unpacked quat). */

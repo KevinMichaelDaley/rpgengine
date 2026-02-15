@@ -1,6 +1,6 @@
 ---
 id: rpg-lhrq
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-15T08:45:10Z
