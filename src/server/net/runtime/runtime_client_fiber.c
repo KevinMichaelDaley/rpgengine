@@ -286,4 +286,7 @@ void fr_server_client_fiber_main(void *user) {
     }
 
     fr_rudp_stream_destroy(out_stream);
+
+    /* Clear the inbox pointer so the pump doesn't deliver to freed stack memory. */
+    atomic_store_explicit(&client->inbox_ptr, (uintptr_t)0, memory_order_release);
 }

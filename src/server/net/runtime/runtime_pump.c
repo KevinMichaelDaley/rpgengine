@@ -71,13 +71,18 @@ static uint64_t transport_key_from_addr_(const net_udp_addr_t *a) {
     return fnv1a64_(a->storage, n);
 }
 
-static int find_client_by_transport_key_(fr_server_net_runtime_t *rt, uint64_t key) {
+static int find_client_by_transport_key_(fr_server_net_runtime_t *rt, uint64_t key,
+                                         const net_udp_addr_t *addr) {
     if (!rt || key == 0ull) {
         return -1;
     }
     for (uint16_t i = 0u; i < rt->cfg.max_clients; ++i) {
         if (rt->clients[i].active && rt->clients[i].transport_key == key) {
-            return (int)i;
+            /* Verify address matches to guard against FNV1a hash collisions. */
+            if (addr && rt->clients[i].addr.len == addr->len &&
+                memcmp(rt->clients[i].addr.storage, addr->storage, addr->len) == 0) {
+                return (int)i;
+            }
         }
     }
     return -1;
@@ -161,7 +166,7 @@ bool fr_server_net_runtime_pump(fr_server_net_runtime_t *rt, uint64_t now_ms) {
         atomic_fetch_add_explicit(&rt->bytes_in, (uint64_t)size, memory_order_relaxed);
 
         const uint64_t tkey = transport_key_from_addr_(&from);
-        int idx = find_client_by_transport_key_(rt, tkey);
+        int idx = find_client_by_transport_key_(rt, tkey, &from);
 
         if (idx < 0) {
             /* New transport endpoint: must be a JOIN so we can assign mocked

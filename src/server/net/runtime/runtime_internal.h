@@ -28,9 +28,15 @@ typedef struct fr_server_client_t {
      */
     uint32_t auth_client_nonce;
 
-        /* Transient transport key for demuxing packets to this client.
-             Must not be used as persistent identity.
-         */
+    /* Transient transport key for demuxing packets to this client.
+         Must not be used as persistent identity.
+         NOTE: FNV1a hash of sockaddr bytes may collide; packet routing
+         falls back to nonce-based lookup for JOIN packets (see
+         find_client_by_nonce_ in runtime_pump.c).  For non-JOIN packets,
+         a collision would misroute to the wrong client.  This is acceptable
+         at small client counts but should be replaced with a direct
+         addr comparison or a collision-resistant scheme at scale.
+     */
         uint64_t transport_key;
 
     atomic_uintptr_t inbox_ptr; /* (fr_server_client_inbox_t*) stored by fiber */

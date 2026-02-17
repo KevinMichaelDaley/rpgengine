@@ -1,6 +1,6 @@
 ---
 id: demo-009
-status: open
+status: closed
 deps: [phys-700, demo-001]
 links: []
 created: 2026-02-06T14:54:51Z

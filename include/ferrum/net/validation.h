@@ -39,8 +39,14 @@ extern "C" {
 /** Max registered schemas in the whitelist. */
 #define NET_VALIDATION_MAX_SCHEMAS 64
 
-/** Minimum packet size: 12-byte header + 4-byte schema header. */
-#define NET_VALIDATION_MIN_PACKET  16
+/** Minimum packet size: 40-byte packet header + 8-byte wire frame header. */
+#define NET_VALIDATION_MIN_PACKET  (NET_VALIDATION_PACKET_HEADER_SIZE + NET_VALIDATION_FRAME_HEADER_SIZE)
+
+/** Packet header size: [protocol_id:4][sequence:2][ack:2][ack_bits:32] = 40. */
+#define NET_VALIDATION_PACKET_HEADER_SIZE  40u
+
+/** Wire frame header size: [flags:1][reserved:1][schema_id:2][payload_size:2][reserved:2] = 8. */
+#define NET_VALIDATION_FRAME_HEADER_SIZE   8u
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
@@ -86,7 +92,7 @@ void net_validation_init(net_validation_ctx_t *ctx,
  * @brief Validate a raw incoming packet.
  *
  * Checks (in order):
- *   1. Packet length ≥ 16 bytes
+ *   1. Packet length ≥ 48 bytes (40-byte header + 8-byte frame header)
  *   2. Protocol ID matches
  *   3. Schema ID is in the whitelist
  *   4. Payload size ≤ remaining bytes

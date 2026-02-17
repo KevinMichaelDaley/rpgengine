@@ -69,6 +69,12 @@ bool fr_topic_channel_push(fr_topic_channel_t *ch, const uint8_t *data, size_t l
 
     const uint32_t msg_len = (uint32_t)len;
 
+    /* Guard against uint32 overflow: 4 + msg_len must not wrap. */
+    if (msg_len > UINT32_MAX - 4u) {
+        (void)atomic_fetch_add(&ch->stat_dropped, 1u);
+        return false;
+    }
+
     job_spinlock_lock(&ch->lock);
     if (msg_len > ch->max_message_size) {
         (void)atomic_fetch_add(&ch->stat_dropped, 1u);

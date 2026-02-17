@@ -49,8 +49,10 @@ int net_validation_check(net_validation_ctx_t *ctx,
         return NET_VALIDATION_ERR_PROTOCOL;
     }
 
-    /* Check 3: schema ID (big-endian at offset 12). */
-    uint16_t schema_id = (uint16_t)((packet[12] << 8) | packet[13]);
+    /* Check 3: schema ID (big-endian at offset 42 within wire frame header).
+     * Wire layout: [packet_header:40][flags:1][reserved:1][schema_id:2]... */
+    const size_t schema_off = NET_VALIDATION_PACKET_HEADER_SIZE + 2u;
+    uint16_t schema_id = (uint16_t)((packet[schema_off] << 8) | packet[schema_off + 1u]);
 
     int schema_known = 0;
     for (uint32_t i = 0; i < ctx->schema_count; i++) {
@@ -64,8 +66,9 @@ int net_validation_check(net_validation_ctx_t *ctx,
         return NET_VALIDATION_ERR_SCHEMA;
     }
 
-    /* Check 4: payload size consistency (big-endian at offset 14). */
-    uint16_t payload_size = (uint16_t)((packet[14] << 8) | packet[15]);
+    /* Check 4: payload size consistency (big-endian at offset 44). */
+    const size_t psize_off = NET_VALIDATION_PACKET_HEADER_SIZE + 4u;
+    uint16_t payload_size = (uint16_t)((packet[psize_off] << 8) | packet[psize_off + 1u]);
     if ((size_t)payload_size > size - NET_VALIDATION_MIN_PACKET) {
         ctx->stats.malformed_packets++;
         return NET_VALIDATION_ERR_MALFORMED;

@@ -64,23 +64,27 @@ static void write_u16_be(uint8_t *buf, uint16_t v) {
 }
 
 /**
- * Builds a packet: [proto:4][seq:2][ack:2][ack_bits:4][schema:2][payload_len:2][payload...]
- * Total header = 16 bytes.
+ * Builds a packet: [proto:4][seq:2][ack:2][ack_bits:32][flags:1][rsv:1][schema:2][payload_len:2][rsv:2][payload...]
+ * Packet header = 40 bytes, wire frame header = 8 bytes, total = 48 + payload.
  */
 static size_t build_packet(uint8_t *out, size_t cap,
                            uint16_t schema_id,
                            const uint8_t *payload, uint16_t payload_len) {
-    size_t total = 16 + (size_t)payload_len;
+    size_t total = 48 + (size_t)payload_len;
     if (total > cap) { return 0; }
-    memset(out, 0, 16);
+    memset(out, 0, 48);
     write_u32_be(out + 0, PROTO_ID);      /* protocol id */
     write_u16_be(out + 4, 1);             /* seq */
     write_u16_be(out + 6, 0);             /* ack */
-    write_u32_be(out + 8, 0);             /* ack_bits */
-    write_u16_be(out + 12, schema_id);    /* schema id */
-    write_u16_be(out + 14, payload_len);  /* payload size */
+    /* ack_bits[4] at bytes 8..39 — zeroed by memset */
+    /* Wire frame header at offset 40 */
+    out[40] = 0;                          /* flags */
+    out[41] = 0;                          /* reserved */
+    write_u16_be(out + 42, schema_id);    /* schema id */
+    write_u16_be(out + 44, payload_len);  /* payload size */
+    write_u16_be(out + 46, 0);            /* reserved */
     if (payload && payload_len > 0) {
-        memcpy(out + 16, payload, payload_len);
+        memcpy(out + 48, payload, payload_len);
     }
     return total;
 }
@@ -384,15 +388,15 @@ TEST(test_validation_gates_pipeline) {
     net_validation_init(&val, PROTO_ID, schemas, 1);
 
     /* Bad protocol ID → rejected before ghost table */
-    uint8_t bad_pkt[32];
+    uint8_t bad_pkt[64];
     memset(bad_pkt, 0, sizeof(bad_pkt));
     write_u32_be(bad_pkt, 0xDEADBEEF);   /* wrong proto */
-    write_u16_be(bad_pkt + 12, SCHEMA_SNAP);
-    write_u16_be(bad_pkt + 14, 0);
-    ASSERT(net_validation_check(&val, bad_pkt, 16) == NET_VALIDATION_ERR_PROTOCOL);
+    write_u16_be(bad_pkt + 42, SCHEMA_SNAP);  /* schema in wire frame header */
+    write_u16_be(bad_pkt + 44, 0);            /* payload_size */
+    ASSERT(net_validation_check(&val, bad_pkt, 48) == NET_VALIDATION_ERR_PROTOCOL);
 
     /* Unknown schema → rejected */
-    uint8_t pkt2[32];
+    uint8_t pkt2[64];
     size_t sz2 = build_packet(pkt2, sizeof(pkt2), 0x9999, NULL, 0);
     ASSERT(net_validation_check(&val, pkt2, sz2) == NET_VALIDATION_ERR_SCHEMA);
 
@@ -400,7 +404,7 @@ TEST(test_validation_gates_pipeline) {
     ASSERT(net_validation_check(&val, bad_pkt, 4) == NET_VALIDATION_ERR_TRUNCATED);
 
     /* Valid → passes through */
-    uint8_t good_pkt[32];
+    uint8_t good_pkt[64];
     size_t sz = build_packet(good_pkt, sizeof(good_pkt), SCHEMA_SNAP, NULL, 0);
     ASSERT(net_validation_check(&val, good_pkt, sz) == NET_VALIDATION_OK);
 

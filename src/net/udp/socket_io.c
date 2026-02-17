@@ -158,14 +158,18 @@ int net_udp_socket_sendto(net_udp_socket_t *sock, const net_udp_addr_t *to, cons
         uint8_t flush_buf[NET_EMU_MAX_PACKET_SIZE];
         size_t flush_size;
         net_udp_addr_t flush_addr;
+        int flush_err = 0;
         uint64_t t = now_us();
         while (net_emulator_pop(emu, &flush_addr, flush_buf,
                                 sizeof(flush_buf), &flush_size, t) == NET_EMU_OK) {
-            (void)sendto(sock->fd, flush_buf, flush_size, 0,
+            ssize_t sent = sendto(sock->fd, flush_buf, flush_size, 0,
                          (const struct sockaddr *)flush_addr.storage,
                          (socklen_t)flush_addr.len);
+            if (sent < 0) {
+                flush_err = 1;
+            }
         }
-        return NET_UDP_SOCKET_OK;
+        return flush_err ? NET_UDP_SOCKET_ERR_SYS : NET_UDP_SOCKET_OK;
     }
 #else
     if (fr__impair_should_drop()) {

@@ -42,11 +42,11 @@ execution flow for the Ferrum networking subsystem. It shows:
 WIRE PROTOCOL STRUCTURES
 ═══════════════════════════════════════════════════════════════════════════════
 
-net_packet_header_t                  12-byte packet header (network order)
+net_packet_header_t                  40-byte packet header (network order)
 ├── protocol_id: uint32_t            Magic number (e.g., 0x52555038 = 'RUP8')
 ├── sequence: uint16_t               Sender sequence number
 ├── ack: uint16_t                    Highest received remote sequence
-└── ack_bits: uint32_t               Bitfield of 32 prior ACKs
+└── ack_bits: uint64_t[4]            256-bit ACK bitfield (4 × uint64_t)
 
 net_rudp_wire_frame_view_t           8-byte frame header + payload view
 ├── flags: uint8_t                   FLAG_RELIABLE (0x01), FLAG_FRAGMENT (0x02)
@@ -57,7 +57,7 @@ net_rudp_wire_frame_view_t           8-byte frame header + payload view
 Wire Layout (UDP datagram):
 ┌──────────────┬──────────────────┬─────────────────────┐
 │ packet_header │ frame_header     │ payload             │
-│ (12 bytes)    │ (8 bytes)        │ (0..~492 bytes)     │
+│ (40 bytes)    │ (8 bytes)        │ (0..~464 bytes)     │
 └──────────────┴──────────────────┴─────────────────────┘
   Total: ≤ 512 bytes (NET_RUDP_MAX_PACKET_SIZE)
 
@@ -67,7 +67,7 @@ RELIABILITY STRUCTURES (per-peer)
 
 net_ack_window_t                     Sliding ACK window
 ├── ack: uint16_t                    Highest received sequence
-├── ack_bits: uint32_t               33-deep duplicate/ordering bitfield
+├── ack_bits: uint64_t[4]            256-bit duplicate/ordering bitfield
 └── initialized: uint8_t             Guard for first-packet bootstrap
 
 net_rudp_send_slot_t                 One reliable send slot

@@ -58,8 +58,9 @@ static void write_u16_be(uint8_t *buf, uint16_t v) {
 
 /**
  * Build a minimal valid packet:
- * [protocol_id:4][seq:2][ack:2][ack_bits:4] = 12 bytes header
- * + [schema_id:2][payload_size:2][payload...] = 4 + payload_size
+ * [protocol_id:4][seq:2][ack:2][ack_bits:32] = 40 bytes header
+ * + [flags:1][reserved:1][schema_id:2][payload_size:2][reserved:2] = 8 bytes
+ * + [payload...]
  */
 static size_t build_packet(uint8_t *buf, size_t cap,
                            uint32_t protocol_id,
@@ -67,22 +68,26 @@ static size_t build_packet(uint8_t *buf, size_t cap,
                            const uint8_t *payload,
                            uint16_t payload_size) {
     (void)cap;
-    /* Packet header (12 bytes). */
+    memset(buf, 0, 48 + payload_size);
+    /* Packet header (40 bytes). */
     write_u32_be(buf + 0, protocol_id);
     write_u16_be(buf + 4, 1);   /* sequence */
     write_u16_be(buf + 6, 0);   /* ack */
-    write_u32_be(buf + 8, 0);   /* ack_bits */
+    /* ack_bits[4] at bytes 8..39 — zeroed by memset */
 
-    /* Schema header (4 bytes). */
-    write_u16_be(buf + 12, schema_id);
-    write_u16_be(buf + 14, payload_size);
+    /* Wire frame header (8 bytes at offset 40). */
+    buf[40] = 0;                          /* flags */
+    buf[41] = 0;                          /* reserved */
+    write_u16_be(buf + 42, schema_id);
+    write_u16_be(buf + 44, payload_size);
+    write_u16_be(buf + 46, 0);            /* reserved */
 
     /* Payload. */
     if (payload && payload_size > 0) {
-        memcpy(buf + 16, payload, payload_size);
+        memcpy(buf + 48, payload, payload_size);
     }
 
-    return 16 + payload_size;
+    return 48 + payload_size;
 }
 
 /* ── Tests ──────────────────────────────────────────────────────── */
@@ -152,7 +157,7 @@ TEST(test_truncated_packet) {
     net_validation_ctx_t ctx;
     net_validation_init(&ctx, 0x52555038u, NULL, 0);
 
-    uint8_t pkt[8] = {0}; /* too short for 12-byte header */
+    uint8_t pkt[8] = {0}; /* too short for 48-byte min */
 
     int rc = net_validation_check(&ctx, pkt, 8);
     ASSERT_EQ(rc, NET_VALIDATION_ERR_TRUNCATED);
@@ -168,16 +173,20 @@ TEST(test_payload_size_mismatch) {
     net_validation_init(&ctx, 0x52555038u, known, 1);
 
     uint8_t pkt[64];
+    memset(pkt, 0, sizeof(pkt));
     /* Build header with protocol OK. */
     write_u32_be(pkt + 0, 0x52555038u);
     write_u16_be(pkt + 4, 1);
     write_u16_be(pkt + 6, 0);
-    write_u32_be(pkt + 8, 0);
-    /* Schema header claims 100 bytes of payload but packet is only 20. */
-    write_u16_be(pkt + 12, 0x2001);
-    write_u16_be(pkt + 14, 100);
+    /* ack_bits[4] at bytes 8..39 — zeroed by memset */
+    /* Wire frame header: claims 100 bytes of payload but packet is only 52. */
+    pkt[40] = 0;   /* flags */
+    pkt[41] = 0;   /* reserved */
+    write_u16_be(pkt + 42, 0x2001);
+    write_u16_be(pkt + 44, 100);
+    write_u16_be(pkt + 46, 0);
 
-    int rc = net_validation_check(&ctx, pkt, 20);
+    int rc = net_validation_check(&ctx, pkt, 52);
     ASSERT_EQ(rc, NET_VALIDATION_ERR_MALFORMED);
     ASSERT_EQ(ctx.stats.malformed_packets, 1);
 }
