@@ -53,11 +53,11 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
     #endif
 
     assert(fiber->magic1==0xf183);
-    assert(fiber->magic2=0x3a7f);
+    assert(fiber->magic2==0x3a7f);
     fiber->fn(fiber->user);
     fiber->finished = 1;
     assert(fiber->magic1==0xf183);
-    assert(fiber->magic2=0x3a7f);
+    assert(fiber->magic2==0x3a7f);
 
     if (fiber->counter) {
         job_counter_dec(fiber->counter);
@@ -78,7 +78,7 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
             TracyCFiberLeave;
         #endif
 	assert(fiber->magic1==0xf183);
-    	assert(fiber->magic2=0x3a7f);
+    	assert(fiber->magic2==0x3a7f);
         /* Verify stack canary before yielding back to the scheduler. */
         job_stack_canary_check(fiber->stack, fiber->system->fiber_stack_size,
                                fiber->id, "fiber_trampoline:yield");
@@ -86,7 +86,7 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
         fiber->swap_site = "fiber_trampoline:yield";
         job_context_swap(&fiber->ctx, g_scheduler_context);
 	assert(fiber->magic1==0xf183);
-    	assert(fiber->magic2=0x3a7f);
+    	assert(fiber->magic2==0x3a7f);
         #if defined(TRACY_ENABLE) && defined(TRACY_FIBERS)
             if (fiber->tracy_name) {
                 TracyCFiberEnter(fiber->tracy_name);
@@ -99,20 +99,20 @@ static void job_fiber_trampoline_body(job_fiber_t *fiber) {
 static void job_fiber_trampoline_arm(uintptr_t raw) {
     job_fiber_t *fiber = (job_fiber_t *)raw;
     assert(fiber->magic1==0xf183);
-    assert(fiber->magic2=0x3a7f);
+    assert(fiber->magic2==0x3a7f);
     job_fiber_trampoline_body(fiber);
     assert(fiber->magic1==0xf183);
-    assert(fiber->magic2=0x3a7f);
+    assert(fiber->magic2==0x3a7f);
 }
 #else
 static void job_fiber_trampoline(uintptr_t low, uintptr_t high) {
     uintptr_t raw = low | (high << 32);
     job_fiber_t *fiber = (job_fiber_t *)raw;
     assert(fiber->magic1==0xf183);
-    assert(fiber->magic2=0x3a7f);
+    assert(fiber->magic2==0x3a7f);
     job_fiber_trampoline_body(fiber);
     assert(fiber->magic1==0xf183);
-    assert(fiber->magic2=0x3a7f);
+    assert(fiber->magic2==0x3a7f);
 }
 #endif
 
