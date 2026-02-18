@@ -140,6 +140,7 @@ struct demo_ctx {
 
     /* Timing / spawn */
     double                              last_spawn_time;
+    uint64_t                            last_stats_tick;
     uint32_t                            total_spawned;
     uint32_t                            server_tick;
 
@@ -1048,9 +1049,11 @@ int main(int argc, char **argv) {
         /* Fixed-rate server ticks via tick loop. */
         fr_server_tick_loop_step(&ctx.tick_loop, elapsed_us);
 
-        /* Periodic stats. */
+        /* Periodic stats (once per second). */
         uint64_t tick_id = fr_server_tick_loop_tick_id(&ctx.tick_loop);
-        if (tick_id > 0 && tick_id % (DEMO_TICK_HZ * 5u) == 0) {
+        if (tick_id > 0 && tick_id % DEMO_TICK_HZ == 0 &&
+            tick_id != ctx.last_stats_tick) {
+            ctx.last_stats_tick = tick_id;
             uint64_t phys_tick = phys_tick_runner_tick_id(&ctx.tick_runner);
             uint64_t tick_ns = phys_tick_runner_last_tick_ns(&ctx.tick_runner);
             printf("[server] tick=%lu phys=%lu clients=%u entities=%u tick_us=%lu\n",
