@@ -19,6 +19,7 @@
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/mesh_narrowphase.h"
 #include "ferrum/physics/narrowphase_convex.h"
+#include "ferrum/physics/convex_compound.h"
 #include "ferrum/physics/collision/box_box.h"
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
@@ -181,6 +182,71 @@ static void np_par_job_fn(void *user_data)
             const phys_convex_hull_t *hb = &args->convex_hulls[c1->shape_index];
             hit = phys_convex_vs_convex(w0, q0, ha, w1, q1, hb,
                                         args->speculative_margin, &contact);
+        }
+        /* ── Compound dispatch ─────────────────────────────────── */
+        else if (c1->type == PHYS_SHAPE_COMPOUND) {
+            const phys_convex_compound_t *cc =
+                &args->compounds[c1->shape_index];
+            for (uint32_t ci = 0; ci < cc->child_count; ci++) {
+                const phys_convex_hull_t *hull =
+                    &args->convex_hulls[cc->child_hull_indices[ci]];
+                phys_contact_point_t child_contact;
+                memset(&child_contact, 0, sizeof(child_contact));
+                bool child_hit = false;
+
+                if (c0->type == PHYS_SHAPE_SPHERE) {
+                    float rs = args->spheres[c0->shape_index].radius;
+                    child_hit = phys_sphere_vs_convex(w0, rs, w1, q1, hull,
+                                                      args->speculative_margin,
+                                                      &child_contact);
+                } else if (c0->type == PHYS_SHAPE_BOX) {
+                    phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
+                    child_hit = phys_box_vs_convex(w0, q0, he, w1, q1, hull,
+                                                    args->speculative_margin,
+                                                    &child_contact);
+                } else if (c0->type == PHYS_SHAPE_CAPSULE) {
+                    float rc = args->capsules[c0->shape_index].radius;
+                    float hh = args->capsules[c0->shape_index].half_height;
+                    child_hit = phys_capsule_vs_convex(w0, q0, rc, hh,
+                                                       w1, q1, hull,
+                                                       args->speculative_margin,
+                                                       &child_contact);
+                } else if (c0->type == PHYS_SHAPE_COMPOUND) {
+                    const phys_convex_compound_t *cc0 =
+                        &args->compounds[c0->shape_index];
+                    for (uint32_t cj = 0; cj < cc0->child_count; cj++) {
+                        const phys_convex_hull_t *hull0 =
+                            &args->convex_hulls[cc0->child_hull_indices[cj]];
+                        phys_contact_point_t cc_contact;
+                        memset(&cc_contact, 0, sizeof(cc_contact));
+                        if (phys_convex_vs_convex(w0, q0, hull0, w1, q1, hull,
+                                                   args->speculative_margin,
+                                                   &cc_contact)) {
+                            uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                            if (slot < args->max_candidates) {
+                                phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                                cand->body_a = ba;
+                                cand->body_b = bb;
+                                cand->contacts[0] = cc_contact;
+                                cand->contact_count = 1;
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if (child_hit) {
+                    uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                    if (slot < args->max_candidates) {
+                        phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                        cand->body_a = ba;
+                        cand->body_b = bb;
+                        cand->contacts[0] = child_contact;
+                        cand->contact_count = 1;
+                    }
+                }
+            }
+            continue;
         }
         else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_MESH) {
             float rs = args->spheres[c0->shape_index].radius;

@@ -25,6 +25,7 @@
 #include "ferrum/physics/collision/capsule_capsule.h"
 #include "ferrum/physics/mesh_narrowphase.h"
 #include "ferrum/physics/narrowphase_convex.h"
+#include "ferrum/physics/convex_compound.h"
 #include "ferrum/physics/collision/halfspace.h"
 #include "ferrum/physics/step_plan.h"
 
@@ -110,9 +111,15 @@ static int contact_on_unstable_box(const phys_collision_fused_args_t *args,
  * @brief Run narrowphase on one broadphase pair; write candidate to local buf.
  * @return 1 if a candidate was written, 0 otherwise.
  */
+/**
+ * Narrowphase test for a single broadphase pair.
+ * Returns the number of contact candidates written to cand_out (0..max_cands).
+ * For simple shapes this is 0 or 1.  For compound shapes it may be > 1.
+ */
 static int narrow_test_pair(const phys_collision_fused_args_t *args,
                             uint32_t pair_idx,
-                            phys_contact_candidate_t *cand_out)
+                            phys_contact_candidate_t *cand_out,
+                            uint32_t max_cands)
 {
     uint32_t a = args->pairs[pair_idx].body_a;
     uint32_t b = args->pairs[pair_idx].body_b;
@@ -227,6 +234,66 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         const phys_convex_hull_t *hb = &args->convex_hulls[c1->shape_index];
         hit = phys_convex_vs_convex(w0, q0, ha, w1, q1, hb,
                                     args->speculative_margin, &contact);
+    }
+    /* ── Compound dispatch ─────────────────────────────────── */
+    else if (c1->type == PHYS_SHAPE_COMPOUND) {
+        const phys_convex_compound_t *cc =
+            &args->compounds[c1->shape_index];
+        uint32_t n_emitted = 0;
+        for (uint32_t ci = 0; ci < cc->child_count && n_emitted < max_cands; ci++) {
+            const phys_convex_hull_t *hull =
+                &args->convex_hulls[cc->child_hull_indices[ci]];
+            phys_contact_point_t child_contact;
+            memset(&child_contact, 0, sizeof(child_contact));
+            bool child_hit = false;
+
+            if (c0->type == PHYS_SHAPE_SPHERE) {
+                float rs = args->spheres[c0->shape_index].radius;
+                child_hit = phys_sphere_vs_convex(w0, rs, w1, q1, hull,
+                                                  args->speculative_margin,
+                                                  &child_contact);
+            } else if (c0->type == PHYS_SHAPE_BOX) {
+                phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
+                child_hit = phys_box_vs_convex(w0, q0, he, w1, q1, hull,
+                                                args->speculative_margin,
+                                                &child_contact);
+            } else if (c0->type == PHYS_SHAPE_CAPSULE) {
+                float rc = args->capsules[c0->shape_index].radius;
+                float hh = args->capsules[c0->shape_index].half_height;
+                child_hit = phys_capsule_vs_convex(w0, q0, rc, hh,
+                                                   w1, q1, hull,
+                                                   args->speculative_margin,
+                                                   &child_contact);
+            } else if (c0->type == PHYS_SHAPE_COMPOUND) {
+                const phys_convex_compound_t *cc0 =
+                    &args->compounds[c0->shape_index];
+                for (uint32_t cj = 0; cj < cc0->child_count && n_emitted < max_cands; cj++) {
+                    const phys_convex_hull_t *hull0 =
+                        &args->convex_hulls[cc0->child_hull_indices[cj]];
+                    phys_contact_point_t cc_contact;
+                    memset(&cc_contact, 0, sizeof(cc_contact));
+                    if (phys_convex_vs_convex(w0, q0, hull0, w1, q1, hull,
+                                               args->speculative_margin,
+                                               &cc_contact)) {
+                        cand_out[n_emitted].body_a = ba;
+                        cand_out[n_emitted].body_b = bb;
+                        cand_out[n_emitted].contacts[0] = cc_contact;
+                        cand_out[n_emitted].contact_count = 1;
+                        n_emitted++;
+                    }
+                }
+                continue;
+            }
+
+            if (child_hit) {
+                cand_out[n_emitted].body_a = ba;
+                cand_out[n_emitted].body_b = bb;
+                cand_out[n_emitted].contacts[0] = child_contact;
+                cand_out[n_emitted].contact_count = 1;
+                n_emitted++;
+            }
+        }
+        return (int)n_emitted;
     }
     else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_MESH) {
         float rs = args->spheres[c0->shape_index].radius;
@@ -552,9 +619,9 @@ static void collision_fused_job(void *data)
 
     for (uint32_t i = pair_start; i < pair_end; ++i) {
         if (cand_count >= FUSED_MAX_CAND_PER_BATCH) break;
-        if (narrow_test_pair(args, i, &local_cands[cand_count])) {
-            cand_count++;
-        }
+        uint32_t remaining = FUSED_MAX_CAND_PER_BATCH - cand_count;
+        int n = narrow_test_pair(args, i, &local_cands[cand_count], remaining);
+        cand_count += (uint32_t)n;
     }
 
     if (cand_count == 0) return;

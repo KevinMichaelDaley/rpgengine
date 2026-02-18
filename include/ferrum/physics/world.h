@@ -19,6 +19,7 @@
 #include "ferrum/physics/static_bvh.h"
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/convex_hull.h"
+#include "ferrum/physics/convex_compound.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -98,12 +99,14 @@ typedef struct phys_world {
     phys_mesh_shape_t *meshes;   /**< Mesh shapes array. */
     phys_convex_hull_t *convex_hulls; /**< Convex hull shapes array. */
     phys_halfspace_t *halfspaces; /**< Halfspace shapes array. */
+    phys_convex_compound_t *compounds; /**< Compound convex shapes array. */
     uint32_t sphere_count;       /**< Number of allocated spheres. */
     uint32_t box_count;          /**< Number of allocated boxes. */
     uint32_t capsule_count;      /**< Number of allocated capsules. */
     uint32_t mesh_count;         /**< Number of allocated meshes. */
     uint32_t convex_hull_count;  /**< Number of allocated convex hulls. */
     uint32_t halfspace_count;    /**< Number of allocated halfspaces. */
+    uint32_t compound_count;     /**< Number of allocated compounds. */
 
     /* Persistent manifold cache. */
     phys_manifold_cache_t manifold_cache;
@@ -337,6 +340,27 @@ void phys_world_set_mesh_collider(phys_world_t *world, uint32_t body_index,
  */
 void phys_world_set_halfspace_collider(phys_world_t *world, uint32_t body_index,
                                        phys_vec3_t normal, float distance);
+
+/**
+ * @brief Register a decomposed mesh as a compound convex collider.
+ *
+ * Copies all hulls from the decompose result into the world's
+ * convex_hulls pool and creates a compound shape entry that groups
+ * them.  The body's collider is set to PHYS_SHAPE_COMPOUND.
+ *
+ * @param world       World (NULL returns immediately).
+ * @param body_index  Body to attach the compound to.
+ * @param result      Decompose result (NULL returns immediately).
+ * @param offset      Local-space offset for the compound.
+ *
+ * Ownership: hulls are copied; caller can free result after call.
+ * Side effects: increments compound_count and convex_hull_count.
+ */
+struct phys_decompose_result;
+void phys_world_set_compound_collider(phys_world_t *world,
+                                       uint32_t body_index,
+                                       const struct phys_decompose_result *result,
+                                       phys_vec3_t offset);
 
 /**
  * @brief Get a read-only pointer to a body's collider.

@@ -13,6 +13,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/collider.h"
 #include "ferrum/physics/convex_hull.h"
+#include "ferrum/physics/convex_compound.h"
 #include "ferrum/physics/tier_list.h"
 
 #include <stddef.h>
@@ -86,6 +87,25 @@ void phys_stage_aabb_update(const phys_aabb_update_args_t *args) {
                     const phys_convex_hull_t *hull =
                         &args->convex_hulls[collider->shape_index];
                     *aabb = phys_convex_hull_world_aabb(hull, center, rotation);
+                    break;
+                }
+                case PHYS_SHAPE_COMPOUND: {
+                    /* Union of all child hull AABBs. */
+                    const phys_convex_compound_t *cc =
+                        &args->compounds[collider->shape_index];
+                    if (cc->child_count > 0) {
+                        *aabb = phys_convex_hull_world_aabb(
+                            &args->convex_hulls[cc->child_hull_indices[0]],
+                            center, rotation);
+                        for (uint32_t ci = 1; ci < cc->child_count; ci++) {
+                            phys_aabb_t child_aabb = phys_convex_hull_world_aabb(
+                                &args->convex_hulls[cc->child_hull_indices[ci]],
+                                center, rotation);
+                            phys_aabb_merge(aabb, aabb, &child_aabb);
+                        }
+                    } else {
+                        *aabb = (phys_aabb_t){center, center};
+                    }
                     break;
                 }
                 case PHYS_SHAPE_HALFSPACE: {

@@ -34,8 +34,12 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
     world->capsules = calloc(config->max_bodies, sizeof(phys_capsule_t));
     world->meshes   = calloc(config->max_bodies, sizeof(phys_mesh_shape_t));
     world->halfspaces = calloc(config->max_bodies, sizeof(phys_halfspace_t));
+    world->compounds  = calloc(config->max_bodies, sizeof(phys_convex_compound_t));
+    /* Convex hulls pool: up to 8 hulls per body on average. */
+    world->convex_hulls = calloc(config->max_bodies * 8,
+                                 sizeof(phys_convex_hull_t));
     if (!world->spheres || !world->boxes || !world->capsules || !world->meshes
-        || !world->halfspaces) {
+        || !world->halfspaces || !world->compounds || !world->convex_hulls) {
         phys_world_destroy(world);
         return -1;
     }
@@ -102,6 +106,8 @@ void phys_world_destroy(phys_world_t *world) {
     free(world->capsules);
     free(world->meshes);
     free(world->halfspaces);
+    free(world->compounds);
+    free(world->convex_hulls);
     free(world->impact_events);
     free(world->joints);
     free(world->bodies_ccd_prev);

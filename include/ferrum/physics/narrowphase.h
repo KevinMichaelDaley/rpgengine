@@ -67,6 +67,7 @@ typedef struct phys_narrowphase_args {
     const struct phys_mesh_shape *meshes;          /**< Mesh shape pool. */
     const struct phys_convex_hull *convex_hulls;   /**< Convex hull shape pool. */
     const struct phys_halfspace *halfspaces;       /**< Halfspace shape pool. */
+    const struct phys_convex_compound *compounds;  /**< Compound convex shape pool. */
     const struct phys_collision_pair *pairs;       /**< Broadphase pair array. */
     uint32_t pair_count;                          /**< Number of pairs. */
     phys_contact_candidate_t *candidates_out;     /**< Caller-allocated output. */
