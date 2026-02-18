@@ -401,6 +401,7 @@ static int gl_init(gl_ctx_t *ctx) {
     }
 
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
     SDL_GL_SetSwapInterval(0); /* No vsync — render as fast as possible. */
     SDL_SetRelativeMouseMode(SDL_TRUE);
 
@@ -981,7 +982,6 @@ int main(int argc, char **argv) {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
             if (shader_program_bind(&gl.program) == SHADER_PROGRAM_OK) {
-                glBindVertexArray(vao_handle(&gl.vao));
 
                 mat4_t proj;
                 float aspect = (float)CLIENT_WIN_W / (float)CLIENT_WIN_H;
@@ -1003,25 +1003,82 @@ int main(int argc, char **argv) {
                              (vec3_t){0.0f, 1.0f, 0.0f}, &view);
                 mat4_t vp = mat4_mul(proj, view);
 
-                /* Iterate all active bodies and render. */
+                /* ── Fix 2: Cache uniform locations once ──────── */
+                GLint u_mvp_loc = glGetUniformLocation(
+                    gl.program.handle, "u_mvp");
+                GLint u_color_loc = glGetUniformLocation(
+                    gl.program.handle, "u_color");
+
+                /* ── Fix 4: Extract frustum planes from VP matrix.
+                 * Each plane is (a,b,c,d) where ax+by+cz+d >= 0 is
+                 * inside.  We normalize so that (a,b,c) is a unit
+                 * vector, enabling direct sphere-vs-plane tests. */
+                float frustum[6][4];
+                {
+                    const float *m = vp.m; /* column-major */
+                    /* Left   */ frustum[0][0] = m[3]+m[0];  frustum[0][1] = m[7]+m[4];  frustum[0][2] = m[11]+m[8];  frustum[0][3] = m[15]+m[12];
+                    /* Right  */ frustum[1][0] = m[3]-m[0];  frustum[1][1] = m[7]-m[4];  frustum[1][2] = m[11]-m[8];  frustum[1][3] = m[15]-m[12];
+                    /* Bottom */ frustum[2][0] = m[3]+m[1];  frustum[2][1] = m[7]+m[5];  frustum[2][2] = m[11]+m[9];  frustum[2][3] = m[15]+m[13];
+                    /* Top    */ frustum[3][0] = m[3]-m[1];  frustum[3][1] = m[7]-m[5];  frustum[3][2] = m[11]-m[9];  frustum[3][3] = m[15]-m[13];
+                    /* Near   */ frustum[4][0] = m[3]+m[2];  frustum[4][1] = m[7]+m[6];  frustum[4][2] = m[11]+m[10]; frustum[4][3] = m[15]+m[14];
+                    /* Far    */ frustum[5][0] = m[3]-m[2];  frustum[5][1] = m[7]-m[6];  frustum[5][2] = m[11]-m[10]; frustum[5][3] = m[15]-m[14];
+                    for (int p = 0; p < 6; p++) {
+                        float len = sqrtf(frustum[p][0]*frustum[p][0] +
+                                          frustum[p][1]*frustum[p][1] +
+                                          frustum[p][2]*frustum[p][2]);
+                        if (len > 1e-8f) {
+                            float inv = 1.0f / len;
+                            frustum[p][0] *= inv;
+                            frustum[p][1] *= inv;
+                            frustum[p][2] *= inv;
+                            frustum[p][3] *= inv;
+                        }
+                    }
+                }
+
+                /* ── Fix 3: Sort bodies by shape_type to minimise
+                 *  VAO state changes.  Build index list, then sort
+                 *  by shape_type with a simple insertion sort (stable,
+                 *  ~5 shape types → nearly O(n)). ──────────────── */
+                uint32_t draw_order[CLIENT_MAX_BODIES];
+                uint32_t draw_count = 0;
                 double render_time = now_s();
                 uint32_t cap = world.body_pool.capacity;
+
                 for (uint32_t i = 0; i < cap; i++) {
-                    if (!phys_body_pool_is_active(&world.body_pool, i)) {
-                        continue;
+                    if (phys_body_pool_is_active(&world.body_pool, i)) {
+                        draw_order[draw_count++] = i;
                     }
+                }
+
+                /* Insertion sort by shape_type. */
+                for (uint32_t si = 1; si < draw_count; si++) {
+                    uint32_t key = draw_order[si];
+                    uint8_t  key_st = render_info[key].shape_type;
+                    uint32_t j = si;
+                    while (j > 0 &&
+                           render_info[draw_order[j - 1]].shape_type > key_st) {
+                        draw_order[j] = draw_order[j - 1];
+                        j--;
+                    }
+                    draw_order[j] = key;
+                }
+
+                /* ── Draw sorted bodies, binding each VAO only once
+                 *  per shape group (fix 3 + fix 5). ────────────── */
+                uint8_t cur_shape = UINT8_MAX; /* force initial bind */
+
+                for (uint32_t di = 0; di < draw_count; di++) {
+                    uint32_t i = draw_order[di];
                     const body_render_info_t *ri = &render_info[i];
 
                     vec3_t pos;
                     quat_t rot;
 
                     if (ri->is_constrained) {
-                        /* Constrained bodies: interpolate between server
-                         * snapshots (prediction can't solve joints). */
                         if (!fr_snapshot_interp_sample(snap_interp, i,
                                                        render_time,
                                                        &pos, &rot)) {
-                            /* No snapshot data yet — fall back to body pool. */
                             const phys_body_t *body =
                                 &world.body_pool.bodies_curr[i];
                             pos = (vec3_t){body->position.x,
@@ -1033,7 +1090,6 @@ int main(int argc, char **argv) {
                                            body->orientation.w};
                         }
                     } else {
-                        /* Predicted bodies: read from local physics world. */
                         const phys_body_t *body =
                             &world.body_pool.bodies_curr[i];
                         pos = (vec3_t){body->position.x,
@@ -1043,6 +1099,22 @@ int main(int argc, char **argv) {
                                        body->orientation.y,
                                        body->orientation.z,
                                        body->orientation.w};
+                    }
+
+                    /* ── Fix 4: Frustum cull (sphere test). ────── */
+                    {
+                        float hx = ri->half_x, hy = ri->half_y;
+                        float hz = ri->half_z;
+                        float radius = sqrtf(hx*hx + hy*hy + hz*hz);
+                        int culled = 0;
+                        for (int p = 0; p < 6; p++) {
+                            float dist = frustum[p][0] * pos.x +
+                                         frustum[p][1] * pos.y +
+                                         frustum[p][2] * pos.z +
+                                         frustum[p][3];
+                            if (dist < -radius) { culled = 1; break; }
+                        }
+                        if (culled) { continue; }
                     }
 
                     mat4_t t = mat4_translation(pos.x, pos.y, pos.z);
@@ -1062,8 +1134,8 @@ int main(int argc, char **argv) {
                     mat4_t model = mat4_mul(t, mat4_mul(r, s));
                     mat4_t mvp = mat4_mul(vp, model);
 
-                    shader_uniform_set_mat4(&gl.uniforms, &gl.program,
-                                            "u_mvp", mvp.m, 0u);
+                    /* Fix 2: Direct uniform upload (no cache lookup). */
+                    glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mvp.m);
 
                     float rgb[3];
                     if (ri->shape_type == 3) {
@@ -1073,25 +1145,45 @@ int main(int argc, char **argv) {
                     } else {
                         color_from_body((uint16_t)i, rgb);
                     }
-                    shader_uniform_set_vec3(&gl.uniforms, &gl.program,
-                                            "u_color", rgb);
+                    glUniform3fv(u_color_loc, 1, rgb);
 
-                    if (ri->shape_type == 4) {
-                        glBindVertexArray(vao_handle(&gl.plane_vao));
+                    /* Fix 3+5: Bind VAO only on shape group change. */
+                    if (ri->shape_type != cur_shape) {
+                        cur_shape = ri->shape_type;
+                        switch (cur_shape) {
+                        case 4:
+                            glBindVertexArray(gl.plane_vao.handle);
+                            break;
+                        case 3:
+                            glBindVertexArray(gl.arm_vao.handle);
+                            break;
+                        case 2:
+                            glBindVertexArray(gl.cap_vao.handle);
+                            break;
+                        default:
+                            glBindVertexArray(gl.vao.handle);
+                            break;
+                        }
+                    }
+
+                    /* Issue draw call with correct vertex count. */
+                    switch (ri->shape_type) {
+                    case 4:
                         glDrawArrays(GL_TRIANGLES, 0, 6);
-                        glBindVertexArray(vao_handle(&gl.vao));
-                    } else if (ri->shape_type == 3 && gl.arm_vert_count > 0) {
-                        glBindVertexArray(vao_handle(&gl.arm_vao));
-                        glDrawArrays(GL_TRIANGLES, 0,
-                                     (GLsizei)gl.arm_vert_count);
-                        glBindVertexArray(vao_handle(&gl.vao));
-                    } else if (ri->shape_type == 2) {
-                        glBindVertexArray(vao_handle(&gl.cap_vao));
+                        break;
+                    case 3:
+                        if (gl.arm_vert_count > 0) {
+                            glDrawArrays(GL_TRIANGLES, 0,
+                                         (GLsizei)gl.arm_vert_count);
+                        }
+                        break;
+                    case 2:
                         glDrawArrays(GL_TRIANGLES, 0,
                                      (GLsizei)gl.cap_vert_count);
-                        glBindVertexArray(vao_handle(&gl.vao));
-                    } else {
+                        break;
+                    default:
                         glDrawArrays(GL_TRIANGLES, 0, 36);
+                        break;
                     }
                 }
 
