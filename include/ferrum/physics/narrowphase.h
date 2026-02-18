@@ -24,6 +24,7 @@ struct phys_box;
 struct phys_capsule;
 struct phys_mesh_shape;
 struct phys_halfspace;
+struct phys_convex_hull;
 struct phys_collision_pair;
 
 #ifdef __cplusplus
@@ -64,6 +65,7 @@ typedef struct phys_narrowphase_args {
     const struct phys_box *boxes;                 /**< Box shape pool. */
     const struct phys_capsule *capsules;           /**< Capsule shape pool. */
     const struct phys_mesh_shape *meshes;          /**< Mesh shape pool. */
+    const struct phys_convex_hull *convex_hulls;   /**< Convex hull shape pool. */
     const struct phys_halfspace *halfspaces;       /**< Halfspace shape pool. */
     const struct phys_collision_pair *pairs;       /**< Broadphase pair array. */
     uint32_t pair_count;                          /**< Number of pairs. */

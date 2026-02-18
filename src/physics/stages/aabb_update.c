@@ -12,6 +12,7 @@
 #include "ferrum/physics/aabb.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/collider.h"
+#include "ferrum/physics/convex_hull.h"
 #include "ferrum/physics/tier_list.h"
 
 #include <stddef.h>
@@ -79,6 +80,12 @@ void phys_stage_aabb_update(const phys_aabb_update_args_t *args) {
                     } else {
                         *aabb = (phys_aabb_t){center, center};
                     }
+                    break;
+                }
+                case PHYS_SHAPE_CONVEX: {
+                    const phys_convex_hull_t *hull =
+                        &args->convex_hulls[collider->shape_index];
+                    *aabb = phys_convex_hull_world_aabb(hull, center, rotation);
                     break;
                 }
                 case PHYS_SHAPE_HALFSPACE: {

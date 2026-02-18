@@ -23,6 +23,7 @@
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/manifold_cache.h"
 #include "ferrum/physics/narrowphase.h"
+#include "ferrum/physics/convex_hull.h"
 #include "ferrum/physics/stabilization.h"
 #include "ferrum/physics/constraint.h"
 
@@ -47,6 +48,7 @@ typedef struct phys_collision_fused_args {
     const phys_box_t           *boxes;        /**< Box shape array. */
     const phys_capsule_t       *capsules;     /**< Capsule shape array. */
     const phys_mesh_shape_t    *meshes;       /**< Mesh shape array. */
+    const phys_convex_hull_t   *convex_hulls; /**< Convex hull shape array. */
     const phys_halfspace_t     *halfspaces;   /**< Halfspace shape array. */
     const phys_collision_pair_t *pairs;       /**< Broadphase pair array. */
     uint32_t                    pair_count;   /**< Number of broadphase pairs. */

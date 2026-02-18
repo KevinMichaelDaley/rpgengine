@@ -24,6 +24,7 @@
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
 #include "ferrum/physics/mesh_narrowphase.h"
+#include "ferrum/physics/narrowphase_convex.h"
 #include "ferrum/physics/collision/halfspace.h"
 #include "ferrum/physics/step_plan.h"
 
@@ -200,6 +201,32 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         hit = phys_capsule_vs_capsule(w0, q0, r0c, h0,
                                       w1, q1, r1c, h1,
                                       args->speculative_margin, &contact);
+    }
+    /* ── Convex hull dispatch ──────────────────────────────── */
+    else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_CONVEX) {
+        float rs = args->spheres[c0->shape_index].radius;
+        const phys_convex_hull_t *hull = &args->convex_hulls[c1->shape_index];
+        hit = phys_sphere_vs_convex(w0, rs, w1, q1, hull,
+                                    args->speculative_margin, &contact);
+    }
+    else if (c0->type == PHYS_SHAPE_BOX && c1->type == PHYS_SHAPE_CONVEX) {
+        phys_vec3_t he = args->boxes[c0->shape_index].half_extents;
+        const phys_convex_hull_t *hull = &args->convex_hulls[c1->shape_index];
+        hit = phys_box_vs_convex(w0, q0, he, w1, q1, hull,
+                                 args->speculative_margin, &contact);
+    }
+    else if (c0->type == PHYS_SHAPE_CAPSULE && c1->type == PHYS_SHAPE_CONVEX) {
+        float rc = args->capsules[c0->shape_index].radius;
+        float hh = args->capsules[c0->shape_index].half_height;
+        const phys_convex_hull_t *hull = &args->convex_hulls[c1->shape_index];
+        hit = phys_capsule_vs_convex(w0, q0, rc, hh, w1, q1, hull,
+                                      args->speculative_margin, &contact);
+    }
+    else if (c0->type == PHYS_SHAPE_CONVEX && c1->type == PHYS_SHAPE_CONVEX) {
+        const phys_convex_hull_t *ha = &args->convex_hulls[c0->shape_index];
+        const phys_convex_hull_t *hb = &args->convex_hulls[c1->shape_index];
+        hit = phys_convex_vs_convex(w0, q0, ha, w1, q1, hb,
+                                    args->speculative_margin, &contact);
     }
     else if (c0->type == PHYS_SHAPE_SPHERE && c1->type == PHYS_SHAPE_MESH) {
         float rs = args->spheres[c0->shape_index].radius;

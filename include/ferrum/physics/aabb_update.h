@@ -43,6 +43,7 @@ typedef struct phys_aabb_update_args {
     const struct phys_box *boxes;
     const struct phys_capsule *capsules;
     const struct phys_mesh_shape *meshes;
+    const struct phys_convex_hull *convex_hulls;
     const struct phys_halfspace *halfspaces;
     struct phys_aabb *aabbs_out;
     const struct phys_tier_lists *tier_lists;
