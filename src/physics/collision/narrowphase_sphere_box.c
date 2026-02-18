@@ -5,20 +5,11 @@
 
 #include <math.h>
 
+#include "ferrum/math/common.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/narrowphase.h"
-
-/**
- * @brief Clamp a float to [lo, hi].
- */
-static float clampf(float val, float lo, float hi)
-{
-    if (val < lo) return lo;
-    if (val > hi) return hi;
-    return val;
-}
 
 bool phys_sphere_vs_box(
     phys_vec3_t sphere_center, float sphere_radius,
@@ -38,9 +29,9 @@ bool phys_sphere_vs_box(
 
     /* Step 2: Clamp to box extents → closest point on box surface. */
     phys_vec3_t closest_local = {
-        clampf(local_center.x, -box_half_extents.x, box_half_extents.x),
-        clampf(local_center.y, -box_half_extents.y, box_half_extents.y),
-        clampf(local_center.z, -box_half_extents.z, box_half_extents.z),
+        fr_clampf(local_center.x, -box_half_extents.x, box_half_extents.x),
+        fr_clampf(local_center.y, -box_half_extents.y, box_half_extents.y),
+        fr_clampf(local_center.z, -box_half_extents.z, box_half_extents.z),
     };
 
     /* Step 3: Difference from sphere center (local) to closest point. */

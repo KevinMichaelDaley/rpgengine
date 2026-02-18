@@ -8,22 +8,11 @@
 
 #include <math.h>
 
+#include "ferrum/math/common.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/narrowphase.h"
-
-/* ── Static helpers ─────────────────────────────────────────────── */
-
-/**
- * Clamp a float to [lo, hi].
- */
-static float clampf(float val, float lo, float hi)
-{
-    if (val < lo) return lo;
-    if (val > hi) return hi;
-    return val;
-}
 
 /* ── Public API ─────────────────────────────────────────────────── */
 
@@ -51,7 +40,7 @@ bool phys_sphere_vs_capsule(
     float t = 0.5f; /* default: midpoint if segment is degenerate */
     if (dd > 1e-8f) {
         t = vec3_dot(vec3_sub(sphere_center, p0), d) / dd;
-        t = clampf(t, 0.0f, 1.0f);
+        t = fr_clampf(t, 0.0f, 1.0f);
     }
     phys_vec3_t closest = vec3_add(p0, vec3_scale(d, t));
 

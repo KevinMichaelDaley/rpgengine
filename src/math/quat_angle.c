@@ -1,16 +1,7 @@
 #include <math.h>
 
+#include "ferrum/math/common.h"
 #include "ferrum/math/quat_angle.h"
-
-static float clampf_(float x, float lo, float hi) {
-    if (x < lo) {
-        return lo;
-    }
-    if (x > hi) {
-        return hi;
-    }
-    return x;
-}
 
 float fr_quat_angle_degrees_between(quat_t a, quat_t b) {
     /* Normalize to avoid drift from quantization or integration. */
@@ -23,7 +14,7 @@ float fr_quat_angle_degrees_between(quat_t a, quat_t b) {
 
     /* q and -q represent the same rotation; use |w| to get shortest angle. */
     float w = fabsf(qrel.w);
-    w = clampf_(w, -1.0f, 1.0f);
+    w = fr_clampf(w, -1.0f, 1.0f);
 
     const float angle_rad = 2.0f * acosf(w);
     const float rad_to_deg = 180.0f / 3.14159265358979323846f;

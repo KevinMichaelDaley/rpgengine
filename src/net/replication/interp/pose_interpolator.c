@@ -1,17 +1,9 @@
 #include "ferrum/net/replication/interp/pose_interpolator.h"
 
+#include "ferrum/math/common.h"
+
 #include <math.h>
 #include <stddef.h>
-
-static float clampf_(float x, float lo, float hi) {
-    if (x < lo) {
-        return lo;
-    }
-    if (x > hi) {
-        return hi;
-    }
-    return x;
-}
 
 /**
  * @brief Extract angular velocity from a delta quaternion over dt.
@@ -34,7 +26,7 @@ static vec3_t angular_vel_from_quats(quat_t prev, quat_t curr, double dt) {
     }
 
     /* Extract axis-angle: angle = 2 * acos(w), axis = xyz / sin(half_angle). */
-    float half_angle = acosf(clampf_(dq.w, -1.0f, 1.0f));
+    float half_angle = acosf(fr_clampf(dq.w, -1.0f, 1.0f));
     float sin_ha = sinf(half_angle);
     if (sin_ha < 1e-6f) return zero;
 
@@ -140,7 +132,7 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
          * state forward from prev and backward from curr, then lerp/
          * slerp between the two estimates.  This keeps position and
          * rotation coupled through their velocities. */
-        t = clampf_(t, 0.0f, 1.0f);
+        t = fr_clampf(t, 0.0f, 1.0f);
         const float fdt = (float)dt;
         const float fwd_t = t * fdt;       /* time forward from prev */
         const float bwd_t = (1.0f - t) * fdt; /* time backward from curr */

@@ -9,22 +9,14 @@
 
 #include "ferrum/physics/snapshot.h"
 
+#include "ferrum/math/common.h"
+
 #include <math.h>
 
 /* ── Internal constants ─────────────────────────────────────────── */
 
 /** Maximum value for snorm16 mapping [-1, 1] → [-32767, 32767]. */
 #define SNORM16_MAX 32767.0f
-
-/* ── Helpers ────────────────────────────────────────────────────── */
-
-/** Clamp a float to [lo, hi]. */
-static float clampf(float val, float lo, float hi)
-{
-    if (val < lo) return lo;
-    if (val > hi) return hi;
-    return val;
-}
 
 /* ── Public API ─────────────────────────────────────────────────── */
 
@@ -33,7 +25,7 @@ void phys_quantize_vec3(phys_vec3_t v, int16_t out[3], float scale)
     float components[3] = {v.x, v.y, v.z};
     for (int i = 0; i < 3; i++) {
         float scaled = components[i] * scale;
-        scaled = clampf(scaled, -32767.0f, 32767.0f);
+        scaled = fr_clampf(scaled, -32767.0f, 32767.0f);
         out[i] = (int16_t)roundf(scaled);
     }
 }
@@ -77,7 +69,7 @@ void phys_quantize_quat(phys_quat_t q, int16_t out[3])
 
     /* Encode each remaining component as snorm16. */
     for (int i = 0; i < 3; i++) {
-        float clamped = clampf(remaining[i], -1.0f, 1.0f);
+        float clamped = fr_clampf(remaining[i], -1.0f, 1.0f);
         out[i] = (int16_t)roundf(clamped * SNORM16_MAX);
     }
 

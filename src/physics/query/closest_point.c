@@ -7,6 +7,7 @@
 
 #include "ferrum/physics/closest_point.h"
 
+#include "ferrum/math/common.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/physics/aabb.h"
 #include "ferrum/physics/collider.h"
@@ -42,12 +43,6 @@ static void sort_u32_(uint32_t *v, uint32_t n) {
     }
 }
 
-static float clampf_(float v, float lo, float hi) {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return v;
-}
-
 static phys_vec3_t closest_point_sphere_(phys_vec3_t center, float radius, phys_vec3_t point) {
     phys_vec3_t d = vec3_sub(point, center);
     float len2 = vec3_dot(d, d);
@@ -66,9 +61,9 @@ static phys_vec3_t closest_point_box_(phys_vec3_t center, phys_quat_t rot, phys_
     phys_vec3_t local = quat_rotate_vec3(inv, delta);
 
     phys_vec3_t clamped = (phys_vec3_t){
-        clampf_(local.x, -he.x, he.x),
-        clampf_(local.y, -he.y, he.y),
-        clampf_(local.z, -he.z, he.z),
+        fr_clampf(local.x, -he.x, he.x),
+        fr_clampf(local.y, -he.y, he.y),
+        fr_clampf(local.z, -he.z, he.z),
     };
 
     uint32_t inside =
@@ -106,7 +101,7 @@ static phys_vec3_t closest_point_capsule_(phys_vec3_t center, phys_quat_t rot,
     float t = 0.0f;
     if (seg_len2 > 1e-12f) {
         t = vec3_dot(vec3_sub(point, p0), seg) / seg_len2;
-        t = clampf_(t, 0.0f, 1.0f);
+        t = fr_clampf(t, 0.0f, 1.0f);
     }
 
     phys_vec3_t closest_seg = vec3_add(p0, vec3_scale(seg, t));

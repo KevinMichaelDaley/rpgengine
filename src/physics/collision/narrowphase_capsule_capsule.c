@@ -11,19 +11,12 @@
 #include <math.h>
 
 #include "ferrum/physics/collision/capsule_capsule.h"
+#include "ferrum/math/common.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/physics/manifold.h"
 
 /* ── Static helpers ─────────────────────────────────────────────── */
-
-/** Clamp a float to [lo, hi]. */
-static float clampf(float val, float lo, float hi)
-{
-    if (val < lo) return lo;
-    if (val > hi) return hi;
-    return val;
-}
 
 /**
  * @brief Rotate a vector by a quaternion: q * v * q^-1.
@@ -75,20 +68,20 @@ bool phys_capsule_vs_capsule(
     } else if (a <= epsilon) {
         /* Capsule A is degenerate → clamp to a0, project onto B. */
         s = 0.0f;
-        t = clampf(f / e, 0.0f, 1.0f);
+        t = fr_clampf(f / e, 0.0f, 1.0f);
     } else {
         float c = vec3_dot(d1, r);
         if (e <= epsilon) {
             /* Capsule B is degenerate → clamp to b0, project onto A. */
             t = 0.0f;
-            s = clampf(-c / a, 0.0f, 1.0f);
+            s = fr_clampf(-c / a, 0.0f, 1.0f);
         } else {
             /* General non-degenerate case. */
             float b_coeff = vec3_dot(d1, d2);
             float denom = a * e - b_coeff * b_coeff;
 
             if (denom > epsilon) {
-                s = clampf((b_coeff * f - c * e) / denom, 0.0f, 1.0f);
+                s = fr_clampf((b_coeff * f - c * e) / denom, 0.0f, 1.0f);
             } else {
                 /* Nearly parallel segments — use midpoint of A. */
                 s = 0.5f;
@@ -100,10 +93,10 @@ bool phys_capsule_vs_capsule(
             /* Clamp t, then re-derive s if t was clamped. */
             if (t < 0.0f) {
                 t = 0.0f;
-                s = clampf(-c / a, 0.0f, 1.0f);
+                s = fr_clampf(-c / a, 0.0f, 1.0f);
             } else if (t > 1.0f) {
                 t = 1.0f;
-                s = clampf((b_coeff - c) / a, 0.0f, 1.0f);
+                s = fr_clampf((b_coeff - c) / a, 0.0f, 1.0f);
             }
         }
     }

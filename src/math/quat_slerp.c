@@ -1,15 +1,10 @@
 #include <math.h>
 
+#include "ferrum/math/common.h"
 #include "ferrum/math/quat.h"
 
-static float clamp01(float v) {
-    if (v < 0.0f) return 0.0f;
-    if (v > 1.0f) return 1.0f;
-    return v;
-}
-
 quat_t quat_slerp(quat_t a, quat_t b, float t, float epsilon) {
-    t = clamp01(t);
+    t = fr_clampf(t, 0.0f, 1.0f);
     float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
     if (dot < 0.0f) {
         dot = -dot;
