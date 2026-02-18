@@ -2,9 +2,11 @@
  * @file convex_acd.c
  * @brief Approximate convex decomposition of voxel clusters.
  *
- * Iteratively splits voxel clusters along their principal axis
- * until each cluster is approximately convex (measured by comparing
- * cluster volume to its convex hull volume).
+ * Iteratively splits voxel clusters along their longest axis
+ * until each cluster is approximately convex.  Concavity is
+ * measured by comparing the cluster voxel volume to the volume
+ * of an inscribed ellipsoid (π/6 × AABB), which avoids
+ * over-splitting convex-but-round shapes like spheres.
  *
  * Non-static functions (2):
  *   1. acd_split_cluster
@@ -56,7 +58,8 @@ float acd_measure_concavity(const phys_vec3_t *centers, uint32_t count,
         if (centers[i].z > hi.z) hi.z = centers[i].z;
     }
 
-    /* Estimate convex hull volume as AABB volume (overestimate). */
+    /* AABB volume, expanded by one cell in each dimension to
+     * account for voxel extent. */
     float dx = (hi.x - lo.x) + cell_size;
     float dy = (hi.y - lo.y) + cell_size;
     float dz = (hi.z - lo.z) + cell_size;
@@ -65,11 +68,20 @@ float acd_measure_concavity(const phys_vec3_t *centers, uint32_t count,
 
     if (aabb_vol < 1e-10f) return 0.0f;
 
-    float fill_ratio = cluster_vol / aabb_vol;
-    /* Concavity: how much of the AABB is NOT filled. */
+    /* Normalize against the inscribed ellipsoid volume (π/6 ≈ 0.5236
+     * of the AABB).  A perfectly convex shape (sphere, capsule, etc.)
+     * fills roughly π/6 of its AABB, so using raw AABB volume as the
+     * reference causes every non-cubic convex shape to register as
+     * highly concave and get over-split.  Dividing the AABB reference
+     * by this factor lets convex-but-round shapes pass. */
+    const float ELLIPSOID_FACTOR = 0.5236f;  /* π/6 */
+    float convex_ref_vol = aabb_vol * ELLIPSOID_FACTOR;
+    float fill_ratio = cluster_vol / convex_ref_vol;
+    if (fill_ratio > 1.0f) fill_ratio = 1.0f;
+
+    /* Concavity: how much of the expected convex volume is NOT filled. */
     float concavity = 1.0f - fill_ratio;
     if (concavity < 0.0f) concavity = 0.0f;
-    if (concavity > 1.0f) concavity = 1.0f;
     return concavity;
 }
 

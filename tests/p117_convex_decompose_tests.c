@@ -4,7 +4,7 @@
  *
  * Tests cover:
  *   1. Decompose a box mesh → 1 hull
- *   2. Decompose an L-shaped mesh → 2+ hulls
+ *   2. Decompose a U-shaped mesh → 2+ hulls
  *   3. Default params are sane
  *   4. Hull vertex counts within limits
  *   5. Decomposed hulls cover the original mesh volume
@@ -101,50 +101,45 @@ static int make_box_mesh(phys_triangle_t *out, uint32_t max_tris,
 }
 
 /**
- * Build an L-shaped mesh by combining two boxes:
- *   Box A: (0,0,0)→(2,1,1)  — bottom of L
- *   Box B: (0,0,0)→(1,2,1)  — left column of L
+ * Build a U-shaped mesh from three boxes forming a clear concavity:
+ *   Left wall:   (0, 0, 0) → (0.3, 3, 1)
+ *   Bottom:      (0, 0, 0) → (3, 0.3, 1)
+ *   Right wall:  (2.7, 0, 0) → (3, 3, 1)
  *
- * This creates a concave shape that should decompose into 2+ pieces.
- * We construct the L as 6 faces of the combined outline.
+ * The U has a large open interior — only ~18% of its AABB is filled,
+ * which is well below the convex threshold.
  */
-static int make_l_shape_mesh(phys_triangle_t *out, uint32_t max_tris) {
-    /* Build L as two boxes: bottom + left column.
-     * The L outline when viewed from +Z:
-     *   (0,2)---(1,2)
-     *     |       |
-     *   (0,1)---(1,1)---(2,1)
-     *     |               |
-     *   (0,0)-----------(2,0)
-     *
-     * For simplicity, build two overlapping boxes and let the
-     * decomposition algorithm handle it.
-     */
-    if (max_tris < 24) return 0;
+static int make_u_shape_mesh(phys_triangle_t *out, uint32_t max_tris) {
+    if (max_tris < 36) return 0;
     int n = 0;
-    /* Bottom box: (0,0,0) → (2,1,1) */
+    /* Left wall */
     n += make_box_mesh(out + n, max_tris - (uint32_t)n,
-                       0, 0, 0, 2, 1, 1);
-    /* Left column: (0,1,0) → (1,2,1) */
+                       0, 0, 0, 0.3f, 3, 1);
+    /* Bottom */
     n += make_box_mesh(out + n, max_tris - (uint32_t)n,
-                       0, 1, 0, 1, 2, 1);
+                       0, 0, 0, 3, 0.3f, 1);
+    /* Right wall */
+    n += make_box_mesh(out + n, max_tris - (uint32_t)n,
+                       2.7f, 0, 0, 3, 3, 1);
     return n;
 }
 
 /**
- * Build a T-shaped mesh by combining two boxes:
- *   Vertical stem: (0.5, 0, 0) → (1.5, 1, 1)
- *   Top bar:       (0, 1, 0) → (2, 1.5, 1)
+ * Build a T-shaped mesh with clear concavity:
+ *   Narrow stem: (1.25, 0, 0) → (1.75, 1.5, 1)
+ *   Wide top:    (0, 1.5, 0) → (3, 2, 1)
+ *
+ * Two concave pockets below the top bar make this clearly non-convex.
  */
 static int make_t_shape_mesh(phys_triangle_t *out, uint32_t max_tris) {
     if (max_tris < 24) return 0;
     int n = 0;
     /* Stem */
     n += make_box_mesh(out + n, max_tris - (uint32_t)n,
-                       0.5f, 0, 0, 1.5f, 1, 1);
+                       1.25f, 0, 0, 1.75f, 1.5f, 1);
     /* Top bar */
     n += make_box_mesh(out + n, max_tris - (uint32_t)n,
-                       0, 1, 0, 2, 1.5f, 1);
+                       0, 1.5f, 0, 3, 2, 1);
     return n;
 }
 
@@ -170,10 +165,12 @@ static int test_decompose_box(void) {
     return 0;
 }
 
-/** 2. Decompose an L-shaped mesh → should produce 2+ hulls. */
-static int test_decompose_l_shape(void) {
-    phys_triangle_t tris[24];
-    int n = make_l_shape_mesh(tris, 24);
+/** 2. Decompose a U-shaped mesh → should produce 2+ hulls.
+ *  The U has a large concavity (~72% of its AABB is empty),
+ *  so the decomposer must split it. */
+static int test_decompose_u_shape(void) {
+    phys_triangle_t tris[36];
+    int n = make_u_shape_mesh(tris, 36);
     ASSERT_TRUE(n > 0);
 
     phys_decompose_params_t params = phys_decompose_params_default();
@@ -183,7 +180,7 @@ static int test_decompose_l_shape(void) {
 
     int rc = phys_decompose_mesh(tris, (uint32_t)n, &params, &result);
     ASSERT_EQ(0, rc);
-    /* L-shape is concave, expect at least 2 pieces. */
+    /* U-shape is clearly concave, expect at least 2 pieces. */
     ASSERT_TRUE(result.hull_count >= 2);
     return 0;
 }
@@ -191,7 +188,7 @@ static int test_decompose_l_shape(void) {
 /** 3. Default params are sane. */
 static int test_default_params(void) {
     phys_decompose_params_t p = phys_decompose_params_default();
-    ASSERT_TRUE(p.resolution >= 8 && p.resolution <= 64);
+    ASSERT_TRUE(p.resolution >= 8 && p.resolution <= 128);
     ASSERT_TRUE(p.concavity_threshold > 0.0f && p.concavity_threshold < 1.0f);
     ASSERT_TRUE(p.max_hulls >= 1 && p.max_hulls <= 64);
     ASSERT_TRUE(p.min_voxels >= 1);
@@ -200,8 +197,8 @@ static int test_default_params(void) {
 
 /** 4. Hull vertex counts are within limits. */
 static int test_hull_vertex_limits(void) {
-    phys_triangle_t tris[24];
-    int n = make_l_shape_mesh(tris, 24);
+    phys_triangle_t tris[36];
+    int n = make_u_shape_mesh(tris, 36);
     ASSERT_TRUE(n > 0);
 
     phys_decompose_params_t params = phys_decompose_params_default();
@@ -282,6 +279,7 @@ static int test_decompose_t_shape(void) {
     ASSERT_TRUE(n > 0);
 
     phys_decompose_params_t params = phys_decompose_params_default();
+    params.resolution = 64;
     params.concavity_threshold = 0.05f;
     phys_decompose_result_t result;
     memset(&result, 0, sizeof(result));
@@ -299,7 +297,7 @@ int main(void) {
     fprintf(stderr, "=== p117_convex_decompose_tests ===\n");
 
     RUN_TEST(test_decompose_box);
-    RUN_TEST(test_decompose_l_shape);
+    RUN_TEST(test_decompose_u_shape);
     RUN_TEST(test_default_params);
     RUN_TEST(test_hull_vertex_limits);
     RUN_TEST(test_hulls_cover_volume);

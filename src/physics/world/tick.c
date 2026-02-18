@@ -445,7 +445,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
     const float substep_dt = plan.dt / (float)max_substeps;
 
     /* Initialize CCD prev buffer on first tick (no prior snapshot). */
-    if (world->tick_count == 0 && world->bodies_ccd_prev && world->mesh_count > 0) {
+    if (world->tick_count == 0 && world->bodies_ccd_prev) {
         memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
                body_cap * sizeof(phys_body_t));
     }
@@ -1064,7 +1064,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         }
 
         /* ── Stage 12c: CCD (swept sphere vs static mesh) ─────── */
-        if (world->mesh_count > 0) {
+        {
             phys_stage_ccd(&(phys_ccd_args_t){
                 .bodies_prev      = world->bodies_ccd_prev,
                 .bodies_read      = world->body_pool.bodies_curr,
@@ -1080,6 +1080,9 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .spheres          = world->spheres,
                 .capsules         = world->capsules,
                 .boxes            = world->boxes,
+                .convex_hulls     = world->convex_hulls,
+                .compounds        = world->compounds,
+                .compound_count   = world->compound_count,
             });
         }
 
@@ -1112,7 +1115,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
 
     /* Snapshot post-tick body positions for next tick's CCD.
      * After the final buffer swap, bodies_curr holds the latest state. */
-    if (world->bodies_ccd_prev && world->mesh_count > 0) {
+    if (world->bodies_ccd_prev) {
         memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
                body_cap * sizeof(phys_body_t));
     }

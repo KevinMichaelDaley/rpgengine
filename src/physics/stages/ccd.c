@@ -29,6 +29,15 @@
 #include "ferrum/physics/mesh_narrowphase.h"
 #include "ferrum/physics/phys_pool.h"
 
+/* Forward declarations for ccd_statics.c helpers. */
+bool ccd_depenetrate_vs_statics(
+    uint32_t di, const phys_ccd_args_t *args,
+    float *depth_out, phys_vec3_t *normal_out);
+bool ccd_sweep_vs_statics(
+    uint32_t di, float bounding_radius, float margin,
+    const phys_ccd_args_t *args,
+    float *best_t_inout, phys_vec3_t *best_normal_out);
+
 /* ── Ray vs Triangle (Möller–Trumbore) ─────────────────────────── */
 
 bool phys_ray_vs_triangle(
@@ -1464,6 +1473,20 @@ static int ccd_process_body(
             }
             return 1;
         }
+
+        /* Also check vs static primitives / compounds. */
+        {
+            float sd = 0.0f; phys_vec3_t sn = {0,1,0};
+            if (ccd_depenetrate_vs_statics(i, args, &sd, &sn)) {
+                curr->position = vec3_add(curr->position,
+                    vec3_scale(sn, sd + 0.01f));
+                float svn = vec3_dot(curr->linear_vel, sn);
+                if (svn < 0.0f)
+                    curr->linear_vel = vec3_sub(
+                        curr->linear_vel, vec3_scale(sn, svn));
+                return 1;
+            }
+        }
     }
 
     /* ── Phase 2: Swept CCD ──────────────────────────────── */
@@ -1491,6 +1514,10 @@ static int ccd_process_body(
             &best_t, &best_normal, &best_hit);
     }
 
+    /* Also sweep vs all static primitives / compounds. */
+    ccd_sweep_vs_statics(i, ccd_radius, margin, args,
+                         &best_t, &best_normal);
+
     if (best_t <= 1.01f) {
         if (best_t > 1.0f) best_t = 1.0f;
         phys_vec3_t safe_pos = vec3_add(prev->position,
@@ -1513,7 +1540,7 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
     if (!args) return 0;
     if (!args->bodies_prev || !args->bodies_curr || !args->bodies_read)
         return 0;
-    if (!args->colliders || args->mesh_count == 0) return 0;
+    if (!args->colliders) return 0;
 
     const uint32_t n = args->body_count;
     const uint32_t mask_words = (n + 31) / 32;

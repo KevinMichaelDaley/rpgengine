@@ -4,7 +4,11 @@
  *
  * Converts a triangle mesh into a 3D voxel grid.  Each voxel is
  * marked as FILLED if it lies on the mesh surface or inside the
- * mesh volume (determined by ray-casting parity along +X).
+ * mesh volume.
+ *
+ * For watertight meshes, interior is determined by flood-filling
+ * the exterior from grid corner (0,0,0) and inverting: any voxel
+ * not reached by the flood and not on the surface is interior.
  *
  * Non-static functions (2):
  *   1. voxelize_mesh
@@ -20,6 +24,14 @@
 #include "ferrum/physics/mesh_collider.h"
 #include "ferrum/physics/phys_types.h"
 
+/* ── Voxel grid constants ─────────────────────────────────────── */
+
+/** Surface / filled voxel marker. */
+#define VOXEL_FILLED 1u
+
+/** Exterior voxel marker (used during flood fill, then inverted). */
+#define VOXEL_EXTERIOR 2u
+
 /* ── Voxel grid index helper ──────────────────────────────────── */
 
 static inline uint32_t voxel_idx(uint32_t x, uint32_t y, uint32_t z,
@@ -27,49 +39,61 @@ static inline uint32_t voxel_idx(uint32_t x, uint32_t y, uint32_t z,
     return z * res * res + y * res + x;
 }
 
-/* ── Ray-triangle intersection (Möller–Trumbore, +X ray) ───────── */
+/* ── Flood-fill stack entry ───────────────────────────────────── */
+
+typedef struct voxel_coord {
+    uint16_t x, y, z;
+} voxel_coord_t;
 
 /**
- * Test ray from (ox, oy, oz) along +X against triangle.
- * Returns the intersection t parameter, or -1 if no hit.
+ * @brief Flood-fill exterior voxels from grid corner (0,0,0).
+ *
+ * Marks all empty voxels reachable from the grid boundary as
+ * VOXEL_EXTERIOR using an explicit stack (no recursion).
+ * Surface voxels (value == VOXEL_FILLED) act as barriers.
  */
-static float ray_triangle_t(float ox, float oy, float oz,
-                             const phys_triangle_t *tri) {
-    phys_vec3_t e1 = {
-        tri->v[1].x - tri->v[0].x,
-        tri->v[1].y - tri->v[0].y,
-        tri->v[1].z - tri->v[0].z,
-    };
-    phys_vec3_t e2 = {
-        tri->v[2].x - tri->v[0].x,
-        tri->v[2].y - tri->v[0].y,
-        tri->v[2].z - tri->v[0].z,
-    };
-    /* h = cross((1,0,0), e2) = (0, -e2.z, e2.y) */
-    float hy = -e2.z;
-    float hz = e2.y;
+static void flood_fill_exterior(uint8_t *grid, uint32_t res) {
+    uint32_t total = res * res * res;
 
-    float a = e1.y * hy + e1.z * hz;  /* e1 · h (hx=0) */
-    if (fabsf(a) < 1e-8f) return -1.0f;
+    /* Pre-allocate stack — worst case every voxel is exterior. */
+    voxel_coord_t *stack = malloc(total * sizeof(voxel_coord_t));
+    if (!stack) return;
+    uint32_t top = 0;
 
-    float f = 1.0f / a;
-    float sx = ox - tri->v[0].x;
-    float sy = oy - tri->v[0].y;
-    float sz = oz - tri->v[0].z;
+    /* Seed from (0,0,0).  The grid has a margin around the mesh
+     * so corner voxels are guaranteed to be outside the mesh. */
+    if (grid[0] == 0) {
+        grid[0] = VOXEL_EXTERIOR;
+        stack[top++] = (voxel_coord_t){0, 0, 0};
+    }
 
-    float u = f * (sy * hy + sz * hz);  /* s · h (hx=0) */
-    if (u < 0.0f || u > 1.0f) return -1.0f;
+    /* 6-connected flood fill. */
+    while (top > 0) {
+        voxel_coord_t c = stack[--top];
+        int dx[6] = {-1, 1, 0, 0, 0, 0};
+        int dy[6] = {0, 0, -1, 1, 0, 0};
+        int dz[6] = {0, 0, 0, 0, -1, 1};
 
-    /* q = cross(s, e1) */
-    float qx = sy * e1.z - sz * e1.y;
-    float qy = sz * e1.x - sx * e1.z;
-    float qz = sx * e1.y - sy * e1.x;
+        for (int d = 0; d < 6; d++) {
+            int nx = (int)c.x + dx[d];
+            int ny = (int)c.y + dy[d];
+            int nz = (int)c.z + dz[d];
 
-    float v = f * qx;  /* dir · q = (1,0,0)·q = qx */
-    if (v < 0.0f || u + v > 1.0f) return -1.0f;
+            if (nx < 0 || nx >= (int)res) continue;
+            if (ny < 0 || ny >= (int)res) continue;
+            if (nz < 0 || nz >= (int)res) continue;
 
-    float t = f * (e2.x * qx + e2.y * qy + e2.z * qz);
-    return t > 1e-6f ? t : -1.0f;
+            uint32_t idx = voxel_idx((uint32_t)nx, (uint32_t)ny,
+                                      (uint32_t)nz, res);
+            if (grid[idx] == 0) {
+                grid[idx] = VOXEL_EXTERIOR;
+                stack[top++] = (voxel_coord_t){
+                    (uint16_t)nx, (uint16_t)ny, (uint16_t)nz};
+            }
+        }
+    }
+
+    free(stack);
 }
 
 /* ── Surface voxelization ──────────────────────────────────────── */
@@ -96,9 +120,12 @@ void voxelize_surface(uint8_t *grid, uint32_t res,
             float gx = (tri->v[vi].x - min_corner.x) * inv_cell;
             float gy = (tri->v[vi].y - min_corner.y) * inv_cell;
             float gz = (tri->v[vi].z - min_corner.z) * inv_cell;
-            if (gx < ax) { ax = gx; } if (gx > bx) { bx = gx; }
-            if (gy < ay) { ay = gy; } if (gy > by) { by = gy; }
-            if (gz < az) { az = gz; } if (gz > bz) { bz = gz; }
+            if (gx < ax) { ax = gx; }
+            if (gx > bx) { bx = gx; }
+            if (gy < ay) { ay = gy; }
+            if (gy > by) { by = gy; }
+            if (gz < az) { az = gz; }
+            if (gz > bz) { bz = gz; }
         }
         int x0 = (int)ax; if (x0 < 0) x0 = 0;
         int y0 = (int)ay; if (y0 < 0) y0 = 0;
@@ -111,79 +138,47 @@ void voxelize_surface(uint8_t *grid, uint32_t res,
             for (int iy = y0; iy <= y1; iy++) {
                 for (int ix = x0; ix <= x1; ix++) {
                     grid[voxel_idx((uint32_t)ix, (uint32_t)iy,
-                                   (uint32_t)iz, res)] = 1;
+                                   (uint32_t)iz, res)] = VOXEL_FILLED;
                 }
             }
         }
     }
 }
 
-/* ── Interior voxelization via ray-casting parity ──────────────── */
+/* ── Interior voxelization via exterior flood fill ─────────────── */
 
 /**
- * @brief Voxelize mesh interior using scanline ray-casting parity.
+ * @brief Voxelize mesh interior using flood-fill inversion.
  *
- * For each (y, z) row, cast a ray along +X and collect all triangle
- * intersection t values.  Walk voxels left-to-right, counting
- * crossings before each voxel center.  Odd crossing count = inside.
+ * Algorithm (assumes watertight mesh):
+ *   1. Mark surface voxels via triangle AABB rasterization.
+ *   2. Flood-fill exterior from corner (0,0,0) — surface voxels
+ *      act as barriers, so flood cannot leak inside.
+ *   3. Invert: any voxel not marked as exterior or surface is
+ *      interior → mark as filled.
+ *
+ * The grid must have a margin around the mesh AABB so that
+ * corner (0,0,0) is guaranteed to be outside the mesh.
  */
 void voxelize_mesh(uint8_t *grid, uint32_t res,
                    phys_vec3_t min_corner, float cell_size,
                    const phys_triangle_t *triangles, uint32_t tri_count) {
-    /* First mark surface voxels. */
+    /* Step 1: mark surface voxels. */
     voxelize_surface(grid, res, min_corner, cell_size, triangles, tri_count);
 
-    /* Allocate crossing buffer: worst case, every triangle hits. */
-    float *crossings = malloc(tri_count * sizeof(float));
-    if (!crossings) return;
+    /* Step 2: flood-fill exterior from corner. */
+    flood_fill_exterior(grid, res);
 
-    for (uint32_t iz = 0; iz < res; iz++) {
-        for (uint32_t iy = 0; iy < res; iy++) {
-            float ray_oy = min_corner.y + ((float)iy + 0.5f) * cell_size;
-            float ray_oz = min_corner.z + ((float)iz + 0.5f) * cell_size;
-            float ray_ox = min_corner.x - cell_size;
-
-            /* Collect all crossing t values along this scanline. */
-            uint32_t ncross = 0;
-            for (uint32_t t = 0; t < tri_count; t++) {
-                float hit_t = ray_triangle_t(ray_ox, ray_oy, ray_oz,
-                                              &triangles[t]);
-                if (hit_t > 0.0f) {
-                    crossings[ncross++] = hit_t;
-                }
-            }
-
-            /* Sort crossings (insertion sort — typically few crossings). */
-            for (uint32_t i = 1; i < ncross; i++) {
-                float key = crossings[i];
-                int j = (int)i - 1;
-                while (j >= 0 && crossings[j] > key) {
-                    crossings[j + 1] = crossings[j];
-                    j--;
-                }
-                crossings[j + 1] = key;
-            }
-
-            /* Walk voxels, tracking parity. */
-            uint32_t cross_idx = 0;
-            for (uint32_t ix = 0; ix < res; ix++) {
-                if (grid[voxel_idx(ix, iy, iz, res)]) continue;
-
-                /* Voxel center distance from ray origin along +X. */
-                float voxel_t = (min_corner.x + ((float)ix + 0.5f) * cell_size)
-                                - ray_ox;
-
-                /* Count crossings before this voxel center. */
-                while (cross_idx < ncross && crossings[cross_idx] < voxel_t) {
-                    cross_idx++;
-                }
-                /* Odd parity = inside. */
-                if (cross_idx & 1) {
-                    grid[voxel_idx(ix, iy, iz, res)] = 1;
-                }
-            }
+    /* Step 3: invert — unmarked voxels are interior. */
+    uint32_t total = res * res * res;
+    for (uint32_t i = 0; i < total; i++) {
+        if (grid[i] == 0) {
+            /* Not surface and not exterior → interior. */
+            grid[i] = VOXEL_FILLED;
+        } else if (grid[i] == VOXEL_EXTERIOR) {
+            /* Exterior → empty. */
+            grid[i] = 0;
         }
+        /* VOXEL_FILLED stays as-is. */
     }
-
-    free(crossings);
 }

@@ -11,6 +11,10 @@
 #include "ferrum/physics/ccd.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/collider.h"
+#include "ferrum/physics/convex_hull.h"
+#include "ferrum/physics/convex_compound.h"
+#include "ferrum/physics/convex_decompose.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/mesh_collider.h"
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/world.h"
@@ -442,6 +446,211 @@ static int test_ccd_skips_slow_box(void) {
     return 0;
 }
 
+/* ── CCD vs static non-mesh colliders (no meshes in scene) ─────── */
+
+/**
+ * Fast capsule vs static sphere — should be clamped.
+ * No meshes in the scene; exercises ccd_statics.c path.
+ */
+static int test_ccd_capsule_vs_static_sphere(void) {
+    phys_world_t world;
+    phys_world_config_t cfg = phys_world_config_default();
+    cfg.max_bodies = 16;
+    phys_world_init(&world, &cfg);
+
+    /* Static sphere at X=10, radius 2. Large gap ensures CCD
+     * is the only thing that can stop the fast capsule. */
+    uint32_t sid = phys_world_create_body(&world);
+    phys_body_t *sb = phys_world_get_body(&world, sid);
+    sb->position = (phys_vec3_t){10, 0, 0};
+    sb->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
+    sb->inv_mass = 0.0f;
+    phys_world_set_sphere_collider(&world, sid, 2.0f,
+                                    (phys_vec3_t){0, 0, 0});
+
+    /* Fast capsule moving +X at 100 m/s with CCD. */
+    uint32_t cid = phys_world_create_body(&world);
+    phys_body_t *cb = phys_world_get_body(&world, cid);
+    cb->position = (phys_vec3_t){0, 0, 0};
+    cb->linear_vel = (phys_vec3_t){100, 0, 0};
+    cb->flags |= PHYS_BODY_FLAG_CCD;
+    phys_body_set_mass(cb, 1.0f);
+    phys_world_set_capsule_collider(&world, cid, 0.2f, 0.5f,
+                                     (phys_vec3_t){0, 0, 0},
+                                     (phys_quat_t){0, 0, 0, 1});
+
+    for (int i = 0; i < 5; i++)
+        phys_world_tick(&world, NULL);
+
+    cb = phys_world_get_body(&world, cid);
+    /* Capsule must not have tunneled past the sphere (center at X=10). */
+    ASSERT_FLOAT_LT(cb->position.x, 10.0f);
+
+    phys_world_destroy(&world);
+    return 0;
+}
+
+/**
+ * Fast capsule vs static box — should be clamped.
+ * No meshes in the scene.
+ */
+static int test_ccd_capsule_vs_static_box(void) {
+    phys_world_t world;
+    phys_world_config_t cfg = phys_world_config_default();
+    cfg.max_bodies = 16;
+    phys_world_init(&world, &cfg);
+
+    /* Static box at X=5, half-extents 1. */
+    uint32_t bid = phys_world_create_body(&world);
+    phys_body_t *bb = phys_world_get_body(&world, bid);
+    bb->position = (phys_vec3_t){5, 0, 0};
+    bb->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
+    bb->inv_mass = 0.0f;
+    phys_world_set_box_collider(&world, bid,
+                                 (phys_vec3_t){1, 1, 1},
+                                 (phys_vec3_t){0, 0, 0},
+                                 (phys_quat_t){0, 0, 0, 1});
+
+    /* Fast capsule moving +X at 100 m/s with CCD. */
+    uint32_t cid = phys_world_create_body(&world);
+    phys_body_t *cb = phys_world_get_body(&world, cid);
+    cb->position = (phys_vec3_t){0, 0, 0};
+    cb->linear_vel = (phys_vec3_t){100, 0, 0};
+    cb->flags |= PHYS_BODY_FLAG_CCD;
+    phys_body_set_mass(cb, 1.0f);
+    phys_world_set_capsule_collider(&world, cid, 0.2f, 0.5f,
+                                     (phys_vec3_t){0, 0, 0},
+                                     (phys_quat_t){0, 0, 0, 1});
+
+    for (int i = 0; i < 5; i++)
+        phys_world_tick(&world, NULL);
+
+    cb = phys_world_get_body(&world, cid);
+    ASSERT_FLOAT_LT(cb->position.x, 5.0f);
+
+    phys_world_destroy(&world);
+    return 0;
+}
+
+/**
+ * Fast capsule chain vs armadillo-like static compound.
+ * Mimics the demo: 10 capsules connected by ball joints, swinging
+ * at high velocity into a compound hull.  No meshes in the scene.
+ */
+static int test_ccd_chain_vs_static_compound(void) {
+    phys_world_t world;
+    phys_world_config_t cfg = phys_world_config_default();
+    cfg.max_bodies = 64;
+    phys_world_init(&world, &cfg);
+
+    /* ── Static compound body at origin ─────────────────────────── */
+    /* Build a box-shaped convex hull: 4×4×4 cube. */
+    phys_vec3_t pts[8] = {
+        {-2,-2,-2}, { 2,-2,-2}, { 2, 2,-2}, {-2, 2,-2},
+        {-2,-2, 2}, { 2,-2, 2}, { 2, 2, 2}, {-2, 2, 2}
+    };
+    phys_convex_hull_t hull;
+    int rc = phys_convex_hull_build(&hull, pts, 8);
+    ASSERT_TRUE(rc == 0);
+
+    phys_decompose_result_t dr;
+    memset(&dr, 0, sizeof(dr));
+    dr.hulls[0] = hull;
+    dr.hull_count = 1;
+
+    uint32_t compound_id = phys_world_create_body(&world);
+    phys_body_t *sb = phys_world_get_body(&world, compound_id);
+    sb->position = (phys_vec3_t){0, 0, 0};
+    sb->flags |= (uint32_t)PHYS_BODY_FLAG_STATIC;
+    sb->inv_mass = 0.0f;
+    phys_world_set_compound_collider(&world, compound_id, &dr,
+                                      (phys_vec3_t){0, 0, 0});
+
+    /* ── Capsule chain: 10 links ───────────────────────────────── */
+    /* Chain parameters matching demo. */
+    const float cap_r = 0.5f;
+    const float cap_hh = 0.8f;
+    const float link_len = 2.0f * (cap_hh + cap_r);  /* 2.6 */
+    const float chain_mass = 2.0f;
+    const uint32_t chain_len = 10;
+
+    /* Kinematic anchor at X=-30, Y=10 — chain hangs from here. */
+    uint32_t anchor = phys_world_create_body(&world);
+    phys_body_t *ab = phys_world_get_body(&world, anchor);
+    ab->position = (phys_vec3_t){-30, 10, 0};
+    ab->orientation = (phys_quat_t){0, 0, 0, 1};
+    ab->flags |= PHYS_BODY_FLAG_KINEMATIC;
+    phys_body_t *abn = phys_body_pool_get_next(&world.body_pool, anchor);
+    *abn = *ab;
+
+    uint32_t first_link = 0, last_link = 0;
+    uint32_t prev_body = anchor;
+    for (uint32_t ci = 0; ci < chain_len; ci++) {
+        float x = -30.0f + (float)(ci + 1) * link_len;
+
+        uint32_t bi = phys_world_create_body(&world);
+        phys_body_t *cb = phys_world_get_body(&world, bi);
+        cb->position = (phys_vec3_t){x, 10, 0};
+        /* Rotate 90° around Z so capsule lies along X. */
+        cb->orientation = (phys_quat_t){0, 0, 0.7071068f, 0.7071068f};
+        phys_body_set_mass(cb, chain_mass);
+        phys_body_set_capsule_inertia(cb, chain_mass, cap_r, cap_hh);
+        cb->flags |= PHYS_BODY_FLAG_CCD;
+        /* Give the chain high velocity toward the compound. */
+        cb->linear_vel = (phys_vec3_t){50, 0, 0};
+
+        phys_body_t *cb_next =
+            phys_body_pool_get_next(&world.body_pool, bi);
+        *cb_next = *cb;
+
+        phys_world_set_capsule_collider(&world, bi,
+            cap_r, cap_hh,
+            (phys_vec3_t){0, 0, 0},
+            (phys_quat_t){0, 0, 0, 1});
+
+        phys_joint_t joint;
+        memset(&joint, 0, sizeof(joint));
+        joint.type = PHYS_JOINT_BALL;
+        joint.body_a = prev_body;
+        joint.body_b = bi;
+        joint.local_anchor_a = (prev_body == anchor)
+            ? (phys_vec3_t){0, 0, 0}
+            : (phys_vec3_t){0, cap_hh + cap_r, 0};
+        joint.local_anchor_b = (phys_vec3_t){0, -(cap_hh + cap_r), 0};
+        joint.damping = 0.5f;
+        phys_world_add_joint(&world, &joint);
+
+        if (ci == 0) first_link = bi;
+        last_link = bi;
+        prev_body = bi;
+    }
+
+    /* Run 20 ticks — enough for the chain to reach the compound. */
+    for (int i = 0; i < 20; i++) {
+        phys_world_tick(&world, NULL);
+    }
+
+    /* No capsule link should have tunneled into or past the compound.
+     * The compound hull spans X=[-2,2], so no chain body should be
+     * inside that range unless it has been properly stopped. */
+    bool tunneled = false;
+    for (uint32_t bi = first_link; bi <= last_link; bi++) {
+        const phys_body_t *b = phys_world_get_body(&world, bi);
+        /* If a link ended up at X > 2 (past the compound) and it
+         * started from X < -2, that's tunneling. */
+        if (b->position.x > 2.5f) {
+            printf("  body %u tunneled: pos=(%.2f, %.2f, %.2f)\n",
+                   bi, (double)b->position.x, (double)b->position.y,
+                   (double)b->position.z);
+            tunneled = true;
+        }
+    }
+    ASSERT_TRUE(!tunneled);
+
+    phys_world_destroy(&world);
+    return 0;
+}
+
 /** NULL safety — stage should not crash with NULL inputs. */
 static int test_ccd_null_safe(void) {
     int result = phys_stage_ccd(NULL);
@@ -471,6 +680,9 @@ int main(void) {
     RUN(test_ccd_stage_clamps_fast_box);
     RUN(test_ccd_stage_clamps_fast_box_floor);
     RUN(test_ccd_skips_slow_box);
+    RUN(test_ccd_capsule_vs_static_sphere);
+    RUN(test_ccd_capsule_vs_static_box);
+    RUN(test_ccd_chain_vs_static_compound);
     RUN(test_ccd_null_safe);
 
     printf("\n%d/%d tests passed\n", g_pass, g_pass + g_fail);

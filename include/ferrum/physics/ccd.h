@@ -31,6 +31,8 @@ struct phys_collider;
 struct phys_constraint;
 struct phys_frame_arena;
 struct phys_mesh_shape;
+struct phys_convex_hull;
+struct phys_convex_compound;
 
 #ifdef __cplusplus
 extern "C" {
@@ -127,6 +129,12 @@ typedef struct phys_ccd_args {
     const void *spheres;    /**< phys_sphere_t array. */
     const void *capsules;   /**< phys_capsule_t array. */
     const void *boxes;      /**< phys_box_t array. */
+
+    /* Convex hull / compound pools for static CCD. */
+    const struct phys_convex_hull *convex_hulls;     /**< Convex hull pool. */
+    const struct phys_convex_compound *compounds;    /**< Compound shape pool. */
+    uint32_t compound_count;
+    const void *halfspaces; /**< phys_halfspace_t array (unused by CCD). */
 } phys_ccd_args_t;
 
 /**

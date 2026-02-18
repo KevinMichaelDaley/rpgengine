@@ -4,9 +4,9 @@
  *
  * Orchestrates the full pipeline:
  *   1. Compute mesh AABB, set up voxel grid
- *   2. Voxelize (surface + interior via ray-casting)
+ *   2. Voxelize (surface + flood-fill interior)
  *   3. Collect filled voxel centers
- *   4. Iteratively split concave clusters (ACD)
+ *   4. BFS split concave clusters (ACD) for even spatial coverage
  *   5. Build convex hull of each cluster
  *
  * Non-static functions (2):
@@ -163,26 +163,27 @@ int phys_decompose_mesh(const phys_triangle_t *triangles,
     }
     free(grid);
 
-    /* ── Step 4: ACD — iterative splitting ────────────────────── */
-    /* Use a work stack of cluster ranges.  Each cluster is a
-     * contiguous range in the centers[] array. */
-    uint32_t max_stack = max_hulls * 2;
-    if (max_stack < 128) max_stack = 128;
-    cluster_range_t *stack = malloc(max_stack * sizeof(cluster_range_t));
-    if (!stack) { free(centers); return -1; }
+    /* ── Step 4: ACD — iterative splitting (BFS) ─────────────── */
+    /* BFS ensures even spatial coverage when max_hulls caps the
+     * number of splits.  DFS would fully refine one side of the
+     * mesh while leaving the other as a single coarse cluster. */
+    uint32_t queue_cap = max_hulls * 4;
+    if (queue_cap < 256) queue_cap = 256;
+    cluster_range_t *queue = malloc(queue_cap * sizeof(cluster_range_t));
+    if (!queue) { free(centers); return -1; }
 
     /* Output clusters (final hulls). */
     cluster_range_t *final_clusters = malloc(max_hulls * sizeof(cluster_range_t));
-    if (!final_clusters) { free(stack); free(centers); return -1; }
+    if (!final_clusters) { free(queue); free(centers); return -1; }
 
     /* Initialize: one cluster = all voxels. */
-    uint32_t stack_top = 0;
+    uint32_t q_head = 0, q_tail = 0;
     uint32_t final_count = 0;
 
-    stack[stack_top++] = (cluster_range_t){ .start = 0, .count = filled_count };
+    queue[q_tail++] = (cluster_range_t){ .start = 0, .count = filled_count };
 
-    while (stack_top > 0 && final_count < max_hulls) {
-        cluster_range_t cluster = stack[--stack_top];
+    while (q_head < q_tail && final_count < max_hulls) {
+        cluster_range_t cluster = queue[q_head++];
 
         if (cluster.count < min_voxels) {
             /* Too small to split; keep as-is if it has enough points. */
@@ -214,31 +215,31 @@ int phys_decompose_mesh(const phys_triangle_t *triangles,
             continue;
         }
 
-        /* Push two sub-clusters. */
-        if (stack_top + 2 <= max_stack) {
-            stack[stack_top++] = (cluster_range_t){
+        /* Enqueue two sub-clusters. */
+        if (q_tail + 2 <= queue_cap) {
+            queue[q_tail++] = (cluster_range_t){
                 .start = cluster.start,
                 .count = split_n,
             };
-            stack[stack_top++] = (cluster_range_t){
+            queue[q_tail++] = (cluster_range_t){
                 .start = cluster.start + split_n,
                 .count = cluster.count - split_n,
             };
         } else {
-            /* Stack overflow — keep unsplit. */
+            /* Queue full — keep unsplit. */
             final_clusters[final_count++] = cluster;
         }
     }
 
-    /* Any remaining items on the stack → add to final. */
-    while (stack_top > 0 && final_count < max_hulls) {
-        cluster_range_t cluster = stack[--stack_top];
+    /* Any remaining items in queue → add to final. */
+    while (q_head < q_tail && final_count < max_hulls) {
+        cluster_range_t cluster = queue[q_head++];
         if (cluster.count >= 4) {
             final_clusters[final_count++] = cluster;
         }
     }
 
-    free(stack);
+    free(queue);
 
     /* ── Step 5: Build convex hull for each cluster ───────────── */
     /* Hull build now accepts up to 8192 input points and extracts

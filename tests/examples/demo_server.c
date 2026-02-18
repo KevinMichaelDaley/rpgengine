@@ -829,8 +829,8 @@ int main(int argc, char **argv) {
                     phys_decompose_params_t dp =
                         phys_decompose_params_default();
                     dp.resolution = 32;
-                    dp.max_hulls  = 32;
-                    dp.concavity_threshold = 0.05f;
+                    dp.max_hulls  = 16;
+                    dp.concavity_threshold = 0.08f;
 
                     struct timespec t0, t1;
                     clock_gettime(CLOCK_MONOTONIC, &t0);

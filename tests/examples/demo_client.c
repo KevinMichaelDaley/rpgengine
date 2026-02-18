@@ -450,19 +450,6 @@ static void gl_shutdown(gl_ctx_t *ctx) {
 
 /* ── Correction debug line helpers ──────────────────────────────── */
 
-/** Rotate a vector by a quaternion: q * v * q⁻¹ */
-static vec3_t quat_rotate_vec3(quat_t q, vec3_t v) {
-    /* t = 2 * cross(q.xyz, v) */
-    float tx = 2.0f * (q.y * v.z - q.z * v.y);
-    float ty = 2.0f * (q.z * v.x - q.x * v.z);
-    float tz = 2.0f * (q.x * v.y - q.y * v.x);
-    return (vec3_t){
-        v.x + q.w * tx + (q.y * tz - q.z * ty),
-        v.y + q.w * ty + (q.z * tx - q.x * tz),
-        v.z + q.w * tz + (q.x * ty - q.y * tx),
-    };
-}
-
 /** Compute the 8 corners of an axis-aligned box transformed by pos+rot. */
 static void box_corners(vec3_t pos, quat_t rot,
                         float hx, float hy, float hz,

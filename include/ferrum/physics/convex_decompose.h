@@ -29,7 +29,7 @@ extern "C" {
 #define PHYS_DECOMPOSE_MAX_HULLS 64u
 
 /** Maximum voxel grid resolution per axis. */
-#define PHYS_DECOMPOSE_MAX_RESOLUTION 64u
+#define PHYS_DECOMPOSE_MAX_RESOLUTION 128u
 
 /**
  * @brief Parameters controlling convex decomposition.
