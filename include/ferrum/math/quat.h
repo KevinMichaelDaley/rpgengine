@@ -65,6 +65,26 @@ quat_t quat_slerp(quat_t a, quat_t b, float t, float epsilon);
  */
 int quat_to_mat4(quat_t q, mat4_t *out);
 
+/**
+ * @brief Rotate a vector by a quaternion: q * v * q^-1.
+ * @param q Unit quaternion representing the rotation.
+ * @param v Vector to rotate.
+ * @return Rotated vector.
+ *
+ * Side effects: none.
+ */
+vec3_t quat_rotate_vec3(quat_t q, vec3_t v);
+
+/**
+ * @brief Rotate a vector by the inverse (conjugate) of a quaternion: q^-1 * v * q.
+ * @param q Unit quaternion whose inverse rotation is applied.
+ * @param v Vector to rotate.
+ * @return Rotated vector.
+ *
+ * Side effects: none.
+ */
+vec3_t quat_inv_rotate_vec3(quat_t q, vec3_t v);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
