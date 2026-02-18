@@ -25,7 +25,9 @@
 extern "C" {
 #endif
 
-/** Maximum vertices per convex hull. */
+/** Maximum vertices per convex hull (output limit).
+ *  The hull builder accepts up to 8192 input points but produces
+ *  an output hull with at most this many vertices. */
 #define PHYS_CONVEX_MAX_VERTS  64u
 
 /** Maximum faces per convex hull. */
@@ -92,18 +94,17 @@ phys_vec3_t phys_convex_hull_support(const phys_convex_hull_t *hull,
 /**
  * @brief Build a convex hull from a point cloud.
  *
- * Computes the convex hull of up to PHYS_CONVEX_MAX_VERTS input points.
- * Populates vertices, faces, indices, centroid, and AABB.
+ * Accepts up to 8192 input points and extracts a convex hull with at
+ * most PHYS_CONVEX_MAX_VERTS output vertices.  Uses an incremental
+ * convex hull algorithm.  Heap-allocates working memory internally.
  *
- * Uses an incremental convex hull algorithm.
- *
- * @param hull       Output hull (non-NULL, zeroed by caller).
+ * @param hull       Output hull (non-NULL).
  * @param points     Input point cloud (non-NULL if count > 0).
- * @param count      Number of input points.
- * @return 0 on success, -1 on error (NULL args, count > max, degenerate).
+ * @param count      Number of input points (4..8192).
+ * @return 0 on success, -1 on error (NULL args, count out of range, degenerate).
  *
  * Ownership: hull is fully self-contained after build.
- * Side effects: writes to *hull.
+ * Side effects: writes to *hull; allocates/frees internal working memory.
  */
 int phys_convex_hull_build(phys_convex_hull_t *hull,
                            const phys_vec3_t *points,

@@ -9,6 +9,9 @@
  *      b. Remove visible faces, add new faces from horizon edges to point
  *   3. Extract final vertex/face/index arrays
  *
+ * Accepts up to PHYS_CONVEX_BUILD_MAX_INPUT input points but produces
+ * an output hull with at most PHYS_CONVEX_MAX_VERTS vertices.
+ *
  * Non-static functions (1):
  *   1. phys_convex_hull_build
  */
@@ -17,15 +20,19 @@
 
 #include <float.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
+/** Maximum input points accepted by hull build. */
+#define BUILD_MAX_INPUT 8192u
+
 /* Maximum faces during construction (more than final hull due to
-   intermediate states).  For N<=64 input points, the hull has at
-   most 2*N-4 faces (Euler formula). */
-#define BUILD_MAX_FACES 128u
+   intermediate states).  For N<=64 output verts, the hull has at
+   most 2*N-4 faces (Euler formula).  Extra headroom for churn. */
+#define BUILD_MAX_FACES 256u
 
 /* Maximum edges in the horizon loop. */
-#define BUILD_MAX_HORIZON 256u
+#define BUILD_MAX_HORIZON 512u
 
 /** Working face during construction. */
 typedef struct build_face {
@@ -159,12 +166,11 @@ static void init_face(build_face_t *f, uint32_t a, uint32_t b, uint32_t c,
 int phys_convex_hull_build(phys_convex_hull_t *hull,
                            const phys_vec3_t *points,
                            uint32_t count) {
-    if (!hull || !points || count < 4 || count > PHYS_CONVEX_MAX_VERTS) {
+    if (!hull || !points || count < 4 || count > BUILD_MAX_INPUT) {
         return -1;
     }
 
-    /* Working arrays (on stack — hull construction is a load-time operation,
-       not per-frame, so stack usage is acceptable). */
+    /* Working arrays — heap-allocated since count may be large. */
     build_face_t faces[BUILD_MAX_FACES];
     uint32_t face_count = 0;
     memset(faces, 0, sizeof(faces));
@@ -175,14 +181,12 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
         return -1;
     }
 
-    /* Copy points into hull vertices (we'll prune later). */
-    phys_vec3_t verts[PHYS_CONVEX_MAX_VERTS];
-    for (uint32_t i = 0; i < count; i++) {
-        verts[i] = points[i];
-    }
+    /* Use the input points directly as our vertex reference.
+     * The incremental algorithm only adds vertices that are already
+     * in the input array, so we index into `points[]` throughout. */
+    const phys_vec3_t *verts = points;
 
-    /* Step 2: Create 4 faces of the tetrahedron.
-       Winding: each face's normal points outward (away from the opposite vertex). */
+    /* Step 2: Create 4 faces of the tetrahedron. */
     init_face(&faces[0], tet[0], tet[1], tet[2], verts);
     init_face(&faces[1], tet[0], tet[2], tet[3], verts);
     init_face(&faces[2], tet[0], tet[3], tet[1], verts);
@@ -190,9 +194,8 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
     face_count = 4;
 
     /* Verify winding: each face's normal must point away from the
-       opposite vertex.  Fix any that are flipped. */
+       opposite vertex. */
     for (uint32_t fi = 0; fi < 4; fi++) {
-        /* Find vertex of tet NOT in this face. */
         uint32_t opp = UINT32_MAX;
         for (uint32_t ti = 0; ti < 4; ti++) {
             uint32_t tv = tet[ti];
@@ -203,10 +206,8 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
         }
         if (opp == UINT32_MAX) continue;
 
-        /* Opposite vertex should be BEHIND this face (negative distance). */
         float d = point_plane_dist(&faces[fi], verts[opp], verts);
         if (d > 0) {
-            /* Wrong winding — flip. */
             uint32_t tmp = faces[fi].v[1];
             faces[fi].v[1] = faces[fi].v[2];
             faces[fi].v[2] = tmp;
@@ -216,8 +217,9 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
     }
 
     /* Step 3: Incrementally add remaining points. */
-    uint8_t on_hull[PHYS_CONVEX_MAX_VERTS];
-    memset(on_hull, 0, sizeof(on_hull));
+    /* Heap-allocate the on_hull tracker since count may be >> 64. */
+    uint8_t *on_hull = calloc(count, sizeof(uint8_t));
+    if (!on_hull) return -1;
     on_hull[tet[0]] = 1;
     on_hull[tet[1]] = 1;
     on_hull[tet[2]] = 1;
@@ -234,10 +236,7 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
             if (d > max_dist) max_dist = d;
         }
 
-        if (max_dist < 1e-6f) {
-            /* Point is inside or on the hull — skip. */
-            continue;
-        }
+        if (max_dist < 1e-6f) continue;
 
         on_hull[pi] = 1;
 
@@ -252,25 +251,19 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
             }
         }
 
-        /* Find horizon edges: edges shared between exactly one visible
-           and one non-visible face.  An edge is a pair (a, b) from a
-           visible face where the adjacent face (sharing a, b in reverse
-           order) is not visible. */
+        /* Find horizon edges. */
         horizon_edge_t horizon[BUILD_MAX_HORIZON];
         uint32_t horizon_count = 0;
 
         for (uint32_t fi = 0; fi < face_count; fi++) {
             if (!faces[fi].alive || !visible[fi]) continue;
-            /* Check each edge of this visible face. */
             for (int ei = 0; ei < 3; ei++) {
                 uint32_t ea = faces[fi].v[ei];
                 uint32_t eb = faces[fi].v[(ei + 1) % 3];
 
-                /* Find the adjacent face sharing edge (eb, ea) — reverse order. */
                 int has_adjacent_visible = 0;
                 for (uint32_t fj = 0; fj < face_count; fj++) {
                     if (fj == fi || !faces[fj].alive) continue;
-                    /* Check if fj has edge (eb, ea). */
                     for (int ej = 0; ej < 3; ej++) {
                         if (faces[fj].v[ej] == eb && faces[fj].v[(ej + 1) % 3] == ea) {
                             if (visible[fj]) {
@@ -302,8 +295,6 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
             if (face_count >= BUILD_MAX_FACES) break;
             init_face(&faces[face_count], horizon[hi].a, horizon[hi].b, pi, verts);
 
-            /* Verify normal points outward (away from centroid of existing hull). */
-            /* Compute rough centroid from tet verts (good enough). */
             phys_vec3_t c = {0, 0, 0};
             for (uint32_t ti = 0; ti < 4; ti++) {
                 c = vec3_add(c, verts[tet[ti]]);
@@ -312,7 +303,6 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
 
             float d = point_plane_dist(&faces[face_count], c, verts);
             if (d > 0) {
-                /* Normal points toward centroid — flip. */
                 uint32_t tmp = faces[face_count].v[1];
                 faces[face_count].v[1] = faces[face_count].v[2];
                 faces[face_count].v[2] = tmp;
@@ -324,13 +314,12 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
         }
     }
 
-    /* Step 4: Extract final hull.  Collect unique vertices used by alive faces,
-       remap indices, populate output hull. */
+    /* Step 4: Extract final hull.  Collect unique vertices used by alive faces. */
     memset(hull, 0, sizeof(*hull));
 
-    /* Collect unique vertex indices. */
-    uint8_t used[PHYS_CONVEX_MAX_VERTS];
-    memset(used, 0, sizeof(used));
+    /* Collect unique vertex indices — need a set tracking up to count entries. */
+    uint8_t *used = calloc(count, sizeof(uint8_t));
+    if (!used) { free(on_hull); return -1; }
     for (uint32_t fi = 0; fi < face_count; fi++) {
         if (!faces[fi].alive) continue;
         used[faces[fi].v[0]] = 1;
@@ -338,9 +327,10 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
         used[faces[fi].v[2]] = 1;
     }
 
-    /* Build vertex remap table. */
-    uint32_t remap[PHYS_CONVEX_MAX_VERTS];
-    memset(remap, 0xFF, sizeof(remap));
+    /* Build vertex remap table (heap-allocated for large count). */
+    uint32_t *remap = malloc(count * sizeof(uint32_t));
+    if (!remap) { free(used); free(on_hull); return -1; }
+    memset(remap, 0xFF, count * sizeof(uint32_t));
     uint32_t vc = 0;
     for (uint32_t i = 0; i < count && vc < PHYS_CONVEX_MAX_VERTS; i++) {
         if (used[i]) {
@@ -350,6 +340,9 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
         }
     }
     hull->vertex_count = vc;
+
+    free(used);
+    free(on_hull);
 
     /* Build faces and indices. */
     uint32_t fc = 0;
@@ -370,6 +363,8 @@ int phys_convex_hull_build(phys_convex_hull_t *hull,
     }
     hull->face_count = fc;
     hull->index_count = ic;
+
+    free(remap);
 
     /* Merge coplanar triangular faces into convex polygons.
        For a cube, 12 triangles should become 6 quads. */

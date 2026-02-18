@@ -211,6 +211,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p113_convex_hull_tests \
 	build/p115_gjk_epa_tests \
 	build/p116_convex_narrowphase_tests \
+	build/p117_convex_decompose_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -629,6 +630,9 @@ build/p115_gjk_epa_tests: build/libheadless.a tests/p115_gjk_epa_tests.c | build
 
 build/p116_convex_narrowphase_tests: build/libheadless.a tests/p116_convex_narrowphase_tests.c | build
 	$(CC) $(CFLAGS) tests/p116_convex_narrowphase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p117_convex_decompose_tests: build/libheadless.a tests/p117_convex_decompose_tests.c | build
+	$(CC) $(CFLAGS) tests/p117_convex_decompose_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)

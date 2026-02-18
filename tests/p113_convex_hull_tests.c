@@ -291,18 +291,22 @@ static int test_build_null_safety(void) {
     return 0;
 }
 
-/** Exceeding max verts. */
+/** Exceeding max input points (BUILD_MAX_INPUT = 8192). */
 static int test_build_too_many_verts(void) {
     phys_convex_hull_t hull;
     memset(&hull, 0, sizeof(hull));
 
+    /* 65 points should now succeed (hull build accepts up to 8192). */
     phys_vec3_t pts[PHYS_CONVEX_MAX_VERTS + 1];
     for (uint32_t i = 0; i <= PHYS_CONVEX_MAX_VERTS; i++) {
-        pts[i] = v3((float)i, 0, 0);
+        float angle = (float)i * 6.2831853f / (float)(PHYS_CONVEX_MAX_VERTS + 1);
+        pts[i] = v3(cosf(angle), sinf(angle), (float)i * 0.01f);
     }
 
     int rc = phys_convex_hull_build(&hull, pts, PHYS_CONVEX_MAX_VERTS + 1);
-    ASSERT_INT_EQ(-1, rc);
+    ASSERT_INT_EQ(0, rc);
+    ASSERT_TRUE(hull.vertex_count >= 4);
+    ASSERT_TRUE(hull.vertex_count <= PHYS_CONVEX_MAX_VERTS);
     return 0;
 }
 
