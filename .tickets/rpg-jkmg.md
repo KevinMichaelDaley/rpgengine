@@ -1,6 +1,6 @@
 ---
 id: rpg-jkmg
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-18T08:24:23Z

@@ -36,6 +36,8 @@ fr_client_rx_t *fr_client_rx_create(const fr_client_rx_config_t *cfg) {
     scfg.num_topics = rx->num_topics;
     rx->stream = fr_rudp_stream_create(&scfg);
     if (!rx->stream) { free(rx); return NULL; }
+    rx->frame_buf = (uint8_t *)malloc(RX_FRAME_BUF_SIZE);
+    if (!rx->frame_buf) { fr_rudp_stream_destroy(rx->stream); free(rx); return NULL; }
     atomic_init(&rx->running, false);
     return rx;
 }
@@ -50,6 +52,8 @@ void fr_client_rx_destroy(fr_client_rx_t *rx) {
         fr_rudp_stream_destroy(rx->stream);
         rx->stream = NULL;
     }
+    free(rx->frame_buf);
+    rx->frame_buf = NULL;
     if (rx->sock_initialized) {
         net_udp_socket_close(&rx->sock);
         rx->sock_initialized = 0;
