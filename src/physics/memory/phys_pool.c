@@ -17,12 +17,17 @@ int phys_body_pool_init(phys_body_pool_t *pool, uint32_t capacity) {
 
     pool->bodies_curr = calloc(capacity, sizeof(phys_body_t));
     pool->bodies_next = calloc(capacity, sizeof(phys_body_t));
+    pool->bodies_net  = calloc(capacity, sizeof(phys_body_t));
     pool->active = calloc(capacity, sizeof(uint8_t));
+    pool->net_dirty = calloc(capacity, sizeof(atomic_uchar));
 
-    if (!pool->bodies_curr || !pool->bodies_next || !pool->active) {
+    if (!pool->bodies_curr || !pool->bodies_next || !pool->bodies_net
+        || !pool->active || !pool->net_dirty) {
         free(pool->bodies_curr);
         free(pool->bodies_next);
+        free(pool->bodies_net);
         free(pool->active);
+        free(pool->net_dirty);
         memset(pool, 0, sizeof(*pool));
         return -1;
     }
@@ -38,7 +43,9 @@ void phys_body_pool_destroy(phys_body_pool_t *pool) {
     }
     free(pool->bodies_curr);
     free(pool->bodies_next);
+    free(pool->bodies_net);
     free(pool->active);
+    free(pool->net_dirty);
     memset(pool, 0, sizeof(*pool));
 }
 
@@ -55,6 +62,7 @@ int phys_body_pool_add(phys_body_pool_t *pool, const phys_body_t *body, uint32_t
         if (!pool->active[i]) {
             pool->bodies_curr[i] = *body;
             pool->bodies_next[i] = *body;
+            pool->bodies_net[i]  = *body;
             pool->active[i] = 1;
             pool->count++;
             *index_out = i;

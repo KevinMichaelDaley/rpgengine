@@ -2,6 +2,7 @@
 #define FERRUM_PHYSICS_PHYS_POOL_H
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -9,11 +10,16 @@
 #include "ferrum/physics/body.h"
 
 /** @file
- * @brief Double-buffered body pool and per-frame arena allocator.
+ * @brief Triple-buffered body pool and per-frame arena allocator.
  *
- * The body pool stores rigid bodies in two parallel arrays (curr/next)
- * to support lock-free double-buffered reads during physics updates.
- * Buffer swap is O(1) pointer exchange.
+ * The body pool stores rigid bodies in three parallel arrays:
+ *   - bodies_curr: read-only snapshot of the last completed prediction tick.
+ *   - bodies_next: write target for the current prediction tick.
+ *   - bodies_net:  network authority buffer written by the recv thread.
+ *
+ * The prediction thread consumes dirty net entries (lock-free via atomics),
+ * reconciles them into bodies_next, integrates, then swaps curr/next.
+ * The render thread reads bodies_curr without synchronization.
  *
  * The frame arena provides fast bump-pointer allocations for transient
  * per-tick data (contact manifolds, island lists, etc.).  Reset is O(1).
@@ -26,16 +32,21 @@ extern "C" {
 /* ── Body pool ──────────────────────────────────────────────────── */
 
 /**
- * @brief Double-buffered body pool with indexed access.
+ * @brief Triple-buffered body pool with indexed access.
+ *
+ * Three buffers: curr (read-only previous frame), next (prediction write
+ * target), net (network authority, written by recv thread).
  *
  * Ownership: the pool owns all internal arrays.  Callers must not
- * free the body pointers returned by get_curr / get_next.
+ * free the body pointers returned by get_curr / get_next / get_net.
  *
  * Nullability: all public functions are NULL-safe on the pool pointer.
  */
 typedef struct phys_body_pool {
-    phys_body_t *bodies_curr;  /**< Read buffer (current frame). */
-    phys_body_t *bodies_next;  /**< Write buffer (next frame). */
+    phys_body_t *bodies_curr;  /**< Read buffer (previous completed tick). */
+    phys_body_t *bodies_next;  /**< Write buffer (current tick target). */
+    phys_body_t *bodies_net;   /**< Network authority buffer (recv writes). */
+    atomic_uchar *net_dirty;   /**< Per-slot dirty flag (1 = new server data). */
     uint32_t capacity;         /**< Maximum number of bodies. */
     uint32_t count;            /**< Number of active bodies. */
     uint8_t *active;           /**< Per-slot activity flag (1 = in use). */
@@ -132,6 +143,56 @@ phys_body_t *phys_body_pool_get_curr(phys_body_pool_t *pool, uint32_t index);
  */
 phys_body_t *phys_body_pool_get_next(phys_body_pool_t *pool, uint32_t index);
 
+/* ── Network authority buffer API ───────────────────────────────── */
+
+/**
+ * @brief Get a pointer to the network-authority body at the given index.
+ *
+ * @param pool   Body pool (NULL returns NULL).
+ * @param index  Slot index.
+ * @return Pointer to the body in the net buffer, or NULL if inactive
+ *         or out of range.
+ *
+ * Ownership: the returned pointer is owned by the pool.
+ */
+phys_body_t *phys_body_pool_get_net(phys_body_pool_t *pool, uint32_t index);
+
+/**
+ * @brief Mark a net buffer slot as dirty (new server data available).
+ *
+ * Thread-safe: uses atomic store.  Called by the recv thread after
+ * writing position/velocity into bodies_net[index].
+ *
+ * @param pool   Body pool (NULL-safe, no-op).
+ * @param index  Slot index (out-of-range is a no-op).
+ */
+void phys_body_pool_mark_net_dirty(phys_body_pool_t *pool, uint32_t index);
+
+/**
+ * @brief Atomically consume the dirty flag for a net buffer slot.
+ *
+ * Returns the previous dirty state and clears it to 0.
+ * Thread-safe: uses atomic exchange.  Called by the prediction thread.
+ *
+ * @param pool   Body pool (NULL returns false).
+ * @param index  Slot index (out-of-range returns false).
+ * @return true if the slot had new server data; false otherwise.
+ */
+bool phys_body_pool_consume_net_dirty(phys_body_pool_t *pool, uint32_t index);
+
+/**
+ * @brief Write a body into the net buffer and mark it dirty.
+ *
+ * Convenience: copies the body, then sets the atomic dirty flag.
+ * Thread-safe with respect to the prediction thread's consume call.
+ *
+ * @param pool   Body pool (NULL-safe, no-op).
+ * @param index  Slot index (out-of-range is a no-op).
+ * @param body   Body data to copy (non-NULL).
+ */
+void phys_body_pool_write_net(phys_body_pool_t *pool, uint32_t index,
+                              const phys_body_t *body);
+
 /**
  * @brief Swap the curr and next body buffers (O(1) pointer exchange).
  *
@@ -144,13 +205,13 @@ void phys_body_pool_swap_buffers(phys_body_pool_t *pool);
 /**
  * @brief Remove a body from the pool.
  *
- * Marks the slot inactive, zeroes both curr and next entries, and
- * decrements the active count.
+ * Marks the slot inactive, zeroes curr/next/net entries, clears the
+ * net dirty flag, and decrements the active count.
  *
  * @param pool   Body pool (NULL-safe, no-op if NULL).
  * @param index  Slot index (out-of-range or already-inactive is a no-op).
  *
- * Side effects: zeroes the body data in both buffers.
+ * Side effects: zeroes the body data in all three buffers.
  */
 void phys_body_pool_remove(phys_body_pool_t *pool, uint32_t index);
 

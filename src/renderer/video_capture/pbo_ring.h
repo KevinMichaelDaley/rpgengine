@@ -10,7 +10,7 @@
 #ifndef FR_VIDEO_CAPTURE_PBO_RING_H
 #define FR_VIDEO_CAPTURE_PBO_RING_H
 
-#include <GL/glew.h>
+#include <glad/glad.h>
 #include <stdint.h>
 
 /** Maximum number of PBOs in the ring. */

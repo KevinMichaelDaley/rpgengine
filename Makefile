@@ -4,7 +4,7 @@ TRACY ?= 0
 STACK_CANARY ?= 0
 EMU ?= 0
 
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -O3
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -O3
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
 
@@ -60,10 +60,10 @@ SRC := $(SRC_HEADLESS)
 
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
 SDL2_LIBS := $(shell sdl2-config --libs 2>/dev/null)
-GLEW_LIBS := $(shell pkg-config --libs glew 2>/dev/null)
-GL_LIBS := -lGL
+GLEW_LIBS :=
+GL_LIBS := -lGL -ldl
 RENDERER_TEST_CFLAGS := $(SDL2_CFLAGS)
-RENDERER_TEST_LIBS := $(SDL2_LIBS) $(GLEW_LIBS) -lSDL2 -lGLEW $(GL_LIBS)
+RENDERER_TEST_LIBS := $(SDL2_LIBS) -lSDL2 $(GL_LIBS)
 
 # ── Incremental compilation via object files ─────────────────────
 # Compile each .c → build/obj/<path>.o, then archive into static libs.
@@ -73,7 +73,8 @@ OBJDIR := build/obj
 
 OBJ_HEADLESS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRC_HEADLESS))
 OBJ_RENDERER := $(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC))
-OBJ_ALL      := $(OBJ_HEADLESS) $(OBJ_RENDERER)
+OBJ_GLAD     := $(OBJDIR)/third_party/glad/src/glad.o
+OBJ_ALL      := $(OBJ_HEADLESS) $(OBJ_RENDERER) $(OBJ_GLAD)
 
 # Auto-generate per-file dependency tracking (.d files).
 DEPFLAGS = -MMD -MP -MF $(OBJDIR)/$*.d
@@ -248,6 +249,11 @@ $(OBJDIR)/%.o: %.c | build
 $(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC)): $(OBJDIR)/%.o: %.c | build
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# GLAD loader (third-party, suppress warnings).
+$(OBJ_GLAD): third_party/glad/src/glad.c | build
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -w -c $< -o $@
 
 # Static libraries.
 build/libheadless.a: $(OBJ_HEADLESS) | build

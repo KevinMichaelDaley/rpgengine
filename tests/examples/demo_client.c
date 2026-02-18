@@ -13,7 +13,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 
-#include <GL/glew.h>
+#include <glad/glad.h>
 #include <SDL2/SDL.h>
 
 #include <math.h>
@@ -275,15 +275,13 @@ static int gl_init(gl_ctx_t *ctx) {
     }
     SDL_GL_MakeCurrent(ctx->window, ctx->gl);
 
-    glewExperimental = GL_TRUE;
-    if (glewInit() != GLEW_OK) {
-        fprintf(stderr, "glewInit failed\n");
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+        fprintf(stderr, "gladLoadGLLoader failed\n");
         SDL_GL_DeleteContext(ctx->gl);
         SDL_DestroyWindow(ctx->window);
         SDL_Quit();
         return -1;
     }
-    (void)glGetError();
 
     ctx->loader.get_proc_address = sdl_get_proc;
     ctx->loader.user_data = NULL;
@@ -624,6 +622,7 @@ int main(int argc, char **argv) {
         .fixed_dt   = 1.0f / 60.0f,
         .gravity    = {0.0f, -9.81f, 0.0f},
         .max_bodies = CLIENT_MAX_BODIES,
+        .reconcile  = phys_prediction_config_default(),
     };
     fr_prediction_tick_t *pred_tick = fr_prediction_tick_create(&ptick_cfg);
     if (!pred_tick) {
@@ -642,9 +641,6 @@ int main(int argc, char **argv) {
     /* Per-body last-seen server tick for BODY_STATE dedup. */
     uint16_t body_state_last_tick[CLIENT_MAX_BODIES];
     memset(body_state_last_tick, 0, sizeof(body_state_last_tick));
-
-    /* Prediction reconciliation config. */
-    phys_prediction_config_t pred_cfg = phys_prediction_config_default();
 
     /* Snapshot reassembly buffer. */
     uint8_t snap_reasm_buf[CLIENT_SNAPSHOT_BUF_SIZE];
@@ -783,9 +779,33 @@ int main(int argc, char **argv) {
                                 fr_snapshot_interp_push(snap_interp,
                                                         &snap_decoded,
                                                         rx_time);
-                                /* Reconcile predicted bodies. */
-                                phys_prediction_reconcile(&world, &snap_decoded,
-                                                          &pred_cfg);
+                                /* Write server-authoritative state into
+                                 * bodies_net for prediction reconciliation.
+                                 * The prediction thread will consume these
+                                 * via atomic dirty flags. */
+                                uint32_t sc = snap_decoded.body_count;
+                                uint32_t wc = world.body_pool.capacity;
+                                uint32_t n = (sc < wc) ? sc : wc;
+                                for (uint32_t si = 0; si < n; si++) {
+                                    if (!world.body_pool.active[si]) continue;
+                                    const phys_snapshot_body_t *sb =
+                                        &snap_decoded.bodies[si];
+                                    phys_body_t net_body =
+                                        world.body_pool.bodies_net[si];
+                                    net_body.position =
+                                        phys_dequantize_vec3(sb->position,
+                                                             1.0f / 1000.0f);
+                                    net_body.orientation =
+                                        phys_dequantize_quat(sb->orientation);
+                                    net_body.linear_vel =
+                                        phys_dequantize_vec3(sb->linear_vel,
+                                                             1.0f / 1000.0f);
+                                    net_body.angular_vel =
+                                        phys_dequantize_vec3(sb->angular_vel,
+                                                             1.0f / 1000.0f);
+                                    phys_body_pool_write_net(
+                                        &world.body_pool, si, &net_body);
+                                }
                                 snap_applied_count++;
                             }
                         }

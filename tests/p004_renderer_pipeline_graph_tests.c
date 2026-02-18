@@ -1,4 +1,4 @@
-#include <GL/glew.h>
+#include <glad/glad.h>
 #include <SDL2/SDL.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -67,10 +67,9 @@ static int gl_test_context_init(struct gl_test_context *ctx) {
         return -1;
     }
 
-    glewExperimental = GL_TRUE;
-    GLenum glew_status = glewInit();
-    if (glew_status != GLEW_OK) {
-        fprintf(stderr, "glewInit failed: %s\n", glewGetErrorString(glew_status));
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+        fprintf(stderr, "gladLoadGLLoader failed
+");
         SDL_GL_DeleteContext(ctx->context);
         SDL_DestroyWindow(ctx->window);
         SDL_Quit();

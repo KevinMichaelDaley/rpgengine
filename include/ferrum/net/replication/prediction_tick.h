@@ -7,8 +7,10 @@
  *
  * Runs at a fixed timestep (matching the server physics rate) on a
  * dedicated thread, decoupled from the render loop.  Each tick
+ * consumes any new server-authoritative state from the net buffer
+ * (lock-free via atomic dirty flags), reconciles via snap/blend,
  * integrates position from linear velocity and orientation from
- * angular velocity, applies gravity, and swaps the body pool double
+ * angular velocity, applies gravity, and swaps the body pool
  * buffers.  The render thread reads bodies_curr lock-free.
  *
  * Types: fr_prediction_tick_config_t, fr_prediction_tick_t (opaque).
@@ -16,6 +18,7 @@
  */
 
 #include "ferrum/math/vec3.h"
+#include "ferrum/physics/prediction.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -32,6 +35,11 @@ typedef struct fr_prediction_tick_config {
     float    fixed_dt;    /**< Fixed timestep in seconds (e.g. 1/60). */
     vec3_t   gravity;     /**< Gravity acceleration (m/s²). */
     uint32_t max_bodies;  /**< Capacity of the body pool. */
+
+    /** Reconciliation config for server authority blending.
+     *  Used by the prediction thread to merge bodies_net into
+     *  bodies_next before each integration step. */
+    phys_prediction_config_t reconcile;
 } fr_prediction_tick_config_t;
 
 /**

@@ -38,6 +38,8 @@ void phys_body_pool_remove(phys_body_pool_t *pool, uint32_t index) {
     }
     memset(&pool->bodies_curr[index], 0, sizeof(phys_body_t));
     memset(&pool->bodies_next[index], 0, sizeof(phys_body_t));
+    memset(&pool->bodies_net[index], 0, sizeof(phys_body_t));
+    atomic_store(&pool->net_dirty[index], 0);
     pool->active[index] = 0;
     pool->count--;
 }

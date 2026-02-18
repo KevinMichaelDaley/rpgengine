@@ -1,6 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include <GL/glew.h>
+#include <glad/glad.h>
 #include <SDL2/SDL.h>
 
 #include <errno.h>
@@ -237,16 +237,13 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
         return -1;
     }
 
-    glewExperimental = GL_TRUE;
-    GLenum glew_status = glewInit();
-    if (glew_status != GLEW_OK) {
-        fprintf(stderr, "glewInit failed: %s\n", glewGetErrorString(glew_status));
+    if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
+        fprintf(stderr, "gladLoadGLLoader failed\n");
         SDL_GL_DeleteContext(ctx->gl);
         SDL_DestroyWindow(ctx->window);
         SDL_Quit();
         return -1;
     }
-    (void)glGetError();
 
         const char *gl_vendor = (const char *)glGetString(GL_VENDOR);
         const char *gl_renderer = (const char *)glGetString(GL_RENDERER);
@@ -258,7 +255,7 @@ static int gl_client_init_(struct gl_client_context *ctx, const char *title, int
             gl_renderer ? gl_renderer : "(null)",
             gl_version ? gl_version : "(null)",
             glsl_version ? glsl_version : "(null)");
-        gl_check_("post-glew");
+        gl_check_("post-glad");
 
     ctx->loader.get_proc_address = sdl_get_proc_address_;
     ctx->loader.user_data = NULL;
