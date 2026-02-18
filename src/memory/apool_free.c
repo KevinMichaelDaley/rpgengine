@@ -31,12 +31,13 @@ apool_status_t apool_free(apool_t *pool, apool_handle_t handle) {
         return APOOL_ERR_INVALID;
     }
     // Generation increment semantics: wrap at UINT16_MAX back to 1.
-    uint16_t g = atomic_load_explicit(&pool->generations[handle.index], memory_order_relaxed);
-    if (g == UINT16_MAX) {
-        atomic_store_explicit(&pool->generations[handle.index], 1u, memory_order_relaxed);
-    } else {
-        atomic_store_explicit(&pool->generations[handle.index], (uint16_t)(g + 1u), memory_order_relaxed);
-    }
+    uint16_t old_gen, new_gen;
+    do {
+        old_gen = atomic_load_explicit(&pool->generations[handle.index], memory_order_relaxed);
+        new_gen = (old_gen == UINT16_MAX) ? 1u : (uint16_t)(old_gen + 1u);
+    } while (!atomic_compare_exchange_weak_explicit(&pool->generations[handle.index], 
+                                                   &old_gen, new_gen, 
+                                                   memory_order_relaxed, memory_order_relaxed));
 
     // Push onto lock-free stack.
     uint32_t idx = handle.index;
@@ -44,8 +45,8 @@ apool_status_t apool_free(apool_t *pool, apool_handle_t handle) {
     for (;;) {
         uint32_t head_index = apool_head_index(head);
         uint32_t tag = apool_head_tag(head);
-        pool->next[idx] = head_index;
         uint64_t desired = apool_pack_head(idx, tag + 1u);
+        pool->next[idx] = head_index;
         if (atomic_compare_exchange_weak_explicit(&pool->free_head,
                                                   &head,
                                                   desired,

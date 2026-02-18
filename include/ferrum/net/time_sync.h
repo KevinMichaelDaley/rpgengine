@@ -46,6 +46,7 @@ extern "C" {
  */
 typedef struct net_time_sync {
     int64_t samples[NET_TIME_SYNC_MAX_WINDOW]; /**< Ring of offset samples. */
+    int64_t scratch[NET_TIME_SYNC_MAX_WINDOW]; /**< Scratch space for median computation. */
     uint32_t window_size;       /**< Configured window (≤ MAX_WINDOW). */
     uint32_t sample_count;      /**< Samples written so far. */
     uint32_t write_idx;         /**< Next write position in ring. */

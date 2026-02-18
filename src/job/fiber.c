@@ -162,8 +162,7 @@ job_fiber_t *job_fiber_create_named(job_system_t *sys,
     #endif
     apool_handle_t fiber_stack_handle = apool_alloc(&sys->fiber_stack_pool);
     if (fiber_stack_handle.index == APOOL_INDEX_INVALID) {
-        apool_free(&sys->fiber_ctx_pool,fiber_handle);
-        apool_free(&sys->fiber_stack_pool,fiber_stack_handle);
+        apool_free(&sys->fiber_ctx_pool, fiber_handle);
 	return NULL;
     }
     uint8_t *stack = (uint8_t *)apool_get(&sys->fiber_stack_pool, fiber_stack_handle);

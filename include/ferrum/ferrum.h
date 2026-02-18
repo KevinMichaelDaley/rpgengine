@@ -6,8 +6,6 @@
  */
 
 #include "ferrum/job/system.h"
-#include "ferrum/job/counter.h"
-#include "ferrum/job/counter.h"
 #include "ferrum/math/constants.h"
 #include "ferrum/job/instrumentation.h"
 #include "ferrum/job/ws_deque.h"

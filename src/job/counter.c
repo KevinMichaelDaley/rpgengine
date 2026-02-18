@@ -24,12 +24,16 @@ int job_counter_add(job_counter_t *counter, uint32_t value) {
     if (!counter) {
         return -1;
     }
-    uint32_t current = atomic_load_explicit(&counter->value, memory_order_relaxed);
-    if (value > UINT_MAX - current) {
-        return -1;
+    for (;;) {
+        uint32_t current = atomic_load_explicit(&counter->value, memory_order_relaxed);
+        if (value > UINT_MAX - current) {
+            return -1;
+        }
+        if (atomic_compare_exchange_weak_explicit(&counter->value, &current, current + value,
+                                                 memory_order_relaxed, memory_order_relaxed)) {
+            return 0;
+        }
     }
-    atomic_fetch_add_explicit(&counter->value, value, memory_order_relaxed);
-    return 0;
 }
 
 int job_counter_dec(job_counter_t *counter) {
@@ -68,8 +72,14 @@ int job_counter_dec(job_counter_t *counter) {
 
         if (atomic_compare_exchange_weak_explicit(&counter->value, &current, current - 1,
                                                   memory_order_acq_rel, memory_order_relaxed)) {
-            if (current - 1 == 0) {
-                job_system_wake_waiters(NULL, counter);
+            /* If we just caused the transition to 0, wake waiters.
+               Since we use acq_rel ordering, waiters that observe 0 will
+               see all our changes. The check must use the original 'current'
+               value before CAS, not re-read the counter. */
+            if (current == 1) {
+                job_spinlock_lock(&counter->lock);
+                job_system_wake_waiters_locked(NULL, counter);
+                job_spinlock_unlock(&counter->lock);
             }
             return 0;
         }

@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdint.h>
 
 #include "ferrum/net/packet_header.h"
 #include "ferrum/net/rudp/reliability_send.h"
@@ -100,6 +101,9 @@ int net_rudp_reliability_send_unreliable_via(net_rudp_peer_t *peer,
     }
 
     if (!peer->frag_enabled) {
+        return NET_RUDP_ERR_INVALID;
+    }
+    if (payload_size > UINT16_MAX) {
         return NET_RUDP_ERR_INVALID;
     }
     if (max_single <= NET_RUDP_FRAG_HDR_SIZE) {
@@ -218,6 +222,9 @@ int net_rudp_reliability_send_reliable_via(net_rudp_peer_t *peer,
     }
 
     if (!peer->frag_enabled) {
+        return NET_RUDP_ERR_INVALID;
+    }
+    if (payload_size > UINT16_MAX) {
         return NET_RUDP_ERR_INVALID;
     }
     if (max_single <= NET_RUDP_FRAG_HDR_SIZE) {

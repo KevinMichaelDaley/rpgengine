@@ -24,26 +24,26 @@ void net_time_sync_init(net_time_sync_t *sync,
 /**
  * Compute median of up to `n` int64 values.  Uses a scratch copy
  * and insertion sort (window is small, ≤32).
+ * `scratch` must be at least `n` elements.
  */
-static int64_t compute_median(const int64_t *values, uint32_t n) {
+static int64_t compute_median(const int64_t *values, uint32_t n, int64_t *scratch) {
     if (n == 0) { return 0; }
     if (n == 1) { return values[0]; }
 
     /* Copy into scratch and insertion-sort. */
-    int64_t sorted[NET_TIME_SYNC_MAX_WINDOW];
-    for (uint32_t i = 0; i < n; i++) { sorted[i] = values[i]; }
+    for (uint32_t i = 0; i < n; i++) { scratch[i] = values[i]; }
 
     for (uint32_t i = 1; i < n; i++) {
-        int64_t key = sorted[i];
+        int64_t key = scratch[i];
         uint32_t j = i;
-        while (j > 0 && sorted[j - 1] > key) {
-            sorted[j] = sorted[j - 1];
+        while (j > 0 && scratch[j - 1] > key) {
+            scratch[j] = scratch[j - 1];
             j--;
         }
-        sorted[j] = key;
+        scratch[j] = key;
     }
 
-    return sorted[n / 2];
+    return scratch[n / 2];
 }
 
 void net_time_sync_sample(net_time_sync_t *sync,
@@ -61,7 +61,7 @@ void net_time_sync_sample(net_time_sync_t *sync,
     }
 
     /* Compute median of current window. */
-    int64_t median = compute_median(sync->samples, sync->sample_count);
+    int64_t median = compute_median(sync->samples, sync->sample_count, sync->scratch);
 
     if (!sync->initialized) {
         /* First sample: snap directly. */

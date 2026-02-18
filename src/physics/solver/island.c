@@ -187,11 +187,13 @@ void phys_island_list_build(phys_island_list_t *list,
             (phys_frame_arena_t *)arena,
             body_counts[i] * sizeof(uint32_t),
             _Alignof(uint32_t));
+        if (!island->body_indices) { return; }
 
         island->constraint_indices = phys_frame_arena_alloc(
             (phys_frame_arena_t *)arena,
             constraint_counts[i] * sizeof(uint32_t),
             _Alignof(uint32_t));
+        if (!island->constraint_indices) { return; }
     }
 
     /* Step 5: Second pass — fill body indices. */
