@@ -38,6 +38,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/mesh_collider.h"
+#include "ferrum/physics/convex_decompose.h"
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_pool.h"
@@ -824,20 +825,59 @@ int main(int argc, char **argv) {
                         &ctx.world.body_pool, bi);
                     *abn = *ab;
 
-                    phys_world_set_mesh_collider(
-                        &ctx.world, bi,
-                        ctx.armadillo_tris, loaded,
-                        &ctx.armadillo_bvh,
-                        (phys_vec3_t){0.0f, 0.0f, 0.0f},
-                        true);  /* solid — closed mesh volume */
-                    ctx.body_shape_type[bi] = 3u; /* mesh */
+                    /* Decompose mesh into convex compound collider. */
+                    phys_decompose_params_t dp =
+                        phys_decompose_params_default();
+                    dp.resolution = 32;
+                    dp.max_hulls  = 32;
+                    dp.concavity_threshold = 0.05f;
 
-                    printf("[server] armadillo mesh body %u: %u tris, "
-                           "half=(%.1f, %.1f, %.1f)\n",
-                           bi, loaded,
-                           (double)ctx.armadillo_half[0],
-                           (double)ctx.armadillo_half[1],
-                           (double)ctx.armadillo_half[2]);
+                    struct timespec t0, t1;
+                    clock_gettime(CLOCK_MONOTONIC, &t0);
+
+                    phys_decompose_result_t decomp;
+                    memset(&decomp, 0, sizeof(decomp));
+                    int drc = phys_decompose_mesh(
+                        ctx.armadillo_tris, loaded, &dp, &decomp);
+
+                    clock_gettime(CLOCK_MONOTONIC, &t1);
+                    double decomp_ms =
+                        (double)(t1.tv_sec  - t0.tv_sec)  * 1000.0 +
+                        (double)(t1.tv_nsec - t0.tv_nsec) / 1.0e6;
+
+                    if (drc == 0 && decomp.hull_count > 0) {
+                        phys_world_set_compound_collider(
+                            &ctx.world, bi, &decomp,
+                            (phys_vec3_t){0.0f, 0.0f, 0.0f});
+                        ctx.body_shape_type[bi] = 3u; /* compound */
+
+                        printf("[server] armadillo compound body %u: "
+                               "%u hulls (from %u tris), "
+                               "decompose %.1f ms, "
+                               "half=(%.1f, %.1f, %.1f)\n",
+                               bi, decomp.hull_count, loaded,
+                               decomp_ms,
+                               (double)ctx.armadillo_half[0],
+                               (double)ctx.armadillo_half[1],
+                               (double)ctx.armadillo_half[2]);
+                    } else {
+                        /* Fallback to mesh collider. */
+                        phys_world_set_mesh_collider(
+                            &ctx.world, bi,
+                            ctx.armadillo_tris, loaded,
+                            &ctx.armadillo_bvh,
+                            (phys_vec3_t){0.0f, 0.0f, 0.0f},
+                            true);
+                        ctx.body_shape_type[bi] = 3u; /* mesh */
+
+                        printf("[server] armadillo mesh body %u: %u tris "
+                               "(decompose failed rc=%d), "
+                               "half=(%.1f, %.1f, %.1f)\n",
+                               bi, loaded, drc,
+                               (double)ctx.armadillo_half[0],
+                               (double)ctx.armadillo_half[1],
+                               (double)ctx.armadillo_half[2]);
+                    }
                 }
             }
             free(verts);
