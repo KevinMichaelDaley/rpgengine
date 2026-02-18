@@ -46,7 +46,7 @@ apool_status_t apool_free(apool_t *pool, apool_handle_t handle) {
         uint32_t head_index = apool_head_index(head);
         uint32_t tag = apool_head_tag(head);
         uint64_t desired = apool_pack_head(idx, tag + 1u);
-        pool->next[idx] = head_index;
+        atomic_store_explicit(&pool->next[idx], head_index, memory_order_relaxed);
         if (atomic_compare_exchange_weak_explicit(&pool->free_head,
                                                   &head,
                                                   desired,

@@ -26,7 +26,7 @@ apool_handle_t apool_alloc(apool_t *pool) {
             return invalid;
         }
 
-        uint32_t next = pool->next[index];
+        uint32_t next = atomic_load_explicit(&pool->next[index], memory_order_relaxed);
         uint64_t desired = apool_pack_head(next, tag + 1u);
         if (atomic_compare_exchange_weak_explicit(&pool->free_head,
                                                   &head,

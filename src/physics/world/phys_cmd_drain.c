@@ -45,8 +45,9 @@ static void apply_spawn_(phys_world_t *world,
             phys_body_set_sphere_inertia(b, cmd->mass, cmd->shape_data.sphere_r);
             break;
         case PHYS_CMD_SHAPE_CAPSULE:
-            /* Approximate with sphere inertia for now. */
-            phys_body_set_sphere_inertia(b, cmd->mass, cmd->shape_data.capsule.radius);
+            phys_body_set_capsule_inertia(b, cmd->mass,
+                cmd->shape_data.capsule.radius,
+                cmd->shape_data.capsule.half_height);
             break;
         }
     }

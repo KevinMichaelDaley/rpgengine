@@ -19,7 +19,7 @@ apool_status_t apool_init(apool_t *pool, uint32_t capacity, uint32_t stride) {
     atomic_store(&pool->free_head, apool_pack_head(APOOL_INDEX_INVALID, 0u));
 
     pool->storage = calloc(capacity, stride);
-    pool->next = calloc(capacity, sizeof(uint32_t));
+    pool->next = calloc(capacity, sizeof(*pool->next));
     pool->generations = calloc(capacity, sizeof(*pool->generations));
     if (pool->storage == NULL || pool->next == NULL || pool->generations == NULL) {
         free(pool->storage);

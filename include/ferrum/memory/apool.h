@@ -23,7 +23,7 @@ typedef struct apool_handle {
 /** Atomic pool allocator for fixed-size elements. */
 typedef struct apool {
     uint8_t *storage;                       /**< Element storage */
-    uint32_t *next;                         /**< Singly-linked stack next indices */
+    _Atomic uint32_t *next;                 /**< Singly-linked stack next indices (atomic for cross-thread visibility) */
     _Atomic uint16_t *generations;          /**< Generation per slot */
     _Atomic uint64_t free_head;             /**< Lock-free stack head (tagged to avoid ABA) */
     uint32_t capacity;                      /**< Number of elements */

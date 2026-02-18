@@ -20,9 +20,9 @@ extern "C" {
 typedef struct fr_ws_deque {
     size_t capacity;
     size_t mask;
-    _Atomic size_t top;
-    _Atomic size_t bottom;
     void **buffer;
+    _Alignas(64) _Atomic size_t top;      /**< Written by stealers. */
+    _Alignas(64) _Atomic size_t bottom;   /**< Written by owner. */
 } fr_ws_deque_t;
 
 /**
