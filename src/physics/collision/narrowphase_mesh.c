@@ -18,14 +18,6 @@
 #include "ferrum/physics/mesh_narrowphase.h"
 #include "ferrum/physics/phys_quat.h"
 
-/** Rotate vector by quaternion: q * v * q^-1. */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v) {
-    phys_vec3_t u = {q.x, q.y, q.z};
-    float s = q.w;
-    phys_vec3_t t = vec3_scale(vec3_cross(u, v), 2.0f);
-    return vec3_add(v, vec3_add(vec3_scale(t, s), vec3_cross(u, t)));
-}
-
 /* ── AABB builders for primitives ──────────────────────────────── */
 
 static phys_aabb_t sphere_aabb(phys_vec3_t center, float radius,

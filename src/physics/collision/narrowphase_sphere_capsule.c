@@ -16,22 +16,6 @@
 /* ── Static helpers ─────────────────────────────────────────────── */
 
 /**
- * Rotate a vector by a unit quaternion.
- * v' = v + 2w(q_xyz × v) + 2(q_xyz × (q_xyz × v))
- */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v)
-{
-    phys_vec3_t u = {q.x, q.y, q.z};
-    float w = q.w;
-
-    phys_vec3_t uv  = vec3_cross(u, v);
-    phys_vec3_t uuv = vec3_cross(u, uv);
-    uv  = vec3_scale(uv,  2.0f * w);
-    uuv = vec3_scale(uuv, 2.0f);
-    return vec3_add(v, vec3_add(uv, uuv));
-}
-
-/**
  * Clamp a float to [lo, hi].
  */
 static float clampf(float val, float lo, float hi)

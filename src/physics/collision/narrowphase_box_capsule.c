@@ -20,18 +20,6 @@
 
 /* ── Static helpers ─────────────────────────────────────────────── */
 
-/** Rotate a vector by a quaternion: q * v * q^-1. */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v)
-{
-    phys_vec3_t u = {q.x, q.y, q.z};
-    float w = q.w;
-    phys_vec3_t uv = vec3_cross(u, v);
-    phys_vec3_t uuv = vec3_cross(u, uv);
-    uv = vec3_scale(uv, 2.0f * w);
-    uuv = vec3_scale(uuv, 2.0f);
-    return vec3_add(v, vec3_add(uv, uuv));
-}
-
 /** Clamp a vector component-wise to the box half-extents. */
 static phys_vec3_t clamp_to_box(phys_vec3_t p, phys_vec3_t half_ext)
 {

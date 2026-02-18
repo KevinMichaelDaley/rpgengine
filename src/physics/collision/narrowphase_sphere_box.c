@@ -11,25 +11,6 @@
 #include "ferrum/physics/narrowphase.h"
 
 /**
- * @brief Rotate a vector by a quaternion: v' = q * v * q^-1.
- *
- * Uses the optimized formula: v' = v + 2w*(u × v) + 2*(u × (u × v))
- * where q = (u.x, u.y, u.z, w).
- */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v)
-{
-    phys_vec3_t u = {q.x, q.y, q.z};
-    float w = q.w;
-
-    phys_vec3_t uv = vec3_cross(u, v);
-    phys_vec3_t uuv = vec3_cross(u, uv);
-
-    /* v' = v + 2*w*uv + 2*uuv */
-    return vec3_add(v, vec3_add(vec3_scale(uv, 2.0f * w),
-                                vec3_scale(uuv, 2.0f)));
-}
-
-/**
  * @brief Clamp a float to [lo, hi].
  */
 static float clampf(float val, float lo, float hi)

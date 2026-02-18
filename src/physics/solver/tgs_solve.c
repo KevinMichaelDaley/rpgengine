@@ -349,15 +349,6 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
 #define NL_PROJ_FRACTION 0.8f
 
 /**
- * @brief Rotate a vector by a quaternion: q * v * q^-1.
- */
-static phys_vec3_t tgs_quat_rotate(phys_quat_t q, phys_vec3_t v) {
-    phys_vec3_t qv = {q.x, q.y, q.z};
-    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
-    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
-}
-
-/**
  * @brief Integrate a quaternion by an angular velocity over dt.
  *
  * Uses the standard quaternion derivative: dq = 0.5 * omega_q * q.
@@ -435,8 +426,8 @@ static void project_joints_nonlinear(const phys_joint_t *joints,
                 bb->orientation, pseudo[j->body_b].angular, dt);
 
             /* Compute world anchors from predicted state. */
-            phys_vec3_t rA = tgs_quat_rotate(ori_a, j->local_anchor_a);
-            phys_vec3_t rB = tgs_quat_rotate(ori_b, j->local_anchor_b);
+            phys_vec3_t rA = quat_rotate_vec3(ori_a, j->local_anchor_a);
+            phys_vec3_t rB = quat_rotate_vec3(ori_b, j->local_anchor_b);
             phys_vec3_t wa = vec3_add(pos_a, rA);
             phys_vec3_t wb = vec3_add(pos_b, rB);
 

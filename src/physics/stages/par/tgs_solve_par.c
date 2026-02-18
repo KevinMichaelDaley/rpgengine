@@ -668,15 +668,6 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
 #define NL_PROJ_FRACTION 0.8f
 
 /**
- * @brief Rotate a vector by a quaternion: q * v * q^-1.
- */
-static phys_vec3_t tgs_par_quat_rotate(phys_quat_t q, phys_vec3_t v) {
-    phys_vec3_t qv = {q.x, q.y, q.z};
-    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
-    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
-}
-
-/**
  * @brief Integrate a quaternion by an angular velocity over dt.
  */
 static phys_quat_t tgs_par_quat_integrate(phys_quat_t q, phys_vec3_t w,
@@ -729,8 +720,8 @@ static void tgs_project_joints_nonlinear(const phys_joint_t *joints,
             phys_quat_t ori_b = tgs_par_quat_integrate(
                 bb->orientation, pseudo[j->body_b].angular, dt);
 
-            phys_vec3_t rA = tgs_par_quat_rotate(ori_a, j->local_anchor_a);
-            phys_vec3_t rB = tgs_par_quat_rotate(ori_b, j->local_anchor_b);
+            phys_vec3_t rA = quat_rotate_vec3(ori_a, j->local_anchor_a);
+            phys_vec3_t rB = quat_rotate_vec3(ori_b, j->local_anchor_b);
             phys_vec3_t wa = vec3_add(pos_a, rA);
             phys_vec3_t wb = vec3_add(pos_b, rB);
 

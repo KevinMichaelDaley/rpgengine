@@ -27,18 +27,6 @@ static float clampf(float val, float lo, float hi)
 
 /**
  * @brief Rotate a vector by a quaternion: q * v * q^-1.
- *
- * Uses the optimized formula avoiding full quaternion multiply:
- *   t = 2 * cross(q.xyz, v)
- *   result = v + q.w * t + cross(q.xyz, t)
- */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v)
-{
-    phys_vec3_t qv = {q.x, q.y, q.z};
-    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
-    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
-}
-
 /* ── Public API ─────────────────────────────────────────────────── */
 
 bool phys_capsule_vs_capsule(

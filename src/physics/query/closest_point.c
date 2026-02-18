@@ -48,18 +48,6 @@ static float clampf_(float v, float lo, float hi) {
     return v;
 }
 
-static phys_vec3_t quat_rotate_vec3_(phys_quat_t q, phys_vec3_t v) {
-    phys_vec3_t u = (phys_vec3_t){q.x, q.y, q.z};
-    float s = q.w;
-
-    phys_vec3_t uv  = vec3_cross(u, v);
-    phys_vec3_t uuv = vec3_cross(u, uv);
-
-    uv  = vec3_scale(uv, 2.0f * s);
-    uuv = vec3_scale(uuv, 2.0f);
-    return vec3_add(v, vec3_add(uv, uuv));
-}
-
 static phys_vec3_t closest_point_sphere_(phys_vec3_t center, float radius, phys_vec3_t point) {
     phys_vec3_t d = vec3_sub(point, center);
     float len2 = vec3_dot(d, d);
@@ -75,7 +63,7 @@ static phys_vec3_t closest_point_box_(phys_vec3_t center, phys_quat_t rot, phys_
                                      phys_vec3_t point) {
     phys_vec3_t delta = vec3_sub(point, center);
     phys_quat_t inv = quat_conjugate(rot);
-    phys_vec3_t local = quat_rotate_vec3_(inv, delta);
+    phys_vec3_t local = quat_rotate_vec3(inv, delta);
 
     phys_vec3_t clamped = (phys_vec3_t){
         clampf_(local.x, -he.x, he.x),
@@ -102,13 +90,13 @@ static phys_vec3_t closest_point_box_(phys_vec3_t center, phys_quat_t rot, phys_
         }
     }
 
-    return vec3_add(center, quat_rotate_vec3_(rot, clamped));
+    return vec3_add(center, quat_rotate_vec3(rot, clamped));
 }
 
 static phys_vec3_t closest_point_capsule_(phys_vec3_t center, phys_quat_t rot,
                                          float radius, float half_height,
                                          phys_vec3_t point) {
-    phys_vec3_t axis = quat_rotate_vec3_(rot, (phys_vec3_t){0.0f, 1.0f, 0.0f});
+    phys_vec3_t axis = quat_rotate_vec3(rot, (phys_vec3_t){0.0f, 1.0f, 0.0f});
     phys_vec3_t p0 = vec3_add(center, vec3_scale(axis, -half_height));
     phys_vec3_t p1 = vec3_add(center, vec3_scale(axis,  half_height));
 
@@ -126,7 +114,7 @@ static phys_vec3_t closest_point_capsule_(phys_vec3_t center, phys_quat_t rot,
     float len2 = vec3_dot(d, d);
 
     if (len2 <= 1e-12f) {
-        phys_vec3_t outward = quat_rotate_vec3_(rot, (phys_vec3_t){1.0f, 0.0f, 0.0f});
+        phys_vec3_t outward = quat_rotate_vec3(rot, (phys_vec3_t){1.0f, 0.0f, 0.0f});
         return vec3_add(closest_seg, vec3_scale(outward, radius));
     }
 

@@ -20,17 +20,6 @@
 
 
 
-/**
- * @brief Rotate a vector by a quaternion: q * v * q^-1.
- */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v) {
-    /* t = 2 * cross(q.xyz, v) */
-    phys_vec3_t qv = {q.x, q.y, q.z};
-    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
-    /* result = v + w*t + cross(q.xyz, t) */
-    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
-}
-
 void phys_joint_init(phys_joint_t *joint) {
     if (!joint) { return; }
     memset(joint, 0, sizeof(*joint));

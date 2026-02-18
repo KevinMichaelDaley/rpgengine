@@ -11,25 +11,10 @@
 
 #include <math.h>
 
+#include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/collision/halfspace.h"
 #include "ferrum/physics/manifold.h"
-
-/**
- * @brief Rotate a vector by a quaternion.
- *
- * Uses the q * v * q^-1 formula in expanded cross-product form.
- */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v)
-{
-    phys_vec3_t u = {q.x, q.y, q.z};
-    float w = q.w;
-    phys_vec3_t uv = vec3_cross(u, v);
-    phys_vec3_t uuv = vec3_cross(u, uv);
-    uv = vec3_scale(uv, 2.0f * w);
-    uuv = vec3_scale(uuv, 2.0f);
-    return vec3_add(v, vec3_add(uv, uuv));
-}
 
 /* ── Sphere vs Halfspace ───────────────────────────────────────── */
 

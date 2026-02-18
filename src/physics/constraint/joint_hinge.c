@@ -22,15 +22,6 @@
 
 
 /**
- * @brief Rotate a vector by a quaternion: q * v * q^-1.
- */
-static phys_vec3_t quat_rotate_vec3(phys_quat_t q, phys_vec3_t v) {
-    phys_vec3_t qv = {q.x, q.y, q.z};
-    phys_vec3_t t = vec3_scale(vec3_cross(qv, v), 2.0f);
-    return vec3_add(vec3_add(v, vec3_scale(t, q.w)), vec3_cross(qv, t));
-}
-
-/**
  * @brief Build one positional row along a world axis.
  */
 static void build_positional_row(phys_jacobian_row_t *row,

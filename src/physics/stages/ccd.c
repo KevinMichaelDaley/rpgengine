@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/aabb.h"
 #include "ferrum/physics/body.h"
@@ -375,24 +376,6 @@ bool phys_swept_sphere_vs_mesh(
 }
 
 /* ── CCD Stage ─────────────────────────────────────────────────── */
-
-/** Rotate a vector by a quaternion: q * v * q^-1. */
-static phys_vec3_t ccd_quat_rotate(phys_quat_t q, phys_vec3_t v) {
-    phys_vec3_t u = {q.x, q.y, q.z};
-    float s = q.w;
-    phys_vec3_t t = vec3_scale(vec3_cross(u, v), 2.0f);
-    return vec3_add(v, vec3_add(vec3_scale(t, s), vec3_cross(u, t)));
-}
-
-/** Multiply two quaternions. */
-static phys_quat_t ccd_quat_mul(phys_quat_t a, phys_quat_t b) {
-    return (phys_quat_t){
-        .x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
-        .y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
-        .z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
-        .w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
-    };
-}
 
 /* ── Closest point on triangle to a point ──────────────────────── */
 
@@ -893,10 +876,10 @@ static bool ccd_swept_capsule_vs_meshes(
                 (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t));
 
             /* Compute capsule endpoints in world space. */
-            phys_vec3_t offset = ccd_quat_rotate(ori, col->local_offset);
+            phys_vec3_t offset = quat_rotate_vec3(ori, col->local_offset);
             phys_vec3_t center = vec3_add(pos, offset);
-            phys_quat_t world_rot = ccd_quat_mul(ori, col->local_rotation);
-            phys_vec3_t axis = ccd_quat_rotate(
+            phys_quat_t world_rot = quat_mul(ori, col->local_rotation);
+            phys_vec3_t axis = quat_rotate_vec3(
                 world_rot, (phys_vec3_t){0, half_h, 0});
             phys_vec3_t ep_a = vec3_add(center, axis);
             phys_vec3_t ep_b = vec3_sub(center, axis);
@@ -1070,12 +1053,6 @@ static bool ccd_depenetrate_capsule_vs_meshes(
 
 /* ── Box SDF depth test ─────────────────────────────────────────── */
 
-/** Rotate vector by conjugate quaternion: q^-1 * v * q. */
-static phys_vec3_t ccd_quat_inv_rotate(phys_quat_t q, phys_vec3_t v) {
-    phys_quat_t conj = {-q.x, -q.y, -q.z, q.w};
-    return ccd_quat_rotate(conj, v);
-}
-
 /**
  * Signed distance from a point to the surface of an axis-aligned box
  * centered at origin with the given half-extents.
@@ -1147,7 +1124,7 @@ static float box_vs_triangle_sdf(
      * direction to push the triangle vertex OUT of the box.  For CCD
      * we negate: the box should move in the opposite direction. */
     for (int vi = 0; vi < 3; vi++) {
-        phys_vec3_t local_p = ccd_quat_inv_rotate(
+        phys_vec3_t local_p = quat_inv_rotate_vec3(
             box_rot, vec3_sub(tri->v[vi], box_center));
 
         phys_vec3_t local_n;
@@ -1167,7 +1144,7 @@ static float box_vs_triangle_sdf(
      * Same normal convention as test 1: negate the SDF normal. */
     phys_vec3_t tri_normal;
     phys_vec3_t cp = closest_point_on_triangle(box_center, tri, &tri_normal);
-    phys_vec3_t local_cp = ccd_quat_inv_rotate(
+    phys_vec3_t local_cp = quat_inv_rotate_vec3(
         box_rot, vec3_sub(cp, box_center));
 
     phys_vec3_t cp_local_n;
@@ -1184,9 +1161,9 @@ static float box_vs_triangle_sdf(
      * If a corner is on the front side and the projection lands
      * inside the triangle, it's penetrating. */
     phys_vec3_t box_axes[3];
-    box_axes[0] = ccd_quat_rotate(box_rot, (phys_vec3_t){1, 0, 0});
-    box_axes[1] = ccd_quat_rotate(box_rot, (phys_vec3_t){0, 1, 0});
-    box_axes[2] = ccd_quat_rotate(box_rot, (phys_vec3_t){0, 0, 1});
+    box_axes[0] = quat_rotate_vec3(box_rot, (phys_vec3_t){1, 0, 0});
+    box_axes[1] = quat_rotate_vec3(box_rot, (phys_vec3_t){0, 1, 0});
+    box_axes[2] = quat_rotate_vec3(box_rot, (phys_vec3_t){0, 0, 1});
 
     float signs[8][3] = {
         { 1, 1, 1}, { 1, 1,-1}, { 1,-1, 1}, { 1,-1,-1},
@@ -1217,7 +1194,7 @@ static float box_vs_triangle_sdf(
 
             /* Normal: negate triangle normal so it points from wall
              * toward the safe side (same convention as tests 1-2). */
-            phys_vec3_t local_n_tri = ccd_quat_inv_rotate(
+            phys_vec3_t local_n_tri = quat_inv_rotate_vec3(
                 box_rot, vec3_scale(tri_normal, -1.0f));
             if (pen > deepest) {
                 deepest = pen;
@@ -1227,7 +1204,7 @@ static float box_vs_triangle_sdf(
     }
 
     if (deepest > 0.0f) {
-        *normal_out = ccd_quat_rotate(box_rot, best_local_n);
+        *normal_out = quat_rotate_vec3(box_rot, best_local_n);
     }
     return deepest;
 }
@@ -1387,9 +1364,9 @@ static bool ccd_swept_box_vs_meshes(
                 prev->orientation, curr->orientation, clamp_t);
 
             /* Box center in world space (apply collider offset). */
-            phys_vec3_t offset = ccd_quat_rotate(ori, col->local_offset);
+            phys_vec3_t offset = quat_rotate_vec3(ori, col->local_offset);
             phys_vec3_t center = vec3_add(pos, offset);
-            phys_quat_t world_rot = ccd_quat_mul(ori, col->local_rotation);
+            phys_quat_t world_rot = quat_mul(ori, col->local_rotation);
 
             /* Transform to mesh-local space. */
             phys_vec3_t local_center = vec3_sub(center, mesh_origin);
@@ -1450,20 +1427,20 @@ static int ccd_process_body(
         bool penetrating = false;
 
         if (col->type == PHYS_SHAPE_BOX) {
-            phys_vec3_t offset = ccd_quat_rotate(
+            phys_vec3_t offset = quat_rotate_vec3(
                 curr->orientation, col->local_offset);
             phys_vec3_t center = vec3_add(curr->position, offset);
-            phys_quat_t wr = ccd_quat_mul(
+            phys_quat_t wr = quat_mul(
                 curr->orientation, col->local_rotation);
             penetrating = ccd_depenetrate_box_vs_meshes(
                 center, wr, half_extents, args, &depth, &normal);
         } else if (col->type == PHYS_SHAPE_CAPSULE && half_h > 0.0f) {
-            phys_vec3_t offset = ccd_quat_rotate(
+            phys_vec3_t offset = quat_rotate_vec3(
                 curr->orientation, col->local_offset);
             phys_vec3_t center = vec3_add(curr->position, offset);
-            phys_quat_t wr = ccd_quat_mul(
+            phys_quat_t wr = quat_mul(
                 curr->orientation, col->local_rotation);
-            phys_vec3_t ax = ccd_quat_rotate(
+            phys_vec3_t ax = quat_rotate_vec3(
                 wr, (phys_vec3_t){0, half_h, 0});
             phys_vec3_t ep_a = vec3_add(center, ax);
             phys_vec3_t ep_b = vec3_sub(center, ax);

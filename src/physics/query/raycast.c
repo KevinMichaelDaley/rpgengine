@@ -23,19 +23,6 @@
 #define RAYCAST_GRID_CELL_COUNT 256u
 #define RAYCAST_GRID_CELL_SIZE 2.0f
 
-static phys_vec3_t quat_rotate_vec3_(phys_quat_t q, phys_vec3_t v) {
-    /* q assumed normalized. */
-    phys_vec3_t u = (phys_vec3_t){q.x, q.y, q.z};
-    float s = q.w;
-
-    phys_vec3_t uv  = vec3_cross(u, v);
-    phys_vec3_t uuv = vec3_cross(u, uv);
-
-    uv  = vec3_scale(uv, 2.0f * s);
-    uuv = vec3_scale(uuv, 2.0f);
-    return vec3_add(v, vec3_add(uv, uuv));
-}
-
 static bool ray_sphere_hit_(phys_vec3_t origin, phys_vec3_t dir, float max_dist,
                            phys_vec3_t center, float radius,
                            float *t_out, phys_vec3_t *normal_out) {
@@ -82,8 +69,8 @@ static bool ray_box_hit_(phys_vec3_t origin, phys_vec3_t dir, float max_dist,
                         float *t_out, phys_vec3_t *normal_out) {
     phys_quat_t inv = PHYS_QUAT_FROM_QUAT(quat_conjugate(QUAT_FROM_PHYS_QUAT(rotation)));
 
-    phys_vec3_t o_local = quat_rotate_vec3_(inv, vec3_sub(origin, center));
-    phys_vec3_t d_local = quat_rotate_vec3_(inv, dir);
+    phys_vec3_t o_local = quat_rotate_vec3(inv, vec3_sub(origin, center));
+    phys_vec3_t d_local = quat_rotate_vec3(inv, dir);
 
     float tmin = 0.0f;
     float tmax = max_dist;
@@ -162,7 +149,7 @@ static bool ray_box_hit_(phys_vec3_t origin, phys_vec3_t dir, float max_dist,
         *t_out = tmin;
     }
     if (normal_out) {
-        *normal_out = vec3_normalize_safe(quat_rotate_vec3_(rotation, n_local), 1e-8f);
+        *normal_out = vec3_normalize_safe(quat_rotate_vec3(rotation, n_local), 1e-8f);
     }
     return true;
 }
@@ -173,8 +160,8 @@ static bool ray_capsule_hit_(phys_vec3_t origin, phys_vec3_t dir, float max_dist
                             float *t_out, phys_vec3_t *normal_out) {
     phys_quat_t inv = PHYS_QUAT_FROM_QUAT(quat_conjugate(QUAT_FROM_PHYS_QUAT(rotation)));
 
-    phys_vec3_t o = quat_rotate_vec3_(inv, vec3_sub(origin, center));
-    phys_vec3_t d = quat_rotate_vec3_(inv, dir);
+    phys_vec3_t o = quat_rotate_vec3(inv, vec3_sub(origin, center));
+    phys_vec3_t d = quat_rotate_vec3(inv, dir);
 
     float best_t = INFINITY;
     phys_vec3_t best_n = (phys_vec3_t){0, 0, 0};
@@ -235,7 +222,7 @@ static bool ray_capsule_hit_(phys_vec3_t origin, phys_vec3_t dir, float max_dist
         *t_out = best_t;
     }
     if (normal_out) {
-        *normal_out = vec3_normalize_safe(quat_rotate_vec3_(rotation, best_n), 1e-8f);
+        *normal_out = vec3_normalize_safe(quat_rotate_vec3(rotation, best_n), 1e-8f);
     }
     return true;
 }
