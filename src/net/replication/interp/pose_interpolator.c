@@ -211,11 +211,33 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
         out_pos->z = pos_fwd.z * (1.0f - t) + pos_bwd.z * t;
         *out_rot = quat_slerp(rot_fwd, rot_bwd, t, quat_epsilon);
     } else {
-        /* Beyond the latest snapshot — hold curr pose.
-         * Client-side physics prediction is not available, so
-         * extrapolation would drift.  Hold until next server update. */
-        *out_pos = interp->curr_pos;
-        *out_rot = quat_normalize_safe(interp->curr_rot, quat_epsilon);
+        /* Beyond the latest snapshot — extrapolate from curr using
+         * server velocity so bodies keep moving between updates.
+         * Clamp extrapolation to avoid runaway drift. */
+        float extrap = (float)(now_time_s - interp->curr_time_s);
+        const float max_extrap = 0.15f; /* 150ms cap */
+        if (extrap > max_extrap) extrap = max_extrap;
+
+        out_pos->x = interp->curr_pos.x + interp->server_vel.x * extrap;
+        out_pos->y = interp->curr_pos.y + interp->server_vel.y * extrap;
+        out_pos->z = interp->curr_pos.z + interp->server_vel.z * extrap;
+
+        /* Extrapolate rotation by angular velocity. */
+        quat_t rot_ext = interp->curr_rot;
+        float w = sqrtf(
+            interp->server_ang_vel.x * interp->server_ang_vel.x +
+            interp->server_ang_vel.y * interp->server_ang_vel.y +
+            interp->server_ang_vel.z * interp->server_ang_vel.z);
+        if (w > 1e-6f) {
+            vec3_t ax = {
+                interp->server_ang_vel.x / w,
+                interp->server_ang_vel.y / w,
+                interp->server_ang_vel.z / w,
+            };
+            quat_t dq = quat_from_axis_angle(ax, w * extrap, 1e-8f);
+            rot_ext = quat_mul(dq, interp->curr_rot);
+        }
+        *out_rot = quat_normalize_safe(rot_ext, quat_epsilon);
     }
     return true;
 }

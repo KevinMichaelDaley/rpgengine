@@ -48,6 +48,18 @@ struct fr_topic_channel;
 struct phys_game_state;
 
 /**
+ * @brief Post-tick callback signature.
+ *
+ * Invoked on the physics thread immediately after each tick completes
+ * and corrections are drained.  Use for sending priority state updates
+ * at physics tick rate.
+ *
+ * @param user   Opaque user pointer (set in init).
+ * @param tick   Completed tick number (1-based, monotonically increasing).
+ */
+typedef void (*phys_tick_runner_post_tick_fn)(void *user, uint64_t tick);
+
+/**
  * @brief Continuous physics tick runner.
  *
  * Stack-allocatable.  Must be initialized before use and destroyed
@@ -62,6 +74,10 @@ typedef struct phys_tick_runner {
     /** Optional callback invoked for each SPAWN_BODY during drain. */
     phys_cmd_spawn_callback_t spawn_cb;
     void                     *spawn_cb_user;
+
+    /** Optional callback invoked after each tick completes. */
+    phys_tick_runner_post_tick_fn post_tick_cb;
+    void                         *post_tick_cb_user;
 
     /** Optional game state for tier classification (borrowed, may be NULL).
      *  When NULL, all bodies default to T0.  Updated externally before

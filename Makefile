@@ -213,6 +213,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p116_convex_narrowphase_tests \
 	build/p117_convex_decompose_tests \
 	build/p118_compound_collider_tests \
+	build/p119_snapshot_interp_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -638,6 +639,9 @@ build/p117_convex_decompose_tests: build/libheadless.a tests/p117_convex_decompo
 build/p118_compound_collider_tests: build/libheadless.a tests/p118_compound_collider_tests.c | build
 	$(CC) $(CFLAGS) tests/p118_compound_collider_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p119_snapshot_interp_tests: build/libheadless.a tests/p119_snapshot_interp_tests.c | build
+	$(CC) $(CFLAGS) tests/p119_snapshot_interp_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -948,6 +952,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p007_net_validation_tests \
 	&& ./build/p007_net_integration_tests \
 	&& ./build/p008_pose_interpolator_tests \
+	&& ./build/p119_snapshot_interp_tests \
 	&& ./build/p009_server_state_update_queue_tests \
 	&& ./build/p000_job_queue_diagnostics_tests \
 	&& ./build/p000_ws_deque_tests \
@@ -988,6 +993,7 @@ test_timeout: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job
 		./build/p007_net_schema_registry_tests \
 		./build/p007_net_udp_socket_tests \
 		./build/p008_pose_interpolator_tests \
+		./build/p119_snapshot_interp_tests \
 		./build/p009_server_state_update_queue_tests \
 		./build/p000_job_queue_diagnostics_tests \
 		./build/p000_ws_deque_tests \

@@ -158,6 +158,13 @@ static void *tick_thread_fn_(void *user_data) {
                            NULL, NULL);
         }
 
+        /* Post-tick callback (e.g. send priority state updates). */
+        uint64_t next_tick = atomic_load_explicit(&r->completed_ticks,
+                                                   memory_order_relaxed) + 1;
+        if (r->post_tick_cb) {
+            r->post_tick_cb(r->post_tick_cb_user, next_tick);
+        }
+
         /* Signal tick completion. */
         atomic_fetch_add_explicit(&r->completed_ticks, 1,
                                   memory_order_release);

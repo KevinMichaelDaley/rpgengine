@@ -48,6 +48,7 @@
 #include "ferrum/server/entity/net/pump.h"
 #include "ferrum/server/net/inbound_message.h"
 #include "ferrum/server/net/runtime.h"
+#include "ferrum/server/physics/net/priority_body_sender.h"
 #include "ferrum/server/tick_loop.h"
 #include "ferrum/physics/snapshot.h"
 #include "ferrum/net/snapshot_chunk.h"
@@ -163,6 +164,14 @@ struct demo_ctx {
     /* Per-body shape type (0=box, 1=sphere, 2=capsule, 3=mesh). */
     uint8_t                             body_shape_type[DEMO_MAX_BODIES];
 
+    /** Per-body flag: 1 if body participates in at least one joint.
+     *  Clients use this to choose interpolation (constrained) vs prediction. */
+    uint8_t                             body_constrained[DEMO_MAX_BODIES];
+
+    /** Joint pair array: [a0,b0,a1,b1,...] for priority sender. */
+    uint32_t                            joint_pairs[DEMO_MAX_BODIES * 2];
+    uint32_t                            joint_pair_count;
+
     /* Armadillo mesh data (kept alive for mesh collider's borrowed pointer). */
     phys_triangle_t                    *armadillo_tris;
     uint32_t                            armadillo_tri_count;
@@ -172,6 +181,13 @@ struct demo_ctx {
 
     /* Pre-allocated snapshot encoding buffer. */
     uint8_t                             snap_buf[DEMO_SNAPSHOT_BUF_SIZE];
+
+    /* Priority body state sender (velocity-proportional rate). */
+    fr_priority_body_sender_t          *priority_sender;
+
+    /* Cached client addresses for raw UDP sends from physics thread. */
+    net_udp_addr_t                      client_addrs[DEMO_MAX_CLIENTS];
+    uint8_t                             client_addr_active[DEMO_MAX_CLIENTS];
 };
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -252,6 +268,9 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         memset(&spawn_msg, 0, sizeof(spawn_msg));
         spawn_msg.body_id = (uint16_t)bi;
         spawn_msg.flags = (body->flags & PHYS_BODY_FLAG_STATIC) ? 1u : 0u;
+        if (ctx->body_constrained[bi]) {
+            spawn_msg.flags |= 0x04u; /* bit2 = constrained (interpolated) */
+        }
         spawn_msg.shape_type = ctx->body_shape_type[bi];
         spawn_msg.color_seed = bi;
 
@@ -413,6 +432,15 @@ static void on_drain(void *user) {
             if (client_id < DEMO_MAX_CLIENTS && !ctx->client_joined[client_id]) {
                 ctx->client_joined[client_id] = true;
                 ctx->clients_connected++;
+
+                /* Cache address for physics-thread priority sends. */
+                net_udp_addr_t caddr;
+                if (fr_server_net_runtime_client_addr(ctx->net_rt,
+                                                       client_id, &caddr)) {
+                    ctx->client_addrs[client_id] = caddr;
+                    ctx->client_addr_active[client_id] = 1u;
+                }
+
                 printf("[server] client %u joined (total: %u)\n",
                        client_id, ctx->clients_connected);
 
@@ -500,6 +528,34 @@ static void on_drain(void *user) {
  */
 static void on_physics(void *user) {
     (void)user;
+}
+
+/**
+ * Post-tick callback: send velocity-proportional priority BODY_STATE
+ * updates for constrained bodies via raw UDP.
+ *
+ * Runs on the physics thread at physics tick rate (~60Hz).
+ * Delegates to fr_priority_body_sender_tick which rate-limits per body
+ * based on speed.
+ */
+static void on_post_physics_tick(void *user, uint64_t tick) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user;
+    if (!ctx->priority_sender) { return; }
+
+    net_udp_socket_t *raw_sock = fr_server_net_runtime_socket(ctx->net_rt);
+    if (!raw_sock) { return; }
+
+    fr_priority_body_sender_tick(
+        ctx->priority_sender,
+        &ctx->world,
+        ctx->body_constrained,
+        tick,
+        raw_sock,
+        ctx->client_addrs,
+        ctx->client_addr_active,
+        DEMO_MAX_CLIENTS,
+        ctx->joint_pairs,
+        ctx->joint_pair_count);
 }
 
 /**
@@ -777,6 +833,13 @@ int main(int argc, char **argv) {
                 joint.damping = 0.5f;
 
                 phys_world_add_joint(&ctx.world, &joint);
+                ctx.body_constrained[prev_body] = 1u;
+                ctx.body_constrained[bi] = 1u;
+                if (ctx.joint_pair_count < DEMO_MAX_BODIES) {
+                    ctx.joint_pairs[ctx.joint_pair_count * 2u]     = prev_body;
+                    ctx.joint_pairs[ctx.joint_pair_count * 2u + 1u] = bi;
+                    ctx.joint_pair_count++;
+                }
                 prev_body = bi;
             }
             printf("[server] chain %u: %u links from body %u\n",
@@ -1037,6 +1100,19 @@ int main(int argc, char **argv) {
     }
     printf("[server] net runtime created (max %u clients)\n", DEMO_MAX_CLIENTS);
 
+    /* Now that net_rt and socket are ready, enable post-tick
+     * priority updates for constrained bodies on the physics thread. */
+    fr_priority_body_sender_config_t pbs_cfg = {
+        .max_bodies     = DEMO_MAX_BODIES,
+        .speed_full_rate = 10.0f,  /* 10 m/s → every physics tick */
+        .speed_min       = 0.3f,   /* < 0.3 m/s → skip entirely */
+        .max_interval    = 30,     /* slowest movers: every 30 ticks (~0.5s) */
+    };
+    ctx.priority_sender = fr_priority_body_sender_create(&pbs_cfg);
+
+    ctx.tick_runner.post_tick_cb      = on_post_physics_tick;
+    ctx.tick_runner.post_tick_cb_user = &ctx;
+
     /* ── 7. Entity net pump ────────────────────────────────────── */
     fr_server_entity_net_pump_config_t pump_cfg = {
         .max_clients = DEMO_MAX_CLIENTS,
@@ -1133,6 +1209,7 @@ int main(int argc, char **argv) {
     printf("[server] tick runner stopped\n");
 
     /* Tear down in reverse init order. */
+    fr_priority_body_sender_destroy(ctx.priority_sender);
     fr_server_entity_net_pump_destroy(ctx.entity_pump);
     fr_server_net_runtime_destroy(ctx.net_rt);
     job_system_shutdown(&ctx.job_sys);

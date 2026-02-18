@@ -36,20 +36,21 @@
 
 #include "ferrum/net/quantization.h"
 #include "ferrum/net/replication/body_spawn.h"
+#include "ferrum/net/replication/body_state.h"
 #include "ferrum/net/replication/common.h"
 #include "ferrum/net/replication/join.h"
+#include "ferrum/net/replication/prediction_tick.h"
 #include "ferrum/net/replication/welcome.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/snapshot_chunk.h"
+#include "ferrum/net/replication/interp/snapshot_interp.h"
 #include "ferrum/net/stream.h"
 #include "ferrum/net/udp_socket.h"
 
 #include "ferrum/physics/body.h"
-#include "ferrum/physics/game_state.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/prediction.h"
 #include "ferrum/physics/snapshot.h"
-#include "ferrum/physics/tick.h"
 #include "ferrum/physics/world.h"
 
 #include "ferrum/renderer/gl_loader.h"
@@ -135,11 +136,12 @@ static void color_from_body(uint16_t body_id, float out_rgb[3]) {
  * This struct holds only the rendering-specific data.
  */
 typedef struct body_render_info {
-    uint8_t  shape_type;  /**< 0=box, 1=sphere, 2=capsule, 3=mesh, 4=halfspace. */
-    uint8_t  is_static;   /**< 1 if static/kinematic body. */
-    float    half_x;      /**< Half-extent X in meters. */
-    float    half_y;      /**< Half-extent Y in meters. */
-    float    half_z;      /**< Half-extent Z in meters. */
+    uint8_t  shape_type;    /**< 0=box, 1=sphere, 2=capsule, 3=mesh, 4=halfspace. */
+    uint8_t  is_static;     /**< 1 if static/kinematic body. */
+    uint8_t  is_constrained; /**< 1 if body has joints → use interpolation. */
+    float    half_x;        /**< Half-extent X in meters. */
+    float    half_y;        /**< Half-extent Y in meters. */
+    float    half_z;        /**< Half-extent Z in meters. */
 } body_render_info_t;
 
 /* ── GL context ─────────────────────────────────────────────────── */
@@ -399,7 +401,7 @@ static int gl_init(gl_ctx_t *ctx) {
     }
 
     glEnable(GL_DEPTH_TEST);
-    SDL_GL_SetSwapInterval(1);
+    SDL_GL_SetSwapInterval(0); /* No vsync — render as fast as possible. */
     SDL_SetRelativeMouseMode(SDL_TRUE);
 
     return 0;
@@ -598,14 +600,13 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* ── 4. Local physics world (prediction mode) ──────────────── */
+    /* ── 4. Local physics world (body storage + prediction) ──────── */
     phys_world_t world;
     {
         phys_world_config_t cfg = phys_world_config_default();
         cfg.max_bodies = CLIENT_MAX_BODIES;
         cfg.max_colliders = CLIENT_MAX_BODIES;
         cfg.frame_arena_size = 256u * 1024u;
-        /* Match server physics. */
         cfg.fixed_dt = 1.0f / 60.0f;
         cfg.gravity = (phys_vec3_t){0.0f, -9.81f, 0.0f};
         if (phys_world_init(&world, &cfg) != 0) {
@@ -614,12 +615,32 @@ int main(int argc, char **argv) {
         }
         world.prediction_mode = 1;
     }
-    phys_game_state_t game_state;
-    phys_game_state_init(&game_state);
+
+    /* Lightweight prediction integrator — fixed 60Hz, decoupled from
+     * render frame rate.  Integrates position + orientation only
+     * (no collision/constraints — those come from the server). */
+    fr_prediction_tick_config_t ptick_cfg = {
+        .fixed_dt   = 1.0f / 60.0f,
+        .gravity    = {0.0f, -9.81f, 0.0f},
+        .max_bodies = CLIENT_MAX_BODIES,
+    };
+    fr_prediction_tick_t *pred_tick = fr_prediction_tick_create(&ptick_cfg);
+    if (!pred_tick) {
+        fprintf(stderr, "[client] failed to create prediction tick\n");
+        return 1;
+    }
+    if (!fr_prediction_tick_start(pred_tick, &world.body_pool)) {
+        fprintf(stderr, "[client] failed to start prediction thread\n");
+        return 1;
+    }
 
     /* Per-body render metadata. */
     body_render_info_t render_info[CLIENT_MAX_BODIES];
     memset(render_info, 0, sizeof(render_info));
+
+    /* Per-body last-seen server tick for BODY_STATE dedup. */
+    uint16_t body_state_last_tick[CLIENT_MAX_BODIES];
+    memset(body_state_last_tick, 0, sizeof(body_state_last_tick));
 
     /* Prediction reconciliation config. */
     phys_prediction_config_t pred_cfg = phys_prediction_config_default();
@@ -638,6 +659,20 @@ int main(int argc, char **argv) {
     /* Track highest server tick to reject stale snapshots. */
     uint64_t last_server_tick = 0;
 
+    /* Snapshot interpolator for constrained bodies (joints/chains).
+     * These bodies cannot be locally predicted because prediction_mode
+     * skips the constraint solver.  Instead we lerp/slerp between the
+     * two most recent server snapshot poses. */
+    fr_snapshot_interp_config_t si_cfg = {
+        .max_bodies    = CLIENT_MAX_BODIES,
+        .quat_epsilon  = 1e-6f,
+    };
+    fr_snapshot_interp_t *snap_interp = fr_snapshot_interp_create(&si_cfg);
+    if (!snap_interp) {
+        fprintf(stderr, "[client] failed to create snapshot interpolator\n");
+        return 1;
+    }
+
     /* ── 5. FPS camera state ───────────────────────────────────── */
     float cam_yaw   = 0.0f;
     float cam_pitch = 0.0f;
@@ -649,6 +684,8 @@ int main(int argc, char **argv) {
     uint64_t next_diag_ms = now_ms_val() + 2000u;
     uint64_t last_frame_ns = now_ns();
     uint32_t frame_count = 0;
+    uint32_t diag_frame_start = 0;
+    uint64_t diag_time_start_ms = now_ms_val();
     uint32_t snap_applied_count = 0;
     uint32_t dbg_pkts = 0;
     uint32_t dbg_stream_frames = 0;
@@ -662,7 +699,6 @@ int main(int argc, char **argv) {
         const double dt_s = (double)(frame_ns - last_frame_ns) / 1e9;
         last_frame_ns = frame_ns;
         const uint64_t now_ms = frame_ns / 1000000ull;
-        (void)dt_s;
 
         if (duration > 0.0 && (now_s() - start_time) >= duration) {
             break;
@@ -694,6 +730,7 @@ int main(int argc, char **argv) {
             if (keys[SDL_SCANCODE_D]) move_right = 1;
         }
 
+        uint64_t t_recv_start = now_ns();
         /* ── Stage 2: Network receive ──────────────────────────── */
         net_rudp_peer_tick_resend(&peer, &sock, &server_addr, now_ms);
 
@@ -706,7 +743,8 @@ int main(int argc, char **argv) {
             next_keepalive_ms = now_ms + 100u;
         }
 
-        /* Drain all pending UDP packets. */
+        /* Drain all pending UDP packets.  Stale unreliable data is
+         * detected and skipped without expensive processing. */
         for (;;) {
             size_t rx_size = 0;
             int rc = net_udp_socket_recv(&sock, rx_buf, sizeof(rx_buf),
@@ -739,12 +777,60 @@ int main(int argc, char **argv) {
                                                  &snap_decoded) == 0) {
                             if (snap_decoded.tick > last_server_tick) {
                                 last_server_tick = snap_decoded.tick;
+                                /* Feed interpolator (constrained bodies). */
+                                double rx_time = now_s();
+                                fr_snapshot_interp_push(snap_interp,
+                                                        &snap_decoded,
+                                                        rx_time);
+                                /* Reconcile predicted bodies. */
                                 phys_prediction_reconcile(&world, &snap_decoded,
                                                           &pred_cfg);
                                 snap_applied_count++;
                             }
                         }
                         net_chunk_reassembly_reset(&snap_reasm);
+                    }
+                    continue;
+                }
+
+                /* Raw BODY_STATE priority updates for constrained bodies. */
+                if (raw_schema == NET_REPL_SCHEMA_BODY_STATE &&
+                    rx_size >= 2u + NET_REPL_BODY_STATE_PAYLOAD_SIZE) {
+                    net_repl_body_state_t bst;
+                    if (net_repl_body_state_decode(&bst, rx_buf + 2u,
+                                                    rx_size - 2u)
+                        == NET_REPL_OK) {
+                        uint32_t bi = bst.body_id;
+                        if (bi >= CLIENT_MAX_BODIES) { continue; }
+                        if (!render_info[bi].is_constrained) { continue; }
+
+                        /* Drop stale: tick wrapped-aware comparison. */
+                        int16_t tick_diff = (int16_t)(bst.server_tick
+                                            - body_state_last_tick[bi]);
+                        if (tick_diff <= 0) { continue; }
+                        body_state_last_tick[bi] = bst.server_tick;
+
+                        vec3_t pos = {
+                            (float)bst.pos_mm.x_mm / 1000.0f,
+                            (float)bst.pos_mm.y_mm / 1000.0f,
+                            (float)bst.pos_mm.z_mm / 1000.0f,
+                        };
+                        quat_t rot = {bst.rot_x, bst.rot_y,
+                                      bst.rot_z, bst.rot_w};
+                        vec3_t vel = {
+                            (float)bst.vel_x_mm_s / 1000.0f,
+                            (float)bst.vel_y_mm_s / 1000.0f,
+                            (float)bst.vel_z_mm_s / 1000.0f,
+                        };
+                        vec3_t ang = {
+                            (float)bst.ang_x_mrad_s / 1000.0f,
+                            (float)bst.ang_y_mrad_s / 1000.0f,
+                            (float)bst.ang_z_mrad_s / 1000.0f,
+                        };
+                        double rx_time = now_s();
+                        fr_pose_interpolator_push(
+                            &snap_interp->interps[bi],
+                            rx_time, pos, rot, vel, ang, rx_time);
                     }
                     continue;
                 }
@@ -825,8 +911,9 @@ int main(int argc, char **argv) {
                     /* Store render metadata. */
                     if (idx < CLIENT_MAX_BODIES) {
                         body_render_info_t *ri = &render_info[idx];
-                        ri->shape_type = sp.shape_type;
-                        ri->is_static  = (sp.flags & 0x01u) ? 1u : 0u;
+                        ri->shape_type    = sp.shape_type;
+                        ri->is_static     = (sp.flags & 0x01u) ? 1u : 0u;
+                        ri->is_constrained = (sp.flags & 0x04u) ? 1u : 0u;
                         ri->half_x = net_float16_to_float(sp.half_x_f16);
                         ri->half_y = net_float16_to_float(sp.half_y_f16);
                         ri->half_z = net_float16_to_float(sp.half_z_f16);
@@ -868,19 +955,25 @@ int main(int argc, char **argv) {
             cam_pos.z += mz * CLIENT_MOVE_SPEED * (float)dt_s;
         }
 
-        /* ── Stage 5: Tick local physics (prediction) ──────────── */
-        phys_world_tick(&world, &game_state);
+        /* ── Stage 5: Prediction runs on its own thread at 60Hz ── */
+        uint64_t t_recv_end = now_ns();
 
         /* ── Stage 6: Diagnostics ──────────────────────────────── */
         if (now_ms >= next_diag_ms) {
             uint32_t body_count = phys_world_body_count(&world);
-            printf("[client] frame=%u bodies=%u snapshots=%u pkts=%u stream=%u chunks=%u cam=(%.1f,%.1f,%.1f)\n",
-                   frame_count, body_count, snap_applied_count,
-                   dbg_pkts, dbg_stream_frames, dbg_snap_chunks,
+            uint32_t frames_in_interval = frame_count - diag_frame_start;
+            uint64_t interval_ms = now_ms - diag_time_start_ms;
+            float ms_per_frame = (frames_in_interval > 0)
+                ? (float)interval_ms / (float)frames_in_interval : 0.0f;
+            printf("[client] frame=%u ms/f=%.1f bodies=%u snaps=%u cam=(%.1f,%.1f,%.1f)\n",
+                   frame_count, ms_per_frame, body_count, snap_applied_count,
                    cam_pos.x, cam_pos.y, cam_pos.z);
+            diag_frame_start = frame_count;
+            diag_time_start_ms = now_ms;
             next_diag_ms = now_ms + 2000u;
         }
 
+        uint64_t t_render_start = now_ns();
         /* ── Stage 7: Render ───────────────────────────────────── */
         if (!headless) {
             glViewport(0, 0, CLIENT_WIN_W, CLIENT_WIN_H);
@@ -911,21 +1004,46 @@ int main(int argc, char **argv) {
                 mat4_t vp = mat4_mul(proj, view);
 
                 /* Iterate all active bodies and render. */
+                double render_time = now_s();
                 uint32_t cap = world.body_pool.capacity;
                 for (uint32_t i = 0; i < cap; i++) {
                     if (!phys_body_pool_is_active(&world.body_pool, i)) {
                         continue;
                     }
-                    const phys_body_t *body = &world.body_pool.bodies_curr[i];
                     const body_render_info_t *ri = &render_info[i];
 
-                    vec3_t pos = {body->position.x,
-                                  body->position.y,
-                                  body->position.z};
-                    quat_t rot = {body->orientation.x,
-                                  body->orientation.y,
-                                  body->orientation.z,
-                                  body->orientation.w};
+                    vec3_t pos;
+                    quat_t rot;
+
+                    if (ri->is_constrained) {
+                        /* Constrained bodies: interpolate between server
+                         * snapshots (prediction can't solve joints). */
+                        if (!fr_snapshot_interp_sample(snap_interp, i,
+                                                       render_time,
+                                                       &pos, &rot)) {
+                            /* No snapshot data yet — fall back to body pool. */
+                            const phys_body_t *body =
+                                &world.body_pool.bodies_curr[i];
+                            pos = (vec3_t){body->position.x,
+                                           body->position.y,
+                                           body->position.z};
+                            rot = (quat_t){body->orientation.x,
+                                           body->orientation.y,
+                                           body->orientation.z,
+                                           body->orientation.w};
+                        }
+                    } else {
+                        /* Predicted bodies: read from local physics world. */
+                        const phys_body_t *body =
+                            &world.body_pool.bodies_curr[i];
+                        pos = (vec3_t){body->position.x,
+                                       body->position.y,
+                                       body->position.z};
+                        rot = (quat_t){body->orientation.x,
+                                       body->orientation.y,
+                                       body->orientation.z,
+                                       body->orientation.w};
+                    }
 
                     mat4_t t = mat4_translation(pos.x, pos.y, pos.z);
                     mat4_t r = mat4_from_quat(rot);
@@ -985,6 +1103,22 @@ int main(int argc, char **argv) {
             }
 
             SDL_GL_SwapWindow(gl.window);
+            uint64_t t_render_end = now_ns();
+
+            /* Accumulate per-stage times for diag (in µs). */
+            static uint64_t acc_recv_us = 0, acc_render_us = 0;
+            static uint32_t acc_frames = 0;
+            acc_recv_us   += (t_recv_end - t_recv_start) / 1000u;
+            acc_render_us += (t_render_end - t_render_start) / 1000u;
+            acc_frames++;
+            if (acc_frames >= 30) {
+                printf("[client] avg recv=%.1fms render=%.1fms (%u frames)\n",
+                       (float)acc_recv_us / (float)acc_frames / 1000.0f,
+                       (float)acc_render_us / (float)acc_frames / 1000.0f,
+                       acc_frames);
+                acc_recv_us = acc_render_us = 0;
+                acc_frames = 0;
+            }
         } else {
             struct timespec ts = {0, 1000000};
             nanosleep(&ts, NULL);
@@ -1009,7 +1143,10 @@ done:
 
     printf("[client] done. %u snapshots applied.\n", snap_applied_count);
 
+    fr_prediction_tick_stop(pred_tick);
     phys_world_destroy(&world);
+    fr_prediction_tick_destroy(pred_tick);
+    fr_snapshot_interp_destroy(snap_interp);
     fr_rudp_stream_destroy(rx_stream);
     free(send_slots);
     net_udp_socket_close(&sock);
