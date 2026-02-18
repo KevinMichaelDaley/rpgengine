@@ -102,6 +102,24 @@ bool fr_server_net_runtime_client_out_topics(fr_server_net_runtime_t *rt,
                                              fr_topic_channel_t **out_reliable,
                                              fr_topic_channel_t **out_unreliable);
 
+/** Obtain a client's remote UDP address.
+ *
+ * @param rt        Runtime handle (non-NULL).
+ * @param client_id Client slot index.
+ * @param out_addr  Destination for the address (non-NULL).
+ * @return true if client_id is valid and active, false otherwise.
+ */
+bool fr_server_net_runtime_client_addr(const fr_server_net_runtime_t *rt,
+                                       uint16_t client_id,
+                                       net_udp_addr_t *out_addr);
+
+/** Return the runtime's UDP socket (for direct raw sends).
+ *
+ * @param rt  Runtime handle (non-NULL).
+ * @return Pointer to the socket, or NULL if using callback I/O.
+ */
+net_udp_socket_t *fr_server_net_runtime_socket(fr_server_net_runtime_t *rt);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

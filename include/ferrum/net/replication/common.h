@@ -30,6 +30,7 @@ extern "C" {
 #define NET_REPL_SCHEMA_STREAM_FRAME 0x200Cu
 #define NET_REPL_SCHEMA_EVENT 0x200Du
 #define NET_REPL_SCHEMA_BODY_STATE_BATCH 0x200Eu
+#define NET_REPL_SCHEMA_SNAPSHOT_CHUNK 0x200Fu
 
 #ifdef __cplusplus
 } /* extern "C" */

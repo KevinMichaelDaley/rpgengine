@@ -55,6 +55,11 @@ bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_
         return false;
     }
 
+    /* Drop packets older than the most recent we've seen (per-body). */
+    if (interp->has_curr && server_time_s < interp->server_time_s) {
+        return false;
+    }
+
     if (!interp->has_curr) {
         interp->has_curr = true;
         interp->curr_time_s = recv_time_s;
@@ -65,6 +70,22 @@ bool fr_pose_interpolator_push(fr_pose_interpolator_t *interp, double recv_time_
         interp->server_vel = vel;
         interp->server_ang_vel = ang_vel;
         interp->server_time_s = server_time_s;
+        return true;
+    }
+
+    /* If this packet arrived in the same burst as curr (recv_time very
+     * close), just overwrite curr — don't shift to prev.  This keeps
+     * prev as the last snapshot we actually rendered from. */
+    const double burst_threshold = 0.002; /* 2ms */
+    if (recv_time_s - interp->curr_time_s < burst_threshold) {
+        interp->curr_pos = pos;
+        interp->curr_rot = rot;
+        interp->server_vel = vel;
+        interp->server_ang_vel = ang_vel;
+        interp->server_time_s = server_time_s;
+        /* Keep curr_time_s unchanged — it's the arrival time of the
+         * first packet in this burst, which is when we started rendering
+         * from this batch. */
         return true;
     }
 
@@ -191,9 +212,8 @@ bool fr_pose_interpolator_sample(const fr_pose_interpolator_t *interp,
         *out_rot = quat_slerp(rot_fwd, rot_bwd, t, quat_epsilon);
     } else {
         /* Beyond the latest snapshot — hold curr pose.
-         * Extrapolation is intentionally disabled: at any meaningful
-         * velocity the displacement per frame exceeds constraint
-         * tolerances, producing visible artifacts. */
+         * Client-side physics prediction is not available, so
+         * extrapolation would drift.  Hold until next server update. */
         *out_pos = interp->curr_pos;
         *out_rot = quat_normalize_safe(interp->curr_rot, quat_epsilon);
     }

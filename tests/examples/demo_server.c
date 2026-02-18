@@ -48,8 +48,9 @@
 #include "ferrum/server/entity/net/pump.h"
 #include "ferrum/server/net/inbound_message.h"
 #include "ferrum/server/net/runtime.h"
-#include "ferrum/server/physics/net/body_state_broadcast.h"
 #include "ferrum/server/tick_loop.h"
+#include "ferrum/physics/snapshot.h"
+#include "ferrum/net/snapshot_chunk.h"
 
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
@@ -88,6 +89,19 @@
 #define DEMO_ARMADILLO_SCALE   3.0f
 #define DEMO_ARMADILLO_TRI_MAX 220000u
 
+/** Maximum snapshot wire size: header(12) + 1024 bodies × 26 bytes. */
+#define DEMO_SNAPSHOT_BUF_SIZE (12u + DEMO_MAX_BODIES * 26u)
+
+/** Chunk size for snapshot splitting (fits in one UDP datagram). */
+#define DEMO_SNAPSHOT_CHUNK_SIZE 1200u
+
+/** Max chunks per snapshot (ceil(DEMO_SNAPSHOT_BUF_SIZE / CHUNK_SIZE)). */
+#define DEMO_SNAPSHOT_MAX_CHUNKS 24u
+
+/** Chunk header wire size: schema(2) + chunk_idx(2) + chunk_total(2)
+ *  + offset(4) + length(4) = 14 bytes. */
+#define DEMO_CHUNK_HDR_WIRE 14u
+
 /* ── Globals for signal handling ────────────────────────────────── */
 
 static volatile sig_atomic_t g_running = 1;
@@ -112,7 +126,6 @@ struct demo_ctx {
     net_udp_socket_t                    sock;
     fr_server_net_runtime_t            *net_rt;
     fr_server_entity_net_pump_t        *entity_pump;
-    fr_server_body_state_broadcast_t   *broadcaster;
 
     /* Topic channels */
     fr_topic_channel_t                 *inbound_topic;
@@ -156,6 +169,9 @@ struct demo_ctx {
     phys_mesh_bvh_t                     armadillo_bvh;
     phys_frame_arena_t                  armadillo_bvh_arena;
     float                               armadillo_half[3]; /* bounding half-extents */
+
+    /* Pre-allocated snapshot encoding buffer. */
+    uint8_t                             snap_buf[DEMO_SNAPSHOT_BUF_SIZE];
 };
 
 /* ── Helpers ────────────────────────────────────────────────────── */
@@ -487,16 +503,70 @@ static void on_physics(void *user) {
 }
 
 /**
- * Stage 3: encode replication (body state broadcast).
+ * Stage 3: encode replication — snapshot encode + chunk split + raw UDP send.
+ *
+ * Encodes the full physics world into a compact binary snapshot,
+ * splits it into MTU-safe chunks, and sends each chunk directly
+ * to every connected client as a raw UDP datagram (bypassing RUDP).
  */
 static void on_encode(void *user) {
     demo_ctx_t *ctx = (demo_ctx_t *)user;
     ctx->server_tick++;
-    uint64_t tick_completion_ms =
-        phys_tick_runner_last_tick_completion_ms(&ctx->tick_runner);
-    fr_server_body_state_broadcast_tick(
-        ctx->broadcaster, (uint16_t)ctx->server_tick, now_ms(),
-        tick_completion_ms);
+
+    /* Encode physics world into snapshot wire format. */
+    size_t snap_len = phys_snapshot_encode(
+        &ctx->world, ctx->snap_buf, sizeof(ctx->snap_buf));
+    if (snap_len == 0) {
+        return;
+    }
+
+    /* Split into MTU-safe chunks. */
+    net_chunk_header_t headers[DEMO_SNAPSHOT_MAX_CHUNKS];
+    uint32_t chunk_count = 0;
+    if (net_snapshot_chunk_split(ctx->snap_buf, (uint32_t)snap_len,
+                                 DEMO_SNAPSHOT_CHUNK_SIZE,
+                                 headers, DEMO_SNAPSHOT_MAX_CHUNKS,
+                                 &chunk_count) != NET_CHUNK_OK) {
+        return;
+    }
+
+    /* Get the raw UDP socket for direct sends. */
+    net_udp_socket_t *raw_sock = fr_server_net_runtime_socket(ctx->net_rt);
+    if (!raw_sock) { return; }
+
+    /* Send each chunk to every connected client as a raw UDP datagram. */
+    for (uint32_t c = 0; c < chunk_count; c++) {
+        /* Build wire message: [schema:2][chunk_idx:2][chunk_total:2]
+         *                     [offset:4][length:4][data:N]           */
+        uint8_t msg[DEMO_CHUNK_HDR_WIRE + DEMO_SNAPSHOT_CHUNK_SIZE];
+        const net_chunk_header_t *h = &headers[c];
+
+        /* Schema ID (LE). */
+        msg[0] = (uint8_t)(NET_REPL_SCHEMA_SNAPSHOT_CHUNK & 0xFFu);
+        msg[1] = (uint8_t)((NET_REPL_SCHEMA_SNAPSHOT_CHUNK >> 8u) & 0xFFu);
+        /* Chunk index (LE). */
+        msg[2] = (uint8_t)(h->chunk_index & 0xFFu);
+        msg[3] = (uint8_t)((h->chunk_index >> 8u) & 0xFFu);
+        /* Chunk total (LE). */
+        msg[4] = (uint8_t)(h->chunk_total & 0xFFu);
+        msg[5] = (uint8_t)((h->chunk_total >> 8u) & 0xFFu);
+        /* Offset (LE). */
+        memcpy(msg + 6, &h->offset, 4);
+        /* Length (LE). */
+        memcpy(msg + 10, &h->length, 4);
+        /* Chunk data. */
+        memcpy(msg + DEMO_CHUNK_HDR_WIRE, ctx->snap_buf + h->offset, h->length);
+        size_t msg_len = DEMO_CHUNK_HDR_WIRE + h->length;
+
+        for (uint16_t cid = 0; cid < DEMO_MAX_CLIENTS; cid++) {
+            if (!ctx->client_joined[cid]) { continue; }
+            net_udp_addr_t addr;
+            if (!fr_server_net_runtime_client_addr(ctx->net_rt, cid, &addr)) {
+                continue;
+            }
+            net_udp_socket_sendto(raw_sock, &addr, msg, msg_len);
+        }
+    }
 }
 
 /**
@@ -985,19 +1055,7 @@ int main(int argc, char **argv) {
     }
     printf("[server] entity net pump created\n");
 
-    /* ── 8. Body state broadcaster ─────────────────────────────── */
-    fr_server_body_state_broadcast_config_t bc_cfg = {
-        .max_clients = DEMO_MAX_CLIENTS,
-        .world = &ctx.world,
-        .get_client_out_topics_cb = get_client_out_topics_cb,
-        .io_user = &ctx,
-    };
-    ctx.broadcaster = fr_server_body_state_broadcast_create(&bc_cfg);
-    if (!ctx.broadcaster) {
-        fprintf(stderr, "error: fr_server_body_state_broadcast_create failed\n");
-        return 1;
-    }
-    printf("[server] body state broadcaster created\n");
+    /* ── 8. (body state broadcaster removed — using snapshot encode) ── */
 
     /* ── 9. Spawned-to-client tracking ─────────────────────────── */
     ctx.spawned_to_client = (uint8_t *)calloc(
@@ -1075,7 +1133,6 @@ int main(int argc, char **argv) {
     printf("[server] tick runner stopped\n");
 
     /* Tear down in reverse init order. */
-    fr_server_body_state_broadcast_destroy(ctx.broadcaster);
     fr_server_entity_net_pump_destroy(ctx.entity_pump);
     fr_server_net_runtime_destroy(ctx.net_rt);
     job_system_shutdown(&ctx.job_sys);
