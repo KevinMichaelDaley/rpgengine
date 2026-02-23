@@ -12,4 +12,17 @@ bench-logs/
 *.out
 *.mpstat
 *.pidstat
+
+# Binary media files
 *.mp4
+*.mkv
+*.webm
+*.png
+*.jpg
+*.jpeg
+
+# Dependencies (use npm install)
+node_modules/
+
+# Tool artifacts
+.marvin/
