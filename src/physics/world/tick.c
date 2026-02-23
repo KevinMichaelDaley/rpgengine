@@ -450,6 +450,15 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                body_cap * sizeof(phys_body_t));
     }
 
+    /* Clear CONTACT_RESTING flag on all active bodies before substep loop.
+     * The flag will be re-set each substep based on contact normals. */
+    for (uint32_t i = 0; i < body_cap; i++) {
+        if (active[i]) {
+            world->body_pool.bodies_curr[i].flags &=
+                ~(uint32_t)PHYS_BODY_FLAG_CONTACT_RESTING;
+        }
+    }
+
     for (uint32_t sub = 0; sub < max_substeps; sub++) {
 
         /* ── Stage 4: AABB Update (skip on first substep) ──────── */
@@ -623,7 +632,12 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         }
 
         /* Compute per-body max penetration from constraints for sleep
-         * blocking.  Bodies with penetration > slop must stay awake. */
+         * blocking.  Bodies with penetration > slop must stay awake.
+         * Also detect contact-resting bodies: any non-joint constraint
+         * whose normal row has J_vb.y > 0.5 (upward-facing contact on
+         * body B) marks body B as CONTACT_RESTING, and similarly J_va.y
+         * < -0.5 marks body A.  This tells the client that gravity is
+         * countered by collision support. */
         if (constraints && constraint_count > 0) {
             body_max_pen = phys_frame_arena_alloc(
                 &world->frame_arena,
@@ -633,14 +647,30 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 memset(body_max_pen, 0,
                        (body_cap > 0 ? body_cap : 1) * sizeof(float));
                 for (uint32_t ci = 0; ci < constraint_count; ci++) {
-                    float pen = constraints[ci].penetration;
-                    uint32_t a = constraints[ci].body_a;
-                    uint32_t b = constraints[ci].body_b;
+                    const phys_constraint_t *c = &constraints[ci];
+                    float pen = c->penetration;
+                    uint32_t a = c->body_a;
+                    uint32_t b = c->body_b;
                     if (a < body_cap && pen > body_max_pen[a]) {
                         body_max_pen[a] = pen;
                     }
                     if (b < body_cap && pen > body_max_pen[b]) {
                         body_max_pen[b] = pen;
+                    }
+
+                    /* Contact-resting detection: normal row (row 0)
+                     * has J_vb = contact_normal (A→B).  If Y component
+                     * is strongly upward, the contact opposes gravity. */
+                    if (!c->is_joint && c->row_count > 0) {
+                        float ny = c->rows[0].J_vb.y;
+                        if (ny > 0.5f && b < body_cap) {
+                            world->body_pool.bodies_curr[b].flags |=
+                                PHYS_BODY_FLAG_CONTACT_RESTING;
+                        }
+                        if (ny < -0.5f && a < body_cap) {
+                            world->body_pool.bodies_curr[a].flags |=
+                                PHYS_BODY_FLAG_CONTACT_RESTING;
+                        }
                     }
                 }
             }

@@ -792,6 +792,8 @@ int main(int argc, char **argv) {
                                         &snap_decoded.bodies[si];
                                     phys_body_t net_body =
                                         world.body_pool.bodies_net[si];
+                                    net_body.flags =
+                                        (uint32_t)sb->flags;
                                     net_body.position =
                                         phys_dequantize_vec3(sb->position,
                                                              1.0f / 1000.0f);

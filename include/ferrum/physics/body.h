@@ -19,6 +19,7 @@ extern "C" {
 #define PHYS_BODY_FLAG_KINEMATIC (1u << 1)
 #define PHYS_BODY_FLAG_SLEEPING (1u << 2)
 #define PHYS_BODY_FLAG_CCD (1u << 3)  /**< Enable swept CCD vs static mesh. */
+#define PHYS_BODY_FLAG_CONTACT_RESTING (1u << 4) /**< Body has contact support opposing gravity (set each tick). */
 
 /**
  * @brief Core rigid body state.

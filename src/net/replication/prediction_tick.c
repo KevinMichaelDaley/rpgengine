@@ -24,6 +24,7 @@
 #include "ferrum/net/replication/prediction_tick.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/snapshot.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 
@@ -83,17 +84,61 @@ void fr_prediction_tick_destroy(fr_prediction_tick_t *pt)
     free(pt);
 }
 
+/** Quantization scale for position (mm precision, matches snapshot). */
+#define POS_QUANT_SCALE 1000.0f
+
 /* ── per-body reconciliation against server authority ───────── */
+
+/**
+ * Check whether two positions are identical at the wire quantization
+ * level (int16 mm).  If so, any float difference is pure roundtrip
+ * noise and should not trigger reconciliation.
+ */
+static bool positions_match_quantized_(const phys_vec3_t *a,
+                                       const phys_vec3_t *b)
+{
+    int16_t qa[3], qb[3];
+    phys_quantize_vec3(*a, qa, POS_QUANT_SCALE);
+    phys_quantize_vec3(*b, qb, POS_QUANT_SCALE);
+    return qa[0] == qb[0] && qa[1] == qb[1] && qa[2] == qb[2];
+}
 
 /**
  * Reconcile a single body toward server-authoritative state.
  * Reads net body (server truth), writes corrections into out (bodies_next).
- * Snap if error exceeds threshold, otherwise blend (lerp/slerp).
+ *
+ * If the server reports the body as sleeping, snap to exact server state
+ * and preserve the sleeping flag — no blend, no integration will follow.
+ *
+ * If the local and server positions are identical at the quantization
+ * level (int16 mm), skip reconciliation — the difference is pure
+ * roundtrip noise and blending toward it causes visible jitter.
+ *
+ * Otherwise snap (large errors) or blend (small errors) toward server.
  */
 static void reconcile_body_(phys_body_t *out,
                             const phys_body_t *net,
                             const phys_prediction_config_t *cfg)
 {
+    /* Server says sleeping: accept server pose exactly, mark sleeping.
+     * No blend — quantization roundtrip noise would cause jitter. */
+    if (net->flags & PHYS_BODY_FLAG_SLEEPING) {
+        out->position    = net->position;
+        out->orientation = net->orientation;
+        out->linear_vel  = (phys_vec3_t){0, 0, 0};
+        out->angular_vel = (phys_vec3_t){0, 0, 0};
+        out->flags      |= PHYS_BODY_FLAG_SLEEPING;
+        return;
+    }
+
+    /* Server says awake: clear sleeping flag so integration runs. */
+    out->flags &= ~(uint32_t)PHYS_BODY_FLAG_SLEEPING;
+
+    /* If positions are identical at wire quantization, the float
+     * difference is pure roundtrip noise — skip reconciliation. */
+    if (positions_match_quantized_(&out->position, &net->position)) {
+        return;
+    }
     /* Position error (Euclidean distance). */
     vec3_t diff = vec3_sub(
         (vec3_t){out->position.x, out->position.y, out->position.z},
@@ -180,6 +225,12 @@ static void integrate_step_(phys_body_pool_t *pool,
         /* Static / sleeping bodies: no integration. */
         if (out->inv_mass <= 0.0f) continue;
         if (out->flags & PHYS_BODY_FLAG_SLEEPING) continue;
+
+        /* Server flagged this body as contact-supported (gravity
+         * countered by collision).  Without client-side collision we
+         * cannot keep it on the surface, so skip integration entirely
+         * to avoid gravity pulling it through the floor. */
+        if (out->flags & PHYS_BODY_FLAG_CONTACT_RESTING) continue;
 
         /* 3. Integrate from the (possibly reconciled) state in out. */
 

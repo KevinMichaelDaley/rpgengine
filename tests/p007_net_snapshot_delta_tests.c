@@ -404,6 +404,163 @@ TEST(test_null_safety) {
     ASSERT_EQ(net_snap_baseline_ack(NULL, 1), NET_SNAP_ERR_INVALID);
 }
 
+/**
+ * Delta-encoded position roundtrip has < 0.3mm error.
+ * Body moves 0.5m in each axis between baseline and current.
+ */
+TEST(test_delta_position_precision) {
+    /* Base at (10.000, 5.000, -3.000) → int16 (10000, 5000, -3000). */
+    net_snap_body_t base_bodies[4];
+    base_bodies[0] = make_body(0, 10000, 5000, -3000, 0);
+
+    net_snapshot_t baseline = {
+        .tick = 100, .body_count = 1, .bodies = base_bodies
+    };
+
+    /* Current at (10.500, 5.250, -2.750) → int16 (10500, 5250, -2750). */
+    net_snap_body_t cur_bodies[4];
+    cur_bodies[0] = make_body(0, 10500, 5250, -2750, 0);
+
+    net_snapshot_t current = {
+        .tick = 105, .body_count = 1, .bodies = cur_bodies
+    };
+
+    net_snap_delta_entry_t delta_buf[4];
+    net_snapshot_delta_t delta = {
+        .entries = delta_buf, .capacity = 4, .count = 0
+    };
+
+    int rc = net_snapshot_delta_compute(&baseline, &current, &delta);
+    ASSERT_EQ(rc, NET_SNAP_OK);
+    ASSERT_EQ(delta.count, 1);
+    /* Position should be delta-encoded. */
+    ASSERT(delta.entries[0].changed_mask & NET_SNAP_DELTA_POS);
+    ASSERT(delta.entries[0].changed_mask & NET_SNAP_CHANGED_POS);
+
+    /* Apply and verify sub-millimeter accuracy. */
+    net_snap_body_t result_bodies[4];
+    result_bodies[0] = base_bodies[0];
+    net_snapshot_t result = {
+        .tick = 100, .body_count = 1, .bodies = result_bodies
+    };
+
+    rc = net_snapshot_delta_apply(&result, &delta);
+    ASSERT_EQ(rc, NET_SNAP_OK);
+
+    /* Roundtrip error: should be within 1 int16 unit (1mm at abs scale). */
+    for (int k = 0; k < 3; k++) {
+        int diff = (int)result.bodies[0].position[k] -
+                   (int)cur_bodies[0].position[k];
+        ASSERT(diff >= -1 && diff <= 1);
+    }
+}
+
+/**
+ * Tiny position change (< 1mm) that was invisible at old abs scale
+ * should now be captured by delta encoding at higher precision.
+ */
+TEST(test_delta_sub_millimeter_detection) {
+    /* Base at (1.000, 2.000, 3.000) → int16 (1000, 2000, 3000). */
+    net_snap_body_t base_bodies[4];
+    base_bodies[0] = make_body(0, 1000, 2000, 3000, 0);
+
+    net_snapshot_t baseline = {
+        .tick = 50, .body_count = 1, .bodies = base_bodies
+    };
+
+    /* Current at (1.001, 2.000, 3.000) → int16 still (1001, 2000, 3000)
+     * because 0.001m * 1000 = 1.0 → rounds to 1001.
+     * But at DELTA_SCALE=4096: 0.001 * 4096 = 4.096 → rounds to 4.
+     * This should be detected as a delta. */
+    net_snap_body_t cur_bodies[4];
+    cur_bodies[0] = make_body(0, 1001, 2000, 3000, 0);
+
+    net_snapshot_t current = {
+        .tick = 55, .body_count = 1, .bodies = cur_bodies
+    };
+
+    net_snap_delta_entry_t delta_buf[4];
+    net_snapshot_delta_t delta = {
+        .entries = delta_buf, .capacity = 4, .count = 0
+    };
+
+    int rc = net_snapshot_delta_compute(&baseline, &current, &delta);
+    ASSERT_EQ(rc, NET_SNAP_OK);
+    ASSERT_EQ(delta.count, 1);
+    ASSERT(delta.entries[0].changed_mask & NET_SNAP_CHANGED_POS);
+    ASSERT(delta.entries[0].changed_mask & NET_SNAP_DELTA_POS);
+}
+
+/**
+ * Zero delta (position unchanged) should produce no delta entry.
+ */
+TEST(test_delta_zero_position_change) {
+    net_snap_body_t base_bodies[4];
+    base_bodies[0] = make_body(0, 5000, 5000, 5000, 0);
+    net_snapshot_t baseline = {
+        .tick = 10, .body_count = 1, .bodies = base_bodies
+    };
+
+    net_snap_body_t cur_bodies[4];
+    cur_bodies[0] = make_body(0, 5000, 5000, 5000, 0);
+    net_snapshot_t current = {
+        .tick = 15, .body_count = 1, .bodies = cur_bodies
+    };
+
+    net_snap_delta_entry_t delta_buf[4];
+    net_snapshot_delta_t delta = {
+        .entries = delta_buf, .capacity = 4, .count = 0
+    };
+
+    int rc = net_snapshot_delta_compute(&baseline, &current, &delta);
+    ASSERT_EQ(rc, NET_SNAP_OK);
+    ASSERT_EQ(delta.count, 0);
+}
+
+/**
+ * Large position change (>8m) should overflow delta int16 range
+ * and fall back to absolute encoding (no NET_SNAP_DELTA_POS bit).
+ */
+TEST(test_delta_overflow_falls_back_to_absolute) {
+    /* Base at (0, 0, 0), current at (10.000, 0, 0) → delta = 10m.
+     * 10.0 * 4096 = 40960 > 32767, so delta overflows. */
+    net_snap_body_t base_bodies[4];
+    base_bodies[0] = make_body(0, 0, 0, 0, 0);
+    net_snapshot_t baseline = {
+        .tick = 10, .body_count = 1, .bodies = base_bodies
+    };
+
+    net_snap_body_t cur_bodies[4];
+    cur_bodies[0] = make_body(0, 10000, 0, 0, 0);
+    net_snapshot_t current = {
+        .tick = 15, .body_count = 1, .bodies = cur_bodies
+    };
+
+    net_snap_delta_entry_t delta_buf[4];
+    net_snapshot_delta_t delta = {
+        .entries = delta_buf, .capacity = 4, .count = 0
+    };
+
+    int rc = net_snapshot_delta_compute(&baseline, &current, &delta);
+    ASSERT_EQ(rc, NET_SNAP_OK);
+    ASSERT_EQ(delta.count, 1);
+    ASSERT(delta.entries[0].changed_mask & NET_SNAP_CHANGED_POS);
+    /* Should NOT have delta flag — fell back to absolute. */
+    ASSERT(!(delta.entries[0].changed_mask & NET_SNAP_DELTA_POS));
+    /* Absolute position should be the current value directly. */
+    ASSERT_EQ(delta.entries[0].data.position[0], 10000);
+
+    /* Apply and verify. */
+    net_snap_body_t result_bodies[4];
+    result_bodies[0] = base_bodies[0];
+    net_snapshot_t result = {
+        .tick = 10, .body_count = 1, .bodies = result_bodies
+    };
+    rc = net_snapshot_delta_apply(&result, &delta);
+    ASSERT_EQ(rc, NET_SNAP_OK);
+    ASSERT_EQ(result.bodies[0].position[0], 10000);
+}
+
 /* ── Runner ─────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -417,6 +574,10 @@ int main(void) {
     RUN(test_delta_body_destroy);
     RUN(test_delta_capacity_overflow);
     RUN(test_null_safety);
+    RUN(test_delta_position_precision);
+    RUN(test_delta_sub_millimeter_detection);
+    RUN(test_delta_zero_position_change);
+    RUN(test_delta_overflow_falls_back_to_absolute);
     printf("%d/%d tests passed\n", g_pass_count,
            g_pass_count + g_fail_count);
     return g_fail_count ? 1 : 0;

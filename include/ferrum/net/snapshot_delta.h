@@ -37,12 +37,23 @@ extern "C" {
 #define NET_SNAP_CHANGED_LINVEL  (1u << 2)  /**< Linear velocity changed. */
 #define NET_SNAP_CHANGED_ANGVEL  (1u << 3)  /**< Angular velocity changed. */
 #define NET_SNAP_CHANGED_FLAGS   (1u << 4)  /**< Flags or tier changed. */
+#define NET_SNAP_DELTA_POS       (1u << 5)  /**< Position is delta-encoded (high-precision). */
 #define NET_SNAP_CHANGED_DESTROY (1u << 7)  /**< Body was destroyed. */
 
 /** All data fields changed (used for newly-spawned bodies). */
 #define NET_SNAP_CHANGED_ALL     (NET_SNAP_CHANGED_POS | NET_SNAP_CHANGED_ORI | \
                                   NET_SNAP_CHANGED_LINVEL | NET_SNAP_CHANGED_ANGVEL | \
                                   NET_SNAP_CHANGED_FLAGS)
+
+/* ── Delta position quantization ──────────────────────────────── */
+
+/** Delta position quantization scale: 4096 → ~0.24mm precision, ±8m range.
+ *  Used when encoding position as delta from baseline. */
+#define NET_SNAP_DELTA_SCALE     4096.0f
+
+/** Absolute position quantization scale: 1000 → 1mm precision, ±32m range.
+ *  Used for full snapshots and overflow fallback. */
+#define NET_SNAP_ABS_SCALE       1000.0f
 
 /* ── Types ─────────────────────────────────────────────────────── */
 
