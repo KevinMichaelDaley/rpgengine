@@ -134,6 +134,14 @@ static void reconcile_body_(phys_body_t *out,
     /* Server says awake: clear sleeping flag so integration runs. */
     out->flags &= ~(uint32_t)PHYS_BODY_FLAG_SLEEPING;
 
+    /* Propagate contact-resting flag from server authority.
+     * This tells the client whether gravity is countered by collision. */
+    if (net->flags & PHYS_BODY_FLAG_CONTACT_RESTING) {
+        out->flags |= PHYS_BODY_FLAG_CONTACT_RESTING;
+    } else {
+        out->flags &= ~(uint32_t)PHYS_BODY_FLAG_CONTACT_RESTING;
+    }
+
     /* If positions are identical at wire quantization, the float
      * difference is pure roundtrip noise — skip reconciliation. */
     if (positions_match_quantized_(&out->position, &net->position)) {
