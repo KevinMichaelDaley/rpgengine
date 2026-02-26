@@ -38,6 +38,7 @@ typedef struct edit_entity {
     float    rot[3];       /**< Euler rotation in degrees (pitch, yaw, roll). */
     float    scale[3];     /**< Per-axis scale factors. */
     uint32_t type;         /**< Entity type (EDIT_ENTITY_TYPE_*). */
+    uint32_t body_index;   /**< Physics body index (UINT32_MAX = none). */
     bool     active;       /**< Whether this slot is in use. */
 } edit_entity_t;
 

@@ -45,6 +45,12 @@ bool cmd_delete(edit_dispatch_t *d, const json_value_t *args,
             edit_undo_record(ctx->undo, &entry, e, sizeof(edit_entity_t));
         }
 
+        /* Bridge: notify physics engine before removing. */
+        if (ctx->bridge && ctx->bridge->on_delete) {
+            ctx->bridge->on_delete(ctx->bridge->user_data, eid,
+                                   e->body_index);
+        }
+
         edit_entity_store_remove(ctx->entities, eid);
     }
 

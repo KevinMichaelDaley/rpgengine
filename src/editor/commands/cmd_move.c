@@ -56,6 +56,12 @@ bool cmd_move(edit_dispatch_t *d, const json_value_t *args,
         e->pos[1] += delta[1];
         e->pos[2] += delta[2];
 
+        /* Bridge: notify physics engine of new position. */
+        if (ctx->bridge && ctx->bridge->on_move) {
+            ctx->bridge->on_move(ctx->bridge->user_data, ids[i],
+                                 e->body_index, e->pos);
+        }
+
         /* Record undo with inverse delta. */
         if (ctx->undo) {
             edit_undo_entry_t entry = {0};

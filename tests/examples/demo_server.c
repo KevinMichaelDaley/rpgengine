@@ -1,15 +1,12 @@
 /**
  * @file demo_server.c
- * @brief Full-stack physics + replication demo server.
+ * @brief Standalone demo server — empty scene with editor integration.
  *
- * Spawns a ground plane and periodically rains stacks of boxes.
- * Physics runs via the real tick runner (all 15 stages, tier system,
- * island coloring).  State is replicated to clients via the new
- * server net runtime (fr_server_net_runtime), entity net pump,
- * tick loop, and body state broadcaster.
+ * Starts an empty physics world with networking and an editor TCP socket.
+ * All entities are created via the editor protocol (spawn command).
  *
- * Usage:  ./demo_server <port> [duration_s]
- * Example: ./demo_server 40080 60
+ * Usage:  ./demo_server <port> [duration_s] [--edit-port PORT]
+ * Example: ./demo_server 40080 0 --edit-port 9100
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -33,12 +30,8 @@
 #include "ferrum/net/replication/body_state.h"
 #include "ferrum/net/replication/common.h"
 #include "ferrum/net/topic_channel.h"
-#include "ferrum/mesh/obj_loader.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/physics/body.h"
-#include "ferrum/physics/joint.h"
-#include "ferrum/physics/mesh_collider.h"
-#include "ferrum/physics/convex_decompose.h"
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_pool.h"
@@ -53,6 +46,8 @@
 #include "ferrum/physics/snapshot.h"
 #include "ferrum/net/snapshot_chunk.h"
 
+#include "ferrum/editor/editor_ctx.h"
+
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
 #include "ferrum/net/emulation/net_emulator.h"
@@ -63,32 +58,9 @@
 #define DEMO_MAX_CLIENTS       4u
 #define DEMO_MAX_BODIES        1024u
 #define DEMO_TICK_HZ           30u
-#define DEMO_SPAWN_INTERVAL_S  10.0
-#define DEMO_SPAWN_MIN         20u
-#define DEMO_SPAWN_MAX         50u
-#define DEMO_SPAWN_Y_LO        20.0f
-#define DEMO_SPAWN_Y_HI        30.0f
-#define DEMO_SPAWN_AREA        100.0f
 #define DEMO_BOX_HALF          0.5f
 #define DEMO_BOX_MASS          1.0f
-#define DEMO_GROUND_HALF_X     1000.0f
-#define DEMO_GROUND_HALF_Y     0.1f
-#define DEMO_GROUND_HALF_Z     1000.0f
 #define DEMO_FIBER_STACK       (256u * 1024u)
-
-/* Capsule chain parameters. */
-#define DEMO_NUM_CHAINS        3u
-#define DEMO_CHAIN_LENGTH      40u
-#define DEMO_CHAIN_RADIUS      0.5f
-#define DEMO_CHAIN_HALF_H      0.8f
-#define DEMO_CHAIN_MASS        2.0f
-/* Total capsule length along Y: 2*(half_height + radius) */
-#define DEMO_CHAIN_LINK_LEN    (2.0f * (DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS))
-
-/* Armadillo mesh parameters. */
-#define DEMO_ARMADILLO_OBJ     "assets/test/armadillo.obj"
-#define DEMO_ARMADILLO_SCALE   3.0f
-#define DEMO_ARMADILLO_TRI_MAX 220000u
 
 /** Maximum snapshot wire size: header(12) + 1024 bodies × 26 bytes. */
 #define DEMO_SNAPSHOT_BUF_SIZE (12u + DEMO_MAX_BODIES * 26u)
@@ -152,14 +124,10 @@ struct demo_ctx {
      * when BODY_SPAWN has been sent for that body to that client. */
     uint8_t                            *spawned_to_client;
 
-    /* Timing / spawn */
-    double                              last_spawn_time;
+    /* Timing */
     uint64_t                            last_stats_tick;
     uint32_t                            total_spawned;
     uint32_t                            server_tick;
-
-    /* Capsule chain anchors (kinematic, driven in circles). */
-    uint32_t                            chain_anchor_ids[DEMO_NUM_CHAINS];
 
     /* Per-body shape type (0=box, 1=sphere, 2=capsule, 3=mesh). */
     uint8_t                             body_shape_type[DEMO_MAX_BODIES];
@@ -172,18 +140,16 @@ struct demo_ctx {
     uint32_t                            joint_pairs[DEMO_MAX_BODIES * 2];
     uint32_t                            joint_pair_count;
 
-    /* Armadillo mesh data (kept alive for mesh collider's borrowed pointer). */
-    phys_triangle_t                    *armadillo_tris;
-    uint32_t                            armadillo_tri_count;
-    phys_mesh_bvh_t                     armadillo_bvh;
-    phys_frame_arena_t                  armadillo_bvh_arena;
-    float                               armadillo_half[3]; /* bounding half-extents */
-
     /* Pre-allocated snapshot encoding buffer. */
     uint8_t                             snap_buf[DEMO_SNAPSHOT_BUF_SIZE];
 
     /* Priority body state sender (velocity-proportional rate). */
     fr_priority_body_sender_t          *priority_sender;
+
+    /* Editor integration */
+    editor_ctx_t                        editor;
+    edit_physics_bridge_t               editor_bridge;
+    uint16_t                            edit_port;
 
     /* Cached client addresses for raw UDP sends from physics thread. */
     net_udp_addr_t                      client_addrs[DEMO_MAX_CLIENTS];
@@ -198,23 +164,80 @@ static double now_seconds(void) {
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+/* ── Editor-to-physics bridge callbacks ────────────────────────── */
+
+/**
+ * @brief Bridge: create a physics body when editor spawns an entity.
+ */
+static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
+                                  const edit_entity_t *entity) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    (void)entity_id;
+
+    phys_cmd_spawn_body_t spawn;
+    memset(&spawn, 0, sizeof(spawn));
+    spawn.position = (phys_vec3_t){entity->pos[0], entity->pos[1], entity->pos[2]};
+    spawn.orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+    spawn.mass = DEMO_BOX_MASS;
+
+    if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {
+        spawn.shape = PHYS_CMD_SHAPE_SPHERE;
+        spawn.shape_data.sphere_r = entity->scale[0] * 0.5f;
+    } else {
+        spawn.shape = PHYS_CMD_SHAPE_BOX;
+        spawn.shape_data.box_half = (phys_vec3_t){
+            entity->scale[0] * DEMO_BOX_HALF,
+            entity->scale[1] * DEMO_BOX_HALF,
+            entity->scale[2] * DEMO_BOX_HALF,
+        };
+    }
+
+    phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
+                  &spawn, sizeof(spawn));
+    ctx->total_spawned++;
+
+    /* Body index assigned by physics engine on next tick; we don't have it
+     * synchronously. Return total_spawned as a tracking hint. */
+    return ctx->total_spawned - 1;
+}
+
+/**
+ * @brief Bridge: destroy a physics body when editor deletes an entity.
+ */
+static void bridge_on_delete_(void *user_data, uint32_t entity_id,
+                               uint32_t body_index) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    (void)entity_id;
+
+    if (body_index < DEMO_MAX_BODIES) {
+        phys_cmd_destroy_body_t destroy = {.body_index = body_index};
+        phys_cmd_push(ctx->cmd_channel, PHYS_CMD_DESTROY_BODY,
+                      &destroy, sizeof(destroy));
+    }
+}
+
+/**
+ * @brief Bridge: teleport a physics body when editor moves an entity.
+ */
+static void bridge_on_move_(void *user_data, uint32_t entity_id,
+                             uint32_t body_index, const float pos[3]) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    (void)entity_id;
+
+    if (body_index < DEMO_MAX_BODIES) {
+        phys_cmd_set_position_t setpos = {
+            .body_index = body_index,
+            .position = {pos[0], pos[1], pos[2]},
+        };
+        phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_POSITION,
+                      &setpos, sizeof(setpos));
+    }
+}
+
 static uint64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
-}
-
-static uint32_t xorshift32(uint32_t *state) {
-    uint32_t x = *state;
-    x ^= x << 13u;
-    x ^= x >> 17u;
-    x ^= x << 5u;
-    *state = x;
-    return x;
-}
-
-static float randf(uint32_t *rng, float lo, float hi) {
-    return lo + (float)(xorshift32(rng) % 10000u) / 10000.0f * (hi - lo);
 }
 
 /* ── Topic-out callback (for entity pump + broadcaster) ─────────── */
@@ -285,32 +308,11 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.rot_z = body->orientation.z;
         spawn_msg.rot_w = body->orientation.w;
 
-        /* Encode half-extents as float16 (meters). */
-        if (ctx->body_shape_type[bi] == 4u) {
-            /* Halfspace: send large visual extents for client plane. */
-            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_GROUND_HALF_X);
-            spawn_msg.half_y_f16 = net_float16_from_float(0.0f);
-            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_GROUND_HALF_Z);
-        } else if (ctx->body_shape_type[bi] == 3u) {
-            /* Mesh: use pre-computed bounding half-extents. */
-            spawn_msg.half_x_f16 = net_float16_from_float(ctx->armadillo_half[0]);
-            spawn_msg.half_y_f16 = net_float16_from_float(ctx->armadillo_half[1]);
-            spawn_msg.half_z_f16 = net_float16_from_float(ctx->armadillo_half[2]);
-        } else if (body->flags & PHYS_BODY_FLAG_STATIC) {
-            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_GROUND_HALF_X);
-            spawn_msg.half_y_f16 = net_float16_from_float(DEMO_GROUND_HALF_Y);
-            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_GROUND_HALF_Z);
-        } else if (ctx->body_shape_type[bi] == 2u) {
-            /* Capsule: half_x = half_z = radius, half_y = half_height + radius. */
-            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_CHAIN_RADIUS);
-            spawn_msg.half_y_f16 = net_float16_from_float(
-                DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS);
-            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_CHAIN_RADIUS);
-        } else {
-            spawn_msg.half_x_f16 = net_float16_from_float(DEMO_BOX_HALF);
-            spawn_msg.half_y_f16 = net_float16_from_float(DEMO_BOX_HALF);
-            spawn_msg.half_z_f16 = net_float16_from_float(DEMO_BOX_HALF);
-        }
+        /* Encode half-extents as float16 (meters).
+         * Editor-spawned bodies use DEMO_BOX_HALF; future: per-body extents. */
+        spawn_msg.half_x_f16 = net_float16_from_float(DEMO_BOX_HALF);
+        spawn_msg.half_y_f16 = net_float16_from_float(DEMO_BOX_HALF);
+        spawn_msg.half_z_f16 = net_float16_from_float(DEMO_BOX_HALF);
 
         uint8_t wire[2u + NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];
         wire[0] = (uint8_t)(NET_REPL_SCHEMA_BODY_SPAWN & 0xFFu);
@@ -344,64 +346,6 @@ static void demo_spawn_callback(uint32_t body_index,
         return; /* spawn failed */
     }
     /* Body is now in the world; send_body_spawns_to_client will pick it up. */
-}
-
-/* ── Box rain spawner ───────────────────────────────────────────── */
-
-static void demo_spawn_box_rain(demo_ctx_t *ctx, uint32_t *rng) {
-    uint32_t count = DEMO_SPAWN_MIN +
-        (xorshift32(rng) % (DEMO_SPAWN_MAX - DEMO_SPAWN_MIN + 1u));
-
-    /* Clamp to remaining entity budget. */
-    if (ctx->total_spawned + count > DEMO_MAX_BODIES - 1u) {
-        count = (DEMO_MAX_BODIES - 1u > ctx->total_spawned)
-              ? (DEMO_MAX_BODIES - 1u - ctx->total_spawned) : 0u;
-    }
-    if (count == 0u) {
-        return;
-    }
-
-    /* Spawn boxes in vertical stacks (columns).
-     * Pick 1-2 random XZ positions, then stack boxes upward from SPAWN_Y_LO. */
-    uint32_t num_stacks = 1u + (xorshift32(rng) % 2u); /* 1 or 2 stacks */
-    float stack_x[2];
-    float stack_z[2];
-    for (uint32_t s = 0; s < num_stacks; ++s) {
-        stack_x[s] = randf(rng, -DEMO_SPAWN_AREA, DEMO_SPAWN_AREA);
-        stack_z[s] = randf(rng, -DEMO_SPAWN_AREA, DEMO_SPAWN_AREA);
-    }
-
-    for (uint32_t i = 0; i < count; ++i) {
-        uint32_t stack_idx = i % num_stacks;
-        uint32_t layer = i / num_stacks;
-        float y = DEMO_BOX_HALF + (float)layer * (DEMO_BOX_HALF * 2.0f + 0.01f)
-                  + DEMO_SPAWN_Y_LO;
-
-        phys_cmd_spawn_body_t spawn = {
-            .position = {
-                stack_x[stack_idx],
-                y,
-                stack_z[stack_idx]
-            },
-            .orientation = {0.0f, 0.0f, 0.0f, 1.0f},
-            .linear_vel  = {0.0f, 0.0f, 0.0f},
-            .mass        = DEMO_BOX_MASS,
-            .flags       = 0u,
-            .shape       = PHYS_CMD_SHAPE_BOX,
-            .shape_data.box_half = {DEMO_BOX_HALF, DEMO_BOX_HALF, DEMO_BOX_HALF},
-            .user_tag    = 0u
-        };
-
-        if (!phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
-                           &spawn, sizeof(spawn))) {
-            fprintf(stderr, "warn: cmd channel full, spawned %u of %u\n", i, count);
-            break;
-        }
-    }
-
-    ctx->total_spawned += count;
-    printf("[server] spawned %u boxes in %u stacks (total: %u)\n",
-           count, num_stacks, ctx->total_spawned);
 }
 
 /* ── Tick loop callbacks ────────────────────────────────────────── */
@@ -471,55 +415,8 @@ static void on_drain(void *user) {
         if (!fr_topic_channel_pop(ctx->entity_event_topic, evt, &evt_len)) {
             break;
         }
-        /* For now, we acknowledge but don't process move inputs.
-         * The physics world is server-authoritative for box rain;
-         * future: apply kinematic intent from INPUT_MOVE to player bodies. */
+        /* For now, we acknowledge but don't process move inputs. */
         (void)evt;
-    }
-
-    /* Drive chain anchors in horizontal circles, speeding up over time.
-     * Each chain has a different orbit sign so they collide. */
-    {
-        static const float chain_cfg[DEMO_NUM_CHAINS][4] = {
-            /*  anchor_x, anchor_y, anchor_z, orbit_sign */
-            {   0.0f,     20.0f,    0.0f,      1.0f },
-            {  15.0f,     20.0f,   10.0f,     -1.0f },
-            { -15.0f,     20.0f,  -10.0f,      1.0f },
-        };
-
-        float t = (float)ctx->server_tick / (float)DEMO_TICK_HZ;
-        /* Faster ramp: start at 1.5 rad/s, add 1.5 rad/s² */
-        float omega = 1.5f + 1.5f * t;
-        /* Integrated angle: θ = 1.5*t + 0.75*t² */
-        float base_angle = 1.5f * t + 0.75f * t * t;
-        float radius = 10.0f;
-
-        if (ctx->server_tick % (DEMO_TICK_HZ * 5) == 0) {
-            printf("[server] chains omega=%.1f rad/s (%.1f RPM) t=%.1fs\n",
-                   (double)omega, (double)(omega * 60.0f / 6.2832f), (double)t);
-        }
-
-        for (uint32_t ch = 0; ch < DEMO_NUM_CHAINS; ch++) {
-            float ax = chain_cfg[ch][0];
-            float az = chain_cfg[ch][2];
-            float sign = chain_cfg[ch][3];
-            float angle = sign * base_angle;
-            float cx = ax + radius * cosf(angle);
-            float cz = az + radius * sinf(angle);
-            float vx = -radius * omega * sign * sinf(angle);
-            float vz =  radius * omega * sign * cosf(angle);
-
-            phys_body_t *ab = phys_world_get_body(&ctx->world,
-                                                    ctx->chain_anchor_ids[ch]);
-            ab->position.x = cx;
-            ab->position.z = cz;
-            ab->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
-            phys_body_t *ab_next = phys_body_pool_get_next(
-                &ctx->world.body_pool, ctx->chain_anchor_ids[ch]);
-            ab_next->position.x = cx;
-            ab_next->position.z = cz;
-            ab_next->linear_vel = (phys_vec3_t){vx, 0.0f, vz};
-        }
     }
 }
 
@@ -638,6 +535,7 @@ int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
             "Usage: %s <port> [duration_s] [--net-workers N] [--phys-workers N]"
+            " [--edit-port PORT]"
 #ifdef FR_NET_EMULATION
             " [--emu-delay MS] [--emu-jitter MS] [--emu-loss PCT]"
             " [--emu-reorder PCT] [--emu-duplicate PCT]"
@@ -652,6 +550,7 @@ int main(int argc, char **argv) {
     /* Default worker counts. */
     uint32_t net_workers  = 1u;
     uint32_t phys_workers = 6u;
+    uint16_t edit_port    = 9100u; /* Editor protocol port. */
 
 #ifdef FR_NET_EMULATION
     /* Network emulation parameters (all zero = disabled). */
@@ -668,6 +567,8 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--phys-workers") == 0 && i + 1 < argc) {
             phys_workers = (uint32_t)atoi(argv[++i]);
             if (phys_workers < 1u) phys_workers = 1u;
+        } else if (strcmp(argv[i], "--edit-port") == 0 && i + 1 < argc) {
+            edit_port = (uint16_t)atoi(argv[++i]);
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -752,275 +653,6 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_BODIES);
-
-    /* Ground plane: infinite half-space at y=0, normal pointing up. */
-    {
-        uint32_t gi = phys_world_create_body(&ctx.world);
-        phys_body_t *gb = phys_world_get_body(&ctx.world, gi);
-        gb->position = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        gb->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-        gb->flags |= PHYS_BODY_FLAG_STATIC;
-        phys_world_set_halfspace_collider(&ctx.world, gi,
-            (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
-        ctx.body_shape_type[gi] = 4u; /* halfspace */
-        printf("[server] ground halfspace body %u\n", gi);
-    }
-
-    /* Articulated capsule chains hanging from kinematic anchors.
-     * Three chains positioned so they sweep through each other. */
-    {
-        /* Chain anchor positions and orbit directions. */
-        static const float chain_cfg[DEMO_NUM_CHAINS][4] = {
-            /*  anchor_x, anchor_y, anchor_z, orbit_sign */
-            {   0.0f,     20.0f,    0.0f,      1.0f },
-            {  15.0f,     20.0f,   10.0f,     -1.0f },
-            { -15.0f,     20.0f,  -10.0f,      1.0f },
-        };
-
-        for (uint32_t ch = 0; ch < DEMO_NUM_CHAINS; ch++) {
-            float ax = chain_cfg[ch][0];
-            float ay = chain_cfg[ch][1];
-            float az = chain_cfg[ch][2];
-
-            /* Static anchor point. */
-            uint32_t anchor = phys_world_create_body(&ctx.world);
-            phys_body_t *ab = phys_world_get_body(&ctx.world, anchor);
-            ab->position = (phys_vec3_t){ax, ay, az};
-            ab->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-            ab->flags |= PHYS_BODY_FLAG_KINEMATIC;
-            phys_body_t *ab_next =
-                phys_body_pool_get_next(&ctx.world.body_pool, anchor);
-            *ab_next = *ab;
-            ctx.chain_anchor_ids[ch] = anchor;
-
-            uint32_t prev_body = anchor;
-            for (uint32_t ci = 0; ci < DEMO_CHAIN_LENGTH; ci++) {
-                float x = ax + (float)(ci + 1) * DEMO_CHAIN_LINK_LEN;
-
-                uint32_t bi = phys_world_create_body(&ctx.world);
-                phys_body_t *cb = phys_world_get_body(&ctx.world, bi);
-                cb->position = (phys_vec3_t){x, ay, az};
-                /* Rotate capsule 90° around Z so it lies along X. */
-                cb->orientation = (phys_quat_t){
-                    0.0f, 0.0f, 0.7071068f, 0.7071068f};
-                phys_body_set_mass(cb, DEMO_CHAIN_MASS);
-                phys_body_set_capsule_inertia(cb, DEMO_CHAIN_MASS,
-                                              DEMO_CHAIN_RADIUS,
-                                              DEMO_CHAIN_HALF_H);
-                cb->flags |= PHYS_BODY_FLAG_CCD;
-
-                /* Copy to next buffer for double-buffered init. */
-                phys_body_t *cb_next =
-                    phys_body_pool_get_next(&ctx.world.body_pool, bi);
-                *cb_next = *cb;
-
-                phys_world_set_capsule_collider(&ctx.world, bi,
-                    DEMO_CHAIN_RADIUS, DEMO_CHAIN_HALF_H,
-                    (phys_vec3_t){0.0f, 0.0f, 0.0f},
-                    (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
-                ctx.body_shape_type[bi] = 2u; /* capsule */
-
-                phys_joint_t joint;
-                memset(&joint, 0, sizeof(joint));
-                joint.type = PHYS_JOINT_BALL;
-                joint.body_a = prev_body;
-                joint.body_b = bi;
-                joint.local_anchor_a = (prev_body == anchor)
-                    ? (phys_vec3_t){0.0f, 0.0f, 0.0f}
-                    : (phys_vec3_t){0.0f, DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS, 0.0f};
-                joint.local_anchor_b = (phys_vec3_t){
-                    0.0f, -(DEMO_CHAIN_HALF_H + DEMO_CHAIN_RADIUS), 0.0f};
-                joint.damping = 0.5f;
-
-                phys_world_add_joint(&ctx.world, &joint);
-                ctx.body_constrained[prev_body] = 1u;
-                ctx.body_constrained[bi] = 1u;
-                if (ctx.joint_pair_count < DEMO_MAX_BODIES) {
-                    ctx.joint_pairs[ctx.joint_pair_count * 2u]     = prev_body;
-                    ctx.joint_pairs[ctx.joint_pair_count * 2u + 1u] = bi;
-                    ctx.joint_pair_count++;
-                }
-                prev_body = bi;
-            }
-            printf("[server] chain %u: %u links from body %u\n",
-                   ch, DEMO_CHAIN_LENGTH, anchor);
-        }
-    }
-
-    /* Static box stacks placed in chain sweep paths for collision. */
-    {
-        static const float stack_pos[][2] = {
-            {  8.0f,   5.0f },   /* between chain 0 and 1 */
-            { -8.0f,  -5.0f },   /* between chain 0 and 2 */
-            {  0.0f,   0.0f },   /* center, all chains sweep through */
-            { 10.0f,  -8.0f },   /* outer sweep zone */
-        };
-        uint32_t num_stacks = sizeof(stack_pos) / sizeof(stack_pos[0]);
-        uint32_t stack_height = 5u;
-        float box_half = DEMO_BOX_HALF;
-        float box_mass = DEMO_BOX_MASS;
-
-        for (uint32_t s = 0; s < num_stacks; s++) {
-            for (uint32_t layer = 0; layer < stack_height; layer++) {
-                float y = box_half + (float)layer * (box_half * 2.0f + 0.01f);
-                uint32_t bi = phys_world_create_body(&ctx.world);
-                phys_body_t *b = phys_world_get_body(&ctx.world, bi);
-                b->position = (phys_vec3_t){
-                    stack_pos[s][0], y, stack_pos[s][1]};
-                b->orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-                phys_body_set_mass(b, box_mass);
-                phys_body_set_box_inertia(b, box_mass,
-                    (phys_vec3_t){box_half, box_half, box_half});
-                phys_body_t *bn = phys_body_pool_get_next(
-                    &ctx.world.body_pool, bi);
-                *bn = *b;
-                phys_world_set_box_collider(&ctx.world, bi,
-                    (phys_vec3_t){box_half, box_half, box_half},
-                    (phys_vec3_t){0.0f, 0.0f, 0.0f},
-                    (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
-                ctx.body_shape_type[bi] = 0u; /* box */
-            }
-        }
-        printf("[server] placed %u box stacks (%u boxes total) in sweep paths\n",
-               num_stacks, num_stacks * stack_height);
-    }
-
-    /* ── Armadillo mesh collider ──────────────────────────────────── */
-    {
-        /* Pass 1: query triangle count. */
-        uint32_t tri_count = 0;
-        int rc = obj_load_triangles(DEMO_ARMADILLO_OBJ, DEMO_ARMADILLO_SCALE,
-                                    NULL, 0, &tri_count);
-        if (rc != 0 && tri_count > 0 && tri_count <= DEMO_ARMADILLO_TRI_MAX) {
-            /* Allocate render vertices (9 floats per tri) and physics tris. */
-            float *verts = (float *)malloc(
-                (size_t)tri_count * 9 * sizeof(float));
-            ctx.armadillo_tris = (phys_triangle_t *)malloc(
-                (size_t)tri_count * sizeof(phys_triangle_t));
-
-            if (verts && ctx.armadillo_tris) {
-                uint32_t loaded = 0;
-                rc = obj_load_triangles(DEMO_ARMADILLO_OBJ, DEMO_ARMADILLO_SCALE,
-                                        verts, tri_count, &loaded);
-                if (rc == 0 && loaded > 0) {
-                    ctx.armadillo_tri_count = loaded;
-
-                    /* Convert flat vertex buffer to phys_triangle_t array
-                     * and compute bounding box. */
-                    float bmin[3] = { 1e30f,  1e30f,  1e30f};
-                    float bmax[3] = {-1e30f, -1e30f, -1e30f};
-                    for (uint32_t i = 0; i < loaded; i++) {
-                        const float *tv = verts + (size_t)i * 9;
-                        for (int vi = 0; vi < 3; vi++) {
-                            float x = tv[vi * 3 + 0];
-                            float y = tv[vi * 3 + 1];
-                            float z = tv[vi * 3 + 2];
-                            ctx.armadillo_tris[i].v[vi] =
-                                (phys_vec3_t){x, y, z};
-                            if (x < bmin[0]) bmin[0] = x;
-                            if (y < bmin[1]) bmin[1] = y;
-                            if (z < bmin[2]) bmin[2] = z;
-                            if (x > bmax[0]) bmax[0] = x;
-                            if (y > bmax[1]) bmax[1] = y;
-                            if (z > bmax[2]) bmax[2] = z;
-                        }
-                    }
-
-                    /* Store half-extents for spawn messages. */
-                    ctx.armadillo_half[0] = (bmax[0] - bmin[0]) * 0.5f;
-                    ctx.armadillo_half[1] = (bmax[1] - bmin[1]) * 0.5f;
-                    ctx.armadillo_half[2] = (bmax[2] - bmin[2]) * 0.5f;
-
-                    /* Build BVH.  Arena sized from triangle count:
-                     * ~120 bytes per triangle covers nodes, indices,
-                     * per-tri AABBs, and build stack. */
-                    size_t bvh_arena_bytes = (size_t)loaded * 128u;
-                    phys_frame_arena_init(&ctx.armadillo_bvh_arena,
-                                          bvh_arena_bytes);
-                    phys_mesh_bvh_build(&ctx.armadillo_bvh,
-                                        ctx.armadillo_tris, loaded,
-                                        &ctx.armadillo_bvh_arena);
-
-                    /* Create static body at center, raised so base
-                     * sits on ground (Y=0.1 = ground top). */
-                    float center_y = (bmin[1] + bmax[1]) * 0.5f;
-                    float base_offset = center_y - bmin[1];
-                    (void)base_offset;
-
-                    uint32_t bi = phys_world_create_body(&ctx.world);
-                    phys_body_t *ab = phys_world_get_body(&ctx.world, bi);
-                    /* Place so the mesh min-Y aligns with ground top. */
-                    ab->position = (phys_vec3_t){
-                        5.0f, -bmin[1], 5.0f};
-                    ab->orientation =
-                        (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-                    ab->flags |= PHYS_BODY_FLAG_STATIC;
-                    phys_body_t *abn = phys_body_pool_get_next(
-                        &ctx.world.body_pool, bi);
-                    *abn = *ab;
-
-                    /* Decompose mesh into convex compound collider. */
-                    phys_decompose_params_t dp =
-                        phys_decompose_params_default();
-                    dp.resolution = 32;
-                    dp.max_hulls  = 16;
-                    dp.concavity_threshold = 0.08f;
-
-                    struct timespec t0, t1;
-                    clock_gettime(CLOCK_MONOTONIC, &t0);
-
-                    phys_decompose_result_t decomp;
-                    memset(&decomp, 0, sizeof(decomp));
-                    int drc = phys_decompose_mesh(
-                        ctx.armadillo_tris, loaded, &dp, &decomp);
-
-                    clock_gettime(CLOCK_MONOTONIC, &t1);
-                    double decomp_ms =
-                        (double)(t1.tv_sec  - t0.tv_sec)  * 1000.0 +
-                        (double)(t1.tv_nsec - t0.tv_nsec) / 1.0e6;
-
-                    if (drc == 0 && decomp.hull_count > 0) {
-                        phys_world_set_compound_collider(
-                            &ctx.world, bi, &decomp,
-                            (phys_vec3_t){0.0f, 0.0f, 0.0f});
-                        ctx.body_shape_type[bi] = 3u; /* compound */
-
-                        printf("[server] armadillo compound body %u: "
-                               "%u hulls (from %u tris), "
-                               "decompose %.1f ms, "
-                               "half=(%.1f, %.1f, %.1f)\n",
-                               bi, decomp.hull_count, loaded,
-                               decomp_ms,
-                               (double)ctx.armadillo_half[0],
-                               (double)ctx.armadillo_half[1],
-                               (double)ctx.armadillo_half[2]);
-                    } else {
-                        /* Fallback to mesh collider. */
-                        phys_world_set_mesh_collider(
-                            &ctx.world, bi,
-                            ctx.armadillo_tris, loaded,
-                            &ctx.armadillo_bvh,
-                            (phys_vec3_t){0.0f, 0.0f, 0.0f},
-                            true);
-                        ctx.body_shape_type[bi] = 3u; /* mesh */
-
-                        printf("[server] armadillo mesh body %u: %u tris "
-                               "(decompose failed rc=%d), "
-                               "half=(%.1f, %.1f, %.1f)\n",
-                               bi, loaded, drc,
-                               (double)ctx.armadillo_half[0],
-                               (double)ctx.armadillo_half[1],
-                               (double)ctx.armadillo_half[2]);
-                    }
-                }
-            }
-            free(verts);
-        } else {
-            fprintf(stderr, "[server] WARN: could not load %s (rc=%d, "
-                    "tris=%u)\n", DEMO_ARMADILLO_OBJ, rc, tri_count);
-        }
-    }
-
     /* ── 3. Physics command channel + tick runner ───────────────── */
     fr_topic_channel_config_t chan_cfg = {
         .capacity = 256u,
@@ -1156,9 +788,27 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* ── 10b. Editor context ──────────────────────────────────── */
+    ctx.edit_port = edit_port;
+    {
+        editor_ctx_config_t ecfg = {.edit_port = edit_port};
+        if (!editor_ctx_init(&ctx.editor, &ecfg)) {
+            fprintf(stderr, "error: editor_ctx_init failed\n");
+            return 1;
+        }
+        /* Wire physics bridge. */
+        ctx.editor_bridge = (edit_physics_bridge_t){
+            .on_spawn  = bridge_on_spawn_,
+            .on_delete = bridge_on_delete_,
+            .on_move   = bridge_on_move_,
+            .user_data = &ctx,
+        };
+        editor_ctx_set_bridge(&ctx.editor, &ctx.editor_bridge);
+        printf("[server] editor listening on port %u\n",
+               ctx.editor.io_thread.port);
+    }
+
     /* ── 11. Main loop ─────────────────────────────────────────── */
-    uint32_t rng = 12345u;
-    ctx.last_spawn_time = 0.0;  /* Force immediate first spawn. */
     const double start_time = now_seconds();
     double last_step_time = now_seconds();
 
@@ -1174,11 +824,8 @@ int main(int argc, char **argv) {
             break;
         }
 
-        /* Spawn box rain every DEMO_SPAWN_INTERVAL_S seconds. */
-        if (now - ctx.last_spawn_time >= DEMO_SPAWN_INTERVAL_S) {
-            demo_spawn_box_rain(&ctx, &rng);
-            ctx.last_spawn_time = now;
-        }
+        /* Drain editor commands (Stage 1 — before physics). */
+        editor_tick_drain(&ctx.editor);
 
         /* Fixed-rate server ticks via tick loop. */
         fr_server_tick_loop_step(&ctx.tick_loop, elapsed_us);
@@ -1204,6 +851,10 @@ int main(int argc, char **argv) {
     /* ── 12. Shutdown ──────────────────────────────────────────── */
     printf("\n[server] shutting down...\n");
 
+    /* Shut down editor first (stops I/O thread). */
+    editor_ctx_shutdown(&ctx.editor);
+    printf("[server] editor stopped\n");
+
     /* Stop physics tick runner thread (joins the dedicated thread). */
     phys_tick_runner_stop(&ctx.tick_runner);
     printf("[server] tick runner stopped\n");
@@ -1223,8 +874,6 @@ int main(int argc, char **argv) {
     fr_topic_channel_destroy(ctx.entity_event_topic);
     net_udp_socket_close(&ctx.sock);
     free(ctx.spawned_to_client);
-    free(ctx.armadillo_tris);
-    phys_frame_arena_destroy(&ctx.armadillo_bvh_arena);
 
     uint64_t final_tick = fr_server_tick_loop_tick_id(&ctx.tick_loop);
     printf("[server] done. %lu ticks, %u bodies spawned.\n",

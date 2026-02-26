@@ -107,6 +107,18 @@ void editor_ctx_shutdown(editor_ctx_t *ctx);
  */
 uint32_t editor_tick_drain(editor_ctx_t *ctx);
 
+/**
+ * @brief Set the physics bridge for editor commands.
+ *
+ * The bridge callbacks are invoked by spawn/delete/move commands to
+ * create/destroy/teleport physics bodies alongside editor entities.
+ * Pass NULL to disable bridging (default).
+ *
+ * @param ctx     Editor context.
+ * @param bridge  Physics bridge (caller owns memory, must outlive ctx).
+ */
+void editor_ctx_set_bridge(editor_ctx_t *ctx, edit_physics_bridge_t *bridge);
+
 #ifdef __cplusplus
 }
 #endif

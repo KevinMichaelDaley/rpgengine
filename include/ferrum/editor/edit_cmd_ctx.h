@@ -20,6 +20,51 @@ extern "C" {
 struct edit_entity_store;
 struct edit_selection;
 struct edit_undo_stack;
+struct edit_entity;
+
+/* ------------------------------------------------------------------------ */
+/* Physics bridge callback                                                   */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * @brief Callback for bridging editor entity ops to the physics engine.
+ *
+ * The editor entity store manages logical entities; this bridge lets the
+ * host application (e.g., demo_server) also create/destroy/move the
+ * corresponding physics bodies.
+ */
+typedef struct edit_physics_bridge {
+    /**
+     * @brief Called after an entity is spawned.
+     * @param user_data  Opaque context (e.g., demo_ctx_t pointer).
+     * @param entity_id  Editor entity ID.
+     * @param entity     Pointer to the newly created entity.
+     * @return Physics body index to store on the entity, or UINT32_MAX.
+     */
+    uint32_t (*on_spawn)(void *user_data, uint32_t entity_id,
+                         const struct edit_entity *entity);
+
+    /**
+     * @brief Called before an entity is deleted.
+     * @param user_data   Opaque context.
+     * @param entity_id   Editor entity ID.
+     * @param body_index  Physics body index from the entity.
+     */
+    void (*on_delete)(void *user_data, uint32_t entity_id,
+                      uint32_t body_index);
+
+    /**
+     * @brief Called after an entity is moved (position changed).
+     * @param user_data   Opaque context.
+     * @param entity_id   Editor entity ID.
+     * @param body_index  Physics body index.
+     * @param pos         New position [x, y, z].
+     */
+    void (*on_move)(void *user_data, uint32_t entity_id,
+                    uint32_t body_index, const float pos[3]);
+
+    void *user_data;  /**< Opaque context passed to all callbacks. */
+} edit_physics_bridge_t;
 
 /* ------------------------------------------------------------------------ */
 /* Command type tags (for undo entries)                                      */
@@ -49,6 +94,7 @@ typedef struct edit_cmd_ctx {
     struct edit_entity_store *entities;   /**< Entity storage. */
     struct edit_selection    *selection;  /**< Current selection set. */
     struct edit_undo_stack   *undo;      /**< Undo/redo stack. */
+    edit_physics_bridge_t   *bridge;     /**< Physics bridge (NULL = no-op). */
 } edit_cmd_ctx_t;
 
 #ifdef __cplusplus

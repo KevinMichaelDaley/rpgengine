@@ -47,15 +47,24 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
     if (eid == EDIT_ENTITY_INVALID_ID) return false;
 
     /* Set position if provided. */
+    float pos[3] = {0};
     if (args) {
         const json_value_t *pos_val = json_object_get(args, "pos");
-        float pos[3] = {0};
         if (extract_vec3_(pos_val, pos)) {
             edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
             e->pos[0] = pos[0];
             e->pos[1] = pos[1];
             e->pos[2] = pos[2];
         }
+    }
+
+    /* Bridge: notify physics engine about the new entity. */
+    if (ctx->bridge && ctx->bridge->on_spawn) {
+        const edit_entity_t *ent = edit_entity_store_get(ctx->entities, eid);
+        uint32_t body_idx = ctx->bridge->on_spawn(
+            ctx->bridge->user_data, eid, ent);
+        edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+        if (e) e->body_index = body_idx;
     }
 
     /* Record undo entry. */

@@ -1,6 +1,6 @@
 ---
 id: rpg-wxom
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-26T04:24:50Z

@@ -58,6 +58,30 @@ bool cmd_save(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_load(edit_dispatch_t *d, const json_value_t *args,
               json_value_t *result, json_arena_t *arena);
 
+/** @brief Select entity by ID. Args: {"entity_id":N, "toggle":bool}. */
+bool cmd_select(edit_dispatch_t *d, const json_value_t *args,
+                json_value_t *result, json_arena_t *arena);
+
+/** @brief Deselect entity by ID. Args: {"entity_id":N}. */
+bool cmd_deselect(edit_dispatch_t *d, const json_value_t *args,
+                  json_value_t *result, json_arena_t *arena);
+
+/** @brief Select all active entities. Args: {} (none). */
+bool cmd_select_all(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
+/** @brief Deselect all entities. Args: {} (none). */
+bool cmd_deselect_all(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief Delete entity by ID. Args: {"entity_id":N}. */
+bool cmd_delete_id(edit_dispatch_t *d, const json_value_t *args,
+                   json_value_t *result, json_arena_t *arena);
+
+/** @brief Move entity by ID. Args: {"entity_id":N, "delta":[dx,dy,dz]}. */
+bool cmd_move_id(edit_dispatch_t *d, const json_value_t *args,
+                 json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

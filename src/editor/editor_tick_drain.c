@@ -36,3 +36,8 @@ uint32_t editor_tick_drain(editor_ctx_t *ctx) {
 
     return processed;
 }
+
+void editor_ctx_set_bridge(editor_ctx_t *ctx, edit_physics_bridge_t *bridge) {
+    if (!ctx) return;
+    ctx->cmd_ctx.bridge = bridge;
+}
