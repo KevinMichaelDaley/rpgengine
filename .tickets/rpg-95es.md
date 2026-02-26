@@ -1,6 +1,6 @@
 ---
 id: rpg-95es
-status: in_progress
+status: closed
 deps: [rpg-00d1, rpg-pc4k]
 links: []
 created: 2026-02-26T04:26:35Z

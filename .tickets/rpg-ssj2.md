@@ -1,6 +1,6 @@
 ---
 id: rpg-ssj2
-status: open
+status: closed
 deps: [rpg-95es]
 links: []
 created: 2026-02-26T04:26:35Z
