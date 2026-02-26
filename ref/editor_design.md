@@ -5,33 +5,42 @@
 ```
 src/editor/
 ├── protocol/
-│   ├── edit_socket.c          # TCP listener + per-connection fiber
-│   ├── edit_socket.h          # (internal)
+│   ├── edit_io_thread.c       # Dedicated editor I/O thread (TCP accept/read/write)
+│   ├── edit_io_thread.h       # (internal)
+│   ├── edit_cmd_ring.c        # Lock-free SPSC command ring (I/O thread → tick loop)
+│   ├── edit_cmd_ring.h
 │   ├── edit_parse.c           # JSON command parser
 │   ├── edit_parse.h
-│   ├── edit_dispatch.c        # command → handler routing
+│   ├── edit_dispatch.c        # command → handler routing (runs on main tick thread)
 │   └── edit_dispatch.h
 ├── commands/
 │   ├── cmd_spawn.c            # spawn command family
 │   ├── cmd_transform.c        # move, rotate, scale
 │   ├── cmd_select.c           # select, deselect, query
-│   ├── cmd_delete.c           # delete, clone
+│   ├── cmd_delete.c           # delete + clone
+│   ├── cmd_clone.c            # clone (entity duplication)
 │   ├── cmd_level.c            # save, load, new
 │   ├── cmd_asset.c            # browse, import, complete
-│   ├── cmd_cursor.c           # cursor position, grid
+│   ├── cmd_cursor.c           # cursor position, grid (forwarded to client)
+│   ├── cmd_camera.c           # camera mode/position (forwarded to client)
+│   ├── cmd_material.c         # material assignment
 │   ├── cmd_script.c           # run, eval, repl
-│   └── cmd_texture.c          # texsynth commands
+│   ├── cmd_texture.c          # texsynth commands
+│   ├── cmd_inspect.c          # properties, inspect
+│   └── cmd_search.c           # entity search by name/component
 ├── assets/
-│   ├── asset_registry.c       # catalog + lookup + hot-reload
+│   ├── asset_registry.c       # catalog + lookup
 │   ├── asset_registry.h
+│   ├── asset_watch.c          # inotify filesystem watcher for hot-reload
+│   ├── asset_watch.h
 │   ├── asset_import.c         # external file import
-│   ├── asset_download.c       # TCP asset transfer (server side)
+│   ├── asset_download.c       # TCP asset transfer (server side, on editor I/O thread)
 │   └── asset_download.h
 ├── undo/
 │   ├── undo_stack.c           # command pattern undo/redo
 │   └── undo_stack.h
 ├── script/
-│   ├── script_runtime.c       # Lua state management + fiber
+│   ├── script_runtime.c       # Lua state management (runs on main tick thread)
 │   ├── script_runtime.h
 │   ├── script_api_entity.c    # entity manipulation bindings
 │   ├── script_api_math.c      # vec3, quat, noise bindings
@@ -46,23 +55,39 @@ src/editor/
 │   ├── texsynth_bake.c        # UV-space rasterization
 │   └── texsynth_bake.h
 ├── cursor/
-│   ├── editor_cursor.c        # 3D cursor state + grid logic
+│   ├── editor_cursor.c        # 3D cursor state + grid logic (client side)
 │   └── editor_cursor.h
 ├── level/
 │   ├── level_serialize.c      # JSON save/load
 │   └── level_serialize.h
+├── json/
+│   ├── json_parse.c           # Minimal JSON parser (no external dependency)
+│   └── json_parse.h
 ├── controller/
 │   ├── ctrl_main.c            # controller entry point
 │   ├── ctrl_tui.c             # terminal UI (raw termios)
 │   ├── ctrl_tui.h
-│   ├── ctrl_input.c           # input parsing + keybindings
+│   ├── ctrl_input.c           # input parsing, keybindings, Vim-style state machine
 │   ├── ctrl_input.h
 │   ├── ctrl_complete.c        # tab-completion engine
 │   ├── ctrl_complete.h
-│   ├── ctrl_history.c         # command history
+│   ├── ctrl_history.c         # command history (with file persistence)
 │   ├── ctrl_history.h
 │   ├── ctrl_connection.c      # TCP connection to server + client
-│   └── ctrl_connection.h
+│   ├── ctrl_connection.h
+│   ├── ctrl_browse.c          # Browse result cache + #N references
+│   └── ctrl_browse.h
+├── client/
+│   ├── client_state_socket.c  # TCP listener for controller connection (client side)
+│   ├── client_state_socket.h
+│   ├── client_selection.c     # Selection state + highlight rendering
+│   ├── client_selection.h
+│   ├── client_preview.c       # Asset preview rendering (mesh/texture/material)
+│   ├── client_preview.h
+│   ├── client_editor_input.c  # Mouse raycast, click-select, box-select
+│   ├── client_editor_input.h
+│   ├── client_editor_camera.c # Camera modes (front/right/top/ortho)
+│   └── client_editor_camera.h
 ├── mcp/
 │   ├── mcp_server.c           # MCP protocol handler
 │   ├── mcp_server.h
@@ -102,7 +127,9 @@ by `\n`. This is chosen over binary for:
 - Easy scripting (any language with TCP + JSON)
 - Easy MCP bridging (MCP is already JSON-RPC)
 
-Maximum message size: 64 KB (rejects larger).
+Maximum message size: 1 MB (rejects larger). Large query responses (e.g.,
+entity lists for levels with hundreds of entities) are paginated via
+`offset`/`limit` parameters rather than sending everything in one message.
 
 ### 2.2 Message Types
 
@@ -138,52 +165,69 @@ Events have no `id` field. The controller must handle them asynchronously.
 
 ### 2.3 Server-Side Implementation
 
-The edit socket runs as a fiber on the networking job system:
+The edit socket runs on a **dedicated editor I/O thread** — not on fiber
+workers (which must not touch sockets per the engine threading contract).
+Commands are bridged to the main tick thread via a lock-free SPSC ring.
 
 ```c
-/* Lifecycle */
-static void edit_socket_fiber_(void *user) {
+/* Editor I/O thread — owns all TCP sockets */
+static void *edit_io_thread_(void *user) {
     editor_ctx_t *ctx = user;
     int listen_fd = net_tcp_listen(ctx->edit_port);
+    int asset_fd  = net_tcp_listen(ctx->asset_port);
 
-    for (;;) {
-        /* Accept blocks the fiber, not the OS thread.
-         * Use a pollable fd + fiber yield. */
-        int client_fd = edit_socket_accept_yield_(ctx, listen_fd);
-        if (client_fd < 0) continue;
+    /* Non-blocking + epoll for multiplexing */
+    int epfd = epoll_create1(0);
+    epoll_add_(epfd, listen_fd, EPOLLIN);
+    epoll_add_(epfd, asset_fd, EPOLLIN);
 
-        /* Spawn a child fiber per controller connection */
-        job_dispatch(ctx->net_sys, edit_client_fiber_,
-                     &(edit_client_args_t){ctx, client_fd}, 0, NULL);
+    struct epoll_event events[16];
+    while (ctx->running) {
+        int n = epoll_wait(epfd, events, 16, 100 /* ms */);
+        for (int i = 0; i < n; i++) {
+            int fd = events[i].data.fd;
+            if (fd == listen_fd) {
+                /* Accept new controller connection */
+                int client_fd = accept(listen_fd, NULL, NULL);
+                net_tcp_set_nonblocking(client_fd);
+                net_tcp_set_nodelay(client_fd);
+                epoll_add_(epfd, client_fd, EPOLLIN);
+            } else if (fd == asset_fd) {
+                /* Accept new asset download connection */
+                int dl_fd = accept(asset_fd, NULL, NULL);
+                asset_download_handle_(ctx, dl_fd);  /* blocking OK, dedicated thread */
+            } else if (events[i].events & EPOLLIN) {
+                /* Read from controller connection */
+                edit_io_read_line_(ctx, fd);  /* → enqueue to cmd_ring */
+            }
+        }
+
+        /* Drain response ring → send TCP responses */
+        edit_io_drain_responses_(ctx);
     }
+    return NULL;
 }
 
-static void edit_client_fiber_(void *user) {
-    edit_client_args_t *args = user;
-    char line_buf[65536];
+/* Command ring: I/O thread → main tick thread */
+typedef struct edit_cmd_ring {
+    _Atomic uint32_t head;   /* written by I/O thread */
+    _Atomic uint32_t tail;   /* read by tick thread */
+    edit_cmd_entry_t entries[EDIT_CMD_RING_SIZE];  /* power-of-2 */
+} edit_cmd_ring_t;
 
-    for (;;) {
-        /* Read one line (fiber yields on EAGAIN) */
-        int len = edit_read_line_yield_(args->ctx, args->fd, line_buf, sizeof(line_buf));
-        if (len <= 0) break;  /* disconnect */
-
-        /* Parse + dispatch */
-        editor_cmd_t cmd;
-        if (edit_parse_command(line_buf, len, &cmd)) {
-            editor_cmd_result_t result = edit_dispatch(args->ctx, &cmd);
-            edit_send_response_(args->fd, cmd.id, &result);
-        } else {
-            edit_send_error_(args->fd, 0, "Parse error");
-        }
+/* Main tick loop drains the ring between physics ticks */
+static void edit_drain_commands_(editor_ctx_t *ctx) {
+    edit_cmd_entry_t entry;
+    while (edit_cmd_ring_pop(&ctx->cmd_ring, &entry)) {
+        editor_cmd_result_t result = edit_dispatch(ctx, &entry.cmd);
+        edit_resp_ring_push(&ctx->resp_ring, entry.cmd.id, &result);
     }
-    close(args->fd);
 }
 ```
 
-Key design choice: the edit socket fiber uses the **same** `job_system_t` as
-the network runtime. This means edit commands can safely access the same data
-structures (with appropriate locking) without cross-thread synchronization
-issues.
+The epoll-based I/O thread handles TCP accept, read, and write for both the
+edit protocol and asset download connections. This keeps all socket I/O on one
+thread, consistent with the engine's architecture.
 
 ### 2.4 Command Dispatch
 
@@ -192,7 +236,7 @@ Commands are registered in a static table:
 ```c
 typedef struct editor_cmd_handler {
     const char *name;
-    editor_cmd_result_t (*fn)(editor_ctx_t *ctx, const cJSON *args);
+    editor_cmd_result_t (*fn)(editor_ctx_t *ctx, const json_value_t *args);
     const char *help;
     const char *completion_hint;  /* for tab-completion */
 } editor_cmd_handler_t;
@@ -200,6 +244,7 @@ typedef struct editor_cmd_handler {
 static const editor_cmd_handler_t g_handlers[] = {
     {"spawn",      cmd_spawn,      "Spawn entity at position", "<type> [args...]"},
     {"delete",     cmd_delete,     "Delete selected entities", ""},
+    {"clone",      cmd_clone,      "Duplicate selection",      "[offset]"},
     {"move",       cmd_move,       "Move selection by delta",  "<dx> <dy> <dz>"},
     {"rotate",     cmd_rotate,     "Rotate selection",         "<rx> <ry> <rz>"},
     {"scale",      cmd_scale,      "Scale selection",          "<sx> <sy> <sz>"},
@@ -207,17 +252,22 @@ static const editor_cmd_handler_t g_handlers[] = {
     {"cursor",     cmd_cursor,     "Set cursor position",      "<x> <y> <z>"},
     {"grid",       cmd_grid,       "Set grid size",            "<size>"},
     {"snap",       cmd_snap,       "Toggle grid snap",         "<on|off|toggle>"},
+    {"camera",     cmd_camera,     "Set camera mode/position", "<front|right|top|ortho|pos ...>"},
     {"save",       cmd_save,       "Save level to file",       "<path>"},
     {"load",       cmd_load,       "Load level from file",     "<path>"},
     {"browse",     cmd_browse,     "Browse assets",            "[path] [--filter ...]"},
     {"complete",   cmd_complete,   "Tab-completion query",     "<prefix>"},
+    {"material",   cmd_material,   "Assign material to entity","<set|get> <entity> <slot> <path>"},
     {"run",        cmd_run,        "Run script file",          "<path> [args...]"},
     {"eval",       cmd_eval,       "Evaluate script expression", "<expr>"},
+    {"repl",       cmd_repl,       "Enter/exit Lua REPL mode", ""},
     {"texsynth",   cmd_texsynth,   "Texture synthesis",        "<sub-cmd> [args...]"},
     {"undo",       cmd_undo,       "Undo last operation",      ""},
     {"redo",       cmd_redo,       "Redo last undone operation",""},
     {"bind",       cmd_bind,       "Bind key to command",      "<key> <command>"},
     {"properties", cmd_properties, "Show entity properties",   "[entity_id]"},
+    {"inspect",    cmd_inspect,    "Detailed component dump",  "[entity_id]"},
+    {"search",     cmd_search,     "Search entities",          "<pattern>"},
     {NULL, NULL, NULL, NULL}
 };
 ```
@@ -299,49 +349,43 @@ edit channel). Client re-downloads if the asset is in use.
 
 ### 3.4 Server-Side Implementation
 
-The asset downloader fiber:
+Asset download connections are accepted by the editor I/O thread (see §2.3).
+The actual file transfer is handled inline on the I/O thread since it is pure
+sequential I/O (no computation, no fiber interaction needed):
 
 ```c
-static void asset_download_fiber_(void *user) {
-    editor_ctx_t *ctx = user;
-    int listen_fd = net_tcp_listen(ctx->asset_port);
-
-    for (;;) {
-        int client_fd = edit_socket_accept_yield_(ctx, listen_fd);
-        if (client_fd < 0) continue;
-
-        /* Handle requests sequentially per connection */
-        job_dispatch(ctx->net_sys, asset_client_fiber_,
-                     &(asset_client_args_t){ctx, client_fd}, 0, NULL);
-    }
-}
-
-static void asset_client_fiber_(void *user) {
-    asset_client_args_t *args = user;
+/* Called from editor I/O thread when a new asset download connection arrives */
+static void asset_download_handle_(editor_ctx_t *ctx, int client_fd) {
+    net_tcp_set_nonblocking(client_fd);  /* but we'll do blocking reads here */
 
     for (;;) {
         uint16_t path_len;
-        if (tcp_read_exact_yield_(args->fd, &path_len, 2) != 2) break;
+        if (tcp_read_exact_(client_fd, &path_len, 2) != 2) break;
         path_len = le16toh(path_len);
         if (path_len > 1024) break;
 
         char path[1025];
-        if (tcp_read_exact_yield_(args->fd, path, path_len) != path_len) break;
+        if (tcp_read_exact_(client_fd, path, path_len) != path_len) break;
         path[path_len] = '\0';
 
         /* Resolve asset on disk */
         char full_path[PATH_MAX];
-        if (!asset_registry_resolve(args->ctx->registry, path, full_path)) {
+        if (!asset_registry_resolve(ctx->registry, path, full_path)) {
             uint8_t status = 1;  /* not found */
-            tcp_write_all_(args->fd, &status, 1);
+            tcp_write_all_(client_fd, &status, 1);
             continue;
         }
 
-        /* Send file */
-        asset_send_file_(args->fd, full_path);
+        /* Send file (status + length + data) */
+        asset_send_file_(client_fd, full_path);
     }
-    close(args->fd);
+    close(client_fd);
 }
+```
+
+Note: for large asset transfers that might block the I/O thread too long,
+a future optimization is to spawn a short-lived pthread per download
+connection. For Phase 1 (single editor, small assets), inline I/O suffices.
 ```
 
 ---
@@ -365,25 +409,34 @@ typedef struct editor_cursor {
 
 The controller needs to know the cursor position (for "spawn at cursor").
 The client needs to receive cursor commands from the controller.
+The client must push events to the controller (mouse clicks, box select, etc.).
 
-**Option chosen: controller ↔ client direct TCP link.**
+**Option chosen: controller ↔ client direct TCP link (bidirectional).**
 
 The client listens on a small TCP port (the "client state socket"). The
 controller connects and can:
 - Query cursor position, camera state, selection set
 - Send cursor movement commands
+- Send camera commands (front/right/top/ortho/position)
 - Send selection commands (click-equivalent)
 
-This avoids routing cursor state through the server (which doesn't need it).
+The client **pushes events** to the controller for viewport interactions:
+- `cursor_moved` — after mouse-click raycast places cursor
+- `entity_clicked` — mouse click on entity
+- `context_menu` — right-click (controller shows context menu in TUI)
+- `box_select` — drag-select completed, list of selected entities
+
+This avoids routing cursor state through the server (which doesn't need it)
+and eliminates polling latency for mouse-driven interactions.
 
 ```
-Controller ──── TCP (client state) ────► Client
-    │                                       │
-    │                                       │  (renders cursor)
-    │                                       │
-    └──── TCP (edit protocol) ────────► Server
-                                            │
-                                            │  (processes entity commands)
+Controller ──── TCP (client state, bidirectional) ────► Client
+    │                                                      │
+    │                                                      │  (renders cursor, handles mouse)
+    │                                                      │  (pushes click/select events)
+    └──── TCP (edit protocol) ────────────────────────► Server
+                                                           │
+                                                           │  (processes entity commands)
 ```
 
 ### 4.3 Grid Snapping
@@ -410,28 +463,77 @@ The client renders the cursor as:
 
 Uses the existing debug line rendering path (no new shaders needed).
 
+### 4.5 Grab Mode (Client-Side Provisional Positioning)
+
+When the user enters grab mode (`g` key), the selected entity must visually
+track the cursor in real-time. Since the server is authoritative, a naive
+roundtrip (send move → server processes → snapshot → client renders) would
+add 50-250ms of latency — unacceptable for interactive placement.
+
+**Solution: client-side provisional positioning.**
+
+In grab mode, the client:
+1. Stores the entity's server-authoritative position as `grab_origin`
+2. Locally overrides the entity's rendered position to match cursor movement
+3. Does NOT send continuous move commands to the server
+4. On confirm (Enter/click), sends a single `move` command with the final delta
+5. On cancel (Escape), snaps the entity back to `grab_origin`
+
+```c
+typedef struct editor_grab_state {
+    bool active;                /* currently in grab mode? */
+    uint32_t entity_id;         /* entity being grabbed */
+    vec3_t grab_origin;         /* position when grab started */
+    vec3_t grab_offset;         /* cursor_pos - grab_origin at grab start */
+    uint8_t axis_constraint;    /* 0=free, 1=X, 2=Y, 4=Z (bitmask) */
+} editor_grab_state_t;
+```
+
+The controller sends `grab_begin` to the client (via client state socket),
+and the client enters grab mode locally. During grab, cursor movement is
+purely local — no server traffic. Only the final `move` command goes through
+the edit protocol to the server.
+
+This gives zero-latency visual feedback during placement while maintaining
+server authority for the final position.
+
 ---
 
 ## 5. Undo System
 
 ### 5.1 Command Pattern
 
-Every mutating operation produces an `undo_entry_t`:
+Every mutating operation produces an `undo_entry_t`. Undo entries are recorded
+at **drain time** (when the command actually executes on the main tick thread),
+not at enqueue time. This ensures the undo stack reflects committed state.
 
 ```c
 typedef struct undo_entry {
     editor_cmd_t forward;       /* the command that was executed */
     editor_cmd_t inverse;       /* the command that reverses it */
     uint32_t group_id;          /* for multi-command groups */
+    void *snapshot_data;        /* for delete undo: entity snapshot (allocated from undo arena) */
+    uint32_t snapshot_size;
 } undo_entry_t;
 
 typedef struct undo_stack {
     undo_entry_t *entries;      /* ring buffer */
-    uint32_t capacity;
+    uint32_t capacity;          /* max entries (default 4096) */
     uint32_t top;               /* next write position */
     uint32_t undo_cursor;       /* current position for undo */
+    arena_t snapshot_arena;     /* dedicated arena for entity snapshots (16 MB budget) */
 } undo_stack_t;
 ```
+
+**Memory strategy:**
+- The undo stack uses a **dedicated arena** (`snapshot_arena`, 16 MB default)
+  for entity snapshot data (needed for delete-undo). This arena is separate
+  from both frame arenas (too short-lived) and level arenas (wrong lifetime).
+- When the ring buffer wraps and overwrites an old entry, its snapshot data
+  is freed from the arena. If the arena fills, the oldest entries are
+  force-evicted until space is available.
+- The entire undo stack (including arena) is freed on editor disconnect.
+  Undo does not persist across sessions (spec §9).
 
 ### 5.2 Inverse Commands
 
@@ -443,7 +545,8 @@ typedef struct undo_stack {
 | `rotate(ent_042, angles)` | `rotate(ent_042, -angles)` |
 | `set_component(ent, comp, new)` | `set_component(ent, comp, old)` |
 
-Delete captures a full snapshot of the entity so undo can reconstruct it.
+Delete captures a full snapshot of the entity (position, rotation, all
+components, flags) so undo can reconstruct it exactly.
 
 ### 5.3 Group Undo
 
@@ -466,46 +569,101 @@ editor_undo(ctx);
 
 ### 6.1 Lua Integration
 
-Lua 5.4 is embedded as a static library. The runtime:
+Lua 5.4 is embedded as a static library. The runtime runs exclusively on
+the **main tick thread** during command drain (Stage 1 of the server tick).
+It never runs on fibers — this avoids the Lua coroutine / fiber stack
+incompatibility (see spec §2.5).
 
 ```c
 typedef struct script_runtime {
     lua_State *L;               /* Lua state */
     editor_ctx_t *editor;       /* back-pointer to editor context */
-    bool running;               /* script currently executing? */
+    uint32_t instruction_budget; /* max Lua VM instructions per tick (default 100K) */
+    uint32_t instructions_used; /* instructions consumed this tick */
+    bool continuation_pending;  /* true if a script is mid-execution across ticks */
 } script_runtime_t;
 ```
 
-### 6.2 Fiber Execution
+### 6.2 Execution Model: Instruction-Budgeted Per-Tick
 
-Long-running scripts execute on a fiber that yields cooperatively:
+Scripts do NOT run on fibers. Instead, the main tick thread calls the script
+runtime during command drain. Execution is instruction-limited via
+`lua_sethook(L, budget_hook, LUA_MASKCOUNT, budget)`.
+
+**Single-frame scripts** (e.g., `eval "spawn_box({0,0,0}, {1,1,1})"`) run
+to completion within the budget and return a result.
+
+**Multi-frame scripts** (e.g., `run "build_castle.lua"`) use Lua coroutines:
 
 ```c
-static void script_fiber_(void *user) {
-    script_runtime_t *rt = user;
+/* Called each tick during command drain to advance running scripts */
+void script_runtime_tick(script_runtime_t *rt) {
+    if (!rt->continuation_pending) return;
 
-    /* Resume the Lua coroutine */
+    /* Reset budget for this tick */
+    rt->instructions_used = 0;
+    lua_sethook(rt->L, budget_hook_, LUA_MASKCOUNT, rt->instruction_budget);
+
     int status = lua_resume(rt->L, NULL, 0);
 
     if (status == LUA_YIELD) {
-        /* Script called sleep() or a yielding operation.
-         * Re-enqueue this fiber after the requested delay. */
-        job_dispatch_delayed(rt->editor->net_sys, script_fiber_, rt,
-                             rt->yield_delay_ms);
-    } else if (status != LUA_OK) {
-        /* Script error */
+        /* Script voluntarily yielded (e.g., coroutine.yield() or budget hit).
+         * Will resume next tick. */
+        rt->continuation_pending = true;
+    } else if (status == LUA_OK) {
+        rt->continuation_pending = false;
+    } else {
         const char *err = lua_tostring(rt->L, -1);
         editor_log_error(rt->editor, "Script error: %s", err);
+        rt->continuation_pending = false;
     }
+}
+
+/* Hook function — fires every N instructions to enforce budget */
+static void budget_hook_(lua_State *L, lua_Debug *ar) {
+    (void)ar;
+    script_runtime_t *rt = get_runtime_from_lua_(L);
+    rt->instructions_used += rt->instruction_budget;
+    /* Force yield by raising a "budget exhausted" condition */
+    lua_yield(L, 0);
 }
 ```
 
-### 6.3 C → Lua API Binding Pattern
+The key invariant: **Lua state is only touched from the main tick thread.**
+Coroutine yield/resume operates on the Lua stack only — no C stack switch,
+no fiber interaction.
 
-Each API function follows the same pattern:
+### 6.3 REPL Continuation Detection
+
+When the controller sends `eval` or `repl` input, the server must detect
+whether the Lua code is syntactically incomplete (e.g., `function foo()`
+without `end`). The server uses `luaL_loadstring()` to attempt compilation:
 
 ```c
-/* Lua: spawn_box(pos, size) → entity_id */
+bool script_is_complete(script_runtime_t *rt, const char *input) {
+    int status = luaL_loadstring(rt->L, input);
+    if (status == LUA_ERRSYNTAX) {
+        const char *msg = lua_tostring(rt->L, -1);
+        /* Lua syntax errors for incomplete input end with "<eof>" */
+        bool incomplete = (strstr(msg, "<eof>") != NULL);
+        lua_pop(rt->L, 1);
+        return !incomplete;
+    }
+    lua_pop(rt->L, 1);  /* pop compiled chunk */
+    return true;  /* complete (valid or other error) */
+}
+```
+
+The server returns `"status": "incomplete"` in the JSON response, and the
+controller shows a `...>` continuation prompt (see UX §3.4).
+
+### 6.4 C → Lua API Binding Pattern
+
+Each API function follows the same pattern. Commands are **deferred** — they
+enqueue into the undo-recording command buffer (not immediate mutation):
+
+```c
+/* Lua: spawn_box(pos, size) → request_id (entity created at next drain) */
 static int l_spawn_box_(lua_State *L) {
     script_runtime_t *rt = lua_touserdata(L, lua_upvalueindex(1));
 
@@ -518,18 +676,19 @@ static int l_spawn_box_(lua_State *L) {
         .size = size,
     };
 
-    entity_t ent = editor_spawn_entity(rt->editor, &desc);
-    lua_pushinteger(L, ent.index);
+    uint32_t req_id = editor_request_spawn(rt->editor, &desc);
+    lua_pushinteger(L, req_id);
     return 1;
 }
 ```
 
-### 6.4 Safety
+### 6.5 Safety
 
 - Scripts run in a sandboxed Lua state (no `os.execute`, `io`, `loadlib`)
-- Memory limit enforced via custom allocator (arena-backed)
-- Instruction count limit prevents infinite loops (via `lua_sethook`)
+- Memory limit enforced via custom allocator (arena-backed, 8 MB default)
+- Instruction count limit prevents blocking the tick (via `lua_sethook`)
 - Scripts cannot directly access C pointers
+- Multi-frame scripts must explicitly yield; budget hook forces yield if not
 
 ---
 
@@ -754,7 +913,34 @@ static void ctrl_main_loop_(ctrl_ctx_t *ctx) {
 }
 ```
 
-### 9.3 Rendering
+### 9.3 Input State Machine (Vim-Style Numeric Prefix)
+
+The controller supports Vim-style numeric prefixes for repeat counts:
+
+```c
+typedef enum ctrl_input_mode {
+    CTRL_MODE_NORMAL,       /* default: keybindings active */
+    CTRL_MODE_COMMAND,      /* typing in command line (:) */
+    CTRL_MODE_REPL,         /* Lua REPL mode */
+    CTRL_MODE_GRAB,         /* entity grab mode (mouse/keys move entity) */
+    CTRL_MODE_CONTEXT,      /* context menu overlay */
+} ctrl_input_mode_t;
+
+typedef struct ctrl_input_state {
+    ctrl_input_mode_t mode;
+    uint32_t numeric_prefix;    /* accumulates digits: "5" then "k" = move 5 */
+    bool has_prefix;            /* true if any digits entered */
+    char pending_key;           /* for two-key combos: g then g */
+} ctrl_input_state_t;
+```
+
+**Normal mode dispatch:** when a digit is pressed, accumulate into
+`numeric_prefix`. When a non-digit key arrives, dispatch the bound
+command with the repeat count. Example: `5k` moves cursor up 5 grid units.
+
+If no prefix is given, the repeat count defaults to 1.
+
+### 9.4 Rendering
 
 The TUI renders using ANSI escape sequences:
 - `\033[H` — cursor home
@@ -769,7 +955,7 @@ The TUI renders using ANSI escape sequences:
 Double-buffered: build the full screen in a buffer, then write in one
 `write()` call to avoid flicker.
 
-### 9.4 Tab Completion Engine
+### 9.5 Tab Completion Engine
 
 ```c
 typedef struct ctrl_complete {
@@ -778,6 +964,8 @@ typedef struct ctrl_complete {
     uint32_t selected;          /* currently highlighted candidate */
     char prefix[256];           /* the prefix being completed */
     bool active;                /* completion popup visible? */
+    bool loading;               /* waiting for server response? */
+    uint32_t request_id;        /* correlate response to request */
 } ctrl_complete_t;
 
 /* On Tab press: */
@@ -790,15 +978,39 @@ static void ctrl_trigger_complete_(ctrl_ctx_t *ctx) {
     complete_context_t cctx = ctrl_classify_context_(ctx);
 
     if (cctx == COMPLETE_COMMAND) {
-        /* Complete from built-in command list (local) */
+        /* Complete from built-in command list (local, instant) */
         ctrl_complete_commands_(ctx, prefix);
     } else {
-        /* Ask server for completions */
-        ctrl_send_complete_request_(ctx, prefix);
-        /* Response arrives asynchronously via server_fd */
+        /* Ask server for completions (async) */
+        ctx->complete.loading = true;
+        ctx->complete.request_id = ctx->next_request_id++;
+        ctrl_send_complete_request_(ctx, prefix, ctx->complete.request_id);
+        /* TUI shows "..." loading indicator until response arrives */
+        /* Response arrives via server_fd; handler checks request_id
+         * to discard stale responses (user typed more since request) */
     }
 }
 ```
+
+**Stale response handling:** if the user types more characters after Tab,
+a new completion request is issued. When the old response arrives, its
+`request_id` won't match the latest request and is silently discarded.
+
+### 9.6 Browse Results Caching
+
+The `browse` command returns numbered results (e.g., `[1] stone_pillar [2]
+stone_wall`). These are cached in `ctrl_browse_t` so the user can reference
+them by number:
+
+```c
+typedef struct ctrl_browse {
+    char results[MAX_BROWSE_RESULTS][MAX_ASSET_PATH];
+    uint32_t count;
+    bool valid;                 /* true if results are from a recent browse */
+} ctrl_browse_t;
+```
+
+Usage: `spawn #2` expands to `spawn stone_wall` using the cached browse list.
 
 ---
 
@@ -839,85 +1051,106 @@ LUA_OBJS = $(LUA_SRCS:.c=.o)
 ### 11.1 Server-Side Threading
 
 ```
-Main thread
+Main tick thread
   │
-  ├── Physics job system (N workers)
+  ├── Stage 1 (command drain):
+  │     ├── Drain SPSC command ring (edit commands from I/O thread)
+  │     ├── Execute entity mutations (spawn, delete, move, etc.)
+  │     ├── Record undo entries
+  │     └── script_runtime_tick() — advance Lua scripts (budgeted)
+  │
+  ├── Stage 2-N: Physics, networking, etc. (existing pipeline)
+  │
+  ├── Physics job system (N workers, existing)
   │     └── phys_world_tick_parallel()
-  │
-  ├── Net job system (1-2 workers)
-  │     ├── per-client RUDP fibers (existing)
-  │     ├── edit_socket_fiber_ (NEW)
-  │     ├── edit_client_fiber_ (NEW, one per controller)
-  │     └── asset_download_fiber_ (NEW)
   │
   └── Net pump thread (existing)
         └── UDP recv loop
+
+Editor I/O thread (NEW, dedicated pthread)
+  │
+  ├── epoll-based event loop
+  ├── Accepts edit protocol connections (TCP)
+  ├── Accepts asset download connections (TCP)
+  ├── Reads JSON commands from controllers → enqueue into SPSC command ring
+  ├── Reads response ring → sends JSON responses to controllers
+  └── Handles asset file transfers inline
 ```
 
-The edit socket and asset download fibers run on the **net job system**, which
-means they share the same OS thread(s) as client RUDP fibers. This is fine
-because:
-- Edit commands are low-frequency (< 100/sec)
-- Asset downloads are IO-bound (TCP send)
-- Neither is CPU-intensive
+**Key invariants:**
+- Only the I/O thread touches TCP sockets (matches engine rule: "only I/O
+  thread touches sockets")
+- Only the main tick thread mutates world state (commands drained in Stage 1)
+- The SPSC command ring is the sole synchronization point (lock-free)
+- Lua scripts run on the main tick thread, never on fibers
+- Asset downloads are I/O-bound and handled inline on the I/O thread
 
-### 11.2 Locking
+### 11.2 Synchronization
 
-Entity manipulation from the edit socket must be synchronized with the
-physics tick. Options:
+No locks in the hot path. The only cross-thread communication is:
 
-1. **Queue-based (preferred):** edit commands enqueue into a thread-safe
-   command ring. The main tick loop drains the ring between ticks. Zero locking
-   in the hot path.
+| Producer | Consumer | Mechanism |
+|----------|----------|-----------|
+| I/O thread | Main tick thread | SPSC command ring (lock-free) |
+| Main tick thread | I/O thread | SPSC response ring (lock-free) |
 
-2. **Spinlock:** if immediate feedback is needed, use `job_spinlock_t` around
-   entity creation/destruction. Must be very short-lived.
-
-The queue approach aligns with the existing architecture (inbound topic drain
-in Stage 1 of the server tick).
+Both rings are bounded (capacity 1024 commands, 1024 responses). If the
+command ring is full, the I/O thread returns an error to the controller
+("server busy, command dropped"). This prevents unbounded buffering.
 
 ### 11.3 Client-Side Threading
 
 ```
 Main thread (SDL + GL)
   │
-  ├── Renders cursor, gizmos, grid (NEW)
-  ├── Handles client state socket (NEW, polled in frame loop)
+  ├── Renders cursor, gizmos, grid, selection highlights (NEW)
+  ├── Processes client state socket I/O (NEW)
+  │     ├── Receives cursor/camera/selection commands from controller
+  │     ├── Pushes events to controller (click, box_select, context_menu)
+  │     └── Non-blocking TCP reads in SDL event loop
   │
   └── Net IO thread (existing)
         └── UDP recv + RUDP reassembly
 ```
 
-The client state socket (TCP) is polled in the main loop alongside SDL events.
-Non-blocking reads ensure no stalls.
+The client state socket (TCP) is polled in the main loop alongside SDL
+events using non-blocking reads. No additional thread needed — edit commands
+arrive at <100/sec and never block rendering.
 
 ---
 
 ## 12. Phased Implementation Plan
 
-### Phase 1: Foundation
-- [ ] Edit socket (TCP listener + JSON protocol)
+### Phase 1: Foundation (Core Loop)
+- [ ] Editor I/O thread (epoll, TCP listener, SPSC command ring)
+- [ ] JSON parser (json_parse.c, minimal internal implementation)
 - [ ] Command dispatch framework
 - [ ] Basic commands: spawn box/sphere, delete, move, cursor set
-- [ ] Undo/redo stack
+- [ ] Selection system (multi-select, query select, click-to-select)
+- [ ] Undo/redo stack (with dedicated snapshot arena)
 - [ ] Controller TUI (status bar + log + command-line)
 - [ ] Controller ↔ server TCP connection
 - [ ] 3D cursor rendering on client
-- [ ] Client state socket (cursor query)
+- [ ] Client state socket (bidirectional: cursor query + push events)
+- [ ] Level save/load (JSON format)
 
 ### Phase 2: Asset System
-- [ ] Asset registry (catalog + listing)
-- [ ] Asset downloader (TCP transfer)
+- [ ] Asset registry (catalog + listing + search)
+- [ ] Asset downloader (TCP transfer via I/O thread)
 - [ ] Client asset cache
-- [ ] Tab-completion for asset paths
-- [ ] Browse command
+- [ ] Tab-completion for asset paths (async, with stale handling)
+- [ ] Browse command (with #N reference caching)
+- [ ] Material assignment commands
+- [ ] Clone command
 
 ### Phase 3: Scripting
 - [ ] Lua 5.4 integration (third_party/lua/)
-- [ ] Script runtime fiber
-- [ ] Entity manipulation API bindings
+- [ ] Script runtime on main tick thread (instruction-budgeted)
+- [ ] Entity manipulation API bindings (deferred execution)
 - [ ] Math/vec3/quat bindings
-- [ ] run/eval/repl commands
+- [ ] run/eval commands
+- [ ] REPL mode (with server-side continuation detection)
+- [ ] Undo grouping for scripts (begin_group/end_group)
 
 ### Phase 4: Texture Synthesis
 - [ ] Noise generators (perlin, simplex, voronoi, fractal)
@@ -927,16 +1160,16 @@ Non-blocking reads ensure no stalls.
 - [ ] Lua texture API
 
 ### Phase 5: Polish & MCP
-- [ ] MCP server in controller
-- [ ] Full keybinding system
-- [ ] Selection system (multi-select, query select)
+- [ ] MCP server in controller (JSON-RPC over stdio)
+- [ ] Full keybinding system (bind/unbind, save/load keymaps)
+- [ ] Grab mode (client-side provisional positioning for real-time feel)
 - [ ] Grid/snap refinement
-- [ ] Level save/load (JSON)
 - [ ] Prefab system
+- [ ] Camera commands (front/right/top/ortho/position)
 
 ### Phase 6: Advanced
 - [ ] Gizmo rendering (translate/rotate/scale handles)
 - [ ] Entity property editor (in TUI)
-- [ ] Hot-reload for scripts and assets
-- [ ] Material assignment workflow
-- [ ] Undo grouping for scripts
+- [ ] Hot-reload for scripts and assets (asset_watch.c, inotify)
+- [ ] Context menu mode in TUI
+- [ ] Inspect command (detailed component dump)

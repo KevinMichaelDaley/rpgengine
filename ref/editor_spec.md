@@ -60,15 +60,35 @@ with the following editor-mode subsystems. These are conditionally compiled
 ### 2.1 Edit Socket (TCP)
 
 A TCP listener on a configurable port accepts controller connections. The
-protocol is line-oriented (newline-delimited JSON or a compact text protocol)
-for easy scripting and debugging.
+protocol is line-oriented (newline-delimited JSON) for easy scripting and
+debugging.
 
 **Why TCP, not UDP:** edit commands are low-volume, must be ordered and reliable,
 and benefit from backpressure. The existing RUDP stream is designed for
-real-time game traffic; editor commands have different requirements.
+real-time game traffic; editor commands have different requirements. TCP also
+enables trivial integration with external tools (netcat, curl, scripting
+languages) and the MCP protocol.
 
-The edit socket runs on its own fiber in the networking job system, similar to
-the existing per-client RUDP fibers.
+**Threading model:** TCP socket I/O runs on a **dedicated editor I/O thread**
+(not on fiber workers). The engine's threading contract (ref/server_architecture:
+"only the I/O thread touches sockets") prohibits socket calls on job system
+workers. The editor I/O thread owns the TCP listen/accept/read/write and
+bridges to the job system via a lock-free command ring:
+
+```
+Editor I/O thread           Command ring           Main tick loop
+  TCP recv ──────► enqueue(cmd) ──────► drain + dispatch
+  TCP send ◄────── enqueue(resp) ◄───── result
+```
+
+This is the same pattern as the existing `net_pump_thread` for UDP.
+
+**Command queue semantics:** all edit commands are **deferred** — they are
+enqueued by the I/O thread and drained by the main tick loop between physics
+ticks (alongside the existing inbound topic drain in Stage 1). This means
+mutations happen synchronously with respect to the simulation but asynchronously
+with respect to the TCP connection. Responses are sent after the command executes
+on the next tick.
 
 ### 2.2 Asset Registry
 
@@ -91,9 +111,13 @@ project/
 Assets are referenced by **path relative to project root** (e.g.,
 `assets/meshes/pillar.glb`). The registry supports:
 - **Listing** with glob/prefix filtering (for tab-completion)
-- **Hot-reload** via filesystem watch (inotify)
+- **Hot-reload** via filesystem watch (inotify on Linux; polled fallback)
 - **Import** from external files (copy + register)
 - **Procedural creation** via scripts (texture synthesis, mesh generation)
+
+**Scripting language: Lua 5.4** — selected for minimal footprint, fast
+embedding, well-understood coroutine model, and broad tooling ecosystem.
+Built from source in `third_party/lua/`.
 
 ### 2.3 Asset Downloader (TCP)
 
@@ -115,52 +139,67 @@ The protocol:
 
 ### 2.4 Entity Manipulation API
 
-The server exposes a C API for entity manipulation that the edit socket handler
-calls:
+The server exposes a C API for entity manipulation. Because edit commands
+arrive on the I/O thread but physics state can only be mutated between ticks,
+all mutations are **deferred** — they enqueue into a command ring and execute
+during the main tick's drain phase.
 
 ```c
+// All functions enqueue a deferred mutation. The returned request_id
+// can be used to correlate with the response sent after execution.
+
 // Create / destroy
-entity_t     editor_spawn_entity(editor_ctx_t *ctx, const spawn_desc_t *desc);
-void         editor_destroy_entity(editor_ctx_t *ctx, entity_t ent);
+uint32_t     editor_spawn_entity(editor_ctx_t *ctx, const spawn_desc_t *desc);
+uint32_t     editor_destroy_entity(editor_ctx_t *ctx, entity_t ent);
 
 // Transform
-void         editor_set_position(editor_ctx_t *ctx, entity_t ent, vec3_t pos);
-void         editor_set_rotation(editor_ctx_t *ctx, entity_t ent, quat_t rot);
-void         editor_set_scale(editor_ctx_t *ctx, entity_t ent, vec3_t scale);
+uint32_t     editor_set_position(editor_ctx_t *ctx, entity_t ent, vec3_t pos);
+uint32_t     editor_set_rotation(editor_ctx_t *ctx, entity_t ent, quat_t rot);
+uint32_t     editor_set_scale(editor_ctx_t *ctx, entity_t ent, vec3_t scale);
 
 // Components
-void         editor_set_component(editor_ctx_t *ctx, entity_t ent,
+uint32_t     editor_set_component(editor_ctx_t *ctx, entity_t ent,
                                   const char *comp_name, const void *data);
-void         editor_remove_component(editor_ctx_t *ctx, entity_t ent,
+uint32_t     editor_remove_component(editor_ctx_t *ctx, entity_t ent,
                                      const char *comp_name);
 
-// Queries
+// Queries (synchronous — reads committed state, safe between ticks)
 uint32_t     editor_query_entities(editor_ctx_t *ctx, const query_desc_t *q,
                                    entity_t *out, uint32_t max);
 
-// Undo/redo
-void         editor_undo(editor_ctx_t *ctx);
-void         editor_redo(editor_ctx_t *ctx);
+// Undo/redo (deferred — executes on next tick drain)
+uint32_t     editor_undo(editor_ctx_t *ctx);
+uint32_t     editor_redo(editor_ctx_t *ctx);
 ```
+
+**Undo recording** happens at drain time (when the command actually executes),
+not at enqueue time. This ensures the undo stack reflects committed state.
 
 All mutations go through an **undo stack** (command pattern). Each command
 records the inverse operation for undo.
 
 ### 2.5 Script Runtime
 
-An embedded scripting language provides procedural generation and automation.
-Candidate languages (in order of preference):
-
-1. **Lua 5.4** — minimal, embeddable, fast, well-understood
-2. **Wren** — class-based, embeddable, small
-3. **Custom DSL** — if neither fits, a minimal expression language
+Lua 5.4 is the embedded scripting language for procedural generation and
+automation. Built from source in `third_party/lua/`.
 
 The script runtime:
-- Runs in a dedicated fiber (no blocking the physics tick)
-- Has access to the full entity manipulation API
+- Runs on the **main tick thread** (not on a fiber) — Lua executes during the
+  command drain phase, so it has synchronous access to committed entity state.
+- Has access to the full entity manipulation API. Because scripts run during
+  drain, `spawn_box()` returns an entity_id immediately (the mutation is applied
+  in the same tick).
 - Can register new commands (extending the command vocabulary)
 - Provides texture synthesis primitives (noise, blend, warp, etc.)
-- Supports coroutines for multi-frame operations (e.g., animated generation)
+- Supports **instruction-limited execution**: long scripts are budgeted N
+  instructions per tick via `lua_sethook`. When the budget is exhausted, the
+  Lua coroutine yields and resumes on the next tick's drain phase. This avoids
+  blocking the simulation while supporting multi-frame generation scripts.
+
+**Concurrency model:** scripts do NOT run on fibers. The Lua call stack lives
+on the main thread's C stack. Lua's `coroutine.yield()` suspends the Lua state
+(not the OS/fiber stack), and the tick loop resumes it next frame. This avoids
+the hazardous interaction between Lua coroutines and fiber context switching.
 
 ### 2.6 Level Serialization
 
@@ -337,9 +376,10 @@ TCP, newline-delimited JSON messages.
 
 ### 5.2 Client State Protocol (Controller ↔ Client)
 
-TCP, newline-delimited JSON. Read-only queries + cursor movement commands.
+TCP, newline-delimited JSON. Bidirectional: queries from controller, events
+pushed from client.
 
-**Query:**
+**Query (controller → client):**
 ```json
 {"query": "cursor"}
 ```
@@ -351,18 +391,32 @@ TCP, newline-delimited JSON. Read-only queries + cursor movement commands.
 **Command (controller → client):**
 ```json
 {"cmd": "set_cursor", "pos": [10, 0, 5]}
+{"cmd": "set_camera", "mode": "front"}
+{"cmd": "set_camera", "pos": [0,10,-20], "target": [0,0,0]}
 ```
+
+**Event (client → controller, pushed):**
+```json
+{"event": "cursor_moved", "pos": [10.0, 0.0, 5.0], "source": "mouse"}
+{"event": "entity_clicked", "entity": "ent_042", "pos": [10.0, 0.5, 5.0]}
+{"event": "context_menu", "pos": [10.0, 0.5, 5.0], "entity": "ent_042"}
+{"event": "box_select", "entities": ["ent_042", "ent_043", "ent_044"]}
+```
+
+The client **pushes events** to the controller whenever the user interacts
+with the viewport (mouse clicks, box select, etc.). This eliminates the
+need for polling and ensures the controller has up-to-date state after
+mouse-driven interactions.
 
 ### 5.3 Asset Download Protocol (Client ↔ Server)
 
-TCP, binary.
+TCP, binary. No application-level chunking — TCP provides reliable ordered
+byte stream delivery, so the client reads `total_len` bytes after the header.
 
 ```
 [REQ]  asset_path_len:u16 LE | asset_path:utf8
-[RESP] status:u8 | total_len:u32 LE | data:bytes
+[RESP] status:u8 | total_len:u32 LE | data:bytes (total_len bytes)
 ```
-
-Chunked transfer for large assets (chunk size = 64KB).
 
 ---
 
@@ -429,16 +483,31 @@ Available to scripts:
 
 | Existing Module | Editor Extension |
 |----------------|------------------|
-| `phys_world_t` | `editor_spawn_entity()` creates bodies; `editor_set_position()` teleports |
-| `fr_server_net_runtime_t` | Edit socket fiber joins the net job system |
+| `phys_world_t` | `editor_spawn_entity()` enqueues body creation; drained between ticks |
+| `fr_server_net_runtime_t` | Editor creates its own `editor_ctx_t` holding a reference to the runtime (not extending it) |
 | ECS (`src/ecs/`) | Editor components: `editor_name_t`, `editor_prefab_ref_t` |
-| Fiber job system | Script runtime fiber, edit socket fiber |
+| Fiber job system | Texture synthesis jobs parallelized across workers |
 | Snapshot replication | New entities replicate normally after spawn |
+| Net pump thread | Editor adds a **dedicated editor I/O thread** for TCP (does not share the UDP pump thread) |
 
 ### 7.2 Client-Side
 
 | Existing Module | Editor Extension |
 |----------------|------------------|
+| SDL2 + OpenGL renderer | 3D cursor rendering, gizmos, grid overlay, selection highlight |
+| Pose interpolator | Works as-is for editor-spawned entities |
+| Video capture | Useful for recording editor sessions |
+| Input handling | Editor mode keybindings (cursor movement, camera) |
+
+**New client-side modules:**
+
+| Module | Description |
+|--------|-------------|
+| Client state socket | TCP listener for controller connection; handles queries + push events |
+| Selection state | Tracks selected entity set; renders highlight (tint or outline) |
+| Asset preview | Renders mesh/texture/material preview near cursor |
+| Editor camera | Additional camera modes (front/right/top/ortho), camera commands |
+| Editor input | Mouse raycast, click-to-select, box-select, context menu trigger |
 | SDL2 + OpenGL renderer | 3D cursor rendering, gizmos, grid overlay, selection highlight |
 | Pose interpolator | Works as-is for editor-spawned entities |
 | Video capture | Useful for recording editor sessions |

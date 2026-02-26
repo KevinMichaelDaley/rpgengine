@@ -62,15 +62,18 @@ interface that rewards expertise with speed.
 
 ### 3.1 Input Modes
 
-The editor has two input modes, toggled with **Escape** and **:** (colon):
+The editor has several input modes:
 
 | Mode | Description |
 |------|-------------|
-| **Normal** | Keyboard shortcuts active. Keys map to commands (e.g., `x` = delete, `g` = grab/move). |
+| **Normal** | Keyboard shortcuts active. Keys map to commands (e.g., `x` = delete, `g` = grab/move). Vim-style numeric prefixes supported (e.g., `5l` = move 5 units). |
 | **Command** | Command-line focused. Type commands directly. Enter to execute, Escape to cancel. |
+| **REPL** | Lua REPL mode. `lua>` prompt for interactive scripting. Exit with `exit()` or Ctrl+D. |
+| **Grab** | Entity grab mode. Cursor keys move the grabbed entity. Enter to confirm, Escape to cancel. |
+| **Context** | Context menu overlay. Only listed shortcut keys active. Escape to dismiss. |
 
 Entering `:` from Normal mode switches to Command mode (like Vim).
-Pressing Escape from Command mode returns to Normal mode.
+Pressing Escape from any mode returns to Normal mode.
 
 ### 3.2 Tab Completion
 
@@ -100,6 +103,27 @@ Tab completion works on all arguments:
 
 Tab cycles forward; Shift+Tab cycles backward. A popup shows all candidates
 when there are ≤ 20 matches.
+
+**Async tab-completion:** for server-sourced completions (asset paths, entity
+IDs, component names), the request is asynchronous. While waiting for the
+server response, the command-line shows a `[...]` loading indicator after
+the cursor. If the user types more characters before the response arrives,
+the stale response is discarded and a new request is issued automatically.
+
+### 3.3 Browse Result References
+
+The `browse` command numbers its results. These numbers can be used as
+shorthand in subsequent commands using `#N` syntax:
+
+```
+:browse assets/meshes/
+  [1] pillar.glb    [2] wall_section.glb    [3] barrel.glb
+
+:spawn mesh #2                # equivalent to: spawn mesh assets/meshes/wall_section.glb
+:material set wall albedo #1  # equivalent to: material set wall albedo assets/meshes/pillar.glb
+```
+
+References are valid until the next `browse` command replaces them.
 
 ### 3.3 Command History
 
@@ -155,7 +179,7 @@ Numeric prefix works like Vim: `5l` moves cursor +5X grid units.
   (snapped to grid if snap enabled)
 - **Middle drag**: orbit camera around cursor
 - **Scroll**: zoom toward/away from cursor
-- **Right click**: context menu (spawn, select, properties)
+- **Right click**: open context menu in TUI (see §4.5)
 
 ### 4.4 Cursor Commands
 
@@ -164,7 +188,36 @@ Numeric prefix works like Vim: `5l` moves cursor +5X grid units.
 :cursor +0 +1 +0        # relative move (up 1 unit)
 :grid 0.5               # set grid size to 0.5 units
 :snap on|off|toggle      # grid snapping
+:camera front            # align camera to -Z looking at cursor
+:camera right            # align camera to +X looking at cursor
+:camera top              # align camera to -Y looking at cursor
+:camera ortho            # toggle orthographic projection
+:camera pos 10 5 -10     # set camera position explicitly
 ```
+
+Camera commands are sent to the client via the client state socket (the
+server does not manage camera state — it is purely a view concern).
+
+### 4.5 Context Menu
+
+Right-clicking in the viewport sends a `context_menu` event to the
+controller via the client state socket, along with the clicked position
+and entity (if any). The controller displays a modal overlay in the TUI:
+
+```
+┌─ Context ──────────┐
+│ [s] Spawn here     │
+│ [p] Properties     │
+│ [d] Delete         │
+│ [g] Grab           │
+│ [m] Assign material│
+│ [Esc] Cancel       │
+└────────────────────┘
+```
+
+The context menu is a modal mode: only the listed keys are active.
+Pressing any listed key executes the command and returns to Normal mode.
+Escape dismisses the menu without action.
 
 ---
 
@@ -206,6 +259,12 @@ Or via command: `:spawn box 2 2 2`
 3. Use cursor keys to move — entity follows cursor in real-time
 4. Press Enter to confirm, Escape to cancel (revert to original position)
 5. Axis constraint: press `x`/`y`/`z` after `g` to lock to axis
+
+**Latency note:** the client does not wait for the server during grab mode.
+It provisionally repositions the entity locally for zero-latency visual
+feedback. Only the final confirmed position is sent to the server as a
+`move` command (see design §4.5). If the server rejects the move (e.g.,
+out of bounds), the entity snaps back to its last authoritative position.
 
 ### 5.4 Multi-Select Operations
 
@@ -325,7 +384,10 @@ During synthesis (interactive or scripted), intermediate results are:
 
 ### 8.2 REPL Mode
 
-In REPL mode, the command-line becomes a Lua prompt:
+In REPL mode, the command-line becomes a Lua prompt. The server detects
+incomplete input (e.g., an unclosed `function` block) using `luaL_loadstring`
+and returns `"status": "incomplete"`. The controller then shows a `...>`
+continuation prompt.
 
 ```
 lua> for i = 1, 10 do
@@ -339,6 +401,14 @@ lua> t:bake("test_tex", "assets/meshes/floor.glb")
 
 lua> exit()    -- or Ctrl+D to leave REPL
 ```
+
+Multi-line accumulation: the controller accumulates lines locally while
+in continuation mode. When the server returns `"status": "ok"` or
+`"status": "error"`, the accumulated input is cleared and the prompt
+returns to `lua>`.
+
+**Error display:** syntax errors appear in red in the log area, with the
+offending line number highlighted. Runtime errors show a traceback.
 
 ### 8.3 Script API
 
