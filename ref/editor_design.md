@@ -567,16 +567,17 @@ editor_undo(ctx);
 
 ## 6. Script Runtime
 
-### 6.1 Lua Integration
+### 6.1 LuaJIT Integration
 
-Lua 5.4 is embedded as a static library. The runtime runs exclusively on
-the **main tick thread** during command drain (Stage 1 of the server tick).
-It never runs on fibers — this avoids the Lua coroutine / fiber stack
-incompatibility (see spec §2.5).
+LuaJIT 2.1 is embedded as a static library. It provides Lua 5.1 semantics
+with a JIT compiler and FFI, giving near-C performance for procedural
+generation scripts. The runtime runs exclusively on the **main tick thread**
+during command drain (Stage 1 of the server tick). It never runs on fibers —
+this avoids the Lua coroutine / fiber stack incompatibility (see spec §2.5).
 
 ```c
 typedef struct script_runtime {
-    lua_State *L;               /* Lua state */
+    lua_State *L;               /* LuaJIT state */
     editor_ctx_t *editor;       /* back-pointer to editor context */
     uint32_t instruction_budget; /* max Lua VM instructions per tick (default 100K) */
     uint32_t instructions_used; /* instructions consumed this tick */
@@ -687,7 +688,7 @@ static int l_spawn_box_(lua_State *L) {
 - Scripts run in a sandboxed Lua state (no `os.execute`, `io`, `loadlib`)
 - Memory limit enforced via custom allocator (arena-backed, 8 MB default)
 - Instruction count limit prevents blocking the tick (via `lua_sethook`)
-- Scripts cannot directly access C pointers
+- Scripts cannot directly access C pointers (FFI is disabled in sandbox)
 - Multi-frame scripts must explicitly yield; budget hook forces yield if not
 
 ---
@@ -767,8 +768,10 @@ job workers.
 
 ### 8.1 Protocol
 
-MCP uses **JSON-RPC 2.0** over stdio (when the controller is launched as an
-MCP subprocess) or over TCP (when running as a standalone MCP endpoint).
+MCP uses **JSON-RPC 2.0** over a dedicated **TCP socket**. The controller
+listens on a configurable MCP port (default 9300). AI agents connect over
+TCP, enabling the agent to run on a different machine from the controller,
+client, and server.
 
 The controller process acts as the MCP server. It translates MCP tool calls
 into edit protocol commands and MCP resource reads into state queries.
@@ -776,21 +779,21 @@ into edit protocol commands and MCP resource reads into state queries.
 ### 8.2 Architecture
 
 ```
-AI Agent (Claude/etc)
+AI Agent (Claude/etc)                          (can be on any machine)
     │
-    │  JSON-RPC 2.0 (stdio or TCP)
+    │  JSON-RPC 2.0 over TCP (port 9300)
     │
     ▼
-MCP Server (inside controller process)
+MCP Server (inside controller process)         (can be on any machine)
     │
-    ├── Tool call → edit protocol command → Server
+    ├── Tool call → edit protocol command → Server  (can be on any machine)
     │                                         │
     │                                         ▼
     │                               (executes command)
     │                                         │
     │ ◄── response ──────────────────────────┘
     │
-    ├── Resource read → client state query → Client
+    ├── Resource read → client state query → Client  (can be on any machine)
     │                                         │
     │ ◄── cursor/camera/selection ───────────┘
     │
@@ -799,7 +802,45 @@ MCP Server (inside controller process)
         ◄── asset list ───────────────────────┘
 ```
 
-### 8.3 Tool Mapping
+All four processes (server, client, controller, AI agent) communicate over
+TCP and can run on separate machines. The controller needs network addresses
+for both the server and client, and the AI agent needs the controller's MCP
+address. Typical distributed setup:
+
+```
+# On machine A (headless, beefy):
+editor_server --port 9100
+
+# On machine B (has GPU + display):
+editor_client --server a.local:9100 --state-port 9200
+
+# On machine C (terminal):
+editor_ctrl --server a.local:9100 --client b.local:9200 --mcp-port 9300
+
+# On machine D (AI workstation):
+ai_agent --mcp c.local:9300
+```
+
+### 8.3 MCP TCP Listener
+
+The MCP listener runs on the controller's poll loop (same as keyboard and
+other socket I/O — the controller is single-threaded with `poll()`):
+
+```c
+typedef struct mcp_server {
+    int listen_fd;              /* TCP listen socket for MCP */
+    int client_fd;              /* connected AI agent (-1 if none) */
+    char recv_buf[MCP_BUF_SIZE]; /* partial JSON-RPC message buffer */
+    uint32_t recv_len;
+    uint16_t port;              /* MCP listen port */
+} mcp_server_t;
+```
+
+Messages are newline-delimited JSON-RPC 2.0. The controller reads lines
+from the MCP socket, parses them, dispatches to tool/resource handlers,
+and writes JSON-RPC responses back on the same socket.
+
+### 8.4 Tool Mapping
 
 Each editor command maps to an MCP tool:
 
@@ -833,7 +874,7 @@ static const mcp_tool_def_t g_tools[] = {
 };
 ```
 
-### 8.4 Resource Mapping
+### 8.5 Resource Mapping
 
 ```c
 static const mcp_resource_def_t g_resources[] = {
@@ -1019,9 +1060,9 @@ Usage: `spawn #2` expands to `spawn stone_wall` using the cached browse list.
 ### 10.1 Makefile Targets
 
 ```makefile
-# Editor server (server + editor extensions + Lua)
-build/editor_server: $(SERVER_OBJS) $(EDITOR_SERVER_OBJS) $(LUA_OBJS)
-	$(CC) $(CFLAGS) -DEDITOR_ENABLE -DLUA_ENABLE -o $@ $^ $(LDFLAGS)
+# Editor server (server + editor extensions + LuaJIT)
+build/editor_server: $(SERVER_OBJS) $(EDITOR_SERVER_OBJS) $(LUAJIT_LIB)
+	$(CC) $(CFLAGS) -DEDITOR_ENABLE -DLUAJIT_ENABLE -o $@ $^ $(LUAJIT_LDFLAGS) $(LDFLAGS)
 
 # Editor client (client + editor mode)
 build/editor_client: $(CLIENT_OBJS) $(EDITOR_CLIENT_OBJS)
@@ -1032,16 +1073,20 @@ build/editor_ctrl: $(CTRL_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 ```
 
-### 10.2 Lua Integration
+### 10.2 LuaJIT Integration
 
-Lua 5.4 is built from source as part of the project (in `third_party/lua/`).
+LuaJIT 2.1 is built from source as part of the project (in `third_party/luajit/`).
 This avoids system dependency issues and keeps the build self-contained.
 
 ```makefile
-LUA_DIR = third_party/lua
-LUA_SRCS = $(wildcard $(LUA_DIR)/*.c)
-LUA_SRCS := $(filter-out $(LUA_DIR)/lua.c $(LUA_DIR)/luac.c, $(LUA_SRCS))
-LUA_OBJS = $(LUA_SRCS:.c=.o)
+LUAJIT_DIR = third_party/luajit/src
+LUAJIT_LIB = $(LUAJIT_DIR)/libluajit.a
+
+$(LUAJIT_LIB):
+	$(MAKE) -C $(LUAJIT_DIR) BUILDMODE=static CC=$(CC)
+
+# Link against libluajit.a + libm + libdl
+LUAJIT_LDFLAGS = -L$(LUAJIT_DIR) -lluajit -lm -ldl
 ```
 
 ---
@@ -1144,7 +1189,7 @@ arrive at <100/sec and never block rendering.
 - [ ] Clone command
 
 ### Phase 3: Scripting
-- [ ] Lua 5.4 integration (third_party/lua/)
+- [ ] LuaJIT 2.1 integration (third_party/luajit/)
 - [ ] Script runtime on main tick thread (instruction-budgeted)
 - [ ] Entity manipulation API bindings (deferred execution)
 - [ ] Math/vec3/quat bindings
@@ -1160,7 +1205,7 @@ arrive at <100/sec and never block rendering.
 - [ ] Lua texture API
 
 ### Phase 5: Polish & MCP
-- [ ] MCP server in controller (JSON-RPC over stdio)
+- [ ] MCP server in controller (JSON-RPC 2.0 over TCP, port 9300)
 - [ ] Full keybinding system (bind/unbind, save/load keymaps)
 - [ ] Grab mode (client-side provisional positioning for real-time feel)
 - [ ] Grid/snap refinement

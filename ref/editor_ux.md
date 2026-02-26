@@ -385,7 +385,7 @@ During synthesis (interactive or scripted), intermediate results are:
 ### 8.2 REPL Mode
 
 In REPL mode, the command-line becomes a Lua prompt. The server detects
-incomplete input (e.g., an unclosed `function` block) using `luaL_loadstring`
+incomplete input (e.g., an unclosed `function` block) using `luaL_loadstring()`
 and returns `"status": "incomplete"`. The controller then shows a `...>`
 continuation prompt.
 

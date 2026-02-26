@@ -115,9 +115,9 @@ Assets are referenced by **path relative to project root** (e.g.,
 - **Import** from external files (copy + register)
 - **Procedural creation** via scripts (texture synthesis, mesh generation)
 
-**Scripting language: Lua 5.4** — selected for minimal footprint, fast
-embedding, well-understood coroutine model, and broad tooling ecosystem.
-Built from source in `third_party/lua/`.
+**Scripting language: LuaJIT 2.1** — selected for near-C performance via JIT
+compilation, minimal footprint, well-understood coroutine model, and FFI for
+advanced users. Built from source in `third_party/luajit/`.
 
 ### 2.3 Asset Downloader (TCP)
 
@@ -180,8 +180,8 @@ records the inverse operation for undo.
 
 ### 2.5 Script Runtime
 
-Lua 5.4 is the embedded scripting language for procedural generation and
-automation. Built from source in `third_party/lua/`.
+LuaJIT 2.1 is the embedded scripting language for procedural generation and
+automation. Built from source in `third_party/luajit/`.
 
 The script runtime:
 - Runs on the **main tick thread** (not on a fiber) — Lua executes during the
@@ -200,6 +200,10 @@ The script runtime:
 on the main thread's C stack. Lua's `coroutine.yield()` suspends the Lua state
 (not the OS/fiber stack), and the tick loop resumes it next frame. This avoids
 the hazardous interaction between Lua coroutines and fiber context switching.
+
+**FFI restriction:** LuaJIT's FFI library is disabled in the sandbox to prevent
+scripts from accessing arbitrary memory. All C↔Lua interaction goes through
+the registered API functions.
 
 ### 2.6 Level Serialization
 
@@ -340,7 +344,9 @@ are loaded from a config file (`editor.conf`).
 ### 4.5 MCP Server
 
 The controller hosts an **MCP (Model Context Protocol) server** on a
-configurable port. This allows an AI agent (e.g., Claude, GPT) to:
+dedicated TCP socket (default port 9300). JSON-RPC 2.0 over TCP — never
+stdio. This allows an AI agent (e.g., Claude, GPT) to connect from any
+machine on the network and:
 
 - Send any command from the command vocabulary
 - Read world state (entity list, properties, cursor position)
@@ -350,6 +356,10 @@ configurable port. This allows an AI agent (e.g., Claude, GPT) to:
 
 The MCP server exposes **tools** that map 1:1 to the command vocabulary, plus
 **resources** for world state queries.
+
+All four processes (server, client, controller, AI agent) communicate over
+TCP and can run on separate machines. The controller needs network addresses
+for both the server and client; the AI agent needs the controller's MCP port.
 
 ---
 
@@ -524,7 +534,7 @@ Available to scripts:
 | Texture synthesis | `src/editor/texsynth/` | Noise generators, blending, bake |
 | Undo system | `src/editor/undo/` | Command stack, inverse operations |
 | Controller TUI | `src/editor/controller/` | Terminal UI, command-line, keybinds |
-| MCP server | `src/editor/mcp/` | JSON-RPC over stdio/TCP for AI agents |
+| MCP server | `src/editor/mcp/` | JSON-RPC 2.0 over TCP for AI agents |
 | Level serialization | `src/editor/level/` | JSON save/load |
 | 3D cursor | `src/editor/cursor/` | Client-side cursor + sync |
 
@@ -548,7 +558,7 @@ make editor
 
 Compile flags:
 - `EDITOR_ENABLE` — gates editor code in server/client
-- `LUA_ENABLE` — gates Lua runtime (optional; editor works without scripts
+- `LUAJIT_ENABLE` — gates LuaJIT runtime (optional; editor works without scripts
   but procedural features require it)
 
 ---
