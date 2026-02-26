@@ -1,6 +1,6 @@
 ---
 id: rpg-pf3x
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-26T04:26:35Z
