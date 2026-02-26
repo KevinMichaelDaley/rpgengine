@@ -119,6 +119,17 @@ uint32_t editor_tick_drain(editor_ctx_t *ctx);
  */
 void editor_ctx_set_bridge(editor_ctx_t *ctx, edit_physics_bridge_t *bridge);
 
+/**
+ * @brief Attach a physics simulation controller to the editor.
+ *
+ * Enables physics_pause/resume/step/reset commands.
+ * Pass NULL to disable physics control (default).
+ *
+ * @param ctx      Editor context.
+ * @param physics  Physics controller (caller owns memory, must outlive ctx).
+ */
+void editor_ctx_set_physics(editor_ctx_t *ctx, struct edit_physics_ctrl *physics);
+
 #ifdef __cplusplus
 }
 #endif

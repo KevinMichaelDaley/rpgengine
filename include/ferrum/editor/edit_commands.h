@@ -82,6 +82,22 @@ bool cmd_delete_id(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_move_id(edit_dispatch_t *d, const json_value_t *args,
                  json_value_t *result, json_arena_t *arena);
 
+/** @brief Pause physics simulation. Args: {} (none). */
+bool cmd_physics_pause(edit_dispatch_t *d, const json_value_t *args,
+                       json_value_t *result, json_arena_t *arena);
+
+/** @brief Resume physics simulation. Args: {} (none). */
+bool cmd_physics_resume(edit_dispatch_t *d, const json_value_t *args,
+                        json_value_t *result, json_arena_t *arena);
+
+/** @brief Advance one physics tick (only while paused). Args: {} (none). */
+bool cmd_physics_step(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief Reset physics (zero velocities, pause). Args: {} (none). */
+bool cmd_physics_reset(edit_dispatch_t *d, const json_value_t *args,
+                       json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

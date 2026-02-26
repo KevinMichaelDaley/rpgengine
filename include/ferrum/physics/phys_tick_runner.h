@@ -32,6 +32,7 @@
 #define FERRUM_PHYSICS_PHYS_TICK_RUNNER_H
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
 
@@ -91,6 +92,14 @@ typedef struct phys_tick_runner {
 
     /** Stop flag — main thread sets to 1, thread exits on next iteration. */
     atomic_int stop_requested;
+
+    /** Pause flag — when 1, thread still runs but skips physics ticks.
+     *  Commands are still drained so spawns/moves work while paused. */
+    atomic_int paused;
+
+    /** Single-step counter — when paused, if > 0 the thread runs one
+     *  tick and decrements.  Set by phys_tick_runner_step_once(). */
+    atomic_int step_requested;
 
     /** Set to 1 by the thread when it has exited its loop. */
     atomic_int stopped;
@@ -179,6 +188,46 @@ uint64_t phys_tick_runner_last_tick_ns(const phys_tick_runner_t *r);
  * @return Wall-clock completion time of the last tick in milliseconds.
  */
 uint64_t phys_tick_runner_last_tick_completion_ms(const phys_tick_runner_t *r);
+
+/* ── Pause / Resume / Step API ──────────────────────────────────────── */
+
+/**
+ * @brief Pause the physics simulation.
+ *
+ * The tick thread continues running but skips physics ticks.
+ * Commands (spawns, moves) are still drained while paused.
+ * Idempotent — calling on an already-paused runner is a no-op.
+ *
+ * @param r  Runner (NULL-safe, no-op).
+ */
+void phys_tick_runner_pause(phys_tick_runner_t *r);
+
+/**
+ * @brief Resume the physics simulation.
+ *
+ * Idempotent — calling on an already-running runner is a no-op.
+ *
+ * @param r  Runner (NULL-safe, no-op).
+ */
+void phys_tick_runner_resume(phys_tick_runner_t *r);
+
+/**
+ * @brief Advance exactly one physics tick while paused.
+ *
+ * Has no effect if the runner is not paused.  The tick thread will
+ * execute one tick and then return to the paused state.
+ *
+ * @param r  Runner (NULL-safe, no-op).
+ */
+void phys_tick_runner_step_once(phys_tick_runner_t *r);
+
+/**
+ * @brief Query whether the runner is currently paused.
+ *
+ * @param r  Runner (NULL-safe, returns false).
+ * @return true if paused, false if running or NULL.
+ */
+bool phys_tick_runner_is_paused(const phys_tick_runner_t *r);
 
 /* ── Backward compatibility (kick/done/consume API) ─────────────── */
 /* These thin wrappers exist so existing callers don't break.

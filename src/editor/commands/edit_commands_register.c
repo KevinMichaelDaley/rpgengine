@@ -20,4 +20,8 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "deselect_all", cmd_deselect_all);
     edit_dispatch_register(dispatch, "delete_id",    cmd_delete_id);
     edit_dispatch_register(dispatch, "move_id",      cmd_move_id);
+    edit_dispatch_register(dispatch, "physics_pause",  cmd_physics_pause);
+    edit_dispatch_register(dispatch, "physics_resume", cmd_physics_resume);
+    edit_dispatch_register(dispatch, "physics_step",   cmd_physics_step);
+    edit_dispatch_register(dispatch, "physics_reset",  cmd_physics_reset);
 }

@@ -21,6 +21,7 @@ struct edit_entity_store;
 struct edit_selection;
 struct edit_undo_stack;
 struct edit_entity;
+struct edit_physics_ctrl;
 
 /* ------------------------------------------------------------------------ */
 /* Physics bridge callback                                                   */
@@ -91,10 +92,11 @@ typedef enum edit_cmd_type {
  * Stored as dispatch->user_data. Handlers cast user_data to this type.
  */
 typedef struct edit_cmd_ctx {
-    struct edit_entity_store *entities;   /**< Entity storage. */
-    struct edit_selection    *selection;  /**< Current selection set. */
-    struct edit_undo_stack   *undo;      /**< Undo/redo stack. */
-    edit_physics_bridge_t   *bridge;     /**< Physics bridge (NULL = no-op). */
+    struct edit_entity_store  *entities;   /**< Entity storage. */
+    struct edit_selection     *selection;  /**< Current selection set. */
+    struct edit_undo_stack    *undo;      /**< Undo/redo stack. */
+    edit_physics_bridge_t    *bridge;     /**< Physics bridge (NULL = no-op). */
+    struct edit_physics_ctrl *physics;    /**< Physics sim control (NULL = no-op). */
 } edit_cmd_ctx_t;
 
 #ifdef __cplusplus

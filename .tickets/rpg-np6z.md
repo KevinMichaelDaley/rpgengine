@@ -1,6 +1,6 @@
 ---
 id: rpg-np6z
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-26T16:02:31Z

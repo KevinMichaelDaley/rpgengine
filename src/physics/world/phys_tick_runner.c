@@ -135,10 +135,30 @@ static void *tick_thread_fn_(void *user_data) {
             r->world->dt_override = 0.0f;
         }
 
-        /* Drain spawns/mutations before tick. */
+        /* Drain spawns/mutations before tick (always, even when paused). */
         if (r->cmd_channel) {
             phys_cmd_drain(r->world, r->cmd_channel,
                            r->spawn_cb, r->spawn_cb_user);
+        }
+
+        /* Check pause state: skip physics tick if paused and no step
+         * was requested.  Commands are still drained above so spawns
+         * and teleports work while the simulation is frozen. */
+        int is_paused = atomic_load_explicit(&r->paused,
+                                              memory_order_acquire);
+        if (is_paused) {
+            int steps = atomic_load_explicit(&r->step_requested,
+                                              memory_order_acquire);
+            if (steps <= 0) {
+                /* Paused with no step — sleep briefly to avoid busy-wait. */
+                struct timespec pause_sleep = { .tv_sec = 0,
+                                                .tv_nsec = 1000000 }; /* 1 ms */
+                nanosleep(&pause_sleep, NULL);
+                continue;
+            }
+            /* Consume one step request. */
+            atomic_fetch_sub_explicit(&r->step_requested, 1,
+                                      memory_order_release);
         }
 
         /* Run one physics tick (dispatches parallel jobs to workers). */
@@ -195,6 +215,8 @@ void phys_tick_runner_init(phys_tick_runner_t *r,
 
     atomic_init(&r->completed_ticks, 0);
     atomic_init(&r->stop_requested, 0);
+    atomic_init(&r->paused, 0);
+    atomic_init(&r->step_requested, 0);
     atomic_init(&r->stopped, 0);
     r->running = 0;
 }

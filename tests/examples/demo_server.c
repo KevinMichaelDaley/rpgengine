@@ -47,6 +47,7 @@
 #include "ferrum/net/snapshot_chunk.h"
 
 #include "ferrum/editor/editor_ctx.h"
+#include "ferrum/editor/edit_physics_ctrl.h"
 
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
@@ -149,6 +150,7 @@ struct demo_ctx {
     /* Editor integration */
     editor_ctx_t                        editor;
     edit_physics_bridge_t               editor_bridge;
+    edit_physics_ctrl_t                 physics_ctrl;
     uint16_t                            edit_port;
 
     /* Cached client addresses for raw UDP sends from physics thread. */
@@ -232,6 +234,46 @@ static void bridge_on_move_(void *user_data, uint32_t entity_id,
         phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_POSITION,
                       &setpos, sizeof(setpos));
     }
+}
+
+/* ── Physics simulation control callbacks ─────────────────────────── */
+
+/** @brief Pause the physics tick runner. */
+static void ctrl_on_pause_(void *user_data) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    phys_tick_runner_pause(&ctx->tick_runner);
+    printf("[server] physics paused\n");
+}
+
+/** @brief Resume the physics tick runner. */
+static void ctrl_on_resume_(void *user_data) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    phys_tick_runner_resume(&ctx->tick_runner);
+    printf("[server] physics resumed\n");
+}
+
+/** @brief Step exactly one physics tick while paused. */
+static void ctrl_on_step_(void *user_data) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    phys_tick_runner_step_once(&ctx->tick_runner);
+}
+
+/** @brief Reset physics — zero all velocities. */
+static void ctrl_on_reset_(void *user_data) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    phys_body_pool_t *pool = &ctx->world.body_pool;
+    for (uint32_t i = 0; i < pool->count; i++) {
+        phys_body_t *b = &pool->bodies_next[i];
+        b->linear_vel  = (phys_vec3_t){0, 0, 0};
+        b->angular_vel = (phys_vec3_t){0, 0, 0};
+    }
+    printf("[server] physics reset (velocities zeroed)\n");
+}
+
+/** @brief Query whether physics is paused. */
+static bool ctrl_is_paused_(void *user_data) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    return phys_tick_runner_is_paused(&ctx->tick_runner);
 }
 
 static uint64_t now_ms(void) {
@@ -804,7 +846,22 @@ int main(int argc, char **argv) {
             .user_data = &ctx,
         };
         editor_ctx_set_bridge(&ctx.editor, &ctx.editor_bridge);
-        printf("[server] editor listening on port %u\n",
+
+        /* Wire physics simulation control. */
+        ctx.physics_ctrl = (edit_physics_ctrl_t){
+            .on_pause  = ctrl_on_pause_,
+            .on_resume = ctrl_on_resume_,
+            .on_step   = ctrl_on_step_,
+            .on_reset  = ctrl_on_reset_,
+            .is_paused = ctrl_is_paused_,
+            .user_data = &ctx,
+        };
+        editor_ctx_set_physics(&ctx.editor, &ctx.physics_ctrl);
+
+        /* Start physics paused in editor mode. */
+        phys_tick_runner_pause(&ctx.tick_runner);
+
+        printf("[server] editor listening on port %u (physics paused)\n",
                ctx.editor.io_thread.port);
     }
 
