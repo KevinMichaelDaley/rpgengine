@@ -12,4 +12,6 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "move",   cmd_move);
     edit_dispatch_register(dispatch, "rotate", cmd_rotate);
     edit_dispatch_register(dispatch, "scale",  cmd_scale);
+    edit_dispatch_register(dispatch, "save",   cmd_save);
+    edit_dispatch_register(dispatch, "load",   cmd_load);
 }

@@ -1,6 +1,6 @@
 ---
 id: rpg-8pvq
-status: open
+status: closed
 deps: [rpg-00d1, rpg-ssj2, rpg-6auf]
 links: []
 created: 2026-02-26T04:26:35Z
