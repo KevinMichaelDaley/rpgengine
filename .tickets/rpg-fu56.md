@@ -1,6 +1,6 @@
 ---
 id: rpg-fu56
-status: open
+status: closed
 deps: [rpg-95es, rpg-ssj2, rpg-nkhw, rpg-3p7n]
 links: []
 created: 2026-02-26T04:26:35Z
