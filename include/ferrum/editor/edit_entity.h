@@ -1,0 +1,136 @@
+/**
+ * @file edit_entity.h
+ * @brief Editor entity storage.
+ *
+ * Simple flat-array entity store for the editor. Each entity has position,
+ * rotation (euler), scale, and a type tag. Entities are addressed by ID
+ * (array index). Inactive slots can be reclaimed by create().
+ *
+ * Thread safety: only mutated from the main tick thread during drain.
+ */
+#ifndef FERRUM_EDITOR_EDIT_ENTITY_H
+#define FERRUM_EDITOR_EDIT_ENTITY_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/* ------------------------------------------------------------------------ */
+/* Constants                                                                 */
+/* ------------------------------------------------------------------------ */
+
+#define EDIT_ENTITY_TYPE_BOX     0
+#define EDIT_ENTITY_TYPE_SPHERE  1
+#define EDIT_ENTITY_INVALID_ID   UINT32_MAX
+
+/* ------------------------------------------------------------------------ */
+/* Types                                                                     */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * @brief A single editor entity.
+ */
+typedef struct edit_entity {
+    float    pos[3];       /**< World position. */
+    float    rot[3];       /**< Euler rotation in degrees (pitch, yaw, roll). */
+    float    scale[3];     /**< Per-axis scale factors. */
+    uint32_t type;         /**< Entity type (EDIT_ENTITY_TYPE_*). */
+    bool     active;       /**< Whether this slot is in use. */
+} edit_entity_t;
+
+/**
+ * @brief Flat-array entity store.
+ *
+ * Ownership: init() allocates, destroy() frees.
+ */
+typedef struct edit_entity_store {
+    edit_entity_t *entities;   /**< Array of entity slots. */
+    uint32_t       capacity;   /**< Total number of slots. */
+} edit_entity_store_t;
+
+/* ------------------------------------------------------------------------ */
+/* Lifecycle (edit_entity_store.c)                                           */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * @brief Initialize the entity store.
+ * @param store     Store to initialize.
+ * @param capacity  Maximum number of entities.
+ * @return true on success.
+ */
+bool edit_entity_store_init(edit_entity_store_t *store, uint32_t capacity);
+
+/**
+ * @brief Free all memory owned by the store.
+ * @param store  Store to destroy.
+ */
+void edit_entity_store_destroy(edit_entity_store_t *store);
+
+/**
+ * @brief Create a new entity. Finds the first inactive slot.
+ * @param store  Entity store.
+ * @param type   Entity type (EDIT_ENTITY_TYPE_*).
+ * @return Entity ID (slot index), or EDIT_ENTITY_INVALID_ID if full.
+ *
+ * The new entity is initialized with pos=(0,0,0), rot=(0,0,0), scale=(1,1,1).
+ */
+uint32_t edit_entity_store_create(edit_entity_store_t *store, uint32_t type);
+
+/**
+ * @brief Remove an entity (mark slot inactive).
+ * @param store  Entity store.
+ * @param id     Entity ID to remove.
+ * @return true if removed, false if already inactive or out of range.
+ */
+bool edit_entity_store_remove(edit_entity_store_t *store, uint32_t id);
+
+/* ------------------------------------------------------------------------ */
+/* Access (edit_entity_store_access.c)                                       */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * @brief Get a read-only pointer to an entity.
+ * @param store  Entity store.
+ * @param id     Entity ID.
+ * @return Pointer to entity, or NULL if inactive/out of range.
+ */
+const edit_entity_t *edit_entity_store_get(const edit_entity_store_t *store,
+                                            uint32_t id);
+
+/**
+ * @brief Get a mutable pointer to an entity.
+ * @param store  Entity store.
+ * @param id     Entity ID.
+ * @return Pointer to entity, or NULL if inactive/out of range.
+ */
+edit_entity_t *edit_entity_store_get_mut(edit_entity_store_t *store,
+                                          uint32_t id);
+
+/**
+ * @brief Restore a previously removed entity from a snapshot.
+ *
+ * Re-activates slot `id` with the given snapshot data. Used for undo of delete.
+ *
+ * @param store     Entity store.
+ * @param id        Slot to restore into.
+ * @param snapshot  Entity data to copy in.
+ * @return true on success, false if id out of range or slot already active.
+ */
+bool edit_entity_store_restore(edit_entity_store_t *store, uint32_t id,
+                                const edit_entity_t *snapshot);
+
+/**
+ * @brief Count active entities.
+ * @param store  Entity store.
+ * @return Number of active entities.
+ */
+uint32_t edit_entity_store_count(const edit_entity_store_t *store);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* FERRUM_EDITOR_EDIT_ENTITY_H */

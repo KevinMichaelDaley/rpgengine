@@ -1,6 +1,6 @@
 ---
 id: rpg-6auf
-status: open
+status: closed
 deps: [rpg-ssj2, rpg-3p7n, rpg-nkhw]
 links: []
 created: 2026-02-26T04:26:35Z
