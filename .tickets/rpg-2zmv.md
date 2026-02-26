@@ -1,6 +1,6 @@
 ---
 id: rpg-2zmv
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-26T04:26:35Z
