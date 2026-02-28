@@ -361,9 +361,17 @@ static void send_entity_refresh_(ctrl_conn_t *conn) {
  * @return true if the command was handled (even if no results).
  */
 static bool handle_find_(ctrl_tui_t *tui, const char *text) {
-    /* Parse: "find <category> [pattern]" */
-    if (strncmp(text, "find", 4) != 0) return false;
-    const char *p = text + 4;
+    /* Extract first word to check against 'find' or its alias 'f'. */
+    char first[16];
+    size_t fi = 0;
+    const char *tp = text;
+    while (*tp && *tp != ' ' && fi < sizeof(first) - 1) first[fi++] = *tp++;
+    first[fi] = '\0';
+
+    const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(first);
+    if (!def || strcmp(def->name, "find") != 0) return false;
+
+    const char *p = tp;
     while (*p == ' ') p++;
     if (*p == '\0') {
         ctrl_log_add(&tui->log, 0, "Usage: find <entities|types> [pattern]");
@@ -473,10 +481,16 @@ static bool handle_help_query_(ctrl_tui_t *tui, const char *text) {
         const ctrl_cmd_def_t *defs = ctrl_cmd_defs_table(&count);
         for (uint32_t i = 0; i < count; i++) {
             char line[256];
-            snprintf(line, sizeof(line), "  %-18s %s",
-                     defs[i].name, defs[i].help);
+            if (defs[i].alias) {
+                snprintf(line, sizeof(line), "  %-14s %-3s %s",
+                         defs[i].name, defs[i].alias, defs[i].help);
+            } else {
+                snprintf(line, sizeof(line), "  %-14s     %s",
+                         defs[i].name, defs[i].help);
+            }
             ctrl_log_add(&tui->log, 0, line);
         }
+        ctrl_log_add(&tui->log, 0, "  q/quit                Quit editor.");
         return true;
     }
 

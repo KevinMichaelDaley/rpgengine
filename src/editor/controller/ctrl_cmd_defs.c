@@ -16,120 +16,140 @@
 static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "spawn",
+        .alias   = "sp",
         .usage   = "spawn <type> [name] <x> <y> <z>",
         .help    = "Spawn entity. Optional name before position.",
         .arg_fmt = "s:type f3:pos",
     },
     {
         .name    = "delete",
+        .alias   = "del",
         .usage   = "delete",
         .help    = "Delete all selected entities.",
         .arg_fmt = NULL,
     },
     {
         .name    = "delete_id",
+        .alias   = "di",
         .usage   = "delete_id <id_or_name>",
         .help    = "Delete entity by ID or name.",
         .arg_fmt = "s:entity_id",
     },
     {
         .name    = "move",
+        .alias   = "mv",
         .usage   = "move <dx> <dy> <dz>",
         .help    = "Move selected entities by delta.",
         .arg_fmt = "f3:delta",
     },
     {
         .name    = "move_id",
+        .alias   = "mi",
         .usage   = "move_id <id_or_name> <dx> <dy> <dz>",
         .help    = "Move entity by ID or name with delta.",
         .arg_fmt = "s:entity_id f3:delta",
     },
     {
         .name    = "rotate",
+        .alias   = "rot",
         .usage   = "rotate <rx> <ry> <rz>",
         .help    = "Rotate selected entities by euler angles (degrees).",
         .arg_fmt = "f3:delta",
     },
     {
         .name    = "scale",
+        .alias   = "sc",
         .usage   = "scale <sx> <sy> <sz>",
         .help    = "Scale selected entities by factor.",
         .arg_fmt = "f3:factor",
     },
     {
         .name    = "select",
+        .alias   = "s",
         .usage   = "select <id_or_name> [toggle]",
         .help    = "Select entity by ID or name.",
         .arg_fmt = "s:entity_id",
     },
     {
         .name    = "deselect",
+        .alias   = "ds",
         .usage   = "deselect <id_or_name>",
         .help    = "Deselect entity by ID or name.",
         .arg_fmt = "s:entity_id",
     },
     {
         .name    = "select_all",
+        .alias   = "sa",
         .usage   = "select_all",
         .help    = "Select all active entities.",
         .arg_fmt = NULL,
     },
     {
         .name    = "deselect_all",
+        .alias   = "da",
         .usage   = "deselect_all",
         .help    = "Deselect all entities.",
         .arg_fmt = NULL,
     },
     {
         .name    = "save",
+        .alias   = "w",
         .usage   = "save <path>",
         .help    = "Save level to JSON file.",
         .arg_fmt = "s:path",
     },
     {
         .name    = "load",
+        .alias   = "ld",
         .usage   = "load <path>",
         .help    = "Load level from JSON file.",
         .arg_fmt = "s:path",
     },
     {
         .name    = "physics_pause",
+        .alias   = "pp",
         .usage   = "physics_pause",
         .help    = "Pause physics simulation (bodies freeze).",
         .arg_fmt = NULL,
     },
     {
         .name    = "physics_resume",
+        .alias   = "pr",
         .usage   = "physics_resume",
         .help    = "Resume physics simulation.",
         .arg_fmt = NULL,
     },
     {
         .name    = "physics_step",
+        .alias   = "ps",
         .usage   = "physics_step",
         .help    = "Advance one physics tick (only while paused).",
         .arg_fmt = NULL,
     },
     {
         .name    = "physics_reset",
+        .alias   = "px",
         .usage   = "physics_reset",
         .help    = "Zero all velocities and pause.",
         .arg_fmt = NULL,
     },
     {
         .name    = "list_types",
+        .alias   = "lt",
         .usage   = "list_types",
         .help    = "List available entity types for spawn.",
         .arg_fmt = NULL,
     },
     {
         .name    = "list_entities",
+        .alias   = "le",
         .usage   = "list_entities [pattern]",
         .help    = "List active entities. Optional regex filter on name.",
         .arg_fmt = "s:pattern",
     },
     {
         .name    = "find",
+        .alias   = "f",
         .usage   = "find <entities|types> [pattern]",
         .help    = "Search entities or types by regex pattern.",
         .arg_fmt = NULL,  /* Handled locally in TUI. */
@@ -150,6 +170,9 @@ const ctrl_cmd_def_t *ctrl_cmd_defs_find(const char *name) {
     if (!name) return NULL;
     for (uint32_t i = 0; i < s_def_count; i++) {
         if (strcmp(s_defs[i].name, name) == 0) {
+            return &s_defs[i];
+        }
+        if (s_defs[i].alias && strcmp(s_defs[i].alias, name) == 0) {
             return &s_defs[i];
         }
     }

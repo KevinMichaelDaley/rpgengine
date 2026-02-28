@@ -164,11 +164,14 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     /* Look up command definition. */
     const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(cmd_name);
 
+    /* Use the canonical command name for the JSON wire format. */
+    const char *wire_name = def ? def->name : cmd_name;
+
     /* Special handling for spawn: detect optional name between type and pos.
      * "spawn box 0 5 0"          → type=box, pos=[0,5,0]
      * "spawn box myname 0 5 0"   → type=box, name=myname, pos=[0,5,0] */
     char *name_token = NULL;
-    if (def && strcmp(cmd_name, "spawn") == 0 && token_count >= 3) {
+    if (def && strcmp(wire_name, "spawn") == 0 && token_count >= 3) {
         /* tokens[1]=type, check if tokens[2] is NOT a number → it's a name. */
         if (!looks_numeric_(tokens[2])) {
             name_token = tokens[2];
@@ -208,10 +211,10 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         }
     }
 
-    /* Build final JSON. */
+    /* Build final JSON — use canonical name, not alias. */
     int n = snprintf(out, out_cap,
                      "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
-                     cmd_id, cmd_name, args_buf);
+                     cmd_id, wire_name, args_buf);
     if (n < 0 || (uint32_t)n >= out_cap) return 0;
     return (uint32_t)n;
 }
@@ -229,6 +232,9 @@ uint32_t ctrl_cmd_complete(const char *prefix, const char **matches,
     for (uint32_t i = 0; i < def_count && count < max_matches; i++) {
         if (strncmp(defs[i].name, prefix, prefix_len) == 0) {
             matches[count++] = defs[i].name;
+        } else if (defs[i].alias &&
+                   strncmp(defs[i].alias, prefix, prefix_len) == 0) {
+            matches[count++] = defs[i].alias;
         }
     }
     return count;

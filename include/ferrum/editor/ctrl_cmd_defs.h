@@ -28,6 +28,7 @@ extern "C" {
  */
 typedef struct ctrl_cmd_def {
     const char *name;       /**< Command name (e.g., "spawn"). */
+    const char *alias;      /**< Short alias (e.g., "sp"), or NULL. */
     const char *usage;      /**< Usage string (e.g., "spawn <type> <x> <y> <z>"). */
     const char *help;       /**< One-line help text. */
     const char *arg_fmt;    /**< Argument format (NULL = no args). */
