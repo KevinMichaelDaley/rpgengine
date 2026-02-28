@@ -27,6 +27,7 @@
 #include "ferrum/editor/ctrl_tui.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_asset_registry.h"
 
 static atomic_bool g_running = true;
 static struct termios g_orig_termios;
@@ -56,8 +57,16 @@ static uint32_t g_group_id_counts[MAX_GROUP_NAMES];
 static uint32_t g_group_name_count = 0;
 static uint32_t g_group_list_cmd_id = UINT32_MAX;
 
+/* ── Asset path cache (populated from server on connect) ──────────── */
+
+#define MAX_ASSET_PATHS 512
+static char     g_asset_paths[MAX_ASSET_PATHS][EDIT_ASSET_PATH_MAX];
+static uint32_t g_asset_path_count = 0;
+static uint32_t g_asset_list_cmd_id = UINT32_MAX;
+
 /* Forward declarations for response parsers. */
 static void parse_group_list_result_(const char *json);
+static void parse_asset_list_result_(const char *json);
 
 /* Commands that trigger an entity name cache refresh. */
 static bool needs_entity_refresh_(const char *cmd_text) {
@@ -218,6 +227,37 @@ static void parse_type_list_result_(const char *json) {
 }
 
 /**
+ * @brief Parse asset_complete response into the asset path cache.
+ *
+ * Response result is ["path1","path2",...].
+ */
+static void parse_asset_list_result_(const char *json) {
+    const char *p = strstr(json, "\"result\":");
+    if (!p) return;
+    p += 9;
+    while (*p == ' ') p++;
+    if (*p != '[') return;
+    p++;
+
+    g_asset_path_count = 0;
+    while (*p && *p != ']' && g_asset_path_count < MAX_ASSET_PATHS) {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == '"') {
+            p++;
+            size_t i = 0;
+            while (*p && *p != '"' && i < EDIT_ASSET_PATH_MAX - 1) {
+                g_asset_paths[g_asset_path_count][i++] = *p++;
+            }
+            g_asset_paths[g_asset_path_count][i] = '\0';
+            if (*p == '"') p++;
+            g_asset_path_count++;
+        } else {
+            break;
+        }
+    }
+}
+
+/**
  * @brief Parse list_entities response into the entity name cache.
  *
  * Response result is [{"id":N,"name":"...","type":"..."}, ...].
@@ -307,6 +347,7 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
         bool is_type_bootstrap = ((uint32_t)id == g_list_types_cmd_id);
         bool is_entity_bootstrap = ((uint32_t)id == g_list_entities_cmd_id);
         bool is_group_bootstrap = ((uint32_t)id == g_group_list_cmd_id);
+        bool is_asset_bootstrap = ((uint32_t)id == g_asset_list_cmd_id);
 
         if (ok) {
             if (is_type_bootstrap) {
@@ -322,6 +363,11 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
             if (is_group_bootstrap) {
                 parse_group_list_result_(json);
                 g_group_list_cmd_id = UINT32_MAX;
+                return;
+            }
+            if (is_asset_bootstrap) {
+                parse_asset_list_result_(json);
+                g_asset_list_cmd_id = UINT32_MAX;
                 return;
             }
 
@@ -350,6 +396,10 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
             }
             if (is_group_bootstrap) {
                 g_group_list_cmd_id = UINT32_MAX;
+                return;
+            }
+            if (is_asset_bootstrap) {
+                g_asset_list_cmd_id = UINT32_MAX;
                 return;
             }
 
@@ -1034,6 +1084,87 @@ static void handle_tab_(ctrl_tui_t *tui) {
             ctrl_log_add(&tui->log, 0, "  entities  types");
         }
     }
+
+    /* ── Asset path completion ──────────────────────────────────────── */
+    /* For spawn (2nd arg = name), asset_list, asset_search, asset_complete
+     * — complete asset paths from the cached registry. */
+    bool is_asset_cmd = (strcmp(cmd, "asset_list") == 0 ||
+                         strcmp(cmd, "asset_search") == 0 ||
+                         strcmp(cmd, "asset_complete") == 0);
+    bool is_spawn_name = (strcmp(cmd, "spawn") == 0 && has_more_args);
+
+    if ((is_asset_cmd || is_spawn_name) && g_asset_path_count > 0) {
+        /* For spawn, the last space-delimited token is the name/path. */
+        const char *tok = arg_start;
+        if (is_spawn_name) {
+            const char *sp = strchr(arg_start, ' ');
+            if (sp) tok = sp + 1;
+        }
+        size_t tok_len = strlen(tok);
+        const char *matches[64];
+        uint32_t match_count = 0;
+        for (uint32_t i = 0; i < g_asset_path_count && match_count < 64; i++) {
+            if (strncmp(g_asset_paths[i], tok, tok_len) == 0) {
+                matches[match_count++] = g_asset_paths[i];
+            }
+        }
+
+        if (match_count == 1) {
+            /* Rebuild command with completed path. */
+            char rebuilt[CTRL_CMD_MAX_LEN];
+            size_t prefix_len = (size_t)(tok - arg_start);
+            char prior[256];
+            if (prefix_len >= sizeof(prior)) prefix_len = sizeof(prior) - 1;
+            memcpy(prior, arg_start, prefix_len);
+            prior[prefix_len] = '\0';
+            int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s%s ",
+                             cmd, prior, matches[0]);
+            if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                tui->cmd_len = (uint32_t)n;
+                tui->cmd_text[tui->cmd_len] = '\0';
+                tui->cmd_cursor = tui->cmd_len;
+            }
+        } else if (match_count > 1) {
+            ctrl_log_add(&tui->log, 0, "Assets:");
+            char line[512];
+            line[0] = '\0';
+            size_t pos = 0;
+            for (uint32_t i = 0; i < match_count && pos < sizeof(line) - 60; i++) {
+                int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
+                                 matches[i]);
+                if (n > 0) pos += (size_t)n;
+            }
+            ctrl_log_add(&tui->log, 0, line);
+
+            /* Complete common prefix. */
+            size_t common = strlen(matches[0]);
+            for (uint32_t i = 1; i < match_count; i++) {
+                size_t j = 0;
+                while (j < common && matches[0][j] == matches[i][j]) j++;
+                common = j;
+            }
+            if (common > tok_len) {
+                char rebuilt[CTRL_CMD_MAX_LEN];
+                size_t prefix_len = (size_t)(tok - arg_start);
+                char prior[256];
+                if (prefix_len >= sizeof(prior)) prefix_len = sizeof(prior) - 1;
+                memcpy(prior, arg_start, prefix_len);
+                prior[prefix_len] = '\0';
+                char partial[EDIT_ASSET_PATH_MAX];
+                memcpy(partial, matches[0], common);
+                partial[common] = '\0';
+                int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s%s",
+                                 cmd, prior, partial);
+                if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                    memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                    tui->cmd_len = (uint32_t)n;
+                    tui->cmd_text[tui->cmd_len] = '\0';
+                    tui->cmd_cursor = tui->cmd_len;
+                }
+            }
+        }
+    }
 }
 
 int main(int argc, char **argv) {
@@ -1114,6 +1245,20 @@ int main(int argc, char **argv) {
 
     /* Query group names from server (bootstrap). */
     send_group_refresh_(&conn);
+
+    /* Query asset paths from server (bootstrap). */
+    {
+        g_asset_list_cmd_id = conn.next_id;
+        char json[128];
+        int n = snprintf(json, sizeof(json),
+                         "{\"id\":%u,\"cmd\":\"asset_complete\","
+                         "\"args\":{\"prefix\":\"\"}}\n",
+                         conn.next_id);
+        if (n > 0) {
+            ctrl_conn_send_raw(&conn, json, (uint32_t)n);
+            conn.next_id++;
+        }
+    }
 
     /* Enter raw terminal mode. */
     if (!raw_mode_()) {

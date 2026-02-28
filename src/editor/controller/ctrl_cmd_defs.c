@@ -294,6 +294,13 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Tab-complete asset paths.",
         .arg_fmt = "s:prefix",
     },
+    {
+        .name    = "complete",
+        .alias   = NULL,
+        .usage   = "complete <context>",
+        .help    = "General tab-completion (routes to appropriate source).",
+        .arg_fmt = "s:context",
+    },
 };
 
 static const uint32_t s_def_count =

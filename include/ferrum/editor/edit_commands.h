@@ -186,6 +186,10 @@ bool cmd_asset_search(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_asset_complete(edit_dispatch_t *d, const json_value_t *args,
                         json_value_t *result, json_arena_t *arena);
 
+/** @brief General tab-completion. Args: {"context":"spawn mesh p"}. */
+bool cmd_complete(edit_dispatch_t *d, const json_value_t *args,
+                  json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

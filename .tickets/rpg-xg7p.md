@@ -1,6 +1,6 @@
 ---
 id: rpg-xg7p
-status: open
+status: closed
 deps: [rpg-2zmv, rpg-00d1]
 links: []
 created: 2026-02-26T04:26:35Z
