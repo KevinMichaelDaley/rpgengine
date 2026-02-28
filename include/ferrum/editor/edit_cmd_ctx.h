@@ -83,6 +83,13 @@ typedef enum edit_cmd_type {
 } edit_cmd_type_t;
 
 /* ------------------------------------------------------------------------ */
+/* Cursor position stack                                                     */
+/* ------------------------------------------------------------------------ */
+
+/** @brief Maximum depth of the cursor position stack. */
+#define EDIT_CURSOR_STACK_MAX 16
+
+/* ------------------------------------------------------------------------ */
 /* Command context                                                           */
 /* ------------------------------------------------------------------------ */
 
@@ -97,6 +104,11 @@ typedef struct edit_cmd_ctx {
     struct edit_undo_stack    *undo;      /**< Undo/redo stack. */
     edit_physics_bridge_t    *bridge;     /**< Physics bridge (NULL = no-op). */
     struct edit_physics_ctrl *physics;    /**< Physics sim control (NULL = no-op). */
+
+    /** @brief Stack of saved cursor positions (LIFO). */
+    float    cursor_stack[EDIT_CURSOR_STACK_MAX][3];
+    /** @brief Number of positions currently on the cursor stack. */
+    uint32_t cursor_stack_count;
 } edit_cmd_ctx_t;
 
 /* Forward declaration for JSON types. */

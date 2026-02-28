@@ -183,10 +183,12 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         }
     }
 
-    /* Special handling for select_near: variable arg count.
+    /* Special handling for select_near / deselect_near: variable arg count.
      * "select_near 5.0"          → {"dist":5.0}
      * "select_near 1 2 3 5.0"    → {"pos":[1,2,3],"dist":5.0} */
-    if (def && strcmp(wire_name, "select_near") == 0 && token_count >= 2) {
+    if (def && (strcmp(wire_name, "select_near") == 0 ||
+                strcmp(wire_name, "deselect_near") == 0) &&
+        token_count >= 2) {
         char args_buf2[512];
         if (token_count == 2) {
             /* Just distance — omit pos so server uses @cursor. */

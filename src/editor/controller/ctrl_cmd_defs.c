@@ -182,6 +182,41 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Select entities within distance. Defaults to @cursor pos.",
         .arg_fmt = NULL,  /* Custom parsing in TUI. */
     },
+    {
+        .name    = "deselect_near",
+        .alias   = "dn",
+        .usage   = "deselect_near [x y z] <dist>",
+        .help    = "Deselect entities within distance. Defaults to @cursor.",
+        .arg_fmt = NULL,  /* Custom parsing — same as select_near. */
+    },
+    {
+        .name    = "deselect_regex",
+        .alias   = "dr",
+        .usage   = "deselect_regex <pattern>",
+        .help    = "Deselect entities whose name matches regex pattern.",
+        .arg_fmt = "s:pattern",
+    },
+    {
+        .name    = "cursor_push",
+        .alias   = "cp",
+        .usage   = "cursor_push",
+        .help    = "Push @cursor position onto stack.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "cursor_pop",
+        .alias   = "co",
+        .usage   = "cursor_pop",
+        .help    = "Pop and restore @cursor position from stack.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "cursor_snap",
+        .alias   = "cs",
+        .usage   = "cursor_snap [id_or_name]",
+        .help    = "Snap @cursor to entity, or selection center if none.",
+        .arg_fmt = "s:entity_id",
+    },
 };
 
 static const uint32_t s_def_count =

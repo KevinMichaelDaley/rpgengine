@@ -122,6 +122,26 @@ bool cmd_scale_id(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_select_near(edit_dispatch_t *d, const json_value_t *args,
                      json_value_t *result, json_arena_t *arena);
 
+/** @brief Deselect entities within distance. Args: {"pos":[x,y,z],"dist":r}. */
+bool cmd_deselect_near(edit_dispatch_t *d, const json_value_t *args,
+                       json_value_t *result, json_arena_t *arena);
+
+/** @brief Deselect entities by regex pattern. Args: {"pattern":"regex"}. */
+bool cmd_deselect_regex(edit_dispatch_t *d, const json_value_t *args,
+                        json_value_t *result, json_arena_t *arena);
+
+/** @brief Push @cursor position onto stack. Args: {} (none). */
+bool cmd_cursor_push(edit_dispatch_t *d, const json_value_t *args,
+                     json_value_t *result, json_arena_t *arena);
+
+/** @brief Pop @cursor position from stack. Args: {} (none). */
+bool cmd_cursor_pop(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
+/** @brief Snap @cursor to entity or selection center. Args: {"entity_id":N}. */
+bool cmd_cursor_snap(edit_dispatch_t *d, const json_value_t *args,
+                     json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

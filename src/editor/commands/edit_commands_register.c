@@ -30,4 +30,9 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "rotate_id",      cmd_rotate_id);
     edit_dispatch_register(dispatch, "scale_id",       cmd_scale_id);
     edit_dispatch_register(dispatch, "select_near",    cmd_select_near);
+    edit_dispatch_register(dispatch, "deselect_near",  cmd_deselect_near);
+    edit_dispatch_register(dispatch, "deselect_regex", cmd_deselect_regex);
+    edit_dispatch_register(dispatch, "cursor_push",    cmd_cursor_push);
+    edit_dispatch_register(dispatch, "cursor_pop",     cmd_cursor_pop);
+    edit_dispatch_register(dispatch, "cursor_snap",    cmd_cursor_snap);
 }
