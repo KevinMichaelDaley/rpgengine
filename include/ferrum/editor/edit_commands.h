@@ -102,6 +102,10 @@ bool cmd_physics_reset(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_list_types(edit_dispatch_t *d, const json_value_t *args,
                     json_value_t *result, json_arena_t *arena);
 
+/** @brief List active entities. Args: {"pattern":"regex"} (optional). */
+bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
+                       json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

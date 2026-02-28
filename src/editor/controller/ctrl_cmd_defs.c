@@ -122,6 +122,18 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "List available entity types for spawn.",
         .arg_fmt = NULL,
     },
+    {
+        .name    = "list_entities",
+        .usage   = "list_entities [pattern]",
+        .help    = "List active entities. Optional regex filter on name.",
+        .arg_fmt = "s:pattern",
+    },
+    {
+        .name    = "find",
+        .usage   = "find <entities|types> [pattern]",
+        .help    = "Search entities or types by regex pattern.",
+        .arg_fmt = NULL,  /* Handled locally in TUI. */
+    },
 };
 
 static const uint32_t s_def_count =

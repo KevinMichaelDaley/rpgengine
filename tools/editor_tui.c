@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <termios.h>
+#include <regex.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <poll.h>
@@ -25,6 +26,7 @@
 #include "ferrum/editor/ctrl_conn.h"
 #include "ferrum/editor/ctrl_tui.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
+#include "ferrum/editor/edit_entity.h"
 
 static atomic_bool g_running = true;
 static struct termios g_orig_termios;
@@ -35,6 +37,30 @@ static struct termios g_orig_termios;
 static char    g_entity_types[MAX_ENTITY_TYPES][32];
 static uint32_t g_entity_type_count = 0;
 static uint32_t g_list_types_cmd_id = UINT32_MAX; /* ID of pending list_types. */
+
+/* ── Entity name cache (populated from server on connect) ─────────── */
+
+#define MAX_ENTITY_NAMES 256
+static char     g_entity_names[MAX_ENTITY_NAMES][EDIT_ENTITY_NAME_MAX];
+static uint32_t g_entity_name_ids[MAX_ENTITY_NAMES];
+static uint32_t g_entity_name_count = 0;
+static uint32_t g_list_entities_cmd_id = UINT32_MAX;
+
+/* Commands that trigger an entity name cache refresh. */
+static bool needs_entity_refresh_(const char *cmd_text) {
+    /* Extract first word (command name) from the text. */
+    char cmd[32];
+    size_t i = 0;
+    while (cmd_text[i] && cmd_text[i] != ' ' && i < sizeof(cmd) - 1) {
+        cmd[i] = cmd_text[i];
+        i++;
+    }
+    cmd[i] = '\0';
+    return strcmp(cmd, "spawn") == 0
+        || strcmp(cmd, "delete") == 0
+        || strcmp(cmd, "delete_id") == 0
+        || strcmp(cmd, "load") == 0;
+}
 
 /**
  * @brief Build a comma-separated list of cached entity types.
@@ -162,6 +188,80 @@ static void parse_type_list_result_(const char *json) {
 }
 
 /**
+ * @brief Parse list_entities response into the entity name cache.
+ *
+ * Response result is [{"id":N,"name":"...","type":"..."}, ...].
+ * Only entities with non-empty names are cached (for tab completion).
+ */
+static void parse_entity_list_result_(const char *json) {
+    const char *p = strstr(json, "\"result\":");
+    if (!p) return;
+    p += 9;
+    while (*p == ' ') p++;
+    if (*p != '[') return;
+    p++;
+
+    g_entity_name_count = 0;
+
+    while (*p && *p != ']' && g_entity_name_count < MAX_ENTITY_NAMES) {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p != '{') break;
+        p++;
+
+        /* Parse object fields: id, name, type. */
+        uint32_t eid = UINT32_MAX;
+        char name[EDIT_ENTITY_NAME_MAX];
+        name[0] = '\0';
+
+        while (*p && *p != '}') {
+            while (*p == ' ' || *p == ',') p++;
+            if (*p != '"') { p++; continue; }
+            p++; /* Skip opening quote. */
+
+            /* Read key. */
+            char key[16];
+            size_t ki = 0;
+            while (*p && *p != '"' && ki < sizeof(key) - 1) key[ki++] = *p++;
+            key[ki] = '\0';
+            if (*p == '"') p++;
+            while (*p == ' ' || *p == ':') p++;
+
+            if (strcmp(key, "id") == 0) {
+                eid = (uint32_t)strtoul(p, NULL, 10);
+                while (*p && *p != ',' && *p != '}') p++;
+            } else if (strcmp(key, "name") == 0 && *p == '"') {
+                p++;
+                size_t ni = 0;
+                while (*p && *p != '"' && ni < sizeof(name) - 1) {
+                    name[ni++] = *p++;
+                }
+                name[ni] = '\0';
+                if (*p == '"') p++;
+            } else {
+                /* Skip value. */
+                if (*p == '"') {
+                    p++;
+                    while (*p && *p != '"') p++;
+                    if (*p == '"') p++;
+                } else {
+                    while (*p && *p != ',' && *p != '}') p++;
+                }
+            }
+        }
+        if (*p == '}') p++;
+
+        /* Cache named entities for tab completion. */
+        if (name[0] != '\0' && eid != UINT32_MAX) {
+            strncpy(g_entity_names[g_entity_name_count], name,
+                    EDIT_ENTITY_NAME_MAX - 1);
+            g_entity_names[g_entity_name_count][EDIT_ENTITY_NAME_MAX - 1] = '\0';
+            g_entity_name_ids[g_entity_name_count] = eid;
+            g_entity_name_count++;
+        }
+    }
+}
+
+/**
  * @brief Parse a server response JSON and update the TUI log.
  *
  * Success with null result: mark command line with green ✓.
@@ -173,14 +273,19 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
     bool ok = json_get_ok_(json);
 
     if (id >= 0) {
-        /* Check if this is the list_types bootstrap response. */
-        bool is_bootstrap = ((uint32_t)id == g_list_types_cmd_id);
+        /* Check if this is a bootstrap response. */
+        bool is_type_bootstrap = ((uint32_t)id == g_list_types_cmd_id);
+        bool is_entity_bootstrap = ((uint32_t)id == g_list_entities_cmd_id);
 
         if (ok) {
-            if (is_bootstrap) {
-                /* Silently populate type cache — don't show in log. */
+            if (is_type_bootstrap) {
                 parse_type_list_result_(json);
                 g_list_types_cmd_id = UINT32_MAX;
+                return;
+            }
+            if (is_entity_bootstrap) {
+                parse_entity_list_result_(json);
+                g_list_entities_cmd_id = UINT32_MAX;
                 return;
             }
 
@@ -199,9 +304,12 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
                 ctrl_log_add(&tui->log, 0, msg);
             }
         } else {
-            if (is_bootstrap) {
-                /* Bootstrap failed — not fatal, just use defaults. */
+            if (is_type_bootstrap) {
                 g_list_types_cmd_id = UINT32_MAX;
+                return;
+            }
+            if (is_entity_bootstrap) {
+                g_list_entities_cmd_id = UINT32_MAX;
                 return;
             }
 
@@ -224,6 +332,110 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
         /* Not a command response — show as-is (e.g., server broadcast). */
         ctrl_log_add(&tui->log, 0, json);
     }
+}
+
+/**
+ * @brief Send a list_entities query to refresh the entity name cache.
+ */
+static void send_entity_refresh_(ctrl_conn_t *conn) {
+    g_list_entities_cmd_id = conn->next_id;
+    char json[128];
+    int n = snprintf(json, sizeof(json),
+                     "{\"id\":%u,\"cmd\":\"list_entities\",\"args\":{}}\n",
+                     conn->next_id);
+    if (n > 0) {
+        ctrl_conn_send_raw(conn, json, (uint32_t)n);
+        conn->next_id++;
+    }
+}
+
+/**
+ * @brief Handle the local "find" command.
+ *
+ * Syntax: find entities [pattern]
+ *         find types [pattern]
+ *
+ * Searches cached entity names or type names by POSIX regex.
+ * Results shown in the TUI log.
+ *
+ * @return true if the command was handled (even if no results).
+ */
+static bool handle_find_(ctrl_tui_t *tui, const char *text) {
+    /* Parse: "find <category> [pattern]" */
+    if (strncmp(text, "find", 4) != 0) return false;
+    const char *p = text + 4;
+    while (*p == ' ') p++;
+    if (*p == '\0') {
+        ctrl_log_add(&tui->log, 0, "Usage: find <entities|types> [pattern]");
+        return true;
+    }
+
+    /* Extract category. */
+    char category[32];
+    size_t ci = 0;
+    while (*p && *p != ' ' && ci < sizeof(category) - 1) category[ci++] = *p++;
+    category[ci] = '\0';
+    while (*p == ' ') p++;
+
+    /* Compile optional regex pattern. */
+    regex_t regex;
+    bool has_pattern = (*p != '\0');
+    if (has_pattern) {
+        int rc = regcomp(&regex, p, REG_EXTENDED | REG_NOSUB | REG_ICASE);
+        if (rc != 0) {
+            ctrl_log_add(&tui->log, 2, "Invalid regex pattern");
+            return true;
+        }
+    }
+
+    if (strcmp(category, "entities") == 0 || strcmp(category, "e") == 0) {
+        uint32_t shown = 0;
+        for (uint32_t i = 0; i < g_entity_name_count; i++) {
+            if (has_pattern &&
+                regexec(&regex, g_entity_names[i], 0, NULL, 0) != 0) {
+                continue;
+            }
+            char line[300];
+            snprintf(line, sizeof(line), "  [%u] %s",
+                     g_entity_name_ids[i], g_entity_names[i]);
+            ctrl_log_add(&tui->log, 0, line);
+            shown++;
+        }
+        if (shown == 0) {
+            ctrl_log_add(&tui->log, 0, "  (no matching entities)");
+        } else {
+            char summary[64];
+            snprintf(summary, sizeof(summary), "%u entit%s found",
+                     shown, shown == 1 ? "y" : "ies");
+            ctrl_log_add(&tui->log, 0, summary);
+        }
+    } else if (strcmp(category, "types") == 0 || strcmp(category, "t") == 0) {
+        uint32_t shown = 0;
+        for (uint32_t i = 0; i < g_entity_type_count; i++) {
+            if (has_pattern &&
+                regexec(&regex, g_entity_types[i], 0, NULL, 0) != 0) {
+                continue;
+            }
+            char line[64];
+            snprintf(line, sizeof(line), "  %s", g_entity_types[i]);
+            ctrl_log_add(&tui->log, 0, line);
+            shown++;
+        }
+        if (shown == 0) {
+            ctrl_log_add(&tui->log, 0, "  (no matching types)");
+        } else {
+            char summary[64];
+            snprintf(summary, sizeof(summary), "%u type%s found",
+                     shown, shown == 1 ? "" : "s");
+            ctrl_log_add(&tui->log, 0, summary);
+        }
+    } else {
+        ctrl_log_add(&tui->log, 1,
+                     "Unknown category. Use: find entities|types [pattern]");
+    }
+
+    if (has_pattern) regfree(&regex);
+    return true;
 }
 
 static void sigint_handler_(int sig) {
@@ -377,53 +589,135 @@ static void handle_tab_(ctrl_tui_t *tui) {
         return;
     }
 
-    /* Past command name — check if spawn and completing type arg. */
+    /* Past command name — determine arg completion type. */
     *space = '\0';
     const char *cmd = prefix;
     const char *arg_start = space + 1;
-    /* Skip extra spaces. */
     while (*arg_start == ' ') arg_start++;
 
-    /* Only complete spawn's type argument (first arg after cmd). */
-    if (strcmp(cmd, "spawn") != 0 || g_entity_type_count == 0) return;
-    /* Don't complete if we already have more args (past the type). */
-    if (strchr(arg_start, ' ')) return;
+    /* Don't complete if we already have more args after the first arg. */
+    bool has_more_args = (strchr(arg_start, ' ') != NULL);
 
-    size_t arg_len = strlen(arg_start);
-    const char *matches[MAX_ENTITY_TYPES];
-    uint32_t match_count = 0;
+    if (strcmp(cmd, "spawn") == 0 && !has_more_args &&
+        g_entity_type_count > 0) {
+        /* Complete spawn's type argument. */
+        size_t arg_len = strlen(arg_start);
+        const char *matches[MAX_ENTITY_TYPES];
+        uint32_t match_count = 0;
 
-    for (uint32_t i = 0; i < g_entity_type_count; i++) {
-        if (strncmp(g_entity_types[i], arg_start, arg_len) == 0) {
-            matches[match_count++] = g_entity_types[i];
+        for (uint32_t i = 0; i < g_entity_type_count; i++) {
+            if (strncmp(g_entity_types[i], arg_start, arg_len) == 0) {
+                matches[match_count++] = g_entity_types[i];
+            }
         }
-    }
 
-    if (match_count == 1) {
-        /* Rebuild: "spawn <match> " */
-        size_t cmd_len = (size_t)(space - prefix);
-        size_t mlen = strlen(matches[0]);
-        char rebuilt[CTRL_CMD_MAX_LEN];
-        int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s ",
-                         cmd, matches[0]);
-        (void)cmd_len; (void)mlen;
-        if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
-            memcpy(tui->cmd_text, rebuilt, (size_t)n);
-            tui->cmd_len = (uint32_t)n;
-            tui->cmd_text[tui->cmd_len] = '\0';
-            tui->cmd_cursor = tui->cmd_len;
+        if (match_count == 1) {
+            char rebuilt[CTRL_CMD_MAX_LEN];
+            int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s ",
+                             cmd, matches[0]);
+            if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                tui->cmd_len = (uint32_t)n;
+                tui->cmd_text[tui->cmd_len] = '\0';
+                tui->cmd_cursor = tui->cmd_len;
+            }
+        } else if (match_count > 1) {
+            ctrl_log_add(&tui->log, 0, "Types:");
+            char line[512];
+            line[0] = '\0';
+            size_t pos = 0;
+            for (uint32_t i = 0; i < match_count; i++) {
+                int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
+                                 matches[i]);
+                if (n > 0) pos += (size_t)n;
+            }
+            ctrl_log_add(&tui->log, 0, line);
         }
-    } else if (match_count > 1) {
-        ctrl_log_add(&tui->log, 0, "Types:");
-        char line[512];
-        line[0] = '\0';
-        size_t pos = 0;
-        for (uint32_t i = 0; i < match_count; i++) {
-            int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
-                             matches[i]);
-            if (n > 0) pos += (size_t)n;
+    } else if (!has_more_args && g_entity_name_count > 0 &&
+               (strcmp(cmd, "select") == 0 ||
+                strcmp(cmd, "deselect") == 0 ||
+                strcmp(cmd, "delete_id") == 0 ||
+                strcmp(cmd, "move_id") == 0)) {
+        /* Complete entity name for commands that take entity_id. */
+        size_t arg_len = strlen(arg_start);
+        const char *matches[MAX_ENTITY_NAMES];
+        uint32_t match_count = 0;
+
+        for (uint32_t i = 0; i < g_entity_name_count &&
+                              match_count < MAX_ENTITY_NAMES; i++) {
+            if (strncmp(g_entity_names[i], arg_start, arg_len) == 0) {
+                matches[match_count++] = g_entity_names[i];
+            }
         }
-        ctrl_log_add(&tui->log, 0, line);
+
+        if (match_count == 1) {
+            char rebuilt[CTRL_CMD_MAX_LEN];
+            int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s ",
+                             cmd, matches[0]);
+            if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                tui->cmd_len = (uint32_t)n;
+                tui->cmd_text[tui->cmd_len] = '\0';
+                tui->cmd_cursor = tui->cmd_len;
+            }
+        } else if (match_count > 1) {
+            ctrl_log_add(&tui->log, 0, "Entities:");
+            char line[512];
+            line[0] = '\0';
+            size_t pos = 0;
+            for (uint32_t i = 0; i < match_count; i++) {
+                int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
+                                 matches[i]);
+                if (n > 0) pos += (size_t)n;
+            }
+            ctrl_log_add(&tui->log, 0, line);
+
+            /* Complete common prefix. */
+            size_t common = strlen(matches[0]);
+            for (uint32_t i = 1; i < match_count; i++) {
+                size_t j = 0;
+                while (j < common && matches[0][j] == matches[i][j]) j++;
+                common = j;
+            }
+            if (common > arg_len) {
+                char rebuilt[CTRL_CMD_MAX_LEN];
+                char partial[256];
+                memcpy(partial, matches[0], common);
+                partial[common] = '\0';
+                int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s",
+                                 cmd, partial);
+                if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                    memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                    tui->cmd_len = (uint32_t)n;
+                    tui->cmd_text[tui->cmd_len] = '\0';
+                    tui->cmd_cursor = tui->cmd_len;
+                }
+            }
+        }
+    } else if (strcmp(cmd, "find") == 0 && !has_more_args) {
+        /* Complete find's category argument. */
+        static const char *categories[] = {"entities", "types"};
+        size_t arg_len = strlen(arg_start);
+        const char *matches[2];
+        uint32_t match_count = 0;
+        for (int i = 0; i < 2; i++) {
+            if (strncmp(categories[i], arg_start, arg_len) == 0) {
+                matches[match_count++] = categories[i];
+            }
+        }
+        if (match_count == 1) {
+            char rebuilt[CTRL_CMD_MAX_LEN];
+            int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s ",
+                             cmd, matches[0]);
+            if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                tui->cmd_len = (uint32_t)n;
+                tui->cmd_text[tui->cmd_len] = '\0';
+                tui->cmd_cursor = tui->cmd_len;
+            }
+        } else if (match_count > 1) {
+            ctrl_log_add(&tui->log, 0, "  entities  types");
+        }
     }
 }
 
@@ -490,6 +784,19 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Query entity names from server (bootstrap). */
+    {
+        g_list_entities_cmd_id = conn.next_id;
+        char json[128];
+        int n = snprintf(json, sizeof(json),
+                         "{\"id\":%u,\"cmd\":\"list_entities\",\"args\":{}}\n",
+                         conn.next_id);
+        if (n > 0) {
+            ctrl_conn_send_raw(&conn, json, (uint32_t)n);
+            conn.next_id++;
+        }
+    }
+
     /* Enter raw terminal mode. */
     if (!raw_mode_()) {
         fprintf(stderr, "Failed to set raw terminal mode\n");
@@ -540,6 +847,11 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
+                    /* Handle local 'find' command (no server roundtrip). */
+                    if (handle_find_(&tui, cmd)) {
+                        continue;
+                    }
+
                     /* Log the user command with pending status. */
                     char msg[512];
                     snprintf(msg, sizeof(msg), "%s", cmd);
@@ -554,6 +866,11 @@ int main(int argc, char **argv) {
                         ctrl_log_add_cmd(&tui.log, msg, this_cmd_id);
                         ctrl_conn_send_raw(&conn, json, json_len);
                         conn.next_id++;
+
+                        /* Refresh entity cache after mutating commands. */
+                        if (needs_entity_refresh_(msg)) {
+                            send_entity_refresh_(&conn);
+                        }
                     } else {
                         /* Build failed — check if command has required args. */
                         const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(cmd);
