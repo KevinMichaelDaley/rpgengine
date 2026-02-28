@@ -1,6 +1,6 @@
 ---
 id: rpg-syut
-status: open
+status: in_progress
 deps: [rpg-ma1t]
 links: []
 created: 2026-02-28T22:21:17Z
