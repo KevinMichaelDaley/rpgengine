@@ -1,6 +1,6 @@
 ---
 id: rpg-nulp
-status: open
+status: in_progress
 deps: [rpg-ma1t]
 links: []
 created: 2026-02-28T22:21:00Z
