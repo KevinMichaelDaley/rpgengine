@@ -43,4 +43,7 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "group_save",      cmd_group_save);
     edit_dispatch_register(dispatch, "group_delete",    cmd_group_delete);
     edit_dispatch_register(dispatch, "group_list",      cmd_group_list);
+    edit_dispatch_register(dispatch, "asset_list",      cmd_asset_list);
+    edit_dispatch_register(dispatch, "asset_search",    cmd_asset_search);
+    edit_dispatch_register(dispatch, "asset_complete",  cmd_asset_complete);
 }

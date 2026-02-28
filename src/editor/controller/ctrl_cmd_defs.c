@@ -273,6 +273,27 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "List all selection groups.",
         .arg_fmt = NULL,
     },
+    {
+        .name    = "asset_list",
+        .alias   = "al",
+        .usage   = "asset_list [prefix] [type]",
+        .help    = "List assets. Optional prefix and type filter.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "asset_search",
+        .alias   = "as",
+        .usage   = "asset_search <pattern>",
+        .help    = "Search assets by regex pattern.",
+        .arg_fmt = "s:pattern",
+    },
+    {
+        .name    = "asset_complete",
+        .alias   = "ac",
+        .usage   = "asset_complete <prefix>",
+        .help    = "Tab-complete asset paths.",
+        .arg_fmt = "s:prefix",
+    },
 };
 
 static const uint32_t s_def_count =

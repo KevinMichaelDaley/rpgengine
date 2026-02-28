@@ -317,6 +317,29 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return (uint32_t)n2;
     }
 
+    /* Custom parsing for asset_list: optional prefix and type.
+     * "asset_list"              → {}
+     * "asset_list meshes/"      → {"prefix":"meshes/"}
+     * "asset_list meshes/ mesh" → {"prefix":"meshes/","type":"mesh"} */
+    if (def && strcmp(wire_name, "asset_list") == 0) {
+        char args_buf2[512];
+        if (token_count >= 3) {
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"prefix\":\"%s\",\"type\":\"%s\"}",
+                     tokens[1], tokens[2]);
+        } else if (token_count == 2) {
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"prefix\":\"%s\"}", tokens[1]);
+        } else {
+            snprintf(args_buf2, sizeof(args_buf2), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, args_buf2);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
     /* Build args JSON. */
     char args_buf[2048];
     uint32_t args_len;

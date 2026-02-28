@@ -24,6 +24,7 @@ struct edit_undo_stack;
 struct edit_entity;
 struct edit_physics_ctrl;
 struct json_value;
+struct edit_asset_registry;
 
 /* ------------------------------------------------------------------------ */
 /* Physics bridge callback                                                   */
@@ -165,6 +166,9 @@ typedef struct edit_cmd_ctx {
     edit_group_t *groups;
     /** @brief Number of allocated group slots. */
     uint32_t      group_capacity;
+
+    /** @brief Asset registry (NULL if no asset directory configured). */
+    struct edit_asset_registry *asset_registry;
 } edit_cmd_ctx_t;
 
 /* Forward declaration for JSON types. */

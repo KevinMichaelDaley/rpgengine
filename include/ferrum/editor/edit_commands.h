@@ -174,6 +174,18 @@ bool cmd_group_delete(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_group_list(edit_dispatch_t *d, const json_value_t *args,
                     json_value_t *result, json_arena_t *arena);
 
+/** @brief List assets. Args: {"prefix":"...", "type":"mesh"} (all optional). */
+bool cmd_asset_list(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
+/** @brief Search assets by regex. Args: {"pattern":"regex"}. */
+bool cmd_asset_search(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief Tab-complete asset paths. Args: {"prefix":"mesh"}. */
+bool cmd_asset_complete(edit_dispatch_t *d, const json_value_t *args,
+                        json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif
