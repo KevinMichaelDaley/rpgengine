@@ -183,6 +183,34 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         }
     }
 
+    /* Special handling for select_near: variable arg count.
+     * "select_near 5.0"          → {"dist":5.0}
+     * "select_near 1 2 3 5.0"    → {"pos":[1,2,3],"dist":5.0} */
+    if (def && strcmp(wire_name, "select_near") == 0 && token_count >= 2) {
+        char args_buf2[512];
+        if (token_count == 2) {
+            /* Just distance — omit pos so server uses @cursor. */
+            float d = strtof(tokens[1], NULL);
+            snprintf(args_buf2, sizeof(args_buf2), "{\"dist\":%.6g}", (double)d);
+        } else if (token_count >= 5) {
+            /* pos + dist */
+            float px = strtof(tokens[1], NULL);
+            float py = strtof(tokens[2], NULL);
+            float pz = strtof(tokens[3], NULL);
+            float d  = strtof(tokens[4], NULL);
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"pos\":[%.6g,%.6g,%.6g],\"dist\":%.6g}",
+                     (double)px, (double)py, (double)pz, (double)d);
+        } else {
+            return 0;  /* Bad arg count. */
+        }
+        int n2 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, args_buf2);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
     /* Build args JSON. */
     char args_buf[2048];
     uint32_t args_len;

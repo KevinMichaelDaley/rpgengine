@@ -651,7 +651,9 @@ static void handle_tab_(ctrl_tui_t *tui) {
                (strcmp(cmd, "select") == 0 ||
                 strcmp(cmd, "deselect") == 0 ||
                 strcmp(cmd, "delete_id") == 0 ||
-                strcmp(cmd, "move_id") == 0)) {
+                strcmp(cmd, "move_id") == 0 ||
+                strcmp(cmd, "rotate_id") == 0 ||
+                strcmp(cmd, "scale_id") == 0)) {
         /* Complete entity name for commands that take entity_id. */
         size_t arg_len = strlen(arg_start);
         const char *matches[MAX_ENTITY_NAMES];

@@ -154,6 +154,34 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Search entities or types by regex pattern.",
         .arg_fmt = NULL,  /* Handled locally in TUI. */
     },
+    {
+        .name    = "select_regex",
+        .alias   = "sr",
+        .usage   = "select_regex <pattern>",
+        .help    = "Select entities whose name matches regex pattern.",
+        .arg_fmt = "s:pattern",
+    },
+    {
+        .name    = "rotate_id",
+        .alias   = "ri",
+        .usage   = "rotate_id <id_or_name> <rx> <ry> <rz>",
+        .help    = "Rotate entity by ID or name with euler delta (degrees).",
+        .arg_fmt = "s:entity_id f3:delta",
+    },
+    {
+        .name    = "scale_id",
+        .alias   = "si",
+        .usage   = "scale_id <id_or_name> <sx> <sy> <sz>",
+        .help    = "Scale entity by ID or name with factor.",
+        .arg_fmt = "s:entity_id f3:factor",
+    },
+    {
+        .name    = "select_near",
+        .alias   = "sn",
+        .usage   = "select_near [x y z] <dist>",
+        .help    = "Select entities within distance. Defaults to @cursor pos.",
+        .arg_fmt = NULL,  /* Custom parsing in TUI. */
+    },
 };
 
 static const uint32_t s_def_count =

@@ -106,6 +106,22 @@ bool cmd_list_types(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
                        json_value_t *result, json_arena_t *arena);
 
+/** @brief Select entities by regex pattern. Args: {"pattern":"regex"}. */
+bool cmd_select_regex(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief Rotate entity by ID. Args: {"entity_id":N, "delta":[rx,ry,rz]}. */
+bool cmd_rotate_id(edit_dispatch_t *d, const json_value_t *args,
+                   json_value_t *result, json_arena_t *arena);
+
+/** @brief Scale entity by ID. Args: {"entity_id":N, "factor":[sx,sy,sz]}. */
+bool cmd_scale_id(edit_dispatch_t *d, const json_value_t *args,
+                  json_value_t *result, json_arena_t *arena);
+
+/** @brief Select entities within distance. Args: {"pos":[x,y,z],"dist":r}. */
+bool cmd_select_near(edit_dispatch_t *d, const json_value_t *args,
+                     json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

@@ -26,4 +26,8 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "physics_reset",  cmd_physics_reset);
     edit_dispatch_register(dispatch, "list_types",     cmd_list_types);
     edit_dispatch_register(dispatch, "list_entities",  cmd_list_entities);
+    edit_dispatch_register(dispatch, "select_regex",   cmd_select_regex);
+    edit_dispatch_register(dispatch, "rotate_id",      cmd_rotate_id);
+    edit_dispatch_register(dispatch, "scale_id",       cmd_scale_id);
+    edit_dispatch_register(dispatch, "select_near",    cmd_select_near);
 }
