@@ -198,6 +198,10 @@ bool cmd_browse(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_material(edit_dispatch_t *d, const json_value_t *args,
                   json_value_t *result, json_arena_t *arena);
 
+/** @brief Clone selected entities. Args: {"offset":[1,0,0]} (optional). */
+bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
+               json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

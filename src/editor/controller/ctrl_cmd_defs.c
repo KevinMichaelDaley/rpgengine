@@ -315,6 +315,13 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Assign or query entity material slots.",
         .arg_fmt = "s:sub u:entity s:slot s:path",
     },
+    {
+        .name    = "clone",
+        .alias   = "c",
+        .usage   = "clone [offset_x offset_y offset_z]",
+        .help    = "Duplicate selected entities. Clones become new selection.",
+        .arg_fmt = "a:offset",
+    },
 };
 
 static const uint32_t s_def_count =

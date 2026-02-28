@@ -1,6 +1,6 @@
 ---
 id: rpg-p50p
-status: open
+status: closed
 deps: [rpg-d6j3]
 links: []
 created: 2026-02-26T04:27:44Z
