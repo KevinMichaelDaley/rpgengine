@@ -194,6 +194,10 @@ bool cmd_complete(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_browse(edit_dispatch_t *d, const json_value_t *args,
                 json_value_t *result, json_arena_t *arena);
 
+/** @brief Material assign/query. Args: {"sub":"set","entity":0,"slot":"albedo","path":"..."}. */
+bool cmd_material(edit_dispatch_t *d, const json_value_t *args,
+                  json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

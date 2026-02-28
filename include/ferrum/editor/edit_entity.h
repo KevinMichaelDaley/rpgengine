@@ -34,6 +34,17 @@ extern "C" {
 /** @brief Maximum length of an entity name (including null terminator). */
 #define EDIT_ENTITY_NAME_MAX 256
 
+/** @brief Maximum length of a material path. */
+#define EDIT_MATERIAL_PATH_MAX 256
+
+/** @brief Material slot indices. */
+#define EDIT_MATERIAL_SLOT_ALBEDO    0
+#define EDIT_MATERIAL_SLOT_NORMAL    1
+#define EDIT_MATERIAL_SLOT_ROUGHNESS 2
+#define EDIT_MATERIAL_SLOT_METALLIC  3
+#define EDIT_MATERIAL_SLOT_EMISSIVE  4
+#define EDIT_MATERIAL_SLOT_COUNT     5
+
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */
 /* ------------------------------------------------------------------------ */
@@ -49,6 +60,8 @@ typedef struct edit_entity {
     uint32_t body_index;   /**< Physics body index (UINT32_MAX = none). */
     bool     active;       /**< Whether this slot is in use. */
     char     name[EDIT_ENTITY_NAME_MAX]; /**< Optional display name (empty = unnamed). */
+    /** Material slot paths (empty = no material assigned). */
+    char     materials[EDIT_MATERIAL_SLOT_COUNT][EDIT_MATERIAL_PATH_MAX];
 } edit_entity_t;
 
 /**

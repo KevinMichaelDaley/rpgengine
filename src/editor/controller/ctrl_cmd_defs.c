@@ -308,6 +308,13 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Browse assets by directory. Results numbered for #N ref.",
         .arg_fmt = "s:prefix s:filter",
     },
+    {
+        .name    = "material",
+        .alias   = "mat",
+        .usage   = "material <set|get> <entity_id> [slot] [path]",
+        .help    = "Assign or query entity material slots.",
+        .arg_fmt = "s:sub u:entity s:slot s:path",
+    },
 };
 
 static const uint32_t s_def_count =

@@ -1,6 +1,6 @@
 ---
 id: rpg-18cm
-status: open
+status: closed
 deps: [rpg-d6j3, rpg-89t3]
 links: []
 created: 2026-02-26T04:27:44Z

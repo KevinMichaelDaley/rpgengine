@@ -48,4 +48,5 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "asset_complete",  cmd_asset_complete);
     edit_dispatch_register(dispatch, "complete",        cmd_complete);
     edit_dispatch_register(dispatch, "browse",          cmd_browse);
+    edit_dispatch_register(dispatch, "material",        cmd_material);
 }
