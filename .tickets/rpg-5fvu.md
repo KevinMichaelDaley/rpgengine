@@ -1,6 +1,6 @@
 ---
 id: rpg-5fvu
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-26T04:27:44Z

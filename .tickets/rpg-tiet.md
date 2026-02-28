@@ -1,6 +1,6 @@
 ---
 id: rpg-tiet
-status: open
+status: closed
 deps: [rpg-wxom]
 links: []
 created: 2026-02-26T04:27:43Z
