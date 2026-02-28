@@ -49,7 +49,10 @@ static uint32_t g_list_entities_cmd_id = UINT32_MAX;
 /* ── Group name cache (populated from server on connect) ──────────── */
 
 #define MAX_GROUP_NAMES 64
+#define MAX_GROUP_MEMBERS 4096
 static char     g_group_names[MAX_GROUP_NAMES][64];
+static uint32_t g_group_ids[MAX_GROUP_NAMES][MAX_GROUP_MEMBERS];
+static uint32_t g_group_id_counts[MAX_GROUP_NAMES];
 static uint32_t g_group_name_count = 0;
 static uint32_t g_group_list_cmd_id = UINT32_MAX;
 
@@ -402,10 +405,10 @@ static void send_group_refresh_(ctrl_conn_t *conn) {
 }
 
 /**
- * @brief Parse group_list result into the group name cache.
+ * @brief Parse group_list result into the group cache.
  *
- * The result is an array of strings like "&walls(3)" — we extract
- * just the group name (up to the '(' character).
+ * The result is an array of strings like "&walls(3):1,5,8" — we extract
+ * the group name (up to '(') and member IDs (after ':').
  */
 static void parse_group_list_result_(const char *json) {
     g_group_name_count = 0;
@@ -421,16 +424,43 @@ static void parse_group_list_result_(const char *json) {
         if (*arr != '"') { arr++; continue; }
         arr++; /* skip opening quote */
 
-        /* Extract string content up to '(' or '"'. */
-        char *dst = g_group_names[g_group_name_count];
+        uint32_t gi = g_group_name_count;
+
+        /* Extract group name up to '(' or '"'. */
+        char *dst = g_group_names[gi];
         size_t di = 0;
         while (*arr && *arr != '"' && *arr != '(' && di < 63) {
             dst[di++] = *arr++;
         }
         dst[di] = '\0';
-        /* Skip to closing quote. */
-        while (*arr && *arr != '"') arr++;
+
+        /* Skip past count and ':' to get member IDs. */
+        g_group_id_counts[gi] = 0;
+        const char *colon = NULL;
+        while (*arr && *arr != '"') {
+            if (*arr == ':') colon = arr + 1;
+            arr++;
+        }
         if (*arr == '"') arr++;
+
+        /* Parse comma-separated member IDs after ':'. */
+        if (colon) {
+            const char *cp = colon;
+            while (*cp && *cp != '"' &&
+                   g_group_id_counts[gi] < MAX_GROUP_MEMBERS) {
+                char num[16];
+                size_t ni = 0;
+                while (*cp >= '0' && *cp <= '9' && ni < 15) {
+                    num[ni++] = *cp++;
+                }
+                num[ni] = '\0';
+                if (ni > 0) {
+                    g_group_ids[gi][g_group_id_counts[gi]++] =
+                        (uint32_t)strtoul(num, NULL, 10);
+                }
+                if (*cp == ',') cp++;
+            }
+        }
 
         if (di > 0 && dst[0] == '&') {
             g_group_name_count++;
@@ -439,12 +469,34 @@ static void parse_group_list_result_(const char *json) {
 }
 
 /**
+ * @brief Check if entity ID belongs to cached group index.
+ */
+static bool group_cache_contains_(uint32_t group_idx, uint32_t eid) {
+    if (group_idx >= g_group_name_count) return false;
+    for (uint32_t i = 0; i < g_group_id_counts[group_idx]; i++) {
+        if (g_group_ids[group_idx][i] == eid) return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Find cached group index by name. Returns UINT32_MAX if not found.
+ */
+static uint32_t group_cache_find_(const char *name) {
+    for (uint32_t i = 0; i < g_group_name_count; i++) {
+        if (strcmp(g_group_names[i], name) == 0) return i;
+    }
+    return UINT32_MAX;
+}
+
+/**
  * @brief Handle the local "find" command.
  *
- * Syntax: find entities [pattern]
+ * Syntax: find entities [pattern] [&group]
  *         find types [pattern]
  *
  * Searches cached entity names or type names by POSIX regex.
+ * Optional &group filter limits entity results to group members.
  * Results shown in the TUI log.
  *
  * @return true if the command was handled (even if no results).
@@ -463,7 +515,8 @@ static bool handle_find_(ctrl_tui_t *tui, const char *text) {
     const char *p = tp;
     while (*p == ' ') p++;
     if (*p == '\0') {
-        ctrl_log_add(&tui->log, 0, "Usage: find <entities|types> [pattern]");
+        ctrl_log_add(&tui->log, 0,
+                     "Usage: find <entities|types> [pattern] [&group]");
         return true;
     }
 
@@ -474,13 +527,62 @@ static bool handle_find_(ctrl_tui_t *tui, const char *text) {
     category[ci] = '\0';
     while (*p == ' ') p++;
 
+    /* Remaining args: optional pattern and/or optional &group.
+     * Tokenize remaining into up to 2 parts. */
+    char pattern_buf[256] = {0};
+    char group_filter[64] = {0};
+
+    if (*p != '\0') {
+        /* Check if first remaining token starts with & (group filter). */
+        if (*p == '&') {
+            /* No pattern, just group filter. */
+            size_t gi = 0;
+            while (*p && *p != ' ' && gi < sizeof(group_filter) - 1) {
+                group_filter[gi++] = *p++;
+            }
+            group_filter[gi] = '\0';
+        } else {
+            /* Pattern token. */
+            size_t pi = 0;
+            while (*p && *p != ' ' && pi < sizeof(pattern_buf) - 1) {
+                pattern_buf[pi++] = *p++;
+            }
+            pattern_buf[pi] = '\0';
+            while (*p == ' ') p++;
+
+            /* Check for trailing &group. */
+            if (*p == '&') {
+                size_t gi = 0;
+                while (*p && *p != ' ' && gi < sizeof(group_filter) - 1) {
+                    group_filter[gi++] = *p++;
+                }
+                group_filter[gi] = '\0';
+            }
+        }
+    }
+
     /* Compile optional regex pattern. */
     regex_t regex;
-    bool has_pattern = (*p != '\0');
+    bool has_pattern = (pattern_buf[0] != '\0');
     if (has_pattern) {
-        int rc = regcomp(&regex, p, REG_EXTENDED | REG_NOSUB | REG_ICASE);
+        int rc = regcomp(&regex, pattern_buf,
+                         REG_EXTENDED | REG_NOSUB | REG_ICASE);
         if (rc != 0) {
             ctrl_log_add(&tui->log, 2, "Invalid regex pattern");
+            return true;
+        }
+    }
+
+    /* Resolve optional group filter. */
+    uint32_t gf_idx = UINT32_MAX;
+    bool has_group_filter = (group_filter[0] != '\0');
+    if (has_group_filter) {
+        gf_idx = group_cache_find_(group_filter);
+        if (gf_idx == UINT32_MAX) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Unknown group: %s", group_filter);
+            ctrl_log_add(&tui->log, 2, msg);
+            if (has_pattern) regfree(&regex);
             return true;
         }
     }
@@ -490,6 +592,11 @@ static bool handle_find_(ctrl_tui_t *tui, const char *text) {
         for (uint32_t i = 0; i < g_entity_name_count; i++) {
             if (has_pattern &&
                 regexec(&regex, g_entity_names[i], 0, NULL, 0) != 0) {
+                continue;
+            }
+            /* Apply group filter: skip entities not in the group. */
+            if (has_group_filter &&
+                !group_cache_contains_(gf_idx, g_entity_name_ids[i])) {
                 continue;
             }
             char line[300];
@@ -857,8 +964,9 @@ static void handle_tab_(ctrl_tui_t *tui) {
         }
     } else if (has_more_args && g_group_name_count > 0 &&
                (strcmp(cmd, "select_regex") == 0 ||
-                strcmp(cmd, "select_near") == 0)) {
-        /* Complete trailing &group for select_regex/select_near. */
+                strcmp(cmd, "select_near") == 0 ||
+                strcmp(cmd, "find") == 0)) {
+        /* Complete trailing &group for select_regex/select_near/find. */
         const char *last_space = strrchr(arg_start, ' ');
         const char *last_arg = last_space ? last_space + 1 : arg_start;
         if (last_arg[0] == '&' || last_arg[0] == '\0') {

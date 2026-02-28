@@ -161,11 +161,16 @@ bool cmd_group_list(edit_dispatch_t *d, const json_value_t *args,
     for (uint32_t i = 0; i < ctx->group_capacity && idx < active; i++) {
         if (!ctx->groups[i].active) continue;
 
-        /* Build a simple string with "name(count)" format. */
-        char buf[128];
-        int n = snprintf(buf, sizeof(buf), "%s(%u)",
+        /* Build string: "name(count):id1,id2,..." for TUI caching. */
+        char buf[512];
+        int n = snprintf(buf, sizeof(buf), "%s(%u):",
                          ctx->groups[i].name, ctx->groups[i].count);
         if (n <= 0) continue;
+        for (uint32_t j = 0; j < ctx->groups[i].count && n < (int)sizeof(buf) - 12; j++) {
+            if (j > 0) buf[n++] = ',';
+            n += snprintf(buf + n, sizeof(buf) - (size_t)n, "%u",
+                          ctx->groups[i].ids[j]);
+        }
 
         size_t str_sz = (size_t)n + 1;
         if (arena->used + str_sz > arena->cap) break;

@@ -150,8 +150,8 @@ static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "find",
         .alias   = "f",
-        .usage   = "find <entities|types> [pattern]",
-        .help    = "Search entities or types by regex pattern.",
+        .usage   = "find <entities|types> [pattern] [&group]",
+        .help    = "Search entities or types by regex. Optional group filter.",
         .arg_fmt = NULL,  /* Handled locally in TUI. */
     },
     {
