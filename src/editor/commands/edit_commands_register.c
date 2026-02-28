@@ -40,4 +40,7 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "alias_list",     cmd_alias_list);
     edit_dispatch_register(dispatch, "select_touching", cmd_select_touching);
     edit_dispatch_register(dispatch, "select_fill",     cmd_select_fill);
+    edit_dispatch_register(dispatch, "group_save",      cmd_group_save);
+    edit_dispatch_register(dispatch, "group_delete",    cmd_group_delete);
+    edit_dispatch_register(dispatch, "group_list",      cmd_group_list);
 }

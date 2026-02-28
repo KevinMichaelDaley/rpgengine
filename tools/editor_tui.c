@@ -46,6 +46,16 @@ static uint32_t g_entity_name_ids[MAX_ENTITY_NAMES];
 static uint32_t g_entity_name_count = 0;
 static uint32_t g_list_entities_cmd_id = UINT32_MAX;
 
+/* ── Group name cache (populated from server on connect) ──────────── */
+
+#define MAX_GROUP_NAMES 64
+static char     g_group_names[MAX_GROUP_NAMES][64];
+static uint32_t g_group_name_count = 0;
+static uint32_t g_group_list_cmd_id = UINT32_MAX;
+
+/* Forward declarations for response parsers. */
+static void parse_group_list_result_(const char *json);
+
 /* Commands that trigger an entity name cache refresh. */
 static bool needs_entity_refresh_(const char *cmd_text) {
     /* Extract first word (command name) from the text. */
@@ -62,6 +72,21 @@ static bool needs_entity_refresh_(const char *cmd_text) {
         || strcmp(cmd, "load") == 0
         || strcmp(cmd, "alias_create") == 0
         || strcmp(cmd, "alias_delete") == 0;
+}
+
+/**
+ * @brief Check if a command should trigger a group name cache refresh.
+ */
+static bool needs_group_refresh_(const char *cmd_text) {
+    char cmd[32];
+    size_t i = 0;
+    while (cmd_text[i] && cmd_text[i] != ' ' && i < sizeof(cmd) - 1) {
+        cmd[i] = cmd_text[i];
+        i++;
+    }
+    cmd[i] = '\0';
+    return strcmp(cmd, "group_save") == 0
+        || strcmp(cmd, "group_delete") == 0;
 }
 
 /**
@@ -278,6 +303,7 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
         /* Check if this is a bootstrap response. */
         bool is_type_bootstrap = ((uint32_t)id == g_list_types_cmd_id);
         bool is_entity_bootstrap = ((uint32_t)id == g_list_entities_cmd_id);
+        bool is_group_bootstrap = ((uint32_t)id == g_group_list_cmd_id);
 
         if (ok) {
             if (is_type_bootstrap) {
@@ -288,6 +314,11 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
             if (is_entity_bootstrap) {
                 parse_entity_list_result_(json);
                 g_list_entities_cmd_id = UINT32_MAX;
+                return;
+            }
+            if (is_group_bootstrap) {
+                parse_group_list_result_(json);
+                g_group_list_cmd_id = UINT32_MAX;
                 return;
             }
 
@@ -312,6 +343,10 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
             }
             if (is_entity_bootstrap) {
                 g_list_entities_cmd_id = UINT32_MAX;
+                return;
+            }
+            if (is_group_bootstrap) {
+                g_group_list_cmd_id = UINT32_MAX;
                 return;
             }
 
@@ -348,6 +383,58 @@ static void send_entity_refresh_(ctrl_conn_t *conn) {
     if (n > 0) {
         ctrl_conn_send_raw(conn, json, (uint32_t)n);
         conn->next_id++;
+    }
+}
+
+/**
+ * @brief Send a group_list query to refresh the group name cache.
+ */
+static void send_group_refresh_(ctrl_conn_t *conn) {
+    g_group_list_cmd_id = conn->next_id;
+    char json[128];
+    int n = snprintf(json, sizeof(json),
+                     "{\"id\":%u,\"cmd\":\"group_list\",\"args\":{}}\n",
+                     conn->next_id);
+    if (n > 0) {
+        ctrl_conn_send_raw(conn, json, (uint32_t)n);
+        conn->next_id++;
+    }
+}
+
+/**
+ * @brief Parse group_list result into the group name cache.
+ *
+ * The result is an array of strings like "&walls(3)" — we extract
+ * just the group name (up to the '(' character).
+ */
+static void parse_group_list_result_(const char *json) {
+    g_group_name_count = 0;
+    /* Quick scan: find "result":[ ... ] and extract strings. */
+    const char *arr = strstr(json, "\"result\":[");
+    if (!arr) return;
+    arr += 10; /* skip "result":[ */
+
+    while (*arr && g_group_name_count < MAX_GROUP_NAMES) {
+        /* Skip whitespace and commas. */
+        while (*arr == ' ' || *arr == ',' || *arr == '\n') arr++;
+        if (*arr == ']') break;
+        if (*arr != '"') { arr++; continue; }
+        arr++; /* skip opening quote */
+
+        /* Extract string content up to '(' or '"'. */
+        char *dst = g_group_names[g_group_name_count];
+        size_t di = 0;
+        while (*arr && *arr != '"' && *arr != '(' && di < 63) {
+            dst[di++] = *arr++;
+        }
+        dst[di] = '\0';
+        /* Skip to closing quote. */
+        while (*arr && *arr != '"') arr++;
+        if (*arr == '"') arr++;
+
+        if (di > 0 && dst[0] == '&') {
+            g_group_name_count++;
+        }
     }
 }
 
@@ -649,7 +736,7 @@ static void handle_tab_(ctrl_tui_t *tui) {
             }
             ctrl_log_add(&tui->log, 0, line);
         }
-    } else if (!has_more_args && g_entity_name_count > 0 &&
+    } else if (!has_more_args &&
                (strcmp(cmd, "select") == 0 ||
                 strcmp(cmd, "deselect") == 0 ||
                 strcmp(cmd, "delete_id") == 0 ||
@@ -657,16 +744,34 @@ static void handle_tab_(ctrl_tui_t *tui) {
                 strcmp(cmd, "rotate_id") == 0 ||
                 strcmp(cmd, "scale_id") == 0 ||
                 strcmp(cmd, "cursor_snap") == 0 ||
-                strcmp(cmd, "alias_delete") == 0)) {
-        /* Complete entity name for commands that take entity_id. */
+                strcmp(cmd, "alias_delete") == 0 ||
+                strcmp(cmd, "group_delete") == 0)) {
+        /* Complete entity or group name for commands that take entity_id. */
         size_t arg_len = strlen(arg_start);
-        const char *matches[MAX_ENTITY_NAMES];
+        const char *matches[MAX_ENTITY_NAMES + MAX_GROUP_NAMES];
         uint32_t match_count = 0;
 
-        for (uint32_t i = 0; i < g_entity_name_count &&
-                              match_count < MAX_ENTITY_NAMES; i++) {
-            if (strncmp(g_entity_names[i], arg_start, arg_len) == 0) {
-                matches[match_count++] = g_entity_names[i];
+        /* For select/deselect/group_delete, include group names. */
+        bool accepts_groups = (strcmp(cmd, "select") == 0 ||
+                               strcmp(cmd, "deselect") == 0 ||
+                               strcmp(cmd, "group_delete") == 0);
+        if (accepts_groups) {
+            for (uint32_t i = 0; i < g_group_name_count &&
+                                  match_count < MAX_GROUP_NAMES; i++) {
+                if (strncmp(g_group_names[i], arg_start, arg_len) == 0) {
+                    matches[match_count++] = g_group_names[i];
+                }
+            }
+        }
+
+        /* Include entity names (skip if arg starts with & for group_delete). */
+        bool skip_entities = (strcmp(cmd, "group_delete") == 0);
+        if (!skip_entities && g_entity_name_count > 0) {
+            for (uint32_t i = 0; i < g_entity_name_count &&
+                                  match_count < MAX_ENTITY_NAMES + MAX_GROUP_NAMES; i++) {
+                if (strncmp(g_entity_names[i], arg_start, arg_len) == 0) {
+                    matches[match_count++] = g_entity_names[i];
+                }
             }
         }
 
@@ -817,6 +922,9 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Query group names from server (bootstrap). */
+    send_group_refresh_(&conn);
+
     /* Enter raw terminal mode. */
     if (!raw_mode_()) {
         fprintf(stderr, "Failed to set raw terminal mode\n");
@@ -890,6 +998,10 @@ int main(int argc, char **argv) {
                         /* Refresh entity cache after mutating commands. */
                         if (needs_entity_refresh_(msg)) {
                             send_entity_refresh_(&conn);
+                        }
+                        /* Refresh group cache after group mutations. */
+                        if (needs_group_refresh_(msg)) {
+                            send_group_refresh_(&conn);
                         }
                     } else {
                         /* Build failed — check if command has required args. */

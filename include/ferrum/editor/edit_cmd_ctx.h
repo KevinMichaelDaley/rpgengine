@@ -14,6 +14,7 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Forward declarations (full types in their own headers). */
@@ -108,6 +109,29 @@ typedef enum edit_cmd_type {
 #define EDIT_CURSOR_STACK_MAX 16
 
 /* ------------------------------------------------------------------------ */
+/* Selection groups                                                          */
+/* ------------------------------------------------------------------------ */
+
+/** @brief Maximum number of named selection groups. */
+#define EDIT_GROUP_MAX       64
+/** @brief Maximum name length for a group (including & prefix and NUL). */
+#define EDIT_GROUP_NAME_MAX  64
+/** @brief Maximum entities per group. */
+#define EDIT_GROUP_ENTRY_MAX 4096
+
+/**
+ * @brief A named selection group — snapshot of entity IDs.
+ *
+ * Name must start with '&'. Entity IDs are stored as a simple array.
+ */
+typedef struct edit_group {
+    char     name[EDIT_GROUP_NAME_MAX]; /**< Group name (e.g. "&walls"). */
+    uint32_t ids[EDIT_GROUP_ENTRY_MAX]; /**< Entity IDs in the group. */
+    uint32_t count;                     /**< Number of entities. */
+    bool     active;                    /**< True if slot is in use. */
+} edit_group_t;
+
+/* ------------------------------------------------------------------------ */
 /* Command context                                                           */
 /* ------------------------------------------------------------------------ */
 
@@ -127,6 +151,11 @@ typedef struct edit_cmd_ctx {
     float    cursor_stack[EDIT_CURSOR_STACK_MAX][3];
     /** @brief Number of positions currently on the cursor stack. */
     uint32_t cursor_stack_count;
+
+    /** @brief Named selection groups (heap-allocated array, EDIT_GROUP_MAX slots). */
+    edit_group_t *groups;
+    /** @brief Number of allocated group slots. */
+    uint32_t      group_capacity;
 } edit_cmd_ctx_t;
 
 /* Forward declaration for JSON types. */
@@ -144,6 +173,16 @@ struct json_value;
  */
 uint32_t edit_cmd_resolve_entity(const edit_cmd_ctx_t *ctx,
                                  const struct json_value *id_val);
+
+/**
+ * @brief Find a group by name.
+ *
+ * @param ctx   Command context.
+ * @param name  Group name (must start with '&').
+ * @return Pointer to the group, or NULL if not found.
+ */
+edit_group_t *edit_cmd_find_group(const edit_cmd_ctx_t *ctx,
+                                  const char *name);
 
 #ifdef __cplusplus
 }

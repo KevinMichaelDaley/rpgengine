@@ -162,6 +162,18 @@ bool cmd_select_touching(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_select_fill(edit_dispatch_t *d, const json_value_t *args,
                      json_value_t *result, json_arena_t *arena);
 
+/** @brief Save current selection as named group. Args: {"name":"&x"}. */
+bool cmd_group_save(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
+/** @brief Delete a named group. Args: {"name":"&x"}. */
+bool cmd_group_delete(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief List all groups. Args: {} (none). */
+bool cmd_group_list(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

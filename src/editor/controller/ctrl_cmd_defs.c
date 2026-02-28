@@ -252,6 +252,27 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Flood-fill select through touching chains.",
         .arg_fmt = NULL,
     },
+    {
+        .name    = "group_save",
+        .alias   = "gs",
+        .usage   = "group_save &name",
+        .help    = "Save current selection as named group.",
+        .arg_fmt = "s:name",
+    },
+    {
+        .name    = "group_delete",
+        .alias   = "gd",
+        .usage   = "group_delete &name",
+        .help    = "Delete a named selection group.",
+        .arg_fmt = "s:name",
+    },
+    {
+        .name    = "group_list",
+        .alias   = "gl",
+        .usage   = "group_list",
+        .help    = "List all selection groups.",
+        .arg_fmt = NULL,
+    },
 };
 
 static const uint32_t s_def_count =
