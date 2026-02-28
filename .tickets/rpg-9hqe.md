@@ -1,6 +1,6 @@
 ---
 id: rpg-9hqe
-status: open
+status: in_progress
 deps: [rpg-fund]
 links: []
 created: 2026-02-28T22:22:59Z
