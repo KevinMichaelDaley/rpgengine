@@ -1,6 +1,6 @@
 ---
 id: rpg-m6jf
-status: open
+status: in_progress
 deps: [rpg-nulp, rpg-syut]
 links: []
 created: 2026-02-28T22:22:05Z

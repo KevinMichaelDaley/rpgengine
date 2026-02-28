@@ -1,6 +1,6 @@
 ---
 id: rpg-clq6
-status: in_progress
+status: closed
 deps: [rpg-tze6]
 links: []
 created: 2026-02-28T22:21:49Z
