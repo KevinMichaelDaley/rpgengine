@@ -142,6 +142,18 @@ bool cmd_cursor_pop(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_cursor_snap(edit_dispatch_t *d, const json_value_t *args,
                      json_value_t *result, json_arena_t *arena);
 
+/** @brief Create named alias (@ marker). Args: {"name":"@x","pos":[],"rot":[]}. */
+bool cmd_alias_create(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief Delete named alias. Args: {"name":"@x"}. */
+bool cmd_alias_delete(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief List all aliases. Args: {"pattern":"regex"} (optional). */
+bool cmd_alias_list(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

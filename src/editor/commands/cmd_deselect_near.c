@@ -65,9 +65,9 @@ bool cmd_deselect_near(edit_dispatch_t *d, const json_value_t *args,
         const edit_entity_t *e = edit_entity_store_get(ctx->entities, i);
         if (!e) continue;
 
-        /* Skip cursor entity itself. */
+        /* Skip all @ entities (cursor, aliases). */
         if (i == cursor_id) continue;
-        if (e->name[0] == '@' && strcmp(e->name, "@cursor") == 0) continue;
+        if (e->name[0] == '@') continue;
 
         float dx = e->pos[0] - pos[0];
         float dy = e->pos[1] - pos[1];

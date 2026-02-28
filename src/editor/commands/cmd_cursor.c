@@ -88,6 +88,7 @@ bool cmd_cursor_snap(edit_dispatch_t *d, const json_value_t *args,
     if (!cur) return false;
 
     float target[3] = {0, 0, 0};
+    float target_rot[3] = {0, 0, 0};
 
     /* Check for entity_id argument. Treat empty string as absent. */
     const json_value_t *id_val = json_object_get(args, "entity_id");
@@ -104,6 +105,9 @@ bool cmd_cursor_snap(edit_dispatch_t *d, const json_value_t *args,
         target[0] = e->pos[0];
         target[1] = e->pos[1];
         target[2] = e->pos[2];
+        target_rot[0] = e->rot[0];
+        target_rot[1] = e->rot[1];
+        target_rot[2] = e->rot[2];
     } else {
         /* No entity specified — snap to selection centroid. */
         if (!ctx->selection) return false;
@@ -124,10 +128,13 @@ bool cmd_cursor_snap(edit_dispatch_t *d, const json_value_t *args,
         target[2] /= (float)count;
     }
 
-    /* Move cursor to target. */
+    /* Move cursor to target position and rotation. */
     cur->pos[0] = target[0];
     cur->pos[1] = target[1];
     cur->pos[2] = target[2];
+    cur->rot[0] = target_rot[0];
+    cur->rot[1] = target_rot[1];
+    cur->rot[2] = target_rot[2];
 
     /* Notify bridge. */
     if (ctx->bridge && ctx->bridge->on_move) {

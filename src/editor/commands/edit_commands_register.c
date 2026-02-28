@@ -35,4 +35,7 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "cursor_push",    cmd_cursor_push);
     edit_dispatch_register(dispatch, "cursor_pop",     cmd_cursor_pop);
     edit_dispatch_register(dispatch, "cursor_snap",    cmd_cursor_snap);
+    edit_dispatch_register(dispatch, "alias_create",   cmd_alias_create);
+    edit_dispatch_register(dispatch, "alias_delete",   cmd_alias_delete);
+    edit_dispatch_register(dispatch, "alias_list",     cmd_alias_list);
 }

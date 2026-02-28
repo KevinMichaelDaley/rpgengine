@@ -14,6 +14,7 @@ static const edit_entity_type_info_t s_types[] = {
     { .name = "box",     .type_id = EDIT_ENTITY_TYPE_BOX },
     { .name = "sphere",  .type_id = EDIT_ENTITY_TYPE_SPHERE },
     { .name = "capsule", .type_id = EDIT_ENTITY_TYPE_CAPSULE },
+    { .name = "marker",  .type_id = EDIT_ENTITY_TYPE_MARKER },
 };
 
 static const uint32_t s_type_count =

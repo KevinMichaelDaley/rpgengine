@@ -217,6 +217,27 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Snap @cursor to entity, or selection center if none.",
         .arg_fmt = "s:entity_id",
     },
+    {
+        .name    = "alias_create",
+        .alias   = "ac",
+        .usage   = "alias_create @name [x y z] [rx ry rz]",
+        .help    = "Create named reference point (pos defaults to @cursor).",
+        .arg_fmt = NULL,  /* Custom parsing — variable args. */
+    },
+    {
+        .name    = "alias_delete",
+        .alias   = "ad",
+        .usage   = "alias_delete @name",
+        .help    = "Delete a named alias.",
+        .arg_fmt = "s:name",
+    },
+    {
+        .name    = "alias_list",
+        .alias   = "al",
+        .usage   = "alias_list [pattern]",
+        .help    = "List all @ aliases. Optional regex filter.",
+        .arg_fmt = "s:pattern",
+    },
 };
 
 static const uint32_t s_def_count =

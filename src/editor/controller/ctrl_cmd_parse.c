@@ -213,6 +213,45 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return (uint32_t)n2;
     }
 
+    /* Special handling for alias_create: variable arg count.
+     * "alias_create @name"              → {"name":"@name"}
+     * "alias_create @name x y z"        → {"name":"@name","pos":[x,y,z]}
+     * "alias_create @name x y z rx ry rz" → + "rot":[...] */
+    if (def && strcmp(wire_name, "alias_create") == 0 && token_count >= 2) {
+        char args_buf2[512];
+        const char *aname = tokens[1];
+        if (token_count == 2) {
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"name\":\"%s\"}", aname);
+        } else if (token_count >= 5 && token_count < 8) {
+            float px = strtof(tokens[2], NULL);
+            float py = strtof(tokens[3], NULL);
+            float pz = strtof(tokens[4], NULL);
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"name\":\"%s\",\"pos\":[%.6g,%.6g,%.6g]}",
+                     aname, (double)px, (double)py, (double)pz);
+        } else if (token_count >= 8) {
+            float px = strtof(tokens[2], NULL);
+            float py = strtof(tokens[3], NULL);
+            float pz = strtof(tokens[4], NULL);
+            float rx = strtof(tokens[5], NULL);
+            float ry = strtof(tokens[6], NULL);
+            float rz = strtof(tokens[7], NULL);
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"name\":\"%s\",\"pos\":[%.6g,%.6g,%.6g],"
+                     "\"rot\":[%.6g,%.6g,%.6g]}",
+                     aname, (double)px, (double)py, (double)pz,
+                     (double)rx, (double)ry, (double)rz);
+        } else {
+            return 0;
+        }
+        int n2 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, args_buf2);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
     /* Build args JSON. */
     char args_buf[2048];
     uint32_t args_len;
