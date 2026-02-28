@@ -301,6 +301,13 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "General tab-completion (routes to appropriate source).",
         .arg_fmt = "s:context",
     },
+    {
+        .name    = "browse",
+        .alias   = "br",
+        .usage   = "browse [prefix] [--filter <pattern>]",
+        .help    = "Browse assets by directory. Results numbered for #N ref.",
+        .arg_fmt = "s:prefix s:filter",
+    },
 };
 
 static const uint32_t s_def_count =

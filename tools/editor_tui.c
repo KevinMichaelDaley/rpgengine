@@ -26,6 +26,7 @@
 #include "ferrum/editor/ctrl_conn.h"
 #include "ferrum/editor/ctrl_tui.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
+#include "ferrum/editor/ctrl_browse.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_asset_registry.h"
 
@@ -63,6 +64,11 @@ static uint32_t g_group_list_cmd_id = UINT32_MAX;
 static char     g_asset_paths[MAX_ASSET_PATHS][EDIT_ASSET_PATH_MAX];
 static uint32_t g_asset_path_count = 0;
 static uint32_t g_asset_list_cmd_id = UINT32_MAX;
+
+/* ── Browse result cache (for #N reference expansion) ─────────────── */
+
+static ctrl_browse_t g_browse;
+static uint32_t      g_browse_cmd_id = UINT32_MAX;
 
 /* Forward declarations for response parsers. */
 static void parse_group_list_result_(const char *json);
@@ -348,6 +354,7 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
         bool is_entity_bootstrap = ((uint32_t)id == g_list_entities_cmd_id);
         bool is_group_bootstrap = ((uint32_t)id == g_group_list_cmd_id);
         bool is_asset_bootstrap = ((uint32_t)id == g_asset_list_cmd_id);
+        bool is_browse_response = ((uint32_t)id == g_browse_cmd_id);
 
         if (ok) {
             if (is_type_bootstrap) {
@@ -368,6 +375,50 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
             if (is_asset_bootstrap) {
                 parse_asset_list_result_(json);
                 g_asset_list_cmd_id = UINT32_MAX;
+                return;
+            }
+            if (is_browse_response) {
+                /* Parse browse results into the cache and display numbered list. */
+                g_browse_cmd_id = UINT32_MAX;
+                ctrl_browse_clear(&g_browse);
+                ctrl_log_set_cmd_status(&tui->log, (uint32_t)id,
+                                        CTRL_LOG_STATUS_OK);
+
+                /* Parse JSON result array. */
+                const char *arr = strstr(json, "\"result\":[");
+                if (arr) {
+                    arr = strchr(arr, '[') + 1;
+                    const char *paths[CTRL_BROWSE_MAX_RESULTS];
+                    char path_buf[CTRL_BROWSE_MAX_RESULTS][CTRL_BROWSE_PATH_MAX];
+                    uint32_t count = 0;
+                    while (*arr && *arr != ']'
+                           && count < CTRL_BROWSE_MAX_RESULTS) {
+                        const char *q1 = strchr(arr, '"');
+                        if (!q1) break;
+                        const char *q2 = strchr(q1 + 1, '"');
+                        if (!q2) break;
+                        size_t len = (size_t)(q2 - q1 - 1);
+                        if (len >= CTRL_BROWSE_PATH_MAX)
+                            len = CTRL_BROWSE_PATH_MAX - 1;
+                        memcpy(path_buf[count], q1 + 1, len);
+                        path_buf[count][len] = '\0';
+                        paths[count] = path_buf[count];
+
+                        /* Display numbered result in log. */
+                        char line[320];
+                        snprintf(line, sizeof(line), "  [%u] %s",
+                                 count + 1, path_buf[count]);
+                        ctrl_log_add(&tui->log, 0, line);
+
+                        count++;
+                        arr = q2 + 1;
+                        while (*arr == ',' || *arr == ' ') arr++;
+                    }
+                    ctrl_browse_set(&g_browse, paths, count);
+                    if (count == 0) {
+                        ctrl_log_add(&tui->log, 0, "  (no results)");
+                    }
+                }
                 return;
             }
 
@@ -401,6 +452,10 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
             if (is_asset_bootstrap) {
                 g_asset_list_cmd_id = UINT32_MAX;
                 return;
+            }
+            if (is_browse_response) {
+                g_browse_cmd_id = UINT32_MAX;
+                /* Fall through to normal error display. */
             }
 
             ctrl_log_set_cmd_status(&tui->log, (uint32_t)id,
@@ -547,6 +602,57 @@ static uint32_t group_cache_find_(const char *name) {
  *
  * Searches cached entity names or type names by POSIX regex.
  * Optional &group filter limits entity results to group members.
+ /**
+ * @brief Expand #N references in a command string using browse cache.
+ *
+ * Scans @p cmd for tokens starting with '#' followed by a number,
+ * and replaces them with the corresponding browse result path.
+ * Writes result to @p out. Returns true if any expansion happened.
+ */
+static bool expand_browse_refs_(const char *cmd, char *out, size_t cap) {
+    const char *src = cmd;
+    size_t pos = 0;
+    bool expanded = false;
+
+    while (*src && pos < cap - 1) {
+        /* Skip to next '#' or end. */
+        if (*src == '#' && (src == cmd || *(src - 1) == ' ')) {
+            /* Extract the #N token. */
+            const char *tok_start = src;
+            src++; /* skip '#' */
+            while (*src >= '0' && *src <= '9') src++;
+            /* Token is from tok_start to src. */
+            size_t tok_len = (size_t)(src - tok_start);
+            char tok[16];
+            if (tok_len < sizeof(tok)) {
+                memcpy(tok, tok_start, tok_len);
+                tok[tok_len] = '\0';
+                const char *path = ctrl_browse_expand(&g_browse, tok);
+                if (path) {
+                    size_t plen = strlen(path);
+                    if (pos + plen < cap - 1) {
+                        memcpy(out + pos, path, plen);
+                        pos += plen;
+                        expanded = true;
+                        continue;
+                    }
+                }
+            }
+            /* Not a valid ref — copy original token. */
+            for (const char *c = tok_start; c < src && pos < cap - 1; c++) {
+                out[pos++] = *c;
+            }
+        } else {
+            out[pos++] = *src++;
+        }
+    }
+    out[pos] = '\0';
+    return expanded;
+}
+
+/**
+ * @brief Handle local 'find' command — regex search in entity/type/asset caches.
+ *
  * Results shown in the TUI log.
  *
  * @return true if the command was handled (even if no results).
@@ -1208,6 +1314,7 @@ int main(int argc, char **argv) {
     /* Init TUI. */
     ctrl_tui_t tui;
     ctrl_tui_init(&tui);
+    ctrl_browse_init(&g_browse);
 
     {
         char msg[256];
@@ -1317,9 +1424,22 @@ int main(int argc, char **argv) {
                     }
 
                     /* Log the user command with pending status. */
+                    char expanded[512];
+                    if (expand_browse_refs_(cmd, expanded, sizeof(expanded))) {
+                        cmd = expanded;
+                    }
                     char msg[512];
                     snprintf(msg, sizeof(msg), "%s", cmd);
                     uint32_t this_cmd_id = conn.next_id;
+
+                    /* Track browse command ID for response interception. */
+                    if (strncmp(cmd, "browse", 6) == 0
+                        && (cmd[6] == '\0' || cmd[6] == ' ')) {
+                        g_browse_cmd_id = this_cmd_id;
+                    }
+                    if (strncmp(cmd, "br ", 3) == 0 || strcmp(cmd, "br") == 0) {
+                        g_browse_cmd_id = this_cmd_id;
+                    }
 
                     /* Build proper JSON and send. */
                     char json[4096];

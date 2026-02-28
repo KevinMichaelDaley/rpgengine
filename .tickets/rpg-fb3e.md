@@ -1,6 +1,6 @@
 ---
 id: rpg-fb3e
-status: open
+status: closed
 deps: [rpg-d6j3]
 links: []
 created: 2026-02-26T04:27:43Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-cpvm
-status: open
+status: closed
 deps: [rpg-fb3e]
 links: []
 created: 2026-02-26T04:27:43Z
