@@ -1,6 +1,6 @@
 ---
 id: rpg-dk4m
-status: in_progress
+status: closed
 deps: [rpg-clq6]
 links: []
 created: 2026-02-28T22:23:12Z
