@@ -769,7 +769,7 @@ int main(int argc, char **argv) {
         ctrl_log_add(&tui.log, 0, msg);
     }
     ctrl_log_add(&tui.log, 0, "Type :? for command list, :cmd ? for help");
-    ctrl_log_add(&tui.log, 0, "Tab to autocomplete, 'q' to quit");
+    ctrl_log_add(&tui.log, 0, "Tab to autocomplete, :q to quit");
 
     /* Query entity types from server (bootstrap). */
     {
@@ -828,12 +828,6 @@ int main(int argc, char **argv) {
         if (ready > 0 && (fds[0].revents & POLLIN)) {
             char ch;
             while (read(STDIN_FILENO, &ch, 1) == 1) {
-                /* Quit on 'q' in normal mode. */
-                if (tui.mode == CTRL_MODE_NORMAL && ch == 'q') {
-                    g_running = false;
-                    break;
-                }
-
                 /* Tab completion in command mode. */
                 if (tui.mode == CTRL_MODE_COMMAND && ch == '\t') {
                     handle_tab_(&tui);
@@ -850,6 +844,12 @@ int main(int argc, char **argv) {
                     /* Handle local 'find' command (no server roundtrip). */
                     if (handle_find_(&tui, cmd)) {
                         continue;
+                    }
+
+                    /* Quit command. */
+                    if (strcmp(cmd, "q") == 0 || strcmp(cmd, "quit") == 0) {
+                        g_running = false;
+                        break;
                     }
 
                     /* Log the user command with pending status. */
