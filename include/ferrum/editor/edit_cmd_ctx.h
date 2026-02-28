@@ -23,6 +23,7 @@ struct edit_selection;
 struct edit_undo_stack;
 struct edit_entity;
 struct edit_physics_ctrl;
+struct json_value;
 
 /* ------------------------------------------------------------------------ */
 /* Physics bridge callback                                                   */
@@ -69,17 +70,25 @@ typedef struct edit_physics_bridge {
      * @brief Query which entities are touching a given entity.
      *
      * The server implements this by performing narrowphase collision
-     * tests (sphere, box, capsule, convex, mesh) against all other
-     * bodies. Results are entity IDs (not body indices).
+     * tests (sphere, box, capsule, convex, mesh) against other bodies.
+     * Results are entity IDs (not body indices).
      *
-     * @param user_data       Opaque context.
-     * @param entity_id       Editor entity ID to test.
-     * @param out_entity_ids  Output array of touching entity IDs.
-     * @param max_results     Maximum number of results.
+     * When candidates/candidate_count are provided (non-NULL, >0),
+     * only test those specific entities (group_mask optimization).
+     * When candidates is NULL, test against all entities.
+     *
+     * @param user_data        Opaque context.
+     * @param entity_id        Editor entity ID to test.
+     * @param candidates       Optional array of entity IDs to test against.
+     * @param candidate_count  Number of candidates (0 = test all).
+     * @param out_entity_ids   Output array of touching entity IDs.
+     * @param max_results      Maximum number of results.
      * @return Number of touching entities written to out_entity_ids.
      */
     uint32_t (*on_query_touching)(void *user_data,
                                    uint32_t entity_id,
+                                   const uint32_t *candidates,
+                                   uint32_t candidate_count,
                                    uint32_t *out_entity_ids,
                                    uint32_t max_results);
 
@@ -183,6 +192,30 @@ uint32_t edit_cmd_resolve_entity(const edit_cmd_ctx_t *ctx,
  */
 edit_group_t *edit_cmd_find_group(const edit_cmd_ctx_t *ctx,
                                   const char *name);
+
+/**
+ * @brief Check if an entity ID is a member of a group.
+ *
+ * @param grp  Group to search (NULL returns false).
+ * @param id   Entity ID to check.
+ * @return true if id is found in the group's ID list.
+ */
+bool edit_cmd_group_contains(const edit_group_t *grp, uint32_t id);
+
+/**
+ * @brief Resolve an optional group_mask argument from JSON args.
+ *
+ * Looks for "group_mask" string key in args. If present, finds the
+ * group by name. If not present, returns NULL (no mask = accept all).
+ * Sets *fail to true if the mask name is present but group not found.
+ *
+ * @param ctx   Command context.
+ * @param args  JSON args object.
+ * @param fail  Set to true if group_mask was specified but not found.
+ * @return Pointer to group, or NULL if no mask or not found.
+ */
+const edit_group_t *edit_cmd_resolve_group_mask(
+    const edit_cmd_ctx_t *ctx, const struct json_value *args, bool *fail);
 
 #ifdef __cplusplus
 }

@@ -41,16 +41,38 @@ bool cmd_select_regex(edit_dispatch_t *d, const json_value_t *args,
         return false;
     }
 
-    /* Iterate all entities, select those whose name matches. */
-    uint32_t matched = 0;
-    for (uint32_t i = 0; i < ctx->entities->capacity; i++) {
-        const edit_entity_t *e = edit_entity_store_get(ctx->entities, i);
-        if (!e) continue;
-        if (e->name[0] == '\0') continue;  /* Skip unnamed entities. */
+    /* Resolve optional group_mask. */
+    bool mask_fail = false;
+    const edit_group_t *mask = edit_cmd_resolve_group_mask(ctx, args,
+                                                           &mask_fail);
+    if (mask_fail) { regfree(&re); return false; }
 
-        if (regexec(&re, e->name, 0, NULL, 0) == 0) {
-            edit_selection_add(ctx->selection, i);
-            matched++;
+    /* Iterate entities, select those whose name matches. */
+    uint32_t matched = 0;
+
+    if (mask) {
+        /* Only check group members. */
+        for (uint32_t g = 0; g < mask->count; g++) {
+            uint32_t id = mask->ids[g];
+            const edit_entity_t *e = edit_entity_store_get(ctx->entities, id);
+            if (!e) continue;
+            if (e->name[0] == '\0') continue;
+
+            if (regexec(&re, e->name, 0, NULL, 0) == 0) {
+                edit_selection_add(ctx->selection, id);
+                matched++;
+            }
+        }
+    } else {
+        for (uint32_t i = 0; i < ctx->entities->capacity; i++) {
+            const edit_entity_t *e = edit_entity_store_get(ctx->entities, i);
+            if (!e) continue;
+            if (e->name[0] == '\0') continue;
+
+            if (regexec(&re, e->name, 0, NULL, 0) == 0) {
+                edit_selection_add(ctx->selection, i);
+                matched++;
+            }
         }
     }
 

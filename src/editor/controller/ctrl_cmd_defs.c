@@ -80,8 +80,8 @@ static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "select_all",
         .alias   = "sa",
-        .usage   = "select_all",
-        .help    = "Select all active entities.",
+        .usage   = "select_all [&group]",
+        .help    = "Select all active entities. Optional group mask.",
         .arg_fmt = NULL,
     },
     {
@@ -157,9 +157,9 @@ static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "select_regex",
         .alias   = "sr",
-        .usage   = "select_regex <pattern>",
-        .help    = "Select entities whose name matches regex pattern.",
-        .arg_fmt = "s:pattern",
+        .usage   = "select_regex <pattern> [&group]",
+        .help    = "Select entities whose name matches regex. Optional group mask.",
+        .arg_fmt = NULL,
     },
     {
         .name    = "rotate_id",
@@ -178,8 +178,8 @@ static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "select_near",
         .alias   = "sn",
-        .usage   = "select_near [x y z] <dist>",
-        .help    = "Select entities within distance. Defaults to @cursor pos.",
+        .usage   = "select_near [x y z] <dist> [&group]",
+        .help    = "Select entities within distance. Optional group mask.",
         .arg_fmt = NULL,  /* Custom parsing in TUI. */
     },
     {
@@ -241,15 +241,15 @@ static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "select_touching",
         .alias   = "st",
-        .usage   = "select_touching",
-        .help    = "Select entities colliding with current selection.",
+        .usage   = "select_touching [&group]",
+        .help    = "Select colliding entities. Optional group mask.",
         .arg_fmt = NULL,
     },
     {
         .name    = "select_fill",
         .alias   = "sf",
-        .usage   = "select_fill",
-        .help    = "Flood-fill select through touching chains.",
+        .usage   = "select_fill [&group]",
+        .help    = "Flood-fill select through touching chains. Optional mask.",
         .arg_fmt = NULL,
     },
     {

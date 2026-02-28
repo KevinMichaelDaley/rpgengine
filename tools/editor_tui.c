@@ -819,6 +819,88 @@ static void handle_tab_(ctrl_tui_t *tui) {
                 }
             }
         }
+    } else if (!has_more_args && g_group_name_count > 0 &&
+               (strcmp(cmd, "select_all") == 0 ||
+                strcmp(cmd, "select_touching") == 0 ||
+                strcmp(cmd, "select_fill") == 0)) {
+        /* Complete group_mask for commands where it's the only arg. */
+        size_t arg_len = strlen(arg_start);
+        const char *matches[MAX_GROUP_NAMES];
+        uint32_t match_count = 0;
+        for (uint32_t i = 0; i < g_group_name_count &&
+                              match_count < MAX_GROUP_NAMES; i++) {
+            if (strncmp(g_group_names[i], arg_start, arg_len) == 0) {
+                matches[match_count++] = g_group_names[i];
+            }
+        }
+        if (match_count == 1) {
+            char rebuilt[CTRL_CMD_MAX_LEN];
+            int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s ",
+                             cmd, matches[0]);
+            if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                tui->cmd_len = (uint32_t)n;
+                tui->cmd_text[tui->cmd_len] = '\0';
+                tui->cmd_cursor = tui->cmd_len;
+            }
+        } else if (match_count > 1) {
+            ctrl_log_add(&tui->log, 0, "Groups:");
+            char line[512];
+            line[0] = '\0';
+            size_t pos = 0;
+            for (uint32_t i = 0; i < match_count; i++) {
+                int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
+                                 matches[i]);
+                if (n > 0) pos += (size_t)n;
+            }
+            ctrl_log_add(&tui->log, 0, line);
+        }
+    } else if (has_more_args && g_group_name_count > 0 &&
+               (strcmp(cmd, "select_regex") == 0 ||
+                strcmp(cmd, "select_near") == 0)) {
+        /* Complete trailing &group for select_regex/select_near. */
+        const char *last_space = strrchr(arg_start, ' ');
+        const char *last_arg = last_space ? last_space + 1 : arg_start;
+        if (last_arg[0] == '&' || last_arg[0] == '\0') {
+            size_t la_len = strlen(last_arg);
+            const char *matches[MAX_GROUP_NAMES];
+            uint32_t match_count = 0;
+            for (uint32_t i = 0; i < g_group_name_count &&
+                                  match_count < MAX_GROUP_NAMES; i++) {
+                if (strncmp(g_group_names[i], last_arg, la_len) == 0) {
+                    matches[match_count++] = g_group_names[i];
+                }
+            }
+            if (match_count == 1) {
+                /* Rebuild: cmd + original args up to last_arg + match. */
+                char rebuilt[CTRL_CMD_MAX_LEN];
+                size_t prefix_len = (size_t)(last_arg - arg_start);
+                char prior_args[256];
+                if (prefix_len >= sizeof(prior_args))
+                    prefix_len = sizeof(prior_args) - 1;
+                memcpy(prior_args, arg_start, prefix_len);
+                prior_args[prefix_len] = '\0';
+                int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s%s ",
+                                 cmd, prior_args, matches[0]);
+                if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+                    memcpy(tui->cmd_text, rebuilt, (size_t)n);
+                    tui->cmd_len = (uint32_t)n;
+                    tui->cmd_text[tui->cmd_len] = '\0';
+                    tui->cmd_cursor = tui->cmd_len;
+                }
+            } else if (match_count > 1) {
+                ctrl_log_add(&tui->log, 0, "Groups:");
+                char line[512];
+                line[0] = '\0';
+                size_t pos = 0;
+                for (uint32_t i = 0; i < match_count; i++) {
+                    int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
+                                     matches[i]);
+                    if (n > 0) pos += (size_t)n;
+                }
+                ctrl_log_add(&tui->log, 0, line);
+            }
+        }
     } else if (strcmp(cmd, "find") == 0 && !has_more_args) {
         /* Complete find's category argument. */
         static const char *categories[] = {"entities", "types"};

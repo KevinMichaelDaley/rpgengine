@@ -1,20 +1,16 @@
 /**
- * @file cmd_select_touching_tests.c
- * @brief Tests for select_touching and select_fill commands.
- *
- * Since full narrowphase collision requires physics world data, these tests
- * use a mock bridge callback that simulates collision results. The actual
- * collision dispatch is tested in the physics narrowphase tests.
+ * @file cmd_group_mask_tests.c
+ * @brief Tests for group_mask filtering on select commands.
  *
  * Tests:
- *  1. select_touching adds entities that touch current selection
- *  2. select_touching with no selection is a no-op
- *  3. select_touching with no bridge fails gracefully
- *  4. select_fill repeats select_touching until stable
- *  5. select_fill from single entity fills connected cluster
- *  6. select_fill stops at disconnected groups
- *  7. select_touching skips @ entities
- *  8. select_touching returns count of newly selected
+ *  1. select_all with group_mask only selects group members
+ *  2. select_regex with group_mask filters to group members
+ *  3. select_near with group_mask iterates only group members
+ *  4. select_touching with group_mask only adds group members
+ *  5. select_fill with group_mask stops at group boundary
+ *  6. select_all without group_mask selects everything (no regression)
+ *  7. group_mask with nonexistent group fails
+ *  8. select_near with group_mask skips non-members even if close
  */
 
 #include <math.h>
@@ -54,12 +50,6 @@ static int g_pass, g_fail;
 /* Mock touching callback                                                    */
 /* ----------------------------------------------------------------------- */
 
-/**
- * @brief Mock touching adjacency table.
- *
- * mock_adj[i] is a list of entity IDs that entity i is "touching".
- * The callback returns these when queried for entity i's body_index.
- */
 #define MOCK_MAX_ADJ 8
 #define MOCK_MAX_ENTITIES 16
 
@@ -71,7 +61,6 @@ static void mock_clear(void) {
     memset(g_mock_adj_count, 0, sizeof(g_mock_adj_count));
 }
 
-/** Make entities a and b "touch" each other (symmetric). */
 static void mock_touch(uint32_t a, uint32_t b) {
     if (a < MOCK_MAX_ENTITIES && g_mock_adj_count[a] < MOCK_MAX_ADJ) {
         g_mock_adj[a][g_mock_adj_count[a]++] = b;
@@ -81,13 +70,6 @@ static void mock_touch(uint32_t a, uint32_t b) {
     }
 }
 
-/**
- * @brief Mock bridge callback: query what entities touch a given entity.
- *
- * The entity_id maps directly to the mock adjacency table.
- * Returns entity IDs (not body indices) in out_entity_ids.
- * When candidates is non-NULL, only returns touching entities from that set.
- */
 static uint32_t mock_query_touching_(void *user_data,
                                       uint32_t entity_id,
                                       const uint32_t *candidates,
@@ -99,9 +81,8 @@ static uint32_t mock_query_touching_(void *user_data,
 
     uint32_t found = 0;
     if (candidates && candidate_count > 0) {
-        /* Only check candidates. */
-        for (uint32_t c = 0; c < candidate_count && found < max_results;
-             c++) {
+        /* Only check candidates for touching. */
+        for (uint32_t c = 0; c < candidate_count && found < max_results; c++) {
             uint32_t cand = candidates[c];
             for (uint32_t j = 0; j < g_mock_adj_count[entity_id]; j++) {
                 if (g_mock_adj[entity_id][j] == cand) {
@@ -111,6 +92,7 @@ static uint32_t mock_query_touching_(void *user_data,
             }
         }
     } else {
+        /* No candidate filter — return all touching. */
         uint32_t count = g_mock_adj_count[entity_id];
         if (count > max_results) count = max_results;
         for (uint32_t i = 0; i < count; i++) {
@@ -154,6 +136,7 @@ static void setup(void) {
 }
 
 static void teardown(void) {
+    if (g_ctx.groups) { free(g_ctx.groups); g_ctx.groups = NULL; }
     edit_dispatch_destroy(&g_dispatch);
     edit_entity_store_destroy(&g_entities);
     edit_selection_destroy(&g_selection);
@@ -174,6 +157,10 @@ static bool resp_ok(void) {
     return strstr(g_resp, "\"ok\":true") != NULL;
 }
 
+static bool resp_fail(void) {
+    return strstr(g_resp, "\"ok\":false") != NULL;
+}
+
 static void spawn_named(const char *type, const char *name,
                         float x, float y, float z) {
     char json[512];
@@ -184,69 +171,26 @@ static void spawn_named(const char *type, const char *name,
     exec(json);
 }
 
+/** Create group &name from entity IDs. */
+static void create_group(const char *name, const uint32_t *ids, uint32_t n) {
+    edit_selection_clear(&g_selection);
+    for (uint32_t i = 0; i < n; i++) {
+        edit_selection_add(&g_selection, ids[i]);
+    }
+    char json[256];
+    snprintf(json, sizeof(json),
+             "{\"id\":50,\"cmd\":\"group_save\",\"args\":{\"name\":\"%s\"}}",
+             name);
+    exec(json);
+    edit_selection_clear(&g_selection);
+}
+
 /* ----------------------------------------------------------------------- */
 /* Tests                                                                     */
 /* ----------------------------------------------------------------------- */
 
-/** 1. select_touching adds entities that touch current selection. */
-static bool test_select_touching_basic(void) {
-    spawn_named("box", "A", 0, 0, 0);
-    spawn_named("box", "B", 1, 0, 0);
-    spawn_named("box", "C", 5, 0, 0);
-
-    uint32_t a = edit_entity_store_find_by_name(&g_entities, "A");
-    uint32_t b = edit_entity_store_find_by_name(&g_entities, "B");
-    uint32_t c = edit_entity_store_find_by_name(&g_entities, "C");
-
-    /* A touches B, but not C. */
-    mock_touch(a, b);
-
-    /* Select A. */
-    edit_selection_add(&g_selection, a);
-
-    uint32_t n = exec(
-        "{\"id\":1,\"cmd\":\"select_touching\",\"args\":{}}");
-    ASSERT(n > 0);
-    ASSERT(resp_ok());
-
-    /* B should now be selected (touches A). */
-    ASSERT(edit_selection_contains(&g_selection, b));
-    /* C should NOT be selected. */
-    ASSERT(!edit_selection_contains(&g_selection, c));
-    /* A still selected. */
-    ASSERT(edit_selection_contains(&g_selection, a));
-    return true;
-}
-
-/** 2. select_touching with no selection is a no-op. */
-static bool test_select_touching_empty_selection(void) {
-    spawn_named("box", "lone", 0, 0, 0);
-
-    uint32_t n = exec(
-        "{\"id\":1,\"cmd\":\"select_touching\",\"args\":{}}");
-    ASSERT(n > 0);
-    ASSERT(resp_ok());
-    ASSERT(edit_selection_count(&g_selection) == 0);
-    return true;
-}
-
-/** 3. select_touching with no bridge fails gracefully. */
-static bool test_select_touching_no_bridge(void) {
-    g_ctx.bridge = NULL;  /* Remove bridge. */
-
-    spawn_named("box", "X", 0, 0, 0);
-    uint32_t x = edit_entity_store_find_by_name(&g_entities, "X");
-    edit_selection_add(&g_selection, x);
-
-    uint32_t n = exec(
-        "{\"id\":1,\"cmd\":\"select_touching\",\"args\":{}}");
-    ASSERT(n > 0);
-    ASSERT(!resp_ok());
-    return true;
-}
-
-/** 4. select_fill repeats select_touching until stable. */
-static bool test_select_fill_chain(void) {
+/** 1. select_all with group_mask only selects group members. */
+static bool test_select_all_with_mask(void) {
     spawn_named("box", "A", 0, 0, 0);
     spawn_named("box", "B", 1, 0, 0);
     spawn_named("box", "C", 2, 0, 0);
@@ -255,27 +199,101 @@ static bool test_select_fill_chain(void) {
     uint32_t b = edit_entity_store_find_by_name(&g_entities, "B");
     uint32_t c = edit_entity_store_find_by_name(&g_entities, "C");
 
-    /* A→B→C chain. */
-    mock_touch(a, b);
-    mock_touch(b, c);
+    /* Group &pair = {A, B}. */
+    uint32_t pair[] = {a, b};
+    create_group("&pair", pair, 2);
 
-    /* Select only A. */
-    edit_selection_add(&g_selection, a);
-
-    uint32_t n = exec(
-        "{\"id\":1,\"cmd\":\"select_fill\",\"args\":{}}");
-    ASSERT(n > 0);
+    exec("{\"id\":1,\"cmd\":\"select_all\",\"args\":"
+         "{\"group_mask\":\"&pair\"}}");
     ASSERT(resp_ok());
 
-    /* All three should be selected. */
     ASSERT(edit_selection_contains(&g_selection, a));
     ASSERT(edit_selection_contains(&g_selection, b));
-    ASSERT(edit_selection_contains(&g_selection, c));
+    ASSERT(!edit_selection_contains(&g_selection, c));
     return true;
 }
 
-/** 5. select_fill from single entity fills connected cluster. */
-static bool test_select_fill_cluster(void) {
+/** 2. select_regex with group_mask filters to group members. */
+static bool test_select_regex_with_mask(void) {
+    spawn_named("box", "wall_1", 0, 0, 0);
+    spawn_named("box", "wall_2", 1, 0, 0);
+    spawn_named("box", "wall_3", 2, 0, 0);
+
+    uint32_t w1 = edit_entity_store_find_by_name(&g_entities, "wall_1");
+    uint32_t w2 = edit_entity_store_find_by_name(&g_entities, "wall_2");
+    uint32_t w3 = edit_entity_store_find_by_name(&g_entities, "wall_3");
+
+    /* Group &subset = {wall_1, wall_3}. */
+    uint32_t subset[] = {w1, w3};
+    create_group("&subset", subset, 2);
+
+    /* Regex matches all wall_*, but mask limits to &subset. */
+    exec("{\"id\":1,\"cmd\":\"select_regex\",\"args\":"
+         "{\"pattern\":\"wall_.*\",\"group_mask\":\"&subset\"}}");
+    ASSERT(resp_ok());
+
+    ASSERT(edit_selection_contains(&g_selection, w1));
+    ASSERT(!edit_selection_contains(&g_selection, w2));
+    ASSERT(edit_selection_contains(&g_selection, w3));
+    return true;
+}
+
+/** 3. select_near with group_mask iterates only group members. */
+static bool test_select_near_with_mask(void) {
+    spawn_named("box", "close1", 0, 0, 0);
+    spawn_named("box", "close2", 0.5, 0, 0);
+    spawn_named("box", "close3", 0.3, 0, 0);
+
+    uint32_t c1 = edit_entity_store_find_by_name(&g_entities, "close1");
+    uint32_t c2 = edit_entity_store_find_by_name(&g_entities, "close2");
+    uint32_t c3 = edit_entity_store_find_by_name(&g_entities, "close3");
+
+    /* Group &two = {close1, close2}. close3 is NOT in group. */
+    uint32_t two[] = {c1, c2};
+    create_group("&two", two, 2);
+
+    /* All three are within dist 1 of origin, but mask limits to &two. */
+    exec("{\"id\":1,\"cmd\":\"select_near\",\"args\":"
+         "{\"pos\":[0,0,0],\"dist\":1.0,\"group_mask\":\"&two\"}}");
+    ASSERT(resp_ok());
+
+    ASSERT(edit_selection_contains(&g_selection, c1));
+    ASSERT(edit_selection_contains(&g_selection, c2));
+    ASSERT(!edit_selection_contains(&g_selection, c3));
+    return true;
+}
+
+/** 4. select_touching with group_mask only adds group members. */
+static bool test_select_touching_with_mask(void) {
+    spawn_named("box", "A", 0, 0, 0);
+    spawn_named("box", "B", 1, 0, 0);
+    spawn_named("box", "C", 2, 0, 0);
+
+    uint32_t a = edit_entity_store_find_by_name(&g_entities, "A");
+    uint32_t b = edit_entity_store_find_by_name(&g_entities, "B");
+    uint32_t c = edit_entity_store_find_by_name(&g_entities, "C");
+
+    /* A touches B and C. */
+    mock_touch(a, b);
+    mock_touch(a, c);
+
+    /* Group &only_b = {A, B}. C is NOT in group. */
+    uint32_t only_b[] = {a, b};
+    create_group("&only_b", only_b, 2);
+
+    edit_selection_add(&g_selection, a);
+
+    exec("{\"id\":1,\"cmd\":\"select_touching\",\"args\":"
+         "{\"group_mask\":\"&only_b\"}}");
+    ASSERT(resp_ok());
+
+    ASSERT(edit_selection_contains(&g_selection, b));
+    ASSERT(!edit_selection_contains(&g_selection, c));
+    return true;
+}
+
+/** 5. select_fill with group_mask stops at group boundary. */
+static bool test_select_fill_with_mask(void) {
     spawn_named("box", "A", 0, 0, 0);
     spawn_named("box", "B", 1, 0, 0);
     spawn_named("box", "C", 2, 0, 0);
@@ -286,94 +304,71 @@ static bool test_select_fill_cluster(void) {
     uint32_t c = edit_entity_store_find_by_name(&g_entities, "C");
     uint32_t d = edit_entity_store_find_by_name(&g_entities, "D");
 
-    /* Full mesh: A↔B, A↔C, B↔C, C↔D. */
+    /* Chain: A→B→C→D. */
     mock_touch(a, b);
-    mock_touch(a, c);
     mock_touch(b, c);
     mock_touch(c, d);
 
+    /* Group &abc = {A, B, C}. D is NOT in group. */
+    uint32_t abc[] = {a, b, c};
+    create_group("&abc", abc, 3);
+
     edit_selection_add(&g_selection, a);
 
-    exec("{\"id\":1,\"cmd\":\"select_fill\",\"args\":{}}");
+    exec("{\"id\":1,\"cmd\":\"select_fill\",\"args\":"
+         "{\"group_mask\":\"&abc\"}}");
+    ASSERT(resp_ok());
+
     ASSERT(edit_selection_contains(&g_selection, a));
     ASSERT(edit_selection_contains(&g_selection, b));
     ASSERT(edit_selection_contains(&g_selection, c));
-    ASSERT(edit_selection_contains(&g_selection, d));
-    ASSERT(edit_selection_count(&g_selection) == 4);
+    ASSERT(!edit_selection_contains(&g_selection, d));
     return true;
 }
 
-/** 6. select_fill stops at disconnected groups. */
-static bool test_select_fill_disconnected(void) {
-    spawn_named("box", "A", 0, 0, 0);
-    spawn_named("box", "B", 1, 0, 0);
-    spawn_named("box", "X", 100, 0, 0);
-    spawn_named("box", "Y", 101, 0, 0);
-
-    uint32_t a = edit_entity_store_find_by_name(&g_entities, "A");
-    uint32_t b = edit_entity_store_find_by_name(&g_entities, "B");
-    uint32_t x = edit_entity_store_find_by_name(&g_entities, "X");
-    uint32_t y = edit_entity_store_find_by_name(&g_entities, "Y");
-
-    /* Group 1: A↔B. Group 2: X↔Y. No connection between groups. */
-    mock_touch(a, b);
-    mock_touch(x, y);
-
-    edit_selection_add(&g_selection, a);
-
-    exec("{\"id\":1,\"cmd\":\"select_fill\",\"args\":{}}");
-    ASSERT(edit_selection_contains(&g_selection, a));
-    ASSERT(edit_selection_contains(&g_selection, b));
-    ASSERT(!edit_selection_contains(&g_selection, x));
-    ASSERT(!edit_selection_contains(&g_selection, y));
-    return true;
-}
-
-/** 7. select_touching skips @ entities. */
-static bool test_select_touching_skips_aliases(void) {
+/** 6. select_all without group_mask selects everything (no regression). */
+static bool test_select_all_no_mask(void) {
     spawn_named("box", "A", 0, 0, 0);
     spawn_named("box", "B", 1, 0, 0);
 
-    /* Spawn an alias near A. */
-    exec("{\"id\":50,\"cmd\":\"alias_create\",\"args\":"
-         "{\"name\":\"@mark\",\"pos\":[0,0,0]}}");
-
     uint32_t a = edit_entity_store_find_by_name(&g_entities, "A");
     uint32_t b = edit_entity_store_find_by_name(&g_entities, "B");
-    uint32_t mark = edit_entity_store_find_by_name(&g_entities, "@mark");
 
-    /* A touches B and @mark. */
-    mock_touch(a, b);
-    mock_touch(a, mark);
-
-    edit_selection_add(&g_selection, a);
-
-    exec("{\"id\":1,\"cmd\":\"select_touching\",\"args\":{}}");
-    ASSERT(edit_selection_contains(&g_selection, b));
-    ASSERT(!edit_selection_contains(&g_selection, mark));
-    return true;
-}
-
-/** 8. select_touching returns count of newly selected entities. */
-static bool test_select_touching_returns_count(void) {
-    spawn_named("box", "A", 0, 0, 0);
-    spawn_named("box", "B", 1, 0, 0);
-    spawn_named("box", "C", 2, 0, 0);
-
-    uint32_t a = edit_entity_store_find_by_name(&g_entities, "A");
-    uint32_t b = edit_entity_store_find_by_name(&g_entities, "B");
-    uint32_t c = edit_entity_store_find_by_name(&g_entities, "C");
-
-    mock_touch(a, b);
-    mock_touch(a, c);
-
-    edit_selection_add(&g_selection, a);
-
-    exec("{\"id\":1,\"cmd\":\"select_touching\",\"args\":{}}");
+    exec("{\"id\":1,\"cmd\":\"select_all\",\"args\":{}}");
     ASSERT(resp_ok());
 
-    /* Result should be 2 (B and C were newly added). */
-    ASSERT(strstr(g_resp, "\"result\":2") != NULL);
+    ASSERT(edit_selection_contains(&g_selection, a));
+    ASSERT(edit_selection_contains(&g_selection, b));
+    return true;
+}
+
+/** 7. group_mask with nonexistent group fails. */
+static bool test_mask_nonexistent_group(void) {
+    spawn_named("box", "A", 0, 0, 0);
+
+    exec("{\"id\":1,\"cmd\":\"select_all\",\"args\":"
+         "{\"group_mask\":\"&nope\"}}");
+    ASSERT(resp_fail());
+    return true;
+}
+
+/** 8. select_near with group_mask skips non-members even if close. */
+static bool test_select_near_mask_exclusion(void) {
+    spawn_named("box", "in_group", 0.1, 0, 0);
+    spawn_named("box", "not_in_group", 0.2, 0, 0);
+
+    uint32_t ig = edit_entity_store_find_by_name(&g_entities, "in_group");
+    uint32_t nig = edit_entity_store_find_by_name(&g_entities, "not_in_group");
+
+    uint32_t one[] = {ig};
+    create_group("&one", one, 1);
+
+    exec("{\"id\":1,\"cmd\":\"select_near\",\"args\":"
+         "{\"pos\":[0,0,0],\"dist\":10.0,\"group_mask\":\"&one\"}}");
+    ASSERT(resp_ok());
+
+    ASSERT(edit_selection_contains(&g_selection, ig));
+    ASSERT(!edit_selection_contains(&g_selection, nig));
     return true;
 }
 
@@ -382,14 +377,14 @@ static bool test_select_touching_returns_count(void) {
 /* ----------------------------------------------------------------------- */
 
 int main(void) {
-    RUN(test_select_touching_basic);
-    RUN(test_select_touching_empty_selection);
-    RUN(test_select_touching_no_bridge);
-    RUN(test_select_fill_chain);
-    RUN(test_select_fill_cluster);
-    RUN(test_select_fill_disconnected);
-    RUN(test_select_touching_skips_aliases);
-    RUN(test_select_touching_returns_count);
+    RUN(test_select_all_with_mask);
+    RUN(test_select_regex_with_mask);
+    RUN(test_select_near_with_mask);
+    RUN(test_select_touching_with_mask);
+    RUN(test_select_fill_with_mask);
+    RUN(test_select_all_no_mask);
+    RUN(test_mask_nonexistent_group);
+    RUN(test_select_near_mask_exclusion);
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;

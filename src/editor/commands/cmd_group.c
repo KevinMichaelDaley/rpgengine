@@ -7,8 +7,9 @@
  * group_delete: remove a named group.
  * group_list:   list all groups with their entity counts.
  *
- * Non-static functions: 4 (cmd_group_save, cmd_group_delete,
- *   cmd_group_list, edit_cmd_find_group).
+ * Non-static functions: 4 per file (this file + cmd_group_mask.c).
+ * This file: cmd_group_save, cmd_group_delete, cmd_group_list,
+ *   edit_cmd_find_group.
  */
 
 #include "ferrum/editor/edit_commands.h"

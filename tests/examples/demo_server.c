@@ -248,6 +248,8 @@ static void bridge_on_move_(void *user_data, uint32_t entity_id,
  */
 static uint32_t bridge_on_query_touching_(void *user_data,
                                            uint32_t entity_id,
+                                           const uint32_t *candidates,
+                                           uint32_t candidate_count,
                                            uint32_t *out_entity_ids,
                                            uint32_t max_results) {
     demo_ctx_t *ctx = (demo_ctx_t *)user_data;
@@ -283,25 +285,58 @@ static uint32_t bridge_on_query_touching_(void *user_data,
 
     uint32_t found = 0;
 
-    /* Iterate all entities (not physics bodies) to get entity IDs. */
-    for (uint32_t eid = 0; eid < store->capacity && found < max_results; eid++) {
-        if (eid == entity_id) continue;
-        const edit_entity_t *other = edit_entity_store_get(store, eid);
-        if (!other || !other->active) continue;
-        if (other->body_index >= DEMO_MAX_BODIES) continue;
-        if (!phys_body_pool_is_active(&world->body_pool, other->body_index))
-            continue;
+    if (candidates && candidate_count > 0) {
+        /* Iterate only candidate entities (group_mask optimization). */
+        for (uint32_t c = 0; c < candidate_count && found < max_results;
+             c++) {
+            uint32_t eid = candidates[c];
+            if (eid == entity_id) continue;
+            const edit_entity_t *other = edit_entity_store_get(store, eid);
+            if (!other || !other->active) continue;
+            if (other->body_index >= DEMO_MAX_BODIES) continue;
+            if (!phys_body_pool_is_active(&world->body_pool,
+                                          other->body_index))
+                continue;
 
-        const phys_body_t *body_b = phys_body_pool_get_curr(
-            &world->body_pool, other->body_index);
-        const phys_collider_t *col_b = phys_world_get_collider(
-            world, other->body_index);
-        if (!body_b || !col_b) continue;
+            const phys_body_t *body_b = phys_body_pool_get_curr(
+                &world->body_pool, other->body_index);
+            const phys_collider_t *col_b = phys_world_get_collider(
+                world, other->body_index);
+            if (!body_b || !col_b) continue;
 
-        if (phys_test_overlap(&ov_ctx,
-                              col_a, body_a->position, body_a->orientation,
-                              col_b, body_b->position, body_b->orientation)) {
-            out_entity_ids[found++] = eid;
+            if (phys_test_overlap(&ov_ctx,
+                                  col_a, body_a->position,
+                                  body_a->orientation,
+                                  col_b, body_b->position,
+                                  body_b->orientation)) {
+                out_entity_ids[found++] = eid;
+            }
+        }
+    } else {
+        /* No candidate filter — iterate all entities. */
+        for (uint32_t eid = 0;
+             eid < store->capacity && found < max_results; eid++) {
+            if (eid == entity_id) continue;
+            const edit_entity_t *other = edit_entity_store_get(store, eid);
+            if (!other || !other->active) continue;
+            if (other->body_index >= DEMO_MAX_BODIES) continue;
+            if (!phys_body_pool_is_active(&world->body_pool,
+                                          other->body_index))
+                continue;
+
+            const phys_body_t *body_b = phys_body_pool_get_curr(
+                &world->body_pool, other->body_index);
+            const phys_collider_t *col_b = phys_world_get_collider(
+                world, other->body_index);
+            if (!body_b || !col_b) continue;
+
+            if (phys_test_overlap(&ov_ctx,
+                                  col_a, body_a->position,
+                                  body_a->orientation,
+                                  col_b, body_b->position,
+                                  body_b->orientation)) {
+                out_entity_ids[found++] = eid;
+            }
         }
     }
 

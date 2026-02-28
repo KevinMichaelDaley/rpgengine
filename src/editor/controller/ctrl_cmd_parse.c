@@ -184,27 +184,92 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     }
 
     /* Special handling for select_near / deselect_near: variable arg count.
-     * "select_near 5.0"          → {"dist":5.0}
-     * "select_near 1 2 3 5.0"    → {"pos":[1,2,3],"dist":5.0} */
+     * "select_near 5.0"                → {"dist":5.0}
+     * "select_near 1 2 3 5.0"          → {"pos":[1,2,3],"dist":5.0}
+     * "select_near 5.0 &group"         → {"dist":5.0,"group_mask":"&group"}
+     * "select_near 1 2 3 5.0 &group"   → all three */
     if (def && (strcmp(wire_name, "select_near") == 0 ||
                 strcmp(wire_name, "deselect_near") == 0) &&
         token_count >= 2) {
+        /* Check for trailing &group token. */
+        const char *mask = NULL;
+        uint32_t arg_count = token_count;
+        if (arg_count >= 2 && tokens[arg_count - 1][0] == '&') {
+            mask = tokens[arg_count - 1];
+            arg_count--;
+        }
+
         char args_buf2[512];
-        if (token_count == 2) {
-            /* Just distance — omit pos so server uses @cursor. */
+        if (arg_count == 2) {
             float d = strtof(tokens[1], NULL);
-            snprintf(args_buf2, sizeof(args_buf2), "{\"dist\":%.6g}", (double)d);
-        } else if (token_count >= 5) {
-            /* pos + dist */
+            if (mask) {
+                snprintf(args_buf2, sizeof(args_buf2),
+                         "{\"dist\":%.6g,\"group_mask\":\"%s\"}",
+                         (double)d, mask);
+            } else {
+                snprintf(args_buf2, sizeof(args_buf2),
+                         "{\"dist\":%.6g}", (double)d);
+            }
+        } else if (arg_count >= 5) {
             float px = strtof(tokens[1], NULL);
             float py = strtof(tokens[2], NULL);
             float pz = strtof(tokens[3], NULL);
             float d  = strtof(tokens[4], NULL);
-            snprintf(args_buf2, sizeof(args_buf2),
-                     "{\"pos\":[%.6g,%.6g,%.6g],\"dist\":%.6g}",
-                     (double)px, (double)py, (double)pz, (double)d);
+            if (mask) {
+                snprintf(args_buf2, sizeof(args_buf2),
+                         "{\"pos\":[%.6g,%.6g,%.6g],\"dist\":%.6g,"
+                         "\"group_mask\":\"%s\"}",
+                         (double)px, (double)py, (double)pz, (double)d,
+                         mask);
+            } else {
+                snprintf(args_buf2, sizeof(args_buf2),
+                         "{\"pos\":[%.6g,%.6g,%.6g],\"dist\":%.6g}",
+                         (double)px, (double)py, (double)pz, (double)d);
+            }
         } else {
             return 0;  /* Bad arg count. */
+        }
+        int n2 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, args_buf2);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* Custom parsing for commands with optional group_mask:
+     * select_all [&group], select_touching [&group], select_fill [&group],
+     * select_regex <pattern> [&group]. */
+    if (def && (strcmp(wire_name, "select_all") == 0 ||
+                strcmp(wire_name, "select_touching") == 0 ||
+                strcmp(wire_name, "select_fill") == 0)) {
+        char args_buf2[256];
+        if (token_count >= 2 && tokens[1][0] == '&') {
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"group_mask\":\"%s\"}", tokens[1]);
+        } else {
+            snprintf(args_buf2, sizeof(args_buf2), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, args_buf2);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    if (def && strcmp(wire_name, "select_regex") == 0 && token_count >= 2) {
+        char args_buf2[512];
+        const char *pattern = tokens[1];
+        const char *mask = NULL;
+        if (token_count >= 3 && tokens[2][0] == '&') {
+            mask = tokens[2];
+        }
+        if (mask) {
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"pattern\":\"%s\",\"group_mask\":\"%s\"}",
+                     pattern, mask);
+        } else {
+            snprintf(args_buf2, sizeof(args_buf2),
+                     "{\"pattern\":\"%s\"}", pattern);
         }
         int n2 = snprintf(out, out_cap,
                            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",

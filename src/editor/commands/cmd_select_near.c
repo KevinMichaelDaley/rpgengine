@@ -61,24 +61,50 @@ bool cmd_select_near(edit_dispatch_t *d, const json_value_t *args,
         pos[2] = cursor->pos[2];
     }
 
-    /* Iterate all entities, select those within distance. */
+    /* Resolve optional group_mask. */
+    bool mask_fail = false;
+    const edit_group_t *mask = edit_cmd_resolve_group_mask(ctx, args,
+                                                           &mask_fail);
+    if (mask_fail) return false;
+
+    /* Iterate entities, select those within distance. */
     uint32_t matched = 0;
-    for (uint32_t i = 0; i < ctx->entities->capacity; i++) {
-        const edit_entity_t *e = edit_entity_store_get(ctx->entities, i);
-        if (!e) continue;
 
-        /* Skip all @ entities (cursor, aliases). */
-        if (i == cursor_id) continue;
-        if (e->name[0] == '@') continue;
+    if (mask) {
+        /* Only check group members. */
+        for (uint32_t g = 0; g < mask->count; g++) {
+            uint32_t id = mask->ids[g];
+            if (id == cursor_id) continue;
+            const edit_entity_t *e = edit_entity_store_get(ctx->entities, id);
+            if (!e) continue;
+            if (e->name[0] == '@') continue;
 
-        float dx = e->pos[0] - pos[0];
-        float dy = e->pos[1] - pos[1];
-        float dz = e->pos[2] - pos[2];
-        float d2 = dx * dx + dy * dy + dz * dz;
+            float dx = e->pos[0] - pos[0];
+            float dy = e->pos[1] - pos[1];
+            float dz = e->pos[2] - pos[2];
+            float d2 = dx * dx + dy * dy + dz * dz;
 
-        if (d2 <= dist_sq) {
-            edit_selection_add(ctx->selection, i);
-            matched++;
+            if (d2 <= dist_sq) {
+                edit_selection_add(ctx->selection, id);
+                matched++;
+            }
+        }
+    } else {
+        for (uint32_t i = 0; i < ctx->entities->capacity; i++) {
+            const edit_entity_t *e = edit_entity_store_get(ctx->entities, i);
+            if (!e) continue;
+            if (i == cursor_id) continue;
+            if (e->name[0] == '@') continue;
+
+            float dx = e->pos[0] - pos[0];
+            float dy = e->pos[1] - pos[1];
+            float dz = e->pos[2] - pos[2];
+            float d2 = dx * dx + dy * dy + dz * dz;
+
+            if (d2 <= dist_sq) {
+                edit_selection_add(ctx->selection, i);
+                matched++;
+            }
         }
     }
 

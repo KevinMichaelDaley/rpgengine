@@ -5,11 +5,13 @@
  * select_touching: queries the bridge for collision results against each
  *   selected entity, then adds all touching entities to the selection.
  *   Skips @ entities (cursor, aliases). Returns count of newly selected.
+ *   Optional group_mask filters candidates and results.
  *
  * select_fill: repeats select_touching until the selection stops growing.
  *   This flood-fills through connected collision chains.
+ *   Optional group_mask limits flood-fill to group boundary.
  *
- * JSON args: {} (both commands operate on current selection)
+ * JSON args: {"group_mask": "&name"} (optional)
  */
 
 #include "ferrum/editor/edit_commands.h"
@@ -26,9 +28,12 @@
  * @brief One pass of select_touching: query each selected entity's neighbors
  *        and add them to the selection.
  *
+ * @param ctx   Command context.
+ * @param mask  Optional group mask (NULL = no filtering).
  * @return Number of newly added entities.
  */
-static uint32_t select_touching_pass_(edit_cmd_ctx_t *ctx) {
+static uint32_t select_touching_pass_(edit_cmd_ctx_t *ctx,
+                                       const edit_group_t *mask) {
     uint32_t count = edit_selection_count(ctx->selection);
     if (count == 0) return 0;
 
@@ -38,15 +43,20 @@ static uint32_t select_touching_pass_(edit_cmd_ctx_t *ctx) {
     if (count > EDIT_SELECTION_MAX) count = EDIT_SELECTION_MAX;
     memcpy(snapshot, ids, count * sizeof(uint32_t));
 
+    /* Pass group member IDs as candidates when mask is set. */
+    const uint32_t *candidates = mask ? mask->ids : NULL;
+    uint32_t candidate_count = mask ? mask->count : 0;
+
     uint32_t newly_added = 0;
     uint32_t touching[MAX_TOUCHING_PER_ENTITY];
 
     for (uint32_t i = 0; i < count; i++) {
         uint32_t eid = snapshot[i];
 
-        /* Query bridge for touching entities. */
+        /* Query bridge for touching entities with optional candidate set. */
         uint32_t n = ctx->bridge->on_query_touching(
             ctx->bridge->user_data, eid,
+            candidates, candidate_count,
             touching, MAX_TOUCHING_PER_ENTITY);
 
         for (uint32_t j = 0; j < n; j++) {
@@ -57,6 +67,9 @@ static uint32_t select_touching_pass_(edit_cmd_ctx_t *ctx) {
                                                              tid);
             if (!te) continue;
             if (te->name[0] == '@') continue;
+
+            /* If mask is set, verify membership (belt-and-suspenders). */
+            if (mask && !edit_cmd_group_contains(mask, tid)) continue;
 
             /* Add to selection (no-op if already present). */
             if (!edit_selection_contains(ctx->selection, tid)) {
@@ -71,12 +84,18 @@ static uint32_t select_touching_pass_(edit_cmd_ctx_t *ctx) {
 
 bool cmd_select_touching(edit_dispatch_t *d, const json_value_t *args,
                          json_value_t *result, json_arena_t *arena) {
-    (void)args; (void)arena;
+    (void)arena;
     edit_cmd_ctx_t *ctx = (edit_cmd_ctx_t *)d->user_data;
     if (!ctx || !ctx->entities || !ctx->selection) return false;
 
     /* Require bridge with on_query_touching callback. */
     if (!ctx->bridge || !ctx->bridge->on_query_touching) return false;
+
+    /* Resolve optional group_mask. */
+    bool mask_fail = false;
+    const edit_group_t *mask = edit_cmd_resolve_group_mask(ctx, args,
+                                                           &mask_fail);
+    if (mask_fail) return false;
 
     uint32_t count = edit_selection_count(ctx->selection);
     if (count == 0) {
@@ -85,7 +104,7 @@ bool cmd_select_touching(edit_dispatch_t *d, const json_value_t *args,
         return true;
     }
 
-    uint32_t added = select_touching_pass_(ctx);
+    uint32_t added = select_touching_pass_(ctx, mask);
 
     result->type = JSON_NUMBER;
     result->number = (double)added;
@@ -94,12 +113,18 @@ bool cmd_select_touching(edit_dispatch_t *d, const json_value_t *args,
 
 bool cmd_select_fill(edit_dispatch_t *d, const json_value_t *args,
                      json_value_t *result, json_arena_t *arena) {
-    (void)args; (void)arena;
+    (void)arena;
     edit_cmd_ctx_t *ctx = (edit_cmd_ctx_t *)d->user_data;
     if (!ctx || !ctx->entities || !ctx->selection) return false;
 
     /* Require bridge with on_query_touching callback. */
     if (!ctx->bridge || !ctx->bridge->on_query_touching) return false;
+
+    /* Resolve optional group_mask. */
+    bool mask_fail = false;
+    const edit_group_t *mask = edit_cmd_resolve_group_mask(ctx, args,
+                                                           &mask_fail);
+    if (mask_fail) return false;
 
     uint32_t count = edit_selection_count(ctx->selection);
     if (count == 0) {
@@ -113,7 +138,7 @@ bool cmd_select_fill(edit_dispatch_t *d, const json_value_t *args,
     uint32_t total_added = 0;
     uint32_t max_iters = ctx->entities->capacity;
     for (uint32_t iter = 0; iter < max_iters; iter++) {
-        uint32_t added = select_touching_pass_(ctx);
+        uint32_t added = select_touching_pass_(ctx, mask);
         total_added += added;
         if (added == 0) break;
     }
