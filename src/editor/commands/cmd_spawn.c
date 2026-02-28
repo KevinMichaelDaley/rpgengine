@@ -2,8 +2,9 @@
  * @file cmd_spawn.c
  * @brief Spawn command — creates a new entity at a given position.
  *
- * JSON args: {"type":"box"|"sphere", "pos":[x,y,z]}
- * Response result: entity_id (number)
+ * JSON args: {"type":"box"|"sphere", "pos":[x,y,z], "rot":[rx,ry,rz], "scale":[sx,sy,sz]}
+ * All args except type are optional.
+ * Response result: entity_id (number) or name (string)
  */
 
 #include "ferrum/editor/edit_commands.h"
@@ -75,6 +76,30 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
             e->pos[0] = pos[0];
             e->pos[1] = pos[1];
             e->pos[2] = pos[2];
+        }
+    }
+
+    /* Set rotation if provided (Euler degrees). */
+    if (args) {
+        float rot[3] = {0};
+        const json_value_t *rot_val = json_object_get(args, "rot");
+        if (extract_vec3_(rot_val, rot)) {
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            e->rot[0] = rot[0];
+            e->rot[1] = rot[1];
+            e->rot[2] = rot[2];
+        }
+    }
+
+    /* Set scale if provided (per-axis factors). */
+    if (args) {
+        float scl[3] = {0};
+        const json_value_t *scl_val = json_object_get(args, "scale");
+        if (extract_vec3_(scl_val, scl)) {
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            e->scale[0] = scl[0];
+            e->scale[1] = scl[1];
+            e->scale[2] = scl[2];
         }
     }
 

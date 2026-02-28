@@ -1146,8 +1146,9 @@ int main(int argc, char **argv) {
         if (ready > 0 && (fds[0].revents & POLLIN)) {
             char ch;
             while (read(STDIN_FILENO, &ch, 1) == 1) {
-                /* Tab completion in command mode. */
-                if (tui.mode == CTRL_MODE_COMMAND && ch == '\t') {
+                /* Tab or ? completion in command mode. */
+                if (tui.mode == CTRL_MODE_COMMAND &&
+                    (ch == '\t' || ch == '?')) {
                     handle_tab_(&tui);
                     continue;
                 }

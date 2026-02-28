@@ -17,8 +17,8 @@ static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "spawn",
         .alias   = "sp",
-        .usage   = "spawn <type> [name] <x> <y> <z>",
-        .help    = "Spawn entity. Optional name before position.",
+        .usage   = "spawn <type> [name] [x y z] [rx ry rz] [sx sy sz]",
+        .help    = "Spawn entity. Optional name, position, rotation, scale.",
         .arg_fmt = "s:type f3:pos",
     },
     {

@@ -30,7 +30,7 @@ void edit_commands_register_all(edit_dispatch_t *dispatch);
 /* Individual handlers (for direct testing or external registration)          */
 /* ------------------------------------------------------------------------ */
 
-/** @brief Spawn an entity. Args: {"type":"box"|"sphere", "pos":[x,y,z]}. */
+/** @brief Spawn an entity. Args: {"type":"box"|"sphere", "pos":[x,y,z], "rot":[rx,ry,rz], "scale":[sx,sy,sz]}. */
 bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
                json_value_t *result, json_arena_t *arena);
 

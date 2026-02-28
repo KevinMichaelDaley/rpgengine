@@ -167,9 +167,13 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     /* Use the canonical command name for the JSON wire format. */
     const char *wire_name = def ? def->name : cmd_name;
 
-    /* Special handling for spawn: detect optional name between type and pos.
-     * "spawn box 0 5 0"          → type=box, pos=[0,5,0]
-     * "spawn box myname 0 5 0"   → type=box, name=myname, pos=[0,5,0] */
+    /* Special handling for spawn: detect optional name between type and pos,
+     * and optional rotation/scale after position.
+     * "spawn box 0 5 0"                      → type=box, pos=[0,5,0]
+     * "spawn box myname 0 5 0"               → type=box, name=myname, pos=[0,5,0]
+     * "spawn box 0 5 0 0 90 0"               → + rot=[0,90,0]
+     * "spawn box 0 5 0 0 90 0 2 2 2"         → + rot + scale=[2,2,2]
+     * "spawn box myname 0 5 0 0 90 0 2 2 2"  → name + pos + rot + scale */
     char *name_token = NULL;
     if (def && strcmp(wire_name, "spawn") == 0 && token_count >= 3) {
         /* tokens[1]=type, check if tokens[2] is NOT a number → it's a name. */
@@ -180,6 +184,96 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
                 tokens[i] = tokens[i + 1];
             }
             token_count--;
+        }
+
+        /* After name extraction, remaining numeric tokens after type:
+         * tokens[2..4] = pos, tokens[5..7] = rot, tokens[8..10] = scale.
+         * Count remaining numeric tokens starting at index 2. */
+        uint32_t num_count = 0;
+        for (uint32_t i = 2; i < token_count; i++) {
+            if (looks_numeric_(tokens[i])) num_count++;
+            else break;
+        }
+
+        /* Build custom JSON with pos, optional rot, optional scale. */
+        if (num_count >= 3) {
+            char args_buf2[512];
+            float px = strtof(tokens[2], NULL);
+            float py = strtof(tokens[3], NULL);
+            float pz = strtof(tokens[4], NULL);
+
+            if (num_count >= 9) {
+                /* pos + rot + scale. */
+                float rx = strtof(tokens[5], NULL);
+                float ry = strtof(tokens[6], NULL);
+                float rz = strtof(tokens[7], NULL);
+                float sx = strtof(tokens[8], NULL);
+                float sy = strtof(tokens[9], NULL);
+                float sz = strtof(tokens[10], NULL);
+                if (name_token) {
+                    snprintf(args_buf2, sizeof(args_buf2),
+                        "{\"type\":\"%s\",\"name\":\"%s\","
+                        "\"pos\":[%.6g,%.6g,%.6g],"
+                        "\"rot\":[%.6g,%.6g,%.6g],"
+                        "\"scale\":[%.6g,%.6g,%.6g]}",
+                        tokens[1], name_token,
+                        (double)px, (double)py, (double)pz,
+                        (double)rx, (double)ry, (double)rz,
+                        (double)sx, (double)sy, (double)sz);
+                } else {
+                    snprintf(args_buf2, sizeof(args_buf2),
+                        "{\"type\":\"%s\","
+                        "\"pos\":[%.6g,%.6g,%.6g],"
+                        "\"rot\":[%.6g,%.6g,%.6g],"
+                        "\"scale\":[%.6g,%.6g,%.6g]}",
+                        tokens[1],
+                        (double)px, (double)py, (double)pz,
+                        (double)rx, (double)ry, (double)rz,
+                        (double)sx, (double)sy, (double)sz);
+                }
+            } else if (num_count >= 6) {
+                /* pos + rot. */
+                float rx = strtof(tokens[5], NULL);
+                float ry = strtof(tokens[6], NULL);
+                float rz = strtof(tokens[7], NULL);
+                if (name_token) {
+                    snprintf(args_buf2, sizeof(args_buf2),
+                        "{\"type\":\"%s\",\"name\":\"%s\","
+                        "\"pos\":[%.6g,%.6g,%.6g],"
+                        "\"rot\":[%.6g,%.6g,%.6g]}",
+                        tokens[1], name_token,
+                        (double)px, (double)py, (double)pz,
+                        (double)rx, (double)ry, (double)rz);
+                } else {
+                    snprintf(args_buf2, sizeof(args_buf2),
+                        "{\"type\":\"%s\","
+                        "\"pos\":[%.6g,%.6g,%.6g],"
+                        "\"rot\":[%.6g,%.6g,%.6g]}",
+                        tokens[1],
+                        (double)px, (double)py, (double)pz,
+                        (double)rx, (double)ry, (double)rz);
+                }
+            } else {
+                /* pos only. */
+                if (name_token) {
+                    snprintf(args_buf2, sizeof(args_buf2),
+                        "{\"type\":\"%s\",\"name\":\"%s\","
+                        "\"pos\":[%.6g,%.6g,%.6g]}",
+                        tokens[1], name_token,
+                        (double)px, (double)py, (double)pz);
+                } else {
+                    snprintf(args_buf2, sizeof(args_buf2),
+                        "{\"type\":\"%s\","
+                        "\"pos\":[%.6g,%.6g,%.6g]}",
+                        tokens[1],
+                        (double)px, (double)py, (double)pz);
+                }
+            }
+            int n2 = snprintf(out, out_cap,
+                               "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                               cmd_id, wire_name, args_buf2);
+            if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+            return (uint32_t)n2;
         }
     }
 
