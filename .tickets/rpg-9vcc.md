@@ -1,6 +1,6 @@
 ---
 id: rpg-9vcc
-status: open
+status: closed
 deps: [rpg-caw8]
 links: []
 created: 2026-02-28T22:19:57Z

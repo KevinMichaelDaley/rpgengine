@@ -1,6 +1,6 @@
 ---
 id: rpg-dj77
-status: open
+status: closed
 deps: [rpg-8hi9]
 links: []
 created: 2026-02-28T22:27:55Z

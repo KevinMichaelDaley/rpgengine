@@ -1,6 +1,6 @@
 ---
 id: rpg-6fi0
-status: open
+status: closed
 deps: [rpg-9vcc]
 links: []
 created: 2026-02-28T22:20:09Z

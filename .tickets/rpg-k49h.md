@@ -1,6 +1,6 @@
 ---
 id: rpg-k49h
-status: open
+status: closed
 deps: [rpg-ivbg]
 links: []
 created: 2026-02-28T22:25:11Z

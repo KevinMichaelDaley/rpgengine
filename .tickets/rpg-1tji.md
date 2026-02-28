@@ -1,6 +1,6 @@
 ---
 id: rpg-1tji
-status: open
+status: closed
 deps: [rpg-elky, rpg-9bds]
 links: []
 created: 2026-02-28T22:27:10Z

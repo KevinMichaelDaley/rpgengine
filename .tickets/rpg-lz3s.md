@@ -1,6 +1,6 @@
 ---
 id: rpg-lz3s
-status: open
+status: closed
 deps: [rpg-nulp, rpg-m6jf]
 links: []
 created: 2026-02-28T22:22:21Z

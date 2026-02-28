@@ -1,6 +1,6 @@
 ---
 id: rpg-n0dl
-status: open
+status: closed
 deps: [rpg-ivbg]
 links: []
 created: 2026-02-28T22:25:24Z

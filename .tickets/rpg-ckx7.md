@@ -1,6 +1,6 @@
 ---
 id: rpg-ckx7
-status: open
+status: closed
 deps: [rpg-fund, rpg-clq6]
 links: []
 created: 2026-02-28T22:27:24Z

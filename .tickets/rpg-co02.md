@@ -1,6 +1,6 @@
 ---
 id: rpg-co02
-status: open
+status: closed
 deps: [rpg-ivbg, rpg-n0dl]
 links: []
 created: 2026-02-28T22:25:35Z

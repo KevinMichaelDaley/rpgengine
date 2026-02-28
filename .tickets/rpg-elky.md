@@ -1,6 +1,6 @@
 ---
 id: rpg-elky
-status: open
+status: closed
 deps: [rpg-nulp]
 links: []
 created: 2026-02-28T22:26:54Z

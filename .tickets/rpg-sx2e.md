@@ -1,6 +1,6 @@
 ---
 id: rpg-sx2e
-status: open
+status: closed
 deps: [rpg-8hi9]
 links: []
 created: 2026-02-28T22:26:37Z

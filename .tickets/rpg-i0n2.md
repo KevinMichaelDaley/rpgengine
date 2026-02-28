@@ -1,6 +1,6 @@
 ---
 id: rpg-i0n2
-status: open
+status: closed
 deps: [rpg-tze6, rpg-clq6]
 links: []
 created: 2026-02-28T22:27:40Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-37uq
-status: open
+status: closed
 deps: [rpg-6fi0]
 links: []
 created: 2026-02-28T22:20:21Z

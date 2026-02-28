@@ -1,6 +1,6 @@
 ---
 id: rpg-sy9a
-status: open
+status: closed
 deps: [rpg-ivbg, rpg-k49h]
 links: []
 created: 2026-02-28T22:24:59Z

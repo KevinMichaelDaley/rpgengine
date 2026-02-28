@@ -1,6 +1,6 @@
 ---
 id: rpg-9bds
-status: open
+status: closed
 deps: [rpg-clq6]
 links: []
 created: 2026-02-28T22:25:49Z
