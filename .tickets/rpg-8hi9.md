@@ -1,6 +1,6 @@
 ---
 id: rpg-8hi9
-status: in_progress
+status: closed
 deps: [rpg-clq6]
 links: []
 created: 2026-02-28T22:26:23Z

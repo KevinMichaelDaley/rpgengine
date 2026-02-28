@@ -1,6 +1,6 @@
 ---
 id: rpg-zpwy
-status: open
+status: in_progress
 deps: [rpg-clq6]
 links: []
 created: 2026-02-28T22:24:09Z
