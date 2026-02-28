@@ -47,7 +47,10 @@
 #include "ferrum/net/snapshot_chunk.h"
 
 #include "ferrum/editor/editor_ctx.h"
+#include "ferrum/editor/edit_cmd_ctx.h"
+#include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_physics_ctrl.h"
+#include "ferrum/physics/phys_overlap.h"
 
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
@@ -234,6 +237,75 @@ static void bridge_on_move_(void *user_data, uint32_t entity_id,
         phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_POSITION,
                       &setpos, sizeof(setpos));
     }
+}
+
+/**
+ * @brief Bridge: query which entities are touching a given entity.
+ *
+ * Iterates all editor entities, performs bounding sphere pre-filter,
+ * then full narrowphase collision test via phys_test_overlap().
+ * Returns entity IDs (not body indices) in out_entity_ids.
+ */
+static uint32_t bridge_on_query_touching_(void *user_data,
+                                           uint32_t entity_id,
+                                           uint32_t *out_entity_ids,
+                                           uint32_t max_results) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    phys_world_t *world = &ctx->world;
+    edit_entity_store_t *store = ctx->editor.dispatch.user_data
+        ? ((edit_cmd_ctx_t *)ctx->editor.dispatch.user_data)->entities
+        : NULL;
+    if (!store) return 0;
+
+    /* Look up the source entity and its body. */
+    const edit_entity_t *src = edit_entity_store_get(store, entity_id);
+    if (!src || !src->active) return 0;
+    if (src->body_index >= DEMO_MAX_BODIES) return 0;
+    if (!phys_body_pool_is_active(&world->body_pool, src->body_index))
+        return 0;
+
+    const phys_body_t *body_a = phys_body_pool_get_curr(
+        &world->body_pool, src->body_index);
+    const phys_collider_t *col_a = phys_world_get_collider(
+        world, src->body_index);
+    if (!body_a || !col_a) return 0;
+
+    /* Build overlap context from world shape pools. */
+    phys_overlap_ctx_t ov_ctx = {
+        .spheres      = world->spheres,
+        .boxes        = world->boxes,
+        .capsules     = world->capsules,
+        .meshes       = world->meshes,
+        .convex_hulls = world->convex_hulls,
+        .halfspaces   = world->halfspaces,
+        .compounds    = world->compounds,
+    };
+
+    uint32_t found = 0;
+
+    /* Iterate all entities (not physics bodies) to get entity IDs. */
+    for (uint32_t eid = 0; eid < store->capacity && found < max_results; eid++) {
+        if (eid == entity_id) continue;
+        const edit_entity_t *other = edit_entity_store_get(store, eid);
+        if (!other || !other->active) continue;
+        if (other->body_index >= DEMO_MAX_BODIES) continue;
+        if (!phys_body_pool_is_active(&world->body_pool, other->body_index))
+            continue;
+
+        const phys_body_t *body_b = phys_body_pool_get_curr(
+            &world->body_pool, other->body_index);
+        const phys_collider_t *col_b = phys_world_get_collider(
+            world, other->body_index);
+        if (!body_b || !col_b) continue;
+
+        if (phys_test_overlap(&ov_ctx,
+                              col_a, body_a->position, body_a->orientation,
+                              col_b, body_b->position, body_b->orientation)) {
+            out_entity_ids[found++] = eid;
+        }
+    }
+
+    return found;
 }
 
 /* ── Physics simulation control callbacks ─────────────────────────── */
@@ -843,6 +915,7 @@ int main(int argc, char **argv) {
             .on_spawn  = bridge_on_spawn_,
             .on_delete = bridge_on_delete_,
             .on_move   = bridge_on_move_,
+            .on_query_touching = bridge_on_query_touching_,
             .user_data = &ctx,
         };
         editor_ctx_set_bridge(&ctx.editor, &ctx.editor_bridge);

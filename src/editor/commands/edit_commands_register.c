@@ -38,4 +38,6 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "alias_create",   cmd_alias_create);
     edit_dispatch_register(dispatch, "alias_delete",   cmd_alias_delete);
     edit_dispatch_register(dispatch, "alias_list",     cmd_alias_list);
+    edit_dispatch_register(dispatch, "select_touching", cmd_select_touching);
+    edit_dispatch_register(dispatch, "select_fill",     cmd_select_fill);
 }

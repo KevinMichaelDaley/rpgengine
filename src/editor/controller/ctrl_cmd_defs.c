@@ -238,6 +238,20 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "List all @ aliases. Optional regex filter.",
         .arg_fmt = "s:pattern",
     },
+    {
+        .name    = "select_touching",
+        .alias   = "st",
+        .usage   = "select_touching",
+        .help    = "Select entities colliding with current selection.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "select_fill",
+        .alias   = "sf",
+        .usage   = "select_fill",
+        .help    = "Flood-fill select through touching chains.",
+        .arg_fmt = NULL,
+    },
 };
 
 static const uint32_t s_def_count =

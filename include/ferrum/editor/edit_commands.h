@@ -154,6 +154,14 @@ bool cmd_alias_delete(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_alias_list(edit_dispatch_t *d, const json_value_t *args,
                     json_value_t *result, json_arena_t *arena);
 
+/** @brief Select entities touching current selection. Args: {} (none). */
+bool cmd_select_touching(edit_dispatch_t *d, const json_value_t *args,
+                         json_value_t *result, json_arena_t *arena);
+
+/** @brief Flood-fill select via touching until stable. Args: {} (none). */
+bool cmd_select_fill(edit_dispatch_t *d, const json_value_t *args,
+                     json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

@@ -64,6 +64,24 @@ typedef struct edit_physics_bridge {
     void (*on_move)(void *user_data, uint32_t entity_id,
                     uint32_t body_index, const float pos[3]);
 
+    /**
+     * @brief Query which entities are touching a given entity.
+     *
+     * The server implements this by performing narrowphase collision
+     * tests (sphere, box, capsule, convex, mesh) against all other
+     * bodies. Results are entity IDs (not body indices).
+     *
+     * @param user_data       Opaque context.
+     * @param entity_id       Editor entity ID to test.
+     * @param out_entity_ids  Output array of touching entity IDs.
+     * @param max_results     Maximum number of results.
+     * @return Number of touching entities written to out_entity_ids.
+     */
+    uint32_t (*on_query_touching)(void *user_data,
+                                   uint32_t entity_id,
+                                   uint32_t *out_entity_ids,
+                                   uint32_t max_results);
+
     void *user_data;  /**< Opaque context passed to all callbacks. */
 } edit_physics_bridge_t;
 
