@@ -1,6 +1,6 @@
 ---
 id: rpg-ma1t
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-28T22:20:45Z
