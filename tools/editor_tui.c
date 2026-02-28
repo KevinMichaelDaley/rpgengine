@@ -10,6 +10,7 @@
  */
 
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 
 #include <signal.h>
 #include <stdatomic.h>
@@ -23,9 +24,204 @@
 
 #include "ferrum/editor/ctrl_conn.h"
 #include "ferrum/editor/ctrl_tui.h"
+#include "ferrum/editor/ctrl_cmd_defs.h"
 
 static atomic_bool g_running = true;
 static struct termios g_orig_termios;
+
+/* ── Entity type cache (populated from server on connect) ─────────── */
+
+#define MAX_ENTITY_TYPES 32
+static char    g_entity_types[MAX_ENTITY_TYPES][32];
+static uint32_t g_entity_type_count = 0;
+static uint32_t g_list_types_cmd_id = UINT32_MAX; /* ID of pending list_types. */
+
+/**
+ * @brief Build a comma-separated list of cached entity types.
+ */
+static void build_type_list_string_(char *buf, size_t cap) {
+    size_t pos = 0;
+    for (uint32_t i = 0; i < g_entity_type_count && pos < cap - 1; i++) {
+        if (i > 0) {
+            int n = snprintf(buf + pos, cap - pos, ", ");
+            if (n > 0) pos += (size_t)n;
+        }
+        int n = snprintf(buf + pos, cap - pos, "%s", g_entity_types[i]);
+        if (n > 0) pos += (size_t)n;
+    }
+}
+
+/* ── Minimal JSON response parser ─────────────────────────────────── */
+
+/**
+ * @brief Extract a numeric field value from a JSON string.
+ *
+ * Finds "field":NUMBER and returns the integer value.
+ * Returns -1 if field not found.
+ */
+static int json_get_int_(const char *json, const char *field) {
+    char needle[64];
+    snprintf(needle, sizeof(needle), "\"%s\":", field);
+    const char *p = strstr(json, needle);
+    if (!p) return -1;
+    p += strlen(needle);
+    while (*p == ' ') p++;
+    return atoi(p);
+}
+
+/**
+ * @brief Check if JSON has "ok":true.
+ */
+static bool json_get_ok_(const char *json) {
+    const char *p = strstr(json, "\"ok\":");
+    if (!p) return false;
+    p += 5;
+    while (*p == ' ') p++;
+    return (strncmp(p, "true", 4) == 0);
+}
+
+/**
+ * @brief Extract string field value from JSON (copies into buf).
+ * @return true if found.
+ */
+static bool json_get_string_(const char *json, const char *field,
+                              char *buf, size_t cap) {
+    char needle[64];
+    snprintf(needle, sizeof(needle), "\"%s\":\"", field);
+    const char *p = strstr(json, needle);
+    if (!p) return false;
+    p += strlen(needle);
+    size_t i = 0;
+    while (*p && *p != '"' && i < cap - 1) {
+        buf[i++] = *p++;
+    }
+    buf[i] = '\0';
+    return true;
+}
+
+/**
+ * @brief Extract the "result" field as a display string.
+ *
+ * For simple values (numbers, strings, bools), returns a readable form.
+ * For null, returns empty string.
+ */
+static bool json_get_result_display_(const char *json, char *buf, size_t cap) {
+    const char *p = strstr(json, "\"result\":");
+    if (!p) return false;
+    p += 9;
+    while (*p == ' ') p++;
+
+    if (strncmp(p, "null", 4) == 0) {
+        buf[0] = '\0';
+        return true;
+    }
+
+    /* Copy the value until we hit } or end of string. */
+    size_t i = 0;
+    if (*p == '"') {
+        /* String value. */
+        p++;
+        while (*p && *p != '"' && i < cap - 1) buf[i++] = *p++;
+    } else {
+        /* Number, bool, array, etc. */
+        while (*p && *p != '}' && *p != ',' && i < cap - 1) buf[i++] = *p++;
+    }
+    buf[i] = '\0';
+    return true;
+}
+
+/**
+ * @brief Parse a JSON array of strings from "result":[...].
+ *
+ * Populates the entity type cache from list_types response.
+ */
+static void parse_type_list_result_(const char *json) {
+    const char *p = strstr(json, "\"result\":");
+    if (!p) return;
+    p += 9;
+    while (*p == ' ') p++;
+    if (*p != '[') return;
+    p++; /* Skip '[' */
+
+    g_entity_type_count = 0;
+    while (*p && *p != ']' && g_entity_type_count < MAX_ENTITY_TYPES) {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == '"') {
+            p++; /* Skip opening quote. */
+            size_t i = 0;
+            while (*p && *p != '"' && i < 31) {
+                g_entity_types[g_entity_type_count][i++] = *p++;
+            }
+            g_entity_types[g_entity_type_count][i] = '\0';
+            if (*p == '"') p++;
+            g_entity_type_count++;
+        } else {
+            break;
+        }
+    }
+}
+
+/**
+ * @brief Parse a server response JSON and update the TUI log.
+ *
+ * Success with null result: mark command line with green ✓.
+ * Success with result: mark ✓ and show result on next line.
+ * Failure: mark command line with red ✗, show error on next line.
+ */
+static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
+    int id = json_get_int_(json, "id");
+    bool ok = json_get_ok_(json);
+
+    if (id >= 0) {
+        /* Check if this is the list_types bootstrap response. */
+        bool is_bootstrap = ((uint32_t)id == g_list_types_cmd_id);
+
+        if (ok) {
+            if (is_bootstrap) {
+                /* Silently populate type cache — don't show in log. */
+                parse_type_list_result_(json);
+                g_list_types_cmd_id = UINT32_MAX;
+                return;
+            }
+
+            ctrl_log_set_cmd_status(&tui->log, (uint32_t)id,
+                                    CTRL_LOG_STATUS_OK);
+
+            /* Show result value if non-null. */
+            char result[128];
+            if (json_get_result_display_(json, result, sizeof(result))
+                && result[0] != '\0') {
+                char msg[192];
+                snprintf(msg, sizeof(msg), "  → %s", result);
+                ctrl_log_add(&tui->log, 0, msg);
+            }
+        } else {
+            if (is_bootstrap) {
+                /* Bootstrap failed — not fatal, just use defaults. */
+                g_list_types_cmd_id = UINT32_MAX;
+                return;
+            }
+
+            ctrl_log_set_cmd_status(&tui->log, (uint32_t)id,
+                                    CTRL_LOG_STATUS_FAIL);
+
+            /* Show error message (not raw JSON). */
+            char error[128];
+            if (json_get_string_(json, "error", error, sizeof(error))) {
+                /* Convert underscored error codes to readable text. */
+                for (char *c = error; *c; c++) {
+                    if (*c == '_') *c = ' ';
+                }
+                ctrl_log_add(&tui->log, 2, error);
+            } else {
+                ctrl_log_add(&tui->log, 2, "command failed");
+            }
+        }
+    } else {
+        /* Not a command response — show as-is (e.g., server broadcast). */
+        ctrl_log_add(&tui->log, 0, json);
+    }
+}
 
 static void sigint_handler_(int sig) {
     (void)sig;
@@ -53,12 +249,187 @@ static bool raw_mode_(void) {
     return tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0;
 }
 
+/** @brief Check if user text is a help query and display help if so. */
+static bool handle_help_query_(ctrl_tui_t *tui, const char *text) {
+    /* "?" alone → show all commands. */
+    if (strcmp(text, "?") == 0) {
+        ctrl_log_add(&tui->log, 0, "Available commands:");
+        uint32_t count = 0;
+        const ctrl_cmd_def_t *defs = ctrl_cmd_defs_table(&count);
+        for (uint32_t i = 0; i < count; i++) {
+            char line[256];
+            snprintf(line, sizeof(line), "  %-18s %s",
+                     defs[i].name, defs[i].help);
+            ctrl_log_add(&tui->log, 0, line);
+        }
+        return true;
+    }
+
+    /* "?command" or "command ?" → show usage for that command. */
+    const char *cmd_name = text;
+    bool is_help = false;
+
+    /* Check "?command" form. */
+    if (text[0] == '?') {
+        cmd_name = text + 1;
+        is_help = true;
+    }
+
+    /* Check "command ?" form. */
+    if (!is_help) {
+        size_t len = strlen(text);
+        if (len >= 2 && text[len - 1] == '?') {
+            /* Copy and strip trailing ? and whitespace. */
+            static char name_buf[128];
+            strncpy(name_buf, text, sizeof(name_buf) - 1);
+            name_buf[sizeof(name_buf) - 1] = '\0';
+            /* Strip trailing "?" and spaces. */
+            char *end = name_buf + strlen(name_buf) - 1;
+            while (end > name_buf && (*end == '?' || *end == ' ')) {
+                *end-- = '\0';
+            }
+            cmd_name = name_buf;
+            is_help = true;
+        }
+    }
+
+    if (!is_help) return false;
+
+    const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(cmd_name);
+    if (def) {
+        char line[256];
+        snprintf(line, sizeof(line), "Usage: %s", def->usage);
+        ctrl_log_add(&tui->log, 0, line);
+        ctrl_log_add(&tui->log, 0, def->help);
+
+        /* For spawn, also list available entity types. */
+        if (strcmp(cmd_name, "spawn") == 0 && g_entity_type_count > 0) {
+            char types_str[256];
+            build_type_list_string_(types_str, sizeof(types_str));
+            char types_line[256];
+            snprintf(types_line, sizeof(types_line),
+                     "  Types: %s", types_str);
+            ctrl_log_add(&tui->log, 0, types_line);
+        }
+    } else {
+        char line[256];
+        snprintf(line, sizeof(line), "Unknown command: %s (type ? for list)",
+                 cmd_name);
+        ctrl_log_add(&tui->log, 1, line);
+    }
+    return true;
+}
+
+/** @brief Handle Tab completion in command mode. */
+static void handle_tab_(ctrl_tui_t *tui) {
+    if (tui->cmd_len == 0) return;
+
+    char prefix[CTRL_CMD_MAX_LEN];
+    memcpy(prefix, tui->cmd_text, tui->cmd_len);
+    prefix[tui->cmd_len] = '\0';
+
+    /* Find first space — determines if we're completing cmd or arg. */
+    char *space = strchr(prefix, ' ');
+
+    if (!space) {
+        /* Completing command name. */
+        const char *matches[32];
+        uint32_t match_count = ctrl_cmd_complete(prefix, matches, 32);
+
+        if (match_count == 1) {
+            size_t len = strlen(matches[0]);
+            if (len < CTRL_CMD_MAX_LEN - 2) {
+                memcpy(tui->cmd_text, matches[0], len);
+                tui->cmd_text[len] = ' ';
+                tui->cmd_len = (uint32_t)(len + 1);
+                tui->cmd_text[tui->cmd_len] = '\0';
+                tui->cmd_cursor = tui->cmd_len;
+            }
+        } else if (match_count > 1) {
+            ctrl_log_add(&tui->log, 0, "Completions:");
+            char line[512];
+            line[0] = '\0';
+            size_t pos = 0;
+            for (uint32_t i = 0; i < match_count; i++) {
+                int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
+                                 matches[i]);
+                if (n > 0) pos += (size_t)n;
+            }
+            ctrl_log_add(&tui->log, 0, line);
+
+            /* Complete common prefix. */
+            size_t common = strlen(matches[0]);
+            for (uint32_t i = 1; i < match_count; i++) {
+                size_t j = 0;
+                while (j < common && matches[0][j] == matches[i][j]) j++;
+                common = j;
+            }
+            if (common > tui->cmd_len) {
+                memcpy(tui->cmd_text, matches[0], common);
+                tui->cmd_len = (uint32_t)common;
+                tui->cmd_text[tui->cmd_len] = '\0';
+                tui->cmd_cursor = tui->cmd_len;
+            }
+        }
+        return;
+    }
+
+    /* Past command name — check if spawn and completing type arg. */
+    *space = '\0';
+    const char *cmd = prefix;
+    const char *arg_start = space + 1;
+    /* Skip extra spaces. */
+    while (*arg_start == ' ') arg_start++;
+
+    /* Only complete spawn's type argument (first arg after cmd). */
+    if (strcmp(cmd, "spawn") != 0 || g_entity_type_count == 0) return;
+    /* Don't complete if we already have more args (past the type). */
+    if (strchr(arg_start, ' ')) return;
+
+    size_t arg_len = strlen(arg_start);
+    const char *matches[MAX_ENTITY_TYPES];
+    uint32_t match_count = 0;
+
+    for (uint32_t i = 0; i < g_entity_type_count; i++) {
+        if (strncmp(g_entity_types[i], arg_start, arg_len) == 0) {
+            matches[match_count++] = g_entity_types[i];
+        }
+    }
+
+    if (match_count == 1) {
+        /* Rebuild: "spawn <match> " */
+        size_t cmd_len = (size_t)(space - prefix);
+        size_t mlen = strlen(matches[0]);
+        char rebuilt[CTRL_CMD_MAX_LEN];
+        int n = snprintf(rebuilt, sizeof(rebuilt), "%s %s ",
+                         cmd, matches[0]);
+        (void)cmd_len; (void)mlen;
+        if (n > 0 && (uint32_t)n < CTRL_CMD_MAX_LEN) {
+            memcpy(tui->cmd_text, rebuilt, (size_t)n);
+            tui->cmd_len = (uint32_t)n;
+            tui->cmd_text[tui->cmd_len] = '\0';
+            tui->cmd_cursor = tui->cmd_len;
+        }
+    } else if (match_count > 1) {
+        ctrl_log_add(&tui->log, 0, "Types:");
+        char line[512];
+        line[0] = '\0';
+        size_t pos = 0;
+        for (uint32_t i = 0; i < match_count; i++) {
+            int n = snprintf(line + pos, sizeof(line) - pos, "  %s",
+                             matches[i]);
+            if (n > 0) pos += (size_t)n;
+        }
+        ctrl_log_add(&tui->log, 0, line);
+    }
+}
+
 int main(int argc, char **argv) {
     const char *host = "127.0.0.1";
     uint16_t port = 9100;
 
     if (argc > 1) {
-        /* Parse host:port */
+        /* Parse host:port or host port. */
         char *colon = strchr(argv[1], ':');
         if (colon) {
             static char host_buf[256];
@@ -68,6 +439,9 @@ int main(int argc, char **argv) {
             host_buf[hlen] = '\0';
             host = host_buf;
             port = (uint16_t)atoi(colon + 1);
+        } else if (argc > 2) {
+            host = argv[1];
+            port = (uint16_t)atoi(argv[2]);
         } else {
             port = (uint16_t)atoi(argv[1]);
         }
@@ -97,9 +471,21 @@ int main(int argc, char **argv) {
         snprintf(msg, sizeof(msg), "Connected to %s:%u", host, port);
         ctrl_log_add(&tui.log, 0, msg);
     }
-    ctrl_log_add(&tui.log, 0, "Type :command and press Enter");
-    ctrl_log_add(&tui.log, 0, "Commands: spawn, delete, move, rotate, scale, save, load");
-    ctrl_log_add(&tui.log, 0, "Press 'q' to quit, ':' to enter command mode");
+    ctrl_log_add(&tui.log, 0, "Type :? for command list, :cmd ? for help");
+    ctrl_log_add(&tui.log, 0, "Tab to autocomplete, 'q' to quit");
+
+    /* Query entity types from server (bootstrap). */
+    {
+        g_list_types_cmd_id = conn.next_id;
+        char json[128];
+        int n = snprintf(json, sizeof(json),
+                         "{\"id\":%u,\"cmd\":\"list_types\",\"args\":{}}\n",
+                         conn.next_id);
+        if (n > 0) {
+            ctrl_conn_send_raw(&conn, json, (uint32_t)n);
+            conn.next_id++;
+        }
+    }
 
     /* Enter raw terminal mode. */
     if (!raw_mode_()) {
@@ -138,13 +524,47 @@ int main(int argc, char **argv) {
                     break;
                 }
 
+                /* Tab completion in command mode. */
+                if (tui.mode == CTRL_MODE_COMMAND && ch == '\t') {
+                    handle_tab_(&tui);
+                    continue;
+                }
+
                 const char *cmd = ctrl_tui_feed_key(&tui, ch);
                 if (cmd && cmd[0] != '\0') {
-                    /* User submitted a command — send to server. */
+                    /* Check for help query first. */
+                    if (handle_help_query_(&tui, cmd)) {
+                        continue;
+                    }
+
+                    /* Log the user command with pending status. */
                     char msg[512];
-                    snprintf(msg, sizeof(msg), "> %s", cmd);
-                    ctrl_log_add(&tui.log, 0, msg);
-                    ctrl_conn_send_cmd(&conn, cmd);
+                    snprintf(msg, sizeof(msg), "%s", cmd);
+                    uint32_t this_cmd_id = conn.next_id;
+
+                    /* Build proper JSON and send. */
+                    char json[4096];
+                    uint32_t json_len = ctrl_cmd_build_json(
+                        cmd, json, sizeof(json), conn.next_id);
+
+                    if (json_len > 0) {
+                        ctrl_log_add_cmd(&tui.log, msg, this_cmd_id);
+                        ctrl_conn_send_raw(&conn, json, json_len);
+                        conn.next_id++;
+                    } else {
+                        /* Build failed — check if command has required args. */
+                        const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(cmd);
+                        if (def && def->arg_fmt) {
+                            char hint[256];
+                            snprintf(hint, sizeof(hint),
+                                     "Usage: %s", def->usage);
+                            ctrl_log_add(&tui.log, 1, hint);
+                        } else {
+                            /* Unknown cmd or no args needed — send raw. */
+                            ctrl_log_add_cmd(&tui.log, msg, conn.next_id);
+                            ctrl_conn_send_cmd(&conn, cmd);
+                        }
+                    }
                 }
             }
         }
@@ -154,10 +574,9 @@ int main(int argc, char **argv) {
             if (ctrl_conn_recv(&conn)) {
                 char line[4096];
                 uint32_t len;
-                while ((len = ctrl_conn_pop_line(&conn, line, sizeof(line))) > 0) {
-                    char msg[4200];
-                    snprintf(msg, sizeof(msg), "< %s", line);
-                    ctrl_log_add(&tui.log, 0, msg);
+                while ((len = ctrl_conn_pop_line(&conn, line,
+                                                 sizeof(line))) > 0) {
+                    parse_server_response_(&tui, line);
                 }
             } else if (conn.state == CTRL_CONN_ERROR) {
                 ctrl_log_add(&tui.log, 2, "Server disconnected");

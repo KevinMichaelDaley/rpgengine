@@ -98,6 +98,10 @@ bool cmd_physics_step(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_physics_reset(edit_dispatch_t *d, const json_value_t *args,
                        json_value_t *result, json_arena_t *arena);
 
+/** @brief List available entity types. Args: {} (none). */
+bool cmd_list_types(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

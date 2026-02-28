@@ -15,6 +15,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 /** @brief Append to screen buffer. */
 static void emit_(ctrl_tui_t *tui, const char *data, size_t len) {
@@ -87,11 +88,25 @@ static void render_log_area_(ctrl_tui_t *tui) {
 
         if (e) {
             emit_(tui, level_color_(e->level), strlen(level_color_(e->level)));
-            /* Truncate to terminal width. */
+            /* Truncate to terminal width (leave room for status). */
             size_t text_len = strlen(e->text);
-            if (text_len > (size_t)tui->cols) text_len = (size_t)tui->cols;
+            int max_text = tui->cols - 2; /* Room for status indicator. */
+            if (max_text < 1) max_text = 1;
+            if (text_len > (size_t)max_text) text_len = (size_t)max_text;
             emit_(tui, e->text, text_len);
             emit_(tui, "\033[0m", 4);
+
+            /* Render status indicator at far right. */
+            if (e->status == CTRL_LOG_STATUS_PENDING) {
+                int col = tui->cols;
+                emitf_(tui, "\033[%d;%dH\033[33m…\033[0m", row + 2, col);
+            } else if (e->status == CTRL_LOG_STATUS_OK) {
+                int col = tui->cols;
+                emitf_(tui, "\033[%d;%dH\033[32m✓\033[0m", row + 2, col);
+            } else if (e->status == CTRL_LOG_STATUS_FAIL) {
+                int col = tui->cols;
+                emitf_(tui, "\033[%d;%dH\033[31m✗\033[0m", row + 2, col);
+            }
         }
     }
 }
@@ -102,7 +117,8 @@ static void render_command_line_(ctrl_tui_t *tui) {
 
     if (tui->mode == CTRL_MODE_COMMAND) {
         /* Show ':' prefix + command text. */
-        emit_(tui, "\033[36m:\033[0m", 13); /* Cyan colon. */
+        const char *colon_esc = "\033[36m:\033[0m";
+        emit_(tui, colon_esc, strlen(colon_esc));
         if (tui->cmd_len > 0) {
             emit_(tui, tui->cmd_text, tui->cmd_len);
         }
@@ -132,4 +148,9 @@ void ctrl_tui_render(ctrl_tui_t *tui) {
         emitf_(tui, "\033[%d;%dH", tui->rows, 2 + (int)tui->cmd_len);
     }
     emit_(tui, "\033[?25h", 6); /* Show cursor. */
+
+    /* Flush the entire screen buffer in one write. */
+    if (tui->screen_len > 0) {
+        (void)write(STDOUT_FILENO, tui->screen_buf, tui->screen_len);
+    }
 }

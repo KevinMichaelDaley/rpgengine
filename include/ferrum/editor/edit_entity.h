@@ -24,7 +24,11 @@ extern "C" {
 
 #define EDIT_ENTITY_TYPE_BOX     0
 #define EDIT_ENTITY_TYPE_SPHERE  1
+#define EDIT_ENTITY_TYPE_CAPSULE 2
 #define EDIT_ENTITY_INVALID_ID   UINT32_MAX
+
+/** @brief Maximum number of entity types in the registry. */
+#define EDIT_ENTITY_TYPE_MAX     32
 
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */
@@ -129,6 +133,32 @@ bool edit_entity_store_restore(edit_entity_store_t *store, uint32_t id,
  * @return Number of active entities.
  */
 uint32_t edit_entity_store_count(const edit_entity_store_t *store);
+
+/* ------------------------------------------------------------------------ */
+/* Entity type registry (edit_entity_types.c)                                */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * @brief An entry in the entity type registry.
+ */
+typedef struct edit_entity_type_info {
+    char     name[32];   /**< Type name (e.g., "box", "sphere"). */
+    uint32_t type_id;    /**< Numeric type ID (EDIT_ENTITY_TYPE_*). */
+} edit_entity_type_info_t;
+
+/**
+ * @brief Get the built-in entity type registry.
+ * @param[out] count  Number of types in the registry.
+ * @return Pointer to array of type info structs.
+ */
+const edit_entity_type_info_t *edit_entity_type_registry(uint32_t *count);
+
+/**
+ * @brief Look up a type ID by name.
+ * @param name  Type name (e.g., "box").
+ * @return Type ID, or UINT32_MAX if not found.
+ */
+uint32_t edit_entity_type_by_name(const char *name);
 
 #ifdef __cplusplus
 }

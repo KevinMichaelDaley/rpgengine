@@ -29,11 +29,23 @@ extern "C" {
 /* ------------------------------------------------------------------------ */
 
 /**
+ * @brief Status indicator for command result display.
+ */
+typedef enum ctrl_log_status {
+    CTRL_LOG_STATUS_NONE    = 0, /**< Not a command (no indicator). */
+    CTRL_LOG_STATUS_PENDING = 1, /**< Command sent, awaiting response. */
+    CTRL_LOG_STATUS_OK      = 2, /**< Command succeeded (green ✓). */
+    CTRL_LOG_STATUS_FAIL    = 3, /**< Command failed (red ✗). */
+} ctrl_log_status_t;
+
+/**
  * @brief A single log entry.
  */
 typedef struct ctrl_log_entry {
     char     text[CTRL_LOG_MAX_TEXT]; /**< Null-terminated log message. */
     uint8_t  level;                  /**< 0=info, 1=warn, 2=error. */
+    uint8_t  status;                 /**< ctrl_log_status_t indicator. */
+    uint32_t cmd_id;                 /**< Request ID (for matching responses). */
 } ctrl_log_entry_t;
 
 /**
@@ -80,6 +92,27 @@ void ctrl_log_destroy(ctrl_log_t *log);
  * @param text   Message text (truncated to CTRL_LOG_MAX_TEXT-1).
  */
 void ctrl_log_add(ctrl_log_t *log, uint8_t level, const char *text);
+
+/**
+ * @brief Add a log entry with a command ID and pending status.
+ * @param log     Log buffer.
+ * @param text    Message text.
+ * @param cmd_id  Request ID for matching responses.
+ */
+void ctrl_log_add_cmd(ctrl_log_t *log, const char *text, uint32_t cmd_id);
+
+/**
+ * @brief Update the status of a pending command entry by ID.
+ *
+ * Searches backwards from newest for an entry with matching cmd_id.
+ *
+ * @param log     Log buffer.
+ * @param cmd_id  Request ID to find.
+ * @param status  New status (CTRL_LOG_STATUS_OK or CTRL_LOG_STATUS_FAIL).
+ * @return true if found and updated.
+ */
+bool ctrl_log_set_cmd_status(ctrl_log_t *log, uint32_t cmd_id,
+                             ctrl_log_status_t status);
 
 /**
  * @brief Clear all log entries.

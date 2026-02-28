@@ -24,4 +24,5 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "physics_resume", cmd_physics_resume);
     edit_dispatch_register(dispatch, "physics_step",   cmd_physics_step);
     edit_dispatch_register(dispatch, "physics_reset",  cmd_physics_reset);
+    edit_dispatch_register(dispatch, "list_types",     cmd_list_types);
 }

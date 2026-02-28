@@ -30,14 +30,20 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
     edit_cmd_ctx_t *ctx = (edit_cmd_ctx_t *)d->user_data;
     if (!ctx || !ctx->entities) return false;
 
-    /* Parse entity type. */
+    /* Parse entity type from registry. */
     uint32_t type = EDIT_ENTITY_TYPE_BOX;
     if (args) {
         const json_value_t *type_val = json_object_get(args, "type");
         if (type_val && type_val->type == JSON_STRING) {
-            if (type_val->string.len == 6 &&
-                memcmp(type_val->string.ptr, "sphere", 6) == 0) {
-                type = EDIT_ENTITY_TYPE_SPHERE;
+            /* Copy name to null-terminated buffer for lookup. */
+            char name[32];
+            uint32_t nlen = type_val->string.len;
+            if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
+            memcpy(name, type_val->string.ptr, nlen);
+            name[nlen] = '\0';
+            uint32_t resolved = edit_entity_type_by_name(name);
+            if (resolved != UINT32_MAX) {
+                type = resolved;
             }
         }
     }
