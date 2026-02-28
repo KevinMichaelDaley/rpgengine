@@ -17,11 +17,12 @@ static bool path_is_safe_(const char *path) {
 
 /** @brief Map entity type to string. */
 static const char *type_str_(uint32_t type) {
-    switch (type) {
-        case EDIT_ENTITY_TYPE_BOX:    return "box";
-        case EDIT_ENTITY_TYPE_SPHERE: return "sphere";
-        default:                      return "box";
+    uint32_t count = 0;
+    const edit_entity_type_info_t *types = edit_entity_type_registry(&count);
+    for (uint32_t i = 0; i < count; i++) {
+        if (types[i].type_id == type) return types[i].name;
     }
+    return "box";
 }
 
 size_t edit_level_serialize(const struct edit_entity_store *store,
@@ -48,11 +49,17 @@ size_t edit_level_serialize(const struct edit_entity_store *store,
         if (!first) APPEND(",");
         first = false;
 
-        APPEND("{\"id\":%u,\"type\":\"%s\","
-               "\"pos\":[%.6g,%.6g,%.6g],"
+        APPEND("{\"id\":%u,\"type\":\"%s\"",
+               i, type_str_(e->type));
+
+        /* Include name if set. */
+        if (e->name[0] != '\0') {
+            APPEND(",\"name\":\"%s\"", e->name);
+        }
+
+        APPEND(",\"pos\":[%.6g,%.6g,%.6g],"
                "\"rot\":[%.6g,%.6g,%.6g],"
                "\"scale\":[%.6g,%.6g,%.6g]}",
-               i, type_str_(e->type),
                (double)e->pos[0], (double)e->pos[1], (double)e->pos[2],
                (double)e->rot[0], (double)e->rot[1], (double)e->rot[2],
                (double)e->scale[0], (double)e->scale[1], (double)e->scale[2]);

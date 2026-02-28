@@ -123,6 +123,19 @@ static uint32_t build_args_(const char *arg_fmt, char *tokens[],
     return written;
 }
 
+/**
+ * @brief Check if a string looks like a number (int or float).
+ */
+static bool looks_numeric_(const char *s) {
+    if (!s || !*s) return false;
+    if (*s == '-' || *s == '+') s++;
+    if (!*s) return false;
+    bool has_digit = false;
+    while (*s >= '0' && *s <= '9') { s++; has_digit = true; }
+    if (*s == '.') { s++; while (*s >= '0' && *s <= '9') { s++; has_digit = true; } }
+    return has_digit && *s == '\0';
+}
+
 /* ── Public API ───────────────────────────────────────────────────── */
 
 uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
@@ -142,7 +155,6 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
 
     /* Check for help query: "?command" or "command ?" */
     if (cmd_name[0] == '?') {
-        /* Return empty — caller should display help. */
         return 0;
     }
     if (token_count >= 2 && strcmp(tokens[1], "?") == 0) {
@@ -152,6 +164,22 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     /* Look up command definition. */
     const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(cmd_name);
 
+    /* Special handling for spawn: detect optional name between type and pos.
+     * "spawn box 0 5 0"          → type=box, pos=[0,5,0]
+     * "spawn box myname 0 5 0"   → type=box, name=myname, pos=[0,5,0] */
+    char *name_token = NULL;
+    if (def && strcmp(cmd_name, "spawn") == 0 && token_count >= 3) {
+        /* tokens[1]=type, check if tokens[2] is NOT a number → it's a name. */
+        if (!looks_numeric_(tokens[2])) {
+            name_token = tokens[2];
+            /* Shift tokens to remove the name from the arg stream. */
+            for (uint32_t i = 2; i + 1 < token_count; i++) {
+                tokens[i] = tokens[i + 1];
+            }
+            token_count--;
+        }
+    }
+
     /* Build args JSON. */
     char args_buf[2048];
     uint32_t args_len;
@@ -159,12 +187,25 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         args_len = build_args_(def->arg_fmt, tokens, token_count, 1,
                                args_buf, sizeof(args_buf));
     } else {
-        /* Unknown command — send with empty args. */
         args_len = (uint32_t)snprintf(args_buf, sizeof(args_buf), "{}");
     }
 
     if (args_len == 0) {
         snprintf(args_buf, sizeof(args_buf), "{}");
+    }
+
+    /* Inject "name" field into spawn args if present. */
+    if (name_token && args_len > 1) {
+        /* args_buf looks like {"type":"box","pos":[...]}
+         * Insert ,"name":"<name>" before the closing }. */
+        char injected[2048];
+        args_buf[args_len - 1] = '\0'; /* Remove closing } */
+        int ni = snprintf(injected, sizeof(injected),
+                          "%s,\"name\":\"%s\"}", args_buf, name_token);
+        if (ni > 0 && (uint32_t)ni < sizeof(injected)) {
+            memcpy(args_buf, injected, (size_t)ni + 1);
+            args_len = (uint32_t)ni;
+        }
     }
 
     /* Build final JSON. */

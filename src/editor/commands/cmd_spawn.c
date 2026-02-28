@@ -35,13 +35,12 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
     if (args) {
         const json_value_t *type_val = json_object_get(args, "type");
         if (type_val && type_val->type == JSON_STRING) {
-            /* Copy name to null-terminated buffer for lookup. */
-            char name[32];
+            char tname[32];
             uint32_t nlen = type_val->string.len;
-            if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
-            memcpy(name, type_val->string.ptr, nlen);
-            name[nlen] = '\0';
-            uint32_t resolved = edit_entity_type_by_name(name);
+            if (nlen >= sizeof(tname)) nlen = sizeof(tname) - 1;
+            memcpy(tname, type_val->string.ptr, nlen);
+            tname[nlen] = '\0';
+            uint32_t resolved = edit_entity_type_by_name(tname);
             if (resolved != UINT32_MAX) {
                 type = resolved;
             }
@@ -51,6 +50,21 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
     /* Create entity. */
     uint32_t eid = edit_entity_store_create(ctx->entities, type);
     if (eid == EDIT_ENTITY_INVALID_ID) return false;
+
+    /* Set name if provided. */
+    bool has_name = false;
+    if (args) {
+        const json_value_t *name_val = json_object_get(args, "name");
+        if (name_val && name_val->type == JSON_STRING &&
+            name_val->string.len > 0) {
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            uint32_t nlen = name_val->string.len;
+            if (nlen >= EDIT_ENTITY_NAME_MAX) nlen = EDIT_ENTITY_NAME_MAX - 1;
+            memcpy(e->name, name_val->string.ptr, nlen);
+            e->name[nlen] = '\0';
+            has_name = true;
+        }
+    }
 
     /* Set position if provided. */
     float pos[3] = {0};
@@ -82,8 +96,15 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
         edit_undo_record(ctx->undo, &entry, NULL, 0);
     }
 
-    /* Return entity ID as result. */
-    result->type   = JSON_NUMBER;
-    result->number = (double)eid;
+    /* Return: name if provided, else entity ID. */
+    if (has_name) {
+        const edit_entity_t *ent = edit_entity_store_get(ctx->entities, eid);
+        result->type       = JSON_STRING;
+        result->string.ptr = ent->name;
+        result->string.len = (uint32_t)strlen(ent->name);
+    } else {
+        result->type   = JSON_NUMBER;
+        result->number = (double)eid;
+    }
     return true;
 }

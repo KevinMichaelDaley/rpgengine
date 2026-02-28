@@ -187,10 +187,13 @@ static void parse_server_response_(ctrl_tui_t *tui, const char *json) {
             ctrl_log_set_cmd_status(&tui->log, (uint32_t)id,
                                     CTRL_LOG_STATUS_OK);
 
-            /* Show result value if non-null. */
+            /* Show result value only when informative (not null/true/false). */
             char result[128];
             if (json_get_result_display_(json, result, sizeof(result))
-                && result[0] != '\0') {
+                && result[0] != '\0'
+                && strcmp(result, "null") != 0
+                && strcmp(result, "true") != 0
+                && strcmp(result, "false") != 0) {
                 char msg[192];
                 snprintf(msg, sizeof(msg), "  → %s", result);
                 ctrl_log_add(&tui->log, 0, msg);

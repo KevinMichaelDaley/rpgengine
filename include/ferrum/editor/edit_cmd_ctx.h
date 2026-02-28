@@ -99,6 +99,22 @@ typedef struct edit_cmd_ctx {
     struct edit_physics_ctrl *physics;    /**< Physics sim control (NULL = no-op). */
 } edit_cmd_ctx_t;
 
+/* Forward declaration for JSON types. */
+struct json_value;
+
+/**
+ * @brief Resolve an entity ID from a JSON value.
+ *
+ * Accepts either a number (direct ID) or a string (entity name lookup).
+ * Returns EDIT_ENTITY_INVALID_ID (UINT32_MAX) if resolution fails.
+ *
+ * @param ctx       Command context (for entity store access).
+ * @param id_val    JSON value from args (number or string).
+ * @return Resolved entity ID, or UINT32_MAX.
+ */
+uint32_t edit_cmd_resolve_entity(const edit_cmd_ctx_t *ctx,
+                                 const struct json_value *id_val);
+
 #ifdef __cplusplus
 }
 #endif

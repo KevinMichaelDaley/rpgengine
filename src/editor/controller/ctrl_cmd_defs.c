@@ -16,8 +16,8 @@
 static const ctrl_cmd_def_t s_defs[] = {
     {
         .name    = "spawn",
-        .usage   = "spawn <type> <x> <y> <z> [rx ry rz] [sx sy sz]",
-        .help    = "Spawn entity at position. Types: box, sphere.",
+        .usage   = "spawn <type> [name] <x> <y> <z>",
+        .help    = "Spawn entity. Optional name before position.",
         .arg_fmt = "s:type f3:pos",
     },
     {
@@ -28,9 +28,9 @@ static const ctrl_cmd_def_t s_defs[] = {
     },
     {
         .name    = "delete_id",
-        .usage   = "delete_id <entity_id>",
-        .help    = "Delete entity by ID (no selection needed).",
-        .arg_fmt = "u:entity_id",
+        .usage   = "delete_id <id_or_name>",
+        .help    = "Delete entity by ID or name.",
+        .arg_fmt = "s:entity_id",
     },
     {
         .name    = "move",
@@ -40,9 +40,9 @@ static const ctrl_cmd_def_t s_defs[] = {
     },
     {
         .name    = "move_id",
-        .usage   = "move_id <entity_id> <dx> <dy> <dz>",
-        .help    = "Move entity by ID with delta.",
-        .arg_fmt = "u:entity_id f3:delta",
+        .usage   = "move_id <id_or_name> <dx> <dy> <dz>",
+        .help    = "Move entity by ID or name with delta.",
+        .arg_fmt = "s:entity_id f3:delta",
     },
     {
         .name    = "rotate",
@@ -58,15 +58,15 @@ static const ctrl_cmd_def_t s_defs[] = {
     },
     {
         .name    = "select",
-        .usage   = "select <entity_id> [toggle]",
-        .help    = "Select entity by ID. Optional toggle (true/false).",
-        .arg_fmt = "u:entity_id",
+        .usage   = "select <id_or_name> [toggle]",
+        .help    = "Select entity by ID or name.",
+        .arg_fmt = "s:entity_id",
     },
     {
         .name    = "deselect",
-        .usage   = "deselect <entity_id>",
-        .help    = "Deselect entity by ID.",
-        .arg_fmt = "u:entity_id",
+        .usage   = "deselect <id_or_name>",
+        .help    = "Deselect entity by ID or name.",
+        .arg_fmt = "s:entity_id",
     },
     {
         .name    = "select_all",

@@ -32,10 +32,11 @@ bool cmd_move_id(edit_dispatch_t *d, const json_value_t *args,
     edit_cmd_ctx_t *ctx = (edit_cmd_ctx_t *)d->user_data;
     if (!ctx || !ctx->entities || !args) return false;
 
-    /* Extract entity_id (required). */
+    /* Extract entity_id (required) — accepts number or name string. */
     const json_value_t *id_val = json_object_get(args, "entity_id");
-    if (!id_val || id_val->type != JSON_NUMBER) return false;
-    uint32_t eid = (uint32_t)id_val->number;
+    if (!id_val) return false;
+    uint32_t eid = edit_cmd_resolve_entity(ctx, id_val);
+    if (eid == EDIT_ENTITY_INVALID_ID) return false;
 
     /* Extract delta vector. */
     const json_value_t *delta_val = json_object_get(args, "delta");

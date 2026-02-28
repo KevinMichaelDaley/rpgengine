@@ -27,14 +27,16 @@ static bool extract_vec3_(const json_value_t *arr, float out[3]) {
     return true;
 }
 
-/** @brief Determine entity type from a JSON string value. */
+/** @brief Determine entity type from a JSON string value using registry. */
 static uint32_t parse_type_(const json_value_t *type_val) {
     if (!type_val || type_val->type != JSON_STRING) return EDIT_ENTITY_TYPE_BOX;
-    if (type_val->string.len == 6 &&
-        memcmp(type_val->string.ptr, "sphere", 6) == 0) {
-        return EDIT_ENTITY_TYPE_SPHERE;
-    }
-    return EDIT_ENTITY_TYPE_BOX;
+    char name[32];
+    uint32_t len = type_val->string.len;
+    if (len >= sizeof(name)) len = sizeof(name) - 1;
+    memcpy(name, type_val->string.ptr, len);
+    name[len] = '\0';
+    uint32_t id = edit_entity_type_by_name(name);
+    return (id != UINT32_MAX) ? id : EDIT_ENTITY_TYPE_BOX;
 }
 
 /** @brief Clear all entities in the store. */
@@ -98,6 +100,17 @@ bool edit_level_deserialize(struct edit_entity_store *store,
         extract_vec3_(json_object_get(ent, "rot"), rot);
         extract_vec3_(json_object_get(ent, "scale"), scale);
 
+        /* Parse optional name. */
+        char ent_name[EDIT_ENTITY_NAME_MAX] = {0};
+        const json_value_t *name_val = json_object_get(ent, "name");
+        if (name_val && name_val->type == JSON_STRING &&
+            name_val->string.len > 0) {
+            uint32_t nlen = name_val->string.len;
+            if (nlen >= sizeof(ent_name)) nlen = sizeof(ent_name) - 1;
+            memcpy(ent_name, name_val->string.ptr, nlen);
+            ent_name[nlen] = '\0';
+        }
+
         /* Place entity at target slot or first available. */
         if (target_id < store->capacity && !store->entities[target_id].active) {
             edit_entity_t *e = &store->entities[target_id];
@@ -107,6 +120,8 @@ bool edit_level_deserialize(struct edit_entity_store *store,
             memcpy(e->pos, pos, sizeof(pos));
             memcpy(e->rot, rot, sizeof(rot));
             memcpy(e->scale, scale, sizeof(scale));
+            memcpy(e->name, ent_name, sizeof(ent_name));
+            e->body_index = EDIT_ENTITY_INVALID_ID;
         } else {
             /* Fallback: create at first free slot. */
             uint32_t eid = edit_entity_store_create(store, type);
@@ -115,6 +130,7 @@ bool edit_level_deserialize(struct edit_entity_store *store,
                 memcpy(e->pos, pos, sizeof(pos));
                 memcpy(e->rot, rot, sizeof(rot));
                 memcpy(e->scale, scale, sizeof(scale));
+                memcpy(e->name, ent_name, sizeof(ent_name));
             }
         }
     }

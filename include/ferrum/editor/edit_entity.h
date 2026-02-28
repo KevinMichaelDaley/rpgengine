@@ -30,6 +30,9 @@ extern "C" {
 /** @brief Maximum number of entity types in the registry. */
 #define EDIT_ENTITY_TYPE_MAX     32
 
+/** @brief Maximum length of an entity name (including null terminator). */
+#define EDIT_ENTITY_NAME_MAX 256
+
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */
 /* ------------------------------------------------------------------------ */
@@ -44,6 +47,7 @@ typedef struct edit_entity {
     uint32_t type;         /**< Entity type (EDIT_ENTITY_TYPE_*). */
     uint32_t body_index;   /**< Physics body index (UINT32_MAX = none). */
     bool     active;       /**< Whether this slot is in use. */
+    char     name[EDIT_ENTITY_NAME_MAX]; /**< Optional display name (empty = unnamed). */
 } edit_entity_t;
 
 /**
@@ -133,6 +137,15 @@ bool edit_entity_store_restore(edit_entity_store_t *store, uint32_t id,
  * @return Number of active entities.
  */
 uint32_t edit_entity_store_count(const edit_entity_store_t *store);
+
+/**
+ * @brief Find an active entity by name.
+ * @param store  Entity store.
+ * @param name   Name to search for (case-sensitive).
+ * @return Entity ID, or EDIT_ENTITY_INVALID_ID if not found.
+ */
+uint32_t edit_entity_store_find_by_name(const edit_entity_store_t *store,
+                                        const char *name);
 
 /* ------------------------------------------------------------------------ */
 /* Entity type registry (edit_entity_types.c)                                */
