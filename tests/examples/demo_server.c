@@ -136,6 +136,9 @@ struct demo_ctx {
     /* Per-body shape type (0=box, 1=sphere, 2=capsule, 3=mesh). */
     uint8_t                             body_shape_type[DEMO_MAX_BODIES];
 
+    /* Per-body half-extents for network spawn messages. */
+    float                               body_half[DEMO_MAX_BODIES][3];
+
     /** Per-body flag: 1 if body participates in at least one joint.
      *  Clients use this to choose interpolation (constrained) vs prediction. */
     uint8_t                             body_constrained[DEMO_MAX_BODIES];
@@ -209,6 +212,23 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
 
     phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
                   &spawn, sizeof(spawn));
+
+    /* Store shape type and half-extents for network spawn messages. */
+    uint32_t bi = ctx->total_spawned;
+    if (bi < DEMO_MAX_BODIES) {
+        if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {
+            ctx->body_shape_type[bi] = 1; /* sphere */
+            float r = spawn.shape_data.sphere_r;
+            ctx->body_half[bi][0] = r;
+            ctx->body_half[bi][1] = r;
+            ctx->body_half[bi][2] = r;
+        } else {
+            ctx->body_shape_type[bi] = 0; /* box */
+            ctx->body_half[bi][0] = spawn.shape_data.box_half.x;
+            ctx->body_half[bi][1] = spawn.shape_data.box_half.y;
+            ctx->body_half[bi][2] = spawn.shape_data.box_half.z;
+        }
+    }
     ctx->total_spawned++;
 
     /* Body index assigned by physics engine on next tick; we don't have it
@@ -467,11 +487,10 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.rot_z = body->orientation.z;
         spawn_msg.rot_w = body->orientation.w;
 
-        /* Encode half-extents as float16 (meters).
-         * Editor-spawned bodies use DEMO_BOX_HALF; future: per-body extents. */
-        spawn_msg.half_x_f16 = net_float16_from_float(DEMO_BOX_HALF);
-        spawn_msg.half_y_f16 = net_float16_from_float(DEMO_BOX_HALF);
-        spawn_msg.half_z_f16 = net_float16_from_float(DEMO_BOX_HALF);
+        /* Encode per-body half-extents as float16 (meters). */
+        spawn_msg.half_x_f16 = net_float16_from_float(ctx->body_half[bi][0]);
+        spawn_msg.half_y_f16 = net_float16_from_float(ctx->body_half[bi][1]);
+        spawn_msg.half_z_f16 = net_float16_from_float(ctx->body_half[bi][2]);
 
         uint8_t wire[2u + NET_REPL_BODY_SPAWN_PAYLOAD_SIZE];
         wire[0] = (uint8_t)(NET_REPL_SCHEMA_BODY_SPAWN & 0xFFu);
