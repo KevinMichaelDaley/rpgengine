@@ -434,6 +434,179 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return (uint32_t)n2;
     }
 
+    /* ── Mesh creation: variable optional args ───────────────────── */
+
+    /* mesh_create_box [w h d] [x y z]
+     * 0 args → {}
+     * 3 args → {"size":[w,h,d]}
+     * 6 args → {"size":[w,h,d],"pos":[x,y,z]} */
+    if (def && strcmp(wire_name, "mesh_create_box") == 0) {
+        char ab[512];
+        uint32_t na = token_count - 1;
+        if (na >= 6) {
+            snprintf(ab, sizeof(ab),
+                "{\"size\":[%.6g,%.6g,%.6g],\"pos\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (double)strtof(tokens[3],NULL), (double)strtof(tokens[4],NULL),
+                (double)strtof(tokens[5],NULL), (double)strtof(tokens[6],NULL));
+        } else if (na >= 3) {
+            snprintf(ab, sizeof(ab), "{\"size\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (double)strtof(tokens[3],NULL));
+        } else {
+            snprintf(ab, sizeof(ab), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n", cmd_id, wire_name, ab);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* mesh_create_sphere [radius] [segments] [x y z] */
+    if (def && strcmp(wire_name, "mesh_create_sphere") == 0) {
+        char ab[512];
+        uint32_t na = token_count - 1;
+        if (na >= 5) {
+            snprintf(ab, sizeof(ab),
+                "{\"radius\":%.6g,\"segments\":%u,\"pos\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL),
+                (unsigned)strtoul(tokens[2],NULL,10),
+                (double)strtof(tokens[3],NULL), (double)strtof(tokens[4],NULL),
+                (double)strtof(tokens[5],NULL));
+        } else if (na >= 2) {
+            snprintf(ab, sizeof(ab), "{\"radius\":%.6g,\"segments\":%u}",
+                (double)strtof(tokens[1],NULL),
+                (unsigned)strtoul(tokens[2],NULL,10));
+        } else if (na >= 1) {
+            snprintf(ab, sizeof(ab), "{\"radius\":%.6g}",
+                (double)strtof(tokens[1],NULL));
+        } else {
+            snprintf(ab, sizeof(ab), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n", cmd_id, wire_name, ab);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* mesh_create_cylinder [radius] [height] [segments] [axis] [x y z] */
+    if (def && strcmp(wire_name, "mesh_create_cylinder") == 0) {
+        char ab[512];
+        uint32_t na = token_count - 1;
+        if (na >= 7) {
+            snprintf(ab, sizeof(ab),
+                "{\"radius\":%.6g,\"height\":%.6g,\"segments\":%u,"
+                "\"axis\":%u,\"pos\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (unsigned)strtoul(tokens[3],NULL,10),
+                (unsigned)strtoul(tokens[4],NULL,10),
+                (double)strtof(tokens[5],NULL), (double)strtof(tokens[6],NULL),
+                (double)strtof(tokens[7],NULL));
+        } else if (na >= 4) {
+            snprintf(ab, sizeof(ab),
+                "{\"radius\":%.6g,\"height\":%.6g,\"segments\":%u,\"axis\":%u}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (unsigned)strtoul(tokens[3],NULL,10),
+                (unsigned)strtoul(tokens[4],NULL,10));
+        } else if (na >= 2) {
+            snprintf(ab, sizeof(ab), "{\"radius\":%.6g,\"height\":%.6g}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL));
+        } else {
+            snprintf(ab, sizeof(ab), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n", cmd_id, wire_name, ab);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* mesh_create_plane [w h] [axis] [x y z] */
+    if (def && strcmp(wire_name, "mesh_create_plane") == 0) {
+        char ab[512];
+        uint32_t na = token_count - 1;
+        if (na >= 6) {
+            snprintf(ab, sizeof(ab),
+                "{\"size\":[%.6g,%.6g],\"axis\":%u,"
+                "\"pos\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (unsigned)strtoul(tokens[3],NULL,10),
+                (double)strtof(tokens[4],NULL), (double)strtof(tokens[5],NULL),
+                (double)strtof(tokens[6],NULL));
+        } else if (na >= 3) {
+            snprintf(ab, sizeof(ab), "{\"size\":[%.6g,%.6g],\"axis\":%u}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (unsigned)strtoul(tokens[3],NULL,10));
+        } else if (na >= 2) {
+            snprintf(ab, sizeof(ab), "{\"size\":[%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL));
+        } else {
+            snprintf(ab, sizeof(ab), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n", cmd_id, wire_name, ab);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* extrude [distance] [dx dy dz] */
+    if (def && strcmp(wire_name, "extrude") == 0) {
+        char ab[512];
+        uint32_t na = token_count - 1;
+        if (na >= 4) {
+            snprintf(ab, sizeof(ab),
+                "{\"distance\":%.6g,\"direction\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (double)strtof(tokens[3],NULL), (double)strtof(tokens[4],NULL));
+        } else if (na >= 1) {
+            snprintf(ab, sizeof(ab), "{\"distance\":%.6g}",
+                (double)strtof(tokens[1],NULL));
+        } else {
+            snprintf(ab, sizeof(ab), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n", cmd_id, wire_name, ab);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* inset [amount] [depth] */
+    if (def && strcmp(wire_name, "inset") == 0) {
+        char ab[256];
+        uint32_t na = token_count - 1;
+        if (na >= 2) {
+            snprintf(ab, sizeof(ab), "{\"amount\":%.6g,\"depth\":%.6g}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL));
+        } else if (na >= 1) {
+            snprintf(ab, sizeof(ab), "{\"amount\":%.6g}",
+                (double)strtof(tokens[1],NULL));
+        } else {
+            snprintf(ab, sizeof(ab), "{}");
+        }
+        int n2 = snprintf(out, out_cap,
+            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n", cmd_id, wire_name, ab);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* mesh_select / mesh_deselect: variable index list.
+     * "mesh_select 0 1 2" → {"indices":[0,1,2]} */
+    if (def && (strcmp(wire_name, "mesh_select") == 0 ||
+                strcmp(wire_name, "mesh_deselect") == 0)) {
+        char ab[2048];
+        uint32_t w = 0;
+        w += (uint32_t)snprintf(ab + w, sizeof(ab) - w, "{\"indices\":[");
+        for (uint32_t i = 1; i < token_count; i++) {
+            if (i > 1) w += (uint32_t)snprintf(ab + w, sizeof(ab) - w, ",");
+            w += (uint32_t)snprintf(ab + w, sizeof(ab) - w, "%u",
+                                     (unsigned)strtoul(tokens[i], NULL, 10));
+        }
+        w += (uint32_t)snprintf(ab + w, sizeof(ab) - w, "]}");
+        int n2 = snprintf(out, out_cap,
+            "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n", cmd_id, wire_name, ab);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
     /* Build args JSON. */
     char args_buf[2048];
     uint32_t args_len;

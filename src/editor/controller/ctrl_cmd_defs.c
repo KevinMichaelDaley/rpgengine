@@ -322,6 +322,105 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Duplicate selected entities. Clones become new selection.",
         .arg_fmt = "a:offset",
     },
+    /* ── Mesh modeling commands ───────────────────────────────── */
+    {
+        .name    = "mesh_create_box",
+        .alias   = "mcb",
+        .usage   = "mesh_create_box [w h d] [x y z]",
+        .help    = "Create editable box mesh. Default 1x1x1 at origin.",
+        .arg_fmt = NULL, /* Custom parsing. */
+    },
+    {
+        .name    = "mesh_create_sphere",
+        .alias   = "mcs",
+        .usage   = "mesh_create_sphere [radius] [segments] [x y z]",
+        .help    = "Create editable sphere. Default r=1, 16 segs.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "mesh_create_cylinder",
+        .alias   = "mcc",
+        .usage   = "mesh_create_cylinder [radius] [height] [segments] [axis] [x y z]",
+        .help    = "Create cylinder. axis: 0=X 1=Y 2=Z. Default r=1 h=2.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "mesh_create_plane",
+        .alias   = "mcp",
+        .usage   = "mesh_create_plane [w h] [axis] [x y z]",
+        .help    = "Create plane. axis: 0=X 1=Y 2=Z. Default 1x1 Y-up.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "mesh_mode",
+        .alias   = "mm",
+        .usage   = "mesh_mode <vertex|edge|face>",
+        .help    = "Switch mesh selection mode.",
+        .arg_fmt = "s:mode",
+    },
+    {
+        .name    = "extrude",
+        .alias   = "ex",
+        .usage   = "extrude [distance] [dx dy dz]",
+        .help    = "Extrude selected faces. Optional direction vector.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "inset",
+        .alias   = "in",
+        .usage   = "inset [amount] [depth]",
+        .help    = "Inset selected faces. Optional depth.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "bevel",
+        .alias   = "bv",
+        .usage   = "bevel [amount]",
+        .help    = "Bevel selected vertices (vertex mode only).",
+        .arg_fmt = "f:amount",
+    },
+    {
+        .name    = "mesh_select",
+        .alias   = "ms",
+        .usage   = "mesh_select <i0> [i1 i2 ...]",
+        .help    = "Select mesh elements by index.",
+        .arg_fmt = NULL,  /* Custom: variable-length index array. */
+    },
+    {
+        .name    = "mesh_deselect",
+        .alias   = "md",
+        .usage   = "mesh_deselect <i0> [i1 i2 ...]",
+        .help    = "Deselect mesh elements by index.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "mesh_select_all",
+        .alias   = "msa",
+        .usage   = "mesh_select_all",
+        .help    = "Select all mesh elements in current mode.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "mesh_deselect_all",
+        .alias   = "mda",
+        .usage   = "mesh_deselect_all",
+        .help    = "Deselect all mesh elements.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "mesh_commit",
+        .alias   = "mc",
+        .usage   = "mesh_commit [entity_name]",
+        .help    = "Bake mesh to world entity + FVMA asset.",
+        .arg_fmt = "s:entity_name",
+    },
+    {
+        .name    = "mesh_info",
+        .alias   = "mi2",
+        .usage   = "mesh_info",
+        .help    = "Show mesh stats: verts, tris, mode, selection.",
+        .arg_fmt = NULL,
+    },
 };
 
 static const uint32_t s_def_count =
