@@ -23,6 +23,7 @@
 #include "ferrum/aegis/aegis_memory.h"
 #include "ferrum/aegis/aegis_types.h"
 #include "ferrum/aegis/aegis_update.h"
+#include "ferrum/aegis/aegis_async.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,6 +78,22 @@ typedef struct aegis_vm {
 
     /** Staging area for the current update being built. */
     aegis_state_update_t staging;
+
+    /** Async task buffer (set by runtime, not owned). */
+    struct aegis_async_buffer *async_buffer;
+
+    /**
+     * @brief Per-VM async task tracking.
+     *
+     * Each slot tracks the status of one in-flight async task.
+     * The handle returned to the script is the heap offset of the
+     * result slot; async_tasks[i] corresponds to the i-th submitted task.
+     * Max tasks per yield is config.max_async_tasks.
+     */
+    struct aegis_async_task async_tasks[32];
+
+    /** Number of active async tasks this VM has submitted. */
+    uint32_t async_task_count;
 
     /** Current execution status. */
     aegis_vm_status_t status;

@@ -16,6 +16,7 @@
 #include "ferrum/aegis/aegis_ops_event.h"
 #include "ferrum/aegis/aegis_ops_entity.h"
 #include "ferrum/aegis/aegis_ops_update.h"
+#include "ferrum/aegis/aegis_ops_async.h"
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 
@@ -396,13 +397,33 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             }
             break;
 
-        /* ---- Phase 2/3 stubs (not yet implemented) ---- */
+        /* ---- Async instructions ---- */
+
+        case AEGIS_OP_VIS_TEST:
+            if (!aegis_op_vis_test(vm, &d)) {
+                return vm_error(vm, 0xFFBE);
+            }
+            break;
+
+        case AEGIS_OP_NAV_QUERY:
+            if (!aegis_op_nav_query(vm, &d)) {
+                return vm_error(vm, 0xFFBD);
+            }
+            break;
+
+        case AEGIS_OP_POLL:
+            if (!aegis_op_poll(vm, &d)) {
+                return vm_error(vm, 0xFFBC);
+            }
+            break;
 
         case AEGIS_OP_WAIT:
-        case AEGIS_OP_POLL:
-        case AEGIS_OP_VIS_TEST:
-        case AEGIS_OP_NAV_QUERY:
-            return vm_error(vm, 0xFF00 | (uint32_t)d.opcode);
+            if (!aegis_op_wait(vm, &d)) {
+                /* PENDING: wait-yield without advancing PC. */
+                aegis_vm_wait_yield(vm);
+                return vm->status;
+            }
+            break;
 
         default:
             return vm_error(vm, 0xFE00 | (uint32_t)d.opcode);
