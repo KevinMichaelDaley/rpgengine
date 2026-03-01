@@ -202,6 +202,66 @@ bool cmd_material(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
                json_value_t *result, json_arena_t *arena);
 
+/* ------------------------------------------------------------------------ */
+/* Mesh modeling commands                                                     */
+/* ------------------------------------------------------------------------ */
+
+/** @brief Create box mesh. Args: {"size":[w,h,d],"segments":[x,y,z],"pos":[x,y,z]}. */
+bool cmd_mesh_create_box(edit_dispatch_t *d, const json_value_t *args,
+                         json_value_t *result, json_arena_t *arena);
+
+/** @brief Create sphere mesh. Args: {"radius":r,"segments":n,"pos":[x,y,z]}. */
+bool cmd_mesh_create_sphere(edit_dispatch_t *d, const json_value_t *args,
+                            json_value_t *result, json_arena_t *arena);
+
+/** @brief Create cylinder mesh. Args: {"radius":r,"height":h,"segments":n,"axis":0|1|2,"pos":[]}. */
+bool cmd_mesh_create_cylinder(edit_dispatch_t *d, const json_value_t *args,
+                              json_value_t *result, json_arena_t *arena);
+
+/** @brief Create plane mesh. Args: {"size":[w,h],"segments":[x,y],"axis":0|1|2,"pos":[]}. */
+bool cmd_mesh_create_plane(edit_dispatch_t *d, const json_value_t *args,
+                           json_value_t *result, json_arena_t *arena);
+
+/** @brief Switch mesh selection mode. Args: {"mode":"vertex"|"edge"|"face"}. */
+bool cmd_mesh_mode(edit_dispatch_t *d, const json_value_t *args,
+                   json_value_t *result, json_arena_t *arena);
+
+/** @brief Extrude selected faces. Args: {"distance":1.0}. */
+bool cmd_extrude(edit_dispatch_t *d, const json_value_t *args,
+                 json_value_t *result, json_arena_t *arena);
+
+/** @brief Inset selected faces. Args: {"amount":0.5}. */
+bool cmd_inset(edit_dispatch_t *d, const json_value_t *args,
+               json_value_t *result, json_arena_t *arena);
+
+/** @brief Bevel selected edges. Args: {"amount":0.5,"segments":1}. */
+bool cmd_bevel(edit_dispatch_t *d, const json_value_t *args,
+               json_value_t *result, json_arena_t *arena);
+
+/** @brief Select mesh elements. Args: {"indices":[0,1,2]}. */
+bool cmd_mesh_select(edit_dispatch_t *d, const json_value_t *args,
+                     json_value_t *result, json_arena_t *arena);
+
+/** @brief Deselect mesh elements. Args: {"indices":[0,1,2]}. */
+bool cmd_mesh_deselect(edit_dispatch_t *d, const json_value_t *args,
+                       json_value_t *result, json_arena_t *arena);
+
+/** @brief Select all mesh elements. Args: {} (none). */
+bool cmd_mesh_select_all(edit_dispatch_t *d, const json_value_t *args,
+                         json_value_t *result, json_arena_t *arena);
+
+/** @brief Deselect all mesh elements. Args: {} (none). */
+bool cmd_mesh_deselect_all(edit_dispatch_t *d, const json_value_t *args,
+                           json_value_t *result, json_arena_t *arena);
+
+/** @brief Commit mesh to world entity. Args: {"entity_name":"...", "material_override":"..."}. */
+bool cmd_mesh_commit(edit_dispatch_t *d, const json_value_t *args,
+                     json_value_t *result, json_arena_t *arena);
+
+/** @brief Query mesh stats. Args: {} (none). */
+bool cmd_mesh_info(edit_dispatch_t *d, const json_value_t *args,
+                   json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

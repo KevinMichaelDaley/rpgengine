@@ -25,6 +25,7 @@ struct edit_entity;
 struct edit_physics_ctrl;
 struct json_value;
 struct edit_asset_registry;
+struct mesh_edit;
 
 /* ------------------------------------------------------------------------ */
 /* Physics bridge callback                                                   */
@@ -169,6 +170,9 @@ typedef struct edit_cmd_ctx {
 
     /** @brief Asset registry (NULL if no asset directory configured). */
     struct edit_asset_registry *asset_registry;
+
+    /** @brief Mesh editing context (NULL if mesh mode not initialized). */
+    struct mesh_edit *mesh;
 } edit_cmd_ctx_t;
 
 /* Forward declaration for JSON types. */

@@ -25,6 +25,7 @@ extern "C" {
 #include "ferrum/editor/edit_io_thread.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/mesh/mesh_edit.h"
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
@@ -61,6 +62,7 @@ typedef struct editor_ctx {
     edit_undo_stack_t    undo;          /**< Undo/redo stack. */
     edit_selection_t     selection;     /**< Entity selection set. */
     edit_entity_store_t  entities;      /**< Entity storage. */
+    mesh_edit_t          mesh;          /**< Mesh editing subsystem. */
     edit_cmd_ctx_t       cmd_ctx;       /**< Handler context (pointers into above). */
 
     editor_ctx_config_t  config;        /**< Resolved configuration. */

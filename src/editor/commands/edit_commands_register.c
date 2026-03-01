@@ -50,4 +50,20 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "browse",          cmd_browse);
     edit_dispatch_register(dispatch, "material",        cmd_material);
     edit_dispatch_register(dispatch, "clone",           cmd_clone);
+
+    /* Mesh modeling commands */
+    edit_dispatch_register(dispatch, "mesh_create_box",      cmd_mesh_create_box);
+    edit_dispatch_register(dispatch, "mesh_create_sphere",   cmd_mesh_create_sphere);
+    edit_dispatch_register(dispatch, "mesh_create_cylinder", cmd_mesh_create_cylinder);
+    edit_dispatch_register(dispatch, "mesh_create_plane",    cmd_mesh_create_plane);
+    edit_dispatch_register(dispatch, "mesh_mode",            cmd_mesh_mode);
+    edit_dispatch_register(dispatch, "extrude",              cmd_extrude);
+    edit_dispatch_register(dispatch, "inset",                cmd_inset);
+    edit_dispatch_register(dispatch, "bevel",                cmd_bevel);
+    edit_dispatch_register(dispatch, "mesh_select",          cmd_mesh_select);
+    edit_dispatch_register(dispatch, "mesh_deselect",        cmd_mesh_deselect);
+    edit_dispatch_register(dispatch, "mesh_select_all",      cmd_mesh_select_all);
+    edit_dispatch_register(dispatch, "mesh_deselect_all",    cmd_mesh_deselect_all);
+    edit_dispatch_register(dispatch, "mesh_commit",          cmd_mesh_commit);
+    edit_dispatch_register(dispatch, "mesh_info",            cmd_mesh_info);
 }

@@ -64,6 +64,17 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
     ctx->cmd_ctx.selection = &ctx->selection;
     ctx->cmd_ctx.undo      = &ctx->undo;
 
+    /* Mesh editing subsystem. */
+    if (!mesh_edit_init(&ctx->mesh)) {
+        edit_undo_destroy(&ctx->undo);
+        edit_selection_destroy(&ctx->selection);
+        edit_entity_store_destroy(&ctx->entities);
+        edit_cmd_ring_destroy(&ctx->cmd_ring);
+        edit_cmd_ring_destroy(&ctx->resp_ring);
+        return false;
+    }
+    ctx->cmd_ctx.mesh = &ctx->mesh;
+
     /* Dispatch table. */
     if (!edit_dispatch_init(&ctx->dispatch, ctx->config.dispatch_arena,
                             &ctx->cmd_ctx)) {
@@ -100,6 +111,7 @@ void editor_ctx_shutdown(editor_ctx_t *ctx) {
 
     /* Destroy subsystems in reverse order. */
     edit_dispatch_destroy(&ctx->dispatch);
+    mesh_edit_destroy(&ctx->mesh);
     edit_undo_destroy(&ctx->undo);
     edit_selection_destroy(&ctx->selection);
     edit_entity_store_destroy(&ctx->entities);
