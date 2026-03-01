@@ -71,12 +71,24 @@ bool mesh_commit(mesh_slot_t *slot,
 
     memset(result, 0, sizeof(*result));
 
-    /* 1. Serialize to FVMA */
+    /* 1. Compute bbox center and re-center vertices to local space.
+     *    The entity position stores the world-space center; mesh data
+     *    must be relative to that center so the client's model matrix
+     *    (translate by body position) doesn't double-offset. */
+    float center[3], extents[3];
+    bbox_compute_(slot, center, extents);
+    for (uint32_t v = 0; v < slot->vertex_count; v++) {
+        slot->positions[v * 3 + 0] -= center[0];
+        slot->positions[v * 3 + 1] -= center[1];
+        slot->positions[v * 3 + 2] -= center[2];
+    }
+
+    /* 2. Serialize to FVMA (now in local space) */
     if (!serialize_fvma_(slot, &result->fvma_data, &result->fvma_size)) {
         return false;
     }
 
-    /* 2. Create entity */
+    /* 3. Create entity */
     uint32_t eid = edit_entity_store_create(store, EDIT_ENTITY_TYPE_MESH);
     if (eid == EDIT_ENTITY_INVALID_ID) {
         free(result->fvma_data);
@@ -85,13 +97,14 @@ bool mesh_commit(mesh_slot_t *slot,
     }
     result->entity_id = eid;
 
-    /* 3. Configure entity */
+    /* 4. Configure entity */
     edit_entity_t *ent = edit_entity_store_get_mut(store, eid);
     if (ent) {
         /* Position at bounding box center; scale = bbox extents
          * so physics bridge can derive half-extents correctly. */
-        float extents[3];
-        bbox_compute_(slot, ent->pos, extents);
+        ent->pos[0] = center[0];
+        ent->pos[1] = center[1];
+        ent->pos[2] = center[2];
         ent->scale[0] = extents[0];
         ent->scale[1] = extents[1];
         ent->scale[2] = extents[2];

@@ -230,7 +230,7 @@ BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer
 
 BIN := $(BIN_HEADLESS) $(BIN_RENDERER_TESTS)
 
-.PHONY: all test test_renderer clean p008_build p008_test p008_help p008_perf p008_renderer_client demo_server demo_client
+.PHONY: all test test_renderer clean p008_build p008_test p008_help p008_perf p008_renderer_client demo_server demo_client editor_tui
 
 all: $(BIN)
 
@@ -1114,6 +1114,14 @@ demo_client:
 	@echo "Built: build/demo_client"
 	@echo "Usage: ./build/demo_client <server_ip> <port> [duration_s] [--headless]"
 
+build/editor_tui: build/libheadless.a tools/editor_tui.c | build
+	$(CC) $(CFLAGS) tools/editor_tui.c build/libheadless.a -o $@ $(LDFLAGS)
+
+editor_tui:
+	@$(MAKE) build/editor_tui
+	@echo "Built: build/editor_tui"
+	@echo "Usage: ./build/editor_tui [host:port] [--exec <script>]"
+
 clean:
-	$(RM) $(BIN) build/libheadless.a build/liball.a build/demo_server build/demo_client
+	$(RM) $(BIN) build/libheadless.a build/liball.a build/demo_server build/demo_client build/editor_tui
 	$(RM) -r build/obj
