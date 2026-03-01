@@ -237,6 +237,9 @@ BIN_HEADLESS += build/aegis_ops_data_tests
 BIN_HEADLESS += build/aegis_ops_math_tests
 BIN_HEADLESS += build/aegis_yield_tests
 BIN_HEADLESS += build/aegis_vm_tests
+BIN_HEADLESS += build/aegis_vm_math_stress_tests
+BIN_HEADLESS += build/aegis_vm_memory_exhaust_tests
+BIN_HEADLESS += build/aegis_vm_interrupt_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -826,6 +829,15 @@ AEGIS_ALL_SRC := $(AEGIS_VM_SRC) src/aegis/aegis_vm_run.c src/aegis/aegis_decode
 build/aegis_vm_tests: tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
 
+build/aegis_vm_math_stress_tests: tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+
+build/aegis_vm_memory_exhaust_tests: tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+
+build/aegis_vm_interrupt_tests: tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -1036,7 +1048,10 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_ops_data_tests \
 	&& ./build/aegis_ops_math_tests \
 	&& ./build/aegis_yield_tests \
-	&& ./build/aegis_vm_tests
+	&& ./build/aegis_vm_tests \
+	&& ./build/aegis_vm_math_stress_tests \
+	&& ./build/aegis_vm_memory_exhaust_tests \
+	&& ./build/aegis_vm_interrupt_tests
 
 TEST_TIMEOUT ?= 20
 

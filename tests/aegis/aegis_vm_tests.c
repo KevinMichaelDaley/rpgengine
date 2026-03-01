@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ferrum/aegis/aegis_vm.h"
@@ -68,20 +69,36 @@ static aegis_instruction_t insn_irr(aegis_opcode_t op,
     return make_insn(op, 0x01, imm_a, b, c); /* bit 16 = IMM_A */
 }
 
-#define TEST_ARENA_SIZE 8192
-#define MAX_PROG 32
+#define TEST_VM_ARENA_SIZE  8192
+#define DEFAULT_PROG_CAP   4096
 
 typedef struct test_program {
-    aegis_instruction_t insns[MAX_PROG];
-    uint32_t            count;
-    aegis_bytecode_t    bc;
-    aegis_vm_t          vm;
-    uint8_t             arena[TEST_ARENA_SIZE];
+    aegis_instruction_t *insns;      /* heap-allocated instruction buffer */
+    uint32_t             count;      /* instructions written */
+    uint32_t             capacity;   /* allocated instruction slots */
+    aegis_bytecode_t     bc;
+    aegis_vm_t           vm;
+    uint8_t             *arena;      /* heap-allocated VM memory arena */
+    uint32_t             arena_size;
 } test_program_t;
 
-static bool prog_init(test_program_t *p, uint32_t fuel) {
-    /* Zero arena and VM state but NOT instructions (already populated). */
-    memset(p->arena, 0, TEST_ARENA_SIZE);
+static void prog_alloc(test_program_t *p, uint32_t insn_cap,
+                       uint32_t vm_arena) {
+    memset(p, 0, sizeof(*p));
+    p->capacity   = insn_cap;
+    p->arena_size = vm_arena;
+    p->insns = (aegis_instruction_t *)calloc(insn_cap, sizeof(aegis_instruction_t));
+    p->arena = (uint8_t *)calloc(vm_arena, 1);
+}
+
+static void prog_free(test_program_t *p) {
+    free(p->insns);
+    free(p->arena);
+    memset(p, 0, sizeof(*p));
+}
+
+static bool prog_build(test_program_t *p, uint32_t fuel) {
+    memset(p->arena, 0, p->arena_size);
     memset(&p->vm, 0, sizeof(p->vm));
     aegis_bytecode_init(&p->bc);
     p->bc.instructions      = p->insns;
@@ -92,13 +109,7 @@ static bool prog_init(test_program_t *p, uint32_t fuel) {
     cfg.fuel_budget = fuel;
     cfg.stack_max   = 512;
 
-    return aegis_vm_init(&p->vm, &p->bc, &cfg, p->arena, TEST_ARENA_SIZE);
-}
-
-/* Set instruction count before init. */
-static bool prog_build(test_program_t *p, uint32_t fuel) {
-    p->bc.instruction_count = p->count;
-    return prog_init(p, fuel);
+    return aegis_vm_init(&p->vm, &p->bc, &cfg, p->arena, p->arena_size);
 }
 
 /* ======================================================================= */
@@ -107,6 +118,7 @@ static bool prog_build(test_program_t *p, uint32_t fuel) {
 
 static bool test_trivial_add_yield(void) {
     test_program_t p;
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 10, 0);  /* r0 = 10 */
     p.insns[1] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 20, 0);  /* r1 = 20 */
     p.insns[2] = insn_rrr(AEGIS_OP_ADD, 2, 0, 1);         /* r2 = r0 + r1 */
@@ -117,7 +129,8 @@ static bool test_trivial_add_yield(void) {
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
     ASSERT_INT_EQ(30, p.vm.regs[2].i32);
-    ASSERT_INT_EQ(4, (int)p.vm.pc); /* PC advanced past yield */
+    ASSERT_INT_EQ(4, (int)p.vm.pc);
+    prog_free(&p);
     return true;
 }
 
@@ -127,8 +140,9 @@ static bool test_trivial_add_yield(void) {
 
 static bool test_exit_with_code(void) {
     test_program_t p;
-    p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 42, 0); /* r0 = 42 */
-    p.insns[1] = insn_rrr(AEGIS_OP_EXIT, 0, 0, 0);      /* exit(r0) */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
+    p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 42, 0);
+    p.insns[1] = insn_rrr(AEGIS_OP_EXIT, 0, 0, 0);
     p.count = 2;
     ASSERT(prog_build(&p, 1000));
 
@@ -136,6 +150,7 @@ static bool test_exit_with_code(void) {
     ASSERT_INT_EQ(AEGIS_VM_EXITED, (int)s);
     ASSERT_INT_EQ(42, (int)p.vm.exit_code);
     ASSERT(!p.vm.alive);
+    prog_free(&p);
     return true;
 }
 
@@ -145,13 +160,10 @@ static bool test_exit_with_code(void) {
 
 static bool test_conditional_branch(void) {
     test_program_t p;
-    /* r0 = 1 (truthy) */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 1, 0);
-    /* jmp_if r0, label=3 */
     p.insns[1] = insn_rir(AEGIS_OP_JMP_IF, 0, 3, 0);
-    /* r1 = 99 (should be skipped) */
     p.insns[2] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 99, 0);
-    /* r1 = 42 (branch target) */
     p.insns[3] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 42, 0);
     p.insns[4] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
     p.count = 5;
@@ -159,19 +171,17 @@ static bool test_conditional_branch(void) {
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
-    ASSERT_INT_EQ(42, p.vm.regs[1].i32); /* skipped the r1=99 */
+    ASSERT_INT_EQ(42, p.vm.regs[1].i32);
+    prog_free(&p);
     return true;
 }
 
 static bool test_branch_not_taken(void) {
     test_program_t p;
-    /* r0 = 0 (falsy) */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 0, 0);
-    /* jmp_if r0, label=3 — NOT taken */
     p.insns[1] = insn_rir(AEGIS_OP_JMP_IF, 0, 3, 0);
-    /* r1 = 99 (should execute) */
     p.insns[2] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 99, 0);
-    /* r1 = 42 (also executes, overwrites) */
     p.insns[3] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 42, 0);
     p.insns[4] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
     p.count = 5;
@@ -179,8 +189,8 @@ static bool test_branch_not_taken(void) {
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
-    /* Both instructions executed, r1 = 42 (last write wins) */
     ASSERT_INT_EQ(42, p.vm.regs[1].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -190,22 +200,19 @@ static bool test_branch_not_taken(void) {
 
 static bool test_call_ret(void) {
     test_program_t p;
-    /* 0: r0 = 10 */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 10, 0);
-    /* 1: call label=3 */
     p.insns[1] = insn_irr(AEGIS_OP_CALL, 3, 0, 0);
-    /* 2: yield (return point) */
     p.insns[2] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
-    /* 3: r0 = r0 + r0 (function body: doubles r0) */
     p.insns[3] = insn_rrr(AEGIS_OP_ADD, 0, 0, 0);
-    /* 4: ret */
     p.insns[4] = insn_rrr(AEGIS_OP_RET, 0, 0, 0);
     p.count = 5;
     ASSERT(prog_build(&p, 1000));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
-    ASSERT_INT_EQ(20, p.vm.regs[0].i32); /* 10 + 10 = 20 */
+    ASSERT_INT_EQ(20, p.vm.regs[0].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -215,15 +222,16 @@ static bool test_call_ret(void) {
 
 static bool test_fuel_exhaustion(void) {
     test_program_t p;
-    /* Infinite loop: jmp 0 */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 0, 0);
     p.insns[1] = insn_irr(AEGIS_OP_JMP, 0, 0, 0);
     p.count = 2;
-    ASSERT(prog_build(&p, 5)); /* only 5 fuel */
+    ASSERT(prog_build(&p, 5));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_FORCE_YIELDED, (int)s);
-    ASSERT(p.vm.alive); /* not dead, just paused */
+    ASSERT(p.vm.alive);
+    prog_free(&p);
     return true;
 }
 
@@ -233,41 +241,24 @@ static bool test_fuel_exhaustion(void) {
 
 static bool test_resume_after_force_yield(void) {
     test_program_t p;
-    /* 0: r0 = 1 */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 1, 0);
-    /* 1: r0 = r0 + r0 (doubles each time) */
     p.insns[1] = insn_rrr(AEGIS_OP_ADD, 0, 0, 0);
-    /* 2: jmp 1 (infinite loop on add) */
     p.insns[2] = insn_irr(AEGIS_OP_JMP, 1, 0, 0);
     p.count = 3;
-    ASSERT(prog_build(&p, 4)); /* 4 fuel: executes insns 0,1,2,1 then exhausts */
+    ASSERT(prog_build(&p, 4));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_FORCE_YIELDED, (int)s);
-    /* r0 was: 1 → 2 → (jmp) → 4. 4 instructions: load_imm, add, jmp, add.
-     * On the 4th instruction (add), r0 = 2+2 = 4. Then fuel exhausted.
-     * Actually let's trace: fuel=4
-     * PC=0: load_imm r0=1 (fuel=3, pc=1)
-     * PC=1: add r0=1+1=2 (fuel=2, pc=2)
-     * PC=2: jmp 1 (fuel=1, pc=1)
-     * PC=1: add r0=2+2=4 (fuel=0, pc=2)
-     * Next iteration: fuel check fails → force-yield at pc=2
-     */
     ASSERT_INT_EQ(4, p.vm.regs[0].i32);
-
-    /* Resume: VM should continue from PC=2 (the jmp). */
     ASSERT_INT_EQ(2, (int)p.vm.pc);
-    aegis_vm_reset_fuel(&p.vm);
-    /* Give 3 more fuel: jmp, add, (exhaust on next) */
+
+    /* Resume with more fuel. */
     p.vm.fuel = 3;
     s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_FORCE_YIELDED, (int)s);
-    /* PC=2: jmp 1 (fuel=2, pc=1)
-     * PC=1: add r0=4+4=8 (fuel=1, pc=2)
-     * PC=2: jmp 1 (fuel=0, pc=1)
-     * Next: fuel check fails → force-yield at pc=1
-     */
     ASSERT_INT_EQ(8, p.vm.regs[0].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -277,13 +268,14 @@ static bool test_resume_after_force_yield(void) {
 
 static bool test_unknown_opcode(void) {
     test_program_t p;
-    /* Opcode 0xFF doesn't exist. */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = make_insn((aegis_opcode_t)0xFF, 0, 0, 0, 0);
     p.count = 1;
     ASSERT(prog_build(&p, 1000));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_ERROR, (int)s);
+    prog_free(&p);
     return true;
 }
 
@@ -293,12 +285,14 @@ static bool test_unknown_opcode(void) {
 
 static bool test_unimplemented_opcode(void) {
     test_program_t p;
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = make_insn(AEGIS_OP_WAIT, 0, 0, 0, 0);
     p.count = 1;
     ASSERT(prog_build(&p, 1000));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_ERROR, (int)s);
+    prog_free(&p);
     return true;
 }
 
@@ -308,14 +302,14 @@ static bool test_unimplemented_opcode(void) {
 
 static bool test_pc_out_of_bounds(void) {
     test_program_t p;
-    /* A single instruction that doesn't yield — PC will go past end. */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 1, 0);
     p.count = 1;
     ASSERT(prog_build(&p, 1000));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
-    /* After executing insn 0, PC becomes 1, which is out of bounds. */
     ASSERT_INT_EQ(AEGIS_VM_ERROR, (int)s);
+    prog_free(&p);
     return true;
 }
 
@@ -325,32 +319,25 @@ static bool test_pc_out_of_bounds(void) {
 
 static bool test_sum_loop(void) {
     test_program_t p;
-    /* Sum integers 1..5 using a loop.
-     * r0 = sum (accumulator)
-     * r1 = counter (starts at 1)
-     * r2 = limit (6)
-     * r3 = temp (comparison result)
-     * r4 = increment (1)
-     */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     int i = 0;
-    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 0, 0);  /* r0 = 0 */
-    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 1, 0);  /* r1 = 1 */
-    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 2, 6, 0);  /* r2 = 6 */
-    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 4, 1, 0);  /* r4 = 1 */
-    /* loop: */
-    p.insns[i++] = insn_rrr(AEGIS_OP_LT, 3, 1, 2);        /* r3 = r1 < r2 */
-    p.insns[i++] = insn_rir(AEGIS_OP_JMP_IF_NOT, 3, 9, 0); /* if !r3, goto end */
-    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 0, 0, 1);        /* r0 += r1 */
-    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 1, 1, 4);        /* r1 += 1 */
-    p.insns[i++] = insn_irr(AEGIS_OP_JMP, 4, 0, 0);        /* goto loop */
-    /* end: */
+    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 0, 0);
+    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 1, 0);
+    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 2, 6, 0);
+    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 4, 1, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_LT, 3, 1, 2);
+    p.insns[i++] = insn_rir(AEGIS_OP_JMP_IF_NOT, 3, 9, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 0, 0, 1);
+    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 1, 1, 4);
+    p.insns[i++] = insn_irr(AEGIS_OP_JMP, 4, 0, 0);
     p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
     p.count = (uint32_t)i;
     ASSERT(prog_build(&p, 10000));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
-    ASSERT_INT_EQ(15, p.vm.regs[0].i32); /* 1+2+3+4+5 = 15 */
+    ASSERT_INT_EQ(15, p.vm.regs[0].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -360,14 +347,16 @@ static bool test_sum_loop(void) {
 
 static bool test_div_by_zero(void) {
     test_program_t p;
-    p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 10, 0); /* r0 = 10 */
-    p.insns[1] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 0, 0);  /* r1 = 0 */
-    p.insns[2] = insn_rrr(AEGIS_OP_DIV, 2, 0, 1);       /* r2 = r0 / r1 */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
+    p.insns[0] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 10, 0);
+    p.insns[1] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 0, 0);
+    p.insns[2] = insn_rrr(AEGIS_OP_DIV, 2, 0, 1);
     p.count = 3;
     ASSERT(prog_build(&p, 1000));
 
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_ERROR, (int)s);
+    prog_free(&p);
     return true;
 }
 
@@ -377,6 +366,7 @@ static bool test_div_by_zero(void) {
 
 static bool test_resume_noop(void) {
     test_program_t p;
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     p.insns[0] = insn_rrr(AEGIS_OP_RESUME, 0, 0, 0);
     p.insns[1] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 77, 0);
     p.insns[2] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
@@ -386,6 +376,7 @@ static bool test_resume_noop(void) {
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
     ASSERT_INT_EQ(77, p.vm.regs[0].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -395,20 +386,12 @@ static bool test_resume_noop(void) {
 
 static bool test_memory_ops(void) {
     test_program_t p;
-    /* r0 = alloc(32)
-     * r1 = 999
-     * store r1 to heap at r0, slot 0
-     * load r2 from heap at r0, slot 0
-     * yield
-     */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     int i = 0;
-    /* alloc: A=dest reg, B=size (immediate) */
     p.insns[i++] = insn_rir(AEGIS_OP_ALLOC, 0, 32, 0);
     p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 999, 0);
-    /* store: A=value(r1), B=base(r0), C=slot(0 imm) */
-    p.insns[i++] = make_insn(AEGIS_OP_STORE, 0x04, 1, 0, 0); /* IMM_C=bit18 */
-    /* load: A=dest(r2), B=base(r0), C=slot(0 imm) */
-    p.insns[i++] = make_insn(AEGIS_OP_LOAD, 0x04, 2, 0, 0); /* IMM_C=bit18 */
+    p.insns[i++] = make_insn(AEGIS_OP_STORE, 0x04, 1, 0, 0);
+    p.insns[i++] = make_insn(AEGIS_OP_LOAD, 0x04, 2, 0, 0);
     p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
     p.count = (uint32_t)i;
     ASSERT(prog_build(&p, 1000));
@@ -416,6 +399,7 @@ static bool test_memory_ops(void) {
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
     ASSERT_INT_EQ(999, p.vm.regs[2].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -425,28 +409,25 @@ static bool test_memory_ops(void) {
 
 static bool test_static_persist(void) {
     test_program_t p;
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     int i = 0;
-    /* r0 = 42, static_store slot=0, r0 */
     p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 42, 0);
-    /* static_store: A=slot(0 imm), B=value(r0) */
     p.insns[i++] = insn_irr(AEGIS_OP_STATIC_STORE, 0, 0, 0);
     p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
-    /* After yield + resume: static_load r1, slot 0 */
     p.insns[i++] = insn_rir(AEGIS_OP_STATIC_LOAD, 1, 0, 0);
     p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
     p.count = (uint32_t)i;
     ASSERT(prog_build(&p, 1000));
 
-    /* First run: store and yield. */
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
-    ASSERT_INT_EQ(3, (int)p.vm.pc); /* past first yield */
+    ASSERT_INT_EQ(3, (int)p.vm.pc);
 
-    /* Resume: load from static and yield. */
     aegis_vm_reset_fuel(&p.vm);
     s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
     ASSERT_INT_EQ(42, p.vm.regs[1].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -456,11 +437,11 @@ static bool test_static_persist(void) {
 
 static bool test_jmp_if_not(void) {
     test_program_t p;
-    /* r0 = 0, jmp_if_not r0, label=2, r1=77, yield */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     int i = 0;
     p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 0, 0);
     p.insns[i++] = insn_rir(AEGIS_OP_JMP_IF_NOT, 0, 3, 0);
-    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 99, 0); /* skipped */
+    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 99, 0);
     p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 1, 55, 0);
     p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
     p.count = (uint32_t)i;
@@ -469,6 +450,7 @@ static bool test_jmp_if_not(void) {
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
     ASSERT_INT_EQ(55, p.vm.regs[1].i32);
+    prog_free(&p);
     return true;
 }
 
@@ -478,32 +460,24 @@ static bool test_jmp_if_not(void) {
 
 static bool test_nested_call(void) {
     test_program_t p;
-    /* 0: r0 = 1 */
-    /* 1: call func_a (=4) */
-    /* 2: yield */
-    /* 3: (dead) */
-    /* 4: func_a: call func_b (=7) */
-    /* 5: r0 = r0 + r0 */
-    /* 6: ret */
-    /* 7: func_b: r0 = r0 + r0 */
-    /* 8: ret */
+    prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
     int i = 0;
-    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 1, 0);  /* 0: r0=1 */
-    p.insns[i++] = insn_irr(AEGIS_OP_CALL, 4, 0, 0);       /* 1: call 4 */
-    p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);      /* 2: yield */
-    p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);      /* 3: dead */
-    p.insns[i++] = insn_irr(AEGIS_OP_CALL, 7, 0, 0);       /* 4: call 7 */
-    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 0, 0, 0);        /* 5: r0+=r0 */
-    p.insns[i++] = insn_rrr(AEGIS_OP_RET, 0, 0, 0);        /* 6: ret */
-    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 0, 0, 0);        /* 7: r0+=r0 */
-    p.insns[i++] = insn_rrr(AEGIS_OP_RET, 0, 0, 0);        /* 8: ret */
+    p.insns[i++] = insn_rir(AEGIS_OP_LOAD_IMM, 0, 1, 0);
+    p.insns[i++] = insn_irr(AEGIS_OP_CALL, 4, 0, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_YIELD, 0, 0, 0); /* dead */
+    p.insns[i++] = insn_irr(AEGIS_OP_CALL, 7, 0, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 0, 0, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_RET, 0, 0, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_ADD, 0, 0, 0);
+    p.insns[i++] = insn_rrr(AEGIS_OP_RET, 0, 0, 0);
     p.count = (uint32_t)i;
     ASSERT(prog_build(&p, 1000));
 
-    /* Execution: 0→1→4→7→(r0=2)→8(ret→5)→(r0=4)→6(ret→2)→yield */
     aegis_vm_status_t s = aegis_vm_run(&p.vm);
     ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
-    ASSERT_INT_EQ(4, p.vm.regs[0].i32); /* 1 → 2 (func_b) → 4 (func_a) */
+    ASSERT_INT_EQ(4, p.vm.regs[0].i32);
+    prog_free(&p);
     return true;
 }
 
