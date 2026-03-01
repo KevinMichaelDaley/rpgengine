@@ -20,12 +20,12 @@ Requirements:
 - editor_undo_begin_group(ctx) / editor_undo_end_group(ctx) bracket script execution
 - All undo entries within a group share the same group_id
 - editor_undo(ctx) undoes the entire group in one step
-- Lua API: undo_group_begin() / undo_group_end() exposed to scripts
+- scripting API: undo_group_begin() / undo_group_end() exposed to scripts
 - Automatic grouping: cmd_run wraps entire script execution in a group
 - Nested groups flatten (only outermost group_id matters)
 
 Files to create:
 - Modify src/editor/state/edit_undo.c (add group logic)
-- src/editor/script/lua_undo_api.c
+- src/editor/script/script_undo_api.c
 - tests/editor/edit_undo_group_tests.c
 

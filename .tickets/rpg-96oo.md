@@ -10,11 +10,11 @@ assignee: KMD
 parent: rpg-p9zq
 tags: [editor, scripting, server]
 ---
-# Lua entity manipulation API bindings
+# Scripting entity manipulation API bindings
 
-Implement the Lua API bindings for entity manipulation via script_env_t.
+Implement the scripting API bindings for entity manipulation via script_env_t.
 
-READ FIRST: ref/editor_design.md §6.4-6.5 for the native/Lua interface pattern, ref/editor_ux.md §8.3 for full script API listing.
+READ FIRST: ref/editor_design.md §6.4-6.5 for the native/scripting interface pattern, ref/editor_ux.md §8.3 for full script API listing.
 
 Entity reads come from the frozen snapshot (script_env_t.entities). Entity
 writes go through the update buffer (script_env_t.updates) for property
@@ -38,6 +38,6 @@ Requirements:
 - Entity tables expose both fixed fields AND dynamic attrs via __index metamethod
 
 Files to create:
-- src/editor/script/lua_entity_api.c
-- tests/editor/lua_entity_api_tests.c
+- src/editor/script/script_entity_api.c
+- tests/editor/script_entity_api_tests.c
 

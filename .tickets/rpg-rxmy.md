@@ -12,7 +12,7 @@ tags: [editor, scripting, security]
 ---
 # Exploit pattern database: multi-graph detection of known attacks
 
-Pre-execution scanner that checks Lua source against a multi-graph database of known exploit patterns.
+Pre-execution scanner that checks script source against a multi-graph database of known exploit patterns.
 
 ## Architecture
 - Each exploit pattern is a directed multi-graph of operation nodes
@@ -22,7 +22,7 @@ Pre-execution scanner that checks Lua source against a multi-graph database of k
 - Matching uses subgraph isomorphism with wildcard nodes
 
 ## Database
-- Built-in patterns for known Lua/LuaJIT attacks:
+- Built-in patterns for known scripting language attacks:
   1. String bomb (string.rep with computed large size)
   2. Table bomb (loop creating huge nested tables)
   3. Pattern DoS (pathological string.find/gmatch patterns)
@@ -40,7 +40,7 @@ Pre-execution scanner that checks Lua source against a multi-graph database of k
 - Returns: blocked (bool), matched pattern name, confidence (0-1), reason
 
 ## Graph building
-- Tokenize Lua source into operation sequence
+- Tokenize script source into operation sequence
 - Build adjacency lists with typed edges
 - Compare against each pattern using BFS-based subgraph matching
 

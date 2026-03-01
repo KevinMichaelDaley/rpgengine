@@ -12,7 +12,7 @@ tags: [editor, scripting, server, controller]
 ---
 # REPL mode with continuation detection
 
-Implement the interactive Lua REPL mode with server-side continuation detection.
+Implement the interactive script REPL mode with server-side continuation detection.
 
 READ FIRST: ref/editor_design.md §6.3 for REPL continuation detection (script_is_complete using luaL_loadstring), ref/editor_ux.md §8.2 for REPL UX flow.
 

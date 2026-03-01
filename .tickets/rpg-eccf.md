@@ -1,6 +1,6 @@
 ---
 id: rpg-eccf
-status: open
+status: closed
 deps: [rpg-dvgo]
 links: []
 created: 2026-03-01T05:35:19Z

@@ -12,12 +12,12 @@ tags: [editor, scripting, server]
 ---
 # run/eval commands for script execution
 
-Implement the 'run' and 'eval' editor commands that execute Lua code on the script runtime.
+Implement the 'run' and 'eval' editor commands that execute script code on the script runtime.
 
 READ FIRST: ref/editor_design.md §6.5-6.6 for execution model and REPL continuation.
 
 Requirements:
-- 'eval <code>' command: enqueue Lua code string for one-shot execution on script thread, return result JSON
+- 'eval <code>' command: enqueue script code string for one-shot execution on script thread, return result JSON
 - 'run <path>' command: read script file from asset registry, enqueue for execution
 - Both commands go through the edit command dispatch (registered like other commands)
 - Script thread picks up eval requests from a queue (separate from cmd_ring — these are code strings, not entity operations)

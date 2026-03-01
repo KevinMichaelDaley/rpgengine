@@ -12,24 +12,24 @@ tags: [editor, scripting, security]
 ---
 # Instruction budget: hook-based coroutine yielding
 
-Install lua_sethook with LUA_MASKCOUNT to yield scripts after N instructions per tick.
+Install instruction hook with LUA_MASKCOUNT to yield scripts after N instructions per tick.
 
 ## Mechanism
-- lua_sethook(L, hook_fn, LUA_MASKCOUNT, budget) installed before script execution
-- Hook callback calls lua_yield(L, 0) to suspend the coroutine
+- instruction hook(L, hook_fn, LUA_MASKCOUNT, budget) installed before script execution
+- Hook callback calls script yield(L, 0) to suspend the coroutine
 - Budget is configurable (default 100K instructions per tick)
 - Budget resets each tick via script_budget_reset()
 
 ## API
 - script_budget_init(budget, max_instructions) — initialize
-- script_budget_install(budget, L) — install hook on Lua state
+- script_budget_install(budget, L) — install hook on script state
 - script_budget_reset(budget) — reset counter for new tick
 - script_budget_exhausted(budget) — check if budget was hit
 
 ## Coroutine integration
-- Scripts run inside coroutines (lua_newthread + lua_resume)
+- Scripts run inside coroutines (script thread create + script resume)
 - When hook fires, yield suspends the coroutine
-- Next tick, lua_resume continues from where it left off
+- Next tick, script resume continues from where it left off
 - Budget tracks total instructions across yields within a tick
 
 ## Files
@@ -47,3 +47,9 @@ Install lua_sethook with LUA_MASKCOUNT to yield scripts after N instructions per
 - Very small budget (10 instructions) yields quickly
 - Multiple scripts share budget within one tick
 
+
+## Notes
+
+**2026-03-01T07:06:22Z**
+
+SUPERSEDED: LuaJIT removed. Instruction budget will be reimplemented for the engine scripting language, likely using fiber yields instead of coroutines.

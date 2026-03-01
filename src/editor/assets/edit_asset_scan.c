@@ -73,8 +73,7 @@ static edit_asset_type_t type_from_ext_(const char *ext) {
     }
 
     /* Script files. */
-    if (strcmp(ext, ".lua") == 0 || strcmp(ext, ".wren") == 0 ||
-        strcmp(ext, ".ed") == 0) {
+    if (strcmp(ext, ".wren") == 0 || strcmp(ext, ".ed") == 0) {
         return EDIT_ASSET_SCRIPT;
     }
 

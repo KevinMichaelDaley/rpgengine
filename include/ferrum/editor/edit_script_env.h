@@ -4,7 +4,7 @@
  *
  * Defines the data structures the script thread reads (snapshots) and
  * writes (update blob), plus the unified script_env_t that scripts
- * (Lua or native C) interact with.
+ * (scripting or native C) interact with.
  *
  * Thread safety: snapshot arrays are written by the tick thread and read
  * by the script thread. The update blob is written by the script thread
@@ -150,7 +150,7 @@ void script_update_buffer_swap(script_update_buffer_t *buf);
 #define SCRIPT_ENV_MAX_SELECTION 64
 
 /**
- * @brief Unified environment for Lua and native scripts.
+ * @brief Unified environment for scripting and native code.
  *
  * Provides read-only entity snapshots, a write-only update blob,
  * and context (cursor, selection). Scripts interact exclusively

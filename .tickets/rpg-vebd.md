@@ -12,7 +12,7 @@ tags: [editor, scripting, security]
 ---
 # Safe engine API: rate-limited log + validated entity writes
 
-Replace print() and all external-state-manipulating Lua globals with safe engine API functions.
+Replace print() and all external-state-manipulating script globals with safe engine API functions.
 
 ## Remove from sandbox
 - print, rawset, rawget, setmetatable, getmetatable (added to script_sandbox_init strip list)
@@ -44,3 +44,9 @@ Replace print() and all external-state-manipulating Lua globals with safe engine
 - src/editor/script/edit_script_api_entity.c (engine.write_entity callback)
 - tests/editor/edit_script_api_tests.c
 
+
+## Notes
+
+**2026-03-01T07:06:22Z**
+
+SUPERSEDED: LuaJIT removed. Safe API will be reimplemented for the engine scripting language.

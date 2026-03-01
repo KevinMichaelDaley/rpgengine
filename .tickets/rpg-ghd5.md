@@ -17,12 +17,12 @@ Implement the run and eval commands for executing scripts from the command line.
 READ FIRST: ref/editor_design.md §2.4 dispatch table (cmd_run, cmd_eval entries), ref/editor_ux.md §8.1 for running scripts.
 
 Requirements:
-- cmd_eval: evaluate inline Lua expression, return result in JSON response
-- cmd_run: load and execute Lua script file, with optional args passed as global table
+- cmd_eval: evaluate inline scripting expression, return result in JSON response
+- cmd_run: load and execute script file, with optional args passed as global table
 - Both go through script_runtime, so they are instruction-budgeted
 - Long scripts become multi-frame coroutines; server sends intermediate 'running' status
 - Script output (print()) is captured and sent as log messages to controller
-- Error messages include Lua traceback
+- Error messages include script traceback
 
 Files to create:
 - src/editor/commands/cmd_run.c

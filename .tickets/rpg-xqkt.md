@@ -12,18 +12,18 @@ tags: [editor, scripting, controller]
 ---
 # REPL mode with continuation detection
 
-Implement REPL mode in the TUI controller for interactive Lua scripting with server-side continuation detection.
+Implement REPL mode in the TUI controller for interactive scripting scripting with server-side continuation detection.
 
 READ FIRST: ref/editor_design.md §6.6 for continuation detection logic, ref/editor_ux.md for REPL workflow.
 
 Requirements:
 - 'repl' command enters REPL mode (changes TUI prompt to 'lua> ')
 - In REPL mode, input is sent as eval requests to the server
-- Server-side continuation detection: luaL_loadstring → check for '<eof>' in error message
+- Server-side continuation detection: script_loadstring → check for '<eof>' in error message
 - If incomplete: server returns {"status":"incomplete"}, controller shows '...> ' continuation prompt
 - Controller accumulates lines until complete, then sends full block
 - 'exit' or Ctrl-D exits REPL mode, returns to normal command mode
-- Results printed to TUI log (formatted Lua values)
+- Results printed to TUI log (formatted script values)
 - Errors printed with line numbers relative to REPL input
 
 Files to create:

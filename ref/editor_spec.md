@@ -102,7 +102,7 @@ project/
 │   ├── textures/     # .png, .ktx2, synthesized
 │   ├── materials/    # .mat (JSON)
 │   ├── prefabs/      # .prefab (JSON + script ref)
-│   └── scripts/      # .lua / .wren / .ed (editor scripts)
+│   └── scripts/      # .script / .wren / .ed (editor scripts)
 ├── levels/
 │   └── level_01.json # serialized entity list + world settings
 └── project.json      # project metadata
@@ -115,9 +115,9 @@ Assets are referenced by **path relative to project root** (e.g.,
 - **Import** from external files (copy + register)
 - **Procedural creation** via scripts (texture synthesis, mesh generation)
 
-**Scripting language: LuaJIT 2.1** — selected for near-C performance via JIT
+**Scripting language: the engine scripting language** — selected for near-C performance via JIT
 compilation, minimal footprint, well-understood coroutine model, and FFI for
-advanced users. Built from source in `third_party/luajit/`.
+advanced users. The engine scripting language will be determined later.
 
 ### 2.3 Asset Downloader (TCP)
 
@@ -190,8 +190,8 @@ key-value mechanism used for fixed fields.
 
 ### 2.5 Script Runtime
 
-LuaJIT 2.1 is the embedded scripting language for procedural generation and
-automation. Built from source in `extern/luajit/`.
+the engine scripting language is the embedded scripting language for procedural generation and
+automation. The engine scripting language will be determined later.
 
 The script runtime:
 - Runs on a **dedicated script thread** (not the main tick thread, not on
@@ -205,27 +205,27 @@ The script runtime:
 - Can submit **edit commands** (spawn, delete, move, group, etc.) via an
   SPSC ring that the main tick thread drains alongside I/O commands.
 - Supports **instruction-limited execution**: long scripts are budgeted N
-  instructions per tick via `lua_sethook`. When the budget is exhausted, the
-  Lua coroutine yields and resumes on the next tick.
+  instructions per tick via `instruction hook`. When the budget is exhausted, the
+  coroutine yields and resumes on the next tick.
 - Supports a **native code path**: C functions using the same `script_env_t`
-  interface can run instead of (or alongside) Lua. This allows game logic
-  prototyped in Lua to be shipped as native code with zero overhead.
+  interface can run instead of (or alongside) scripting. This allows game logic
+  prototyped in scripting to be shipped as native code with zero overhead.
 - Can register new commands (extending the command vocabulary)
 - Provides texture synthesis primitives (noise, blend, warp, etc.)
 
-**Concurrency model:** the script thread owns the Lua state exclusively.
-No other thread touches `lua_State`. Entity reads come from a snapshot;
+**Concurrency model:** the script thread owns the script state exclusively.
+No other thread touches `script_state`. Entity reads come from a snapshot;
 entity writes go through a double-buffered update array. Edit commands go
 through an SPSC ring. All cross-thread communication is lock-free.
 
 **Native parity:** the `script_env_t` struct provides a unified interface
-for both Lua and native C code. A native function with signature
+for both scripting and native C code. A native function with signature
 `void (*fn)(script_env_t *env, void *userdata)` can read entities, write
-updates, and submit commands identically to Lua. The runtime dispatches
-to registered native functions each tick, then advances Lua scripts.
+updates, and submit commands identically to scripting. The runtime dispatches
+to registered native functions each tick, then advances scripts.
 
-**FFI restriction:** LuaJIT's FFI library is disabled in the sandbox to prevent
-scripts from accessing arbitrary memory. All C↔Lua interaction goes through
+**FFI restriction:** The scripting language's FFI library is disabled in the sandbox to prevent
+scripts from accessing arbitrary memory. All C↔script interaction goes through
 the registered API functions.
 
 ### 2.6 Level Serialization
@@ -342,7 +342,7 @@ undo                               # undo last operation
 redo                               # redo
 save levels/test.json              # save level
 load levels/test.json              # load level
-run scripts/gen_forest.lua         # run script
+run scripts/gen_forest.script         # run script
 texture synth stone01 512 512      # synthesize texture
 bind ctrl+d "delete"               # bind key to command
 ```
@@ -461,8 +461,8 @@ Texture synthesis is driven by scripts, not a node graph. This aligns with the
 "procedural first" principle and makes textures version-controllable and
 AI-generatable.
 
-Example script (Lua):
-```lua
+Example script (pseudocode):
+```
 function stone_wall(w, h)
     local base = noise.voronoi(w, h, {cells=32, jitter=0.8})
     local cracks = noise.fractal(w, h, {octaves=6, lacunarity=2.1})
@@ -553,7 +553,7 @@ Available to scripts:
 | Edit protocol | `src/editor/protocol/` | TCP listener, command parse/dispatch |
 | Asset registry | `src/editor/assets/` | Catalog, hot-reload, import |
 | Asset downloader | `src/editor/download/` | TCP asset transfer |
-| Script runtime | `src/editor/script/` | Lua embed, API bindings |
+| Script runtime | `src/editor/script/` | scripting embed, API bindings |
 | Texture synthesis | `src/editor/texsynth/` | Noise generators, blending, bake |
 | Undo system | `src/editor/undo/` | Command stack, inverse operations |
 | Controller TUI | `src/editor/controller/` | Terminal UI, command-line, keybinds |
@@ -581,7 +581,7 @@ make editor
 
 Compile flags:
 - `EDITOR_ENABLE` — gates editor code in server/client
-- `LUAJIT_ENABLE` — gates LuaJIT runtime (optional; editor works without scripts
+- `SCRIPTING_ENABLE` — gates the engine scripting language runtime (optional; editor works without scripts
   but procedural features require it)
 
 ---

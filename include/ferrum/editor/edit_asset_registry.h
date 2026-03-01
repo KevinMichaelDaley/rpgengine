@@ -36,7 +36,7 @@ typedef enum edit_asset_type {
     EDIT_ASSET_TEXTURE  = 2, /**< .png, .ktx2, .jpg texture files. */
     EDIT_ASSET_MATERIAL = 3, /**< .mat material definition files. */
     EDIT_ASSET_PREFAB   = 4, /**< .prefab entity template files. */
-    EDIT_ASSET_SCRIPT   = 5, /**< .lua, .wren, .ed script files. */
+    EDIT_ASSET_SCRIPT   = 5, /**< .wren, .ed script files. */
     EDIT_ASSET_UNKNOWN  = 6, /**< Unrecognized extension. */
 } edit_asset_type_t;
 

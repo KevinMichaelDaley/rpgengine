@@ -338,7 +338,7 @@ The controller TUI provides a command line with contextual help, similar to Vim'
 - [ ] `clip` and CSG commands
 - [ ] TUI visual feedback (selection counts, mesh stats)
 - [ ] Undo/redo integration for all mesh ops
-- [ ] Scripting bindings (Lua API)
+- [ ] Scripting bindings (script API)
 
 ---
 

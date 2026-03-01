@@ -10,9 +10,9 @@ assignee: KMD
 parent: rpg-p9zq
 tags: [editor, scripting, server]
 ---
-# Lua math/vector/quaternion bindings
+# scripting math/vector/quaternion bindings
 
-Implement Lua bindings for math types: vec3, quat, noise functions.
+Implement scripting bindings for math types: vec3, quat, noise functions.
 
 READ FIRST: ref/editor_ux.md §8.3 for math API listing.
 
@@ -28,7 +28,7 @@ Requirements:
 - grid_size() → number
 
 Files to create:
-- src/editor/script/lua_math_api.c
-- src/editor/script/lua_noise_api.c
-- tests/editor/lua_math_api_tests.c
+- src/editor/script/script_math_api.c
+- src/editor/script/script_noise_api.c
+- tests/editor/script_math_api_tests.c
 

@@ -11,7 +11,7 @@ tags: [editor, texsynth]
 ---
 # Phase 4: Texture Synthesis
 
-Epic for the in-engine texture synthesis tool. This phase adds procedural noise generators, blend modes, the UV bake engine, texsynth commands, and Lua texture API bindings.
+Epic for the in-engine texture synthesis tool. This phase adds procedural noise generators, blend modes, the UV bake engine, texsynth commands, and scripting texture API bindings.
 
 Before starting any subtask, read:
 - ref/editor_spec.md §2.2 (procedural asset creation)

@@ -40,13 +40,13 @@ src/editor/
 │   ├── undo_stack.c           # command pattern undo/redo
 │   └── undo_stack.h
 ├── script/
-│   ├── script_runtime.c       # Script thread + Lua state (dedicated pthread)
+│   ├── script_runtime.c       # Script thread + script state (dedicated pthread)
 │   ├── script_runtime.h
 │   ├── script_env.c           # script_env_t setup, snapshot copy, update swap
-│   ├── script_sandbox.c       # Lua sandbox (strip os/io/ffi/debug)
+│   ├── script_sandbox.c       # script sandbox (strip os/io/ffi/debug)
 │   ├── script_native.c        # Native script function registry + dispatch
 │   ├── script_rebase.c        # Rebase script entity updates onto tick state
-│   ├── script_api_entity.c    # entity manipulation bindings (Lua ↔ env)
+│   ├── script_api_entity.c    # entity manipulation bindings (script ↔ env)
 │   ├── script_api_math.c      # vec3, quat, noise bindings
 │   ├── script_api_texture.c   # texsynth bindings
 │   └── script_api_cursor.c    # cursor/grid bindings
@@ -264,7 +264,7 @@ static const editor_cmd_handler_t g_handlers[] = {
     {"material",   cmd_material,   "Assign material to entity","<set|get> <entity> <slot> <path>"},
     {"run",        cmd_run,        "Run script file",          "<path> [args...]"},
     {"eval",       cmd_eval,       "Evaluate script expression", "<expr>"},
-    {"repl",       cmd_repl,       "Enter/exit Lua REPL mode", ""},
+    {"repl",       cmd_repl,       "Enter/exit script REPL mode", ""},
     {"texsynth",   cmd_texsynth,   "Texture synthesis",        "<sub-cmd> [args...]"},
     {"undo",       cmd_undo,       "Undo last operation",      ""},
     {"redo",       cmd_redo,       "Redo last undone operation",""},
@@ -575,7 +575,7 @@ editor_undo(ctx);
 
 The script runtime executes on a **dedicated script thread** (not the main
 tick thread, not on fibers). It reads entity state from a read-only snapshot,
-executes Lua or native C code through a unified interface, and produces an
+executes scripting or native C code through a unified interface, and produces an
 array of **entity updates** that get rebased on top of physics and native
 game logic updates during the main tick's commit phase.
 
@@ -583,8 +583,8 @@ This design achieves three goals:
 1. **Decoupled execution**: scripts never block physics or networking
 2. **Safe concurrency**: scripts read a frozen snapshot, not live state
 3. **Native parity**: C code using the same `script_env_t` interface runs
-   at full speed without LuaJIT overhead — useful for shipping game logic
-   that was prototyped in Lua
+   at full speed without scripting overhead — useful for shipping game logic
+   that was prototyped in script
 
 ### 6.2 Core Types
 
@@ -708,7 +708,7 @@ typedef struct script_entity_view {
     uint32_t capacity;
 } script_entity_view_t;
 
-/* Unified environment exposed to both Lua and native scripts */
+/* Unified environment exposed to both scripting and native scripts */
 typedef struct script_env {
     /* Read-only entity state (snapshot from last tick).
      * Includes fixed fields AND dynamic attrs from ECS components. */
@@ -752,8 +752,9 @@ typedef struct script_runtime {
     atomic_bool running;
     atomic_bool request_stop;
 
-    /* LuaJIT (NULL when running native-only) */
-    lua_State *L;
+    /* Script engine state (NULL when running native-only).
+     * Opaque pointer — actual type depends on chosen scripting language. */
+    void *script_state;
 
     /* Double-buffered update exchange */
     script_update_buffer_t update_buf;
@@ -776,7 +777,7 @@ typedef struct script_runtime {
     bool continuation_pending;
 
     /* Memory */
-    void *arena;                /* 8 MB arena for Lua allocator */
+    void *arena;                /* 8 MB arena for script allocator */
     size_t arena_size;
 } script_runtime_t;
 ```
@@ -802,7 +803,7 @@ Stage 2-N: physics, networking
 
                                     ┌── wait for new snapshot seq
                                     ├── copy snapshot → env.entities
-                                    ├── execute script (Lua or native)
+                                    ├── execute script (scripting or native)
                                     │   ├── read env.entities (frozen)
                                     │   ├── write env.updates[]
                                     │   └── push edit cmds to ring
@@ -828,10 +829,10 @@ are visible in the next snapshot.
 ### 6.4 Native Code Path
 
 The `script_env_t` interface is backend-agnostic. A native C function with
-this signature can run instead of (or alongside) Lua:
+this signature can run instead of (or alongside) scripting:
 
 ```c
-/* Native script function — same access pattern as Lua */
+/* Native script function — same access pattern as scripting */
 typedef void (*script_native_fn)(script_env_t *env, void *userdata);
 
 /* Register a native tick function (runs every tick on script thread) */
@@ -861,64 +862,66 @@ static void rotate_selected(script_env_t *env, void *ud) {
 }
 ```
 
-When shipping, Lua scripts can be "compiled" to native functions that use
+When shipping, scripts can be "compiled" to native functions that use
 the same `script_env_t` reads/writes. The runtime switches transparently.
 
-### 6.5 LuaJIT Integration
+### 6.5 Scripting Language Integration
 
-LuaJIT 2.1 is embedded as a static library (built from `extern/luajit/`).
-It provides Lua 5.1 semantics with a JIT compiler. The Lua state lives
-entirely on the script thread — no cross-thread Lua access.
+The engine scripting language is TBD (LuaJIT was removed due to security
+concerns around guard injection and coroutine/fiber conflicts). The chosen
+language must support:
+- Embedding as a static library with a custom allocator
+- Instruction-level preemption (hook or fiber-based yielding)
+- Sandboxing (no filesystem, network, or FFI access)
+- C interop for registered engine functions only
 
-Lua scripts access entities through the `script_env_t` via registered C
+Scripts access entities through the `script_env_t` via registered C
 functions:
 
 ```c
-/* Lua: local entities = get_entities() → table of entity snapshots */
-/* Lua: update_entity(id, {pos={x,y,z}}) → queue update */
-/* Lua: submit_command("move", {entity_id=5, pos={1,2,3}}) → edit cmd */
+/* Script: local entities = get_entities() → table of entity snapshots */
+/* Script: update_entity(id, {pos={x,y,z}}) → queue update */
+/* Script: submit_command("move", {entity_id=5, pos={1,2,3}}) → edit cmd */
 ```
 
-**Instruction budget** is still enforced via `lua_sethook` for multi-frame
-scripts. When budget is exhausted, the hook sets a flag and returns —
-the script thread's loop picks up from the coroutine next tick.
+**Instruction budget** is enforced via the scripting language's hook or
+interrupt mechanism. When budget is exhausted, the script thread yields
+(via fiber yield, not language-level coroutines) and resumes next tick.
 
-**Multi-frame scripts** use Lua coroutines. The script thread's loop calls
-`lua_resume()` each tick, passing the updated `script_env_t`. When the
-coroutine yields (voluntarily or via budget), the loop swaps buffers and
-waits for the next snapshot.
+**Multi-frame scripts** use engine fibers, not language-level coroutines.
+The script thread's loop resumes the fiber each tick, passing the updated
+`script_env_t`. When the fiber yields (voluntarily or via budget), the
+loop swaps buffers and waits for the next snapshot.
 
 ### 6.6 REPL Continuation Detection
 
 When the controller sends `eval` or `repl` input, the server must detect
-whether the Lua code is syntactically incomplete (e.g., `function foo()`
-without `end`). The server uses `luaL_loadstring()` to attempt compilation:
+whether the script code is syntactically incomplete (e.g., an unclosed
+block). The server uses the scripting language's parser to attempt compilation.
+If the parse fails with an "unexpected end of input" error, the input is
+treated as incomplete and the REPL waits for more lines.
 
 ```c
+/* Pseudocode — actual implementation depends on chosen scripting language */
 bool script_is_complete(script_runtime_t *rt, const char *input) {
-    int status = luaL_loadstring(rt->L, input);
-    if (status == LUA_ERRSYNTAX) {
-        const char *msg = lua_tostring(rt->L, -1);
-        /* Lua syntax errors for incomplete input end with "<eof>" */
-        bool incomplete = (strstr(msg, "<eof>") != NULL);
-        lua_pop(rt->L, 1);
-        return !incomplete;
+    script_parse_result_t result = script_try_parse(rt, input);
+    if (result.status == SCRIPT_PARSE_INCOMPLETE) {
+        return false;  /* need more input */
     }
-    lua_pop(rt->L, 1);  /* pop compiled chunk */
-    return true;  /* complete (valid or other error) */
+    return true;  /* complete (valid or hard error) */
 }
 ```
 
-Note: `script_is_complete` is called on the script thread (it touches `rt->L`).
+Note: `script_is_complete` is called on the script thread.
 The I/O thread enqueues the eval request; the script thread checks completeness
 and either executes or returns `"status": "incomplete"`.
 
 ### 6.7 Safety
 
-- Scripts run in a sandboxed Lua state (no `os.execute`, `io`, `loadlib`)
+- Scripts run in a sandboxed script state (no `os.execute`, `io`, `loadlib`)
 - FFI is DISABLED — scripts cannot access arbitrary memory
 - Memory limit enforced via custom allocator (arena-backed, 8 MB default)
-- Instruction count limit prevents runaway scripts (via `lua_sethook`)
+- Instruction count limit prevents runaway scripts (via `instruction hook`)
 - Entity reads are from a frozen snapshot (no race with physics)
 - Entity writes go through the update buffer (rebased by tick thread)
 - Edit commands go through SPSC ring (same mechanism as I/O commands)
@@ -1098,7 +1101,7 @@ static const mcp_tool_def_t g_tools[] = {
     },
     {
         .name = "run_script",
-        .description = "Execute a Lua script file",
+        .description = "Execute a scripting script file",
         .handler = mcp_tool_run_script_,
         .schema = "{\"path\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"}}"
     },
@@ -1195,7 +1198,7 @@ The controller supports Vim-style numeric prefixes for repeat counts:
 typedef enum ctrl_input_mode {
     CTRL_MODE_NORMAL,       /* default: keybindings active */
     CTRL_MODE_COMMAND,      /* typing in command line (:) */
-    CTRL_MODE_REPL,         /* Lua REPL mode */
+    CTRL_MODE_REPL,         /* script REPL mode */
     CTRL_MODE_GRAB,         /* entity grab mode (mouse/keys move entity) */
     CTRL_MODE_CONTEXT,      /* context menu overlay */
 } ctrl_input_mode_t;
@@ -1293,9 +1296,9 @@ Usage: `spawn #2` expands to `spawn stone_wall` using the cached browse list.
 ### 10.1 Makefile Targets
 
 ```makefile
-# Editor server (server + editor extensions + LuaJIT)
-build/editor_server: $(SERVER_OBJS) $(EDITOR_SERVER_OBJS) $(LUAJIT_LIB)
-	$(CC) $(CFLAGS) -DEDITOR_ENABLE -DLUAJIT_ENABLE -o $@ $^ $(LUAJIT_LDFLAGS) $(LDFLAGS)
+# Editor server (server + editor extensions + scripting)
+build/editor_server: $(SERVER_OBJS) $(EDITOR_SERVER_OBJS)
+	$(CC) $(CFLAGS) -DEDITOR_ENABLE -o $@ $^ $(LDFLAGS)
 
 # Editor client (client + editor mode)
 build/editor_client: $(CLIENT_OBJS) $(EDITOR_CLIENT_OBJS)
@@ -1306,20 +1309,16 @@ build/editor_ctrl: $(CTRL_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 ```
 
-### 10.2 LuaJIT Integration
+### 10.2 Scripting Language Integration
 
-LuaJIT 2.1 is built from source as a git submodule (in `extern/luajit/`).
-This avoids system dependency issues and keeps the build self-contained.
+The engine scripting language is TBD. When chosen, it will be built from
+source as a git submodule. The build system will gate scripting support
+behind a `SCRIPTING=1` flag.
 
 ```makefile
-LUAJIT_DIR = extern/luajit/src
-LUAJIT_LIB = $(LUAJIT_DIR)/libluajit.a
-
-$(LUAJIT_LIB):
-	$(MAKE) -C $(LUAJIT_DIR) BUILDMODE=static CC=$(CC)
-
-# Link against libluajit.a + libm + libdl (order matters: -lm after -lluajit)
-LUAJIT_LDFLAGS = -L$(LUAJIT_DIR) -lluajit -ldl -lm
+# Placeholder — will be filled in when scripting language is chosen.
+# SCRIPT_DIR = extern/scripting/src
+# SCRIPT_LIB = $(SCRIPT_DIR)/libscript.a
 ```
 
 ---
@@ -1360,7 +1359,7 @@ Script thread (dedicated pthread)
   │
   ├── Waits for new entity snapshot (atomic seq check)
   ├── Copies snapshot into script_env_t (read-only view)
-  ├── Executes Lua scripts and/or native tick functions
+  ├── Executes scripts and/or native tick functions
   │     ├── Reads entity state from frozen snapshot
   │     ├── Writes entity updates to back buffer
   │     └── Pushes edit commands to SPSC ring → main tick
@@ -1373,7 +1372,7 @@ Script thread (dedicated pthread)
   thread touches sockets")
 - Only the main tick thread mutates world state (commands drained in Stage 1)
 - Script thread never touches live entity store — reads snapshot, writes updates
-- Lua state is only accessed from the script thread (never main tick, never I/O)
+- script state is only accessed from the script thread (never main tick, never I/O)
 - Entity updates from scripts are rebased on top of physics results
 - SPSC rings are the sole synchronization mechanism (lock-free)
 
@@ -1439,13 +1438,13 @@ arrive at <100/sec and never block rendering.
 - [ ] Clone command
 
 ### Phase 3: Scripting
-- [x] LuaJIT 2.1 integration (extern/luajit/ submodule, LUAJIT=1 build flag)
+- [ ] Scripting language selection and integration (TBD)
 - [ ] Script runtime core (dedicated thread, double-buffered entity updates)
 - [ ] Script environment (script_env_t, entity snapshot, update buffer, cmd ring)
-- [ ] Script sandbox (strip os/io/ffi/debug from Lua state)
+- [ ] Script sandbox (strip os/io/ffi/debug from script state)
 - [ ] Script rebase (apply entity updates on top of physics/game state)
 - [ ] Native script function registry (C functions with same script_env_t interface)
-- [ ] Entity manipulation API bindings (Lua ↔ script_env_t)
+- [ ] Entity manipulation API bindings (script ↔ script_env_t)
 - [ ] Math/vec3/quat bindings
 - [ ] run/eval commands
 - [ ] REPL mode (with server-side continuation detection)
@@ -1456,7 +1455,7 @@ arrive at <100/sec and never block rendering.
 - [ ] Blend modes
 - [ ] UV bake engine
 - [ ] texsynth commands
-- [ ] Lua texture API
+- [ ] scripting texture API
 
 ### Phase 5: Polish & MCP
 - [ ] MCP server in controller (JSON-RPC 2.0 over TCP, port 9300)

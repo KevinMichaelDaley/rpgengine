@@ -39,7 +39,7 @@ extern "C" {
 typedef enum ctrl_input_mode {
     CTRL_MODE_NORMAL  = 0,  /**< Default: hotkeys, vim-style prefix. */
     CTRL_MODE_COMMAND = 1,  /**< Command-line editing (after ':'). */
-    CTRL_MODE_REPL    = 2,  /**< Lua REPL mode. */
+    CTRL_MODE_REPL    = 2,  /**< Script REPL mode. */
     CTRL_MODE_GRAB    = 3,  /**< Entity grab mode. */
     CTRL_MODE_CONTEXT = 4,  /**< Context menu mode. */
 } ctrl_input_mode_t;

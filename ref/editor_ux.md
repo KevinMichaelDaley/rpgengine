@@ -25,7 +25,7 @@ interface that rewards expertise with speed.
 │                                                                                 │
 │  [entity_042] box 2×2×2 at (10, 0, 5) mass=0 static                           │
 │  [entity_043] prefab:stone_pillar at (15, 0, 8)                                │
-│  > Spawned 2 entities from script gen_courtyard.lua                            │
+│  > Spawned 2 entities from script gen_courtyard.script                            │
 │  > Texture stone_wall_01 synthesized (1024×1024, 3 maps)                       │
 │  > Saved level_01.json (847 entities)                                          │
 │                                                                                 │
@@ -68,7 +68,7 @@ The editor has several input modes:
 |------|-------------|
 | **Normal** | Keyboard shortcuts active. Keys map to commands (e.g., `x` = delete, `g` = grab/move). Vim-style numeric prefixes supported (e.g., `5l` = move 5 units). |
 | **Command** | Command-line focused. Type commands directly. Enter to execute, Escape to cancel. |
-| **REPL** | Lua REPL mode. `lua>` prompt for interactive scripting. Exit with `exit()` or Ctrl+D. |
+| **REPL** | script REPL mode. `script>` prompt for interactive scripting. Exit with `exit()` or Ctrl+D. |
 | **Grab** | Entity grab mode. Cursor keys move the grabbed entity. Enter to confirm, Escape to cancel. |
 | **Context** | Context menu overlay. Only listed shortcut keys active. Escape to dismiss. |
 
@@ -356,7 +356,7 @@ Preview is triggered by highlighting an asset in tab-completion or browse result
 More commonly, textures are defined in scripts:
 
 ```
-:run scripts/textures/stone_wall.lua
+:run scripts/textures/stone_wall.script
 > Synthesized stone_wall (512×512, 3 maps) in 0.34s
 ```
 
@@ -376,36 +376,36 @@ During synthesis (interactive or scripted), intermediate results are:
 ### 8.1 Running Scripts
 
 ```
-:run scripts/gen_forest.lua              # run script file
-:run scripts/gen_forest.lua seed=42      # with arguments
+:run scripts/gen_forest.script              # run script file
+:run scripts/gen_forest.script seed=42      # with arguments
 :eval print("hello from lua")            # evaluate inline expression
 :repl                                    # enter interactive REPL mode
 ```
 
 ### 8.2 REPL Mode
 
-In REPL mode, the command-line becomes a Lua prompt. The server detects
-incomplete input (e.g., an unclosed `function` block) using `luaL_loadstring()`
+In REPL mode, the command-line becomes a script prompt. The server detects
+incomplete input (e.g., an unclosed `function` block) using the script parser
 and returns `"status": "incomplete"`. The controller then shows a `...>`
 continuation prompt.
 
 ```
-lua> for i = 1, 10 do
+script> for i = 1, 10 do
 ...>   spawn_box(cursor() + vec3(i * 2, 0, 0), vec3(1, 1, 1))
 ...> end
 > Spawned 10 boxes
 
-lua> local t = texsynth.new(256, 256)
-lua> t:layer("base", "perlin", {scale=4})
-lua> t:bake("test_tex", "assets/meshes/floor.glb")
+script> local t = texsynth.new(256, 256)
+script> t:layer("base", "perlin", {scale=4})
+script> t:bake("test_tex", "assets/meshes/floor.glb")
 
-lua> exit()    -- or Ctrl+D to leave REPL
+script> exit()    -- or Ctrl+D to leave REPL
 ```
 
 Multi-line accumulation: the controller accumulates lines locally while
 in continuation mode. When the server returns `"status": "ok"` or
 `"status": "error"`, the accumulated input is cleared and the prompt
-returns to `lua>`.
+returns to `script>`.
 
 **Error display:** syntax errors appear in red in the log area, with the
 offending line number highlighted. Runtime errors show a traceback.
@@ -414,7 +414,7 @@ offending line number highlighted. Runtime errors show a traceback.
 
 Scripts see a global API:
 
-```lua
+```
 -- Entity operations
 spawn_box(pos, size)                → entity_id
 spawn_sphere(pos, radius)           → entity_id
@@ -607,7 +607,7 @@ This enables fully autonomous level generation with AI oversight.
 ### 11.2 Procedural Forest
 
 ```
-:run scripts/gen_forest.lua seed=42 density=0.3 area=100
+:run scripts/gen_forest.script seed=42 density=0.3 area=100
 > Spawned 847 trees in 1.2s
 > Texture autumn_bark synthesized (512×512)
 > Texture leaf_cluster synthesized (256×256)

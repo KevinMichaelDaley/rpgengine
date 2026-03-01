@@ -10,9 +10,9 @@ assignee: KMD
 parent: rpg-p9zq
 tags: [editor, scripting]
 ---
-# Math/vec3/quat Lua bindings
+# Math/vec3/quat scripting bindings
 
-Implement Lua bindings for vec3 and quaternion math operations used by gameplay scripts.
+Implement scripting bindings for vec3 and quaternion math operations used by gameplay scripts.
 
 Requirements:
 - vec3 userdata type with metamethods: __add, __sub, __mul (scalar), __unm, __len (magnitude), __tostring
@@ -23,7 +23,7 @@ Requirements:
 - All operations must be allocation-free (use stack userdata, not heap)
 
 Files to create:
-- src/editor/script/lua_vec3.c (vec3 type + metamethods)
-- src/editor/script/lua_quat.c (quat type + metamethods)
-- tests/editor/lua_math_bindings_tests.c
+- src/editor/script/script_vec3.c (vec3 type + metamethods)
+- src/editor/script/script_quat.c (quat type + metamethods)
+- tests/editor/script_math_bindings_tests.c
 

@@ -10,23 +10,29 @@ assignee: KMD
 parent: rpg-p9zq
 tags: [editor, scripting, build]
 ---
-# LuaJIT 2.1 build integration (third_party/luajit/)
+# engine scripting language build integration (third_party/scripting/)
 
-Integrate LuaJIT 2.1 into the project build system.
+Integrate engine scripting language into the project build system.
 
-READ FIRST: ref/editor_design.md §10.2 for LuaJIT build integration (Makefile targets, static lib).
+READ FIRST: ref/editor_design.md §10.2 for engine scripting language build integration (Makefile targets, static lib).
 
 Requirements:
-- Clone or vendor LuaJIT 2.1 source into third_party/luajit/
-- Makefile target to build libluajit.a (static library)
-- LUAJIT_ENABLE compile flag gates all LuaJIT code
-- Link editor_server against libluajit.a + libm + libdl
-- Verify LuaJIT builds cleanly with project CC and CFLAGS
+- Clone or vendor engine scripting language source into third_party/scripting/
+- Makefile target to build libscript.a (static library)
+- SCRIPTING_ENABLE compile flag gates all engine scripting language code
+- Link editor_server against libscript.a + libm + libdl
+- Verify engine scripting language builds cleanly with project CC and CFLAGS
 - Must work on Linux x86_64 (ARM64 nice-to-have)
-- Do NOT include LuaJIT's standalone interpreter (lua, luac) in the build
+- Do NOT include engine scripting language's standalone interpreter (lua, luac) in the build
 
 Files to create/modify:
-- third_party/luajit/ (vendored source)
+- third_party/scripting/ (vendored source)
 - Makefile additions for LUAJIT targets
-- tests/editor/luajit_smoke_test.c (basic init/eval/shutdown)
+- tests/editor/scripting_smoke_test.c (basic init/eval/shutdown)
 
+
+## Notes
+
+**2026-03-01T07:06:22Z**
+
+SUPERSEDED: LuaJIT removed from project. Scripting language TBD.
