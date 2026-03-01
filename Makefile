@@ -3,6 +3,7 @@ JOB_INSTRUMENTATION ?= 0
 TRACY ?= 0
 STACK_CANARY ?= 0
 EMU ?= 0
+LUAJIT ?= 0
 
 CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -O3
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
@@ -26,6 +27,15 @@ ifeq ($(TRACY),1)
 	LDFLAGS += -Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc -Wl,--wrap=free -Wl,--wrap=aligned_alloc -Wl,--wrap=posix_memalign
 	LDFLAGS += -L$(TRACY_BUILD_DIR) -lTracyClient -lstdc++ -ldl
 endif
+
+LUAJIT_DIR := extern/luajit/src
+LUAJIT_LIB := $(LUAJIT_DIR)/libluajit.a
+
+ifeq ($(LUAJIT),1)
+	CFLAGS += -DLUAJIT_ENABLE -I$(LUAJIT_DIR)
+	LUAJIT_LDFLAGS := -L$(LUAJIT_DIR) -lluajit -ldl
+endif
+
 JOB_SRC := $(wildcard src/job/*.c) $(wildcard src/job/*/*.c) $(wildcard src/job/*/*/*.c)
 MATH_SRC := $(wildcard src/math/*.c)
 MEM_SRC_BASE := $(wildcard src/memory/*.c)
@@ -223,6 +233,10 @@ ifeq ($(TRACY),1)
 BIN_HEADLESS += build/p010_tracy_alloc_override_tests
 endif
 
+ifeq ($(LUAJIT),1)
+BIN_HEADLESS += build/luajit_smoke_tests
+endif
+
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
 	build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
@@ -233,6 +247,14 @@ BIN := $(BIN_HEADLESS) $(BIN_RENDERER_TESTS)
 .PHONY: all test test_renderer clean p008_build p008_test p008_help p008_perf p008_renderer_client demo_server demo_client editor_tui
 
 all: $(BIN)
+
+# ── LuaJIT static library ────────────────────────────────────────
+$(LUAJIT_LIB):
+	$(MAKE) -C $(LUAJIT_DIR) BUILDMODE=static CC=$(CC) -j$$(nproc)
+
+.PHONY: luajit_clean
+luajit_clean:
+	$(MAKE) -C $(LUAJIT_DIR) clean
 
 # Include auto-generated dependency files (after default target to avoid
 # .d file targets from overriding the default goal).
@@ -771,6 +793,9 @@ build/p009_net_topic_channel_ring_tests: build/libheadless.a tests/p009_net_topi
 build/p010_tracy_alloc_override_tests: build/libheadless.a tests/p010_tracy_alloc_override_tests.c | build
 	$(CC) $(CFLAGS) tests/p010_tracy_alloc_override_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/luajit_smoke_tests: $(LUAJIT_LIB) tests/editor/luajit_smoke_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/luajit_smoke_tests.c -o $@ $(LUAJIT_LDFLAGS) $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -970,7 +995,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p008_server_tick_encoder_tests \
 	&& ./build/p008_server_loop_integration_tests \
 	&& ./build/p011_renderer_correction_debug_lines_tests \
-	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests )
+	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests ) \
+	&& ( [ "$(LUAJIT)" != "1" ] || ./build/luajit_smoke_tests )
 
 TEST_TIMEOUT ?= 20
 
@@ -1014,6 +1040,10 @@ test_timeout: $(BIN_HEADLESS) build/p000_job_queue_sharding_tests build/p000_job
 	if [ "$(TRACY)" = "1" ]; then \
 		echo "RUN ./build/p010_tracy_alloc_override_tests"; \
 		timeout --foreground $(TEST_TIMEOUT)s ./build/p010_tracy_alloc_override_tests; \
+	fi; \
+	if [ "$(LUAJIT)" = "1" ]; then \
+		echo "RUN ./build/luajit_smoke_tests"; \
+		timeout --foreground $(TEST_TIMEOUT)s ./build/luajit_smoke_tests; \
 	fi
 
 .PHONY: perf_job
@@ -1123,5 +1153,5 @@ editor_tui:
 	@echo "Usage: ./build/editor_tui [host:port] [--exec <script>]"
 
 clean:
-	$(RM) $(BIN) build/libheadless.a build/liball.a build/demo_server build/demo_client build/editor_tui
+	$(RM) $(BIN) build/libheadless.a build/liball.a build/demo_server build/demo_client build/editor_tui build/luajit_smoke_tests
 	$(RM) -r build/obj
