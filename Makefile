@@ -163,6 +163,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p088_physics_static_bvh_build_tests \
 	build/p089_physics_static_bvh_query_tests \
 	build/p090_physics_static_bvh_rebuild_tests \
+	build/p120_static_bvh_raycast_tests \
 	build/p091_physics_phase6_integration_tests \
 	build/p007_net_udp_socket_tests build/p007_net_integration_server_tests build/p007_net_integration_client_tests \
 	build/p007_net_rtt_retransmit_tests \
@@ -248,6 +249,7 @@ BIN_HEADLESS += build/aegis_ops_entity_tests
 BIN_HEADLESS += build/aegis_ops_update_tests
 BIN_HEADLESS += build/aegis_async_buffer_tests
 BIN_HEADLESS += build/aegis_ops_async_tests
+BIN_HEADLESS += build/aegis_async_execute_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -587,6 +589,9 @@ build/p089_physics_static_bvh_query_tests: build/libheadless.a tests/p089_physic
 build/p090_physics_static_bvh_rebuild_tests: build/libheadless.a tests/p090_physics_static_bvh_rebuild_tests.c | build
 	$(CC) $(CFLAGS) tests/p090_physics_static_bvh_rebuild_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p120_static_bvh_raycast_tests: build/libheadless.a tests/p120_static_bvh_raycast_tests.c | build
+	$(CC) $(CFLAGS) tests/p120_static_bvh_raycast_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p091_physics_phase6_integration_tests: build/libheadless.a tests/p091_physics_phase6_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/p091_physics_phase6_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -869,12 +874,15 @@ build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_S
 build/aegis_ops_update_tests: tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-AEGIS_ASYNC_SRC := src/aegis/aegis_async_buffer.c src/aegis/aegis_async_buffer_io.c
+AEGIS_ASYNC_SRC := src/aegis/aegis_async_buffer.c src/aegis/aegis_async_buffer_io.c src/aegis/aegis_async_execute.c
 build/aegis_async_buffer_tests: tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_SRC) -o $@ $(LDFLAGS)
 
 build/aegis_ops_async_tests: tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+
+build/aegis_async_execute_tests: build/libheadless.a tests/aegis/aegis_async_execute_tests.c $(AEGIS_ASYNC_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_async_execute_tests.c $(AEGIS_ASYNC_SRC) build/libheadless.a -o $@ $(LDFLAGS)
 
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
@@ -1029,6 +1037,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p088_physics_static_bvh_build_tests \
 	&& ./build/p089_physics_static_bvh_query_tests \
 	&& ./build/p090_physics_static_bvh_rebuild_tests \
+	&& ./build/p120_static_bvh_raycast_tests \
 	&& ./build/p091_physics_phase6_integration_tests \
 	&& ./build/p092_server_pre_physics_sync_tests \
 	&& ./build/p093_island_tier_promote_tests \
@@ -1097,7 +1106,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_ops_entity_tests \
 	&& ./build/aegis_ops_update_tests \
 	&& ./build/aegis_async_buffer_tests \
-	&& ./build/aegis_ops_async_tests
+	&& ./build/aegis_ops_async_tests \
+	&& ./build/aegis_async_execute_tests
 
 TEST_TIMEOUT ?= 20
 

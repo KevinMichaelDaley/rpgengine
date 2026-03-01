@@ -119,6 +119,29 @@ void phys_static_bvh_build_bucket_flags(const phys_static_bvh_t *bvh,
                                        float cell_size,
                                        uint8_t *out_bucket_flags);
 
+/**
+ * @brief Raycast through the BVH and collect leaf item IDs.
+ *
+ * Traverses the BVH using slab-based ray-AABB tests, returning the
+ * item IDs of all leaves whose bounding boxes are intersected by the ray.
+ * These are broadphase candidates; the caller must perform narrowphase
+ * tests against the actual collider shapes.
+ *
+ * @param bvh          BVH to query (NULL-safe; returns 0).
+ * @param origin       Ray origin (float[3]).
+ * @param direction    Normalized ray direction (float[3]).
+ * @param max_distance Maximum ray distance (must be > 0).
+ * @param out_item_ids Output array for leaf item IDs.
+ * @param max_results  Capacity of @p out_item_ids.
+ * @return Number of item IDs written.
+ */
+uint32_t phys_static_bvh_raycast(const phys_static_bvh_t *bvh,
+                                 const float origin[3],
+                                 const float direction[3],
+                                 float max_distance,
+                                 uint32_t *out_item_ids,
+                                 uint32_t max_results);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

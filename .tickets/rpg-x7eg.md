@@ -1,6 +1,6 @@
 ---
 id: rpg-x7eg
-status: open
+status: closed
 deps: [rpg-re46]
 links: []
 created: 2026-03-01T09:58:49Z
