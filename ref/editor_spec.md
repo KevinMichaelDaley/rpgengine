@@ -181,25 +181,38 @@ records the inverse operation for undo.
 ### 2.5 Script Runtime
 
 LuaJIT 2.1 is the embedded scripting language for procedural generation and
-automation. Built from source in `third_party/luajit/`.
+automation. Built from source in `extern/luajit/`.
 
 The script runtime:
-- Runs on the **main tick thread** (not on a fiber) — Lua executes during the
-  command drain phase, so it has synchronous access to committed entity state.
-- Has access to the full entity manipulation API. Because scripts run during
-  drain, `spawn_box()` returns an entity_id immediately (the mutation is applied
-  in the same tick).
-- Can register new commands (extending the command vocabulary)
-- Provides texture synthesis primitives (noise, blend, warp, etc.)
+- Runs on a **dedicated script thread** (not the main tick thread, not on
+  fibers) — the script thread reads a frozen entity snapshot and produces
+  entity updates that get rebased on top of physics and native game logic.
+- Reads entity state from a **read-only snapshot** copied by the main tick
+  thread after command drain. Scripts never touch live entity store.
+- Writes entity updates to a **double-buffered update array**. The main tick
+  thread reads the front buffer and applies updates (rebasing) during the
+  next drain phase.
+- Can submit **edit commands** (spawn, delete, move, group, etc.) via an
+  SPSC ring that the main tick thread drains alongside I/O commands.
 - Supports **instruction-limited execution**: long scripts are budgeted N
   instructions per tick via `lua_sethook`. When the budget is exhausted, the
-  Lua coroutine yields and resumes on the next tick's drain phase. This avoids
-  blocking the simulation while supporting multi-frame generation scripts.
+  Lua coroutine yields and resumes on the next tick.
+- Supports a **native code path**: C functions using the same `script_env_t`
+  interface can run instead of (or alongside) Lua. This allows game logic
+  prototyped in Lua to be shipped as native code with zero overhead.
+- Can register new commands (extending the command vocabulary)
+- Provides texture synthesis primitives (noise, blend, warp, etc.)
 
-**Concurrency model:** scripts do NOT run on fibers. The Lua call stack lives
-on the main thread's C stack. Lua's `coroutine.yield()` suspends the Lua state
-(not the OS/fiber stack), and the tick loop resumes it next frame. This avoids
-the hazardous interaction between Lua coroutines and fiber context switching.
+**Concurrency model:** the script thread owns the Lua state exclusively.
+No other thread touches `lua_State`. Entity reads come from a snapshot;
+entity writes go through a double-buffered update array. Edit commands go
+through an SPSC ring. All cross-thread communication is lock-free.
+
+**Native parity:** the `script_env_t` struct provides a unified interface
+for both Lua and native C code. A native function with signature
+`void (*fn)(script_env_t *env, void *userdata)` can read entities, write
+updates, and submit commands identically to Lua. The runtime dispatches
+to registered native functions each tick, then advances Lua scripts.
 
 **FFI restriction:** LuaJIT's FFI library is disabled in the sandbox to prevent
 scripts from accessing arbitrary memory. All C↔Lua interaction goes through

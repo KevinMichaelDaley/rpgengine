@@ -10,26 +10,37 @@ assignee: KMD
 parent: rpg-p9zq
 tags: [editor, scripting, server]
 ---
-# Script runtime core (edit_script_runtime.c)
+# Script runtime core (dedicated thread, double-buffered entity updates)
 
-Implement the core script runtime that executes LuaJIT on the main tick thread.
+Implement the core script runtime on a dedicated pthread with double-buffered entity state exchange.
 
-READ FIRST: ref/editor_design.md §6.1-6.2 for runtime architecture (script_runtime_t, execution model, budget hook), ref/editor_spec.md §2.5 for concurrency model.
+READ FIRST: ref/editor_design.md §6 for the full threaded runtime architecture, ref/editor_spec.md §2.5 for concurrency model.
+
+Architecture:
+- Dedicated script thread (pthread), NOT main tick thread
+- Reads entity state from a read-only snapshot (copied by main tick after drain)
+- Writes entity updates to a double-buffered update array (rebased by main tick)
+- Submits edit commands (spawn, delete, etc.) via SPSC ring → main tick
+- script_env_t provides unified interface for both Lua and native C code
 
 Requirements:
-- script_runtime_t: lua_State, editor back-pointer, instruction_budget (100K default), continuation_pending flag
-- script_runtime_init(editor_ctx) → allocate Lua state with custom arena allocator (8 MB limit)
-- script_runtime_tick(rt) → called during drain, resumes pending coroutines
-- Budget hook via lua_sethook: forces lua_yield when budget exhausted
+- script_runtime_t: pthread, lua_State, update_buf, snapshot, cmd_ring, env
+- script_runtime_init() → spawn thread, allocate snapshot/update buffers, create Lua state with arena allocator (8 MB)
+- Script thread loop: wait for snapshot seq → copy snapshot → run scripts → swap update buffer
+- script_update_buffer_t: double-buffered array with atomic ready flag
+- script_entity_snapshot_t: read-only entity view (id, type, name, pos, rot, scale)
+- Budget hook via lua_sethook: forces yield when budget exhausted (100K instructions default)
 - Sandbox: remove os, io, loadlib, debug, ffi libraries
-- script_runtime_eval(rt, code, result) → run code, return result as JSON
-- script_runtime_load_file(rt, path) → load and start executing a script file
-- Multi-frame scripts: create Lua coroutine, yield/resume across ticks
-- script_runtime_shutdown(rt) → close Lua state, free arena
+- script_runtime_eval(rt, code, result) → enqueue code for execution, return result
+- script_runtime_shutdown(rt) → signal stop, join thread, close Lua state, free arena
+- Native code path: script_runtime_register_native(rt, fn, userdata) for C functions using same script_env_t
+- Main tick integration: drain script cmd_ring, read front update buffer, apply rebase
 
 Files to create:
-- include/ferrum/editor/edit_script_runtime.h
-- src/editor/script/edit_script_runtime.c
-- src/editor/script/edit_script_sandbox.c
+- include/ferrum/editor/edit_script_runtime.h (script_runtime_t, script_env_t)
+- src/editor/script/edit_script_runtime.c (init, thread loop, shutdown)
+- src/editor/script/edit_script_env.c (env setup, snapshot copy, update swap)
+- src/editor/script/edit_script_sandbox.c (Lua sandbox setup)
+- src/editor/script/edit_script_rebase.c (apply entity updates onto tick state)
 - tests/editor/edit_script_runtime_tests.c
 

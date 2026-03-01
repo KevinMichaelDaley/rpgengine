@@ -40,9 +40,13 @@ src/editor/
 │   ├── undo_stack.c           # command pattern undo/redo
 │   └── undo_stack.h
 ├── script/
-│   ├── script_runtime.c       # Lua state management (runs on main tick thread)
+│   ├── script_runtime.c       # Script thread + Lua state (dedicated pthread)
 │   ├── script_runtime.h
-│   ├── script_api_entity.c    # entity manipulation bindings
+│   ├── script_env.c           # script_env_t setup, snapshot copy, update swap
+│   ├── script_sandbox.c       # Lua sandbox (strip os/io/ffi/debug)
+│   ├── script_native.c        # Native script function registry + dispatch
+│   ├── script_rebase.c        # Rebase script entity updates onto tick state
+│   ├── script_api_entity.c    # entity manipulation bindings (Lua ↔ env)
 │   ├── script_api_math.c      # vec3, quat, noise bindings
 │   ├── script_api_texture.c   # texsynth bindings
 │   └── script_api_cursor.c    # cursor/grid bindings
@@ -113,7 +117,7 @@ include/ferrum/editor/
 | `editor_cursor.h` | `editor_cursor_t`, `editor_grid_t` |
 | `asset_registry.h` | `asset_entry_t`, `asset_query_t` |
 | `texsynth.h` | `texsynth_workspace_t`, `texsynth_layer_t` |
-| `script.h` | `script_runtime_t`, `script_result_t` |
+| `script.h` | `script_runtime_t`, `script_env_t` |
 
 ---
 
@@ -567,74 +571,225 @@ editor_undo(ctx);
 
 ## 6. Script Runtime
 
-### 6.1 LuaJIT Integration
+### 6.1 Architecture Overview
 
-LuaJIT 2.1 is embedded as a static library. It provides Lua 5.1 semantics
-with a JIT compiler and FFI, giving near-C performance for procedural
-generation scripts. The runtime runs exclusively on the **main tick thread**
-during command drain (Stage 1 of the server tick). It never runs on fibers —
-this avoids the Lua coroutine / fiber stack incompatibility (see spec §2.5).
+The script runtime executes on a **dedicated script thread** (not the main
+tick thread, not on fibers). It reads entity state from a read-only snapshot,
+executes Lua or native C code through a unified interface, and produces an
+array of **entity updates** that get rebased on top of physics and native
+game logic updates during the main tick's commit phase.
+
+This design achieves three goals:
+1. **Decoupled execution**: scripts never block physics or networking
+2. **Safe concurrency**: scripts read a frozen snapshot, not live state
+3. **Native parity**: C code using the same `script_env_t` interface runs
+   at full speed without LuaJIT overhead — useful for shipping game logic
+   that was prototyped in Lua
+
+### 6.2 Core Types
 
 ```c
+/* A single entity delta produced by script execution */
+typedef struct script_entity_update {
+    uint32_t entity_id;
+    uint32_t flags;             /* bitmask: SCRIPT_UPD_POS, _ROT, _SCALE, etc. */
+    float pos[3];
+    float rot[3];
+    float scale[3];
+    /* Additional fields as needed (materials, mesh ops, etc.) */
+} script_entity_update_t;
+
+/* Double-buffered update array: script writes to back, tick reads from front */
+typedef struct script_update_buffer {
+    script_entity_update_t *updates[2]; /* [0]=front (tick reads), [1]=back (script writes) */
+    uint32_t count[2];
+    uint32_t capacity;
+    _Alignas(64) atomic_uint ready;     /* set by script thread after swap */
+} script_update_buffer_t;
+
+/* Read-only entity snapshot consumed by the script thread */
+typedef struct script_entity_snapshot {
+    uint32_t entity_id;
+    uint8_t  active;
+    uint8_t  type;              /* shape type enum */
+    char     name[256];
+    float    pos[3];
+    float    rot[3];
+    float    scale[3];
+} script_entity_snapshot_t;
+
+typedef struct script_entity_view {
+    const script_entity_snapshot_t *entities;
+    uint32_t count;
+    uint32_t capacity;
+} script_entity_view_t;
+
+/* Unified environment exposed to both Lua and native scripts */
+typedef struct script_env {
+    /* Read-only entity state (snapshot from last tick) */
+    script_entity_view_t entities;
+
+    /* Write: entity updates produced this tick */
+    script_entity_update_t *updates;
+    uint32_t update_count;
+    uint32_t update_capacity;
+
+    /* Write: edit commands (spawn, delete, group, etc.) */
+    edit_cmd_ring_t *cmd_ring;  /* SPSC ring → main tick thread */
+
+    /* Context: cursor, selection, aliases (read-only snapshot) */
+    float cursor_pos[3];
+    float cursor_rot[3];
+    uint32_t selection_ids[64];
+    uint32_t selection_count;
+
+    /* Back-pointer for internal use */
+    struct script_runtime *runtime;
+} script_env_t;
+
 typedef struct script_runtime {
-    lua_State *L;               /* LuaJIT state */
-    editor_ctx_t *editor;       /* back-pointer to editor context */
-    uint32_t instruction_budget; /* max Lua VM instructions per tick (default 100K) */
-    uint32_t instructions_used; /* instructions consumed this tick */
-    bool continuation_pending;  /* true if a script is mid-execution across ticks */
+    /* Thread */
+    pthread_t thread;
+    atomic_bool running;
+    atomic_bool request_stop;
+
+    /* LuaJIT (NULL when running native-only) */
+    lua_State *L;
+
+    /* Double-buffered update exchange */
+    script_update_buffer_t update_buf;
+
+    /* Entity snapshot (written by tick thread, read by script thread) */
+    script_entity_snapshot_t *snapshot;
+    uint32_t snapshot_count;
+    uint32_t snapshot_capacity;
+    _Alignas(64) atomic_uint snapshot_seq; /* incremented by tick after write */
+    uint32_t last_consumed_seq;            /* script thread's last-read seq */
+
+    /* Edit commands from script → main tick */
+    edit_cmd_ring_t cmd_ring;
+
+    /* Unified environment (owned by script thread) */
+    script_env_t env;
+
+    /* Budget */
+    uint32_t instruction_budget; /* default 100K per tick */
+    bool continuation_pending;
+
+    /* Memory */
+    void *arena;                /* 8 MB arena for Lua allocator */
+    size_t arena_size;
 } script_runtime_t;
 ```
 
-### 6.2 Execution Model: Instruction-Budgeted Per-Tick
+### 6.3 Execution Model: Threaded Double-Buffer
 
-Scripts do NOT run on fibers. Instead, the main tick thread calls the script
-runtime during command drain. Execution is instruction-limited via
-`lua_sethook(L, budget_hook, LUA_MASKCOUNT, budget)`.
+The script thread runs a loop synchronized to the server tick rate:
 
-**Single-frame scripts** (e.g., `eval "spawn_box({0,0,0}, {1,1,1})"`) run
-to completion within the budget and return a result.
+```
+Main tick thread                    Script thread
+────────────────                    ─────────────
+Stage 1: command drain
+  ├── drain I/O cmd ring
+  ├── drain script cmd ring  ←───── script submits edit cmds
+  ├── apply script entity    ←───── read front update buffer
+  │   updates (rebase)
+  ├── snapshot entities ─────────→ write entity snapshot
+  │   (copy active entities        (atomic seq bump)
+  │    to snapshot array)
+  └── signal snapshot ready
 
-**Multi-frame scripts** (e.g., `run "build_castle.lua"`) use Lua coroutines:
+Stage 2-N: physics, networking
+
+                                    ┌── wait for new snapshot seq
+                                    ├── copy snapshot → env.entities
+                                    ├── execute script (Lua or native)
+                                    │   ├── read env.entities (frozen)
+                                    │   ├── write env.updates[]
+                                    │   └── push edit cmds to ring
+                                    ├── swap update back→front
+                                    └── loop
+```
+
+**Rebasing**: when the main tick thread reads the script's entity updates,
+it applies them on top of the current authoritative state. If physics moved
+body #7 to (1,2,3) and the script says "set body #7 to (4,5,6)", the script
+wins for the fields it updated. If the script only updated rotation, position
+is left at the physics result. The `flags` bitmask in `script_entity_update_t`
+controls which fields are applied.
+
+**Ordering**: edit commands submitted via `cmd_ring` (spawn, delete, group,
+etc.) are drained in Stage 1 alongside I/O commands. Entity updates from the
+`update_buf` are applied after all commands are drained, so spawned entities
+are visible in the next snapshot.
+
+### 6.4 Native Code Path
+
+The `script_env_t` interface is backend-agnostic. A native C function with
+this signature can run instead of (or alongside) Lua:
 
 ```c
-/* Called each tick during command drain to advance running scripts */
-void script_runtime_tick(script_runtime_t *rt) {
-    if (!rt->continuation_pending) return;
+/* Native script function — same access pattern as Lua */
+typedef void (*script_native_fn)(script_env_t *env, void *userdata);
 
-    /* Reset budget for this tick */
-    rt->instructions_used = 0;
-    lua_sethook(rt->L, budget_hook_, LUA_MASKCOUNT, rt->instruction_budget);
+/* Register a native tick function (runs every tick on script thread) */
+void script_runtime_register_native(script_runtime_t *rt,
+                                     script_native_fn fn,
+                                     void *userdata);
+```
 
-    int status = lua_resume(rt->L, NULL, 0);
+Example native script:
 
-    if (status == LUA_YIELD) {
-        /* Script voluntarily yielded (e.g., coroutine.yield() or budget hit).
-         * Will resume next tick. */
-        rt->continuation_pending = true;
-    } else if (status == LUA_OK) {
-        rt->continuation_pending = false;
-    } else {
-        const char *err = lua_tostring(rt->L, -1);
-        editor_log_error(rt->editor, "Script error: %s", err);
-        rt->continuation_pending = false;
+```c
+/* Native: rotate all selected entities 1° per tick */
+static void rotate_selected(script_env_t *env, void *ud) {
+    (void)ud;
+    for (uint32_t i = 0; i < env->selection_count; i++) {
+        uint32_t id = env->selection_ids[i];
+        /* Find entity in snapshot */
+        for (uint32_t j = 0; j < env->entities.count; j++) {
+            if (env->entities.entities[j].entity_id == id) {
+                script_entity_update_t *u = &env->updates[env->update_count++];
+                u->entity_id = id;
+                u->flags = SCRIPT_UPD_ROT;
+                u->rot[0] = env->entities.entities[j].rot[0];
+                u->rot[1] = env->entities.entities[j].rot[1] + 1.0f;
+                u->rot[2] = env->entities.entities[j].rot[2];
+                break;
+            }
+        }
     }
-}
-
-/* Hook function — fires every N instructions to enforce budget */
-static void budget_hook_(lua_State *L, lua_Debug *ar) {
-    (void)ar;
-    script_runtime_t *rt = get_runtime_from_lua_(L);
-    rt->instructions_used += rt->instruction_budget;
-    /* Force yield by raising a "budget exhausted" condition */
-    lua_yield(L, 0);
 }
 ```
 
-The key invariant: **Lua state is only touched from the main tick thread.**
-Coroutine yield/resume operates on the Lua stack only — no C stack switch,
-no fiber interaction.
+When shipping, Lua scripts can be "compiled" to native functions that use
+the same `script_env_t` reads/writes. The runtime switches transparently.
 
-### 6.3 REPL Continuation Detection
+### 6.5 LuaJIT Integration
+
+LuaJIT 2.1 is embedded as a static library (built from `extern/luajit/`).
+It provides Lua 5.1 semantics with a JIT compiler. The Lua state lives
+entirely on the script thread — no cross-thread Lua access.
+
+Lua scripts access entities through the `script_env_t` via registered C
+functions:
+
+```c
+/* Lua: local entities = get_entities() → table of entity snapshots */
+/* Lua: update_entity(id, {pos={x,y,z}}) → queue update */
+/* Lua: submit_command("move", {entity_id=5, pos={1,2,3}}) → edit cmd */
+```
+
+**Instruction budget** is still enforced via `lua_sethook` for multi-frame
+scripts. When budget is exhausted, the hook sets a flag and returns —
+the script thread's loop picks up from the coroutine next tick.
+
+**Multi-frame scripts** use Lua coroutines. The script thread's loop calls
+`lua_resume()` each tick, passing the updated `script_env_t`. When the
+coroutine yields (voluntarily or via budget), the loop swaps buffers and
+waits for the next snapshot.
+
+### 6.6 REPL Continuation Detection
 
 When the controller sends `eval` or `repl` input, the server must detect
 whether the Lua code is syntactically incomplete (e.g., `function foo()`
@@ -655,41 +810,20 @@ bool script_is_complete(script_runtime_t *rt, const char *input) {
 }
 ```
 
-The server returns `"status": "incomplete"` in the JSON response, and the
-controller shows a `...>` continuation prompt (see UX §3.4).
+Note: `script_is_complete` is called on the script thread (it touches `rt->L`).
+The I/O thread enqueues the eval request; the script thread checks completeness
+and either executes or returns `"status": "incomplete"`.
 
-### 6.4 C → Lua API Binding Pattern
-
-Each API function follows the same pattern. Commands are **deferred** — they
-enqueue into the undo-recording command buffer (not immediate mutation):
-
-```c
-/* Lua: spawn_box(pos, size) → request_id (entity created at next drain) */
-static int l_spawn_box_(lua_State *L) {
-    script_runtime_t *rt = lua_touserdata(L, lua_upvalueindex(1));
-
-    vec3_t pos = l_check_vec3_(L, 1);
-    vec3_t size = l_check_vec3_(L, 2);
-
-    spawn_desc_t desc = {
-        .type = SPAWN_BOX,
-        .position = pos,
-        .size = size,
-    };
-
-    uint32_t req_id = editor_request_spawn(rt->editor, &desc);
-    lua_pushinteger(L, req_id);
-    return 1;
-}
-```
-
-### 6.5 Safety
+### 6.7 Safety
 
 - Scripts run in a sandboxed Lua state (no `os.execute`, `io`, `loadlib`)
+- FFI is DISABLED — scripts cannot access arbitrary memory
 - Memory limit enforced via custom allocator (arena-backed, 8 MB default)
-- Instruction count limit prevents blocking the tick (via `lua_sethook`)
-- Scripts cannot directly access C pointers (FFI is disabled in sandbox)
-- Multi-frame scripts must explicitly yield; budget hook forces yield if not
+- Instruction count limit prevents runaway scripts (via `lua_sethook`)
+- Entity reads are from a frozen snapshot (no race with physics)
+- Entity writes go through the update buffer (rebased by tick thread)
+- Edit commands go through SPSC ring (same mechanism as I/O commands)
+- The script thread never touches live entity store directly
 
 ---
 
@@ -1075,18 +1209,18 @@ build/editor_ctrl: $(CTRL_OBJS)
 
 ### 10.2 LuaJIT Integration
 
-LuaJIT 2.1 is built from source as part of the project (in `third_party/luajit/`).
+LuaJIT 2.1 is built from source as a git submodule (in `extern/luajit/`).
 This avoids system dependency issues and keeps the build self-contained.
 
 ```makefile
-LUAJIT_DIR = third_party/luajit/src
+LUAJIT_DIR = extern/luajit/src
 LUAJIT_LIB = $(LUAJIT_DIR)/libluajit.a
 
 $(LUAJIT_LIB):
 	$(MAKE) -C $(LUAJIT_DIR) BUILDMODE=static CC=$(CC)
 
-# Link against libluajit.a + libm + libdl
-LUAJIT_LDFLAGS = -L$(LUAJIT_DIR) -lluajit -lm -ldl
+# Link against libluajit.a + libm + libdl (order matters: -lm after -lluajit)
+LUAJIT_LDFLAGS = -L$(LUAJIT_DIR) -lluajit -ldl -lm
 ```
 
 ---
@@ -1100,9 +1234,11 @@ Main tick thread
   │
   ├── Stage 1 (command drain):
   │     ├── Drain SPSC command ring (edit commands from I/O thread)
+  │     ├── Drain SPSC command ring (edit commands from script thread)
   │     ├── Execute entity mutations (spawn, delete, move, etc.)
+  │     ├── Apply script entity updates (rebase on top of physics)
   │     ├── Record undo entries
-  │     └── script_runtime_tick() — advance Lua scripts (budgeted)
+  │     └── Snapshot entities → script thread's snapshot buffer
   │
   ├── Stage 2-N: Physics, networking, etc. (existing pipeline)
   │
@@ -1112,7 +1248,7 @@ Main tick thread
   └── Net pump thread (existing)
         └── UDP recv loop
 
-Editor I/O thread (NEW, dedicated pthread)
+Editor I/O thread (dedicated pthread)
   │
   ├── epoll-based event loop
   ├── Accepts edit protocol connections (TCP)
@@ -1120,28 +1256,43 @@ Editor I/O thread (NEW, dedicated pthread)
   ├── Reads JSON commands from controllers → enqueue into SPSC command ring
   ├── Reads response ring → sends JSON responses to controllers
   └── Handles asset file transfers inline
+
+Script thread (dedicated pthread)
+  │
+  ├── Waits for new entity snapshot (atomic seq check)
+  ├── Copies snapshot into script_env_t (read-only view)
+  ├── Executes Lua scripts and/or native tick functions
+  │     ├── Reads entity state from frozen snapshot
+  │     ├── Writes entity updates to back buffer
+  │     └── Pushes edit commands to SPSC ring → main tick
+  ├── Swaps update buffer (back→front, atomic ready flag)
+  └── Loops
 ```
 
 **Key invariants:**
 - Only the I/O thread touches TCP sockets (matches engine rule: "only I/O
   thread touches sockets")
 - Only the main tick thread mutates world state (commands drained in Stage 1)
-- The SPSC command ring is the sole synchronization point (lock-free)
-- Lua scripts run on the main tick thread, never on fibers
-- Asset downloads are I/O-bound and handled inline on the I/O thread
+- Script thread never touches live entity store — reads snapshot, writes updates
+- Lua state is only accessed from the script thread (never main tick, never I/O)
+- Entity updates from scripts are rebased on top of physics results
+- SPSC rings are the sole synchronization mechanism (lock-free)
 
 ### 11.2 Synchronization
 
-No locks in the hot path. The only cross-thread communication is:
+No locks in the hot path. Cross-thread communication:
 
 | Producer | Consumer | Mechanism |
 |----------|----------|-----------|
 | I/O thread | Main tick thread | SPSC command ring (lock-free) |
 | Main tick thread | I/O thread | SPSC response ring (lock-free) |
+| Script thread | Main tick thread | SPSC command ring (lock-free) |
+| Script thread | Main tick thread | Double-buffered entity update array (atomic swap) |
+| Main tick thread | Script thread | Entity snapshot array (atomic sequence number) |
 
-Both rings are bounded (capacity 1024 commands, 1024 responses). If the
-command ring is full, the I/O thread returns an error to the controller
-("server busy, command dropped"). This prevents unbounded buffering.
+All rings are bounded (capacity 1024). The double-buffered update array and
+snapshot array use atomic sequence numbers for synchronization — no locks,
+no condition variables in the hot path.
 
 ### 11.3 Client-Side Threading
 
@@ -1189,9 +1340,13 @@ arrive at <100/sec and never block rendering.
 - [ ] Clone command
 
 ### Phase 3: Scripting
-- [ ] LuaJIT 2.1 integration (third_party/luajit/)
-- [ ] Script runtime on main tick thread (instruction-budgeted)
-- [ ] Entity manipulation API bindings (deferred execution)
+- [x] LuaJIT 2.1 integration (extern/luajit/ submodule, LUAJIT=1 build flag)
+- [ ] Script runtime core (dedicated thread, double-buffered entity updates)
+- [ ] Script environment (script_env_t, entity snapshot, update buffer, cmd ring)
+- [ ] Script sandbox (strip os/io/ffi/debug from Lua state)
+- [ ] Script rebase (apply entity updates on top of physics/game state)
+- [ ] Native script function registry (C functions with same script_env_t interface)
+- [ ] Entity manipulation API bindings (Lua ↔ script_env_t)
 - [ ] Math/vec3/quat bindings
 - [ ] run/eval commands
 - [ ] REPL mode (with server-side continuation detection)
