@@ -45,6 +45,7 @@ ifeq ($(TRACY),1)
 	MEM_SRC += $(MEM_TRACY_WRAP_SRC)
 endif
 ECS_SRC := $(wildcard src/ecs/*.c)
+ENTITY_SRC := $(wildcard src/entity/*.c)
 RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_VIDEO_CAPTURE_SRC := $(wildcard src/renderer/video_capture/*.c)
@@ -62,7 +63,7 @@ PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard
 MESH_SRC := $(wildcard src/mesh/*.c)
 ENGINE_SRC := src/engine_settings.c
 EDITOR_SRC := $(wildcard src/editor/*.c) $(wildcard src/editor/*/*.c) $(wildcard src/editor/*/*/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(RENDERER_DEBUG_LINES_SRC)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(RENDERER_DEBUG_LINES_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -236,6 +237,8 @@ endif
 ifeq ($(LUAJIT),1)
 BIN_HEADLESS += build/luajit_smoke_tests
 endif
+
+BIN_HEADLESS += build/entity_attrs_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -796,6 +799,10 @@ build/p010_tracy_alloc_override_tests: build/libheadless.a tests/p010_tracy_allo
 build/luajit_smoke_tests: $(LUAJIT_LIB) tests/editor/luajit_smoke_tests.c | build
 	$(CC) $(CFLAGS) tests/editor/luajit_smoke_tests.c -o $@ $(LUAJIT_LDFLAGS) $(LDFLAGS)
 
+ENTITY_ATTRS_TEST_SRC := tests/entity/entity_attrs_tests.c $(wildcard src/entity/*.c)
+build/entity_attrs_tests: $(ENTITY_ATTRS_TEST_SRC) include/ferrum/entity/entity_attrs.h | build
+	$(CC) $(CFLAGS) tests/entity/entity_attrs_tests.c $(wildcard src/entity/*.c) -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -996,7 +1003,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p008_server_loop_integration_tests \
 	&& ./build/p011_renderer_correction_debug_lines_tests \
 	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests ) \
-	&& ( [ "$(LUAJIT)" != "1" ] || ./build/luajit_smoke_tests )
+	&& ( [ "$(LUAJIT)" != "1" ] || ./build/luajit_smoke_tests ) \
+	&& ./build/entity_attrs_tests
 
 TEST_TIMEOUT ?= 20
 

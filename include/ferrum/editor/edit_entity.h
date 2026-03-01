@@ -19,6 +19,8 @@ extern "C" {
 #include <stddef.h>
 #include <stdint.h>
 
+#include "ferrum/entity/entity_attrs.h"
+
 /* ------------------------------------------------------------------------ */
 /* Constants                                                                 */
 /* ------------------------------------------------------------------------ */
@@ -64,6 +66,8 @@ typedef struct edit_entity {
     char     name[EDIT_ENTITY_NAME_MAX]; /**< Optional display name (empty = unnamed). */
     /** Material slot paths (empty = no material assigned). */
     char     materials[EDIT_MATERIAL_SLOT_COUNT][EDIT_MATERIAL_PATH_MAX];
+    /** Dynamic key-value attributes for gameplay scripts. */
+    entity_attrs_t attrs;
 } edit_entity_t;
 
 /**
