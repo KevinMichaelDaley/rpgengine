@@ -1,6 +1,6 @@
 ---
 id: rpg-i1az
-status: open
+status: closed
 deps: [rpg-yspo]
 links: []
 created: 2026-03-01T09:58:49Z

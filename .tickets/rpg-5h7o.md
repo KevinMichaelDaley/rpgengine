@@ -1,6 +1,6 @@
 ---
 id: rpg-5h7o
-status: open
+status: closed
 deps: [rpg-i1az, rpg-fiwu]
 links: []
 created: 2026-03-01T09:58:49Z

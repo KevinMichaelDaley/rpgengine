@@ -228,6 +228,15 @@ endif
 
 BIN_HEADLESS += build/entity_attrs_tests
 BIN_HEADLESS += build/edit_script_env_tests
+BIN_HEADLESS += build/aegis_types_tests
+BIN_HEADLESS += build/aegis_memory_tests
+BIN_HEADLESS += build/aegis_decode_tests
+BIN_HEADLESS += build/aegis_ops_arith_tests
+BIN_HEADLESS += build/aegis_ops_flow_tests
+BIN_HEADLESS += build/aegis_ops_data_tests
+BIN_HEADLESS += build/aegis_ops_math_tests
+BIN_HEADLESS += build/aegis_yield_tests
+BIN_HEADLESS += build/aegis_vm_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -784,6 +793,39 @@ build/entity_attrs_tests: $(ENTITY_ATTRS_TEST_SRC) include/ferrum/entity/entity_
 build/edit_script_env_tests: tests/editor/edit_script_env_tests.c build/libheadless.a | build
 	$(CC) $(CFLAGS) tests/editor/edit_script_env_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/aegis_types_tests: tests/aegis/test_aegis_types.c include/ferrum/aegis/aegis_types.h include/ferrum/aegis/aegis_bytecode.h include/ferrum/aegis/aegis_config.h | build
+	$(CC) $(CFLAGS) tests/aegis/test_aegis_types.c -o $@ $(LDFLAGS)
+
+build/aegis_memory_tests: tests/aegis/aegis_memory_tests.c src/aegis/aegis_memory.c include/ferrum/aegis/aegis_memory.h include/ferrum/aegis/aegis_types.h | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_memory_tests.c src/aegis/aegis_memory.c -o $@ $(LDFLAGS)
+
+build/aegis_decode_tests: tests/aegis/aegis_decode_tests.c src/aegis/aegis_decode.c include/ferrum/aegis/aegis_decode.h include/ferrum/aegis/aegis_types.h | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_decode_tests.c src/aegis/aegis_decode.c -o $@ $(LDFLAGS)
+
+AEGIS_ARITH_SRC := $(wildcard src/aegis/ops/aegis_ops_arith*.c) $(wildcard src/aegis/ops/aegis_ops_compare*.c) $(wildcard src/aegis/ops/aegis_ops_convert*.c)
+build/aegis_ops_arith_tests: tests/aegis/aegis_ops_arith_tests.c $(AEGIS_ARITH_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_arith_tests.c $(AEGIS_ARITH_SRC) -o $@ $(LDFLAGS)
+
+AEGIS_FLOW_SRC := $(wildcard src/aegis/ops/aegis_ops_flow*.c) src/aegis/aegis_memory.c
+build/aegis_ops_flow_tests: tests/aegis/aegis_ops_flow_tests.c $(AEGIS_FLOW_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_flow_tests.c $(AEGIS_FLOW_SRC) -o $@ $(LDFLAGS)
+
+build/aegis_ops_data_tests: tests/aegis/aegis_ops_data_tests.c src/aegis/ops/aegis_ops_data.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_data_tests.c src/aegis/ops/aegis_ops_data.c -o $@ $(LDFLAGS)
+
+AEGIS_MATH_SRC := $(wildcard src/aegis/ops/aegis_ops_vec3*.c) src/aegis/ops/aegis_ops_quat.c
+build/aegis_ops_math_tests: tests/aegis/aegis_ops_math_tests.c $(AEGIS_MATH_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_math_tests.c $(AEGIS_MATH_SRC) -o $@ $(LDFLAGS)
+
+AEGIS_VM_SRC := src/aegis/aegis_vm_init.c src/aegis/aegis_yield.c src/aegis/aegis_memory.c
+build/aegis_yield_tests: tests/aegis/aegis_yield_tests.c $(AEGIS_VM_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_yield_tests.c $(AEGIS_VM_SRC) -o $@ $(LDFLAGS)
+
+AEGIS_ALL_SRC := $(AEGIS_VM_SRC) src/aegis/aegis_vm_run.c src/aegis/aegis_decode.c \
+	$(wildcard src/aegis/ops/*.c)
+build/aegis_vm_tests: tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -985,7 +1027,16 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p011_renderer_correction_debug_lines_tests \
 	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests ) \
 	&& ./build/entity_attrs_tests \
-	&& ./build/edit_script_env_tests
+	&& ./build/edit_script_env_tests \
+	&& ./build/aegis_types_tests \
+	&& ./build/aegis_memory_tests \
+	&& ./build/aegis_decode_tests \
+	&& ./build/aegis_ops_arith_tests \
+	&& ./build/aegis_ops_flow_tests \
+	&& ./build/aegis_ops_data_tests \
+	&& ./build/aegis_ops_math_tests \
+	&& ./build/aegis_yield_tests \
+	&& ./build/aegis_vm_tests
 
 TEST_TIMEOUT ?= 20
 
