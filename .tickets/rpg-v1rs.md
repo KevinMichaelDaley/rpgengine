@@ -1,6 +1,6 @@
 ---
 id: rpg-v1rs
-status: open
+status: closed
 deps: [rpg-eccf, rpg-dvgo, rpg-vmlk]
 links: []
 created: 2026-03-01T05:35:41Z

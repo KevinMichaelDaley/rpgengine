@@ -1,6 +1,6 @@
 ---
 id: rpg-ktq6
-status: open
+status: closed
 deps: [rpg-8hc1]
 links: []
 created: 2026-03-01T09:58:49Z
