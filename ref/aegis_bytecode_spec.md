@@ -110,7 +110,7 @@ This maps directly to the engine's `script_env_write_attr()` for applying update
 
 - **Register-based**: 256 general-purpose registers, each 128 bits wide
 - **Fixed-width instructions**: 128 bits (4 × uint32_t words)
-- **Per-script arena memory**: bounds-checked on every access, reset on yield
+- **Structured memory**: static array + call stack + heap arena (see §3.6)
 - **Content-addressable**: statistical canonicalization enables similarity detection
 
 **Register layout** (128 bits / 16 bytes each):
@@ -263,14 +263,18 @@ jmp_if       r_cond, label     — jump if r_cond is truthy (nonzero)
 jmp_if_not   r_cond, label     — jump if r_cond is falsy (zero)
 ```
 
-**Memory (per-script arena, bounds-checked on every access):**
+**Memory (bounds-checked on every access; see §3.6 for layout):**
 ```
-alloc        r_dst, size       — bump-allocate from script arena; r_dst = offset
+alloc        r_dst, size       — bump-allocate from heap arena; r_dst = offset
 load         r_dst, r_base, off — load 16 bytes from arena[r_base + off]
 store        r_base, off, r_val — store 16 bytes to arena[r_base + off]
+static_load  r_dst, off        — load 16 bytes from static array at offset
+static_store off, r_val        — store 16 bytes to static array at offset
+push         r_val             — push register onto call stack
+pop          r_dst             — pop top of call stack into register
 ```
 
-No `free` instruction — the script arena is reset on each `yield`. Multi-yield scripts that accumulate state use registers and the continuation serializer.
+No `free` instruction. The **heap arena** is reset on each explicit `yield` instruction. It is **not** reset on force-yields (fuel exhaustion) or implicit yields from `wait` — this allows async results and in-progress computations to survive across tick boundaries. The **static array** persists for the entire lifetime of the script. The **call stack** is part of continuation state and persists across all yield types.
 
 **Type conversion:**
 ```
@@ -339,7 +343,7 @@ Async operations (`vis_test`, `nav_query`) follow a lock-free producer-consumer 
 **1. Submission (script fiber):**
 
 When the VM executes an async instruction (e.g., `vis_test`):
-- Allocates a result slot in the script's arena (owned by the calling fiber)
+- Allocates a result slot in the script's **heap arena** (owned by the calling fiber; survives wait-yields since heap is not reset on `wait`)
 - Builds an `aegis_async_task_t` with parameters and a pointer to the result slot
 - Enqueues the task into the world subsystem's **async task buffer** (lock-free MPSC ring)
 - Stores a handle (task index) in the destination register
@@ -348,7 +352,7 @@ When the VM executes an async instruction (e.g., `vis_test`):
 typedef struct aegis_async_task {
     _Atomic uint32_t status;       /* AEGIS_ASYNC_PENDING → COMPLETE | ERROR */
     uint32_t         task_type;    /* AEGIS_TASK_VIS_TEST, AEGIS_TASK_NAV, etc. */
-    void            *result_ptr;   /* Points into script arena (fiber-owned). */
+    void            *result_ptr;   /* Points into script heap arena (fiber-owned, survives wait). */
     uint32_t         result_cap;   /* Pre-allocated result capacity. */
     uint8_t          params[64];   /* Task-specific input parameters. */
 } aegis_async_task_t;
@@ -382,6 +386,59 @@ The world subsystem drains its async task buffer on each tick (or continuously) 
 - If complete or error: behaves like `poll` and advances past the instruction
 
 This ensures async queries never block the fiber scheduler and integrate cleanly with `job_dispatch` / `job_yield`.
+
+### 3.6 Script Memory Layout
+
+Each script instance owns a single contiguous memory region (the **script fiber arena**), divided into three fixed zones. All access is bounds-checked; overflow in any zone causes the script to `exit` with an error.
+
+```
+┌────────────────────────────┐ ← arena base
+│  Static Array Space        │  Declared at script init (.static directive)
+│  (configurable limit)      │  Persists from first resume until exit/death
+│                            │  The ONLY mutable state that survives yield
+│                            │  Not resizable after initialization
+├────────────────────────────┤ ← static_end
+│  Call Stack                │  Fixed capacity (grows downward)
+│  (return addresses +       │  Holds local variables and call frames
+│   local variables)         │  Persists across force-yield and wait
+│                            │  Must be at depth 0 for explicit yield
+├────────────────────────────┤ ← stack_limit / heap_base
+│  Heap Arena                │  Bump allocator (alloc instruction)
+│  (transient allocations)   │  Reset on explicit yield instruction ONLY
+│                            │  NOT reset on force-yield or wait
+│                            │  Async result slots live here
+│                            │  Bounds-checked on every alloc/load/store
+└────────────────────────────┘ ← arena limit
+```
+
+**Static array space:**
+- Declared at the beginning of the script with a `.static size` directive
+- Size is fixed at compile time; the server enforces a configurable maximum that accounts for `(max_scripts × static_size) + overhead` fitting within the total memory budget
+- Accessed via `static_load` / `static_store` instructions (offset-based, bounds-checked)
+- This is the only mutable internal state of the script — all persistent variables (counters, accumulators, cached entity IDs, state machines) live here
+- Initialized to zero on first execution
+
+**Call stack:**
+- Fixed capacity (configurable, default 4 KB)
+- Stores return addresses for `call`/`ret` and local variables via `push`/`pop`
+- Part of the continuation state — survives force-yields and `wait` yields
+- On explicit `yield`, call depth must be zero (yielding from inside a function is a validation error)
+- Stack overflow causes script exit with error (not a security issue — bounds-checked)
+
+**Heap arena:**
+- Bump allocator for transient data (`alloc` instruction)
+- **Reset on explicit `yield` only** — this is critical because:
+  - `wait` implicitly yields the fiber but async result slots (allocated in the heap) must survive until the script reads them via `poll`
+  - Force-yields (fuel exhaustion) interrupt mid-computation; destroying the heap would corrupt in-progress work
+  - Long-running scripts that span many ticks via `wait` chains accumulate heap state naturally
+- Since all heap access is bounds-checked, there is no risk of overrun even without periodic resets
+- Scripts that need persistent mutable state use the static array, not the heap
+
+**Why this three-zone design:**
+- The static array provides controlled persistent state without unbounded growth
+- The call stack enables proper function call semantics for the eventual scripting language
+- The heap arena gives scripts scratch space without requiring manual memory management
+- Force-yielding (fuel exhaustion) enables long, slow scripts to be written as simple loop bodies without manually timing yield points — the VM handles preemption transparently, and the script's heap/stack state is intact when it resumes
 
 ---
 
@@ -489,16 +546,26 @@ Every script MUST yield at least once per server tick. This prevents:
 - **Scheduler starvation**: other scripts and engine systems get time
 - **State inconsistency**: long-running scripts see stale world state
 
+**Three kinds of yield:**
+
+| Type | Trigger | Heap reset? | Call stack preserved? | Fuel reset? |
+|------|---------|-------------|----------------------|-------------|
+| Explicit `yield` | Script executes `yield` instruction | **Yes** | Must be at depth 0 | Yes |
+| Force-yield | Fuel exhausted or wall-time exceeded | **No** | Yes (continuation) | Yes |
+| Wait-yield | `wait` polls pending async task | **No** | Yes (continuation) | No (resumes same budget) |
+
+Force-yielding is the key mechanism that allows scripts to be written as simple loop bodies. A script that iterates over many entities doesn't need to manually insert yield points — the fuel counter handles preemption, and the script's full state (registers, call stack, heap) is intact when it resumes. This is a significant advantage over coroutine-based scripting where the programmer must carefully manage yield placement.
+
 **Enforcement — fuel metering (primary):**
 1. Each instruction decrements a fuel counter
-2. `yield` resets the fuel counter
-3. Out-of-fuel triggers forced yield (not error — prevents DoS)
-4. Forced-yield scripts are flagged for review
+2. Explicit `yield` resets the fuel counter
+3. Out-of-fuel triggers force-yield (not error — transparent preemption)
+4. Force-yielded scripts resume exactly where they left off, with heap and stack intact
 
 **Enforcement — wall-time backstop (secondary):**
 1. Engine records `clock_gettime` before `resume`
 2. Every N instructions (configurable, default 256), VM checks elapsed wall-time
-3. If budget exceeded (configurable, default 1 ms), force yield and flag
+3. If budget exceeded (configurable, default 1 ms), force-yield and flag
 4. This catches cases where individual instructions are unexpectedly expensive
 
 Fuel is the primary mechanism (deterministic, no syscall overhead). Wall-time is a safety net for pathological cases.
@@ -507,12 +574,16 @@ Fuel is the primary mechanism (deterministic, no syscall overhead). Wall-time is
 
 | Resource | Limit | Enforcement |
 |----------|-------|-------------|
-| Arena memory per script | Configurable (default 64 KB) | Bounds check on `alloc` |
-| Call stack depth | 256 frames | Counter on `call` |
+| Total arena per script | Configurable (default 64 KB) | Fixed at script init |
+| Static array per script | Configurable (default 4 KB) | Declared at compile time, server-enforced max |
+| Call stack per script | Configurable (default 4 KB) | Bounds check on `push` / `call` |
+| Heap arena per script | Remainder of arena after static + stack | Bounds check on `alloc` |
+| Call stack depth | 256 frames | Counter on `call`, must be 0 at explicit `yield` |
 | Fuel per yield | Configurable (default 10000) | Decremented per instruction |
 | Wall-time per tick | Configurable (default 1 ms) | Checked every 256 instructions |
 | Updates per yield | 1024 | Hard limit on `push_update` |
 | Async tasks per yield | 16 | Hard limit on `vis_test` / `nav_query` |
+| Max concurrent scripts | Configurable | `max_scripts × arena_size` must fit memory budget |
 
 ---
 
