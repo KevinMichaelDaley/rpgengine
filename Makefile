@@ -239,6 +239,7 @@ BIN_HEADLESS += build/luajit_smoke_tests
 endif
 
 BIN_HEADLESS += build/entity_attrs_tests
+BIN_HEADLESS += build/edit_script_env_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -803,6 +804,9 @@ ENTITY_ATTRS_TEST_SRC := tests/entity/entity_attrs_tests.c $(wildcard src/entity
 build/entity_attrs_tests: $(ENTITY_ATTRS_TEST_SRC) include/ferrum/entity/entity_attrs.h | build
 	$(CC) $(CFLAGS) tests/entity/entity_attrs_tests.c $(wildcard src/entity/*.c) -o $@ $(LDFLAGS)
 
+build/edit_script_env_tests: tests/editor/edit_script_env_tests.c build/libheadless.a | build
+	$(CC) $(CFLAGS) tests/editor/edit_script_env_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -1004,7 +1008,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p011_renderer_correction_debug_lines_tests \
 	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests ) \
 	&& ( [ "$(LUAJIT)" != "1" ] || ./build/luajit_smoke_tests ) \
-	&& ./build/entity_attrs_tests
+	&& ./build/entity_attrs_tests \
+	&& ./build/edit_script_env_tests
 
 TEST_TIMEOUT ?= 20
 
