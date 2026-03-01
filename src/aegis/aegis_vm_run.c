@@ -13,6 +13,7 @@
 #include "ferrum/aegis/aegis_decode.h"
 #include "ferrum/aegis/aegis_ops_arith.h"
 #include "ferrum/aegis/aegis_ops_data.h"
+#include "ferrum/aegis/aegis_ops_event.h"
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 
@@ -311,13 +312,32 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             aegis_op_quat_rotate(&vm->regs[d.raw_a], &d.b, &d.c);
             break;
 
+        /* ---- Event access (Phase 2) ---- */
+
+        case AEGIS_OP_EVENT_TYPE:
+            if (!aegis_op_event_type(&vm->regs[d.raw_a], vm->event)) {
+                return vm_error(vm, 0xFFE0);
+            }
+            break;
+
+        case AEGIS_OP_EVENT_SRC:
+            if (!aegis_op_event_src(&vm->regs[d.raw_a], vm->event)) {
+                return vm_error(vm, 0xFFE0);
+            }
+            break;
+
+        case AEGIS_OP_EVENT_FIELD:
+            /* A=dst reg, B=byte offset (imm or reg), C=size (imm or reg) */
+            if (!aegis_op_event_field(&vm->regs[d.raw_a], vm->event,
+                                      d.b.u32, d.c.u32)) {
+                return vm_error(vm, 0xFFDF);
+            }
+            break;
+
         /* ---- Phase 2/3 stubs (not yet implemented) ---- */
 
         case AEGIS_OP_WAIT:
         case AEGIS_OP_POLL:
-        case AEGIS_OP_EVENT_TYPE:
-        case AEGIS_OP_EVENT_SRC:
-        case AEGIS_OP_EVENT_FIELD:
         case AEGIS_OP_QUERY_ENTITY:
         case AEGIS_OP_GET_ATTR:
         case AEGIS_OP_ENTITY_COUNT:

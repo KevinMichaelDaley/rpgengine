@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include "ferrum/aegis/aegis_bytecode.h"
 #include "ferrum/aegis/aegis_config.h"
+#include "ferrum/aegis/aegis_event.h"
 #include "ferrum/aegis/aegis_memory.h"
 #include "ferrum/aegis/aegis_types.h"
 
@@ -61,6 +62,9 @@ typedef struct aegis_vm {
 
     /** VM configuration (fuel budget, limits). */
     aegis_config_t config;
+
+    /** Current event being processed (set before resume, NULL if none). */
+    const aegis_event_t *event;
 
     /** Current execution status. */
     aegis_vm_status_t status;
