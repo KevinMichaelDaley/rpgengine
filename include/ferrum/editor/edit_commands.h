@@ -174,6 +174,22 @@ bool cmd_group_delete(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_group_list(edit_dispatch_t *d, const json_value_t *args,
                     json_value_t *result, json_arena_t *arena);
 
+/** @brief Create named group from selection with pivot. Args: {"name":"&x","pivot":[x,y,z],"parent":"&p"}. */
+bool cmd_group(edit_dispatch_t *d, const json_value_t *args,
+               json_value_t *result, json_arena_t *arena);
+
+/** @brief Dissolve a named group (with undo). Args: {"name":"&x"}. */
+bool cmd_ungroup(edit_dispatch_t *d, const json_value_t *args,
+                 json_value_t *result, json_arena_t *arena);
+
+/** @brief Select all entities in a named group. Args: {"name":"&x"}. */
+bool cmd_select_group(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief Get info about a named group. Args: {"name":"&x"}. */
+bool cmd_group_info(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
 /** @brief List assets. Args: {"prefix":"...", "type":"mesh"} (all optional). */
 bool cmd_asset_list(edit_dispatch_t *d, const json_value_t *args,
                     json_value_t *result, json_arena_t *arena);

@@ -23,6 +23,7 @@ extern "C" {
 
 /* Forward declaration. */
 struct edit_entity_store;
+struct edit_cmd_ctx;
 
 /* ------------------------------------------------------------------------ */
 /* Buffer serialization                                                      */
@@ -78,6 +79,41 @@ bool edit_level_save(const struct edit_entity_store *store, const char *path);
  * @return true on success, false on I/O or parse error.
  */
 bool edit_level_load(struct edit_entity_store *store, const char *path);
+
+/* ------------------------------------------------------------------------ */
+/* Full serialization (entities + groups)                                    */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * @brief Serialize entities and groups to a JSON buffer.
+ *
+ * Produces version 2 format with "entities" and "groups" arrays.
+ *
+ * @param store  Entity store to serialize.
+ * @param ctx    Command context (for groups). May be NULL.
+ * @param buf    Output buffer (NULL for length query).
+ * @param cap    Capacity of output buffer.
+ * @return Bytes written (or required if cap insufficient).
+ */
+size_t edit_level_serialize_full(const struct edit_entity_store *store,
+                                const struct edit_cmd_ctx *ctx,
+                                char *buf, size_t cap);
+
+/**
+ * @brief Deserialize entities and groups from a JSON buffer.
+ *
+ * Supports both version 1 (entities only) and version 2 (with groups).
+ * Clears the store before loading.
+ *
+ * @param store     Entity store to populate.
+ * @param ctx       Command context to populate groups into.
+ * @param json      JSON string.
+ * @param json_len  Length of JSON string.
+ * @return true on success.
+ */
+bool edit_level_deserialize_full(struct edit_entity_store *store,
+                                struct edit_cmd_ctx *ctx,
+                                const char *json, size_t json_len);
 
 #ifdef __cplusplus
 }

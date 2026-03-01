@@ -117,11 +117,13 @@ typedef struct edit_physics_bridge {
  * @brief Command type tags used in undo entry forward/inverse_type fields.
  */
 typedef enum edit_cmd_type {
-    EDIT_CMD_TYPE_SPAWN   = 1,
-    EDIT_CMD_TYPE_DELETE  = 2,
-    EDIT_CMD_TYPE_MOVE    = 3,
-    EDIT_CMD_TYPE_ROTATE  = 4,
-    EDIT_CMD_TYPE_SCALE   = 5,
+    EDIT_CMD_TYPE_SPAWN        = 1,
+    EDIT_CMD_TYPE_DELETE       = 2,
+    EDIT_CMD_TYPE_MOVE         = 3,
+    EDIT_CMD_TYPE_ROTATE       = 4,
+    EDIT_CMD_TYPE_SCALE        = 5,
+    EDIT_CMD_TYPE_GROUP_CREATE = 6,
+    EDIT_CMD_TYPE_GROUP_DELETE = 7,
 } edit_cmd_type_t;
 
 /* ------------------------------------------------------------------------ */
@@ -146,12 +148,16 @@ typedef enum edit_cmd_type {
  * @brief A named selection group — snapshot of entity IDs.
  *
  * Name must start with '&'. Entity IDs are stored as a simple array.
+ * Groups may have a pivot point (center of operations) and an optional
+ * parent group for nesting.
  */
 typedef struct edit_group {
-    char     name[EDIT_GROUP_NAME_MAX]; /**< Group name (e.g. "&walls"). */
-    uint32_t ids[EDIT_GROUP_ENTRY_MAX]; /**< Entity IDs in the group. */
-    uint32_t count;                     /**< Number of entities. */
-    bool     active;                    /**< True if slot is in use. */
+    char     name[EDIT_GROUP_NAME_MAX];   /**< Group name (e.g. "&walls"). */
+    uint32_t ids[EDIT_GROUP_ENTRY_MAX];   /**< Entity IDs in the group. */
+    uint32_t count;                       /**< Number of entities. */
+    bool     active;                      /**< True if slot is in use. */
+    float    pivot[3];                    /**< Pivot point (avg of member positions). */
+    char     parent[EDIT_GROUP_NAME_MAX]; /**< Parent group name ("" = no parent). */
 } edit_group_t;
 
 /* ------------------------------------------------------------------------ */

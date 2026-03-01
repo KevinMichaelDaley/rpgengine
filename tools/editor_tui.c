@@ -1008,7 +1008,10 @@ static void handle_tab_(ctrl_tui_t *tui) {
                 strcmp(cmd, "scale_id") == 0 ||
                 strcmp(cmd, "cursor_snap") == 0 ||
                 strcmp(cmd, "alias_delete") == 0 ||
-                strcmp(cmd, "group_delete") == 0)) {
+                strcmp(cmd, "group_delete") == 0 ||
+                strcmp(cmd, "ungroup") == 0 ||
+                strcmp(cmd, "select_group") == 0 ||
+                strcmp(cmd, "group_info") == 0)) {
         /* Complete entity or group name for commands that take entity_id. */
         size_t arg_len = strlen(arg_start);
         const char *matches[MAX_ENTITY_NAMES + MAX_GROUP_NAMES];
