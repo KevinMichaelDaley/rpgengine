@@ -246,6 +246,7 @@ BIN_HEADLESS += build/aegis_asm_tests
 BIN_HEADLESS += build/aegis_runtime_tests
 BIN_HEADLESS += build/aegis_ops_entity_tests
 BIN_HEADLESS += build/aegis_ops_update_tests
+BIN_HEADLESS += build/aegis_async_buffer_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -867,6 +868,10 @@ build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_S
 build/aegis_ops_update_tests: tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
+AEGIS_ASYNC_SRC := src/aegis/aegis_async_buffer.c src/aegis/aegis_async_buffer_io.c
+build/aegis_async_buffer_tests: tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_SRC) -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -1086,7 +1091,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_asm_tests \
 	&& ./build/aegis_runtime_tests \
 	&& ./build/aegis_ops_entity_tests \
-	&& ./build/aegis_ops_update_tests
+	&& ./build/aegis_ops_update_tests \
+	&& ./build/aegis_async_buffer_tests
 
 TEST_TIMEOUT ?= 20
 
