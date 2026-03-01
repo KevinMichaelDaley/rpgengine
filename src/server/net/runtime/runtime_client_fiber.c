@@ -11,7 +11,9 @@
 
 #include "runtime_internal.h"
 
-#define OUT_MSG_MAX (2u + NET_RUDP_MAX_PACKET_SIZE)
+/** Maximum size of a single outbound message popped from the reliable topic.
+ *  Must be at least as large as the topic's max_message_size (default 1024). */
+#define OUT_MSG_MAX 2048u
 
 /**
  * Read the first 4 bytes of a packet as a big-endian uint32.

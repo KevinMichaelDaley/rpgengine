@@ -70,12 +70,13 @@ bool mesh_prim_cylinder(mesh_slot_t *slot, float radius, float height,
  *
  * @param slot      Target slot (cleared first).
  * @param radius    Sphere radius.
- * @param segments  Number of segments (longitude divisions; latitude = segments/2).
+ * @param segments  Number of longitude divisions.
+ * @param rings     Number of latitude divisions (0 = segments/2).
  * @param pos       World position offset.
  * @return true on success.
  */
 bool mesh_prim_sphere(mesh_slot_t *slot, float radius, uint32_t segments,
-                      const float pos[3]);
+                      uint32_t rings, const float pos[3]);
 
 #ifdef __cplusplus
 }

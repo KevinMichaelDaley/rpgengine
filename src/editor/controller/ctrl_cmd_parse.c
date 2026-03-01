@@ -466,13 +466,31 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     if (def && strcmp(wire_name, "mesh_create_sphere") == 0) {
         char ab[512];
         uint32_t na = token_count - 1;
-        if (na >= 5) {
+        if (na >= 6) {
+            /* radius segments rings x y z */
+            snprintf(ab, sizeof(ab),
+                "{\"radius\":%.6g,\"segments\":%u,\"rings\":%u,"
+                "\"pos\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL),
+                (unsigned)strtoul(tokens[2],NULL,10),
+                (unsigned)strtoul(tokens[3],NULL,10),
+                (double)strtof(tokens[4],NULL), (double)strtof(tokens[5],NULL),
+                (double)strtof(tokens[6],NULL));
+        } else if (na >= 5) {
+            /* radius segments x y z */
             snprintf(ab, sizeof(ab),
                 "{\"radius\":%.6g,\"segments\":%u,\"pos\":[%.6g,%.6g,%.6g]}",
                 (double)strtof(tokens[1],NULL),
                 (unsigned)strtoul(tokens[2],NULL,10),
                 (double)strtof(tokens[3],NULL), (double)strtof(tokens[4],NULL),
                 (double)strtof(tokens[5],NULL));
+        } else if (na >= 3) {
+            /* radius segments rings */
+            snprintf(ab, sizeof(ab),
+                "{\"radius\":%.6g,\"segments\":%u,\"rings\":%u}",
+                (double)strtof(tokens[1],NULL),
+                (unsigned)strtoul(tokens[2],NULL,10),
+                (unsigned)strtoul(tokens[3],NULL,10));
         } else if (na >= 2) {
             snprintf(ab, sizeof(ab), "{\"radius\":%.6g,\"segments\":%u}",
                 (double)strtof(tokens[1],NULL),
@@ -494,6 +512,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         char ab[512];
         uint32_t na = token_count - 1;
         if (na >= 7) {
+            /* radius height segments axis x y z */
             snprintf(ab, sizeof(ab),
                 "{\"radius\":%.6g,\"height\":%.6g,\"segments\":%u,"
                 "\"axis\":%u,\"pos\":[%.6g,%.6g,%.6g]}",
@@ -502,6 +521,15 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
                 (unsigned)strtoul(tokens[4],NULL,10),
                 (double)strtof(tokens[5],NULL), (double)strtof(tokens[6],NULL),
                 (double)strtof(tokens[7],NULL));
+        } else if (na >= 6) {
+            /* radius height segments x y z  (axis defaults to 1/Y) */
+            snprintf(ab, sizeof(ab),
+                "{\"radius\":%.6g,\"height\":%.6g,\"segments\":%u,"
+                "\"axis\":1,\"pos\":[%.6g,%.6g,%.6g]}",
+                (double)strtof(tokens[1],NULL), (double)strtof(tokens[2],NULL),
+                (unsigned)strtoul(tokens[3],NULL,10),
+                (double)strtof(tokens[4],NULL), (double)strtof(tokens[5],NULL),
+                (double)strtof(tokens[6],NULL));
         } else if (na >= 4) {
             snprintf(ab, sizeof(ab),
                 "{\"radius\":%.6g,\"height\":%.6g,\"segments\":%u,\"axis\":%u}",

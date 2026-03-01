@@ -213,7 +213,7 @@ static void test_sphere_basic(void) {
     mesh_slot_t slot;
     mesh_slot_init(&slot, 512, 2048);
 
-    bool ok = mesh_prim_sphere(&slot, 1.0f, 8, (float[3]){0,0,0});
+    bool ok = mesh_prim_sphere(&slot, 1.0f, 8, 0, (float[3]){0,0,0});
     ASSERT(ok, "sphere gen succeeded");
     ASSERT(slot.vertex_count > 0, "has vertices");
     ASSERT(slot.index_count > 0, "has indices");

@@ -5,7 +5,7 @@
  *
  * JSON args:
  *   mesh_create_box:      {"size":[w,h,d], "segments":[sx,sy,sz], "pos":[x,y,z]}
- *   mesh_create_sphere:   {"radius":r, "segments":n, "pos":[x,y,z]}
+ *   mesh_create_sphere:   {"radius":r, "segments":n, "rings":n, "pos":[x,y,z]}
  *   mesh_create_cylinder: {"radius":r, "height":h, "segments":n, "axis":0|1|2, "pos":[x,y,z]}
  *   mesh_create_plane:    {"size":[w,h], "segments":[sx,sy], "axis":0|1|2, "pos":[x,y,z]}
  */
@@ -86,6 +86,7 @@ bool cmd_mesh_create_sphere(edit_dispatch_t *d, const json_value_t *args,
 
     float radius = 1.0f;
     uint32_t segments = 16;
+    uint32_t rings = 0;
     float pos[3] = {0, 0, 0};
 
     if (args) {
@@ -93,10 +94,12 @@ bool cmd_mesh_create_sphere(edit_dispatch_t *d, const json_value_t *args,
         if (r && r->type == JSON_NUMBER) radius = (float)r->number;
         const json_value_t *s = json_object_get(args, "segments");
         if (s && s->type == JSON_NUMBER) segments = (uint32_t)s->number;
+        const json_value_t *rg = json_object_get(args, "rings");
+        if (rg && rg->type == JSON_NUMBER) rings = (uint32_t)rg->number;
         extract_vec3_(json_object_get(args, "pos"), pos);
     }
 
-    mesh_prim_sphere(slot, radius, segments, pos);
+    mesh_prim_sphere(slot, radius, segments, rings, pos);
 
     result->type = JSON_NULL; (void)arena;
     return true;

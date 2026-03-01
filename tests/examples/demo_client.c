@@ -1117,7 +1117,7 @@ int main(int argc, char **argv) {
                                                           &completed_size)) {
                             /* Full mesh arrived — build VAO. */
                             uint16_t bi = chunk.body_id;
-                            if (bi < CLIENT_MAX_BODIES) {
+                            if (bi < CLIENT_MAX_BODIES && !headless) {
                                 body_render_info_t *ri = &render_info[bi];
                                 if (build_vao_from_fvma(completed_data,
                                                         completed_size,

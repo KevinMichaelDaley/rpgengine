@@ -36,8 +36,10 @@ extern "C" {
 /** Per-chunk header size (body_id + chunk_idx + total_chunks + total_size). */
 #define NET_REPL_MESH_CHUNK_HEADER_SIZE 10u
 
-/** Max payload bytes per chunk (fits in 1024-byte topic channel messages). */
-#define NET_REPL_MESH_CHUNK_MAX 960u
+/** Max payload bytes per chunk.  Must fit inside a single RUDP reliable
+ *  stream frame: 464 (RUDP payload) - 4 (stream hdr) - 2 (schema) - 10
+ *  (chunk hdr) = 448.  Round down to 440 for alignment headroom. */
+#define NET_REPL_MESH_CHUNK_MAX 440u
 
 /** Max supported total mesh size (256 KiB). */
 #define NET_REPL_MESH_MAX_TOTAL (256u * 1024u)

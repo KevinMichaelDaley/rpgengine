@@ -5,7 +5,8 @@
  * Non-static functions: mesh_prim_sphere (1 of 4).
  *
  * Generates a UV sphere with `segments` longitude divisions and
- * `segments/2` latitude divisions. Poles share a single vertex each.
+ * `rings` latitude divisions. Poles share a single vertex each.
+ * If rings is 0, it defaults to segments/2.
  */
 #include "ferrum/editor/mesh/mesh_primitives.h"
 
@@ -20,14 +21,14 @@
 /* ------------------------------------------------------------------ */
 
 bool mesh_prim_sphere(mesh_slot_t *slot, float radius, uint32_t segments,
-                      const float pos[3]) {
+                      uint32_t rings, const float pos[3]) {
     if (!slot || !pos) { return false; }
     if (segments < 4) { segments = 4; }
 
     mesh_slot_clear(slot);
 
     uint32_t lon_segs = segments;
-    uint32_t lat_segs = segments / 2;
+    uint32_t lat_segs = (rings > 0) ? rings : segments / 2;
     if (lat_segs < 2) { lat_segs = 2; }
 
     /* --- Generate vertices --- */

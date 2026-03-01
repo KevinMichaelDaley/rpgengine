@@ -115,7 +115,7 @@ static void test_cylindrical(void) {
 static void test_spherical(void) {
     mesh_slot_t slot;
     mesh_slot_init(&slot, 512, 2048);
-    mesh_prim_sphere(&slot, 1.0f, 8, (float[3]){0,0,0});
+    mesh_prim_sphere(&slot, 1.0f, 8, 0, (float[3]){0,0,0});
 
     mesh_sel_bitset_t sel;
     mesh_sel_bitset_init(&sel);
