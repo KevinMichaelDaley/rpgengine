@@ -8,6 +8,7 @@
 
 #include "ferrum/editor/editor_ctx.h"
 #include "ferrum/editor/edit_commands.h"
+#include <stdio.h>
 #include <string.h>
 
 /** @brief Apply defaults to zero-valued config fields. */
@@ -30,21 +31,26 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
     /* Command and response rings. */
     if (!edit_cmd_ring_init(&ctx->cmd_ring, ctx->config.ring_capacity,
                             ctx->config.ring_payload_max)) {
+        fprintf(stderr, "[editor_ctx] cmd_ring init failed\n");
         return false;
     }
     if (!edit_cmd_ring_init(&ctx->resp_ring, ctx->config.ring_capacity,
                             ctx->config.ring_payload_max)) {
+        fprintf(stderr, "[editor_ctx] resp_ring init failed\n");
         edit_cmd_ring_destroy(&ctx->cmd_ring);
         return false;
     }
 
     /* Entity store, selection, undo stack. */
     if (!edit_entity_store_init(&ctx->entities, ctx->config.max_entities)) {
+        fprintf(stderr, "[editor_ctx] entity_store init failed (cap=%u)\n",
+                ctx->config.max_entities);
         edit_cmd_ring_destroy(&ctx->cmd_ring);
         edit_cmd_ring_destroy(&ctx->resp_ring);
         return false;
     }
     if (!edit_selection_init(&ctx->selection)) {
+        fprintf(stderr, "[editor_ctx] selection init failed\n");
         edit_entity_store_destroy(&ctx->entities);
         edit_cmd_ring_destroy(&ctx->cmd_ring);
         edit_cmd_ring_destroy(&ctx->resp_ring);
@@ -52,6 +58,7 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
     }
     if (!edit_undo_init(&ctx->undo, ctx->config.undo_capacity,
                         EDIT_UNDO_DEFAULT_ARENA_MB * 1024 * 1024)) {
+        fprintf(stderr, "[editor_ctx] undo init failed\n");
         edit_selection_destroy(&ctx->selection);
         edit_entity_store_destroy(&ctx->entities);
         edit_cmd_ring_destroy(&ctx->cmd_ring);
@@ -66,6 +73,7 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
 
     /* Mesh editing subsystem. */
     if (!mesh_edit_init(&ctx->mesh)) {
+        fprintf(stderr, "[editor_ctx] mesh_edit init failed\n");
         edit_undo_destroy(&ctx->undo);
         edit_selection_destroy(&ctx->selection);
         edit_entity_store_destroy(&ctx->entities);
@@ -78,6 +86,7 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
     /* Dispatch table. */
     if (!edit_dispatch_init(&ctx->dispatch, ctx->config.dispatch_arena,
                             &ctx->cmd_ctx)) {
+        fprintf(stderr, "[editor_ctx] dispatch init failed\n");
         edit_undo_destroy(&ctx->undo);
         edit_selection_destroy(&ctx->selection);
         edit_entity_store_destroy(&ctx->entities);
@@ -90,6 +99,8 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
     /* I/O thread (last — depends on everything above). */
     if (!edit_io_start(&ctx->io_thread, ctx->config.edit_port,
                        &ctx->cmd_ring, &ctx->resp_ring)) {
+        fprintf(stderr, "[editor_ctx] io_start failed (port=%u)\n",
+                ctx->config.edit_port);
         edit_dispatch_destroy(&ctx->dispatch);
         edit_undo_destroy(&ctx->undo);
         edit_selection_destroy(&ctx->selection);

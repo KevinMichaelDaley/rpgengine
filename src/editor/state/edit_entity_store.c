@@ -1,19 +1,58 @@
 /**
  * @file edit_entity_store.c
  * @brief Entity store lifecycle and creation/removal with O(1) freelist.
+ *
+ * The entity array is allocated via mmap (POSIX) or VirtualAlloc (Windows)
+ * so the OS only commits physical pages on first touch. This allows a large
+ * virtual reservation (e.g. 1M slots ≈ 1.5 GB virtual) without consuming
+ * real memory until entities are actually created.
  */
 
 #include "ferrum/editor/edit_entity.h"
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#else
+#  include <sys/mman.h>
+#endif
+
+/** @brief Reserve zero-initialized virtual memory (committed on demand). */
+static void *vm_reserve_(size_t bytes) {
+#ifdef _WIN32
+    return VirtualAlloc(NULL, bytes, MEM_RESERVE | MEM_COMMIT,
+                        PAGE_READWRITE);
+#else
+    void *p = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return (p == MAP_FAILED) ? NULL : p;
+#endif
+}
+
+/** @brief Release virtual memory previously obtained from vm_reserve_(). */
+static void vm_release_(void *ptr, size_t bytes) {
+    if (!ptr) return;
+#ifdef _WIN32
+    (void)bytes;
+    VirtualFree(ptr, 0, MEM_RELEASE);
+#else
+    munmap(ptr, bytes);
+#endif
+}
+
 bool edit_entity_store_init(edit_entity_store_t *store, uint32_t capacity) {
     if (!store || capacity == 0) return false;
-    store->entities = (edit_entity_t *)calloc(capacity, sizeof(edit_entity_t));
+
+    size_t ent_bytes = (size_t)capacity * sizeof(edit_entity_t);
+    store->entities = (edit_entity_t *)vm_reserve_(ent_bytes);
     if (!store->entities) return false;
+    store->entities_bytes = ent_bytes;
+
     store->freelist = (uint32_t *)malloc(capacity * sizeof(uint32_t));
     if (!store->freelist) {
-        free(store->entities);
+        vm_release_(store->entities, ent_bytes);
         store->entities = NULL;
         return false;
     }
@@ -29,11 +68,12 @@ bool edit_entity_store_init(edit_entity_store_t *store, uint32_t capacity) {
 
 void edit_entity_store_destroy(edit_entity_store_t *store) {
     if (!store) return;
-    free(store->entities);
+    vm_release_(store->entities, store->entities_bytes);
     free(store->freelist);
     store->entities = NULL;
     store->freelist = NULL;
     store->capacity = 0;
+    store->entities_bytes = 0;
     store->free_count = 0;
     store->active_count = 0;
 }

@@ -1,6 +1,6 @@
 ---
 id: rpg-gl4e
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-01T01:34:21Z
@@ -12,3 +12,9 @@ assignee: KMD
 
 When entities are created via editor commands (mesh_create + mesh_commit or spawn), the physics bodies are created server-side but never sent to connected clients. Client shows 0 bodies despite server having 8+ entities. Investigate: (1) Is FR_SERVER_EVT_PLAYER_JOIN firing? (2) Are physics bodies in the world? (3) Is send_body_spawns_to_client entering its loop? (4) Is the reliable channel delivering? (5) Is client RUDP processing reliable messages?
 
+
+## Notes
+
+**2026-03-01T01:46:44Z**
+
+Root cause: demo_server CLI uses positional args (PORT DURATION), not --port flag. Using --port 40080 caused port=0 (atoi on '--port'). Server bound to ephemeral port, client couldn't connect. Entity store also failed with calloc for 1M entities — switched to mmap for demand-paged virtual memory.

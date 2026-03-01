@@ -16,6 +16,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* ------------------------------------------------------------------------ */
@@ -73,8 +74,9 @@ typedef struct edit_entity {
  * create and remove even at million-entity capacities.
  */
 typedef struct edit_entity_store {
-    edit_entity_t *entities;     /**< Array of entity slots. */
+    edit_entity_t *entities;     /**< Array of entity slots (mmap'd). */
     uint32_t      *freelist;     /**< Stack of free slot indices. */
+    size_t         entities_bytes; /**< Size of mmap'd region in bytes. */
     uint32_t       capacity;     /**< Total number of slots. */
     uint32_t       free_count;   /**< Number of entries in the freelist. */
     uint32_t       active_count; /**< Number of active entities (cached). */
