@@ -22,6 +22,7 @@
 #include "ferrum/aegis/aegis_event.h"
 #include "ferrum/aegis/aegis_memory.h"
 #include "ferrum/aegis/aegis_types.h"
+#include "ferrum/aegis/aegis_update.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,6 +71,12 @@ typedef struct aegis_vm {
 
     /** Entity snapshot view for query instructions (set by runtime). */
     const struct script_entity_view *entity_view;
+
+    /** Update set for accumulating state mutations (set by runtime). */
+    aegis_update_set_t *update_set;
+
+    /** Staging area for the current update being built. */
+    aegis_state_update_t staging;
 
     /** Current execution status. */
     aegis_vm_status_t status;

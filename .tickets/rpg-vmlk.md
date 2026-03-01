@@ -1,6 +1,6 @@
 ---
 id: rpg-vmlk
-status: open
+status: in_progress
 deps: [rpg-o8pq]
 links: []
 created: 2026-03-01T09:58:49Z

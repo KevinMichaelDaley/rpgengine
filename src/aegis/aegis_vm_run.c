@@ -15,6 +15,7 @@
 #include "ferrum/aegis/aegis_ops_data.h"
 #include "ferrum/aegis/aegis_ops_event.h"
 #include "ferrum/aegis/aegis_ops_entity.h"
+#include "ferrum/aegis/aegis_ops_update.h"
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 
@@ -366,17 +367,41 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             }
             break;
 
+        /* ---- Update construction (Phase 2) ---- */
+
+        case AEGIS_OP_BUILD_UPDATE:
+            aegis_op_build_update(&vm->regs[d.raw_a], &vm->staging);
+            break;
+
+        case AEGIS_OP_TARGET_ENTITY:
+            aegis_op_target_entity(&vm->staging, &d.b);
+            break;
+
+        case AEGIS_OP_SET_FIELD:
+            /* A=builder (ignored), B=key (imm), C=value (reg). */
+            if (!aegis_op_set_field(&vm->staging, (uint16_t)d.b.u32,
+                                     &d.c)) {
+                return vm_error(vm, 0xFFC0);
+            }
+            break;
+
+        case AEGIS_OP_ADD_HINT:
+            aegis_op_add_hint(&vm->staging, d.b.u32);
+            break;
+
+        case AEGIS_OP_PUSH_UPDATE:
+            if (!vm->update_set ||
+                !aegis_op_push_update(vm->update_set, &vm->staging)) {
+                return vm_error(vm, 0xFFBF);
+            }
+            break;
+
         /* ---- Phase 2/3 stubs (not yet implemented) ---- */
 
         case AEGIS_OP_WAIT:
         case AEGIS_OP_POLL:
         case AEGIS_OP_VIS_TEST:
         case AEGIS_OP_NAV_QUERY:
-        case AEGIS_OP_BUILD_UPDATE:
-        case AEGIS_OP_TARGET_ENTITY:
-        case AEGIS_OP_SET_FIELD:
-        case AEGIS_OP_ADD_HINT:
-        case AEGIS_OP_PUSH_UPDATE:
             return vm_error(vm, 0xFF00 | (uint32_t)d.opcode);
 
         default:
