@@ -1,6 +1,6 @@
 ---
 id: rpg-4wlw
-status: open
+status: closed
 deps: [rpg-ohj4]
 links: []
 created: 2026-02-26T04:29:27Z
@@ -31,3 +31,9 @@ Files to create:
 - src/editor/script/script_texsynth_api.c
 - tests/editor/script_texsynth_api_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

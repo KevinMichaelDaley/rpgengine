@@ -1,6 +1,6 @@
 ---
 id: rpg-7x16
-status: open
+status: closed
 deps: [rpg-jyx3, rpg-qdn7]
 links: []
 created: 2026-03-01T05:36:00Z
@@ -27,3 +27,9 @@ Files to create:
 - src/editor/script/script_quat.c (quat type + metamethods)
 - tests/editor/script_math_bindings_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

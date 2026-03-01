@@ -1,6 +1,6 @@
 ---
 id: rpg-vebd
-status: open
+status: closed
 deps: [rpg-jyx3]
 links: []
 created: 2026-03-01T06:47:03Z
@@ -50,3 +50,7 @@ Replace print() and all external-state-manipulating script globals with safe eng
 **2026-03-01T07:06:22Z**
 
 SUPERSEDED: LuaJIT removed. Safe API will be reimplemented for the engine scripting language.
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

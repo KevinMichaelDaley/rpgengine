@@ -1,6 +1,6 @@
 ---
 id: rpg-kuw1
-status: open
+status: closed
 deps: [rpg-zqex]
 links: []
 created: 2026-03-01T05:36:33Z
@@ -27,3 +27,9 @@ Files to create:
 - src/editor/undo/edit_undo_group.c (group begin/end, compound entry)
 - tests/editor/edit_undo_group_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

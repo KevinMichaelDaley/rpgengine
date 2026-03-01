@@ -1,6 +1,6 @@
 ---
 id: rpg-ghd5
-status: open
+status: closed
 deps: [rpg-zqex, rpg-96oo]
 links: []
 created: 2026-02-26T04:28:42Z
@@ -29,3 +29,9 @@ Files to create:
 - src/editor/commands/cmd_eval.c
 - tests/editor/cmd_script_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

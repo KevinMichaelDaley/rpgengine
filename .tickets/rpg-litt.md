@@ -1,6 +1,6 @@
 ---
 id: rpg-litt
-status: open
+status: closed
 deps: [rpg-jyx3]
 links: []
 created: 2026-03-01T06:47:16Z
@@ -53,3 +53,7 @@ Install instruction hook with LUA_MASKCOUNT to yield scripts after N instruction
 **2026-03-01T07:06:22Z**
 
 SUPERSEDED: LuaJIT removed. Instruction budget will be reimplemented for the engine scripting language, likely using fiber yields instead of coroutines.
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

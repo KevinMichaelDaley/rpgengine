@@ -1,6 +1,6 @@
 ---
 id: rpg-zqex
-status: open
+status: closed
 deps: [rpg-qdn7, rpg-dvgo, rpg-eccf]
 links: []
 created: 2026-02-26T04:28:42Z
@@ -44,3 +44,9 @@ Files to create:
 - src/editor/script/edit_script_rebase.c (apply entity updates onto tick state)
 - tests/editor/edit_script_runtime_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:48Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

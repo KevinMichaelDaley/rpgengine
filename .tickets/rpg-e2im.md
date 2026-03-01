@@ -1,6 +1,6 @@
 ---
 id: rpg-e2im
-status: open
+status: closed
 deps: [rpg-96oo]
 links: []
 created: 2026-02-26T04:28:43Z
@@ -29,3 +29,9 @@ Files to create:
 - src/editor/script/script_undo_api.c
 - tests/editor/edit_undo_group_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

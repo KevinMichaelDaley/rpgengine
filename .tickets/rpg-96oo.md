@@ -1,6 +1,6 @@
 ---
 id: rpg-96oo
-status: open
+status: closed
 deps: [rpg-zqex, rpg-eccf, rpg-jyx3]
 links: []
 created: 2026-02-26T04:28:42Z
@@ -41,3 +41,9 @@ Files to create:
 - src/editor/script/script_entity_api.c
 - tests/editor/script_entity_api_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:48Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

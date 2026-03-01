@@ -1,6 +1,6 @@
 ---
 id: rpg-lqfl
-status: open
+status: closed
 deps: [rpg-zqex]
 links: []
 created: 2026-03-01T05:35:50Z
@@ -28,3 +28,9 @@ Files to create:
 - src/editor/script/edit_script_native.c (register, unregister, run_all)
 - tests/editor/edit_script_native_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:48Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

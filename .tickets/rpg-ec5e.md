@@ -1,6 +1,6 @@
 ---
 id: rpg-ec5e
-status: open
+status: closed
 deps: [rpg-zqex, rpg-96oo]
 links: []
 created: 2026-03-01T05:36:10Z
@@ -30,3 +30,9 @@ Files to create:
 - src/editor/commands/cmd_run.c (run command handler)
 - tests/editor/cmd_eval_tests.c
 
+
+## Notes
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.

@@ -1,6 +1,6 @@
 ---
 id: rpg-0rdx
-status: open
+status: closed
 deps: [rpg-vebd]
 links: []
 created: 2026-03-01T06:47:31Z
@@ -48,3 +48,9 @@ Enforce functional purity at runtime: scripts cannot mutate global state except 
 - pcall catches purity violations gracefully
 - Function definitions work (local function f() end)
 
+
+## Notes
+
+**2026-03-01T09:58:49Z**
+
+Superseded by Aegis VM implementation. See ref/aegis_bytecode_spec.md.
