@@ -237,6 +237,7 @@ endif
 ifeq ($(LUAJIT),1)
 BIN_HEADLESS += build/luajit_smoke_tests
 BIN_HEADLESS += build/edit_script_sandbox_tests
+BIN_HEADLESS += build/edit_script_api_tests
 endif
 
 BIN_HEADLESS += build/entity_attrs_tests
@@ -804,6 +805,15 @@ build/luajit_smoke_tests: $(LUAJIT_LIB) tests/editor/luajit_smoke_tests.c | buil
 build/edit_script_sandbox_tests: $(LUAJIT_LIB) tests/editor/edit_script_sandbox_tests.c src/editor/script/edit_script_sandbox.c | build
 	$(CC) $(CFLAGS) tests/editor/edit_script_sandbox_tests.c src/editor/script/edit_script_sandbox.c -o $@ $(LUAJIT_LDFLAGS) $(LDFLAGS)
 
+SCRIPT_API_TEST_SRC := tests/editor/edit_script_api_tests.c \
+  $(wildcard src/editor/script/edit_script_api*.c) \
+  src/editor/script/edit_script_sandbox.c \
+  src/editor/script/edit_script_env.c \
+  src/editor/script/edit_script_update.c \
+  $(wildcard src/entity/*.c)
+build/edit_script_api_tests: $(LUAJIT_LIB) $(SCRIPT_API_TEST_SRC) | build
+	$(CC) $(CFLAGS) $(SCRIPT_API_TEST_SRC) -o $@ $(LUAJIT_LDFLAGS) $(LDFLAGS)
+
 ENTITY_ATTRS_TEST_SRC := tests/entity/entity_attrs_tests.c $(wildcard src/entity/*.c)
 build/entity_attrs_tests: $(ENTITY_ATTRS_TEST_SRC) include/ferrum/entity/entity_attrs.h | build
 	$(CC) $(CFLAGS) tests/entity/entity_attrs_tests.c $(wildcard src/entity/*.c) -o $@ $(LDFLAGS)
@@ -1013,6 +1023,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ( [ "$(TRACY)" != "1" ] || ./build/p010_tracy_alloc_override_tests ) \
 	&& ( [ "$(LUAJIT)" != "1" ] || ./build/luajit_smoke_tests ) \
 	&& ( [ "$(LUAJIT)" != "1" ] || ./build/edit_script_sandbox_tests ) \
+	&& ( [ "$(LUAJIT)" != "1" ] || ./build/edit_script_api_tests ) \
 	&& ./build/entity_attrs_tests \
 	&& ./build/edit_script_env_tests
 
