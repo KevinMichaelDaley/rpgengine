@@ -191,6 +191,9 @@ typedef struct edit_cmd_ctx {
 
     /** @brief Mesh editing context (NULL if mesh mode not initialized). */
     struct mesh_edit *mesh;
+
+    /** @brief Script runtime (NULL if scripting not configured). */
+    struct aegis_script_runtime *script_runtime;
 } edit_cmd_ctx_t;
 
 /* Forward declaration for JSON types. */

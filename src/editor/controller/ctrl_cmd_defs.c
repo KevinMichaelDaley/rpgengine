@@ -350,6 +350,14 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Duplicate selected entities. Clones become new selection.",
         .arg_fmt = "a:offset",
     },
+    /* ── Script commands ────────────────────────────────────── */
+    {
+        .name    = "script",
+        .alias   = "sc",
+        .usage   = "script <load|unload|list> [name] [source]",
+        .help    = "Manage Aegis scripts. load: compile + register. unload: remove. list: show all.",
+        .arg_fmt = NULL, /* Custom parsing: action + name + source. */
+    },
     /* ── Mesh modeling commands ───────────────────────────────── */
     {
         .name    = "mesh_create_box",

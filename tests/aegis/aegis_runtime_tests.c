@@ -566,6 +566,180 @@ static int test_script_error_marks_inactive(void) {
 }
 
 /* ======================================================================= */
+/* Test: register script in registry                                        */
+/* ======================================================================= */
+
+static int test_register_script(void) {
+    aegis_script_runtime_t rt;
+    aegis_runtime_config_t cfg = default_rt_config();
+    ASSERT_TRUE(aegis_script_runtime_init(&rt, &cfg));
+
+    const char *src = ".topic !test\nexit 0\n";
+    aegis_bytecode_t bc;
+    ASSERT_TRUE(compile_il(src, &bc));
+
+    uint32_t reg_id = aegis_script_runtime_register(&rt, "reg_test", &bc);
+    ASSERT_TRUE(reg_id != AEGIS_SCRIPT_ID_INVALID);
+
+    /* Should be registered but NOT spawned. */
+    ASSERT_TRUE(rt.registry[reg_id].registered);
+    ASSERT_TRUE(!rt.registry[reg_id].spawned);
+
+    /* Find by name. */
+    const aegis_script_entry_t *e = aegis_script_runtime_find(&rt, "reg_test");
+    ASSERT_TRUE(e != NULL);
+    ASSERT_TRUE(e->registered);
+
+    /* Not-found returns NULL. */
+    ASSERT_TRUE(aegis_script_runtime_find(&rt, "nope") == NULL);
+
+    free(bc.instructions);
+    aegis_script_runtime_destroy(&rt);
+    return 0;
+}
+
+/* ======================================================================= */
+/* Test: unregister before spawn                                            */
+/* ======================================================================= */
+
+static int test_unregister_before_spawn(void) {
+    aegis_script_runtime_t rt;
+    aegis_runtime_config_t cfg = default_rt_config();
+    ASSERT_TRUE(aegis_script_runtime_init(&rt, &cfg));
+
+    const char *src = ".topic !test\nexit 0\n";
+    aegis_bytecode_t bc;
+    ASSERT_TRUE(compile_il(src, &bc));
+
+    uint32_t reg_id = aegis_script_runtime_register(&rt, "unreg_test", &bc);
+    ASSERT_TRUE(reg_id != AEGIS_SCRIPT_ID_INVALID);
+
+    /* Unregister. */
+    ASSERT_TRUE(aegis_script_runtime_unregister(&rt, "unreg_test"));
+
+    /* Should no longer be registered. */
+    ASSERT_TRUE(!rt.registry[reg_id].registered);
+    ASSERT_TRUE(aegis_script_runtime_find(&rt, "unreg_test") == NULL);
+
+    free(bc.instructions);
+    aegis_script_runtime_destroy(&rt);
+    return 0;
+}
+
+/* ======================================================================= */
+/* Test: lazy spawn on publish                                              */
+/* ======================================================================= */
+
+static int test_lazy_spawn_on_publish(void) {
+    aegis_script_runtime_t rt;
+    aegis_runtime_config_t cfg = default_rt_config();
+    ASSERT_TRUE(aegis_script_runtime_init(&rt, &cfg));
+
+    job_system_t sys;
+    job_system_create_status_t jstatus =
+        job_system_create(&sys, 2, 64, 64 * 1024, 256, 0);
+    ASSERT_TRUE(jstatus == JOB_CREATE_OK);
+    ASSERT_INT_EQ(0, job_system_start(&sys));
+
+    /* Script that exits on first event. */
+    const char *src =
+        ".topic !spawn_test\n"
+        "exit 0\n";
+    aegis_bytecode_t bc;
+    ASSERT_TRUE(compile_il(src, &bc));
+
+    /* Register (not spawned yet). */
+    uint32_t reg_id = aegis_script_runtime_register(&rt, "lazy", &bc);
+    ASSERT_TRUE(reg_id != AEGIS_SCRIPT_ID_INVALID);
+
+    /* Set the job system so lazy spawn can dispatch. */
+    aegis_script_runtime_set_job_sys(&rt, &sys);
+
+    /* Instance count should be 0 before any event. */
+    ASSERT_UINT_EQ(0, rt.instance_count);
+
+    /* Publish matching event -> should lazy-spawn then run. */
+    aegis_event_t ev = {0};
+    ev.type = aegis_topic_hash("!spawn_test");
+    aegis_script_runtime_publish(&rt, &ev);
+
+    /* Wait for the fiber to run and exit. */
+    job_system_wait_idle(&sys);
+
+    /* Should have been spawned. */
+    ASSERT_TRUE(rt.registry[reg_id].spawned);
+
+    free(bc.instructions);
+    aegis_script_runtime_destroy(&rt);
+    job_system_shutdown(&sys);
+    return 0;
+}
+
+/* ======================================================================= */
+/* Test: non-matching event does not spawn                                  */
+/* ======================================================================= */
+
+static int test_no_spawn_wrong_topic(void) {
+    aegis_script_runtime_t rt;
+    aegis_runtime_config_t cfg = default_rt_config();
+    ASSERT_TRUE(aegis_script_runtime_init(&rt, &cfg));
+
+    job_system_t sys;
+    job_system_create_status_t jstatus =
+        job_system_create(&sys, 2, 64, 64 * 1024, 256, 0);
+    ASSERT_TRUE(jstatus == JOB_CREATE_OK);
+    ASSERT_INT_EQ(0, job_system_start(&sys));
+
+    const char *src =
+        ".topic !my_topic\n"
+        "exit 0\n";
+    aegis_bytecode_t bc;
+    ASSERT_TRUE(compile_il(src, &bc));
+
+    aegis_script_runtime_register(&rt, "nospawn", &bc);
+    aegis_script_runtime_set_job_sys(&rt, &sys);
+
+    /* Publish to a DIFFERENT topic. */
+    aegis_event_t ev = {0};
+    ev.type = aegis_topic_hash("!other_topic");
+    aegis_script_runtime_publish(&rt, &ev);
+
+    /* Instance count should still be 0. */
+    ASSERT_UINT_EQ(0, rt.instance_count);
+
+    free(bc.instructions);
+    aegis_script_runtime_destroy(&rt);
+    job_system_shutdown(&sys);
+    return 0;
+}
+
+/* ======================================================================= */
+/* Test: clear registry                                                     */
+/* ======================================================================= */
+
+static int test_clear_registry(void) {
+    aegis_script_runtime_t rt;
+    aegis_runtime_config_t cfg = default_rt_config();
+    ASSERT_TRUE(aegis_script_runtime_init(&rt, &cfg));
+
+    const char *src = ".topic !a\nexit 0\n";
+    aegis_bytecode_t bc;
+    ASSERT_TRUE(compile_il(src, &bc));
+
+    aegis_script_runtime_register(&rt, "x", &bc);
+    aegis_script_runtime_register(&rt, "y", &bc);
+    ASSERT_UINT_EQ(2, rt.registry_count);
+
+    aegis_script_runtime_clear_registry(&rt);
+    ASSERT_UINT_EQ(0, rt.registry_count);
+    ASSERT_TRUE(aegis_script_runtime_find(&rt, "x") == NULL);
+
+    free(bc.instructions);
+    aegis_script_runtime_destroy(&rt);
+    return 0;
+}
+
+/* ======================================================================= */
 /* Main                                                                     */
 /* ======================================================================= */
 
@@ -582,6 +756,11 @@ int main(void) {
     RUN(test_event_routing_selective);
     RUN(test_yield_processes_multiple_events);
     RUN(test_script_error_marks_inactive);
+    RUN(test_register_script);
+    RUN(test_unregister_before_spawn);
+    RUN(test_lazy_spawn_on_publish);
+    RUN(test_no_spawn_wrong_topic);
+    RUN(test_clear_registry);
 
     printf("\n=== Results: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

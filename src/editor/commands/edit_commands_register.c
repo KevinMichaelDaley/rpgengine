@@ -54,6 +54,7 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "browse",          cmd_browse);
     edit_dispatch_register(dispatch, "material",        cmd_material);
     edit_dispatch_register(dispatch, "clone",           cmd_clone);
+    edit_dispatch_register(dispatch, "script",          cmd_script);
 
     /* Mesh modeling commands */
     edit_dispatch_register(dispatch, "mesh_create_box",      cmd_mesh_create_box);

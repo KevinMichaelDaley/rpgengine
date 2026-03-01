@@ -219,6 +219,14 @@ bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
                json_value_t *result, json_arena_t *arena);
 
 /* ------------------------------------------------------------------------ */
+/* Script commands                                                            */
+/* ------------------------------------------------------------------------ */
+
+/** @brief Manage Aegis scripts. Args: {"action":"load|unload|list",...}. */
+bool cmd_script(edit_dispatch_t *d, const json_value_t *args,
+                json_value_t *result, json_arena_t *arena);
+
+/* ------------------------------------------------------------------------ */
 /* Mesh modeling commands                                                     */
 /* ------------------------------------------------------------------------ */
 

@@ -854,7 +854,7 @@ AEGIS_ASM_SRC := src/aegis/aegis_asm_parse.c src/aegis/aegis_asm_compile.c
 build/aegis_asm_tests: tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) -o $@ $(LDFLAGS)
 
-AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load.c src/aegis/aegis_runtime_tick.c
+AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load.c src/aegis/aegis_runtime_tick.c src/aegis/aegis_runtime_registry.c src/aegis/aegis_runtime_query.c
 build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_RUNTIME_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_RUNTIME_SRC) build/libheadless.a -o $@ $(LDFLAGS)
 

@@ -31,6 +31,32 @@ struct job_system;
 /** Sentinel for invalid script IDs. */
 #define AEGIS_SCRIPT_ID_INVALID ((uint32_t)0xFFFFFFFF)
 
+/** Maximum number of scripts in the registry. */
+#define AEGIS_REGISTRY_MAX 128
+
+/**
+ * @brief A registered script entry (compiled bytecode, not yet spawned).
+ *
+ * Scripts are registered via `script load` and lazily spawned when their
+ * subscribed topic fires for the first time.
+ */
+typedef struct aegis_script_entry {
+    /** Compiled bytecode (owned copy of instructions). */
+    aegis_bytecode_t bytecode;
+
+    /** Debug name. */
+    char name[64];
+
+    /** Whether this registry slot is occupied. */
+    bool registered;
+
+    /** Whether this script has been spawned (has an active instance). */
+    bool spawned;
+
+    /** If spawned, the active instance's script_id. */
+    uint32_t instance_id;
+} aegis_script_entry_t;
+
 /**
  * @brief Per-script instance state.
  *
@@ -109,6 +135,15 @@ typedef struct aegis_script_runtime {
 
     /** Runtime configuration. */
     aegis_runtime_config_t config;
+
+    /** Script registry: compiled bytecodes awaiting lazy spawn. */
+    aegis_script_entry_t registry[AEGIS_REGISTRY_MAX];
+
+    /** Number of registered scripts. */
+    uint32_t registry_count;
+
+    /** Job system for spawning fibers (set via aegis_script_runtime_set_job_sys). */
+    struct job_system *job_sys;
 } aegis_script_runtime_t;
 
 /* ----------------------------------------------------------------------- */
@@ -212,6 +247,71 @@ void aegis_script_runtime_start(aegis_script_runtime_t *rt,
  */
 void aegis_script_runtime_publish(aegis_script_runtime_t *rt,
                                   const aegis_event_t *ev);
+
+/* ----------------------------------------------------------------------- */
+/* Registry API (lazy spawn)                                                */
+/* ----------------------------------------------------------------------- */
+
+/**
+ * @brief Set the job system used for spawning script fibers.
+ *
+ * Must be called before any scripts can be lazily spawned.
+ *
+ * @param rt  Runtime. Must not be NULL.
+ * @param sys Job system. Must not be NULL.
+ */
+void aegis_script_runtime_set_job_sys(aegis_script_runtime_t *rt,
+                                      struct job_system *sys);
+
+/**
+ * @brief Register a compiled script for lazy spawning.
+ *
+ * Stores the bytecode in the registry. The script is NOT started yet.
+ * When an event matching the script's topic_hash arrives, the script
+ * is lazily spawned (loaded + fiber dispatched) and the event delivered.
+ *
+ * @param rt   Runtime. Must not be NULL.
+ * @param name Debug name (copied, truncated to 63 chars).
+ * @param bc   Compiled bytecode (instructions are copied).
+ * @return Registry index on success, AEGIS_SCRIPT_ID_INVALID on failure.
+ *
+ * Side effects: copies bytecode instructions into owned storage.
+ */
+uint32_t aegis_script_runtime_register(aegis_script_runtime_t *rt,
+                                       const char *name,
+                                       const aegis_bytecode_t *bc);
+
+/**
+ * @brief Unregister a script by name.
+ *
+ * Removes from registry. If the script was already spawned, also
+ * unloads the active instance.
+ *
+ * @param rt   Runtime. Must not be NULL.
+ * @param name Script name to unregister.
+ * @return true if found and removed, false if not found.
+ */
+bool aegis_script_runtime_unregister(aegis_script_runtime_t *rt,
+                                     const char *name);
+
+/**
+ * @brief Find a registered script entry by name.
+ *
+ * @param rt   Runtime. Must not be NULL.
+ * @param name Script name to find.
+ * @return Pointer to entry if found, NULL otherwise. Not owned by caller.
+ */
+const aegis_script_entry_t *aegis_script_runtime_find(
+    const aegis_script_runtime_t *rt, const char *name);
+
+/**
+ * @brief Clear the entire script registry and unload all active scripts.
+ *
+ * Used when loading a new level.
+ *
+ * @param rt Runtime. Must not be NULL.
+ */
+void aegis_script_runtime_clear_registry(aegis_script_runtime_t *rt);
 
 #ifdef __cplusplus
 }

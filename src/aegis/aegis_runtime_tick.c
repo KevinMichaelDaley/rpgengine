@@ -120,21 +120,28 @@ void aegis_script_runtime_start(aegis_script_runtime_t *rt,
 
 void aegis_script_runtime_publish(aegis_script_runtime_t *rt,
                                   const aegis_event_t *ev) {
-    /* Build a temporary array of event queue pointers indexed by script_id.
-     * The topic_publish function expects queues[script_id] to be the queue
-     * for that script. We pass the queue array from the instance table. */
+    /* Check registry for unspawned scripts that match this event's topic.
+     * Lazily spawn them before routing the event. */
+    for (uint32_t i = 0; i < AEGIS_REGISTRY_MAX; i++) {
+        if (!rt->registry[i].registered) continue;
+        if (rt->registry[i].spawned) continue;
+        if (rt->registry[i].bytecode.topic_hash != ev->type) continue;
 
-    /* aegis_topic_publish needs a flat array of queues where index = script_id.
-     * We can't pass rt->instances directly because the queue is a member,
-     * not the struct itself. So we use a stack-allocated pointer array. */
+        /* Lazy spawn: load instance + dispatch fiber. */
+        uint32_t sid = aegis_script_runtime_load(
+            rt, rt->registry[i].name, &rt->registry[i].bytecode);
+        if (sid == AEGIS_SCRIPT_ID_INVALID) continue;
 
-    /* Actually, topic_publish takes aegis_event_queue_t* and indexes by
-     * script_id. We need to build an array where arr[i] = instances[i].event_queue.
-     * But the queues aren't contiguous in memory (they're embedded in instances).
-     *
-     * The simplest fix: iterate subscribers manually. */
+        rt->registry[i].spawned = true;
+        rt->registry[i].instance_id = sid;
 
-    /* Walk topic table and push directly to matching queues. */
+        /* Start the fiber if we have a job system. */
+        if (rt->job_sys) {
+            aegis_script_runtime_start(rt, sid, rt->job_sys);
+        }
+    }
+
+    /* Route event to all active subscribers. */
     for (uint32_t i = 0; i < rt->topics.count; i++) {
         if (rt->topics.subs[i].topic_hash == ev->type) {
             uint32_t sid = rt->topics.subs[i].script_id;

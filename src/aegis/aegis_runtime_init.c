@@ -35,7 +35,10 @@ bool aegis_script_runtime_init(aegis_script_runtime_t *rt,
 void aegis_script_runtime_destroy(aegis_script_runtime_t *rt) {
     if (!rt) return;
 
-    /* Unload all active instances. */
+    /* Clear the registry (also unloads spawned instances). */
+    aegis_script_runtime_clear_registry(rt);
+
+    /* Unload any remaining active instances not from the registry. */
     for (uint32_t i = 0; i < rt->instance_cap; i++) {
         if (rt->instances[i].active) {
             aegis_script_runtime_unload(rt, i);
