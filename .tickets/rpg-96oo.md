@@ -1,7 +1,7 @@
 ---
 id: rpg-96oo
 status: open
-deps: [rpg-zqex]
+deps: [rpg-zqex, rpg-eccf, rpg-jyx3]
 links: []
 created: 2026-02-26T04:28:42Z
 type: task
@@ -26,13 +26,16 @@ Requirements:
 - spawn_box(pos, size) → submits spawn command via cmd_ring
 - spawn_sphere(pos, radius) → submits spawn command via cmd_ring
 - destroy(entity_id) → submits delete command via cmd_ring
-- move(entity_id, delta) → writes to update buffer (SCRIPT_UPD_POS)
-- set_pos(entity_id, pos) → writes to update buffer (SCRIPT_UPD_POS)
-- set_rot(entity_id, quat) → writes to update buffer (SCRIPT_UPD_ROT)
-- set_scale(entity_id, scale) → writes to update buffer (SCRIPT_UPD_SCALE)
+- set_pos(entity_id, pos) → writes SCRIPT_KEY_POS via script_env_write_attr
+- set_rot(entity_id, rot) → writes SCRIPT_KEY_ROT via script_env_write_attr
+- set_scale(entity_id, scale) → writes SCRIPT_KEY_SCALE via script_env_write_attr
+- move(entity_id, delta) → reads current pos from snapshot, writes pos+delta
+- set_attr(entity_id, key, value) → writes arbitrary attribute via script_env_write_attr
+- get_attr(entity_id, key) → reads from snapshot entity's entity_attrs_t block
 - select(entity_id) / deselect_all() → submits via cmd_ring
-- get_entities() → returns table from snapshot (read-only)
+- get_entities() → returns table from snapshot (read-only, includes dynamic attrs)
 - find_where(field, op, value) → filters snapshot, returns table
+- Entity tables expose both fixed fields AND dynamic attrs via __index metamethod
 
 Files to create:
 - src/editor/script/lua_entity_api.c

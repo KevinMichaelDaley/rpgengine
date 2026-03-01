@@ -1,7 +1,7 @@
 ---
 id: rpg-zqex
 status: open
-deps: [rpg-qdn7]
+deps: [rpg-qdn7, rpg-dvgo, rpg-eccf]
 links: []
 created: 2026-02-26T04:28:42Z
 type: task
