@@ -14,6 +14,7 @@
 #include "ferrum/aegis/aegis_ops_arith.h"
 #include "ferrum/aegis/aegis_ops_data.h"
 #include "ferrum/aegis/aegis_ops_event.h"
+#include "ferrum/aegis/aegis_ops_entity.h"
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 
@@ -334,14 +335,41 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             }
             break;
 
+        /* ---- Entity queries (Phase 2) ---- */
+
+        case AEGIS_OP_QUERY_ENTITY:
+            if (!aegis_op_query_entity(&vm->regs[d.raw_a], &d.b,
+                                        vm->entity_view)) {
+                return vm_error(vm, 0xFFD0);
+            }
+            break;
+
+        case AEGIS_OP_GET_ATTR:
+            /* A=dst reg, B=handle (reg or imm), C=key (imm). */
+            if (!aegis_op_get_attr(&vm->regs[d.raw_a], d.b.u32,
+                                    (uint16_t)d.c.u32, vm->entity_view)) {
+                return vm_error(vm, 0xFFCF);
+            }
+            break;
+
+        case AEGIS_OP_ENTITY_COUNT:
+            if (!aegis_op_entity_count(&vm->regs[d.raw_a],
+                                        vm->entity_view)) {
+                return vm_error(vm, 0xFFCE);
+            }
+            break;
+
+        case AEGIS_OP_ENTITY_AT:
+            if (!aegis_op_entity_at(&vm->regs[d.raw_a], &d.b,
+                                     vm->entity_view)) {
+                return vm_error(vm, 0xFFCD);
+            }
+            break;
+
         /* ---- Phase 2/3 stubs (not yet implemented) ---- */
 
         case AEGIS_OP_WAIT:
         case AEGIS_OP_POLL:
-        case AEGIS_OP_QUERY_ENTITY:
-        case AEGIS_OP_GET_ATTR:
-        case AEGIS_OP_ENTITY_COUNT:
-        case AEGIS_OP_ENTITY_AT:
         case AEGIS_OP_VIS_TEST:
         case AEGIS_OP_NAV_QUERY:
         case AEGIS_OP_BUILD_UPDATE:

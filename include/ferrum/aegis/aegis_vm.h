@@ -27,6 +27,8 @@
 extern "C" {
 #endif
 
+struct script_entity_view;
+
 /**
  * @brief VM execution status after a run.
  */
@@ -65,6 +67,9 @@ typedef struct aegis_vm {
 
     /** Current event being processed (set before resume, NULL if none). */
     const aegis_event_t *event;
+
+    /** Entity snapshot view for query instructions (set by runtime). */
+    const struct script_entity_view *entity_view;
 
     /** Current execution status. */
     aegis_vm_status_t status;

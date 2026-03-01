@@ -1,6 +1,6 @@
 ---
 id: rpg-ped1
-status: open
+status: closed
 deps: [rpg-h84i, rpg-za2w]
 links: []
 created: 2026-03-01T21:28:02Z
