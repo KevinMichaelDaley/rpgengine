@@ -26,14 +26,18 @@ bool edit_entity_store_restore(edit_entity_store_t *store, uint32_t id,
     if (store->entities[id].active) return false;
     memcpy(&store->entities[id], snapshot, sizeof(edit_entity_t));
     store->entities[id].active = true;
+    /* Remove id from freelist (swap-remove). Restore is rare (undo only). */
+    for (uint32_t i = 0; i < store->free_count; i++) {
+        if (store->freelist[i] == id) {
+            store->freelist[i] = store->freelist[--store->free_count];
+            break;
+        }
+    }
+    store->active_count++;
     return true;
 }
 
 uint32_t edit_entity_store_count(const edit_entity_store_t *store) {
     if (!store) return 0;
-    uint32_t count = 0;
-    for (uint32_t i = 0; i < store->capacity; i++) {
-        if (store->entities[i].active) count++;
-    }
-    return count;
+    return store->active_count;
 }

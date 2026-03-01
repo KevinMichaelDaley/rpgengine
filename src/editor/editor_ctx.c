@@ -12,7 +12,7 @@
 
 /** @brief Apply defaults to zero-valued config fields. */
 static void resolve_config_(editor_ctx_config_t *cfg) {
-    if (cfg->max_entities == 0)     cfg->max_entities     = 4096;
+    if (cfg->max_entities == 0)     cfg->max_entities     = 1000000;
     if (cfg->undo_capacity == 0)    cfg->undo_capacity    = EDIT_UNDO_DEFAULT_CAP;
     if (cfg->ring_capacity == 0)    cfg->ring_capacity    = EDIT_CMD_RING_DEFAULT_CAP;
     if (cfg->ring_payload_max == 0) cfg->ring_payload_max = 8192;

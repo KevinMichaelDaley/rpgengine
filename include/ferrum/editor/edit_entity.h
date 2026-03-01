@@ -66,13 +66,18 @@ typedef struct edit_entity {
 } edit_entity_t;
 
 /**
- * @brief Flat-array entity store.
+ * @brief Flat-array entity store with O(1) freelist allocation.
  *
  * Ownership: init() allocates, destroy() frees.
+ * The freelist is a LIFO stack of free slot indices, enabling O(1)
+ * create and remove even at million-entity capacities.
  */
 typedef struct edit_entity_store {
-    edit_entity_t *entities;   /**< Array of entity slots. */
-    uint32_t       capacity;   /**< Total number of slots. */
+    edit_entity_t *entities;     /**< Array of entity slots. */
+    uint32_t      *freelist;     /**< Stack of free slot indices. */
+    uint32_t       capacity;     /**< Total number of slots. */
+    uint32_t       free_count;   /**< Number of entries in the freelist. */
+    uint32_t       active_count; /**< Number of active entities (cached). */
 } edit_entity_store_t;
 
 /* ------------------------------------------------------------------------ */
