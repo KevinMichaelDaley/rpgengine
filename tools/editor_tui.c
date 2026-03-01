@@ -1273,26 +1273,210 @@ static void handle_tab_(ctrl_tui_t *tui) {
     }
 }
 
+/* ── Command dispatch helper ─────────────────────────────────────── */
+
+/**
+ * @brief Process a single command string: expand refs, build JSON, send.
+ *
+ * Handles help queries, find, quit, browse tracking, entity/group refresh.
+ * Returns false if the command was "q"/"quit" (caller should exit).
+ */
+static bool dispatch_command_(ctrl_tui_t *tui, ctrl_conn_t *conn,
+                               const char *cmd) {
+    if (!cmd || cmd[0] == '\0') return true;
+
+    /* Check for help query first. */
+    if (handle_help_query_(tui, cmd)) return true;
+
+    /* Handle local 'find' command (no server roundtrip). */
+    if (handle_find_(tui, cmd)) return true;
+
+    /* Quit command. */
+    if (strcmp(cmd, "q") == 0 || strcmp(cmd, "quit") == 0) {
+        return false;
+    }
+
+    /* Expand #N browse references. */
+    char expanded[512];
+    const char *final_cmd = cmd;
+    if (expand_browse_refs_(cmd, expanded, sizeof(expanded))) {
+        final_cmd = expanded;
+    }
+    char msg[512];
+    snprintf(msg, sizeof(msg), "%s", final_cmd);
+    uint32_t this_cmd_id = conn->next_id;
+
+    /* Track browse command ID for response interception. */
+    if (strncmp(final_cmd, "browse", 6) == 0
+        && (final_cmd[6] == '\0' || final_cmd[6] == ' ')) {
+        g_browse_cmd_id = this_cmd_id;
+    }
+    if (strncmp(final_cmd, "br ", 3) == 0 || strcmp(final_cmd, "br") == 0) {
+        g_browse_cmd_id = this_cmd_id;
+    }
+
+    /* Build proper JSON and send. */
+    char json[4096];
+    uint32_t json_len = ctrl_cmd_build_json(
+        final_cmd, json, sizeof(json), conn->next_id);
+
+    if (json_len > 0) {
+        ctrl_log_add_cmd(&tui->log, msg, this_cmd_id);
+        ctrl_conn_send_raw(conn, json, json_len);
+        conn->next_id++;
+
+        /* Refresh entity cache after mutating commands. */
+        if (needs_entity_refresh_(msg)) {
+            send_entity_refresh_(conn);
+        }
+        /* Refresh group cache after group mutations. */
+        if (needs_group_refresh_(msg)) {
+            send_group_refresh_(conn);
+        }
+    } else {
+        /* Build failed — check if command has required args. */
+        const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(final_cmd);
+        if (def && def->arg_fmt) {
+            char hint[256];
+            snprintf(hint, sizeof(hint), "Usage: %s", def->usage);
+            ctrl_log_add(&tui->log, 1, hint);
+        } else {
+            /* Unknown cmd or no args needed — send raw. */
+            ctrl_log_add_cmd(&tui->log, msg, conn->next_id);
+            ctrl_conn_send_cmd(conn, final_cmd);
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Drain pending server responses (non-blocking).
+ *
+ * Polls the connection and processes any complete JSON response lines.
+ * Returns false if the server disconnected.
+ */
+static bool drain_responses_(ctrl_tui_t *tui, ctrl_conn_t *conn) {
+    struct pollfd pfd = {.fd = conn->fd, .events = POLLIN};
+    while (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN)) {
+        if (!ctrl_conn_recv(conn)) {
+            if (conn->state == CTRL_CONN_ERROR) return false;
+            break;
+        }
+        char line[4096];
+        uint32_t len;
+        while ((len = ctrl_conn_pop_line(conn, line, sizeof(line))) > 0) {
+            parse_server_response_(tui, line);
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Execute commands from a text file, one per line.
+ *
+ * Skips blank lines and lines starting with '#' (comments).
+ * Sends each command through the normal dispatch path and waits
+ * for the server response before sending the next command.
+ *
+ * @param tui   TUI context (for logging).
+ * @param conn  Server connection.
+ * @param path  Path to the script file.
+ * @return 0 on success, 1 on error.
+ */
+static int exec_file_(ctrl_tui_t *tui, ctrl_conn_t *conn, const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "Cannot open script: %s\n", path);
+        return 1;
+    }
+
+    char line[2048];
+    uint32_t line_no = 0;
+    uint32_t cmd_count = 0;
+    while (fgets(line, (int)sizeof(line), f)) {
+        line_no++;
+
+        /* Strip trailing newline / carriage return. */
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+
+        /* Skip blank lines and comments. */
+        if (len == 0) continue;
+        const char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\0') continue;
+
+        printf("[exec] %3u: %s\n", line_no, p);
+
+        uint32_t id_before = conn->next_id;
+        if (!dispatch_command_(tui, conn, p)) {
+            break; /* quit command */
+        }
+        cmd_count++;
+
+        /* If the command was actually sent (next_id advanced), wait for the
+         * server response before sending the next command. */
+        if (conn->next_id > id_before) {
+            bool got_response = false;
+            for (int attempt = 0; attempt < 20; attempt++) {  /* up to 2s */
+                usleep(100000);  /* 100ms */
+                struct pollfd pfd = {.fd = conn->fd, .events = POLLIN};
+                if (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN)) {
+                    if (ctrl_conn_recv(conn)) {
+                        char resp[8192];
+                        uint32_t rlen;
+                        while ((rlen = ctrl_conn_pop_line(conn, resp,
+                                                          sizeof(resp))) > 0) {
+                            parse_server_response_(tui, resp);
+                            got_response = true;
+                        }
+                    }
+                    if (got_response) break;
+                }
+            }
+            if (!got_response) {
+                printf("[exec] WARNING: no response for line %u\n", line_no);
+            }
+        }
+    }
+
+    /* Final drain — wait for any trailing responses. */
+    usleep(500000);
+    drain_responses_(tui, conn);
+
+    fclose(f);
+    printf("[exec] Done. %u commands from %u lines in %s\n",
+           cmd_count, line_no, path);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const char *host = "127.0.0.1";
     uint16_t port = 9100;
+    const char *exec_file = NULL; /* --exec <file> script path. */
 
-    if (argc > 1) {
-        /* Parse host:port or host port. */
-        char *colon = strchr(argv[1], ':');
-        if (colon) {
-            static char host_buf[256];
-            size_t hlen = (size_t)(colon - argv[1]);
-            if (hlen >= sizeof(host_buf)) hlen = sizeof(host_buf) - 1;
-            memcpy(host_buf, argv[1], hlen);
-            host_buf[hlen] = '\0';
-            host = host_buf;
-            port = (uint16_t)atoi(colon + 1);
-        } else if (argc > 2) {
-            host = argv[1];
-            port = (uint16_t)atoi(argv[2]);
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--exec") == 0 && i + 1 < argc) {
+            exec_file = argv[++i];
         } else {
-            port = (uint16_t)atoi(argv[1]);
+            /* Parse host:port or host port. */
+            char *colon = strchr(argv[i], ':');
+            if (colon) {
+                static char host_buf[256];
+                size_t hlen = (size_t)(colon - argv[i]);
+                if (hlen >= sizeof(host_buf)) hlen = sizeof(host_buf) - 1;
+                memcpy(host_buf, argv[i], hlen);
+                host_buf[hlen] = '\0';
+                host = host_buf;
+                port = (uint16_t)atoi(colon + 1);
+            } else if (i + 1 < argc && argv[i + 1][0] != '-') {
+                host = argv[i];
+                port = (uint16_t)atoi(argv[++i]);
+            } else {
+                port = (uint16_t)atoi(argv[i]);
+            }
         }
     }
 
@@ -1367,6 +1551,18 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* If --exec was given, run the script and exit (no interactive TUI). */
+    if (exec_file) {
+        /* Drain bootstrap responses first. */
+        usleep(200000);
+        drain_responses_(&tui, &conn);
+
+        int rc = exec_file_(&tui, &conn, exec_file);
+        ctrl_tui_destroy(&tui);
+        ctrl_conn_disconnect(&conn);
+        return rc;
+    }
+
     /* Enter raw terminal mode. */
     if (!raw_mode_()) {
         fprintf(stderr, "Failed to set raw terminal mode\n");
@@ -1407,71 +1603,9 @@ int main(int argc, char **argv) {
 
                 const char *cmd = ctrl_tui_feed_key(&tui, ch);
                 if (cmd && cmd[0] != '\0') {
-                    /* Check for help query first. */
-                    if (handle_help_query_(&tui, cmd)) {
-                        continue;
-                    }
-
-                    /* Handle local 'find' command (no server roundtrip). */
-                    if (handle_find_(&tui, cmd)) {
-                        continue;
-                    }
-
-                    /* Quit command. */
-                    if (strcmp(cmd, "q") == 0 || strcmp(cmd, "quit") == 0) {
+                    if (!dispatch_command_(&tui, &conn, cmd)) {
                         g_running = false;
                         break;
-                    }
-
-                    /* Log the user command with pending status. */
-                    char expanded[512];
-                    if (expand_browse_refs_(cmd, expanded, sizeof(expanded))) {
-                        cmd = expanded;
-                    }
-                    char msg[512];
-                    snprintf(msg, sizeof(msg), "%s", cmd);
-                    uint32_t this_cmd_id = conn.next_id;
-
-                    /* Track browse command ID for response interception. */
-                    if (strncmp(cmd, "browse", 6) == 0
-                        && (cmd[6] == '\0' || cmd[6] == ' ')) {
-                        g_browse_cmd_id = this_cmd_id;
-                    }
-                    if (strncmp(cmd, "br ", 3) == 0 || strcmp(cmd, "br") == 0) {
-                        g_browse_cmd_id = this_cmd_id;
-                    }
-
-                    /* Build proper JSON and send. */
-                    char json[4096];
-                    uint32_t json_len = ctrl_cmd_build_json(
-                        cmd, json, sizeof(json), conn.next_id);
-
-                    if (json_len > 0) {
-                        ctrl_log_add_cmd(&tui.log, msg, this_cmd_id);
-                        ctrl_conn_send_raw(&conn, json, json_len);
-                        conn.next_id++;
-
-                        /* Refresh entity cache after mutating commands. */
-                        if (needs_entity_refresh_(msg)) {
-                            send_entity_refresh_(&conn);
-                        }
-                        /* Refresh group cache after group mutations. */
-                        if (needs_group_refresh_(msg)) {
-                            send_group_refresh_(&conn);
-                        }
-                    } else {
-                        /* Build failed — check if command has required args. */
-                        const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(cmd);
-                        if (def && def->arg_fmt) {
-                            char hint[256];
-                            snprintf(hint, sizeof(hint),
-                                     "Usage: %s", def->usage);
-                            ctrl_log_add(&tui.log, 1, hint);
-                        } else {
-                            /* Unknown cmd or no args needed — send raw. */
-                            ctrl_log_add_cmd(&tui.log, msg, conn.next_id);
-                            ctrl_conn_send_cmd(&conn, cmd);
-                        }
                     }
                 }
             }

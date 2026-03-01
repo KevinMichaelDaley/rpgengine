@@ -5,6 +5,7 @@
 #include "ferrum/editor/mesh/mesh_commit.h"
 #include "ferrum/editor/mesh/mesh_vao_format.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -95,10 +96,12 @@ bool mesh_commit(mesh_slot_t *slot,
         ent->scale[1] = extents[1];
         ent->scale[2] = extents[2];
 
-        /* Name */
+        /* Name: use provided name, or auto-generate from entity ID. */
         if (args->entity_name[0] != '\0') {
             strncpy(ent->name, args->entity_name, sizeof(ent->name) - 1);
             ent->name[sizeof(ent->name) - 1] = '\0';
+        } else {
+            snprintf(ent->name, sizeof(ent->name), "mesh_%u", eid);
         }
 
         /* Material override (apply to slot 0) */

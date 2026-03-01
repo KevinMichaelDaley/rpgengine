@@ -1,0 +1,48 @@
+# Room with pillar — editor modeling script
+# Usage: ./build/editor_tui --exec scripts/room_with_pillar.txt
+#
+# Each mesh_create_* sets up mesh editing state.
+# mesh_commit finalizes it into an entity with physics body.
+
+# Pause physics so nothing falls
+physics_pause
+
+# Floor: 20m x 0.5m x 20m centered at origin
+mesh_create_box 20 0.5 20 0 -0.25 0
+mesh_commit
+
+# Back wall (Z-)
+mesh_create_box 20 5 0.5 0 2.5 -10
+mesh_commit
+
+# Front wall (Z+)
+mesh_create_box 20 5 0.5 0 2.5 10
+mesh_commit
+
+# Left wall (X-)
+mesh_create_box 0.5 5 20 -10 2.5 0
+mesh_commit
+
+# Right wall (X+)
+mesh_create_box 0.5 5 20 10 2.5 0
+mesh_commit
+
+# Ceiling
+mesh_create_box 20 0.5 20 0 5.25 0
+mesh_commit
+
+# Pillar near back-left corner
+mesh_create_cylinder 0.5 5 12 -4 2.5 -4
+mesh_commit
+
+# Pillar near back-right corner
+mesh_create_cylinder 0.5 5 12 4 2.5 -4
+mesh_commit
+
+# Table in center
+mesh_create_box 3 0.1 2 0 1.0 0
+mesh_commit
+
+# Sphere decoration on table
+mesh_create_sphere 0.5 16 12 0 1.6 0
+mesh_commit
