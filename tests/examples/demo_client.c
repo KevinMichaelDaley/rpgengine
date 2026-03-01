@@ -1137,25 +1137,32 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* ── Stage 4: FPS camera movement ──────────────────────── */
+        /* ── Stage 4: FPS camera movement (6DOF noclip) ─────────── */
         {
-            float fwd_x = -sinf(cam_yaw);
-            float fwd_z = -cosf(cam_yaw);
+            /* Forward vector follows pitch + yaw (true noclip). */
+            float cos_p = cosf(cam_pitch);
+            float sin_p = sinf(cam_pitch);
+            float fwd_x = cos_p * (-sinf(cam_yaw));
+            float fwd_y = sin_p;
+            float fwd_z = cos_p * (-cosf(cam_yaw));
+            /* Right vector stays horizontal (no roll). */
             float right_x =  cosf(cam_yaw);
             float right_z = -sinf(cam_yaw);
-            float mx = 0.0f, mz = 0.0f;
+            float mx = 0.0f, my = 0.0f, mz = 0.0f;
 
-            if (move_fwd)   { mx += fwd_x;   mz += fwd_z;   }
-            if (move_back)  { mx -= fwd_x;   mz -= fwd_z;   }
+            if (move_fwd)   { mx += fwd_x; my += fwd_y; mz += fwd_z; }
+            if (move_back)  { mx -= fwd_x; my -= fwd_y; mz -= fwd_z; }
             if (move_left)  { mx -= right_x; mz -= right_z; }
             if (move_right) { mx += right_x; mz += right_z; }
 
-            float len = sqrtf(mx * mx + mz * mz);
+            float len = sqrtf(mx * mx + my * my + mz * mz);
             if (len > 0.001f) {
                 mx /= len;
+                my /= len;
                 mz /= len;
             }
             cam_pos.x += mx * CLIENT_MOVE_SPEED * (float)dt_s;
+            cam_pos.y += my * CLIENT_MOVE_SPEED * (float)dt_s;
             cam_pos.z += mz * CLIENT_MOVE_SPEED * (float)dt_s;
         }
 
