@@ -39,7 +39,11 @@
 #include "ferrum/net/replication/body_state.h"
 #include "ferrum/net/replication/common.h"
 #include "ferrum/net/replication/join.h"
+#include "ferrum/net/replication/mesh_data.h"
 #include "ferrum/net/replication/prediction_tick.h"
+
+#include "ferrum/editor/mesh/mesh_vao_format.h"
+#include "ferrum/editor/mesh/mesh_slot.h"
 #include "ferrum/net/replication/welcome.h"
 #include "ferrum/net/rudp/peer.h"
 #include "ferrum/net/snapshot_chunk.h"
@@ -136,12 +140,17 @@ static void color_from_body(uint16_t body_id, float out_rgb[3]) {
  * This struct holds only the rendering-specific data.
  */
 typedef struct body_render_info {
-    uint8_t  shape_type;    /**< 0=box, 1=sphere, 2=capsule, 3=mesh, 4=halfspace. */
+    uint8_t  shape_type;    /**< 0=box, 1=sphere, 2=capsule, 3=mesh, 4=halfspace, 5=custom. */
     uint8_t  is_static;     /**< 1 if static/kinematic body. */
     uint8_t  is_constrained; /**< 1 if body has joints → use interpolation. */
     float    half_x;        /**< Half-extent X in meters. */
     float    half_y;        /**< Half-extent Y in meters. */
     float    half_z;        /**< Half-extent Z in meters. */
+    float    color[3];      /**< RGB color [0..1]. */
+    /* Per-body custom mesh (shape_type == 5). */
+    GLuint   custom_vbo;    /**< VBO for custom mesh data, 0 if none. */
+    GLuint   custom_vao;    /**< VAO for custom mesh data, 0 if none. */
+    uint32_t custom_vert_count; /**< Vertex count for custom mesh. */
 } body_render_info_t;
 
 /* ── GL context ─────────────────────────────────────────────────── */
@@ -157,6 +166,9 @@ typedef struct gl_ctx {
     vbo_t             cap_vbo;   /* capsule mesh */
     vao_t             cap_vao;
     uint32_t          cap_vert_count;
+    vbo_t             sph_vbo;   /* sphere mesh */
+    vao_t             sph_vao;
+    uint32_t          sph_vert_count;
     vbo_t             arm_vbo;   /* armadillo mesh */
     vao_t             arm_vao;
     uint32_t          arm_vert_count;
@@ -238,6 +250,121 @@ static uint32_t gen_capsule_mesh(float *out, uint32_t max_verts)
 
 #undef EMIT
     return v;
+}
+
+/* ── Sphere mesh generator (unit UV sphere) ─────────────────────── */
+
+#define SPH_RINGS  12
+#define SPH_SLICES 16
+#define SPH_MAX_VERTS (SPH_RINGS * SPH_SLICES * 6)
+
+static uint32_t gen_sphere_mesh(float *out, uint32_t max_verts)
+{
+    uint32_t v = 0;
+    const float r = 0.5f;
+
+#define EMIT_S(px,py,pz) do { \
+    if (v >= max_verts) return 0; \
+    out[v*3+0]=(px); out[v*3+1]=(py); out[v*3+2]=(pz); v++; \
+} while(0)
+
+    for (int ring = 0; ring < SPH_RINGS; ring++) {
+        float phi0 = (float)ring / SPH_RINGS * FERRUM_PI;
+        float phi1 = (float)(ring + 1) / SPH_RINGS * FERRUM_PI;
+        float y0 = cosf(phi0) * r, r0 = sinf(phi0) * r;
+        float y1 = cosf(phi1) * r, r1 = sinf(phi1) * r;
+        for (int sl = 0; sl < SPH_SLICES; sl++) {
+            float a0 = (float)sl / SPH_SLICES * 2.0f * FERRUM_PI;
+            float a1 = (float)(sl + 1) / SPH_SLICES * 2.0f * FERRUM_PI;
+            float x00 = cosf(a0) * r0, z00 = sinf(a0) * r0;
+            float x10 = cosf(a1) * r0, z10 = sinf(a1) * r0;
+            float x01 = cosf(a0) * r1, z01 = sinf(a0) * r1;
+            float x11 = cosf(a1) * r1, z11 = sinf(a1) * r1;
+            EMIT_S(x00, y0, z00); EMIT_S(x10, y0, z10); EMIT_S(x11, y1, z11);
+            EMIT_S(x00, y0, z00); EMIT_S(x11, y1, z11); EMIT_S(x01, y1, z01);
+        }
+    }
+
+#undef EMIT_S
+    return v;
+}
+
+/* ── Build GL VAO from FVMA data ────────────────────────────────── */
+
+/**
+ * @brief Deserialize FVMA blob and upload to a per-body GL VBO/VAO.
+ *
+ * Extracts positions from the FVMA, expands indexed triangles into
+ * a flat vertex array (6 floats per vertex: pos + normal), and uploads
+ * to new GL buffers.
+ *
+ * @param fvma_data  Raw FVMA bytes.
+ * @param fvma_size  Size in bytes.
+ * @param out_vbo    Receives GL VBO name.
+ * @param out_vao    Receives GL VAO name.
+ * @param out_verts  Receives vertex count (for glDrawArrays).
+ * @return true on success.
+ */
+static bool build_vao_from_fvma(const uint8_t *fvma_data, uint32_t fvma_size,
+                                 GLuint *out_vbo, GLuint *out_vao,
+                                 uint32_t *out_verts) {
+    mesh_slot_t slot;
+    memset(&slot, 0, sizeof(slot));
+    if (!mesh_vao_deserialize(fvma_data, (size_t)fvma_size, &slot)) {
+        fprintf(stderr, "[client] FVMA deserialize failed\n");
+        return false;
+    }
+    if (slot.index_count == 0 || !slot.positions) {
+        mesh_slot_destroy(&slot);
+        return false;
+    }
+
+    /* Expand indexed triangles into flat array: 6 floats per vertex
+     * (px, py, pz, nx, ny, nz). */
+    uint32_t tri_verts = slot.index_count; /* one index per vertex */
+    float *buf = (float *)malloc(tri_verts * 6 * sizeof(float));
+    if (!buf) {
+        mesh_slot_destroy(&slot);
+        return false;
+    }
+    for (uint32_t i = 0; i < tri_verts; i++) {
+        uint32_t vi = slot.indices[i];
+        buf[i * 6 + 0] = slot.positions[vi * 3 + 0];
+        buf[i * 6 + 1] = slot.positions[vi * 3 + 1];
+        buf[i * 6 + 2] = slot.positions[vi * 3 + 2];
+        if (slot.normals) {
+            buf[i * 6 + 3] = slot.normals[vi * 3 + 0];
+            buf[i * 6 + 4] = slot.normals[vi * 3 + 1];
+            buf[i * 6 + 5] = slot.normals[vi * 3 + 2];
+        } else {
+            buf[i * 6 + 3] = 0.0f;
+            buf[i * 6 + 4] = 1.0f;
+            buf[i * 6 + 5] = 0.0f;
+        }
+    }
+    mesh_slot_destroy(&slot);
+
+    GLuint vbo, vao;
+    glGenBuffers(1, &vbo);
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER,
+                 (GLsizeiptr)(tri_verts * 6 * sizeof(float)),
+                 buf, GL_STATIC_DRAW);
+    /* position: location 0, 3 floats, stride 24, offset 0 */
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, (void *)0);
+    /* normal: location 1, 3 floats, stride 24, offset 12 */
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 24, (void *)12);
+    glBindVertexArray(0);
+
+    free(buf);
+    *out_vbo = vbo;
+    *out_vao = vao;
+    *out_verts = tri_verts;
+    return true;
 }
 
 /* ── GL init / shutdown ─────────────────────────────────────────── */
@@ -346,6 +473,19 @@ static int gl_init(gl_ctx_t *ctx) {
                    ctx->cap_vert_count * 3 * sizeof(float), GL_STATIC_DRAW);
         vao_create(&ctx->cap_vao, &ctx->loader);
         vao_bind_attributes(&ctx->cap_vao, &ctx->cap_vbo, &attr, 1u,
+                            3u * sizeof(float));
+    }
+
+    /* Sphere mesh VBO + VAO. */
+    {
+        float sph_verts[SPH_MAX_VERTS * 3];
+        ctx->sph_vert_count = gen_sphere_mesh(sph_verts, SPH_MAX_VERTS);
+
+        vbo_create(&ctx->sph_vbo, &ctx->loader);
+        vbo_upload(&ctx->sph_vbo, GL_ARRAY_BUFFER, sph_verts,
+                   ctx->sph_vert_count * 3 * sizeof(float), GL_STATIC_DRAW);
+        vao_create(&ctx->sph_vao, &ctx->loader);
+        vao_bind_attributes(&ctx->sph_vao, &ctx->sph_vbo, &attr, 1u,
                             3u * sizeof(float));
     }
 
@@ -637,6 +777,13 @@ int main(int argc, char **argv) {
     /* Per-body render metadata. */
     body_render_info_t render_info[CLIENT_MAX_BODIES];
     memset(render_info, 0, sizeof(render_info));
+
+    /* Mesh data reassembly table for custom meshes. */
+    net_repl_mesh_reassembly_table_t mesh_reassembly;
+    if (!net_repl_mesh_reassembly_init(&mesh_reassembly, 64)) {
+        fprintf(stderr, "[client] mesh reassembly init failed\n");
+        return 1;
+    }
 
     /* Per-body last-seen server tick for BODY_STATE dedup. */
     uint16_t body_state_last_tick[CLIENT_MAX_BODIES];
@@ -940,6 +1087,10 @@ int main(int argc, char **argv) {
                         ri->half_x = net_float16_to_float(sp.half_x_f16);
                         ri->half_y = net_float16_to_float(sp.half_y_f16);
                         ri->half_z = net_float16_to_float(sp.half_z_f16);
+                        /* Decode RGB from color_seed (R8G8B8 packed). */
+                        ri->color[0] = (float)((sp.color_seed >> 16u) & 0xFFu) / 255.0f;
+                        ri->color[1] = (float)((sp.color_seed >>  8u) & 0xFFu) / 255.0f;
+                        ri->color[2] = (float)((sp.color_seed >>  0u) & 0xFFu) / 255.0f;
                     }
 
                     printf("[client] spawn body %u shape=%u pos=(%.1f,%.1f,%.1f) half=(%.2f,%.2f,%.2f)\n",
@@ -950,6 +1101,36 @@ int main(int argc, char **argv) {
                            render_info[idx].half_x,
                            render_info[idx].half_y,
                            render_info[idx].half_z);
+                }
+
+                /* ── Handle MESH_DATA chunks ─────────────────────── */
+                if (rel_schema == NET_REPL_SCHEMA_MESH_DATA &&
+                    rel_data_len >= NET_REPL_MESH_CHUNK_HEADER_SIZE) {
+                    net_repl_mesh_chunk_t chunk;
+                    if (net_repl_mesh_chunk_decode(&chunk, rel_data,
+                                                   rel_data_len) == NET_REPL_OK) {
+                        uint8_t *completed_data = NULL;
+                        uint32_t completed_size = 0;
+                        if (net_repl_mesh_reassembly_push(&mesh_reassembly,
+                                                          &chunk,
+                                                          &completed_data,
+                                                          &completed_size)) {
+                            /* Full mesh arrived — build VAO. */
+                            uint16_t bi = chunk.body_id;
+                            if (bi < CLIENT_MAX_BODIES) {
+                                body_render_info_t *ri = &render_info[bi];
+                                if (build_vao_from_fvma(completed_data,
+                                                        completed_size,
+                                                        &ri->custom_vbo,
+                                                        &ri->custom_vao,
+                                                        &ri->custom_vert_count)) {
+                                    printf("[client] mesh VAO built for body %u (%u verts)\n",
+                                           bi, ri->custom_vert_count);
+                                }
+                            }
+                            free(completed_data);
+                        }
+                    }
                 }
 
                 rel_len = sizeof(rel_buf);
@@ -1148,6 +1329,9 @@ int main(int argc, char **argv) {
                         s = mat4_scaling(ri->half_x * 2.0f,
                                          1.0f,
                                          ri->half_z * 2.0f);
+                    } else if (ri->shape_type == 5) {
+                        /* Custom mesh: geometry is already in world-units. */
+                        s = mat4_scaling(1.0f, 1.0f, 1.0f);
                     } else {
                         s = mat4_scaling(ri->half_x * 2.0f,
                                          ri->half_y * 2.0f,
@@ -1160,17 +1344,26 @@ int main(int argc, char **argv) {
                     glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mvp.m);
 
                     float rgb[3];
-                    if (ri->shape_type == 3) {
-                        rgb[0] = 0.85f; rgb[1] = 0.55f; rgb[2] = 0.25f;
-                    } else if (ri->is_static) {
-                        rgb[0] = 0.3f; rgb[1] = 0.6f; rgb[2] = 0.3f;
+                    /* Use color from spawn message; fall back to hash if unset. */
+                    if (ri->color[0] > 0.001f || ri->color[1] > 0.001f || ri->color[2] > 0.001f) {
+                        rgb[0] = ri->color[0];
+                        rgb[1] = ri->color[1];
+                        rgb[2] = ri->color[2];
                     } else {
                         color_from_body((uint16_t)i, rgb);
                     }
                     glUniform3fv(u_color_loc, 1, rgb);
 
-                    /* Fix 3+5: Bind VAO only on shape group change. */
-                    if (ri->shape_type != cur_shape) {
+                    /* Fix 3+5: Bind VAO only on shape group change.
+                     * Custom meshes (type 5) always rebind per-body. */
+                    if (ri->shape_type == 5) {
+                        if (ri->custom_vao != 0) {
+                            glBindVertexArray(ri->custom_vao);
+                        } else {
+                            glBindVertexArray(gl.vao.handle);
+                        }
+                        cur_shape = 5;
+                    } else if (ri->shape_type != cur_shape) {
                         cur_shape = ri->shape_type;
                         switch (cur_shape) {
                         case 4:
@@ -1182,6 +1375,9 @@ int main(int argc, char **argv) {
                         case 2:
                             glBindVertexArray(gl.cap_vao.handle);
                             break;
+                        case 1:
+                            glBindVertexArray(gl.sph_vao.handle);
+                            break;
                         default:
                             glBindVertexArray(gl.vao.handle);
                             break;
@@ -1190,6 +1386,12 @@ int main(int argc, char **argv) {
 
                     /* Issue draw call with correct vertex count. */
                     switch (ri->shape_type) {
+                    case 5:
+                        if (ri->custom_vert_count > 0) {
+                            glDrawArrays(GL_TRIANGLES, 0,
+                                         (GLsizei)ri->custom_vert_count);
+                        }
+                        break;
                     case 4:
                         glDrawArrays(GL_TRIANGLES, 0, 6);
                         break;
@@ -1202,6 +1404,10 @@ int main(int argc, char **argv) {
                     case 2:
                         glDrawArrays(GL_TRIANGLES, 0,
                                      (GLsizei)gl.cap_vert_count);
+                        break;
+                    case 1:
+                        glDrawArrays(GL_TRIANGLES, 0,
+                                     (GLsizei)gl.sph_vert_count);
                         break;
                     default:
                         glDrawArrays(GL_TRIANGLES, 0, 36);
@@ -1252,8 +1458,19 @@ done:
     }
 
     if (!headless) {
+        /* Clean up per-body custom VAOs. */
+        for (uint32_t ci = 0; ci < CLIENT_MAX_BODIES; ci++) {
+            if (render_info[ci].custom_vbo) {
+                glDeleteBuffers(1, &render_info[ci].custom_vbo);
+            }
+            if (render_info[ci].custom_vao) {
+                glDeleteVertexArrays(1, &render_info[ci].custom_vao);
+            }
+        }
         gl_shutdown(&gl);
     }
+
+    net_repl_mesh_reassembly_destroy(&mesh_reassembly);
 
     printf("[client] done. %u snapshots applied.\n", snap_applied_count);
 

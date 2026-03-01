@@ -94,6 +94,18 @@ typedef struct edit_physics_bridge {
                                    uint32_t *out_entity_ids,
                                    uint32_t max_results);
 
+    /**
+     * @brief Called when mesh data (FVMA) is available for a body.
+     * @param user_data  Opaque context.
+     * @param body_index Physics body index.
+     * @param fvma_data  Serialized FVMA data (caller retains ownership).
+     * @param fvma_size  Size in bytes.
+     *
+     * The host should copy the data if it needs to keep it.
+     */
+    void (*on_mesh_data)(void *user_data, uint32_t body_index,
+                         const uint8_t *fvma_data, uint32_t fvma_size);
+
     void *user_data;  /**< Opaque context passed to all callbacks. */
 } edit_physics_bridge_t;
 

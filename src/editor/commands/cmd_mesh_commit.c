@@ -61,6 +61,13 @@ bool cmd_mesh_commit(edit_dispatch_t *d, const json_value_t *args,
             edit_entity_t *mut = edit_entity_store_get_mut(ctx->entities,
                                                             cresult.entity_id);
             if (mut) mut->body_index = body;
+
+            /* Send mesh data to the bridge so it can forward to clients. */
+            if (ctx->bridge->on_mesh_data && cresult.fvma_data) {
+                ctx->bridge->on_mesh_data(ctx->bridge->user_data, body,
+                                          cresult.fvma_data,
+                                          (uint32_t)cresult.fvma_size);
+            }
         }
     }
 

@@ -29,6 +29,7 @@
 #include "ferrum/net/replication/body_spawn.h"
 #include "ferrum/net/replication/body_state.h"
 #include "ferrum/net/replication/common.h"
+#include "ferrum/net/replication/mesh_data.h"
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/physics/body.h"
@@ -139,6 +140,18 @@ struct demo_ctx {
     /* Per-body half-extents for network spawn messages. */
     float                               body_half[DEMO_MAX_BODIES][3];
 
+    /* Per-body packed RGB color (R8G8B8 in bits 23..0). */
+    uint32_t                            body_color[DEMO_MAX_BODIES];
+
+    /* Per-body FVMA mesh data (NULL for non-mesh bodies). */
+    uint8_t                            *body_fvma[DEMO_MAX_BODIES];
+    uint32_t                            body_fvma_size[DEMO_MAX_BODIES];
+
+    /* Mesh data sent tracking: same layout as spawned_to_client.
+     * mesh_sent_to_client[client_id * DEMO_MAX_BODIES + body_index] = 1
+     * when MESH_DATA has been fully sent for that body to that client. */
+    uint8_t                            *mesh_sent_to_client;
+
     /** Per-body flag: 1 if body participates in at least one joint.
      *  Clients use this to choose interpolation (constrained) vs prediction. */
     uint8_t                             body_constrained[DEMO_MAX_BODIES];
@@ -213,7 +226,7 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
     phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
                   &spawn, sizeof(spawn));
 
-    /* Store shape type and half-extents for network spawn messages. */
+    /* Store shape type, half-extents, and color for network spawn messages. */
     uint32_t bi = ctx->total_spawned;
     if (bi < DEMO_MAX_BODIES) {
         if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {
@@ -228,12 +241,42 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
             ctx->body_half[bi][1] = spawn.shape_data.box_half.y;
             ctx->body_half[bi][2] = spawn.shape_data.box_half.z;
         }
+
+        /* Generate a distinguishable color from entity_id hash.
+         * Pastel palette: clamp channels to [80..220] for visibility. */
+        uint32_t h = entity_id * 2654435761u;
+        uint8_t cr = (uint8_t)(80u + (h & 0x7Fu));          /* 80..207 */
+        uint8_t cg = (uint8_t)(80u + ((h >> 8u) & 0x7Fu));
+        uint8_t cb = (uint8_t)(80u + ((h >> 16u) & 0x7Fu));
+        ctx->body_color[bi] = ((uint32_t)cr << 16u) | ((uint32_t)cg << 8u) | cb;
     }
     ctx->total_spawned++;
 
     /* Body index assigned by physics engine on next tick; we don't have it
      * synchronously. Return total_spawned as a tracking hint. */
     return ctx->total_spawned - 1;
+}
+
+/**
+ * @brief Bridge: store FVMA mesh data for a body.
+ *
+ * Copies the FVMA blob so it can be sent to clients later.
+ */
+static void bridge_on_mesh_data_(void *user_data, uint32_t body_index,
+                                  const uint8_t *fvma_data,
+                                  uint32_t fvma_size) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    if (body_index >= DEMO_MAX_BODIES || !fvma_data || fvma_size == 0) return;
+
+    /* Free any previous mesh data for this body. */
+    free(ctx->body_fvma[body_index]);
+
+    ctx->body_fvma[body_index] = (uint8_t *)malloc(fvma_size);
+    if (ctx->body_fvma[body_index]) {
+        memcpy(ctx->body_fvma[body_index], fvma_data, fvma_size);
+        ctx->body_fvma_size[body_index] = fvma_size;
+        ctx->body_shape_type[body_index] = 5; /* custom mesh */
+    }
 }
 
 /**
@@ -474,7 +517,7 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
             spawn_msg.flags |= 0x04u; /* bit2 = constrained (interpolated) */
         }
         spawn_msg.shape_type = ctx->body_shape_type[bi];
-        spawn_msg.color_seed = bi;
+        spawn_msg.color_seed = ctx->body_color[bi];
 
         net_qvec3_mm_t qpos;
         net_quantize_vec3_mm(
@@ -504,6 +547,68 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
                 fprintf(stderr, "[server] WARN: reliable topic full for client %u body %u\n",
                         client_id, bi);
             }
+        }
+    }
+}
+
+/* ── Mesh data chunk sender ────────────────────────────────────── */
+
+/** @brief Context for the per-chunk send callback. */
+typedef struct {
+    fr_topic_channel_t *channel;
+    uint32_t            chunks_sent;
+} mesh_send_ctx_t;
+
+/**
+ * @brief Callback for net_repl_mesh_data_send: pushes each chunk
+ *        onto the reliable topic channel.
+ */
+static bool mesh_send_chunk_cb_(const uint8_t *wire, size_t wire_len,
+                                 void *user_data) {
+    mesh_send_ctx_t *mctx = (mesh_send_ctx_t *)user_data;
+    if (fr_topic_channel_push(mctx->channel, wire, wire_len)) {
+        mctx->chunks_sent++;
+        return true;
+    }
+    fprintf(stderr, "[server] WARN: mesh chunk push failed\n");
+    return false;
+}
+
+/**
+ * @brief Send FVMA mesh data to a client for any mesh bodies that
+ *        have been spawned but whose mesh data hasn't been sent yet.
+ */
+static void send_mesh_data_to_client(demo_ctx_t *ctx, uint16_t client_id) {
+    fr_topic_channel_t *reliable = NULL;
+    fr_topic_channel_t *unreliable = NULL;
+    if (!fr_server_net_runtime_client_out_topics(ctx->net_rt, client_id,
+                                                  &reliable, &unreliable)) {
+        return;
+    }
+    if (!reliable) return;
+
+    for (uint32_t bi = 0; bi < DEMO_MAX_BODIES; bi++) {
+        size_t idx = (size_t)client_id * DEMO_MAX_BODIES + bi;
+
+        /* Only send mesh data after body spawn has been sent. */
+        if (!ctx->spawned_to_client[idx]) continue;
+        /* Skip if already sent. */
+        if (ctx->mesh_sent_to_client[idx]) continue;
+        /* Skip non-mesh bodies. */
+        if (!ctx->body_fvma[bi] || ctx->body_fvma_size[bi] == 0) {
+            ctx->mesh_sent_to_client[idx] = 1u; /* nothing to send */
+            continue;
+        }
+
+        mesh_send_ctx_t mctx = {.channel = reliable, .chunks_sent = 0};
+        uint32_t sent = net_repl_mesh_data_send(
+            (uint16_t)bi,
+            ctx->body_fvma[bi],
+            ctx->body_fvma_size[bi],
+            mesh_send_chunk_cb_,
+            &mctx);
+        if (sent > 0) {
+            ctx->mesh_sent_to_client[idx] = 1u;
         }
     }
 }
@@ -572,6 +677,7 @@ static void on_drain(void *user) {
 
                 /* Send all existing body spawns to the new client. */
                 send_body_spawns_to_client(ctx, client_id);
+                send_mesh_data_to_client(ctx, client_id);
             }
         }
     }
@@ -580,6 +686,7 @@ static void on_drain(void *user) {
     for (uint16_t ci = 0; ci < DEMO_MAX_CLIENTS; ++ci) {
         if (ctx->client_joined[ci]) {
             send_body_spawns_to_client(ctx, ci);
+            send_mesh_data_to_client(ctx, ci);
         }
     }
 
@@ -946,8 +1053,10 @@ int main(int argc, char **argv) {
     /* ── 9. Spawned-to-client tracking ─────────────────────────── */
     ctx.spawned_to_client = (uint8_t *)calloc(
         (size_t)DEMO_MAX_CLIENTS * (size_t)DEMO_MAX_BODIES, 1u);
-    if (!ctx.spawned_to_client) {
-        fprintf(stderr, "error: spawned_to_client alloc failed\n");
+    ctx.mesh_sent_to_client = (uint8_t *)calloc(
+        (size_t)DEMO_MAX_CLIENTS * (size_t)DEMO_MAX_BODIES, 1u);
+    if (!ctx.spawned_to_client || !ctx.mesh_sent_to_client) {
+        fprintf(stderr, "error: spawn/mesh tracking alloc failed\n");
         return 1;
     }
 
@@ -980,6 +1089,7 @@ int main(int argc, char **argv) {
             .on_delete = bridge_on_delete_,
             .on_move   = bridge_on_move_,
             .on_query_touching = bridge_on_query_touching_,
+            .on_mesh_data = bridge_on_mesh_data_,
             .user_data = &ctx,
         };
         editor_ctx_set_bridge(&ctx.editor, &ctx.editor_bridge);
@@ -1068,6 +1178,10 @@ int main(int argc, char **argv) {
     fr_topic_channel_destroy(ctx.entity_event_topic);
     net_udp_socket_close(&ctx.sock);
     free(ctx.spawned_to_client);
+    free(ctx.mesh_sent_to_client);
+    for (uint32_t i = 0; i < DEMO_MAX_BODIES; i++) {
+        free(ctx.body_fvma[i]);
+    }
 
     uint64_t final_tick = fr_server_tick_loop_tick_id(&ctx.tick_loop);
     printf("[server] done. %lu ticks, %u bodies spawned.\n",

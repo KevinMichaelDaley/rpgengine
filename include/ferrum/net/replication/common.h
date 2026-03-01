@@ -31,6 +31,7 @@ extern "C" {
 #define NET_REPL_SCHEMA_EVENT 0x200Du
 #define NET_REPL_SCHEMA_BODY_STATE_BATCH 0x200Eu
 #define NET_REPL_SCHEMA_SNAPSHOT_CHUNK 0x200Fu
+#define NET_REPL_SCHEMA_MESH_DATA     0x2010u
 
 #ifdef __cplusplus
 } /* extern "C" */
