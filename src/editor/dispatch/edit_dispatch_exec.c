@@ -4,6 +4,8 @@
  */
 
 #include "ferrum/editor/edit_dispatch.h"
+#include "ferrum/editor/edit_history.h"
+#include "ferrum/editor/edit_cmd_ctx.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -91,6 +93,39 @@ uint32_t edit_dispatch_exec(edit_dispatch_t *dispatch,
 
     json_value_t result = {.type = JSON_NULL};
     bool ok = handler(dispatch, args, &result, &resp_arena);
+
+    /* ── Record to history (before building response) ─────────── */
+    if (dispatch->history) {
+        /* NUL-terminate command name. */
+        char cmd_name[EDIT_DISPATCH_MAX_CMD_NAME];
+        uint32_t clen = cmd_val->string.len;
+        if (clen >= sizeof(cmd_name)) clen = sizeof(cmd_name) - 1;
+        memcpy(cmd_name, cmd_val->string.ptr, clen);
+        cmd_name[clen] = '\0';
+
+        /* Serialize args to JSON string. */
+        char args_str[EDIT_HISTORY_ARGS_MAX];
+        if (args) {
+            size_t alen = json_write(args, args_str, sizeof(args_str));
+            if (alen == 0) args_str[0] = '\0';
+        } else {
+            args_str[0] = '\0';
+        }
+
+        /* Serialize result to JSON string. */
+        char result_str[EDIT_HISTORY_RESULT_MAX];
+        if (ok) {
+            size_t rlen = json_write(&result, result_str, sizeof(result_str));
+            if (rlen == 0) result_str[0] = '\0';
+        } else {
+            result_str[0] = '\0';
+        }
+
+        const edit_cmd_ctx_t *ctx =
+            (const edit_cmd_ctx_t *)dispatch->user_data;
+        edit_history_record(dispatch->history, ctx,
+                            cmd_name, args_str, result_str, ok);
+    }
 
     if (!ok) {
         return write_error_(resp_buf, resp_cap, req_id, "handler_failed");

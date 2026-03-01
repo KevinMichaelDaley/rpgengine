@@ -22,6 +22,7 @@ extern "C" {
 
 /* Forward declarations. */
 typedef struct edit_dispatch edit_dispatch_t;
+struct edit_history;
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
@@ -80,6 +81,8 @@ typedef struct edit_dispatch {
     size_t   resp_arena_cap;     /**< Size of response arena. */
 
     void *user_data;             /**< Opaque pointer to editor_ctx. */
+
+    struct edit_history *history; /**< Optional command history log (NULL = disabled). */
 } edit_dispatch_t;
 
 /* ------------------------------------------------------------------------ */

@@ -1,6 +1,6 @@
 ---
 id: rpg-qa29
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-02-26T16:34:25Z
