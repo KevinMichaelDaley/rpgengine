@@ -178,6 +178,16 @@ not at enqueue time. This ensures the undo stack reflects committed state.
 All mutations go through an **undo stack** (command pattern). Each command
 records the inverse operation for undo.
 
+**Dynamic entity attributes**: in addition to fixed fields (pos, rot, scale,
+name, type, materials), both edit entities and ECS entities carry an
+`entity_attrs_t` block — a dynamically-indexed key-value attribute space
+within a fixed-capacity budget (`ENTITY_ATTRS_CAPACITY`, default 2048 bytes).
+Gameplay scripts use this to store arbitrary per-entity state (health, velocity,
+AI flags, custom properties) without modifying the entity struct. The attribute
+directory is sorted by key for binary search lookups. Script snapshots include
+these dynamic attributes, and script updates can write to them via the same
+key-value mechanism used for fixed fields.
+
 ### 2.5 Script Runtime
 
 LuaJIT 2.1 is the embedded scripting language for procedural generation and

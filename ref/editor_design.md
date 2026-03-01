@@ -589,33 +589,117 @@ This design achieves three goals:
 ### 6.2 Core Types
 
 ```c
-/* A single entity delta produced by script execution */
+/* ── Entity update: arbitrary key-value attribute deltas ── */
+
+/* Attribute types that can be read/written */
+enum {
+    SCRIPT_ATTR_F32,     /* single float */
+    SCRIPT_ATTR_VEC3,    /* float[3] */
+    SCRIPT_ATTR_I32,     /* int32_t */
+    SCRIPT_ATTR_U32,     /* uint32_t */
+    SCRIPT_ATTR_BOOL,    /* uint8_t 0/1 */
+    SCRIPT_ATTR_STR,     /* null-terminated string */
+    SCRIPT_ATTR_BLOB,    /* raw bytes */
+};
+
+/* A single attribute write within an entity update */
+typedef struct script_attr_write {
+    uint16_t key;         /* attribute ID (SCRIPT_KEY_POS, ..., or user-defined) */
+    uint8_t  type;        /* SCRIPT_ATTR_* */
+    uint8_t  size;        /* payload size in bytes (max 255) */
+    /* Payload follows inline in the update blob */
+} script_attr_write_t;
+
+/* Well-known attribute keys (extensible — gameplay adds more) */
+enum {
+    /* Core transform (both edit entities and ECS entities) */
+    SCRIPT_KEY_POS       = 0,   /* vec3 */
+    SCRIPT_KEY_ROT       = 1,   /* vec3 (euler degrees) */
+    SCRIPT_KEY_SCALE     = 2,   /* vec3 */
+    SCRIPT_KEY_NAME      = 3,   /* string */
+    SCRIPT_KEY_TYPE      = 4,   /* u32 */
+    SCRIPT_KEY_BODY_IDX  = 5,   /* u32 */
+    SCRIPT_KEY_MATERIAL  = 6,   /* string (slot in high bits) */
+
+    /* ECS component keys (mapped from registered sparse sets) */
+    SCRIPT_KEY_ECS_BASE  = 64,  /* ECS components start here */
+
+    /* User/gameplay attribute keys */
+    SCRIPT_KEY_USER      = 256, /* user-defined keys start here */
+};
+
+/* ── Dynamic attribute storage on entities ── */
+
+/* Each entity (edit or ECS) can carry a dynamic attribute block:
+ * a fixed-capacity byte region with a directory of key→offset entries.
+ * This lives alongside the fixed fields (pos/rot/scale/etc).
+ *
+ * Layout:
+ *   entity_attrs_t header (count, used bytes)
+ *   attr_entry_t[count]   (sorted by key for binary search)
+ *   payload bytes[]       (packed attribute values)
+ *
+ * The total size is bounded by ENTITY_ATTRS_CAPACITY (e.g., 2048 bytes),
+ * which keeps the per-entity struct within a cache-friendly budget.
+ */
+#define ENTITY_ATTRS_CAPACITY 2048
+
+typedef struct attr_entry {
+    uint16_t key;        /* attribute key */
+    uint8_t  type;       /* SCRIPT_ATTR_* */
+    uint8_t  size;       /* payload size */
+    uint16_t offset;     /* byte offset into payload region */
+    uint16_t _pad;
+} attr_entry_t;
+
+typedef struct entity_attrs {
+    uint16_t count;      /* number of attr_entry_t entries */
+    uint16_t used;       /* bytes used in payload region */
+    attr_entry_t entries[ENTITY_ATTRS_CAPACITY / sizeof(attr_entry_t)];
+    /* Payload bytes follow conceptually; in practice the entries[] and
+     * payload share the remaining space after 'used'. Implementation
+     * will use a flexible layout within the ENTITY_ATTRS_CAPACITY budget. */
+} entity_attrs_t;
+
+/* ── Entity updates ── */
+
+/* A single entity update: entity ID + variable-length attribute writes.
+ * Stored as a header followed by packed attr writes in the update blob. */
 typedef struct script_entity_update {
     uint32_t entity_id;
-    uint32_t flags;             /* bitmask: SCRIPT_UPD_POS, _ROT, _SCALE, etc. */
-    float pos[3];
-    float rot[3];
-    float scale[3];
-    /* Additional fields as needed (materials, mesh ops, etc.) */
+    uint32_t generation;    /* ECS generation (0 for edit-only entities) */
+    uint16_t attr_count;    /* number of script_attr_write_t entries */
+    uint16_t total_size;    /* total bytes of this update (header + attrs + payloads) */
+    /* Followed by attr_count × (script_attr_write_t + payload) packed inline */
 } script_entity_update_t;
 
-/* Double-buffered update array: script writes to back, tick reads from front */
+/* Double-buffered update blob: script writes to back, tick reads from front.
+ * Updates are variable-length, packed contiguously in the blob. */
 typedef struct script_update_buffer {
-    script_entity_update_t *updates[2]; /* [0]=front (tick reads), [1]=back (script writes) */
-    uint32_t count[2];
-    uint32_t capacity;
-    _Alignas(64) atomic_uint ready;     /* set by script thread after swap */
+    uint8_t *blob[2];       /* [0]=front (tick reads), [1]=back (script writes) */
+    uint32_t used[2];       /* bytes used in each blob */
+    uint32_t capacity;      /* blob capacity in bytes */
+    _Alignas(64) atomic_uint ready; /* set by script thread after swap */
 } script_update_buffer_t;
 
-/* Read-only entity snapshot consumed by the script thread */
+/* ── Entity snapshot (read-only view for script thread) ── */
+
+/* Covers both edit entities and ECS entities. The snapshot builder
+ * copies fixed fields from edit_entity_t AND iterates registered ECS
+ * sparse sets to populate the dynamic attrs block. */
 typedef struct script_entity_snapshot {
     uint32_t entity_id;
+    uint32_t generation;    /* ECS generation (0 for edit-only) */
     uint8_t  active;
-    uint8_t  type;              /* shape type enum */
+    uint8_t  type;
     char     name[256];
     float    pos[3];
     float    rot[3];
     float    scale[3];
+    uint32_t body_index;
+    char     materials[5][256];
+    /* Dynamic attributes (gameplay state: health, velocity, flags, etc.) */
+    entity_attrs_t attrs;
 } script_entity_snapshot_t;
 
 typedef struct script_entity_view {
@@ -626,13 +710,15 @@ typedef struct script_entity_view {
 
 /* Unified environment exposed to both Lua and native scripts */
 typedef struct script_env {
-    /* Read-only entity state (snapshot from last tick) */
+    /* Read-only entity state (snapshot from last tick).
+     * Includes fixed fields AND dynamic attrs from ECS components. */
     script_entity_view_t entities;
 
-    /* Write: entity updates produced this tick */
-    script_entity_update_t *updates;
-    uint32_t update_count;
-    uint32_t update_capacity;
+    /* Write: entity update blob (variable-length packed updates).
+     * Use script_env_write_attr() to append attribute writes. */
+    uint8_t *update_blob;
+    uint32_t update_blob_used;
+    uint32_t update_blob_capacity;
 
     /* Write: edit commands (spawn, delete, group, etc.) */
     edit_cmd_ring_t *cmd_ring;  /* SPSC ring → main tick thread */
@@ -646,6 +732,19 @@ typedef struct script_env {
     /* Back-pointer for internal use */
     struct script_runtime *runtime;
 } script_env_t;
+
+/* Helper: append an attribute write for an entity into the update blob.
+ * If an update header for this entity_id already exists in the blob,
+ * the new attribute is appended to it; otherwise a new header is created. */
+void script_env_write_attr(script_env_t *env, uint32_t entity_id,
+                           uint32_t generation, uint16_t key,
+                           uint8_t type, const void *data, uint8_t size);
+
+/* Helper: read a dynamic attribute from a snapshot entity.
+ * Returns pointer to payload data, or NULL if attribute not present. */
+const void *script_entity_get_attr(const script_entity_snapshot_t *entity,
+                                    uint16_t key, uint8_t *out_type,
+                                    uint8_t *out_size);
 
 typedef struct script_runtime {
     /* Thread */
@@ -712,11 +811,14 @@ Stage 2-N: physics, networking
 ```
 
 **Rebasing**: when the main tick thread reads the script's entity updates,
-it applies them on top of the current authoritative state. If physics moved
-body #7 to (1,2,3) and the script says "set body #7 to (4,5,6)", the script
-wins for the fields it updated. If the script only updated rotation, position
-is left at the physics result. The `flags` bitmask in `script_entity_update_t`
-controls which fields are applied.
+it applies them on top of the current authoritative state. Each update
+contains a list of attribute writes (key-value pairs). Only the attributes
+explicitly written by the script are applied — everything else retains the
+physics/game logic result. This works for both fixed attributes (pos, rot,
+scale) and dynamic gameplay attributes (health, velocity, custom flags).
+For ECS entities, attribute writes are mapped back to their sparse set
+components. For edit entities, core fields are applied directly and dynamic
+attrs are written to the entity's `entity_attrs_t` block.
 
 **Ordering**: edit commands submitted via `cmd_ring` (spawn, delete, group,
 etc.) are drained in Stage 1 alongside I/O commands. Entity updates from the
@@ -746,15 +848,12 @@ static void rotate_selected(script_env_t *env, void *ud) {
     (void)ud;
     for (uint32_t i = 0; i < env->selection_count; i++) {
         uint32_t id = env->selection_ids[i];
-        /* Find entity in snapshot */
         for (uint32_t j = 0; j < env->entities.count; j++) {
             if (env->entities.entities[j].entity_id == id) {
-                script_entity_update_t *u = &env->updates[env->update_count++];
-                u->entity_id = id;
-                u->flags = SCRIPT_UPD_ROT;
-                u->rot[0] = env->entities.entities[j].rot[0];
-                u->rot[1] = env->entities.entities[j].rot[1] + 1.0f;
-                u->rot[2] = env->entities.entities[j].rot[2];
+                const script_entity_snapshot_t *e = &env->entities.entities[j];
+                float new_rot[3] = { e->rot[0], e->rot[1] + 1.0f, e->rot[2] };
+                script_env_write_attr(env, id, 0, SCRIPT_KEY_ROT,
+                                      SCRIPT_ATTR_VEC3, new_rot, sizeof(new_rot));
                 break;
             }
         }
