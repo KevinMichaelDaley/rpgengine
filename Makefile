@@ -240,6 +240,7 @@ BIN_HEADLESS += build/aegis_vm_tests
 BIN_HEADLESS += build/aegis_vm_math_stress_tests
 BIN_HEADLESS += build/aegis_vm_memory_exhaust_tests
 BIN_HEADLESS += build/aegis_vm_interrupt_tests
+BIN_HEADLESS += build/aegis_event_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -838,6 +839,11 @@ build/aegis_vm_memory_exhaust_tests: tests/aegis/aegis_vm_memory_exhaust_tests.c
 build/aegis_vm_interrupt_tests: tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
 
+AEGIS_EVENT_SRC := src/aegis/aegis_event_queue.c src/aegis/aegis_topic_table.c \
+	src/aegis/aegis_topic_route.c
+build/aegis_event_tests: tests/aegis/aegis_event_tests.c $(AEGIS_EVENT_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_event_tests.c $(AEGIS_EVENT_SRC) -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -1051,7 +1057,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_vm_tests \
 	&& ./build/aegis_vm_math_stress_tests \
 	&& ./build/aegis_vm_memory_exhaust_tests \
-	&& ./build/aegis_vm_interrupt_tests
+	&& ./build/aegis_vm_interrupt_tests \
+	&& ./build/aegis_event_tests
 
 TEST_TIMEOUT ?= 20
 
