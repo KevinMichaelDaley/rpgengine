@@ -243,6 +243,7 @@ BIN_HEADLESS += build/aegis_vm_interrupt_tests
 BIN_HEADLESS += build/aegis_event_tests
 BIN_HEADLESS += build/aegis_ops_event_tests
 BIN_HEADLESS += build/aegis_asm_tests
+BIN_HEADLESS += build/aegis_runtime_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -853,6 +854,10 @@ AEGIS_ASM_SRC := src/aegis/aegis_asm_parse.c src/aegis/aegis_asm_compile.c
 build/aegis_asm_tests: tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) -o $@ $(LDFLAGS)
 
+AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load.c src/aegis/aegis_runtime_tick.c
+build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_RUNTIME_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_RUNTIME_SRC) build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -1069,7 +1074,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_vm_interrupt_tests \
 	&& ./build/aegis_event_tests \
 	&& ./build/aegis_ops_event_tests \
-	&& ./build/aegis_asm_tests
+	&& ./build/aegis_asm_tests \
+	&& ./build/aegis_runtime_tests
 
 TEST_TIMEOUT ?= 20
 
