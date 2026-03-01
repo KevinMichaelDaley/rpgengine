@@ -1,6 +1,6 @@
 ---
 id: rpg-rblb
-status: open
+status: closed
 deps: [rpg-077b, rpg-o8pq]
 links: []
 created: 2026-03-01T09:58:49Z

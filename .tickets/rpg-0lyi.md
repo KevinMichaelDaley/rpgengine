@@ -1,6 +1,6 @@
 ---
 id: rpg-0lyi
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-03-01T09:58:49Z

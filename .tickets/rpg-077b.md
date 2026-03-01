@@ -1,6 +1,6 @@
 ---
 id: rpg-077b
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-01T09:58:49Z

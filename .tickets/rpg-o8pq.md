@@ -1,6 +1,6 @@
 ---
 id: rpg-o8pq
-status: in_progress
+status: closed
 deps: [rpg-s2t6, rpg-fiwu, rpg-a10n, rpg-uch2, rpg-5h7o]
 links: []
 created: 2026-03-01T09:58:49Z
