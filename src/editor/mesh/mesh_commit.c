@@ -12,8 +12,9 @@
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Compute bounding box center of a mesh slot. */
-static void bbox_center_(const mesh_slot_t *slot, float out[3]) {
+/** Compute bounding box center and full extents of a mesh slot. */
+static void bbox_compute_(const mesh_slot_t *slot,
+                           float center[3], float extents[3]) {
     float lo[3] = { 1e30f,  1e30f,  1e30f};
     float hi[3] = {-1e30f, -1e30f, -1e30f};
     for (uint32_t v = 0; v < slot->vertex_count; v++) {
@@ -24,7 +25,9 @@ static void bbox_center_(const mesh_slot_t *slot, float out[3]) {
         }
     }
     for (int a = 0; a < 3; a++) {
-        out[a] = (lo[a] + hi[a]) * 0.5f;
+        center[a]  = (lo[a] + hi[a]) * 0.5f;
+        extents[a] = hi[a] - lo[a];
+        if (extents[a] < 1e-6f) extents[a] = 0.01f; /* avoid zero */
     }
 }
 
@@ -84,8 +87,13 @@ bool mesh_commit(mesh_slot_t *slot,
     /* 3. Configure entity */
     edit_entity_t *ent = edit_entity_store_get_mut(store, eid);
     if (ent) {
-        /* Position at bounding box center */
-        bbox_center_(slot, ent->pos);
+        /* Position at bounding box center; scale = bbox extents
+         * so physics bridge can derive half-extents correctly. */
+        float extents[3];
+        bbox_compute_(slot, ent->pos, extents);
+        ent->scale[0] = extents[0];
+        ent->scale[1] = extents[1];
+        ent->scale[2] = extents[2];
 
         /* Name */
         if (args->entity_name[0] != '\0') {

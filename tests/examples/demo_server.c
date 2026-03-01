@@ -183,12 +183,22 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
     memset(&spawn, 0, sizeof(spawn));
     spawn.position = (phys_vec3_t){entity->pos[0], entity->pos[1], entity->pos[2]};
     spawn.orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-    spawn.mass = DEMO_BOX_MASS;
-
-    if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {
+    /* Mesh entities (from mesh_commit) are static architecture. */
+    if (entity->type == EDIT_ENTITY_TYPE_MESH) {
+        spawn.mass = 0.0f; /* static */
+        spawn.flags = PHYS_BODY_FLAG_STATIC;
+        spawn.shape = PHYS_CMD_SHAPE_BOX;
+        spawn.shape_data.box_half = (phys_vec3_t){
+            entity->scale[0] * DEMO_BOX_HALF,
+            entity->scale[1] * DEMO_BOX_HALF,
+            entity->scale[2] * DEMO_BOX_HALF,
+        };
+    } else if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {
+        spawn.mass = DEMO_BOX_MASS;
         spawn.shape = PHYS_CMD_SHAPE_SPHERE;
         spawn.shape_data.sphere_r = entity->scale[0] * 0.5f;
     } else {
+        spawn.mass = DEMO_BOX_MASS;
         spawn.shape = PHYS_CMD_SHAPE_BOX;
         spawn.shape_data.box_half = (phys_vec3_t){
             entity->scale[0] * DEMO_BOX_HALF,
