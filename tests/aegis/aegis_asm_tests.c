@@ -640,6 +640,25 @@ static bool test_push_pop(void) {
     return true;
 }
 
+/** Float literal operands are bit-cast to u32 immediates. */
+static bool test_float_literal(void) {
+    const char *src =
+        "load_imm r0, 3.14\n"
+        "load_imm r1, -0.5\n"
+        "load_imm r2, 1.0\n"
+        "yield\n";
+
+    aegis_vm_t vm;
+    ASSERT(compile_and_run(src, &vm, 100, 4096));
+    aegis_vm_status_t s = aegis_vm_run(&vm);
+    ASSERT_INT_EQ(AEGIS_VM_YIELDED, (int)s);
+    ASSERT_FLOAT_NEAR(3.14f, vm.regs[0].f32, 0.001f);
+    ASSERT_FLOAT_NEAR(-0.5f, vm.regs[1].f32, 0.001f);
+    ASSERT_FLOAT_NEAR(1.0f, vm.regs[2].f32, 0.001f);
+    free(vm.bytecode->instructions);
+    return true;
+}
+
 /* ======================================================================= */
 /* Main                                                                     */
 /* ======================================================================= */
@@ -655,6 +674,7 @@ int main(void) {
     RUN(test_comments_and_blanks);
     RUN(test_mov);
     RUN(test_push_pop);
+    RUN(test_float_literal);
     RUN(test_exit);
 
     /* Labels */

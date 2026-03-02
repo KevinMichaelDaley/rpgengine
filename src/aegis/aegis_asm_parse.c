@@ -93,6 +93,13 @@ bool aegis_asm_parse_operand(const char *token, uint32_t *out_val,
     /* Decimal immediate: starts with digit or minus-sign followed by digit. */
     if (isdigit((unsigned char)token[0]) ||
         (token[0] == '-' && isdigit((unsigned char)token[1]))) {
+        /* Check for float literal (contains '.'). */
+        if (strchr(token, '.') != NULL) {
+            float fval = strtof(token, NULL);
+            memcpy(out_val, &fval, sizeof(uint32_t));
+            *is_imm = true;
+            return true;
+        }
         long val = strtol(token, NULL, 10);
         uint32_t uval;
         memcpy(&uval, &val, sizeof(uint32_t));
