@@ -401,7 +401,7 @@ static int test_parallel_determinism(void) {
 
     /* Run 20 ticks on both. */
     for (int t = 0; t < 20; t++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
         phys_world_tick_parallel(&world_par, NULL, &ctx);
 
         int cmp = compare_worlds(&world, &world_par,
@@ -498,7 +498,7 @@ static int test_parallel_mixed_shapes(void) {
 
     /* Run 10 ticks. */
     for (int t = 0; t < 10; t++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
         phys_world_tick_parallel(&world_par, NULL, &ctx);
 
         int cmp = compare_worlds(&world, &world_par,
@@ -558,7 +558,7 @@ static int test_parallel_collision_heavy(void) {
     setup_jobs(&sys, &ctx);
 
     for (int t = 0; t < 5; t++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
         phys_world_tick_parallel(&world_par, NULL, &ctx);
 
         int cmp = compare_worlds(&world, &world_par,
@@ -640,7 +640,7 @@ static int test_parallel_single_body_gravity(void) {
     setup_jobs(&sys, &ctx);
 
     for (int t = 0; t < 30; t++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
         phys_world_tick_parallel(&world_par, NULL, &ctx);
     }
 

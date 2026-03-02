@@ -22,6 +22,8 @@
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/world.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
 
@@ -114,6 +116,16 @@ static void make_ramp_mesh(phys_triangle_t tris[2]) {
     tris[1].v[2] = (phys_vec3_t){ 0, 5,  5};
 }
 
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
+}
+
 /* ── Tests ──────────────────────────────────────────────────────── */
 
 /**
@@ -151,9 +163,13 @@ static int test_sphere_on_terrain_mesh(void) {
     phys_world_set_sphere_collider(&world, sphere_id, 0.5f,
                                     (phys_vec3_t){0, 0, 0});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Step the simulation for 300 ticks (~5 seconds at 60Hz). */
     for (int i = 0; i < 300; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* Sphere should have fallen and settled near Y ≈ 0.5 (radius). */
@@ -165,6 +181,7 @@ static int test_sphere_on_terrain_mesh(void) {
     /* Should have fallen from Y=5 — not still up there. */
     ASSERT_FLOAT_LT(final_y, 2.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;
@@ -207,9 +224,13 @@ static int test_box_slides_down_ramp(void) {
 
     float start_y = box_body->position.y;
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Step 300 ticks. */
     for (int i = 0; i < 300; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     box_body = phys_world_get_body(&world, box_id);
@@ -220,6 +241,7 @@ static int test_box_slides_down_ramp(void) {
     /* Should not have fallen through infinity. */
     ASSERT_FLOAT_GT(final_y, -5.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;
@@ -280,9 +302,13 @@ static int test_no_tunneling_through_thin_wall(void) {
     phys_world_set_sphere_collider(&world, sphere_id, 0.5f,
                                     (phys_vec3_t){0, 0, 0});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Step 120 ticks (~2 seconds). */
     for (int i = 0; i < 120; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     sphere_body = phys_world_get_body(&world, sphere_id);
@@ -290,6 +316,7 @@ static int test_no_tunneling_through_thin_wall(void) {
     /* Sphere should not have passed through the wall (X < 5 + radius). */
     ASSERT_FLOAT_LT(sphere_body->position.x, 6.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;

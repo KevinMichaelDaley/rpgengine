@@ -22,6 +22,8 @@
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 #include "ferrum/physics/game_state.h"
 #include "ferrum/physics/tier_classify.h"
 #include "ferrum/physics/tier_list.h"
@@ -83,6 +85,18 @@ static float lcg_float(uint32_t *state, float lo, float hi) {
     uint32_t r = lcg_next(state);
     float t = (float)(r & 0xFFFFu) / 65535.0f;
     return lo + t * (hi - lo);
+}
+
+/* ── Job system helpers ────────────────────────────────────────── */
+
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
 }
 
 /* ── Helper: create a test world ───────────────────────────────── */
@@ -571,9 +585,14 @@ static int test_full_pipeline_mixed_tiers(void) {
         ASSERT_TRUE(body_indices[i] != UINT32_MAX);
     }
 
+    /* Set up job system. */
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Tick 5 times with game state. */
     for (int tick = 0; tick < 5; ++tick) {
-        phys_world_tick(&world, &game);
+        phys_world_tick_parallel(&world, &game, &ctx);
     }
 
     ASSERT_TRUE(phys_world_tick_count(&world) == 5);
@@ -611,6 +630,7 @@ static int test_full_pipeline_mixed_tiers(void) {
         ASSERT_TRUE(tiers[body_indices[i]] == PHYS_TIER_4_BACKGROUND);
     }
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -638,11 +658,15 @@ static int bench_100_bodies_10_ticks(void) {
         (void)idx;
     }
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     for (int tick = 0; tick < 10; ++tick) {
-        phys_world_tick(&world, &game);
+        phys_world_tick_parallel(&world, &game, &ctx);
     }
 
     clock_gettime(CLOCK_MONOTONIC, &end);
@@ -651,6 +675,7 @@ static int bench_100_bodies_10_ticks(void) {
                       + (double)(end.tv_nsec - start.tv_nsec) / 1e6;
     printf(" [%.2f ms total, %.2f ms/tick]", elapsed_ms, elapsed_ms / 10.0);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }

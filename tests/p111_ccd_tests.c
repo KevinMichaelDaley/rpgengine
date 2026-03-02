@@ -18,6 +18,8 @@
 #include "ferrum/physics/mesh_collider.h"
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/world.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 
 /* ── Minimal test harness ──────────────────────────────────────── */
 
@@ -85,6 +87,16 @@ static void make_wall(phys_triangle_t tris[2]) {
     tris[1].v[0] = (phys_vec3_t){5, 0, -5};
     tris[1].v[1] = (phys_vec3_t){5, 10,  5};
     tris[1].v[2] = (phys_vec3_t){5, 0,  5};
+}
+
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
 }
 
 /* ── Tests ─────────────────────────────────────────────────────── */
@@ -245,16 +257,21 @@ static int test_ccd_stage_clamps_fast_sphere(void) {
     phys_world_set_sphere_collider(&world, sphere_id, 0.5f,
                                     (phys_vec3_t){0, 0, 0});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Simulate: after 1 tick at 60Hz, dt=1/60, sphere moves ~1.67 units.
      * Without CCD it tunnels. With CCD it should be clamped to X≈4.5. */
     for (int i = 0; i < 5; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     sphere = phys_world_get_body(&world, sphere_id);
     /* Sphere should NOT have passed through the wall. */
     ASSERT_FLOAT_LT(sphere->position.x, 5.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;
@@ -291,16 +308,21 @@ static int test_ccd_skips_slow_bodies(void) {
     phys_world_set_sphere_collider(&world, sphere_id, 0.5f,
                                     (phys_vec3_t){0, 0, 0});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* The discrete narrowphase should handle this — CCD is only for
      * bodies moving faster than their radius per tick. */
     for (int i = 0; i < 10; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* Should still be on the correct side. */
     sphere = phys_world_get_body(&world, sphere_id);
     ASSERT_FLOAT_LT(sphere->position.x, 5.5f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;
@@ -340,15 +362,20 @@ static int test_ccd_stage_clamps_fast_box(void) {
                                  (phys_vec3_t){0, 0, 0},
                                  (phys_quat_t){0, 0, 0, 1});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Run a few ticks — box should be clamped before the wall. */
     for (int i = 0; i < 5; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     box = phys_world_get_body(&world, box_id);
     /* Box half-extent is 0.5, so center should be ≤ 4.5 (wall at X=5). */
     ASSERT_FLOAT_LT(box->position.x, 5.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;
@@ -388,14 +415,19 @@ static int test_ccd_stage_clamps_fast_box_floor(void) {
                                  (phys_vec3_t){0, 0, 0},
                                  (phys_quat_t){0, 0, 0, 1});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     for (int i = 0; i < 5; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     box = phys_world_get_body(&world, box_id);
     /* Box should not have gone below the floor. */
     ASSERT_FLOAT_GT(box->position.y, -0.5f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;
@@ -434,13 +466,18 @@ static int test_ccd_skips_slow_box(void) {
                                  (phys_vec3_t){0, 0, 0},
                                  (phys_quat_t){0, 0, 0, 1});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     for (int i = 0; i < 10; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     box = phys_world_get_body(&world, box_id);
     ASSERT_FLOAT_LT(box->position.x, 5.5f);
 
+    teardown_jobs(&sys, &ctx);
     phys_frame_arena_destroy(&bvh_arena);
     phys_world_destroy(&world);
     return 0;
@@ -479,13 +516,18 @@ static int test_ccd_capsule_vs_static_sphere(void) {
                                      (phys_vec3_t){0, 0, 0},
                                      (phys_quat_t){0, 0, 0, 1});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     for (int i = 0; i < 5; i++)
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
 
     cb = phys_world_get_body(&world, cid);
     /* Capsule must not have tunneled past the sphere (center at X=10). */
     ASSERT_FLOAT_LT(cb->position.x, 10.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -522,12 +564,17 @@ static int test_ccd_capsule_vs_static_box(void) {
                                      (phys_vec3_t){0, 0, 0},
                                      (phys_quat_t){0, 0, 0, 1});
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     for (int i = 0; i < 5; i++)
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
 
     cb = phys_world_get_body(&world, cid);
     ASSERT_FLOAT_LT(cb->position.x, 5.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -625,9 +672,13 @@ static int test_ccd_chain_vs_static_compound(void) {
         prev_body = bi;
     }
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Run 20 ticks — enough for the chain to reach the compound. */
     for (int i = 0; i < 20; i++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* No capsule link should have tunneled into or past the compound.
@@ -647,6 +698,7 @@ static int test_ccd_chain_vs_static_compound(void) {
     }
     ASSERT_TRUE(!tunneled);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }

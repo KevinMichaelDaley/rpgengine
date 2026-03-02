@@ -16,6 +16,8 @@
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/game_state.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
 
@@ -64,32 +66,48 @@ static int make_test_world(phys_world_t *world) {
     return phys_world_init(world, &cfg);
 }
 
+/* ── Job system helpers ─────────────────────────────────────────── */
+
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
+}
+
 /* ── Test 1: single body falls under gravity ───────────────────── */
 
 static int test_tick_single_body_falls(void) {
     phys_world_t world;
+    job_system_t sys;
+    phys_job_context_t ctx;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    setup_jobs(&sys, &ctx);
 
     /* Create a dynamic sphere body at (0, 10, 0). */
     uint32_t idx = phys_world_create_body(&world);
-    ASSERT_TRUE(idx != UINT32_MAX);
+    if (idx == UINT32_MAX) { teardown_jobs(&sys, &ctx); return 1; }
 
     phys_body_t *body = phys_world_get_body(&world, idx);
-    ASSERT_TRUE(body != NULL);
+    if (!body) { teardown_jobs(&sys, &ctx); return 1; }
     body->position = (phys_vec3_t){0.0f, 10.0f, 0.0f};
     phys_body_set_mass(body, 1.0f);
     phys_body_set_sphere_inertia(body, 1.0f, 0.5f);
 
     /* Also copy to bodies_next so integration reads correct input. */
     phys_body_t *body_next = phys_body_pool_get_next(&world.body_pool, idx);
-    ASSERT_TRUE(body_next != NULL);
+    if (!body_next) { teardown_jobs(&sys, &ctx); return 1; }
     *body_next = *body;
 
     phys_world_set_sphere_collider(&world, idx, 0.5f,
                                    (phys_vec3_t){0, 0, 0});
 
     /* Run one tick. */
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
 
     /* Body should have fallen: y < 10. */
     phys_body_t *after = phys_world_get_body(&world, idx);
@@ -97,6 +115,7 @@ static int test_tick_single_body_falls(void) {
     ASSERT_TRUE(after->position.y < 10.0f);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -104,11 +123,14 @@ static int test_tick_single_body_falls(void) {
 
 static int test_tick_two_spheres_collide(void) {
     phys_world_t world;
+    job_system_t sys;
+    phys_job_context_t ctx;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    setup_jobs(&sys, &ctx);
 
     /* Sphere A at (-0.4, 0, 0), radius 0.5, moving right. */
     uint32_t a = phys_world_create_body(&world);
-    ASSERT_TRUE(a != UINT32_MAX);
+    if (a == UINT32_MAX) { teardown_jobs(&sys, &ctx); return 1; }
     phys_body_t *ba = phys_world_get_body(&world, a);
     ba->position = (phys_vec3_t){-0.4f, 0.0f, 0.0f};
     ba->linear_vel = (phys_vec3_t){5.0f, 0.0f, 0.0f};
@@ -120,7 +142,7 @@ static int test_tick_two_spheres_collide(void) {
 
     /* Sphere B at (0.4, 0, 0), radius 0.5, moving left. */
     uint32_t b = phys_world_create_body(&world);
-    ASSERT_TRUE(b != UINT32_MAX);
+    if (b == UINT32_MAX) { teardown_jobs(&sys, &ctx); return 1; }
     phys_body_t *bb = phys_world_get_body(&world, b);
     bb->position = (phys_vec3_t){0.4f, 0.0f, 0.0f};
     bb->linear_vel = (phys_vec3_t){-5.0f, 0.0f, 0.0f};
@@ -131,7 +153,7 @@ static int test_tick_two_spheres_collide(void) {
                                    (phys_vec3_t){0, 0, 0});
 
     /* They overlap by 0.2 units — should be separated after tick. */
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
 
     phys_body_t *after_a = phys_world_get_body(&world, a);
     phys_body_t *after_b = phys_world_get_body(&world, b);
@@ -148,6 +170,7 @@ static int test_tick_two_spheres_collide(void) {
     ASSERT_TRUE(dist >= 0.6f);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -155,11 +178,14 @@ static int test_tick_two_spheres_collide(void) {
 
 static int test_tick_static_floor(void) {
     phys_world_t world;
+    job_system_t sys;
+    phys_job_context_t ctx;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    setup_jobs(&sys, &ctx);
 
     /* Static floor sphere at (0, 0, 0) with large radius. */
     uint32_t floor_idx = phys_world_create_body(&world);
-    ASSERT_TRUE(floor_idx != UINT32_MAX);
+    if (floor_idx == UINT32_MAX) { teardown_jobs(&sys, &ctx); return 1; }
     phys_body_t *floor_body = phys_world_get_body(&world, floor_idx);
     floor_body->position = (phys_vec3_t){0.0f, 0.0f, 0.0f};
     /* Static: inv_mass = 0 (default from phys_body_init). */
@@ -170,7 +196,7 @@ static int test_tick_static_floor(void) {
 
     /* Dynamic sphere at (0, 1.5, 0), radius 1.0 — sits just above floor. */
     uint32_t ball_idx = phys_world_create_body(&world);
-    ASSERT_TRUE(ball_idx != UINT32_MAX);
+    if (ball_idx == UINT32_MAX) { teardown_jobs(&sys, &ctx); return 1; }
     phys_body_t *ball = phys_world_get_body(&world, ball_idx);
     ball->position = (phys_vec3_t){0.0f, 1.5f, 0.0f};
     phys_body_set_mass(ball, 1.0f);
@@ -180,7 +206,7 @@ static int test_tick_static_floor(void) {
                                    (phys_vec3_t){0, 0, 0});
 
     /* Run a tick. */
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
 
     /* The dynamic body should not fall through the floor.
      * With overlapping spheres (distance=1.5 < 2.0 radii), the solver
@@ -190,6 +216,7 @@ static int test_tick_static_floor(void) {
     ASSERT_TRUE(after_ball->position.y >= 1.0f);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -197,15 +224,19 @@ static int test_tick_static_floor(void) {
 
 static int test_tick_increments_count(void) {
     phys_world_t world;
+    job_system_t sys;
+    phys_job_context_t ctx;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    setup_jobs(&sys, &ctx);
 
     ASSERT_TRUE(phys_world_tick_count(&world) == 0);
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
     ASSERT_TRUE(phys_world_tick_count(&world) == 1);
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
     ASSERT_TRUE(phys_world_tick_count(&world) == 2);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -213,13 +244,17 @@ static int test_tick_increments_count(void) {
 
 static int test_tick_no_bodies(void) {
     phys_world_t world;
+    job_system_t sys;
+    phys_job_context_t ctx;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    setup_jobs(&sys, &ctx);
 
     /* Tick with zero bodies should not crash. */
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
     ASSERT_TRUE(phys_world_tick_count(&world) == 1);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -227,7 +262,7 @@ static int test_tick_no_bodies(void) {
 
 static int test_tick_null_safe(void) {
     /* Should be a no-op. */
-    phys_world_tick(NULL, NULL);
+    phys_world_tick_parallel(NULL, NULL, NULL);
     return 0;
 }
 

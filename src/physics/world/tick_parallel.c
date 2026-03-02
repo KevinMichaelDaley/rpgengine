@@ -521,11 +521,7 @@ void phys_world_tick_parallel(phys_world_t *world,
     TracyCZoneN(z_tick, "Phys.Tick.Total", true);
 #endif
 
-    /* With <= 1 worker, the job system provides no parallelism and
-     * its scheduling order may differ from the sequential pipeline.
-     * Fall back to the sequential tick so results match exactly. */
-    if (!jobs || !jobs->job_sys || jobs->job_sys->worker_count <= 1) {
-        phys_world_tick(world, game);
+    if (!jobs || !jobs->job_sys) {
         return;
     }
 

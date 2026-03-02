@@ -306,7 +306,7 @@ static int test_par_tick_matches_seq(void) {
     setup_jobs(&sys, &ctx);
 
     /* Run sequential. */
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
 
     /* Run parallel. */
     phys_world_tick_parallel(&world_par, NULL, &ctx);
@@ -352,7 +352,7 @@ static int test_par_tick_with_collisions(void) {
     phys_job_context_t ctx;
     setup_jobs(&sys, &ctx);
 
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
     phys_world_tick_parallel(&world_par, NULL, &ctx);
 
     int cmp = compare_worlds(&world, &world_par, world.body_pool.capacity);
@@ -379,7 +379,7 @@ static int test_par_tick_empty_world(void) {
     setup_jobs(&sys, &ctx);
 
     /* Both ticks should be no-ops without crashing. */
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
     phys_world_tick_parallel(&world_par, NULL, &ctx);
 
     ASSERT_TRUE(world.tick_count == 1);
@@ -412,7 +412,7 @@ static int test_par_tick_single_body(void) {
     phys_job_context_t ctx;
     setup_jobs(&sys, &ctx);
 
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
     phys_world_tick_parallel(&world_par, NULL, &ctx);
 
     int cmp = compare_worlds(&world, &world_par, world.body_pool.capacity);
@@ -473,7 +473,7 @@ static int test_par_tick_mixed_shapes(void) {
     phys_job_context_t ctx;
     setup_jobs(&sys, &ctx);
 
-    phys_world_tick(&world, NULL);
+    phys_world_tick_parallel(&world, NULL, &ctx);
     phys_world_tick_parallel(&world_par, NULL, &ctx);
 
     int cmp = compare_worlds(&world, &world_par, world.body_pool.capacity);
@@ -511,7 +511,7 @@ static int test_par_tick_multi_substep(void) {
 
     /* Run 10 ticks on both worlds. */
     for (int t = 0; t < 10; t++) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
         phys_world_tick_parallel(&world_par, NULL, &ctx);
 
         /* Compare after each tick to catch divergence early. */

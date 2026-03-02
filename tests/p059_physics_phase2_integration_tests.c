@@ -26,6 +26,8 @@
 #include "ferrum/physics/snapshot.h"
 #include "ferrum/physics/prediction.h"
 #include "ferrum/physics/cache_commit.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
 
@@ -73,6 +75,19 @@ static int make_test_world(phys_world_t *world) {
     cfg.default_substeps = 1;
     cfg.default_solver_iterations = 8;
     return phys_world_init(world, &cfg);
+}
+
+/* ── Job system helpers ──────────────────────────────────────── */
+
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
 }
 
 /* ── Body creation helpers ─────────────────────────────────────── */
@@ -217,6 +232,7 @@ static uint32_t create_dynamic_capsule_oriented(phys_world_t *world,
  */
 static int test_box_falls_on_floor(void) {
     phys_world_t world;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world) == 0);
 
     /* Static floor: box at y=-1, half_extents (2, 1, 2).
@@ -237,7 +253,7 @@ static int test_box_falls_on_floor(void) {
     ASSERT_TRUE(box_idx != UINT32_MAX);
 
     for (int i = 0; i < 300; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *box = phys_world_get_body(&world, box_idx);
@@ -251,6 +267,7 @@ static int test_box_falls_on_floor(void) {
     ASSERT_TRUE(isfinite(box->position.z));
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -262,6 +279,7 @@ static int test_box_falls_on_floor(void) {
  */
 static int test_sphere_hits_box(void) {
     phys_world_t world;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world) == 0);
 
     /* Disable gravity for a clean horizontal collision. */
@@ -283,7 +301,7 @@ static int test_sphere_hits_box(void) {
     ASSERT_TRUE(sph_idx != UINT32_MAX);
 
     for (int i = 0; i < 60; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *sph = phys_world_get_body(&world, sph_idx);
@@ -302,6 +320,7 @@ static int test_sphere_hits_box(void) {
     ASSERT_TRUE(isfinite(sph->linear_vel.x));
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -313,6 +332,7 @@ static int test_sphere_hits_box(void) {
  */
 static int test_capsule_falls_on_box(void) {
     phys_world_t world;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world) == 0);
 
     /* Static floor box. */
@@ -331,7 +351,7 @@ static int test_capsule_falls_on_box(void) {
     ASSERT_TRUE(cap_idx != UINT32_MAX);
 
     for (int i = 0; i < 300; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *cap = phys_world_get_body(&world, cap_idx);
@@ -345,6 +365,7 @@ static int test_capsule_falls_on_box(void) {
     ASSERT_TRUE(isfinite(cap->position.z));
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -356,6 +377,7 @@ static int test_capsule_falls_on_box(void) {
  */
 static int test_mixed_shapes_collide(void) {
     phys_world_t world;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world) == 0);
 
     /* Disable gravity. */
@@ -392,7 +414,7 @@ static int test_mixed_shapes_collide(void) {
      * box:     3 - 5*0.5 =  0.5
      * capsule: 3 - 5*0.5 =  0.5  (y-axis) */
     for (int i = 0; i < 30; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *s = phys_world_get_body(&world, sph);
@@ -414,6 +436,7 @@ static int test_mixed_shapes_collide(void) {
     ASSERT_TRUE(deflected > 0);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -426,6 +449,7 @@ static int test_mixed_shapes_collide(void) {
  */
 static int test_box_box_stack(void) {
     phys_world_t world;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world) == 0);
 
     /* Static floor. */
@@ -454,7 +478,7 @@ static int test_box_box_stack(void) {
     ASSERT_TRUE(top != UINT32_MAX);
 
     for (int i = 0; i < 300; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *b = phys_world_get_body(&world, bot);
@@ -472,6 +496,7 @@ static int test_box_box_stack(void) {
     ASSERT_TRUE(isfinite(t->position.x));
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -483,6 +508,7 @@ static int test_box_box_stack(void) {
  */
 static int test_capsule_capsule_perpendicular(void) {
     phys_world_t world;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world) == 0);
 
     /* Disable gravity. */
@@ -511,7 +537,7 @@ static int test_capsule_capsule_perpendicular(void) {
     ASSERT_TRUE(b != UINT32_MAX);
 
     for (int i = 0; i < 60; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *ca = phys_world_get_body(&world, a);
@@ -529,6 +555,7 @@ static int test_capsule_capsule_perpendicular(void) {
     ASSERT_TRUE(cb->linear_vel.x > -4.5f);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -540,6 +567,7 @@ static int test_capsule_capsule_perpendicular(void) {
  */
 static int test_snapshot_with_mixed_shapes(void) {
     phys_world_t world;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world) == 0);
 
     /* Disable gravity for predictable positions. */
@@ -569,7 +597,7 @@ static int test_snapshot_with_mixed_shapes(void) {
 
     /* Tick a few times. */
     for (int i = 0; i < 10; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* Record positions before snapshot. */
@@ -611,6 +639,7 @@ static int test_snapshot_with_mixed_shapes(void) {
     ASSERT_FLOAT_NEAR(cz, decoded_c.z, 0.05f);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -621,6 +650,7 @@ static int test_snapshot_with_mixed_shapes(void) {
  */
 static int test_prediction_with_mixed_shapes(void) {
     phys_world_t world1, world2;
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
     ASSERT_TRUE(make_test_world(&world1) == 0);
     ASSERT_TRUE(make_test_world(&world2) == 0);
 
@@ -649,8 +679,8 @@ static int test_prediction_with_mixed_shapes(void) {
 
     /* Run both for 10 ticks. */
     for (int i = 0; i < 10; ++i) {
-        phys_world_tick(&world1, NULL);
-        phys_world_tick(&world2, NULL);
+        phys_world_tick_parallel(&world1, NULL, &ctx);
+        phys_world_tick_parallel(&world2, NULL, &ctx);
     }
 
     /* Introduce a discrepancy in world2. */
@@ -691,6 +721,7 @@ static int test_prediction_with_mixed_shapes(void) {
 
     phys_world_destroy(&world1);
     phys_world_destroy(&world2);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 

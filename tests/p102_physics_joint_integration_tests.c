@@ -20,6 +20,8 @@
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/joint.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
 
@@ -113,6 +115,16 @@ static float vec3_length(phys_vec3_t v) {
     return sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
 }
 
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
+}
+
 /* ── Tests ──────────────────────────────────────────────────────── */
 
 /**
@@ -144,9 +156,13 @@ static int test_pendulum_swings(void) {
     /* Record initial Y. */
     float init_y = phys_world_get_body(&world, ball)->position.y;
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Simulate 120 ticks (~2 seconds). */
     for (int i = 0; i < 120; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *b = phys_world_get_body(&world, ball);
@@ -160,6 +176,7 @@ static int test_pendulum_swings(void) {
     ASSERT_TRUE(dist < 3.0f);
     ASSERT_TRUE(dist > 1.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -203,9 +220,13 @@ static int test_chain_of_bodies(void) {
         ASSERT_TRUE(ji != UINT32_MAX);
     }
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Simulate 300 ticks (~5 seconds). */
     for (int i = 0; i < 300; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* Each body should be below the one above. */
@@ -226,6 +247,7 @@ static int test_chain_of_bodies(void) {
     float expected = (float)(count - 1) * link_len;
     ASSERT_TRUE(total < expected * 2.0f); /* shouldn't double in length */
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -266,9 +288,13 @@ static int test_door_hinge(void) {
 
     float init_y = door_body->position.y;
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Simulate 60 ticks (~1 second). */
     for (int i = 0; i < 60; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *d = phys_world_get_body(&world, door);
@@ -282,6 +308,7 @@ static int test_door_hinge(void) {
     float dist = vec3_dist(f->position, d->position);
     ASSERT_TRUE(dist < 2.5f);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -322,9 +349,13 @@ static int test_joint_no_drift(void) {
 
     ASSERT_TRUE(phys_world_add_joint(&world, &joint) != UINT32_MAX);
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Simulate 300 ticks. */
     for (int i = 0; i < 300; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* Bodies should not have drifted far from initial positions. */
@@ -339,6 +370,7 @@ static int test_joint_no_drift(void) {
     ASSERT_TRUE(vec3_length(ba->linear_vel) < 2.0f);
     ASSERT_TRUE(vec3_length(bb->linear_vel) < 2.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -372,9 +404,13 @@ static int test_multiple_joints(void) {
         ASSERT_TRUE(phys_world_add_joint(&world, &joint) != UINT32_MAX);
     }
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Simulate 120 ticks — should not crash. */
     for (int i = 0; i < 120; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* All dynamic bodies should have fallen below their anchors. */
@@ -387,6 +423,7 @@ static int test_multiple_joints(void) {
         }
     }
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }
@@ -416,9 +453,13 @@ static int test_joint_removal(void) {
     uint32_t ji = phys_world_add_joint(&world, &joint);
     ASSERT_TRUE(ji != UINT32_MAX);
 
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
     /* Simulate 60 ticks with joint. */
     for (int i = 0; i < 60; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     float y_constrained = phys_world_get_body(&world, ball)->position.y;
@@ -439,13 +480,14 @@ static int test_joint_removal(void) {
 
     /* Simulate 120 more ticks — ball falls freely. */
     for (int i = 0; i < 120; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     float y_free = phys_world_get_body(&world, ball)->position.y;
     /* Ball should have fallen significantly. */
     ASSERT_TRUE(y_free < y_constrained - 1.0f);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }

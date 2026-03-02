@@ -6,6 +6,8 @@
 #include "ferrum/physics/manifold_cache.h"
 #include "ferrum/physics/tick.h"
 #include "ferrum/physics/world.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 
 #define ASSERT_TRUE(cond)                                                                                \
     do {                                                                                                 \
@@ -31,6 +33,16 @@ static int make_world_(phys_world_t *world) {
     cfg.manifold_cache_size = 64u;
     cfg.frame_arena_size = 8u * 1024u * 1024u;
     return phys_world_init(world, &cfg);
+}
+
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
 }
 
 static bool grid_contains_body_(const phys_spatial_grid_t *grid, uint32_t body_id) {
@@ -77,7 +89,11 @@ static int test_static_collision_generates_manifold_and_excludes_grid(void) {
 
     phys_world_set_sphere_collider(&world, d, 0.75f, (phys_vec3_t){0, 0, 0});
 
-    phys_world_tick(&world, NULL);
+    job_system_t sys;
+    phys_job_context_t ctx;
+    setup_jobs(&sys, &ctx);
+
+    phys_world_tick_parallel(&world, NULL, &ctx);
 
     ASSERT_TRUE(world.static_bvh_valid != 0);
     ASSERT_TRUE(world.query_grid_valid != 0);
@@ -90,6 +106,7 @@ static int test_static_collision_generates_manifold_and_excludes_grid(void) {
     ASSERT_TRUE(m != NULL);
     ASSERT_TRUE(m->point_count > 0);
 
+    teardown_jobs(&sys, &ctx);
     phys_world_destroy(&world);
     return 0;
 }

@@ -19,6 +19,8 @@
 #include "ferrum/physics/snapshot.h"
 #include "ferrum/physics/prediction.h"
 #include "ferrum/physics/cache_commit.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/job/system.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
 
@@ -123,6 +125,19 @@ static uint32_t create_static_sphere(phys_world_t *world,
     return idx;
 }
 
+/* ── Job system helpers ────────────────────────────────────────── */
+
+static void setup_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    job_system_create(sys, 1, 256, 65536, 64, 0);
+    job_system_start(sys);
+    phys_job_context_init(ctx, sys);
+}
+
+static void teardown_jobs(job_system_t *sys, phys_job_context_t *ctx) {
+    phys_job_context_destroy(ctx);
+    job_system_shutdown(sys);
+}
+
 /* ── Test 1: sphere falls onto floor ───────────────────────────── */
 
 /**
@@ -134,6 +149,7 @@ static uint32_t create_static_sphere(phys_world_t *world,
 static int test_sphere_falls_on_floor(void) {
     phys_world_t world;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     /* Static floor sphere just below origin. */
     uint32_t floor_idx = create_static_sphere(
@@ -152,7 +168,7 @@ static int test_sphere_falls_on_floor(void) {
 
     /* Run 300 ticks. */
     for (int i = 0; i < 300; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *ball = phys_world_get_body(&world, ball_idx);
@@ -162,6 +178,7 @@ static int test_sphere_falls_on_floor(void) {
     ASSERT_TRUE(ball->position.y < 3.0f);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -174,6 +191,7 @@ static int test_sphere_falls_on_floor(void) {
 static int test_two_spheres_collide(void) {
     phys_world_t world;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     /* Disable gravity so collision is purely horizontal. */
     world.config.gravity = (phys_vec3_t){0, 0, 0};
@@ -194,7 +212,7 @@ static int test_two_spheres_collide(void) {
 
     /* Run 60 ticks — spheres should collide and bounce. */
     for (int i = 0; i < 60; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *after_a = phys_world_get_body(&world, a);
@@ -214,6 +232,7 @@ static int test_two_spheres_collide(void) {
     ASSERT_TRUE(after_b->linear_vel.x > -1.0f);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -222,16 +241,18 @@ static int test_two_spheres_collide(void) {
 static int test_tick_count_increments(void) {
     phys_world_t world;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     ASSERT_TRUE(phys_world_tick_count(&world) == 0);
 
     const int N = 25;
     for (int i = 0; i < N; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
     ASSERT_TRUE(phys_world_tick_count(&world) == (uint64_t)N);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -244,6 +265,7 @@ static int test_tick_count_increments(void) {
 static int test_multiple_bodies_no_crash(void) {
     phys_world_t world;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     const int COUNT = 50;
     uint32_t indices[50];
@@ -262,7 +284,7 @@ static int test_multiple_bodies_no_crash(void) {
 
     /* Run 100 ticks. */
     for (int i = 0; i < 100; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* Verify all positions are finite (not NaN or Inf). */
@@ -275,6 +297,7 @@ static int test_multiple_bodies_no_crash(void) {
     }
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -287,6 +310,7 @@ static int test_multiple_bodies_no_crash(void) {
 static int test_sleeping_body(void) {
     phys_world_t world;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     /* Disable gravity so the body truly stays at rest. */
     world.config.gravity = (phys_vec3_t){0, 0, 0};
@@ -302,7 +326,7 @@ static int test_sleeping_body(void) {
      * Add extra margin. */
     int ticks_needed = (int)world.config.sleep_delay_frames + 30;
     for (int i = 0; i < ticks_needed; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     phys_body_t *body = phys_world_get_body(&world, idx);
@@ -310,6 +334,7 @@ static int test_sleeping_body(void) {
     ASSERT_TRUE(phys_body_is_sleeping(body));
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -322,6 +347,7 @@ static int test_sleeping_body(void) {
 static int test_snapshot_during_simulation(void) {
     phys_world_t world;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     /* Create a couple of bodies. */
     uint32_t a = create_dynamic_sphere(
@@ -340,7 +366,7 @@ static int test_snapshot_during_simulation(void) {
 
     /* Run 10 ticks. */
     for (int i = 0; i < 10; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
     }
 
     /* Encode snapshot. */
@@ -360,6 +386,7 @@ static int test_snapshot_during_simulation(void) {
     ASSERT_TRUE(snapshot.body_count == 2);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -374,6 +401,7 @@ static int test_prediction_during_simulation(void) {
     phys_world_t world1, world2;
     ASSERT_TRUE(make_test_world(&world1) == 0);
     ASSERT_TRUE(make_test_world(&world2) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     /* Disable gravity for deterministic behavior. */
     world1.config.gravity = (phys_vec3_t){0, 0, 0};
@@ -396,8 +424,8 @@ static int test_prediction_during_simulation(void) {
 
     /* Run both for 10 ticks. */
     for (int i = 0; i < 10; ++i) {
-        phys_world_tick(&world1, NULL);
-        phys_world_tick(&world2, NULL);
+        phys_world_tick_parallel(&world1, NULL, &ctx);
+        phys_world_tick_parallel(&world2, NULL, &ctx);
     }
 
     /* Introduce a discrepancy in world2. */
@@ -428,6 +456,7 @@ static int test_prediction_during_simulation(void) {
 
     phys_world_destroy(&world1);
     phys_world_destroy(&world2);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
@@ -440,6 +469,7 @@ static int test_prediction_during_simulation(void) {
 static int test_impact_events(void) {
     phys_world_t world;
     ASSERT_TRUE(make_test_world(&world) == 0);
+    job_system_t sys; phys_job_context_t ctx; setup_jobs(&sys, &ctx);
 
     /* Disable gravity to keep collision purely horizontal. */
     world.config.gravity = (phys_vec3_t){0, 0, 0};
@@ -464,7 +494,7 @@ static int test_impact_events(void) {
 
     /* Run a few ticks to trigger collision + impact event. */
     for (int i = 0; i < 5; ++i) {
-        phys_world_tick(&world, NULL);
+        phys_world_tick_parallel(&world, NULL, &ctx);
 
         uint32_t event_count = 0;
         const phys_impact_event_t *events =
@@ -482,6 +512,7 @@ static int test_impact_events(void) {
             }
             ASSERT_TRUE(found_nonzero);
             phys_world_destroy(&world);
+            teardown_jobs(&sys, &ctx);
             return 0;
         }
     }
@@ -497,6 +528,7 @@ static int test_impact_events(void) {
             final_count);
 
     phys_world_destroy(&world);
+    teardown_jobs(&sys, &ctx);
     return 0;
 }
 
