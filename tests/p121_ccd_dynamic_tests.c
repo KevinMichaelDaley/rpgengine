@@ -15,6 +15,7 @@
 #include "ferrum/physics/broadphase.h"
 #include "ferrum/physics/ccd_dynamic.h"
 #include "ferrum/physics/collider.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/phys_pool.h"
 
@@ -68,7 +69,7 @@ static const char *g_current_test;
 /** Identity quaternion. */
 static const phys_quat_t QUAT_ID = {0, 0, 0, 1};
 
-/** Initialize a dynamic body with CCD at a position. */
+/** Initialize a dynamic body with CCD at a position with optional velocity. */
 static void make_dynamic_ccd(phys_body_t *b, phys_vec3_t pos) {
     phys_body_init(b);
     b->position = pos;
@@ -79,6 +80,19 @@ static void make_dynamic_ccd(phys_body_t *b, phys_vec3_t pos) {
     b->tier = 0;
     b->friction = 0.5f;
     b->restitution = 0.3f;
+    b->linear_vel = (phys_vec3_t){0, 0, 0};
+    b->angular_vel = (phys_vec3_t){0, 0, 0};
+}
+
+/** Initialize a dynamic CCD body at start_pos, moving to end_pos over dt. */
+static void make_dynamic_ccd_moving(phys_body_t *b, phys_vec3_t start_pos,
+                                     phys_vec3_t end_pos, float dt) {
+    make_dynamic_ccd(b, start_pos);
+    b->linear_vel = (phys_vec3_t){
+        (end_pos.x - start_pos.x) / dt,
+        (end_pos.y - start_pos.y) / dt,
+        (end_pos.z - start_pos.z) / dt,
+    };
 }
 
 /* ── Test: head-on sphere collision ────────────────────────────── */
@@ -91,16 +105,14 @@ static void make_dynamic_ccd(phys_body_t *b, phys_vec3_t pos) {
  * Expect 1 manifold with correct normal (roughly along X axis).
  */
 static int test_sphere_vs_sphere_headon(void) {
-    /* Body arrays: index 0 = A, index 1 = B, index 2 = sentinel (unused). */
-    phys_body_t prev[3], curr[3];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    /* Body arrays: index 0 = A, index 1 = B. */
+    phys_body_t bodies[3];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){-5, 0, 0});
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){ 5, 0, 0});
-
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){ 1, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){-1, 0, 0});
+    /* A starts at (-5,0,0) moving to (+1,0,0), B starts at (+5,0,0) moving to (-1,0,0). */
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){-5, 0, 0}, (phys_vec3_t){ 1, 0, 0}, dt);
+    make_dynamic_ccd_moving(&bodies[1], (phys_vec3_t){ 5, 0, 0}, (phys_vec3_t){-1, 0, 0}, dt);
 
     /* Colliders: both spheres with radius=1. */
     phys_collider_t colliders[3];
@@ -124,8 +136,7 @@ static int test_sphere_vs_sphere_headon(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -137,7 +148,7 @@ static int test_sphere_vs_sphere_headon(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     /* Should produce exactly 1 manifold. */
@@ -163,14 +174,13 @@ static int test_sphere_vs_sphere_headon(void) {
  *   curr: A at (10,0,0), B at (10,5,0)
  */
 static int test_sphere_parallel_no_collision(void) {
-    phys_body_t prev[2], curr[2];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){0, 0, 0});
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){0, 5, 0});
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){10, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){10, 5, 0});
+    /* Both move in parallel along X — should never collide. */
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){0, 0, 0}, (phys_vec3_t){10, 0, 0}, dt);
+    make_dynamic_ccd_moving(&bodies[1], (phys_vec3_t){0, 5, 0}, (phys_vec3_t){10, 5, 0}, dt);
 
     phys_collider_t colliders[2];
     memset(colliders, 0, sizeof(colliders));
@@ -190,8 +200,7 @@ static int test_sphere_parallel_no_collision(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -203,7 +212,7 @@ static int test_sphere_parallel_no_collision(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     ASSERT_EQ(manifold_count, 0);
@@ -222,15 +231,13 @@ static int test_sphere_parallel_no_collision(void) {
  * Should detect the crossing and produce a manifold.
  */
 static int test_capsule_vs_box_tunneling(void) {
-    phys_body_t prev[2], curr[2];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){-5, 0, 0});  /* capsule */
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){ 0, 0, 0});  /* box */
-
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){ 5, 0, 0});  /* capsule moved */
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){ 0, 0, 0});  /* box stationary */
+    /* Capsule sweeps from (-5,0,0) to (+5,0,0); box stationary at origin. */
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){-5, 0, 0}, (phys_vec3_t){ 5, 0, 0}, dt);
+    make_dynamic_ccd(&bodies[1], (phys_vec3_t){ 0, 0, 0});
 
     phys_collider_t colliders[2];
     memset(colliders, 0, sizeof(colliders));
@@ -252,8 +259,7 @@ static int test_capsule_vs_box_tunneling(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = NULL,
         .capsules    = capsules,
@@ -265,7 +271,7 @@ static int test_capsule_vs_box_tunneling(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     ASSERT_EQ(manifold_count, 1);
@@ -288,15 +294,13 @@ static int test_capsule_vs_box_tunneling(void) {
  * Should detect overlap immediately (TOI ~ 0) and produce manifold.
  */
 static int test_already_overlapping(void) {
-    phys_body_t prev[2], curr[2];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){0, 0, 0});
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){1, 0, 0});
-
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){0, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){1, 0, 0});
+    /* Both stationary, already overlapping (centers 1.0 apart, radii 1.0 each). */
+    make_dynamic_ccd(&bodies[0], (phys_vec3_t){0, 0, 0});
+    make_dynamic_ccd(&bodies[1], (phys_vec3_t){1, 0, 0});
 
     phys_collider_t colliders[2];
     memset(colliders, 0, sizeof(colliders));
@@ -316,8 +320,7 @@ static int test_already_overlapping(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -329,7 +332,7 @@ static int test_already_overlapping(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     /* Already overlapping → should produce a manifold. */
@@ -348,19 +351,15 @@ static int test_already_overlapping(void) {
  * (static CCD handles that case separately).
  */
 static int test_skips_static_body(void) {
-    phys_body_t prev[2], curr[2];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){-5, 0, 0});
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){ 0, 0, 0});
-    prev[1].inv_mass = 0.0f;  /* static */
-    prev[1].flags |= PHYS_BODY_FLAG_STATIC;
-
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){ 5, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){ 0, 0, 0});
-    curr[1].inv_mass = 0.0f;
-    curr[1].flags |= PHYS_BODY_FLAG_STATIC;
+    /* Body 0 is dynamic+CCD, body 1 is static — should be skipped. */
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){-5, 0, 0}, (phys_vec3_t){ 5, 0, 0}, dt);
+    make_dynamic_ccd(&bodies[1], (phys_vec3_t){ 0, 0, 0});
+    bodies[1].inv_mass = 0.0f;
+    bodies[1].flags |= PHYS_BODY_FLAG_STATIC;
 
     phys_collider_t colliders[2];
     memset(colliders, 0, sizeof(colliders));
@@ -380,8 +379,7 @@ static int test_skips_static_body(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -393,7 +391,7 @@ static int test_skips_static_body(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     /* Should produce 0 manifolds — static pair skipped. */
@@ -410,14 +408,12 @@ static int test_skips_static_body(void) {
  * should skip pairs involving mesh colliders.
  */
 static int test_skips_mesh_shapes(void) {
-    phys_body_t prev[2], curr[2];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){-5, 0, 0});
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){ 0, 0, 0});
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){ 5, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){ 0, 0, 0});
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){-5, 0, 0}, (phys_vec3_t){ 5, 0, 0}, dt);
+    make_dynamic_ccd(&bodies[1], (phys_vec3_t){ 0, 0, 0});
 
     phys_collider_t colliders[2];
     memset(colliders, 0, sizeof(colliders));
@@ -437,8 +433,7 @@ static int test_skips_mesh_shapes(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -450,7 +445,7 @@ static int test_skips_mesh_shapes(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     ASSERT_EQ(manifold_count, 0);
@@ -465,19 +460,15 @@ static int test_skips_mesh_shapes(void) {
  * If neither body has PHYS_BODY_FLAG_CCD, the pair is skipped.
  */
 static int test_requires_ccd_flag(void) {
-    phys_body_t prev[2], curr[2];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){-5, 0, 0});
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){ 5, 0, 0});
-    prev[0].flags &= ~(uint32_t)PHYS_BODY_FLAG_CCD;
-    prev[1].flags &= ~(uint32_t)PHYS_BODY_FLAG_CCD;
-
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){ 1, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){-1, 0, 0});
-    curr[0].flags &= ~(uint32_t)PHYS_BODY_FLAG_CCD;
-    curr[1].flags &= ~(uint32_t)PHYS_BODY_FLAG_CCD;
+    /* Both move toward each other but neither has CCD flag. */
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){-5, 0, 0}, (phys_vec3_t){ 1, 0, 0}, dt);
+    bodies[0].flags &= ~(uint32_t)PHYS_BODY_FLAG_CCD;
+    make_dynamic_ccd_moving(&bodies[1], (phys_vec3_t){ 5, 0, 0}, (phys_vec3_t){-1, 0, 0}, dt);
+    bodies[1].flags &= ~(uint32_t)PHYS_BODY_FLAG_CCD;
 
     phys_collider_t colliders[2];
     memset(colliders, 0, sizeof(colliders));
@@ -497,8 +488,7 @@ static int test_requires_ccd_flag(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -510,7 +500,7 @@ static int test_requires_ccd_flag(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     ASSERT_EQ(manifold_count, 0);
@@ -530,24 +520,18 @@ static int test_requires_ccd_flag(void) {
  * Sphere radius=0.5.
  */
 static int test_rotation_sweep(void) {
-    phys_body_t prev[2], curr[2];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
 
-    /* Box at origin, identity rotation. */
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){0, 0, 0});
-    /* Sphere at (2,0,0). */
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){2, 0, 0});
+    /* Box at origin, identity rotation, rotating around Y so corner sweeps into sphere. */
+    make_dynamic_ccd(&bodies[0], (phys_vec3_t){0, 0, 0});
+    /* Angular velocity chosen so total rotation over dt = ~45°. */
+    float angle = 3.14159265f / 4.0f;  /* 45° */
+    bodies[0].angular_vel = (phys_vec3_t){0, angle / dt, 0};
 
-    /* Box: rotated 45° around Y.
-     * quat for 45° Y rotation: (0, sin(π/8), 0, cos(π/8)). */
-    float half_angle = 3.14159265f / 4.0f;  /* 45° */
-    float s = sinf(half_angle / 2.0f);
-    float c = cosf(half_angle / 2.0f);
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){0, 0, 0});
-    curr[0].orientation = (phys_quat_t){0, s, 0, c};
-
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){2, 0, 0});
+    /* Sphere at (2,0,0) — stationary. */
+    make_dynamic_ccd(&bodies[1], (phys_vec3_t){2, 0, 0});
 
     phys_collider_t colliders[2];
     memset(colliders, 0, sizeof(colliders));
@@ -569,8 +553,7 @@ static int test_rotation_sweep(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -582,7 +565,7 @@ static int test_rotation_sweep(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     /* The box corner sweeps past the sphere → should detect contact. */
@@ -599,15 +582,13 @@ static int test_rotation_sweep(void) {
  * Verify manifold body_a and body_b are set correctly from the pair.
  */
 static int test_manifold_body_indices(void) {
-    phys_body_t prev[4], curr[4];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[4];
+    memset(bodies, 0, sizeof(bodies));
 
     /* Use indices 1 and 3 (not 0-based consecutive). */
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){-5, 0, 0});
-    make_dynamic_ccd(&prev[3], (phys_vec3_t){ 5, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){ 1, 0, 0});
-    make_dynamic_ccd(&curr[3], (phys_vec3_t){-1, 0, 0});
+    make_dynamic_ccd_moving(&bodies[1], (phys_vec3_t){-5, 0, 0}, (phys_vec3_t){ 1, 0, 0}, dt);
+    make_dynamic_ccd_moving(&bodies[3], (phys_vec3_t){ 5, 0, 0}, (phys_vec3_t){-1, 0, 0}, dt);
 
     phys_collider_t colliders[4];
     memset(colliders, 0, sizeof(colliders));
@@ -627,8 +608,7 @@ static int test_manifold_body_indices(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -640,7 +620,7 @@ static int test_manifold_body_indices(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 4,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     ASSERT_EQ(manifold_count, 1);
@@ -657,20 +637,15 @@ static int test_manifold_body_indices(void) {
  * When max_manifolds is reached, stop emitting (don't overflow).
  */
 static int test_max_manifolds_cap(void) {
+    const float dt = 1.0f / 60.0f;
     /* 2 pairs, but max_manifolds = 1. */
-    phys_body_t prev[4], curr[4];
-    memset(prev, 0, sizeof(prev));
-    memset(curr, 0, sizeof(curr));
+    phys_body_t bodies[4];
+    memset(bodies, 0, sizeof(bodies));
 
-    make_dynamic_ccd(&prev[0], (phys_vec3_t){-5, 0, 0});
-    make_dynamic_ccd(&prev[1], (phys_vec3_t){ 5, 0, 0});
-    make_dynamic_ccd(&prev[2], (phys_vec3_t){-5, 10, 0});
-    make_dynamic_ccd(&prev[3], (phys_vec3_t){ 5, 10, 0});
-
-    make_dynamic_ccd(&curr[0], (phys_vec3_t){ 1, 0, 0});
-    make_dynamic_ccd(&curr[1], (phys_vec3_t){-1, 0, 0});
-    make_dynamic_ccd(&curr[2], (phys_vec3_t){ 1, 10, 0});
-    make_dynamic_ccd(&curr[3], (phys_vec3_t){-1, 10, 0});
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){-5,  0, 0}, (phys_vec3_t){ 1,  0, 0}, dt);
+    make_dynamic_ccd_moving(&bodies[1], (phys_vec3_t){ 5,  0, 0}, (phys_vec3_t){-1,  0, 0}, dt);
+    make_dynamic_ccd_moving(&bodies[2], (phys_vec3_t){-5, 10, 0}, (phys_vec3_t){ 1, 10, 0}, dt);
+    make_dynamic_ccd_moving(&bodies[3], (phys_vec3_t){ 5, 10, 0}, (phys_vec3_t){-1, 10, 0}, dt);
 
     phys_collider_t colliders[4];
     memset(colliders, 0, sizeof(colliders));
@@ -689,8 +664,7 @@ static int test_max_manifolds_cap(void) {
     phys_frame_arena_init(&arena, 64 * 1024);
 
     phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-        .bodies_prev = prev,
-        .bodies_curr = curr,
+        .bodies      = bodies,
         .colliders   = colliders,
         .spheres     = spheres,
         .capsules    = NULL,
@@ -702,11 +676,73 @@ static int test_max_manifolds_cap(void) {
         .manifold_count_out = &manifold_count,
         .max_manifolds      = 1,
         .arena       = &arena,
-        .dt          = 1.0f / 60.0f,
+        .dt          = dt,
     });
 
     /* Should cap at 1. */
     ASSERT_EQ(manifold_count, 1);
+
+    phys_frame_arena_destroy(&arena);
+    return 0;
+}
+
+/* ── Test: skips pairs connected by a joint ─────────────────────── */
+
+/**
+ * Two spheres that would normally produce a CCD manifold are skipped
+ * when a joint connects them.
+ */
+static int test_skips_jointed_pair(void) {
+    const float dt = 1.0f / 60.0f;
+    phys_body_t bodies[2];
+    memset(bodies, 0, sizeof(bodies));
+
+    make_dynamic_ccd_moving(&bodies[0], (phys_vec3_t){-5, 0, 0}, (phys_vec3_t){ 1, 0, 0}, dt);
+    make_dynamic_ccd_moving(&bodies[1], (phys_vec3_t){ 5, 0, 0}, (phys_vec3_t){-1, 0, 0}, dt);
+
+    phys_collider_t colliders[2];
+    memset(colliders, 0, sizeof(colliders));
+    colliders[0].type = PHYS_SHAPE_SPHERE;
+    colliders[0].shape_index = 0;
+    colliders[1].type = PHYS_SHAPE_SPHERE;
+    colliders[1].shape_index = 1;
+
+    phys_sphere_t spheres[2] = {{1.0f}, {1.0f}};
+    phys_collision_pair_t pairs[1] = {{0, 1}};
+
+    /* A distance joint connecting the two bodies. */
+    phys_joint_t joint;
+    phys_joint_init(&joint);
+    joint.body_a = 0;
+    joint.body_b = 1;
+
+    phys_manifold_t manifolds[4];
+    memset(manifolds, 0, sizeof(manifolds));
+    uint32_t manifold_count = 0;
+
+    phys_frame_arena_t arena;
+    phys_frame_arena_init(&arena, 64 * 1024);
+
+    phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
+        .bodies      = bodies,
+        .colliders   = colliders,
+        .spheres     = spheres,
+        .capsules    = NULL,
+        .boxes       = NULL,
+        .pairs       = pairs,
+        .pair_count  = 1,
+        .body_count  = 2,
+        .manifolds_out      = manifolds,
+        .manifold_count_out = &manifold_count,
+        .max_manifolds      = 4,
+        .joints      = &joint,
+        .joint_count = 1,
+        .arena       = &arena,
+        .dt          = dt,
+    });
+
+    /* Jointed pair should be skipped → 0 manifolds. */
+    ASSERT_EQ(manifold_count, 0);
 
     phys_frame_arena_destroy(&arena);
     return 0;
@@ -735,6 +771,7 @@ int main(void) {
     RUN(test_rotation_sweep);
     RUN(test_manifold_body_indices);
     RUN(test_max_manifolds_cap);
+    RUN(test_skips_jointed_pair);
     RUN(test_null_args_noop);
 
     printf("\n  Results: %d passed, %d failed\n\n", g_pass, g_fail);

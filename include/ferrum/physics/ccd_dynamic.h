@@ -3,11 +3,11 @@
  * @brief Dynamic-vs-dynamic swept CCD with solver manifold output.
  *
  * For each broadphase pair where at least one body has PHYS_BODY_FLAG_CCD
- * and both bodies are dynamic primitives (not mesh/halfspace), interpolates
- * both bodies' positions and orientations from prev→curr, bisects [0,1]
- * for the time of impact (TOI), and runs GJK+EPA at the TOI to produce
- * contact manifolds.  These manifolds are injected into the solver
- * pipeline alongside normal narrowphase manifolds.
+ * and both bodies are dynamic primitives (not mesh/halfspace), extrapolates
+ * both bodies forward from their current poses using linear/angular velocity
+ * over dt, bisects [0,1] for the time of impact (TOI), and runs GJK+EPA
+ * at the TOI to produce contact manifolds.  These manifolds are injected
+ * into the solver pipeline alongside normal narrowphase manifolds.
  *
  * Public types (1):
  *   1. phys_ccd_dynamic_args_t
@@ -31,20 +31,19 @@ extern "C" {
 /* Forward declarations. */
 struct phys_body;
 struct phys_collider;
+struct phys_joint;
 struct phys_frame_arena;
 
 /**
  * @brief Arguments for the dynamic-dynamic CCD stage.
  *
  * Ownership: caller owns all pointed-to arrays.  The stage reads
- * bodies_prev and bodies_curr, and appends manifolds to manifolds_out.
+ * bodies (current state + velocities) and appends manifolds to
+ * manifolds_out.
  */
 typedef struct phys_ccd_dynamic_args {
-    /** Body states at the beginning of the substep (sweep origin). */
-    const struct phys_body *bodies_prev;
-
-    /** Body states after integration (sweep destination). */
-    const struct phys_body *bodies_curr;
+    /** Current body states (positions, orientations, velocities). */
+    const struct phys_body *bodies;
 
     /** Per-body collider descriptors. */
     const struct phys_collider *colliders;
@@ -70,22 +69,32 @@ typedef struct phys_ccd_dynamic_args {
     uint32_t *manifold_count_out;
     uint32_t max_manifolds;
 
+    /** Optional per-pair skip flags (pair_count entries).  If non-NULL,
+     *  set to 1 for each pair where CCD produced a manifold.  The caller
+     *  passes this array to the narrowphase to skip duplicate processing. */
+    uint8_t *skip_pair_out;
+
+    /** Active joints array.  Pairs connected by a joint are skipped
+     *  (jointed bodies are constrained and unlikely to tunnel; letting
+     *  narrowphase handle them avoids solver conflicts). */
+    const struct phys_joint *joints;
+    uint32_t joint_count;
+
     /** Frame arena for scratch allocations. */
     struct phys_frame_arena *arena;
 
-    /** Substep timestep (seconds). Used for bounding-radius displacement
-     *  check to skip slow pairs. */
+    /** Substep timestep (seconds).  Used both for velocity extrapolation
+     *  and bounding-radius displacement check to skip slow pairs. */
     float dt;
 } phys_ccd_dynamic_args_t;
 
 /**
  * @brief Run dynamic-dynamic CCD sweep and emit solver manifolds.
  *
- * For each qualifying pair, interpolates both bodies from prev→curr
- * using lerp (position) + slerp (orientation), bisects for the earliest
- * overlap time via GJK, then runs EPA at that time to extract contact
- * normal, depth, and points.  The resulting manifolds are appended to
- * the output buffer.
+ * For each qualifying pair, extrapolates both bodies forward from current
+ * pose using velocity × dt, bisects [0,1] for the earliest overlap time
+ * via GJK, then runs EPA at that time to extract contact normal, depth,
+ * and points.  The resulting manifolds are appended to the output buffer.
  *
  * @param args  CCD dynamic arguments.  NULL-safe (no-op).
  * @return Number of CCD manifolds generated.

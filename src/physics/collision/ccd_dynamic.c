@@ -3,9 +3,9 @@
  * @brief Dynamic-vs-dynamic swept CCD with solver manifold output.
  *
  * For each broadphase pair where at least one body has PHYS_BODY_FLAG_CCD
- * and both are dynamic primitives, bisects [0,1] to find the time of
- * impact (TOI), then runs GJK+EPA at the TOI to produce contact manifolds
- * for the solver.
+ * and both are dynamic primitives, extrapolates forward from current pose
+ * using velocity × dt, bisects [0,1] to find the time of impact (TOI),
+ * then runs GJK+EPA at the TOI to produce contact manifolds for the solver.
  *
  * Non-static functions (1):
  *   1. phys_stage_ccd_dynamic
@@ -22,6 +22,7 @@
 #include "ferrum/physics/collider.h"
 #include "ferrum/physics/gjk_epa.h"
 #include "ferrum/physics/gjk_support.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/manifold.h"
 
 /* ── Constants ─────────────────────────────────────────────────── */
@@ -33,15 +34,6 @@
 #define CCD_SEPARATION_EPS 1e-4f
 
 /* ── Helpers ───────────────────────────────────────────────────── */
-
-/** Linear interpolation of vec3. */
-static phys_vec3_t lerp_vec3(phys_vec3_t a, phys_vec3_t b, float t) {
-    return (phys_vec3_t){
-        a.x + (b.x - a.x) * t,
-        a.y + (b.y - a.y) * t,
-        a.z + (b.z - a.z) * t,
-    };
-}
 
 /** Check if a shape type is a supported primitive for GJK support. */
 static bool is_primitive_shape(phys_shape_type_t type) {
@@ -56,37 +48,104 @@ static bool is_dynamic(const phys_body_t *b) {
            b->inv_mass > 0.0f;
 }
 
-/* ── Support data setup at interpolated pose ───────────────────── */
+/**
+ * @brief Check if two bodies are directly connected by a joint.
+ *
+ * Linear scan over the joint array.  Joint counts are small enough
+ * (typically < 1000) that this is cheaper than building a lookup table
+ * per frame.
+ */
+static bool bodies_connected_by_joint(uint32_t a, uint32_t b,
+                                       const phys_joint_t *joints,
+                                       uint32_t joint_count) {
+    for (uint32_t j = 0; j < joint_count; j++) {
+        uint32_t ja = joints[j].body_a;
+        uint32_t jb = joints[j].body_b;
+        if ((ja == a && jb == b) || (ja == b && jb == a)) return true;
+    }
+    return false;
+}
 
 /**
- * @brief Build GJK support data for a body at interpolated time t ∈ [0,1].
+ * @brief Extrapolate position forward by velocity × dt × t.
+ */
+static phys_vec3_t extrapolate_position(phys_vec3_t pos, phys_vec3_t vel,
+                                         float dt, float t) {
+    float s = dt * t;
+    return (phys_vec3_t){
+        pos.x + vel.x * s,
+        pos.y + vel.y * s,
+        pos.z + vel.z * s,
+    };
+}
+
+/**
+ * @brief Extrapolate orientation forward by angular velocity × dt × t.
  *
- * Lerps position and slerps orientation from prev→curr, then fills
- * the appropriate support data struct.
+ * Uses the quaternion derivative: q' = q + 0.5 * dt*t * (0, omega) * q,
+ * then normalizes.
+ */
+static phys_quat_t extrapolate_orientation(phys_quat_t q, phys_vec3_t omega,
+                                            float dt, float t) {
+    float s = dt * t * 0.5f;
+    phys_quat_t dq = {
+        .x = s * (omega.x * q.w + omega.y * q.z - omega.z * q.y),
+        .y = s * (omega.y * q.w + omega.z * q.x - omega.x * q.z),
+        .z = s * (omega.z * q.w + omega.x * q.y - omega.y * q.x),
+        .w = s * (-omega.x * q.x - omega.y * q.y - omega.z * q.z),
+    };
+    phys_quat_t result = {
+        .x = q.x + dq.x,
+        .y = q.y + dq.y,
+        .z = q.z + dq.z,
+        .w = q.w + dq.w,
+    };
+    /* Normalize. */
+    float len = sqrtf(result.x * result.x + result.y * result.y +
+                      result.z * result.z + result.w * result.w);
+    if (len > 1e-8f) {
+        float inv = 1.0f / len;
+        result.x *= inv;
+        result.y *= inv;
+        result.z *= inv;
+        result.w *= inv;
+    }
+    return result;
+}
+
+/* ── Support data setup at extrapolated pose ───────────────────── */
+
+/**
+ * @brief Build GJK support data for a body at extrapolated time t ∈ [0,1].
  *
- * @param prev       Body state at t=0.
- * @param curr       Body state at t=1.
- * @param collider   Collider for this body.
- * @param spheres    Sphere pool.
- * @param capsules   Capsule pool.
- * @param boxes      Box pool.
- * @param t          Interpolation parameter [0,1].
- * @param out_data   Caller buffer (at least 64 bytes) for support data.
- * @param out_fn     Receives the support function pointer.
+ * At t=0, uses the current pose.  At t=1, uses pose + velocity × dt.
+ * Position is linearly extrapolated, orientation uses quaternion derivative.
+ *
+ * @param body      Current body state (position, orientation, velocities).
+ * @param collider  Collider for this body.
+ * @param spheres   Sphere pool.
+ * @param capsules  Capsule pool.
+ * @param boxes     Box pool.
+ * @param dt        Substep timestep.
+ * @param t         Extrapolation parameter [0,1].
+ * @param out_data  Caller buffer (at least 64 bytes) for support data.
+ * @param out_fn    Receives the support function pointer.
  * @return true on success, false if shape type is unsupported.
  */
-static bool build_support_at_t(const phys_body_t *prev,
-                                const phys_body_t *curr,
+static bool build_support_at_t(const phys_body_t *body,
                                 const phys_collider_t *collider,
                                 const void *spheres,
                                 const void *capsules,
                                 const void *boxes,
+                                float dt,
                                 float t,
                                 void *out_data,
                                 phys_gjk_support_fn *out_fn) {
-    /* Interpolate pose. */
-    phys_vec3_t pos = lerp_vec3(prev->position, curr->position, t);
-    phys_quat_t rot = quat_slerp(prev->orientation, curr->orientation, t, 1e-6f);
+    /* Extrapolate pose forward. */
+    phys_vec3_t pos = extrapolate_position(body->position, body->linear_vel,
+                                            dt, t);
+    phys_quat_t rot = extrapolate_orientation(body->orientation,
+                                               body->angular_vel, dt, t);
 
     uint32_t si = collider->shape_index;
 
@@ -126,11 +185,12 @@ static bool build_support_at_t(const phys_body_t *prev,
 /* ── TOI bisection + manifold generation for one pair ──────────── */
 
 /**
- * @brief Sweep-test one pair via bisection, emit manifold if collision found.
+ * @brief Sweep-test one pair via forward extrapolation, emit manifold
+ *        if collision found.
  *
  * Strategy:
- * 1. Test at t=1 (curr poses). If no overlap, early-out.
- * 2. If overlap at t=0 (prev poses), report contact at t=0.
+ * 1. Test at t=1 (extrapolated poses). If no overlap, early-out.
+ * 2. If overlap at t=0 (current poses), report contact at t=0.
  * 3. Otherwise, bisect [0,1] to find the earliest overlap time.
  * 4. At the TOI, run EPA to get penetration normal+depth+points.
  * 5. Build manifold from the EPA result.
@@ -140,40 +200,35 @@ static bool build_support_at_t(const phys_body_t *prev,
 static bool sweep_pair(uint32_t body_a, uint32_t body_b,
                         const phys_ccd_dynamic_args_t *args,
                         phys_manifold_t *manifold_out) {
-    const phys_body_t *prev_a = &args->bodies_prev[body_a];
-    const phys_body_t *curr_a = &args->bodies_curr[body_a];
-    const phys_body_t *prev_b = &args->bodies_prev[body_b];
-    const phys_body_t *curr_b = &args->bodies_curr[body_b];
+    const phys_body_t *ba = &args->bodies[body_a];
+    const phys_body_t *bb = &args->bodies[body_b];
     const phys_collider_t *col_a = &args->colliders[body_a];
     const phys_collider_t *col_b = &args->colliders[body_b];
+    float dt = args->dt;
 
     /* Buffers for support data (sized to largest struct). */
     _Alignas(16) uint8_t data_a_buf[64];
     _Alignas(16) uint8_t data_b_buf[64];
     phys_gjk_support_fn fn_a, fn_b;
 
-    /* --- Step 1: Test at t=1 (current poses) --- */
-    if (!build_support_at_t(prev_a, curr_a, col_a,
-                             args->spheres, args->capsules, args->boxes,
-                             1.0f, data_a_buf, &fn_a))
+    /* --- Step 1: Test at t=1 (extrapolated poses) --- */
+    if (!build_support_at_t(ba, col_a, args->spheres, args->capsules,
+                             args->boxes, dt, 1.0f, data_a_buf, &fn_a))
         return false;
-    if (!build_support_at_t(prev_b, curr_b, col_b,
-                             args->spheres, args->capsules, args->boxes,
-                             1.0f, data_b_buf, &fn_b))
+    if (!build_support_at_t(bb, col_b, args->spheres, args->capsules,
+                             args->boxes, dt, 1.0f, data_b_buf, &fn_b))
         return false;
 
     phys_gjk_result_t result;
     bool overlap_at_1 = phys_gjk_intersect(fn_a, data_a_buf,
                                             fn_b, data_b_buf, &result);
 
-    /* --- Step 2: Test at t=0 (prev poses) --- */
-    if (!build_support_at_t(prev_a, curr_a, col_a,
-                             args->spheres, args->capsules, args->boxes,
-                             0.0f, data_a_buf, &fn_a))
+    /* --- Step 2: Test at t=0 (current poses) --- */
+    if (!build_support_at_t(ba, col_a, args->spheres, args->capsules,
+                             args->boxes, dt, 0.0f, data_a_buf, &fn_a))
         return false;
-    if (!build_support_at_t(prev_b, curr_b, col_b,
-                             args->spheres, args->capsules, args->boxes,
-                             0.0f, data_b_buf, &fn_b))
+    if (!build_support_at_t(bb, col_b, args->spheres, args->capsules,
+                             args->boxes, dt, 0.0f, data_b_buf, &fn_b))
         return false;
 
     phys_gjk_result_t result_0;
@@ -181,18 +236,15 @@ static bool sweep_pair(uint32_t body_a, uint32_t body_b,
                                             fn_b, data_b_buf, &result_0);
 
     if (!overlap_at_0 && !overlap_at_1) {
-        /* No overlap at either end — need to check if they cross mid-sweep.
-         * Use bisection to find if there's any overlap in [0,1]. */
+        /* No overlap at either end — check if they cross mid-sweep. */
         float lo = 0.0f, hi = 1.0f;
         bool found = false;
         for (int i = 0; i < CCD_MAX_BISECT_ITERS; i++) {
             float mid = (lo + hi) * 0.5f;
-            build_support_at_t(prev_a, curr_a, col_a,
-                               args->spheres, args->capsules, args->boxes,
-                               mid, data_a_buf, &fn_a);
-            build_support_at_t(prev_b, curr_b, col_b,
-                               args->spheres, args->capsules, args->boxes,
-                               mid, data_b_buf, &fn_b);
+            build_support_at_t(ba, col_a, args->spheres, args->capsules,
+                               args->boxes, dt, mid, data_a_buf, &fn_a);
+            build_support_at_t(bb, col_b, args->spheres, args->capsules,
+                               args->boxes, dt, mid, data_b_buf, &fn_b);
 
             phys_gjk_result_t mid_result;
             bool mid_overlap = phys_gjk_intersect(fn_a, data_a_buf,
@@ -201,16 +253,12 @@ static bool sweep_pair(uint32_t body_a, uint32_t body_b,
             if (mid_overlap) {
                 found = true;
                 result = mid_result;
-                hi = mid;  /* Narrow toward earlier time. */
+                hi = mid;
             } else {
-                /* Check if the separation distance is small enough that
-                 * the shapes might cross between mid and hi.  Use the
-                 * midpoint separation as heuristic: if it's decreasing
-                 * toward mid, the shapes are approaching in [lo, mid]. */
                 lo = mid;
             }
         }
-        if (!found) return false;  /* No overlap found in [0,1]. */
+        if (!found) return false;
     }
 
     /* --- Step 3: Bisect for earliest TOI --- */
@@ -220,16 +268,14 @@ static bool sweep_pair(uint32_t body_a, uint32_t body_b,
         toi = 0.0f;
         result = result_0;
     } else if (overlap_at_1 && !overlap_at_0) {
-        /* Overlap at t=1 but not t=0 — bisect [0,1] for earliest TOI. */
+        /* Overlap at t=1 but not t=0 — bisect for earliest TOI. */
         float lo = 0.0f, hi = 1.0f;
         for (int i = 0; i < CCD_MAX_BISECT_ITERS; i++) {
             float mid = (lo + hi) * 0.5f;
-            build_support_at_t(prev_a, curr_a, col_a,
-                               args->spheres, args->capsules, args->boxes,
-                               mid, data_a_buf, &fn_a);
-            build_support_at_t(prev_b, curr_b, col_b,
-                               args->spheres, args->capsules, args->boxes,
-                               mid, data_b_buf, &fn_b);
+            build_support_at_t(ba, col_a, args->spheres, args->capsules,
+                               args->boxes, dt, mid, data_a_buf, &fn_a);
+            build_support_at_t(bb, col_b, args->spheres, args->capsules,
+                               args->boxes, dt, mid, data_b_buf, &fn_b);
 
             phys_gjk_result_t mid_result;
             bool mid_overlap = phys_gjk_intersect(fn_a, data_a_buf,
@@ -243,29 +289,25 @@ static bool sweep_pair(uint32_t body_a, uint32_t body_b,
             }
         }
         toi = hi;
-        /* Re-test at toi to get final result for EPA. */
-        build_support_at_t(prev_a, curr_a, col_a,
-                           args->spheres, args->capsules, args->boxes,
-                           toi, data_a_buf, &fn_a);
-        build_support_at_t(prev_b, curr_b, col_b,
-                           args->spheres, args->capsules, args->boxes,
-                           toi, data_b_buf, &fn_b);
+        /* Re-test at toi for final GJK result. */
+        build_support_at_t(ba, col_a, args->spheres, args->capsules,
+                           args->boxes, dt, toi, data_a_buf, &fn_a);
+        build_support_at_t(bb, col_b, args->spheres, args->capsules,
+                           args->boxes, dt, toi, data_b_buf, &fn_b);
         phys_gjk_intersect(fn_a, data_a_buf, fn_b, data_b_buf, &result);
     } else {
-        /* Found via mid-sweep bisection — toi is already narrowed. */
-        toi = 0.5f;  /* Approximate; the bisect loop above already narrowed hi. */
+        /* Found via mid-sweep bisection — toi already narrowed. */
+        toi = 0.5f;
     }
 
     /* --- Step 4: EPA for penetration info --- */
     if (!result.intersecting) return false;
 
     /* Rebuild support data at TOI for EPA. */
-    build_support_at_t(prev_a, curr_a, col_a,
-                       args->spheres, args->capsules, args->boxes,
-                       toi, data_a_buf, &fn_a);
-    build_support_at_t(prev_b, curr_b, col_b,
-                       args->spheres, args->capsules, args->boxes,
-                       toi, data_b_buf, &fn_b);
+    build_support_at_t(ba, col_a, args->spheres, args->capsules,
+                       args->boxes, dt, toi, data_a_buf, &fn_a);
+    build_support_at_t(bb, col_b, args->spheres, args->capsules,
+                       args->boxes, dt, toi, data_b_buf, &fn_b);
 
     bool epa_ok = phys_epa_penetration(fn_a, data_a_buf,
                                         fn_b, data_b_buf, &result);
@@ -274,14 +316,16 @@ static bool sweep_pair(uint32_t body_a, uint32_t body_b,
     /* --- Step 5: Build manifold --- */
     phys_manifold_init(manifold_out, body_a, body_b);
 
-    /* Use curr-frame material properties. */
-    manifold_out->friction = (curr_a->friction + curr_b->friction) * 0.5f;
-    manifold_out->restitution = (curr_a->restitution > curr_b->restitution)
-                                 ? curr_a->restitution : curr_b->restitution;
+    /* Use current material properties. */
+    manifold_out->friction = (ba->friction + bb->friction) * 0.5f;
+    manifold_out->restitution = (ba->restitution > bb->restitution)
+                                 ? ba->restitution : bb->restitution;
 
     /* Compute contact point in world space at the TOI. */
-    phys_vec3_t pos_a_toi = lerp_vec3(prev_a->position, curr_a->position, toi);
-    phys_vec3_t pos_b_toi = lerp_vec3(prev_b->position, curr_b->position, toi);
+    phys_vec3_t pos_a_toi = extrapolate_position(ba->position, ba->linear_vel,
+                                                  dt, toi);
+    phys_vec3_t pos_b_toi = extrapolate_position(bb->position, bb->linear_vel,
+                                                  dt, toi);
 
     phys_contact_point_t cp;
     memset(&cp, 0, sizeof(cp));
@@ -313,7 +357,7 @@ static bool sweep_pair(uint32_t body_a, uint32_t body_b,
 
 int phys_stage_ccd_dynamic(const phys_ccd_dynamic_args_t *args) {
     if (!args) return 0;
-    if (!args->bodies_prev || !args->bodies_curr) return 0;
+    if (!args->bodies) return 0;
     if (!args->colliders || !args->pairs) return 0;
     if (!args->manifolds_out || !args->manifold_count_out) return 0;
     if (args->pair_count == 0) return 0;
@@ -328,18 +372,26 @@ int phys_stage_ccd_dynamic(const phys_ccd_dynamic_args_t *args) {
         if (a >= args->body_count || b >= args->body_count) continue;
 
         /* Both must be dynamic. */
-        if (!is_dynamic(&args->bodies_curr[a])) continue;
-        if (!is_dynamic(&args->bodies_curr[b])) continue;
+        if (!is_dynamic(&args->bodies[a])) continue;
+        if (!is_dynamic(&args->bodies[b])) continue;
 
         /* At least one must have CCD flag. */
-        uint32_t flags_a = args->bodies_curr[a].flags;
-        uint32_t flags_b = args->bodies_curr[b].flags;
+        uint32_t flags_a = args->bodies[a].flags;
+        uint32_t flags_b = args->bodies[b].flags;
         if (!(flags_a & PHYS_BODY_FLAG_CCD) &&
             !(flags_b & PHYS_BODY_FLAG_CCD)) continue;
 
         /* Both must be primitive shapes (sphere/box/capsule). */
         if (!is_primitive_shape(args->colliders[a].type)) continue;
         if (!is_primitive_shape(args->colliders[b].type)) continue;
+
+        /* Skip pairs connected by a joint — jointed bodies are
+         * constrained together and should not get CCD manifolds
+         * (let narrowphase handle them normally). */
+        if (args->joints && args->joint_count > 0 &&
+            bodies_connected_by_joint(a, b, args->joints,
+                                       args->joint_count))
+            continue;
 
         /* Check output buffer capacity. */
         if (*args->manifold_count_out >= args->max_manifolds) break;
@@ -349,6 +401,8 @@ int phys_stage_ccd_dynamic(const phys_ccd_dynamic_args_t *args) {
         if (sweep_pair(a, b, args, slot)) {
             (*args->manifold_count_out)++;
             emitted++;
+            /* Mark this pair so narrowphase skips it. */
+            if (args->skip_pair_out) args->skip_pair_out[i] = 1;
         }
     }
 

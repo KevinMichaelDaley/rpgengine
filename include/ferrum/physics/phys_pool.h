@@ -43,13 +43,14 @@ extern "C" {
  * Nullability: all public functions are NULL-safe on the pool pointer.
  */
 typedef struct phys_body_pool {
-    phys_body_t *bodies_curr;  /**< Read buffer (previous completed tick). */
-    phys_body_t *bodies_next;  /**< Write buffer (current tick target). */
-    phys_body_t *bodies_net;   /**< Network authority buffer (recv writes). */
-    atomic_uchar *net_dirty;   /**< Per-slot dirty flag (1 = new server data). */
-    uint32_t capacity;         /**< Maximum number of bodies. */
-    uint32_t count;            /**< Number of active bodies. */
-    uint8_t *active;           /**< Per-slot activity flag (1 = in use). */
+    phys_body_t *bodies_curr;      /**< Read buffer (previous completed tick). */
+    phys_body_t *bodies_next;      /**< Write buffer (current tick target). */
+    phys_body_t *bodies_ccd_prev;  /**< CCD previous-tick snapshot (rotated in swap). */
+    phys_body_t *bodies_net;       /**< Network authority buffer (recv writes). */
+    atomic_uchar *net_dirty;       /**< Per-slot dirty flag (1 = new server data). */
+    uint32_t capacity;             /**< Maximum number of bodies. */
+    uint32_t count;                /**< Number of active bodies. */
+    uint8_t *active;               /**< Per-slot activity flag (1 = in use). */
 } phys_body_pool_t;
 
 /* ── Frame arena ────────────────────────────────────────────────── */

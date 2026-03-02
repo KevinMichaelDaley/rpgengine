@@ -56,6 +56,10 @@ typedef struct phys_collision_fused_args {
     uint32_t                    pair_count;   /**< Number of broadphase pairs. */
     float                       speculative_margin; /**< Speculative contact margin. */
 
+    /** Optional per-pair skip flags (pair_count entries).  If non-NULL,
+     *  pairs where skip_pair[i] != 0 are skipped (already handled by CCD). */
+    const uint8_t              *skip_pair;
+
     /* ── Manifold cache ─────────────────────────────────────────── */
     struct phys_manifold_cache *cache;        /**< Shared manifold cache. */
     uint64_t                    tick;         /**< Current simulation tick. */

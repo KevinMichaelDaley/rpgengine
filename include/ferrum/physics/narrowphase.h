@@ -73,6 +73,10 @@ typedef struct phys_narrowphase_args {
     uint32_t *candidate_count_out;                /**< Receives candidate count. */
     uint32_t max_candidates;                      /**< Capacity of output buffer. */
     float speculative_margin;                     /**< Max separation for speculative contacts (0 = disabled). */
+
+    /** Optional per-pair skip flags (pair_count entries).  If non-NULL,
+     *  pairs where skip_pair[i] != 0 are skipped (already handled by CCD). */
+    const uint8_t *skip_pair;
 } phys_narrowphase_args_t;
 
 /* ── Public API ─────────────────────────────────────────────────── */

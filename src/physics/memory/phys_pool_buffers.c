@@ -27,7 +27,11 @@ void phys_body_pool_swap_buffers(phys_body_pool_t *pool) {
     if (!pool) {
         return;
     }
-    phys_body_t *tmp = pool->bodies_curr;
+    /* 3-way rotation: curr→ccd_prev, next→curr, ccd_prev→next.
+     * Eliminates the memcpy that was previously used to snapshot
+     * ccd_prev at end-of-tick. */
+    phys_body_t *tmp = pool->bodies_ccd_prev;
+    pool->bodies_ccd_prev = pool->bodies_curr;
     pool->bodies_curr = pool->bodies_next;
     pool->bodies_next = tmp;
 }
@@ -38,6 +42,7 @@ void phys_body_pool_remove(phys_body_pool_t *pool, uint32_t index) {
     }
     memset(&pool->bodies_curr[index], 0, sizeof(phys_body_t));
     memset(&pool->bodies_next[index], 0, sizeof(phys_body_t));
+    memset(&pool->bodies_ccd_prev[index], 0, sizeof(phys_body_t));
     memset(&pool->bodies_net[index], 0, sizeof(phys_body_t));
     atomic_store(&pool->net_dirty[index], 0);
     pool->active[index] = 0;

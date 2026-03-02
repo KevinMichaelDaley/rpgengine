@@ -81,13 +81,6 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
     world->joint_count    = 0;
     world->joint_capacity = max_joints;
 
-    /* Allocate CCD previous-frame body buffer (triple-buffer). */
-    world->bodies_ccd_prev = calloc(config->max_bodies, sizeof(phys_body_t));
-    if (!world->bodies_ccd_prev) {
-        phys_world_destroy(world);
-        return -1;
-    }
-
     world->tick_count = 0;
     return 0;
 }
@@ -110,7 +103,6 @@ void phys_world_destroy(phys_world_t *world) {
     free(world->convex_hulls);
     free(world->impact_events);
     free(world->joints);
-    free(world->bodies_ccd_prev);
 
     free(world->static_bucket_flags);
 

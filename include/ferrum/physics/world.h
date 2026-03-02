@@ -129,11 +129,6 @@ typedef struct phys_world {
     /* Tick counter. */
     uint64_t tick_count;
 
-    /** CCD previous-frame body snapshot.  Persists across ticks so that
-     *  swept CCD can detect crossings spanning the full tick interval,
-     *  not just a single substep. */
-    phys_body_t *bodies_ccd_prev;
-
     /** When positive, overrides fixed_dt for the next tick.  Set by
      *  the tick runner when sustained overload is detected.  Clamped to
      *  config.max_dt_override × fixed_dt.  Reset to 0 when performance

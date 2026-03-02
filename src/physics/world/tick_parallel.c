@@ -365,8 +365,8 @@ void phys_world_tick_parallel(phys_world_t *world,
     const float substep_dt = plan.dt / (float)max_substeps;
 
     /* Initialize CCD prev buffer on first tick (no prior snapshot). */
-    if (world->tick_count == 0 && world->bodies_ccd_prev) {
-        memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
+    if (world->tick_count == 0) {
+        memcpy(world->body_pool.bodies_ccd_prev, world->body_pool.bodies_curr,
                body_cap * sizeof(phys_body_t));
     }
 
@@ -411,8 +411,10 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         if (!world->prediction_mode) {
 
-        /* ── Fused collision pipeline: narrow→manifold→stab→constraint ── */
-        /* Over-allocate to leave room for dynamic-dynamic CCD manifolds. */
+        /* ── Stage 5b: Dynamic-dynamic CCD sweep ──────────────── */
+        /* Run CCD BEFORE the fused pipeline so handled pairs can be
+         * skipped.  CCD manifolds go into the front of the manifold
+         * buffer; the fused pipeline appends after them. */
         uint32_t max_manifolds_base = pair_count > 0 ? pair_count : 1;
         uint32_t max_ccd_manifolds  = pair_count > 0 ? pair_count : 0;
         uint32_t max_manifolds = max_manifolds_base + max_ccd_manifolds;
@@ -432,6 +434,69 @@ void phys_world_tick_parallel(phys_world_t *world,
             _Alignof(phys_constraint_t));
         constraint_count = 0;
 
+        uint8_t *ccd_skip_pair = NULL;
+        if (pair_count > 0) {
+            ccd_skip_pair = phys_frame_arena_alloc(
+                &world->frame_arena,
+                pair_count * sizeof(uint8_t),
+                _Alignof(uint8_t));
+            if (ccd_skip_pair) memset(ccd_skip_pair, 0, pair_count * sizeof(uint8_t));
+        }
+
+        uint32_t ccd_manifold_start = 0;
+        if (manifolds && pair_count > 0) {
+            phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
+                .bodies             = world->body_pool.bodies_curr,
+                .colliders          = world->colliders,
+                .spheres            = world->spheres,
+                .capsules           = world->capsules,
+                .boxes              = world->boxes,
+                .pairs              = pairs,
+                .pair_count         = pair_count,
+                .body_count         = body_cap,
+                .manifolds_out      = manifolds,
+                .manifold_count_out = &manifold_count,
+                .max_manifolds      = max_manifolds,
+                .skip_pair_out      = ccd_skip_pair,
+                .joints             = world->joints,
+                .joint_count        = world->joint_count,
+                .arena              = &world->frame_arena,
+                .dt                 = substep_dt,
+            });
+        }
+        uint32_t ccd_manifold_count = manifold_count - ccd_manifold_start;
+
+        /* Build constraints from CCD manifolds (if any). */
+        if (constraints && ccd_manifold_count > 0) {
+            phys_stab_hint_t *ccd_hints = phys_frame_arena_alloc(
+                &world->frame_arena,
+                ccd_manifold_count * sizeof(phys_stab_hint_t),
+                _Alignof(phys_stab_hint_t));
+            if (ccd_hints) {
+                memset(ccd_hints, 0,
+                       ccd_manifold_count * sizeof(phys_stab_hint_t));
+                uint32_t ccd_constraint_count = 0;
+                phys_stage_constraint_build(&(phys_constraint_build_args_t){
+                    .manifolds            = manifolds + ccd_manifold_start,
+                    .hints                = ccd_hints,
+                    .manifold_count       = ccd_manifold_count,
+                    .bodies               = world->body_pool.bodies_curr,
+                    .constraints_out      = constraints + constraint_count,
+                    .constraint_count_out = &ccd_constraint_count,
+                    .max_constraints      = max_constraints - constraint_count,
+                    .dt                   = substep_dt,
+                    .baumgarte            = world->config.baumgarte,
+                    .slop                 = world->config.slop,
+                });
+                constraint_count += ccd_constraint_count;
+            }
+        }
+
+        /* ── Fused collision pipeline: narrow→manifold→stab→constraint ── */
+        /* Skip pairs already handled by CCD.  Offset output buffers past
+         * CCD entries so the fused pipeline appends rather than overwrites. */
+        uint32_t fused_manifold_count = 0;
+        uint32_t fused_constraint_count = 0;
         if (manifolds && constraints && pair_count > 0) {
 #ifdef TRACY_ENABLE
             TracyCZoneN(z_fused, "Phys.Collision.Fused", true);
@@ -449,72 +514,25 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .pairs               = pairs,
                 .pair_count          = pair_count,
                 .speculative_margin  = 0.0f,
+                .skip_pair           = ccd_skip_pair,
                 .cache               = &world->manifold_cache,
                 .tick                = world->tick_count,
                 .resting_velocity_threshold = 0.1f,
                 .dt                  = substep_dt,
                 .baumgarte           = world->config.baumgarte,
                 .slop                = world->config.slop,
-                .manifolds_out       = manifolds,
-                .manifold_count_out  = &manifold_count,
-                .max_manifolds       = max_manifolds_base,
-                .constraints_out     = constraints,
-                .constraint_count_out = &constraint_count,
-                .max_constraints     = max_constraints,
+                .manifolds_out       = manifolds + manifold_count,
+                .manifold_count_out  = &fused_manifold_count,
+                .max_manifolds       = max_manifolds - manifold_count,
+                .constraints_out     = constraints + constraint_count,
+                .constraint_count_out = &fused_constraint_count,
+                .max_constraints     = max_constraints - constraint_count,
             }, jobs, &world->frame_arena);
+            manifold_count += fused_manifold_count;
+            constraint_count += fused_constraint_count;
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_fused);
 #endif
-        }
-
-        /* ── Stage 7b: Dynamic-dynamic CCD sweep (parallel tick) ── */
-        /* Append CCD manifolds after the fused pipeline's manifolds,
-         * then build constraints from them.  CCD contacts are first-contact
-         * so no stabilization hints are needed (zero-initialized hints). */
-        uint32_t ccd_manifold_start = manifold_count;
-        if (manifolds && world->bodies_ccd_prev && pair_count > 0) {
-            phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-                .bodies_prev        = world->bodies_ccd_prev,
-                .bodies_curr        = world->body_pool.bodies_curr,
-                .colliders          = world->colliders,
-                .spheres            = world->spheres,
-                .capsules           = world->capsules,
-                .boxes              = world->boxes,
-                .pairs              = pairs,
-                .pair_count         = pair_count,
-                .body_count         = body_cap,
-                .manifolds_out      = manifolds,
-                .manifold_count_out = &manifold_count,
-                .max_manifolds      = max_manifolds,
-                .arena              = &world->frame_arena,
-                .dt                 = substep_dt,
-            });
-        }
-        uint32_t ccd_manifold_count = manifold_count - ccd_manifold_start;
-
-        /* Build constraints from CCD manifolds (if any). */
-        if (constraints && ccd_manifold_count > 0) {
-            /* Allocate zero-initialized stab hints for CCD manifolds. */
-            phys_stab_hint_t *ccd_hints = phys_frame_arena_alloc(
-                &world->frame_arena,
-                ccd_manifold_count * sizeof(phys_stab_hint_t),
-                _Alignof(phys_stab_hint_t));
-            if (ccd_hints) {
-                memset(ccd_hints, 0,
-                       ccd_manifold_count * sizeof(phys_stab_hint_t));
-                phys_stage_constraint_build(&(phys_constraint_build_args_t){
-                    .manifolds            = manifolds + ccd_manifold_start,
-                    .hints                = ccd_hints,
-                    .manifold_count       = ccd_manifold_count,
-                    .bodies               = world->body_pool.bodies_curr,
-                    .constraints_out      = constraints + constraint_count,
-                    .constraint_count_out = &constraint_count,
-                    .max_constraints      = max_constraints,
-                    .dt                   = substep_dt,
-                    .baumgarte            = world->config.baumgarte,
-                    .slop                 = world->config.slop,
-                });
-            }
         }
 
         /* Build joint constraints and append after contact constraints. */
@@ -739,7 +757,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         /* ── Stage 12c: CCD (swept sphere vs static mesh) ─────── */
         {
             phys_stage_ccd(&(phys_ccd_args_t){
-                .bodies_prev      = world->bodies_ccd_prev,
+                .bodies_prev      = world->body_pool.bodies_ccd_prev,
                 .bodies_read      = world->body_pool.bodies_curr,
                 .bodies_curr      = world->body_pool.bodies_next,
                 .colliders        = world->colliders,
@@ -793,11 +811,8 @@ void phys_world_tick_parallel(phys_world_t *world,
         phys_body_pool_swap_buffers(&world->body_pool);
     }
 
-    /* Snapshot post-tick body positions for next tick's CCD. */
-    if (world->bodies_ccd_prev) {
-        memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
-               body_cap * sizeof(phys_body_t));
-    }
+    /* CCD prev snapshot is now handled by the 3-way buffer rotation
+     * inside swap_buffers — no memcpy needed. */
 
     /* Increment tick counter. */
     world->tick_count++;

@@ -446,8 +446,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
     const float substep_dt = plan.dt / (float)max_substeps;
 
     /* Initialize CCD prev buffer on first tick (no prior snapshot). */
-    if (world->tick_count == 0 && world->bodies_ccd_prev) {
-        memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
+    if (world->tick_count == 0) {
+        memcpy(world->body_pool.bodies_ccd_prev, world->body_pool.bodies_curr,
                body_cap * sizeof(phys_body_t));
     }
 
@@ -502,6 +502,48 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
 
         if (!world->prediction_mode) {
 
+        /* ── Stage 5b: Dynamic-dynamic CCD sweep ──────────────── */
+        /* Run CCD BEFORE narrowphase so handled pairs can be skipped.
+         * Sweep CCD-marked dynamic pairs from prev→curr poses,
+         * bisect for TOI, GJK+EPA at TOI, emit manifolds. */
+        uint32_t max_ccd_manifolds = pair_count > 0 ? pair_count : 0;
+        uint32_t max_manifolds_total = (pair_count > 0 ? pair_count : 1) + max_ccd_manifolds;
+        manifolds = phys_frame_arena_alloc(
+            &world->frame_arena,
+            max_manifolds_total * sizeof(phys_manifold_t),
+            _Alignof(phys_manifold_t));
+        manifold_count = 0;
+
+        uint8_t *ccd_skip_pair = NULL;
+        if (pair_count > 0) {
+            ccd_skip_pair = phys_frame_arena_alloc(
+                &world->frame_arena,
+                pair_count * sizeof(uint8_t),
+                _Alignof(uint8_t));
+            if (ccd_skip_pair) memset(ccd_skip_pair, 0, pair_count * sizeof(uint8_t));
+        }
+
+        if (manifolds && pair_count > 0) {
+            phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
+                .bodies             = world->body_pool.bodies_curr,
+                .colliders          = world->colliders,
+                .spheres            = world->spheres,
+                .capsules           = world->capsules,
+                .boxes              = world->boxes,
+                .pairs              = pairs,
+                .pair_count         = pair_count,
+                .body_count         = body_cap,
+                .manifolds_out      = manifolds,
+                .manifold_count_out = &manifold_count,
+                .max_manifolds      = max_manifolds_total,
+                .skip_pair_out      = ccd_skip_pair,
+                .joints             = world->joints,
+                .joint_count        = world->joint_count,
+                .arena              = &world->frame_arena,
+                .dt                 = substep_dt,
+            });
+        }
+
         /* ── Stage 6: Narrowphase ──────────────────────────────── */
         uint32_t max_candidates = pair_count > 0 ? pair_count : 1;
         phys_contact_candidate_t *candidates = phys_frame_arena_alloc(
@@ -527,54 +569,27 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .candidate_count_out = &candidate_count,
                 .max_candidates      = max_candidates,
                 .speculative_margin  = world->config.speculative_margin,
+                .skip_pair           = ccd_skip_pair,
             });
         }
 
         /* ── Stage 7: Manifold Build ───────────────────────────── */
-        /* Over-allocate to leave room for dynamic-dynamic CCD manifolds
-         * that are appended after Stage 7b. */
-        uint32_t max_manifolds_base = candidate_count > 0 ? candidate_count : 1;
-        uint32_t max_ccd_manifolds  = pair_count > 0 ? pair_count : 0;
-        uint32_t max_manifolds = max_manifolds_base + max_ccd_manifolds;
-        manifolds = phys_frame_arena_alloc(
-            &world->frame_arena,
-            max_manifolds * sizeof(phys_manifold_t),
-            _Alignof(phys_manifold_t));
-        manifold_count = 0;
-
+        /* Narrowphase candidates become manifolds.  CCD manifolds
+         * are already in manifolds[0..manifold_count-1] from Stage 5b,
+         * so manifold_build appends after them. */
+        uint32_t narrow_manifold_count = 0;
         if (manifolds && candidate_count > 0) {
             phys_stage_manifold_build(&(phys_manifold_build_args_t){
                 .candidates         = candidates,
                 .candidate_count    = candidate_count,
                 .cache              = &world->manifold_cache,
-                .manifolds_out      = manifolds,
-                .manifold_count_out = &manifold_count,
-                .max_manifolds      = max_manifolds_base,
+                .manifolds_out      = manifolds + manifold_count,
+                .manifold_count_out = &narrow_manifold_count,
+                .max_manifolds      = max_manifolds_total - manifold_count,
                 .tick               = world->tick_count,
                 .bodies             = world->body_pool.bodies_curr,
             });
-        }
-
-        /* ── Stage 7b: Dynamic-dynamic CCD sweep ──────────────── */
-        /* Sweep CCD-marked dynamic pairs from prev→curr poses,
-         * bisect for TOI, GJK+EPA at TOI, append manifolds. */
-        if (manifolds && world->bodies_ccd_prev && pair_count > 0) {
-            phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-                .bodies_prev        = world->bodies_ccd_prev,
-                .bodies_curr        = world->body_pool.bodies_curr,
-                .colliders          = world->colliders,
-                .spheres            = world->spheres,
-                .capsules           = world->capsules,
-                .boxes              = world->boxes,
-                .pairs              = pairs,
-                .pair_count         = pair_count,
-                .body_count         = body_cap,
-                .manifolds_out      = manifolds,
-                .manifold_count_out = &manifold_count,
-                .max_manifolds      = max_manifolds,
-                .arena              = &world->frame_arena,
-                .dt                 = substep_dt,
-            });
+            manifold_count += narrow_manifold_count;
         }
 
         /* ── Stage 8: Stabilization ────────────────────────────── */
@@ -1123,7 +1138,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         /* ── Stage 12c: CCD (swept sphere vs static mesh) ─────── */
         {
             phys_stage_ccd(&(phys_ccd_args_t){
-                .bodies_prev      = world->bodies_ccd_prev,
+                .bodies_prev      = world->body_pool.bodies_ccd_prev,
                 .bodies_read      = world->body_pool.bodies_curr,
                 .bodies_curr      = world->body_pool.bodies_next,
                 .colliders        = world->colliders,
@@ -1171,12 +1186,8 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         phys_body_pool_swap_buffers(&world->body_pool);
     }
 
-    /* Snapshot post-tick body positions for next tick's CCD.
-     * After the final buffer swap, bodies_curr holds the latest state. */
-    if (world->bodies_ccd_prev) {
-        memcpy(world->bodies_ccd_prev, world->body_pool.bodies_curr,
-               body_cap * sizeof(phys_body_t));
-    }
+    /* CCD prev snapshot is now handled by the 3-way buffer rotation
+     * inside swap_buffers — no memcpy needed. */
 
     /* Increment tick counter. */
     world->tick_count++;

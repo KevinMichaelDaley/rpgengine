@@ -52,6 +52,9 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
     uint32_t count = 0;
 
     for (uint32_t i = 0; i < args->pair_count && count < args->max_candidates; i++) {
+        /* Skip pairs already handled by CCD sweep. */
+        if (args->skip_pair && args->skip_pair[i]) continue;
+
         uint32_t a = args->pairs[i].body_a;
         uint32_t b = args->pairs[i].body_b;
 

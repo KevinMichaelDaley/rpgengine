@@ -624,6 +624,8 @@ static void collision_fused_job(void *data)
     uint32_t cand_count = 0;
 
     for (uint32_t i = pair_start; i < pair_end; ++i) {
+        /* Skip pairs already handled by CCD sweep. */
+        if (args->skip_pair && args->skip_pair[i]) continue;
         if (cand_count >= FUSED_MAX_CAND_PER_BATCH) break;
         uint32_t remaining = FUSED_MAX_CAND_PER_BATCH - cand_count;
         int n = narrow_test_pair(args, i, &local_cands[cand_count], remaining);
