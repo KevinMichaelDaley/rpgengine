@@ -256,6 +256,10 @@ BIN_HEADLESS += build/aegis_ops_signal_tests
 BIN_HEADLESS += build/aegis_ops_await_tests
 BIN_HEADLESS += build/aegis_runtime_idle_tests
 BIN_HEADLESS += build/aegis_signal_integration_tests
+BIN_HEADLESS += build/phys_pair_set_tests
+BIN_HEADLESS += build/phys_contact_begin_tests
+BIN_HEADLESS += build/phys_overlap_begin_tests
+BIN_HEADLESS += build/collision_event_integration_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -907,6 +911,18 @@ build/aegis_runtime_idle_tests: build/libheadless.a tests/aegis/aegis_runtime_id
 build/aegis_signal_integration_tests: build/libheadless.a tests/aegis/aegis_signal_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_signal_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/phys_pair_set_tests: build/libheadless.a tests/physics/phys_pair_set_tests.c | build
+	$(CC) $(CFLAGS) tests/physics/phys_pair_set_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/phys_contact_begin_tests: build/libheadless.a tests/physics/phys_contact_begin_tests.c | build
+	$(CC) $(CFLAGS) tests/physics/phys_contact_begin_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/phys_overlap_begin_tests: build/libheadless.a tests/physics/phys_overlap_begin_tests.c | build
+	$(CC) $(CFLAGS) tests/physics/phys_overlap_begin_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/collision_event_integration_tests: build/libheadless.a tests/physics/collision_event_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/physics/collision_event_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
 
@@ -1135,7 +1151,11 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_ops_signal_tests \
 	&& ./build/aegis_ops_await_tests \
 	&& ./build/aegis_runtime_idle_tests \
-	&& ./build/aegis_signal_integration_tests
+	&& ./build/aegis_signal_integration_tests \
+	&& ./build/phys_pair_set_tests \
+	&& ./build/phys_contact_begin_tests \
+	&& ./build/phys_overlap_begin_tests \
+	&& ./build/collision_event_integration_tests
 
 TEST_TIMEOUT ?= 20
 
