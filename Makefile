@@ -832,7 +832,7 @@ build/aegis_memory_tests: tests/aegis/aegis_memory_tests.c src/aegis/aegis_memor
 build/aegis_decode_tests: tests/aegis/aegis_decode_tests.c src/aegis/aegis_decode.c include/ferrum/aegis/aegis_decode.h include/ferrum/aegis/aegis_types.h | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_decode_tests.c src/aegis/aegis_decode.c -o $@ $(LDFLAGS)
 
-AEGIS_ARITH_SRC := $(wildcard src/aegis/ops/aegis_ops_arith*.c) $(wildcard src/aegis/ops/aegis_ops_compare*.c) $(wildcard src/aegis/ops/aegis_ops_convert*.c)
+AEGIS_ARITH_SRC := $(wildcard src/aegis/ops/aegis_ops_arith*.c) $(wildcard src/aegis/ops/aegis_ops_compare*.c) $(wildcard src/aegis/ops/aegis_ops_fcompare*.c) $(wildcard src/aegis/ops/aegis_ops_convert*.c)
 build/aegis_ops_arith_tests: tests/aegis/aegis_ops_arith_tests.c $(AEGIS_ARITH_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_arith_tests.c $(AEGIS_ARITH_SRC) -o $@ $(LDFLAGS)
 

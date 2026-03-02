@@ -209,6 +209,85 @@ static bool test_ge(void) {
     return true;
 }
 
+/* -- Float comparison -- */
+
+static bool test_flt_true(void) {
+    aegis_register_t a = make_f32(1.5f), b = make_f32(3.0f), dst;
+    aegis_op_flt(&dst, &a, &b);
+    ASSERT_INT_EQ(1, (int)dst.u32);
+    return true;
+}
+
+static bool test_flt_false(void) {
+    aegis_register_t a = make_f32(5.0f), b = make_f32(3.0f), dst;
+    aegis_op_flt(&dst, &a, &b);
+    ASSERT_INT_EQ(0, (int)dst.u32);
+    return true;
+}
+
+static bool test_flt_equal(void) {
+    aegis_register_t a = make_f32(2.0f), b = make_f32(2.0f), dst;
+    aegis_op_flt(&dst, &a, &b);
+    ASSERT_INT_EQ(0, (int)dst.u32);
+    return true;
+}
+
+static bool test_flt_negative(void) {
+    aegis_register_t a = make_f32(-3.0f), b = make_f32(-1.0f), dst;
+    aegis_op_flt(&dst, &a, &b);
+    ASSERT_INT_EQ(1, (int)dst.u32);
+    return true;
+}
+
+static bool test_fle_true(void) {
+    aegis_register_t a = make_f32(2.0f), b = make_f32(2.0f), dst;
+    aegis_op_fle(&dst, &a, &b);
+    ASSERT_INT_EQ(1, (int)dst.u32);
+    return true;
+}
+
+static bool test_fle_strict(void) {
+    aegis_register_t a = make_f32(1.0f), b = make_f32(2.0f), dst;
+    aegis_op_fle(&dst, &a, &b);
+    ASSERT_INT_EQ(1, (int)dst.u32);
+    return true;
+}
+
+static bool test_fle_false(void) {
+    aegis_register_t a = make_f32(3.0f), b = make_f32(2.0f), dst;
+    aegis_op_fle(&dst, &a, &b);
+    ASSERT_INT_EQ(0, (int)dst.u32);
+    return true;
+}
+
+static bool test_fgt_true(void) {
+    aegis_register_t a = make_f32(5.0f), b = make_f32(2.0f), dst;
+    aegis_op_fgt(&dst, &a, &b);
+    ASSERT_INT_EQ(1, (int)dst.u32);
+    return true;
+}
+
+static bool test_fgt_false(void) {
+    aegis_register_t a = make_f32(1.0f), b = make_f32(2.0f), dst;
+    aegis_op_fgt(&dst, &a, &b);
+    ASSERT_INT_EQ(0, (int)dst.u32);
+    return true;
+}
+
+static bool test_fge_true(void) {
+    aegis_register_t a = make_f32(2.0f), b = make_f32(2.0f), dst;
+    aegis_op_fge(&dst, &a, &b);
+    ASSERT_INT_EQ(1, (int)dst.u32);
+    return true;
+}
+
+static bool test_fge_false(void) {
+    aegis_register_t a = make_f32(1.0f), b = make_f32(2.0f), dst;
+    aegis_op_fge(&dst, &a, &b);
+    ASSERT_INT_EQ(0, (int)dst.u32);
+    return true;
+}
+
 /* -- Conversion -- */
 
 static bool test_i32_to_f32(void) {
@@ -292,6 +371,18 @@ int main(void) {
     RUN(test_le);
     RUN(test_gt);
     RUN(test_ge);
+
+    RUN(test_flt_true);
+    RUN(test_flt_false);
+    RUN(test_flt_equal);
+    RUN(test_flt_negative);
+    RUN(test_fle_true);
+    RUN(test_fle_strict);
+    RUN(test_fle_false);
+    RUN(test_fgt_true);
+    RUN(test_fgt_false);
+    RUN(test_fge_true);
+    RUN(test_fge_false);
 
     RUN(test_i32_to_f32);
     RUN(test_f32_to_i32);

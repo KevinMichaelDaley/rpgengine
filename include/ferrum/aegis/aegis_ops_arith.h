@@ -100,6 +100,17 @@ void aegis_op_gt(aegis_register_t *dst,
 void aegis_op_ge(aegis_register_t *dst,
                  const aegis_register_t *a, const aegis_register_t *b);
 
+/* -- Float comparison (result is bool: u32 0 or 1) -- */
+
+void aegis_op_flt(aegis_register_t *dst,
+                  const aegis_register_t *a, const aegis_register_t *b);
+void aegis_op_fle(aegis_register_t *dst,
+                  const aegis_register_t *a, const aegis_register_t *b);
+void aegis_op_fgt(aegis_register_t *dst,
+                  const aegis_register_t *a, const aegis_register_t *b);
+void aegis_op_fge(aegis_register_t *dst,
+                  const aegis_register_t *a, const aegis_register_t *b);
+
 /* -- Type conversion -- */
 
 void aegis_op_i32_to_f32(aegis_register_t *dst, const aegis_register_t *src);

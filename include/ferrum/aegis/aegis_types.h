@@ -119,6 +119,12 @@ typedef enum aegis_opcode {
     AEGIS_OP_FDIV           = 0x63,  /**< r_dst.f32 = r_a.f32 / r_b.f32. */
     AEGIS_OP_FNEG           = 0x64,  /**< r_dst.f32 = -r_a.f32. */
 
+    /* -- Float comparison -- */
+    AEGIS_OP_FLT            = 0x65,  /**< r_dst = (r_a.f32 < r_b.f32). */
+    AEGIS_OP_FLE            = 0x66,  /**< r_dst = (r_a.f32 <= r_b.f32). */
+    AEGIS_OP_FGT            = 0x67,  /**< r_dst = (r_a.f32 > r_b.f32). */
+    AEGIS_OP_FGE            = 0x68,  /**< r_dst = (r_a.f32 >= r_b.f32). */
+
     /* -- Bitwise & logic -- */
     AEGIS_OP_AND            = 0x1E,  /**< r_dst = r_a & r_b. */
     AEGIS_OP_OR             = 0x1F,  /**< r_dst = r_a | r_b. */

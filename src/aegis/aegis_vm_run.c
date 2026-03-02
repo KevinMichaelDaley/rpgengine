@@ -199,6 +199,22 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             aegis_op_ge(&vm->regs[d.raw_a], &d.b, &d.c);
             break;
 
+        case AEGIS_OP_FLT:
+            aegis_op_flt(&vm->regs[d.raw_a], &d.b, &d.c);
+            break;
+
+        case AEGIS_OP_FLE:
+            aegis_op_fle(&vm->regs[d.raw_a], &d.b, &d.c);
+            break;
+
+        case AEGIS_OP_FGT:
+            aegis_op_fgt(&vm->regs[d.raw_a], &d.b, &d.c);
+            break;
+
+        case AEGIS_OP_FGE:
+            aegis_op_fge(&vm->regs[d.raw_a], &d.b, &d.c);
+            break;
+
         /* ---- Control flow ---- */
 
         case AEGIS_OP_JMP:
