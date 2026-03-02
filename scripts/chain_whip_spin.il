@@ -5,7 +5,7 @@
 ; sets position + linear + angular velocity for 3 root nodes.
 ;
 ; Root entity IDs: root_0=21, root_1=62, root_2=103
-; Orbit radius: 5.0
+; Orbit radius: starts at 5.0, grows by 1.0/s
 ; Y height: starts at 33.0, drops by 1.5/s, clamps at 3.0
 ; Omega: 0.8 * t (angular velocity ramps up over time)
 
@@ -15,13 +15,14 @@
 ; ── Constants ──
 load_imm r40 0.8       ; omega multiplier (was 0.5)
 load_imm r41 0.4       ; theta multiplier (0.5 * omega_mult)
-load_imm r42 5.0       ; orbit radius
+load_imm r42 5.0       ; initial orbit radius
 load_imm r43 0.0       ; zero
 load_imm r44 2.0944    ; 2*pi/3 phase offset
 load_imm r45 4.1888    ; 4*pi/3 phase offset
 load_imm r46 33.0      ; initial Y height
 load_imm r47 1.5       ; Y descent rate (units/s)
 load_imm r48 3.0       ; minimum Y height (whips drag on ground)
+load_imm r49 1.0       ; radius growth rate (units/s)
 load_imm r50 21        ; root_0 entity ID
 load_imm r51 62        ; root_1 entity ID
 load_imm r52 103       ; root_2 entity ID
@@ -33,6 +34,10 @@ clock r1
 
 ; ── omega = 0.8 * t ──
 fmul r2 r40 r1
+
+; ── radius = 5.0 + 1.0 * t ──
+fmul r7 r49 r1
+fadd r7 r42 r7
 
 ; ── theta = 0.4 * t^2 ──
 fmul r3 r1 r1
@@ -58,8 +63,8 @@ vec3_pack r60 r30
 ; Position: (radius*sin(theta), y, radius*cos(theta))
 sin r10 r3
 cos r11 r3
-fmul r12 r10 r42
-fmul r13 r11 r42
+fmul r12 r10 r7
+fmul r13 r11 r7
 mov r30 r12
 mov r31 r5
 mov r32 r13
@@ -67,10 +72,10 @@ vec3_pack r62 r30
 
 ; Velocity: tangential = omega * radius in (-cos, 0, sin) direction
 fmul r10 r10 r2
-fmul r10 r10 r42
+fmul r10 r10 r7
 fneg r10 r10
 fmul r11 r11 r2
-fmul r11 r11 r42
+fmul r11 r11 r7
 mov r30 r10
 mov r31 r43
 mov r32 r11
@@ -94,18 +99,18 @@ push_update r0
 fadd r4 r3 r44
 sin r10 r4
 cos r11 r4
-fmul r12 r10 r42
-fmul r13 r11 r42
+fmul r12 r10 r7
+fmul r13 r11 r7
 mov r30 r12
 mov r31 r5
 mov r32 r13
 vec3_pack r62 r30
 
 fmul r10 r10 r2
-fmul r10 r10 r42
+fmul r10 r10 r7
 fneg r10 r10
 fmul r11 r11 r2
-fmul r11 r11 r42
+fmul r11 r11 r7
 mov r30 r10
 mov r31 r43
 mov r32 r11
@@ -128,18 +133,18 @@ push_update r0
 fadd r4 r3 r45
 sin r10 r4
 cos r11 r4
-fmul r12 r10 r42
-fmul r13 r11 r42
+fmul r12 r10 r7
+fmul r13 r11 r7
 mov r30 r12
 mov r31 r5
 mov r32 r13
 vec3_pack r62 r30
 
 fmul r10 r10 r2
-fmul r10 r10 r42
+fmul r10 r10 r7
 fneg r10 r10
 fmul r11 r11 r2
-fmul r11 r11 r42
+fmul r11 r11 r7
 mov r30 r10
 mov r31 r43
 mov r32 r11
