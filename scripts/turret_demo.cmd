@@ -124,9 +124,6 @@ entity_def trigger_3
   setattr 256 true
 end
 
-# Spawn a player target
-spawn sphere player_0 0 1 0
-
 # Resume physics so bodies are simulated and snapshots flow to clients
 physics_resume
 
