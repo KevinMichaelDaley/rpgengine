@@ -104,13 +104,25 @@ typedef struct phys_cmd_destroy_body {
     uint32_t body_index;         /**< Body to destroy. */
 } phys_cmd_destroy_body_t;
 
-/** Set a body's full authoritative state. */
+/** Bitmask for phys_cmd_set_state_t::flags — which fields to apply. */
+enum {
+    PHYS_SET_POS     = 1u << 0, /**< Apply position. */
+    PHYS_SET_ORI     = 1u << 1, /**< Apply orientation. */
+    PHYS_SET_LIN_VEL = 1u << 2, /**< Apply linear velocity. */
+    PHYS_SET_ANG_VEL = 1u << 3, /**< Apply angular velocity. */
+    /** Apply all fields (backwards-compatible default). */
+    PHYS_SET_ALL     = PHYS_SET_POS | PHYS_SET_ORI |
+                       PHYS_SET_LIN_VEL | PHYS_SET_ANG_VEL
+};
+
+/** Set body state — only fields enabled in `flags` are written. */
 typedef struct phys_cmd_set_state {
     uint32_t    body_index;      /**< Target body. */
-    phys_vec3_t position;        /**< New position. */
-    phys_quat_t orientation;     /**< New orientation. */
-    phys_vec3_t linear_vel;      /**< New linear velocity. */
-    phys_vec3_t angular_vel;     /**< New angular velocity. */
+    uint32_t    flags;           /**< Bitmask of PHYS_SET_* fields to apply. */
+    phys_vec3_t position;        /**< New position (if PHYS_SET_POS). */
+    phys_quat_t orientation;     /**< New orientation (if PHYS_SET_ORI). */
+    phys_vec3_t linear_vel;      /**< New linear velocity (if PHYS_SET_LIN_VEL). */
+    phys_vec3_t angular_vel;     /**< New angular velocity (if PHYS_SET_ANG_VEL). */
 } phys_cmd_set_state_t;
 
 /** Add a joint constraint between two bodies. */

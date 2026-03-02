@@ -47,6 +47,27 @@ bool aegis_op_mod(aegis_register_t *dst,
 /** dst = -a. Always returns true. */
 bool aegis_op_neg(aegis_register_t *dst, const aegis_register_t *a);
 
+/* -- Float arithmetic (f32) -- */
+
+/** dst.f32 = a.f32 + b.f32. */
+void aegis_op_fadd(aegis_register_t *dst,
+                   const aegis_register_t *a, const aegis_register_t *b);
+
+/** dst.f32 = a.f32 - b.f32. */
+void aegis_op_fsub(aegis_register_t *dst,
+                   const aegis_register_t *a, const aegis_register_t *b);
+
+/** dst.f32 = a.f32 * b.f32. */
+void aegis_op_fmul(aegis_register_t *dst,
+                   const aegis_register_t *a, const aegis_register_t *b);
+
+/** dst.f32 = a.f32 / b.f32. Returns false on division by zero. */
+bool aegis_op_fdiv(aegis_register_t *dst,
+                   const aegis_register_t *a, const aegis_register_t *b);
+
+/** dst.f32 = -a.f32. */
+void aegis_op_fneg(aegis_register_t *dst, const aegis_register_t *a);
+
 /* -- Bitwise (u32) -- */
 
 /** dst = a & b. */

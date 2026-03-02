@@ -108,31 +108,29 @@ static void apply_impulse_(phys_world_t *world,
     if (b_next) { *b_next = *b; }
 }
 
-/** Apply a single SET_STATE command (full authoritative correction).
+/** Apply a single SET_STATE command (authoritative state correction).
  *
- *  Hard-snaps position, orientation, and velocity to the server's
- *  authoritative values.  The client simulation is purely cosmetic
- *  between corrections — there is no rollback, so blending creates
- *  oscillation.  We clear the sleep flag so resting bodies respond. */
+ *  Only writes fields whose bits are set in cmd->flags.  If flags==0 or
+ *  flags==PHYS_SET_ALL the behaviour is the same as the legacy path
+ *  (overwrite everything).  We clear the sleep flag so resting bodies
+ *  respond to the correction. */
 static void apply_set_state_(phys_world_t *world,
                               const phys_cmd_set_state_t *cmd) {
     phys_body_t *b = phys_world_get_body(world, cmd->body_index);
     if (!b) { return; }
 
-    b->position    = cmd->position;
-    b->orientation = cmd->orientation;
-    b->linear_vel  = cmd->linear_vel;
-    b->angular_vel = cmd->angular_vel;
+    /* Treat flags==0 as "all" for backward compatibility with callers
+     * that memset the struct and never set the flags field. */
+    uint32_t f = cmd->flags ? cmd->flags : PHYS_SET_ALL;
 
-    /* If the server sent near-zero velocity the body is at rest — mark
-     * it sleeping so prediction mode doesn't keep integrating gravity.
-     * The threshold must exceed quantization noise: velocities arrive as
-     * int16 mm/s and mrad/s, so the minimum nonzero per-component
-     * magnitude is 0.001.  With 6 components that gives speed_sq up to
-     * ~6e-6 for a "resting" body.  Use 1e-4 (~10mm/s aggregate) to
-     * absorb solver jitter and quantization rounding. */
-    const float lx = cmd->linear_vel.x, ly = cmd->linear_vel.y, lz = cmd->linear_vel.z;
-    const float ax = cmd->angular_vel.x, ay = cmd->angular_vel.y, az = cmd->angular_vel.z;
+    if (f & PHYS_SET_POS)     b->position    = cmd->position;
+    if (f & PHYS_SET_ORI)     b->orientation = cmd->orientation;
+    if (f & PHYS_SET_LIN_VEL) b->linear_vel  = cmd->linear_vel;
+    if (f & PHYS_SET_ANG_VEL) b->angular_vel = cmd->angular_vel;
+
+    /* Sleep heuristic based on the body's resulting velocity. */
+    const float lx = b->linear_vel.x,  ly = b->linear_vel.y,  lz = b->linear_vel.z;
+    const float ax = b->angular_vel.x, ay = b->angular_vel.y, az = b->angular_vel.z;
     const float speed_sq = lx*lx + ly*ly + lz*lz + ax*ax + ay*ay + az*az;
     if (speed_sq < 1e-4f) {
         b->flags |= (uint32_t)PHYS_BODY_FLAG_SLEEPING;

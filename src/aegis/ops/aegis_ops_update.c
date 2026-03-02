@@ -46,6 +46,8 @@ bool aegis_op_set_field(aegis_state_update_t *staging,
     case SCRIPT_KEY_POS:
     case SCRIPT_KEY_ROT:
     case SCRIPT_KEY_SCALE:
+    case SCRIPT_KEY_ANG_VEL:
+    case SCRIPT_KEY_LIN_VEL:
         staging->type = SCRIPT_ATTR_VEC3;
         staging->size = 12;
         memcpy(staging->value, val_reg->vec3, 12);

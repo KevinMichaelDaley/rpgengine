@@ -13,6 +13,7 @@
 #include "ferrum/aegis/aegis_runtime.h"
 #include "ferrum/job/system.h"
 #include <string.h>
+#include <stdio.h>
 
 /* ----------------------------------------------------------------------- */
 /* Script fiber function                                                    */
@@ -80,11 +81,14 @@ static void script_fiber_fn(void *user_data) {
 
             case AEGIS_VM_EXITED:
                 /* Script terminated normally. */
+                fprintf(stderr, "[fiber] script '%s' EXITED\n", inst->name);
                 inst->active = false;
                 return;
 
             case AEGIS_VM_ERROR:
                 /* Runtime error. */
+                fprintf(stderr, "[fiber] script '%s' ERROR code=0x%x pc=%u\n",
+                        inst->name, inst->vm.exit_code, inst->vm.pc);
                 inst->active = false;
                 return;
             }
@@ -125,12 +129,18 @@ void aegis_script_runtime_publish(aegis_script_runtime_t *rt,
     for (uint32_t i = 0; i < AEGIS_REGISTRY_MAX; i++) {
         if (!rt->registry[i].registered) continue;
         if (rt->registry[i].spawned) continue;
+        fprintf(stderr, "[publish] slot=%u bc_topic=0x%08x ev_type=0x%08x\n",
+                i, rt->registry[i].bytecode.topic_hash, ev->type);
         if (rt->registry[i].bytecode.topic_hash != ev->type) continue;
 
         /* Lazy spawn: load instance + dispatch fiber. */
+        fprintf(stderr, "[publish] SPAWNING script '%s'\n", rt->registry[i].name);
         uint32_t sid = aegis_script_runtime_load(
             rt, rt->registry[i].name, &rt->registry[i].bytecode);
-        if (sid == AEGIS_SCRIPT_ID_INVALID) continue;
+        if (sid == AEGIS_SCRIPT_ID_INVALID) {
+            fprintf(stderr, "[publish] LOAD FAILED for '%s'\n", rt->registry[i].name);
+            continue;
+        }
 
         rt->registry[i].spawned = true;
         rt->registry[i].instance_id = sid;

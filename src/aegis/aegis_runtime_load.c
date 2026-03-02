@@ -75,6 +75,32 @@ uint32_t aegis_script_runtime_load(aegis_script_runtime_t *rt,
         return AEGIS_SCRIPT_ID_INVALID;
     }
 
+    /* Allocate update set for state mutations. */
+    {
+        const uint32_t default_cap = 65536;
+        const uint32_t update_cap =
+            (rt->config.update_set_cap > 0) ? rt->config.update_set_cap
+                                            : default_cap;
+        aegis_update_set_t *uset = (aegis_update_set_t *)calloc(
+            1, sizeof(aegis_update_set_t));
+        if (!uset) {
+            free(inst->arena_buf);
+            free(inst->bytecode.instructions);
+            return AEGIS_SCRIPT_ID_INVALID;
+        }
+        uset->updates = (aegis_state_update_t *)calloc(
+            update_cap, sizeof(aegis_state_update_t));
+        if (!uset->updates) {
+            free(uset);
+            free(inst->arena_buf);
+            free(inst->bytecode.instructions);
+            return AEGIS_SCRIPT_ID_INVALID;
+        }
+        uset->capacity = update_cap;
+        uset->count = 0;
+        inst->vm.update_set = uset;
+    }
+
     /* Initialize per-script event queue. */
     aegis_event_queue_init(&inst->event_queue, rt->config.event_queue_cap);
 
@@ -122,6 +148,11 @@ void aegis_script_runtime_unload(aegis_script_runtime_t *rt,
     }
 
     /* Free resources. */
+    if (inst->vm.update_set) {
+        free(inst->vm.update_set->updates);
+        free(inst->vm.update_set);
+        inst->vm.update_set = NULL;
+    }
     aegis_event_queue_destroy(&inst->event_queue);
     free(inst->arena_buf);
     free(inst->bytecode.instructions);

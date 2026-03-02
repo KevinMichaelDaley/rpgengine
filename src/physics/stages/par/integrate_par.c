@@ -69,9 +69,35 @@ static void integrate_batch_job(void *data) {
         /* Copy body from input to output. */
         *out = *in;
 
-        /* Skip static, kinematic, and sleeping bodies. */
-        if (phys_body_is_static(in) || phys_body_is_kinematic(in) ||
-            phys_body_is_sleeping(in)) {
+        /* Skip static bodies entirely. */
+        if (phys_body_is_static(in)) {
+            continue;
+        }
+
+        /* Kinematic bodies: integrate position/orientation from their
+         * stored velocity (set externally via SET_STATE), but skip
+         * gravity, solver writes, damping, and sleep detection. */
+        if (phys_body_is_kinematic(in)) {
+            out->position = vec3_add(in->position,
+                                     vec3_scale(in->linear_vel, dt));
+            phys_quat_t omega_q = {
+                in->angular_vel.x,
+                in->angular_vel.y,
+                in->angular_vel.z,
+                0.0f
+            };
+            phys_quat_t dq = quat_mul(omega_q, in->orientation);
+            float half_dt = 0.5f * dt;
+            out->orientation.x = in->orientation.x + dq.x * half_dt;
+            out->orientation.y = in->orientation.y + dq.y * half_dt;
+            out->orientation.z = in->orientation.z + dq.z * half_dt;
+            out->orientation.w = in->orientation.w + dq.w * half_dt;
+            out->orientation = quat_normalize_safe(out->orientation, 1e-8f);
+            continue;
+        }
+
+        /* Skip sleeping bodies. */
+        if (phys_body_is_sleeping(in)) {
             continue;
         }
 

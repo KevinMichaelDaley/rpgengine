@@ -112,6 +112,13 @@ typedef enum aegis_opcode {
     AEGIS_OP_MOD            = 0x1C,  /**< r_dst = r_a % r_b. */
     AEGIS_OP_NEG            = 0x1D,  /**< r_dst = -r_a. */
 
+    /* -- Float arithmetic -- */
+    AEGIS_OP_FADD           = 0x60,  /**< r_dst.f32 = r_a.f32 + r_b.f32. */
+    AEGIS_OP_FSUB           = 0x61,  /**< r_dst.f32 = r_a.f32 - r_b.f32. */
+    AEGIS_OP_FMUL           = 0x62,  /**< r_dst.f32 = r_a.f32 * r_b.f32. */
+    AEGIS_OP_FDIV           = 0x63,  /**< r_dst.f32 = r_a.f32 / r_b.f32. */
+    AEGIS_OP_FNEG           = 0x64,  /**< r_dst.f32 = -r_a.f32. */
+
     /* -- Bitwise & logic -- */
     AEGIS_OP_AND            = 0x1E,  /**< r_dst = r_a & r_b. */
     AEGIS_OP_OR             = 0x1F,  /**< r_dst = r_a | r_b. */
@@ -164,6 +171,15 @@ typedef enum aegis_opcode {
     AEGIS_OP_SIGNAL         = 0x42,  /**< Signal event to server (rate-limited). */
     AEGIS_OP_SUBSCRIBE      = 0x43,  /**< Subscribe to event topic. */
     AEGIS_OP_AWAIT_EVENT    = 0x44,  /**< Wait-yield for matching topic event. */
+
+    /* -- Environment queries -- */
+    AEGIS_OP_CLOCK          = 0x45,  /**< Load sim_time_s into r_dst.f32. */
+    AEGIS_OP_SIN            = 0x46,  /**< dst.f32 = sinf(src.f32). */
+    AEGIS_OP_COS            = 0x47,  /**< dst.f32 = cosf(src.f32). */
+    AEGIS_OP_VEC3_PACK      = 0x48,  /**< dst.v3 = {rB.f32, r(B+1).f32, r(B+2).f32}. */
+
+    /* -- Debug -- */
+    AEGIS_OP_SHOW           = 0x49,  /**< Print register value to stderr. */
 
     /** Sentinel: total number of opcodes. Not a valid instruction. */
     AEGIS_OP_COUNT

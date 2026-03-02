@@ -64,6 +64,11 @@ static const mnemonic_entry_t g_mnemonics[] = {
     {"div",           AEGIS_OP_DIV},
     {"mod",           AEGIS_OP_MOD},
     {"neg",           AEGIS_OP_NEG},
+    {"fadd",          AEGIS_OP_FADD},
+    {"fsub",          AEGIS_OP_FSUB},
+    {"fmul",          AEGIS_OP_FMUL},
+    {"fdiv",          AEGIS_OP_FDIV},
+    {"fneg",          AEGIS_OP_FNEG},
     {"and",           AEGIS_OP_AND},
     {"or",            AEGIS_OP_OR},
     {"xor",           AEGIS_OP_XOR},
@@ -103,6 +108,11 @@ static const mnemonic_entry_t g_mnemonics[] = {
     {"signal",        AEGIS_OP_SIGNAL},
     {"subscribe",     AEGIS_OP_SUBSCRIBE},
     {"await_event",   AEGIS_OP_AWAIT_EVENT},
+    {"clock",         AEGIS_OP_CLOCK},
+    {"sin",           AEGIS_OP_SIN},
+    {"cos",           AEGIS_OP_COS},
+    {"vec3_pack",     AEGIS_OP_VEC3_PACK},
+    {"show",          AEGIS_OP_SHOW},
     {NULL, 0}
 };
 

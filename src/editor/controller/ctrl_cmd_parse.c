@@ -879,6 +879,15 @@ uint32_t ctrl_cmd_build_entity_def_json(const char *header,
             aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
                                      "{\"key\":8,\"value\":true}");
             attr_count++;
+        } else if (strcmp(toks[0], "kinematic") == 0) {
+            /* Sugar: "kinematic" → setattr SCRIPT_KEY_KINEMATIC(9) true. */
+            if (attr_count > 0) {
+                aw += (uint32_t)snprintf(attrs_buf + aw,
+                                         sizeof(attrs_buf) - aw, ",");
+            }
+            aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
+                                     "{\"key\":9,\"value\":true}");
+            attr_count++;
         }
     }
 

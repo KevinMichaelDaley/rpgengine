@@ -194,6 +194,9 @@ struct demo_ctx {
     script_entity_snapshot_t            script_snapshots[DEMO_SCRIPT_MAX_ENTITIES];
     script_entity_view_t                script_entity_view;
 
+    /* Simulation tick counter (incremented each server tick). */
+    uint64_t                            sim_tick_count;
+
     /* Cached client addresses for raw UDP sends from physics thread. */
     net_udp_addr_t                      client_addrs[DEMO_MAX_CLIENTS];
     uint8_t                             client_addr_active[DEMO_MAX_CLIENTS];
@@ -272,6 +275,17 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
                                           &at, &as);
         if (sv && as == 1 && *(const uint8_t *)sv) {
             spawn.flags |= PHYS_BODY_FLAG_STATIC;
+            spawn.mass = 0.0f;
+        }
+    }
+
+    /* Read kinematic flag from attrs. */
+    {
+        uint8_t at = 0, as = 0;
+        const void *sv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_KINEMATIC,
+                                          &at, &as);
+        if (sv && as == 1 && *(const uint8_t *)sv) {
+            spawn.flags |= PHYS_BODY_FLAG_KINEMATIC;
             spawn.mass = 0.0f;
         }
     }
@@ -771,6 +785,79 @@ static void demo_spawn_callback(uint32_t body_index,
  * tracking for auto-unscheduling exited scripts.
  */
 static void script_tick(demo_ctx_t *ctx) {
+    /* Advance simulation clock. */
+    ctx->sim_tick_count++;
+    float sim_time_s = (float)ctx->sim_tick_count / (float)DEMO_TICK_HZ;
+
+    /* Propagate sim_time_s to all active VM instances. */
+    for (uint32_t i = 0; i < ctx->script_runtime.instance_cap; i++) {
+        aegis_script_instance_t *inst = &ctx->script_runtime.instances[i];
+        if (!inst->active) continue;
+        inst->vm.sim_time_s = sim_time_s;
+    }
+
+    /* Drain script update sets: apply velocity updates to physics.
+     * Scan backwards so we see the LATEST update first for each
+     * (entity, key) pair, and skip earlier duplicates efficiently. */
+    for (uint32_t i = 0; i < ctx->script_runtime.instance_cap; i++) {
+        aegis_script_instance_t *inst = &ctx->script_runtime.instances[i];
+        if (!inst->active) continue;
+        aegis_update_set_t *uset = inst->vm.update_set;
+        if (!uset || uset->count == 0) continue;
+
+        /* Track seen (entity_id, key) pairs.  We expect very few unique
+         * pairs (e.g., 6 for 3 entities × 2 keys).  Linear scan is fine
+         * for small counts. */
+        typedef struct { uint32_t target; uint16_t key; } seen_pair_t;
+        seen_pair_t seen[64];
+        uint32_t seen_count = 0;
+
+        for (uint32_t u = uset->count; u > 0; u--) {
+            const aegis_state_update_t *upd = &uset->updates[u - 1];
+            if (upd->size != 12) continue;
+            if (upd->key != SCRIPT_KEY_ANG_VEL &&
+                upd->key != SCRIPT_KEY_LIN_VEL) continue;
+
+            /* Skip if we already saw a later update for this pair. */
+            bool already = false;
+            for (uint32_t s = 0; s < seen_count; s++) {
+                if (seen[s].target == upd->target &&
+                    seen[s].key    == upd->key) {
+                    already = true;
+                    break;
+                }
+            }
+            if (already) continue;
+
+            /* Record as seen. */
+            if (seen_count < 64) {
+                seen[seen_count].target = upd->target;
+                seen[seen_count].key    = upd->key;
+                seen_count++;
+            }
+
+            /* Resolve entity → body index. */
+            edit_entity_t *ent = edit_entity_store_get_mut(
+                &ctx->editor.entities, upd->target);
+            if (!ent || ent->body_index == 0) continue;
+
+            phys_cmd_set_state_t st;
+            memset(&st, 0, sizeof(st));
+            st.body_index = ent->body_index;
+            if (upd->key == SCRIPT_KEY_ANG_VEL) {
+                st.flags = PHYS_SET_ANG_VEL;
+                memcpy(&st.angular_vel, upd->value, 12);
+            } else {
+                st.flags = PHYS_SET_LIN_VEL;
+                memcpy(&st.linear_vel, upd->value, 12);
+            }
+            phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_STATE,
+                          &st, sizeof(st));
+        }
+
+        uset->count = 0;
+    }
+
     /* Rebuild entity snapshot from the store. */
     uint32_t snap_count = script_snapshot_build(
         &ctx->editor.entities,
@@ -869,6 +956,15 @@ static void on_drain(void *user) {
 
     /* Script maintenance: refresh entity snapshots, drain async tasks. */
     script_tick(ctx);
+
+    /* Publish a generic "tick" event so scripts can run per-frame logic.
+     * Scripts subscribe via .topic tick in their .il file. */
+    {
+        aegis_event_t tick_ev;
+        memset(&tick_ev, 0, sizeof(tick_ev));
+        tick_ev.type = aegis_topic_hash("tick");
+        aegis_script_runtime_publish(&ctx->script_runtime, &tick_ev);
+    }
 }
 
 /**
@@ -1106,8 +1202,8 @@ int main(int argc, char **argv) {
     printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_BODIES);
     /* ── 3. Physics command channel + tick runner ───────────────── */
     fr_topic_channel_config_t chan_cfg = {
-        .capacity = 256u,
-        .capacity_bytes = 256u * 1024u,
+        .capacity = 512u,
+        .capacity_bytes = 512u * 1024u,
         .max_message_size = 1024u,
         .backpressure = FR_TOPIC_BACKPRESSURE_FAIL
     };
@@ -1356,10 +1452,10 @@ int main(int argc, char **argv) {
     /* ── 12. Shutdown ──────────────────────────────────────────── */
     printf("\n[server] shutting down...\n");
 
-    /* Destroy script runtime before job system (fibers must finish). */
-    aegis_script_runtime_destroy(&ctx.script_runtime);
-    aegis_async_buffer_destroy(&ctx.script_async_buf);
-    printf("[server] script runtime stopped\n");
+    /* Mark all script instances inactive so fibers exit on next yield. */
+    for (uint32_t i = 0; i < ctx.script_runtime.instance_cap; i++) {
+        ctx.script_runtime.instances[i].active = false;
+    }
 
     /* Shut down editor first (stops I/O thread). */
     editor_ctx_shutdown(&ctx.editor);
@@ -1369,11 +1465,17 @@ int main(int argc, char **argv) {
     phys_tick_runner_stop(&ctx.tick_runner);
     printf("[server] tick runner stopped\n");
 
-    /* Tear down in reverse init order. */
+    /* Shut down main job system — joins all fibers including scripts. */
     fr_priority_body_sender_destroy(ctx.priority_sender);
     fr_server_entity_net_pump_destroy(ctx.entity_pump);
     fr_server_net_runtime_destroy(ctx.net_rt);
     job_system_shutdown(&ctx.job_sys);
+
+    /* Now safe to free script runtime memory (all fibers have exited). */
+    aegis_script_runtime_destroy(&ctx.script_runtime);
+    aegis_async_buffer_destroy(&ctx.script_async_buf);
+    printf("[server] script runtime stopped\n");
+
     phys_tick_runner_destroy(&ctx.tick_runner);
     phys_job_context_destroy(&ctx.phys_jobs);
     job_system_shutdown(&ctx.phys_job_sys);

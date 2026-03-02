@@ -20,6 +20,8 @@
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 #include "ferrum/aegis/aegis_ops_signal.h"
+#include <math.h>
+#include <stdio.h>
 
 /** Helper: set error status and return. */
 static aegis_vm_status_t vm_error(aegis_vm_t *vm, uint32_t code) {
@@ -127,6 +129,30 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
 
         case AEGIS_OP_NEG:
             aegis_op_neg(&vm->regs[d.raw_a], &d.b);
+            break;
+
+        /* ---- Float arithmetic ---- */
+
+        case AEGIS_OP_FADD:
+            aegis_op_fadd(&vm->regs[d.raw_a], &d.b, &d.c);
+            break;
+
+        case AEGIS_OP_FSUB:
+            aegis_op_fsub(&vm->regs[d.raw_a], &d.b, &d.c);
+            break;
+
+        case AEGIS_OP_FMUL:
+            aegis_op_fmul(&vm->regs[d.raw_a], &d.b, &d.c);
+            break;
+
+        case AEGIS_OP_FDIV:
+            if (!aegis_op_fdiv(&vm->regs[d.raw_a], &d.b, &d.c)) {
+                return vm_error(vm, 0xFFF1);
+            }
+            break;
+
+        case AEGIS_OP_FNEG:
+            aegis_op_fneg(&vm->regs[d.raw_a], &d.b);
             break;
 
         /* ---- Bitwise ---- */
@@ -392,9 +418,22 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             break;
 
         case AEGIS_OP_PUSH_UPDATE:
-            if (!vm->update_set ||
-                !aegis_op_push_update(vm->update_set, &vm->staging)) {
+            if (!vm->update_set) {
                 return vm_error(vm, 0xFFBF);
+            }
+            if (!aegis_op_push_update(vm->update_set, &vm->staging)) {
+                /* Update set full — back-pressure via force-yield.
+                 * The runtime drains the set, then resumes us at the
+                 * same PC so the push is retried. */
+                vm->status = AEGIS_VM_FORCE_YIELDED;
+                return AEGIS_VM_FORCE_YIELDED;
+            }
+            /* Each push burns 50 extra fuel so update-heavy scripts
+             * yield frequently, giving the runtime a chance to drain. */
+            if (vm->fuel > 50) {
+                vm->fuel -= 50;
+            } else {
+                vm->fuel = 0;
             }
             break;
 
@@ -404,11 +443,23 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             if (!aegis_op_vis_test(vm, &d)) {
                 return vm_error(vm, 0xFFBE);
             }
+            /* Vis tests are expensive — burn 200 fuel. */
+            if (vm->fuel > 200) {
+                vm->fuel -= 200;
+            } else {
+                vm->fuel = 0;
+            }
             break;
 
         case AEGIS_OP_NAV_QUERY:
             if (!aegis_op_nav_query(vm, &d)) {
                 return vm_error(vm, 0xFFBD);
+            }
+            /* Nav queries are expensive — burn 200 fuel. */
+            if (vm->fuel > 200) {
+                vm->fuel -= 200;
+            } else {
+                vm->fuel = 0;
             }
             break;
 
@@ -442,6 +493,44 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
                 aegis_vm_wait_yield(vm);
                 return vm->status;
             }
+            break;
+
+        /* ---- Environment queries ---- */
+
+        case AEGIS_OP_CLOCK:
+            /* clock r_dst — load sim_time_s into r_dst.f32. */
+            vm->regs[d.raw_a].f32 = vm->sim_time_s;
+            break;
+
+        case AEGIS_OP_SIN:
+            /* sin r_dst r_src — dst.f32 = sinf(src.f32). */
+            vm->regs[d.raw_a].f32 = sinf(d.b.f32);
+            break;
+
+        case AEGIS_OP_COS:
+            /* cos r_dst r_src — dst.f32 = cosf(src.f32). */
+            vm->regs[d.raw_a].f32 = cosf(d.b.f32);
+            break;
+
+        case AEGIS_OP_VEC3_PACK: {
+            /* vec3_pack r_dst r_base — dst.vec3 = {rB, r(B+1), r(B+2)}.f32. */
+            uint32_t base = d.raw_b;
+            vm->regs[d.raw_a].vec3[0] = vm->regs[base].f32;
+            vm->regs[d.raw_a].vec3[1] = vm->regs[base + 1].f32;
+            vm->regs[d.raw_a].vec3[2] = vm->regs[base + 2].f32;
+            break;
+        }
+
+        case AEGIS_OP_SHOW:
+            /* show r_src — print register value to stderr for debugging. */
+            fprintf(stderr, "[show] r%u: i32=%d u32=%u f32=%f vec3=(%f,%f,%f)\n",
+                d.raw_a,
+                vm->regs[d.raw_a].i32,
+                vm->regs[d.raw_a].u32,
+                (double)vm->regs[d.raw_a].f32,
+                (double)vm->regs[d.raw_a].vec3[0],
+                (double)vm->regs[d.raw_a].vec3[1],
+                (double)vm->regs[d.raw_a].vec3[2]);
             break;
 
         default:

@@ -114,6 +114,11 @@ typedef struct aegis_runtime_config {
     /** Per-script event queue capacity. */
     uint32_t event_queue_cap;
 
+    /** Per-script update set capacity (max pending state updates).
+     *  Acts as a DDoS guard — not meant to limit well-behaved scripts.
+     *  Default: 65536.  Zero means use the default. */
+    uint32_t update_set_cap;
+
     /** VM configuration applied to all script instances. */
     aegis_config_t vm_config;
 
