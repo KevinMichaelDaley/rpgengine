@@ -1,6 +1,6 @@
 ---
 id: rpg-4dpg
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-03-02T12:25:37Z
