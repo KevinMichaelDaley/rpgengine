@@ -54,14 +54,19 @@ typedef enum phys_cmd_type {
 
     /** Add a joint between two bodies.
      *  Payload: phys_cmd_add_joint_t. */
-    PHYS_CMD_ADD_JOINT = 6
+    PHYS_CMD_ADD_JOINT = 6,
+
+    /** Set a body's friction and restitution.
+     *  Payload: phys_cmd_set_material_t. */
+    PHYS_CMD_SET_MATERIAL = 7
 } phys_cmd_type_t;
 
 /** Shape tag for spawn commands. */
 typedef enum phys_cmd_shape {
-    PHYS_CMD_SHAPE_BOX     = 0,
-    PHYS_CMD_SHAPE_SPHERE  = 1,
-    PHYS_CMD_SHAPE_CAPSULE = 2
+    PHYS_CMD_SHAPE_BOX       = 0,
+    PHYS_CMD_SHAPE_SPHERE    = 1,
+    PHYS_CMD_SHAPE_CAPSULE   = 2,
+    PHYS_CMD_SHAPE_HALFSPACE = 3
 } phys_cmd_shape_t;
 
 /** Spawn a new rigid body. */
@@ -80,7 +85,16 @@ typedef struct phys_cmd_spawn_body {
             float radius;        /**< Capsule radius. */
             float half_height;   /**< Capsule half-height. */
         } capsule;
+        struct {
+            phys_vec3_t normal;  /**< Outward-facing unit normal. */
+            float       distance; /**< Signed distance from origin. */
+        } halfspace;
     } shape_data;
+
+    float       friction;        /**< Surface friction (0 = use default 0.5). */
+    float       restitution;     /**< Bounciness (0 = use default 0.0). */
+    /** If true, friction/restitution values override body_init defaults. */
+    bool        has_material;
 
     /** Opaque user data passed back via the result callback.
      *  Useful for mapping the created body index to game-level metadata. */
@@ -134,6 +148,13 @@ typedef struct phys_cmd_add_joint {
     phys_vec3_t local_anchor_b;  /**< Anchor in body B local space. */
     phys_vec3_t axis;            /**< Joint axis (hinge only). */
 } phys_cmd_add_joint_t;
+
+/** Set a body's surface material properties (friction and restitution). */
+typedef struct phys_cmd_set_material {
+    uint32_t body_index;         /**< Target body. */
+    float    friction;           /**< Surface friction coefficient (0–1+). */
+    float    restitution;        /**< Coefficient of restitution (0–1). */
+} phys_cmd_set_material_t;
 
 /**
  * @brief Callback invoked for each SPAWN_BODY command after the body

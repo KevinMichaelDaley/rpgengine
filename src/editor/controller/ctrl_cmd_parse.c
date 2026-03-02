@@ -721,6 +721,35 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return (uint32_t)n3;
     }
 
+    /* Special handling for physics_material: entity friction restitution.
+     * "physics_material ground 0.8 0.1"
+     *   → {"entity_id":"ground","friction":0.8,"restitution":0.1}
+     */
+    if (def && strcmp(wire_name, "physics_material") == 0 && token_count >= 4) {
+        char mbuf[256];
+        const char *ent = tokens[1];
+        const char *fric = tokens[2];
+        const char *rest = tokens[3];
+
+        /* Entity ref: numeric id or string name. */
+        char ent_json[128];
+        if (looks_numeric_(ent)) {
+            snprintf(ent_json, sizeof(ent_json), "%s", ent);
+        } else {
+            snprintf(ent_json, sizeof(ent_json), "\"%s\"", ent);
+        }
+
+        snprintf(mbuf, sizeof(mbuf),
+                 "{\"entity_id\":%s,\"friction\":%s,\"restitution\":%s}",
+                 ent_json, fric, rest);
+
+        int n4 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, mbuf);
+        if (n4 < 0 || (uint32_t)n4 >= out_cap) return 0;
+        return (uint32_t)n4;
+    }
+
     /* Build args JSON. */
     char args_buf[2048];
     uint32_t args_len;
@@ -887,6 +916,28 @@ uint32_t ctrl_cmd_build_entity_def_json(const char *header,
             }
             aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
                                      "{\"key\":9,\"value\":true}");
+            attr_count++;
+        } else if (strcmp(toks[0], "friction") == 0 && ntoks >= 2) {
+            /* Sugar: "friction 0.8" → setattr SCRIPT_KEY_FRICTION(12) <float>. */
+            if (attr_count > 0) {
+                aw += (uint32_t)snprintf(attrs_buf + aw,
+                                         sizeof(attrs_buf) - aw, ",");
+            }
+            const char *dot = strchr(toks[1], '.');
+            aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
+                                     "{\"key\":12,\"value\":%s%s}",
+                                     toks[1], dot ? "" : ".0");
+            attr_count++;
+        } else if (strcmp(toks[0], "restitution") == 0 && ntoks >= 2) {
+            /* Sugar: "restitution 0.1" → setattr SCRIPT_KEY_RESTITUTION(13) <float>. */
+            if (attr_count > 0) {
+                aw += (uint32_t)snprintf(attrs_buf + aw,
+                                         sizeof(attrs_buf) - aw, ",");
+            }
+            const char *dot = strchr(toks[1], '.');
+            aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
+                                     "{\"key\":13,\"value\":%s%s}",
+                                     toks[1], dot ? "" : ".0");
             attr_count++;
         }
     }

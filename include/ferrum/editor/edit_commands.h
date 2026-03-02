@@ -302,6 +302,10 @@ bool cmd_entity_def(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_joint(edit_dispatch_t *d, const json_value_t *args,
                json_value_t *result, json_arena_t *arena);
 
+/** @brief Set physics material on an entity. Args: {"entity_id":N,"friction":f,"restitution":r}. */
+bool cmd_physics_material(edit_dispatch_t *d, const json_value_t *args,
+                          json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

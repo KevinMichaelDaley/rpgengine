@@ -124,6 +124,17 @@ typedef struct edit_physics_bridge {
                          const float local_anchor_b[3],
                          const float axis[3]);
 
+    /**
+     * @brief Called to set physics material on a body.
+     * @param user_data    Opaque context.
+     * @param body_index   Physics body index.
+     * @param friction     Surface friction coefficient (0–1+).
+     * @param restitution  Coefficient of restitution (0–1).
+     */
+    void (*on_set_material)(void *user_data,
+                            uint32_t body_index,
+                            float friction, float restitution);
+
     void *user_data;  /**< Opaque context passed to all callbacks. */
 } edit_physics_bridge_t;
 

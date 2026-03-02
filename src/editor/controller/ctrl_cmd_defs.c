@@ -486,6 +486,13 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Create a joint. Type: hinge, ball, distance. Anchor is world-space.",
         .arg_fmt = NULL, /* Custom parsing: type + 2 entities + anchor + optional axis. */
     },
+    {
+        .name    = "physics_material",
+        .alias   = "pmat",
+        .usage   = "physics_material <entity> <friction> <restitution>",
+        .help    = "Set friction and restitution on an entity's physics body.",
+        .arg_fmt = NULL, /* Custom parsing. */
+    },
 };
 
 static const uint32_t s_def_count =

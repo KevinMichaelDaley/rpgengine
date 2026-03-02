@@ -25,11 +25,12 @@ extern "C" {
 /* Constants                                                                 */
 /* ------------------------------------------------------------------------ */
 
-#define EDIT_ENTITY_TYPE_BOX     0
-#define EDIT_ENTITY_TYPE_SPHERE  1
-#define EDIT_ENTITY_TYPE_CAPSULE 2
-#define EDIT_ENTITY_TYPE_MARKER  3
-#define EDIT_ENTITY_TYPE_MESH    4
+#define EDIT_ENTITY_TYPE_BOX       0
+#define EDIT_ENTITY_TYPE_SPHERE    1
+#define EDIT_ENTITY_TYPE_CAPSULE   2
+#define EDIT_ENTITY_TYPE_MARKER    3
+#define EDIT_ENTITY_TYPE_MESH      4
+#define EDIT_ENTITY_TYPE_HALFSPACE 5
 #define EDIT_ENTITY_INVALID_ID   UINT32_MAX
 
 /** @brief Maximum number of entity types in the registry. */

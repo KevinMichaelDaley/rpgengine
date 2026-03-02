@@ -5,12 +5,13 @@
 #
 # Usage: source scripts/chain_whip.cmd
 
-# Ground plane
+# Ground plane (halfspace: pos = point on plane, rot = normal)
 entity_def ground
-  type box
-  pos 0 -0.5 0
-  scale 80 1 80
-  static
+  type halfspace
+  pos 0 0 0
+  rot 0 1 0
+  friction 0.8
+  restitution 0.0
 end
 
 # Scattered boxes for collisions
@@ -1149,3 +1150,54 @@ joint ball cap_2_35 cap_2_36 -2.5 4.0 -4.3 0 1 0
 joint ball cap_2_36 cap_2_37 -2.5 3.2 -4.3 0 1 0
 joint ball cap_2_37 cap_2_38 -2.5 2.4 -4.3 0 1 0
 joint ball cap_2_38 cap_2_39 -2.5 1.6 -4.3 0 1 0
+
+# Loose capsules for settling test (y-aligned, dropped from height)
+entity_def loose_cap_0
+  type capsule
+  pos 10.0 5.0 10.0
+  rot 15 0 0
+  scale 0.3 0.8 0.3
+  mass 1.0
+  friction 0.6
+  restitution 0.0
+end
+
+entity_def loose_cap_1
+  type capsule
+  pos 12.0 5.0 10.0
+  rot 0 0 20
+  scale 0.3 0.8 0.3
+  mass 1.0
+  friction 0.6
+  restitution 0.0
+end
+
+entity_def loose_cap_2
+  type capsule
+  pos 14.0 5.0 10.0
+  rot -10 0 15
+  scale 0.3 0.8 0.3
+  mass 1.0
+  friction 0.6
+  restitution 0.0
+end
+
+entity_def loose_cap_3
+  type capsule
+  pos 10.0 5.0 12.0
+  rot 20 0 -10
+  scale 0.3 0.8 0.3
+  mass 1.0
+  friction 0.6
+  restitution 0.0
+end
+
+entity_def loose_cap_4
+  type capsule
+  pos 12.0 5.0 12.0
+  rot -15 0 -20
+  scale 0.3 0.8 0.3
+  mass 1.0
+  friction 0.6
+  restitution 0.0
+end

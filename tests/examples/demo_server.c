@@ -71,7 +71,7 @@
 #define DEMO_MAX_BODIES        1024u
 #define DEMO_TICK_HZ           30u
 #define DEMO_BOX_HALF          0.5f
-#define DEMO_BOX_MASS          1.0f
+#define DEMO_DEFAULT_MASS      1.0f
 #define DEMO_FIBER_STACK       (256u * 1024u)
 
 /** Maximum snapshot wire size: header(12) + 1024 bodies × 26 bytes. */
@@ -242,6 +242,20 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
         spawn.shape = PHYS_CMD_SHAPE_CAPSULE;
         spawn.shape_data.capsule.radius      = entity->scale[0] * 0.5f;
         spawn.shape_data.capsule.half_height  = entity->scale[1] * 0.5f;
+    } else if (entity->type == EDIT_ENTITY_TYPE_HALFSPACE) {
+        /* Halfspace: infinite plane.  rot = plane normal (unit vector),
+         * pos = any point on the plane.  Plane distance from origin =
+         * dot(normal, pos). */
+        spawn.shape = PHYS_CMD_SHAPE_HALFSPACE;
+        spawn.mass  = 0.0f;
+        spawn.flags |= PHYS_BODY_FLAG_STATIC;
+        float nx = entity->rot[0], ny = entity->rot[1], nz = entity->rot[2];
+        float len = sqrtf(nx*nx + ny*ny + nz*nz);
+        if (len < 1e-6f) { nx = 0.0f; ny = 1.0f; nz = 0.0f; len = 1.0f; }
+        nx /= len; ny /= len; nz /= len;
+        spawn.shape_data.halfspace.normal = (phys_vec3_t){nx, ny, nz};
+        spawn.shape_data.halfspace.distance =
+            nx * entity->pos[0] + ny * entity->pos[1] + nz * entity->pos[2];
     } else {
         spawn.shape = PHYS_CMD_SHAPE_BOX;
         spawn.shape_data.box_half = (phys_vec3_t){
@@ -251,9 +265,10 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
         };
     }
 
-    /* Read mass from attrs (default: DEMO_BOX_MASS). */
-    spawn.mass = DEMO_BOX_MASS;
-    {
+    /* Read mass from attrs (default: DEMO_DEFAULT_MASS).
+     * Halfspaces are always static with zero mass — skip mass readback. */
+    if (entity->type != EDIT_ENTITY_TYPE_HALFSPACE) {
+        spawn.mass = DEMO_DEFAULT_MASS;
         uint8_t at = 0, as = 0;
         const void *mv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_MASS,
                                           &at, &as);
@@ -304,6 +319,26 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
         }
     }
 
+    /* Read friction/restitution from attrs if present. */
+    {
+        uint8_t at = 0, as = 0;
+        const void *fv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_FRICTION,
+                                          &at, &as);
+        if (fv && as == 4 && at == SCRIPT_ATTR_F32) {
+            memcpy(&spawn.friction, fv, 4);
+            spawn.has_material = true;
+        }
+    }
+    {
+        uint8_t at = 0, as = 0;
+        const void *rv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_RESTITUTION,
+                                          &at, &as);
+        if (rv && as == 4 && at == SCRIPT_ATTR_F32) {
+            memcpy(&spawn.restitution, rv, 4);
+            spawn.has_material = true;
+        }
+    }
+
     phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
                   &spawn, sizeof(spawn));
 
@@ -321,6 +356,11 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
             ctx->body_half[bi][0] = spawn.shape_data.capsule.radius;
             ctx->body_half[bi][1] = spawn.shape_data.capsule.half_height;
             ctx->body_half[bi][2] = spawn.shape_data.capsule.radius;
+        } else if (entity->type == EDIT_ENTITY_TYPE_HALFSPACE) {
+            ctx->body_shape_type[bi] = 0; /* render as invisible/box placeholder */
+            ctx->body_half[bi][0] = 0.0f;
+            ctx->body_half[bi][1] = 0.0f;
+            ctx->body_half[bi][2] = 0.0f;
         } else {
             ctx->body_shape_type[bi] = 0; /* box */
             ctx->body_half[bi][0] = spawn.shape_data.box_half.x;
@@ -555,6 +595,19 @@ static uint32_t bridge_on_joint_(void *user_data,
            joint_type, body_a, body_b);
     /* Return 0 as a success indicator (actual joint index assigned at drain). */
     return 0;
+}
+
+/** Bridge callback: set friction/restitution on a physics body. */
+static void bridge_on_set_material_(void *user_data,
+                                     uint32_t body_index,
+                                     float friction, float restitution) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+    phys_cmd_set_material_t cmd;
+    cmd.body_index  = body_index;
+    cmd.friction    = friction;
+    cmd.restitution = restitution;
+    phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_MATERIAL,
+                  &cmd, sizeof(cmd));
 }
 
 /* ── Physics simulation control callbacks ─────────────────────────── */
@@ -1353,6 +1406,7 @@ int main(int argc, char **argv) {
             .on_query_touching = bridge_on_query_touching_,
             .on_mesh_data = bridge_on_mesh_data_,
             .on_joint  = bridge_on_joint_,
+            .on_set_material = bridge_on_set_material_,
             .user_data = &ctx,
         };
         editor_ctx_set_bridge(&ctx.editor, &ctx.editor_bridge);

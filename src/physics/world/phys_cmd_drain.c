@@ -50,7 +50,16 @@ static void apply_spawn_(phys_world_t *world,
                 cmd->shape_data.capsule.radius,
                 cmd->shape_data.capsule.half_height);
             break;
+        case PHYS_CMD_SHAPE_HALFSPACE:
+            /* Halfspaces are always static — no inertia needed. */
+            break;
         }
+    }
+
+    /* Apply material properties if explicitly provided. */
+    if (cmd->has_material) {
+        b->friction    = cmd->friction;
+        b->restitution = cmd->restitution;
     }
 
     /* Copy to next buffer so the tick sees consistent state. */
@@ -75,6 +84,11 @@ static void apply_spawn_(phys_world_t *world,
                                         cmd->shape_data.capsule.radius,
                                         cmd->shape_data.capsule.half_height,
                                         zero_off, identity);
+        break;
+    case PHYS_CMD_SHAPE_HALFSPACE:
+        phys_world_set_halfspace_collider(world, idx,
+                                          cmd->shape_data.halfspace.normal,
+                                          cmd->shape_data.halfspace.distance);
         break;
     }
 
@@ -221,6 +235,24 @@ void phys_cmd_drain(phys_world_t *world,
                 joint.local_anchor_b = cmd.local_anchor_b;
                 joint.local_axis_a   = cmd.axis;
                 phys_world_add_joint(world, &joint);
+            }
+            break;
+
+        case PHYS_CMD_SET_MATERIAL:
+            if (payload_len >= sizeof(phys_cmd_set_material_t)) {
+                phys_cmd_set_material_t cmd;
+                memcpy(&cmd, payload, sizeof(cmd));
+                phys_body_t *mb = phys_world_get_body(world, cmd.body_index);
+                if (mb) {
+                    mb->friction    = cmd.friction;
+                    mb->restitution = cmd.restitution;
+                    phys_body_t *mb_next = phys_body_pool_get_next(
+                        &world->body_pool, cmd.body_index);
+                    if (mb_next) {
+                        mb_next->friction    = cmd.friction;
+                        mb_next->restitution = cmd.restitution;
+                    }
+                }
             }
             break;
 

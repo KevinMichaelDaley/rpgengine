@@ -56,6 +56,8 @@ enum {
     SCRIPT_KEY_KINEMATIC = 9,   /**< bool: body is kinematic (velocity-driven). */
     SCRIPT_KEY_ANG_VEL   = 10,  /**< vec3: angular velocity (rad/s). */
     SCRIPT_KEY_LIN_VEL   = 11,  /**< vec3: linear velocity (m/s). */
+    SCRIPT_KEY_FRICTION  = 12,  /**< f32: surface friction coefficient (0–1+). */
+    SCRIPT_KEY_RESTITUTION = 13, /**< f32: coefficient of restitution (0–1). */
 
     /* ECS component keys (mapped from registered sparse sets) */
     SCRIPT_KEY_ECS_BASE  = 64,  /**< ECS components start here. */
