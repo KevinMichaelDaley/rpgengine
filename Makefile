@@ -260,6 +260,7 @@ BIN_HEADLESS += build/phys_pair_set_tests
 BIN_HEADLESS += build/phys_contact_begin_tests
 BIN_HEADLESS += build/phys_overlap_begin_tests
 BIN_HEADLESS += build/collision_event_integration_tests
+BIN_HEADLESS += build/turret_script_e2e_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -911,6 +912,9 @@ build/aegis_runtime_idle_tests: build/libheadless.a tests/aegis/aegis_runtime_id
 build/aegis_signal_integration_tests: build/libheadless.a tests/aegis/aegis_signal_integration_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_signal_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/turret_script_e2e_tests: build/libheadless.a tests/aegis/turret_script_e2e_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/turret_script_e2e_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/phys_pair_set_tests: build/libheadless.a tests/physics/phys_pair_set_tests.c | build
 	$(CC) $(CFLAGS) tests/physics/phys_pair_set_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -1155,7 +1159,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/phys_pair_set_tests \
 	&& ./build/phys_contact_begin_tests \
 	&& ./build/phys_overlap_begin_tests \
-	&& ./build/collision_event_integration_tests
+	&& ./build/collision_event_integration_tests \
+	&& ./build/turret_script_e2e_tests
 
 TEST_TIMEOUT ?= 20
 
