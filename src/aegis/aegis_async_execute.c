@@ -114,23 +114,32 @@ uint32_t aegis_async_execute_drain(struct aegis_async_buffer *buf,
 
     for (uint32_t i = 0; i < drained; i++) {
         aegis_async_task_t *t = &tasks[i];
+        uint32_t final_status = AEGIS_ASYNC_COMPLETE;
 
         switch (t->task_type) {
         case AEGIS_TASK_VIS_TEST:
             execute_vis_test_(t, world);
-            /* Mark status on the original task via result_ptr.
-             * The VM polls the status through the buffer's task tracking,
-             * but for direct executor tests we write the result. */
             break;
 
         case AEGIS_TASK_NAV_QUERY:
             /* Not yet implemented — write miss/error sentinel. */
             write_miss_result_(t->result_ptr);
+            final_status = AEGIS_ASYNC_ERROR;
+            final_status = AEGIS_ASYNC_ERROR;
             break;
 
         default:
             write_miss_result_(t->result_ptr);
+            final_status = AEGIS_ASYNC_ERROR;
             break;
+        }
+
+        /* Write back completion status to the VM's tracking entry.
+         * Use release ordering so result writes are visible before
+         * the VM's poll/wait reads the status with acquire ordering. */
+        if (t->status_ptr) {
+            atomic_store_explicit(t->status_ptr, final_status,
+                                 memory_order_release);
         }
     }
 

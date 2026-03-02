@@ -64,6 +64,7 @@ typedef struct aegis_async_task {
     _Atomic uint32_t status;      /**< AEGIS_ASYNC_PENDING → COMPLETE | ERROR. */
     uint32_t         task_type;   /**< AEGIS_TASK_VIS_TEST, AEGIS_TASK_NAV_QUERY, etc. */
     void            *result_ptr;  /**< Points into script heap arena (fiber-owned). */
+    _Atomic uint32_t *status_ptr; /**< Points to VM's tracking entry status (for executor writeback). */
     uint32_t         result_cap;  /**< Pre-allocated result capacity in bytes. */
     uint8_t          params[64];  /**< Task-specific input parameters. */
 } aegis_async_task_t;

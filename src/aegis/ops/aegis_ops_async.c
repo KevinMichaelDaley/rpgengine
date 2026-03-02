@@ -57,17 +57,23 @@ static bool submit_async(aegis_vm_t *vm, const aegis_decode_result_t *d,
     memcpy(task.params,      vm->regs[d->raw_b].vec3, 12);
     memcpy(task.params + 12, vm->regs[d->raw_c].vec3, 12);
 
-    /* Submit to async buffer. */
-    if (!aegis_async_buffer_submit(vm->async_buffer, &task)) {
-        return false;
-    }
-
-    /* Track in VM's local task array. */
+    /* Track in VM's local task array FIRST so we can give the buffer
+     * copy a pointer to the VM-side status for executor writeback. */
     uint32_t idx = vm->async_task_count;
     vm->async_tasks[idx] = task;
-    /* Fix result_ptr — it's the real pointer, not a copy from submit. */
     vm->async_tasks[idx].result_ptr = vm->memory.base + offset;
     vm->async_task_count++;
+
+    /* Set status_ptr on the task to point at the VM's tracking entry.
+     * The executor will atomically write COMPLETE/ERROR here after
+     * writing results to result_ptr. */
+    task.status_ptr = &vm->async_tasks[idx].status;
+
+    /* Submit to async buffer (copies task including status_ptr). */
+    if (!aegis_async_buffer_submit(vm->async_buffer, &task)) {
+        vm->async_task_count--; /* Roll back tracking. */
+        return false;
+    }
 
     /* Store handle = heap offset in destination register. */
     vm->regs[d->raw_a].i32 = offset;
