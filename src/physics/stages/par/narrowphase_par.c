@@ -12,7 +12,6 @@
 #include <string.h>
 
 #include "ferrum/math/vec3.h"
-#include "ferrum/math/quat.h"
 #include "ferrum/physics/par/narrowphase_par.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/broadphase.h"
@@ -25,7 +24,6 @@
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
 #include "ferrum/physics/collision/halfspace.h"
-#include "ferrum/physics/joint.h"
 
 /** Batch size: number of broadphase pairs per job. */
 #define NP_PAR_BATCH_SIZE 64
@@ -42,50 +40,6 @@ typedef struct np_par_shared {
     const phys_narrowphase_args_t *args;  /**< Original narrowphase args.    */
     atomic_uint                    out_idx; /**< Next free candidate slot.   */
 } np_par_shared_t;
-
-/**
- * @brief Filter contacts near joint anchors for a jointed body pair.
- * @return Remaining contact count after filtering.
- */
-#define JOINT_CONTACT_RADIUS_SQ (0.5f * 0.5f)
-
-static uint8_t filter_joint_contacts(phys_contact_candidate_t *cand,
-                                     const phys_joint_t *joints,
-                                     uint32_t jcount,
-                                     const phys_body_t *bodies)
-{
-    if (!joints || jcount == 0 || cand->contact_count == 0) {
-        return cand->contact_count;
-    }
-
-    uint32_t a = cand->body_a;
-    uint32_t b = cand->body_b;
-
-    for (uint32_t ji = 0; ji < jcount; ++ji) {
-        const phys_joint_t *j = &joints[ji];
-        bool match = (j->body_a == a && j->body_b == b) ||
-                     (j->body_a == b && j->body_b == a);
-        if (!match) continue;
-
-        phys_vec3_t anchor = vec3_add(
-            bodies[j->body_a].position,
-            quat_rotate_vec3(bodies[j->body_a].orientation,
-                             j->local_anchor_a));
-
-        uint8_t write = 0;
-        for (uint8_t ci = 0; ci < cand->contact_count; ++ci) {
-            phys_vec3_t diff = vec3_sub(cand->contacts[ci].point_world,
-                                        anchor);
-            float dist_sq = vec3_dot(diff, diff);
-            if (dist_sq > JOINT_CONTACT_RADIUS_SQ) {
-                cand->contacts[write++] = cand->contacts[ci];
-            }
-        }
-        cand->contact_count = write;
-    }
-
-    return cand->contact_count;
-}
 
 /* ── Job function ──────────────────────────────────────────────── */
 
@@ -183,8 +137,6 @@ static void np_par_job_fn(void *user_data)
                     for (int j = 0; j < cand->contact_count; j++) {
                         cand->contacts[j] = contacts_buf[j];
                     }
-                    filter_joint_contacts(cand, args->joints,
-                                          args->joint_count, args->bodies);
                 }
                 continue; /* Already emitted. */
             }
@@ -277,9 +229,6 @@ static void np_par_job_fn(void *user_data)
                                 cand->body_b = bb;
                                 cand->contacts[0] = cc_contact;
                                 cand->contact_count = 1;
-                                filter_joint_contacts(cand, args->joints,
-                                                      args->joint_count,
-                                                      args->bodies);
                             }
                         }
                     }
@@ -294,8 +243,6 @@ static void np_par_job_fn(void *user_data)
                         cand->body_b = bb;
                         cand->contacts[0] = child_contact;
                         cand->contact_count = 1;
-                        filter_joint_contacts(cand, args->joints,
-                                              args->joint_count, args->bodies);
                     }
                 }
             }
@@ -323,8 +270,6 @@ static void np_par_job_fn(void *user_data)
                         cand->contacts[j].normal = vec3_scale(
                             cand->contacts[j].normal, -1.0f);
                     }
-                    filter_joint_contacts(cand, args->joints,
-                                          args->joint_count, args->bodies);
                 }
                 continue;
             }
@@ -351,8 +296,6 @@ static void np_par_job_fn(void *user_data)
                         cand->contacts[j].normal = vec3_scale(
                             cand->contacts[j].normal, -1.0f);
                     }
-                    filter_joint_contacts(cand, args->joints,
-                                          args->joint_count, args->bodies);
                 }
                 continue;
             }
@@ -380,8 +323,6 @@ static void np_par_job_fn(void *user_data)
                         cand->contacts[j].normal = vec3_scale(
                             cand->contacts[j].normal, -1.0f);
                     }
-                    filter_joint_contacts(cand, args->joints,
-                                          args->joint_count, args->bodies);
                 }
                 continue;
             }
@@ -411,8 +352,6 @@ static void np_par_job_fn(void *user_data)
                     for (int j = 0; j < cand->contact_count; j++) {
                         cand->contacts[j] = contacts_buf[j];
                     }
-                    filter_joint_contacts(cand, args->joints,
-                                          args->joint_count, args->bodies);
                 }
                 continue;
             }
@@ -436,8 +375,6 @@ static void np_par_job_fn(void *user_data)
                 cand->body_b = bb;
                 cand->contacts[0] = contact;
                 cand->contact_count = 1;
-                filter_joint_contacts(cand, args->joints,
-                                      args->joint_count, args->bodies);
             }
         }
     }

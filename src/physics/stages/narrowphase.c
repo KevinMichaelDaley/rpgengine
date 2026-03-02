@@ -11,11 +11,9 @@
 #include <string.h>
 
 #include "ferrum/math/vec3.h"
-#include "ferrum/math/quat.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/broadphase.h"
 #include "ferrum/physics/collider.h"
-#include "ferrum/physics/joint.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/narrowphase.h"
 #include "ferrum/physics/narrowphase_convex.h"
@@ -34,58 +32,6 @@
  * Helper to avoid repeating the write-out pattern for every
  * shape pair that produces exactly one contact point.
  */
-/**
- * @brief Filter contacts near joint anchors for a jointed body pair.
- *
- * For each joint connecting body_a and body_b, compute the world-space
- * anchor and discard any contact point within JOINT_CONTACT_RADIUS of it.
- * This prevents spurious collision response at the attachment point while
- * allowing the bodies to collide elsewhere on their geometry.
- *
- * @return Remaining contact count after filtering.
- */
-#define JOINT_CONTACT_RADIUS_SQ (0.5f * 0.5f)
-
-static uint8_t filter_joint_contacts(phys_contact_candidate_t *cand,
-                                     const phys_joint_t *joints,
-                                     uint32_t jcount,
-                                     const phys_body_t *bodies)
-{
-    if (!joints || jcount == 0 || cand->contact_count == 0) {
-        return cand->contact_count;
-    }
-
-    uint32_t a = cand->body_a;
-    uint32_t b = cand->body_b;
-
-    for (uint32_t ji = 0; ji < jcount; ++ji) {
-        const phys_joint_t *j = &joints[ji];
-        bool match = (j->body_a == a && j->body_b == b) ||
-                     (j->body_a == b && j->body_b == a);
-        if (!match) continue;
-
-        /* Compute world-space anchor from body A's frame. */
-        phys_vec3_t anchor = vec3_add(
-            bodies[j->body_a].position,
-            quat_rotate_vec3(bodies[j->body_a].orientation,
-                             j->local_anchor_a));
-
-        /* Remove contacts near the anchor. */
-        uint8_t write = 0;
-        for (uint8_t ci = 0; ci < cand->contact_count; ++ci) {
-            phys_vec3_t diff = vec3_sub(cand->contacts[ci].point_world,
-                                        anchor);
-            float dist_sq = vec3_dot(diff, diff);
-            if (dist_sq > JOINT_CONTACT_RADIUS_SQ) {
-                cand->contacts[write++] = cand->contacts[ci];
-            }
-        }
-        cand->contact_count = write;
-    }
-
-    return cand->contact_count;
-}
-
 static void emit_single(phys_contact_candidate_t *cand,
                          uint32_t body_a, uint32_t body_b,
                          const phys_contact_point_t *c)
@@ -419,23 +365,6 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
             emit_single(&args->candidates_out[count], ba, bb, &contact);
             count++;
         }
-    }
-
-    /* Post-filter: remove contact points near joint anchors. */
-    if (args->joints && args->joint_count > 0) {
-        uint32_t write = 0;
-        for (uint32_t ci = 0; ci < count; ++ci) {
-            filter_joint_contacts(&args->candidates_out[ci],
-                                  args->joints, args->joint_count,
-                                  args->bodies);
-            if (args->candidates_out[ci].contact_count > 0) {
-                if (write != ci) {
-                    args->candidates_out[write] = args->candidates_out[ci];
-                }
-                write++;
-            }
-        }
-        count = write;
     }
 
     *args->candidate_count_out = count;

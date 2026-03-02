@@ -20,7 +20,6 @@
 
 #include "ferrum/job/spinlock.h"
 #include "ferrum/math/vec3.h"
-#include "ferrum/math/quat.h"
 #include "ferrum/physics/collision/box_box.h"
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
@@ -28,7 +27,6 @@
 #include "ferrum/physics/narrowphase_convex.h"
 #include "ferrum/physics/convex_compound.h"
 #include "ferrum/physics/collision/halfspace.h"
-#include "ferrum/physics/joint.h"
 #include "ferrum/physics/step_plan.h"
 
 #ifdef TRACY_ENABLE
@@ -105,50 +103,6 @@ static int contact_on_unstable_box(const phys_collision_fused_args_t *args,
         if (box_contact_unstable(cp->local_b, he)) return 1;
     }
     return 0;
-}
-
-/**
- * @brief Filter contacts near joint anchors for a jointed body pair.
- * @return Remaining contact count after filtering.
- */
-#define JOINT_CONTACT_RADIUS_SQ (0.5f * 0.5f)
-
-static uint8_t filter_joint_contacts(phys_contact_candidate_t *cand,
-                                     const phys_joint_t *joints,
-                                     uint32_t jcount,
-                                     const phys_body_t *bodies)
-{
-    if (!joints || jcount == 0 || cand->contact_count == 0) {
-        return cand->contact_count;
-    }
-
-    uint32_t a = cand->body_a;
-    uint32_t b = cand->body_b;
-
-    for (uint32_t ji = 0; ji < jcount; ++ji) {
-        const phys_joint_t *j = &joints[ji];
-        bool match = (j->body_a == a && j->body_b == b) ||
-                     (j->body_a == b && j->body_b == a);
-        if (!match) continue;
-
-        phys_vec3_t anchor = vec3_add(
-            bodies[j->body_a].position,
-            quat_rotate_vec3(bodies[j->body_a].orientation,
-                             j->local_anchor_a));
-
-        uint8_t write = 0;
-        for (uint8_t ci = 0; ci < cand->contact_count; ++ci) {
-            phys_vec3_t diff = vec3_sub(cand->contacts[ci].point_world,
-                                        anchor);
-            float dist_sq = vec3_dot(diff, diff);
-            if (dist_sq > JOINT_CONTACT_RADIUS_SQ) {
-                cand->contacts[write++] = cand->contacts[ci];
-            }
-        }
-        cand->contact_count = write;
-    }
-
-    return cand->contact_count;
 }
 
 /* ── Narrowphase: test one pair ────────────────────────────────── */
@@ -673,26 +627,6 @@ static void collision_fused_job(void *data)
         if (cand_count >= FUSED_MAX_CAND_PER_BATCH) break;
         uint32_t remaining = FUSED_MAX_CAND_PER_BATCH - cand_count;
         int n = narrow_test_pair(args, i, &local_cands[cand_count], remaining);
-        /* Filter out contacts near joint anchors. */
-        if (n > 0 && args->joints && args->joint_count > 0) {
-            for (int ci = 0; ci < n; ++ci) {
-                filter_joint_contacts(&local_cands[cand_count + ci],
-                                      args->joints, args->joint_count,
-                                      args->bodies);
-            }
-            /* Compact: remove candidates with zero remaining contacts. */
-            int kept = 0;
-            for (int ci = 0; ci < n; ++ci) {
-                if (local_cands[cand_count + ci].contact_count > 0) {
-                    if (kept != ci) {
-                        local_cands[cand_count + kept] =
-                            local_cands[cand_count + ci];
-                    }
-                    kept++;
-                }
-            }
-            n = kept;
-        }
         cand_count += (uint32_t)n;
     }
 

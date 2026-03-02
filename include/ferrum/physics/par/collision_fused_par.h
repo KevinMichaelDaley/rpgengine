@@ -56,10 +56,6 @@ typedef struct phys_collision_fused_args {
     uint32_t                    pair_count;   /**< Number of broadphase pairs. */
     float                       speculative_margin; /**< Speculative contact margin. */
 
-    /* ── Joint filtering ───────────────────────────────────────── */
-    const struct phys_joint    *joints;            /**< Joint array for connected-body filtering (may be NULL). */
-    uint32_t                    joint_count;        /**< Number of active joints. */
-
     /* ── Manifold cache ─────────────────────────────────────────── */
     struct phys_manifold_cache *cache;        /**< Shared manifold cache. */
     uint64_t                    tick;         /**< Current simulation tick. */
