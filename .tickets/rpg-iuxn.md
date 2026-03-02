@@ -1,6 +1,6 @@
 ---
 id: rpg-iuxn
-status: open
+status: closed
 deps: []
 links: [rpg-kapu, rpg-62o7]
 created: 2026-03-02T00:43:12Z
