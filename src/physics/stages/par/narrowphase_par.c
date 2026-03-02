@@ -360,9 +360,23 @@ static void np_par_job_fn(void *user_data)
             float rc = args->capsules[c0->shape_index].radius;
             float hh = args->capsules[c0->shape_index].half_height;
             const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
-            hit = phys_capsule_vs_halfspace(w0, q0, rc, hh,
-                                             hs->normal, hs->distance,
-                                             args->speculative_margin, &contact);
+            phys_contact_point_t contacts_buf[2];
+            int nc = phys_capsule_vs_halfspace(w0, q0, rc, hh,
+                                               hs->normal, hs->distance,
+                                               args->speculative_margin,
+                                               contacts_buf, 2);
+            if (nc > 0) {
+                uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                if (slot < args->max_candidates) {
+                    phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                    cand->body_a = ba;
+                    cand->body_b = bb;
+                    cand->contact_count = (uint8_t)nc;
+                    for (int j = 0; j < nc; j++) {
+                        cand->contacts[j] = contacts_buf[j];
+                    }
+                }
+            }
         }
         /* mesh-halfspace and halfspace-halfspace: no collision. */
 

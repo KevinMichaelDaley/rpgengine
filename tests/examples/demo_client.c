@@ -167,6 +167,11 @@ typedef struct gl_ctx {
     vbo_t             cap_vbo;   /* capsule mesh */
     vao_t             cap_vao;
     uint32_t          cap_vert_count;
+    shader_program_t  cap_program;  /* capsule-specific shader */
+    GLint             cap_u_mvp;
+    GLint             cap_u_color;
+    GLint             cap_u_radius;
+    GLint             cap_u_half_h;
     vbo_t             sph_vbo;   /* sphere mesh */
     vao_t             sph_vao;
     uint32_t          sph_vert_count;
@@ -197,9 +202,14 @@ static mat4_t mat4_from_quat(quat_t q) {
 
 static uint32_t gen_capsule_mesh(float *out, uint32_t max_verts)
 {
+    /* Unit capsule: radius = 1.0, half_height = 1.0.
+     * Cylinder body spans Y = [-1, 1], hemisphere caps at each end.
+     * Total height = 4.0 (2*half_h + 2*r).
+     * The vertex shader rescales using u_radius and u_half_height uniforms
+     * to produce the correct capsule dimensions. */
     uint32_t v = 0;
-    const float r = 0.5f;
-    const float half_h = 0.0f;
+    const float r = 1.0f;
+    const float half_h = 1.0f;
 
 #define EMIT(px,py,pz) do { \
     if (v >= max_verts) return 0; \
@@ -436,6 +446,56 @@ static int gl_init(gl_ctx_t *ctx) {
     }
     shader_uniform_cache_init(&ctx->uniforms, &ctx->program);
 
+    /* ── Capsule shader: rescales unit capsule mesh per-body ───────── */
+    const char *cap_vs =
+        "#version 330 core\n"
+        "in vec3 in_pos;\n"
+        "uniform mat4 u_mvp;\n"
+        "uniform float u_radius;\n"
+        "uniform float u_half_h;\n"
+        "void main() {\n"
+        "    /* Unit mesh: r=1, half_h=1.  Cylinder spans Y=[-1,1],\n"
+        "     * hemisphere caps extend beyond.  Decompose vertex into\n"
+        "     * cylinder vs hemisphere part and scale independently. */\n"
+        "    float y = in_pos.y;\n"
+        "    vec3 p;\n"
+        "    p.x = in_pos.x * u_radius;\n"
+        "    p.z = in_pos.z * u_radius;\n"
+        "    if (y >= 1.0) {\n"
+        "        /* Top hemisphere: offset from cylinder top. */\n"
+        "        float dy = y - 1.0;\n"
+        "        float xz_scale = length(vec2(in_pos.x, in_pos.z));\n"
+        "        if (xz_scale > 0.001) {\n"
+        "            p.x = in_pos.x / xz_scale * sqrt(max(0.0, u_radius*u_radius - (dy*u_radius)*(dy*u_radius)));\n"
+        "            p.z = in_pos.z / xz_scale * sqrt(max(0.0, u_radius*u_radius - (dy*u_radius)*(dy*u_radius)));\n"
+        "        }\n"
+        "        p.y = u_half_h + dy * u_radius;\n"
+        "    } else if (y <= -1.0) {\n"
+        "        /* Bottom hemisphere. */\n"
+        "        float dy = y + 1.0;\n"
+        "        float xz_scale = length(vec2(in_pos.x, in_pos.z));\n"
+        "        if (xz_scale > 0.001) {\n"
+        "            p.x = in_pos.x / xz_scale * sqrt(max(0.0, u_radius*u_radius - (dy*u_radius)*(dy*u_radius)));\n"
+        "            p.z = in_pos.z / xz_scale * sqrt(max(0.0, u_radius*u_radius - (dy*u_radius)*(dy*u_radius)));\n"
+        "        }\n"
+        "        p.y = -u_half_h + dy * u_radius;\n"
+        "    } else {\n"
+        "        /* Cylinder body: scale Y by half_height. */\n"
+        "        p.y = y * u_half_h;\n"
+        "    }\n"
+        "    gl_Position = u_mvp * vec4(p, 1.0);\n"
+        "}\n";
+
+    char cap_log[1024] = {0};
+    if (shader_program_create(&ctx->cap_program, &ctx->loader, cap_vs, fs,
+                              cap_log, sizeof(cap_log)) != SHADER_PROGRAM_OK) {
+        fprintf(stderr, "capsule shader error: %s\n", cap_log);
+    }
+    ctx->cap_u_mvp    = glGetUniformLocation(ctx->cap_program.handle, "u_mvp");
+    ctx->cap_u_color  = glGetUniformLocation(ctx->cap_program.handle, "u_color");
+    ctx->cap_u_radius = glGetUniformLocation(ctx->cap_program.handle, "u_radius");
+    ctx->cap_u_half_h = glGetUniformLocation(ctx->cap_program.handle, "u_half_h");
+
     /* Cube VBO + VAO */
     static const float cube_verts[] = {
          0.5f,-0.5f,-0.5f,  0.5f,-0.5f, 0.5f,  0.5f, 0.5f, 0.5f,
@@ -473,7 +533,11 @@ static int gl_init(gl_ctx_t *ctx) {
         vbo_upload(&ctx->cap_vbo, GL_ARRAY_BUFFER, cap_verts,
                    ctx->cap_vert_count * 3 * sizeof(float), GL_STATIC_DRAW);
         vao_create(&ctx->cap_vao, &ctx->loader);
-        vao_bind_attributes(&ctx->cap_vao, &ctx->cap_vbo, &attr, 1u,
+        GLint cap_pos_loc = glGetAttribLocation(
+            ctx->cap_program.handle, "in_pos");
+        vao_attribute_t cap_attr = {(uint32_t)cap_pos_loc, 3, GL_FLOAT,
+                                    0u, 0u, 0u};
+        vao_bind_attributes(&ctx->cap_vao, &ctx->cap_vbo, &cap_attr, 1u,
                             3u * sizeof(float));
     }
 
@@ -559,6 +623,7 @@ static void gl_shutdown(gl_ctx_t *ctx) {
     vao_destroy(&ctx->vao);
     vbo_destroy(&ctx->vbo);
     shader_program_destroy(&ctx->program);
+    shader_program_destroy(&ctx->cap_program);
     if (ctx->gl) {
         SDL_GL_DeleteContext(ctx->gl);
     }

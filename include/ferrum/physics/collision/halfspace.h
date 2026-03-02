@@ -46,8 +46,9 @@ bool phys_sphere_vs_halfspace(
 /**
  * @brief Test capsule vs halfspace intersection.
  *
- * Tests both capsule endpoints against the plane and returns a single
- * contact at the deepest penetrating point.
+ * Tests both capsule endpoints against the plane and returns contacts
+ * for each endpoint that is penetrating or within speculative margin.
+ * When the capsule lies on its side, both endpoints produce contacts.
  *
  * @param capsule_center     World-space center of the capsule.
  * @param capsule_rotation   World-space orientation of the capsule.
@@ -56,15 +57,16 @@ bool phys_sphere_vs_halfspace(
  * @param plane_normal       Unit normal of the halfspace.
  * @param plane_distance     Signed distance of the plane from origin.
  * @param speculative_margin Max separation for speculative contacts.
- * @param contact_out        Output contact point.
- * @return true if capsule penetrates or is within speculative margin.
+ * @param contacts_out       Output array (must have capacity for 2 contacts).
+ * @param max_contacts       Capacity of contacts_out (typically 2).
+ * @return Number of contacts written (0 if no intersection).
  */
-bool phys_capsule_vs_halfspace(
+int phys_capsule_vs_halfspace(
     phys_vec3_t capsule_center, phys_quat_t capsule_rotation,
     float capsule_radius, float capsule_half_height,
     phys_vec3_t plane_normal, float plane_distance,
     float speculative_margin,
-    struct phys_contact_point *contact_out);
+    struct phys_contact_point *contacts_out, int max_contacts);
 
 /**
  * @brief Test box vs halfspace intersection.

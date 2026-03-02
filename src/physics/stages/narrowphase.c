@@ -358,9 +358,22 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
             float rc = args->capsules[c0->shape_index].radius;
             float hh = args->capsules[c0->shape_index].half_height;
             const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
-            hit = phys_capsule_vs_halfspace(w0, q0, rc, hh,
-                                             hs->normal, hs->distance,
-                                             args->speculative_margin, &contact);
+            phys_contact_point_t contacts_buf[2];
+            int nc = phys_capsule_vs_halfspace(w0, q0, rc, hh,
+                                               hs->normal, hs->distance,
+                                               args->speculative_margin,
+                                               contacts_buf, 2);
+            if (nc > 0) {
+                phys_contact_candidate_t *cand = &args->candidates_out[count];
+                cand->body_a = ba;
+                cand->body_b = bb;
+                cand->contact_count = (uint8_t)nc;
+                for (int j = 0; j < nc; j++) {
+                    cand->contacts[j] = contacts_buf[j];
+                }
+                count++;
+                continue;
+            }
         }
         /* mesh-halfspace and halfspace-halfspace: no collision. */
 

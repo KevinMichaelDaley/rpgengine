@@ -107,6 +107,46 @@ static int contact_on_unstable_box_(const phys_stabilization_args_t *args,
     return 0;
 }
 
+/**
+ * @brief Check if a manifold's contact points form stable support.
+ *
+ * Stable support requires at least 3 noncollinear contact points whose
+ * support plane is roughly horizontal (normal aligned with gravity axis).
+ * A vertical support plane (e.g., side-to-side box contact) cannot resist
+ * gravity-induced toppling and must not receive resting stabilization.
+ *
+ * @param m   The manifold to check.
+ * @return true if the contact provides stable (horizontal) support.
+ */
+static int manifold_has_stable_support_(const phys_manifold_t *m)
+{
+    if (m->point_count < 3) {
+        return 0;
+    }
+
+    /* Compute the support plane normal from the first 3 contact points. */
+    vec3_t p0 = m->points[0].point_world;
+    vec3_t p1 = m->points[1].point_world;
+    vec3_t p2 = m->points[2].point_world;
+
+    vec3_t e1 = vec3_sub(p1, p0);
+    vec3_t e2 = vec3_sub(p2, p0);
+    vec3_t cross = vec3_cross(e1, e2);
+    float area_sq = vec3_dot(cross, cross);
+
+    /* Collinearity check: triangle with sides ~1mm has area ~0.5e-6. */
+    if (area_sq < 1e-8f) {
+        return 0;
+    }
+
+    /* The support plane must be roughly horizontal for gravitational
+     * stability.  Check that the plane normal has a strong vertical
+     * component (|normal.y| / |normal| > cos(45°) ≈ 0.707).
+     * Squaring both sides avoids the sqrt: y² > 0.5 * |n|². */
+    float ny_sq = cross.y * cross.y;
+    return ny_sq > 0.5f * area_sq;
+}
+
 void phys_stage_stabilization(const phys_stabilization_args_t *args)
 {
     if (!args || !args->manifolds || !args->hints_out || !args->bodies) {
@@ -178,11 +218,13 @@ void phys_stage_stabilization(const phys_stabilization_args_t *args)
         /* Classify as resting if both normal and tangential speeds
          * are below the threshold.  Apply tier friction boost.
          *
-         * Exception: if a box body is supported only on an edge or
-         * corner, the configuration is inherently unstable and must
-         * not receive resting treatment — gravity will topple it. */
+         * Exceptions — do NOT apply resting stabilization when:
+         * 1. A box body is supported on an edge or corner (unstable).
+         * 2. The manifold has fewer than 3 noncollinear contact points,
+         *    meaning the support polygon cannot resist torque. */
         if (fabsf(v_n) < threshold && v_t_sq < threshold_sq) {
-            if (!contact_on_unstable_box_(args, m, cp)) {
+            if (!contact_on_unstable_box_(args, m, cp) &&
+                manifold_has_stable_support_(m)) {
                 hint->friction_scale    = 3.0f * tier_friction_boost;
                 hint->restitution_scale = 0.0f;
             }

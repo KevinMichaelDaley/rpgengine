@@ -476,11 +476,32 @@ int phys_stage_ccd_dynamic(const phys_ccd_dynamic_args_t *args) {
         if (!is_dynamic(&args->bodies[a])) continue;
         if (!is_dynamic(&args->bodies[b])) continue;
 
-        /* At least one must have CCD flag. */
+        /* At least one must have CCD flag OR be moving fast enough
+         * relative to its size that tunneling is possible.  The auto-CCD
+         * check compares displacement (speed * dt) against the smaller
+         * bounding radius of the pair — if displacement exceeds the
+         * minimum radius, CCD is needed. */
         uint32_t flags_a = args->bodies[a].flags;
         uint32_t flags_b = args->bodies[b].flags;
         if (!(flags_a & PHYS_BODY_FLAG_CCD) &&
-            !(flags_b & PHYS_BODY_FLAG_CCD)) continue;
+            !(flags_b & PHYS_BODY_FLAG_CCD)) {
+            /* Auto-CCD: check if displacement exceeds min bounding radius. */
+            float ra = bounding_radius(&args->colliders[a], args->spheres,
+                                       args->capsules, args->boxes);
+            float rb = bounding_radius(&args->colliders[b], args->spheres,
+                                       args->capsules, args->boxes);
+            float min_r = ra < rb ? ra : rb;
+            float vax = args->bodies[a].linear_vel.x;
+            float vay = args->bodies[a].linear_vel.y;
+            float vaz = args->bodies[a].linear_vel.z;
+            float vbx = args->bodies[b].linear_vel.x;
+            float vby = args->bodies[b].linear_vel.y;
+            float vbz = args->bodies[b].linear_vel.z;
+            float rel_vx = vbx - vax, rel_vy = vby - vay, rel_vz = vbz - vaz;
+            float rel_speed_sq = rel_vx*rel_vx + rel_vy*rel_vy + rel_vz*rel_vz;
+            float disp = sqrtf(rel_speed_sq) * args->dt;
+            if (disp < min_r * 0.5f) continue;
+        }
 
         /* Both must be primitive shapes (sphere/box/capsule). */
         if (!is_primitive_shape(args->colliders[a].type)) continue;

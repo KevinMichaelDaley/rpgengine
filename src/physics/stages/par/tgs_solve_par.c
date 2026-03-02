@@ -35,6 +35,11 @@
 /** Minimum penetration excess to correct (avoids micro-jitter). */
 #define SPLIT_MIN_PHI 1e-6f
 
+/** Position correction ERP: fraction of penetration resolved per substep.
+ *  1.0 = full correction (aggressive, can oscillate).
+ *  0.2–0.4 = typical for stable stacking/resting contacts. */
+#define SPLIT_ERP 0.1f
+
 /** Min constraints per island to use graph-colored parallel dispatch. */
 #define COLOR_THRESHOLD 128
 
@@ -83,9 +88,9 @@ static uint32_t compute_island_iterations(
 
     if (max_speed_sq <= lo2) {
         /* Even at low speed, serial chains need enough iterations for
-         * impulse to propagate root-to-tip.  Floor at half the island
-         * body count so a 40-body chain gets at least 20 iterations. */
-        uint32_t chain_floor = island->body_count / 2;
+         * impulse to propagate root-to-tip.  Floor at the island body
+         * count so a 40-body chain gets at least 40 iterations. */
+        uint32_t chain_floor = island->body_count;
         return (chain_floor > base_iters) ? chain_floor : base_iters;
     }
 
@@ -109,8 +114,8 @@ static uint32_t compute_island_iterations(
     uint32_t extra = (uint32_t)(t * (float)(base_iters * (mult - 1)));
     uint32_t result = base_iters + extra;
 
-    /* Floor: serial chains need body_count/2 iterations minimum. */
-    uint32_t chain_floor = island->body_count / 2;
+    /* Floor: serial chains need body_count iterations minimum. */
+    uint32_t chain_floor = island->body_count;
     return (result > chain_floor) ? result : chain_floor;
 }
 
@@ -215,7 +220,7 @@ static void solve_position_row(phys_jacobian_row_t *row,
     float excess = penetration - slop;
     if (excess < SPLIT_MIN_PHI) { return; }
 
-    float pos_bias = excess * inv_dt;
+    float pos_bias = excess * inv_dt * SPLIT_ERP;
 
     float jv = vec3_dot(row->J_va, pva->linear)
              + vec3_dot(row->J_wa, pva->angular)

@@ -167,7 +167,8 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
         out->orientation.w = in->orientation.w + dq.w * half_dt;
         out->orientation = quat_normalize_safe(out->orientation, 1e-8f);
 
-        /* Sleep detection. */
+        /* Sleep detection — only update sleep counter on first substep
+         * so that sleep_delay_frames counts physics ticks, not substeps. */
         float linear_speed  = vec3_magnitude(out->linear_vel);
         float angular_speed = vec3_magnitude(out->angular_vel);
 
@@ -177,8 +178,8 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
         if (linear_speed < sleep_lin_thresh &&
             angular_speed < sleep_ang_thresh &&
             !penetrating) {
-            /* Body is below threshold: increment sleep counter. */
-            if (out->sleep_counter < 255) {
+            /* Body is below threshold: increment sleep counter once per tick. */
+            if (cur_sub == 0 && out->sleep_counter < 255) {
                 out->sleep_counter++;
             }
             if (out->sleep_counter >= sleep_delay) {

@@ -81,6 +81,34 @@ static int contact_on_unstable_box_(const phys_stabilization_args_t *args,
     return 0;
 }
 
+/**
+ * @brief Check if a manifold's contact points form stable support.
+ *
+ * Requires at least 3 noncollinear contact points whose support plane
+ * is roughly horizontal (normal within ~45° of gravity axis).
+ * Vertical support planes (side contacts) cannot resist toppling.
+ */
+static int manifold_has_stable_support_(const phys_manifold_t *m)
+{
+    if (m->point_count < 3) {
+        return 0;
+    }
+    vec3_t p0 = m->points[0].point_world;
+    vec3_t p1 = m->points[1].point_world;
+    vec3_t p2 = m->points[2].point_world;
+    vec3_t e1 = vec3_sub(p1, p0);
+    vec3_t e2 = vec3_sub(p2, p0);
+    vec3_t cross = vec3_cross(e1, e2);
+    float area_sq = vec3_dot(cross, cross);
+    if (area_sq < 1e-8f) {
+        return 0;
+    }
+    /* Plane normal must be roughly vertical: |ny|/|n| > cos(45°).
+     * Squared: ny² > 0.5 * |n|². */
+    float ny_sq = cross.y * cross.y;
+    return ny_sq > 0.5f * area_sq;
+}
+
 /* ── Per-dispatch shared context ────────────────────────────────── */
 
 /**
@@ -173,10 +201,12 @@ static void stabilization_batch_job(void *data) {
         /* Classify as resting if both normal and tangential speeds
          * are below the threshold.  Apply tier friction boost.
          *
-         * Exception: box contacts on edges or corners are inherently
-         * unstable and must not receive resting treatment. */
+         * Exceptions — do NOT apply resting stabilization when:
+         * 1. A box body is supported on an edge or corner (unstable).
+         * 2. The manifold has fewer than 3 noncollinear contact points. */
         if (fabsf(v_n) < threshold && v_t_sq < threshold_sq) {
-            if (!contact_on_unstable_box_(args, m, cp)) {
+            if (!contact_on_unstable_box_(args, m, cp) &&
+                manifold_has_stable_support_(m)) {
                 hint->friction_scale    = 3.0f * tier_friction_boost;
                 hint->restitution_scale = 0.0f;
             }

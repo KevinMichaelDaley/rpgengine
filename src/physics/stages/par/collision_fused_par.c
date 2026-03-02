@@ -105,6 +105,28 @@ static int contact_on_unstable_box(const phys_collision_fused_args_t *args,
     return 0;
 }
 
+/**
+ * @brief Check if a manifold's contact points form stable support.
+ *
+ * Requires 3+ noncollinear points with a roughly horizontal support
+ * plane (normal within ~45° of gravity axis).
+ */
+static int manifold_has_stable_support(const phys_manifold_t *m)
+{
+    if (m->point_count < 3) return 0;
+    vec3_t p0 = m->points[0].point_world;
+    vec3_t p1 = m->points[1].point_world;
+    vec3_t p2 = m->points[2].point_world;
+    vec3_t e1 = vec3_sub(p1, p0);
+    vec3_t e2 = vec3_sub(p2, p0);
+    vec3_t cross = vec3_cross(e1, e2);
+    float area_sq = vec3_dot(cross, cross);
+    if (area_sq < 1e-8f) return 0;
+    /* Plane normal must be roughly vertical: ny² > 0.5 * |n|². */
+    float ny_sq = cross.y * cross.y;
+    return ny_sq > 0.5f * area_sq;
+}
+
 /* ── Narrowphase: test one pair ────────────────────────────────── */
 
 /**
@@ -396,9 +418,21 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         float rc = args->capsules[c0->shape_index].radius;
         float hh = args->capsules[c0->shape_index].half_height;
         const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
-        hit = phys_capsule_vs_halfspace(w0, q0, rc, hh,
-                                         hs->normal, hs->distance,
-                                         args->speculative_margin, &contact);
+        phys_contact_point_t contacts_buf[2];
+        int nc = phys_capsule_vs_halfspace(w0, q0, rc, hh,
+                                           hs->normal, hs->distance,
+                                           args->speculative_margin,
+                                           contacts_buf, 2);
+        if (nc > 0) {
+            cand_out->body_a = ba;
+            cand_out->body_b = bb;
+            cand_out->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
+            for (int j = 0; j < cand_out->contact_count; j++) {
+                cand_out->contacts[j] = contacts_buf[j];
+            }
+            return 1;
+        }
+        return 0;
     }
     /* mesh-halfspace and halfspace-halfspace: no collision. */
 
@@ -535,7 +569,8 @@ static void stab_compute_one(const phys_collision_fused_args_t *args,
     if (v_t_sq < 0.0f) v_t_sq = 0.0f;
 
     if (fabsf(v_n) < threshold && v_t_sq < threshold_sq) {
-        if (!contact_on_unstable_box(args, m, cp)) {
+        if (!contact_on_unstable_box(args, m, cp) &&
+            manifold_has_stable_support(m)) {
             hint->friction_scale    = 3.0f * tier_friction_boost;
             hint->restitution_scale = 0.0f;
         }

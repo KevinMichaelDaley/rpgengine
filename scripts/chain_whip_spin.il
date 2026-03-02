@@ -24,9 +24,9 @@ load_imm r47 3.0       ; Y descent rate (units/s)
 load_imm r48 18.0      ; minimum Y height
 load_imm r49 0.2       ; radius growth rate (units/s)
 load_imm r53 8.0       ; maximum orbit radius
-load_imm r50 21        ; root_0 entity ID
-load_imm r51 62        ; root_1 entity ID
-load_imm r52 103       ; root_2 entity ID
+load_imm r50 41        ; root_0 entity ID
+load_imm r51 82        ; root_1 entity ID
+load_imm r52 123       ; root_2 entity ID
 
 loop_top:
 
