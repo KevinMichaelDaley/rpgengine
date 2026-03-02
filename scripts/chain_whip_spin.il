@@ -6,7 +6,7 @@
 ;
 ; Root entity IDs: root_0=21, root_1=62, root_2=103
 ; Orbit radius: starts at 2.0, grows by 0.2/s, caps at 8.0
-; Y height: starts at 33.0, drops by 1.5/s, clamps at 3.0
+; Y height: starts at 63.0, drops by 3.0/s, clamps at 18.0
 ; Omega: 0.8 * t (angular velocity ramps up over time)
 
 .topic tick
@@ -19,9 +19,9 @@ load_imm r42 2.0       ; initial orbit radius
 load_imm r43 0.0       ; zero
 load_imm r44 2.0944    ; 2*pi/3 phase offset
 load_imm r45 4.1888    ; 4*pi/3 phase offset
-load_imm r46 33.0      ; initial Y height
+load_imm r46 63.0      ; initial Y height
 load_imm r47 3.0       ; Y descent rate (units/s)
-load_imm r48 3.0       ; minimum Y height (whips drag on ground)
+load_imm r48 18.0      ; minimum Y height
 load_imm r49 0.2       ; radius growth rate (units/s)
 load_imm r53 8.0       ; maximum orbit radius
 load_imm r50 21        ; root_0 entity ID
@@ -50,7 +50,7 @@ after_clamp_r:
 fmul r3 r1 r1
 fmul r3 r41 r3
 
-; ── Compute Y height: y = 33.0 - 1.5 * t, clamp to 3.0 ──
+; ── Compute Y height: y = 63.0 - 3.0 * t, clamp to 18.0 ──
 fmul r5 r47 r1
 fsub r5 r46 r5
 flt r6 r5 r48

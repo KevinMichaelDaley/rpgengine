@@ -84,7 +84,11 @@ static uint32_t compute_island_iterations(
     const float hi2 = ADAPTIVE_SPEED_HIGH * ADAPTIVE_SPEED_HIGH;
 
     if (max_speed_sq <= lo2) {
-        return base_iters;
+        /* Even at low speed, serial chains need enough iterations for
+         * impulse to propagate root-to-tip.  Floor at half the island
+         * body count so a 40-body chain gets at least 20 iterations. */
+        uint32_t chain_floor = island->body_count / 2;
+        return (chain_floor > base_iters) ? chain_floor : base_iters;
     }
 
     /* Scale down the adaptive multiplier for large islands to bound
@@ -105,7 +109,11 @@ static uint32_t compute_island_iterations(
     float t = (max_speed_sq - lo2) / (hi2 - lo2);
     t = sqrtf(t);
     uint32_t extra = (uint32_t)(t * (float)(base_iters * (mult - 1)));
-    return base_iters + extra;
+    uint32_t result = base_iters + extra;
+
+    /* Floor: serial chains need body_count/2 iterations minimum. */
+    uint32_t chain_floor = island->body_count / 2;
+    return (result > chain_floor) ? result : chain_floor;
 }
 
 /* ── Internal: initialize velocity workspace from body state ──── */
