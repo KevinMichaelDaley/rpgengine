@@ -16,6 +16,37 @@ void aegis_script_runtime_set_job_sys(aegis_script_runtime_t *rt,
 }
 
 /* ----------------------------------------------------------------------- */
+/* aegis_script_runtime_set_async_buffer                                    */
+/* ----------------------------------------------------------------------- */
+
+void aegis_script_runtime_set_async_buffer(aegis_script_runtime_t *rt,
+                                           struct aegis_async_buffer *buf) {
+    rt->async_buffer = buf;
+    /* Propagate to all active VMs. */
+    for (uint32_t i = 0; i < rt->instance_cap; i++) {
+        if (rt->instances[i].active) {
+            rt->instances[i].vm.async_buffer = buf;
+        }
+    }
+}
+
+/* ----------------------------------------------------------------------- */
+/* aegis_script_runtime_set_entity_view                                     */
+/* ----------------------------------------------------------------------- */
+
+void aegis_script_runtime_set_entity_view(
+    aegis_script_runtime_t *rt,
+    const struct script_entity_view *view) {
+    rt->entity_view = view;
+    /* Propagate to all active VMs. */
+    for (uint32_t i = 0; i < rt->instance_cap; i++) {
+        if (rt->instances[i].active) {
+            rt->instances[i].vm.entity_view = view;
+        }
+    }
+}
+
+/* ----------------------------------------------------------------------- */
 /* aegis_script_runtime_find                                                */
 /* ----------------------------------------------------------------------- */
 

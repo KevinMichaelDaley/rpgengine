@@ -54,7 +54,8 @@ PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard
 MESH_SRC := $(wildcard src/mesh/*.c)
 ENGINE_SRC := src/engine_settings.c
 EDITOR_SRC := $(wildcard src/editor/*.c) $(wildcard src/editor/*/*.c) $(wildcard src/editor/*/*/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(RENDERER_DEBUG_LINES_SRC)
+AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(AEGIS_SRC) $(RENDERER_DEBUG_LINES_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -873,8 +874,8 @@ build/aegis_asm_tests: tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_AL
 	$(CC) $(CFLAGS) tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
 AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load.c src/aegis/aegis_runtime_tick.c src/aegis/aegis_runtime_registry.c src/aegis/aegis_runtime_query.c src/aegis/aegis_runtime_idle.c
-build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) build/libheadless.a -o $@ $(LDFLAGS)
+build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 AEGIS_ENTITY_DEPS := src/entity/entity_attrs.c src/entity/entity_attrs_mutate.c src/entity/entity_attrs_search.c
 build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
@@ -888,11 +889,11 @@ AEGIS_ASYNC_SRC := $(AEGIS_ASYNC_BUF_SRC) src/aegis/aegis_async_execute.c
 build/aegis_async_buffer_tests: tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_BUF_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_BUF_SRC) -o $@ $(LDFLAGS)
 
-build/aegis_ops_async_tests: build/libheadless.a tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) build/libheadless.a -o $@ $(LDFLAGS)
+build/aegis_ops_async_tests: build/libheadless.a tests/aegis/aegis_ops_async_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_async_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/aegis_async_execute_tests: build/libheadless.a tests/aegis/aegis_async_execute_tests.c $(AEGIS_ASYNC_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_async_execute_tests.c $(AEGIS_ASYNC_SRC) build/libheadless.a -o $@ $(LDFLAGS)
+build/aegis_async_execute_tests: build/libheadless.a tests/aegis/aegis_async_execute_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_async_execute_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 build/aegis_ops_signal_tests: tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
@@ -900,11 +901,11 @@ build/aegis_ops_signal_tests: tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_S
 build/aegis_ops_await_tests: tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-build/aegis_runtime_idle_tests: build/libheadless.a tests/aegis/aegis_runtime_idle_tests.c $(AEGIS_RUNTIME_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASM_SRC) $(AEGIS_ASYNC_BUF_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_idle_tests.c $(AEGIS_RUNTIME_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASM_SRC) $(AEGIS_ASYNC_BUF_SRC) build/libheadless.a -o $@ $(LDFLAGS)
+build/aegis_runtime_idle_tests: build/libheadless.a tests/aegis/aegis_runtime_idle_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_idle_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-build/aegis_signal_integration_tests: build/libheadless.a tests/aegis/aegis_signal_integration_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_ASYNC_BUF_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_signal_integration_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_ASYNC_BUF_SRC) build/libheadless.a -o $@ $(LDFLAGS)
+build/aegis_signal_integration_tests: build/libheadless.a tests/aegis/aegis_signal_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_signal_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)

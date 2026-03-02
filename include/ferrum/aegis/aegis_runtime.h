@@ -159,6 +159,12 @@ typedef struct aegis_script_runtime {
 
     /** Job system for spawning fibers (set via aegis_script_runtime_set_job_sys). */
     struct job_system *job_sys;
+
+    /** Shared async task buffer for VIS_TEST/NAV_QUERY (set by server, not owned). */
+    struct aegis_async_buffer *async_buffer;
+
+    /** Shared entity snapshot view (set by server each tick, not owned). */
+    const struct script_entity_view *entity_view;
 } aegis_script_runtime_t;
 
 /* ----------------------------------------------------------------------- */
@@ -279,6 +285,31 @@ void aegis_script_runtime_set_job_sys(aegis_script_runtime_t *rt,
                                       struct job_system *sys);
 
 /**
+ * @brief Set the shared async task buffer for all script VMs.
+ *
+ * Propagates the buffer pointer to all currently active VMs.
+ * New scripts loaded after this call also receive the pointer.
+ *
+ * @param rt  Runtime. Must not be NULL.
+ * @param buf Async buffer. May be NULL to disable async ops.
+ */
+void aegis_script_runtime_set_async_buffer(aegis_script_runtime_t *rt,
+                                           struct aegis_async_buffer *buf);
+
+/**
+ * @brief Set the shared entity snapshot view for all script VMs.
+ *
+ * Call this each tick after rebuilding the entity snapshot so
+ * scripts see up-to-date entity state.
+ *
+ * @param rt   Runtime. Must not be NULL.
+ * @param view Entity snapshot view. May be NULL.
+ */
+void aegis_script_runtime_set_entity_view(
+    aegis_script_runtime_t *rt,
+    const struct script_entity_view *view);
+
+/**
  * @brief Register a compiled script for lazy spawning.
  *
  * Stores the bytecode in the registry. The script is NOT started yet.
@@ -327,6 +358,16 @@ const aegis_script_entry_t *aegis_script_runtime_find(
  * @param rt Runtime. Must not be NULL.
  */
 void aegis_script_runtime_clear_registry(aegis_script_runtime_t *rt);
+
+/**
+ * @brief Tick idle tracking — auto-unschedule scripts that exited and
+ *        haven't received a new event within the grace window.
+ *
+ * Call once per server tick from the main thread.
+ *
+ * @param rt Runtime. Must not be NULL.
+ */
+void aegis_runtime_tick_idle(aegis_script_runtime_t *rt);
 
 #ifdef __cplusplus
 }

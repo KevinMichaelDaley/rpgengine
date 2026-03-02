@@ -92,6 +92,10 @@ uint32_t aegis_script_runtime_load(aegis_script_runtime_t *rt,
     inst->vm.publish_fn = aegis_runtime_publish_cb;
     inst->vm.publish_ctx = rt;
 
+    /* Wire shared resources (async tasks, entity snapshot). */
+    inst->vm.async_buffer = rt->async_buffer;
+    inst->vm.entity_view = rt->entity_view;
+
     /* Auto-subscribe to topic if bytecode declared one. */
     if (inst->bytecode.topic_hash != 0) {
         aegis_topic_subscribe(&rt->topics, inst->bytecode.topic_hash, slot);

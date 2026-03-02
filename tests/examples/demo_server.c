@@ -51,7 +51,13 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_physics_ctrl.h"
+#include "ferrum/editor/edit_script_env.h"
 #include "ferrum/physics/phys_overlap.h"
+
+#include "ferrum/aegis/aegis_runtime.h"
+#include "ferrum/aegis/aegis_async.h"
+#include "ferrum/aegis/aegis_async_execute.h"
+#include "ferrum/aegis/aegis_event.h"
 
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
@@ -75,6 +81,12 @@
 
 /** Max chunks per snapshot (ceil(DEMO_SNAPSHOT_BUF_SIZE / CHUNK_SIZE)). */
 #define DEMO_SNAPSHOT_MAX_CHUNKS 24u
+
+/** Maximum entity snapshots for script entity view. */
+#define DEMO_SCRIPT_MAX_ENTITIES 256u
+
+/** Async task buffer capacity (must be power of 2). */
+#define DEMO_ASYNC_TASK_CAP 64u
 
 /** Chunk header wire size: schema(2) + chunk_idx(2) + chunk_total(2)
  *  + offset(4) + length(4) = 14 bytes. */
@@ -171,6 +183,12 @@ struct demo_ctx {
     edit_physics_bridge_t               editor_bridge;
     edit_physics_ctrl_t                 physics_ctrl;
     uint16_t                            edit_port;
+
+    /* Scripting */
+    aegis_script_runtime_t              script_runtime;
+    aegis_async_buffer_t                script_async_buf;
+    script_entity_snapshot_t            script_snapshots[DEMO_SCRIPT_MAX_ENTITIES];
+    script_entity_view_t                script_entity_view;
 
     /* Cached client addresses for raw UDP sends from physics thread. */
     net_udp_addr_t                      client_addrs[DEMO_MAX_CLIENTS];
@@ -631,6 +649,39 @@ static void demo_spawn_callback(uint32_t body_index,
     /* Body is now in the world; send_body_spawns_to_client will pick it up. */
 }
 
+/* ── Script tick helper ─────────────────────────────────────────── */
+
+/**
+ * @brief Per-tick script maintenance.
+ *
+ * Rebuilds the entity snapshot so scripts see fresh state,
+ * drains completed async tasks (raycasts), and ticks idle
+ * tracking for auto-unscheduling exited scripts.
+ */
+static void script_tick(demo_ctx_t *ctx) {
+    /* Rebuild entity snapshot from the store. */
+    uint32_t snap_count = script_snapshot_build(
+        &ctx->editor.entities,
+        ctx->script_snapshots,
+        DEMO_SCRIPT_MAX_ENTITIES);
+
+    ctx->script_entity_view.entities = ctx->script_snapshots;
+    ctx->script_entity_view.count    = snap_count;
+    ctx->script_entity_view.capacity = DEMO_SCRIPT_MAX_ENTITIES;
+
+    /* Propagate updated view to all active VMs. */
+    aegis_script_runtime_set_entity_view(
+        &ctx->script_runtime, &ctx->script_entity_view);
+
+    /* Drain completed async tasks (raycasts against physics world). */
+    aegis_async_execute_drain(
+        &ctx->script_async_buf, &ctx->world, 32);
+
+    /* Tick idle tracking — auto-unschedule scripts that exited and
+     * haven't received a new event within the grace window. */
+    aegis_runtime_tick_idle(&ctx->script_runtime);
+}
+
 /* ── Tick loop callbacks ────────────────────────────────────────── */
 
 /**
@@ -703,6 +754,9 @@ static void on_drain(void *user) {
         /* For now, we acknowledge but don't process move inputs. */
         (void)evt;
     }
+
+    /* Script maintenance: refresh entity snapshots, drain async tasks. */
+    script_tick(ctx);
 }
 
 /**
@@ -1112,6 +1166,40 @@ int main(int argc, char **argv) {
                ctx.editor.io_thread.port);
     }
 
+    /* ── 10c. Script runtime ─────────────────────────────────── */
+    {
+        aegis_runtime_config_t scfg = {0};
+        scfg.max_instances      = 64;
+        scfg.max_subscriptions  = 256;
+        scfg.event_queue_cap    = 64;
+        scfg.vm_config          = aegis_config_default();
+        scfg.vm_config.arena_size  = 8192;
+        scfg.vm_config.static_max = 512;
+        scfg.vm_config.stack_max  = 512;
+        scfg.signal_rate_limit_us  = 250;
+        scfg.idle_grace_ticks      = 6;
+
+        if (!aegis_script_runtime_init(&ctx.script_runtime, &scfg)) {
+            fprintf(stderr, "error: aegis_script_runtime_init failed\n");
+            return 1;
+        }
+        aegis_script_runtime_set_job_sys(&ctx.script_runtime, &ctx.job_sys);
+
+        /* Async task buffer for VIS_TEST / NAV_QUERY. */
+        if (!aegis_async_buffer_init(&ctx.script_async_buf, DEMO_ASYNC_TASK_CAP)) {
+            fprintf(stderr, "error: aegis_async_buffer_init failed\n");
+            return 1;
+        }
+        aegis_script_runtime_set_async_buffer(
+            &ctx.script_runtime, &ctx.script_async_buf);
+
+        /* Wire runtime into editor command context. */
+        ctx.editor.cmd_ctx.script_runtime = &ctx.script_runtime;
+
+        printf("[server] script runtime ready (max %u instances)\n",
+               scfg.max_instances);
+    }
+
     /* ── 11. Main loop ─────────────────────────────────────────── */
     const double start_time = now_seconds();
     double last_step_time = now_seconds();
@@ -1154,6 +1242,11 @@ int main(int argc, char **argv) {
 
     /* ── 12. Shutdown ──────────────────────────────────────────── */
     printf("\n[server] shutting down...\n");
+
+    /* Destroy script runtime before job system (fibers must finish). */
+    aegis_script_runtime_destroy(&ctx.script_runtime);
+    aegis_async_buffer_destroy(&ctx.script_async_buf);
+    printf("[server] script runtime stopped\n");
 
     /* Shut down editor first (stops I/O thread). */
     editor_ctx_shutdown(&ctx.editor);

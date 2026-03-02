@@ -1,6 +1,6 @@
 ---
 id: rpg-dyq5
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-01T23:45:19Z
