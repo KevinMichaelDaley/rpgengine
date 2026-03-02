@@ -30,6 +30,12 @@ void phys_stage_constraint_build(const phys_constraint_build_args_t *args)
         const phys_body_t *body_a       = &args->bodies[manifold->body_a];
         const phys_body_t *body_b       = &args->bodies[manifold->body_b];
 
+        /* Trigger volumes detect contacts but skip solver response. */
+        if ((body_a->flags & PHYS_BODY_FLAG_TRIGGER) ||
+            (body_b->flags & PHYS_BODY_FLAG_TRIGGER)) {
+            continue;
+        }
+
         /* Apply stabilization hints to material properties. */
         float friction    = manifold->friction    * hint->friction_scale;
         float restitution = manifold->restitution * hint->restitution_scale;

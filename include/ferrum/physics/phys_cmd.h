@@ -50,7 +50,11 @@ typedef enum phys_cmd_type {
     /** Set a body's full state (position, orientation, velocity).
      *  Used for authoritative server corrections on the client.
      *  Payload: phys_cmd_set_state_t. */
-    PHYS_CMD_SET_STATE = 5
+    PHYS_CMD_SET_STATE = 5,
+
+    /** Add a joint between two bodies.
+     *  Payload: phys_cmd_add_joint_t. */
+    PHYS_CMD_ADD_JOINT = 6
 } phys_cmd_type_t;
 
 /** Shape tag for spawn commands. */
@@ -108,6 +112,16 @@ typedef struct phys_cmd_set_state {
     phys_vec3_t linear_vel;      /**< New linear velocity. */
     phys_vec3_t angular_vel;     /**< New angular velocity. */
 } phys_cmd_set_state_t;
+
+/** Add a joint constraint between two bodies. */
+typedef struct phys_cmd_add_joint {
+    uint32_t    body_a;          /**< First body index. */
+    uint32_t    body_b;          /**< Second body index. */
+    int         joint_type;      /**< 0=distance, 1=ball, 2=hinge. */
+    phys_vec3_t local_anchor_a;  /**< Anchor in body A local space. */
+    phys_vec3_t local_anchor_b;  /**< Anchor in body B local space. */
+    phys_vec3_t axis;            /**< Joint axis (hinge only). */
+} phys_cmd_add_joint_t;
 
 /**
  * @brief Callback invoked for each SPAWN_BODY command after the body

@@ -1582,6 +1582,13 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* entity_def block gathering state for TUI. */
+    bool edef_in_block = false;
+    char edef_header[512];
+    char edef_lines[64][512];
+    const char *edef_ptrs[64];
+    uint32_t edef_count = 0;
+
     /* Main loop. */
     while (g_running) {
         /* Poll stdin + server socket. */
@@ -1606,9 +1613,54 @@ int main(int argc, char **argv) {
 
                 const char *cmd = ctrl_tui_feed_key(&tui, ch);
                 if (cmd && cmd[0] != '\0') {
-                    if (!dispatch_command_(&tui, &conn, cmd)) {
-                        g_running = false;
-                        break;
+                    /* Strip leading whitespace for comparison. */
+                    const char *stripped = cmd;
+                    while (*stripped == ' ' || *stripped == '\t') stripped++;
+
+                    if (edef_in_block) {
+                        /* Inside entity_def block: gather or close. */
+                        if (strcmp(stripped, "end") == 0) {
+                            /* Build entity_def JSON and dispatch. */
+                            for (uint32_t ei = 0; ei < edef_count; ei++) {
+                                edef_ptrs[ei] = edef_lines[ei];
+                            }
+                            char json[8192];
+                            uint32_t jlen = ctrl_cmd_build_entity_def_json(
+                                edef_header, edef_ptrs, edef_count,
+                                json, sizeof(json), conn.next_id);
+                            if (jlen > 0) {
+                                ctrl_log_add_cmd(&tui.log, edef_header,
+                                                 conn.next_id);
+                                ctrl_conn_send_raw(&conn, json, jlen);
+                                conn.next_id++;
+                                if (needs_entity_refresh_(edef_header)) {
+                                    send_entity_refresh_(&conn);
+                                }
+                            }
+                            edef_in_block = false;
+                            edef_count = 0;
+                        } else if (edef_count < 64) {
+                            strncpy(edef_lines[edef_count], stripped,
+                                    sizeof(edef_lines[0]) - 1);
+                            edef_lines[edef_count][sizeof(edef_lines[0]) - 1]
+                                = '\0';
+                            edef_count++;
+                            ctrl_log_add(&tui.log, 0, stripped);
+                        }
+                    } else if (strncmp(stripped, "entity_def ", 11) == 0 ||
+                               strncmp(stripped, "edef ", 5) == 0) {
+                        /* Start entity_def block. */
+                        edef_in_block = true;
+                        edef_count = 0;
+                        strncpy(edef_header, stripped,
+                                sizeof(edef_header) - 1);
+                        edef_header[sizeof(edef_header) - 1] = '\0';
+                        ctrl_log_add(&tui.log, 0, stripped);
+                    } else {
+                        if (!dispatch_command_(&tui, &conn, cmd)) {
+                            g_running = false;
+                            break;
+                        }
                     }
                 }
             }

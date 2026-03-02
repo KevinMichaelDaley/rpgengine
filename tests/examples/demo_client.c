@@ -143,6 +143,7 @@ typedef struct body_render_info {
     uint8_t  shape_type;    /**< 0=box, 1=sphere, 2=capsule, 3=mesh, 4=halfspace, 5=custom. */
     uint8_t  is_static;     /**< 1 if static/kinematic body. */
     uint8_t  is_constrained; /**< 1 if body has joints → use interpolation. */
+    uint8_t  is_hidden;     /**< 1 if body is invisible (trigger volume). */
     float    half_x;        /**< Half-extent X in meters. */
     float    half_y;        /**< Half-extent Y in meters. */
     float    half_z;        /**< Half-extent Z in meters. */
@@ -1084,6 +1085,7 @@ int main(int argc, char **argv) {
                         ri->shape_type    = sp.shape_type;
                         ri->is_static     = (sp.flags & 0x01u) ? 1u : 0u;
                         ri->is_constrained = (sp.flags & 0x04u) ? 1u : 0u;
+                        ri->is_hidden     = (sp.flags & 0x08u) ? 1u : 0u;
                         ri->half_x = net_float16_to_float(sp.half_x_f16);
                         ri->half_y = net_float16_to_float(sp.half_y_f16);
                         ri->half_z = net_float16_to_float(sp.half_z_f16);
@@ -1256,7 +1258,8 @@ int main(int argc, char **argv) {
                 uint32_t cap = world.body_pool.capacity;
 
                 for (uint32_t i = 0; i < cap; i++) {
-                    if (phys_body_pool_is_active(&world.body_pool, i)) {
+                    if (phys_body_pool_is_active(&world.body_pool, i) &&
+                        !render_info[i].is_hidden) {
                         draw_order[draw_count++] = i;
                     }
                 }

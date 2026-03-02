@@ -106,6 +106,24 @@ typedef struct edit_physics_bridge {
     void (*on_mesh_data)(void *user_data, uint32_t body_index,
                          const uint8_t *fvma_data, uint32_t fvma_size);
 
+    /**
+     * @brief Called to create a physics joint between two bodies.
+     * @param user_data      Opaque context.
+     * @param body_a         Physics body index of first entity.
+     * @param body_b         Physics body index of second entity.
+     * @param joint_type     Joint type (0=distance, 1=ball, 2=hinge).
+     * @param local_anchor_a Anchor in body A's local space [3].
+     * @param local_anchor_b Anchor in body B's local space [3].
+     * @param axis           Joint axis in world space [3] (hinge only).
+     * @return Joint index, or UINT32_MAX on failure.
+     */
+    uint32_t (*on_joint)(void *user_data,
+                         uint32_t body_a, uint32_t body_b,
+                         int joint_type,
+                         const float local_anchor_a[3],
+                         const float local_anchor_b[3],
+                         const float axis[3]);
+
     void *user_data;  /**< Opaque context passed to all callbacks. */
 } edit_physics_bridge_t;
 

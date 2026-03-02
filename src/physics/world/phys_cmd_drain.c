@@ -10,6 +10,7 @@
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/net/topic_channel.h"
 
@@ -206,6 +207,22 @@ void phys_cmd_drain(phys_world_t *world,
                 phys_cmd_set_state_t cmd;
                 memcpy(&cmd, payload, sizeof(cmd));
                 apply_set_state_(world, &cmd);
+            }
+            break;
+
+        case PHYS_CMD_ADD_JOINT:
+            if (payload_len >= sizeof(phys_cmd_add_joint_t)) {
+                phys_cmd_add_joint_t cmd;
+                memcpy(&cmd, payload, sizeof(cmd));
+                phys_joint_t joint;
+                phys_joint_init(&joint);
+                joint.type   = (phys_joint_type_t)cmd.joint_type;
+                joint.body_a = cmd.body_a;
+                joint.body_b = cmd.body_b;
+                joint.local_anchor_a = cmd.local_anchor_a;
+                joint.local_anchor_b = cmd.local_anchor_b;
+                joint.local_axis_a   = cmd.axis;
+                phys_world_add_joint(world, &joint);
             }
             break;
 

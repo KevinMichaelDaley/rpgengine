@@ -51,6 +51,8 @@ enum {
     SCRIPT_KEY_TYPE      = 4,   /**< u32: entity type ID. */
     SCRIPT_KEY_BODY_IDX  = 5,   /**< u32: physics body index. */
     SCRIPT_KEY_MATERIAL  = 6,   /**< str: material path (slot in high bits). */
+    SCRIPT_KEY_MASS      = 7,   /**< f32: physics body mass (0 = no gravity). */
+    SCRIPT_KEY_STATIC    = 8,   /**< bool: body is static (immovable). */
 
     /* ECS component keys (mapped from registered sparse sets) */
     SCRIPT_KEY_ECS_BASE  = 64,  /**< ECS components start here. */

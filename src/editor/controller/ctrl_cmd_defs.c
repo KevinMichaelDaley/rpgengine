@@ -457,6 +457,35 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Show mesh stats: verts, tris, mode, selection.",
         .arg_fmt = NULL,
     },
+    /* ── File commands ────────────────────────────────────────── */
+    {
+        .name    = "source",
+        .alias   = "src",
+        .usage   = "source <file>",
+        .help    = "Execute a file of text commands line-by-line.",
+        .arg_fmt = "s:file",
+    },
+    {
+        .name    = "setattr",
+        .alias   = "sa",
+        .usage   = "setattr <entity> <key> <value>",
+        .help    = "Set an attribute on an entity. Key is numeric, value is auto-typed.",
+        .arg_fmt = NULL, /* Custom parsing: entity + key + value. */
+    },
+    {
+        .name    = "entity_def",
+        .alias   = "edef",
+        .usage   = "entity_def <name>\\n  type <type>\\n  ...\\nend",
+        .help    = "Define and spawn an entity with attrs. Block ends with 'end'.",
+        .arg_fmt = NULL, /* Block command: custom parsing in source/TUI. */
+    },
+    {
+        .name    = "joint",
+        .alias   = "jnt",
+        .usage   = "joint <type> <entity_a> <entity_b> <ax> <ay> <az> [axis_x axis_y axis_z]",
+        .help    = "Create a joint. Type: hinge, ball, distance. Anchor is world-space.",
+        .arg_fmt = NULL, /* Custom parsing: type + 2 entities + anchor + optional axis. */
+    },
 };
 
 static const uint32_t s_def_count =

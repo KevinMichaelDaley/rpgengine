@@ -558,6 +558,12 @@ static uint32_t constraint_build_one(const phys_collision_fused_args_t *args,
     const phys_body_t *body_a = &args->bodies[manifold->body_a];
     const phys_body_t *body_b = &args->bodies[manifold->body_b];
 
+    /* Trigger volumes detect contacts but skip solver response. */
+    if ((body_a->flags & PHYS_BODY_FLAG_TRIGGER) ||
+        (body_b->flags & PHYS_BODY_FLAG_TRIGGER)) {
+        return 0;
+    }
+
     float friction    = manifold->friction    * hint->friction_scale;
     float restitution = manifold->restitution * hint->restitution_scale;
 
@@ -642,9 +648,17 @@ static void collision_fused_job(void *data)
 
     /* ── Phase 3+4: Stab + Constraint build — manifolds → constraints ── */
 
-    /* First pass: count total constraints for this batch. */
+    /* First pass: count total constraints for this batch.
+     * Skip trigger volumes — they produce manifolds for event detection
+     * but must not generate solver constraints. */
     uint32_t total_cons = 0;
     for (uint32_t i = 0; i < mani_count; ++i) {
+        const phys_body_t *ba = &args->bodies[local_manis[i].body_a];
+        const phys_body_t *bb = &args->bodies[local_manis[i].body_b];
+        if ((ba->flags & PHYS_BODY_FLAG_TRIGGER) ||
+            (bb->flags & PHYS_BODY_FLAG_TRIGGER)) {
+            continue;
+        }
         total_cons += local_manis[i].point_count;
     }
 

@@ -33,6 +33,7 @@
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/net/udp_socket.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/phys_jobs.h"
 #include "ferrum/physics/phys_pool.h"
@@ -155,6 +156,9 @@ struct demo_ctx {
     /* Per-body packed RGB color (R8G8B8 in bits 23..0). */
     uint32_t                            body_color[DEMO_MAX_BODIES];
 
+    /* Per-body hidden flag (trigger volumes are invisible). */
+    uint8_t                             body_hidden[DEMO_MAX_BODIES];
+
     /* Per-body FVMA mesh data (NULL for non-mesh bodies). */
     uint8_t                            *body_fvma[DEMO_MAX_BODIES];
     uint32_t                            body_fvma_size[DEMO_MAX_BODIES];
@@ -217,28 +221,64 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
     memset(&spawn, 0, sizeof(spawn));
     spawn.position = (phys_vec3_t){entity->pos[0], entity->pos[1], entity->pos[2]};
     spawn.orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-    /* Mesh entities (from mesh_commit) are static architecture. */
-    if (entity->type == EDIT_ENTITY_TYPE_MESH) {
-        spawn.mass = 0.0f; /* static */
-        spawn.flags = PHYS_BODY_FLAG_STATIC;
-        spawn.shape = PHYS_CMD_SHAPE_BOX;
-        spawn.shape_data.box_half = (phys_vec3_t){
-            entity->scale[0] * DEMO_BOX_HALF,
-            entity->scale[1] * DEMO_BOX_HALF,
-            entity->scale[2] * DEMO_BOX_HALF,
-        };
-    } else if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {
-        spawn.mass = DEMO_BOX_MASS;
+
+    /* Determine shape from entity type. */
+    if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {
         spawn.shape = PHYS_CMD_SHAPE_SPHERE;
         spawn.shape_data.sphere_r = entity->scale[0] * 0.5f;
+    } else if (entity->type == EDIT_ENTITY_TYPE_CAPSULE) {
+        spawn.shape = PHYS_CMD_SHAPE_CAPSULE;
+        spawn.shape_data.capsule.radius      = entity->scale[0] * 0.5f;
+        spawn.shape_data.capsule.half_height  = entity->scale[1] * 0.5f;
     } else {
-        spawn.mass = DEMO_BOX_MASS;
         spawn.shape = PHYS_CMD_SHAPE_BOX;
         spawn.shape_data.box_half = (phys_vec3_t){
             entity->scale[0] * DEMO_BOX_HALF,
             entity->scale[1] * DEMO_BOX_HALF,
             entity->scale[2] * DEMO_BOX_HALF,
         };
+    }
+
+    /* Read mass from attrs (default: DEMO_BOX_MASS). */
+    spawn.mass = DEMO_BOX_MASS;
+    {
+        uint8_t at = 0, as = 0;
+        const void *mv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_MASS,
+                                          &at, &as);
+        if (mv && as == 4) {
+            if (at == SCRIPT_ATTR_F32) {
+                memcpy(&spawn.mass, mv, 4);
+            } else if (at == SCRIPT_ATTR_I32) {
+                int32_t iv;
+                memcpy(&iv, mv, 4);
+                spawn.mass = (float)iv;
+            }
+        }
+    }
+
+    /* Read static flag from attrs. */
+    {
+        uint8_t at = 0, as = 0;
+        const void *sv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_STATIC,
+                                          &at, &as);
+        if (sv && as == 1 && *(const uint8_t *)sv) {
+            spawn.flags |= PHYS_BODY_FLAG_STATIC;
+            spawn.mass = 0.0f;
+        }
+    }
+
+    /* Check if entity has the trigger attribute (key 256 = SCRIPT_KEY_USER).
+     * Trigger bodies are static, invisible, and have the TRIGGER flag. */
+    bool is_trigger = false;
+    {
+        uint8_t attr_type = 0, attr_size = 0;
+        const void *val = entity_attrs_get(&entity->attrs, SCRIPT_KEY_USER,
+                                           &attr_type, &attr_size);
+        if (val && attr_size == 1 && *(const uint8_t *)val) {
+            is_trigger = true;
+            spawn.mass  = 0.0f;
+            spawn.flags = PHYS_BODY_FLAG_STATIC | PHYS_BODY_FLAG_TRIGGER;
+        }
     }
 
     phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
@@ -253,6 +293,11 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
             ctx->body_half[bi][0] = r;
             ctx->body_half[bi][1] = r;
             ctx->body_half[bi][2] = r;
+        } else if (entity->type == EDIT_ENTITY_TYPE_CAPSULE) {
+            ctx->body_shape_type[bi] = 2; /* capsule */
+            ctx->body_half[bi][0] = spawn.shape_data.capsule.radius;
+            ctx->body_half[bi][1] = spawn.shape_data.capsule.half_height;
+            ctx->body_half[bi][2] = spawn.shape_data.capsule.radius;
         } else {
             ctx->body_shape_type[bi] = 0; /* box */
             ctx->body_half[bi][0] = spawn.shape_data.box_half.x;
@@ -267,6 +312,7 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
         uint8_t cg = (uint8_t)(80u + ((h >> 8u) & 0x7Fu));
         uint8_t cb = (uint8_t)(80u + ((h >> 16u) & 0x7Fu));
         ctx->body_color[bi] = ((uint32_t)cr << 16u) | ((uint32_t)cg << 8u) | cb;
+        ctx->body_hidden[bi] = is_trigger ? 1u : 0u;
     }
     ctx->total_spawned++;
 
@@ -434,6 +480,60 @@ static uint32_t bridge_on_query_touching_(void *user_data,
     return found;
 }
 
+/* ── Bridge: create a physics joint ───────────────────────────────── */
+
+/**
+ * @brief Bridge callback: create a physics joint between two bodies.
+ *
+ * Initializes a phys_joint_t, sets anchors and axis, then adds it
+ * to the physics world.  Updates body_constrained[] and joint_pairs[].
+ */
+static uint32_t bridge_on_joint_(void *user_data,
+                                  uint32_t body_a, uint32_t body_b,
+                                  int joint_type,
+                                  const float local_anchor_a[3],
+                                  const float local_anchor_b[3],
+                                  const float axis[3]) {
+    demo_ctx_t *ctx = (demo_ctx_t *)user_data;
+
+    /* Defer joint creation to the physics tick via the command channel.
+     * Bodies are also deferred (PHYS_CMD_SPAWN_BODY), so the joint must
+     * be drained after the spawns in the same tick. */
+    phys_cmd_add_joint_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.body_a     = body_a;
+    cmd.body_b     = body_b;
+    cmd.joint_type = joint_type;
+    cmd.local_anchor_a = (phys_vec3_t){
+        local_anchor_a[0], local_anchor_a[1], local_anchor_a[2]};
+    cmd.local_anchor_b = (phys_vec3_t){
+        local_anchor_b[0], local_anchor_b[1], local_anchor_b[2]};
+    cmd.axis = (phys_vec3_t){axis[0], axis[1], axis[2]};
+
+    if (!phys_cmd_push(ctx->cmd_channel, PHYS_CMD_ADD_JOINT,
+                       &cmd, sizeof(cmd))) {
+        fprintf(stderr, "[server] joint push failed (channel full?)\n");
+        return UINT32_MAX;
+    }
+
+    /* Mark bodies as constrained for network priority. */
+    if (body_a < DEMO_MAX_BODIES) ctx->body_constrained[body_a] = 1;
+    if (body_b < DEMO_MAX_BODIES) ctx->body_constrained[body_b] = 1;
+
+    /* Record joint pair for priority sender. */
+    if (ctx->joint_pair_count + 1 < DEMO_MAX_BODIES) {
+        uint32_t idx = ctx->joint_pair_count * 2;
+        ctx->joint_pairs[idx]     = body_a;
+        ctx->joint_pairs[idx + 1] = body_b;
+        ctx->joint_pair_count++;
+    }
+
+    printf("[server] joint queued: type=%d bodies=(%u,%u)\n",
+           joint_type, body_a, body_b);
+    /* Return 0 as a success indicator (actual joint index assigned at drain). */
+    return 0;
+}
+
 /* ── Physics simulation control callbacks ─────────────────────────── */
 
 /** @brief Pause the physics tick runner. */
@@ -533,6 +633,9 @@ static void send_body_spawns_to_client(demo_ctx_t *ctx, uint16_t client_id) {
         spawn_msg.flags = (body->flags & PHYS_BODY_FLAG_STATIC) ? 1u : 0u;
         if (ctx->body_constrained[bi]) {
             spawn_msg.flags |= 0x04u; /* bit2 = constrained (interpolated) */
+        }
+        if (ctx->body_hidden[bi]) {
+            spawn_msg.flags |= 0x08u; /* bit3 = hidden (trigger volume) */
         }
         spawn_msg.shape_type = ctx->body_shape_type[bi];
         spawn_msg.color_seed = ctx->body_color[bi];
@@ -1144,6 +1247,7 @@ int main(int argc, char **argv) {
             .on_move   = bridge_on_move_,
             .on_query_touching = bridge_on_query_touching_,
             .on_mesh_data = bridge_on_mesh_data_,
+            .on_joint  = bridge_on_joint_,
             .user_data = &ctx,
         };
         editor_ctx_set_bridge(&ctx.editor, &ctx.editor_bridge);

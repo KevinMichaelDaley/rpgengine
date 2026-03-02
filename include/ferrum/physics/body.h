@@ -20,6 +20,7 @@ extern "C" {
 #define PHYS_BODY_FLAG_SLEEPING (1u << 2)
 #define PHYS_BODY_FLAG_CCD (1u << 3)  /**< Enable swept CCD vs static mesh. */
 #define PHYS_BODY_FLAG_CONTACT_RESTING (1u << 4) /**< Body has contact support opposing gravity (set each tick). */
+#define PHYS_BODY_FLAG_TRIGGER (1u << 5)  /**< Trigger volume: detect contacts/overlaps but skip solver response. */
 
 /**
  * @brief Core rigid body state.
@@ -77,6 +78,9 @@ void phys_body_set_capsule_inertia(phys_body_t *body, float mass, float radius, 
 bool phys_body_is_static(const phys_body_t *body);
 bool phys_body_is_kinematic(const phys_body_t *body);
 bool phys_body_is_sleeping(const phys_body_t *body);
+
+/** Check if a body is a trigger volume (no solver response). */
+bool phys_body_is_trigger(const phys_body_t *body);
 void phys_body_set_sleeping(phys_body_t *body, bool sleeping);
 
 #ifdef __cplusplus

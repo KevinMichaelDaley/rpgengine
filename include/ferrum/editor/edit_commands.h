@@ -286,6 +286,22 @@ bool cmd_mesh_commit(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_mesh_info(edit_dispatch_t *d, const json_value_t *args,
                    json_value_t *result, json_arena_t *arena);
 
+/** @brief Execute a file of text commands. Args: {"file":"path"}. */
+bool cmd_source(edit_dispatch_t *d, const json_value_t *args,
+                json_value_t *result, json_arena_t *arena);
+
+/** @brief Set an attribute on an entity. Args: {"entity":<id|name>, "key":<num>, "value":<val>}. */
+bool cmd_setattr(edit_dispatch_t *d, const json_value_t *args,
+                 json_value_t *result, json_arena_t *arena);
+
+/** @brief Spawn entity with pre-applied attrs. Args: {"name":..., "type":..., "attrs":[...]}. */
+bool cmd_entity_def(edit_dispatch_t *d, const json_value_t *args,
+                    json_value_t *result, json_arena_t *arena);
+
+/** @brief Create a physics joint between two entities. Args: {"joint_type":"hinge","entity_a":...,"entity_b":...,...}. */
+bool cmd_joint(edit_dispatch_t *d, const json_value_t *args,
+               json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

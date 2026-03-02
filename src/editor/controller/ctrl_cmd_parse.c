@@ -635,6 +635,92 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return (uint32_t)n2;
     }
 
+    /* Special handling for setattr: entity key value.
+     * "setattr turret_0 256 1"       → {"entity":"turret_0","key":256,"value":1}
+     * "setattr 5 256 true"           → {"entity":5,"key":256,"value":true}
+     * "setattr turret_0 256 hello"   → {"entity":"turret_0","key":256,"value":"hello"}
+     */
+    if (def && strcmp(wire_name, "setattr") == 0 && token_count >= 4) {
+        char args_buf2[512];
+        const char *ent_tok = tokens[1];
+        const char *key_tok = tokens[2];
+        const char *val_tok = tokens[3];
+
+        /* Entity: numeric id or string name. */
+        char ent_json[128];
+        if (looks_numeric_(ent_tok)) {
+            snprintf(ent_json, sizeof(ent_json), "%s", ent_tok);
+        } else {
+            snprintf(ent_json, sizeof(ent_json), "\"%s\"", ent_tok);
+        }
+
+        /* Value: bool, number, or string. */
+        char val_json[256];
+        if (strcmp(val_tok, "true") == 0 || strcmp(val_tok, "false") == 0) {
+            snprintf(val_json, sizeof(val_json), "%s", val_tok);
+        } else if (looks_numeric_(val_tok)) {
+            snprintf(val_json, sizeof(val_json), "%s", val_tok);
+        } else {
+            snprintf(val_json, sizeof(val_json), "\"%s\"", val_tok);
+        }
+
+        snprintf(args_buf2, sizeof(args_buf2),
+                 "{\"entity\":%s,\"key\":%s,\"value\":%s}",
+                 ent_json, key_tok, val_json);
+
+        int n2 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, args_buf2);
+        if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+        return (uint32_t)n2;
+    }
+
+    /* Special handling for joint: type entity_a entity_b ax ay az [axis_x axis_y axis_z].
+     * "joint hinge base_0 barrel_0 0 1.5 0 0 1 0"
+     *   → {"joint_type":"hinge","entity_a":"base_0","entity_b":"barrel_0",
+     *      "anchor":[0,1.5,0],"axis":[0,1,0]}
+     */
+    if (def && strcmp(wire_name, "joint") == 0 && token_count >= 7) {
+        char jbuf[512];
+        const char *jtype = tokens[1];
+        const char *ent_a = tokens[2];
+        const char *ent_b = tokens[3];
+
+        /* Entity refs: numeric id or string name. */
+        char ea_json[128], eb_json[128];
+        if (looks_numeric_(ent_a)) {
+            snprintf(ea_json, sizeof(ea_json), "%s", ent_a);
+        } else {
+            snprintf(ea_json, sizeof(ea_json), "\"%s\"", ent_a);
+        }
+        if (looks_numeric_(ent_b)) {
+            snprintf(eb_json, sizeof(eb_json), "%s", ent_b);
+        } else {
+            snprintf(eb_json, sizeof(eb_json), "\"%s\"", ent_b);
+        }
+
+        /* Anchor: tokens 4,5,6. */
+        const char *ax = tokens[4];
+        const char *ay = tokens[5];
+        const char *az = tokens[6];
+
+        /* Optional axis: tokens 7,8,9 (default 0,1,0). */
+        const char *axx = (token_count >= 10) ? tokens[7] : "0";
+        const char *axy = (token_count >= 10) ? tokens[8] : "1";
+        const char *axz = (token_count >= 10) ? tokens[9] : "0";
+
+        snprintf(jbuf, sizeof(jbuf),
+                 "{\"joint_type\":\"%s\",\"entity_a\":%s,\"entity_b\":%s,"
+                 "\"anchor\":[%s,%s,%s],\"axis\":[%s,%s,%s]}",
+                 jtype, ea_json, eb_json, ax, ay, az, axx, axy, axz);
+
+        int n3 = snprintf(out, out_cap,
+                           "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                           cmd_id, wire_name, jbuf);
+        if (n3 < 0 || (uint32_t)n3 >= out_cap) return 0;
+        return (uint32_t)n3;
+    }
+
     /* Build args JSON. */
     char args_buf[2048];
     uint32_t args_len;
@@ -690,4 +776,124 @@ uint32_t ctrl_cmd_complete(const char *prefix, const char **matches,
         }
     }
     return count;
+}
+
+/* ── entity_def block → JSON conversion ──────────────────────────── */
+
+uint32_t ctrl_cmd_build_entity_def_json(const char *header,
+                                        const char **lines, uint32_t nlines,
+                                        char *out, uint32_t out_cap,
+                                        uint32_t cmd_id) {
+    if (!header || !out || out_cap < 64) return 0;
+
+    /* Parse name from header: "entity_def <name>" or "edef <name>". */
+    const char *p = header;
+    while (*p && !isspace((unsigned char)*p)) p++;  /* skip command word */
+    while (*p && isspace((unsigned char)*p)) p++;    /* skip whitespace */
+    const char *name = p;
+    if (!*name) return 0;
+
+    /* Build the args JSON incrementally. */
+    char args[4096];
+    uint32_t w = 0;
+    w += (uint32_t)snprintf(args + w, sizeof(args) - w,
+                            "{\"name\":\"%s\"", name);
+
+    /* Collect attrs into a separate buffer to append at the end. */
+    char attrs_buf[2048];
+    uint32_t aw = 0;
+    uint32_t attr_count = 0;
+    aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw, "[");
+
+    for (uint32_t i = 0; i < nlines; i++) {
+        /* Tokenize each body line. */
+        const char *ln = lines[i];
+        while (*ln && isspace((unsigned char)*ln)) ln++;
+        if (*ln == '\0' || *ln == '#') continue;
+
+        /* Make a mutable copy for tokenization. */
+        char lbuf[512];
+        strncpy(lbuf, ln, sizeof(lbuf) - 1);
+        lbuf[sizeof(lbuf) - 1] = '\0';
+
+        char *toks[MAX_TOKENS];
+        uint32_t ntoks = tokenize_(lbuf, toks, MAX_TOKENS);
+        if (ntoks == 0) continue;
+
+        if (strcmp(toks[0], "type") == 0 && ntoks >= 2) {
+            w += (uint32_t)snprintf(args + w, sizeof(args) - w,
+                                    ",\"type\":\"%s\"", toks[1]);
+        } else if (strcmp(toks[0], "pos") == 0 && ntoks >= 4) {
+            w += (uint32_t)snprintf(args + w, sizeof(args) - w,
+                                    ",\"pos\":[%s,%s,%s]",
+                                    toks[1], toks[2], toks[3]);
+        } else if (strcmp(toks[0], "rot") == 0 && ntoks >= 4) {
+            w += (uint32_t)snprintf(args + w, sizeof(args) - w,
+                                    ",\"rot\":[%s,%s,%s]",
+                                    toks[1], toks[2], toks[3]);
+        } else if (strcmp(toks[0], "scale") == 0 && ntoks >= 4) {
+            w += (uint32_t)snprintf(args + w, sizeof(args) - w,
+                                    ",\"scale\":[%s,%s,%s]",
+                                    toks[1], toks[2], toks[3]);
+        } else if (strcmp(toks[0], "setattr") == 0 && ntoks >= 3) {
+            const char *key_tok = toks[1];
+            const char *val_tok = toks[2];
+
+            char val_json[256];
+            if (strcmp(val_tok, "true") == 0 ||
+                strcmp(val_tok, "false") == 0) {
+                snprintf(val_json, sizeof(val_json), "%s", val_tok);
+            } else if (looks_numeric_(val_tok)) {
+                snprintf(val_json, sizeof(val_json), "%s", val_tok);
+            } else {
+                snprintf(val_json, sizeof(val_json), "\"%s\"", val_tok);
+            }
+
+            if (attr_count > 0) {
+                aw += (uint32_t)snprintf(attrs_buf + aw,
+                                         sizeof(attrs_buf) - aw, ",");
+            }
+            aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
+                                     "{\"key\":%s,\"value\":%s}",
+                                     key_tok, val_json);
+            attr_count++;
+        } else if (strcmp(toks[0], "mass") == 0 && ntoks >= 2) {
+            /* Sugar: "mass 5.0" → setattr SCRIPT_KEY_MASS(7) <float>. */
+            if (attr_count > 0) {
+                aw += (uint32_t)snprintf(attrs_buf + aw,
+                                         sizeof(attrs_buf) - aw, ",");
+            }
+            /* Ensure mass is emitted as a float (must have decimal point)
+             * so that cmd_setattr stores it as SCRIPT_ATTR_F32. */
+            const char *dot = strchr(toks[1], '.');
+            aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
+                                     "{\"key\":7,\"value\":%s%s}",
+                                     toks[1], dot ? "" : ".0");
+            attr_count++;
+        } else if (strcmp(toks[0], "static") == 0) {
+            /* Sugar: "static" → setattr SCRIPT_KEY_STATIC(8) true. */
+            if (attr_count > 0) {
+                aw += (uint32_t)snprintf(attrs_buf + aw,
+                                         sizeof(attrs_buf) - aw, ",");
+            }
+            aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
+                                     "{\"key\":8,\"value\":true}");
+            attr_count++;
+        }
+    }
+
+    aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw, "]");
+
+    if (attr_count > 0) {
+        w += (uint32_t)snprintf(args + w, sizeof(args) - w,
+                                ",\"attrs\":%s", attrs_buf);
+    }
+
+    w += (uint32_t)snprintf(args + w, sizeof(args) - w, "}");
+
+    int n = snprintf(out, out_cap,
+                     "{\"id\":%u,\"cmd\":\"entity_def\",\"args\":%s}\n",
+                     cmd_id, args);
+    if (n < 0 || (uint32_t)n >= out_cap) return 0;
+    return (uint32_t)n;
 }

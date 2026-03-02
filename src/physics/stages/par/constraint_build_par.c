@@ -64,7 +64,15 @@ static void constraint_build_job(void *data) {
     /* First pass: count how many constraints this batch will produce. */
     uint32_t local_count = 0;
     for (uint32_t m = m_start; m < m_end; ++m) {
-        local_count += args->manifolds[m].point_count;
+        const phys_manifold_t *mf = &args->manifolds[m];
+        const phys_body_t *ba = &args->bodies[mf->body_a];
+        const phys_body_t *bb = &args->bodies[mf->body_b];
+        /* Trigger volumes detect contacts but skip solver response. */
+        if ((ba->flags & PHYS_BODY_FLAG_TRIGGER) ||
+            (bb->flags & PHYS_BODY_FLAG_TRIGGER)) {
+            continue;
+        }
+        local_count += mf->point_count;
     }
 
     if (local_count == 0) {
@@ -93,6 +101,12 @@ static void constraint_build_job(void *data) {
         const phys_stab_hint_t *hint     = &args->hints[m];
         const phys_body_t      *body_a   = &args->bodies[manifold->body_a];
         const phys_body_t      *body_b   = &args->bodies[manifold->body_b];
+
+        /* Trigger volumes detect contacts but skip solver response. */
+        if ((body_a->flags & PHYS_BODY_FLAG_TRIGGER) ||
+            (body_b->flags & PHYS_BODY_FLAG_TRIGGER)) {
+            continue;
+        }
 
         /* Apply stabilization hints to material properties. */
         float friction    = manifold->friction    * hint->friction_scale;

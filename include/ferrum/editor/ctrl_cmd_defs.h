@@ -74,6 +74,25 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
 uint32_t ctrl_cmd_complete(const char *prefix, const char **matches,
                            uint32_t max_matches);
 
+/**
+ * @brief Build entity_def JSON from block lines.
+ *
+ * Converts a block of text (entity_def header + body lines) into a single
+ * JSON command for the entity_def handler.
+ *
+ * @param header  The "entity_def <name>" header line.
+ * @param lines   Array of body lines (type, pos, setattr, etc.).
+ * @param nlines  Number of body lines.
+ * @param out     Output buffer for JSON string.
+ * @param out_cap Capacity of output buffer.
+ * @param cmd_id  Command ID for the JSON envelope.
+ * @return Number of bytes written (0 on error).
+ */
+uint32_t ctrl_cmd_build_entity_def_json(const char *header,
+                                        const char **lines, uint32_t nlines,
+                                        char *out, uint32_t out_cap,
+                                        uint32_t cmd_id);
+
 #ifdef __cplusplus
 }
 #endif
