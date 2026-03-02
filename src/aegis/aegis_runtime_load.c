@@ -7,6 +7,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+/**
+ * @brief Publish callback adapter for the VM's signal opcode.
+ *
+ * Forwards event publishing to the runtime's routing logic.
+ */
+static void aegis_runtime_publish_cb(void *ctx, const aegis_event_t *ev) {
+    aegis_script_runtime_publish((aegis_script_runtime_t *)ctx, ev);
+}
+
 /* ----------------------------------------------------------------------- */
 /* aegis_script_runtime_load                                                */
 /* ----------------------------------------------------------------------- */
@@ -74,6 +83,14 @@ uint32_t aegis_script_runtime_load(aegis_script_runtime_t *rt,
     inst->runtime = rt;
     inst->job_sys = NULL;
     rt->instance_count++;
+
+    /* Wire VM fields for signal/subscribe/await opcodes. */
+    inst->vm.topic_table = &rt->topics;
+    inst->vm.event_queue = &inst->event_queue;
+    inst->vm.script_id = slot;
+    inst->vm.signal_rate_limit_us = rt->config.signal_rate_limit_us;
+    inst->vm.publish_fn = aegis_runtime_publish_cb;
+    inst->vm.publish_ctx = rt;
 
     /* Auto-subscribe to topic if bytecode declared one. */
     if (inst->bytecode.topic_hash != 0) {

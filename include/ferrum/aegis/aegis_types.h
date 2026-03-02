@@ -160,6 +160,11 @@ typedef enum aegis_opcode {
     AEGIS_OP_QUAT_MUL       = 0x40,  /**< Quaternion multiply. */
     AEGIS_OP_QUAT_ROTATE    = 0x41,  /**< Rotate vec3 by quaternion. */
 
+    /* -- Event signaling -- */
+    AEGIS_OP_SIGNAL         = 0x42,  /**< Signal event to server (rate-limited). */
+    AEGIS_OP_SUBSCRIBE      = 0x43,  /**< Subscribe to event topic. */
+    AEGIS_OP_AWAIT_EVENT    = 0x44,  /**< Wait-yield for matching topic event. */
+
     /** Sentinel: total number of opcodes. Not a valid instruction. */
     AEGIS_OP_COUNT
 } aegis_opcode_t;

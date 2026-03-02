@@ -19,6 +19,7 @@
 #include "ferrum/aegis/aegis_ops_async.h"
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
+#include "ferrum/aegis/aegis_ops_signal.h"
 
 /** Helper: set error status and return. */
 static aegis_vm_status_t vm_error(aegis_vm_t *vm, uint32_t code) {
@@ -420,6 +421,24 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
         case AEGIS_OP_WAIT:
             if (!aegis_op_wait(vm, &d)) {
                 /* PENDING: wait-yield without advancing PC. */
+                aegis_vm_wait_yield(vm);
+                return vm->status;
+            }
+            break;
+
+        /* ---- Event signaling ---- */
+
+        case AEGIS_OP_SIGNAL:
+            aegis_op_signal(vm, &d);
+            break;
+
+        case AEGIS_OP_SUBSCRIBE:
+            aegis_op_subscribe(vm, &d);
+            break;
+
+        case AEGIS_OP_AWAIT_EVENT:
+            if (!aegis_op_await_event(vm, &d)) {
+                /* No matching event: wait-yield without advancing PC. */
                 aegis_vm_wait_yield(vm);
                 return vm->status;
             }

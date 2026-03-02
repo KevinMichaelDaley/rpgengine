@@ -32,6 +32,17 @@ extern "C" {
 struct script_entity_view;
 
 /**
+ * @brief Callback for publishing an event to all subscribers.
+ *
+ * The runtime sets this so the SIGNAL opcode can route events
+ * without knowing about runtime internals.
+ *
+ * @param ctx  Opaque context (typically the runtime pointer).
+ * @param ev   Event to publish (caller owns, callee copies).
+ */
+typedef void (*aegis_publish_fn)(void *ctx, const aegis_event_t *ev);
+
+/**
  * @brief VM execution status after a run.
  */
 typedef enum aegis_vm_status {
@@ -94,6 +105,27 @@ typedef struct aegis_vm {
 
     /** Number of active async tasks this VM has submitted. */
     uint32_t async_task_count;
+
+    /** Script ID for this VM instance (set by runtime). */
+    uint32_t script_id;
+
+    /** Topic table reference for subscribe/signal (set by runtime, not owned). */
+    struct aegis_topic_table *topic_table;
+
+    /** Event queue reference for await_event (set by runtime, not owned). */
+    struct aegis_event_queue *event_queue;
+
+    /** Signal rate limit in microseconds (set by runtime). */
+    uint32_t signal_rate_limit_us;
+
+    /** Last signal timestamp in microseconds (monotonic). */
+    uint64_t last_signal_time_us;
+
+    /** Publish callback for SIGNAL opcode (set by runtime, nullable). */
+    aegis_publish_fn publish_fn;
+
+    /** Opaque context passed to publish_fn (typically runtime pointer). */
+    void *publish_ctx;
 
     /** Current execution status. */
     aegis_vm_status_t status;

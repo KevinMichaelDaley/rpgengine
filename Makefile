@@ -251,6 +251,10 @@ BIN_HEADLESS += build/aegis_ops_update_tests
 BIN_HEADLESS += build/aegis_async_buffer_tests
 BIN_HEADLESS += build/aegis_ops_async_tests
 BIN_HEADLESS += build/aegis_async_execute_tests
+BIN_HEADLESS += build/aegis_ops_signal_tests
+BIN_HEADLESS += build/aegis_ops_await_tests
+BIN_HEADLESS += build/aegis_runtime_idle_tests
+BIN_HEADLESS += build/aegis_signal_integration_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -842,51 +846,65 @@ build/aegis_yield_tests: tests/aegis/aegis_yield_tests.c $(AEGIS_VM_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_yield_tests.c $(AEGIS_VM_SRC) -o $@ $(LDFLAGS)
 
 AEGIS_ALL_SRC := $(AEGIS_VM_SRC) src/aegis/aegis_vm_run.c src/aegis/aegis_decode.c \
-	$(wildcard src/aegis/ops/*.c)
-build/aegis_vm_tests: tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+	$(wildcard src/aegis/ops/*.c) \
+	src/aegis/aegis_event_queue.c src/aegis/aegis_topic_table.c src/aegis/aegis_topic_route.c
+build/aegis_vm_tests: tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-build/aegis_vm_math_stress_tests: tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+build/aegis_vm_math_stress_tests: tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-build/aegis_vm_memory_exhaust_tests: tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+build/aegis_vm_memory_exhaust_tests: tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-build/aegis_vm_interrupt_tests: tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) -o $@ $(LDFLAGS)
+build/aegis_vm_interrupt_tests: tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
 AEGIS_EVENT_SRC := src/aegis/aegis_event_queue.c src/aegis/aegis_topic_table.c \
 	src/aegis/aegis_topic_route.c
 build/aegis_event_tests: tests/aegis/aegis_event_tests.c $(AEGIS_EVENT_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_event_tests.c $(AEGIS_EVENT_SRC) -o $@ $(LDFLAGS)
 
-build/aegis_ops_event_tests: tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) -o $@ $(LDFLAGS)
+build/aegis_ops_event_tests: tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
 AEGIS_ASM_SRC := src/aegis/aegis_asm_parse.c src/aegis/aegis_asm_compile.c
-build/aegis_asm_tests: tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) -o $@ $(LDFLAGS)
+build/aegis_asm_tests: tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load.c src/aegis/aegis_runtime_tick.c src/aegis/aegis_runtime_registry.c src/aegis/aegis_runtime_query.c
-build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_RUNTIME_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_RUNTIME_SRC) build/libheadless.a -o $@ $(LDFLAGS)
+AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load.c src/aegis/aegis_runtime_tick.c src/aegis/aegis_runtime_registry.c src/aegis/aegis_runtime_query.c src/aegis/aegis_runtime_idle.c
+build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) build/libheadless.a -o $@ $(LDFLAGS)
 
 AEGIS_ENTITY_DEPS := src/entity/entity_attrs.c src/entity/entity_attrs_mutate.c src/entity/entity_attrs_search.c
-build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-build/aegis_ops_update_tests: tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_update_tests: tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
-AEGIS_ASYNC_SRC := src/aegis/aegis_async_buffer.c src/aegis/aegis_async_buffer_io.c src/aegis/aegis_async_execute.c
-build/aegis_async_buffer_tests: tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_SRC) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_SRC) -o $@ $(LDFLAGS)
+AEGIS_ASYNC_BUF_SRC := src/aegis/aegis_async_buffer.c src/aegis/aegis_async_buffer_io.c
+AEGIS_ASYNC_SRC := $(AEGIS_ASYNC_BUF_SRC) src/aegis/aegis_async_execute.c
+build/aegis_async_buffer_tests: tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_BUF_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_async_buffer_tests.c $(AEGIS_ASYNC_BUF_SRC) -o $@ $(LDFLAGS)
 
-build/aegis_ops_async_tests: tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_EVENT_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_async_tests: build/libheadless.a tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_async_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_SRC) $(AEGIS_ENTITY_DEPS) build/libheadless.a -o $@ $(LDFLAGS)
 
 build/aegis_async_execute_tests: build/libheadless.a tests/aegis/aegis_async_execute_tests.c $(AEGIS_ASYNC_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_async_execute_tests.c $(AEGIS_ASYNC_SRC) build/libheadless.a -o $@ $(LDFLAGS)
+
+build/aegis_ops_signal_tests: tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+
+build/aegis_ops_await_tests: tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+
+build/aegis_runtime_idle_tests: build/libheadless.a tests/aegis/aegis_runtime_idle_tests.c $(AEGIS_RUNTIME_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASM_SRC) $(AEGIS_ASYNC_BUF_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_idle_tests.c $(AEGIS_RUNTIME_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASM_SRC) $(AEGIS_ASYNC_BUF_SRC) build/libheadless.a -o $@ $(LDFLAGS)
+
+build/aegis_signal_integration_tests: build/libheadless.a tests/aegis/aegis_signal_integration_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_ASYNC_BUF_SRC) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_signal_integration_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_RUNTIME_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_ASYNC_BUF_SRC) build/libheadless.a -o $@ $(LDFLAGS)
 
 build/p011_renderer_correction_debug_lines_tests: build/liball.a tests/p011_renderer_correction_debug_lines_tests.c | build
 	$(CC) $(CFLAGS) tests/p011_renderer_correction_debug_lines_tests.c build/liball.a -o $@ $(LDFLAGS)
@@ -1112,7 +1130,11 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_ops_update_tests \
 	&& ./build/aegis_async_buffer_tests \
 	&& ./build/aegis_ops_async_tests \
-	&& ./build/aegis_async_execute_tests
+	&& ./build/aegis_async_execute_tests \
+	&& ./build/aegis_ops_signal_tests \
+	&& ./build/aegis_ops_await_tests \
+	&& ./build/aegis_runtime_idle_tests \
+	&& ./build/aegis_signal_integration_tests
 
 TEST_TIMEOUT ?= 20
 

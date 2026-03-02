@@ -286,7 +286,9 @@ static bool test_unknown_opcode(void) {
 static bool test_unimplemented_opcode(void) {
     test_program_t p;
     prog_alloc(&p, DEFAULT_PROG_CAP, TEST_VM_ARENA_SIZE);
-    p.insns[0] = make_insn(AEGIS_OP_WAIT, 0, 0, 0, 0);
+    /* Use a high opcode value (0x7F) that is guaranteed to be
+     * unimplemented / unknown. */
+    p.insns[0] = make_insn(0x7F, 0, 0, 0, 0);
     p.count = 1;
     ASSERT(prog_build(&p, 1000));
 

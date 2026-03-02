@@ -85,6 +85,15 @@ typedef struct aegis_script_instance {
     /** Whether this script is alive and scheduled. */
     bool active;
 
+    /** Whether this script exited and is pending unschedule. */
+    bool pending_unschedule;
+
+    /** Ticks since last event while pending unschedule. */
+    uint32_t idle_ticks;
+
+    /** Last signal timestamp in microseconds (monotonic). */
+    uint64_t last_signal_time_us;
+
     /** Pointer to owning runtime (for fiber function context). */
     struct aegis_script_runtime *runtime;
 
@@ -107,6 +116,12 @@ typedef struct aegis_runtime_config {
 
     /** VM configuration applied to all script instances. */
     aegis_config_t vm_config;
+
+    /** Minimum microseconds between signals per script. Default: 250. */
+    uint32_t signal_rate_limit_us;
+
+    /** Ticks to wait after EXIT before unscheduling. Default: 6. */
+    uint32_t idle_grace_ticks;
 } aegis_runtime_config_t;
 
 /**

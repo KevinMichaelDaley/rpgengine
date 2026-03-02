@@ -100,6 +100,9 @@ static const mnemonic_entry_t g_mnemonics[] = {
     {"vec3_norm",     AEGIS_OP_VEC3_NORM},
     {"quat_mul",      AEGIS_OP_QUAT_MUL},
     {"quat_rotate",   AEGIS_OP_QUAT_ROTATE},
+    {"signal",        AEGIS_OP_SIGNAL},
+    {"subscribe",     AEGIS_OP_SUBSCRIBE},
+    {"await_event",   AEGIS_OP_AWAIT_EVENT},
     {NULL, 0}
 };
 
