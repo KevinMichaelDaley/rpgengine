@@ -64,7 +64,7 @@ static int test_config_default(void) {
     ASSERT_FLOAT_NEAR(0.0f, cfg.gravity.x, 1e-6f);
     ASSERT_FLOAT_NEAR(-9.81f, cfg.gravity.y, 1e-6f);
     ASSERT_FLOAT_NEAR(0.0f, cfg.gravity.z, 1e-6f);
-    ASSERT_INT_EQ(1, (int)cfg.default_substeps);
+    ASSERT_INT_EQ(4, (int)cfg.default_substeps);
     ASSERT_INT_EQ(8, (int)cfg.default_solver_iterations);
     ASSERT_FLOAT_NEAR(0.0f, cfg.baumgarte, 1e-6f);
     ASSERT_FLOAT_NEAR(0.005f, cfg.slop, 1e-6f);

@@ -179,7 +179,7 @@ typedef enum aegis_opcode {
     AEGIS_OP_AWAIT_EVENT    = 0x44,  /**< Wait-yield for matching topic event. */
 
     /* -- Environment queries -- */
-    AEGIS_OP_CLOCK          = 0x45,  /**< Load sim_time_s into r_dst.f32. */
+    AEGIS_OP_CLOCK          = 0x45,  /**< Load sim_time_us as float seconds into r_dst.f32. */
     AEGIS_OP_SIN            = 0x46,  /**< dst.f32 = sinf(src.f32). */
     AEGIS_OP_COS            = 0x47,  /**< dst.f32 = cosf(src.f32). */
     AEGIS_OP_VEC3_PACK      = 0x48,  /**< dst.v3 = {rB.f32, r(B+1).f32, r(B+2).f32}. */

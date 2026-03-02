@@ -305,6 +305,16 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
         }
     }
 
+    /* Read CCD flag from attrs. */
+    {
+        uint8_t at = 0, as = 0;
+        const void *cv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_CCD,
+                                          &at, &as);
+        if (cv && as == 1 && *(const uint8_t *)cv) {
+            spawn.flags |= PHYS_BODY_FLAG_CCD;
+        }
+    }
+
     /* Check if entity has the trigger attribute (key 256 = SCRIPT_KEY_USER).
      * Trigger bodies are static, invisible, and have the TRIGGER flag. */
     bool is_trigger = false;
@@ -840,13 +850,13 @@ static void demo_spawn_callback(uint32_t body_index,
 static void script_tick(demo_ctx_t *ctx) {
     /* Advance simulation clock. */
     ctx->sim_tick_count++;
-    float sim_time_s = (float)ctx->sim_tick_count / (float)DEMO_TICK_HZ;
+    int64_t sim_time_us = (int64_t)ctx->sim_tick_count * 1000000LL / (int64_t)DEMO_TICK_HZ;
 
-    /* Propagate sim_time_s to all active VM instances. */
+    /* Propagate sim_time_us to all active VM instances. */
     for (uint32_t i = 0; i < ctx->script_runtime.instance_cap; i++) {
         aegis_script_instance_t *inst = &ctx->script_runtime.instances[i];
         if (!inst->active) continue;
-        inst->vm.sim_time_s = sim_time_s;
+        inst->vm.sim_time_us = sim_time_us;
     }
 
     /* Drain script update sets: apply velocity updates to physics.
@@ -869,7 +879,8 @@ static void script_tick(demo_ctx_t *ctx) {
             const aegis_state_update_t *upd = &uset->updates[u - 1];
             if (upd->size != 12) continue;
             if (upd->key != SCRIPT_KEY_ANG_VEL &&
-                upd->key != SCRIPT_KEY_LIN_VEL) continue;
+                upd->key != SCRIPT_KEY_LIN_VEL &&
+                upd->key != SCRIPT_KEY_POS) continue;
 
             /* Skip if we already saw a later update for this pair. */
             bool already = false;
@@ -894,18 +905,30 @@ static void script_tick(demo_ctx_t *ctx) {
                 &ctx->editor.entities, upd->target);
             if (!ent || ent->body_index == 0) continue;
 
-            phys_cmd_set_state_t st;
-            memset(&st, 0, sizeof(st));
-            st.body_index = ent->body_index;
-            if (upd->key == SCRIPT_KEY_ANG_VEL) {
-                st.flags = PHYS_SET_ANG_VEL;
-                memcpy(&st.angular_vel, upd->value, 12);
+            if (upd->key == SCRIPT_KEY_POS) {
+                /* Position update → SET_POSITION command. */
+                phys_cmd_set_position_t setpos;
+                memset(&setpos, 0, sizeof(setpos));
+                setpos.body_index = ent->body_index;
+                memcpy(&setpos.position, upd->value, 12);
+                /* Also update entity store so snapshots reflect it. */
+                memcpy(ent->pos, upd->value, 12);
+                phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_POSITION,
+                              &setpos, sizeof(setpos));
             } else {
-                st.flags = PHYS_SET_LIN_VEL;
-                memcpy(&st.linear_vel, upd->value, 12);
+                phys_cmd_set_state_t st;
+                memset(&st, 0, sizeof(st));
+                st.body_index = ent->body_index;
+                if (upd->key == SCRIPT_KEY_ANG_VEL) {
+                    st.flags = PHYS_SET_ANG_VEL;
+                    memcpy(&st.angular_vel, upd->value, 12);
+                } else {
+                    st.flags = PHYS_SET_LIN_VEL;
+                    memcpy(&st.linear_vel, upd->value, 12);
+                }
+                phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_STATE,
+                              &st, sizeof(st));
             }
-            phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_STATE,
-                          &st, sizeof(st));
         }
 
         uset->count = 0;

@@ -61,6 +61,7 @@ typedef struct phys_world_config {
     uint32_t max_island_bodies;        /**< Max bodies per island for splitting (0 = unlimited). */
     uint32_t max_joints;               /**< Maximum number of joints. */
     float    max_dt_override;          /**< Max dt when using variable timestep (multiplier of fixed_dt, default 3.0). */
+    float    auto_ccd_speed;           /**< Speed threshold for auto CCD (m/s, 0 = disabled). */
 } phys_world_config_t;
 
 /* ── World container ────────────────────────────────────────────── */

@@ -1553,7 +1553,7 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
     if (!ccd_mask) return 0;
     memset(ccd_mask, 0, mask_words * sizeof(uint32_t));
 
-    /* Pass 1: mark bodies that are explicitly CCD-enabled and dynamic. */
+    /* Pass 1a: mark bodies that are explicitly CCD-enabled and dynamic. */
     for (uint32_t i = 0; i < n; i++) {
         const phys_body_t *read = &args->bodies_read[i];
         if (!(read->flags & PHYS_BODY_FLAG_CCD)) continue;
@@ -1561,6 +1561,26 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
             continue;
         if (read->inv_mass <= 0.0f) continue;
         ccd_mask[i / 32] |= (1u << (i % 32));
+    }
+
+    /* Pass 1b: auto-mark fast dynamic bodies above speed threshold. */
+    const float auto_speed = args->auto_ccd_speed;
+    if (auto_speed > 0.0f) {
+        const float speed_sq_thresh = auto_speed * auto_speed;
+        for (uint32_t i = 0; i < n; i++) {
+            if ((ccd_mask[i / 32] >> (i % 32)) & 1u) continue;
+            const phys_body_t *read = &args->bodies_read[i];
+            if (read->flags & (PHYS_BODY_FLAG_STATIC |
+                               PHYS_BODY_FLAG_KINEMATIC))
+                continue;
+            if (read->inv_mass <= 0.0f) continue;
+            const float vx = read->linear_vel.x;
+            const float vy = read->linear_vel.y;
+            const float vz = read->linear_vel.z;
+            if (vx*vx + vy*vy + vz*vz >= speed_sq_thresh) {
+                ccd_mask[i / 32] |= (1u << (i % 32));
+            }
+        }
     }
 
     /* Pass 2: propagate to immediate constraint neighbors.

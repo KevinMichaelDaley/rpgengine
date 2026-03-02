@@ -8,7 +8,7 @@ phys_world_config_t phys_world_config_default(void) {
         .frame_arena_size        = 32u * 1024u * 1024u, /* 32 MB */
         .fixed_dt                = 1.0f / 60.0f,      /* ~16.7 ms / 60 Hz */
         .gravity                 = {0.0f, -9.81f, 0.0f},
-        .default_substeps        = 1,
+        .default_substeps        = 4,
         .default_solver_iterations = 8,
         .baumgarte               = 0.0f,
         .slop                    = 0.005f,
@@ -21,6 +21,7 @@ phys_world_config_t phys_world_config_default(void) {
         .island_color_threshold  = 128,
         .max_joints              = 1024,
         .max_dt_override         = 3.0f,   /* Variable-dt cap: 3× fixed_dt. */
+        .auto_ccd_speed          = 8.0f,   /* Auto-CCD for bodies > 8 m/s. */
     };
     return cfg;
 }

@@ -127,8 +127,8 @@ typedef struct aegis_vm {
     /** Opaque context passed to publish_fn (typically runtime pointer). */
     void *publish_ctx;
 
-    /** Simulation time in seconds (set by runtime each tick). */
-    float sim_time_s;
+    /** Simulation time in microseconds (set by runtime each tick). */
+    int64_t sim_time_us;
 
     /** Current execution status. */
     aegis_vm_status_t status;

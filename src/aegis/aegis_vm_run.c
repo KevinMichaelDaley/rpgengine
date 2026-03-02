@@ -514,8 +514,8 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
         /* ---- Environment queries ---- */
 
         case AEGIS_OP_CLOCK:
-            /* clock r_dst — load sim_time_s into r_dst.f32. */
-            vm->regs[d.raw_a].f32 = vm->sim_time_s;
+            /* clock r_dst — convert sim_time_us (int64) to seconds (f32). */
+            vm->regs[d.raw_a].f32 = (float)((double)vm->sim_time_us / 1000000.0);
             break;
 
         case AEGIS_OP_SIN:

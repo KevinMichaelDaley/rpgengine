@@ -135,6 +135,11 @@ typedef struct phys_ccd_args {
     const struct phys_convex_compound *compounds;    /**< Compound shape pool. */
     uint32_t compound_count;
     const void *halfspaces; /**< phys_halfspace_t array (unused by CCD). */
+
+    /** Speed threshold for automatic CCD activation (m/s).
+     *  Dynamic bodies moving faster than this are auto-marked for CCD
+     *  even without PHYS_BODY_FLAG_CCD.  0 = disabled (flag-only). */
+    float auto_ccd_speed;
 } phys_ccd_args_t;
 
 /**

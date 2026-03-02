@@ -917,6 +917,15 @@ uint32_t ctrl_cmd_build_entity_def_json(const char *header,
             aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
                                      "{\"key\":9,\"value\":true}");
             attr_count++;
+        } else if (strcmp(toks[0], "ccd") == 0) {
+            /* Sugar: "ccd" → setattr SCRIPT_KEY_CCD(14) true. */
+            if (attr_count > 0) {
+                aw += (uint32_t)snprintf(attrs_buf + aw,
+                                         sizeof(attrs_buf) - aw, ",");
+            }
+            aw += (uint32_t)snprintf(attrs_buf + aw, sizeof(attrs_buf) - aw,
+                                     "{\"key\":14,\"value\":true}");
+            attr_count++;
         } else if (strcmp(toks[0], "friction") == 0 && ntoks >= 2) {
             /* Sugar: "friction 0.8" → setattr SCRIPT_KEY_FRICTION(12) <float>. */
             if (attr_count > 0) {

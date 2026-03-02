@@ -135,22 +135,22 @@ static void *tick_thread_fn_(void *user_data) {
             r->world->dt_override = 0.0f;
         }
 
-        /* Drain spawns/mutations before tick (always, even when paused). */
-        if (r->cmd_channel) {
-            phys_cmd_drain(r->world, r->cmd_channel,
-                           r->spawn_cb, r->spawn_cb_user);
-        }
-
         /* Check pause state: skip physics tick if paused and no step
-         * was requested.  Commands are still drained above so spawns
-         * and teleports work while the simulation is frozen. */
+         * was requested.  Commands are drained after the tick so that
+         * writes to bodies_curr don't race with the solver. */
         int is_paused = atomic_load_explicit(&r->paused,
                                               memory_order_acquire);
         if (is_paused) {
             int steps = atomic_load_explicit(&r->step_requested,
                                               memory_order_acquire);
             if (steps <= 0) {
-                /* Paused with no step — sleep briefly to avoid busy-wait. */
+                /* Paused with no step — drain commands so spawns and
+                 * teleports work while simulation is frozen, then
+                 * sleep briefly to avoid busy-wait. */
+                if (r->cmd_channel) {
+                    phys_cmd_drain(r->world, r->cmd_channel,
+                                   r->spawn_cb, r->spawn_cb_user);
+                }
                 struct timespec pause_sleep = { .tv_sec = 0,
                                                 .tv_nsec = 1000000 }; /* 1 ms */
                 nanosleep(&pause_sleep, NULL);
@@ -171,6 +171,14 @@ static void *tick_thread_fn_(void *user_data) {
         atomic_store_explicit(&r->last_tick_completion_ms,
                               tick_end_ns / 1000000u,
                               memory_order_relaxed);
+
+        /* Drain commands after tick — writes to bodies_curr which is
+         * now the authoritative buffer after the tick's buffer swap.
+         * No concurrent readers at this point. */
+        if (r->cmd_channel) {
+            phys_cmd_drain(r->world, r->cmd_channel,
+                           r->spawn_cb, r->spawn_cb_user);
+        }
 
         /* Drain corrections after tick. */
         if (r->correction_channel) {

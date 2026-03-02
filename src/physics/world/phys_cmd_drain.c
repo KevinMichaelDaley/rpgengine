@@ -2,9 +2,13 @@
  * @file phys_cmd_drain.c
  * @brief Drain a topic channel of physics commands and apply them.
  *
- * Called by the tick fiber at the start of each physics tick, before
- * any simulation stages run.  This is the single point where external
- * mutations flow into the physics world.
+ * Spawns/destroys run BEFORE the tick so newly-created bodies enter
+ * the simulation immediately.  State mutations (SET_POSITION,
+ * SET_STATE, APPLY_IMPULSE, SET_MATERIAL) run AFTER the tick's
+ * buffer swap so they write to bodies_curr without racing the solver.
+ *
+ * Only bodies_curr is written — the next tick reads from bodies_curr
+ * as its input, so no bodies_next writes are needed.
  */
 
 #include "ferrum/physics/phys_cmd.h"
@@ -62,10 +66,6 @@ static void apply_spawn_(phys_world_t *world,
         b->restitution = cmd->restitution;
     }
 
-    /* Copy to next buffer so the tick sees consistent state. */
-    phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool, idx);
-    if (b_next) { *b_next = *b; }
-
     /* Attach collider. */
     phys_vec3_t zero_off = {0.0f, 0.0f, 0.0f};
     phys_quat_t identity = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -95,19 +95,17 @@ static void apply_spawn_(phys_world_t *world,
     if (cb) { cb(idx, cmd->user_tag, cb_user); }
 }
 
-/** Apply a single SET_POSITION command. */
+/** Apply a single SET_POSITION command.
+ *  Only writes bodies_curr — safe to call after the tick's buffer swap. */
 static void apply_set_position_(phys_world_t *world,
                                  const phys_cmd_set_position_t *cmd) {
     phys_body_t *b = phys_world_get_body(world, cmd->body_index);
     if (!b) { return; }
     b->position = cmd->position;
-
-    phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
-                                                    cmd->body_index);
-    if (b_next) { b_next->position = cmd->position; }
 }
 
-/** Apply a single APPLY_IMPULSE command. */
+/** Apply a single APPLY_IMPULSE command.
+ *  Only writes bodies_curr — safe to call after the tick's buffer swap. */
 static void apply_impulse_(phys_world_t *world,
                             const phys_cmd_apply_impulse_t *cmd) {
     phys_body_t *b = phys_world_get_body(world, cmd->body_index);
@@ -116,10 +114,6 @@ static void apply_impulse_(phys_world_t *world,
     b->linear_vel.x += cmd->impulse.x * b->inv_mass;
     b->linear_vel.y += cmd->impulse.y * b->inv_mass;
     b->linear_vel.z += cmd->impulse.z * b->inv_mass;
-
-    phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
-                                                    cmd->body_index);
-    if (b_next) { *b_next = *b; }
 }
 
 /** Apply a single SET_STATE command (authoritative state correction).
@@ -153,10 +147,6 @@ static void apply_set_state_(phys_world_t *world,
         b->flags &= ~(uint32_t)PHYS_BODY_FLAG_SLEEPING;
         b->sleep_counter = 0;
     }
-
-    phys_body_t *b_next = phys_body_pool_get_next(&world->body_pool,
-                                                     cmd->body_index);
-    if (b_next) { *b_next = *b; }
 }
 
 /* ── Public API (1 non-static function) ────────────────────────── */
@@ -246,12 +236,6 @@ void phys_cmd_drain(phys_world_t *world,
                 if (mb) {
                     mb->friction    = cmd.friction;
                     mb->restitution = cmd.restitution;
-                    phys_body_t *mb_next = phys_body_pool_get_next(
-                        &world->body_pool, cmd.body_index);
-                    if (mb_next) {
-                        mb_next->friction    = cmd.friction;
-                        mb_next->restitution = cmd.restitution;
-                    }
                 }
             }
             break;

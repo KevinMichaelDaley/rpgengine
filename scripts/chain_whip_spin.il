@@ -5,7 +5,7 @@
 ; sets position + linear + angular velocity for 3 root nodes.
 ;
 ; Root entity IDs: root_0=21, root_1=62, root_2=103
-; Orbit radius: starts at 5.0, grows by 1.0/s
+; Orbit radius: starts at 2.0, grows by 0.2/s, caps at 8.0
 ; Y height: starts at 33.0, drops by 1.5/s, clamps at 3.0
 ; Omega: 0.8 * t (angular velocity ramps up over time)
 
@@ -15,14 +15,15 @@
 ; ── Constants ──
 load_imm r40 0.8       ; omega multiplier (was 0.5)
 load_imm r41 0.4       ; theta multiplier (0.5 * omega_mult)
-load_imm r42 5.0       ; initial orbit radius
+load_imm r42 2.0       ; initial orbit radius
 load_imm r43 0.0       ; zero
 load_imm r44 2.0944    ; 2*pi/3 phase offset
 load_imm r45 4.1888    ; 4*pi/3 phase offset
 load_imm r46 33.0      ; initial Y height
-load_imm r47 1.5       ; Y descent rate (units/s)
+load_imm r47 3.0       ; Y descent rate (units/s)
 load_imm r48 3.0       ; minimum Y height (whips drag on ground)
-load_imm r49 1.0       ; radius growth rate (units/s)
+load_imm r49 0.2       ; radius growth rate (units/s)
+load_imm r53 8.0       ; maximum orbit radius
 load_imm r50 21        ; root_0 entity ID
 load_imm r51 62        ; root_1 entity ID
 load_imm r52 103       ; root_2 entity ID
@@ -35,9 +36,15 @@ clock r1
 ; ── omega = 0.8 * t ──
 fmul r2 r40 r1
 
-; ── radius = 5.0 + 1.0 * t ──
+; ── radius = 2.0 + 0.2 * t, clamped to 8.0 ──
 fmul r7 r49 r1
 fadd r7 r42 r7
+fgt r6 r7 r53
+jmp_if r6 clamp_r
+jmp after_clamp_r
+clamp_r:
+mov r7 r53
+after_clamp_r:
 
 ; ── theta = 0.4 * t^2 ──
 fmul r3 r1 r1

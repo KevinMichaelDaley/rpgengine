@@ -219,6 +219,7 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p117_convex_decompose_tests \
 	build/p118_compound_collider_tests \
 	build/p119_snapshot_interp_tests \
+	build/p121_ccd_dynamic_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -690,6 +691,9 @@ build/p118_compound_collider_tests: build/libheadless.a tests/p118_compound_coll
 build/p119_snapshot_interp_tests: build/libheadless.a tests/p119_snapshot_interp_tests.c | build
 	$(CC) $(CFLAGS) tests/p119_snapshot_interp_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/p121_ccd_dynamic_tests: build/libheadless.a tests/p121_ccd_dynamic_tests.c | build
+	$(CC) $(CFLAGS) tests/p121_ccd_dynamic_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
@@ -1102,6 +1106,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p109_mesh_integration_tests \
 	&& ./build/p110_obj_loader_tests \
 	&& ./build/p111_ccd_tests \
+	&& ./build/p121_ccd_dynamic_tests \
 	&& ./build/p112_halfspace_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \

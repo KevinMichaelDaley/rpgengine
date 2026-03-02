@@ -167,6 +167,7 @@ end
 
 entity_def cap_0_0
   type capsule
+  ccd
   pos 5.0 32.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -174,6 +175,7 @@ end
 
 entity_def cap_0_1
   type capsule
+  ccd
   pos 5.0 31.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -181,6 +183,7 @@ end
 
 entity_def cap_0_2
   type capsule
+  ccd
   pos 5.0 30.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -188,6 +191,7 @@ end
 
 entity_def cap_0_3
   type capsule
+  ccd
   pos 5.0 30.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -195,6 +199,7 @@ end
 
 entity_def cap_0_4
   type capsule
+  ccd
   pos 5.0 29.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -202,6 +207,7 @@ end
 
 entity_def cap_0_5
   type capsule
+  ccd
   pos 5.0 28.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -209,6 +215,7 @@ end
 
 entity_def cap_0_6
   type capsule
+  ccd
   pos 5.0 27.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -216,6 +223,7 @@ end
 
 entity_def cap_0_7
   type capsule
+  ccd
   pos 5.0 26.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -223,6 +231,7 @@ end
 
 entity_def cap_0_8
   type capsule
+  ccd
   pos 5.0 26.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -230,6 +239,7 @@ end
 
 entity_def cap_0_9
   type capsule
+  ccd
   pos 5.0 25.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -237,6 +247,7 @@ end
 
 entity_def cap_0_10
   type capsule
+  ccd
   pos 5.0 24.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -244,6 +255,7 @@ end
 
 entity_def cap_0_11
   type capsule
+  ccd
   pos 5.0 23.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -251,6 +263,7 @@ end
 
 entity_def cap_0_12
   type capsule
+  ccd
   pos 5.0 22.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -258,6 +271,7 @@ end
 
 entity_def cap_0_13
   type capsule
+  ccd
   pos 5.0 22.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -265,6 +279,7 @@ end
 
 entity_def cap_0_14
   type capsule
+  ccd
   pos 5.0 21.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -272,6 +287,7 @@ end
 
 entity_def cap_0_15
   type capsule
+  ccd
   pos 5.0 20.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -279,6 +295,7 @@ end
 
 entity_def cap_0_16
   type capsule
+  ccd
   pos 5.0 19.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -286,6 +303,7 @@ end
 
 entity_def cap_0_17
   type capsule
+  ccd
   pos 5.0 18.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -293,6 +311,7 @@ end
 
 entity_def cap_0_18
   type capsule
+  ccd
   pos 5.0 18.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -300,6 +319,7 @@ end
 
 entity_def cap_0_19
   type capsule
+  ccd
   pos 5.0 17.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -307,6 +327,7 @@ end
 
 entity_def cap_0_20
   type capsule
+  ccd
   pos 5.0 16.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -314,6 +335,7 @@ end
 
 entity_def cap_0_21
   type capsule
+  ccd
   pos 5.0 15.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -321,6 +343,7 @@ end
 
 entity_def cap_0_22
   type capsule
+  ccd
   pos 5.0 14.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -328,6 +351,7 @@ end
 
 entity_def cap_0_23
   type capsule
+  ccd
   pos 5.0 14.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -335,6 +359,7 @@ end
 
 entity_def cap_0_24
   type capsule
+  ccd
   pos 5.0 13.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -342,6 +367,7 @@ end
 
 entity_def cap_0_25
   type capsule
+  ccd
   pos 5.0 12.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -349,6 +375,7 @@ end
 
 entity_def cap_0_26
   type capsule
+  ccd
   pos 5.0 11.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -356,6 +383,7 @@ end
 
 entity_def cap_0_27
   type capsule
+  ccd
   pos 5.0 10.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -363,6 +391,7 @@ end
 
 entity_def cap_0_28
   type capsule
+  ccd
   pos 5.0 10.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -370,6 +399,7 @@ end
 
 entity_def cap_0_29
   type capsule
+  ccd
   pos 5.0 9.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -377,6 +407,7 @@ end
 
 entity_def cap_0_30
   type capsule
+  ccd
   pos 5.0 8.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -384,6 +415,7 @@ end
 
 entity_def cap_0_31
   type capsule
+  ccd
   pos 5.0 7.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -391,6 +423,7 @@ end
 
 entity_def cap_0_32
   type capsule
+  ccd
   pos 5.0 6.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -398,6 +431,7 @@ end
 
 entity_def cap_0_33
   type capsule
+  ccd
   pos 5.0 6.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -405,6 +439,7 @@ end
 
 entity_def cap_0_34
   type capsule
+  ccd
   pos 5.0 5.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -412,6 +447,7 @@ end
 
 entity_def cap_0_35
   type capsule
+  ccd
   pos 5.0 4.4 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -419,6 +455,7 @@ end
 
 entity_def cap_0_36
   type capsule
+  ccd
   pos 5.0 3.6 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -426,6 +463,7 @@ end
 
 entity_def cap_0_37
   type capsule
+  ccd
   pos 5.0 2.8 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -433,6 +471,7 @@ end
 
 entity_def cap_0_38
   type capsule
+  ccd
   pos 5.0 2.0 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -440,6 +479,7 @@ end
 
 entity_def cap_0_39
   type capsule
+  ccd
   pos 5.0 1.2 0.0
   scale 0.2 0.6 0.2
   mass 0.5
@@ -499,6 +539,7 @@ end
 
 entity_def cap_1_0
   type capsule
+  ccd
   pos -2.5 32.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -506,6 +547,7 @@ end
 
 entity_def cap_1_1
   type capsule
+  ccd
   pos -2.5 31.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -513,6 +555,7 @@ end
 
 entity_def cap_1_2
   type capsule
+  ccd
   pos -2.5 30.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -520,6 +563,7 @@ end
 
 entity_def cap_1_3
   type capsule
+  ccd
   pos -2.5 30.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -527,6 +571,7 @@ end
 
 entity_def cap_1_4
   type capsule
+  ccd
   pos -2.5 29.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -534,6 +579,7 @@ end
 
 entity_def cap_1_5
   type capsule
+  ccd
   pos -2.5 28.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -541,6 +587,7 @@ end
 
 entity_def cap_1_6
   type capsule
+  ccd
   pos -2.5 27.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -548,6 +595,7 @@ end
 
 entity_def cap_1_7
   type capsule
+  ccd
   pos -2.5 26.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -555,6 +603,7 @@ end
 
 entity_def cap_1_8
   type capsule
+  ccd
   pos -2.5 26.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -562,6 +611,7 @@ end
 
 entity_def cap_1_9
   type capsule
+  ccd
   pos -2.5 25.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -569,6 +619,7 @@ end
 
 entity_def cap_1_10
   type capsule
+  ccd
   pos -2.5 24.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -576,6 +627,7 @@ end
 
 entity_def cap_1_11
   type capsule
+  ccd
   pos -2.5 23.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -583,6 +635,7 @@ end
 
 entity_def cap_1_12
   type capsule
+  ccd
   pos -2.5 22.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -590,6 +643,7 @@ end
 
 entity_def cap_1_13
   type capsule
+  ccd
   pos -2.5 22.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -597,6 +651,7 @@ end
 
 entity_def cap_1_14
   type capsule
+  ccd
   pos -2.5 21.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -604,6 +659,7 @@ end
 
 entity_def cap_1_15
   type capsule
+  ccd
   pos -2.5 20.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -611,6 +667,7 @@ end
 
 entity_def cap_1_16
   type capsule
+  ccd
   pos -2.5 19.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -618,6 +675,7 @@ end
 
 entity_def cap_1_17
   type capsule
+  ccd
   pos -2.5 18.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -625,6 +683,7 @@ end
 
 entity_def cap_1_18
   type capsule
+  ccd
   pos -2.5 18.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -632,6 +691,7 @@ end
 
 entity_def cap_1_19
   type capsule
+  ccd
   pos -2.5 17.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -639,6 +699,7 @@ end
 
 entity_def cap_1_20
   type capsule
+  ccd
   pos -2.5 16.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -646,6 +707,7 @@ end
 
 entity_def cap_1_21
   type capsule
+  ccd
   pos -2.5 15.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -653,6 +715,7 @@ end
 
 entity_def cap_1_22
   type capsule
+  ccd
   pos -2.5 14.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -660,6 +723,7 @@ end
 
 entity_def cap_1_23
   type capsule
+  ccd
   pos -2.5 14.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -667,6 +731,7 @@ end
 
 entity_def cap_1_24
   type capsule
+  ccd
   pos -2.5 13.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -674,6 +739,7 @@ end
 
 entity_def cap_1_25
   type capsule
+  ccd
   pos -2.5 12.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -681,6 +747,7 @@ end
 
 entity_def cap_1_26
   type capsule
+  ccd
   pos -2.5 11.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -688,6 +755,7 @@ end
 
 entity_def cap_1_27
   type capsule
+  ccd
   pos -2.5 10.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -695,6 +763,7 @@ end
 
 entity_def cap_1_28
   type capsule
+  ccd
   pos -2.5 10.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -702,6 +771,7 @@ end
 
 entity_def cap_1_29
   type capsule
+  ccd
   pos -2.5 9.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -709,6 +779,7 @@ end
 
 entity_def cap_1_30
   type capsule
+  ccd
   pos -2.5 8.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -716,6 +787,7 @@ end
 
 entity_def cap_1_31
   type capsule
+  ccd
   pos -2.5 7.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -723,6 +795,7 @@ end
 
 entity_def cap_1_32
   type capsule
+  ccd
   pos -2.5 6.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -730,6 +803,7 @@ end
 
 entity_def cap_1_33
   type capsule
+  ccd
   pos -2.5 6.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -737,6 +811,7 @@ end
 
 entity_def cap_1_34
   type capsule
+  ccd
   pos -2.5 5.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -744,6 +819,7 @@ end
 
 entity_def cap_1_35
   type capsule
+  ccd
   pos -2.5 4.4 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -751,6 +827,7 @@ end
 
 entity_def cap_1_36
   type capsule
+  ccd
   pos -2.5 3.6 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -758,6 +835,7 @@ end
 
 entity_def cap_1_37
   type capsule
+  ccd
   pos -2.5 2.8 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -765,6 +843,7 @@ end
 
 entity_def cap_1_38
   type capsule
+  ccd
   pos -2.5 2.0 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -772,6 +851,7 @@ end
 
 entity_def cap_1_39
   type capsule
+  ccd
   pos -2.5 1.2 4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -831,6 +911,7 @@ end
 
 entity_def cap_2_0
   type capsule
+  ccd
   pos -2.5 32.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -838,6 +919,7 @@ end
 
 entity_def cap_2_1
   type capsule
+  ccd
   pos -2.5 31.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -845,6 +927,7 @@ end
 
 entity_def cap_2_2
   type capsule
+  ccd
   pos -2.5 30.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -852,6 +935,7 @@ end
 
 entity_def cap_2_3
   type capsule
+  ccd
   pos -2.5 30.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -859,6 +943,7 @@ end
 
 entity_def cap_2_4
   type capsule
+  ccd
   pos -2.5 29.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -866,6 +951,7 @@ end
 
 entity_def cap_2_5
   type capsule
+  ccd
   pos -2.5 28.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -873,6 +959,7 @@ end
 
 entity_def cap_2_6
   type capsule
+  ccd
   pos -2.5 27.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -880,6 +967,7 @@ end
 
 entity_def cap_2_7
   type capsule
+  ccd
   pos -2.5 26.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -887,6 +975,7 @@ end
 
 entity_def cap_2_8
   type capsule
+  ccd
   pos -2.5 26.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -894,6 +983,7 @@ end
 
 entity_def cap_2_9
   type capsule
+  ccd
   pos -2.5 25.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -901,6 +991,7 @@ end
 
 entity_def cap_2_10
   type capsule
+  ccd
   pos -2.5 24.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -908,6 +999,7 @@ end
 
 entity_def cap_2_11
   type capsule
+  ccd
   pos -2.5 23.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -915,6 +1007,7 @@ end
 
 entity_def cap_2_12
   type capsule
+  ccd
   pos -2.5 22.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -922,6 +1015,7 @@ end
 
 entity_def cap_2_13
   type capsule
+  ccd
   pos -2.5 22.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -929,6 +1023,7 @@ end
 
 entity_def cap_2_14
   type capsule
+  ccd
   pos -2.5 21.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -936,6 +1031,7 @@ end
 
 entity_def cap_2_15
   type capsule
+  ccd
   pos -2.5 20.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -943,6 +1039,7 @@ end
 
 entity_def cap_2_16
   type capsule
+  ccd
   pos -2.5 19.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -950,6 +1047,7 @@ end
 
 entity_def cap_2_17
   type capsule
+  ccd
   pos -2.5 18.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -957,6 +1055,7 @@ end
 
 entity_def cap_2_18
   type capsule
+  ccd
   pos -2.5 18.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -964,6 +1063,7 @@ end
 
 entity_def cap_2_19
   type capsule
+  ccd
   pos -2.5 17.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -971,6 +1071,7 @@ end
 
 entity_def cap_2_20
   type capsule
+  ccd
   pos -2.5 16.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -978,6 +1079,7 @@ end
 
 entity_def cap_2_21
   type capsule
+  ccd
   pos -2.5 15.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -985,6 +1087,7 @@ end
 
 entity_def cap_2_22
   type capsule
+  ccd
   pos -2.5 14.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -992,6 +1095,7 @@ end
 
 entity_def cap_2_23
   type capsule
+  ccd
   pos -2.5 14.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -999,6 +1103,7 @@ end
 
 entity_def cap_2_24
   type capsule
+  ccd
   pos -2.5 13.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1006,6 +1111,7 @@ end
 
 entity_def cap_2_25
   type capsule
+  ccd
   pos -2.5 12.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1013,6 +1119,7 @@ end
 
 entity_def cap_2_26
   type capsule
+  ccd
   pos -2.5 11.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1020,6 +1127,7 @@ end
 
 entity_def cap_2_27
   type capsule
+  ccd
   pos -2.5 10.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1027,6 +1135,7 @@ end
 
 entity_def cap_2_28
   type capsule
+  ccd
   pos -2.5 10.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1034,6 +1143,7 @@ end
 
 entity_def cap_2_29
   type capsule
+  ccd
   pos -2.5 9.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1041,6 +1151,7 @@ end
 
 entity_def cap_2_30
   type capsule
+  ccd
   pos -2.5 8.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1048,6 +1159,7 @@ end
 
 entity_def cap_2_31
   type capsule
+  ccd
   pos -2.5 7.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1055,6 +1167,7 @@ end
 
 entity_def cap_2_32
   type capsule
+  ccd
   pos -2.5 6.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1062,6 +1175,7 @@ end
 
 entity_def cap_2_33
   type capsule
+  ccd
   pos -2.5 6.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1069,6 +1183,7 @@ end
 
 entity_def cap_2_34
   type capsule
+  ccd
   pos -2.5 5.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1076,6 +1191,7 @@ end
 
 entity_def cap_2_35
   type capsule
+  ccd
   pos -2.5 4.4 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1083,6 +1199,7 @@ end
 
 entity_def cap_2_36
   type capsule
+  ccd
   pos -2.5 3.6 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1090,6 +1207,7 @@ end
 
 entity_def cap_2_37
   type capsule
+  ccd
   pos -2.5 2.8 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1097,6 +1215,7 @@ end
 
 entity_def cap_2_38
   type capsule
+  ccd
   pos -2.5 2.0 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1104,6 +1223,7 @@ end
 
 entity_def cap_2_39
   type capsule
+  ccd
   pos -2.5 1.2 -4.3
   scale 0.2 0.6 0.2
   mass 0.5
@@ -1154,6 +1274,7 @@ joint ball cap_2_38 cap_2_39 -2.5 1.6 -4.3 0 1 0
 # Loose capsules for settling test (y-aligned, dropped from height)
 entity_def loose_cap_0
   type capsule
+  ccd
   pos 10.0 5.0 10.0
   rot 15 0 0
   scale 0.3 0.8 0.3
@@ -1164,6 +1285,7 @@ end
 
 entity_def loose_cap_1
   type capsule
+  ccd
   pos 12.0 5.0 10.0
   rot 0 0 20
   scale 0.3 0.8 0.3
@@ -1174,6 +1296,7 @@ end
 
 entity_def loose_cap_2
   type capsule
+  ccd
   pos 14.0 5.0 10.0
   rot -10 0 15
   scale 0.3 0.8 0.3
@@ -1184,6 +1307,7 @@ end
 
 entity_def loose_cap_3
   type capsule
+  ccd
   pos 10.0 5.0 12.0
   rot 20 0 -10
   scale 0.3 0.8 0.3
@@ -1194,6 +1318,7 @@ end
 
 entity_def loose_cap_4
   type capsule
+  ccd
   pos 12.0 5.0 12.0
   rot -15 0 -20
   scale 0.3 0.8 0.3

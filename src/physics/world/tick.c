@@ -32,6 +32,7 @@
 #include "ferrum/physics/xpbd_solve.h"
 #include "ferrum/physics/integrate.h"
 #include "ferrum/physics/ccd.h"
+#include "ferrum/physics/ccd_dynamic.h"
 #include "ferrum/physics/cache_commit.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
@@ -57,11 +58,11 @@
 /* ── Adaptive solver sub-substeps ──────────────────────────────── */
 
 /** Speed (m/s) above which solver sub-substeps kick in. */
-#define SUBSUB_SPEED_LOW  15.0f
+#define SUBSUB_SPEED_LOW  5.0f
 /** Speed (m/s) at which we reach maximum sub-substeps. */
-#define SUBSUB_SPEED_HIGH 150.0f
+#define SUBSUB_SPEED_HIGH 40.0f
 /** Maximum solver sub-substeps for fast islands. */
-#define SUBSUB_MAX        8
+#define SUBSUB_MAX        16
 
 /**
  * @brief Compute the number of solver sub-substeps for an island
@@ -530,7 +531,11 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         }
 
         /* ── Stage 7: Manifold Build ───────────────────────────── */
-        uint32_t max_manifolds = candidate_count > 0 ? candidate_count : 1;
+        /* Over-allocate to leave room for dynamic-dynamic CCD manifolds
+         * that are appended after Stage 7b. */
+        uint32_t max_manifolds_base = candidate_count > 0 ? candidate_count : 1;
+        uint32_t max_ccd_manifolds  = pair_count > 0 ? pair_count : 0;
+        uint32_t max_manifolds = max_manifolds_base + max_ccd_manifolds;
         manifolds = phys_frame_arena_alloc(
             &world->frame_arena,
             max_manifolds * sizeof(phys_manifold_t),
@@ -544,9 +549,31 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .cache              = &world->manifold_cache,
                 .manifolds_out      = manifolds,
                 .manifold_count_out = &manifold_count,
-                .max_manifolds      = max_manifolds,
+                .max_manifolds      = max_manifolds_base,
                 .tick               = world->tick_count,
                 .bodies             = world->body_pool.bodies_curr,
+            });
+        }
+
+        /* ── Stage 7b: Dynamic-dynamic CCD sweep ──────────────── */
+        /* Sweep CCD-marked dynamic pairs from prev→curr poses,
+         * bisect for TOI, GJK+EPA at TOI, append manifolds. */
+        if (manifolds && world->bodies_ccd_prev && pair_count > 0) {
+            phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
+                .bodies_prev        = world->bodies_ccd_prev,
+                .bodies_curr        = world->body_pool.bodies_curr,
+                .colliders          = world->colliders,
+                .spheres            = world->spheres,
+                .capsules           = world->capsules,
+                .boxes              = world->boxes,
+                .pairs              = pairs,
+                .pair_count         = pair_count,
+                .body_count         = body_cap,
+                .manifolds_out      = manifolds,
+                .manifold_count_out = &manifold_count,
+                .max_manifolds      = max_manifolds,
+                .arena              = &world->frame_arena,
+                .dt                 = substep_dt,
             });
         }
 
@@ -1113,6 +1140,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .convex_hulls     = world->convex_hulls,
                 .compounds        = world->compounds,
                 .compound_count   = world->compound_count,
+                .auto_ccd_speed   = world->config.auto_ccd_speed,
             });
         }
 

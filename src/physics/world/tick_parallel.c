@@ -32,6 +32,7 @@
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/physics/integrate.h"
 #include "ferrum/physics/ccd.h"
+#include "ferrum/physics/ccd_dynamic.h"
 #include "ferrum/physics/cache_commit.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
@@ -411,14 +412,17 @@ void phys_world_tick_parallel(phys_world_t *world,
         if (!world->prediction_mode) {
 
         /* ── Fused collision pipeline: narrow→manifold→stab→constraint ── */
-        uint32_t max_manifolds = pair_count > 0 ? pair_count : 1;
+        /* Over-allocate to leave room for dynamic-dynamic CCD manifolds. */
+        uint32_t max_manifolds_base = pair_count > 0 ? pair_count : 1;
+        uint32_t max_ccd_manifolds  = pair_count > 0 ? pair_count : 0;
+        uint32_t max_manifolds = max_manifolds_base + max_ccd_manifolds;
         manifolds = phys_frame_arena_alloc(
             &world->frame_arena,
             max_manifolds * sizeof(phys_manifold_t),
             _Alignof(phys_manifold_t));
         manifold_count = 0;
 
-        uint32_t max_contact_constraints = pair_count * PHYS_MAX_MANIFOLD_POINTS;
+        uint32_t max_contact_constraints = max_manifolds * PHYS_MAX_MANIFOLD_POINTS;
         uint32_t max_joint_constraints = world->joint_count * 2;
         uint32_t max_constraints = max_contact_constraints + max_joint_constraints;
         if (max_constraints == 0) max_constraints = 1;
@@ -453,7 +457,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .slop                = world->config.slop,
                 .manifolds_out       = manifolds,
                 .manifold_count_out  = &manifold_count,
-                .max_manifolds       = max_manifolds,
+                .max_manifolds       = max_manifolds_base,
                 .constraints_out     = constraints,
                 .constraint_count_out = &constraint_count,
                 .max_constraints     = max_constraints,
@@ -463,6 +467,55 @@ void phys_world_tick_parallel(phys_world_t *world,
 #endif
         }
 
+        /* ── Stage 7b: Dynamic-dynamic CCD sweep (parallel tick) ── */
+        /* Append CCD manifolds after the fused pipeline's manifolds,
+         * then build constraints from them.  CCD contacts are first-contact
+         * so no stabilization hints are needed (zero-initialized hints). */
+        uint32_t ccd_manifold_start = manifold_count;
+        if (manifolds && world->bodies_ccd_prev && pair_count > 0) {
+            phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
+                .bodies_prev        = world->bodies_ccd_prev,
+                .bodies_curr        = world->body_pool.bodies_curr,
+                .colliders          = world->colliders,
+                .spheres            = world->spheres,
+                .capsules           = world->capsules,
+                .boxes              = world->boxes,
+                .pairs              = pairs,
+                .pair_count         = pair_count,
+                .body_count         = body_cap,
+                .manifolds_out      = manifolds,
+                .manifold_count_out = &manifold_count,
+                .max_manifolds      = max_manifolds,
+                .arena              = &world->frame_arena,
+                .dt                 = substep_dt,
+            });
+        }
+        uint32_t ccd_manifold_count = manifold_count - ccd_manifold_start;
+
+        /* Build constraints from CCD manifolds (if any). */
+        if (constraints && ccd_manifold_count > 0) {
+            /* Allocate zero-initialized stab hints for CCD manifolds. */
+            phys_stab_hint_t *ccd_hints = phys_frame_arena_alloc(
+                &world->frame_arena,
+                ccd_manifold_count * sizeof(phys_stab_hint_t),
+                _Alignof(phys_stab_hint_t));
+            if (ccd_hints) {
+                memset(ccd_hints, 0,
+                       ccd_manifold_count * sizeof(phys_stab_hint_t));
+                phys_stage_constraint_build(&(phys_constraint_build_args_t){
+                    .manifolds            = manifolds + ccd_manifold_start,
+                    .hints                = ccd_hints,
+                    .manifold_count       = ccd_manifold_count,
+                    .bodies               = world->body_pool.bodies_curr,
+                    .constraints_out      = constraints + constraint_count,
+                    .constraint_count_out = &constraint_count,
+                    .max_constraints      = max_constraints,
+                    .dt                   = substep_dt,
+                    .baumgarte            = world->config.baumgarte,
+                    .slop                 = world->config.slop,
+                });
+            }
+        }
 
         /* Build joint constraints and append after contact constraints. */
         uint32_t joint_constraint_start = constraint_count;
@@ -703,6 +756,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .convex_hulls     = world->convex_hulls,
                 .compounds        = world->compounds,
                 .compound_count   = world->compound_count,
+                .auto_ccd_speed   = world->config.auto_ccd_speed,
             });
         }
 
