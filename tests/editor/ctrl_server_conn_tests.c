@@ -44,7 +44,7 @@ static bool test_init_disconnect(void) {
     ctrl_conn_init(&conn);
     ASSERT(conn.fd == -1);
     ASSERT(conn.state == CTRL_CONN_DISCONNECTED);
-    ctrl_conn_disconnect(&conn);
+    ctrl_conn_destroy(&conn);
     return true;
 }
 
@@ -60,7 +60,7 @@ static bool test_connect(void) {
     ASSERT(conn.state == CTRL_CONN_CONNECTED);
     ASSERT(conn.fd >= 0);
 
-    ctrl_conn_disconnect(&conn);
+    ctrl_conn_destroy(&conn);
     editor_ctx_shutdown(&ctx);
     return true;
 }
@@ -106,7 +106,7 @@ static bool test_send_recv(void) {
     ASSERT(len > 0);
     ASSERT(strstr(line, "\"ok\":true") != NULL);
 
-    ctrl_conn_disconnect(&conn);
+    ctrl_conn_destroy(&conn);
     editor_ctx_shutdown(&ctx);
     return true;
 }
@@ -135,7 +135,7 @@ static bool test_send_raw(void) {
     ASSERT(len > 0);
     ASSERT(strstr(line, "\"id\":42") != NULL);
 
-    ctrl_conn_disconnect(&conn);
+    ctrl_conn_destroy(&conn);
     editor_ctx_shutdown(&ctx);
     return true;
 }
@@ -184,7 +184,7 @@ static bool test_multiple_responses(void) {
     }
     ASSERT(count == 3);
 
-    ctrl_conn_disconnect(&conn);
+    ctrl_conn_destroy(&conn);
     editor_ctx_shutdown(&ctx);
     return true;
 }
@@ -192,7 +192,7 @@ static bool test_multiple_responses(void) {
 /** Null params. */
 static bool test_null_params(void) {
     ctrl_conn_init(NULL);  /* Should not crash. */
-    ctrl_conn_disconnect(NULL);
+    ctrl_conn_destroy(NULL);
     ASSERT(!ctrl_conn_connect(NULL, NULL, 0));
     ASSERT(!ctrl_conn_send_cmd(NULL, NULL));
     ASSERT(!ctrl_conn_send_raw(NULL, NULL, 0));

@@ -21,7 +21,10 @@ extern "C" {
 /* Constants                                                                 */
 /* ------------------------------------------------------------------------ */
 
-#define CTRL_CONN_RECV_BUF  8192
+/** Default receive buffer size (32 MB — must handle asset transfers). */
+#define CTRL_CONN_RECV_BUF  (32 * 1024 * 1024)
+
+/** Stack buffer for send_cmd formatting (short commands only). */
 #define CTRL_CONN_SEND_BUF  8192
 
 /* ------------------------------------------------------------------------ */
@@ -49,9 +52,10 @@ typedef struct ctrl_conn {
     int                fd;              /**< Socket fd (-1 = not connected). */
     ctrl_conn_state_t  state;           /**< Connection state. */
 
-    /* Receive buffer for response accumulation. */
-    char     recv_buf[CTRL_CONN_RECV_BUF];
+    /* Receive buffer for response accumulation (heap-allocated). */
+    char    *recv_buf;                  /**< Heap-allocated receive buffer. */
     uint32_t recv_len;                  /**< Bytes in recv_buf. */
+    uint32_t recv_cap;                  /**< Capacity of recv_buf. */
 
     /* Next request ID for correlation. */
     uint32_t next_id;
@@ -63,9 +67,19 @@ typedef struct ctrl_conn {
 
 /**
  * @brief Initialize connection state (does not connect).
+ *
+ * Allocates the receive buffer (CTRL_CONN_RECV_BUF bytes).
+ *
  * @param conn  Connection to initialize.
+ * @return true on success, false on allocation failure.
  */
-void ctrl_conn_init(ctrl_conn_t *conn);
+bool ctrl_conn_init(ctrl_conn_t *conn);
+
+/**
+ * @brief Free resources (receive buffer).  Disconnects first if needed.
+ * @param conn  Connection to destroy.
+ */
+void ctrl_conn_destroy(ctrl_conn_t *conn);
 
 /**
  * @brief Connect to the editor server.

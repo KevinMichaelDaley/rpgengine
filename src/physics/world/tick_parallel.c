@@ -12,6 +12,7 @@
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/game_state.h"
 #include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_cmd.h"
 #include "ferrum/physics/step_plan.h"
 #include "ferrum/physics/tier_list.h"
 #include "ferrum/physics/tier_classify.h"
@@ -1415,6 +1416,23 @@ void phys_world_tick_parallel(phys_world_t *world,
         } /* end if (!world->prediction_mode) — 13 */
 
         /* ── Buffer swap for next substep ──────────────────────── */
+        phys_body_pool_swap_buffers(&world->body_pool);
+    }
+
+    /* ── Apply deferred mutations (thread-safe) ────────────────── */
+    /* If the tick runner staged body mutations (SET_POSITION, etc.),
+     * copy the latest physics state into bodies_next, apply the
+     * mutations there, then swap.  This publishes commanded state
+     * atomically — the network thread reading bodies_curr never sees
+     * partially-written fields. */
+    if (world->pending_mutations &&
+        world->pending_mutations->used > 0) {
+        memcpy(world->body_pool.bodies_next,
+               world->body_pool.bodies_curr,
+               body_cap * sizeof(phys_body_t));
+        phys_cmd_apply_mutations(world->pending_mutations,
+                                 world->body_pool.bodies_next,
+                                 body_cap);
         phys_body_pool_swap_buffers(&world->body_pool);
     }
 

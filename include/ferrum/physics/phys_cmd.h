@@ -171,14 +171,30 @@ typedef void (*phys_cmd_spawn_callback_t)(uint32_t body_index,
 
 /* Forward declarations to avoid pulling in full headers. */
 struct phys_world;
+struct phys_body;
 struct fr_topic_channel;
+
+/**
+ * @brief Staging buffer for deferred body mutations.
+ *
+ * Commands are stored as contiguous [type_byte | payload] entries.
+ * Populated by phys_cmd_drain_spawns(), consumed by
+ * phys_cmd_apply_mutations().
+ */
+typedef struct phys_cmd_mutation_list {
+    uint8_t *data;    /**< Pre-allocated buffer for staged commands. */
+    size_t   used;    /**< Bytes currently used. */
+    size_t   cap;     /**< Total buffer capacity in bytes. */
+} phys_cmd_mutation_list_t;
 
 /**
  * @brief Drain all pending commands from a topic channel and apply them
  *        to the physics world.
  *
- * Called at the start of each physics tick, before any simulation stages.
- * Commands are deserialized from the channel's byte ring buffer.
+ * Called while paused to process commands without a physics tick.
+ * NOT safe to call concurrently with network reads of bodies_curr
+ * for mutation commands — use phys_cmd_drain_spawns() +
+ * phys_cmd_apply_mutations() for thread-safe operation during ticks.
  *
  * @param world          Physics world to mutate.
  * @param cmd_channel    Topic channel containing serialized commands.
@@ -191,6 +207,46 @@ void phys_cmd_drain(struct phys_world *world,
                     struct fr_topic_channel *cmd_channel,
                     phys_cmd_spawn_callback_t spawn_cb,
                     void *spawn_cb_user);
+
+/**
+ * @brief Drain commands, splitting spawns from mutations.
+ *
+ * Spawn/destroy/joint commands are applied immediately to the world
+ * (writing to bodies_curr — safe because new body slots don't
+ * contend with existing network reads of active bodies).
+ *
+ * Mutation commands (SET_POSITION, APPLY_IMPULSE, SET_STATE,
+ * SET_MATERIAL) are copied into the deferred list for later
+ * application to bodies_next before the buffer swap.
+ *
+ * @param world          Physics world.
+ * @param cmd_channel    Topic channel to drain.
+ * @param spawn_cb       Callback for spawns (may be NULL).
+ * @param spawn_cb_user  Opaque pointer for spawn_cb.
+ * @param deferred       Output list for mutations.  Must be initialized
+ *                       with .data pointing to a pre-allocated buffer
+ *                       and .cap set.  .used is reset to 0 on entry.
+ */
+void phys_cmd_drain_spawns(struct phys_world *world,
+                           struct fr_topic_channel *cmd_channel,
+                           phys_cmd_spawn_callback_t spawn_cb,
+                           void *spawn_cb_user,
+                           phys_cmd_mutation_list_t *deferred);
+
+/**
+ * @brief Apply deferred mutations to a target body buffer.
+ *
+ * Processes SET_POSITION, APPLY_IMPULSE, SET_STATE, and SET_MATERIAL
+ * commands from the deferred list, writing to the target buffer
+ * (typically bodies_next) rather than bodies_curr.
+ *
+ * @param mutations      Deferred mutation list from phys_cmd_drain_spawns().
+ * @param target_bodies  Body buffer to write to (e.g., bodies_next).
+ * @param body_cap       Capacity of the target buffer (for bounds check).
+ */
+void phys_cmd_apply_mutations(const phys_cmd_mutation_list_t *mutations,
+                              struct phys_body *target_bodies,
+                              uint32_t body_cap);
 
 /**
  * @brief Push a serialized physics command into a topic channel.

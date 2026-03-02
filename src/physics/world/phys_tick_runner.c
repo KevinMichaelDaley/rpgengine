@@ -3,10 +3,12 @@
  * @brief Continuous physics tick runner implementation.
  *
  * Spawns a dedicated OS thread that loops forever (until stop is
- * requested).  Each iteration: pace → drain commands → tick →
- * drain corrections → signal.  Pacing uses nanosleep between ticks.
- * Parallel physics stages are dispatched to the job system's worker
- * pool from the tick thread.
+ * requested).  Each iteration: pace → split-drain commands (spawns
+ * to bodies_curr, mutations deferred) → tick (applies mutations
+ * atomically via bodies_next + swap) → signal.
+ *
+ * Pacing uses nanosleep between ticks.  Parallel physics stages are
+ * dispatched to the job system's worker pool from the tick thread.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -21,6 +23,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -136,8 +139,8 @@ static void *tick_thread_fn_(void *user_data) {
         }
 
         /* Check pause state: skip physics tick if paused and no step
-         * was requested.  Commands are drained after the tick so that
-         * writes to bodies_curr don't race with the solver. */
+         * was requested.  While paused, use split drain so mutations
+         * go through bodies_next + swap (thread-safe). */
         int is_paused = atomic_load_explicit(&r->paused,
                                               memory_order_acquire);
         if (is_paused) {
@@ -147,9 +150,26 @@ static void *tick_thread_fn_(void *user_data) {
                 /* Paused with no step — drain commands so spawns and
                  * teleports work while simulation is frozen, then
                  * sleep briefly to avoid busy-wait. */
-                if (r->cmd_channel) {
-                    phys_cmd_drain(r->world, r->cmd_channel,
-                                   r->spawn_cb, r->spawn_cb_user);
+                if (r->cmd_channel && r->mutation_buf) {
+                    phys_cmd_mutation_list_t paused_mut = {
+                        .data = r->mutation_buf,
+                        .used = 0,
+                        .cap  = r->mutation_buf_cap
+                    };
+                    phys_cmd_drain_spawns(r->world, r->cmd_channel,
+                                          r->spawn_cb, r->spawn_cb_user,
+                                          &paused_mut);
+                    /* Apply mutations atomically: curr→next, mutate, swap. */
+                    if (paused_mut.used > 0) {
+                        uint32_t cap = r->world->body_pool.capacity;
+                        memcpy(r->world->body_pool.bodies_next,
+                               r->world->body_pool.bodies_curr,
+                               cap * sizeof(phys_body_t));
+                        phys_cmd_apply_mutations(
+                            &paused_mut,
+                            r->world->body_pool.bodies_next, cap);
+                        phys_body_pool_swap_buffers(&r->world->body_pool);
+                    }
                 }
                 struct timespec pause_sleep = { .tv_sec = 0,
                                                 .tv_nsec = 1000000 }; /* 1 ms */
@@ -158,33 +178,63 @@ static void *tick_thread_fn_(void *user_data) {
             }
             /* Consume one step request. */
             atomic_fetch_sub_explicit(&r->step_requested, 1,
-                                      memory_order_release);
+                                       memory_order_release);
         }
+
+        /* ── Split drain: spawns immediate, mutations deferred ─────
+         *
+         * Structural commands (spawn/destroy/joint) apply immediately
+         * to bodies_curr — new slots don't contend with existing
+         * network reads.
+         *
+         * Mutation commands (set_position, impulse, state, material)
+         * are staged in mutation_buf.  tick_parallel copies
+         * bodies_curr → bodies_next, applies mutations there, then
+         * swaps — publishing commanded state atomically. */
+        phys_cmd_mutation_list_t mutations = {
+            .data = r->mutation_buf,
+            .used = 0,
+            .cap  = r->mutation_buf_cap
+        };
+
+        if (r->cmd_channel && r->mutation_buf) {
+            phys_cmd_drain_spawns(r->world, r->cmd_channel,
+                                   r->spawn_cb, r->spawn_cb_user,
+                                   &mutations);
+        }
+
+        if (r->correction_channel && r->mutation_buf) {
+            /* Corrections are state mutations — append to same buffer. */
+            phys_cmd_mutation_list_t corr = {
+                .data = r->mutation_buf + mutations.used,
+                .used = 0,
+                .cap  = r->mutation_buf_cap - mutations.used
+            };
+            phys_cmd_drain_spawns(r->world, r->correction_channel,
+                                   NULL, NULL, &corr);
+            mutations.used += corr.used;
+        }
+
+        /* Publish deferred mutations via world pointer so tick_parallel
+         * can apply them at end of substep loop before final swap. */
+        r->world->pending_mutations =
+            (mutations.used > 0) ? &mutations : NULL;
 
         /* Run one physics tick (dispatches parallel jobs to workers). */
         uint64_t tick_start_ns = runner_clock_ns_();
         phys_world_tick_parallel(r->world, r->game_state, r->jobs);
         uint64_t tick_end_ns = runner_clock_ns_();
+
+        /* Clear pending mutations (stack-local, must not outlive
+         * this iteration). */
+        r->world->pending_mutations = NULL;
+
         atomic_store_explicit(&r->last_tick_duration_ns,
                               tick_end_ns - tick_start_ns,
                               memory_order_relaxed);
         atomic_store_explicit(&r->last_tick_completion_ms,
                               tick_end_ns / 1000000u,
                               memory_order_relaxed);
-
-        /* Drain commands after tick — writes to bodies_curr which is
-         * now the authoritative buffer after the tick's buffer swap.
-         * No concurrent readers at this point. */
-        if (r->cmd_channel) {
-            phys_cmd_drain(r->world, r->cmd_channel,
-                           r->spawn_cb, r->spawn_cb_user);
-        }
-
-        /* Drain corrections after tick. */
-        if (r->correction_channel) {
-            phys_cmd_drain(r->world, r->correction_channel,
-                           NULL, NULL);
-        }
 
         /* Post-tick callback (e.g. send priority state updates). */
         uint64_t next_tick = atomic_load_explicit(&r->completed_ticks,
@@ -221,6 +271,11 @@ void phys_tick_runner_init(phys_tick_runner_t *r,
     r->spawn_cb           = spawn_cb;
     r->spawn_cb_user      = spawn_cb_user;
 
+    /* Pre-allocate mutation staging buffer (256 KB — sufficient for
+     * thousands of mutations per tick without per-frame allocation). */
+    r->mutation_buf_cap = 256u * 1024u;
+    r->mutation_buf     = (uint8_t *)malloc(r->mutation_buf_cap);
+
     atomic_init(&r->completed_ticks, 0);
     atomic_init(&r->stop_requested, 0);
     atomic_init(&r->paused, 0);
@@ -230,7 +285,10 @@ void phys_tick_runner_init(phys_tick_runner_t *r,
 }
 
 void phys_tick_runner_destroy(phys_tick_runner_t *r) {
-    (void)r; /* Nothing to free — we borrow everything. */
+    if (!r) { return; }
+    free(r->mutation_buf);
+    r->mutation_buf = NULL;
+    r->mutation_buf_cap = 0;
 }
 
 void phys_tick_runner_start(phys_tick_runner_t *r) {

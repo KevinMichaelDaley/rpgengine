@@ -32,8 +32,8 @@ extern "C" {
 /** Default TCP port for the client state socket. */
 #define CLIENT_STATE_PORT_DEFAULT 9200
 
-/** Receive buffer size (bytes). */
-#define CLIENT_STATE_RECV_BUF 8192
+/** Receive buffer size (32 MB — must handle asset transfers). */
+#define CLIENT_STATE_RECV_BUF (32 * 1024 * 1024)
 
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */
@@ -52,9 +52,10 @@ typedef struct client_state_socket {
     int      client_fd;   /**< Connected controller fd (-1 = none). */
     uint16_t port;        /**< Actual port (set after listen, useful when port=0). */
 
-    /** Receive buffer for incoming data accumulation. */
-    char     recv_buf[CLIENT_STATE_RECV_BUF];
+    /** Receive buffer for incoming data accumulation (heap-allocated). */
+    char    *recv_buf;    /**< Heap-allocated receive buffer. */
     uint32_t recv_len;    /**< Bytes currently in recv_buf. */
+    uint32_t recv_cap;    /**< Capacity of recv_buf. */
 } client_state_socket_t;
 
 /* ------------------------------------------------------------------------ */

@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -50,7 +51,7 @@ static bool try_accept_(client_state_socket_t *css) {
 static bool try_recv_(client_state_socket_t *css) {
     if (css->client_fd < 0) return false;
 
-    uint32_t space = CLIENT_STATE_RECV_BUF - css->recv_len;
+    uint32_t space = css->recv_cap - css->recv_len;
     if (space == 0) return false;  /* Buffer full. */
 
     ssize_t n = recv(css->client_fd, css->recv_buf + css->recv_len,
@@ -150,18 +151,19 @@ bool client_state_socket_send(client_state_socket_t *css,
                                const char *json, uint32_t len) {
     if (!css || !json || len == 0 || css->client_fd < 0) return false;
 
-    /* Build message with newline appended in a single buffer
-     * to avoid split-send issues with non-blocking receivers. */
+    /* Build message with newline appended.  Use heap buffer since
+     * messages can be large (asset transfers). */
     bool needs_nl = (json[len - 1] != '\n');
     uint32_t total = len + (needs_nl ? 1 : 0);
 
-    char buf[CLIENT_STATE_RECV_BUF];
-    if (total > sizeof(buf)) return false;
+    char *buf = (char *)malloc(total);
+    if (!buf) return false;
 
     memcpy(buf, json, len);
     if (needs_nl) buf[len] = '\n';
 
     ssize_t sent = send(css->client_fd, buf, total, MSG_NOSIGNAL);
+    free(buf);
     if (sent < 0 || (uint32_t)sent != total) {
         close(css->client_fd);
         css->client_fd = -1;

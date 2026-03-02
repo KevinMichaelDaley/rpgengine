@@ -118,6 +118,12 @@ typedef struct phys_tick_runner {
 
     /** True after start() has been called. */
     uint8_t running;
+
+    /** Pre-allocated mutation staging buffer.  Populated by
+     *  phys_cmd_drain_spawns() before each tick, consumed by
+     *  tick_parallel via world->pending_mutations. */
+    uint8_t *mutation_buf;
+    size_t   mutation_buf_cap;
 } phys_tick_runner_t;
 
 /**

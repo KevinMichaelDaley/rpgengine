@@ -59,7 +59,7 @@ bool ctrl_conn_send_raw(ctrl_conn_t *conn, const char *json, uint32_t len) {
 bool ctrl_conn_recv(ctrl_conn_t *conn) {
     if (!conn || conn->state != CTRL_CONN_CONNECTED) return false;
 
-    uint32_t space = CTRL_CONN_RECV_BUF - conn->recv_len;
+    uint32_t space = conn->recv_cap - conn->recv_len;
     if (space == 0) return false;  /* Buffer full. */
 
     ssize_t n = recv(conn->fd, conn->recv_buf + conn->recv_len,

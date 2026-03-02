@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -20,6 +21,8 @@ void client_state_socket_init(client_state_socket_t *css) {
     css->listen_fd = -1;
     css->client_fd = -1;
     css->port      = 0;
+    css->recv_buf  = (char *)malloc(CLIENT_STATE_RECV_BUF);
+    css->recv_cap  = css->recv_buf ? CLIENT_STATE_RECV_BUF : 0;
 }
 
 bool client_state_socket_listen(client_state_socket_t *css, uint16_t port) {
@@ -75,6 +78,9 @@ void client_state_socket_destroy(client_state_socket_t *css) {
         close(css->listen_fd);
         css->listen_fd = -1;
     }
+    free(css->recv_buf);
+    css->recv_buf = NULL;
+    css->recv_cap = 0;
     css->recv_len = 0;
     css->port     = 0;
 }

@@ -35,11 +35,11 @@ extern "C" {
 /** @brief Maximum simultaneous edit clients. */
 #define EDIT_IO_MAX_CLIENTS   8
 
-/** @brief Maximum bytes per JSON line (1 MB). */
-#define EDIT_IO_MAX_LINE      (1024 * 1024)
+/** @brief Maximum bytes per JSON line (32 MB). */
+#define EDIT_IO_MAX_LINE      (32 * 1024 * 1024)
 
-/** @brief Per-client read buffer size. */
-#define EDIT_IO_READ_BUF_SIZE 4096
+/** @brief Per-client read buffer size (32 MB — must handle asset transfers). */
+#define EDIT_IO_READ_BUF_SIZE (32 * 1024 * 1024)
 
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */

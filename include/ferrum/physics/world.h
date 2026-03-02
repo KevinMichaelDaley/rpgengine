@@ -150,6 +150,13 @@ typedef struct phys_world {
     phys_joint_t *joints;                      /**< Array of active joints. */
     uint32_t joint_count;                      /**< Number of active joints. */
     uint32_t joint_capacity;                   /**< Allocated joint capacity. */
+
+    /** Deferred body mutations to apply at end of tick.
+     *  Set by the tick runner before calling tick_parallel.
+     *  tick_parallel copies bodies_curr → bodies_next, applies these
+     *  mutations to bodies_next, then does a final swap to publish
+     *  them atomically.  NULL when no deferred mutations exist. */
+    struct phys_cmd_mutation_list *pending_mutations;
 } phys_world_t;
 
 /* ── Configuration API ──────────────────────────────────────────── */

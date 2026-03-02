@@ -10,15 +10,28 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
-void ctrl_conn_init(ctrl_conn_t *conn) {
-    if (!conn) return;
+bool ctrl_conn_init(ctrl_conn_t *conn) {
+    if (!conn) return false;
     memset(conn, 0, sizeof(*conn));
     conn->fd    = -1;
     conn->state = CTRL_CONN_DISCONNECTED;
+    conn->recv_buf = (char *)malloc(CTRL_CONN_RECV_BUF);
+    if (!conn->recv_buf) return false;
+    conn->recv_cap = CTRL_CONN_RECV_BUF;
+    return true;
+}
+
+void ctrl_conn_destroy(ctrl_conn_t *conn) {
+    if (!conn) return;
+    ctrl_conn_disconnect(conn);
+    free(conn->recv_buf);
+    conn->recv_buf = NULL;
+    conn->recv_cap = 0;
 }
 
 bool ctrl_conn_connect(ctrl_conn_t *conn, const char *host, uint16_t port) {
