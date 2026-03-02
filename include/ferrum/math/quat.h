@@ -85,6 +85,17 @@ vec3_t quat_rotate_vec3(quat_t q, vec3_t v);
  */
 vec3_t quat_inv_rotate_vec3(quat_t q, vec3_t v);
 
+/**
+ * @brief Build quaternion from Euler angles (XYZ intrinsic order).
+ * @param x Rotation around X axis in radians.
+ * @param y Rotation around Y axis in radians.
+ * @param z Rotation around Z axis in radians.
+ * @return Normalized quaternion representing the combined rotation.
+ *
+ * Applies rotations in X → Y → Z order (intrinsic).
+ */
+quat_t quat_from_euler(float x, float y, float z);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -14,6 +14,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/broadphase.h"
 #include "ferrum/physics/collider.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/narrowphase.h"
 #include "ferrum/physics/narrowphase_convex.h"
@@ -32,6 +33,19 @@
  * Helper to avoid repeating the write-out pattern for every
  * shape pair that produces exactly one contact point.
  */
+/** Check if two bodies are connected by a joint (linear scan, small N). */
+static bool bodies_jointed(const phys_joint_t *joints, uint32_t count,
+                           uint32_t a, uint32_t b)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        if ((joints[i].body_a == a && joints[i].body_b == b) ||
+            (joints[i].body_a == b && joints[i].body_b == a)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void emit_single(phys_contact_candidate_t *cand,
                          uint32_t body_a, uint32_t body_b,
                          const phys_contact_point_t *c)
@@ -54,6 +68,12 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
     for (uint32_t i = 0; i < args->pair_count && count < args->max_candidates; i++) {
         uint32_t a = args->pairs[i].body_a;
         uint32_t b = args->pairs[i].body_b;
+
+        /* Skip pairs connected by a joint. */
+        if (args->joints && args->joint_count > 0 &&
+            bodies_jointed(args->joints, args->joint_count, a, b)) {
+            continue;
+        }
 
         const phys_collider_t *ca = &args->colliders[a];
         const phys_collider_t *cb = &args->colliders[b];

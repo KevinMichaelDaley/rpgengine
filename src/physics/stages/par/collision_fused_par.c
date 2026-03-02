@@ -27,6 +27,7 @@
 #include "ferrum/physics/narrowphase_convex.h"
 #include "ferrum/physics/convex_compound.h"
 #include "ferrum/physics/collision/halfspace.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/step_plan.h"
 
 #ifdef TRACY_ENABLE
@@ -105,6 +106,19 @@ static int contact_on_unstable_box(const phys_collision_fused_args_t *args,
     return 0;
 }
 
+/** Check if two bodies are connected by a joint (linear scan, small N). */
+static bool bodies_jointed(const phys_joint_t *joints, uint32_t count,
+                           uint32_t a, uint32_t b)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        if ((joints[i].body_a == a && joints[i].body_b == b) ||
+            (joints[i].body_a == b && joints[i].body_b == a)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* ── Narrowphase: test one pair ────────────────────────────────── */
 
 /**
@@ -127,6 +141,12 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
     /* Skip pairs where both bodies are sleeping. */
     if (phys_body_is_sleeping(&args->bodies[a]) &&
         phys_body_is_sleeping(&args->bodies[b])) {
+        return 0;
+    }
+
+    /* Skip pairs connected by a joint. */
+    if (args->joints && args->joint_count > 0 &&
+        bodies_jointed(args->joints, args->joint_count, a, b)) {
         return 0;
     }
 

@@ -220,7 +220,16 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
     phys_cmd_spawn_body_t spawn;
     memset(&spawn, 0, sizeof(spawn));
     spawn.position = (phys_vec3_t){entity->pos[0], entity->pos[1], entity->pos[2]};
-    spawn.orientation = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+
+    /* Convert entity Euler angles (degrees) to quaternion orientation. */
+    {
+        const float deg2rad = 3.14159265358979f / 180.0f;
+        quat_t eq = quat_from_euler(
+            entity->rot[0] * deg2rad,
+            entity->rot[1] * deg2rad,
+            entity->rot[2] * deg2rad);
+        spawn.orientation = PHYS_QUAT_FROM_QUAT(eq);
+    }
 
     /* Determine shape from entity type. */
     if (entity->type == EDIT_ENTITY_TYPE_SPHERE) {

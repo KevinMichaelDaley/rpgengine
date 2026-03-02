@@ -24,6 +24,7 @@
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
 #include "ferrum/physics/collision/halfspace.h"
+#include "ferrum/physics/joint.h"
 
 /** Batch size: number of broadphase pairs per job. */
 #define NP_PAR_BATCH_SIZE 64
@@ -40,6 +41,19 @@ typedef struct np_par_shared {
     const phys_narrowphase_args_t *args;  /**< Original narrowphase args.    */
     atomic_uint                    out_idx; /**< Next free candidate slot.   */
 } np_par_shared_t;
+
+/** Check if two bodies are connected by a joint (linear scan, small N). */
+static bool bodies_jointed(const phys_joint_t *joints, uint32_t count,
+                           uint32_t a, uint32_t b)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        if ((joints[i].body_a == a && joints[i].body_b == b) ||
+            (joints[i].body_a == b && joints[i].body_b == a)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /* ── Job function ──────────────────────────────────────────────── */
 
@@ -68,6 +82,12 @@ static void np_par_job_fn(void *user_data)
     for (uint32_t i = batch->start; i < end; i++) {
         uint32_t a = args->pairs[i].body_a;
         uint32_t b = args->pairs[i].body_b;
+
+        /* Skip pairs connected by a joint. */
+        if (args->joints && args->joint_count > 0 &&
+            bodies_jointed(args->joints, args->joint_count, a, b)) {
+            continue;
+        }
 
         const phys_collider_t *ca = &args->colliders[a];
         const phys_collider_t *cb = &args->colliders[b];

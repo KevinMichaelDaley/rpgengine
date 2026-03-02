@@ -26,7 +26,8 @@ end
 
 entity_def barrel_0
   type capsule
-  pos -10 2.25 -10
+  pos -10 1.75 -10
+  rot 0 0 90
   scale 0.5 1.0 0.5
   mass 5
 end
@@ -45,7 +46,8 @@ end
 
 entity_def barrel_1
   type capsule
-  pos 10 2.25 -10
+  pos 10 1.75 -10
+  rot 0 0 90
   scale 0.5 1.0 0.5
   mass 5
 end
@@ -64,7 +66,8 @@ end
 
 entity_def barrel_2
   type capsule
-  pos -10 2.25 10
+  pos -10 1.75 10
+  rot 0 0 90
   scale 0.5 1.0 0.5
   mass 5
 end
@@ -83,7 +86,8 @@ end
 
 entity_def barrel_3
   type capsule
-  pos 10 2.25 10
+  pos 10 1.75 10
+  rot 0 0 90
   scale 0.5 1.0 0.5
   mass 5
 end

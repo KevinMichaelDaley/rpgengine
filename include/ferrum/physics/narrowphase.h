@@ -26,6 +26,7 @@ struct phys_mesh_shape;
 struct phys_halfspace;
 struct phys_convex_hull;
 struct phys_collision_pair;
+struct phys_joint;
 
 #ifdef __cplusplus
 extern "C" {
@@ -74,6 +75,8 @@ typedef struct phys_narrowphase_args {
     uint32_t *candidate_count_out;                /**< Receives candidate count. */
     uint32_t max_candidates;                      /**< Capacity of output buffer. */
     float speculative_margin;                     /**< Max separation for speculative contacts (0 = disabled). */
+    const struct phys_joint *joints;              /**< Joint array for connected-body filtering (may be NULL). */
+    uint32_t joint_count;                         /**< Number of active joints. */
 } phys_narrowphase_args_t;
 
 /* ── Public API ─────────────────────────────────────────────────── */
