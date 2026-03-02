@@ -9,6 +9,7 @@
 
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
@@ -36,6 +37,8 @@ static void build_positional_row(phys_jacobian_row_t *row,
                                  phys_vec3_t axis, float error,
                                  const struct phys_body *body_a,
                                  const struct phys_body *body_b,
+                                 const phys_mat3_t *inv_i_world_a,
+                                 const phys_mat3_t *inv_i_world_b,
                                  float row_damping) {
     memset(row, 0, sizeof(*row));
 
@@ -56,8 +59,8 @@ static void build_positional_row(phys_jacobian_row_t *row,
 
     row->effective_mass = phys_compute_effective_mass(
         row,
-        body_a->inv_mass, &body_a->inv_inertia_diag,
-        body_b->inv_mass, &body_b->inv_inertia_diag);
+        body_a->inv_mass, inv_i_world_a,
+        body_b->inv_mass, inv_i_world_b);
 }
 
 void phys_joint_build_ball(phys_joint_t *joint,
@@ -116,6 +119,12 @@ void phys_joint_build_ball(phys_joint_t *joint,
     phys_vec3_t rA = vec3_sub(world_anchor_a, body_a->position);
     phys_vec3_t rB = vec3_sub(world_anchor_b, body_b->position);
 
+    /* Precompute world-space inverse inertia for effective mass. */
+    phys_mat3_t inv_i_world_a = phys_mat3_inv_inertia_world(
+        body_a->orientation, body_a->inv_inertia_diag);
+    phys_mat3_t inv_i_world_b = phys_mat3_inv_inertia_world(
+        body_b->orientation, body_b->inv_inertia_diag);
+
     /* Three rows: one per world axis. */
     static const phys_vec3_t axes[3] = {
         {1.0f, 0.0f, 0.0f},
@@ -127,6 +136,7 @@ void phys_joint_build_ball(phys_joint_t *joint,
         float axis_error = vec3_dot(error, axes[i]);
         build_positional_row(&joint->rows[i], rA, rB, axes[i],
                              axis_error, body_a, body_b,
+                             &inv_i_world_a, &inv_i_world_b,
                              joint->damping);
         /* Warmstart: seed lambda from previous substep's cached value. */
         joint->rows[i].lambda = joint->cached_lambda[i];

@@ -6,7 +6,8 @@
  * does not require island decomposition.  Derives final velocities
  * from position deltas.
  *
- * 1 non-static function: phys_stage_xpbd_solve
+ * 2 non-static functions: phys_stage_xpbd_solve,
+ *                         phys_xpbd_solve_constraint_batch
  */
 
 #include "ferrum/physics/xpbd_solve.h"
@@ -216,5 +217,28 @@ void phys_stage_xpbd_solve(const phys_xpbd_solve_args_t *args)
         derive_velocities(args->bodies_in, args->bodies_out,
                           args->velocities_out, args->body_count,
                           args->dt);
+    }
+}
+
+void phys_xpbd_solve_constraint_batch(
+    phys_constraint_t *constraints,
+    uint32_t count,
+    phys_body_t *bodies,
+    uint32_t iterations,
+    float omega,
+    float dt,
+    float compliance)
+{
+    if (!constraints || !bodies || count == 0) return;
+
+    for (uint32_t iter = 0; iter < iterations; iter++) {
+        for (uint32_t ci = 0; ci < count; ci++) {
+            phys_constraint_t *c = &constraints[ci];
+            if (c->is_joint) {
+                solve_joint_position(c, bodies, omega, dt, compliance);
+            } else {
+                solve_contact_position(c, bodies, omega, dt, compliance);
+            }
+        }
     }
 }

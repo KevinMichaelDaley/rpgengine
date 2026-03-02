@@ -19,6 +19,7 @@ extern "C" {
 /* Forward declarations to avoid circular dependencies. */
 struct phys_body;
 struct phys_contact_point;
+struct phys_mat3;
 
 /**
  * @brief A single constraint row (Jacobian + solver state).
@@ -116,22 +117,22 @@ void phys_compute_tangent_basis(
  * @brief Compute effective mass for a single Jacobian row.
  *
  * effective_mass = 1 / (inv_mass_a + inv_mass_b
- *                       + dot(J_wa, diag(inv_inertia_a) * J_wa)
- *                       + dot(J_wb, diag(inv_inertia_b) * J_wb))
+ *                       + dot(J_wa, inv_inertia_world_a * J_wa)
+ *                       + dot(J_wb, inv_inertia_world_b * J_wb))
  *
- * @param row           Jacobian row. If NULL, returns 0.
- * @param inv_mass_a    Inverse mass of body A.
- * @param inv_inertia_a Diagonal inverse inertia of body A. If NULL, returns 0.
- * @param inv_mass_b    Inverse mass of body B.
- * @param inv_inertia_b Diagonal inverse inertia of body B. If NULL, returns 0.
+ * @param row             Jacobian row. If NULL, returns 0.
+ * @param inv_mass_a      Inverse mass of body A.
+ * @param inv_inertia_a   World-space 3x3 inverse inertia of body A. If NULL, returns 0.
+ * @param inv_mass_b      Inverse mass of body B.
+ * @param inv_inertia_b   World-space 3x3 inverse inertia of body B. If NULL, returns 0.
  * @return Effective mass (always >= 0). Returns 0 on error.
  *
  * @note No allocations. No side effects.
  */
 float phys_compute_effective_mass(
     const phys_jacobian_row_t *row,
-    float inv_mass_a, const phys_vec3_t *inv_inertia_a,
-    float inv_mass_b, const phys_vec3_t *inv_inertia_b);
+    float inv_mass_a, const struct phys_mat3 *inv_inertia_a,
+    float inv_mass_b, const struct phys_mat3 *inv_inertia_b);
 
 #ifdef __cplusplus
 } /* extern "C" */

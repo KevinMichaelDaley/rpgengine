@@ -53,6 +53,34 @@ typedef struct phys_xpbd_solve_args {
  */
 void phys_stage_xpbd_solve(const phys_xpbd_solve_args_t *args);
 
+/**
+ * @brief Solve a slice of constraints on a shared body workspace.
+ *
+ * Designed for parallel dispatch: each fiber calls this on a disjoint
+ * slice of constraints, all writing to the same bodies array.
+ * The Jacobi relaxation factor (omega < 1) ensures convergence even
+ * with concurrent writes from multiple fibers.
+ *
+ * @param constraints  Constraint slice to solve (lambdas modified).
+ * @param count        Number of constraints in the slice.
+ * @param bodies       Shared body workspace (positions modified in-place).
+ * @param iterations   Number of solver iterations.
+ * @param omega        Jacobi relaxation factor (0.5–0.8).
+ * @param dt           Timestep in seconds.
+ * @param compliance   XPBD compliance (α); 0 = perfectly stiff.
+ *
+ * @note Does NOT copy bodies or derive velocities — caller manages that.
+ * @note NULL-safe (no-op on NULL constraints or bodies).
+ */
+void phys_xpbd_solve_constraint_batch(
+    struct phys_constraint *constraints,
+    uint32_t count,
+    struct phys_body *bodies,
+    uint32_t iterations,
+    float omega,
+    float dt,
+    float compliance);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

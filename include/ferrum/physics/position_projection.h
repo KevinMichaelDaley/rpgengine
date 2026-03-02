@@ -30,6 +30,8 @@ struct phys_body;
 struct phys_frame_arena;
 struct phys_velocity;
 
+struct phys_mat3;
+
 /**
  * @brief Output of position projection for a single island.
  *
@@ -59,6 +61,7 @@ typedef struct phys_position_projection_args {
     const struct phys_island *island;    /**< Island to project. */
     const struct phys_constraint *constraints; /**< Global constraint array. */
     const struct phys_body *bodies;      /**< Global body array. */
+    const struct phys_mat3 *inv_inertia_world; /**< World-space inverse inertia per body. */
     uint32_t body_count;                 /**< Total body count (for output array sizing). */
     float dt;                            /**< Timestep in seconds. */
     float slop;                          /**< Penetration slop (no correction below this). */

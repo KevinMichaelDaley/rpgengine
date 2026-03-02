@@ -21,6 +21,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/tgs_solve.h"    /* phys_velocity_t */
 #include "ferrum/math/vec3.h"
@@ -84,6 +85,7 @@ static void apply_position_impulse(
     phys_velocity_t *deltas,
     const phys_constraint_t *c,
     const phys_body_t *bodies,
+    const phys_mat3_t *inv_inertia_world,
     float delta_lambda)
 {
     const phys_jacobian_row_t *row = &c->rows[0];
@@ -95,22 +97,38 @@ static void apply_position_impulse(
     deltas[a].linear = vec3_add(deltas[a].linear,
                                 vec3_scale(row->J_va, inv_ma * delta_lambda));
 
-    /* Body A: angular correction (diagonal inverse inertia). */
-    const phys_vec3_t *inv_ia = &bodies[a].inv_inertia_diag;
-    deltas[a].angular.x += inv_ia->x * row->J_wa.x * delta_lambda;
-    deltas[a].angular.y += inv_ia->y * row->J_wa.y * delta_lambda;
-    deltas[a].angular.z += inv_ia->z * row->J_wa.z * delta_lambda;
+    /* Body A: angular correction (world-space inverse inertia). */
+    phys_mat3_t iw_a;
+    const phys_mat3_t *m_a;
+    if (inv_inertia_world) {
+        m_a = &inv_inertia_world[a];
+    } else {
+        iw_a = phys_mat3_inv_inertia_world(
+            bodies[a].orientation, bodies[a].inv_inertia_diag);
+        m_a = &iw_a;
+    }
+    phys_vec3_t ang_a = phys_mat3_mul_vec3(m_a, row->J_wa);
+    deltas[a].angular = vec3_add(deltas[a].angular,
+                                 vec3_scale(ang_a, delta_lambda));
 
     /* Body B: linear correction. */
     float inv_mb = bodies[b].inv_mass;
     deltas[b].linear = vec3_add(deltas[b].linear,
                                 vec3_scale(row->J_vb, inv_mb * delta_lambda));
 
-    /* Body B: angular correction (diagonal inverse inertia). */
-    const phys_vec3_t *inv_ib = &bodies[b].inv_inertia_diag;
-    deltas[b].angular.x += inv_ib->x * row->J_wb.x * delta_lambda;
-    deltas[b].angular.y += inv_ib->y * row->J_wb.y * delta_lambda;
-    deltas[b].angular.z += inv_ib->z * row->J_wb.z * delta_lambda;
+    /* Body B: angular correction (world-space inverse inertia). */
+    phys_mat3_t iw_b;
+    const phys_mat3_t *m_b;
+    if (inv_inertia_world) {
+        m_b = &inv_inertia_world[b];
+    } else {
+        iw_b = phys_mat3_inv_inertia_world(
+            bodies[b].orientation, bodies[b].inv_inertia_diag);
+        m_b = &iw_b;
+    }
+    phys_vec3_t ang_b = phys_mat3_mul_vec3(m_b, row->J_wb);
+    deltas[b].angular = vec3_add(deltas[b].angular,
+                                 vec3_scale(ang_b, delta_lambda));
 }
 
 void phys_position_projection(const phys_position_projection_args_t *args)
@@ -230,6 +248,7 @@ void phys_position_projection(const phys_position_projection_args_t *args)
 
             /* Apply generalized position impulse (linear + angular). */
             apply_position_impulse(deltas, con, args->bodies,
+                                   args->inv_inertia_world,
                                    delta_lambda);
         }
     }

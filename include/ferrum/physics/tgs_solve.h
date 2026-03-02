@@ -43,6 +43,7 @@ typedef struct phys_tgs_solve_args {
     const struct phys_island_list *islands;  /**< Island decomposition. */
     struct phys_constraint *constraints;     /**< Constraint array (lambda updated). */
     const struct phys_body *bodies;          /**< Body array (read-only). */
+    const struct phys_mat3 *inv_inertia_world; /**< Precomputed world-space inverse inertia per body. */
     phys_velocity_t *velocities;            /**< In/out: solver velocity workspace. */
     phys_velocity_t *pseudo_velocities;     /**< In/out: split-impulse position correction workspace (may be NULL). */
     uint32_t body_count;                    /**< Number of bodies. */

@@ -33,7 +33,80 @@
 /** GJK separation tolerance for "just touching". */
 #define CCD_SEPARATION_EPS 1e-4f
 
+/** Minimum relative speed (m/s) for a pair to be worth CCD testing.
+ *  Below this the bodies can't tunnel through each other in one substep. */
+#define CCD_MIN_RELATIVE_SPEED 0.5f
+
 /* ── Helpers ───────────────────────────────────────────────────── */
+
+/**
+ * @brief Compute conservative bounding radius for a collider shape.
+ *
+ * Returns the maximum distance from the body center to any point on
+ * the collider surface (circumradius).
+ */
+static float bounding_radius(const phys_collider_t *col,
+                              const void *spheres,
+                              const void *capsules,
+                              const void *boxes) {
+    uint32_t si = col->shape_index;
+    switch (col->type) {
+    case PHYS_SHAPE_SPHERE: {
+        const phys_sphere_t *s = (const phys_sphere_t *)spheres + si;
+        return s->radius;
+    }
+    case PHYS_SHAPE_BOX: {
+        const phys_box_t *b = (const phys_box_t *)boxes + si;
+        phys_vec3_t h = b->half_extents;
+        return sqrtf(h.x * h.x + h.y * h.y + h.z * h.z);
+    }
+    case PHYS_SHAPE_CAPSULE: {
+        const phys_capsule_t *c = (const phys_capsule_t *)capsules + si;
+        return c->half_height + c->radius;
+    }
+    default:
+        return 0.0f;
+    }
+}
+
+/**
+ * @brief Swept bounding-sphere overlap test.
+ *
+ * Each body sweeps a line segment from pos to pos + vel * dt.  We find
+ * the minimum distance between the two segments and compare against the
+ * sum of bounding radii.  This is a conservative filter — if this
+ * returns false, the bodies cannot possibly collide during the substep.
+ */
+static bool swept_spheres_overlap(const phys_body_t *ba,
+                                   const phys_body_t *bb,
+                                   float r_a, float r_b, float dt) {
+    /* Relative displacement: treat A as stationary. */
+    float dx = bb->position.x - ba->position.x;
+    float dy = bb->position.y - ba->position.y;
+    float dz = bb->position.z - ba->position.z;
+
+    float vx = (bb->linear_vel.x - ba->linear_vel.x) * dt;
+    float vy = (bb->linear_vel.y - ba->linear_vel.y) * dt;
+    float vz = (bb->linear_vel.z - ba->linear_vel.z) * dt;
+
+    /* Closest point on segment [d, d+v] to origin → parameter t. */
+    float v_dot_v = vx * vx + vy * vy + vz * vz;
+    float t_min = 0.0f;
+    if (v_dot_v > 1e-12f) {
+        t_min = -(dx * vx + dy * vy + dz * vz) / v_dot_v;
+        if (t_min < 0.0f) t_min = 0.0f;
+        if (t_min > 1.0f) t_min = 1.0f;
+    }
+
+    /* Distance at closest approach. */
+    float cx = dx + vx * t_min;
+    float cy = dy + vy * t_min;
+    float cz = dz + vz * t_min;
+    float dist_sq = cx * cx + cy * cy + cz * cz;
+
+    float r_sum = r_a + r_b;
+    return dist_sq <= r_sum * r_sum;
+}
 
 /** Check if a shape type is a supported primitive for GJK support. */
 static bool is_primitive_shape(phys_shape_type_t type) {
@@ -205,6 +278,34 @@ static bool sweep_pair(uint32_t body_a, uint32_t body_b,
     const phys_collider_t *col_a = &args->colliders[body_a];
     const phys_collider_t *col_b = &args->colliders[body_b];
     float dt = args->dt;
+
+    /* --- Pre-filter 1: bounding radii (needed for both filters) --- */
+    float r_a = bounding_radius(col_a, args->spheres, args->capsules,
+                                 args->boxes);
+    float r_b = bounding_radius(col_b, args->spheres, args->capsules,
+                                 args->boxes);
+
+    /* --- Pre-filter 2: effective relative speed threshold ---
+     * Include angular velocity contribution: surface speed = |ω| × r. */
+    float rvx = bb->linear_vel.x - ba->linear_vel.x;
+    float rvy = bb->linear_vel.y - ba->linear_vel.y;
+    float rvz = bb->linear_vel.z - ba->linear_vel.z;
+    float rel_speed_sq = rvx * rvx + rvy * rvy + rvz * rvz;
+
+    float wa = ba->angular_vel.x * ba->angular_vel.x +
+               ba->angular_vel.y * ba->angular_vel.y +
+               ba->angular_vel.z * ba->angular_vel.z;
+    float wb = bb->angular_vel.x * bb->angular_vel.x +
+               bb->angular_vel.y * bb->angular_vel.y +
+               bb->angular_vel.z * bb->angular_vel.z;
+    float ang_speed = sqrtf(wa) * r_a + sqrtf(wb) * r_b;
+    float total_speed_sq = rel_speed_sq + ang_speed * ang_speed;
+    if (total_speed_sq < CCD_MIN_RELATIVE_SPEED * CCD_MIN_RELATIVE_SPEED)
+        return false;
+
+    /* --- Pre-filter 3: swept bounding-sphere overlap --- */
+    if (!swept_spheres_overlap(ba, bb, r_a, r_b, dt))
+        return false;
 
     /* Buffers for support data (sized to largest struct). */
     _Alignas(16) uint8_t data_a_buf[64];

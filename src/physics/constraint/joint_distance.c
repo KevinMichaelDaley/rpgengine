@@ -9,6 +9,7 @@
 
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
@@ -82,11 +83,15 @@ void phys_joint_build_distance(phys_joint_t *joint,
     row->bias = error;
     row->damping = joint->damping;
 
-    /* Effective mass. */
+    /* Effective mass (world-space inverse inertia). */
+    phys_mat3_t inv_i_world_a = phys_mat3_inv_inertia_world(
+        body_a->orientation, body_a->inv_inertia_diag);
+    phys_mat3_t inv_i_world_b = phys_mat3_inv_inertia_world(
+        body_b->orientation, body_b->inv_inertia_diag);
     row->effective_mass = phys_compute_effective_mass(
         row,
-        body_a->inv_mass, &body_a->inv_inertia_diag,
-        body_b->inv_mass, &body_b->inv_inertia_diag);
+        body_a->inv_mass, &inv_i_world_a,
+        body_b->inv_mass, &inv_i_world_b);
 
     joint->row_count = 1;
 }

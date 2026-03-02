@@ -24,6 +24,7 @@ struct phys_island;
 struct phys_constraint;
 struct phys_body;
 struct phys_velocity;
+struct phys_mat3;
 
 /**
  * @brief Arguments for constraint-normal velocity synchronization.
@@ -37,6 +38,7 @@ typedef struct phys_velocity_sync_args {
     const struct phys_island *island;        /**< Island that was projected. */
     const struct phys_constraint *constraints; /**< Global constraint array. */
     struct phys_body *bodies;                /**< Global body array (modified). */
+    const struct phys_mat3 *inv_inertia_world; /**< World-space inverse inertia per body. */
     const struct phys_velocity *correction_deltas; /**< Per-body generalized deltas from projection. */
     float dt;                                /**< Timestep in seconds. */
 } phys_velocity_sync_args_t;

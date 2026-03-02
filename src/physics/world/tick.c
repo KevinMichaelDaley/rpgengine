@@ -37,6 +37,7 @@
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
@@ -666,8 +667,10 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 /* Convert to solver constraints and append. */
                 if (constraint_count < max_constraints) {
                     uint32_t remaining = max_constraints - constraint_count;
+                    uint8_t jmode = (uint8_t)phys_tier_cross_solver_mode(
+                        bodies[j->body_a].tier, bodies[j->body_b].tier);
                     uint32_t written = phys_joint_build_constraints(
-                        j, &constraints[constraint_count], remaining, 0);
+                        j, &constraints[constraint_count], remaining, jmode);
                     constraint_count += written;
                 }
             }
@@ -758,6 +761,27 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
             }
         }
 
+        /* ── Precompute world-space inverse inertia tensors ──────── */
+        /* R · diag(I_local⁻¹) · Rᵀ for each active body, allocated from
+         * the frame arena.  Used by TGS solver, position projection,
+         * and velocity sync to avoid per-row diagonal-in-wrong-frame bugs
+         * for non-spherical bodies (capsules, boxes). */
+        phys_mat3_t *inv_inertia_world = phys_frame_arena_alloc(
+            &world->frame_arena,
+            (body_cap > 0 ? body_cap : 1) * sizeof(phys_mat3_t),
+            _Alignof(phys_mat3_t));
+        if (inv_inertia_world) {
+            for (uint32_t i = 0; i < body_cap; i++) {
+                if (!world->body_pool.active[i]) {
+                    inv_inertia_world[i] = (phys_mat3_t){{0}};
+                    continue;
+                }
+                const phys_body_t *b = &world->body_pool.bodies_curr[i];
+                inv_inertia_world[i] = phys_mat3_inv_inertia_world(
+                    b->orientation, b->inv_inertia_diag);
+            }
+        }
+
         /* ── Stage 10c: Solver sub-substeps for fast islands ───── */
         /* Islands with high body velocities get multiple solver+integrate
          * sub-substeps with a finer dt.  Contact constraints stay frozen
@@ -801,13 +825,49 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
 
                     for (uint32_t ss = 0; ss < nsub; ss++) {
 
-                        /* Rebuild joint rows from current positions
-                         * (skip first pass — rows are fresh from build). */
+                        /* After the first sub-substep, integration has
+                         * changed body orientations.  Recompute the
+                         * world-space inverse inertia tensors for this
+                         * island's bodies so the solver and effective
+                         * mass stay consistent with current orientation. */
                         if (ss > 0) {
+                            /* Update inertia for island bodies. */
+                            for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                                uint32_t idx = isle->body_indices[bi];
+                                const phys_body_t *b =
+                                    &world->body_pool.bodies_curr[idx];
+                                inv_inertia_world[idx] =
+                                    phys_mat3_inv_inertia_world(
+                                        b->orientation, b->inv_inertia_diag);
+                            }
+
+                            /* Rebuild joint rows from current positions. */
                             rebuild_island_joint_constraints(
                                 isle, constraints, constraint_count,
                                 world->joints, world->joint_count,
                                 world->body_pool.bodies_curr, ss_dt);
+
+                            /* Recompute effective mass for all island
+                             * contact constraints using updated inertia. */
+                            for (uint32_t ci = 0; ci < isle->constraint_count; ci++) {
+                                uint32_t c_idx = isle->constraint_indices[ci];
+                                if (c_idx >= constraint_count) continue;
+                                phys_constraint_t *c = &constraints[c_idx];
+                                const phys_mat3_t *iw_a =
+                                    &inv_inertia_world[c->body_a];
+                                const phys_mat3_t *iw_b =
+                                    &inv_inertia_world[c->body_b];
+                                float im_a =
+                                    world->body_pool.bodies_curr[c->body_a].inv_mass;
+                                float im_b =
+                                    world->body_pool.bodies_curr[c->body_b].inv_mass;
+                                for (uint32_t ri = 0; ri < c->row_count; ri++) {
+                                    c->rows[ri].effective_mass =
+                                        phys_compute_effective_mass(
+                                            &c->rows[ri], im_a, iw_a,
+                                            im_b, iw_b);
+                                }
+                            }
                         }
 
                         /* Init velocity workspace from body state. */
@@ -841,6 +901,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                             .islands    = &ss_islands,
                             .constraints = constraints,
                             .bodies     = world->body_pool.bodies_curr,
+                            .inv_inertia_world = inv_inertia_world,
                             .velocities = ss_vel,
                             .pseudo_velocities = ss_pseudo,
                             .body_count = body_cap,
@@ -954,6 +1015,7 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
                 .islands    = &islands,
                 .constraints = constraints,
                 .bodies     = world->body_pool.bodies_curr,
+                .inv_inertia_world = inv_inertia_world,
                 .velocities = velocities,
                 .pseudo_velocities = pseudo_velocities,
                 .body_count = body_cap,
@@ -1186,8 +1248,10 @@ void phys_world_tick(phys_world_t *world, const phys_game_state_t *game) {
         phys_body_pool_swap_buffers(&world->body_pool);
     }
 
-    /* CCD prev snapshot is now handled by the 3-way buffer rotation
-     * inside swap_buffers — no memcpy needed. */
+    /* Snapshot post-tick body positions for next tick's CCD.
+     * After the final buffer swap, bodies_curr holds the latest state. */
+    memcpy(world->body_pool.bodies_ccd_prev, world->body_pool.bodies_curr,
+           body_cap * sizeof(phys_body_t));
 
     /* Increment tick counter. */
     world->tick_count++;

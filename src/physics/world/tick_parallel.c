@@ -29,7 +29,9 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island_build.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/island_tier_promote.h"
 #include "ferrum/physics/tgs_solve.h"
+#include "ferrum/physics/xpbd_solve.h"
 #include "ferrum/physics/integrate.h"
 #include "ferrum/physics/ccd.h"
 #include "ferrum/physics/ccd_dynamic.h"
@@ -37,6 +39,7 @@
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
@@ -49,9 +52,11 @@
 #include "ferrum/physics/par/integrate_par.h"
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #ifdef TRACY_ENABLE
 #include "tracy/TracyC.h"
@@ -65,6 +70,116 @@
 
 /** Maximum broadphase pairs per substep. */
 #define MAX_PAIRS_PER_SUBSTEP 10000
+
+/* ── Adaptive solver sub-substeps ──────────────────────────────── */
+
+/** Speed (m/s) above which solver sub-substeps kick in. */
+#define SUBSUB_SPEED_LOW  5.0f
+/** Speed (m/s) at which we reach maximum sub-substeps. */
+#define SUBSUB_SPEED_HIGH 40.0f
+/** Maximum solver sub-substeps for fast islands. */
+#define SUBSUB_MAX        16
+
+/**
+ * @brief Compute the number of solver sub-substeps for an island
+ *        based on the maximum body speed.
+ *
+ * Islands where every body is below SUBSUB_SPEED_LOW get 1 sub-substep
+ * (the normal path).  Faster islands get up to SUBSUB_MAX, with a
+ * sqrt ramp for early onset.
+ *
+ * @param island     Island to inspect.
+ * @param bodies     Body array (read-only).
+ * @param body_count Total body count.
+ * @return Sub-substep count (1..SUBSUB_MAX).
+ */
+static uint32_t compute_island_sub_substeps(
+    const phys_island_t *island,
+    const phys_body_t *bodies,
+    uint32_t body_count)
+{
+    (void)body_count;
+    float max_speed_sq = 0.0f;
+    for (uint32_t bi = 0; bi < island->body_count; bi++) {
+        uint32_t idx = island->body_indices[bi];
+        if (bodies[idx].inv_mass == 0.0f) continue;
+        phys_vec3_t v = bodies[idx].linear_vel;
+        float speed_sq = vec3_dot(v, v);
+        if (speed_sq > max_speed_sq) {
+            max_speed_sq = speed_sq;
+        }
+    }
+
+    const float lo2 = SUBSUB_SPEED_LOW  * SUBSUB_SPEED_LOW;
+    const float hi2 = SUBSUB_SPEED_HIGH * SUBSUB_SPEED_HIGH;
+
+    if (max_speed_sq <= lo2) { return 1; }
+    if (max_speed_sq >= hi2) { return SUBSUB_MAX; }
+
+    float t = (max_speed_sq - lo2) / (hi2 - lo2);
+    t = sqrtf(t);
+    return 1 + (uint32_t)(t * (float)(SUBSUB_MAX - 1));
+}
+
+/**
+ * @brief Rebuild joint constraint rows for joints whose bodies belong
+ *        to the given island, using updated body positions from inline
+ *        integration within sub-substeps.
+ *
+ * Only joint constraints (is_joint == true) are rebuilt; contact rows
+ * from the narrowphase are left unchanged.
+ */
+static void rebuild_island_joint_constraints(
+    const phys_island_t *island,
+    phys_constraint_t *constraints,
+    uint32_t constraint_count,
+    phys_joint_t *joints,
+    uint32_t joint_count,
+    const phys_body_t *bodies,
+    float dt)
+{
+    for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+        uint32_t c_idx = island->constraint_indices[ci];
+        if (c_idx >= constraint_count) continue;
+        phys_constraint_t *c = &constraints[c_idx];
+        if (!c->is_joint) continue;
+
+        for (uint32_t ji = 0; ji < joint_count; ji++) {
+            phys_joint_t *j = &joints[ji];
+            if (j->body_a == c->body_a && j->body_b == c->body_b) {
+                switch (j->type) {
+                case PHYS_JOINT_DISTANCE:
+                    phys_joint_build_distance(j, &bodies[j->body_a],
+                                               &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_BALL:
+                    phys_joint_build_ball(j, &bodies[j->body_a],
+                                          &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_HINGE:
+                    phys_joint_build_hinge(j, &bodies[j->body_a],
+                                           &bodies[j->body_b], dt);
+                    break;
+                }
+                phys_constraint_t tmp[2];
+                uint32_t written = phys_joint_build_constraints(
+                    j, tmp, 2, c->solver_mode);
+                if (written >= 1) {
+                    *c = tmp[0];
+                }
+                if (written >= 2 && ci + 1 < island->constraint_count) {
+                    uint32_t next_idx = island->constraint_indices[ci + 1];
+                    if (next_idx < constraint_count &&
+                        constraints[next_idx].is_joint) {
+                        constraints[next_idx] = tmp[1];
+                        ci++;
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
 
 static size_t static_bvh_arena_size_bytes(uint32_t item_count) {
     if (item_count == 0) {
@@ -158,6 +273,241 @@ static uint8_t phys_world_try_build_static_bvh(phys_world_t *world,
 
     world->static_bvh_valid = 1;
     return 1;
+}
+
+/* ── Sub-substep job context and dispatch ──────────────────────── */
+
+/**
+ * @brief Shared context for sub-substep island batch jobs.
+ *
+ * Islands have disjoint body sets, so parallel jobs can safely write
+ * to bodies_curr, inv_inertia_world, ss_vel, ss_pseudo, and
+ * body_sub_substepped without synchronization.
+ */
+typedef struct ss_shared {
+    const phys_island_list_t *islands;
+    const uint32_t           *island_indices;
+    phys_constraint_t        *constraints;
+    uint32_t                  constraint_count;
+    phys_body_t              *bodies;
+    phys_mat3_t              *inv_inertia_world;
+    phys_velocity_t          *ss_vel;
+    phys_velocity_t          *ss_pseudo;
+    uint8_t                  *body_sub_substepped;
+    uint32_t                  body_cap;
+    float                     substep_dt;
+    float                     tick_dt;
+    phys_vec3_t               gravity;
+    float                     slop;
+    float                     velocity_damping;
+    uint32_t                  solver_iterations;
+    uint32_t                  island_color_threshold;
+    const uint32_t           *tier_substep_counts;
+    phys_joint_t             *joints;
+    uint32_t                  joint_count;
+    phys_frame_arena_t       *frame_arena;
+} ss_shared_t;
+
+/**
+ * @brief Run the full sub-substep loop for a single island.
+ */
+static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
+    uint32_t nsub = compute_island_sub_substeps(
+        isle, s->bodies, s->body_cap);
+    if (nsub <= 1) return;
+
+    float ss_dt = s->substep_dt / (float)nsub;
+
+    for (uint32_t ss = 0; ss < nsub; ss++) {
+
+        if (ss > 0) {
+            /* Recompute world-space inertia for island bodies. */
+            for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                uint32_t idx = isle->body_indices[bi];
+                const phys_body_t *b = &s->bodies[idx];
+                s->inv_inertia_world[idx] =
+                    phys_mat3_inv_inertia_world(
+                        b->orientation, b->inv_inertia_diag);
+            }
+
+            /* Rebuild joint rows from current positions. */
+            rebuild_island_joint_constraints(
+                isle, s->constraints, s->constraint_count,
+                s->joints, s->joint_count, s->bodies, ss_dt);
+
+            /* Recompute effective mass for island constraints. */
+            for (uint32_t ci = 0; ci < isle->constraint_count; ci++) {
+                uint32_t c_idx = isle->constraint_indices[ci];
+                if (c_idx >= s->constraint_count) continue;
+                phys_constraint_t *c = &s->constraints[c_idx];
+                const phys_mat3_t *iw_a =
+                    &s->inv_inertia_world[c->body_a];
+                const phys_mat3_t *iw_b =
+                    &s->inv_inertia_world[c->body_b];
+                float im_a = s->bodies[c->body_a].inv_mass;
+                float im_b = s->bodies[c->body_b].inv_mass;
+                for (uint32_t ri = 0; ri < c->row_count; ri++) {
+                    c->rows[ri].effective_mass =
+                        phys_compute_effective_mass(
+                            &c->rows[ri], im_a, iw_a, im_b, iw_b);
+                }
+            }
+        }
+
+        /* Init velocity workspace from body state. */
+        for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+            uint32_t idx = isle->body_indices[bi];
+            s->ss_vel[idx].linear  = s->bodies[idx].linear_vel;
+            s->ss_vel[idx].angular = s->bodies[idx].angular_vel;
+            s->ss_pseudo[idx] = (phys_velocity_t){{0,0,0},{0,0,0}};
+            if (s->bodies[idx].inv_mass > 0.0f &&
+                !phys_body_is_sleeping(&s->bodies[idx])) {
+                s->ss_vel[idx].linear = vec3_add(
+                    s->ss_vel[idx].linear,
+                    vec3_scale(s->gravity, ss_dt));
+            }
+        }
+
+        /* Wrap island in a single-island list for solver. */
+        phys_island_list_t ss_islands = {
+            .islands  = isle,
+            .count    = 1,
+            .capacity = 1,
+            .parent   = NULL,
+            .rank     = NULL,
+            .uf_size  = s->body_cap,
+        };
+
+        phys_stage_tgs_solve(&(phys_tgs_solve_args_t){
+            .islands    = &ss_islands,
+            .constraints = s->constraints,
+            .bodies     = s->bodies,
+            .inv_inertia_world = s->inv_inertia_world,
+            .velocities = s->ss_vel,
+            .pseudo_velocities = s->ss_pseudo,
+            .body_count = s->body_cap,
+            .iterations = s->solver_iterations,
+            .gravity    = s->gravity,
+            .dt         = ss_dt,
+            .tick_dt    = s->tick_dt,
+            .slop       = s->slop,
+            .tier_substep_counts = s->tier_substep_counts,
+            .frame_arena = s->frame_arena,
+            .island_color_threshold = s->island_color_threshold,
+            .joints      = s->joints,
+            .joint_count = s->joint_count,
+        });
+
+        /* Integrate island bodies inline. */
+        for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+            uint32_t idx = isle->body_indices[bi];
+            phys_body_t *b = &s->bodies[idx];
+
+            if (phys_body_is_static(b) || phys_body_is_kinematic(b)) {
+                continue;
+            }
+
+            b->linear_vel  = s->ss_vel[idx].linear;
+            b->angular_vel = s->ss_vel[idx].angular;
+
+            /* Velocity damping. */
+            if (s->velocity_damping < 1.0f && s->velocity_damping > 0.0f) {
+                float d = powf(s->velocity_damping, ss_dt);
+                b->linear_vel  = vec3_scale(b->linear_vel, d);
+                b->angular_vel = vec3_scale(b->angular_vel, d);
+            }
+
+            /* Velocity clamping. */
+            {
+                float ls = vec3_magnitude(b->linear_vel);
+                if (ls > 100.0f) {
+                    b->linear_vel = vec3_scale(b->linear_vel, 100.0f / ls);
+                }
+                float as = vec3_magnitude(b->angular_vel);
+                if (as > 50.0f) {
+                    b->angular_vel = vec3_scale(b->angular_vel, 50.0f / as);
+                }
+            }
+
+            /* Position integration with pseudo-velocity. */
+            phys_vec3_t int_vel = vec3_add(b->linear_vel,
+                                           s->ss_pseudo[idx].linear);
+            b->position = vec3_add(b->position,
+                                   vec3_scale(int_vel, ss_dt));
+
+            /* Orientation integration via quat derivative. */
+            phys_vec3_t int_ang = vec3_add(b->angular_vel,
+                                           s->ss_pseudo[idx].angular);
+            phys_quat_t omega_q = {
+                int_ang.x, int_ang.y, int_ang.z, 0.0f
+            };
+            phys_quat_t dq = quat_mul(omega_q, b->orientation);
+            float half_dt = 0.5f * ss_dt;
+            b->orientation.x += dq.x * half_dt;
+            b->orientation.y += dq.y * half_dt;
+            b->orientation.z += dq.z * half_dt;
+            b->orientation.w += dq.w * half_dt;
+            b->orientation = quat_normalize_safe(b->orientation, 1e-8f);
+        }
+    }
+
+    /* Mark bodies so the main integrate stage skips them. */
+    for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+        s->body_sub_substepped[isle->body_indices[bi]] = 1;
+    }
+
+    /* Mark skip so main TGS solve doesn't repeat. */
+    isle->skip = true;
+}
+
+/**
+ * @brief Job entry point: solve a batch of sub-substep islands.
+ */
+static void ss_island_batch_job(void *user_data) {
+    phys_job_batch_t *batch = (phys_job_batch_t *)user_data;
+    const ss_shared_t *s = (const ss_shared_t *)batch->user_args;
+    for (uint32_t i = 0; i < batch->count; i++) {
+        uint32_t island_idx = s->island_indices[batch->start + i];
+        phys_island_t *isle = &s->islands->islands[island_idx];
+        ss_solve_island(s, isle);
+    }
+}
+
+/* ── XPBD parallel job context ────────────────────────────────── */
+
+/**
+ * @brief Shared context for batched XPBD constraint fiber jobs.
+ *
+ * XPBD operates on T2-T4 islands whose body sets are disjoint from
+ * T0/T1 islands being solved by TGS, so the two solvers can run
+ * concurrently.  Within the XPBD solve, constraints are split into
+ * batches and dispatched to multiple fibers.  Jacobi relaxation
+ * (omega < 1) ensures convergence with concurrent body writes.
+ */
+typedef struct xpbd_batch_shared {
+    phys_constraint_t *constraints;    /**< XPBD constraint array. */
+    phys_body_t       *bodies_out;     /**< Shared body workspace. */
+    uint32_t           iterations;     /**< Solver iteration count. */
+    float              omega;          /**< Jacobi relaxation factor. */
+    float              dt;             /**< Substep timestep. */
+    float              compliance;     /**< XPBD compliance. */
+} xpbd_batch_shared_t;
+
+/**
+ * @brief Fiber job: solve a batch of XPBD constraints.
+ *
+ * Each fiber processes a contiguous slice of the XPBD constraint array
+ * for all iterations.  Concurrent writes to shared body positions are
+ * handled by Jacobi relaxation (omega).
+ */
+static void xpbd_constraint_batch_job(void *user_data) {
+    phys_job_batch_t *batch = (phys_job_batch_t *)user_data;
+    xpbd_batch_shared_t *s = (xpbd_batch_shared_t *)batch->user_args;
+
+    phys_xpbd_solve_constraint_batch(
+        &s->constraints[batch->start], batch->count,
+        s->bodies_out, s->iterations,
+        s->omega, s->dt, s->compliance);
 }
 
 void phys_world_tick_parallel(phys_world_t *world,
@@ -408,6 +758,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         phys_velocity_t *velocities = NULL;
         phys_velocity_t *pseudo_velocities = NULL;
         float *body_max_pen = NULL;
+        uint8_t *body_sub_substepped = NULL;
 
         if (!world->prediction_mode) {
 
@@ -559,8 +910,10 @@ void phys_world_tick_parallel(phys_world_t *world,
 
                 if (constraint_count < max_constraints) {
                     uint32_t remaining = max_constraints - constraint_count;
+                    uint8_t jmode = (uint8_t)phys_tier_cross_solver_mode(
+                        bodies[j->body_a].tier, bodies[j->body_b].tier);
                     uint32_t written = phys_joint_build_constraints(
-                        j, &constraints[constraint_count], remaining, 0);
+                        j, &constraints[constraint_count], remaining, jmode);
                     constraint_count += written;
                 }
             }
@@ -624,6 +977,19 @@ void phys_world_tick_parallel(phys_world_t *world,
         TracyCZoneEnd(z_island);
 #endif
 
+        /* ── Stage 10b: Island Tier Promotion ──────────────────── */
+        /* Promote all dynamic bodies in each island to the
+         * highest-fidelity (lowest-numbered) tier in that island.
+         * This ensures per-island solver-mode uniformity and
+         * correct substep-skip decisions below. */
+        phys_stage_island_tier_promote(&(phys_island_tier_promote_args_t){
+            .islands          = &islands,
+            .bodies           = world->body_pool.bodies_curr,
+            .body_count       = body_cap,
+            .constraints      = constraints,
+            .constraint_count = constraint_count,
+        });
+
         /* Mark islands whose tier needs fewer substeps than the
          * current iteration.  Tier promotion guarantees all bodies
          * in an island share the same tier. */
@@ -636,6 +1002,130 @@ void phys_world_tick_parallel(phys_world_t *world,
                 uint32_t tier_subs = plan.tier_params[tier].substeps;
                 if (tier_subs == 0) { tier_subs = 1; }
                 isle->skip = (sub >= tier_subs);
+            }
+        }
+
+        /* Precompute world-space inverse inertia tensors. */
+        phys_mat3_t *inv_inertia_world = phys_frame_arena_alloc(
+            &world->frame_arena,
+            (body_cap > 0 ? body_cap : 1) * sizeof(phys_mat3_t),
+            _Alignof(phys_mat3_t));
+        if (inv_inertia_world) {
+            for (uint32_t i = 0; i < body_cap; i++) {
+                if (!world->body_pool.active[i]) {
+                    inv_inertia_world[i] = (phys_mat3_t){{0}};
+                    continue;
+                }
+                const phys_body_t *b = &world->body_pool.bodies_curr[i];
+                inv_inertia_world[i] = phys_mat3_inv_inertia_world(
+                    b->orientation, b->inv_inertia_diag);
+            }
+        }
+
+        /* ── Stage 10c: Solver sub-substeps for fast islands ───── */
+        /* Islands with high body velocities get multiple solver+integrate
+         * sub-substeps with a finer dt.  Contact constraints stay frozen
+         * from the narrowphase; only joint rows are rebuilt each sub-substep
+         * to track updated body positions.
+         *
+         * Integration is done inline per-body (not via phys_stage_integrate)
+         * so only island bodies are touched.  The main integrate stage
+         * skips these bodies via body_sub_substepped[].
+         *
+         * Dispatched as batched jobs over eligible islands.  Islands have
+         * disjoint body sets, so parallel writes to bodies_curr,
+         * inv_inertia_world, and velocity arrays are safe. */
+        body_sub_substepped = phys_frame_arena_alloc(
+            &world->frame_arena,
+            (body_cap > 0 ? body_cap : 1) * sizeof(uint8_t),
+            _Alignof(uint8_t));
+        if (body_sub_substepped) {
+            memset(body_sub_substepped, 0,
+                   (body_cap > 0 ? body_cap : 1) * sizeof(uint8_t));
+        }
+
+        {
+            phys_velocity_t *ss_vel = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+            phys_velocity_t *ss_pseudo = phys_frame_arena_alloc(
+                &world->frame_arena,
+                (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+
+            if (ss_vel && ss_pseudo && body_sub_substepped) {
+                /* Collect eligible island indices. */
+                uint32_t *ss_island_indices = phys_frame_arena_alloc(
+                    &world->frame_arena,
+                    (islands.count > 0 ? islands.count : 1) * sizeof(uint32_t),
+                    _Alignof(uint32_t));
+                uint32_t ss_island_count = 0;
+                if (ss_island_indices) {
+                    for (uint32_t ii = 0; ii < islands.count; ii++) {
+                        phys_island_t *isle = &islands.islands[ii];
+                        if (isle->sleeping || isle->skip) continue;
+                        if (isle->body_count == 0) continue;
+                        uint32_t nsub = compute_island_sub_substeps(
+                            isle, world->body_pool.bodies_curr, body_cap);
+                        if (nsub <= 1) continue;
+                        ss_island_indices[ss_island_count++] = ii;
+                    }
+                }
+
+                if (ss_island_count > 0) {
+                    /* Shared context for sub-substep jobs. */
+                    ss_shared_t ss_shared = {
+                        .islands            = &islands,
+                        .island_indices     = ss_island_indices,
+                        .constraints        = constraints,
+                        .constraint_count   = constraint_count,
+                        .bodies             = world->body_pool.bodies_curr,
+                        .inv_inertia_world  = inv_inertia_world,
+                        .ss_vel             = ss_vel,
+                        .ss_pseudo          = ss_pseudo,
+                        .body_sub_substepped = body_sub_substepped,
+                        .body_cap           = body_cap,
+                        .substep_dt         = substep_dt,
+                        .tick_dt            = plan.dt,
+                        .gravity            = world->config.gravity,
+                        .slop               = world->config.slop,
+                        .velocity_damping   = world->config.velocity_damping,
+                        .solver_iterations  = plan.solver_iterations,
+                        .island_color_threshold =
+                            world->config.island_color_threshold,
+                        .tier_substep_counts = tier_substep_counts,
+                        .joints             = world->joints,
+                        .joint_count        = world->joint_count,
+                        .frame_arena        = &world->frame_arena,
+                    };
+
+                    uint32_t batch_size = phys_batch_size(
+                        jobs, ss_island_count, 4, 0);
+                    uint32_t num_batches =
+                        (ss_island_count + batch_size - 1) / batch_size;
+                    phys_job_batch_t *ss_batches = phys_frame_arena_alloc(
+                        &world->frame_arena,
+                        num_batches * sizeof(phys_job_batch_t),
+                        _Alignof(phys_job_batch_t));
+
+                    if (ss_batches) {
+                        phys_dispatch_stage(jobs, PHYS_STAGE_TGS_SOLVE,
+                                            ss_island_batch_job, &ss_shared,
+                                            ss_island_count, batch_size,
+                                            ss_batches);
+                        phys_wait_stage(jobs, PHYS_STAGE_TGS_SOLVE);
+                    } else {
+                        /* Arena exhausted — run inline. */
+                        phys_job_batch_t inline_batch = {
+                            .user_args = &ss_shared,
+                            .start = 0,
+                            .count = ss_island_count,
+                            .batch_idx = 0,
+                        };
+                        ss_island_batch_job(&inline_batch);
+                    }
+                }
             }
         }
 
@@ -655,6 +1145,97 @@ void phys_world_tick_parallel(phys_world_t *world,
             memset(velocities, 0,
                    (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
 
+            /* ── Stage 11b: Prepare XPBD Solve (T2-T4 islands) ─────── */
+            /* XPBD operates on T2-T4 islands which are disjoint from
+             * T0/T1 TGS islands, so we dispatch XPBD as a fiber job
+             * BEFORE TGS and let them run concurrently. */
+            uint32_t xpbd_count = 0;
+            for (uint32_t ii = 0; ii < islands.count; ii++) {
+                phys_island_t *isle = &islands.islands[ii];
+                if (isle->sleeping || isle->skip || isle->constraint_count == 0) continue;
+                uint32_t first_ci = isle->constraint_indices[0];
+                if (constraints[first_ci].solver_mode == PHYS_SOLVER_XPBD) {
+                    xpbd_count += isle->constraint_count;
+                }
+            }
+
+            xpbd_batch_shared_t xpbd_shared = {0};
+            bool xpbd_dispatched = false;
+            uint32_t xpbd_actual_count = 0;
+
+            /* Max batches for XPBD constraint dispatch. */
+            #define XPBD_MAX_BATCHES 64
+            phys_job_batch_t xpbd_batches[XPBD_MAX_BATCHES];
+
+            if (xpbd_count > 0) {
+                /* Gather XPBD constraints into a contiguous arena array. */
+                phys_constraint_t *xpbd_constraints = phys_frame_arena_alloc(
+                    &world->frame_arena,
+                    xpbd_count * sizeof(phys_constraint_t),
+                    _Alignof(phys_constraint_t));
+
+                if (xpbd_constraints) {
+                    /* Copy XPBD constraints and seed bodies_next with
+                     * starting positions for XPBD body indices.  We use
+                     * bodies_next as the XPBD position workspace — it's
+                     * unused until the integration stage which runs after
+                     * both solvers complete. */
+                    uint32_t xc = 0;
+                    phys_body_t *xpbd_bodies = world->body_pool.bodies_next;
+                    for (uint32_t ii = 0; ii < islands.count; ii++) {
+                        phys_island_t *isle = &islands.islands[ii];
+                        if (isle->sleeping || isle->skip || isle->constraint_count == 0) continue;
+                        uint32_t first_ci = isle->constraint_indices[0];
+                        if (constraints[first_ci].solver_mode != PHYS_SOLVER_XPBD) {
+                            continue;
+                        }
+                        for (uint32_t c = 0; c < isle->constraint_count && xc < xpbd_count; c++) {
+                            xpbd_constraints[xc++] = constraints[isle->constraint_indices[c]];
+                        }
+                        /* Seed XPBD body positions from bodies_curr. */
+                        for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                            uint32_t idx = isle->body_indices[bi];
+                            if (idx < body_cap) {
+                                xpbd_bodies[idx] = world->body_pool.bodies_curr[idx];
+                            }
+                        }
+                    }
+                    xpbd_actual_count = xc;
+
+                    /* Determine XPBD iterations and compliance from the
+                     * highest-fidelity XPBD tier (lowest tier number). */
+                    uint32_t xpbd_iters = 2;
+                    float xpbd_compliance = 1e-4f;
+                    for (uint32_t t = 0; t < PHYS_TIER_COUNT; t++) {
+                        if (plan.tier_params[t].solver_mode == PHYS_SOLVER_XPBD &&
+                            plan.tier_params[t].iterations > xpbd_iters) {
+                            xpbd_iters = plan.tier_params[t].iterations;
+                            xpbd_compliance = plan.tier_params[t].compliance;
+                        }
+                    }
+
+                    /* Fill shared context for batched XPBD fiber jobs. */
+                    xpbd_shared = (xpbd_batch_shared_t){
+                        .constraints = xpbd_constraints,
+                        .bodies_out  = xpbd_bodies,
+                        .iterations  = xpbd_iters,
+                        .omega       = 0.5f,
+                        .dt          = substep_dt,
+                        .compliance  = xpbd_compliance,
+                    };
+
+                    /* Dispatch XPBD constraint batches — runs concurrently
+                     * with TGS which operates on disjoint T0/T1 islands. */
+                    uint32_t xpbd_bs = phys_batch_size(jobs, xpbd_actual_count,
+                                                       4, XPBD_MAX_BATCHES);
+                    phys_dispatch_stage(jobs, PHYS_STAGE_XPBD_SOLVE,
+                                        xpbd_constraint_batch_job, &xpbd_shared,
+                                        xpbd_actual_count, xpbd_bs, xpbd_batches);
+                    xpbd_dispatched = true;
+                }
+            }
+
+            /* ── Stage 11a: TGS Solve (T0/T1 islands) ─────────────── */
 #ifdef TRACY_ENABLE
             TracyCZoneN(z_tgs, "Phys.Solve.IteratingTGS", true);
 #endif
@@ -662,6 +1243,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .islands    = &islands,
                 .constraints = constraints,
                 .bodies     = world->body_pool.bodies_curr,
+                .inv_inertia_world = inv_inertia_world,
                 .velocities = velocities,
                 .pseudo_velocities = pseudo_velocities,
                 .body_count = body_cap,
@@ -679,6 +1261,33 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_tgs);
 #endif
+
+            /* Wait for XPBD fibers to finish (usually already done). */
+            if (xpbd_dispatched) {
+                phys_wait_stage(jobs, PHYS_STAGE_XPBD_SOLVE);
+
+                /* Derive velocities from XPBD position deltas and merge
+                 * into the shared velocity array for XPBD-island bodies.
+                 * XPBD wrote its solved positions into bodies_next. */
+                const phys_body_t *bodies_in = world->body_pool.bodies_curr;
+                const phys_body_t *bodies_solved = world->body_pool.bodies_next;
+                float inv_dt = (substep_dt > 0.0f) ? 1.0f / substep_dt : 0.0f;
+                for (uint32_t ii = 0; ii < islands.count; ii++) {
+                    const phys_island_t *isle = &islands.islands[ii];
+                    if (isle->sleeping || isle->skip || isle->constraint_count == 0) continue;
+                    uint32_t first_ci = isle->constraint_indices[0];
+                    if (constraints[first_ci].solver_mode != PHYS_SOLVER_XPBD) continue;
+                    for (uint32_t bi = 0; bi < isle->body_count; bi++) {
+                        uint32_t idx = isle->body_indices[bi];
+                        if (idx < body_cap) {
+                            phys_vec3_t dp = vec3_sub(bodies_solved[idx].position,
+                                                       bodies_in[idx].position);
+                            velocities[idx].linear  = vec3_scale(dp, inv_dt);
+                            velocities[idx].angular = bodies_in[idx].angular_vel;
+                        }
+                    }
+                }
+            }
 
             /* Write back solved lambdas to joint cache for warmstarting
              * the next substep.  Joint constraints start at
@@ -699,6 +1308,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 }
             }
         }
+
         } /* end if (!world->prediction_mode) */
 
         /* In prediction mode, seed velocities from bodies' current state
@@ -748,6 +1358,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .velocity_damping       = world->config.velocity_damping,
                 .max_penetration        = body_max_pen,
                 .slop                   = world->config.slop,
+                .skip_body              = body_sub_substepped,
             }, jobs, &world->frame_arena);
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_integ);
@@ -811,8 +1422,10 @@ void phys_world_tick_parallel(phys_world_t *world,
         phys_body_pool_swap_buffers(&world->body_pool);
     }
 
-    /* CCD prev snapshot is now handled by the 3-way buffer rotation
-     * inside swap_buffers — no memcpy needed. */
+    /* Snapshot post-tick body positions for next tick's CCD.
+     * After the final buffer swap, bodies_curr holds the latest state. */
+    memcpy(world->body_pool.bodies_ccd_prev, world->body_pool.bodies_curr,
+           body_cap * sizeof(phys_body_t));
 
     /* Increment tick counter. */
     world->tick_count++;

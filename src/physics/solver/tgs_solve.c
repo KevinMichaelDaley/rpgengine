@@ -26,6 +26,7 @@
 #include "ferrum/physics/constraint_color.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/joint.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/step_plan.h"
 #include "ferrum/math/vec3.h"
@@ -158,9 +159,9 @@ static void solve_row(phys_jacobian_row_t *row,
                        phys_velocity_t *va,
                        phys_velocity_t *vb,
                        float inv_mass_a,
-                       const phys_vec3_t *inv_i_a,
+                       const phys_mat3_t *inv_i_a,
                        float inv_mass_b,
-                       const phys_vec3_t *inv_i_b)
+                       const phys_mat3_t *inv_i_b)
 {
     /* Compute J·v (relative velocity along the constraint direction). */
     float jv = vec3_dot(row->J_va, va->linear)
@@ -191,14 +192,14 @@ static void solve_row(phys_jacobian_row_t *row,
     vb->linear = vec3_add(vb->linear,
                           vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
 
-    /* Apply angular velocity corrections (diagonal inertia). */
-    va->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
-    va->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
-    va->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+    /* Apply angular velocity corrections (world-space inverse inertia). */
+    phys_vec3_t ang_impulse_a = phys_mat3_mul_vec3(inv_i_a, row->J_wa);
+    va->angular = vec3_add(va->angular,
+                           vec3_scale(ang_impulse_a, delta_lambda));
 
-    vb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
-    vb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
-    vb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+    phys_vec3_t ang_impulse_b = phys_mat3_mul_vec3(inv_i_b, row->J_wb);
+    vb->angular = vec3_add(vb->angular,
+                           vec3_scale(ang_impulse_b, delta_lambda));
 }
 
 /* ── Solve split-impulse position correction row (static helper) ─ */
@@ -228,9 +229,9 @@ static void solve_position_row(phys_jacobian_row_t *row,
                                 float slop,
                                 float inv_dt,
                                 float inv_mass_a,
-                                const phys_vec3_t *inv_i_a,
+                                const phys_mat3_t *inv_i_a,
                                 float inv_mass_b,
-                                const phys_vec3_t *inv_i_b)
+                                const phys_mat3_t *inv_i_b)
 {
     float excess = penetration - slop;
     if (excess < SPLIT_MIN_PHI) { return; }
@@ -262,13 +263,11 @@ static void solve_position_row(phys_jacobian_row_t *row,
     pvb->linear = vec3_add(pvb->linear,
                            vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
 
-    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
-    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
-    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+    phys_vec3_t ang_a = phys_mat3_mul_vec3(inv_i_a, row->J_wa);
+    pva->angular = vec3_add(pva->angular, vec3_scale(ang_a, delta_lambda));
 
-    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
-    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
-    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+    phys_vec3_t ang_b = phys_mat3_mul_vec3(inv_i_b, row->J_wb);
+    pvb->angular = vec3_add(pvb->angular, vec3_scale(ang_b, delta_lambda));
 }
 
 /* ── Solve joint split-impulse position correction row ────────────── */
@@ -294,9 +293,9 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
                                       phys_velocity_t *pvb,
                                       float inv_dt,
                                       float inv_mass_a,
-                                      const phys_vec3_t *inv_i_a,
+                                      const phys_mat3_t *inv_i_a,
                                       float inv_mass_b,
-                                      const phys_vec3_t *inv_i_b)
+                                      const phys_mat3_t *inv_i_b)
 {
     /* row->bias holds the raw position error (meters, signed). */
     float error = row->bias;
@@ -328,13 +327,11 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
     pvb->linear = vec3_add(pvb->linear,
                            vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
 
-    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
-    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
-    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+    phys_vec3_t ang_a = phys_mat3_mul_vec3(inv_i_a, row->J_wa);
+    pva->angular = vec3_add(pva->angular, vec3_scale(ang_a, delta_lambda));
 
-    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
-    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
-    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+    phys_vec3_t ang_b = phys_mat3_mul_vec3(inv_i_b, row->J_wb);
+    pvb->angular = vec3_add(pvb->angular, vec3_scale(ang_b, delta_lambda));
 }
 
 /* ── Nonlinear joint position projection ──────────────────────────── */
@@ -520,6 +517,7 @@ static void solve_one_constraint(phys_constraint_t *c,
                                   phys_velocity_t *velocities,
                                   phys_velocity_t *pseudo,
                                   const struct phys_body *bodies,
+                                  const phys_mat3_t *inv_inertia_world,
                                   float slop,
                                   float inv_dt)
 {
@@ -528,8 +526,22 @@ static void solve_one_constraint(phys_constraint_t *c,
 
     float inv_mass_a = bodies[c->body_a].inv_mass;
     float inv_mass_b = bodies[c->body_b].inv_mass;
-    const phys_vec3_t *inv_i_a = &bodies[c->body_a].inv_inertia_diag;
-    const phys_vec3_t *inv_i_b = &bodies[c->body_b].inv_inertia_diag;
+
+    /* Use precomputed world-space inertia if available, else compute inline. */
+    phys_mat3_t fallback_a, fallback_b;
+    const phys_mat3_t *inv_i_a;
+    const phys_mat3_t *inv_i_b;
+    if (inv_inertia_world) {
+        inv_i_a = &inv_inertia_world[c->body_a];
+        inv_i_b = &inv_inertia_world[c->body_b];
+    } else {
+        fallback_a = phys_mat3_inv_inertia_world(
+            bodies[c->body_a].orientation, bodies[c->body_a].inv_inertia_diag);
+        fallback_b = phys_mat3_inv_inertia_world(
+            bodies[c->body_b].orientation, bodies[c->body_b].inv_inertia_diag);
+        inv_i_a = &fallback_a;
+        inv_i_b = &fallback_b;
+    }
 
     if (c->is_joint) {
         /* Joint constraints: velocity-level solve with a small Baumgarte
@@ -672,7 +684,8 @@ static bool solve_island_colored(const phys_island_t *island,
                 uint32_t c_idx = island->constraint_indices[ci];
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
-                                     args->bodies, slop, inv_dt);
+                                     args->bodies, args->inv_inertia_world,
+                                     slop, inv_dt);
             }
         }
     }
@@ -735,7 +748,8 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                 uint32_t c_idx = island->constraint_indices[ci];
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
-                                     args->bodies, slop, inv_dt);
+                                     args->bodies, args->inv_inertia_world,
+                                     slop, inv_dt);
             }
         }
     }

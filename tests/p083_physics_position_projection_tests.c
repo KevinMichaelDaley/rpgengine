@@ -15,6 +15,7 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/manifold.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/position_projection.h"
 #include "ferrum/physics/velocity_sync.h"
@@ -101,10 +102,14 @@ static void build_normal_constraint(phys_constraint_t *c,
     c->rows[0].lambda_max = 1e10f;
     c->rows[0].bias = 0.0f;
     c->penetration = penetration;  /* raw penetration for position projection */
+    phys_mat3_t inv_i_a = phys_mat3_inv_inertia_world(
+        bodies[body_a].orientation, bodies[body_a].inv_inertia_diag);
+    phys_mat3_t inv_i_b = phys_mat3_inv_inertia_world(
+        bodies[body_b].orientation, bodies[body_b].inv_inertia_diag);
     c->rows[0].effective_mass = phys_compute_effective_mass(
         &c->rows[0],
-        bodies[body_a].inv_mass, &bodies[body_a].inv_inertia_diag,
-        bodies[body_b].inv_mass, &bodies[body_b].inv_inertia_diag);
+        bodies[body_a].inv_mass, &inv_i_a,
+        bodies[body_b].inv_mass, &inv_i_b);
 }
 
 /* ================================================================== */

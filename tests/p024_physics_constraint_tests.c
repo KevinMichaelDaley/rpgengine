@@ -13,6 +13,7 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/constants.h"
@@ -244,9 +245,13 @@ static int test_effective_mass_positive(void) {
                                   0.5f, 0.3f, 1.0f / 60.0f, 0.2f, 0.01f);
 
     /* Effective mass should be positive for two unit-mass bodies. */
+    phys_mat3_t inv_i_a = phys_mat3_inv_inertia_world(
+        a.orientation, a.inv_inertia_diag);
+    phys_mat3_t inv_i_b = phys_mat3_inv_inertia_world(
+        b.orientation, b.inv_inertia_diag);
     float eff = phys_compute_effective_mass(&c.rows[0],
-                                            a.inv_mass, &a.inv_inertia_diag,
-                                            b.inv_mass, &b.inv_inertia_diag);
+                                            a.inv_mass, &inv_i_a,
+                                            b.inv_mass, &inv_i_b);
     ASSERT_TRUE(eff > 0.0f);
     /* Should be less than either body mass (1.0). */
     ASSERT_TRUE(eff < 1.0f);
@@ -268,9 +273,13 @@ static int test_effective_mass_static_body(void) {
                                   0.5f, 0.3f, 1.0f / 60.0f, 0.2f, 0.01f);
 
     /* Effective mass should still be positive (based on body B only). */
+    phys_mat3_t inv_i_a2 = phys_mat3_inv_inertia_world(
+        a.orientation, a.inv_inertia_diag);
+    phys_mat3_t inv_i_b2 = phys_mat3_inv_inertia_world(
+        b.orientation, b.inv_inertia_diag);
     float eff = phys_compute_effective_mass(&c.rows[0],
-                                            a.inv_mass, &a.inv_inertia_diag,
-                                            b.inv_mass, &b.inv_inertia_diag);
+                                            a.inv_mass, &inv_i_a2,
+                                            b.inv_mass, &inv_i_b2);
     ASSERT_TRUE(eff > 0.0f);
     return 0;
 }

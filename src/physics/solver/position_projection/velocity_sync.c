@@ -41,6 +41,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/tgs_solve.h"    /* phys_velocity_t */
 #include "ferrum/math/vec3.h"
 
@@ -125,18 +126,36 @@ void phys_velocity_sync_normals(
                     vec3_scale(row->J_vb, body_b->inv_mass * delta_lambda));
             }
 
-            /* Apply angular velocity impulse: v_ang += I^-1 * J_w^T * dλ. */
-            const phys_vec3_t *inv_ia = &body_a->inv_inertia_diag;
-            if (inv_ia->x > 0.0f || inv_ia->y > 0.0f || inv_ia->z > 0.0f) {
-                body_a->angular_vel.x += inv_ia->x * row->J_wa.x * delta_lambda;
-                body_a->angular_vel.y += inv_ia->y * row->J_wa.y * delta_lambda;
-                body_a->angular_vel.z += inv_ia->z * row->J_wa.z * delta_lambda;
+            /* Apply angular velocity impulse: v_ang += I_world^-1 * J_w^T * dλ. */
+            if (body_a->inv_mass > 0.0f) {
+                phys_mat3_t iw_a;
+                const phys_mat3_t *m_a;
+                if (args->inv_inertia_world) {
+                    m_a = &args->inv_inertia_world[idx_a];
+                } else {
+                    iw_a = phys_mat3_inv_inertia_world(
+                        body_a->orientation, body_a->inv_inertia_diag);
+                    m_a = &iw_a;
+                }
+                phys_vec3_t ang_a = phys_mat3_mul_vec3(m_a, row->J_wa);
+                body_a->angular_vel = vec3_add(
+                    body_a->angular_vel,
+                    vec3_scale(ang_a, delta_lambda));
             }
-            const phys_vec3_t *inv_ib = &body_b->inv_inertia_diag;
-            if (inv_ib->x > 0.0f || inv_ib->y > 0.0f || inv_ib->z > 0.0f) {
-                body_b->angular_vel.x += inv_ib->x * row->J_wb.x * delta_lambda;
-                body_b->angular_vel.y += inv_ib->y * row->J_wb.y * delta_lambda;
-                body_b->angular_vel.z += inv_ib->z * row->J_wb.z * delta_lambda;
+            if (body_b->inv_mass > 0.0f) {
+                phys_mat3_t iw_b;
+                const phys_mat3_t *m_b;
+                if (args->inv_inertia_world) {
+                    m_b = &args->inv_inertia_world[idx_b];
+                } else {
+                    iw_b = phys_mat3_inv_inertia_world(
+                        body_b->orientation, body_b->inv_inertia_diag);
+                    m_b = &iw_b;
+                }
+                phys_vec3_t ang_b = phys_mat3_mul_vec3(m_b, row->J_wb);
+                body_b->angular_vel = vec3_add(
+                    body_b->angular_vel,
+                    vec3_scale(ang_b, delta_lambda));
             }
         }
     }

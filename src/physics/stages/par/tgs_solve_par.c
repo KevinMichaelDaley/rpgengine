@@ -25,6 +25,7 @@
 #include "ferrum/physics/constraint_color.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/joint.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/job/counter.h"
 #include "ferrum/job/system.h"
@@ -117,6 +118,7 @@ typedef struct tgs_solve_shared {
     const phys_island_list_t *islands;      /**< Island decomposition. */
     phys_constraint_t        *constraints;  /**< Constraint array (lambda updated). */
     const phys_body_t        *bodies;       /**< Body array (read-only). */
+    const phys_mat3_t        *inv_inertia_world; /**< World-space inverse inertia per body. */
     phys_velocity_t          *velocities;   /**< Solver velocity workspace. */
     phys_velocity_t          *pseudo_velocities; /**< Split-impulse workspace (may be NULL). */
     uint32_t                  iterations;   /**< Solver iteration count. */
@@ -133,6 +135,7 @@ typedef struct tgs_solve_shared {
 typedef struct tgs_color_shared {
     phys_constraint_t *constraints;        /**< Full constraint array. */
     const phys_body_t *bodies;             /**< Body array (read-only). */
+    const phys_mat3_t *inv_inertia_world;  /**< World-space inverse inertia per body. */
     phys_velocity_t   *velocities;         /**< Solver velocity workspace. */
     phys_velocity_t   *pseudo_velocities;  /**< Split-impulse workspace (may be NULL). */
     float              slop;               /**< Penetration slop threshold. */
@@ -150,46 +153,37 @@ static void solve_row(phys_jacobian_row_t *row,
                        phys_velocity_t *va,
                        phys_velocity_t *vb,
                        float inv_mass_a,
-                       const phys_vec3_t *inv_i_a,
+                       const phys_mat3_t *inv_i_a,
                        float inv_mass_b,
-                       const phys_vec3_t *inv_i_b)
+                       const phys_mat3_t *inv_i_b)
 {
-    /* Compute J·v (relative velocity along the constraint direction). */
     float jv = vec3_dot(row->J_va, va->linear)
              + vec3_dot(row->J_wa, va->angular)
              + vec3_dot(row->J_vb, vb->linear)
              + vec3_dot(row->J_wb, vb->angular);
 
-    /* Impulse delta from constraint violation.
-     * Linear viscous damping: opposes relative velocity along the
-     * constraint axis proportional to speed. */
     float jv_damped = jv * (1.0f + row->damping);
     float delta_lambda = (row->bias - jv_damped) * row->effective_mass;
 
-    /* Successive over-relaxation: scale impulse to accelerate convergence. */
     delta_lambda *= SOR_OMEGA;
 
-    /* Clamp accumulated impulse within bounds. */
     float old_lambda = row->lambda;
     row->lambda = old_lambda + delta_lambda;
     if (row->lambda < row->lambda_min) row->lambda = row->lambda_min;
     if (row->lambda > row->lambda_max) row->lambda = row->lambda_max;
     delta_lambda = row->lambda - old_lambda;
 
-    /* Apply linear velocity corrections. */
     va->linear = vec3_add(va->linear,
                           vec3_scale(row->J_va, inv_mass_a * delta_lambda));
     vb->linear = vec3_add(vb->linear,
                           vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
 
-    /* Apply angular velocity corrections (diagonal inertia). */
-    va->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
-    va->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
-    va->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+    /* Apply angular velocity corrections (world-space inverse inertia). */
+    phys_vec3_t ang_a = phys_mat3_mul_vec3(inv_i_a, row->J_wa);
+    va->angular = vec3_add(va->angular, vec3_scale(ang_a, delta_lambda));
 
-    vb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
-    vb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
-    vb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+    phys_vec3_t ang_b = phys_mat3_mul_vec3(inv_i_b, row->J_wb);
+    vb->angular = vec3_add(vb->angular, vec3_scale(ang_b, delta_lambda));
 }
 
 /* ── Solve split-impulse position correction row (static helper) ─ */
@@ -206,9 +200,9 @@ static void solve_position_row(phys_jacobian_row_t *row,
                                 float slop,
                                 float inv_dt,
                                 float inv_mass_a,
-                                const phys_vec3_t *inv_i_a,
+                                const phys_mat3_t *inv_i_a,
                                 float inv_mass_b,
-                                const phys_vec3_t *inv_i_b)
+                                const phys_mat3_t *inv_i_b)
 {
     float excess = penetration - slop;
     if (excess < SPLIT_MIN_PHI) { return; }
@@ -235,13 +229,11 @@ static void solve_position_row(phys_jacobian_row_t *row,
     pvb->linear = vec3_add(pvb->linear,
                            vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
 
-    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
-    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
-    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+    phys_vec3_t ang_a = phys_mat3_mul_vec3(inv_i_a, row->J_wa);
+    pva->angular = vec3_add(pva->angular, vec3_scale(ang_a, delta_lambda));
 
-    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
-    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
-    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+    phys_vec3_t ang_b = phys_mat3_mul_vec3(inv_i_b, row->J_wb);
+    pvb->angular = vec3_add(pvb->angular, vec3_scale(ang_b, delta_lambda));
 }
 
 /**
@@ -255,9 +247,9 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
                                       phys_velocity_t *pvb,
                                       float inv_dt,
                                       float inv_mass_a,
-                                      const phys_vec3_t *inv_i_a,
+                                      const phys_mat3_t *inv_i_a,
                                       float inv_mass_b,
-                                      const phys_vec3_t *inv_i_b)
+                                      const phys_mat3_t *inv_i_b)
 {
     float error = row->bias;
     if (fabsf(error) < 1e-7f) { return; }
@@ -282,13 +274,11 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
     pvb->linear = vec3_add(pvb->linear,
                            vec3_scale(row->J_vb, inv_mass_b * delta_lambda));
 
-    pva->angular.x += inv_i_a->x * row->J_wa.x * delta_lambda;
-    pva->angular.y += inv_i_a->y * row->J_wa.y * delta_lambda;
-    pva->angular.z += inv_i_a->z * row->J_wa.z * delta_lambda;
+    phys_vec3_t ang_a = phys_mat3_mul_vec3(inv_i_a, row->J_wa);
+    pva->angular = vec3_add(pva->angular, vec3_scale(ang_a, delta_lambda));
 
-    pvb->angular.x += inv_i_b->x * row->J_wb.x * delta_lambda;
-    pvb->angular.y += inv_i_b->y * row->J_wb.y * delta_lambda;
-    pvb->angular.z += inv_i_b->z * row->J_wb.z * delta_lambda;
+    phys_vec3_t ang_b = phys_mat3_mul_vec3(inv_i_b, row->J_wb);
+    pvb->angular = vec3_add(pvb->angular, vec3_scale(ang_b, delta_lambda));
 }
 
 /* ── Solve a single constraint (used by colored job) ──────────── */
@@ -306,8 +296,23 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
 
     float inv_mass_a = shared->bodies[c->body_a].inv_mass;
     float inv_mass_b = shared->bodies[c->body_b].inv_mass;
-    const phys_vec3_t *inv_i_a = &shared->bodies[c->body_a].inv_inertia_diag;
-    const phys_vec3_t *inv_i_b = &shared->bodies[c->body_b].inv_inertia_diag;
+
+    phys_mat3_t fallback_a, fallback_b;
+    const phys_mat3_t *inv_i_a;
+    const phys_mat3_t *inv_i_b;
+    if (shared->inv_inertia_world) {
+        inv_i_a = &shared->inv_inertia_world[c->body_a];
+        inv_i_b = &shared->inv_inertia_world[c->body_b];
+    } else {
+        fallback_a = phys_mat3_inv_inertia_world(
+            shared->bodies[c->body_a].orientation,
+            shared->bodies[c->body_a].inv_inertia_diag);
+        fallback_b = phys_mat3_inv_inertia_world(
+            shared->bodies[c->body_b].orientation,
+            shared->bodies[c->body_b].inv_inertia_diag);
+        inv_i_a = &fallback_a;
+        inv_i_b = &fallback_b;
+    }
 
     if (c->is_joint) {
         /* Joint: velocity-level solve with speed-dependent Baumgarte
@@ -428,10 +433,23 @@ static void solve_island(const tgs_solve_shared_t *shared,
 
             float inv_mass_a = shared->bodies[c->body_a].inv_mass;
             float inv_mass_b = shared->bodies[c->body_b].inv_mass;
-            const phys_vec3_t *inv_i_a =
-                &shared->bodies[c->body_a].inv_inertia_diag;
-            const phys_vec3_t *inv_i_b =
-                &shared->bodies[c->body_b].inv_inertia_diag;
+
+            phys_mat3_t fb_a, fb_b;
+            const phys_mat3_t *inv_i_a;
+            const phys_mat3_t *inv_i_b;
+            if (shared->inv_inertia_world) {
+                inv_i_a = &shared->inv_inertia_world[c->body_a];
+                inv_i_b = &shared->inv_inertia_world[c->body_b];
+            } else {
+                fb_a = phys_mat3_inv_inertia_world(
+                    shared->bodies[c->body_a].orientation,
+                    shared->bodies[c->body_a].inv_inertia_diag);
+                fb_b = phys_mat3_inv_inertia_world(
+                    shared->bodies[c->body_b].orientation,
+                    shared->bodies[c->body_b].inv_inertia_diag);
+                inv_i_a = &fb_a;
+                inv_i_b = &fb_b;
+            }
 
             if (c->is_joint) {
                 /* Joint: velocity-level solve with bias=0, then
@@ -596,12 +614,13 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
 
     /* Shared context for colored constraint jobs. */
     tgs_color_shared_t color_shared = {
-        .constraints      = shared->constraints,
-        .bodies           = shared->bodies,
-        .velocities       = shared->velocities,
-        .pseudo_velocities = shared->pseudo_velocities,
-        .slop             = shared->slop,
-        .inv_dt           = shared->inv_dt,
+        .constraints        = shared->constraints,
+        .bodies             = shared->bodies,
+        .inv_inertia_world  = shared->inv_inertia_world,
+        .velocities         = shared->velocities,
+        .pseudo_velocities  = shared->pseudo_velocities,
+        .slop               = shared->slop,
+        .inv_dt             = shared->inv_dt,
         .constraint_indices = sorted_indices,
     };
 
@@ -828,14 +847,15 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
 
     /* Set up shared context for all island jobs. */
     tgs_solve_shared_t shared = {
-        .islands          = args->islands,
-        .constraints      = args->constraints,
-        .bodies           = args->bodies,
-        .velocities       = args->velocities,
+        .islands           = args->islands,
+        .constraints       = args->constraints,
+        .bodies            = args->bodies,
+        .inv_inertia_world = args->inv_inertia_world,
+        .velocities        = args->velocities,
         .pseudo_velocities = pseudo,
-        .iterations       = args->iterations,
-        .slop             = args->slop,
-        .inv_dt           = inv_dt,
+        .iterations        = args->iterations,
+        .slop              = args->slop,
+        .inv_dt            = inv_dt,
     };
 
     /* Separate large islands (colored parallel) from small (one-job). */

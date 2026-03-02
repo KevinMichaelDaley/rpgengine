@@ -6,6 +6,7 @@
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/manifold.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/math/vec3.h"
 
 #include <float.h>
@@ -120,11 +121,17 @@ void phys_constraint_build_contact(
 
     c->rows[0].bias = restitution_bias + baumgarte_bias + speculative_bias;
 
+    /* Compute world-space inverse inertia tensors for effective mass. */
+    phys_mat3_t inv_i_world_a = phys_mat3_inv_inertia_world(
+        body_a->orientation, body_a->inv_inertia_diag);
+    phys_mat3_t inv_i_world_b = phys_mat3_inv_inertia_world(
+        body_b->orientation, body_b->inv_inertia_diag);
+
     /* Compute effective mass for normal row. */
     c->rows[0].effective_mass = phys_compute_effective_mass(
         &c->rows[0],
-        body_a->inv_mass, &body_a->inv_inertia_diag,
-        body_b->inv_mass, &body_b->inv_inertia_diag);
+        body_a->inv_mass, &inv_i_world_a,
+        body_b->inv_mass, &inv_i_world_b);
 
     /* ── Tangent basis ────────────────────────────────────────────── */
     phys_vec3_t tangent1, tangent2;
@@ -137,8 +144,8 @@ void phys_constraint_build_contact(
     c->rows[1].bias = 0.0f;
     c->rows[1].effective_mass = phys_compute_effective_mass(
         &c->rows[1],
-        body_a->inv_mass, &body_a->inv_inertia_diag,
-        body_b->inv_mass, &body_b->inv_inertia_diag);
+        body_a->inv_mass, &inv_i_world_a,
+        body_b->inv_mass, &inv_i_world_b);
 
     /* ── Row 2: Friction tangent 2 ────────────────────────────────── */
     build_row_for_direction(&c->rows[2], rA, rB, tangent2);
@@ -147,6 +154,6 @@ void phys_constraint_build_contact(
     c->rows[2].bias = 0.0f;
     c->rows[2].effective_mass = phys_compute_effective_mass(
         &c->rows[2],
-        body_a->inv_mass, &body_a->inv_inertia_diag,
-        body_b->inv_mass, &body_b->inv_inertia_diag);
+        body_a->inv_mass, &inv_i_world_a,
+        body_b->inv_mass, &inv_i_world_b);
 }

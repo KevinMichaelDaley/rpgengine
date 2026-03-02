@@ -335,10 +335,9 @@ static int test_already_overlapping(void) {
         .dt          = dt,
     });
 
-    /* Already overlapping → should produce a manifold. */
-    ASSERT_EQ(manifold_count, 1);
-    ASSERT_TRUE(manifolds[0].point_count >= 1);
-    ASSERT_FLOAT_GT(manifolds[0].points[0].penetration, 0.0f);
+    /* Already overlapping but stationary → CCD skips (narrowphase handles).
+     * CCD only fires for fast-moving pairs. */
+    ASSERT_EQ(manifold_count, 0);
 
     phys_frame_arena_destroy(&arena);
     return 0;
