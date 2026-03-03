@@ -1,6 +1,6 @@
 ---
 id: rpg-j184
-status: open
+status: in_progress
 deps: []
 links: []
 created: 2026-03-02T18:36:54Z

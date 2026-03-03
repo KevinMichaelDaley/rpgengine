@@ -95,6 +95,18 @@ extern "C" {
 #ifndef GL_TEXTURE_MAG_FILTER
 #define GL_TEXTURE_MAG_FILTER 0x2800
 #endif
+#ifndef GL_ELEMENT_ARRAY_BUFFER
+#define GL_ELEMENT_ARRAY_BUFFER 0x8893
+#endif
+#ifndef GL_STATIC_DRAW
+#define GL_STATIC_DRAW 0x88E4
+#endif
+#ifndef GL_UNSIGNED_INT
+#define GL_UNSIGNED_INT 0x1405
+#endif
+#ifndef GL_TRIANGLES
+#define GL_TRIANGLES 0x0004
+#endif
 #ifndef GL_TRUE
 #define GL_TRUE 1
 #endif

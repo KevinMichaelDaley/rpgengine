@@ -37,7 +37,7 @@ ifeq ($(TRACY),1)
 endif
 ECS_SRC := $(wildcard src/ecs/*.c)
 ENTITY_SRC := $(wildcard src/entity/*.c)
-RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c)
+RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c)
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_VIDEO_CAPTURE_SRC := $(wildcard src/renderer/video_capture/*.c)
 RENDERER_SRC += $(RENDERER_VIDEO_CAPTURE_SRC)
@@ -988,6 +988,9 @@ $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_pipeline_graph_tests: build/libheadless.a tests/p004_renderer_pipeline_graph_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pipeline_graph_tests.c \
 $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p004_static_mesh_tests: build/libheadless.a tests/p004_renderer_static_mesh_tests.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_static_mesh_tests.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
 
