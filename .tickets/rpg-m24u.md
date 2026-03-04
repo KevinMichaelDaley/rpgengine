@@ -1,6 +1,6 @@
 ---
 id: rpg-m24u
-status: in_progress
+status: closed
 deps: [rpg-07mf]
 links: []
 created: 2026-03-02T18:38:05Z
