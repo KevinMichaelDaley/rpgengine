@@ -1,6 +1,6 @@
 ---
 id: rpg-p2vr
-status: in_progress
+status: closed
 deps: [rpg-j184]
 links: []
 created: 2026-03-02T18:37:05Z
