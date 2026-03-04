@@ -1,6 +1,6 @@
 ---
 id: rpg-07mf
-status: in_progress
+status: closed
 deps: [rpg-j184, rpg-p2vr]
 links: []
 created: 2026-03-02T18:37:19Z
