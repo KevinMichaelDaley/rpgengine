@@ -1,6 +1,6 @@
 ---
 id: rpg-nun5
-status: open
+status: in_progress
 deps: [rpg-m24u]
 links: []
 created: 2026-03-02T18:38:17Z

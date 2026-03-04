@@ -1000,6 +1000,9 @@ $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_draw_list_tests: build/libheadless.a tests/p004_renderer_draw_list_tests.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_draw_list_tests.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p004_pass_pipeline_tests: build/libheadless.a tests/p004_renderer_pass_pipeline_tests.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_pass_pipeline_tests.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
 

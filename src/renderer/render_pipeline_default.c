@@ -14,5 +14,6 @@ int render_pipeline_default(render_pipeline_t *pipeline,
     pipeline->passes = storage;
     pipeline->pass_count = 3u;
     pipeline->glBindFramebuffer = NULL;
+    pipeline->owns_storage = 0;
     return RENDER_PIPELINE_OK;
 }
