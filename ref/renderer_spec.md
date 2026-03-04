@@ -122,25 +122,24 @@ typedef struct mesh_handle {
     uint16_t generation;
 } mesh_handle_t;
 
-#define MESH_REGISTRY_CAPACITY 4096
-
 /** Mesh type discriminator. */
 typedef enum mesh_type {
     MESH_TYPE_STATIC   = 0,
     MESH_TYPE_SKELETAL = 1
 } mesh_type_t;
 
-/** Central mesh store. */
+/** Central mesh store. Capacity is configurable at init time. */
 typedef struct mesh_registry {
-    mesh_type_t       types[MESH_REGISTRY_CAPACITY];
+    mesh_type_t       *types;          /**< Heap-allocated, capacity elements. */
     union {
         static_mesh_t   stat;
         skeletal_mesh_t skel;
-    }                 meshes[MESH_REGISTRY_CAPACITY];
-    uint16_t          generations[MESH_REGISTRY_CAPACITY];
-    uint32_t          freelist[MESH_REGISTRY_CAPACITY];
+    }                 *meshes;         /**< Heap-allocated, capacity elements. */
+    uint16_t          *generations;    /**< Heap-allocated, capacity elements. */
+    uint32_t          *freelist;       /**< Heap-allocated, capacity elements. */
     uint32_t          freelist_count;
     uint32_t          count;
+    uint32_t          capacity;        /**< Set at init time (no compile-time limit). */
     const gl_loader_t *loader;
 } mesh_registry_t;
 ```
@@ -229,8 +228,9 @@ struct InstanceData {
 };
 ```
 
-Maximum batch size: 256 instances per draw call (fits a 64KB UBO at
-256 bytes per instance).
+Maximum batch size is configurable at init time (no compile-time cap).
+The instance UBO is allocated once at pipeline init with the requested
+capacity (e.g., 256, 1024, or more depending on the scene).
 
 ---
 
@@ -647,7 +647,7 @@ All shaders in the engine use consistent attribute locations:
 |---------|------|----------|
 | 0 | MaterialParams | base_color, roughness, metallic, emissive, alpha_cutoff |
 | 1 | FrameParams | view, proj, VP, camera_pos, time, cascade data |
-| 2 | InstanceData | Per-instance model matrices (up to 256) |
+| 2 | InstanceData | Per-instance model matrices (configurable capacity) |
 | 3 | BonePalette | Bone matrices (up to 128 × mat4) |
 
 ---

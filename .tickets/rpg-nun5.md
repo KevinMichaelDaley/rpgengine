@@ -19,7 +19,7 @@ Deliverables:
 - Per-pass framebuffer binding (shadow maps get their own FBOs)
 - Integration with existing render_pipeline_graph.h dependency system
 - Global per-frame UBO (FrameParams: view, proj, VP, camera_pos, time, cascade data) uploaded once before all passes
-- Instance data UBO: per-instance model matrices, max 256 instances, persistent-mapped
+- Instance data UBO: per-instance model matrices, configurable capacity (init-time allocated pool), persistent-mapped
 - Tests extending tests/p004_renderer_pipeline_tests.c
 
 Depends on: rpg-m24u (draw lists feed into passes)

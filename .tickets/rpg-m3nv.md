@@ -16,7 +16,7 @@ Deliverables:
 - Server-side: after physics tick, build a draw_list_t from all active entities (iterate edit_entity_store, construct draw_commands from mesh_handle + material + transform)
 - Client-side: replace manual per-body draw loop in demo_client with draw_list_sort() + draw_list_submit() path
 - Per-frame UBO (FrameParams) uploaded once before passes: view, proj, VP, camera_pos, time
-- Instance data UBO: persistent-mapped, batch up to 256 instances per draw call
+- Instance data UBO: persistent-mapped, configurable instance batch capacity (init-time allocated pool)
 - Extend spawn message with render_queue (opaque/transparent/overlay) so client sorts correctly
 - Add SCRIPT_KEY_RENDER_QUEUE (u32, key=16) to entity_attrs.h
 - IL support: add 'set_field r0 16 rN' for scripts to change render queue at runtime (e.g., fade-in/fade-out effects)
