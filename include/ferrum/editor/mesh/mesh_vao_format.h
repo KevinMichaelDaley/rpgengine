@@ -47,6 +47,7 @@ extern "C" {
 #define MESH_VAO_FLAG_UV0       (1u << 2)
 #define MESH_VAO_FLAG_UV1       (1u << 3)
 #define MESH_VAO_FLAG_COLORS    (1u << 4)
+#define MESH_VAO_FLAG_BONES     (1u << 5)
 
 /* ------------------------------------------------------------------------ */
 /* API (mesh_vao_serialize.c / mesh_vao_deserialize.c)                       */

@@ -991,6 +991,9 @@ $(SRC_ALL) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_static_mesh_tests: build/libheadless.a tests/p004_renderer_static_mesh_tests.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_static_mesh_tests.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p004_skeletal_mesh_tests: build/libheadless.a tests/p004_renderer_skeletal_mesh_tests.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_skeletal_mesh_tests.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
 
