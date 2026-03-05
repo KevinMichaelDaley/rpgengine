@@ -21,12 +21,12 @@ int mesh_registry_init(mesh_registry_t *reg, uint32_t capacity,
     /*
      * Single allocation for all internal arrays:
      *   types[]       — capacity × sizeof(mesh_type_t)
-     *   meshes[]      — capacity × sizeof(union mesh_slot)
+     *   meshes[]      — capacity × sizeof(union mesh_registry_slot)
      *   generations[] — capacity × sizeof(uint16_t)
      *   freelist[]    — capacity × sizeof(uint32_t)
      */
     size_t sz_types = (size_t)capacity * sizeof(mesh_type_t);
-    size_t sz_meshes = (size_t)capacity * sizeof(union mesh_slot);
+    size_t sz_meshes = (size_t)capacity * sizeof(union mesh_registry_slot);
     size_t sz_gens  = (size_t)capacity * sizeof(uint16_t);
     size_t sz_free  = (size_t)capacity * sizeof(uint32_t);
     size_t total    = sz_types + sz_meshes + sz_gens + sz_free;
@@ -39,7 +39,7 @@ int mesh_registry_init(mesh_registry_t *reg, uint32_t capacity,
 
     uint8_t *ptr = block;
     reg->types       = (mesh_type_t *)ptr;   ptr += sz_types;
-    reg->meshes      = (union mesh_slot *)ptr; ptr += sz_meshes;
+    reg->meshes      = (union mesh_registry_slot *)ptr; ptr += sz_meshes;
     reg->generations = (uint16_t *)ptr;      ptr += sz_gens;
     reg->freelist    = (uint32_t *)ptr;
 

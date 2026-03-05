@@ -57,7 +57,7 @@ typedef struct mesh_registry {
     mesh_type_t *types;
 
     /** Per-slot mesh union (static or skeletal). */
-    union mesh_slot {
+    union mesh_registry_slot {
         static_mesh_t   stat;
         skeletal_mesh_t skel;
     } *meshes;

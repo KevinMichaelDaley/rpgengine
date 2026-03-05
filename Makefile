@@ -1006,6 +1006,9 @@ $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_ubo_tests: build/libheadless.a tests/p004_renderer_ubo_tests.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_renderer_ubo_tests.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p004_visual_mesh_primitives: build/libheadless.a tests/visual/p004_visual_mesh_primitives.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p004_visual_mesh_primitives.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
 
