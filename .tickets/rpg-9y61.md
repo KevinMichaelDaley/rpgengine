@@ -1,6 +1,6 @@
 ---
 id: rpg-9y61
-status: open
+status: closed
 deps: [rpg-07mf]
 links: [rpg-d3ue, rpg-h66f, rpg-zryp, rpg-hezs, rpg-8ot1]
 created: 2026-03-04T02:55:34Z
