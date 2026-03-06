@@ -30,6 +30,8 @@
 #include "ferrum/animation/surface_vol.h"
 #include "ferrum/animation/transform_map.h"
 #include "ferrum/animation/fskel_loader.h"
+#include "ferrum/animation/ragdoll.h"
+#include "ferrum/animation/bone_to_body.h"
 #include "ferrum/renderer/gl_loader.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/video_capture.h"
@@ -350,7 +352,7 @@ int main(void) {
     printf("  Rest foot R: (%.2f, %.2f, %.2f)\n",
            (double)rest_foot_r.x, (double)rest_foot_r.y, (double)rest_foot_r.z);
 
-    /* Set up constraint solver with all evaluators. */
+    /* Set up constraint solver with all evaluators (for animation targets). */
     constraint_solver_t solver;
     constraint_solver_init(&solver, skel.joint_count,
                            skel.max_constraints_per_joint);
@@ -363,15 +365,29 @@ int main(void) {
     /* Allocate pose buffers. */
     mat4_t *pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
     mat4_t *local_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
-    if (!pose || !local_pose) {
+    mat4_t *target_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
+    if (!pose || !local_pose || !target_pose) {
         fprintf(stderr, "Failed to allocate pose\n");
-        free(pose); free(local_pose);
+        free(pose); free(local_pose); free(target_pose);
         skeleton_def_destroy(&skel);
         if (ibms) free(ibms);
         cleanup_line_buffer_();
         shader_program_destroy(&shader);
         cleanup_gl_context_();
         return 1;
+    }
+
+    /* Create ragdoll from skeleton (uses colliders + joints from fskel). */
+    ragdoll_t ragdoll;
+    bool ragdoll_ok = ragdoll_create(&ragdoll, &skel, skel.rest_world);
+    if (!ragdoll_ok) {
+        fprintf(stderr, "WARNING: ragdoll creation failed, falling back to "
+                        "constraint solver only\n");
+    } else {
+        /* Motor strength = 1.0 (fully animation-driven). */
+        ragdoll_set_motor_strength(&ragdoll, 1.0f);
+        printf("  Ragdoll: %u bodies, %u joints\n",
+               ragdoll.bone_count, ragdoll.joint_count);
     }
 
     /* Find the root_master bone (child of c_traj, drives the body). */
@@ -448,14 +464,34 @@ int main(void) {
         }
 
         /* Initialize world pose (will be computed by solver's FK). */
-        memset(pose, 0, skel.joint_count * sizeof(mat4_t));
+        memset(target_pose, 0, skel.joint_count * sizeof(mat4_t));
 
-        /* Evaluate: FK propagation + constraint solving (IK, copy, etc.).
-         * The solver computes world = parent_world × local for each bone,
-         * then applies constraints (IK targets, copy rotation/scale/location,
-         * damped track, limits, etc.) in parent-before-child order. */
+        /* Phase 1: Animation solver produces target poses via FK + constraints.
+         * This resolves IK targets, copy rotation/location, etc. */
         constraint_solver_evaluate(&solver, &skel, local_pose,
-                                   pose, skel.joint_count);
+                                   target_pose, skel.joint_count);
+
+        /* Phase 2: Feed animation targets through ragdoll pipeline. */
+        if (ragdoll_ok) {
+            /* Update motor targets from animation solver output. */
+            ragdoll_update_motor_targets(&ragdoll, target_pose,
+                                         skel.joint_count);
+
+            /* Sync ragdoll body positions from animation targets.
+             * In the full engine pipeline, XPBD would solve here.
+             * For this visual test, we directly apply animation targets
+             * to ragdoll bodies (motor strength = 1.0). */
+            anim_bones_to_bodies(target_pose, skel.colliders,
+                                 ragdoll.bodies, skel.joint_count);
+
+            /* Sync physics results back to bone world matrices. */
+            ragdoll_sync_from_physics(&ragdoll);
+            memcpy(pose, ragdoll.bone_world,
+                   skel.joint_count * sizeof(mat4_t));
+        } else {
+            /* Fallback: use constraint solver output directly. */
+            memcpy(pose, target_pose, skel.joint_count * sizeof(mat4_t));
+        }
 
         /* ── Draw ─────────────────────────────────────────────── */
         begin_lines_();
@@ -551,8 +587,10 @@ int main(void) {
     cleanup_line_buffer_();
     shader_program_destroy(&shader);
     constraint_solver_destroy(&solver);
+    if (ragdoll_ok) ragdoll_destroy(&ragdoll);
     free(pose);
     free(local_pose);
+    free(target_pose);
     skeleton_def_destroy(&skel);
     if (ibms) free(ibms);
     cleanup_gl_context_();
