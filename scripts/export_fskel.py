@@ -22,6 +22,7 @@ bl_info = {
 }
 
 import bpy
+import bmesh
 import struct
 import mathutils
 import math
@@ -1314,6 +1315,59 @@ def _sphere_wire(center, radius, segments=16):
     return lines
 
 
+def _convex_hull_wire(armature_obj, bone_name, vgroup_name):
+    """Generate wireframe lines for a convex hull from a vertex group.
+
+    Gathers vertices from the named vertex group on child meshes of the
+    armature, computes their convex hull via bmesh, and returns edge line
+    pairs in world space (Blender coordinates — NOT engine-converted).
+    """
+    if not vgroup_name:
+        return []
+
+    # Collect world-space verts from vertex group
+    hull_verts = []
+    for child in armature_obj.children:
+        if child.type != 'MESH':
+            continue
+        vg = child.vertex_groups.get(vgroup_name)
+        if vg is None:
+            continue
+        vg_idx = vg.index
+        mesh = child.data
+        for v in mesh.vertices:
+            for g in v.groups:
+                if g.group == vg_idx and g.weight > 0.5:
+                    co = child.matrix_world @ v.co
+                    hull_verts.append(co)
+                    break
+
+    if len(hull_verts) < 4:
+        return []
+
+    # Build convex hull with bmesh
+    bm = bmesh.new()
+    for co in hull_verts:
+        bm.verts.new(co)
+    bm.verts.ensure_lookup_table()
+
+    try:
+        result = bmesh.ops.convex_hull(bm, input=bm.verts)
+    except Exception:
+        bm.free()
+        return []
+
+    # Extract edges from the hull geometry
+    lines = []
+    for edge in bm.edges:
+        a = edge.verts[0].co.copy()
+        b = edge.verts[1].co.copy()
+        lines.append((a, b))
+
+    bm.free()
+    return lines
+
+
 def _draw_collision_overlay():
     """Draw collision wireframes for all pose bones with shapes."""
     context = bpy.context
@@ -1357,6 +1411,12 @@ def _draw_collision_overlay():
             r = pb.talarium_sphere_radius
             center = bone_matrix.translation.copy()
             lines = _sphere_wire(center, r)
+            for a, b in lines:
+                all_lines.append((a, b, color))
+
+        elif shape == '4':  # Convex Hull
+            vgroup = pb.talarium_hull_vgroup
+            lines = _convex_hull_wire(obj, pb.name, vgroup)
             for a, b in lines:
                 all_lines.append((a, b, color))
 
