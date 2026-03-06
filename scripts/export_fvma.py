@@ -97,8 +97,11 @@ def _gather_mesh_data(obj, export_normals, export_tangents, export_uvs,
     mesh = eval_obj.to_mesh()
 
     # Compute smooth normals and tangents.
+    # calc_normals_split() was removed in Blender 4.0;
+    # corner_normals are now auto-computed.
     if export_normals:
-        mesh.calc_normals_split()
+        if hasattr(mesh, 'calc_normals_split'):
+            mesh.calc_normals_split()
     if export_tangents and mesh.uv_layers:
         mesh.calc_tangents()
 
@@ -193,7 +196,11 @@ def _gather_mesh_data(obj, export_normals, export_tangents, export_uvs,
 
                 norm = None
                 if export_normals:
-                    norm = _convert_normal(loop.normal)
+                    # Blender 4.0+ uses corner_normals; older uses loop.normal
+                    if hasattr(mesh, 'corner_normals') and mesh.corner_normals:
+                        norm = _convert_normal(mesh.corner_normals[loop_idx].vector)
+                    else:
+                        norm = _convert_normal(loop.normal)
                     key_parts.append(norm)
 
                 tang = None
