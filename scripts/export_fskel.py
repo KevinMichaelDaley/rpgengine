@@ -26,7 +26,7 @@ import struct
 import mathutils
 import math
 from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, BoolProperty
+from bpy.props import StringProperty, BoolProperty, EnumProperty
 
 # ── Format constants (must match fskel_format.h) ────────────────────
 
@@ -454,9 +454,14 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
 
 # ── Main export logic ──────────────────────────────────────────────
 
-def export_fskel(context, filepath, export_ibms):
+def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
     """
     Export the active armature to .fskel format.
+    
+    Args:
+        default_collision: How to handle bones without explicit collision
+            geometry.  'EMPTY' = no collider, 'ENVELOPE' = capsule from
+            bone envelope (head/tail radius and length).
     
     Returns set of {'FINISHED'} or {'CANCELLED'}.
     """
@@ -587,8 +592,9 @@ def export_fskel(context, filepath, export_ibms):
                 ccd_enabled = int(pb.get('talarium_ccd', 0))
                 is_kinematic = int(pb.get('talarium_kinematic', 0))
                 mass = float(pb.get('talarium_mass', 0.0))
+                explicit_shape = shape_type  # Original user-set value.
 
-                if shape_type == 1:  # Capsule
+                if shape_type == 1:  # Capsule (explicit)
                     params[0] = float(pb.get('talarium_capsule_radius', 0.05))
                     params[1] = float(pb.get('talarium_capsule_height', 0.2))
                     axis_name = pb.get('talarium_capsule_axis', 'Y')
@@ -603,11 +609,23 @@ def export_fskel(context, filepath, export_ibms):
                 elif shape_type == 4:  # Convex hull
                     hull_offset = len(hull_vertices) // 3
                     vg_name = str(pb.get('talarium_hull_vgroup', ''))
-                    # Find mesh vertices in vertex group
                     hull_verts = _gather_hull_vertices(
                         obj, bone.name, vg_name)
                     hull_count = len(hull_verts)
                     hull_vertices.extend(hull_verts)
+                elif explicit_shape == 0 and default_collision == 'ENVELOPE':
+                    # Auto-generate capsule from bone envelope.
+                    bone_len = bone.length
+                    if bone_len > 1e-6:
+                        avg_radius = (bone.head_radius + bone.tail_radius) * 0.5
+                        if avg_radius < 1e-6:
+                            avg_radius = bone_len * 0.1
+                        shape_type = 1  # Capsule
+                        params[0] = avg_radius
+                        params[1] = bone_len
+                        # Blender bone Y axis → engine Y axis after coord
+                        # conversion.  Capsule axis enum: 0=X, 1=Y, 2=Z.
+                        params[2] = 1.0
 
             # sizeof(bone_collider_desc_t) = 4 + 24 + 4 + 4 + 4 + 4 + 4 = 48
             desc = struct.pack('<I6fIIfII',
@@ -747,9 +765,23 @@ class ExportFSKEL(bpy.types.Operator, ExportHelper):
         default=True,
     )
 
+    default_collision: EnumProperty(
+        name="Default Collision",
+        description="Collision geometry for bones without explicit custom shapes",
+        items=[
+            ('EMPTY', "Empty (None)",
+             "Bones without custom shapes get no collider"),
+            ('ENVELOPE', "Capsule from Envelope",
+             "Auto-generate capsule colliders from bone envelope "
+             "(head/tail radius and length)"),
+        ],
+        default='EMPTY',
+    )
+
     def execute(self, context):
         try:
-            result = export_fskel(context, self.filepath, self.export_ibms)
+            result = export_fskel(context, self.filepath,
+                                  self.export_ibms, self.default_collision)
             self.report({'INFO'}, f"Exported to {self.filepath}")
             return result
         except RuntimeError as e:
@@ -762,6 +794,7 @@ class ExportFSKEL(bpy.types.Operator, ExportHelper):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "export_ibms")
+        layout.prop(self, "default_collision")
 
 
 # ── Registration ──────────────────────────────────────────────────
