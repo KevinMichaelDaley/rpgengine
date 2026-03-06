@@ -12,6 +12,7 @@
 #include "ferrum/animation/fskel_format.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/bone_collider.h"
+#include "ferrum/animation/bone_joint_desc.h"
 #include "ferrum/math/mat4.h"
 
 #include <stdio.h>
@@ -110,6 +111,22 @@ bool fskel_write(const char *path,
         if (fwrite(skel->hull_vertices, sizeof(float) * 3,
                    hull_count, f) != hull_count)
             goto fail;
+    }
+
+    /* --- v2 JNTS chunk: per-bone joint descriptors --- */
+    if (n > 0) {
+        if (skel->joints) {
+            if (fwrite(skel->joints, sizeof(bone_joint_desc_t), n, f) != n)
+                goto fail;
+        } else {
+            /* No joints: write NONE descriptors. */
+            bone_joint_desc_t empty;
+            memset(&empty, 0, sizeof(empty));
+            for (uint32_t i = 0; i < n; i++) {
+                if (fwrite(&empty, sizeof(empty), 1, f) != 1)
+                    goto fail;
+            }
+        }
     }
 
     fclose(f);

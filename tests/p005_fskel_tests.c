@@ -18,6 +18,7 @@
 #include "ferrum/animation/constraint_types.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/bone_collider.h"
+#include "ferrum/animation/bone_joint_desc.h"
 #include "ferrum/math/mat4.h"
 
 /* ── Test harness ────────────────────────────────────────────────── */
@@ -576,6 +577,56 @@ static int test_no_colliders_round_trip(void) {
     return 0;
 }
 
+/** Joint descriptors round-trip through write/load. */
+static int test_joint_desc_round_trip(void) {
+    skeleton_def_t skel;
+    make_test_skeleton(&skel);
+    mat4_t ibms[3];
+    make_test_ibms(ibms);
+
+    /* Allocate joint descriptors. */
+    skel.joints = (bone_joint_desc_t *)calloc(3, sizeof(bone_joint_desc_t));
+    ASSERT_TRUE(skel.joints != NULL);
+
+    /* Root: no joint (root bone). */
+    skel.joints[0].joint_type = 0;
+
+    /* Spine: ball joint to root. */
+    skel.joints[1].joint_type = 1;
+
+    /* Head: hinge joint along X axis. */
+    skel.joints[2].joint_type = 2;
+    skel.joints[2].axis[0] = 1.0f;
+    skel.joints[2].axis[1] = 0.0f;
+    skel.joints[2].axis[2] = 0.0f;
+    skel.joints[2].limit_min = -0.5f;
+    skel.joints[2].limit_max = 0.8f;
+
+    bool ok = fskel_write(tmp_path, &skel, ibms, 3);
+    ASSERT_TRUE(ok);
+
+    skeleton_def_t loaded;
+    mat4_t *loaded_ibms = NULL;
+    uint32_t loaded_ibm_count = 0;
+    ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
+    ASSERT_TRUE(ok);
+
+    /* Verify joints loaded. */
+    ASSERT_TRUE(loaded.joints != NULL);
+    ASSERT_TRUE(loaded.joints[0].joint_type == 0);
+    ASSERT_TRUE(loaded.joints[1].joint_type == 1);
+    ASSERT_TRUE(loaded.joints[2].joint_type == 2);
+    ASSERT_FLOAT_EQ(loaded.joints[2].axis[0], 1.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[2].limit_min, -0.5f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[2].limit_max, 0.8f, 1e-6f);
+
+    skeleton_def_destroy(&loaded);
+    free(loaded_ibms);
+    unlink(tmp_path);
+    skeleton_def_destroy(&skel);
+    return 0;
+}
+
 /* ── main ────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -591,6 +642,7 @@ int main(void) {
     RUN(test_hull_vertex_round_trip);
     RUN(test_v1_backward_compat);
     RUN(test_no_colliders_round_trip);
+    RUN(test_joint_desc_round_trip);
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

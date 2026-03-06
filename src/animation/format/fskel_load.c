@@ -12,6 +12,7 @@
 #include "ferrum/animation/fskel_format.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/bone_collider.h"
+#include "ferrum/animation/bone_joint_desc.h"
 #include "ferrum/math/mat4.h"
 
 #include <stdio.h>
@@ -125,8 +126,17 @@ bool fskel_load(const char *path,
                 goto fail_skel;
         }
         out_skel->hull_vertex_count = hull_vertex_count;
+
+        /* --- v2 JNTS chunk: per-bone joint descriptors --- */
+        out_skel->joints = (bone_joint_desc_t *)calloc(
+            joint_count, sizeof(bone_joint_desc_t));
+        if (!out_skel->joints) goto fail_skel;
+
+        if (fread(out_skel->joints, sizeof(bone_joint_desc_t),
+                  joint_count, f) != joint_count)
+            goto fail_skel;
     }
-    /* v1 files: colliders remain NULL (set by skeleton_def_init's memset). */
+    /* v1 files: colliders and joints remain NULL. */
 
     fclose(f);
     return true;

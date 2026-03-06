@@ -631,6 +631,33 @@ def export_fskel(context, filepath, export_ibms):
                                 hull_vertices[i + 1],
                                 hull_vertices[i + 2]))
 
+        # --- v2 JNTS chunk: per-bone joint descriptors ---
+        # sizeof(bone_joint_desc_t) = 4 + 12 + 4 + 4 + 4 = 28 bytes
+        for bone in bone_list:
+            pb = pose_bones.get(bone.name)
+
+            jt = 0  # NONE
+            axis = [0.0, 1.0, 0.0]
+            rest_len = 0.0
+            lim_min = 0.0
+            lim_max = 0.0
+
+            if pb and bone.parent:
+                jt = int(pb.get('talarium_joint_type', 1))  # Default: ball
+                axis_str = str(pb.get('talarium_joint_axis', 'Y'))
+                axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
+                        'Z': [0, 0, 1]}.get(axis_str, [0, 1, 0])
+                # Convert axis from Blender Z-up to engine Y-up
+                bx, by, bz = axis
+                axis = [bx, bz, -by]
+                rest_len = float(pb.get('talarium_joint_rest_length', 0.0))
+                lim_min = float(pb.get('talarium_joint_limit_min', 0.0))
+                lim_max = float(pb.get('talarium_joint_limit_max', 0.0))
+
+            f.write(struct.pack('<I3f3f', jt,
+                                axis[0], axis[1], axis[2],
+                                rest_len, lim_min, lim_max))
+
     # Summary
     total_constraints = sum(len(c) for c in bone_constraints)
     total_colliders = sum(1 for d in bone_collider_descs

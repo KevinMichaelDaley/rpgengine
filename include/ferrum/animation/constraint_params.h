@@ -18,6 +18,7 @@
 #include "ferrum/math/mat4.h"
 #include "ferrum/animation/constraint_types.h"
 #include "ferrum/animation/bone_collider.h"
+#include "ferrum/animation/bone_joint_desc.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -256,6 +257,11 @@ typedef struct skeleton_def {
     bone_collider_desc_t *colliders;    /**< One per joint, or NULL. */
     float          *hull_vertices;      /**< Convex hull vertex data (x,y,z triples). */
     uint32_t        hull_vertex_count;  /**< Total hull vertices across all bones. */
+
+    /* Per-bone joint descriptors (fskel v2 JNTS chunk).
+     * NULL if the file is v1 or no joint data was provided.
+     * Auto-generated as ball joints from hierarchy when NULL. */
+    bone_joint_desc_t *joints;          /**< One per joint, or NULL. */
 } skeleton_def_t;
 
 /**

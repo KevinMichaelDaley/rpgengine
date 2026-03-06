@@ -12,6 +12,7 @@
 #include "ferrum/animation/ragdoll.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/bone_collider.h"
+#include "ferrum/animation/bone_joint_desc.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/joint_motor.h"
@@ -180,7 +181,9 @@ bool ragdoll_create(ragdoll_t *ragdoll,
         ragdoll->bone_world[i] = world_pose[i];
     }
 
-    /* Create joints between parent-child pairs. */
+    /* Create joints between parent-child pairs.
+     * Use joint descriptors from fskel if available, otherwise default
+     * to ball joints. */
     ragdoll->joint_count = 0;
     for (uint32_t i = 0; i < n; i++) {
         uint32_t parent = skel->parent_indices[i];
@@ -189,11 +192,41 @@ bool ragdoll_create(ragdoll_t *ragdoll,
             continue;
         }
 
+        /* Read joint descriptor if available. */
+        const bone_joint_desc_t *jd = NULL;
+        if (skel->joints) jd = &skel->joints[i];
+
+        /* Skip bones with joint_type = 0 (NONE) when explicitly set. */
+        if (jd && jd->joint_type == 0) {
+            ragdoll->joint_indices[i] = UINT32_MAX;
+            continue;
+        }
+
         uint32_t ji = ragdoll->joint_count;
         phys_joint_init(&ragdoll->joints[ji]);
-        ragdoll->joints[ji].type = PHYS_JOINT_BALL;
         ragdoll->joints[ji].body_a = parent;
         ragdoll->joints[ji].body_b = i;
+
+        /* Set joint type from descriptor or default to ball. */
+        if (jd && jd->joint_type == 2) {
+            ragdoll->joints[ji].type = PHYS_JOINT_HINGE;
+            ragdoll->joints[ji].local_axis_a = (phys_vec3_t){
+                jd->axis[0], jd->axis[1], jd->axis[2]
+            };
+        } else if (jd && jd->joint_type == 3) {
+            ragdoll->joints[ji].type = PHYS_JOINT_DISTANCE;
+            /* Rest length: use descriptor or compute from bone positions. */
+            if (jd->rest_length > 0.0f) {
+                ragdoll->joints[ji].rest_length = jd->rest_length;
+            } else {
+                vec3_t cp = mat4_get_position(&world_pose[i]);
+                vec3_t pp = mat4_get_position(&world_pose[parent]);
+                float dx = cp.x - pp.x, dy = cp.y - pp.y, dz = cp.z - pp.z;
+                ragdoll->joints[ji].rest_length = sqrtf(dx*dx + dy*dy + dz*dz);
+            }
+        } else {
+            ragdoll->joints[ji].type = PHYS_JOINT_BALL;
+        }
 
         /* Anchor at child bone's position, in each body's local space. */
         vec3_t child_pos = mat4_get_position(&world_pose[i]);
