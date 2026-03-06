@@ -26,7 +26,7 @@ import struct
 import mathutils
 import math
 from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, BoolProperty, EnumProperty
+from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty
 
 # ── Format constants (must match fskel_format.h) ────────────────────
 
@@ -588,27 +588,26 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             hull_count = 0
 
             if pb:
-                shape_type = int(pb.get('talarium_collision_shape', 0))
-                ccd_enabled = int(pb.get('talarium_ccd', 0))
-                is_kinematic = int(pb.get('talarium_kinematic', 0))
-                mass = float(pb.get('talarium_mass', 0.0))
+                shape_type = int(pb.talarium_collision_shape)
+                ccd_enabled = 1 if pb.talarium_ccd else 0
+                is_kinematic = 1 if pb.talarium_kinematic else 0
+                mass = pb.talarium_mass
                 explicit_shape = shape_type  # Original user-set value.
 
                 if shape_type == 1:  # Capsule (explicit)
-                    params[0] = float(pb.get('talarium_capsule_radius', 0.05))
-                    params[1] = float(pb.get('talarium_capsule_height', 0.2))
-                    axis_name = pb.get('talarium_capsule_axis', 'Y')
+                    params[0] = pb.talarium_capsule_radius
+                    params[1] = pb.talarium_capsule_height
                     params[2] = float({'X': 0, 'Y': 1, 'Z': 2}.get(
-                        str(axis_name), 1))
+                        pb.talarium_capsule_axis, 1))
                 elif shape_type == 2:  # Box
-                    params[0] = float(pb.get('talarium_box_hx', 0.1))
-                    params[1] = float(pb.get('talarium_box_hy', 0.1))
-                    params[2] = float(pb.get('talarium_box_hz', 0.1))
+                    params[0] = pb.talarium_box_hx
+                    params[1] = pb.talarium_box_hy
+                    params[2] = pb.talarium_box_hz
                 elif shape_type == 3:  # Sphere
-                    params[0] = float(pb.get('talarium_sphere_radius', 0.1))
+                    params[0] = pb.talarium_sphere_radius
                 elif shape_type == 4:  # Convex hull
                     hull_offset = len(hull_vertices) // 3
-                    vg_name = str(pb.get('talarium_hull_vgroup', ''))
+                    vg_name = pb.talarium_hull_vgroup
                     hull_verts = _gather_hull_vertices(
                         obj, bone.name, vg_name)
                     hull_count = len(hull_verts)
@@ -663,10 +662,10 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             lim_axes = 0
 
             if pb and bone.parent:
-                jt = int(pb.get('talarium_joint_type', 1))  # Default: ball
+                jt = int(pb.talarium_joint_type)
 
                 if jt in (2, 8):  # Hinge or Aim: use axis
-                    axis_str = str(pb.get('talarium_joint_axis', 'Y'))
+                    axis_str = pb.talarium_joint_axis
                     axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
                             'Z': [0, 0, 1]}.get(axis_str, [0, 1, 0])
                     # Convert axis from Blender Z-up to engine Y-up
@@ -674,25 +673,25 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
                     axis = [bx, bz, -by]
 
                 if jt == 2:  # Hinge: scalar limits in slot [0]
-                    lim_min[0] = float(pb.get('talarium_joint_limit_min', 0.0))
-                    lim_max[0] = float(pb.get('talarium_joint_limit_max', 0.0))
+                    lim_min[0] = pb.talarium_joint_limit_min
+                    lim_max[0] = pb.talarium_joint_limit_max
                     if lim_min[0] != 0.0 or lim_max[0] != 0.0:
                         lim_axes = 1
 
                 elif jt == 3:  # Distance
-                    rest_len = float(pb.get('talarium_joint_rest_length', 0.0))
+                    rest_len = pb.talarium_joint_rest_length
 
                 elif jt == 6:  # Limit rotation: per-axis angle limits
                     # Read Blender-space per-axis limits
-                    bl_min_x = float(pb.get('talarium_joint_limit_min_x', 0.0))
-                    bl_max_x = float(pb.get('talarium_joint_limit_max_x', 0.0))
-                    bl_min_y = float(pb.get('talarium_joint_limit_min_y', 0.0))
-                    bl_max_y = float(pb.get('talarium_joint_limit_max_y', 0.0))
-                    bl_min_z = float(pb.get('talarium_joint_limit_min_z', 0.0))
-                    bl_max_z = float(pb.get('talarium_joint_limit_max_z', 0.0))
-                    bl_use_x = int(pb.get('talarium_joint_use_limit_x', 0))
-                    bl_use_y = int(pb.get('talarium_joint_use_limit_y', 0))
-                    bl_use_z = int(pb.get('talarium_joint_use_limit_z', 0))
+                    bl_min_x = pb.talarium_joint_limit_min_x
+                    bl_max_x = pb.talarium_joint_limit_max_x
+                    bl_min_y = pb.talarium_joint_limit_min_y
+                    bl_max_y = pb.talarium_joint_limit_max_y
+                    bl_min_z = pb.talarium_joint_limit_min_z
+                    bl_max_z = pb.talarium_joint_limit_max_z
+                    bl_use_x = pb.talarium_joint_use_limit_x
+                    bl_use_y = pb.talarium_joint_use_limit_y
+                    bl_use_z = pb.talarium_joint_use_limit_z
                     # Coordinate conversion: Blender Z-up → engine Y-up
                     # Blender X → engine X, Blender Z → engine Y,
                     # Blender Y → engine -Z (negate + swap min/max)
@@ -705,15 +704,15 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
                     lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
 
                 elif jt == 7:  # Limit position: per-axis position limits
-                    bl_min_x = float(pb.get('talarium_joint_limit_min_x', 0.0))
-                    bl_max_x = float(pb.get('talarium_joint_limit_max_x', 0.0))
-                    bl_min_y = float(pb.get('talarium_joint_limit_min_y', 0.0))
-                    bl_max_y = float(pb.get('talarium_joint_limit_max_y', 0.0))
-                    bl_min_z = float(pb.get('talarium_joint_limit_min_z', 0.0))
-                    bl_max_z = float(pb.get('talarium_joint_limit_max_z', 0.0))
-                    bl_use_x = int(pb.get('talarium_joint_use_limit_x', 0))
-                    bl_use_y = int(pb.get('talarium_joint_use_limit_y', 0))
-                    bl_use_z = int(pb.get('talarium_joint_use_limit_z', 0))
+                    bl_min_x = pb.talarium_joint_limit_min_x
+                    bl_max_x = pb.talarium_joint_limit_max_x
+                    bl_min_y = pb.talarium_joint_limit_min_y
+                    bl_max_y = pb.talarium_joint_limit_max_y
+                    bl_min_z = pb.talarium_joint_limit_min_z
+                    bl_max_z = pb.talarium_joint_limit_max_z
+                    bl_use_x = pb.talarium_joint_use_limit_x
+                    bl_use_y = pb.talarium_joint_use_limit_y
+                    bl_use_z = pb.talarium_joint_use_limit_z
                     # Same coordinate conversion as rotation limits
                     lim_min[0] = bl_min_x
                     lim_max[0] = bl_max_x
@@ -797,7 +796,244 @@ class ExportFSKEL(bpy.types.Operator, ExportHelper):
         layout.prop(self, "default_collision")
 
 
+# ── Per-bone custom properties ────────────────────────────────────
+
+# These are registered on PoseBone so they appear in the bone
+# properties panel and are saved with the .blend file.
+
+_BONE_PROPS = {
+    # Collision shape
+    "talarium_collision_shape": EnumProperty(
+        name="Shape",
+        description="Collision geometry for this bone",
+        items=[
+            ('0', "None", "No collision geometry"),
+            ('1', "Capsule", "Capsule collider (radius + height)"),
+            ('2', "Box", "Box collider (half-extents)"),
+            ('3', "Sphere", "Sphere collider (radius)"),
+            ('4', "Convex Hull", "Convex hull from vertex group"),
+        ],
+        default='0',
+    ),
+
+    # Physics flags
+    "talarium_kinematic": BoolProperty(
+        name="Kinematic",
+        description="Skip Euler-Verlet integration (animation-only, "
+                    "no external forces)",
+        default=False,
+    ),
+    "talarium_ccd": BoolProperty(
+        name="CCD",
+        description="Enable continuous collision detection for this bone",
+        default=False,
+    ),
+    "talarium_mass": FloatProperty(
+        name="Mass",
+        description="Mass override (0 = auto from volume × density, "
+                    "ignored if kinematic)",
+        default=0.0,
+        min=0.0,
+        soft_max=100.0,
+        unit='MASS',
+    ),
+
+    # Capsule params
+    "talarium_capsule_radius": FloatProperty(
+        name="Radius", description="Capsule radius",
+        default=0.05, min=0.001, soft_max=2.0, unit='LENGTH',
+    ),
+    "talarium_capsule_height": FloatProperty(
+        name="Height", description="Capsule height (end-to-end)",
+        default=0.2, min=0.001, soft_max=5.0, unit='LENGTH',
+    ),
+    "talarium_capsule_axis": EnumProperty(
+        name="Axis", description="Capsule alignment axis",
+        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
+        default='Y',
+    ),
+
+    # Box params
+    "talarium_box_hx": FloatProperty(
+        name="Half X", description="Box half-extent X",
+        default=0.1, min=0.001, soft_max=5.0, unit='LENGTH',
+    ),
+    "talarium_box_hy": FloatProperty(
+        name="Half Y", description="Box half-extent Y",
+        default=0.1, min=0.001, soft_max=5.0, unit='LENGTH',
+    ),
+    "talarium_box_hz": FloatProperty(
+        name="Half Z", description="Box half-extent Z",
+        default=0.1, min=0.001, soft_max=5.0, unit='LENGTH',
+    ),
+
+    # Sphere params
+    "talarium_sphere_radius": FloatProperty(
+        name="Radius", description="Sphere radius",
+        default=0.1, min=0.001, soft_max=5.0, unit='LENGTH',
+    ),
+
+    # Convex hull params
+    "talarium_hull_vgroup": StringProperty(
+        name="Vertex Group",
+        description="Name of vertex group whose vertices define the "
+                    "convex hull",
+        default="",
+    ),
+
+    # Joint type
+    "talarium_joint_type": EnumProperty(
+        name="Joint",
+        description="Physics joint type for parent-child connection",
+        items=[
+            ('0', "None", "No joint"),
+            ('1', "Ball", "Ball-and-socket joint (3 DOF)"),
+            ('2', "Hinge", "Hinge joint (1 DOF rotation)"),
+            ('3', "Distance", "Distance constraint"),
+            ('4', "Lock", "Fully locked (0 DOF)"),
+            ('5', "Copy Rotation", "Copy parent rotation"),
+            ('6', "Limit Rotation", "Rotation with per-axis limits"),
+            ('7', "Limit Position", "Position with per-axis limits"),
+            ('8', "Aim", "Aim/track constraint"),
+        ],
+        default='1',
+    ),
+
+    # Joint axis (for hinge / aim)
+    "talarium_joint_axis": EnumProperty(
+        name="Axis", description="Joint rotation or aim axis",
+        items=[('X', "X", ""), ('Y', "Y", ""), ('Z', "Z", "")],
+        default='Y',
+    ),
+
+    # Joint limits (scalar for hinge, per-axis for limit types)
+    "talarium_joint_limit_min": FloatProperty(
+        name="Limit Min", description="Hinge lower limit (radians)",
+        default=0.0, subtype='ANGLE',
+    ),
+    "talarium_joint_limit_max": FloatProperty(
+        name="Limit Max", description="Hinge upper limit (radians)",
+        default=0.0, subtype='ANGLE',
+    ),
+    "talarium_joint_rest_length": FloatProperty(
+        name="Rest Length", description="Distance joint rest length "
+                                        "(0 = auto from bone length)",
+        default=0.0, min=0.0, unit='LENGTH',
+    ),
+
+    # Per-axis limits (for limit_rotation / limit_position)
+    "talarium_joint_limit_min_x": FloatProperty(
+        name="Min X", default=0.0, subtype='ANGLE'),
+    "talarium_joint_limit_max_x": FloatProperty(
+        name="Max X", default=0.0, subtype='ANGLE'),
+    "talarium_joint_limit_min_y": FloatProperty(
+        name="Min Y", default=0.0, subtype='ANGLE'),
+    "talarium_joint_limit_max_y": FloatProperty(
+        name="Max Y", default=0.0, subtype='ANGLE'),
+    "talarium_joint_limit_min_z": FloatProperty(
+        name="Min Z", default=0.0, subtype='ANGLE'),
+    "talarium_joint_limit_max_z": FloatProperty(
+        name="Max Z", default=0.0, subtype='ANGLE'),
+    "talarium_joint_use_limit_x": BoolProperty(
+        name="Use X", default=False),
+    "talarium_joint_use_limit_y": BoolProperty(
+        name="Use Y", default=False),
+    "talarium_joint_use_limit_z": BoolProperty(
+        name="Use Z", default=False),
+}
+
+
+# ── Properties panel (Bone tab, Pose mode) ───────────────────────
+
+class BONE_PT_talarium_physics(bpy.types.Panel):
+    """Talarium per-bone physics properties."""
+    bl_label = "Talarium Physics"
+    bl_idname = "BONE_PT_talarium_physics"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "bone"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_pose_bone is not None or
+                (context.active_bone is not None and
+                 context.mode == 'POSE'))
+
+    def draw(self, context):
+        layout = self.layout
+        pb = context.active_pose_bone
+        if pb is None:
+            return
+
+        # ── Collision shape ──
+        box = layout.box()
+        box.label(text="Collision Shape", icon='MESH_CUBE')
+        box.prop(pb, "talarium_collision_shape")
+
+        shape = pb.talarium_collision_shape
+        if shape == '1':  # Capsule
+            row = box.row(align=True)
+            row.prop(pb, "talarium_capsule_radius")
+            row.prop(pb, "talarium_capsule_height")
+            box.prop(pb, "talarium_capsule_axis")
+        elif shape == '2':  # Box
+            row = box.row(align=True)
+            row.prop(pb, "talarium_box_hx")
+            row.prop(pb, "talarium_box_hy")
+            row.prop(pb, "talarium_box_hz")
+        elif shape == '3':  # Sphere
+            box.prop(pb, "talarium_sphere_radius")
+        elif shape == '4':  # Convex Hull
+            box.prop(pb, "talarium_hull_vgroup")
+
+        # ── Physics flags ──
+        box = layout.box()
+        box.label(text="Physics", icon='PHYSICS')
+        row = box.row()
+        row.prop(pb, "talarium_kinematic")
+        row.prop(pb, "talarium_ccd")
+        box.prop(pb, "talarium_mass")
+
+        # ── Joint type ──
+        bone = pb.bone
+        if bone and bone.parent:
+            box = layout.box()
+            box.label(text="Joint (to Parent)", icon='CONSTRAINT_BONE')
+            box.prop(pb, "talarium_joint_type")
+
+            jt = pb.talarium_joint_type
+            if jt in ('2', '8'):  # Hinge or Aim
+                box.prop(pb, "talarium_joint_axis")
+            if jt == '2':  # Hinge
+                row = box.row(align=True)
+                row.prop(pb, "talarium_joint_limit_min")
+                row.prop(pb, "talarium_joint_limit_max")
+            elif jt == '3':  # Distance
+                box.prop(pb, "talarium_joint_rest_length")
+            elif jt in ('6', '7'):  # Limit rotation / position
+                col = box.column(align=True)
+                row = col.row(align=True)
+                row.prop(pb, "talarium_joint_use_limit_x", text="X")
+                row.prop(pb, "talarium_joint_limit_min_x", text="Min")
+                row.prop(pb, "talarium_joint_limit_max_x", text="Max")
+                row = col.row(align=True)
+                row.prop(pb, "talarium_joint_use_limit_y", text="Y")
+                row.prop(pb, "talarium_joint_limit_min_y", text="Min")
+                row.prop(pb, "talarium_joint_limit_max_y", text="Max")
+                row = col.row(align=True)
+                row.prop(pb, "talarium_joint_use_limit_z", text="Z")
+                row.prop(pb, "talarium_joint_limit_min_z", text="Min")
+                row.prop(pb, "talarium_joint_limit_max_z", text="Max")
+
+
 # ── Registration ──────────────────────────────────────────────────
+
+_CLASSES = [
+    ExportFSKEL,
+    BONE_PT_talarium_physics,
+]
+
 
 def menu_func_export(self, context):
     self.layout.operator(ExportFSKEL.bl_idname,
@@ -805,13 +1041,23 @@ def menu_func_export(self, context):
 
 
 def register():
-    bpy.utils.register_class(ExportFSKEL)
+    # Register per-bone properties on PoseBone.
+    for prop_name, prop_def in _BONE_PROPS.items():
+        setattr(bpy.types.PoseBone, prop_name, prop_def)
+
+    for cls in _CLASSES:
+        bpy.utils.register_class(cls)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
 
 
 def unregister():
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
-    bpy.utils.unregister_class(ExportFSKEL)
+    for cls in reversed(_CLASSES):
+        bpy.utils.unregister_class(cls)
+
+    for prop_name in _BONE_PROPS:
+        if hasattr(bpy.types.PoseBone, prop_name):
+            delattr(bpy.types.PoseBone, prop_name)
 
 
 if __name__ == "__main__":
