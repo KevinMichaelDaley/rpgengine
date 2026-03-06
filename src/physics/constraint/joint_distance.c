@@ -27,6 +27,7 @@ void phys_joint_init(phys_joint_t *joint) {
     joint->type = PHYS_JOINT_DISTANCE;
     joint->body_a = UINT32_MAX;
     joint->body_b = UINT32_MAX;
+    joint->ik_target_body = UINT32_MAX;
 }
 
 void phys_joint_build_distance(phys_joint_t *joint,

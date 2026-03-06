@@ -12,6 +12,7 @@
 #include "ferrum/animation/anim_constraint_rows.h"
 #include "ferrum/animation/bone_joint_desc.h"
 #include "ferrum/physics/joint.h"
+#include "ferrum/math/quat.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -47,7 +48,10 @@ uint32_t anim_joint_descs_to_joints(
         j->body_a = body_parent;
         j->body_b = body_child;
 
-        /* Anchor at child bone position, in each body's local space. */
+        /* Anchor at child bone position, in each body's local space.
+         * world_delta is the vector from parent to child in world coords;
+         * we must inverse-rotate by each body's orientation to get the
+         * offset in body-local space. */
         float cx = world_pose[i].m[12];
         float cy = world_pose[i].m[13];
         float cz = world_pose[i].m[14];
@@ -55,7 +59,9 @@ uint32_t anim_joint_descs_to_joints(
         float py = world_pose[parent].m[13];
         float pz = world_pose[parent].m[14];
 
-        j->local_anchor_a = (phys_vec3_t){cx - px, cy - py, cz - pz};
+        phys_quat_t parent_orient = quat_from_mat4(&world_pose[parent]);
+        phys_vec3_t world_delta = {cx - px, cy - py, cz - pz};
+        j->local_anchor_a = quat_inv_rotate_vec3(parent_orient, world_delta);
         j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
 
         switch (jd->joint_type) {
@@ -64,9 +70,19 @@ uint32_t anim_joint_descs_to_joints(
             break;
         case 2: /* Hinge joint. */
             j->type = PHYS_JOINT_HINGE;
-            j->local_axis_a = (phys_vec3_t){
-                jd->axis[0], jd->axis[1], jd->axis[2]
-            };
+            /* Axis from exporter is in the child bone's local space.
+             * Convert to parent-body-local via: world_axis = child_rot * axis,
+             * then local_axis_a = inv(parent_rot) * world_axis. */
+            {
+                phys_quat_t child_orient = quat_from_mat4(&world_pose[i]);
+                phys_vec3_t bone_axis = {
+                    jd->axis[0], jd->axis[1], jd->axis[2]
+                };
+                phys_vec3_t world_axis = quat_rotate_vec3(
+                    child_orient, bone_axis);
+                j->local_axis_a = quat_inv_rotate_vec3(
+                    parent_orient, world_axis);
+            }
             /* Apply angular limits if specified. */
             if (jd->limit_min[0] != 0.0f || jd->limit_max[0] != 0.0f) {
                 j->limit_min[0] = jd->limit_min[0];

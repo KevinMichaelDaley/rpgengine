@@ -157,6 +157,12 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         }
     }
 
+    /* Skip ghost bodies (no collider, joint-only). */
+    if ((args->bodies[a].flags & PHYS_BODY_FLAG_NO_BROADPHASE) ||
+        (args->bodies[b].flags & PHYS_BODY_FLAG_NO_BROADPHASE)) {
+        return 0;
+    }
+
     /* Skip pairs where both bodies are sleeping. */
     if (phys_body_is_sleeping(&args->bodies[a]) &&
         phys_body_is_sleeping(&args->bodies[b])) {

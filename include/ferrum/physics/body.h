@@ -21,6 +21,7 @@ extern "C" {
 #define PHYS_BODY_FLAG_CCD (1u << 3)  /**< Enable swept CCD vs static mesh. */
 #define PHYS_BODY_FLAG_CONTACT_RESTING (1u << 4) /**< Body has contact support opposing gravity (set each tick). */
 #define PHYS_BODY_FLAG_TRIGGER (1u << 5)  /**< Trigger volume: detect contacts/overlaps but skip solver response. */
+#define PHYS_BODY_FLAG_NO_BROADPHASE (1u << 6) /**< Skip broadphase/narrowphase; body only participates in joint constraints. */
 
 /**
  * @brief Core rigid body state.

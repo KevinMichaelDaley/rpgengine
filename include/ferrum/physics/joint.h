@@ -42,6 +42,7 @@ typedef enum phys_joint_type {
     PHYS_JOINT_LIMIT_ROTATION = 5,  /**< Per-axis angular limits (up to 3 clamped rows). */
     PHYS_JOINT_LIMIT_POSITION = 6,  /**< Per-axis positional limits (up to 3 clamped rows). */
     PHYS_JOINT_AIM            = 7,  /**< Align axis toward target (2 angular rows). */
+    PHYS_JOINT_IK             = 8,  /**< IK chain pair: angular rows toward target (3 angular rows). */
 } phys_joint_type_t;
 
 /**
@@ -77,6 +78,16 @@ typedef struct phys_joint {
 
     /* Aim joint: which local axis of body_b to align toward body_a. */
     phys_vec3_t track_axis;     /**< Local axis on body_b to aim (e.g. {0,1,0}). */
+
+    /* IK chain pair (PHYS_JOINT_IK).
+     * Each IK pair connects two consecutive chain bodies.  The build
+     * function computes angular rows that steer both bodies to reduce
+     * the end-effector → target position error. */
+    uint32_t    ik_ee_body;     /**< Body index of end-effector (chain tip). */
+    uint32_t    ik_target_body; /**< Body index of IK target (read position dynamically).
+                                 *   UINT32_MAX = use static ik_target_pos instead. */
+    phys_vec3_t ik_target_pos;  /**< Fallback world-space IK target position
+                                 *   (only used when ik_target_body == UINT32_MAX). */
 
     /* Warmstarting: cached accumulated impulses from previous substep.
      * Seeded into rows at build time, written back after solve. */
@@ -244,6 +255,31 @@ void phys_joint_build_aim(phys_joint_t *joint,
                           const struct phys_body *body_a,
                           const struct phys_body *body_b,
                           float dt);
+
+/**
+ * @brief Build constraint rows for an IK chain pair.
+ *
+ * Produces 3 angular Jacobian rows that drive body_a and body_b to
+ * rotate such that the end-effector body reaches ik_target_pos.
+ * Each row corresponds to one world axis (X, Y, Z).
+ *
+ * The lever arm from each body to the end-effector determines the
+ * per-body angular Jacobian contribution.  Bodies far from the
+ * end-effector have larger lever arms and produce proportionally
+ * larger corrections.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_IK).
+ *                ik_ee_body and ik_target_pos must be set.
+ * @param body_a  Pointer to body A (upstream in chain).
+ * @param body_b  Pointer to body B (downstream in chain).
+ * @param ee_body Pointer to end-effector body (chain tip).
+ * @param dt      Timestep in seconds.
+ */
+void phys_joint_build_ik(phys_joint_t *joint,
+                         const struct phys_body *body_a,
+                         const struct phys_body *body_b,
+                         const struct phys_body *ee_body,
+                         float dt);
 
 /* Forward declaration for constraint output. */
 struct phys_constraint;

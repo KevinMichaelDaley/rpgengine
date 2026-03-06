@@ -33,6 +33,15 @@ void phys_stage_aabb_update(const phys_aabb_update_args_t *args) {
         for (uint32_t j = 0; j < list->count; ++j) {
             uint32_t body_idx = list->indices[j];
             const phys_body_t *body = &args->bodies[body_idx];
+
+            /* Ghost bodies (no collider) skip AABB computation;
+             * they only participate in joint constraints. */
+            if (body->flags & PHYS_BODY_FLAG_NO_BROADPHASE) {
+                phys_aabb_t *aabb = &args->aabbs_out[body_idx];
+                *aabb = (phys_aabb_t){body->position, body->position};
+                continue;
+            }
+
             const phys_collider_t *collider = &args->colliders[body_idx];
             phys_aabb_t *aabb = &args->aabbs_out[body_idx];
 

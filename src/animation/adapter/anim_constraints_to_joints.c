@@ -158,12 +158,54 @@ uint32_t anim_constraints_to_joints(
                 count++;
                 break;
 
-            case CONSTRAINT_IK:
+            case CONSTRAINT_IK: {
                 if (body_target == UINT32_MAX) break;
-                setup_ball(&out_joints[count], body_owner, body_target,
-                           def->influence);
-                count++;
+                /* IK target world position. */
+                uint32_t target_bone = def->target_bone_idx;
+                phys_vec3_t target_pos = {
+                    world_pose[target_bone].m[12],
+                    world_pose[target_bone].m[13],
+                    world_pose[target_bone].m[14]
+                };
+
+                /* Walk the chain from the IK bone (end-effector) toward
+                 * the root, creating one IK joint per consecutive pair.
+                 * chain_length=0 means "entire chain to root". */
+                uint32_t chain_len = def->params.ik.chain_length;
+                if (chain_len == 0) chain_len = n;
+
+                /* End-effector body is the body owning this constraint. */
+                uint32_t ee_body = body_owner;
+
+                uint32_t cur = bi;
+                for (uint32_t ci2 = 0; ci2 < chain_len && count < max_joints;
+                     ci2++) {
+                    uint32_t par = skel->parent_indices[cur];
+                    if (par == UINT32_MAX || par >= n) break;
+
+                    uint32_t body_cur = bone_to_body_map[cur];
+                    uint32_t body_par = bone_to_body_map[par];
+                    if (body_cur == UINT32_MAX || body_par == UINT32_MAX) {
+                        cur = par;
+                        continue;
+                    }
+
+                    phys_joint_t *j = &out_joints[count];
+                    phys_joint_init(j);
+                    j->type = PHYS_JOINT_IK;
+                    j->body_a = body_par;
+                    j->body_b = body_cur;
+                    j->stiffness = def->influence;
+                    j->damping = 5.0f;
+                    j->ik_ee_body = ee_body;
+                    j->ik_target_body = body_target;
+                    j->ik_target_pos = target_pos;
+                    count++;
+
+                    cur = par;
+                }
                 break;
+            }
 
             case CONSTRAINT_DAMPED_TRACK:
             case CONSTRAINT_TRACK_TO:

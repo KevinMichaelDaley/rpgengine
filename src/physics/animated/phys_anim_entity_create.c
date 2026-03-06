@@ -100,17 +100,15 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
     /* Initialize bone_world from rest pose. */
     memcpy(entity->bone_world, world_pose, n * sizeof(mat4_t));
 
-    /* Create bodies in the world for each bone with a collider. */
+    /* Create bodies in the world for each bone.  Bones with colliders
+     * get full physics bodies; bones without colliders get "ghost" bodies
+     * (NO_BROADPHASE) that only participate in joint constraints. */
     uint32_t body_count = 0;
     for (uint32_t i = 0; i < n; i++) {
         const bone_collider_desc_t *col = NULL;
         if (skel->colliders) col = &skel->colliders[i];
 
-        /* Skip bones without collision geometry. */
-        if (!col || col->shape_type == BONE_COLLIDER_NONE) {
-            entity->body_indices[i] = UINT32_MAX;
-            continue;
-        }
+        bool has_collider = (col && col->shape_type != BONE_COLLIDER_NONE);
 
         uint32_t bi = phys_world_create_body(world);
         if (bi == UINT32_MAX) {
@@ -131,6 +129,14 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             world_pose[i].m[14]
         };
         body->orientation = quat_from_mat4(&world_pose[i]);
+
+        if (!has_collider) {
+            /* Ghost body: participates in joints only. */
+            body->flags |= PHYS_BODY_FLAG_NO_BROADPHASE;
+            phys_body_set_mass(body, 0.5f);
+            phys_body_set_sphere_inertia(body, 0.5f, 0.05f);
+            continue;
+        }
 
         /* Set mass, kinematic flag, and CCD. */
         float body_mass = (col->mass > 0.0f) ? col->mass : 1.0f;
@@ -215,16 +221,19 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
     /* ── Register collision exclusion pairs ──────────────────────── */
 
     /* 0. Exclude same collision-group body pairs.  Bones assigned to
-     *    the same non-zero group (authored in Blender) never collide. */
+     *    the same non-zero group (authored in Blender) never collide.
+     *    Only applies to bodies with colliders (not ghost bodies). */
     if (skel->colliders) {
         for (uint32_t i = 0; i < n; i++) {
             uint32_t bi = entity->body_indices[i];
             if (bi == UINT32_MAX) continue;
+            if (world->body_pool.bodies_curr[bi].flags & PHYS_BODY_FLAG_NO_BROADPHASE) continue;
             uint32_t gi = skel->colliders[i].collision_group;
             if (gi == 0) continue;  /* Group 0 = no filtering. */
             for (uint32_t j = i + 1; j < n; j++) {
                 uint32_t bj = entity->body_indices[j];
                 if (bj == UINT32_MAX) continue;
+                if (world->body_pool.bodies_curr[bj].flags & PHYS_BODY_FLAG_NO_BROADPHASE) continue;
                 if (skel->colliders[j].collision_group == gi) {
                     phys_world_exclude_pair(world, bi, bj);
                 }
@@ -248,7 +257,8 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
 
     /* 2. Exclude body pairs whose colliders overlap in the bind pose.
      *    This catches adjacent bones whose capsules naturally interpenetrate
-     *    even without a direct joint connection. */
+     *    even without a direct joint connection.
+     *    Only check pairs where both bodies have real colliders. */
     phys_overlap_ctx_t ovl_ctx = {
         .spheres      = world->spheres,
         .boxes        = world->boxes,
@@ -262,9 +272,11 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
     for (uint32_t i = 0; i < n; i++) {
         uint32_t bi = entity->body_indices[i];
         if (bi == UINT32_MAX) continue;
+        if (world->body_pool.bodies_curr[bi].flags & PHYS_BODY_FLAG_NO_BROADPHASE) continue;
         for (uint32_t j = i + 1; j < n; j++) {
             uint32_t bj = entity->body_indices[j];
             if (bj == UINT32_MAX) continue;
+            if (world->body_pool.bodies_curr[bj].flags & PHYS_BODY_FLAG_NO_BROADPHASE) continue;
 
             /* Already excluded (e.g. by joint)? */
             if (phys_world_is_pair_excluded(world, bi, bj)) continue;

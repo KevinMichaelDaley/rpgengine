@@ -181,6 +181,15 @@ static void rebuild_island_joint_constraints(
                     phys_joint_build_aim(j, &bodies[j->body_a],
                                          &bodies[j->body_b], dt);
                     break;
+                case PHYS_JOINT_IK:
+                    /* Dynamically update target pos from target body. */
+                    if (j->ik_target_body != UINT32_MAX) {
+                        j->ik_target_pos = bodies[j->ik_target_body].position;
+                    }
+                    phys_joint_build_ik(j, &bodies[j->body_a],
+                                        &bodies[j->body_b],
+                                        &bodies[j->ik_ee_body], dt);
+                    break;
                 }
                 phys_constraint_t tmp[2];
                 uint32_t written = phys_joint_build_constraints(
@@ -950,6 +959,15 @@ void phys_world_tick_parallel(phys_world_t *world,
                 case PHYS_JOINT_AIM:
                     phys_joint_build_aim(j,
                         &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_IK:
+                    /* Dynamically update target pos from target body. */
+                    if (j->ik_target_body != UINT32_MAX) {
+                        j->ik_target_pos = bodies[j->ik_target_body].position;
+                    }
+                    phys_joint_build_ik(j,
+                        &bodies[j->body_a], &bodies[j->body_b],
+                        &bodies[j->ik_ee_body], substep_dt);
                     break;
                 }
 
