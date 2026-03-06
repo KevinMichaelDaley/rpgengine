@@ -64,6 +64,8 @@ void skeleton_def_destroy(skeleton_def_t *skel) {
     free(skel->rest_world);
     free(skel->constraint_counts);
     free(skel->constraints);
+    free(skel->colliders);
+    free(skel->hull_vertices);
 
     memset(skel, 0, sizeof(*skel));
 }

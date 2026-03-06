@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include "ferrum/math/mat4.h"
 #include "ferrum/animation/constraint_types.h"
+#include "ferrum/animation/bone_collider.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -249,6 +250,12 @@ typedef struct skeleton_def {
     mat4_t         *rest_world;         /**< World rest transforms. */
     uint32_t       *constraint_counts;  /**< Number of active constraints per joint. */
     constraint_def_t *constraints;      /**< Flat array: [joint][constraint_idx]. */
+
+    /* Per-bone collision descriptors (fskel v2 COLL chunk).
+     * NULL if the file is v1 or no collision data was provided. */
+    bone_collider_desc_t *colliders;    /**< One per joint, or NULL. */
+    float          *hull_vertices;      /**< Convex hull vertex data (x,y,z triples). */
+    uint32_t        hull_vertex_count;  /**< Total hull vertices across all bones. */
 } skeleton_def_t;
 
 /**

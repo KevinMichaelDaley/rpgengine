@@ -2,8 +2,8 @@
  * @file fskel_write.c
  * @brief .fskel format writer.
  *
- * Writes skeleton hierarchy, constraints, and IBMs to a binary file.
- * Format is little-endian, flat arrays, no chunk headers (fixed layout).
+ * Writes skeleton hierarchy, constraints, IBMs, and optional v2 chunks
+ * (COLL) to a binary file.  Always writes current version (v2).
  *
  * Non-static functions: 1 (fskel_write)
  */
@@ -11,6 +11,7 @@
 #include "ferrum/animation/fskel_loader.h"
 #include "ferrum/animation/fskel_format.h"
 #include "ferrum/animation/constraint_params.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/math/mat4.h"
 
 #include <stdio.h>
@@ -82,6 +83,32 @@ bool fskel_write(const char *path,
     /* Inverse bind matrices. */
     if (ibm_count > 0 && ibms) {
         if (fwrite(ibms, sizeof(mat4_t), ibm_count, f) != ibm_count)
+            goto fail;
+    }
+
+    /* --- v2 COLL chunk: per-bone collision descriptors --- */
+    uint32_t hull_count = skel->hull_vertex_count;
+    if (!write_u32(f, hull_count)) goto fail;
+
+    if (n > 0) {
+        if (skel->colliders) {
+            if (fwrite(skel->colliders, sizeof(bone_collider_desc_t), n, f) != n)
+                goto fail;
+        } else {
+            /* No colliders: write NONE descriptors. */
+            bone_collider_desc_t empty;
+            memset(&empty, 0, sizeof(empty));
+            for (uint32_t i = 0; i < n; i++) {
+                if (fwrite(&empty, sizeof(empty), 1, f) != 1)
+                    goto fail;
+            }
+        }
+    }
+
+    /* Hull vertex data. */
+    if (hull_count > 0 && skel->hull_vertices) {
+        if (fwrite(skel->hull_vertices, sizeof(float) * 3,
+                   hull_count, f) != hull_count)
             goto fail;
     }
 

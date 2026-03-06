@@ -31,7 +31,7 @@ from bpy.props import StringProperty, BoolProperty
 # ── Format constants (must match fskel_format.h) ────────────────────
 
 FSKEL_MAGIC = 0x4C4B5346   # 'FSKL' little-endian
-FSKEL_VERSION = 1
+FSKEL_VERSION = 2
 SKELETON_JOINT_NAME_MAX = 64
 
 # sizeof(constraint_def_t) = 224 bytes (verified against C compiler)
@@ -421,6 +421,37 @@ def pack_constraint_def(con, bone_names):
     return bytes(buf)
 
 
+# ── Collision hull helpers ──────────────────────────────────────────
+
+def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
+    """
+    Gather world-space vertices from a vertex group on a mesh parented
+    to the armature.  Returns flat list [x0,y0,z0, x1,y1,z1, ...] in
+    engine coordinate space.  Returns empty list if no vertices found.
+    """
+    verts = []
+    if not vgroup_name:
+        return verts
+    # Search child meshes for vertex group
+    for child in armature_obj.children:
+        if child.type != 'MESH':
+            continue
+        vg = child.vertex_groups.get(vgroup_name)
+        if vg is None:
+            continue
+        vg_idx = vg.index
+        mesh = child.data
+        for v in mesh.vertices:
+            for g in v.groups:
+                if g.group == vg_idx and g.weight > 0.5:
+                    # Transform to world, then convert coords
+                    co = child.matrix_world @ v.co
+                    # Blender Z-up → engine Y-up: (x,y,z) → (x,z,-y)
+                    verts.extend([co.x, co.z, -co.y])
+                    break
+    return verts
+
+
 # ── Main export logic ──────────────────────────────────────────────
 
 def export_fskel(context, filepath, export_ibms):
@@ -535,11 +566,79 @@ def export_fskel(context, filepath, export_ibms):
         for ibm in ibms:
             f.write(struct.pack('<16f', *ibm))
 
+        # --- v2 COLL chunk: per-bone collision descriptors ---
+        # Gather hull vertex data across all bones.
+        hull_vertices = []  # Flat list of (x, y, z) floats
+        bone_collider_descs = []
+
+        for bone in bone_list:
+            pb = pose_bones.get(bone.name)
+
+            shape_type = 0  # NONE
+            params = [0.0] * 6
+            ccd_enabled = 0
+            is_kinematic = 0
+            mass = 0.0
+            hull_offset = 0
+            hull_count = 0
+
+            if pb:
+                shape_type = int(pb.get('talarium_collision_shape', 0))
+                ccd_enabled = int(pb.get('talarium_ccd', 0))
+                is_kinematic = int(pb.get('talarium_kinematic', 0))
+                mass = float(pb.get('talarium_mass', 0.0))
+
+                if shape_type == 1:  # Capsule
+                    params[0] = float(pb.get('talarium_capsule_radius', 0.05))
+                    params[1] = float(pb.get('talarium_capsule_height', 0.2))
+                    axis_name = pb.get('talarium_capsule_axis', 'Y')
+                    params[2] = float({'X': 0, 'Y': 1, 'Z': 2}.get(
+                        str(axis_name), 1))
+                elif shape_type == 2:  # Box
+                    params[0] = float(pb.get('talarium_box_hx', 0.1))
+                    params[1] = float(pb.get('talarium_box_hy', 0.1))
+                    params[2] = float(pb.get('talarium_box_hz', 0.1))
+                elif shape_type == 3:  # Sphere
+                    params[0] = float(pb.get('talarium_sphere_radius', 0.1))
+                elif shape_type == 4:  # Convex hull
+                    hull_offset = len(hull_vertices) // 3
+                    vg_name = str(pb.get('talarium_hull_vgroup', ''))
+                    # Find mesh vertices in vertex group
+                    hull_verts = _gather_hull_vertices(
+                        obj, bone.name, vg_name)
+                    hull_count = len(hull_verts)
+                    hull_vertices.extend(hull_verts)
+
+            # sizeof(bone_collider_desc_t) = 4 + 24 + 4 + 4 + 4 + 4 + 4 = 48
+            desc = struct.pack('<I6fIIfII',
+                               shape_type,
+                               params[0], params[1], params[2],
+                               params[3], params[4], params[5],
+                               ccd_enabled, is_kinematic, mass,
+                               hull_offset, hull_count)
+            bone_collider_descs.append(desc)
+
+        hull_vertex_count = len(hull_vertices) // 3
+        f.write(struct.pack('<I', hull_vertex_count))
+
+        for desc in bone_collider_descs:
+            f.write(desc)
+
+        # Hull vertex data (float x,y,z triples)
+        for i in range(0, len(hull_vertices), 3):
+            f.write(struct.pack('<fff',
+                                hull_vertices[i],
+                                hull_vertices[i + 1],
+                                hull_vertices[i + 2]))
+
     # Summary
     total_constraints = sum(len(c) for c in bone_constraints)
+    total_colliders = sum(1 for d in bone_collider_descs
+                          if struct.unpack_from('<I', d, 0)[0] != 0)
     print(f"Exported {filepath}:")
     print(f"  {joint_count} joints, {total_constraints} constraints, "
-          f"{ibm_count} IBMs")
+          f"{ibm_count} IBMs, {total_colliders} colliders, "
+          f"{hull_vertex_count} hull vertices")
     print(f"  max_constraints_per_joint = {max_constraints}")
 
     return {'FINISHED'}

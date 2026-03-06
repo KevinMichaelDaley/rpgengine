@@ -11,6 +11,7 @@
 
 #include "ferrum/animation/ragdoll.h"
 #include "ferrum/animation/constraint_params.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/joint_motor.h"
@@ -122,10 +123,50 @@ bool ragdoll_create(ragdoll_t *ragdoll,
         };
         ragdoll->bodies[i].orientation = mat4_get_rotation(&world_pose[i]);
 
-        /* Dynamic body with unit mass (caller can adjust later). */
-        phys_body_set_mass(&ragdoll->bodies[i], 1.0f);
-        phys_body_set_box_inertia(&ragdoll->bodies[i], 1.0f,
-                                  (phys_vec3_t){0.1f, 0.5f, 0.1f});
+        /* Use collider descriptor if available, otherwise default shape. */
+        const bone_collider_desc_t *col = NULL;
+        if (skel->colliders) col = &skel->colliders[i];
+
+        float body_mass = 1.0f;
+        if (col && col->mass > 0.0f) body_mass = col->mass;
+
+        if (col && col->is_kinematic) {
+            /* Kinematic bone: inv_mass=0, skip Euler-Verlet. */
+            ragdoll->bodies[i].flags |= PHYS_BODY_FLAG_KINEMATIC;
+            ragdoll->bodies[i].inv_mass = 0.0f;
+        } else {
+            phys_body_set_mass(&ragdoll->bodies[i], body_mass);
+        }
+
+        /* Set inertia based on collision shape. */
+        if (col && col->shape_type == BONE_COLLIDER_CAPSULE) {
+            float radius = col->params[0];
+            float height = col->params[1];
+            float half_h = (height > 0.0f ? height : 0.2f) * 0.5f;
+            if (radius <= 0.0f) radius = 0.05f;
+            phys_body_set_capsule_inertia(&ragdoll->bodies[i], body_mass,
+                                          radius, half_h);
+        } else if (col && col->shape_type == BONE_COLLIDER_BOX) {
+            phys_vec3_t he = {col->params[0], col->params[1], col->params[2]};
+            if (he.x <= 0.0f) he.x = 0.1f;
+            if (he.y <= 0.0f) he.y = 0.1f;
+            if (he.z <= 0.0f) he.z = 0.1f;
+            phys_body_set_box_inertia(&ragdoll->bodies[i], body_mass, he);
+        } else if (col && col->shape_type == BONE_COLLIDER_SPHERE) {
+            float radius = col->params[0];
+            if (radius <= 0.0f) radius = 0.1f;
+            phys_body_set_sphere_inertia(&ragdoll->bodies[i], body_mass,
+                                         radius);
+        } else {
+            /* Default: box inertia approximation. */
+            phys_body_set_box_inertia(&ragdoll->bodies[i], body_mass,
+                                      (phys_vec3_t){0.1f, 0.5f, 0.1f});
+        }
+
+        /* CCD flag from collider. */
+        if (col && col->ccd_enabled) {
+            ragdoll->bodies[i].flags |= PHYS_BODY_FLAG_CCD;
+        }
 
         ragdoll->body_indices[i] = i;
 

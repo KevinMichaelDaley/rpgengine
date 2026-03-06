@@ -4,7 +4,7 @@
  *
  * Wire format (little-endian):
  *   [4]  magic 'FSKL' (0x4C4B5346)
- *   [4]  version (1)
+ *   [4]  version (2)
  *   [4]  joint_count
  *   [4]  max_constraints_per_joint
  *   [4]  ibm_count
@@ -18,6 +18,12 @@
  *   [joint_count × max_constraints × sizeof(constraint_def_t)]  constraints
  *   --- IBM chunk ---
  *   [ibm_count × 64]    inverse bind matrices (mat4_t)
+ *   --- COLL chunk (v2+) ---
+ *   [4]  hull_vertex_count (total convex hull vertices)
+ *   [joint_count × sizeof(bone_collider_desc_t)]  collider descriptors
+ *   [hull_vertex_count × 12]  hull vertex data (float x,y,z triples)
+ *   --- JNTS chunk (v2+) ---
+ *   [joint_count × sizeof(bone_joint_desc_t)]  joint descriptors
  *
  * Public types: 0
  * Public functions: 0
@@ -36,7 +42,7 @@ extern "C" {
 #define FSKEL_MAGIC   0x4C4B5346u
 
 /** @brief Current format version. */
-#define FSKEL_VERSION 1u
+#define FSKEL_VERSION 2u
 
 /** @brief Header size in bytes (5 × 4 = 20). */
 #define FSKEL_HEADER_SIZE 20u

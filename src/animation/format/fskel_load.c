@@ -2,8 +2,8 @@
  * @file fskel_load.c
  * @brief .fskel format loader.
  *
- * Reads skeleton hierarchy, constraints, and IBMs from a binary file.
- * Validates magic number, version, and data integrity.
+ * Reads skeleton hierarchy, constraints, IBMs, and optional v2 chunks
+ * (COLL, JNTS) from a binary file.  Backward-compatible with v1 files.
  *
  * Non-static functions: 1 (fskel_load)
  */
@@ -11,6 +11,7 @@
 #include "ferrum/animation/fskel_loader.h"
 #include "ferrum/animation/fskel_format.h"
 #include "ferrum/animation/constraint_params.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/math/mat4.h"
 
 #include <stdio.h>
@@ -41,7 +42,7 @@ bool fskel_load(const char *path,
     uint32_t max_constraints = 0, ibm_count = 0;
 
     if (!read_u32(f, &magic) || magic != FSKEL_MAGIC) goto fail;
-    if (!read_u32(f, &version) || version != FSKEL_VERSION) goto fail;
+    if (!read_u32(f, &version) || (version != 1 && version != FSKEL_VERSION)) goto fail;
     if (!read_u32(f, &joint_count)) goto fail;
     if (!read_u32(f, &max_constraints)) goto fail;
     if (!read_u32(f, &ibm_count)) goto fail;
@@ -100,6 +101,32 @@ bool fskel_load(const char *path,
     }
 
     if (out_ibm_count) *out_ibm_count = ibm_count;
+
+    /* --- v2 COLL chunk: per-bone collision descriptors --- */
+    if (version >= 2 && joint_count > 0) {
+        uint32_t hull_vertex_count = 0;
+        if (!read_u32(f, &hull_vertex_count)) goto fail_skel;
+
+        out_skel->colliders = (bone_collider_desc_t *)calloc(
+            joint_count, sizeof(bone_collider_desc_t));
+        if (!out_skel->colliders) goto fail_skel;
+
+        if (fread(out_skel->colliders, sizeof(bone_collider_desc_t),
+                  joint_count, f) != joint_count)
+            goto fail_skel;
+
+        /* Read convex hull vertex data. */
+        if (hull_vertex_count > 0) {
+            out_skel->hull_vertices = (float *)calloc(
+                (size_t)hull_vertex_count * 3, sizeof(float));
+            if (!out_skel->hull_vertices) goto fail_skel;
+            if (fread(out_skel->hull_vertices, sizeof(float) * 3,
+                      hull_vertex_count, f) != hull_vertex_count)
+                goto fail_skel;
+        }
+        out_skel->hull_vertex_count = hull_vertex_count;
+    }
+    /* v1 files: colliders remain NULL (set by skeleton_def_init's memset). */
 
     fclose(f);
     return true;

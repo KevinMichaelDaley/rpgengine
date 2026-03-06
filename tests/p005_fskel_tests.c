@@ -17,6 +17,7 @@
 #include "ferrum/animation/fskel_loader.h"
 #include "ferrum/animation/constraint_types.h"
 #include "ferrum/animation/constraint_params.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/math/mat4.h"
 
 /* ── Test harness ────────────────────────────────────────────────── */
@@ -354,6 +355,227 @@ static int test_bad_version(void) {
     return 0;
 }
 
+/** Collider descriptors round-trip through write/load. */
+static int test_collider_round_trip(void) {
+    skeleton_def_t skel;
+    make_test_skeleton(&skel);
+    mat4_t ibms[3];
+    make_test_ibms(ibms);
+
+    /* Allocate colliders. */
+    skel.colliders = (bone_collider_desc_t *)calloc(3, sizeof(bone_collider_desc_t));
+    ASSERT_TRUE(skel.colliders != NULL);
+
+    /* Root: capsule */
+    skel.colliders[0].shape_type = BONE_COLLIDER_CAPSULE;
+    skel.colliders[0].params[0] = 0.15f; /* radius */
+    skel.colliders[0].params[1] = 0.6f;  /* height */
+    skel.colliders[0].params[2] = 1.0f;  /* axis Y */
+    skel.colliders[0].ccd_enabled = 0;
+    skel.colliders[0].is_kinematic = 1;
+    skel.colliders[0].mass = 0.0f;
+
+    /* Spine: box */
+    skel.colliders[1].shape_type = BONE_COLLIDER_BOX;
+    skel.colliders[1].params[0] = 0.2f;
+    skel.colliders[1].params[1] = 0.3f;
+    skel.colliders[1].params[2] = 0.15f;
+    skel.colliders[1].ccd_enabled = 1;
+    skel.colliders[1].is_kinematic = 0;
+    skel.colliders[1].mass = 5.0f;
+
+    /* Head: sphere */
+    skel.colliders[2].shape_type = BONE_COLLIDER_SPHERE;
+    skel.colliders[2].params[0] = 0.12f;
+    skel.colliders[2].is_kinematic = 0;
+    skel.colliders[2].mass = 2.5f;
+
+    bool ok = fskel_write(tmp_path, &skel, ibms, 3);
+    ASSERT_TRUE(ok);
+
+    skeleton_def_t loaded;
+    mat4_t *loaded_ibms = NULL;
+    uint32_t loaded_ibm_count = 0;
+    ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
+    ASSERT_TRUE(ok);
+
+    /* Verify colliders loaded. */
+    ASSERT_TRUE(loaded.colliders != NULL);
+    ASSERT_TRUE(loaded.colliders[0].shape_type == BONE_COLLIDER_CAPSULE);
+    ASSERT_FLOAT_EQ(loaded.colliders[0].params[0], 0.15f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.colliders[0].params[1], 0.6f, 1e-6f);
+    ASSERT_TRUE(loaded.colliders[0].is_kinematic == 1);
+
+    ASSERT_TRUE(loaded.colliders[1].shape_type == BONE_COLLIDER_BOX);
+    ASSERT_TRUE(loaded.colliders[1].ccd_enabled == 1);
+    ASSERT_TRUE(loaded.colliders[1].is_kinematic == 0);
+    ASSERT_FLOAT_EQ(loaded.colliders[1].mass, 5.0f, 1e-6f);
+
+    ASSERT_TRUE(loaded.colliders[2].shape_type == BONE_COLLIDER_SPHERE);
+    ASSERT_FLOAT_EQ(loaded.colliders[2].params[0], 0.12f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.colliders[2].mass, 2.5f, 1e-6f);
+
+    skeleton_def_destroy(&loaded);
+    free(loaded_ibms);
+    unlink(tmp_path);
+    skeleton_def_destroy(&skel);
+    return 0;
+}
+
+/** Convex hull vertex data round-trips through write/load. */
+static int test_hull_vertex_round_trip(void) {
+    skeleton_def_t skel;
+    skeleton_def_init(&skel, 2, 0);
+    snprintf(skel.joint_names[0], SKELETON_JOINT_NAME_MAX, "root");
+    snprintf(skel.joint_names[1], SKELETON_JOINT_NAME_MAX, "child");
+    skel.parent_indices[0] = UINT32_MAX;
+    skel.parent_indices[1] = 0;
+
+    /* Set up colliders with convex hull on joint 1. */
+    skel.colliders = (bone_collider_desc_t *)calloc(2, sizeof(bone_collider_desc_t));
+    ASSERT_TRUE(skel.colliders != NULL);
+    skel.colliders[0].shape_type = BONE_COLLIDER_NONE;
+    skel.colliders[1].shape_type = BONE_COLLIDER_CONVEX_HULL;
+    skel.colliders[1].hull_offset = 0;
+    skel.colliders[1].hull_count = 4;
+
+    /* 4 vertices = tetrahedron. */
+    skel.hull_vertex_count = 4;
+    skel.hull_vertices = (float *)calloc(4 * 3, sizeof(float));
+    ASSERT_TRUE(skel.hull_vertices != NULL);
+    float verts[] = {
+        0.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 0.0f,
+        0.5f, 1.0f, 0.0f,
+        0.5f, 0.5f, 1.0f,
+    };
+    memcpy(skel.hull_vertices, verts, sizeof(verts));
+
+    mat4_t ibms[2] = { mat4_identity(), mat4_identity() };
+    bool ok = fskel_write(tmp_path, &skel, ibms, 2);
+    ASSERT_TRUE(ok);
+
+    skeleton_def_t loaded;
+    mat4_t *loaded_ibms = NULL;
+    uint32_t loaded_ibm_count = 0;
+    ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
+    ASSERT_TRUE(ok);
+
+    ASSERT_TRUE(loaded.hull_vertex_count == 4);
+    ASSERT_TRUE(loaded.hull_vertices != NULL);
+    ASSERT_TRUE(loaded.colliders[1].shape_type == BONE_COLLIDER_CONVEX_HULL);
+    ASSERT_TRUE(loaded.colliders[1].hull_count == 4);
+
+    for (int i = 0; i < 12; i++) {
+        ASSERT_FLOAT_EQ(loaded.hull_vertices[i], verts[i], 1e-6f);
+    }
+
+    skeleton_def_destroy(&loaded);
+    free(loaded_ibms);
+    unlink(tmp_path);
+    skeleton_def_destroy(&skel);
+    return 0;
+}
+
+/** v1 files load with NULL colliders (backward compat). */
+static int test_v1_backward_compat(void) {
+    skeleton_def_t skel;
+    make_test_skeleton(&skel);
+    mat4_t ibms[3];
+    make_test_ibms(ibms);
+
+    /* Write a v2 file, then patch version to 1 and truncate COLL data. */
+    bool ok = fskel_write(tmp_path, &skel, ibms, 3);
+    ASSERT_TRUE(ok);
+
+    /* Get file size of v1 portion (before COLL chunk).
+     * Header: 20 bytes
+     * Names: 3 × 64 = 192
+     * Parents: 3 × 4 = 12
+     * rest_local: 3 × 64 = 192
+     * rest_world: 3 × 64 = 192
+     * constraint_counts: 3 × 4 = 12
+     * constraints: 3 × 4 × 224 = 2688
+     * IBMs: 3 × 64 = 192
+     * Total v1: 20 + 192 + 12 + 192 + 192 + 12 + 2688 + 192 = 3500
+     */
+    size_t v1_size = 20 + (3 * 64) + (3 * 4) + (3 * 64) + (3 * 64)
+                   + (3 * 4) + (3 * 4 * sizeof(constraint_def_t))
+                   + (3 * 64);
+
+    /* Read the file, truncate to v1 size, patch version. */
+    FILE *f = fopen(tmp_path, "rb");
+    ASSERT_TRUE(f != NULL);
+    fseek(f, 0, SEEK_END);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *buf = (uint8_t *)malloc(v1_size);
+    ASSERT_TRUE(buf != NULL);
+    ASSERT_TRUE(fread(buf, 1, v1_size, f) == v1_size);
+    fclose(f);
+
+    /* Patch version to 1. */
+    uint32_t v1 = 1;
+    memcpy(buf + 4, &v1, 4);
+
+    /* Write truncated v1 file. */
+    f = fopen(tmp_path, "wb");
+    ASSERT_TRUE(f != NULL);
+    fwrite(buf, 1, v1_size, f);
+    fclose(f);
+    free(buf);
+
+    /* Load v1 file — should succeed with NULL colliders. */
+    skeleton_def_t loaded;
+    mat4_t *loaded_ibms = NULL;
+    uint32_t loaded_ibm_count = 0;
+    ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(loaded.joint_count == 3);
+    ASSERT_TRUE(loaded.colliders == NULL);
+    ASSERT_TRUE(loaded.hull_vertices == NULL);
+    ASSERT_TRUE(loaded.hull_vertex_count == 0);
+
+    /* Skeleton data still valid. */
+    ASSERT_TRUE(strcmp(loaded.joint_names[0], "root") == 0);
+    ASSERT_TRUE(loaded.constraint_counts[1] == 1);
+
+    skeleton_def_destroy(&loaded);
+    free(loaded_ibms);
+    unlink(tmp_path);
+    skeleton_def_destroy(&skel);
+    return 0;
+}
+
+/** No-collider skeleton writes empty COLL chunk. */
+static int test_no_colliders_round_trip(void) {
+    skeleton_def_t skel;
+    make_test_skeleton(&skel);
+    /* skel.colliders is NULL — no collision data. */
+    mat4_t ibms[3];
+    make_test_ibms(ibms);
+
+    bool ok = fskel_write(tmp_path, &skel, ibms, 3);
+    ASSERT_TRUE(ok);
+
+    skeleton_def_t loaded;
+    mat4_t *loaded_ibms = NULL;
+    uint32_t loaded_ibm_count = 0;
+    ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
+    ASSERT_TRUE(ok);
+
+    /* All colliders should be NONE. */
+    ASSERT_TRUE(loaded.colliders != NULL);
+    for (uint32_t i = 0; i < loaded.joint_count; i++) {
+        ASSERT_TRUE(loaded.colliders[i].shape_type == BONE_COLLIDER_NONE);
+    }
+
+    skeleton_def_destroy(&loaded);
+    free(loaded_ibms);
+    unlink(tmp_path);
+    skeleton_def_destroy(&skel);
+    return 0;
+}
+
 /* ── main ────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -365,6 +587,10 @@ int main(void) {
     RUN(test_null_safety);
     RUN(test_missing_file);
     RUN(test_bad_version);
+    RUN(test_collider_round_trip);
+    RUN(test_hull_vertex_round_trip);
+    RUN(test_v1_backward_compat);
+    RUN(test_no_colliders_round_trip);
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;
