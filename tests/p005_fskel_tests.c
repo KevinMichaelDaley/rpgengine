@@ -599,8 +599,8 @@ static int test_joint_desc_round_trip(void) {
     skel.joints[2].axis[0] = 1.0f;
     skel.joints[2].axis[1] = 0.0f;
     skel.joints[2].axis[2] = 0.0f;
-    skel.joints[2].limit_min = -0.5f;
-    skel.joints[2].limit_max = 0.8f;
+    skel.joints[2].limit_min[0] = -0.5f;
+    skel.joints[2].limit_max[0] = 0.8f;
 
     bool ok = fskel_write(tmp_path, &skel, ibms, 3);
     ASSERT_TRUE(ok);
@@ -617,8 +617,111 @@ static int test_joint_desc_round_trip(void) {
     ASSERT_TRUE(loaded.joints[1].joint_type == 1);
     ASSERT_TRUE(loaded.joints[2].joint_type == 2);
     ASSERT_FLOAT_EQ(loaded.joints[2].axis[0], 1.0f, 1e-6f);
-    ASSERT_FLOAT_EQ(loaded.joints[2].limit_min, -0.5f, 1e-6f);
-    ASSERT_FLOAT_EQ(loaded.joints[2].limit_max, 0.8f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[2].limit_min[0], -0.5f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[2].limit_max[0], 0.8f, 1e-6f);
+
+    skeleton_def_destroy(&loaded);
+    free(loaded_ibms);
+    unlink(tmp_path);
+    skeleton_def_destroy(&skel);
+    return 0;
+}
+
+/** Expanded joint types (lock, copy_rot, limit_rot, limit_pos, aim) round-trip. */
+static int test_expanded_joint_types_round_trip(void) {
+    skeleton_def_t skel;
+    skeleton_def_init(&skel, 6, 0);
+
+    snprintf(skel.joint_names[0], SKELETON_JOINT_NAME_MAX, "root");
+    snprintf(skel.joint_names[1], SKELETON_JOINT_NAME_MAX, "lock_bone");
+    snprintf(skel.joint_names[2], SKELETON_JOINT_NAME_MAX, "copy_rot_bone");
+    snprintf(skel.joint_names[3], SKELETON_JOINT_NAME_MAX, "limit_rot_bone");
+    snprintf(skel.joint_names[4], SKELETON_JOINT_NAME_MAX, "limit_pos_bone");
+    snprintf(skel.joint_names[5], SKELETON_JOINT_NAME_MAX, "aim_bone");
+
+    skel.parent_indices[0] = UINT32_MAX;
+    for (uint32_t i = 1; i < 6; i++) skel.parent_indices[i] = 0;
+    for (uint32_t i = 0; i < 6; i++) {
+        skel.rest_local[i] = mat4_identity();
+        skel.rest_world[i] = mat4_identity();
+    }
+
+    skel.joints = (bone_joint_desc_t *)calloc(6, sizeof(bone_joint_desc_t));
+    ASSERT_TRUE(skel.joints != NULL);
+
+    /* Root: no joint. */
+    skel.joints[0].joint_type = 0;
+
+    /* Lock joint (type 4). */
+    skel.joints[1].joint_type = 4;
+
+    /* Copy rotation (type 5). */
+    skel.joints[2].joint_type = 5;
+
+    /* Limit rotation (type 6): X and Z active. */
+    skel.joints[3].joint_type = 6;
+    skel.joints[3].limit_min[0] = -1.5f;
+    skel.joints[3].limit_max[0] = 1.5f;
+    skel.joints[3].limit_min[2] = -0.3f;
+    skel.joints[3].limit_max[2] = 0.7f;
+    skel.joints[3].limit_axes = 5;  /* 0b101 = X + Z */
+
+    /* Limit position (type 7): all 3 axes. */
+    skel.joints[4].joint_type = 7;
+    skel.joints[4].limit_min[0] = -2.0f;
+    skel.joints[4].limit_max[0] = 2.0f;
+    skel.joints[4].limit_min[1] = -1.0f;
+    skel.joints[4].limit_max[1] = 3.0f;
+    skel.joints[4].limit_min[2] = 0.0f;
+    skel.joints[4].limit_max[2] = 5.0f;
+    skel.joints[4].limit_axes = 7;  /* 0b111 = X + Y + Z */
+
+    /* Aim joint (type 8): track Y axis. */
+    skel.joints[5].joint_type = 8;
+    skel.joints[5].axis[0] = 0.0f;
+    skel.joints[5].axis[1] = 1.0f;
+    skel.joints[5].axis[2] = 0.0f;
+
+    mat4_t ibms[6];
+    for (int i = 0; i < 6; i++) ibms[i] = mat4_identity();
+
+    bool ok = fskel_write(tmp_path, &skel, ibms, 6);
+    ASSERT_TRUE(ok);
+
+    skeleton_def_t loaded;
+    mat4_t *loaded_ibms = NULL;
+    uint32_t loaded_ibm_count = 0;
+    ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
+    ASSERT_TRUE(ok);
+
+    ASSERT_TRUE(loaded.joints != NULL);
+    ASSERT_TRUE(loaded.joints[0].joint_type == 0);
+    ASSERT_TRUE(loaded.joints[1].joint_type == 4);
+    ASSERT_TRUE(loaded.joints[2].joint_type == 5);
+    ASSERT_TRUE(loaded.joints[3].joint_type == 6);
+    ASSERT_TRUE(loaded.joints[4].joint_type == 7);
+    ASSERT_TRUE(loaded.joints[5].joint_type == 8);
+
+    /* Limit rotation per-axis. */
+    ASSERT_FLOAT_EQ(loaded.joints[3].limit_min[0], -1.5f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[3].limit_max[0], 1.5f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[3].limit_min[2], -0.3f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[3].limit_max[2], 0.7f, 1e-6f);
+    ASSERT_TRUE(loaded.joints[3].limit_axes == 5);
+
+    /* Limit position per-axis. */
+    ASSERT_FLOAT_EQ(loaded.joints[4].limit_min[0], -2.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[4].limit_max[0], 2.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[4].limit_min[1], -1.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[4].limit_max[1], 3.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[4].limit_min[2], 0.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[4].limit_max[2], 5.0f, 1e-6f);
+    ASSERT_TRUE(loaded.joints[4].limit_axes == 7);
+
+    /* Aim track axis. */
+    ASSERT_FLOAT_EQ(loaded.joints[5].axis[0], 0.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[5].axis[1], 1.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(loaded.joints[5].axis[2], 0.0f, 1e-6f);
 
     skeleton_def_destroy(&loaded);
     free(loaded_ibms);
@@ -643,6 +746,7 @@ int main(void) {
     RUN(test_v1_backward_compat);
     RUN(test_no_colliders_round_trip);
     RUN(test_joint_desc_round_trip);
+    RUN(test_expanded_joint_types_round_trip);
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

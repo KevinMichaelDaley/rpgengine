@@ -31,7 +31,7 @@ from bpy.props import StringProperty, BoolProperty
 # ── Format constants (must match fskel_format.h) ────────────────────
 
 FSKEL_MAGIC = 0x4C4B5346   # 'FSKL' little-endian
-FSKEL_VERSION = 2
+FSKEL_VERSION = 3
 SKELETON_JOINT_NAME_MAX = 64
 
 # sizeof(constraint_def_t) = 224 bytes (verified against C compiler)
@@ -631,32 +631,86 @@ def export_fskel(context, filepath, export_ibms):
                                 hull_vertices[i + 1],
                                 hull_vertices[i + 2]))
 
-        # --- v2 JNTS chunk: per-bone joint descriptors ---
-        # sizeof(bone_joint_desc_t) = 4 + 12 + 4 + 4 + 4 = 28 bytes
+        # --- v3 JNTS chunk: per-bone joint descriptors ---
+        # sizeof(bone_joint_desc_t) = 4 + 12 + 4 + 12 + 12 + 4 = 48 bytes
+        # joint_type(I) axis(3f) rest_length(f) limit_min(3f) limit_max(3f) limit_axes(I)
         for bone in bone_list:
             pb = pose_bones.get(bone.name)
 
             jt = 0  # NONE
             axis = [0.0, 1.0, 0.0]
             rest_len = 0.0
-            lim_min = 0.0
-            lim_max = 0.0
+            lim_min = [0.0, 0.0, 0.0]
+            lim_max = [0.0, 0.0, 0.0]
+            lim_axes = 0
 
             if pb and bone.parent:
                 jt = int(pb.get('talarium_joint_type', 1))  # Default: ball
-                axis_str = str(pb.get('talarium_joint_axis', 'Y'))
-                axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
-                        'Z': [0, 0, 1]}.get(axis_str, [0, 1, 0])
-                # Convert axis from Blender Z-up to engine Y-up
-                bx, by, bz = axis
-                axis = [bx, bz, -by]
-                rest_len = float(pb.get('talarium_joint_rest_length', 0.0))
-                lim_min = float(pb.get('talarium_joint_limit_min', 0.0))
-                lim_max = float(pb.get('talarium_joint_limit_max', 0.0))
 
-            f.write(struct.pack('<I3f3f', jt,
+                if jt in (2, 8):  # Hinge or Aim: use axis
+                    axis_str = str(pb.get('talarium_joint_axis', 'Y'))
+                    axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
+                            'Z': [0, 0, 1]}.get(axis_str, [0, 1, 0])
+                    # Convert axis from Blender Z-up to engine Y-up
+                    bx, by, bz = axis
+                    axis = [bx, bz, -by]
+
+                if jt == 2:  # Hinge: scalar limits in slot [0]
+                    lim_min[0] = float(pb.get('talarium_joint_limit_min', 0.0))
+                    lim_max[0] = float(pb.get('talarium_joint_limit_max', 0.0))
+                    if lim_min[0] != 0.0 or lim_max[0] != 0.0:
+                        lim_axes = 1
+
+                elif jt == 3:  # Distance
+                    rest_len = float(pb.get('talarium_joint_rest_length', 0.0))
+
+                elif jt == 6:  # Limit rotation: per-axis angle limits
+                    # Read Blender-space per-axis limits
+                    bl_min_x = float(pb.get('talarium_joint_limit_min_x', 0.0))
+                    bl_max_x = float(pb.get('talarium_joint_limit_max_x', 0.0))
+                    bl_min_y = float(pb.get('talarium_joint_limit_min_y', 0.0))
+                    bl_max_y = float(pb.get('talarium_joint_limit_max_y', 0.0))
+                    bl_min_z = float(pb.get('talarium_joint_limit_min_z', 0.0))
+                    bl_max_z = float(pb.get('talarium_joint_limit_max_z', 0.0))
+                    bl_use_x = int(pb.get('talarium_joint_use_limit_x', 0))
+                    bl_use_y = int(pb.get('talarium_joint_use_limit_y', 0))
+                    bl_use_z = int(pb.get('talarium_joint_use_limit_z', 0))
+                    # Coordinate conversion: Blender Z-up → engine Y-up
+                    # Blender X → engine X, Blender Z → engine Y,
+                    # Blender Y → engine -Z (negate + swap min/max)
+                    lim_min[0] = bl_min_x
+                    lim_max[0] = bl_max_x
+                    lim_min[1] = bl_min_z
+                    lim_max[1] = bl_max_z
+                    lim_min[2] = -bl_max_y
+                    lim_max[2] = -bl_min_y
+                    lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
+
+                elif jt == 7:  # Limit position: per-axis position limits
+                    bl_min_x = float(pb.get('talarium_joint_limit_min_x', 0.0))
+                    bl_max_x = float(pb.get('talarium_joint_limit_max_x', 0.0))
+                    bl_min_y = float(pb.get('talarium_joint_limit_min_y', 0.0))
+                    bl_max_y = float(pb.get('talarium_joint_limit_max_y', 0.0))
+                    bl_min_z = float(pb.get('talarium_joint_limit_min_z', 0.0))
+                    bl_max_z = float(pb.get('talarium_joint_limit_max_z', 0.0))
+                    bl_use_x = int(pb.get('talarium_joint_use_limit_x', 0))
+                    bl_use_y = int(pb.get('talarium_joint_use_limit_y', 0))
+                    bl_use_z = int(pb.get('talarium_joint_use_limit_z', 0))
+                    # Same coordinate conversion as rotation limits
+                    lim_min[0] = bl_min_x
+                    lim_max[0] = bl_max_x
+                    lim_min[1] = bl_min_z
+                    lim_max[1] = bl_max_z
+                    lim_min[2] = -bl_max_y
+                    lim_max[2] = -bl_min_y
+                    lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
+
+            f.write(struct.pack('<I3ff3f3fI', jt,
                                 axis[0], axis[1], axis[2],
-                                rest_len, lim_min, lim_max))
+                                rest_len,
+                                lim_min[0], lim_min[1], lim_min[2],
+                                lim_max[0], lim_max[1], lim_max[2],
+                                lim_axes))
 
     # Summary
     total_constraints = sum(len(c) for c in bone_constraints)

@@ -522,6 +522,142 @@ static int test_joint_desc_hinge_mapping(void) {
     return 0;
 }
 
+/* ── Joint desc adapter tests for expanded types ────────────────── */
+
+static int test_joint_desc_lock_mapping(void) {
+    skeleton_def_t skel;
+    memset(&skel, 0, sizeof(skel));
+    skel.joint_count = 2;
+    uint32_t parents[2] = {UINT32_MAX, 0};
+    skel.parent_indices = parents;
+
+    bone_joint_desc_t jds[2];
+    memset(jds, 0, sizeof(jds));
+    jds[1].joint_type = 4;  /* Lock. */
+    skel.joints = jds;
+
+    mat4_t pose[2] = {mat4_identity(), mat4_translation(1, 0, 0)};
+    uint32_t body_map[2] = {0, 1};
+    phys_joint_t out[4];
+
+    uint32_t n = anim_joint_descs_to_joints(&skel, pose, body_map, out, 4);
+    ASSERT_TRUE(n == 1);
+    ASSERT_TRUE(out[0].type == PHYS_JOINT_LOCK);
+    return 0;
+}
+
+static int test_joint_desc_copy_rotation_mapping(void) {
+    skeleton_def_t skel;
+    memset(&skel, 0, sizeof(skel));
+    skel.joint_count = 2;
+    uint32_t parents[2] = {UINT32_MAX, 0};
+    skel.parent_indices = parents;
+
+    bone_joint_desc_t jds[2];
+    memset(jds, 0, sizeof(jds));
+    jds[1].joint_type = 5;  /* Copy rotation. */
+    skel.joints = jds;
+
+    mat4_t pose[2] = {mat4_identity(), mat4_identity()};
+    uint32_t body_map[2] = {0, 1};
+    phys_joint_t out[4];
+
+    uint32_t n = anim_joint_descs_to_joints(&skel, pose, body_map, out, 4);
+    ASSERT_TRUE(n == 1);
+    ASSERT_TRUE(out[0].type == PHYS_JOINT_COPY_ROTATION);
+    return 0;
+}
+
+static int test_joint_desc_limit_rotation_mapping(void) {
+    skeleton_def_t skel;
+    memset(&skel, 0, sizeof(skel));
+    skel.joint_count = 2;
+    uint32_t parents[2] = {UINT32_MAX, 0};
+    skel.parent_indices = parents;
+
+    bone_joint_desc_t jds[2];
+    memset(jds, 0, sizeof(jds));
+    jds[1].joint_type = 6;  /* Limit rotation. */
+    jds[1].limit_min[0] = -1.0f;
+    jds[1].limit_max[0] = 1.0f;
+    jds[1].limit_min[2] = -0.5f;
+    jds[1].limit_max[2] = 0.5f;
+    jds[1].limit_axes = 5;  /* X + Z. */
+    skel.joints = jds;
+
+    mat4_t pose[2] = {mat4_identity(), mat4_identity()};
+    uint32_t body_map[2] = {0, 1};
+    phys_joint_t out[4];
+
+    uint32_t n = anim_joint_descs_to_joints(&skel, pose, body_map, out, 4);
+    ASSERT_TRUE(n == 1);
+    ASSERT_TRUE(out[0].type == PHYS_JOINT_LIMIT_ROTATION);
+    ASSERT_FLOAT_EQ(out[0].limit_min[0], -1.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(out[0].limit_max[0], 1.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(out[0].limit_min[2], -0.5f, 1e-6f);
+    ASSERT_FLOAT_EQ(out[0].limit_max[2], 0.5f, 1e-6f);
+    ASSERT_TRUE(out[0].limit_axes == 5);
+    return 0;
+}
+
+static int test_joint_desc_limit_position_mapping(void) {
+    skeleton_def_t skel;
+    memset(&skel, 0, sizeof(skel));
+    skel.joint_count = 2;
+    uint32_t parents[2] = {UINT32_MAX, 0};
+    skel.parent_indices = parents;
+
+    bone_joint_desc_t jds[2];
+    memset(jds, 0, sizeof(jds));
+    jds[1].joint_type = 7;  /* Limit position. */
+    jds[1].limit_min[0] = -2.0f;
+    jds[1].limit_max[0] = 2.0f;
+    jds[1].limit_min[1] = -1.0f;
+    jds[1].limit_max[1] = 3.0f;
+    jds[1].limit_axes = 3;  /* X + Y. */
+    skel.joints = jds;
+
+    mat4_t pose[2] = {mat4_identity(), mat4_identity()};
+    uint32_t body_map[2] = {0, 1};
+    phys_joint_t out[4];
+
+    uint32_t n = anim_joint_descs_to_joints(&skel, pose, body_map, out, 4);
+    ASSERT_TRUE(n == 1);
+    ASSERT_TRUE(out[0].type == PHYS_JOINT_LIMIT_POSITION);
+    ASSERT_FLOAT_EQ(out[0].limit_min[0], -2.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(out[0].limit_max[0], 2.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(out[0].limit_min[1], -1.0f, 1e-6f);
+    ASSERT_FLOAT_EQ(out[0].limit_max[1], 3.0f, 1e-6f);
+    ASSERT_TRUE(out[0].limit_axes == 3);
+    return 0;
+}
+
+static int test_joint_desc_aim_mapping(void) {
+    skeleton_def_t skel;
+    memset(&skel, 0, sizeof(skel));
+    skel.joint_count = 2;
+    uint32_t parents[2] = {UINT32_MAX, 0};
+    skel.parent_indices = parents;
+
+    bone_joint_desc_t jds[2];
+    memset(jds, 0, sizeof(jds));
+    jds[1].joint_type = 8;  /* Aim. */
+    jds[1].axis[0] = 0.0f;
+    jds[1].axis[1] = 1.0f;
+    jds[1].axis[2] = 0.0f;
+    skel.joints = jds;
+
+    mat4_t pose[2] = {mat4_identity(), mat4_translation(1, 0, 0)};
+    uint32_t body_map[2] = {0, 1};
+    phys_joint_t out[4];
+
+    uint32_t n = anim_joint_descs_to_joints(&skel, pose, body_map, out, 4);
+    ASSERT_TRUE(n == 1);
+    ASSERT_TRUE(out[0].type == PHYS_JOINT_AIM);
+    ASSERT_FLOAT_EQ(out[0].track_axis.y, 1.0f, 1e-6f);
+    return 0;
+}
+
 /* ── Null safety tests ───────────────────────────────────────────── */
 
 static int test_null_safety(void) {
@@ -621,6 +757,11 @@ int main(void) {
     /* Joint desc adapter. */
     RUN(test_joint_desc_ball_mapping);
     RUN(test_joint_desc_hinge_mapping);
+    RUN(test_joint_desc_lock_mapping);
+    RUN(test_joint_desc_copy_rotation_mapping);
+    RUN(test_joint_desc_limit_rotation_mapping);
+    RUN(test_joint_desc_limit_position_mapping);
+    RUN(test_joint_desc_aim_mapping);
 
     /* Null safety. */
     RUN(test_null_safety);

@@ -43,7 +43,7 @@ bool fskel_load(const char *path,
     uint32_t max_constraints = 0, ibm_count = 0;
 
     if (!read_u32(f, &magic) || magic != FSKEL_MAGIC) goto fail;
-    if (!read_u32(f, &version) || (version != 1 && version != FSKEL_VERSION)) goto fail;
+    if (!read_u32(f, &version) || (version < 1 || version > FSKEL_VERSION)) goto fail;
     if (!read_u32(f, &joint_count)) goto fail;
     if (!read_u32(f, &max_constraints)) goto fail;
     if (!read_u32(f, &ibm_count)) goto fail;
@@ -127,14 +127,38 @@ bool fskel_load(const char *path,
         }
         out_skel->hull_vertex_count = hull_vertex_count;
 
-        /* --- v2 JNTS chunk: per-bone joint descriptors --- */
+        /* --- JNTS chunk: per-bone joint descriptors --- */
         out_skel->joints = (bone_joint_desc_t *)calloc(
             joint_count, sizeof(bone_joint_desc_t));
         if (!out_skel->joints) goto fail_skel;
 
-        if (fread(out_skel->joints, sizeof(bone_joint_desc_t),
-                  joint_count, f) != joint_count)
-            goto fail_skel;
+        if (version == 2) {
+            /* v2 JNTS: 28-byte records (scalar limit_min/max).
+             * Read each record individually and convert. */
+            for (uint32_t i = 0; i < joint_count; i++) {
+                uint32_t jt = 0;
+                float ax[3] = {0}, rl = 0, lmin = 0, lmax = 0;
+                if (fread(&jt, 4, 1, f) != 1) goto fail_skel;
+                if (fread(ax, 4, 3, f) != 3) goto fail_skel;
+                if (fread(&rl, 4, 1, f) != 1) goto fail_skel;
+                if (fread(&lmin, 4, 1, f) != 1) goto fail_skel;
+                if (fread(&lmax, 4, 1, f) != 1) goto fail_skel;
+                out_skel->joints[i].joint_type = jt;
+                out_skel->joints[i].axis[0] = ax[0];
+                out_skel->joints[i].axis[1] = ax[1];
+                out_skel->joints[i].axis[2] = ax[2];
+                out_skel->joints[i].rest_length = rl;
+                out_skel->joints[i].limit_min[0] = lmin;
+                out_skel->joints[i].limit_max[0] = lmax;
+                out_skel->joints[i].limit_axes =
+                    (lmin != 0.0f || lmax != 0.0f) ? 1u : 0u;
+            }
+        } else {
+            /* v3+: 48-byte records (full bone_joint_desc_t). */
+            if (fread(out_skel->joints, sizeof(bone_joint_desc_t),
+                      joint_count, f) != joint_count)
+                goto fail_skel;
+        }
     }
     /* v1 files: colliders and joints remain NULL. */
 

@@ -68,11 +68,9 @@ uint32_t anim_joint_descs_to_joints(
                 jd->axis[0], jd->axis[1], jd->axis[2]
             };
             /* Apply angular limits if specified. */
-            if (jd->limit_min != 0.0f || jd->limit_max != 0.0f) {
-                /* Hinge limits are enforced via the hinge builder's
-                 * angular rows.  Store limits for future use. */
-                j->limit_min[0] = jd->limit_min;
-                j->limit_max[0] = jd->limit_max;
+            if (jd->limit_min[0] != 0.0f || jd->limit_max[0] != 0.0f) {
+                j->limit_min[0] = jd->limit_min[0];
+                j->limit_max[0] = jd->limit_max[0];
                 j->limit_axes = 1;
             }
             break;
@@ -85,6 +83,38 @@ uint32_t anim_joint_descs_to_joints(
                 float dx = cx - px, dy = cy - py, dz = cz - pz;
                 j->rest_length = sqrtf(dx*dx + dy*dy + dz*dz);
             }
+            break;
+        case 4: /* Lock (0-DOF rigid attachment). */
+            j->type = PHYS_JOINT_LOCK;
+            break;
+        case 5: /* Copy rotation. */
+            j->type = PHYS_JOINT_COPY_ROTATION;
+            break;
+        case 6: /* Limit rotation. */
+            j->type = PHYS_JOINT_LIMIT_ROTATION;
+            j->limit_min[0] = jd->limit_min[0];
+            j->limit_min[1] = jd->limit_min[1];
+            j->limit_min[2] = jd->limit_min[2];
+            j->limit_max[0] = jd->limit_max[0];
+            j->limit_max[1] = jd->limit_max[1];
+            j->limit_max[2] = jd->limit_max[2];
+            j->limit_axes = (uint8_t)jd->limit_axes;
+            break;
+        case 7: /* Limit position. */
+            j->type = PHYS_JOINT_LIMIT_POSITION;
+            j->limit_min[0] = jd->limit_min[0];
+            j->limit_min[1] = jd->limit_min[1];
+            j->limit_min[2] = jd->limit_min[2];
+            j->limit_max[0] = jd->limit_max[0];
+            j->limit_max[1] = jd->limit_max[1];
+            j->limit_max[2] = jd->limit_max[2];
+            j->limit_axes = (uint8_t)jd->limit_axes;
+            break;
+        case 8: /* Aim (track-to). */
+            j->type = PHYS_JOINT_AIM;
+            j->track_axis = (phys_vec3_t){
+                jd->axis[0], jd->axis[1], jd->axis[2]
+            };
             break;
         default:
             continue;  /* Unknown type — skip. */
