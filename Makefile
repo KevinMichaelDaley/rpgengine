@@ -1032,6 +1032,8 @@ build/p005_transform_map_tests: build/libheadless.a tests/p005_transform_map_tes
 	$(CC) $(CFLAGS) tests/p005_transform_map_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p005_surface_vol_tests: build/libheadless.a tests/p005_surface_vol_tests.c | build
 	$(CC) $(CFLAGS) tests/p005_surface_vol_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p005_joint_motor_tests: build/libheadless.a tests/p005_joint_motor_tests.c | build
+	$(CC) $(CFLAGS) tests/p005_joint_motor_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build:
 
 
