@@ -1020,6 +1020,8 @@ build/p004_scene_graph_tests: build/liball.a tests/p004_renderer_scene_graph_tes
 	$(CC) $(CFLAGS) tests/p004_renderer_scene_graph_tests.c build/liball.a -o $@ $(LDFLAGS)
 build/p005_constraint_types_tests: build/libheadless.a tests/p005_constraint_types_tests.c | build
 	$(CC) $(CFLAGS) tests/p005_constraint_types_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p005_constraint_solver_tests: build/libheadless.a tests/p005_constraint_solver_tests.c | build
+	$(CC) $(CFLAGS) tests/p005_constraint_solver_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build:
 
 
