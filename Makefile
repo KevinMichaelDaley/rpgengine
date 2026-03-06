@@ -1030,6 +1030,8 @@ build/p005_limit_tests: build/libheadless.a tests/p005_limit_tests.c | build
 	$(CC) $(CFLAGS) tests/p005_limit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p005_transform_map_tests: build/libheadless.a tests/p005_transform_map_tests.c | build
 	$(CC) $(CFLAGS) tests/p005_transform_map_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p005_surface_vol_tests: build/libheadless.a tests/p005_surface_vol_tests.c | build
+	$(CC) $(CFLAGS) tests/p005_surface_vol_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build:
 
 

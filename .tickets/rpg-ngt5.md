@@ -1,6 +1,6 @@
 ---
 id: rpg-ngt5
-status: in_progress
+status: closed
 deps: [rpg-1blk]
 links: []
 created: 2026-03-06T06:12:32Z
