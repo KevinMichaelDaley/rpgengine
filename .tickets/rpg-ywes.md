@@ -67,12 +67,28 @@ Our glTF loader extracts skeleton hierarchy and inverse bind matrices, but glTF 
 - Iterative IK solver (CCD or FABRIK)
 - Constraint influence blending (0.0-1.0)
 - Owner/target space conversions (local, world, pose, bone)
-- Integration with phys_tick_runner for physics-driven constraints
+- Output: target_pose[] array consumed by physics motor system
 
-### 4. Rigid Body Engine Integration
-- Physics-driven bone constraints (ragdoll)
-- Joint limits mapped to physics constraint limits
-- Bidirectional: animation->physics (kinematic) and physics->animation (dynamic)
+### 4. Rigid Body Engine Integration — Sequential Pipeline
+
+**CRITICAL DESIGN PRINCIPLE**: Animation and physics are NOT alternatives — they are sequential stages in a per-tick pipeline. ALL bodies (including dynamic ragdoll bodies) go through BOTH the animation constraint solver AND the physics solver every tick:
+
+```
+Per-tick pipeline:
+  1. Animation clips → raw bone transforms
+  2. Constraint solver (IK, tracking, limits) → target_pose[]
+  3. target_pose[] → physics joint motor targets
+  4. Physics tick (gravity, collisions, joint solving with motors)
+  5. Physics body transforms → bone_world[] → GPU skinning
+```
+
+The `motor_strength` parameter (0.0–1.0) on each physics joint controls how strongly the body tracks its animation target:
+- `1.0` = animation-dominated (walking character, near-kinematic)
+- `0.5` = powered ragdoll (character struggling, e.g., wind, impacts)
+- `0.0` = pure ragdoll (death, unconscious — no animation motors)
+- Per-bone: upper body `1.0` + legs `0.3` = stumbling character
+
+This eliminates the need for binary "kinematic vs dynamic" switching. Instead, motor_strength is a continuous dial that blends between animation authority and physics authority per bone.
 
 ## File Structure
 include/ferrum/animation/pose_constraint.h, pose_constraint_solver.h

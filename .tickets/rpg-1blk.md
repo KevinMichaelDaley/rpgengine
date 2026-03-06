@@ -58,12 +58,27 @@ typedef void (*constraint_eval_fn)(const constraint_def_t *def, const constraint
 ```
 Subtask implementations (IK, tracking, limits, etc.) register their evaluation functions here.
 
-### 5. Physics adapter interface
-Abstract interface allowing the solver to operate on either:
-- Animation bones (mat4 transforms, skeleton hierarchy)
-- Physics bodies (phys_state_t, body pairs)
+### 5. Output: target pose array
+The solver's output is a `mat4 *target_pose` array — the animation-solved bone transforms. This is NOT the final pose. It feeds into the physics engine as motor targets:
 
-This ensures the same constraint evaluation code works for both systems.
+```
+clip evaluation → constraint_solver_evaluate() → target_pose[]
+                                                      │
+                                          ┌───────────┘
+                                          ▼
+                               physics joint motors
+                               (motor.target = target_pose[bone])
+                                          │
+                                          ▼
+                               physics tick (gravity, collisions, solve)
+                                          │
+                                          ▼
+                               final_pose[] → GPU skinning
+```
+
+**CRITICAL**: The solver always runs, even for dynamic/ragdoll bodies. Dynamic bodies get animation + IK target poses as physics motor targets. The motor_strength (set on the physics side, see rpg-j8n0) controls how strongly the body tracks the animation target vs. yielding to physical forces.
+
+The solver does NOT need to know whether its output drives kinematic or dynamic bodies — it always computes the desired pose. The physics integration layer (rpg-j8n0) handles the motor strength mapping.
 
 ## File Structure
 ```
