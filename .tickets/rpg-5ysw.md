@@ -22,7 +22,8 @@ Add support for assigning collision geometry (capsule, box, sphere, or per-verte
 - Sphere params: radius
 - Convex Hull params: vertex group name (auto-generates from mesh vertices in that group)
 - CCD toggle: enable continuous collision detection per bone
-- Mass override: optional per-bone mass value (default: auto from volume)
+- Kinematic toggle: when enabled, bone skips Euler-Verlet integration (animation-only, no external forces)
+- Mass override: optional per-bone mass value (default: auto from volume, ignored if kinematic)
 
 ### Wireframe preview
 - Custom draw handler that generates wireframe meshes from collision parameters
@@ -53,7 +54,8 @@ typedef struct bone_collider_desc {
     uint32_t shape_type;     // 0=none, 1=capsule, 2=box, 3=sphere, 4=convex_hull
     float    params[6];      // capsule: radius,height,axis / box: hx,hy,hz / sphere: radius,0,0
     uint32_t ccd_enabled;    // 1=CCD on
-    float    mass;           // 0=auto from volume
+    uint32_t is_kinematic;   // 1=skip Euler-Verlet integration (animation-only bone)
+    float    mass;           // 0=auto from volume (ignored if is_kinematic)
     uint32_t hull_offset;    // byte offset into hull vertex data (shape_type=4 only)
     uint32_t hull_count;     // vertex count for convex hull
 } bone_collider_desc_t;

@@ -18,8 +18,11 @@ Replace the current sequential constraint_solver_evaluate with a physics-integra
 
 1. FK propagation: local_pose → world bone matrices
 2. bone_to_body(): convert each bone mat4 → phys_body_t (pos, orient, inv_mass)
-   - Root/control bones: kinematic (inv_mass=0, driven by animation input)
-   - Deform bones: dynamic (inv_mass derived from bone mass property)
+   - Each bone has a per-bone `is_kinematic` flag (exported from Blender, stored in fskel)
+   - Kinematic bones: inv_mass=0, Euler-Verlet integration SKIPPED entirely
+     (purely animation-driven, no external forces affect them)
+   - Dynamic bones: inv_mass from bone mass property, full Euler-Verlet integration
+     (animation advances interpolation target AND external forces apply)
 3. anim_constraint_to_rows(): map each constraint_def_t → phys_constraint_t
    - Copy Location → 3 positional rows (equivalent to ball joint)
    - Copy Rotation → 3 angular rows
@@ -29,19 +32,24 @@ Replace the current sequential constraint_solver_evaluate with a physics-integra
 4. joint_to_rows(): map fskel joint descriptors → phys_constraint_t (via existing phys_joint_build_*)
 5. If per-bone colliders (rpg-5ysw): broadphase/narrowphase → contact constraints
 6. XPBD solve: all rows together, multiple iterations
-7. Integration: animation target + external forces (Euler-Verlet)
-   - Animation pulls bones toward target pose
-   - External forces (gravity, contacts, explosions) perturb bones
-   - Result: natural blend between animation and physics
+7. Integration (per-bone conditional):
+   - Dynamic bones (is_kinematic=false): Euler-Verlet integration applies external forces
+     (gravity, contacts, explosions) ON TOP of animation interpolation target
+   - Kinematic bones (is_kinematic=true): integration skipped, position set
+     purely from XPBD constraint solve + animation target (weight=1.0)
+   - Result: ragdoll limbs flop under gravity while spine/hips stay animation-driven
 8. Write solved body states → bone world matrices
 9. Swap double buffer (anim_data_curr ↔ anim_data_next)
 
 ### Key design decisions
 
-- Animation advances the interpolation TARGET, not replaces integration
+- Per-bone `is_kinematic` flag controls whether Euler-Verlet runs for that bone
+  - Kinematic: animation-only, inv_mass=0, no external forces, no integration
+  - Dynamic: animation target + Euler-Verlet, external forces blend naturally
+  - Flag is a Blender custom property per bone, exported in fskel COLL/JNTS chunk
+- Animation advances the interpolation TARGET, not replaces integration (for dynamic bones)
 - Standard joints from fskel keep skeleton structurally sound under force
 - Animation constraints and physics constraints are the same phys_constraint_t
-- Root/control bones are kinematic (inv_mass=0), deform bones are dynamic
 - Per-bone collision geo (rpg-5ysw) required for world contact
 
 ### New tier: PHYS_TIER_ANIMATED
@@ -65,6 +73,9 @@ Replace the current sequential constraint_solver_evaluate with a physics-integra
 ## Acceptance Criteria
 
 - Animated skeleton bones appear as phys_body_t in physics solver
+- Per-bone is_kinematic flag disables Euler-Verlet for that bone (animation-only)
+- Dynamic bones: animation target + external forces blend via Euler-Verlet
+- Kinematic bones: position from animation + XPBD constraints only, no integration
 - Animation constraints solved by XPBD (order-independent)
 - External forces affect animated bodies (ragdoll behavior)
 - Double-buffered pose data with atomic swap
