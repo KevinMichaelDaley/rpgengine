@@ -1025,6 +1025,9 @@ $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p005_visual_tracking: build/libheadless.a tests/visual/p005_visual_tracking.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_tracking.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p005_visual_walk_cycle: build/libheadless.a tests/visual/p005_visual_walk_cycle.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_walk_cycle.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_scene_graph_tests: build/liball.a tests/p004_renderer_scene_graph_tests.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_scene_graph_tests.c build/liball.a -o $@ $(LDFLAGS)
 build/p005_constraint_types_tests: build/libheadless.a tests/p005_constraint_types_tests.c | build

@@ -117,20 +117,55 @@ SHRINKWRAP_MAP = {
 
 # ── Matrix conversion ──────────────────────────────────────────────
 
+# Blender is Z-up, our engine is Y-up.
+# Coordinate conversion: (x, y, z)_blender → (x, z, -y)_engine
+# As a 4×4 basis-change matrix:
+#   C = [[1,0,0,0], [0,0,1,0], [0,-1,0,0], [0,0,0,1]]
+# For transforms: M_engine = C × M_blender × C⁻¹
+# C⁻¹ = C^T = [[1,0,0,0], [0,0,-1,0], [0,1,0,0], [0,0,0,1]]
+
+def _mat4_mul(a, b):
+    """Multiply two 4×4 matrices in row-major list-of-lists form."""
+    r = [[0]*4 for _ in range(4)]
+    for i in range(4):
+        for j in range(4):
+            s = 0.0
+            for k in range(4):
+                s += a[i][k] * b[k][j]
+            r[i][j] = s
+    return r
+
+# Basis-change matrix and its inverse (row-major, list-of-lists).
+_COORD_C = [
+    [1,  0, 0, 0],
+    [0,  0, 1, 0],
+    [0, -1, 0, 0],
+    [0,  0, 0, 1],
+]
+_COORD_C_INV = [
+    [1, 0,  0, 0],
+    [0, 0, -1, 0],
+    [0, 1,  0, 0],
+    [0, 0,  0, 1],
+]
+
+
 def blender_to_engine_matrix(bmat):
     """
     Convert a Blender 4×4 matrix to our engine's column-major float[16].
-    
-    Blender: row-major (mat[row][col])
-    Engine:  column-major mat4_t.m[16] where m[col*4 + row]
-    Also applies Blender→engine coordinate conversion (Y-up to Y-up,
-    but Blender bones use tail-along-Y which matches our convention).
+
+    Applies Z-up → Y-up coordinate conversion: M_engine = C × M_blender × C⁻¹
+    Then flattens to column-major for mat4_t.m[16].
     """
-    # Flatten to column-major order for our engine.
+    # Convert Blender Matrix to row-major list-of-lists.
+    bm = [[bmat[r][c] for c in range(4)] for r in range(4)]
+    # Apply basis change: C × M × C⁻¹
+    em = _mat4_mul(_COORD_C, _mat4_mul(bm, _COORD_C_INV))
+    # Flatten to column-major.
     m = [0.0] * 16
     for col in range(4):
         for row in range(4):
-            m[col * 4 + row] = bmat[row][col]
+            m[col * 4 + row] = em[row][col]
     return m
 
 
