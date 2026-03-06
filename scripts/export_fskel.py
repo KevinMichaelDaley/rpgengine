@@ -25,13 +25,15 @@ import bpy
 import struct
 import mathutils
 import math
+import gpu
+from gpu_extras.batch import batch_for_shader
 from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty
+from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty, IntProperty
 
 # ── Format constants (must match fskel_format.h) ────────────────────
 
 FSKEL_MAGIC = 0x4C4B5346   # 'FSKL' little-endian
-FSKEL_VERSION = 3
+FSKEL_VERSION = 4
 SKELETON_JOINT_NAME_MAX = 64
 
 # sizeof(constraint_def_t) = 224 bytes (verified against C compiler)
@@ -586,12 +588,14 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             mass = 0.0
             hull_offset = 0
             hull_count = 0
+            collision_group = 0
 
             if pb:
                 shape_type = int(pb.talarium_collision_shape)
                 ccd_enabled = 1 if pb.talarium_ccd else 0
                 is_kinematic = 1 if pb.talarium_kinematic else 0
                 mass = pb.talarium_mass
+                collision_group = pb.talarium_collision_group
                 explicit_shape = shape_type  # Original user-set value.
 
                 if shape_type == 1:  # Capsule (explicit)
@@ -626,13 +630,13 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
                         # conversion.  Capsule axis enum: 0=X, 1=Y, 2=Z.
                         params[2] = 1.0
 
-            # sizeof(bone_collider_desc_t) = 4 + 24 + 4 + 4 + 4 + 4 + 4 = 48
-            desc = struct.pack('<I6fIIfII',
+            # sizeof(bone_collider_desc_t) = 4 + 24 + 4 + 4 + 4 + 4 + 4 + 4 = 52
+            desc = struct.pack('<I6fIIfIII',
                                shape_type,
                                params[0], params[1], params[2],
                                params[3], params[4], params[5],
                                ccd_enabled, is_kinematic, mass,
-                               hull_offset, hull_count)
+                               hull_offset, hull_count, collision_group)
             bone_collider_descs.append(desc)
 
         hull_vertex_count = len(hull_vertices) // 3
@@ -881,6 +885,16 @@ _BONE_PROPS = {
         default="",
     ),
 
+    # Collision group
+    "talarium_collision_group": IntProperty(
+        name="Collision Group",
+        description="Bones in the same non-zero group skip collision "
+                    "with each other.  0 = no group filtering (default)",
+        default=0,
+        min=0,
+        soft_max=16,
+    ),
+
     # Joint type
     "talarium_joint_type": EnumProperty(
         name="Joint",
@@ -943,6 +957,136 @@ _BONE_PROPS = {
 }
 
 
+# ── Operators for auto-filling collision defaults ──────────────────
+
+class BONE_OT_talarium_autofill_collision(bpy.types.Operator):
+    """Auto-fill collision shape defaults from bone geometry"""
+    bl_idname = "bone.talarium_autofill_collision"
+    bl_label = "Auto-fill from Bone"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.active_pose_bone is not None
+
+    def execute(self, context):
+        pb = context.active_pose_bone
+        bone = pb.bone
+        shape = pb.talarium_collision_shape
+
+        if shape == '1':  # Capsule: defaults from bone envelope
+            avg_r = (bone.head_radius + bone.tail_radius) * 0.5
+            if avg_r < 1e-6:
+                avg_r = bone.length * 0.1
+            pb.talarium_capsule_radius = avg_r
+            pb.talarium_capsule_height = bone.length
+            # Bone local Y axis = bone direction
+            pb.talarium_capsule_axis = 'Y'
+            self.report({'INFO'}, f"Capsule: r={avg_r:.4f} h={bone.length:.4f}")
+
+        elif shape == '2':  # Box: OBB from vertex group
+            obj = context.active_object
+            mesh_obj = _find_mesh_for_armature(obj)
+            if mesh_obj and mesh_obj.type == 'MESH':
+                he = _compute_bone_obb(mesh_obj, bone)
+                if he:
+                    pb.talarium_box_hx = he[0]
+                    pb.talarium_box_hy = he[1]
+                    pb.talarium_box_hz = he[2]
+                    self.report({'INFO'},
+                                f"Box: hx={he[0]:.4f} hy={he[1]:.4f} hz={he[2]:.4f}")
+                else:
+                    self.report({'WARNING'},
+                                f"No vertex group '{bone.name}' found")
+            else:
+                # Fallback: use bone length to estimate box
+                hl = bone.length * 0.5
+                hr = bone.length * 0.15
+                pb.talarium_box_hx = hr
+                pb.talarium_box_hy = hl
+                pb.talarium_box_hz = hr
+                self.report({'INFO'}, "Box estimated from bone length")
+
+        elif shape == '3':  # Sphere: from bone envelope
+            avg_r = (bone.head_radius + bone.tail_radius) * 0.5
+            if avg_r < 1e-6:
+                avg_r = bone.length * 0.2
+            pb.talarium_sphere_radius = avg_r
+            self.report({'INFO'}, f"Sphere: r={avg_r:.4f}")
+
+        elif shape == '4':  # Convex Hull: default vertex group
+            if not pb.talarium_hull_vgroup:
+                pb.talarium_hull_vgroup = bone.name
+                self.report({'INFO'},
+                            f"Hull vertex group set to '{bone.name}'")
+        else:
+            self.report({'WARNING'}, "Select a collision shape first")
+
+        return {'FINISHED'}
+
+
+def _find_mesh_for_armature(armature_obj):
+    """Find the first mesh child of the armature."""
+    for child in armature_obj.children:
+        if child.type == 'MESH':
+            return child
+    return None
+
+
+def _compute_bone_obb(mesh_obj, bone):
+    """Compute OBB half-extents for a bone's vertex group in bone-local space.
+
+    Returns (half_x, half_y, half_z) or None if vertex group not found.
+    """
+    vg = mesh_obj.vertex_groups.get(bone.name)
+    if not vg:
+        return None
+
+    vg_idx = vg.index
+    mesh = mesh_obj.data
+
+    # Collect vertices in this group
+    coords = []
+    for v in mesh.vertices:
+        for g in v.groups:
+            if g.group == vg_idx and g.weight > 0.1:
+                coords.append(v.co.copy())
+                break
+
+    if len(coords) < 3:
+        return None
+
+    # Transform to bone-local space
+    # Bone rest matrix: world-space of the bone in rest pose
+    bone_mat = armature_obj_matrix(mesh_obj) @ bone.matrix_local
+    bone_inv = bone_mat.inverted_safe()
+
+    local_coords = [bone_inv @ co for co in coords]
+
+    # Compute AABB in bone-local space (approximating OBB)
+    min_v = local_coords[0].copy()
+    max_v = local_coords[0].copy()
+    for co in local_coords[1:]:
+        for i in range(3):
+            if co[i] < min_v[i]:
+                min_v[i] = co[i]
+            if co[i] > max_v[i]:
+                max_v[i] = co[i]
+
+    half_x = (max_v[0] - min_v[0]) * 0.5
+    half_y = (max_v[1] - min_v[1]) * 0.5
+    half_z = (max_v[2] - min_v[2]) * 0.5
+
+    return (max(half_x, 0.001), max(half_y, 0.001), max(half_z, 0.001))
+
+
+def armature_obj_matrix(mesh_obj):
+    """Get the armature's world matrix from a mesh child."""
+    if mesh_obj.parent and mesh_obj.parent.type == 'ARMATURE':
+        return mesh_obj.parent.matrix_world
+    return mathutils.Matrix.Identity(4)
+
+
 # ── Properties panel (Bone tab, Pose mode) ───────────────────────
 
 class BONE_PT_talarium_physics(bpy.types.Panel):
@@ -966,6 +1110,13 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
         if pb is None:
             return
 
+        # ── Viewport overlay toggle ──
+        row = layout.row(align=True)
+        row.prop(context.scene, "talarium_show_collision",
+                 text="Show Collision", icon='HIDE_OFF')
+        row.operator("bone.talarium_refresh_collision",
+                     text="", icon='FILE_REFRESH')
+
         # ── Collision shape ──
         box = layout.box()
         box.label(text="Collision Shape", icon='MESH_CUBE')
@@ -985,7 +1136,25 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
         elif shape == '3':  # Sphere
             box.prop(pb, "talarium_sphere_radius")
         elif shape == '4':  # Convex Hull
-            box.prop(pb, "talarium_hull_vgroup")
+            # Show vertex group as searchable dropdown
+            arm_obj = context.active_object
+            mesh_child = None
+            if arm_obj:
+                for ch in arm_obj.children:
+                    if ch.type == 'MESH':
+                        mesh_child = ch
+                        break
+            if mesh_child:
+                box.prop_search(pb, "talarium_hull_vgroup",
+                                mesh_child, "vertex_groups",
+                                text="Vertex Group")
+            else:
+                box.prop(pb, "talarium_hull_vgroup")
+
+        if shape != '0':
+            box.prop(pb, "talarium_collision_group")
+            box.operator("bone.talarium_autofill_collision",
+                         icon='FILE_REFRESH')
 
         # ── Physics flags ──
         box = layout.box()
@@ -1027,10 +1196,216 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 row.prop(pb, "talarium_joint_limit_max_z", text="Max")
 
 
+# ── Collision wireframe overlay ───────────────────────────────────
+
+_draw_handler = None
+_COLLIDER_WIRE_SHADER = None
+
+# Color per collision group (group 0 = default white/cyan)
+_GROUP_COLORS = [
+    (0.0, 0.9, 0.9, 0.6),   # 0: cyan (default)
+    (0.9, 0.3, 0.1, 0.6),   # 1: red-orange
+    (0.1, 0.9, 0.2, 0.6),   # 2: green
+    (0.2, 0.4, 1.0, 0.6),   # 3: blue
+    (0.9, 0.9, 0.1, 0.6),   # 4: yellow
+    (0.9, 0.1, 0.9, 0.6),   # 5: magenta
+    (0.1, 0.9, 0.9, 0.6),   # 6: cyan-2
+    (1.0, 0.6, 0.2, 0.6),   # 7: orange
+]
+
+
+def _circle_verts(center, axis_u, axis_v, radius, segments=16):
+    """Generate circle vertex positions in 3D."""
+    verts = []
+    for i in range(segments):
+        a = 2.0 * math.pi * i / segments
+        p = center + axis_u * (radius * math.cos(a)) + axis_v * (radius * math.sin(a))
+        verts.append(p)
+    return verts
+
+
+def _circle_lines(verts):
+    """Generate line index pairs for a closed loop."""
+    n = len(verts)
+    return [(verts[i], verts[(i + 1) % n]) for i in range(n)]
+
+
+def _capsule_wire(matrix, radius, half_height, axis_idx, segments=16):
+    """Generate wireframe lines for a capsule in world space.
+
+    axis_idx: 0=X, 1=Y, 2=Z in bone-local space.
+    """
+    # Bone-local axes
+    axes = [matrix.col[0].to_3d().normalized(),
+            matrix.col[1].to_3d().normalized(),
+            matrix.col[2].to_3d().normalized()]
+    center = matrix.translation.copy()
+
+    main_axis = axes[axis_idx]
+    perp1 = axes[(axis_idx + 1) % 3]
+    perp2 = axes[(axis_idx + 2) % 3]
+
+    top = center + main_axis * half_height
+    bot = center - main_axis * half_height
+
+    lines = []
+
+    # Two circles at cylinder ends
+    c_top = _circle_verts(top, perp1, perp2, radius, segments)
+    c_bot = _circle_verts(bot, perp1, perp2, radius, segments)
+    lines.extend(_circle_lines(c_top))
+    lines.extend(_circle_lines(c_bot))
+
+    # Four longitudinal lines
+    for i in range(4):
+        idx = i * (segments // 4)
+        lines.append((c_top[idx], c_bot[idx]))
+
+    # Hemisphere arcs (2 arcs per cap, in two perpendicular planes)
+    for perp in [perp1, perp2]:
+        for sign, cap_center in [(1.0, top), (-1.0, bot)]:
+            arc = []
+            half_segs = segments // 2
+            for i in range(half_segs + 1):
+                a = math.pi * i / half_segs
+                p = (cap_center
+                     + perp * (radius * math.cos(a))
+                     + main_axis * (sign * radius * math.sin(a)))
+                arc.append(p)
+            for i in range(len(arc) - 1):
+                lines.append((arc[i], arc[i + 1]))
+
+    return lines
+
+
+def _box_wire(matrix, half_extents):
+    """Generate wireframe lines for a box in world space."""
+    hx, hy, hz = half_extents
+    center = matrix.translation.copy()
+    ax = matrix.col[0].to_3d().normalized()
+    ay = matrix.col[1].to_3d().normalized()
+    az = matrix.col[2].to_3d().normalized()
+
+    corners = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                corners.append(center + ax * (sx * hx)
+                               + ay * (sy * hy) + az * (sz * hz))
+
+    # 12 edges of a box
+    edges = [
+        (0, 1), (2, 3), (4, 5), (6, 7),  # along Z
+        (0, 2), (1, 3), (4, 6), (5, 7),  # along Y
+        (0, 4), (1, 5), (2, 6), (3, 7),  # along X
+    ]
+    return [(corners[a], corners[b]) for a, b in edges]
+
+
+def _sphere_wire(center, radius, segments=16):
+    """Generate wireframe lines for a sphere (3 great circles)."""
+    x = mathutils.Vector((1, 0, 0))
+    y = mathutils.Vector((0, 1, 0))
+    z = mathutils.Vector((0, 0, 1))
+    lines = []
+    lines.extend(_circle_lines(_circle_verts(center, x, y, radius, segments)))
+    lines.extend(_circle_lines(_circle_verts(center, y, z, radius, segments)))
+    lines.extend(_circle_lines(_circle_verts(center, x, z, radius, segments)))
+    return lines
+
+
+def _draw_collision_overlay():
+    """Draw collision wireframes for all pose bones with shapes."""
+    context = bpy.context
+    if not context.scene.talarium_show_collision:
+        return
+
+    obj = context.active_object
+    if not obj or obj.type != 'ARMATURE' or context.mode != 'POSE':
+        return
+
+    all_lines = []    # list of (pos_a, pos_b, color)
+
+    for pb in obj.pose.bones:
+        shape = pb.talarium_collision_shape
+        if shape == '0':
+            continue
+
+        bone = pb.bone
+        # Pose-space bone matrix (world-space = armature world × pose matrix)
+        bone_matrix = obj.matrix_world @ pb.matrix
+
+        group = pb.talarium_collision_group
+        color = _GROUP_COLORS[group % len(_GROUP_COLORS)]
+
+        if shape == '1':  # Capsule
+            r = pb.talarium_capsule_radius
+            h = pb.talarium_capsule_height
+            axis_str = pb.talarium_capsule_axis
+            axis_idx = {'X': 0, 'Y': 1, 'Z': 2}.get(axis_str, 1)
+            lines = _capsule_wire(bone_matrix, r, h * 0.5, axis_idx)
+            for a, b in lines:
+                all_lines.append((a, b, color))
+
+        elif shape == '2':  # Box
+            he = (pb.talarium_box_hx, pb.talarium_box_hy, pb.talarium_box_hz)
+            lines = _box_wire(bone_matrix, he)
+            for a, b in lines:
+                all_lines.append((a, b, color))
+
+        elif shape == '3':  # Sphere
+            r = pb.talarium_sphere_radius
+            center = bone_matrix.translation.copy()
+            lines = _sphere_wire(center, r)
+            for a, b in lines:
+                all_lines.append((a, b, color))
+
+    if not all_lines:
+        return
+
+    # Build GPU batch
+    coords = []
+    colors = []
+    for a, b, col in all_lines:
+        coords.append(a)
+        coords.append(b)
+        colors.append(col)
+        colors.append(col)
+
+    shader = gpu.shader.from_builtin('FLAT_COLOR')
+    batch = batch_for_shader(shader, 'LINES',
+                             {"pos": coords, "color": colors})
+    shader.bind()
+    gpu.state.blend_set('ALPHA')
+    gpu.state.line_width_set(1.5)
+    gpu.state.depth_test_set('LESS_EQUAL')
+    batch.draw(shader)
+    gpu.state.blend_set('NONE')
+    gpu.state.depth_test_set('NONE')
+    gpu.state.line_width_set(1.0)
+
+
+class BONE_OT_talarium_refresh_collision(bpy.types.Operator):
+    """Refresh collision wireframe preview in viewport"""
+    bl_idname = "bone.talarium_refresh_collision"
+    bl_label = "Refresh Preview"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        # Force viewport redraw so the overlay updates
+        for area in context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+        self.report({'INFO'}, "Collision preview refreshed")
+        return {'FINISHED'}
+
+
 # ── Registration ──────────────────────────────────────────────────
 
 _CLASSES = [
     ExportFSKEL,
+    BONE_OT_talarium_autofill_collision,
+    BONE_OT_talarium_refresh_collision,
     BONE_PT_talarium_physics,
 ]
 
@@ -1041,16 +1416,36 @@ def menu_func_export(self, context):
 
 
 def register():
+    global _draw_handler
+
     # Register per-bone properties on PoseBone.
     for prop_name, prop_def in _BONE_PROPS.items():
         setattr(bpy.types.PoseBone, prop_name, prop_def)
+
+    # Scene-level toggle for collision wireframe overlay.
+    bpy.types.Scene.talarium_show_collision = BoolProperty(
+        name="Show Collision",
+        description="Display collision shape wireframes in the viewport",
+        default=True,
+    )
 
     for cls in _CLASSES:
         bpy.utils.register_class(cls)
     bpy.types.TOPBAR_MT_file_export.append(menu_func_export)
 
+    # Install viewport draw handler for collision wireframes.
+    _draw_handler = bpy.types.SpaceView3D.draw_handler_add(
+        _draw_collision_overlay, (), 'WINDOW', 'POST_VIEW')
+
 
 def unregister():
+    global _draw_handler
+
+    # Remove draw handler.
+    if _draw_handler is not None:
+        bpy.types.SpaceView3D.draw_handler_remove(_draw_handler, 'WINDOW')
+        _draw_handler = None
+
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
     for cls in reversed(_CLASSES):
         bpy.utils.unregister_class(cls)
@@ -1058,6 +1453,9 @@ def unregister():
     for prop_name in _BONE_PROPS:
         if hasattr(bpy.types.PoseBone, prop_name):
             delattr(bpy.types.PoseBone, prop_name)
+
+    if hasattr(bpy.types.Scene, 'talarium_show_collision'):
+        del bpy.types.Scene.talarium_show_collision
 
 
 if __name__ == "__main__":

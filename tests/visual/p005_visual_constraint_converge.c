@@ -13,6 +13,7 @@
 #include <SDL2/SDL.h>
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,8 +30,15 @@
 #include "ferrum/animation/surface_vol.h"
 #include "ferrum/animation/transform_map.h"
 #include "ferrum/animation/fskel_loader.h"
-#include "ferrum/animation/ragdoll.h"
-#include "ferrum/animation/bone_to_body.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/world.h"
+#include "ferrum/physics/tick.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_tick_runner.h"
+#include "ferrum/physics/phys_anim_entity.h"
+#include "ferrum/physics/game_state.h"
+#include "ferrum/job/system.h"
+#include "ferrum/net/topic_channel.h"
 #include "ferrum/renderer/gl_loader.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/video_capture.h"
@@ -249,6 +257,104 @@ static void draw_label_(float x_offset, float y, float r, float g, float b) {
               (vec3_t){x_offset - sz, y, 0}, r, g, b);
 }
 
+/* ── Substep animation context (per variant) ─────────────────────── */
+
+#define STRIDE_LENGTH 3.0f
+#define STEP_HEIGHT   1.5f
+#define WALK_SPEED    2.0f
+
+static vec3_t walk_foot_pos_(float phase, float rest_x,
+                              float rest_y, float rest_z) {
+    vec3_t pos;
+    pos.x = rest_x;
+    if (phase < 0.5f) {
+        float t = phase / 0.5f;
+        pos.z = rest_z + STRIDE_LENGTH * (0.5f - t);
+        pos.y = rest_y;
+    } else {
+        float t = (phase - 0.5f) / 0.5f;
+        pos.z = rest_z + STRIDE_LENGTH * (t - 0.5f);
+        pos.y = rest_y + STEP_HEIGHT * sinf(t * PI);
+    }
+    return pos;
+}
+
+static int find_bone_(const skeleton_def_t *skel, const char *name) {
+    for (uint32_t i = 0; i < skel->joint_count; i++) {
+        if (strcmp(skel->joint_names[i], name) == 0) return (int)i;
+    }
+    return -1;
+}
+
+typedef struct converge_ctx {
+    skeleton_def_t       *skel;
+    phys_anim_entity_t   *anim_ent;
+    constraint_solver_t  *solver;
+    mat4_t               *local_pose;
+    mat4_t               *target_pose;
+    int                   idx_foot_l;
+    int                   idx_foot_r;
+    int                   idx_traj;
+    int                   idx_root_master;
+    vec3_t                rest_foot_l;
+    vec3_t                rest_foot_r;
+    float                 time_acc;
+} converge_ctx_t;
+
+/**
+ * @brief Substep callback: advance walk cycle and push kinematic
+ *        bone positions+orientations so joints are XPBD-solved.
+ */
+static void converge_substep(void *user, struct phys_world *world,
+                              uint32_t substep, float substep_dt) {
+    (void)substep_dt;
+    converge_ctx_t *ctx = (converge_ctx_t *)user;
+    skeleton_def_t *skel = ctx->skel;
+    uint32_t n = skel->joint_count;
+
+    if (substep == 0) {
+        ctx->time_acc += (1.0f / (float)TARGET_FPS);
+    }
+    float t = ctx->time_acc;
+    float cycle = t * WALK_SPEED;
+    float phase_l = fmodf(cycle, 1.0f);
+    float phase_r = fmodf(cycle + 0.5f, 1.0f);
+    float forward_z = cycle * STRIDE_LENGTH;
+
+    memcpy(ctx->local_pose, skel->rest_local, n * sizeof(mat4_t));
+
+    if (ctx->idx_traj >= 0)
+        ctx->local_pose[ctx->idx_traj].m[14] += forward_z;
+
+    if (ctx->idx_foot_l >= 0) {
+        vec3_t fl = walk_foot_pos_(phase_l, ctx->rest_foot_l.x,
+                                    ctx->rest_foot_l.y,
+                                    ctx->rest_foot_l.z + forward_z);
+        ctx->local_pose[ctx->idx_foot_l].m[12] = fl.x;
+        ctx->local_pose[ctx->idx_foot_l].m[13] = fl.y;
+        ctx->local_pose[ctx->idx_foot_l].m[14] = fl.z;
+    }
+    if (ctx->idx_foot_r >= 0) {
+        vec3_t fr = walk_foot_pos_(phase_r, ctx->rest_foot_r.x,
+                                    ctx->rest_foot_r.y,
+                                    ctx->rest_foot_r.z + forward_z);
+        ctx->local_pose[ctx->idx_foot_r].m[12] = fr.x;
+        ctx->local_pose[ctx->idx_foot_r].m[13] = fr.y;
+        ctx->local_pose[ctx->idx_foot_r].m[14] = fr.z;
+    }
+
+    if (ctx->idx_root_master >= 0) {
+        float bob = 0.3f * sinf(cycle * 4.0f * PI);
+        ctx->local_pose[ctx->idx_root_master].m[13] += bob;
+    }
+
+    memset(ctx->target_pose, 0, n * sizeof(mat4_t));
+    constraint_solver_evaluate(ctx->solver, skel, ctx->local_pose,
+                               ctx->target_pose, n);
+    phys_anim_entity_push_kinematic(ctx->anim_ent, world,
+                                     ctx->target_pose, n);
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -280,24 +386,88 @@ int main(void) {
         cleanup_gl_context_();
         return 1;
     }
-    printf("  Loaded: %u joints\n",
-           skel.joint_count);
+    printf("  Loaded: %u joints\n", skel.joint_count);
 
-    /* Allocate solver contexts and ragdolls for each variant. */
-    constraint_solver_t solvers[NUM_VARIANTS];
-    ragdoll_t ragdolls[NUM_VARIANTS];
-    mat4_t *target_poses[NUM_VARIANTS];
-    bool ragdoll_ok[NUM_VARIANTS];
+    /* Find control bones (shared across all variants). */
+    int idx_foot_l = find_bone_(&skel, "c_foot_ik.l");
+    int idx_foot_r = find_bone_(&skel, "c_foot_ik.r");
+    int idx_traj   = find_bone_(&skel, "c_traj");
+    int idx_root_master = find_bone_(&skel, "c_root_master.x");
 
-    /* Colors for each variant (1-iter=red, 2=orange, 4=green, 8=blue). */
+    vec3_t rest_foot_l = {0}, rest_foot_r = {0};
+    if (idx_foot_l >= 0) {
+        rest_foot_l = (vec3_t){
+            skel.rest_world[idx_foot_l].m[12],
+            skel.rest_world[idx_foot_l].m[13],
+            skel.rest_world[idx_foot_l].m[14]
+        };
+    }
+    if (idx_foot_r >= 0) {
+        rest_foot_r = (vec3_t){
+            skel.rest_world[idx_foot_r].m[12],
+            skel.rest_world[idx_foot_r].m[13],
+            skel.rest_world[idx_foot_r].m[14]
+        };
+    }
+
+    /* Colors: 1-iter=red, 2=orange, 4=green, 8=blue. */
     static const float colors[NUM_VARIANTS][3] = {
-        {0.9f, 0.2f, 0.2f},  /* 1 iteration: red */
-        {0.9f, 0.6f, 0.1f},  /* 2 iterations: orange */
-        {0.2f, 0.8f, 0.3f},  /* 4 iterations: green */
-        {0.2f, 0.4f, 0.9f},  /* 8 iterations: blue */
+        {0.9f, 0.2f, 0.2f},
+        {0.9f, 0.6f, 0.1f},
+        {0.2f, 0.8f, 0.3f},
+        {0.2f, 0.4f, 0.9f},
     };
 
+    /* ── Physics setup: one world per variant ──────────────────── */
+
+    job_system_t phys_job_sys;
+    if (job_system_create(&phys_job_sys, 2, 4096, 256u * 1024u, 4096, 0)
+        != JOB_CREATE_OK) {
+        fprintf(stderr, "job_system_create failed\n"); return 1;
+    }
+    if (job_system_start(&phys_job_sys) != 0) {
+        fprintf(stderr, "job_system_start failed\n"); return 1;
+    }
+
+    phys_world_t worlds[NUM_VARIANTS];
+    phys_anim_entity_t anim_ents[NUM_VARIANTS];
+    constraint_solver_t solvers[NUM_VARIANTS];
+    converge_ctx_t ctxs[NUM_VARIANTS];
+    mat4_t *local_poses[NUM_VARIANTS];
+    mat4_t *target_poses[NUM_VARIANTS];
+    phys_job_context_t phys_jobs[NUM_VARIANTS];
+    phys_tick_runner_t tick_runners[NUM_VARIANTS];
+    fr_topic_channel_t *cmd_channels[NUM_VARIANTS];
+    phys_game_state_t game_states[NUM_VARIANTS];
+
     for (int v = 0; v < NUM_VARIANTS; v++) {
+        phys_world_config_t wcfg = phys_world_config_default();
+        wcfg.max_bodies = 256;
+        wcfg.max_colliders = 256;
+        wcfg.max_joints = 256;
+        wcfg.default_solver_iterations = (uint32_t)ITERATION_COUNTS[v];
+        if (phys_world_init(&worlds[v], &wcfg) != 0) {
+            fprintf(stderr, "world init failed for variant %d\n", v);
+            return 1;
+        }
+
+        /* Ground plane. */
+        uint32_t ground_id = phys_world_create_body(&worlds[v]);
+        {
+            phys_body_t *g = phys_world_get_body(&worlds[v], ground_id);
+            g->flags |= PHYS_BODY_FLAG_STATIC;
+            phys_world_set_halfspace_collider(&worlds[v], ground_id,
+                (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
+        }
+
+        /* Animated entity. */
+        if (!phys_anim_entity_create(&anim_ents[v], &worlds[v], &skel,
+                                      skel.rest_world)) {
+            fprintf(stderr, "anim entity create failed for variant %d\n", v);
+            return 1;
+        }
+
+        /* Constraint solver. */
         constraint_solver_init(&solvers[v], skel.joint_count,
                                skel.max_constraints_per_joint);
         ik_solver_register(&solvers[v]);
@@ -305,20 +475,53 @@ int main(void) {
         limit_constraints_register(&solvers[v]);
         surface_vol_register(&solvers[v]);
         transform_map_register(&solvers[v]);
-        target_poses[v] = (mat4_t *)malloc(
-            skel.joint_count * sizeof(mat4_t));
-        memcpy(target_poses[v], skel.rest_world,
-               skel.joint_count * sizeof(mat4_t));
 
-        ragdoll_ok[v] = ragdoll_create(&ragdolls[v], &skel, skel.rest_world);
-        if (ragdoll_ok[v]) {
-            ragdoll_set_motor_strength(&ragdolls[v], 1.0f);
-            printf("  Variant %d (%d iters): ragdoll ok (%u bodies)\n",
-                   v, ITERATION_COUNTS[v], ragdolls[v].bone_count);
-        } else {
-            printf("  Variant %d: ragdoll creation failed, using solver only\n",
-                   v);
-        }
+        /* Pose buffers. */
+        local_poses[v]  = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
+        target_poses[v] = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
+
+        /* Substep animation context. */
+        memset(&ctxs[v], 0, sizeof(ctxs[v]));
+        ctxs[v].skel            = &skel;
+        ctxs[v].anim_ent        = &anim_ents[v];
+        ctxs[v].solver          = &solvers[v];
+        ctxs[v].local_pose      = local_poses[v];
+        ctxs[v].target_pose     = target_poses[v];
+        ctxs[v].idx_foot_l      = idx_foot_l;
+        ctxs[v].idx_foot_r      = idx_foot_r;
+        ctxs[v].idx_traj        = idx_traj;
+        ctxs[v].idx_root_master = idx_root_master;
+        ctxs[v].rest_foot_l     = rest_foot_l;
+        ctxs[v].rest_foot_r     = rest_foot_r;
+
+        /* Wire substep callback on the world. */
+        worlds[v].anim_substep_cb   = converge_substep;
+        worlds[v].anim_substep_user = &ctxs[v];
+
+        /* Job context + tick runner. */
+        phys_job_context_init(&phys_jobs[v], &phys_job_sys);
+
+        fr_topic_channel_config_t chan_cfg = {
+            .capacity = 64, .capacity_bytes = 64 * 1024,
+            .max_message_size = 1024,
+            .backpressure = FR_TOPIC_BACKPRESSURE_FAIL
+        };
+        cmd_channels[v] = fr_topic_channel_create(&chan_cfg);
+
+        phys_tick_runner_init(&tick_runners[v], &worlds[v], &phys_jobs[v],
+                              cmd_channels[v], NULL, NULL, NULL);
+
+        phys_game_state_init(&game_states[v]);
+        phys_player_state_t player0 = {
+            .position = {0.0f, 0.0f, 0.0f},
+            .interaction_radius = 20.0f,
+        };
+        phys_game_state_set_player(&game_states[v], 0, &player0);
+        tick_runners[v].game_state = &game_states[v];
+
+        phys_tick_runner_start(&tick_runners[v]);
+        printf("  Variant %d (%d iters): started\n",
+               v, ITERATION_COUNTS[v]);
     }
 
     /* Video capture. */
@@ -338,44 +541,26 @@ int main(void) {
 
     int gl_error_count = 0;
     int frame_count = 0;
-    float time_acc = 0.0f;
 
     /* ── Render loop ──────────────────────────────────────────────── */
 
     for (int f = 0; f < TOTAL_FRAMES; ++f) {
         uint32_t frame_start = SDL_GetTicks();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        time_acc += DT;
 
         begin_lines_();
         draw_ground_grid_(0.0f, 20.0f, 40);
 
-        /* Solve each variant with its iteration count. */
         for (int v = 0; v < NUM_VARIANTS; v++) {
-            /* Evaluate animation constraints with varying iterations. */
-            constraint_solver_evaluate(
-                &solvers[v], &skel, skel.rest_world,
-                target_poses[v], ITERATION_COUNTS[v]);
+            /* Sync bone transforms from physics. */
+            phys_anim_entity_sync_from_world(&anim_ents[v], &worlds[v]);
 
-            /* Feed into ragdoll pipeline if available. */
-            if (ragdoll_ok[v]) {
-                ragdoll_update_motor_targets(&ragdolls[v],
-                                             target_poses[v],
-                                             skel.joint_count);
-                anim_bones_to_bodies(target_poses[v], skel.colliders,
-                                     ragdolls[v].bodies,
-                                     skel.joint_count);
-                ragdoll_sync_from_physics(&ragdolls[v]);
-            }
-
-            /* Draw this variant offset along X. */
+            /* Draw variant at X offset. */
             float x_off = ((float)v - 1.5f) * SPACING;
-            const mat4_t *draw_pose = ragdoll_ok[v]
-                                    ? ragdolls[v].bone_world
-                                    : target_poses[v];
-            draw_skeleton_offset_(&skel, draw_pose, x_off,
+            draw_skeleton_offset_(&skel, anim_ents[v].bone_world, x_off,
                                   colors[v][0], colors[v][1], colors[v][2]);
-            draw_label_(x_off, -0.2f, colors[v][0], colors[v][1], colors[v][2]);
+            draw_label_(x_off, -0.2f,
+                        colors[v][0], colors[v][1], colors[v][2]);
         }
 
         /* Camera: wide view to see all 4 variants. */
@@ -417,14 +602,23 @@ int main(void) {
     }
 
     /* Cleanup. */
+    for (int v = 0; v < NUM_VARIANTS; v++) {
+        phys_tick_runner_stop(&tick_runners[v]);
+    }
     if (capture) fr_video_capture_destroy(capture);
     for (int v = 0; v < NUM_VARIANTS; v++) {
-        if (ragdoll_ok[v]) ragdoll_destroy(&ragdolls[v]);
         constraint_solver_destroy(&solvers[v]);
+        free(local_poses[v]);
         free(target_poses[v]);
+        phys_anim_entity_destroy(&anim_ents[v]);
+        phys_tick_runner_destroy(&tick_runners[v]);
+        phys_job_context_destroy(&phys_jobs[v]);
+        if (cmd_channels[v]) fr_topic_channel_destroy(cmd_channels[v]);
+        phys_world_destroy(&worlds[v]);
     }
     cleanup_line_buffer_();
     shader_program_destroy(&shader);
+    job_system_shutdown(&phys_job_sys);
     skeleton_def_destroy(&skel);
     if (ibms) free(ibms);
     cleanup_gl_context_();

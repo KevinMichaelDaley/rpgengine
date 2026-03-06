@@ -56,8 +56,8 @@
 
 static int test_config_default(void) {
     phys_world_config_t cfg = phys_world_config_default();
-    ASSERT_INT_EQ(10000, (int)cfg.max_bodies);
-    ASSERT_INT_EQ(10000, (int)cfg.max_colliders);
+    ASSERT_TRUE(cfg.max_bodies == 2u * 1024u * 1024u);
+    ASSERT_TRUE(cfg.max_colliders == 2u * 1024u * 1024u);
     ASSERT_INT_EQ(4096, (int)cfg.manifold_cache_size);
     ASSERT_TRUE(cfg.frame_arena_size == 32u * 1024u * 1024u);
     ASSERT_FLOAT_NEAR(1.0f / 60.0f, cfg.fixed_dt, 1e-6f);
@@ -68,9 +68,9 @@ static int test_config_default(void) {
     ASSERT_INT_EQ(8, (int)cfg.default_solver_iterations);
     ASSERT_FLOAT_NEAR(0.0f, cfg.baumgarte, 1e-6f);
     ASSERT_FLOAT_NEAR(0.005f, cfg.slop, 1e-6f);
-    ASSERT_FLOAT_NEAR(0.08f, cfg.sleep_threshold_linear, 1e-6f);
-    ASSERT_FLOAT_NEAR(0.08f, cfg.sleep_threshold_angular, 1e-6f);
-    ASSERT_INT_EQ(60, (int)cfg.sleep_delay_frames);
+    ASSERT_FLOAT_NEAR(0.15f, cfg.sleep_threshold_linear, 1e-6f);
+    ASSERT_FLOAT_NEAR(0.15f, cfg.sleep_threshold_angular, 1e-6f);
+    ASSERT_INT_EQ(120, (int)cfg.sleep_delay_frames);
     return 0;
 }
 

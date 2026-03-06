@@ -1,6 +1,6 @@
 ---
 id: rpg-5ysw
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-03-06T07:54:37Z

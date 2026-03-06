@@ -61,6 +61,21 @@ struct phys_game_state;
 typedef void (*phys_tick_runner_post_tick_fn)(void *user, uint64_t tick);
 
 /**
+ * @brief Pre-tick callback signature.
+ *
+ * Invoked on the physics thread after commands are drained but before
+ * phys_world_tick_parallel().  Use this to advance animation and push
+ * kinematic body positions into the world.
+ *
+ * @param user   Opaque user pointer.
+ * @param world  Physics world (bodies may be read/written).
+ * @param tick   Tick number about to execute.
+ */
+typedef void (*phys_anim_pre_tick_fn)(void *user,
+                                      struct phys_world *world,
+                                      uint64_t tick);
+
+/**
  * @brief Continuous physics tick runner.
  *
  * Stack-allocatable.  Must be initialized before use and destroyed
@@ -75,6 +90,11 @@ typedef struct phys_tick_runner {
     /** Optional callback invoked for each SPAWN_BODY during drain. */
     phys_cmd_spawn_callback_t spawn_cb;
     void                     *spawn_cb_user;
+
+    /** Optional callback invoked before each tick (after command drain).
+     *  Use this to advance animation and update kinematic body positions. */
+    phys_anim_pre_tick_fn pre_tick_cb;
+    void                 *pre_tick_cb_user;
 
     /** Optional callback invoked after each tick completes. */
     phys_tick_runner_post_tick_fn post_tick_cb;

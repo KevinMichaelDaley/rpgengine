@@ -21,6 +21,8 @@
  *   --- COLL chunk (v2+) ---
  *   [4]  hull_vertex_count (total convex hull vertices)
  *   [joint_count × sizeof(bone_collider_desc_t)]  collider descriptors
+ *     v2/v3: 48 bytes each (no collision_group)
+ *     v4:    52 bytes each (+ uint32 collision_group)
  *   [hull_vertex_count × 12]  hull vertex data (float x,y,z triples)
  *   --- JNTS chunk (v2+) ---
  *   v2: [joint_count × 28]  joint descriptors (legacy)
@@ -46,8 +48,9 @@ extern "C" {
  *  v1: SKEL + CNST + IBM
  *  v2: + COLL + JNTS (28-byte bone_joint_desc)
  *  v3: + expanded JNTS (48-byte bone_joint_desc with per-axis limits)
+ *  v4: + collision_group in COLL (52-byte bone_collider_desc)
  */
-#define FSKEL_VERSION 3u
+#define FSKEL_VERSION 4u
 
 /** @brief Header size in bytes (5 × 4 = 20). */
 #define FSKEL_HEADER_SIZE 20u

@@ -20,6 +20,7 @@
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/convex_hull.h"
 #include "ferrum/physics/convex_compound.h"
+#include "ferrum/physics/phys_pair_set.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -63,6 +64,46 @@ typedef struct phys_world_config {
     float    max_dt_override;          /**< Max dt when using variable timestep (multiplier of fixed_dt, default 3.0). */
     float    auto_ccd_speed;           /**< Speed threshold for auto CCD (m/s, 0 = disabled). */
 } phys_world_config_t;
+
+/* ── Animation substep callback types ───────────────────────────── */
+
+/**
+ * @brief Callback invoked at the start of each physics substep,
+ *        before broadphase / narrowphase / solver.
+ *
+ * Animation code should evaluate its logic (IK, procedural,
+ * constraints, etc.) and write kinematic body positions and
+ * orientations into the world so that joint anchors are correct
+ * when the solver runs.
+ *
+ * @param user        Opaque user pointer.
+ * @param world       Physics world (bodies may be read/written).
+ * @param substep     Zero-based substep index within the current tick.
+ * @param substep_dt  Duration of this substep (seconds).
+ */
+typedef void (*phys_anim_substep_fn)(void *user,
+                                     struct phys_world *world,
+                                     uint32_t substep,
+                                     float substep_dt);
+
+/**
+ * @brief Callback invoked during the integrate stage for dynamic
+ *        (non-kinematic) animation-tier bodies.
+ *
+ * Called after the solver has run but during integration.  Use to
+ * apply animation-driven velocity corrections, position blending,
+ * or motor-like forces to dynamic bones that still have animation
+ * logic but are physically simulated (not kinematic).
+ *
+ * @param user        Opaque user pointer.
+ * @param world       Physics world (bodies_out may be written).
+ * @param substep     Zero-based substep index within the current tick.
+ * @param substep_dt  Duration of this substep (seconds).
+ */
+typedef void (*phys_anim_integrate_fn)(void *user,
+                                       struct phys_world *world,
+                                       uint32_t substep,
+                                       float substep_dt);
 
 /* ── World container ────────────────────────────────────────────── */
 
@@ -151,12 +192,34 @@ typedef struct phys_world {
     uint32_t joint_count;                      /**< Number of active joints. */
     uint32_t joint_capacity;                   /**< Allocated joint capacity. */
 
+    /** Collision exclusion set — body pairs that should never collide.
+     *  Used for animation-tier bones whose colliders overlap in bind
+     *  pose or are directly connected by a joint.  Checked during
+     *  narrowphase to skip excluded pairs. */
+    phys_pair_set_t collision_exclude;
+
     /** Deferred body mutations to apply at end of tick.
      *  Set by the tick runner before calling tick_parallel.
      *  tick_parallel copies bodies_curr → bodies_next, applies these
      *  mutations to bodies_next, then does a final swap to publish
      *  them atomically.  NULL when no deferred mutations exist. */
     struct phys_cmd_mutation_list *pending_mutations;
+
+    /* ── Animation substep callbacks ────────────────────────────── */
+
+    /** Called at the start of each substep, before broadphase/solver.
+     *  Use to evaluate animation logic and set kinematic body
+     *  positions + orientations so the solver sees correct joint
+     *  anchors.  May be NULL. */
+    phys_anim_substep_fn   anim_substep_cb;
+    void                  *anim_substep_user;
+
+    /** Called during the integrate stage for anim-tier bodies that
+     *  are dynamic (not kinematic).  Use to apply animation-driven
+     *  velocity corrections or position blending after the solver
+     *  has run.  May be NULL. */
+    phys_anim_integrate_fn anim_integrate_cb;
+    void                  *anim_integrate_user;
 } phys_world_t;
 
 /* ── Configuration API ──────────────────────────────────────────── */
@@ -507,6 +570,35 @@ phys_joint_t *phys_world_get_joint(phys_world_t *world, uint32_t index);
  * @return Active joint count.
  */
 uint32_t phys_world_joint_count(const phys_world_t *world);
+
+/* ── Collision Exclusion API ─────────────────────────────────────── */
+
+/**
+ * @brief Mark a body pair as excluded from collision detection.
+ *
+ * Excluded pairs are skipped during narrowphase testing.  Use for
+ * animation bones whose colliders overlap in the bind pose or are
+ * directly connected by a joint.
+ *
+ * @param world  World (non-NULL).
+ * @param body_a First body index.
+ * @param body_b Second body index.
+ *
+ * Side effects: inserts into the collision exclusion set.
+ */
+void phys_world_exclude_pair(phys_world_t *world,
+                             uint32_t body_a, uint32_t body_b);
+
+/**
+ * @brief Check whether a body pair is excluded from collision.
+ *
+ * @param world  World (non-NULL).
+ * @param body_a First body index.
+ * @param body_b Second body index.
+ * @return true if the pair is excluded.
+ */
+bool phys_world_is_pair_excluded(const phys_world_t *world,
+                                 uint32_t body_a, uint32_t body_b);
 
 #ifdef __cplusplus
 } /* extern "C" */

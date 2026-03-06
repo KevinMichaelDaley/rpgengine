@@ -1,6 +1,6 @@
 ---
 id: rpg-obl9
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-06T09:20:57Z

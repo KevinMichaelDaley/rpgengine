@@ -14,6 +14,7 @@
 #include <SDL2/SDL.h>
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,8 +31,15 @@
 #include "ferrum/animation/surface_vol.h"
 #include "ferrum/animation/transform_map.h"
 #include "ferrum/animation/fskel_loader.h"
-#include "ferrum/animation/ragdoll.h"
-#include "ferrum/animation/bone_to_body.h"
+#include "ferrum/physics/body.h"
+#include "ferrum/physics/world.h"
+#include "ferrum/physics/tick.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_tick_runner.h"
+#include "ferrum/physics/phys_anim_entity.h"
+#include "ferrum/physics/game_state.h"
+#include "ferrum/job/system.h"
+#include "ferrum/net/topic_channel.h"
 #include "ferrum/renderer/gl_loader.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/video_capture.h"
@@ -299,6 +307,118 @@ static float get_ground_height_(float world_x) {
     return 0.0f;
 }
 
+/* ── Pre-tick animation context ───────────────────────────────────── */
+
+#define STRIDE_LENGTH 3.0f
+#define STEP_HEIGHT   1.5f
+#define WALK_SPEED    1.5f
+
+static vec3_t walk_foot_pos_(float phase, float rest_x,
+                              float rest_y, float rest_z) {
+    vec3_t pos;
+    pos.x = rest_x;
+    if (phase < 0.5f) {
+        float t = phase / 0.5f;
+        pos.z = rest_z + STRIDE_LENGTH * (0.5f - t);
+        pos.y = rest_y;
+    } else {
+        float t = (phase - 0.5f) / 0.5f;
+        pos.z = rest_z + STRIDE_LENGTH * (t - 0.5f);
+        pos.y = rest_y + STEP_HEIGHT * sinf(t * PI);
+    }
+    return pos;
+}
+
+typedef struct ik_ground_ctx {
+    skeleton_def_t       *skel;
+    phys_anim_entity_t   *anim_ent;
+    constraint_solver_t  *solver;
+    mat4_t               *local_pose;
+    mat4_t               *target_pose;
+    uint32_t              idx_foot_l;
+    uint32_t              idx_foot_r;
+    uint32_t              idx_traj;
+    uint32_t              idx_root_master;
+    vec3_t                rest_foot_l;
+    vec3_t                rest_foot_r;
+    float                 walk_x_start;
+    float                 walk_x_end;
+    float                 time_acc;  /**< Accumulated time in seconds. */
+} ik_ground_ctx_t;
+
+/**
+ * @brief Substep callback: advance walk cycle with IK foot targets
+ *        adjusted to step box surface height.  Runs inside each
+ *        physics substep so joints are solved by the XPBD solver.
+ */
+static void ik_ground_substep(void *user, struct phys_world *world,
+                               uint32_t substep, float substep_dt) {
+    (void)substep_dt;
+    ik_ground_ctx_t *ctx = (ik_ground_ctx_t *)user;
+    skeleton_def_t *skel = ctx->skel;
+    uint32_t n = skel->joint_count;
+
+    /* Advance time once per tick (first substep only). */
+    if (substep == 0) {
+        ctx->time_acc += (1.0f / (float)TARGET_FPS);
+    }
+    float progress = ctx->time_acc / ((float)DURATION_SEC);
+    if (progress > 1.0f) progress = 1.0f;
+    float walk_x = ctx->walk_x_start +
+                   progress * (ctx->walk_x_end - ctx->walk_x_start);
+    float cycle = ctx->time_acc * WALK_SPEED;
+    float phase_l = fmodf(cycle, 1.0f);
+    float phase_r = fmodf(cycle + 0.5f, 1.0f);
+
+    /* Build local pose from rest. */
+    memcpy(ctx->local_pose, skel->rest_local, n * sizeof(mat4_t));
+
+    /* Translate trajectory bone to walk_x. */
+    if (ctx->idx_traj < n) {
+        ctx->local_pose[ctx->idx_traj].m[12] += walk_x;
+        float ground_y = get_ground_height_(walk_x);
+        ctx->local_pose[ctx->idx_traj].m[13] += ground_y;
+    }
+
+    /* Set foot IK targets on the ground surface. */
+    float foot_spread = 0.5f;
+    if (ctx->idx_foot_l < n) {
+        float foot_x = walk_x - foot_spread;
+        float gy = get_ground_height_(foot_x);
+        vec3_t fl = walk_foot_pos_(phase_l, ctx->rest_foot_l.x,
+                                    gy, ctx->rest_foot_l.z);
+        fl.x = foot_x;
+        ctx->local_pose[ctx->idx_foot_l].m[12] = fl.x;
+        ctx->local_pose[ctx->idx_foot_l].m[13] = fl.y;
+        ctx->local_pose[ctx->idx_foot_l].m[14] = fl.z;
+    }
+    if (ctx->idx_foot_r < n) {
+        float foot_x = walk_x + foot_spread;
+        float gy = get_ground_height_(foot_x);
+        vec3_t fr = walk_foot_pos_(phase_r, ctx->rest_foot_r.x,
+                                    gy, ctx->rest_foot_r.z);
+        fr.x = foot_x;
+        ctx->local_pose[ctx->idx_foot_r].m[12] = fr.x;
+        ctx->local_pose[ctx->idx_foot_r].m[13] = fr.y;
+        ctx->local_pose[ctx->idx_foot_r].m[14] = fr.z;
+    }
+
+    /* Root master bob. */
+    if (ctx->idx_root_master < n) {
+        float bob = 0.3f * sinf(cycle * 4.0f * PI);
+        ctx->local_pose[ctx->idx_root_master].m[13] += bob;
+    }
+
+    /* Evaluate constraint solver. */
+    memset(ctx->target_pose, 0, n * sizeof(mat4_t));
+    constraint_solver_evaluate(ctx->solver, skel, ctx->local_pose,
+                               ctx->target_pose, n);
+
+    /* Push kinematic body positions. */
+    phys_anim_entity_push_kinematic(ctx->anim_ent, world,
+                                     ctx->target_pose, n);
+}
+
 /* ── Main ─────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -332,25 +452,58 @@ int main(void) {
     }
     printf("  Loaded: %u joints\n", skel.joint_count);
 
-    /* Find foot bones. */
-    uint32_t l_foot = find_bone_(&skel, "c_foot_ik.l");
-    if (l_foot == UINT32_MAX) l_foot = find_bone_(&skel, "foot.ik.L");
-    if (l_foot == UINT32_MAX) l_foot = find_bone_(&skel, "Foot.L");
-    uint32_t r_foot = find_bone_(&skel, "c_foot_ik.r");
-    if (r_foot == UINT32_MAX) r_foot = find_bone_(&skel, "foot.ik.R");
-    if (r_foot == UINT32_MAX) r_foot = find_bone_(&skel, "Foot.R");
+    /* ── Physics setup ──────────────────────────────────────────── */
 
-    printf("  Left foot bone: %u (%s)\n", l_foot,
-           l_foot < skel.joint_count ? skel.joint_names[l_foot] : "NONE");
-    printf("  Right foot bone: %u (%s)\n", r_foot,
-           r_foot < skel.joint_count ? skel.joint_names[r_foot] : "NONE");
+    job_system_t phys_job_sys;
+    if (job_system_create(&phys_job_sys, 2, 4096, 256u * 1024u, 4096, 0)
+        != JOB_CREATE_OK) {
+        fprintf(stderr, "job_system_create failed\n"); return 1;
+    }
+    if (job_system_start(&phys_job_sys) != 0) {
+        fprintf(stderr, "job_system_start failed\n"); return 1;
+    }
 
-    /* Allocate pose buffers and solver. */
-    mat4_t *target_pose = (mat4_t *)malloc(
-        skel.joint_count * sizeof(mat4_t));
-    memcpy(target_pose, skel.rest_world,
-           skel.joint_count * sizeof(mat4_t));
+    phys_world_config_t wcfg = phys_world_config_default();
+    wcfg.max_bodies = 512;
+    wcfg.max_colliders = 512;
+    wcfg.max_joints = 512;
+    phys_world_t world;
+    if (phys_world_init(&world, &wcfg) != 0) {
+        fprintf(stderr, "phys_world_init failed\n"); return 1;
+    }
 
+    /* Ground plane. */
+    uint32_t ground_id = phys_world_create_body(&world);
+    {
+        phys_body_t *ground = phys_world_get_body(&world, ground_id);
+        ground->flags |= PHYS_BODY_FLAG_STATIC;
+        phys_world_set_halfspace_collider(&world, ground_id,
+            (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
+    }
+
+    /* Step boxes as static box colliders. */
+    for (int s = 0; s < NUM_STEPS; s++) {
+        uint32_t bid = phys_world_create_body(&world);
+        phys_body_t *b = phys_world_get_body(&world, bid);
+        b->flags |= PHYS_BODY_FLAG_STATIC;
+        b->position = (phys_vec3_t){
+            STEPS[s].x, STEPS[s].y * 0.5f, STEPS[s].z
+        };
+        phys_world_set_box_collider(&world, bid,
+            (phys_vec3_t){STEPS[s].half_w, STEPS[s].y * 0.5f, STEPS[s].half_w},
+            (phys_vec3_t){0, 0, 0}, (phys_quat_t){0, 0, 0, 1});
+    }
+
+    /* Register skeleton as animated entity. */
+    phys_anim_entity_t anim_ent;
+    if (!phys_anim_entity_create(&anim_ent, &world, &skel,
+                                  skel.rest_world)) {
+        fprintf(stderr, "phys_anim_entity_create failed\n"); return 1;
+    }
+    printf("  Animated entity: %u bodies, %u joints\n",
+           anim_ent.body_count, anim_ent.joint_count);
+
+    /* Set up constraint solver. */
     constraint_solver_t solver;
     constraint_solver_init(&solver, skel.joint_count,
                            skel.max_constraints_per_joint);
@@ -360,14 +513,91 @@ int main(void) {
     surface_vol_register(&solver);
     transform_map_register(&solver);
 
-    /* Create ragdoll. */
-    ragdoll_t ragdoll;
-    bool ragdoll_ok = ragdoll_create(&ragdoll, &skel, skel.rest_world);
-    if (ragdoll_ok) {
-        ragdoll_set_motor_strength(&ragdoll, 1.0f);
-        printf("  Ragdoll: %u bodies, %u joints\n",
-               ragdoll.bone_count, ragdoll.joint_count);
+    /* Allocate pose buffers. */
+    mat4_t *local_pose  = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
+    mat4_t *target_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
+
+    /* Find control bones. */
+    uint32_t idx_foot_l = find_bone_(&skel, "c_foot_ik.l");
+    if (idx_foot_l == UINT32_MAX) idx_foot_l = find_bone_(&skel, "foot.ik.L");
+    if (idx_foot_l == UINT32_MAX) idx_foot_l = find_bone_(&skel, "Foot.L");
+    uint32_t idx_foot_r = find_bone_(&skel, "c_foot_ik.r");
+    if (idx_foot_r == UINT32_MAX) idx_foot_r = find_bone_(&skel, "foot.ik.R");
+    if (idx_foot_r == UINT32_MAX) idx_foot_r = find_bone_(&skel, "Foot.R");
+
+    uint32_t idx_traj = find_bone_(&skel, "c_traj");
+    uint32_t idx_root_master = find_bone_(&skel, "c_root_master.x");
+
+    printf("  Left foot: %u, Right foot: %u\n", idx_foot_l, idx_foot_r);
+
+    vec3_t rest_foot_l = {0}, rest_foot_r = {0};
+    if (idx_foot_l < skel.joint_count) {
+        rest_foot_l = (vec3_t){
+            skel.rest_world[idx_foot_l].m[12],
+            skel.rest_world[idx_foot_l].m[13],
+            skel.rest_world[idx_foot_l].m[14]
+        };
     }
+    if (idx_foot_r < skel.joint_count) {
+        rest_foot_r = (vec3_t){
+            skel.rest_world[idx_foot_r].m[12],
+            skel.rest_world[idx_foot_r].m[13],
+            skel.rest_world[idx_foot_r].m[14]
+        };
+    }
+
+    /* Pre-tick context. */
+    float walk_x_start = -4.0f;
+    float walk_x_end   =  4.0f;
+
+    ik_ground_ctx_t anim_ctx;
+    memset(&anim_ctx, 0, sizeof(anim_ctx));
+    anim_ctx.skel            = &skel;
+    anim_ctx.anim_ent        = &anim_ent;
+    anim_ctx.solver          = &solver;
+    anim_ctx.local_pose      = local_pose;
+    anim_ctx.target_pose     = target_pose;
+    anim_ctx.idx_foot_l      = idx_foot_l;
+    anim_ctx.idx_foot_r      = idx_foot_r;
+    anim_ctx.idx_traj        = (idx_traj != UINT32_MAX) ? idx_traj : skel.joint_count;
+    anim_ctx.idx_root_master = (idx_root_master != UINT32_MAX) ? idx_root_master : skel.joint_count;
+    anim_ctx.rest_foot_l     = rest_foot_l;
+    anim_ctx.rest_foot_r     = rest_foot_r;
+    anim_ctx.walk_x_start    = walk_x_start;
+    anim_ctx.walk_x_end      = walk_x_end;
+
+    /* Physics job context + tick runner. */
+    phys_job_context_t phys_jobs;
+    phys_job_context_init(&phys_jobs, &phys_job_sys);
+
+    fr_topic_channel_config_t chan_cfg = {
+        .capacity = 64, .capacity_bytes = 64 * 1024,
+        .max_message_size = 1024,
+        .backpressure = FR_TOPIC_BACKPRESSURE_FAIL
+    };
+    fr_topic_channel_t *cmd_channel = fr_topic_channel_create(&chan_cfg);
+
+    phys_tick_runner_t tick_runner;
+    phys_tick_runner_init(&tick_runner, &world, &phys_jobs,
+                          cmd_channel, NULL, NULL, NULL);
+
+    /* Set animation substep callback on the WORLD — runs inside each
+     * physics substep so skeleton joints are solved by XPBD alongside
+     * collision contacts. */
+    world.anim_substep_cb   = ik_ground_substep;
+    world.anim_substep_user = &anim_ctx;
+
+    phys_game_state_t game_state;
+    phys_game_state_init(&game_state);
+    phys_player_state_t player0 = {
+        .position = {0.0f, 0.0f, 0.0f},
+        .interaction_radius = 20.0f,
+    };
+    phys_game_state_set_player(&game_state, 0, &player0);
+    tick_runner.game_state = &game_state;
+
+    phys_tick_runner_start(&tick_runner);
+    printf("  Tick runner started\n");
 
     /* Video capture. */
     system("mkdir -p tests/output");
@@ -387,20 +617,19 @@ int main(void) {
     int gl_error_count = 0;
     int frame_count = 0;
 
-    /* Skeleton walks from left to right across the steps. */
-    float walk_x_start = -4.0f;
-    float walk_x_end   =  4.0f;
-
     /* ── Render loop ──────────────────────────────────────────────── */
 
     for (int f = 0; f < TOTAL_FRAMES; ++f) {
         uint32_t frame_start = SDL_GetTicks();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        /* Sync bone transforms from physics world. */
+        phys_anim_entity_sync_from_world(&anim_ent, &world);
+
         float progress = (float)f / (float)(TOTAL_FRAMES - 1);
         float walk_x = walk_x_start + progress * (walk_x_end - walk_x_start);
 
-        /* Adjust foot IK targets to the ground height at current position. */
+        /* Foot IK targets for visualization. */
         float foot_spread = 0.5f;
         vec3_t l_foot_target = {
             walk_x - foot_spread,
@@ -412,42 +641,6 @@ int main(void) {
             get_ground_height_(walk_x + foot_spread),
             0.0f
         };
-
-        /* Apply foot targets to the pose (translate foot bones). */
-        if (l_foot < skel.joint_count) {
-            target_pose[l_foot] = skel.rest_world[l_foot];
-            target_pose[l_foot].m[12] = l_foot_target.x;
-            target_pose[l_foot].m[13] = l_foot_target.y;
-            target_pose[l_foot].m[14] = l_foot_target.z;
-        }
-        if (r_foot < skel.joint_count) {
-            target_pose[r_foot] = skel.rest_world[r_foot];
-            target_pose[r_foot].m[12] = r_foot_target.x;
-            target_pose[r_foot].m[13] = r_foot_target.y;
-            target_pose[r_foot].m[14] = r_foot_target.z;
-        }
-
-        /* Translate entire skeleton root to walk_x. */
-        for (uint32_t i = 0; i < skel.joint_count; i++) {
-            if (skel.parent_indices[i] == UINT32_MAX) {
-                target_pose[i] = skel.rest_world[i];
-                target_pose[i].m[12] += walk_x;
-                float ground_y = get_ground_height_(walk_x);
-                target_pose[i].m[13] += ground_y;
-            }
-        }
-
-        /* Run solver. */
-        constraint_solver_evaluate(
-            &solver, &skel, skel.rest_world, target_pose, 4);
-
-        if (ragdoll_ok) {
-            ragdoll_update_motor_targets(&ragdoll, target_pose,
-                                         skel.joint_count);
-            anim_bones_to_bodies(target_pose, skel.colliders,
-                                 ragdoll.bodies, skel.joint_count);
-            ragdoll_sync_from_physics(&ragdoll);
-        }
 
         /* ── Draw ─────────────────────────────────────────────── */
         begin_lines_();
@@ -464,9 +657,7 @@ int main(void) {
         draw_target_(r_foot_target, 0.2f, 1.0f, 0.4f, 0.2f);
 
         /* Draw skeleton. */
-        const mat4_t *draw_pose = ragdoll_ok ? ragdoll.bone_world
-                                             : target_pose;
-        draw_skeleton_(&skel, draw_pose);
+        draw_skeleton_(&skel, anim_ent.bone_world);
 
         /* Camera follows the walk. */
         mat4_t view, proj;
@@ -508,12 +699,19 @@ int main(void) {
     }
 
     /* Cleanup. */
+    phys_tick_runner_stop(&tick_runner);
     if (capture) fr_video_capture_destroy(capture);
-    if (ragdoll_ok) ragdoll_destroy(&ragdoll);
     constraint_solver_destroy(&solver);
+    free(local_pose);
     free(target_pose);
+    phys_anim_entity_destroy(&anim_ent);
     cleanup_line_buffer_();
     shader_program_destroy(&shader);
+    phys_tick_runner_destroy(&tick_runner);
+    phys_job_context_destroy(&phys_jobs);
+    if (cmd_channel) fr_topic_channel_destroy(cmd_channel);
+    phys_world_destroy(&world);
+    job_system_shutdown(&phys_job_sys);
     skeleton_def_destroy(&skel);
     if (ibms) free(ibms);
     cleanup_gl_context_();

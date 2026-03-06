@@ -1,6 +1,6 @@
 ---
 id: rpg-rcii
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-06T09:19:20Z

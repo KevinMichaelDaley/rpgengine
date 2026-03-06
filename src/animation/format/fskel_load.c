@@ -112,9 +112,20 @@ bool fskel_load(const char *path,
             joint_count, sizeof(bone_collider_desc_t));
         if (!out_skel->colliders) goto fail_skel;
 
-        if (fread(out_skel->colliders, sizeof(bone_collider_desc_t),
-                  joint_count, f) != joint_count)
-            goto fail_skel;
+        if (version >= 4) {
+            /* v4+: 52-byte records (includes collision_group). */
+            if (fread(out_skel->colliders, sizeof(bone_collider_desc_t),
+                      joint_count, f) != joint_count)
+                goto fail_skel;
+        } else {
+            /* v2/v3: 48-byte records (no collision_group).
+             * Read each record individually and zero collision_group. */
+            for (uint32_t i = 0; i < joint_count; i++) {
+                if (fread(&out_skel->colliders[i], 48, 1, f) != 1)
+                    goto fail_skel;
+                out_skel->colliders[i].collision_group = 0;
+            }
+        }
 
         /* Read convex hull vertex data. */
         if (hull_vertex_count > 0) {

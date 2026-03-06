@@ -27,6 +27,7 @@
 #include "ferrum/physics/narrowphase_convex.h"
 #include "ferrum/physics/convex_compound.h"
 #include "ferrum/physics/collision/halfspace.h"
+#include "ferrum/physics/phys_pair_set.h"
 #include "ferrum/physics/step_plan.h"
 
 #ifdef TRACY_ENABLE
@@ -145,6 +146,16 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
 {
     uint32_t a = args->pairs[pair_idx].body_a;
     uint32_t b = args->pairs[pair_idx].body_b;
+
+    /* Skip excluded pairs (e.g. animation bones overlapping in bind pose). */
+    if (args->exclude_set) {
+        uint32_t lo = a < b ? a : b;
+        uint32_t hi = a < b ? b : a;
+        uint64_t key = ((uint64_t)lo << 32) | (uint64_t)hi;
+        if (phys_pair_set_contains(args->exclude_set, key)) {
+            return 0;
+        }
+    }
 
     /* Skip pairs where both bodies are sleeping. */
     if (phys_body_is_sleeping(&args->bodies[a]) &&

@@ -1,6 +1,6 @@
 ---
 id: rpg-sqf8
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-06T09:20:10Z

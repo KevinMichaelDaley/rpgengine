@@ -1,5 +1,6 @@
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/cache_commit.h"
+#include "ferrum/memory/vm_alloc.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -15,29 +16,30 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
     memset(world, 0, sizeof(*world));
     world->config = *config;
 
-    /* Initialize body pool. */
+    /* Initialize body pool (uses demand-paged VM internally). */
     if (phys_body_pool_init(&world->body_pool, config->max_bodies) != 0) {
         return -1;
     }
 
-    /* Allocate per-body collider and AABB arrays. */
-    world->colliders = calloc(config->max_bodies, sizeof(phys_collider_t));
-    world->aabbs     = calloc(config->max_bodies, sizeof(phys_aabb_t));
+    /* Allocate per-body arrays via demand-paged virtual memory so only
+     * touched pages consume physical RAM. */
+    size_t nb = (size_t)config->max_bodies;
+
+    world->colliders  = vm_reserve(nb * sizeof(phys_collider_t));
+    world->aabbs      = vm_reserve(nb * sizeof(phys_aabb_t));
     if (!world->colliders || !world->aabbs) {
         phys_world_destroy(world);
         return -1;
     }
 
-    /* Allocate shape arrays (max_bodies is an upper bound). */
-    world->spheres  = calloc(config->max_bodies, sizeof(phys_sphere_t));
-    world->boxes    = calloc(config->max_bodies, sizeof(phys_box_t));
-    world->capsules = calloc(config->max_bodies, sizeof(phys_capsule_t));
-    world->meshes   = calloc(config->max_bodies, sizeof(phys_mesh_shape_t));
-    world->halfspaces = calloc(config->max_bodies, sizeof(phys_halfspace_t));
-    world->compounds  = calloc(config->max_bodies, sizeof(phys_convex_compound_t));
-    /* Convex hulls pool: up to 8 hulls per body on average. */
-    world->convex_hulls = calloc(config->max_bodies * 8,
-                                 sizeof(phys_convex_hull_t));
+    /* Shape arrays (max_bodies is an upper bound). */
+    world->spheres      = vm_reserve(nb * sizeof(phys_sphere_t));
+    world->boxes        = vm_reserve(nb * sizeof(phys_box_t));
+    world->capsules     = vm_reserve(nb * sizeof(phys_capsule_t));
+    world->meshes       = vm_reserve(nb * sizeof(phys_mesh_shape_t));
+    world->halfspaces   = vm_reserve(nb * sizeof(phys_halfspace_t));
+    world->compounds    = vm_reserve(nb * sizeof(phys_convex_compound_t));
+    world->convex_hulls = vm_reserve(nb * 8 * sizeof(phys_convex_hull_t));
     if (!world->spheres || !world->boxes || !world->capsules || !world->meshes
         || !world->halfspaces || !world->compounds || !world->convex_hulls) {
         phys_world_destroy(world);
@@ -81,6 +83,12 @@ int phys_world_init(phys_world_t *world, const phys_world_config_t *config) {
     world->joint_count    = 0;
     world->joint_capacity = max_joints;
 
+    /* Initialize collision exclusion set (4K slots default). */
+    if (!phys_pair_set_init(&world->collision_exclude, 4096)) {
+        phys_world_destroy(world);
+        return -1;
+    }
+
     world->tick_count = 0;
     return 0;
 }
@@ -92,20 +100,25 @@ void phys_world_destroy(phys_world_t *world) {
 
     phys_body_pool_destroy(&world->body_pool);
 
-    free(world->colliders);
-    free(world->aabbs);
-    free(world->spheres);
-    free(world->boxes);
-    free(world->capsules);
-    free(world->meshes);
-    free(world->halfspaces);
-    free(world->compounds);
-    free(world->convex_hulls);
+    size_t nb = (size_t)world->config.max_bodies;
+
+    vm_release(world->colliders,    nb * sizeof(phys_collider_t));
+    vm_release(world->aabbs,        nb * sizeof(phys_aabb_t));
+    vm_release(world->spheres,      nb * sizeof(phys_sphere_t));
+    vm_release(world->boxes,        nb * sizeof(phys_box_t));
+    vm_release(world->capsules,     nb * sizeof(phys_capsule_t));
+    vm_release(world->meshes,       nb * sizeof(phys_mesh_shape_t));
+    vm_release(world->halfspaces,   nb * sizeof(phys_halfspace_t));
+    vm_release(world->compounds,    nb * sizeof(phys_convex_compound_t));
+    vm_release(world->convex_hulls, nb * 8 * sizeof(phys_convex_hull_t));
+
+    /* Impact events and joints use small fixed-size calloc. */
     free(world->impact_events);
     free(world->joints);
 
     free(world->static_bucket_flags);
 
+    phys_pair_set_destroy(&world->collision_exclude);
     phys_manifold_cache_destroy(&world->manifold_cache);
     phys_frame_arena_destroy(&world->static_bvh_arena);
     phys_frame_arena_destroy(&world->frame_arena);

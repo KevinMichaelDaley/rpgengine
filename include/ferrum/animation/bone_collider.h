@@ -55,6 +55,10 @@ typedef struct bone_collider_desc {
                               *   Ignored if is_kinematic. */
     uint32_t hull_offset;    /**< Byte offset into hull vertex data (shape_type=4 only). */
     uint32_t hull_count;     /**< Vertex count for convex hull (shape_type=4 only). */
+    uint32_t collision_group; /**< Collision group index.  Bodies in the same
+                               *   non-zero group skip collision with each other.
+                               *   0 = default (no group filtering).
+                               *   Exported from fskel v4+ COLL chunk. */
 } bone_collider_desc_t;
 
 #ifdef __cplusplus

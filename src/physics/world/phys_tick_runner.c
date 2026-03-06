@@ -220,6 +220,13 @@ static void *tick_thread_fn_(void *user_data) {
         r->world->pending_mutations =
             (mutations.used > 0) ? &mutations : NULL;
 
+        /* Pre-tick callback: advance animation, push kinematic poses. */
+        uint64_t upcoming_tick = atomic_load_explicit(
+            &r->completed_ticks, memory_order_relaxed) + 1;
+        if (r->pre_tick_cb) {
+            r->pre_tick_cb(r->pre_tick_cb_user, r->world, upcoming_tick);
+        }
+
         /* Run one physics tick (dispatches parallel jobs to workers). */
         uint64_t tick_start_ns = runner_clock_ns_();
         phys_world_tick_parallel(r->world, r->game_state, r->jobs);

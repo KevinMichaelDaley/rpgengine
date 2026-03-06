@@ -2,9 +2,10 @@
  * @file p005_visual_ragdoll_drop.c
  * @brief Visual test: ragdoll drop onto ground plane.
  *
- * Loads humanoid.fskel, creates a ragdoll with all animation motors
- * disabled (pure ragdoll), drops it from height=5 onto y=0 ground,
- * and renders bone lines for 3 seconds.
+ * Loads humanoid.fskel, registers the skeleton as an animated entity
+ * in a real physics world with job system + tick runner, drops it from
+ * height=5 onto a halfspace ground at y=0, and renders bone lines
+ * for 3 seconds.  All bones are non-kinematic (pure ragdoll).
  *
  * PASS if frame_count >= TOTAL_FRAMES and no GL errors.
  */
@@ -13,6 +14,7 @@
 #include <SDL2/SDL.h>
 
 #include <math.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,9 +25,15 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/fskel_loader.h"
-#include "ferrum/animation/ragdoll.h"
-#include "ferrum/animation/bone_to_body.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/world.h"
+#include "ferrum/physics/tick.h"
+#include "ferrum/physics/phys_jobs.h"
+#include "ferrum/physics/phys_tick_runner.h"
+#include "ferrum/physics/phys_anim_entity.h"
+#include "ferrum/physics/game_state.h"
+#include "ferrum/job/system.h"
+#include "ferrum/net/topic_channel.h"
 #include "ferrum/renderer/gl_loader.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/video_capture.h"
@@ -254,6 +262,41 @@ int main(void) {
     }
     printf("  Loaded: %u joints\n", skel.joint_count);
 
+    /* ── Physics setup ──────────────────────────────────────────── */
+
+    /* Job system for physics parallel stages. */
+    job_system_t phys_job_sys;
+    if (job_system_create(&phys_job_sys, 2, 4096, 256u * 1024u, 4096, 0)
+        != JOB_CREATE_OK) {
+        fprintf(stderr, "job_system_create failed\n");
+        return 1;
+    }
+    if (job_system_start(&phys_job_sys) != 0) {
+        fprintf(stderr, "job_system_start failed\n");
+        return 1;
+    }
+
+    /* Physics world. */
+    phys_world_config_t wcfg = phys_world_config_default();
+    wcfg.max_bodies = 512;
+    wcfg.max_colliders = 512;
+    wcfg.max_joints = 512;
+    phys_world_t world;
+    if (phys_world_init(&world, &wcfg) != 0) {
+        fprintf(stderr, "phys_world_init failed\n");
+        return 1;
+    }
+
+    /* Ground plane: static halfspace at y=0. */
+    uint32_t ground_id = phys_world_create_body(&world);
+    {
+        phys_body_t *ground = phys_world_get_body(&world, ground_id);
+        ground->position = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        ground->flags |= PHYS_BODY_FLAG_STATIC;
+        phys_world_set_halfspace_collider(&world, ground_id,
+            (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
+    }
+
     /* Create initial world pose: skeleton raised by DROP_HEIGHT. */
     mat4_t *initial_pose = (mat4_t *)malloc(
         skel.joint_count * sizeof(mat4_t));
@@ -263,25 +306,67 @@ int main(void) {
         initial_pose[i].m[13] += DROP_HEIGHT;
     }
 
-    /* Create ragdoll with motor_strength = 0 (pure ragdoll). */
-    ragdoll_t ragdoll;
-    if (!ragdoll_create(&ragdoll, &skel, initial_pose)) {
-        fprintf(stderr, "Failed to create ragdoll\n");
-        free(initial_pose);
-        skeleton_def_destroy(&skel);
-        if (ibms) free(ibms);
-        cleanup_line_buffer_();
-        shader_program_destroy(&shader);
-        cleanup_gl_context_();
+    /* Register skeleton as an animated entity in the physics world.
+     * All bones with colliders become real physics bodies; joints
+     * from fskel JNTS chunk are created between parent-child pairs. */
+    phys_anim_entity_t anim_ent;
+    if (!phys_anim_entity_create(&anim_ent, &world, &skel, initial_pose)) {
+        fprintf(stderr, "phys_anim_entity_create failed\n");
         return 1;
     }
-    ragdoll_set_motor_strength(&ragdoll, 0.0f);
-    printf("  Ragdoll: %u bodies, %u joints (motors OFF)\n",
-           ragdoll.bone_count, ragdoll.joint_count);
+    printf("  Animated entity: %u bodies, %u joints (pure ragdoll)\n",
+           anim_ent.body_count, anim_ent.joint_count);
+
+    /* Make all bodies non-kinematic (override fskel is_kinematic flags)
+     * so the entire skeleton falls under gravity as a pure ragdoll. */
+    for (uint32_t i = 0; i < anim_ent.bone_count; i++) {
+        uint32_t bi = anim_ent.body_indices[i];
+        if (bi == UINT32_MAX) continue;
+        phys_body_t *body = phys_world_get_body(&world, bi);
+        if (!body) continue;
+        if (phys_body_is_kinematic(body)) {
+            body->flags &= ~(uint32_t)PHYS_BODY_FLAG_KINEMATIC;
+            phys_body_set_mass(body, 1.0f);
+            phys_body_set_capsule_inertia(body, 1.0f, 0.05f, 0.1f);
+        }
+    }
+
+    /* Physics job context + tick runner. */
+    phys_job_context_t phys_jobs;
+    phys_job_context_init(&phys_jobs, &phys_job_sys);
+
+    /* Command channel (required by tick runner, can be empty). */
+    fr_topic_channel_config_t chan_cfg = {
+        .capacity = 64,
+        .capacity_bytes = 64 * 1024,
+        .max_message_size = 1024,
+        .backpressure = FR_TOPIC_BACKPRESSURE_FAIL
+    };
+    fr_topic_channel_t *cmd_channel = fr_topic_channel_create(&chan_cfg);
+
+    phys_tick_runner_t tick_runner;
+    phys_tick_runner_init(&tick_runner, &world, &phys_jobs,
+                          cmd_channel, NULL, NULL, NULL);
+
+    /* Game state (player at origin for tier classification). */
+    phys_game_state_t game_state;
+    phys_game_state_init(&game_state);
+    phys_player_state_t player0 = {
+        .position = {0.0f, 5.0f, 0.0f},
+        .interaction_radius = 20.0f,
+    };
+    phys_game_state_set_player(&game_state, 0, &player0);
+    tick_runner.game_state = &game_state;
+
+    /* No pre-tick callback — pure ragdoll, no animation. */
+
+    /* Start the physics tick runner thread. */
+    phys_tick_runner_start(&tick_runner);
+    printf("  Tick runner started\n");
 
     /* Video capture. */
     system("mkdir -p tests/output");
-    fr_video_capture_desc_t cap_desc;
+    fr_video_capture_desc_t cap_desc = {0};
     cap_desc.width       = WINDOW_W;
     cap_desc.height      = WINDOW_H;
     cap_desc.fps         = TARGET_FPS;
@@ -304,31 +389,13 @@ int main(void) {
         uint32_t frame_start = SDL_GetTicks();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        /* Apply gravity to all non-kinematic bodies. */
-        for (uint32_t i = 0; i < ragdoll.bone_count; i++) {
-            if (ragdoll.bodies[i].inv_mass > 0.0f) {
-                ragdoll.bodies[i].linear_vel.y += GRAVITY * DT;
-                ragdoll.bodies[i].position.x += ragdoll.bodies[i].linear_vel.x * DT;
-                ragdoll.bodies[i].position.y += ragdoll.bodies[i].linear_vel.y * DT;
-                ragdoll.bodies[i].position.z += ragdoll.bodies[i].linear_vel.z * DT;
-
-                /* Simple ground collision: clamp Y and bounce. */
-                if (ragdoll.bodies[i].position.y < GROUND_Y) {
-                    ragdoll.bodies[i].position.y = GROUND_Y;
-                    ragdoll.bodies[i].linear_vel.y *= -0.3f; /* Bounce damping. */
-                    ragdoll.bodies[i].linear_vel.x *= 0.9f;
-                    ragdoll.bodies[i].linear_vel.z *= 0.9f;
-                }
-            }
-        }
-
-        /* Sync physics → bone matrices. */
-        ragdoll_sync_from_physics(&ragdoll);
+        /* Sync bone world transforms from physics bodies. */
+        phys_anim_entity_sync_from_world(&anim_ent, &world);
 
         /* ── Draw ─────────────────────────────────────────────── */
         begin_lines_();
         draw_ground_grid_(GROUND_Y, 15.0f, 30);
-        draw_skeleton_(&skel, ragdoll.bone_world);
+        draw_skeleton_(&skel, anim_ent.bone_world);
 
         /* Camera: fixed view looking at the drop zone. */
         mat4_t view, proj;
@@ -369,21 +436,31 @@ int main(void) {
             SDL_Delay(frame_interval_ms - elapsed);
     }
 
-    /* Verify the ragdoll dropped: final average Y should be near ground. */
+    /* Verify the ragdoll dropped: check some bodies near ground. */
     float avg_y = 0.0f;
-    for (uint32_t i = 0; i < ragdoll.bone_count; i++) {
-        avg_y += ragdoll.bodies[i].position.y;
+    uint32_t counted = 0;
+    for (uint32_t i = 0; i < anim_ent.bone_count; i++) {
+        uint32_t bi = anim_ent.body_indices[i];
+        if (bi == UINT32_MAX) continue;
+        const phys_body_t *body = phys_world_get_body(&world, bi);
+        if (body) { avg_y += body->position.y; counted++; }
     }
-    avg_y /= (float)ragdoll.bone_count;
+    if (counted > 0) avg_y /= (float)counted;
     printf("  Final avg body Y: %.2f (should be near %.1f)\n",
            (double)avg_y, (double)GROUND_Y);
 
     /* Cleanup. */
+    phys_tick_runner_stop(&tick_runner);
     if (capture) fr_video_capture_destroy(capture);
     cleanup_line_buffer_();
     shader_program_destroy(&shader);
-    ragdoll_destroy(&ragdoll);
+    phys_anim_entity_destroy(&anim_ent);
     free(initial_pose);
+    phys_tick_runner_destroy(&tick_runner);
+    phys_job_context_destroy(&phys_jobs);
+    if (cmd_channel) fr_topic_channel_destroy(cmd_channel);
+    phys_world_destroy(&world);
+    job_system_shutdown(&phys_job_sys);
     skeleton_def_destroy(&skel);
     if (ibms) free(ibms);
     cleanup_gl_context_();

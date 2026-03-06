@@ -70,7 +70,7 @@
 #define GRID_CELL_SIZE 2.0f
 
 /** Maximum broadphase pairs per substep. */
-#define MAX_PAIRS_PER_SUBSTEP 10000
+#define MAX_PAIRS_PER_SUBSTEP 500000
 
 /* ── Adaptive solver sub-substeps ──────────────────────────────── */
 
@@ -683,9 +683,6 @@ void phys_world_tick_parallel(phys_world_t *world,
     }
 
     uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
-    if (max_pairs > body_cap * 4) {
-        max_pairs = body_cap * 4 > 0 ? body_cap * 4 : 1;
-    }
     phys_collision_pair_t *pairs = phys_frame_arena_alloc(
         &world->frame_arena,
         max_pairs * sizeof(phys_collision_pair_t),
@@ -747,6 +744,15 @@ void phys_world_tick_parallel(phys_world_t *world,
     }
 
     for (uint32_t sub = 0; sub < max_substeps; sub++) {
+
+        /* ── Animation substep callback ────────────────────────── */
+        /* Invoked before broadphase/solver so animation code can
+         * set kinematic bone positions+orientations.  The solver
+         * then sees correct joint anchors. */
+        if (world->anim_substep_cb) {
+            world->anim_substep_cb(world->anim_substep_user, world,
+                                   sub, substep_dt);
+        }
 
         /* ── Stage 4: AABB Update [SYNC, skip first substep] ──── */
         if (sub > 0) {
@@ -883,6 +889,8 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .pair_count          = pair_count,
                 .speculative_margin  = 0.0f,
                 .skip_pair           = ccd_skip_pair,
+                .exclude_set         = world->collision_exclude.capacity > 0
+                                         ? &world->collision_exclude : NULL,
                 .cache               = &world->manifold_cache,
                 .tick                = world->tick_count,
                 .resting_velocity_threshold = 0.1f,
@@ -1400,6 +1408,15 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_integ);
 #endif
+
+            /* ── Animation integrate callback ──────────────────── */
+            /* Called after standard integration for dynamic
+             * anim-tier bodies that need animation-driven velocity
+             * corrections or position blending. */
+            if (world->anim_integrate_cb) {
+                world->anim_integrate_cb(world->anim_integrate_user,
+                                         world, sub, substep_dt);
+            }
         }
 
         /* ── Stage 12c: CCD (swept sphere vs static mesh) ─────── */

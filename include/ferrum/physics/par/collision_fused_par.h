@@ -27,6 +27,7 @@
 #include "ferrum/physics/convex_compound.h"
 #include "ferrum/physics/stabilization.h"
 #include "ferrum/physics/constraint.h"
+#include "ferrum/physics/phys_pair_set.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,6 +60,11 @@ typedef struct phys_collision_fused_args {
     /** Optional per-pair skip flags (pair_count entries).  If non-NULL,
      *  pairs where skip_pair[i] != 0 are skipped (already handled by CCD). */
     const uint8_t              *skip_pair;
+
+    /** Optional collision exclusion set.  If non-NULL, pairs whose
+     *  canonical key is in this set are skipped (e.g. animation bones
+     *  that overlap in bind pose). */
+    const phys_pair_set_t      *exclude_set;
 
     /* ── Manifold cache ─────────────────────────────────────────── */
     struct phys_manifold_cache *cache;        /**< Shared manifold cache. */
