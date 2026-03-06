@@ -153,6 +153,31 @@ gltf_status_t gltf_scene_create_skeletal_mesh(const gltf_scene_t *scene,
  */
 uint32_t gltf_scene_joint_count(const gltf_scene_t *scene);
 
+/**
+ * @brief Compute bind-pose bone matrices for the first skin.
+ *
+ * Walks the joint node hierarchy to compute each joint's world-space
+ * transform, then multiplies by the corresponding inverse bind matrix:
+ *
+ *     bone[j] = joint_world_transform[j] × inverse_bind_matrix[j]
+ *
+ * This produces the correct bind-pose matrices for rendering skinned
+ * meshes that share the same armature but have different node pivots.
+ *
+ * @param scene      Loaded scene (non-NULL, must have at least one skin).
+ * @param out_mats   Output array of column-major mat4 (16 floats each).
+ *                   Must be large enough for joint_count matrices.
+ * @param capacity   Number of mat4 slots in out_mats. Must be >=
+ *                   gltf_scene_joint_count(scene).
+ * @return GLTF_OK on success, GLTF_ERR_INVALID if parameters are bad.
+ *
+ * @note Ownership: caller owns out_mats.
+ * @note The output matrices are in column-major layout (OpenGL).
+ */
+gltf_status_t gltf_scene_compute_bind_pose(const gltf_scene_t *scene,
+                                            float *out_mats,
+                                            uint32_t capacity);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

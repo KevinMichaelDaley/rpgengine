@@ -9,7 +9,9 @@
 #include <glad/glad.h>
 #include <SDL2/SDL.h>
 
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ferrum/renderer/gl_loader.h"
@@ -226,6 +228,72 @@ static int test_mesh_count_null(void) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+ *  BIND POSE COMPUTATION
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/**
+ * Bind pose matrices should be non-identity when the skeleton has
+ * actual joint transforms and inverse bind matrices.
+ */
+static int test_compute_bind_pose(void) {
+    gltf_scene_t *scene = NULL;
+    gltf_scene_load("asset_src/humanoid.glb", &scene);
+
+    uint32_t joint_count = gltf_scene_joint_count(scene);
+    ASSERT_TRUE(joint_count == 333);
+
+    float *bind_pose = (float *)malloc((size_t)joint_count * 16 * sizeof(float));
+    ASSERT_TRUE(bind_pose != NULL);
+
+    gltf_status_t rc = gltf_scene_compute_bind_pose(scene, bind_pose,
+                                                     joint_count);
+    ASSERT_EQ(GLTF_OK, rc);
+
+    /* At least some bones should NOT be identity — the humanoid has
+       non-trivial joint transforms and inverse bind matrices. */
+    int non_identity = 0;
+    for (uint32_t j = 0; j < joint_count; ++j) {
+        float *m = &bind_pose[j * 16];
+        /* Quick check: if m[12],m[13],m[14] (translation) are all 0
+           AND diagonal is all 1, it's identity. */
+        int is_ident = (fabsf(m[0] - 1.0f) < 1e-5f &&
+                        fabsf(m[5] - 1.0f) < 1e-5f &&
+                        fabsf(m[10] - 1.0f) < 1e-5f &&
+                        fabsf(m[15] - 1.0f) < 1e-5f &&
+                        fabsf(m[12]) < 1e-5f &&
+                        fabsf(m[13]) < 1e-5f &&
+                        fabsf(m[14]) < 1e-5f);
+        if (!is_ident) non_identity++;
+    }
+    ASSERT_TRUE(non_identity > 0);
+
+    free(bind_pose);
+    gltf_scene_destroy(scene);
+    return 0;
+}
+
+/* Bind pose with NULL scene should fail. */
+static int test_compute_bind_pose_null(void) {
+    float dummy[16];
+    gltf_status_t rc = gltf_scene_compute_bind_pose(NULL, dummy, 1);
+    ASSERT_EQ(GLTF_ERR_INVALID, rc);
+    return 0;
+}
+
+/* Bind pose with insufficient buffer capacity should fail. */
+static int test_compute_bind_pose_small_buffer(void) {
+    gltf_scene_t *scene = NULL;
+    gltf_scene_load("asset_src/humanoid.glb", &scene);
+
+    float buf[16]; /* only 1 bone, need 333 */
+    gltf_status_t rc = gltf_scene_compute_bind_pose(scene, buf, 1);
+    ASSERT_EQ(GLTF_ERR_INVALID, rc);
+
+    gltf_scene_destroy(scene);
+    return 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
  *  FAILURE MODES
  * ═══════════════════════════════════════════════════════════════════ */
 
@@ -273,6 +341,10 @@ static const test_entry_t TESTS[] = {
     {"mesh_info_out_of_range",       test_mesh_info_out_of_range},
     {"destroy_null",                 test_destroy_null},
     {"mesh_count_null",              test_mesh_count_null},
+    /* Bind pose */
+    {"compute_bind_pose",            test_compute_bind_pose},
+    {"compute_bind_pose_null",       test_compute_bind_pose_null},
+    {"compute_bind_pose_small_buf",  test_compute_bind_pose_small_buffer},
     /* Failure modes */
     {"load_missing_file",            test_load_missing_file},
     {"load_null_path",               test_load_null_path},
