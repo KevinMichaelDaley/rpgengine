@@ -93,7 +93,7 @@ static int test_ccd_2bone_reach(void) {
     for (uint32_t i = 0; i < 3; i++) pose[i] = skel.rest_world[i];
 
     vec3_t target = { 7.0f, 0.0f, 0.0f };
-    ik_solve_ccd(&skel, pose, 3, 2, target, 20, 0.01f);
+    ik_solve_ccd(&skel, pose, 2, 2, target, 20, 0.01f);
 
     /* End-effector (joint 2) should be near target. */
     vec3_t effector = mat4_get_translation(&pose[2]);
@@ -114,7 +114,7 @@ static int test_ccd_5bone_reach(void) {
     for (uint32_t i = 0; i < 6; i++) pose[i] = skel.rest_world[i];
 
     vec3_t target = { 5.0f, 8.0f, 0.0f };
-    ik_solve_ccd(&skel, pose, 6, 5, target, 30, 0.01f);
+    ik_solve_ccd(&skel, pose, 5, 5, target, 30, 0.01f);
 
     vec3_t effector = mat4_get_translation(&pose[5]);
     float dist = vec3_dist(effector, target);
@@ -135,7 +135,7 @@ static int test_ccd_unreachable(void) {
 
     /* Target at distance 100 — far beyond reach. */
     vec3_t target = { 100.0f, 0.0f, 0.0f };
-    ik_solve_ccd(&skel, pose, 3, 2, target, 20, 0.01f);
+    ik_solve_ccd(&skel, pose, 2, 2, target, 20, 0.01f);
 
     /* End-effector should be at max reach (~10 units from root). */
     vec3_t effector = mat4_get_translation(&pose[2]);
@@ -165,7 +165,7 @@ static int test_ccd_zero_chain(void) {
     memcpy(original, pose, sizeof(pose));
 
     vec3_t target = { 1.0f, 0.0f, 0.0f };
-    ik_solve_ccd(&skel, pose, 3, 0, target, 20, 0.01f);
+    ik_solve_ccd(&skel, pose, 2, 0, target, 20, 0.01f);
 
     /* Nothing should change with chain_length=0. */
     for (int i = 0; i < 3; i++) {
@@ -188,7 +188,7 @@ static int test_fabrik_2bone_reach(void) {
     for (uint32_t i = 0; i < 3; i++) pose[i] = skel.rest_world[i];
 
     vec3_t target = { 7.0f, 0.0f, 0.0f };
-    ik_solve_fabrik(&skel, pose, 3, 2, target, 20, 0.01f);
+    ik_solve_fabrik(&skel, pose, 2, 2, target, 20, 0.01f);
 
     vec3_t effector = mat4_get_translation(&pose[2]);
     float dist = vec3_dist(effector, target);
@@ -209,7 +209,7 @@ static int test_fabrik_bone_lengths(void) {
     for (uint32_t i = 0; i < 4; i++) pose[i] = skel.rest_world[i];
 
     vec3_t target = { 6.0f, 5.0f, 0.0f };
-    ik_solve_fabrik(&skel, pose, 4, 3, target, 30, 0.01f);
+    ik_solve_fabrik(&skel, pose, 3, 3, target, 30, 0.01f);
 
     /* Check each bone segment length. */
     for (uint32_t i = 1; i < 4; i++) {
@@ -233,7 +233,7 @@ static int test_fabrik_unreachable(void) {
     for (uint32_t i = 0; i < 3; i++) pose[i] = skel.rest_world[i];
 
     vec3_t target = { 0.0f, 200.0f, 0.0f };
-    ik_solve_fabrik(&skel, pose, 3, 2, target, 20, 0.01f);
+    ik_solve_fabrik(&skel, pose, 2, 2, target, 20, 0.01f);
 
     vec3_t effector = mat4_get_translation(&pose[2]);
     ASSERT_TRUE(!isnan(effector.x));
@@ -274,7 +274,7 @@ static int test_ik_dispatch_integration(void) {
     mat4_t pose[3];
     for (uint32_t i = 0; i < 3; i++) pose[i] = skel.rest_world[i];
 
-    constraint_solver_evaluate(&solver, &skel, pose, 3);
+    constraint_solver_evaluate(&solver, &skel, NULL, pose, 3);
 
     /* Without a target bone, IK eval may be a no-op or use world origin.
      * Just verify no crash and no NaN. */
@@ -301,7 +301,7 @@ static int test_ccd_target_at_root(void) {
 
     /* Target at root position — chain should fold back on itself. */
     vec3_t target = { 0.0f, 0.0f, 0.0f };
-    ik_solve_ccd(&skel, pose, 3, 2, target, 20, 0.01f);
+    ik_solve_ccd(&skel, pose, 2, 2, target, 20, 0.01f);
 
     vec3_t effector = mat4_get_translation(&pose[2]);
     /* Should be near origin (within tolerance since bones have length). */

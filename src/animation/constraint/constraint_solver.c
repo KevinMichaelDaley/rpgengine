@@ -50,6 +50,7 @@ void constraint_solver_destroy(constraint_solver_t *solver) {
 
 void constraint_solver_evaluate(constraint_solver_t *solver,
                                 const skeleton_def_t *skel,
+                                const mat4_t *local_pose,
                                 mat4_t *pose, uint32_t bone_count) {
     if (!solver || !skel || !pose || bone_count == 0) return;
 
@@ -63,6 +64,18 @@ void constraint_solver_evaluate(constraint_solver_t *solver,
 
     /* Evaluate in skeleton order (parents before children). */
     for (uint32_t bi = 0; bi < count; bi++) {
+        /* FK propagate from parent before evaluating constraints.
+         * This ensures each bone's world transform reflects any
+         * modifications made to ancestor bones by prior constraints. */
+        if (local_pose) {
+            uint32_t pi = skel->parent_indices[bi];
+            if (pi != UINT32_MAX && pi < count) {
+                pose[bi] = mat4_mul(pose[pi], local_pose[bi]);
+            } else {
+                pose[bi] = local_pose[bi];
+            }
+        }
+
         uint32_t num_constraints = skel->constraint_counts[bi];
         if (num_constraints == 0) continue;
 

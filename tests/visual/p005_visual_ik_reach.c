@@ -355,7 +355,7 @@ int main(void) {
         }
 
         /* Run IK solver manually (CCD). */
-        ik_solve_ccd(&skel, pose, BONE_COUNT,
+        ik_solve_ccd(&skel, pose, BONE_COUNT - 1,
                      CHAIN_LENGTH, target,
                      ik_def->params.ik.iterations, 0.001f);
 

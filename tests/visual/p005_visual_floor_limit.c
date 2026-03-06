@@ -320,7 +320,7 @@ int main(void) {
         }
 
         /* Apply floor constraint on the tip bone. */
-        constraint_solver_evaluate(&solver, &skel, pose, BONE_COUNT);
+        constraint_solver_evaluate(&solver, &skel, NULL, pose, BONE_COUNT);
 
         /* Check if floor was clamped (tip bone y should be >= 0). */
         float tip_y = pose[BONE_COUNT - 1].m[13];

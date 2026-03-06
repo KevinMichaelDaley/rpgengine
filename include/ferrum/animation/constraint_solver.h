@@ -121,11 +121,16 @@ constraint_eval_fn constraint_solver_get_eval_fn(const constraint_solver_t *solv
  *
  * @param solver     Solver instance (non-NULL).
  * @param skel       Skeleton definition (non-NULL).
+ * @param local_pose Local-space bone transforms used for FK propagation.
+ *                   If non-NULL, each bone's world pose is computed as
+ *                   parent_world × local before constraint evaluation.
+ *                   If NULL, pose[] is used as-is (legacy world-space mode).
  * @param pose       Bone transform array (in/out, length >= bone_count).
  * @param bone_count Number of bones to evaluate.
  */
 void constraint_solver_evaluate(constraint_solver_t *solver,
                                 const skeleton_def_t *skel,
+                                const mat4_t *local_pose,
                                 mat4_t *pose, uint32_t bone_count);
 
 #ifdef __cplusplus

@@ -345,7 +345,7 @@ static int test_solver_evaluation_order(void) {
 
     /* Evaluate. */
     s_eval_order_count = 0;
-    constraint_solver_evaluate(&solver, &skel, pose, 3);
+    constraint_solver_evaluate(&solver, &skel, NULL, pose, 3);
 
     /* Expected order: bone 0 (1 constraint), bone 2 (2 constraints).
      * Bone 1 has no constraints so no calls.
@@ -375,7 +375,7 @@ static int test_solver_no_constraints(void) {
     mat4_t original[3];
     memcpy(original, pose, sizeof(pose));
 
-    constraint_solver_evaluate(&solver, &skel, pose, 3);
+    constraint_solver_evaluate(&solver, &skel, NULL, pose, 3);
 
     /* Pose should be unchanged. */
     for (int i = 0; i < 3; i++) {
@@ -419,7 +419,7 @@ static int test_solver_influence_blending(void) {
     /* Start at (0, 0, 0). */
     mat4_t pose[1];
     pose[0] = mat4_identity();
-    constraint_solver_evaluate(&solver, &skel, pose, 1);
+    constraint_solver_evaluate(&solver, &skel, NULL, pose, 1);
 
     /* offset_eval sets to (100, 0, 0), but influence=0.5 blends:
      * result.x = lerp(0, 100, 0.5) = 50. */

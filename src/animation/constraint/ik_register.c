@@ -42,7 +42,7 @@ static void ik_eval_fn_(const constraint_def_t *def,
     mat4_t *mutable_pose = (mat4_t *)ctx->pose;
 
     ik_solve_ccd(ctx->skel, mutable_pose,
-                 ctx->bone_count, def->params.ik.chain_length,
+                 ctx->bone_idx, def->params.ik.chain_length,
                  target, def->params.ik.iterations, 0.001f);
 }
 

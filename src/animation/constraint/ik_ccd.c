@@ -68,14 +68,11 @@ static void rotate_around_pivot_(mat4_t *bone_world, mat4_t rot, vec3_t pivot) {
 }
 
 void ik_solve_ccd(const skeleton_def_t *skel, mat4_t *pose,
-                  uint32_t bone_count, uint32_t chain_length,
+                  uint32_t tip_bone_idx, uint32_t chain_length,
                   vec3_t target, uint32_t max_iter, float tolerance) {
-    if (!skel || !pose || chain_length == 0 || bone_count < 2) return;
+    if (!skel || !pose || chain_length == 0) return;
 
-    /* Find the tip bone (last bone in the chain).
-     * We assume the chain ends at bone (bone_count - 1) and goes back
-     * chain_length bones via parent links. chain_length bones = chain_length+1 joints. */
-    uint32_t tip = bone_count - 1;
+    uint32_t tip = tip_bone_idx;
 
     /* Build chain indices by walking parents from tip.
      * chain_length bones require chain_length+1 joint positions. */

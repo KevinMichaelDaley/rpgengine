@@ -313,7 +313,7 @@ int main(void) {
         pose[2] = skel.rest_world[2];
 
         /* Evaluate constraints. */
-        constraint_solver_evaluate(&solver, &skel, pose, BONE_COUNT);
+        constraint_solver_evaluate(&solver, &skel, NULL, pose, BONE_COUNT);
 
         /* Draw. */
         begin_lines_();

@@ -1,6 +1,6 @@
 ---
 id: rpg-b8u1
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-06T07:54:03Z

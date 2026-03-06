@@ -360,10 +360,12 @@ int main(void) {
     surface_vol_register(&solver);
     transform_map_register(&solver);
 
-    /* Allocate pose buffer. */
+    /* Allocate pose buffers. */
     mat4_t *pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
-    if (!pose) {
+    mat4_t *local_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
+    if (!pose || !local_pose) {
         fprintf(stderr, "Failed to allocate pose\n");
+        free(pose); free(local_pose);
         skeleton_def_destroy(&skel);
         if (ibms) free(ibms);
         cleanup_line_buffer_();
@@ -371,6 +373,10 @@ int main(void) {
         cleanup_gl_context_();
         return 1;
     }
+
+    /* Find the root_master bone (child of c_traj, drives the body). */
+    int idx_root_master = find_bone_(&skel, "c_root_master.x");
+    printf("  c_root_master.x = %d\n", idx_root_master);
 
     /* Video capture. */
     system("mkdir -p tests/output");
@@ -410,27 +416,16 @@ int main(void) {
         /* Forward motion of the whole body. */
         float forward_z = cycle * STRIDE_LENGTH;
 
-        /* Start from rest pose. */
-        memcpy(pose, skel.rest_world,
+        /* Start from rest local poses. */
+        memcpy(local_pose, skel.rest_local,
                skel.joint_count * sizeof(mat4_t));
 
-        /* Animate c_traj: forward translation. */
-        pose[idx_traj].m[14] += forward_z;
+        /* Animate c_traj: forward translation in local space.
+         * c_traj is child of c_pos (both at origin). */
+        local_pose[idx_traj].m[14] += forward_z;
 
-        /* Animate c_pos: same forward offset (root follows trajectory). */
-        if (idx_pos >= 0) {
-            pose[idx_pos].m[14] += forward_z;
-        }
-
-        /* Propagate trajectory offset to all children of c_traj. */
-        for (uint32_t i = 0; i < skel.joint_count; i++) {
-            if (i == (uint32_t)idx_traj || i == (uint32_t)idx_pos)
-                continue;
-            /* Shift all bones forward. */
-            pose[i].m[14] += forward_z;
-        }
-
-        /* Animate foot IK targets. */
+        /* Animate foot IK targets in local space.
+         * These are ROOT bones (no parent), so local = world. */
         vec3_t foot_l_target = walk_foot_pos_(
             phase_l, rest_foot_l.x, rest_foot_l.y,
             rest_foot_l.z + forward_z);
@@ -438,32 +433,29 @@ int main(void) {
             phase_r, rest_foot_r.x, rest_foot_r.y,
             rest_foot_r.z + forward_z);
 
-        /* Override foot IK bone positions. */
-        pose[idx_foot_l].m[12] = foot_l_target.x;
-        pose[idx_foot_l].m[13] = foot_l_target.y;
-        pose[idx_foot_l].m[14] = foot_l_target.z;
+        local_pose[idx_foot_l].m[12] = foot_l_target.x;
+        local_pose[idx_foot_l].m[13] = foot_l_target.y;
+        local_pose[idx_foot_l].m[14] = foot_l_target.z;
 
-        pose[idx_foot_r].m[12] = foot_r_target.x;
-        pose[idx_foot_r].m[13] = foot_r_target.y;
-        pose[idx_foot_r].m[14] = foot_r_target.z;
+        local_pose[idx_foot_r].m[12] = foot_r_target.x;
+        local_pose[idx_foot_r].m[13] = foot_r_target.y;
+        local_pose[idx_foot_r].m[14] = foot_r_target.z;
 
-        /* Add slight hip bob (body goes up on swing phase). */
-        if (idx_pos >= 0) {
-            float bob = 0.3f * (sinf(cycle * 2.0f * PI * 2.0f) * 0.5f + 0.5f);
-            /* Apply to root bones that control the body. */
-            for (uint32_t i = 2; i < skel.joint_count; i++) {
-                if (i == (uint32_t)idx_foot_l || i == (uint32_t)idx_foot_r)
-                    continue;
-                if (skel.parent_indices[i] == (uint32_t)idx_traj ||
-                    skel.parent_indices[i] == (uint32_t)idx_pos) {
-                    /* This is a direct child of traj/pos — bob it. */
-                    pose[i].m[13] += bob;
-                }
-            }
+        /* Add slight hip bob via root_master (body goes up during swing). */
+        if (idx_root_master >= 0) {
+            float bob = 0.3f * sinf(cycle * 4.0f * PI);
+            local_pose[idx_root_master].m[13] += bob;
         }
 
-        /* Evaluate constraints (IK, copy, limits, etc.). */
-        constraint_solver_evaluate(&solver, &skel, pose, skel.joint_count);
+        /* Initialize world pose (will be computed by solver's FK). */
+        memset(pose, 0, skel.joint_count * sizeof(mat4_t));
+
+        /* Evaluate: FK propagation + constraint solving (IK, copy, etc.).
+         * The solver computes world = parent_world × local for each bone,
+         * then applies constraints (IK targets, copy rotation/scale/location,
+         * damped track, limits, etc.) in parent-before-child order. */
+        constraint_solver_evaluate(&solver, &skel, local_pose,
+                                   pose, skel.joint_count);
 
         /* ── Draw ─────────────────────────────────────────────── */
         begin_lines_();
@@ -560,6 +552,7 @@ int main(void) {
     shader_program_destroy(&shader);
     constraint_solver_destroy(&solver);
     free(pose);
+    free(local_pose);
     skeleton_def_destroy(&skel);
     if (ibms) free(ibms);
     cleanup_gl_context_();
