@@ -1,6 +1,6 @@
 ---
 id: rpg-b17x
-status: open
+status: closed
 deps: [rpg-qslo]
 links: []
 created: 2026-03-06T06:14:07Z

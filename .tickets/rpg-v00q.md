@@ -1,6 +1,6 @@
 ---
 id: rpg-v00q
-status: open
+status: closed
 deps: [rpg-s9ob, rpg-augx, rpg-9sjh, rpg-ngt5, rpg-pkgw, rpg-j8n0, rpg-b17x]
 links: []
 created: 2026-03-06T06:14:45Z

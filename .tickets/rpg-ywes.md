@@ -1,6 +1,6 @@
 ---
 id: rpg-ywes
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-06T06:04:28Z
