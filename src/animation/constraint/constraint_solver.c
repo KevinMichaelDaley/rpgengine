@@ -57,17 +57,13 @@ void constraint_solver_evaluate(constraint_solver_t *solver,
     /* Cap to solver capacity. */
     uint32_t count = bone_count < solver->max_bones ? bone_count : solver->max_bones;
 
-    constraint_eval_ctx_t ctx;
-    ctx.skel = skel;
-    ctx.pose = pose;
-    ctx.bone_count = count;
-
-    /* Evaluate in skeleton order (parents before children). */
-    for (uint32_t bi = 0; bi < count; bi++) {
-        /* FK propagate from parent before evaluating constraints.
-         * This ensures each bone's world transform reflects any
-         * modifications made to ancestor bones by prior constraints. */
-        if (local_pose) {
+    /* Phase 1: FK propagation — compute ALL world poses from local poses.
+     * This must happen before constraints so that constraints referencing
+     * higher-indexed bones see valid world positions (not zeros).
+     * The exported skeleton has ~67 forward references (bone N's constraint
+     * reads from bone M where M > N). */
+    if (local_pose) {
+        for (uint32_t bi = 0; bi < count; bi++) {
             uint32_t pi = skel->parent_indices[bi];
             if (pi != UINT32_MAX && pi < count) {
                 pose[bi] = mat4_mul(pose[pi], local_pose[bi]);
@@ -75,7 +71,15 @@ void constraint_solver_evaluate(constraint_solver_t *solver,
                 pose[bi] = local_pose[bi];
             }
         }
+    }
 
+    /* Phase 2: Constraint evaluation in skeleton order. */
+    constraint_eval_ctx_t ctx;
+    ctx.skel = skel;
+    ctx.pose = pose;
+    ctx.bone_count = count;
+
+    for (uint32_t bi = 0; bi < count; bi++) {
         uint32_t num_constraints = skel->constraint_counts[bi];
         if (num_constraints == 0) continue;
 
