@@ -1028,6 +1028,18 @@ $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p005_visual_walk_cycle: build/libheadless.a tests/visual/p005_visual_walk_cycle.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_walk_cycle.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p005_visual_ragdoll_drop: build/libheadless.a tests/visual/p005_visual_ragdoll_drop.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_ragdoll_drop.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p005_visual_anim_force: build/libheadless.a tests/visual/p005_visual_anim_force.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_anim_force.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p005_visual_ik_ground: build/libheadless.a tests/visual/p005_visual_ik_ground.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_ik_ground.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p005_visual_constraint_converge: build/libheadless.a tests/visual/p005_visual_constraint_converge.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_constraint_converge.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_scene_graph_tests: build/liball.a tests/p004_renderer_scene_graph_tests.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_scene_graph_tests.c build/liball.a -o $@ $(LDFLAGS)
 build/p005_constraint_types_tests: build/libheadless.a tests/p005_constraint_types_tests.c | build
