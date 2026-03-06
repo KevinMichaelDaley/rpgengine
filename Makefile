@@ -1024,6 +1024,8 @@ build/p005_constraint_solver_tests: build/libheadless.a tests/p005_constraint_so
 	$(CC) $(CFLAGS) tests/p005_constraint_solver_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p005_ik_solver_tests: build/libheadless.a tests/p005_ik_solver_tests.c | build
 	$(CC) $(CFLAGS) tests/p005_ik_solver_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p005_copy_track_tests: build/libheadless.a tests/p005_copy_track_tests.c | build
+	$(CC) $(CFLAGS) tests/p005_copy_track_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build:
 
 
