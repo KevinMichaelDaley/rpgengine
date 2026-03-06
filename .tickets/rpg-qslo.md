@@ -1,6 +1,6 @@
 ---
 id: rpg-qslo
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-06T06:10:14Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-1blk
-status: open
+status: closed
 deps: [rpg-qslo]
 links: []
 created: 2026-03-06T06:10:42Z

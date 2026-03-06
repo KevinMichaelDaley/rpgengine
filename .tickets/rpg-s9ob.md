@@ -1,6 +1,6 @@
 ---
 id: rpg-s9ob
-status: open
+status: in_progress
 deps: [rpg-1blk]
 links: []
 created: 2026-03-06T06:11:12Z
