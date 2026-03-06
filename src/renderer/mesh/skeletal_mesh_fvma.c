@@ -81,7 +81,7 @@ int skeletal_mesh_create_from_fvma(const gl_loader_t *loader,
     }
     const uint8_t *p = fvma_data + offset;
     uint32_t bone_count = read_u32_(&p);
-    if (bone_count == 0 || bone_count > SKELETAL_MESH_MAX_BONES) {
+    if (bone_count == 0) {
         mesh_slot_destroy(&slot);
         return SKELETAL_MESH_ERR_FORMAT;
     }

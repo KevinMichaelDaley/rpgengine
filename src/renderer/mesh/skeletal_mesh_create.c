@@ -23,8 +23,6 @@ static int validate_bone_fields_(const skeletal_mesh_create_info_t *info)
     if (!info->bone_weights)      return SKELETAL_MESH_ERR_INVALID;
     if (!info->bone_indices)      return SKELETAL_MESH_ERR_INVALID;
     if (info->bone_count == 0)    return SKELETAL_MESH_ERR_INVALID;
-    if (info->bone_count > SKELETAL_MESH_MAX_BONES)
-        return SKELETAL_MESH_ERR_INVALID;
     if (!info->inv_bind_matrices) return SKELETAL_MESH_ERR_INVALID;
     return SKELETAL_MESH_OK;
 }
