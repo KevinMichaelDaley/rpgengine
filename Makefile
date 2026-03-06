@@ -1048,6 +1048,8 @@ build/p005_joint_motor_tests: build/libheadless.a tests/p005_joint_motor_tests.c
 	$(CC) $(CFLAGS) tests/p005_joint_motor_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p005_fskel_tests: build/libheadless.a tests/p005_fskel_tests.c | build
 	$(CC) $(CFLAGS) tests/p005_fskel_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p005_joint_types_tests: build/libheadless.a tests/p005_joint_types_tests.c | build
+	$(CC) $(CFLAGS) tests/p005_joint_types_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build:
 
 

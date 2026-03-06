@@ -34,9 +34,14 @@ struct phys_body;
  * @brief Joint type discriminator.
  */
 typedef enum phys_joint_type {
-    PHYS_JOINT_DISTANCE = 0,  /**< Spring-damper distance constraint. */
-    PHYS_JOINT_BALL     = 1,  /**< 3-DOF rotation (positional lock). */
-    PHYS_JOINT_HINGE    = 2,  /**< 1-DOF rotation (positional + angular lock). */
+    PHYS_JOINT_DISTANCE       = 0,  /**< Spring-damper distance constraint. */
+    PHYS_JOINT_BALL           = 1,  /**< 3-DOF rotation (positional lock). */
+    PHYS_JOINT_HINGE          = 2,  /**< 1-DOF rotation (positional + angular lock). */
+    PHYS_JOINT_LOCK           = 3,  /**< 0-DOF full rigid attachment (3 pos + 3 ang). */
+    PHYS_JOINT_COPY_ROTATION  = 4,  /**< Match orientation (3 angular rows). */
+    PHYS_JOINT_LIMIT_ROTATION = 5,  /**< Per-axis angular limits (up to 3 clamped rows). */
+    PHYS_JOINT_LIMIT_POSITION = 6,  /**< Per-axis positional limits (up to 3 clamped rows). */
+    PHYS_JOINT_AIM            = 7,  /**< Align axis toward target (2 angular rows). */
 } phys_joint_type_t;
 
 /**
@@ -64,6 +69,14 @@ typedef struct phys_joint {
     float rest_length;          /**< Desired distance between anchors. */
     float stiffness;            /**< Spring stiffness (0 = rigid). */
     float damping;              /**< Damping coefficient. */
+
+    /* Per-axis limit parameters (limit_rotation / limit_position). */
+    float limit_min[3];         /**< Min angle (rad) or position per axis. */
+    float limit_max[3];         /**< Max angle (rad) or position per axis. */
+    uint8_t limit_axes;         /**< Bitmask: bit 0=X, 1=Y, 2=Z active. */
+
+    /* Aim joint: which local axis of body_b to align toward body_a. */
+    phys_vec3_t track_axis;     /**< Local axis on body_b to aim (e.g. {0,1,0}). */
 
     /* Warmstarting: cached accumulated impulses from previous substep.
      * Seeded into rows at build time, written back after solve. */
@@ -150,6 +163,88 @@ void phys_joint_build_hinge(phys_joint_t *joint,
                             const struct phys_body *body_b,
                             float dt);
 
+/**
+ * @brief Build constraint rows for a lock (rigid attachment) joint.
+ *
+ * Produces 6 Jacobian rows: 3 positional (like ball) + 3 angular
+ * (lock all rotation axes).  Used for Copy Transforms / Child Of.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_LOCK).
+ * @param body_a  Pointer to body A.
+ * @param body_b  Pointer to body B.
+ * @param dt      Timestep in seconds.
+ */
+void phys_joint_build_lock(phys_joint_t *joint,
+                           const struct phys_body *body_a,
+                           const struct phys_body *body_b,
+                           float dt);
+
+/**
+ * @brief Build constraint rows for copy-rotation joint.
+ *
+ * Produces 3 angular Jacobian rows that drive body_b's orientation
+ * to match body_a's orientation.  No positional constraint.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_COPY_ROTATION).
+ * @param body_a  Pointer to body A (orientation source).
+ * @param body_b  Pointer to body B (constrained body).
+ * @param dt      Timestep in seconds.
+ */
+void phys_joint_build_copy_rotation(phys_joint_t *joint,
+                                    const struct phys_body *body_a,
+                                    const struct phys_body *body_b,
+                                    float dt);
+
+/**
+ * @brief Build constraint rows for angular limits.
+ *
+ * Produces up to 3 clamped angular rows, one per axis enabled in
+ * limit_axes.  Each row is one-sided: active only when the relative
+ * angle exceeds limit_min or limit_max.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_LIMIT_ROTATION).
+ * @param body_a  Pointer to body A (reference frame).
+ * @param body_b  Pointer to body B (constrained body).
+ * @param dt      Timestep in seconds.
+ */
+void phys_joint_build_limit_rotation(phys_joint_t *joint,
+                                     const struct phys_body *body_a,
+                                     const struct phys_body *body_b,
+                                     float dt);
+
+/**
+ * @brief Build constraint rows for positional limits.
+ *
+ * Produces up to 3 clamped positional rows, one per axis enabled in
+ * limit_axes.  Each row is one-sided: active only when the position
+ * exceeds limit_min or limit_max on that axis.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_LIMIT_POSITION).
+ * @param body_a  Pointer to body A (reference frame).
+ * @param body_b  Pointer to body B (constrained body).
+ * @param dt      Timestep in seconds.
+ */
+void phys_joint_build_limit_position(phys_joint_t *joint,
+                                     const struct phys_body *body_a,
+                                     const struct phys_body *body_b,
+                                     float dt);
+
+/**
+ * @brief Build constraint rows for an aim (track-to) joint.
+ *
+ * Produces 2 angular rows that align body_b's track_axis toward
+ * body_a's position.  Similar to Damped Track / Track To constraints.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_AIM).
+ * @param body_a  Pointer to body A (target position).
+ * @param body_b  Pointer to body B (aiming body).
+ * @param dt      Timestep in seconds.
+ */
+void phys_joint_build_aim(phys_joint_t *joint,
+                          const struct phys_body *body_a,
+                          const struct phys_body *body_b,
+                          float dt);
+
 /* Forward declaration for constraint output. */
 struct phys_constraint;
 
@@ -160,9 +255,14 @@ struct phys_constraint;
  * joint->row_count.  This function then packs those rows into one or
  * two phys_constraint_t entries (max 3 rows each).
  *
- * - Distance joint (1 row) → 1 constraint.
- * - Ball joint (3 rows)    → 1 constraint.
- * - Hinge joint (5 rows)   → 2 constraints (3 positional + 2 angular).
+ * - Distance joint (1 row)          → 1 constraint.
+ * - Ball joint (3 rows)             → 1 constraint.
+ * - Copy rotation (3 rows)          → 1 constraint.
+ * - Hinge joint (5 rows)            → 2 constraints (3 + 2).
+ * - Lock joint (6 rows)             → 2 constraints (3 + 3).
+ * - Limit rotation (up to 3 rows)   → 1 constraint.
+ * - Limit position (up to 3 rows)   → 1 constraint.
+ * - Aim joint (2 rows)              → 1 constraint.
  *
  * Each output constraint has is_joint=1, friction=0, penetration=0,
  * and bilateral lambda bounds preserved from the build step.

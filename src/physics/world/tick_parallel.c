@@ -161,6 +161,26 @@ static void rebuild_island_joint_constraints(
                     phys_joint_build_hinge(j, &bodies[j->body_a],
                                            &bodies[j->body_b], dt);
                     break;
+                case PHYS_JOINT_LOCK:
+                    phys_joint_build_lock(j, &bodies[j->body_a],
+                                          &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_COPY_ROTATION:
+                    phys_joint_build_copy_rotation(j, &bodies[j->body_a],
+                                                    &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_LIMIT_ROTATION:
+                    phys_joint_build_limit_rotation(j, &bodies[j->body_a],
+                                                     &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_LIMIT_POSITION:
+                    phys_joint_build_limit_position(j, &bodies[j->body_a],
+                                                     &bodies[j->body_b], dt);
+                    break;
+                case PHYS_JOINT_AIM:
+                    phys_joint_build_aim(j, &bodies[j->body_a],
+                                         &bodies[j->body_b], dt);
+                    break;
                 }
                 phys_constraint_t tmp[2];
                 uint32_t written = phys_joint_build_constraints(
@@ -901,6 +921,26 @@ void phys_world_tick_parallel(phys_world_t *world,
                     break;
                 case PHYS_JOINT_HINGE:
                     phys_joint_build_hinge(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_LOCK:
+                    phys_joint_build_lock(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_COPY_ROTATION:
+                    phys_joint_build_copy_rotation(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_LIMIT_ROTATION:
+                    phys_joint_build_limit_rotation(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_LIMIT_POSITION:
+                    phys_joint_build_limit_position(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_AIM:
+                    phys_joint_build_aim(j,
                         &bodies[j->body_a], &bodies[j->body_b], substep_dt);
                     break;
                 }

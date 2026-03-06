@@ -96,6 +96,19 @@ vec3_t quat_inv_rotate_vec3(quat_t q, vec3_t v);
  */
 quat_t quat_from_euler(float x, float y, float z);
 
+/**
+ * @brief Extract rotation quaternion from a 4×4 column-major matrix.
+ *
+ * Assumes the upper-left 3×3 contains rotation (possibly with uniform
+ * or non-uniform scale).  Scale is stripped before quaternion extraction.
+ *
+ * @param m  Input matrix (non-NULL).
+ * @return   Normalized quaternion representing the rotation.
+ *
+ * Side effects: none.
+ */
+quat_t quat_from_mat4(const mat4_t *m);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
