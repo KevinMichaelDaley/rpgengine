@@ -1,0 +1,112 @@
+/**
+ * @file fskel_load.c
+ * @brief .fskel format loader.
+ *
+ * Reads skeleton hierarchy, constraints, and IBMs from a binary file.
+ * Validates magic number, version, and data integrity.
+ *
+ * Non-static functions: 1 (fskel_load)
+ */
+
+#include "ferrum/animation/fskel_loader.h"
+#include "ferrum/animation/fskel_format.h"
+#include "ferrum/animation/constraint_params.h"
+#include "ferrum/math/mat4.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/** @brief Maximum joints to prevent insane allocations. */
+#define FSKEL_MAX_JOINTS 4096
+
+/**
+ * @brief Read a 4-byte little-endian uint32.
+ */
+static bool read_u32(FILE *f, uint32_t *out) {
+    return fread(out, 4, 1, f) == 1;
+}
+
+bool fskel_load(const char *path,
+                skeleton_def_t *out_skel,
+                mat4_t **out_ibms,
+                uint32_t *out_ibm_count) {
+    if (!path || !out_skel) return false;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+
+    /* Read header. */
+    uint32_t magic = 0, version = 0, joint_count = 0;
+    uint32_t max_constraints = 0, ibm_count = 0;
+
+    if (!read_u32(f, &magic) || magic != FSKEL_MAGIC) goto fail;
+    if (!read_u32(f, &version) || version != FSKEL_VERSION) goto fail;
+    if (!read_u32(f, &joint_count)) goto fail;
+    if (!read_u32(f, &max_constraints)) goto fail;
+    if (!read_u32(f, &ibm_count)) goto fail;
+
+    /* Sanity checks. */
+    if (joint_count > FSKEL_MAX_JOINTS) goto fail;
+    if (max_constraints > 64) goto fail;
+    if (ibm_count > FSKEL_MAX_JOINTS) goto fail;
+
+    /* Initialize skeleton. */
+    if (!skeleton_def_init(out_skel, joint_count, max_constraints)) goto fail;
+
+    /* Read joint names. */
+    for (uint32_t i = 0; i < joint_count; i++) {
+        if (fread(out_skel->joint_names[i], SKELETON_JOINT_NAME_MAX, 1, f) != 1)
+            goto fail_skel;
+    }
+
+    /* Read parent indices. */
+    if (joint_count > 0 &&
+        fread(out_skel->parent_indices, sizeof(uint32_t), joint_count, f) != joint_count)
+        goto fail_skel;
+
+    /* Read rest local transforms. */
+    if (joint_count > 0 &&
+        fread(out_skel->rest_local, sizeof(mat4_t), joint_count, f) != joint_count)
+        goto fail_skel;
+
+    /* Read rest world transforms. */
+    if (joint_count > 0 &&
+        fread(out_skel->rest_world, sizeof(mat4_t), joint_count, f) != joint_count)
+        goto fail_skel;
+
+    /* Read constraint counts. */
+    if (out_skel->constraint_counts && joint_count > 0) {
+        if (fread(out_skel->constraint_counts, sizeof(uint32_t), joint_count, f) != joint_count)
+            goto fail_skel;
+    }
+
+    /* Read constraints. */
+    if (max_constraints > 0 && out_skel->constraints) {
+        size_t total = (size_t)joint_count * max_constraints;
+        if (fread(out_skel->constraints, sizeof(constraint_def_t), total, f) != total)
+            goto fail_skel;
+    }
+
+    /* Read IBMs. */
+    if (ibm_count > 0 && out_ibms) {
+        *out_ibms = (mat4_t *)calloc(ibm_count, sizeof(mat4_t));
+        if (!*out_ibms) goto fail_skel;
+        if (fread(*out_ibms, sizeof(mat4_t), ibm_count, f) != ibm_count) {
+            free(*out_ibms);
+            *out_ibms = NULL;
+            goto fail_skel;
+        }
+    }
+
+    if (out_ibm_count) *out_ibm_count = ibm_count;
+
+    fclose(f);
+    return true;
+
+fail_skel:
+    skeleton_def_destroy(out_skel);
+fail:
+    fclose(f);
+    return false;
+}

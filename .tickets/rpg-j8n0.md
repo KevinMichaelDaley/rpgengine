@@ -1,6 +1,6 @@
 ---
 id: rpg-j8n0
-status: open
+status: closed
 deps: [rpg-qslo, rpg-1blk, rpg-9sjh]
 links: []
 created: 2026-03-06T06:13:39Z
