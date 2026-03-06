@@ -1,6 +1,6 @@
 ---
 id: rpg-o0a7
-status: open
+status: closed
 deps: [rpg-nun5]
 links: []
 created: 2026-03-02T18:38:32Z
