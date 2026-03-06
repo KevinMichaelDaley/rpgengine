@@ -55,7 +55,8 @@ MESH_SRC := $(wildcard src/mesh/*.c)
 ENGINE_SRC := src/engine_settings.c
 EDITOR_SRC := $(wildcard src/editor/*.c) $(wildcard src/editor/*/*.c) $(wildcard src/editor/*/*/*.c)
 AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(AEGIS_SRC) $(RENDERER_DEBUG_LINES_SRC)
+ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(AEGIS_SRC) $(ANIM_SRC) $(RENDERER_DEBUG_LINES_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -1017,6 +1018,8 @@ build/p004_visual_humanoid: build/libheadless.a tests/visual/p004_visual_humanoi
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_scene_graph_tests: build/liball.a tests/p004_renderer_scene_graph_tests.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_scene_graph_tests.c build/liball.a -o $@ $(LDFLAGS)
+build/p005_constraint_types_tests: build/libheadless.a tests/p005_constraint_types_tests.c | build
+	$(CC) $(CFLAGS) tests/p005_constraint_types_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build:
 
 
