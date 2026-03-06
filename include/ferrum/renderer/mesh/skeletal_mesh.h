@@ -13,7 +13,7 @@
  * (bone_count × mat4, row-major) used by the skinning shader to
  * transform vertices from model space into bone-local space.
  *
- * Maximum bone count: 128 (fits in a std140 UBO at 8 KB).
+ * Maximum bone count: 512 (SSBO path).
  *
  * @note Ownership: skeletal_mesh_t owns all GPU resources and the
  *       inv_bind_matrices array.  Destroy via skeletal_mesh_destroy().
@@ -34,8 +34,8 @@ extern "C" {
 
 /* ── Constants ────────────────────────────────────────────────────── */
 
-/** Maximum bones per skeleton (128 × mat4 = 8 KB in std140 UBO). */
-#define SKELETAL_MESH_MAX_BONES 128u
+/** Maximum bones per skeleton.  SSBO path supports up to 512. */
+#define SKELETAL_MESH_MAX_BONES 512u
 
 /** VAO attribute location for bone weights (vec4). */
 #define SKELETAL_MESH_ATTR_BONE_WEIGHTS 6u
@@ -82,7 +82,7 @@ typedef struct skeletal_mesh_create_info {
     static_mesh_create_info_t base;          /**< Static mesh geometry. */
     const float    *bone_weights;            /**< vec4 × vertex_count (required). */
     const uint32_t *bone_indices;            /**< uvec4 × vertex_count (required). */
-    uint32_t        bone_count;              /**< Number of bones (1..128). */
+    uint32_t        bone_count;              /**< Number of bones (1..512). */
     const float    *inv_bind_matrices;       /**< bone_count × 16 floats (required). */
 } skeletal_mesh_create_info_t;
 

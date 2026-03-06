@@ -4,7 +4,7 @@ TRACY ?= 0
 STACK_CANARY ?= 0
 EMU ?= 0
 
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -O3
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -Iextern/cgltf -O3
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
 
@@ -37,7 +37,7 @@ ifeq ($(TRACY),1)
 endif
 ECS_SRC := $(wildcard src/ecs/*.c)
 ENTITY_SRC := $(wildcard src/entity/*.c)
-RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c)
+RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c)
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_VIDEO_CAPTURE_SRC := $(wildcard src/renderer/video_capture/*.c)
 RENDERER_SRC += $(RENDERER_VIDEO_CAPTURE_SRC)
@@ -1008,6 +1008,12 @@ build/p004_ubo_tests: build/libheadless.a tests/p004_renderer_ubo_tests.c $(OBJ_
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p004_visual_mesh_primitives: build/libheadless.a tests/visual/p004_visual_mesh_primitives.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p004_visual_mesh_primitives.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p004_gltf_loader_tests: build/libheadless.a tests/p004_gltf_loader_tests.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p004_gltf_loader_tests.c \
+$(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p004_visual_humanoid: build/libheadless.a tests/visual/p004_visual_humanoid.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p004_visual_humanoid.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 	@mkdir -p build
