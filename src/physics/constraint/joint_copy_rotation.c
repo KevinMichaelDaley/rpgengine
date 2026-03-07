@@ -66,6 +66,7 @@ void phys_joint_build_copy_rotation(phys_joint_t *joint,
         row->lambda = joint->cached_lambda[i];
         row->bias = vec3_dot(ang_err, axes[i]);
         row->damping = joint->damping;
+        row->flags = PHYS_ROW_FLAG_ANGULAR;
 
         row->effective_mass = phys_compute_effective_mass(
             row, body_a->inv_mass, &inv_i_a,

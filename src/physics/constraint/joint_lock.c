@@ -70,6 +70,7 @@ static void build_angular_row(phys_jacobian_row_t *row,
     row->lambda = 0.0f;
     row->bias = angular_error;
     row->damping = row_damping;
+    row->flags = PHYS_ROW_FLAG_ANGULAR;
     row->effective_mass = phys_compute_effective_mass(
         row, body_a->inv_mass, inv_i_world_a,
         body_b->inv_mass, inv_i_world_b);

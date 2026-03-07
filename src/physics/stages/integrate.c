@@ -16,6 +16,7 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/tgs_solve.h"
 
 void phys_stage_integrate(const phys_integrate_args_t *args)
@@ -43,6 +44,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
     const float *max_pen               = args->max_penetration;
     const float slop                   = args->slop;
     const uint8_t *skip_body           = args->skip_body;
+    const phys_mat3_t *inv_I_world     = args->inv_inertia_world;
 
     for (uint32_t i = 0; i < args->body_count; ++i) {
         const phys_body_t *in = &bodies_in[i];
@@ -107,13 +109,33 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
          * solver) so that contact constraints can counteract it in
          * the same substep.  Do NOT apply gravity here. */
 
-        /* Apply velocity damping to dissipate energy over time.
-         * The configured value is the fraction retained per second;
-         * we exponentiate by dt so damping is substep-independent. */
-        if (vel_damp < 1.0f && vel_damp > 0.0f) {
-            float d = powf(vel_damp, body_dt);
-            out->linear_vel  = vec3_scale(out->linear_vel, d);
-            out->angular_vel = vec3_scale(out->angular_vel, d);
+        /* Damping as forces proportional to velocity.
+         * Linear:  F = -c*v,  dv = -c * v * inv_mass * dt
+         *   Vertical (Y) gets 10% coefficient to allow free-fall.
+         * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt */
+        {
+            float ld = out->linear_damping;
+            float ad = out->angular_damping;
+            if (ld == 0.0f && vel_damp > 0.0f && vel_damp < 1.0f) {
+                ld = 1.0f - vel_damp;
+            }
+            if (ad == 0.0f && vel_damp > 0.0f && vel_damp < 1.0f) {
+                ad = 1.0f - vel_damp;
+            }
+            if (ld > 0.0f) {
+                float s_xz = -ld * out->inv_mass * body_dt;
+                float s_y  = s_xz * 0.1f;
+                out->linear_vel.x += out->linear_vel.x * s_xz;
+                out->linear_vel.y += out->linear_vel.y * s_y;
+                out->linear_vel.z += out->linear_vel.z * s_xz;
+            }
+            if (ad > 0.0f && inv_I_world) {
+                phys_vec3_t torque = vec3_scale(out->angular_vel, -ad);
+                phys_vec3_t d_omega = phys_mat3_mul_vec3(
+                    &inv_I_world[i], torque);
+                out->angular_vel = vec3_add(out->angular_vel,
+                    vec3_scale(d_omega, body_dt));
+            }
         }
 
         /* Clamp velocity magnitude to prevent runaway speeds.

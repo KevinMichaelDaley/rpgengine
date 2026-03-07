@@ -458,11 +458,36 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
             b->linear_vel  = s->ss_vel[idx].linear;
             b->angular_vel = s->ss_vel[idx].angular;
 
-            /* Velocity damping. */
-            if (s->velocity_damping < 1.0f && s->velocity_damping > 0.0f) {
-                float d = powf(s->velocity_damping, ss_dt);
-                b->linear_vel  = vec3_scale(b->linear_vel, d);
-                b->angular_vel = vec3_scale(b->angular_vel, d);
+            /* Damping as forces proportional to velocity.
+             * Linear:  F = -c*v,  dv = -c * v * inv_mass * dt
+             *   Vertical (Y) gets 10% coefficient to allow free-fall.
+             * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt
+             * Coefficient c encodes cross-section / drag area. */
+            {
+                float ld = b->linear_damping;
+                float ad = b->angular_damping;
+                if (ld == 0.0f && s->velocity_damping > 0.0f &&
+                    s->velocity_damping < 1.0f) {
+                    ld = 1.0f - s->velocity_damping;
+                }
+                if (ad == 0.0f && s->velocity_damping > 0.0f &&
+                    s->velocity_damping < 1.0f) {
+                    ad = 1.0f - s->velocity_damping;
+                }
+                if (ld > 0.0f) {
+                    float s_xz = -ld * b->inv_mass * ss_dt;
+                    float s_y  = s_xz * 0.1f;
+                    b->linear_vel.x += b->linear_vel.x * s_xz;
+                    b->linear_vel.y += b->linear_vel.y * s_y;
+                    b->linear_vel.z += b->linear_vel.z * s_xz;
+                }
+                if (ad > 0.0f && s->inv_inertia_world) {
+                    phys_vec3_t torque = vec3_scale(b->angular_vel, -ad);
+                    phys_vec3_t d_omega = phys_mat3_mul_vec3(
+                        &s->inv_inertia_world[idx], torque);
+                    b->angular_vel = vec3_add(b->angular_vel,
+                        vec3_scale(d_omega, ss_dt));
+                }
             }
 
             /* Velocity clamping. */
@@ -818,6 +843,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         phys_velocity_t *pseudo_velocities = NULL;
         float *body_max_pen = NULL;
         uint8_t *body_sub_substepped = NULL;
+        phys_mat3_t *inv_inertia_world = NULL;
 
         if (!world->prediction_mode) {
 
@@ -1102,7 +1128,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         }
 
         /* Precompute world-space inverse inertia tensors. */
-        phys_mat3_t *inv_inertia_world = phys_frame_arena_alloc(
+        inv_inertia_world = phys_frame_arena_alloc(
             &world->frame_arena,
             (body_cap > 0 ? body_cap : 1) * sizeof(phys_mat3_t),
             _Alignof(phys_mat3_t));
@@ -1694,6 +1720,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .max_penetration        = body_max_pen,
                 .slop                   = world->config.slop,
                 .skip_body              = body_sub_substepped,
+                .inv_inertia_world      = inv_inertia_world,
             }, jobs, &world->frame_arena);
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_integ);

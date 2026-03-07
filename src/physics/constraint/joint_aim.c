@@ -95,6 +95,7 @@ void phys_joint_build_aim(phys_joint_t *joint,
         row->lambda = joint->cached_lambda[k];
         row->bias = err;
         row->damping = joint->damping;
+        row->flags = PHYS_ROW_FLAG_ANGULAR;
         row->effective_mass = phys_compute_effective_mass(
             row, body_a->inv_mass, &inv_i_a,
             body_b->inv_mass, &inv_i_b);

@@ -95,13 +95,42 @@ int skeletal_mesh_create_from_fvma(const gl_loader_t *loader,
         return SKELETAL_MESH_ERR_FORMAT;
     }
 
-    /* Read bone weights. */
-    const float *bone_weights = (const float *)p;
+    /* Read bone weights (may need normalization). */
+    const float *bone_weights_raw = (const float *)p;
     p += (size_t)vc * 16;
 
     /* Read bone indices. */
     const uint32_t *bone_indices = (const uint32_t *)p;
     p += (size_t)vc * 16;
+
+    /* Normalize bone weights so each vertex sums to 1.0.
+     * Linear blend skinning requires Σw=1 for rigid transforms;
+     * raw Blender weights may not sum to 1. */
+    float *bone_weights = (float *)malloc((size_t)vc * 4 * sizeof(float));
+    if (!bone_weights) {
+        mesh_slot_destroy(&slot);
+        return SKELETAL_MESH_ERR_OOM;
+    }
+    for (uint32_t vi = 0; vi < vc; vi++) {
+        float w0 = bone_weights_raw[vi * 4 + 0];
+        float w1 = bone_weights_raw[vi * 4 + 1];
+        float w2 = bone_weights_raw[vi * 4 + 2];
+        float w3 = bone_weights_raw[vi * 4 + 3];
+        float sum = w0 + w1 + w2 + w3;
+        if (sum > 1e-6f) {
+            float inv = 1.0f / sum;
+            bone_weights[vi * 4 + 0] = w0 * inv;
+            bone_weights[vi * 4 + 1] = w1 * inv;
+            bone_weights[vi * 4 + 2] = w2 * inv;
+            bone_weights[vi * 4 + 3] = w3 * inv;
+        } else {
+            /* Fallback: full weight on first bone. */
+            bone_weights[vi * 4 + 0] = 1.0f;
+            bone_weights[vi * 4 + 1] = 0.0f;
+            bone_weights[vi * 4 + 2] = 0.0f;
+            bone_weights[vi * 4 + 3] = 0.0f;
+        }
+    }
 
     /* Read inverse-bind matrices. */
     const float *inv_bind = (const float *)p;
@@ -124,6 +153,7 @@ int skeletal_mesh_create_from_fvma(const gl_loader_t *loader,
     info.inv_bind_matrices = inv_bind;
 
     int rc = skeletal_mesh_create(loader, &info, out);
+    free(bone_weights);
     mesh_slot_destroy(&slot);
     return rc;
 }

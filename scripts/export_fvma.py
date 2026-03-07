@@ -91,10 +91,25 @@ def _gather_mesh_data(obj, export_normals, export_tangents, export_uvs,
         ibms:         flat list of floats (mat4 per bone, col-major) or None
         flags:        uint32 FVMA flag bitmask
     """
+    # Force armature to rest pose before evaluating, so mesh vertices
+    # are exported in bind pose (matching the inverse-bind matrices).
+    armature_obj_tmp = None
+    old_pose_position = None
+    for mod in obj.modifiers:
+        if mod.type == 'ARMATURE' and mod.object:
+            armature_obj_tmp = mod.object
+            old_pose_position = armature_obj_tmp.data.pose_position
+            armature_obj_tmp.data.pose_position = 'REST'
+            break
+
     # Get the evaluated (modifier-applied) mesh.
     depsgraph = bpy.context.evaluated_depsgraph_get()
     eval_obj = obj.evaluated_get(depsgraph)
     mesh = eval_obj.to_mesh()
+
+    # Restore armature pose position.
+    if armature_obj_tmp and old_pose_position:
+        armature_obj_tmp.data.pose_position = old_pose_position
 
     # Compute smooth normals and tangents.
     # calc_normals_split() was removed in Blender 4.0;
@@ -134,10 +149,6 @@ def _gather_mesh_data(obj, export_normals, export_tangents, export_uvs,
             # Sort by weight descending, keep top MAX_BONE_INFLUENCES.
             groups.sort(key=lambda x: x[1], reverse=True)
             groups = groups[:MAX_BONE_INFLUENCES]
-            # Normalize weights.
-            total_w = sum(w for _, w in groups)
-            if total_w > 0:
-                groups = [(bi, w / total_w) for bi, w in groups]
             # Pad to MAX_BONE_INFLUENCES.
             while len(groups) < MAX_BONE_INFLUENCES:
                 groups.append((0, 0.0))

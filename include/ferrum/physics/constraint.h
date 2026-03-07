@@ -43,7 +43,14 @@ typedef struct phys_jacobian_row {
                              *   Applied as: delta = (bias - jv*(1+damping)) * eff_mass.
                              *   Must be < 1 for PGS convergence; typical
                              *   range 0.1–0.5.  Higher values risk oscillation. */
+    uint8_t flags;          /**< Row flags (PHYS_ROW_FLAG_*). */
+    uint8_t _pad[3];        /**< Alignment padding. */
 } phys_jacobian_row_t;
+
+/** Row is an angular-only constraint (no linear Jacobian terms).
+ *  Angular rows receive reduced Baumgarte leak and split-impulse ERP
+ *  to prevent destabilizing coupled positional rows. */
+#define PHYS_ROW_FLAG_ANGULAR 0x01
 
 /** Maximum constraint rows per constraint.
  *  Contact constraints use 3 (1 normal + 2 friction).

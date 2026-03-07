@@ -50,7 +50,8 @@ typedef struct phys_integrate_args {
     uint32_t current_substep;
     /** Per-tier substep counts, indexed by body tier.  May be NULL. */
     const uint32_t *tier_substep_counts;
-    /** Per-substep velocity damping factor (0-1, 1=no damping). */
+    /** Per-substep velocity damping factor (0-1, 1=no damping).
+     *  Used as fallback when per-body damping coefficients are 0. */
     float velocity_damping;
     /** Per-body maximum contact penetration depth.  May be NULL.
      *  When present, bodies with penetration > slop are prevented
@@ -64,6 +65,9 @@ typedef struct phys_integrate_args {
      *  skip_body[i] != 0 are copied unchanged (no integration).
      *  Used to exclude bodies already integrated by sub-substeps. */
     const uint8_t *skip_body;
+    /** Per-body world-space inverse inertia tensors.  May be NULL.
+     *  Required for force-based angular damping. */
+    const struct phys_mat3 *inv_inertia_world;
 } phys_integrate_args_t;
 
 /**

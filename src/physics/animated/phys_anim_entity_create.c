@@ -327,6 +327,8 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             body->tier = PHYS_TIER_0_DIRECT;
             phys_body_set_mass(body, 1.0f);
             phys_body_set_sphere_inertia(body, 1.0f, 0.05f);
+            body->linear_damping  = 50.0f;
+            body->angular_damping = 50.0f;
             continue;
         }
 
@@ -402,6 +404,61 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
         set_bone_collider_(world, bi, col, skel);
         body->friction    = 0.5f;
         body->restitution = 0.0f;
+
+        /* Compute estimated collider volume for drag scaling.
+         * Cross-section ∝ volume^(2/3), so damping coeff scales with
+         * that to approximate air resistance on differently-sized parts. */
+        float volume = 0.001f; /* fallback: tiny cube */
+        switch (col->shape_type) {
+        case BONE_COLLIDER_SPHERE: {
+            float r = col->params[0] > 0.0f ? col->params[0] : 0.1f;
+            volume = (4.0f / 3.0f) * 3.14159f * r * r * r;
+            break;
+        }
+        case BONE_COLLIDER_CAPSULE: {
+            float r = col->params[0] > 0.0f ? col->params[0] : 0.05f;
+            float h = col->params[1] > 0.0f ? col->params[1] : 0.2f;
+            /* cylinder + 2 hemisphere caps = cylinder + sphere */
+            volume = 3.14159f * r * r * h
+                   + (4.0f / 3.0f) * 3.14159f * r * r * r;
+            break;
+        }
+        case BONE_COLLIDER_BOX: {
+            float hx = col->params[0] > 0.0f ? col->params[0] : 0.1f;
+            float hy = col->params[1] > 0.0f ? col->params[1] : 0.1f;
+            float hz = col->params[2] > 0.0f ? col->params[2] : 0.1f;
+            volume = 8.0f * hx * hy * hz;
+            break;
+        }
+        case BONE_COLLIDER_CONVEX_HULL: {
+            /* Rough AABB volume estimate (already computed above). */
+            if (skel->hull_vertices && col->hull_count >= 4) {
+                const float *hv = &skel->hull_vertices[col->hull_offset * 3];
+                float minx = hv[0], maxx = hv[0];
+                float miny = hv[1], maxy = hv[1];
+                float minz = hv[2], maxz = hv[2];
+                for (uint32_t vi = 1; vi < col->hull_count; vi++) {
+                    float x = hv[vi*3+0], y = hv[vi*3+1], z = hv[vi*3+2];
+                    if (x < minx) minx = x; if (x > maxx) maxx = x;
+                    if (y < miny) miny = y; if (y > maxy) maxy = y;
+                    if (z < minz) minz = z; if (z > maxz) maxz = z;
+                }
+                /* ~52% fill factor (π/6) for convex shapes. */
+                volume = (maxx-minx) * (maxy-miny) * (maxz-minz) * 0.52f;
+            }
+            break;
+        }
+        default:
+            volume = 0.008f; /* 0.2^3 */
+            break;
+        }
+        /* Approximate cross-section from volume for drag scaling.
+         * Uses cbrt(vol/ref) for gentle scaling — larger parts get
+         * proportionally more drag but not excessively. */
+        float cross_scale = cbrtf(volume / 0.002f);
+        if (cross_scale < 0.1f) cross_scale = 0.1f;
+        body->linear_damping  = 50.0f * cross_scale;
+        body->angular_damping = 50.0f * cross_scale;
     }
 
     entity->body_count = body_count;

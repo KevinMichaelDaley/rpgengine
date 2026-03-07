@@ -487,6 +487,68 @@ int main(void) {
         /* Sync bone world transforms from physics bodies. */
         phys_anim_entity_sync_from_world(&anim_ent, &world, &skel);
 
+        /* Track foot bones every frame for pop detection. */
+        if (f >= 30 && f <= 120) {
+            /* Foot.R = bone 15, Foot.L = bone 19 */
+            for (int foot = 0; foot < 2; foot++) {
+                uint32_t bi = (foot == 0) ? 15 : 19;
+                uint32_t idx = anim_ent.body_indices[bi];
+                if (idx == UINT32_MAX) continue;
+                const phys_body_t *b = phys_world_get_body(&world, idx);
+                if (!b) continue;
+                float y = b->position.y;
+                float vy = b->linear_vel.y;
+                float speed = sqrtf(b->linear_vel.x * b->linear_vel.x +
+                                    b->linear_vel.y * b->linear_vel.y +
+                                    b->linear_vel.z * b->linear_vel.z);
+                if (speed > 3.0f || y < -0.1f || (f % 10 == 0)) {
+                    fprintf(stderr, "  f%03d %s Y=%.3f vy=%.2f spd=%.2f\n",
+                            f, foot == 0 ? "Foot.R" : "Foot.L",
+                            y, vy, speed);
+                }
+            }
+        }
+
+        /* Diagnostic: print per-body Y and joint anchor errors at key frames. */
+        if (f == 45 || f == 90 || f == 150) {
+            fprintf(stderr, "  --- f%03d per-body ---\n", f);
+            float min_y = 999.0f;
+            for (uint32_t bi = 0; bi < skel.joint_count; bi++) {
+                uint32_t idx = anim_ent.body_indices[bi];
+                if (idx == UINT32_MAX) continue;
+                const phys_body_t *b = phys_world_get_body(&world, idx);
+                if (!b) continue;
+                const char *tag = (b->flags & PHYS_BODY_FLAG_NO_BROADPHASE)
+                                ? "G" : "C";
+                fprintf(stderr, "    b%02u[%s] Y=%.3f vy=%.2f\n",
+                        bi, tag, b->position.y, b->linear_vel.y);
+                if (b->position.y < min_y) min_y = b->position.y;
+            }
+            fprintf(stderr, "    min_Y=%.3f\n", min_y);
+            /* Measure joint anchor errors (world-space distance).
+             * Skip distance-limit joints (type PHYS_JOINT_DISTANCE)
+             * since they intentionally keep anchors separated. */
+            float max_err = 0.0f;
+            uint32_t worst_joint = 0;
+            for (uint32_t ji = 0; ji < world.joint_count; ji++) {
+                const phys_joint_t *j = &world.joints[ji];
+                if (j->type == PHYS_JOINT_DISTANCE) continue;
+                if (j->body_a >= world.body_pool.capacity ||
+                    j->body_b >= world.body_pool.capacity) continue;
+                const phys_body_t *ba = &world.body_pool.bodies_curr[j->body_a];
+                const phys_body_t *bb = &world.body_pool.bodies_curr[j->body_b];
+                phys_vec3_t wa = vec3_add(ba->position,
+                    quat_rotate_vec3(ba->orientation, j->local_anchor_a));
+                phys_vec3_t wb = vec3_add(bb->position,
+                    quat_rotate_vec3(bb->orientation, j->local_anchor_b));
+                phys_vec3_t diff = vec3_sub(wa, wb);
+                float err = sqrtf(vec3_dot(diff, diff));
+                if (err > max_err) { max_err = err; worst_joint = ji; }
+            }
+            fprintf(stderr, "    max_anchor_err=%.4f (joint %u)\n",
+                    max_err, worst_joint);
+        }
+
         /* Debug: print bone 1 (Ribcage) position + velocity every 15 frames. */
         if (f % 15 == 0) {
             uint32_t bi1 = anim_ent.body_indices[1];
@@ -509,6 +571,58 @@ int main(void) {
             memcpy(&ibm, &ibms[j], sizeof(mat4_t));
             mat4_t result = mat4_mul(bw, ibm);
             memcpy(&bone_matrices[j * 16], result.m, 16 * sizeof(float));
+        }
+        /* Debug: on frame 0, dump first few bone palette matrices
+         * to verify they are near-identity (rest pose). */
+        if (f == 0) {
+            fprintf(stderr, "  --- Frame 0 bone palette ---\n");
+            for (uint32_t j = 0; j < n && j < 6; j++) {
+                const float *m = &bone_matrices[j * 16];
+                fprintf(stderr, "  bone[%u]:\n", j);
+                fprintf(stderr, "    [%7.3f %7.3f %7.3f %7.3f]\n",
+                        m[0], m[4], m[8], m[12]);
+                fprintf(stderr, "    [%7.3f %7.3f %7.3f %7.3f]\n",
+                        m[1], m[5], m[9], m[13]);
+                fprintf(stderr, "    [%7.3f %7.3f %7.3f %7.3f]\n",
+                        m[2], m[6], m[10], m[14]);
+                fprintf(stderr, "    [%7.3f %7.3f %7.3f %7.3f]\n",
+                        m[3], m[7], m[11], m[15]);
+            }
+            /* Also dump bone_world[0] and ibm[0] separately. */
+            fprintf(stderr, "  bone_world[0]:\n");
+            for (int r = 0; r < 4; r++)
+                fprintf(stderr, "    [%7.3f %7.3f %7.3f %7.3f]\n",
+                    anim_ent.bone_world[0].m[r],
+                    anim_ent.bone_world[0].m[4+r],
+                    anim_ent.bone_world[0].m[8+r],
+                    anim_ent.bone_world[0].m[12+r]);
+            fprintf(stderr, "  ibm[0]:\n");
+            for (int r = 0; r < 4; r++)
+                fprintf(stderr, "    [%7.3f %7.3f %7.3f %7.3f]\n",
+                    ibms[0].m[r], ibms[0].m[4+r],
+                    ibms[0].m[8+r], ibms[0].m[12+r]);
+            fprintf(stderr, "  FVMA bones=%u, fskel joints=%u, ibm_count=%u\n",
+                    skinned_mesh.bone_count, skel.joint_count, ibm_count);
+            /* Compare fskel IBM[0] vs FVMA IBM[0]. */
+            if (skinned_mesh.inv_bind_matrices) {
+                fprintf(stderr, "  FVMA ibm[0]:\n");
+                const float *fi = skinned_mesh.inv_bind_matrices;
+                for (int r = 0; r < 4; r++)
+                    fprintf(stderr, "    [%7.3f %7.3f %7.3f %7.3f]\n",
+                        fi[r], fi[4+r], fi[8+r], fi[12+r]);
+            }
+        }
+        /* Debug: on frame 90, dump palette to check for stretched bones. */
+        if (f == 90) {
+            fprintf(stderr, "  --- Frame 90 bone palette trans ---\n");
+            for (uint32_t j = 0; j < n; j++) {
+                const float *m = &bone_matrices[j * 16];
+                float det3 = m[0]*(m[5]*m[10]-m[6]*m[9])
+                           - m[4]*(m[1]*m[10]-m[2]*m[9])
+                           + m[8]*(m[1]*m[6]-m[2]*m[5]);
+                fprintf(stderr, "  b%02u t=(%.2f,%.2f,%.2f) det=%.3f\n",
+                        j, m[12], m[13], m[14], det3);
+            }
         }
 
         /* Upload bone palette to SSBO. */

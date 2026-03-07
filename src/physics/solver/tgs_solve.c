@@ -317,8 +317,16 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
 
     /* Target pseudo-velocity to correct the error in one substep.
      * Negative sign: positive error means anchors are separated, so
-     * correction drives the relative anchor velocity negative. */
-    float pos_bias = -error * inv_dt;
+     * correction drives the relative anchor velocity negative.
+     *
+     * Joint positional rows use aggressive ERP (0.8) so anchors
+     * don't visibly stretch apart between substeps.  Angular rows
+     * use a very soft ERP to prevent angular corrections from
+     * fighting positional rows via coupled anchor movement. */
+    float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
+              ? 0.01f
+              : 0.4f;
+    float pos_bias = -error * inv_dt * erp;
 
     /* Current pseudo-velocity along constraint direction. */
     float jv = vec3_dot(row->J_va, pva->linear)
@@ -587,11 +595,23 @@ static void solve_one_constraint(phys_constraint_t *c,
         }
 
         /* Save bias values (position errors), set velocity-level bias
-         * to Baumgarte leak: -error * inv_dt * baumgarte_fraction. */
+         * to Baumgarte leak: -error * inv_dt * baumgarte_fraction.
+         * Angular rows (PHYS_ROW_FLAG_ANGULAR) get a much lower
+         * baumgarte to prevent angular corrections from destabilizing
+         * positional rows via coupled anchor movement. */
         float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
+        float saved_eff_mass[PHYS_MAX_CONSTRAINT_ROWS];
+        /* Animation constraints (is_joint == 1) use softened effective
+         * mass so structural joints and contacts override them. */
+        const float anim_softness = (c->is_joint == 1) ? 0.5f : 1.0f;
         for (uint8_t r = 0; r < c->row_count; r++) {
             saved_bias[r] = c->rows[r].bias;
-            c->rows[r].bias = -saved_bias[r] * inv_dt * baumgarte;
+            saved_eff_mass[r] = c->rows[r].effective_mass;
+            c->rows[r].effective_mass *= anim_softness;
+            float row_baumgarte = (c->rows[r].flags & PHYS_ROW_FLAG_ANGULAR)
+                                ? baumgarte * 0.05f
+                                : baumgarte;
+            c->rows[r].bias = -saved_bias[r] * inv_dt * row_baumgarte;
         }
 
         /* Velocity-level solve: all rows with bilateral bounds. */
@@ -600,9 +620,11 @@ static void solve_one_constraint(phys_constraint_t *c,
                       inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
         }
 
-        /* Restore bias and apply split-impulse position correction. */
+        /* Restore bias and effective mass, then apply split-impulse
+         * position correction. */
         for (uint8_t r = 0; r < c->row_count; r++) {
             c->rows[r].bias = saved_bias[r];
+            c->rows[r].effective_mass = saved_eff_mass[r];
         }
         if (pseudo) {
             for (uint8_t r = 0; r < c->row_count; r++) {
@@ -687,13 +709,15 @@ static bool solve_island_colored(const phys_island_t *island,
     int rc = phys_constraint_color(local, n, args->body_count, arena, &coloring);
     if (rc != 0) { return false; }
 
-    /* Two-pass solve: animation constraints first (is_joint == 1),
-     * then structural joints + contacts (is_joint == 0 or 2).
-     * Within each pass, iterate color-by-color for parallelism. */
+    /* Interleaved two-pass solve: within each iteration, animation
+     * constraints (is_joint == 1) are solved first so structural joints
+     * and contacts (is_joint == 0 or 2) can override them.  Animation
+     * constraints use softened effective mass (50%) so they yield to
+     * structural constraints when they conflict. */
     phys_velocity_t *pseudo = args->pseudo_velocities;
 
-    /* Pass 1: animation constraints (soft goals — IK, copy_rotation, etc.). */
     for (uint32_t iter = 0; iter < iters; ++iter) {
+        /* Pass 1: animation constraints (soft goals). */
         for (uint32_t color = 0; color < coloring.num_colors; ++color) {
             for (uint32_t ci = 0; ci < n; ++ci) {
                 if (coloring.colors[ci] != color) { continue; }
@@ -705,10 +729,7 @@ static bool solve_island_colored(const phys_island_t *island,
                                      slop, inv_dt);
             }
         }
-    }
-
-    /* Pass 2: structural joints + contacts (hard physical constraints). */
-    for (uint32_t iter = 0; iter < iters; ++iter) {
+        /* Pass 2: structural joints + contacts. */
         for (uint32_t color = 0; color < coloring.num_colors; ++color) {
             for (uint32_t ci = 0; ci < n; ++ci) {
                 if (coloring.colors[ci] != color) { continue; }
@@ -774,10 +795,11 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
         }
 
-        /* Sequential solve (default path): two-pass ordering.
-         * Pass 1: animation constraints (is_joint == 1).
-         * Pass 2: structural joints + contacts (is_joint != 1). */
+        /* Sequential solve (default path): interleaved two-pass ordering.
+         * Within each iteration, animation constraints (is_joint == 1)
+         * are solved first, then structural joints + contacts override. */
         for (uint32_t iter = 0; iter < iters; iter++) {
+            /* Pass 1: animation constraints (soft goals). */
             for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
                 uint32_t c_idx = island->constraint_indices[ci];
                 if (args->constraints[c_idx].is_joint != 1) { continue; }
@@ -786,8 +808,7 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                                      args->bodies, args->inv_inertia_world,
                                      slop, inv_dt);
             }
-        }
-        for (uint32_t iter = 0; iter < iters; iter++) {
+            /* Pass 2: structural joints + contacts. */
             for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
                 uint32_t c_idx = island->constraint_indices[ci];
                 if (args->constraints[c_idx].is_joint == 1) { continue; }

@@ -28,11 +28,15 @@ extern "C" {
  * @brief Core rigid body state.
  *
  * Layout is intentionally stable and validated by size assertions.
- * Fields total 73 bytes before padding; 7 pad bytes reach 80.
  *
  * sleep_counter tracks consecutive frames with velocity below the
  * sleep threshold.  When it exceeds sleep_delay_frames (set in the
  * integrate stage args), the body is marked SLEEPING and moved to T5.
+ *
+ * linear_damping / angular_damping: force-based damping coefficients.
+ * Linear:  F = -c*v,  dv = -c * v / mass * dt  (encodes cross-section).
+ * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt (through inertia tensor).
+ * Heavier bodies resist drag more.  0 = no damping.  Default 0.0.
  */
 typedef struct phys_body {
     phys_vec3_t position;
@@ -51,12 +55,15 @@ typedef struct phys_body {
     float friction;         /**< Surface friction coefficient (0–1+). */
     float restitution;      /**< Coefficient of restitution / bounciness (0–1). */
 
+    float linear_damping;   /**< Linear drag coeff (0 = none). */
+    float angular_damping;  /**< Angular torque damping coeff (0 = none). */
+
     /** ECS entity index that owns this body (UINT32_MAX = unlinked).
      *  Set by the pre-physics ECS→physics sync pass. */
     uint32_t entity_index;
 } phys_body_t;
 
-_Static_assert(sizeof(phys_body_t) == 88, "phys_body_t size check");
+_Static_assert(sizeof(phys_body_t) == 96, "phys_body_t size check");
 
 /** Initialize body to safe defaults (static, identity orientation). */
 void phys_body_init(phys_body_t *body);
