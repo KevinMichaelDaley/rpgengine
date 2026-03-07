@@ -326,8 +326,8 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
      * before integration, so effective inv_dt matches body_dt.
      * Angular rows use softer ERP to prevent fighting. */
     float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
-              ? 0.02f
-              : 0.15f;
+              ? 0.05f
+              : 0.4f;
     float pos_bias = -error * inv_dt * erp;
 
     /* Current pseudo-velocity along constraint direction. */
@@ -543,7 +543,9 @@ static void solve_one_constraint(phys_constraint_t *c,
                                   const struct phys_body *bodies,
                                   const phys_mat3_t *inv_inertia_world,
                                   float slop,
-                                  float inv_dt)
+                                  float inv_dt,
+                                  float tick_dt,
+                                  const uint32_t *tier_substep_counts)
 {
     phys_velocity_t *va = &velocities[c->body_a];
     phys_velocity_t *vb = &velocities[c->body_b];
@@ -634,9 +636,22 @@ static void solve_one_constraint(phys_constraint_t *c,
              * In split-impulse TGS, compliance reduces the strength of
              * positional drift correction (elastic response) without
              * weakening the velocity-level constraint solve.
-             *   m_soft = m_eff / (1 + α * m_eff * inv_dt²)  */
+             *   m_soft = m_eff / (1 + α * m_eff * inv_dt²)
+             * Use per-body effective inv_dt that accounts for tiered
+             * substep scaling (pseudo_velocities are scaled by
+             * tier_substeps/max_substeps before integration). */
+            float eff_inv_dt = inv_dt;
+            if (tier_substep_counts && tick_dt > 0.0f) {
+                uint8_t t_a = bodies[c->body_a].tier;
+                uint8_t t_b = bodies[c->body_b].tier;
+                uint32_t ts_a = tier_substep_counts[t_a];
+                uint32_t ts_b = tier_substep_counts[t_b];
+                uint32_t ts = (ts_a < ts_b) ? ts_a : ts_b;
+                if (ts == 0) { ts = 1; }
+                eff_inv_dt = (float)ts / tick_dt;
+            }
             const float compliance_factor =
-                c->compliance * inv_dt * inv_dt;
+                c->compliance * eff_inv_dt * eff_inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
                 float m_save = c->rows[r].effective_mass;
                 if (compliance_factor > 0.0f) {
@@ -743,7 +758,9 @@ static bool solve_island_colored(const phys_island_t *island,
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
                                      args->bodies, args->inv_inertia_world,
-                                     slop, inv_dt);
+                                     slop, inv_dt,
+                                     args->tick_dt,
+                                     args->tier_substep_counts);
             }
         }
     }
@@ -808,7 +825,9 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
                                      args->bodies, args->inv_inertia_world,
-                                     slop, inv_dt);
+                                     slop, inv_dt,
+                                     args->tick_dt,
+                                     args->tier_substep_counts);
             }
         }
     }

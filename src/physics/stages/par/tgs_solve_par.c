@@ -138,6 +138,8 @@ typedef struct tgs_solve_shared {
     uint32_t                  iterations;   /**< Solver iteration count. */
     float                     slop;         /**< Penetration slop threshold. */
     float                     inv_dt;       /**< 1 / substep dt. */
+    float                     tick_dt;      /**< Full tick dt (for per-body compliance). */
+    const uint32_t           *tier_substep_counts; /**< Per-tier substep counts (may be NULL). */
 } tgs_solve_shared_t;
 
 /**
@@ -154,6 +156,8 @@ typedef struct tgs_color_shared {
     phys_velocity_t   *pseudo_velocities;  /**< Split-impulse workspace (may be NULL). */
     float              slop;               /**< Penetration slop threshold. */
     float              inv_dt;             /**< 1 / substep dt. */
+    float              tick_dt;            /**< Full tick dt (for per-body compliance). */
+    const uint32_t    *tier_substep_counts;/**< Per-tier substep counts (may be NULL). */
     const uint32_t    *constraint_indices; /**< Global constraint indices for this color batch. */
 } tgs_color_shared_t;
 
@@ -280,8 +284,8 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
      * before integration, so effective inv_dt matches body_dt.
      * Angular rows use softer ERP to prevent fighting. */
     float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
-              ? 0.02f
-              : 0.15f;
+              ? 0.05f
+              : 0.4f;
     float pos_bias = -error * inv_dt * erp;
 
     float jv = vec3_dot(row->J_va, pva->linear)
@@ -394,9 +398,22 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
              * In split-impulse TGS, compliance reduces the strength of
              * positional drift correction (elastic response) without
              * weakening the velocity-level constraint solve.
-             *   m_soft = m_eff / (1 + α * m_eff * inv_dt²)  */
+             *   m_soft = m_eff / (1 + α * m_eff * inv_dt²)
+             * Use per-body effective inv_dt that accounts for tiered
+             * substep scaling (pseudo_velocities are scaled by
+             * tier_substeps/max_substeps before integration). */
+            float eff_inv_dt = shared->inv_dt;
+            if (shared->tier_substep_counts && shared->tick_dt > 0.0f) {
+                uint8_t t_a = shared->bodies[c->body_a].tier;
+                uint8_t t_b = shared->bodies[c->body_b].tier;
+                uint32_t ts_a = shared->tier_substep_counts[t_a];
+                uint32_t ts_b = shared->tier_substep_counts[t_b];
+                uint32_t ts = (ts_a < ts_b) ? ts_a : ts_b;
+                if (ts == 0) { ts = 1; }
+                eff_inv_dt = (float)ts / shared->tick_dt;
+            }
             const float compliance_factor =
-                c->compliance * shared->inv_dt * shared->inv_dt;
+                c->compliance * eff_inv_dt * eff_inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
                 float m_save = c->rows[r].effective_mass;
                 if (compliance_factor > 0.0f) {
@@ -490,6 +507,8 @@ static void solve_island(const tgs_solve_shared_t *shared,
                 .pseudo_velocities = shared->pseudo_velocities,
                 .slop              = shared->slop,
                 .inv_dt            = shared->inv_dt,
+                .tick_dt           = shared->tick_dt,
+                .tier_substep_counts = shared->tier_substep_counts,
             }, c_idx);
         }
     }
@@ -606,6 +625,8 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
         .pseudo_velocities  = shared->pseudo_velocities,
         .slop               = shared->slop,
         .inv_dt             = shared->inv_dt,
+        .tick_dt            = shared->tick_dt,
+        .tier_substep_counts = shared->tier_substep_counts,
         .constraint_indices = sorted_indices,
     };
 
@@ -842,6 +863,8 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
         .iterations        = args->iterations,
         .slop              = args->slop,
         .inv_dt            = inv_dt,
+        .tick_dt           = args->tick_dt,
+        .tier_substep_counts = args->tier_substep_counts,
     };
 
     /* Separate large islands (colored parallel) from small (one-job). */
