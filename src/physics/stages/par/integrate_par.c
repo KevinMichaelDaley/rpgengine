@@ -15,7 +15,6 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
-
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/body.h"

@@ -168,22 +168,9 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR;
 
-        /* Compute effective mass with compliance regularization.
-         * Angular limit rows can fight positional rows when the
-         * effective mass is too stiff, causing oscillation.  Adding
-         * a compliance term (α/dt²) to the denominator softens the
-         * response, preventing explosive feedback loops. */
-        {
-            float raw_eff_mass = phys_compute_effective_mass(
-                row, body_a->inv_mass, &inv_i_a,
-                body_b->inv_mass, &inv_i_b);
-            float alpha = 1e-2f;
-            float inv_dt2 = 1.0f / (dt * dt);
-            float regularized = (raw_eff_mass > 0.0f)
-                ? 1.0f / (1.0f / raw_eff_mass + alpha * inv_dt2)
-                : 0.0f;
-            row->effective_mass = regularized;
-        }
+        row->effective_mass = phys_compute_effective_mass(
+            row, body_a->inv_mass, &inv_i_a,
+            body_b->inv_mass, &inv_i_b);
         rc++;
     }
 

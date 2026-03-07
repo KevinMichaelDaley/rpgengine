@@ -55,7 +55,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -102,12 +101,8 @@ static uint32_t compute_island_sub_substeps(
 {
     (void)body_count;
     float max_speed_sq = 0.0f;
-    bool has_ghost = false;
     for (uint32_t bi = 0; bi < island->body_count; bi++) {
         uint32_t idx = island->body_indices[bi];
-        if (bodies[idx].flags & PHYS_BODY_FLAG_NO_BROADPHASE) {
-            has_ghost = true;
-        }
         if (bodies[idx].inv_mass == 0.0f) continue;
         phys_vec3_t v = bodies[idx].linear_vel;
         float speed_sq = vec3_dot(v, v);
@@ -116,9 +111,10 @@ static uint32_t compute_island_sub_substeps(
         }
     }
 
-    /* Ghost body islands (skeleton chains) always get sub-substepping
-     * for joint stability, regardless of velocity. */
-    uint32_t min_subs = has_ghost ? 4 : 1;
+    /* Sub-substeps are velocity-driven only.  Ghost/joint-only islands
+     * at rest get nsub=1 (no sub-substeps); the normal solver + compliance
+     * regularization handles joint stability. */
+    uint32_t min_subs = 1;
 
     const float lo2 = SUBSUB_SPEED_LOW  * SUBSUB_SPEED_LOW;
     const float hi2 = SUBSUB_SPEED_HIGH * SUBSUB_SPEED_HIGH;
@@ -401,19 +397,14 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
             }
         }
 
-        /* Init velocity workspace from body state. */
+        /* Init velocity workspace from body state.
+         * Gravity is NOT applied here — phys_stage_tgs_solve's
+         * init_velocities handles it to avoid double-counting. */
         for (uint32_t bi = 0; bi < isle->body_count; bi++) {
             uint32_t idx = isle->body_indices[bi];
             s->ss_vel[idx].linear  = s->bodies[idx].linear_vel;
             s->ss_vel[idx].angular = s->bodies[idx].angular_vel;
             s->ss_pseudo[idx] = (phys_velocity_t){{0,0,0},{0,0,0}};
-            if (s->bodies[idx].inv_mass > 0.0f &&
-                !phys_body_is_sleeping(&s->bodies[idx]) &&
-                !(s->bodies[idx].flags & PHYS_BODY_FLAG_NO_GRAVITY)) {
-                s->ss_vel[idx].linear = vec3_add(
-                    s->ss_vel[idx].linear,
-                    vec3_scale(s->gravity, ss_dt));
-            }
         }
 
         /* Wrap island in a single-island list for solver. */
@@ -437,9 +428,9 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
             .iterations = s->solver_iterations,
             .gravity    = s->gravity,
             .dt         = ss_dt,
-            .tick_dt    = s->tick_dt,
+            .tick_dt    = ss_dt,
             .slop       = s->slop,
-            .tier_substep_counts = s->tier_substep_counts,
+            .tier_substep_counts = NULL,
             .frame_arena = s->frame_arena,
             .island_color_threshold = s->island_color_threshold,
             .joints      = s->joints,
@@ -1261,9 +1252,13 @@ void phys_world_tick_parallel(phys_world_t *world,
             _Alignof(phys_velocity_t));
 
         if (velocities) {
-            /* Zero-initialize velocities. */
-            memset(velocities, 0,
-                   (body_cap > 0 ? body_cap : 1) * sizeof(phys_velocity_t));
+            /* Zero-initialize velocities and pseudo-velocities. */
+            size_t vel_size = (body_cap > 0 ? body_cap : 1)
+                            * sizeof(phys_velocity_t);
+            memset(velocities, 0, vel_size);
+            if (pseudo_velocities) {
+                memset(pseudo_velocities, 0, vel_size);
+            }
 
             /* ── Stage 11b: Prepare XPBD Solve (T2-T4 islands) ─────── */
             /* XPBD operates on T2-T4 islands which are disjoint from
@@ -1651,6 +1646,32 @@ void phys_world_tick_parallel(phys_world_t *world,
              * the next substep.  Joint constraints start at
              * joint_constraint_start in the constraint array. */
             if (world->joint_count > 0 && constraints) {
+                /* Compute per-body contact impulse magnitude for break
+                 * evaluation.  Break strength is triggered by external
+                 * forces (contacts), not the joint's own correction. */
+                float *body_contact_impulse = phys_frame_arena_alloc(
+                    &world->frame_arena,
+                    (body_cap > 0 ? body_cap : 1) * sizeof(float),
+                    _Alignof(float));
+                if (body_contact_impulse) {
+                    for (uint32_t bi = 0; bi < body_cap; bi++)
+                        body_contact_impulse[bi] = 0.0f;
+                    for (uint32_t ci = 0; ci < joint_constraint_start && ci < constraint_count; ci++) {
+                        const phys_constraint_t *c = &constraints[ci];
+                        if (c->is_joint) continue; /* skip joints */
+                        float imp2 = 0.0f;
+                        for (uint8_t r = 0; r < c->row_count; r++) {
+                            float lam = c->rows[r].lambda;
+                            imp2 += lam * lam;
+                        }
+                        float imp = sqrtf(imp2);
+                        if (c->body_a < body_cap)
+                            body_contact_impulse[c->body_a] += imp;
+                        if (c->body_b < body_cap)
+                            body_contact_impulse[c->body_b] += imp;
+                    }
+                }
+
                 uint32_t jci = joint_constraint_start;
                 for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
                     phys_joint_t *j = &world->joints[ji];
@@ -1696,10 +1717,20 @@ void phys_world_tick_parallel(phys_world_t *world,
                         j->accumulated_impulse = 0.0f;
                     }
 
-                    /* Break: mark joint for removal. */
-                    if (j->break_strength > 0.0f &&
-                        impulse_mag > j->break_strength) {
-                        j->broken = 1;
+                    /* Break: triggered by contact impulse on the joint's
+                     * bodies, not by the joint's own correction impulse.
+                     * A joint breaks when an external impact delivers
+                     * enough force to exceed its structural capacity. */
+                    if (j->break_strength > 0.0f && body_contact_impulse) {
+                        float contact_a = (j->body_a < body_cap)
+                            ? body_contact_impulse[j->body_a] : 0.0f;
+                        float contact_b = (j->body_b < body_cap)
+                            ? body_contact_impulse[j->body_b] : 0.0f;
+                        float max_contact = (contact_a > contact_b)
+                            ? contact_a : contact_b;
+                        if (max_contact > j->break_strength) {
+                            j->broken = 1;
+                        }
                     }
                 }
             }
@@ -1731,6 +1762,26 @@ void phys_world_tick_parallel(phys_world_t *world,
                             vec3_scale(world->config.gravity, body_dt));
                     }
                 }
+            }
+        }
+
+        /* Scale pseudo-velocities for tier dt mismatch.
+         * The solver uses inv_dt = 1/substep_dt, but integration uses
+         * body_dt = tick_dt / tier_substeps[tier].  When body_dt != substep_dt
+         * (e.g. T0 has 2 substeps, max_substeps=4 → body_dt = 2×substep_dt),
+         * pseudo-velocities must be scaled by substep_dt/body_dt =
+         * tier_substeps/max_substeps so position corrections match. */
+        if (pseudo_velocities && max_substeps > 1) {
+            for (uint32_t i = 0; i < body_cap; ++i) {
+                uint8_t tier = world->body_pool.bodies_next[i].tier;
+                uint32_t ts = tier_substep_counts[tier];
+                if (ts == 0) { ts = 1; }
+                if (ts == max_substeps) { continue; }
+                float scale = (float)ts / (float)max_substeps;
+                pseudo_velocities[i].linear = vec3_scale(
+                    pseudo_velocities[i].linear, scale);
+                pseudo_velocities[i].angular = vec3_scale(
+                    pseudo_velocities[i].angular, scale);
             }
         }
 

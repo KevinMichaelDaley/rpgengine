@@ -169,14 +169,20 @@ static void solve_row(phys_jacobian_row_t *row,
                        float inv_mass_a,
                        const phys_mat3_t *inv_i_a,
                        float inv_mass_b,
-                       const phys_mat3_t *inv_i_b)
+                       const phys_mat3_t *inv_i_b,
+                       float dt)
 {
     float jv = vec3_dot(row->J_va, va->linear)
              + vec3_dot(row->J_wa, va->angular)
              + vec3_dot(row->J_vb, vb->linear)
              + vec3_dot(row->J_wb, vb->angular);
 
-    float jv_damped = jv * (1.0f + row->damping);
+    /* Viscous damping: scale the velocity error by (1 + d*dt) so the
+     * solver applies a stronger correction that opposes relative motion.
+     * The dt factor keeps the damping force physically correct and
+     * prevents instability at large damping coefficients.
+     * d=10, dt=0.008 → factor=1.08 (stable, mildly damped). */
+    float jv_damped = jv * (1.0f + row->damping * dt);
     float delta_lambda = (row->bias - jv_damped) * row->effective_mass;
 
     delta_lambda *= SOR_OMEGA;
@@ -268,13 +274,14 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
     float error = row->bias;
     if (fabsf(error) < 1e-7f) { return; }
 
-    /* Joint positional rows use aggressive ERP (0.8) so anchors
-     * don't visibly stretch apart between substeps.  Angular rows
-     * use a very soft ERP to prevent angular corrections from
-     * fighting positional rows via coupled anchor movement. */
+    /* Joint positional rows use moderate ERP to avoid Gauss-Seidel
+     * divergence in long joint chains (ragdoll: 19 joints).
+     * Pseudo-velocities are scaled by tier_substeps/max_substeps
+     * before integration, so effective inv_dt matches body_dt.
+     * Angular rows use softer ERP to prevent fighting. */
     float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
-              ? 0.01f
-              : 0.4f;
+              ? 0.02f
+              : 0.15f;
     float pos_bias = -error * inv_dt * erp;
 
     float jv = vec3_dot(row->J_va, pva->linear)
@@ -361,6 +368,7 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
         float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
         float saved_eff_mass[PHYS_MAX_CONSTRAINT_ROWS];
         const float anim_softness = (c->is_joint == 1) ? 0.5f : 1.0f;
+
         for (uint8_t r = 0; r < c->row_count; r++) {
             saved_bias[r] = c->rows[r].bias;
             saved_eff_mass[r] = c->rows[r].effective_mass;
@@ -373,7 +381,8 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
 
         for (uint8_t r = 0; r < c->row_count; r++) {
             solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
+                      1.0f / shared->inv_dt);
         }
 
         for (uint8_t r = 0; r < c->row_count; r++) {
@@ -381,13 +390,26 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
             c->rows[r].effective_mass = saved_eff_mass[r];
         }
         if (shared->pseudo_velocities) {
+            /* Compliance softening for position correction only.
+             * In split-impulse TGS, compliance reduces the strength of
+             * positional drift correction (elastic response) without
+             * weakening the velocity-level constraint solve.
+             *   m_soft = m_eff / (1 + α * m_eff * inv_dt²)  */
+            const float compliance_factor =
+                c->compliance * shared->inv_dt * shared->inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
+                float m_save = c->rows[r].effective_mass;
+                if (compliance_factor > 0.0f) {
+                    float m = m_save / (1.0f + compliance_factor * m_save);
+                    c->rows[r].effective_mass = m;
+                }
                 solve_joint_position_row(
                     &c->rows[r],
                     &shared->pseudo_velocities[c->body_a],
                     &shared->pseudo_velocities[c->body_b],
                     shared->inv_dt,
                     inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+                c->rows[r].effective_mass = m_save;
             }
         }
         return;
@@ -395,7 +417,8 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
 
     /* Normal row. */
     solve_row(&c->rows[0], va, vb,
-              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
+              1.0f / shared->inv_dt);
 
     {
         /* Split impulse position correction. */
@@ -414,12 +437,11 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
             c->rows[r].lambda_min = -friction_limit;
             c->rows[r].lambda_max =  friction_limit;
             solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
+                      1.0f / shared->inv_dt);
         }
     }
 }
-
-/* ── Job function for colored constraint batch ───────────────── */
 
 /**
  * @brief Job function: solve a batch of same-color constraints.
@@ -456,192 +478,19 @@ static void solve_island(const tgs_solve_shared_t *shared,
     phys_velocity_t *pseudo = shared->pseudo_velocities;
 
     for (uint32_t iter = 0; iter < iters; iter++) {
-        /* Pass 1: animation constraints (is_joint == 1, soft goals). */
+        /* Single pass: all constraints solved together so they converge
+         * without fighting between animation and structural passes. */
         for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
             uint32_t c_idx = island->constraint_indices[ci];
-            phys_constraint_t *c = &shared->constraints[c_idx];
-            if (c->is_joint != 1) { continue; }
-
-            phys_velocity_t *va = &shared->velocities[c->body_a];
-            phys_velocity_t *vb = &shared->velocities[c->body_b];
-
-            float inv_mass_a = shared->bodies[c->body_a].inv_mass;
-            float inv_mass_b = shared->bodies[c->body_b].inv_mass;
-
-            phys_mat3_t fb_a, fb_b;
-            const phys_mat3_t *inv_i_a;
-            const phys_mat3_t *inv_i_b;
-            if (shared->inv_inertia_world) {
-                inv_i_a = &shared->inv_inertia_world[c->body_a];
-                inv_i_b = &shared->inv_inertia_world[c->body_b];
-            } else {
-                fb_a = phys_mat3_inv_inertia_world(
-                    shared->bodies[c->body_a].orientation,
-                    shared->bodies[c->body_a].inv_inertia_diag);
-                fb_b = phys_mat3_inv_inertia_world(
-                    shared->bodies[c->body_b].orientation,
-                    shared->bodies[c->body_b].inv_inertia_diag);
-                inv_i_a = &fb_a;
-                inv_i_b = &fb_b;
-            }
-
-            /* Animation joint: velocity-level solve with speed-dependent
-             * Baumgarte leak, angular row scaling, and softened effective
-             * mass so structural constraints override. */
-            phys_vec3_t vel_a = va->linear;
-            phys_vec3_t vel_b = vb->linear;
-            float spd_a = vec3_dot(vel_a, vel_a);
-            float spd_b = vec3_dot(vel_b, vel_b);
-            float max_spd2 = spd_a > spd_b ? spd_a : spd_b;
-
-            const float baum_lo2 = 5.0f * 5.0f;
-            const float baum_hi2 = 60.0f * 60.0f;
-            const float baum_max = 0.6f;
-            float baumgarte = 0.0f;
-            if (max_spd2 > baum_lo2) {
-                float t = (max_spd2 - baum_lo2)
-                        / (baum_hi2 - baum_lo2);
-                if (t > 1.0f) { t = 1.0f; }
-                baumgarte = baum_max * t;
-            }
-
-            float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
-            float saved_eff_mass[PHYS_MAX_CONSTRAINT_ROWS];
-            for (uint8_t r = 0; r < c->row_count; r++) {
-                saved_bias[r] = c->rows[r].bias;
-                saved_eff_mass[r] = c->rows[r].effective_mass;
-                c->rows[r].effective_mass *= 0.5f;
-                float row_baumgarte =
-                    (c->rows[r].flags & PHYS_ROW_FLAG_ANGULAR)
-                        ? baumgarte * 0.05f : baumgarte;
-                c->rows[r].bias =
-                    -saved_bias[r] * shared->inv_dt * row_baumgarte;
-            }
-
-            for (uint8_t r = 0; r < c->row_count; r++) {
-                solve_row(&c->rows[r], va, vb,
-                          inv_mass_a, inv_i_a,
-                          inv_mass_b, inv_i_b);
-            }
-
-            for (uint8_t r = 0; r < c->row_count; r++) {
-                c->rows[r].bias = saved_bias[r];
-                c->rows[r].effective_mass = saved_eff_mass[r];
-            }
-            if (pseudo) {
-                for (uint8_t r = 0; r < c->row_count; r++) {
-                    solve_joint_position_row(
-                        &c->rows[r],
-                        &pseudo[c->body_a], &pseudo[c->body_b],
-                        shared->inv_dt,
-                        inv_mass_a, inv_i_a,
-                        inv_mass_b, inv_i_b);
-                }
-            }
-        }
-
-        /* Pass 2: structural joints (is_joint == 2) + contacts (is_joint == 0). */
-        for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
-            uint32_t c_idx = island->constraint_indices[ci];
-            phys_constraint_t *c = &shared->constraints[c_idx];
-            if (c->is_joint == 1) { continue; }
-
-            phys_velocity_t *va = &shared->velocities[c->body_a];
-            phys_velocity_t *vb = &shared->velocities[c->body_b];
-
-            float inv_mass_a = shared->bodies[c->body_a].inv_mass;
-            float inv_mass_b = shared->bodies[c->body_b].inv_mass;
-
-            phys_mat3_t fb_a, fb_b;
-            const phys_mat3_t *inv_i_a;
-            const phys_mat3_t *inv_i_b;
-            if (shared->inv_inertia_world) {
-                inv_i_a = &shared->inv_inertia_world[c->body_a];
-                inv_i_b = &shared->inv_inertia_world[c->body_b];
-            } else {
-                fb_a = phys_mat3_inv_inertia_world(
-                    shared->bodies[c->body_a].orientation,
-                    shared->bodies[c->body_a].inv_inertia_diag);
-                fb_b = phys_mat3_inv_inertia_world(
-                    shared->bodies[c->body_b].orientation,
-                    shared->bodies[c->body_b].inv_inertia_diag);
-                inv_i_a = &fb_a;
-                inv_i_b = &fb_b;
-            }
-
-            if (c->is_joint) {
-                /* Structural joint: full-strength Baumgarte + angular
-                 * scaling, no animation softness. */
-                phys_vec3_t vel_a = va->linear;
-                phys_vec3_t vel_b = vb->linear;
-                float spd_a = vec3_dot(vel_a, vel_a);
-                float spd_b = vec3_dot(vel_b, vel_b);
-                float max_spd2 = spd_a > spd_b ? spd_a : spd_b;
-
-                const float baum_lo2 = 5.0f * 5.0f;
-                const float baum_hi2 = 60.0f * 60.0f;
-                const float baum_max = 0.6f;
-                float baumgarte = 0.0f;
-                if (max_spd2 > baum_lo2) {
-                    float t = (max_spd2 - baum_lo2)
-                            / (baum_hi2 - baum_lo2);
-                    if (t > 1.0f) { t = 1.0f; }
-                    baumgarte = baum_max * t;
-                }
-
-                float saved_bias[PHYS_MAX_CONSTRAINT_ROWS];
-                for (uint8_t r = 0; r < c->row_count; r++) {
-                    saved_bias[r] = c->rows[r].bias;
-                    float row_baumgarte =
-                        (c->rows[r].flags & PHYS_ROW_FLAG_ANGULAR)
-                            ? baumgarte * 0.05f : baumgarte;
-                    c->rows[r].bias =
-                        -saved_bias[r] * shared->inv_dt * row_baumgarte;
-                }
-
-                for (uint8_t r = 0; r < c->row_count; r++) {
-                    solve_row(&c->rows[r], va, vb,
-                              inv_mass_a, inv_i_a,
-                              inv_mass_b, inv_i_b);
-                }
-
-                for (uint8_t r = 0; r < c->row_count; r++) {
-                    c->rows[r].bias = saved_bias[r];
-                }
-                if (pseudo) {
-                    for (uint8_t r = 0; r < c->row_count; r++) {
-                        solve_joint_position_row(
-                            &c->rows[r],
-                            &pseudo[c->body_a], &pseudo[c->body_b],
-                            shared->inv_dt,
-                            inv_mass_a, inv_i_a,
-                            inv_mass_b, inv_i_b);
-                    }
-                }
-            } else {
-                /* Contact: solve normal row first (row 0). */
-                solve_row(&c->rows[0], va, vb,
-                          inv_mass_a, inv_i_a,
-                          inv_mass_b, inv_i_b);
-                if (pseudo) {
-                    solve_position_row(
-                        &c->rows[0],
-                        &pseudo[c->body_a], &pseudo[c->body_b],
-                        c->penetration, shared->slop, shared->inv_dt,
-                        inv_mass_a, inv_i_a,
-                        inv_mass_b, inv_i_b);
-                }
-
-                /* Coulomb friction cone. */
-                float friction_limit = c->friction * c->rows[0].lambda;
-                for (uint8_t r = 1; r < c->row_count; r++) {
-                    c->rows[r].lambda_min = -friction_limit;
-                    c->rows[r].lambda_max =  friction_limit;
-                    solve_row(&c->rows[r], va, vb,
-                              inv_mass_a, inv_i_a,
-                              inv_mass_b, inv_i_b);
-                }
-            }
+            solve_one_full(&(tgs_color_shared_t){
+                .constraints       = shared->constraints,
+                .bodies            = shared->bodies,
+                .inv_inertia_world = shared->inv_inertia_world,
+                .velocities        = shared->velocities,
+                .pseudo_velocities = shared->pseudo_velocities,
+                .slop              = shared->slop,
+                .inv_dt            = shared->inv_dt,
+            }, c_idx);
         }
     }
 }
@@ -953,7 +802,8 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
             args->velocities[i].linear  = args->bodies[i].linear_vel;
             args->velocities[i].angular = args->bodies[i].angular_vel;
             if (args->bodies[i].inv_mass > 0.0f &&
-                !phys_body_is_sleeping(&args->bodies[i])) {
+                !phys_body_is_sleeping(&args->bodies[i]) &&
+                !(args->bodies[i].flags & PHYS_BODY_FLAG_NO_GRAVITY)) {
                 float body_dt = args->dt;
                 if (args->tier_substep_counts && args->tick_dt > 0.0f) {
                     uint8_t tier = args->bodies[i].tier;

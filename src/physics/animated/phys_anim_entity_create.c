@@ -4,9 +4,11 @@
  *
  * Creates bodies for bones that have colliders or participate in
  * physics-relevant constraints.  Bones without colliders or constraint
- * involvement are pruned (no body created).  Ghost bodies (no collider
- * but needed for constraint chains) get NO_BROADPHASE flag and inherit
- * averaged mass from their connected collider neighbors.
+ * involvement are pruned (no body created).  Ghost bodies (no authored
+ * collider but needed for constraint chains) get a small proxy sphere
+ * so they still collide with the environment; joint-connected pairs are
+ * excluded to prevent self-collision.  Ghost mass is averaged from
+ * connected collider neighbors.
  *
  * Parent-child joints bridge over pruned bones by connecting each child
  * to its nearest ancestor that has a body.
@@ -28,7 +30,6 @@
 #include "ferrum/math/quat.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -122,38 +123,31 @@ static void build_needs_body_map_(const skeleton_def_t *skel,
         }
     }
 
-    /* Connectivity pass: walk up from every body-bone to the root,
-     * marking all intermediate ancestors as needing bodies.  This
-     * ensures the skeleton's physics bodies form a single connected
-     * tree — without this, non-collider branching bones (e.g. the
-     * root) would disconnect subtrees into independent islands. */
-    for (uint32_t i = 0; i < n; i++) {
-        if (!needs_body[i]) continue;
-        uint32_t cur = skel->parent_indices[i];
-        while (cur != UINT32_MAX && cur < n) {
-            if (needs_body[cur]) break; /* already connected */
-            needs_body[cur] = 1;
-            cur = skel->parent_indices[cur];
+    /* Mark jointed bones and their direct parents as needing bodies.
+     * Both the child bone (which has the joint) and its direct parent
+     * must exist in the physics world (as ghosts if no collider). */
+    if (skel->joints) {
+        for (uint32_t i = 0; i < n; i++) {
+            if (skel->joints[i].joint_type == 0) continue;
+            needs_body[i] = 1;
+            uint32_t par = skel->parent_indices[i];
+            if (par != UINT32_MAX && par < n) {
+                needs_body[par] = 1;
+            }
         }
     }
 }
 
 /**
- * @brief Find the nearest ancestor of bone_idx that has a body.
+ * @brief Get the direct parent bone index.
  *
- * Walks the parent chain from bone_idx's parent upward, returning
- * the first bone index whose body_indices entry is not UINT32_MAX.
- * Returns UINT32_MAX if no ancestor has a body (e.g., root bone).
+ * Returns the skeleton parent of bone_idx, or UINT32_MAX if root.
  */
-static uint32_t find_nearest_ancestor_body_(
-    uint32_t bone_idx, const skeleton_def_t *skel,
-    const uint32_t *body_indices) {
-    uint32_t cur = skel->parent_indices[bone_idx];
-    while (cur != UINT32_MAX && cur < skel->joint_count) {
-        if (body_indices[cur] != UINT32_MAX) return cur;
-        cur = skel->parent_indices[cur];
-    }
-    return UINT32_MAX;
+static uint32_t direct_parent_bone_(
+    uint32_t bone_idx, const skeleton_def_t *skel) {
+    uint32_t par = skel->parent_indices[bone_idx];
+    if (par == UINT32_MAX || par >= skel->joint_count) return UINT32_MAX;
+    return par;
 }
 
 /**
@@ -220,7 +214,9 @@ static void set_bone_collider_(phys_world_t *world, uint32_t body_idx,
  */
 static void average_ghost_masses_(phys_world_t *world,
                                   const uint32_t *body_indices,
-                                  uint32_t bone_count) {
+                                  uint32_t bone_count,
+                                  const skeleton_def_t *skel) {
+    (void)skel;
     phys_body_t *bodies = world->body_pool.bodies_curr;
 
     for (uint32_t i = 0; i < bone_count; i++) {
@@ -310,25 +306,39 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
         phys_body_t *body = phys_world_get_body(world, bi);
         if (!body) continue;
 
-        body->position = (phys_vec3_t){
-            world_pose[i].m[12],
-            world_pose[i].m[13],
-            world_pose[i].m[14]
-        };
+        /* Position body at the midpoint between bone head and tail.
+         * This gives both anchor_a and anchor_b non-zero offsets,
+         * providing angular coupling for stable GS convergence. */
+        float hx = world_pose[i].m[12];
+        float hy = world_pose[i].m[13];
+        float hz = world_pose[i].m[14];
+        if (skel->tail_positions) {
+            float tx = skel->tail_positions[i * 3 + 0];
+            float ty = skel->tail_positions[i * 3 + 1];
+            float tz = skel->tail_positions[i * 3 + 2];
+            body->position = (phys_vec3_t){
+                (hx + tx) * 0.5f,
+                (hy + ty) * 0.5f,
+                (hz + tz) * 0.5f
+            };
+        } else {
+            body->position = (phys_vec3_t){hx, hy, hz};
+        }
         body->orientation = quat_from_mat4(&world_pose[i]);
 
         if (!has_collider) {
-            /* Ghost body: participates in joints only, solved via TGS
-             * with graph coloring + sub-substepping for the skeleton
-             * island.  Tier 0 ensures TGS solver mode for all ghost
-             * body constraints.  Gravity enabled so ghosts fall with
-             * the rest of the skeleton. */
-            body->flags |= PHYS_BODY_FLAG_NO_BROADPHASE;
+            /* Ghost body: no authored collider.  Participates in joint
+             * constraints (so IK and parent-child links still work) but
+             * has no gravity and no broadphase.  High damping ensures
+             * it settles quickly to wherever its joints place it
+             * without injecting energy into the skeleton. */
+            body->flags |= PHYS_BODY_FLAG_NO_BROADPHASE
+                         | PHYS_BODY_FLAG_NO_GRAVITY;
             body->tier = PHYS_TIER_0_DIRECT;
             phys_body_set_mass(body, 1.0f);
             phys_body_set_sphere_inertia(body, 1.0f, 0.05f);
-            body->linear_damping  = 0.5f;
-            body->angular_damping = 0.5f;
+            body->linear_damping  = 0.95f;
+            body->angular_damping = 0.95f;
             continue;
         }
 
@@ -536,30 +546,45 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 uint32_t body_child = entity->body_indices[i];
                 if (body_child == UINT32_MAX) continue;
 
-                /* Find nearest ancestor with a body (bridge over pruned). */
-                uint32_t ancestor = find_nearest_ancestor_body_(
-                    i, skel, entity->body_indices);
-                if (ancestor == UINT32_MAX) continue;
-                uint32_t body_parent = entity->body_indices[ancestor];
+                /* Connect to direct parent bone. */
+                uint32_t parent_bone = direct_parent_bone_(i, skel);
+                if (parent_bone == UINT32_MAX) continue;
+                uint32_t body_parent = entity->body_indices[parent_bone];
+                if (body_parent == UINT32_MAX) continue;
 
                 phys_joint_t *j = &tmp_joints[jc];
                 phys_joint_init(j);
                 j->body_a = body_parent;
                 j->body_b = body_child;
 
-                /* Anchor at child bone position in each body's local space. */
-                float cx = world_pose[i].m[12];
-                float cy = world_pose[i].m[13];
-                float cz = world_pose[i].m[14];
-                float px = world_pose[ancestor].m[12];
-                float py = world_pose[ancestor].m[13];
-                float pz = world_pose[ancestor].m[14];
+                /* Joint point = child bone HEAD in world space.
+                 * Each anchor is the offset from the body center (at bone
+                 * midpoint) to this joint point, in the body's local frame.
+                 * With bodies at midpoints, both anchors are non-zero,
+                 * giving proper angular coupling on both sides. */
+                float jx = world_pose[i].m[12];
+                float jy = world_pose[i].m[13];
+                float jz = world_pose[i].m[14];
 
-                phys_quat_t parent_orient = quat_from_mat4(&world_pose[ancestor]);
-                phys_vec3_t world_delta = {cx - px, cy - py, cz - pz};
-                j->local_anchor_a = quat_inv_rotate_vec3(
-                    parent_orient, world_delta);
-                j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+                /* Parent body center (midpoint of parent bone). */
+                phys_body_t *body_a = phys_world_get_body(world, body_parent);
+                phys_quat_t parent_orient = body_a->orientation;
+                phys_vec3_t delta_a = {
+                    jx - body_a->position.x,
+                    jy - body_a->position.y,
+                    jz - body_a->position.z
+                };
+                j->local_anchor_a = quat_inv_rotate_vec3(parent_orient, delta_a);
+
+                /* Child body center (midpoint of child bone). */
+                phys_body_t *body_b = phys_world_get_body(world, body_child);
+                phys_quat_t child_orient = body_b->orientation;
+                phys_vec3_t delta_b = {
+                    jx - body_b->position.x,
+                    jy - body_b->position.y,
+                    jz - body_b->position.z
+                };
+                j->local_anchor_b = quat_inv_rotate_vec3(child_orient, delta_b);
 
                 switch (jd->joint_type) {
                 case 1: {
@@ -613,7 +638,10 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     if (jd->rest_length > 0.0f) {
                         j->rest_length = jd->rest_length;
                     } else {
-                        float dx = cx-px, dy = cy-py, dz = cz-pz;
+                        /* Auto rest length from body positions. */
+                        float dx = body_a->position.x - body_b->position.x;
+                        float dy = body_a->position.y - body_b->position.y;
+                        float dz = body_a->position.z - body_b->position.z;
                         j->rest_length = sqrtf(dx*dx + dy*dy + dz*dz);
                     }
                     break;
@@ -656,21 +684,6 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 jc++;
             }
 
-            /* Diagnostic: count joint types. */
-            {
-                uint32_t ct_count = 0, ball_count = 0, lock_count = 0, other_count = 0;
-                for (uint32_t ji = 0; ji < jc; ji++) {
-                    switch (tmp_joints[ji].type) {
-                    case PHYS_JOINT_CONE_TWIST: ct_count++; break;
-                    case PHYS_JOINT_BALL: ball_count++; break;
-                    case PHYS_JOINT_LOCK: lock_count++; break;
-                    default: other_count++; break;
-                    }
-                }
-                fprintf(stderr, "  Joint types: cone_twist=%u ball=%u lock=%u other=%u\n",
-                        ct_count, ball_count, lock_count, other_count);
-            }
-
             /* Add distance-limit joints between parent-child ghost body
              * pairs.  These act like semi-collision constraints: inactive
              * within a slack band around the rest distance, but push/pull
@@ -685,10 +698,10 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     if (jd->joint_type == 0) continue;
                     uint32_t body_child = entity->body_indices[i];
                     if (body_child == UINT32_MAX) continue;
-                    uint32_t ancestor = find_nearest_ancestor_body_(
-                        i, skel, entity->body_indices);
-                    if (ancestor == UINT32_MAX) continue;
-                    uint32_t body_parent = entity->body_indices[ancestor];
+                    uint32_t parent_bone = direct_parent_bone_(i, skel);
+                    if (parent_bone == UINT32_MAX) continue;
+                    uint32_t body_parent = entity->body_indices[parent_bone];
+                    if (body_parent == UINT32_MAX) continue;
 
                     /* Only add for ghost-to-ghost or ghost-to-collider. */
                     bool a_ghost = (bodies[body_parent].flags &
@@ -698,9 +711,9 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     if (!a_ghost && !b_ghost) continue;
 
                     /* Center-to-center rest distance. */
-                    float px = world_pose[ancestor].m[12];
-                    float py = world_pose[ancestor].m[13];
-                    float pz = world_pose[ancestor].m[14];
+                    float px = world_pose[parent_bone].m[12];
+                    float py = world_pose[parent_bone].m[13];
+                    float pz = world_pose[parent_bone].m[14];
                     float cx = world_pose[i].m[12];
                     float cy = world_pose[i].m[13];
                     float cz = world_pose[i].m[14];
@@ -724,11 +737,7 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     jc++;
                     dl_count++;
                 }
-                if (dl_count > 0) {
-                    fprintf(stderr, "  Distance-limit joints: %u\n", dl_count);
-                } else {
-                    fprintf(stderr, "  Distance-limit joints: 0 (no ghost pairs found)\n");
-                }
+                (void)dl_count;
             }
 
             /* Add animation constraint joints (IK, aim, copy_rotation, etc.).
@@ -783,11 +792,12 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
     }
 
     /* ── Average ghost body masses from connected neighbors ────── */
-    average_ghost_masses_(world, entity->body_indices, n);
+    average_ghost_masses_(world, entity->body_indices, n, skel);
 
     /* ── Register collision exclusion pairs ──────────────────────── */
 
     /* 0. Exclude same collision-group body pairs. */
+    uint32_t group_excl_count = 0;
     if (skel->colliders) {
         for (uint32_t i = 0; i < n; i++) {
             uint32_t bi = entity->body_indices[i];
@@ -795,7 +805,6 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             if (world->body_pool.bodies_curr[bi].flags &
                 PHYS_BODY_FLAG_NO_BROADPHASE) continue;
             uint32_t gi = skel->colliders[i].collision_group;
-            if (gi == 0) continue;
             for (uint32_t j = i + 1; j < n; j++) {
                 uint32_t bj = entity->body_indices[j];
                 if (bj == UINT32_MAX) continue;
@@ -803,12 +812,15 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     PHYS_BODY_FLAG_NO_BROADPHASE) continue;
                 if (skel->colliders[j].collision_group == gi) {
                     phys_world_exclude_pair(world, bi, bj);
+                    group_excl_count++;
                 }
             }
         }
     }
+    (void)group_excl_count;
 
     /* 1. Exclude all joint-connected body pairs. */
+    uint32_t joint_excl_count = 0;
     for (uint32_t j = 0; j < world->joint_count; j++) {
         const phys_joint_t *jt = &world->joints[j];
         bool owns_a = false, owns_b = false;
@@ -818,10 +830,13 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
         }
         if (owns_a && owns_b) {
             phys_world_exclude_pair(world, jt->body_a, jt->body_b);
+            joint_excl_count++;
         }
     }
+    (void)joint_excl_count;
 
     /* 2. Exclude body pairs whose colliders overlap in the bind pose. */
+    uint32_t overlap_excl_count = 0;
     phys_overlap_ctx_t ovl_ctx = {
         .spheres      = world->spheres,
         .boxes        = world->boxes,
@@ -858,9 +873,11 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
 
             if (phys_test_overlap(&ovl_ctx, ci, pi, qi, cj, pj, qj)) {
                 phys_world_exclude_pair(world, bi, bj);
+                overlap_excl_count++;
             }
         }
     }
+    (void)overlap_excl_count;
 
     return true;
 }
