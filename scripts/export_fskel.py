@@ -687,7 +687,26 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
                 bx, by, bz = axis
                 axis = [bx, bz, -by]
 
-            if jt == 2:  # Hinge: scalar limits in slot [0]
+            if jt == 1:  # Cone Twist: per-axis angle limits
+                bl_min_x = pb.talarium_joint_limit_min_x
+                bl_max_x = pb.talarium_joint_limit_max_x
+                bl_min_y = pb.talarium_joint_limit_min_y
+                bl_max_y = pb.talarium_joint_limit_max_y
+                bl_min_z = pb.talarium_joint_limit_min_z
+                bl_max_z = pb.talarium_joint_limit_max_z
+                bl_use_x = pb.talarium_joint_use_limit_x
+                bl_use_y = pb.talarium_joint_use_limit_y
+                bl_use_z = pb.talarium_joint_use_limit_z
+                # Coordinate conversion: Blender Z-up → engine Y-up
+                lim_min[0] = bl_min_x
+                lim_max[0] = bl_max_x
+                lim_min[1] = bl_min_z
+                lim_max[1] = bl_max_z
+                lim_min[2] = -bl_max_y
+                lim_max[2] = -bl_min_y
+                lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
+
+            elif jt == 2:  # Hinge: scalar limits in slot [0]
                 lim_min[0] = pb.talarium_joint_limit_min
                 lim_max[0] = pb.talarium_joint_limit_max
                 if lim_min[0] != 0.0 or lim_max[0] != 0.0:
@@ -931,7 +950,7 @@ _BONE_PROPS = {
         description="Physics joint type for parent-child connection",
         items=[
             ('0', "None", "No joint"),
-            ('1', "Ball", "Ball-and-socket joint (3 DOF)"),
+            ('1', "Cone Twist", "Cone-twist joint (3 DOF with limits)"),
             ('2', "Hinge", "Hinge joint (1 DOF rotation)"),
             ('3', "Distance", "Distance constraint"),
             ('4', "Lock", "Fully locked (0 DOF)"),
@@ -1202,7 +1221,21 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
             box.prop(pb, "talarium_joint_type")
 
             jt = pb.talarium_joint_type
-            if jt in ('2', '8'):  # Hinge or Aim
+            if jt == '1':  # Cone Twist: per-axis limits
+                col = box.column(align=True)
+                row = col.row(align=True)
+                row.prop(pb, "talarium_joint_use_limit_x", text="X")
+                row.prop(pb, "talarium_joint_limit_min_x", text="Min")
+                row.prop(pb, "talarium_joint_limit_max_x", text="Max")
+                row = col.row(align=True)
+                row.prop(pb, "talarium_joint_use_limit_y", text="Y")
+                row.prop(pb, "talarium_joint_limit_min_y", text="Min")
+                row.prop(pb, "talarium_joint_limit_max_y", text="Max")
+                row = col.row(align=True)
+                row.prop(pb, "talarium_joint_use_limit_z", text="Z")
+                row.prop(pb, "talarium_joint_limit_min_z", text="Min")
+                row.prop(pb, "talarium_joint_limit_max_z", text="Max")
+            elif jt in ('2', '8'):  # Hinge or Aim
                 box.prop(pb, "talarium_joint_axis")
             if jt == '2':  # Hinge
                 row = box.row(align=True)
