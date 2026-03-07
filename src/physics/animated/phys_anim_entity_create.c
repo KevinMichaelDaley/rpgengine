@@ -266,7 +266,11 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
     /* Allocate per-bone arrays. */
     entity->body_indices = (uint32_t *)malloc(n * sizeof(uint32_t));
     entity->bone_world   = (mat4_t *)malloc(n * sizeof(mat4_t));
-    if (!entity->body_indices || !entity->bone_world) {
+    /* Allocate head offsets: body-local offset from midpoint → head.
+     * Only meaningful when tail_positions are available (bodies at
+     * midpoints).  Used by sync to recover bone head position. */
+    entity->head_offsets = (float *)calloc(n * 3, sizeof(float));
+    if (!entity->body_indices || !entity->bone_world || !entity->head_offsets) {
         phys_anim_entity_destroy(entity);
         return false;
     }
@@ -308,7 +312,9 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
 
         /* Position body at the midpoint between bone head and tail.
          * This gives both anchor_a and anchor_b non-zero offsets,
-         * providing angular coupling for stable GS convergence. */
+         * providing angular coupling for stable GS convergence.
+         * Store the body-local offset from midpoint back to head
+         * so sync can recover the bone head position for skinning. */
         float hx = world_pose[i].m[12];
         float hy = world_pose[i].m[13];
         float hz = world_pose[i].m[14];
@@ -316,11 +322,19 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             float tx = skel->tail_positions[i * 3 + 0];
             float ty = skel->tail_positions[i * 3 + 1];
             float tz = skel->tail_positions[i * 3 + 2];
-            body->position = (phys_vec3_t){
-                (hx + tx) * 0.5f,
-                (hy + ty) * 0.5f,
-                (hz + tz) * 0.5f
-            };
+            float mx = (hx + tx) * 0.5f;
+            float my = (hy + ty) * 0.5f;
+            float mz = (hz + tz) * 0.5f;
+            body->position = (phys_vec3_t){ mx, my, mz };
+
+            /* head_offset = head - midpoint in world space, then rotate
+             * into body-local frame so it can be un-rotated at sync. */
+            phys_vec3_t world_offset = { hx - mx, hy - my, hz - mz };
+            phys_quat_t orient = quat_from_mat4(&world_pose[i]);
+            phys_vec3_t local_off = quat_inv_rotate_vec3(orient, world_offset);
+            entity->head_offsets[i * 3 + 0] = local_off.x;
+            entity->head_offsets[i * 3 + 1] = local_off.y;
+            entity->head_offsets[i * 3 + 2] = local_off.z;
         } else {
             body->position = (phys_vec3_t){hx, hy, hz};
         }
@@ -557,34 +571,55 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 j->body_a = body_parent;
                 j->body_b = body_child;
 
-                /* Joint point = child bone HEAD in world space.
-                 * Each anchor is the offset from the body center (at bone
-                 * midpoint) to this joint point, in the body's local frame.
-                 * With bodies at midpoints, both anchors are non-zero,
-                 * giving proper angular coupling on both sides. */
-                float jx = world_pose[i].m[12];
-                float jy = world_pose[i].m[13];
-                float jz = world_pose[i].m[14];
-
-                /* Parent body center (midpoint of parent bone). */
+                /* Compute joint anchor positions.
+                 * If the fskel provides explicit anchors (has_anchors),
+                 * use those (armature-space points converted to body-local).
+                 * Otherwise, default to child bone HEAD as the joint point. */
                 phys_body_t *body_a = phys_world_get_body(world, body_parent);
-                phys_quat_t parent_orient = body_a->orientation;
-                phys_vec3_t delta_a = {
-                    jx - body_a->position.x,
-                    jy - body_a->position.y,
-                    jz - body_a->position.z
-                };
-                j->local_anchor_a = quat_inv_rotate_vec3(parent_orient, delta_a);
-
-                /* Child body center (midpoint of child bone). */
                 phys_body_t *body_b = phys_world_get_body(world, body_child);
-                phys_quat_t child_orient = body_b->orientation;
-                phys_vec3_t delta_b = {
-                    jx - body_b->position.x,
-                    jy - body_b->position.y,
-                    jz - body_b->position.z
-                };
-                j->local_anchor_b = quat_inv_rotate_vec3(child_orient, delta_b);
+                phys_quat_t parent_orient = body_a->orientation;
+                phys_quat_t child_orient_q = body_b->orientation;
+
+                if (jd->has_anchors) {
+                    /* Exported anchors are in armature (engine) world space.
+                     * Convert to body-local by subtracting body position
+                     * and rotating into the body's local frame. */
+                    phys_vec3_t anc_a_world = {
+                        jd->anchor_a[0], jd->anchor_a[1], jd->anchor_a[2]
+                    };
+                    phys_vec3_t anc_b_world = {
+                        jd->anchor_b[0], jd->anchor_b[1], jd->anchor_b[2]
+                    };
+                    phys_vec3_t da = {
+                        anc_a_world.x - body_a->position.x,
+                        anc_a_world.y - body_a->position.y,
+                        anc_a_world.z - body_a->position.z
+                    };
+                    j->local_anchor_a = quat_inv_rotate_vec3(parent_orient, da);
+                    phys_vec3_t db = {
+                        anc_b_world.x - body_b->position.x,
+                        anc_b_world.y - body_b->position.y,
+                        anc_b_world.z - body_b->position.z
+                    };
+                    j->local_anchor_b = quat_inv_rotate_vec3(child_orient_q, db);
+                } else {
+                    /* Default: joint point = child bone HEAD. */
+                    float jx = world_pose[i].m[12];
+                    float jy = world_pose[i].m[13];
+                    float jz = world_pose[i].m[14];
+                    phys_vec3_t da = {
+                        jx - body_a->position.x,
+                        jy - body_a->position.y,
+                        jz - body_a->position.z
+                    };
+                    j->local_anchor_a = quat_inv_rotate_vec3(parent_orient, da);
+                    phys_vec3_t db = {
+                        jx - body_b->position.x,
+                        jy - body_b->position.y,
+                        jz - body_b->position.z
+                    };
+                    j->local_anchor_b = quat_inv_rotate_vec3(child_orient_q, db);
+                }
 
                 switch (jd->joint_type) {
                 case 1: {
@@ -887,5 +922,6 @@ void phys_anim_entity_destroy(phys_anim_entity_t *entity) {
     free(entity->body_indices);
     free(entity->bone_world);
     free(entity->joint_world_ids);
+    free(entity->head_offsets);
     memset(entity, 0, sizeof(*entity));
 }

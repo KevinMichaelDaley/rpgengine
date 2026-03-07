@@ -65,6 +65,16 @@ typedef struct bone_joint_desc {
                              *   0 = no yield (joint never deforms). */
     float    break_strength;/**< Impulse threshold for joint destruction.
                              *   0 = unbreakable. */
+
+    float    anchor_a[3];  /**< Joint anchor on parent body in armature
+                             *   (engine) space.  When has_anchors==0,
+                             *   ignored and computed from bone heads. */
+    float    anchor_b[3];  /**< Joint anchor on child body in armature
+                             *   (engine) space.  When has_anchors==0,
+                             *   ignored and computed from bone heads. */
+    uint8_t  has_anchors;  /**< Non-zero if anchor_a/b were explicitly set.
+                             *   When 0, anchors are computed from bone
+                             *   head positions at entity creation time. */
 } bone_joint_desc_t;
 
 #ifdef __cplusplus

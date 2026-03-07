@@ -538,6 +538,20 @@ bool fskel_load(const char *path,
                 json_object_get(jd, "yield_strength"), 0.0f);
             bd->break_strength = jfloat_(
                 json_object_get(jd, "break_strength"), 0.0f);
+
+            /* Read explicit joint anchors (armature-space positions). */
+            const json_value_t *anc_a = json_object_get(jd, "anchor_a");
+            const json_value_t *anc_b = json_object_get(jd, "anchor_b");
+            if (anc_a && anc_a->type == JSON_ARRAY && anc_a->array.count >= 3 &&
+                anc_b && anc_b->type == JSON_ARRAY && anc_b->array.count >= 3) {
+                bd->anchor_a[0] = jfloat_(&anc_a->array.items[0], 0.0f);
+                bd->anchor_a[1] = jfloat_(&anc_a->array.items[1], 0.0f);
+                bd->anchor_a[2] = jfloat_(&anc_a->array.items[2], 0.0f);
+                bd->anchor_b[0] = jfloat_(&anc_b->array.items[0], 0.0f);
+                bd->anchor_b[1] = jfloat_(&anc_b->array.items[1], 0.0f);
+                bd->anchor_b[2] = jfloat_(&anc_b->array.items[2], 0.0f);
+                bd->has_anchors = 1;
+            }
         }
     }
 

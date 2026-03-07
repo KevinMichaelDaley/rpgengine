@@ -26,7 +26,9 @@ void phys_anim_entity_sync_from_world(phys_anim_entity_t *entity,
                                       const skeleton_def_t *skel) {
     if (!entity || !world) return;
 
-    /* Pass 1: update bones that have physics bodies. */
+    /* Pass 1: update bones that have physics bodies.
+     * Body position is at bone midpoint.  Recover bone HEAD
+     * position by adding the rotated head_offset. */
     for (uint32_t i = 0; i < entity->bone_count; i++) {
         uint32_t bi = entity->body_indices[i];
         if (bi == UINT32_MAX) continue;
@@ -39,10 +41,25 @@ void phys_anim_entity_sync_from_world(phys_anim_entity_t *entity,
         mat4_t rot;
         quat_to_mat4(body->orientation, &rot);
 
-        /* Set translation from position. */
-        rot.m[12] = body->position.x;
-        rot.m[13] = body->position.y;
-        rot.m[14] = body->position.z;
+        /* Recover bone head position from body midpoint + head offset. */
+        float tx = body->position.x;
+        float ty = body->position.y;
+        float tz = body->position.z;
+        if (entity->head_offsets) {
+            phys_vec3_t local_off = {
+                entity->head_offsets[i * 3 + 0],
+                entity->head_offsets[i * 3 + 1],
+                entity->head_offsets[i * 3 + 2]
+            };
+            phys_vec3_t world_off = quat_rotate_vec3(body->orientation,
+                                                     local_off);
+            tx += world_off.x;
+            ty += world_off.y;
+            tz += world_off.z;
+        }
+        rot.m[12] = tx;
+        rot.m[13] = ty;
+        rot.m[14] = tz;
 
         entity->bone_world[i] = rot;
     }

@@ -397,6 +397,14 @@ bool fskel_write(const char *path,
                     (double)jd->damping,
                     (double)jd->yield_strength,
                     (double)jd->break_strength);
+            if (jd->has_anchors) {
+                fprintf(f, ",\"anchor_a\":[%.8g,%.8g,%.8g],"
+                           "\"anchor_b\":[%.8g,%.8g,%.8g]",
+                        (double)jd->anchor_a[0], (double)jd->anchor_a[1],
+                        (double)jd->anchor_a[2],
+                        (double)jd->anchor_b[0], (double)jd->anchor_b[1],
+                        (double)jd->anchor_b[2]);
+            }
         } else {
             fprintf(f, "\"type\":0,\"axis\":[0,1,0],\"rest_length\":0,"
                        "\"limit_min\":[0,0,0],\"limit_max\":[0,0,0],\"limit_axes\":0,"

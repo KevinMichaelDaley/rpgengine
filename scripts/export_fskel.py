@@ -775,6 +775,16 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "break_strength": pb.talarium_joint_break_strength,
         }
 
+        # Export explicit joint anchor positions in armature (engine) space.
+        # The joint point is at the child bone's HEAD.  Both anchor_a (on
+        # parent body) and anchor_b (on child body) reference this same
+        # world-space point — they get converted to body-local by the C code.
+        if jt != 0 and bone.parent:
+            bh = bone.head_local  # child bone head in Blender coords
+            joint_pt = [bh[0], bh[2], -bh[1]]  # Blender Z-up → engine Y-up
+            joint_desc["anchor_a"] = joint_pt
+            joint_desc["anchor_b"] = joint_pt
+
         joints.append({
             "name": bone.name,
             "parent": parent_idx,

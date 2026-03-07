@@ -47,6 +47,11 @@ typedef struct phys_anim_entity {
     uint32_t *joint_world_ids;  /**< World joint IDs (joint_count elements). */
     uint32_t  joint_count;      /**< Number of joints created in the world. */
     mat4_t   *bone_world;       /**< Output world-space bone transforms. */
+    float    *head_offsets;     /**< Body-local offset from midpoint to bone head
+                                 *   (3 floats per bone, bone_count elements).
+                                 *   Used by sync to recover bone HEAD position
+                                 *   from body midpoint position for skinning.
+                                 *   NULL if no tail_positions were available. */
 } phys_anim_entity_t;
 
 /**
