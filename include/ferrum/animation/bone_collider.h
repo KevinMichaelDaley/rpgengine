@@ -53,7 +53,7 @@ typedef struct bone_collider_desc {
     uint32_t is_kinematic;   /**< 1 = skip Euler-Verlet (animation-only bone). */
     float    mass;           /**< Mass override (0 = auto from volume × density).
                               *   Ignored if is_kinematic. */
-    uint32_t hull_offset;    /**< Byte offset into hull vertex data (shape_type=4 only). */
+    uint32_t hull_offset;    /**< Vertex index into hull_vertices (shape_type=4 only). */
     uint32_t hull_count;     /**< Vertex count for convex hull (shape_type=4 only). */
     uint32_t collision_group; /**< Collision group index.  Bodies in the same
                                *   non-zero group skip collision with each other.

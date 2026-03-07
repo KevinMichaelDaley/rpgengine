@@ -481,13 +481,26 @@ def _compute_convex_hull(verts_flat):
 
 def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
     """
-    Gather world-space vertices from a vertex group on a mesh parented
+    Gather bone-local vertices from a vertex group on a mesh parented
     to the armature.  Returns flat list [x0,y0,z0, x1,y1,z1, ...] in
-    engine coordinate space.  Returns empty list if no vertices found.
+    engine coordinate space, relative to the bone's rest position.
+    Returns empty list if no vertices found.
+
+    The C physics code interprets hull vertices as body-local offsets,
+    so we must transform from mesh world space → bone rest world space
+    → engine coordinates.
     """
     verts = []
     if not vgroup_name:
         return verts
+
+    # Get rest-pose bone world matrix for world → bone-local transform
+    bone = armature_obj.data.bones.get(bone_name)
+    if bone is None:
+        return verts
+    rest_world = armature_obj.matrix_world @ bone.matrix_local
+    rest_world_inv = rest_world.inverted_safe()
+
     # Search child meshes for vertex group
     for child in armature_obj.children:
         if child.type != 'MESH':
@@ -500,10 +513,11 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
         for v in mesh.vertices:
             for g in v.groups:
                 if g.group == vg_idx and g.weight > 0.5:
-                    # Transform to world, then convert coords
-                    co = child.matrix_world @ v.co
-                    # Blender Z-up → engine Y-up: (x,y,z) → (x,z,-y)
-                    verts.extend([co.x, co.z, -co.y])
+                    # Mesh local → world → bone-local
+                    world_co = child.matrix_world @ v.co
+                    local_co = rest_world_inv @ world_co
+                    # Blender bone-local Z-up → engine Y-up: (x,y,z) → (x,z,-y)
+                    verts.extend([local_co.x, local_co.z, -local_co.y])
                     break
     return verts
 
@@ -1330,18 +1344,32 @@ def _sphere_wire(center, radius, segments=16):
     return lines
 
 
-def _convex_hull_wire(armature_obj, bone_name, vgroup_name):
+def _convex_hull_wire(armature_obj, bone_name, vgroup_name, bone_matrix):
     """Generate wireframe lines for a convex hull from a vertex group.
 
     Gathers vertices from the named vertex group on child meshes of the
-    armature, computes their convex hull via bmesh, and returns edge line
-    pairs in world space (Blender coordinates — NOT engine-converted).
+    armature in bone-local space, computes their convex hull via bmesh,
+    then transforms to world space using the current posed bone matrix
+    so the wireframe follows the armature pose.
+
+    Args:
+        armature_obj: Blender armature object.
+        bone_name: Name of the bone owning the hull.
+        vgroup_name: Vertex group name to gather vertices from.
+        bone_matrix: World-space posed bone matrix (armature_world @ pose_bone.matrix).
     """
     if not vgroup_name:
         return []
 
-    # Collect world-space verts from vertex group
-    hull_verts = []
+    # Get rest-pose bone matrix to convert world → bone-local space.
+    bone = armature_obj.data.bones.get(bone_name)
+    if bone is None:
+        return []
+    rest_world = armature_obj.matrix_world @ bone.matrix_local
+    rest_world_inv = rest_world.inverted_safe()
+
+    # Collect vertices in bone-local space
+    hull_verts_local = []
     for child in armature_obj.children:
         if child.type != 'MESH':
             continue
@@ -1353,16 +1381,18 @@ def _convex_hull_wire(armature_obj, bone_name, vgroup_name):
         for v in mesh.vertices:
             for g in v.groups:
                 if g.group == vg_idx and g.weight > 0.5:
-                    co = child.matrix_world @ v.co
-                    hull_verts.append(co)
+                    # Mesh vertex → world → bone-local
+                    world_co = child.matrix_world @ v.co
+                    local_co = rest_world_inv @ world_co
+                    hull_verts_local.append(local_co)
                     break
 
-    if len(hull_verts) < 4:
+    if len(hull_verts_local) < 4:
         return []
 
-    # Build convex hull with bmesh
+    # Build convex hull with bmesh in bone-local space
     bm = bmesh.new()
-    for co in hull_verts:
+    for co in hull_verts_local:
         bm.verts.new(co)
     bm.verts.ensure_lookup_table()
 
@@ -1372,11 +1402,11 @@ def _convex_hull_wire(armature_obj, bone_name, vgroup_name):
         bm.free()
         return []
 
-    # Extract edges from the hull geometry
+    # Extract edges and transform to world via posed bone matrix
     lines = []
     for edge in bm.edges:
-        a = edge.verts[0].co.copy()
-        b = edge.verts[1].co.copy()
+        a = bone_matrix @ edge.verts[0].co.copy()
+        b = bone_matrix @ edge.verts[1].co.copy()
         lines.append((a, b))
 
     bm.free()
@@ -1431,7 +1461,7 @@ def _draw_collision_overlay():
 
         elif shape == '4':  # Convex Hull
             vgroup = pb.talarium_hull_vgroup
-            lines = _convex_hull_wire(obj, pb.name, vgroup)
+            lines = _convex_hull_wire(obj, pb.name, vgroup, bone_matrix)
             for a, b in lines:
                 all_lines.append((a, b, color))
 
