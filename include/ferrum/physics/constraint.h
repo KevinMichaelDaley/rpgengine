@@ -76,6 +76,9 @@ typedef struct phys_constraint {
     float friction;         /**< Combined friction coefficient for Coulomb cone. */
     float penetration;      /**< Raw penetration depth for position projection. */
     float compliance;       /**< XPBD compliance (α) per-constraint; 0 = stiff. */
+    float joint_damping;    /**< Viscous damping for joint constraints.
+                             *   Adds velocity-opposing bias: -c_damp * v_rel.
+                             *   0 = no joint damping. */
     phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS]; /**< Constraint rows. */
 } phys_constraint_t;
 

@@ -59,6 +59,12 @@ typedef struct bone_joint_desc {
     float    compliance;    /**< XPBD compliance (α); 0 = perfectly stiff.
                              *   Higher values make the joint softer.
                              *   Typical ragdoll: 1e-4 to 1e-2. */
+    float    damping;       /**< Viscous damping coefficient; dissipates
+                             *   relative velocity at the joint.  0 = none. */
+    float    yield_strength;/**< Impulse threshold for plastic deformation.
+                             *   0 = no yield (joint never deforms). */
+    float    break_strength;/**< Impulse threshold for joint destruction.
+                             *   0 = unbreakable. */
 } bone_joint_desc_t;
 
 #ifdef __cplusplus

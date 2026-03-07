@@ -370,20 +370,29 @@ bool fskel_write(const char *path,
         fprintf(f, "  \"joint_desc\": {");
         if (skel->joints) {
             const bone_joint_desc_t *jd = &skel->joints[i];
-            fprintf(f, "\"type\":%u,\"axis\":[%.8g,%.8g,%.8g],"
+             fprintf(f, "\"type\":%u,\"axis\":[%.8g,%.8g,%.8g],"
                        "\"rest_length\":%.8g,"
                        "\"limit_min\":[%.8g,%.8g,%.8g],"
                        "\"limit_max\":[%.8g,%.8g,%.8g],"
-                       "\"limit_axes\":%u",
+                       "\"limit_axes\":%u,"
+                       "\"compliance\":%.8g,"
+                       "\"damping\":%.8g,"
+                       "\"yield_strength\":%.8g,"
+                       "\"break_strength\":%.8g",
                     jd->joint_type,
                     (double)jd->axis[0], (double)jd->axis[1], (double)jd->axis[2],
                     (double)jd->rest_length,
                     (double)jd->limit_min[0], (double)jd->limit_min[1], (double)jd->limit_min[2],
                     (double)jd->limit_max[0], (double)jd->limit_max[1], (double)jd->limit_max[2],
-                    jd->limit_axes);
+                    jd->limit_axes,
+                    (double)jd->compliance,
+                    (double)jd->damping,
+                    (double)jd->yield_strength,
+                    (double)jd->break_strength);
         } else {
             fprintf(f, "\"type\":0,\"axis\":[0,1,0],\"rest_length\":0,"
-                       "\"limit_min\":[0,0,0],\"limit_max\":[0,0,0],\"limit_axes\":0");
+                       "\"limit_min\":[0,0,0],\"limit_max\":[0,0,0],\"limit_axes\":0,"
+                       "\"compliance\":0,\"damping\":0,\"yield_strength\":0,\"break_strength\":0");
         }
         fprintf(f, "}\n }");
     }

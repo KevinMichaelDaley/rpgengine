@@ -113,7 +113,7 @@ static int test_joint_init_defaults(void) {
     ASSERT_TRUE(j.body_b == UINT32_MAX);
     ASSERT_INT_EQ(0, j.row_count);
     ASSERT_FLOAT_NEAR(0.0f, j.rest_length, EPS);
-    ASSERT_FLOAT_NEAR(0.0f, j.stiffness, EPS);
+    ASSERT_FLOAT_NEAR(0.0f, j.spring_stiffness, EPS);
     ASSERT_FLOAT_NEAR(0.0f, j.damping, EPS);
     return 0;
 }

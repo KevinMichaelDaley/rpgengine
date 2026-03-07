@@ -135,7 +135,7 @@ void phys_joint_build_ik(phys_joint_t *joint,
         float axis_error = vec3_dot(error, axes[i]);
 
         /* Scale error by influence (stiffness field). */
-        float influence = joint->stiffness > 0.0f ? joint->stiffness : 1.0f;
+        float influence = joint->spring_stiffness > 0.0f ? joint->spring_stiffness : 1.0f;
         axis_error *= influence;
 
         build_ik_row(&joint->rows[i], r_a, r_b, axes[i],

@@ -1,6 +1,6 @@
 ---
 id: rpg-x7fe
-status: open
+status: in_progress
 deps: []
 links: []
 created: 2026-03-06T09:20:32Z

@@ -1657,11 +1657,49 @@ void phys_world_tick_parallel(phys_world_t *world,
                     uint32_t num_c = (j->row_count <= PHYS_MAX_CONSTRAINT_ROWS)
                                    ? 1u : 2u;
                     uint8_t row_idx = 0;
+                    float impulse_mag = 0.0f;
                     for (uint32_t ci = 0; ci < num_c && jci < constraint_count; ci++, jci++) {
                         const phys_constraint_t *c = &constraints[jci];
                         for (uint8_t r = 0; r < c->row_count && row_idx < j->row_count; r++, row_idx++) {
                             j->cached_lambda[row_idx] = c->rows[r].lambda;
+                            float lam = c->rows[r].lambda;
+                            impulse_mag += lam * lam;
                         }
+                    }
+                    impulse_mag = sqrtf(impulse_mag);
+                    j->accumulated_impulse += impulse_mag;
+
+                    /* Yield: shift rest configuration when threshold
+                     * exceeded, allowing plastic deformation. */
+                    if (j->yield_strength > 0.0f &&
+                        j->accumulated_impulse > j->yield_strength) {
+                        /* Shift rest orientation toward current relative
+                         * orientation, dissipating the accumulated stress. */
+                        const phys_body_t *ba =
+                            &world->body_pool.bodies_curr[j->body_a];
+                        const phys_body_t *bb =
+                            &world->body_pool.bodies_curr[j->body_b];
+                        quat_t q_rel = quat_mul(
+                            bb->orientation,
+                            quat_conjugate(ba->orientation));
+                        /* Blend 10% toward the deformed configuration
+                         * using normalized linear interpolation (nlerp). */
+                        quat_t rest = j->rest_relative_orient;
+                        quat_t blended = {
+                            .x = rest.x * 0.9f + q_rel.x * 0.1f,
+                            .y = rest.y * 0.9f + q_rel.y * 0.1f,
+                            .z = rest.z * 0.9f + q_rel.z * 0.1f,
+                            .w = rest.w * 0.9f + q_rel.w * 0.1f
+                        };
+                        j->rest_relative_orient =
+                            quat_normalize_safe(blended, 1e-6f);
+                        j->accumulated_impulse = 0.0f;
+                    }
+
+                    /* Break: mark joint for removal. */
+                    if (j->break_strength > 0.0f &&
+                        impulse_mag > j->break_strength) {
+                        j->broken = 1;
                     }
                 }
             }
@@ -1816,6 +1854,13 @@ void phys_world_tick_parallel(phys_world_t *world,
      * After the final buffer swap, bodies_curr holds the latest state. */
     memcpy(world->body_pool.bodies_ccd_prev, world->body_pool.bodies_curr,
            body_cap * sizeof(phys_body_t));
+
+    /* Remove broken joints (reverse order to preserve indices). */
+    for (uint32_t ji = world->joint_count; ji > 0; --ji) {
+        if (world->joints[ji - 1].broken) {
+            phys_world_remove_joint(world, ji - 1);
+        }
+    }
 
     /* Increment tick counter. */
     world->tick_count++;

@@ -69,8 +69,8 @@ typedef struct phys_joint {
 
     /* Distance joint parameters. */
     float rest_length;          /**< Desired distance between anchors. */
-    float stiffness;            /**< Spring stiffness (0 = rigid). */
-    float damping;              /**< Damping coefficient. */
+    float spring_stiffness;     /**< Spring stiffness (0 = rigid). */
+    float spring_damping;       /**< Spring damping coefficient. */
 
     /* Per-axis limit parameters (limit_rotation / limit_position). */
     float limit_min[3];         /**< Min angle (rad) or position per axis. */
@@ -103,6 +103,27 @@ typedef struct phys_joint {
     /** XPBD compliance (α) for this joint; 0 = perfectly stiff.
      *  Propagated to constraint via phys_joint_build_constraints. */
     float compliance;
+
+    /** Viscous damping coefficient; dissipates relative velocity at
+     *  the joint.  Applied as an impulse opposing the constraint-space
+     *  relative velocity each solver iteration: λ_damp = -c_damp * v_rel.
+     *  0 = no joint damping. */
+    float damping;
+
+    /** Accumulated impulse magnitude across the joint's lifetime.
+     *  Updated each solve step; used for yield and break checks. */
+    float accumulated_impulse;
+
+    /** Yield strength: impulse threshold above which the joint
+     *  permanently deforms (rest configuration shifts).  0 = no yield. */
+    float yield_strength;
+
+    /** Break strength: impulse threshold above which the joint is
+     *  removed from the simulation.  0 = unbreakable. */
+    float break_strength;
+
+    /** True when the joint has been broken (pending removal). */
+    uint8_t broken;
 
     /* Solver output (populated by build functions). */
     uint8_t row_count;          /**< Number of active rows after build. */

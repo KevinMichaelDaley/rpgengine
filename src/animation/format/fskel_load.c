@@ -517,6 +517,11 @@ bool fskel_load(const char *path,
             }
             bd->limit_axes = juint_(json_object_get(jd, "limit_axes"), 0);
             bd->compliance = jfloat_(json_object_get(jd, "compliance"), 0.0f);
+            bd->damping = jfloat_(json_object_get(jd, "damping"), 0.0f);
+            bd->yield_strength = jfloat_(
+                json_object_get(jd, "yield_strength"), 0.0f);
+            bd->break_strength = jfloat_(
+                json_object_get(jd, "break_strength"), 0.0f);
         }
     }
 

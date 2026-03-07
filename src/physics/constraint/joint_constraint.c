@@ -57,6 +57,7 @@ static void fill_constraint(struct phys_constraint *c,
     c->friction     = 0.0f;
     c->penetration  = 0.0f;
     c->compliance   = joint->compliance;
+    c->joint_damping = joint->damping;
 
     uint8_t count = row_end - row_start;
     if (count > PHYS_MAX_CONSTRAINT_ROWS) {
@@ -73,7 +74,8 @@ uint32_t phys_joint_build_constraints(const phys_joint_t *joint,
                                       struct phys_constraint *out,
                                       uint32_t max_out,
                                       uint8_t solver_mode) {
-    if (!joint || !out || max_out == 0 || joint->row_count == 0) {
+    if (!joint || !out || max_out == 0 || joint->row_count == 0
+        || joint->broken) {
         return 0;
     }
 

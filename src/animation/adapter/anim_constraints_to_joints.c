@@ -52,7 +52,7 @@ static void setup_ball(phys_joint_t *j,
     j->type = PHYS_JOINT_BALL;
     j->body_a = body_target;
     j->body_b = body_owner;
-    j->stiffness = influence;
+    j->spring_stiffness = influence;
 
     /* Anchor at the owner bone's world position. */
     phys_vec3_t owner_pos = {
@@ -95,7 +95,7 @@ static void setup_lock(phys_joint_t *j,
     j->type = PHYS_JOINT_LOCK;
     j->body_a = body_target;
     j->body_b = body_owner;
-    j->stiffness = influence;
+    j->spring_stiffness = influence;
 
     phys_vec3_t owner_pos = {
         world_pose[owner_bone].m[12],
@@ -132,7 +132,7 @@ static void setup_copy_rot(phys_joint_t *j,
     j->type = PHYS_JOINT_COPY_ROTATION;
     j->body_a = body_target;
     j->body_b = body_owner;
-    j->stiffness = influence;
+    j->spring_stiffness = influence;
 
     phys_vec3_t owner_pos = {
         world_pose[owner_bone].m[12],
@@ -166,7 +166,7 @@ static void setup_aim(phys_joint_t *j,
     j->type = PHYS_JOINT_AIM;
     j->body_a = body_target;
     j->body_b = body_owner;
-    j->stiffness = def->influence;
+    j->spring_stiffness = def->influence;
 
     /* Anchors at owner position. */
     phys_vec3_t owner_pos = {
@@ -298,7 +298,7 @@ uint32_t anim_constraints_to_joints(
                     j->type = PHYS_JOINT_IK;
                     j->body_a = body_par;
                     j->body_b = body_cur;
-                    j->stiffness = def->influence;
+                    j->spring_stiffness = def->influence;
                     j->damping = 5.0f;
                     j->ik_ee_body = ee_body;
                     j->ik_target_body = body_target;
@@ -357,7 +357,7 @@ uint32_t anim_constraints_to_joints(
                 if (body_ref == UINT32_MAX) { body_ref = body_owner; ref_bone = bi; }
                 j->body_a = body_ref;
                 j->body_b = body_owner;
-                j->stiffness = def->influence;
+                j->spring_stiffness = def->influence;
 
                 /* Anchor at owner bone position. */
                 if (body_ref != body_owner) {
@@ -406,7 +406,7 @@ uint32_t anim_constraints_to_joints(
                 if (body_ref2 == UINT32_MAX) { body_ref2 = body_owner; ref_bone2 = bi; }
                 j->body_a = body_ref2;
                 j->body_b = body_owner;
-                j->stiffness = def->influence;
+                j->spring_stiffness = def->influence;
 
                 /* Anchor at owner bone position. */
                 if (body_ref2 != body_owner) {
@@ -464,7 +464,7 @@ uint32_t anim_constraints_to_joints(
                 j->body_a = (body_target != UINT32_MAX) ? body_target
                                                          : body_owner;
                 j->body_b = body_owner;
-                j->stiffness = def->influence;
+                j->spring_stiffness = def->influence;
                 j->limit_axes = (1u << 1);  /* Y axis only. */
                 j->limit_min[1] = def->params.floor.offset;
                 j->limit_max[1] = 1e10f;   /* No upper limit. */
