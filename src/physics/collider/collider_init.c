@@ -68,3 +68,17 @@ void phys_collider_init_halfspace(phys_collider_t *c,
     c->local_offset = offset;
     c->local_rotation = (phys_quat_t){0, 0, 0, 1};
 }
+
+void phys_collider_init_convex(phys_collider_t *c,
+                               uint32_t convex_idx,
+                               phys_vec3_t offset,
+                               phys_quat_t rotation)
+{
+    if (!c) { return; }
+
+    *c = (phys_collider_t){0};
+    c->type = PHYS_SHAPE_CONVEX;
+    c->shape_index = convex_idx;
+    c->local_offset = offset;
+    c->local_rotation = rotation;
+}

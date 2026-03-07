@@ -185,6 +185,18 @@ void phys_collider_init_halfspace(phys_collider_t *c,
                                    uint32_t halfspace_idx,
                                    phys_vec3_t offset);
 
+/**
+ * @brief Initialize a convex hull collider reference.
+ * @param c          Collider to initialize (non-NULL).
+ * @param convex_idx Index into the world's convex_hulls shape pool.
+ * @param offset     Local offset from body origin.
+ * @param rotation   Local rotation relative to body.
+ */
+void phys_collider_init_convex(phys_collider_t *c,
+                               uint32_t convex_idx,
+                               phys_vec3_t offset,
+                               phys_quat_t rotation);
+
 /* ── World-space transform helpers ──────────────────────────────── */
 
 /**

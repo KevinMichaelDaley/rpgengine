@@ -12,6 +12,28 @@
 #include <string.h>
 
 /**
+ * @brief Classify joint as structural (2) or animation (1).
+ *
+ * Structural joints represent hard physical connections (ball, hinge,
+ * lock, distance, cone_twist).  Animation joints represent soft goals
+ * (copy_rotation, limit_rotation, limit_position, aim, IK).
+ * The solver processes animation constraints first so that structural
+ * joints and contacts can override them.
+ */
+static uint8_t joint_priority(uint8_t type) {
+    switch (type) {
+    case PHYS_JOINT_COPY_ROTATION:
+    case PHYS_JOINT_LIMIT_ROTATION:
+    case PHYS_JOINT_LIMIT_POSITION:
+    case PHYS_JOINT_AIM:
+    case PHYS_JOINT_IK:
+        return 1;  /* Animation (soft, solved first). */
+    default:
+        return 2;  /* Structural (hard, solved second). */
+    }
+}
+
+/**
  * @brief Fill one constraint from a slice of joint rows.
  *
  * @param c            Output constraint.
@@ -31,9 +53,10 @@ static void fill_constraint(struct phys_constraint *c,
     c->manifold_idx = UINT32_MAX;  /* No manifold back-reference. */
     c->point_idx    = 0;
     c->solver_mode  = solver_mode;
-    c->is_joint     = 1;
+    c->is_joint     = joint_priority(joint->type);
     c->friction     = 0.0f;
     c->penetration  = 0.0f;
+    c->compliance   = joint->compliance;
 
     uint8_t count = row_end - row_start;
     if (count > PHYS_MAX_CONSTRAINT_ROWS) {

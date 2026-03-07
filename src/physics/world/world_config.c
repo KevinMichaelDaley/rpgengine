@@ -18,7 +18,7 @@ phys_world_config_t phys_world_config_default(void) {
         .warmstart_decay         = 0.95f,
         .velocity_damping        = 0.96f,
         .max_island_bodies       = 128,
-        .island_color_threshold  = 128,
+        .island_color_threshold  = 8,
         .max_joints              = 1024,
         .max_dt_override         = 3.0f,   /* Variable-dt cap: 3× fixed_dt. */
         .auto_ccd_speed          = 8.0f,   /* Auto-CCD for bodies > 8 m/s. */

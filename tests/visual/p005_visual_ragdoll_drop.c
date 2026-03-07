@@ -1,11 +1,11 @@
 /**
  * @file p005_visual_ragdoll_drop.c
- * @brief Visual test: ragdoll drop onto ground plane.
+ * @brief Visual test: ragdoll drop onto ground plane with skeletal mesh.
  *
- * Loads humanoid.fskel, registers the skeleton as an animated entity
- * in a real physics world with job system + tick runner, drops it from
- * height=5 onto a halfspace ground at y=0, and renders bone lines
- * for 3 seconds.  All bones are non-kinematic (pure ragdoll).
+ * Loads humanoid.fskel + humanoid.glb, registers the skeleton as an
+ * animated entity in a real physics world with job system + tick runner,
+ * starts it at ground level and lets it tip over under gravity.
+ * Renders the GPU-skinned mesh plus bone-only debug lines for 3 seconds.
  *
  * PASS if frame_count >= TOTAL_FRAMES and no GL errors.
  */
@@ -24,6 +24,7 @@
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/animation/constraint_params.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/animation/fskel_loader.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/world.h"
@@ -36,6 +37,9 @@
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/renderer/gl_loader.h"
 #include "ferrum/renderer/shader_program.h"
+#include "ferrum/renderer/skinning_shader.h"
+#include "ferrum/renderer/mesh/skeletal_mesh.h"
+#include "ferrum/renderer/gltf/gltf_loader.h"
 #include "ferrum/renderer/video_capture.h"
 
 /* ── Constants ────────────────────────────────────────────────────── */
@@ -47,14 +51,49 @@
 #define TOTAL_FRAMES (TARGET_FPS * DURATION_SEC)
 #define PI 3.14159265358979323846f
 
-#define DROP_HEIGHT  5.0f
+#define MAX_SKINNED_MESHES 24
+
 #define GROUND_Y     0.0f
-#define GRAVITY     -9.81f
 #define DT           (1.0f / TARGET_FPS)
 
-/* ── Shader sources ───────────────────────────────────────────────── */
+/* ── Skinning shader sources ──────────────────────────────────────── */
 
-static const char *VERT_SRC =
+static const char *SKINNING_VERT_SRC =
+    "#version 430 core\n"
+    "layout(location = 0) in vec3 in_pos;\n"
+    "layout(location = 1) in vec3 in_norm;\n"
+    "layout(location = 6) in vec4 in_weights;\n"
+    "layout(location = 7) in ivec4 in_indices;\n"
+    "layout(std430, binding = 0) buffer BonePalette { mat4 bones[]; };\n"
+    "uniform mat4 u_view_proj;\n"
+    "out vec3 v_normal;\n"
+    "out vec3 v_world_pos;\n"
+    "void main() {\n"
+    "    mat4 skin = bones[in_indices.x] * in_weights.x +\n"
+    "                bones[in_indices.y] * in_weights.y +\n"
+    "                bones[in_indices.z] * in_weights.z +\n"
+    "                bones[in_indices.w] * in_weights.w;\n"
+    "    vec4 world = skin * vec4(in_pos, 1.0);\n"
+    "    v_normal = mat3(skin) * in_norm;\n"
+    "    v_world_pos = world.xyz;\n"
+    "    gl_Position = u_view_proj * world;\n"
+    "}\n";
+
+static const char *SKINNING_FRAG_SRC =
+    "#version 430 core\n"
+    "in vec3 v_normal;\n"
+    "in vec3 v_world_pos;\n"
+    "out vec4 frag_color;\n"
+    "void main() {\n"
+    "    vec3 light_dir = normalize(vec3(0.5, 1.0, 0.3));\n"
+    "    float ndotl = max(dot(normalize(v_normal), light_dir), 0.2);\n"
+    "    vec3 base_color = vec3(0.75, 0.60, 0.50);\n"
+    "    frag_color = vec4(base_color * ndotl, 1.0);\n"
+    "}\n";
+
+/* ── Line shader sources (for bone overlay + grid) ────────────────── */
+
+static const char *LINE_VERT_SRC =
     "#version 330 core\n"
     "layout(location = 0) in vec3 a_position;\n"
     "layout(location = 1) in vec3 a_color;\n"
@@ -65,7 +104,7 @@ static const char *VERT_SRC =
     "    gl_Position = u_mvp * vec4(a_position, 1.0);\n"
     "}\n";
 
-static const char *FRAG_SRC =
+static const char *LINE_FRAG_SRC =
     "#version 330 core\n"
     "in vec3 v_color;\n"
     "out vec4 frag_color;\n"
@@ -86,7 +125,7 @@ static void *sdl_get_proc_(const char *name, void *ud) {
 
 static int init_gl_context_(void) {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return -1;
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
                         SDL_GL_CONTEXT_PROFILE_CORE);
@@ -216,16 +255,34 @@ static void draw_ground_grid_(float y, float extent, int divs) {
     }
 }
 
-/* ── Draw skeleton as lines ──────────────────────────────────────── */
+/* ── Draw skeleton as lines (deform bones only) ──────────────────── */
 
+/**
+ * @brief Draw only "real" bone connections.
+ *
+ * Skips control/mechanism bones (names starting with 'c_' or 'MCH-')
+ * which are Rigify internal controls, not actual deformation bones.
+ * This avoids the long stray lines between distant mechanism bones.
+ */
 static void draw_skeleton_(const skeleton_def_t *skel, const mat4_t *pose) {
     for (uint32_t i = 0; i < skel->joint_count; i++) {
         uint32_t pi = skel->parent_indices[i];
         if (pi == UINT32_MAX || pi >= skel->joint_count) continue;
+
+        /* Skip mechanism/control bones. */
+        const char *name = skel->joint_names[i];
+        if (name[0] == 'c' && name[1] == '_') continue;
+        if (name[0] == 'M' && name[1] == 'C' && name[2] == 'H') continue;
+
         vec3_t child  = { pose[i].m[12],  pose[i].m[13],  pose[i].m[14] };
         vec3_t parent = { pose[pi].m[12], pose[pi].m[13], pose[pi].m[14] };
-        float t = (float)i / (float)skel->joint_count;
-        add_line_(parent, child, 0.9f - 0.6f*t, 0.3f + 0.6f*t, 0.2f);
+
+        /* Color by bone type: collider bodies are brighter. */
+        float r = 0.2f, g = 0.8f, b = 0.3f;
+        if (skel->colliders && skel->colliders[i].shape_type != BONE_COLLIDER_NONE) {
+            r = 0.9f; g = 0.9f; b = 0.2f;
+        }
+        add_line_(parent, child, r, g, b);
     }
 }
 
@@ -236,58 +293,108 @@ int main(void) {
 
     if (init_gl_context_() != 0) { return 1; }
 
-    shader_program_t shader;
-    char log_buf[512];
-    int rc = shader_program_create(&shader, &g_loader,
-                                   VERT_SRC, FRAG_SRC,
+    /* Line shader (for bone overlay + ground grid). */
+    shader_program_t line_shader;
+    char log_buf[1024];
+    int rc = shader_program_create(&line_shader, &g_loader,
+                                   LINE_VERT_SRC, LINE_FRAG_SRC,
                                    log_buf, sizeof(log_buf));
     if (rc != 0) {
-        fprintf(stderr, "Shader failed: %s\n", log_buf);
-        cleanup_gl_context_();
-        return 1;
+        fprintf(stderr, "Line shader failed: %s\n", log_buf);
+        cleanup_gl_context_(); return 1;
     }
-    int32_t u_mvp_loc = shader.glGetUniformLocation(shader.handle, "u_mvp");
+    int32_t u_mvp_loc = line_shader.glGetUniformLocation(
+        line_shader.handle, "u_mvp");
     init_line_buffer_();
 
-    /* Load skeleton. */
+    /* Skinning shader (for skeletal mesh). */
+    skinning_shader_t skin_shader;
+    skinning_shader_status_t ss = skinning_shader_create_from_source(
+        &skin_shader, &g_loader,
+        SKINNING_VERT_SRC, SKINNING_FRAG_SRC,
+        log_buf, sizeof(log_buf));
+    if (ss != SKINNING_SHADER_OK) {
+        fprintf(stderr, "Skinning shader failed (%d): %s\n", ss, log_buf);
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        cleanup_gl_context_(); return 1;
+    }
+    int32_t u_vp_loc = glGetUniformLocation(skin_shader.program.handle,
+                                             "u_view_proj");
+
+    /* Load skeleton (fskel). */
     skeleton_def_t skel;
     mat4_t *ibms = NULL;
     uint32_t ibm_count = 0;
     if (!fskel_load("asset_src/humanoid.fskel", &skel, &ibms, &ibm_count)) {
         fprintf(stderr, "Failed to load humanoid.fskel\n");
-        cleanup_line_buffer_();
-        shader_program_destroy(&shader);
-        cleanup_gl_context_();
-        return 1;
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        skinning_shader_destroy(&skin_shader);
+        cleanup_gl_context_(); return 1;
     }
-    printf("  Loaded: %u joints\n", skel.joint_count);
+    printf("  Loaded fskel: %u joints, %u IBMs\n", skel.joint_count, ibm_count);
+
+    /* Load skeletal mesh (fvma — same bone ordering as fskel). */
+    FILE *fvma_fp = fopen("asset_src/humanoid.fvma", "rb");
+    if (!fvma_fp) {
+        fprintf(stderr, "Failed to open humanoid.fvma\n");
+        skeleton_def_destroy(&skel); if (ibms) free(ibms);
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        skinning_shader_destroy(&skin_shader);
+        cleanup_gl_context_(); return 1;
+    }
+    fseek(fvma_fp, 0, SEEK_END);
+    long fvma_size = ftell(fvma_fp);
+    fseek(fvma_fp, 0, SEEK_SET);
+    uint8_t *fvma_data = (uint8_t *)malloc((size_t)fvma_size);
+    fread(fvma_data, 1, (size_t)fvma_size, fvma_fp);
+    fclose(fvma_fp);
+
+    skeletal_mesh_t skinned_mesh;
+    int sm_rc = skeletal_mesh_create_from_fvma(&g_loader, fvma_data,
+                                                (size_t)fvma_size,
+                                                &skinned_mesh);
+    free(fvma_data);
+    if (sm_rc != 0) {
+        fprintf(stderr, "skeletal_mesh_create_from_fvma failed: %d\n", sm_rc);
+        skeleton_def_destroy(&skel); if (ibms) free(ibms);
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        skinning_shader_destroy(&skin_shader);
+        cleanup_gl_context_(); return 1;
+    }
+    printf("  Loaded FVMA skeletal mesh: %u submeshes, %u bones\n",
+           skinned_mesh.base.submesh_count, skinned_mesh.bone_count);
+
+    /* Bone palette SSBO. */
+    uint32_t palette_count = skel.joint_count;
+    float *bone_matrices = (float *)calloc(palette_count * 16, sizeof(float));
+    GLuint bone_ssbo = 0;
+    glGenBuffers(1, &bone_ssbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, bone_ssbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 (GLsizeiptr)(palette_count * 16 * sizeof(float)),
+                 NULL, GL_DYNAMIC_DRAW);
 
     /* ── Physics setup ──────────────────────────────────────────── */
 
-    /* Job system for physics parallel stages. */
     job_system_t phys_job_sys;
     if (job_system_create(&phys_job_sys, 2, 4096, 256u * 1024u, 4096, 0)
         != JOB_CREATE_OK) {
-        fprintf(stderr, "job_system_create failed\n");
-        return 1;
+        fprintf(stderr, "job_system_create failed\n"); return 1;
     }
     if (job_system_start(&phys_job_sys) != 0) {
-        fprintf(stderr, "job_system_start failed\n");
-        return 1;
+        fprintf(stderr, "job_system_start failed\n"); return 1;
     }
 
-    /* Physics world. */
     phys_world_config_t wcfg = phys_world_config_default();
     wcfg.max_bodies = 512;
     wcfg.max_colliders = 512;
     wcfg.max_joints = 512;
     phys_world_t world;
     if (phys_world_init(&world, &wcfg) != 0) {
-        fprintf(stderr, "phys_world_init failed\n");
-        return 1;
+        fprintf(stderr, "phys_world_init failed\n"); return 1;
     }
 
-    /* Ground plane: static halfspace at y=0. */
+    /* Ground plane. */
     uint32_t ground_id = phys_world_create_body(&world);
     {
         phys_body_t *ground = phys_world_get_body(&world, ground_id);
@@ -297,48 +404,34 @@ int main(void) {
             (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
     }
 
-    /* Create initial world pose: skeleton raised by DROP_HEIGHT. */
-    mat4_t *initial_pose = (mat4_t *)malloc(
-        skel.joint_count * sizeof(mat4_t));
-    if (!initial_pose) { return 1; }
+    /* Position skeleton at ground level. */
+    float min_y = 1e10f;
+    for (uint32_t i = 0; i < skel.joint_count; i++) {
+        float y = skel.rest_world[i].m[13];
+        if (y < min_y) min_y = y;
+    }
+    float y_offset = GROUND_Y - min_y;
+
+    mat4_t *initial_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
     for (uint32_t i = 0; i < skel.joint_count; i++) {
         initial_pose[i] = skel.rest_world[i];
-        initial_pose[i].m[13] += DROP_HEIGHT;
+        initial_pose[i].m[13] += y_offset;
     }
 
-    /* Register skeleton as an animated entity in the physics world.
-     * All bones with colliders become real physics bodies; joints
-     * from fskel JNTS chunk are created between parent-child pairs. */
+    /* Create animated entity. */
     phys_anim_entity_t anim_ent;
     if (!phys_anim_entity_create(&anim_ent, &world, &skel, initial_pose)) {
-        fprintf(stderr, "phys_anim_entity_create failed\n");
-        return 1;
+        fprintf(stderr, "phys_anim_entity_create failed\n"); return 1;
     }
     printf("  Animated entity: %u bodies, %u joints (pure ragdoll)\n",
            anim_ent.body_count, anim_ent.joint_count);
-
-    /* Make all bodies non-kinematic (override fskel is_kinematic flags)
-     * so the entire skeleton falls under gravity as a pure ragdoll. */
-    for (uint32_t i = 0; i < anim_ent.bone_count; i++) {
-        uint32_t bi = anim_ent.body_indices[i];
-        if (bi == UINT32_MAX) continue;
-        phys_body_t *body = phys_world_get_body(&world, bi);
-        if (!body) continue;
-        if (phys_body_is_kinematic(body)) {
-            body->flags &= ~(uint32_t)PHYS_BODY_FLAG_KINEMATIC;
-            phys_body_set_mass(body, 1.0f);
-            phys_body_set_capsule_inertia(body, 1.0f, 0.05f, 0.1f);
-        }
-    }
 
     /* Physics job context + tick runner. */
     phys_job_context_t phys_jobs;
     phys_job_context_init(&phys_jobs, &phys_job_sys);
 
-    /* Command channel (required by tick runner, can be empty). */
     fr_topic_channel_config_t chan_cfg = {
-        .capacity = 64,
-        .capacity_bytes = 64 * 1024,
+        .capacity = 64, .capacity_bytes = 64 * 1024,
         .max_message_size = 1024,
         .backpressure = FR_TOPIC_BACKPRESSURE_FAIL
     };
@@ -348,7 +441,6 @@ int main(void) {
     phys_tick_runner_init(&tick_runner, &world, &phys_jobs,
                           cmd_channel, NULL, NULL, NULL);
 
-    /* Game state (player at origin for tier classification). */
     phys_game_state_t game_state;
     phys_game_state_init(&game_state);
     phys_player_state_t player0 = {
@@ -358,9 +450,6 @@ int main(void) {
     phys_game_state_set_player(&game_state, 0, &player0);
     tick_runner.game_state = &game_state;
 
-    /* No pre-tick callback — pure ragdoll, no animation. */
-
-    /* Start the physics tick runner thread. */
     phys_tick_runner_start(&tick_runner);
     printf("  Tick runner started\n");
 
@@ -392,12 +481,40 @@ int main(void) {
         /* Sync bone world transforms from physics bodies. */
         phys_anim_entity_sync_from_world(&anim_ent, &world);
 
-        /* ── Draw ─────────────────────────────────────────────── */
-        begin_lines_();
-        draw_ground_grid_(GROUND_Y, 15.0f, 30);
-        draw_skeleton_(&skel, anim_ent.bone_world);
+        /* Debug: print bone positions every 45 frames. */
+        if (f % 45 == 0) {
+            for (uint32_t db = 0; db < 10 && db < skel.joint_count; db++) {
+                fprintf(stderr, "  f%03d bone %u (%s): xyz=(%.2f, %.2f, %.2f) body=%u\n",
+                        f, db, skel.joint_names[db],
+                        anim_ent.bone_world[db].m[12],
+                        anim_ent.bone_world[db].m[13],
+                        anim_ent.bone_world[db].m[14],
+                        anim_ent.body_indices[db]);
+                /* Also print palette diagonal to check identity vs real */
+                float *pm = &bone_matrices[db * 16];
+                if (f > 0)
+                    fprintf(stderr, "        palette diag=(%.4f, %.4f, %.4f, %.4f)\n",
+                            pm[0], pm[5], pm[10], pm[15]);
+            }
+        }
 
-        /* Camera: fixed view looking at the drop zone. */
+        /* Compute bone palette: palette[j] = bone_world[j] * IBM[j]. */
+        uint32_t n = skel.joint_count < ibm_count ? skel.joint_count : ibm_count;
+        for (uint32_t j = 0; j < n; j++) {
+            mat4_t bw = anim_ent.bone_world[j];
+            mat4_t ibm;
+            memcpy(&ibm, &ibms[j], sizeof(mat4_t));
+            mat4_t result = mat4_mul(bw, ibm);
+            memcpy(&bone_matrices[j * 16], result.m, 16 * sizeof(float));
+        }
+
+        /* Upload bone palette to SSBO. */
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, bone_ssbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)(n * 16 * sizeof(float)),
+                        bone_matrices);
+
+        /* Camera. */
         mat4_t view, proj;
         mat4_look_at((vec3_t){15.0f, 8.0f, 15.0f},
                      (vec3_t){0.f, 3.0f, 0.f},
@@ -405,8 +522,24 @@ int main(void) {
         mat4_perspective(45.0f * PI / 180.0f,
                          (float)WINDOW_W / (float)WINDOW_H,
                          0.1f, 200.0f, &proj);
-        mat4_t mvp = mat4_mul(proj, view);
-        flush_lines_(&mvp, &shader, u_mvp_loc);
+        mat4_t vp = mat4_mul(proj, view);
+
+        /* Draw skinned mesh. */
+        glUseProgram(skin_shader.program.handle);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, bone_ssbo);
+        glUniformMatrix4fv(u_vp_loc, 1, 0, vp.m);
+        skeletal_mesh_bind(&skinned_mesh);
+        for (uint32_t s = 0; s < skinned_mesh.base.submesh_count; s++)
+            skeletal_mesh_draw_submesh(&skinned_mesh, s);
+        skeletal_mesh_unbind();
+
+        /* Draw bone lines + ground grid overlay. */
+        begin_lines_();
+        draw_ground_grid_(GROUND_Y, 15.0f, 30);
+        draw_skeleton_(&skel, anim_ent.bone_world);
+        glDisable(GL_DEPTH_TEST);
+        flush_lines_(&vp, &line_shader, u_mvp_loc);
+        glEnable(GL_DEPTH_TEST);
 
         GLenum gl_err = glGetError();
         while (gl_err != GL_NO_ERROR) {
@@ -436,7 +569,7 @@ int main(void) {
             SDL_Delay(frame_interval_ms - elapsed);
     }
 
-    /* Verify the ragdoll dropped: check some bodies near ground. */
+    /* Verify the ragdoll dropped. */
     float avg_y = 0.0f;
     uint32_t counted = 0;
     for (uint32_t i = 0; i < anim_ent.bone_count; i++) {
@@ -453,7 +586,11 @@ int main(void) {
     phys_tick_runner_stop(&tick_runner);
     if (capture) fr_video_capture_destroy(capture);
     cleanup_line_buffer_();
-    shader_program_destroy(&shader);
+    shader_program_destroy(&line_shader);
+    skinning_shader_destroy(&skin_shader);
+    free(bone_matrices);
+    glDeleteBuffers(1, &bone_ssbo);
+    skeletal_mesh_destroy(&skinned_mesh);
     phys_anim_entity_destroy(&anim_ent);
     free(initial_pose);
     phys_tick_runner_destroy(&tick_runner);

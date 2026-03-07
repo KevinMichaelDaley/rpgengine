@@ -147,7 +147,8 @@ static void phys_tgs_init_velocities(const phys_tgs_solve_args_t *args)
          * bodies are skipped.  Use per-tier dt so bodies with fewer
          * substeps get the correct gravity increment. */
         if (args->bodies[i].inv_mass > 0.0f &&
-            !phys_body_is_sleeping(&args->bodies[i])) {
+            !phys_body_is_sleeping(&args->bodies[i]) &&
+            !(args->bodies[i].flags & PHYS_BODY_FLAG_NO_GRAVITY)) {
             float body_dt = args->dt;
             if (args->tier_substep_counts && args->tick_dt > 0.0f) {
                 uint8_t tier = args->bodies[i].tier;
@@ -686,15 +687,33 @@ static bool solve_island_colored(const phys_island_t *island,
     int rc = phys_constraint_color(local, n, args->body_count, arena, &coloring);
     if (rc != 0) { return false; }
 
-    /* Solve per iteration, per color batch. */
+    /* Two-pass solve: animation constraints first (is_joint == 1),
+     * then structural joints + contacts (is_joint == 0 or 2).
+     * Within each pass, iterate color-by-color for parallelism. */
     phys_velocity_t *pseudo = args->pseudo_velocities;
 
+    /* Pass 1: animation constraints (soft goals — IK, copy_rotation, etc.). */
     for (uint32_t iter = 0; iter < iters; ++iter) {
         for (uint32_t color = 0; color < coloring.num_colors; ++color) {
-            /* Solve all constraints with this color. */
             for (uint32_t ci = 0; ci < n; ++ci) {
                 if (coloring.colors[ci] != color) { continue; }
                 uint32_t c_idx = island->constraint_indices[ci];
+                if (args->constraints[c_idx].is_joint != 1) { continue; }
+                solve_one_constraint(&args->constraints[c_idx],
+                                     args->velocities, pseudo,
+                                     args->bodies, args->inv_inertia_world,
+                                     slop, inv_dt);
+            }
+        }
+    }
+
+    /* Pass 2: structural joints + contacts (hard physical constraints). */
+    for (uint32_t iter = 0; iter < iters; ++iter) {
+        for (uint32_t color = 0; color < coloring.num_colors; ++color) {
+            for (uint32_t ci = 0; ci < n; ++ci) {
+                if (coloring.colors[ci] != color) { continue; }
+                uint32_t c_idx = island->constraint_indices[ci];
+                if (args->constraints[c_idx].is_joint == 1) { continue; }
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
                                      args->bodies, args->inv_inertia_world,
@@ -755,10 +774,23 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
         }
 
-        /* Sequential solve (default path). */
+        /* Sequential solve (default path): two-pass ordering.
+         * Pass 1: animation constraints (is_joint == 1).
+         * Pass 2: structural joints + contacts (is_joint != 1). */
         for (uint32_t iter = 0; iter < iters; iter++) {
             for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
                 uint32_t c_idx = island->constraint_indices[ci];
+                if (args->constraints[c_idx].is_joint != 1) { continue; }
+                solve_one_constraint(&args->constraints[c_idx],
+                                     args->velocities, pseudo,
+                                     args->bodies, args->inv_inertia_world,
+                                     slop, inv_dt);
+            }
+        }
+        for (uint32_t iter = 0; iter < iters; iter++) {
+            for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+                uint32_t c_idx = island->constraint_indices[ci];
+                if (args->constraints[c_idx].is_joint == 1) { continue; }
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
                                      args->bodies, args->inv_inertia_world,

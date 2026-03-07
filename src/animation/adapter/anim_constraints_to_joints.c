@@ -38,42 +38,120 @@
 
 /**
  * @brief Set up a ball joint between two bones (owner and target).
+ *
+ * The anchor is placed at the owner bone's world position, expressed
+ * in each body's local frame.  This way both anchors coincide in
+ * world space at setup time (zero initial error).
  */
 static void setup_ball(phys_joint_t *j,
                        uint32_t body_owner, uint32_t body_target,
-                       float influence) {
+                       float influence,
+                       const mat4_t *world_pose,
+                       uint32_t owner_bone, uint32_t target_bone) {
     phys_joint_init(j);
     j->type = PHYS_JOINT_BALL;
     j->body_a = body_target;
     j->body_b = body_owner;
     j->stiffness = influence;
-    /* Anchors default to body origins (local {0,0,0}). */
+
+    /* Anchor at the owner bone's world position. */
+    phys_vec3_t owner_pos = {
+        world_pose[owner_bone].m[12],
+        world_pose[owner_bone].m[13],
+        world_pose[owner_bone].m[14]
+    };
+    phys_vec3_t target_pos = {
+        world_pose[target_bone].m[12],
+        world_pose[target_bone].m[13],
+        world_pose[target_bone].m[14]
+    };
+
+    /* local_anchor_a (on target body): owner_pos in target's local frame. */
+    phys_quat_t target_orient = quat_from_mat4(&world_pose[target_bone]);
+    phys_vec3_t delta_a = {
+        owner_pos.x - target_pos.x,
+        owner_pos.y - target_pos.y,
+        owner_pos.z - target_pos.z
+    };
+    j->local_anchor_a = quat_inv_rotate_vec3(target_orient, delta_a);
+
+    /* local_anchor_b (on owner body): at body origin since body center
+     * is at the owner bone position. */
+    j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
 }
 
 /**
  * @brief Set up a lock joint between two bones.
+ *
+ * Anchors are placed at the owner bone's world position so both
+ * world-space anchors coincide initially.
  */
 static void setup_lock(phys_joint_t *j,
                        uint32_t body_owner, uint32_t body_target,
-                       float influence) {
+                       float influence,
+                       const mat4_t *world_pose,
+                       uint32_t owner_bone, uint32_t target_bone) {
     phys_joint_init(j);
     j->type = PHYS_JOINT_LOCK;
     j->body_a = body_target;
     j->body_b = body_owner;
     j->stiffness = influence;
+
+    phys_vec3_t owner_pos = {
+        world_pose[owner_bone].m[12],
+        world_pose[owner_bone].m[13],
+        world_pose[owner_bone].m[14]
+    };
+    phys_vec3_t target_pos = {
+        world_pose[target_bone].m[12],
+        world_pose[target_bone].m[13],
+        world_pose[target_bone].m[14]
+    };
+    phys_quat_t target_orient = quat_from_mat4(&world_pose[target_bone]);
+    phys_vec3_t delta_a = {
+        owner_pos.x - target_pos.x,
+        owner_pos.y - target_pos.y,
+        owner_pos.z - target_pos.z
+    };
+    j->local_anchor_a = quat_inv_rotate_vec3(target_orient, delta_a);
+    j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
 }
 
 /**
  * @brief Set up a copy-rotation joint between two bones.
+ *
+ * Copy-rotation is angular-only — anchors placed at owner bone
+ * position for any positional rows the solver might add.
  */
 static void setup_copy_rot(phys_joint_t *j,
                            uint32_t body_owner, uint32_t body_target,
-                           float influence) {
+                           float influence,
+                           const mat4_t *world_pose,
+                           uint32_t owner_bone, uint32_t target_bone) {
     phys_joint_init(j);
     j->type = PHYS_JOINT_COPY_ROTATION;
     j->body_a = body_target;
     j->body_b = body_owner;
     j->stiffness = influence;
+
+    phys_vec3_t owner_pos = {
+        world_pose[owner_bone].m[12],
+        world_pose[owner_bone].m[13],
+        world_pose[owner_bone].m[14]
+    };
+    phys_vec3_t target_pos = {
+        world_pose[target_bone].m[12],
+        world_pose[target_bone].m[13],
+        world_pose[target_bone].m[14]
+    };
+    phys_quat_t target_orient = quat_from_mat4(&world_pose[target_bone]);
+    phys_vec3_t delta_a = {
+        owner_pos.x - target_pos.x,
+        owner_pos.y - target_pos.y,
+        owner_pos.z - target_pos.z
+    };
+    j->local_anchor_a = quat_inv_rotate_vec3(target_orient, delta_a);
+    j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
 }
 
 /**
@@ -81,12 +159,34 @@ static void setup_copy_rot(phys_joint_t *j,
  */
 static void setup_aim(phys_joint_t *j,
                       uint32_t body_owner, uint32_t body_target,
-                      const constraint_def_t *def) {
+                      const constraint_def_t *def,
+                      const mat4_t *world_pose,
+                      uint32_t owner_bone, uint32_t target_bone) {
     phys_joint_init(j);
     j->type = PHYS_JOINT_AIM;
     j->body_a = body_target;
     j->body_b = body_owner;
     j->stiffness = def->influence;
+
+    /* Anchors at owner position. */
+    phys_vec3_t owner_pos = {
+        world_pose[owner_bone].m[12],
+        world_pose[owner_bone].m[13],
+        world_pose[owner_bone].m[14]
+    };
+    phys_vec3_t target_pos = {
+        world_pose[target_bone].m[12],
+        world_pose[target_bone].m[13],
+        world_pose[target_bone].m[14]
+    };
+    phys_quat_t target_orient = quat_from_mat4(&world_pose[target_bone]);
+    phys_vec3_t delta_a = {
+        owner_pos.x - target_pos.x,
+        owner_pos.y - target_pos.y,
+        owner_pos.z - target_pos.z
+    };
+    j->local_anchor_a = quat_inv_rotate_vec3(target_orient, delta_a);
+    j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
 
     /* Determine track axis from constraint params. */
     if (def->type == CONSTRAINT_DAMPED_TRACK) {
@@ -139,14 +239,16 @@ uint32_t anim_constraints_to_joints(
             case CONSTRAINT_COPY_LOCATION:
                 if (body_target == UINT32_MAX) break;
                 setup_ball(&out_joints[count], body_owner, body_target,
-                           def->influence);
+                           def->influence, world_pose,
+                           bi, def->target_bone_idx);
                 count++;
                 break;
 
             case CONSTRAINT_COPY_ROTATION:
                 if (body_target == UINT32_MAX) break;
                 setup_copy_rot(&out_joints[count], body_owner, body_target,
-                               def->influence);
+                               def->influence, world_pose,
+                               bi, def->target_bone_idx);
                 count++;
                 break;
 
@@ -154,7 +256,8 @@ uint32_t anim_constraints_to_joints(
             case CONSTRAINT_CHILD_OF:
                 if (body_target == UINT32_MAX) break;
                 setup_lock(&out_joints[count], body_owner, body_target,
-                           def->influence);
+                           def->influence, world_pose,
+                           bi, def->target_bone_idx);
                 count++;
                 break;
 
@@ -200,6 +303,28 @@ uint32_t anim_constraints_to_joints(
                     j->ik_ee_body = ee_body;
                     j->ik_target_body = body_target;
                     j->ik_target_pos = target_pos;
+
+                    /* Anchor at cur bone position in each body's local
+                     * frame so world anchors coincide at rest. */
+                    phys_vec3_t cur_pos = {
+                        world_pose[cur].m[12],
+                        world_pose[cur].m[13],
+                        world_pose[cur].m[14]
+                    };
+                    phys_vec3_t par_pos = {
+                        world_pose[par].m[12],
+                        world_pose[par].m[13],
+                        world_pose[par].m[14]
+                    };
+                    phys_quat_t par_orient = quat_from_mat4(&world_pose[par]);
+                    phys_vec3_t delta = {
+                        cur_pos.x - par_pos.x,
+                        cur_pos.y - par_pos.y,
+                        cur_pos.z - par_pos.z
+                    };
+                    j->local_anchor_a = quat_inv_rotate_vec3(par_orient, delta);
+                    j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+
                     count++;
 
                     cur = par;
@@ -211,7 +336,8 @@ uint32_t anim_constraints_to_joints(
             case CONSTRAINT_TRACK_TO:
             case CONSTRAINT_LOCKED_TRACK:
                 if (body_target == UINT32_MAX) break;
-                setup_aim(&out_joints[count], body_owner, body_target, def);
+                setup_aim(&out_joints[count], body_owner, body_target, def,
+                          world_pose, bi, def->target_bone_idx);
                 count++;
                 break;
 
@@ -223,13 +349,29 @@ uint32_t anim_constraints_to_joints(
                  * Use parent bone if available, else self. */
                 uint32_t parent_idx = skel->parent_indices[bi];
                 uint32_t body_ref = UINT32_MAX;
+                uint32_t ref_bone = bi;
                 if (parent_idx != UINT32_MAX && parent_idx < n) {
                     body_ref = bone_to_body_map[parent_idx];
+                    ref_bone = parent_idx;
                 }
-                if (body_ref == UINT32_MAX) body_ref = body_owner;
+                if (body_ref == UINT32_MAX) { body_ref = body_owner; ref_bone = bi; }
                 j->body_a = body_ref;
                 j->body_b = body_owner;
                 j->stiffness = def->influence;
+
+                /* Anchor at owner bone position. */
+                if (body_ref != body_owner) {
+                    phys_vec3_t own_pos = {
+                        world_pose[bi].m[12], world_pose[bi].m[13], world_pose[bi].m[14]
+                    };
+                    phys_vec3_t ref_pos = {
+                        world_pose[ref_bone].m[12], world_pose[ref_bone].m[13], world_pose[ref_bone].m[14]
+                    };
+                    phys_quat_t ref_orient = quat_from_mat4(&world_pose[ref_bone]);
+                    phys_vec3_t delta = {own_pos.x - ref_pos.x, own_pos.y - ref_pos.y, own_pos.z - ref_pos.z};
+                    j->local_anchor_a = quat_inv_rotate_vec3(ref_orient, delta);
+                }
+
                 j->limit_axes = 0;
                 if (def->params.limit_rotation.use_limit_x) {
                     j->limit_axes |= (1u << 0);
@@ -254,15 +396,31 @@ uint32_t anim_constraints_to_joints(
                 phys_joint_t *j = &out_joints[count];
                 phys_joint_init(j);
                 j->type = PHYS_JOINT_LIMIT_POSITION;
-                uint32_t parent_idx = skel->parent_indices[bi];
-                uint32_t body_ref = UINT32_MAX;
-                if (parent_idx != UINT32_MAX && parent_idx < n) {
-                    body_ref = bone_to_body_map[parent_idx];
+                uint32_t parent_idx2 = skel->parent_indices[bi];
+                uint32_t body_ref2 = UINT32_MAX;
+                uint32_t ref_bone2 = bi;
+                if (parent_idx2 != UINT32_MAX && parent_idx2 < n) {
+                    body_ref2 = bone_to_body_map[parent_idx2];
+                    ref_bone2 = parent_idx2;
                 }
-                if (body_ref == UINT32_MAX) body_ref = body_owner;
-                j->body_a = body_ref;
+                if (body_ref2 == UINT32_MAX) { body_ref2 = body_owner; ref_bone2 = bi; }
+                j->body_a = body_ref2;
                 j->body_b = body_owner;
                 j->stiffness = def->influence;
+
+                /* Anchor at owner bone position. */
+                if (body_ref2 != body_owner) {
+                    phys_vec3_t own_pos = {
+                        world_pose[bi].m[12], world_pose[bi].m[13], world_pose[bi].m[14]
+                    };
+                    phys_vec3_t ref_pos = {
+                        world_pose[ref_bone2].m[12], world_pose[ref_bone2].m[13], world_pose[ref_bone2].m[14]
+                    };
+                    phys_quat_t ref_orient = quat_from_mat4(&world_pose[ref_bone2]);
+                    phys_vec3_t delta = {own_pos.x - ref_pos.x, own_pos.y - ref_pos.y, own_pos.z - ref_pos.z};
+                    j->local_anchor_a = quat_inv_rotate_vec3(ref_orient, delta);
+                }
+
                 j->limit_axes = 0;
                 /* Default limits: ±infinity (inactive). */
                 for (int ax = 0; ax < 3; ax++) {
@@ -317,7 +475,8 @@ uint32_t anim_constraints_to_joints(
             case CONSTRAINT_PIVOT:
                 if (body_target == UINT32_MAX) break;
                 setup_ball(&out_joints[count], body_owner, body_target,
-                           def->influence);
+                           def->influence, world_pose,
+                           bi, def->target_bone_idx);
                 count++;
                 break;
 

@@ -28,6 +28,7 @@ void phys_joint_init(phys_joint_t *joint) {
     joint->body_a = UINT32_MAX;
     joint->body_b = UINT32_MAX;
     joint->ik_target_body = UINT32_MAX;
+    joint->rest_relative_orient = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
 }
 
 void phys_joint_build_distance(phys_joint_t *joint,
@@ -51,6 +52,38 @@ void phys_joint_build_distance(phys_joint_t *joint,
     phys_vec3_t delta = vec3_sub(world_anchor_b, world_anchor_a);
     float dist = sqrtf(vec3_dot(delta, delta));
 
+    /* Range mode: when limit_axes bit 0 is set, limit_min[0] and
+     * limit_max[0] define the allowed distance range.  Within the
+     * range the constraint is inactive (row_count=0).  Outside, a
+     * unilateral row pushes/pulls back to the nearest bound —
+     * similar to a contact constraint but for distance. */
+    float error;
+    float lam_min, lam_max;
+    if (joint->limit_axes & 1) {
+        float min_dist = joint->limit_min[0];
+        float max_dist = joint->limit_max[0];
+        if (dist < min_dist) {
+            /* Too close — push apart. */
+            error = dist - min_dist;        /* negative */
+            lam_min = 0.0f;                 /* repulsive only */
+            lam_max = JOINT_LAMBDA_BIG;
+        } else if (dist > max_dist) {
+            /* Too far — pull together. */
+            error = dist - max_dist;        /* positive */
+            lam_min = -JOINT_LAMBDA_BIG;    /* attractive only */
+            lam_max = 0.0f;
+        } else {
+            /* Within allowed range — no constraint. */
+            joint->row_count = 0;
+            return;
+        }
+    } else {
+        /* Exact distance mode (bilateral). */
+        error = dist - joint->rest_length;
+        lam_min = -JOINT_LAMBDA_BIG;
+        lam_max =  JOINT_LAMBDA_BIG;
+    }
+
     /* Constraint direction: normalized separation (or fallback X axis). */
     phys_vec3_t dir;
     if (dist > 1e-7f) {
@@ -72,15 +105,13 @@ void phys_joint_build_distance(phys_joint_t *joint,
     row->J_vb = dir;
     row->J_wb = vec3_cross(rB, dir);
 
-    /* Bilateral lambda bounds (can push and pull). */
-    row->lambda_min = -JOINT_LAMBDA_BIG;
-    row->lambda_max =  JOINT_LAMBDA_BIG;
+    row->lambda_min = lam_min;
+    row->lambda_max = lam_max;
     row->lambda = joint->cached_lambda[0]; /* Warmstart from previous substep. */
 
     /* Position error stored in bias for split-impulse correction.
      * The velocity-level solve sees bias=0 (set by the solver);
      * position correction uses this raw error value. */
-    float error = dist - joint->rest_length;
     row->bias = error;
     row->damping = joint->damping;
 

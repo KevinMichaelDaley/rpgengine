@@ -2,7 +2,7 @@
 Blender Add-on: Export .fskel (Talarium Skeleton Format)
 
 Exports the active armature's bone hierarchy, rest transforms, Blender
-bone constraints, and (optionally) inverse-bind matrices to the binary
+bone constraints, and (optionally) inverse-bind matrices to the JSON
 .fskel format consumed by the Talarium engine.
 
 Install:  Edit → Preferences → Add-ons → Install from Disk → select this file.

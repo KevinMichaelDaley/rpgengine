@@ -45,8 +45,10 @@ typedef struct phys_jacobian_row {
                              *   range 0.1–0.5.  Higher values risk oscillation. */
 } phys_jacobian_row_t;
 
-/** Maximum constraint rows per contact (1 normal + 2 friction). */
-#define PHYS_MAX_CONSTRAINT_ROWS 3
+/** Maximum constraint rows per constraint.
+ *  Contact constraints use 3 (1 normal + 2 friction).
+ *  Joint constraints may use up to 9 (3 positional + 3 angular + 3 limit). */
+#define PHYS_MAX_CONSTRAINT_ROWS 9
 
 /**
  * @brief A constraint grouping up to 3 Jacobian rows.
@@ -61,9 +63,12 @@ typedef struct phys_constraint {
     uint8_t point_idx;      /**< Which contact point in the manifold. */
     uint8_t row_count;      /**< Number of active rows (typically 3). */
     uint8_t solver_mode;    /**< phys_solver_mode_t: 0=TGS, 1=XPBD. */
-    uint8_t is_joint;       /**< Non-zero for joint constraints (skip friction cone). */
+    uint8_t is_joint;       /**< 0 = contact, 1 = animation joint (soft),
+                             *   2 = structural joint (hard). Non-zero skips
+                             *   friction cone logic. */
     float friction;         /**< Combined friction coefficient for Coulomb cone. */
     float penetration;      /**< Raw penetration depth for position projection. */
+    float compliance;       /**< XPBD compliance (α) per-constraint; 0 = stiff. */
     phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS]; /**< Constraint rows. */
 } phys_constraint_t;
 

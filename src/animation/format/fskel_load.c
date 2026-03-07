@@ -1,9 +1,10 @@
 /**
  * @file fskel_load.c
- * @brief .fskel format loader.
+ * @brief .fskel JSON format loader.
  *
- * Reads skeleton hierarchy, constraints, IBMs, and optional v2 chunks
- * (COLL, JNTS) from a binary file.  Backward-compatible with v1 files.
+ * Reads skeleton hierarchy, constraints, IBMs, colliders, and joint
+ * descriptors from a JSON file.  Uses the arena-based json_parse.h
+ * parser.
  *
  * Non-static functions: 1 (fskel_load)
  */
@@ -13,6 +14,7 @@
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/bone_collider.h"
 #include "ferrum/animation/bone_joint_desc.h"
+#include "ferrum/editor/json_parse.h"
 #include "ferrum/math/mat4.h"
 
 #include <stdio.h>
@@ -22,12 +24,313 @@
 /** @brief Maximum joints to prevent insane allocations. */
 #define FSKEL_MAX_JOINTS 4096
 
-/**
- * @brief Read a 4-byte little-endian uint32.
- */
-static bool read_u32(FILE *f, uint32_t *out) {
-    return fread(out, 4, 1, f) == 1;
+/* ── Helpers ────────────────────────────────────────────────────── */
+
+/** @brief Read a float from a JSON number value, returning def on failure. */
+static float jfloat_(const json_value_t *v, float def) {
+    return (v && v->type == JSON_NUMBER) ? (float)v->number : def;
 }
+
+/** @brief Read an int from a JSON number value, returning def on failure. */
+static int32_t jint_(const json_value_t *v, int32_t def) {
+    return (v && v->type == JSON_NUMBER) ? (int32_t)v->number : def;
+}
+
+/** @brief Read a uint32 from a JSON number, treating -1 as UINT32_MAX. */
+static uint32_t juint_(const json_value_t *v, uint32_t def) {
+    if (!v || v->type != JSON_NUMBER) return def;
+    int32_t i = (int32_t)v->number;
+    return (i < 0) ? UINT32_MAX : (uint32_t)i;
+}
+
+/** @brief Read a bool from JSON, returning def on failure. */
+static bool jbool_(const json_value_t *v, bool def) {
+    if (!v) return def;
+    if (v->type == JSON_BOOL) return v->boolean;
+    if (v->type == JSON_NUMBER) return v->number != 0.0;
+    return def;
+}
+
+/** @brief Read 16 floats from a JSON array into a mat4_t. */
+static bool jmat4_(const json_value_t *arr, mat4_t *out) {
+    if (!arr || arr->type != JSON_ARRAY || arr->array.count < 16) return false;
+    for (uint32_t i = 0; i < 16; i++) {
+        out->m[i] = jfloat_(&arr->array.items[i], 0.0f);
+    }
+    return true;
+}
+
+/**
+ * @brief Match a JSON string value against a null-terminated C string.
+ * @return true if they match.
+ */
+static bool jstreq_(const json_value_t *v, const char *s) {
+    if (!v || v->type != JSON_STRING || !s) return false;
+    size_t slen = strlen(s);
+    return v->string.len == (uint32_t)slen &&
+           memcmp(v->string.ptr, s, slen) == 0;
+}
+
+/**
+ * @brief Map a constraint type string to constraint_type_t.
+ * @return The type, or -1 if unrecognized.
+ */
+static int constraint_type_from_string_(const json_value_t *v) {
+    if (!v || v->type != JSON_STRING) return -1;
+    static const struct { const char *name; int type; } map[] = {
+        {"IK",                CONSTRAINT_IK},
+        {"SPLINE_IK",         CONSTRAINT_SPLINE_IK},
+        {"CHILD_OF",          CONSTRAINT_CHILD_OF},
+        {"COPY_TRANSFORMS",   CONSTRAINT_COPY_TRANSFORMS},
+        {"COPY_ROTATION",     CONSTRAINT_COPY_ROTATION},
+        {"COPY_LOCATION",     CONSTRAINT_COPY_LOCATION},
+        {"COPY_SCALE",        CONSTRAINT_COPY_SCALE},
+        {"DAMPED_TRACK",      CONSTRAINT_DAMPED_TRACK},
+        {"TRACK_TO",          CONSTRAINT_TRACK_TO},
+        {"LOCKED_TRACK",      CONSTRAINT_LOCKED_TRACK},
+        {"LIMIT_ROTATION",    CONSTRAINT_LIMIT_ROTATION},
+        {"LIMIT_LOCATION",    CONSTRAINT_LIMIT_LOCATION},
+        {"LIMIT_SCALE",       CONSTRAINT_LIMIT_SCALE},
+        {"TRANSFORMATION",    CONSTRAINT_TRANSFORMATION},
+        {"ACTION",            CONSTRAINT_ACTION},
+        {"CLAMP_TO",          CONSTRAINT_CLAMP_TO},
+        {"FLOOR",             CONSTRAINT_FLOOR},
+        {"MAINTAIN_VOLUME",   CONSTRAINT_MAINTAIN_VOLUME},
+        {"SHRINKWRAP",        CONSTRAINT_SHRINKWRAP},
+        {"PIVOT",             CONSTRAINT_PIVOT},
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (jstreq_(v, map[i].name)) return map[i].type;
+    }
+    return -1;
+}
+
+/**
+ * @brief Map a collider shape string to bone_collider_shape_t.
+ */
+static uint32_t collider_shape_from_string_(const json_value_t *v) {
+    if (jstreq_(v, "capsule"))     return BONE_COLLIDER_CAPSULE;
+    if (jstreq_(v, "box"))         return BONE_COLLIDER_BOX;
+    if (jstreq_(v, "sphere"))      return BONE_COLLIDER_SPHERE;
+    if (jstreq_(v, "convex_hull")) return BONE_COLLIDER_CONVEX_HULL;
+    return BONE_COLLIDER_NONE;
+}
+
+/* ── Constraint param parsing ───────────────────────────────────── */
+
+/**
+ * @brief Parse constraint params from a JSON object into constraint_def_t.
+ *
+ * Fills in the params union based on the constraint type.
+ */
+static void parse_constraint_params_(constraint_def_t *def,
+                                     const json_value_t *params) {
+    if (!params || params->type != JSON_OBJECT) return;
+
+    switch (def->type) {
+    case CONSTRAINT_IK:
+        def->params.ik.chain_length    = juint_(json_object_get(params, "chain_length"), 0);
+        def->params.ik.pole_target_idx = juint_(json_object_get(params, "pole_target"), UINT32_MAX);
+        def->params.ik.iterations      = juint_(json_object_get(params, "iterations"), 10);
+        def->params.ik.weight          = jfloat_(json_object_get(params, "weight"), 1.0f);
+        def->params.ik.orient_weight   = jfloat_(json_object_get(params, "orient_weight"), 0.0f);
+        def->params.ik.use_tail        = jbool_(json_object_get(params, "use_tail"), true);
+        break;
+
+    case CONSTRAINT_SPLINE_IK: {
+        def->params.spline_ik.chain_length = juint_(json_object_get(params, "chain_length"), 0);
+        const json_value_t *cps = json_object_get(params, "control_points");
+        def->params.spline_ik.control_point_count = 0;
+        if (cps && cps->type == JSON_ARRAY) {
+            uint32_t n = cps->array.count < 16 ? cps->array.count : 16;
+            for (uint32_t i = 0; i < n; i++) {
+                const json_value_t *pt = &cps->array.items[i];
+                if (pt->type == JSON_ARRAY && pt->array.count >= 3) {
+                    def->params.spline_ik.control_points[i * 3 + 0] =
+                        jfloat_(&pt->array.items[0], 0.0f);
+                    def->params.spline_ik.control_points[i * 3 + 1] =
+                        jfloat_(&pt->array.items[1], 0.0f);
+                    def->params.spline_ik.control_points[i * 3 + 2] =
+                        jfloat_(&pt->array.items[2], 0.0f);
+                }
+            }
+            def->params.spline_ik.control_point_count = n;
+        }
+        def->params.spline_ik.twist_axis = juint_(json_object_get(params, "twist_axis"), 0);
+        break;
+    }
+
+    case CONSTRAINT_CHILD_OF:
+        def->params.child_of.use_location_x = jbool_(json_object_get(params, "use_location_x"), true);
+        def->params.child_of.use_location_y = jbool_(json_object_get(params, "use_location_y"), true);
+        def->params.child_of.use_location_z = jbool_(json_object_get(params, "use_location_z"), true);
+        def->params.child_of.use_rotation_x = jbool_(json_object_get(params, "use_rotation_x"), true);
+        def->params.child_of.use_rotation_y = jbool_(json_object_get(params, "use_rotation_y"), true);
+        def->params.child_of.use_rotation_z = jbool_(json_object_get(params, "use_rotation_z"), true);
+        def->params.child_of.use_scale_x    = jbool_(json_object_get(params, "use_scale_x"), true);
+        def->params.child_of.use_scale_y    = jbool_(json_object_get(params, "use_scale_y"), true);
+        def->params.child_of.use_scale_z    = jbool_(json_object_get(params, "use_scale_z"), true);
+        jmat4_(json_object_get(params, "inverse_matrix"),
+               &def->params.child_of.inverse_matrix);
+        break;
+
+    case CONSTRAINT_COPY_TRANSFORMS:
+        def->params.copy_transforms.mix_mode = juint_(json_object_get(params, "mix_mode"), 0);
+        break;
+
+    case CONSTRAINT_COPY_ROTATION:
+        def->params.copy_rotation.mix_mode = juint_(json_object_get(params, "mix_mode"), 0);
+        def->params.copy_rotation.use_x    = jbool_(json_object_get(params, "use_x"), true);
+        def->params.copy_rotation.use_y    = jbool_(json_object_get(params, "use_y"), true);
+        def->params.copy_rotation.use_z    = jbool_(json_object_get(params, "use_z"), true);
+        def->params.copy_rotation.invert_x = jbool_(json_object_get(params, "invert_x"), false);
+        def->params.copy_rotation.invert_y = jbool_(json_object_get(params, "invert_y"), false);
+        def->params.copy_rotation.invert_z = jbool_(json_object_get(params, "invert_z"), false);
+        break;
+
+    case CONSTRAINT_COPY_LOCATION:
+        def->params.copy_location.use_x    = jbool_(json_object_get(params, "use_x"), true);
+        def->params.copy_location.use_y    = jbool_(json_object_get(params, "use_y"), true);
+        def->params.copy_location.use_z    = jbool_(json_object_get(params, "use_z"), true);
+        def->params.copy_location.invert_x = jbool_(json_object_get(params, "invert_x"), false);
+        def->params.copy_location.invert_y = jbool_(json_object_get(params, "invert_y"), false);
+        def->params.copy_location.invert_z = jbool_(json_object_get(params, "invert_z"), false);
+        def->params.copy_location.offset   = jbool_(json_object_get(params, "offset"), false);
+        break;
+
+    case CONSTRAINT_COPY_SCALE:
+        def->params.copy_scale.use_x  = jbool_(json_object_get(params, "use_x"), true);
+        def->params.copy_scale.use_y  = jbool_(json_object_get(params, "use_y"), true);
+        def->params.copy_scale.use_z  = jbool_(json_object_get(params, "use_z"), true);
+        def->params.copy_scale.power  = jfloat_(json_object_get(params, "power"), 1.0f);
+        def->params.copy_scale.offset = jbool_(json_object_get(params, "offset"), false);
+        break;
+
+    case CONSTRAINT_DAMPED_TRACK:
+        def->params.damped_track.track_axis = juint_(json_object_get(params, "track_axis"), 1);
+        break;
+
+    case CONSTRAINT_TRACK_TO:
+        def->params.track_to.track_axis = juint_(json_object_get(params, "track_axis"), 1);
+        def->params.track_to.up_axis    = juint_(json_object_get(params, "up_axis"), 2);
+        break;
+
+    case CONSTRAINT_LOCKED_TRACK:
+        def->params.locked_track.track_axis = juint_(json_object_get(params, "track_axis"), 1);
+        def->params.locked_track.lock_axis  = juint_(json_object_get(params, "lock_axis"), 2);
+        break;
+
+    case CONSTRAINT_LIMIT_ROTATION:
+        def->params.limit_rotation.min_x       = jfloat_(json_object_get(params, "min_x"), 0.0f);
+        def->params.limit_rotation.max_x       = jfloat_(json_object_get(params, "max_x"), 0.0f);
+        def->params.limit_rotation.min_y       = jfloat_(json_object_get(params, "min_y"), 0.0f);
+        def->params.limit_rotation.max_y       = jfloat_(json_object_get(params, "max_y"), 0.0f);
+        def->params.limit_rotation.min_z       = jfloat_(json_object_get(params, "min_z"), 0.0f);
+        def->params.limit_rotation.max_z       = jfloat_(json_object_get(params, "max_z"), 0.0f);
+        def->params.limit_rotation.use_limit_x = jbool_(json_object_get(params, "use_limit_x"), false);
+        def->params.limit_rotation.use_limit_y = jbool_(json_object_get(params, "use_limit_y"), false);
+        def->params.limit_rotation.use_limit_z = jbool_(json_object_get(params, "use_limit_z"), false);
+        break;
+
+    case CONSTRAINT_LIMIT_LOCATION:
+        def->params.limit_location.min_x     = jfloat_(json_object_get(params, "min_x"), 0.0f);
+        def->params.limit_location.max_x     = jfloat_(json_object_get(params, "max_x"), 0.0f);
+        def->params.limit_location.min_y     = jfloat_(json_object_get(params, "min_y"), 0.0f);
+        def->params.limit_location.max_y     = jfloat_(json_object_get(params, "max_y"), 0.0f);
+        def->params.limit_location.min_z     = jfloat_(json_object_get(params, "min_z"), 0.0f);
+        def->params.limit_location.max_z     = jfloat_(json_object_get(params, "max_z"), 0.0f);
+        def->params.limit_location.use_min_x = jbool_(json_object_get(params, "use_min_x"), false);
+        def->params.limit_location.use_max_x = jbool_(json_object_get(params, "use_max_x"), false);
+        def->params.limit_location.use_min_y = jbool_(json_object_get(params, "use_min_y"), false);
+        def->params.limit_location.use_max_y = jbool_(json_object_get(params, "use_max_y"), false);
+        def->params.limit_location.use_min_z = jbool_(json_object_get(params, "use_min_z"), false);
+        def->params.limit_location.use_max_z = jbool_(json_object_get(params, "use_max_z"), false);
+        break;
+
+    case CONSTRAINT_LIMIT_SCALE:
+        def->params.limit_scale.min_x     = jfloat_(json_object_get(params, "min_x"), 0.0f);
+        def->params.limit_scale.max_x     = jfloat_(json_object_get(params, "max_x"), 0.0f);
+        def->params.limit_scale.min_y     = jfloat_(json_object_get(params, "min_y"), 0.0f);
+        def->params.limit_scale.max_y     = jfloat_(json_object_get(params, "max_y"), 0.0f);
+        def->params.limit_scale.min_z     = jfloat_(json_object_get(params, "min_z"), 0.0f);
+        def->params.limit_scale.max_z     = jfloat_(json_object_get(params, "max_z"), 0.0f);
+        def->params.limit_scale.use_min_x = jbool_(json_object_get(params, "use_min_x"), false);
+        def->params.limit_scale.use_max_x = jbool_(json_object_get(params, "use_max_x"), false);
+        def->params.limit_scale.use_min_y = jbool_(json_object_get(params, "use_min_y"), false);
+        def->params.limit_scale.use_max_y = jbool_(json_object_get(params, "use_max_y"), false);
+        def->params.limit_scale.use_min_z = jbool_(json_object_get(params, "use_min_z"), false);
+        def->params.limit_scale.use_max_z = jbool_(json_object_get(params, "use_max_z"), false);
+        break;
+
+    case CONSTRAINT_TRANSFORMATION:
+        def->params.transformation.from_channel = juint_(json_object_get(params, "from_channel"), 0);
+        def->params.transformation.to_channel   = juint_(json_object_get(params, "to_channel"), 0);
+        def->params.transformation.from_min     = jfloat_(json_object_get(params, "from_min"), 0.0f);
+        def->params.transformation.from_max     = jfloat_(json_object_get(params, "from_max"), 1.0f);
+        def->params.transformation.to_min       = jfloat_(json_object_get(params, "to_min"), 0.0f);
+        def->params.transformation.to_max       = jfloat_(json_object_get(params, "to_max"), 1.0f);
+        def->params.transformation.extrapolate  = jbool_(json_object_get(params, "extrapolate"), false);
+        break;
+
+    case CONSTRAINT_ACTION:
+        def->params.action.action_clip_idx    = juint_(json_object_get(params, "action_clip_idx"), 0);
+        def->params.action.transform_channel  = juint_(json_object_get(params, "transform_channel"), 0);
+        def->params.action.min_value          = jfloat_(json_object_get(params, "min_value"), 0.0f);
+        def->params.action.max_value          = jfloat_(json_object_get(params, "max_value"), 1.0f);
+        break;
+
+    case CONSTRAINT_CLAMP_TO: {
+        def->params.clamp_to.main_axis = juint_(json_object_get(params, "main_axis"), 0);
+        const json_value_t *cps = json_object_get(params, "control_points");
+        def->params.clamp_to.control_point_count = 0;
+        if (cps && cps->type == JSON_ARRAY) {
+            uint32_t n = cps->array.count < 16 ? cps->array.count : 16;
+            for (uint32_t i = 0; i < n; i++) {
+                const json_value_t *pt = &cps->array.items[i];
+                if (pt->type == JSON_ARRAY && pt->array.count >= 3) {
+                    def->params.clamp_to.control_points[i * 3 + 0] =
+                        jfloat_(&pt->array.items[0], 0.0f);
+                    def->params.clamp_to.control_points[i * 3 + 1] =
+                        jfloat_(&pt->array.items[1], 0.0f);
+                    def->params.clamp_to.control_points[i * 3 + 2] =
+                        jfloat_(&pt->array.items[2], 0.0f);
+                }
+            }
+            def->params.clamp_to.control_point_count = n;
+        }
+        def->params.clamp_to.cyclic = jbool_(json_object_get(params, "cyclic"), false);
+        break;
+    }
+
+    case CONSTRAINT_FLOOR:
+        def->params.floor.offset         = jfloat_(json_object_get(params, "offset"), 0.0f);
+        def->params.floor.use_rotation   = jbool_(json_object_get(params, "use_rotation"), false);
+        def->params.floor.floor_location = juint_(json_object_get(params, "floor_location"), 0);
+        break;
+
+    case CONSTRAINT_MAINTAIN_VOLUME:
+        def->params.maintain_volume.free_axis = juint_(json_object_get(params, "free_axis"), 1);
+        def->params.maintain_volume.volume    = jfloat_(json_object_get(params, "volume"), 1.0f);
+        break;
+
+    case CONSTRAINT_SHRINKWRAP:
+        def->params.shrinkwrap.shrinkwrap_type = juint_(json_object_get(params, "shrinkwrap_type"), 0);
+        def->params.shrinkwrap.distance        = jfloat_(json_object_get(params, "distance"), 0.0f);
+        break;
+
+    case CONSTRAINT_PIVOT:
+        def->params.pivot.offset[0]      = jfloat_(json_object_get(params, "offset_x"), 0.0f);
+        def->params.pivot.offset[1]      = jfloat_(json_object_get(params, "offset_y"), 0.0f);
+        def->params.pivot.offset[2]      = jfloat_(json_object_get(params, "offset_z"), 0.0f);
+        def->params.pivot.rotation_range = jfloat_(json_object_get(params, "rotation_range"), 0.0f);
+        break;
+
+    default:
+        break;
+    }
+}
+
+/* ── Public API ─────────────────────────────────────────────────── */
 
 bool fskel_load(const char *path,
                 skeleton_def_t *out_skel,
@@ -35,150 +338,220 @@ bool fskel_load(const char *path,
                 uint32_t *out_ibm_count) {
     if (!path || !out_skel) return false;
 
+    /* Read entire file into memory. */
     FILE *f = fopen(path, "rb");
     if (!f) return false;
 
-    /* Read header. */
-    uint32_t magic = 0, version = 0, joint_count = 0;
-    uint32_t max_constraints = 0, ibm_count = 0;
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (file_size <= 0) { fclose(f); return false; }
 
-    if (!read_u32(f, &magic) || magic != FSKEL_MAGIC) goto fail;
-    if (!read_u32(f, &version) || (version < 1 || version > FSKEL_VERSION)) goto fail;
-    if (!read_u32(f, &joint_count)) goto fail;
-    if (!read_u32(f, &max_constraints)) goto fail;
-    if (!read_u32(f, &ibm_count)) goto fail;
+    char *file_buf = (char *)malloc((size_t)file_size);
+    if (!file_buf) { fclose(f); return false; }
+    if (fread(file_buf, 1, (size_t)file_size, f) != (size_t)file_size) {
+        free(file_buf);
+        fclose(f);
+        return false;
+    }
+    fclose(f);
 
-    /* Sanity checks. */
-    if (joint_count > FSKEL_MAX_JOINTS) goto fail;
-    if (max_constraints > 64) goto fail;
-    if (ibm_count > FSKEL_MAX_JOINTS) goto fail;
+    /* Parse JSON.  Arena size: ~32 bytes per JSON node; a 333-joint
+     * skeleton with constraints, colliders, IBMs ≈ 200k nodes. */
+    size_t arena_size = (size_t)file_size * 4;
+    if (arena_size < 1024 * 1024) arena_size = 1024 * 1024;
+    uint8_t *arena_buf = (uint8_t *)malloc(arena_size);
+    if (!arena_buf) { free(file_buf); return false; }
+
+    json_arena_t arena;
+    json_arena_init(&arena, arena_buf, arena_size);
+
+    json_value_t root;
+    bool parse_ok = json_parse(file_buf, (size_t)file_size, &arena, &root);
+    free(file_buf);
+    if (!parse_ok || root.type != JSON_OBJECT) {
+        free(arena_buf);
+        return false;
+    }
+
+    /* Read version. */
+    const json_value_t *ver_val = json_object_get(&root, "version");
+    int version = jint_(ver_val, 0);
+    if (version < 5) {
+        /* Not a JSON-format fskel. */
+        free(arena_buf);
+        return false;
+    }
+
+    /* Read joints array. */
+    const json_value_t *joints = json_object_get(&root, "joints");
+    if (!joints || joints->type != JSON_ARRAY || joints->array.count == 0) {
+        free(arena_buf);
+        return false;
+    }
+
+    uint32_t joint_count = joints->array.count;
+    if (joint_count > FSKEL_MAX_JOINTS) {
+        free(arena_buf);
+        return false;
+    }
+
+    /* Determine max constraints per joint. */
+    uint32_t max_constraints = 0;
+    for (uint32_t i = 0; i < joint_count; i++) {
+        const json_value_t *j = &joints->array.items[i];
+        if (j->type != JSON_OBJECT) continue;
+        const json_value_t *cons = json_object_get(j, "constraints");
+        if (cons && cons->type == JSON_ARRAY && cons->array.count > max_constraints) {
+            max_constraints = cons->array.count;
+        }
+    }
 
     /* Initialize skeleton. */
-    if (!skeleton_def_init(out_skel, joint_count, max_constraints)) goto fail;
+    if (!skeleton_def_init(out_skel, joint_count, max_constraints)) {
+        free(arena_buf);
+        return false;
+    }
 
-    /* Read joint names. */
+    /* Parse each joint. */
     for (uint32_t i = 0; i < joint_count; i++) {
-        if (fread(out_skel->joint_names[i], SKELETON_JOINT_NAME_MAX, 1, f) != 1)
-            goto fail_skel;
-    }
+        const json_value_t *j = &joints->array.items[i];
+        if (j->type != JSON_OBJECT) goto fail_skel;
 
-    /* Read parent indices. */
-    if (joint_count > 0 &&
-        fread(out_skel->parent_indices, sizeof(uint32_t), joint_count, f) != joint_count)
-        goto fail_skel;
+        /* Name. */
+        const json_value_t *name_val = json_object_get(j, "name");
+        if (name_val && name_val->type == JSON_STRING) {
+            uint32_t copy_len = name_val->string.len;
+            if (copy_len >= SKELETON_JOINT_NAME_MAX)
+                copy_len = SKELETON_JOINT_NAME_MAX - 1;
+            memcpy(out_skel->joint_names[i], name_val->string.ptr, copy_len);
+            out_skel->joint_names[i][copy_len] = '\0';
+        }
 
-    /* Read rest local transforms. */
-    if (joint_count > 0 &&
-        fread(out_skel->rest_local, sizeof(mat4_t), joint_count, f) != joint_count)
-        goto fail_skel;
+        /* Parent index (-1 → UINT32_MAX). */
+        out_skel->parent_indices[i] = juint_(json_object_get(j, "parent"), UINT32_MAX);
 
-    /* Read rest world transforms. */
-    if (joint_count > 0 &&
-        fread(out_skel->rest_world, sizeof(mat4_t), joint_count, f) != joint_count)
-        goto fail_skel;
+        /* Rest transforms. */
+        jmat4_(json_object_get(j, "rest_local"), &out_skel->rest_local[i]);
+        jmat4_(json_object_get(j, "rest_world"), &out_skel->rest_world[i]);
 
-    /* Read constraint counts. */
-    if (out_skel->constraint_counts && joint_count > 0) {
-        if (fread(out_skel->constraint_counts, sizeof(uint32_t), joint_count, f) != joint_count)
-            goto fail_skel;
-    }
+        /* Constraints. */
+        const json_value_t *cons = json_object_get(j, "constraints");
+        uint32_t nc = 0;
+        if (cons && cons->type == JSON_ARRAY) {
+            nc = cons->array.count;
+            if (nc > max_constraints) nc = max_constraints;
+            for (uint32_t ci = 0; ci < nc; ci++) {
+                const json_value_t *cv = &cons->array.items[ci];
+                if (cv->type != JSON_OBJECT) continue;
 
-    /* Read constraints. */
-    if (max_constraints > 0 && out_skel->constraints) {
-        size_t total = (size_t)joint_count * max_constraints;
-        if (fread(out_skel->constraints, sizeof(constraint_def_t), total, f) != total)
-            goto fail_skel;
+                constraint_def_t *def =
+                    &out_skel->constraints[i * max_constraints + ci];
+                memset(def, 0, sizeof(*def));
+
+                int ct = constraint_type_from_string_(json_object_get(cv, "type"));
+                if (ct < 0) continue;
+                def->type = (constraint_type_t)ct;
+                def->influence = jfloat_(json_object_get(cv, "influence"), 1.0f);
+                def->owner_space = juint_(json_object_get(cv, "owner_space"), 0);
+                def->target_space = juint_(json_object_get(cv, "target_space"), 0);
+                def->target_bone_idx = juint_(json_object_get(cv, "target_bone"), UINT32_MAX);
+
+                parse_constraint_params_(def, json_object_get(cv, "params"));
+            }
+        }
+        out_skel->constraint_counts[i] = nc;
+
+        /* Collider. */
+        const json_value_t *col = json_object_get(j, "collider");
+        if (col && col->type == JSON_OBJECT) {
+            if (!out_skel->colliders) {
+                out_skel->colliders = (bone_collider_desc_t *)calloc(
+                    joint_count, sizeof(bone_collider_desc_t));
+                if (!out_skel->colliders) goto fail_skel;
+            }
+            bone_collider_desc_t *cd = &out_skel->colliders[i];
+            cd->shape_type = collider_shape_from_string_(json_object_get(col, "shape"));
+            const json_value_t *params_arr = json_object_get(col, "params");
+            if (params_arr && params_arr->type == JSON_ARRAY) {
+                for (uint32_t pi = 0; pi < 6 && pi < params_arr->array.count; pi++) {
+                    cd->params[pi] = jfloat_(&params_arr->array.items[pi], 0.0f);
+                }
+            }
+            cd->ccd_enabled     = jbool_(json_object_get(col, "ccd"), false) ? 1 : 0;
+            cd->is_kinematic    = jbool_(json_object_get(col, "kinematic"), false) ? 1 : 0;
+            cd->mass            = jfloat_(json_object_get(col, "mass"), 0.0f);
+            cd->hull_offset     = juint_(json_object_get(col, "hull_offset"), 0);
+            cd->hull_count      = juint_(json_object_get(col, "hull_count"), 0);
+            cd->collision_group = juint_(json_object_get(col, "collision_group"), 0);
+        }
+
+        /* Joint descriptor. */
+        const json_value_t *jd = json_object_get(j, "joint_desc");
+        if (jd && jd->type == JSON_OBJECT) {
+            if (!out_skel->joints) {
+                out_skel->joints = (bone_joint_desc_t *)calloc(
+                    joint_count, sizeof(bone_joint_desc_t));
+                if (!out_skel->joints) goto fail_skel;
+            }
+            bone_joint_desc_t *bd = &out_skel->joints[i];
+            bd->joint_type  = juint_(json_object_get(jd, "type"), 0);
+            const json_value_t *ax = json_object_get(jd, "axis");
+            if (ax && ax->type == JSON_ARRAY && ax->array.count >= 3) {
+                bd->axis[0] = jfloat_(&ax->array.items[0], 0.0f);
+                bd->axis[1] = jfloat_(&ax->array.items[1], 1.0f);
+                bd->axis[2] = jfloat_(&ax->array.items[2], 0.0f);
+            }
+            bd->rest_length = jfloat_(json_object_get(jd, "rest_length"), 0.0f);
+            const json_value_t *lmin = json_object_get(jd, "limit_min");
+            if (lmin && lmin->type == JSON_ARRAY && lmin->array.count >= 3) {
+                bd->limit_min[0] = jfloat_(&lmin->array.items[0], 0.0f);
+                bd->limit_min[1] = jfloat_(&lmin->array.items[1], 0.0f);
+                bd->limit_min[2] = jfloat_(&lmin->array.items[2], 0.0f);
+            }
+            const json_value_t *lmax = json_object_get(jd, "limit_max");
+            if (lmax && lmax->type == JSON_ARRAY && lmax->array.count >= 3) {
+                bd->limit_max[0] = jfloat_(&lmax->array.items[0], 0.0f);
+                bd->limit_max[1] = jfloat_(&lmax->array.items[1], 0.0f);
+                bd->limit_max[2] = jfloat_(&lmax->array.items[2], 0.0f);
+            }
+            bd->limit_axes = juint_(json_object_get(jd, "limit_axes"), 0);
+        }
     }
 
     /* Read IBMs. */
-    if (ibm_count > 0 && out_ibms) {
+    const json_value_t *ibms = json_object_get(&root, "ibms");
+    if (ibms && ibms->type == JSON_ARRAY && ibms->array.count > 0 && out_ibms) {
+        uint32_t ibm_count = ibms->array.count;
         *out_ibms = (mat4_t *)calloc(ibm_count, sizeof(mat4_t));
         if (!*out_ibms) goto fail_skel;
-        if (fread(*out_ibms, sizeof(mat4_t), ibm_count, f) != ibm_count) {
-            free(*out_ibms);
-            *out_ibms = NULL;
-            goto fail_skel;
+        for (uint32_t i = 0; i < ibm_count; i++) {
+            jmat4_(&ibms->array.items[i], &(*out_ibms)[i]);
         }
+        if (out_ibm_count) *out_ibm_count = ibm_count;
+    } else {
+        if (out_ibm_count) *out_ibm_count = 0;
+        if (out_ibms) *out_ibms = NULL;
     }
 
-    if (out_ibm_count) *out_ibm_count = ibm_count;
-
-    /* --- v2 COLL chunk: per-bone collision descriptors --- */
-    if (version >= 2 && joint_count > 0) {
-        uint32_t hull_vertex_count = 0;
-        if (!read_u32(f, &hull_vertex_count)) goto fail_skel;
-
-        out_skel->colliders = (bone_collider_desc_t *)calloc(
-            joint_count, sizeof(bone_collider_desc_t));
-        if (!out_skel->colliders) goto fail_skel;
-
-        if (version >= 4) {
-            /* v4+: 52-byte records (includes collision_group). */
-            if (fread(out_skel->colliders, sizeof(bone_collider_desc_t),
-                      joint_count, f) != joint_count)
-                goto fail_skel;
-        } else {
-            /* v2/v3: 48-byte records (no collision_group).
-             * Read each record individually and zero collision_group. */
-            for (uint32_t i = 0; i < joint_count; i++) {
-                if (fread(&out_skel->colliders[i], 48, 1, f) != 1)
-                    goto fail_skel;
-                out_skel->colliders[i].collision_group = 0;
-            }
+    /* Read hull vertices. */
+    const json_value_t *hulls = json_object_get(&root, "hull_vertices");
+    if (hulls && hulls->type == JSON_ARRAY && hulls->array.count >= 3) {
+        uint32_t hvc = hulls->array.count / 3;
+        out_skel->hull_vertices = (float *)calloc(
+            (size_t)hvc * 3, sizeof(float));
+        if (!out_skel->hull_vertices) goto fail_skel;
+        for (uint32_t i = 0; i < hvc * 3; i++) {
+            out_skel->hull_vertices[i] = jfloat_(&hulls->array.items[i], 0.0f);
         }
-
-        /* Read convex hull vertex data. */
-        if (hull_vertex_count > 0) {
-            out_skel->hull_vertices = (float *)calloc(
-                (size_t)hull_vertex_count * 3, sizeof(float));
-            if (!out_skel->hull_vertices) goto fail_skel;
-            if (fread(out_skel->hull_vertices, sizeof(float) * 3,
-                      hull_vertex_count, f) != hull_vertex_count)
-                goto fail_skel;
-        }
-        out_skel->hull_vertex_count = hull_vertex_count;
-
-        /* --- JNTS chunk: per-bone joint descriptors --- */
-        out_skel->joints = (bone_joint_desc_t *)calloc(
-            joint_count, sizeof(bone_joint_desc_t));
-        if (!out_skel->joints) goto fail_skel;
-
-        if (version == 2) {
-            /* v2 JNTS: 28-byte records (scalar limit_min/max).
-             * Read each record individually and convert. */
-            for (uint32_t i = 0; i < joint_count; i++) {
-                uint32_t jt = 0;
-                float ax[3] = {0}, rl = 0, lmin = 0, lmax = 0;
-                if (fread(&jt, 4, 1, f) != 1) goto fail_skel;
-                if (fread(ax, 4, 3, f) != 3) goto fail_skel;
-                if (fread(&rl, 4, 1, f) != 1) goto fail_skel;
-                if (fread(&lmin, 4, 1, f) != 1) goto fail_skel;
-                if (fread(&lmax, 4, 1, f) != 1) goto fail_skel;
-                out_skel->joints[i].joint_type = jt;
-                out_skel->joints[i].axis[0] = ax[0];
-                out_skel->joints[i].axis[1] = ax[1];
-                out_skel->joints[i].axis[2] = ax[2];
-                out_skel->joints[i].rest_length = rl;
-                out_skel->joints[i].limit_min[0] = lmin;
-                out_skel->joints[i].limit_max[0] = lmax;
-                out_skel->joints[i].limit_axes =
-                    (lmin != 0.0f || lmax != 0.0f) ? 1u : 0u;
-            }
-        } else {
-            /* v3+: 48-byte records (full bone_joint_desc_t). */
-            if (fread(out_skel->joints, sizeof(bone_joint_desc_t),
-                      joint_count, f) != joint_count)
-                goto fail_skel;
-        }
+        out_skel->hull_vertex_count = hvc;
     }
-    /* v1 files: colliders and joints remain NULL. */
 
-    fclose(f);
+    free(arena_buf);
     return true;
 
 fail_skel:
     skeleton_def_destroy(out_skel);
-fail:
-    fclose(f);
+    free(arena_buf);
     return false;
 }

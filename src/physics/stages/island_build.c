@@ -136,7 +136,11 @@ void phys_stage_island_build(const phys_island_build_args_t *args)
          * near rest) only if the merged island stays within cap.
          * Resting chains naturally fragment here. */
 
-        /* Pass 0: joints — unconditional merge (ignore cap). */
+        /* Pass 0: joints — unconditional merge (ignore cap).
+         * Ghost bodies (NO_BROADPHASE) are excluded: they participate
+         * in joints solved via XPBD independently, not via serial
+         * island solving.  This prevents skeleton ghost chains from
+         * merging all bones into one giant island. */
         for (uint32_t i = 0; i < args->constraint_count; ++i) {
             if (!args->constraints[i].is_joint) { continue; }
             uint32_t a = args->constraints[i].body_a;
@@ -144,6 +148,9 @@ void phys_stage_island_build(const phys_island_build_args_t *args)
             if (a >= args->body_count || b >= args->body_count) { continue; }
             if (phys_body_is_static(&args->bodies[a])) { continue; }
             if (phys_body_is_static(&args->bodies[b])) { continue; }
+            /* Skip joints involving ghost bodies — solved via XPBD. */
+            if (args->bodies[a].flags & PHYS_BODY_FLAG_NO_BROADPHASE) { continue; }
+            if (args->bodies[b].flags & PHYS_BODY_FLAG_NO_BROADPHASE) { continue; }
 
             phys_uf_union(args->islands_out, a, b);
             /* Update sizes for the merged root. */

@@ -408,6 +408,27 @@ void phys_world_set_halfspace_collider(phys_world_t *world, uint32_t body_index,
                                        phys_vec3_t normal, float distance);
 
 /**
+ * @brief Attach a convex hull collider to a body.
+ *
+ * Builds a convex hull from the given point cloud and stores it in
+ * the world's convex_hulls pool.
+ *
+ * @param world       World to modify (NULL is a no-op).
+ * @param body_index  Index of the body to attach the collider to.
+ * @param points      Vertex positions (non-NULL).
+ * @param point_count Number of vertices (must be >= 4).
+ * @param offset      Local offset from body origin.
+ * @param rotation    Local rotation relative to body.
+ *
+ * Side effects: increments convex_hull_count; writes colliders[body_index].
+ */
+void phys_world_set_convex_collider(phys_world_t *world, uint32_t body_index,
+                                    const phys_vec3_t *points,
+                                    uint32_t point_count,
+                                    phys_vec3_t offset,
+                                    phys_quat_t rotation);
+
+/**
  * @brief Register a decomposed mesh as a compound convex collider.
  *
  * Copies all hulls from the decompose result into the world's

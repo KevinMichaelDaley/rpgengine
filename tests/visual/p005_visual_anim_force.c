@@ -2,11 +2,11 @@
  * @file p005_visual_anim_force.c
  * @brief Visual test: animation recovery from external impulse.
  *
- * Loads humanoid.fskel, registers bones as physics bodies in a real
- * physics world with job system + tick runner.  Runs a walk cycle
- * animation via pre-tick callback (advancing kinematic bone positions).
- * At t=1.5s, a lateral impulse is applied to the torso body.
- * The physics solver handles joint constraints and ground collision.
+ * Loads humanoid.fskel + humanoid.glb, registers bones as physics
+ * bodies in a real physics world with job system + tick runner.
+ * Runs a walk cycle animation via substep callback.  At t=1.5s,
+ * a lateral impulse is applied to the torso body.  Renders the
+ * GPU-skinned mesh plus bone-only debug lines.
  *
  * PASS if frame_count >= TOTAL_FRAMES and no GL errors.
  */
@@ -26,6 +26,7 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/constraint_solver.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/animation/ik_solver.h"
 #include "ferrum/animation/copy_track.h"
 #include "ferrum/animation/limit_constraints.h"
@@ -43,6 +44,9 @@
 #include "ferrum/net/topic_channel.h"
 #include "ferrum/renderer/gl_loader.h"
 #include "ferrum/renderer/shader_program.h"
+#include "ferrum/renderer/skinning_shader.h"
+#include "ferrum/renderer/mesh/skeletal_mesh.h"
+#include "ferrum/renderer/gltf/gltf_loader.h"
 #include "ferrum/renderer/video_capture.h"
 
 /* ── Constants ────────────────────────────────────────────────────── */
@@ -58,9 +62,46 @@
 #define IMPULSE_FRAME (int)(1.5f * TARGET_FPS) /* Frame at t=1.5s. */
 #define IMPULSE_FORCE_X 20.0f  /* Lateral impulse magnitude. */
 
-/* ── Shader sources ───────────────────────────────────────────────── */
+#define MAX_SKINNED_MESHES 24
 
-static const char *VERT_SRC =
+/* ── Skinning shader sources ──────────────────────────────────────── */
+
+static const char *SKINNING_VERT_SRC =
+    "#version 430 core\n"
+    "layout(location = 0) in vec3 in_pos;\n"
+    "layout(location = 1) in vec3 in_norm;\n"
+    "layout(location = 6) in vec4 in_weights;\n"
+    "layout(location = 7) in ivec4 in_indices;\n"
+    "layout(std430, binding = 0) buffer BonePalette { mat4 bones[]; };\n"
+    "uniform mat4 u_view_proj;\n"
+    "out vec3 v_normal;\n"
+    "out vec3 v_world_pos;\n"
+    "void main() {\n"
+    "    mat4 skin = bones[in_indices.x] * in_weights.x +\n"
+    "                bones[in_indices.y] * in_weights.y +\n"
+    "                bones[in_indices.z] * in_weights.z +\n"
+    "                bones[in_indices.w] * in_weights.w;\n"
+    "    vec4 world = skin * vec4(in_pos, 1.0);\n"
+    "    v_normal = mat3(skin) * in_norm;\n"
+    "    v_world_pos = world.xyz;\n"
+    "    gl_Position = u_view_proj * world;\n"
+    "}\n";
+
+static const char *SKINNING_FRAG_SRC =
+    "#version 430 core\n"
+    "in vec3 v_normal;\n"
+    "in vec3 v_world_pos;\n"
+    "out vec4 frag_color;\n"
+    "void main() {\n"
+    "    vec3 light_dir = normalize(vec3(0.5, 1.0, 0.3));\n"
+    "    float ndotl = max(dot(normalize(v_normal), light_dir), 0.2);\n"
+    "    vec3 base_color = vec3(0.75, 0.60, 0.50);\n"
+    "    frag_color = vec4(base_color * ndotl, 1.0);\n"
+    "}\n";
+
+/* ── Shader sources (lines) ───────────────────────────────────────── */
+
+static const char *LINE_VERT_SRC =
     "#version 330 core\n"
     "layout(location = 0) in vec3 a_position;\n"
     "layout(location = 1) in vec3 a_color;\n"
@@ -71,7 +112,7 @@ static const char *VERT_SRC =
     "    gl_Position = u_mvp * vec4(a_position, 1.0);\n"
     "}\n";
 
-static const char *FRAG_SRC =
+static const char *LINE_FRAG_SRC =
     "#version 330 core\n"
     "in vec3 v_color;\n"
     "out vec4 frag_color;\n"
@@ -92,7 +133,7 @@ static void *sdl_get_proc_(const char *name, void *ud) {
 
 static int init_gl_context_(void) {
     if (SDL_Init(SDL_INIT_VIDEO) != 0) return -1;
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
                         SDL_GL_CONTEXT_PROFILE_CORE);
@@ -227,9 +268,18 @@ static void draw_skeleton_(const skeleton_def_t *skel, const mat4_t *pose,
     for (uint32_t i = 0; i < skel->joint_count; i++) {
         uint32_t pi = skel->parent_indices[i];
         if (pi == UINT32_MAX || pi >= skel->joint_count) continue;
+        /* Skip mechanism/control bones. */
+        const char *name = skel->joint_names[i];
+        if (name[0] == 'c' && name[1] == '_') continue;
+        if (name[0] == 'M' && name[1] == 'C' && name[2] == 'H') continue;
         vec3_t child  = { pose[i].m[12],  pose[i].m[13],  pose[i].m[14] };
         vec3_t parent = { pose[pi].m[12], pose[pi].m[13], pose[pi].m[14] };
-        add_line_(parent, child, r, g, b);
+        float cr = r, cg = g, cb = b;
+        if (skel->colliders && skel->colliders[i].shape_type != BONE_COLLIDER_NONE) {
+            cr = fminf(r + 0.3f, 1.0f);
+            cg = fminf(g + 0.3f, 1.0f);
+        }
+        add_line_(parent, child, cr, cg, cb);
     }
 }
 
@@ -370,9 +420,9 @@ static void anim_force_substep(void *user, struct phys_world *world,
     constraint_solver_evaluate(ctx->solver, skel, ctx->local_pose,
                                ctx->target_pose, n);
 
-    /* Push animation targets (pos + orient) to kinematic bodies. */
-    phys_anim_entity_push_kinematic(ctx->anim_ent, world,
-                                     ctx->target_pose, n);
+    /* Drive all bodies toward animation targets (blend deltas). */
+    phys_anim_entity_drive_toward(ctx->anim_ent, world,
+                                   ctx->target_pose, n, 0.3f);
 
     /* Apply lateral impulse at ~1.5 seconds. */
     if (t >= 1.5f && !atomic_load(&ctx->impulse_applied)) {
@@ -396,18 +446,33 @@ int main(void) {
 
     if (init_gl_context_() != 0) { return 1; }
 
-    shader_program_t shader;
-    char log_buf[512];
-    int rc = shader_program_create(&shader, &g_loader,
-                                   VERT_SRC, FRAG_SRC,
+    /* Line shader. */
+    shader_program_t line_shader;
+    char log_buf[1024];
+    int rc = shader_program_create(&line_shader, &g_loader,
+                                   LINE_VERT_SRC, LINE_FRAG_SRC,
                                    log_buf, sizeof(log_buf));
     if (rc != 0) {
-        fprintf(stderr, "Shader failed: %s\n", log_buf);
-        cleanup_gl_context_();
-        return 1;
+        fprintf(stderr, "Line shader failed: %s\n", log_buf);
+        cleanup_gl_context_(); return 1;
     }
-    int32_t u_mvp_loc = shader.glGetUniformLocation(shader.handle, "u_mvp");
+    int32_t u_mvp_loc = line_shader.glGetUniformLocation(
+        line_shader.handle, "u_mvp");
     init_line_buffer_();
+
+    /* Skinning shader. */
+    skinning_shader_t skin_shader;
+    skinning_shader_status_t ss = skinning_shader_create_from_source(
+        &skin_shader, &g_loader,
+        SKINNING_VERT_SRC, SKINNING_FRAG_SRC,
+        log_buf, sizeof(log_buf));
+    if (ss != SKINNING_SHADER_OK) {
+        fprintf(stderr, "Skinning shader failed (%d): %s\n", ss, log_buf);
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        cleanup_gl_context_(); return 1;
+    }
+    int32_t u_vp_loc = glGetUniformLocation(skin_shader.program.handle,
+                                             "u_view_proj");
 
     /* Load skeleton. */
     skeleton_def_t skel;
@@ -415,12 +480,52 @@ int main(void) {
     uint32_t ibm_count = 0;
     if (!fskel_load("asset_src/humanoid.fskel", &skel, &ibms, &ibm_count)) {
         fprintf(stderr, "Failed to load humanoid.fskel\n");
-        cleanup_line_buffer_();
-        shader_program_destroy(&shader);
-        cleanup_gl_context_();
-        return 1;
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        skinning_shader_destroy(&skin_shader);
+        cleanup_gl_context_(); return 1;
     }
     printf("  Loaded: %u joints\n", skel.joint_count);
+
+    /* Load skeletal mesh (fvma — same bone ordering as fskel). */
+    FILE *fvma_fp = fopen("asset_src/humanoid.fvma", "rb");
+    if (!fvma_fp) {
+        fprintf(stderr, "Failed to open humanoid.fvma\n");
+        skeleton_def_destroy(&skel); if (ibms) free(ibms);
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        skinning_shader_destroy(&skin_shader);
+        cleanup_gl_context_(); return 1;
+    }
+    fseek(fvma_fp, 0, SEEK_END);
+    long fvma_size = ftell(fvma_fp);
+    fseek(fvma_fp, 0, SEEK_SET);
+    uint8_t *fvma_data = (uint8_t *)malloc((size_t)fvma_size);
+    fread(fvma_data, 1, (size_t)fvma_size, fvma_fp);
+    fclose(fvma_fp);
+
+    skeletal_mesh_t skinned_mesh;
+    int sm_rc = skeletal_mesh_create_from_fvma(&g_loader, fvma_data,
+                                                (size_t)fvma_size,
+                                                &skinned_mesh);
+    free(fvma_data);
+    if (sm_rc != 0) {
+        fprintf(stderr, "skeletal_mesh_create_from_fvma failed: %d\n", sm_rc);
+        skeleton_def_destroy(&skel); if (ibms) free(ibms);
+        cleanup_line_buffer_(); shader_program_destroy(&line_shader);
+        skinning_shader_destroy(&skin_shader);
+        cleanup_gl_context_(); return 1;
+    }
+    printf("  Loaded FVMA skeletal mesh: %u submeshes, %u bones\n",
+           skinned_mesh.base.submesh_count, skinned_mesh.bone_count);
+
+    /* Bone palette SSBO. */
+    uint32_t palette_count = skel.joint_count;
+    float *bone_matrices = (float *)calloc(palette_count * 16, sizeof(float));
+    GLuint bone_ssbo = 0;
+    glGenBuffers(1, &bone_ssbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, bone_ssbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 (GLsizeiptr)(palette_count * 16 * sizeof(float)),
+                 NULL, GL_DYNAMIC_DRAW);
 
     /* ── Physics setup ──────────────────────────────────────────── */
 
@@ -597,6 +702,44 @@ int main(void) {
         float red_factor = fminf(dx / 2.0f, 1.0f);
 
         /* ── Draw ─────────────────────────────────────────────── */
+
+        /* Compute bone palette for skinned mesh. */
+        for (uint32_t j = 0; j < palette_count; j++) {
+            mat4_t skin_mat;
+            if (j < skel.joint_count && j < ibm_count) {
+                skin_mat = mat4_mul(anim_ent.bone_world[j], ibms[j]);
+            } else {
+                skin_mat = mat4_identity();
+            }
+            memcpy(&bone_matrices[j * 16], skin_mat.m, 16 * sizeof(float));
+        }
+
+        mat4_t view, proj;
+        mat4_look_at((vec3_t){12.0f, 6.0f, 12.0f},
+                     (vec3_t){0.f, 3.0f, 0.f},
+                     (vec3_t){0.f, 1.f, 0.f}, &view);
+        mat4_perspective(45.0f * PI / 180.0f,
+                         (float)WINDOW_W / (float)WINDOW_H,
+                         0.1f, 200.0f, &proj);
+        mat4_t vp = mat4_mul(proj, view);
+
+        /* Skinned mesh pass. */
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, bone_ssbo);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                        (GLsizeiptr)(palette_count * 16 * sizeof(float)),
+                        bone_matrices);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, bone_ssbo);
+
+        glUseProgram(skin_shader.program.handle);
+        glUniformMatrix4fv(u_vp_loc, 1, GL_FALSE, vp.m);
+        skeletal_mesh_bind(&skinned_mesh);
+        for (uint32_t si = 0; si < skinned_mesh.base.submesh_count; si++) {
+            skeletal_mesh_draw_submesh(&skinned_mesh, si);
+        }
+        skeletal_mesh_unbind();
+        
+
+        /* Bone debug lines. */
         begin_lines_();
         draw_ground_grid_(0.0f, 15.0f, 30);
         draw_skeleton_(&skel, anim_ent.bone_world,
@@ -614,15 +757,7 @@ int main(void) {
             draw_impulse_arrow_(torso_pos, (vec3_t){1, 0, 0}, 2.0f);
         }
 
-        mat4_t view, proj;
-        mat4_look_at((vec3_t){12.0f, 6.0f, 12.0f},
-                     (vec3_t){0.f, 3.0f, 0.f},
-                     (vec3_t){0.f, 1.f, 0.f}, &view);
-        mat4_perspective(45.0f * PI / 180.0f,
-                         (float)WINDOW_W / (float)WINDOW_H,
-                         0.1f, 200.0f, &proj);
-        mat4_t mvp = mat4_mul(proj, view);
-        flush_lines_(&mvp, &shader, u_mvp_loc);
+        flush_lines_(&vp, &line_shader, u_mvp_loc);
 
         GLenum gl_err = glGetError();
         while (gl_err != GL_NO_ERROR) {
@@ -661,8 +796,12 @@ int main(void) {
     free(local_pose);
     free(target_pose);
     phys_anim_entity_destroy(&anim_ent);
+    if (bone_ssbo) glDeleteBuffers(1, &bone_ssbo);
+    free(bone_matrices);
+    skeletal_mesh_destroy(&skinned_mesh);
     cleanup_line_buffer_();
-    shader_program_destroy(&shader);
+    shader_program_destroy(&line_shader);
+    skinning_shader_destroy(&skin_shader);
     phys_tick_runner_destroy(&tick_runner);
     phys_job_context_destroy(&phys_jobs);
     if (cmd_channel) fr_topic_channel_destroy(cmd_channel);

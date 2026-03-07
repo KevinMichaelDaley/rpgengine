@@ -31,7 +31,10 @@ void phys_stage_island_tier_promote(
         if (isle->sleeping || isle->skip) { continue; }
         if (isle->body_count <= 1) { continue; }
 
-        /* Pass 1: find minimum tier among dynamic bodies. */
+        /* Pass 1: find minimum tier among dynamic bodies.
+         * Ghost bodies (NO_BROADPHASE) contribute their tier to the
+         * scan so ghost-only islands get the correct solver mode,
+         * but they are not overwritten in Pass 2. */
         uint8_t min_tier = PHYS_TIER_5_SLEEPING;
         for (uint32_t b = 0; b < isle->body_count; ++b) {
             uint32_t idx = isle->body_indices[b];
@@ -67,7 +70,8 @@ void phys_stage_island_tier_promote(
         for (uint32_t c = 0; c < isle->constraint_count; ++c) {
             uint32_t ci = isle->constraint_indices[c];
             if (ci >= args->constraint_count) { continue; }
-            args->constraints[ci].solver_mode = (uint8_t)mode;
+            phys_constraint_t *con = &args->constraints[ci];
+            con->solver_mode = (uint8_t)mode;
         }
     }
 }

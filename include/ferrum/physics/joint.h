@@ -27,8 +27,8 @@ extern "C" {
 /* Forward declaration. */
 struct phys_body;
 
-/** Maximum Jacobian rows a single joint can produce (hinge = 5). */
-#define PHYS_JOINT_MAX_ROWS 6
+/** Maximum Jacobian rows a single joint can produce (cone-twist = 6). */
+#define PHYS_JOINT_MAX_ROWS 9
 
 /**
  * @brief Joint type discriminator.
@@ -43,6 +43,7 @@ typedef enum phys_joint_type {
     PHYS_JOINT_LIMIT_POSITION = 6,  /**< Per-axis positional limits (up to 3 clamped rows). */
     PHYS_JOINT_AIM            = 7,  /**< Align axis toward target (2 angular rows). */
     PHYS_JOINT_IK             = 8,  /**< IK chain pair: angular rows toward target (3 angular rows). */
+    PHYS_JOINT_CONE_TWIST     = 9,  /**< Ball joint + per-axis angular limits (3 pos + up to 3 ang). */
 } phys_joint_type_t;
 
 /**
@@ -76,6 +77,12 @@ typedef struct phys_joint {
     float limit_max[3];         /**< Max angle (rad) or position per axis. */
     uint8_t limit_axes;         /**< Bitmask: bit 0=X, 1=Y, 2=Z active. */
 
+    /* Rest-pose relative orientation for cone-twist angular limits.
+     * Angular error is measured as deviation from this reference
+     * rotation: q_err = q_rest_inv * (q_b * conj(q_a)).
+     * Set by phys_joint_init to identity. */
+    phys_quat_t rest_relative_orient;
+
     /* Aim joint: which local axis of body_b to align toward body_a. */
     phys_vec3_t track_axis;     /**< Local axis on body_b to aim (e.g. {0,1,0}). */
 
@@ -92,6 +99,10 @@ typedef struct phys_joint {
     /* Warmstarting: cached accumulated impulses from previous substep.
      * Seeded into rows at build time, written back after solve. */
     float cached_lambda[PHYS_JOINT_MAX_ROWS]; /**< Cached lambda per row. */
+
+    /** XPBD compliance (α) for this joint; 0 = perfectly stiff.
+     *  Propagated to constraint via phys_joint_build_constraints. */
+    float compliance;
 
     /* Solver output (populated by build functions). */
     uint8_t row_count;          /**< Number of active rows after build. */
@@ -280,6 +291,26 @@ void phys_joint_build_ik(phys_joint_t *joint,
                          const struct phys_body *body_b,
                          const struct phys_body *ee_body,
                          float dt);
+
+/**
+ * @brief Build constraint rows for a cone-twist (limited ball) joint.
+ *
+ * Produces 3 positional rows (same as ball joint) plus up to 3
+ * angular limit rows (same as limit_rotation).  Angular error is
+ * measured relative to rest_relative_orient so limits are centered
+ * on the bone's rest pose.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_CONE_TWIST).
+ *                limit_min/limit_max and limit_axes define the angular
+ *                freedom.  rest_relative_orient is the reference.
+ * @param body_a  Pointer to body A (parent).
+ * @param body_b  Pointer to body B (child).
+ * @param dt      Timestep in seconds.
+ */
+void phys_joint_build_cone_twist(phys_joint_t *joint,
+                                 const struct phys_body *body_a,
+                                 const struct phys_body *body_b,
+                                 float dt);
 
 /* Forward declaration for constraint output. */
 struct phys_constraint;

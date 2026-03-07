@@ -124,6 +124,36 @@ void phys_world_set_halfspace_collider(phys_world_t *world, uint32_t body_index,
     }
 }
 
+void phys_world_set_convex_collider(phys_world_t *world, uint32_t body_index,
+                                    const phys_vec3_t *points,
+                                    uint32_t point_count,
+                                    phys_vec3_t offset,
+                                    phys_quat_t rotation) {
+    if (!world || !points || point_count < 4) {
+        return;
+    }
+    if (body_index >= world->body_pool.capacity) {
+        return;
+    }
+
+    /* Store shape data: build convex hull from point cloud. */
+    uint32_t si = world->convex_hull_count++;
+    if (phys_convex_hull_build(&world->convex_hulls[si],
+                               points, point_count) != 0) {
+        world->convex_hull_count--;
+        return;
+    }
+
+    /* Set collider reference. */
+    phys_collider_init_convex(&world->colliders[body_index], si,
+                              offset, rotation);
+
+    phys_body_t *b = phys_body_pool_get_curr(&world->body_pool, body_index);
+    if (b && world->static_bvh_valid && phys_body_is_static(b)) {
+        phys_world_static_bvh_invalidate(world);
+    }
+}
+
 const phys_collider_t *phys_world_get_collider(const phys_world_t *world,
                                                uint32_t body_index) {
     if (!world) {

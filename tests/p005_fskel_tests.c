@@ -1,9 +1,9 @@
 /**
  * @file p005_fskel_tests.c
- * @brief Tests for .fskel binary format (write + load round-trip).
+ * @brief Tests for .fskel JSON format (write + load round-trip).
  *
- * Validates format header, chunk integrity, round-trip fidelity,
- * corruption detection, and edge cases (empty, large skeletons).
+ * Validates JSON round-trip fidelity, corruption detection,
+ * and edge cases (empty, large skeletons).
  */
 
 #include <stdio.h>
@@ -112,7 +112,9 @@ static int test_round_trip(void) {
 
     /* Compare skeleton. */
     ASSERT_TRUE(loaded.joint_count == skel.joint_count);
-    ASSERT_TRUE(loaded.max_constraints_per_joint == skel.max_constraints_per_joint);
+    /* max_constraints_per_joint is derived from actual data in JSON,
+     * so it may differ from the original allocation size. */
+    ASSERT_TRUE(loaded.max_constraints_per_joint >= 1);
 
     for (uint32_t i = 0; i < skel.joint_count; i++) {
         ASSERT_TRUE(strcmp(loaded.joint_names[i], skel.joint_names[i]) == 0);
@@ -151,21 +153,11 @@ static int test_round_trip(void) {
     return 0;
 }
 
-/** Format validates magic number. */
-static int test_bad_magic(void) {
-    /* Write a valid file, then corrupt the magic. */
-    skeleton_def_t skel;
-    make_test_skeleton(&skel);
-    mat4_t ibms[3];
-    make_test_ibms(ibms);
-
-    fskel_write(tmp_path, &skel, ibms, 3);
-
-    /* Corrupt magic bytes. */
-    FILE *f = fopen(tmp_path, "r+b");
+/** Non-JSON content is rejected. */
+static int test_invalid_json(void) {
+    FILE *f = fopen(tmp_path, "w");
     ASSERT_TRUE(f != NULL);
-    uint32_t bad_magic = 0xDEADBEEF;
-    fwrite(&bad_magic, 4, 1, f);
+    fprintf(f, "this is not JSON at all!!!");
     fclose(f);
 
     skeleton_def_t loaded;
@@ -175,18 +167,14 @@ static int test_bad_magic(void) {
     ASSERT_TRUE(!ok);
 
     unlink(tmp_path);
-    skeleton_def_destroy(&skel);
     return 0;
 }
 
-/** Truncated file is rejected. */
+/** Truncated JSON file is rejected. */
 static int test_truncated_file(void) {
-    /* Write minimal valid data, then truncate. */
-    FILE *f = fopen(tmp_path, "wb");
+    FILE *f = fopen(tmp_path, "w");
     ASSERT_TRUE(f != NULL);
-    uint32_t magic = FSKEL_MAGIC;
-    fwrite(&magic, 4, 1, f);
-    /* Only 4 bytes — no version, no data. */
+    fprintf(f, "{\"version\": 5, \"joints\": [");
     fclose(f);
 
     skeleton_def_t loaded;
@@ -328,21 +316,19 @@ static int test_missing_file(void) {
     return 0;
 }
 
-/** Validate format version check. */
+/** Old version (< 5) is rejected. */
 static int test_bad_version(void) {
-    skeleton_def_t skel;
-    make_test_skeleton(&skel);
-    mat4_t ibms[3];
-    make_test_ibms(ibms);
-
-    fskel_write(tmp_path, &skel, ibms, 3);
-
-    /* Corrupt version (offset 4). */
-    FILE *f = fopen(tmp_path, "r+b");
+    FILE *f = fopen(tmp_path, "w");
     ASSERT_TRUE(f != NULL);
-    fseek(f, 4, SEEK_SET);
-    uint32_t bad_version = 9999;
-    fwrite(&bad_version, 4, 1, f);
+    fprintf(f, "{\"version\": 3, \"joints\": [{\"name\":\"root\",\"parent\":-1,"
+               "\"rest_local\":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"
+               "\"rest_world\":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"
+               "\"constraints\":[],\"collider\":{\"shape\":\"none\","
+               "\"params\":[0,0,0,0,0,0],\"ccd\":false,\"kinematic\":false,"
+               "\"mass\":0,\"hull_offset\":0,\"hull_count\":0,\"collision_group\":0},"
+               "\"joint_desc\":{\"type\":0,\"axis\":[0,1,0],\"rest_length\":0,"
+               "\"limit_min\":[0,0,0],\"limit_max\":[0,0,0],\"limit_axes\":0}}],"
+               "\"ibms\":[],\"hull_vertices\":[]}");
     fclose(f);
 
     skeleton_def_t loaded;
@@ -352,7 +338,6 @@ static int test_bad_version(void) {
     ASSERT_TRUE(!ok);
 
     unlink(tmp_path);
-    skeleton_def_destroy(&skel);
     return 0;
 }
 
@@ -478,72 +463,21 @@ static int test_hull_vertex_round_trip(void) {
     return 0;
 }
 
-/** v1 files load with NULL colliders (backward compat). */
-static int test_v1_backward_compat(void) {
-    skeleton_def_t skel;
-    make_test_skeleton(&skel);
-    mat4_t ibms[3];
-    make_test_ibms(ibms);
-
-    /* Write a v2 file, then patch version to 1 and truncate COLL data. */
-    bool ok = fskel_write(tmp_path, &skel, ibms, 3);
-    ASSERT_TRUE(ok);
-
-    /* Get file size of v1 portion (before COLL chunk).
-     * Header: 20 bytes
-     * Names: 3 × 64 = 192
-     * Parents: 3 × 4 = 12
-     * rest_local: 3 × 64 = 192
-     * rest_world: 3 × 64 = 192
-     * constraint_counts: 3 × 4 = 12
-     * constraints: 3 × 4 × 224 = 2688
-     * IBMs: 3 × 64 = 192
-     * Total v1: 20 + 192 + 12 + 192 + 192 + 12 + 2688 + 192 = 3500
-     */
-    size_t v1_size = 20 + (3 * 64) + (3 * 4) + (3 * 64) + (3 * 64)
-                   + (3 * 4) + (3 * 4 * sizeof(constraint_def_t))
-                   + (3 * 64);
-
-    /* Read the file, truncate to v1 size, patch version. */
-    FILE *f = fopen(tmp_path, "rb");
+/** Empty joints array is rejected. */
+static int test_empty_joints(void) {
+    FILE *f = fopen(tmp_path, "w");
     ASSERT_TRUE(f != NULL);
-    fseek(f, 0, SEEK_END);
-    fseek(f, 0, SEEK_SET);
-    uint8_t *buf = (uint8_t *)malloc(v1_size);
-    ASSERT_TRUE(buf != NULL);
-    ASSERT_TRUE(fread(buf, 1, v1_size, f) == v1_size);
+    fprintf(f, "{\"version\": 5, \"joints\": [], \"ibms\": [], "
+               "\"hull_vertices\": []}");
     fclose(f);
 
-    /* Patch version to 1. */
-    uint32_t v1 = 1;
-    memcpy(buf + 4, &v1, 4);
-
-    /* Write truncated v1 file. */
-    f = fopen(tmp_path, "wb");
-    ASSERT_TRUE(f != NULL);
-    fwrite(buf, 1, v1_size, f);
-    fclose(f);
-    free(buf);
-
-    /* Load v1 file — should succeed with NULL colliders. */
     skeleton_def_t loaded;
     mat4_t *loaded_ibms = NULL;
     uint32_t loaded_ibm_count = 0;
-    ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
-    ASSERT_TRUE(ok);
-    ASSERT_TRUE(loaded.joint_count == 3);
-    ASSERT_TRUE(loaded.colliders == NULL);
-    ASSERT_TRUE(loaded.hull_vertices == NULL);
-    ASSERT_TRUE(loaded.hull_vertex_count == 0);
+    bool ok = fskel_load(tmp_path, &loaded, &loaded_ibms, &loaded_ibm_count);
+    ASSERT_TRUE(!ok);
 
-    /* Skeleton data still valid. */
-    ASSERT_TRUE(strcmp(loaded.joint_names[0], "root") == 0);
-    ASSERT_TRUE(loaded.constraint_counts[1] == 1);
-
-    skeleton_def_destroy(&loaded);
-    free(loaded_ibms);
     unlink(tmp_path);
-    skeleton_def_destroy(&skel);
     return 0;
 }
 
@@ -734,7 +668,7 @@ static int test_expanded_joint_types_round_trip(void) {
 
 int main(void) {
     RUN(test_round_trip);
-    RUN(test_bad_magic);
+    RUN(test_invalid_json);
     RUN(test_truncated_file);
     RUN(test_no_constraints);
     RUN(test_multi_constraints);
@@ -743,7 +677,7 @@ int main(void) {
     RUN(test_bad_version);
     RUN(test_collider_round_trip);
     RUN(test_hull_vertex_round_trip);
-    RUN(test_v1_backward_compat);
+    RUN(test_empty_joints);
     RUN(test_no_colliders_round_trip);
     RUN(test_joint_desc_round_trip);
     RUN(test_expanded_joint_types_round_trip);

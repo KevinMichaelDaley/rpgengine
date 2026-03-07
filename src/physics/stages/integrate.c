@@ -48,6 +48,16 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
         const phys_body_t *in = &bodies_in[i];
         phys_body_t *out      = &bodies_out[i];
 
+        /* Skip bodies already integrated by XPBD or sub-substeps.
+         * For XPBD bodies, bodies_out already has the solver-corrected
+         * positions/orientations — we must NOT overwrite them with
+         * bodies_in.  Just update velocities from the derived array. */
+        if (skip_body && skip_body[i]) {
+            out->linear_vel  = velocities[i].linear;
+            out->angular_vel = velocities[i].angular;
+            continue;
+        }
+
         /* Copy body from input to output. */
         *out = *in;
 
@@ -60,11 +70,6 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
          * (e.g. by scripts). Velocity fields exist only for correct
          * collision response with dynamic bodies. Skip integration. */
         if (phys_body_is_kinematic(in)) {
-            continue;
-        }
-
-        /* Skip bodies already integrated by solver sub-substeps. */
-        if (skip_body && skip_body[i]) {
             continue;
         }
 

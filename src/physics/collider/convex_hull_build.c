@@ -24,7 +24,7 @@
 #include <string.h>
 
 /** Maximum input points accepted by hull build. */
-#define BUILD_MAX_INPUT 8192u
+#define BUILD_MAX_INPUT 131072u
 
 /* Maximum faces during construction (more than final hull due to
    intermediate states).  For N<=64 output verts, the hull has at
@@ -88,18 +88,27 @@ static int find_initial_tet(const phys_vec3_t *pts, uint32_t count,
                             uint32_t out[4]) {
     if (count < 4) return -1;
 
-    /* Find two points with max distance. */
+    /* Find two points with max distance along each axis, then pick
+     * the pair with the greatest separation.  O(n) instead of O(n²). */
+    uint32_t min_idx[3] = {0, 0, 0};
+    uint32_t max_idx[3] = {0, 0, 0};
+    for (uint32_t i = 1; i < count; i++) {
+        if (pts[i].x < pts[min_idx[0]].x) min_idx[0] = i;
+        if (pts[i].x > pts[max_idx[0]].x) max_idx[0] = i;
+        if (pts[i].y < pts[min_idx[1]].y) min_idx[1] = i;
+        if (pts[i].y > pts[max_idx[1]].y) max_idx[1] = i;
+        if (pts[i].z < pts[min_idx[2]].z) min_idx[2] = i;
+        if (pts[i].z > pts[max_idx[2]].z) max_idx[2] = i;
+    }
+    float best = 0;
     out[0] = 0;
     out[1] = 1;
-    float best = 0;
-    for (uint32_t i = 0; i < count; i++) {
-        for (uint32_t j = i + 1; j < count; j++) {
-            float d = vec3_magnitude(vec3_sub(pts[i], pts[j]));
-            if (d > best) {
-                best = d;
-                out[0] = i;
-                out[1] = j;
-            }
+    for (int ax = 0; ax < 3; ax++) {
+        float d = vec3_magnitude(vec3_sub(pts[max_idx[ax]], pts[min_idx[ax]]));
+        if (d > best) {
+            best = d;
+            out[0] = min_idx[ax];
+            out[1] = max_idx[ax];
         }
     }
     if (best < 1e-8f) return -1;

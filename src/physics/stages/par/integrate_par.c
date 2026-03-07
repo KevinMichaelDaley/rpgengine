@@ -67,6 +67,17 @@ static void integrate_batch_job(void *data) {
         phys_body_t *out      = &bodies_out[i];
 
         /* Copy body from input to output. */
+        /* Skip bodies already integrated by XPBD or sub-substeps.
+         * For XPBD bodies, bodies_out already has the solver-corrected
+         * positions/orientations — we must NOT overwrite them with
+         * bodies_in.  Just update velocities from the derived array. */
+        if (args->skip_body && args->skip_body[i]) {
+            out->linear_vel  = velocities[i].linear;
+            out->angular_vel = velocities[i].angular;
+            continue;
+        }
+
+        /* Copy body from input to output (non-XPBD bodies). */
         *out = *in;
 
         /* Skip static bodies entirely. */
@@ -83,11 +94,6 @@ static void integrate_batch_job(void *data) {
 
         /* Skip sleeping bodies. */
         if (phys_body_is_sleeping(in)) {
-            continue;
-        }
-
-        /* Skip bodies already integrated by solver sub-substeps. */
-        if (args->skip_body && args->skip_body[i]) {
             continue;
         }
 

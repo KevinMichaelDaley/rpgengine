@@ -26,11 +26,15 @@ extern "C" {
 /* Constants                                                                 */
 /* ------------------------------------------------------------------------ */
 
-/** @brief Maximum vertices per mesh slot. */
-#define MESH_SLOT_MAX_VERTICES  65536
+/** @brief Maximum vertices per mesh slot.  Override at compile time. */
+#ifndef MESH_SLOT_MAX_VERTICES
+#define MESH_SLOT_MAX_VERTICES  (4u * 1024u * 1024u)
+#endif
 
-/** @brief Maximum indices per mesh slot (65536 * 3 = 196608). */
-#define MESH_SLOT_MAX_INDICES   196608
+/** @brief Maximum indices per mesh slot.  Override at compile time. */
+#ifndef MESH_SLOT_MAX_INDICES
+#define MESH_SLOT_MAX_INDICES   (12u * 1024u * 1024u)
+#endif
 
 /** @brief Number of UV channels. */
 #define MESH_SLOT_UV_CHANNELS   2

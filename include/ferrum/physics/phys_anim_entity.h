@@ -112,6 +112,28 @@ void phys_anim_entity_push_kinematic(phys_anim_entity_t *entity,
                                      uint32_t count);
 
 /**
+ * @brief Drive all bodies toward animation targets with blended deltas.
+ *
+ * For kinematic bodies: sets position and orientation absolutely.
+ * For dynamic bodies: applies an interpolated delta — blends current
+ * position/orientation toward the animation target by @p blend factor.
+ *
+ * Call this from the substep callback after computing animation pose.
+ *
+ * @param entity     Animated entity (NULL-safe, no-op).
+ * @param world      Physics world (NULL-safe, no-op).
+ * @param world_pose Target bone world-space transforms.
+ * @param count      Number of transforms (clamped to bone_count).
+ * @param blend      Interpolation factor [0..1]. 0 = no effect, 1 = snap.
+ *                   Values around 0.2–0.5 give soft animation drive.
+ */
+void phys_anim_entity_drive_toward(phys_anim_entity_t *entity,
+                                   struct phys_world *world,
+                                   const mat4_t *world_pose,
+                                   uint32_t count,
+                                   float blend);
+
+/**
  * @brief Free the animated entity's internal arrays.
  *
  * Does NOT remove bodies or joints from the physics world.
