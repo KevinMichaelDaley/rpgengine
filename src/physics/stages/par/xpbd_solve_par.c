@@ -71,8 +71,10 @@ static void solve_contact_position(phys_constraint_t *c,
     /* Position error from bias term. */
     float C = -row->bias * dt;
 
-    /* XPBD regularization: alpha_tilde = compliance / dt^2. */
-    float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
+    /* XPBD regularization: alpha_tilde = compliance / dt^2.
+     * Prefer per-constraint compliance if set, else use global. */
+    float c_alpha = (c->compliance > 0.0f) ? c->compliance : compliance;
+    float alpha_tilde = (dt > 0.0f) ? c_alpha / (dt * dt) : 0.0f;
     float w_sum = w_a + w_b + alpha_tilde;
 
     float delta_lambda = (-C - alpha_tilde * row->lambda) / w_sum;
@@ -107,7 +109,9 @@ static void solve_joint_position(phys_constraint_t *c,
 
     if (w_a + w_b < 1e-10f) return;
 
-    float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
+    /* Per-constraint compliance overrides global if set. */
+    float c_alpha = (c->compliance > 0.0f) ? c->compliance : compliance;
+    float alpha_tilde = (dt > 0.0f) ? c_alpha / (dt * dt) : 0.0f;
     float w_sum = w_a + w_b + alpha_tilde;
 
     for (uint8_t r = 0; r < c->row_count; ++r) {

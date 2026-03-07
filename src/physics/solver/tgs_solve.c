@@ -175,7 +175,8 @@ static void solve_row(phys_jacobian_row_t *row,
                        float inv_mass_a,
                        const phys_mat3_t *inv_i_a,
                        float inv_mass_b,
-                       const phys_mat3_t *inv_i_b)
+                       const phys_mat3_t *inv_i_b,
+                       float dt)
 {
     /* Compute J·v (relative velocity along the constraint direction). */
     float jv = vec3_dot(row->J_va, va->linear)
@@ -183,11 +184,11 @@ static void solve_row(phys_jacobian_row_t *row,
              + vec3_dot(row->J_vb, vb->linear)
              + vec3_dot(row->J_wb, vb->angular);
 
-    /* Impulse delta from constraint violation.
-     * Linear viscous damping: opposes relative velocity along the
-     * constraint axis proportional to speed.  damping=0 is off,
-     * damping=1 doubles the effective velocity correction. */
-    float jv_damped = jv * (1.0f + row->damping);
+    /* Viscous damping: scale velocity error by (1 + d*dt) so the
+     * solver applies a stronger correction that opposes relative motion.
+     * The dt factor keeps the damping force physically correct and
+     * prevents instability at large damping coefficients. */
+    float jv_damped = jv * (1.0f + row->damping * dt);
     float delta_lambda = (row->bias - jv_damped) * row->effective_mass;
 
     /* Successive over-relaxation: scale impulse to accelerate convergence. */
@@ -319,13 +320,14 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
      * Negative sign: positive error means anchors are separated, so
      * correction drives the relative anchor velocity negative.
      *
-     * Joint positional rows use aggressive ERP (0.8) so anchors
-     * don't visibly stretch apart between substeps.  Angular rows
-     * use a very soft ERP to prevent angular corrections from
-     * fighting positional rows via coupled anchor movement. */
+     * Joint positional rows use moderate ERP to avoid Gauss-Seidel
+     * divergence in long joint chains (ragdoll: 19 joints).
+     * Pseudo-velocities are scaled by tier_substeps/max_substeps
+     * before integration, so effective inv_dt matches body_dt.
+     * Angular rows use softer ERP to prevent fighting. */
     float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
-              ? 0.01f
-              : 0.4f;
+              ? 0.02f
+              : 0.15f;
     float pos_bias = -error * inv_dt * erp;
 
     /* Current pseudo-velocity along constraint direction. */
@@ -604,6 +606,7 @@ static void solve_one_constraint(phys_constraint_t *c,
         /* Animation constraints (is_joint == 1) use softened effective
          * mass so structural joints and contacts override them. */
         const float anim_softness = (c->is_joint == 1) ? 0.5f : 1.0f;
+
         for (uint8_t r = 0; r < c->row_count; r++) {
             saved_bias[r] = c->rows[r].bias;
             saved_eff_mass[r] = c->rows[r].effective_mass;
@@ -615,24 +618,37 @@ static void solve_one_constraint(phys_constraint_t *c,
         }
 
         /* Velocity-level solve: all rows with bilateral bounds. */
+        const float dt = 1.0f / inv_dt;
         for (uint8_t r = 0; r < c->row_count; r++) {
             solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b, dt);
         }
 
-        /* Restore bias and effective mass, then apply split-impulse
-         * position correction. */
+        /* Restore bias and effective mass for position correction. */
         for (uint8_t r = 0; r < c->row_count; r++) {
             c->rows[r].bias = saved_bias[r];
             c->rows[r].effective_mass = saved_eff_mass[r];
         }
         if (pseudo) {
+            /* Compliance softening for position correction only.
+             * In split-impulse TGS, compliance reduces the strength of
+             * positional drift correction (elastic response) without
+             * weakening the velocity-level constraint solve.
+             *   m_soft = m_eff / (1 + α * m_eff * inv_dt²)  */
+            const float compliance_factor =
+                c->compliance * inv_dt * inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
+                float m_save = c->rows[r].effective_mass;
+                if (compliance_factor > 0.0f) {
+                    float m = m_save / (1.0f + compliance_factor * m_save);
+                    c->rows[r].effective_mass = m;
+                }
                 solve_joint_position_row(
                     &c->rows[r],
                     &pseudo[c->body_a], &pseudo[c->body_b],
                     inv_dt,
                     inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+                c->rows[r].effective_mass = m_save;
             }
         }
         return;
@@ -640,7 +656,8 @@ static void solve_one_constraint(phys_constraint_t *c,
 
     /* Solve normal row first (row 0). */
     solve_row(&c->rows[0], va, vb,
-              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
+              1.0f / inv_dt);
 
     {
         /* Split impulse: position correction into pseudo-velocities. */
@@ -658,7 +675,8 @@ static void solve_one_constraint(phys_constraint_t *c,
             c->rows[r].lambda_min = -friction_limit;
             c->rows[r].lambda_max =  friction_limit;
             solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
+                      1.0f / inv_dt);
         }
     }
 }
@@ -717,24 +735,11 @@ static bool solve_island_colored(const phys_island_t *island,
     phys_velocity_t *pseudo = args->pseudo_velocities;
 
     for (uint32_t iter = 0; iter < iters; ++iter) {
-        /* Pass 1: animation constraints (soft goals). */
+        /* All constraints in a single pass per color. */
         for (uint32_t color = 0; color < coloring.num_colors; ++color) {
             for (uint32_t ci = 0; ci < n; ++ci) {
                 if (coloring.colors[ci] != color) { continue; }
                 uint32_t c_idx = island->constraint_indices[ci];
-                if (args->constraints[c_idx].is_joint != 1) { continue; }
-                solve_one_constraint(&args->constraints[c_idx],
-                                     args->velocities, pseudo,
-                                     args->bodies, args->inv_inertia_world,
-                                     slop, inv_dt);
-            }
-        }
-        /* Pass 2: structural joints + contacts. */
-        for (uint32_t color = 0; color < coloring.num_colors; ++color) {
-            for (uint32_t ci = 0; ci < n; ++ci) {
-                if (coloring.colors[ci] != color) { continue; }
-                uint32_t c_idx = island->constraint_indices[ci];
-                if (args->constraints[c_idx].is_joint == 1) { continue; }
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
                                      args->bodies, args->inv_inertia_world,
@@ -795,23 +800,11 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
         }
 
-        /* Sequential solve (default path): interleaved two-pass ordering.
-         * Within each iteration, animation constraints (is_joint == 1)
-         * are solved first, then structural joints + contacts override. */
+        /* Sequential solve (default path): all constraints in a single
+         * pass per iteration so they converge together. */
         for (uint32_t iter = 0; iter < iters; iter++) {
-            /* Pass 1: animation constraints (soft goals). */
             for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
                 uint32_t c_idx = island->constraint_indices[ci];
-                if (args->constraints[c_idx].is_joint != 1) { continue; }
-                solve_one_constraint(&args->constraints[c_idx],
-                                     args->velocities, pseudo,
-                                     args->bodies, args->inv_inertia_world,
-                                     slop, inv_dt);
-            }
-            /* Pass 2: structural joints + contacts. */
-            for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
-                uint32_t c_idx = island->constraint_indices[ci];
-                if (args->constraints[c_idx].is_joint == 1) { continue; }
                 solve_one_constraint(&args->constraints[c_idx],
                                      args->velocities, pseudo,
                                      args->bodies, args->inv_inertia_world,

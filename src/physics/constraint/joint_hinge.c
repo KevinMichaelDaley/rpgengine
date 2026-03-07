@@ -149,19 +149,10 @@ void phys_joint_build_hinge(phys_joint_t *joint,
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR;
 
-        /* Compliance regularization: soften the angular lock slightly
-         * to prevent fighting with positional rows in coupled chains. */
-        {
-            float raw_eff_mass = phys_compute_effective_mass(
-                row,
-                body_a->inv_mass, &inv_i_world_a,
-                body_b->inv_mass, &inv_i_world_b);
-            float alpha = 1e-3f;
-            float inv_dt2 = 1.0f / (dt * dt);
-            row->effective_mass = (raw_eff_mass > 0.0f)
-                ? 1.0f / (1.0f / raw_eff_mass + alpha * inv_dt2)
-                : 0.0f;
-        }
+        row->effective_mass = phys_compute_effective_mass(
+            row,
+            body_a->inv_mass, &inv_i_world_a,
+            body_b->inv_mass, &inv_i_world_b);
     }
 
     joint->row_count = 5;
