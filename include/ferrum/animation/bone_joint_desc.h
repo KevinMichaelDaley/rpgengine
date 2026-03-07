@@ -56,6 +56,9 @@ typedef struct bone_joint_desc {
     float    limit_max[3];  /**< Per-axis max angle (rad) or position. */
     uint32_t limit_axes;    /**< Bitmask of active limit axes: bit 0=X, 1=Y, 2=Z.
                              *   Only used for types 6 and 7. */
+    float    compliance;    /**< XPBD compliance (α); 0 = perfectly stiff.
+                             *   Higher values make the joint softer.
+                             *   Typical ragdoll: 1e-4 to 1e-2. */
 } bone_joint_desc_t;
 
 #ifdef __cplusplus

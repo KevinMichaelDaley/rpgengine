@@ -327,8 +327,8 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             body->tier = PHYS_TIER_0_DIRECT;
             phys_body_set_mass(body, 1.0f);
             phys_body_set_sphere_inertia(body, 1.0f, 0.05f);
-            body->linear_damping  = 50.0f;
-            body->angular_damping = 50.0f;
+            body->linear_damping  = 0.5f;
+            body->angular_damping = 0.5f;
             continue;
         }
 
@@ -457,11 +457,66 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
          * proportionally more drag but not excessively. */
         float cross_scale = cbrtf(volume / 0.002f);
         if (cross_scale < 0.1f) cross_scale = 0.1f;
-        body->linear_damping  = 50.0f * cross_scale;
-        body->angular_damping = 50.0f * cross_scale;
+        body->linear_damping  = 0.5f * cross_scale;
+        body->angular_damping = 0.5f * cross_scale;
     }
 
     entity->body_count = body_count;
+
+    /* ── Ghost body mass averaging ─────────────────────────────── */
+    /* Ghost bodies (no collider) inherit the average mass of their
+     * immediate skeleton neighbors that DO have colliders/mass.
+     * This prevents ghosts from being too light relative to their
+     * connected collider bodies, which causes joint separation. */
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t bi = entity->body_indices[i];
+        if (bi == UINT32_MAX) continue;
+
+        const bone_collider_desc_t *col = NULL;
+        if (skel->colliders) col = &skel->colliders[i];
+        bool has_collider = (col && col->shape_type != BONE_COLLIDER_NONE);
+        if (has_collider) continue; /* only fix ghosts */
+
+        /* Gather masses from parent and children with bodies. */
+        float mass_sum = 0.0f;
+        uint32_t mass_count = 0;
+
+        /* Parent. */
+        uint32_t pi = skel->parent_indices[i];
+        if (pi != UINT32_MAX && pi < n) {
+            uint32_t pbi = entity->body_indices[pi];
+            if (pbi != UINT32_MAX) {
+                phys_body_t *pb = phys_world_get_body(world, pbi);
+                if (pb && pb->inv_mass > 0.0f) {
+                    mass_sum += 1.0f / pb->inv_mass;
+                    mass_count++;
+                }
+            }
+        }
+
+        /* Children. */
+        for (uint32_t c = 0; c < n; c++) {
+            if (skel->parent_indices[c] != i) continue;
+            uint32_t cbi = entity->body_indices[c];
+            if (cbi == UINT32_MAX) continue;
+            phys_body_t *cb = phys_world_get_body(world, cbi);
+            if (cb && cb->inv_mass > 0.0f) {
+                mass_sum += 1.0f / cb->inv_mass;
+                mass_count++;
+            }
+        }
+
+        float avg_mass = (mass_count > 0) ? (mass_sum / mass_count) : 1.0f;
+        if (avg_mass < 0.1f) avg_mass = 0.1f;
+
+        phys_body_t *body = phys_world_get_body(world, bi);
+        if (body) {
+            phys_body_set_mass(body, avg_mass);
+            /* Approximate inertia as a small sphere of that mass. */
+            phys_body_set_sphere_inertia(body, avg_mass, 0.05f);
+        }
+    }
+
     free(needs_body);
 
     /* ── Create joints from skeleton joint descriptors ──────────── */
@@ -594,6 +649,7 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 default: continue;
                 }
 
+                j->compliance = jd->compliance;
                 jc++;
             }
 

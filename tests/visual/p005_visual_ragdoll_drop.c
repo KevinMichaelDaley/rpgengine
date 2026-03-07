@@ -85,9 +85,10 @@ static const char *SKINNING_FRAG_SRC =
     "in vec3 v_world_pos;\n"
     "out vec4 frag_color;\n"
     "void main() {\n"
-    "    vec3 light_dir = normalize(vec3(0.5, 1.0, 0.3));\n"
-    "    float ndotl = max(dot(normalize(v_normal), light_dir), 0.2);\n"
-    "    vec3 base_color = vec3(0.75, 0.60, 0.50);\n"
+    "    vec3 light_dir = normalize(vec3(0.7, 0.5, 0.7));\n"
+    "    float ndotl = max(dot(normalize(v_normal), light_dir), 0.0);\n"
+    "    ndotl = ndotl * 0.7 + 0.3;\n"
+    "    vec3 base_color = vec3(0.85, 0.70, 0.60);\n"
     "    frag_color = vec4(base_color * ndotl, 1.0);\n"
     "}\n";
 
@@ -228,7 +229,7 @@ static void flush_lines_(const mat4_t *mvp, shader_program_t *sh,
     glBufferSubData(GL_ARRAY_BUFFER, 0,
                     (GLsizeiptr)(g_line_vert_count * sizeof(line_vertex_t)),
                     g_line_verts);
-    glLineWidth(2.0f);
+    glLineWidth(1.0f);
     glDrawArrays(GL_LINES, 0, g_line_vert_count);
     glBindVertexArray(0);
 }
@@ -393,6 +394,8 @@ int main(void) {
     if (phys_world_init(&world, &wcfg) != 0) {
         fprintf(stderr, "phys_world_init failed\n"); return 1;
     }
+    /* Bump gravity to compensate for uniform damping drag. */
+    world.config.gravity = (phys_vec3_t){0.0f, -12.0f, 0.0f};
 
     /* Ground plane. */
     uint32_t ground_id = phys_world_create_body(&world);
@@ -471,7 +474,7 @@ int main(void) {
         fprintf(stderr, "WARNING: video capture unavailable\n");
 
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.06f, 0.06f, 0.10f, 1.0f);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     glViewport(0, 0, WINDOW_W, WINDOW_H);
 
     int gl_error_count = 0;
@@ -675,8 +678,8 @@ int main(void) {
             gl_err = glGetError();
         }
 
-        /* Snapshots at start, mid, end. */
-        if (f == 0 || f == TOTAL_FRAMES / 2 || f == TOTAL_FRAMES - 1) {
+        /* Snapshots at start, quarter, mid, end. */
+        if (f == 0 || f == 45 || f == TOTAL_FRAMES / 2 || f == TOTAL_FRAMES - 1) {
             char path[256];
             snprintf(path, sizeof(path),
                      "tests/output/p005_ragdoll_drop_frame_%03d.ppm", f);

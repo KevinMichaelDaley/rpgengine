@@ -516,6 +516,7 @@ bool fskel_load(const char *path,
                 bd->limit_max[2] = jfloat_(&lmax->array.items[2], 0.0f);
             }
             bd->limit_axes = juint_(json_object_get(jd, "limit_axes"), 0);
+            bd->compliance = jfloat_(json_object_get(jd, "compliance"), 0.0f);
         }
     }
 

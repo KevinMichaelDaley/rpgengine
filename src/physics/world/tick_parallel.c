@@ -460,7 +460,6 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
 
             /* Damping as forces proportional to velocity.
              * Linear:  F = -c*v,  dv = -c * v * inv_mass * dt
-             *   Vertical (Y) gets 10% coefficient to allow free-fall.
              * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt
              * Coefficient c encodes cross-section / drag area. */
             {
@@ -475,11 +474,10 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
                     ad = 1.0f - s->velocity_damping;
                 }
                 if (ld > 0.0f) {
-                    float s_xz = -ld * b->inv_mass * ss_dt;
-                    float s_y  = s_xz * 0.1f;
-                    b->linear_vel.x += b->linear_vel.x * s_xz;
-                    b->linear_vel.y += b->linear_vel.y * s_y;
-                    b->linear_vel.z += b->linear_vel.z * s_xz;
+                    float s = -ld * b->inv_mass * ss_dt;
+                    b->linear_vel.x += b->linear_vel.x * s;
+                    b->linear_vel.y += b->linear_vel.y * s;
+                    b->linear_vel.z += b->linear_vel.z * s;
                 }
                 if (ad > 0.0f && s->inv_inertia_world) {
                     phys_vec3_t torque = vec3_scale(b->angular_vel, -ad);

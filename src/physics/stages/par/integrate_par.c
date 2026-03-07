@@ -137,7 +137,6 @@ static void integrate_batch_job(void *data) {
 
         /* Damping as forces proportional to velocity.
          * Linear:  F = -c*v,  dv = -c * v * inv_mass * dt
-         *   Vertical (Y) gets 10% coefficient to allow free-fall.
          * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt */
         {
             float ld = out->linear_damping;
@@ -149,11 +148,10 @@ static void integrate_batch_job(void *data) {
                 ad = 1.0f - vel_damp;
             }
             if (ld > 0.0f) {
-                float s_xz = -ld * out->inv_mass * body_dt;
-                float s_y  = s_xz * 0.1f;
-                out->linear_vel.x += out->linear_vel.x * s_xz;
-                out->linear_vel.y += out->linear_vel.y * s_y;
-                out->linear_vel.z += out->linear_vel.z * s_xz;
+                float s = -ld * out->inv_mass * body_dt;
+                out->linear_vel.x += out->linear_vel.x * s;
+                out->linear_vel.y += out->linear_vel.y * s;
+                out->linear_vel.z += out->linear_vel.z * s;
             }
             if (ad > 0.0f && inv_I_world) {
                 phys_vec3_t torque = vec3_scale(out->angular_vel, -ad);
