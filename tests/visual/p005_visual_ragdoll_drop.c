@@ -47,7 +47,7 @@
 #define WINDOW_W     640
 #define WINDOW_H     480
 #define TARGET_FPS   30
-#define DURATION_SEC 3
+#define DURATION_SEC 6
 #define TOTAL_FRAMES (TARGET_FPS * DURATION_SEC)
 #define PI 3.14159265358979323846f
 

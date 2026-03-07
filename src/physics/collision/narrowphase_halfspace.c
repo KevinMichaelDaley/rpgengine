@@ -6,7 +6,7 @@
  * defined by dot(normal, point) = distance.  Points below the plane
  * (dot < distance) are penetrating.
  *
- * Non-static functions: 3 (sphere, capsule, box).
+ * Non-static functions: 4 (sphere, capsule, box, convex hull).
  */
 
 #include <math.h>
@@ -14,6 +14,7 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/collision/halfspace.h"
+#include "ferrum/physics/convex_hull.h"
 #include "ferrum/physics/manifold.h"
 
 /* ── Sphere vs Halfspace ───────────────────────────────────────── */
@@ -187,6 +188,78 @@ int phys_box_vs_halfspace(
         phys_vec3_t contact_pt = vec3_sub(verts[i],
                                            vec3_scale(plane_normal, signed_dist));
 
+        contacts_out[i].normal = vec3_scale(plane_normal, -1.0f);
+        contacts_out[i].penetration = pens[i];
+        contacts_out[i].point_world = contact_pt;
+        contacts_out[i].local_a = (phys_vec3_t){0, 0, 0};
+        contacts_out[i].local_b = (phys_vec3_t){0, 0, 0};
+        contacts_out[i].feature_id = (uint32_t)i;
+    }
+
+    return out_count;
+}
+
+/* ── Convex Hull vs Halfspace ──────────────────────────────────── */
+
+int phys_convex_hull_vs_halfspace(
+    const phys_convex_hull_t *hull,
+    phys_vec3_t hull_center, phys_quat_t hull_rotation,
+    phys_vec3_t plane_normal, float plane_distance,
+    float speculative_margin,
+    phys_contact_point_t *contacts_out, int max_contacts)
+{
+    if (!hull || !contacts_out || max_contacts <= 0) return 0;
+    if (hull->vertex_count == 0) return 0;
+
+    /* Transform each hull vertex to world space and compute signed
+     * distance to the plane.  Track the deepest penetrating vertices
+     * and select up to max_contacts of them. */
+
+    /* Temporary storage for penetration depths and world positions.
+     * PHYS_CONVEX_MAX_VERTS is 64 — small enough for the stack. */
+    float pens[PHYS_CONVEX_MAX_VERTS];
+    phys_vec3_t world_pts[PHYS_CONVEX_MAX_VERTS];
+    int pen_count = 0;
+
+    for (uint32_t i = 0; i < hull->vertex_count; i++) {
+        /* Rotate the local vertex and translate to world space. */
+        phys_vec3_t world_v = vec3_add(
+            quat_rotate_vec3(hull_rotation, hull->vertices[i]),
+            hull_center);
+
+        float signed_dist = vec3_dot(plane_normal, world_v) - plane_distance;
+        float pen = -signed_dist; /* positive = penetrating */
+
+        if (pen < -speculative_margin) continue;
+
+        world_pts[pen_count] = world_v;
+        pens[pen_count] = pen;
+        pen_count++;
+    }
+
+    if (pen_count == 0) return 0;
+
+    /* Select the deepest contacts (simple selection sort for small N). */
+    int out_count = pen_count < max_contacts ? pen_count : max_contacts;
+    for (int i = 0; i < out_count; i++) {
+        int best = i;
+        for (int j = i + 1; j < pen_count; j++) {
+            if (pens[j] > pens[best]) best = j;
+        }
+        if (best != i) {
+            float tmp_p = pens[i]; pens[i] = pens[best]; pens[best] = tmp_p;
+            phys_vec3_t tmp_v = world_pts[i];
+            world_pts[i] = world_pts[best];
+            world_pts[best] = tmp_v;
+        }
+
+        /* Project the world point onto the plane for the contact point. */
+        float d = vec3_dot(plane_normal, world_pts[i]) - plane_distance;
+        phys_vec3_t contact_pt = vec3_sub(world_pts[i],
+                                          vec3_scale(plane_normal, d));
+
+        /* Normal points from the shape INTO the halfspace solid half
+         * (negated plane normal, same convention as box/capsule). */
         contacts_out[i].normal = vec3_scale(plane_normal, -1.0f);
         contacts_out[i].penetration = pens[i];
         contacts_out[i].point_world = contact_pt;

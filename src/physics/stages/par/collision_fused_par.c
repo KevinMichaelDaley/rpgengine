@@ -20,6 +20,7 @@
 
 #include "ferrum/job/spinlock.h"
 #include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
 #include "ferrum/physics/collision/box_box.h"
 #include "ferrum/physics/collision/box_capsule.h"
 #include "ferrum/physics/collision/capsule_capsule.h"
@@ -440,6 +441,25 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
                                            hs->normal, hs->distance,
                                            args->speculative_margin,
                                            contacts_buf, 2);
+        if (nc > 0) {
+            cand_out->body_a = ba;
+            cand_out->body_b = bb;
+            cand_out->contact_count = (uint8_t)(nc > 4 ? 4 : nc);
+            for (int j = 0; j < cand_out->contact_count; j++) {
+                cand_out->contacts[j] = contacts_buf[j];
+            }
+            return 1;
+        }
+        return 0;
+    }
+    else if (c0->type == PHYS_SHAPE_CONVEX && c1->type == PHYS_SHAPE_HALFSPACE) {
+        const phys_convex_hull_t *hull = &args->convex_hulls[c0->shape_index];
+        const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
+        phys_contact_point_t contacts_buf[4];
+        int nc = phys_convex_hull_vs_halfspace(hull, w0, q0,
+                                                hs->normal, hs->distance,
+                                                args->speculative_margin,
+                                                contacts_buf, 4);
         if (nc > 0) {
             cand_out->body_a = ba;
             cand_out->body_b = bb;

@@ -736,6 +736,7 @@ void phys_world_tick_parallel(phys_world_t *world,
     TracyCZoneEnd(z_broad);
 #endif
 
+
     /* ── Per-tier substep loop ─────────────────────────────────── */
     /* Compute max substeps across all tiers.  Only narrowphase,
      * solver, and integrate run multiple times; broadphase and halo
@@ -1012,23 +1013,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                     constraint_count += written;
                 }
             }
-        }
-
-        /* Diagnostic: count XPBD vs TGS joint constraints. */
-        if (world->tick_count == 0) {
-            uint32_t xpbd_jc = 0, tgs_jc = 0;
-            uint32_t xpbd_rows = 0, tgs_rows = 0;
-            for (uint32_t ci = joint_constraint_start; ci < constraint_count; ci++) {
-                if (constraints[ci].solver_mode == (uint8_t)PHYS_SOLVER_XPBD) {
-                    xpbd_jc++;
-                    xpbd_rows += constraints[ci].row_count;
-                } else {
-                    tgs_jc++;
-                    tgs_rows += constraints[ci].row_count;
-                }
-            }
-            fprintf(stderr, "  Tick 0 joint constraints: %u XPBD (%u rows), %u TGS (%u rows)\n",
-                    xpbd_jc, xpbd_rows, tgs_jc, tgs_rows);
         }
 
         /* Compute per-body max penetration from constraints for sleep
@@ -1585,8 +1569,6 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_tgs);
 #endif
-
-            /* Wait for XPBD fibers to finish (usually already done). */
             if (xpbd_dispatched) {
                 phys_wait_stage(jobs, PHYS_STAGE_XPBD_SOLVE);
 

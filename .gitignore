@@ -27,3 +27,4 @@ node_modules/
 # Tool artifacts
 .marvin/
 tests/output/
+*.orig

@@ -5,7 +5,8 @@
  * @file halfspace.h
  * @brief Halfspace (infinite plane) collision tests.
  *
- * Provides sphere, capsule, and box vs halfspace narrowphase tests.
+ * Provides sphere, capsule, box, and convex hull vs halfspace narrowphase
+ * tests.
  * A halfspace is defined by a unit normal and signed distance from origin.
  * The plane equation is dot(normal, point) = distance.  Points with
  * dot(normal, point) < distance are behind the plane (penetrating).
@@ -18,6 +19,7 @@
 #include "ferrum/physics/phys_types.h"
 
 struct phys_contact_point;
+struct phys_convex_hull;
 
 #ifdef __cplusplus
 extern "C" {
@@ -87,6 +89,31 @@ int phys_capsule_vs_halfspace(
 int phys_box_vs_halfspace(
     phys_vec3_t box_center, phys_quat_t box_rotation,
     phys_vec3_t box_half_extents,
+    phys_vec3_t plane_normal, float plane_distance,
+    float speculative_margin,
+    struct phys_contact_point *contacts_out, int max_contacts);
+
+/**
+ * @brief Test convex hull vs halfspace intersection.
+ *
+ * Transforms hull vertices to world space and tests each against the
+ * plane.  Returns contacts for the deepest penetrating vertices
+ * (up to max_contacts, typically 4).
+ *
+ * @param hull             Convex hull shape data.
+ * @param hull_center      World-space center of the hull body.
+ * @param hull_rotation    World-space orientation of the hull body.
+ * @param plane_normal     Unit normal of the halfspace (outward).
+ * @param plane_distance   Signed distance of the plane from origin.
+ * @param speculative_margin Max separation for speculative contacts.
+ * @param contacts_out     Output array (must have capacity for
+ *                         max_contacts entries).
+ * @param max_contacts     Capacity of contacts_out (typically 4).
+ * @return Number of contacts written (0 if no intersection).
+ */
+int phys_convex_hull_vs_halfspace(
+    const struct phys_convex_hull *hull,
+    phys_vec3_t hull_center, phys_quat_t hull_rotation,
     phys_vec3_t plane_normal, float plane_distance,
     float speculative_margin,
     struct phys_contact_point *contacts_out, int max_contacts);

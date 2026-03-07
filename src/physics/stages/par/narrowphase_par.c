@@ -378,6 +378,27 @@ static void np_par_job_fn(void *user_data)
                 }
             }
         }
+        else if (c0->type == PHYS_SHAPE_CONVEX && c1->type == PHYS_SHAPE_HALFSPACE) {
+            const phys_convex_hull_t *hull = &args->convex_hulls[c0->shape_index];
+            const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
+            phys_contact_point_t contacts_buf[4];
+            int nc = phys_convex_hull_vs_halfspace(hull, w0, q0,
+                                                    hs->normal, hs->distance,
+                                                    args->speculative_margin,
+                                                    contacts_buf, 4);
+            if (nc > 0) {
+                uint32_t slot = atomic_fetch_add(&shared->out_idx, 1);
+                if (slot < args->max_candidates) {
+                    phys_contact_candidate_t *cand = &args->candidates_out[slot];
+                    cand->body_a = ba;
+                    cand->body_b = bb;
+                    cand->contact_count = (uint8_t)nc;
+                    for (int j = 0; j < nc; j++) {
+                        cand->contacts[j] = contacts_buf[j];
+                    }
+                }
+            }
+        }
         /* mesh-halfspace and halfspace-halfspace: no collision. */
 
         if (hit) {

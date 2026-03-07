@@ -116,6 +116,13 @@ void phys_constraint_build_contact(
         float pen_excess = contact->penetration - slop;
         if (pen_excess > 0.0f && dt > 0.0f) {
             baumgarte_bias = (baumgarte / dt) * pen_excess;
+            /* Cap correction velocity to prevent explosive response
+             * when penetration is deep (e.g. body fell through ground
+             * before contact was detected). */
+            const float MAX_BAUMGARTE_VEL = 10.0f;
+            if (baumgarte_bias > MAX_BAUMGARTE_VEL) {
+                baumgarte_bias = MAX_BAUMGARTE_VEL;
+            }
         }
     }
 
