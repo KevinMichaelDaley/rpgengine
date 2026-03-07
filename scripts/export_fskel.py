@@ -23,22 +23,13 @@ bl_info = {
 
 import bpy
 import bmesh
-import struct
+import json
 import mathutils
 import math
 import gpu
 from gpu_extras.batch import batch_for_shader
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, BoolProperty, EnumProperty, FloatProperty, IntProperty
-
-# ── Format constants (must match fskel_format.h) ────────────────────
-
-FSKEL_MAGIC = 0x4C4B5346   # 'FSKL' little-endian
-FSKEL_VERSION = 4
-SKELETON_JOINT_NAME_MAX = 64
-
-# sizeof(constraint_def_t) = 224 bytes (verified against C compiler)
-CONSTRAINT_DEF_SIZE = 224
 
 # ── Constraint type enum (must match constraint_types.h) ────────────
 
@@ -185,246 +176,308 @@ def identity_matrix_flat():
 # ── Constraint serialization ───────────────────────────────────────
 
 def find_bone_index(bone_name, bone_names):
-    """Look up bone index by name. Returns 0xFFFFFFFF if not found."""
+    """Look up bone index by name. Returns -1 if not found."""
     try:
         return bone_names.index(bone_name)
     except ValueError:
-        return 0xFFFFFFFF
+        return -1
 
 
-def pack_constraint_def(con, bone_names):
+def _gather_control_points(con):
+    """Extract control points from a curve-target constraint as [[x,y,z], ...]."""
+    points = []
+    if con.target and con.target.type == 'CURVE':
+        spline = con.target.data.splines[0] if con.target.data.splines else None
+        if spline:
+            for pt in spline.points[:16]:
+                co = pt.co
+                points.append([co[0], co[1], co[2]])
+    return points
+
+
+def constraint_to_dict(con, bone_names):
     """
-    Pack a single Blender bone constraint into a 224-byte constraint_def_t.
-    
-    Layout:
-      [0:4]   type (uint32)
-      [4:8]   influence (float)
-      [8:12]  owner_space (uint32)
-      [12:16] target_space (uint32)
-      [16:20] target_bone_idx (uint32)
-      [20:224] params union (204 bytes)
-    """
-    buf = bytearray(CONSTRAINT_DEF_SIZE)
+    Convert a single Blender bone constraint into a JSON-serialisable dict.
 
-    con_type = CONSTRAINT_TYPE_MAP.get(con.type, None)
-    if con_type is None:
+    Returns None for unsupported constraint types.
+    """
+    if con.type not in CONSTRAINT_TYPE_MAP:
         return None  # Unsupported constraint type
 
-    # Header fields
-    struct.pack_into('<I', buf, 0, con_type)
-    struct.pack_into('<f', buf, 4, con.influence)
-    struct.pack_into('<I', buf, 8, SPACE_MAP.get(getattr(con, 'owner_space', 'WORLD'), 0))
-    struct.pack_into('<I', buf, 12, SPACE_MAP.get(getattr(con, 'target_space', 'WORLD'), 0))
-
     # Target bone index
-    target_bone_idx = 0xFFFFFFFF
+    target_bone_idx = -1
     if hasattr(con, 'subtarget') and con.subtarget:
         target_bone_idx = find_bone_index(con.subtarget, bone_names)
-    struct.pack_into('<I', buf, 16, target_bone_idx)
 
-    # Params union starts at offset 20
-    p = 20
+    params = {}
 
     if con.type == 'IK':
-        chain_length = con.chain_count if con.chain_count > 0 else 0
-        pole_idx = 0xFFFFFFFF
+        pole_idx = -1
         if con.pole_subtarget:
             pole_idx = find_bone_index(con.pole_subtarget, bone_names)
-        iterations = con.iterations
-        weight = con.weight if hasattr(con, 'weight') else 1.0
-        orient_weight = getattr(con, 'orient_weight', 0.0)
-        use_tail = getattr(con, 'use_tail', True)
-
-        struct.pack_into('<I', buf, p, chain_length)
-        struct.pack_into('<I', buf, p + 4, pole_idx)
-        struct.pack_into('<I', buf, p + 8, iterations)
-        struct.pack_into('<f', buf, p + 12, weight)
-        struct.pack_into('<f', buf, p + 16, orient_weight)
-        struct.pack_into('<B', buf, p + 20, 1 if use_tail else 0)
+        params = {
+            "chain_length": con.chain_count if con.chain_count > 0 else 0,
+            "pole_target": pole_idx,
+            "iterations": con.iterations,
+            "weight": con.weight if hasattr(con, 'weight') else 1.0,
+            "orient_weight": getattr(con, 'orient_weight', 0.0),
+            "use_tail": bool(getattr(con, 'use_tail', True)),
+        }
 
     elif con.type == 'SPLINE_IK':
-        chain_length = con.chain_count
-        struct.pack_into('<I', buf, p, chain_length)
-        # Control points from spline (if target is a curve)
-        cp_offset = p + 4
-        cp_count = 0
-        if con.target and con.target.type == 'CURVE':
-            spline = con.target.data.splines[0] if con.target.data.splines else None
-            if spline:
-                for i, pt in enumerate(spline.points[:16]):
-                    co = pt.co
-                    struct.pack_into('<fff', buf, cp_offset + i * 12,
-                                    co[0], co[1], co[2])
-                    cp_count += 1
-        struct.pack_into('<I', buf, cp_offset + 16 * 12, cp_count)
+        params = {
+            "chain_length": con.chain_count,
+            "control_points": _gather_control_points(con),
+        }
 
     elif con.type == 'CHILD_OF':
-        # Booleans for which channels to use
-        struct.pack_into('<B', buf, p + 0, 1 if con.use_location_x else 0)
-        struct.pack_into('<B', buf, p + 1, 1 if con.use_location_y else 0)
-        struct.pack_into('<B', buf, p + 2, 1 if con.use_location_z else 0)
-        struct.pack_into('<B', buf, p + 3, 1 if con.use_rotation_x else 0)
-        struct.pack_into('<B', buf, p + 4, 1 if con.use_rotation_y else 0)
-        struct.pack_into('<B', buf, p + 5, 1 if con.use_rotation_z else 0)
-        struct.pack_into('<B', buf, p + 6, 1 if con.use_scale_x else 0)
-        struct.pack_into('<B', buf, p + 7, 1 if con.use_scale_y else 0)
-        struct.pack_into('<B', buf, p + 8, 1 if con.use_scale_z else 0)
-        # inverse_matrix (mat4_t = 64 bytes, column-major)
         inv = blender_to_engine_matrix(con.inverse_matrix)
-        for i, v in enumerate(inv):
-            struct.pack_into('<f', buf, p + 12 + i * 4, v)
+        params = {
+            "use_location_x": bool(con.use_location_x),
+            "use_location_y": bool(con.use_location_y),
+            "use_location_z": bool(con.use_location_z),
+            "use_rotation_x": bool(con.use_rotation_x),
+            "use_rotation_y": bool(con.use_rotation_y),
+            "use_rotation_z": bool(con.use_rotation_z),
+            "use_scale_x": bool(con.use_scale_x),
+            "use_scale_y": bool(con.use_scale_y),
+            "use_scale_z": bool(con.use_scale_z),
+            "inverse_matrix": list(inv),
+        }
 
     elif con.type == 'COPY_TRANSFORMS':
-        mix = MIX_MODE_MAP.get(getattr(con, 'mix_mode', 'REPLACE'), 0)
-        struct.pack_into('<I', buf, p, mix)
+        params = {
+            "mix_mode": MIX_MODE_MAP.get(getattr(con, 'mix_mode', 'REPLACE'), 0),
+        }
 
     elif con.type == 'COPY_ROTATION':
-        mix = MIX_MODE_MAP.get(getattr(con, 'mix_mode', 'REPLACE'), 0)
-        struct.pack_into('<I', buf, p, mix)
-        struct.pack_into('<B', buf, p + 4, 1 if con.use_x else 0)
-        struct.pack_into('<B', buf, p + 5, 1 if con.use_y else 0)
-        struct.pack_into('<B', buf, p + 6, 1 if con.use_z else 0)
-        struct.pack_into('<B', buf, p + 7, 1 if con.invert_x else 0)
-        struct.pack_into('<B', buf, p + 8, 1 if con.invert_y else 0)
-        struct.pack_into('<B', buf, p + 9, 1 if con.invert_z else 0)
+        params = {
+            "mix_mode": MIX_MODE_MAP.get(getattr(con, 'mix_mode', 'REPLACE'), 0),
+            "use_x": bool(con.use_x),
+            "use_y": bool(con.use_y),
+            "use_z": bool(con.use_z),
+            "invert_x": bool(con.invert_x),
+            "invert_y": bool(con.invert_y),
+            "invert_z": bool(con.invert_z),
+        }
 
     elif con.type == 'COPY_LOCATION':
-        struct.pack_into('<B', buf, p + 0, 1 if con.use_x else 0)
-        struct.pack_into('<B', buf, p + 1, 1 if con.use_y else 0)
-        struct.pack_into('<B', buf, p + 2, 1 if con.use_z else 0)
-        struct.pack_into('<B', buf, p + 3, 1 if con.invert_x else 0)
-        struct.pack_into('<B', buf, p + 4, 1 if con.invert_y else 0)
-        struct.pack_into('<B', buf, p + 5, 1 if con.invert_z else 0)
-        struct.pack_into('<B', buf, p + 6, 1 if con.use_offset else 0)
+        params = {
+            "use_x": bool(con.use_x),
+            "use_y": bool(con.use_y),
+            "use_z": bool(con.use_z),
+            "invert_x": bool(con.invert_x),
+            "invert_y": bool(con.invert_y),
+            "invert_z": bool(con.invert_z),
+            "use_offset": bool(con.use_offset),
+        }
 
     elif con.type == 'COPY_SCALE':
-        struct.pack_into('<B', buf, p + 0, 1 if con.use_x else 0)
-        struct.pack_into('<B', buf, p + 1, 1 if con.use_y else 0)
-        struct.pack_into('<B', buf, p + 2, 1 if con.use_z else 0)
-        struct.pack_into('<f', buf, p + 4, getattr(con, 'power', 1.0))
-        struct.pack_into('<B', buf, p + 8, 1 if con.use_offset else 0)
+        params = {
+            "use_x": bool(con.use_x),
+            "use_y": bool(con.use_y),
+            "use_z": bool(con.use_z),
+            "power": getattr(con, 'power', 1.0),
+            "use_offset": bool(con.use_offset),
+        }
 
     elif con.type == 'DAMPED_TRACK':
-        axis = AXIS_MAP.get(con.track_axis, 1)
-        struct.pack_into('<I', buf, p, axis)
+        params = {
+            "track_axis": AXIS_MAP.get(con.track_axis, 1),
+        }
 
     elif con.type == 'TRACK_TO':
-        track = AXIS_MAP.get(con.track_axis, 1)
-        up = AXIS_MAP.get(con.up_axis, 2)
-        struct.pack_into('<I', buf, p, track)
-        struct.pack_into('<I', buf, p + 4, up)
+        params = {
+            "track_axis": AXIS_MAP.get(con.track_axis, 1),
+            "up_axis": AXIS_MAP.get(con.up_axis, 2),
+        }
 
     elif con.type == 'LOCKED_TRACK':
-        track = AXIS_MAP.get(con.track_axis, 1)
-        lock = AXIS_MAP.get(con.lock_axis, 2)
-        struct.pack_into('<I', buf, p, track)
-        struct.pack_into('<I', buf, p + 4, lock)
+        params = {
+            "track_axis": AXIS_MAP.get(con.track_axis, 1),
+            "lock_axis": AXIS_MAP.get(con.lock_axis, 2),
+        }
 
     elif con.type == 'LIMIT_ROTATION':
-        struct.pack_into('<f', buf, p + 0, con.min_x)
-        struct.pack_into('<f', buf, p + 4, con.max_x)
-        struct.pack_into('<f', buf, p + 8, con.min_y)
-        struct.pack_into('<f', buf, p + 12, con.max_y)
-        struct.pack_into('<f', buf, p + 16, con.min_z)
-        struct.pack_into('<f', buf, p + 20, con.max_z)
-        struct.pack_into('<B', buf, p + 24, 1 if con.use_limit_x else 0)
-        struct.pack_into('<B', buf, p + 25, 1 if con.use_limit_y else 0)
-        struct.pack_into('<B', buf, p + 26, 1 if con.use_limit_z else 0)
+        params = {
+            "min_x": con.min_x, "max_x": con.max_x,
+            "min_y": con.min_y, "max_y": con.max_y,
+            "min_z": con.min_z, "max_z": con.max_z,
+            "use_limit_x": bool(con.use_limit_x),
+            "use_limit_y": bool(con.use_limit_y),
+            "use_limit_z": bool(con.use_limit_z),
+        }
 
     elif con.type == 'LIMIT_LOCATION':
-        struct.pack_into('<f', buf, p + 0, con.min_x)
-        struct.pack_into('<f', buf, p + 4, con.max_x)
-        struct.pack_into('<f', buf, p + 8, con.min_y)
-        struct.pack_into('<f', buf, p + 12, con.max_y)
-        struct.pack_into('<f', buf, p + 16, con.min_z)
-        struct.pack_into('<f', buf, p + 20, con.max_z)
-        struct.pack_into('<B', buf, p + 24, 1 if con.use_min_x else 0)
-        struct.pack_into('<B', buf, p + 25, 1 if con.use_max_x else 0)
-        struct.pack_into('<B', buf, p + 26, 1 if con.use_min_y else 0)
-        struct.pack_into('<B', buf, p + 27, 1 if con.use_max_y else 0)
-        struct.pack_into('<B', buf, p + 28, 1 if con.use_min_z else 0)
-        struct.pack_into('<B', buf, p + 29, 1 if con.use_max_z else 0)
+        params = {
+            "min_x": con.min_x, "max_x": con.max_x,
+            "min_y": con.min_y, "max_y": con.max_y,
+            "min_z": con.min_z, "max_z": con.max_z,
+            "use_min_x": bool(con.use_min_x),
+            "use_max_x": bool(con.use_max_x),
+            "use_min_y": bool(con.use_min_y),
+            "use_max_y": bool(con.use_max_y),
+            "use_min_z": bool(con.use_min_z),
+            "use_max_z": bool(con.use_max_z),
+        }
 
     elif con.type == 'LIMIT_SCALE':
-        struct.pack_into('<f', buf, p + 0, con.min_x)
-        struct.pack_into('<f', buf, p + 4, con.max_x)
-        struct.pack_into('<f', buf, p + 8, con.min_y)
-        struct.pack_into('<f', buf, p + 12, con.max_y)
-        struct.pack_into('<f', buf, p + 16, con.min_z)
-        struct.pack_into('<f', buf, p + 20, con.max_z)
-        struct.pack_into('<B', buf, p + 24, 1 if con.use_min_x else 0)
-        struct.pack_into('<B', buf, p + 25, 1 if con.use_max_x else 0)
-        struct.pack_into('<B', buf, p + 26, 1 if con.use_min_y else 0)
-        struct.pack_into('<B', buf, p + 27, 1 if con.use_max_y else 0)
-        struct.pack_into('<B', buf, p + 28, 1 if con.use_min_z else 0)
-        struct.pack_into('<B', buf, p + 29, 1 if con.use_max_z else 0)
+        params = {
+            "min_x": con.min_x, "max_x": con.max_x,
+            "min_y": con.min_y, "max_y": con.max_y,
+            "min_z": con.min_z, "max_z": con.max_z,
+            "use_min_x": bool(con.use_min_x),
+            "use_max_x": bool(con.use_max_x),
+            "use_min_y": bool(con.use_min_y),
+            "use_max_y": bool(con.use_max_y),
+            "use_min_z": bool(con.use_min_z),
+            "use_max_z": bool(con.use_max_z),
+        }
 
     elif con.type == 'TRANSFORMATION':
-        from_ch = CHANNEL_MAP.get(getattr(con, 'map_from', 'LOCATION_X'), 0)
-        to_ch = CHANNEL_MAP.get(getattr(con, 'map_to', 'LOCATION_X'), 0)
-        struct.pack_into('<I', buf, p + 0, from_ch)
-        struct.pack_into('<I', buf, p + 4, to_ch)
-        struct.pack_into('<f', buf, p + 8, getattr(con, 'from_min_x', 0.0))
-        struct.pack_into('<f', buf, p + 12, getattr(con, 'from_max_x', 1.0))
-        struct.pack_into('<f', buf, p + 16, getattr(con, 'to_min_x', 0.0))
-        struct.pack_into('<f', buf, p + 20, getattr(con, 'to_max_x', 1.0))
-        struct.pack_into('<B', buf, p + 24,
-                         1 if getattr(con, 'use_motion_extrapolate', False) else 0)
+        params = {
+            "map_from": CHANNEL_MAP.get(getattr(con, 'map_from', 'LOCATION_X'), 0),
+            "map_to": CHANNEL_MAP.get(getattr(con, 'map_to', 'LOCATION_X'), 0),
+            "from_min_x": getattr(con, 'from_min_x', 0.0),
+            "from_max_x": getattr(con, 'from_max_x', 1.0),
+            "to_min_x": getattr(con, 'to_min_x', 0.0),
+            "to_max_x": getattr(con, 'to_max_x', 1.0),
+            "use_motion_extrapolate": bool(getattr(con, 'use_motion_extrapolate', False)),
+        }
 
     elif con.type == 'ACTION':
-        struct.pack_into('<I', buf, p + 0, 0)  # action_clip_idx (not mapped here)
-        # Try to map transform_channel
-        ch = CHANNEL_MAP.get(getattr(con, 'transform_channel', 'LOCATION_X'), 0)
-        struct.pack_into('<I', buf, p + 4, ch)
-        struct.pack_into('<f', buf, p + 8, getattr(con, 'min', 0.0))
-        struct.pack_into('<f', buf, p + 12, getattr(con, 'max', 1.0))
+        params = {
+            "action_clip_idx": 0,
+            "transform_channel": CHANNEL_MAP.get(
+                getattr(con, 'transform_channel', 'LOCATION_X'), 0),
+            "min": getattr(con, 'min', 0.0),
+            "max": getattr(con, 'max', 1.0),
+        }
 
     elif con.type == 'CLAMP_TO':
-        axis = AXIS_MAP.get(getattr(con, 'main_axis', 'X'), 0)
-        struct.pack_into('<I', buf, p, axis)
-        # Control points from target curve
-        cp_offset = p + 4
-        cp_count = 0
-        if con.target and con.target.type == 'CURVE':
-            spline = con.target.data.splines[0] if con.target.data.splines else None
-            if spline:
-                for i, pt in enumerate(spline.points[:16]):
-                    co = pt.co
-                    struct.pack_into('<fff', buf, cp_offset + i * 12,
-                                    co[0], co[1], co[2])
-                    cp_count += 1
-        struct.pack_into('<I', buf, cp_offset + 16 * 12, cp_count)
-        struct.pack_into('<B', buf, cp_offset + 16 * 12 + 4,
-                         1 if getattr(con, 'use_cyclic', False) else 0)
+        params = {
+            "main_axis": AXIS_MAP.get(getattr(con, 'main_axis', 'X'), 0),
+            "control_points": _gather_control_points(con),
+            "use_cyclic": bool(getattr(con, 'use_cyclic', False)),
+        }
 
     elif con.type == 'FLOOR':
-        struct.pack_into('<f', buf, p + 0, con.offset)
-        struct.pack_into('<B', buf, p + 4, 1 if con.use_rotation else 0)
-        floor_loc = FLOOR_LOCATION_MAP.get(con.floor_location, 0)
-        struct.pack_into('<I', buf, p + 8, floor_loc)
+        params = {
+            "offset": con.offset,
+            "use_rotation": bool(con.use_rotation),
+            "floor_location": FLOOR_LOCATION_MAP.get(con.floor_location, 0),
+        }
 
     elif con.type == 'MAINTAIN_VOLUME':
-        axis = AXIS_MAP.get(con.free_axis, 1)
-        struct.pack_into('<I', buf, p + 0, axis)
-        struct.pack_into('<f', buf, p + 4, con.volume if hasattr(con, 'volume') else 1.0)
+        params = {
+            "free_axis": AXIS_MAP.get(con.free_axis, 1),
+            "volume": con.volume if hasattr(con, 'volume') else 1.0,
+        }
 
     elif con.type == 'SHRINKWRAP':
-        mode = SHRINKWRAP_MAP.get(getattr(con, 'shrinkwrap_type', 'NEAREST_SURFACEPOINT'), 0)
-        struct.pack_into('<I', buf, p + 0, mode)
-        struct.pack_into('<f', buf, p + 4, con.distance)
+        params = {
+            "shrinkwrap_type": SHRINKWRAP_MAP.get(
+                getattr(con, 'shrinkwrap_type', 'NEAREST_SURFACEPOINT'), 0),
+            "distance": con.distance,
+        }
 
     elif con.type == 'PIVOT':
         offset = getattr(con, 'offset', (0, 0, 0))
-        struct.pack_into('<f', buf, p + 0, offset[0])
-        struct.pack_into('<f', buf, p + 4, offset[1])
-        struct.pack_into('<f', buf, p + 8, offset[2])
-        struct.pack_into('<f', buf, p + 12,
-                         getattr(con, 'rotation_range', 0.0))
+        params = {
+            "offset": [offset[0], offset[1], offset[2]],
+            "rotation_range": getattr(con, 'rotation_range', 0.0),
+        }
 
-    return bytes(buf)
+    return {
+        "type": con.type,
+        "influence": con.influence,
+        "owner_space": getattr(con, 'owner_space', 'WORLD'),
+        "target_space": getattr(con, 'target_space', 'WORLD'),
+        "target_bone": target_bone_idx,
+        "params": params,
+    }
 
 
 # ── Collision hull helpers ──────────────────────────────────────────
+
+def _compute_convex_hull(verts_flat):
+    """
+    Given a flat list [x0,y0,z0, x1,y1,z1, ...] of vertex positions,
+    compute the convex hull and return only the hull vertices as a
+    flat list.  Uses numpy for efficiency.  Falls back to returning
+    the input (clamped to 8192 points) if numpy is unavailable or
+    the point set is degenerate.
+    """
+    n = len(verts_flat) // 3
+    if n < 4:
+        return verts_flat
+
+    try:
+        import numpy as np
+        pts = np.array(verts_flat, dtype=np.float64).reshape(-1, 3)
+
+        # Iterative convex hull via extremal vertex selection:
+        # For each of ~42 uniformly distributed directions, keep the
+        # vertex with the maximum projection.  This gives a tight
+        # subset of hull vertices that is sufficient for physics.
+        # 42 directions = 6 axis-aligned + 8 cube corners + 12 edge
+        # midpoints + 16 extra spread directions.
+        dirs = []
+        # 6 axis-aligned
+        for ax in range(3):
+            for sign in (-1.0, 1.0):
+                d = [0.0, 0.0, 0.0]
+                d[ax] = sign
+                dirs.append(d)
+        # 8 cube corners
+        for sx in (-1.0, 1.0):
+            for sy in (-1.0, 1.0):
+                for sz in (-1.0, 1.0):
+                    norm = (3.0) ** 0.5
+                    dirs.append([sx / norm, sy / norm, sz / norm])
+        # 12 edge midpoints
+        for i in range(3):
+            for j in range(i + 1, 3):
+                for si in (-1.0, 1.0):
+                    for sj in (-1.0, 1.0):
+                        d = [0.0, 0.0, 0.0]
+                        d[i] = si
+                        d[j] = sj
+                        norm = 2.0 ** 0.5
+                        d = [x / norm for x in d]
+                        dirs.append(d)
+
+        dirs_np = np.array(dirs, dtype=np.float64)  # (K, 3)
+        # Project all points onto all directions: (N, 3) @ (3, K) = (N, K)
+        projections = pts @ dirs_np.T
+        # For each direction, find the vertex with max projection
+        hull_indices = set()
+        for k in range(projections.shape[1]):
+            hull_indices.add(int(np.argmax(projections[:, k])))
+
+        # If we got very few unique vertices, try scipy as backup
+        if len(hull_indices) < 4:
+            return verts_flat[:8192 * 3] if n > 8192 else verts_flat
+
+        # Also try scipy ConvexHull if available and point count is manageable
+        if n <= 50000:
+            try:
+                from scipy.spatial import ConvexHull
+                ch = ConvexHull(pts)
+                hull_indices = set(ch.vertices.tolist())
+            except Exception:
+                pass  # stick with extremal directions
+
+        hull_pts = pts[sorted(hull_indices)]
+        result = hull_pts.flatten().tolist()
+        return result
+
+    except ImportError:
+        # No numpy: just return clamped input
+        if n > 8192:
+            return verts_flat[:8192 * 3]
+        return verts_flat
+
 
 def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
     """
@@ -491,8 +544,7 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
 
     # Gather constraints per bone from pose bones
     pose_bones = obj.pose.bones
-    max_constraints = 0
-    bone_constraints = []  # List of lists of constraint bytes
+    bone_constraints = []  # List of lists of constraint dicts
 
     for bone in bone_list:
         pb = pose_bones.get(bone.name)
@@ -500,16 +552,10 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
         if pb:
             for c in pb.constraints:
                 if not c.mute:  # Skip muted constraints
-                    packed = pack_constraint_def(c, bone_names)
-                    if packed is not None:
-                        cons.append(packed)
+                    cons_dict = constraint_to_dict(c, bone_names)
+                    if cons_dict is not None:
+                        cons.append(cons_dict)
         bone_constraints.append(cons)
-        if len(cons) > max_constraints:
-            max_constraints = len(cons)
-
-    # Ensure at least 1 for the constraint array allocation
-    if max_constraints == 0:
-        max_constraints = 1
 
     # Compute inverse bind matrices if requested
     ibms = []
@@ -522,227 +568,196 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
 
     ibm_count = len(ibms)
 
-    # ── Write binary file ───────────────────────────────────────
+    # ── Collider shape name mapping ─────────────────────────────────
+    SHAPE_NAMES = {0: "none", 1: "capsule", 2: "box", 3: "sphere", 4: "convex_hull"}
 
-    with open(filepath, 'wb') as f:
-        # Header: magic, version, joint_count, max_constraints, ibm_count
-        f.write(struct.pack('<IIIII',
-                            FSKEL_MAGIC, FSKEL_VERSION,
-                            joint_count, max_constraints, ibm_count))
+    # ── Build JSON data structure ───────────────────────────────────
 
-        # Joint names (64 bytes each, null-padded)
-        for name in bone_names:
-            encoded = name.encode('utf-8')[:SKELETON_JOINT_NAME_MAX - 1]
-            padded = encoded + b'\x00' * (SKELETON_JOINT_NAME_MAX - len(encoded))
-            f.write(padded)
+    hull_vertices = []  # Flat list of floats (x, y, z triples)
+    joints = []
 
-        # Parent indices (uint32 each, UINT32_MAX for roots)
-        for bone in bone_list:
-            if bone.parent:
-                idx = find_bone_index(bone.parent.name, bone_names)
-            else:
-                idx = 0xFFFFFFFF
-            f.write(struct.pack('<I', idx))
+    for bone_idx, bone in enumerate(bone_list):
+        pb = pose_bones.get(bone.name)
 
-        # Rest local transforms (mat4, 64 bytes each)
-        for bone in bone_list:
-            if bone.parent:
-                local = bone.parent.matrix_local.inverted_safe() @ bone.matrix_local
-            else:
-                local = bone.matrix_local
-            flat = blender_to_engine_matrix(local)
-            f.write(struct.pack('<16f', *flat))
+        # Parent index
+        if bone.parent:
+            parent_idx = find_bone_index(bone.parent.name, bone_names)
+        else:
+            parent_idx = -1
 
-        # Rest world transforms (mat4, 64 bytes each)
-        for bone in bone_list:
-            flat = blender_to_engine_matrix(bone.matrix_local)
-            f.write(struct.pack('<16f', *flat))
+        # Rest local transform
+        if bone.parent:
+            local = bone.parent.matrix_local.inverted_safe() @ bone.matrix_local
+        else:
+            local = bone.matrix_local
+        rest_local = list(blender_to_engine_matrix(local))
 
-        # Constraint counts (uint32 each)
-        for cons in bone_constraints:
-            f.write(struct.pack('<I', len(cons)))
+        # Rest world transform
+        rest_world = list(blender_to_engine_matrix(bone.matrix_local))
 
-        # Constraints (flat: joint_count × max_constraints × 224 bytes)
-        for cons in bone_constraints:
-            for c_bytes in cons:
-                f.write(c_bytes)
-            # Pad remaining slots with zeros
-            remaining = max_constraints - len(cons)
-            f.write(b'\x00' * (remaining * CONSTRAINT_DEF_SIZE))
+        # Collider descriptor
+        shape_type = 0  # NONE
+        params = [0.0] * 6
+        ccd_enabled = False
+        is_kinematic = False
+        mass = 0.0
+        hull_offset = 0
+        hull_count = 0
+        collision_group = 0
 
-        # Inverse bind matrices (mat4, 64 bytes each)
-        for ibm in ibms:
-            f.write(struct.pack('<16f', *ibm))
+        if pb:
+            shape_type = int(pb.talarium_collision_shape)
+            ccd_enabled = bool(pb.talarium_ccd)
+            is_kinematic = bool(pb.talarium_kinematic)
+            mass = pb.talarium_mass
+            collision_group = pb.talarium_collision_group
+            explicit_shape = shape_type
 
-        # --- v2 COLL chunk: per-bone collision descriptors ---
-        # Gather hull vertex data across all bones.
-        hull_vertices = []  # Flat list of (x, y, z) floats
-        bone_collider_descs = []
+            if shape_type == 1:  # Capsule (explicit)
+                params[0] = pb.talarium_capsule_radius
+                params[1] = pb.talarium_capsule_height
+                params[2] = float({'X': 0, 'Y': 1, 'Z': 2}.get(
+                    pb.talarium_capsule_axis, 1))
+            elif shape_type == 2:  # Box
+                params[0] = pb.talarium_box_hx
+                params[1] = pb.talarium_box_hy
+                params[2] = pb.talarium_box_hz
+            elif shape_type == 3:  # Sphere
+                params[0] = pb.talarium_sphere_radius
+            elif shape_type == 4:  # Convex hull
+                hull_offset = len(hull_vertices) // 3
+                vg_name = pb.talarium_hull_vgroup
+                raw_verts = _gather_hull_vertices(obj, bone.name, vg_name)
+                hull_verts = _compute_convex_hull(raw_verts)
+                hull_count = len(hull_verts) // 3
+                hull_vertices.extend(hull_verts)
+            elif explicit_shape == 0 and default_collision == 'ENVELOPE':
+                # Auto-generate capsule from bone envelope.
+                bone_len = bone.length
+                if bone_len > 1e-6:
+                    avg_radius = (bone.head_radius + bone.tail_radius) * 0.5
+                    if avg_radius < 1e-6:
+                        avg_radius = bone_len * 0.1
+                    shape_type = 1  # Capsule
+                    params[0] = avg_radius
+                    params[1] = bone_len
+                    params[2] = 1.0
 
-        for bone in bone_list:
-            pb = pose_bones.get(bone.name)
+        collider = {
+            "shape": SHAPE_NAMES.get(shape_type, "none"),
+            "params": params,
+            "ccd": ccd_enabled,
+            "kinematic": is_kinematic,
+            "mass": mass,
+            "hull_offset": hull_offset,
+            "hull_count": hull_count,
+            "collision_group": collision_group,
+        }
 
-            shape_type = 0  # NONE
-            params = [0.0] * 6
-            ccd_enabled = 0
-            is_kinematic = 0
-            mass = 0.0
-            hull_offset = 0
-            hull_count = 0
-            collision_group = 0
+        # Joint descriptor
+        jt = 0
+        axis = [0.0, 1.0, 0.0]
+        rest_len = 0.0
+        lim_min = [0.0, 0.0, 0.0]
+        lim_max = [0.0, 0.0, 0.0]
+        lim_axes = 0
 
-            if pb:
-                shape_type = int(pb.talarium_collision_shape)
-                ccd_enabled = 1 if pb.talarium_ccd else 0
-                is_kinematic = 1 if pb.talarium_kinematic else 0
-                mass = pb.talarium_mass
-                collision_group = pb.talarium_collision_group
-                explicit_shape = shape_type  # Original user-set value.
+        if pb and bone.parent:
+            jt = int(pb.talarium_joint_type)
 
-                if shape_type == 1:  # Capsule (explicit)
-                    params[0] = pb.talarium_capsule_radius
-                    params[1] = pb.talarium_capsule_height
-                    params[2] = float({'X': 0, 'Y': 1, 'Z': 2}.get(
-                        pb.talarium_capsule_axis, 1))
-                elif shape_type == 2:  # Box
-                    params[0] = pb.talarium_box_hx
-                    params[1] = pb.talarium_box_hy
-                    params[2] = pb.talarium_box_hz
-                elif shape_type == 3:  # Sphere
-                    params[0] = pb.talarium_sphere_radius
-                elif shape_type == 4:  # Convex hull
-                    hull_offset = len(hull_vertices) // 3
-                    vg_name = pb.talarium_hull_vgroup
-                    hull_verts = _gather_hull_vertices(
-                        obj, bone.name, vg_name)
-                    hull_count = len(hull_verts)
-                    hull_vertices.extend(hull_verts)
-                elif explicit_shape == 0 and default_collision == 'ENVELOPE':
-                    # Auto-generate capsule from bone envelope.
-                    bone_len = bone.length
-                    if bone_len > 1e-6:
-                        avg_radius = (bone.head_radius + bone.tail_radius) * 0.5
-                        if avg_radius < 1e-6:
-                            avg_radius = bone_len * 0.1
-                        shape_type = 1  # Capsule
-                        params[0] = avg_radius
-                        params[1] = bone_len
-                        # Blender bone Y axis → engine Y axis after coord
-                        # conversion.  Capsule axis enum: 0=X, 1=Y, 2=Z.
-                        params[2] = 1.0
+            if jt in (2, 8):  # Hinge or Aim: use axis
+                axis_str = pb.talarium_joint_axis
+                axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
+                        'Z': [0, 0, 1]}.get(axis_str, [0, 1, 0])
+                # Convert axis from Blender Z-up to engine Y-up
+                bx, by, bz = axis
+                axis = [bx, bz, -by]
 
-            # sizeof(bone_collider_desc_t) = 4 + 24 + 4 + 4 + 4 + 4 + 4 + 4 = 52
-            desc = struct.pack('<I6fIIfIII',
-                               shape_type,
-                               params[0], params[1], params[2],
-                               params[3], params[4], params[5],
-                               ccd_enabled, is_kinematic, mass,
-                               hull_offset, hull_count, collision_group)
-            bone_collider_descs.append(desc)
+            if jt == 2:  # Hinge: scalar limits in slot [0]
+                lim_min[0] = pb.talarium_joint_limit_min
+                lim_max[0] = pb.talarium_joint_limit_max
+                if lim_min[0] != 0.0 or lim_max[0] != 0.0:
+                    lim_axes = 1
 
-        hull_vertex_count = len(hull_vertices) // 3
-        f.write(struct.pack('<I', hull_vertex_count))
+            elif jt == 3:  # Distance
+                rest_len = pb.talarium_joint_rest_length
 
-        for desc in bone_collider_descs:
-            f.write(desc)
+            elif jt == 6:  # Limit rotation: per-axis angle limits
+                bl_min_x = pb.talarium_joint_limit_min_x
+                bl_max_x = pb.talarium_joint_limit_max_x
+                bl_min_y = pb.talarium_joint_limit_min_y
+                bl_max_y = pb.talarium_joint_limit_max_y
+                bl_min_z = pb.talarium_joint_limit_min_z
+                bl_max_z = pb.talarium_joint_limit_max_z
+                bl_use_x = pb.talarium_joint_use_limit_x
+                bl_use_y = pb.talarium_joint_use_limit_y
+                bl_use_z = pb.talarium_joint_use_limit_z
+                # Coordinate conversion: Blender Z-up → engine Y-up
+                lim_min[0] = bl_min_x
+                lim_max[0] = bl_max_x
+                lim_min[1] = bl_min_z
+                lim_max[1] = bl_max_z
+                lim_min[2] = -bl_max_y
+                lim_max[2] = -bl_min_y
+                lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
 
-        # Hull vertex data (float x,y,z triples)
-        for i in range(0, len(hull_vertices), 3):
-            f.write(struct.pack('<fff',
-                                hull_vertices[i],
-                                hull_vertices[i + 1],
-                                hull_vertices[i + 2]))
+            elif jt == 7:  # Limit position: per-axis position limits
+                bl_min_x = pb.talarium_joint_limit_min_x
+                bl_max_x = pb.talarium_joint_limit_max_x
+                bl_min_y = pb.talarium_joint_limit_min_y
+                bl_max_y = pb.talarium_joint_limit_max_y
+                bl_min_z = pb.talarium_joint_limit_min_z
+                bl_max_z = pb.talarium_joint_limit_max_z
+                bl_use_x = pb.talarium_joint_use_limit_x
+                bl_use_y = pb.talarium_joint_use_limit_y
+                bl_use_z = pb.talarium_joint_use_limit_z
+                lim_min[0] = bl_min_x
+                lim_max[0] = bl_max_x
+                lim_min[1] = bl_min_z
+                lim_max[1] = bl_max_z
+                lim_min[2] = -bl_max_y
+                lim_max[2] = -bl_min_y
+                lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
 
-        # --- v3 JNTS chunk: per-bone joint descriptors ---
-        # sizeof(bone_joint_desc_t) = 4 + 12 + 4 + 12 + 12 + 4 = 48 bytes
-        # joint_type(I) axis(3f) rest_length(f) limit_min(3f) limit_max(3f) limit_axes(I)
-        for bone in bone_list:
-            pb = pose_bones.get(bone.name)
+        joint_desc = {
+            "type": jt,
+            "axis": axis,
+            "rest_length": rest_len,
+            "limit_min": lim_min,
+            "limit_max": lim_max,
+            "limit_axes": lim_axes,
+        }
 
-            jt = 0  # NONE
-            axis = [0.0, 1.0, 0.0]
-            rest_len = 0.0
-            lim_min = [0.0, 0.0, 0.0]
-            lim_max = [0.0, 0.0, 0.0]
-            lim_axes = 0
+        joints.append({
+            "name": bone.name,
+            "parent": parent_idx,
+            "rest_local": rest_local,
+            "rest_world": rest_world,
+            "constraints": bone_constraints[bone_idx],
+            "collider": collider,
+            "joint_desc": joint_desc,
+        })
 
-            if pb and bone.parent:
-                jt = int(pb.talarium_joint_type)
+    data = {
+        "version": 5,
+        "joints": joints,
+        "ibms": [list(ibm) for ibm in ibms],
+        "hull_vertices": hull_vertices,
+    }
 
-                if jt in (2, 8):  # Hinge or Aim: use axis
-                    axis_str = pb.talarium_joint_axis
-                    axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
-                            'Z': [0, 0, 1]}.get(axis_str, [0, 1, 0])
-                    # Convert axis from Blender Z-up to engine Y-up
-                    bx, by, bz = axis
-                    axis = [bx, bz, -by]
+    # ── Write JSON file ─────────────────────────────────────────
 
-                if jt == 2:  # Hinge: scalar limits in slot [0]
-                    lim_min[0] = pb.talarium_joint_limit_min
-                    lim_max[0] = pb.talarium_joint_limit_max
-                    if lim_min[0] != 0.0 or lim_max[0] != 0.0:
-                        lim_axes = 1
-
-                elif jt == 3:  # Distance
-                    rest_len = pb.talarium_joint_rest_length
-
-                elif jt == 6:  # Limit rotation: per-axis angle limits
-                    # Read Blender-space per-axis limits
-                    bl_min_x = pb.talarium_joint_limit_min_x
-                    bl_max_x = pb.talarium_joint_limit_max_x
-                    bl_min_y = pb.talarium_joint_limit_min_y
-                    bl_max_y = pb.talarium_joint_limit_max_y
-                    bl_min_z = pb.talarium_joint_limit_min_z
-                    bl_max_z = pb.talarium_joint_limit_max_z
-                    bl_use_x = pb.talarium_joint_use_limit_x
-                    bl_use_y = pb.talarium_joint_use_limit_y
-                    bl_use_z = pb.talarium_joint_use_limit_z
-                    # Coordinate conversion: Blender Z-up → engine Y-up
-                    # Blender X → engine X, Blender Z → engine Y,
-                    # Blender Y → engine -Z (negate + swap min/max)
-                    lim_min[0] = bl_min_x
-                    lim_max[0] = bl_max_x
-                    lim_min[1] = bl_min_z
-                    lim_max[1] = bl_max_z
-                    lim_min[2] = -bl_max_y
-                    lim_max[2] = -bl_min_y
-                    lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
-
-                elif jt == 7:  # Limit position: per-axis position limits
-                    bl_min_x = pb.talarium_joint_limit_min_x
-                    bl_max_x = pb.talarium_joint_limit_max_x
-                    bl_min_y = pb.talarium_joint_limit_min_y
-                    bl_max_y = pb.talarium_joint_limit_max_y
-                    bl_min_z = pb.talarium_joint_limit_min_z
-                    bl_max_z = pb.talarium_joint_limit_max_z
-                    bl_use_x = pb.talarium_joint_use_limit_x
-                    bl_use_y = pb.talarium_joint_use_limit_y
-                    bl_use_z = pb.talarium_joint_use_limit_z
-                    # Same coordinate conversion as rotation limits
-                    lim_min[0] = bl_min_x
-                    lim_max[0] = bl_max_x
-                    lim_min[1] = bl_min_z
-                    lim_max[1] = bl_max_z
-                    lim_min[2] = -bl_max_y
-                    lim_max[2] = -bl_min_y
-                    lim_axes = (bl_use_x) | (bl_use_z << 1) | (bl_use_y << 2)
-
-            f.write(struct.pack('<I3ff3f3fI', jt,
-                                axis[0], axis[1], axis[2],
-                                rest_len,
-                                lim_min[0], lim_min[1], lim_min[2],
-                                lim_max[0], lim_max[1], lim_max[2],
-                                lim_axes))
+    with open(filepath, 'w') as f:
+        json.dump(data, f, indent=1)
 
     # Summary
     total_constraints = sum(len(c) for c in bone_constraints)
-    total_colliders = sum(1 for d in bone_collider_descs
-                          if struct.unpack_from('<I', d, 0)[0] != 0)
+    total_colliders = sum(1 for j in joints if j["collider"]["shape"] != "none")
+    hull_vertex_count = len(hull_vertices) // 3
     print(f"Exported {filepath}:")
     print(f"  {joint_count} joints, {total_constraints} constraints, "
           f"{ibm_count} IBMs, {total_colliders} colliders, "
           f"{hull_vertex_count} hull vertices")
-    print(f"  max_constraints_per_joint = {max_constraints}")
 
     return {'FINISHED'}
 
