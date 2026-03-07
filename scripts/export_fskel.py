@@ -759,6 +759,10 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "limit_min": lim_min,
             "limit_max": lim_max,
             "limit_axes": lim_axes,
+            "compliance": pb.talarium_joint_compliance,
+            "damping": pb.talarium_joint_damping,
+            "yield_strength": pb.talarium_joint_yield_strength,
+            "break_strength": pb.talarium_joint_break_strength,
         }
 
         joints.append({
@@ -1003,6 +1007,33 @@ _BONE_PROPS = {
         name="Use Y", default=False),
     "talarium_joint_use_limit_z": BoolProperty(
         name="Use Z", default=False),
+
+    # Joint physical properties (all joint types)
+    "talarium_joint_compliance": FloatProperty(
+        name="Compliance",
+        description="XPBD compliance (α); 0 = perfectly stiff, "
+                    "higher = softer joint",
+        default=0.0, min=0.0, soft_max=1.0,
+    ),
+    "talarium_joint_damping": FloatProperty(
+        name="Damping",
+        description="Viscous damping coefficient; opposes relative "
+                    "velocity at the joint.  0 = no damping",
+        default=0.0, min=0.0, soft_max=10.0,
+    ),
+    "talarium_joint_yield_strength": FloatProperty(
+        name="Yield Strength",
+        description="Impulse threshold above which the joint "
+                    "permanently deforms (rest config shifts).  "
+                    "0 = no yield",
+        default=0.0, min=0.0, soft_max=1000.0,
+    ),
+    "talarium_joint_break_strength": FloatProperty(
+        name="Break Strength",
+        description="Impulse threshold above which the joint is "
+                    "removed from the simulation.  0 = unbreakable",
+        default=0.0, min=0.0, soft_max=10000.0,
+    ),
 }
 
 
@@ -1257,6 +1288,15 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 row.prop(pb, "talarium_joint_use_limit_z", text="Z")
                 row.prop(pb, "talarium_joint_limit_min_z", text="Min")
                 row.prop(pb, "talarium_joint_limit_max_z", text="Max")
+
+            # Physical properties (shown for all joint types except None)
+            if jt != '0':
+                box.separator()
+                box.label(text="Physical Properties")
+                box.prop(pb, "talarium_joint_compliance")
+                box.prop(pb, "talarium_joint_damping")
+                box.prop(pb, "talarium_joint_yield_strength")
+                box.prop(pb, "talarium_joint_break_strength")
 
 
 # ── Collision wireframe overlay ───────────────────────────────────
