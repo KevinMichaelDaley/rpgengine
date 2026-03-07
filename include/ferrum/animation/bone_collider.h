@@ -55,9 +55,12 @@ typedef struct bone_collider_desc {
                               *   Ignored if is_kinematic. */
     uint32_t hull_offset;    /**< Vertex index into hull_vertices (shape_type=4 only). */
     uint32_t hull_count;     /**< Vertex count for convex hull (shape_type=4 only). */
-    uint32_t collision_group; /**< Collision group index.  Bodies in the same
-                               *   non-zero group skip collision with each other.
-                               *   0 = default (no group filtering).
+    uint32_t collision_group; /**< Collision group index.  Bodies sharing the
+                               *   same group never collide with each other.
+                               *   Group 0 is treated as "ungrouped" — bodies
+                               *   in group 0 are NOT excluded from each other.
+                               *   Assign overlapping bones (e.g. abdomen,
+                               *   pelvis) to the same nonzero group.
                                *   Exported from fskel v4+ COLL chunk. */
 } bone_collider_desc_t;
 

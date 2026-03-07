@@ -435,6 +435,19 @@ bool fskel_load(const char *path,
         jmat4_(json_object_get(j, "rest_local"), &out_skel->rest_local[i]);
         jmat4_(json_object_get(j, "rest_world"), &out_skel->rest_world[i]);
 
+        /* Bone tail position (armature/engine space). */
+        const json_value_t *tp = json_object_get(j, "tail_pos");
+        if (tp && tp->type == JSON_ARRAY && tp->array.count >= 3) {
+            if (!out_skel->tail_positions) {
+                out_skel->tail_positions = (float *)calloc(
+                    (size_t)joint_count * 3, sizeof(float));
+                if (!out_skel->tail_positions) goto fail_skel;
+            }
+            out_skel->tail_positions[i * 3 + 0] = jfloat_(&tp->array.items[0], 0.0f);
+            out_skel->tail_positions[i * 3 + 1] = jfloat_(&tp->array.items[1], 0.0f);
+            out_skel->tail_positions[i * 3 + 2] = jfloat_(&tp->array.items[2], 0.0f);
+        }
+
         /* Constraints. */
         const json_value_t *cons = json_object_get(j, "constraints");
         uint32_t nc = 0;
@@ -516,7 +529,10 @@ bool fskel_load(const char *path,
                 bd->limit_max[2] = jfloat_(&lmax->array.items[2], 0.0f);
             }
             bd->limit_axes = juint_(json_object_get(jd, "limit_axes"), 0);
-            bd->compliance = jfloat_(json_object_get(jd, "compliance"), 0.0f);
+            /* Stiffness → compliance conversion: compliance = 1/stiffness.
+             * Stiffness 0 means perfectly rigid (compliance = 0). */
+            float stiffness = jfloat_(json_object_get(jd, "stiffness"), 0.0f);
+            bd->compliance = (stiffness > 0.0f) ? (1.0f / stiffness) : 0.0f;
             bd->damping = jfloat_(json_object_get(jd, "damping"), 0.0f);
             bd->yield_strength = jfloat_(
                 json_object_get(jd, "yield_strength"), 0.0f);

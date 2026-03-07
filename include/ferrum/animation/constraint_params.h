@@ -262,6 +262,11 @@ typedef struct skeleton_def {
      * NULL if the file is v1 or no joint data was provided.
      * Auto-generated as ball joints from hierarchy when NULL. */
     bone_joint_desc_t *joints;          /**< One per joint, or NULL. */
+
+    /* Per-bone tail positions in armature (engine) space.
+     * 3 floats (x,y,z) per joint.  Used to compute body midpoints
+     * so joint anchors have non-zero offsets on both sides. */
+    float *tail_positions;              /**< 3 * joint_count floats, or NULL. */
 } skeleton_def_t;
 
 /**

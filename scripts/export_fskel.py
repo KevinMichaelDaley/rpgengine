@@ -494,12 +494,15 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
     if not vgroup_name:
         return verts
 
-    # Get rest-pose bone world matrix for world → bone-local transform
+    # Get rest-pose bone world matrix for world → bone-local transform.
+    # Body is at bone midpoint, so offset vertices by half bone length
+    # along the bone Y axis (head→tail direction in Blender bone-local).
     bone = armature_obj.data.bones.get(bone_name)
     if bone is None:
         return verts
     rest_world = armature_obj.matrix_world @ bone.matrix_local
     rest_world_inv = rest_world.inverted_safe()
+    half_len = bone.length * 0.5
 
     # Search child meshes for vertex group
     for child in armature_obj.children:
@@ -513,9 +516,11 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
         for v in mesh.vertices:
             for g in v.groups:
                 if g.group == vg_idx and g.weight > 0.5:
-                    # Mesh local → world → bone-local
+                    # Mesh local → world → bone-local (head origin)
                     world_co = child.matrix_world @ v.co
                     local_co = rest_world_inv @ world_co
+                    # Shift from head-origin to midpoint-origin
+                    local_co.y -= half_len
                     # Blender bone-local Z-up → engine Y-up: (x,y,z) → (x,z,-y)
                     verts.extend([local_co.x, local_co.z, -local_co.y])
                     break
@@ -608,6 +613,11 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
 
         # Rest world transform
         rest_world = list(blender_to_engine_matrix(bone.matrix_local))
+
+        # Bone tail position in armature space (engine coords).
+        # bone.tail_local is (x,y,z) in Blender Z-up → (x,z,-y) engine.
+        bt = bone.tail_local
+        tail_pos = [bt[0], bt[2], -bt[1]]
 
         # Collider descriptor
         shape_type = 0  # NONE
@@ -759,7 +769,7 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "limit_min": lim_min,
             "limit_max": lim_max,
             "limit_axes": lim_axes,
-            "compliance": pb.talarium_joint_compliance,
+            "stiffness": pb.talarium_joint_stiffness,
             "damping": pb.talarium_joint_damping,
             "yield_strength": pb.talarium_joint_yield_strength,
             "break_strength": pb.talarium_joint_break_strength,
@@ -770,6 +780,7 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "parent": parent_idx,
             "rest_local": rest_local,
             "rest_world": rest_world,
+            "tail_pos": tail_pos,
             "constraints": bone_constraints[bone_idx],
             "collider": collider,
             "joint_desc": joint_desc,
@@ -941,8 +952,10 @@ _BONE_PROPS = {
     # Collision group
     "talarium_collision_group": IntProperty(
         name="Collision Group",
-        description="Bones in the same non-zero group skip collision "
-                    "with each other.  0 = no group filtering (default)",
+        description="Bones sharing the same nonzero group never collide. "
+                    "Group 0 = ungrouped (no exclusion). "
+                    "Assign overlapping bones (e.g. abdomen, pelvis) "
+                    "to the same nonzero group",
         default=0,
         min=0,
         soft_max=16,
@@ -1009,11 +1022,12 @@ _BONE_PROPS = {
         name="Use Z", default=False),
 
     # Joint physical properties (all joint types)
-    "talarium_joint_compliance": FloatProperty(
-        name="Compliance",
-        description="XPBD compliance (α); 0 = perfectly stiff, "
-                    "higher = softer joint",
-        default=0.0, min=0.0, soft_max=1.0,
+    "talarium_joint_stiffness": FloatProperty(
+        name="Stiffness",
+        description="Joint spring stiffness (N·m/rad for angular, N/m for linear). "
+                    "0 = rigid constraint (default). "
+                    "Nonzero enables soft compliance: low = elastic, high = stiff",
+        default=0.0, min=0.0, soft_max=10000.0,
     ),
     "talarium_joint_damping": FloatProperty(
         name="Damping",
@@ -1293,7 +1307,7 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
             if jt != '0':
                 box.separator()
                 box.label(text="Physical Properties")
-                box.prop(pb, "talarium_joint_compliance")
+                box.prop(pb, "talarium_joint_stiffness")
                 box.prop(pb, "talarium_joint_damping")
                 box.prop(pb, "talarium_joint_yield_strength")
                 box.prop(pb, "talarium_joint_break_strength")
@@ -1441,8 +1455,9 @@ def _convex_hull_wire(armature_obj, bone_name, vgroup_name, bone_matrix):
     rest_world = armature_obj.matrix_world @ bone.matrix_local
     rest_world_inv = rest_world.inverted_safe()
 
-    # Collect vertices in bone-local space
+    # Collect vertices in bone-local space (shifted to midpoint-origin)
     hull_verts_local = []
+    half_len = bone.length * 0.5
     for child in armature_obj.children:
         if child.type != 'MESH':
             continue
@@ -1454,9 +1469,11 @@ def _convex_hull_wire(armature_obj, bone_name, vgroup_name, bone_matrix):
         for v in mesh.vertices:
             for g in v.groups:
                 if g.group == vg_idx and g.weight > 0.5:
-                    # Mesh vertex → world → bone-local
+                    # Mesh vertex → world → bone-local (head origin)
                     world_co = child.matrix_world @ v.co
                     local_co = rest_world_inv @ world_co
+                    # Shift from head-origin to midpoint-origin
+                    local_co.y -= half_len
                     hull_verts_local.append(local_co)
                     break
 
@@ -1504,8 +1521,12 @@ def _draw_collision_overlay():
             continue
 
         bone = pb.bone
-        # Pose-space bone matrix (world-space = armature world × pose matrix)
+        # Body is at bone midpoint: shift along bone Y by half length.
         bone_matrix = obj.matrix_world @ pb.matrix
+        bone_y = bone_matrix.col[1].to_3d().normalized()
+        midpoint_offset = bone_y * (bone.length * 0.5)
+        mid_matrix = bone_matrix.copy()
+        mid_matrix.translation += midpoint_offset
 
         group = pb.talarium_collision_group
         color = _GROUP_COLORS[group % len(_GROUP_COLORS)]
@@ -1515,26 +1536,26 @@ def _draw_collision_overlay():
             h = pb.talarium_capsule_height
             axis_str = pb.talarium_capsule_axis
             axis_idx = {'X': 0, 'Y': 1, 'Z': 2}.get(axis_str, 1)
-            lines = _capsule_wire(bone_matrix, r, h * 0.5, axis_idx)
+            lines = _capsule_wire(mid_matrix, r, h * 0.5, axis_idx)
             for a, b in lines:
                 all_lines.append((a, b, color))
 
         elif shape == '2':  # Box
             he = (pb.talarium_box_hx, pb.talarium_box_hy, pb.talarium_box_hz)
-            lines = _box_wire(bone_matrix, he)
+            lines = _box_wire(mid_matrix, he)
             for a, b in lines:
                 all_lines.append((a, b, color))
 
         elif shape == '3':  # Sphere
             r = pb.talarium_sphere_radius
-            center = bone_matrix.translation.copy()
+            center = mid_matrix.translation.copy()
             lines = _sphere_wire(center, r)
             for a, b in lines:
                 all_lines.append((a, b, color))
 
         elif shape == '4':  # Convex Hull
             vgroup = pb.talarium_hull_vgroup
-            lines = _convex_hull_wire(obj, pb.name, vgroup, bone_matrix)
+            lines = _convex_hull_wire(obj, pb.name, vgroup, mid_matrix)
             for a, b in lines:
                 all_lines.append((a, b, color))
 

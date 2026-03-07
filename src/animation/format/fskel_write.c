@@ -324,6 +324,14 @@ bool fskel_write(const char *path,
         write_mat4_(f, &skel->rest_world[i]);
         fprintf(f, ",\n");
 
+        /* Bone tail position. */
+        if (skel->tail_positions) {
+            fprintf(f, "  \"tail_pos\": [%.8g, %.8g, %.8g],\n",
+                    (double)skel->tail_positions[i * 3 + 0],
+                    (double)skel->tail_positions[i * 3 + 1],
+                    (double)skel->tail_positions[i * 3 + 2]);
+        }
+
         /* Constraints. */
         uint32_t nc = skel->constraint_counts ? skel->constraint_counts[i] : 0;
         fprintf(f, "  \"constraints\": [");
@@ -375,7 +383,7 @@ bool fskel_write(const char *path,
                        "\"limit_min\":[%.8g,%.8g,%.8g],"
                        "\"limit_max\":[%.8g,%.8g,%.8g],"
                        "\"limit_axes\":%u,"
-                       "\"compliance\":%.8g,"
+                       "\"stiffness\":%.8g,"
                        "\"damping\":%.8g,"
                        "\"yield_strength\":%.8g,"
                        "\"break_strength\":%.8g",
@@ -385,14 +393,14 @@ bool fskel_write(const char *path,
                     (double)jd->limit_min[0], (double)jd->limit_min[1], (double)jd->limit_min[2],
                     (double)jd->limit_max[0], (double)jd->limit_max[1], (double)jd->limit_max[2],
                     jd->limit_axes,
-                    (double)jd->compliance,
+                    (double)(jd->compliance > 0.0f ? 1.0f / jd->compliance : 0.0f),
                     (double)jd->damping,
                     (double)jd->yield_strength,
                     (double)jd->break_strength);
         } else {
             fprintf(f, "\"type\":0,\"axis\":[0,1,0],\"rest_length\":0,"
                        "\"limit_min\":[0,0,0],\"limit_max\":[0,0,0],\"limit_axes\":0,"
-                       "\"compliance\":0,\"damping\":0,\"yield_strength\":0,\"break_strength\":0");
+                       "\"stiffness\":0,\"damping\":0,\"yield_strength\":0,\"break_strength\":0");
         }
         fprintf(f, "}\n }");
     }

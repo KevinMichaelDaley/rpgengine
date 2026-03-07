@@ -513,7 +513,7 @@ int main(void) {
         }
 
         /* Diagnostic: print per-body Y and joint anchor errors at key frames. */
-        if (f == 45 || f == 90 || f == 150) {
+        if (f <= 5 || f == 10 || f == 20 || f == 45 || f == 90 || f == 150) {
             fprintf(stderr, "  --- f%03d per-body ---\n", f);
             float min_y = 999.0f;
             for (uint32_t bi = 0; bi < skel.joint_count; bi++) {
@@ -550,6 +550,28 @@ int main(void) {
             }
             fprintf(stderr, "    max_anchor_err=%.4f (joint %u)\n",
                     max_err, worst_joint);
+            /* Dump worst joint anchor details. */
+            if (max_err > 0.1f) {
+                const phys_joint_t *wj = &world.joints[worst_joint];
+                const phys_body_t *wba = &world.body_pool.bodies_curr[wj->body_a];
+                const phys_body_t *wbb = &world.body_pool.bodies_curr[wj->body_b];
+                phys_vec3_t wa = vec3_add(wba->position,
+                    quat_rotate_vec3(wba->orientation, wj->local_anchor_a));
+                phys_vec3_t wb = vec3_add(wbb->position,
+                    quat_rotate_vec3(wbb->orientation, wj->local_anchor_b));
+                fprintf(stderr, "      joint %u: bodies %u-%u type=%d\n",
+                        worst_joint, wj->body_a, wj->body_b, wj->type);
+                fprintf(stderr, "      anchor_a local=(%.4f,%.4f,%.4f) world=(%.4f,%.4f,%.4f)\n",
+                        wj->local_anchor_a.x, wj->local_anchor_a.y, wj->local_anchor_a.z,
+                        wa.x, wa.y, wa.z);
+                fprintf(stderr, "      anchor_b local=(%.4f,%.4f,%.4f) world=(%.4f,%.4f,%.4f)\n",
+                        wj->local_anchor_b.x, wj->local_anchor_b.y, wj->local_anchor_b.z,
+                        wb.x, wb.y, wb.z);
+                fprintf(stderr, "      body_a pos=(%.4f,%.4f,%.4f)\n",
+                        wba->position.x, wba->position.y, wba->position.z);
+                fprintf(stderr, "      body_b pos=(%.4f,%.4f,%.4f)\n",
+                        wbb->position.x, wbb->position.y, wbb->position.z);
+            }
         }
 
         /* Debug: print bone 1 (Ribcage) position + velocity every 15 frames. */
