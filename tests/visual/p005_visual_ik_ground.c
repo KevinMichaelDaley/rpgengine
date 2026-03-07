@@ -624,7 +624,7 @@ int main(void) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         /* Sync bone transforms from physics world. */
-        phys_anim_entity_sync_from_world(&anim_ent, &world);
+        phys_anim_entity_sync_from_world(&anim_ent, &world, &skel);
 
         float progress = (float)f / (float)(TOTAL_FRAMES - 1);
         float walk_x = walk_x_start + progress * (walk_x_end - walk_x_start);

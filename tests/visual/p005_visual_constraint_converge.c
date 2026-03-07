@@ -553,7 +553,7 @@ int main(void) {
 
         for (int v = 0; v < NUM_VARIANTS; v++) {
             /* Sync bone transforms from physics. */
-            phys_anim_entity_sync_from_world(&anim_ents[v], &worlds[v]);
+            phys_anim_entity_sync_from_world(&anim_ents[v], &worlds[v], &skel);
 
             /* Draw variant at X offset. */
             float x_off = ((float)v - 1.5f) * SPACING;

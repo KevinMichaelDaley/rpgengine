@@ -556,10 +556,26 @@ int main(void) {
             (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
     }
 
+    /* Shift skeleton so lowest bone sits on ground plane (Y=0). */
+    float skel_min_y = 1e10f;
+    float skel_max_y = -1e10f;
+    for (uint32_t i = 0; i < skel.joint_count; i++) {
+        float y = skel.rest_world[i].m[13];
+        if (y < skel_min_y) skel_min_y = y;
+        if (y > skel_max_y) skel_max_y = y;
+    }
+    float skel_height = skel_max_y - skel_min_y;
+    float skel_y_offset = -skel_min_y;
+    mat4_t *initial_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
+    for (uint32_t i = 0; i < skel.joint_count; i++) {
+        initial_pose[i] = skel.rest_world[i];
+        initial_pose[i].m[13] += skel_y_offset;
+    }
+
     /* Register skeleton as animated entity. */
     phys_anim_entity_t anim_ent;
     if (!phys_anim_entity_create(&anim_ent, &world, &skel,
-                                  skel.rest_world)) {
+                                  initial_pose)) {
         fprintf(stderr, "phys_anim_entity_create failed\n"); return 1;
     }
     printf("  Animated entity: %u bodies, %u joints\n",
@@ -686,7 +702,7 @@ int main(void) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         /* Sync bone transforms from physics world. */
-        phys_anim_entity_sync_from_world(&anim_ent, &world);
+        phys_anim_entity_sync_from_world(&anim_ent, &world, &skel);
 
         /* Track torso displacement. */
         uint32_t torso_bi = anim_ent.body_indices[torso_idx];
@@ -714,13 +730,14 @@ int main(void) {
             memcpy(&bone_matrices[j * 16], skin_mat.m, 16 * sizeof(float));
         }
 
+        float cam_dist = skel_height * 1.5f;
         mat4_t view, proj;
-        mat4_look_at((vec3_t){12.0f, 6.0f, 12.0f},
-                     (vec3_t){0.f, 3.0f, 0.f},
+        mat4_look_at((vec3_t){cam_dist * 0.7f, skel_height * 0.4f, cam_dist * 0.7f},
+                     (vec3_t){0.f, skel_height * 0.3f, 0.f},
                      (vec3_t){0.f, 1.f, 0.f}, &view);
         mat4_perspective(45.0f * PI / 180.0f,
                          (float)WINDOW_W / (float)WINDOW_H,
-                         0.1f, 200.0f, &proj);
+                         0.1f, cam_dist * 10.0f, &proj);
         mat4_t vp = mat4_mul(proj, view);
 
         /* Skinned mesh pass. */
@@ -741,7 +758,7 @@ int main(void) {
 
         /* Bone debug lines. */
         begin_lines_();
-        draw_ground_grid_(0.0f, 15.0f, 30);
+        draw_ground_grid_(0.0f, skel_height * 2.0f, 30);
         draw_skeleton_(&skel, anim_ent.bone_world,
                         0.3f + 0.6f * red_factor,
                         0.8f - 0.5f * red_factor,
@@ -793,6 +810,7 @@ int main(void) {
     phys_tick_runner_stop(&tick_runner);
     if (capture) fr_video_capture_destroy(capture);
     constraint_solver_destroy(&solver);
+    free(initial_pose);
     free(local_pose);
     free(target_pose);
     phys_anim_entity_destroy(&anim_ent);

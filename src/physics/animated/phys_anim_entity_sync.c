@@ -3,8 +3,10 @@
  * @brief Sync animated entity bone transforms from/to physics world.
  *
  * Reads body positions + orientations from the world and writes them
- * as bone mat4_t transforms.  Also provides push_kinematic() to
- * write animation-driven bone poses into kinematic bodies.
+ * as bone mat4_t transforms.  Bones without bodies propagate from
+ * their parent's world transform via rest-local multiplication.
+ * Also provides push_kinematic() to write animation-driven bone
+ * poses into kinematic bodies.
  *
  * Non-static functions: 2 (phys_anim_entity_sync_from_world,
  *                          phys_anim_entity_push_kinematic)
@@ -13,15 +15,18 @@
 #include "ferrum/physics/phys_anim_entity.h"
 #include "ferrum/physics/world.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/animation/constraint_params.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/mat4.h"
 
 #include <stddef.h>
 
 void phys_anim_entity_sync_from_world(phys_anim_entity_t *entity,
-                                      const phys_world_t *world) {
+                                      const phys_world_t *world,
+                                      const skeleton_def_t *skel) {
     if (!entity || !world) return;
 
+    /* Pass 1: update bones that have physics bodies. */
     for (uint32_t i = 0; i < entity->bone_count; i++) {
         uint32_t bi = entity->body_indices[i];
         if (bi == UINT32_MAX) continue;
@@ -40,6 +45,61 @@ void phys_anim_entity_sync_from_world(phys_anim_entity_t *entity,
         rot.m[14] = body->position.z;
 
         entity->bone_world[i] = rot;
+    }
+
+    /* Pass 2: propagate non-body bones.
+     *
+     * Two sub-passes:
+     *   2a (reverse): "pull up" — rootward non-body bones with no
+     *       parent body derive their world transform from their first
+     *       child that has a body:
+     *           bone_world[i] = child_world * inverse(rest_local[child])
+     *       Reverse order ensures children are resolved before parents.
+     *
+     *   2b (forward): "push down" — remaining non-body bones (mid-chain)
+     *       inherit from their parent:
+     *           bone_world[i] = parent_world * rest_local[i]
+     *       Forward order ensures parents are resolved before children.
+     */
+    if (skel && skel->parent_indices && skel->rest_local) {
+        /* 2a: pull-up for rootward non-body bones. */
+        for (uint32_t i = entity->bone_count; i-- > 0; ) {
+            if (entity->body_indices[i] != UINT32_MAX) continue;
+
+            /* Skip if this bone has a parent that already has a body
+             * — it will be handled by the forward pass. */
+            uint32_t pi = skel->parent_indices[i];
+            if (pi != UINT32_MAX && pi < entity->bone_count &&
+                entity->body_indices[pi] != UINT32_MAX) {
+                continue;
+            }
+
+            /* Find first child with a body (or already resolved). */
+            for (uint32_t c = i + 1; c < entity->bone_count; c++) {
+                if (skel->parent_indices[c] != i) continue;
+                if (entity->body_indices[c] == UINT32_MAX) continue;
+
+                /* bone_world[i] = child_world * inv(rest_local[child]) */
+                mat4_t inv_local;
+                if (mat4_inverse(skel->rest_local[c], &inv_local) == 0) {
+                    entity->bone_world[i] = mat4_mul(
+                        entity->bone_world[c], inv_local);
+                }
+                break;
+            }
+        }
+
+        /* 2b: push-down for mid-chain non-body bones. */
+        for (uint32_t i = 0; i < entity->bone_count; i++) {
+            if (entity->body_indices[i] != UINT32_MAX) continue;
+
+            uint32_t par = skel->parent_indices[i];
+            if (par == UINT32_MAX || par >= entity->bone_count) continue;
+
+            /* bone_world[i] = parent_world * rest_local[i] */
+            entity->bone_world[i] = mat4_mul(entity->bone_world[par],
+                                             skel->rest_local[i]);
+        }
     }
 }
 

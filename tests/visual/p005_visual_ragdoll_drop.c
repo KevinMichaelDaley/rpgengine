@@ -404,13 +404,17 @@ int main(void) {
             (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
     }
 
-    /* Position skeleton at ground level. */
+    /* Position skeleton: shift so lowest bone sits at GROUND_Y + drop height. */
     float min_y = 1e10f;
+    float max_y = -1e10f;
     for (uint32_t i = 0; i < skel.joint_count; i++) {
         float y = skel.rest_world[i].m[13];
         if (y < min_y) min_y = y;
+        if (y > max_y) max_y = y;
     }
-    float y_offset = GROUND_Y - min_y;
+    float model_height = max_y - min_y;
+    float drop_height = model_height * 0.5f; /* drop from half its height */
+    float y_offset = GROUND_Y - min_y + drop_height;
 
     mat4_t *initial_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
     for (uint32_t i = 0; i < skel.joint_count; i++) {
@@ -443,9 +447,11 @@ int main(void) {
 
     phys_game_state_t game_state;
     phys_game_state_init(&game_state);
+    /* Position the player at the model center so all bones are in T0. */
+    float model_center_y = model_height * 0.5f + GROUND_Y + drop_height;
     phys_player_state_t player0 = {
-        .position = {0.0f, 5.0f, 0.0f},
-        .interaction_radius = 20.0f,
+        .position = {0.0f, model_center_y, 0.0f},
+        .interaction_radius = model_height * 2.0f,
     };
     phys_game_state_set_player(&game_state, 0, &player0);
     tick_runner.game_state = &game_state;
@@ -479,23 +485,20 @@ int main(void) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         /* Sync bone world transforms from physics bodies. */
-        phys_anim_entity_sync_from_world(&anim_ent, &world);
+        phys_anim_entity_sync_from_world(&anim_ent, &world, &skel);
 
-        /* Debug: print bone positions every 45 frames. */
-        if (f % 45 == 0) {
-            for (uint32_t db = 0; db < 10 && db < skel.joint_count; db++) {
-                fprintf(stderr, "  f%03d bone %u (%s): xyz=(%.2f, %.2f, %.2f) body=%u\n",
-                        f, db, skel.joint_names[db],
-                        anim_ent.bone_world[db].m[12],
-                        anim_ent.bone_world[db].m[13],
-                        anim_ent.bone_world[db].m[14],
-                        anim_ent.body_indices[db]);
-                /* Also print palette diagonal to check identity vs real */
-                float *pm = &bone_matrices[db * 16];
-                if (f > 0)
-                    fprintf(stderr, "        palette diag=(%.4f, %.4f, %.4f, %.4f)\n",
-                            pm[0], pm[5], pm[10], pm[15]);
+        /* Debug: print bone 1 (Ribcage) position + velocity every 15 frames. */
+        if (f % 15 == 0) {
+            uint32_t bi1 = anim_ent.body_indices[1];
+            if (bi1 != UINT32_MAX) {
+                const phys_body_t *b1 = phys_world_get_body(&world, bi1);
+                if (b1)
+                    fprintf(stderr, "  f%03d Ribcage: pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f) tier=%u flags=0x%x\n",
+                            f, b1->position.x, b1->position.y, b1->position.z,
+                            b1->linear_vel.x, b1->linear_vel.y, b1->linear_vel.z,
+                            b1->tier, b1->flags);
             }
+            fprintf(stderr, "  tick_count=%lu\n", (unsigned long)phys_world_tick_count(&world));
         }
 
         /* Compute bone palette: palette[j] = bone_world[j] * IBM[j]. */
@@ -514,14 +517,24 @@ int main(void) {
                         (GLsizeiptr)(n * 16 * sizeof(float)),
                         bone_matrices);
 
-        /* Camera. */
+        /* Camera: track the average body Y so we see the ragdoll fall. */
+        float avg_y = 0.0f;
+        uint32_t bc = 0;
+        for (uint32_t i = 0; i < anim_ent.bone_count; i++) {
+            if (anim_ent.body_indices[i] == UINT32_MAX) continue;
+            avg_y += anim_ent.bone_world[i].m[13];
+            bc++;
+        }
+        if (bc > 0) avg_y /= (float)bc;
+        float center_y = avg_y;
+        float cam_dist = model_height * 2.0f;
         mat4_t view, proj;
-        mat4_look_at((vec3_t){15.0f, 8.0f, 15.0f},
-                     (vec3_t){0.f, 3.0f, 0.f},
+        mat4_look_at((vec3_t){cam_dist * 0.7f, center_y, cam_dist * 0.7f},
+                     (vec3_t){0.f, center_y, 0.f},
                      (vec3_t){0.f, 1.f, 0.f}, &view);
         mat4_perspective(45.0f * PI / 180.0f,
                          (float)WINDOW_W / (float)WINDOW_H,
-                         0.1f, 200.0f, &proj);
+                         0.1f, cam_dist * 5.0f, &proj);
         mat4_t vp = mat4_mul(proj, view);
 
         /* Draw skinned mesh. */
@@ -535,7 +548,7 @@ int main(void) {
 
         /* Draw bone lines + ground grid overlay. */
         begin_lines_();
-        draw_ground_grid_(GROUND_Y, 15.0f, 30);
+        draw_ground_grid_(GROUND_Y, model_height * 2.0f, 40);
         draw_skeleton_(&skel, anim_ent.bone_world);
         glDisable(GL_DEPTH_TEST);
         flush_lines_(&vp, &line_shader, u_mvp_loc);

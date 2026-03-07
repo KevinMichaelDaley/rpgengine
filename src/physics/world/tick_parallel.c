@@ -761,11 +761,19 @@ void phys_world_tick_parallel(phys_world_t *world,
                body_cap * sizeof(phys_body_t));
     }
 
+    /* ── Seed bodies_next from bodies_curr ─────────────────────── */
+    /* The substep loop works entirely on bodies_next (the "scratch"
+     * buffer).  bodies_curr remains untouched and readable by the
+     * render thread without synchronisation.  A single swap at the
+     * end of the tick publishes the result. */
+    memcpy(world->body_pool.bodies_next, world->body_pool.bodies_curr,
+           body_cap * sizeof(phys_body_t));
+
     /* Clear CONTACT_RESTING flag on all active bodies before substep loop.
      * The flag will be re-set each substep based on contact normals. */
     for (uint32_t i = 0; i < body_cap; i++) {
         if (active[i]) {
-            world->body_pool.bodies_curr[i].flags &=
+            world->body_pool.bodies_next[i].flags &=
                 ~(uint32_t)PHYS_BODY_FLAG_CONTACT_RESTING;
         }
     }
@@ -784,7 +792,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         /* ── Stage 4: AABB Update [SYNC, skip first substep] ──── */
         if (sub > 0) {
             phys_stage_aabb_update(&(phys_aabb_update_args_t){
-                .bodies     = world->body_pool.bodies_curr,
+                .bodies     = world->body_pool.bodies_next,
                 .colliders  = world->colliders,
                 .spheres    = world->spheres,
                 .boxes      = world->boxes,
@@ -847,7 +855,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         uint32_t ccd_manifold_start = 0;
         if (manifolds && pair_count > 0) {
             phys_stage_ccd_dynamic(&(phys_ccd_dynamic_args_t){
-                .bodies             = world->body_pool.bodies_curr,
+                .bodies             = world->body_pool.bodies_next,
                 .colliders          = world->colliders,
                 .spheres            = world->spheres,
                 .capsules           = world->capsules,
@@ -881,7 +889,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                     .manifolds            = manifolds + ccd_manifold_start,
                     .hints                = ccd_hints,
                     .manifold_count       = ccd_manifold_count,
-                    .bodies               = world->body_pool.bodies_curr,
+                    .bodies               = world->body_pool.bodies_next,
                     .constraints_out      = constraints + constraint_count,
                     .constraint_count_out = &ccd_constraint_count,
                     .max_constraints      = max_constraints - constraint_count,
@@ -903,7 +911,7 @@ void phys_world_tick_parallel(phys_world_t *world,
             TracyCZoneN(z_fused, "Phys.Collision.Fused", true);
 #endif
             phys_stage_collision_fused_par(&(phys_collision_fused_args_t){
-                .bodies              = world->body_pool.bodies_curr,
+                .bodies              = world->body_pool.bodies_next,
                 .colliders           = world->colliders,
                 .spheres             = world->spheres,
                 .boxes               = world->boxes,
@@ -941,7 +949,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         /* Build joint constraints and append after contact constraints. */
         uint32_t joint_constraint_start = constraint_count;
         if (constraints && world->joint_count > 0) {
-            const phys_body_t *bodies = world->body_pool.bodies_curr;
+            const phys_body_t *bodies = world->body_pool.bodies_next;
             for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
                 phys_joint_t *j = &world->joints[ji];
 
@@ -1053,11 +1061,11 @@ void phys_world_tick_parallel(phys_world_t *world,
                     if (!c->is_joint && c->row_count > 0) {
                         float ny = c->rows[0].J_vb.y;
                         if (ny > 0.5f && b < body_cap) {
-                            world->body_pool.bodies_curr[b].flags |=
+                            world->body_pool.bodies_next[b].flags |=
                                 PHYS_BODY_FLAG_CONTACT_RESTING;
                         }
                         if (ny < -0.5f && a < body_cap) {
-                            world->body_pool.bodies_curr[a].flags |=
+                            world->body_pool.bodies_next[a].flags |=
                                 PHYS_BODY_FLAG_CONTACT_RESTING;
                         }
                     }
@@ -1071,7 +1079,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         phys_stage_island_build(&(phys_island_build_args_t){
             .constraints      = constraints,
             .constraint_count = constraint_count,
-            .bodies           = world->body_pool.bodies_curr,
+            .bodies           = world->body_pool.bodies_next,
             .body_count       = body_cap,
             .islands_out      = &islands,
             .arena            = &world->frame_arena,
@@ -1088,7 +1096,7 @@ void phys_world_tick_parallel(phys_world_t *world,
          * correct substep-skip decisions below. */
         phys_stage_island_tier_promote(&(phys_island_tier_promote_args_t){
             .islands          = &islands,
-            .bodies           = world->body_pool.bodies_curr,
+            .bodies           = world->body_pool.bodies_next,
             .body_count       = body_cap,
             .constraints      = constraints,
             .constraint_count = constraint_count,
@@ -1101,7 +1109,7 @@ void phys_world_tick_parallel(phys_world_t *world,
             for (uint32_t i = 0; i < islands.count; i++) {
                 phys_island_t *isle = &islands.islands[i];
                 if (isle->body_count == 0) { continue; }
-                uint8_t tier = world->body_pool.bodies_curr[
+                uint8_t tier = world->body_pool.bodies_next[
                                    isle->body_indices[0]].tier;
                 uint32_t tier_subs = plan.tier_params[tier].substeps;
                 if (tier_subs == 0) { tier_subs = 1; }
@@ -1120,7 +1128,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                     inv_inertia_world[i] = (phys_mat3_t){{0}};
                     continue;
                 }
-                const phys_body_t *b = &world->body_pool.bodies_curr[i];
+                const phys_body_t *b = &world->body_pool.bodies_next[i];
                 inv_inertia_world[i] = phys_mat3_inv_inertia_world(
                     b->orientation, b->inv_inertia_diag);
             }
@@ -1171,7 +1179,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                         if (isle->sleeping || isle->skip) continue;
                         if (isle->body_count == 0) continue;
                         uint32_t nsub = compute_island_sub_substeps(
-                            isle, world->body_pool.bodies_curr, body_cap);
+                            isle, world->body_pool.bodies_next, body_cap);
                         if (nsub <= 1) continue;
                         ss_island_indices[ss_island_count++] = ii;
                     }
@@ -1184,7 +1192,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                         .island_indices     = ss_island_indices,
                         .constraints        = constraints,
                         .constraint_count   = constraint_count,
-                        .bodies             = world->body_pool.bodies_curr,
+                        .bodies             = world->body_pool.bodies_next,
                         .inv_inertia_world  = inv_inertia_world,
                         .ss_vel             = ss_vel,
                         .ss_pseudo          = ss_pseudo,
@@ -1312,7 +1320,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                         _Alignof(uint32_t));
                     /* Solver mode per XPBD joint (always XPBD but stored
                      * for rebuild consistency). */
-                    const phys_body_t *bodies_c = world->body_pool.bodies_curr;
+                    const phys_body_t *bodies_c = world->body_pool.bodies_next;
 
                     for (uint32_t ii = 0; ii < islands.count; ii++) {
                         phys_island_t *isle = &islands.islands[ii];
@@ -1558,7 +1566,7 @@ void phys_world_tick_parallel(phys_world_t *world,
             phys_stage_tgs_solve_par(&(phys_tgs_solve_args_t){
                 .islands    = &islands,
                 .constraints = constraints,
-                .bodies     = world->body_pool.bodies_curr,
+                .bodies     = world->body_pool.bodies_next,
                 .inv_inertia_world = inv_inertia_world,
                 .velocities = velocities,
                 .pseudo_velocities = pseudo_velocities,
@@ -1585,7 +1593,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                 /* Derive velocities from XPBD position+orientation deltas
                  * and merge into the shared velocity array for XPBD bodies.
                  * XPBD wrote solved positions and orientations into bodies_next. */
-                const phys_body_t *bodies_in = world->body_pool.bodies_curr;
+                const phys_body_t *bodies_in = world->body_pool.bodies_next;
                 const phys_body_t *bodies_solved = world->body_pool.bodies_next;
                 float inv_dt = (substep_dt > 0.0f) ? 1.0f / substep_dt : 0.0f;
 
@@ -1665,12 +1673,12 @@ void phys_world_tick_parallel(phys_world_t *world,
                 _Alignof(phys_velocity_t));
             if (velocities) {
                 for (uint32_t i = 0; i < body_cap; ++i) {
-                    velocities[i].linear  = world->body_pool.bodies_curr[i].linear_vel;
-                    velocities[i].angular = world->body_pool.bodies_curr[i].angular_vel;
-                    if (world->body_pool.bodies_curr[i].inv_mass > 0.0f &&
-                        !phys_body_is_sleeping(&world->body_pool.bodies_curr[i]) &&
-                        !(world->body_pool.bodies_curr[i].flags & PHYS_BODY_FLAG_NO_GRAVITY)) {
-                        uint8_t tier = world->body_pool.bodies_curr[i].tier;
+                    velocities[i].linear  = world->body_pool.bodies_next[i].linear_vel;
+                    velocities[i].angular = world->body_pool.bodies_next[i].angular_vel;
+                    if (world->body_pool.bodies_next[i].inv_mass > 0.0f &&
+                        !phys_body_is_sleeping(&world->body_pool.bodies_next[i]) &&
+                        !(world->body_pool.bodies_next[i].flags & PHYS_BODY_FLAG_NO_GRAVITY)) {
+                        uint8_t tier = world->body_pool.bodies_next[i].tier;
                         uint32_t ts = tier_substep_counts[tier];
                         if (ts == 0) { ts = 1; }
                         float body_dt = plan.dt / (float)ts;
@@ -1687,7 +1695,7 @@ void phys_world_tick_parallel(phys_world_t *world,
             TracyCZoneN(z_integ, "Phys.Integrate.Stepping", true);
 #endif
             phys_stage_integrate_par(&(phys_integrate_args_t){
-                .bodies_in              = world->body_pool.bodies_curr,
+                .bodies_in              = world->body_pool.bodies_next,
                 .velocities             = velocities,
                 .pseudo_velocities      = pseudo_velocities,
                 .bodies_out             = world->body_pool.bodies_next,
@@ -1723,7 +1731,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         {
             phys_stage_ccd(&(phys_ccd_args_t){
                 .bodies_prev      = world->body_pool.bodies_ccd_prev,
-                .bodies_read      = world->body_pool.bodies_curr,
+                .bodies_read      = world->body_pool.bodies_next,
                 .bodies_curr      = world->body_pool.bodies_next,
                 .colliders        = world->colliders,
                 .meshes           = world->meshes,
@@ -1772,9 +1780,13 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         } /* end if (!world->prediction_mode) — 13 */
 
-        /* ── Buffer swap for next substep ──────────────────────── */
-        phys_body_pool_swap_buffers(&world->body_pool);
-    }
+    } /* end substep loop */
+
+    /* ── Publish: single swap to make solved state visible ──────── */
+    /* The substep loop worked entirely on bodies_next.  One swap
+     * atomically publishes the result as bodies_curr, so the render
+     * thread never sees a partially-updated buffer. */
+    phys_body_pool_swap_buffers(&world->body_pool);
 
     /* ── Apply deferred mutations (thread-safe) ────────────────── */
     /* If the tick runner staged body mutations (SET_POSITION, etc.),

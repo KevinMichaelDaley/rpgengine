@@ -81,16 +81,22 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
  *
  * Reads each body's position + orientation from the world and writes
  * the corresponding bone_world matrix.  Bones without bodies
- * (body_indices[i] == UINT32_MAX) are left unchanged.
+ * (body_indices[i] == UINT32_MAX) inherit their world transform from
+ * their parent bone multiplied by their rest-pose local transform,
+ * so the entire skeleton moves coherently.
  *
  * @param entity  Animated entity (NULL-safe, no-op).
  * @param world   Physics world to read from (NULL-safe, no-op).
+ * @param skel    Skeleton definition for parent indices and rest_local
+ *                transforms. Required so non-body bones can follow
+ *                their parent. (NULL-safe: non-body bones stay fixed.)
  *
  * @note Thread safety: call from the main thread after the tick
  *       runner has completed a tick (read bodies_curr).
  */
 void phys_anim_entity_sync_from_world(phys_anim_entity_t *entity,
-                                      const struct phys_world *world);
+                                      const struct phys_world *world,
+                                      const struct skeleton_def *skel);
 
 /**
  * @brief Update kinematic body positions in the world from bone matrices.

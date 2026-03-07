@@ -68,6 +68,8 @@ static bool constraint_is_physics_relevant_(constraint_type_t type) {
  *   2. Is an owner of a physics-relevant animation constraint.
  *   3. Is a target of a physics-relevant animation constraint.
  *   4. Is in an IK chain between end-effector and chain root.
+ *   5. Sits on the parent chain between a body-bone and the root,
+ *      ensuring the skeleton's body-bones form a connected tree.
  *
  * @param skel       Skeleton definition.
  * @param needs_body Output bitmap (n elements, caller-allocated).
@@ -117,6 +119,21 @@ static void build_needs_body_map_(const skeleton_def_t *skel,
                     }
                 }
             }
+        }
+    }
+
+    /* Connectivity pass: walk up from every body-bone to the root,
+     * marking all intermediate ancestors as needing bodies.  This
+     * ensures the skeleton's physics bodies form a single connected
+     * tree — without this, non-collider branching bones (e.g. the
+     * root) would disconnect subtrees into independent islands. */
+    for (uint32_t i = 0; i < n; i++) {
+        if (!needs_body[i]) continue;
+        uint32_t cur = skel->parent_indices[i];
+        while (cur != UINT32_MAX && cur < n) {
+            if (needs_body[cur]) break; /* already connected */
+            needs_body[cur] = 1;
+            cur = skel->parent_indices[cur];
         }
     }
 }
@@ -304,10 +321,9 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             /* Ghost body: participates in joints only, solved via TGS
              * with graph coloring + sub-substepping for the skeleton
              * island.  Tier 0 ensures TGS solver mode for all ghost
-             * body constraints.  No gravity — position driven by
-             * animation + joint constraints. */
-            body->flags |= PHYS_BODY_FLAG_NO_BROADPHASE
-                         | PHYS_BODY_FLAG_NO_GRAVITY;
+             * body constraints.  Gravity enabled so ghosts fall with
+             * the rest of the skeleton. */
+            body->flags |= PHYS_BODY_FLAG_NO_BROADPHASE;
             body->tier = PHYS_TIER_0_DIRECT;
             phys_body_set_mass(body, 1.0f);
             phys_body_set_sphere_inertia(body, 1.0f, 0.05f);
