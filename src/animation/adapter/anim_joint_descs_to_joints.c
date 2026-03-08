@@ -65,8 +65,15 @@ uint32_t anim_joint_descs_to_joints(
         j->local_anchor_b = (phys_vec3_t){0.0f, 0.0f, 0.0f};
 
         switch (jd->joint_type) {
-        case 1: /* Ball joint. */
-            j->type = PHYS_JOINT_BALL;
+        case 1: /* Cone twist (Blender "Cone Twist" → 3 pos + angular limits). */
+            j->type = PHYS_JOINT_CONE_TWIST;
+            j->limit_min[0] = jd->limit_min[0];
+            j->limit_min[1] = jd->limit_min[1];
+            j->limit_min[2] = jd->limit_min[2];
+            j->limit_max[0] = jd->limit_max[0];
+            j->limit_max[1] = jd->limit_max[1];
+            j->limit_max[2] = jd->limit_max[2];
+            j->limit_axes = (uint8_t)jd->limit_axes;
             break;
         case 2: /* Hinge joint. */
             j->type = PHYS_JOINT_HINGE;

@@ -4,7 +4,7 @@
  *
  * Each bone may carry a joint descriptor specifying how it connects
  * to its parent bone in the physics simulation.  Joint types map
- * directly to phys_joint_type_t (ball, hinge, distance).
+ * directly to phys_joint_type_t (cone_twist, hinge, distance).
  *
  * Exported from Blender and stored in the fskel v2 JNTS chunk.
  *
@@ -29,7 +29,7 @@ extern "C" {
  *
  * joint_type values:
  *   0 = none (no joint, or root bone)
- *   1 = ball (3-DOF: positional lock, free rotation)
+ *   1 = cone_twist (3-DOF positional lock + per-axis angular limits)
  *   2 = hinge (1-DOF: rotation around axis only)
  *   3 = distance (spring-damper maintaining rest length)
  *   4 = lock (0-DOF: full rigid attachment)
@@ -43,7 +43,7 @@ extern "C" {
  * Array is owned by skeleton_def_t.
  */
 typedef struct bone_joint_desc {
-    uint32_t joint_type;    /**< 0=none, 1=ball, 2=hinge, 3=distance,
+    uint32_t joint_type;    /**< 0=none, 1=cone_twist, 2=hinge, 3=distance,
                              *   4=lock, 5=copy_rotation, 6=limit_rotation,
                              *   7=limit_position, 8=aim. */
     float    axis[3];       /**< Hinge axis (type=2) or track axis (type=8)
