@@ -28,6 +28,7 @@
 #include "ferrum/physics/stabilization.h"
 #include "ferrum/physics/constraint_stage.h"
 #include "ferrum/physics/constraint.h"
+#include "ferrum/physics/constraint_rebuild.h"
 #include "ferrum/physics/island_build.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/island_tier_promote.h"
@@ -574,6 +575,9 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
             .island_color_threshold = s->island_color_threshold,
             .joints      = s->joints,
             .joint_count = s->joint_count,
+            .bodies_mut  = s->bodies,
+            .inv_inertia_world_mut = s->inv_inertia_world,
+            .constraint_joint_indices = s->constraint_joint_indices,
         });
 
         /* Integrate island bodies inline. */
@@ -588,10 +592,22 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
             b->linear_vel  = s->ss_vel[idx].linear;
             b->angular_vel = s->ss_vel[idx].angular;
 
-            /* Damping as forces proportional to velocity.
-             * Linear:  F = -c*v,  dv = -c * v * inv_mass * dt
-             * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt
-             * Coefficient c encodes cross-section / drag area. */
+            /* Velocity damping via implicit Euler integration.
+             *
+             * The ODE for force-proportional damping is:
+             *   Linear:  dv/dt = -c * inv_mass * v
+             *   Angular: dω/dt = -c * ω  (mass-independent for stability)
+             *
+             * Explicit Euler (old): v_new = v * (1 - c*inv_mass*dt)
+             *   UNSTABLE when c*inv_mass*dt > 2 (oscillation/explosion).
+             *
+             * Implicit Euler (new): v_new = v / (1 + c*inv_mass*dt)
+             *   UNCONDITIONALLY STABLE for any c > 0, dt > 0.
+             *   Approaches zero smoothly; never reverses or amplifies.
+             *
+             * Angular damping is mass-independent (no inertia tensor)
+             * to avoid instability with thin/light body parts whose
+             * inverse inertia can be very large (I_inv > 100). */
             {
                 float ld = b->linear_damping;
                 float ad = b->angular_damping;
@@ -604,17 +620,16 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
                     ad = 1.0f - s->velocity_damping;
                 }
                 if (ld > 0.0f) {
-                    float s = -ld * b->inv_mass * ss_dt;
-                    b->linear_vel.x += b->linear_vel.x * s;
-                    b->linear_vel.y += b->linear_vel.y * s;
-                    b->linear_vel.z += b->linear_vel.z * s;
+                    float lin_factor = 1.0f / (1.0f + ld * b->inv_mass * ss_dt);
+                    b->linear_vel.x *= lin_factor;
+                    b->linear_vel.y *= lin_factor;
+                    b->linear_vel.z *= lin_factor;
                 }
-                if (ad > 0.0f && s->inv_inertia_world) {
-                    phys_vec3_t torque = vec3_scale(b->angular_vel, -ad);
-                    phys_vec3_t d_omega = phys_mat3_mul_vec3(
-                        &s->inv_inertia_world[idx], torque);
-                    b->angular_vel = vec3_add(b->angular_vel,
-                        vec3_scale(d_omega, ss_dt));
+                if (ad > 0.0f) {
+                    float ang_factor = 1.0f / (1.0f + ad * ss_dt);
+                    b->angular_vel.x *= ang_factor;
+                    b->angular_vel.y *= ang_factor;
+                    b->angular_vel.z *= ang_factor;
                 }
             }
 
@@ -2248,12 +2263,16 @@ void phys_world_tick_parallel(phys_world_t *world,
                                 };
                             }
 
-                            /* Light damping to prevent energy gain. */
-                            float damp = 1.0f
-                                - world->config.velocity_damping * xpbd_sub_dt;
-                            if (damp < 0.0f) damp = 0.0f;
-                            b->linear_vel = vec3_scale(b->linear_vel, damp);
-                            b->angular_vel = vec3_scale(b->angular_vel, damp);
+                            /* Light damping to prevent energy gain.
+                             * Use implicit Euler: v /= (1 + c*dt) for
+                             * unconditional stability (explicit Euler
+                             * v *= (1-c*dt) can oscillate/go negative
+                             * when c*dt > 1). */
+                            if (world->config.velocity_damping > 0.0f) {
+                                float damp = 1.0f / (1.0f + world->config.velocity_damping * xpbd_sub_dt);
+                                b->linear_vel = vec3_scale(b->linear_vel, damp);
+                                b->angular_vel = vec3_scale(b->angular_vel, damp);
+                            }
                         }
                     }
 
@@ -2330,6 +2349,13 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .island_color_threshold = world->config.island_color_threshold,
                 .joints      = world->joints,
                 .joint_count = world->joint_count,
+                .bodies_mut  = world->body_pool.bodies_next,
+                .inv_inertia_world_mut = inv_inertia_world,
+                .constraint_joint_indices = constraint_joint_indices,
+                .skip_body   = body_sub_substepped,
+                .manifolds   = manifolds,
+                .manifold_count = manifold_count,
+                .baumgarte   = world->config.baumgarte,
             }, jobs, &world->frame_arena);
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_tgs);

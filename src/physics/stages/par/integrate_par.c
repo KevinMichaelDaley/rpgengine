@@ -134,9 +134,9 @@ static void integrate_batch_job(void *data) {
          * solver) so that contact constraints can counteract it in
          * the same substep.  Do NOT apply gravity here. */
 
-        /* Damping as forces proportional to velocity.
-         * Linear:  F = -c*v,  dv = -c * v * inv_mass * dt
-         * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt */
+        /* Velocity damping via implicit Euler (unconditionally stable).
+         * Linear:  v_new = v / (1 + c*inv_mass*dt)
+         * Angular: ω_new = ω / (1 + c*dt)  (mass-independent) */
         {
             float ld = out->linear_damping;
             float ad = out->angular_damping;
@@ -147,17 +147,16 @@ static void integrate_batch_job(void *data) {
                 ad = 1.0f - vel_damp;
             }
             if (ld > 0.0f) {
-                float s = -ld * out->inv_mass * body_dt;
-                out->linear_vel.x += out->linear_vel.x * s;
-                out->linear_vel.y += out->linear_vel.y * s;
-                out->linear_vel.z += out->linear_vel.z * s;
+                float lin_factor = 1.0f / (1.0f + ld * out->inv_mass * body_dt);
+                out->linear_vel.x *= lin_factor;
+                out->linear_vel.y *= lin_factor;
+                out->linear_vel.z *= lin_factor;
             }
-            if (ad > 0.0f && inv_I_world) {
-                phys_vec3_t torque = vec3_scale(out->angular_vel, -ad);
-                phys_vec3_t d_omega = phys_mat3_mul_vec3(
-                    &inv_I_world[i], torque);
-                out->angular_vel = vec3_add(out->angular_vel,
-                    vec3_scale(d_omega, body_dt));
+            if (ad > 0.0f) {
+                float ang_factor = 1.0f / (1.0f + ad * body_dt);
+                out->angular_vel.x *= ang_factor;
+                out->angular_vel.y *= ang_factor;
+                out->angular_vel.z *= ang_factor;
             }
         }
 

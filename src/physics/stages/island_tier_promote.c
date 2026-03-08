@@ -53,8 +53,9 @@ void phys_stage_island_tier_promote(
         if (min_tier == PHYS_TIER_5_SLEEPING) { continue; }
 
         /* Pass 2: promote non-ANIM dynamic bodies to min_tier.
-         * Animated bodies must keep their ANIM tag so later tier
-         * classification continues routing the island through XPBD. */
+         * Animated bodies keep their ANIM tag so the TGS coupled
+         * implicit solver (with XPBD-regularized velocity equation)
+         * handles them correctly. */
         for (uint32_t b = 0; b < isle->body_count; ++b) {
             uint32_t idx = isle->body_indices[b];
             if (idx >= args->body_count) { continue; }

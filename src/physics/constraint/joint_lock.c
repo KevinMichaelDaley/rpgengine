@@ -122,10 +122,12 @@ void phys_joint_build_lock(phys_joint_t *joint,
      * q_error = conjugate(q_rest) * q_current measures deviation from
      * the rest orientation.  The vector part of q_error (scaled by 2)
      * approximates the rotation error for small angles. */
-    phys_quat_t q_current = quat_mul(body_b->orientation,
-                                      quat_conjugate(body_a->orientation));
-    phys_quat_t q_error = quat_mul(
-        quat_conjugate(joint->rest_relative_orient), q_current);
+    phys_quat_t q_current = quat_normalize_safe(
+        quat_mul(body_b->orientation, quat_conjugate(body_a->orientation)),
+        1e-12f);
+    phys_quat_t q_error = quat_normalize_safe(
+        quat_mul(quat_conjugate(joint->rest_relative_orient), q_current),
+        1e-12f);
     /* Ensure shortest path (avoid 360-degree flip). */
     if (q_error.w < 0.0f) {
         q_error.x = -q_error.x; q_error.y = -q_error.y;

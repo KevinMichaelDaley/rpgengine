@@ -689,6 +689,16 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
         if pb and bone.parent:
             jt = int(pb.talarium_joint_type)
 
+            # Lock joints (type 4) are no longer supported — remap to
+            # cone-twist with tight limits (±5°) to approximate lock
+            # behavior using a stable joint type.
+            if jt == 4:
+                jt = 1  # Cone twist
+                lim_axes = 7  # All 3 axes
+                tight = 0.0873  # ~5° in radians
+                lim_min = [-tight, -tight, -tight]
+                lim_max = [ tight,  tight,  tight]
+
             if jt in (2, 8):  # Hinge or Aim: use axis
                 axis_str = pb.talarium_joint_axis
                 axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
@@ -776,14 +786,38 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
         }
 
         # Export explicit joint anchor positions in armature (engine) space.
-        # The joint point is at the child bone's HEAD.  Both anchor_a (on
-        # parent body) and anchor_b (on child body) reference this same
-        # world-space point — they get converted to body-local by the C code.
+        #
+        # For connected bones (head == parent tail), both anchors are at
+        # the child bone's head — the natural joint pivot.
+        #
+        # For unconnected bones, there are two modes:
+        #   - bind_anchor=True:  both anchors at the child's head (bind
+        #     position).  The parent anchor is at the child's head
+        #     position expressed in the parent body's local space.
+        #     This lets you attach a bone at an arbitrary offset from
+        #     the parent's tail (e.g. pelvis halves branching from root).
+        #   - bind_anchor=False: anchor_a is at the parent bone's tail,
+        #     anchor_b is at the child bone's head.  The anchors are at
+        #     different world-space points, so the joint naturally keeps
+        #     them at their bind-pose separation.
         if jt != 0 and bone.parent:
             bh = bone.head_local  # child bone head in Blender coords
-            joint_pt = [bh[0], bh[2], -bh[1]]  # Blender Z-up → engine Y-up
-            joint_desc["anchor_a"] = joint_pt
-            joint_desc["anchor_b"] = joint_pt
+            child_pt = [bh[0], bh[2], -bh[1]]  # Blender Z-up → engine Y-up
+
+            use_bind = pb.talarium_joint_bind_anchor if pb else False
+            is_connected = bone.use_connect
+
+            if is_connected or use_bind:
+                # Both anchors at the child's head (bind position).
+                joint_desc["anchor_a"] = child_pt
+                joint_desc["anchor_b"] = child_pt
+            else:
+                # Unconnected, no bind anchor: anchor_a at parent tail,
+                # anchor_b at child head.
+                pt = bone.parent.tail_local
+                parent_pt = [pt[0], pt[2], -pt[1]]
+                joint_desc["anchor_a"] = parent_pt
+                joint_desc["anchor_b"] = child_pt
 
         joints.append({
             "name": bone.name,
@@ -981,13 +1015,26 @@ _BONE_PROPS = {
             ('1', "Cone Twist", "Cone-twist joint (3 DOF with limits)"),
             ('2', "Hinge", "Hinge joint (1 DOF rotation)"),
             ('3', "Distance", "Distance constraint"),
-            ('4', "Lock", "Fully locked (0 DOF)"),
+            # Lock removed — unstable in the coupled solver.
+            # ('4', "Lock", "Fully locked (0 DOF)"),
             ('5', "Copy Rotation", "Copy parent rotation"),
             ('6', "Limit Rotation", "Rotation with per-axis limits"),
             ('7', "Limit Position", "Position with per-axis limits"),
             ('8', "Aim", "Aim/track constraint"),
         ],
         default='1',
+    ),
+
+    # Bind-position anchor: for unconnected bones, anchor the joint
+    # at the child bone's rest (bind) position on the parent body,
+    # instead of at the parent bone's tail.
+    "talarium_joint_bind_anchor": BoolProperty(
+        name="Anchor at Bind Position",
+        description="Anchor the joint at this bone's bind-pose head "
+                    "position on the parent body.  Use for bones whose "
+                    "head is offset from the parent's tail (unconnected "
+                    "bones like pelvis halves branching from root)",
+        default=False,
     ),
 
     # Joint axis (for hinge / aim)
@@ -1042,8 +1089,9 @@ _BONE_PROPS = {
     ),
     "talarium_joint_damping": FloatProperty(
         name="Damping",
-        description="Viscous damping coefficient; opposes relative "
-                    "velocity at the joint.  0 = no damping",
+        description="Dimensionless viscous damping ratio; opposes relative "
+                    "velocity at the joint.  0 = no damping, 1 = doubles "
+                    "correction, 5 = strong damping.  Timestep-independent",
         default=0.0, min=0.0, soft_max=10.0,
     ),
     "talarium_joint_yield_strength": FloatProperty(
@@ -1244,6 +1292,12 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
 
             jt = int(pb.talarium_joint_type)
             if jt == 0:  # No joint
+                continue
+
+            if jt == 4:  # Lock joints are deprecated
+                violations.append(
+                    f"{bone.name}: Lock joint is deprecated. "
+                    "Use Cone Twist with tight limits instead.")
                 continue
 
             # Compute the current relative orientation in engine space.
@@ -1541,6 +1595,10 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
             box.prop(pb, "talarium_joint_type")
 
             jt = pb.talarium_joint_type
+
+            # For unconnected bones, show anchor mode toggle.
+            if not bone.use_connect and jt != '0':
+                box.prop(pb, "talarium_joint_bind_anchor")
             if jt == '1':  # Cone Twist: per-axis limits
                 col = box.column(align=True)
                 row = col.row(align=True)

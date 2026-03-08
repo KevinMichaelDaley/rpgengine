@@ -22,6 +22,7 @@ struct phys_constraint;
 struct phys_body;
 struct phys_frame_arena;
 struct phys_joint;
+struct phys_manifold;
 
 /**
  * @brief Linear and angular velocity pair for a single body.
@@ -57,6 +58,20 @@ typedef struct phys_tgs_solve_args {
     uint32_t island_color_threshold;        /**< Min constraints per island to enable coloring (0 = disabled). */
     struct phys_joint *joints;              /**< Joint array for nonlinear position projection (may be NULL). */
     uint32_t joint_count;                   /**< Number of joints in the array. */
+    struct phys_body *bodies_mut;           /**< Mutable body array for coupled implicit solver (TIER_ANIM).
+                                             *   When non-NULL, the coupled solver writes position/orientation
+                                             *   updates directly to bodies during the solve.  Must point to
+                                             *   the same memory as bodies (typically bodies_next).  May be NULL
+                                             *   for standard TGS (decoupled) operation. */
+    struct phys_mat3 *inv_inertia_world_mut; /**< Mutable world-space inverse inertia (for coupled solver
+                                              *   to update after orientation changes). May be NULL. */
+    const uint32_t *constraint_joint_indices; /**< Maps constraint index → joint index (for Jacobian rebuild). */
+    uint8_t *skip_body;                      /**< Per-body flag: 1 = coupled solver updated position,
+                                              *   integrator should skip position integration.
+                                              *   Arena-allocated, body_count entries. May be NULL. */
+    const struct phys_manifold *manifolds;   /**< Manifold array for contact constraint rebuild. May be NULL. */
+    uint32_t manifold_count;                 /**< Number of manifolds. */
+    float baumgarte;                         /**< Baumgarte stabilization factor for contact rebuild. */
 } phys_tgs_solve_args_t;
 
 /**

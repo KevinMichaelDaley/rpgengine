@@ -495,6 +495,17 @@ int main(void) {
     /* Dump full Jacobian rows for first solver iteration (24 joints). */
     g_tgs_debug_dump_counter = 30;
 
+    /* CSV log: per-frame bone X,Z positions for displacement analysis. */
+    FILE *csv_log = fopen("tests/output/p005_bone_xz.csv", "w");
+    if (csv_log) {
+        fprintf(csv_log, "frame");
+        for (uint32_t i = 0; i < skel.joint_count; i++) {
+            const char *bname = (skel.joint_names) ? skel.joint_names[i] : "?";
+            fprintf(csv_log, ",%s_x,%s_z", bname, bname);
+        }
+        fprintf(csv_log, "\n");
+    }
+
     /* Video capture. */
     system("mkdir -p tests/output");
     fr_video_capture_desc_t cap_desc = {0};
@@ -528,6 +539,25 @@ int main(void) {
 
         /* Sync bone world transforms from physics bodies. */
         phys_anim_entity_sync_from_world(&anim_ent, &world, &skel);
+
+        /* Write bone X,Z positions to CSV every frame. */
+        if (csv_log) {
+            fprintf(csv_log, "%d", f);
+            for (uint32_t i = 0; i < skel.joint_count; i++) {
+                uint32_t idx = anim_ent.body_indices[i];
+                if (idx == UINT32_MAX) {
+                    fprintf(csv_log, ",0.0,0.0");
+                } else {
+                    const phys_body_t *b = phys_world_get_body(&world, idx);
+                    if (b) {
+                        fprintf(csv_log, ",%.5f,%.5f", b->position.x, b->position.z);
+                    } else {
+                        fprintf(csv_log, ",0.0,0.0");
+                    }
+                }
+            }
+            fprintf(csv_log, "\n");
+        }
 
         /* Track foot bones every frame for pop detection. */
         if (f >= 30 && f <= 120) {
@@ -731,24 +761,16 @@ int main(void) {
                         (GLsizeiptr)(n * 16 * sizeof(float)),
                         bone_matrices);
 
-        /* Camera: track the average body Y so we see the ragdoll fall. */
-        float avg_y = 0.0f;
-        uint32_t bc = 0;
-        for (uint32_t i = 0; i < anim_ent.bone_count; i++) {
-            if (anim_ent.body_indices[i] == UINT32_MAX) continue;
-            avg_y += anim_ent.bone_world[i].m[13];
-            bc++;
-        }
-        if (bc > 0) avg_y /= (float)bc;
-        float center_y = avg_y;
-        float cam_dist = model_height * 2.0f;
+        /* Camera: orthographic top-down view for displacement analysis. */
+        float half_ext = model_height * 1.5f;
+        float aspect = (float)WINDOW_W / (float)WINDOW_H;
         mat4_t view, proj;
-        mat4_look_at((vec3_t){cam_dist * 0.7f, center_y, cam_dist * 0.7f},
-                     (vec3_t){0.f, center_y, 0.f},
-                     (vec3_t){0.f, 1.f, 0.f}, &view);
-        mat4_perspective(45.0f * PI / 180.0f,
-                         (float)WINDOW_W / (float)WINDOW_H,
-                         0.1f, cam_dist * 5.0f, &proj);
+        mat4_look_at((vec3_t){0.f, model_height * 4.0f, 0.f},
+                     (vec3_t){0.f, 0.f, 0.f},
+                     (vec3_t){0.f, 0.f, -1.f}, &view);
+        proj = mat4_ortho(-half_ext * aspect, half_ext * aspect,
+                          -half_ext, half_ext,
+                          0.1f, model_height * 10.0f);
         mat4_t vp = mat4_mul(proj, view);
 
         /* Draw skinned mesh. */
@@ -810,6 +832,7 @@ int main(void) {
            (double)avg_y, (double)GROUND_Y);
 
     /* Cleanup. */
+    if (csv_log) fclose(csv_log);
     phys_tick_runner_stop(&tick_runner);
     if (capture) fr_video_capture_destroy(capture);
     cleanup_line_buffer_();

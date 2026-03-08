@@ -26,10 +26,11 @@ extern "C" {
  *
  * Each tier represents a different level of physics fidelity.
  * ANIM is the lowest numeric value so it wins min-tier island
- * promotion, pulling the whole island to XPBD.
+ * promotion, pulling the whole island to TGS with coupled implicit
+ * velocity solve (XPBD-regularized).
  */
 typedef enum phys_tier {
-    PHYS_TIER_ANIM = 0,        /**< Animated / ragdoll bodies (XPBD). */
+    PHYS_TIER_ANIM = 0,        /**< Animated / ragdoll bodies (TGS coupled). */
     PHYS_TIER_0_DIRECT,        /**< Direct manipulation. */
     PHYS_TIER_1_NEAR,          /**< Near interactive. */
     PHYS_TIER_2_VISIBLE,       /**< Visible / hazardous. */

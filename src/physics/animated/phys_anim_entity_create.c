@@ -483,11 +483,14 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
         }
         /* Approximate cross-section from volume for drag scaling.
          * Uses cbrt(vol/ref) for gentle scaling — larger parts get
-         * proportionally more drag but not excessively. */
+         * proportionally more drag but not excessively.
+         * Base coefficient is high enough to prevent ragdoll bounce:
+         * for a 5 kg body at dt=4.2ms, c=50 gives ~4% vel reduction
+         * per substep, ~15% per tick — sufficient post-impact settling. */
         float cross_scale = cbrtf(volume / 0.002f);
         if (cross_scale < 0.1f) cross_scale = 0.1f;
-        body->linear_damping  = 0.5f * cross_scale;
-        body->angular_damping = 0.5f * cross_scale;
+        body->linear_damping  = 50.0f * cross_scale;
+        body->angular_damping = 50.0f * cross_scale;
 
         /* All animated entity bodies use the ANIM tier (XPBD solver). */
         body->tier = PHYS_TIER_ANIM;
@@ -690,10 +693,22 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     break;
                 }
                 case 4: {
-                    j->type = PHYS_JOINT_LOCK;
+                    /* Lock joints are remapped to cone-twist with tight
+                     * limits.  Lock joints caused oscillation in the
+                     * coupled solver due to zero compliance + zero damping.
+                     * Tight cone-twist (±5°) approximates lock behavior. */
+                    j->type = PHYS_JOINT_CONE_TWIST;
                     phys_quat_t child_orient = quat_from_mat4(&world_pose[i]);
                     j->rest_relative_orient = quat_mul(
                         child_orient, quat_conjugate(parent_orient));
+                    const float tight = 0.0873f; /* ~5° */
+                    j->limit_min[0] = -tight;
+                    j->limit_min[1] = -tight;
+                    j->limit_min[2] = -tight;
+                    j->limit_max[0] =  tight;
+                    j->limit_max[1] =  tight;
+                    j->limit_max[2] =  tight;
+                    j->limit_axes = 7; /* All 3 axes. */
                     break;
                 }
                 case 5: j->type = PHYS_JOINT_COPY_ROTATION; break;

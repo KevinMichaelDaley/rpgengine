@@ -24,13 +24,17 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/constraint_color.h"
+#include "ferrum/physics/constraint_rebuild.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/step_plan.h"
+#include "ferrum/physics/tier_list.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
+
+#include <string.h>
 
 /** Minimum penetration excess to correct (avoids micro-jitter). */
 #define SPLIT_MIN_PHI 1e-6f
@@ -129,11 +133,10 @@ static bool island_routes_xpbd_(const phys_island_t *island,
         return false;
     }
 
-    for (uint32_t bi = 0; bi < island->body_count; ++bi) {
-        if (bodies[island->body_indices[bi]].tier == PHYS_TIER_ANIM) {
-            return true;
-        }
-    }
+    /* TIER_ANIM islands are NOT routed to XPBD.  They use the TGS
+     * coupled implicit solver (solve_joint_coupled) with XPBD-style
+     * compliance/damping regularization in the velocity equation.
+     * Only check constraint solver_mode, not body tier. */
 
     if (!constraints) {
         return false;
@@ -203,8 +206,7 @@ static void solve_row(phys_jacobian_row_t *row,
                        float inv_mass_a,
                        const phys_mat3_t *inv_i_a,
                        float inv_mass_b,
-                       const phys_mat3_t *inv_i_b,
-                       float dt)
+                       const phys_mat3_t *inv_i_b)
 {
     /* Compute J·v (relative velocity along the constraint direction). */
     float jv = vec3_dot(row->J_va, va->linear)
@@ -212,11 +214,11 @@ static void solve_row(phys_jacobian_row_t *row,
              + vec3_dot(row->J_vb, vb->linear)
              + vec3_dot(row->J_wb, vb->angular);
 
-    /* Viscous damping: scale velocity error by (1 + d*dt) so the
+    /* Viscous damping: scale velocity error by (1 + d) so the
      * solver applies a stronger correction that opposes relative motion.
-     * The dt factor keeps the damping force physically correct and
-     * prevents instability at large damping coefficients. */
-    float jv_damped = jv * (1.0f + row->damping * dt);
+     * Dimensionless: d=1 doubles the effective velocity correction,
+     * d=0.5 increases it by 50%.  Timestep-independent. */
+    float jv_damped = jv * (1.0f + row->damping);
     float delta_lambda = (row->bias - jv_damped) * row->effective_mass;
 
     /* Successive over-relaxation: scale impulse to accelerate convergence. */
@@ -560,10 +562,182 @@ static void project_joints_nonlinear(const phys_joint_t *joints,
     }
 }
 
-/* ── Solve one constraint (all rows) ──────────────────────────────── */
+/* ── Coupled implicit Gauss-Seidel for joint constraints ──────────── */
+
+/**
+ * @brief Solve a joint constraint using the coupled implicit method.
+ *
+ * Uses the XPBD-regularized coupled update equation:
+ *
+ *   Δλ = -(J·v + C/h + (α/h)·λ_total) / (J·M⁻¹·J^T + α/h² + γ/h)
+ *
+ * Then applies coupled velocity + position update:
+ *   v ← v + M⁻¹·J^T·Δλ
+ *   p ← p + h·(M⁻¹·J^T·Δλ)
+ *   λ_total ← λ_total + Δλ
+ *
+ * This eliminates the split between velocity solve and position
+ * correction that causes energy injection in long joint chains.
+ *
+ * @param c              Joint constraint to solve.
+ * @param velocities     Solver velocity workspace (modified).
+ * @param bodies_mut     Mutable body array (position/orientation updated).
+ * @param inv_inertia_world  Precomputed world-space inverse inertia (may be NULL).
+ * @param dt             Substep timestep.
+ * @param inv_dt         1 / dt.
+ */
+static void solve_joint_coupled(phys_constraint_t *c,
+                                 phys_velocity_t *velocities,
+                                 phys_body_t *bodies_mut,
+                                 const phys_mat3_t *inv_inertia_world,
+                                 float dt,
+                                 float inv_dt)
+{
+    phys_velocity_t *va = &velocities[c->body_a];
+    phys_velocity_t *vb = &velocities[c->body_b];
+
+    float inv_mass_a = bodies_mut[c->body_a].inv_mass;
+    float inv_mass_b = bodies_mut[c->body_b].inv_mass;
+
+    phys_mat3_t fallback_a, fallback_b;
+    const phys_mat3_t *inv_i_a;
+    const phys_mat3_t *inv_i_b;
+    if (inv_inertia_world) {
+        inv_i_a = &inv_inertia_world[c->body_a];
+        inv_i_b = &inv_inertia_world[c->body_b];
+    } else {
+        fallback_a = phys_mat3_inv_inertia_world(
+            bodies_mut[c->body_a].orientation,
+            bodies_mut[c->body_a].inv_inertia_diag);
+        fallback_b = phys_mat3_inv_inertia_world(
+            bodies_mut[c->body_b].orientation,
+            bodies_mut[c->body_b].inv_inertia_diag);
+        inv_i_a = &fallback_a;
+        inv_i_b = &fallback_b;
+    }
+
+    /* Compliance α and damping γ from constraint. */
+    float alpha = c->compliance;
+    float gamma = c->joint_damping;
+
+    /* Regularization terms: α/h² and γ/h.
+     * These soften the effective mass denominator.  When α=0 and γ=0,
+     * this reduces to standard coupled implicit GS (rigid). */
+    float alpha_over_h2 = alpha * inv_dt * inv_dt;
+    float gamma_over_h  = gamma * inv_dt;
+
+    for (uint8_t r = 0; r < c->row_count; r++) {
+        phys_jacobian_row_t *row = &c->rows[r];
+
+        /* Compute J·v (relative velocity along constraint direction). */
+        float jv = vec3_dot(row->J_va, va->linear)
+                 + vec3_dot(row->J_wa, va->angular)
+                 + vec3_dot(row->J_vb, vb->linear)
+                 + vec3_dot(row->J_wb, vb->angular);
+
+        /* row->bias holds the position-level constraint error C_i
+         * (set by joint builders: anchor separation in meters for
+         * positional rows, angle error in radians for angular rows).
+         *
+         * Coupled bias: -(J·v + β·C/h + (α/h)·λ_total)
+         * row->lambda serves as λ_total (accumulated across iterations).
+         *
+         * β (position ERP) controls how aggressively position errors
+         * are corrected per substep.  For the coupled solver, we use
+         * a fraction rather than full correction to prevent oscillation
+         * when multiple constraints compete. */
+        float C_i = row->bias;
+        /* Position ERP for coupled solver.  Full correction (1.0) causes
+         * oscillation when zero-damping lock joints compete.  0.6 gives
+         * aggressive-but-stable convergence with FK propagation and
+         * per-iteration Jacobian rebuild. */
+        const float coupled_erp = 0.6f;
+        float numerator = -(jv + coupled_erp * C_i * inv_dt
+                            + alpha * inv_dt * row->lambda);
+
+        /* Regularized effective mass denominator:
+         *   J·M⁻¹·J^T + α/h² + γ/h
+         * row->effective_mass = 1/(J·M⁻¹·J^T), so we need the raw
+         * J·M⁻¹·J^T = 1/effective_mass. */
+        float jmjt = (row->effective_mass > 1e-12f)
+                    ? (1.0f / row->effective_mass)
+                    : 1e12f;
+        float denom = jmjt + alpha_over_h2 + gamma_over_h;
+        float inv_denom = (denom > 1e-12f) ? (1.0f / denom) : 0.0f;
+
+        float delta_lambda = numerator * inv_denom;
+
+        /* Clamp accumulated impulse within bounds. */
+        float old_lambda = row->lambda;
+        row->lambda = old_lambda + delta_lambda;
+        if (row->lambda < row->lambda_min) row->lambda = row->lambda_min;
+        if (row->lambda > row->lambda_max) row->lambda = row->lambda_max;
+        delta_lambda = row->lambda - old_lambda;
+
+        if (fabsf(delta_lambda) < 1e-12f) continue;
+
+        /* Compute velocity deltas: Δv = M⁻¹·J^T·Δλ */
+        phys_vec3_t dv_lin_a = vec3_scale(row->J_va,
+                                           inv_mass_a * delta_lambda);
+        phys_vec3_t dv_lin_b = vec3_scale(row->J_vb,
+                                           inv_mass_b * delta_lambda);
+
+        phys_vec3_t dv_ang_a = vec3_scale(
+            phys_mat3_mul_vec3(inv_i_a, row->J_wa), delta_lambda);
+        phys_vec3_t dv_ang_b = vec3_scale(
+            phys_mat3_mul_vec3(inv_i_b, row->J_wb), delta_lambda);
+
+        /* Update velocities. */
+        va->linear  = vec3_add(va->linear,  dv_lin_a);
+        va->angular = vec3_add(va->angular, dv_ang_a);
+        vb->linear  = vec3_add(vb->linear,  dv_lin_b);
+        vb->angular = vec3_add(vb->angular, dv_ang_b);
+
+        /* Coupled position update: accumulate position changes inline
+         * so that inter-iteration Jacobian rebuilds use up-to-date
+         * body positions and world-space anchors.  This is the core
+         * of the nonlinear implicit GS method.
+         *
+         * The caller saves original positions, lets these accumulate,
+         * then converts the total correction into pseudo-velocities
+         * for the integrator to apply alongside v*dt. */
+        phys_vec3_t dp_a = vec3_scale(dv_lin_a, dt);
+        phys_vec3_t dp_b = vec3_scale(dv_lin_b, dt);
+        bodies_mut[c->body_a].position =
+            vec3_add(bodies_mut[c->body_a].position, dp_a);
+        bodies_mut[c->body_b].position =
+            vec3_add(bodies_mut[c->body_b].position, dp_b);
+
+        /* Integrate orientation: q += 0.5 * dt * [0, ω] * q */
+        phys_quat_t qa = bodies_mut[c->body_a].orientation;
+        phys_quat_t qb = bodies_mut[c->body_b].orientation;
+
+        phys_quat_t dqa = {
+            0.5f * dt * (dv_ang_a.x * qa.w + dv_ang_a.y * qa.z - dv_ang_a.z * qa.y),
+            0.5f * dt * (-dv_ang_a.x * qa.z + dv_ang_a.y * qa.w + dv_ang_a.z * qa.x),
+            0.5f * dt * (dv_ang_a.x * qa.y - dv_ang_a.y * qa.x + dv_ang_a.z * qa.w),
+            0.5f * dt * (-dv_ang_a.x * qa.x - dv_ang_a.y * qa.y - dv_ang_a.z * qa.z)
+        };
+        qa.x += dqa.x; qa.y += dqa.y; qa.z += dqa.z; qa.w += dqa.w;
+        bodies_mut[c->body_a].orientation = quat_normalize_safe(qa, 1e-12f);
+
+        phys_quat_t dqb = {
+            0.5f * dt * (dv_ang_b.x * qb.w + dv_ang_b.y * qb.z - dv_ang_b.z * qb.y),
+            0.5f * dt * (-dv_ang_b.x * qb.z + dv_ang_b.y * qb.w + dv_ang_b.z * qb.x),
+            0.5f * dt * (dv_ang_b.x * qb.y - dv_ang_b.y * qb.x + dv_ang_b.z * qb.w),
+            0.5f * dt * (-dv_ang_b.x * qb.x - dv_ang_b.y * qb.y - dv_ang_b.z * qb.z)
+        };
+        qb.x += dqb.x; qb.y += dqb.y; qb.z += dqb.z; qb.w += dqb.w;
+        bodies_mut[c->body_b].orientation = quat_normalize_safe(qb, 1e-12f);
+    }
+}
 
 /**
  * @brief Solve all rows of a single constraint: normal + friction + split.
+ *
+ * For joint constraints when bodies_mut is non-NULL, uses the coupled
+ * implicit solver (no split-impulse, position updated inline).
+ * Otherwise uses the standard TGS velocity solve + split-impulse.
  */
 static void solve_one_constraint(phys_constraint_t *c,
                                   phys_velocity_t *velocities,
@@ -573,7 +747,8 @@ static void solve_one_constraint(phys_constraint_t *c,
                                   float slop,
                                   float inv_dt,
                                   float tick_dt,
-                                  const uint32_t *tier_substep_counts)
+                                  const uint32_t *tier_substep_counts,
+                                  phys_body_t *bodies_mut)
 {
     phys_velocity_t *va = &velocities[c->body_a];
     phys_velocity_t *vb = &velocities[c->body_b];
@@ -598,6 +773,20 @@ static void solve_one_constraint(phys_constraint_t *c,
     }
 
     if (c->is_joint) {
+        /* Coupled implicit solver: when bodies_mut is available, use the
+         * coupled update that modifies position+velocity together.
+         * This eliminates the split-impulse energy injection problem. */
+        if (bodies_mut) {
+            float dt = (inv_dt > 0.0f) ? (1.0f / inv_dt) : 0.0f;
+            solve_joint_coupled(c, velocities, bodies_mut,
+                                inv_inertia_world, dt, inv_dt);
+            return;
+        }
+
+        /* Fallback: standard TGS velocity-level solve with Baumgarte
+         * leak + split-impulse position correction.  Used when
+         * bodies_mut is NULL (non-TIER_ANIM islands). */
+
         /* Joint constraints: velocity-level solve with a small Baumgarte
          * leak proportional to body speed, then split-impulse position
          * correction using the position error stored in each row's bias.
@@ -648,10 +837,9 @@ static void solve_one_constraint(phys_constraint_t *c,
         }
 
         /* Velocity-level solve: all rows with bilateral bounds. */
-        const float dt = 1.0f / inv_dt;
         for (uint8_t r = 0; r < c->row_count; r++) {
             solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b, dt);
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
         }
 
         /* Restore bias and effective mass for position correction. */
@@ -699,8 +887,7 @@ static void solve_one_constraint(phys_constraint_t *c,
 
     /* Solve normal row first (row 0). */
     solve_row(&c->rows[0], va, vb,
-              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
-              1.0f / inv_dt);
+              inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
 
     {
         /* Split impulse: position correction into pseudo-velocities. */
@@ -718,8 +905,7 @@ static void solve_one_constraint(phys_constraint_t *c,
             c->rows[r].lambda_min = -friction_limit;
             c->rows[r].lambda_max =  friction_limit;
             solve_row(&c->rows[r], va, vb,
-                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
-                      1.0f / inv_dt);
+                      inv_mass_a, inv_i_a, inv_mass_b, inv_i_b);
         }
     }
 }
@@ -788,12 +974,192 @@ static bool solve_island_colored(const phys_island_t *island,
                                      args->bodies, args->inv_inertia_world,
                                      slop, inv_dt,
                                      args->tick_dt,
-                                     args->tier_substep_counts);
+                                     args->tier_substep_counts,
+                                     args->bodies_mut);
             }
         }
     }
 
     return true;
+}
+
+/* ── Coupled island helpers ───────────────────────────────────────── */
+
+/**
+ * @brief Check if an island uses the coupled implicit solver.
+ *
+ * Returns true when bodies_mut is available and any dynamic body in
+ * the island has TIER_ANIM.  The coupled solver updates positions
+ * inline and rebuilds Jacobians between iterations.
+ */
+static bool island_is_coupled_(const phys_island_t *island,
+                                const phys_body_t *bodies,
+                                uint32_t body_count,
+                                const phys_body_t *bodies_mut)
+{
+    if (!bodies_mut || !island || !bodies) {
+        return false;
+    }
+    for (uint32_t b = 0; b < island->body_count; ++b) {
+        uint32_t idx = island->body_indices[b];
+        if (idx >= body_count) continue;
+        if (bodies[idx].tier == PHYS_TIER_ANIM && bodies[idx].inv_mass > 0.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Final position projection for coupled islands.
+ *
+ * After the iterative coupled solve, run one last FK propagation pass
+ * to snap all joint anchors to exact coincidence.  This eliminates
+ * any residual anchor drift from the iterative process.
+ *
+ * @param island      The island to project.
+ * @param constraints Constraint array.
+ * @param constraint_joint_indices Maps constraint → joint index.
+ * @param joints      Joint array.
+ * @param joint_count Number of joints.
+ * @param bodies_mut  Mutable body array (positions updated in-place).
+ * @param body_count  Number of bodies.
+ */
+static void coupled_position_projection_(
+    const phys_island_t *island,
+    phys_constraint_t *constraints,
+    const uint32_t *constraint_joint_indices,
+    phys_joint_t *joints,
+    uint32_t joint_count,
+    phys_body_t *bodies_mut,
+    uint32_t body_count)
+{
+    if (!constraint_joint_indices || !joints || !bodies_mut) return;
+
+    /* Multiple projection passes for convergence in long chains.
+     * Each pass snaps child anchors to parents in topological order,
+     * so a 20-bone chain converges in ~2 passes. */
+    for (int pass = 0; pass < 3; ++pass) {
+        uint32_t last_ji = UINT32_MAX;
+        for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+            uint32_t c_idx = island->constraint_indices[ci];
+            phys_constraint_t *c = &constraints[c_idx];
+            if (!c->is_joint) continue;
+
+            uint32_t ji = constraint_joint_indices[c_idx];
+            if (ji >= joint_count) continue;
+            if (ji == last_ji) continue;
+            last_ji = ji;
+
+            phys_joint_t *j = &joints[ji];
+            uint32_t ba = j->body_a;
+            uint32_t bb = j->body_b;
+            if (ba >= body_count || bb >= body_count) continue;
+            if (bodies_mut[bb].inv_mass <= 0.0f) continue;
+
+            /* Distance joints constrain separation, not coincidence. */
+            if (j->type == PHYS_JOINT_DISTANCE) continue;
+
+            /* Lock joints: snap orientation from parent. */
+            if (j->type == PHYS_JOINT_LOCK) {
+                bodies_mut[bb].orientation = quat_normalize_safe(
+                    quat_mul(bodies_mut[ba].orientation,
+                              j->rest_relative_orient),
+                    1e-12f);
+            }
+
+            /* Snap child position so joint anchors coincide exactly. */
+            phys_vec3_t wa = vec3_add(bodies_mut[ba].position,
+                quat_rotate_vec3(bodies_mut[ba].orientation,
+                                  j->local_anchor_a));
+            phys_vec3_t child_anchor_world = quat_rotate_vec3(
+                bodies_mut[bb].orientation, j->local_anchor_b);
+            bodies_mut[bb].position = vec3_sub(wa, child_anchor_world);
+        }
+    }
+}
+
+/**
+ * @brief Propagate position/orientation corrections through the joint
+ *        hierarchy (forward kinematics).
+ *
+ * After the coupled solver updates body positions inline, parent bones
+ * may have moved without their children following.  This pass snaps
+ * each child body's position so its joint anchor coincides with the
+ * parent's, and for lock joints also propagates orientation.
+ *
+ * Assumes joints are in topological (parent-before-child) order,
+ * which is the natural skeleton ordering.
+ */
+static void propagate_coupled_anchors_(
+    const phys_island_t *island,
+    phys_constraint_t *constraints,
+    const uint32_t *constraint_joint_indices,
+    phys_joint_t *joints,
+    uint32_t joint_count,
+    phys_body_t *bodies_mut,
+    uint32_t body_count)
+{
+    if (!constraint_joint_indices || !joints || !bodies_mut) return;
+
+    uint32_t last_ji = UINT32_MAX;
+    for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+        uint32_t c_idx = island->constraint_indices[ci];
+        phys_constraint_t *c = &constraints[c_idx];
+        if (!c->is_joint) continue;
+
+        uint32_t ji = constraint_joint_indices[c_idx];
+        if (ji >= joint_count) continue;
+        /* Skip duplicate constraints for the same joint (e.g. hinge). */
+        if (ji == last_ji) continue;
+        last_ji = ji;
+
+        phys_joint_t *j = &joints[ji];
+        uint32_t ba = j->body_a;
+        uint32_t bb = j->body_b;
+        if (ba >= body_count || bb >= body_count) continue;
+        if (bodies_mut[bb].inv_mass <= 0.0f) continue;
+
+        /* Distance joints constrain separation, not anchor coincidence. */
+        if (j->type == PHYS_JOINT_DISTANCE) continue;
+
+        /* For lock joints: propagate orientation from parent. */
+        if (j->type == PHYS_JOINT_LOCK) {
+            bodies_mut[bb].orientation = quat_normalize_safe(
+                quat_mul(bodies_mut[ba].orientation,
+                          j->rest_relative_orient),
+                1e-12f);
+        }
+
+        /* Snap child position so joint anchors coincide. */
+        phys_vec3_t wa = vec3_add(bodies_mut[ba].position,
+            quat_rotate_vec3(bodies_mut[ba].orientation,
+                              j->local_anchor_a));
+        phys_vec3_t child_anchor_world = quat_rotate_vec3(
+            bodies_mut[bb].orientation, j->local_anchor_b);
+        bodies_mut[bb].position = vec3_sub(wa, child_anchor_world);
+    }
+}
+
+/**
+ * @brief Recompute world-space inverse inertia for all dynamic island bodies.
+ *
+ * Called between coupled solver iterations after orientation changes.
+ */
+static void recompute_island_inertia_(const phys_island_t *island,
+                                       const phys_body_t *bodies,
+                                       phys_mat3_t *inv_inertia_world,
+                                       uint32_t body_count)
+{
+    if (!inv_inertia_world) return;
+    for (uint32_t b = 0; b < island->body_count; ++b) {
+        uint32_t idx = island->body_indices[b];
+        if (idx >= body_count) continue;
+        const phys_body_t *body = &bodies[idx];
+        if (body->inv_mass <= 0.0f) continue;
+        inv_inertia_world[idx] = phys_mat3_inv_inertia_world(
+            body->orientation, body->inv_inertia_diag);
+    }
 }
 
 /* ── Public API ─────────────────────────────────────────────────── */
@@ -818,6 +1184,23 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
 
     const phys_island_list_t *islands = args->islands;
 
+    /* Build rebuild args once for all coupled islands. */
+    phys_constraint_rebuild_args_t rebuild_args = {
+        .constraints             = args->constraints,
+        .constraint_count        = UINT32_MAX, /* Constraint indices come from islands; no separate count in TGS args. */
+        .constraint_joint_indices = args->constraint_joint_indices,
+        .joints                  = args->joints,
+        .joint_count             = args->joint_count,
+        .bodies                  = args->bodies_mut ? args->bodies_mut : args->bodies,
+        .body_count              = args->body_count,
+        .manifolds               = args->manifolds,
+        .manifold_count          = args->manifold_count,
+        .inv_inertia_world       = args->inv_inertia_world,
+        .dt                      = args->dt,
+        .baumgarte               = args->baumgarte,
+        .slop                    = args->slop,
+    };
+
     /* Process each island independently. */
     for (uint32_t i = 0; i < islands->count; i++) {
         const phys_island_t *island = &islands->islands[i];
@@ -833,6 +1216,10 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
         uint32_t iters = compute_island_iterations(
             island, args->bodies, args->velocities, args->iterations);
 
+        /* Check if this is a coupled (TIER_ANIM) island. */
+        bool coupled = island_is_coupled_(island, args->bodies,
+                                           args->body_count, args->bodies_mut);
+
         /* For large islands with coloring enabled, use graph-colored
          * constraint ordering.  Falls back to sequential on failure. */
         if (args->frame_arena &&
@@ -846,6 +1233,23 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
         /* Sequential solve (default path): all constraints in a single
          * pass per iteration so they converge together. */
         for (uint32_t iter = 0; iter < iters; iter++) {
+            /* Coupled islands: propagate position/orientation corrections
+             * through the skeleton hierarchy (FK pass), then rebuild
+             * world-space anchors, Jacobians, biases, and effective
+             * masses.  The FK pass ensures that when a parent bone
+             * moves, all children follow before Jacobian rebuild. */
+            if (coupled) {
+                propagate_coupled_anchors_(
+                    island, args->constraints,
+                    args->constraint_joint_indices,
+                    args->joints, args->joint_count,
+                    args->bodies_mut, args->body_count);
+                recompute_island_inertia_(island, args->bodies_mut,
+                                           args->inv_inertia_world_mut,
+                                           args->body_count);
+                phys_rebuild_island_all_constraints(island, &rebuild_args);
+            }
+
             for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
                 uint32_t c_idx = island->constraint_indices[ci];
                 solve_one_constraint(&args->constraints[c_idx],
@@ -853,7 +1257,36 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                                      args->bodies, args->inv_inertia_world,
                                      slop, inv_dt,
                                      args->tick_dt,
-                                     args->tier_substep_counts);
+                                     args->tier_substep_counts,
+                                     args->bodies_mut);
+            }
+        }
+
+        /* Coupled islands: the solver wrote final positions directly
+         * into bodies_mut.  Run position projection to snap anchors
+         * to exact coincidence, write back solved velocities, and
+         * mark bodies so the integrator skips position integration
+         * (it would double-integrate otherwise). */
+        if (coupled) {
+            /* Final FK + anchor snap for near-zero anchor errors. */
+            coupled_position_projection_(
+                island, args->constraints,
+                args->constraint_joint_indices,
+                args->joints, args->joint_count,
+                args->bodies_mut, args->body_count);
+
+            for (uint32_t b = 0; b < island->body_count; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= args->body_count) continue;
+                if (args->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                /* Write solved velocities back to body state. */
+                args->bodies_mut[idx].linear_vel = args->velocities[idx].linear;
+                args->bodies_mut[idx].angular_vel = args->velocities[idx].angular;
+                /* Mark body so integrator copies velocities but
+                 * does NOT re-integrate position (solver already did). */
+                if (args->skip_body) {
+                    args->skip_body[idx] = 1;
+                }
             }
         }
     }

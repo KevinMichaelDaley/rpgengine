@@ -35,8 +35,9 @@ void phys_joint_build_copy_rotation(phys_joint_t *joint,
 
     /* Relative rotation: q_rel = q_b * conjugate(q_a).
      * For matching orientations, q_rel should be identity. */
-    phys_quat_t q_rel = quat_mul(body_b->orientation,
-                                  quat_conjugate(body_a->orientation));
+    phys_quat_t q_rel = quat_normalize_safe(
+        quat_mul(body_b->orientation, quat_conjugate(body_a->orientation)),
+        1e-12f);
     if (q_rel.w < 0.0f) {
         q_rel.x = -q_rel.x; q_rel.y = -q_rel.y;
         q_rel.z = -q_rel.z; q_rel.w = -q_rel.w;

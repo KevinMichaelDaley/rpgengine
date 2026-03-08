@@ -33,10 +33,11 @@ extern "C" {
  * sleep threshold.  When it exceeds sleep_delay_frames (set in the
  * integrate stage args), the body is marked SLEEPING and moved to T5.
  *
- * linear_damping / angular_damping: force-based damping coefficients.
- * Linear:  F = -c*v,  dv = -c * v / mass * dt  (encodes cross-section).
- * Angular: τ = -c*ω,  dω = I_inv * (-c*ω) * dt (through inertia tensor).
- * Heavier bodies resist drag more.  0 = no damping.  Default 0.0.
+ * linear_damping / angular_damping: velocity damping coefficients.
+ * Integrated via implicit Euler for unconditional stability.
+ * Linear:  v_new = v / (1 + c * inv_mass * dt)  (mass-dependent).
+ * Angular: ω_new = ω / (1 + c * dt)  (mass-independent).
+ * Higher c = stronger damping.  0 = no damping.  Default 0.0.
  */
 typedef struct phys_body {
     phys_vec3_t position;

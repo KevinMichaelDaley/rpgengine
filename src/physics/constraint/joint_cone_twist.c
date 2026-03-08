@@ -146,19 +146,18 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
     /* Compute relative rotation error relative to rest pose.
      * q_current = q_b * conj(q_a) is the current relative orientation.
      * q_error = conj(q_rest) * q_current measures deviation from rest. */
-    phys_quat_t q_current = quat_mul(body_b->orientation,
-                                      quat_conjugate(body_a->orientation));
-    phys_quat_t q_error = quat_mul(
-        quat_conjugate(joint->rest_relative_orient), q_current);
+    phys_quat_t q_current = quat_normalize_safe(
+        quat_mul(body_b->orientation, quat_conjugate(body_a->orientation)),
+        1e-12f);
+    phys_quat_t q_error = quat_normalize_safe(
+        quat_mul(quat_conjugate(joint->rest_relative_orient), q_current),
+        1e-12f);
 
     /* Ensure shortest path. */
     if (q_error.w < 0.0f) {
         q_error.x = -q_error.x; q_error.y = -q_error.y;
         q_error.z = -q_error.z; q_error.w = -q_error.w;
     }
-
-    /* Relative angular velocity for speculative limit activation. */
-    phys_vec3_t rel_omega = vec3_sub(body_b->angular_vel, body_a->angular_vel);
 
     uint8_t rc = 3;  /* First 3 rows are positional. */
     for (int i = 0; i < 3; ++i) {
@@ -167,13 +166,6 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         float angle = extract_axis_angle(q_error, i);
         float lo = joint->limit_min[i];
         float hi = joint->limit_max[i];
-
-        /* Predict angle at end of timestep from relative angular velocity.
-         * Activate the constraint speculatively when the predicted angle
-         * exceeds the limit, even if the current angle is still within
-         * bounds.  This prevents single-frame overshoot for fast rotations. */
-        float omega_i = vec3_dot(rel_omega, axes[i]);
-        float predicted = angle + omega_i * dt;
 
         float ang_error = 0.0f;
         float lmin = 0.0f, lmax = 0.0f;
@@ -187,18 +179,8 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
             ang_error = angle - hi;
             lmin = 0.0f;
             lmax = JOINT_LAMBDA_BIG;
-        } else if (predicted < lo) {
-            /* Within limits now, but will exceed lower limit this step. */
-            ang_error = predicted - lo;
-            lmin = -JOINT_LAMBDA_BIG;
-            lmax = 0.0f;
-        } else if (predicted > hi) {
-            /* Within limits now, but will exceed upper limit this step. */
-            ang_error = predicted - hi;
-            lmin = 0.0f;
-            lmax = JOINT_LAMBDA_BIG;
         } else {
-            continue;  /* Within limits and predicted to stay there. */
+            continue;  /* Within limits — no correction needed. */
         }
 
         phys_jacobian_row_t *row = &joint->rows[rc];

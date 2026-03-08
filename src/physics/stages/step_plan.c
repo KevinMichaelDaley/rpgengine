@@ -68,12 +68,17 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
     plan->tier_params[PHYS_TIER_0_DIRECT].substeps = 2;
     plan->tier_params[PHYS_TIER_1_NEAR].substeps   = 2;
 
-    /* ANIM tier: XPBD position-level solver for animated/ragdoll bodies.
-     * XPBD converges unconditionally for coupled joint chains where
-     * TGS Gauss-Seidel diverges (spectral radius > 1). */
-    plan->tier_params[PHYS_TIER_ANIM].solver_mode = PHYS_SOLVER_XPBD;
+    /* ANIM tier: TGS with XPBD-regularized coupled implicit velocity
+     * solver for animated/ragdoll bodies.  The regularization terms
+     * (compliance α, damping γ) in the velocity equation prevent
+     * energy injection without needing a separate position solver.
+     * phys_tier_cross_solver_mode() also returns TGS for TIER_ANIM. */
+    plan->tier_params[PHYS_TIER_ANIM].solver_mode = PHYS_SOLVER_TGS;
     plan->tier_params[PHYS_TIER_ANIM].substeps    = cfg->default_substeps;
-    plan->tier_params[PHYS_TIER_ANIM].iterations   = cfg->default_solver_iterations;
+    /* TIER_ANIM uses 2× default iterations for the nonlinear coupled
+     * solver — extra iterations are needed for FK propagation +
+     * Jacobian re-linearization to converge to near-zero errors. */
+    plan->tier_params[PHYS_TIER_ANIM].iterations   = cfg->default_solver_iterations * 2;
     plan->tier_params[PHYS_TIER_ANIM].compliance   = 0.0f;
 
     /* T4 amortized ticking: only active every 3rd frame. */
