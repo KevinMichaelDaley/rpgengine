@@ -206,18 +206,32 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
             ang_error = angle - hi;
             lmin = -JOINT_LAMBDA_BIG;
             lmax = 0.0f;
-        } else if (angular_drive) {
-            /* Within limits — soft bilateral damping row.  bias=0 means
-             * no positional target; the row only opposes relative angular
-             * velocity via the joint's damping coefficient.  This provides
-             * passive resistance to motion ("stiff joints") without
-             * pulling toward any particular pose. */
-            ang_error = 0.0f;
-            lmin = -JOINT_LAMBDA_BIG;
-            lmax =  JOINT_LAMBDA_BIG;
-            is_drive = 1;
         } else {
-            continue;  /* Within limits, no drive — skip. */
+            /* Within limits — emit speculative row so the solver can
+             * prevent overshoot in a single step.  The bias is zero
+             * (no correction needed yet) but the row is active with
+             * one-sided bounds that block motion toward the nearer
+             * limit.  Without this, the body can freely accelerate
+             * past the limit between Jacobian rebuilds. */
+            ang_error = 0.0f;
+            float dist_lo = angle - lo;  /* > 0 */
+            float dist_hi = hi - angle;  /* > 0 */
+            if (angular_drive) {
+                /* Drive row: bilateral, opposes relative angular
+                 * velocity without pulling toward a pose. */
+                lmin = -JOINT_LAMBDA_BIG;
+                lmax =  JOINT_LAMBDA_BIG;
+                is_drive = 1;
+            } else if (dist_lo < dist_hi) {
+                /* Closer to lower limit — only allow positive impulse
+                 * (which would push angle away from lo). */
+                lmin = 0.0f;
+                lmax = JOINT_LAMBDA_BIG;
+            } else {
+                /* Closer to upper limit — only allow negative impulse. */
+                lmin = -JOINT_LAMBDA_BIG;
+                lmax = 0.0f;
+            }
         }
 
         /* Transform the limit axis from joint-local to world space. */

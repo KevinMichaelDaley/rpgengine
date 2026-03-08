@@ -1280,24 +1280,23 @@ def armature_obj_matrix(mesh_obj):
 
 # ── Pose-limit violation checker ─────────────────────────────────
 
-def _extract_euler_from_quat(q):
-    """Extract Euler angles (XYZ) from a quaternion.
+def _quat_to_rotation_vector(q):
+    """Convert quaternion to rotation vector (axis * angle).
 
-    Returns (roll_x, pitch_y, yaw_z) in radians, matching the
-    decomposition used by joint_cone_twist.c / extract_axis_angle().
+    Returns (rx, ry, rz) in radians.  This matches the engine's
+    quat_to_rotation_vector() in joint_cone_twist.c.  Unlike Euler
+    angles, rotation vector components are independent and
+    self-consistent with the angular Jacobian axes.
     """
     x, y, z, w = q.x, q.y, q.z, q.w
-    # Roll (X)
-    roll = math.atan2(2.0 * (w * x + y * z),
-                      1.0 - 2.0 * (x * x + y * y))
-    # Pitch (Y)
-    sinp = 2.0 * (w * y - z * x)
-    sinp = max(-1.0, min(1.0, sinp))
-    pitch = math.asin(sinp)
-    # Yaw (Z)
-    yaw = math.atan2(2.0 * (w * z + x * y),
-                     1.0 - 2.0 * (y * y + z * z))
-    return (roll, pitch, yaw)
+    sin_half = math.sqrt(x * x + y * y + z * z)
+    if sin_half > 1e-6:
+        half_angle = math.atan2(sin_half, w)
+        scale = 2.0 * half_angle / sin_half
+    else:
+        # Small angle: rotation_vector ~ 2 * (x, y, z).
+        scale = 2.0
+    return (x * scale, y * scale, z * scale)
 
 
 class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
@@ -1366,12 +1365,12 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
                                                  -error_q.y,
                                                  -error_q.z))
 
-            angles = _extract_euler_from_quat(error_q)
-            axis_names_bl = ['X', 'Y', 'Z']
+            angles = _quat_to_rotation_vector(error_q)
 
             if jt == 1:  # Cone twist: per-axis limits
-                # Engine mapping: eng_X=bl_X, eng_Y=bl_Z, eng_Z=-bl_Y
-                # Limit flags use the same mapping.
+                # Error quaternion is in the joint's rest-relative frame
+                # which uses Blender coordinates.  Compare directly against
+                # Blender-space limits (no engine axis remapping).
                 use_flags = [pb.talarium_joint_use_limit_x,
                              pb.talarium_joint_use_limit_y,
                              pb.talarium_joint_use_limit_z]
@@ -1381,20 +1380,14 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
                 maxs_bl = [pb.talarium_joint_limit_max_x,
                            pb.talarium_joint_limit_max_y,
                            pb.talarium_joint_limit_max_z]
-
-                # Map Blender axes to engine axes for comparison.
-                # Engine X ← Blender X, Engine Y ← Blender Z,
-                # Engine Z ← -Blender Y.
-                eng_lim_min = [mins_bl[0], mins_bl[2], -maxs_bl[1]]
-                eng_lim_max = [maxs_bl[0], maxs_bl[2], -mins_bl[1]]
-                eng_use = [use_flags[0], use_flags[2], use_flags[1]]
+                axis_names = ['X', 'Y', 'Z']
 
                 for i in range(3):
-                    if not eng_use[i]:
+                    if not use_flags[i]:
                         continue
                     angle = angles[i]
-                    lo = eng_lim_min[i]
-                    hi = eng_lim_max[i]
+                    lo = mins_bl[i]
+                    hi = maxs_bl[i]
                     if lo > hi:
                         lo, hi = hi, lo
                     if angle < lo or angle > hi:
@@ -1402,7 +1395,7 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
                         lo_d = math.degrees(lo)
                         hi_d = math.degrees(hi)
                         violations.append(
-                            f"{bone.name}: axis {i} angle "
+                            f"{bone.name}: {axis_names[i]} axis "
                             f"{deg:.1f}° outside [{lo_d:.1f}°, {hi_d:.1f}°]")
 
             elif jt == 2:  # Hinge: scalar limit
@@ -1428,16 +1421,14 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
                 maxs_bl = [pb.talarium_joint_limit_max_x,
                            pb.talarium_joint_limit_max_y,
                            pb.talarium_joint_limit_max_z]
-                eng_lim_min = [mins_bl[0], mins_bl[2], -maxs_bl[1]]
-                eng_lim_max = [maxs_bl[0], maxs_bl[2], -mins_bl[1]]
-                eng_use = [use_flags[0], use_flags[2], use_flags[1]]
+                axis_names = ['X', 'Y', 'Z']
 
                 for i in range(3):
-                    if not eng_use[i]:
+                    if not use_flags[i]:
                         continue
                     angle = angles[i]
-                    lo = eng_lim_min[i]
-                    hi = eng_lim_max[i]
+                    lo = mins_bl[i]
+                    hi = maxs_bl[i]
                     if lo > hi:
                         lo, hi = hi, lo
                     if angle < lo or angle > hi:
@@ -1445,7 +1436,7 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
                         lo_d = math.degrees(lo)
                         hi_d = math.degrees(hi)
                         violations.append(
-                            f"{bone.name}: axis {i} angle "
+                            f"{bone.name}: {axis_names[i]} axis "
                             f"{deg:.1f}° outside [{lo_d:.1f}°, {hi_d:.1f}°]")
 
         if violations:
@@ -1513,21 +1504,17 @@ class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
 
             # For a bilateral positional constraint between two bodies
             # of equal mass m, effective mass w = 2/m.
-            # XPBD: Δx = -C / (w + α̃), α̃ = α/h².
-            # Spectral radius ρ = sqrt(d * (1 - κ)) where
-            #   κ = w / (w + α̃), d = damping factor.
+            # XPBD diagonal: w + α̃·(1 + β), where α̃ = α/h² and
+            # β is the dimensionless damping ratio.
+            # κ = w / (w + α̃·(1 + β))
+            # Spectral radius ρ = sqrt(1 - κ)
             w = 2.0 / mass
             alpha_tilde = alpha / (h * h)
 
-            kappa = w / (w + alpha_tilde)
-            damping = pb.talarium_joint_damping
-            if damping > 0:
-                # d = 1 / (1 + damping_coeff * h * w)
-                d = 1.0 / (1.0 + damping * h * w)
-            else:
-                d = 1.0
+            beta = pb.talarium_joint_damping
+            kappa = w / (w + alpha_tilde * (1.0 + beta))
 
-            rho = math.sqrt(abs(d * (1.0 - kappa)))
+            rho = math.sqrt(abs(1.0 - kappa))
             if rho > worst_rho:
                 worst_rho = rho
                 worst_bone = bone.name
@@ -1549,6 +1536,39 @@ class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
 
 
 # ── Properties panel (Bone tab, Pose mode) ───────────────────────
+
+class POSE_OT_talarium_copy_prop(bpy.types.Operator):
+    """Copy a single property from the active bone to all selected bones."""
+    bl_idname = "pose.talarium_copy_prop"
+    bl_label = "Copy to Selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    prop_name: StringProperty(name="Property", default="")
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_pose_bone is not None and
+                context.mode == 'POSE')
+
+    def execute(self, context):
+        if not self.prop_name:
+            return {'CANCELLED'}
+        src = context.active_pose_bone
+        val = getattr(src, self.prop_name, None)
+        if val is None:
+            self.report({'WARNING'}, f"Unknown property: {self.prop_name}")
+            return {'CANCELLED'}
+        count = 0
+        for pb in context.selected_pose_bones:
+            if pb == src:
+                continue
+            setattr(pb, self.prop_name, val)
+            count += 1
+        self.report({'INFO'},
+                    f"Set {self.prop_name.replace('talarium_joint_', '')} "
+                    f"= {val} on {count} bone(s)")
+        return {'FINISHED'}
+
 
 class BONE_PT_talarium_physics(bpy.types.Panel):
     """Talarium per-bone physics properties."""
@@ -1674,22 +1694,48 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 row.prop(pb, "talarium_joint_limit_min_z", text="Min")
                 row.prop(pb, "talarium_joint_limit_max_z", text="Max")
 
-            # Physical properties (shown for all joint types except None)
-            if jt != '0':
-                box.separator()
-                box.label(text="Physical Properties")
-                box.prop(pb, "talarium_joint_stiffness")
-                box.prop(pb, "talarium_joint_angular_compliance")
-                box.prop(pb, "talarium_joint_damping")
-                box.prop(pb, "talarium_joint_yield_strength")
-                box.prop(pb, "talarium_joint_break_strength")
+        # ── Physical properties ──
+        # Drawn outside the parent guard so bulk editing works
+        # regardless of joint type on each selected bone.
+        bone = pb.bone
+        has_joint = (bone and bone.parent and
+                     pb.talarium_joint_type != '0')
+        multi = len(context.selected_pose_bones) > 1
+        box = layout.box()
+        box.label(text="Physical Properties", icon='MOD_PHYSICS')
+        phys_col = box.column()
+        phys_col.active = has_joint
+        for prop in ("talarium_joint_stiffness",
+                     "talarium_joint_angular_compliance",
+                     "talarium_joint_damping",
+                     "talarium_joint_yield_strength",
+                     "talarium_joint_break_strength"):
+            row = phys_col.row(align=True)
+            row.prop(pb, prop)
+            if multi:
+                op = row.operator("pose.talarium_copy_prop",
+                                  text="", icon='COPYDOWN')
+                op.prop_name = prop
 
-                box.separator()
-                box.label(text="Drive (Return to Rest)")
-                box.prop(pb, "talarium_joint_angular_drive")
-                box.prop(pb, "talarium_joint_linear_drive")
-                if pb.talarium_joint_angular_drive or pb.talarium_joint_linear_drive:
-                    box.prop(pb, "talarium_joint_drive_compliance")
+        box.separator()
+        box.label(text="Drive (Return to Rest)")
+        drive_col = box.column()
+        drive_col.active = has_joint
+        for prop in ("talarium_joint_angular_drive",
+                     "talarium_joint_linear_drive"):
+            row = drive_col.row(align=True)
+            row.prop(pb, prop)
+            if multi:
+                op = row.operator("pose.talarium_copy_prop",
+                                  text="", icon='COPYDOWN')
+                op.prop_name = prop
+        if pb.talarium_joint_angular_drive or pb.talarium_joint_linear_drive:
+            row = drive_col.row(align=True)
+            row.prop(pb, "talarium_joint_drive_compliance")
+            if multi:
+                op = row.operator("pose.talarium_copy_prop",
+                                  text="", icon='COPYDOWN')
+                op.prop_name = "talarium_joint_drive_compliance"
 
         # ── Validation ──
         box = layout.box()
@@ -1994,6 +2040,7 @@ _CLASSES = [
     BONE_OT_talarium_refresh_collision,
     ARMATURE_OT_talarium_validate_pose,
     ARMATURE_OT_talarium_validate_stability,
+    POSE_OT_talarium_copy_prop,
     BONE_PT_talarium_physics,
 ]
 

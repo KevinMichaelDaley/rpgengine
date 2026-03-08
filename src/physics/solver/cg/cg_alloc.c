@@ -47,12 +47,17 @@ bool phys_cg_alloc(cg_system_t *sys,
         max_rows * sizeof(uint32_t), align);
     sys->row_sub = phys_frame_arena_alloc(arena,
         max_rows * sizeof(uint8_t), align);
+    sys->friction_normal_cg_row = phys_frame_arena_alloc(arena,
+        max_rows * sizeof(uint32_t), align);
+    sys->friction_coeff = phys_frame_arena_alloc(arena,
+        max_rows * sizeof(float), align);
 
     /* Check all allocations succeeded. */
     if (!sys->A_rows || !sys->diag_inv || !sys->rhs ||
         !sys->lambda || !sys->residual || !sys->search_dir ||
         !sys->z || !sys->Ap || !sys->lambda_min || !sys->lambda_max ||
-        !sys->row_constraint || !sys->row_sub) {
+        !sys->row_constraint || !sys->row_sub ||
+        !sys->friction_normal_cg_row || !sys->friction_coeff) {
         memset(sys, 0, sizeof(*sys));
         return false;
     }

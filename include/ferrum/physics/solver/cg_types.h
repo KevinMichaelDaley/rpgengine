@@ -68,6 +68,12 @@ typedef struct cg_system {
     uint32_t *row_constraint;  /**< Constraint index for each CG row [n]. */
     uint8_t  *row_sub;         /**< Row-within-constraint for each CG row [n]. */
 
+    /** Friction cone projection: maps each friction CG row to the CG
+     *  index of its contact normal row.  UINT32_MAX = not a friction row.
+     *  Used during CG iterations to enforce λ_friction ∈ [-μ·λ_n, μ·λ_n]. */
+    uint32_t *friction_normal_cg_row;  /**< CG index of normal row [n]. */
+    float    *friction_coeff;          /**< Friction coefficient μ [n]. */
+
     uint32_t n;                /**< System size (total active joint rows). */
     uint8_t  overflow;         /**< 1 if NNZ overflow occurred during assembly. */
 } cg_system_t;

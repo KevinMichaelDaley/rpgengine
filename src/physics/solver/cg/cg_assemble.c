@@ -114,6 +114,10 @@ void phys_cg_assemble(cg_system_t *sys,
         /* Include both joints and contacts in the CG system. */
         if (c->body_a >= body_count || c->body_b >= body_count) continue;
 
+        /* Track the CG index of row 0 (normal) for contact constraints,
+         * so friction rows can reference it for cone projection. */
+        uint32_t normal_cg_idx = UINT32_MAX;
+
         for (uint8_t r = 0; r < c->row_count; r++) {
             if (sys->n >= CG_MAX_ROWS) {
                 sys->overflow = 1;
@@ -131,6 +135,23 @@ void phys_cg_assemble(cg_system_t *sys,
             sys->lambda[idx] = c->rows[r].lambda;
             sys->lambda_min[idx] = c->rows[r].lambda_min;
             sys->lambda_max[idx] = c->rows[r].lambda_max;
+
+            /* Friction cone mapping: for contacts (is_joint==0),
+             * row 0 is the normal, rows 1-2 are friction tangents.
+             * Map friction rows to their normal row's CG index. */
+            if (c->is_joint == 0) {
+                if (r == 0) {
+                    normal_cg_idx = idx;
+                    sys->friction_normal_cg_row[idx] = UINT32_MAX;
+                    sys->friction_coeff[idx] = 0.0f;
+                } else {
+                    sys->friction_normal_cg_row[idx] = normal_cg_idx;
+                    sys->friction_coeff[idx] = c->friction;
+                }
+            } else {
+                sys->friction_normal_cg_row[idx] = UINT32_MAX;
+                sys->friction_coeff[idx] = 0.0f;
+            }
 
             sys->n++;
         }

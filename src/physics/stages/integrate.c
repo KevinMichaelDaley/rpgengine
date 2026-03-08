@@ -110,8 +110,12 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
          * the same substep.  Do NOT apply gravity here. */
 
         /* Velocity damping via implicit Euler (unconditionally stable).
-         * Linear:  v_new = v / (1 + c*inv_mass*dt)
-         * Angular: ω_new = ω / (1 + c*dt)  (mass-independent) */
+         * Both linear and angular use mass-independent form:
+         *   v_new = v / (1 + c*dt)
+         * Mass-independent damping prevents differential deceleration
+         * between connected bodies of different mass (e.g. ragdoll
+         * torso vs. hand), which would create relative velocity and
+         * cause stretching during free fall. */
         {
             float ld = out->linear_damping;
             float ad = out->angular_damping;
@@ -122,7 +126,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
                 ad = 1.0f - vel_damp;
             }
             if (ld > 0.0f) {
-                float lin_factor = 1.0f / (1.0f + ld * out->inv_mass * body_dt);
+                float lin_factor = 1.0f / (1.0f + ld * body_dt);
                 out->linear_vel.x *= lin_factor;
                 out->linear_vel.y *= lin_factor;
                 out->linear_vel.z *= lin_factor;

@@ -40,6 +40,31 @@ static void project_bounds(float *lambda, const float *lo, const float *hi,
 }
 
 /**
+ * @brief Project friction lambdas onto the Coulomb friction cone.
+ *
+ * For each friction row, clamps lambda to [-μ·λ_normal, +μ·λ_normal].
+ * This ensures friction forces never exceed the normal force scaled by
+ * the friction coefficient, preventing contacts from pulling bodies
+ * together through unconstrained tangential impulses.
+ *
+ * Must be called after project_bounds (which clamps λ_normal ≥ 0).
+ */
+static void project_friction_cone(float *lambda,
+                                  const uint32_t *friction_normal_cg_row,
+                                  const float *friction_coeff,
+                                  uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t ni = friction_normal_cg_row[i];
+        if (ni == UINT32_MAX) continue;
+        float limit = friction_coeff[i] * lambda[ni];
+        if (limit < 0.0f) limit = 0.0f;
+        if (lambda[i] < -limit) lambda[i] = -limit;
+        if (lambda[i] >  limit) lambda[i] =  limit;
+    }
+}
+
+/**
  * @brief Mask residual for active bound constraints.
  *
  * For components at a bound, zero out the residual if the gradient
@@ -80,8 +105,10 @@ uint32_t phys_cg_solve(cg_system_t *sys,
     float *z = sys->z;
     float *Ap = sys->Ap;
 
-    /* Project initial guess onto bounds. */
+    /* Project initial guess onto bounds and friction cone. */
     project_bounds(lambda, sys->lambda_min, sys->lambda_max, n);
+    project_friction_cone(lambda, sys->friction_normal_cg_row,
+                          sys->friction_coeff, n);
 
     /* Initial residual: r = b - A·λ */
     spmv(sys->A_rows, lambda, Ap, n);
@@ -119,6 +146,14 @@ uint32_t phys_cg_solve(cg_system_t *sys,
             lambda[i] += alpha * p[i];
         }
         project_bounds(lambda, sys->lambda_min, sys->lambda_max, n);
+
+        /* Friction cone projection: clamp friction lambdas to
+         * ±μ·λ_normal.  Must come after project_bounds so that
+         * λ_normal ≥ 0 is guaranteed.  Prevents contacts from
+         * exerting tangential forces that exceed the Coulomb limit,
+         * which would otherwise pull bodies together. */
+        project_friction_cone(lambda, sys->friction_normal_cg_row,
+                              sys->friction_coeff, n);
 
         /* Recompute residual after projection (projection breaks
          * the CG recurrence r -= α·Ap, so full recomputation is

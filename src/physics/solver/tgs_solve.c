@@ -768,9 +768,6 @@ static void solve_joint_coupled(phys_constraint_t *c,
          * a fraction rather than full correction to prevent oscillation
          * when multiple constraints compete. */
         float C_i = row->bias;
-        /* Position ERP for coupled solver.  Angular limit rows use a
-         * much lower ERP to avoid energy injection from overcorrection
-         * while still gently enforcing limits. */
         const float coupled_erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
                                 ? 0.1f : 0.6f;
 

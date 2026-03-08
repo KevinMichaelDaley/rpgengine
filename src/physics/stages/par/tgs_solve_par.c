@@ -540,8 +540,6 @@ static void solve_joint_coupled_par(phys_constraint_t *c,
                  + vec3_dot(row->J_wb, vb->angular);
 
         float C_i = row->bias;
-        /* Angular limit rows use lower ERP to avoid energy injection
-         * from overcorrection while still enforcing limits. */
         const float coupled_erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
                                 ? 0.1f : 0.6f;
 

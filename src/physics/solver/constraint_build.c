@@ -71,6 +71,12 @@ void phys_constraint_build_contact(
     c->friction     = friction;
     c->penetration  = contact->penetration;
 
+    /* Slight contact compliance prevents contacts from infinitely
+     * dominating joint angular limits in coupled solvers.  At h=1/240,
+     * α̃ = 1e-8 / h² ≈ 5.8e-4 — negligible vs body mass terms but
+     * enough regularization to avoid ill-conditioned coupling. */
+    c->compliance   = 1e-8f;
+
     /* Lever arms from body centers to the contact point. */
     phys_vec3_t rA = vec3_sub(contact->point_world, body_a->position);
     phys_vec3_t rB = vec3_sub(contact->point_world, body_b->position);

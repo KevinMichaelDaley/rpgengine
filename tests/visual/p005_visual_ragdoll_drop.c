@@ -623,10 +623,49 @@ int main(void) {
                 float err = sqrtf(vec3_dot(diff, diff));
                 if (err > max_err) { max_err = err; worst_joint = ji; }
             }
-            fprintf(stderr, "    max_anchor_err=%.4f (joint %u)\n",
-                    max_err, worst_joint);
-            /* Dump ALL joint errors at frame 10 to see full picture. */
-            if (f == 10 || f == 45 || f == 90) {
+            /* Compute max angular limit violation across all joints. */
+            float max_ang_viol = 0.0f;
+            uint32_t worst_ang_joint = 0;
+            for (uint32_t ji = 0; ji < world.joint_count; ji++) {
+                const phys_joint_t *jj = &world.joints[ji];
+                if (jj->type != PHYS_JOINT_CONE_TWIST) continue;
+                if (jj->body_a >= world.body_pool.capacity ||
+                    jj->body_b >= world.body_pool.capacity) continue;
+                const phys_body_t *ba2 = &world.body_pool.bodies_curr[jj->body_a];
+                const phys_body_t *bb2 = &world.body_pool.bodies_curr[jj->body_b];
+                phys_quat_t qa = ba2->orientation, qb = bb2->orientation;
+                /* q_current = qb * conj(qa), matching engine convention. */
+                phys_quat_t qa_inv = {-qa.x, -qa.y, -qa.z, qa.w};
+                phys_quat_t q_rel = quat_mul(qb, qa_inv);
+                phys_quat_t rest = jj->rest_relative_orient;
+                phys_quat_t rest_inv = {-rest.x, -rest.y, -rest.z, rest.w};
+                phys_quat_t q_err = quat_mul(rest_inv, q_rel);
+                if (q_err.w < 0.0f) {
+                    q_err.x = -q_err.x; q_err.y = -q_err.y;
+                    q_err.z = -q_err.z; q_err.w = -q_err.w;
+                }
+                float sv = sqrtf(q_err.x*q_err.x + q_err.y*q_err.y
+                               + q_err.z*q_err.z);
+                float ax = 0, ay = 0, az = 0;
+                if (sv > 1e-8f) {
+                    float angle = 2.0f * asinf(sv < 1.0f ? sv : 1.0f);
+                    ax = angle * q_err.x / sv;
+                    ay = angle * q_err.y / sv;
+                    az = angle * q_err.z / sv;
+                }
+                float v = 0;
+                if ((jj->limit_axes & 1) && ax < jj->limit_min[0]) v += jj->limit_min[0] - ax;
+                if ((jj->limit_axes & 1) && ax > jj->limit_max[0]) v += ax - jj->limit_max[0];
+                if ((jj->limit_axes & 2) && ay < jj->limit_min[1]) v += jj->limit_min[1] - ay;
+                if ((jj->limit_axes & 2) && ay > jj->limit_max[1]) v += ay - jj->limit_max[1];
+                if ((jj->limit_axes & 4) && az < jj->limit_min[2]) v += jj->limit_min[2] - az;
+                if ((jj->limit_axes & 4) && az > jj->limit_max[2]) v += az - jj->limit_max[2];
+                if (v > max_ang_viol) { max_ang_viol = v; worst_ang_joint = ji; }
+            }
+            fprintf(stderr, "    max_anchor_err=%.4f (j%u)  max_ang_viol=%.4f (j%u)\n",
+                    max_err, worst_joint, max_ang_viol, worst_ang_joint);
+            /* Dump ALL joint errors at key frames. */
+            if (f == 0 || f == 5 || f == 10 || f == 45 || f == 60 || f == 90 || f == 120) {
                 for (uint32_t ji = 0; ji < world.joint_count; ji++) {
                     const phys_joint_t *jj = &world.joints[ji];
                     if (jj->body_a >= world.body_pool.capacity ||
@@ -644,15 +683,58 @@ int main(void) {
                                       : jj->type == PHYS_JOINT_BALL      ? "BL"
                                       : jj->type == 10 /* lock */        ? "LK"
                                       :                                     "??";
-                    fprintf(stderr, "      j%02u[%s] b%u→b%u err=%.4f"
-                            " |la|=%.3f |lb|=%.3f\n",
+                    /* Compute angular error: relative rotation vs rest pose,
+                     * decomposed into rotation vector components. */
+                    float ang_x = 0.0f, ang_y = 0.0f, ang_z = 0.0f;
+                    float viol_x = 0.0f, viol_y = 0.0f, viol_z = 0.0f;
+                    if (jj->type == PHYS_JOINT_CONE_TWIST &&
+                        jj->body_a < world.body_pool.capacity &&
+                        jj->body_b < world.body_pool.capacity) {
+                        phys_quat_t qa = ba2->orientation;
+                        phys_quat_t qb = bb2->orientation;
+                        /* q_current = qb * conj(qa), matching engine convention. */
+                        phys_quat_t qa_inv = {-qa.x, -qa.y, -qa.z, qa.w};
+                        phys_quat_t q_rel = quat_mul(qb, qa_inv);
+                        /* q_err = conj(rest) * q_rel */
+                        phys_quat_t rest = jj->rest_relative_orient;
+                        phys_quat_t rest_inv = {-rest.x, -rest.y, -rest.z, rest.w};
+                        phys_quat_t q_err = quat_mul(rest_inv, q_rel);
+                        /* Ensure w > 0 for consistent rotation vector. */
+                        if (q_err.w < 0.0f) {
+                            q_err.x = -q_err.x; q_err.y = -q_err.y;
+                            q_err.z = -q_err.z; q_err.w = -q_err.w;
+                        }
+                        /* Rotation vector: 2 * asin(|v|) * v/|v| */
+                        float sv = sqrtf(q_err.x*q_err.x + q_err.y*q_err.y
+                                       + q_err.z*q_err.z);
+                        if (sv > 1e-8f) {
+                            float angle = 2.0f * asinf(sv < 1.0f ? sv : 1.0f);
+                            ang_x = angle * q_err.x / sv;
+                            ang_y = angle * q_err.y / sv;
+                            ang_z = angle * q_err.z / sv;
+                        }
+                        /* Compute limit violation per axis. */
+                        if (jj->limit_axes & 1) {
+                            if (ang_x < jj->limit_min[0]) viol_x = ang_x - jj->limit_min[0];
+                            else if (ang_x > jj->limit_max[0]) viol_x = ang_x - jj->limit_max[0];
+                        }
+                        if (jj->limit_axes & 2) {
+                            if (ang_y < jj->limit_min[1]) viol_y = ang_y - jj->limit_min[1];
+                            else if (ang_y > jj->limit_max[1]) viol_y = ang_y - jj->limit_max[1];
+                        }
+                        if (jj->limit_axes & 4) {
+                            if (ang_z < jj->limit_min[2]) viol_z = ang_z - jj->limit_min[2];
+                            else if (ang_z > jj->limit_max[2]) viol_z = ang_z - jj->limit_max[2];
+                        }
+                    }
+                    float max_viol = fabsf(viol_x);
+                    if (fabsf(viol_y) > max_viol) max_viol = fabsf(viol_y);
+                    if (fabsf(viol_z) > max_viol) max_viol = fabsf(viol_z);
+                    fprintf(stderr, "      j%02u[%s] b%u→b%u pos_err=%.4f"
+                            " ang=(%.2f,%.2f,%.2f) viol=(%.3f,%.3f,%.3f)\n",
                             ji, jtype, jj->body_a, jj->body_b, e2,
-                            sqrtf(jj->local_anchor_a.x*jj->local_anchor_a.x +
-                                  jj->local_anchor_a.y*jj->local_anchor_a.y +
-                                  jj->local_anchor_a.z*jj->local_anchor_a.z),
-                            sqrtf(jj->local_anchor_b.x*jj->local_anchor_b.x +
-                                  jj->local_anchor_b.y*jj->local_anchor_b.y +
-                                  jj->local_anchor_b.z*jj->local_anchor_b.z));
+                            ang_x, ang_y, ang_z,
+                            viol_x, viol_y, viol_z);
                 }
             }
             /* Dump worst joint anchor details when error is large. */

@@ -481,16 +481,16 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             volume = 0.008f; /* 0.2^3 */
             break;
         }
-        /* Approximate cross-section from volume for drag scaling.
-         * Uses cbrt(vol/ref) for gentle scaling — larger parts get
-         * proportionally more drag but not excessively.
-         * Base coefficient is high enough to prevent ragdoll bounce:
-         * for a 5 kg body at dt=4.2ms, c=50 gives ~4% vel reduction
-         * per substep, ~15% per tick — sufficient post-impact settling. */
-        float cross_scale = cbrtf(volume / 0.002f);
-        if (cross_scale < 0.1f) cross_scale = 0.1f;
-        body->linear_damping  = 50.0f * cross_scale;
-        body->angular_damping = 50.0f * cross_scale;
+        /* Uniform damping for all ragdoll bodies.  Must be the same
+         * across all connected bodies to prevent differential deceleration
+         * during free fall (which causes anchor stretching).  The damping
+         * formula is mass-independent: v' = v / (1 + c*dt), so equal
+         * coefficients guarantee equal deceleration rates regardless
+         * of body mass.  50 gives ~17% reduction per substep at dt=4.2ms,
+         * providing strong post-impact settling. */
+        (void)volume;
+        body->linear_damping  = 50.0f;
+        body->angular_damping = 50.0f;
 
         /* All animated entity bodies use the ANIM tier (XPBD solver). */
         body->tier = PHYS_TIER_ANIM;

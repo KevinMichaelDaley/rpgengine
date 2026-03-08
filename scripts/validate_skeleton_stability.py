@@ -208,6 +208,8 @@ def _extract_skeleton(fskel_data, min_compliance):
         all_rows: list of (body_a, body_b, J_va, J_wa, J_vb, J_wb)
         all_compliances: list[float]
         joint_names: list[str]
+        all_damping_ratios: list[float]
+        all_is_angular: list[bool]
     """
     joints_data = fskel_data.get("joints", [])
     n_bodies = len(joints_data)
@@ -238,6 +240,8 @@ def _extract_skeleton(fskel_data, min_compliance):
     all_rows = []
     all_compliances = []
     joint_names = []
+    all_damping_ratios = []
+    all_is_angular = []
 
     for i, jd in enumerate(joints_data):
         desc = jd.get("joint_desc", {})
@@ -253,6 +257,7 @@ def _extract_skeleton(fskel_data, min_compliance):
         if compliance < min_compliance:
             compliance = min_compliance
 
+        damping_ratio = desc.get("damping", 0.0)
         limit_axes = desc.get("limit_axes", 0)
         anchor_a = desc.get("anchor_a", list(positions[i]))
         anchor_b = desc.get("anchor_b", list(positions[i]))
@@ -269,6 +274,8 @@ def _extract_skeleton(fskel_data, min_compliance):
                     anchor_a_local, anchor_b_local):
                 all_rows.append((parent_idx, i) + row)
                 all_compliances.append(compliance)
+                all_damping_ratios.append(damping_ratio)
+                all_is_angular.append(False)
                 joint_names.append(bone_name)
 
         if jt == JOINT_CONE_TWIST:
@@ -277,6 +284,8 @@ def _extract_skeleton(fskel_data, min_compliance):
                     active_axes=limit_axes):
                 all_rows.append((parent_idx, i) + row)
                 all_compliances.append(compliance)
+                all_damping_ratios.append(damping_ratio)
+                all_is_angular.append(True)
                 joint_names.append(bone_name + " (ang)")
         elif jt == JOINT_HINGE:
             for row in _build_angular_jacobian_rows(
@@ -284,6 +293,8 @@ def _extract_skeleton(fskel_data, min_compliance):
                     active_axes=0x6):
                 all_rows.append((parent_idx, i) + row)
                 all_compliances.append(compliance)
+                all_damping_ratios.append(damping_ratio)
+                all_is_angular.append(True)
                 joint_names.append(bone_name + " (ang)")
         elif jt == JOINT_LOCK:
             for row in _build_angular_jacobian_rows(
@@ -291,6 +302,8 @@ def _extract_skeleton(fskel_data, min_compliance):
                     active_axes=0x7):
                 all_rows.append((parent_idx, i) + row)
                 all_compliances.append(compliance)
+                all_damping_ratios.append(damping_ratio)
+                all_is_angular.append(True)
                 joint_names.append(bone_name + " (ang)")
         elif jt == JOINT_DISTANCE:
             diff = positions[i] - positions[parent_idx]
@@ -301,10 +314,13 @@ def _extract_skeleton(fskel_data, min_compliance):
             all_rows.append((parent_idx, i, -n, -np.cross(r_a, n),
                              n, np.cross(r_b, n)))
             all_compliances.append(compliance)
+            all_damping_ratios.append(damping_ratio)
+            all_is_angular.append(False)
             joint_names.append(bone_name)
 
     return (n_bodies, masses, inv_inertias, positions, orientations,
-            all_rows, all_compliances, joint_names)
+            all_rows, all_compliances, joint_names,
+            all_damping_ratios, all_is_angular)
 
 
 # ── Core analysis ────────────────────────────────────────────────
@@ -344,7 +360,8 @@ def validate_fskel_stability(fskel_data, dt=1.0/240.0, min_compliance=1e-3,
         (max_eig_magnitude, warnings)
     """
     (n_bodies, masses, inv_inertias, positions, orientations,
-     all_rows, all_compliances, joint_names) = \
+     all_rows, all_compliances, joint_names,
+     all_damping_ratios, all_is_angular) = \
         _extract_skeleton(fskel_data, min_compliance)
 
     n_rows = len(all_rows)
@@ -383,10 +400,45 @@ def validate_fskel_stability(fskel_data, dt=1.0/240.0, min_compliance=1e-3,
         inv_I_world = R @ np.diag(inv_inertias[b]) @ R.T
         M_inv[6*b+3:6*b+6, 6*b+3:6*b+6] = inv_I_world
 
-    # ── Build XPBD projection K = M⁻¹Jᵀ(JM⁻¹Jᵀ + α̃I)⁻¹J ──────
+    # ── Build XPBD projection K = M⁻¹Jᵀ W⁻¹ J ──────────────────
+    # W = J·M⁻¹·Jᵀ + diag(α̃·(1 + β) + K_geo)
+    # where α̃ = α/h², β = damping ratio, K_geo = geometric stiffness.
 
     alpha_tilde = np.array([c / (dt*dt) for c in all_compliances])
-    W = J @ M_inv @ J.T + np.diag(alpha_tilde)
+
+    # Per-row diagonal regularization: α̃·(1 + β)
+    diag_reg = np.array([
+        alpha_tilde[i] * (1.0 + all_damping_ratios[i])
+        for i in range(n_rows)
+    ])
+
+    # Geometric stiffness for angular rows: h²·Σ_{j≠i} |λ_j|·(1-(n_i·n_j)²)
+    # At equilibrium λ≈0, but for the stability analysis we estimate λ
+    # from the constraint force needed to hold the pose.  For a first-order
+    # approximation we use the diagonal effective mass as a proxy.
+    JMJt = J @ M_inv @ J.T
+    for i in range(n_rows):
+        if all_is_angular[i]:
+            # Estimate geometric stiffness from sibling angular rows
+            # on the same joint.  Use the diagonal of JMJt as a proxy
+            # for the equilibrium lambda magnitude.
+            k_geo = 0.0
+            for s in range(n_rows):
+                if s == i or not all_is_angular[s]:
+                    continue
+                # Only rows from the same joint (same body pair)
+                if (all_rows[i][0] == all_rows[s][0] and
+                        all_rows[i][1] == all_rows[s][1]):
+                    # n_i · n_j from angular Jacobian (J_wb columns)
+                    n_i = all_rows[i][5]  # J_wb
+                    n_s = all_rows[s][5]
+                    dot = np.dot(n_i, n_s)
+                    # Use diagonal element as proxy for |λ|
+                    lam_proxy = abs(JMJt[s, s])
+                    k_geo += lam_proxy * (1.0 - dot * dot)
+            diag_reg[i] += dt * dt * k_geo
+
+    W = JMJt + np.diag(diag_reg)
 
     try:
         W_inv = np.linalg.inv(W)
@@ -506,8 +558,8 @@ def validate_fskel_stability(fskel_data, dt=1.0/240.0, min_compliance=1e-3,
                 print(f"    |λ|={mag:.6f} ∠{phase:+.1f}° → body '{name}' "
                       f"DOF {dof} [{sign}]")
 
-        # Per-joint compliance
-        print(f"\n  Joint compliance values:")
+        # Per-joint compliance and damping
+        print(f"\n  Joint compliance/damping values:")
         seen = set()
         for i, name in enumerate(joint_names):
             key = name.split(" (")[0]
@@ -517,8 +569,9 @@ def validate_fskel_stability(fskel_data, dt=1.0/240.0, min_compliance=1e-3,
             c = all_compliances[i]
             stiff = 1.0/c if c > 0 else float('inf')
             at = c / (dt*dt)
+            beta = all_damping_ratios[i]
             print(f"    {name}: α={c:.2e}  k={stiff:.0f} N/m  "
-                  f"α̃={at:.2e}")
+                  f"α̃={at:.2e}  β={beta:.2f}")
 
         # Top eigenvalue magnitudes
         top_mags = np.sort(magnitudes)[::-1]
@@ -540,7 +593,7 @@ def validate_fskel_stability(fskel_data, dt=1.0/240.0, min_compliance=1e-3,
     if HAS_MPMATH and verbose:
         mp_dps = 8
         mp_mag, mp_top, mp_K_eigs = _mpmath_verify_eigenvalues(
-            J, M_inv, alpha_tilde, N, dt, d, dps=mp_dps)
+            J, M_inv, diag_reg, N, dt, d, dps=mp_dps)
         if mp_mag is not None:
             print(f"\n  {'─'*55}")
             print(f"  mpmath verification ({mp_dps} digits, analytical reduction):")
