@@ -130,7 +130,13 @@ static void solve_contact_xpbd(phys_constraint_t *c,
     float n_len_sq = vec3_dot(normal, normal);
     if (n_len_sq < 1e-10f) return;
 
-    float C = -row->bias * dt;
+    /* XPBD needs a position-level error, not the velocity-space bias used
+     * by the TGS solver. For real overlap, solve the full penetration depth
+     * directly; otherwise keep the speculative gap bias for pre-contact
+     * clamping. */
+    float C = (c->penetration > 0.0f)
+        ? -c->penetration
+        : (-row->bias * dt);
 
     float compliance = (c->compliance > 0.0f) ? c->compliance : default_compliance;
     float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
@@ -142,11 +148,46 @@ static void solve_contact_xpbd(phys_constraint_t *c,
     if (row->lambda < 0.0f) row->lambda = 0.0f;
     delta_lambda = row->lambda - old_lambda;
 
-    /* Linear corrections. */
-    ba->position = vec3_sub(ba->position,
-        vec3_scale(row->J_va, ba->inv_mass * delta_lambda * omega));
-    bb->position = vec3_sub(bb->position,
-        vec3_scale(row->J_vb, -bb->inv_mass * delta_lambda * omega));
+    /* Linear corrections follow the Jacobian signs directly.
+     * J_va is typically -n and J_vb is +n for contacts, so adding the
+     * scaled Jacobians moves the bodies apart instead of translating the
+     * pair together. */
+    if (ba->inv_mass > 0.0f) {
+        ba->position = vec3_add(ba->position,
+            vec3_scale(row->J_va, ba->inv_mass * delta_lambda * omega));
+    }
+    if (bb->inv_mass > 0.0f) {
+        bb->position = vec3_add(bb->position,
+            vec3_scale(row->J_vb, bb->inv_mass * delta_lambda * omega));
+    }
+
+    /* Contact rows also carry angular Jacobians from the lever arm at the
+     * contact point. Without the matching orientation correction, foot and
+     * hand contacts barely affect off-center bodies because w includes the
+     * angular term while the solve only translates the COM. */
+    float jwa_sq = vec3_dot(row->J_wa, row->J_wa);
+    if (jwa_sq > 1e-12f && ba->inv_mass > 0.0f) {
+        phys_vec3_t wa_local = quat_inv_rotate_vec3(ba->orientation, row->J_wa);
+        phys_vec3_t dw_local = {
+            wa_local.x * ba->inv_inertia_diag.x * delta_lambda * omega,
+            wa_local.y * ba->inv_inertia_diag.y * delta_lambda * omega,
+            wa_local.z * ba->inv_inertia_diag.z * delta_lambda * omega
+        };
+        phys_vec3_t dw_world = quat_rotate_vec3(ba->orientation, dw_local);
+        ba->orientation = apply_angular_correction(ba->orientation, dw_world);
+    }
+
+    float jwb_sq = vec3_dot(row->J_wb, row->J_wb);
+    if (jwb_sq > 1e-12f && bb->inv_mass > 0.0f) {
+        phys_vec3_t wb_local = quat_inv_rotate_vec3(bb->orientation, row->J_wb);
+        phys_vec3_t dw_local = {
+            wb_local.x * bb->inv_inertia_diag.x * delta_lambda * omega,
+            wb_local.y * bb->inv_inertia_diag.y * delta_lambda * omega,
+            wb_local.z * bb->inv_inertia_diag.z * delta_lambda * omega
+        };
+        phys_vec3_t dw_world = quat_rotate_vec3(bb->orientation, dw_local);
+        bb->orientation = apply_angular_correction(bb->orientation, dw_world);
+    }
 }
 
 /**
@@ -165,8 +206,24 @@ static void solve_joint_xpbd(phys_constraint_t *c,
     phys_body_t *ba = &bodies[c->body_a];
     phys_body_t *bb = &bodies[c->body_b];
 
+    /* Minimum compliance floor: without sufficient compliance, α̃ → 0
+     * and XPBD degenerates to raw Jacobi projection.  For coupled
+     * joint chains the iteration matrix's spectral radius can exceed 1,
+     * causing divergence.  The floor is applied via default_compliance
+     * which is set from world->config.xpbd_min_compliance upstream.
+     * Per-constraint compliance is also floored to the default so that
+     * no joint can be stiffer than the system can converge. */
     float compliance = (c->compliance > 0.0f) ? c->compliance : default_compliance;
+    if (compliance < default_compliance) compliance = default_compliance;
     float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
+
+    /* XPBD-D: damping coefficient γ = α̃ · d · h.
+     * Adds velocity-opposing term so joints dissipate kinetic energy.
+     * When joint_damping = 0 this vanishes → standard XPBD. */
+    float gamma = 0.0f;
+    if (c->joint_damping > 0.0f && dt > 0.0f) {
+        gamma = alpha_tilde * c->joint_damping * dt;
+    }
 
     for (uint8_t r = 0; r < c->row_count; ++r) {
         phys_jacobian_row_t *row = &c->rows[r];
@@ -175,8 +232,20 @@ static void solve_joint_xpbd(phys_constraint_t *c,
         float w = compute_generalized_inv_mass(row, ba, bb);
         if (w < 1e-10f) continue;
 
+        /* Relative velocity along constraint direction: J·v.
+         * Only computed when damping is active (gamma > 0). */
+        float jv = 0.0f;
+        if (gamma > 0.0f) {
+            jv = vec3_dot(row->J_va, ba->linear_vel)
+               + vec3_dot(row->J_wa, ba->angular_vel)
+               + vec3_dot(row->J_vb, bb->linear_vel)
+               + vec3_dot(row->J_wb, bb->angular_vel);
+        }
+
         float C = row->bias;
-        float delta_lambda = (-C - alpha_tilde * row->lambda) / (w + alpha_tilde);
+        /* XPBD-D: Δλ = -(C + α̃·λ + γ·Jv) / ((1+γ)·w + α̃) */
+        float delta_lambda = -(C + alpha_tilde * row->lambda + gamma * jv)
+                           / ((1.0f + gamma) * w + alpha_tilde);
 
         /* Bilateral clamp. */
         float old_lambda = row->lambda;

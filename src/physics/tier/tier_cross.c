@@ -14,6 +14,13 @@
 phys_solver_mode_t phys_tier_cross_solver_mode(phys_tier_t tier_a,
                                                phys_tier_t tier_b)
 {
+    /* Animated tier routes through TGS with per-constraint compliance
+     * softening.  The XPBD position solver had persistent energy-injection
+     * bugs; TGS + compliance gives equivalent softness without the
+     * velocity-derivation complexity. */
+    if (tier_a == PHYS_TIER_ANIM || tier_b == PHYS_TIER_ANIM) {
+        return PHYS_SOLVER_TGS;
+    }
     /* Use TGS if either body is in a high-fidelity tier (T0 or T1). */
     if (tier_a <= PHYS_TIER_1_NEAR || tier_b <= PHYS_TIER_1_NEAR) {
         return PHYS_SOLVER_TGS;

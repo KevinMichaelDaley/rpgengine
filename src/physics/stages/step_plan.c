@@ -68,6 +68,14 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
     plan->tier_params[PHYS_TIER_0_DIRECT].substeps = 2;
     plan->tier_params[PHYS_TIER_1_NEAR].substeps   = 2;
 
+    /* ANIM tier: XPBD position-level solver for animated/ragdoll bodies.
+     * XPBD converges unconditionally for coupled joint chains where
+     * TGS Gauss-Seidel diverges (spectral radius > 1). */
+    plan->tier_params[PHYS_TIER_ANIM].solver_mode = PHYS_SOLVER_XPBD;
+    plan->tier_params[PHYS_TIER_ANIM].substeps    = cfg->default_substeps;
+    plan->tier_params[PHYS_TIER_ANIM].iterations   = cfg->default_solver_iterations;
+    plan->tier_params[PHYS_TIER_ANIM].compliance   = 0.0f;
+
     /* T4 amortized ticking: only active every 3rd frame. */
     if (world->tick_count % 3 != 0) {
         plan->tier_params[PHYS_TIER_4_BACKGROUND].active = false;

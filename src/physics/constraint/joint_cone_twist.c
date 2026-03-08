@@ -92,7 +92,32 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         body_b->position,
         quat_rotate_vec3(body_b->orientation, joint->local_anchor_b));
 
-    phys_vec3_t error = vec3_sub(world_anchor_b, world_anchor_a);
+    phys_vec3_t pred_pos_a = vec3_add(body_a->position,
+                                       vec3_scale(body_a->linear_vel, dt));
+    phys_vec3_t pred_pos_b = vec3_add(body_b->position,
+                                       vec3_scale(body_b->linear_vel, dt));
+    phys_vec3_t pred_anchor_a = vec3_add(
+        pred_pos_a,
+        quat_rotate_vec3(body_a->orientation, joint->local_anchor_a));
+    phys_vec3_t pred_anchor_b = vec3_add(
+        pred_pos_b,
+        quat_rotate_vec3(body_b->orientation, joint->local_anchor_b));
+
+    phys_vec3_t curr_error = vec3_sub(world_anchor_b, world_anchor_a);
+    phys_vec3_t pred_error = vec3_sub(pred_anchor_b, pred_anchor_a);
+    float spd2_a = vec3_dot(body_a->linear_vel, body_a->linear_vel);
+    float spd2_b = vec3_dot(body_b->linear_vel, body_b->linear_vel);
+    float max_spd2 = spd2_a > spd2_b ? spd2_a : spd2_b;
+    const float pred_lo2 = 5.0f * 5.0f;
+    const float pred_hi2 = 80.0f * 80.0f;
+    float pred_blend = 0.0f;
+    if (max_spd2 > pred_lo2) {
+        pred_blend = (max_spd2 - pred_lo2) / (pred_hi2 - pred_lo2);
+        if (pred_blend > 0.5f) { pred_blend = 0.5f; }
+    }
+    phys_vec3_t error = vec3_add(
+        vec3_scale(curr_error, 1.0f - pred_blend),
+        vec3_scale(pred_error, pred_blend));
     phys_vec3_t rA = vec3_sub(world_anchor_a, body_a->position);
     phys_vec3_t rB = vec3_sub(world_anchor_b, body_b->position);
 
@@ -163,7 +188,9 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         row->J_wb = axes[i];
         row->lambda_min = lmin;
         row->lambda_max = lmax;
-        row->lambda = joint->cached_lambda[rc];
+        /* Active limit rows appear/disappear as the violation set changes,
+         * so row order is not stable enough to warmstart by index. */
+        row->lambda = 0.0f;
         row->bias = ang_error;
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR;

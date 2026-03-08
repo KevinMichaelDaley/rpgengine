@@ -30,6 +30,7 @@
 #include "ferrum/math/quat.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -348,7 +349,7 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
              * without injecting energy into the skeleton. */
             body->flags |= PHYS_BODY_FLAG_NO_BROADPHASE
                          | PHYS_BODY_FLAG_NO_GRAVITY;
-            body->tier = PHYS_TIER_0_DIRECT;
+            body->tier = PHYS_TIER_ANIM;
             phys_body_set_mass(body, 1.0f);
             phys_body_set_sphere_inertia(body, 1.0f, 0.05f);
             body->linear_damping  = 0.95f;
@@ -483,6 +484,9 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
         if (cross_scale < 0.1f) cross_scale = 0.1f;
         body->linear_damping  = 0.5f * cross_scale;
         body->angular_damping = 0.5f * cross_scale;
+
+        /* All animated entity bodies use the ANIM tier (XPBD solver). */
+        body->tier = PHYS_TIER_ANIM;
     }
 
     entity->body_count = body_count;
@@ -681,7 +685,13 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     }
                     break;
                 }
-                case 4: j->type = PHYS_JOINT_LOCK; break;
+                case 4: {
+                    j->type = PHYS_JOINT_LOCK;
+                    phys_quat_t child_orient = quat_from_mat4(&world_pose[i]);
+                    j->rest_relative_orient = quat_mul(
+                        child_orient, quat_conjugate(parent_orient));
+                    break;
+                }
                 case 5: j->type = PHYS_JOINT_COPY_ROTATION; break;
                 case 6:
                     j->type = PHYS_JOINT_LIMIT_ROTATION;
@@ -716,6 +726,28 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 j->damping = jd->damping;
                 j->yield_strength = jd->yield_strength;
                 j->break_strength = jd->break_strength;
+
+                /* Temporary load-time diagnostic dump. */
+                {
+                    static const char *type_names[] = {
+                        "DIST","BALL","HINGE","LOCK","CPROT",
+                        "LROT","LPOS","AIM","IK","CTWIST"
+                    };
+                    const char *tn = (j->type < 10) ? type_names[j->type] : "?";
+                    fprintf(stderr,
+                        "  j%u: b%u->b%u %s lim_axes=%u "
+                        "lim=[%.3f,%.3f,%.3f]->[%.3f,%.3f,%.3f] "
+                        "damp=%.3f comp=%.6f rest_q=(%.4f,%.4f,%.4f,%.4f)\n",
+                        jc, j->body_a, j->body_b, tn, j->limit_axes,
+                        j->limit_min[0], j->limit_min[1], j->limit_min[2],
+                        j->limit_max[0], j->limit_max[1], j->limit_max[2],
+                        j->damping, j->compliance,
+                        j->rest_relative_orient.x,
+                        j->rest_relative_orient.y,
+                        j->rest_relative_orient.z,
+                        j->rest_relative_orient.w);
+                }
+
                 jc++;
             }
 
@@ -745,14 +777,16 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                                     PHYS_BODY_FLAG_NO_BROADPHASE) != 0;
                     if (!a_ghost && !b_ghost) continue;
 
-                    /* Center-to-center rest distance. */
-                    float px = world_pose[parent_bone].m[12];
-                    float py = world_pose[parent_bone].m[13];
-                    float pz = world_pose[parent_bone].m[14];
-                    float cx = world_pose[i].m[12];
-                    float cy = world_pose[i].m[13];
-                    float cz = world_pose[i].m[14];
-                    float dx = cx - px, dy = cy - py, dz = cz - pz;
+                    /* Center-to-center rest distance using actual body
+                     * midpoint positions, NOT bone head positions from
+                     * world_pose.  Bodies are at bone midpoints so the
+                     * distance constraint must match. */
+                    float dx = bodies[body_child].position.x -
+                               bodies[body_parent].position.x;
+                    float dy = bodies[body_child].position.y -
+                               bodies[body_parent].position.y;
+                    float dz = bodies[body_child].position.z -
+                               bodies[body_parent].position.z;
                     float rest = sqrtf(dx*dx + dy*dy + dz*dz);
                     if (rest < 1e-4f) continue;  /* Skip coincident bones. */
 
@@ -913,6 +947,28 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
         }
     }
     (void)overlap_excl_count;
+
+    /* 3. Exclude all remaining intra-rig pairs.
+     * Animated rigs are already held together by authored joints; letting
+     * the same rig self-collide on top of those constraints over-constrains
+     * XPBD islands and blows the ragdoll apart. */
+    uint32_t self_excl_count = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t bi = entity->body_indices[i];
+        if (bi == UINT32_MAX) continue;
+        if (world->body_pool.bodies_curr[bi].flags &
+            PHYS_BODY_FLAG_NO_BROADPHASE) continue;
+        for (uint32_t j = i + 1; j < n; j++) {
+            uint32_t bj = entity->body_indices[j];
+            if (bj == UINT32_MAX) continue;
+            if (world->body_pool.bodies_curr[bj].flags &
+                PHYS_BODY_FLAG_NO_BROADPHASE) continue;
+            if (phys_world_is_pair_excluded(world, bi, bj)) continue;
+            phys_world_exclude_pair(world, bi, bj);
+            self_excl_count++;
+        }
+    }
+    (void)self_excl_count;
 
     return true;
 }

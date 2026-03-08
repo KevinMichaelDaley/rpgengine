@@ -101,14 +101,15 @@ void phys_constraint_build_contact(
     float baumgarte_bias = 0.0f;
 
     /* Speculative contacts (negative penetration) use velocity-level
-     * clamping: bias = penetration/dt clamps the closing velocity to
-     * exactly reach the contact surface this frame. */
+     * clamping: bias = -penetration/dt limits closing speed so the gap
+     * reaches zero at the end of the step instead of turning a gap into
+     * overlap. */
     float speculative_bias = 0.0f;
 
     if (contact->penetration < 0.0f) {
         /* Speculative: clamp closing velocity. */
         if (dt > 0.0f) {
-            speculative_bias = contact->penetration / dt;
+            speculative_bias = -contact->penetration / dt;
         }
         /* No restitution for speculative contacts. */
         restitution_bias = 0.0f;

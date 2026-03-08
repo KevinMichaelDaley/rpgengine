@@ -36,9 +36,12 @@ bool phys_sphere_vs_halfspace(
     /* No contact if gap exceeds speculative margin. */
     if (pen < -speculative_margin) return false;
 
-    /* Contact point on the sphere surface closest to the plane. */
+    /* Midpoint between the sphere support point and the plane contact.
+     * Using the projected center overstates the lever arm and weakens
+     * solver response for deep contacts. */
     phys_vec3_t contact_pt = vec3_sub(sphere_center,
-                                       vec3_scale(plane_normal, signed_dist));
+                                       vec3_scale(plane_normal,
+                                                  sphere_radius - pen * 0.5f));
 
     /* Normal points from the shape (body_a after type-swap) toward the
      * halfspace (body_b), i.e. INTO the solid half.  The plane_normal
@@ -107,8 +110,10 @@ int phys_capsule_vs_halfspace(
         phys_contact_point_t *cp = &contacts_out[count];
         cp->normal      = normal;
         cp->penetration = ep_pen[i];
-        cp->point_world = vec3_sub(ep_center[i],
-                                   vec3_scale(plane_normal, ep_dist[i]));
+        cp->point_world = vec3_sub(
+            ep_center[i],
+            vec3_scale(plane_normal,
+                       capsule_radius - ep_pen[i] * 0.5f));
         cp->local_a     = (phys_vec3_t){0, 0, 0};
         cp->local_b     = (phys_vec3_t){0, 0, 0};
         cp->feature_id  = (uint32_t)i;
@@ -183,10 +188,11 @@ int phys_box_vs_halfspace(
     if (out_count > max_contacts) out_count = max_contacts;
 
     for (int i = 0; i < out_count; i++) {
-        /* Contact point is the vertex projected onto the plane. */
+        /* Midpoint between the vertex support point and the plane. */
         float signed_dist = vec3_dot(plane_normal, verts[i]) - plane_distance;
         phys_vec3_t contact_pt = vec3_sub(verts[i],
-                                           vec3_scale(plane_normal, signed_dist));
+                                           vec3_scale(plane_normal,
+                                                      signed_dist * 0.5f));
 
         contacts_out[i].normal = vec3_scale(plane_normal, -1.0f);
         contacts_out[i].penetration = pens[i];
@@ -253,10 +259,11 @@ int phys_convex_hull_vs_halfspace(
             world_pts[best] = tmp_v;
         }
 
-        /* Project the world point onto the plane for the contact point. */
+        /* Midpoint between the hull support point and the plane. */
         float d = vec3_dot(plane_normal, world_pts[i]) - plane_distance;
         phys_vec3_t contact_pt = vec3_sub(world_pts[i],
-                                          vec3_scale(plane_normal, d));
+                                          vec3_scale(plane_normal,
+                                                     d * 0.5f));
 
         /* Normal points from the shape INTO the halfspace solid half
          * (negated plane normal, same convention as box/capsule). */

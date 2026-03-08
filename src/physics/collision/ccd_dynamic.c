@@ -20,6 +20,7 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/collider.h"
+#include "ferrum/physics/phys_pair_set.h"
 #include "ferrum/physics/gjk_epa.h"
 #include "ferrum/physics/gjk_support.h"
 #include "ferrum/physics/joint.h"
@@ -471,6 +472,20 @@ int phys_stage_ccd_dynamic(const phys_ccd_dynamic_args_t *args) {
 
         /* Bounds check. */
         if (a >= args->body_count || b >= args->body_count) continue;
+
+        /* Skip excluded or joint-only bodies before any CCD work. */
+        if ((args->bodies[a].flags & PHYS_BODY_FLAG_NO_BROADPHASE) ||
+            (args->bodies[b].flags & PHYS_BODY_FLAG_NO_BROADPHASE)) {
+            continue;
+        }
+        if (args->exclude_set) {
+            uint32_t lo = a < b ? a : b;
+            uint32_t hi = a < b ? b : a;
+            uint64_t key = ((uint64_t)lo << 32) | (uint64_t)hi;
+            if (phys_pair_set_contains(args->exclude_set, key)) {
+                continue;
+            }
+        }
 
         /* Both must be dynamic. */
         if (!is_dynamic(&args->bodies[a])) continue;

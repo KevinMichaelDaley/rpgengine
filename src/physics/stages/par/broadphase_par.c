@@ -250,7 +250,7 @@ static void broadphase_par_batch_job(void *data) {
 /**
  * @brief Collect all active tier body indices into a flat array.
  *
- * Iterates tiers T0 through T4 and appends each body index to out.
+ * Iterates all active tiers (ANIM through T4) and appends each body index to out.
  *
  * @param tier_lists  Tier lists to read from.
  * @param out         Output array (must have capacity >= total active).
@@ -259,7 +259,7 @@ static void broadphase_par_batch_job(void *data) {
 static uint32_t collect_active_indices(const phys_tier_lists_t *tier_lists,
                                        uint32_t *out) {
     uint32_t n = 0;
-    for (int tier = PHYS_TIER_0_DIRECT; tier <= PHYS_TIER_4_BACKGROUND;
+    for (int tier = PHYS_TIER_ANIM; tier <= PHYS_TIER_4_BACKGROUND;
          ++tier) {
         const phys_tier_list_t *list = &tier_lists->tiers[tier];
         for (uint32_t i = 0; i < list->count; ++i) {
@@ -355,7 +355,7 @@ void phys_stage_broadphase_par(const phys_broadphase_args_t *args,
     for (uint32_t h = 0; h < args->halfspace_body_count; ++h) {
         uint32_t hs_body = args->halfspace_bodies[h];
 
-        for (int tier = PHYS_TIER_0_DIRECT; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
+        for (int tier = PHYS_TIER_ANIM; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
             const phys_tier_list_t *list = &args->tier_lists->tiers[tier];
             for (uint32_t i = 0; i < list->count; ++i) {
                 uint32_t dyn = list->indices[i];

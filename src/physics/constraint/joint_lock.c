@@ -117,18 +117,22 @@ void phys_joint_build_lock(phys_joint_t *joint,
     }
 
     /* Rows 3-5: angular lock along X, Y, Z.
-     * Compute relative rotation error: q_rel = q_b * conjugate(q_a).
-     * The vector part of q_rel (scaled by 2) approximates the rotation
-     * error for small angles. */
-    phys_quat_t q_rel = quat_mul(body_b->orientation,
-                                  quat_conjugate(body_a->orientation));
-    /* Ensure shortest path (avoid 360° flip). */
-    if (q_rel.w < 0.0f) {
-        q_rel.x = -q_rel.x; q_rel.y = -q_rel.y;
-        q_rel.z = -q_rel.z; q_rel.w = -q_rel.w;
+     * Compute relative rotation error against rest pose:
+     * q_current = q_b * conjugate(q_a) is the live relative orientation.
+     * q_error = conjugate(q_rest) * q_current measures deviation from
+     * the rest orientation.  The vector part of q_error (scaled by 2)
+     * approximates the rotation error for small angles. */
+    phys_quat_t q_current = quat_mul(body_b->orientation,
+                                      quat_conjugate(body_a->orientation));
+    phys_quat_t q_error = quat_mul(
+        quat_conjugate(joint->rest_relative_orient), q_current);
+    /* Ensure shortest path (avoid 360-degree flip). */
+    if (q_error.w < 0.0f) {
+        q_error.x = -q_error.x; q_error.y = -q_error.y;
+        q_error.z = -q_error.z; q_error.w = -q_error.w;
     }
-    /* Angular error vector ≈ 2 * vec(q_rel) for small angles. */
-    phys_vec3_t ang_err = {2.0f * q_rel.x, 2.0f * q_rel.y, 2.0f * q_rel.z};
+    /* Angular error vector ~ 2 * vec(q_error) for small angles. */
+    phys_vec3_t ang_err = {2.0f * q_error.x, 2.0f * q_error.y, 2.0f * q_error.z};
 
     for (int i = 0; i < 3; ++i) {
         float err = vec3_dot(ang_err, axes[i]);

@@ -63,6 +63,10 @@ static void tier_classify_batch_job(void *data) {
         if (phys_body_is_sleeping(body)) {
             phys_tier_list_add(
                 &local_lists->tiers[PHYS_TIER_5_SLEEPING], i);
+        } else if (body->tier == PHYS_TIER_ANIM) {
+            /* Animated bodies stay in ANIM tier. */
+            phys_tier_list_add(
+                &local_lists->tiers[PHYS_TIER_ANIM], i);
         } else {
             /* Phase 1: all non-sleeping dynamic bodies → T0. */
             phys_tier_list_add(

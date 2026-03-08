@@ -278,6 +278,7 @@ void phys_stage_island_build(const phys_island_build_args_t *args)
         isl->body_count = 0;
         isl->constraint_count = 0;
         isl->sleeping = false;
+        isl->skip = false;
         isl->body_indices = phys_frame_arena_alloc(
             args->arena, body_counts[i] * sizeof(uint32_t),
             _Alignof(uint32_t));

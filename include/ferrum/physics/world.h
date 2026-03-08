@@ -63,6 +63,11 @@ typedef struct phys_world_config {
     uint32_t max_joints;               /**< Maximum number of joints. */
     float    max_dt_override;          /**< Max dt when using variable timestep (multiplier of fixed_dt, default 3.0). */
     float    auto_ccd_speed;           /**< Speed threshold for auto CCD (m/s, 0 = disabled). */
+    float    xpbd_min_compliance;      /**< Minimum compliance floor for XPBD joint constraints.
+                                        *   Regularizes the iteration matrix so the spectral radius
+                                        *   stays below 1.  Higher values converge faster but allow
+                                        *   more stretch.  0 = no floor (dangerous for stiff chains).
+                                        *   Default 1e-3.  Effective stiffness = 1/compliance. */
 } phys_world_config_t;
 
 /* ── Animation substep callback types ───────────────────────────── */
@@ -220,6 +225,11 @@ typedef struct phys_world {
      *  has run.  May be NULL. */
     phys_anim_integrate_fn anim_integrate_cb;
     void                  *anim_integrate_user;
+
+    /** Temporary debug flag — when non-zero, tick_parallel dumps
+     *  body positions, velocities, and constraint errors at every
+     *  substep to stderr.  Set from test code before tick. */
+    int debug_substep_dump;
 } phys_world_t;
 
 /* ── Configuration API ──────────────────────────────────────────── */

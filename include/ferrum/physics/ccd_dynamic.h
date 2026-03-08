@@ -33,6 +33,7 @@ struct phys_body;
 struct phys_collider;
 struct phys_joint;
 struct phys_frame_arena;
+struct phys_pair_set;
 
 /**
  * @brief Arguments for the dynamic-dynamic CCD stage.
@@ -79,6 +80,10 @@ typedef struct phys_ccd_dynamic_args {
      *  narrowphase handle them avoids solver conflicts). */
     const struct phys_joint *joints;
     uint32_t joint_count;
+
+    /** Optional excluded-pair set. When non-NULL, pairs in the set are
+     *  skipped before CCD work, matching the fused collision pipeline. */
+    const struct phys_pair_set *exclude_set;
 
     /** Frame arena for scratch allocations. */
     struct phys_frame_arena *arena;

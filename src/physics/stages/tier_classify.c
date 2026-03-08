@@ -24,7 +24,8 @@
 /** Number of distance thresholds (T0–T3 boundaries; T4 is the catch-all). */
 #define TIER_THRESHOLD_COUNT 4
 
-/** Exact promotion thresholds for tiers T0–T3. */
+/** Exact promotion thresholds for tiers T0–T3.
+ *  Indexed by (tier - PHYS_TIER_0_DIRECT). */
 static const float tier_thresholds[TIER_THRESHOLD_COUNT] = {
     5.0f,   /* T0: < 5m   */
     20.0f,  /* T1: < 20m  */
@@ -32,7 +33,8 @@ static const float tier_thresholds[TIER_THRESHOLD_COUNT] = {
     200.0f, /* T3: < 200m */
 };
 
-/** Demotion thresholds (promotion threshold * 1.2). */
+/** Demotion thresholds (promotion threshold * 1.2).
+ *  Indexed by (tier - PHYS_TIER_0_DIRECT). */
 static const float tier_demotion_thresholds[TIER_THRESHOLD_COUNT] = {
     6.0f,   /* T0 demotion: must exceed 6m   */
     24.0f,  /* T1 demotion: must exceed 24m  */
@@ -61,10 +63,14 @@ static phys_tier_t apply_hysteresis(phys_tier_t new_tier,
     /* Only apply hysteresis for demotion (new tier farther than current). */
     if (new_tier <= current_tier) { return new_tier; }
     if (current_tier >= PHYS_TIER_5_SLEEPING) { return new_tier; }
+    /* ANIM tier is not distance-based — no hysteresis. */
+    if (current_tier == PHYS_TIER_ANIM) { return new_tier; }
 
-    /* Check if distance exceeds the demotion threshold for current tier. */
-    if ((int)current_tier < TIER_THRESHOLD_COUNT &&
-        dist < tier_demotion_thresholds[current_tier]) {
+    /* Check if distance exceeds the demotion threshold for current tier.
+     * Threshold arrays are indexed starting at T0. */
+    int thresh_idx = (int)current_tier - (int)PHYS_TIER_0_DIRECT;
+    if (thresh_idx >= 0 && thresh_idx < TIER_THRESHOLD_COUNT &&
+        dist < tier_demotion_thresholds[thresh_idx]) {
         return current_tier;  /* Stay at current tier. */
     }
     return new_tier;
@@ -96,6 +102,16 @@ void phys_stage_tier_classify(const phys_tier_classify_args_t *args) {
                 &args->tier_lists_out->tiers[PHYS_TIER_5_SLEEPING], i);
             if (args->tier_out) {
                 args->tier_out[i] = (uint8_t)PHYS_TIER_5_SLEEPING;
+            }
+            continue;
+        }
+
+        /* Animated bodies stay in ANIM tier — not distance-based. */
+        if (body->tier == PHYS_TIER_ANIM) {
+            phys_tier_list_add(
+                &args->tier_lists_out->tiers[PHYS_TIER_ANIM], i);
+            if (args->tier_out) {
+                args->tier_out[i] = (uint8_t)PHYS_TIER_ANIM;
             }
             continue;
         }

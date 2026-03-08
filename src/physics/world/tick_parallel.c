@@ -39,8 +39,10 @@
 #include "ferrum/physics/cache_commit.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/collider.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/phys_mat3.h"
+#include "ferrum/physics/collision/halfspace.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
@@ -58,10 +60,87 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 #ifdef TRACY_ENABLE
 #include "tracy/TracyC.h"
 #endif
+
+/* ── Debug substep dump ───────────────────────────────────────────── */
+
+/**
+ * @brief Dump body positions, velocities, and joint constraint errors
+ *        for every active body in the world.  Called per-substep when
+ *        world->debug_substep_dump is non-zero.
+ */
+static void debug_dump_substep(
+    const phys_world_t *world,
+    const phys_body_t *bodies,
+    const phys_velocity_t *velocities,
+    const phys_velocity_t *pseudo_velocities,
+    uint32_t body_cap,
+    uint32_t tick,
+    uint32_t substep,
+    const char *label)
+{
+    fprintf(stderr, "\n=== TICK %u  SUB %u  [%s] ===\n", tick, substep, label);
+
+    /* Dump all active bodies with non-zero inv_mass (dynamic). */
+    for (uint32_t i = 0; i < body_cap; i++) {
+        const phys_body_t *b = &bodies[i];
+        if (b->inv_mass <= 0.0f && !(b->flags & 0x8000u)) continue; /* skip static */
+        if (b->inv_mass == 0.0f && b->position.x == 0.0f &&
+            b->position.y == 0.0f && b->position.z == 0.0f) continue;
+        float speed = sqrtf(b->linear_vel.x * b->linear_vel.x +
+                            b->linear_vel.y * b->linear_vel.y +
+                            b->linear_vel.z * b->linear_vel.z);
+        float aspeed = sqrtf(b->angular_vel.x * b->angular_vel.x +
+                             b->angular_vel.y * b->angular_vel.y +
+                             b->angular_vel.z * b->angular_vel.z);
+        const char *tag = (b->flags & PHYS_BODY_FLAG_NO_BROADPHASE) ? "G"
+                        : (b->inv_mass == 0.0f) ? "K" : "C";
+        fprintf(stderr, "  b%03u[%s] pos=(%.4f,%.4f,%.4f) vel=(%.3f,%.3f,%.3f)"
+                " |v|=%.3f |w|=%.3f tier=%u\n",
+                i, tag, b->position.x, b->position.y, b->position.z,
+                b->linear_vel.x, b->linear_vel.y, b->linear_vel.z,
+                speed, aspeed, b->tier);
+        if (velocities) {
+            fprintf(stderr, "        solver_v=(%.3f,%.3f,%.3f) solver_w=(%.3f,%.3f,%.3f)\n",
+                    velocities[i].linear.x, velocities[i].linear.y, velocities[i].linear.z,
+                    velocities[i].angular.x, velocities[i].angular.y, velocities[i].angular.z);
+        }
+        if (pseudo_velocities) {
+            float pv_mag = sqrtf(pseudo_velocities[i].linear.x * pseudo_velocities[i].linear.x +
+                                 pseudo_velocities[i].linear.y * pseudo_velocities[i].linear.y +
+                                 pseudo_velocities[i].linear.z * pseudo_velocities[i].linear.z);
+            if (pv_mag > 1e-6f) {
+                fprintf(stderr, "        pseudo_v=(%.3f,%.3f,%.3f) |pv|=%.4f\n",
+                        pseudo_velocities[i].linear.x, pseudo_velocities[i].linear.y,
+                        pseudo_velocities[i].linear.z, pv_mag);
+            }
+        }
+    }
+
+    /* Dump joint anchor errors. */
+    for (uint32_t ji = 0; ji < world->joint_count; ji++) {
+        const phys_joint_t *j = &world->joints[ji];
+        if (j->body_a >= body_cap || j->body_b >= body_cap) continue;
+        const phys_body_t *ba = &bodies[j->body_a];
+        const phys_body_t *bb = &bodies[j->body_b];
+        phys_vec3_t wa = vec3_add(ba->position,
+            quat_rotate_vec3(ba->orientation, j->local_anchor_a));
+        phys_vec3_t wb = vec3_add(bb->position,
+            quat_rotate_vec3(bb->orientation, j->local_anchor_b));
+        phys_vec3_t d = vec3_sub(wa, wb);
+        float err = sqrtf(vec3_dot(d, d));
+        const char *jt = j->type == 1 ? "BL" : j->type == 2 ? "HN"
+                       : j->type == 3 ? "DL" : j->type == 4 ? "CT"
+                       : j->type == 10 ? "LK" : "??";
+        fprintf(stderr, "  j%02u[%s] b%u→b%u err=%.4f d=(%.4f,%.4f,%.4f)\n",
+                ji, jt, j->body_a, j->body_b, err, d.x, d.y, d.z);
+    }
+    fprintf(stderr, "=== END SUB %u [%s] ===\n", substep, label);
+}
 
 /** Number of spatial grid hash buckets (must be power of 2). */
 #define GRID_CELL_COUNT 256
@@ -131,6 +210,23 @@ static uint32_t compute_island_sub_substeps(
     return speed_subs > min_subs ? speed_subs : min_subs;
 }
 
+static uint8_t stable_joint_lambda_rows(const phys_joint_t *joint)
+{
+    if (!joint) {
+        return 0;
+    }
+
+    switch (joint->type) {
+    case PHYS_JOINT_LIMIT_ROTATION:
+    case PHYS_JOINT_LIMIT_POSITION:
+        return 0;
+    case PHYS_JOINT_CONE_TWIST:
+        return 3;
+    default:
+        return joint->row_count;
+    }
+}
+
 /**
  * @brief Rebuild joint constraint rows for joints whose bodies belong
  *        to the given island, using updated body positions from inline
@@ -143,6 +239,7 @@ static void rebuild_island_joint_constraints(
     const phys_island_t *island,
     phys_constraint_t *constraints,
     uint32_t constraint_count,
+    const uint32_t *constraint_joint_indices,
     phys_joint_t *joints,
     uint32_t joint_count,
     const phys_body_t *bodies,
@@ -154,71 +251,101 @@ static void rebuild_island_joint_constraints(
         phys_constraint_t *c = &constraints[c_idx];
         if (!c->is_joint) continue;
 
-        for (uint32_t ji = 0; ji < joint_count; ji++) {
-            phys_joint_t *j = &joints[ji];
-            if (j->body_a == c->body_a && j->body_b == c->body_b) {
-                switch (j->type) {
-                case PHYS_JOINT_DISTANCE:
-                    phys_joint_build_distance(j, &bodies[j->body_a],
-                                               &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_BALL:
-                    phys_joint_build_ball(j, &bodies[j->body_a],
-                                          &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_HINGE:
-                    phys_joint_build_hinge(j, &bodies[j->body_a],
-                                           &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_LOCK:
-                    phys_joint_build_lock(j, &bodies[j->body_a],
-                                          &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_COPY_ROTATION:
-                    phys_joint_build_copy_rotation(j, &bodies[j->body_a],
-                                                    &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_LIMIT_ROTATION:
-                    phys_joint_build_limit_rotation(j, &bodies[j->body_a],
-                                                     &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_LIMIT_POSITION:
-                    phys_joint_build_limit_position(j, &bodies[j->body_a],
-                                                     &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_AIM:
-                    phys_joint_build_aim(j, &bodies[j->body_a],
-                                         &bodies[j->body_b], dt);
-                    break;
-                case PHYS_JOINT_IK:
-                    /* Dynamically update target pos from target body. */
-                    if (j->ik_target_body != UINT32_MAX) {
-                        j->ik_target_pos = bodies[j->ik_target_body].position;
-                    }
-                    phys_joint_build_ik(j, &bodies[j->body_a],
-                                        &bodies[j->body_b],
-                                        &bodies[j->ik_ee_body], dt);
-                    break;
-                case PHYS_JOINT_CONE_TWIST:
-                    phys_joint_build_cone_twist(j, &bodies[j->body_a],
-                                                &bodies[j->body_b], dt);
-                    break;
+        if (!constraint_joint_indices) continue;
+        uint32_t ji = constraint_joint_indices[c_idx];
+        if (ji >= joint_count) continue;
+
+        phys_joint_t *j = &joints[ji];
+        float saved_lambda[PHYS_JOINT_MAX_ROWS] = {0};
+        uint8_t saved_rows = 0;
+        uint8_t stable_rows = stable_joint_lambda_rows(j);
+        for (uint8_t r = 0; r < c->row_count &&
+                            r < stable_rows &&
+                            saved_rows < PHYS_JOINT_MAX_ROWS; ++r) {
+            saved_lambda[saved_rows++] = c->rows[r].lambda;
+        }
+        uint32_t next_idx = UINT32_MAX;
+        if (ci + 1 < island->constraint_count) {
+            next_idx = island->constraint_indices[ci + 1];
+            if (next_idx < constraint_count &&
+                constraints[next_idx].is_joint &&
+                constraint_joint_indices[next_idx] == ji) {
+                phys_constraint_t *next_c = &constraints[next_idx];
+                for (uint8_t r = 0; r < next_c->row_count &&
+                                    saved_rows < stable_rows &&
+                                    saved_rows < PHYS_JOINT_MAX_ROWS; ++r) {
+                    saved_lambda[saved_rows++] = next_c->rows[r].lambda;
                 }
-                phys_constraint_t tmp[2];
-                uint32_t written = phys_joint_build_constraints(
-                    j, tmp, 2, c->solver_mode);
-                if (written >= 1) {
-                    *c = tmp[0];
-                }
-                if (written >= 2 && ci + 1 < island->constraint_count) {
-                    uint32_t next_idx = island->constraint_indices[ci + 1];
-                    if (next_idx < constraint_count &&
-                        constraints[next_idx].is_joint) {
-                        constraints[next_idx] = tmp[1];
-                        ci++;
-                    }
-                }
-                break;
+            } else {
+                next_idx = UINT32_MAX;
+            }
+        }
+
+        switch (j->type) {
+        case PHYS_JOINT_DISTANCE:
+            phys_joint_build_distance(j, &bodies[j->body_a],
+                                       &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_BALL:
+            phys_joint_build_ball(j, &bodies[j->body_a],
+                                  &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_HINGE:
+            phys_joint_build_hinge(j, &bodies[j->body_a],
+                                   &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_LOCK:
+            phys_joint_build_lock(j, &bodies[j->body_a],
+                                  &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_COPY_ROTATION:
+            phys_joint_build_copy_rotation(j, &bodies[j->body_a],
+                                            &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_LIMIT_ROTATION:
+            phys_joint_build_limit_rotation(j, &bodies[j->body_a],
+                                             &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_LIMIT_POSITION:
+            phys_joint_build_limit_position(j, &bodies[j->body_a],
+                                             &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_AIM:
+            phys_joint_build_aim(j, &bodies[j->body_a],
+                                 &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_IK:
+            if (j->ik_target_body != UINT32_MAX) {
+                j->ik_target_pos = bodies[j->ik_target_body].position;
+            }
+            phys_joint_build_ik(j, &bodies[j->body_a],
+                                &bodies[j->body_b],
+                                &bodies[j->ik_ee_body], dt);
+            break;
+        case PHYS_JOINT_CONE_TWIST:
+            phys_joint_build_cone_twist(j, &bodies[j->body_a],
+                                        &bodies[j->body_b], dt);
+            break;
+        }
+        phys_constraint_t tmp[2];
+        uint32_t written = phys_joint_build_constraints(
+            j, tmp, 2, c->solver_mode);
+        uint8_t restore_idx = 0;
+        for (uint32_t wi = 0; wi < written; ++wi) {
+            for (uint8_t r = 0; r < tmp[wi].row_count &&
+                                restore_idx < saved_rows; ++r) {
+                tmp[wi].rows[r].lambda = saved_lambda[restore_idx++];
+            }
+        }
+        if (written >= 1) {
+            *c = tmp[0];
+        }
+        if (written >= 2 && ci + 1 < island->constraint_count) {
+            if (next_idx < constraint_count &&
+                constraints[next_idx].is_joint &&
+                constraint_joint_indices[next_idx] == ji) {
+                constraints[next_idx] = tmp[1];
+                ci++;
             }
         }
     }
@@ -332,6 +459,7 @@ typedef struct ss_shared {
     const uint32_t           *island_indices;
     phys_constraint_t        *constraints;
     uint32_t                  constraint_count;
+    const uint32_t           *constraint_joint_indices;
     phys_body_t              *bodies;
     phys_mat3_t              *inv_inertia_world;
     phys_velocity_t          *ss_vel;
@@ -351,10 +479,20 @@ typedef struct ss_shared {
     phys_frame_arena_t       *frame_arena;
 } ss_shared_t;
 
+static bool island_routes_xpbd_(const phys_island_t *island,
+                                const phys_constraint_t *constraints,
+                                uint32_t constraint_count,
+                                const phys_body_t *bodies);
+
 /**
  * @brief Run the full sub-substep loop for a single island.
  */
 static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
+    if (island_routes_xpbd_(isle, s->constraints, s->constraint_count,
+                            s->bodies)) {
+        return;
+    }
+
     uint32_t nsub = compute_island_sub_substeps(
         isle, s->bodies, s->body_cap);
     if (nsub <= 1) return;
@@ -376,6 +514,7 @@ static void ss_solve_island(const ss_shared_t *s, phys_island_t *isle) {
             /* Rebuild joint rows from current positions. */
             rebuild_island_joint_constraints(
                 isle, s->constraints, s->constraint_count,
+                s->constraint_joint_indices,
                 s->joints, s->joint_count, s->bodies, ss_dt);
 
             /* Recompute effective mass for island constraints. */
@@ -570,6 +709,193 @@ static void xpbd_constraint_batch_job(void *user_data) {
         &s->constraints[batch->start], batch->count,
         s->bodies_out, s->iterations,
         s->omega, s->dt, s->compliance);
+}
+
+static void xpbd_disable_contact_constraint_(phys_constraint_t *c)
+{
+    if (!c) {
+        return;
+    }
+
+    c->penetration = 0.0f;
+    for (uint8_t r = 0; r < 3 && r < PHYS_MAX_CONSTRAINT_ROWS; ++r) {
+        c->rows[r].J_va = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        c->rows[r].J_wa = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        c->rows[r].J_vb = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        c->rows[r].J_wb = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        c->rows[r].effective_mass = 0.0f;
+        c->rows[r].bias = 0.0f;
+        c->rows[r].lambda = 0.0f;
+        c->rows[r].lambda_min = 0.0f;
+        c->rows[r].lambda_max = 0.0f;
+        c->rows[r].pseudo_lambda = 0.0f;
+        c->rows[r].damping = 0.0f;
+        c->rows[r].flags = 0;
+    }
+}
+
+static void xpbd_refresh_halfspace_contact_constraint_(
+    phys_constraint_t *c,
+    phys_body_t *bodies,
+    const phys_collider_t *colliders,
+    const phys_sphere_t *spheres,
+    const phys_box_t *boxes,
+    const phys_capsule_t *capsules,
+    const phys_convex_hull_t *convex_hulls,
+    const phys_halfspace_t *halfspaces,
+    float dt,
+    float baumgarte,
+    float slop)
+{
+    if (!c || !bodies || !colliders || !halfspaces) {
+        return;
+    }
+
+    const uint32_t orig_a = c->body_a;
+    const uint32_t orig_b = c->body_b;
+    const phys_collider_t *ca = &colliders[orig_a];
+    const phys_collider_t *cb = &colliders[orig_b];
+
+    if (ca->type != PHYS_SHAPE_HALFSPACE && cb->type != PHYS_SHAPE_HALFSPACE) {
+        return;
+    }
+
+    uint32_t body_a = orig_a;
+    uint32_t body_b = orig_b;
+    const phys_collider_t *c0 = ca;
+    const phys_collider_t *c1 = cb;
+    phys_vec3_t w0 = phys_collider_world_center(ca, bodies[orig_a].position,
+                                                bodies[orig_a].orientation);
+    phys_quat_t q0 = phys_collider_world_rotation(ca, bodies[orig_a].orientation);
+    phys_vec3_t w1 = phys_collider_world_center(cb, bodies[orig_b].position,
+                                                bodies[orig_b].orientation);
+    phys_quat_t q1 = phys_collider_world_rotation(cb, bodies[orig_b].orientation);
+
+    if (c0->type > c1->type) {
+        body_a = orig_b;
+        body_b = orig_a;
+        c0 = cb;
+        c1 = ca;
+        w0 = phys_collider_world_center(cb, bodies[orig_b].position,
+                                        bodies[orig_b].orientation);
+        q0 = phys_collider_world_rotation(cb, bodies[orig_b].orientation);
+        w1 = phys_collider_world_center(ca, bodies[orig_a].position,
+                                        bodies[orig_a].orientation);
+        q1 = phys_collider_world_rotation(ca, bodies[orig_a].orientation);
+    }
+
+    if (c1->type != PHYS_SHAPE_HALFSPACE) {
+        return;
+    }
+
+    const phys_halfspace_t *hs = &halfspaces[c1->shape_index];
+    phys_contact_point_t contacts[4];
+    int contact_count = 0;
+
+    switch (c0->type) {
+    case PHYS_SHAPE_SPHERE: {
+        float r = spheres[c0->shape_index].radius;
+        if (phys_sphere_vs_halfspace(w0, r, hs->normal, hs->distance,
+                                     0.0f, &contacts[0])) {
+            contact_count = 1;
+        }
+        break;
+    }
+    case PHYS_SHAPE_BOX: {
+        phys_vec3_t he = boxes[c0->shape_index].half_extents;
+        contact_count = phys_box_vs_halfspace(w0, q0, he,
+                                              hs->normal, hs->distance,
+                                              0.0f, contacts, 4);
+        break;
+    }
+    case PHYS_SHAPE_CAPSULE: {
+        float r = capsules[c0->shape_index].radius;
+        float hh = capsules[c0->shape_index].half_height;
+        contact_count = phys_capsule_vs_halfspace(w0, q0, r, hh,
+                                                  hs->normal, hs->distance,
+                                                  0.0f, contacts, 2);
+        break;
+    }
+    case PHYS_SHAPE_CONVEX: {
+        const phys_convex_hull_t *hull = &convex_hulls[c0->shape_index];
+        contact_count = phys_convex_hull_vs_halfspace(hull, w0, q0,
+                                                      hs->normal, hs->distance,
+                                                      0.0f, contacts, 4);
+        break;
+    }
+    default:
+        xpbd_disable_contact_constraint_(c);
+        return;
+    }
+
+    if (contact_count <= 0) {
+        xpbd_disable_contact_constraint_(c);
+        return;
+    }
+
+    int pick = c->point_idx;
+    if (pick >= contact_count) {
+        pick = contact_count - 1;
+    }
+    if (pick < 0) {
+        pick = 0;
+    }
+
+    float lambdas[3] = {0.0f, 0.0f, 0.0f};
+    uint8_t old_row_count = c->row_count;
+    for (uint8_t r = 0; r < old_row_count && r < 3; ++r) {
+        lambdas[r] = c->rows[r].lambda;
+    }
+
+    const float friction = c->friction;
+    const float restitution = phys_combine_restitution(
+        bodies[body_a].restitution, bodies[body_b].restitution);
+    const uint8_t solver_mode = c->solver_mode;
+    const uint8_t is_joint = c->is_joint;
+    const float compliance = c->compliance;
+    const float joint_damping = c->joint_damping;
+    const uint32_t manifold_idx = c->manifold_idx;
+    const uint8_t point_idx = c->point_idx;
+
+    phys_constraint_build_contact(c, &bodies[body_a], &bodies[body_b],
+                                  &contacts[pick], friction, restitution,
+                                  dt, baumgarte, slop);
+    c->body_a = body_a;
+    c->body_b = body_b;
+    c->solver_mode = solver_mode;
+    c->is_joint = is_joint;
+    c->compliance = compliance;
+    c->joint_damping = joint_damping;
+    c->manifold_idx = manifold_idx;
+    c->point_idx = point_idx;
+
+    for (uint8_t r = 0; r < c->row_count && r < 3; ++r) {
+        c->rows[r].lambda = lambdas[r];
+    }
+}
+
+static bool island_routes_xpbd_(const phys_island_t *island,
+                                const phys_constraint_t *constraints,
+                                uint32_t constraint_count,
+                                const phys_body_t *bodies)
+{
+    if (!island || !bodies) {
+        return false;
+    }
+
+    if (!constraints) {
+        return false;
+    }
+
+    for (uint32_t ci = 0; ci < island->constraint_count; ++ci) {
+        uint32_t idx = island->constraint_indices[ci];
+        if (idx < constraint_count &&
+            constraints[idx].solver_mode == PHYS_SOLVER_XPBD) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void phys_world_tick_parallel(phys_world_t *world,
@@ -833,6 +1159,7 @@ void phys_world_tick_parallel(phys_world_t *world,
         float *body_max_pen = NULL;
         uint8_t *body_sub_substepped = NULL;
         phys_mat3_t *inv_inertia_world = NULL;
+        uint32_t *constraint_joint_indices = NULL;
 
         if (!world->prediction_mode) {
 
@@ -858,6 +1185,15 @@ void phys_world_tick_parallel(phys_world_t *world,
             max_constraints * sizeof(phys_constraint_t),
             _Alignof(phys_constraint_t));
         constraint_count = 0;
+        constraint_joint_indices = phys_frame_arena_alloc(
+            &world->frame_arena,
+            max_constraints * sizeof(uint32_t),
+            _Alignof(uint32_t));
+        if (constraint_joint_indices) {
+            for (uint32_t i = 0; i < max_constraints; ++i) {
+                constraint_joint_indices[i] = UINT32_MAX;
+            }
+        }
 
         uint8_t *ccd_skip_pair = NULL;
         if (pair_count > 0) {
@@ -885,6 +1221,8 @@ void phys_world_tick_parallel(phys_world_t *world,
                 .skip_pair_out      = ccd_skip_pair,
                 .joints             = world->joints,
                 .joint_count        = world->joint_count,
+                .exclude_set        = world->collision_exclude.capacity > 0
+                                         ? &world->collision_exclude : NULL,
                 .arena              = &world->frame_arena,
                 .dt                 = substep_dt,
             });
@@ -1023,10 +1361,74 @@ void phys_world_tick_parallel(phys_world_t *world,
                      * including ghost bodies (which are now T0/TGS). */
                     uint8_t jmode = (uint8_t)phys_tier_cross_solver_mode(
                         bodies[j->body_a].tier, bodies[j->body_b].tier);
+                    uint32_t dst_start = constraint_count;
                     uint32_t written = phys_joint_build_constraints(
-                        j, &constraints[constraint_count], remaining, jmode);
+                        j, &constraints[dst_start], remaining, jmode);
+                    if (constraint_joint_indices) {
+                        for (uint32_t slot = 0; slot < written; ++slot) {
+                            constraint_joint_indices[dst_start + slot] = ji;
+                        }
+                    }
                     constraint_count += written;
                 }
+            }
+        }
+
+        {
+            static uint32_t contact_dbg_ticks = 0;
+            if (contact_dbg_ticks < 24 && sub == 0) {
+                uint32_t halfspace_manifold_count = 0;
+                uint32_t halfspace_constraint_count = 0;
+                const phys_constraint_t *first_halfspace_constraint = NULL;
+                const phys_constraint_t *first_contact_constraint = NULL;
+                for (uint32_t mi = 0; mi < manifold_count; ++mi) {
+                    const phys_manifold_t *m = &manifolds[mi];
+                    if (world->colliders[m->body_a].type == PHYS_SHAPE_HALFSPACE ||
+                        world->colliders[m->body_b].type == PHYS_SHAPE_HALFSPACE) {
+                        halfspace_manifold_count++;
+                    }
+                }
+                for (uint32_t ci = 0; ci < joint_constraint_start && ci < constraint_count; ++ci) {
+                    const phys_constraint_t *c = &constraints[ci];
+                    if (!first_contact_constraint) {
+                        first_contact_constraint = c;
+                    }
+                    if (world->colliders[c->body_a].type == PHYS_SHAPE_HALFSPACE ||
+                        world->colliders[c->body_b].type == PHYS_SHAPE_HALFSPACE) {
+                        halfspace_constraint_count++;
+                        if (!first_halfspace_constraint) {
+                            first_halfspace_constraint = c;
+                        }
+                    }
+                }
+                fprintf(stderr,
+                        "[CONTACT-DBG] tick=%u sub=%u pairs=%u manifolds=%u halfspace_manifolds=%u "
+                        "contact_constraints=%u halfspace_constraints=%u\n",
+                        world->tick_count, sub, pair_count, manifold_count,
+                        halfspace_manifold_count, joint_constraint_start,
+                        halfspace_constraint_count);
+                if (first_halfspace_constraint) {
+                    const phys_constraint_t *c = first_halfspace_constraint;
+                    const phys_jacobian_row_t *row = &c->rows[0];
+                    fprintf(stderr,
+                            "  [CONTACT-ROW] bodies=%u,%u pen=%.4f bias=%.4f lambda=%.4f "
+                            "Jva.y=%.3f Jvb.y=%.3f\n",
+                            c->body_a, c->body_b, c->penetration, row->bias,
+                            row->lambda, row->J_va.y, row->J_vb.y);
+                }
+                if (!first_halfspace_constraint && first_contact_constraint) {
+                    const phys_constraint_t *c = first_contact_constraint;
+                    fprintf(stderr,
+                            "  [CONTACT-FIRST] bodies=%u,%u types=%u,%u pen=%.4f "
+                            "solver=%u flagsA=0x%x flagsB=0x%x\n",
+                            c->body_a, c->body_b,
+                            world->colliders[c->body_a].type,
+                            world->colliders[c->body_b].type,
+                            c->penetration, c->solver_mode,
+                            world->body_pool.bodies_next[c->body_a].flags,
+                            world->body_pool.bodies_next[c->body_b].flags);
+                }
+                contact_dbg_ticks++;
             }
         }
 
@@ -1100,6 +1502,26 @@ void phys_world_tick_parallel(phys_world_t *world,
             .constraints      = constraints,
             .constraint_count = constraint_count,
         });
+
+        if (constraints) {
+            for (uint32_t ii = 0; ii < islands.count; ++ii) {
+                phys_island_t *isle = &islands.islands[ii];
+                if (isle->sleeping || isle->skip || isle->constraint_count == 0) {
+                    continue;
+                }
+                if (!island_routes_xpbd_(isle, constraints, constraint_count,
+                                         world->body_pool.bodies_next)) {
+                    continue;
+                }
+                for (uint32_t ci = 0; ci < isle->constraint_count; ++ci) {
+                    uint32_t idx = isle->constraint_indices[ci];
+                    if (idx < constraint_count) {
+                        constraints[idx].solver_mode =
+                            (uint8_t)PHYS_SOLVER_XPBD;
+                    }
+                }
+            }
+        }
 
         /* Mark islands whose tier needs fewer substeps than the
          * current iteration.  Tier promotion guarantees all bodies
@@ -1177,6 +1599,11 @@ void phys_world_tick_parallel(phys_world_t *world,
                         phys_island_t *isle = &islands.islands[ii];
                         if (isle->sleeping || isle->skip) continue;
                         if (isle->body_count == 0) continue;
+                        if (island_routes_xpbd_(isle, constraints,
+                                                constraint_count,
+                                                world->body_pool.bodies_next)) {
+                            continue;
+                        }
                         uint32_t nsub = compute_island_sub_substeps(
                             isle, world->body_pool.bodies_next, body_cap);
                         if (nsub <= 1) continue;
@@ -1191,6 +1618,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                         .island_indices     = ss_island_indices,
                         .constraints        = constraints,
                         .constraint_count   = constraint_count,
+                        .constraint_joint_indices = constraint_joint_indices,
                         .bodies             = world->body_pool.bodies_next,
                         .inv_inertia_world  = inv_inertia_world,
                         .ss_vel             = ss_vel,
@@ -1268,15 +1696,97 @@ void phys_world_tick_parallel(phys_world_t *world,
             for (uint32_t ii = 0; ii < islands.count; ii++) {
                 phys_island_t *isle = &islands.islands[ii];
                 if (isle->sleeping || isle->skip || isle->constraint_count == 0) continue;
-                uint32_t first_ci = isle->constraint_indices[0];
-                if (constraints[first_ci].solver_mode == PHYS_SOLVER_XPBD) {
+                if (island_routes_xpbd_(isle, constraints, constraint_count,
+                                        world->body_pool.bodies_next)) {
                     xpbd_count += isle->constraint_count;
+                }
+            }
+            {
+                static uint32_t xpbd_route_dbg_ticks = 0;
+                if (xpbd_route_dbg_ticks < 24 && sub == 0) {
+                    uint32_t xpbd_halfspace_constraints = 0;
+                    for (uint32_t ii = 0; ii < islands.count; ++ii) {
+                        phys_island_t *isle = &islands.islands[ii];
+                        if (isle->sleeping || isle->skip || isle->constraint_count == 0) {
+                            continue;
+                        }
+                        if (!island_routes_xpbd_(isle, constraints, constraint_count,
+                                                 world->body_pool.bodies_next)) {
+                            continue;
+                        }
+                        for (uint32_t ci = 0; ci < isle->constraint_count; ++ci) {
+                            const phys_constraint_t *c =
+                                &constraints[isle->constraint_indices[ci]];
+                            if (c->is_joint) {
+                                continue;
+                            }
+                            if (world->colliders[c->body_a].type == PHYS_SHAPE_HALFSPACE ||
+                                world->colliders[c->body_b].type == PHYS_SHAPE_HALFSPACE) {
+                                xpbd_halfspace_constraints++;
+                            }
+                        }
+                    }
+                    fprintf(stderr,
+                            "[XPBD-ROUTE] tick=%u sub=%u xpbd_count=%u halfspace_constraints=%u islands=%u\n",
+                            world->tick_count, sub, xpbd_count,
+                            xpbd_halfspace_constraints, islands.count);
+                    if (world->tick_count < 4 && islands.count > 0) {
+                        phys_island_t *isle = &islands.islands[0];
+                        fprintf(stderr,
+                                "  [XPBD-ROUTE-DETAIL] bodies=%u constraints=%u route=%d\n",
+                                isle->body_count, isle->constraint_count,
+                                (int)island_routes_xpbd_(
+                                    isle, constraints, constraint_count,
+                                    world->body_pool.bodies_next));
+                        for (uint32_t bi = 0; bi < isle->body_count && bi < 6; ++bi) {
+                            uint32_t idx = isle->body_indices[bi];
+                            fprintf(stderr,
+                                    "    body[%u] idx=%u tier=%u flags=0x%x\n",
+                                    bi, idx, world->body_pool.bodies_next[idx].tier,
+                                    world->body_pool.bodies_next[idx].flags);
+                        }
+                        for (uint32_t ci = 0; ci < isle->constraint_count && ci < 6; ++ci) {
+                            uint32_t idx = isle->constraint_indices[ci];
+                            fprintf(stderr,
+                                    "    constraint[%u] idx=%u solver=%u is_joint=%u\n",
+                                    ci, idx, constraints[idx].solver_mode,
+                                    constraints[idx].is_joint);
+                        }
+                    }
+                    xpbd_route_dbg_ticks++;
+                }
+            }
+            /* DEBUG: one-shot diagnostic for XPBD routing */
+            {
+                static int dbg_once = 0;
+                if (!dbg_once && sub == 0) {
+                    dbg_once = 1;
+                    fprintf(stderr, "[XPBD-DBG] islands=%u xpbd_count=%u constraint_count=%u\n",
+                        islands.count, xpbd_count, constraint_count);
+                    for (uint32_t ii = 0; ii < islands.count && ii < 5; ii++) {
+                        phys_island_t *isle = &islands.islands[ii];
+                        if (isle->sleeping || isle->skip) continue;
+                        uint32_t first_ci = isle->constraint_count > 0 ? isle->constraint_indices[0] : UINT32_MAX;
+                        uint8_t smode = first_ci < constraint_count ? constraints[first_ci].solver_mode : 255;
+                        fprintf(stderr, "  island[%u]: bodies=%u constraints=%u solver_mode=%u\n",
+                            ii, isle->body_count, isle->constraint_count, smode);
+                        for (uint32_t bi = 0; bi < isle->body_count && bi < 3; bi++) {
+                            uint32_t idx = isle->body_indices[bi];
+                            const phys_body_t *b = &world->body_pool.bodies_next[idx];
+                            fprintf(stderr, "    body[%u] idx=%u tier=%u flags=0x%x inv_mass=%.3f\n",
+                                bi, idx, b->tier, b->flags, b->inv_mass);
+                        }
+                    }
                 }
             }
 
             xpbd_batch_shared_t xpbd_shared = {0};
             bool xpbd_dispatched = false;
             uint32_t xpbd_actual_count = 0;
+            uint32_t xpbd_body_count = 0;
+            uint32_t *xpbd_body_indices = NULL;
+            phys_vec3_t *xpbd_start_pos = NULL;
+            phys_quat_t *xpbd_start_orient = NULL;
 
             /* Max batches for XPBD constraint dispatch. */
             #define XPBD_MAX_BATCHES 64
@@ -1297,10 +1807,19 @@ void phys_world_tick_parallel(phys_world_t *world,
                      * both solvers complete. */
                     uint32_t xc = 0;
                     phys_body_t *xpbd_bodies = world->body_pool.bodies_next;
+                    uint32_t *xpbd_constraint_source_indices =
+                        phys_frame_arena_alloc(
+                            &world->frame_arena,
+                            xpbd_count * sizeof(uint32_t),
+                            _Alignof(uint32_t));
+                    uint32_t *xpbd_constraint_joint_indices =
+                        phys_frame_arena_alloc(
+                            &world->frame_arena,
+                            xpbd_count * sizeof(uint32_t),
+                            _Alignof(uint32_t));
 
                     /* Collect XPBD body indices for substep integration. */
-                    uint32_t xpbd_body_count = 0;
-                    uint32_t *xpbd_body_indices = phys_frame_arena_alloc(
+                    xpbd_body_indices = phys_frame_arena_alloc(
                         &world->frame_arena,
                         (body_cap > 0 ? body_cap : 1) * sizeof(uint32_t),
                         _Alignof(uint32_t));
@@ -1313,27 +1832,57 @@ void phys_world_tick_parallel(phys_world_t *world,
                                (body_cap > 0 ? body_cap : 1) * sizeof(uint8_t));
                     }
 
-                    /* Collect XPBD joint indices so we can rebuild them
-                     * from current body positions each substep. */
+                    /* Map joint-owned constraint slots so rebuilt joint rows
+                     * overwrite their original XPBD slots while contact rows
+                     * remain intact throughout the solve. */
                     uint32_t xpbd_joint_count = 0;
                     uint32_t *xpbd_joint_indices = phys_frame_arena_alloc(
                         &world->frame_arena,
                         (world->joint_count > 0 ? world->joint_count : 1)
                             * sizeof(uint32_t),
                         _Alignof(uint32_t));
-                    /* Solver mode per XPBD joint (always XPBD but stored
-                     * for rebuild consistency). */
+                    uint32_t *xpbd_joint_temp_start = phys_frame_arena_alloc(
+                        &world->frame_arena,
+                        (world->joint_count > 0 ? world->joint_count : 1)
+                            * sizeof(uint32_t),
+                        _Alignof(uint32_t));
                     const phys_body_t *bodies_c = world->body_pool.bodies_next;
 
+                    if (xpbd_joint_temp_start) {
+                        for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                            xpbd_joint_temp_start[ji] = UINT32_MAX;
+                        }
+                    }
                     for (uint32_t ii = 0; ii < islands.count; ii++) {
                         phys_island_t *isle = &islands.islands[ii];
                         if (isle->sleeping || isle->skip || isle->constraint_count == 0) continue;
-                        uint32_t first_ci = isle->constraint_indices[0];
-                        if (constraints[first_ci].solver_mode != PHYS_SOLVER_XPBD) {
+                        if (!island_routes_xpbd_(isle, constraints, constraint_count,
+                                                 world->body_pool.bodies_next)) {
                             continue;
                         }
                         for (uint32_t c = 0; c < isle->constraint_count && xc < xpbd_count; c++) {
-                            xpbd_constraints[xc++] = constraints[isle->constraint_indices[c]];
+                            uint32_t src_idx = isle->constraint_indices[c];
+                            xpbd_constraints[xc] = constraints[src_idx];
+                            if (xpbd_constraint_source_indices) {
+                                xpbd_constraint_source_indices[xc] = src_idx;
+                            }
+                            if (xpbd_constraint_joint_indices) {
+                                xpbd_constraint_joint_indices[xc] =
+                                    (constraint_joint_indices && src_idx < constraint_count)
+                                    ? constraint_joint_indices[src_idx]
+                                    : UINT32_MAX;
+                            }
+                            if (xpbd_joint_temp_start &&
+                                constraint_joint_indices &&
+                                xpbd_constraints[xc].is_joint &&
+                                src_idx < constraint_count) {
+                                uint32_t ji = constraint_joint_indices[src_idx];
+                                if (ji < world->joint_count &&
+                                    xpbd_joint_temp_start[ji] == UINT32_MAX) {
+                                    xpbd_joint_temp_start[ji] = xc;
+                                }
+                            }
+                            xc++;
                         }
                         /* Seed XPBD body positions from bodies_curr and
                          * record which bodies are XPBD-managed. */
@@ -1352,28 +1901,55 @@ void phys_world_tick_parallel(phys_world_t *world,
                     }
                     xpbd_actual_count = xc;
 
-                    /* Identify which joints are XPBD (involve ghost bodies). */
-                    if (xpbd_joint_indices && world->joint_count > 0) {
+                    /* Identify the joints whose constraint rows were copied
+                     * into the XPBD workspace. */
+                    if (xpbd_joint_indices && xpbd_joint_temp_start &&
+                        world->joint_count > 0) {
                         for (uint32_t ji = 0; ji < world->joint_count; ji++) {
-                            const phys_joint_t *j = &world->joints[ji];
-                            if ((bodies_c[j->body_a].flags & PHYS_BODY_FLAG_NO_BROADPHASE) ||
-                                (bodies_c[j->body_b].flags & PHYS_BODY_FLAG_NO_BROADPHASE)) {
+                            if (xpbd_joint_temp_start[ji] != UINT32_MAX) {
                                 xpbd_joint_indices[xpbd_joint_count++] = ji;
                             }
                         }
                     }
 
-                    /* Determine XPBD iterations and compliance from the
-                     * highest-fidelity XPBD tier (lowest tier number).
-                     * Default 4 iterations per substep. */
-                    uint32_t xpbd_iters = 32;
-                    float xpbd_compliance = 1e-6f;
-                    for (uint32_t t = 0; t < PHYS_TIER_COUNT; t++) {
-                        if (plan.tier_params[t].solver_mode == PHYS_SOLVER_XPBD &&
-                            plan.tier_params[t].iterations > xpbd_iters) {
-                            xpbd_iters = plan.tier_params[t].iterations;
-                            xpbd_compliance = plan.tier_params[t].compliance;
-                        }
+                    /* The dedicated anim-tier XPBD settings drive the
+                     * sub-substep solve for all XPBD-routed islands. */
+                    uint32_t xpbd_iters =
+                        plan.tier_params[PHYS_TIER_ANIM].iterations;
+                    float xpbd_compliance =
+                        plan.tier_params[PHYS_TIER_ANIM].compliance;
+                    /* Apply configurable minimum compliance floor so the
+                     * spectral radius of the XPBD iteration stays below 1.
+                     * Without this, stiff coupled chains diverge. */
+                    if (xpbd_compliance < world->config.xpbd_min_compliance) {
+                        xpbd_compliance = world->config.xpbd_min_compliance;
+                    }
+                    uint32_t xpbd_substeps =
+                        plan.tier_params[PHYS_TIER_ANIM].substeps;
+                    if (xpbd_iters == 0) {
+                        xpbd_iters = plan.solver_iterations;
+                    }
+                    if (xpbd_substeps == 0) {
+                        xpbd_substeps = 1;
+                    }
+
+                    /* Save pre-XPBD positions/orientations so we can
+                     * derive final velocities for the shared velocity
+                     * array after all XPBD substeps complete. */
+                    xpbd_start_pos = phys_frame_arena_alloc(
+                        &world->frame_arena,
+                        xpbd_body_count * sizeof(phys_vec3_t),
+                        _Alignof(phys_vec3_t));
+                    xpbd_start_orient = phys_frame_arena_alloc(
+                        &world->frame_arena,
+                        xpbd_body_count * sizeof(phys_quat_t),
+                        _Alignof(phys_quat_t));
+                    for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
+                        uint32_t idx = xpbd_body_indices[bi];
+                        if (xpbd_start_pos)
+                            xpbd_start_pos[bi] = xpbd_bodies[idx].position;
+                        if (xpbd_start_orient)
+                            xpbd_start_orient[bi] = xpbd_bodies[idx].orientation;
                     }
 
                     /* XPBD substepping: subdivide the substep_dt into
@@ -1385,8 +1961,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                      *   5. Derive velocities from position deltas
                      * This gives much better convergence for long chains
                      * than doing many iterations on a single large dt. */
-                    #define XPBD_SUBSTEPS 8
-                    float xpbd_sub_dt = substep_dt / (float)XPBD_SUBSTEPS;
+                    float xpbd_sub_dt = substep_dt / (float)xpbd_substeps;
 
                     /* Allocate scratch for pre-predict positions so we
                      * can derive velocities after each substep. */
@@ -1399,10 +1974,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                         xpbd_body_count * sizeof(phys_quat_t),
                         _Alignof(phys_quat_t));
 
-                    uint32_t xpbd_bs = phys_batch_size(jobs,
-                        xpbd_actual_count, 4, XPBD_MAX_BATCHES);
-
-                    for (uint32_t xsub = 0; xsub < XPBD_SUBSTEPS; xsub++) {
+                    for (uint32_t xsub = 0; xsub < xpbd_substeps; xsub++) {
                         /* 1. Save pre-predict state and predict with
                          *    gravity (semi-implicit Euler). */
                         for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
@@ -1417,17 +1989,100 @@ void phys_world_tick_parallel(phys_world_t *world,
                             }
                             b->position = vec3_add(b->position,
                                 vec3_scale(b->linear_vel, xpbd_sub_dt));
+                            /* Predict orientation: q' = q + 0.5 * (ω,0) * q * dt */
+                            phys_vec3_t w = b->angular_vel;
+                            float wmag = sqrtf(w.x*w.x + w.y*w.y + w.z*w.z);
+                            if (wmag > 1e-8f) {
+                                phys_quat_t wq = { w.x, w.y, w.z, 0.0f };
+                                phys_quat_t dq = quat_mul(wq, b->orientation);
+                                b->orientation.x += 0.5f * dq.x * xpbd_sub_dt;
+                                b->orientation.y += 0.5f * dq.y * xpbd_sub_dt;
+                                b->orientation.z += 0.5f * dq.z * xpbd_sub_dt;
+                                b->orientation.w += 0.5f * dq.w * xpbd_sub_dt;
+                                b->orientation = quat_normalize_safe(
+                                    b->orientation, 1e-8f);
+                            }
+                        }
+                        /* DEBUG: dump first few body positions pre-solve */
+                        {
+                            static uint32_t pre_solve_dbg = 0;
+                            if (pre_solve_dbg < 3 && sub == 0 && xsub == 0) {
+                                pre_solve_dbg++;
+                                fprintf(stderr, "[XPBD-PRE] tick=%u xpbd_body_count=%u compliance=%.6f sub_dt=%.6f\n",
+                                    world->tick_count, xpbd_body_count, xpbd_compliance, xpbd_sub_dt);
+                                uint32_t show = xpbd_body_count < 8 ? xpbd_body_count : 8;
+                                for (uint32_t bi = 0; bi < show; bi++) {
+                                    uint32_t idx = xpbd_body_indices[bi];
+                                    phys_body_t *b = &xpbd_bodies[idx];
+                                    float vlen = sqrtf(b->linear_vel.x*b->linear_vel.x +
+                                                       b->linear_vel.y*b->linear_vel.y +
+                                                       b->linear_vel.z*b->linear_vel.z);
+                                    float wlen = sqrtf(b->angular_vel.x*b->angular_vel.x +
+                                                       b->angular_vel.y*b->angular_vel.y +
+                                                       b->angular_vel.z*b->angular_vel.z);
+                                    fprintf(stderr, "  b[%u] idx=%u pos=(%.3f,%.3f,%.3f) |v|=%.3f |w|=%.3f im=%.4f\n",
+                                        bi, idx, b->position.x, b->position.y, b->position.z,
+                                        vlen, wlen, b->inv_mass);
+                                }
+                            }
                         }
 
                         /* 2-3. Solve loop: rebuild joints + solve for
                          *       each iteration so C is always fresh. */
                         for (uint32_t xiter = 0; xiter < xpbd_iters; xiter++) {
+                            for (uint32_t ci = 0; ci < xpbd_actual_count; ++ci) {
+                                if (xpbd_constraints[ci].is_joint) {
+                                    continue;
+                                }
+                                xpbd_refresh_halfspace_contact_constraint_(
+                                    &xpbd_constraints[ci],
+                                    xpbd_bodies,
+                                    world->colliders,
+                                    world->spheres,
+                                    world->boxes,
+                                    world->capsules,
+                                    world->convex_hulls,
+                                    world->halfspaces,
+                                    xpbd_sub_dt,
+                                    world->config.baumgarte,
+                                    world->config.slop);
+                            }
+
                             /* Rebuild XPBD joints from current body
                              * positions so biases reflect updated state. */
-                            xc = 0;
                             for (uint32_t jj = 0; jj < xpbd_joint_count; jj++) {
                                 uint32_t ji = xpbd_joint_indices[jj];
                                 phys_joint_t *j = &world->joints[ji];
+                                uint32_t temp_start = xpbd_joint_temp_start
+                                    ? xpbd_joint_temp_start[ji] : UINT32_MAX;
+                                if (temp_start == UINT32_MAX ||
+                                    temp_start >= xpbd_actual_count) {
+                                    continue;
+                                }
+
+                                float saved_lambda[PHYS_JOINT_MAX_ROWS] = {0};
+                                uint8_t saved_rows = 0;
+                                uint8_t stable_rows = stable_joint_lambda_rows(j);
+                                phys_constraint_t *saved_c0 =
+                                    &xpbd_constraints[temp_start];
+                                for (uint8_t r = 0; r < saved_c0->row_count &&
+                                                    r < stable_rows &&
+                                                    saved_rows < PHYS_JOINT_MAX_ROWS; ++r) {
+                                    saved_lambda[saved_rows++] = saved_c0->rows[r].lambda;
+                                }
+                                uint32_t second_idx = temp_start + 1;
+                                if (second_idx < xpbd_actual_count &&
+                                    xpbd_constraints[second_idx].is_joint &&
+                                    xpbd_constraint_joint_indices &&
+                                    xpbd_constraint_joint_indices[second_idx] == ji) {
+                                    phys_constraint_t *saved_c1 =
+                                        &xpbd_constraints[second_idx];
+                                    for (uint8_t r = 0; r < saved_c1->row_count &&
+                                                        saved_rows < stable_rows &&
+                                                        saved_rows < PHYS_JOINT_MAX_ROWS; ++r) {
+                                        saved_lambda[saved_rows++] = saved_c1->rows[r].lambda;
+                                    }
+                                }
 
                                 switch (j->type) {
                                 case PHYS_JOINT_DISTANCE:
@@ -1487,16 +2142,22 @@ void phys_world_tick_parallel(phys_world_t *world,
                                     break;
                                 }
 
-                                /* Re-pack into XPBD constraint array. */
-                                if (xc < xpbd_count) {
-                                    uint32_t remaining = xpbd_count - xc;
-                                    uint32_t written = phys_joint_build_constraints(
-                                        j, &xpbd_constraints[xc], remaining,
-                                        (uint8_t)PHYS_SOLVER_XPBD);
-                                    xc += written;
+                                /* Rebuild joint rows in place so contact
+                                 * constraints stay live for the XPBD solve. */
+                                uint32_t remaining = xpbd_actual_count - temp_start;
+                                uint32_t written = phys_joint_build_constraints(
+                                    j, &xpbd_constraints[temp_start], remaining,
+                                    (uint8_t)PHYS_SOLVER_XPBD);
+                                uint8_t restore_idx = 0;
+                                for (uint32_t wi = 0; wi < written; ++wi) {
+                                    phys_constraint_t *dst =
+                                        &xpbd_constraints[temp_start + wi];
+                                    for (uint8_t r = 0; r < dst->row_count &&
+                                                        restore_idx < saved_rows; ++r) {
+                                        dst->rows[r].lambda = saved_lambda[restore_idx++];
+                                    }
                                 }
                             }
-                            xpbd_actual_count = xc;
 
                             /* Solve 1 iteration in parallel. */
                             xpbd_shared = (xpbd_batch_shared_t){
@@ -1508,13 +2169,54 @@ void phys_world_tick_parallel(phys_world_t *world,
                                 .compliance  = xpbd_compliance,
                             };
 
-                            xpbd_bs = phys_batch_size(jobs,
-                                xpbd_actual_count, 4, XPBD_MAX_BATCHES);
-                            phys_dispatch_stage(jobs, PHYS_STAGE_XPBD_SOLVE,
-                                xpbd_constraint_batch_job, &xpbd_shared,
-                                xpbd_actual_count, xpbd_bs, xpbd_batches);
-                            phys_wait_stage(jobs, PHYS_STAGE_XPBD_SOLVE);
+                            xpbd_batches[0] = (phys_job_batch_t){
+                                .user_args = &xpbd_shared,
+                                .start = 0,
+                                .count = xpbd_actual_count,
+                                .batch_idx = 0,
+                            };
+                            xpbd_constraint_batch_job(&xpbd_batches[0]);
+
+                            /* DEBUG: per-iteration max joint error */
+                            {
+                                static uint32_t iter_dbg_ticks = 0;
+                                if (iter_dbg_ticks < 3 && sub == 0 && xsub == 0) {
+                                    float max_bias = 0.0f;
+                                    uint32_t max_ci = 0;
+                                    for (uint32_t ci = 0; ci < xpbd_actual_count; ci++) {
+                                        phys_constraint_t *cc = &xpbd_constraints[ci];
+                                        if (!cc->is_joint) continue;
+                                        for (uint8_t rr = 0; rr < cc->row_count; rr++) {
+                                            float ab = fabsf(cc->rows[rr].bias);
+                                            if (ab > max_bias) { max_bias = ab; max_ci = ci; }
+                                        }
+                                    }
+                                    fprintf(stderr, "  [XPBD-ITER] tick=%u iter=%u max_joint_bias=%.6f ci=%u "
+                                            "ba=%u bb=%u rows=%u lambda0=%.4f\n",
+                                            world->tick_count, xiter, max_bias, max_ci,
+                                            xpbd_constraints[max_ci].body_a,
+                                            xpbd_constraints[max_ci].body_b,
+                                            xpbd_constraints[max_ci].row_count,
+                                            xpbd_constraints[max_ci].rows[0].lambda);
+                                    if (xiter == xpbd_iters - 1) iter_dbg_ticks++;
+                                }
+                            }
                         } /* end iteration loop */
+
+                        /* DEBUG: post-solve body positions */
+                        {
+                            static uint32_t post_solve_dbg = 0;
+                            if (post_solve_dbg < 3 && sub == 0 && xsub == 0) {
+                                post_solve_dbg++;
+                                uint32_t show = xpbd_body_count < 5 ? xpbd_body_count : 5;
+                                for (uint32_t bi = 0; bi < show; bi++) {
+                                    uint32_t idx = xpbd_body_indices[bi];
+                                    phys_body_t *b = &xpbd_bodies[idx];
+                                    fprintf(stderr, "  [XPBD-POST] b[%u] idx=%u pos=(%.3f,%.3f,%.3f)\n",
+                                        bi, idx, b->position.x, b->position.y, b->position.z);
+                                }
+                            }
+                        }
 
                         /* 4. Derive velocities from position/orientation
                          *    deltas: v = (x_solved - x_prev) / sub_dt. */
@@ -1554,6 +2256,42 @@ void phys_world_tick_parallel(phys_world_t *world,
                             b->angular_vel = vec3_scale(b->angular_vel, damp);
                         }
                     }
+
+                    /* Propagate solved lambdas and rebuilt joint rows back to
+                     * the main constraint array for cache commit/warmstart. */
+                    if (xpbd_constraint_source_indices && constraints) {
+                        for (uint32_t i = 0; i < xpbd_actual_count; ++i) {
+                            uint32_t src_idx = xpbd_constraint_source_indices[i];
+                            if (src_idx < constraint_count) {
+                                constraints[src_idx] = xpbd_constraints[i];
+                            }
+                        }
+
+                        {
+                            static uint32_t contact_solved_dbg_ticks = 0;
+                            if (contact_solved_dbg_ticks < 24 && sub == 0) {
+                                for (uint32_t i = 0; i < xpbd_actual_count; ++i) {
+                                    const phys_constraint_t *c = &xpbd_constraints[i];
+                                    if (c->is_joint) {
+                                        continue;
+                                    }
+                                    if (world->colliders[c->body_a].type != PHYS_SHAPE_HALFSPACE &&
+                                        world->colliders[c->body_b].type != PHYS_SHAPE_HALFSPACE) {
+                                        continue;
+                                    }
+                                    fprintf(stderr,
+                                            "  [CONTACT-SOLVED] bodies=%u,%u pen=%.4f lambda=%.4f "
+                                            "posA.y=%.3f posB.y=%.3f\n",
+                                            c->body_a, c->body_b, c->penetration,
+                                            c->rows[0].lambda,
+                                            world->body_pool.bodies_next[c->body_a].position.y,
+                                            world->body_pool.bodies_next[c->body_b].position.y);
+                                    break;
+                                }
+                                contact_solved_dbg_ticks++;
+                            }
+                        }
+                    }
                     /* Mark XPBD as "dispatched" so the velocity derivation
                      * below runs — even though we already waited per-substep,
                      * we still need to write final velocities into the
@@ -1563,6 +2301,14 @@ void phys_world_tick_parallel(phys_world_t *world,
             }
 
             /* ── Stage 11a: TGS Solve (T0/T1 islands) ─────────────── */
+
+            /* Debug: dump state BEFORE solver. */
+            if (world->debug_substep_dump) {
+                debug_dump_substep(world, world->body_pool.bodies_next,
+                                   velocities, pseudo_velocities, body_cap,
+                                   (uint32_t)world->tick_count, sub,
+                                   "PRE-SOLVE");
+            }
 #ifdef TRACY_ENABLE
             TracyCZoneN(z_tgs, "Phys.Solve.IteratingTGS", true);
 #endif
@@ -1588,14 +2334,21 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
             TracyCZoneEnd(z_tgs);
 #endif
+
+            /* Debug: dump state AFTER solver, BEFORE integration. */
+            if (world->debug_substep_dump) {
+                debug_dump_substep(world, world->body_pool.bodies_next,
+                                   velocities, pseudo_velocities, body_cap,
+                                   (uint32_t)world->tick_count, sub,
+                                   "POST-SOLVE");
+            }
+
             if (xpbd_dispatched) {
                 phys_wait_stage(jobs, PHYS_STAGE_XPBD_SOLVE);
 
                 /* Derive velocities from XPBD position+orientation deltas
                  * and merge into the shared velocity array for XPBD bodies.
-                 * XPBD wrote solved positions and orientations into bodies_next. */
-                const phys_body_t *bodies_in = world->body_pool.bodies_next;
-                const phys_body_t *bodies_solved = world->body_pool.bodies_next;
+                 * Use pre-XPBD saved state vs post-XPBD bodies_next. */
                 float inv_dt = (substep_dt > 0.0f) ? 1.0f / substep_dt : 0.0f;
 
                 /* Allocate skip array if needed so integration doesn't
@@ -1611,33 +2364,31 @@ void phys_world_tick_parallel(phys_world_t *world,
                     }
                 }
 
-                for (uint32_t ii = 0; ii < islands.count; ii++) {
-                    const phys_island_t *isle = &islands.islands[ii];
-                    if (isle->sleeping || isle->skip || isle->constraint_count == 0) continue;
-                    uint32_t first_ci = isle->constraint_indices[0];
-                    if (constraints[first_ci].solver_mode != PHYS_SOLVER_XPBD) continue;
-                    for (uint32_t bi = 0; bi < isle->body_count; bi++) {
-                        uint32_t idx = isle->body_indices[bi];
-                        if (idx < body_cap) {
-                            phys_vec3_t dp = vec3_sub(bodies_solved[idx].position,
-                                                       bodies_in[idx].position);
-                            velocities[idx].linear  = vec3_scale(dp, inv_dt);
-                            /* Angular velocity from orientation delta:
-                             * dq = q_out * conj(q_in), w ≈ 2 * dq.xyz / dt */
-                            phys_quat_t qi_conj = quat_conjugate(bodies_in[idx].orientation);
-                            phys_quat_t dq = quat_mul(bodies_solved[idx].orientation, qi_conj);
-                            float sign = (dq.w >= 0.0f) ? 1.0f : -1.0f;
-                            velocities[idx].angular = (phys_vec3_t){
-                                2.0f * dq.x * sign * inv_dt,
-                                2.0f * dq.y * sign * inv_dt,
-                                2.0f * dq.z * sign * inv_dt
-                            };
-                            /* Mark XPBD body to skip integration — positions
-                             * in bodies_next are already correct. */
-                            if (body_sub_substepped) {
-                                body_sub_substepped[idx] = 1;
-                            }
-                        }
+                const phys_body_t *bodies_solved = world->body_pool.bodies_next;
+                for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
+                    uint32_t idx = xpbd_body_indices[bi];
+                    if (idx >= body_cap) continue;
+                    if (xpbd_start_pos) {
+                        phys_vec3_t dp = vec3_sub(bodies_solved[idx].position,
+                                                   xpbd_start_pos[bi]);
+                        velocities[idx].linear = vec3_scale(dp, inv_dt);
+                    } else {
+                        velocities[idx].linear = bodies_solved[idx].linear_vel;
+                    }
+                    if (xpbd_start_orient) {
+                        phys_quat_t qi_conj = quat_conjugate(xpbd_start_orient[bi]);
+                        phys_quat_t dq = quat_mul(bodies_solved[idx].orientation, qi_conj);
+                        float sign = (dq.w >= 0.0f) ? 1.0f : -1.0f;
+                        velocities[idx].angular = (phys_vec3_t){
+                            2.0f * dq.x * sign * inv_dt,
+                            2.0f * dq.y * sign * inv_dt,
+                            2.0f * dq.z * sign * inv_dt
+                        };
+                    } else {
+                        velocities[idx].angular = bodies_solved[idx].angular_vel;
+                    }
+                    if (body_sub_substepped) {
+                        body_sub_substepped[idx] = 1;
                     }
                 }
             }
@@ -1672,22 +2423,55 @@ void phys_world_tick_parallel(phys_world_t *world,
                     }
                 }
 
-                uint32_t jci = joint_constraint_start;
-                for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
-                    phys_joint_t *j = &world->joints[ji];
-                    uint32_t num_c = (j->row_count <= PHYS_MAX_CONSTRAINT_ROWS)
-                                   ? 1u : 2u;
-                    uint8_t row_idx = 0;
-                    float impulse_mag = 0.0f;
-                    for (uint32_t ci = 0; ci < num_c && jci < constraint_count; ci++, jci++) {
-                        const phys_constraint_t *c = &constraints[jci];
-                        for (uint8_t r = 0; r < c->row_count && row_idx < j->row_count; r++, row_idx++) {
-                            j->cached_lambda[row_idx] = c->rows[r].lambda;
-                            float lam = c->rows[r].lambda;
-                            impulse_mag += lam * lam;
+                uint8_t *joint_row_write = phys_frame_arena_alloc(
+                    &world->frame_arena,
+                    (world->joint_count > 0 ? world->joint_count : 1) * sizeof(uint8_t),
+                    _Alignof(uint8_t));
+                float *joint_impulse_sq = phys_frame_arena_alloc(
+                    &world->frame_arena,
+                    (world->joint_count > 0 ? world->joint_count : 1) * sizeof(float),
+                    _Alignof(float));
+
+                if (joint_row_write && joint_impulse_sq && constraint_joint_indices) {
+                    memset(joint_row_write, 0,
+                           (world->joint_count > 0 ? world->joint_count : 1) * sizeof(uint8_t));
+                    for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                        memset(world->joints[ji].cached_lambda, 0,
+                               sizeof(world->joints[ji].cached_lambda));
+                        joint_impulse_sq[ji] = 0.0f;
+                    }
+
+                    for (uint32_t ci = joint_constraint_start; ci < constraint_count; ++ci) {
+                        const phys_constraint_t *c = &constraints[ci];
+                        if (!c->is_joint) {
+                            continue;
+                        }
+                        uint32_t ji = constraint_joint_indices[ci];
+                        if (ji >= world->joint_count) {
+                            continue;
+                        }
+                        phys_joint_t *j = &world->joints[ji];
+                        for (uint8_t r = 0; r < c->row_count; ++r) {
+                            uint8_t row_idx = joint_row_write[ji];
+                            if (row_idx < PHYS_JOINT_MAX_ROWS) {
+                                j->cached_lambda[row_idx] = c->rows[r].lambda;
+                                joint_row_write[ji] = (uint8_t)(row_idx + 1);
+                            }
+                            joint_impulse_sq[ji] += c->rows[r].lambda * c->rows[r].lambda;
                         }
                     }
-                    impulse_mag = sqrtf(impulse_mag);
+                } else {
+                    for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                        memset(world->joints[ji].cached_lambda, 0,
+                               sizeof(world->joints[ji].cached_lambda));
+                    }
+                }
+
+                for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                    phys_joint_t *j = &world->joints[ji];
+                    float impulse_mag = (joint_impulse_sq && ji < world->joint_count)
+                                      ? sqrtf(joint_impulse_sq[ji])
+                                      : 0.0f;
                     j->accumulated_impulse += impulse_mag;
 
                     /* Yield: shift rest configuration when threshold
@@ -1820,6 +2604,14 @@ void phys_world_tick_parallel(phys_world_t *world,
             if (world->anim_integrate_cb) {
                 world->anim_integrate_cb(world->anim_integrate_user,
                                          world, sub, substep_dt);
+            }
+
+            /* Debug: dump state AFTER integration. */
+            if (world->debug_substep_dump) {
+                debug_dump_substep(world, world->body_pool.bodies_next,
+                                   velocities, pseudo_velocities, body_cap,
+                                   (uint32_t)world->tick_count, sub,
+                                   "POST-INTEGRATE");
             }
         }
 

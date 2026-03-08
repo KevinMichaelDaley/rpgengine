@@ -16,6 +16,7 @@
 #include <math.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ferrum/job/spinlock.h"
@@ -154,6 +155,11 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         uint32_t hi = a < b ? b : a;
         uint64_t key = ((uint64_t)lo << 32) | (uint64_t)hi;
         if (phys_pair_set_contains(args->exclude_set, key)) {
+            static int excl_dbg = 0;
+            if (excl_dbg < 5) {
+                excl_dbg++;
+                fprintf(stderr, "[NARROW-EXCL] pair %u-%u excluded\n", a, b);
+            }
             return 0;
         }
     }
@@ -161,6 +167,12 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
     /* Skip ghost bodies (no collider, joint-only). */
     if ((args->bodies[a].flags & PHYS_BODY_FLAG_NO_BROADPHASE) ||
         (args->bodies[b].flags & PHYS_BODY_FLAG_NO_BROADPHASE)) {
+        static int ghost_dbg = 0;
+        if (ghost_dbg < 5) {
+            ghost_dbg++;
+            fprintf(stderr, "[NARROW-GHOST] pair %u-%u skipped (flags=0x%x,0x%x)\n",
+                    a, b, args->bodies[a].flags, args->bodies[b].flags);
+        }
         return 0;
     }
 

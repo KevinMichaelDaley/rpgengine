@@ -157,8 +157,8 @@ void phys_stage_broadphase(const phys_broadphase_args_t *args) {
 
     uint32_t pair_count = 0;
 
-    /* Iterate active tiers T0 through T4. */
-    for (int tier = PHYS_TIER_0_DIRECT; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
+    /* Iterate all active tiers, including ANIM ragdolls. */
+    for (int tier = PHYS_TIER_ANIM; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
         const phys_tier_list_t *list = &args->tier_lists->tiers[tier];
 
         for (uint32_t i = 0; i < list->count; ++i) {
@@ -241,7 +241,7 @@ void phys_stage_broadphase(const phys_broadphase_args_t *args) {
     for (uint32_t h = 0; h < args->halfspace_body_count; ++h) {
         uint32_t hs_body = args->halfspace_bodies[h];
 
-        for (int tier = PHYS_TIER_0_DIRECT; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
+        for (int tier = PHYS_TIER_ANIM; tier <= PHYS_TIER_4_BACKGROUND; ++tier) {
             const phys_tier_list_t *list = &args->tier_lists->tiers[tier];
             for (uint32_t i = 0; i < list->count; ++i) {
                 uint32_t dyn = list->indices[i];

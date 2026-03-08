@@ -44,6 +44,9 @@
 
 /* ── Constants ────────────────────────────────────────────────────── */
 
+/* Temporary debug: defined in tgs_solve_par.c, controls Jacobian dump. */
+extern int g_tgs_debug_dump_counter;
+
 #define WINDOW_W     640
 #define WINDOW_H     480
 #define TARGET_FPS   30
@@ -432,6 +435,29 @@ int main(void) {
     }
     printf("  Animated entity: %u bodies, %u joints (pure ragdoll)\n",
            anim_ent.body_count, anim_ent.joint_count);
+    {
+        uint32_t included_pairs = 0;
+        uint32_t excluded_pairs = 0;
+        for (uint32_t i = 0; i < skel.joint_count; ++i) {
+            uint32_t bi = anim_ent.body_indices[i];
+            if (bi == UINT32_MAX) continue;
+            const phys_body_t *ba = phys_world_get_body(&world, bi);
+            if (!ba || (ba->flags & PHYS_BODY_FLAG_NO_BROADPHASE)) continue;
+            for (uint32_t j = i + 1; j < skel.joint_count; ++j) {
+                uint32_t bj = anim_ent.body_indices[j];
+                if (bj == UINT32_MAX) continue;
+                const phys_body_t *bb = phys_world_get_body(&world, bj);
+                if (!bb || (bb->flags & PHYS_BODY_FLAG_NO_BROADPHASE)) continue;
+                if (phys_world_is_pair_excluded(&world, bi, bj)) {
+                    excluded_pairs++;
+                } else {
+                    included_pairs++;
+                }
+            }
+        }
+        fprintf(stderr, "  rig pairs: excluded=%u included=%u\n",
+                excluded_pairs, included_pairs);
+    }
 
     /* Physics job context + tick runner. */
     phys_job_context_t phys_jobs;
@@ -462,6 +488,13 @@ int main(void) {
     phys_tick_runner_start(&tick_runner);
     printf("  Tick runner started\n");
 
+    /* Enable substep-level diagnostic dump for first few ticks.
+     * The flag is checked by tick_parallel.c each substep. */
+    world.debug_substep_dump = 0;
+
+    /* Dump full Jacobian rows for first solver iteration (24 joints). */
+    g_tgs_debug_dump_counter = 30;
+
     /* Video capture. */
     system("mkdir -p tests/output");
     fr_video_capture_desc_t cap_desc = {0};
@@ -486,6 +519,12 @@ int main(void) {
     for (int f = 0; f < TOTAL_FRAMES; ++f) {
         uint32_t frame_start = SDL_GetTicks();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        /* Turn off substep dump after first 3 render frames
+         * (each render frame = ~2 physics ticks at 60Hz/30fps). */
+        if (f == 3) {
+            world.debug_substep_dump = 0;
+        }
 
         /* Sync bone world transforms from physics bodies. */
         phys_anim_entity_sync_from_world(&anim_ent, &world, &skel);
@@ -550,7 +589,37 @@ int main(void) {
             }
             fprintf(stderr, "    max_anchor_err=%.4f (joint %u)\n",
                     max_err, worst_joint);
-            /* Dump worst joint anchor details. */
+            /* Dump ALL joint errors at frame 10 to see full picture. */
+            if (f == 10 || f == 45 || f == 90) {
+                for (uint32_t ji = 0; ji < world.joint_count; ji++) {
+                    const phys_joint_t *jj = &world.joints[ji];
+                    if (jj->body_a >= world.body_pool.capacity ||
+                        jj->body_b >= world.body_pool.capacity) continue;
+                    const phys_body_t *ba2 = &world.body_pool.bodies_curr[jj->body_a];
+                    const phys_body_t *bb2 = &world.body_pool.bodies_curr[jj->body_b];
+                    phys_vec3_t wa2 = vec3_add(ba2->position,
+                        quat_rotate_vec3(ba2->orientation, jj->local_anchor_a));
+                    phys_vec3_t wb2 = vec3_add(bb2->position,
+                        quat_rotate_vec3(bb2->orientation, jj->local_anchor_b));
+                    phys_vec3_t d2 = vec3_sub(wa2, wb2);
+                    float e2 = sqrtf(vec3_dot(d2, d2));
+                    const char *jtype = jj->type == PHYS_JOINT_CONE_TWIST ? "CT"
+                                      : jj->type == PHYS_JOINT_DISTANCE  ? "DL"
+                                      : jj->type == PHYS_JOINT_BALL      ? "BL"
+                                      : jj->type == 10 /* lock */        ? "LK"
+                                      :                                     "??";
+                    fprintf(stderr, "      j%02u[%s] b%u→b%u err=%.4f"
+                            " |la|=%.3f |lb|=%.3f\n",
+                            ji, jtype, jj->body_a, jj->body_b, e2,
+                            sqrtf(jj->local_anchor_a.x*jj->local_anchor_a.x +
+                                  jj->local_anchor_a.y*jj->local_anchor_a.y +
+                                  jj->local_anchor_a.z*jj->local_anchor_a.z),
+                            sqrtf(jj->local_anchor_b.x*jj->local_anchor_b.x +
+                                  jj->local_anchor_b.y*jj->local_anchor_b.y +
+                                  jj->local_anchor_b.z*jj->local_anchor_b.z));
+                }
+            }
+            /* Dump worst joint anchor details when error is large. */
             if (max_err > 0.1f) {
                 const phys_joint_t *wj = &world.joints[worst_joint];
                 const phys_body_t *wba = &world.body_pool.bodies_curr[wj->body_a];

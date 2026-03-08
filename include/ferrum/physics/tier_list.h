@@ -18,17 +18,19 @@ struct phys_frame_arena; /* forward declaration */
 extern "C" {
 #endif
 
-/** Number of simulation tiers (T0-T5). */
-#define PHYS_TIER_COUNT 6
+/** Number of simulation tiers (ANIM + T0-T5). */
+#define PHYS_TIER_COUNT 7
 
 /**
  * @brief Simulation tier identifiers.
  *
- * Each tier represents a different level of physics fidelity,
- * from direct manipulation (T0) to sleeping (T5).
+ * Each tier represents a different level of physics fidelity.
+ * ANIM is the lowest numeric value so it wins min-tier island
+ * promotion, pulling the whole island to XPBD.
  */
 typedef enum phys_tier {
-    PHYS_TIER_0_DIRECT = 0,    /**< Direct manipulation. */
+    PHYS_TIER_ANIM = 0,        /**< Animated / ragdoll bodies (XPBD). */
+    PHYS_TIER_0_DIRECT,        /**< Direct manipulation. */
     PHYS_TIER_1_NEAR,          /**< Near interactive. */
     PHYS_TIER_2_VISIBLE,       /**< Visible / hazardous. */
     PHYS_TIER_3_WORLD,         /**< World-shaping. */

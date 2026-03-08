@@ -28,3 +28,5 @@ node_modules/
 .marvin/
 tests/output/
 *.orig
+__pycache__/
+jacobian_dump.txt

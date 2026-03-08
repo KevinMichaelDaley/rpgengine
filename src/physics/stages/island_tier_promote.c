@@ -52,13 +52,16 @@ void phys_stage_island_tier_promote(
         /* No dynamic bodies found — nothing to promote. */
         if (min_tier == PHYS_TIER_5_SLEEPING) { continue; }
 
-        /* Pass 2: promote all dynamic bodies to min_tier. */
+        /* Pass 2: promote non-ANIM dynamic bodies to min_tier.
+         * Animated bodies must keep their ANIM tag so later tier
+         * classification continues routing the island through XPBD. */
         for (uint32_t b = 0; b < isle->body_count; ++b) {
             uint32_t idx = isle->body_indices[b];
             if (idx >= args->body_count) { continue; }
             phys_body_t *body = &args->bodies[idx];
 
             if (body->inv_mass <= 0.0f) { continue; }
+            if (body->tier == PHYS_TIER_ANIM) { continue; }
             body->tier = min_tier;
         }
 

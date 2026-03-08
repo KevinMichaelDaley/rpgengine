@@ -108,7 +108,9 @@ void phys_joint_build_limit_rotation(phys_joint_t *joint,
         row->J_wb = axes[i];
         row->lambda_min = lmin;
         row->lambda_max = lmax;
-        row->lambda = joint->cached_lambda[rc];
+        /* Row activation changes with the violated axes, so keep limit
+         * rows cold-started instead of reusing a mismatched lambda. */
+        row->lambda = 0.0f;
         row->bias = error;
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR;

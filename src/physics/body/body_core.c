@@ -1,4 +1,5 @@
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/tier_list.h"
 
 #include <stddef.h>
 
@@ -10,7 +11,7 @@ void phys_body_init(phys_body_t *body) {
     *body = (phys_body_t){0};
     body->orientation.w = 1.0f;
     body->flags = PHYS_BODY_FLAG_STATIC;
-    body->tier = 0;
+    body->tier = PHYS_TIER_0_DIRECT;
     body->friction = 0.5f;
     body->restitution = 0.0f;
     body->linear_damping  = 0.0f; /* No drag by default. */

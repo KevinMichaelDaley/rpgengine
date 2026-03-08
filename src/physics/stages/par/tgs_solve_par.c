@@ -18,6 +18,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ferrum/physics/body.h"
@@ -27,6 +28,7 @@
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/step_plan.h"
 #include "ferrum/job/counter.h"
 #include "ferrum/job/system.h"
 #include "ferrum/math/vec3.h"
@@ -51,9 +53,15 @@
 /** Maximum multiplier on base iteration count for fast islands. */
 #define ADAPTIVE_ITER_MULT  5
 
-/** Successive over-relaxation factor.  Values > 1.0 accelerate
- *  convergence; typical range 1.1–1.5.  Too high causes oscillation. */
+/** Successive over-relaxation factor for contacts.  Values > 1.0
+ *  accelerate convergence; typical range 1.1–1.5. */
 #define SOR_OMEGA 1.1f
+
+/** Under-relaxation factor for joint constraints.  Joint chains couple
+ *  many rows through shared hub bodies (e.g. root in ragdoll).  The
+ *  critical omega for a 21-body humanoid ragdoll is ~0.82; above that
+ *  the Gauss-Seidel iteration diverges.  0.8 is near-optimal. */
+#define JOINT_SOR_OMEGA 0.8f
 
 /* ── Internal: compute per-island iteration count ─────────────── */
 
@@ -120,6 +128,28 @@ static uint32_t compute_island_iterations(
     return (result > chain_floor) ? result : chain_floor;
 }
 
+static bool island_routes_xpbd_(const phys_island_t *island,
+                                const phys_constraint_t *constraints,
+                                const phys_body_t *bodies)
+{
+    if (!island || !bodies) {
+        return false;
+    }
+
+    if (!constraints) {
+        return false;
+    }
+
+    for (uint32_t ci = 0; ci < island->constraint_count; ++ci) {
+        if (constraints[island->constraint_indices[ci]].solver_mode ==
+            PHYS_SOLVER_XPBD) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /* ── Shared context for all island jobs ────────────────────────── */
 
 /**
@@ -174,7 +204,8 @@ static void solve_row(phys_jacobian_row_t *row,
                        const phys_mat3_t *inv_i_a,
                        float inv_mass_b,
                        const phys_mat3_t *inv_i_b,
-                       float dt)
+                       float dt,
+                       float omega)
 {
     float jv = vec3_dot(row->J_va, va->linear)
              + vec3_dot(row->J_wa, va->angular)
@@ -189,7 +220,7 @@ static void solve_row(phys_jacobian_row_t *row,
     float jv_damped = jv * (1.0f + row->damping * dt);
     float delta_lambda = (row->bias - jv_damped) * row->effective_mass;
 
-    delta_lambda *= SOR_OMEGA;
+    delta_lambda *= omega;
 
     float old_lambda = row->lambda;
     row->lambda = old_lambda + delta_lambda;
@@ -282,9 +313,10 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
      * divergence in long joint chains (ragdoll: 19 joints).
      * Pseudo-velocities are scaled by tier_substeps/max_substeps
      * before integration, so effective inv_dt matches body_dt.
-     * Angular rows use softer ERP to prevent fighting. */
+     * Angular rows use softer ERP to prevent overshoot but still
+     * converge positionally. */
     float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
-              ? 0.05f
+              ? 0.2f
               : 0.4f;
     float pos_bias = -error * inv_dt * erp;
 
@@ -311,6 +343,43 @@ static void solve_joint_position_row(phys_jacobian_row_t *row,
 
     phys_vec3_t ang_b = phys_mat3_mul_vec3(inv_i_b, row->J_wb);
     pvb->angular = vec3_add(pvb->angular, vec3_scale(ang_b, delta_lambda));
+}
+
+/* ── Temporary debug: dump full Jacobian for joint constraints ──── */
+
+/** Global debug counter — decremented each call.  When > 0, dump rows. */
+int g_tgs_debug_dump_counter = 0;
+
+static void debug_dump_joint_rows(const phys_constraint_t *c,
+                                  const phys_velocity_t *va,
+                                  const phys_velocity_t *vb,
+                                  uint32_t c_idx)
+{
+    if (g_tgs_debug_dump_counter <= 0) return;
+    if (!c->is_joint) return;
+
+    fprintf(stderr, "  c%u b%u→b%u rows=%u compliance=%.6f is_joint=%u\n",
+            c_idx, c->body_a, c->body_b, c->row_count, c->compliance, c->is_joint);
+    for (uint8_t r = 0; r < c->row_count; r++) {
+        const phys_jacobian_row_t *row = &c->rows[r];
+        const char *kind = (row->flags & PHYS_ROW_FLAG_ANGULAR) ? "ANG" : "POS";
+        fprintf(stderr, "    r%u[%s] bias=%.6f eff_mass=%.6f λ=%.4f [%.1f,%.1f] damp=%.3f\n",
+                r, kind, row->bias, row->effective_mass, row->lambda,
+                row->lambda_min, row->lambda_max, row->damping);
+        fprintf(stderr, "      J_va=(%.4f,%.4f,%.4f) J_wa=(%.4f,%.4f,%.4f)\n",
+                row->J_va.x, row->J_va.y, row->J_va.z,
+                row->J_wa.x, row->J_wa.y, row->J_wa.z);
+        fprintf(stderr, "      J_vb=(%.4f,%.4f,%.4f) J_wb=(%.4f,%.4f,%.4f)\n",
+                row->J_vb.x, row->J_vb.y, row->J_vb.z,
+                row->J_wb.x, row->J_wb.y, row->J_wb.z);
+    }
+    fprintf(stderr, "    va_lin=(%.4f,%.4f,%.4f) va_ang=(%.4f,%.4f,%.4f)\n",
+            va->linear.x, va->linear.y, va->linear.z,
+            va->angular.x, va->angular.y, va->angular.z);
+    fprintf(stderr, "    vb_lin=(%.4f,%.4f,%.4f) vb_ang=(%.4f,%.4f,%.4f)\n",
+            vb->linear.x, vb->linear.y, vb->linear.z,
+            vb->angular.x, vb->angular.y, vb->angular.z);
+    g_tgs_debug_dump_counter--;
 }
 
 /* ── Solve a single constraint (used by colored job) ──────────── */
@@ -347,6 +416,9 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
     }
 
     if (c->is_joint) {
+        /* Debug: dump full Jacobian before solving. */
+        debug_dump_joint_rows(c, va, vb, c_idx);
+
         /* Joint: velocity-level solve with speed-dependent Baumgarte
          * leak, then split-impulse position correction.
          * Angular rows get reduced baumgarte to prevent destabilizing
@@ -386,7 +458,7 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
         for (uint8_t r = 0; r < c->row_count; r++) {
             solve_row(&c->rows[r], va, vb,
                       inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
-                      1.0f / shared->inv_dt);
+                      1.0f / shared->inv_dt, JOINT_SOR_OMEGA);
         }
 
         for (uint8_t r = 0; r < c->row_count; r++) {
@@ -435,7 +507,7 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
     /* Normal row. */
     solve_row(&c->rows[0], va, vb,
               inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
-              1.0f / shared->inv_dt);
+              1.0f / shared->inv_dt, SOR_OMEGA);
 
     {
         /* Split impulse position correction. */
@@ -455,7 +527,7 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
             c->rows[r].lambda_max =  friction_limit;
             solve_row(&c->rows[r], va, vb,
                       inv_mass_a, inv_i_a, inv_mass_b, inv_i_b,
-                      1.0f / shared->inv_dt);
+                      1.0f / shared->inv_dt, SOR_OMEGA);
         }
     }
 }
@@ -487,6 +559,12 @@ static void solve_island(const tgs_solve_shared_t *shared,
                           const phys_island_t *island)
 {
     if (island->sleeping || island->skip) return;
+
+    /* Skip XPBD islands — they are solved by the XPBD position solver. */
+    if (island->constraint_count > 0 &&
+        island_routes_xpbd_(island, shared->constraints, shared->bodies)) {
+        return;
+    }
 
     /* Adaptive iteration count based on island body velocity. */
     uint32_t iters = compute_island_iterations(
@@ -559,6 +637,11 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
 {
     uint32_t n = island->constraint_count;
     if (n == 0) { return true; }
+
+    /* Skip XPBD islands — they are solved by the XPBD position solver. */
+    if (island_routes_xpbd_(island, shared->constraints, shared->bodies)) {
+        return true;
+    }
 
     /* Build contiguous constraint copy for coloring (coloring needs
      * contiguous body_a/body_b indexing). */

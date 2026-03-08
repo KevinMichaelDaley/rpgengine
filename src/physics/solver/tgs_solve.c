@@ -121,6 +121,34 @@ static uint32_t compute_island_iterations(
     return (result > chain_floor) ? result : chain_floor;
 }
 
+static bool island_routes_xpbd_(const phys_island_t *island,
+                                const phys_constraint_t *constraints,
+                                const phys_body_t *bodies)
+{
+    if (!island || !bodies) {
+        return false;
+    }
+
+    for (uint32_t bi = 0; bi < island->body_count; ++bi) {
+        if (bodies[island->body_indices[bi]].tier == PHYS_TIER_ANIM) {
+            return true;
+        }
+    }
+
+    if (!constraints) {
+        return false;
+    }
+
+    for (uint32_t ci = 0; ci < island->constraint_count; ++ci) {
+        if (constraints[island->constraint_indices[ci]].solver_mode ==
+            PHYS_SOLVER_XPBD) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /* ── Internal: initialize velocity workspace from body state ──── */
 
 /**
@@ -796,11 +824,9 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
         if (island->sleeping || island->skip) continue;
 
         /* Skip XPBD islands — they are handled by Stage 11b. */
-        if (island->constraint_count > 0) {
-            uint32_t first_ci = island->constraint_indices[0];
-            if (args->constraints[first_ci].solver_mode == PHYS_SOLVER_XPBD) {
-                continue;
-            }
+        if (island->constraint_count > 0 &&
+            island_routes_xpbd_(island, args->constraints, args->bodies)) {
+            continue;
         }
 
         /* Adaptive iteration count based on island body velocity. */

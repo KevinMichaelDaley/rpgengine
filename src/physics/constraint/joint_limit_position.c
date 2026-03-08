@@ -89,7 +89,9 @@ void phys_joint_build_limit_position(phys_joint_t *joint,
         row->J_wb = vec3_cross(rB, axes[i]);
         row->lambda_min = lmin;
         row->lambda_max = lmax;
-        row->lambda = joint->cached_lambda[rc];
+        /* Limit rows are data-dependent and can reorder as different axes
+         * clamp, so avoid warmstarting them by transient row index. */
+        row->lambda = 0.0f;
         row->bias = error;
         row->damping = joint->damping;
         row->effective_mass = phys_compute_effective_mass(
