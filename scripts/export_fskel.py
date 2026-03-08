@@ -1191,6 +1191,270 @@ def armature_obj_matrix(mesh_obj):
     return mathutils.Matrix.Identity(4)
 
 
+# ── Pose-limit violation checker ─────────────────────────────────
+
+def _extract_euler_from_quat(q):
+    """Extract Euler angles (XYZ) from a quaternion.
+
+    Returns (roll_x, pitch_y, yaw_z) in radians, matching the
+    decomposition used by joint_cone_twist.c / extract_axis_angle().
+    """
+    x, y, z, w = q.x, q.y, q.z, q.w
+    # Roll (X)
+    roll = math.atan2(2.0 * (w * x + y * z),
+                      1.0 - 2.0 * (x * x + y * y))
+    # Pitch (Y)
+    sinp = 2.0 * (w * y - z * x)
+    sinp = max(-1.0, min(1.0, sinp))
+    pitch = math.asin(sinp)
+    # Yaw (Z)
+    yaw = math.atan2(2.0 * (w * z + x * y),
+                     1.0 - 2.0 * (y * y + z * z))
+    return (roll, pitch, yaw)
+
+
+class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
+    """Check if the current pose violates any joint limits.
+
+    Iterates every bone with a configured joint, computes the relative
+    orientation vs the rest pose, extracts per-axis angles, and reports
+    any violations.  Bind-pose violations are especially dangerous
+    because the solver cannot recover from them.
+    """
+    bl_idname = "armature.talarium_validate_pose"
+    bl_label = "Validate Pose Limits"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object is not None and
+                context.active_object.type == 'ARMATURE' and
+                context.mode == 'POSE')
+
+    def execute(self, context):
+        arm_obj = context.active_object
+        arm = arm_obj.data
+        violations = []
+
+        for pb in arm_obj.pose.bones:
+            bone = pb.bone
+            if not bone.parent:
+                continue
+
+            jt = int(pb.talarium_joint_type)
+            if jt == 0:  # No joint
+                continue
+
+            # Compute the current relative orientation in engine space.
+            # In pose mode the evaluated bone matrices include the pose.
+            # Relative rotation = child_world * inverse(parent_world).
+            parent_pb = arm_obj.pose.bones.get(bone.parent.name)
+            if parent_pb is None:
+                continue
+
+            # Blender bone matrices are in armature space.
+            child_mat = pb.matrix
+            parent_mat = parent_pb.matrix
+            rel_mat = parent_mat.inverted_safe() @ child_mat
+
+            # Rest-pose relative.
+            child_rest = bone.matrix_local
+            parent_rest = bone.parent.matrix_local
+            rest_mat = parent_rest.inverted_safe() @ child_rest
+
+            # Error = inv(rest) * current
+            error_mat = rest_mat.inverted_safe() @ rel_mat
+            error_q = error_mat.to_quaternion()
+
+            # Ensure shortest path (match engine convention).
+            if error_q.w < 0:
+                error_q = mathutils.Quaternion((-error_q.w,
+                                                 -error_q.x,
+                                                 -error_q.y,
+                                                 -error_q.z))
+
+            angles = _extract_euler_from_quat(error_q)
+            axis_names_bl = ['X', 'Y', 'Z']
+
+            if jt == 1:  # Cone twist: per-axis limits
+                # Engine mapping: eng_X=bl_X, eng_Y=bl_Z, eng_Z=-bl_Y
+                # Limit flags use the same mapping.
+                use_flags = [pb.talarium_joint_use_limit_x,
+                             pb.talarium_joint_use_limit_y,
+                             pb.talarium_joint_use_limit_z]
+                mins_bl = [pb.talarium_joint_limit_min_x,
+                           pb.talarium_joint_limit_min_y,
+                           pb.talarium_joint_limit_min_z]
+                maxs_bl = [pb.talarium_joint_limit_max_x,
+                           pb.talarium_joint_limit_max_y,
+                           pb.talarium_joint_limit_max_z]
+
+                # Map Blender axes to engine axes for comparison.
+                # Engine X ← Blender X, Engine Y ← Blender Z,
+                # Engine Z ← -Blender Y.
+                eng_lim_min = [mins_bl[0], mins_bl[2], -maxs_bl[1]]
+                eng_lim_max = [maxs_bl[0], maxs_bl[2], -mins_bl[1]]
+                eng_use = [use_flags[0], use_flags[2], use_flags[1]]
+
+                for i in range(3):
+                    if not eng_use[i]:
+                        continue
+                    angle = angles[i]
+                    lo = eng_lim_min[i]
+                    hi = eng_lim_max[i]
+                    if lo > hi:
+                        lo, hi = hi, lo
+                    if angle < lo or angle > hi:
+                        deg = math.degrees(angle)
+                        lo_d = math.degrees(lo)
+                        hi_d = math.degrees(hi)
+                        violations.append(
+                            f"{bone.name}: axis {i} angle "
+                            f"{deg:.1f}° outside [{lo_d:.1f}°, {hi_d:.1f}°]")
+
+            elif jt == 2:  # Hinge: scalar limit
+                lo = pb.talarium_joint_limit_min
+                hi = pb.talarium_joint_limit_max
+                if lo != 0.0 or hi != 0.0:
+                    # Hinge axis maps to engine coordinate; use axis 0.
+                    angle = angles[0]
+                    if angle < lo or angle > hi:
+                        violations.append(
+                            f"{bone.name}: hinge angle "
+                            f"{math.degrees(angle):.1f}° outside "
+                            f"[{math.degrees(lo):.1f}°, "
+                            f"{math.degrees(hi):.1f}°]")
+
+            elif jt in (6, 7):  # Limit rotation / position
+                use_flags = [pb.talarium_joint_use_limit_x,
+                             pb.talarium_joint_use_limit_y,
+                             pb.talarium_joint_use_limit_z]
+                mins_bl = [pb.talarium_joint_limit_min_x,
+                           pb.talarium_joint_limit_min_y,
+                           pb.talarium_joint_limit_min_z]
+                maxs_bl = [pb.talarium_joint_limit_max_x,
+                           pb.talarium_joint_limit_max_y,
+                           pb.talarium_joint_limit_max_z]
+                eng_lim_min = [mins_bl[0], mins_bl[2], -maxs_bl[1]]
+                eng_lim_max = [maxs_bl[0], maxs_bl[2], -mins_bl[1]]
+                eng_use = [use_flags[0], use_flags[2], use_flags[1]]
+
+                for i in range(3):
+                    if not eng_use[i]:
+                        continue
+                    angle = angles[i]
+                    lo = eng_lim_min[i]
+                    hi = eng_lim_max[i]
+                    if lo > hi:
+                        lo, hi = hi, lo
+                    if angle < lo or angle > hi:
+                        deg = math.degrees(angle)
+                        lo_d = math.degrees(lo)
+                        hi_d = math.degrees(hi)
+                        violations.append(
+                            f"{bone.name}: axis {i} angle "
+                            f"{deg:.1f}° outside [{lo_d:.1f}°, {hi_d:.1f}°]")
+
+        if violations:
+            for v in violations:
+                self.report({'WARNING'}, v)
+            self.report({'ERROR'},
+                        f"{len(violations)} joint limit violation(s) found. "
+                        "Bind-pose violations prevent solver convergence.")
+        else:
+            self.report({'INFO'}, "All joints within limits ✓")
+
+        return {'FINISHED'}
+
+
+# ── XPBD stability estimator (lightweight, runs in Blender) ──────
+
+class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
+    """Estimate XPBD spectral radius for the current skeleton.
+
+    Builds a simplified per-joint effective-mass model and computes
+    the worst-case amplification factor across all constraint rows.
+    Reports whether the system is stable (ρ < 1), marginally stable
+    (ρ ≈ 1), or unstable (ρ > 1).
+    """
+    bl_idname = "armature.talarium_validate_stability"
+    bl_label = "Check Stability"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.active_object is not None and
+                context.active_object.type == 'ARMATURE' and
+                context.mode == 'POSE')
+
+    def execute(self, context):
+        arm_obj = context.active_object
+
+        # Collect masses and compliance per joint.
+        dt = 1.0 / 60.0
+        substeps = 4
+        h = dt / substeps
+        worst_rho = 0.0
+        worst_bone = ""
+
+        for pb in arm_obj.pose.bones:
+            bone = pb.bone
+            if not bone.parent:
+                continue
+
+            jt = int(pb.talarium_joint_type)
+            if jt == 0:
+                continue
+
+            compliance = pb.talarium_joint_stiffness
+            if compliance > 0:
+                # Stiffness → compliance: α = 1/k
+                alpha = 1.0 / compliance
+            else:
+                alpha = 0.0
+
+            # Estimate body mass from collider.
+            mass = pb.talarium_mass
+            if mass <= 0:
+                mass = 1.0
+
+            # For a bilateral positional constraint between two bodies
+            # of equal mass m, effective mass w = 2/m.
+            # XPBD: Δx = -C / (w + α̃), α̃ = α/h².
+            # Spectral radius ρ = sqrt(d * (1 - κ)) where
+            #   κ = w / (w + α̃), d = damping factor.
+            w = 2.0 / mass
+            alpha_tilde = alpha / (h * h)
+
+            kappa = w / (w + alpha_tilde)
+            damping = pb.talarium_joint_damping
+            if damping > 0:
+                # d = 1 / (1 + damping_coeff * h * w)
+                d = 1.0 / (1.0 + damping * h * w)
+            else:
+                d = 1.0
+
+            rho = math.sqrt(abs(d * (1.0 - kappa)))
+            if rho > worst_rho:
+                worst_rho = rho
+                worst_bone = bone.name
+
+        if worst_rho > 1.01:
+            self.report({'ERROR'},
+                        f"UNSTABLE: ρ = {worst_rho:.4f} at '{worst_bone}'. "
+                        "Increase compliance or damping.")
+        elif worst_rho > 0.99:
+            self.report({'WARNING'},
+                        f"Marginally stable: ρ = {worst_rho:.4f} at "
+                        f"'{worst_bone}'. May oscillate under load.")
+        else:
+            self.report({'INFO'},
+                        f"Stable: worst ρ = {worst_rho:.4f} "
+                        f"('{worst_bone}') ✓")
+
+        return {'FINISHED'}
+
+
 # ── Properties panel (Bone tab, Pose mode) ───────────────────────
 
 class BONE_PT_talarium_physics(bpy.types.Panel):
@@ -1321,6 +1585,14 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 box.prop(pb, "talarium_joint_damping")
                 box.prop(pb, "talarium_joint_yield_strength")
                 box.prop(pb, "talarium_joint_break_strength")
+
+        # ── Validation ──
+        box = layout.box()
+        box.label(text="Validation", icon='CHECKMARK')
+        box.operator("armature.talarium_validate_pose",
+                     icon='ERROR')
+        box.operator("armature.talarium_validate_stability",
+                     icon='VIEWZOOM')
 
 
 # ── Collision wireframe overlay ───────────────────────────────────
@@ -1615,6 +1887,8 @@ _CLASSES = [
     ExportFSKEL,
     BONE_OT_talarium_autofill_collision,
     BONE_OT_talarium_refresh_collision,
+    ARMATURE_OT_talarium_validate_pose,
+    ARMATURE_OT_talarium_validate_stability,
     BONE_PT_talarium_physics,
 ]
 
