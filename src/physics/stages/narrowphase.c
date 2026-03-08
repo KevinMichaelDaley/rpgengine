@@ -395,11 +395,15 @@ void phys_stage_narrowphase(const phys_narrowphase_args_t *args)
                 continue;
             }
         }
-        else if (c0->type == PHYS_SHAPE_POINT && c1->type == PHYS_SHAPE_HALFSPACE) {
-            const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
-            hit = phys_point_vs_halfspace(w0,
+        else if (c0->type == PHYS_SHAPE_HALFSPACE && c1->type == PHYS_SHAPE_POINT) {
+            const phys_halfspace_t *hs = &args->halfspaces[c0->shape_index];
+            hit = phys_point_vs_halfspace(w1,
                                            hs->normal, hs->distance,
                                            args->speculative_margin, &contact);
+            /* Swap so body_a = point body, body_b = halfspace. */
+            if (hit) {
+                uint32_t tmp = ba; ba = bb; bb = tmp;
+            }
         }
         /* mesh-halfspace and halfspace-halfspace: no collision. */
 

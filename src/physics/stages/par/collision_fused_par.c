@@ -483,14 +483,16 @@ static int narrow_test_pair(const phys_collision_fused_args_t *args,
         }
         return 0;
     }
-    else if (c0->type == PHYS_SHAPE_POINT && c1->type == PHYS_SHAPE_HALFSPACE) {
-        const phys_halfspace_t *hs = &args->halfspaces[c1->shape_index];
+    else if (c0->type == PHYS_SHAPE_HALFSPACE && c1->type == PHYS_SHAPE_POINT) {
+        const phys_halfspace_t *hs = &args->halfspaces[c0->shape_index];
         phys_contact_point_t cp;
-        int nc = phys_point_vs_halfspace(w0, hs->normal, hs->distance,
+        int nc = phys_point_vs_halfspace(w1, hs->normal, hs->distance,
                                           args->speculative_margin, &cp);
         if (nc > 0) {
-            cand_out->body_a = ba;
-            cand_out->body_b = bb;
+            /* body_a = point body, body_b = halfspace body (match other
+             * halfspace tests where normal points from plane to shape). */
+            cand_out->body_a = bb;
+            cand_out->body_b = ba;
             cand_out->contacts[0] = cp;
             cand_out->contact_count = 1;
             return 1;
