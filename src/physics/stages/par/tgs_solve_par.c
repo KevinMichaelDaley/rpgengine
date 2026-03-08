@@ -1560,7 +1560,10 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
             /* Arena exhausted — solve remaining islands inline. */
             for (uint32_t i = 0; i < island_count; ++i) {
                 const phys_island_t *island = &args->islands->islands[i];
-                if (island->constraint_count < threshold) {
+                bool isl_c = island_is_coupled_(island, shared.bodies,
+                                                 shared.body_count,
+                                                 shared.bodies_mut);
+                if (isl_c || island->constraint_count < threshold) {
                     solve_island(&shared, island);
                 }
             }
@@ -1569,7 +1572,11 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
 
         uint32_t si = 0;
         for (uint32_t i = 0; i < island_count; ++i) {
-            if (args->islands->islands[i].constraint_count < threshold) {
+            const phys_island_t *isl = &args->islands->islands[i];
+            bool isl_coupled = island_is_coupled_(isl, shared.bodies,
+                                                   shared.body_count,
+                                                   shared.bodies_mut);
+            if (isl_coupled || isl->constraint_count < threshold) {
                 small_indices[si++] = i;
             }
         }
