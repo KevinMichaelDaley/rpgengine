@@ -745,9 +745,7 @@ static void solve_joint_coupled(phys_constraint_t *c,
     float alpha_hard    = c->compliance;
     float alpha_angular = c->angular_compliance;
     float alpha_drive   = c->drive_compliance;
-    float gamma = c->joint_damping;
-
-    float gamma_over_h = gamma * inv_dt;
+    float damping_ratio = c->joint_damping;
 
     for (uint8_t r = 0; r < c->row_count; r++) {
         phys_jacobian_row_t *row = &c->rows[r];
@@ -827,6 +825,11 @@ static void solve_joint_coupled(phys_constraint_t *c,
                 k_geo += fabsf(c->rows[s].lambda) * (-contrib);
             }
         }
+
+        /* Damping: γ/h = β·α/h² where β is the dimensionless damping
+         * ratio from the joint.  This makes damping timestep-independent,
+         * scaling with the compliance regularization. */
+        float gamma_over_h = damping_ratio * alpha_over_h2;
 
         float denom = jmjt + dt * dt * k_geo + alpha_over_h2 + gamma_over_h;
         float inv_denom = (denom > 1e-12f) ? (1.0f / denom) : 0.0f;
@@ -1457,19 +1460,8 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                     }
                 }
 
-                /* TGS pass for contact constraints in this island. */
-                for (uint32_t ci = 0; ci < island->constraint_count; ci++){
-                    uint32_t c_idx = island->constraint_indices[ci];
-                    if (args->constraints[c_idx].is_joint) continue;
-                    solve_one_constraint(&args->constraints[c_idx],
-                                         args->velocities, pseudo,
-                                         args->bodies,
-                                         args->inv_inertia_world,
-                                         slop, inv_dt,
-                                         args->tick_dt,
-                                         args->tier_substep_counts,
-                                         NULL);
-                }
+                /* Contacts are now included in the CG system — no
+                 * separate TGS pass needed. */
 
                 /* Gyroscopic torque correction, once per body. */
                 for (uint32_t b = 0; b < island->body_count; ++b) {

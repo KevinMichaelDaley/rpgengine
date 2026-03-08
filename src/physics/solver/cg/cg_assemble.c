@@ -111,8 +111,7 @@ void phys_cg_assemble(cg_system_t *sys,
         uint32_t c_idx = island->constraint_indices[ci];
         const phys_constraint_t *c = &constraints[c_idx];
 
-        /* Only joint constraints go into CG. */
-        if (!c->is_joint) continue;
+        /* Include both joints and contacts in the CG system. */
         if (c->body_a >= body_count || c->body_b >= body_count) continue;
 
         for (uint8_t r = 0; r < c->row_count; r++) {
@@ -226,8 +225,9 @@ void phys_cg_assemble(cg_system_t *sys,
                 }
                 coupling += alpha * inv_dt * inv_dt;
 
-                /* Damping: γ/h */
-                coupling += ci_c->joint_damping * inv_dt;
+                /* Damping: γ/h = β·α/h² (timestep-independent).
+                 * β is the dimensionless damping ratio from the joint. */
+                coupling += ci_c->joint_damping * alpha * inv_dt * inv_dt;
 
                 /* Geometric stiffness for angular rows:
                  * h²·Σ_{j≠i} |λ_j|·(1 - (n_i·n_j)²) */

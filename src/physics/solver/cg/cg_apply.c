@@ -57,10 +57,8 @@ void phys_cg_apply(const cg_system_t *sys,
         return;
     }
 
-    /* The CG solver solved for incremental Δλ (lambda was zeroed
-     * before solve by cg_assemble).  Accumulate Δλ into constraint
-     * row lambdas for XPBD compliance feedback on subsequent
-     * iterations/substeps. */
+    /* Accumulate Δλ into constraint row lambdas for XPBD compliance
+     * feedback on subsequent iterations/substeps. */
     for (uint32_t i = 0; i < sys->n; i++) {
         uint32_t c_idx = sys->row_constraint[i];
         uint8_t r_idx = sys->row_sub[i];
