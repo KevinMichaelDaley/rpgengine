@@ -20,6 +20,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
@@ -29,6 +30,7 @@
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/solver/cg_solve.h"
 #include "ferrum/physics/step_plan.h"
 #include "ferrum/physics/tier_list.h"
 #include "ferrum/math/vec3.h"
@@ -1386,9 +1388,12 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
         bool coupled = island_is_coupled_(island, args->bodies,
                                            args->body_count, args->bodies_mut);
 
-        /* For large islands with coloring enabled, use graph-colored
-         * constraint ordering.  Falls back to sequential on failure. */
-        if (args->frame_arena &&
+        /* For large non-coupled islands with coloring enabled, use
+         * graph-colored constraint ordering.  Coupled (TIER_ANIM) islands
+         * skip coloring — they use the sparse CG solver which handles
+         * the entire island simultaneously. */
+        if (!coupled &&
+            args->frame_arena &&
             args->island_color_threshold > 0 &&
             island->constraint_count >= args->island_color_threshold) {
             if (solve_island_colored(island, args, iters, slop, inv_dt)) {
@@ -1396,15 +1401,21 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
         }
 
-        /* Sequential solve (default path): all constraints in a single
-         * pass per iteration so they converge together. */
-        for (uint32_t iter = 0; iter < iters; iter++) {
-            /* Coupled islands: propagate position/orientation corrections
-             * through the skeleton hierarchy (FK pass), then rebuild
-             * world-space anchors, Jacobians, biases, and effective
-             * masses.  The FK pass ensures that when a parent bone
-             * moves, all children follow before Jacobian rebuild. */
-            if (coupled) {
+        /* Sequential solve: coupled islands use sparse CG for joints
+         * (simultaneous solve of all joint constraints), then TGS for
+         * contacts.  Non-coupled islands use pure GS as before. */
+        if (coupled && args->frame_arena) {
+            /* Allocate CG workspace from frame arena. */
+            cg_system_t cg_sys;
+            uint32_t max_rows = island->constraint_count *
+                                PHYS_MAX_CONSTRAINT_ROWS;
+            if (max_rows > CG_MAX_ROWS) max_rows = CG_MAX_ROWS;
+
+            bool cg_ok = phys_cg_alloc(&cg_sys, args->frame_arena,
+                                        max_rows);
+
+            for (uint32_t iter = 0; iter < iters; iter++) {
+                /* FK propagation + Jacobian rebuild. */
                 propagate_coupled_anchors_(
                     island, args->constraints,
                     args->constraint_joint_indices,
@@ -1414,24 +1425,53 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                                            args->inv_inertia_world_mut,
                                            args->body_count);
                 phys_rebuild_island_all_constraints(island, &rebuild_args);
-            }
 
-            for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
-                uint32_t c_idx = island->constraint_indices[ci];
-                solve_one_constraint(&args->constraints[c_idx],
-                                     args->velocities, pseudo,
-                                     args->bodies, args->inv_inertia_world,
-                                     slop, inv_dt,
-                                     args->tick_dt,
-                                     args->tier_substep_counts,
-                                     args->bodies_mut);
-            }
+                if (cg_ok) {
+                    /* Assemble sparse system A·λ = b for joint rows. */
+                    const phys_mat3_t *inv_I_use =
+                        args->inv_inertia_world_mut
+                            ? args->inv_inertia_world_mut
+                            : args->inv_inertia_world;
 
-            /* Implicit gyroscopic torque correction, once per body per
-             * iteration.  Solves (I + h·[ω×]·I)·ω_new = I·ω_old to
-             * prevent precession-driven energy injection in articulated
-             * chains with non-spherical inertia tensors. */
-            if (coupled) {
+                    phys_cg_assemble(&cg_sys, island,
+                                     args->constraints,
+                                     args->bodies_mut,
+                                     inv_I_use,
+                                     args->velocities,
+                                     args->body_count,
+                                     args->dt);
+
+                    if (cg_sys.n > 0 && !cg_sys.overflow) {
+                        /* Lambda was zeroed by cg_assemble; CG solves
+                         * for incremental Δλ directly. */
+                        phys_cg_solve(&cg_sys, 40, 1e-6f);
+
+                        /* Apply Δλ to velocities and positions. */
+                        phys_cg_apply(&cg_sys, island,
+                                      args->constraints,
+                                      args->bodies_mut,
+                                      inv_I_use,
+                                      args->velocities,
+                                      args->body_count,
+                                      args->dt);
+                    }
+                }
+
+                /* TGS pass for contact constraints in this island. */
+                for (uint32_t ci = 0; ci < island->constraint_count; ci++){
+                    uint32_t c_idx = island->constraint_indices[ci];
+                    if (args->constraints[c_idx].is_joint) continue;
+                    solve_one_constraint(&args->constraints[c_idx],
+                                         args->velocities, pseudo,
+                                         args->bodies,
+                                         args->inv_inertia_world,
+                                         slop, inv_dt,
+                                         args->tick_dt,
+                                         args->tier_substep_counts,
+                                         NULL);
+                }
+
+                /* Gyroscopic torque correction, once per body. */
                 for (uint32_t b = 0; b < island->body_count; ++b) {
                     uint32_t idx = island->body_indices[b];
                     if (idx >= args->body_count) continue;
@@ -1441,6 +1481,21 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                         args->bodies_mut[idx].inv_inertia_diag,
                         args->bodies_mut[idx].orientation,
                         args->dt);
+                }
+            }
+        } else {
+            /* Non-coupled: standard GS iteration. */
+            for (uint32_t iter = 0; iter < iters; iter++) {
+                for (uint32_t ci = 0; ci < island->constraint_count; ci++){
+                    uint32_t c_idx = island->constraint_indices[ci];
+                    solve_one_constraint(&args->constraints[c_idx],
+                                         args->velocities, pseudo,
+                                         args->bodies,
+                                         args->inv_inertia_world,
+                                         slop, inv_dt,
+                                         args->tick_dt,
+                                         args->tier_substep_counts,
+                                         NULL);
                 }
             }
         }

@@ -29,6 +29,7 @@
 #include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
+#include "ferrum/physics/solver/cg_solve.h"
 #include "ferrum/physics/step_plan.h"
 #include "ferrum/physics/tier_list.h"
 #include "ferrum/job/counter.h"
@@ -1000,11 +1001,21 @@ static void solve_island(const tgs_solve_shared_t *shared,
         };
     }
 
-    for (uint32_t iter = 0; iter < iters; iter++) {
-        /* Coupled islands: FK propagation then Jacobian rebuild.
-         * Propagate parent corrections to children, then rebuild
-         * world-space anchors and constraint data. */
-        if (coupled) {
+    if (coupled && shared->frame_arena) {
+        /* Coupled (TIER_ANIM) islands: sparse CG for joints, TGS for
+         * contacts.  CG solves all joint constraints simultaneously,
+         * eliminating sequential coupling artifacts from Gauss-Seidel. */
+        cg_system_t cg_sys;
+        uint32_t max_rows = island->constraint_count *
+                            PHYS_MAX_CONSTRAINT_ROWS;
+        if (max_rows > CG_MAX_ROWS) max_rows = CG_MAX_ROWS;
+
+        bool cg_ok = phys_cg_alloc(&cg_sys, shared->frame_arena, max_rows);
+
+        float solve_dt = 1.0f / shared->inv_dt;
+
+        for (uint32_t iter = 0; iter < iters; iter++) {
+            /* FK propagation + Jacobian rebuild. */
             propagate_coupled_anchors_par_(
                 island, shared->constraints,
                 shared->constraint_joint_indices,
@@ -1014,28 +1025,56 @@ static void solve_island(const tgs_solve_shared_t *shared,
                                            shared->inv_inertia_world_mut,
                                            shared->body_count);
             phys_rebuild_island_all_constraints(island, &rebuild_args);
-        }
 
-        for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
-            uint32_t c_idx = island->constraint_indices[ci];
-            solve_one_full(&(tgs_color_shared_t){
-                .constraints       = shared->constraints,
-                .bodies            = shared->bodies,
-                .inv_inertia_world = shared->inv_inertia_world,
-                .velocities        = shared->velocities,
-                .pseudo_velocities = shared->pseudo_velocities,
-                .slop              = shared->slop,
-                .inv_dt            = shared->inv_dt,
-                .tick_dt           = shared->tick_dt,
-                .tier_substep_counts = shared->tier_substep_counts,
-                .bodies_mut        = shared->bodies_mut,
-            }, c_idx);
-        }
+            if (cg_ok) {
+                /* Assemble sparse system A·λ = b for joint rows. */
+                const phys_mat3_t *inv_I_use =
+                    shared->inv_inertia_world_mut
+                        ? shared->inv_inertia_world_mut
+                        : shared->inv_inertia_world;
 
-        /* Implicit gyroscopic torque correction, once per body per
-         * iteration.  Prevents precession-driven energy injection. */
-        if (coupled) {
-            float solve_dt = 1.0f / shared->inv_dt;
+                phys_cg_assemble(&cg_sys, island,
+                                 shared->constraints,
+                                 shared->bodies_mut,
+                                 inv_I_use,
+                                 shared->velocities,
+                                 shared->body_count,
+                                 solve_dt);
+
+                if (cg_sys.n > 0 && !cg_sys.overflow) {
+                    /* Lambda was zeroed by cg_assemble; CG solves
+                     * for incremental Δλ directly. */
+                    phys_cg_solve(&cg_sys, 40, 1e-6f);
+
+                    phys_cg_apply(&cg_sys, island,
+                                  shared->constraints,
+                                  shared->bodies_mut,
+                                  inv_I_use,
+                                  shared->velocities,
+                                  shared->body_count,
+                                  solve_dt);
+                }
+            }
+
+            /* TGS pass for contact constraints only. */
+            for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+                uint32_t c_idx = island->constraint_indices[ci];
+                if (shared->constraints[c_idx].is_joint) continue;
+                solve_one_full(&(tgs_color_shared_t){
+                    .constraints       = shared->constraints,
+                    .bodies            = shared->bodies,
+                    .inv_inertia_world = shared->inv_inertia_world,
+                    .velocities        = shared->velocities,
+                    .pseudo_velocities = shared->pseudo_velocities,
+                    .slop              = shared->slop,
+                    .inv_dt            = shared->inv_dt,
+                    .tick_dt           = shared->tick_dt,
+                    .tier_substep_counts = shared->tier_substep_counts,
+                    .bodies_mut        = shared->bodies_mut,
+                }, c_idx);
+            }
+
+            /* Implicit gyroscopic torque correction, once per body. */
             for (uint32_t b = 0; b < island->body_count; ++b) {
                 uint32_t idx = island->body_indices[b];
                 if (idx >= shared->body_count) continue;
@@ -1045,6 +1084,51 @@ static void solve_island(const tgs_solve_shared_t *shared,
                     shared->bodies_mut[idx].inv_inertia_diag,
                     shared->bodies_mut[idx].orientation,
                     solve_dt);
+            }
+        }
+    } else {
+        /* Non-coupled islands: standard per-constraint GS iteration. */
+        for (uint32_t iter = 0; iter < iters; iter++) {
+            if (coupled) {
+                propagate_coupled_anchors_par_(
+                    island, shared->constraints,
+                    shared->constraint_joint_indices,
+                    shared->joints, shared->joint_count,
+                    shared->bodies_mut, shared->body_count);
+                recompute_island_inertia_par_(island, shared->bodies_mut,
+                                               shared->inv_inertia_world_mut,
+                                               shared->body_count);
+                phys_rebuild_island_all_constraints(island, &rebuild_args);
+            }
+
+            for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+                uint32_t c_idx = island->constraint_indices[ci];
+                solve_one_full(&(tgs_color_shared_t){
+                    .constraints       = shared->constraints,
+                    .bodies            = shared->bodies,
+                    .inv_inertia_world = shared->inv_inertia_world,
+                    .velocities        = shared->velocities,
+                    .pseudo_velocities = shared->pseudo_velocities,
+                    .slop              = shared->slop,
+                    .inv_dt            = shared->inv_dt,
+                    .tick_dt           = shared->tick_dt,
+                    .tier_substep_counts = shared->tier_substep_counts,
+                    .bodies_mut        = shared->bodies_mut,
+                }, c_idx);
+            }
+
+            if (coupled) {
+                float solve_dt = 1.0f / shared->inv_dt;
+                for (uint32_t b = 0; b < island->body_count; ++b) {
+                    uint32_t idx = island->body_indices[b];
+                    if (idx >= shared->body_count) continue;
+                    if (shared->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                    apply_gyroscopic_correction(
+                        &shared->velocities[idx].angular,
+                        shared->bodies_mut[idx].inv_inertia_diag,
+                        shared->bodies_mut[idx].orientation,
+                        solve_dt);
+                }
             }
         }
     }
@@ -1451,7 +1535,12 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
     uint32_t small_count = 0;
     for (uint32_t i = 0; i < island_count; ++i) {
         const phys_island_t *island = &args->islands->islands[i];
-        if (island->constraint_count >= threshold) {
+        /* Skip graph coloring for coupled (TIER_ANIM) islands — they
+         * use the CG solver path in solve_island() instead. */
+        bool is_coupled = island_is_coupled_(island, shared.bodies,
+                                              shared.body_count,
+                                              shared.bodies_mut);
+        if (!is_coupled && island->constraint_count >= threshold) {
             /* Large island: colored parallel solve. */
             if (!solve_island_colored_par(&shared, island, ctx, arena)) {
                 /* Coloring failed — fall back to sequential for this island. */
