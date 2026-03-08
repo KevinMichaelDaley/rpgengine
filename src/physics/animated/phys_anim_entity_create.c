@@ -201,6 +201,10 @@ static void set_bone_collider_(phys_world_t *world, uint32_t body_idx,
             zero_offset, identity);
         break;
     }
+    case BONE_COLLIDER_POINT: {
+        phys_world_set_point_collider(world, body_idx, zero_offset);
+        break;
+    }
     default:
         break;
     }

@@ -34,6 +34,9 @@ typedef enum phys_shape_type {
     PHYS_SHAPE_CONVEX  = 4,   /**< Future — convex hull. */
     PHYS_SHAPE_MESH    = 5,   /**< Future — triangle mesh (Phase 9). */
     PHYS_SHAPE_HALFSPACE = 6, /**< Infinite plane (normal + distance). */
+    PHYS_SHAPE_POINT   = 7,   /**< Zero-volume point collider.  Generates a
+                               *   single contact when the body center
+                               *   penetrates another shape or halfspace. */
     PHYS_SHAPE_COUNT
 } phys_shape_type_t;
 
@@ -196,6 +199,18 @@ void phys_collider_init_convex(phys_collider_t *c,
                                uint32_t convex_idx,
                                phys_vec3_t offset,
                                phys_quat_t rotation);
+
+/**
+ * @brief Initialize a point collider reference.
+ *
+ * Point colliders have no shape data — the contact is generated at
+ * the body's world-space center.
+ *
+ * @param c        Collider to initialize.
+ * @param offset   Local offset from body origin.
+ */
+void phys_collider_init_point(phys_collider_t *c,
+                               phys_vec3_t offset);
 
 /* ── World-space transform helpers ──────────────────────────────── */
 

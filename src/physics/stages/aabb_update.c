@@ -131,6 +131,12 @@ void phys_stage_aabb_update(const phys_aabb_update_args_t *args) {
                          HS_EXTENT + center.z};
                     break;
                 }
+                case PHYS_SHAPE_POINT: {
+                    /* Degenerate AABB at point center.  Broadphase will
+                     * pair it with any overlapping AABB (e.g. halfspace). */
+                    *aabb = (phys_aabb_t){center, center};
+                    break;
+                }
                 default:
                     /* Unknown shape — zero-volume AABB at center. */
                     *aabb = (phys_aabb_t){center, center};

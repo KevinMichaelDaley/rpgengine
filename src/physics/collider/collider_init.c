@@ -82,3 +82,15 @@ void phys_collider_init_convex(phys_collider_t *c,
     c->local_offset = offset;
     c->local_rotation = rotation;
 }
+
+void phys_collider_init_point(phys_collider_t *c,
+                               phys_vec3_t offset)
+{
+    if (!c) { return; }
+
+    *c = (phys_collider_t){0};
+    c->type = PHYS_SHAPE_POINT;
+    c->shape_index = 0;  /* No shape pool for points. */
+    c->local_offset = offset;
+    c->local_rotation = (phys_quat_t){0, 0, 0, 1};
+}

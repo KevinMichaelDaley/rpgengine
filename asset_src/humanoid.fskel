@@ -256,8 +256,8 @@
      1.1344640254974365
     ],
     "limit_axes": 7,
-    "stiffness": 2500.0,
-    "damping": 10.0,
+    "stiffness": 9000.0,
+    "damping": 5.0,
     "yield_strength": 9999.0,
     "break_strength": 50.0,
     "anchor_a": [
@@ -354,7 +354,7 @@
     ],
     "limit_axes": 7,
     "stiffness": 3000.0,
-    "damping": 0.4000000059604645,
+    "damping": 5.0,
     "yield_strength": 99999.0,
     "break_strength": 50.0,
     "anchor_a": [
@@ -838,8 +838,8 @@
      0.01745329238474369
     ],
     "limit_axes": 7,
-    "stiffness": 600.0,
-    "damping": 0.20000000298023224,
+    "stiffness": 900.0,
+    "damping": 3.0,
     "yield_strength": 99999.0,
     "break_strength": 17.0,
     "anchor_a": [
@@ -1226,8 +1226,8 @@
      0.01745329238474369
     ],
     "limit_axes": 7,
-    "stiffness": 600.0,
-    "damping": 0.20000000298023224,
+    "stiffness": 900.0,
+    "damping": 3.0,
     "yield_strength": 99999.0,
     "break_strength": 17.0,
     "anchor_a": [
@@ -1614,8 +1614,8 @@
      0.5235987901687622
     ],
     "limit_axes": 7,
-    "stiffness": 600.0,
-    "damping": 0.6000000238418579,
+    "stiffness": 1200.0,
+    "damping": 3.0,
     "yield_strength": 9999.0,
     "break_strength": 18.0,
     "anchor_a": [
@@ -2002,8 +2002,8 @@
      0.5235987901687622
     ],
     "limit_axes": 7,
-    "stiffness": 600.0,
-    "damping": 0.699999988079071,
+    "stiffness": 1200.0,
+    "damping": 3.0,
     "yield_strength": 99999.0,
     "break_strength": 18.0,
     "anchor_a": [

@@ -588,7 +588,7 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
     ibm_count = len(ibms)
 
     # ── Collider shape name mapping ─────────────────────────────────
-    SHAPE_NAMES = {0: "none", 1: "capsule", 2: "box", 3: "sphere", 4: "convex_hull"}
+    SHAPE_NAMES = {0: "none", 1: "capsule", 2: "box", 3: "sphere", 4: "convex_hull", 5: "point"}
 
     # ── Build JSON data structure ───────────────────────────────────
 
@@ -890,6 +890,7 @@ _BONE_PROPS = {
             ('2', "Box", "Box collider (half-extents)"),
             ('3', "Sphere", "Sphere collider (radius)"),
             ('4', "Convex Hull", "Convex hull from vertex group"),
+            ('5', "Point", "Zero-volume point collider (ground contact only)"),
         ],
         default='0',
     ),

@@ -552,7 +552,8 @@ int main(void) {
         }
 
         /* Diagnostic: print per-body Y and joint anchor errors at key frames. */
-        if (f <= 5 || f == 10 || f == 20 || f == 45 || f == 90 || f == 150) {
+        if (f <= 5 || f == 10 || f == 20 || f == 45 || f == 90 || f == 120
+            || f == 150 || f == 179) {
             fprintf(stderr, "  --- f%03d per-body ---\n", f);
             float min_y = 999.0f;
             for (uint32_t bi = 0; bi < skel.joint_count; bi++) {
@@ -562,11 +563,16 @@ int main(void) {
                 if (!b) continue;
                 const char *tag = (b->flags & PHYS_BODY_FLAG_NO_BROADPHASE)
                                 ? "G" : "C";
-                fprintf(stderr, "    b%02u[%s] Y=%.3f vy=%.2f\n",
-                        bi, tag, b->position.y, b->linear_vel.y);
+                const char *bname = (bi < skel.joint_count && skel.joint_names)
+                                  ? skel.joint_names[bi] : "?";
+                fprintf(stderr, "    b%02u[%s] %-15s pos=(%.3f,%.3f,%.3f) vel=(%.2f,%.2f,%.2f)\n",
+                        bi, tag, bname,
+                        b->position.x, b->position.y, b->position.z,
+                        b->linear_vel.x, b->linear_vel.y, b->linear_vel.z);
                 if (b->position.y < min_y) min_y = b->position.y;
             }
-            fprintf(stderr, "    min_Y=%.3f\n", min_y);
+            fprintf(stderr, "    min_Y=%.3f  joints=%u\n",
+                    min_y, world.joint_count);
             /* Measure joint anchor errors (world-space distance).
              * Skip distance-limit joints (type PHYS_JOINT_DISTANCE)
              * since they intentionally keep anchors separated. */

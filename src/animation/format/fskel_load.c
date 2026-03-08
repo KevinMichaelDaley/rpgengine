@@ -113,6 +113,7 @@ static uint32_t collider_shape_from_string_(const json_value_t *v) {
     if (jstreq_(v, "box"))         return BONE_COLLIDER_BOX;
     if (jstreq_(v, "sphere"))      return BONE_COLLIDER_SPHERE;
     if (jstreq_(v, "convex_hull")) return BONE_COLLIDER_CONVEX_HULL;
+    if (jstreq_(v, "point"))       return BONE_COLLIDER_POINT;
     return BONE_COLLIDER_NONE;
 }
 

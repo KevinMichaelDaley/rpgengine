@@ -5,8 +5,8 @@
  * @file halfspace.h
  * @brief Halfspace (infinite plane) collision tests.
  *
- * Provides sphere, capsule, box, and convex hull vs halfspace narrowphase
- * tests.
+ * Provides sphere, capsule, box, convex hull, and point vs halfspace
+ * narrowphase tests.
  * A halfspace is defined by a unit normal and signed distance from origin.
  * The plane equation is dot(normal, point) = distance.  Points with
  * dot(normal, point) < distance are behind the plane (penetrating).
@@ -117,6 +117,25 @@ int phys_convex_hull_vs_halfspace(
     phys_vec3_t plane_normal, float plane_distance,
     float speculative_margin,
     struct phys_contact_point *contacts_out, int max_contacts);
+
+/**
+ * @brief Test point vs halfspace intersection.
+ *
+ * A point collider has zero volume.  Contact is generated when the
+ * point is behind the plane or within the speculative margin.
+ *
+ * @param point           World-space position of the point.
+ * @param plane_normal    Unit normal of the halfspace (outward).
+ * @param plane_distance  Signed distance of the plane from origin.
+ * @param speculative_margin Max separation for speculative contacts.
+ * @param contact_out     Output contact point (written on true return).
+ * @return true if point penetrates or is within speculative margin.
+ */
+bool phys_point_vs_halfspace(
+    phys_vec3_t point,
+    phys_vec3_t plane_normal, float plane_distance,
+    float speculative_margin,
+    struct phys_contact_point *contact_out);
 
 #ifdef __cplusplus
 }

@@ -460,6 +460,23 @@ void phys_world_set_compound_collider(phys_world_t *world,
                                        phys_vec3_t offset);
 
 /**
+ * @brief Assign a point collider to a body.
+ *
+ * Point colliders have zero volume.  They generate a single contact
+ * when the body center penetrates another shape (typically a halfspace
+ * ground plane).  Useful for skeleton bones that need ground contact
+ * but have no authored collision geometry.
+ *
+ * @param world       World (NULL returns immediately).
+ * @param body_index  Index of the body.
+ * @param offset      Local offset from body origin.
+ *
+ * Side effects: sets collider type to PHYS_SHAPE_POINT.
+ */
+void phys_world_set_point_collider(phys_world_t *world, uint32_t body_index,
+                                    phys_vec3_t offset);
+
+/**
  * @brief Get a read-only pointer to a body's collider.
  *
  * @param world       World (NULL returns NULL).
