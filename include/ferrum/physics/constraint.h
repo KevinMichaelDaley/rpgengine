@@ -52,6 +52,11 @@ typedef struct phys_jacobian_row {
  *  to prevent destabilizing coupled positional rows. */
 #define PHYS_ROW_FLAG_ANGULAR 0x01
 
+/** Row is a soft drive constraint (angular or linear).  The solver
+ *  uses the constraint's drive_compliance instead of compliance for
+ *  these rows, giving them independent softness from hard limits. */
+#define PHYS_ROW_FLAG_DRIVE   0x02
+
 /** Maximum constraint rows per constraint.
  *  Contact constraints use 3 (1 normal + 2 friction).
  *  Joint constraints may use up to 9 (3 positional + 3 angular + 3 limit). */
@@ -79,6 +84,8 @@ typedef struct phys_constraint {
     float joint_damping;    /**< Viscous damping for joint constraints.
                              *   Adds velocity-opposing bias: -c_damp * v_rel.
                              *   0 = no joint damping. */
+    float drive_compliance; /**< XPBD compliance for drive rows (PHYS_ROW_FLAG_DRIVE).
+                             *   Drive rows use this instead of compliance.  0 = rigid. */
     phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS]; /**< Constraint rows. */
 } phys_constraint_t;
 

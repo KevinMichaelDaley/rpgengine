@@ -2321,6 +2321,21 @@ void phys_world_tick_parallel(phys_world_t *world,
 
             /* ── Stage 11a: TGS Solve (T0/T1 islands) ─────────────── */
 
+            /* Ensure skip_body is allocated so the coupled (TIER_ANIM)
+             * solver can mark bodies it has already position-projected.
+             * Without this, the integrator would overwrite projected
+             * positions with velocity-integrated ones. */
+            if (!body_sub_substepped) {
+                body_sub_substepped = phys_frame_arena_alloc(
+                    &world->frame_arena,
+                    (body_cap > 0 ? body_cap : 1) * sizeof(uint8_t),
+                    _Alignof(uint8_t));
+                if (body_sub_substepped) {
+                    memset(body_sub_substepped, 0,
+                           body_cap * sizeof(uint8_t));
+                }
+            }
+
             /* Debug: dump state BEFORE solver. */
             if (world->debug_substep_dump) {
                 debug_dump_substep(world, world->body_pool.bodies_next,

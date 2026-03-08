@@ -553,6 +553,12 @@ bool fskel_load(const char *path,
                 bd->anchor_b[2] = jfloat_(&anc_b->array.items[2], 0.0f);
                 bd->has_anchors = 1;
             }
+
+            /* Drive flags and compliance for angular/linear drive. */
+            bd->drive_flags = (uint8_t)jfloat_(
+                json_object_get(jd, "drive_flags"), 0.0f);
+            bd->drive_compliance = jfloat_(
+                json_object_get(jd, "drive_compliance"), 0.0f);
         }
     }
 

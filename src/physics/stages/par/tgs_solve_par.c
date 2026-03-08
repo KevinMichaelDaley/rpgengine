@@ -435,10 +435,10 @@ static void solve_joint_coupled_par(phys_constraint_t *c,
         inv_i_b = &fallback_b;
     }
 
-    float alpha = c->compliance;
+    float alpha_hard  = c->compliance;
+    float alpha_drive = c->drive_compliance;
     float gamma = c->joint_damping;
-    float alpha_over_h2 = alpha * inv_dt * inv_dt;
-    float gamma_over_h  = gamma * inv_dt;
+    float gamma_over_h = gamma * inv_dt;
 
     for (uint8_t r = 0; r < c->row_count; r++) {
         phys_jacobian_row_t *row = &c->rows[r];
@@ -452,6 +452,12 @@ static void solve_joint_coupled_par(phys_constraint_t *c,
         /* Position ERP: fraction of C/h to correct per substep.
          * Prevents oscillation when multiple constraints compete. */
         const float coupled_erp = 0.6f;
+
+        /* Select compliance: drive rows use drive_compliance. */
+        float alpha = (row->flags & PHYS_ROW_FLAG_DRIVE)
+                    ? alpha_drive : alpha_hard;
+        float alpha_over_h2 = alpha * inv_dt * inv_dt;
+
         float numerator = -(jv + coupled_erp * C_i * inv_dt
                             + alpha * inv_dt * row->lambda);
 
@@ -629,9 +635,11 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
                 if (ts == 0) { ts = 1; }
                 eff_inv_dt = (float)ts / shared->tick_dt;
             }
-            const float compliance_factor =
-                c->compliance * eff_inv_dt * eff_inv_dt;
+            const float comp_hard  = c->compliance * eff_inv_dt * eff_inv_dt;
+            const float comp_drive = c->drive_compliance * eff_inv_dt * eff_inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
+                float compliance_factor = (c->rows[r].flags & PHYS_ROW_FLAG_DRIVE)
+                                        ? comp_drive : comp_hard;
                 float m_save = c->rows[r].effective_mass;
                 if (compliance_factor > 0.0f) {
                     float m = m_save / (1.0f + compliance_factor * m_save);
@@ -732,7 +740,7 @@ static void coupled_position_projection_par_(
 {
     if (!constraint_joint_indices || !joints || !bodies_mut) return;
 
-    for (int pass = 0; pass < 3; ++pass) {
+    for (int pass = 0; pass < 5; ++pass) {
         uint32_t last_ji = UINT32_MAX;
         for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
             uint32_t c_idx = island->constraint_indices[ci];
@@ -757,6 +765,47 @@ static void coupled_position_projection_par_(
                     quat_mul(bodies_mut[ba].orientation,
                               j->rest_relative_orient),
                     1e-12f);
+            }
+
+            /* Cone-twist: clamp child orientation to within limits. */
+            if (j->type == PHYS_JOINT_CONE_TWIST && j->limit_axes) {
+                phys_quat_t q_cur = quat_normalize_safe(
+                    quat_mul(bodies_mut[bb].orientation,
+                             quat_conjugate(bodies_mut[ba].orientation)),
+                    1e-12f);
+                phys_quat_t q_err = quat_normalize_safe(
+                    quat_mul(quat_conjugate(j->rest_relative_orient), q_cur),
+                    1e-12f);
+                if (q_err.w < 0.0f) {
+                    q_err.x = -q_err.x; q_err.y = -q_err.y;
+                    q_err.z = -q_err.z; q_err.w = -q_err.w;
+                }
+                float ex = atan2f(2.0f*(q_err.w*q_err.x + q_err.y*q_err.z),
+                                  1.0f - 2.0f*(q_err.x*q_err.x + q_err.y*q_err.y));
+                float sy = 2.0f*(q_err.w*q_err.y - q_err.z*q_err.x);
+                if (sy >  1.0f) sy =  1.0f;
+                if (sy < -1.0f) sy = -1.0f;
+                float ey = asinf(sy);
+                float ez = atan2f(2.0f*(q_err.w*q_err.z + q_err.x*q_err.y),
+                                  1.0f - 2.0f*(q_err.y*q_err.y + q_err.z*q_err.z));
+                float angles[3] = {ex, ey, ez};
+                bool clamped = false;
+                for (int ax = 0; ax < 3; ++ax) {
+                    if (!(j->limit_axes & (1u << ax))) continue;
+                    if (angles[ax] < j->limit_min[ax]) {
+                        angles[ax] = j->limit_min[ax]; clamped = true;
+                    } else if (angles[ax] > j->limit_max[ax]) {
+                        angles[ax] = j->limit_max[ax]; clamped = true;
+                    }
+                }
+                if (clamped) {
+                    phys_quat_t q_clamped = quat_from_euler(
+                        angles[0], angles[1], angles[2]);
+                    bodies_mut[bb].orientation = quat_normalize_safe(
+                        quat_mul(bodies_mut[ba].orientation,
+                            quat_mul(j->rest_relative_orient, q_clamped)),
+                        1e-12f);
+                }
             }
 
             phys_vec3_t wa = vec3_add(bodies_mut[ba].position,

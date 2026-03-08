@@ -90,13 +90,13 @@ void phys_joint_build_limit_rotation(phys_joint_t *joint,
         float error = 0.0f;
         float lmin = 0.0f, lmax = 0.0f;
         if (angle < lo) {
-            error = angle - lo;          /* Negative: push toward lo. */
-            lmin = -JOINT_LAMBDA_BIG;
-            lmax = 0.0f;                 /* Only push, not pull. */
-        } else if (angle > hi) {
-            error = angle - hi;          /* Positive: push toward hi. */
+            error = angle - lo;          /* Negative: need positive λ. */
             lmin = 0.0f;
-            lmax = JOINT_LAMBDA_BIG;     /* Only push, not pull. */
+            lmax = JOINT_LAMBDA_BIG;
+        } else if (angle > hi) {
+            error = angle - hi;          /* Positive: need negative λ. */
+            lmin = -JOINT_LAMBDA_BIG;
+            lmax = 0.0f;
         } else {
             continue;  /* Within limits — no constraint needed. */
         }

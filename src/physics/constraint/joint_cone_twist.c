@@ -132,16 +132,22 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         {0.0f, 0.0f, 1.0f},
     };
 
-    /* Rows 0-2: positional lock along X, Y, Z. */
+    /* Rows 0-2: positional lock along X, Y, Z.
+     * When LINEAR_DRIVE is set, these rows are flagged as drive rows
+     * so the solver uses drive_compliance (soft spring) instead of
+     * the joint's hard compliance. */
+    uint8_t linear_drive = (joint->flags & PHYS_JOINT_FLAG_LINEAR_DRIVE)
+                           ? PHYS_ROW_FLAG_DRIVE : 0;
     for (int i = 0; i < 3; ++i) {
         float axis_error = vec3_dot(error, axes[i]);
         build_positional_row(&joint->rows[i], rA, rB, axes[i],
                              axis_error, body_a, body_b,
                              &inv_i_a, &inv_i_b, joint->damping);
         joint->rows[i].lambda = joint->cached_lambda[i];
+        joint->rows[i].flags |= linear_drive;
     }
 
-    /* ---- Angular limit rows ---- */
+    /* ---- Angular limit / drive rows ---- */
 
     /* Compute relative rotation error relative to rest pose.
      * q_current = q_b * conj(q_a) is the current relative orientation.
@@ -159,6 +165,18 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         q_error.z = -q_error.z; q_error.w = -q_error.w;
     }
 
+    /* The joint frame in world space: parent orientation × rest pose.
+     * Angular errors are measured in this frame, so the Jacobian axes
+     * must also be expressed in this frame to get correct torque
+     * directions.  Without this, limits are enforced along world axes
+     * and appear to "detach" from the parent when it rotates. */
+    phys_quat_t joint_frame = quat_normalize_safe(
+        quat_mul(body_a->orientation, joint->rest_relative_orient),
+        1e-12f);
+
+    uint8_t angular_drive = (joint->flags & PHYS_JOINT_FLAG_ANGULAR_DRIVE)
+                            ? 1 : 0;
+
     uint8_t rc = 3;  /* First 3 rows are positional. */
     for (int i = 0; i < 3; ++i) {
         if (!(joint->limit_axes & (1u << i))) continue;
@@ -169,34 +187,50 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
 
         float ang_error = 0.0f;
         float lmin = 0.0f, lmax = 0.0f;
+        uint8_t is_drive = 0;
+
         if (angle < lo) {
-            /* Already past lower limit — correct back to surface. */
+            /* Already past lower limit — need positive impulse to
+             * increase angle back toward lo. */
             ang_error = angle - lo;
-            lmin = -JOINT_LAMBDA_BIG;
-            lmax = 0.0f;
-        } else if (angle > hi) {
-            /* Already past upper limit — correct back to surface. */
-            ang_error = angle - hi;
             lmin = 0.0f;
             lmax = JOINT_LAMBDA_BIG;
+        } else if (angle > hi) {
+            /* Already past upper limit — need negative impulse to
+             * decrease angle back toward hi. */
+            ang_error = angle - hi;
+            lmin = -JOINT_LAMBDA_BIG;
+            lmax = 0.0f;
+        } else if (angular_drive) {
+            /* Within limits — soft bilateral damping row.  bias=0 means
+             * no positional target; the row only opposes relative angular
+             * velocity via the joint's damping coefficient.  This provides
+             * passive resistance to motion ("stiff joints") without
+             * pulling toward any particular pose. */
+            ang_error = 0.0f;
+            lmin = -JOINT_LAMBDA_BIG;
+            lmax =  JOINT_LAMBDA_BIG;
+            is_drive = 1;
         } else {
-            continue;  /* Within limits — no correction needed. */
+            continue;  /* Within limits, no drive — skip. */
         }
+
+        /* Transform the limit axis from joint-local to world space. */
+        phys_vec3_t world_axis = quat_rotate_vec3(joint_frame, axes[i]);
 
         phys_jacobian_row_t *row = &joint->rows[rc];
         memset(row, 0, sizeof(*row));
         row->J_va = (phys_vec3_t){0.0f, 0.0f, 0.0f};
         row->J_vb = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        row->J_wa = vec3_scale(axes[i], -1.0f);
-        row->J_wb = axes[i];
+        row->J_wa = vec3_scale(world_axis, -1.0f);
+        row->J_wb = world_axis;
         row->lambda_min = lmin;
         row->lambda_max = lmax;
-        /* Active limit rows appear/disappear as the violation set changes,
-         * so row order is not stable enough to warmstart by index. */
-        row->lambda = 0.0f;
+        row->lambda = is_drive ? 0.0f : 0.0f;
         row->bias = ang_error;
         row->damping = joint->damping;
-        row->flags = PHYS_ROW_FLAG_ANGULAR;
+        row->flags = PHYS_ROW_FLAG_ANGULAR
+                   | (is_drive ? PHYS_ROW_FLAG_DRIVE : 0);
 
         row->effective_mass = phys_compute_effective_mass(
             row, body_a->inv_mass, &inv_i_a,

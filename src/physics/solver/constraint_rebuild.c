@@ -43,7 +43,13 @@ static uint8_t stable_joint_lambda_rows(const phys_joint_t *joint)
     case PHYS_JOINT_LIMIT_POSITION:
         return 0;
     case PHYS_JOINT_CONE_TWIST:
-        return 3;
+        /* Preserve ALL row lambdas including angular limit rows.
+         * The active limit set rarely changes during convergence
+         * within a single solve pass, so restoring angular lambdas
+         * gives them the same warm-start advantage as positional rows.
+         * Without this, angular limits restart from 0 each iteration
+         * and positional rows dominate — causing limits to be ignored. */
+        return joint->row_count;
     default:
         return joint->row_count;
     }

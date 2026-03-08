@@ -785,6 +785,16 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "break_strength": pb.talarium_joint_break_strength,
         }
 
+        # Drive flags: bit 0 = angular drive, bit 1 = linear drive.
+        drive_flags = 0
+        if pb.talarium_joint_angular_drive:
+            drive_flags |= 1
+        if pb.talarium_joint_linear_drive:
+            drive_flags |= 2
+        if drive_flags:
+            joint_desc["drive_flags"] = drive_flags
+            joint_desc["drive_compliance"] = pb.talarium_joint_drive_compliance
+
         # Export explicit joint anchor positions in armature (engine) space.
         #
         # For connected bones (head == parent tail), both anchors are at
@@ -1106,6 +1116,24 @@ _BONE_PROPS = {
         description="Impulse threshold above which the joint is "
                     "removed from the simulation.  0 = unbreakable",
         default=0.0, min=0.0, soft_max=10000.0,
+    ),
+    "talarium_joint_angular_drive": BoolProperty(
+        name="Angular Drive",
+        description="Soft spring pulling joint toward rest pose when "
+                    "within angular limits.  Simulates passive muscle tone",
+        default=False,
+    ),
+    "talarium_joint_linear_drive": BoolProperty(
+        name="Linear Drive",
+        description="Soft positional spring.  Makes the positional "
+                    "constraint soft instead of rigid",
+        default=False,
+    ),
+    "talarium_joint_drive_compliance": FloatProperty(
+        name="Drive Compliance",
+        description="Softness of drive springs (higher = softer).  "
+                    "0.1 = medium, 1.0 = very soft, 10.0 = barely there",
+        default=1.0, min=0.0, soft_max=100.0,
     ),
 }
 
@@ -1644,6 +1672,13 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 box.prop(pb, "talarium_joint_damping")
                 box.prop(pb, "talarium_joint_yield_strength")
                 box.prop(pb, "talarium_joint_break_strength")
+
+                box.separator()
+                box.label(text="Drive (Return to Rest)")
+                box.prop(pb, "talarium_joint_angular_drive")
+                box.prop(pb, "talarium_joint_linear_drive")
+                if pb.talarium_joint_angular_drive or pb.talarium_joint_linear_drive:
+                    box.prop(pb, "talarium_joint_drive_compliance")
 
         # ── Validation ──
         box = layout.box()

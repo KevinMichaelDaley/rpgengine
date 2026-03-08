@@ -270,6 +270,8 @@
     "damping": 5.0,
     "yield_strength": 9999.0,
     "break_strength": 250.0,
+    "drive_flags": 1,
+    "drive_compliance": 0.800000011920929,
     "anchor_a": [
      -0.02079978585243225,
      0.9812717437744141,
@@ -367,6 +369,8 @@
     "damping": 5.0,
     "yield_strength": 99999.0,
     "break_strength": 120.0,
+    "drive_flags": 1,
+    "drive_compliance": 1.0,
     "anchor_a": [
      -0.02079978585243225,
      1.2511920928955078,
@@ -561,6 +565,8 @@
     "damping": 0.20000000298023224,
     "yield_strength": 999.0,
     "break_strength": 150.0,
+    "drive_flags": 3,
+    "drive_compliance": 1.0,
     "anchor_a": [
      -0.02079978585243225,
      1.2511920928955078,
@@ -658,6 +664,8 @@
     "damping": 0.30000001192092896,
     "yield_strength": 99999.0,
     "break_strength": 120.0,
+    "drive_flags": 1,
+    "drive_compliance": 2.0,
     "anchor_a": [
      -0.22560419142246246,
      1.2595093250274658,
@@ -755,6 +763,8 @@
     "damping": 0.5,
     "yield_strength": 99999.0,
     "break_strength": 120.0,
+    "drive_flags": 1,
+    "drive_compliance": 5.0,
     "anchor_a": [
      -0.39934277534484863,
      1.3394817113876343,
@@ -949,6 +959,8 @@
     "damping": 0.20000000298023224,
     "yield_strength": 999.0,
     "break_strength": 150.0,
+    "drive_flags": 3,
+    "drive_compliance": 1.0,
     "anchor_a": [
      -0.02079978585243225,
      1.2511920928955078,
@@ -1046,6 +1058,8 @@
     "damping": 0.30000001192092896,
     "yield_strength": 99999.0,
     "break_strength": 120.0,
+    "drive_flags": 1,
+    "drive_compliance": 2.0,
     "anchor_a": [
      0.1518002152442932,
      1.2749059200286865,
@@ -1143,6 +1157,8 @@
     "damping": 0.5,
     "yield_strength": 99999.0,
     "break_strength": 120.0,
+    "drive_flags": 1,
+    "drive_compliance": 5.0,
     "anchor_a": [
      0.2981278896331787,
      1.3399735689163208,
@@ -1337,6 +1353,8 @@
     "damping": 0.5,
     "yield_strength": 9999.0,
     "break_strength": 200.0,
+    "drive_flags": 1,
+    "drive_compliance": 1.0,
     "anchor_a": [
      -0.1368972212076187,
      0.7961660623550415,
@@ -1434,6 +1452,8 @@
     "damping": 1.0,
     "yield_strength": 99999.0,
     "break_strength": 180.0,
+    "drive_flags": 1,
+    "drive_compliance": 4.0,
     "anchor_a": [
      -0.3440527319908142,
      0.43973588943481445,
@@ -1628,6 +1648,8 @@
     "damping": 0.5,
     "yield_strength": 9999.0,
     "break_strength": 200.0,
+    "drive_flags": 1,
+    "drive_compliance": 1.0,
     "anchor_a": [
      0.11251717805862427,
      0.7961660623550415,
@@ -1725,6 +1747,8 @@
     "damping": 1.0,
     "yield_strength": 99999.0,
     "break_strength": 180.0,
+    "drive_flags": 1,
+    "drive_compliance": 4.0,
     "anchor_a": [
      0.3003665506839752,
      0.4232814610004425,

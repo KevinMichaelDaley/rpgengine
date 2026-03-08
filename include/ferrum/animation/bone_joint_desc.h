@@ -75,6 +75,16 @@ typedef struct bone_joint_desc {
     uint8_t  has_anchors;  /**< Non-zero if anchor_a/b were explicitly set.
                              *   When 0, anchors are computed from bone
                              *   head positions at entity creation time. */
+
+    /** Drive behavior flags (maps to PHYS_JOINT_FLAG_*).
+     *  bit 0 = angular drive (return to rest pose within limits).
+     *  bit 1 = linear drive (soft positional spring). */
+    uint8_t  drive_flags;
+
+    /** XPBD compliance for drive rows.  Controls drive softness
+     *  independently from the hard constraint compliance.
+     *  Higher = softer.  Typical: 0.1 (medium), 1.0 (very soft). */
+    float    drive_compliance;
 } bone_joint_desc_t;
 
 #ifdef __cplusplus

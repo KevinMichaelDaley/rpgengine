@@ -761,16 +761,14 @@ int main(void) {
                         (GLsizeiptr)(n * 16 * sizeof(float)),
                         bone_matrices);
 
-        /* Camera: orthographic top-down view for displacement analysis. */
-        float half_ext = model_height * 1.5f;
+        /* Camera: perspective 3/4 view looking down at the ragdoll. */
         float aspect = (float)WINDOW_W / (float)WINDOW_H;
         mat4_t view, proj;
-        mat4_look_at((vec3_t){0.f, model_height * 4.0f, 0.f},
-                     (vec3_t){0.f, 0.f, 0.f},
-                     (vec3_t){0.f, 0.f, -1.f}, &view);
-        proj = mat4_ortho(-half_ext * aspect, half_ext * aspect,
-                          -half_ext, half_ext,
-                          0.1f, model_height * 10.0f);
+        mat4_look_at((vec3_t){-1.5f, model_height * 1.8f, 2.5f},
+                     (vec3_t){0.f, model_height * 0.3f, 0.f},
+                     (vec3_t){0.f, 1.f, 0.f}, &view);
+        mat4_perspective(50.0f * (PI / 180.0f), aspect,
+                        0.1f, model_height * 20.0f, &proj);
         mat4_t vp = mat4_mul(proj, view);
 
         /* Draw skinned mesh. */

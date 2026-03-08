@@ -30,6 +30,22 @@ struct phys_body;
 /** Maximum Jacobian rows a single joint can produce (cone-twist = 6). */
 #define PHYS_JOINT_MAX_ROWS 9
 
+/** @name Joint flags (phys_joint_t::flags bitmask).
+ * @{ */
+
+/** Angular drive: emit soft bilateral angular rows pulling toward the
+ *  rest pose even when the joint's angular limits are not violated.
+ *  Uses drive_compliance to control stiffness.  This simulates passive
+ *  muscle tone / return-to-rest behavior in ragdolls. */
+#define PHYS_JOINT_FLAG_ANGULAR_DRIVE  (1u << 0)
+
+/** Linear drive: emit soft bilateral positional rows pulling anchors
+ *  toward coincidence.  Uses drive_compliance to control stiffness.
+ *  Useful for loosely attached bones or animation-blended constraints. */
+#define PHYS_JOINT_FLAG_LINEAR_DRIVE   (1u << 1)
+
+/** @} */
+
 /**
  * @brief Joint type discriminator.
  */
@@ -124,6 +140,14 @@ typedef struct phys_joint {
 
     /** True when the joint has been broken (pending removal). */
     uint8_t broken;
+
+    /** Joint behavior flags (PHYS_JOINT_FLAG_*).  See flag definitions. */
+    uint8_t flags;
+
+    /** XPBD compliance for drive rows (angular/linear drive).
+     *  Higher = softer spring.  0 = rigid (same as limit rows).
+     *  Typical values: 0.01 (stiff), 0.1 (medium), 1.0 (very soft). */
+    float drive_compliance;
 
     /* Solver output (populated by build functions). */
     uint8_t row_count;          /**< Number of active rows after build. */

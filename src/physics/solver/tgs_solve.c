@@ -616,15 +616,14 @@ static void solve_joint_coupled(phys_constraint_t *c,
         inv_i_b = &fallback_b;
     }
 
-    /* Compliance α and damping γ from constraint. */
-    float alpha = c->compliance;
+    /* Compliance α and damping γ from constraint.
+     * Drive rows (PHYS_ROW_FLAG_DRIVE) use drive_compliance instead,
+     * so they can be independently softer than the hard limit rows. */
+    float alpha_hard  = c->compliance;
+    float alpha_drive = c->drive_compliance;
     float gamma = c->joint_damping;
 
-    /* Regularization terms: α/h² and γ/h.
-     * These soften the effective mass denominator.  When α=0 and γ=0,
-     * this reduces to standard coupled implicit GS (rigid). */
-    float alpha_over_h2 = alpha * inv_dt * inv_dt;
-    float gamma_over_h  = gamma * inv_dt;
+    float gamma_over_h = gamma * inv_dt;
 
     for (uint8_t r = 0; r < c->row_count; r++) {
         phys_jacobian_row_t *row = &c->rows[r];
@@ -647,11 +646,16 @@ static void solve_joint_coupled(phys_constraint_t *c,
          * a fraction rather than full correction to prevent oscillation
          * when multiple constraints compete. */
         float C_i = row->bias;
-        /* Position ERP for coupled solver.  Full correction (1.0) causes
-         * oscillation when zero-damping lock joints compete.  0.6 gives
-         * aggressive-but-stable convergence with FK propagation and
-         * per-iteration Jacobian rebuild. */
+        /* Position ERP for coupled solver.  0.6 gives stable convergence;
+         * position projection at end of solve snaps remaining errors. */
         const float coupled_erp = 0.6f;
+
+        /* Select compliance: drive rows use drive_compliance. */
+        float alpha = (row->flags & PHYS_ROW_FLAG_DRIVE)
+                    ? alpha_drive : alpha_hard;
+
+        float alpha_over_h2 = alpha * inv_dt * inv_dt;
+
         float numerator = -(jv + coupled_erp * C_i * inv_dt
                             + alpha * inv_dt * row->lambda);
 
@@ -866,9 +870,11 @@ static void solve_one_constraint(phys_constraint_t *c,
                 if (ts == 0) { ts = 1; }
                 eff_inv_dt = (float)ts / tick_dt;
             }
-            const float compliance_factor =
-                c->compliance * eff_inv_dt * eff_inv_dt;
+            const float comp_hard  = c->compliance * eff_inv_dt * eff_inv_dt;
+            const float comp_drive = c->drive_compliance * eff_inv_dt * eff_inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
+                float compliance_factor = (c->rows[r].flags & PHYS_ROW_FLAG_DRIVE)
+                                        ? comp_drive : comp_hard;
                 float m_save = c->rows[r].effective_mass;
                 if (compliance_factor > 0.0f) {
                     float m = m_save / (1.0f + compliance_factor * m_save);
@@ -1038,8 +1044,9 @@ static void coupled_position_projection_(
 
     /* Multiple projection passes for convergence in long chains.
      * Each pass snaps child anchors to parents in topological order,
-     * so a 20-bone chain converges in ~2 passes. */
-    for (int pass = 0; pass < 3; ++pass) {
+     * so a 20-bone chain converges in ~3 passes.  Use 5 to handle
+     * branching chains (pelvis→leg + pelvis→spine). */
+    for (int pass = 0; pass < 5; ++pass) {
         uint32_t last_ji = UINT32_MAX;
         for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
             uint32_t c_idx = island->constraint_indices[ci];
@@ -1066,6 +1073,51 @@ static void coupled_position_projection_(
                     quat_mul(bodies_mut[ba].orientation,
                               j->rest_relative_orient),
                     1e-12f);
+            }
+
+            /* Cone-twist joints: clamp child orientation to within limits.
+             * Extract the error quaternion, clamp each enabled axis to
+             * [min, max], and reconstruct the clamped child orientation. */
+            if (j->type == PHYS_JOINT_CONE_TWIST && j->limit_axes) {
+                phys_quat_t q_cur = quat_normalize_safe(
+                    quat_mul(bodies_mut[bb].orientation,
+                             quat_conjugate(bodies_mut[ba].orientation)),
+                    1e-12f);
+                phys_quat_t q_err = quat_normalize_safe(
+                    quat_mul(quat_conjugate(j->rest_relative_orient), q_cur),
+                    1e-12f);
+                if (q_err.w < 0.0f) {
+                    q_err.x = -q_err.x; q_err.y = -q_err.y;
+                    q_err.z = -q_err.z; q_err.w = -q_err.w;
+                }
+                /* Extract Euler angles and clamp violated axes. */
+                float ex = atan2f(2.0f*(q_err.w*q_err.x + q_err.y*q_err.z),
+                                  1.0f - 2.0f*(q_err.x*q_err.x + q_err.y*q_err.y));
+                float sy = 2.0f*(q_err.w*q_err.y - q_err.z*q_err.x);
+                if (sy >  1.0f) sy =  1.0f;
+                if (sy < -1.0f) sy = -1.0f;
+                float ey = asinf(sy);
+                float ez = atan2f(2.0f*(q_err.w*q_err.z + q_err.x*q_err.y),
+                                  1.0f - 2.0f*(q_err.y*q_err.y + q_err.z*q_err.z));
+                float angles[3] = {ex, ey, ez};
+                bool clamped = false;
+                for (int ax = 0; ax < 3; ++ax) {
+                    if (!(j->limit_axes & (1u << ax))) continue;
+                    if (angles[ax] < j->limit_min[ax]) {
+                        angles[ax] = j->limit_min[ax]; clamped = true;
+                    } else if (angles[ax] > j->limit_max[ax]) {
+                        angles[ax] = j->limit_max[ax]; clamped = true;
+                    }
+                }
+                if (clamped) {
+                    /* Rebuild child orientation: parent × rest × clamped_error */
+                    phys_quat_t q_clamped = quat_from_euler(
+                        angles[0], angles[1], angles[2]);
+                    bodies_mut[bb].orientation = quat_normalize_safe(
+                        quat_mul(bodies_mut[ba].orientation,
+                            quat_mul(j->rest_relative_orient, q_clamped)),
+                        1e-12f);
+                }
             }
 
             /* Snap child position so joint anchors coincide exactly. */

@@ -132,6 +132,10 @@ void phys_joint_build_ball(phys_joint_t *joint,
         {0.0f, 0.0f, 1.0f},
     };
 
+    /* When LINEAR_DRIVE is set, flag positional rows so the solver
+     * uses drive_compliance (soft spring) instead of hard compliance. */
+    uint8_t linear_drive = (joint->flags & PHYS_JOINT_FLAG_LINEAR_DRIVE)
+                           ? PHYS_ROW_FLAG_DRIVE : 0;
     for (int i = 0; i < 3; ++i) {
         float axis_error = vec3_dot(error, axes[i]);
         build_positional_row(&joint->rows[i], rA, rB, axes[i],
@@ -140,6 +144,7 @@ void phys_joint_build_ball(phys_joint_t *joint,
                              joint->damping);
         /* Warmstart: seed lambda from previous substep's cached value. */
         joint->rows[i].lambda = joint->cached_lambda[i];
+        joint->rows[i].flags |= linear_drive;
     }
 
     joint->row_count = 3;

@@ -405,6 +405,11 @@ bool fskel_write(const char *path,
                         (double)jd->anchor_b[0], (double)jd->anchor_b[1],
                         (double)jd->anchor_b[2]);
             }
+            if (jd->drive_flags) {
+                fprintf(f, ",\"drive_flags\":%u,\"drive_compliance\":%.8g",
+                        (unsigned)jd->drive_flags,
+                        (double)jd->drive_compliance);
+            }
         } else {
             fprintf(f, "\"type\":0,\"axis\":[0,1,0],\"rest_length\":0,"
                        "\"limit_min\":[0,0,0],\"limit_max\":[0,0,0],\"limit_axes\":0,"

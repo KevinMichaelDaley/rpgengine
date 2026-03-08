@@ -70,13 +70,13 @@ void phys_joint_build_limit_position(phys_joint_t *joint,
         float error = 0.0f;
         float lmin = 0.0f, lmax = 0.0f;
         if (pos < lo) {
-            error = pos - lo;
-            lmin = -JOINT_LAMBDA_BIG;
-            lmax = 0.0f;
-        } else if (pos > hi) {
-            error = pos - hi;
+            error = pos - lo;     /* Negative: need positive λ. */
             lmin = 0.0f;
             lmax = JOINT_LAMBDA_BIG;
+        } else if (pos > hi) {
+            error = pos - hi;     /* Positive: need negative λ. */
+            lmin = -JOINT_LAMBDA_BIG;
+            lmax = 0.0f;
         } else {
             continue;
         }

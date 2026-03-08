@@ -746,6 +746,10 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 j->yield_strength = jd->yield_strength;
                 j->break_strength = jd->break_strength;
 
+                /* Drive flags and compliance from Blender exporter. */
+                j->flags = jd->drive_flags;
+                j->drive_compliance = jd->drive_compliance;
+
                 /* Temporary load-time diagnostic dump. */
                 {
                     static const char *type_names[] = {
@@ -967,27 +971,65 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
     }
     (void)overlap_excl_count;
 
-    /* 3. Exclude all remaining intra-rig pairs.
-     * Animated rigs are already held together by authored joints; letting
-     * the same rig self-collide on top of those constraints over-constrains
-     * XPBD islands and blows the ragdoll apart. */
-    uint32_t self_excl_count = 0;
-    for (uint32_t i = 0; i < n; i++) {
-        uint32_t bi = entity->body_indices[i];
-        if (bi == UINT32_MAX) continue;
-        if (world->body_pool.bodies_curr[bi].flags &
-            PHYS_BODY_FLAG_NO_BROADPHASE) continue;
-        for (uint32_t j = i + 1; j < n; j++) {
-            uint32_t bj = entity->body_indices[j];
-            if (bj == UINT32_MAX) continue;
-            if (world->body_pool.bodies_curr[bj].flags &
+    /* 3. Exclude near-adjacent bone pairs (within 2 hops in the joint
+     * graph).  Adjacent bones are already excluded by step 1.  This
+     * additionally excludes "grandparent–grandchild" and "sibling"
+     * pairs that would fight the joint solver.  Non-adjacent pairs
+     * (e.g. hand vs opposite thigh) are allowed to self-collide so
+     * the ragdoll doesn't self-intersect.
+     *
+     * Build a per-bone parent index from the skeleton, then for each
+     * pair check if they share a grandparent within 2 hops. */
+    uint32_t near_excl_count = 0;
+    {
+        /* Build bone→parent mapping from the skeleton. */
+        int32_t parent_of[256]; /* bone index → parent bone index, -1 = root */
+        uint32_t max_bones = n < 256 ? n : 256;
+        for (uint32_t i = 0; i < max_bones; i++) {
+            uint32_t pi = skel->parent_indices[i];
+            parent_of[i] = (pi < max_bones) ? (int32_t)pi : -1;
+        }
+
+        for (uint32_t i = 0; i < max_bones; i++) {
+            uint32_t bi = entity->body_indices[i];
+            if (bi == UINT32_MAX) continue;
+            if (world->body_pool.bodies_curr[bi].flags &
                 PHYS_BODY_FLAG_NO_BROADPHASE) continue;
-            if (phys_world_is_pair_excluded(world, bi, bj)) continue;
-            phys_world_exclude_pair(world, bi, bj);
-            self_excl_count++;
+
+            for (uint32_t j = i + 1; j < max_bones; j++) {
+                uint32_t bj = entity->body_indices[j];
+                if (bj == UINT32_MAX) continue;
+                if (world->body_pool.bodies_curr[bj].flags &
+                    PHYS_BODY_FLAG_NO_BROADPHASE) continue;
+                if (phys_world_is_pair_excluded(world, bi, bj)) continue;
+
+                /* Check if bones i and j are within 2 hops.
+                 * Collect ancestors up to depth 2 for each bone. */
+                int32_t anc_i[3] = { (int32_t)i, parent_of[i], -1 };
+                if (anc_i[1] >= 0 && (uint32_t)anc_i[1] < max_bones)
+                    anc_i[2] = parent_of[anc_i[1]];
+
+                int32_t anc_j[3] = { (int32_t)j, parent_of[j], -1 };
+                if (anc_j[1] >= 0 && (uint32_t)anc_j[1] < max_bones)
+                    anc_j[2] = parent_of[anc_j[1]];
+
+                bool near = false;
+                for (int a = 0; a < 3 && !near; a++) {
+                    if (anc_i[a] < 0) continue;
+                    for (int b = 0; b < 3 && !near; b++) {
+                        if (anc_j[b] < 0) continue;
+                        if (anc_i[a] == anc_j[b]) near = true;
+                    }
+                }
+
+                if (near) {
+                    phys_world_exclude_pair(world, bi, bj);
+                    near_excl_count++;
+                }
+            }
         }
     }
-    (void)self_excl_count;
+    (void)near_excl_count;
 
     return true;
 }
