@@ -59,6 +59,96 @@
  *  accelerate convergence; typical range 1.1–1.5. */
 #define SOR_OMEGA 1.1f
 
+/* ── Exponential map quaternion integration ───────────────────── */
+
+/**
+ * @brief Integrate orientation using the exponential map.
+ *
+ * Computes q_new = exp(0.5 * dω * dt) * q_old, which is the exact
+ * rotation for a constant angular velocity increment dω over timestep dt.
+ */
+static phys_quat_t quat_integrate_expmap(phys_quat_t q,
+                                          phys_vec3_t dw,
+                                          float dt)
+{
+    float wx = dw.x * dt;
+    float wy = dw.y * dt;
+    float wz = dw.z * dt;
+    float theta = sqrtf(wx * wx + wy * wy + wz * wz);
+
+    phys_quat_t dq;
+    if (theta > 1e-8f) {
+        float half_theta = 0.5f * theta;
+        float s = sinf(half_theta) / theta;
+        dq.w = cosf(half_theta);
+        dq.x = s * wx;
+        dq.y = s * wy;
+        dq.z = s * wz;
+    } else {
+        dq.w = 1.0f;
+        dq.x = 0.5f * wx;
+        dq.y = 0.5f * wy;
+        dq.z = 0.5f * wz;
+    }
+
+    return quat_normalize_safe(quat_mul(dq, q), 1e-12f);
+}
+
+/* ── Implicit gyroscopic torque correction ────────────────────── */
+
+/**
+ * @brief Apply implicit gyroscopic torque correction.
+ *
+ * Solves (I + h·[ω×]·I) · ω_new = I · ω_old in body-local frame
+ * via Cramer's rule to prevent precession energy injection.
+ */
+static void apply_gyroscopic_correction(phys_vec3_t *omega,
+                                         phys_vec3_t inv_I_diag,
+                                         phys_quat_t orient,
+                                         float dt)
+{
+    phys_quat_t q_inv = quat_conjugate(orient);
+    phys_vec3_t w_local = quat_rotate_vec3(q_inv, *omega);
+
+    float Ix = (inv_I_diag.x > 1e-12f) ? (1.0f / inv_I_diag.x) : 0.0f;
+    float Iy = (inv_I_diag.y > 1e-12f) ? (1.0f / inv_I_diag.y) : 0.0f;
+    float Iz = (inv_I_diag.z > 1e-12f) ? (1.0f / inv_I_diag.z) : 0.0f;
+
+    float rhs_x = Ix * w_local.x;
+    float rhs_y = Iy * w_local.y;
+    float rhs_z = Iz * w_local.z;
+
+    float a00 = Ix;
+    float a01 = -dt * w_local.z * Iy;
+    float a02 =  dt * w_local.y * Iz;
+    float a10 =  dt * w_local.z * Ix;
+    float a11 = Iy;
+    float a12 = -dt * w_local.x * Iz;
+    float a20 = -dt * w_local.y * Ix;
+    float a21 =  dt * w_local.x * Iy;
+    float a22 = Iz;
+
+    float det = a00 * (a11 * a22 - a12 * a21)
+              - a01 * (a10 * a22 - a12 * a20)
+              + a02 * (a10 * a21 - a11 * a20);
+
+    if (fabsf(det) < 1e-20f) return;
+
+    float inv_det = 1.0f / det;
+    phys_vec3_t w_new_local;
+    w_new_local.x = inv_det * (rhs_x * (a11 * a22 - a12 * a21)
+                              - a01  * (rhs_y * a22 - a12 * rhs_z)
+                              + a02  * (rhs_y * a21 - a11 * rhs_z));
+    w_new_local.y = inv_det * (a00 * (rhs_y * a22 - a12 * rhs_z)
+                              - rhs_x * (a10 * a22 - a12 * a20)
+                              + a02   * (a10 * rhs_z - rhs_y * a20));
+    w_new_local.z = inv_det * (a00 * (a11 * rhs_z - rhs_y * a21)
+                              - a01 * (a10 * rhs_z - rhs_y * a20)
+                              + rhs_x * (a10 * a21 - a11 * a20));
+
+    *omega = quat_rotate_vec3(orient, w_new_local);
+}
+
 /** Under-relaxation factor for joint constraints.  Joint chains couple
  *  many rows through shared hub bodies (e.g. root in ragdoll).  The
  *  critical omega for a 21-body humanoid ragdoll is ~0.82; above that
@@ -435,8 +525,9 @@ static void solve_joint_coupled_par(phys_constraint_t *c,
         inv_i_b = &fallback_b;
     }
 
-    float alpha_hard  = c->compliance;
-    float alpha_drive = c->drive_compliance;
+    float alpha_hard    = c->compliance;
+    float alpha_angular = c->angular_compliance;
+    float alpha_drive   = c->drive_compliance;
     float gamma = c->joint_damping;
     float gamma_over_h = gamma * inv_dt;
 
@@ -449,13 +540,20 @@ static void solve_joint_coupled_par(phys_constraint_t *c,
                  + vec3_dot(row->J_wb, vb->angular);
 
         float C_i = row->bias;
-        /* Position ERP: fraction of C/h to correct per substep.
-         * Prevents oscillation when multiple constraints compete. */
-        const float coupled_erp = 0.6f;
+        /* Angular limit rows use lower ERP to avoid energy injection
+         * from overcorrection while still enforcing limits. */
+        const float coupled_erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
+                                ? 0.1f : 0.6f;
 
-        /* Select compliance: drive rows use drive_compliance. */
-        float alpha = (row->flags & PHYS_ROW_FLAG_DRIVE)
-                    ? alpha_drive : alpha_hard;
+        /* Select compliance per row type. */
+        float alpha;
+        if (row->flags & PHYS_ROW_FLAG_DRIVE) {
+            alpha = alpha_drive;
+        } else if ((row->flags & PHYS_ROW_FLAG_ANGULAR) && alpha_angular > 0.0f) {
+            alpha = alpha_angular;
+        } else {
+            alpha = alpha_hard;
+        }
         float alpha_over_h2 = alpha * inv_dt * inv_dt;
 
         float numerator = -(jv + coupled_erp * C_i * inv_dt
@@ -464,7 +562,23 @@ static void solve_joint_coupled_par(phys_constraint_t *c,
         float jmjt = (row->effective_mass > 1e-12f)
                     ? (1.0f / row->effective_mass)
                     : 1e12f;
-        float denom = jmjt + alpha_over_h2 + gamma_over_h;
+
+        /* Geometric stiffness correction for angular rows.
+         * Accounts for constraint force direction changes during rotation.
+         * For orthogonal axes: k_geo_i = Σ_{j≠i} |λ_j| * (1 - (n_i·n_j)²)
+         * Added as h²·k_geo to prevent overshoot on the spherical manifold. */
+        float k_geo = 0.0f;
+        if (row->flags & PHYS_ROW_FLAG_ANGULAR) {
+            for (uint8_t s = 0; s < c->row_count; s++) {
+                if (s == r) continue;
+                if (!(c->rows[s].flags & PHYS_ROW_FLAG_ANGULAR)) continue;
+                float dot = vec3_dot(row->J_wb, c->rows[s].J_wb);
+                float contrib = dot * dot - 1.0f;
+                k_geo += fabsf(c->rows[s].lambda) * (-contrib);
+            }
+        }
+
+        float denom = jmjt + dt * dt * k_geo + alpha_over_h2 + gamma_over_h;
         float inv_denom = (denom > 1e-12f) ? (1.0f / denom) : 0.0f;
 
         float delta_lambda = numerator * inv_denom;
@@ -502,27 +616,11 @@ static void solve_joint_coupled_par(phys_constraint_t *c,
         bodies_mut[c->body_b].position =
             vec3_add(bodies_mut[c->body_b].position, dp_b);
 
-        /* Integrate orientation: q += 0.5 * dt * [0, ω] * q */
-        phys_quat_t qa = bodies_mut[c->body_a].orientation;
-        phys_quat_t qb = bodies_mut[c->body_b].orientation;
-
-        phys_quat_t dqa = {
-            0.5f * dt * (dv_ang_a.x * qa.w + dv_ang_a.y * qa.z - dv_ang_a.z * qa.y),
-            0.5f * dt * (-dv_ang_a.x * qa.z + dv_ang_a.y * qa.w + dv_ang_a.z * qa.x),
-            0.5f * dt * (dv_ang_a.x * qa.y - dv_ang_a.y * qa.x + dv_ang_a.z * qa.w),
-            0.5f * dt * (-dv_ang_a.x * qa.x - dv_ang_a.y * qa.y - dv_ang_a.z * qa.z)
-        };
-        qa.x += dqa.x; qa.y += dqa.y; qa.z += dqa.z; qa.w += dqa.w;
-        bodies_mut[c->body_a].orientation = quat_normalize_safe(qa, 1e-12f);
-
-        phys_quat_t dqb = {
-            0.5f * dt * (dv_ang_b.x * qb.w + dv_ang_b.y * qb.z - dv_ang_b.z * qb.y),
-            0.5f * dt * (-dv_ang_b.x * qb.z + dv_ang_b.y * qb.w + dv_ang_b.z * qb.x),
-            0.5f * dt * (dv_ang_b.x * qb.y - dv_ang_b.y * qb.x + dv_ang_b.z * qb.w),
-            0.5f * dt * (-dv_ang_b.x * qb.x - dv_ang_b.y * qb.y - dv_ang_b.z * qb.z)
-        };
-        qb.x += dqb.x; qb.y += dqb.y; qb.z += dqb.z; qb.w += dqb.w;
-        bodies_mut[c->body_b].orientation = quat_normalize_safe(qb, 1e-12f);
+        /* Integrate orientation using exponential map (symplectic). */
+        bodies_mut[c->body_a].orientation = quat_integrate_expmap(
+            bodies_mut[c->body_a].orientation, dv_ang_a, dt);
+        bodies_mut[c->body_b].orientation = quat_integrate_expmap(
+            bodies_mut[c->body_b].orientation, dv_ang_b, dt);
     }
 }
 
@@ -636,10 +734,17 @@ static void solve_one_full(tgs_color_shared_t *shared, uint32_t c_idx)
                 eff_inv_dt = (float)ts / shared->tick_dt;
             }
             const float comp_hard  = c->compliance * eff_inv_dt * eff_inv_dt;
+            const float comp_ang   = c->angular_compliance * eff_inv_dt * eff_inv_dt;
             const float comp_drive = c->drive_compliance * eff_inv_dt * eff_inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
-                float compliance_factor = (c->rows[r].flags & PHYS_ROW_FLAG_DRIVE)
-                                        ? comp_drive : comp_hard;
+                float compliance_factor;
+                if (c->rows[r].flags & PHYS_ROW_FLAG_DRIVE) {
+                    compliance_factor = comp_drive;
+                } else if ((c->rows[r].flags & PHYS_ROW_FLAG_ANGULAR) && comp_ang > 0.0f) {
+                    compliance_factor = comp_ang;
+                } else {
+                    compliance_factor = comp_hard;
+                }
                 float m_save = c->rows[r].effective_mass;
                 if (compliance_factor > 0.0f) {
                     float m = m_save / (1.0f + compliance_factor * m_save);
@@ -767,46 +872,8 @@ static void coupled_position_projection_par_(
                     1e-12f);
             }
 
-            /* Cone-twist: clamp child orientation to within limits. */
-            if (j->type == PHYS_JOINT_CONE_TWIST && j->limit_axes) {
-                phys_quat_t q_cur = quat_normalize_safe(
-                    quat_mul(bodies_mut[bb].orientation,
-                             quat_conjugate(bodies_mut[ba].orientation)),
-                    1e-12f);
-                phys_quat_t q_err = quat_normalize_safe(
-                    quat_mul(quat_conjugate(j->rest_relative_orient), q_cur),
-                    1e-12f);
-                if (q_err.w < 0.0f) {
-                    q_err.x = -q_err.x; q_err.y = -q_err.y;
-                    q_err.z = -q_err.z; q_err.w = -q_err.w;
-                }
-                float ex = atan2f(2.0f*(q_err.w*q_err.x + q_err.y*q_err.z),
-                                  1.0f - 2.0f*(q_err.x*q_err.x + q_err.y*q_err.y));
-                float sy = 2.0f*(q_err.w*q_err.y - q_err.z*q_err.x);
-                if (sy >  1.0f) sy =  1.0f;
-                if (sy < -1.0f) sy = -1.0f;
-                float ey = asinf(sy);
-                float ez = atan2f(2.0f*(q_err.w*q_err.z + q_err.x*q_err.y),
-                                  1.0f - 2.0f*(q_err.y*q_err.y + q_err.z*q_err.z));
-                float angles[3] = {ex, ey, ez};
-                bool clamped = false;
-                for (int ax = 0; ax < 3; ++ax) {
-                    if (!(j->limit_axes & (1u << ax))) continue;
-                    if (angles[ax] < j->limit_min[ax]) {
-                        angles[ax] = j->limit_min[ax]; clamped = true;
-                    } else if (angles[ax] > j->limit_max[ax]) {
-                        angles[ax] = j->limit_max[ax]; clamped = true;
-                    }
-                }
-                if (clamped) {
-                    phys_quat_t q_clamped = quat_from_euler(
-                        angles[0], angles[1], angles[2]);
-                    bodies_mut[bb].orientation = quat_normalize_safe(
-                        quat_mul(bodies_mut[ba].orientation,
-                            quat_mul(j->rest_relative_orient, q_clamped)),
-                        1e-12f);
-                }
-            }
+            /* Angular limits handled by solver's one-sided rows.
+             * No orientation clamping — avoids energy injection. */
 
             phys_vec3_t wa = vec3_add(bodies_mut[ba].position,
                 quat_rotate_vec3(bodies_mut[ba].orientation,
@@ -963,6 +1030,22 @@ static void solve_island(const tgs_solve_shared_t *shared,
                 .tier_substep_counts = shared->tier_substep_counts,
                 .bodies_mut        = shared->bodies_mut,
             }, c_idx);
+        }
+
+        /* Implicit gyroscopic torque correction, once per body per
+         * iteration.  Prevents precession-driven energy injection. */
+        if (coupled) {
+            float solve_dt = 1.0f / shared->inv_dt;
+            for (uint32_t b = 0; b < island->body_count; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= shared->body_count) continue;
+                if (shared->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                apply_gyroscopic_correction(
+                    &shared->velocities[idx].angular,
+                    shared->bodies_mut[idx].inv_inertia_diag,
+                    shared->bodies_mut[idx].orientation,
+                    solve_dt);
+            }
         }
     }
 

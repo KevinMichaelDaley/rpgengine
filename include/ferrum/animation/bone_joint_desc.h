@@ -56,9 +56,12 @@ typedef struct bone_joint_desc {
     float    limit_max[3];  /**< Per-axis max angle (rad) or position. */
     uint32_t limit_axes;    /**< Bitmask of active limit axes: bit 0=X, 1=Y, 2=Z.
                              *   Only used for types 6 and 7. */
-    float    compliance;    /**< XPBD compliance (α); 0 = perfectly stiff.
-                             *   Higher values make the joint softer.
-                             *   Typical ragdoll: 1e-4 to 1e-2. */
+    float    compliance;    /**< XPBD compliance (α) for positional rows;
+                             *   0 = perfectly stiff.  Typical: 1e-4 to 1e-2. */
+    float    angular_compliance; /**< XPBD compliance for angular limit rows.
+                             *   0 = use same as positional compliance.
+                             *   Allows angular limits to be softer than
+                             *   positional lock.  Typical: 0.001–0.05. */
     float    damping;       /**< Viscous damping coefficient; dissipates
                              *   relative velocity at the joint.  0 = none. */
     float    yield_strength;/**< Impulse threshold for plastic deformation.

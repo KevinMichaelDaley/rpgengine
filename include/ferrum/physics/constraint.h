@@ -80,12 +80,14 @@ typedef struct phys_constraint {
                              *   friction cone logic. */
     float friction;         /**< Combined friction coefficient for Coulomb cone. */
     float penetration;      /**< Raw penetration depth for position projection. */
-    float compliance;       /**< XPBD compliance (α) per-constraint; 0 = stiff. */
-    float joint_damping;    /**< Viscous damping for joint constraints.
-                             *   Adds velocity-opposing bias: -c_damp * v_rel.
-                             *   0 = no joint damping. */
-    float drive_compliance; /**< XPBD compliance for drive rows (PHYS_ROW_FLAG_DRIVE).
-                             *   Drive rows use this instead of compliance.  0 = rigid. */
+    float compliance;          /**< XPBD compliance (α) for positional rows; 0 = stiff. */
+    float angular_compliance;  /**< XPBD compliance for angular limit rows.
+                                *   0 = use compliance (same as positional). */
+    float joint_damping;       /**< Viscous damping for joint constraints.
+                                *   Adds velocity-opposing bias: -c_damp * v_rel.
+                                *   0 = no joint damping. */
+    float drive_compliance;    /**< XPBD compliance for drive rows (PHYS_ROW_FLAG_DRIVE).
+                                *   Drive rows use this instead of compliance.  0 = rigid. */
     phys_jacobian_row_t rows[PHYS_MAX_CONSTRAINT_ROWS]; /**< Constraint rows. */
 } phys_constraint_t;
 

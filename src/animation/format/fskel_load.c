@@ -534,6 +534,10 @@ bool fskel_load(const char *path,
              * Stiffness 0 means perfectly rigid (compliance = 0). */
             float stiffness = jfloat_(json_object_get(jd, "stiffness"), 0.0f);
             bd->compliance = (stiffness > 0.0f) ? (1.0f / stiffness) : 0.0f;
+            /* Angular compliance: separate softness for angular limit rows.
+             * Read directly as compliance (not stiffness). */
+            bd->angular_compliance = jfloat_(
+                json_object_get(jd, "angular_compliance"), 0.0f);
             bd->damping = jfloat_(json_object_get(jd, "damping"), 0.0f);
             bd->yield_strength = jfloat_(
                 json_object_get(jd, "yield_strength"), 0.0f);

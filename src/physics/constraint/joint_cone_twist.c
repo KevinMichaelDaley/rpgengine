@@ -49,28 +49,27 @@ static void build_positional_row(phys_jacobian_row_t *row,
 }
 
 /**
- * @brief Extract Euler angle for one axis from a quaternion.
+ * @brief Decompose error quaternion into per-axis rotation vector components.
  *
- * Uses full atan2/asin extraction for accuracy at large angles.
+ * Converts q to axis-angle, then returns the rotation vector (axis * angle).
+ * The components of this vector give per-axis angular errors that are
+ * self-consistent with the Jacobian axes, unlike Euler angles which
+ * couple across axes and cause energy injection.
  */
-static float extract_axis_angle(phys_quat_t q, int axis) {
-    float x = q.x, y = q.y, z = q.z, w = q.w;
-    switch (axis) {
-    case 0: /* X (roll) */
-        return atan2f(2.0f * (w * x + y * z),
-                      1.0f - 2.0f * (x * x + y * y));
-    case 1: { /* Y (pitch) */
-        float sinp = 2.0f * (w * y - z * x);
-        if (sinp >  1.0f) sinp =  1.0f;
-        if (sinp < -1.0f) sinp = -1.0f;
-        return asinf(sinp);
+static void quat_to_rotation_vector(phys_quat_t q, float out[3]) {
+    float vx = q.x, vy = q.y, vz = q.z, vw = q.w;
+    float sin_half = sqrtf(vx * vx + vy * vy + vz * vz);
+    float scale;
+    if (sin_half > 1e-6f) {
+        float half_angle = atan2f(sin_half, vw);
+        scale = 2.0f * half_angle / sin_half;
+    } else {
+        /* Small angle: rotation_vector ≈ 2 * (x, y, z). */
+        scale = 2.0f;
     }
-    case 2: /* Z (yaw) */
-        return atan2f(2.0f * (w * z + x * y),
-                      1.0f - 2.0f * (y * y + z * z));
-    default:
-        return 0.0f;
-    }
+    out[0] = vx * scale;
+    out[1] = vy * scale;
+    out[2] = vz * scale;
 }
 
 void phys_joint_build_cone_twist(phys_joint_t *joint,
@@ -177,11 +176,17 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
     uint8_t angular_drive = (joint->flags & PHYS_JOINT_FLAG_ANGULAR_DRIVE)
                             ? 1 : 0;
 
+    /* Decompose error quaternion into per-axis rotation vector.
+     * Unlike Euler angles, rotation vector components are independent
+     * and self-consistent with the angular Jacobian axes. */
+    float rot_vec[3];
+    quat_to_rotation_vector(q_error, rot_vec);
+
     uint8_t rc = 3;  /* First 3 rows are positional. */
     for (int i = 0; i < 3; ++i) {
         if (!(joint->limit_axes & (1u << i))) continue;
 
-        float angle = extract_axis_angle(q_error, i);
+        float angle = rot_vec[i];
         float lo = joint->limit_min[i];
         float hi = joint->limit_max[i];
 

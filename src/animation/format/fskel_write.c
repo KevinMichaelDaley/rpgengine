@@ -405,6 +405,10 @@ bool fskel_write(const char *path,
                         (double)jd->anchor_b[0], (double)jd->anchor_b[1],
                         (double)jd->anchor_b[2]);
             }
+            if (jd->angular_compliance > 0.0f) {
+                fprintf(f, ",\"angular_compliance\":%.8g",
+                        (double)jd->angular_compliance);
+            }
             if (jd->drive_flags) {
                 fprintf(f, ",\"drive_flags\":%u,\"drive_compliance\":%.8g",
                         (unsigned)jd->drive_flags,

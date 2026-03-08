@@ -780,6 +780,7 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "limit_max": lim_max,
             "limit_axes": lim_axes,
             "stiffness": pb.talarium_joint_stiffness,
+            "angular_compliance": pb.talarium_joint_angular_compliance,
             "damping": pb.talarium_joint_damping,
             "yield_strength": pb.talarium_joint_yield_strength,
             "break_strength": pb.talarium_joint_break_strength,
@@ -1096,6 +1097,15 @@ _BONE_PROPS = {
                     "0 = rigid constraint (default). "
                     "Nonzero enables soft compliance: low = elastic, high = stiff",
         default=0.0, min=0.0, soft_max=10000.0,
+    ),
+    "talarium_joint_angular_compliance": FloatProperty(
+        name="Angular Compliance",
+        description="XPBD compliance for angular limit rows only. "
+                    "Allows angular limits to be softer than positional lock, "
+                    "preventing angular corrections from destabilizing anchors. "
+                    "0 = use same compliance as positional rows. "
+                    "Typical: 0.001 (stiff) to 0.05 (soft)",
+        default=0.0, min=0.0, soft_max=1.0,
     ),
     "talarium_joint_damping": FloatProperty(
         name="Damping",
@@ -1669,6 +1679,7 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 box.separator()
                 box.label(text="Physical Properties")
                 box.prop(pb, "talarium_joint_stiffness")
+                box.prop(pb, "talarium_joint_angular_compliance")
                 box.prop(pb, "talarium_joint_damping")
                 box.prop(pb, "talarium_joint_yield_strength")
                 box.prop(pb, "talarium_joint_break_strength")

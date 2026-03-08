@@ -55,6 +55,127 @@
  *  convergence; typical range 1.1–1.5.  Too high causes oscillation. */
 #define SOR_OMEGA 1.1f
 
+/* ── Exponential map quaternion integration ───────────────────── */
+
+/**
+ * @brief Integrate orientation using the exponential map.
+ *
+ * Computes q_new = exp(0.5 * dω * dt) * q_old, which is the exact
+ * rotation for a constant angular velocity increment dω over timestep dt.
+ * Unlike the Euler update (q += 0.5*dt*Ω*q), this stays on SO(3) exactly
+ * and does not inject energy through quaternion drift.
+ *
+ * @param q     Current orientation quaternion.
+ * @param dw    Angular velocity increment (rad/s).
+ * @param dt    Timestep (seconds).
+ * @return      Updated orientation quaternion (normalized).
+ */
+static phys_quat_t quat_integrate_expmap(phys_quat_t q,
+                                          phys_vec3_t dw,
+                                          float dt)
+{
+    float wx = dw.x * dt;
+    float wy = dw.y * dt;
+    float wz = dw.z * dt;
+    float theta = sqrtf(wx * wx + wy * wy + wz * wz);
+
+    phys_quat_t dq;
+    if (theta > 1e-8f) {
+        float half_theta = 0.5f * theta;
+        float s = sinf(half_theta) / theta;
+        dq.w = cosf(half_theta);
+        dq.x = s * wx;
+        dq.y = s * wy;
+        dq.z = s * wz;
+    } else {
+        /* Small angle: sin(θ/2)/θ ≈ 0.5 */
+        dq.w = 1.0f;
+        dq.x = 0.5f * wx;
+        dq.y = 0.5f * wy;
+        dq.z = 0.5f * wz;
+    }
+
+    return quat_normalize_safe(quat_mul(dq, q), 1e-12f);
+}
+
+/* ── Implicit gyroscopic torque correction ────────────────────── */
+
+/**
+ * @brief Apply implicit gyroscopic torque correction to angular velocity.
+ *
+ * The gyroscopic torque τ_gyro = ω × (I·ω) causes precession and
+ * nutation.  An explicit treatment is unstable for fast-spinning bodies.
+ * This applies the implicit correction by solving:
+ *   (I + h·[ω×]·I) · ω_new = I · ω_old
+ *
+ * For diagonal inertia in body space, this is a 3x3 linear system
+ * that we solve via Cramer's rule for efficiency.
+ *
+ * @param omega      Current angular velocity (world space, modified in place).
+ * @param inv_I_diag Diagonal inverse inertia in body-local frame.
+ * @param orient     Body orientation quaternion.
+ * @param dt         Timestep (seconds).
+ */
+static void apply_gyroscopic_correction(phys_vec3_t *omega,
+                                         phys_vec3_t inv_I_diag,
+                                         phys_quat_t orient,
+                                         float dt)
+{
+    /* Convert angular velocity to body-local frame. */
+    phys_quat_t q_inv = quat_conjugate(orient);
+    phys_vec3_t w_local = quat_rotate_vec3(q_inv, *omega);
+
+    /* Body-space inertia (not inverse). */
+    float Ix = (inv_I_diag.x > 1e-12f) ? (1.0f / inv_I_diag.x) : 0.0f;
+    float Iy = (inv_I_diag.y > 1e-12f) ? (1.0f / inv_I_diag.y) : 0.0f;
+    float Iz = (inv_I_diag.z > 1e-12f) ? (1.0f / inv_I_diag.z) : 0.0f;
+
+    /* RHS = I · ω_local */
+    float rhs_x = Ix * w_local.x;
+    float rhs_y = Iy * w_local.y;
+    float rhs_z = Iz * w_local.z;
+
+    /* LHS matrix = I + h · [ω×] · I  (body-space, diagonal I).
+     * [ω×]·I = [[0, -wz*Iy, wy*Iz],
+     *           [wz*Ix, 0, -wx*Iz],
+     *           [-wy*Ix, wx*Iy, 0]]
+     * So LHS = I + h * [ω×]·I:
+     *   [[Ix,           -h*wz*Iy,      h*wy*Iz],
+     *    [h*wz*Ix,       Iy,           -h*wx*Iz],
+     *    [-h*wy*Ix,      h*wx*Iy,       Iz     ]] */
+    float a00 = Ix;
+    float a01 = -dt * w_local.z * Iy;
+    float a02 =  dt * w_local.y * Iz;
+    float a10 =  dt * w_local.z * Ix;
+    float a11 = Iy;
+    float a12 = -dt * w_local.x * Iz;
+    float a20 = -dt * w_local.y * Ix;
+    float a21 =  dt * w_local.x * Iy;
+    float a22 = Iz;
+
+    /* Solve via Cramer's rule. */
+    float det = a00 * (a11 * a22 - a12 * a21)
+              - a01 * (a10 * a22 - a12 * a20)
+              + a02 * (a10 * a21 - a11 * a20);
+
+    if (fabsf(det) < 1e-20f) return;
+
+    float inv_det = 1.0f / det;
+    phys_vec3_t w_new_local;
+    w_new_local.x = inv_det * (rhs_x * (a11 * a22 - a12 * a21)
+                              - a01  * (rhs_y * a22 - a12 * rhs_z)
+                              + a02  * (rhs_y * a21 - a11 * rhs_z));
+    w_new_local.y = inv_det * (a00 * (rhs_y * a22 - a12 * rhs_z)
+                              - rhs_x * (a10 * a22 - a12 * a20)
+                              + a02   * (a10 * rhs_z - rhs_y * a20));
+    w_new_local.z = inv_det * (a00 * (a11 * rhs_z - rhs_y * a21)
+                              - a01 * (a10 * rhs_z - rhs_y * a20)
+                              + rhs_x * (a10 * a21 - a11 * a20));
+
+    /* Convert back to world frame. */
+    *omega = quat_rotate_vec3(orient, w_new_local);
+}
+
 /* ── Internal: compute per-island iteration count ─────────────── */
 
 /**
@@ -617,10 +738,11 @@ static void solve_joint_coupled(phys_constraint_t *c,
     }
 
     /* Compliance α and damping γ from constraint.
-     * Drive rows (PHYS_ROW_FLAG_DRIVE) use drive_compliance instead,
-     * so they can be independently softer than the hard limit rows. */
-    float alpha_hard  = c->compliance;
-    float alpha_drive = c->drive_compliance;
+     * Drive rows use drive_compliance, angular limit rows use
+     * angular_compliance (0 = fall back to positional compliance). */
+    float alpha_hard    = c->compliance;
+    float alpha_angular = c->angular_compliance;
+    float alpha_drive   = c->drive_compliance;
     float gamma = c->joint_damping;
 
     float gamma_over_h = gamma * inv_dt;
@@ -646,13 +768,24 @@ static void solve_joint_coupled(phys_constraint_t *c,
          * a fraction rather than full correction to prevent oscillation
          * when multiple constraints compete. */
         float C_i = row->bias;
-        /* Position ERP for coupled solver.  0.6 gives stable convergence;
-         * position projection at end of solve snaps remaining errors. */
-        const float coupled_erp = 0.6f;
+        /* Position ERP for coupled solver.  Angular limit rows use a
+         * much lower ERP to avoid energy injection from overcorrection
+         * while still gently enforcing limits. */
+        const float coupled_erp = (row->flags & PHYS_ROW_FLAG_ANGULAR)
+                                ? 0.1f : 0.6f;
 
-        /* Select compliance: drive rows use drive_compliance. */
-        float alpha = (row->flags & PHYS_ROW_FLAG_DRIVE)
-                    ? alpha_drive : alpha_hard;
+        /* Select compliance per row type:
+         *   drive rows  → drive_compliance
+         *   angular rows → angular_compliance (falls back to hard)
+         *   positional   → compliance */
+        float alpha;
+        if (row->flags & PHYS_ROW_FLAG_DRIVE) {
+            alpha = alpha_drive;
+        } else if ((row->flags & PHYS_ROW_FLAG_ANGULAR) && alpha_angular > 0.0f) {
+            alpha = alpha_angular;
+        } else {
+            alpha = alpha_hard;
+        }
 
         float alpha_over_h2 = alpha * inv_dt * inv_dt;
 
@@ -660,13 +793,40 @@ static void solve_joint_coupled(phys_constraint_t *c,
                             + alpha * inv_dt * row->lambda);
 
         /* Regularized effective mass denominator:
-         *   J·M⁻¹·J^T + α/h² + γ/h
+         *   J·M⁻¹·J^T + h²·K_geo + α/h² + γ/h
          * row->effective_mass = 1/(J·M⁻¹·J^T), so we need the raw
          * J·M⁻¹·J^T = 1/effective_mass. */
         float jmjt = (row->effective_mass > 1e-12f)
                     ? (1.0f / row->effective_mass)
                     : 1e12f;
-        float denom = jmjt + alpha_over_h2 + gamma_over_h;
+
+        /* Geometric stiffness correction for angular rows.
+         *
+         * The geometric stiffness matrix K_geo accounts for the change
+         * in constraint force direction as bodies rotate.  Without it,
+         * the solver overshoots the spherical constraint manifold,
+         * injecting radial energy.
+         *
+         * For orthogonal angular axes (cone-twist joint frame), the
+         * projected K_geo for row i simplifies to:
+         *   k_geo_i = -Σ_{j≠i} λ_j * ((n_j · n_i)² - 1) = Σ_{j≠i} |λ_j|
+         *
+         * Added to denominator as h² · k_geo to stabilize the solve. */
+        float k_geo = 0.0f;
+        if (row->flags & PHYS_ROW_FLAG_ANGULAR) {
+            for (uint8_t s = 0; s < c->row_count; s++) {
+                if (s == r) continue;
+                if (!(c->rows[s].flags & PHYS_ROW_FLAG_ANGULAR)) continue;
+                /* Use dot product between angular Jacobian axes to handle
+                 * non-orthogonal cases correctly.  For J_wb (body B axis):
+                 *   n_i · n_j gives the alignment between axes. */
+                float dot = vec3_dot(row->J_wb, c->rows[s].J_wb);
+                float contrib = dot * dot - 1.0f;  /* ≤ 0 for unit axes */
+                k_geo += fabsf(c->rows[s].lambda) * (-contrib);
+            }
+        }
+
+        float denom = jmjt + dt * dt * k_geo + alpha_over_h2 + gamma_over_h;
         float inv_denom = (denom > 1e-12f) ? (1.0f / denom) : 0.0f;
 
         float delta_lambda = numerator * inv_denom;
@@ -712,27 +872,14 @@ static void solve_joint_coupled(phys_constraint_t *c,
         bodies_mut[c->body_b].position =
             vec3_add(bodies_mut[c->body_b].position, dp_b);
 
-        /* Integrate orientation: q += 0.5 * dt * [0, ω] * q */
-        phys_quat_t qa = bodies_mut[c->body_a].orientation;
-        phys_quat_t qb = bodies_mut[c->body_b].orientation;
-
-        phys_quat_t dqa = {
-            0.5f * dt * (dv_ang_a.x * qa.w + dv_ang_a.y * qa.z - dv_ang_a.z * qa.y),
-            0.5f * dt * (-dv_ang_a.x * qa.z + dv_ang_a.y * qa.w + dv_ang_a.z * qa.x),
-            0.5f * dt * (dv_ang_a.x * qa.y - dv_ang_a.y * qa.x + dv_ang_a.z * qa.w),
-            0.5f * dt * (-dv_ang_a.x * qa.x - dv_ang_a.y * qa.y - dv_ang_a.z * qa.z)
-        };
-        qa.x += dqa.x; qa.y += dqa.y; qa.z += dqa.z; qa.w += dqa.w;
-        bodies_mut[c->body_a].orientation = quat_normalize_safe(qa, 1e-12f);
-
-        phys_quat_t dqb = {
-            0.5f * dt * (dv_ang_b.x * qb.w + dv_ang_b.y * qb.z - dv_ang_b.z * qb.y),
-            0.5f * dt * (-dv_ang_b.x * qb.z + dv_ang_b.y * qb.w + dv_ang_b.z * qb.x),
-            0.5f * dt * (dv_ang_b.x * qb.y - dv_ang_b.y * qb.x + dv_ang_b.z * qb.w),
-            0.5f * dt * (-dv_ang_b.x * qb.x - dv_ang_b.y * qb.y - dv_ang_b.z * qb.z)
-        };
-        qb.x += dqb.x; qb.y += dqb.y; qb.z += dqb.z; qb.w += dqb.w;
-        bodies_mut[c->body_b].orientation = quat_normalize_safe(qb, 1e-12f);
+        /* Integrate orientation using exponential map (symplectic).
+         * exp(0.5·dω·dt) * q stays on SO(3) exactly, unlike the Euler
+         * update q += 0.5·dt·Ω·q which drifts off the unit quaternion
+         * manifold and injects energy through normalization correction. */
+        bodies_mut[c->body_a].orientation = quat_integrate_expmap(
+            bodies_mut[c->body_a].orientation, dv_ang_a, dt);
+        bodies_mut[c->body_b].orientation = quat_integrate_expmap(
+            bodies_mut[c->body_b].orientation, dv_ang_b, dt);
     }
 }
 
@@ -871,10 +1018,17 @@ static void solve_one_constraint(phys_constraint_t *c,
                 eff_inv_dt = (float)ts / tick_dt;
             }
             const float comp_hard  = c->compliance * eff_inv_dt * eff_inv_dt;
+            const float comp_ang   = c->angular_compliance * eff_inv_dt * eff_inv_dt;
             const float comp_drive = c->drive_compliance * eff_inv_dt * eff_inv_dt;
             for (uint8_t r = 0; r < c->row_count; r++) {
-                float compliance_factor = (c->rows[r].flags & PHYS_ROW_FLAG_DRIVE)
-                                        ? comp_drive : comp_hard;
+                float compliance_factor;
+                if (c->rows[r].flags & PHYS_ROW_FLAG_DRIVE) {
+                    compliance_factor = comp_drive;
+                } else if ((c->rows[r].flags & PHYS_ROW_FLAG_ANGULAR) && comp_ang > 0.0f) {
+                    compliance_factor = comp_ang;
+                } else {
+                    compliance_factor = comp_hard;
+                }
                 float m_save = c->rows[r].effective_mass;
                 if (compliance_factor > 0.0f) {
                     float m = m_save / (1.0f + compliance_factor * m_save);
@@ -1075,50 +1229,10 @@ static void coupled_position_projection_(
                     1e-12f);
             }
 
-            /* Cone-twist joints: clamp child orientation to within limits.
-             * Extract the error quaternion, clamp each enabled axis to
-             * [min, max], and reconstruct the clamped child orientation. */
-            if (j->type == PHYS_JOINT_CONE_TWIST && j->limit_axes) {
-                phys_quat_t q_cur = quat_normalize_safe(
-                    quat_mul(bodies_mut[bb].orientation,
-                             quat_conjugate(bodies_mut[ba].orientation)),
-                    1e-12f);
-                phys_quat_t q_err = quat_normalize_safe(
-                    quat_mul(quat_conjugate(j->rest_relative_orient), q_cur),
-                    1e-12f);
-                if (q_err.w < 0.0f) {
-                    q_err.x = -q_err.x; q_err.y = -q_err.y;
-                    q_err.z = -q_err.z; q_err.w = -q_err.w;
-                }
-                /* Extract Euler angles and clamp violated axes. */
-                float ex = atan2f(2.0f*(q_err.w*q_err.x + q_err.y*q_err.z),
-                                  1.0f - 2.0f*(q_err.x*q_err.x + q_err.y*q_err.y));
-                float sy = 2.0f*(q_err.w*q_err.y - q_err.z*q_err.x);
-                if (sy >  1.0f) sy =  1.0f;
-                if (sy < -1.0f) sy = -1.0f;
-                float ey = asinf(sy);
-                float ez = atan2f(2.0f*(q_err.w*q_err.z + q_err.x*q_err.y),
-                                  1.0f - 2.0f*(q_err.y*q_err.y + q_err.z*q_err.z));
-                float angles[3] = {ex, ey, ez};
-                bool clamped = false;
-                for (int ax = 0; ax < 3; ++ax) {
-                    if (!(j->limit_axes & (1u << ax))) continue;
-                    if (angles[ax] < j->limit_min[ax]) {
-                        angles[ax] = j->limit_min[ax]; clamped = true;
-                    } else if (angles[ax] > j->limit_max[ax]) {
-                        angles[ax] = j->limit_max[ax]; clamped = true;
-                    }
-                }
-                if (clamped) {
-                    /* Rebuild child orientation: parent × rest × clamped_error */
-                    phys_quat_t q_clamped = quat_from_euler(
-                        angles[0], angles[1], angles[2]);
-                    bodies_mut[bb].orientation = quat_normalize_safe(
-                        quat_mul(bodies_mut[ba].orientation,
-                            quat_mul(j->rest_relative_orient, q_clamped)),
-                        1e-12f);
-                }
-            }
+            /* Angular limits are enforced by the solver's one-sided
+             * angular rows (velocity-level corrections).  No orientation
+             * clamping here — doing so without zeroing the corresponding
+             * angular velocity creates energy injection (double-correction). */
 
             /* Snap child position so joint anchors coincide exactly. */
             phys_vec3_t wa = vec3_add(bodies_mut[ba].position,
@@ -1311,6 +1425,23 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                                      args->tick_dt,
                                      args->tier_substep_counts,
                                      args->bodies_mut);
+            }
+
+            /* Implicit gyroscopic torque correction, once per body per
+             * iteration.  Solves (I + h·[ω×]·I)·ω_new = I·ω_old to
+             * prevent precession-driven energy injection in articulated
+             * chains with non-spherical inertia tensors. */
+            if (coupled) {
+                for (uint32_t b = 0; b < island->body_count; ++b) {
+                    uint32_t idx = island->body_indices[b];
+                    if (idx >= args->body_count) continue;
+                    if (args->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                    apply_gyroscopic_correction(
+                        &args->velocities[idx].angular,
+                        args->bodies_mut[idx].inv_inertia_diag,
+                        args->bodies_mut[idx].orientation,
+                        args->dt);
+                }
             }
         }
 

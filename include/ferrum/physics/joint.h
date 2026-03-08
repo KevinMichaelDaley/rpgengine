@@ -116,9 +116,15 @@ typedef struct phys_joint {
      * Seeded into rows at build time, written back after solve. */
     float cached_lambda[PHYS_JOINT_MAX_ROWS]; /**< Cached lambda per row. */
 
-    /** XPBD compliance (α) for this joint; 0 = perfectly stiff.
+    /** XPBD compliance (α) for positional rows; 0 = perfectly stiff.
      *  Propagated to constraint via phys_joint_build_constraints. */
     float compliance;
+
+    /** XPBD compliance for angular limit rows.  Allows angular limits
+     *  to be softer than positional rows, reducing spectral radius and
+     *  preventing angular corrections from destabilizing anchors.
+     *  0 = use same compliance as positional rows.  Typical: 0.001–0.01. */
+    float angular_compliance;
 
     /** Viscous damping coefficient; dissipates relative velocity at
      *  the joint.  Applied as an impulse opposing the constraint-space
