@@ -1391,7 +1391,7 @@ void phys_world_tick_parallel(phys_world_t *world,
 
         {
             static uint32_t contact_dbg_ticks = 0;
-            if (contact_dbg_ticks < 24 && sub == 0) {
+            if (contact_dbg_ticks < 120 && sub == 0) {
                 uint32_t halfspace_manifold_count = 0;
                 uint32_t halfspace_constraint_count = 0;
                 const phys_constraint_t *first_halfspace_constraint = NULL;

@@ -563,6 +563,10 @@ bool fskel_load(const char *path,
                 json_object_get(jd, "drive_flags"), 0.0f);
             bd->drive_compliance = jfloat_(
                 json_object_get(jd, "drive_compliance"), 0.0f);
+
+            /* CG solver inertia scaling (default 10.0). */
+            bd->mass_scale = jfloat_(
+                json_object_get(jd, "mass_scale"), 10.0f);
         }
     }
 

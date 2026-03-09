@@ -71,7 +71,10 @@ void phys_cg_assemble(cg_system_t *sys,
                       const struct phys_mat3 *inv_inertia_world,
                       const struct phys_velocity *velocities,
                       uint32_t body_count,
-                      float dt);
+                      float dt,
+                      const struct phys_joint *joints,
+                      uint32_t joint_count,
+                      const uint32_t *constraint_joint_indices);
 
 /**
  * @brief Run the projected CG solver.

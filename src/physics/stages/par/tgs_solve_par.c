@@ -1041,6 +1041,10 @@ static void solve_island(const tgs_solve_shared_t *shared,
                                            shared->body_count);
             phys_rebuild_island_all_constraints(island, &rebuild_args);
 
+            /* CG solve: joints + contacts solved simultaneously.
+             * Inertia scaling + Tikhonov regularization keep the
+             * condition number manageable despite the diagonal spread
+             * between contact and angular joint rows. */
             if (cg_ok) {
                 /* Assemble sparse system A·λ = b for joint rows. */
                 const phys_mat3_t *inv_I_use =
@@ -1054,13 +1058,153 @@ static void solve_island(const tgs_solve_shared_t *shared,
                                  inv_I_use,
                                  shared->velocities,
                                  shared->body_count,
-                                 solve_dt);
+                                 solve_dt,
+                                 shared->joints,
+                                 shared->joint_count,
+                                 shared->constraint_joint_indices);
 
                 if (cg_sys.n > 0 && !cg_sys.overflow) {
-                    /* Lambda was zeroed by cg_assemble; CG solves
-                     * for incremental Δλ directly. */
+                    /* Debug: condition number + gradient analysis. */
+                    {
+                        static _Atomic int _cg_cond_cnt = 0;
+                        int cv = _cg_cond_cnt++;
+                        /* Debug: count contacts in island. */
+                        if (cv < 5 || (cg_sys.n != 82 && cv % 200 == 0)) {
+                            uint32_t n_contact_c = 0, n_joint_c = 0;
+                            for (uint32_t _ci = 0; _ci < island->constraint_count; _ci++) {
+                                uint32_t _idx = island->constraint_indices[_ci];
+                                if (shared->constraints[_idx].is_joint) n_joint_c++;
+                                else n_contact_c++;
+                            }
+                            fprintf(stderr, "[CG-island] cv=%d island constraints=%u (joints=%u contacts=%u) cg_n=%u\n",
+                                    cv, island->constraint_count, n_joint_c, n_contact_c, cg_sys.n);
+                        }
+                        /* Print early (free fall) and late (ground contact). */
+                        if ((cv < 10) || (cv % 50 == 0) || (cv > 400 && cv < 420)) {
+                            /* Diagonal range → condition estimate. */
+                            float dmin = 1e30f, dmax = 0.0f;
+                            for (uint32_t _i = 0; _i < cg_sys.n; _i++) {
+                                float d = (cg_sys.diag_inv[_i] > 1e-20f)
+                                        ? (1.0f / cg_sys.diag_inv[_i]) : 0.0f;
+                                if (d > 0.0f && d < dmin) dmin = d;
+                                if (d > dmax) dmax = d;
+                            }
+                            float cond = (dmin > 1e-20f) ? (dmax / dmin) : 0.0f;
+
+                            /* Per-type RHS magnitude. */
+                            float rhs_pos = 0.0f, rhs_ang = 0.0f, rhs_contact = 0.0f;
+                            uint32_t n_pos = 0, n_ang = 0, n_contact = 0;
+                            for (uint32_t _i = 0; _i < cg_sys.n; _i++) {
+                                uint32_t ci = cg_sys.row_constraint[_i];
+                                const phys_constraint_t *cc = &shared->constraints[ci];
+                                const phys_jacobian_row_t *rr = &cc->rows[cg_sys.row_sub[_i]];
+                                float ab = fabsf(cg_sys.rhs[_i]);
+                                if (!cc->is_joint) {
+                                    rhs_contact += ab; n_contact++;
+                                } else if (rr->flags & PHYS_ROW_FLAG_ANGULAR) {
+                                    rhs_ang += ab; n_ang++;
+                                } else {
+                                    rhs_pos += ab; n_pos++;
+                                }
+                            }
+                            /* Per-type diagonal range. */
+                            float dmin_ang = 1e30f, dmax_ang = 0.0f;
+                            float dmin_pos = 1e30f, dmax_pos = 0.0f;
+                            float dmin_ct = 1e30f, dmax_ct = 0.0f;
+                            for (uint32_t _i = 0; _i < cg_sys.n; _i++) {
+                                uint32_t ci = cg_sys.row_constraint[_i];
+                                const phys_constraint_t *cc = &shared->constraints[ci];
+                                const phys_jacobian_row_t *rr = &cc->rows[cg_sys.row_sub[_i]];
+                                float d = (cg_sys.diag_inv[_i] > 1e-20f)
+                                        ? (1.0f / cg_sys.diag_inv[_i]) : 0.0f;
+                                if (d <= 0.0f) continue;
+                                if (!cc->is_joint) {
+                                    if (d < dmin_ct) dmin_ct = d;
+                                    if (d > dmax_ct) dmax_ct = d;
+                                } else if (rr->flags & PHYS_ROW_FLAG_ANGULAR) {
+                                    if (d < dmin_ang) dmin_ang = d;
+                                    if (d > dmax_ang) dmax_ang = d;
+                                } else {
+                                    if (d < dmin_pos) dmin_pos = d;
+                                    if (d > dmax_pos) dmax_pos = d;
+                                }
+                            }
+                            fprintf(stderr,
+                                "[CG-cond] #%d n=%u cond=%.1f diag=[%.4f,%.1f]\n"
+                                "  pos: n=%u rhs_sum=%.3f diag=[%.4f,%.3f]\n"
+                                "  ang: n=%u rhs_sum=%.3f diag=[%.4f,%.3f]\n"
+                                "  con: n=%u rhs_sum=%.3f diag=[%.4f,%.3f]\n",
+                                cv, cg_sys.n, (double)cond, (double)dmin, (double)dmax,
+                                n_pos, (double)rhs_pos,
+                                (double)(dmin_pos < 1e29f ? dmin_pos : 0.0f),
+                                (double)(dmax_pos > 0.0f ? dmax_pos : 0.0f),
+                                n_ang, (double)rhs_ang,
+                                (double)(dmin_ang < 1e29f ? dmin_ang : 0.0f),
+                                (double)(dmax_ang > 0.0f ? dmax_ang : 0.0f),
+                                n_contact, (double)rhs_contact,
+                                (double)(dmin_ct < 1e29f ? dmin_ct : 0.0f),
+                                (double)(dmax_ct > 0.0f ? dmax_ct : 0.0f));
+                            fflush(stderr);
+                        }
+                    }
+
+                    /* Per-row detail for angular violation rows. */
+                    {
+                        static _Atomic int _row_cnt = 0;
+                        int rv = _row_cnt++;
+                        if (rv > 7400 && rv < 7410) {
+                            for (uint32_t _i = 0; _i < cg_sys.n; _i++) {
+                                uint32_t ci = cg_sys.row_constraint[_i];
+                                const phys_constraint_t *cc = &shared->constraints[ci];
+                                const phys_jacobian_row_t *rr = &cc->rows[cg_sys.row_sub[_i]];
+                                if (!(rr->flags & PHYS_ROW_FLAG_ANGULAR)) continue;
+                                if (fabsf(rr->bias) < 0.01f) continue;
+                                float d = (cg_sys.diag_inv[_i] > 1e-20f)
+                                        ? (1.0f / cg_sys.diag_inv[_i]) : 0.0f;
+                                fprintf(stderr,
+                                    "  [row%u] c%u.%u b%u→b%u bias=%.3f rhs=%.3f diag=%.1f lam=[%.1f,%.1f]\n",
+                                    _i, ci, cg_sys.row_sub[_i],
+                                    cc->body_a, cc->body_b,
+                                    (double)rr->bias, (double)cg_sys.rhs[_i],
+                                    (double)d,
+                                    (double)cg_sys.lambda_min[_i],
+                                    (double)cg_sys.lambda_max[_i]);
+                            }
+                            fflush(stderr);
+                        }
+                    }
+
                     uint32_t cg_iters = phys_cg_solve(&cg_sys, 40, 1e-6f);
-                    (void)cg_iters;
+
+                    /* Post-solve residual breakdown. */
+                    {
+                        static _Atomic int _res_cnt = 0;
+                        int rc2 = _res_cnt++;
+                        if (rc2 > 7400 && rc2 < 7410) {
+                            float res_pos = 0.0f, res_ang = 0.0f, res_con = 0.0f;
+                            float lam_pos = 0.0f, lam_ang = 0.0f, lam_con = 0.0f;
+                            for (uint32_t _i = 0; _i < cg_sys.n; _i++) {
+                                uint32_t ci = cg_sys.row_constraint[_i];
+                                const phys_constraint_t *cc = &shared->constraints[ci];
+                                const phys_jacobian_row_t *rr = &cc->rows[cg_sys.row_sub[_i]];
+                                float r2 = cg_sys.residual[_i] * cg_sys.residual[_i];
+                                float al = fabsf(cg_sys.lambda[_i]);
+                                if (!cc->is_joint) {
+                                    res_con += r2; lam_con += al;
+                                } else if (rr->flags & PHYS_ROW_FLAG_ANGULAR) {
+                                    res_ang += r2; lam_ang += al;
+                                } else {
+                                    res_pos += r2; lam_pos += al;
+                                }
+                            }
+                            fprintf(stderr,
+                                "[CG-post] iters=%u res: pos=%.3e ang=%.3e con=%.3e | lam: pos=%.3f ang=%.3f con=%.3f\n",
+                                cg_iters,
+                                (double)res_pos, (double)res_ang, (double)res_con,
+                                (double)lam_pos, (double)lam_ang, (double)lam_con);
+                            fflush(stderr);
+                        }
+                    }
 
                     phys_cg_apply(&cg_sys, island,
                                   shared->constraints,
@@ -1075,9 +1219,6 @@ static void solve_island(const tgs_solve_shared_t *shared,
                 }
             }
 
-            /* Contacts are now included in the CG system — no
-             * separate TGS pass needed. */
-
             /* Implicit gyroscopic torque correction, once per body. */
             for (uint32_t b = 0; b < island->body_count; ++b) {
                 uint32_t idx = island->body_indices[b];
@@ -1089,6 +1230,21 @@ static void solve_island(const tgs_solve_shared_t *shared,
                     shared->bodies_mut[idx].orientation,
                     solve_dt);
             }
+        }
+
+        /* Position projection disabled — it teleports bodies without
+         * adjusting velocities, injecting energy.  The CG solver's
+         * pivot transforms handle position correction directly. */
+
+        /* Rebuild world_transform from solver state. */
+        for (uint32_t b = 0; b < island->body_count; ++b) {
+            uint32_t idx = island->body_indices[b];
+            if (idx >= shared->body_count) continue;
+            phys_body_t *body = &shared->bodies_mut[idx];
+            quat_to_mat4(body->orientation, &body->world_transform);
+            body->world_transform.m[12] = body->position.x;
+            body->world_transform.m[13] = body->position.y;
+            body->world_transform.m[14] = body->position.z;
         }
     } else {
         /* Non-coupled islands: standard per-constraint GS iteration. */
@@ -1137,15 +1293,8 @@ static void solve_island(const tgs_solve_shared_t *shared,
         }
     }
 
-    /* Coupled islands: the solver wrote final positions directly.
-     * Run position projection, write back velocities, mark skip_body. */
+    /* Coupled islands: write back velocities, mark skip_body. */
     if (coupled) {
-        coupled_position_projection_par_(
-            island, shared->constraints,
-            shared->constraint_joint_indices,
-            shared->joints, shared->joint_count,
-            shared->bodies_mut, shared->body_count);
-
         for (uint32_t b = 0; b < island->body_count; ++b) {
             uint32_t idx = island->body_indices[b];
             if (idx >= shared->body_count) continue;

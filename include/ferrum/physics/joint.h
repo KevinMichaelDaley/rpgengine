@@ -155,6 +155,12 @@ typedef struct phys_joint {
      *  Typical values: 0.01 (stiff), 0.1 (medium), 1.0 (very soft). */
     float drive_compliance;
 
+    /** CG solver inertia scaling factor for this joint.
+     *  Joint bodies appear this many times heavier in the CG system
+     *  matrix, improving condition number when contacts are present.
+     *  Default: 10.0.  Set from bone_joint_desc_t at entity creation. */
+    float mass_scale;
+
     /* Solver output (populated by build functions). */
     uint8_t row_count;          /**< Number of active rows after build. */
     phys_jacobian_row_t rows[PHYS_JOINT_MAX_ROWS]; /**< Jacobian rows. */

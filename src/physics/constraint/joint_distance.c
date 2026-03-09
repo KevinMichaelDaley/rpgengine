@@ -29,6 +29,7 @@ void phys_joint_init(phys_joint_t *joint) {
     joint->body_b = UINT32_MAX;
     joint->ik_target_body = UINT32_MAX;
     joint->rest_relative_orient = (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f};
+    joint->mass_scale = 10.0f;
 }
 
 void phys_joint_build_distance(phys_joint_t *joint,

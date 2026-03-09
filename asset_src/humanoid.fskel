@@ -84,9 +84,10 @@
     "limit_axes": 0,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
-    "break_strength": 0.0
+    "break_strength": 0.0,
+    "mass_scale": 5.0
    }
   },
   {
@@ -146,7 +147,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 3.0,
+    "mass": 15.0,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -170,11 +171,12 @@
      -0.0
     ],
     "limit_axes": 0,
-    "stiffness": 10000.0,
-    "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "stiffness": 6000.0,
+    "angular_compliance": 0.0010000000474974513,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 15.0,
     "anchor_a": [
      -0.0030032414942979813,
      0.7961660623550415,
@@ -244,7 +246,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 3.0,
+    "mass": 12.0,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -258,21 +260,22 @@
     ],
     "rest_length": 0.0,
     "limit_min": [
-     -0.3490658402442932,
-     -1.0471975803375244,
-     -1.1344640254974365
+     -0.7853981852531433,
+     -0.7853981852531433,
+     -0.7853981852531433
     ],
     "limit_max": [
-     1.6580628156661987,
-     1.0471975803375244,
-     1.1344640254974365
+     0.7853981852531433,
+     0.7853981852531433,
+     0.7853981852531433
     ],
-    "limit_axes": 7,
+    "limit_axes": 2,
     "stiffness": 10000.0,
-    "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "angular_compliance": 0.0020000000949949026,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 8.0,
     "anchor_a": [
      -0.02079978585243225,
      0.9812717437744141,
@@ -342,7 +345,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 1.0499999523162842,
+    "mass": 3.5,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -357,20 +360,21 @@
     "rest_length": 0.0,
     "limit_min": [
      -0.6981316804885864,
-     -0.5235987901687622,
-     -1.0471975803375244
+     -0.6981316804885864,
+     -0.6981316804885864
     ],
     "limit_max": [
      0.6981316804885864,
-     0.5235987901687622,
-     1.0471975803375244
+     0.6981316804885864,
+     0.6981316804885864
     ],
     "limit_axes": 7,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 2.0,
     "anchor_a": [
      -0.02079978585243225,
      1.2511920928955078,
@@ -440,7 +444,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 2.0,
+    "mass": 3.5,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 6
@@ -466,9 +470,10 @@
     "limit_axes": 7,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 2.0,
     "anchor_a": [
      -0.020567335188388824,
      1.439668893814087,
@@ -538,7 +543,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 0.5,
+    "mass": 3.0,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 0
@@ -564,9 +569,10 @@
     "limit_axes": 0,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 5.0,
     "drive_flags": 3,
     "drive_compliance": 1.0,
     "anchor_a": [
@@ -638,7 +644,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 1.0,
+    "mass": 2.0999999046325684,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -661,12 +667,13 @@
      2.7925267219543457,
      2.7925267219543457
     ],
-    "limit_axes": 7,
+    "limit_axes": 0,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 5.0,
     "anchor_a": [
      -0.22560419142246246,
      1.2595093250274658,
@@ -759,12 +766,13 @@
      0.5235987901687622,
      1.483529806137085
     ],
-    "limit_axes": 7,
+    "limit_axes": 2,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 1.0,
     "anchor_a": [
      -0.39934277534484863,
      1.3394817113876343,
@@ -834,7 +842,7 @@
     ],
     "ccd": true,
     "kinematic": false,
-    "mass": 1.0,
+    "mass": 1.399999976158142,
     "hull_offset": 0,
     "hull_count": 26,
     "collision_group": 4
@@ -857,12 +865,13 @@
      1.5707963705062866,
      0.0872664600610733
     ],
-    "limit_axes": 7,
+    "limit_axes": 5,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 10.0,
     "anchor_a": [
      -0.6127059459686279,
      1.3860127925872803,
@@ -932,7 +941,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 0.5,
+    "mass": 3.0,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -958,9 +967,10 @@
     "limit_axes": 0,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 5.0,
     "drive_flags": 3,
     "drive_compliance": 1.0,
     "anchor_a": [
@@ -1032,7 +1042,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 1.0,
+    "mass": 2.0999999046325684,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -1055,12 +1065,13 @@
      2.7925267219543457,
      2.7925267219543457
     ],
-    "limit_axes": 7,
+    "limit_axes": 0,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 5.0,
     "anchor_a": [
      0.1518002152442932,
      1.2749059200286865,
@@ -1153,12 +1164,13 @@
      0.5235987901687622,
      1.483529806137085
     ],
-    "limit_axes": 7,
+    "limit_axes": 2,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 1.0,
     "anchor_a": [
      0.2981278896331787,
      1.3399735689163208,
@@ -1228,7 +1240,7 @@
     ],
     "ccd": true,
     "kinematic": false,
-    "mass": 1.0,
+    "mass": 1.399999976158142,
     "hull_offset": 26,
     "hull_count": 24,
     "collision_group": 5
@@ -1251,12 +1263,13 @@
      1.5707963705062866,
      0.5235987901687622
     ],
-    "limit_axes": 7,
+    "limit_axes": 5,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 10.0,
     "anchor_a": [
      0.4957541823387146,
      1.3804137706756592,
@@ -1326,7 +1339,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 2.0,
+    "mass": 8.0,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -1340,21 +1353,22 @@
     ],
     "rest_length": 0.0,
     "limit_min": [
-     -1.2217304706573486,
+     -0.6981316804885864,
      -0.3490658402442932,
      -0.5235987901687622
     ],
     "limit_max": [
-     1.2217304706573486,
+     0.6981316804885864,
      2.268928050994873,
      0.5235987901687622
     ],
-    "limit_axes": 7,
+    "limit_axes": 5,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 10.0,
     "anchor_a": [
      -0.1368972212076187,
      0.7961660623550415,
@@ -1424,7 +1438,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 3.0,
+    "mass": 3.5,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 2
@@ -1447,12 +1461,13 @@
      0.0872664600610733,
      0.13962633907794952
     ],
-    "limit_axes": 7,
+    "limit_axes": 5,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 20.0,
     "anchor_a": [
      -0.3440527319908142,
      0.43973588943481445,
@@ -1545,12 +1560,13 @@
      0.1745329201221466,
      0.5235987901687622
     ],
-    "limit_axes": 7,
+    "limit_axes": 4,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 20.0,
     "anchor_a": [
      -0.5907986164093018,
      0.023601945489645004,
@@ -1620,7 +1636,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 2.0,
+    "mass": 8.0,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 7
@@ -1634,21 +1650,22 @@
     ],
     "rest_length": 0.0,
     "limit_min": [
-     -1.2217304706573486,
+     -0.6981316804885864,
      -0.3490658402442932,
      -0.5235987901687622
     ],
     "limit_max": [
-     1.2217304706573486,
+     0.6981316804885864,
      2.268928050994873,
      0.5235987901687622
     ],
-    "limit_axes": 7,
+    "limit_axes": 5,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 10.0,
     "anchor_a": [
      0.11251717805862427,
      0.7961660623550415,
@@ -1718,7 +1735,7 @@
     ],
     "ccd": false,
     "kinematic": false,
-    "mass": 3.0,
+    "mass": 3.5,
     "hull_offset": 0,
     "hull_count": 0,
     "collision_group": 1
@@ -1741,12 +1758,13 @@
      0.0872664600610733,
      0.13962633907794952
     ],
-    "limit_axes": 7,
+    "limit_axes": 4,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 20.0,
     "anchor_a": [
      0.3003665506839752,
      0.4232814610004425,
@@ -1839,12 +1857,13 @@
      0.1745329201221466,
      0.5235987901687622
     ],
-    "limit_axes": 7,
+    "limit_axes": 5,
     "stiffness": 10000.0,
     "angular_compliance": 0.0005000000237487257,
-    "damping": 0.75,
+    "damping": 0.5,
     "yield_strength": 0.0,
     "break_strength": 0.0,
+    "mass_scale": 20.0,
     "anchor_a": [
      0.5179595947265625,
      0.02838096022605896,

@@ -784,6 +784,7 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "damping": pb.talarium_joint_damping,
             "yield_strength": pb.talarium_joint_yield_strength,
             "break_strength": pb.talarium_joint_break_strength,
+            "mass_scale": pb.talarium_joint_mass_scale,
         }
 
         # Drive flags: bit 0 = angular drive, bit 1 = linear drive.
@@ -1145,6 +1146,13 @@ _BONE_PROPS = {
                     "0.1 = medium, 1.0 = very soft, 10.0 = barely there",
         default=1.0, min=0.0, soft_max=100.0,
     ),
+    "talarium_joint_mass_scale": FloatProperty(
+        name="Mass Scale",
+        description="CG solver inertia scaling.  Joint bodies appear "
+                    "this many times heavier, reducing condition number "
+                    "when contacts are present.  Default 10",
+        default=10.0, min=1.0, soft_max=100.0,
+    ),
 }
 
 
@@ -1454,12 +1462,14 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
 # ── XPBD stability estimator (lightweight, runs in Blender) ──────
 
 class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
-    """Estimate XPBD spectral radius for the current skeleton.
+    """Estimate XPBD spectral radius and CG condition number.
 
-    Builds a simplified per-joint effective-mass model and computes
-    the worst-case amplification factor across all constraint rows.
-    Reports whether the system is stable (ρ < 1), marginally stable
-    (ρ ≈ 1), or unstable (ρ > 1).
+    Builds a simplified per-joint effective-mass model and computes:
+    1. Worst-case spectral radius across all constraint rows.
+    2. Approximate condition number of the CG system matrix
+       (ratio of largest to smallest diagonal entry).
+
+    Reports stability (ρ < 1) and condition number warnings (κ > 50).
     """
     bl_idname = "armature.talarium_validate_stability"
     bl_label = "Check Stability"
@@ -1471,8 +1481,36 @@ class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
                 context.active_object.type == 'ARMATURE' and
                 context.mode == 'POSE')
 
+    @staticmethod
+    def _estimate_inertia(pb, mass):
+        """Estimate principal inertia from collider shape."""
+        shape = pb.talarium_collision_shape
+        if shape == '1':  # Capsule
+            r = pb.talarium_capsule_radius
+            h = pb.talarium_capsule_height
+            # Solid cylinder approximation
+            Iax = 0.5 * mass * r * r
+            Iperp = mass * (3 * r * r + h * h) / 12.0
+            return (Iax, Iperp, Iperp)
+        elif shape == '2':  # Box
+            hx = pb.talarium_box_hx
+            hy = pb.talarium_box_hy
+            hz = pb.talarium_box_hz
+            return (mass * (hy*hy + hz*hz) / 3.0,
+                    mass * (hx*hx + hz*hz) / 3.0,
+                    mass * (hx*hx + hy*hy) / 3.0)
+        elif shape == '3':  # Sphere
+            r = pb.talarium_sphere_radius
+            I = 0.4 * mass * r * r
+            return (I, I, I)
+        else:
+            # Default: unit sphere
+            I = 0.4 * mass * 0.1 * 0.1
+            return (I, I, I)
+
     def execute(self, context):
         arm_obj = context.active_object
+        armature = arm_obj.data
 
         # Collect masses and compliance per joint.
         dt = 1.0 / 60.0
@@ -1480,6 +1518,9 @@ class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
         h = dt / substeps
         worst_rho = 0.0
         worst_bone = ""
+
+        # Condition number estimation: collect diagonal values.
+        diag_values = []
 
         for pb in arm_obj.pose.bones:
             bone = pb.bone
@@ -1492,7 +1533,6 @@ class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
 
             compliance = pb.talarium_joint_stiffness
             if compliance > 0:
-                # Stiffness → compliance: α = 1/k
                 alpha = 1.0 / compliance
             else:
                 alpha = 0.0
@@ -1502,23 +1542,56 @@ class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
             if mass <= 0:
                 mass = 1.0
 
-            # For a bilateral positional constraint between two bodies
-            # of equal mass m, effective mass w = 2/m.
-            # XPBD diagonal: w + α̃·(1 + β), where α̃ = α/h² and
-            # β is the dimensionless damping ratio.
-            # κ = w / (w + α̃·(1 + β))
-            # Spectral radius ρ = sqrt(1 - κ)
             w = 2.0 / mass
             alpha_tilde = alpha / (h * h)
-
             beta = pb.talarium_joint_damping
             kappa = w / (w + alpha_tilde * (1.0 + beta))
-
             rho = math.sqrt(abs(1.0 - kappa))
             if rho > worst_rho:
                 worst_rho = rho
                 worst_bone = bone.name
 
+            # Condition number: estimate diagonal of J·M⁻¹·Jᵀ.
+            inv_mass = 1.0 / mass
+            Ix, Iy, Iz = self._estimate_inertia(pb, mass)
+            inv_Ix = 1.0 / Ix if Ix > 1e-12 else 0.0
+            inv_Iy = 1.0 / Iy if Iy > 1e-12 else 0.0
+            inv_Iz = 1.0 / Iz if Iz > 1e-12 else 0.0
+
+            bone_mass_scale = pb.talarium_joint_mass_scale
+
+            # Positional rows: J_v = unit axis, J_w = cross(r, axis).
+            # Diagonal ≈ 2 * inv_mass (two bodies).
+            # With mass_scale applied to joint rows:
+            pos_diag = 2.0 * inv_mass / bone_mass_scale
+            ang_compliance = pb.talarium_joint_angular_compliance
+            alpha_ang = ang_compliance if ang_compliance > 0 else alpha
+            alpha_ang_tilde = alpha_ang / (h * h)
+
+            # Angular rows: J_w = unit axis.
+            # Diagonal ≈ inv_Ix + inv_Iy (two-body, worst case).
+            # With mass_scale:
+            ang_diags = [
+                (inv_Ix + inv_Iy) / bone_mass_scale + alpha_ang_tilde,
+                (inv_Iy + inv_Iz) / bone_mass_scale + alpha_ang_tilde,
+                (inv_Ix + inv_Iz) / bone_mass_scale + alpha_ang_tilde,
+            ]
+
+            for _ in range(3):  # 3 positional rows
+                diag_values.append(pos_diag + alpha_tilde)
+            for d in ang_diags:
+                diag_values.append(d)
+
+        # Compute condition number.
+        cond_number = 0.0
+        if diag_values:
+            d_min = min(v for v in diag_values if v > 1e-12)
+            d_max = max(diag_values)
+            if d_min > 1e-12:
+                cond_number = d_max / d_min
+
+        # Report spectral radius.
+        messages = []
         if worst_rho > 1.01:
             self.report({'ERROR'},
                         f"UNSTABLE: ρ = {worst_rho:.4f} at '{worst_bone}'. "
@@ -1528,9 +1601,20 @@ class ARMATURE_OT_talarium_validate_stability(bpy.types.Operator):
                         f"Marginally stable: ρ = {worst_rho:.4f} at "
                         f"'{worst_bone}'. May oscillate under load.")
         else:
-            self.report({'INFO'},
-                        f"Stable: worst ρ = {worst_rho:.4f} "
-                        f"('{worst_bone}') ✓")
+            messages.append(f"ρ = {worst_rho:.4f} ('{worst_bone}')")
+
+        # Report condition number.
+        if cond_number > 50.0:
+            self.report({'WARNING'},
+                        f"CG condition number {cond_number:.1f} > 50. "
+                        "Increase mass_scale or add compliance.")
+        else:
+            cond_msg = f"κ = {cond_number:.1f}"
+            if messages:
+                self.report({'INFO'},
+                            f"Stable: {messages[0]}, {cond_msg}")
+            else:
+                self.report({'INFO'}, f"Condition: {cond_msg}")
 
         return {'FINISHED'}
 
@@ -1708,6 +1792,7 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
         for prop in ("talarium_joint_stiffness",
                      "talarium_joint_angular_compliance",
                      "talarium_joint_damping",
+                     "talarium_joint_mass_scale",
                      "talarium_joint_yield_strength",
                      "talarium_joint_break_strength"):
             row = phys_col.row(align=True)
@@ -2091,6 +2176,7 @@ def unregister():
 
     if hasattr(bpy.types.Scene, 'talarium_show_collision'):
         del bpy.types.Scene.talarium_show_collision
+
 
 
 if __name__ == "__main__":

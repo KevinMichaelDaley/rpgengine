@@ -49,27 +49,64 @@ static void build_positional_row(phys_jacobian_row_t *row,
 }
 
 /**
- * @brief Decompose error quaternion into per-axis rotation vector components.
+ * @brief Decompose error quaternion into swing-twist representation.
  *
- * Converts q to axis-angle, then returns the rotation vector (axis * angle).
- * The components of this vector give per-axis angular errors that are
- * self-consistent with the Jacobian axes, unlike Euler angles which
- * couple across axes and cause energy injection.
+ * The twist axis is the joint's local X axis (index 0).  The error
+ * quaternion q is factored as q = q_swing * q_twist, where:
+ *   q_twist = normalize(q.w, q.x, 0, 0)  (rotation about X)
+ *   q_swing = q * conj(q_twist)           (rotation in YZ plane)
+ *
+ * Returns:
+ *   twist_angle  — signed rotation about X (radians)
+ *   swing_y      — swing component about Y (radians)
+ *   swing_z      — swing component about Z (radians)
+ *
+ * Unlike rotation-vector decomposition, swing-twist components are
+ * geometrically independent: twist doesn't affect swing and vice versa.
+ * This avoids the axis coupling that causes energy injection at large
+ * angles with rotation-vector decomposition.
  */
-static void quat_to_rotation_vector(phys_quat_t q, float out[3]) {
-    float vx = q.x, vy = q.y, vz = q.z, vw = q.w;
-    float sin_half = sqrtf(vx * vx + vy * vy + vz * vz);
-    float scale;
-    if (sin_half > 1e-6f) {
-        float half_angle = atan2f(sin_half, vw);
-        scale = 2.0f * half_angle / sin_half;
+static void quat_to_swing_twist(phys_quat_t q,
+                                 float *twist_angle,
+                                 float *swing_y,
+                                 float *swing_z)
+{
+    /* Extract twist quaternion: projection of q onto twist axis (X).
+     * q_twist = normalize(w, x, 0, 0). */
+    float tw = q.w, tx = q.x;
+    float twist_len = sqrtf(tw * tw + tx * tx);
+    if (twist_len > 1e-8f) {
+        tw /= twist_len;
+        tx /= twist_len;
     } else {
-        /* Small angle: rotation_vector ≈ 2 * (x, y, z). */
-        scale = 2.0f;
+        /* Degenerate: 180° swing, no twist info recoverable. */
+        tw = 1.0f;
+        tx = 0.0f;
     }
-    out[0] = vx * scale;
-    out[1] = vy * scale;
-    out[2] = vz * scale;
+
+    /* Twist angle from the twist quaternion. */
+    *twist_angle = 2.0f * atan2f(tx, tw);
+
+    /* Swing quaternion: q_swing = q * conj(q_twist).
+     * conj(q_twist) = (tw, -tx, 0, 0). */
+    phys_quat_t q_twist_conj = {-tx, 0.0f, 0.0f, tw};
+    phys_quat_t q_swing = quat_mul(q, q_twist_conj);
+
+    /* Swing Y and Z from the swing quaternion's axis-angle.
+     * q_swing ≈ (cos(θ/2), 0, sin(θ/2)·ŷ, sin(θ/2)·ẑ) for small swing.
+     * For arbitrary swing, extract the full rotation vector. */
+    float sy = q_swing.y, sz = q_swing.z, sw = q_swing.w;
+    float sin_half = sqrtf(sy * sy + sz * sz);
+    if (sin_half > 1e-8f) {
+        float half_angle = atan2f(sin_half, fabsf(sw));
+        float scale = 2.0f * half_angle / sin_half;
+        if (sw < 0.0f) scale = -scale;
+        *swing_y = sy * scale;
+        *swing_z = sz * scale;
+    } else {
+        *swing_y = 2.0f * sy;
+        *swing_z = 2.0f * sz;
+    }
 }
 
 void phys_joint_build_cone_twist(phys_joint_t *joint,
@@ -176,17 +213,29 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
     uint8_t angular_drive = (joint->flags & PHYS_JOINT_FLAG_ANGULAR_DRIVE)
                             ? 1 : 0;
 
-    /* Decompose error quaternion into per-axis rotation vector.
-     * Unlike Euler angles, rotation vector components are independent
-     * and self-consistent with the angular Jacobian axes. */
-    float rot_vec[3];
-    quat_to_rotation_vector(q_error, rot_vec);
+    /* Swing-twist decomposition of the error quaternion.
+     *
+     * The twist axis is the joint's local X (bone longitudinal axis).
+     * Swing is the rotation of that axis in the YZ plane.  Unlike
+     * rotation-vector decomposition, swing and twist are geometrically
+     * independent — changing twist doesn't affect swing and vice versa.
+     * This eliminates cross-axis coupling that causes energy injection
+     * at large angles, and reduces 3 overconstrained rows to 2-3
+     * properly independent DOFs. */
+    float twist_angle, swing_y, swing_z;
+    quat_to_swing_twist(q_error, &twist_angle, &swing_y, &swing_z);
+
+    /* Map swing-twist components to the limit axes:
+     *   axis 0 (X) → twist
+     *   axis 1 (Y) → swing_y
+     *   axis 2 (Z) → swing_z */
+    float st_angles[3] = {twist_angle, swing_y, swing_z};
 
     uint8_t rc = 3;  /* First 3 rows are positional. */
     for (int i = 0; i < 3; ++i) {
         if (!(joint->limit_axes & (1u << i))) continue;
 
-        float angle = rot_vec[i];
+        float angle = st_angles[i];
         float lo = joint->limit_min[i];
         float hi = joint->limit_max[i];
 
@@ -195,26 +244,17 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         uint8_t is_drive = 0;
 
         if (angle < lo) {
-            /* Already past lower limit — need positive impulse to
-             * increase angle back toward lo. */
             ang_error = angle - lo;
             lmin = 0.0f;
             lmax = JOINT_LAMBDA_BIG;
         } else if (angle > hi) {
-            /* Already past upper limit — need negative impulse to
-             * decrease angle back toward hi. */
             ang_error = angle - hi;
             lmin = -JOINT_LAMBDA_BIG;
             lmax = 0.0f;
         } else {
-            /* Within limits — bilateral speculative row.  The bias is
-             * zero (no correction needed) but the row is active so the
-             * CG solver can apply impulses in EITHER direction to resist
-             * external forces (gravity, contacts).  One-sided bounds
-             * would block the solver via residual masking, causing it to
-             * exit with zero lambda even when large forces act on the
-             * joint.  The coupled CG solver's projected bounds + residual
-             * masking make one-sided speculative rows effectively dead. */
+            /* Within limits — bilateral speculative row.  Bias is zero
+             * but the row is active so the CG solver can resist external
+             * forces in either direction. */
             ang_error = 0.0f;
             if (angular_drive) {
                 is_drive = 1;
@@ -228,19 +268,15 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
 
         phys_jacobian_row_t *row = &joint->rows[rc];
         memset(row, 0, sizeof(*row));
-        /* Lever-arm cross products are required for ALL angular rows
-         * (violation + speculative) because the joint anchor is off the
-         * body's center of mass.  An angular impulse about an off-COM
-         * pivot produces both torque AND linear force on the body.
-         * Without the lever-arm terms, the effective mass is wrong and
-         * the solver under-corrects, leading to massive limit blowthrough. */
+        /* Lever-arm cross products on ALL angular rows because the
+         * joint anchor is off the body's COM. */
         row->J_va = vec3_scale(vec3_cross(rA, world_axis), -1.0f);
         row->J_vb = vec3_cross(rB, world_axis);
         row->J_wa = vec3_scale(world_axis, -1.0f);
         row->J_wb = world_axis;
         row->lambda_min = lmin;
         row->lambda_max = lmax;
-        row->lambda = is_drive ? 0.0f : 0.0f;
+        row->lambda = 0.0f;
         row->bias = ang_error;
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR

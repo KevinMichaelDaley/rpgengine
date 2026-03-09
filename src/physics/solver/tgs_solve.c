@@ -1456,7 +1456,10 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                                      inv_I_use,
                                      args->velocities,
                                      args->body_count,
-                                     args->dt);
+                                     args->dt,
+                                     args->joints,
+                                     args->joint_count,
+                                     args->constraint_joint_indices);
 
                     if (cg_sys.n > 0 && !cg_sys.overflow) {
                         /* Lambda was zeroed by cg_assemble; CG solves

@@ -88,6 +88,13 @@ typedef struct bone_joint_desc {
      *  independently from the hard constraint compliance.
      *  Higher = softer.  Typical: 0.1 (medium), 1.0 (very soft). */
     float    drive_compliance;
+
+    /** CG solver inertia scaling factor.  Joint bodies appear this
+     *  many times heavier to the CG solver, reducing the condition
+     *  number of the system matrix when contacts are present.
+     *  Default: 10.0.  Larger values improve conditioning but reduce
+     *  solver accuracy for joint constraints. */
+    float    mass_scale;
 } bone_joint_desc_t;
 
 #ifdef __cplusplus

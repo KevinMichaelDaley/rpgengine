@@ -746,6 +746,8 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 j->damping = jd->damping;
                 j->yield_strength = jd->yield_strength;
                 j->break_strength = jd->break_strength;
+                j->mass_scale = (jd->mass_scale > 0.0f)
+                    ? jd->mass_scale : 10.0f;
 
                 /* Drive flags and compliance from Blender exporter. */
                 j->flags = jd->drive_flags;

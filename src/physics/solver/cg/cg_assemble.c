@@ -9,6 +9,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/island.h"
+#include "ferrum/physics/joint.h"
 #include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/tgs_solve.h"
 #include "ferrum/math/vec3.h"
@@ -65,17 +66,26 @@ static void get_jacobian_block(const phys_jacobian_row_t *row,
  *   diag(inv_mass, inv_mass, inv_mass) for linear,
  *   inv_inertia_world (3×3) for angular.
  */
+/** Tikhonov regularization: added to every diagonal entry.
+ *  Provides a lower bound on the diagonal, preventing near-singular
+ *  rows from blowing up the preconditioner.  Keep small relative to
+ *  the smallest physical diagonal (~0.5 for contacts). */
+#define TIKHONOV_EPS 0.01f
+
 static float compute_coupling(const float Ji[6], const float Jj[6],
                               float inv_mass,
-                              const phys_mat3_t *inv_I)
+                              const phys_mat3_t *inv_I,
+                              float mass_scale)
 {
     /* Linear contribution: Ji_lin · (inv_mass · I) · Jj_lin */
-    float lin = inv_mass * (Ji[0]*Jj[0] + Ji[1]*Jj[1] + Ji[2]*Jj[2]);
+    float lin = inv_mass * mass_scale *
+                (Ji[0]*Jj[0] + Ji[1]*Jj[1] + Ji[2]*Jj[2]);
 
     /* Angular contribution: Ji_ang · inv_I · Jj_ang */
     phys_vec3_t Jj_ang = {Jj[3], Jj[4], Jj[5]};
     phys_vec3_t iI_Jj = phys_mat3_mul_vec3(inv_I, Jj_ang);
-    float ang = Ji[3]*iI_Jj.x + Ji[4]*iI_Jj.y + Ji[5]*iI_Jj.z;
+    float ang = mass_scale *
+                (Ji[3]*iI_Jj.x + Ji[4]*iI_Jj.y + Ji[5]*iI_Jj.z);
 
     return lin + ang;
 }
@@ -87,7 +97,10 @@ void phys_cg_assemble(cg_system_t *sys,
                       const phys_mat3_t *inv_inertia_world,
                       const phys_velocity_t *velocities,
                       uint32_t body_count,
-                      float dt)
+                      float dt,
+                      const phys_joint_t *joints,
+                      uint32_t joint_count,
+                      const uint32_t *constraint_joint_indices)
 {
     if (!sys || !island || !constraints || !bodies || !velocities) {
         if (sys) sys->n = 0;
@@ -98,24 +111,37 @@ void phys_cg_assemble(cg_system_t *sys,
     sys->n = 0;
     sys->overflow = 0;
 
-    /* ---- Pass 1: Collect all joint rows into the CG system ---- */
+    /* ---- Pass 1: Collect all constraint rows into the CG system ---- */
 
     /* Temporary: map (constraint_index, row_index) → CG row index.
      * We also need to know which CG rows share a body for coupling.
      *
-     * For each CG row, store the body_a, body_b it references. */
+     * For each CG row, store the body_a, body_b it references and the
+     * per-joint mass_scale (1.0 for contacts). */
     uint32_t cg_body_a[CG_MAX_ROWS];
     uint32_t cg_body_b[CG_MAX_ROWS];
+    float    cg_mass_scale[CG_MAX_ROWS];
 
     for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
         uint32_t c_idx = island->constraint_indices[ci];
         const phys_constraint_t *c = &constraints[c_idx];
 
-        /* Include both joints and contacts in the CG system. */
         if (c->body_a >= body_count || c->body_b >= body_count) continue;
 
-        /* Track the CG index of row 0 (normal) for contact constraints,
-         * so friction rows can reference it for cone projection. */
+        /* Look up the per-joint mass_scale for this constraint.
+         * Contacts get mass_scale = 1.0 (no scaling). */
+        float row_mass_scale = 1.0f;
+        if (c->is_joint && joints && constraint_joint_indices) {
+            uint32_t ji = constraint_joint_indices[c_idx];
+            if (ji < joint_count && joints[ji].mass_scale > 0.0f) {
+                row_mass_scale = joints[ji].mass_scale;
+            } else {
+                row_mass_scale = 10.0f; /* default */
+            }
+        }
+
+        /* Track the CG index of the contact normal row (row 0) so
+         * friction tangent rows can reference it for Coulomb clamping. */
         uint32_t normal_cg_idx = UINT32_MAX;
 
         for (uint8_t r = 0; r < c->row_count; r++) {
@@ -128,18 +154,18 @@ void phys_cg_assemble(cg_system_t *sys,
             sys->row_sub[idx] = r;
             cg_body_a[idx] = c->body_a;
             cg_body_b[idx] = c->body_b;
+            cg_mass_scale[idx] = row_mass_scale;
 
-            /* Store accumulated lambda for RHS compliance feedback,
-             * but initialize CG solution to zero — we solve for
-             * the incremental Δλ, not the total. */
             sys->lambda[idx] = c->rows[r].lambda;
             sys->lambda_min[idx] = c->rows[r].lambda_min;
             sys->lambda_max[idx] = c->rows[r].lambda_max;
 
-            /* Friction cone mapping: for contacts (is_joint==0),
-             * row 0 is the normal, rows 1-2 are friction tangents.
-             * Map friction rows to their normal row's CG index. */
-            if (c->is_joint == 0) {
+            if (c->is_joint) {
+                /* No friction cone for joints. */
+                sys->friction_normal_cg_row[idx] = UINT32_MAX;
+                sys->friction_coeff[idx] = 0.0f;
+            } else {
+                /* Contact: row 0 = normal, rows 1-2 = friction tangents. */
                 if (r == 0) {
                     normal_cg_idx = idx;
                     sys->friction_normal_cg_row[idx] = UINT32_MAX;
@@ -148,9 +174,6 @@ void phys_cg_assemble(cg_system_t *sys,
                     sys->friction_normal_cg_row[idx] = normal_cg_idx;
                     sys->friction_coeff[idx] = c->friction;
                 }
-            } else {
-                sys->friction_normal_cg_row[idx] = UINT32_MAX;
-                sys->friction_coeff[idx] = 0.0f;
             }
 
             sys->n++;
@@ -178,6 +201,15 @@ void phys_cg_assemble(cg_system_t *sys,
             const phys_constraint_t *cj_c = &constraints[sys->row_constraint[j]];
             const phys_jacobian_row_t *rj = &cj_c->rows[sys->row_sub[j]];
 
+            /* Inertia scaling: when either row is a joint, scale down
+             * inv_mass/inv_I to reduce joint diagonals closer to contact
+             * diagonals, improving condition number.  Use the larger
+             * mass_scale of the two rows (more aggressive scaling). */
+            float ms_i = cg_mass_scale[i];
+            float ms_j = cg_mass_scale[j];
+            float ms = (ms_i > ms_j) ? ms_i : ms_j;
+            float mass_scale = (ms > 1.0f) ? (1.0f / ms) : 1.0f;
+
             float coupling = 0.0f;
 
             /* Check body_a of row i against both bodies of row j. */
@@ -193,7 +225,7 @@ void phys_cg_assemble(cg_system_t *sys,
                     ? &inv_inertia_world[bi_a] : NULL;
                 if (inv_I) {
                     coupling += compute_coupling(Ji, Jj,
-                        bodies[bi_a].inv_mass, inv_I);
+                        bodies[bi_a].inv_mass, inv_I, mass_scale);
                 }
             }
             if (bi_a == bj_b && bi_a < body_count) {
@@ -204,7 +236,7 @@ void phys_cg_assemble(cg_system_t *sys,
                     ? &inv_inertia_world[bi_a] : NULL;
                 if (inv_I) {
                     coupling += compute_coupling(Ji, Jj,
-                        bodies[bi_a].inv_mass, inv_I);
+                        bodies[bi_a].inv_mass, inv_I, mass_scale);
                 }
             }
             if (bi_b == bj_a && bi_b < body_count && bi_b != bi_a) {
@@ -215,7 +247,7 @@ void phys_cg_assemble(cg_system_t *sys,
                     ? &inv_inertia_world[bi_b] : NULL;
                 if (inv_I) {
                     coupling += compute_coupling(Ji, Jj,
-                        bodies[bi_b].inv_mass, inv_I);
+                        bodies[bi_b].inv_mass, inv_I, mass_scale);
                 }
             }
             if (bi_b == bj_b && bi_b < body_count) {
@@ -226,14 +258,15 @@ void phys_cg_assemble(cg_system_t *sys,
                     ? &inv_inertia_world[bi_b] : NULL;
                 if (inv_I) {
                     coupling += compute_coupling(Ji, Jj,
-                        bodies[bi_b].inv_mass, inv_I);
+                        bodies[bi_b].inv_mass, inv_I, mass_scale);
                 }
             }
 
             if (fabsf(coupling) < 1e-20f && i != j) continue;
 
-            /* Diagonal: add regularization terms. */
+            /* Diagonal: Tikhonov regularization + XPBD terms. */
             if (i == j) {
+                coupling += TIKHONOV_EPS;
                 /* XPBD compliance: α/h² */
                 float alpha;
                 if (ri->flags & PHYS_ROW_FLAG_DRIVE) {
@@ -296,25 +329,40 @@ void phys_cg_assemble(cg_system_t *sys,
                 + vec3_dot(row->J_wb, velocities[bb].angular);
         }
 
-        /* Position error bias. */
-        float C_i = row->bias;
-        float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR) ? 0.2f : 0.6f;
-
-        /* Compliance feedback term. */
+        /* Bias and compliance differ between joints and contacts. */
+        float bias_term;
         float alpha;
-        if (row->flags & PHYS_ROW_FLAG_DRIVE) {
-            alpha = c->drive_compliance;
-        } else if ((row->flags & PHYS_ROW_FLAG_ANGULAR) &&
-                   c->angular_compliance > 0.0f) {
-            alpha = c->angular_compliance;
+
+        if (c->is_joint) {
+            /* Joint: bias = position error; scale by ERP/h. */
+            float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR) ? 0.4f : 0.6f;
+            bias_term = erp * row->bias * inv_dt;
+
+            if (row->flags & PHYS_ROW_FLAG_DRIVE) {
+                alpha = c->drive_compliance;
+            } else if ((row->flags & PHYS_ROW_FLAG_ANGULAR) &&
+                       c->angular_compliance > 0.0f) {
+                alpha = c->angular_compliance;
+            } else {
+                alpha = c->compliance;
+            }
         } else {
+            /* Contact: bias is already velocity-level (Baumgarte +
+             * restitution), so use it directly without ERP/h scaling. */
+            bias_term = row->bias;
             alpha = c->compliance;
         }
 
-        /* RHS = -(J·v + erp·C/h + (α/h²)·λ_warmstart)
+        /* RHS = -(J·v + bias_term + (α/h²)·λ_warmstart)
          * The compliance feedback α/h² must match the diagonal
-         * regularization term to satisfy the XPBD update rule. */
-        sys->rhs[i] = -(jv + erp * C_i * inv_dt
+         * regularization term to satisfy the XPBD update rule.
+         *
+         * Joint rows: scale RHS by 1/mass_scale to match the
+         * scaled A matrix.  Without this, CG produces λ that is
+         * mass_scale× too large, causing energy explosion. */
+        float rhs_scale = (cg_mass_scale[i] > 1.0f)
+                        ? (1.0f / cg_mass_scale[i]) : 1.0f;
+        sys->rhs[i] = rhs_scale * -(jv + bias_term
                         + alpha * inv_dt * inv_dt * sys->lambda[i]);
 
         /* Jacobi preconditioner: 1 / A[i][i]. */
