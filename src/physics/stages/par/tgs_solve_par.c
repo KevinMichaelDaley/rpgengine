@@ -981,7 +981,6 @@ static void solve_island(const tgs_solve_shared_t *shared,
     /* Check if this is a coupled (TIER_ANIM) island. */
     bool coupled = island_is_coupled_(island, shared->bodies,
                                        shared->body_count, shared->bodies_mut);
-
     /* Build rebuild args for coupled islands. */
     phys_constraint_rebuild_args_t rebuild_args;
     if (coupled) {
@@ -1060,7 +1059,8 @@ static void solve_island(const tgs_solve_shared_t *shared,
                 if (cg_sys.n > 0 && !cg_sys.overflow) {
                     /* Lambda was zeroed by cg_assemble; CG solves
                      * for incremental Δλ directly. */
-                    phys_cg_solve(&cg_sys, 40, 1e-6f);
+                    uint32_t cg_iters = phys_cg_solve(&cg_sys, 40, 1e-6f);
+                    (void)cg_iters;
 
                     phys_cg_apply(&cg_sys, island,
                                   shared->constraints,

@@ -207,35 +207,20 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
             lmin = -JOINT_LAMBDA_BIG;
             lmax = 0.0f;
         } else {
-            /* Within limits — emit speculative row so the solver can
-             * prevent overshoot in a single step.  The bias is zero
-             * (no correction needed yet) but the row is active with
-             * one-sided bounds that block motion toward the nearer
-             * limit.  Without this, the body can freely accelerate
-             * past the limit between Jacobian rebuilds.
-             *
-             * Note: with pure angular Jacobians (J_va = J_vb = 0),
-             * speculative rows see Jv = axis·(ω_b - ω_a) which is
-             * zero during uniform motion, so no ratchet effect. */
+            /* Within limits — bilateral speculative row.  The bias is
+             * zero (no correction needed) but the row is active so the
+             * CG solver can apply impulses in EITHER direction to resist
+             * external forces (gravity, contacts).  One-sided bounds
+             * would block the solver via residual masking, causing it to
+             * exit with zero lambda even when large forces act on the
+             * joint.  The coupled CG solver's projected bounds + residual
+             * masking make one-sided speculative rows effectively dead. */
             ang_error = 0.0f;
-            float dist_lo = angle - lo;  /* > 0 */
-            float dist_hi = hi - angle;  /* > 0 */
             if (angular_drive) {
-                /* Drive row: bilateral, opposes relative angular
-                 * velocity without pulling toward a pose. */
-                lmin = -JOINT_LAMBDA_BIG;
-                lmax =  JOINT_LAMBDA_BIG;
                 is_drive = 1;
-            } else if (dist_lo < dist_hi) {
-                /* Closer to lower limit — only allow positive impulse
-                 * (which would push angle away from lo). */
-                lmin = 0.0f;
-                lmax = JOINT_LAMBDA_BIG;
-            } else {
-                /* Closer to upper limit — only allow negative impulse. */
-                lmin = -JOINT_LAMBDA_BIG;
-                lmax = 0.0f;
             }
+            lmin = -JOINT_LAMBDA_BIG;
+            lmax =  JOINT_LAMBDA_BIG;
         }
 
         /* Transform the limit axis from joint-local to world space. */
@@ -243,24 +228,14 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
 
         phys_jacobian_row_t *row = &joint->rows[rc];
         memset(row, 0, sizeof(*row));
-        /* Violation rows use lever-arm cross products so angular
-         * corrections rotate about the anchor (couples angular and
-         * positional DOFs in the A matrix).
-         *
-         * Speculative rows (within limits) use pure angular Jacobians
-         * to avoid a ratchet effect: lever-arm terms create a spurious
-         * Jv = cross(rB-rA, axis)·v during uniform motion (free fall)
-         * which one-sided bounds rectify into accumulated angular
-         * velocity.  Speculative rows only need to block angular
-         * velocity, not correct positional displacement. */
-        bool at_limit = (ang_error != 0.0f);
-        if (at_limit) {
-            row->J_va = vec3_scale(vec3_cross(rA, world_axis), -1.0f);
-            row->J_vb = vec3_cross(rB, world_axis);
-        } else {
-            row->J_va = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-            row->J_vb = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        }
+        /* Lever-arm cross products are required for ALL angular rows
+         * (violation + speculative) because the joint anchor is off the
+         * body's center of mass.  An angular impulse about an off-COM
+         * pivot produces both torque AND linear force on the body.
+         * Without the lever-arm terms, the effective mass is wrong and
+         * the solver under-corrects, leading to massive limit blowthrough. */
+        row->J_va = vec3_scale(vec3_cross(rA, world_axis), -1.0f);
+        row->J_vb = vec3_cross(rB, world_axis);
         row->J_wa = vec3_scale(world_axis, -1.0f);
         row->J_wb = world_axis;
         row->lambda_min = lmin;

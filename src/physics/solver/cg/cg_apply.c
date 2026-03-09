@@ -4,14 +4,16 @@
  *
  * The CG solver produces an incremental impulse vector Δλ.  Each row's
  * impulse is converted to a per-body 4×4 rigid transform (rotation
- * about the constraint's anchor point + translation).  Per-row
- * transforms are composed via matrix multiplication, then the final
- * composed transform is applied to the body's position and orientation.
+ * about the constraint's anchor point).  Per-row transforms are
+ * composed via matrix multiplication, then the final composed
+ * transform is applied to the body's world_transform.
  *
- * This "symplectic" 4×4 composition is essential because different
- * constraint rows rotate the body about different anchor points.
- * Summing angular velocities and applying one rotation loses the
- * anchor-point information and rotates about the body center instead.
+ * Rotating about the anchor point is correct for position-level
+ * correction: it adjusts the body's orientation AND translates the
+ * COM so the anchor stays fixed.  The linear Jacobian (J_va) is only
+ * used for velocity updates — NOT for position correction — because
+ * the pivot rotation already accounts for the position displacement.
+ * Adding `row_trans` on top would double-count.
  *
  * 1 non-static function: phys_cg_apply.
  */
@@ -69,22 +71,24 @@ static mat4_t rotvec_to_mat4(phys_vec3_t rv)
 }
 
 /**
- * @brief Build a 4×4 rigid transform: rotation about a pivot point,
- *        plus additional translation.
+ * @brief Build a 4×4 rigid transform: rotation about a pivot point.
  *
- * T = Translate(pivot + trans) · Rotate(rot_vec) · Translate(-pivot)
+ * T = Translate(pivot) · Rotate(rot_vec) · Translate(-pivot)
  *
  * This rotates a point about `pivot` by the angle/axis encoded in
- * `rot_vec`, then translates by `trans`.
+ * `rot_vec`.  The pivot stays fixed; the body center moves as a
+ * consequence of the off-center rotation.
+ *
+ * No additional linear translation is applied — the pivot rotation
+ * already accounts for the position displacement needed to keep
+ * the anchor point stationary.
  *
  * @param rot_vec  Rotation vector (axis × angle).
  * @param pivot    Point to rotate about (world space).
- * @param trans    Additional translation (e.g. from linear impulse).
  * @return         4×4 rigid transform (column-major).
  */
 static mat4_t build_pivot_transform(phys_vec3_t rot_vec,
-                                     phys_vec3_t pivot,
-                                     phys_vec3_t trans)
+                                     phys_vec3_t pivot)
 {
     mat4_t R = rotvec_to_mat4(rot_vec);
 
@@ -98,11 +102,11 @@ static mat4_t build_pivot_transform(phys_vec3_t rot_vec,
     float ty = R.m[1]*npx + R.m[5]*npy + R.m[9]*npz;
     float tz = R.m[2]*npx + R.m[6]*npy + R.m[10]*npz;
 
-    /* T(pivot + trans) * [R * T(-pivot)]:
-     * Just add (pivot + trans) to the translation column. */
-    R.m[12] = tx + pivot.x + trans.x;
-    R.m[13] = ty + pivot.y + trans.y;
-    R.m[14] = tz + pivot.z + trans.z;
+    /* T(pivot) * [R * T(-pivot)]:
+     * Just add pivot to the translation column. */
+    R.m[12] = tx + pivot.x;
+    R.m[13] = ty + pivot.y;
+    R.m[14] = tz + pivot.z;
 
     return R;
 }
@@ -133,18 +137,17 @@ void phys_cg_apply(const cg_system_t *sys,
     }
 
     /* Apply Δv = M⁻¹ · Jᵀ · Δλ per body, composing per-row 4×4
-     * rigid transforms.
+     * rigid transforms for position correction.
      *
-     * Each constraint row's impulse produces a rigid displacement
-     * of the body.  For angular rows, this is a rotation about the
-     * joint's anchor point — NOT the body center.  For positional
-     * rows, it's a translation + small rotation about the anchor.
+     * Each constraint row's angular impulse produces a rotation about
+     * the joint's anchor point.  This pivot rotation moves the body
+     * center as a side effect, keeping the anchor stationary — which
+     * is exactly the position correction needed.
      *
-     * We compose these per-row 4×4 transforms via matrix
-     * multiplication, then apply the final transform to the body
-     * pose.  This preserves the anchor-point information that would
-     * be lost by summing angular velocities into a single rotation
-     * about the body center. */
+     * The linear Jacobian (J_va) is used ONLY for velocity updates,
+     * NOT for position correction.  Adding a linear translation on
+     * top of the pivot rotation would double-count the position
+     * displacement (the pivot rotation already handles it). */
     for (uint32_t b = 0; b < island->body_count; b++) {
         uint32_t idx = island->body_indices[b];
         if (idx >= body_count) continue;
@@ -186,16 +189,15 @@ void phys_cg_apply(const cg_system_t *sys,
                     phys_mat3_mul_vec3(inv_I, row->J_wb), dlam);
             }
 
-            /* Accumulate velocity deltas (additive). */
+            /* Accumulate velocity deltas (additive — for velocity update). */
             dv_lin = vec3_add(dv_lin, row_dv_lin);
             dv_ang = vec3_add(dv_ang, row_dv_ang);
 
-            /* Build per-row 4×4 transform.
+            /* Build per-row 4×4 transform: rotation about the anchor.
              *
-             * Determine the pivot (anchor) for this row's rotation.
              * For joint constraints, the anchor is the joint's world-
              * space socket position.  For contacts, use the body
-             * center (no off-center rotation needed). */
+             * center (rotation about COM = pure rotation, no translation). */
             phys_vec3_t pivot = bodies_mut[idx].position;
 
             if (c->is_joint && constraint_joint_indices && joints) {
@@ -214,29 +216,26 @@ void phys_cg_apply(const cg_system_t *sys,
             /* Rotation vector for this row. */
             phys_vec3_t row_rot = vec3_scale(row_dv_ang, dt);
 
-            /* Translation from linear impulse. */
-            phys_vec3_t row_trans = vec3_scale(row_dv_lin, dt);
-
-            /* Build 4×4: rotation about pivot + translation. */
-            mat4_t T_row = build_pivot_transform(row_rot, pivot,
-                                                  row_trans);
+            /* Build 4×4: rotation about pivot only — no linear
+             * translation.  The pivot rotation already moves the COM
+             * to keep the anchor fixed. */
+            mat4_t T_row = build_pivot_transform(row_rot, pivot);
 
             /* Compose: T_accum = T_row * T_accum.
              * Left-multiply so later rows act on top of earlier ones. */
             T_accum = mat4_mul(T_row, T_accum);
         }
 
-        /* Update velocities (additive, as usual). */
+        /* Update velocities (additive, includes both linear and angular). */
         velocities[idx].linear = vec3_add(velocities[idx].linear, dv_lin);
         velocities[idx].angular = vec3_add(velocities[idx].angular, dv_ang);
 
         /* Apply the composed transform to the body pose.
          *
          * Compose T_accum directly with body->world_transform.
-         * This is the authoritative rendering state — no lossy
-         * mat4→quat→mat4 roundtrip.  The world_transform was
-         * initialized from position+orientation before the first
-         * CG iteration. */
+         * This is the authoritative rendering state.  The
+         * world_transform was initialized from position+orientation
+         * before the first CG iteration. */
         bodies_mut[idx].world_transform = mat4_mul(
             T_accum, bodies_mut[idx].world_transform);
 
@@ -249,8 +248,7 @@ void phys_cg_apply(const cg_system_t *sys,
 
         /* Decompose orientation for the solver's next Jacobian rebuild.
          * This quat is only used internally by the constraint builder;
-         * rendering reads world_transform directly, avoiding the
-         * roundtrip error. */
+         * rendering reads world_transform directly. */
         mat4_t rot_only = bodies_mut[idx].world_transform;
         rot_only.m[12] = 0.0f;
         rot_only.m[13] = 0.0f;

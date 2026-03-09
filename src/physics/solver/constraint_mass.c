@@ -14,11 +14,18 @@ float phys_compute_effective_mass(
 {
     if (!row || !inv_inertia_a || !inv_inertia_b) { return 0.0f; }
 
-    /* World-space inverse inertia applied via matrix-vector multiply. */
+    /* W = J · M⁻¹ · Jᵀ
+     *   = inv_mass_a · |J_va|² + J_wa · (I_a⁻¹ · J_wa)
+     *   + inv_mass_b · |J_vb|² + J_wb · (I_b⁻¹ · J_wb)
+     *
+     * The linear terms must use |J_v|², not just inv_mass, because
+     * angular rows with lever-arm cross products have J_va = -cross(r, axis)
+     * whose magnitude depends on the lever arm length. */
     phys_vec3_t iIa_Jwa = phys_mat3_mul_vec3(inv_inertia_a, row->J_wa);
     phys_vec3_t iIb_Jwb = phys_mat3_mul_vec3(inv_inertia_b, row->J_wb);
 
-    float denom = inv_mass_a + inv_mass_b
+    float denom = inv_mass_a * vec3_dot(row->J_va, row->J_va)
+                + inv_mass_b * vec3_dot(row->J_vb, row->J_vb)
                 + vec3_dot(row->J_wa, iIa_Jwa)
                 + vec3_dot(row->J_wb, iIb_Jwb);
 
