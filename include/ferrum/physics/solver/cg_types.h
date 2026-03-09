@@ -20,9 +20,10 @@ extern "C" {
 #endif
 
 /** Maximum non-zeros per row in the sparse system matrix.
- *  Each body participates in at most ~4 joints with up to 6 active
- *  rows each, giving ~24 coupled rows.  32 provides headroom. */
-#define CG_MAX_NNZ_PER_ROW 32
+ *  In the worst case every row couples with every other row (dense),
+ *  so this should match CG_MAX_ROWS.  Memory cost is acceptable
+ *  since only one cg_system_t exists per island solve. */
+#define CG_MAX_NNZ_PER_ROW 512
 
 /** Maximum total constraint rows the CG solver can handle per island.
  *  128 bodies × 9 rows/joint = 1152 theoretical max; 512 is generous

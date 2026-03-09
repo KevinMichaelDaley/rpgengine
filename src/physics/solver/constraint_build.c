@@ -121,12 +121,18 @@ void phys_constraint_build_contact(
         restitution_bias = 0.0f;
     } else {
         float pen_excess = contact->penetration - slop;
+        /* Clamp penetration used for bias to prevent explosive
+         * correction when first contact has deep overlap. */
+        const float MAX_PEN_FOR_BIAS = 0.02f;
+        if (pen_excess > MAX_PEN_FOR_BIAS) {
+            pen_excess = MAX_PEN_FOR_BIAS;
+        }
         if (pen_excess > 0.0f && dt > 0.0f) {
             baumgarte_bias = (baumgarte / dt) * pen_excess;
             /* Cap correction velocity to prevent explosive response
              * when penetration is deep (e.g. body fell through ground
              * before contact was detected). */
-            const float MAX_BAUMGARTE_VEL = 10.0f;
+            const float MAX_BAUMGARTE_VEL = 2.0f;
             if (baumgarte_bias > MAX_BAUMGARTE_VEL) {
                 baumgarte_bias = MAX_BAUMGARTE_VEL;
             }

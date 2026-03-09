@@ -24,6 +24,7 @@ extern "C" {
 #define PHYS_BODY_FLAG_TRIGGER (1u << 5)  /**< Trigger volume: detect contacts/overlaps but skip solver response. */
 #define PHYS_BODY_FLAG_NO_BROADPHASE (1u << 6) /**< Skip broadphase/narrowphase; body only participates in joint constraints. */
 #define PHYS_BODY_FLAG_NO_GRAVITY    (1u << 7) /**< Disable gravity integration (ghost/animation-driven bodies). */
+#define PHYS_BODY_FLAG_HAD_CONTACT   (1u << 8) /**< Body had at least one contact constraint last substep. */
 
 /**
  * @brief Core rigid body state.

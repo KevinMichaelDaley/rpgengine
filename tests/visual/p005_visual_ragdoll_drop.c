@@ -404,10 +404,12 @@ int main(void) {
     uint32_t ground_id = phys_world_create_body(&world);
     {
         phys_body_t *ground = phys_world_get_body(&world, ground_id);
-        ground->position = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        ground->flags |= PHYS_BODY_FLAG_STATIC;
-        phys_world_set_halfspace_collider(&world, ground_id,
-            (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
+        ground->position = (phys_vec3_t){0.0f, -0.5f, 0.0f};
+        ground->flags |= PHYS_BODY_FLAG_STATIC | PHYS_BODY_FLAG_CCD;
+        phys_world_set_box_collider(&world, ground_id,
+            (phys_vec3_t){50.0f, 0.5f, 50.0f},
+            (phys_vec3_t){0.0f, 0.0f, 0.0f},
+            (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
     }
 
     /* Position skeleton: shift so lowest bone sits at GROUND_Y + drop height. */
@@ -668,8 +670,44 @@ int main(void) {
             }
             fprintf(stderr, "    max_anchor_err=%.4f (j%u)  max_ang_viol=%.4f (j%u)\n",
                     max_err, worst_joint, max_ang_viol, worst_ang_joint);
+            /* Quaternion sign-flip check: dump body ori.w signs and
+             * q_error quaternions for all cone-twist joints. */
+            {
+                static float prev_body_w[64];
+                static float prev_qerr_w[64];
+                static int qcheck_init = 0;
+                for (uint32_t ji = 0; ji < world.joint_count && ji < 64; ji++) {
+                    const phys_joint_t *jj = &world.joints[ji];
+                    if (jj->type != PHYS_JOINT_CONE_TWIST) continue;
+                    if (jj->body_a >= world.body_pool.capacity ||
+                        jj->body_b >= world.body_pool.capacity) continue;
+                    const phys_body_t *ba2 = &world.body_pool.bodies_curr[jj->body_a];
+                    const phys_body_t *bb2 = &world.body_pool.bodies_curr[jj->body_b];
+                    phys_quat_t qa = ba2->orientation, qb = bb2->orientation;
+                    phys_quat_t qa_inv = {-qa.x, -qa.y, -qa.z, qa.w};
+                    phys_quat_t q_rel = quat_mul(qb, qa_inv);
+                    phys_quat_t rest = jj->rest_relative_orient;
+                    phys_quat_t rest_inv = {-rest.x, -rest.y, -rest.z, rest.w};
+                    phys_quat_t q_err = quat_mul(rest_inv, q_rel);
+                    if (q_err.w < 0.0f) {
+                        q_err.x = -q_err.x; q_err.y = -q_err.y;
+                        q_err.z = -q_err.z; q_err.w = -q_err.w;
+                    }
+                    int body_b_flip = (qcheck_init && qb.w * prev_body_w[ji] < 0.0f);
+                    int qerr_flip = (qcheck_init && q_err.w * prev_qerr_w[ji] < -0.01f);
+                    if (body_b_flip || qerr_flip || f == 0) {
+                        fprintf(stderr, "    [QCHECK] j%u f=%d ori_b.w=%.4f q_err=(%.4f,%.4f,%.4f,%.4f)%s%s\n",
+                                ji, f, qb.w, q_err.x, q_err.y, q_err.z, q_err.w,
+                                body_b_flip ? " BODY_FLIP" : "",
+                                qerr_flip ? " QERR_FLIP" : "");
+                    }
+                    prev_body_w[ji] = qb.w;
+                    prev_qerr_w[ji] = q_err.w;
+                }
+                qcheck_init = 1;
+            }
             /* Dump ALL joint errors at key frames. */
-            if (f == 0 || f == 5 || f == 10 || f == 45 || f == 60 || f == 90 || f == 120) {
+            if (f == 0 || f == 5 || f == 6 || f == 7 || f == 8 || f == 10 || f == 45 || f == 60 || f == 90 || f == 120) {
                 for (uint32_t ji = 0; ji < world.joint_count; ji++) {
                     const phys_joint_t *jj = &world.joints[ji];
                     if (jj->body_a >= world.body_pool.capacity ||

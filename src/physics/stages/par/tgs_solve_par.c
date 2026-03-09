@@ -27,6 +27,7 @@
 #include "ferrum/physics/constraint_rebuild.h"
 #include "ferrum/physics/island.h"
 #include "ferrum/physics/joint.h"
+#include "ferrum/physics/joint_angular_projection.h"
 #include "ferrum/physics/phys_mat3.h"
 #include "ferrum/physics/phys_pool.h"
 #include "ferrum/physics/solver/cg_solve.h"
@@ -93,7 +94,19 @@ static phys_quat_t quat_integrate_expmap(phys_quat_t q,
         dq.z = 0.5f * wz;
     }
 
-    return quat_normalize_safe(quat_mul(dq, q), 1e-12f);
+    phys_quat_t result = quat_normalize_safe(quat_mul(dq, q), 1e-12f);
+
+    /* Shortest-path hemisphere consistency: keep the result in the
+     * same hemisphere as the input so that lever-arm cross products
+     * (r × axis) in Jacobian rows don't jitter from sign flips when
+     * the quaternion is near the w≈0 boundary. */
+    float qdot = q.x * result.x + q.y * result.y +
+                 q.z * result.z + q.w * result.w;
+    if (qdot < 0.0f) {
+        result.x = -result.x; result.y = -result.y;
+        result.z = -result.z; result.w = -result.w;
+    }
+    return result;
 }
 
 /* ── Implicit gyroscopic torque correction ────────────────────── */
@@ -868,10 +881,18 @@ static void coupled_position_projection_par_(
             if (j->type == PHYS_JOINT_DISTANCE) continue;
 
             if (j->type == PHYS_JOINT_LOCK) {
-                bodies_mut[bb].orientation = quat_normalize_safe(
+                phys_quat_t prev = bodies_mut[bb].orientation;
+                phys_quat_t snap = quat_normalize_safe(
                     quat_mul(bodies_mut[ba].orientation,
                               j->rest_relative_orient),
                     1e-12f);
+                float d = prev.x*snap.x + prev.y*snap.y +
+                          prev.z*snap.z + prev.w*snap.w;
+                if (d < 0.0f) {
+                    snap.x = -snap.x; snap.y = -snap.y;
+                    snap.z = -snap.z; snap.w = -snap.w;
+                }
+                bodies_mut[bb].orientation = snap;
             }
 
             /* Angular limits handled by solver's one-sided rows.
@@ -922,10 +943,18 @@ static void propagate_coupled_anchors_par_(
         if (j->type == PHYS_JOINT_DISTANCE) continue;
 
         if (j->type == PHYS_JOINT_LOCK) {
-            bodies_mut[bb].orientation = quat_normalize_safe(
+            phys_quat_t prev = bodies_mut[bb].orientation;
+            phys_quat_t snap = quat_normalize_safe(
                 quat_mul(bodies_mut[ba].orientation,
                           j->rest_relative_orient),
                 1e-12f);
+            float d = prev.x*snap.x + prev.y*snap.y +
+                      prev.z*snap.z + prev.w*snap.w;
+            if (d < 0.0f) {
+                snap.x = -snap.x; snap.y = -snap.y;
+                snap.z = -snap.z; snap.w = -snap.w;
+            }
+            bodies_mut[bb].orientation = snap;
         }
 
         phys_vec3_t wa = vec3_add(bodies_mut[ba].position,
@@ -943,15 +972,24 @@ static void propagate_coupled_anchors_par_(
 static void recompute_island_inertia_par_(const phys_island_t *island,
                                            const phys_body_t *bodies,
                                            phys_mat3_t *inv_inertia_world,
-                                           uint32_t body_count)
+                                           uint32_t body_count,
+                                           bool sphericalize)
 {
     if (!inv_inertia_world) return;
     for (uint32_t b = 0; b < island->body_count; ++b) {
         uint32_t idx = island->body_indices[b];
         if (idx >= body_count) continue;
         if (bodies[idx].inv_mass <= 0.0f) continue;
-        inv_inertia_world[idx] = phys_mat3_inv_inertia_world(
-            bodies[idx].orientation, bodies[idx].inv_inertia_diag);
+
+        if (sphericalize) {
+            /* Currently unused: just use real inertia.
+             * Mass redistribution handles conditioning. */
+            inv_inertia_world[idx] = phys_mat3_inv_inertia_world(
+                bodies[idx].orientation, bodies[idx].inv_inertia_diag);
+        } else {
+            inv_inertia_world[idx] = phys_mat3_inv_inertia_world(
+                bodies[idx].orientation, bodies[idx].inv_inertia_diag);
+        }
     }
 }
 
@@ -1014,6 +1052,54 @@ static void solve_island(const tgs_solve_shared_t *shared,
 
         float solve_dt = 1.0f / shared->inv_dt;
 
+        /* Degree-weighted mass redistribution: sum all dynamic bone
+         * masses in the island and redistribute proportional to each
+         * body's constraint degree (number of constraints it appears in).
+         * Hub bodies (e.g. abdomen connected to spine + 2 legs) get more
+         * mass, making them harder to perturb.  Only modifies bodies_mut. */
+        {
+            /* Count constraint degree per body. */
+            uint32_t degree[256]; /* max bodies per island */
+            if (island->body_count > 256) goto skip_redistribution_par_;
+            memset(degree, 0, island->body_count * sizeof(uint32_t));
+            for (uint32_t ci = 0; ci < island->constraint_count; ++ci) {
+                uint32_t c_idx = island->constraint_indices[ci];
+                const phys_constraint_t *c = &shared->constraints[c_idx];
+                /* Find body indices within the island. */
+                for (uint32_t b = 0; b < island->body_count; ++b) {
+                    uint32_t idx = island->body_indices[b];
+                    if (idx == c->body_a || idx == c->body_b) {
+                        if (idx < shared->body_count &&
+                            shared->bodies_mut[idx].inv_mass > 0.0f) {
+                            degree[b]++;
+                        }
+                    }
+                }
+            }
+
+            float mass_sum = 0.0f;
+            uint32_t total_degree = 0;
+            for (uint32_t b = 0; b < island->body_count; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= shared->body_count) continue;
+                if (shared->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                mass_sum += 1.0f / shared->bodies_mut[idx].inv_mass;
+                total_degree += degree[b];
+            }
+            if (total_degree > 0 && mass_sum > 0.0f) {
+                for (uint32_t b = 0; b < island->body_count; ++b) {
+                    uint32_t idx = island->body_indices[b];
+                    if (idx >= shared->body_count) continue;
+                    if (shared->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                    if (degree[b] == 0) continue;
+                    float body_mass = mass_sum * (float)degree[b]
+                                    / (float)total_degree;
+                    shared->bodies_mut[idx].inv_mass = 1.0f / body_mass;
+                }
+            }
+        }
+        skip_redistribution_par_: (void)0;
+
         /* Initialize world_transform for each body from current
          * position + orientation.  The CG apply will compose
          * incremental transforms directly onto this mat4. */
@@ -1038,7 +1124,7 @@ static void solve_island(const tgs_solve_shared_t *shared,
                 shared->bodies_mut, shared->body_count);
             recompute_island_inertia_par_(island, shared->bodies_mut,
                                            shared->inv_inertia_world_mut,
-                                           shared->body_count);
+                                           shared->body_count, true);
             phys_rebuild_island_all_constraints(island, &rebuild_args);
 
             /* CG solve: joints + contacts solved simultaneously.
@@ -1257,7 +1343,7 @@ static void solve_island(const tgs_solve_shared_t *shared,
                     shared->bodies_mut, shared->body_count);
                 recompute_island_inertia_par_(island, shared->bodies_mut,
                                                shared->inv_inertia_world_mut,
-                                               shared->body_count);
+                                               shared->body_count, true);
                 phys_rebuild_island_all_constraints(island, &rebuild_args);
             }
 
@@ -1766,9 +1852,23 @@ void phys_stage_tgs_solve_par(const phys_tgs_solve_args_t *args,
      * recompute world anchors from predicted body state and apply
      * corrections that account for how rotation affects lever arms.
      * Runs single-threaded since it's a small number of joints. */
+    /* Position and angular projection disabled — see tgs_solve.c. */
+#if 0
     if (pseudo && args->joints && args->joint_count > 0) {
         tgs_project_joints_nonlinear(args->joints, args->joint_count,
                                       args->bodies, pseudo,
                                       args->body_count, args->dt);
+
+        phys_angular_projection_args_t ang_args = {
+            .joints = args->joints,
+            .joint_count = args->joint_count,
+            .bodies = args->bodies,
+            .velocities = args->velocities,
+            .pseudo_velocities = pseudo,
+            .body_count = args->body_count,
+            .dt = args->dt,
+        };
+        phys_project_joint_angular_limits(&ang_args);
     }
+#endif
 }

@@ -172,29 +172,54 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
                !isinf(out->position.y) && !isinf(out->position.z) &&
                "NaN/Inf position after integration");
 
-        /* Integrate orientation via quaternion derivative:
-         *   omega_quat = {angular_vel.x, angular_vel.y, angular_vel.z, 0}
-         *   dq = quat_mul(omega_quat, orientation)
-         *   orientation += 0.5 * dq * dt  (component-wise)
-         *   then normalize.
+        /* Integrate orientation using the exponential map (symplectic).
+         * q_new = exp(0.5 * ω * dt) * q_old stays on SO(3) exactly,
+         * unlike the Euler update q += 0.5*dt*Ω*q which drifts off the
+         * unit quaternion manifold and injects energy.
          * Include pseudo angular velocity for position correction. */
         phys_vec3_t integrate_ang = out->angular_vel;
         if (pseudo) {
             integrate_ang = vec3_add(integrate_ang, pseudo[i].angular);
         }
-        phys_quat_t omega_q = {
-            integrate_ang.x,
-            integrate_ang.y,
-            integrate_ang.z,
-            0.0f
-        };
-        phys_quat_t dq = quat_mul(omega_q, in->orientation);
-        float half_dt = 0.5f * body_dt;
-        out->orientation.x = in->orientation.x + dq.x * half_dt;
-        out->orientation.y = in->orientation.y + dq.y * half_dt;
-        out->orientation.z = in->orientation.z + dq.z * half_dt;
-        out->orientation.w = in->orientation.w + dq.w * half_dt;
-        out->orientation = quat_normalize_safe(out->orientation, 1e-8f);
+        {
+            float wx = integrate_ang.x * body_dt;
+            float wy = integrate_ang.y * body_dt;
+            float wz = integrate_ang.z * body_dt;
+            float theta = sqrtf(wx * wx + wy * wy + wz * wz);
+
+            phys_quat_t dq;
+            if (theta > 1e-8f) {
+                float half_theta = 0.5f * theta;
+                float s = sinf(half_theta) / theta;
+                dq.w = cosf(half_theta);
+                dq.x = s * wx;
+                dq.y = s * wy;
+                dq.z = s * wz;
+            } else {
+                /* Small angle: sin(θ/2)/θ ≈ 0.5 */
+                dq.w = 1.0f;
+                dq.x = 0.5f * wx;
+                dq.y = 0.5f * wy;
+                dq.z = 0.5f * wz;
+            }
+            out->orientation = quat_normalize_safe(
+                quat_mul(dq, in->orientation), 1e-8f);
+        }
+
+        /* Shortest-path hemisphere consistency: ensure the integrated
+         * quaternion is in the same hemisphere as the previous frame's.
+         * With expmap this only triggers for genuine > 180° rotations
+         * in a single step, which indicates a solver overshoot. */
+        float qdot = in->orientation.x * out->orientation.x +
+                     in->orientation.y * out->orientation.y +
+                     in->orientation.z * out->orientation.z +
+                     in->orientation.w * out->orientation.w;
+        if (qdot < 0.0f) {
+            out->orientation.x = -out->orientation.x;
+            out->orientation.y = -out->orientation.y;
+            out->orientation.z = -out->orientation.z;
+            out->orientation.w = -out->orientation.w;
+        }
 
         /* Build world_transform from integrated position + orientation.
          * Keeps it in sync for rendering (non-CG bodies use this path;

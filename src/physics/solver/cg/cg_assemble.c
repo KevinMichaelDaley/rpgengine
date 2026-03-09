@@ -15,6 +15,7 @@
 #include "ferrum/math/vec3.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 /**
@@ -70,7 +71,7 @@ static void get_jacobian_block(const phys_jacobian_row_t *row,
  *  Provides a lower bound on the diagonal, preventing near-singular
  *  rows from blowing up the preconditioner.  Keep small relative to
  *  the smallest physical diagonal (~0.5 for contacts). */
-#define TIKHONOV_EPS 0.01f
+#define TIKHONOV_EPS 1e-6f
 
 static float compute_coupling(const float Ji[6], const float Jj[6],
                               float inv_mass,
@@ -138,6 +139,15 @@ void phys_cg_assemble(cg_system_t *sys,
             } else {
                 row_mass_scale = 10.0f; /* default */
             }
+        }
+
+        static int ms_dbg = 0;
+        if (ms_dbg < 18 && c->is_joint) {
+            fprintf(stderr, "[CG-ms] c_idx=%u ji=%u mass_scale=%.3f\n",
+                    c_idx,
+                    constraint_joint_indices ? constraint_joint_indices[c_idx] : 9999,
+                    row_mass_scale);
+            ms_dbg++;
         }
 
         /* Track the CG index of the contact normal row (row 0) so
@@ -208,7 +218,7 @@ void phys_cg_assemble(cg_system_t *sys,
             float ms_i = cg_mass_scale[i];
             float ms_j = cg_mass_scale[j];
             float ms = (ms_i > ms_j) ? ms_i : ms_j;
-            float mass_scale = (ms > 1.0f) ? (1.0f / ms) : 1.0f;
+            float mass_scale = (ms > 0.0f) ? (1.0f / ms) : 1.0f;
 
             float coupling = 0.0f;
 
@@ -266,6 +276,7 @@ void phys_cg_assemble(cg_system_t *sys,
 
             /* Diagonal: Tikhonov regularization + XPBD terms. */
             if (i == j) {
+                float phys_coupling = coupling; /* save pre-reg value */
                 coupling += TIKHONOV_EPS;
                 /* XPBD compliance: α/h² */
                 float alpha;
@@ -277,14 +288,17 @@ void phys_cg_assemble(cg_system_t *sys,
                 } else {
                     alpha = ci_c->compliance;
                 }
-                coupling += alpha * inv_dt * inv_dt;
+                float comp_term = alpha * inv_dt * inv_dt;
+                coupling += comp_term;
 
                 /* Damping: γ/h = β·α/h² (timestep-independent).
                  * β is the dimensionless damping ratio from the joint. */
-                coupling += ci_c->joint_damping * alpha * inv_dt * inv_dt;
+                float damp_term = ci_c->joint_damping * alpha * inv_dt * inv_dt;
+                coupling += damp_term;
 
                 /* Geometric stiffness for angular rows:
                  * h²·Σ_{j≠i} |λ_j|·(1 - (n_i·n_j)²) */
+                float geo_term = 0.0f;
                 if (ri->flags & PHYS_ROW_FLAG_ANGULAR) {
                     float k_geo = 0.0f;
                     for (uint32_t s = 0; s < ci_c->row_count; s++) {
@@ -295,7 +309,29 @@ void phys_cg_assemble(cg_system_t *sys,
                         k_geo += fabsf(ci_c->rows[s].lambda) *
                                  (1.0f - dot * dot);
                     }
-                    coupling += dt * dt * k_geo;
+                    geo_term = dt * dt * k_geo;
+                    coupling += geo_term;
+                }
+
+                static int diag_dbg = 0;
+                if (diag_dbg < 82) {
+                    uint32_t ba = cg_body_a[i], bb = cg_body_b[i];
+                    const phys_mat3_t *inv_I_a = (inv_inertia_world && ba < body_count)
+                        ? &inv_inertia_world[ba] : NULL;
+                    const phys_mat3_t *inv_I_b = (inv_inertia_world && bb < body_count)
+                        ? &inv_inertia_world[bb] : NULL;
+                    fprintf(stderr, "[CG-diag] row=%u %s phys=%.4f comp=%.4f damp=%.4f geo=%.4f total=%.4f"
+                            " ms=%.1f inv_m_a=%.4f inv_m_b=%.4f"
+                            " inv_I_a=[%.1f,%.1f,%.1f] inv_I_b=[%.1f,%.1f,%.1f]\n",
+                            i,
+                            (ri->flags & PHYS_ROW_FLAG_ANGULAR) ? "ANG" : "POS",
+                            phys_coupling, comp_term, damp_term, geo_term, coupling,
+                            cg_mass_scale[i],
+                            ba < body_count ? bodies[ba].inv_mass : 0.0f,
+                            bb < body_count ? bodies[bb].inv_mass : 0.0f,
+                            inv_I_a ? inv_I_a->m[0] : 0, inv_I_a ? inv_I_a->m[4] : 0, inv_I_a ? inv_I_a->m[8] : 0,
+                            inv_I_b ? inv_I_b->m[0] : 0, inv_I_b ? inv_I_b->m[4] : 0, inv_I_b ? inv_I_b->m[8] : 0);
+                    diag_dbg++;
                 }
             }
 
@@ -308,6 +344,37 @@ void phys_cg_assemble(cg_system_t *sys,
                     sys->overflow = 1;
                 }
             }
+        }
+    }
+
+    /* ---- Dump K matrix for offline SPD check ---- */
+    {
+        static int dump_count = 0;
+        if (dump_count < 6 && sys->n > 92) {
+            char path[128];
+            snprintf(path, sizeof(path), "/tmp/cg_matrix_%d.csv", dump_count);
+            FILE *fp = fopen(path, "w");
+            if (fp) {
+                fprintf(fp, "# n=%u\n", sys->n);
+                for (uint32_t i = 0; i < sys->n; i++) {
+                    for (uint32_t j = 0; j < sys->n; j++) {
+                        float val = 0.0f;
+                        const cg_sparse_row_t *row = &sys->A_rows[i];
+                        for (uint16_t k = 0; k < row->nnz; k++) {
+                            if (row->col_indices[k] == j) {
+                                val = row->values[k];
+                                break;
+                            }
+                        }
+                        fprintf(fp, "%.10g%s", val,
+                                j + 1 < sys->n ? "," : "\n");
+                    }
+                }
+                fclose(fp);
+                fprintf(stderr, "[CG-DUMP] wrote %s (%u x %u)\n",
+                        path, sys->n, sys->n);
+            }
+            dump_count++;
         }
     }
 
@@ -360,7 +427,7 @@ void phys_cg_assemble(cg_system_t *sys,
          * Joint rows: scale RHS by 1/mass_scale to match the
          * scaled A matrix.  Without this, CG produces λ that is
          * mass_scale× too large, causing energy explosion. */
-        float rhs_scale = (cg_mass_scale[i] > 1.0f)
+        float rhs_scale = (cg_mass_scale[i] > 0.0f)
                         ? (1.0f / cg_mass_scale[i]) : 1.0f;
         sys->rhs[i] = rhs_scale * -(jv + bias_term
                         + alpha * inv_dt * inv_dt * sys->lambda[i]);

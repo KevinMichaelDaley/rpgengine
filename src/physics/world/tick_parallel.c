@@ -1130,7 +1130,8 @@ void phys_world_tick_parallel(phys_world_t *world,
     for (uint32_t i = 0; i < body_cap; i++) {
         if (active[i]) {
             world->body_pool.bodies_next[i].flags &=
-                ~(uint32_t)PHYS_BODY_FLAG_CONTACT_RESTING;
+                ~(uint32_t)(PHYS_BODY_FLAG_CONTACT_RESTING |
+                            PHYS_BODY_FLAG_HAD_CONTACT);
         }
     }
 
@@ -2333,6 +2334,40 @@ void phys_world_tick_parallel(phys_world_t *world,
                 if (body_sub_substepped) {
                     memset(body_sub_substepped, 0,
                            body_cap * sizeof(uint8_t));
+                }
+            }
+
+            /* Zero joint warmstarts when a joint body gains a new contact.
+             * Stale cached lambdas are invalid once the constraint graph
+             * topology changes (e.g. ground impact), causing the solver
+             * to overshoot and tear joints apart. */
+            {
+                /* Mark bodies that have contacts this substep. */
+                for (uint32_t ci = 0; ci < joint_constraint_start; ++ci) {
+                    const phys_constraint_t *c = &constraints[ci];
+                    if (c->body_a < body_cap)
+                        world->body_pool.bodies_next[c->body_a].flags |=
+                            PHYS_BODY_FLAG_HAD_CONTACT;
+                    if (c->body_b < body_cap)
+                        world->body_pool.bodies_next[c->body_b].flags |=
+                            PHYS_BODY_FLAG_HAD_CONTACT;
+                }
+
+                /* If either body of a joint just gained a contact (has
+                 * HAD_CONTACT now but didn't before), zero warmstarts. */
+                for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
+                    phys_joint_t *j = &world->joints[ji];
+                    uint32_t ba = j->body_a, bb = j->body_b;
+                    bool a_new = (ba < body_cap &&
+                        (world->body_pool.bodies_next[ba].flags & PHYS_BODY_FLAG_HAD_CONTACT) &&
+                        !(world->body_pool.bodies_curr[ba].flags & PHYS_BODY_FLAG_HAD_CONTACT));
+                    bool b_new = (bb < body_cap &&
+                        (world->body_pool.bodies_next[bb].flags & PHYS_BODY_FLAG_HAD_CONTACT) &&
+                        !(world->body_pool.bodies_curr[bb].flags & PHYS_BODY_FLAG_HAD_CONTACT));
+                    if (a_new || b_new) {
+                        memset(j->cached_lambda, 0,
+                               sizeof(j->cached_lambda));
+                    }
                 }
             }
 

@@ -734,6 +734,12 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
 
             elif jt == 3:  # Distance
                 rest_len = pb.talarium_joint_rest_length
+                d_min = pb.talarium_joint_distance_min
+                d_max = pb.talarium_joint_distance_max
+                if d_min > 0.0 or d_max > 0.0:
+                    lim_min[0] = d_min
+                    lim_max[0] = d_max
+                    lim_axes = 1
 
             elif jt == 6:  # Limit rotation: per-axis angle limits
                 bl_min_x = pb.talarium_joint_limit_min_x
@@ -1070,6 +1076,16 @@ _BONE_PROPS = {
                                         "(0 = auto from bone length)",
         default=0.0, min=0.0, unit='LENGTH',
     ),
+    "talarium_joint_distance_min": FloatProperty(
+        name="Distance Min", description="Distance joint minimum range "
+                                          "(0 = no lower bound)",
+        default=0.0, min=0.0, unit='LENGTH',
+    ),
+    "talarium_joint_distance_max": FloatProperty(
+        name="Distance Max", description="Distance joint maximum range "
+                                          "(0 = no upper bound)",
+        default=0.0, min=0.0, unit='LENGTH',
+    ),
 
     # Per-axis limits (for limit_rotation / limit_position)
     "talarium_joint_limit_min_x": FloatProperty(
@@ -1151,7 +1167,7 @@ _BONE_PROPS = {
         description="CG solver inertia scaling.  Joint bodies appear "
                     "this many times heavier, reducing condition number "
                     "when contacts are present.  Default 10",
-        default=10.0, min=1.0, soft_max=100.0,
+        default=10.0, min=0.01, soft_max=100.0,
     ),
 }
 
@@ -1763,6 +1779,9 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 row.prop(pb, "talarium_joint_limit_max")
             elif jt == '3':  # Distance
                 box.prop(pb, "talarium_joint_rest_length")
+                row = box.row(align=True)
+                row.prop(pb, "talarium_joint_distance_min")
+                row.prop(pb, "talarium_joint_distance_max")
             elif jt in ('6', '7'):  # Limit rotation / position
                 col = box.column(align=True)
                 row = col.row(align=True)
