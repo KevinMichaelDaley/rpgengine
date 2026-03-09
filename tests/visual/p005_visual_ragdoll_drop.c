@@ -595,10 +595,14 @@ int main(void) {
                                 ? "G" : "C";
                 const char *bname = (bi < skel.joint_count && skel.joint_names)
                                   ? skel.joint_names[bi] : "?";
-                fprintf(stderr, "    b%02u[%s] %-15s pos=(%.3f,%.3f,%.3f) vel=(%.2f,%.2f,%.2f)\n",
+                float ang_spd = sqrtf(b->angular_vel.x * b->angular_vel.x +
+                                      b->angular_vel.y * b->angular_vel.y +
+                                      b->angular_vel.z * b->angular_vel.z);
+                fprintf(stderr, "    b%02u[%s] %-15s pos=(%.3f,%.3f,%.3f) vel=(%.2f,%.2f,%.2f) w=%.2f\n",
                         bi, tag, bname,
                         b->position.x, b->position.y, b->position.z,
-                        b->linear_vel.x, b->linear_vel.y, b->linear_vel.z);
+                        b->linear_vel.x, b->linear_vel.y, b->linear_vel.z,
+                        ang_spd);
                 if (b->position.y < min_y) min_y = b->position.y;
             }
             fprintf(stderr, "    min_Y=%.3f  joints=%u\n",
@@ -775,6 +779,25 @@ int main(void) {
             fprintf(stderr, "  tick_count=%lu\n", (unsigned long)phys_world_tick_count(&world));
         }
 
+        /* Debug: compare body pos vs bone_world pos for key bones. */
+        if (f == 45 || f == 90) {
+            fprintf(stderr, "  --- f%03d body vs bone_world ---\n", f);
+            for (uint32_t j = 0; j < skel.joint_count && j < 6; j++) {
+                uint32_t bi = anim_ent.body_indices[j];
+                if (bi == UINT32_MAX) continue;
+                const phys_body_t *b = phys_world_get_body(&world, bi);
+                if (!b) continue;
+                mat4_t bw = anim_ent.bone_world[j];
+                fprintf(stderr, "    bone[%u] %-12s body=(%.3f,%.3f,%.3f) bw=(%.3f,%.3f,%.3f) delta=(%.4f,%.4f,%.4f)\n",
+                        j, skel.joint_names[j],
+                        b->position.x, b->position.y, b->position.z,
+                        bw.m[12], bw.m[13], bw.m[14],
+                        bw.m[12] - b->position.x,
+                        bw.m[13] - b->position.y,
+                        bw.m[14] - b->position.z);
+            }
+        }
+
         /* Compute bone palette: palette[j] = bone_world[j] * IBM[j]. */
         uint32_t n = skel.joint_count < ibm_count ? skel.joint_count : ibm_count;
         for (uint32_t j = 0; j < n; j++) {
@@ -878,7 +901,7 @@ int main(void) {
         }
 
         /* Snapshots at start, quarter, mid, end. */
-        if (f == 0 || f == 45 || f == TOTAL_FRAMES / 2 || f == TOTAL_FRAMES - 1) {
+        if (f == 0 || f == 5 || f == 45 || f == TOTAL_FRAMES / 2 || f == TOTAL_FRAMES - 1) {
             char path[256];
             snprintf(path, sizeof(path),
                      "tests/output/p005_ragdoll_drop_frame_%03d.ppm", f);

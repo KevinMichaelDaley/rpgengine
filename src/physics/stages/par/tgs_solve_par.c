@@ -36,6 +36,7 @@
 #include "ferrum/job/system.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
+#include "ferrum/math/mat4.h"
 
 /** Minimum penetration excess to correct (avoids micro-jitter). */
 #define SPLIT_MIN_PHI 1e-6f
@@ -1014,6 +1015,21 @@ static void solve_island(const tgs_solve_shared_t *shared,
 
         float solve_dt = 1.0f / shared->inv_dt;
 
+        /* Initialize world_transform for each body from current
+         * position + orientation.  The CG apply will compose
+         * incremental transforms directly onto this mat4. */
+        for (uint32_t b = 0; b < island->body_count; ++b) {
+            uint32_t idx = island->body_indices[b];
+            if (idx >= shared->body_count) continue;
+            phys_body_t *body = &shared->bodies_mut[idx];
+            mat4_t rot;
+            quat_to_mat4(body->orientation, &rot);
+            rot.m[12] = body->position.x;
+            rot.m[13] = body->position.y;
+            rot.m[14] = body->position.z;
+            body->world_transform = rot;
+        }
+
         for (uint32_t iter = 0; iter < iters; iter++) {
             /* FK propagation + Jacobian rebuild. */
             propagate_coupled_anchors_par_(
@@ -1052,7 +1068,10 @@ static void solve_island(const tgs_solve_shared_t *shared,
                                   inv_I_use,
                                   shared->velocities,
                                   shared->body_count,
-                                  solve_dt);
+                                  solve_dt,
+                                  shared->joints,
+                                  shared->joint_count,
+                                  shared->constraint_joint_indices);
                 }
             }
 

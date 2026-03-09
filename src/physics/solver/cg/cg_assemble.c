@@ -298,7 +298,7 @@ void phys_cg_assemble(cg_system_t *sys,
 
         /* Position error bias. */
         float C_i = row->bias;
-        float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR) ? 0.1f : 0.6f;
+        float erp = (row->flags & PHYS_ROW_FLAG_ANGULAR) ? 0.2f : 0.6f;
 
         /* Compliance feedback term. */
         float alpha;

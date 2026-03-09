@@ -761,11 +761,11 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                     fprintf(stderr,
                         "  j%u: b%u->b%u %s lim_axes=%u "
                         "lim=[%.3f,%.3f,%.3f]->[%.3f,%.3f,%.3f] "
-                        "damp=%.3f comp=%.6f rest_q=(%.4f,%.4f,%.4f,%.4f)\n",
+                        "damp=%.3f comp=%.6f ang_comp=%.6f rest_q=(%.4f,%.4f,%.4f,%.4f)\n",
                         jc, j->body_a, j->body_b, tn, j->limit_axes,
                         j->limit_min[0], j->limit_min[1], j->limit_min[2],
                         j->limit_max[0], j->limit_max[1], j->limit_max[2],
-                        j->damping, j->compliance,
+                        j->damping, j->compliance, j->angular_compliance,
                         j->rest_relative_orient.x,
                         j->rest_relative_orient.y,
                         j->rest_relative_orient.z,

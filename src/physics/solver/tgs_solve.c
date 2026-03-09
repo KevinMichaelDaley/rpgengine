@@ -35,6 +35,7 @@
 #include "ferrum/physics/tier_list.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
+#include "ferrum/math/mat4.h"
 
 #include <string.h>
 
@@ -1414,6 +1415,22 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             bool cg_ok = phys_cg_alloc(&cg_sys, args->frame_arena,
                                         max_rows);
 
+            /* Initialize world_transform for each body from current
+             * position + orientation.  The CG apply will then compose
+             * incremental transforms directly onto this mat4, avoiding
+             * the lossy mat4→quat→mat4 roundtrip. */
+            for (uint32_t b = 0; b < island->body_count; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= args->body_count) continue;
+                phys_body_t *body = &args->bodies_mut[idx];
+                mat4_t rot;
+                quat_to_mat4(body->orientation, &rot);
+                rot.m[12] = body->position.x;
+                rot.m[13] = body->position.y;
+                rot.m[14] = body->position.z;
+                body->world_transform = rot;
+            }
+
             for (uint32_t iter = 0; iter < iters; iter++) {
                 /* FK propagation + Jacobian rebuild. */
                 propagate_coupled_anchors_(
@@ -1453,7 +1470,10 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                                       inv_I_use,
                                       args->velocities,
                                       args->body_count,
-                                      args->dt);
+                                      args->dt,
+                                      args->joints,
+                                      args->joint_count,
+                                      args->constraint_joint_indices);
                     }
                 }
 

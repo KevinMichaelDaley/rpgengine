@@ -23,6 +23,7 @@ struct phys_frame_arena;
 struct phys_island;
 struct phys_constraint;
 struct phys_body;
+struct phys_joint;
 struct phys_mat3;
 struct phys_velocity;
 
@@ -101,6 +102,9 @@ uint32_t phys_cg_solve(cg_system_t *sys,
  * @param velocities       Velocity workspace (updated).
  * @param body_count       Total body count.
  * @param dt               Substep timestep.
+ * @param joints           Joint array (for anchor lookup). May be NULL.
+ * @param joint_count      Number of joints.
+ * @param constraint_joint_indices Maps constraint → joint index. May be NULL.
  */
 void phys_cg_apply(const cg_system_t *sys,
                    const struct phys_island *island,
@@ -109,7 +113,10 @@ void phys_cg_apply(const cg_system_t *sys,
                    const struct phys_mat3 *inv_inertia_world,
                    struct phys_velocity *velocities,
                    uint32_t body_count,
-                   float dt);
+                   float dt,
+                   const struct phys_joint *joints,
+                   uint32_t joint_count,
+                   const uint32_t *constraint_joint_indices);
 
 #ifdef __cplusplus
 } /* extern "C" */

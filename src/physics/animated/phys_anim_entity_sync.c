@@ -37,31 +37,25 @@ void phys_anim_entity_sync_from_world(phys_anim_entity_t *entity,
             (phys_world_t *)world, bi);
         if (!body) continue;
 
-        /* Build rotation matrix from quaternion. */
-        mat4_t rot;
-        quat_to_mat4(body->orientation, &rot);
+        /* Use body->world_transform directly — no quat→mat4 roundtrip.
+         * The CG solver composes this mat4 via SE(3) matrix multiplication,
+         * and the integrator maintains it for non-CG bodies. */
+        mat4_t wt = body->world_transform;
 
-        /* Recover bone head position from body midpoint + head offset. */
-        float tx = body->position.x;
-        float ty = body->position.y;
-        float tz = body->position.z;
+        /* Recover bone head position from body midpoint + head offset.
+         * Rotate head_offset using the mat4's rotation columns directly,
+         * avoiding a separate quat_rotate_vec3 call. */
         if (entity->head_offsets) {
-            phys_vec3_t local_off = {
-                entity->head_offsets[i * 3 + 0],
-                entity->head_offsets[i * 3 + 1],
-                entity->head_offsets[i * 3 + 2]
-            };
-            phys_vec3_t world_off = quat_rotate_vec3(body->orientation,
-                                                     local_off);
-            tx += world_off.x;
-            ty += world_off.y;
-            tz += world_off.z;
+            float hx = entity->head_offsets[i * 3 + 0];
+            float hy = entity->head_offsets[i * 3 + 1];
+            float hz = entity->head_offsets[i * 3 + 2];
+            /* world_off = R * local_off (rotation from upper-left 3×3). */
+            wt.m[12] += wt.m[0]*hx + wt.m[4]*hy + wt.m[8]*hz;
+            wt.m[13] += wt.m[1]*hx + wt.m[5]*hy + wt.m[9]*hz;
+            wt.m[14] += wt.m[2]*hx + wt.m[6]*hy + wt.m[10]*hz;
         }
-        rot.m[12] = tx;
-        rot.m[13] = ty;
-        rot.m[14] = tz;
 
-        entity->bone_world[i] = rot;
+        entity->bone_world[i] = wt;
     }
 
     /* Pass 2: propagate non-body bones.

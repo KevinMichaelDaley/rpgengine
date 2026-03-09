@@ -1,5 +1,6 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/tier_list.h"
+#include "ferrum/math/mat4.h"
 
 #include <stddef.h>
 
@@ -17,6 +18,7 @@ void phys_body_init(phys_body_t *body) {
     body->linear_damping  = 0.0f; /* No drag by default. */
     body->angular_damping = 0.0f;
     body->entity_index = UINT32_MAX;
+    body->world_transform = mat4_identity();
 }
 
 void phys_body_set_mass(phys_body_t *body, float mass) {

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ferrum/math/mat4.h"
 #include "ferrum/physics/phys_types.h"
 
 /** @file
@@ -62,9 +63,16 @@ typedef struct phys_body {
     /** ECS entity index that owns this body (UINT32_MAX = unlinked).
      *  Set by the pre-physics ECS→physics sync pass. */
     uint32_t entity_index;
+
+    /** World-space rigid transform (rotation + translation).
+     *  Maintained by the CG coupled solver and integrator as the
+     *  authoritative rendering state.  Avoids the lossy mat4→quat→mat4
+     *  roundtrip when converting solver output to bone matrices.
+     *  Column-major, same layout as mat4_t. */
+    mat4_t world_transform;
 } phys_body_t;
 
-_Static_assert(sizeof(phys_body_t) == 96, "phys_body_t size check");
+_Static_assert(sizeof(phys_body_t) == 160, "phys_body_t size check");
 
 /** Initialize body to safe defaults (static, identity orientation). */
 void phys_body_init(phys_body_t *body);

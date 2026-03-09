@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "ferrum/math/mat4.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/physics/body.h"
@@ -194,6 +195,14 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
         out->orientation.z = in->orientation.z + dq.z * half_dt;
         out->orientation.w = in->orientation.w + dq.w * half_dt;
         out->orientation = quat_normalize_safe(out->orientation, 1e-8f);
+
+        /* Build world_transform from integrated position + orientation.
+         * Keeps it in sync for rendering (non-CG bodies use this path;
+         * CG bodies have world_transform set directly by cg_apply). */
+        quat_to_mat4(out->orientation, &out->world_transform);
+        out->world_transform.m[12] = out->position.x;
+        out->world_transform.m[13] = out->position.y;
+        out->world_transform.m[14] = out->position.z;
 
         /* Sleep detection — only update sleep counter on first substep
          * so that sleep_delay_frames counts physics ticks, not substeps. */

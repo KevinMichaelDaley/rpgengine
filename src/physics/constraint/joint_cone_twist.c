@@ -212,7 +212,11 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
              * (no correction needed yet) but the row is active with
              * one-sided bounds that block motion toward the nearer
              * limit.  Without this, the body can freely accelerate
-             * past the limit between Jacobian rebuilds. */
+             * past the limit between Jacobian rebuilds.
+             *
+             * Note: with pure angular Jacobians (J_va = J_vb = 0),
+             * speculative rows see Jv = axis·(ω_b - ω_a) which is
+             * zero during uniform motion, so no ratchet effect. */
             ang_error = 0.0f;
             float dist_lo = angle - lo;  /* > 0 */
             float dist_hi = hi - angle;  /* > 0 */
@@ -239,8 +243,24 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
 
         phys_jacobian_row_t *row = &joint->rows[rc];
         memset(row, 0, sizeof(*row));
-        row->J_va = (phys_vec3_t){0.0f, 0.0f, 0.0f};
-        row->J_vb = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        /* Violation rows use lever-arm cross products so angular
+         * corrections rotate about the anchor (couples angular and
+         * positional DOFs in the A matrix).
+         *
+         * Speculative rows (within limits) use pure angular Jacobians
+         * to avoid a ratchet effect: lever-arm terms create a spurious
+         * Jv = cross(rB-rA, axis)·v during uniform motion (free fall)
+         * which one-sided bounds rectify into accumulated angular
+         * velocity.  Speculative rows only need to block angular
+         * velocity, not correct positional displacement. */
+        bool at_limit = (ang_error != 0.0f);
+        if (at_limit) {
+            row->J_va = vec3_scale(vec3_cross(rA, world_axis), -1.0f);
+            row->J_vb = vec3_cross(rB, world_axis);
+        } else {
+            row->J_va = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+            row->J_vb = (phys_vec3_t){0.0f, 0.0f, 0.0f};
+        }
         row->J_wa = vec3_scale(world_axis, -1.0f);
         row->J_wb = world_axis;
         row->lambda_min = lmin;
