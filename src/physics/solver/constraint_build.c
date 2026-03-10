@@ -140,6 +140,8 @@ void phys_constraint_build_contact(
     }
 
     c->rows[0].bias = restitution_bias + baumgarte_bias + speculative_bias;
+    /* XPBD uses c->penetration directly for contacts, not constraint_error. */
+    c->rows[0].constraint_error = -contact->penetration;
 
     /* Compute world-space inverse inertia tensors for effective mass. */
     phys_mat3_t inv_i_world_a = phys_mat3_inv_inertia_world(

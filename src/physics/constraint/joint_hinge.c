@@ -46,6 +46,7 @@ static void build_positional_row(phys_jacobian_row_t *row,
 
     /* Position error stored in bias for split-impulse correction. */
     row->bias = error;
+    row->constraint_error = error;
     row->damping = row_damping;
 
     row->effective_mass = phys_compute_effective_mass(
@@ -146,6 +147,7 @@ void phys_joint_build_hinge(phys_joint_t *joint,
         row->lambda_max =  JOINT_LAMBDA_BIG;
         row->lambda = joint->cached_lambda[3 + k]; /* Warmstart. */
         row->bias = 0.0f;  /* No angular drift correction for now. */
+        row->constraint_error = 0.0f;
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR;
 

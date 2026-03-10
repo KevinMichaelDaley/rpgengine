@@ -93,6 +93,7 @@ void phys_joint_build_limit_position(phys_joint_t *joint,
          * clamp, so avoid warmstarting them by transient row index. */
         row->lambda = 0.0f;
         row->bias = error;
+        row->constraint_error = error;
         row->damping = joint->damping;
         row->effective_mass = phys_compute_effective_mass(
             row, body_a->inv_mass, &inv_i_a,

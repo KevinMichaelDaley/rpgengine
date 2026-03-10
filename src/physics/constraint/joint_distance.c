@@ -114,6 +114,7 @@ void phys_joint_build_distance(phys_joint_t *joint,
      * The velocity-level solve sees bias=0 (set by the solver);
      * position correction uses this raw error value. */
     row->bias = error;
+    row->constraint_error = error;
     row->damping = joint->damping;
 
     /* Effective mass (world-space inverse inertia). */

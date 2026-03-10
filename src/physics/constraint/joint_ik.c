@@ -75,6 +75,7 @@ static void build_ik_row(phys_jacobian_row_t *row,
     row->lambda     = 0.0f;
 
     row->bias    = error;
+    row->constraint_error = error;
     row->damping = damping;
 
     row->effective_mass = phys_compute_effective_mass(

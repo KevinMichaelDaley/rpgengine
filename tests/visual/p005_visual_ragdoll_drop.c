@@ -400,16 +400,14 @@ int main(void) {
     /* Bump gravity to compensate for uniform damping drag. */
     world.config.gravity = (phys_vec3_t){0.0f, -12.0f, 0.0f};
 
-    /* Ground plane. */
+    /* Ground halfspace (infinite plane at y=0, normal pointing up). */
     uint32_t ground_id = phys_world_create_body(&world);
     {
         phys_body_t *ground = phys_world_get_body(&world, ground_id);
-        ground->position = (phys_vec3_t){0.0f, -0.5f, 0.0f};
+        ground->position = (phys_vec3_t){0.0f, 0.0f, 0.0f};
         ground->flags |= PHYS_BODY_FLAG_STATIC | PHYS_BODY_FLAG_CCD;
-        phys_world_set_box_collider(&world, ground_id,
-            (phys_vec3_t){50.0f, 0.5f, 50.0f},
-            (phys_vec3_t){0.0f, 0.0f, 0.0f},
-            (phys_quat_t){0.0f, 0.0f, 0.0f, 1.0f});
+        phys_world_set_halfspace_collider(&world, ground_id,
+            (phys_vec3_t){0.0f, 1.0f, 0.0f}, 0.0f);
     }
 
     /* Position skeleton: shift so lowest bone sits at GROUND_Y + drop height. */
@@ -421,7 +419,7 @@ int main(void) {
         if (y > max_y) max_y = y;
     }
     float model_height = max_y - min_y;
-    float drop_height = model_height * 0.5f; /* drop from half its height */
+    float drop_height = model_height * 2.0f; /* drop from well above ground */
     float y_offset = GROUND_Y - min_y + drop_height;
 
     mat4_t *initial_pose = (mat4_t *)malloc(skel.joint_count * sizeof(mat4_t));
@@ -437,6 +435,17 @@ int main(void) {
     }
     printf("  Animated entity: %u bodies, %u joints (pure ragdoll)\n",
            anim_ent.body_count, anim_ent.joint_count);
+    /* Debug: verify bodies_curr has correct positions after create. */
+    for (uint32_t i = 0; i < skel.joint_count && i < 3; i++) {
+        uint32_t bi = anim_ent.body_indices[i];
+        if (bi == UINT32_MAX) continue;
+        const phys_body_t *b = phys_world_get_body(&world, bi);
+        if (b) {
+            fprintf(stderr, "  [CREATE-DBG] bone %u body %u: pos=(%.3f,%.3f,%.3f) tier=%u wt13=%.3f\n",
+                    i, bi, b->position.x, b->position.y, b->position.z,
+                    b->tier, b->world_transform.m[13]);
+        }
+    }
     {
         uint32_t included_pairs = 0;
         uint32_t excluded_pairs = 0;
@@ -487,9 +496,6 @@ int main(void) {
     phys_game_state_set_player(&game_state, 0, &player0);
     tick_runner.game_state = &game_state;
 
-    phys_tick_runner_start(&tick_runner);
-    printf("  Tick runner started\n");
-
     /* Enable substep-level diagnostic dump for first few ticks.
      * The flag is checked by tick_parallel.c each substep. */
     world.debug_substep_dump = 0;
@@ -526,6 +532,11 @@ int main(void) {
     int gl_error_count = 0;
     int frame_count = 0;
     uint32_t frame_interval_ms = 1000 / TARGET_FPS;
+
+    /* Start physics only after all setup is done so the ragdoll doesn't
+     * fall before the first frame renders. */
+    phys_tick_runner_start(&tick_runner);
+    printf("  Tick runner started\n");
 
     /* ── Render loop ──────────────────────────────────────────────── */
 
@@ -817,22 +828,36 @@ int main(void) {
             fprintf(stderr, "  tick_count=%lu\n", (unsigned long)phys_world_tick_count(&world));
         }
 
-        /* Debug: compare body pos vs bone_world pos for key bones. */
-        if (f == 45 || f == 90) {
-            fprintf(stderr, "  --- f%03d body vs bone_world ---\n", f);
+        /* Debug: compare body pos/orient vs bone_world vs palette. */
+        if (f == 30 || f == 45) {
+            fprintf(stderr, "  --- f%03d body vs bone_world vs palette ---\n", f);
             for (uint32_t j = 0; j < skel.joint_count && j < 6; j++) {
                 uint32_t bi = anim_ent.body_indices[j];
                 if (bi == UINT32_MAX) continue;
                 const phys_body_t *b = phys_world_get_body(&world, bi);
                 if (!b) continue;
                 mat4_t bw = anim_ent.bone_world[j];
-                fprintf(stderr, "    bone[%u] %-12s body=(%.3f,%.3f,%.3f) bw=(%.3f,%.3f,%.3f) delta=(%.4f,%.4f,%.4f)\n",
-                        j, skel.joint_names[j],
+                fprintf(stderr, "    bone[%u] %-12s\n", j, skel.joint_names[j]);
+                fprintf(stderr, "      body pos=(%.3f,%.3f,%.3f) q=(%.3f,%.3f,%.3f,%.3f)\n",
                         b->position.x, b->position.y, b->position.z,
-                        bw.m[12], bw.m[13], bw.m[14],
-                        bw.m[12] - b->position.x,
-                        bw.m[13] - b->position.y,
-                        bw.m[14] - b->position.z);
+                        b->orientation.x, b->orientation.y, b->orientation.z, b->orientation.w);
+                fprintf(stderr, "      wt row0=[%.3f %.3f %.3f %.3f]\n",
+                        b->world_transform.m[0], b->world_transform.m[4],
+                        b->world_transform.m[8], b->world_transform.m[12]);
+                fprintf(stderr, "      wt row1=[%.3f %.3f %.3f %.3f]\n",
+                        b->world_transform.m[1], b->world_transform.m[5],
+                        b->world_transform.m[9], b->world_transform.m[13]);
+                fprintf(stderr, "      wt row2=[%.3f %.3f %.3f %.3f]\n",
+                        b->world_transform.m[2], b->world_transform.m[6],
+                        b->world_transform.m[10], b->world_transform.m[14]);
+                fprintf(stderr, "      bw trans=(%.3f,%.3f,%.3f)\n",
+                        bw.m[12], bw.m[13], bw.m[14]);
+                if (anim_ent.head_offsets) {
+                    fprintf(stderr, "      head_off=(%.3f,%.3f,%.3f)\n",
+                            anim_ent.head_offsets[j*3+0],
+                            anim_ent.head_offsets[j*3+1],
+                            anim_ent.head_offsets[j*3+2]);
+                }
             }
         }
 

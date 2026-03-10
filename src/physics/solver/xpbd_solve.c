@@ -65,7 +65,22 @@ static phys_quat_t apply_angular_correction(phys_quat_t q, phys_vec3_t delta_w)
         q.z + dq.z,
         q.w + dq.w
     };
-    return quat_normalize_safe(result, 1e-8f);
+    result = quat_normalize_safe(result, 1e-8f);
+    /* Shortest-path check: ensure the corrected quaternion is in the
+     * same hemisphere as the input.  If dot(q, result) < 0 the solver
+     * jumped to the antipodal representation, which would look like a
+     * ~π rotation error to downstream constraint builders.  Negating
+     * result maps it back to the same rotation without changing the
+     * physical orientation. */
+    float dot = q.x * result.x + q.y * result.y
+              + q.z * result.z + q.w * result.w;
+    if (dot < 0.0f) {
+        result.x = -result.x;
+        result.y = -result.y;
+        result.z = -result.z;
+        result.w = -result.w;
+    }
+    return result;
 }
 
 /**
@@ -130,13 +145,12 @@ static void solve_contact_xpbd(phys_constraint_t *c,
     float n_len_sq = vec3_dot(normal, normal);
     if (n_len_sq < 1e-10f) return;
 
-    /* XPBD needs a position-level error, not the velocity-space bias used
-     * by the TGS solver. For real overlap, solve the full penetration depth
-     * directly; otherwise keep the speculative gap bias for pre-contact
-     * clamping. */
-    float C = (c->penetration > 0.0f)
-        ? -c->penetration
-        : (-row->bias * dt);
+    /* XPBD is a position-level solver — only correct actual overlaps.
+     * Speculative contacts (penetration <= 0) are a velocity-level concept
+     * and must be skipped here; otherwise the bias term generates a
+     * position correction that pulls the bodies *toward* each other. */
+    if (c->penetration <= 0.0f) return;
+    float C = -c->penetration;
 
     float compliance = (c->compliance > 0.0f) ? c->compliance : default_compliance;
     float alpha_tilde = (dt > 0.0f) ? compliance / (dt * dt) : 0.0f;
@@ -242,7 +256,7 @@ static void solve_joint_xpbd(phys_constraint_t *c,
                + vec3_dot(row->J_wb, bb->angular_vel);
         }
 
-        float C = row->bias;
+        float C = row->constraint_error;
         /* XPBD-D: Δλ = -(C + α̃·λ + γ·Jv) / ((1+γ)·w + α̃) */
         float delta_lambda = -(C + alpha_tilde * row->lambda + gamma * jv)
                            / ((1.0f + gamma) * w + alpha_tilde);

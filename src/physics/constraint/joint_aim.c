@@ -94,6 +94,7 @@ void phys_joint_build_aim(phys_joint_t *joint,
         row->lambda_max =  JOINT_LAMBDA_BIG;
         row->lambda = joint->cached_lambda[k];
         row->bias = err;
+        row->constraint_error = err;
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR;
         row->effective_mass = phys_compute_effective_mass(

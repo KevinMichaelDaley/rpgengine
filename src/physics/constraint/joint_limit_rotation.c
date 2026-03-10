@@ -113,6 +113,7 @@ void phys_joint_build_limit_rotation(phys_joint_t *joint,
          * rows cold-started instead of reusing a mismatched lambda. */
         row->lambda = 0.0f;
         row->bias = error;
+        row->constraint_error = error;
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR;
         row->effective_mass = phys_compute_effective_mass(

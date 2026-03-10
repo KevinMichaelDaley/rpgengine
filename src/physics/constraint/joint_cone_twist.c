@@ -42,6 +42,7 @@ static void build_positional_row(phys_jacobian_row_t *row,
     row->lambda_max =  JOINT_LAMBDA_BIG;
     row->lambda = 0.0f;
     row->bias = error;
+    row->constraint_error = error;
     row->damping = row_damping;
     row->effective_mass = phys_compute_effective_mass(
         row, body_a->inv_mass, inv_i_world_a,
@@ -278,6 +279,7 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
         row->lambda_max = lmax;
         row->lambda = 0.0f;
         row->bias = ang_error;
+        row->constraint_error = ang_error;
         row->damping = joint->damping;
         row->flags = PHYS_ROW_FLAG_ANGULAR
                    | (is_drive ? PHYS_ROW_FLAG_DRIVE : 0);

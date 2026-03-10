@@ -1064,6 +1064,20 @@ void phys_world_tick_parallel(phys_world_t *world,
         }
     }
 
+    {
+        static int hs_dbg = 0;
+        if (hs_dbg < 3) {
+            fprintf(stderr, "[HS-DBG] halfspace_count=%u hs_count=%u body_cap=%u\n",
+                    world->halfspace_count, hs_count, body_cap);
+            for (uint32_t h = 0; h < hs_count; h++) {
+                uint32_t hi = hs_bodies[h];
+                fprintf(stderr, "  hs[%u] body=%u active=%u type=%u flags=0x%x\n",
+                        h, hi, active[hi], world->colliders[hi].type,
+                        world->body_pool.bodies_curr[hi].flags);
+            }
+            hs_dbg++;
+        }
+    }
     uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
     phys_collision_pair_t *pairs = phys_frame_arena_alloc(
         &world->frame_arena,
@@ -1134,6 +1148,13 @@ void phys_world_tick_parallel(phys_world_t *world,
                             PHYS_BODY_FLAG_HAD_CONTACT);
         }
     }
+
+    /* XPBD state that must persist across substeps for velocity
+     * derivation on the final substep (sub == plan.substeps - 1). */
+    phys_vec3_t *xpbd_start_pos_outer = NULL;
+    phys_quat_t *xpbd_start_orient_outer = NULL;
+    uint32_t     xpbd_body_count_outer = 0;
+    uint32_t    *xpbd_body_indices_outer = NULL;
 
     for (uint32_t sub = 0; sub < max_substeps; sub++) {
 
@@ -1210,6 +1231,31 @@ void phys_world_tick_parallel(phys_world_t *world,
                 constraint_joint_indices[i] = UINT32_MAX;
             }
         }
+
+        /* ── Static CCD: clamp positions against static geometry ──
+         * Run BEFORE narrowphase so clamped positions generate proper
+         * ground contacts for the solver to resolve. */
+        phys_stage_ccd(&(phys_ccd_args_t){
+            .bodies_prev      = world->body_pool.bodies_ccd_prev,
+            .bodies_read      = world->body_pool.bodies_next,
+            .bodies_curr      = world->body_pool.bodies_next,
+            .colliders        = world->colliders,
+            .meshes           = world->meshes,
+            .constraints      = constraints,
+            .arena            = &world->frame_arena,
+            .constraint_count = constraint_count,
+            .mesh_count       = world->mesh_count,
+            .body_count       = body_cap,
+            .dt               = substep_dt,
+            .spheres          = world->spheres,
+            .capsules         = world->capsules,
+            .boxes            = world->boxes,
+            .convex_hulls     = world->convex_hulls,
+            .compounds        = world->compounds,
+            .compound_count   = world->compound_count,
+            .halfspaces       = world->halfspaces,
+            .auto_ccd_speed   = world->config.auto_ccd_speed,
+        });
 
         uint8_t *ccd_skip_pair = NULL;
         if (pair_count > 0) {
@@ -1505,6 +1551,27 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
         TracyCZoneEnd(z_island);
 #endif
+
+        /* Debug: island contents after build. */
+        {
+            static uint32_t _isl_dbg = 0;
+            if (_isl_dbg < 10 && sub == 0 && joint_constraint_start > 0) {
+                fprintf(stderr, "[ISLAND-DBG] tick=%u islands=%u total_constraints=%u (contacts=%u joints=%u)\n",
+                        world->tick_count, islands.count, constraint_count,
+                        joint_constraint_start, constraint_count - joint_constraint_start);
+                for (uint32_t ii = 0; ii < islands.count; ii++) {
+                    phys_island_t *isle = &islands.islands[ii];
+                    uint32_t nc = 0, nj = 0;
+                    for (uint32_t ci = 0; ci < isle->constraint_count; ci++) {
+                        uint32_t idx = isle->constraint_indices[ci];
+                        if (constraints[idx].is_joint) nj++; else nc++;
+                    }
+                    fprintf(stderr, "  island[%u] bodies=%u constraints=%u (contacts=%u joints=%u)\n",
+                            ii, isle->body_count, isle->constraint_count, nc, nj);
+                }
+                _isl_dbg++;
+            }
+        }
 
         /* ── Stage 10b: Island Tier Promotion ──────────────────── */
         /* Promote all dynamic bodies in each island to the
@@ -1822,7 +1889,19 @@ void phys_world_tick_parallel(phys_world_t *world,
                      * unused until the integration stage which runs after
                      * both solvers complete. */
                     uint32_t xc = 0;
-                    phys_body_t *xpbd_bodies = world->body_pool.bodies_next;
+                    /* Allocate a scratch buffer so the XPBD solver does
+                     * not mutate bodies_next in-place.  Other stages may
+                     * read bodies_next concurrently; writing to it here
+                     * is a data race.  Results are copied back after the
+                     * solve completes. */
+                    phys_body_t *xpbd_bodies = phys_frame_arena_alloc(
+                        &world->frame_arena,
+                        body_cap * sizeof(phys_body_t),
+                        _Alignof(phys_body_t));
+                    if (!xpbd_bodies) {
+                        /* Arena exhausted — fall through to TGS. */
+                        goto xpbd_skip;
+                    }
                     uint32_t *xpbd_constraint_source_indices =
                         phys_frame_arena_alloc(
                             &world->frame_arena,
@@ -1863,6 +1942,11 @@ void phys_world_tick_parallel(phys_world_t *world,
                             * sizeof(uint32_t),
                         _Alignof(uint32_t));
                     const phys_body_t *bodies_c = world->body_pool.bodies_next;
+                    /* Seed the entire scratch buffer so static body
+                     * lookups (inv_mass=0 entries referenced by
+                     * constraints) return valid data. */
+                    memcpy(xpbd_bodies, bodies_c,
+                           body_cap * sizeof(phys_body_t));
 
                     if (xpbd_joint_temp_start) {
                         for (uint32_t ji = 0; ji < world->joint_count; ++ji) {
@@ -1940,26 +2024,39 @@ void phys_world_tick_parallel(phys_world_t *world,
                     if (xpbd_compliance < world->config.xpbd_min_compliance) {
                         xpbd_compliance = world->config.xpbd_min_compliance;
                     }
-                    uint32_t xpbd_substeps =
-                        plan.tier_params[PHYS_TIER_ANIM].substeps;
+                    /* The XPBD block already runs inside the main substep
+                     * loop (sub = 0..max_substeps-1), so it should NOT do
+                     * additional sub-substepping.  Using xpbd_substeps > 1
+                     * would double-divide the timestep, making the solver
+                     * dt 16× too small and breaking compliance scaling. */
+                    uint32_t xpbd_substeps = 1;
                     if (xpbd_iters == 0) {
                         xpbd_iters = plan.solver_iterations;
-                    }
-                    if (xpbd_substeps == 0) {
-                        xpbd_substeps = 1;
                     }
 
                     /* Save pre-XPBD positions/orientations so we can
                      * derive final velocities for the shared velocity
                      * array after all XPBD substeps complete. */
-                    xpbd_start_pos = phys_frame_arena_alloc(
-                        &world->frame_arena,
-                        xpbd_body_count * sizeof(phys_vec3_t),
-                        _Alignof(phys_vec3_t));
-                    xpbd_start_orient = phys_frame_arena_alloc(
-                        &world->frame_arena,
-                        xpbd_body_count * sizeof(phys_quat_t),
-                        _Alignof(phys_quat_t));
+                    /* Only snapshot start state on the first substep so
+                     * the final velocity derivation spans the whole tick. */
+                    if (sub == 0) {
+                        xpbd_start_pos = phys_frame_arena_alloc(
+                            &world->frame_arena,
+                            xpbd_body_count * sizeof(phys_vec3_t),
+                            _Alignof(phys_vec3_t));
+                        xpbd_start_orient = phys_frame_arena_alloc(
+                            &world->frame_arena,
+                            xpbd_body_count * sizeof(phys_quat_t),
+                            _Alignof(phys_quat_t));
+                        /* Persist across substeps so the final velocity
+                         * derivation (sub == plan.substeps-1) can access
+                         * the start-of-tick state. */
+                        xpbd_start_pos_outer = xpbd_start_pos;
+                        xpbd_start_orient_outer = xpbd_start_orient;
+                        xpbd_body_count_outer = xpbd_body_count;
+                        xpbd_body_indices_outer = xpbd_body_indices;
+                    }
+                    if (sub == 0) {
                     for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
                         uint32_t idx = xpbd_body_indices[bi];
                         if (xpbd_start_pos)
@@ -1967,6 +2064,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                         if (xpbd_start_orient)
                             xpbd_start_orient[bi] = xpbd_bodies[idx].orientation;
                     }
+                    } /* end if (sub == 0) save */
 
                     /* XPBD substepping: subdivide the substep_dt into
                      * multiple sub-substeps.  Each sub-substep:
@@ -1991,6 +2089,26 @@ void phys_world_tick_parallel(phys_world_t *world,
                         _Alignof(phys_quat_t));
 
                     for (uint32_t xsub = 0; xsub < xpbd_substeps; xsub++) {
+                        /* DEBUG: dump velocities entering prediction */
+                        {
+                            static uint32_t vel_dbg = 0;
+                            if (vel_dbg < 6 && xsub == 0) {
+                                fprintf(stderr, "[XPBD-VEL] tick=%u sub=%u body[0] idx=%u "
+                                    "vel=(%.3f,%.3f,%.3f) avel=(%.3f,%.3f,%.3f) pos=(%.4f,%.4f,%.4f)\n",
+                                    world->tick_count, sub,
+                                    xpbd_body_indices[0],
+                                    xpbd_bodies[xpbd_body_indices[0]].linear_vel.x,
+                                    xpbd_bodies[xpbd_body_indices[0]].linear_vel.y,
+                                    xpbd_bodies[xpbd_body_indices[0]].linear_vel.z,
+                                    xpbd_bodies[xpbd_body_indices[0]].angular_vel.x,
+                                    xpbd_bodies[xpbd_body_indices[0]].angular_vel.y,
+                                    xpbd_bodies[xpbd_body_indices[0]].angular_vel.z,
+                                    xpbd_bodies[xpbd_body_indices[0]].position.x,
+                                    xpbd_bodies[xpbd_body_indices[0]].position.y,
+                                    xpbd_bodies[xpbd_body_indices[0]].position.z);
+                                vel_dbg++;
+                            }
+                        }
                         /* 1. Save pre-predict state and predict with
                          *    gravity (semi-implicit Euler). */
                         for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
@@ -2009,6 +2127,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                             phys_vec3_t w = b->angular_vel;
                             float wmag = sqrtf(w.x*w.x + w.y*w.y + w.z*w.z);
                             if (wmag > 1e-8f) {
+                                phys_quat_t q_before = b->orientation;
                                 phys_quat_t wq = { w.x, w.y, w.z, 0.0f };
                                 phys_quat_t dq = quat_mul(wq, b->orientation);
                                 b->orientation.x += 0.5f * dq.x * xpbd_sub_dt;
@@ -2017,6 +2136,20 @@ void phys_world_tick_parallel(phys_world_t *world,
                                 b->orientation.w += 0.5f * dq.w * xpbd_sub_dt;
                                 b->orientation = quat_normalize_safe(
                                     b->orientation, 1e-8f);
+                                /* Shortest-path: keep predicted quaternion
+                                 * in the same hemisphere as the input to
+                                 * avoid antipodal flips that look like ~π
+                                 * rotation errors to joint builders. */
+                                float qd = q_before.x * b->orientation.x
+                                         + q_before.y * b->orientation.y
+                                         + q_before.z * b->orientation.z
+                                         + q_before.w * b->orientation.w;
+                                if (qd < 0.0f) {
+                                    b->orientation.x = -b->orientation.x;
+                                    b->orientation.y = -b->orientation.y;
+                                    b->orientation.z = -b->orientation.z;
+                                    b->orientation.w = -b->orientation.w;
+                                }
                             }
                         }
                         /* DEBUG: dump first few body positions pre-solve */
@@ -2234,46 +2367,27 @@ void phys_world_tick_parallel(phys_world_t *world,
                             }
                         }
 
-                        /* 4. Derive velocities from position/orientation
-                         *    deltas: v = (x_solved - x_prev) / sub_dt. */
-                        float inv_sub_dt = (xpbd_sub_dt > 0.0f)
-                                         ? 1.0f / xpbd_sub_dt : 0.0f;
-                        for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
-                            uint32_t idx = xpbd_body_indices[bi];
-                            phys_body_t *b = &xpbd_bodies[idx];
-                            if (b->inv_mass <= 0.0f) continue;
+                        /* No per-substep velocity derivation.  XPBD is a
+                         * position-level solver: corrections move positions
+                         * directly.  Deriving velocity from position delta
+                         * creates a feedback loop where constraint corrections
+                         * are amplified into large velocities.  Velocities
+                         * evolve only via gravity in the prediction step. */
+                    }
 
-                            /* Linear velocity from position delta. */
-                            if (xpbd_prev_pos) {
-                                phys_vec3_t dp = vec3_sub(b->position,
-                                                          xpbd_prev_pos[bi]);
-                                b->linear_vel = vec3_scale(dp, inv_sub_dt);
-                            }
-
-                            /* Angular velocity from orientation delta. */
-                            if (xpbd_prev_orient) {
-                                phys_quat_t qi_conj = quat_conjugate(
-                                    xpbd_prev_orient[bi]);
-                                phys_quat_t dq = quat_mul(b->orientation,
-                                                           qi_conj);
-                                float sign = (dq.w >= 0.0f) ? 1.0f : -1.0f;
-                                b->angular_vel = (phys_vec3_t){
-                                    2.0f * dq.x * sign * inv_sub_dt,
-                                    2.0f * dq.y * sign * inv_sub_dt,
-                                    2.0f * dq.z * sign * inv_sub_dt
-                                };
-                            }
-
-                            /* Light damping to prevent energy gain.
-                             * Use implicit Euler: v /= (1 + c*dt) for
-                             * unconditional stability (explicit Euler
-                             * v *= (1-c*dt) can oscillate/go negative
-                             * when c*dt > 1). */
-                            if (world->config.velocity_damping > 0.0f) {
-                                float damp = 1.0f / (1.0f + world->config.velocity_damping * xpbd_sub_dt);
-                                b->linear_vel = vec3_scale(b->linear_vel, damp);
-                                b->angular_vel = vec3_scale(b->angular_vel, damp);
-                            }
+                    /* Write solved body state back from scratch buffer
+                     * to bodies_next so downstream stages see the result.
+                     * Rebuild world_transform from position + orientation so
+                     * that rendering (bone sync) sees the updated pose. */
+                    for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
+                        uint32_t idx = xpbd_body_indices[bi];
+                        if (idx < body_cap) {
+                            phys_body_t *out = &xpbd_bodies[idx];
+                            quat_to_mat4(out->orientation, &out->world_transform);
+                            out->world_transform.m[12] = out->position.x;
+                            out->world_transform.m[13] = out->position.y;
+                            out->world_transform.m[14] = out->position.z;
+                            world->body_pool.bodies_next[idx] = *out;
                         }
                     }
 
@@ -2319,6 +2433,7 @@ void phys_world_tick_parallel(phys_world_t *world,
                     xpbd_dispatched = true;
                 }
             }
+            xpbd_skip: (void)0;
 
             /* ── Stage 11a: TGS Solve (T0/T1 islands) ─────────────── */
 
@@ -2422,11 +2537,6 @@ void phys_world_tick_parallel(phys_world_t *world,
             if (xpbd_dispatched) {
                 phys_wait_stage(jobs, PHYS_STAGE_XPBD_SOLVE);
 
-                /* Derive velocities from XPBD position+orientation deltas
-                 * and merge into the shared velocity array for XPBD bodies.
-                 * Use pre-XPBD saved state vs post-XPBD bodies_next. */
-                float inv_dt = (substep_dt > 0.0f) ? 1.0f / substep_dt : 0.0f;
-
                 /* Allocate skip array if needed so integration doesn't
                  * overwrite the XPBD-solved positions in bodies_next. */
                 if (!body_sub_substepped) {
@@ -2440,31 +2550,48 @@ void phys_world_tick_parallel(phys_world_t *world,
                     }
                 }
 
-                const phys_body_t *bodies_solved = world->body_pool.bodies_next;
+                /* Always mark XPBD bodies so integration skips them. */
                 for (uint32_t bi = 0; bi < xpbd_body_count; bi++) {
                     uint32_t idx = xpbd_body_indices[bi];
-                    if (idx >= body_cap) continue;
-                    if (xpbd_start_pos) {
-                        phys_vec3_t dp = vec3_sub(bodies_solved[idx].position,
-                                                   xpbd_start_pos[bi]);
-                        velocities[idx].linear = vec3_scale(dp, inv_dt);
-                    } else {
-                        velocities[idx].linear = bodies_solved[idx].linear_vel;
-                    }
-                    if (xpbd_start_orient) {
-                        phys_quat_t qi_conj = quat_conjugate(xpbd_start_orient[bi]);
-                        phys_quat_t dq = quat_mul(bodies_solved[idx].orientation, qi_conj);
-                        float sign = (dq.w >= 0.0f) ? 1.0f : -1.0f;
-                        velocities[idx].angular = (phys_vec3_t){
-                            2.0f * dq.x * sign * inv_dt,
-                            2.0f * dq.y * sign * inv_dt,
-                            2.0f * dq.z * sign * inv_dt
-                        };
-                    } else {
-                        velocities[idx].angular = bodies_solved[idx].angular_vel;
-                    }
-                    if (body_sub_substepped) {
+                    if (idx < body_cap && body_sub_substepped) {
                         body_sub_substepped[idx] = 1;
+                    }
+                }
+
+                /* XPBD velocity derivation.  Linear velocity is derived
+                 * from the full-tick position delta so momentum carries
+                 * across ticks (free-fall + constraint corrections).
+                 * Angular velocity is NOT derived — orientation corrections
+                 * divided by dt produce enormous angular velocities that
+                 * destabilize the next tick's prediction.  Angular DOFs
+                 * are handled purely through the solver's position-level
+                 * orientation projection each tick. */
+                if (sub == plan.substeps - 1 &&
+                    xpbd_body_count_outer > 0) {
+                    float inv_tick_dt = (plan.dt > 0.0f)
+                                      ? 1.0f / plan.dt : 0.0f;
+                    for (uint32_t bi = 0; bi < xpbd_body_count_outer; bi++) {
+                        uint32_t idx = xpbd_body_indices_outer[bi];
+                        if (idx >= body_cap) continue;
+                        /* Linear: v = dp / tick_dt */
+                        if (xpbd_start_pos_outer) {
+                            phys_vec3_t dp = vec3_sub(
+                                world->body_pool.bodies_next[idx].position,
+                                xpbd_start_pos_outer[bi]);
+                            velocities[idx].linear =
+                                vec3_scale(dp, inv_tick_dt);
+                        } else {
+                            velocities[idx].linear =
+                                world->body_pool.bodies_next[idx].linear_vel;
+                        }
+                        /* Angular: keep at zero — solver projects orientations */
+                        velocities[idx].angular = (phys_vec3_t){0,0,0};
+                        world->body_pool.bodies_next[idx].linear_vel =
+                            velocities[idx].linear;
+                        world->body_pool.bodies_next[idx].angular_vel =
+                            velocities[idx].angular;
+                        world->body_pool.bodies_next[idx].angular_vel =
+                            velocities[idx].angular;
                     }
                 }
             }
@@ -2691,29 +2818,7 @@ void phys_world_tick_parallel(phys_world_t *world,
             }
         }
 
-        /* ── Stage 12c: CCD (swept sphere vs static mesh) ─────── */
-        {
-            phys_stage_ccd(&(phys_ccd_args_t){
-                .bodies_prev      = world->body_pool.bodies_ccd_prev,
-                .bodies_read      = world->body_pool.bodies_next,
-                .bodies_curr      = world->body_pool.bodies_next,
-                .colliders        = world->colliders,
-                .meshes           = world->meshes,
-                .constraints      = constraints,
-                .arena            = &world->frame_arena,
-                .constraint_count = constraint_count,
-                .mesh_count       = world->mesh_count,
-                .body_count       = body_cap,
-                .dt               = substep_dt,
-                .spheres          = world->spheres,
-                .capsules         = world->capsules,
-                .boxes            = world->boxes,
-                .convex_hulls     = world->convex_hulls,
-                .compounds        = world->compounds,
-                .compound_count   = world->compound_count,
-                .auto_ccd_speed   = world->config.auto_ccd_speed,
-            });
-        }
+        /* Static CCD moved to pre-solver (before narrowphase). */
 
         if (!world->prediction_mode) {
 

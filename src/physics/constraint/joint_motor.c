@@ -118,6 +118,7 @@ uint8_t phys_joint_motor_apply(const phys_joint_motor_t *motor,
         row->lambda_max =  lam_max;
         row->lambda = 0.f;
         row->bias = errors[i];
+        row->constraint_error = errors[i];
         row->damping = 0.3f;  /* Moderate damping for stability. */
         row->flags = PHYS_ROW_FLAG_ANGULAR;
 

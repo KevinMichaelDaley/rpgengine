@@ -34,7 +34,10 @@ typedef struct phys_jacobian_row {
     phys_vec3_t J_vb;       /**< Linear Jacobian for body B. */
     phys_vec3_t J_wb;       /**< Angular Jacobian for body B. */
     float effective_mass;   /**< 1 / (J * M^-1 * J^T). */
-    float bias;             /**< Baumgarte stabilization + restitution bias. */
+    float bias;             /**< Baumgarte stabilization + restitution bias (velocity-level). */
+    float constraint_error; /**< Raw position/angle error for XPBD (position-level).
+                             *   Set by constraint builders; refreshed each XPBD iteration
+                             *   when joints are rebuilt from current body positions. */
     float lambda;           /**< Accumulated impulse (warmstarted). */
     float lambda_min;       /**< Clamp minimum (0 for normal, -friction*big for tangent). */
     float lambda_max;       /**< Clamp maximum (+big for normal, +friction*big for tangent). */

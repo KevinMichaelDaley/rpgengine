@@ -324,9 +324,19 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
         float hy = world_pose[i].m[13];
         float hz = world_pose[i].m[14];
         if (skel->tail_positions) {
-            float tx = skel->tail_positions[i * 3 + 0];
-            float ty = skel->tail_positions[i * 3 + 1];
-            float tz = skel->tail_positions[i * 3 + 2];
+            /* tail_positions are in armature rest space, same as
+             * rest_world heads.  The caller may have shifted world_pose
+             * (e.g. drop height offset).  Compute that shift and apply
+             * it to the tail so head and tail are in the same frame. */
+            float dx = hx, dy = hy, dz = hz;
+            if (skel->rest_world) {
+                dx -= skel->rest_world[i].m[12];
+                dy -= skel->rest_world[i].m[13];
+                dz -= skel->rest_world[i].m[14];
+            }
+            float tx = skel->tail_positions[i * 3 + 0] + dx;
+            float ty = skel->tail_positions[i * 3 + 1] + dy;
+            float tz = skel->tail_positions[i * 3 + 2] + dz;
             float mx = (hx + tx) * 0.5f;
             float my = (hy + ty) * 0.5f;
             float mz = (hz + tz) * 0.5f;
@@ -344,6 +354,13 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
             body->position = (phys_vec3_t){hx, hy, hz};
         }
         body->orientation = quat_from_mat4(&world_pose[i]);
+
+        /* Build world_transform from position + orientation so that the
+         * bone sync (which reads world_transform) works from frame 0. */
+        quat_to_mat4(body->orientation, &body->world_transform);
+        body->world_transform.m[12] = body->position.x;
+        body->world_transform.m[13] = body->position.y;
+        body->world_transform.m[14] = body->position.z;
 
         if (!has_collider) {
             /* Ghost body: no authored collider.  Participates in joint
@@ -372,6 +389,8 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
 
         if (col->ccd_enabled) {
             body->flags |= PHYS_BODY_FLAG_CCD;
+            fprintf(stderr, "[CCD-FLAG] bone %u (body %u) CCD enabled\n",
+                    i, bi);
         }
 
         /* Set shape-specific inertia. */

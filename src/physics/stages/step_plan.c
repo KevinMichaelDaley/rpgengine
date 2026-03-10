@@ -73,13 +73,13 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
      * (compliance α, damping γ) in the velocity equation prevent
      * energy injection without needing a separate position solver.
      * phys_tier_cross_solver_mode() also returns TGS for TIER_ANIM. */
-    plan->tier_params[PHYS_TIER_ANIM].solver_mode = PHYS_SOLVER_TGS;
-    plan->tier_params[PHYS_TIER_ANIM].substeps    = cfg->default_substeps;
-    /* TIER_ANIM uses 2× default iterations for the nonlinear coupled
-     * solver — extra iterations are needed for FK propagation +
-     * Jacobian re-linearization to converge to near-zero errors. */
-    plan->tier_params[PHYS_TIER_ANIM].iterations   = cfg->default_solver_iterations * 2;
-    plan->tier_params[PHYS_TIER_ANIM].compliance   = 0.0f;
+    plan->tier_params[PHYS_TIER_ANIM].solver_mode = PHYS_SOLVER_XPBD;
+    /* XPBD already runs inside the main substep loop, so TIER_ANIM
+     * substeps = 1 to avoid double-substepping.  The main loop
+     * provides the substep structure. */
+    plan->tier_params[PHYS_TIER_ANIM].substeps    = 1;
+    plan->tier_params[PHYS_TIER_ANIM].iterations   = 16;
+    plan->tier_params[PHYS_TIER_ANIM].compliance   = 1e-6f;
 
     /* T4 amortized ticking: only active every 3rd frame. */
     if (world->tick_count % 3 != 0) {

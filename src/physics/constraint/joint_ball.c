@@ -55,6 +55,7 @@ static void build_positional_row(phys_jacobian_row_t *row,
      * The velocity-level solve sees bias=0 (set by the solver);
      * position correction uses this raw error value. */
     row->bias = error;
+    row->constraint_error = error;
     row->damping = row_damping;
 
     row->effective_mass = phys_compute_effective_mass(
