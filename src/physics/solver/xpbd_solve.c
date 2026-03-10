@@ -29,7 +29,30 @@
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
+/* Maximum per-iteration correction magnitudes.  Without these clamps,
+ * a single deep penetration or large constraint error can produce an
+ * arbitrarily large position/orientation jump, injecting energy into
+ * the system and destabilizing coupled joint chains. */
+#define XPBD_MAX_LINEAR_CORRECTION  0.05f   /* meters per iteration */
+#define XPBD_MAX_ANGULAR_CORRECTION 0.02f   /* radians per iteration (~1.1°) —
+                                             * small enough that the linear
+                                             * Jacobian approximation holds. */
+
 /* ── Static helpers ─────────────────────────────────────────────── */
+
+/**
+ * @brief Clamp a vector's magnitude to a maximum length.
+ * @return The (possibly shortened) vector.
+ */
+static phys_vec3_t clamp_vec3_magnitude(phys_vec3_t v, float max_len)
+{
+    float sq = vec3_dot(v, v);
+    if (sq > max_len * max_len) {
+        float scale = max_len / sqrtf(sq);
+        return vec3_scale(v, scale);
+    }
+    return v;
+}
 
 /**
  * @brief Copy body state from input array to output array.
@@ -165,14 +188,17 @@ static void solve_contact_xpbd(phys_constraint_t *c,
     /* Linear corrections follow the Jacobian signs directly.
      * J_va is typically -n and J_vb is +n for contacts, so adding the
      * scaled Jacobians moves the bodies apart instead of translating the
-     * pair together. */
+     * pair together.  Corrections are clamped to prevent energy injection
+     * from deep penetrations producing oversized jumps. */
     if (ba->inv_mass > 0.0f) {
-        ba->position = vec3_add(ba->position,
-            vec3_scale(row->J_va, ba->inv_mass * delta_lambda * omega));
+        phys_vec3_t dp = vec3_scale(row->J_va, ba->inv_mass * delta_lambda * omega);
+        dp = clamp_vec3_magnitude(dp, XPBD_MAX_LINEAR_CORRECTION);
+        ba->position = vec3_add(ba->position, dp);
     }
     if (bb->inv_mass > 0.0f) {
-        bb->position = vec3_add(bb->position,
-            vec3_scale(row->J_vb, bb->inv_mass * delta_lambda * omega));
+        phys_vec3_t dp = vec3_scale(row->J_vb, bb->inv_mass * delta_lambda * omega);
+        dp = clamp_vec3_magnitude(dp, XPBD_MAX_LINEAR_CORRECTION);
+        bb->position = vec3_add(bb->position, dp);
     }
 
     /* Contact rows also carry angular Jacobians from the lever arm at the
@@ -188,6 +214,7 @@ static void solve_contact_xpbd(phys_constraint_t *c,
             wa_local.z * ba->inv_inertia_diag.z * delta_lambda * omega
         };
         phys_vec3_t dw_world = quat_rotate_vec3(ba->orientation, dw_local);
+        dw_world = clamp_vec3_magnitude(dw_world, XPBD_MAX_ANGULAR_CORRECTION);
         ba->orientation = apply_angular_correction(ba->orientation, dw_world);
     }
 
@@ -200,6 +227,7 @@ static void solve_contact_xpbd(phys_constraint_t *c,
             wb_local.z * bb->inv_inertia_diag.z * delta_lambda * omega
         };
         phys_vec3_t dw_world = quat_rotate_vec3(bb->orientation, dw_local);
+        dw_world = clamp_vec3_magnitude(dw_world, XPBD_MAX_ANGULAR_CORRECTION);
         bb->orientation = apply_angular_correction(bb->orientation, dw_world);
     }
 }
@@ -272,18 +300,22 @@ static void solve_joint_xpbd(phys_constraint_t *c,
 
         /* Linear position corrections: dp = inv_mass * J_v * delta_lambda.
          * Body A uses J_va (typically -normal), body B uses J_vb (+normal).
-         * The Jacobian encodes the sign, so we subtract for both. */
+         * The Jacobian encodes the sign, so we subtract for both.
+         * Clamped to prevent energy injection from large errors. */
         if (ba->inv_mass > 0.0f) {
-            ba->position = vec3_add(ba->position,
-                vec3_scale(row->J_va, ba->inv_mass * scaled_dl));
+            phys_vec3_t dp = vec3_scale(row->J_va, ba->inv_mass * scaled_dl);
+            dp = clamp_vec3_magnitude(dp, XPBD_MAX_LINEAR_CORRECTION);
+            ba->position = vec3_add(ba->position, dp);
         }
         if (bb->inv_mass > 0.0f) {
-            bb->position = vec3_add(bb->position,
-                vec3_scale(row->J_vb, bb->inv_mass * scaled_dl));
+            phys_vec3_t dp = vec3_scale(row->J_vb, bb->inv_mass * scaled_dl);
+            dp = clamp_vec3_magnitude(dp, XPBD_MAX_LINEAR_CORRECTION);
+            bb->position = vec3_add(bb->position, dp);
         }
 
         /* Angular orientation corrections: dq from inv_I * J_w * delta_lambda.
-         * Transform J_w to local, scale by diagonal inv_inertia, back to world. */
+         * Transform J_w to local, scale by diagonal inv_inertia, back to world.
+         * Clamped so the linear Jacobian approximation stays valid. */
         float jwa_sq = vec3_dot(row->J_wa, row->J_wa);
         if (jwa_sq > 1e-12f && ba->inv_mass > 0.0f) {
             phys_vec3_t wa_local = quat_inv_rotate_vec3(ba->orientation, row->J_wa);
@@ -293,6 +325,7 @@ static void solve_joint_xpbd(phys_constraint_t *c,
                 wa_local.z * ba->inv_inertia_diag.z * scaled_dl
             };
             phys_vec3_t dw_world = quat_rotate_vec3(ba->orientation, dw_local);
+            dw_world = clamp_vec3_magnitude(dw_world, XPBD_MAX_ANGULAR_CORRECTION);
             ba->orientation = apply_angular_correction(ba->orientation, dw_world);
         }
 
@@ -305,6 +338,7 @@ static void solve_joint_xpbd(phys_constraint_t *c,
                 wb_local.z * bb->inv_inertia_diag.z * scaled_dl
             };
             phys_vec3_t dw_world = quat_rotate_vec3(bb->orientation, dw_local);
+            dw_world = clamp_vec3_magnitude(dw_world, XPBD_MAX_ANGULAR_CORRECTION);
             bb->orientation = apply_angular_correction(bb->orientation, dw_world);
         }
 

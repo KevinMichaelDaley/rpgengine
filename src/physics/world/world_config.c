@@ -22,9 +22,10 @@ phys_world_config_t phys_world_config_default(void) {
         .max_joints              = 1024,
         .max_dt_override         = 3.0f,   /* Variable-dt cap: 3× fixed_dt. */
         .auto_ccd_speed          = 8.0f,   /* Auto-CCD for bodies > 8 m/s. */
-        .xpbd_min_compliance     = 1e-8f,  /* Compliance floor: low enough to
-                                            * allow stiff ragdoll joints
-                                            * (α̃ ≈ 0.01 at 4 substeps). */
+        .xpbd_min_compliance     = 1e-5f,  /* Compliance floor: prevents near-rigid
+                                            * projection that causes divergence
+                                            * when contacts fight joints.
+                                            * α̃ ≈ 0.6 at 4 substeps (h=4.2ms). */
     };
     return cfg;
 }
