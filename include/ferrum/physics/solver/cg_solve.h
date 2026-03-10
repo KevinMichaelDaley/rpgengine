@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ferrum/physics/phys_types.h"
 #include "ferrum/physics/solver/cg_types.h"
 
 #ifdef __cplusplus
@@ -120,6 +121,32 @@ void phys_cg_apply(const cg_system_t *sys,
                    const struct phys_joint *joints,
                    uint32_t joint_count,
                    const uint32_t *constraint_joint_indices);
+
+/**
+ * @brief Predict body positions from full velocity.
+ *
+ * After CG apply updates velocities, integrates each body's FULL
+ * velocity (pre-existing + solver corrections) from initial positions
+ * to produce predicted poses for the next Jacobian rebuild.
+ *
+ * Position:    x_pred = x_init + v_total * dt
+ * Orientation: q_pred = exp(0.5 * ω_total * dt) * q_init
+ *
+ * @param island               Island to process.
+ * @param bodies_mut           Mutable body array (updated in place).
+ * @param velocities           Current velocity array (read only).
+ * @param initial_positions    Body positions at start of substep.
+ * @param initial_orientations Body orientations at start of substep.
+ * @param body_count           Body pool capacity.
+ * @param dt                   Substep timestep.
+ */
+void phys_cg_predict_positions(const struct phys_island *island,
+                               struct phys_body *bodies_mut,
+                               const struct phys_velocity *velocities,
+                               const phys_vec3_t *initial_positions,
+                               const phys_quat_t *initial_orientations,
+                               uint32_t body_count,
+                               float dt);
 
 #ifdef __cplusplus
 } /* extern "C" */

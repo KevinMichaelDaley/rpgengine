@@ -10,6 +10,7 @@
 #include "ferrum/physics/solver/cg_solve.h"
 
 #include <math.h>
+#include <stdio.h>
 
 /**
  * @brief Sparse matrix-vector multiply: out = A · x.
@@ -129,6 +130,31 @@ uint32_t phys_cg_solve(cg_system_t *sys,
 
     float rz_old = dot_product(r, z, n);
 
+    /* Debug: track gradient magnitude and constraint error per iteration.
+     * Only print for the first few solves to avoid flooding. */
+    static int cg_solve_dbg_count = 0;
+    static int cg_contact_dbg = 0;
+    int cg_solve_dbg = 0;
+    if (n > 92 && cg_contact_dbg < 3) {
+        fprintf(stderr, "[CG-SIZE] solve=%d n=%u\n", cg_solve_dbg_count, n);
+        cg_solve_dbg = 1;
+    }
+
+    if (cg_solve_dbg) {
+        float r_norm = sqrtf(dot_product(r, r, n));
+        float rhs_norm = sqrtf(dot_product(sys->rhs, sys->rhs, n));
+        fprintf(stderr, "[CG-ITER] solve=%d n=%u rhs_norm=%.6f init_r_norm=%.6f\n",
+                cg_solve_dbg_count, n, rhs_norm, r_norm);
+        /* Print per-row RHS for joints */
+        for (uint32_t i = 0; i < n && i < 40; i++) {
+            float diag = (sys->diag_inv[i] > 1e-12f)
+                       ? (1.0f / sys->diag_inv[i]) : 0.0f;
+            fprintf(stderr, "  row[%u] rhs=%.6f lambda=%.6f lo=%.2f hi=%.2f diag=%.4f\n",
+                    i, sys->rhs[i], sys->lambda[i],
+                    sys->lambda_min[i], sys->lambda_max[i], diag);
+        }
+    }
+
     uint32_t iter;
     for (iter = 0; iter < max_iters; iter++) {
         if (rz_old < tolerance) break;
@@ -170,6 +196,14 @@ uint32_t phys_cg_solve(cg_system_t *sys,
         }
 
         float rz_new = dot_product(r, z, n);
+
+        if (cg_solve_dbg) {
+            float r_norm = sqrtf(dot_product(r, r, n));
+            float grad_mag = sqrtf(rz_new); /* |M⁻¹r| proxy */
+            fprintf(stderr, "[CG-ITER] solve=%d iter=%u r_norm=%.6f grad=%.6f alpha=%.6f rz=%.6e\n",
+                    cg_solve_dbg_count, iter, r_norm, grad_mag, alpha, rz_new);
+        }
+
         if (fabsf(rz_old) < 1e-20f) break;
 
         float beta = rz_new / rz_old;
@@ -181,6 +215,20 @@ uint32_t phys_cg_solve(cg_system_t *sys,
 
         rz_old = rz_new;
     }
+
+    if (cg_solve_dbg) {
+        fprintf(stderr, "[CG-ITER] solve=%d DONE iters=%u final_rz=%.6e\n",
+                cg_solve_dbg_count, iter, rz_old);
+        /* Print final lambda for each row. */
+        for (uint32_t i = 0; i < n && i < 40; i++) {
+            fprintf(stderr, "  row[%u] final_lambda=%.6f rhs=%.6f ratio=%.4f\n",
+                    i, lambda[i], sys->rhs[i],
+                    (fabsf(sys->rhs[i]) > 1e-12f)
+                        ? lambda[i] / sys->rhs[i] : 0.0f);
+        }
+        if (n > 92) cg_contact_dbg++;
+    }
+    cg_solve_dbg_count++;
 
     return iter;
 }

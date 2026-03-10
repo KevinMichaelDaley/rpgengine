@@ -25,6 +25,7 @@
 #include "ferrum/physics/body.h"
 #include "ferrum/physics/collider.h"
 #include "ferrum/physics/constraint.h"
+#include "ferrum/physics/convex_hull.h"
 #include "ferrum/physics/mesh_collider.h"
 #include "ferrum/physics/mesh_narrowphase.h"
 #include "ferrum/physics/phys_pool.h"
@@ -1643,6 +1644,14 @@ int phys_stage_ccd(const phys_ccd_args_t *args) {
             radius = sqrtf(half_extents.x * half_extents.x +
                            half_extents.y * half_extents.y +
                            half_extents.z * half_extents.z);
+        } else if (col->type == PHYS_SHAPE_CONVEX && args->convex_hulls) {
+            /* Convex hull: compute bounding radius from local AABB. */
+            const phys_convex_hull_t *hull =
+                &((const phys_convex_hull_t *)args->convex_hulls)[col->shape_index];
+            float ex = (hull->aabb.max.x - hull->aabb.min.x) * 0.5f;
+            float ey = (hull->aabb.max.y - hull->aabb.min.y) * 0.5f;
+            float ez = (hull->aabb.max.z - hull->aabb.min.z) * 0.5f;
+            radius = sqrtf(ex * ex + ey * ey + ez * ez);
         } else {
             continue;
         }

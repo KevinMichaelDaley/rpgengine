@@ -1442,6 +1442,17 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
         }
 
+        /* Save pre-solve velocities (includes gravity/external forces)
+         * so coupled islands can damp only the solver delta afterward. */
+        phys_velocity_t pre_solve[256];
+        if (coupled) {
+            for (uint32_t b = 0; b < island->body_count && b < 256; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= args->body_count) continue;
+                pre_solve[b] = args->velocities[idx];
+            }
+        }
+
         /* Sequential solve: coupled islands use sparse CG for joints
          * (simultaneous solve of all joint constraints), then TGS for
          * contacts.  Non-coupled islands use pure GS as before. */
@@ -1515,17 +1526,20 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
             }
             skip_redistribution_: (void)0;
 
+            /* Use near-zero Baumgarte for CG contacts — the CG solver
+             * corrects positions directly via velocity impulses; Baumgarte
+             * bias re-applied each iteration pumps energy. */
+            phys_constraint_rebuild_args_t cg_rebuild_args = rebuild_args;
+            cg_rebuild_args.baumgarte = 0.01f;
+
             for (uint32_t iter = 0; iter < iters; iter++) {
-                /* FK propagation + Jacobian rebuild. */
-                propagate_coupled_anchors_(
-                    island, args->constraints,
-                    args->constraint_joint_indices,
-                    args->joints, args->joint_count,
-                    args->bodies_mut, args->body_count);
+                /* Jacobian rebuild from current positions (no FK snap —
+                 * FK teleports positions without velocity correction,
+                 * injecting energy).  Inertia recompute only. */
                 recompute_island_inertia_(island, args->bodies_mut,
                                            args->inv_inertia_world_mut,
                                            args->body_count, true);
-                phys_rebuild_island_all_constraints(island, &rebuild_args);
+                phys_rebuild_island_all_constraints(island, &cg_rebuild_args);
 
                 if (cg_ok) {
                     /* Assemble sparse system A·λ = b for joint rows. */
@@ -1567,23 +1581,69 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
                 /* Contacts are now included in the CG system — no
                  * separate TGS pass needed. */
 
-                /* Gyroscopic torque correction, once per body. */
-                for (uint32_t b = 0; b < island->body_count; ++b) {
-                    uint32_t idx = island->body_indices[b];
-                    if (idx >= args->body_count) continue;
-                    if (args->bodies_mut[idx].inv_mass <= 0.0f) continue;
-                    apply_gyroscopic_correction(
-                        &args->velocities[idx].angular,
-                        args->bodies_mut[idx].inv_inertia_diag,
-                        args->bodies_mut[idx].orientation,
-                        args->dt);
+                /* Damp solver velocity delta each iteration, matching
+                 * XPBD which damps per position update.  Only the delta
+                 * from the solver is damped — gravity/forces preserved.
+                 * Per-iteration factors: total^(1/iters) so the
+                 * cumulative effect matches the single-shot damping. */
+                {
+                    const float lin_damp = 0.96f;
+                    const float ang_damp = 0.8f;
+                    for (uint32_t b = 0; b < island->body_count; ++b) {
+                        uint32_t idx = island->body_indices[b];
+                        if (idx >= args->body_count) continue;
+                        if (args->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                        if (b >= 256) break;
+                        phys_vec3_t dv = vec3_sub(
+                            args->velocities[idx].linear,
+                            pre_solve[b].linear);
+                        phys_vec3_t dw = vec3_sub(
+                            args->velocities[idx].angular,
+                            pre_solve[b].angular);
+                        args->velocities[idx].linear = vec3_add(
+                            pre_solve[b].linear,
+                            vec3_scale(dv, lin_damp));
+                        args->velocities[idx].angular = vec3_add(
+                            pre_solve[b].angular,
+                            vec3_scale(dw, ang_damp));
+                    }
                 }
+
+            }
+
+            /* Gyroscopic torque correction, once after all iterations. */
+            for (uint32_t b = 0; b < island->body_count; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= args->body_count) continue;
+                if (args->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                apply_gyroscopic_correction(
+                    &args->velocities[idx].angular,
+                    args->bodies_mut[idx].inv_inertia_diag,
+                    args->bodies_mut[idx].orientation,
+                    args->dt);
             }
         } else {
-            /* Non-coupled: standard GS iteration. */
+            /* GS iteration with two-pass ordering for coupled islands:
+             * joints first, then contacts, so joint corrections aren't
+             * immediately fought by contact lever-arm responses. */
             for (uint32_t iter = 0; iter < iters; iter++) {
+                /* Pass 1: joints (coupled solver updates positions inline). */
                 for (uint32_t ci = 0; ci < island->constraint_count; ci++){
                     uint32_t c_idx = island->constraint_indices[ci];
+                    if (!args->constraints[c_idx].is_joint) continue;
+                    solve_one_constraint(&args->constraints[c_idx],
+                                         args->velocities, pseudo,
+                                         args->bodies,
+                                         args->inv_inertia_world,
+                                         slop, inv_dt,
+                                         args->tick_dt,
+                                         args->tier_substep_counts,
+                                         coupled ? args->bodies_mut : NULL);
+                }
+                /* Pass 2: contacts. */
+                for (uint32_t ci = 0; ci < island->constraint_count; ci++){
+                    uint32_t c_idx = island->constraint_indices[ci];
+                    if (args->constraints[c_idx].is_joint) continue;
                     solve_one_constraint(&args->constraints[c_idx],
                                          args->velocities, pseudo,
                                          args->bodies,
@@ -1602,18 +1662,16 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
          * mark bodies so the integrator skips position integration
          * (it would double-integrate otherwise). */
         if (coupled) {
-            /* Final FK + anchor snap for near-zero anchor errors. */
-            coupled_position_projection_(
-                island, args->constraints,
-                args->constraint_joint_indices,
-                args->joints, args->joint_count,
-                args->bodies_mut, args->body_count);
+            /* Position projection disabled — it teleports positions
+             * without velocity correction, injecting energy.  The CG
+             * solver enforces anchor coincidence through velocity. */
 
+            /* Damping already applied per-iteration inside the CG loop.
+             * Just write back final velocities. */
             for (uint32_t b = 0; b < island->body_count; ++b) {
                 uint32_t idx = island->body_indices[b];
                 if (idx >= args->body_count) continue;
                 if (args->bodies_mut[idx].inv_mass <= 0.0f) continue;
-                /* Write solved velocities back to body state. */
                 args->bodies_mut[idx].linear_vel = args->velocities[idx].linear;
                 args->bodies_mut[idx].angular_vel = args->velocities[idx].angular;
                 /* Mark body so integrator copies velocities but

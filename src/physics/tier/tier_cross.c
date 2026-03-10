@@ -14,10 +14,12 @@
 phys_solver_mode_t phys_tier_cross_solver_mode(phys_tier_t tier_a,
                                                phys_tier_t tier_b)
 {
-    /* Animated tier routes through TGS with per-constraint compliance
-     * softening.  The XPBD position solver had persistent energy-injection
-     * bugs; TGS + compliance gives equivalent softness without the
-     * velocity-derivation complexity. */
+    /* Static/sleeping bodies are tier-neutral — use the other body's
+     * tier to decide the solver mode.  This prevents a static ground
+     * plane from promoting every constraint to TGS. */
+    if (tier_a == PHYS_TIER_5_SLEEPING) tier_a = tier_b;
+    if (tier_b == PHYS_TIER_5_SLEEPING) tier_b = tier_a;
+
     if (tier_a == PHYS_TIER_ANIM || tier_b == PHYS_TIER_ANIM) {
         return PHYS_SOLVER_TGS;
     }

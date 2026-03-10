@@ -84,6 +84,11 @@ void phys_constraint_build_contact(
 
     /* ── Row 0: Normal constraint ─────────────────────────────────── */
     build_row_for_direction(&c->rows[0], rA, rB, normal);
+    /* Contact rows are linear-only: zero the angular lever-arm Jacobians.
+     * The cross-product terms (rA×n, rB×n) inject angular energy that
+     * fights joint constraints and destabilizes ragdolls and stacks. */
+    c->rows[0].J_wa = (phys_vec3_t){0, 0, 0};
+    c->rows[0].J_wb = (phys_vec3_t){0, 0, 0};
     c->rows[0].lambda_min = 0.0f;
     c->rows[0].lambda_max = CONSTRAINT_LAMBDA_BIG;
 
@@ -161,6 +166,8 @@ void phys_constraint_build_contact(
 
     /* ── Row 1: Friction tangent 1 ────────────────────────────────── */
     build_row_for_direction(&c->rows[1], rA, rB, tangent1);
+    c->rows[1].J_wa = (phys_vec3_t){0, 0, 0};
+    c->rows[1].J_wb = (phys_vec3_t){0, 0, 0};
     c->rows[1].lambda_min = -CONSTRAINT_LAMBDA_BIG;
     c->rows[1].lambda_max =  CONSTRAINT_LAMBDA_BIG;
     c->rows[1].bias = 0.0f;
@@ -171,6 +178,8 @@ void phys_constraint_build_contact(
 
     /* ── Row 2: Friction tangent 2 ────────────────────────────────── */
     build_row_for_direction(&c->rows[2], rA, rB, tangent2);
+    c->rows[2].J_wa = (phys_vec3_t){0, 0, 0};
+    c->rows[2].J_wb = (phys_vec3_t){0, 0, 0};
     c->rows[2].lambda_min = -CONSTRAINT_LAMBDA_BIG;
     c->rows[2].lambda_max =  CONSTRAINT_LAMBDA_BIG;
     c->rows[2].bias = 0.0f;

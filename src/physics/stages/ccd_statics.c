@@ -235,7 +235,27 @@ bool ccd_depenetrate_vs_statics(
         if (!(sb->flags & PHYS_BODY_FLAG_STATIC)) continue;
         const phys_collider_t *col = &args->colliders[si];
         if (col->type == PHYS_SHAPE_MESH) continue;
-        if (col->type == PHYS_SHAPE_HALFSPACE) continue;
+
+        /* Halfspace: analytical signed-distance test.
+         * The deepest point of the dynamic shape into the halfspace
+         * is support(-normal).  Penetration = distance - dot(sup, n). */
+        if (col->type == PHYS_SHAPE_HALFSPACE) {
+            if (!args->halfspaces) continue;
+            const phys_halfspace_t *hs =
+                &((const phys_halfspace_t *)args->halfspaces)[col->shape_index];
+            phys_vec3_t neg_n = {-hs->normal.x, -hs->normal.y, -hs->normal.z};
+            phys_vec3_t sup_pt = dyn.fn(dyn.data, neg_n);
+            float signed_dist = vec3_dot(sup_pt, hs->normal) - hs->distance;
+            if (signed_dist < 0.0f) {
+                float d = -signed_dist;
+                if (d > deepest) {
+                    deepest = d;
+                    best_n = hs->normal;
+                    any = true;
+                }
+            }
+            continue;
+        }
 
         if (col->type == PHYS_SHAPE_COMPOUND) {
             if (!args->compounds || col->shape_index >= args->compound_count)
@@ -367,7 +387,60 @@ bool ccd_sweep_vs_statics(
         if (!(sb->flags & PHYS_BODY_FLAG_STATIC)) continue;
         const phys_collider_t *col = &args->colliders[si];
         if (col->type == PHYS_SHAPE_MESH) continue;
-        if (col->type == PHYS_SHAPE_HALFSPACE) continue;
+
+        /* Halfspace: analytical swept test.
+         * Find earliest t where the dynamic shape's deepest point
+         * along -normal touches the plane.
+         *
+         * For a sphere of radius r at center(t) = prev + t*disp:
+         *   dot(center(t), n) - offset = r
+         *   dot(prev, n) - offset - r + t * dot(disp, n) = 0
+         *   t = (r - (dot(prev, n) - offset)) / dot(disp, n)
+         *
+         * For general convex shapes, we use the support function
+         * to find the effective radius along the normal. */
+        if (col->type == PHYS_SHAPE_HALFSPACE) {
+            if (!args->halfspaces) continue;
+            const phys_halfspace_t *hs =
+                &((const phys_halfspace_t *)args->halfspaces)[col->shape_index];
+            phys_vec3_t n = hs->normal;
+
+            /* Build dynamic shape at prev and curr poses to get
+             * the support-function radius along -normal. */
+            packed_shape_t dyn_prev, dyn_curr;
+            build_dyn_shape(args, di, prev_b->position,
+                            prev_b->orientation, &dyn_prev);
+            build_dyn_shape(args, di, curr_b->position,
+                            curr_b->orientation, &dyn_curr);
+
+            /* Deepest point of dynamic shape along -normal at prev. */
+            phys_vec3_t neg_n = {-n.x, -n.y, -n.z};
+            phys_vec3_t sup_prev = dyn_prev.fn(dyn_prev.data, neg_n);
+            float d_prev = vec3_dot(sup_prev, n) - hs->distance;
+
+            /* Check at curr too. */
+            phys_vec3_t sup_curr = dyn_curr.fn(dyn_curr.data, neg_n);
+            float d_curr = vec3_dot(sup_curr, n) - hs->distance;
+
+            if (d_prev >= 0.0f && d_curr < 0.0f) {
+                /* Crossed the plane between prev and curr.
+                 * Linear interpolation for TOI. */
+                float t = d_prev / (d_prev - d_curr);
+                if (t < best_t) {
+                    best_t = t;
+                    best_n = n;
+                    any = true;
+                }
+            } else if (d_prev < 0.0f) {
+                /* Already penetrating at start — TOI = 0. */
+                if (0.0f < best_t) {
+                    best_t = 0.0f;
+                    best_n = n;
+                    any = true;
+                }
+            }
+            continue;
+        }
 
         /* Broad AABB check against static body position. */
         float sx = sb->position.x, sy = sb->position.y, sz = sb->position.z;

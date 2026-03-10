@@ -15,6 +15,7 @@
 #include <math.h>
 #include <stdatomic.h>
 #include <stddef.h>
+#include <stdio.h>
 
 #include "ferrum/physics/aabb.h"
 #include "ferrum/physics/body.h"
@@ -352,6 +353,14 @@ void phys_stage_broadphase_par(const phys_broadphase_args_t *args,
     }
 
     /* ── Halfspace pass (sequential, few halfspaces) ───────────── */
+    {
+        static int hs_bp_dbg = 0;
+        if (hs_bp_dbg < 3) {
+            fprintf(stderr, "[HS-BP] halfspace_body_count=%u final_count_before=%u\n",
+                    args->halfspace_body_count, final_count);
+            hs_bp_dbg++;
+        }
+    }
     for (uint32_t h = 0; h < args->halfspace_body_count; ++h) {
         uint32_t hs_body = args->halfspace_bodies[h];
 
@@ -373,5 +382,12 @@ void phys_stage_broadphase_par(const phys_broadphase_args_t *args,
         }
     }
 
+    {
+        static int hs_bp_dbg2 = 0;
+        if (hs_bp_dbg2 < 3) {
+            fprintf(stderr, "[HS-BP] final_count_after=%u\n", final_count);
+            hs_bp_dbg2++;
+        }
+    }
     *args->pair_count_out = final_count;
 }

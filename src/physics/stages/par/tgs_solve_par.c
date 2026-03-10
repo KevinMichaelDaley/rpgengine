@@ -1034,9 +1034,20 @@ static void solve_island(const tgs_solve_shared_t *shared,
             .manifold_count          = shared->manifold_count,
             .inv_inertia_world       = shared->inv_inertia_world_mut,
             .dt                      = shared->dt,
-            .baumgarte               = shared->baumgarte,
+            .baumgarte               = 0.01f, /* Near-zero for CG — solver corrects positions via velocity impulses */
             .slop                    = shared->slop,
         };
+    }
+
+    /* Save pre-solve velocities (includes gravity/external forces)
+     * so coupled islands can damp only the solver delta afterward. */
+    phys_velocity_t pre_solve_vel[256];
+    if (coupled) {
+        for (uint32_t b = 0; b < island->body_count && b < 256; ++b) {
+            uint32_t idx = island->body_indices[b];
+            if (idx >= shared->body_count) continue;
+            pre_solve_vel[b] = shared->velocities[idx];
+        }
     }
 
     if (coupled && shared->frame_arena) {
@@ -1100,9 +1111,28 @@ static void solve_island(const tgs_solve_shared_t *shared,
         }
         skip_redistribution_par_: (void)0;
 
+        /* Save initial positions and orientations for predicted
+         * position integration.  The CG iteration loop will predict
+         * x = x_init + v_total * dt after each apply step. */
+        phys_vec3_t *init_positions = phys_frame_arena_alloc(
+            shared->frame_arena,
+            shared->body_count * sizeof(phys_vec3_t),
+            _Alignof(phys_vec3_t));
+        phys_quat_t *init_orientations = phys_frame_arena_alloc(
+            shared->frame_arena,
+            shared->body_count * sizeof(phys_quat_t),
+            _Alignof(phys_quat_t));
+        if (init_positions && init_orientations) {
+            for (uint32_t b = 0; b < island->body_count; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= shared->body_count) continue;
+                init_positions[idx] = shared->bodies_mut[idx].position;
+                init_orientations[idx] = shared->bodies_mut[idx].orientation;
+            }
+        }
+
         /* Initialize world_transform for each body from current
-         * position + orientation.  The CG apply will compose
-         * incremental transforms directly onto this mat4. */
+         * position + orientation. */
         for (uint32_t b = 0; b < island->body_count; ++b) {
             uint32_t idx = island->body_indices[b];
             if (idx >= shared->body_count) continue;
@@ -1116,16 +1146,41 @@ static void solve_island(const tgs_solve_shared_t *shared,
         }
 
         for (uint32_t iter = 0; iter < iters; iter++) {
-            /* FK propagation + Jacobian rebuild. */
-            propagate_coupled_anchors_par_(
-                island, shared->constraints,
-                shared->constraint_joint_indices,
-                shared->joints, shared->joint_count,
-                shared->bodies_mut, shared->body_count);
+            /* Jacobian rebuild from current predicted positions.
+             *
+             * FK propagation (snapping child to parent anchor) is
+             * NOT used here — it teleports positions without updating
+             * velocity, which fights predict_positions (velocity-based
+             * integration from init poses).  The CG solver corrects
+             * anchor errors through velocity impulses instead. */
             recompute_island_inertia_par_(island, shared->bodies_mut,
                                            shared->inv_inertia_world_mut,
                                            shared->body_count, true);
             phys_rebuild_island_all_constraints(island, &rebuild_args);
+
+            /* Debug: track max contact penetration per iteration. */
+            {
+                static uint32_t _pen_dbg = 0;
+                if (_pen_dbg < 40) {
+                    float max_pen = 0.0f;
+                    uint32_t pen_body = 0;
+                    for (uint32_t ci = 0; ci < island->constraint_count; ci++) {
+                        uint32_t idx = island->constraint_indices[ci];
+                        const phys_constraint_t *cc = &shared->constraints[idx];
+                        if (cc->is_joint) continue;
+                        if (cc->penetration > max_pen) {
+                            max_pen = cc->penetration;
+                            pen_body = cc->body_a;
+                        }
+                    }
+                    if (max_pen > 0.001f) {
+                        fprintf(stderr, "[CG-PEN] iter=%u max_pen=%.4f body=%u body_y=%.4f\n",
+                                iter, max_pen,
+                                pen_body, shared->bodies_mut[pen_body].position.y);
+                        _pen_dbg++;
+                    }
+                }
+            }
 
             /* CG solve: joints + contacts solved simultaneously.
              * Inertia scaling + Tikhonov regularization keep the
@@ -1305,17 +1360,57 @@ static void solve_island(const tgs_solve_shared_t *shared,
                 }
             }
 
-            /* Implicit gyroscopic torque correction, once per body. */
-            for (uint32_t b = 0; b < island->body_count; ++b) {
-                uint32_t idx = island->body_indices[b];
-                if (idx >= shared->body_count) continue;
-                if (shared->bodies_mut[idx].inv_mass <= 0.0f) continue;
-                apply_gyroscopic_correction(
-                    &shared->velocities[idx].angular,
-                    shared->bodies_mut[idx].inv_inertia_diag,
-                    shared->bodies_mut[idx].orientation,
-                    solve_dt);
+            /* Damp solver velocity delta each iteration, matching
+             * XPBD which damps per position update.
+             * Per-iteration factors so cumulative matches single-shot. */
+            {
+                const float lin_damp = 0.96f;
+                const float ang_damp = 0.8f;
+                for (uint32_t b = 0; b < island->body_count && b < 256; ++b) {
+                    uint32_t idx = island->body_indices[b];
+                    if (idx >= shared->body_count) continue;
+                    if (shared->bodies_mut[idx].inv_mass <= 0.0f) continue;
+                    phys_vec3_t dv = vec3_sub(
+                        shared->velocities[idx].linear,
+                        pre_solve_vel[b].linear);
+                    phys_vec3_t dw = vec3_sub(
+                        shared->velocities[idx].angular,
+                        pre_solve_vel[b].angular);
+                    shared->velocities[idx].linear = vec3_add(
+                        pre_solve_vel[b].linear,
+                        vec3_scale(dv, lin_damp));
+                    shared->velocities[idx].angular = vec3_add(
+                        pre_solve_vel[b].angular,
+                        vec3_scale(dw, ang_damp));
+                }
             }
+
+            /* Predict body positions from full velocity.
+             * x_pred = x_init + v_total * dt integrates the ENTIRE
+             * velocity (pre-existing + all solver corrections) so
+             * the next Jacobian rebuild sees correct predicted geometry.
+             * This is what makes contacts resolve penetration: the
+             * velocity correction from ground contact translates into
+             * predicted position above the ground. */
+            if (init_positions && init_orientations) {
+                phys_cg_predict_positions(island,
+                    shared->bodies_mut, shared->velocities,
+                    init_positions, init_orientations,
+                    shared->body_count, solve_dt);
+            }
+
+        }
+
+        /* Gyroscopic torque correction, once after all iterations. */
+        for (uint32_t b = 0; b < island->body_count; ++b) {
+            uint32_t idx = island->body_indices[b];
+            if (idx >= shared->body_count) continue;
+            if (shared->bodies_mut[idx].inv_mass <= 0.0f) continue;
+            apply_gyroscopic_correction(
+                &shared->velocities[idx].angular,
+                shared->bodies_mut[idx].inv_inertia_diag,
+                shared->bodies_mut[idx].orientation,
+                solve_dt);
         }
 
         /* Position projection disabled — it teleports bodies without
@@ -1336,11 +1431,8 @@ static void solve_island(const tgs_solve_shared_t *shared,
         /* Non-coupled islands: standard per-constraint GS iteration. */
         for (uint32_t iter = 0; iter < iters; iter++) {
             if (coupled) {
-                propagate_coupled_anchors_par_(
-                    island, shared->constraints,
-                    shared->constraint_joint_indices,
-                    shared->joints, shared->joint_count,
-                    shared->bodies_mut, shared->body_count);
+                /* No FK propagation — it teleports positions without
+                 * velocity correction, injecting energy. */
                 recompute_island_inertia_par_(island, shared->bodies_mut,
                                                shared->inv_inertia_world_mut,
                                                shared->body_count, true);
@@ -1379,7 +1471,8 @@ static void solve_island(const tgs_solve_shared_t *shared,
         }
     }
 
-    /* Coupled islands: write back velocities, mark skip_body. */
+    /* Coupled islands: write back velocities, mark skip_body.
+     * Damping already applied per-iteration inside the CG loop. */
     if (coupled) {
         for (uint32_t b = 0; b < island->body_count; ++b) {
             uint32_t idx = island->body_indices[b];

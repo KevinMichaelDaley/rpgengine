@@ -73,7 +73,7 @@ void phys_stage_step_plan(phys_step_plan_t *plan,
      * (compliance α, damping γ) in the velocity equation prevent
      * energy injection without needing a separate position solver.
      * phys_tier_cross_solver_mode() also returns TGS for TIER_ANIM. */
-    plan->tier_params[PHYS_TIER_ANIM].solver_mode = PHYS_SOLVER_XPBD;
+    plan->tier_params[PHYS_TIER_ANIM].solver_mode = PHYS_SOLVER_TGS;
     /* XPBD already runs inside the main substep loop, so TIER_ANIM
      * substeps = 1 to avoid double-substepping.  The main loop
      * provides the substep structure. */
