@@ -48,6 +48,22 @@ typedef struct phys_constraint_rebuild_args {
 } phys_constraint_rebuild_args_t;
 
 /**
+ * @brief Rebuild a single joint using its type-specific builder.
+ *
+ * Dispatches to the correct phys_joint_build_* function based on
+ * joint type, using current body positions.
+ *
+ * @param j          Joint to rebuild (modified in-place).
+ * @param bodies     Body array with current positions.
+ * @param body_count Number of bodies.
+ * @param dt         Timestep in seconds.
+ */
+void phys_rebuild_joint_by_type(struct phys_joint *j,
+                                const struct phys_body *bodies,
+                                uint32_t body_count,
+                                float dt);
+
+/**
  * @brief Rebuild joint constraint rows for an island from updated body state.
  *
  * For each joint constraint in the island, calls the appropriate joint

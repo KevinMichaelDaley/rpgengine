@@ -44,8 +44,10 @@ bool phys_point_vs_halfspace(
     contact_out->normal = vec3_scale(plane_normal, -1.0f);
     contact_out->penetration = pen;
     contact_out->point_world = contact_pt;
-    contact_out->local_a = (phys_vec3_t){0, 0, 0};
-    contact_out->local_b = (phys_vec3_t){0, 0, 0};
+    /* Point collider: local_a is offset from body center to contact. */
+    contact_out->local_a = vec3_sub(contact_pt, point);
+    /* Halfspace: local_b is projection onto plane (body at origin). */
+    contact_out->local_b = contact_pt;
     contact_out->feature_id = 0;
 
     return true;

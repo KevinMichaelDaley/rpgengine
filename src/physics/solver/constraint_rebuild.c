@@ -54,13 +54,10 @@ static uint8_t stable_joint_lambda_rows(const phys_joint_t *joint)
     }
 }
 
-/**
- * @brief Rebuild a single joint using its type-specific builder.
- */
-static void rebuild_joint_by_type(phys_joint_t *j,
-                                   const phys_body_t *bodies,
-                                   uint32_t body_count,
-                                   float dt)
+void phys_rebuild_joint_by_type(phys_joint_t *j,
+                                const phys_body_t *bodies,
+                                uint32_t body_count,
+                                float dt)
 {
     if (j->body_a >= body_count || j->body_b >= body_count) {
         return;
@@ -168,7 +165,7 @@ void phys_rebuild_island_joint_constraints(
         }
 
         /* Rebuild joint rows from current body positions. */
-        rebuild_joint_by_type(j, args->bodies, args->body_count, args->dt);
+        phys_rebuild_joint_by_type(j, args->bodies, args->body_count, args->dt);
 
         /* Pack rebuilt rows into constraint(s). */
         phys_constraint_t tmp[2];

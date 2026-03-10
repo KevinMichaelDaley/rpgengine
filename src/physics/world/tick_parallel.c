@@ -2176,29 +2176,90 @@ void phys_world_tick_parallel(phys_world_t *world,
                             }
                         }
 
-                        /* 2-3. Solve loop: rebuild joints + solve for
+                        /* 2-3. Solve loop: rebuild all constraints + solve
                          *       each iteration so C is always fresh. */
                         for (uint32_t xiter = 0; xiter < xpbd_iters; xiter++) {
+                            /* Rebuild ALL contact constraints from current
+                             * body positions using manifold local coords. */
                             for (uint32_t ci = 0; ci < xpbd_actual_count; ++ci) {
-                                if (xpbd_constraints[ci].is_joint) {
+                                phys_constraint_t *cc = &xpbd_constraints[ci];
+                                if (cc->is_joint) continue;
+
+                                uint32_t mi = cc->manifold_idx;
+                                if (mi >= manifold_count) {
+                                    /* No manifold — fall back to halfspace
+                                     * re-narrowphase for legacy contacts. */
+                                    xpbd_refresh_halfspace_contact_constraint_(
+                                        cc, xpbd_bodies,
+                                        world->colliders,
+                                        world->spheres, world->boxes,
+                                        world->capsules, world->convex_hulls,
+                                        world->halfspaces,
+                                        xpbd_sub_dt,
+                                        world->config.baumgarte,
+                                        world->config.slop);
                                     continue;
                                 }
-                                xpbd_refresh_halfspace_contact_constraint_(
-                                    &xpbd_constraints[ci],
-                                    xpbd_bodies,
-                                    world->colliders,
-                                    world->spheres,
-                                    world->boxes,
-                                    world->capsules,
-                                    world->convex_hulls,
-                                    world->halfspaces,
-                                    xpbd_sub_dt,
-                                    world->config.baumgarte,
+
+                                const phys_manifold_t *m = &manifolds[mi];
+                                uint8_t pi = cc->point_idx;
+                                if (pi >= m->point_count) continue;
+                                const phys_contact_point_t *cp = &m->points[pi];
+
+                                uint32_t ba = cc->body_a;
+                                uint32_t bb = cc->body_b;
+                                if (ba >= body_cap || bb >= body_cap) continue;
+
+                                const phys_body_t *body_a = &xpbd_bodies[ba];
+                                const phys_body_t *body_b = &xpbd_bodies[bb];
+
+                                /* Save lambdas. */
+                                float lambdas[PHYS_MAX_CONSTRAINT_ROWS];
+                                uint8_t old_rc = cc->row_count;
+                                for (uint8_t r = 0; r < old_rc && r < PHYS_MAX_CONSTRAINT_ROWS; ++r)
+                                    lambdas[r] = cc->rows[r].lambda;
+
+                                /* Recompute contact from local coords. */
+                                phys_vec3_t wa = vec3_add(body_a->position,
+                                    quat_rotate_vec3(body_a->orientation, cp->local_a));
+                                phys_vec3_t wb = vec3_add(body_b->position,
+                                    quat_rotate_vec3(body_b->orientation, cp->local_b));
+                                float new_pen = vec3_dot(cp->normal, vec3_sub(wa, wb));
+
+                                phys_contact_point_t updated_cp = *cp;
+                                updated_cp.point_world = vec3_scale(vec3_add(wa, wb), 0.5f);
+                                updated_cp.penetration = new_pen;
+
+                                /* Save metadata. */
+                                uint8_t sm = cc->solver_mode;
+                                uint8_t ij = cc->is_joint;
+                                float compl_ = cc->compliance;
+                                float jd = cc->joint_damping;
+                                uint32_t midx = cc->manifold_idx;
+                                uint8_t pidx = cc->point_idx;
+
+                                phys_constraint_build_contact(cc, body_a, body_b,
+                                    &updated_cp, cc->friction, m->restitution,
+                                    xpbd_sub_dt, world->config.baumgarte,
                                     world->config.slop);
+
+                                /* Restore metadata. */
+                                cc->body_a = ba;
+                                cc->body_b = bb;
+                                cc->solver_mode = sm;
+                                cc->is_joint = ij;
+                                cc->compliance = compl_;
+                                cc->joint_damping = jd;
+                                cc->manifold_idx = midx;
+                                cc->point_idx = pidx;
+
+                                /* Restore lambdas. */
+                                for (uint8_t r = 0; r < cc->row_count && r < old_rc; ++r)
+                                    cc->rows[r].lambda = lambdas[r];
                             }
 
                             /* Rebuild XPBD joints from current body
-                             * positions so biases reflect updated state. */
+                             * positions so constraint_error is fresh. */
                             for (uint32_t jj = 0; jj < xpbd_joint_count; jj++) {
                                 uint32_t ji = xpbd_joint_indices[jj];
                                 phys_joint_t *j = &world->joints[ji];
@@ -2233,66 +2294,10 @@ void phys_world_tick_parallel(phys_world_t *world,
                                     }
                                 }
 
-                                switch (j->type) {
-                                case PHYS_JOINT_DISTANCE:
-                                    phys_joint_build_distance(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_BALL:
-                                    phys_joint_build_ball(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_HINGE:
-                                    phys_joint_build_hinge(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_LOCK:
-                                    phys_joint_build_lock(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_COPY_ROTATION:
-                                    phys_joint_build_copy_rotation(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_LIMIT_ROTATION:
-                                    phys_joint_build_limit_rotation(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_LIMIT_POSITION:
-                                    phys_joint_build_limit_position(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_AIM:
-                                    phys_joint_build_aim(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_IK:
-                                    if (j->ik_target_body != UINT32_MAX) {
-                                        j->ik_target_pos =
-                                            xpbd_bodies[j->ik_target_body].position;
-                                    }
-                                    phys_joint_build_ik(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b],
-                                        &xpbd_bodies[j->ik_ee_body], xpbd_sub_dt);
-                                    break;
-                                case PHYS_JOINT_CONE_TWIST:
-                                    phys_joint_build_cone_twist(j,
-                                        &xpbd_bodies[j->body_a],
-                                        &xpbd_bodies[j->body_b], xpbd_sub_dt);
-                                    break;
-                                }
+                                phys_rebuild_joint_by_type(j, xpbd_bodies,
+                                                           body_cap, xpbd_sub_dt);
 
-                                /* Rebuild joint rows in place so contact
-                                 * constraints stay live for the XPBD solve. */
+                                /* Pack rebuilt rows back into constraint(s). */
                                 uint32_t remaining = xpbd_actual_count - temp_start;
                                 uint32_t written = phys_joint_build_constraints(
                                     j, &xpbd_constraints[temp_start], remaining,

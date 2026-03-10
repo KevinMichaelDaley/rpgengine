@@ -148,7 +148,12 @@ static float compute_generalized_inv_mass(
 }
 
 /**
- * @brief Solve a single contact constraint (normal row, position only).
+ * @brief Solve a single contact constraint (linear-only position correction).
+ *
+ * Contact rows are linear constraints (normal + friction tangents).
+ * The lever-arm angular Jacobians (J_wa, J_wb = r×n) are excluded
+ * from both the generalized inverse mass and the correction to avoid
+ * injecting angular energy that fights joint constraints.
  */
 static void solve_contact_xpbd(phys_constraint_t *c,
                                 phys_body_t *bodies,
@@ -161,17 +166,19 @@ static void solve_contact_xpbd(phys_constraint_t *c,
 
     phys_jacobian_row_t *row = &c->rows[0];
 
-    float w = compute_generalized_inv_mass(row, ba, bb);
-    if (w < 1e-10f) return;
-
     phys_vec3_t normal = row->J_vb;
     float n_len_sq = vec3_dot(normal, normal);
     if (n_len_sq < 1e-10f) return;
 
+    /* Linear-only generalized inverse mass (no angular lever-arm term). */
+    float w = ba->inv_mass * vec3_dot(row->J_va, row->J_va)
+            + bb->inv_mass * vec3_dot(row->J_vb, row->J_vb);
+    if (w < 1e-10f) return;
+
     /* XPBD is a position-level solver — only correct actual overlaps.
      * Speculative contacts (penetration <= 0) are a velocity-level concept
-     * and must be skipped here; otherwise the bias term generates a
-     * position correction that pulls the bodies *toward* each other. */
+     * and must be skipped here; otherwise the correction pulls bodies
+     * *toward* each other. */
     if (c->penetration <= 0.0f) return;
     float C = -c->penetration;
 
@@ -185,11 +192,8 @@ static void solve_contact_xpbd(phys_constraint_t *c,
     if (row->lambda < 0.0f) row->lambda = 0.0f;
     delta_lambda = row->lambda - old_lambda;
 
-    /* Linear corrections follow the Jacobian signs directly.
-     * J_va is typically -n and J_vb is +n for contacts, so adding the
-     * scaled Jacobians moves the bodies apart instead of translating the
-     * pair together.  Corrections are clamped to prevent energy injection
-     * from deep penetrations producing oversized jumps. */
+    /* Linear corrections only — no angular lever-arm correction.
+     * Clamped to prevent energy injection from deep penetrations. */
     if (ba->inv_mass > 0.0f) {
         phys_vec3_t dp = vec3_scale(row->J_va, ba->inv_mass * delta_lambda * omega);
         dp = clamp_vec3_magnitude(dp, XPBD_MAX_LINEAR_CORRECTION);
@@ -199,36 +203,6 @@ static void solve_contact_xpbd(phys_constraint_t *c,
         phys_vec3_t dp = vec3_scale(row->J_vb, bb->inv_mass * delta_lambda * omega);
         dp = clamp_vec3_magnitude(dp, XPBD_MAX_LINEAR_CORRECTION);
         bb->position = vec3_add(bb->position, dp);
-    }
-
-    /* Contact rows also carry angular Jacobians from the lever arm at the
-     * contact point. Without the matching orientation correction, foot and
-     * hand contacts barely affect off-center bodies because w includes the
-     * angular term while the solve only translates the COM. */
-    float jwa_sq = vec3_dot(row->J_wa, row->J_wa);
-    if (jwa_sq > 1e-12f && ba->inv_mass > 0.0f) {
-        phys_vec3_t wa_local = quat_inv_rotate_vec3(ba->orientation, row->J_wa);
-        phys_vec3_t dw_local = {
-            wa_local.x * ba->inv_inertia_diag.x * delta_lambda * omega,
-            wa_local.y * ba->inv_inertia_diag.y * delta_lambda * omega,
-            wa_local.z * ba->inv_inertia_diag.z * delta_lambda * omega
-        };
-        phys_vec3_t dw_world = quat_rotate_vec3(ba->orientation, dw_local);
-        dw_world = clamp_vec3_magnitude(dw_world, XPBD_MAX_ANGULAR_CORRECTION);
-        ba->orientation = apply_angular_correction(ba->orientation, dw_world);
-    }
-
-    float jwb_sq = vec3_dot(row->J_wb, row->J_wb);
-    if (jwb_sq > 1e-12f && bb->inv_mass > 0.0f) {
-        phys_vec3_t wb_local = quat_inv_rotate_vec3(bb->orientation, row->J_wb);
-        phys_vec3_t dw_local = {
-            wb_local.x * bb->inv_inertia_diag.x * delta_lambda * omega,
-            wb_local.y * bb->inv_inertia_diag.y * delta_lambda * omega,
-            wb_local.z * bb->inv_inertia_diag.z * delta_lambda * omega
-        };
-        phys_vec3_t dw_world = quat_rotate_vec3(bb->orientation, dw_local);
-        dw_world = clamp_vec3_magnitude(dw_world, XPBD_MAX_ANGULAR_CORRECTION);
-        bb->orientation = apply_angular_correction(bb->orientation, dw_world);
     }
 }
 
@@ -347,11 +321,19 @@ static void solve_joint_xpbd(phys_constraint_t *c,
     }
 }
 
+/* Damping factor applied to XPBD-derived velocities.
+ * Aggressively damps the constraint-correction velocities to prevent
+ * angular energy accumulation from joint/contact coupling.  This does
+ * NOT affect gravity or external forces — only the velocity component
+ * that comes from XPBD position/orientation corrections. */
+#define XPBD_LINEAR_VELOCITY_DAMPING  0.7f
+#define XPBD_ANGULAR_VELOCITY_DAMPING 0.2f
+
 /**
  * @brief Derive linear and angular velocities from position/orientation deltas.
  *
- * Linear:  v = (pos_out - pos_in) / dt
- * Angular: w = 2 * (q_out * q_in^-1).xyz / dt  (small-angle approximation)
+ * Linear:  v = (pos_out - pos_in) / dt * damping
+ * Angular: w = 2 * (q_out * q_in^-1).xyz / dt * damping
  */
 static void derive_velocities(const phys_body_t *bodies_in,
                                const phys_body_t *bodies_out,
@@ -361,21 +343,23 @@ static void derive_velocities(const phys_body_t *bodies_in,
 {
     float inv_dt = 1.0f / dt;
     for (uint32_t i = 0; i < body_count; i++) {
-        /* Linear velocity from position delta. */
+        /* Linear velocity from position delta, damped. */
         phys_vec3_t dp = vec3_sub(bodies_out[i].position,
                                    bodies_in[i].position);
-        velocities[i].linear = vec3_scale(dp, inv_dt);
+        velocities[i].linear = vec3_scale(dp,
+            inv_dt * XPBD_LINEAR_VELOCITY_DAMPING);
 
-        /* Angular velocity from orientation delta.
+        /* Angular velocity from orientation delta, aggressively damped.
          * dq = q_out * conj(q_in), then w ≈ 2 * dq.xyz / dt */
         phys_quat_t q_in_conj = quat_conjugate(bodies_in[i].orientation);
         phys_quat_t dq = quat_mul(bodies_out[i].orientation, q_in_conj);
         /* Ensure shortest path (w component positive). */
         float sign = (dq.w >= 0.0f) ? 1.0f : -1.0f;
+        float ang_scale = 2.0f * sign * inv_dt * XPBD_ANGULAR_VELOCITY_DAMPING;
         velocities[i].angular = (phys_vec3_t){
-            2.0f * dq.x * sign * inv_dt,
-            2.0f * dq.y * sign * inv_dt,
-            2.0f * dq.z * sign * inv_dt
+            dq.x * ang_scale,
+            dq.y * ang_scale,
+            dq.z * ang_scale
         };
     }
 }
@@ -391,15 +375,24 @@ void phys_stage_xpbd_solve(const phys_xpbd_solve_args_t *args)
     /* Step 1: Copy body state from input to output workspace. */
     copy_bodies(args->bodies_in, args->bodies_out, args->body_count);
 
-    /* Step 2: Iterative position+orientation constraint projection. */
+    /* Step 2: Iterative constraint projection.
+     * Joints first (angular + linear), then contacts (linear only).
+     * Solving contacts last prevents lever-arm energy injection from
+     * fighting joint angular corrections. */
     for (uint32_t iter = 0; iter < args->iterations; iter++) {
+        /* Pass 1: joints. */
         for (uint32_t ci = 0; ci < args->constraint_count; ci++) {
             phys_constraint_t *c = &args->constraints[ci];
             if (c->is_joint) {
                 solve_joint_xpbd(c, args->bodies_out,
                                  args->omega, args->dt,
                                  args->compliance);
-            } else {
+            }
+        }
+        /* Pass 2: contacts. */
+        for (uint32_t ci = 0; ci < args->constraint_count; ci++) {
+            phys_constraint_t *c = &args->constraints[ci];
+            if (!c->is_joint) {
                 solve_contact_xpbd(c, args->bodies_out,
                                    args->omega, args->dt,
                                    args->compliance);
@@ -427,11 +420,17 @@ void phys_xpbd_solve_constraint_batch(
     if (!constraints || !bodies || count == 0) return;
 
     for (uint32_t iter = 0; iter < iterations; iter++) {
+        /* Pass 1: joints. */
         for (uint32_t ci = 0; ci < count; ci++) {
             phys_constraint_t *c = &constraints[ci];
             if (c->is_joint) {
                 solve_joint_xpbd(c, bodies, omega, dt, compliance);
-            } else {
+            }
+        }
+        /* Pass 2: contacts. */
+        for (uint32_t ci = 0; ci < count; ci++) {
+            phys_constraint_t *c = &constraints[ci];
+            if (!c->is_joint) {
                 solve_contact_xpbd(c, bodies, omega, dt, compliance);
             }
         }

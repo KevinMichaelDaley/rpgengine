@@ -18,6 +18,9 @@ extern "C" {
 struct phys_constraint;
 struct phys_body;
 struct phys_velocity;
+struct phys_joint;
+struct phys_manifold;
+struct phys_mat3;
 
 /**
  * @brief Arguments for the XPBD position solver stage.
@@ -36,6 +39,16 @@ typedef struct phys_xpbd_solve_args {
     float omega;                          /**< Jacobi relaxation factor (0.5-0.8). */
     float dt;                             /**< Timestep in seconds. */
     float compliance;                     /**< XPBD compliance (α); 0 = stiff. */
+
+    /* Optional rebuild data — when non-NULL, contacts and joints are
+     * rebuilt from current body positions between each solver iteration. */
+    const uint32_t *constraint_joint_indices; /**< Maps constraint idx → joint idx. */
+    struct phys_joint *joints;            /**< Joint array (rebuilt in-place). */
+    uint32_t joint_count;                 /**< Number of joints. */
+    const struct phys_manifold *manifolds; /**< Manifold array for contact rebuild. */
+    uint32_t manifold_count;              /**< Number of manifolds. */
+    float baumgarte;                      /**< Baumgarte factor for contact rebuild. */
+    float slop;                           /**< Penetration slop for contact rebuild. */
 } phys_xpbd_solve_args_t;
 
 /**

@@ -49,8 +49,15 @@ bool phys_sphere_vs_halfspace(
     contact_out->normal = vec3_scale(plane_normal, -1.0f);
     contact_out->penetration = pen;
     contact_out->point_world = contact_pt;
-    contact_out->local_a = (phys_vec3_t){0, 0, 0};
-    contact_out->local_b = (phys_vec3_t){0, 0, 0};
+    /* Sphere is rotationally symmetric, so local_a is just the
+     * world-space offset from sphere center to contact point. */
+    contact_out->local_a = vec3_sub(contact_pt, sphere_center);
+    /* Halfspace body is static — local_b is the contact point projected
+     * onto the plane surface (world-space, since halfspace body is at
+     * origin with identity orientation). */
+    contact_out->local_b = vec3_sub(contact_pt,
+        vec3_scale(plane_normal,
+                   vec3_dot(plane_normal, contact_pt) - plane_distance));
     contact_out->feature_id = 0;
 
     return true;
@@ -114,8 +121,13 @@ int phys_capsule_vs_halfspace(
             ep_center[i],
             vec3_scale(plane_normal,
                        capsule_radius - ep_pen[i] * 0.5f));
-        cp->local_a     = (phys_vec3_t){0, 0, 0};
-        cp->local_b     = (phys_vec3_t){0, 0, 0};
+        /* Contact point in capsule-local space. */
+        cp->local_a = quat_inv_rotate_vec3(capsule_rotation,
+            vec3_sub(cp->point_world, capsule_center));
+        /* Projection onto plane (halfspace body at origin). */
+        cp->local_b = vec3_sub(cp->point_world,
+            vec3_scale(plane_normal,
+                       vec3_dot(plane_normal, cp->point_world) - plane_distance));
         cp->feature_id  = (uint32_t)i;
         count++;
     }
@@ -197,8 +209,13 @@ int phys_box_vs_halfspace(
         contacts_out[i].normal = vec3_scale(plane_normal, -1.0f);
         contacts_out[i].penetration = pens[i];
         contacts_out[i].point_world = contact_pt;
-        contacts_out[i].local_a = (phys_vec3_t){0, 0, 0};
-        contacts_out[i].local_b = (phys_vec3_t){0, 0, 0};
+        /* Contact point in box-local space. */
+        contacts_out[i].local_a = quat_inv_rotate_vec3(box_rotation,
+            vec3_sub(contact_pt, box_center));
+        /* Projection onto plane (halfspace body at origin). */
+        contacts_out[i].local_b = vec3_sub(contact_pt,
+            vec3_scale(plane_normal,
+                       vec3_dot(plane_normal, contact_pt) - plane_distance));
         contacts_out[i].feature_id = (uint32_t)i;
     }
 
@@ -270,8 +287,13 @@ int phys_convex_hull_vs_halfspace(
         contacts_out[i].normal = vec3_scale(plane_normal, -1.0f);
         contacts_out[i].penetration = pens[i];
         contacts_out[i].point_world = contact_pt;
-        contacts_out[i].local_a = (phys_vec3_t){0, 0, 0};
-        contacts_out[i].local_b = (phys_vec3_t){0, 0, 0};
+        /* Contact point in hull-local space. */
+        contacts_out[i].local_a = quat_inv_rotate_vec3(hull_rotation,
+            vec3_sub(contact_pt, hull_center));
+        /* Projection onto plane (halfspace body at origin). */
+        contacts_out[i].local_b = vec3_sub(contact_pt,
+            vec3_scale(plane_normal,
+                       vec3_dot(plane_normal, contact_pt) - plane_distance));
         contacts_out[i].feature_id = (uint32_t)i;
     }
 
