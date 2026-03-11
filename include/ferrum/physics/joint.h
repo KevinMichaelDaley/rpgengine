@@ -60,6 +60,7 @@ typedef enum phys_joint_type {
     PHYS_JOINT_AIM            = 7,  /**< Align axis toward target (2 angular rows). */
     PHYS_JOINT_IK             = 8,  /**< IK chain pair: angular rows toward target (3 angular rows). */
     PHYS_JOINT_CONE_TWIST     = 9,  /**< Ball joint + per-axis angular limits (3 pos + up to 3 ang). */
+    PHYS_JOINT_TWIST          = 10, /**< Single-axis twist (3 pos + 2 ang lock + optional twist limit). */
 } phys_joint_type_t;
 
 /**
@@ -368,6 +369,29 @@ void phys_joint_build_cone_twist(phys_joint_t *joint,
                                  const struct phys_body *body_a,
                                  const struct phys_body *body_b,
                                  float dt);
+
+/**
+ * @brief Build constraint rows for a twist (single-axis rotation) joint.
+ *
+ * Produces 5 or 6 Jacobian rows:
+ *   - Rows 0–2: positional lock (anchor coincidence).
+ *   - Rows 3–4: angular lock perpendicular to the twist axis.
+ *   - Row 5 (optional): twist angle limit when limit_axes bit 0 is set.
+ *     Uses rest_relative_orient as the reference for twist angle.
+ *
+ * @param joint   Joint descriptor (type should be PHYS_JOINT_TWIST).
+ *                local_axis_a defines the twist axis.  If NULL, no-op.
+ * @param body_a  Pointer to body A.  If NULL, no-op.
+ * @param body_b  Pointer to body B.  If NULL, no-op.
+ * @param dt      Timestep in seconds.  Must be > 0; if <= 0, no-op.
+ *
+ * @par Ownership: caller owns all pointers.  No allocations.
+ * @par Side effects: writes joint->rows and joint->row_count.
+ */
+void phys_joint_build_twist(phys_joint_t *joint,
+                             const struct phys_body *body_a,
+                             const struct phys_body *body_b,
+                             float dt);
 
 /* Forward declaration for constraint output. */
 struct phys_constraint;

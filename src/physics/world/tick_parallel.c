@@ -223,6 +223,8 @@ static uint8_t stable_joint_lambda_rows(const phys_joint_t *joint)
         return 0;
     case PHYS_JOINT_CONE_TWIST:
         return 3;
+    case PHYS_JOINT_TWIST:
+        return 3;  /* Preserve only 3 positional rows. */
     default:
         return joint->row_count;
     }
@@ -326,6 +328,10 @@ static void rebuild_island_joint_constraints(
         case PHYS_JOINT_CONE_TWIST:
             phys_joint_build_cone_twist(j, &bodies[j->body_a],
                                         &bodies[j->body_b], dt);
+            break;
+        case PHYS_JOINT_TWIST:
+            phys_joint_build_twist(j, &bodies[j->body_a],
+                                   &bodies[j->body_b], dt);
             break;
         }
         phys_constraint_t tmp[2];
@@ -1413,6 +1419,10 @@ void phys_world_tick_parallel(phys_world_t *world,
                     break;
                 case PHYS_JOINT_CONE_TWIST:
                     phys_joint_build_cone_twist(j,
+                        &bodies[j->body_a], &bodies[j->body_b], substep_dt);
+                    break;
+                case PHYS_JOINT_TWIST:
+                    phys_joint_build_twist(j,
                         &bodies[j->body_a], &bodies[j->body_b], substep_dt);
                     break;
                 }

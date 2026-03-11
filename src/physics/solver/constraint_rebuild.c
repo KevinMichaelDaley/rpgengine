@@ -110,6 +110,10 @@ void phys_rebuild_joint_by_type(phys_joint_t *j,
         phys_joint_build_cone_twist(j, &bodies[j->body_a],
                                     &bodies[j->body_b], dt);
         break;
+    case PHYS_JOINT_TWIST:
+        phys_joint_build_twist(j, &bodies[j->body_a],
+                               &bodies[j->body_b], dt);
+        break;
     }
 }
 
