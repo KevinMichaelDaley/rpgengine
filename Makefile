@@ -222,6 +222,12 @@ BIN_HEADLESS := build/p000_tests build/p001_tests build/p002_tests build/p003_te
 	build/p119_snapshot_interp_tests \
 	build/p121_ccd_dynamic_tests \
 	build/p122_joint_properties_tests \
+	build/p123_muscle_activation_tests \
+	build/p124_muscle_force_curve_tests \
+	build/p125_muscle_tendon_tests \
+	build/p126_muscle_geometry_tests \
+	build/p127_muscle_unit_tests \
+	build/p128_muscle_pair_tests \
 	build/p008_server_tick_loop_tests \
 	build/p008_server_tick_encoder_tests \
 	build/p008_server_loop_integration_tests
@@ -698,6 +704,24 @@ build/p121_ccd_dynamic_tests: build/libheadless.a tests/p121_ccd_dynamic_tests.c
 
 build/p122_joint_properties_tests: build/libheadless.a tests/p122_joint_properties_tests.c | build
 	$(CC) $(CFLAGS) tests/p122_joint_properties_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p123_muscle_activation_tests: build/libheadless.a tests/p123_muscle_activation_tests.c | build
+	$(CC) $(CFLAGS) tests/p123_muscle_activation_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p124_muscle_force_curve_tests: build/libheadless.a tests/p124_muscle_force_curve_tests.c | build
+	$(CC) $(CFLAGS) tests/p124_muscle_force_curve_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p125_muscle_tendon_tests: build/libheadless.a tests/p125_muscle_tendon_tests.c | build
+	$(CC) $(CFLAGS) tests/p125_muscle_tendon_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p126_muscle_geometry_tests: build/libheadless.a tests/p126_muscle_geometry_tests.c | build
+	$(CC) $(CFLAGS) tests/p126_muscle_geometry_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p127_muscle_unit_tests: build/libheadless.a tests/p127_muscle_unit_tests.c | build
+	$(CC) $(CFLAGS) tests/p127_muscle_unit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/p128_muscle_pair_tests: build/libheadless.a tests/p128_muscle_pair_tests.c | build
+	$(CC) $(CFLAGS) tests/p128_muscle_pair_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 build/p007_net_udp_socket_tests: build/libheadless.a tests/p007_net_udp_socket_tests.c | build
 	$(CC) $(CFLAGS) tests/p007_net_udp_socket_tests.c build/libheadless.a -o $@ $(LDFLAGS)
@@ -1194,6 +1218,12 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/p111_ccd_tests \
 	&& ./build/p121_ccd_dynamic_tests \
 	&& ./build/p122_joint_properties_tests \
+	&& ./build/p123_muscle_activation_tests \
+	&& ./build/p124_muscle_force_curve_tests \
+	&& ./build/p125_muscle_tendon_tests \
+	&& ./build/p126_muscle_geometry_tests \
+	&& ./build/p127_muscle_unit_tests \
+	&& ./build/p128_muscle_pair_tests \
 	&& ./build/p112_halfspace_tests \
 	&& ./build/p007_net_schema_registry_tests \
 	&& ./build/p007_net_udp_socket_tests \

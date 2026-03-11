@@ -757,6 +757,30 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                         jd->axis[0], jd->axis[1], jd->axis[2]
                     };
                     break;
+                case 9: {
+                    /* Twist joint: single-axis rotation. */
+                    j->type = PHYS_JOINT_TWIST;
+                    phys_quat_t child_orient = quat_from_mat4(&world_pose[i]);
+                    phys_vec3_t bone_axis = {
+                        jd->axis[0], jd->axis[1], jd->axis[2]
+                    };
+                    phys_vec3_t world_axis = quat_rotate_vec3(
+                        child_orient, bone_axis);
+                    j->local_axis_a = quat_inv_rotate_vec3(
+                        parent_orient, world_axis);
+                    j->rest_relative_orient = quat_mul(
+                        child_orient, quat_conjugate(parent_orient));
+                    if (jd->limit_min[0] != 0.0f || jd->limit_max[0] != 0.0f) {
+                        j->limit_min[0] = jd->limit_min[0];
+                        j->limit_max[0] = jd->limit_max[0];
+                        j->limit_axes = 1;
+                    }
+                    break;
+                }
+                case 10:
+                    /* Ball socket: 3-DOF spherical joint. */
+                    j->type = PHYS_JOINT_BALL;
+                    break;
                 default: continue;
                 }
 
@@ -776,9 +800,9 @@ bool phys_anim_entity_create(phys_anim_entity_t *entity,
                 {
                     static const char *type_names[] = {
                         "DIST","BALL","HINGE","LOCK","CPROT",
-                        "LROT","LPOS","AIM","IK","CTWIST"
+                        "LROT","LPOS","AIM","IK","CTWIST","TWIST"
                     };
-                    const char *tn = (j->type < 10) ? type_names[j->type] : "?";
+                    const char *tn = (j->type < 11) ? type_names[j->type] : "?";
                     fprintf(stderr,
                         "  j%u: b%u->b%u %s lim_axes=%u "
                         "lim=[%.3f,%.3f,%.3f]->[%.3f,%.3f,%.3f] "

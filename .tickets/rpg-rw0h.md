@@ -1,6 +1,6 @@
 ---
 id: rpg-rw0h
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-11T02:30:34Z

@@ -699,7 +699,7 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
                 lim_min = [-tight, -tight, -tight]
                 lim_max = [ tight,  tight,  tight]
 
-            if jt in (2, 8):  # Hinge or Aim: use axis
+            if jt in (2, 8, 9):  # Hinge, Aim, or Twist: use axis
                 axis_str = pb.talarium_joint_axis
                 axis = {'X': [1, 0, 0], 'Y': [0, 1, 0],
                         'Z': [0, 0, 1]}.get(axis_str, [0, 1, 0])
@@ -731,6 +731,14 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
                 lim_max[0] = pb.talarium_joint_limit_max
                 if lim_min[0] != 0.0 or lim_max[0] != 0.0:
                     lim_axes = 1
+
+            elif jt == 9:  # Twist: scalar twist limit in slot [0]
+                lim_min[0] = pb.talarium_joint_limit_min
+                lim_max[0] = pb.talarium_joint_limit_max
+                if lim_min[0] != 0.0 or lim_max[0] != 0.0:
+                    lim_axes = 1
+
+            # Ball socket (10): no limits, no axis — just positional lock.
 
             elif jt == 3:  # Distance
                 rest_len = pb.talarium_joint_rest_length
@@ -1039,6 +1047,8 @@ _BONE_PROPS = {
             ('6', "Limit Rotation", "Rotation with per-axis limits"),
             ('7', "Limit Position", "Position with per-axis limits"),
             ('8', "Aim", "Aim/track constraint"),
+            ('9', "Twist", "Single-axis twist (1 DOF with optional limit)"),
+            ('10', "Ball Socket", "Ball-socket joint (3 DOF, no limits)"),
         ],
         default='1',
     ),
@@ -1422,15 +1432,15 @@ class ARMATURE_OT_talarium_validate_pose(bpy.types.Operator):
                             f"{bone.name}: {axis_names[i]} axis "
                             f"{deg:.1f}° outside [{lo_d:.1f}°, {hi_d:.1f}°]")
 
-            elif jt == 2:  # Hinge: scalar limit
+            elif jt in (2, 9):  # Hinge or Twist: scalar limit
                 lo = pb.talarium_joint_limit_min
                 hi = pb.talarium_joint_limit_max
+                label = "hinge" if jt == 2 else "twist"
                 if lo != 0.0 or hi != 0.0:
-                    # Hinge axis maps to engine coordinate; use axis 0.
                     angle = angles[0]
                     if angle < lo or angle > hi:
                         violations.append(
-                            f"{bone.name}: hinge angle "
+                            f"{bone.name}: {label} angle "
                             f"{math.degrees(angle):.1f}° outside "
                             f"[{math.degrees(lo):.1f}°, "
                             f"{math.degrees(hi):.1f}°]")
@@ -1771,9 +1781,13 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 row.prop(pb, "talarium_joint_use_limit_z", text="Z")
                 row.prop(pb, "talarium_joint_limit_min_z", text="Min")
                 row.prop(pb, "talarium_joint_limit_max_z", text="Max")
-            elif jt in ('2', '8'):  # Hinge or Aim
+            elif jt in ('2', '8', '9'):  # Hinge, Aim, or Twist
                 box.prop(pb, "talarium_joint_axis")
             if jt == '2':  # Hinge
+                row = box.row(align=True)
+                row.prop(pb, "talarium_joint_limit_min")
+                row.prop(pb, "talarium_joint_limit_max")
+            elif jt == '9':  # Twist
                 row = box.row(align=True)
                 row.prop(pb, "talarium_joint_limit_min")
                 row.prop(pb, "talarium_joint_limit_max")

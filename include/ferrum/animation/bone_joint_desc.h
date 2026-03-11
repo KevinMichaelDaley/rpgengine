@@ -37,6 +37,8 @@ extern "C" {
  *   6 = limit_rotation (per-axis angular limits)
  *   7 = limit_position (per-axis positional limits)
  *   8 = aim (align axis toward target position)
+ *   9 = twist (single-axis twist: 3 pos + 2 ang lock + optional limit)
+ *  10 = ball_socket (3-DOF spherical joint, no angular limits)
  *
  * @par Ownership
  * Plain data struct, no internal allocations.
@@ -45,7 +47,8 @@ extern "C" {
 typedef struct bone_joint_desc {
     uint32_t joint_type;    /**< 0=none, 1=cone_twist, 2=hinge, 3=distance,
                              *   4=lock, 5=copy_rotation, 6=limit_rotation,
-                             *   7=limit_position, 8=aim. */
+                             *   7=limit_position, 8=aim, 9=twist,
+                             *   10=ball_socket. */
     float    axis[3];       /**< Hinge axis (type=2) or track axis (type=8)
                              *   in parent bone's local space. */
     float    rest_length;   /**< Distance joint rest length (type=3).

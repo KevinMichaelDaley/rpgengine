@@ -139,6 +139,28 @@ uint32_t anim_joint_descs_to_joints(
                 jd->axis[0], jd->axis[1], jd->axis[2]
             };
             break;
+        case 9: /* Twist (single-axis rotation). */
+            j->type = PHYS_JOINT_TWIST;
+            {
+                phys_quat_t child_orient = quat_from_mat4(&world_pose[i]);
+                phys_vec3_t bone_axis = {
+                    jd->axis[0], jd->axis[1], jd->axis[2]
+                };
+                phys_vec3_t world_axis = quat_rotate_vec3(
+                    child_orient, bone_axis);
+                j->local_axis_a = quat_inv_rotate_vec3(
+                    parent_orient, world_axis);
+            }
+            /* Apply twist angle limits if specified. */
+            if (jd->limit_min[0] != 0.0f || jd->limit_max[0] != 0.0f) {
+                j->limit_min[0] = jd->limit_min[0];
+                j->limit_max[0] = jd->limit_max[0];
+                j->limit_axes = 1;
+            }
+            break;
+        case 10: /* Ball socket (3-DOF spherical). */
+            j->type = PHYS_JOINT_BALL;
+            break;
         default:
             continue;  /* Unknown type — skip. */
         }

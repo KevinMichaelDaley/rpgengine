@@ -1,6 +1,6 @@
 ---
 id: rpg-ovxp
-status: open
+status: closed
 deps: [rpg-xgo2]
 links: []
 created: 2026-03-11T02:29:22Z

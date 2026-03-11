@@ -1,6 +1,6 @@
 ---
 id: rpg-xg1v
-status: open
+status: closed
 deps: [rpg-rw0h, rpg-s4k4, rpg-fvio]
 links: []
 created: 2026-03-11T02:30:34Z

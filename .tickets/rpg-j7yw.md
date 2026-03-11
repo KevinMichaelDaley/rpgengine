@@ -1,6 +1,6 @@
 ---
 id: rpg-j7yw
-status: open
+status: closed
 deps: [rpg-rw0h]
 links: []
 created: 2026-03-11T02:30:34Z
