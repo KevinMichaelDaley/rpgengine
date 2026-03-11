@@ -1068,6 +1068,10 @@ build/p005_joint_types_tests: build/libheadless.a tests/p005_joint_types_tests.c
 	$(CC) $(CFLAGS) tests/p005_joint_types_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p110_joint_twist_tests: build/libheadless.a tests/p110_joint_twist_tests.c | build
 	$(CC) $(CFLAGS) tests/p110_joint_twist_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p111_joint_driver_tests: build/libheadless.a tests/p111_joint_driver_tests.c | build
+	$(CC) $(CFLAGS) tests/p111_joint_driver_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p112_joint_driver_extended_tests: build/libheadless.a tests/p112_joint_driver_extended_tests.c | build
+	$(CC) $(CFLAGS) tests/p112_joint_driver_extended_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build:
 
 
