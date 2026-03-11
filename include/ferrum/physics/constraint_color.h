@@ -19,6 +19,7 @@
 #ifndef FERRUM_PHYSICS_CONSTRAINT_COLOR_H
 #define FERRUM_PHYSICS_CONSTRAINT_COLOR_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -42,6 +43,16 @@ typedef struct phys_color_result {
 } phys_color_result_t;
 
 /**
+ * @brief Compute the scratch buffer size required for coloring.
+ *
+ * @param constraint_count  Number of constraints.
+ * @param body_count        Total body count.
+ * @return Required scratch buffer size in bytes.
+ */
+size_t phys_constraint_color_scratch_size(uint32_t constraint_count,
+                                           uint32_t body_count);
+
+/**
  * @brief Assign colors to constraints via greedy lowest-degree-first.
  *
  * Two constraints are adjacent (conflicting) if they share at least
@@ -53,17 +64,19 @@ typedef struct phys_color_result {
  * @param constraints       Array of constraints to color.
  * @param constraint_count  Number of constraints.
  * @param body_count        Total body count (for indexing workspace).
- * @param arena             Frame arena for all temporary allocations.
- * @param result_out        Output result (filled on success).
- * @return 0 on success, -1 on invalid args or arena exhaustion.
+ * @param scratch           Pre-allocated scratch buffer.
+ * @param scratch_size      Size of scratch buffer in bytes.
+ * @param result_out        Output result (colors array points into scratch).
+ * @return 0 on success, -1 on invalid args or insufficient scratch.
  *
- * @note Side effects: allocates from arena.
- * @note No per-frame malloc/free.
+ * @note Thread-safe: does not allocate — uses only the provided scratch.
+ * @note result_out->colors points into scratch; valid until scratch is reused.
  */
 int phys_constraint_color(const struct phys_constraint *constraints,
                           uint32_t constraint_count,
                           uint32_t body_count,
-                          struct phys_frame_arena *arena,
+                          uint8_t *scratch,
+                          size_t scratch_size,
                           phys_color_result_t *result_out);
 
 #ifdef __cplusplus

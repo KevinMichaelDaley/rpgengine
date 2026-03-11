@@ -74,6 +74,11 @@ static void apply_spawn_(phys_world_t *world,
         b->restitution = cmd->restitution;
     }
 
+    /* Apply tier override if specified. */
+    if (cmd->tier > 0) {
+        b->tier = cmd->tier;
+    }
+
     /* Attach collider. */
     phys_vec3_t zero_off = {0.0f, 0.0f, 0.0f};
     phys_quat_t identity = {0.0f, 0.0f, 0.0f, 1.0f};

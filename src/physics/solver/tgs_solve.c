@@ -1129,7 +1129,11 @@ static bool solve_island_colored(const phys_island_t *island,
     }
 
     phys_color_result_t coloring;
-    int rc = phys_constraint_color(local, n, args->body_count, arena, &coloring);
+    size_t scratch_need = phys_constraint_color_scratch_size(n, args->body_count);
+    uint8_t *scratch = phys_frame_arena_alloc(arena, scratch_need, 8);
+    if (!scratch) { return false; }
+    int rc = phys_constraint_color(local, n, args->body_count,
+                                    scratch, scratch_need, &coloring);
     if (rc != 0) { return false; }
 
     /* Interleaved two-pass solve: within each iteration, animation
@@ -1444,12 +1448,18 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
 
         /* Save pre-solve velocities (includes gravity/external forces)
          * so coupled islands can damp only the solver delta afterward. */
-        phys_velocity_t pre_solve[256];
-        if (coupled) {
-            for (uint32_t b = 0; b < island->body_count && b < 256; ++b) {
-                uint32_t idx = island->body_indices[b];
-                if (idx >= args->body_count) continue;
-                pre_solve[b] = args->velocities[idx];
+        phys_velocity_t *pre_solve = NULL;
+        if (coupled && args->frame_arena) {
+            pre_solve = phys_frame_arena_alloc(
+                args->frame_arena,
+                island->body_count * sizeof(phys_velocity_t),
+                _Alignof(phys_velocity_t));
+            if (pre_solve) {
+                for (uint32_t b = 0; b < island->body_count; ++b) {
+                    uint32_t idx = island->body_indices[b];
+                    if (idx >= args->body_count) continue;
+                    pre_solve[b] = args->velocities[idx];
+                }
             }
         }
 
@@ -1486,8 +1496,11 @@ void phys_stage_tgs_solve(const phys_tgs_solve_args_t *args)
              * masses in the island and redistribute proportional to each
              * body's constraint degree.  Hub bodies get more mass. */
             {
-                uint32_t degree[256]; /* max bodies per island */
-                if (island->body_count > 256) goto skip_redistribution_;
+                uint32_t *degree = phys_frame_arena_alloc(
+                    args->frame_arena,
+                    island->body_count * sizeof(uint32_t),
+                    _Alignof(uint32_t));
+                if (!degree) goto skip_redistribution_;
                 memset(degree, 0, island->body_count * sizeof(uint32_t));
                 for (uint32_t ci = 0; ci < island->constraint_count; ++ci) {
                     uint32_t c_idx = island->constraint_indices[ci];

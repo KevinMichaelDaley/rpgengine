@@ -96,6 +96,10 @@ typedef struct phys_cmd_spawn_body {
     /** If true, friction/restitution values override body_init defaults. */
     bool        has_material;
 
+    /** Physics tier override (0 = default/ANIM, 1–3 = DIRECT/NEAR/VISIBLE).
+     *  When non-zero, the spawned body's tier is set to this value. */
+    uint8_t tier;
+
     /** Opaque user data passed back via the result callback.
      *  Useful for mapping the created body index to game-level metadata. */
     uint64_t user_tag;

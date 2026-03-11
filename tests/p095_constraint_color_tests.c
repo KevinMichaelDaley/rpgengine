@@ -10,10 +10,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "ferrum/physics/body.h"
 #include "ferrum/physics/constraint.h"
 #include "ferrum/physics/constraint_color.h"
-#include "ferrum/physics/phys_pool.h"
 
 /* ── Test macros ────────────────────────────────────────────────── */
 
@@ -68,12 +66,8 @@ static int validate_coloring_(const phys_constraint_t *constraints,
     return 1; /* valid */
 }
 
-/** Create and return a frame arena. Caller must destroy. */
-static phys_frame_arena_t make_arena_(void) {
-    phys_frame_arena_t arena;
-    phys_frame_arena_init(&arena, 64 * 1024);
-    return arena;
-}
+/* Scratch buffer large enough for all tests (64 KB). */
+static uint8_t g_scratch[64 * 1024];
 
 /* ── Test: chain A-B, B-C, C-D → valid 2-coloring ─────────────── */
 
@@ -88,15 +82,17 @@ static int test_chain_coloring(void) {
     make_constraint_(&constraints[1], 1, 2);
     make_constraint_(&constraints[2], 2, 3);
 
-    phys_frame_arena_t arena = make_arena_();
     phys_color_result_t result;
+    size_t need = phys_constraint_color_scratch_size(3, 4);
+    ASSERT_TRUE(need <= sizeof(g_scratch));
 
-    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 3, 4, &arena, &result));
+    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 3, 4,
+                                            g_scratch, sizeof(g_scratch),
+                                            &result));
     ASSERT_INT_EQ(3, (int)result.count);
     ASSERT_TRUE(result.num_colors <= 2);
     ASSERT_TRUE(validate_coloring_(constraints, 3, result.colors));
 
-    phys_frame_arena_destroy(&arena);
     return 0;
 }
 
@@ -112,15 +108,15 @@ static int test_star_coloring(void) {
     make_constraint_(&constraints[2], 0, 3);
     make_constraint_(&constraints[3], 0, 4);
 
-    phys_frame_arena_t arena = make_arena_();
     phys_color_result_t result;
 
-    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 4, 5, &arena, &result));
+    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 4, 5,
+                                            g_scratch, sizeof(g_scratch),
+                                            &result));
     ASSERT_INT_EQ(4, (int)result.count);
     ASSERT_INT_EQ(4, (int)result.num_colors);
     ASSERT_TRUE(validate_coloring_(constraints, 4, result.colors));
 
-    phys_frame_arena_destroy(&arena);
     return 0;
 }
 
@@ -133,17 +129,17 @@ static int test_disconnected_all_color_0(void) {
     make_constraint_(&constraints[1], 2, 3);
     make_constraint_(&constraints[2], 4, 5);
 
-    phys_frame_arena_t arena = make_arena_();
     phys_color_result_t result;
 
-    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 3, 6, &arena, &result));
+    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 3, 6,
+                                            g_scratch, sizeof(g_scratch),
+                                            &result));
     ASSERT_INT_EQ(3, (int)result.count);
     ASSERT_INT_EQ(1, (int)result.num_colors);
     for (uint32_t i = 0; i < 3; ++i) {
         ASSERT_INT_EQ(0, (int)result.colors[i]);
     }
 
-    phys_frame_arena_destroy(&arena);
     return 0;
 }
 
@@ -153,32 +149,33 @@ static int test_single_constraint(void) {
     phys_constraint_t constraints[1];
     make_constraint_(&constraints[0], 0, 1);
 
-    phys_frame_arena_t arena = make_arena_();
     phys_color_result_t result;
 
-    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 1, 2, &arena, &result));
+    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 1, 2,
+                                            g_scratch, sizeof(g_scratch),
+                                            &result));
     ASSERT_INT_EQ(1, (int)result.count);
     ASSERT_INT_EQ(1, (int)result.num_colors);
     ASSERT_INT_EQ(0, (int)result.colors[0]);
 
-    phys_frame_arena_destroy(&arena);
     return 0;
 }
 
 /* ── Test: null/empty input ────────────────────────────────────── */
 
 static int test_null_args(void) {
-    ASSERT_INT_EQ(-1, phys_constraint_color(NULL, 0, 0, NULL, NULL));
+    ASSERT_INT_EQ(-1, phys_constraint_color(NULL, 0, 0,
+                                             NULL, 0, NULL));
 
-    phys_frame_arena_t arena = make_arena_();
     phys_color_result_t result;
 
     /* Zero constraints → success, 0 colors. */
-    ASSERT_INT_EQ(0, phys_constraint_color(NULL, 0, 0, &arena, &result));
+    ASSERT_INT_EQ(0, phys_constraint_color(NULL, 0, 0,
+                                            g_scratch, sizeof(g_scratch),
+                                            &result));
     ASSERT_INT_EQ(0, (int)result.count);
     ASSERT_INT_EQ(0, (int)result.num_colors);
 
-    phys_frame_arena_destroy(&arena);
     return 0;
 }
 
@@ -192,14 +189,14 @@ static int test_triangle(void) {
     make_constraint_(&constraints[1], 1, 2);
     make_constraint_(&constraints[2], 0, 2);
 
-    phys_frame_arena_t arena = make_arena_();
     phys_color_result_t result;
 
-    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 3, 3, &arena, &result));
+    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 3, 3,
+                                            g_scratch, sizeof(g_scratch),
+                                            &result));
     ASSERT_INT_EQ(3, (int)result.num_colors);
     ASSERT_TRUE(validate_coloring_(constraints, 3, result.colors));
 
-    phys_frame_arena_destroy(&arena);
     return 0;
 }
 
@@ -218,15 +215,32 @@ static int test_dense_mesh(void) {
     make_constraint_(&constraints[6], 0, 4);
     make_constraint_(&constraints[7], 4, 2);
 
-    phys_frame_arena_t arena = make_arena_();
     phys_color_result_t result;
 
-    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 8, 5, &arena, &result));
+    ASSERT_INT_EQ(0, phys_constraint_color(constraints, 8, 5,
+                                            g_scratch, sizeof(g_scratch),
+                                            &result));
     ASSERT_INT_EQ(8, (int)result.count);
     ASSERT_TRUE(result.num_colors >= 1);
     ASSERT_TRUE(validate_coloring_(constraints, 8, result.colors));
 
-    phys_frame_arena_destroy(&arena);
+    return 0;
+}
+
+/* ── Test: insufficient scratch returns error ──────────────────── */
+
+static int test_insufficient_scratch(void) {
+    phys_constraint_t constraints[3];
+    make_constraint_(&constraints[0], 0, 1);
+    make_constraint_(&constraints[1], 1, 2);
+    make_constraint_(&constraints[2], 2, 3);
+
+    phys_color_result_t result;
+    uint8_t tiny[4]; /* way too small */
+
+    ASSERT_INT_EQ(-1, phys_constraint_color(constraints, 3, 4,
+                                             tiny, sizeof(tiny),
+                                             &result));
     return 0;
 }
 
@@ -254,6 +268,7 @@ int main(void) {
     RUN_TEST(test_null_args);
     RUN_TEST(test_triangle);
     RUN_TEST(test_dense_mesh);
+    RUN_TEST(test_insufficient_scratch);
 
     printf("%d/%d tests passed\n", test_count - fail_count, test_count);
     return fail_count ? 1 : 0;

@@ -349,6 +349,16 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
         }
     }
 
+    /* Read physics tier from attrs (default: 0 = ANIM). */
+    {
+        uint8_t at = 0, as = 0;
+        const void *tv = entity_attrs_get(&entity->attrs, SCRIPT_KEY_TIER,
+                                          &at, &as);
+        if (tv && as == 1) {
+            spawn.tier = *(const uint8_t *)tv;
+        }
+    }
+
     phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SPAWN_BODY,
                   &spawn, sizeof(spawn));
 
@@ -1174,6 +1184,8 @@ int main(int argc, char **argv) {
     uint32_t net_workers  = 1u;
     uint32_t phys_workers = 6u;
     uint16_t edit_port    = 9100u; /* Editor protocol port. */
+    bool no_pacing = false;        /* Skip realtime pacing (benchmark). */
+    const char *scene_path = NULL; /* Optional scene JSON to auto-load. */
 
 #ifdef FR_NET_EMULATION
     /* Network emulation parameters (all zero = disabled). */
@@ -1192,6 +1204,10 @@ int main(int argc, char **argv) {
             if (phys_workers < 1u) phys_workers = 1u;
         } else if (strcmp(argv[i], "--edit-port") == 0 && i + 1 < argc) {
             edit_port = (uint16_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--no-pacing") == 0) {
+            no_pacing = true;
+        } else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
+            scene_path = argv[++i];
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -1304,6 +1320,11 @@ int main(int argc, char **argv) {
     };
     phys_game_state_set_player(&ctx.game_state, 0, &player0);
     ctx.tick_runner.game_state = &ctx.game_state;
+
+    if (no_pacing) {
+        ctx.tick_runner.no_pacing = 1;
+        printf("[server] realtime pacing DISABLED (benchmark mode)\n");
+    }
 
     phys_tick_runner_start(&ctx.tick_runner);
     printf("[server] physics tick runner started\n");

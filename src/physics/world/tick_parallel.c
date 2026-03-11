@@ -1070,20 +1070,6 @@ void phys_world_tick_parallel(phys_world_t *world,
         }
     }
 
-    {
-        static int hs_dbg = 0;
-        if (hs_dbg < 3) {
-            fprintf(stderr, "[HS-DBG] halfspace_count=%u hs_count=%u body_cap=%u\n",
-                    world->halfspace_count, hs_count, body_cap);
-            for (uint32_t h = 0; h < hs_count; h++) {
-                uint32_t hi = hs_bodies[h];
-                fprintf(stderr, "  hs[%u] body=%u active=%u type=%u flags=0x%x\n",
-                        h, hi, active[hi], world->colliders[hi].type,
-                        world->body_pool.bodies_curr[hi].flags);
-            }
-            hs_dbg++;
-        }
-    }
     uint32_t max_pairs = MAX_PAIRS_PER_SUBSTEP;
     phys_collision_pair_t *pairs = phys_frame_arena_alloc(
         &world->frame_arena,
@@ -1210,9 +1196,11 @@ void phys_world_tick_parallel(phys_world_t *world,
         /* Run CCD BEFORE the fused pipeline so handled pairs can be
          * skipped.  CCD manifolds go into the front of the manifold
          * buffer; the fused pipeline appends after them. */
-        uint32_t max_manifolds_base = pair_count > 0 ? pair_count : 1;
-        uint32_t max_ccd_manifolds  = pair_count > 0 ? pair_count : 0;
-        uint32_t max_manifolds = max_manifolds_base + max_ccd_manifolds;
+        /* Cap manifold/constraint estimates to avoid exhausting the
+         * frame arena.  Not every pair produces a manifold, and CCD
+         * handles a small fraction.  Use pair_count as the manifold
+         * budget (covers both base + CCD with headroom). */
+        uint32_t max_manifolds = pair_count > 0 ? pair_count : 1;
         manifolds = phys_frame_arena_alloc(
             &world->frame_arena,
             max_manifolds * sizeof(phys_manifold_t),
@@ -1446,64 +1434,6 @@ void phys_world_tick_parallel(phys_world_t *world,
             }
         }
 
-        {
-            static uint32_t contact_dbg_ticks = 0;
-            if (contact_dbg_ticks < 120 && sub == 0) {
-                uint32_t halfspace_manifold_count = 0;
-                uint32_t halfspace_constraint_count = 0;
-                const phys_constraint_t *first_halfspace_constraint = NULL;
-                const phys_constraint_t *first_contact_constraint = NULL;
-                for (uint32_t mi = 0; mi < manifold_count; ++mi) {
-                    const phys_manifold_t *m = &manifolds[mi];
-                    if (world->colliders[m->body_a].type == PHYS_SHAPE_HALFSPACE ||
-                        world->colliders[m->body_b].type == PHYS_SHAPE_HALFSPACE) {
-                        halfspace_manifold_count++;
-                    }
-                }
-                for (uint32_t ci = 0; ci < joint_constraint_start && ci < constraint_count; ++ci) {
-                    const phys_constraint_t *c = &constraints[ci];
-                    if (!first_contact_constraint) {
-                        first_contact_constraint = c;
-                    }
-                    if (world->colliders[c->body_a].type == PHYS_SHAPE_HALFSPACE ||
-                        world->colliders[c->body_b].type == PHYS_SHAPE_HALFSPACE) {
-                        halfspace_constraint_count++;
-                        if (!first_halfspace_constraint) {
-                            first_halfspace_constraint = c;
-                        }
-                    }
-                }
-                fprintf(stderr,
-                        "[CONTACT-DBG] tick=%u sub=%u pairs=%u manifolds=%u halfspace_manifolds=%u "
-                        "contact_constraints=%u halfspace_constraints=%u\n",
-                        world->tick_count, sub, pair_count, manifold_count,
-                        halfspace_manifold_count, joint_constraint_start,
-                        halfspace_constraint_count);
-                if (first_halfspace_constraint) {
-                    const phys_constraint_t *c = first_halfspace_constraint;
-                    const phys_jacobian_row_t *row = &c->rows[0];
-                    fprintf(stderr,
-                            "  [CONTACT-ROW] bodies=%u,%u pen=%.4f bias=%.4f lambda=%.4f "
-                            "Jva.y=%.3f Jvb.y=%.3f\n",
-                            c->body_a, c->body_b, c->penetration, row->bias,
-                            row->lambda, row->J_va.y, row->J_vb.y);
-                }
-                if (!first_halfspace_constraint && first_contact_constraint) {
-                    const phys_constraint_t *c = first_contact_constraint;
-                    fprintf(stderr,
-                            "  [CONTACT-FIRST] bodies=%u,%u types=%u,%u pen=%.4f "
-                            "solver=%u flagsA=0x%x flagsB=0x%x\n",
-                            c->body_a, c->body_b,
-                            world->colliders[c->body_a].type,
-                            world->colliders[c->body_b].type,
-                            c->penetration, c->solver_mode,
-                            world->body_pool.bodies_next[c->body_a].flags,
-                            world->body_pool.bodies_next[c->body_b].flags);
-                }
-                contact_dbg_ticks++;
-            }
-        }
-
         /* Compute per-body max penetration from constraints for sleep
          * blocking.  Bodies with penetration > slop must stay awake so
          * Baumgarte + position projection can correct the overlap.
@@ -1561,27 +1491,6 @@ void phys_world_tick_parallel(phys_world_t *world,
 #ifdef TRACY_ENABLE
         TracyCZoneEnd(z_island);
 #endif
-
-        /* Debug: island contents after build. */
-        {
-            static uint32_t _isl_dbg = 0;
-            if (_isl_dbg < 10 && sub == 0 && joint_constraint_start > 0) {
-                fprintf(stderr, "[ISLAND-DBG] tick=%u islands=%u total_constraints=%u (contacts=%u joints=%u)\n",
-                        world->tick_count, islands.count, constraint_count,
-                        joint_constraint_start, constraint_count - joint_constraint_start);
-                for (uint32_t ii = 0; ii < islands.count; ii++) {
-                    phys_island_t *isle = &islands.islands[ii];
-                    uint32_t nc = 0, nj = 0;
-                    for (uint32_t ci = 0; ci < isle->constraint_count; ci++) {
-                        uint32_t idx = isle->constraint_indices[ci];
-                        if (constraints[idx].is_joint) nj++; else nc++;
-                    }
-                    fprintf(stderr, "  island[%u] bodies=%u constraints=%u (contacts=%u joints=%u)\n",
-                            ii, isle->body_count, isle->constraint_count, nc, nj);
-                }
-                _isl_dbg++;
-            }
-        }
 
         /* ── Stage 10b: Island Tier Promotion ──────────────────── */
         /* Promote all dynamic bodies in each island to the
@@ -1794,85 +1703,6 @@ void phys_world_tick_parallel(phys_world_t *world,
                     xpbd_count += isle->constraint_count;
                 }
             }
-            {
-                static uint32_t xpbd_route_dbg_ticks = 0;
-                if (xpbd_route_dbg_ticks < 24 && sub == 0) {
-                    uint32_t xpbd_halfspace_constraints = 0;
-                    for (uint32_t ii = 0; ii < islands.count; ++ii) {
-                        phys_island_t *isle = &islands.islands[ii];
-                        if (isle->sleeping || isle->skip || isle->constraint_count == 0) {
-                            continue;
-                        }
-                        if (!island_routes_xpbd_(isle, constraints, constraint_count,
-                                                 world->body_pool.bodies_next)) {
-                            continue;
-                        }
-                        for (uint32_t ci = 0; ci < isle->constraint_count; ++ci) {
-                            const phys_constraint_t *c =
-                                &constraints[isle->constraint_indices[ci]];
-                            if (c->is_joint) {
-                                continue;
-                            }
-                            if (world->colliders[c->body_a].type == PHYS_SHAPE_HALFSPACE ||
-                                world->colliders[c->body_b].type == PHYS_SHAPE_HALFSPACE) {
-                                xpbd_halfspace_constraints++;
-                            }
-                        }
-                    }
-                    fprintf(stderr,
-                            "[XPBD-ROUTE] tick=%u sub=%u xpbd_count=%u halfspace_constraints=%u islands=%u\n",
-                            world->tick_count, sub, xpbd_count,
-                            xpbd_halfspace_constraints, islands.count);
-                    if (world->tick_count < 4 && islands.count > 0) {
-                        phys_island_t *isle = &islands.islands[0];
-                        fprintf(stderr,
-                                "  [XPBD-ROUTE-DETAIL] bodies=%u constraints=%u route=%d\n",
-                                isle->body_count, isle->constraint_count,
-                                (int)island_routes_xpbd_(
-                                    isle, constraints, constraint_count,
-                                    world->body_pool.bodies_next));
-                        for (uint32_t bi = 0; bi < isle->body_count && bi < 6; ++bi) {
-                            uint32_t idx = isle->body_indices[bi];
-                            fprintf(stderr,
-                                    "    body[%u] idx=%u tier=%u flags=0x%x\n",
-                                    bi, idx, world->body_pool.bodies_next[idx].tier,
-                                    world->body_pool.bodies_next[idx].flags);
-                        }
-                        for (uint32_t ci = 0; ci < isle->constraint_count && ci < 6; ++ci) {
-                            uint32_t idx = isle->constraint_indices[ci];
-                            fprintf(stderr,
-                                    "    constraint[%u] idx=%u solver=%u is_joint=%u\n",
-                                    ci, idx, constraints[idx].solver_mode,
-                                    constraints[idx].is_joint);
-                        }
-                    }
-                    xpbd_route_dbg_ticks++;
-                }
-            }
-            /* DEBUG: one-shot diagnostic for XPBD routing */
-            {
-                static int dbg_once = 0;
-                if (!dbg_once && sub == 0) {
-                    dbg_once = 1;
-                    fprintf(stderr, "[XPBD-DBG] islands=%u xpbd_count=%u constraint_count=%u\n",
-                        islands.count, xpbd_count, constraint_count);
-                    for (uint32_t ii = 0; ii < islands.count && ii < 5; ii++) {
-                        phys_island_t *isle = &islands.islands[ii];
-                        if (isle->sleeping || isle->skip) continue;
-                        uint32_t first_ci = isle->constraint_count > 0 ? isle->constraint_indices[0] : UINT32_MAX;
-                        uint8_t smode = first_ci < constraint_count ? constraints[first_ci].solver_mode : 255;
-                        fprintf(stderr, "  island[%u]: bodies=%u constraints=%u solver_mode=%u\n",
-                            ii, isle->body_count, isle->constraint_count, smode);
-                        for (uint32_t bi = 0; bi < isle->body_count && bi < 3; bi++) {
-                            uint32_t idx = isle->body_indices[bi];
-                            const phys_body_t *b = &world->body_pool.bodies_next[idx];
-                            fprintf(stderr, "    body[%u] idx=%u tier=%u flags=0x%x inv_mass=%.3f\n",
-                                bi, idx, b->tier, b->flags, b->inv_mass);
-                        }
-                    }
-                }
-            }
-
             xpbd_batch_shared_t xpbd_shared = {0};
             bool xpbd_dispatched = false;
             uint32_t xpbd_actual_count = 0;

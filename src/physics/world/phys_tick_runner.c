@@ -76,12 +76,13 @@ static void *tick_thread_fn_(void *user_data) {
 
     while (!atomic_load_explicit(&r->stop_requested, memory_order_acquire)) {
 
-        /* Pace: sleep until fixed_dt has elapsed since last tick. */
+        /* Pace: sleep until fixed_dt has elapsed since last tick.
+         * Skipped when no_pacing is set (benchmark mode). */
         uint64_t wall_elapsed_ns = 0;
         if (last_tick_ns != 0) {
             uint64_t now = runner_clock_ns_();
             wall_elapsed_ns = now - last_tick_ns;
-            if (wall_elapsed_ns < target_ns) {
+            if (!r->no_pacing && wall_elapsed_ns < target_ns) {
                 uint64_t remain = target_ns - wall_elapsed_ns;
                 struct timespec ts = {
                     .tv_sec  = (time_t)(remain / 1000000000ULL),

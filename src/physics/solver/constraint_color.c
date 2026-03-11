@@ -6,35 +6,74 @@
  *   1. Build per-body adjacency lists: for each body, store the
  *      indices of all constraints that reference it.
  *   2. Compute per-constraint degree: sum of adjacency list lengths
- *      of body_a and body_b, minus 2 (for self-reference), capped
- *      to avoid double-counting shared neighbors.
+ *      of body_a and body_b, minus 2 (for self-reference).
  *   3. Sort constraint indices by ascending degree (insertion sort
- *      for small N, which is expected for per-island counts).
+ *      for small N).
  *   4. Greedy assign: for each constraint in degree order, find the
  *      smallest color not used by any already-colored neighbor.
  *
- * All workspace is arena-allocated.
+ * All workspace is laid out in a caller-provided scratch buffer.
+ * No arena or heap allocations.
  *
- * 1 non-static function: phys_constraint_color
+ * 2 non-static functions: phys_constraint_color_scratch_size,
+ *                          phys_constraint_color
  */
 
 #include "ferrum/physics/constraint_color.h"
 
 #include <string.h>
+#include <stddef.h>
 
 #include "ferrum/physics/constraint.h"
-#include "ferrum/physics/phys_pool.h"
 
-/* ── Adjacency list (per-body) ─────────────────────────────────── */
-
-/**
- * @brief Per-body list of constraint indices that reference this body.
+/* ── Scratch layout ──────────────────────────────────────────────
+ *
+ * The scratch buffer is partitioned into:
+ *   [0] body_ref_count : uint32_t[body_count]
+ *   [1] adj_offsets    : uint32_t[body_count]   (start offset into adj_indices)
+ *   [2] adj_fill       : uint32_t[body_count]   (current fill position)
+ *   [3] adj_indices    : uint32_t[2 * constraint_count]  (flattened adjacency)
+ *   [4] degree         : uint32_t[constraint_count]
+ *   [5] order          : uint32_t[constraint_count]
+ *   [6] colors         : uint32_t[constraint_count]  (output — survives)
+ *   [7] used           : uint8_t[max_colors]
  */
-typedef struct body_adj {
-    uint32_t *indices;   /**< Arena-allocated array of constraint indices. */
-    uint32_t  count;     /**< Number of constraints referencing this body. */
-    uint32_t  capacity;  /**< Allocated capacity. */
-} body_adj_t;
+
+/** Align a byte offset up to a given alignment. */
+static size_t align_up_(size_t offset, size_t align) {
+    return (offset + align - 1) & ~(align - 1);
+}
+
+size_t phys_constraint_color_scratch_size(uint32_t constraint_count,
+                                           uint32_t body_count) {
+    size_t off = 0;
+    /* body_ref_count */
+    off = align_up_(off, _Alignof(uint32_t));
+    off += (size_t)body_count * sizeof(uint32_t);
+    /* adj_offsets */
+    off = align_up_(off, _Alignof(uint32_t));
+    off += (size_t)body_count * sizeof(uint32_t);
+    /* adj_fill */
+    off = align_up_(off, _Alignof(uint32_t));
+    off += (size_t)body_count * sizeof(uint32_t);
+    /* adj_indices (each constraint references 2 bodies) */
+    off = align_up_(off, _Alignof(uint32_t));
+    off += (size_t)constraint_count * 2 * sizeof(uint32_t);
+    /* degree */
+    off = align_up_(off, _Alignof(uint32_t));
+    off += (size_t)constraint_count * sizeof(uint32_t);
+    /* order */
+    off = align_up_(off, _Alignof(uint32_t));
+    off += (size_t)constraint_count * sizeof(uint32_t);
+    /* colors */
+    off = align_up_(off, _Alignof(uint32_t));
+    off += (size_t)constraint_count * sizeof(uint32_t);
+    /* used (max 256 colors) */
+    uint32_t max_colors = constraint_count;
+    if (max_colors > 256) max_colors = 256;
+    off += max_colors * sizeof(uint8_t);
+    return off;
+}
 
 /* ── Static helpers ────────────────────────────────────────────── */
 
@@ -66,9 +105,10 @@ static uint32_t smallest_available_(const uint8_t *used, uint32_t max_check) {
 int phys_constraint_color(const phys_constraint_t *constraints,
                           uint32_t constraint_count,
                           uint32_t body_count,
-                          phys_frame_arena_t *arena,
+                          uint8_t *scratch,
+                          size_t scratch_size,
                           phys_color_result_t *result_out) {
-    if (!arena || !result_out) { return -1; }
+    if (!scratch || !result_out) { return -1; }
 
     /* Handle trivial case. */
     if (constraint_count == 0) {
@@ -79,14 +119,49 @@ int phys_constraint_color(const phys_constraint_t *constraints,
     }
     if (!constraints) { return -1; }
 
-    /* ── Step 1: Build per-body adjacency lists ──────────────── */
+    /* Verify scratch is large enough. */
+    size_t needed = phys_constraint_color_scratch_size(
+        constraint_count, body_count);
+    if (scratch_size < needed) { return -1; }
 
-    /* Count how many constraints reference each body. */
-    uint32_t *body_ref_count = phys_frame_arena_alloc(
-        arena, body_count * sizeof(uint32_t), _Alignof(uint32_t));
-    if (!body_ref_count) { return -1; }
+    /* ── Partition scratch buffer ────────────────────────────── */
+    size_t off = 0;
+
+    off = align_up_(off, _Alignof(uint32_t));
+    uint32_t *body_ref_count = (uint32_t *)(scratch + off);
+    off += (size_t)body_count * sizeof(uint32_t);
+
+    off = align_up_(off, _Alignof(uint32_t));
+    uint32_t *adj_offsets = (uint32_t *)(scratch + off);
+    off += (size_t)body_count * sizeof(uint32_t);
+
+    off = align_up_(off, _Alignof(uint32_t));
+    uint32_t *adj_fill = (uint32_t *)(scratch + off);
+    off += (size_t)body_count * sizeof(uint32_t);
+
+    off = align_up_(off, _Alignof(uint32_t));
+    uint32_t *adj_indices = (uint32_t *)(scratch + off);
+    off += (size_t)constraint_count * 2 * sizeof(uint32_t);
+
+    off = align_up_(off, _Alignof(uint32_t));
+    uint32_t *degree = (uint32_t *)(scratch + off);
+    off += (size_t)constraint_count * sizeof(uint32_t);
+
+    off = align_up_(off, _Alignof(uint32_t));
+    uint32_t *order = (uint32_t *)(scratch + off);
+    off += (size_t)constraint_count * sizeof(uint32_t);
+
+    off = align_up_(off, _Alignof(uint32_t));
+    uint32_t *colors = (uint32_t *)(scratch + off);
+    off += (size_t)constraint_count * sizeof(uint32_t);
+
+    uint32_t max_colors = constraint_count;
+    if (max_colors > 256) max_colors = 256;
+    uint8_t *used = scratch + off;
+
+    /* ── Step 1: Build per-body adjacency (flattened) ────────── */
+
     memset(body_ref_count, 0, body_count * sizeof(uint32_t));
-
     for (uint32_t ci = 0; ci < constraint_count; ++ci) {
         uint32_t a = constraints[ci].body_a;
         uint32_t b = constraints[ci].body_b;
@@ -94,61 +169,38 @@ int phys_constraint_color(const phys_constraint_t *constraints,
         if (b < body_count) { body_ref_count[b]++; }
     }
 
-    /* Allocate per-body index arrays. */
-    body_adj_t *adj = phys_frame_arena_alloc(
-        arena, body_count * sizeof(body_adj_t), _Alignof(body_adj_t));
-    if (!adj) { return -1; }
-
-    for (uint32_t bi = 0; bi < body_count; ++bi) {
-        uint32_t cap = body_ref_count[bi];
-        adj[bi].count = 0;
-        adj[bi].capacity = cap;
-        if (cap > 0) {
-            adj[bi].indices = phys_frame_arena_alloc(
-                arena, cap * sizeof(uint32_t), _Alignof(uint32_t));
-            if (!adj[bi].indices) { return -1; }
-        } else {
-            adj[bi].indices = NULL;
-        }
+    /* Prefix sum to get offsets into flattened adj_indices. */
+    adj_offsets[0] = 0;
+    for (uint32_t bi = 1; bi < body_count; ++bi) {
+        adj_offsets[bi] = adj_offsets[bi - 1] + body_ref_count[bi - 1];
     }
+    memcpy(adj_fill, adj_offsets, body_count * sizeof(uint32_t));
 
-    /* Populate adjacency lists. */
+    /* Populate flattened adjacency. */
     for (uint32_t ci = 0; ci < constraint_count; ++ci) {
         uint32_t a = constraints[ci].body_a;
         uint32_t b = constraints[ci].body_b;
-        if (a < body_count && adj[a].count < adj[a].capacity) {
-            adj[a].indices[adj[a].count++] = ci;
+        if (a < body_count) {
+            adj_indices[adj_fill[a]++] = ci;
         }
-        if (b < body_count && adj[b].count < adj[b].capacity) {
-            adj[b].indices[adj[b].count++] = ci;
+        if (b < body_count) {
+            adj_indices[adj_fill[b]++] = ci;
         }
     }
 
     /* ── Step 2: Compute per-constraint degree ───────────────── */
 
-    uint32_t *degree = phys_frame_arena_alloc(
-        arena, constraint_count * sizeof(uint32_t), _Alignof(uint32_t));
-    if (!degree) { return -1; }
-
     for (uint32_t ci = 0; ci < constraint_count; ++ci) {
         uint32_t a = constraints[ci].body_a;
         uint32_t b = constraints[ci].body_b;
-        /* Degree = number of other constraints sharing at least one body.
-         * Upper bound: adj[a].count + adj[b].count - 2 (self refs).
-         * May overcount if a neighbor shares both bodies, but that's
-         * fine for greedy ordering — it's a heuristic. */
-        uint32_t da = (a < body_count) ? adj[a].count : 0;
-        uint32_t db = (b < body_count) ? adj[b].count : 0;
+        uint32_t da = (a < body_count) ? body_ref_count[a] : 0;
+        uint32_t db = (b < body_count) ? body_ref_count[b] : 0;
         uint32_t d = da + db;
-        if (d >= 2) { d -= 2; } else { d = 0; } /* subtract self refs */
+        if (d >= 2) { d -= 2; } else { d = 0; }
         degree[ci] = d;
     }
 
     /* ── Step 3: Sort by ascending degree ────────────────────── */
-
-    uint32_t *order = phys_frame_arena_alloc(
-        arena, constraint_count * sizeof(uint32_t), _Alignof(uint32_t));
-    if (!order) { return -1; }
 
     for (uint32_t ci = 0; ci < constraint_count; ++ci) {
         order[ci] = ci;
@@ -157,24 +209,9 @@ int phys_constraint_color(const phys_constraint_t *constraints,
 
     /* ── Step 4: Greedy coloring ─────────────────────────────── */
 
-    uint32_t *colors = phys_frame_arena_alloc(
-        arena, constraint_count * sizeof(uint32_t), _Alignof(uint32_t));
-    if (!colors) { return -1; }
-
-    /* UINT32_MAX = uncolored sentinel. */
     for (uint32_t ci = 0; ci < constraint_count; ++ci) {
         colors[ci] = UINT32_MAX;
     }
-
-    /* Temporary bitset for "used colors among neighbors".
-     * Max possible colors = constraint_count, but in practice
-     * much smaller.  We use a byte array capped at a reasonable
-     * maximum (256 colors should cover any real scenario). */
-    uint32_t max_colors = constraint_count;
-    if (max_colors > 256) { max_colors = 256; }
-    uint8_t *used = phys_frame_arena_alloc(
-        arena, max_colors * sizeof(uint8_t), _Alignof(uint8_t));
-    if (!used) { return -1; }
 
     uint32_t num_colors = 0;
 
@@ -187,16 +224,20 @@ int phys_constraint_color(const phys_constraint_t *constraints,
         uint32_t b = constraints[ci].body_b;
 
         if (a < body_count) {
-            for (uint32_t k = 0; k < adj[a].count; ++k) {
-                uint32_t ni = adj[a].indices[k];
+            uint32_t start = adj_offsets[a];
+            uint32_t end   = start + body_ref_count[a];
+            for (uint32_t k = start; k < end; ++k) {
+                uint32_t ni = adj_indices[k];
                 if (ni != ci && colors[ni] < max_colors) {
                     used[colors[ni]] = 1;
                 }
             }
         }
         if (b < body_count) {
-            for (uint32_t k = 0; k < adj[b].count; ++k) {
-                uint32_t ni = adj[b].indices[k];
+            uint32_t start = adj_offsets[b];
+            uint32_t end   = start + body_ref_count[b];
+            for (uint32_t k = start; k < end; ++k) {
+                uint32_t ni = adj_indices[k];
                 if (ni != ci && colors[ni] < max_colors) {
                     used[colors[ni]] = 1;
                 }

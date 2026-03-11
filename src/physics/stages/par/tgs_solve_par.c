@@ -1041,12 +1041,18 @@ static void solve_island(const tgs_solve_shared_t *shared,
 
     /* Save pre-solve velocities (includes gravity/external forces)
      * so coupled islands can damp only the solver delta afterward. */
-    phys_velocity_t pre_solve_vel[256];
-    if (coupled) {
-        for (uint32_t b = 0; b < island->body_count && b < 256; ++b) {
-            uint32_t idx = island->body_indices[b];
-            if (idx >= shared->body_count) continue;
-            pre_solve_vel[b] = shared->velocities[idx];
+    phys_velocity_t *pre_solve_vel = NULL;
+    if (coupled && shared->frame_arena) {
+        pre_solve_vel = phys_frame_arena_alloc(
+            shared->frame_arena,
+            island->body_count * sizeof(phys_velocity_t),
+            _Alignof(phys_velocity_t));
+        if (pre_solve_vel) {
+            for (uint32_t b = 0; b < island->body_count; ++b) {
+                uint32_t idx = island->body_indices[b];
+                if (idx >= shared->body_count) continue;
+                pre_solve_vel[b] = shared->velocities[idx];
+            }
         }
     }
 
@@ -1070,8 +1076,11 @@ static void solve_island(const tgs_solve_shared_t *shared,
          * mass, making them harder to perturb.  Only modifies bodies_mut. */
         {
             /* Count constraint degree per body. */
-            uint32_t degree[256]; /* max bodies per island */
-            if (island->body_count > 256) goto skip_redistribution_par_;
+            uint32_t *degree = phys_frame_arena_alloc(
+                shared->frame_arena,
+                island->body_count * sizeof(uint32_t),
+                _Alignof(uint32_t));
+            if (!degree) goto skip_redistribution_par_;
             memset(degree, 0, island->body_count * sizeof(uint32_t));
             for (uint32_t ci = 0; ci < island->constraint_count; ++ci) {
                 uint32_t c_idx = island->constraint_indices[ci];
@@ -1549,9 +1558,13 @@ static bool solve_island_colored_par(const tgs_solve_shared_t *shared,
     }
 
     /* Color the local constraints. */
+    size_t scratch_need = phys_constraint_color_scratch_size(
+        n, shared->islands->uf_size);
+    uint8_t *scratch = phys_frame_arena_alloc(arena, scratch_need, 8);
+    if (!scratch) { return false; }
     phys_color_result_t coloring;
     if (phys_constraint_color(local, n, shared->islands->uf_size,
-                               arena, &coloring) != 0) {
+                               scratch, scratch_need, &coloring) != 0) {
         return false;
     }
 

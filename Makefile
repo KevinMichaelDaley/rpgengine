@@ -1032,6 +1032,9 @@ $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p005_visual_walk_cycle: build/libheadless.a tests/visual/p005_visual_walk_cycle.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_walk_cycle.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+build/p006_visual_cube_tower: build/libheadless.a tests/visual/p006_visual_cube_tower.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p006_visual_cube_tower.c \
+build/libheadless.a $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build/p005_visual_ragdoll_drop: build/libheadless.a tests/visual/p005_visual_ragdoll_drop.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p005_visual_ragdoll_drop.c \
 $(SRC_ALL) $(OBJ_GLAD) -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)

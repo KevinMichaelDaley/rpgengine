@@ -732,7 +732,9 @@ static void collision_fused_job(void *data)
         cand_count += (uint32_t)n;
     }
 
-    if (cand_count == 0) return;
+    if (cand_count == 0) {
+        return;
+    }
 
     /* ── Phase 2: Manifold build — candidates → local manifolds ── */
     phys_manifold_t local_manis[FUSED_MAX_MANI_PER_BATCH];

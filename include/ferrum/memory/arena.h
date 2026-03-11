@@ -1,22 +1,24 @@
 #ifndef FERRUM_MEMORY_ARENA_H
 #define FERRUM_MEMORY_ARENA_H
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
 /** @file
- * @brief Linear arena allocator.
+ * @brief Linear arena allocator (thread-safe via atomic bump pointer).
  */
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/** Arena allocator backed by caller-owned buffer. */
+/** Arena allocator backed by caller-owned buffer.
+ *  Thread-safe: the offset is atomic, allowing concurrent alloc calls. */
 typedef struct arena {
     uint8_t *buffer;
     size_t capacity;
-    size_t offset;
+    atomic_size_t offset;
 } arena_t;
 
 /**

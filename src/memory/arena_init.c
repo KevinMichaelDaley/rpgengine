@@ -6,5 +6,5 @@ void arena_init(arena_t *arena, void *buffer, size_t capacity) {
     }
     arena->buffer = (uint8_t *)buffer;
     arena->capacity = capacity;
-    arena->offset = 0;
+    atomic_store_explicit(&arena->offset, 0, memory_order_relaxed);
 }

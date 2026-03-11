@@ -139,6 +139,9 @@ typedef struct phys_tick_runner {
     /** True after start() has been called. */
     uint8_t running;
 
+    /** When true, skip realtime pacing (benchmark mode). */
+    uint8_t no_pacing;
+
     /** Pre-allocated mutation staging buffer.  Populated by
      *  phys_cmd_drain_spawns() before each tick, consumed by
      *  tick_parallel via world->pending_mutations. */

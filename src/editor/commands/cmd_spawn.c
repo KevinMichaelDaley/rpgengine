@@ -11,6 +11,7 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/entity/entity_attrs.h"
 #include <string.h>
 
 /**
@@ -100,6 +101,17 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
             e->scale[0] = scl[0];
             e->scale[1] = scl[1];
             e->scale[2] = scl[2];
+        }
+    }
+
+    /* Set tier if provided (integer 0–3). */
+    if (args) {
+        const json_value_t *tier_val = json_object_get(args, "tier");
+        if (tier_val && tier_val->type == JSON_NUMBER) {
+            uint8_t tier = (uint8_t)tier_val->number;
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            entity_attrs_set(&e->attrs, SCRIPT_KEY_TIER,
+                             SCRIPT_ATTR_BOOL, &tier, sizeof(tier));
         }
     }
 

@@ -59,6 +59,7 @@ enum {
     SCRIPT_KEY_FRICTION  = 12,  /**< f32: surface friction coefficient (0–1+). */
     SCRIPT_KEY_RESTITUTION = 13, /**< f32: coefficient of restitution (0–1). */
     SCRIPT_KEY_CCD       = 14,  /**< bool: enable continuous collision detection. */
+    SCRIPT_KEY_TIER      = 15,  /**< u8: physics tier (0=ANIM, 1=DIRECT, 2=NEAR, 3=VISIBLE). */
 
     /* ECS component keys (mapped from registered sparse sets) */
     SCRIPT_KEY_ECS_BASE  = 64,  /**< ECS components start here. */
