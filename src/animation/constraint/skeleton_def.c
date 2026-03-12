@@ -68,6 +68,7 @@ void skeleton_def_destroy(skeleton_def_t *skel) {
     free(skel->hull_vertices);
     free(skel->joints);
     free(skel->tail_positions);
+    free(skel->muscles);
 
     memset(skel, 0, sizeof(*skel));
 }

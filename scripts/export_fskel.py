@@ -845,7 +845,64 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
                 joint_desc["anchor_a"] = parent_pt
                 joint_desc["anchor_b"] = child_pt
 
-        joints.append({
+        # ── Muscle descriptor ──────────────────────────────────────
+        muscle_desc = None
+        if pb and pb.talarium_muscle_enabled and bone.parent:
+            # Compute attachment points from bone geometry.
+            # Flexor: origin at 25% along parent bone, insertion at 25%
+            #         along child bone (anterior side).
+            # Extensor: origin at 25% along parent bone, insertion at 25%
+            #           along child bone (posterior side).
+            # Both in engine Y-up coordinates.
+            parent_bone = bone.parent
+            ph = parent_bone.head_local
+            pt = parent_bone.tail_local
+            ch = bone.head_local
+            ct = bone.tail_local
+
+            # Parent midpoint and child midpoint (25% along each bone)
+            frac = 0.25
+            p_mid = [ph[i] + frac * (pt[i] - ph[i]) for i in range(3)]
+            c_mid = [ch[i] + frac * (ct[i] - ch[i]) for i in range(3)]
+
+            # Blender Z-up → engine Y-up: (x, z, -y)
+            flex_origin = [p_mid[0], p_mid[2], -p_mid[1]]
+            flex_insert = [c_mid[0], c_mid[2], -c_mid[1]]
+            # Extensor is same points (mirrored side handled by
+            # joint axis convention, or user can adjust manually).
+            ext_origin = flex_origin[:]
+            ext_insert = flex_insert[:]
+
+            # Wrap center at the joint (child bone head) in engine coords
+            wrap_center = [ch[0], ch[2], -ch[1]]
+
+            def build_muscle_unit(prefix, origin, insertion, wc):
+                return {
+                    "origin": origin,
+                    "insertion": insertion,
+                    "optimal_length": getattr(pb, f"talarium_muscle_{prefix}_optimal_length"),
+                    "max_force": getattr(pb, f"talarium_muscle_{prefix}_max_force"),
+                    "max_velocity": getattr(pb, f"talarium_muscle_{prefix}_max_velocity"),
+                    "pennation_angle": getattr(pb, f"talarium_muscle_{prefix}_pennation"),
+                    "width": 0.56,
+                    "tau_rise": getattr(pb, f"talarium_muscle_{prefix}_tau_rise"),
+                    "tau_fall": getattr(pb, f"talarium_muscle_{prefix}_tau_fall"),
+                    "tendon_slack_length": getattr(pb, f"talarium_muscle_{prefix}_tendon_slack"),
+                    "tendon_stiffness": getattr(pb, f"talarium_muscle_{prefix}_tendon_stiffness"),
+                    "tendon_reference_strain": 0.033,
+                    "wrap_radius": getattr(pb, f"talarium_muscle_{prefix}_wrap_radius"),
+                    "wrap_center": wc,
+                    "wrap_axis": [0.0, 1.0, 0.0],
+                }
+
+            muscle_desc = {
+                "enabled": True,
+                "target_row": pb.talarium_muscle_target_row,
+                "flexor": build_muscle_unit("flex", flex_origin, flex_insert, wrap_center),
+                "extensor": build_muscle_unit("ext", ext_origin, ext_insert, wrap_center),
+            }
+
+        bone_entry = {
             "name": bone.name,
             "parent": parent_idx,
             "rest_local": rest_local,
@@ -854,7 +911,11 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
             "constraints": bone_constraints[bone_idx],
             "collider": collider,
             "joint_desc": joint_desc,
-        })
+        }
+        if muscle_desc is not None:
+            bone_entry["muscle_desc"] = muscle_desc
+
+        joints.append(bone_entry)
 
     data = {
         "version": 5,
@@ -871,11 +932,12 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
     # Summary
     total_constraints = sum(len(c) for c in bone_constraints)
     total_colliders = sum(1 for j in joints if j["collider"]["shape"] != "none")
+    total_muscles = sum(1 for j in joints if "muscle_desc" in j)
     hull_vertex_count = len(hull_vertices) // 3
     print(f"Exported {filepath}:")
     print(f"  {joint_count} joints, {total_constraints} constraints, "
           f"{ibm_count} IBMs, {total_colliders} colliders, "
-          f"{hull_vertex_count} hull vertices")
+          f"{hull_vertex_count} hull vertices, {total_muscles} muscles")
 
     return {'FINISHED'}
 
@@ -1178,6 +1240,114 @@ _BONE_PROPS = {
                     "this many times heavier, reducing condition number "
                     "when contacts are present.  Default 10",
         default=10.0, min=0.01, soft_max=100.0,
+    ),
+
+    # ── Biomechanical muscle properties ──
+
+    "talarium_muscle_enabled": BoolProperty(
+        name="Muscle Drive",
+        description="Enable antagonist muscle pair on this joint.  "
+                    "Replaces motor/servo with biomechanical force model",
+        default=False,
+    ),
+    "talarium_muscle_target_row": IntProperty(
+        name="Target Row",
+        description="Joint constraint row driven by this muscle pair (0 = first)",
+        default=0, min=0, max=8,
+    ),
+
+    # Flexor
+    "talarium_muscle_flex_max_force": FloatProperty(
+        name="Flex Max Force",
+        description="Flexor maximum isometric force (N)",
+        default=100.0, min=0.0, soft_max=5000.0, unit='NONE',
+    ),
+    "talarium_muscle_flex_optimal_length": FloatProperty(
+        name="Flex Optimal Length",
+        description="Flexor fiber length at peak force (m). 0 = auto from bone",
+        default=0.0, min=0.0, soft_max=1.0, unit='LENGTH',
+    ),
+    "talarium_muscle_flex_max_velocity": FloatProperty(
+        name="Flex Max Velocity",
+        description="Flexor max shortening velocity (lengths/s)",
+        default=10.0, min=0.1, soft_max=30.0,
+    ),
+    "talarium_muscle_flex_pennation": FloatProperty(
+        name="Flex Pennation",
+        description="Flexor fiber pennation angle",
+        default=0.0, min=0.0, max=1.0472, subtype='ANGLE',
+    ),
+    "talarium_muscle_flex_tau_rise": FloatProperty(
+        name="Flex τ Rise",
+        description="Flexor activation rise time constant (s)",
+        default=0.015, min=0.001, soft_max=0.1,
+    ),
+    "talarium_muscle_flex_tau_fall": FloatProperty(
+        name="Flex τ Fall",
+        description="Flexor activation fall time constant (s)",
+        default=0.050, min=0.001, soft_max=0.2,
+    ),
+    "talarium_muscle_flex_tendon_slack": FloatProperty(
+        name="Flex Tendon Slack",
+        description="Flexor tendon slack length (m). 0 = auto",
+        default=0.0, min=0.0, soft_max=1.0, unit='LENGTH',
+    ),
+    "talarium_muscle_flex_tendon_stiffness": FloatProperty(
+        name="Flex Tendon Stiffness",
+        description="Flexor normalized tendon stiffness",
+        default=35.0, min=1.0, soft_max=100.0,
+    ),
+    "talarium_muscle_flex_wrap_radius": FloatProperty(
+        name="Flex Wrap Radius",
+        description="Flexor wrapping cylinder radius (0 = no wrapping)",
+        default=0.0, min=0.0, soft_max=0.1, unit='LENGTH',
+    ),
+
+    # Extensor
+    "talarium_muscle_ext_max_force": FloatProperty(
+        name="Ext Max Force",
+        description="Extensor maximum isometric force (N)",
+        default=100.0, min=0.0, soft_max=5000.0, unit='NONE',
+    ),
+    "talarium_muscle_ext_optimal_length": FloatProperty(
+        name="Ext Optimal Length",
+        description="Extensor fiber length at peak force (m). 0 = auto",
+        default=0.0, min=0.0, soft_max=1.0, unit='LENGTH',
+    ),
+    "talarium_muscle_ext_max_velocity": FloatProperty(
+        name="Ext Max Velocity",
+        description="Extensor max shortening velocity (lengths/s)",
+        default=10.0, min=0.1, soft_max=30.0,
+    ),
+    "talarium_muscle_ext_pennation": FloatProperty(
+        name="Ext Pennation",
+        description="Extensor fiber pennation angle",
+        default=0.0, min=0.0, max=1.0472, subtype='ANGLE',
+    ),
+    "talarium_muscle_ext_tau_rise": FloatProperty(
+        name="Ext τ Rise",
+        description="Extensor activation rise time constant (s)",
+        default=0.015, min=0.001, soft_max=0.1,
+    ),
+    "talarium_muscle_ext_tau_fall": FloatProperty(
+        name="Ext τ Fall",
+        description="Extensor activation fall time constant (s)",
+        default=0.050, min=0.001, soft_max=0.2,
+    ),
+    "talarium_muscle_ext_tendon_slack": FloatProperty(
+        name="Ext Tendon Slack",
+        description="Extensor tendon slack length (m). 0 = auto",
+        default=0.0, min=0.0, soft_max=1.0, unit='LENGTH',
+    ),
+    "talarium_muscle_ext_tendon_stiffness": FloatProperty(
+        name="Ext Tendon Stiffness",
+        description="Extensor normalized tendon stiffness",
+        default=35.0, min=1.0, soft_max=100.0,
+    ),
+    "talarium_muscle_ext_wrap_radius": FloatProperty(
+        name="Ext Wrap Radius",
+        description="Extensor wrapping cylinder radius (0 = no wrapping)",
+        default=0.0, min=0.0, soft_max=0.1, unit='LENGTH',
     ),
 }
 
@@ -1854,6 +2024,46 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
                 op = row.operator("pose.talarium_copy_prop",
                                   text="", icon='COPYDOWN')
                 op.prop_name = "talarium_joint_drive_compliance"
+
+        # ── Muscle Drive ──
+        bone = pb.bone
+        has_joint = (bone and bone.parent and
+                     pb.talarium_joint_type != '0')
+        if has_joint:
+            box = layout.box()
+            box.label(text="Muscle Drive", icon='FORCE_MAGNETIC')
+            box.prop(pb, "talarium_muscle_enabled")
+
+            if pb.talarium_muscle_enabled:
+                box.prop(pb, "talarium_muscle_target_row")
+
+                # Flexor
+                sub = box.box()
+                sub.label(text="Flexor")
+                sub.prop(pb, "talarium_muscle_flex_max_force")
+                sub.prop(pb, "talarium_muscle_flex_optimal_length")
+                sub.prop(pb, "talarium_muscle_flex_max_velocity")
+                sub.prop(pb, "talarium_muscle_flex_pennation")
+                row = sub.row(align=True)
+                row.prop(pb, "talarium_muscle_flex_tau_rise")
+                row.prop(pb, "talarium_muscle_flex_tau_fall")
+                sub.prop(pb, "talarium_muscle_flex_tendon_slack")
+                sub.prop(pb, "talarium_muscle_flex_tendon_stiffness")
+                sub.prop(pb, "talarium_muscle_flex_wrap_radius")
+
+                # Extensor
+                sub = box.box()
+                sub.label(text="Extensor")
+                sub.prop(pb, "talarium_muscle_ext_max_force")
+                sub.prop(pb, "talarium_muscle_ext_optimal_length")
+                sub.prop(pb, "talarium_muscle_ext_max_velocity")
+                sub.prop(pb, "talarium_muscle_ext_pennation")
+                row = sub.row(align=True)
+                row.prop(pb, "talarium_muscle_ext_tau_rise")
+                row.prop(pb, "talarium_muscle_ext_tau_fall")
+                sub.prop(pb, "talarium_muscle_ext_tendon_slack")
+                sub.prop(pb, "talarium_muscle_ext_tendon_stiffness")
+                sub.prop(pb, "talarium_muscle_ext_wrap_radius")
 
         # ── Validation ──
         box = layout.box()

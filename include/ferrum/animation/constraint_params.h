@@ -19,6 +19,7 @@
 #include "ferrum/animation/constraint_types.h"
 #include "ferrum/animation/bone_collider.h"
 #include "ferrum/animation/bone_joint_desc.h"
+#include "ferrum/animation/bone_muscle_desc.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -267,6 +268,10 @@ typedef struct skeleton_def {
      * 3 floats (x,y,z) per joint.  Used to compute body midpoints
      * so joint anchors have non-zero offsets on both sides. */
     float *tail_positions;              /**< 3 * joint_count floats, or NULL. */
+
+    /* Per-bone muscle descriptors (fskel v5+ muscle_desc).
+     * NULL if no muscle data was provided. */
+    bone_muscle_desc_t *muscles;        /**< One per joint, or NULL. */
 } skeleton_def_t;
 
 /**

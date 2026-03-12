@@ -14,6 +14,7 @@
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/animation/bone_collider.h"
 #include "ferrum/animation/bone_joint_desc.h"
+#include "ferrum/animation/bone_muscle_desc.h"
 #include "ferrum/editor/json_parse.h"
 #include "ferrum/math/mat4.h"
 
@@ -567,6 +568,103 @@ bool fskel_load(const char *path,
             /* CG solver inertia scaling (default 10.0). */
             bd->mass_scale = jfloat_(
                 json_object_get(jd, "mass_scale"), 10.0f);
+        }
+
+        /* Muscle descriptor. */
+        const json_value_t *md = json_object_get(j, "muscle_desc");
+        if (md && md->type == JSON_OBJECT) {
+            if (!out_skel->muscles) {
+                out_skel->muscles = (bone_muscle_desc_t *)calloc(
+                    joint_count, sizeof(bone_muscle_desc_t));
+                if (!out_skel->muscles) goto fail_skel;
+            }
+            bone_muscle_desc_t *bm = &out_skel->muscles[i];
+            bm->has_muscle = (uint8_t)jbool_(
+                json_object_get(md, "enabled"), false);
+            bm->target_row = (uint8_t)jfloat_(
+                json_object_get(md, "target_row"), 0.0f);
+            if (bm->has_muscle) {
+                /* Parse flexor. */
+                const json_value_t *fl = json_object_get(md, "flexor");
+                if (fl && fl->type == JSON_OBJECT) {
+                    bone_muscle_unit_desc_t *u = &bm->flexor;
+                    const json_value_t *o = json_object_get(fl, "origin");
+                    if (o && o->type == JSON_ARRAY && o->array.count >= 3) {
+                        u->origin[0] = jfloat_(&o->array.items[0], 0.0f);
+                        u->origin[1] = jfloat_(&o->array.items[1], 0.0f);
+                        u->origin[2] = jfloat_(&o->array.items[2], 0.0f);
+                    }
+                    const json_value_t *ins = json_object_get(fl, "insertion");
+                    if (ins && ins->type == JSON_ARRAY && ins->array.count >= 3) {
+                        u->insertion[0] = jfloat_(&ins->array.items[0], 0.0f);
+                        u->insertion[1] = jfloat_(&ins->array.items[1], 0.0f);
+                        u->insertion[2] = jfloat_(&ins->array.items[2], 0.0f);
+                    }
+                    u->optimal_length = jfloat_(json_object_get(fl, "optimal_length"), 0.0f);
+                    u->max_force = jfloat_(json_object_get(fl, "max_force"), 100.0f);
+                    u->max_velocity = jfloat_(json_object_get(fl, "max_velocity"), 10.0f);
+                    u->pennation_angle = jfloat_(json_object_get(fl, "pennation_angle"), 0.0f);
+                    u->width = jfloat_(json_object_get(fl, "width"), 0.56f);
+                    u->tau_rise = jfloat_(json_object_get(fl, "tau_rise"), 0.015f);
+                    u->tau_fall = jfloat_(json_object_get(fl, "tau_fall"), 0.050f);
+                    u->tendon_slack_length = jfloat_(json_object_get(fl, "tendon_slack_length"), 0.0f);
+                    u->tendon_stiffness = jfloat_(json_object_get(fl, "tendon_stiffness"), 35.0f);
+                    u->tendon_reference_strain = jfloat_(json_object_get(fl, "tendon_reference_strain"), 0.033f);
+                    u->wrap_radius = jfloat_(json_object_get(fl, "wrap_radius"), 0.0f);
+                    const json_value_t *wc = json_object_get(fl, "wrap_center");
+                    if (wc && wc->type == JSON_ARRAY && wc->array.count >= 3) {
+                        u->wrap_center[0] = jfloat_(&wc->array.items[0], 0.0f);
+                        u->wrap_center[1] = jfloat_(&wc->array.items[1], 0.0f);
+                        u->wrap_center[2] = jfloat_(&wc->array.items[2], 0.0f);
+                    }
+                    const json_value_t *wa = json_object_get(fl, "wrap_axis");
+                    if (wa && wa->type == JSON_ARRAY && wa->array.count >= 3) {
+                        u->wrap_axis[0] = jfloat_(&wa->array.items[0], 0.0f);
+                        u->wrap_axis[1] = jfloat_(&wa->array.items[1], 1.0f);
+                        u->wrap_axis[2] = jfloat_(&wa->array.items[2], 0.0f);
+                    }
+                }
+                /* Parse extensor (same structure). */
+                const json_value_t *ex = json_object_get(md, "extensor");
+                if (ex && ex->type == JSON_OBJECT) {
+                    bone_muscle_unit_desc_t *u = &bm->extensor;
+                    const json_value_t *o = json_object_get(ex, "origin");
+                    if (o && o->type == JSON_ARRAY && o->array.count >= 3) {
+                        u->origin[0] = jfloat_(&o->array.items[0], 0.0f);
+                        u->origin[1] = jfloat_(&o->array.items[1], 0.0f);
+                        u->origin[2] = jfloat_(&o->array.items[2], 0.0f);
+                    }
+                    const json_value_t *ins = json_object_get(ex, "insertion");
+                    if (ins && ins->type == JSON_ARRAY && ins->array.count >= 3) {
+                        u->insertion[0] = jfloat_(&ins->array.items[0], 0.0f);
+                        u->insertion[1] = jfloat_(&ins->array.items[1], 0.0f);
+                        u->insertion[2] = jfloat_(&ins->array.items[2], 0.0f);
+                    }
+                    u->optimal_length = jfloat_(json_object_get(ex, "optimal_length"), 0.0f);
+                    u->max_force = jfloat_(json_object_get(ex, "max_force"), 100.0f);
+                    u->max_velocity = jfloat_(json_object_get(ex, "max_velocity"), 10.0f);
+                    u->pennation_angle = jfloat_(json_object_get(ex, "pennation_angle"), 0.0f);
+                    u->width = jfloat_(json_object_get(ex, "width"), 0.56f);
+                    u->tau_rise = jfloat_(json_object_get(ex, "tau_rise"), 0.015f);
+                    u->tau_fall = jfloat_(json_object_get(ex, "tau_fall"), 0.050f);
+                    u->tendon_slack_length = jfloat_(json_object_get(ex, "tendon_slack_length"), 0.0f);
+                    u->tendon_stiffness = jfloat_(json_object_get(ex, "tendon_stiffness"), 35.0f);
+                    u->tendon_reference_strain = jfloat_(json_object_get(ex, "tendon_reference_strain"), 0.033f);
+                    u->wrap_radius = jfloat_(json_object_get(ex, "wrap_radius"), 0.0f);
+                    const json_value_t *wc = json_object_get(ex, "wrap_center");
+                    if (wc && wc->type == JSON_ARRAY && wc->array.count >= 3) {
+                        u->wrap_center[0] = jfloat_(&wc->array.items[0], 0.0f);
+                        u->wrap_center[1] = jfloat_(&wc->array.items[1], 0.0f);
+                        u->wrap_center[2] = jfloat_(&wc->array.items[2], 0.0f);
+                    }
+                    const json_value_t *wa = json_object_get(ex, "wrap_axis");
+                    if (wa && wa->type == JSON_ARRAY && wa->array.count >= 3) {
+                        u->wrap_axis[0] = jfloat_(&wa->array.items[0], 0.0f);
+                        u->wrap_axis[1] = jfloat_(&wa->array.items[1], 1.0f);
+                        u->wrap_axis[2] = jfloat_(&wa->array.items[2], 0.0f);
+                    }
+                }
+            }
         }
     }
 
