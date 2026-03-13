@@ -31,7 +31,9 @@ extern "C" {
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
+#include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/ui/clay_backend.h"
+#include "ferrum/math/vec3.h"
 #include "ferrum/memory/arena.h"
 
 /* Forward declarations */
@@ -87,6 +89,17 @@ typedef struct scene_editor {
 
     /* 3D viewport renderer. */
     viewport_render_state_t viewport; /**< FBO, shaders, meshes, camera. */
+
+    /* 3D cursor (world-space crosshair). */
+    vec3_t cursor_3d;               /**< 3D cursor world position. */
+
+    /* Transform gizmo state. */
+    gizmo_state_t gizmo;            /**< Gizmo mode, axis, drag state. */
+
+    /* Viewport interaction state. */
+    bool box_selecting;             /**< True during box select drag. */
+    float box_select_start_x;      /**< Screen X at box select start. */
+    float box_select_start_y;      /**< Screen Y at box select start. */
 
     /* Interactive UI state. */
     scene_ui_state_t   ui;         /**< UI actions, scroll, mouse. */

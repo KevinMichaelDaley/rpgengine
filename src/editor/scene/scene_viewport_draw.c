@@ -15,10 +15,11 @@
  *   MESH      → loaded FVMA geometry from entity mesh cache
  *   MARKER    → small wireframe cross (rendered as 3 axis lines)
  *
- * Non-static functions (3 / 4 limit):
+ * Non-static functions (4 / 4 limit):
  *   viewport_render_draw_scene
  *   viewport_render_draw_grid
  *   viewport_render_draw_entities
+ *   viewport_render_get_primitive_mesh
  */
 
 #include "ferrum/editor/scene/scene_viewport_render.h"
@@ -77,8 +78,8 @@ static struct {
  *
  * @return Pointer to the static mesh, or NULL if type has no primitive.
  */
-static const static_mesh_t *get_primitive_mesh(uint32_t entity_type,
-                                                const gl_loader_t *loader) {
+const static_mesh_t *viewport_render_get_primitive_mesh(
+    uint32_t entity_type, const gl_loader_t *loader) {
     switch (entity_type) {
     case EDIT_ENTITY_TYPE_BOX:
         if (!s_primitives.box_valid) {
@@ -235,7 +236,7 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
         if (ent->type == EDIT_ENTITY_TYPE_MESH) {
             mesh = viewport_render_get_entity_mesh(state, i);
         } else {
-            mesh = get_primitive_mesh(ent->type, &state->loader);
+            mesh = viewport_render_get_primitive_mesh(ent->type, &state->loader);
         }
         if (!mesh) continue;
 
@@ -285,6 +286,7 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
     vp->glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
     vp->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     vp->glEnable(GL_DEPTH_TEST);
+    vp->glEnable(GL_CULL_FACE);
 
     /* Draw grid. */
     viewport_render_draw_grid(vp, &view, &proj);
@@ -293,7 +295,15 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
     viewport_render_draw_entities(vp, &ed->entities, &ed->selection,
                                    &view, &proj, &eye_pos);
 
+    /* Draw selection outlines (wireframe, slightly scaled up). */
+    viewport_render_draw_selection_outline(vp, &ed->entities, &ed->selection,
+                                            &view, &proj);
+
+    /* Draw 3D cursor crosshair. */
+    viewport_render_draw_cursor(vp, &ed->cursor_3d, &view, &proj);
+
     /* Unbind FBO (restore default framebuffer). */
+    vp->glDisable(GL_CULL_FACE);
     vp->glDisable(GL_DEPTH_TEST);
     vp->glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

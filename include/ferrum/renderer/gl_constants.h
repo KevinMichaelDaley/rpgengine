@@ -135,6 +135,15 @@ extern "C" {
 #ifndef GL_DEPTH_TEST
 #define GL_DEPTH_TEST 0x0B71
 #endif
+#ifndef GL_CULL_FACE
+#define GL_CULL_FACE 0x0B44
+#endif
+#ifndef GL_FRONT
+#define GL_FRONT 0x0404
+#endif
+#ifndef GL_BACK
+#define GL_BACK 0x0405
+#endif
 
 /* ---- Clear buffer bits ---- */
 #ifndef GL_COLOR_BUFFER_BIT

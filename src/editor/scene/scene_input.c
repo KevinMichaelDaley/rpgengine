@@ -10,6 +10,7 @@
 #include "ferrum/editor/scene/scene_input.h"
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
+#include "ferrum/editor/viewport/selection_raycast.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
 #include "ferrum/editor/ui/clay_theme.h"
 
@@ -101,6 +102,64 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
         /* Click-to-focus */
         panel_id_t hit = panel_layout_hit_test(&ed->layout, lx, ly);
         panel_layout_set_focus(&ed->layout, hit);
+
+        /* Viewport left-click: raycast entity selection. */
+        if (hit == PANEL_VIEWPORT) {
+            /* Convert logical coords to viewport-local normalized coords. */
+            panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout,
+                                                           PANEL_VIEWPORT);
+            /* screen_to_ray expects [0,1] normalized coords, not NDC. */
+            float nx = (float)(lx - vp_rect.x) / (float)vp_rect.w;
+            float ny = (float)(ly - vp_rect.y) / (float)vp_rect.h;
+
+            vec2_t screen_pos = {nx, ny};
+            vec2_t vp_size = {(float)vp_rect.w, (float)vp_rect.h};
+            editor_ray_t ray;
+            if (editor_camera_screen_to_ray(&ed->viewport.camera,
+                                              screen_pos, vp_size, &ray) == 0) {
+                /* Build pick candidates from entity store. */
+                uint32_t cap = ed->entities.capacity;
+                uint32_t count = 0;
+                /* Use a fixed-size stack buffer for candidates. */
+                pick_candidate_t candidates[256];
+                for (uint32_t i = 0; i < cap && count < 256; ++i) {
+                    const edit_entity_t *ent =
+                        edit_entity_store_get(&ed->entities, i);
+                    if (!ent || ent->pending_delete) continue;
+                    /* Build AABB from entity pos and scale. */
+                    float hw = ent->scale[0] * 0.5f;
+                    float hh = ent->scale[1] * 0.5f;
+                    float hd = ent->scale[2] * 0.5f;
+                    candidates[count].entity_id = i;
+                    candidates[count].aabb_min = (vec3_t){
+                        ent->pos[0] - hw, ent->pos[1] - hh, ent->pos[2] - hd};
+                    candidates[count].aabb_max = (vec3_t){
+                        ent->pos[0] + hw, ent->pos[1] + hh, ent->pos[2] + hd};
+                    count++;
+                }
+
+                uint32_t picked_id;
+                SDL_Keymod mod = SDL_GetModState();
+                if (pick_nearest_entity(&ray, candidates, count, &picked_id)) {
+                    if (mod & KMOD_SHIFT) {
+                        /* Shift+click: toggle selection. */
+                        if (edit_selection_contains(&ed->selection, picked_id)) {
+                            ed->ui.action = UI_ACTION_DESELECT_ENTITY;
+                        } else {
+                            ed->ui.action = UI_ACTION_SELECT_ENTITY;
+                        }
+                    } else {
+                        /* Plain click: clear + select. */
+                        edit_selection_clear(&ed->selection);
+                        ed->ui.action = UI_ACTION_SELECT_ENTITY;
+                    }
+                    ed->ui.action_target = picked_id;
+                } else if (!(mod & KMOD_SHIFT)) {
+                    /* Click on empty space: clear selection. */
+                    edit_selection_clear(&ed->selection);
+                }
+            }
+        }
     } else if (ev->button == SDL_BUTTON_MIDDLE) {
         ed->ui.middle_mouse_down = true;
     } else if (ev->button == SDL_BUTTON_RIGHT) {

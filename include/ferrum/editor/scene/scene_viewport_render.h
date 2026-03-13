@@ -223,11 +223,60 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
                                     const struct vec3 *eye_pos);
 
 /**
+ * @brief Get a lazily-created primitive mesh for a given entity type.
+ *
+ * Returns built-in geometry for BOX, SPHERE, CAPSULE, HALFSPACE,
+ * and MARKER types. Returns NULL for MESH type.
+ *
+ * @param entity_type  Entity type constant.
+ * @param loader       GL function loader (non-NULL).
+ * @return Pointer to static mesh, or NULL.
+ */
+const static_mesh_t *viewport_render_get_primitive_mesh(
+    uint32_t entity_type, const gl_loader_t *loader);
+
+/**
  * @brief Destroy lazily-created primitive meshes.
  *
  * Must be called before GL context is destroyed.
  */
 void viewport_render_destroy_primitives(void);
+
+/* ---- Overlay drawing (scene_viewport_overlay.c) ---- */
+
+/**
+ * @brief Draw the 3D cursor crosshair at the given world position.
+ *
+ * Renders axis-colored lines (X=red, Y=green, Z=blue). Always visible
+ * (no depth test).
+ *
+ * @param state  Render state (non-NULL).
+ * @param pos    Cursor world position (non-NULL).
+ * @param view   View matrix.
+ * @param proj   Projection matrix.
+ */
+void viewport_render_draw_cursor(viewport_render_state_t *state,
+                                   const struct vec3 *pos,
+                                   const struct mat4 *view,
+                                   const struct mat4 *proj);
+
+/**
+ * @brief Draw orange wireframe outlines around selected entities.
+ *
+ * Re-draws selected entities slightly scaled up with a flat orange
+ * wireframe to highlight the selection.
+ *
+ * @param state      Render state (non-NULL).
+ * @param entities   Entity store (non-NULL).
+ * @param selection  Selection set (non-NULL).
+ * @param view       View matrix.
+ * @param proj       Projection matrix.
+ */
+void viewport_render_draw_selection_outline(viewport_render_state_t *state,
+                                              const struct edit_entity_store *entities,
+                                              const struct edit_selection *selection,
+                                              const struct mat4 *view,
+                                              const struct mat4 *proj);
 
 /* ---- Entity mesh loading (scene_viewport_mesh.c) ---- */
 
