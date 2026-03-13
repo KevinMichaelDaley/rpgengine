@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-dis
-status: open
+status: closed
 deps: [rust-rpg-doy]
 links: []
 created: 2026-01-17T18:04:55.078348792-08:00
@@ -37,3 +37,9 @@ Add an efficient audio mixer with buses/submixes, effects, and 3D spatialization
 
 
 
+
+## Notes
+
+**2026-03-13T04:08:43Z**
+
+Closed as exact duplicate (double import). Keeping the copy with downstream blockers wired.

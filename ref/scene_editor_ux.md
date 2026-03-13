@@ -70,11 +70,10 @@ border. Focus follows:
 | **Shift + middle drag** | Pan |
 | **Scroll wheel** | Zoom (dolly toward cursor) |
 | **Alt + middle drag** | Orbit (alternate binding) |
-| **Numpad 1/3/7** | Front / Right / Top view |
-| **Numpad 5** | Toggle perspective / orthographic |
-| **Numpad 0** | Reset camera to default |
-| **Numpad .** | Frame selection (zoom to fit selected objects) |
-| **F** | Frame selection (same as numpad .) |
+| **1 / 3 / 7** | Front / Right / Top view |
+| **5** | Toggle perspective / orthographic |
+| **0** | Reset camera to default |
+| **F** | Frame selection (zoom to fit selected objects) |
 
 ### 2.2 Object Interaction
 
@@ -529,7 +528,7 @@ UV canvas for the active material.
 - **Scroll wheel** — zoom in/out on canvas
 - **Middle-drag** — pan canvas
 - **Home** — fit UV islands to view
-- **Numpad +/-** — zoom in/out in discrete steps
+- **+/-** — zoom in/out in discrete steps
 
 **Interactions:**
 - All paint tools from §7.4 are available (brush, fill, gradient, clone,

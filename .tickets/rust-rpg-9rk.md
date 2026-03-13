@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-9rk
-status: open
+status: closed
 deps: [rust-rpg-1eu]
 links: []
 created: 2026-01-17T18:04:55.670731689-08:00
@@ -34,3 +34,9 @@ Immediate-mode UI with font atlas, text shaping support (basic), and localizatio
 
 
 
+
+## Notes
+
+**2026-03-13T04:08:43Z**
+
+Closed as exact duplicate (double import). Keeping the copy with downstream blockers wired.

@@ -1,7 +1,7 @@
 ---
 id: rpg-vdqf
 status: open
-deps: []
+deps: [rpg-1sjm]
 links: []
 created: 2026-02-26T04:30:12Z
 type: task
@@ -32,3 +32,9 @@ Files to create:
 - src/editor/controller/ctrl_grab.c
 - tests/editor/client_grab_mode_tests.c
 
+
+## Notes
+
+**2026-03-13T04:09:34Z**
+
+Scope reduced: basic G grab + axis constraint (x/y/z lock) moved to Phase 1 §1.4 (rpg-1sjm). This ticket now covers ONLY the Phase 5 enhancement: client-side provisional positioning (zero-latency local rendering during grab, no server traffic until confirm). Depends on Phase 1 grab being implemented first.

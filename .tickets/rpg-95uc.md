@@ -17,3 +17,9 @@ See ref/scene_editor_design.md §10.5. Custom .fanim format containing keyframe 
 
 .fanim format read/write works. All channel types and event types preserved. Cross-reference with ref/scene_editor_spec.md and ref/scene_editor_ux.md for requirements and interaction details.
 
+
+## Notes
+
+**2026-03-13T04:09:16Z**
+
+Merged from rpg-fxan: engine file src/animation/format/fanim_load.c is part of this ticket's scope.

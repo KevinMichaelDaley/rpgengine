@@ -33,3 +33,9 @@ Files to create:
 - src/editor/controller/ctrl_camera.c
 - tests/editor/client_editor_camera_tests.c
 
+
+## Notes
+
+**2026-03-13T04:09:26Z**
+
+Scope reduced: camera view shortcuts (1/3/7/5 for front/right/top/ortho) and smooth transitions moved to Phase 1 §1.1 (rpg-dzgo). This ticket now covers ONLY: camera pos x y z explicit positioning command, camera reset (0 key), and any additional camera TUI commands not covered by Phase 1 viewport controls.

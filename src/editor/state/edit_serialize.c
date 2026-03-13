@@ -59,10 +59,19 @@ size_t edit_level_serialize(const struct edit_entity_store *store,
 
         APPEND(",\"pos\":[%.6g,%.6g,%.6g],"
                "\"rot\":[%.6g,%.6g,%.6g],"
-               "\"scale\":[%.6g,%.6g,%.6g]}",
+               "\"scale\":[%.6g,%.6g,%.6g]",
                (double)e->pos[0], (double)e->pos[1], (double)e->pos[2],
                (double)e->rot[0], (double)e->rot[1], (double)e->rot[2],
                (double)e->scale[0], (double)e->scale[1], (double)e->scale[2]);
+
+        /* Include pivot_offset only if non-zero. */
+        if (e->pivot_offset[0] != 0.0f || e->pivot_offset[1] != 0.0f ||
+            e->pivot_offset[2] != 0.0f) {
+            APPEND(",\"pivot_offset\":[%.6g,%.6g,%.6g]",
+                   (double)e->pivot_offset[0], (double)e->pivot_offset[1],
+                   (double)e->pivot_offset[2]);
+        }
+        APPEND("}");
     }
 
     APPEND("]}");

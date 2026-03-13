@@ -1,6 +1,6 @@
 ---
 id: rpg-c93o
-status: open
+status: closed
 deps: [rpg-43h9, rpg-4d9g, rpg-97do, rpg-5ifh, rpg-p7gw, rpg-v4kx, rpg-125w]
 links: []
 created: 2026-03-12T06:48:51Z

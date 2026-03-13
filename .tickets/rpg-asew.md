@@ -1,6 +1,6 @@
 ---
 id: rpg-asew
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-12T06:48:53Z
@@ -17,3 +17,9 @@ See ref/scene_editor_design.md Engine-Side Work table. Animated attribute modifi
 
 Engine evaluates attr modifiers and writes to entity_attrs_t. Cross-reference with ref/scene_editor_spec.md and ref/scene_editor_ux.md for requirements and interaction details.
 
+
+## Notes
+
+**2026-03-13T04:08:51Z**
+
+Closed as duplicate — scope (anim_attr_eval.c engine eval) is fully covered by §7.4 rpg-hln7 which includes server-side evaluation + editor UI.

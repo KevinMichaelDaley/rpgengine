@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-j2w
-status: open
+status: closed
 deps: [rust-rpg-55s]
 links: []
 created: 2026-01-17T18:04:54.628033178-08:00
@@ -150,3 +150,9 @@ Provide deterministic scene graph management and robust asset streaming, integra
 
 
 
+
+## Notes
+
+**2026-03-13T04:08:43Z**
+
+Closed as exact duplicate (double import). Keeping the copy with downstream blockers wired.

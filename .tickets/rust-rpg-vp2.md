@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-vp2
-status: open
+status: closed
 deps: [rust-rpg-1a1]
 links: []
 created: 2026-01-17T18:04:55.227076139-08:00
@@ -36,3 +36,9 @@ Provide a minimal, customizable surface shader and render pipeline plumbing (no 
 
 
 
+
+## Notes
+
+**2026-03-13T04:08:43Z**
+
+Closed as exact duplicate (double import). Keeping the copy with downstream blockers wired.

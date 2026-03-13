@@ -293,7 +293,7 @@ render code. Entities come from the replication snapshot.
 
 **Work items:**
 1. Camera controls: orbit (middle mouse), pan (shift+middle), zoom (scroll)
-2. Numpad views (1/3/7/5/0), frame selection (F / numpad .)
+2. Snap views (1=front, 3=right, 7=top, 5=ortho toggle, 0=reset), frame selection (F)
 3. Grid rendering (XZ plane, infinite, fading with distance)
 4. 3D cursor (wireframe crosshair with axis colors)
 5. Entity rendering from replication snapshot

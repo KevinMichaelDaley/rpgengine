@@ -4,7 +4,7 @@ TRACY ?= 0
 STACK_CANARY ?= 0
 EMU ?= 0
 
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -Iextern/cgltf -O3
+CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -Iextern/cgltf -Iextern/clay -O3
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
 
@@ -1099,6 +1099,40 @@ build/p111_joint_driver_tests: build/libheadless.a tests/p111_joint_driver_tests
 	$(CC) $(CFLAGS) tests/p111_joint_driver_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p112_joint_driver_extended_tests: build/libheadless.a tests/p112_joint_driver_extended_tests.c | build
 	$(CC) $(CFLAGS) tests/p112_joint_driver_extended_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p200_panel_layout_tests: build/libheadless.a tests/p200_panel_layout_tests.c | build
+	$(CC) $(CFLAGS) tests/p200_panel_layout_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p200b_clay_backend_tests: build/libheadless.a tests/p200b_clay_backend_tests.c | build
+	$(CC) $(CFLAGS) -Iextern/clay tests/p200b_clay_backend_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p200c_tui_panel_tests: build/libheadless.a tests/p200c_tui_panel_tests.c | build
+	$(CC) $(CFLAGS) tests/p200c_tui_panel_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p200d_scene_connection_tests: build/libheadless.a tests/p200d_scene_connection_tests.c | build
+	$(CC) $(CFLAGS) tests/p200d_scene_connection_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p200e_scene_sync_tests: build/libheadless.a tests/p200e_scene_sync_tests.c | build
+	$(CC) $(CFLAGS) tests/p200e_scene_sync_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p200f_autosave_tests: build/libheadless.a tests/p200f_autosave_tests.c | build
+	$(CC) $(CFLAGS) tests/p200f_autosave_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p201_pivot_offset_tests: build/libheadless.a tests/p201_pivot_offset_tests.c | build
+	$(CC) $(CFLAGS) tests/p201_pivot_offset_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p202_viewport_camera_tests: build/libheadless.a tests/p202_viewport_camera_tests.c | build
+	$(CC) $(CFLAGS) tests/p202_viewport_camera_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p203_gizmo_hit_tests: build/libheadless.a tests/p203_gizmo_hit_tests.c | build
+	$(CC) $(CFLAGS) tests/p203_gizmo_hit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p204_selection_raycast_tests: build/libheadless.a tests/p204_selection_raycast_tests.c | build
+	$(CC) $(CFLAGS) tests/p204_selection_raycast_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p205_outliner_tree_tests: build/libheadless.a tests/p205_outliner_tree_tests.c | build
+	$(CC) $(CFLAGS) tests/p205_outliner_tree_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p205b_inspector_widget_tests: build/libheadless.a tests/p205b_inspector_widget_tests.c | build
+	$(CC) $(CFLAGS) tests/p205b_inspector_widget_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p205c_mode_manager_tests: build/libheadless.a tests/p205c_mode_manager_tests.c | build
+	$(CC) $(CFLAGS) tests/p205c_mode_manager_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p205d_toolbar_tests: build/libheadless.a tests/p205d_toolbar_tests.c | build
+	$(CC) $(CFLAGS) tests/p205d_toolbar_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p206a_snap_state_tests: build/libheadless.a tests/p206a_snap_state_tests.c | build
+	$(CC) $(CFLAGS) tests/p206a_snap_state_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p206b_pivot_tests: build/libheadless.a tests/p206b_pivot_tests.c | build
+	$(CC) $(CFLAGS) tests/p206b_pivot_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/scene_editor: build/liball.a tools/scene_editor_main.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tools/scene_editor_main.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
 
 
@@ -1426,6 +1460,8 @@ demo_client:
 	@echo "Built: build/demo_client"
 	@echo "Usage: ./build/demo_client <server_ip> <port> [duration_s] [--headless]"
 
+build/editor_server: build/libheadless.a tools/editor_server.c | build
+	$(CC) $(CFLAGS) tools/editor_server.c build/libheadless.a -o $@ $(LDFLAGS)
 build/editor_tui: build/libheadless.a tools/editor_tui.c | build
 	$(CC) $(CFLAGS) tools/editor_tui.c build/libheadless.a -o $@ $(LDFLAGS)
 

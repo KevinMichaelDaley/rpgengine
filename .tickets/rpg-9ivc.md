@@ -17,3 +17,9 @@ See ref/scene_editor_design.md §7.1. ✕ markers on constraint channel in timel
 
 Constraint swaps visible in timeline, editable, execute during playback. Collision-driven swap works. Cross-reference with ref/scene_editor_spec.md and ref/scene_editor_ux.md for requirements and interaction details.
 
+
+## Notes
+
+**2026-03-13T04:08:55Z**
+
+Merged from rpg-dikp: engine file src/physics/animated/constraint_swap.c is part of this ticket's scope.

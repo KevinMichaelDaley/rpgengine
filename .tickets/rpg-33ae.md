@@ -1,6 +1,6 @@
 ---
 id: rpg-33ae
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-02-26T04:30:48Z
@@ -31,3 +31,9 @@ Files to create:
 - src/editor/client/client_gizmo_render.c
 - tests/editor/client_gizmo_tests.c
 
+
+## Notes
+
+**2026-03-13T04:03:57Z**
+
+Closed as duplicate — gizmo rendering is already covered by Phase 1 §1.1 Viewport Rendering (rpg-dzgo) and §1.4 Object Mode (rpg-1sjm).

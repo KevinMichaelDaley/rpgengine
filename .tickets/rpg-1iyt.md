@@ -1,6 +1,6 @@
 ---
 id: rpg-1iyt
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-12T06:48:51Z

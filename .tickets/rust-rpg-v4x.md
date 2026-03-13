@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-v4x
-status: open
+status: closed
 deps: [rust-rpg-71n]
 links: []
 created: 2026-01-17T18:04:55.817360269-08:00
@@ -38,3 +38,9 @@ Self-hosted dedicated server model with minimal authentication and simple matchm
 
 
 
+
+## Notes
+
+**2026-03-13T04:08:43Z**
+
+Closed as exact duplicate (double import). Keeping the copy with downstream blockers wired.

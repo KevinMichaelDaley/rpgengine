@@ -17,3 +17,9 @@ See ref/scene_editor_design.md §7.4. Attribute modifier channels in timeline (p
 
 Animated attribute modifiers drive entity attributes over time. Cross-reference with ref/scene_editor_spec.md and ref/scene_editor_ux.md for requirements and interaction details.
 
+
+## Notes
+
+**2026-03-13T04:08:55Z**
+
+Merged from rpg-asew: engine file src/animation/attr/anim_attr_eval.c is part of this ticket's scope.

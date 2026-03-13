@@ -1,6 +1,6 @@
 ---
 id: rust-rpg-8sz
-status: open
+status: closed
 deps: [rust-rpg-6he]
 links: []
 created: 2026-01-17T18:04:55.525725196-08:00
@@ -35,3 +35,9 @@ Add a build-time cooking pipeline with hashed dependencies, runtime hot-reload, 
 
 
 
+
+## Notes
+
+**2026-03-13T04:08:43Z**
+
+Closed as exact duplicate (double import). Keeping the copy with downstream blockers wired.

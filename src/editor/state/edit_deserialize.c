@@ -96,9 +96,11 @@ bool edit_level_deserialize(struct edit_entity_store *store,
         float pos[3] = {0, 0, 0};
         float rot[3] = {0, 0, 0};
         float scale[3] = {1, 1, 1};
+        float pivot_offset[3] = {0, 0, 0};
         extract_vec3_(json_object_get(ent, "pos"), pos);
         extract_vec3_(json_object_get(ent, "rot"), rot);
         extract_vec3_(json_object_get(ent, "scale"), scale);
+        extract_vec3_(json_object_get(ent, "pivot_offset"), pivot_offset);
 
         /* Parse optional name. */
         char ent_name[EDIT_ENTITY_NAME_MAX] = {0};
@@ -120,6 +122,7 @@ bool edit_level_deserialize(struct edit_entity_store *store,
             memcpy(e->pos, pos, sizeof(pos));
             memcpy(e->rot, rot, sizeof(rot));
             memcpy(e->scale, scale, sizeof(scale));
+            memcpy(e->pivot_offset, pivot_offset, sizeof(pivot_offset));
             memcpy(e->name, ent_name, sizeof(ent_name));
             e->body_index = EDIT_ENTITY_INVALID_ID;
         } else {
@@ -130,6 +133,7 @@ bool edit_level_deserialize(struct edit_entity_store *store,
                 memcpy(e->pos, pos, sizeof(pos));
                 memcpy(e->rot, rot, sizeof(rot));
                 memcpy(e->scale, scale, sizeof(scale));
+                memcpy(e->pivot_offset, pivot_offset, sizeof(pivot_offset));
                 memcpy(e->name, ent_name, sizeof(ent_name));
             }
         }

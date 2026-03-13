@@ -17,3 +17,9 @@ See ref/scene_editor_design.md §7.3. Inspector: per-entity binding list (event 
 
 Event-to-animation bindings trigger clips on event receipt. Cross-reference with ref/scene_editor_spec.md and ref/scene_editor_ux.md for requirements and interaction details.
 
+
+## Notes
+
+**2026-03-13T04:08:55Z**
+
+Merged from rpg-nyt9: engine file src/animation/state/anim_event_trigger.c is part of this ticket's scope.

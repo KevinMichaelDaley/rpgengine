@@ -1,6 +1,6 @@
 ---
 id: rpg-4d9g
-status: open
+status: closed
 deps: [rpg-43h9]
 links: []
 created: 2026-03-12T06:48:51Z

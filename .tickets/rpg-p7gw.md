@@ -1,6 +1,6 @@
 ---
 id: rpg-p7gw
-status: open
+status: closed
 deps: [rpg-5ifh]
 links: []
 created: 2026-03-12T06:48:51Z
