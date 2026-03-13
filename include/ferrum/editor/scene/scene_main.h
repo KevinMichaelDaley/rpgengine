@@ -95,6 +95,8 @@ typedef struct scene_editor {
 
     /* Transform gizmo state. */
     gizmo_state_t gizmo;            /**< Gizmo mode, axis, drag state. */
+    vec3_t gizmo_drag_origin;       /**< World pos where gizmo drag started. */
+    vec3_t gizmo_drag_accum;        /**< Accumulated drag delta this drag. */
 
     /* Viewport interaction state. */
     bool box_selecting;             /**< True during box select drag. */

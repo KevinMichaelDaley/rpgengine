@@ -121,9 +121,12 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
     shader_uniform_set_vec3(&state->uniforms, &state->shader,
                              "u_eye_pos", ze);
 
-    /* Draw each selected entity slightly scaled up.
-     * The original entity (drawn previously) will overdraw the center,
-     * leaving only the outline edges visible. */
+    /* Cull front faces so only back faces of the scaled-up mesh are
+     * visible. These back faces peek out around the edges of the
+     * original entity, creating the outline effect. */
+    state->glEnable(GL_CULL_FACE);
+    state->glCullFace(GL_FRONT);
+
     uint32_t capacity = entities->capacity;
     for (uint32_t i = 0; i < capacity; ++i) {
         if (!edit_selection_contains(selection, i)) continue;
@@ -148,4 +151,7 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
         }
     }
     static_mesh_unbind();
+
+    /* Restore back-face culling. */
+    state->glCullFace(GL_BACK);
 }

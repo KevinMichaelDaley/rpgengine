@@ -9,12 +9,17 @@
 
 #include "ferrum/editor/scene/scene_input.h"
 #include "ferrum/editor/scene/scene_main.h"
+#include "ferrum/editor/scene/scene_cmd.h"
+#include "ferrum/editor/scene/scene_connection.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
+#include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/viewport/selection_raycast.h"
+#include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
 #include "ferrum/editor/ui/clay_theme.h"
 
 #include <SDL2/SDL.h>
+#include <math.h>
 #include <string.h>
 
 /* Camera orbit/pan sensitivity. */
@@ -22,7 +27,94 @@
 #define CAMERA_PAN_SPEED   0.02f
 #define CAMERA_ZOOM_SPEED  1.0f
 
+/** Gizmo drag sensitivity: world units per pixel of mouse motion. */
+#define GIZMO_DRAG_SPEED 0.01f
+
 /* ---- Internal helpers ---- */
+
+/**
+ * @brief Compute gizmo visual scale from camera distance.
+ */
+static float viewport_gizmo_screen_scale(const vec3_t *gizmo_pos,
+                                           const vec3_t *eye_pos) {
+    float dx = gizmo_pos->x - eye_pos->x;
+    float dy = gizmo_pos->y - eye_pos->y;
+    float dz = gizmo_pos->z - eye_pos->z;
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    return dist * 0.15f;
+}
+
+/**
+ * @brief Apply gizmo drag delta to all selected entities (optimistic).
+ *
+ * For translate: moves entities by delta.
+ * For scale: scales entities by (1 + delta component).
+ * For rotate: rotates entities by delta (degrees).
+ */
+static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
+    for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+        if (!edit_selection_contains(&ed->selection, i)) continue;
+        edit_entity_t *ent = edit_entity_store_get_mut(
+            &ed->entities, i);
+        if (!ent) continue;
+
+        switch (ed->gizmo.mode) {
+        case GIZMO_MODE_TRANSLATE:
+            ent->pos[0] += delta.x;
+            ent->pos[1] += delta.y;
+            ent->pos[2] += delta.z;
+            break;
+        case GIZMO_MODE_ROTATE:
+            ent->rot[0] += delta.x;
+            ent->rot[1] += delta.y;
+            ent->rot[2] += delta.z;
+            break;
+        case GIZMO_MODE_SCALE:
+            ent->scale[0] *= (1.0f + delta.x);
+            ent->scale[1] *= (1.0f + delta.y);
+            ent->scale[2] *= (1.0f + delta.z);
+            break;
+        }
+    }
+}
+
+/**
+ * @brief Send a single server command for the accumulated gizmo drag.
+ *
+ * The server applies the transform to all currently selected entities.
+ */
+static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
+    char cmd_buf[256];
+    int cmd_len = 0;
+    uint32_t cmd_id = scene_connection_next_id(&ed->connection);
+
+    switch (ed->gizmo.mode) {
+    case GIZMO_MODE_TRANSLATE: {
+        float delta_arr[3] = {total_delta.x, total_delta.y, total_delta.z};
+        cmd_len = scene_cmd_format_move(cmd_buf, sizeof(cmd_buf),
+                                         cmd_id, delta_arr);
+        break;
+    }
+    case GIZMO_MODE_ROTATE: {
+        float delta_arr[3] = {total_delta.x, total_delta.y, total_delta.z};
+        cmd_len = scene_cmd_format_rotate(cmd_buf, sizeof(cmd_buf),
+                                           cmd_id, delta_arr);
+        break;
+    }
+    case GIZMO_MODE_SCALE: {
+        float factor[3] = {1.0f + total_delta.x,
+                            1.0f + total_delta.y,
+                            1.0f + total_delta.z};
+        cmd_len = scene_cmd_format_scale(cmd_buf, sizeof(cmd_buf),
+                                          cmd_id, factor);
+        break;
+    }
+    }
+
+    if (cmd_len > 0) {
+        scene_connection_send_cmd(&ed->connection, cmd_buf);
+    }
+}
 
 /**
  * @brief Handle mouse button down: start divider drag, change focus,
@@ -103,12 +195,10 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
         panel_id_t hit = panel_layout_hit_test(&ed->layout, lx, ly);
         panel_layout_set_focus(&ed->layout, hit);
 
-        /* Viewport left-click: raycast entity selection. */
+        /* Viewport left-click: gizmo interaction or entity selection. */
         if (hit == PANEL_VIEWPORT) {
-            /* Convert logical coords to viewport-local normalized coords. */
             panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout,
                                                            PANEL_VIEWPORT);
-            /* screen_to_ray expects [0,1] normalized coords, not NDC. */
             float nx = (float)(lx - vp_rect.x) / (float)vp_rect.w;
             float ny = (float)(ly - vp_rect.y) / (float)vp_rect.h;
 
@@ -117,46 +207,65 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
             editor_ray_t ray;
             if (editor_camera_screen_to_ray(&ed->viewport.camera,
                                               screen_pos, vp_size, &ray) == 0) {
-                /* Build pick candidates from entity store. */
-                uint32_t cap = ed->entities.capacity;
-                uint32_t count = 0;
-                /* Use a fixed-size stack buffer for candidates. */
-                pick_candidate_t candidates[256];
-                for (uint32_t i = 0; i < cap && count < 256; ++i) {
-                    const edit_entity_t *ent =
-                        edit_entity_store_get(&ed->entities, i);
-                    if (!ent || ent->pending_delete) continue;
-                    /* Build AABB from entity pos and scale. */
-                    float hw = ent->scale[0] * 0.5f;
-                    float hh = ent->scale[1] * 0.5f;
-                    float hd = ent->scale[2] * 0.5f;
-                    candidates[count].entity_id = i;
-                    candidates[count].aabb_min = (vec3_t){
-                        ent->pos[0] - hw, ent->pos[1] - hh, ent->pos[2] - hd};
-                    candidates[count].aabb_max = (vec3_t){
-                        ent->pos[0] + hw, ent->pos[1] + hh, ent->pos[2] + hd};
-                    count++;
+                /* Test gizmo hit first (if we have a selection). */
+                bool gizmo_hit = false;
+                if (edit_selection_count(&ed->selection) > 0) {
+                    vec3_t eye = editor_camera_eye_position(
+                        &ed->viewport.camera);
+                    float gscale = viewport_gizmo_screen_scale(
+                        &ed->gizmo.position, &eye);
+                    gizmo_axis_t axis = gizmo_hit_test(
+                        &ed->gizmo, &ray, gscale);
+                    if (axis != GIZMO_AXIS_NONE) {
+                        ed->gizmo.active_axis = axis;
+                        ed->gizmo.dragging = true;
+                        ed->gizmo_drag_origin = ed->gizmo.position;
+                        ed->gizmo_drag_accum = (vec3_t){0, 0, 0};
+                        gizmo_hit = true;
+                    }
                 }
 
-                uint32_t picked_id;
-                SDL_Keymod mod = SDL_GetModState();
-                if (pick_nearest_entity(&ray, candidates, count, &picked_id)) {
-                    if (mod & KMOD_SHIFT) {
-                        /* Shift+click: toggle selection. */
-                        if (edit_selection_contains(&ed->selection, picked_id)) {
-                            ed->ui.action = UI_ACTION_DESELECT_ENTITY;
+                /* If no gizmo hit, do entity picking. */
+                if (!gizmo_hit) {
+                    uint32_t cap = ed->entities.capacity;
+                    uint32_t count = 0;
+                    pick_candidate_t candidates[256];
+                    for (uint32_t i = 0; i < cap && count < 256; ++i) {
+                        const edit_entity_t *ent =
+                            edit_entity_store_get(&ed->entities, i);
+                        if (!ent || ent->pending_delete) continue;
+                        float hw = ent->scale[0] * 0.5f;
+                        float hh = ent->scale[1] * 0.5f;
+                        float hd = ent->scale[2] * 0.5f;
+                        candidates[count].entity_id = i;
+                        candidates[count].aabb_min = (vec3_t){
+                            ent->pos[0] - hw, ent->pos[1] - hh,
+                            ent->pos[2] - hd};
+                        candidates[count].aabb_max = (vec3_t){
+                            ent->pos[0] + hw, ent->pos[1] + hh,
+                            ent->pos[2] + hd};
+                        count++;
+                    }
+
+                    uint32_t picked_id;
+                    SDL_Keymod mod = SDL_GetModState();
+                    if (pick_nearest_entity(&ray, candidates, count,
+                                             &picked_id)) {
+                        if (mod & KMOD_SHIFT) {
+                            if (edit_selection_contains(&ed->selection,
+                                                        picked_id)) {
+                                ed->ui.action = UI_ACTION_DESELECT_ENTITY;
+                            } else {
+                                ed->ui.action = UI_ACTION_SELECT_ENTITY;
+                            }
                         } else {
+                            edit_selection_clear(&ed->selection);
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
                         }
-                    } else {
-                        /* Plain click: clear + select. */
+                        ed->ui.action_target = picked_id;
+                    } else if (!(mod & KMOD_SHIFT)) {
                         edit_selection_clear(&ed->selection);
-                        ed->ui.action = UI_ACTION_SELECT_ENTITY;
                     }
-                    ed->ui.action_target = picked_id;
-                } else if (!(mod & KMOD_SHIFT)) {
-                    /* Click on empty space: clear selection. */
-                    edit_selection_clear(&ed->selection);
                 }
             }
         }
@@ -174,6 +283,15 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
 static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) {
     if (ev->button == SDL_BUTTON_LEFT) {
         ed->ui.mouse_down = false;
+
+        /* End gizmo drag: send server commands for total delta. */
+        if (ed->gizmo.dragging) {
+            send_gizmo_commands(ed, ed->gizmo_drag_accum);
+            ed->gizmo.dragging = false;
+            ed->gizmo.active_axis = GIZMO_AXIS_NONE;
+            return true;
+        }
+
         if (ed->dragging_divider != DIVIDER_NONE) {
             ed->dragging_divider = DIVIDER_NONE;
             return true;
@@ -198,6 +316,37 @@ static bool handle_mouse_motion(scene_editor_t *ed,
     /* Always update mouse position for Clay. */
     ed->ui.mouse_x = (float)ev->x;
     ed->ui.mouse_y = (float)ev->y;
+
+    /* Gizmo drag: convert pixel delta to constrained world delta. */
+    if (ed->gizmo.dragging) {
+        vec3_t eye = editor_camera_eye_position(&ed->viewport.camera);
+        float cam_dist = viewport_gizmo_screen_scale(
+            &ed->gizmo.position, &eye);
+        /* Scale pixel motion by camera distance for consistent feel. */
+        float speed = cam_dist * GIZMO_DRAG_SPEED;
+
+        vec3_t delta = {0, 0, 0};
+        switch (ed->gizmo.active_axis) {
+        case GIZMO_AXIS_X:
+            delta.x = (float)ev->xrel * speed;
+            break;
+        case GIZMO_AXIS_Y:
+            /* Mouse Y up = world Y up (invert screen Y). */
+            delta.y = -(float)ev->yrel * speed;
+            break;
+        case GIZMO_AXIS_Z:
+            delta.z = (float)ev->xrel * speed;
+            break;
+        default:
+            break;
+        }
+
+        apply_gizmo_drag(ed, delta);
+        ed->gizmo_drag_accum.x += delta.x;
+        ed->gizmo_drag_accum.y += delta.y;
+        ed->gizmo_drag_accum.z += delta.z;
+        return true;
+    }
 
     /* Right mouse or middle mouse drag: orbit or pan the viewport camera. */
     if (ed->ui.right_mouse_down || ed->ui.middle_mouse_down) {

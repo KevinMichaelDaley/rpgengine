@@ -42,6 +42,7 @@ extern "C" {
 struct scene_editor;
 struct edit_entity_store;
 struct edit_selection;
+struct gizmo_state;
 
 /* ---- Configuration ---- */
 
@@ -132,6 +133,7 @@ typedef struct viewport_render_state {
     void     (*glClear)(uint32_t mask);
     void     (*glEnable)(uint32_t cap);
     void     (*glDisable)(uint32_t cap);
+    void     (*glCullFace)(uint32_t mode);
     void     (*glDrawArrays)(uint32_t mode, int32_t first, int32_t count);
 } viewport_render_state_t;
 
@@ -241,6 +243,27 @@ const static_mesh_t *viewport_render_get_primitive_mesh(
  * Must be called before GL context is destroyed.
  */
 void viewport_render_destroy_primitives(void);
+
+/* ---- Gizmo drawing (scene_viewport_gizmo.c) ---- */
+
+/**
+ * @brief Draw the transform gizmo at the selection center.
+ *
+ * Renders translate arrows, rotate rings, or scale handles based
+ * on current gizmo mode. Always visible (no depth test). Axis
+ * colors: X=red, Y=green, Z=blue. Active axis is brighter.
+ *
+ * @param state      Render state (non-NULL).
+ * @param gizmo      Gizmo state (non-NULL).
+ * @param selection  Selection set (non-NULL).
+ * @param view       View matrix.
+ * @param proj       Projection matrix.
+ */
+void viewport_render_draw_gizmo(viewport_render_state_t *state,
+                                  const struct gizmo_state *gizmo,
+                                  const struct edit_selection *selection,
+                                  const struct mat4 *view,
+                                  const struct mat4 *proj);
 
 /* ---- Overlay drawing (scene_viewport_overlay.c) ---- */
 

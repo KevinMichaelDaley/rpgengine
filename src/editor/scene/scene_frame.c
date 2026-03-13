@@ -836,14 +836,17 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
 
     case UI_ACTION_MODE_TRANSLATE:
         ed->ui.transform_mode = UI_MODE_TRANSLATE;
+        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_TRANSLATE);
         break;
 
     case UI_ACTION_MODE_ROTATE:
         ed->ui.transform_mode = UI_MODE_ROTATE;
+        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_ROTATE);
         break;
 
     case UI_ACTION_MODE_SCALE:
         ed->ui.transform_mode = UI_MODE_SCALE;
+        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_SCALE);
         break;
 
     case UI_ACTION_TUI_COMMAND:

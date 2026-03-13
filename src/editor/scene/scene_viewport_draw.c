@@ -299,6 +299,31 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
     viewport_render_draw_selection_outline(vp, &ed->entities, &ed->selection,
                                             &view, &proj);
 
+    /* Update gizmo position to selection centroid. */
+    if (edit_selection_count(&ed->selection) > 0) {
+        vec3_t center = {0, 0, 0};
+        uint32_t sel_n = 0;
+        for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+            if (!edit_selection_contains(&ed->selection, i)) continue;
+            const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
+            if (!ent) continue;
+            center.x += ent->pos[0];
+            center.y += ent->pos[1];
+            center.z += ent->pos[2];
+            sel_n++;
+        }
+        if (sel_n > 0) {
+            float inv = 1.0f / (float)sel_n;
+            center.x *= inv;
+            center.y *= inv;
+            center.z *= inv;
+        }
+        ed->gizmo.position = center;
+    }
+
+    /* Draw transform gizmo at selection center. */
+    viewport_render_draw_gizmo(vp, &ed->gizmo, &ed->selection, &view, &proj);
+
     /* Draw 3D cursor crosshair. */
     viewport_render_draw_cursor(vp, &ed->cursor_3d, &view, &proj);
 
