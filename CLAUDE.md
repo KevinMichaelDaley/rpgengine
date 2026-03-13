@@ -1,3 +1,79 @@
+## Engine Architecture Summary
+
+Ferrum is a C11 game engine for server-authoritative multiplayer with physics, networking, rendering, and a visual editor. See `ref/` docs for full details.
+
+### Subsystems at a Glance
+
+| Subsystem | Source | Headers | Reference Doc |
+|-----------|--------|---------|---------------|
+| Physics | `src/physics/` | `include/ferrum/physics/` | `ref/physics.md` |
+| Networking | `src/net/`, `src/server/` | `include/ferrum/net/`, `include/ferrum/server/` | `ref/networking_runtime.md`, `ref/server_architecture.md`, `ref/client_architecture.md` |
+| Renderer | `src/renderer/` | `include/ferrum/renderer/` | `ref/renderer_spec.md` |
+| Editor | `src/editor/` | `include/ferrum/editor/` | `ref/editor_design.md` |
+| Job System | `src/job/` | `include/ferrum/job/` | `ref/architecture.md` §3 |
+| Memory | `src/memory/` | `include/ferrum/memory/` | `ref/architecture.md` §4 |
+| Math | `src/math/` | `include/ferrum/math/` | `ref/architecture.md` §6 |
+| Animation | `src/animation/` | `include/ferrum/animation/` | `ref/architecture.md` §8 |
+| Aegis VM | `src/aegis/` | `include/ferrum/aegis/` | `ref/aegis_bytecode_spec.md` |
+| ECS | `src/ecs/` | `include/ferrum/ecs/` | `ref/architecture.md` §5 |
+
+### Physics Engine
+- **Tiered TGS/XPBD solver** with 7 tiers (ANIM + T0-T5) based on distance/importance
+- **11 joint types**: distance, ball, hinge, lock, twist, cone-twist, copy-rotation, limit-rotation, limit-position, aim, IK
+- **5 joint driver types**: motor, spring, linear actuator, servo, aero-hydraulic
+- **Biomechanical muscle system**: Hill force model, tendon dynamics, antagonist pairs
+- **Colliders**: sphere, box, capsule, halfspace, mesh, convex (GJK/EPA), compound, point
+- **Broadphase**: spatial hash grid + static BVH
+- **Parallel physics**: job-based broadphase, narrowphase, constraint solving
+- **Island solver** with adaptive iteration scaling and CG coupled solver for ANIM tier
+- **CCD** for fast-moving bodies; contact/overlap events; deferred command system
+
+### Renderer
+- **OpenGL 3.3+ core profile** with custom `gl_loader_t` (no GLAD/GLEW)
+- **9-pass pipeline**: shadow → depth_pre → caster → light_cull → forward → skybox → debug → post → ui
+- **Mesh system**: `mesh_registry_t` (handle-based), `static_mesh_t` (per-attribute VBOs), `skeletal_mesh_t`, FVMA binary format
+- **Shader system**: `shader_program_t` + `shader_uniform_cache_t` (64-entry cache with type checking)
+- **VAO/VBO wrappers**: per-instance GL function pointers, `vao_attribute_t` binding
+- **Clay UI backend**: renders Clay commands via GL (text, rectangles, images, borders, scissors)
+- **Scene viewport**: FBO-based 3D rendering with Blinn-Phong, grid, entity mesh cache (FVMA loading)
+- **Skinning pipeline**: bone palette (SSBO/UBO/TBO), GPU-skinned animation
+- **Video capture**: PBO ring + async encoder thread
+
+### Editor
+- **Two interfaces**: Scene editor (SDL2/OpenGL/Clay UI) and TUI editor (text-based over TCP)
+- **Entity types**: BOX, SPHERE, CAPSULE, MARKER, MESH, HALFSPACE (up to 32)
+- **Entity store**: flat array with O(1) freelist, mmap'd backing, `entity_attrs_t` dynamic key-value storage
+- **50+ commands**: spawn, delete, move, rotate, scale, clone, save, load, select variants, groups, materials, physics control, mesh commit, etc.
+- **Scene editor panels**: viewport (3D FBO), outliner (entity tree), inspector (property editing), TUI (command input)
+- **3D viewport**: orbit/pan/zoom camera, grid, entity rendering by type, FVMA mesh loading for MESH entities, selection highlighting
+- **Mesh editing**: 60+ modules (extrude, inset, bevel, CSG, UV tools, OBJ import/export, smart unwrap)
+- **Physics bridge**: callbacks for spawn/delete/move/mesh_data/joint/material between editor and physics
+- **Undo/redo**, selection groups, asset registry, scene sync (offline queue)
+
+### Networking
+- **RUDP transport**: reliable UDP with 256-bit ACK window, fragmentation (64-fragment mask), RTT-based retransmit
+- **Stream abstraction**: `fr_rudp_stream_t` with push/pop/send/flush per channel
+- **Replication**: body state batching (11 per batch), mesh data chunking (440-byte chunks), quantized snapshots
+- **Server**: fiber-per-client architecture, entity net pump, priority body sender, dedicated physics thread
+- **Client**: 4 threads (main/RX/TX/prediction), ghost table, snapshot interpolation, client-side prediction with replay
+
+### Job System
+- Fiber-based (stackful coroutines) on pinned worker threads
+- Jobs with counter-based dependencies, work-stealing deques
+- Tracy profiling integration with fiber context tracking
+
+### Memory
+- Arena allocator (linear bump, thread-safe variant with spinlock)
+- Pool allocator for fixed-size objects
+- No malloc/free in per-frame code paths — use arenas/pools
+
+### Build
+- `make` builds everything; `make test` runs headless tests
+- `make TRACY=1` enables profiling; `make TRACY=1 FIBERS=1` adds fiber tracking
+- Source auto-discovered via wildcards; tests link against `libheadless.a` (no GL) or `liball.a` (with GL)
+
+---
+
 ## Issue Tracking and Task Management
 
 This project uses **tk (ticket)** for issue tracking and task management.

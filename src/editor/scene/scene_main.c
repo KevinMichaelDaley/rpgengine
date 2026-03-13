@@ -11,6 +11,7 @@
 #include "ferrum/editor/scene/scene_frame.h"
 #include "ferrum/editor/scene/scene_input.h"
 #include "ferrum/editor/scene/scene_ui.h"
+#include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/ui/glad_gl_loader.h"
 #include "ferrum/editor/ui/clay_theme.h"
 
@@ -80,6 +81,7 @@ static scene_editor_config_t resolve_config(const scene_editor_config_t *cfg) {
     if (out.arena_size == 0) out.arena_size = DEFAULT_ARENA_SIZE;
     if (!out.server_host) out.server_host = DEFAULT_SERVER_HOST;
     if (out.server_port == 0) out.server_port = DEFAULT_SERVER_PORT;
+    if (out.ui_scale <= 0.0f) out.ui_scale = 2.0f;
     return out;
 }
 
@@ -93,10 +95,20 @@ static void build_clay_layout(scene_editor_t *ed, int ww, int wh) {
     /* Use mouse_clicked to ensure Clay sees the press even if the
      * button was released within the same frame's event batch. */
     bool pointer_down = ed->ui.mouse_down || ed->ui.mouse_clicked;
+    /* Mouse coordinates from SDL are in window (physical) pixels;
+     * convert to logical pixels for Clay when UI is scaled. */
+    float mx = ed->ui.mouse_x;
+    float my = ed->ui.mouse_y;
+    if (ed->clay_be.ui_scale > 1.0f) {
+        mx /= ed->clay_be.ui_scale;
+        my /= ed->clay_be.ui_scale;
+    }
     Clay_SetPointerState(
-        (Clay_Vector2){ed->ui.mouse_x, ed->ui.mouse_y},
+        (Clay_Vector2){mx, my},
         pointer_down);
-    Clay_UpdateScrollContainers(true, (Clay_Vector2){0, 0}, 1.0f / 60.0f);
+    Clay_UpdateScrollContainers(true,
+        (Clay_Vector2){0, ed->ui.scroll_delta_y}, 1.0f / 60.0f);
+    ed->ui.scroll_delta_y = 0.0f;
     Clay_BeginLayout();
 
     /* Root container spanning the full window. */
@@ -143,17 +155,29 @@ static void build_clay_layout(scene_editor_t *ed, int ww, int wh) {
  * and dispatches them through the clay backend renderer.
  */
 static void render_frame(scene_editor_t *ed) {
-    int ww, wh;
-    SDL_GetWindowSize(ed->window, &ww, &wh);
-    glViewport(0, 0, ww, wh);
+    /* Use drawable size (physical pixels) for GL viewport. */
+    int dw, dh;
+    SDL_GL_GetDrawableSize(ed->window, &dw, &dh);
+    glViewport(0, 0, dw, dh);
     glClearColor(0.08f, 0.08f, 0.10f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    /* Update backend window size. */
-    clay_backend_resize(&ed->clay_be, ww, wh);
+    /* Render 3D scene into viewport FBO (before Clay UI overlay).
+     * This changes glViewport to the FBO size, so restore it after. */
+    viewport_render_draw_scene(ed);
+    glViewport(0, 0, dw, dh);
 
-    /* Build Clay layout and render. */
-    build_clay_layout(ed, ww, wh);
+    /* Update backend with physical drawable size. */
+    clay_backend_resize(&ed->clay_be, dw, dh);
+
+    /* Build Clay layout in logical pixels (physical / ui_scale).
+     * The panel layout must match so panel rects fit the Clay area. */
+    float sc = ed->clay_be.ui_scale;
+    if (sc < 1.0f) sc = 1.0f;
+    int lw = (int)((float)dw / sc);
+    int lh = (int)((float)dh / sc);
+    panel_layout_resize(&ed->layout, lw, lh);
+    build_clay_layout(ed, lw, lh);
     Clay_RenderCommandArray cmds = Clay_EndLayout();
     clay_backend_render(&ed->clay_be, cmds);
 
@@ -343,8 +367,24 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
         return false;
     }
 
+    /* Apply UI scale from config. */
+    ed->clay_be.ui_scale = ed->config.ui_scale;
+
     /* Register the text measurement callback. */
     Clay_SetMeasureTextFunction(measure_text_callback, &ed->clay_be);
+
+    /* Initialize viewport 3D renderer. */
+    {
+        viewport_render_config_t vp_cfg = {
+            .initial_width  = ed->config.window_w,
+            .initial_height = ed->config.window_h,
+            .loader         = gl_loader,
+        };
+        if (!viewport_render_init(&ed->viewport, &vp_cfg)) {
+            fprintf(stderr, "scene_editor: viewport render init failed\n");
+            /* Non-fatal: editor still usable without 3D rendering. */
+        }
+    }
 
     /* Try to connect to editor server (non-fatal if it fails). */
     if (scene_connection_connect(&ed->connection)) {
@@ -371,6 +411,9 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
 
 void scene_editor_shutdown(scene_editor_t *ed) {
     if (!ed->initialized) return;
+
+    viewport_render_destroy_primitives();
+    viewport_render_destroy(&ed->viewport);
 
     scene_sync_destroy(&ed->sync);
     scene_connection_destroy(&ed->connection);
@@ -404,6 +447,10 @@ void scene_editor_frame(scene_editor_t *ed) {
         scene_frame_pump(ed);
     }
 
+    /* Preserve any action set during event polling (e.g. TUI command
+     * from Enter key) so it survives the layout reset below. */
+    scene_ui_action_t pre_layout_action = ed->ui.action;
+
     /* Reset UI action before layout (Clay_OnHover sets it). */
     ed->ui.action = UI_ACTION_NONE;
 
@@ -427,6 +474,11 @@ void scene_editor_frame(scene_editor_t *ed) {
         } else if (Clay_PointerOver(CLAY_ID("Outliner_BtnScale"))) {
             ed->ui.action = UI_ACTION_MODE_SCALE;
         }
+    }
+
+    /* Restore pre-layout action if nothing was set during layout. */
+    if (ed->ui.action == UI_ACTION_NONE && pre_layout_action != UI_ACTION_NONE) {
+        ed->ui.action = pre_layout_action;
     }
 
     /* Dispatch any UI action that was set during layout. */

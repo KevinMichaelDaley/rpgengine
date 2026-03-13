@@ -1,6 +1,6 @@
 ---
 id: rpg-w8bs
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-03-08T04:38:45Z

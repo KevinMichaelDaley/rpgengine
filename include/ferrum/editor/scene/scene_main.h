@@ -30,6 +30,7 @@ extern "C" {
 #include "ferrum/editor/scene/snap_state.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
+#include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/ui/clay_backend.h"
 #include "ferrum/memory/arena.h"
 
@@ -51,6 +52,7 @@ typedef struct scene_editor_config {
     uint32_t arena_size;    /**< Main arena size in bytes (0 = 4MB). */
     const char *server_host; /**< Server host (NULL = "127.0.0.1"). */
     uint16_t server_port;   /**< Server TCP port (0 = 9100). */
+    float ui_scale;         /**< UI scale factor (0 = 2.0). */
 } scene_editor_config_t;
 
 /* ---- Context ---- */
@@ -82,6 +84,9 @@ typedef struct scene_editor {
     /* Local entity data (mirrored from server). */
     edit_entity_store_t entities;  /**< Local entity store. */
     edit_selection_t    selection; /**< Selected entity set. */
+
+    /* 3D viewport renderer. */
+    viewport_render_state_t viewport; /**< FBO, shaders, meshes, camera. */
 
     /* Interactive UI state. */
     scene_ui_state_t   ui;         /**< UI actions, scroll, mouse. */

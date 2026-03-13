@@ -99,6 +99,7 @@ bool clay_backend_init(clay_backend_t *backend,
 
     backend->window_w = config->window_w;
     backend->window_h = config->window_h;
+    backend->ui_scale = 2.0f;  /* 2x pixel-doubled UI. */
     backend->loader   = config->loader;
 
     /* Headless mode: no GL loader means no rendering resources. */

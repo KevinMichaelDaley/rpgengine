@@ -55,8 +55,9 @@ typedef struct clay_backend {
     vbo_t            vbo;        /**< Vertex buffer for UI quads. */
     gl_loader_t      loader;     /**< Cached GL loader for draw calls. */
     clay_font_set_t  fonts;      /**< Font glyph atlas. */
-    int              window_w;   /**< Current window width. */
-    int              window_h;   /**< Current window height. */
+    int              window_w;   /**< Current window width (physical). */
+    int              window_h;   /**< Current window height (physical). */
+    float            ui_scale;   /**< UI scale factor (e.g., 2.0 for 2x). */
     int32_t          u_projection; /**< Uniform: orthographic projection. */
     int32_t          u_use_texture; /**< Uniform: texture vs solid color. */
     int32_t          u_texture;    /**< Uniform: texture sampler. */

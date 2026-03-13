@@ -28,10 +28,10 @@
 /* ------------------------------------------------------------------------ */
 
 /** Stack buffer size for reading TCP response lines. */
-#define RESPONSE_BUF_SIZE 8192
+#define RESPONSE_BUF_SIZE 65536
 
 /** Arena size for JSON parsing of entity list responses. */
-#define JSON_ARENA_SIZE   4096
+#define JSON_ARENA_SIZE   65536
 
 /* ------------------------------------------------------------------------ */
 /* Static helpers                                                            */
@@ -80,18 +80,9 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         return;
     }
 
-    /* Clear all existing entities from the local store. */
-    for (uint32_t i = 0; i < ed->entities.capacity; i++) {
-        const edit_entity_t *existing = edit_entity_store_get(&ed->entities, i);
-        if (existing && existing->active) {
-            edit_entity_store_remove(&ed->entities, i);
-        }
-    }
-
-    /* Preserve the current selection — entity IDs are stable across
-     * list refreshes because the server assigns persistent IDs. */
-
-    /* Restore each entity from the server's list. */
+    /* Restore each entity from the server's list.
+     * Clearing is handled by the caller for paginated responses,
+     * or done here for legacy plain-array responses. */
     for (uint32_t i = 0; i < result->array.count; i++) {
         const json_value_t *item = json_array_get(result, i);
         if (!item || item->type != JSON_OBJECT) {
@@ -147,6 +138,29 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         /* Restore the entity at the server-assigned ID slot. */
         edit_entity_store_restore(&ed->entities, eid, &snapshot);
     }
+}
+
+/**
+ * @brief Push a command string into TUI history ring buffer.
+ *
+ * Skips empty strings and duplicates of the most recent entry.
+ */
+static void tui_history_push(scene_ui_state_t *ui, const char *cmd)
+{
+    if (!cmd || cmd[0] == '\0') return;
+
+    if (ui->tui_history_count > 0) {
+        int prev = (ui->tui_history_head - 1 + UI_TUI_HISTORY_MAX)
+                   % UI_TUI_HISTORY_MAX;
+        if (strcmp(ui->tui_history[prev], cmd) == 0) return;
+    }
+
+    strncpy(ui->tui_history[ui->tui_history_head], cmd,
+            UI_TUI_INPUT_MAX - 1);
+    ui->tui_history[ui->tui_history_head][UI_TUI_INPUT_MAX - 1] = '\0';
+    ui->tui_history_head = (ui->tui_history_head + 1) % UI_TUI_HISTORY_MAX;
+    if (ui->tui_history_count < UI_TUI_HISTORY_MAX)
+        ui->tui_history_count++;
 }
 
 /**
@@ -300,8 +314,9 @@ void scene_frame_pump(struct scene_editor *ed)
     /* Read available TCP data into the connection's receive buffer. */
     scene_connection_pump(&ed->connection);
 
-    /* Stack buffer for extracting individual response lines. */
-    char resp_buf[RESPONSE_BUF_SIZE];
+    /* Static buffer for extracting individual response lines.
+     * Must be large enough for paginated entity list responses. */
+    static char resp_buf[RESPONSE_BUF_SIZE];
     bool needs_entity_refresh = false;
 
     /* Process all complete response lines available. */
@@ -331,19 +346,70 @@ void scene_frame_pump(struct scene_editor *ed)
             scene_ui_tui_log_error(&ed->ui, err_line);
         }
 
-        /* Try to parse the full JSON to check if the result is an array
-         * (entity list response). We use a separate arena for this. */
-        uint8_t arena_buf[JSON_ARENA_SIZE];
+        /* Try to parse the full JSON to check if the result contains
+         * a paginated entity list response. */
+        static uint8_t arena_buf[JSON_ARENA_SIZE];
         json_arena_t arena;
         json_arena_init(&arena, arena_buf, sizeof(arena_buf));
 
         json_value_t root;
         if (json_parse(resp_buf, (size_t)resp_len, &arena, &root)) {
             const json_value_t *result_val = json_object_get(&root, "result");
+
+            /* Legacy: plain array result (backward compat). */
             if (result_val && result_val->type == JSON_ARRAY) {
-                /* This is an entity list response — rebuild local store. */
                 process_entity_list(ed, result_val);
                 continue;
+            }
+
+            /* Paginated: {"entities":[...], "total":N, "offset":N} */
+            if (result_val && result_val->type == JSON_OBJECT) {
+                const json_value_t *ents_val =
+                    json_object_get(result_val, "entities");
+                const json_value_t *total_val =
+                    json_object_get(result_val, "total");
+                const json_value_t *offset_val =
+                    json_object_get(result_val, "offset");
+
+                if (ents_val && ents_val->type == JSON_ARRAY) {
+                    uint32_t offset = 0;
+                    uint32_t total = 0;
+                    if (offset_val && offset_val->type == JSON_NUMBER)
+                        offset = (uint32_t)offset_val->number;
+                    if (total_val && total_val->type == JSON_NUMBER)
+                        total = (uint32_t)total_val->number;
+
+                    /* First page: clear existing entities. */
+                    if (offset == 0) {
+                        for (uint32_t ei = 0; ei < ed->entities.capacity; ei++) {
+                            const edit_entity_t *existing =
+                                edit_entity_store_get(&ed->entities, ei);
+                            if (existing && existing->active)
+                                edit_entity_store_remove(&ed->entities, ei);
+                        }
+                    }
+
+                    /* Restore entities from this page. */
+                    process_entity_list(ed, ents_val);
+
+                    /* Request next page if more entities remain. */
+                    uint32_t received = offset + ents_val->array.count;
+                    if (received < total) {
+                        char cmd_buf2[256];
+                        uint32_t cid =
+                            scene_connection_next_id(&ed->connection);
+                        int n = snprintf(cmd_buf2, sizeof(cmd_buf2),
+                            "{\"id\":%u,\"cmd\":\"list_entities\","
+                            "\"args\":{\"offset\":%u}}\n",
+                            cid, received);
+                        if (n > 0) {
+                            ctrl_conn_send_raw(&ed->connection.tcp,
+                                cmd_buf2, (uint32_t)n);
+                            scene_sync_mark_sent(&ed->sync);
+                        }
+                    }
+                    continue;
+                }
             }
         }
 
@@ -367,6 +433,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
     }
 
     char cmd_buf[1024];
+    char echo[UI_TUI_LOG_LINE]; /* Human-readable command echo for TUI. */
+    echo[0] = '\0';
     int cmd_len = 0;
     uint32_t cmd_id = 0;
     bool is_entity_modify = false;
@@ -377,12 +445,15 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
     case UI_ACTION_SPAWN_CAPSULE: {
         /* Determine entity type from the action. */
         uint32_t entity_type = EDIT_ENTITY_TYPE_BOX;
+        const char *type_name = "box";
         const char *type_prefix = "Box";
         if (ed->ui.action == UI_ACTION_SPAWN_SPHERE) {
             entity_type = EDIT_ENTITY_TYPE_SPHERE;
+            type_name = "sphere";
             type_prefix = "Sphere";
         } else if (ed->ui.action == UI_ACTION_SPAWN_CAPSULE) {
             entity_type = EDIT_ENTITY_TYPE_CAPSULE;
+            type_name = "capsule";
             type_prefix = "Capsule";
         }
 
@@ -399,6 +470,9 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         cmd_len = scene_cmd_format_spawn(
             cmd_buf, sizeof(cmd_buf), cmd_id, entity_type, origin, entity_name);
         is_entity_modify = true;
+
+        /* Echo to TUI + history. */
+        snprintf(echo, sizeof(echo), "spawn %s %s", type_name, entity_name);
         break;
     }
 
@@ -409,6 +483,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
 
         /* Optimistically update local selection. */
         edit_selection_add(&ed->selection, ed->ui.action_target);
+
+        snprintf(echo, sizeof(echo), "select %u", ed->ui.action_target);
         break;
     }
 
@@ -419,6 +495,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
 
         /* Optimistically update local selection. */
         edit_selection_remove(&ed->selection, ed->ui.action_target);
+
+        snprintf(echo, sizeof(echo), "deselect %u", ed->ui.action_target);
         break;
     }
 
@@ -426,6 +504,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         cmd_id = scene_connection_next_id(&ed->connection);
         cmd_len = scene_cmd_format_delete(cmd_buf, sizeof(cmd_buf), cmd_id);
         is_entity_modify = true;
+
+        snprintf(echo, sizeof(echo), "delete");
         break;
     }
 
@@ -454,6 +534,12 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
     if (cmd_len > 0) {
         ctrl_conn_send_raw(&ed->connection.tcp, cmd_buf, (uint32_t)cmd_len);
         scene_sync_mark_sent(&ed->sync);
+
+        /* Echo command text to TUI log and add to history. */
+        if (echo[0] != '\0') {
+            scene_ui_tui_log_success(&ed->ui, echo);
+            tui_history_push(&ed->ui, echo);
+        }
 
         /* For entity-modifying commands (spawn, delete), also queue a
          * list_entities request so the local store refreshes when the

@@ -1,18 +1,20 @@
 /**
  * @file scene_ui_viewport.c
- * @brief Viewport panel Clay UI layout: 2D top-down entity view.
+ * @brief Viewport panel Clay UI layout: display 3D FBO texture.
  *
- * Renders a 2D top-down view of entities. Each entity is displayed as
- * a small colored rectangle at its (pos[0], pos[2]) world position
- * mapped to screen coordinates. Selected entities are highlighted
- * with the selection color (orange).
+ * Displays the viewport FBO's color texture as a Clay IMAGE element
+ * covering the panel rectangle. The 3D scene is rendered into the
+ * FBO by scene_viewport_draw.c before Clay layout runs.
  *
- * Contains one public function (scene_ui_build_viewport) and static
- * helpers for coordinate mapping and sub-sections.
+ * Also shows a title bar overlay and entity count.
+ *
+ * Non-static functions (1 / 4 limit):
+ *   scene_ui_build_viewport
  */
 
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
+#include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -20,88 +22,60 @@
 #include <stdio.h>
 #include <string.h>
 
-/* ------------------------------------------------------------------------ */
-/* Constants                                                                 */
-/* ------------------------------------------------------------------------ */
-
-/** Maximum entities rendered in the viewport to avoid too many Clay elements. */
-#define VIEWPORT_MAX_ENTITIES 64
-
-/**
- * @brief Static fallback name buffers for entities without names.
- *
- * Clay_String only stores a pointer — the backing memory must
- * survive until Clay_EndLayout() / render. Stack locals won't work.
- */
-static char s_viewport_names[VIEWPORT_MAX_ENTITIES][32];
-
-/** Pixels per world unit for the 2D projection. */
-#define VIEWPORT_SCALE 20.0f
-
-/** Size of each entity marker in pixels. */
-#define VIEWPORT_MARKER_SIZE 12.0f
-
-/* ---- Color constants ---- */
-
-/** Viewport background color. */
-static const Clay_Color COLOR_VIEWPORT_BG = {
-    THEME_BG_VIEWPORT_R, THEME_BG_VIEWPORT_G,
-    THEME_BG_VIEWPORT_B, THEME_BG_VIEWPORT_A
-};
+/* ---- Constants ---- */
 
 /** Title bar background (accent with reduced alpha). */
 static const Clay_Color COLOR_TITLE_BG = {
     THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 60
 };
 
-/** Normal entity marker color (blue accent). */
-static const Clay_Color COLOR_MARKER_NORMAL = {
-    THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, THEME_ACCENT_A
-};
+/** Button background color (slightly lighter than panel). */
+static const Clay_Color COLOR_BTN_BG = {50, 52, 58, 255};
 
-/** Selected entity marker color (orange). */
-static const Clay_Color COLOR_MARKER_SELECTED = {
+/** Selection highlight background. */
+static const Clay_Color COLOR_SELECTION_BG = {
     THEME_SELECTION_R, THEME_SELECTION_G,
     THEME_SELECTION_B, THEME_SELECTION_A
 };
 
-/* ------------------------------------------------------------------------ */
-/* Static helpers                                                            */
-/* ------------------------------------------------------------------------ */
+/** Static buffer for viewport status text. */
+#define VP_STATUS_BUF_SIZE 128
+static char s_vp_status[VP_STATUS_BUF_SIZE];
 
-/**
- * @brief Clamp a float value to [min, max].
- * @param val  Value to clamp.
- * @param min  Minimum bound.
- * @param max  Maximum bound.
- * @return Clamped value.
- */
-static float clampf(float val, float min, float max) {
-    if (val < min) return min;
-    if (val > max) return max;
-    return val;
+/* ---- Mode button hover callbacks ---- */
+
+/** @brief Hover callback for mode: Translate. */
+static void on_mode_translate_hover(Clay_ElementId id, Clay_PointerData data,
+                                     void *user) {
+    (void)id;
+    scene_editor_t *ed = (scene_editor_t *)user;
+    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
+        ed->ui.action = UI_ACTION_MODE_TRANSLATE;
+    }
 }
 
-/* ------------------------------------------------------------------------ */
-/* Public API                                                                */
-/* ------------------------------------------------------------------------ */
+/** @brief Hover callback for mode: Rotate. */
+static void on_mode_rotate_hover(Clay_ElementId id, Clay_PointerData data,
+                                  void *user) {
+    (void)id;
+    scene_editor_t *ed = (scene_editor_t *)user;
+    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
+        ed->ui.action = UI_ACTION_MODE_ROTATE;
+    }
+}
 
-/**
- * @brief Build the viewport panel Clay layout.
- *
- * Creates a floating element at the panel rectangle position containing:
- *   1. A title bar with "Viewport" text.
- *   2. A grid origin indicator.
- *   3. Entity markers at mapped world positions (max 64).
- *   4. "Empty scene" text if no active entities exist.
- *
- * World-to-screen mapping:
- *   screen_x = panel_center_x + pos[0] * 20
- *   screen_y = panel_center_y - pos[2] * 20
- *
- * @param ed    Scene editor context (non-NULL).
- * @param rect  Panel screen rectangle (non-NULL).
- */
+/** @brief Hover callback for mode: Scale. */
+static void on_mode_scale_hover(Clay_ElementId id, Clay_PointerData data,
+                                 void *user) {
+    (void)id;
+    scene_editor_t *ed = (scene_editor_t *)user;
+    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
+        ed->ui.action = UI_ACTION_MODE_SCALE;
+    }
+}
+
+/* ---- Public API ---- */
+
 void scene_ui_build_viewport(struct scene_editor *ed,
                               const struct panel_rect *rect) {
     if (!ed || !rect || rect->w <= 0 || rect->h <= 0) {
@@ -111,16 +85,12 @@ void scene_ui_build_viewport(struct scene_editor *ed,
     float panel_w = (float)rect->w;
     float panel_h = (float)rect->h;
 
-    /* Center of the panel in screen coordinates, used as the origin
-     * for the 2D top-down projection. */
-    float panel_center_x = (float)rect->x + panel_w * 0.5f;
-    float panel_center_y = (float)rect->y + panel_h * 0.5f;
+    /* Get the FBO color texture handle for display. */
+    uint32_t tex = viewport_render_get_texture(&ed->viewport);
 
-    /* Panel bounds for clamping entity markers. */
-    float panel_left   = (float)rect->x;
-    float panel_top    = (float)rect->y;
-    float panel_right  = (float)rect->x + panel_w - VIEWPORT_MARKER_SIZE;
-    float panel_bottom = (float)rect->y + panel_h - VIEWPORT_MARKER_SIZE;
+    /* Format status text. */
+    snprintf(s_vp_status, sizeof(s_vp_status),
+             "Viewport  Entities: %u", ed->entities.active_count);
 
     /* Root floating container positioned at the panel rectangle. */
     CLAY(CLAY_ID("Viewport_Root"), {
@@ -128,25 +98,36 @@ void scene_ui_build_viewport(struct scene_editor *ed,
             .sizing = {CLAY_SIZING_FIXED(panel_w),
                        CLAY_SIZING_FIXED(panel_h)},
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
-            .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL,
-                        THEME_PADDING_SMALL, THEME_PADDING_SMALL},
         },
-        .backgroundColor = COLOR_VIEWPORT_BG,
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ROOT,
             .offset = {(float)rect->x, (float)rect->y},
         },
+        /* Display the FBO texture as the viewport background.
+         * imageData points to the GL texture handle (uint32_t). */
+        .image = {
+            .imageData = tex > 0 ? &ed->viewport.color_tex : NULL,
+        },
+        .backgroundColor = tex == 0
+            ? (Clay_Color){THEME_BG_VIEWPORT_R, THEME_BG_VIEWPORT_G,
+                            THEME_BG_VIEWPORT_B, THEME_BG_VIEWPORT_A}
+            : (Clay_Color){0, 0, 0, 0},
     }) {
-        /* ---- Title bar ---- */
+        /* ---- Title bar overlay ---- */
         CLAY(CLAY_ID("Viewport_Title"), {
             .layout = {
                 .sizing = {CLAY_SIZING_GROW(0),
                            CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
                 .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL, 0, 0},
+                .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
             },
             .backgroundColor = COLOR_TITLE_BG,
         }) {
-            CLAY_TEXT(CLAY_STRING("Viewport"),
+            Clay_String status_str = {
+                .length = (int32_t)strlen(s_vp_status),
+                .chars = s_vp_status,
+            };
+            Clay__OpenTextElement(status_str,
                 CLAY_TEXT_CONFIG({
                     .fontSize = THEME_FONT_SIZE_UI,
                     .textColor = {THEME_TEXT_R, THEME_TEXT_G,
@@ -155,26 +136,91 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                 }));
         }
 
-        /* ---- Grid origin indicator ---- */
-        CLAY(CLAY_ID("Viewport_Grid"), {
-            .layout = {
-                .sizing = {CLAY_SIZING_GROW(0),
-                           CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-                .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL, 0, 0},
-            },
-        }) {
-            CLAY_TEXT(CLAY_STRING("Origin (0,0)"),
-                CLAY_TEXT_CONFIG({
-                    .fontSize = THEME_FONT_SIZE_UI,
-                    .textColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
-                                  THEME_TEXT_DIM_B, THEME_TEXT_DIM_A},
-                    .fontId = CLAY_FONT_UI,
-                }));
+        /* ---- Mode toolbar overlay (far left, below title) ---- */
+        {
+            Clay_Color translate_bg = (ed->ui.transform_mode == UI_MODE_TRANSLATE)
+                                        ? COLOR_SELECTION_BG : COLOR_BTN_BG;
+            Clay_Color rotate_bg = (ed->ui.transform_mode == UI_MODE_ROTATE)
+                                     ? COLOR_SELECTION_BG : COLOR_BTN_BG;
+            Clay_Color scale_bg = (ed->ui.transform_mode == UI_MODE_SCALE)
+                                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
+
+            CLAY(CLAY_ID("VP_ModeBar"), {
+                .layout = {
+                    .sizing = {CLAY_SIZING_FIT(0),
+                               CLAY_SIZING_FIXED(THEME_ROW_HEIGHT + THEME_PADDING)},
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL,
+                                THEME_PADDING_SMALL, THEME_PADDING_SMALL},
+                    .childGap = THEME_PADDING_SMALL,
+                    .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                },
+                .backgroundColor = {THEME_BG_PANEL_R, THEME_BG_PANEL_G,
+                                     THEME_BG_PANEL_B, 180},
+            }) {
+                CLAY_TEXT(CLAY_STRING("Mode:"),
+                    CLAY_TEXT_CONFIG({
+                        .fontSize = THEME_FONT_SIZE_UI,
+                        .textColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                      THEME_TEXT_DIM_B, THEME_TEXT_DIM_A},
+                        .fontId = CLAY_FONT_UI,
+                    }));
+
+                CLAY(CLAY_ID("VP_BtnTranslate"), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
+                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
+                    },
+                    .backgroundColor = translate_bg,
+                }) {
+                    Clay_OnHover(on_mode_translate_hover, ed);
+                    CLAY_TEXT(CLAY_STRING("Move(G)"),
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
+                                          THEME_TEXT_B, THEME_TEXT_A},
+                            .fontId = CLAY_FONT_UI,
+                        }));
+                }
+
+                CLAY(CLAY_ID("VP_BtnRotate"), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
+                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
+                    },
+                    .backgroundColor = rotate_bg,
+                }) {
+                    Clay_OnHover(on_mode_rotate_hover, ed);
+                    CLAY_TEXT(CLAY_STRING("Rot(R)"),
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
+                                          THEME_TEXT_B, THEME_TEXT_A},
+                            .fontId = CLAY_FONT_UI,
+                        }));
+                }
+
+                CLAY(CLAY_ID("VP_BtnScale"), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
+                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
+                    },
+                    .backgroundColor = scale_bg,
+                }) {
+                    Clay_OnHover(on_mode_scale_hover, ed);
+                    CLAY_TEXT(CLAY_STRING("Scale(S)"),
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
+                                          THEME_TEXT_B, THEME_TEXT_A},
+                            .fontId = CLAY_FONT_UI,
+                        }));
+                }
+            }
         }
 
-        /* ---- Entity markers or empty-scene message ---- */
-        if (ed->entities.active_count == 0) {
-            /* No entities: show placeholder text. */
+        /* ---- Empty scene message (only when no entities and no FBO) ---- */
+        if (ed->entities.active_count == 0 && tex == 0) {
             CLAY(CLAY_ID("Viewport_Empty"), {
                 .layout = {
                     .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
@@ -184,7 +230,7 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                     },
                 },
             }) {
-                CLAY_TEXT(CLAY_STRING("Empty scene"),
+                CLAY_TEXT(CLAY_STRING("3D viewport not available"),
                     CLAY_TEXT_CONFIG({
                         .fontSize = THEME_FONT_SIZE_UI,
                         .textColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
@@ -193,92 +239,5 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                     }));
             }
         }
-    }
-
-    /* ---- Floating entity markers ---- */
-    /* These are placed as independent floating elements over the viewport
-     * so that each marker can be positioned at its mapped screen coordinate. */
-    uint32_t rendered = 0;
-    uint32_t capacity = ed->entities.capacity;
-
-    for (uint32_t i = 0; i < capacity; ++i) {
-        if (rendered >= VIEWPORT_MAX_ENTITIES) {
-            break;
-        }
-
-        const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
-        if (!ent) {
-            continue;
-        }
-
-        /* Map world position to screen coordinates.
-         * X-axis maps to screen X (right = positive).
-         * Z-axis maps to screen Y (forward/up in world = up on screen). */
-        float screen_x = panel_center_x + ent->pos[0] * VIEWPORT_SCALE;
-        float screen_y = panel_center_y - ent->pos[2] * VIEWPORT_SCALE;
-
-        /* Clamp to panel bounds so markers stay visible. */
-        screen_x = clampf(screen_x, panel_left, panel_right);
-        screen_y = clampf(screen_y, panel_top, panel_bottom);
-
-        /* Choose marker color based on selection state. */
-        bool selected = edit_selection_contains(&ed->selection, i);
-        Clay_Color marker_color = selected ? COLOR_MARKER_SELECTED
-                                           : COLOR_MARKER_NORMAL;
-
-        /* Entity marker: small colored rectangle. */
-        CLAY(CLAY_IDI("Viewport_Marker", rendered), {
-            .layout = {
-                .sizing = {CLAY_SIZING_FIXED(VIEWPORT_MARKER_SIZE),
-                           CLAY_SIZING_FIXED(VIEWPORT_MARKER_SIZE)},
-            },
-            .backgroundColor = marker_color,
-            .floating = {
-                .attachTo = CLAY_ATTACH_TO_ROOT,
-                .offset = {screen_x, screen_y},
-            },
-        }) {
-            /* Marker body is just the colored rectangle; no children. */
-        }
-
-        /* Entity name label below the marker. */
-        {
-            const char *name = ent->name;
-            int32_t name_len = (int32_t)strlen(name);
-
-            /* If the entity has no name, use a static fallback buffer. */
-            if (name_len == 0) {
-                snprintf(s_viewport_names[rendered], 32,
-                         "entity_%u", i);
-                name = s_viewport_names[rendered];
-                name_len = (int32_t)strlen(name);
-            }
-
-            Clay_String label_str = {
-                .length = name_len,
-                .chars = name,
-            };
-
-            CLAY(CLAY_IDI("Viewport_Label", rendered), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_FIT(0),
-                               CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-                },
-                .floating = {
-                    .attachTo = CLAY_ATTACH_TO_ROOT,
-                    .offset = {screen_x, screen_y + VIEWPORT_MARKER_SIZE + 2.0f},
-                },
-            }) {
-                Clay__OpenTextElement(label_str,
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                      THEME_TEXT_B, THEME_TEXT_A},
-                        .fontId = CLAY_FONT_UI,
-                    }));
-            }
-        }
-
-        rendered++;
     }
 }

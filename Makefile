@@ -1115,6 +1115,12 @@ build/p201_pivot_offset_tests: build/libheadless.a tests/p201_pivot_offset_tests
 	$(CC) $(CFLAGS) tests/p201_pivot_offset_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p202_viewport_camera_tests: build/libheadless.a tests/p202_viewport_camera_tests.c | build
 	$(CC) $(CFLAGS) tests/p202_viewport_camera_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/scene_viewport_render_tests: build/liball.a tests/scene_viewport_render_tests.c | build
+	$(CC) $(CFLAGS) tests/scene_viewport_render_tests.c build/liball.a -o $@ $(LDFLAGS)
+build/scene_viewport_mesh_tests: build/liball.a tests/scene_viewport_mesh_tests.c | build
+	$(CC) $(CFLAGS) tests/scene_viewport_mesh_tests.c build/liball.a -o $@ $(LDFLAGS)
+build/ctrl_cmd_parse_tests: build/libheadless.a tests/editor/ctrl_cmd_parse_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/ctrl_cmd_parse_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p203_gizmo_hit_tests: build/libheadless.a tests/p203_gizmo_hit_tests.c | build
 	$(CC) $(CFLAGS) tests/p203_gizmo_hit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p204_selection_raycast_tests: build/libheadless.a tests/p204_selection_raycast_tests.c | build
@@ -1316,7 +1322,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/phys_contact_begin_tests \
 	&& ./build/phys_overlap_begin_tests \
 	&& ./build/collision_event_integration_tests \
-	&& ./build/turret_script_e2e_tests
+	&& ./build/turret_script_e2e_tests \
+	&& ./build/ctrl_cmd_parse_tests
 
 TEST_TIMEOUT ?= 20
 

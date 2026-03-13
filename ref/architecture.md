@@ -1,9 +1,9 @@
 # C11-Based High-Performance Game Engine Architecture
-## “Ferrum-Engine-C”: A Comprehensive Design Specification
+## "Ferrum-Engine-C": A Comprehensive Design Specification
 
 ## 1. Architectural Philosophy and Core Design Principles
 
-This report specifies “Ferrum-Engine-C,” a high-performance proprietary game engine built in **pure C11** for AAA-fidelity simulation, **massive co-op multiplayer**, **dynamic world geometry**, and **high-density crowd simulation**.
+This report specifies "Ferrum-Engine-C," a high-performance proprietary game engine built in **pure C11** for AAA-fidelity simulation, **massive co-op multiplayer**, **dynamic world geometry**, and **high-density crowd simulation**.
 
 The defining goals are:
 
@@ -41,7 +41,7 @@ Stage N+1: read(output_buffer_B) → compute → write(output_buffer_C)
 This pattern applies across subsystems: animation evaluation, AI decisions, network state application, and rendering command generation all follow the same read-input/write-output discipline.
 
 ### 1.1 The Shift from OOP to DOD in C11
-Traditional OOP “Actor” hierarchies lead to pointer chasing, cache misses, and polymorphic overhead that scales poorly with thousands of entities. Ferrum-Engine-C uses a strict **Entity Component System (ECS)** to separate:
+Traditional OOP "Actor" hierarchies lead to pointer chasing, cache misses, and polymorphic overhead that scales poorly with thousands of entities. Ferrum-Engine-C uses a strict **Entity Component System (ECS)** to separate:
 
 - **Identity:** entity handles (index + generation)
 - **Data:** components stored contiguously
@@ -49,43 +49,8 @@ Traditional OOP “Actor” hierarchies lead to pointer chasing, cache misses, a
 
 This enables high-throughput loops with predictable memory access patterns and straightforward parallelization.
 
-### 1.4 Module Index (P_000–P_020)
-High-level modules aligned with `ref/prompts.md`:
-- P_000 Fiber Runtime & Job System
-- P_001 Core Math
-- P_002 Memory (Arena + Pool)
-- P_003 ECS Core (Sparse Sets + Homogeneous Pools)
-- P_004 Renderer Core + Pipeline Graph
-- P_005 Geometry Clipmaps (Terrain)
-- P_006 Physics (Rigid Bodies, Collisions, Constraints)
-- P_007 Networking & Replication (RUDP, Snapshot/Delta, Prediction)
-- P_008 Inventory & Modifiers (Networked Transactions)
-- P_009 Quest System (Event Log)
-- P_010 Dialogue Graph
-- P_011 Flow Field AI
-- P_012 Scene Management & Asset Streaming (glTF, Lightmaps, Skybox, World Streaming)
-- P_013 AI & Scripting (Dynamic Modules, BT, HTN, Hierarchical Pathfinding)
-- P_014 Platform & Input Abstraction
-- P_015 Audio (Mixer & Spatialization)
-- P_016 Render Pipeline & Simplified Surface Shader
-- P_017 ECS Serialization, Save-Load & Replay
-- P_018 Asset Cooking, Hot-Reload & VFS
-- P_019 UI, Text & Localization
-- P_020 Online Services (Dedicated Server, Minimal Auth/Matchmaking)
-
-### 1.3 Engine Settings (Frozen-at-Launch Configuration)
-
-Global engine configuration is managed via `engine_settings.h`:
-- `fr_engine_settings_init()` → `fr_engine_settings_mut()` to configure →
-  `fr_engine_settings_freeze()` → `fr_engine_settings_get()` (read-only).
-- After `freeze()`, all writes are rejected — the settings become immutable
-  before any threads or job systems start.
-- Currently holds network emulation parameters (gated by `FR_NET_EMULATION`).
-- Designed to hold any application-wide configuration that must be set once
-  at startup and never changed at runtime.
-
 ### 1.2 The Concurrency Model: Beyond Standard Threads
-Ferrum-Engine-C does not adopt “one OS thread per subsystem.” Instead it uses a **fiber-based job system** inspired by modern AAA engine architectures:
+Ferrum-Engine-C does not adopt "one OS thread per subsystem." Instead it uses a **fiber-based job system** inspired by modern AAA engine architectures:
 
 - A small pool of **pinned worker threads**
 - Thousands of **user-space fibers** (stackful coroutines)
@@ -97,7 +62,18 @@ This model minimizes kernel context switches and keeps cores busy even when task
 **Exception: networking and IO boundaries.**
 Networking must interact with OS sockets and OS scheduling. On the **client**, the network subsystem runs on dedicated OS thread(s) that do packet IO, reliability/reassembly, and then feed decoded messages into fiber-safe jobs. On the **server**, networking is modeled as one fiber per connected client, scheduled by the job system, with per-client channels bridging to simulation.
 
-### 1.3 Networking as a First-Class Citizen
+### 1.3 Engine Settings (Frozen-at-Launch Configuration)
+
+Global engine configuration is managed via `engine_settings.h`:
+- `fr_engine_settings_init()` -> `fr_engine_settings_mut()` to configure ->
+  `fr_engine_settings_freeze()` -> `fr_engine_settings_get()` (read-only).
+- After `freeze()`, all writes are rejected — the settings become immutable
+  before any threads or job systems start.
+- Currently holds network emulation parameters (gated by `FR_NET_EMULATION`).
+- Designed to hold any application-wide configuration that must be set once
+  at startup and never changed at runtime.
+
+### 1.4 Networking as a First-Class Citizen
 Massive co-op with client-side prediction and dynamic geometry requires networking to be core architecture, not a bolt-on. The engine uses:
 
 - **Server authoritative simulation**
@@ -107,495 +83,897 @@ Massive co-op with client-side prediction and dynamic geometry requires networki
 
 ---
 
-## 2. Core Foundation: Fiber-Based Job System
+## 2. Directory Structure
 
-### 2.1 The Fiber Abstraction
+The codebase is split between public headers (`include/ferrum/`) and source files (`src/`), with deep hierarchies following the directory-first design principle.
+
+### 2.1 Top-Level Layout
+
+```
+include/ferrum/          Public headers
+  aegis/                 Aegis scripting VM
+  animation/             Skeletal animation, ragdoll, IK, constraints
+  ecs/                   Entity Component System
+  editor/                Editor subsystems (scene, mesh, UI, viewport)
+  entity/                Entity attributes and event flags
+  job/                   Fiber-based job system
+  math/                  Vector, matrix, quaternion math
+  memory/                Arena, pool, VM allocators
+  mesh/                  OBJ mesh loader
+  net/                   Networking (RUDP, channels, replication)
+  physics/               Physics world, bodies, joints, collision
+  renderer/              Render pipeline, shaders, meshes, skinning
+  server/                Server tick loop, networking, physics sync
+
+src/                     Implementation files (mirrors include/ hierarchy)
+  aegis/                 Aegis VM, runtime, ops/
+  animation/             Animation solver, ragdoll, format loaders
+  ecs/                   Sparse set, entity pool, world
+  editor/                Editor (commands, mesh, scene, UI, viewport)
+  entity/                Entity attribute tables
+  job/                   Job system, work-stealing deque, fibers
+  math/                  Math implementations
+  memory/                Arena, pool, alloc_tracy/
+  mesh/                  Mesh loaders
+  net/                   Networking (channel, client, rudp, replication, topic)
+  physics/               Physics (body, broadphase, collision, constraint,
+                           muscle, solver, stages, tier, world)
+  renderer/              Renderer (draw, gltf, mesh, scene, skinning, ubo,
+                           video_capture, debug_lines)
+  server/                Server (entity, net, physics, repl, tick)
+```
+
+---
+
+## 3. Core Foundation: Fiber-Based Job System
+
+Source: `src/job/`, Headers: `include/ferrum/job/`
+
+### 3.1 The Fiber Abstraction
 A **fiber** is a lightweight execution context with its own stack, cooperatively scheduled atop an OS thread. Context switching is done in user-space by saving/restoring registers and stack pointer.
 
 **Key properties**
 - Cooperative (explicit yield), deterministic scheduling possible in debug mode
 - Fixed stacks (typically 256KB for sim fibers, 256KB for net fibers), recycled from pools via `apool_t`
-- **Tracy builds require larger stacks** — Tracy instrumentation adds significant frame overhead; use ≥128KB for any fiber that runs instrumented code (see `TRACY_ENABLE` guard in `p008_net_repl_server.c` for example)
+- **Tracy builds require larger stacks** — Tracy instrumentation adds significant frame overhead; use >= 128KB for any fiber that runs instrumented code
 - Fiber stacks are allocated in a separate pool from fiber context/metadata to preserve debuggable call stacks
-- GCC stack-protector canary (`%fs:0x28` on x86-64) is saved/restored across context swaps to prevent false stack-smash detection
+- GCC stack-protector canary (`%fs:0x28` on x86-64) is saved/restored across context swaps to prevent false stack-smash detection (`stack_canary.h`)
 - No blocking on OS primitives inside fibers; waiting yields to scheduler
 
-### 2.1.1 Implementation Strategy (C11)
-The job system initializes **N worker threads** at startup (typically = physical cores or logical cores depending on profiling). Each worker runs:
+### 3.2 Implementation
 
-1. Pop a ready job from its local queue  
-2. Execute the job on a fiber  
+Key files:
+- `include/ferrum/job/system.h` — `job_system_t`, worker init, dispatch API
+- `include/ferrum/job/counter.h` — atomic dependency counters
+- `include/ferrum/job/spinlock.h` — `job_spinlock_t` (CAS spinlock for fiber contexts)
+- `include/ferrum/job/ws_deque.h` — work-stealing deque
+- `include/ferrum/job/instrumentation.h` — Tracy zone instrumentation
+
+The job system initializes **N worker threads** at startup (typically = physical cores). Each worker runs:
+
+1. Pop a ready job from its local deque
+2. Execute the job on a fiber
 3. If job waits, fiber yields; worker immediately continues with other work
 
-If its local queue is empty, the worker **steals** jobs from other workers.
+If its local queue is empty, the worker **steals** jobs from other workers' tails.
 
-### 2.2 Job Scheduling and Dependency Graphs
-Each worker owns a local deque. Work stealing takes from another worker’s tail to reduce contention.
-
-**Dependencies**
-- **Atomic counters** represent outstanding work.
-- Parent job spawns children: increments counter; children decrement on completion.
-- Waiting does **not block**: it parks the current fiber until the counter reaches zero.
-
-#### Concurrency model comparison (C11 framing)
-- OS threads: expensive switches, blocking waits waste CPU.
-- Async/await: great for IO, but CPU-heavy jobs benefit more from fibers.
-- Fiber job system: ultra-cheap cooperative switches; excellent for CPU-bound game workloads.
-
-### 2.3 Safety and Failure Containment in C11
-C11 provides no compiler-enforced memory safety. Ferrum-Engine-C addresses this with engineering constraints:
-
-- **Explicit ownership contracts** in every API
-- **Handles + generation counters** instead of raw pointers in gameplay-facing layers
-- **Arena lifetime rules** (frame/level) to prevent accidental long-lived references
-- **Failure containment:** jobs return status codes; scheduler isolates failures and can trigger safe shutdown in debug builds
+### 3.3 Dependencies and Safety
+- **Atomic counters** represent outstanding work
+- Parent job spawns children: increments counter; children decrement on completion
+- Waiting does **not block**: it parks the current fiber until the counter reaches zero
+- Fiber-code paths use `job_spinlock_t` instead of C11 `mtx_t` to avoid blocking OS threads
+- OS-thread sleep/wake uses `pthread_mutex_t` + `pthread_cond_t`
+- Fiber wait/wake uses a 4-state atomic protocol (`RUNNING -> WAITING -> SIGNALED -> RUNNING`)
 
 ---
 
-## 3. Memory Architecture: Arenas and Deterministic Allocation
+## 4. Memory Architecture: Arenas and Deterministic Allocation
 
-### 3.1 Arena Allocation Strategy
-Arenas reserve large contiguous blocks and fulfill allocations by bumping a pointer.
+Source: `src/memory/`, Headers: `include/ferrum/memory/`
 
-#### 3.1.1 Frame Arenas (Bump Allocators)
+### 4.1 Allocator Types
+
+| Allocator | Header | Purpose |
+|-----------|--------|---------|
+| `arena_t` | `arena.h` | Bump allocator for transient/frame data |
+| `pool_t` | `pool.h` | Fixed-size block pool for components |
+| `apool_t` | `apool.h` | Aligned pool for fiber stacks |
+| `vm_alloc_t` | `vm_alloc.h` | Virtual memory page allocator |
+
+- **Thread-safe arena allocator** with atomic bump pointer for multi-worker use.
+- Tracy memory tracking integration via `alloc_tracy/`.
+
+### 4.2 Frame Arenas (Bump Allocators)
 Per-worker **frame arena**:
-- used for transient data (visibility lists, temporary collision pairs, UI vertex buffers)
-- reset at end of frame
-- alignment-safe allocations
+- Used for transient data (visibility lists, temporary collision pairs, UI vertex buffers)
+- Reset at end of frame
+- Alignment-safe allocations
 
-#### 3.1.2 Level Arenas
+### 4.3 Level Arenas
 A **level arena** holds data valid for the duration of a map:
-- static terrain meshes
-- navigation data
-- loaded entity state  
-Freed wholesale during map transition.
+- Static terrain meshes, navigation data, loaded entity state
+- Freed wholesale during map transition
 
-### 3.2 Integration with ECS
+### 4.4 Integration with ECS
 ECS storage is designed to be arena-backed or pool-backed to control fragmentation:
-
-- stable component pools for long-lived components
-- dedicated arenas for high-churn subsystems (particles, projectiles)
+- Stable component pools for long-lived components
+- Dedicated arenas for high-churn subsystems (particles, projectiles)
 
 ---
 
-## 4. Entity Component System (ECS) Implementation
+## 5. Entity Component System (ECS) Implementation
+
+Source: `src/ecs/`, Headers: `include/ferrum/ecs/`
 
 Ferrum-Engine-C uses a **hybrid ECS** combining sparse sets for general entities with **homogeneous entity pools** for high-throughput batch processing.
 
-### 4.1 Sparse Set Storage (General Entities)
+### 5.1 Core Types
 
-The core ECS uses sparse sets for flexible component storage:
+- `entity_t` — Entity handle with index + generation counter (`entity.h`)
+- `ecs_sparse_set_base_t` — Generic sparse set storage (`sparse_set.h`)
+- `ecs_world_t` — World registry owning entity pool and component stores (`world.h`)
+- `ecs_entity_pool_t` — Entity allocation pool with generation tracking
 
-- **O(1) lookup:** sparse array maps entity index → dense index
+### 5.2 Sparse Set Storage (General Entities)
+
+- **O(1) lookup:** sparse array maps entity index -> dense index
 - **O(1) add/remove:** swap-and-pop removal, append insertion
 - **Cache-friendly iteration:** dense arrays are contiguous
 - **Generation counters:** detect use-after-destroy via entity handles
 
-Sparse sets are ideal for heterogeneous entities where components are added/removed dynamically (players, unique objects, interactables).
+### 5.3 Homogeneous Entity Pools (Batch Processing)
 
-### 4.2 Homogeneous Entity Pools (Batch Processing)
+For compute-intensive entities with fixed component sets, dedicated **pool-per-type** storage provides maximum throughput.
 
-For compute-intensive entities with fixed component sets, dedicated **pool-per-type** storage provides maximum throughput:
+### 5.4 Entity Attributes
 
-```c
-// All NPCs have identical components - store together
-typedef struct npc_data {
-    vec3_t position;
-    vec3_t velocity;
-    float health;
-    uint32_t ai_state;
-} npc_data_t;
+Source: `src/entity/`, Headers: `include/ferrum/entity/`
 
-pool_t npc_pool;  // 10k NPCs, contiguous memory
+- `entity_attrs.h` — Per-entity attribute key-value table
+- `entity_event_flags.h` — Event flag bitmask for entity state changes
 
-// All projectiles have identical components
-typedef struct projectile_data {
-    vec3_t position;
-    vec3_t velocity;
-    float lifetime;
-    entity_t owner;
-} projectile_data_t;
+### 5.5 Systems as Pipeline Stages
 
-pool_t projectile_pool;  // 50k projectiles, contiguous memory
-```
-
-**Advantages:**
-
-- **Perfect cache utilization:** All data for entity type is packed
-- **No sparse lookups:** Direct index into pool storage
-- **SIMD-friendly:** Can process 4/8 entities per instruction with SoA layout
-- **Predictable memory:** Fixed capacity, no fragmentation
-
-**When to use each:**
-
-| Homogeneous Pools | Sparse Sets |
-|-------------------|-------------|
-| High-volume similar entities (NPCs, projectiles, particles) | Heterogeneous entities (player, unique objects) |
-| Hot-path systems (physics, AI batch updates) | Rarely-queried components |
-| Fixed component set at spawn | Components added/removed dynamically |
-| Thousands+ entities of same type | Dozens of unique entities |
-
-### 4.3 Systems as Pipeline Stages
-
-Systems follow the pure functional transformation model (§1.0.1):
-
+Systems follow the pure functional transformation model:
 - **Input/output separation:** Systems read from source arrays, write to destination arrays
-- **Parallel chunking:** Large pools are split across jobs (e.g., 1k entities per job)
+- **Parallel chunking:** Large pools are split across jobs
 - **Counter-based dependencies:** Stage N+1 waits on Stage N's completion counter
 
-```c
-// Example: velocity integration as parallel jobs
-void integrate_positions_job(void *user) {
-    integrate_args_t *args = user;
-    // Read from: args->velocities_in, args->positions_in
-    // Write to:  args->positions_out (disjoint from input)
-    for (uint32_t i = args->start; i < args->end; ++i) {
-        args->positions_out[i] = vec3_add(
-            args->positions_in[i],
-            vec3_scale(args->velocities_in[i], args->dt)
-        );
-    }
-}
+---
 
-// Dispatch N parallel jobs, wait on counter
-job_counter_t done;
-job_counter_init(&done, 0);
-for (int chunk = 0; chunk < num_chunks; ++chunk) {
-    job_dispatch(sys, integrate_positions_job, &args[chunk], 0, &done);
-}
-job_counter_wait(sys, &done);
-// Now positions_out is complete; swap buffers for next frame
-```
+## 6. Math Library
 
-### 4.4 Relationship/Parameterization Pattern (C11)
-Relationships are modeled via components containing **entity handles**, e.g.:
+Source: `src/math/`, Headers: `include/ferrum/math/`
 
-- `target_t { entity_t target; }`
-- `parent_t { entity_t parent; }`
-
-Queries can filter by presence of relationship components and validate targets via generation checks.
+| Header | Contents |
+|--------|----------|
+| `vec2.h` | 2D vector operations |
+| `vec3.h` | 3D vector operations |
+| `vec4.h` | 4D vector operations |
+| `quat.h` | Quaternion math (multiply, rotate, slerp, conjugate) |
+| `quat_angle.h` | Quaternion-angle conversions, decomposition |
+| `mat4.h` | 4x4 matrix (transform, projection, inverse) |
+| `constants.h` | Pi, epsilon, common constants |
+| `common.h` | Shared utility macros (min, max, clamp) |
 
 ---
 
-## 5. Rendering Pipeline: Modern OpenGL 4.6 (AZDO)
+## 7. Physics and Simulation Architecture
 
-Rendering targets OpenGL 4.6 features and “Approaching Zero Driver Overhead” patterns:
+Source: `src/physics/`, Headers: `include/ferrum/physics/`
 
-- Direct State Access (DSA)
-- persistent mapped buffers where appropriate
-- mult-draw indirect (optional) for large crowds
-- careful state change minimization
+The engine implements its own full-featured physics subsystem with no third-party dependencies. It uses a deterministic fixed timestep (default 60Hz) with configurable substeps.
 
-### 5.0 Render Pipeline Graph (Stages & Passes)
-Core renderer exposes a pipeline graph:
-- Stages: skybox, forward shading, optional post chain stub.
-- Pass ordering deterministic; resources bound via AZDO-friendly layouts.
-- ECS/job integration: pipeline execution jobs with explicit dependencies.
+### 7.1 Physics World
 
-### 5.0.1 Simplified Surface Shader (Non-PBR)
-Materials use a minimal parameter set:
-- `base_color`, `roughness_like`, `spec_like`, `emissive`, optional `normal_map`.
-- glTF metallic-roughness mapped deterministically (e.g., `roughness_like = roughness`, `spec_like = 1 - metallic`).
-- Mapping is lossy but stable; documented for reproducibility.
+`phys_world_t` (`world.h`) is the top-level container owning:
 
-### 5.0.2 Video Capture Module
-GPU-buffered video capture (`fr_video_capture_t`) records the framebuffer
-to MP4 without stalling the render loop.  Architecture:
-- 4-slot PBO ring for async GPU→CPU readback (fence-sync, non-blocking).
-- 8-slot SPSC lock-free frame ring for render→encode thread transfer.
-- Dedicated encode pthread pipes raw RGBA to ffmpeg (H.264 / libx264).
-- Render-side decimation to target FPS (default 30) — only unique frames.
-- Source: `src/renderer/video_capture/`, header: `include/ferrum/renderer/video_capture.h`.
+- **Double-buffered body pool** (`phys_body_pool_t`) for lock-free read during render
+- **Collider array** and per-body AABBs
+- **Shape storage:** spheres, boxes, capsules, mesh shapes, convex hulls, halfspaces, compound convex shapes, point colliders
+- **Persistent manifold cache** with warmstarting
+- **Per-frame arena** for transient collision data
+- **Persistent static BVH** for static geometry acceleration
+- **Joint array** for constraint-based connections
+- **Collision exclusion set** for animation bones and joint-connected bodies
+- **Impact event buffer** for gameplay callbacks
+- **Animation substep callbacks** for kinematic/motor-driven animation integration
 
-### 5.1 Direct State Access (DSA) and Bindless (Optional)
-- DSA removes bind-to-edit patterns and reduces global state coupling.
-- Bindless textures can remove texture binding limits (if supported), but must be optional and capability-checked.
+Configuration via `phys_world_config_t` controls pool sizes, solver parameters, sleep thresholds, CCD, substep count, island limits, and XPBD compliance.
 
-### 5.2 Clustered Forward Shading
-Clustered forward shading supports thousands of dynamic lights:
+### 7.2 Collision Detection
 
-- compute step generates cluster bounds
-- compute culls lights into per-cluster lists (SSBO)
-- forward pass shades using only relevant lights per pixel
+**Broadphase** (`src/physics/broadphase/`):
+- Spatial hash grid (`spatial_grid.h`)
+- Static BVH for immovable geometry (`static_bvh.h`)
+- Parallel broadphase (`broadphase_par.h`)
 
-### 5.3 Static Lightmapping (Hybrid)
-Static geometry uses baked lightmaps; dynamic lights add on top through clustered shading.
+**Narrowphase** (`src/physics/collision/`):
+- Primitive pair tests: box-box, box-capsule, capsule-capsule, sphere simplification
+- Halfspace collision
+- GJK/EPA for convex hull pairs (`gjk_epa.h`, `gjk_support.h`)
+- Mesh narrowphase via BVH traversal (`mesh_narrowphase.h`)
+- Convex decomposition for mesh approximation (`convex_decompose.h`)
+- Compound collider support (`compound_collider.h`, `convex_compound.h`)
+- Speculative contacts and CCD (`ccd.h`, `ccd_dynamic.h`)
 
-### 5.4 GPU Geometry Clipmaps for Terrain
-Clipmaps provide constant geometry memory usage:
+**Contact management:**
+- Manifold build and caching (`manifold.h`, `manifold_cache.h`, `manifold_build.h`)
+- Cache commit with warmstarting decay (`cache_commit.h`)
+- Impact event generation above configurable threshold
 
-- nested grids centered on camera
-- toroidal updates (offset snapping)
-- height sampled in vertex shader
-- optional streaming of height/weight maps via PBOs (asynchronous)
+### 7.3 Constraint Solver (Dual Solver Architecture)
 
-### 5.5 Asset Streaming and PBO Pipeline
-A dedicated IO thread:
-- reads & decompresses assets into CPU buffers
-- stages into PBOs or persistently mapped buffers
-- render thread issues GPU uploads without stalls
+The physics engine uses a **tiered dual-solver** architecture:
 
-### 5.6 Scene Management & World Streaming (P_012)
-- World partitioned into streaming regions/chunks with dependency metadata.
-- Seamless transitions via prefetch/unload policies; cross-scene handoff preserves entity IDs/state.
-- glTF 2.0 import: meshes, skeletons/skins, materials mapped to simplified surface shader; KTX2/PNG textures, sRGB handling.
-- Lightmaps: UV2 generation and baking pipeline; lightmap volumes/zones integrate with dynamic clustered lighting.
-- Skybox integrated as a pipeline stage; asset streaming aligns with networking interest sets.
+- **TGS (Temporal Gauss-Seidel)** (`tgs_solve.h`): velocity-level solver for T0/T1 tier bodies (high-accuracy stacking, contacts). Operates per-island.
+- **XPBD (Extended Position-Based Dynamics)** (`xpbd_solve.h`): position-level solver for T2-T4 tier bodies (unconditionally stable, no island decomposition required).
+- **CG (Conjugate Gradient)** solver (`solver/cg_solve.h`, `solver/cg_types.h`): optional linear system solver for improved convergence on stiff joint chains.
+
+Supporting infrastructure:
+- Island decomposition and graph coloring (`island.h`, `island_build.h`, `constraint_color.h`)
+- Tier classification (`tier_classify.h`, `tier_list.h`) to assign bodies to the appropriate solver
+- Solver transition logic (`solver_transition.h`)
+- Position projection for post-solve stabilization (`position_projection.h`)
+- Baumgarte stabilization (`stabilization.h`)
+- Velocity sync between solver tiers (`velocity_sync.h`)
+
+**Parallel stages** (`src/physics/stages/par/`):
+- `broadphase_par.h`, `narrowphase_par.h`, `manifold_build_par.h`
+- `constraint_build_par.h`, `tgs_solve_par.h`, `xpbd_solve_par.h`
+- `integrate_par.h`, `spatial_update_par.h`, `stabilization_par.h`
+- `tier_classify_par.h`, `collision_fused_par.h`
+
+### 7.4 Joint System
+
+The joint system (`joint.h`) supports 11 joint types:
+
+| Type | Description | Rows |
+|------|-------------|------|
+| `PHYS_JOINT_DISTANCE` | Spring-damper distance constraint | 1 |
+| `PHYS_JOINT_BALL` | 3-DOF ball/spherical joint | 3 |
+| `PHYS_JOINT_HINGE` | 1-DOF revolute joint | 5 |
+| `PHYS_JOINT_LOCK` | 0-DOF rigid attachment | 6 |
+| `PHYS_JOINT_COPY_ROTATION` | Match orientation | 3 |
+| `PHYS_JOINT_LIMIT_ROTATION` | Per-axis angular limits | up to 3 |
+| `PHYS_JOINT_LIMIT_POSITION` | Per-axis positional limits | up to 3 |
+| `PHYS_JOINT_AIM` | Track-to/damped-track | 2 |
+| `PHYS_JOINT_IK` | IK chain pair | 3 |
+| `PHYS_JOINT_CONE_TWIST` | Ball + per-axis angular limits | 3-6 |
+| `PHYS_JOINT_TWIST` | Single-axis twist rotation | 5-6 |
+
+Joint features:
+- Compliance (XPBD), damping, warmstarting via cached lambdas
+- Yield and break strength (permanent deformation / removal thresholds)
+- Angular and linear drive flags for soft return-to-rest behavior
+- Rest-pose relative orientation for limit reference frames
+- CG solver mass scaling for improved joint chain conditioning
+
+### 7.5 Joint Drivers
+
+`joint_driver.h` provides 5 actuation behavior types that modify constraint rows:
+
+| Driver | Behavior |
+|--------|----------|
+| `PHYS_DRIVER_MOTOR` | Constant-velocity motor |
+| `PHYS_DRIVER_SPRING` | Restoring spring with damping |
+| `PHYS_DRIVER_LINEAR_ACTUATOR` | Position-targeting with speed limit |
+| `PHYS_DRIVER_SERVO` | PD (proportional-derivative) controller |
+| `PHYS_DRIVER_AERO_HYDRAULIC` | Velocity-dependent drag / flow-limited force |
+
+### 7.6 Biomechanical Muscle System
+
+Source: `src/physics/muscle/`, Headers: `include/ferrum/physics/muscle/`
+
+A biomechanical muscle model for physically-driven character animation:
+
+- `activation.h` — First-order activation dynamics (excitation -> activation)
+- `force_curve.h` — Hill muscle force model (force-length-velocity curves)
+- `tendon.h` — Series elastic tendon element
+- `geometry.h` — Muscle attachment points, wrapping surfaces, moment arm computation
+- `muscle_unit.h` — Composite muscle unit evaluating the full pipeline to produce joint torque
+- `muscle_pair.h` — Agonist/antagonist muscle pairs for bidirectional actuation
+
+### 7.7 Additional Physics Features
+
+- **Queries:** raycasting (`raycast.h`), overlap tests (`overlap.h`, `phys_overlap.h`), closest point (`closest_point.h`)
+- **Prediction mode:** skips collision response for client-side prediction (`prediction.h`)
+- **Snapshots:** physics state serialization for networking (`snapshot.h`)
+- **Deferred mutations:** command-based body mutation applied atomically at tick end (`phys_cmd.h`)
+- **Amortized computation:** spread expensive recalculations across ticks (`amortized.h`)
+- **Step planning:** variable substep scheduling (`step_plan.h`)
+- **Physics job integration:** `phys_jobs.h`, `phys_tick_runner.h` for parallel tick dispatch
 
 ---
 
-## 6. Physics and Simulation Architecture (No Third-Party Physics)
+## 8. Animation System
 
-The engine implements its own physics subset:
+Source: `src/animation/`, Headers: `include/ferrum/animation/`
 
-- deterministic fixed timestep (e.g., 60Hz)
-- rigid body basics (integrator + constraints as incremental milestones)
-- broadphase acceleration (spatial hash / sweep-and-prune)
-- narrowphase AABB + simple primitives as baseline
+### 8.1 Skeleton and Animation Data
 
-### 6.1 Rigid Bodies & Constraints (P_006)
-- Integrator: semi-implicit Euler; fixed timestep; sleeping/wake based on thresholds.
-- Broadphase: spatial hash; optional sweep-and-prune.
-- Narrowphase: contacts/manifolds for primitives; restitution/friction coefficients.
-- Solver: sequential impulses; stable stacking; warm starting optional.
-- Constraints: distance, ball-and-socket, hinge (limits/motor); articulated bodies supported.
-- Sensors/ray tests: overlap sets; force fields; non-solid interactions.
+- `fskel_format.h` / `fskel_loader.h` — Custom skeleton file format and loader
+- `bone_to_body.h` — Bone-to-physics-body mapping
+- `bone_collider.h` — Per-bone collision shape descriptors
+- `bone_joint_desc.h` — Per-bone joint configuration for ragdoll generation
+- `bone_muscle_desc.h` — Per-bone muscle attachment descriptors
+- `transform_map.h` — Skeleton transform hierarchy
+- `copy_track.h` — Copy constraint track evaluation
 
-Synchronization:
-- physics reads transforms → simulates → writes back transforms
-- rendering interpolates between previous/current physics states for smooth visuals
+### 8.2 Ragdoll System
 
-Force fields/sensors:
-- sensor volumes produce overlap sets, apply forces without collision response
+`ragdoll.h` — Full ragdoll with bone-to-body mapping and motor-driven animation:
 
----
+- Creates one physics body per bone (capsule-shaped)
+- Ball joints between parent-child bones
+- Motor targets from animation solver output (per-bone strength 0.0-1.0)
+- Bidirectional sync: animation -> motor targets, physics -> bone world transforms
 
-## 7. Animation System
+### 8.3 Physics-Animation Constraint Solver
 
-### 7.1 Data Pipeline
-- keyframed skeletal animation: translation/rotation/scale curves
-- rotations interpolated with quaternion SLERP, others with LERP
-- blending between multiple clips
+- `constraint_solver.h` — Constraint evaluation for animation
+- `constraint_types.h` / `constraint_params.h` — Constraint type definitions
+- `constraint_space.h` — Local/world space conversions
+- `anim_constraint_rows.h` — Animation constraint row builders
+- `limit_constraints.h` — Joint limit constraint helpers
+- `ik_solver.h` — Inverse kinematics solver
+- `surface_vol.h` — Surface volume calculations for muscle wrapping
 
-### 7.2 GPU Skinning
+### 8.4 GPU Skinning
+
 GPU skinning is required for crowd scale:
-
-- bone palette uploaded via UBO/SSBO/TBO (capability-based)
-- vertex shader applies weighted bone transforms
-
-### 7.3 Clip Import & Evaluation (P_012)
-- Import clips (translation/rotation/scale) and retarget to skeletons.
-- CPU jobs evaluate keyframes and produce bone palettes uploaded per-frame.
-- Networking: `animation_state` schema replicated for consistent animation across clients.
+- Bone palette uploaded via UBO/SSBO (`bone_palette.h`)
+- Vertex shader applies weighted bone transforms
+- Skinning pipeline in `include/ferrum/renderer/skinning/`
 
 ---
 
-## 8. AI and Crowd Simulation
+## 9. Rendering Pipeline
 
-### 8.1 Proximity-Based Scheduler (AI LOD)
-AI updates are LOD’d based on distance to players:
+Source: `src/renderer/`, Headers: `include/ferrum/renderer/`
 
-- spatial hash for neighbor queries
-- LOD buckets:
-  - near: update every frame
-  - mid: update every N frames
-  - far: sparse updates + simplified movement/animation
+Rendering targets OpenGL 4.6 with "Approaching Zero Driver Overhead" (AZDO) patterns:
+- Direct State Access (DSA)
+- Persistent mapped buffers where appropriate
+- Multi-draw indirect (optional) for large crowds
+- Careful state change minimization
 
-### 8.2 Utility AI + Behavior Trees (Data-Oriented)
-- utility scores decide goals
-- behavior tree executes goal steps
-- implemented as ECS systems operating over packed arrays, scheduled via fibers
+### 9.1 GL Abstraction Layer
 
-### 8.3 Scripting, HTN, and Hierarchical Pathfinding (P_013)
-- Dynamic modules via `dlopen` with versioned ABI; manifest-driven attribute registration.
-- Behavior Trees and HTN planning integrated; hierarchical pathfinding (zones→cells) for large worlds.
-- Networking: `ai_state` and `custom_attributes` replicated; server authoritative decisions.
+- `gl_loader.h` — Runtime GL function pointer resolution (no GLEW dependency in core)
+- `gl_constants.h` — GL enum constant definitions
+
+### 9.2 Render Pipeline Graph (9-Pass Architecture)
+
+`render_pipeline.h` defines an ordered 9-pass pipeline:
+
+| Pass | Type | Purpose |
+|------|------|---------|
+| 0 | `RENDER_PASS_SHADOW` | Per-light shadow map generation |
+| 1 | `RENDER_PASS_DEPTH_PRE` | Optional depth pre-pass for early-Z |
+| 2 | `RENDER_PASS_CASTER` | Precomputed shadow maps for static lights |
+| 3 | `RENDER_PASS_LIGHT_CULL` | Tiled light assignment |
+| 4 | `RENDER_PASS_FORWARD` | Main shading: geometry + lighting |
+| 5 | `RENDER_PASS_SKYBOX` | Drawn at max depth after forward |
+| 6 | `RENDER_PASS_DEBUG` | Debug lines, gizmos, wireframes |
+| 7 | `RENDER_PASS_POST` | Tone mapping, gamma, FXAA |
+| 8 | `RENDER_PASS_UI` | 2D overlay |
+
+Each pass has optional begin/submit/end callbacks, a per-pass draw list, and an FBO binding. Pipeline execution is deterministic.
+
+### 9.3 Draw List and Sort Key System
+
+Source: `src/renderer/draw/`
+
+- `draw_list.h` — Flat array of draw commands for a single render pass, cleared and reused each frame
+- `draw_sort.h` — 64-bit packed sort keys (shader > material > mesh > depth) for state-change minimization
+- O(n) radix sort on 64-bit keys (8-pass, stable)
+
+Each `draw_command_t` contains: sort key, mesh handle, submesh index, instance offset/count.
+
+### 9.4 Mesh Infrastructure
+
+Source: `src/renderer/mesh/`, Headers: `include/ferrum/renderer/mesh/`
+
+- `mesh_handle.h` — Opaque handle type with index + generation for stale reference detection
+- `mesh_registry.h` — Central mesh store mapping handles to static/skeletal mesh data
+- `static_mesh.h` — Static mesh (VAO + index/vertex counts)
+- `skeletal_mesh.h` — Skeletal mesh (static mesh + bone data)
+
+The mesh registry uses a freelist for O(1) alloc/free and supports both mesh types in a single flat array of union slots.
+
+### 9.5 Shader System
+
+- `shader_program.h` — Shader compilation, linking, and binding wrapper with explicit GL function pointers
+- `shader_uniforms.h` — Cached uniform location lookup
+
+### 9.6 VAO/VBO Primitives
+
+- `vao.h` / `vao_attribute.h` — Vertex Array Object wrapper with attribute binding
+- `vbo.h` — Vertex/Index Buffer Object wrapper
+
+### 9.7 UBO System
+
+Source: `src/renderer/ubo/`
+
+- `frame_params_ubo.h` — Per-frame parameters (view, projection, camera position)
+- `instance_data_ubo.h` — Per-instance transform data
+
+### 9.8 Scene Graph
+
+Source: `src/renderer/scene/`
+
+- `scene_graph.h` — Hierarchical scene node tree
+- `scene_node.h` — Individual scene node with transform and mesh reference
+
+### 9.9 glTF Import
+
+Source: `src/renderer/gltf/`
+
+- `gltf_loader.h` — glTF 2.0 mesh/skeleton/material import
+
+### 9.10 Skinning Pipeline
+
+Source: `src/renderer/skinning/`
+
+- `skinning.h` — Top-level skinning API
+- `skinning/skin.h` — Skin instance data
+- `skinning/pipeline.h` — GPU skinning dispatch
+- `skinning/components.h` — ECS skinning components
+- `skinning_shader.h` — Skinning shader source
+- `bone_palette.h` — Bone matrix upload
+
+### 9.11 Debug Rendering
+
+Source: `src/renderer/debug_lines/`
+
+- `debug_lines.h` — Immediate-mode debug line rendering
+- `debug_correction_lines.h` — Physics correction visualization
+
+### 9.12 Video Capture Module
+
+Source: `src/renderer/video_capture/`
+
+GPU-buffered video capture (`fr_video_capture_t`) records the framebuffer to MP4 without stalling the render loop:
+- 4-slot PBO ring for async GPU->CPU readback (fence-sync, non-blocking)
+- 8-slot SPSC lock-free frame ring for render->encode thread transfer
+- Dedicated encode pthread pipes raw RGBA to ffmpeg (H.264 / libx264)
+- Render-side decimation to target FPS (default 30)
+
+### 9.13 Simplified Surface Shader (Non-PBR)
+Materials use a minimal parameter set:
+- `base_color`, `roughness_like`, `spec_like`, `emissive`, optional `normal_map`
+- glTF metallic-roughness mapped deterministically
 
 ---
 
-## 9. Networking Architecture: Massive Co-op
+## 10. Aegis Scripting VM
 
-This section describes the *runtime shape* of networking: which parts run on OS threads, which run on fibers, and what other subsystems are allowed to see.
+Source: `src/aegis/`, Headers: `include/ferrum/aegis/`
+
+Aegis is a custom bytecode virtual machine for game scripting with a coroutine-based execution model.
+
+### 10.1 VM Architecture
+
+- **Register-based:** 256 x 128-bit general-purpose registers (4 KB register file, L1-friendly)
+- **Fixed-width instructions:** 128-bit (4 x uint32_t) per instruction
+- **Coroutine model:** resume with event, execute until yield/exit/fuel exhaustion, return update set
+- **Fuel-limited execution:** configurable instruction budget per resume to prevent runaway scripts
+
+Register union supports: i32, i64, f32, f64, vec2, vec3, vec4 (quaternion), entity_id, handle, raw bytes.
+
+### 10.2 Instruction Set
+
+74+ opcodes organized by category:
+
+| Category | Opcodes |
+|----------|---------|
+| Coroutine control | YIELD, RESUME, EXIT |
+| Function calls | CALL, RET |
+| Async operations | WAIT, POLL |
+| Event access | EVENT_TYPE, EVENT_SRC, EVENT_FIELD |
+| World queries | QUERY_ENTITY, GET_ATTR, ENTITY_COUNT, ENTITY_AT |
+| Async world queries | VIS_TEST (raycast), NAV_QUERY (navmesh) |
+| State mutation | BUILD_UPDATE, TARGET_ENTITY, SET_FIELD, ADD_HINT, PUSH_UPDATE |
+| Data movement | MOV, LOAD_IMM, LOAD_IMM64 |
+| Integer arithmetic | ADD, SUB, MUL, DIV, MOD, NEG |
+| Float arithmetic | FADD, FSUB, FMUL, FDIV, FNEG |
+| Bitwise/logic | AND, OR, XOR, NOT |
+| Comparison | EQ, NE, LT, LE, GT, GE (integer), FLT, FLE, FGT, FGE (float) |
+| Control flow | JMP, JMP_IF, JMP_IF_NOT |
+| Memory | ALLOC, LOAD, STORE, STATIC_LOAD, STATIC_STORE, PUSH, POP |
+| Type conversion | I32_TO_F32, F32_TO_I32, I64_TO_F64, F64_TO_I64, F64_TO_F32, F32_TO_F64 |
+| Vector/quat math | VEC3_ADD/SUB/MUL/SCALE/DOT/CROSS/LEN/NORM, QUAT_MUL, QUAT_ROTATE, VEC3_PACK |
+| Event signaling | SIGNAL (rate-limited), SUBSCRIBE, AWAIT_EVENT |
+| Environment | CLOCK, SIN, COS |
+| Debug | SHOW |
+
+### 10.3 Memory Model
+
+Three-zone memory per VM (`aegis_memory.h`):
+- **Static zone:** persistent across yields (global variables)
+- **Heap zone:** bump-allocated, reset on yield (temporary data)
+- **Call stack:** PUSH/POP for function call frames
+
+### 10.4 Runtime System
+
+`aegis_runtime.h` manages script lifecycle:
+
+- **Script registry:** up to 128 registered scripts, lazily spawned on first matching event
+- **Script instances:** each gets own VM, event queue, and arena buffer
+- **Fiber integration:** scripts dispatch as long-lived fibers on the job system; force-yield maps to `job_yield()`
+- **Topic-based pub/sub:** `aegis_topic_table` routes events to subscribed scripts
+- **Rate limiting:** per-script signal rate limiting to prevent event storms
+- **Idle tracking:** auto-unschedule scripts that exited and haven't received events within grace window
+- **Async task buffer:** shared buffer for VIS_TEST/NAV_QUERY results
+- **Entity snapshot view:** read-only entity state for world queries, updated each tick
+
+### 10.5 Assembler
+
+`aegis_asm.h` — Text assembler for compiling human-readable mnemonics to bytecode.
+Source: `src/aegis/aegis_asm_parse.c`, `src/aegis/aegis_asm_compile.c`
+
+### 10.6 Operation Dispatch
+
+Source: `src/aegis/ops/` — 20+ files, one per opcode category:
+- Arithmetic, float arithmetic, comparison, float comparison
+- Data movement, flow control
+- Entity queries, entity iteration
+- Event handling, signal, poll, await
+- Async operations
+- State update, update push
+- Vec3, quaternion math
+- Type conversion
+
+---
+
+## 11. Editor
+
+Source: `src/editor/`, Headers: `include/ferrum/editor/`
+
+The editor is a substantial subsystem providing both a TUI (terminal) editing interface and a graphical scene editor.
+
+### 11.1 Scene Editor (Graphical)
+
+Source: `src/editor/scene/`, Headers: `include/ferrum/editor/scene/`
+
+A standalone SDL2/OpenGL application with Clay UI that connects to a game server:
+
+- `scene_main.h` — Top-level context (`scene_editor_t`) owning SDL2 window, GL context, Clay UI backend, panel layout, entity store, selection, viewport renderer, and server connection
+- `scene_panel.h` — Four-region panel layout with resizable dividers
+- `scene_ui.h` — Interactive UI state (actions, scroll, mouse)
+- `scene_input.h` — SDL2 event dispatch
+- `scene_frame.h` — Per-frame update logic
+- `scene_connection.h` — TCP/UDP connection to game server
+- `scene_sync.h` — Offline queue and entity state synchronization
+- `scene_cmd.h` — Scene editor command dispatch
+- `snap_state.h` — Grid/snap state for precise positioning
+
+### 11.2 3D Viewport Rendering
+
+Headers: `include/ferrum/editor/scene/scene_viewport_render.h`
+
+Off-screen framebuffer rendering displayed in Clay UI:
+- FBO with color texture + depth renderbuffer, resized dynamically
+- Full 9-pass render pipeline integration
+- Blinn-Phong entity shader + grid line shader
+- Mesh registry for entity visualization (box, sphere, capsule, plane primitives + loaded FVMA meshes)
+- Orbit camera with mouse-driven navigation
+
+### 11.3 Clay UI System
+
+Headers: `include/ferrum/editor/ui/`
+
+- `clay_backend.h` — OpenGL rendering backend for Clay UI
+- `clay_fonts.h` — Font atlas management
+- `clay_theme.h` — Color theme definitions
+- `glad_gl_loader.h` — GL loader for editor context
+
+### 11.4 Viewport Interaction
+
+Headers: `include/ferrum/editor/viewport/`
+
+- `viewport_camera.h` — Editor orbit camera (pitch, yaw, distance, target)
+- `viewport_gizmo.h` — Transform gizmo rendering
+- `selection_raycast.h` — Mouse-to-world raycasting for entity picking
+
+### 11.5 Editor Panels
+
+Headers: `include/ferrum/editor/panels/`
+
+- `inspector_widgets.h` — Property inspector UI widgets
+- `outliner_tree.h` — Entity hierarchy tree view
+- `panel_toolbar.h` — Toolbar panel
+
+### 11.6 Command System
+
+Source: `src/editor/commands/`
+
+The editor uses a JSON-RPC-style command dispatch system:
+
+- `edit_dispatch.h` — Command dispatch table with handler registration
+- `edit_cmd_ctx.h` — Command execution context
+- `edit_cmd_ring.h` — Lock-free command ring buffer for async command submission
+- `edit_commands.h` — 50+ registered commands including:
+  - Entity operations: spawn, delete, clone, move, rotate, scale, select/deselect
+  - Selection: by ID, regex pattern, proximity, touching, flood-fill, groups
+  - Scene I/O: save, load, source (batch command file)
+  - Physics control: pause, resume, step, reset, material assignment, joint creation
+  - Asset management: list, search, complete, browse
+  - Mesh modeling: create primitives, mode switch, extrude, inset, bevel, select elements, commit
+  - Scripting: script load/unload/list (Aegis integration)
+  - Aliases and cursor: named position markers, cursor push/pop/snap
+
+### 11.7 Undo/Redo System
+
+`edit_undo.h` — Ring-buffer undo stack with dedicated snapshot arena:
+- Forward/inverse command pairs recorded at mutation time
+- Grouped undo (multiple commands reversed atomically)
+- 16 MB default snapshot arena for entity state storage
+- Delta storage for simple ops (move/rotate) avoids full snapshots
+
+### 11.8 Mesh Editing Subsystem
+
+Source: `src/editor/mesh/`, Headers: `include/ferrum/editor/mesh/`
+
+Full mesh modeling toolkit:
+
+| Module | Purpose |
+|--------|---------|
+| `mesh_slot.h` | Editable mesh slot (vertex/index data) |
+| `mesh_edit.h` | Top-level mesh editing (16 simultaneous slots, selection bitsets) |
+| `mesh_selection.h` / `mesh_select.h` | Element selection (vertex/edge/face/polygroup/object modes) |
+| `mesh_commit.h` | Commit edited mesh to world entity |
+| `mesh_vao_format.h` | FVMA vertex format for GPU upload |
+| `mesh_snapshot.h` | Mesh state snapshot for undo |
+| `mesh_undo.h` | Mesh-specific undo integration |
+| `mesh_primitives.h` | Procedural primitives (box, sphere, cylinder, plane) |
+| `mesh_extrude.h` | Face extrusion |
+| `mesh_inset.h` | Face inset |
+| `mesh_bevel.h` | Edge beveling |
+| `mesh_bridge.h` | Edge/face bridging |
+| `mesh_subdivide.h` | Subdivision |
+| `mesh_merge.h` | Vertex/mesh merging |
+| `mesh_clip.h` | Mesh clipping |
+| `mesh_csg.h` | Constructive solid geometry operations |
+| `mesh_brush.h` | Brush-based sculpting |
+| `mesh_normals.h` | Normal recalculation |
+| `mesh_triangulate.h` | Polygon triangulation |
+| `mesh_transfer.h` | Mesh data transfer between slots |
+| `mesh_material.h` / `mesh_material_ops.h` | Per-face material assignment |
+| `mesh_uv.h` | UV coordinate editing |
+| `mesh_uv_pack.h` | UV atlas packing |
+| `mesh_uv_seam.h` | UV seam marking |
+| `mesh_uv_smart.h` | Smart UV projection |
+| `mesh_uv_transform.h` | UV transform operations |
+
+### 11.9 Editor Mode System
+
+Headers: `include/ferrum/editor/mode/`
+
+- `mode_manager.h` — Editor mode state machine
+- `mode_object.h` — Object manipulation mode
+
+### 11.10 Asset Registry
+
+`edit_asset_registry.h` — Server-side asset catalog:
+- Recursive directory scanning with type detection from file extension
+- Asset types: mesh (.glb, .obj), texture (.png, .ktx2, .jpg), material, prefab, script
+- Prefix listing, regex search, path completion
+- CRC32 content hash for change detection
+
+### 11.11 Editor Networking
+
+Source: `src/editor/client/`, Headers: `include/ferrum/editor/client/`
+
+Client-side editor networking:
+- `client_state_socket.h` / `client_state_dispatch.h` — State synchronization socket
+- `client_asset_cache.h` / `client_asset_download.h` — Asset download and caching
+- `client_mesh_render.h` — Remote mesh rendering
+- `client_cursor.h` — Collaborative cursor state
+- `client_editor_input.h` — Input event forwarding
+
+### 11.12 Additional Editor Infrastructure
+
+- `editor_ctx.h` — Editor context aggregator
+- `edit_entity.h` — Editor entity store (local mirror of server state)
+- `edit_selection.h` — Multi-entity selection state
+- `edit_history.h` — Command history log
+- `edit_serialize.h` — Level serialization (JSON)
+- `edit_io_thread.h` — Background I/O for save/load
+- `edit_physics_ctrl.h` — Physics simulation control (pause/step/reset)
+- `edit_script_env.h` / `edit_script_rebase.h` — Aegis script integration
+- `json_parse.h` — Lightweight JSON parser for command args
+- `protocol/edit_autosave.h` — Autosave protocol
+
+### 11.13 TUI Editor
+
+Source: `src/editor/controller/`
+
+- `ctrl_tui.h` — Terminal UI interface
+- `ctrl_cmd_defs.h` — TUI command definitions
+- `ctrl_conn.h` — TUI connection management
+- `ctrl_browse.h` — TUI asset browser
+- `ctrl_mesh_mode.h` — TUI mesh editing mode
+- `ctrl_log.h` — TUI log display
+
+---
+
+## 12. Networking Architecture: Massive Co-op
+
+Source: `src/net/`, Headers: `include/ferrum/net/`
 
 For a more detailed description of the runtime message flow and channel abstractions, see `ref/networking_runtime.md`.
 
-### 9.1 Transport Layer: UDP with Reliability Channels
-- Unreliable channel for high-rate state (movement)
-- Reliable ordered channel for critical events (inventory, dialogue, terrain edits)
+### 12.1 Transport Layer: UDP with Reliability Channels
 
-**Important layering rule:** retransmission, reordering, and packet reconstruction happen *above* the protocol/frame parsing layer and *before* any other subsystem reads messages. Subsystems should not parse RUDP frames; they should only consume an abstracted per-channel **reliable UDP stream**.
+- `udp_socket.h` — Platform socket wrapper (`src/net/udp/`)
+- `reliable_channel.h` — Reliable delivery with acknowledgments
+- `reliable_ordered_channel.h` — Reliable ordered delivery
+- `unreliable_channel.h` — Best-effort delivery for high-rate state
+- `ack_window.h` — Sliding ACK window for reliability tracking
 
-**Network condition emulation:** When built with `FR_NET_EMULATION` (`make EMU=1`), the socket IO layer routes outbound packets through an in-process delay queue that simulates latency, jitter, loss, reorder, and duplication. Configuration is set via `fr_engine_settings_mut()` before `freeze()`. See `ref/networking_callgraph.md` for the emulator call graph.
+**RUDP implementation** (`src/net/rudp/`):
+- `peer.h` — Per-peer RUDP state
+- `reliability.h` / `reliability_send.h` — Retransmission logic
+- `wire_frame.h` — Wire-level frame format
+- `stream.h` — Byte stream for serialization
 
-### 9.2 Client Networking Runtime (Threaded IO + Job Dispatch)
-On the client, networking runs on its own OS thread(s):
+**Network condition emulation** (`src/net/emulation/`):
+- `net_emulator.h` — In-process delay queue simulating latency, jitter, loss, reorder, duplication
+- Enabled via `FR_NET_EMULATION` / `make EMU=1`
 
-- **RX / reassembly thread:** receives UDP packets, reorders/reassembles reliable streams per channel, and pumps decoded messages into subscribed jobs.
-- **TX thread:** polls outbound channels for messages to send and emits UDP packets.
+### 12.2 Topic/Channel System
 
-**Channel abstraction:** subscriptions are to a topic/channel that behaves like a socket backed by a long ring buffer. The network threads are the only writers/readers of the OS socket; gameplay subsystems only see channel streams.
+Source: `src/net/topic/`, `src/net/channel/`
 
-**Subsystem boundary:** modules like spawned-entity management run on the job system (fiber-safe) and are fed an arena (with a pool-backed backing store) for allocating entities created by server commands.
+- `topic_channel.h` — Named pub/sub channels
+- `topic_dispatcher.h` — Message routing to subscribers
 
-### 9.3 Server Networking Runtime (One Fiber per Client)
-On the server, the network subsystem uses **one fiber per client** scheduled by a **dedicated networking job system**:
+### 12.3 Replication
 
-- Each client fiber maintains at least two fiber-local channels: **reliable** and **unreliable** (e.g., physics/motion updates).
-- Client fibers publish decoded inbound messages into a **global inbound topic/queue** consumed by simulation/gameplay jobs on other fibers.
-- Outbound simulation results are published into per-client outbound channels for the client fibers to serialize and send.
+Source: `src/net/replication/`, Headers: `include/ferrum/net/replication/`
 
-**Threading requirement:** client fibers run on a **separate `job_system_t`** with dedicated OS worker threads (typically 1, configurable via CLI). This ensures that physics tick latency spikes cannot starve client fiber scheduling. The main-thread tick catch-up loop is capped (default: 3 ticks) to prevent unbounded physics-only bursts from blocking the network pump. UDP receive runs on a **dedicated OS thread** (`net_pump_thread`) separate from the main loop and job system workers.
+- `body_state.h` / `body_state_batch.h` — Rigid body state replication
+- `body_spawn.h` / `spawn.h` / `spawn_batch.h` — Entity spawn messages
+- `body_state_inbox.h` — Inbound state queue
+- `event_batch.h` — Batched event replication
+- `join.h` / `welcome.h` — Connection handshake
+- `mesh_data.h` — Mesh data replication
+- `prediction_tick.h` — Client prediction tick tracking
+- `state_cube.h` — State cube for interest management
 
-**Async physics tick:** the main server loop dispatches each physics tick as a non-blocking job on the simulation job system (e.g. running `phys_world_tick_parallel()` on a fiber). While the tick runs on worker fibers, the main thread broadcasts the previous frame's body state (physics double-buffers via `bodies_curr`/`bodies_next`) and processes network events. Before advancing to the next tick, the main thread waits on a completion barrier (counter) for the physics tick job(s).
+**Quantization and compression:**
+- `quantization.h` — Float quantization utilities
+- `quat_smallest3.h` — Quaternion smallest-3 compression
+- `quat_snorm16.h` — SNORM16 quaternion encoding
+- `vec3_mm.h` — Min/max bounded vec3 quantization
+- `bit_pack.h` — Bitfield packing
+- `snapshot_delta.h` / `snapshot_chunk.h` — Delta compression
 
-**Synchronization:** fiber-code paths use `job_spinlock_t` (compare-and-swap spinlocks) instead of C11 `mtx_t` which can block the OS thread and deadlock fibers. OS-thread sleep/wake uses `pthread_mutex_t` + `pthread_cond_t`. The fiber wait/wake path uses a 4-state atomic protocol (`RUNNING → WAITING → SIGNALED → RUNNING`) to prevent double-enqueue races.
+**Interpolation** (`src/net/replication/interp/`):
+- `pose_interpolator.h` — Smooth pose interpolation between snapshots
+- `snapshot_interp.h` — Snapshot interpolation buffer
 
-**Important distinction:** not all spawnable entities represent players.
+### 12.4 Client Networking Runtime
 
-- Many entities (NPCs, props, projectiles) can spawn and replicate without any corresponding “join”.
-- Some player-like entities may join and exist, but should not necessarily spawn to every remote client (e.g., invisible players, far-away players outside interest).
+Source: `src/net/client/`, Headers: `include/ferrum/net/client/`
 
-To avoid conflating these concepts, the server treats “player connectivity” as its own data model.
+- `runtime_rx.h` — RX/reassembly thread
+- `runtime_tx.h` — TX thread for outbound packets
 
-**`player_connection_t` (conceptual):**
-- `player_id` (stable id for the connected player)
-- `world_pos` (plain `vec3` data stored by value, used for interest decisions)
-- `player_should_spawn_remote` (flag used to decide whether to emit player-spawn messages to a given remote client)
+### 12.5 Other Networking
 
-The entity/world simulation uses this connection data to drive networking events, rather than assuming a 1:1 mapping between “connected client” and “spawned entity”.
+- `ghost_table.h` — Ghost entity tracking (client-side entity proxies)
+- `interest.h` — Interest set management
+- `packet_header.h` — Packet header format
+- `prediction.h` — Client-side prediction state
+- `schema_registry.h` — Schema versioning and registration
+- `time_sync.h` — Clock synchronization
+- `validation.h` — Packet validation
+- Test harness: `test_buffer.h`, `test_client.h`, `test_clock.h`, `test_link.h`, `test_transport.h`
 
-**Event taxonomy (conceptual):**
-- `EVT_PLAYER_JOIN`: a player connection is established and authorized.
-- `EVT_PLAYER_SPAWN`: the player’s in-world representation should spawn for some remote client(s) based on interest/visibility rules.
-- `EVT_ENTITY_JOIN`: reserved for non-player “remote entity processes” (e.g., audit/observer/bridge clients) that join but are not players.
-- `EVT_ENTITY_SPAWN`: non-player entity spawn events (NPCs/props/etc).
+### 12.6 Server Networking Runtime
 
-**Threading requirement:** allocate at least **one dedicated OS worker thread** in the networking job system for client fiber progress. For higher client counts, increase to 2+. The simulation job system uses separate workers for physics, skinning, and gameplay jobs.
+Source: `src/server/`, Headers: `include/ferrum/server/`
 
-### 9.2 Replication and Delta Compression
-- server maintains state history (snapshots)
-- client acks last received snapshot
-- server sends deltas (bit-packed, quantized)
+- `server/net/runtime.h` — Server network runtime (one fiber per client)
+- `server/net/client_fiber.h` — Per-client fiber state
+- `server/net/inbound_message.h` — Inbound message queue
+- `server/net/state_update_queue.h` — Outbound state update queue
+- `server/tick_loop.h` — Server tick loop orchestration
+- `server/tick_encoder.h` — Tick state encoding
+- `server/repl_server.h` — REPL command server
 
-### 9.3 Client Prediction and Reconciliation
-- client predicts local inputs, stores input history
-- server sends authoritative state
-- client reconciles and re-simulates inputs if error exceeds threshold
+**Server physics networking:**
+- `server/physics/net/body_state_broadcast.h` — Physics state broadcast
+- `server/physics/net/priority_body_sender.h` — Priority-based body state sending
+- `server/physics/sync/pre_physics_sync.h` — Pre-physics network state sync
 
-### 9.5 Interest Management & Time Sync (P_007)
-- Interest sets derive from streamed regions (P_012); clients receive only in-range entities.
-- Deterministic time sync; server broadcasts clock; clients adjust drift and apply interpolation windows.
+**Server entity management:**
+- `server/entity.h` — Server entity management
+- `server/entity/net/pump.h` — Entity network pump
+- `server/player/connection.h` — Player connection state
 
-### 9.6 Networking Aggregator: Schemas & Channel Policies
-- Standardized schemas: `transform`, `rigid_body_correction`, `inventory_container`, `quest_log`, `dialogue_state`, `animation_state`, `ai_state`, `custom_attributes`.
-- Policies: quantization, reliability channel selection, priority tiers; versioning and manifest registration for custom attributes.
-- Headers: sequence/ack/ack_bits; baselines and snapshot-deltas maintained per-entity.
-
-### 9.4 Dynamic Level Geometry Propagation
-Terrain/geometry edits replicated as commands:
-
-- world divided into chunks with monotonic version numbers
-- edits broadcast as “brush commands” (op, pos, radius, strength)
-- late joiners request full chunk state (compressed), not full edit history
+**Threading requirement:** The networking job system runs on separate OS worker threads from simulation. UDP receive runs on a dedicated OS thread (`net_pump_thread`). Main-thread tick catch-up is capped (default: 3 ticks) to prevent unbounded physics bursts from blocking the network pump.
 
 ---
 
-## 10. Gameplay Systems
+## 13. Mesh Loading
 
-### 10.1 UI (Immediate Mode)
+Source: `src/mesh/`, Headers: `include/ferrum/mesh/`
+
+- `obj_loader.h` — Wavefront OBJ mesh file loader
+
+---
+
+## 14. Gameplay Systems
+
+### 14.1 UI (Immediate Mode)
 UI is immediate-mode:
-
-- generates transient meshes each frame
-- avoids retained-state desync problems
+- Generates transient meshes each frame
+- Avoids retained-state desync problems
 - UI runs as jobs producing command buffers for renderer
 
-### 10.2 Inventory
+### 14.2 Inventory
 Inventory as ECS components and deterministic transactions:
+- Slots arrays / containers
+- Stacking/splitting/swapping
+- Networking via reliable messages + state hashes
 
-- slots arrays / containers
-- stacking/splitting/swapping
-- networking via reliable messages + state hashes
-
-### 10.2.1 Transactions & Idempotency (P_008)
-- Server-authoritative transactions with event logs and state hashes; idempotent retries.
-- Snapshots/deltas for container state; reconciliation resolves conflicts deterministically.
-
-### 10.3 Dialogue System
+### 14.3 Dialogue System
 Dialogue as node/edge graph with condition checks:
+- Conditions evaluated against gameplay state (quests, reputation, items)
+- Emits UI events (text, choices)
+- State stored in ECS components or a "blackboard" resource
 
-- conditions evaluated against gameplay state (quests, reputation, items)
-- emits UI events (text, choices)
-- state stored in ECS components or a “blackboard” resource
+### 14.4 Quests
+Event-driven DAG; networked event log; snapshots and deltas for quest state.
 
-### 10.4 Quests (P_009)
-- Event-driven DAG; networked event log; snapshots and deltas for quest state.
-- Server authoritative; client UI reflects replicated progression.
-
-### 10.5 Flow Field AI (P_011)
-- Large-scale movement fields for crowds; integrated with ECS systems and physics constraints.
+### 14.5 Flow Field AI
+Large-scale movement fields for crowds; integrated with ECS systems and physics constraints.
 
 ---
 
-## 11. Conclusion
+## 15. Platform, Audio, Serialization, Assets, UI, and Services
 
-Ferrum-Engine-C is a cohesive, performance-first architecture built on:
+### 15.1 Platform & Input
+- Windowing, input devices (keyboard/mouse/gamepad), timers, filesystem paths
+- Poll-driven; integrates with job system; no blocking calls in hot loops
 
-- a **fiber-based job system**
-- **predictable memory** via arenas/pools
-- **archetype ECS** for high-throughput iteration
-- **modern OpenGL 4.6 AZDO** patterns
-- **server-authoritative networking** with prediction, delta compression, and dynamic geometry propagation
+### 15.2 Audio
+- Mixer graph with voices/buses/submixes; simple effects; 3D spatialization
+- Streaming-friendly buffers; deterministic scheduling via jobs
 
-This design trades third-party convenience for total control over performance characteristics, debuggability, and long-term maintainability under strict constraints.
+### 15.3 ECS Serialization & Replay
+- Snapshot serialization with versioned schemas; input recording and deterministic replay
 
----
+### 15.4 Asset Cooking, Hot-Reload & VFS
+- Cooked cache with content hashes and dependency graph; VFS mounts and path resolution; thread-safe hot-reload staging and swap
 
-## 12. Platform, Audio, Serialization, Assets, UI, and Services
+### 15.5 UI, Text & Localization
+- Immediate-mode UI; font atlas; basic text shaping; localization tables; deterministic layout
 
-### 12.1 Platform & Input (P_014)
-- Windowing, input devices (keyboard/mouse/gamepad), timers, filesystem paths; event + snapshot APIs; sandboxed asset paths.
-- Poll-driven; integrates with job system; no blocking calls in hot loops.
-
-### 12.2 Audio (P_015)
-- Mixer graph with voices/buses/submixes; simple effects; 3D spatialization and attenuation.
-- Streaming-friendly buffers; deterministic scheduling via jobs; ECS audio components.
-
-### 12.3 ECS Serialization & Replay (P_017)
-- Snapshot serialization with versioned schemas (reuse networking where possible); input recording and deterministic replay.
-
-### 12.4 Asset Cooking, Hot-Reload & VFS (P_018)
-- Cooked cache with content hashes and dependency graph; VFS mounts and path resolution; thread-safe hot-reload staging and swap.
-
-### 12.5 UI, Text & Localization (P_019)
-- Immediate-mode UI; font atlas; basic text shaping; localization tables; deterministic layout.
-
-### 12.6 Online Services (P_020)
-- Self-hosted dedicated server model; minimal authentication (session tokens) and simple matchmaking (lobbies/direct join).
-- Security via server-side validation and rate limiting; explicitly no client-side anti-cheat.
+### 15.6 Online Services
+- Self-hosted dedicated server model; minimal authentication (session tokens) and simple matchmaking
+- Security via server-side validation and rate limiting
 
 ---
 
-## Subsystem Summary (C11)
+## Subsystem Summary
 
-| System | Strategy | Key Technologies |
-|---|---|---|
-| Concurrency | Fiber job system | pthread + C11 atomics + user-space fibers |
-| Memory | Frame/Level arenas + pools | custom allocators |
-| ECS | Archetype-based SoA | handles + generation |
-| Rendering | OpenGL 4.6 AZDO, clustered forward | DSA, SSBO/UBO, compute shaders |
-| Terrain | GPU geometry clipmaps | toroidal updates, optional PBO streaming |
-| Lighting | Hybrid baked + clustered | light lists per cluster |
-| Physics | Deterministic rigid body baseline | spatial hash broadphase, fixed tick |
-| AI | Utility + BT + LOD scheduler | spatial hash, chunked jobs |
-| Networking | UDP + reliable channels | snapshot delta, prediction/reconciliation |
-| Scene/Assets | Streaming, glTF import, UV2/lightmaps, skybox | world streaming, interest-aligned |
-| Materials | Simplified surface shader | deterministic glTF→shader mapping |
-| Inventory/Quests | Server-authoritative transactions/logs | snapshots/deltas, idempotency |
-| AI & Scripting | Dynamic modules, BT/HTN/pathfinding | `ai_state`/`custom_attributes` replication |
-| Platform | Input/window/timers/fs | poll + snapshot APIs |
-| Audio | Mixer/spatialization | streaming buffers |
-| Serialization | ECS snapshots + replay | versioned schemas |
-| Assets | Cooking/VFS/hot-reload | hash cache, staging swap |
-| UI/Text | Immediate-mode + localization | font atlas, shaping |
-| Services | Dedicated server | minimal auth/matchmaking, server validation |
-| UI | Immediate mode | transient mesh generation |
+| System | Key Source | Key Technologies |
+|--------|-----------|------------------|
+| Concurrency | `src/job/` | pthread + C11 atomics + user-space fibers, work-stealing deque |
+| Memory | `src/memory/` | Thread-safe arena, pool, apool, vm_alloc, Tracy integration |
+| ECS | `src/ecs/` | Sparse sets + generation handles, world registry |
+| Math | `src/math/` | vec2/3/4, quat, mat4, SIMD-friendly layout |
+| Physics | `src/physics/` | Dual TGS/XPBD solver, tiered bodies, 11 joint types, 5 driver types, muscle model, CG solver, spatial hash + static BVH, CCD |
+| Animation | `src/animation/` | Ragdoll, IK, constraint solver, fskel format, bone-to-body mapping |
+| Rendering | `src/renderer/` | 9-pass pipeline, draw list + radix sort, mesh registry (static/skeletal), shader program, VAO/VBO, UBO, scene graph, gltf loader, GPU skinning, video capture |
+| Aegis VM | `src/aegis/` | 256-register bytecode VM, coroutine model, topic pub/sub, async queries, entity snapshot view, assembler |
+| Editor | `src/editor/` | Scene editor (SDL2+Clay UI+3D viewport), 50+ commands, undo/redo, mesh modeling (extrude/inset/bevel/CSG/UV), asset registry, TUI interface |
+| Networking | `src/net/` | RUDP, reliable/ordered/unreliable channels, delta compression, smallest-3 quat, snapshot interpolation, network emulation |
+| Server | `src/server/` | Fiber-per-client, physics broadcast, priority body sender, tick loop, REPL |
+| Materials | — | Simplified surface shader, deterministic glTF mapping |
+| UI | — | Immediate mode, transient mesh generation |

@@ -16,8 +16,8 @@ static void resolve_config_(editor_ctx_config_t *cfg) {
     if (cfg->max_entities == 0)     cfg->max_entities     = 1000000;
     if (cfg->undo_capacity == 0)    cfg->undo_capacity    = EDIT_UNDO_DEFAULT_CAP;
     if (cfg->ring_capacity == 0)    cfg->ring_capacity    = EDIT_CMD_RING_DEFAULT_CAP;
-    if (cfg->ring_payload_max == 0) cfg->ring_payload_max = 8192;
-    if (cfg->dispatch_arena == 0)   cfg->dispatch_arena   = 32768;
+    if (cfg->ring_payload_max == 0) cfg->ring_payload_max = 65536;
+    if (cfg->dispatch_arena == 0)   cfg->dispatch_arena   = 1024 * 1024; /* 1 MB */
 }
 
 bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {

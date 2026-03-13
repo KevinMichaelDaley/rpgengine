@@ -256,11 +256,14 @@ static void render_border(clay_backend_t *b, const Clay_RenderCommand *cmd) {
 static void render_scissor_start(clay_backend_t *b,
                                  const Clay_RenderCommand *cmd) {
     b->glEnable(GL_SCISSOR_TEST);
-    int sx = (int)cmd->boundingBox.x;
-    int sy = b->window_h - (int)cmd->boundingBox.y
-             - (int)cmd->boundingBox.height;
-    int sw = (int)cmd->boundingBox.width;
-    int sh = (int)cmd->boundingBox.height;
+    /* Scale scissor rect from logical to physical pixels. */
+    float sc = b->ui_scale;
+    if (sc < 1.0f) sc = 1.0f;
+    int sx = (int)(cmd->boundingBox.x * sc);
+    int sy = b->window_h - (int)((cmd->boundingBox.y
+             + cmd->boundingBox.height) * sc);
+    int sw = (int)(cmd->boundingBox.width * sc);
+    int sh = (int)(cmd->boundingBox.height * sc);
     b->glScissor(sx, sy, sw, sh);
 }
 
@@ -325,10 +328,18 @@ void clay_backend_render(clay_backend_t *backend,
     backend->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     backend->glDisable(GL_DEPTH_TEST);
 
-    /* Bind the UI shader and set the projection matrix. */
+    /* Bind the UI shader and set the projection matrix.
+     * Use logical dimensions (physical / ui_scale) so that Clay's
+     * coordinate space maps to the full GL viewport — effectively
+     * pixel-doubling the UI. */
+    float sc = backend->ui_scale;
+    if (sc < 1.0f) sc = 1.0f;
+    int log_w = (int)((float)backend->window_w / sc);
+    int log_h = (int)((float)backend->window_h / sc);
+
     shader_program_bind(&backend->shader);
     float proj[16];
-    build_ortho(proj, backend->window_w, backend->window_h);
+    build_ortho(proj, log_w, log_h);
     backend->shader.glUniformMatrix4fv(backend->u_projection, 1,
                                        GL_FALSE, proj);
 

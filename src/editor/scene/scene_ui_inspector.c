@@ -5,6 +5,9 @@
  * Displays properties of the first selected entity (position, rotation,
  * scale, name, type). Shows "No selection" when nothing is selected.
  *
+ * Uses pixel-based scroll tracking to handle heterogeneous content
+ * heights (text rows, headers, separators, future thumbnails/tables).
+ *
  * All runtime text is formatted into static buffers that persist
  * through the render pass (Clay_String stores only a pointer).
  *
@@ -51,6 +54,9 @@ static const char *entity_type_names[] = {
 static char s_insp_bufs[INSP_BUF_COUNT][INSP_BUF_SIZE];
 static int32_t s_insp_lens[INSP_BUF_COUNT];
 
+/** Separator height in pixels. */
+#define INSP_SEP_HEIGHT 2
+
 /* ---- Helpers ---- */
 
 /**
@@ -79,29 +85,21 @@ static void format_vec3(int base_slot, const float v[3]) {
 }
 
 /**
- * @brief Emit a single text row from a static buffer slot.
+ * @brief Check if an element at [y_cursor, y_cursor+h) is visible.
+ *
+ * An element is visible if it overlaps [scroll_px, scroll_px + visible_h).
+ *
+ * @param y_cursor    Top of this element in content space (pixels).
+ * @param h           Height of this element in pixels.
+ * @param scroll_px   Current scroll offset in pixels.
+ * @param visible_h   Visible viewport height in pixels.
+ * @return true if any part of the element is within the viewport.
  */
-static void emit_text_row(int slot, uint32_t clay_id_index,
-                           uint16_t font_size, Clay_Color color,
-                           uint16_t font_id) {
-    Clay_String text = {
-        .length = s_insp_lens[slot],
-        .chars = s_insp_bufs[slot],
-    };
-    CLAY(CLAY_IDI("InspRow", clay_id_index), {
-        .layout = {
-            .sizing = {CLAY_SIZING_GROW(0),
-                       CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-            .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
-        },
-    }) {
-        Clay__OpenTextElement(text,
-            CLAY_TEXT_CONFIG({
-                .fontSize = font_size,
-                .textColor = color,
-                .fontId = font_id,
-            }));
-    }
+static bool is_visible(float y_cursor, float h,
+                        float scroll_px, float visible_h) {
+    float top = y_cursor;
+    float bot = y_cursor + h;
+    return bot > scroll_px && top < scroll_px + visible_h;
 }
 
 /* ---- Public API ---- */
@@ -110,10 +108,16 @@ void scene_ui_build_inspector(scene_editor_t *ed,
                               const panel_rect_t *rect) {
     if (!ed || !rect || rect->w <= 0 || rect->h <= 0) return;
 
+    float panel_h = (float)rect->h;
     Clay_Color color_text = {THEME_TEXT_R, THEME_TEXT_G,
                               THEME_TEXT_B, THEME_TEXT_A};
     Clay_Color color_accent = {THEME_ACCENT_R, THEME_ACCENT_G,
                                 THEME_ACCENT_B, THEME_ACCENT_A};
+
+    /* Visible height for content area (below title bar, minus padding). */
+    float title_h = (float)THEME_ROW_HEIGHT;
+    float visible_h = panel_h - title_h - (float)(THEME_PADDING_SMALL * 2);
+    if (visible_h < 1.0f) visible_h = 1.0f;
 
     CLAY(CLAY_ID("InspectorRoot"), {
         .layout = {
@@ -151,6 +155,10 @@ void scene_ui_build_inspector(scene_editor_t *ed,
         uint32_t sel_count = edit_selection_count(&ed->selection);
 
         if (sel_count == 0) {
+            ed->ui.inspector_total = 0;
+            ed->ui.inspector_visible_lines = 0;
+            ed->ui.inspector_scroll = 0;
+
             CLAY(CLAY_ID("InspectorEmpty"), {
                 .layout = {
                     .sizing = {CLAY_SIZING_GROW(0),
@@ -189,80 +197,217 @@ void scene_ui_build_inspector(scene_editor_t *ed,
             format_vec3(5, ent->rot);   /* slots 5,6,7 */
             format_vec3(8, ent->scale); /* slots 8,9,10 */
 
-            /* Emit rows from static buffers. */
-            emit_text_row(0, 0, THEME_FONT_SIZE_UI, color_text, CLAY_FONT_UI);
-            emit_text_row(1, 1, THEME_FONT_SIZE_UI, color_text, CLAY_FONT_UI);
+            /* ---- Compute total content height ---- */
+            /* Row heights: name, type, separator, then 3x (header + 3 values). */
+            float row_h = (float)THEME_ROW_HEIGHT;
+            float sep_h = (float)INSP_SEP_HEIGHT;
+            float total_h = row_h     /* Name */
+                          + row_h     /* Type */
+                          + sep_h     /* Separator */
+                          + row_h     /* Position header */
+                          + row_h * 3 /* X Y Z */
+                          + row_h     /* Rotation header */
+                          + row_h * 3 /* X Y Z */
+                          + row_h     /* Scale header */
+                          + row_h * 3; /* X Y Z */
 
-            /* Separator */
-            CLAY(CLAY_ID("InspectorSep"), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(2)},
-                    .padding = {THEME_PADDING, THEME_PADDING,
-                                THEME_PADDING_SMALL, THEME_PADDING_SMALL},
-                },
-                .backgroundColor = {THEME_ACCENT_R, THEME_ACCENT_G,
-                                     THEME_ACCENT_B, 40},
-            }) {}
+            /* Store total content height for scroll clamping. */
+            ed->ui.inspector_total = (int)total_h;
+            ed->ui.inspector_visible_lines = (int)visible_h;
 
-            /* Position header + XYZ */
-            CLAY(CLAY_IDI("InspHeader", 0), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_GROW(0),
-                               CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-                    .padding = {THEME_PADDING, THEME_PADDING,
-                                THEME_PADDING_SMALL, 0},
-                },
-            }) {
-                CLAY_TEXT(CLAY_STRING("Position"),
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = color_accent,
-                        .fontId = CLAY_FONT_UI,
-                    }));
-            }
-            emit_text_row(2, 10, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
-            emit_text_row(3, 11, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
-            emit_text_row(4, 12, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
+            /* Clamp scroll offset (pixel-based). */
+            int max_scroll_px = (int)(total_h - visible_h);
+            if (max_scroll_px < 0) max_scroll_px = 0;
+            if (ed->ui.inspector_scroll > max_scroll_px)
+                ed->ui.inspector_scroll = max_scroll_px;
+            if (ed->ui.inspector_scroll < 0)
+                ed->ui.inspector_scroll = 0;
 
-            /* Rotation header + XYZ */
-            CLAY(CLAY_IDI("InspHeader", 1), {
+            float scroll_px = (float)ed->ui.inspector_scroll;
+            bool needs_scrollbar = total_h > visible_h;
+
+            /* ---- Content area (rows + scrollbar) ---- */
+            CLAY(CLAY_ID("InspContentArea"), {
                 .layout = {
-                    .sizing = {CLAY_SIZING_GROW(0),
-                               CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-                    .padding = {THEME_PADDING, THEME_PADDING,
-                                THEME_PADDING_SMALL, 0},
+                    .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
             }) {
-                CLAY_TEXT(CLAY_STRING("Rotation"),
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = color_accent,
-                        .fontId = CLAY_FONT_UI,
-                    }));
-            }
-            emit_text_row(5, 13, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
-            emit_text_row(6, 14, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
-            emit_text_row(7, 15, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
+                /* ---- Property rows (windowed by pixel offset) ---- */
+                CLAY(CLAY_ID("InspRows"), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_GROW(0),
+                                   CLAY_SIZING_GROW(0)},
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                }) {
+                    float y = 0.0f;
+                    uint32_t clay_idx = 0;
 
-            /* Scale header + XYZ */
-            CLAY(CLAY_IDI("InspHeader", 2), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_GROW(0),
-                               CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-                    .padding = {THEME_PADDING, THEME_PADDING,
-                                THEME_PADDING_SMALL, 0},
-                },
-            }) {
-                CLAY_TEXT(CLAY_STRING("Scale"),
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = color_accent,
-                        .fontId = CLAY_FONT_UI,
-                    }));
+                    /* Name */
+                    if (is_visible(y, row_h, scroll_px, visible_h)) {
+                        Clay_String text = {.length = s_insp_lens[0],
+                                            .chars = s_insp_bufs[0]};
+                        CLAY(CLAY_IDI("InspRow", clay_idx), {
+                            .layout = {
+                                .sizing = {CLAY_SIZING_GROW(0),
+                                           CLAY_SIZING_FIXED(row_h)},
+                                .padding = {THEME_PADDING, THEME_PADDING,
+                                            0, 0},
+                            },
+                        }) {
+                            Clay__OpenTextElement(text,
+                                CLAY_TEXT_CONFIG({
+                                    .fontSize = THEME_FONT_SIZE_UI,
+                                    .textColor = color_text,
+                                    .fontId = CLAY_FONT_UI,
+                                }));
+                        }
+                    }
+                    y += row_h;
+                    clay_idx++;
+
+                    /* Type */
+                    if (is_visible(y, row_h, scroll_px, visible_h)) {
+                        Clay_String text = {.length = s_insp_lens[1],
+                                            .chars = s_insp_bufs[1]};
+                        CLAY(CLAY_IDI("InspRow", clay_idx), {
+                            .layout = {
+                                .sizing = {CLAY_SIZING_GROW(0),
+                                           CLAY_SIZING_FIXED(row_h)},
+                                .padding = {THEME_PADDING, THEME_PADDING,
+                                            0, 0},
+                            },
+                        }) {
+                            Clay__OpenTextElement(text,
+                                CLAY_TEXT_CONFIG({
+                                    .fontSize = THEME_FONT_SIZE_UI,
+                                    .textColor = color_text,
+                                    .fontId = CLAY_FONT_UI,
+                                }));
+                        }
+                    }
+                    y += row_h;
+                    clay_idx++;
+
+                    /* Separator */
+                    if (is_visible(y, sep_h, scroll_px, visible_h)) {
+                        CLAY(CLAY_IDI("InspRow", clay_idx), {
+                            .layout = {
+                                .sizing = {CLAY_SIZING_GROW(0),
+                                           CLAY_SIZING_FIXED(sep_h)},
+                                .padding = {THEME_PADDING, THEME_PADDING,
+                                            THEME_PADDING_SMALL,
+                                            THEME_PADDING_SMALL},
+                            },
+                            .backgroundColor = {THEME_ACCENT_R,
+                                                 THEME_ACCENT_G,
+                                                 THEME_ACCENT_B, 40},
+                        }) {}
+                    }
+                    y += sep_h;
+                    clay_idx++;
+
+                    /* Position, Rotation, Scale — 3 sections of
+                     * (header + 3 values). */
+                    static const char *section_labels[3] = {
+                        "Position", "Rotation", "Scale"
+                    };
+                    int buf_base[3] = {2, 5, 8};
+
+                    for (int sec = 0; sec < 3; sec++) {
+                        /* Section header */
+                        if (is_visible(y, row_h, scroll_px, visible_h)) {
+                            Clay_String hdr = {
+                                .length = (int32_t)strlen(
+                                    section_labels[sec]),
+                                .chars = section_labels[sec],
+                            };
+                            CLAY(CLAY_IDI("InspRow", clay_idx), {
+                                .layout = {
+                                    .sizing = {CLAY_SIZING_GROW(0),
+                                               CLAY_SIZING_FIXED(row_h)},
+                                    .padding = {THEME_PADDING, THEME_PADDING,
+                                                THEME_PADDING_SMALL, 0},
+                                },
+                            }) {
+                                Clay__OpenTextElement(hdr,
+                                    CLAY_TEXT_CONFIG({
+                                        .fontSize = THEME_FONT_SIZE_UI,
+                                        .textColor = color_accent,
+                                        .fontId = CLAY_FONT_UI,
+                                    }));
+                            }
+                        }
+                        y += row_h;
+                        clay_idx++;
+
+                        /* X, Y, Z values */
+                        for (int axis = 0; axis < 3; axis++) {
+                            int buf_slot = buf_base[sec] + axis;
+                            if (is_visible(y, row_h, scroll_px, visible_h)) {
+                                Clay_String text = {
+                                    .length = s_insp_lens[buf_slot],
+                                    .chars = s_insp_bufs[buf_slot],
+                                };
+                                CLAY(CLAY_IDI("InspRow", clay_idx), {
+                                    .layout = {
+                                        .sizing = {CLAY_SIZING_GROW(0),
+                                                   CLAY_SIZING_FIXED(row_h)},
+                                        .padding = {THEME_PADDING,
+                                                    THEME_PADDING, 0, 0},
+                                    },
+                                }) {
+                                    Clay__OpenTextElement(text,
+                                        CLAY_TEXT_CONFIG({
+                                            .fontSize = THEME_FONT_SIZE_MONO,
+                                            .textColor = color_text,
+                                            .fontId = CLAY_FONT_MONO,
+                                        }));
+                                }
+                            }
+                            y += row_h;
+                            clay_idx++;
+                        }
+                    }
+                }
+
+                /* ---- Scrollbar ---- */
+                if (needs_scrollbar) {
+                    float thumb_ratio = visible_h / total_h;
+                    if (thumb_ratio > 1.0f) thumb_ratio = 1.0f;
+                    float thumb_h = visible_h * thumb_ratio;
+                    if (thumb_h < 12.0f) thumb_h = 12.0f;
+
+                    float scroll_range = visible_h - thumb_h;
+                    float thumb_offset = 0.0f;
+                    if (max_scroll_px > 0) {
+                        thumb_offset = scroll_range
+                                       * (scroll_px / (float)max_scroll_px);
+                    }
+
+                    CLAY(CLAY_ID("Insp_ScrollTrack"), {
+                        .layout = {
+                            .sizing = {CLAY_SIZING_FIXED(8),
+                                       CLAY_SIZING_GROW(0)},
+                        },
+                        .backgroundColor = {25, 27, 33, 255},
+                    }) {
+                        CLAY(CLAY_ID("Insp_ScrollThumb"), {
+                            .layout = {
+                                .sizing = {CLAY_SIZING_FIXED(8),
+                                           CLAY_SIZING_FIXED(thumb_h)},
+                            },
+                            .backgroundColor = {80, 85, 95, 255},
+                            .cornerRadius = CLAY_CORNER_RADIUS(4),
+                            .floating = {
+                                .attachTo = CLAY_ATTACH_TO_PARENT,
+                                .offset = {0, thumb_offset},
+                            },
+                        }) {}
+                    }
+                }
             }
-            emit_text_row(8, 16, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
-            emit_text_row(9, 17, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
-            emit_text_row(10, 18, THEME_FONT_SIZE_MONO, color_text, CLAY_FONT_MONO);
         }
     }
 }

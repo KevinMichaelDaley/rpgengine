@@ -36,6 +36,21 @@ static uint32_t tokenize_(char *text, char *tokens[], uint32_t max) {
     return count;
 }
 
+/* ── Numeric detection ────────────────────────────────────────────── */
+
+/**
+ * @brief Check if a string looks like a number (int or float).
+ */
+static bool looks_numeric_(const char *s) {
+    if (!s || !*s) return false;
+    if (*s == '-' || *s == '+') s++;
+    if (!*s) return false;
+    bool has_digit = false;
+    while (*s >= '0' && *s <= '9') { s++; has_digit = true; }
+    if (*s == '.') { s++; while (*s >= '0' && *s <= '9') { s++; has_digit = true; } }
+    return has_digit && *s == '\0';
+}
+
 /* ── Argument format parser ───────────────────────────────────────── */
 
 /**
@@ -87,24 +102,28 @@ static uint32_t build_args_(const char *arg_fmt, char *tokens[],
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":\"%s\"", name, val);
         } else if (strcmp(type, "u") == 0) {
-            /* Unsigned integer argument. */
-            uint32_t val = (ti < token_count)
-                               ? (uint32_t)strtoul(tokens[ti++], NULL, 10)
-                               : 0;
+            /* Unsigned integer argument — must be numeric. */
+            if (ti >= token_count) return 0;
+            if (!looks_numeric_(tokens[ti])) return 0;
+            uint32_t val = (uint32_t)strtoul(tokens[ti++], NULL, 10);
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":%u", name, val);
         } else if (strcmp(type, "f") == 0) {
-            /* Single float argument. */
-            float val = (ti < token_count)
-                            ? strtof(tokens[ti++], NULL)
-                            : 0.0f;
+            /* Single float argument — must be numeric. */
+            if (ti >= token_count) return 0;
+            if (!looks_numeric_(tokens[ti])) return 0;
+            float val = strtof(tokens[ti++], NULL);
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":%.6g", name, (double)val);
         } else if (strcmp(type, "f3") == 0) {
-            /* Three-float array argument. */
-            float x = (ti < token_count) ? strtof(tokens[ti++], NULL) : 0.0f;
-            float y = (ti < token_count) ? strtof(tokens[ti++], NULL) : 0.0f;
-            float z = (ti < token_count) ? strtof(tokens[ti++], NULL) : 0.0f;
+            /* Three-float array argument — all three must be numeric. */
+            if (ti + 2 >= token_count) return 0;
+            if (!looks_numeric_(tokens[ti]) ||
+                !looks_numeric_(tokens[ti + 1]) ||
+                !looks_numeric_(tokens[ti + 2])) return 0;
+            float x = strtof(tokens[ti++], NULL);
+            float y = strtof(tokens[ti++], NULL);
+            float z = strtof(tokens[ti++], NULL);
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":[%.6g,%.6g,%.6g]",
                                           name, (double)x, (double)y,
@@ -121,19 +140,6 @@ static uint32_t build_args_(const char *arg_fmt, char *tokens[],
 
     written += (uint32_t)snprintf(out + written, out_cap - written, "}");
     return written;
-}
-
-/**
- * @brief Check if a string looks like a number (int or float).
- */
-static bool looks_numeric_(const char *s) {
-    if (!s || !*s) return false;
-    if (*s == '-' || *s == '+') s++;
-    if (!*s) return false;
-    bool has_digit = false;
-    while (*s >= '0' && *s <= '9') { s++; has_digit = true; }
-    if (*s == '.') { s++; while (*s >= '0' && *s <= '9') { s++; has_digit = true; } }
-    return has_digit && *s == '\0';
 }
 
 /* ── Public API ───────────────────────────────────────────────────── */
@@ -161,11 +167,12 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return 0;
     }
 
-    /* Look up command definition. */
+    /* Look up command definition — reject unknown commands. */
     const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(cmd_name);
+    if (!def) return 0;
 
     /* Use the canonical command name for the JSON wire format. */
-    const char *wire_name = def ? def->name : cmd_name;
+    const char *wire_name = def->name;
 
     /* Special handling for spawn: detect optional name between type and pos,
      * and optional rotation/scale after position.
@@ -175,7 +182,24 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * "spawn box 0 5 0 0 90 0 2 2 2"         → + rot + scale=[2,2,2]
      * "spawn box myname 0 5 0 0 90 0 2 2 2"  → name + pos + rot + scale */
     char *name_token = NULL;
-    if (def && strcmp(wire_name, "spawn") == 0 && token_count >= 3) {
+    if (strcmp(wire_name, "spawn") == 0) {
+        /* spawn requires at least a type argument. */
+        if (token_count < 2) return 0;
+
+        /* Validate entity type against known types. */
+        static const char *const s_valid_types[] = {
+            "box", "sphere", "capsule", "marker", "mesh", "halfspace",
+        };
+        bool valid_type = false;
+        for (uint32_t i = 0; i < 6; i++) {
+            if (strcmp(tokens[1], s_valid_types[i]) == 0) {
+                valid_type = true;
+                break;
+            }
+        }
+        if (!valid_type) return 0;
+    }
+    if (strcmp(wire_name, "spawn") == 0 && token_count >= 3) {
         /* tokens[1]=type, check if tokens[2] is NOT a number → it's a name. */
         if (!looks_numeric_(tokens[2])) {
             name_token = tokens[2];
@@ -194,6 +218,19 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
             if (looks_numeric_(tokens[i])) num_count++;
             else break;
         }
+
+        /* If there are leftover non-numeric tokens after the numeric
+         * run, the input is malformed (e.g., "spawn box 0 abc 0"). */
+        if (num_count > 0 && 2 + num_count < token_count) return 0;
+
+        /* If there are tokens after type but none are numeric, and
+         * we didn't extract a name, the args are invalid. */
+        if (token_count > 2 && num_count == 0) return 0;
+
+        /* Position requires exactly 3, rotation 3 more, scale 3 more.
+         * Reject partial groups (1, 2, 4, 5, 7, 8). */
+        if (num_count != 0 && num_count != 3 &&
+            num_count != 6 && num_count != 9) return 0;
 
         /* Build custom JSON with pos, optional rot, optional scale. */
         if (num_count >= 3) {
@@ -282,7 +319,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * "select_near 1 2 3 5.0"          → {"pos":[1,2,3],"dist":5.0}
      * "select_near 5.0 &group"         → {"dist":5.0,"group_mask":"&group"}
      * "select_near 1 2 3 5.0 &group"   → all three */
-    if (def && (strcmp(wire_name, "select_near") == 0 ||
+    if ((strcmp(wire_name, "select_near") == 0 ||
                 strcmp(wire_name, "deselect_near") == 0) &&
         token_count >= 2) {
         /* Check for trailing &group token. */
@@ -291,6 +328,11 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         if (arg_count >= 2 && tokens[arg_count - 1][0] == '&') {
             mask = tokens[arg_count - 1];
             arg_count--;
+        }
+
+        /* Validate numeric args. */
+        for (uint32_t vi = 1; vi < arg_count; vi++) {
+            if (!looks_numeric_(tokens[vi])) return 0;
         }
 
         char args_buf2[512];
@@ -333,7 +375,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     /* Custom parsing for commands with optional group_mask:
      * select_all [&group], select_touching [&group], select_fill [&group],
      * select_regex <pattern> [&group]. */
-    if (def && (strcmp(wire_name, "select_all") == 0 ||
+    if ((strcmp(wire_name, "select_all") == 0 ||
                 strcmp(wire_name, "select_touching") == 0 ||
                 strcmp(wire_name, "select_fill") == 0)) {
         char args_buf2[256];
@@ -350,7 +392,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return (uint32_t)n2;
     }
 
-    if (def && strcmp(wire_name, "select_regex") == 0 && token_count >= 2) {
+    if (strcmp(wire_name, "select_regex") == 0 && token_count >= 2) {
         char args_buf2[512];
         const char *pattern = tokens[1];
         const char *mask = NULL;
@@ -376,7 +418,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * "alias_create @name"              → {"name":"@name"}
      * "alias_create @name x y z"        → {"name":"@name","pos":[x,y,z]}
      * "alias_create @name x y z rx ry rz" → + "rot":[...] */
-    if (def && strcmp(wire_name, "alias_create") == 0 && token_count >= 2) {
+    if (strcmp(wire_name, "alias_create") == 0 && token_count >= 2) {
         char args_buf2[512];
         const char *aname = tokens[1];
         if (token_count == 2) {
@@ -415,7 +457,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * "asset_list"              → {}
      * "asset_list meshes/"      → {"prefix":"meshes/"}
      * "asset_list meshes/ mesh" → {"prefix":"meshes/","type":"mesh"} */
-    if (def && strcmp(wire_name, "asset_list") == 0) {
+    if (strcmp(wire_name, "asset_list") == 0) {
         char args_buf2[512];
         if (token_count >= 3) {
             snprintf(args_buf2, sizeof(args_buf2),
@@ -440,7 +482,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * 0 args → {}
      * 3 args → {"size":[w,h,d]}
      * 6 args → {"size":[w,h,d],"pos":[x,y,z]} */
-    if (def && strcmp(wire_name, "mesh_create_box") == 0) {
+    if (strcmp(wire_name, "mesh_create_box") == 0) {
         char ab[512];
         uint32_t na = token_count - 1;
         if (na >= 6) {
@@ -463,7 +505,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     }
 
     /* mesh_create_sphere [radius] [segments] [x y z] */
-    if (def && strcmp(wire_name, "mesh_create_sphere") == 0) {
+    if (strcmp(wire_name, "mesh_create_sphere") == 0) {
         char ab[512];
         uint32_t na = token_count - 1;
         if (na >= 6) {
@@ -508,7 +550,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     }
 
     /* mesh_create_cylinder [radius] [height] [segments] [axis] [x y z] */
-    if (def && strcmp(wire_name, "mesh_create_cylinder") == 0) {
+    if (strcmp(wire_name, "mesh_create_cylinder") == 0) {
         char ab[512];
         uint32_t na = token_count - 1;
         if (na >= 7) {
@@ -549,7 +591,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     }
 
     /* mesh_create_plane [w h] [axis] [x y z] */
-    if (def && strcmp(wire_name, "mesh_create_plane") == 0) {
+    if (strcmp(wire_name, "mesh_create_plane") == 0) {
         char ab[512];
         uint32_t na = token_count - 1;
         if (na >= 6) {
@@ -577,7 +619,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     }
 
     /* extrude [distance] [dx dy dz] */
-    if (def && strcmp(wire_name, "extrude") == 0) {
+    if (strcmp(wire_name, "extrude") == 0) {
         char ab[512];
         uint32_t na = token_count - 1;
         if (na >= 4) {
@@ -598,7 +640,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     }
 
     /* inset [amount] [depth] */
-    if (def && strcmp(wire_name, "inset") == 0) {
+    if (strcmp(wire_name, "inset") == 0) {
         char ab[256];
         uint32_t na = token_count - 1;
         if (na >= 2) {
@@ -618,7 +660,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
 
     /* mesh_select / mesh_deselect: variable index list.
      * "mesh_select 0 1 2" → {"indices":[0,1,2]} */
-    if (def && (strcmp(wire_name, "mesh_select") == 0 ||
+    if ((strcmp(wire_name, "mesh_select") == 0 ||
                 strcmp(wire_name, "mesh_deselect") == 0)) {
         char ab[2048];
         uint32_t w = 0;
@@ -640,7 +682,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * "setattr 5 256 true"           → {"entity":5,"key":256,"value":true}
      * "setattr turret_0 256 hello"   → {"entity":"turret_0","key":256,"value":"hello"}
      */
-    if (def && strcmp(wire_name, "setattr") == 0 && token_count >= 4) {
+    if (strcmp(wire_name, "setattr") == 0 && token_count >= 4) {
         char args_buf2[512];
         const char *ent_tok = tokens[1];
         const char *key_tok = tokens[2];
@@ -680,7 +722,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      *   → {"joint_type":"hinge","entity_a":"base_0","entity_b":"barrel_0",
      *      "anchor":[0,1.5,0],"axis":[0,1,0]}
      */
-    if (def && strcmp(wire_name, "joint") == 0 && token_count >= 7) {
+    if (strcmp(wire_name, "joint") == 0 && token_count >= 7) {
         char jbuf[512];
         const char *jtype = tokens[1];
         const char *ent_a = tokens[2];
@@ -725,7 +767,9 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * "physics_material ground 0.8 0.1"
      *   → {"entity_id":"ground","friction":0.8,"restitution":0.1}
      */
-    if (def && strcmp(wire_name, "physics_material") == 0 && token_count >= 4) {
+    if (strcmp(wire_name, "physics_material") == 0 && token_count >= 4) {
+        /* Validate friction and restitution are numeric. */
+        if (!looks_numeric_(tokens[2]) || !looks_numeric_(tokens[3])) return 0;
         char mbuf[256];
         const char *ent = tokens[1];
         const char *fric = tokens[2];
@@ -750,16 +794,13 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         return (uint32_t)n4;
     }
 
-    /* Build args JSON. */
+    /* Build args JSON from the argument format descriptor. */
     char args_buf[2048];
-    uint32_t args_len;
-    if (def) {
-        args_len = build_args_(def->arg_fmt, tokens, token_count, 1,
-                               args_buf, sizeof(args_buf));
-    } else {
-        args_len = (uint32_t)snprintf(args_buf, sizeof(args_buf), "{}");
-    }
+    uint32_t args_len = build_args_(def->arg_fmt, tokens, token_count, 1,
+                                    args_buf, sizeof(args_buf));
 
+    /* build_args_ returns 0 on validation failure (bad/missing numeric args). */
+    if (args_len == 0 && def->arg_fmt != NULL) return 0;
     if (args_len == 0) {
         snprintf(args_buf, sizeof(args_buf), "{}");
     }

@@ -18,8 +18,9 @@ uint32_t editor_tick_drain(editor_ctx_t *ctx) {
     const edit_cmd_slot_t *slot;
 
     while ((slot = edit_cmd_ring_peek(&ctx->cmd_ring)) != NULL) {
-        /* Dispatch the JSON command. */
-        char resp[4096];
+        /* Dispatch the JSON command.
+         * Response buffer sized for paginated entity lists. */
+        char resp[65536];
         uint32_t resp_len = edit_dispatch_exec(
             &ctx->dispatch,
             slot->payload, slot->payload_len,

@@ -63,6 +63,9 @@ static void tui_log_internal(scene_ui_state_t *ui, const char *text,
     if (ui->tui_log_count < UI_TUI_LOG_MAX) {
         ui->tui_log_count++;
     }
+
+    /* Auto-scroll to bottom on new content. */
+    ui->tui_log_scroll = 0;
 }
 
 void scene_ui_tui_log(scene_ui_state_t *ui, const char *text)
@@ -73,6 +76,11 @@ void scene_ui_tui_log(scene_ui_state_t *ui, const char *text)
 void scene_ui_tui_log_error(scene_ui_state_t *ui, const char *text)
 {
     tui_log_internal(ui, text, UI_TUI_LOG_ERROR);
+}
+
+void scene_ui_tui_log_success(scene_ui_state_t *ui, const char *text)
+{
+    tui_log_internal(ui, text, UI_TUI_LOG_SUCCESS);
 }
 
 void scene_ui_build_tui(struct scene_editor *ed,
@@ -145,48 +153,166 @@ void scene_ui_build_tui(struct scene_editor *ed,
                 }));
         }
 
-        /* ---- Log area ---- */
-        CLAY(CLAY_ID("TUI_Log"), {
+        /* ---- Log area (manual windowing + scrollbar) ---- */
+        /* Calculate how many lines fit in the log area.
+         * Available height = panel_h - status_bar - input_line - padding. */
+        float log_h = panel_h - (float)THEME_ROW_HEIGHT
+                      - (float)(THEME_ROW_HEIGHT + 4)
+                      - (float)(THEME_PADDING_SMALL * 2);
+        int visible = (int)(log_h / (float)(THEME_ROW_HEIGHT + 1));
+        if (visible < 1) visible = 1;
+        ed->ui.tui_log_visible = visible;
+
+        int count = ed->ui.tui_log_count;
+        int scroll = ed->ui.tui_log_scroll;
+        int tui_max_scroll = count - visible;
+        if (tui_max_scroll < 0) tui_max_scroll = 0;
+        if (scroll > tui_max_scroll) scroll = tui_max_scroll;
+        if (scroll < 0) scroll = 0;
+        ed->ui.tui_log_scroll = scroll;
+
+        /* Start index: newest is at head-1, scroll back by scroll lines. */
+        int first = count - visible - scroll;
+        if (first < 0) first = 0;
+        int render_count = count - first - scroll;
+        if (render_count > visible) render_count = visible;
+        if (render_count < 0) render_count = 0;
+
+        int oldest = (ed->ui.tui_log_head - count + UI_TUI_LOG_MAX)
+                     % UI_TUI_LOG_MAX;
+        bool tui_needs_scrollbar = count > visible;
+
+        CLAY(CLAY_ID("TUI_LogArea"), {
             .layout = {
                 .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
-                .layoutDirection = CLAY_TOP_TO_BOTTOM,
-                .childGap = 1,
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
             },
         }) {
-            /* Render log lines from oldest to newest. */
-            int count = ed->ui.tui_log_count;
-            int start = (ed->ui.tui_log_head - count + UI_TUI_LOG_MAX)
-                        % UI_TUI_LOG_MAX;
+            /* ---- Log rows ---- */
             Clay_String log_id = {.length = 7, .chars = "TUI_Log"};
+            CLAY(CLAY_ID("TUI_Log"), {
+                .layout = {
+                    .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
+                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    .childGap = 1,
+                },
+            }) {
+                for (int i = 0; i < render_count; i++) {
+                    int idx = (oldest + first + i) % UI_TUI_LOG_MAX;
+                    int32_t line_len = (int32_t)strlen(ed->ui.tui_log[idx]);
+                    if (line_len == 0) continue;
 
-            for (int i = 0; i < count; i++) {
-                int idx = (start + i) % UI_TUI_LOG_MAX;
-                int32_t line_len = (int32_t)strlen(ed->ui.tui_log[idx]);
-                if (line_len == 0) continue;
+                    Clay_String line_str = {
+                        .length = line_len,
+                        .chars = ed->ui.tui_log[idx],
+                    };
+                    uint8_t line_type = ed->ui.tui_log_type[idx];
+                    Clay_Color line_color = {THEME_TEXT_R, THEME_TEXT_G,
+                                             THEME_TEXT_B, THEME_TEXT_A};
+                    if (line_type == UI_TUI_LOG_ERROR)
+                        line_color = (Clay_Color){220, 60, 60, 255};
 
-                Clay_String line_str = {
-                    .length = line_len,
-                    .chars = ed->ui.tui_log[idx],
-                };
-                bool is_error = (ed->ui.tui_log_type[idx] == UI_TUI_LOG_ERROR);
-                CLAY(CLAY_SIDI(log_id, (uint32_t)i), {
+                    CLAY(CLAY_SIDI(log_id, (uint32_t)i), {
+                        .layout = {
+                            .sizing = {CLAY_SIZING_GROW(0),
+                                       CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
+                            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                            .padding = {THEME_PADDING_SMALL,
+                                        THEME_PADDING_SMALL, 0, 0},
+                            .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                        },
+                    }) {
+                        CLAY(CLAY_IDI("TLogTxt", (uint32_t)i), {
+                            .layout = {
+                                .sizing = {CLAY_SIZING_GROW(0),
+                                           CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
+                                .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                            },
+                        }) {
+                            Clay__OpenTextElement(line_str,
+                                CLAY_TEXT_CONFIG({
+                                    .fontSize = THEME_FONT_SIZE_UI,
+                                    .textColor = line_color,
+                                    .fontId = CLAY_FONT_MONO,
+                                }));
+                        }
+
+                        if (line_type == UI_TUI_LOG_SUCCESS) {
+                            Clay_String ok_str = {.length = 2, .chars = "ok"};
+                            CLAY(CLAY_IDI("TLogOk", (uint32_t)i), {
+                                .layout = {
+                                    .sizing = {CLAY_SIZING_FIT(0),
+                                               CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
+                                    .padding = {THEME_PADDING_SMALL,
+                                                THEME_PADDING_SMALL, 0, 0},
+                                    .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                                },
+                            }) {
+                                Clay__OpenTextElement(ok_str,
+                                    CLAY_TEXT_CONFIG({
+                                        .fontSize = THEME_FONT_SIZE_UI,
+                                        .textColor = {60, 200, 60, 255},
+                                        .fontId = CLAY_FONT_MONO,
+                                    }));
+                            }
+                        } else if (line_type == UI_TUI_LOG_ERROR) {
+                            Clay_String err_str = {.length = 1, .chars = "x"};
+                            CLAY(CLAY_IDI("TLogErr", (uint32_t)i), {
+                                .layout = {
+                                    .sizing = {CLAY_SIZING_FIT(0),
+                                               CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
+                                    .padding = {THEME_PADDING_SMALL,
+                                                THEME_PADDING_SMALL, 0, 0},
+                                    .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                                },
+                            }) {
+                                Clay__OpenTextElement(err_str,
+                                    CLAY_TEXT_CONFIG({
+                                        .fontSize = THEME_FONT_SIZE_UI,
+                                        .textColor = {220, 60, 60, 255},
+                                        .fontId = CLAY_FONT_MONO,
+                                    }));
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* ---- TUI scrollbar ---- */
+            if (tui_needs_scrollbar) {
+                float thumb_ratio = (float)visible / (float)count;
+                if (thumb_ratio > 1.0f) thumb_ratio = 1.0f;
+                float thumb_h = log_h * thumb_ratio;
+                if (thumb_h < 12.0f) thumb_h = 12.0f;
+
+                float scroll_range = log_h - thumb_h;
+                float thumb_offset = 0.0f;
+                if (tui_max_scroll > 0) {
+                    /* Scroll=0 means at bottom (newest), max_scroll=at top. */
+                    thumb_offset = scroll_range
+                                   * (1.0f - (float)scroll
+                                      / (float)tui_max_scroll);
+                }
+
+                CLAY(CLAY_ID("TUI_ScrollTrack"), {
                     .layout = {
-                        .sizing = {CLAY_SIZING_GROW(0),
-                                   CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-                        .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL,
-                                    0, 0},
-                        .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                        .sizing = {CLAY_SIZING_FIXED(8),
+                                   CLAY_SIZING_GROW(0)},
                     },
+                    .backgroundColor = {25, 27, 33, 255},
                 }) {
-                    Clay__OpenTextElement(line_str,
-                        CLAY_TEXT_CONFIG({
-                            .fontSize = THEME_FONT_SIZE_UI,
-                            .textColor = is_error
-                                ? (Clay_Color){220, 60, 60, 255}
-                                : (Clay_Color){THEME_TEXT_R, THEME_TEXT_G,
-                                               THEME_TEXT_B, THEME_TEXT_A},
-                            .fontId = CLAY_FONT_MONO,
-                        }));
+                    CLAY(CLAY_ID("TUI_ScrollThumb"), {
+                        .layout = {
+                            .sizing = {CLAY_SIZING_FIXED(8),
+                                       CLAY_SIZING_FIXED(thumb_h)},
+                        },
+                        .backgroundColor = {80, 85, 95, 255},
+                        .cornerRadius = CLAY_CORNER_RADIUS(4),
+                        .floating = {
+                            .attachTo = CLAY_ATTACH_TO_PARENT,
+                            .offset = {0, thumb_offset},
+                        },
+                    }) {}
                 }
             }
         }

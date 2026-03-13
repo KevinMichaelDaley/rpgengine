@@ -55,12 +55,16 @@ typedef enum scene_ui_action {
 /** Maximum log lines in the TUI scrollback. */
 #define UI_TUI_LOG_MAX   64
 
+/** Maximum command history entries. */
+#define UI_TUI_HISTORY_MAX 32
+
 /** Maximum characters per log line. */
 #define UI_TUI_LOG_LINE  128
 
 /** TUI log line types. */
-#define UI_TUI_LOG_NORMAL 0
-#define UI_TUI_LOG_ERROR  1
+#define UI_TUI_LOG_NORMAL  0
+#define UI_TUI_LOG_ERROR   1
+#define UI_TUI_LOG_SUCCESS 2
 
 /**
  * @brief Mutable UI state shared across panel builders.
@@ -84,6 +88,8 @@ typedef struct scene_ui_state {
     bool              mouse_down;
     bool              mouse_was_down;  /**< Previous frame mouse state. */
     bool              mouse_clicked;   /**< True if press occurred this frame. */
+    bool              middle_mouse_down; /**< Middle mouse button state. */
+    float             scroll_delta_y;  /**< Accumulated scroll wheel delta this frame. */
 
     /* Entity counter for auto-naming. */
     uint32_t          spawn_counter;
@@ -104,6 +110,28 @@ typedef struct scene_ui_state {
     uint8_t           tui_log_type[UI_TUI_LOG_MAX]; /**< 0=normal, 1=error. */
     int               tui_log_head;  /**< Next write slot (wraps). */
     int               tui_log_count; /**< Number of lines stored. */
+    int               tui_log_scroll; /**< Lines scrolled back from newest (0=bottom). */
+    int               tui_log_visible; /**< Visible lines (set each frame). */
+
+    /* Command history ring buffer. */
+    char              tui_history[UI_TUI_HISTORY_MAX][UI_TUI_INPUT_MAX];
+    int               tui_history_head;   /**< Next write slot (wraps). */
+    int               tui_history_count;  /**< Number of stored commands. */
+    int               tui_history_index;  /**< Browse position (-1=not browsing). */
+    char              tui_history_stash[UI_TUI_INPUT_MAX]; /**< Stashed input. */
+
+    /* Outliner scroll state. */
+    int               outliner_total;   /**< Total entity rows (set each frame). */
+    int               outliner_visible_lines; /**< Visible rows (set each frame). */
+
+    /* Inspector scroll state. */
+    int               inspector_total;  /**< Total content height px (set each frame). */
+    int               inspector_visible_lines; /**< Visible height px (set each frame). */
+
+    /* Scrollbar drag state. */
+    int               scrollbar_dragging;  /**< 0=none, 1=outliner, 2=inspector, 3=tui. */
+    float             scrollbar_drag_y;    /**< Mouse Y at drag start (logical px). */
+    int               scrollbar_drag_scroll; /**< Scroll value at drag start. */
 } scene_ui_state_t;
 
 /**
@@ -119,6 +147,13 @@ void scene_ui_tui_log(scene_ui_state_t *ui, const char *text);
  * @param text Log line text (non-NULL, truncated to UI_TUI_LOG_LINE-1).
  */
 void scene_ui_tui_log_error(scene_ui_state_t *ui, const char *text);
+
+/**
+ * @brief Append a success line to the TUI log (rendered with green checkmark).
+ * @param ui   UI state (non-NULL).
+ * @param text Log line text (non-NULL, truncated to UI_TUI_LOG_LINE-1).
+ */
+void scene_ui_tui_log_success(scene_ui_state_t *ui, const char *text);
 
 /* ---- Panel builders ---- */
 

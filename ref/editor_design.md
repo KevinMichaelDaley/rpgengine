@@ -5,1469 +5,995 @@
 ```
 src/editor/
 ├── protocol/
-│   ├── edit_io_thread.c       # Dedicated editor I/O thread (TCP accept/read/write)
-│   ├── edit_io_thread.h       # (internal)
-│   ├── edit_cmd_ring.c        # Lock-free SPSC command ring (I/O thread → tick loop)
-│   ├── edit_cmd_ring.h
-│   ├── edit_parse.c           # JSON command parser
-│   ├── edit_parse.h
-│   ├── edit_dispatch.c        # command → handler routing (runs on main tick thread)
-│   └── edit_dispatch.h
+│   ├── json_write.c             # JSON serialization helpers
+│   ├── json_parse.c             # JSON tokenizer / parser
+│   └── json_access.c            # JSON value accessors (get string, number, etc.)
+├── io/
+│   ├── edit_io_thread.c         # Dedicated editor I/O thread (TCP accept/read/write)
+│   ├── edit_cmd_ring.c          # Lock-free SPSC command ring (I/O thread -> tick loop)
+│   ├── edit_cmd_ring_consume.c  # Ring consume operations
+│   └── edit_cmd_ring_query.c    # Ring query operations
+├── dispatch/
+│   └── edit_dispatch.c          # Command -> handler routing (runs on main tick thread)
+├── state/
+│   ├── edit_entity_store.c      # Entity store lifecycle (init/destroy/create/remove)
+│   ├── edit_entity_store_access.c # Entity store get/get_mut/restore/count/find_by_name
+│   ├── edit_entity_store_query.c  # Entity store query helpers
+│   ├── edit_entity_types.c      # Entity type registry (box, sphere, capsule, marker, mesh, halfspace)
+│   ├── edit_selection.c         # Selection mutation (add/remove/toggle/clear)
+│   ├── edit_selection_query.c   # Selection queries (contains/count/ids)
+│   ├── edit_selection_info.c    # Selection info helpers
+│   ├── edit_undo.c              # Undo/redo stack lifecycle and recording
+│   ├── edit_undo_ops.c          # Undo step and redo operations
+│   ├── edit_undo_group.c        # Undo group begin/end
+│   ├── edit_serialize.c         # Level -> JSON serialization (entities only)
+│   ├── edit_deserialize.c       # JSON -> level deserialization (entities only)
+│   ├── edit_serialize_full.c    # Level -> JSON v2 (entities + groups)
+│   ├── edit_deserialize_full.c  # JSON v2 -> level (entities + groups)
+│   ├── edit_history.c           # Command history ring buffer + JSONL log
+│   ├── edit_history_flush.c     # History flush to file
+│   └── edit_history_ctx.c       # History context snapshot (cursor, selection, aliases)
 ├── commands/
-│   ├── cmd_spawn.c            # spawn command family
-│   ├── cmd_transform.c        # move, rotate, scale
-│   ├── cmd_select.c           # select, deselect, query
-│   ├── cmd_delete.c           # delete + clone
-│   ├── cmd_clone.c            # clone (entity duplication)
-│   ├── cmd_level.c            # save, load, new
-│   ├── cmd_asset.c            # browse, import, complete
-│   ├── cmd_cursor.c           # cursor position, grid (forwarded to client)
-│   ├── cmd_camera.c           # camera mode/position (forwarded to client)
-│   ├── cmd_material.c         # material assignment
-│   ├── cmd_script.c           # run, eval, repl
-│   ├── cmd_texture.c          # texsynth commands
-│   ├── cmd_inspect.c          # properties, inspect
-│   └── cmd_search.c           # entity search by name/component
+│   ├── cmd_select.c             # select (by ID, toggle)
+│   ├── cmd_select_all.c         # select_all
+│   ├── cmd_select_near.c        # select_near (spatial radius)
+│   ├── cmd_select_regex.c       # select_regex (name pattern)
+│   ├── cmd_select_touching.c    # select_touching (physics query) + select_fill (flood-fill)
+│   ├── cmd_deselect_near.c      # deselect_near
+│   ├── cmd_deselect_regex.c     # deselect_regex
+│   ├── cmd_delete.c             # delete (selection-based)
+│   ├── cmd_delete_id.c          # delete_id (by entity ID)
+│   ├── cmd_move.c               # move (selection-based, delta)
+│   ├── cmd_move_id.c            # move_id (by entity ID)
+│   ├── cmd_rotate.c             # rotate (selection-based)
+│   ├── cmd_rotate_id.c          # rotate_id (by entity ID)
+│   ├── cmd_scale.c              # scale (selection-based)
+│   ├── cmd_scale_id.c           # scale_id (by entity ID)
+│   ├── cmd_clone.c              # clone (duplicate selected entities)
+│   ├── cmd_save.c               # save (level to file)
+│   ├── cmd_load.c               # load (level from file)
+│   ├── cmd_list_types.c         # list_types (entity type registry)
+│   ├── cmd_list_entities.c      # list_entities (with optional regex filter)
+│   ├── cmd_alias.c              # alias_create, alias_delete
+│   ├── cmd_alias_list.c         # alias_list
+│   ├── cmd_cursor.c             # cursor_push, cursor_pop, cursor_snap
+│   ├── cmd_group.c              # group, ungroup, select_group, group_info
+│   ├── cmd_group_mask.c         # group_mask resolution
+│   ├── cmd_material.c           # material (set/get slot paths)
+│   ├── cmd_asset_list.c         # asset_list (catalog listing)
+│   ├── cmd_asset_search.c       # asset_search (regex on asset paths)
+│   ├── cmd_complete.c           # complete (tab-completion)
+│   ├── cmd_browse.c             # browse (asset browser)
+│   ├── cmd_physics_pause.c      # physics_pause, physics_resume, physics_reset
+│   ├── cmd_physics_step.c       # physics_step (single tick while paused)
+│   └── edit_cmd_resolve.c       # Entity ID resolution (number or name lookup)
 ├── assets/
-│   ├── asset_registry.c       # catalog + lookup
-│   ├── asset_registry.h
-│   ├── asset_watch.c          # inotify filesystem watcher for hot-reload
-│   ├── asset_watch.h
-│   ├── asset_import.c         # external file import
-│   ├── asset_download.c       # TCP asset transfer (server side, on editor I/O thread)
-│   └── asset_download.h
-├── undo/
-│   ├── undo_stack.c           # command pattern undo/redo
-│   └── undo_stack.h
-├── script/
-│   ├── script_runtime.c       # Script thread + script state (dedicated pthread)
-│   ├── script_runtime.h
-│   ├── script_env.c           # script_env_t setup, snapshot copy, update swap
-│   ├── script_sandbox.c       # script sandbox (strip os/io/ffi/debug)
-│   ├── script_native.c        # Native script function registry + dispatch
-│   ├── script_rebase.c        # Rebase script entity updates onto tick state
-│   ├── script_api_entity.c    # entity manipulation bindings (script ↔ env)
-│   ├── script_api_math.c      # vec3, quat, noise bindings
-│   ├── script_api_texture.c   # texsynth bindings
-│   └── script_api_cursor.c    # cursor/grid bindings
-├── texsynth/
-│   ├── texsynth_workspace.c   # workspace lifecycle
-│   ├── texsynth_workspace.h
-│   ├── texsynth_noise.c       # perlin, simplex, voronoi, fractal
-│   ├── texsynth_noise.h
-│   ├── texsynth_blend.c       # blend modes
-│   ├── texsynth_bake.c        # UV-space rasterization
-│   └── texsynth_bake.h
-├── cursor/
-│   ├── editor_cursor.c        # 3D cursor state + grid logic (client side)
-│   └── editor_cursor.h
-├── level/
-│   ├── level_serialize.c      # JSON save/load
-│   └── level_serialize.h
-├── json/
-│   ├── json_parse.c           # Minimal JSON parser (no external dependency)
-│   └── json_parse.h
+│   ├── edit_asset_registry.c    # Asset catalog (init, add, scan directory tree)
+│   ├── edit_asset_query.c       # Asset queries (find, list, search, complete)
+│   └── edit_asset_serve.c       # TCP asset transfer (server-side)
+├── mesh/
+│   ├── mesh_slot.c              # Slot lifecycle (init/destroy/clear/face_count)
+│   ├── mesh_slot_reserve.c      # Buffer capacity growth (vertices, indices)
+│   ├── mesh_slot_add.c          # Append vertex / triangle
+│   ├── mesh_edit.c              # Top-level mesh edit subsystem (16 slots)
+│   ├── mesh_edit_mode.c         # Selection mode switching
+│   ├── mesh_edit_slot.c         # Active slot get/set
+│   ├── mesh_sel_bitset.c        # Selection bitset (set/unset/toggle/test/clear)
+│   ├── mesh_sel_bitset_ops.c    # Bitset bulk operations
+│   ├── mesh_sel_convert.c       # Selection conversion (face<->vertex, face<->edge)
+│   ├── mesh_edge_table.c        # Edge table build/find/destroy
+│   ├── mesh_select.c            # Element selection commands
+│   ├── mesh_select_topo.c       # Topology-based selection (edge loop, edge ring)
+│   ├── mesh_select_grow.c       # Selection grow/shrink
+│   ├── mesh_vao_serialize.c     # FVMA binary serialization
+│   ├── mesh_vao_deserialize.c   # FVMA binary deserialization
+│   ├── mesh_prim_box.c          # Box primitive generator
+│   ├── mesh_prim_plane.c        # Plane primitive generator
+│   ├── mesh_prim_cylinder.c     # Cylinder primitive generator
+│   ├── mesh_prim_sphere.c       # UV sphere primitive generator
+│   ├── mesh_extrude.c           # Face extrusion (region)
+│   ├── mesh_extrude_individual.c # Individual face extrusion
+│   ├── mesh_inset.c             # Face inset
+│   ├── mesh_outset.c            # Face outset
+│   ├── mesh_bevel.c             # Edge bevel
+│   ├── mesh_bevel_vertex.c      # Vertex bevel
+│   ├── mesh_subdiv_linear.c     # Linear subdivision
+│   ├── mesh_subdiv_loop.c       # Loop subdivision
+│   ├── mesh_merge.c             # Vertex merge (by distance)
+│   ├── mesh_collapse.c          # Edge/face collapse
+│   ├── mesh_clip.c              # Plane clipping
+│   ├── mesh_normals.c           # Normal recalculation (smooth/flat/area-weighted)
+│   ├── mesh_split_detach.c      # Selection split / detach
+│   ├── mesh_bridge.c            # Edge loop bridge
+│   ├── mesh_triangulate.c       # N-gon triangulation
+│   ├── mesh_uv_planar.c         # Planar UV projection
+│   ├── mesh_uv_wrap.c           # Box, cylindrical, spherical UV
+│   ├── mesh_uv_seam.c           # UV seam marking
+│   ├── mesh_uv_fit.c            # UV fit to [0,1]
+│   ├── mesh_uv_transform.c      # UV translate/rotate/scale
+│   ├── mesh_uv_smart.c          # Angle-based smart unwrap
+│   ├── mesh_uv_island.c         # UV island detection
+│   ├── mesh_uv_pack.c           # UV island packing
+│   ├── mesh_uv_density.c        # Texel density equalization
+│   ├── mesh_material.c          # Per-face material assignment
+│   ├── mesh_material_assign.c   # Material batch assign
+│   ├── mesh_material_lift.c     # Lift material from face
+│   ├── mesh_material_replace.c  # Replace material across mesh
+│   ├── mesh_brush.c             # Quake-style brush (half-plane intersection)
+│   ├── mesh_csg_hollow.c        # CSG hollow (inner shell)
+│   ├── mesh_csg_boolean.c       # CSG merge/subtract/intersect
+│   ├── mesh_clipboard.c         # Mesh copy/paste
+│   ├── mesh_export_obj.c        # Wavefront OBJ export
+│   ├── mesh_import_obj.c        # Wavefront OBJ import
+│   ├── mesh_snapshot.c          # Mesh state snapshot for undo
+│   ├── mesh_snapshot_update.c   # Snapshot restore
+│   ├── mesh_undo.c              # Mesh-level undo stack
+│   ├── mesh_undo_ops.c          # Mesh undo/redo operations
+│   └── mesh_commit.c            # Bake mesh -> entity + FVMA binary
 ├── controller/
-│   ├── ctrl_main.c            # controller entry point
-│   ├── ctrl_tui.c             # terminal UI (raw termios)
-│   ├── ctrl_tui.h
-│   ├── ctrl_input.c           # input parsing, keybindings, Vim-style state machine
-│   ├── ctrl_input.h
-│   ├── ctrl_complete.c        # tab-completion engine
-│   ├── ctrl_complete.h
-│   ├── ctrl_history.c         # command history (with file persistence)
-│   ├── ctrl_history.h
-│   ├── ctrl_connection.c      # TCP connection to server + client
-│   ├── ctrl_connection.h
-│   ├── ctrl_browse.c          # Browse result cache + #N references
-│   └── ctrl_browse.h
+│   ├── ctrl_input.c             # TUI key processing (mode dispatch)
+│   ├── ctrl_tui.c               # Terminal UI rendering (ANSI)
+│   ├── ctrl_log.c               # Controller log ring buffer
+│   ├── ctrl_log_query.c         # Log query helpers
+│   ├── ctrl_render.c            # TUI screen rendering
+│   └── ctrl_browse.c            # Asset browser TUI mode
 ├── client/
-│   ├── client_state_socket.c  # TCP listener for controller connection (client side)
-│   ├── client_state_socket.h
-│   ├── client_selection.c     # Selection state + highlight rendering
-│   ├── client_selection.h
-│   ├── client_preview.c       # Asset preview rendering (mesh/texture/material)
-│   ├── client_preview.h
-│   ├── client_editor_input.c  # Mouse raycast, click-select, box-select
-│   ├── client_editor_input.h
-│   ├── client_editor_camera.c # Camera modes (front/right/top/ortho)
-│   └── client_editor_camera.h
-├── mcp/
-│   ├── mcp_server.c           # MCP protocol handler
-│   ├── mcp_server.h
-│   ├── mcp_tools.c            # tool definitions + dispatch
-│   └── mcp_resources.c        # resource queries
-└── editor.h                   # top-level editor context + init/shutdown
+│   ├── client_cursor.c          # Client-side cursor state
+│   ├── client_cursor_render.c   # Cursor rendering
+│   ├── client_state_dispatch.c  # State change dispatch
+│   ├── client_state_push.c      # Push state to renderer
+│   ├── client_editor_input.c    # Client-side editor input handling
+│   ├── client_asset_download.c  # Asset download over TCP
+│   ├── client_asset_cache.c     # Client-side asset cache
+│   └── client_asset_cache_io.c  # Cache file I/O
+├── scene/
+│   ├── scene_main.c             # Scene editor lifecycle (init/shutdown/run/frame)
+│   ├── scene_panel.c            # Panel layout (4 regions + dividers)
+│   ├── scene_panel_persist.c    # Panel layout save/load
+│   ├── scene_input.c            # SDL2 event dispatch
+│   ├── scene_frame.c            # Per-frame pump + action dispatch
+│   ├── scene_connection.c       # TCP/UDP connection lifecycle
+│   ├── scene_connection_io.c    # Connection send/recv
+│   ├── scene_connection_status.c # Connection status formatting
+│   ├── scene_sync.c             # Offline queue lifecycle
+│   ├── scene_sync_state.c       # Sync state machine
+│   ├── scene_cmd.c              # JSON command formatting (spawn, delete, select)
+│   ├── scene_cmd_transform.c    # JSON command formatting (move, rotate, scale, list)
+│   ├── scene_cmd_parse.c        # JSON response parsing
+│   ├── scene_ui_outliner.c      # Outliner panel Clay layout
+│   ├── scene_ui_inspector.c     # Inspector panel Clay layout
+│   ├── scene_ui_viewport.c      # Viewport panel Clay layout
+│   ├── scene_ui_tui.c           # TUI panel Clay layout
+│   ├── scene_viewport_render.c  # Viewport FBO/shader/pipeline setup
+│   ├── scene_viewport_draw.c    # Scene draw (grid + entities + camera)
+│   ├── scene_viewport_mesh.c    # FVMA entity mesh loading
+│   └── snap_state.c             # Per-editor snap/grid state
+├── editor_tick_drain.c          # Per-tick drain loop (ring -> dispatch -> response)
+└── (scene editor entry point is scene_main.c)
+```
 
+### Public Headers
+
+```
 include/ferrum/editor/
-├── editor.h                   # public: editor_ctx_t, init, shutdown
-├── editor_commands.h          # public: command registry + dispatch
-├── editor_cursor.h            # public: cursor state query
-├── asset_registry.h           # public: asset catalog query
-├── texsynth.h                 # public: texture synthesis API
-└── script.h                   # public: script runtime control
+├── json_parse.h                 # JSON parser types and API
+├── edit_cmd_ring.h              # SPSC command ring
+├── edit_io_thread.h             # I/O thread lifecycle
+├── edit_dispatch.h              # Command dispatch table
+├── edit_entity.h                # Entity types, entity store
+├── edit_selection.h             # Selection set
+├── edit_undo.h                  # Undo/redo stack
+├── edit_cmd_ctx.h               # Command context (physics bridge, groups, cursor)
+├── edit_commands.h              # Command handler declarations + registration
+├── edit_serialize.h             # Level save/load JSON
+├── edit_history.h               # Command history (ring + JSONL file)
+├── edit_asset_registry.h        # Asset catalog
+├── edit_physics_ctrl.h          # Physics sim control callbacks
+├── edit_script_env.h            # Script environment (snapshots, update blob)
+├── edit_script_rebase.h         # Script update rebase onto entity store
+├── editor_ctx.h                 # Top-level editor context
+├── ctrl_tui.h                   # TUI controller context
+├── ctrl_conn.h                  # TCP connection to server
+├── ctrl_log.h                   # Controller log ring
+├── ctrl_cmd_defs.h              # TUI command table + text-to-JSON conversion
+├── ctrl_browse.h                # Asset browser TUI mode
+├── ctrl_mesh_mode.h             # Mesh mode keybinding dispatch
+├── protocol/
+│   └── edit_autosave.h          # Server-side autosave
+├── mesh/
+│   ├── mesh_slot.h              # Editable mesh slot (indexed triangle mesh)
+│   ├── mesh_edit.h              # Mesh edit subsystem (16 slots, selection bitsets)
+│   ├── mesh_selection.h         # Edge table + selection conversion
+│   ├── mesh_select.h            # Element selection commands
+│   ├── mesh_vao_format.h        # FVMA binary wire format
+│   ├── mesh_primitives.h        # Primitive generators (box, plane, cylinder, sphere)
+│   ├── mesh_extrude.h           # Face extrusion
+│   ├── mesh_inset.h             # Face inset
+│   ├── mesh_bevel.h             # Edge/vertex bevel
+│   ├── mesh_subdivide.h         # Linear + Loop subdivision
+│   ├── mesh_merge.h             # Vertex merge
+│   ├── mesh_clip.h              # Plane clipping
+│   ├── mesh_normals.h           # Normal recalculation
+│   ├── mesh_bridge.h            # Edge loop bridge
+│   ├── mesh_triangulate.h       # Triangulation
+│   ├── mesh_uv.h                # UV projection (planar, box, cylindrical, spherical)
+│   ├── mesh_uv_seam.h           # UV seam marking
+│   ├── mesh_uv_transform.h      # UV transforms
+│   ├── mesh_uv_smart.h          # Smart unwrap
+│   ├── mesh_uv_pack.h           # UV island packing
+│   ├── mesh_material.h          # Per-face material assignment
+│   ├── mesh_material_ops.h      # Material lift/replace
+│   ├── mesh_brush.h             # Quake-style brush geometry
+│   ├── mesh_csg.h               # CSG operations (hollow, merge, subtract, intersect)
+│   ├── mesh_transfer.h          # Copy/paste + OBJ import/export
+│   ├── mesh_snapshot.h          # Mesh state snapshot
+│   ├── mesh_undo.h              # Mesh undo/redo stack
+│   └── mesh_commit.h            # Bake mesh -> entity + FVMA
+├── scene/
+│   ├── scene_main.h             # Scene editor context + lifecycle
+│   ├── scene_panel.h            # Panel layout (Outliner, Viewport, Inspector, TUI)
+│   ├── scene_input.h            # SDL2 event processing
+│   ├── scene_frame.h            # Per-frame pump + action dispatch
+│   ├── scene_connection.h       # TCP/UDP server connection
+│   ├── scene_sync.h             # Offline queue + in-flight tracking
+│   ├── scene_cmd.h              # Command formatting + response parsing
+│   ├── scene_ui.h               # UI panel builders (Clay)
+│   ├── scene_viewport_render.h  # 3D viewport rendering (FBO, shaders, meshes)
+│   └── snap_state.h             # Grid/snap state
+├── viewport/
+│   ├── viewport_camera.h        # Orbit camera
+│   ├── viewport_gizmo.h         # Transform gizmo
+│   └── selection_raycast.h      # Ray/frustum intersection for picking
+├── panels/
+│   ├── outliner_tree.h          # Outliner tree model with filtering
+│   ├── inspector_widgets.h      # Inspector property widgets
+│   └── panel_toolbar.h          # Toolbar button state
+├── mode/
+│   ├── mode_manager.h           # Editor mode vtable dispatch
+│   └── mode_object.h            # Object mode
+├── ui/
+│   ├── clay_backend.h           # Clay UI renderer backend
+│   ├── clay_fonts.h             # Font atlas
+│   ├── clay_theme.h             # Color theme
+│   └── glad_gl_loader.h         # GL function loader
+└── client/
+    ├── client_cursor.h          # Client cursor state
+    ├── client_editor_input.h    # Client editor input
+    ├── client_state_dispatch.h  # Client state dispatch
+    ├── client_state_socket.h    # Client state socket
+    ├── client_asset_download.h  # Asset download
+    ├── client_asset_cache.h     # Asset cache
+    └── client_mesh_render.h     # Client mesh rendering
 ```
-
-### Header Ownership (2-Type Rule Compliance)
-
-| Header | Types |
-|--------|-------|
-| `editor.h` | `editor_ctx_t`, `editor_config_t` |
-| `editor_commands.h` | `editor_cmd_t`, `editor_cmd_result_t` |
-| `editor_cursor.h` | `editor_cursor_t`, `editor_grid_t` |
-| `asset_registry.h` | `asset_entry_t`, `asset_query_t` |
-| `texsynth.h` | `texsynth_workspace_t`, `texsynth_layer_t` |
-| `script.h` | `script_runtime_t`, `script_env_t` |
 
 ---
 
-## 2. Edit Protocol Details
+## 2. Entity System
 
-### 2.1 Wire Format
+### Entity Types
 
-TCP, newline-delimited UTF-8 JSON. Each message is a single line terminated
-by `\n`. This is chosen over binary for:
-- Easy debugging (netcat, telnet)
-- Easy scripting (any language with TCP + JSON)
-- Easy MCP bridging (MCP is already JSON-RPC)
+Six built-in entity types (defined as constants in `edit_entity.h`):
 
-Maximum message size: 1 MB (rejects larger). Large query responses (e.g.,
-entity lists for levels with hundreds of entities) are paginated via
-`offset`/`limit` parameters rather than sending everything in one message.
+| Constant                    | Value | Description                  |
+|-----------------------------|-------|------------------------------|
+| `EDIT_ENTITY_TYPE_BOX`      | 0     | Axis-aligned box collider    |
+| `EDIT_ENTITY_TYPE_SPHERE`   | 1     | Sphere collider              |
+| `EDIT_ENTITY_TYPE_CAPSULE`  | 2     | Capsule collider             |
+| `EDIT_ENTITY_TYPE_MARKER`   | 3     | Non-physical marker          |
+| `EDIT_ENTITY_TYPE_MESH`     | 4     | Custom mesh (FVMA geometry)  |
+| `EDIT_ENTITY_TYPE_HALFSPACE`| 5     | Infinite half-plane collider |
 
-### 2.2 Message Types
+Maximum 32 types supported (`EDIT_ENTITY_TYPE_MAX`). Type registry in `edit_entity_types.c` maps names to IDs for string-based lookup.
 
-**Request (controller → server):**
+### Entity Structure (`edit_entity_t`)
+
+Each entity stores:
+- `pos[3]` — world position
+- `rot[3]` — Euler rotation in degrees (pitch, yaw, roll)
+- `scale[3]` — per-axis scale factors
+- `pivot_offset[3]` — local-space pivot offset for transforms
+- `type` — entity type (`EDIT_ENTITY_TYPE_*`)
+- `body_index` — physics body index (`UINT32_MAX` = none)
+- `active` — whether slot is in use
+- `name[256]` — optional display name
+- `materials[5][256]` — material slot paths (albedo, normal, roughness, metallic, emissive)
+- `attrs` — dynamic key-value attributes (`entity_attrs_t`) for gameplay scripts
+
+### Entity Store (`edit_entity_store_t`)
+
+Flat-array entity store with O(1) LIFO freelist allocation:
+
+- `entities` — mmap'd array of `edit_entity_t` slots
+- `freelist` — stack of free slot indices
+- `capacity`, `free_count`, `active_count`
+
+API:
+- `edit_entity_store_init` / `destroy`
+- `edit_entity_store_create(type)` — allocates slot, returns ID
+- `edit_entity_store_remove(id)` — marks inactive, pushes to freelist
+- `edit_entity_store_get` / `get_mut` — access by ID
+- `edit_entity_store_restore(id, snapshot)` — re-activate slot (for undo)
+- `edit_entity_store_count` — active entity count
+- `edit_entity_store_find_by_name` — name-based lookup
+
+Thread safety: only mutated from the main tick thread during drain.
+
+---
+
+## 3. Command System
+
+### Dispatch (`edit_dispatch.h`)
+
+Command dispatch table with handler registration:
+
+- Up to 64 handlers (`EDIT_DISPATCH_MAX_HANDLERS`)
+- Command name max 32 chars
+- Handler signature: `bool handler(edit_dispatch_t *d, const json_value_t *args, json_value_t *result, json_arena_t *arena)`
+- `edit_dispatch_exec()` — parse JSON, lookup handler, call it, serialize response
+- Parse and response arenas are per-dispatch (reused per command)
+- `user_data` pointer holds `edit_cmd_ctx_t`
+- Optional `edit_history` for command logging
+
+### Command Context (`edit_cmd_ctx_t`)
+
+Shared context for all command handlers, stored as `dispatch->user_data`:
+
+- `entities` — entity store pointer
+- `selection` — selection set pointer
+- `undo` — undo/redo stack pointer
+- `bridge` — physics bridge callbacks (NULL = no physics)
+- `physics` — physics simulation control (NULL = no physics)
+- `cursor_stack[16][3]` — LIFO cursor position stack
+- `groups` — named selection groups (heap-allocated, up to 64 slots)
+- `asset_registry` — asset catalog (NULL if no asset directory)
+- `mesh` — mesh editing context (NULL if mesh mode not initialized)
+- `script_runtime` — Aegis script runtime (NULL if scripting not configured)
+
+### Command Resolution
+
+`edit_cmd_resolve_entity()` accepts either a numeric ID or a string name and resolves to an entity ID. This enables commands to reference entities by name (e.g., `"entity": "player_spawn"`) or by ID (`"entity": 42`).
+
+### Available Commands
+
+**Entity lifecycle:**
+- `spawn` — create entity (type, pos, rot, scale, name)
+- `delete` — delete selected entities (with undo)
+- `delete_id` — delete by entity ID
+- `clone` — duplicate selected entities (optional offset)
+- `entity_def` — spawn with pre-applied attrs
+
+**Transforms:**
+- `move` / `move_id` — translate (selection or by ID)
+- `rotate` / `rotate_id` — rotate (selection or by ID)
+- `scale` / `scale_id` — scale (selection or by ID)
+
+**Selection:**
+- `select` / `deselect` — by entity ID (toggle support)
+- `select_all` / `deselect_all`
+- `select_near` / `deselect_near` — spatial radius query
+- `select_regex` / `deselect_regex` — name pattern matching
+- `select_touching` — physics contact query
+- `select_fill` — flood-fill via touching until stable
+
+**Groups:**
+- `group` — create named group from selection (with pivot, optional parent)
+- `ungroup` — dissolve group (with undo)
+- `select_group` — select all entities in a group
+- `group_info` — query group metadata
+- `group_list` / `group_save` / `group_delete` — manage named groups
+
+Group names must start with `&`. Up to 64 groups, 4096 entities per group. Groups support nesting via a `parent` field.
+
+**Aliases (@ markers):**
+- `alias_create` — create named alias with position/rotation
+- `alias_delete` — remove alias
+- `alias_list` — list aliases (optional regex filter)
+
+**Cursor:**
+- `cursor_push` / `cursor_pop` — position stack
+- `cursor_snap` — snap cursor to entity or selection center
+
+**Level I/O:**
+- `save` — serialize to JSON file
+- `load` — deserialize from JSON file
+- Supports v1 (entities only) and v2 (entities + groups) formats
+
+**Physics control:**
+- `physics_pause` / `physics_resume` / `physics_step` / `physics_reset`
+
+**Materials:**
+- `material` — set/get per-slot material paths (albedo, normal, roughness, metallic, emissive)
+- `physics_material` — set friction/restitution on physics body
+- `setattr` — set dynamic key-value attribute on entity
+
+**Joints:**
+- `joint` — create physics joint between two entities (distance, ball, hinge)
+
+**Assets:**
+- `asset_list` — catalog listing (prefix filter, type filter)
+- `asset_search` — regex search on asset paths
+- `asset_complete` — tab-completion for asset paths
+- `browse` — asset browser with prefix/filter
+- `complete` — general tab-completion for command input
+
+**Scripting:**
+- `script` — manage Aegis scripts (load, unload, list)
+- `source` — execute a file of text commands
+
+**Query:**
+- `list_types` — enumerate entity type registry
+- `list_entities` — list active entities (optional regex filter)
+
+**Mesh modeling commands** (see Section 8).
+
+---
+
+## 4. Physics Bridge
+
+The `edit_physics_bridge_t` (defined in `edit_cmd_ctx.h`) provides callback hooks for bridging editor entity operations to the physics engine. All callbacks are optional (NULL = no-op).
+
+| Callback             | Signature                                                          | Purpose                                     |
+|----------------------|--------------------------------------------------------------------|---------------------------------------------|
+| `on_spawn`           | `uint32_t (*)(void*, uint32_t entity_id, const edit_entity_t*)`    | Create physics body after entity spawn       |
+| `on_delete`          | `void (*)(void*, uint32_t entity_id, uint32_t body_index)`         | Destroy physics body before entity delete    |
+| `on_move`            | `void (*)(void*, uint32_t entity_id, uint32_t body_index, float[3])` | Teleport physics body after entity move    |
+| `on_query_touching`  | `uint32_t (*)(void*, uint32_t entity_id, candidates, out, max)`    | Query contact pairs for select_touching      |
+| `on_mesh_data`       | `void (*)(void*, uint32_t body_index, uint8_t* fvma, uint32_t)`   | Deliver FVMA mesh data to physics engine     |
+| `on_joint`           | `uint32_t (*)(void*, body_a, body_b, type, anchor_a, anchor_b, axis)` | Create joint between two bodies          |
+| `on_set_material`    | `void (*)(void*, uint32_t body_index, float friction, float restitution)` | Set physics material properties      |
+
+### Physics Simulation Control (`edit_physics_ctrl_t`)
+
+Callback interface for pause/resume/step/reset:
+- `on_pause`, `on_resume`, `on_step`, `on_reset`, `is_paused`
+- Host application (e.g., demo_server) provides implementations
+
+---
+
+## 5. Undo / Redo System
+
+### Entity-Level Undo (`edit_undo.h`)
+
+Ring buffer undo stack with dedicated snapshot arena:
+
+- Default capacity: 4096 entries, 16 MB snapshot arena
+- Each entry stores: forward/inverse command type, group ID, entity ID, optional snapshot pointer, compact delta (`float[4]`)
+- Grouped undo: `begin_group` / `end_group` — all entries in a group are undone/redone atomically
+- Snapshot arena: bump allocator for entity snapshots (used by delete undo to reconstruct entities)
+- Ring wrapping silently discards oldest entries
+
+Command type tags (`edit_cmd_type_t`): SPAWN, DELETE, MOVE, ROTATE, SCALE, GROUP_CREATE, GROUP_DELETE.
+
+### Mesh-Level Undo (`mesh_undo.h`)
+
+Separate undo system for mesh editing:
+- Full-slot snapshots (positions, normals, indices, polygroup IDs)
+- Max depth: 64 entries
+- `mesh_undo_push` / `mesh_undo` / `mesh_redo`
+
+---
+
+## 6. Selection System
+
+### Entity Selection (`edit_selection.h`)
+
+Sorted array of selected entity IDs:
+- Max 4096 simultaneously selected entities
+- O(log n) lookup via binary search on sorted array
+- Version counter increments on every change (dirty tracking for sync)
+- API: `add`, `remove`, `toggle`, `clear`, `contains`, `count`, `ids`
+
+### Mesh Element Selection
+
+Per-element bitsets in `mesh_edit_t`:
+- `sel_vertices`, `sel_edges`, `sel_faces` — dynamic bitsets
+- Selection modes: VERTEX, EDGE, FACE, POLYGROUP, OBJECT
+- Selection conversion: face<->vertex, face<->edge (via edge table)
+- Topology selection: edge loops, edge rings, grow/shrink
+
+### Selection Groups
+
+Named groups (prefix `&`) stored in `edit_cmd_ctx_t.groups`:
+- Up to 64 groups, 4096 entities per group
+- Each group has: name, entity IDs, count, pivot point, optional parent group
+- Full undo support for group create/delete
+
+---
+
+## 7. Scene Editor (GUI)
+
+### Overview
+
+Standalone SDL2/OpenGL application (`scene_main.c`) that connects to a game server and provides a graphical editing interface. Uses Clay for immediate-mode UI layout.
+
+### Context (`scene_editor_t`)
+
+Top-level aggregation:
+- SDL2 window + OpenGL context
+- `panel_layout_t` — four-panel layout with draggable dividers
+- `snap_state_t` — per-editor grid/snap state
+- `clay_backend_t` — Clay UI renderer
+- `arena_t` — main editor arena allocator
+- `scene_connection_t` — TCP/UDP server connection
+- `scene_sync_t` — offline queue and sync state
+- `edit_entity_store_t` — local entity mirror
+- `edit_selection_t` — selected entity set
+- `viewport_render_state_t` — 3D viewport (FBO, shaders, meshes, camera)
+- `scene_ui_state_t` — interactive UI state (actions, scroll, mouse, TUI input)
+
+### Panel Layout (`scene_panel.h`)
+
+Four panel regions with draggable dividers:
+
+```
+  OUTLINER (left) | VIEWPORT (center-top)   | INSPECTOR (right)
+                  | TUI (center-bottom)      |
+```
+
+- Three dividers: LEFT (outliner/viewport), RIGHT (viewport/inspector), BOTTOM (viewport/TUI)
+- Divider positions stored as fractions [0,1] of window dimensions
+- Min panel size: 40px
+- Toggle visibility per panel; focus tracking with Tab cycling
+- Persistence: save/load divider positions to file
+
+### 3D Viewport Rendering (`scene_viewport_render.h`)
+
+Off-screen FBO rendered 3D scene displayed as Clay UI image element:
+
+- Framebuffer with color texture + depth renderbuffer
+- 9-pass `render_pipeline_t` (forward + debug passes)
+- Blinn-Phong shader for entities, separate unlit shader for grid
+- Mesh registry for all entity shapes:
+  - Built-in primitives: box, sphere, capsule, halfspace plane
+  - Per-entity FVMA mesh cache for MESH type entities
+- Entity rendering: all 6 types supported, selection-highlighted entities drawn in orange
+- Grid: dynamic line geometry
+
+### Editor Camera (`viewport_camera.h`)
+
+Orbit camera with:
+- Focus point + yaw + pitch + distance (spherical coordinates)
+- Perspective and orthographic projection
+- Controls: orbit (yaw/pitch delta), pan (screen-space), zoom (dolly)
+- Snap views: Front(1), Back(Ctrl+1), Right(3), Left(Ctrl+3), Top(7), Bottom(Ctrl+7)
+- Toggle perspective/orthographic
+- Frame selection (fit AABB)
+- Screen-to-ray casting for entity picking
+
+### Transform Gizmo (`viewport_gizmo.h`)
+
+Per-axis transform manipulation:
+- Modes: Translate, Rotate, Scale
+- Axis IDs: X, Y, Z, NONE
+- Hit testing: ray vs axis-aligned geometry (cylinders for translate, tori for rotate, cubes for scale)
+- Constrained drag delta: projects movement onto active axis
+
+### Selection Raycast (`selection_raycast.h`)
+
+Picking and box selection:
+- Ray-AABB intersection (slab method)
+- Ray-sphere intersection
+- View frustum extraction from camera
+- Frustum-AABB intersection test
+- `pick_nearest_entity()` — test ray against candidate AABBs
+
+### UI Panels (Clay Layout)
+
+**Outliner** (`scene_ui_outliner.c`):
+- Create buttons (spawn box/sphere/capsule)
+- Entity list with click-to-select/deselect
+- Outliner tree model with text filtering and scrolling
+
+**Inspector** (`scene_ui_inspector.c`):
+- Selected entity properties (position, rotation, scale as vec3 widgets)
+- Float widgets with min/max clamping
+- Dropdown widgets, checkbox widgets
+- Delete button for selected entities
+
+**Viewport** (`scene_ui_viewport.c`):
+- 3D viewport texture from FBO displayed as Clay image element
+
+**TUI** (`scene_ui_tui.c`):
+- Log ring buffer display (normal + error lines)
+- Command input line (activated by `:`)
+- Sync status display
+
+**Toolbar** (`panel_toolbar.h`):
+- Transform mode buttons (Translate, Rotate, Scale)
+- Snap toggle button
+
+### UI Actions
+
+UI interactions produce `scene_ui_action_t` values dispatched after layout:
+- SPAWN_BOX, SPAWN_SPHERE, SPAWN_CAPSULE
+- SELECT_ENTITY, DESELECT_ENTITY
+- DELETE_SELECTED
+- MODE_TRANSLATE, MODE_ROTATE, MODE_SCALE
+- TUI_COMMAND (execute text command)
+
+### Editor Modes (`mode_manager.h`)
+
+Mode vtable dispatch with enter/exit callbacks:
+- Currently supports OBJECT mode
+- Max 8 registered modes
+- Mode switch triggers exit on old, enter on new
+
+### Snap State (`snap_state.h`)
+
+Per-transform-type grid snap:
+- Independent enable/grid-size for: POSITION (default 1.0), ROTATION (default 15.0 degrees), SCALE (default 0.1)
+- Per-axis toggles (X, Y, Z) per transform type
+- `snap_state_quantize()` — snap value to grid respecting axis toggles
+
+---
+
+## 8. Mesh Editing
+
+### Mesh Slot (`mesh_slot.h`)
+
+Single indexed triangle mesh with full vertex attributes:
+- Positions (vec3), normals (vec3), tangents (vec4), 2 UV channels (vec2 each), colors (vec4)
+- Triangle indices (uint32), per-face polygroup IDs (uint16)
+- Dynamic buffer growth (doubling strategy)
+- Max 4M vertices, 12M indices
+- API: `init`, `destroy`, `clear`, `face_count`, `reserve_vertices`, `reserve_indices`, `add_vertex`, `add_triangle`
+
+### Mesh Edit Subsystem (`mesh_edit.h`)
+
+Top-level management of editable meshes:
+- 16 simultaneously editable mesh slots (`MESH_MAX_EDITABLE`)
+- Active slot index tracking
+- Per-element selection bitsets (vertices, edges, faces)
+- 5 selection modes: VERTEX, EDGE, FACE, POLYGROUP, OBJECT
+
+### Mesh Operations
+
+**Primitives** (`mesh_primitives.h`):
+- Box (with per-axis segments)
+- Plane (with subdivisions, configurable up axis)
+- Cylinder (radius, height, segments, axis)
+- Sphere (UV sphere with configurable segments/rings)
+
+**Topology editing:**
+- Extrude (region and individual face)
+- Inset, outset
+- Bevel (edge and vertex)
+- Subdivision (linear and Loop)
+- Merge (by distance), collapse (edge/face)
+- Plane clipping
+- Split / detach selection
+- Edge loop bridge
+- Triangulation
+
+**UV mapping** (`mesh_uv.h` and related):
+- Projection: planar, box (triplanar), cylindrical, spherical
+- Seam marking
+- UV transforms (translate, rotate, scale)
+- Smart unwrap (angle-based)
+- UV island detection
+- UV island packing
+- Texel density equalization
+
+**Materials:**
+- Per-face material assignment
+- Material lift (read from face)
+- Material replace (across mesh)
+
+**CSG** (`mesh_csg.h`):
+- Hollow (create inner shell with configurable thickness)
+- Boolean union (merge)
+- Boolean subtraction
+- Boolean intersection
+
+**Brush geometry** (`mesh_brush.h`):
+- Quake/TrenchBroom-style brush: convex mesh from half-plane intersection
+- Clips initial bounding box with each plane to produce convex solid
+
+**Transfer** (`mesh_transfer.h`):
+- Deep copy mesh
+- Paste (append) mesh data
+- Wavefront OBJ import/export
+
+**Normal recalculation** (`mesh_normals.h`):
+- Smooth, flat, area-weighted modes
+
+### FVMA Binary Format (`mesh_vao_format.h`)
+
+Wire format for mesh serialization (little-endian):
+```
+[4] magic 'FVMA' (0x414D5646)
+[4] version (1)
+[4] vertex_count
+[4] index_count
+[4] flags (attribute presence bitmask)
+[4] polygroup_count
+--- conditional attribute data ---
+positions, normals, tangents, uv0, uv1, colors, indices, polygroup_ids
+```
+
+Flags: NORMALS (bit 0), TANGENTS (bit 1), UV0 (bit 2), UV1 (bit 3), COLORS (bit 4), BONES (bit 5).
+
+API: `mesh_vao_serialized_size`, `mesh_vao_serialize`, `mesh_vao_deserialize`.
+
+### Mesh Commit (`mesh_commit.h`)
+
+Bakes editable mesh into world entity + FVMA binary:
+- Serializes mesh to FVMA format
+- Creates entity of type `EDIT_ENTITY_TYPE_MESH`
+- Positions at mesh bounding box center
+- Optional material override, optional slot clear
+- Returns: entity ID, heap-allocated FVMA data (caller frees)
+
+### Mesh Undo (`mesh_undo.h`)
+
+Full-slot snapshot undo stack:
+- Max 64 snapshots
+- Each snapshot stores copies of positions, normals, indices, polygroup IDs
+- Circular buffer — oldest discarded on overflow
+- `mesh_undo_push` / `mesh_undo` / `mesh_redo`
+
+---
+
+## 9. TUI Editor Interface
+
+### Controller (`ctrl_tui.h`)
+
+Standalone terminal process connecting to editor server over TCP:
+- Raw termios mode with ANSI escape rendering
+- Double-buffered screen output
+- Input modes: NORMAL (hotkeys), COMMAND (`:` prefix), REPL (script), GRAB (entity), CONTEXT (menu)
+- Command-line editing (bottom bar)
+- Log area (ring buffer)
+- Terminal dimension tracking
+
+### Command Definitions (`ctrl_cmd_defs.h`)
+
+Static command table:
+- Each entry: name, alias, usage, help, argument format
+- Argument format descriptors: `s:` (string), `f:` (float), `f3:` (vec3), `u:` (uint), `b:` (bool)
+- `ctrl_cmd_build_json()` — convert text input to JSON command
+- `ctrl_cmd_complete()` — tab-completion candidates
+- `ctrl_cmd_build_entity_def_json()` — multi-line entity_def block to JSON
+
+### Mesh Mode Keybindings (`ctrl_mesh_mode.h`)
+
+Mode-dependent key dispatch:
+- Face mode: e=extrude, i=inset, g=grow, G=shrink
+- Edge mode: b=bevel, c=loop_cut, x=edge_ring, l=edge_loop
+- All modes: Tab=wireframe, ~=xray, u=unwrap, 1-5=mode switch
+- Display state: wireframe toggle, x-ray toggle
+- Statistics: selected count, vertex count, triangle count
+
+---
+
+## 10. Connection and Sync
+
+### Server Connection (`ctrl_conn.h`)
+
+Non-blocking TCP connection:
+- 32 MB receive buffer (handles asset transfers)
+- JSON protocol: `{"id":N,"cmd":"name","args":{...}}\n`
+- Response: `{"id":N,"ok":true,"result":...}` or `{"id":N,"ok":false,"error":"code"}`
+- Auto-incrementing request IDs for correlation
+
+### Scene Connection (`scene_connection.h`)
+
+Dual-channel connection for scene editor:
+- TCP control channel (via `ctrl_conn_t`) — edit commands
+- UDP replication channel (via `net_udp_socket_t`) — world snapshots
+- Connection states: DISCONNECTED, CONNECTED, ERROR
+- `scene_connection_send_cmd()` — format and send command
+- `scene_connection_pump()` — non-blocking read from both channels
+- `scene_connection_pop_response()` — extract complete response lines
+
+### Scene Sync (`scene_sync.h`)
+
+Google Drive-style sync with offline support:
+- States: IDLE (all flushed), SYNCING (commands in flight), OFFLINE (queued locally)
+- Offline edit queue: circular buffer of command strings (default 256 slots, max 1024 chars each)
+- In-flight tracking: count of sent-but-not-acked commands
+- Queue / dequeue operations (FIFO)
+- Force save support (`:save force`)
+
+### Scene Frame (`scene_frame.h`)
+
+Per-frame update:
+- `scene_frame_pump()` — read TCP/UDP, parse responses, update local entity store
+- `scene_frame_dispatch_action()` — convert UI actions to server commands
+- `scene_frame_request_entity_list()` — request full entity list from server
+
+---
+
+## 11. Asset Registry
+
+### Server-Side Registry (`edit_asset_registry.h`)
+
+Asset catalog with directory scanning:
+- Types: MESH (.glb, .obj), TEXTURE (.png, .ktx2, .jpg), MATERIAL (.mat), PREFAB (.prefab), SCRIPT (.wren, .ed), UNKNOWN
+- Entries: path (max 256 chars), type, size, CRC32 hash
+- `edit_asset_registry_scan()` — recursive directory walk
+- Queries: `find` (exact path), `list` (prefix + type filter), `search` (regex + type filter), `complete` (path prefix)
+
+### Asset Serving (`edit_asset_serve.h`)
+
+Server-side TCP asset transfer for on-demand client downloads.
+
+### Client Asset Cache
+
+Client-side caching:
+- `client_asset_download.c` — download assets over TCP
+- `client_asset_cache.c` / `client_asset_cache_io.c` — local file cache
+
+---
+
+## 12. Scripting Integration
+
+### Script Environment (`edit_script_env.h`)
+
+Data structures for the script thread:
+
+**Entity snapshots** (tick thread -> script thread):
+- `script_entity_snapshot_t` — read-only copy of entity state (pos, rot, scale, type, name, materials, attrs)
+- `script_entity_view_t` — view into snapshot array
+- `script_snapshot_build()` — build snapshots from entity store
+
+**Update blob** (script thread -> tick thread):
+- `script_update_buffer_t` — double-buffered blob with atomic ready flag
+- Packed `script_entity_update_t` headers + `script_attr_write_t` + payloads
+- `script_env_write_attr()` — append attribute write to blob
+
+**Script environment** (`script_env_t`):
+- Read-only entity view
+- Write-only update blob
+- Command ring for structural commands (spawn, delete, group)
+- Context: cursor position, selection snapshot
+
+### Script Rebase (`edit_script_rebase.h`)
+
+Applies script updates onto authoritative entity state:
+- Iterates packed blob, looks up entities by ID
+- Well-known keys (POS, ROT, SCALE, TYPE, BODY_IDX, NAME) applied to fixed fields
+- User/dynamic keys applied to `entity_attrs_t`
+- Returns counts of applied and skipped updates
+
+---
+
+## 13. Level Serialization
+
+### JSON Formats (`edit_serialize.h`)
+
+**Version 1** (entities only):
 ```json
-{"id": 42, "cmd": "spawn", "args": {"type": "box", "size": [2,2,2], "pos": [10,0,5]}}
+{"version":1,"entities":[
+  {"id":0,"type":"box","name":"wall_1",
+   "pos":[0,5,0],"rot":[0,0,0],"scale":[1,1,1],
+   "pivot_offset":[0,0,0],
+   "materials":{"albedo":"textures/brick.png"},
+   "attrs":{...}
+  }, ...
+]}
 ```
 
-Fields:
-- `id` (u32) — correlates response to request. Monotonically increasing.
-- `cmd` (string) — command name from the command vocabulary.
-- `args` (object) — command-specific arguments.
-
-**Response (server → controller):**
+**Version 2** (entities + groups):
 ```json
-{"id": 42, "ok": true, "result": {"entity": "ent_042", "body_id": 42}}
+{"version":2,"entities":[...],"groups":[
+  {"name":"&walls","ids":[0,1,2],"pivot":[0,5,0],"parent":""},
+  ...
+]}
 ```
 
-```json
-{"id": 43, "ok": false, "error": "Unknown asset: assets/meshes/missing.glb"}
-```
+Deserialization supports both versions transparently. Entities restored at their original IDs where possible.
 
-**Event (server → controller, unsolicited):**
-```json
-{"event": "entity_spawned", "entity": "ent_042", "data": {"pos": [10,0,5], "type": "box"}}
-```
+### Command History (`edit_history.h`)
 
-```json
-{"event": "asset_changed", "path": "assets/textures/stone_wall_albedo.png", "action": "created"}
-```
+Full command log for level reconstruction:
+- Ring buffer (4096 entries) + JSONL file backing
+- Each entry: seq, ISO-8601 timestamp, command name, raw args JSON, result JSON, context snapshot (cursor, selection, aliases), success flag
+- `edit_history_record()` — capture after each dispatch
+- `edit_history_flush()` — write pending entries to file
+- Context snapshot: cursor position, selected entity IDs, active @ aliases
 
-Events have no `id` field. The controller must handle them asynchronously.
+### Autosave (`edit_autosave.h`)
 
-### 2.3 Server-Side Implementation
-
-The edit socket runs on a **dedicated editor I/O thread** — not on fiber
-workers (which must not touch sockets per the engine threading contract).
-Commands are bridged to the main tick thread via a lock-free SPSC ring.
-
-```c
-/* Editor I/O thread — owns all TCP sockets */
-static void *edit_io_thread_(void *user) {
-    editor_ctx_t *ctx = user;
-    int listen_fd = net_tcp_listen(ctx->edit_port);
-    int asset_fd  = net_tcp_listen(ctx->asset_port);
-
-    /* Non-blocking + epoll for multiplexing */
-    int epfd = epoll_create1(0);
-    epoll_add_(epfd, listen_fd, EPOLLIN);
-    epoll_add_(epfd, asset_fd, EPOLLIN);
-
-    struct epoll_event events[16];
-    while (ctx->running) {
-        int n = epoll_wait(epfd, events, 16, 100 /* ms */);
-        for (int i = 0; i < n; i++) {
-            int fd = events[i].data.fd;
-            if (fd == listen_fd) {
-                /* Accept new controller connection */
-                int client_fd = accept(listen_fd, NULL, NULL);
-                net_tcp_set_nonblocking(client_fd);
-                net_tcp_set_nodelay(client_fd);
-                epoll_add_(epfd, client_fd, EPOLLIN);
-            } else if (fd == asset_fd) {
-                /* Accept new asset download connection */
-                int dl_fd = accept(asset_fd, NULL, NULL);
-                asset_download_handle_(ctx, dl_fd);  /* blocking OK, dedicated thread */
-            } else if (events[i].events & EPOLLIN) {
-                /* Read from controller connection */
-                edit_io_read_line_(ctx, fd);  /* → enqueue to cmd_ring */
-            }
-        }
-
-        /* Drain response ring → send TCP responses */
-        edit_io_drain_responses_(ctx);
-    }
-    return NULL;
-}
-
-/* Command ring: I/O thread → main tick thread */
-typedef struct edit_cmd_ring {
-    _Atomic uint32_t head;   /* written by I/O thread */
-    _Atomic uint32_t tail;   /* read by tick thread */
-    edit_cmd_entry_t entries[EDIT_CMD_RING_SIZE];  /* power-of-2 */
-} edit_cmd_ring_t;
-
-/* Main tick loop drains the ring between physics ticks */
-static void edit_drain_commands_(editor_ctx_t *ctx) {
-    edit_cmd_entry_t entry;
-    while (edit_cmd_ring_pop(&ctx->cmd_ring, &entry)) {
-        editor_cmd_result_t result = edit_dispatch(ctx, &entry.cmd);
-        edit_resp_ring_push(&ctx->resp_ring, entry.cmd.id, &result);
-    }
-}
-```
-
-The epoll-based I/O thread handles TCP accept, read, and write for both the
-edit protocol and asset download connections. This keeps all socket I/O on one
-thread, consistent with the engine's architecture.
-
-### 2.4 Command Dispatch
-
-Commands are registered in a static table:
-
-```c
-typedef struct editor_cmd_handler {
-    const char *name;
-    editor_cmd_result_t (*fn)(editor_ctx_t *ctx, const json_value_t *args);
-    const char *help;
-    const char *completion_hint;  /* for tab-completion */
-} editor_cmd_handler_t;
-
-static const editor_cmd_handler_t g_handlers[] = {
-    {"spawn",      cmd_spawn,      "Spawn entity at position", "<type> [args...]"},
-    {"delete",     cmd_delete,     "Delete selected entities", ""},
-    {"clone",      cmd_clone,      "Duplicate selection",      "[offset]"},
-    {"move",       cmd_move,       "Move selection by delta",  "<dx> <dy> <dz>"},
-    {"rotate",     cmd_rotate,     "Rotate selection",         "<rx> <ry> <rz>"},
-    {"scale",      cmd_scale,      "Scale selection",          "<sx> <sy> <sz>"},
-    {"select",     cmd_select,     "Select entities",          "<id|all|none|where ...>"},
-    {"cursor",     cmd_cursor,     "Set cursor position",      "<x> <y> <z>"},
-    {"grid",       cmd_grid,       "Set grid size",            "<size>"},
-    {"snap",       cmd_snap,       "Toggle grid snap",         "<on|off|toggle>"},
-    {"camera",     cmd_camera,     "Set camera mode/position", "<front|right|top|ortho|pos ...>"},
-    {"save",       cmd_save,       "Save level to file",       "<path>"},
-    {"load",       cmd_load,       "Load level from file",     "<path>"},
-    {"browse",     cmd_browse,     "Browse assets",            "[path] [--filter ...]"},
-    {"complete",   cmd_complete,   "Tab-completion query",     "<prefix>"},
-    {"material",   cmd_material,   "Assign material to entity","<set|get> <entity> <slot> <path>"},
-    {"run",        cmd_run,        "Run script file",          "<path> [args...]"},
-    {"eval",       cmd_eval,       "Evaluate script expression", "<expr>"},
-    {"repl",       cmd_repl,       "Enter/exit script REPL mode", ""},
-    {"texsynth",   cmd_texsynth,   "Texture synthesis",        "<sub-cmd> [args...]"},
-    {"undo",       cmd_undo,       "Undo last operation",      ""},
-    {"redo",       cmd_redo,       "Redo last undone operation",""},
-    {"bind",       cmd_bind,       "Bind key to command",      "<key> <command>"},
-    {"properties", cmd_properties, "Show entity properties",   "[entity_id]"},
-    {"inspect",    cmd_inspect,    "Detailed component dump",  "[entity_id]"},
-    {"search",     cmd_search,     "Search entities",          "<pattern>"},
-    {NULL, NULL, NULL, NULL}
-};
-```
-
-### 2.5 Completion Protocol
-
-The `complete` command returns candidates for tab-completion:
-
-**Request:**
-```json
-{"id": 99, "cmd": "complete", "args": {"context": "spawn prefab assets/prefabs/st"}}
-```
-
-**Response:**
-```json
-{"id": 99, "ok": true, "result": {
-  "candidates": ["stone_pillar", "stone_wall", "stone_arch"],
-  "prefix": "assets/prefabs/st",
-  "type": "asset_path"
-}}
-```
+Server-side periodic and forced save:
+- Configurable interval (default 30 seconds)
+- Dirty tracking: mark on entity mutation
+- Force save: immediate save on `:save force`
+- `edit_autosave_should_save()` checks interval + dirty + force
+- `edit_autosave_did_save()` clears flags
 
 ---
 
-## 3. Asset Download Protocol
+## 14. Editor Context (`editor_ctx.h`)
 
-### 3.1 Architecture
+### Server-Side Context
 
-The asset downloader is a separate TCP listener on the server. Clients connect
-when they need to fetch an asset referenced by a spawn or material assignment.
-
-```
-Server                                    Client
-  │                                         │
-  │ ◄── TCP connect to asset_port ──────── │
-  │                                         │
-  │ ◄── REQ: path_len(u16) + path(utf8) ── │
-  │                                         │
-  │ ── RESP: status(u8) + len(u32) ──────► │
-  │ ── DATA: chunk(64KB) ... ────────────► │
-  │ ── DATA: chunk(remaining) ───────────► │
-  │                                         │
-  │ ◄── REQ: next asset ... ────────────── │
-```
-
-### 3.2 Wire Format
+Top-level aggregation of all server-side editor subsystems:
 
 ```
-Request:
-  path_len  : u16 LE        (max 1024)
-  path      : utf8 bytes
-
-Response header:
-  status    : u8             (0 = OK, 1 = not found, 2 = error)
-  total_len : u32 LE         (file size in bytes, 0 if error)
-
-Response data (only if status == 0):
-  data      : raw bytes      (total_len bytes, streamed)
+editor_ctx_t
+├── edit_io_thread_t      — TCP I/O thread
+├── edit_cmd_ring_t       — Commands: I/O thread -> tick thread
+├── edit_cmd_ring_t       — Responses: tick thread -> I/O thread
+├── edit_dispatch_t       — Command dispatch table
+├── edit_undo_stack_t     — Undo/redo stack
+├── edit_selection_t      — Entity selection set
+├── edit_entity_store_t   — Entity storage
+├── mesh_edit_t           — Mesh editing subsystem
+├── edit_cmd_ctx_t        — Handler context (pointers into above)
+└── editor_ctx_config_t   — Configuration
 ```
 
-No chunking headers — the client knows `total_len` and reads until it has all
-bytes. The TCP stream provides reliable ordered delivery.
+Configuration defaults: TCP port 9100, 4096 entities, 4096 undo depth, 1024 ring slots, 8192 bytes per ring payload, 32768 byte dispatch arena.
 
-### 3.3 Client-Side Cache
-
-The client maintains a local asset cache directory:
-```
-~/.ferrum_cache/
-├── assets/
-│   ├── meshes/
-│   │   └── pillar.glb
-│   └── textures/
-│       └── stone_wall_albedo.png
-└── cache.json              # path → hash → local file mapping
-```
-
-Cache invalidation: server sends an `asset_changed` event (via game channel or
-edit channel). Client re-downloads if the asset is in use.
-
-### 3.4 Server-Side Implementation
-
-Asset download connections are accepted by the editor I/O thread (see §2.3).
-The actual file transfer is handled inline on the I/O thread since it is pure
-sequential I/O (no computation, no fiber interaction needed):
-
-```c
-/* Called from editor I/O thread when a new asset download connection arrives */
-static void asset_download_handle_(editor_ctx_t *ctx, int client_fd) {
-    net_tcp_set_nonblocking(client_fd);  /* but we'll do blocking reads here */
-
-    for (;;) {
-        uint16_t path_len;
-        if (tcp_read_exact_(client_fd, &path_len, 2) != 2) break;
-        path_len = le16toh(path_len);
-        if (path_len > 1024) break;
-
-        char path[1025];
-        if (tcp_read_exact_(client_fd, path, path_len) != path_len) break;
-        path[path_len] = '\0';
-
-        /* Resolve asset on disk */
-        char full_path[PATH_MAX];
-        if (!asset_registry_resolve(ctx->registry, path, full_path)) {
-            uint8_t status = 1;  /* not found */
-            tcp_write_all_(client_fd, &status, 1);
-            continue;
-        }
-
-        /* Send file (status + length + data) */
-        asset_send_file_(client_fd, full_path);
-    }
-    close(client_fd);
-}
-```
-
-Note: for large asset transfers that might block the I/O thread too long,
-a future optimization is to spawn a short-lived pthread per download
-connection. For Phase 1 (single editor, small assets), inline I/O suffices.
-```
+Lifecycle:
+- `editor_ctx_init()` — allocate everything, register handlers, start I/O thread
+- `editor_ctx_shutdown()` — stop I/O thread, destroy all subsystems
+- `editor_tick_drain()` — per-tick: drain ring -> dispatch -> push responses
+- `editor_ctx_set_bridge()` — attach physics bridge
+- `editor_ctx_set_physics()` — attach physics sim control
 
 ---
 
-## 4. 3D Cursor Implementation
-
-### 4.1 Cursor State
-
-The cursor lives on the **client**. Its state:
-
-```c
-typedef struct editor_cursor {
-    vec3_t position;        /* world-space position */
-    float grid_size;        /* current grid unit (meters) */
-    bool snap_enabled;      /* snap to grid? */
-    bool visible;           /* render cursor? */
-} editor_cursor_t;
-```
-
-### 4.2 Cursor Synchronization
-
-The controller needs to know the cursor position (for "spawn at cursor").
-The client needs to receive cursor commands from the controller.
-The client must push events to the controller (mouse clicks, box select, etc.).
-
-**Option chosen: controller ↔ client direct TCP link (bidirectional).**
-
-The client listens on a small TCP port (the "client state socket"). The
-controller connects and can:
-- Query cursor position, camera state, selection set
-- Send cursor movement commands
-- Send camera commands (front/right/top/ortho/position)
-- Send selection commands (click-equivalent)
-
-The client **pushes events** to the controller for viewport interactions:
-- `cursor_moved` — after mouse-click raycast places cursor
-- `entity_clicked` — mouse click on entity
-- `context_menu` — right-click (controller shows context menu in TUI)
-- `box_select` — drag-select completed, list of selected entities
-
-This avoids routing cursor state through the server (which doesn't need it)
-and eliminates polling latency for mouse-driven interactions.
+## 15. Threading Model
 
 ```
-Controller ──── TCP (client state, bidirectional) ────► Client
-    │                                                      │
-    │                                                      │  (renders cursor, handles mouse)
-    │                                                      │  (pushes click/select events)
-    └──── TCP (edit protocol) ────────────────────────► Server
-                                                           │
-                                                           │  (processes entity commands)
+I/O Thread                     Main Tick Thread              Script Thread
+  │                                │                            │
+  ├─ TCP accept / read             ├─ editor_tick_drain()       ├─ Read snapshots
+  ├─ Parse newline-delimited JSON  ├─ Pop from cmd_ring         ├─ Run scripts
+  ├─ Push to cmd_ring  ──────────→ ├─ edit_dispatch_exec()      ├─ Write update blob
+  ├─ Pop from resp_ring ←───────── ├─ Push to resp_ring         ├─ swap(blob)
+  └─ TCP write response            ├─ Physics bridge calls      │
+                                   ├─ Undo recording            │
+                                   ├─ script_rebase_apply() ←───┘
+                                   └─ Autosave check
 ```
 
-### 4.3 Grid Snapping
-
-```c
-static vec3_t snap_to_grid_(vec3_t pos, float grid_size) {
-    return (vec3_t){
-        roundf(pos.x / grid_size) * grid_size,
-        roundf(pos.y / grid_size) * grid_size,
-        roundf(pos.z / grid_size) * grid_size
-    };
-}
-```
-
-Grid sizes are powers of 2 (or powers of 10, configurable): 0.125, 0.25, 0.5,
-1, 2, 4, 8 meters.
-
-### 4.4 Cursor Rendering
-
-The client renders the cursor as:
-1. Three axis-colored lines (length = 2 × grid_size)
-2. A small yellow sphere at the intersection
-3. A subtle grid-cell highlight on the XZ plane
-
-Uses the existing debug line rendering path (no new shaders needed).
-
-### 4.5 Grab Mode (Client-Side Provisional Positioning)
-
-When the user enters grab mode (`g` key), the selected entity must visually
-track the cursor in real-time. Since the server is authoritative, a naive
-roundtrip (send move → server processes → snapshot → client renders) would
-add 50-250ms of latency — unacceptable for interactive placement.
-
-**Solution: client-side provisional positioning.**
-
-In grab mode, the client:
-1. Stores the entity's server-authoritative position as `grab_origin`
-2. Locally overrides the entity's rendered position to match cursor movement
-3. Does NOT send continuous move commands to the server
-4. On confirm (Enter/click), sends a single `move` command with the final delta
-5. On cancel (Escape), snaps the entity back to `grab_origin`
-
-```c
-typedef struct editor_grab_state {
-    bool active;                /* currently in grab mode? */
-    uint32_t entity_id;         /* entity being grabbed */
-    vec3_t grab_origin;         /* position when grab started */
-    vec3_t grab_offset;         /* cursor_pos - grab_origin at grab start */
-    uint8_t axis_constraint;    /* 0=free, 1=X, 2=Y, 4=Z (bitmask) */
-} editor_grab_state_t;
-```
-
-The controller sends `grab_begin` to the client (via client state socket),
-and the client enters grab mode locally. During grab, cursor movement is
-purely local — no server traffic. Only the final `move` command goes through
-the edit protocol to the server.
-
-This gives zero-latency visual feedback during placement while maintaining
-server authority for the final position.
+- Command ring: lock-free SPSC (I/O thread -> tick thread)
+- Response ring: lock-free SPSC (tick thread -> I/O thread)
+- Script update blob: double-buffered with atomic ready flag
+- Entity store, selection, undo: tick-thread only
+- Scene editor: single-threaded (SDL2 main loop)
 
 ---
 
-## 5. Undo System
+## 16. JSON Protocol
 
-### 5.1 Command Pattern
+### Wire Format
 
-Every mutating operation produces an `undo_entry_t`. Undo entries are recorded
-at **drain time** (when the command actually executes on the main tick thread),
-not at enqueue time. This ensures the undo stack reflects committed state.
+Newline-delimited JSON over TCP.
 
-```c
-typedef struct undo_entry {
-    editor_cmd_t forward;       /* the command that was executed */
-    editor_cmd_t inverse;       /* the command that reverses it */
-    uint32_t group_id;          /* for multi-command groups */
-    void *snapshot_data;        /* for delete undo: entity snapshot (allocated from undo arena) */
-    uint32_t snapshot_size;
-} undo_entry_t;
+**Command:** `{"id":1,"cmd":"spawn","args":{"type":"box","pos":[0,5,0]}}\n`
 
-typedef struct undo_stack {
-    undo_entry_t *entries;      /* ring buffer */
-    uint32_t capacity;          /* max entries (default 4096) */
-    uint32_t top;               /* next write position */
-    uint32_t undo_cursor;       /* current position for undo */
-    arena_t snapshot_arena;     /* dedicated arena for entity snapshots (16 MB budget) */
-} undo_stack_t;
-```
+**Success response:** `{"id":1,"ok":true,"result":{"entity_id":0}}\n`
 
-**Memory strategy:**
-- The undo stack uses a **dedicated arena** (`snapshot_arena`, 16 MB default)
-  for entity snapshot data (needed for delete-undo). This arena is separate
-  from both frame arenas (too short-lived) and level arenas (wrong lifetime).
-- When the ring buffer wraps and overwrites an old entry, its snapshot data
-  is freed from the arena. If the arena fills, the oldest entries are
-  force-evicted until space is available.
-- The entire undo stack (including arena) is freed on editor disconnect.
-  Undo does not persist across sessions (spec §9).
+**Error response:** `{"id":1,"ok":false,"error":"store_full"}\n`
 
-### 5.2 Inverse Commands
+### Built-in JSON Library
 
-| Forward | Inverse |
-|---------|---------|
-| `spawn(type, pos, ...)` → ent_042 | `delete(ent_042)` |
-| `delete(ent_042)` | `spawn(snapshot of ent_042)` |
-| `move(ent_042, delta)` | `move(ent_042, -delta)` |
-| `rotate(ent_042, angles)` | `rotate(ent_042, -angles)` |
-| `set_component(ent, comp, new)` | `set_component(ent, comp, old)` |
-
-Delete captures a full snapshot of the entity (position, rotation, all
-components, flags) so undo can reconstruct it exactly.
-
-### 5.3 Group Undo
-
-Script operations that spawn multiple entities are grouped:
-
-```c
-editor_undo_begin_group(ctx);
-for (int i = 0; i < 100; i++) {
-    editor_spawn_entity(ctx, &descs[i]);  /* each records an undo entry */
-}
-editor_undo_end_group(ctx);
-
-/* Single undo reverses all 100 spawns */
-editor_undo(ctx);
-```
+Custom zero-dependency JSON parser/writer (`json_parse.h`):
+- Arena-based allocation for parsed values
+- Types: object, array, string, number, boolean, null
+- Writer builds JSON strings with proper escaping
+- Accessor helpers for typed value extraction
 
 ---
 
-## 6. Script Runtime
+## 17. Client Integration
 
-### 6.1 Architecture Overview
+### Client State
 
-The script runtime executes on a **dedicated script thread** (not the main
-tick thread, not on fibers). It reads entity state from a read-only snapshot,
-executes scripting or native C code through a unified interface, and produces an
-array of **entity updates** that get rebased on top of physics and native
-game logic updates during the main tick's commit phase.
+- `client_state_dispatch.c` — dispatches server state changes to renderer
+- `client_state_push.c` — pushes entity/selection state to render thread
+- `client_state_socket.h` — client-side TCP socket state
+- `client_editor_input.c` — client-side editor keybinding layer
 
-This design achieves three goals:
-1. **Decoupled execution**: scripts never block physics or networking
-2. **Safe concurrency**: scripts read a frozen snapshot, not live state
-3. **Native parity**: C code using the same `script_env_t` interface runs
-   at full speed without scripting overhead — useful for shipping game logic
-   that was prototyped in script
+### Client Cursor
 
-### 6.2 Core Types
+- `client_cursor.c` — cursor state management
+- `client_cursor_render.c` — 3D cursor rendering
 
-```c
-/* ── Entity update: arbitrary key-value attribute deltas ── */
+### Client Mesh Rendering
 
-/* Attribute types that can be read/written */
-enum {
-    SCRIPT_ATTR_F32,     /* single float */
-    SCRIPT_ATTR_VEC3,    /* float[3] */
-    SCRIPT_ATTR_I32,     /* int32_t */
-    SCRIPT_ATTR_U32,     /* uint32_t */
-    SCRIPT_ATTR_BOOL,    /* uint8_t 0/1 */
-    SCRIPT_ATTR_STR,     /* null-terminated string */
-    SCRIPT_ATTR_BLOB,    /* raw bytes */
-};
-
-/* A single attribute write within an entity update */
-typedef struct script_attr_write {
-    uint16_t key;         /* attribute ID (SCRIPT_KEY_POS, ..., or user-defined) */
-    uint8_t  type;        /* SCRIPT_ATTR_* */
-    uint8_t  size;        /* payload size in bytes (max 255) */
-    /* Payload follows inline in the update blob */
-} script_attr_write_t;
-
-/* Well-known attribute keys (extensible — gameplay adds more) */
-enum {
-    /* Core transform (both edit entities and ECS entities) */
-    SCRIPT_KEY_POS       = 0,   /* vec3 */
-    SCRIPT_KEY_ROT       = 1,   /* vec3 (euler degrees) */
-    SCRIPT_KEY_SCALE     = 2,   /* vec3 */
-    SCRIPT_KEY_NAME      = 3,   /* string */
-    SCRIPT_KEY_TYPE      = 4,   /* u32 */
-    SCRIPT_KEY_BODY_IDX  = 5,   /* u32 */
-    SCRIPT_KEY_MATERIAL  = 6,   /* string (slot in high bits) */
-
-    /* ECS component keys (mapped from registered sparse sets) */
-    SCRIPT_KEY_ECS_BASE  = 64,  /* ECS components start here */
-
-    /* User/gameplay attribute keys */
-    SCRIPT_KEY_USER      = 256, /* user-defined keys start here */
-};
-
-/* ── Dynamic attribute storage on entities ── */
-
-/* Each entity (edit or ECS) can carry a dynamic attribute block:
- * a fixed-capacity byte region with a directory of key→offset entries.
- * This lives alongside the fixed fields (pos/rot/scale/etc).
- *
- * Layout:
- *   entity_attrs_t header (count, used bytes)
- *   attr_entry_t[count]   (sorted by key for binary search)
- *   payload bytes[]       (packed attribute values)
- *
- * The total size is bounded by ENTITY_ATTRS_CAPACITY (e.g., 2048 bytes),
- * which keeps the per-entity struct within a cache-friendly budget.
- */
-#define ENTITY_ATTRS_CAPACITY 2048
-
-typedef struct attr_entry {
-    uint16_t key;        /* attribute key */
-    uint8_t  type;       /* SCRIPT_ATTR_* */
-    uint8_t  size;       /* payload size */
-    uint16_t offset;     /* byte offset into payload region */
-    uint16_t _pad;
-} attr_entry_t;
-
-typedef struct entity_attrs {
-    uint16_t count;      /* number of attr_entry_t entries */
-    uint16_t used;       /* bytes used in payload region */
-    attr_entry_t entries[ENTITY_ATTRS_CAPACITY / sizeof(attr_entry_t)];
-    /* Payload bytes follow conceptually; in practice the entries[] and
-     * payload share the remaining space after 'used'. Implementation
-     * will use a flexible layout within the ENTITY_ATTRS_CAPACITY budget. */
-} entity_attrs_t;
-
-/* ── Entity updates ── */
-
-/* A single entity update: entity ID + variable-length attribute writes.
- * Stored as a header followed by packed attr writes in the update blob. */
-typedef struct script_entity_update {
-    uint32_t entity_id;
-    uint32_t generation;    /* ECS generation (0 for edit-only entities) */
-    uint16_t attr_count;    /* number of script_attr_write_t entries */
-    uint16_t total_size;    /* total bytes of this update (header + attrs + payloads) */
-    /* Followed by attr_count × (script_attr_write_t + payload) packed inline */
-} script_entity_update_t;
-
-/* Double-buffered update blob: script writes to back, tick reads from front.
- * Updates are variable-length, packed contiguously in the blob. */
-typedef struct script_update_buffer {
-    uint8_t *blob[2];       /* [0]=front (tick reads), [1]=back (script writes) */
-    uint32_t used[2];       /* bytes used in each blob */
-    uint32_t capacity;      /* blob capacity in bytes */
-    _Alignas(64) atomic_uint ready; /* set by script thread after swap */
-} script_update_buffer_t;
-
-/* ── Entity snapshot (read-only view for script thread) ── */
-
-/* Covers both edit entities and ECS entities. The snapshot builder
- * copies fixed fields from edit_entity_t AND iterates registered ECS
- * sparse sets to populate the dynamic attrs block. */
-typedef struct script_entity_snapshot {
-    uint32_t entity_id;
-    uint32_t generation;    /* ECS generation (0 for edit-only) */
-    uint8_t  active;
-    uint8_t  type;
-    char     name[256];
-    float    pos[3];
-    float    rot[3];
-    float    scale[3];
-    uint32_t body_index;
-    char     materials[5][256];
-    /* Dynamic attributes (gameplay state: health, velocity, flags, etc.) */
-    entity_attrs_t attrs;
-} script_entity_snapshot_t;
-
-typedef struct script_entity_view {
-    const script_entity_snapshot_t *entities;
-    uint32_t count;
-    uint32_t capacity;
-} script_entity_view_t;
-
-/* Unified environment exposed to both scripting and native scripts */
-typedef struct script_env {
-    /* Read-only entity state (snapshot from last tick).
-     * Includes fixed fields AND dynamic attrs from ECS components. */
-    script_entity_view_t entities;
-
-    /* Write: entity update blob (variable-length packed updates).
-     * Use script_env_write_attr() to append attribute writes. */
-    uint8_t *update_blob;
-    uint32_t update_blob_used;
-    uint32_t update_blob_capacity;
-
-    /* Write: edit commands (spawn, delete, group, etc.) */
-    edit_cmd_ring_t *cmd_ring;  /* SPSC ring → main tick thread */
-
-    /* Context: cursor, selection, aliases (read-only snapshot) */
-    float cursor_pos[3];
-    float cursor_rot[3];
-    uint32_t selection_ids[64];
-    uint32_t selection_count;
-
-    /* Back-pointer for internal use */
-    struct script_runtime *runtime;
-} script_env_t;
-
-/* Helper: append an attribute write for an entity into the update blob.
- * If an update header for this entity_id already exists in the blob,
- * the new attribute is appended to it; otherwise a new header is created. */
-void script_env_write_attr(script_env_t *env, uint32_t entity_id,
-                           uint32_t generation, uint16_t key,
-                           uint8_t type, const void *data, uint8_t size);
-
-/* Helper: read a dynamic attribute from a snapshot entity.
- * Returns pointer to payload data, or NULL if attribute not present. */
-const void *script_entity_get_attr(const script_entity_snapshot_t *entity,
-                                    uint16_t key, uint8_t *out_type,
-                                    uint8_t *out_size);
-
-typedef struct script_runtime {
-    /* Thread */
-    pthread_t thread;
-    atomic_bool running;
-    atomic_bool request_stop;
-
-    /* Script engine state (NULL when running native-only).
-     * Opaque pointer — actual type depends on chosen scripting language. */
-    void *script_state;
-
-    /* Double-buffered update exchange */
-    script_update_buffer_t update_buf;
-
-    /* Entity snapshot (written by tick thread, read by script thread) */
-    script_entity_snapshot_t *snapshot;
-    uint32_t snapshot_count;
-    uint32_t snapshot_capacity;
-    _Alignas(64) atomic_uint snapshot_seq; /* incremented by tick after write */
-    uint32_t last_consumed_seq;            /* script thread's last-read seq */
-
-    /* Edit commands from script → main tick */
-    edit_cmd_ring_t cmd_ring;
-
-    /* Unified environment (owned by script thread) */
-    script_env_t env;
-
-    /* Budget */
-    uint32_t instruction_budget; /* default 100K per tick */
-    bool continuation_pending;
-
-    /* Memory */
-    void *arena;                /* 8 MB arena for script allocator */
-    size_t arena_size;
-} script_runtime_t;
-```
-
-### 6.3 Execution Model: Threaded Double-Buffer
-
-The script thread runs a loop synchronized to the server tick rate:
-
-```
-Main tick thread                    Script thread
-────────────────                    ─────────────
-Stage 1: command drain
-  ├── drain I/O cmd ring
-  ├── drain script cmd ring  ←───── script submits edit cmds
-  ├── apply script entity    ←───── read front update buffer
-  │   updates (rebase)
-  ├── snapshot entities ─────────→ write entity snapshot
-  │   (copy active entities        (atomic seq bump)
-  │    to snapshot array)
-  └── signal snapshot ready
-
-Stage 2-N: physics, networking
-
-                                    ┌── wait for new snapshot seq
-                                    ├── copy snapshot → env.entities
-                                    ├── execute script (scripting or native)
-                                    │   ├── read env.entities (frozen)
-                                    │   ├── write env.updates[]
-                                    │   └── push edit cmds to ring
-                                    ├── swap update back→front
-                                    └── loop
-```
-
-**Rebasing**: when the main tick thread reads the script's entity updates,
-it applies them on top of the current authoritative state. Each update
-contains a list of attribute writes (key-value pairs). Only the attributes
-explicitly written by the script are applied — everything else retains the
-physics/game logic result. This works for both fixed attributes (pos, rot,
-scale) and dynamic gameplay attributes (health, velocity, custom flags).
-For ECS entities, attribute writes are mapped back to their sparse set
-components. For edit entities, core fields are applied directly and dynamic
-attrs are written to the entity's `entity_attrs_t` block.
-
-**Ordering**: edit commands submitted via `cmd_ring` (spawn, delete, group,
-etc.) are drained in Stage 1 alongside I/O commands. Entity updates from the
-`update_buf` are applied after all commands are drained, so spawned entities
-are visible in the next snapshot.
-
-### 6.4 Native Code Path
-
-The `script_env_t` interface is backend-agnostic. A native C function with
-this signature can run instead of (or alongside) scripting:
-
-```c
-/* Native script function — same access pattern as scripting */
-typedef void (*script_native_fn)(script_env_t *env, void *userdata);
-
-/* Register a native tick function (runs every tick on script thread) */
-void script_runtime_register_native(script_runtime_t *rt,
-                                     script_native_fn fn,
-                                     void *userdata);
-```
-
-Example native script:
-
-```c
-/* Native: rotate all selected entities 1° per tick */
-static void rotate_selected(script_env_t *env, void *ud) {
-    (void)ud;
-    for (uint32_t i = 0; i < env->selection_count; i++) {
-        uint32_t id = env->selection_ids[i];
-        for (uint32_t j = 0; j < env->entities.count; j++) {
-            if (env->entities.entities[j].entity_id == id) {
-                const script_entity_snapshot_t *e = &env->entities.entities[j];
-                float new_rot[3] = { e->rot[0], e->rot[1] + 1.0f, e->rot[2] };
-                script_env_write_attr(env, id, 0, SCRIPT_KEY_ROT,
-                                      SCRIPT_ATTR_VEC3, new_rot, sizeof(new_rot));
-                break;
-            }
-        }
-    }
-}
-```
-
-When shipping, scripts can be "compiled" to native functions that use
-the same `script_env_t` reads/writes. The runtime switches transparently.
-
-### 6.5 Scripting Language Integration
-
-The engine scripting language is TBD (LuaJIT was removed due to security
-concerns around guard injection and coroutine/fiber conflicts). The chosen
-language must support:
-- Embedding as a static library with a custom allocator
-- Instruction-level preemption (hook or fiber-based yielding)
-- Sandboxing (no filesystem, network, or FFI access)
-- C interop for registered engine functions only
-
-Scripts access entities through the `script_env_t` via registered C
-functions:
-
-```c
-/* Script: local entities = get_entities() → table of entity snapshots */
-/* Script: update_entity(id, {pos={x,y,z}}) → queue update */
-/* Script: submit_command("move", {entity_id=5, pos={1,2,3}}) → edit cmd */
-```
-
-**Instruction budget** is enforced via the scripting language's hook or
-interrupt mechanism. When budget is exhausted, the script thread yields
-(via fiber yield, not language-level coroutines) and resumes next tick.
-
-**Multi-frame scripts** use engine fibers, not language-level coroutines.
-The script thread's loop resumes the fiber each tick, passing the updated
-`script_env_t`. When the fiber yields (voluntarily or via budget), the
-loop swaps buffers and waits for the next snapshot.
-
-### 6.6 REPL Continuation Detection
-
-When the controller sends `eval` or `repl` input, the server must detect
-whether the script code is syntactically incomplete (e.g., an unclosed
-block). The server uses the scripting language's parser to attempt compilation.
-If the parse fails with an "unexpected end of input" error, the input is
-treated as incomplete and the REPL waits for more lines.
-
-```c
-/* Pseudocode — actual implementation depends on chosen scripting language */
-bool script_is_complete(script_runtime_t *rt, const char *input) {
-    script_parse_result_t result = script_try_parse(rt, input);
-    if (result.status == SCRIPT_PARSE_INCOMPLETE) {
-        return false;  /* need more input */
-    }
-    return true;  /* complete (valid or hard error) */
-}
-```
-
-Note: `script_is_complete` is called on the script thread.
-The I/O thread enqueues the eval request; the script thread checks completeness
-and either executes or returns `"status": "incomplete"`.
-
-### 6.7 Safety
-
-- Scripts run in a sandboxed script state (no `os.execute`, `io`, `loadlib`)
-- FFI is DISABLED — scripts cannot access arbitrary memory
-- Memory limit enforced via custom allocator (arena-backed, 8 MB default)
-- Instruction count limit prevents runaway scripts (via `instruction hook`)
-- Entity reads are from a frozen snapshot (no race with physics)
-- Entity writes go through the update buffer (rebased by tick thread)
-- Edit commands go through SPSC ring (same mechanism as I/O commands)
-- The script thread never touches live entity store directly
-
----
-
-## 7. Texture Synthesis Engine
-
-### 7.1 Workspace
-
-A texture workspace is a collection of named layers at a fixed resolution:
-
-```c
-typedef struct texsynth_workspace {
-    uint32_t width, height;
-    uint32_t layer_count;
-    texsynth_layer_t layers[TEXSYNTH_MAX_LAYERS];  /* max 32 */
-    float *output_albedo;       /* RGBA float buffer */
-    float *output_normal;       /* RGB float buffer */
-    float *output_roughness;    /* R float buffer */
-} texsynth_workspace_t;
-
-typedef struct texsynth_layer {
-    char name[64];
-    float *data;                /* single-channel float [0,1] */
-    uint32_t width, height;
-} texsynth_layer_t;
-```
-
-### 7.2 Noise Generators
-
-All generators write to a float buffer [0,1]:
-
-```c
-void texsynth_perlin(float *out, uint32_t w, uint32_t h,
-                     const texsynth_noise_params_t *params);
-void texsynth_simplex(float *out, uint32_t w, uint32_t h,
-                      const texsynth_noise_params_t *params);
-void texsynth_voronoi(float *out, uint32_t w, uint32_t h,
-                      const texsynth_voronoi_params_t *params);
-void texsynth_fractal(float *out, uint32_t w, uint32_t h,
-                      const texsynth_fractal_params_t *params);
-```
-
-Parameters include scale, octaves, lacunarity, persistence, seed.
-
-### 7.3 UV Baking
-
-Bake rasterizes texture functions into UV space:
-
-```c
-typedef struct texsynth_bake_desc {
-    const texsynth_workspace_t *workspace;
-    const char *mesh_path;          /* glTF mesh to read UVs from */
-    uint32_t uv_set;                /* UV set index (0 or 1) */
-    uint32_t resolution;            /* output texture resolution */
-    const char *output_prefix;      /* e.g., "assets/textures/stone_wall" */
-} texsynth_bake_desc_t;
-
-bool texsynth_bake(editor_ctx_t *ctx, const texsynth_bake_desc_t *desc);
-```
-
-Bake algorithm:
-1. Load mesh, extract UV coordinates for the given UV set
-2. For each triangle in UV space:
-   a. Rasterize triangle to output texture pixels
-   b. For each pixel, compute the 3D world-space position via barycentric interpolation
-   c. Evaluate the texture function at that world-space position
-   d. Write to output buffer
-3. Dilate edges (extend colors past UV island borders to prevent seam artifacts)
-4. Write to PNG/KTX2
-
-This runs on the job system — triangle rasterization can be parallelized across
-job workers.
-
----
-
-## 8. MCP Server Implementation
-
-### 8.1 Protocol
-
-MCP uses **JSON-RPC 2.0** over a dedicated **TCP socket**. The controller
-listens on a configurable MCP port (default 9300). AI agents connect over
-TCP, enabling the agent to run on a different machine from the controller,
-client, and server.
-
-The controller process acts as the MCP server. It translates MCP tool calls
-into edit protocol commands and MCP resource reads into state queries.
-
-### 8.2 Architecture
-
-```
-AI Agent (Claude/etc)                          (can be on any machine)
-    │
-    │  JSON-RPC 2.0 over TCP (port 9300)
-    │
-    ▼
-MCP Server (inside controller process)         (can be on any machine)
-    │
-    ├── Tool call → edit protocol command → Server  (can be on any machine)
-    │                                         │
-    │                                         ▼
-    │                               (executes command)
-    │                                         │
-    │ ◄── response ──────────────────────────┘
-    │
-    ├── Resource read → client state query → Client  (can be on any machine)
-    │                                         │
-    │ ◄── cursor/camera/selection ───────────┘
-    │
-    └── Resource read → asset catalog query → Server
-                                               │
-        ◄── asset list ───────────────────────┘
-```
-
-All four processes (server, client, controller, AI agent) communicate over
-TCP and can run on separate machines. The controller needs network addresses
-for both the server and client, and the AI agent needs the controller's MCP
-address. Typical distributed setup:
-
-```
-# On machine A (headless, beefy):
-editor_server --port 9100
-
-# On machine B (has GPU + display):
-editor_client --server a.local:9100 --state-port 9200
-
-# On machine C (terminal):
-editor_ctrl --server a.local:9100 --client b.local:9200 --mcp-port 9300
-
-# On machine D (AI workstation):
-ai_agent --mcp c.local:9300
-```
-
-### 8.3 MCP TCP Listener
-
-The MCP listener runs on the controller's poll loop (same as keyboard and
-other socket I/O — the controller is single-threaded with `poll()`):
-
-```c
-typedef struct mcp_server {
-    int listen_fd;              /* TCP listen socket for MCP */
-    int client_fd;              /* connected AI agent (-1 if none) */
-    char recv_buf[MCP_BUF_SIZE]; /* partial JSON-RPC message buffer */
-    uint32_t recv_len;
-    uint16_t port;              /* MCP listen port */
-} mcp_server_t;
-```
-
-Messages are newline-delimited JSON-RPC 2.0. The controller reads lines
-from the MCP socket, parses them, dispatches to tool/resource handlers,
-and writes JSON-RPC responses back on the same socket.
-
-### 8.4 Tool Mapping
-
-Each editor command maps to an MCP tool:
-
-```c
-static const mcp_tool_def_t g_tools[] = {
-    {
-        .name = "spawn_entity",
-        .description = "Spawn a new entity in the world",
-        .handler = mcp_tool_spawn_,
-        .schema = "{"
-            "\"type\": {\"type\":\"string\",\"enum\":[\"box\",\"sphere\",\"mesh\",\"prefab\"]},"
-            "\"position\": {\"type\":\"array\",\"items\":{\"type\":\"number\"}},"
-            "\"size\": {\"type\":\"array\",\"items\":{\"type\":\"number\"}},"
-            "\"asset\": {\"type\":\"string\"}"
-        "}"
-    },
-    {
-        .name = "delete_entities",
-        .description = "Delete the currently selected entities",
-        .handler = mcp_tool_delete_,
-        .schema = "{}"
-    },
-    {
-        .name = "run_script",
-        .description = "Execute a scripting script file",
-        .handler = mcp_tool_run_script_,
-        .schema = "{\"path\":{\"type\":\"string\"},\"args\":{\"type\":\"object\"}}"
-    },
-    /* ... more tools ... */
-    {NULL, NULL, NULL, NULL}
-};
-```
-
-### 8.5 Resource Mapping
-
-```c
-static const mcp_resource_def_t g_resources[] = {
-    {
-        .uri_pattern = "editor://world/entities",
-        .description = "List all entities with their properties",
-        .handler = mcp_resource_entities_,
-    },
-    {
-        .uri_pattern = "editor://world/entity/{id}",
-        .description = "Get properties of a specific entity",
-        .handler = mcp_resource_entity_,
-    },
-    {
-        .uri_pattern = "editor://cursor",
-        .description = "Current 3D cursor position and grid settings",
-        .handler = mcp_resource_cursor_,
-    },
-    {
-        .uri_pattern = "editor://assets/{path}",
-        .description = "Browse asset catalog",
-        .handler = mcp_resource_assets_,
-    },
-    {NULL, NULL, NULL}
-};
-```
-
----
-
-## 9. Controller TUI Implementation
-
-### 9.1 Terminal Setup
-
-Raw termios mode (not ncurses — fewer dependencies, more control):
-
-```c
-static void tui_enter_raw_mode_(ctrl_tui_t *tui) {
-    struct termios raw;
-    tcgetattr(STDIN_FILENO, &tui->orig_termios);
-    raw = tui->orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
-    raw.c_iflag &= ~(IXON | ICRNL | BRKINT | INPCK | ISTRIP);
-    raw.c_oflag &= ~(OPOST);
-    raw.c_cflag |= CS8;
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 1;  /* 100ms timeout for read */
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-}
-```
-
-### 9.2 Event Loop
-
-The controller runs a single-threaded event loop using `poll()`:
-
-```c
-static void ctrl_main_loop_(ctrl_ctx_t *ctx) {
-    struct pollfd fds[3] = {
-        {.fd = STDIN_FILENO,      .events = POLLIN},  /* keyboard */
-        {.fd = ctx->server_fd,    .events = POLLIN},  /* server events */
-        {.fd = ctx->client_fd,    .events = POLLIN},  /* client state */
-    };
-
-    while (ctx->running) {
-        int n = poll(fds, 3, 100 /* ms */);
-
-        if (fds[0].revents & POLLIN)
-            ctrl_handle_keyboard_(ctx);
-
-        if (fds[1].revents & POLLIN)
-            ctrl_handle_server_event_(ctx);
-
-        if (fds[2].revents & POLLIN)
-            ctrl_handle_client_state_(ctx);
-
-        ctrl_tui_redraw_(ctx);
-    }
-}
-```
-
-### 9.3 Input State Machine (Vim-Style Numeric Prefix)
-
-The controller supports Vim-style numeric prefixes for repeat counts:
-
-```c
-typedef enum ctrl_input_mode {
-    CTRL_MODE_NORMAL,       /* default: keybindings active */
-    CTRL_MODE_COMMAND,      /* typing in command line (:) */
-    CTRL_MODE_REPL,         /* script REPL mode */
-    CTRL_MODE_GRAB,         /* entity grab mode (mouse/keys move entity) */
-    CTRL_MODE_CONTEXT,      /* context menu overlay */
-} ctrl_input_mode_t;
-
-typedef struct ctrl_input_state {
-    ctrl_input_mode_t mode;
-    uint32_t numeric_prefix;    /* accumulates digits: "5" then "k" = move 5 */
-    bool has_prefix;            /* true if any digits entered */
-    char pending_key;           /* for two-key combos: g then g */
-} ctrl_input_state_t;
-```
-
-**Normal mode dispatch:** when a digit is pressed, accumulate into
-`numeric_prefix`. When a non-digit key arrives, dispatch the bound
-command with the repeat count. Example: `5k` moves cursor up 5 grid units.
-
-If no prefix is given, the repeat count defaults to 1.
-
-### 9.4 Rendering
-
-The TUI renders using ANSI escape sequences:
-- `\033[H` — cursor home
-- `\033[2J` — clear screen
-- `\033[y;xH` — move cursor
-- `\033[7m` — inverse video (status bar)
-- `\033[1m` — bold
-- `\033[31m` — red (errors)
-- `\033[33m` — yellow (warnings)
-- `\033[36m` — cyan (entity refs)
-
-Double-buffered: build the full screen in a buffer, then write in one
-`write()` call to avoid flicker.
-
-### 9.5 Tab Completion Engine
-
-```c
-typedef struct ctrl_complete {
-    char candidates[MAX_CANDIDATES][MAX_CANDIDATE_LEN];
-    uint32_t count;
-    uint32_t selected;          /* currently highlighted candidate */
-    char prefix[256];           /* the prefix being completed */
-    bool active;                /* completion popup visible? */
-    bool loading;               /* waiting for server response? */
-    uint32_t request_id;        /* correlate response to request */
-} ctrl_complete_t;
-
-/* On Tab press: */
-static void ctrl_trigger_complete_(ctrl_ctx_t *ctx) {
-    /* Extract the current word being typed */
-    char prefix[256];
-    ctrl_extract_word_at_cursor_(ctx, prefix, sizeof(prefix));
-
-    /* Determine completion context (command name? asset path? entity?) */
-    complete_context_t cctx = ctrl_classify_context_(ctx);
-
-    if (cctx == COMPLETE_COMMAND) {
-        /* Complete from built-in command list (local, instant) */
-        ctrl_complete_commands_(ctx, prefix);
-    } else {
-        /* Ask server for completions (async) */
-        ctx->complete.loading = true;
-        ctx->complete.request_id = ctx->next_request_id++;
-        ctrl_send_complete_request_(ctx, prefix, ctx->complete.request_id);
-        /* TUI shows "..." loading indicator until response arrives */
-        /* Response arrives via server_fd; handler checks request_id
-         * to discard stale responses (user typed more since request) */
-    }
-}
-```
-
-**Stale response handling:** if the user types more characters after Tab,
-a new completion request is issued. When the old response arrives, its
-`request_id` won't match the latest request and is silently discarded.
-
-### 9.6 Browse Results Caching
-
-The `browse` command returns numbered results (e.g., `[1] stone_pillar [2]
-stone_wall`). These are cached in `ctrl_browse_t` so the user can reference
-them by number:
-
-```c
-typedef struct ctrl_browse {
-    char results[MAX_BROWSE_RESULTS][MAX_ASSET_PATH];
-    uint32_t count;
-    bool valid;                 /* true if results are from a recent browse */
-} ctrl_browse_t;
-```
-
-Usage: `spawn #2` expands to `spawn stone_wall` using the cached browse list.
-
----
-
-## 10. Build Integration
-
-### 10.1 Makefile Targets
-
-```makefile
-# Editor server (server + editor extensions + scripting)
-build/editor_server: $(SERVER_OBJS) $(EDITOR_SERVER_OBJS)
-	$(CC) $(CFLAGS) -DEDITOR_ENABLE -o $@ $^ $(LDFLAGS)
-
-# Editor client (client + editor mode)
-build/editor_client: $(CLIENT_OBJS) $(EDITOR_CLIENT_OBJS)
-	$(CC) $(CFLAGS) -DEDITOR_ENABLE -o $@ $^ $(LDFLAGS)
-
-# Controller (standalone TUI process)
-build/editor_ctrl: $(CTRL_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
-```
-
-### 10.2 Scripting Language Integration
-
-The engine scripting language is TBD. When chosen, it will be built from
-source as a git submodule. The build system will gate scripting support
-behind a `SCRIPTING=1` flag.
-
-```makefile
-# Placeholder — will be filled in when scripting language is chosen.
-# SCRIPT_DIR = extern/scripting/src
-# SCRIPT_LIB = $(SCRIPT_DIR)/libscript.a
-```
-
----
-
-## 11. Threading and Synchronization
-
-### 11.1 Server-Side Threading
-
-```
-Main tick thread
-  │
-  ├── Stage 1 (command drain):
-  │     ├── Drain SPSC command ring (edit commands from I/O thread)
-  │     ├── Drain SPSC command ring (edit commands from script thread)
-  │     ├── Execute entity mutations (spawn, delete, move, etc.)
-  │     ├── Apply script entity updates (rebase on top of physics)
-  │     ├── Record undo entries
-  │     └── Snapshot entities → script thread's snapshot buffer
-  │
-  ├── Stage 2-N: Physics, networking, etc. (existing pipeline)
-  │
-  ├── Physics job system (N workers, existing)
-  │     └── phys_world_tick_parallel()
-  │
-  └── Net pump thread (existing)
-        └── UDP recv loop
-
-Editor I/O thread (dedicated pthread)
-  │
-  ├── epoll-based event loop
-  ├── Accepts edit protocol connections (TCP)
-  ├── Accepts asset download connections (TCP)
-  ├── Reads JSON commands from controllers → enqueue into SPSC command ring
-  ├── Reads response ring → sends JSON responses to controllers
-  └── Handles asset file transfers inline
-
-Script thread (dedicated pthread)
-  │
-  ├── Waits for new entity snapshot (atomic seq check)
-  ├── Copies snapshot into script_env_t (read-only view)
-  ├── Executes scripts and/or native tick functions
-  │     ├── Reads entity state from frozen snapshot
-  │     ├── Writes entity updates to back buffer
-  │     └── Pushes edit commands to SPSC ring → main tick
-  ├── Swaps update buffer (back→front, atomic ready flag)
-  └── Loops
-```
-
-**Key invariants:**
-- Only the I/O thread touches TCP sockets (matches engine rule: "only I/O
-  thread touches sockets")
-- Only the main tick thread mutates world state (commands drained in Stage 1)
-- Script thread never touches live entity store — reads snapshot, writes updates
-- script state is only accessed from the script thread (never main tick, never I/O)
-- Entity updates from scripts are rebased on top of physics results
-- SPSC rings are the sole synchronization mechanism (lock-free)
-
-### 11.2 Synchronization
-
-No locks in the hot path. Cross-thread communication:
-
-| Producer | Consumer | Mechanism |
-|----------|----------|-----------|
-| I/O thread | Main tick thread | SPSC command ring (lock-free) |
-| Main tick thread | I/O thread | SPSC response ring (lock-free) |
-| Script thread | Main tick thread | SPSC command ring (lock-free) |
-| Script thread | Main tick thread | Double-buffered entity update array (atomic swap) |
-| Main tick thread | Script thread | Entity snapshot array (atomic sequence number) |
-
-All rings are bounded (capacity 1024). The double-buffered update array and
-snapshot array use atomic sequence numbers for synchronization — no locks,
-no condition variables in the hot path.
-
-### 11.3 Client-Side Threading
-
-```
-Main thread (SDL + GL)
-  │
-  ├── Renders cursor, gizmos, grid, selection highlights (NEW)
-  ├── Processes client state socket I/O (NEW)
-  │     ├── Receives cursor/camera/selection commands from controller
-  │     ├── Pushes events to controller (click, box_select, context_menu)
-  │     └── Non-blocking TCP reads in SDL event loop
-  │
-  └── Net IO thread (existing)
-        └── UDP recv + RUDP reassembly
-```
-
-The client state socket (TCP) is polled in the main loop alongside SDL
-events using non-blocking reads. No additional thread needed — edit commands
-arrive at <100/sec and never block rendering.
-
----
-
-## 12. Phased Implementation Plan
-
-### Phase 1: Foundation (Core Loop)
-- [ ] Editor I/O thread (epoll, TCP listener, SPSC command ring)
-- [ ] JSON parser (json_parse.c, minimal internal implementation)
-- [ ] Command dispatch framework
-- [ ] Basic commands: spawn box/sphere, delete, move, cursor set
-- [ ] Selection system (multi-select, query select, click-to-select)
-- [ ] Undo/redo stack (with dedicated snapshot arena)
-- [ ] Controller TUI (status bar + log + command-line)
-- [ ] Controller ↔ server TCP connection
-- [ ] 3D cursor rendering on client
-- [ ] Client state socket (bidirectional: cursor query + push events)
-- [ ] Level save/load (JSON format)
-
-### Phase 2: Asset System
-- [ ] Asset registry (catalog + listing + search)
-- [ ] Asset downloader (TCP transfer via I/O thread)
-- [ ] Client asset cache
-- [ ] Tab-completion for asset paths (async, with stale handling)
-- [ ] Browse command (with #N reference caching)
-- [ ] Material assignment commands
-- [ ] Clone command
-
-### Phase 3: Scripting
-- [ ] Scripting language selection and integration (TBD)
-- [ ] Script runtime core (dedicated thread, double-buffered entity updates)
-- [ ] Script environment (script_env_t, entity snapshot, update buffer, cmd ring)
-- [ ] Script sandbox (strip os/io/ffi/debug from script state)
-- [ ] Script rebase (apply entity updates on top of physics/game state)
-- [ ] Native script function registry (C functions with same script_env_t interface)
-- [ ] Entity manipulation API bindings (script ↔ script_env_t)
-- [ ] Math/vec3/quat bindings
-- [ ] run/eval commands
-- [ ] REPL mode (with server-side continuation detection)
-- [ ] Undo grouping for scripts (begin_group/end_group)
-
-### Phase 4: Texture Synthesis
-- [ ] Noise generators (perlin, simplex, voronoi, fractal)
-- [ ] Blend modes
-- [ ] UV bake engine
-- [ ] texsynth commands
-- [ ] scripting texture API
-
-### Phase 5: Polish & MCP
-- [ ] MCP server in controller (JSON-RPC 2.0 over TCP, port 9300)
-- [ ] Full keybinding system (bind/unbind, save/load keymaps)
-- [ ] Grab mode (client-side provisional positioning for real-time feel)
-- [ ] Grid/snap refinement
-- [ ] Prefab system
-- [ ] Camera commands (front/right/top/ortho/position)
-
-### Phase 6: Advanced
-- [ ] Gizmo rendering (translate/rotate/scale handles)
-- [ ] Entity property editor (in TUI)
-- [ ] Hot-reload for scripts and assets (asset_watch.c, inotify)
-- [ ] Context menu mode in TUI
-- [ ] Inspect command (detailed component dump)
+- `client_mesh_render.h` — mesh entity rendering on client side

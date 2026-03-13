@@ -15,7 +15,7 @@
 #include <string.h>
 
 /** @brief Stack arena size for JSON parsing. */
-#define PARSE_ARENA_SIZE 4096
+#define PARSE_ARENA_SIZE 65536
 
 /**
  * @brief Extract the "id" field from the parsed JSON object.
@@ -102,8 +102,8 @@ bool scene_cmd_parse_response(const char *json, size_t len,
 
     memset(out, 0, sizeof(*out));
 
-    /* Stack-allocated arena for JSON parsing — no dynamic allocation. */
-    uint8_t arena_buf[PARSE_ARENA_SIZE];
+    /* Static arena for JSON parsing — large enough for paginated responses. */
+    static uint8_t arena_buf[PARSE_ARENA_SIZE];
     json_arena_t arena;
     json_arena_init(&arena, arena_buf, sizeof(arena_buf));
 

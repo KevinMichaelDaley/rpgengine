@@ -104,6 +104,9 @@ extern "C" {
 #ifndef GL_UNSIGNED_INT
 #define GL_UNSIGNED_INT 0x1405
 #endif
+#ifndef GL_LINES
+#define GL_LINES 0x0001
+#endif
 #ifndef GL_TRIANGLES
 #define GL_TRIANGLES 0x0004
 #endif
@@ -131,6 +134,14 @@ extern "C" {
 #endif
 #ifndef GL_DEPTH_TEST
 #define GL_DEPTH_TEST 0x0B71
+#endif
+
+/* ---- Clear buffer bits ---- */
+#ifndef GL_COLOR_BUFFER_BIT
+#define GL_COLOR_BUFFER_BIT 0x00004000
+#endif
+#ifndef GL_DEPTH_BUFFER_BIT
+#define GL_DEPTH_BUFFER_BIT 0x00000100
 #endif
 
 /* ---- Texture formats ---- */

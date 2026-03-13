@@ -9,9 +9,17 @@
 
 #include "ferrum/editor/scene/scene_input.h"
 #include "ferrum/editor/scene/scene_main.h"
+#include "ferrum/editor/viewport/viewport_camera.h"
+#include "ferrum/editor/ctrl_cmd_defs.h"
+#include "ferrum/editor/ui/clay_theme.h"
 
 #include <SDL2/SDL.h>
 #include <string.h>
+
+/* Camera orbit/pan sensitivity. */
+#define CAMERA_ORBIT_SPEED 0.005f
+#define CAMERA_PAN_SPEED   0.02f
+#define CAMERA_ZOOM_SPEED  1.0f
 
 /* ---- Internal helpers ---- */
 
@@ -19,22 +27,82 @@
  * @brief Handle mouse button down: start divider drag, change focus,
  *        and update Clay mouse state.
  */
+/**
+ * @brief Check if a click at logical coords (lx, ly) hits a scrollbar track.
+ *
+ * Scrollbar tracks are 8px wide on the right edge of each panel's content
+ * area. Returns the scrollbar ID (1=outliner, 2=inspector, 3=tui) or 0.
+ */
+static int scrollbar_hit_test(const scene_editor_t *ed, int lx, int ly) {
+    /* Only panels with scrollable content. */
+    static const panel_id_t panels[] = {PANEL_OUTLINER, PANEL_INSPECTOR, PANEL_TUI};
+    static const int scroll_ids[] = {1, 2, 3};
+
+    /* Check which panel needs a scrollbar and if click is in the track. */
+    for (int p = 0; p < 3; p++) {
+        if (!panel_layout_is_visible(&ed->layout, panels[p])) continue;
+
+        /* Check if this panel actually has a scrollbar. */
+        bool has_scrollbar = false;
+        if (panels[p] == PANEL_OUTLINER) {
+            has_scrollbar = ed->ui.outliner_total > ed->ui.outliner_visible_lines;
+        } else if (panels[p] == PANEL_INSPECTOR) {
+            has_scrollbar = ed->ui.inspector_total > ed->ui.inspector_visible_lines;
+        } else if (panels[p] == PANEL_TUI) {
+            has_scrollbar = ed->ui.tui_log_count > ed->ui.tui_log_visible;
+        }
+        if (!has_scrollbar) continue;
+
+        panel_rect_t r = panel_layout_get_rect(&ed->layout, panels[p]);
+        /* Scrollbar track: rightmost 8px of panel. */
+        int track_left = r.x + r.w - 8 - THEME_PADDING_SMALL;
+        int track_right = r.x + r.w - THEME_PADDING_SMALL;
+        int track_top = r.y + THEME_ROW_HEIGHT; /* below title bar */
+        int track_bottom = r.y + r.h;
+
+        if (lx >= track_left && lx <= track_right &&
+            ly >= track_top && ly <= track_bottom) {
+            return scroll_ids[p];
+        }
+    }
+    return 0;
+}
+
 static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) {
     if (ev->button == SDL_BUTTON_LEFT) {
         ed->ui.mouse_down = true;
         ed->ui.mouse_clicked = true;
 
+        /* Convert physical mouse coords to logical (layout) coords. */
+        float sc = ed->clay_be.ui_scale;
+        if (sc < 1.0f) sc = 1.0f;
+        int lx = (int)((float)ev->x / sc);
+        int ly = (int)((float)ev->y / sc);
+
         /* Check for divider drag start */
         divider_id_t div = panel_layout_divider_hit_test(&ed->layout,
-                                                          ev->x, ev->y);
+                                                          lx, ly);
         if (div != DIVIDER_NONE) {
             ed->dragging_divider = div;
             return true;
         }
 
+        /* Check for scrollbar drag start. */
+        int sb = scrollbar_hit_test(ed, lx, ly);
+        if (sb > 0) {
+            ed->ui.scrollbar_dragging = sb;
+            ed->ui.scrollbar_drag_y = (float)ly;
+            if (sb == 1) ed->ui.scrollbar_drag_scroll = ed->ui.outliner_scroll;
+            else if (sb == 2) ed->ui.scrollbar_drag_scroll = ed->ui.inspector_scroll;
+            else if (sb == 3) ed->ui.scrollbar_drag_scroll = ed->ui.tui_log_scroll;
+            return true;
+        }
+
         /* Click-to-focus */
-        panel_id_t hit = panel_layout_hit_test(&ed->layout, ev->x, ev->y);
+        panel_id_t hit = panel_layout_hit_test(&ed->layout, lx, ly);
         panel_layout_set_focus(&ed->layout, hit);
+    } else if (ev->button == SDL_BUTTON_MIDDLE) {
+        ed->ui.middle_mouse_down = true;
     }
     return false; /* let Clay also handle the click */
 }
@@ -49,6 +117,12 @@ static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) 
             ed->dragging_divider = DIVIDER_NONE;
             return true;
         }
+        if (ed->ui.scrollbar_dragging != 0) {
+            ed->ui.scrollbar_dragging = 0;
+            return true;
+        }
+    } else if (ev->button == SDL_BUTTON_MIDDLE) {
+        ed->ui.middle_mouse_down = false;
     }
     return false;
 }
@@ -62,11 +136,157 @@ static bool handle_mouse_motion(scene_editor_t *ed,
     ed->ui.mouse_x = (float)ev->x;
     ed->ui.mouse_y = (float)ev->y;
 
+    /* Middle mouse drag: orbit or pan the viewport camera. */
+    if (ed->ui.middle_mouse_down) {
+        SDL_Keymod mod = SDL_GetModState();
+        if (mod & KMOD_SHIFT) {
+            /* Shift+middle mouse: pan. */
+            editor_camera_pan(&ed->viewport.camera,
+                               -(float)ev->xrel * CAMERA_PAN_SPEED,
+                               (float)ev->yrel * CAMERA_PAN_SPEED);
+        } else {
+            /* Middle mouse: orbit. */
+            editor_camera_orbit(&ed->viewport.camera,
+                                 -(float)ev->xrel * CAMERA_ORBIT_SPEED,
+                                 -(float)ev->yrel * CAMERA_ORBIT_SPEED);
+        }
+        return true;
+    }
+
+    /* Scrollbar drag: map mouse Y delta to scroll position. */
+    if (ed->ui.scrollbar_dragging != 0) {
+        float sc = ed->clay_be.ui_scale;
+        if (sc < 1.0f) sc = 1.0f;
+        float ly = (float)ev->y / sc;
+        float dy = ly - ed->ui.scrollbar_drag_y;
+
+        int sb = ed->ui.scrollbar_dragging;
+        int total = 0, visible = 0;
+        if (sb == 1) {
+            total = ed->ui.outliner_total;
+            visible = ed->ui.outliner_visible_lines;
+        } else if (sb == 2) {
+            total = ed->ui.inspector_total;
+            visible = ed->ui.inspector_visible_lines;
+        } else if (sb == 3) {
+            total = ed->ui.tui_log_count;
+            visible = ed->ui.tui_log_visible;
+        }
+
+        int max_scroll = total - visible;
+        if (max_scroll < 0) max_scroll = 0;
+
+        /* Get track height from panel rect. */
+        panel_id_t panels[] = {PANEL_OUTLINER, PANEL_INSPECTOR, PANEL_TUI};
+        panel_rect_t r = panel_layout_get_rect(&ed->layout, panels[sb - 1]);
+        float track_h = (float)(r.h - THEME_ROW_HEIGHT);
+        if (track_h < 1.0f) track_h = 1.0f;
+
+        /* Convert pixel drag to scroll units. */
+        float scroll_per_px = (float)max_scroll / track_h;
+        /* TUI scroll is inverted: scroll=0 is bottom (newest),
+         * so dragging down should decrease scroll. */
+        int delta_scroll = (int)(dy * scroll_per_px);
+        if (sb == 3) delta_scroll = -delta_scroll;
+        int new_scroll = ed->ui.scrollbar_drag_scroll + delta_scroll;
+        if (new_scroll < 0) new_scroll = 0;
+        if (new_scroll > max_scroll) new_scroll = max_scroll;
+
+        if (sb == 1) ed->ui.outliner_scroll = new_scroll;
+        else if (sb == 2) ed->ui.inspector_scroll = new_scroll;
+        else if (sb == 3) ed->ui.tui_log_scroll = new_scroll;
+
+        return true;
+    }
+
     if (ed->dragging_divider == DIVIDER_NONE) return false;
 
-    int delta = (ed->dragging_divider == DIVIDER_BOTTOM) ? ev->yrel : ev->xrel;
+    /* Scale physical pixel delta to logical pixels for the layout. */
+    float sc = ed->clay_be.ui_scale;
+    if (sc < 1.0f) sc = 1.0f;
+    int raw_delta = (ed->dragging_divider == DIVIDER_BOTTOM) ? ev->yrel : ev->xrel;
+    int delta = (int)((float)raw_delta / sc);
     panel_layout_drag_divider(&ed->layout, ed->dragging_divider, delta);
     return true;
+}
+
+/**
+ * @brief Push a command into the history ring buffer.
+ *
+ * Skips empty strings and duplicates of the most recent entry.
+ */
+static void tui_history_push(scene_ui_state_t *ui, const char *cmd) {
+    if (!cmd || cmd[0] == '\0') return;
+
+    /* Skip if identical to previous entry. */
+    if (ui->tui_history_count > 0) {
+        int prev = (ui->tui_history_head - 1 + UI_TUI_HISTORY_MAX)
+                   % UI_TUI_HISTORY_MAX;
+        if (strcmp(ui->tui_history[prev], cmd) == 0) return;
+    }
+
+    strncpy(ui->tui_history[ui->tui_history_head], cmd,
+            UI_TUI_INPUT_MAX - 1);
+    ui->tui_history[ui->tui_history_head][UI_TUI_INPUT_MAX - 1] = '\0';
+    ui->tui_history_head = (ui->tui_history_head + 1) % UI_TUI_HISTORY_MAX;
+    if (ui->tui_history_count < UI_TUI_HISTORY_MAX) {
+        ui->tui_history_count++;
+    }
+}
+
+/**
+ * @brief Handle tab completion for TUI command input.
+ *
+ * Completes command names using ctrl_cmd_complete(). If a single match
+ * is found, replaces the input. If multiple matches, logs them and
+ * fills the common prefix.
+ */
+static void handle_tui_tab(scene_editor_t *ed) {
+    scene_ui_state_t *ui = &ed->ui;
+    if (ui->tui_input_len == 0) return;
+
+    /* Only complete the first word (command name). */
+    char *space = strchr(ui->tui_input, ' ');
+    if (space) return;  /* Already past command name — no arg completion yet. */
+
+    const char *matches[32];
+    uint32_t match_count = ctrl_cmd_complete(ui->tui_input, matches, 32);
+
+    if (match_count == 1) {
+        /* Single match — replace input with match + space. */
+        size_t len = strlen(matches[0]);
+        if (len < UI_TUI_INPUT_MAX - 2) {
+            memcpy(ui->tui_input, matches[0], len);
+            ui->tui_input[len] = ' ';
+            ui->tui_input_len = (int)(len + 1);
+            ui->tui_input[ui->tui_input_len] = '\0';
+            ui->tui_cursor = ui->tui_input_len;
+        }
+    } else if (match_count > 1) {
+        /* Multiple matches — log them. */
+        char line[512];
+        int pos = 0;
+        for (uint32_t i = 0; i < match_count; i++) {
+            int n = snprintf(line + pos, sizeof(line) - (size_t)pos,
+                             "  %s", matches[i]);
+            if (n > 0) pos += n;
+        }
+        scene_ui_tui_log(ui, line);
+
+        /* Fill common prefix. */
+        size_t common = strlen(matches[0]);
+        for (uint32_t i = 1; i < match_count; i++) {
+            size_t j = 0;
+            while (j < common && matches[0][j] == matches[i][j]) j++;
+            common = j;
+        }
+        if (common > (size_t)ui->tui_input_len) {
+            memcpy(ui->tui_input, matches[0], common);
+            ui->tui_input_len = (int)common;
+            ui->tui_input[ui->tui_input_len] = '\0';
+            ui->tui_cursor = ui->tui_input_len;
+        }
+    }
 }
 
 /**
@@ -105,10 +325,12 @@ static bool handle_tui_key(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     case SDLK_KP_ENTER:
         /* Submit the command if non-empty. */
         if (ui->tui_input_len > 0) {
-            /* Log the command as "> input". */
-            char log_line[UI_TUI_LOG_LINE];
-            snprintf(log_line, sizeof(log_line), "> %s", ui->tui_input);
-            scene_ui_tui_log(ui, log_line);
+            /* Push to command history before clearing. */
+            tui_history_push(ui, ui->tui_input);
+            ui->tui_history_index = -1;
+
+            /* Log the command with success indicator. */
+            scene_ui_tui_log_success(ui, ui->tui_input);
 
             /* Copy command to tui_cmd before clearing input. */
             memcpy(ui->tui_cmd, ui->tui_input, (size_t)(ui->tui_input_len + 1));
@@ -158,6 +380,53 @@ static bool handle_tui_key(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         ui->tui_cursor = ui->tui_input_len;
         return true;
 
+    case SDLK_UP:
+        /* Browse command history backward. */
+        if (ui->tui_history_count > 0) {
+            if (ui->tui_history_index == -1) {
+                /* Stash current input before browsing. */
+                memcpy(ui->tui_history_stash, ui->tui_input,
+                       (size_t)(ui->tui_input_len + 1));
+                ui->tui_history_index = 0;
+            } else if (ui->tui_history_index < ui->tui_history_count - 1) {
+                ui->tui_history_index++;
+            }
+            /* Copy history entry to input. */
+            int slot = (ui->tui_history_head - 1 - ui->tui_history_index
+                        + UI_TUI_HISTORY_MAX) % UI_TUI_HISTORY_MAX;
+            strncpy(ui->tui_input, ui->tui_history[slot],
+                    UI_TUI_INPUT_MAX - 1);
+            ui->tui_input[UI_TUI_INPUT_MAX - 1] = '\0';
+            ui->tui_input_len = (int)strlen(ui->tui_input);
+            ui->tui_cursor = ui->tui_input_len;
+        }
+        return true;
+
+    case SDLK_DOWN:
+        /* Browse command history forward. */
+        if (ui->tui_history_index > 0) {
+            ui->tui_history_index--;
+            int slot = (ui->tui_history_head - 1 - ui->tui_history_index
+                        + UI_TUI_HISTORY_MAX) % UI_TUI_HISTORY_MAX;
+            strncpy(ui->tui_input, ui->tui_history[slot],
+                    UI_TUI_INPUT_MAX - 1);
+            ui->tui_input[UI_TUI_INPUT_MAX - 1] = '\0';
+            ui->tui_input_len = (int)strlen(ui->tui_input);
+            ui->tui_cursor = ui->tui_input_len;
+        } else if (ui->tui_history_index == 0) {
+            /* Restore stashed input. */
+            ui->tui_history_index = -1;
+            memcpy(ui->tui_input, ui->tui_history_stash,
+                   UI_TUI_INPUT_MAX);
+            ui->tui_input_len = (int)strlen(ui->tui_input);
+            ui->tui_cursor = ui->tui_input_len;
+        }
+        return true;
+
+    case SDLK_TAB:
+        handle_tui_tab(ed);
+        return true;
+
     case SDLK_u:
         /* Ctrl+U: clear line. */
         if (ev->keysym.mod & KMOD_CTRL) {
@@ -205,6 +474,78 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     /* If TUI is active, route keys to TUI input handler first. */
     if (ed->ui.tui_active) {
         return handle_tui_key(ed, ev);
+    }
+
+    /* Outliner scroll: arrow keys, PgUp/PgDown, Home/End when focused. */
+    if (ed->layout.focus == PANEL_OUTLINER) {
+        int max_scroll = ed->ui.outliner_total - ed->ui.outliner_visible_lines;
+        if (max_scroll < 0) max_scroll = 0;
+
+        switch (key) {
+        case SDLK_UP:
+            ed->ui.outliner_scroll--;
+            if (ed->ui.outliner_scroll < 0) ed->ui.outliner_scroll = 0;
+            return true;
+        case SDLK_DOWN:
+            ed->ui.outliner_scroll++;
+            if (ed->ui.outliner_scroll > max_scroll)
+                ed->ui.outliner_scroll = max_scroll;
+            return true;
+        case SDLK_PAGEUP:
+            ed->ui.outliner_scroll -= ed->ui.outliner_visible_lines;
+            if (ed->ui.outliner_scroll < 0) ed->ui.outliner_scroll = 0;
+            return true;
+        case SDLK_PAGEDOWN:
+            ed->ui.outliner_scroll += ed->ui.outliner_visible_lines;
+            if (ed->ui.outliner_scroll > max_scroll)
+                ed->ui.outliner_scroll = max_scroll;
+            return true;
+        case SDLK_HOME:
+            ed->ui.outliner_scroll = 0;
+            return true;
+        case SDLK_END:
+            ed->ui.outliner_scroll = max_scroll;
+            return true;
+        default:
+            break;
+        }
+    }
+
+    /* Inspector scroll (pixel-based): arrow keys scroll by row height,
+     * PgUp/PgDown by visible area. */
+    if (ed->layout.focus == PANEL_INSPECTOR) {
+        int max_scroll = ed->ui.inspector_total - ed->ui.inspector_visible_lines;
+        if (max_scroll < 0) max_scroll = 0;
+        int step = THEME_ROW_HEIGHT;
+
+        switch (key) {
+        case SDLK_UP:
+            ed->ui.inspector_scroll -= step;
+            if (ed->ui.inspector_scroll < 0) ed->ui.inspector_scroll = 0;
+            return true;
+        case SDLK_DOWN:
+            ed->ui.inspector_scroll += step;
+            if (ed->ui.inspector_scroll > max_scroll)
+                ed->ui.inspector_scroll = max_scroll;
+            return true;
+        case SDLK_PAGEUP:
+            ed->ui.inspector_scroll -= ed->ui.inspector_visible_lines;
+            if (ed->ui.inspector_scroll < 0) ed->ui.inspector_scroll = 0;
+            return true;
+        case SDLK_PAGEDOWN:
+            ed->ui.inspector_scroll += ed->ui.inspector_visible_lines;
+            if (ed->ui.inspector_scroll > max_scroll)
+                ed->ui.inspector_scroll = max_scroll;
+            return true;
+        case SDLK_HOME:
+            ed->ui.inspector_scroll = 0;
+            return true;
+        case SDLK_END:
+            ed->ui.inspector_scroll = max_scroll;
+            return true;
+        default:
+            break;
+        }
     }
 
     /* Panel toggles: F5=Outliner, F6=Viewport, F7=Inspector, F8=TUI */
@@ -276,6 +617,40 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     case SDLK_a:
         break;
 
+    /* Snap view shortcuts (number row keys). */
+    case SDLK_1:
+        if (ev->keysym.mod & KMOD_CTRL) {
+            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_BACK);
+        } else {
+            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_FRONT);
+        }
+        return true;
+    case SDLK_3:
+        if (ev->keysym.mod & KMOD_CTRL) {
+            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_LEFT);
+        } else {
+            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_RIGHT);
+        }
+        return true;
+    case SDLK_7:
+        if (ev->keysym.mod & KMOD_CTRL) {
+            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_BOTTOM);
+        } else {
+            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_TOP);
+        }
+        return true;
+    case SDLK_5:
+        editor_camera_toggle_projection(&ed->viewport.camera);
+        return true;
+    case SDLK_f:
+        /* Frame selection: if entities selected, frame their AABB. */
+        if (edit_selection_count(&ed->selection) > 0) {
+            /* TODO: compute selection AABB and call
+             * editor_camera_frame_selection(). For now, reset camera. */
+            editor_camera_reset(&ed->viewport.camera);
+        }
+        return true;
+
     default:
         break;
     }
@@ -294,8 +669,10 @@ bool scene_input_process(struct scene_editor *ed, const union SDL_Event *event) 
     case SDL_WINDOWEVENT:
         if (event->window.event == SDL_WINDOWEVENT_RESIZED ||
             event->window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            panel_layout_resize(&ed->layout,
-                                event->window.data1, event->window.data2);
+            /* Layout uses logical pixels (physical / ui_scale).
+             * render_frame() calls panel_layout_resize() each frame
+             * with the correct logical dimensions, so skip it here
+             * to avoid a one-frame mismatch with physical sizes. */
             return true;
         }
         break;
@@ -308,6 +685,48 @@ bool scene_input_process(struct scene_editor *ed, const union SDL_Event *event) 
 
     case SDL_MOUSEMOTION:
         return handle_mouse_motion(ed, &event->motion);
+
+    case SDL_MOUSEWHEEL: {
+        /* Route scroll wheel based on which panel the mouse is over. */
+        float sc = ed->clay_be.ui_scale;
+        if (sc < 1.0f) sc = 1.0f;
+        int lx = (int)(ed->ui.mouse_x / sc);
+        int ly = (int)(ed->ui.mouse_y / sc);
+        panel_id_t hover_panel = panel_layout_hit_test(&ed->layout, lx, ly);
+        if (hover_panel == PANEL_VIEWPORT) {
+            editor_camera_zoom(&ed->viewport.camera,
+                                -(float)event->wheel.y * CAMERA_ZOOM_SPEED);
+        } else if (hover_panel == PANEL_TUI) {
+            /* Scroll TUI log: wheel up = scroll back, wheel down = toward newest. */
+            int max_scroll = ed->ui.tui_log_count - ed->ui.tui_log_visible;
+            if (max_scroll < 0) max_scroll = 0;
+            ed->ui.tui_log_scroll += event->wheel.y;
+            if (ed->ui.tui_log_scroll < 0) ed->ui.tui_log_scroll = 0;
+            if (ed->ui.tui_log_scroll > max_scroll)
+                ed->ui.tui_log_scroll = max_scroll;
+        } else if (hover_panel == PANEL_OUTLINER) {
+            /* Scroll outliner entity list. */
+            int max_scroll = ed->ui.outliner_total - ed->ui.outliner_visible_lines;
+            if (max_scroll < 0) max_scroll = 0;
+            ed->ui.outliner_scroll -= event->wheel.y;
+            if (ed->ui.outliner_scroll < 0) ed->ui.outliner_scroll = 0;
+            if (ed->ui.outliner_scroll > max_scroll)
+                ed->ui.outliner_scroll = max_scroll;
+        } else if (hover_panel == PANEL_INSPECTOR) {
+            /* Scroll inspector (pixel-based). */
+            int max_scroll = ed->ui.inspector_total
+                             - ed->ui.inspector_visible_lines;
+            if (max_scroll < 0) max_scroll = 0;
+            ed->ui.inspector_scroll -= event->wheel.y * THEME_ROW_HEIGHT;
+            if (ed->ui.inspector_scroll < 0) ed->ui.inspector_scroll = 0;
+            if (ed->ui.inspector_scroll > max_scroll)
+                ed->ui.inspector_scroll = max_scroll;
+        } else {
+            /* Other panels: pass to Clay scroll containers. */
+            ed->ui.scroll_delta_y += (float)event->wheel.y * 40.0f;
+        }
+        return true;
+    }
 
     case SDL_KEYDOWN:
         return handle_key_down(ed, &event->key);
