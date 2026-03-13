@@ -16,6 +16,7 @@
 
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
+#include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -136,6 +137,8 @@ void scene_ui_build_inspector(scene_editor_t *ed,
         },
     }) {
         /* Title bar */
+        bool focused = (ed->layout.focus == PANEL_INSPECTOR);
+        uint8_t title_alpha = focused ? 140 : 60;
         CLAY(CLAY_ID("InspectorTitle"), {
             .layout = {
                 .sizing = {CLAY_SIZING_GROW(0),
@@ -143,7 +146,7 @@ void scene_ui_build_inspector(scene_editor_t *ed,
                 .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL, 0, 0},
             },
             .backgroundColor = {THEME_ACCENT_R, THEME_ACCENT_G,
-                                 THEME_ACCENT_B, 60},
+                                 THEME_ACCENT_B, title_alpha},
         }) {
             CLAY_TEXT(CLAY_STRING("Inspector"),
                 CLAY_TEXT_CONFIG({

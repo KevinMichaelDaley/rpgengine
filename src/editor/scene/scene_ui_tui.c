@@ -13,6 +13,7 @@
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_connection.h"
+#include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/scene/scene_sync.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
@@ -41,6 +42,15 @@ static char s_status_buf[TUI_STATUS_BUF_SIZE];
 #define TUI_INPUT_BUF_SIZE (UI_TUI_INPUT_MAX + 4)
 static char s_input_buf[TUI_INPUT_BUF_SIZE];
 
+/** Buffer for text before cursor (": " + chars before cursor). */
+static char s_input_pre[TUI_INPUT_BUF_SIZE];
+
+/** Buffer for char at cursor position (single char or space). */
+static char s_input_cur[4];
+
+/** Buffer for text after cursor. */
+static char s_input_post[TUI_INPUT_BUF_SIZE];
+
 /* ------------------------------------------------------------------------ */
 /* Public API                                                                */
 /* ------------------------------------------------------------------------ */
@@ -65,11 +75,31 @@ void scene_ui_build_tui(struct scene_editor *ed,
                  edit_selection_count(&ed->selection), sync_buf);
     }
 
-    /* Format input line with prompt. */
+    /* Format input line segments for cursor rendering. */
     if (ed->ui.tui_active) {
-        snprintf(s_input_buf, sizeof(s_input_buf), ": %s_",
-                 ed->ui.tui_input);
-    } else {
+        int cur = ed->ui.tui_cursor;
+        int len = ed->ui.tui_input_len;
+        /* Pre-cursor: prompt + text before cursor. */
+        snprintf(s_input_pre, sizeof(s_input_pre), ": %.*s",
+                 cur, ed->ui.tui_input);
+        /* Char at cursor (space if at end). */
+        if (cur < len) {
+            s_input_cur[0] = ed->ui.tui_input[cur];
+            s_input_cur[1] = '\0';
+        } else {
+            s_input_cur[0] = ' ';
+            s_input_cur[1] = '\0';
+        }
+        /* Post-cursor: remaining text after cursor char. */
+        if (cur + 1 < len) {
+            snprintf(s_input_post, sizeof(s_input_post), "%s",
+                     ed->ui.tui_input + cur + 1);
+        } else {
+            s_input_post[0] = '\0';
+        }
+    }
+    /* Fallback single-string for inactive mode. */
+    if (!ed->ui.tui_active) {
         snprintf(s_input_buf, sizeof(s_input_buf),
                  "Press : to enter command");
     }
@@ -94,7 +124,9 @@ void scene_ui_build_tui(struct scene_editor *ed,
             .offset = {(float)rect->x, (float)rect->y},
         },
     }) {
-        /* ---- Status bar ---- */
+        /* ---- Status bar (doubles as title bar / focus indicator) ---- */
+        bool tui_focused = (ed->layout.focus == PANEL_TUI);
+        uint8_t tui_title_alpha = tui_focused ? 140 : 60;
         CLAY(CLAY_ID("TUI_StatusBar"), {
             .layout = {
                 .sizing = {CLAY_SIZING_GROW(0),
@@ -103,7 +135,7 @@ void scene_ui_build_tui(struct scene_editor *ed,
                 .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
             },
             .backgroundColor = {THEME_ACCENT_R, THEME_ACCENT_G,
-                                 THEME_ACCENT_B, 60},
+                                 THEME_ACCENT_B, tui_title_alpha},
         }) {
             Clay_String status_str = {
                 .length = (int32_t)strlen(s_status_buf),
@@ -315,32 +347,94 @@ void scene_ui_build_tui(struct scene_editor *ed,
         }
 
         /* ---- Input line ---- */
+        Clay_Color input_text_color = ed->ui.tui_active
+            ? (Clay_Color){THEME_TEXT_R, THEME_TEXT_G,
+                           THEME_TEXT_B, THEME_TEXT_A}
+            : (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                           THEME_TEXT_DIM_B, THEME_TEXT_DIM_A};
         CLAY(CLAY_ID("TUI_Input"), {
             .layout = {
                 .sizing = {CLAY_SIZING_GROW(0),
                            CLAY_SIZING_FIXED(THEME_ROW_HEIGHT + 4)},
                 .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL,
                             2, 2},
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
             },
             .backgroundColor = ed->ui.tui_active
                 ? (Clay_Color){40, 42, 48, 255}
                 : (Clay_Color){30, 32, 38, 255},
         }) {
-            Clay_String input_str = {
-                .length = (int32_t)strlen(s_input_buf),
-                .chars = s_input_buf,
-            };
-            Clay__OpenTextElement(input_str,
-                CLAY_TEXT_CONFIG({
-                    .fontSize = THEME_FONT_SIZE_UI,
-                    .textColor = ed->ui.tui_active
-                        ? (Clay_Color){THEME_TEXT_R, THEME_TEXT_G,
-                                       THEME_TEXT_B, THEME_TEXT_A}
-                        : (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
-                                       THEME_TEXT_DIM_B, THEME_TEXT_DIM_A},
-                    .fontId = CLAY_FONT_MONO,
-                }));
+            if (ed->ui.tui_active) {
+                /* Pre-cursor text. */
+                Clay_String pre_str = {
+                    .length = (int32_t)strlen(s_input_pre),
+                    .chars = s_input_pre,
+                };
+                Clay__OpenTextElement(pre_str,
+                    CLAY_TEXT_CONFIG({
+                        .fontSize = THEME_FONT_SIZE_UI,
+                        .textColor = input_text_color,
+                        .fontId = CLAY_FONT_MONO,
+                    }));
+
+                /* Cursor: character + underline bar beneath.
+                 * Use a fixed-height container so the bar position
+                 * is consistent whether or not a char is visible. */
+                CLAY(CLAY_ID("TUI_Cursor"), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIT(0),
+                                   CLAY_SIZING_FIXED(THEME_FONT_SIZE_UI + 4)},
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                        .childAlignment = {.y = CLAY_ALIGN_Y_BOTTOM},
+                    },
+                }) {
+                    Clay_String cur_str = {
+                        .length = (int32_t)strlen(s_input_cur),
+                        .chars = s_input_cur,
+                    };
+                    Clay__OpenTextElement(cur_str,
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = input_text_color,
+                            .fontId = CLAY_FONT_MONO,
+                        }));
+                    /* Underline bar. */
+                    CLAY(CLAY_ID("TUI_CursorBar"), {
+                        .layout = {
+                            .sizing = {CLAY_SIZING_GROW(0),
+                                       CLAY_SIZING_FIXED(2)},
+                        },
+                        .backgroundColor = {THEME_TEXT_R, THEME_TEXT_G,
+                                             THEME_TEXT_B, THEME_TEXT_A},
+                    }) {}
+                }
+
+                /* Post-cursor text. */
+                if (s_input_post[0] != '\0') {
+                    Clay_String post_str = {
+                        .length = (int32_t)strlen(s_input_post),
+                        .chars = s_input_post,
+                    };
+                    Clay__OpenTextElement(post_str,
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = input_text_color,
+                            .fontId = CLAY_FONT_MONO,
+                        }));
+                }
+            } else {
+                Clay_String input_str = {
+                    .length = (int32_t)strlen(s_input_buf),
+                    .chars = s_input_buf,
+                };
+                Clay__OpenTextElement(input_str,
+                    CLAY_TEXT_CONFIG({
+                        .fontSize = THEME_FONT_SIZE_UI,
+                        .textColor = input_text_color,
+                        .fontId = CLAY_FONT_MONO,
+                    }));
+            }
         }
     }
 }

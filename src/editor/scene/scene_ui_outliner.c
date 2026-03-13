@@ -9,6 +9,7 @@
 
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
+#include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -37,9 +38,14 @@ static const Clay_Color COLOR_PANEL_BG = {
     THEME_BG_PANEL_B, THEME_BG_PANEL_A
 };
 
-/** Title bar background (accent with reduced alpha). */
+/** Title bar background: normal (unfocused). */
 static const Clay_Color COLOR_TITLE_BG = {
     THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 60
+};
+
+/** Title bar background: focused (brighter). */
+static const Clay_Color COLOR_TITLE_BG_FOCUSED = {
+    THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 140
 };
 
 /** Selection highlight background. */
@@ -162,13 +168,15 @@ void scene_ui_build_outliner(struct scene_editor *ed,
         },
     }) {
         /* ---- Title bar ---- */
+        bool focused = (ed->layout.focus == PANEL_OUTLINER);
         CLAY(CLAY_ID("Outliner_Title"), {
             .layout = {
                 .sizing = {CLAY_SIZING_GROW(0),
                            CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
                 .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL, 0, 0},
             },
-            .backgroundColor = COLOR_TITLE_BG,
+            .backgroundColor = focused ? COLOR_TITLE_BG_FOCUSED
+                                       : COLOR_TITLE_BG,
         }) {
             CLAY_TEXT(CLAY_STRING("Outliner"),
                 CLAY_TEXT_CONFIG({
@@ -206,7 +214,8 @@ void scene_ui_build_outliner(struct scene_editor *ed,
         if (ed->ui.outliner_scroll < 0)
             ed->ui.outliner_scroll = 0;
         int skip = ed->ui.outliner_scroll;
-        bool needs_scrollbar = (int)total_entities > vis_lines;
+        bool needs_scrollbar = (int)total_entities > vis_lines
+                               && panel_w > 40.0f;
 
         CLAY(CLAY_ID("Outliner_ListArea"), {
             .layout = {
@@ -348,6 +357,8 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                     .layout = {
                         .sizing = {CLAY_SIZING_FIXED(8),
                                    CLAY_SIZING_GROW(0)},
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                        .padding = {0, 0, (uint16_t)thumb_offset, 0},
                     },
                     .backgroundColor = {25, 27, 33, 255},
                 }) {
@@ -358,10 +369,6 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         },
                         .backgroundColor = {80, 85, 95, 255},
                         .cornerRadius = CLAY_CORNER_RADIUS(4),
-                        .floating = {
-                            .attachTo = CLAY_ATTACH_TO_PARENT,
-                            .offset = {0, thumb_offset},
-                        },
                     }) {}
                 }
             }

@@ -14,6 +14,7 @@
 
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
+#include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
@@ -24,9 +25,14 @@
 
 /* ---- Constants ---- */
 
-/** Title bar background (accent with reduced alpha). */
+/** Title bar background: normal (unfocused). */
 static const Clay_Color COLOR_TITLE_BG = {
     THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 60
+};
+
+/** Title bar background: focused (brighter). */
+static const Clay_Color COLOR_TITLE_BG_FOCUSED = {
+    THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 140
 };
 
 /** Button background color (slightly lighter than panel). */
@@ -114,6 +120,7 @@ void scene_ui_build_viewport(struct scene_editor *ed,
             : (Clay_Color){0, 0, 0, 0},
     }) {
         /* ---- Title bar overlay ---- */
+        bool vp_focused = (ed->layout.focus == PANEL_VIEWPORT);
         CLAY(CLAY_ID("Viewport_Title"), {
             .layout = {
                 .sizing = {CLAY_SIZING_GROW(0),
@@ -121,7 +128,8 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                 .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL, 0, 0},
                 .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
             },
-            .backgroundColor = COLOR_TITLE_BG,
+            .backgroundColor = vp_focused ? COLOR_TITLE_BG_FOCUSED
+                                          : COLOR_TITLE_BG,
         }) {
             Clay_String status_str = {
                 .length = (int32_t)strlen(s_vp_status),

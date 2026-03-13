@@ -103,6 +103,8 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
         panel_layout_set_focus(&ed->layout, hit);
     } else if (ev->button == SDL_BUTTON_MIDDLE) {
         ed->ui.middle_mouse_down = true;
+    } else if (ev->button == SDL_BUTTON_RIGHT) {
+        ed->ui.right_mouse_down = true;
     }
     return false; /* let Clay also handle the click */
 }
@@ -123,6 +125,8 @@ static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) 
         }
     } else if (ev->button == SDL_BUTTON_MIDDLE) {
         ed->ui.middle_mouse_down = false;
+    } else if (ev->button == SDL_BUTTON_RIGHT) {
+        ed->ui.right_mouse_down = false;
     }
     return false;
 }
@@ -136,16 +140,16 @@ static bool handle_mouse_motion(scene_editor_t *ed,
     ed->ui.mouse_x = (float)ev->x;
     ed->ui.mouse_y = (float)ev->y;
 
-    /* Middle mouse drag: orbit or pan the viewport camera. */
-    if (ed->ui.middle_mouse_down) {
+    /* Right mouse or middle mouse drag: orbit or pan the viewport camera. */
+    if (ed->ui.right_mouse_down || ed->ui.middle_mouse_down) {
         SDL_Keymod mod = SDL_GetModState();
         if (mod & KMOD_SHIFT) {
-            /* Shift+middle mouse: pan. */
+            /* Shift+drag: pan. */
             editor_camera_pan(&ed->viewport.camera,
                                -(float)ev->xrel * CAMERA_PAN_SPEED,
                                (float)ev->yrel * CAMERA_PAN_SPEED);
         } else {
-            /* Middle mouse: orbit. */
+            /* Drag: orbit. */
             editor_camera_orbit(&ed->viewport.camera,
                                  -(float)ev->xrel * CAMERA_ORBIT_SPEED,
                                  -(float)ev->yrel * CAMERA_ORBIT_SPEED);
@@ -336,10 +340,11 @@ static bool handle_tui_key(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             memcpy(ui->tui_cmd, ui->tui_input, (size_t)(ui->tui_input_len + 1));
             ui->action = UI_ACTION_TUI_COMMAND;
 
-            /* Clear input for next command. */
+            /* Clear input and deactivate TUI. */
             ui->tui_input[0] = '\0';
             ui->tui_input_len = 0;
             ui->tui_cursor = 0;
+            ui->tui_active = false;
         }
         return true;
 
@@ -476,75 +481,68 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return handle_tui_key(ed, ev);
     }
 
-    /* Outliner scroll: arrow keys, PgUp/PgDown, Home/End when focused. */
-    if (ed->layout.focus == PANEL_OUTLINER) {
-        int max_scroll = ed->ui.outliner_total - ed->ui.outliner_visible_lines;
-        if (max_scroll < 0) max_scroll = 0;
+    /* Unified scroll keys: scroll whichever panel is focused. */
+    {
+        int *scroll_ptr = NULL;
+        int max_scroll = 0;
+        int step = 1;       /* lines for outliner/tui, pixels for inspector */
+        int page_step = 1;
 
-        switch (key) {
-        case SDLK_UP:
-            ed->ui.outliner_scroll--;
-            if (ed->ui.outliner_scroll < 0) ed->ui.outliner_scroll = 0;
-            return true;
-        case SDLK_DOWN:
-            ed->ui.outliner_scroll++;
-            if (ed->ui.outliner_scroll > max_scroll)
-                ed->ui.outliner_scroll = max_scroll;
-            return true;
-        case SDLK_PAGEUP:
-            ed->ui.outliner_scroll -= ed->ui.outliner_visible_lines;
-            if (ed->ui.outliner_scroll < 0) ed->ui.outliner_scroll = 0;
-            return true;
-        case SDLK_PAGEDOWN:
-            ed->ui.outliner_scroll += ed->ui.outliner_visible_lines;
-            if (ed->ui.outliner_scroll > max_scroll)
-                ed->ui.outliner_scroll = max_scroll;
-            return true;
-        case SDLK_HOME:
-            ed->ui.outliner_scroll = 0;
-            return true;
-        case SDLK_END:
-            ed->ui.outliner_scroll = max_scroll;
-            return true;
+        switch (ed->layout.focus) {
+        case PANEL_OUTLINER:
+            scroll_ptr = &ed->ui.outliner_scroll;
+            max_scroll = ed->ui.outliner_total - ed->ui.outliner_visible_lines;
+            step = 1;
+            page_step = ed->ui.outliner_visible_lines;
+            break;
+        case PANEL_INSPECTOR:
+            scroll_ptr = &ed->ui.inspector_scroll;
+            max_scroll = ed->ui.inspector_total - ed->ui.inspector_visible_lines;
+            step = THEME_ROW_HEIGHT;
+            page_step = ed->ui.inspector_visible_lines;
+            break;
+        case PANEL_TUI:
+            scroll_ptr = &ed->ui.tui_log_scroll;
+            max_scroll = ed->ui.tui_log_count - ed->ui.tui_log_visible;
+            step = -1;          /* Inverted: scroll value counts back from newest. */
+            page_step = -(ed->ui.tui_log_visible > 0 ? ed->ui.tui_log_visible : 1);
+            break;
         default:
             break;
         }
-    }
 
-    /* Inspector scroll (pixel-based): arrow keys scroll by row height,
-     * PgUp/PgDown by visible area. */
-    if (ed->layout.focus == PANEL_INSPECTOR) {
-        int max_scroll = ed->ui.inspector_total - ed->ui.inspector_visible_lines;
         if (max_scroll < 0) max_scroll = 0;
-        int step = THEME_ROW_HEIGHT;
 
-        switch (key) {
-        case SDLK_UP:
-            ed->ui.inspector_scroll -= step;
-            if (ed->ui.inspector_scroll < 0) ed->ui.inspector_scroll = 0;
-            return true;
-        case SDLK_DOWN:
-            ed->ui.inspector_scroll += step;
-            if (ed->ui.inspector_scroll > max_scroll)
-                ed->ui.inspector_scroll = max_scroll;
-            return true;
-        case SDLK_PAGEUP:
-            ed->ui.inspector_scroll -= ed->ui.inspector_visible_lines;
-            if (ed->ui.inspector_scroll < 0) ed->ui.inspector_scroll = 0;
-            return true;
-        case SDLK_PAGEDOWN:
-            ed->ui.inspector_scroll += ed->ui.inspector_visible_lines;
-            if (ed->ui.inspector_scroll > max_scroll)
-                ed->ui.inspector_scroll = max_scroll;
-            return true;
-        case SDLK_HOME:
-            ed->ui.inspector_scroll = 0;
-            return true;
-        case SDLK_END:
-            ed->ui.inspector_scroll = max_scroll;
-            return true;
-        default:
-            break;
+        if (scroll_ptr) {
+            bool handled = true;
+            switch (key) {
+            case SDLK_UP:
+                *scroll_ptr -= step;
+                break;
+            case SDLK_DOWN:
+                *scroll_ptr += step;
+                break;
+            case SDLK_PAGEUP:
+                *scroll_ptr -= page_step;
+                break;
+            case SDLK_PAGEDOWN:
+                *scroll_ptr += page_step;
+                break;
+            case SDLK_HOME:
+                *scroll_ptr = 0;
+                break;
+            case SDLK_END:
+                *scroll_ptr = max_scroll;
+                break;
+            default:
+                handled = false;
+                break;
+            }
+            if (handled) {
+                if (*scroll_ptr < 0) *scroll_ptr = 0;
+                if (*scroll_ptr > max_scroll) *scroll_ptr = max_scroll;
+                return true;
+            }
         }
     }
 
@@ -566,7 +564,11 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         /* Toggle fullscreen */
         return true;
     case SDLK_TAB:
-        panel_layout_focus_next(&ed->layout);
+        if (ev->keysym.mod & KMOD_SHIFT) {
+            panel_layout_focus_prev(&ed->layout);
+        } else {
+            panel_layout_focus_next(&ed->layout);
+        }
         /* Activate TUI input when TUI receives focus. */
         ed->ui.tui_active = (ed->layout.focus == PANEL_TUI);
         return true;
@@ -613,6 +615,15 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return true;
     case SDLK_s:
         ed->ui.action = UI_ACTION_MODE_SCALE;
+        return true;
+
+    /* Keyboard zoom: +/- (also = for unshifted plus). */
+    case SDLK_PLUS:
+    case SDLK_EQUALS:
+        editor_camera_zoom(&ed->viewport.camera, -CAMERA_ZOOM_SPEED);
+        return true;
+    case SDLK_MINUS:
+        editor_camera_zoom(&ed->viewport.camera, CAMERA_ZOOM_SPEED);
         return true;
 
     case SDLK_a:

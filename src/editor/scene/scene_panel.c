@@ -250,6 +250,18 @@ void panel_layout_focus_next(panel_layout_t *layout) {
     /* All hidden — stay put */
 }
 
+void panel_layout_focus_prev(panel_layout_t *layout) {
+    /* Cycle backward through visible panels */
+    int start = (int)layout->focus;
+    for (int i = 1; i <= PANEL_COUNT; ++i) {
+        int prev = (start - i + PANEL_COUNT) % PANEL_COUNT;
+        if (layout->visible[prev]) {
+            layout->focus = (panel_id_t)prev;
+            return;
+        }
+    }
+}
+
 void panel_layout_focus_viewport(panel_layout_t *layout) {
     layout->focus = PANEL_VIEWPORT;
 }

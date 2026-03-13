@@ -100,6 +100,7 @@ typedef struct scene_ui_state {
     bool              mouse_was_down;  /**< Previous frame mouse state. */
     bool              mouse_clicked;   /**< True if press occurred this frame. */
     bool              middle_mouse_down; /**< Middle mouse button state. */
+    bool              right_mouse_down;  /**< Right mouse button state. */
     float             scroll_delta_y;  /**< Accumulated scroll wheel delta this frame. */
 
     /* Entity counter for auto-naming. */

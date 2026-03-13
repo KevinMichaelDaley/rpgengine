@@ -207,6 +207,12 @@ void panel_layout_set_focus(panel_layout_t *layout, panel_id_t id);
 void panel_layout_focus_next(panel_layout_t *layout);
 
 /**
+ * @brief Cycle focus to the previous visible panel (Shift+Tab).
+ * @param layout  Layout (non-NULL).
+ */
+void panel_layout_focus_prev(panel_layout_t *layout);
+
+/**
  * @brief Return focus to the viewport (Escape).
  * @param layout  Layout (non-NULL).
  */
