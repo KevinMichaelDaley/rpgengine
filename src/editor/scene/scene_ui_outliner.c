@@ -31,9 +31,6 @@
  */
 static char s_outliner_names[OUTLINER_MAX_VISIBLE][32];
 
-/** Button background color (slightly lighter than panel). */
-static const Clay_Color COLOR_BTN_BG = {50, 52, 58, 255};
-
 /** Panel background color. */
 static const Clay_Color COLOR_PANEL_BG = {
     THEME_BG_PANEL_R, THEME_BG_PANEL_G,
@@ -74,37 +71,6 @@ static struct {
 /* ------------------------------------------------------------------------ */
 /* Hover callbacks                                                           */
 /* ------------------------------------------------------------------------ */
-
-/** @brief Hover callback for the "Box" spawn button. */
-static void on_spawn_box_hover(Clay_ElementId id, Clay_PointerData data,
-                                void *user) {
-    (void)id;
-    scene_editor_t *ed = (scene_editor_t *)user;
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
-        ed->ui.action = UI_ACTION_SPAWN_BOX;
-    }
-}
-
-/** @brief Hover callback for the "Sphere" spawn button. */
-static void on_spawn_sphere_hover(Clay_ElementId id, Clay_PointerData data,
-                                   void *user) {
-    (void)id;
-    scene_editor_t *ed = (scene_editor_t *)user;
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
-        ed->ui.action = UI_ACTION_SPAWN_SPHERE;
-    }
-}
-
-
-/** @brief Hover callback for the "Capsule" spawn button. */
-static void on_spawn_capsule_hover(Clay_ElementId id, Clay_PointerData data,
-                                    void *user) {
-    (void)id;
-    scene_editor_t *ed = (scene_editor_t *)user;
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
-        ed->ui.action = UI_ACTION_SPAWN_CAPSULE;
-    }
-}
 
 /**
  * @brief Hover callback for an entity row click (select/deselect toggle).
@@ -189,6 +155,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         THEME_PADDING_SMALL, THEME_PADDING_SMALL},
         },
         .backgroundColor = COLOR_PANEL_BG,
+        .clip = {.horizontal = true, .vertical = true},
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ROOT,
             .offset = {(float)rect->x, (float)rect->y},
@@ -212,90 +179,11 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                 }));
         }
 
-        /* ---- Toolbar row: Create buttons ---- */
-        CLAY(CLAY_ID("Outliner_Toolbar"), {
-            .layout = {
-                .sizing = {CLAY_SIZING_GROW(0),
-                           CLAY_SIZING_FIXED(THEME_ROW_HEIGHT + THEME_PADDING)},
-                .layoutDirection = CLAY_LEFT_TO_RIGHT,
-                .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL,
-                            THEME_PADDING_SMALL, THEME_PADDING_SMALL},
-                .childGap = THEME_PADDING_SMALL,
-                .childAlignment = {
-                    .y = CLAY_ALIGN_Y_CENTER,
-                },
-            },
-        }) {
-            /* "Create:" label */
-            CLAY_TEXT(CLAY_STRING("Create:"),
-                CLAY_TEXT_CONFIG({
-                    .fontSize = THEME_FONT_SIZE_UI,
-                    .textColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
-                                  THEME_TEXT_DIM_B, THEME_TEXT_DIM_A},
-                    .fontId = CLAY_FONT_UI,
-                }));
-
-            /* Box button */
-            CLAY(CLAY_ID("Outliner_BtnBox"), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
-                    .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
-                },
-                .backgroundColor = COLOR_BTN_BG,
-            }) {
-                Clay_OnHover(on_spawn_box_hover, ed);
-                CLAY_TEXT(CLAY_STRING("Box"),
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                      THEME_TEXT_B, THEME_TEXT_A},
-                        .fontId = CLAY_FONT_UI,
-                    }));
-            }
-
-            /* Sphere button */
-            CLAY(CLAY_ID("Outliner_BtnSphere"), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
-                    .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
-                },
-                .backgroundColor = COLOR_BTN_BG,
-            }) {
-                Clay_OnHover(on_spawn_sphere_hover, ed);
-                CLAY_TEXT(CLAY_STRING("Sphere"),
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                      THEME_TEXT_B, THEME_TEXT_A},
-                        .fontId = CLAY_FONT_UI,
-                    }));
-            }
-
-            /* Capsule button */
-            CLAY(CLAY_ID("Outliner_BtnCapsule"), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
-                    .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
-                },
-                .backgroundColor = COLOR_BTN_BG,
-            }) {
-                Clay_OnHover(on_spawn_capsule_hover, ed);
-                CLAY_TEXT(CLAY_STRING("Capsule"),
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                      THEME_TEXT_B, THEME_TEXT_A},
-                        .fontId = CLAY_FONT_UI,
-                    }));
-            }
-        }
-
         /* ---- Entity list area (rows + scrollbar) ---- */
         /* Calculate visible lines from available height.
-         * Subtract title bar + toolbar row + padding. */
+         * Subtract title bar + padding. */
         float list_h = panel_h
                        - (float)THEME_ROW_HEIGHT
-                       - (float)(THEME_ROW_HEIGHT + THEME_PADDING)
                        - (float)(THEME_PADDING_SMALL * 2);
         int vis_lines = (int)(list_h / (float)(THEME_ROW_HEIGHT + 1));
         if (vis_lines < 1) vis_lines = 1;
@@ -356,16 +244,30 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                     }
                     active_index++;
 
-                    /* Determine if this entity is selected. */
+                    /* Determine if this entity is selected or pending delete. */
                     bool selected = edit_selection_contains(&ed->selection, i);
+                    bool pending = ent->pending_delete;
 
                     /* Set up the click context for this row. */
                     s_entity_click_ctx[visible_index].ed = ed;
                     s_entity_click_ctx[visible_index].entity_id = i;
 
-                    /* Choose row background based on selection state. */
-                    Clay_Color row_bg = selected ? COLOR_SELECTION_BG
+                    /* Choose row background based on state. */
+                    Clay_Color row_bg = pending  ? (Clay_Color){60, 40, 40, 80}
+                                      : selected ? COLOR_SELECTION_BG
                                                  : COLOR_ROW_BG;
+
+                    /* Greyed-out text for pending delete entities. */
+                    Clay_Color name_color = pending
+                        ? (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                       THEME_TEXT_DIM_B, 100}
+                        : (Clay_Color){THEME_TEXT_R, THEME_TEXT_G,
+                                       THEME_TEXT_B, THEME_TEXT_A};
+                    Clay_Color tag_color = pending
+                        ? (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                       THEME_TEXT_DIM_B, 60}
+                        : (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                       THEME_TEXT_DIM_B, THEME_TEXT_DIM_A};
 
                     /* Build the entity row element. */
                     CLAY(CLAY_IDI("Outliner_Row", visible_index), {
@@ -382,8 +284,11 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         },
                         .backgroundColor = row_bg,
                     }) {
-                        Clay_OnHover(on_entity_row_hover,
-                                     &s_entity_click_ctx[visible_index]);
+                        /* Only allow clicking non-pending entities. */
+                        if (!pending) {
+                            Clay_OnHover(on_entity_row_hover,
+                                         &s_entity_click_ctx[visible_index]);
+                        }
 
                         const char *name = ent->name;
                         int32_t name_len = (int32_t)strlen(name);
@@ -402,8 +307,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         Clay__OpenTextElement(name_str,
                             CLAY_TEXT_CONFIG({
                                 .fontSize = THEME_FONT_SIZE_UI,
-                                .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                              THEME_TEXT_B, THEME_TEXT_A},
+                                .textColor = name_color,
                                 .fontId = CLAY_FONT_UI,
                             }));
 
@@ -415,10 +319,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         Clay__OpenTextElement(tag_str,
                             CLAY_TEXT_CONFIG({
                                 .fontSize = THEME_FONT_SIZE_UI,
-                                .textColor = {THEME_TEXT_DIM_R,
-                                              THEME_TEXT_DIM_G,
-                                              THEME_TEXT_DIM_B,
-                                              THEME_TEXT_DIM_A},
+                                .textColor = tag_color,
                                 .fontId = CLAY_FONT_UI,
                             }));
                     }

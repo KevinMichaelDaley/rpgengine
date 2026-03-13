@@ -46,6 +46,15 @@ void scene_frame_dispatch_action(struct scene_editor *ed);
  */
 void scene_frame_request_entity_list(struct scene_editor *ed);
 
+/**
+ * @brief Flush the offline command queue after reconnect.
+ *
+ * Replays all queued TUI commands that were entered while disconnected.
+ *
+ * @param ed  Editor context.
+ */
+void scene_frame_flush_offline_queue(struct scene_editor *ed);
+
 #ifdef __cplusplus
 }
 #endif

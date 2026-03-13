@@ -2,7 +2,7 @@
 id: rpg-ebpv
 status: open
 deps: [rpg-m3nv, rpg-o0a7]
-links: [rpg-tqrt, rpg-q6fa, rpg-eabp, rpg-m3nv, rpg-2nxx, rpg-hrrd]
+links: [rpg-tqrt, rpg-q6fa, rpg-eabp, rpg-m3nv, rpg-2nxx, rpg-hrrd, rpg-21zg, rpg-bhqa]
 created: 2026-03-03T03:00:39Z
 type: task
 priority: 2

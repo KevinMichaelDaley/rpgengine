@@ -141,6 +141,141 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
 }
 
 /**
+ * @brief Track a delete command ID so we can suppress errors and retry silently.
+ */
+static void track_delete_cmd(scene_ui_state_t *ui, uint32_t cmd_id)
+{
+    if (!ui->delete_cmd_ids) return;
+    if (ui->delete_cmd_id_count < ui->delete_cmd_id_cap) {
+        ui->delete_cmd_ids[ui->delete_cmd_id_count++] = cmd_id;
+    }
+}
+
+/**
+ * @brief Check if a response ID belongs to a tracked delete command.
+ *
+ * If found, removes it from the tracking list and returns true.
+ */
+static bool consume_delete_cmd(scene_ui_state_t *ui, uint32_t resp_id)
+{
+    for (int i = 0; i < ui->delete_cmd_id_count; i++) {
+        if (ui->delete_cmd_ids[i] == resp_id) {
+            /* Remove by swapping with last. */
+            ui->delete_cmd_ids[i] =
+                ui->delete_cmd_ids[ui->delete_cmd_id_count - 1];
+            ui->delete_cmd_id_count--;
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Check if a UX action conflicts with pending deletes.
+ *
+ * Actions that modify entity selection or the entity list can race
+ * with in-flight delete commands and must be buffered.
+ */
+static bool action_conflicts_with_delete(scene_ui_action_t action)
+{
+    /* Only select/deselect conflict with in-flight deletes because
+     * the server's selection state is being used by the delete retry.
+     * Spawns and further deletes can proceed — deletes use pending_delete
+     * tracking to avoid double-deleting. */
+    switch (action) {
+    case UI_ACTION_SELECT_ENTITY:
+    case UI_ACTION_DESELECT_ENTITY:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/**
+ * @brief Buffer a UX action for later replay after pending deletes resolve.
+ */
+static void buffer_action(scene_ui_state_t *ui, scene_ui_action_t action,
+                           uint32_t target)
+{
+    if (ui->action_q_count >= UI_ACTION_Q_MAX) return;
+    ui->action_q_actions[ui->action_q_count] = action;
+    ui->action_q_targets[ui->action_q_count] = target;
+    ui->action_q_count++;
+}
+
+/**
+ * @brief Reconcile pending deletes after an entity list refresh.
+ *
+ * For each pending delete ID:
+ * - If the entity reappeared in the store: re-flag it as pending_delete
+ *   and re-send a delete command (the previous delete raced with the list).
+ * - If the entity is gone: remove it from the pending list (confirmed deleted).
+ */
+static void reconcile_pending_deletes(scene_editor_t *ed)
+{
+    if (!ed->ui.pending_delete_ids || ed->ui.pending_delete_count == 0) return;
+
+    uint32_t write = 0;
+    bool need_retry = false;
+
+    for (uint32_t i = 0; i < ed->ui.pending_delete_count; i++) {
+        uint32_t eid = ed->ui.pending_delete_ids[i];
+        edit_entity_t *ent = edit_entity_store_get_mut(&ed->entities, eid);
+
+        if (ent) {
+            /* Entity reappeared — re-flag and keep in pending list. */
+            ent->pending_delete = true;
+            ed->ui.pending_delete_ids[write] = eid;
+            ed->ui.pending_delete_log_ids[write] =
+                ed->ui.pending_delete_log_ids[i];
+            write++;
+            need_retry = true;
+        } else {
+            /* Entity gone — confirmed deleted. Resolve log entry as success. */
+            uint32_t log_id = ed->ui.pending_delete_log_ids[i];
+            if (log_id != 0) {
+                scene_ui_tui_log_resolve(&ed->ui, log_id, true);
+            }
+        }
+    }
+
+    ed->ui.pending_delete_count = write;
+
+    /* Re-send delete for entities that reappeared.
+     * Select them, send delete, then clear selection.
+     * Track the delete cmd ID so error responses are suppressed. */
+    if (need_retry && write > 0) {
+        /* Select all pending entities on the server.
+         * Track these cmd IDs as delete-related so errors are suppressed. */
+        for (uint32_t i = 0; i < write; i++) {
+            char cmd_buf[256];
+            uint32_t cid = scene_connection_next_id(&ed->connection);
+            int len = scene_cmd_format_select(
+                cmd_buf, sizeof(cmd_buf), cid,
+                ed->ui.pending_delete_ids[i]);
+            if (len > 0) {
+                ctrl_conn_send_raw(&ed->connection.tcp,
+                                   cmd_buf, (uint32_t)len);
+                scene_sync_mark_sent(&ed->sync);
+                track_delete_cmd(&ed->ui, cid);
+            }
+        }
+        /* Send delete (tracked for silent error handling). */
+        char cmd_buf[256];
+        uint32_t cid = scene_connection_next_id(&ed->connection);
+        int len = scene_cmd_format_delete(cmd_buf, sizeof(cmd_buf), cid);
+        if (len > 0) {
+            ctrl_conn_send_raw(&ed->connection.tcp,
+                               cmd_buf, (uint32_t)len);
+            scene_sync_mark_sent(&ed->sync);
+            track_delete_cmd(&ed->ui, cid);
+        }
+        /* Reset retry timer (next retry after the refresh comes back). */
+        ed->ui.delete_retry_timer = UI_DELETE_RETRY_INTERVAL;
+    }
+}
+
+/**
  * @brief Push a command string into TUI history ring buffer.
  *
  * Skips empty strings and duplicates of the most recent entry.
@@ -197,10 +332,56 @@ static bool is_entity_modifying_response(const scene_cmd_response_t *resp)
  *
  * Logs the result or error to the TUI.
  */
+/**
+ * @brief Push a command into the offline queue.
+ *
+ * When disconnected, TUI commands are buffered here and flushed
+ * when the connection is restored.
+ */
+static void offline_q_push(scene_ui_state_t *ui, const char *cmd)
+{
+    if (!ui->offline_q || !cmd) return;
+    if (ui->offline_q_count >= UI_TUI_OFFLINE_Q_MAX) {
+        scene_ui_tui_log_error(ui, "Offline queue full — command dropped");
+        return;
+    }
+    int slot = (ui->offline_q_head + ui->offline_q_count) % UI_TUI_OFFLINE_Q_MAX;
+    strncpy(ui->offline_q[slot], cmd, UI_TUI_INPUT_MAX - 1);
+    ui->offline_q[slot][UI_TUI_INPUT_MAX - 1] = '\0';
+    ui->offline_q_count++;
+
+    char msg[UI_TUI_LOG_LINE];
+    snprintf(msg, sizeof(msg), "(queued) %s", cmd);
+    scene_ui_tui_log(ui, msg);
+}
+
 static void dispatch_tui_command(scene_editor_t *ed)
 {
     const char *cmd = ed->ui.tui_cmd;
     char buf[2048];
+
+    /* If disconnected, queue non-local commands for later. */
+    bool is_connected = (ed->connection.state == SCENE_CONN_CONNECTED);
+    if (!is_connected) {
+        /* Check if this is a local-only command (help, ?) that doesn't
+         * need a server connection. Everything else gets queued. */
+        bool is_local = false;
+        if (cmd[0] != '{') {
+            char first[64];
+            int fi = 0;
+            const char *p = cmd;
+            while (*p && *p != ' ' && fi < (int)sizeof(first) - 1)
+                first[fi++] = *p++;
+            first[fi] = '\0';
+            if (strcmp(first, "help") == 0) is_local = true;
+            size_t clen = strlen(cmd);
+            if (clen >= 2 && cmd[clen - 1] == '?') is_local = true;
+        }
+        if (!is_local) {
+            offline_q_push(&ed->ui, cmd);
+            return;
+        }
+    }
 
     /* Handle raw JSON passthrough. */
     if (cmd[0] == '{') {
@@ -336,11 +517,20 @@ void scene_frame_pump(struct scene_editor *ed)
         }
 
         /* Track sync state: decrement in-flight counter on ack. */
+        bool is_delete_resp = consume_delete_cmd(&ed->ui, resp.id);
         if (resp.ok) {
             scene_sync_mark_acked(&ed->sync);
             scene_sync_update_state(&ed->sync);
+            /* Backfill the log entry for this command with green ok. */
+            scene_ui_tui_log_resolve(&ed->ui, resp.id, true);
+        } else if (is_delete_resp) {
+            /* Suppress delete errors — retries happen automatically
+             * via reconcile_pending_deletes after entity list refresh. */
+            scene_sync_mark_acked(&ed->sync);
+            scene_sync_update_state(&ed->sync);
         } else {
-            /* Log server error to TUI in red. */
+            /* Backfill the log entry with red X, and log the error. */
+            scene_ui_tui_log_resolve(&ed->ui, resp.id, false);
             char err_line[UI_TUI_LOG_LINE];
             snprintf(err_line, sizeof(err_line), "Error: %s", resp.error);
             scene_ui_tui_log_error(&ed->ui, err_line);
@@ -359,6 +549,7 @@ void scene_frame_pump(struct scene_editor *ed)
             /* Legacy: plain array result (backward compat). */
             if (result_val && result_val->type == JSON_ARRAY) {
                 process_entity_list(ed, result_val);
+                reconcile_pending_deletes(ed);
                 continue;
             }
 
@@ -392,8 +583,14 @@ void scene_frame_pump(struct scene_editor *ed)
                     /* Restore entities from this page. */
                     process_entity_list(ed, ents_val);
 
-                    /* Request next page if more entities remain. */
+                    /* Check if this is the last page. */
                     uint32_t received = offset + ents_val->array.count;
+                    if (received >= total) {
+                        /* Full refresh complete — reconcile pending deletes. */
+                        reconcile_pending_deletes(ed);
+                    }
+
+                    /* Request next page if more entities remain. */
                     if (received < total) {
                         char cmd_buf2[256];
                         uint32_t cid =
@@ -424,11 +621,62 @@ void scene_frame_pump(struct scene_editor *ed)
     if (needs_entity_refresh) {
         scene_frame_request_entity_list(ed);
     }
+
+    /* Periodic retry for pending deletes: every N frames, request an entity
+     * list refresh which triggers reconcile_pending_deletes to re-send
+     * delete commands for entities that still exist on the server. */
+    if (ed->ui.pending_delete_count > 0) {
+        if (ed->ui.delete_retry_timer == 0) {
+            ed->ui.delete_retry_timer = UI_DELETE_RETRY_INTERVAL;
+            scene_frame_request_entity_list(ed);
+        } else {
+            ed->ui.delete_retry_timer--;
+        }
+    }
+
+    /* When all pending deletes have resolved, replay buffered UX actions. */
+    if (ed->ui.pending_delete_count == 0 && ed->ui.action_q_count > 0) {
+        for (int i = 0; i < ed->ui.action_q_count; i++) {
+            ed->ui.action = ed->ui.action_q_actions[i];
+            ed->ui.action_target = ed->ui.action_q_targets[i];
+            scene_frame_dispatch_action(ed);
+        }
+        ed->ui.action_q_count = 0;
+    }
 }
 
 void scene_frame_dispatch_action(struct scene_editor *ed)
 {
     if (!ed || ed->ui.action == UI_ACTION_NONE) {
+        return;
+    }
+
+    /* When disconnected, only allow TUI input and local-only actions.
+     * TUI commands are buffered and sent when the connection is restored. */
+    if (ed->connection.state != SCENE_CONN_CONNECTED) {
+        switch (ed->ui.action) {
+        case UI_ACTION_TUI_COMMAND:
+        case UI_ACTION_MODE_TRANSLATE:
+        case UI_ACTION_MODE_ROTATE:
+        case UI_ACTION_MODE_SCALE:
+            /* These are allowed offline. */
+            break;
+        default:
+            /* All other actions require a live connection. */
+            ed->ui.action = UI_ACTION_NONE;
+            ed->ui.action_target = 0;
+            return;
+        }
+    }
+
+    /* While deletes are pending, buffer any conflicting actions
+     * (select, deselect, spawn, delete) to avoid racing with
+     * in-flight delete commands on the server. */
+    if (ed->ui.pending_delete_count > 0 &&
+        action_conflicts_with_delete(ed->ui.action)) {
+        buffer_action(&ed->ui, ed->ui.action, ed->ui.action_target);
+        ed->ui.action = UI_ACTION_NONE;
+        ed->ui.action_target = 0;
         return;
     }
 
@@ -471,8 +719,10 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
             cmd_buf, sizeof(cmd_buf), cmd_id, entity_type, origin, entity_name);
         is_entity_modify = true;
 
-        /* Echo to TUI + history. */
-        snprintf(echo, sizeof(echo), "spawn %s %s", type_name, entity_name);
+        /* Echo to TUI + history (include position). */
+        snprintf(echo, sizeof(echo), "spawn %s %s %.4g %.4g %.4g",
+                 type_name, entity_name,
+                 (double)origin[0], (double)origin[1], (double)origin[2]);
         break;
     }
 
@@ -484,7 +734,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         /* Optimistically update local selection. */
         edit_selection_add(&ed->selection, ed->ui.action_target);
 
-        snprintf(echo, sizeof(echo), "select %u", ed->ui.action_target);
+        snprintf(echo, sizeof(echo), "select entity_id=%u",
+                 ed->ui.action_target);
         break;
     }
 
@@ -496,16 +747,90 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         /* Optimistically update local selection. */
         edit_selection_remove(&ed->selection, ed->ui.action_target);
 
-        snprintf(echo, sizeof(echo), "deselect %u", ed->ui.action_target);
+        snprintf(echo, sizeof(echo), "deselect entity_id=%u",
+                 ed->ui.action_target);
         break;
     }
 
     case UI_ACTION_DELETE_SELECTED: {
+        uint32_t sel_count = edit_selection_count(&ed->selection);
+        if (sel_count == 0) break;
+
+        /* Mark selected entities as pending delete (greyed in outliner)
+         * and add to the persistent pending delete ID list. */
+        const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+        uint32_t last_deleted = EDIT_ENTITY_INVALID_ID;
+        for (uint32_t si = 0; si < sel_count; si++) {
+            uint32_t eid = sel_ids[si];
+            edit_entity_t *ent =
+                edit_entity_store_get_mut(&ed->entities, eid);
+            if (ent) {
+                ent->pending_delete = true;
+                last_deleted = eid;
+            }
+            /* Add to pending ID list (survives entity list refresh).
+             * Log cmd_id is filled in after cmd_id is assigned below. */
+            if (ed->ui.pending_delete_ids &&
+                ed->ui.pending_delete_count < ed->ui.pending_delete_cap) {
+                ed->ui.pending_delete_ids[ed->ui.pending_delete_count] = eid;
+                ed->ui.pending_delete_log_ids[ed->ui.pending_delete_count] = 0;
+                ed->ui.pending_delete_count++;
+            }
+        }
+
+        /* Echo delete with the entity IDs being deleted (before clear). */
+        {
+            int ew = snprintf(echo, sizeof(echo), "delete ids=[");
+            for (uint32_t si = 0; si < sel_count && ew < (int)sizeof(echo) - 8; si++) {
+                if (si > 0) ew += snprintf(echo + ew, sizeof(echo) - (size_t)ew, ",");
+                ew += snprintf(echo + ew, sizeof(echo) - (size_t)ew, "%u", sel_ids[si]);
+            }
+            snprintf(echo + ew, sizeof(echo) - (size_t)ew, "]");
+        }
+
         cmd_id = scene_connection_next_id(&ed->connection);
         cmd_len = scene_cmd_format_delete(cmd_buf, sizeof(cmd_buf), cmd_id);
         is_entity_modify = true;
+        track_delete_cmd(&ed->ui, cmd_id);
+        ed->ui.delete_retry_timer = UI_DELETE_RETRY_INTERVAL;
 
-        snprintf(echo, sizeof(echo), "delete");
+        /* Backfill the log cmd_id on all pending entries that have 0. */
+        for (uint32_t pi = 0; pi < ed->ui.pending_delete_count; pi++) {
+            if (ed->ui.pending_delete_log_ids[pi] == 0) {
+                ed->ui.pending_delete_log_ids[pi] = cmd_id;
+            }
+        }
+
+        /* Clear selection and auto-select the next active entity
+         * so the user can rapidly delete in sequence. */
+        edit_selection_clear(&ed->selection);
+
+        /* Auto-select: try below first, then above. */
+        if (last_deleted != EDIT_ENTITY_INVALID_ID) {
+            bool found = false;
+            /* Try below. */
+            for (uint32_t ni = last_deleted + 1;
+                 ni < ed->entities.capacity; ni++) {
+                const edit_entity_t *next =
+                    edit_entity_store_get(&ed->entities, ni);
+                if (next && !next->pending_delete) {
+                    edit_selection_add(&ed->selection, ni);
+                    found = true;
+                    break;
+                }
+            }
+            /* Try above if nothing below. */
+            if (!found && last_deleted > 0) {
+                for (uint32_t ni = last_deleted - 1; ni != UINT32_MAX; ni--) {
+                    const edit_entity_t *prev =
+                        edit_entity_store_get(&ed->entities, ni);
+                    if (prev && !prev->pending_delete) {
+                        edit_selection_add(&ed->selection, ni);
+                        break;
+                    }
+                }
+            }
+        }
         break;
     }
 
@@ -535,9 +860,10 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         ctrl_conn_send_raw(&ed->connection.tcp, cmd_buf, (uint32_t)cmd_len);
         scene_sync_mark_sent(&ed->sync);
 
-        /* Echo command text to TUI log and add to history. */
+        /* Echo command with pending status — backfilled to ok/X
+         * when the server response arrives. */
         if (echo[0] != '\0') {
-            scene_ui_tui_log_success(&ed->ui, echo);
+            scene_ui_tui_log_pending(&ed->ui, echo, cmd_id);
             tui_history_push(&ed->ui, echo);
         }
 
@@ -568,4 +894,27 @@ void scene_frame_request_entity_list(struct scene_editor *ed)
         ctrl_conn_send_raw(&ed->connection.tcp, cmd_buf, (uint32_t)cmd_len);
         scene_sync_mark_sent(&ed->sync);
     }
+}
+
+void scene_frame_flush_offline_queue(struct scene_editor *ed)
+{
+    if (!ed || !ed->ui.offline_q) return;
+
+    int count = ed->ui.offline_q_count;
+    if (count == 0) return;
+
+    char msg[UI_TUI_LOG_LINE];
+    snprintf(msg, sizeof(msg), "Flushing %d queued command(s)...", count);
+    scene_ui_tui_log(&ed->ui, msg);
+
+    for (int i = 0; i < count; i++) {
+        int slot = (ed->ui.offline_q_head + i) % UI_TUI_OFFLINE_Q_MAX;
+        /* Replay by copying into tui_cmd and dispatching. */
+        strncpy(ed->ui.tui_cmd, ed->ui.offline_q[slot], UI_TUI_INPUT_MAX - 1);
+        ed->ui.tui_cmd[UI_TUI_INPUT_MAX - 1] = '\0';
+        dispatch_tui_command(ed);
+    }
+
+    ed->ui.offline_q_head = 0;
+    ed->ui.offline_q_count = 0;
 }

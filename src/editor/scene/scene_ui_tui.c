@@ -6,10 +6,8 @@
  * and a command input line at the bottom. All runtime text uses static
  * buffers that persist through the render pass.
  *
- * Non-static functions (3 / 4 limit):
+ * Non-static functions (1 / 4 limit):
  *   scene_ui_build_tui
- *   scene_ui_tui_log
- *   scene_ui_tui_log_error
  */
 
 #include "ferrum/editor/scene/scene_ui.h"
@@ -20,6 +18,7 @@
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
 
+#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -46,48 +45,13 @@ static char s_input_buf[TUI_INPUT_BUF_SIZE];
 /* Public API                                                                */
 /* ------------------------------------------------------------------------ */
 
-/**
- * @brief Internal helper to append a log line with a given type.
- */
-static void tui_log_internal(scene_ui_state_t *ui, const char *text,
-                              uint8_t type)
-{
-    if (!ui || !text) return;
-
-    int slot = ui->tui_log_head;
-    strncpy(ui->tui_log[slot], text, UI_TUI_LOG_LINE - 1);
-    ui->tui_log[slot][UI_TUI_LOG_LINE - 1] = '\0';
-    ui->tui_log_type[slot] = type;
-
-    ui->tui_log_head = (ui->tui_log_head + 1) % UI_TUI_LOG_MAX;
-    if (ui->tui_log_count < UI_TUI_LOG_MAX) {
-        ui->tui_log_count++;
-    }
-
-    /* Auto-scroll to bottom on new content. */
-    ui->tui_log_scroll = 0;
-}
-
-void scene_ui_tui_log(scene_ui_state_t *ui, const char *text)
-{
-    tui_log_internal(ui, text, UI_TUI_LOG_NORMAL);
-}
-
-void scene_ui_tui_log_error(scene_ui_state_t *ui, const char *text)
-{
-    tui_log_internal(ui, text, UI_TUI_LOG_ERROR);
-}
-
-void scene_ui_tui_log_success(scene_ui_state_t *ui, const char *text)
-{
-    tui_log_internal(ui, text, UI_TUI_LOG_SUCCESS);
-}
-
 void scene_ui_build_tui(struct scene_editor *ed,
                           const struct panel_rect *rect) {
     if (!ed || !rect || rect->w <= 0 || rect->h <= 0) {
         return;
     }
+
+    uint32_t now_ms = SDL_GetTicks();
 
     /* Format status bar into static buffer. */
     {
@@ -124,6 +88,7 @@ void scene_ui_build_tui(struct scene_editor *ed,
         },
         .backgroundColor = {THEME_BG_TUI_R, THEME_BG_TUI_G,
                              THEME_BG_TUI_B, THEME_BG_TUI_A},
+        .clip = {.horizontal = true, .vertical = true},
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ROOT,
             .offset = {(float)rect->x, (float)rect->y},
@@ -272,6 +237,38 @@ void scene_ui_build_tui(struct scene_editor *ed,
                                         .textColor = {220, 60, 60, 255},
                                         .fontId = CLAY_FONT_MONO,
                                     }));
+                            }
+                        } else if (line_type == UI_TUI_LOG_PENDING) {
+                            /* Animated ellipsis: hidden for first 100ms,
+                             * then cycles .  ..  ... every 80ms. */
+                            uint32_t age = now_ms - ed->ui.tui_log_timestamp[idx];
+                            const char *pend_text = "";
+                            int32_t pend_len = 0;
+                            if (age >= 100) {
+                                uint32_t phase = ((age - 100) / 80) % 3;
+                                if (phase == 0) { pend_text = ".";   pend_len = 1; }
+                                else if (phase == 1) { pend_text = "..";  pend_len = 2; }
+                                else { pend_text = "..."; pend_len = 3; }
+                            }
+                            if (pend_len > 0) {
+                                Clay_String pend_str = {.length = pend_len,
+                                                        .chars = pend_text};
+                                CLAY(CLAY_IDI("TLogPnd", (uint32_t)i), {
+                                    .layout = {
+                                        .sizing = {CLAY_SIZING_FIT(0),
+                                                   CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
+                                        .padding = {THEME_PADDING_SMALL,
+                                                    THEME_PADDING_SMALL, 0, 0},
+                                        .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                                    },
+                                }) {
+                                    Clay__OpenTextElement(pend_str,
+                                        CLAY_TEXT_CONFIG({
+                                            .fontSize = THEME_FONT_SIZE_UI,
+                                            .textColor = {180, 180, 60, 255},
+                                            .fontId = CLAY_FONT_MONO,
+                                        }));
+                                }
                             }
                         }
                     }

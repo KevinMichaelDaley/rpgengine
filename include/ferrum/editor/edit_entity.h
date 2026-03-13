@@ -65,6 +65,7 @@ typedef struct edit_entity {
     uint32_t type;         /**< Entity type (EDIT_ENTITY_TYPE_*). */
     uint32_t body_index;   /**< Physics body index (UINT32_MAX = none). */
     bool     active;       /**< Whether this slot is in use. */
+    bool     pending_delete; /**< Queued for server-side deletion (greyed in outliner). */
     char     name[EDIT_ENTITY_NAME_MAX]; /**< Optional display name (empty = unnamed). */
     /** Material slot paths (empty = no material assigned). */
     char     materials[EDIT_MATERIAL_SLOT_COUNT][EDIT_MATERIAL_PATH_MAX];

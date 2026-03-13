@@ -2,7 +2,7 @@
 id: rpg-bhqa
 status: open
 deps: []
-links: []
+links: [rpg-21zg, rpg-ebpv]
 created: 2026-02-26T04:30:12Z
 type: task
 priority: 2

@@ -129,6 +129,7 @@ void scene_ui_build_inspector(scene_editor_t *ed,
         },
         .backgroundColor = {THEME_BG_PANEL_R, THEME_BG_PANEL_G,
                              THEME_BG_PANEL_B, THEME_BG_PANEL_A},
+        .clip = {.horizontal = true, .vertical = true},
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ROOT,
             .offset = {(float)rect->x, (float)rect->y},

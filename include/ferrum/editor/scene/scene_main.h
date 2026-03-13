@@ -95,6 +95,7 @@ typedef struct scene_editor {
     bool               running;   /**< Main loop flag. */
     bool               initialized; /**< Guard against double init. */
     bool               connected;   /**< True if server connection is live. */
+    uint32_t           reconnect_ticks; /**< Frame counter for reconnect throttle. */
 
     /* Divider drag state */
     divider_id_t       dragging_divider; /**< DIVIDER_NONE if not dragging. */

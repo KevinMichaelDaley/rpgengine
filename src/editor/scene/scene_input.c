@@ -329,8 +329,8 @@ static bool handle_tui_key(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             tui_history_push(ui, ui->tui_input);
             ui->tui_history_index = -1;
 
-            /* Log the command with success indicator. */
-            scene_ui_tui_log_success(ui, ui->tui_input);
+            /* Echo the typed command to the log. */
+            scene_ui_tui_log(ui, ui->tui_input);
 
             /* Copy command to tui_cmd before clearing input. */
             memcpy(ui->tui_cmd, ui->tui_input, (size_t)(ui->tui_input_len + 1));
@@ -590,9 +590,10 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         break;
 
-    /* Entity operations */
+    /* Entity operations — ignore key repeat (held key). */
     case SDLK_DELETE:
     case SDLK_x:
+        if (ev->repeat) break;
         if (ev->keysym.mod & KMOD_SHIFT) {
             ed->ui.action = UI_ACTION_DELETE_SELECTED;
             return true;

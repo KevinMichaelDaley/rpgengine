@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/tcp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -53,6 +54,10 @@ bool ctrl_conn_connect(ctrl_conn_t *conn, const char *host, uint16_t port) {
         close(fd);
         return false;
     }
+
+    /* Disable Nagle's algorithm for low-latency command/response. */
+    int one = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
     /* Set non-blocking for future recv calls. */
     int flags = fcntl(fd, F_GETFL, 0);

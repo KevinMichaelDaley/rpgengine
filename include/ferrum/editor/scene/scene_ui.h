@@ -58,13 +58,24 @@ typedef enum scene_ui_action {
 /** Maximum command history entries. */
 #define UI_TUI_HISTORY_MAX 32
 
+/** Maximum offline command queue depth. */
+#define UI_TUI_OFFLINE_Q_MAX 8192
+
+
+/** Maximum buffered UX actions during pending deletes. */
+#define UI_ACTION_Q_MAX 64
+
+/** Frames between automatic delete retry attempts. */
+#define UI_DELETE_RETRY_INTERVAL 10
+
 /** Maximum characters per log line. */
 #define UI_TUI_LOG_LINE  128
 
-/** TUI log line types. */
-#define UI_TUI_LOG_NORMAL  0
-#define UI_TUI_LOG_ERROR   1
-#define UI_TUI_LOG_SUCCESS 2
+/** TUI log line types / status. */
+#define UI_TUI_LOG_NORMAL  0  /**< Plain text, no status column. */
+#define UI_TUI_LOG_ERROR   1  /**< Red X status. */
+#define UI_TUI_LOG_SUCCESS 2  /**< Green checkmark status. */
+#define UI_TUI_LOG_PENDING 3  /**< Awaiting server response (shows spinner/dot). */
 
 /**
  * @brief Mutable UI state shared across panel builders.
@@ -107,7 +118,9 @@ typedef struct scene_ui_state {
 
     /* TUI log ring buffer (circular, newest at tui_log_head-1). */
     char              tui_log[UI_TUI_LOG_MAX][UI_TUI_LOG_LINE];
-    uint8_t           tui_log_type[UI_TUI_LOG_MAX]; /**< 0=normal, 1=error. */
+    uint8_t           tui_log_type[UI_TUI_LOG_MAX]; /**< UI_TUI_LOG_* status. */
+    uint32_t          tui_log_cmd_id[UI_TUI_LOG_MAX]; /**< Cmd ID for pending entries. */
+    uint32_t          tui_log_timestamp[UI_TUI_LOG_MAX]; /**< SDL_GetTicks at creation. */
     int               tui_log_head;  /**< Next write slot (wraps). */
     int               tui_log_count; /**< Number of lines stored. */
     int               tui_log_scroll; /**< Lines scrolled back from newest (0=bottom). */
@@ -132,6 +145,36 @@ typedef struct scene_ui_state {
     int               scrollbar_dragging;  /**< 0=none, 1=outliner, 2=inspector, 3=tui. */
     float             scrollbar_drag_y;    /**< Mouse Y at drag start (logical px). */
     int               scrollbar_drag_scroll; /**< Scroll value at drag start. */
+
+    /* Pending delete tracking: entity IDs awaiting confirmed server deletion.
+     * Survives entity list refresh (entity struct gets overwritten).
+     * Entities in this list are greyed/hidden in the outliner.
+     * vm_reserve'd array of entity IDs (demand-paged, up to entity cap). */
+    uint32_t         *pending_delete_ids;      /**< Entity IDs pending delete. */
+    uint32_t         *pending_delete_log_ids; /**< Cmd ID of original delete (for log resolve). */
+    uint32_t          pending_delete_count;   /**< Number of pending IDs. */
+    uint32_t          pending_delete_cap;     /**< Array capacity. */
+
+    /* Offline command queue: commands entered while disconnected.
+     * Heap-allocated ring buffer, flushed on reconnect. */
+    char            (*offline_q)[UI_TUI_INPUT_MAX]; /**< Ring buffer (heap). */
+    int               offline_q_head;   /**< Next write slot. */
+    int               offline_q_count;  /**< Number queued. */
+
+    /* In-flight delete command ID tracking.
+     * vm_reserve'd array sized to entity cap (worst case: select-all + delete).
+     * Used to suppress error logging for delete commands and
+     * silently retry on failure. */
+    uint32_t         *delete_cmd_ids;     /**< Tracked delete cmd IDs. */
+    uint32_t          delete_cmd_id_count;
+    uint32_t          delete_cmd_id_cap;  /**< Array capacity. */
+    uint32_t          delete_retry_timer; /**< Frames until next auto-retry. */
+
+    /* Buffered UX actions: queued while deletes are pending.
+     * Replayed when pending_delete_count drops to 0. */
+    scene_ui_action_t action_q_actions[UI_ACTION_Q_MAX];
+    uint32_t          action_q_targets[UI_ACTION_Q_MAX];
+    int               action_q_count;
 } scene_ui_state_t;
 
 /**
@@ -154,6 +197,30 @@ void scene_ui_tui_log_error(scene_ui_state_t *ui, const char *text);
  * @param text Log line text (non-NULL, truncated to UI_TUI_LOG_LINE-1).
  */
 void scene_ui_tui_log_success(scene_ui_state_t *ui, const char *text);
+
+/**
+ * @brief Append a pending command line to the TUI log.
+ *
+ * Displayed with a pending indicator until resolved by cmd_id.
+ *
+ * @param ui     UI state (non-NULL).
+ * @param text   Log line text (non-NULL).
+ * @param cmd_id Command ID for later status backfill.
+ */
+void scene_ui_tui_log_pending(scene_ui_state_t *ui, const char *text,
+                               uint32_t cmd_id);
+
+/**
+ * @brief Backfill a pending log entry's status by command ID.
+ *
+ * Searches the log ring buffer for a PENDING entry with the given cmd_id
+ * and updates its type to SUCCESS or ERROR.
+ *
+ * @param ui     UI state (non-NULL).
+ * @param cmd_id Command ID to match.
+ * @param ok     True for success, false for error.
+ */
+void scene_ui_tui_log_resolve(scene_ui_state_t *ui, uint32_t cmd_id, bool ok);
 
 /* ---- Panel builders ---- */
 

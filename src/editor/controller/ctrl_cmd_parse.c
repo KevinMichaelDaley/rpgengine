@@ -91,50 +91,67 @@ static uint32_t build_args_(const char *arg_fmt, char *tokens[],
         const char *type = spec;
         const char *name = colon + 1;
 
-        if (fi > 0) {
-            written += (uint32_t)snprintf(out + written,
-                                          out_cap - written, ",");
-        }
-
         if (strcmp(type, "s") == 0) {
-            /* String argument. */
-            const char *val = (ti < token_count) ? tokens[ti++] : "";
+            /* String argument — optional (defaults to ""). */
+            if (ti >= token_count) continue;
+            const char *val = tokens[ti++];
+            if (fi > 0 && written > 1)
+                written += (uint32_t)snprintf(out + written,
+                                              out_cap - written, ",");
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":\"%s\"", name, val);
+            continue;
         } else if (strcmp(type, "u") == 0) {
-            /* Unsigned integer argument — must be numeric. */
-            if (ti >= token_count) return 0;
-            if (!looks_numeric_(tokens[ti])) return 0;
+            /* Unsigned integer argument — skip if missing or non-numeric. */
+            if (ti >= token_count) continue;
+            if (!looks_numeric_(tokens[ti])) continue;
             uint32_t val = (uint32_t)strtoul(tokens[ti++], NULL, 10);
+            if (fi > 0 && written > 1)
+                written += (uint32_t)snprintf(out + written,
+                                              out_cap - written, ",");
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":%u", name, val);
+            continue;
         } else if (strcmp(type, "f") == 0) {
-            /* Single float argument — must be numeric. */
-            if (ti >= token_count) return 0;
-            if (!looks_numeric_(tokens[ti])) return 0;
+            /* Single float argument — skip if missing or non-numeric. */
+            if (ti >= token_count) continue;
+            if (!looks_numeric_(tokens[ti])) continue;
             float val = strtof(tokens[ti++], NULL);
+            if (fi > 0 && written > 1)
+                written += (uint32_t)snprintf(out + written,
+                                              out_cap - written, ",");
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":%.6g", name, (double)val);
+            continue;
         } else if (strcmp(type, "f3") == 0) {
-            /* Three-float array argument — all three must be numeric. */
-            if (ti + 2 >= token_count) return 0;
+            /* Three-float array — skip entirely if not enough tokens. */
+            if (ti + 2 >= token_count) continue;
             if (!looks_numeric_(tokens[ti]) ||
                 !looks_numeric_(tokens[ti + 1]) ||
-                !looks_numeric_(tokens[ti + 2])) return 0;
+                !looks_numeric_(tokens[ti + 2])) continue;
             float x = strtof(tokens[ti++], NULL);
             float y = strtof(tokens[ti++], NULL);
             float z = strtof(tokens[ti++], NULL);
+            if (fi > 0 && written > 1)
+                written += (uint32_t)snprintf(out + written,
+                                              out_cap - written, ",");
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":[%.6g,%.6g,%.6g]",
                                           name, (double)x, (double)y,
                                           (double)z);
+            continue;
         } else if (strcmp(type, "b") == 0) {
-            /* Boolean argument. */
-            const char *val = (ti < token_count) ? tokens[ti++] : "false";
+            /* Boolean argument — optional (defaults to false). */
+            if (ti >= token_count) continue;
+            const char *val = tokens[ti++];
             bool b = (strcmp(val, "true") == 0 || strcmp(val, "1") == 0);
+            if (fi > 0 && written > 1)
+                written += (uint32_t)snprintf(out + written,
+                                              out_cap - written, ",");
             written += (uint32_t)snprintf(out + written, out_cap - written,
                                           "\"%s\":%s", name,
                                           b ? "true" : "false");
+            continue;
         }
     }
 
@@ -799,10 +816,10 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
     uint32_t args_len = build_args_(def->arg_fmt, tokens, token_count, 1,
                                     args_buf, sizeof(args_buf));
 
-    /* build_args_ returns 0 on validation failure (bad/missing numeric args). */
-    if (args_len == 0 && def->arg_fmt != NULL) return 0;
+    /* If no arg_fmt or build produced nothing, use empty args. */
     if (args_len == 0) {
         snprintf(args_buf, sizeof(args_buf), "{}");
+        args_len = 2;
     }
 
     /* Inject "name" field into spawn args if present. */

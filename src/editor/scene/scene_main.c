@@ -20,6 +20,8 @@
 
 #include "clay.h"
 
+#include "ferrum/memory/vm_alloc.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -270,7 +272,43 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
         return false;
     }
 
-    /* Initialize selection */
+    /* Allocate offline command queue (demand-paged, ~2MB virtual). */
+    ed->ui.offline_q = (char (*)[UI_TUI_INPUT_MAX])vm_reserve(
+        (size_t)UI_TUI_OFFLINE_Q_MAX * UI_TUI_INPUT_MAX);
+    if (!ed->ui.offline_q) {
+        fprintf(stderr, "scene_editor: offline queue alloc failed\n");
+        edit_entity_store_destroy(&ed->entities);
+        free(ed->arena_buf);
+        SDL_GL_DeleteContext(ed->gl_ctx);
+        SDL_DestroyWindow(ed->window);
+        SDL_Quit();
+        return false;
+    }
+
+    /* Allocate pending delete ID list (demand-paged, ~4MB virtual). */
+    ed->ui.pending_delete_cap = DEFAULT_ENTITY_CAP;
+    ed->ui.pending_delete_ids = (uint32_t *)vm_reserve(
+        (size_t)DEFAULT_ENTITY_CAP * sizeof(uint32_t));
+    ed->ui.pending_delete_log_ids = (uint32_t *)vm_reserve(
+        (size_t)DEFAULT_ENTITY_CAP * sizeof(uint32_t));
+    if (!ed->ui.pending_delete_ids || !ed->ui.pending_delete_log_ids) {
+        fprintf(stderr, "scene_editor: pending delete alloc failed\n");
+        vm_release(ed->ui.offline_q,
+                   (size_t)UI_TUI_OFFLINE_Q_MAX * UI_TUI_INPUT_MAX);
+        edit_entity_store_destroy(&ed->entities);
+        free(ed->arena_buf);
+        SDL_GL_DeleteContext(ed->gl_ctx);
+        SDL_DestroyWindow(ed->window);
+        SDL_Quit();
+        return false;
+    }
+
+    /* Allocate delete command ID tracker (demand-paged, same cap as entities). */
+    ed->ui.delete_cmd_id_cap = DEFAULT_ENTITY_CAP;
+    ed->ui.delete_cmd_ids = (uint32_t *)vm_reserve(
+        (size_t)DEFAULT_ENTITY_CAP * sizeof(uint32_t));
+
+/* Initialize selection */
     if (!edit_selection_init(&ed->selection)) {
         fprintf(stderr, "scene_editor: selection init failed\n");
         edit_entity_store_destroy(&ed->entities);
@@ -420,6 +458,30 @@ void scene_editor_shutdown(scene_editor_t *ed) {
     edit_selection_destroy(&ed->selection);
     edit_entity_store_destroy(&ed->entities);
 
+    /* Free offline command queue. */
+    if (ed->ui.offline_q) {
+        vm_release(ed->ui.offline_q,
+                   (size_t)UI_TUI_OFFLINE_Q_MAX * UI_TUI_INPUT_MAX);
+        ed->ui.offline_q = NULL;
+    }
+    /* Free pending delete list. */
+    if (ed->ui.pending_delete_ids) {
+        vm_release(ed->ui.pending_delete_ids,
+                   (size_t)ed->ui.pending_delete_cap * sizeof(uint32_t));
+        ed->ui.pending_delete_ids = NULL;
+    }
+    if (ed->ui.pending_delete_log_ids) {
+        vm_release(ed->ui.pending_delete_log_ids,
+                   (size_t)ed->ui.pending_delete_cap * sizeof(uint32_t));
+        ed->ui.pending_delete_log_ids = NULL;
+    }
+    /* Free delete command ID tracker. */
+    if (ed->ui.delete_cmd_ids) {
+        vm_release(ed->ui.delete_cmd_ids,
+                   (size_t)ed->ui.delete_cmd_id_cap * sizeof(uint32_t));
+        ed->ui.delete_cmd_ids = NULL;
+    }
+
     clay_backend_destroy(&ed->clay_be);
     free(ed->clay_mem);
 
@@ -447,6 +509,23 @@ void scene_editor_frame(scene_editor_t *ed) {
         scene_frame_pump(ed);
     }
 
+    /* Attempt reconnect if disconnected, and flush offline queue on success. */
+    if (!ed->connected || ed->connection.state != SCENE_CONN_CONNECTED) {
+        /* Throttle reconnect attempts (~once per second at 60fps). */
+        ed->reconnect_ticks++;
+        if (ed->reconnect_ticks >= 60) {
+            ed->reconnect_ticks = 0;
+            if (scene_connection_connect(&ed->connection)) {
+                ed->connected = true;
+                scene_ui_tui_log_success(&ed->ui, "Reconnected to server");
+                scene_frame_request_entity_list(ed);
+
+                /* Flush offline command queue. */
+                scene_frame_flush_offline_queue(ed);
+            }
+        }
+    }
+
     /* Preserve any action set during event polling (e.g. TUI command
      * from Enter key) so it survives the layout reset below. */
     scene_ui_action_t pre_layout_action = ed->ui.action;
@@ -467,11 +546,11 @@ void scene_editor_frame(scene_editor_t *ed) {
             ed->ui.action = UI_ACTION_SPAWN_SPHERE;
         } else if (Clay_PointerOver(CLAY_ID("Outliner_BtnCapsule"))) {
             ed->ui.action = UI_ACTION_SPAWN_CAPSULE;
-        } else if (Clay_PointerOver(CLAY_ID("Outliner_BtnTranslate"))) {
+        } else if (Clay_PointerOver(CLAY_ID("VP_BtnTranslate"))) {
             ed->ui.action = UI_ACTION_MODE_TRANSLATE;
-        } else if (Clay_PointerOver(CLAY_ID("Outliner_BtnRotate"))) {
+        } else if (Clay_PointerOver(CLAY_ID("VP_BtnRotate"))) {
             ed->ui.action = UI_ACTION_MODE_ROTATE;
-        } else if (Clay_PointerOver(CLAY_ID("Outliner_BtnScale"))) {
+        } else if (Clay_PointerOver(CLAY_ID("VP_BtnScale"))) {
             ed->ui.action = UI_ACTION_MODE_SCALE;
         }
     }
