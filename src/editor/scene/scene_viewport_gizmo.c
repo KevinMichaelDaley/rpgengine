@@ -486,7 +486,7 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     float verts[1500];
     int vert_count = 0;
     int active_start = -1; /* First vertex of the active ring (rotate only). */
-    int plane_tri_start = -1; /* First vertex of plane fill triangles. */
+    int plane_tri_start = 0; /* First vertex of plane fill triangles. */
     int plane_tri_count = 0;  /* Number of triangle vertices for plane fills. */
 
     const mat4_t *orient = &gizmo->orientation;
