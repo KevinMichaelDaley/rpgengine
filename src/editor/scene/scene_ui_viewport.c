@@ -29,15 +29,13 @@
 /** Button background color (slightly lighter than panel). */
 static const Clay_Color COLOR_BTN_BG = {50, 52, 58, 255};
 
-/** Selection highlight background. */
-static const Clay_Color COLOR_SELECTION_BG = {
-    THEME_SELECTION_R, THEME_SELECTION_G,
-    THEME_SELECTION_B, THEME_SELECTION_A
-};
 
 /** Per-viewport number label buffers (Clay defers rendering, so each
  *  viewport needs its own buffer to avoid overwriting). */
-static char s_vp_num[VIEWPORT_MAX_COUNT][4];
+static char s_vp_num[VIEWPORT_MAX_COUNT][8];
+
+/** Static buffer for mode label. */
+static char s_mode_label[32];
 
 /** Static buffer for basis label. */
 static char s_basis_label[32];
@@ -112,16 +110,6 @@ static void build_single_viewport(struct scene_editor *ed,
 
         /* ---- Mode toolbar (only on focused viewport) ---- */
         if (is_focused) {
-            Clay_Color translate_bg =
-                (ed->ui.transform_mode == UI_MODE_TRANSLATE)
-                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
-            Clay_Color rotate_bg =
-                (ed->ui.transform_mode == UI_MODE_ROTATE)
-                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
-            Clay_Color scale_bg =
-                (ed->ui.transform_mode == UI_MODE_SCALE)
-                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
-
             CLAY(CLAY_IDI("VP_ModeBar", vp_index), {
                 .layout = {
                     .sizing = {CLAY_SIZING_FIT(0),
@@ -135,54 +123,21 @@ static void build_single_viewport(struct scene_editor *ed,
                 .backgroundColor = {THEME_BG_PANEL_R, THEME_BG_PANEL_G,
                                      THEME_BG_PANEL_B, 180},
             }) {
-                CLAY_TEXT(CLAY_STRING("Mode:"),
-                    CLAY_TEXT_CONFIG({
-                        .fontSize = THEME_FONT_SIZE_UI,
-                        .textColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
-                                      THEME_TEXT_DIM_B, THEME_TEXT_DIM_A},
-                        .fontId = CLAY_FONT_UI,
-                    }));
-
-                CLAY(CLAY_IDI("VP_BtnTranslate", vp_index), {
+                /* Mode cycle button: shows current mode + (.) hotkey. */
+                snprintf(s_mode_label, sizeof(s_mode_label), "%s(.)",
+                         ui_mode_name(ed->ui.transform_mode));
+                Clay_String mode_str = {
+                    .length = (int32_t)strlen(s_mode_label),
+                    .chars = s_mode_label,
+                };
+                CLAY(CLAY_IDI("VP_BtnMode", vp_index), {
                     .layout = {
                         .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
                         .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
                     },
-                    .backgroundColor = translate_bg,
+                    .backgroundColor = COLOR_BTN_BG,
                 }) {
-                    CLAY_TEXT(CLAY_STRING("Move(G)"),
-                        CLAY_TEXT_CONFIG({
-                            .fontSize = THEME_FONT_SIZE_UI,
-                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                          THEME_TEXT_B, THEME_TEXT_A},
-                            .fontId = CLAY_FONT_UI,
-                        }));
-                }
-
-                CLAY(CLAY_IDI("VP_BtnRotate", vp_index), {
-                    .layout = {
-                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
-                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
-                    },
-                    .backgroundColor = rotate_bg,
-                }) {
-                    CLAY_TEXT(CLAY_STRING("Rot(R)"),
-                        CLAY_TEXT_CONFIG({
-                            .fontSize = THEME_FONT_SIZE_UI,
-                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                          THEME_TEXT_B, THEME_TEXT_A},
-                            .fontId = CLAY_FONT_UI,
-                        }));
-                }
-
-                CLAY(CLAY_IDI("VP_BtnScale", vp_index), {
-                    .layout = {
-                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
-                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
-                    },
-                    .backgroundColor = scale_bg,
-                }) {
-                    CLAY_TEXT(CLAY_STRING("Scale(S)"),
+                    Clay__OpenTextElement(mode_str,
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,
                             .textColor = {THEME_TEXT_R, THEME_TEXT_G,

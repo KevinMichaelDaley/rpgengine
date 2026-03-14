@@ -922,7 +922,7 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
     }
 
     case UI_ACTION_MODE_NONE:
-        ed->ui.transform_mode = UI_MODE_NONE;
+        ed->ui.transform_mode = UI_MODE_SELECT;
         gizmo_state_set_mode(&scene_focused_vp(ed)->gizmo, GIZMO_MODE_NONE);
         break;
 

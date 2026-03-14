@@ -435,6 +435,7 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
     ed->viewports[0].active = true;
     ed->dragging_bsp_node = -1;
     ed->prev_focused_vp = 0;
+    ed->ui.transform_mode = UI_MODE_TRANSLATE;
 
     /* Try to connect to editor server (non-fatal if it fails). */
     if (scene_connection_connect(&ed->connection)) {

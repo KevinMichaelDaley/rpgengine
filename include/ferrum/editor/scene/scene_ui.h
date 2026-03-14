@@ -46,10 +46,24 @@ typedef enum scene_ui_action {
 } scene_ui_action_t;
 
 /* Transform mode values for scene_ui_state_t.transform_mode. */
-#define UI_MODE_NONE      -1
-#define UI_MODE_TRANSLATE 0
-#define UI_MODE_ROTATE    1
-#define UI_MODE_SCALE     2
+#define UI_MODE_NAV       0
+#define UI_MODE_SELECT    1
+#define UI_MODE_TRANSLATE 2
+#define UI_MODE_ROTATE    3
+#define UI_MODE_SCALE     4
+#define UI_MODE_COUNT     5
+
+/** @brief Get display name for a transform mode. */
+static inline const char *ui_mode_name(uint8_t mode) {
+    switch (mode) {
+    case UI_MODE_NAV:       return "Nav";
+    case UI_MODE_SELECT:    return "Sel";
+    case UI_MODE_TRANSLATE: return "Move";
+    case UI_MODE_ROTATE:    return "Rot";
+    case UI_MODE_SCALE:     return "Scale";
+    default:                return "?";
+    }
+}
 
 /** Maximum command input line length. */
 #define UI_TUI_INPUT_MAX 256

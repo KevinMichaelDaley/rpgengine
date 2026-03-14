@@ -414,40 +414,43 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                  * (no selection clear, proper toggle to NONE). */
                 int row2_top = vp_rect.y + THEME_ROW_HEIGHT;
                 if (ly >= row2_top) {
-                    /* Second row: mode buttons.  Approximate hit zones
-                     * based on label widths (Mode: ~40, buttons ~60 each,
-                     * with PADDING_SMALL gaps). */
+                    /* Second row: mode button + separator + basis button.
+                     * Approximate hit zones for the two cycling buttons. */
                     int rel_x = lx - vp_rect.x;
-                    int btn_start = THEME_PADDING_SMALL + 40; /* after "Mode:" */
-                    int btn_w = 60;
+                    int btn_start = THEME_PADDING_SMALL;
+                    int mode_w = 70;
                     int gap = THEME_PADDING_SMALL;
+                    int sep_w = 1 + 2 * gap; /* separator + gaps */
+                    int basis_start = btn_start + mode_w + sep_w;
+                    int basis_w = 80;
                     if (rel_x >= btn_start &&
-                        rel_x < btn_start + btn_w) {
-                        ed->ui.action = (fvp->gizmo.mode == GIZMO_MODE_TRANSLATE)
-                            ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_TRANSLATE;
-                    } else if (rel_x >= btn_start + btn_w + gap &&
-                               rel_x < btn_start + 2 * btn_w + gap) {
-                        ed->ui.action = (fvp->gizmo.mode == GIZMO_MODE_ROTATE)
-                            ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_ROTATE;
-                    } else if (rel_x >= btn_start + 2 * (btn_w + gap) &&
-                               rel_x < btn_start + 3 * btn_w + 2 * gap) {
-                        ed->ui.action = (fvp->gizmo.mode == GIZMO_MODE_SCALE)
-                            ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_SCALE;
-                    } else {
-                        /* Basis cycle button: after scale btn + separator.
-                         * separator = 1px + gap on each side. */
-                        int basis_start = btn_start + 3 * btn_w + 2 * gap
-                                        + gap + 1 + gap;
-                        int basis_w = 80; /* wider for label like "Local(,)" */
-                        if (rel_x >= basis_start &&
-                            rel_x < basis_start + basis_w) {
-                            fvp->gizmo.basis = transform_basis_next(
-                                fvp->gizmo.basis);
-                            char msg[64];
-                            snprintf(msg, sizeof(msg), "Basis: %s",
-                                     transform_basis_name(fvp->gizmo.basis));
-                            scene_ui_tui_log(&ed->ui, msg);
+                        rel_x < btn_start + mode_w) {
+                        /* Mode cycle: same as '.' hotkey. */
+                        uint8_t next = (ed->ui.transform_mode + 1)
+                                       % UI_MODE_COUNT;
+                        ed->ui.transform_mode = next;
+                        switch (next) {
+                        case UI_MODE_TRANSLATE:
+                            gizmo_state_set_mode(&fvp->gizmo,
+                                GIZMO_MODE_TRANSLATE); break;
+                        case UI_MODE_ROTATE:
+                            gizmo_state_set_mode(&fvp->gizmo,
+                                GIZMO_MODE_ROTATE); break;
+                        case UI_MODE_SCALE:
+                            gizmo_state_set_mode(&fvp->gizmo,
+                                GIZMO_MODE_SCALE); break;
+                        default:
+                            gizmo_state_set_mode(&fvp->gizmo,
+                                GIZMO_MODE_NONE); break;
                         }
+                    } else if (rel_x >= basis_start &&
+                               rel_x < basis_start + basis_w) {
+                        fvp->gizmo.basis = transform_basis_next(
+                            fvp->gizmo.basis);
+                        char msg[64];
+                        snprintf(msg, sizeof(msg), "Basis: %s",
+                                 transform_basis_name(fvp->gizmo.basis));
+                        scene_ui_tui_log(&ed->ui, msg);
                     }
                 }
                 return false;
@@ -1448,6 +1451,23 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             ed->ui.action = UI_ACTION_MODE_SCALE;
         }
         return true;
+
+    /* Cycle transform mode: Nav → Sel → Move → Rot → Scale. */
+    case SDLK_PERIOD: {
+        uint8_t next = (ed->ui.transform_mode + 1) % UI_MODE_COUNT;
+        ed->ui.transform_mode = next;
+        switch (next) {
+        case UI_MODE_TRANSLATE:
+            gizmo_state_set_mode(&fvp->gizmo, GIZMO_MODE_TRANSLATE); break;
+        case UI_MODE_ROTATE:
+            gizmo_state_set_mode(&fvp->gizmo, GIZMO_MODE_ROTATE); break;
+        case UI_MODE_SCALE:
+            gizmo_state_set_mode(&fvp->gizmo, GIZMO_MODE_SCALE); break;
+        default:
+            gizmo_state_set_mode(&fvp->gizmo, GIZMO_MODE_NONE); break;
+        }
+        return true;
+    }
 
     /* Cycle transform basis: World → Local → View → Cursor. */
     case SDLK_COMMA: {
