@@ -12,8 +12,10 @@
 
 /** @brief Gizmo axis arrow length (world units, before scale). */
 static const float ARROW_LENGTH = 1.0f;
-/** @brief Gizmo axis hit radius (world units, before scale). */
-static const float AXIS_HIT_RADIUS = 0.15f;
+/** @brief Gizmo axis hit radius for arrows (world units, before scale). */
+static const float AXIS_HIT_RADIUS = 0.25f;
+/** @brief Larger hit radius for rotation rings (easier edge-on clicks). */
+static const float RING_HIT_RADIUS = 0.25f;
 
 /**
  * @brief Test if a ray passes near a line segment from p0 to p1.
@@ -148,6 +150,7 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
                               const struct editor_ray *ray,
                               float gizmo_scale) {
     if (!gizmo || !ray) return GIZMO_AXIS_NONE;
+    if (gizmo->mode == GIZMO_MODE_NONE) return GIZMO_AXIS_NONE;
 
     float length = ARROW_LENGTH * gizmo_scale;
     float threshold = AXIS_HIT_RADIUS * gizmo_scale;
@@ -168,7 +171,9 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
     };
 
     if (gizmo->mode == GIZMO_MODE_ROTATE) {
-        /* Test each axis ring — normal is the oriented axis direction. */
+        /* Rotation rings use a larger hit radius for easier edge-on selection. */
+        float ring_threshold = RING_HIT_RADIUS * gizmo_scale;
+        best_dist = ring_threshold;
         for (int i = 0; i < 3; i++) {
             float dist = ray_ring_distance_(ray, pos, axis_dirs[i], length);
             if (dist < best_dist) {

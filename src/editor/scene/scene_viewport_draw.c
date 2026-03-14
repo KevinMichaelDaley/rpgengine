@@ -49,8 +49,8 @@ static const float COLOR_CAPSULE[3]   = {0.7f, 0.5f, 0.6f};
 static const float COLOR_HALFSPACE[3] = {0.4f, 0.4f, 0.4f};
 static const float COLOR_MESH[3]      = {0.65f, 0.65f, 0.55f};
 static const float COLOR_MARKER[3]    = {1.0f, 1.0f, 0.0f};
-static const float COLOR_SELECTED[3]  = {1.0f, 0.6f, 0.2f};
-static const float COLOR_ACTIVE[3]   = {1.0f, 0.9f, 0.5f};
+static const float COLOR_SELECTED[3]  = {1.0f, 0.5f, 0.1f};
+static const float COLOR_ACTIVE[3]   = {1.0f, 1.0f, 1.0f};
 
 /* ---- Primitive mesh cache ---- */
 
@@ -356,6 +356,25 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
 
     /* Draw 3D cursor crosshair. */
     viewport_render_draw_cursor(vp, &ed->cursor_3d, &view, &proj);
+
+    /* Draw box select rectangle if active.
+     * box_select_start is in logical coords; mouse_x/y are physical pixels.
+     * Panel rects are logical, so convert current mouse to logical too. */
+    if (ed->box_selecting) {
+        panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout,
+                                                       PANEL_VIEWPORT);
+        float dsc = ed->clay_be.ui_scale;
+        if (dsc < 1.0f) dsc = 1.0f;
+        float cur_lx = ed->ui.mouse_x / dsc;
+        float cur_ly = ed->ui.mouse_y / dsc;
+        float bx0 = (ed->box_select_start_x - (float)vp_rect.x)
+                     / (float)vp_rect.w;
+        float by0 = (ed->box_select_start_y - (float)vp_rect.y)
+                     / (float)vp_rect.h;
+        float bx1 = (cur_lx - (float)vp_rect.x) / (float)vp_rect.w;
+        float by1 = (cur_ly - (float)vp_rect.y) / (float)vp_rect.h;
+        viewport_render_draw_box_select(vp, bx0, by0, bx1, by1);
+    }
 
     /* Unbind FBO (restore default framebuffer). */
     vp->glDisable(GL_CULL_FACE);

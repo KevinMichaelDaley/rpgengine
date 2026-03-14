@@ -548,12 +548,6 @@ void scene_editor_frame(scene_editor_t *ed) {
             ed->ui.action = UI_ACTION_SPAWN_SPHERE;
         } else if (Clay_PointerOver(CLAY_ID("Outliner_BtnCapsule"))) {
             ed->ui.action = UI_ACTION_SPAWN_CAPSULE;
-        } else if (Clay_PointerOver(CLAY_ID("VP_BtnTranslate"))) {
-            ed->ui.action = UI_ACTION_MODE_TRANSLATE;
-        } else if (Clay_PointerOver(CLAY_ID("VP_BtnRotate"))) {
-            ed->ui.action = UI_ACTION_MODE_ROTATE;
-        } else if (Clay_PointerOver(CLAY_ID("VP_BtnScale"))) {
-            ed->ui.action = UI_ACTION_MODE_SCALE;
         }
     }
 

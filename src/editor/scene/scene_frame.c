@@ -147,6 +147,17 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         const json_value_t *scale_val = json_object_get(item, "scale");
         parse_vec3(scale_val, snapshot.scale);
 
+        /* Preserve pending_delete flag if the entity is already marked
+         * for deletion locally — the server hasn't processed the delete
+         * yet, so the entity still appears in list responses. */
+        const edit_entity_t *existing = edit_entity_store_get(&ed->entities, eid);
+        if (existing && existing->pending_delete) {
+            snapshot.pending_delete = true;
+        }
+
+        /* Stamp with current refresh generation for stale detection. */
+        snapshot.refresh_gen = ed->entity_refresh_gen;
+
         /* Restore the entity at the server-assigned ID slot. */
         edit_entity_store_restore(&ed->entities, eid, &snapshot);
     }
@@ -589,7 +600,18 @@ void scene_frame_pump(struct scene_editor *ed)
 
             /* Legacy: plain array result (backward compat). */
             if (result_val && result_val->type == JSON_ARRAY) {
+                ed->entity_refresh_gen++;
                 process_entity_list(ed, result_val);
+                /* Remove confirmed-deleted entities (pending_delete + stale gen). */
+                for (uint32_t ei = 0; ei < ed->entities.capacity; ei++) {
+                    edit_entity_t *ent =
+                        edit_entity_store_get_mut(&ed->entities, ei);
+                    if (ent && ent->active && ent->pending_delete &&
+                        ent->refresh_gen != ed->entity_refresh_gen) {
+                        edit_selection_remove(&ed->selection, ei);
+                        edit_entity_store_remove(&ed->entities, ei);
+                    }
+                }
                 reconcile_pending_deletes(ed);
                 continue;
             }
@@ -611,22 +633,30 @@ void scene_frame_pump(struct scene_editor *ed)
                     if (total_val && total_val->type == JSON_NUMBER)
                         total = (uint32_t)total_val->number;
 
-                    /* First page: clear existing entities. */
+                    /* First page: bump refresh generation. */
                     if (offset == 0) {
-                        for (uint32_t ei = 0; ei < ed->entities.capacity; ei++) {
-                            const edit_entity_t *existing =
-                                edit_entity_store_get(&ed->entities, ei);
-                            if (existing && existing->active)
-                                edit_entity_store_remove(&ed->entities, ei);
-                        }
+                        ed->entity_refresh_gen++;
                     }
 
-                    /* Restore entities from this page. */
+                    /* Restore entities from this page (stamps refresh_gen). */
                     process_entity_list(ed, ents_val);
 
                     /* Check if this is the last page. */
                     uint32_t received = offset + ents_val->array.count;
                     if (received >= total) {
+                        /* Remove entities that are pending_delete AND were
+                         * not in this refresh (server confirmed deletion).
+                         * Normal entities are kept to avoid selection flicker. */
+                        for (uint32_t ei = 0; ei < ed->entities.capacity;
+                             ei++) {
+                            edit_entity_t *ent =
+                                edit_entity_store_get_mut(&ed->entities, ei);
+                            if (ent && ent->active && ent->pending_delete &&
+                                ent->refresh_gen != ed->entity_refresh_gen) {
+                                edit_selection_remove(&ed->selection, ei);
+                                edit_entity_store_remove(&ed->entities, ei);
+                            }
+                        }
                         /* Full refresh complete — reconcile pending deletes. */
                         reconcile_pending_deletes(ed);
                     }
@@ -697,6 +727,7 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
     if (ed->connection.state != SCENE_CONN_CONNECTED) {
         switch (ed->ui.action) {
         case UI_ACTION_TUI_COMMAND:
+        case UI_ACTION_MODE_NONE:
         case UI_ACTION_MODE_TRANSLATE:
         case UI_ACTION_MODE_ROTATE:
         case UI_ACTION_MODE_SCALE:
@@ -889,6 +920,11 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         }
         break;
     }
+
+    case UI_ACTION_MODE_NONE:
+        ed->ui.transform_mode = UI_MODE_NONE;
+        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_NONE);
+        break;
 
     case UI_ACTION_MODE_TRANSLATE:
         ed->ui.transform_mode = UI_MODE_TRANSLATE;

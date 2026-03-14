@@ -11,6 +11,7 @@
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_cmd.h"
 #include "ferrum/editor/scene/scene_connection.h"
+#include "ferrum/editor/scene/scene_sync.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/viewport/transform_basis.h"
@@ -245,6 +246,34 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
 
     if (cmd_len > 0) {
         scene_connection_send_cmd(&ed->connection, cmd_buf);
+        scene_sync_mark_sent(&ed->sync);
+
+        /* Log the command to TUI with pending status. */
+        char echo[64];
+        switch (ed->gizmo.mode) {
+        case GIZMO_MODE_TRANSLATE:
+            snprintf(echo, sizeof(echo), "move [%.2g,%.2g,%.2g]",
+                     (double)total_delta.x, (double)total_delta.y,
+                     (double)total_delta.z);
+            break;
+        case GIZMO_MODE_ROTATE:
+            snprintf(echo, sizeof(echo), "rotate [%.2g,%.2g,%.2g]",
+                     (double)total_delta.x, (double)total_delta.y,
+                     (double)total_delta.z);
+            break;
+        case GIZMO_MODE_SCALE:
+            snprintf(echo, sizeof(echo), "scale [%.2g,%.2g,%.2g]",
+                     (double)(1.0f + total_delta.x),
+                     (double)(1.0f + total_delta.y),
+                     (double)(1.0f + total_delta.z));
+            break;
+        default:
+            echo[0] = '\0';
+            break;
+        }
+        if (echo[0] != '\0') {
+            scene_ui_tui_log_pending(&ed->ui, echo, cmd_id);
+        }
     }
 
     /* For cursor-basis rotation, send per-entity position updates. */
@@ -333,12 +362,63 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
         panel_id_t hit = panel_layout_hit_test(&ed->layout, lx, ly);
         panel_layout_set_focus(&ed->layout, hit);
 
-        /* Viewport left-click: gizmo interaction or entity selection. */
+        /* Viewport left-click: gizmo interaction or entity selection.
+         * Skip if click is in the toolbar overlay area (title + mode bar)
+         * at the top of the viewport — those clicks belong to Clay UI. */
         if (hit == PANEL_VIEWPORT) {
             panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout,
                                                            PANEL_VIEWPORT);
+            int toolbar_h = THEME_ROW_HEIGHT * 2 + THEME_PADDING;
+            if (ly < vp_rect.y + toolbar_h) {
+                /* Click is in the toolbar area.  Handle mode buttons
+                 * directly so they behave identically to keybindings
+                 * (no selection clear, proper toggle to NONE). */
+                int row2_top = vp_rect.y + THEME_ROW_HEIGHT;
+                if (ly >= row2_top) {
+                    /* Second row: mode buttons.  Approximate hit zones
+                     * based on label widths (Mode: ~40, buttons ~60 each,
+                     * with PADDING_SMALL gaps). */
+                    int rel_x = lx - vp_rect.x;
+                    int btn_start = THEME_PADDING_SMALL + 40; /* after "Mode:" */
+                    int btn_w = 60;
+                    int gap = THEME_PADDING_SMALL;
+                    if (rel_x >= btn_start &&
+                        rel_x < btn_start + btn_w) {
+                        ed->ui.action = (ed->gizmo.mode == GIZMO_MODE_TRANSLATE)
+                            ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_TRANSLATE;
+                    } else if (rel_x >= btn_start + btn_w + gap &&
+                               rel_x < btn_start + 2 * btn_w + gap) {
+                        ed->ui.action = (ed->gizmo.mode == GIZMO_MODE_ROTATE)
+                            ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_ROTATE;
+                    } else if (rel_x >= btn_start + 2 * (btn_w + gap) &&
+                               rel_x < btn_start + 3 * btn_w + 2 * gap) {
+                        ed->ui.action = (ed->gizmo.mode == GIZMO_MODE_SCALE)
+                            ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_SCALE;
+                    } else {
+                        /* Basis cycle button: after scale btn + separator.
+                         * separator = 1px + gap on each side. */
+                        int basis_start = btn_start + 3 * btn_w + 2 * gap
+                                        + gap + 1 + gap;
+                        int basis_w = 80; /* wider for label like "Local(,)" */
+                        if (rel_x >= basis_start &&
+                            rel_x < basis_start + basis_w) {
+                            ed->gizmo.basis = transform_basis_next(
+                                ed->gizmo.basis);
+                            char msg[64];
+                            snprintf(msg, sizeof(msg), "Basis: %s",
+                                     transform_basis_name(ed->gizmo.basis));
+                            scene_ui_tui_log(&ed->ui, msg);
+                        }
+                    }
+                }
+                return false;
+            }
             float nx = (float)(lx - vp_rect.x) / (float)vp_rect.w;
             float ny = (float)(ly - vp_rect.y) / (float)vp_rect.h;
+            /* FBO is displayed Y-flipped by Clay's ortho projection,
+             * so screen top = FBO bottom.  Flip ny so the ray matches
+             * the visual scene rather than the raw FBO layout. */
+            ny = 1.0f - ny;
 
             vec2_t screen_pos = {nx, ny};
             vec2_t vp_size = {(float)vp_rect.w, (float)vp_rect.h};
@@ -390,22 +470,43 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     if (pick_nearest_entity(&ray, candidates, count,
                                              &picked_id)) {
                         if (mod & KMOD_SHIFT) {
+                            /* Shift-click: toggle selection. */
                             if (edit_selection_contains(&ed->selection,
                                                         picked_id)) {
                                 ed->ui.action = UI_ACTION_DESELECT_ENTITY;
                             } else {
                                 ed->ui.action = UI_ACTION_SELECT_ENTITY;
                             }
+                            ed->ui.action_target = picked_id;
+                            ed->active_object_id = picked_id;
+                        } else if (ed->gizmo.mode == GIZMO_MODE_TRANSLATE &&
+                                   edit_selection_contains(&ed->selection,
+                                                            picked_id)) {
+                            /* Already-selected entity in translate mode:
+                             * start free-move on camera-facing plane. */
+                            ed->gizmo.dragging = true;
+                            ed->free_dragging = true;
+                            ed->gizmo_drag_origin = ed->gizmo.position;
+                            ed->gizmo_drag_accum = (vec3_t){0, 0, 0};
                         } else {
                             edit_selection_clear(&ed->selection);
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
+                            ed->ui.action_target = picked_id;
+                            ed->active_object_id = picked_id;
                         }
-                        ed->ui.action_target = picked_id;
-                        /* The picked entity becomes the active object. */
-                        ed->active_object_id = picked_id;
+                    } else {
+                        /* No entity hit — start box select drag.
+                         * Store logical coords (divide by UI scale) so
+                         * they match panel_layout_get_rect() coordinates. */
+                        ed->box_selecting = true;
+                        float bsc = ed->clay_be.ui_scale;
+                        if (bsc < 1.0f) bsc = 1.0f;
+                        ed->box_select_start_x = ed->ui.mouse_x / bsc;
+                        ed->box_select_start_y = ed->ui.mouse_y / bsc;
+                        if (!(mod & KMOD_SHIFT)) {
+                            edit_selection_clear(&ed->selection);
+                        }
                     }
-                    /* Clicking empty space does nothing — selection is
-                     * only cleared by selecting a new entity without shift. */
                 }
             }
         }
@@ -418,17 +519,96 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
 }
 
 /**
+ * @brief Complete a box select: project entity centers to screen, select
+ *        those inside the drag rectangle.
+ *
+ * Uses the VP matrix to project world positions to normalized viewport
+ * coords [0,1]. Entities whose projected center falls inside the box
+ * are added to the selection.
+ */
+static void finish_box_select_(scene_editor_t *ed) {
+    panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout, PANEL_VIEWPORT);
+    if (vp_rect.w <= 0 || vp_rect.h <= 0) return;
+
+    /* Convert current mouse to logical coords (start was already stored
+     * in logical coords). Panel rects are in logical pixels. */
+    float bsc = ed->clay_be.ui_scale;
+    if (bsc < 1.0f) bsc = 1.0f;
+    float cur_lx = ed->ui.mouse_x / bsc;
+    float cur_ly = ed->ui.mouse_y / bsc;
+
+    /* Normalized box corners in viewport space [0,1].
+     * FBO is displayed Y-flipped, so flip sy so projected entity
+     * coords (which use standard NDC→screen mapping) match. */
+    float sx0 = (ed->box_select_start_x - (float)vp_rect.x) / (float)vp_rect.w;
+    float sy0 = 1.0f - (ed->box_select_start_y - (float)vp_rect.y) / (float)vp_rect.h;
+    float sx1 = (cur_lx - (float)vp_rect.x) / (float)vp_rect.w;
+    float sy1 = 1.0f - (cur_ly - (float)vp_rect.y) / (float)vp_rect.h;
+
+    /* Ensure min/max ordering. */
+    float bx0 = sx0 < sx1 ? sx0 : sx1;
+    float by0 = sy0 < sy1 ? sy0 : sy1;
+    float bx1 = sx0 < sx1 ? sx1 : sx0;
+    float by1 = sy0 < sy1 ? sy1 : sy0;
+
+    /* Skip tiny drags (likely just a click). */
+    if ((bx1 - bx0) < 0.01f && (by1 - by0) < 0.01f) return;
+
+    /* Build view-projection matrix. */
+    float aspect = (float)vp_rect.w / (float)vp_rect.h;
+    mat4_t view, proj;
+    editor_camera_view_matrix(&ed->viewport.camera, &view);
+    editor_camera_projection_matrix(&ed->viewport.camera, aspect, &proj);
+    mat4_t vp = mat4_mul(proj, view);
+
+    uint32_t cap = ed->entities.capacity;
+    for (uint32_t i = 0; i < cap; i++) {
+        const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
+        if (!ent || ent->pending_delete) continue;
+
+        /* Project entity center to clip space. */
+        float px = vp.m[0] * ent->pos[0] + vp.m[4] * ent->pos[1]
+                  + vp.m[8]  * ent->pos[2] + vp.m[12];
+        float py = vp.m[1] * ent->pos[0] + vp.m[5] * ent->pos[1]
+                  + vp.m[9]  * ent->pos[2] + vp.m[13];
+        float pw = vp.m[3] * ent->pos[0] + vp.m[7] * ent->pos[1]
+                  + vp.m[11] * ent->pos[2] + vp.m[15];
+
+        /* Skip entities behind the camera. */
+        if (pw <= 0.0f) continue;
+
+        /* NDC to normalized viewport coords [0,1]. */
+        float nx = (px / pw) * 0.5f + 0.5f;
+        float ny = 0.5f - (py / pw) * 0.5f; /* Flip Y: NDC up → screen down. */
+
+        if (nx >= bx0 && nx <= bx1 && ny >= by0 && ny <= by1) {
+            edit_selection_add(&ed->selection, i);
+            /* Make the last selected entity the active object. */
+            ed->active_object_id = i;
+        }
+    }
+}
+
+/**
  * @brief Handle mouse button up: stop divider drag, update Clay state.
  */
 static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) {
     if (ev->button == SDL_BUTTON_LEFT) {
         ed->ui.mouse_down = false;
 
-        /* End gizmo drag: send server commands for total delta. */
+        /* End box select: project entities to screen, select those inside. */
+        if (ed->box_selecting) {
+            ed->box_selecting = false;
+            finish_box_select_(ed);
+            return true;
+        }
+
+        /* End gizmo drag (including free-move): send server commands. */
         if (ed->gizmo.dragging) {
             send_gizmo_commands(ed, ed->gizmo_drag_accum);
             ed->gizmo.dragging = false;
             ed->gizmo.active_axis = GIZMO_AXIS_NONE;
+            ed->free_dragging = false;
             return true;
         }
 
@@ -460,6 +640,35 @@ static bool handle_mouse_motion(scene_editor_t *ed,
     /* Gizmo drag: convert pixel delta to constrained world delta. */
     if (ed->gizmo.dragging) {
         vec3_t delta = {0, 0, 0};
+
+        /* Free-move: translate on the camera-facing plane. */
+        if (ed->free_dragging) {
+            mat4_t view;
+            editor_camera_view_matrix(&ed->viewport.camera, &view);
+
+            /* Camera right = row 0 of view, camera up = row 1 of view.
+             * View matrix rows are: right, up, -forward (column-major). */
+            vec3_t cam_right = {view.m[0], view.m[4], view.m[8]};
+            vec3_t cam_up    = {view.m[1], view.m[5], view.m[9]};
+
+            vec3_t eye = editor_camera_eye_position(&ed->viewport.camera);
+            float cam_dist = viewport_gizmo_screen_scale(
+                &ed->gizmo.position, &eye);
+            float speed = cam_dist * GIZMO_DRAG_SPEED;
+
+            /* Mouse X → camera right, mouse Y (inverted) → camera up. */
+            float mx = (float)ev->xrel * speed;
+            float my = -(float)ev->yrel * speed;
+            delta.x = cam_right.x * mx + cam_up.x * my;
+            delta.y = cam_right.y * mx + cam_up.y * my;
+            delta.z = cam_right.z * mx + cam_up.z * my;
+
+            apply_gizmo_drag(ed, delta);
+            ed->gizmo_drag_accum.x += delta.x;
+            ed->gizmo_drag_accum.y += delta.y;
+            ed->gizmo_drag_accum.z += delta.z;
+            return true;
+        }
 
         /* Get the oriented axis direction from the gizmo orientation.
          * Column 0=X, 1=Y, 2=Z of the orientation matrix. */
@@ -1055,15 +1264,27 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         break;
 
-    /* Transform mode shortcuts */
+    /* Transform mode shortcuts (toggle: pressing same key disables gizmo). */
     case SDLK_g:
-        ed->ui.action = UI_ACTION_MODE_TRANSLATE;
+        if (ed->gizmo.mode == GIZMO_MODE_TRANSLATE) {
+            ed->ui.action = UI_ACTION_MODE_NONE;
+        } else {
+            ed->ui.action = UI_ACTION_MODE_TRANSLATE;
+        }
         return true;
     case SDLK_r:
-        ed->ui.action = UI_ACTION_MODE_ROTATE;
+        if (ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+            ed->ui.action = UI_ACTION_MODE_NONE;
+        } else {
+            ed->ui.action = UI_ACTION_MODE_ROTATE;
+        }
         return true;
     case SDLK_s:
-        ed->ui.action = UI_ACTION_MODE_SCALE;
+        if (ed->gizmo.mode == GIZMO_MODE_SCALE) {
+            ed->ui.action = UI_ACTION_MODE_NONE;
+        } else {
+            ed->ui.action = UI_ACTION_MODE_SCALE;
+        }
         return true;
 
     /* Cycle transform basis: World → Local → View → Cursor. */
@@ -1113,12 +1334,53 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     case SDLK_5:
         editor_camera_toggle_projection(&ed->viewport.camera);
         return true;
+
+    /* Incremental orbit (15-degree steps). */
+    case SDLK_8:
+        editor_camera_orbit(&ed->viewport.camera,
+                             0.0f, 15.0f * INPUT_DEG_TO_RAD);
+        return true;
+    case SDLK_2:
+        editor_camera_orbit(&ed->viewport.camera,
+                             0.0f, -15.0f * INPUT_DEG_TO_RAD);
+        return true;
+    case SDLK_4:
+        editor_camera_orbit(&ed->viewport.camera,
+                             -15.0f * INPUT_DEG_TO_RAD, 0.0f);
+        return true;
+    case SDLK_6:
+        editor_camera_orbit(&ed->viewport.camera,
+                             15.0f * INPUT_DEG_TO_RAD, 0.0f);
+        return true;
+    case SDLK_9:
+        /* Flip view 180° around yaw. */
+        editor_camera_orbit(&ed->viewport.camera,
+                             180.0f * INPUT_DEG_TO_RAD, 0.0f);
+        return true;
     case SDLK_f:
-        /* Frame selection: if entities selected, frame their AABB. */
+        /* Frame selection: compute AABB of selected entities and frame it. */
         if (edit_selection_count(&ed->selection) > 0) {
-            /* TODO: compute selection AABB and call
-             * editor_camera_frame_selection(). For now, reset camera. */
-            editor_camera_reset(&ed->viewport.camera);
+            vec3_t aabb_min = { 1e30f,  1e30f,  1e30f};
+            vec3_t aabb_max = {-1e30f, -1e30f, -1e30f};
+            uint32_t sel_count = edit_selection_count(&ed->selection);
+            const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+            for (uint32_t si = 0; si < sel_count; si++) {
+                const edit_entity_t *ent =
+                    edit_entity_store_get(&ed->entities, sel_ids[si]);
+                if (!ent) continue;
+                /* Expand AABB by entity position ± half scale. */
+                float hx = fabsf(ent->scale[0]) * 0.5f;
+                float hy = fabsf(ent->scale[1]) * 0.5f;
+                float hz = fabsf(ent->scale[2]) * 0.5f;
+                if (ent->pos[0] - hx < aabb_min.x) aabb_min.x = ent->pos[0] - hx;
+                if (ent->pos[1] - hy < aabb_min.y) aabb_min.y = ent->pos[1] - hy;
+                if (ent->pos[2] - hz < aabb_min.z) aabb_min.z = ent->pos[2] - hz;
+                if (ent->pos[0] + hx > aabb_max.x) aabb_max.x = ent->pos[0] + hx;
+                if (ent->pos[1] + hy > aabb_max.y) aabb_max.y = ent->pos[1] + hy;
+                if (ent->pos[2] + hz > aabb_max.z) aabb_max.z = ent->pos[2] + hz;
+            }
+            editor_camera_frame_selection(&ed->viewport.camera,
+                                           aabb_min, aabb_max);
         }
         return true;
 

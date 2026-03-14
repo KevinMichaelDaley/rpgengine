@@ -85,6 +85,10 @@ typedef struct viewport_render_state {
     vbo_t grid_vbo;       /**< Grid line VBO. */
     int   grid_vertex_count; /**< Number of grid line vertices. */
 
+    /* Overlay VBO/VAO for gizmo, cursor, and box select (dynamic data). */
+    vao_t overlay_vao;    /**< Overlay line VAO (separate from grid). */
+    vbo_t overlay_vbo;    /**< Overlay line VBO (separate from grid). */
+
     /* Mesh registry for all entity shapes. */
     mesh_registry_t meshes;  /**< Central mesh store. */
 
@@ -302,6 +306,22 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
                                               uint32_t active_object_id,
                                               const struct mat4 *view,
                                               const struct mat4 *proj);
+
+/**
+ * @brief Draw a box select rectangle overlay in the viewport.
+ *
+ * Coordinates are normalized [0,1] within the viewport panel:
+ * (0,0)=top-left, (1,1)=bottom-right.
+ *
+ * @param state  Render state (non-NULL).
+ * @param x0     Start X (normalized).
+ * @param y0     Start Y (normalized).
+ * @param x1     End X (normalized).
+ * @param y1     End Y (normalized).
+ */
+void viewport_render_draw_box_select(viewport_render_state_t *state,
+                                       float x0, float y0,
+                                       float x1, float y1);
 
 /* ---- Entity mesh loading (scene_viewport_mesh.c) ---- */
 

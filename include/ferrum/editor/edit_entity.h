@@ -75,6 +75,8 @@ typedef struct edit_entity {
     char     materials[EDIT_MATERIAL_SLOT_COUNT][EDIT_MATERIAL_PATH_MAX];
     /** Dynamic key-value attributes for gameplay scripts. */
     entity_attrs_t attrs;
+    /** Refresh generation — set by entity list refresh to track staleness. */
+    uint32_t refresh_gen;
 } edit_entity_t;
 
 /**

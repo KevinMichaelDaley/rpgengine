@@ -18,6 +18,8 @@
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/math/mat4.h"
+
+#include <stdio.h>
 #include "ferrum/math/vec3.h"
 
 #include <math.h>
@@ -307,6 +309,9 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
         vert_count = build_scale_verts(verts, &gizmo->position,
                                         scale, gizmo->active_axis, orient);
         break;
+    case GIZMO_MODE_NONE:
+    default:
+        return; /* No gizmo to draw. */
     }
 
     if (vert_count == 0) return;
@@ -317,19 +322,18 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     shader_uniform_set_mat4(&state->grid_uniforms, &state->grid_shader,
                              "u_vp", vp.m, GL_FALSE);
 
-    /* Upload gizmo geometry to grid VBO and re-bind vertex attributes.
-     * Some drivers invalidate attribute pointers after glBufferData
-     * changes the buffer size. Re-set the pointers to be safe. */
-    state->grid_vao.glBindVertexArray(state->grid_vao.handle);
-    vbo_upload(&state->grid_vbo, GL_ARRAY_BUFFER, verts,
+    /* Upload gizmo geometry to overlay VBO (separate from grid VBO
+     * so the grid data is not clobbered). */
+    state->overlay_vao.glBindVertexArray(state->overlay_vao.handle);
+    vbo_upload(&state->overlay_vbo, GL_ARRAY_BUFFER, verts,
                (size_t)vert_count * 6 * sizeof(float), GL_DYNAMIC_DRAW);
 
-    /* Re-bind attribute pointers within the VAO. */
+    /* Bind attribute pointers within the overlay VAO. */
     vao_attribute_t attrs[2] = {
         {0, 3, GL_FLOAT, GL_FALSE, 0,                 0}, /* position */
         {1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0}, /* color */
     };
-    vao_bind_attributes(&state->grid_vao, &state->grid_vbo, attrs, 2,
+    vao_bind_attributes(&state->overlay_vao, &state->overlay_vbo, attrs, 2,
                         6 * sizeof(float));
 
     /* Draw without depth test or face culling so gizmo is always visible. */
@@ -339,5 +343,5 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     state->glEnable(GL_CULL_FACE);
     state->glEnable(GL_DEPTH_TEST);
 
-    state->grid_vao.glBindVertexArray(0);
+    state->overlay_vao.glBindVertexArray(0);
 }

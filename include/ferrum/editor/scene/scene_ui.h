@@ -38,6 +38,7 @@ typedef enum scene_ui_action {
     UI_ACTION_SELECT_ENTITY,    /**< entity_id in action_target. */
     UI_ACTION_DESELECT_ENTITY,  /**< entity_id in action_target. */
     UI_ACTION_DELETE_SELECTED,
+    UI_ACTION_MODE_NONE,        /**< Disable gizmo (selection-only). */
     UI_ACTION_MODE_TRANSLATE,
     UI_ACTION_MODE_ROTATE,
     UI_ACTION_MODE_SCALE,
@@ -45,6 +46,7 @@ typedef enum scene_ui_action {
 } scene_ui_action_t;
 
 /* Transform mode values for scene_ui_state_t.transform_mode. */
+#define UI_MODE_NONE      -1
 #define UI_MODE_TRANSLATE 0
 #define UI_MODE_ROTATE    1
 #define UI_MODE_SCALE     2

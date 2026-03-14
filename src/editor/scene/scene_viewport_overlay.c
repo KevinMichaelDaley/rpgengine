@@ -1,15 +1,17 @@
 /**
  * @file scene_viewport_overlay.c
- * @brief Viewport overlay rendering: 3D cursor and selection outline.
+ * @brief Viewport overlay rendering: 3D cursor, selection outline, box select.
  *
  * Draws overlay geometry after the main entity pass. The 3D cursor
  * is rendered without depth test (always visible). Selection outlines
  * are drawn as slightly scaled-up solid meshes behind the selected
- * entities to create a visible border effect.
+ * entities to create a visible border effect. Box select rectangle
+ * is drawn as an NDC-space line rectangle during drag.
  *
- * Non-static functions (2 / 4 limit):
+ * Non-static functions (3 / 4 limit):
  *   viewport_render_draw_cursor
  *   viewport_render_draw_selection_outline
+ *   viewport_render_draw_box_select
  */
 
 #include "ferrum/editor/scene/scene_viewport_render.h"
@@ -67,17 +69,24 @@ void viewport_render_draw_cursor(viewport_render_state_t *state,
     shader_uniform_set_mat4(&state->grid_uniforms, &state->grid_shader,
                              "u_vp", vp.m, GL_FALSE);
 
-    /* Re-upload cursor vertices to grid VBO (grid already drawn). */
-    state->grid_vao.glBindVertexArray(state->grid_vao.handle);
-    vbo_upload(&state->grid_vbo, GL_ARRAY_BUFFER, verts, sizeof(verts),
+    /* Upload cursor vertices to overlay VBO (separate from grid). */
+    state->overlay_vao.glBindVertexArray(state->overlay_vao.handle);
+    vbo_upload(&state->overlay_vbo, GL_ARRAY_BUFFER, verts, sizeof(verts),
                GL_DYNAMIC_DRAW);
+
+    vao_attribute_t attrs[2] = {
+        {0, 3, GL_FLOAT, GL_FALSE, 0,                 0},
+        {1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0},
+    };
+    vao_bind_attributes(&state->overlay_vao, &state->overlay_vbo, attrs, 2,
+                        6 * sizeof(float));
 
     /* Draw without depth test so cursor is always visible. */
     state->glDisable(GL_DEPTH_TEST);
     state->glDrawArrays(GL_LINES, 0, 6);
     state->glEnable(GL_DEPTH_TEST);
 
-    state->grid_vao.glBindVertexArray(0);
+    state->overlay_vao.glBindVertexArray(0);
 }
 
 /* ---- Selection Outline ---- */
@@ -161,4 +170,59 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
 
     /* Restore back-face culling. */
     state->glCullFace(GL_BACK);
+}
+
+/* ---- Box Select Rectangle ---- */
+
+/** Box select rectangle color (white, semi-transparent feel via thin lines). */
+static const float BOX_SELECT_COLOR[3] = {1.0f, 1.0f, 1.0f};
+
+void viewport_render_draw_box_select(viewport_render_state_t *state,
+                                       float x0, float y0,
+                                       float x1, float y1) {
+    if (!state || !state->initialized) return;
+
+    /* Convert normalized [0,1] viewport coords to NDC [-1,1].
+     * Viewport Y is top-down (0=top, 1=bottom). The FBO is displayed
+     * with its bottom at the top (GL UV origin), so NDC Y maps directly:
+     * viewport 0 → NDC -1 (bottom of FBO = top of display). */
+    float nx0 = x0 * 2.0f - 1.0f;
+    float ny0 = y0 * 2.0f - 1.0f;
+    float nx1 = x1 * 2.0f - 1.0f;
+    float ny1 = y1 * 2.0f - 1.0f;
+
+    /* 4 line segments = 8 vertices, 6 floats each (pos + color). */
+    float r = BOX_SELECT_COLOR[0];
+    float g = BOX_SELECT_COLOR[1];
+    float b = BOX_SELECT_COLOR[2];
+    float verts[8 * 6] = {
+        nx0, ny0, 0.0f, r, g, b,   nx1, ny0, 0.0f, r, g, b,
+        nx1, ny0, 0.0f, r, g, b,   nx1, ny1, 0.0f, r, g, b,
+        nx1, ny1, 0.0f, r, g, b,   nx0, ny1, 0.0f, r, g, b,
+        nx0, ny1, 0.0f, r, g, b,   nx0, ny0, 0.0f, r, g, b,
+    };
+
+    /* Use identity VP so verts are directly in NDC. */
+    mat4_t identity = mat4_identity();
+    shader_program_bind(&state->grid_shader);
+    shader_uniform_set_mat4(&state->grid_uniforms, &state->grid_shader,
+                             "u_vp", identity.m, GL_FALSE);
+
+    state->overlay_vao.glBindVertexArray(state->overlay_vao.handle);
+    vbo_upload(&state->overlay_vbo, GL_ARRAY_BUFFER, verts, sizeof(verts),
+               GL_DYNAMIC_DRAW);
+
+    /* Bind attribute pointers for overlay VAO. */
+    vao_attribute_t attrs[2] = {
+        {0, 3, GL_FLOAT, GL_FALSE, 0,                 0},
+        {1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0},
+    };
+    vao_bind_attributes(&state->overlay_vao, &state->overlay_vbo, attrs, 2,
+                        6 * sizeof(float));
+
+    state->glDisable(GL_DEPTH_TEST);
+    state->glDrawArrays(GL_LINES, 0, 8);
+    state->glEnable(GL_DEPTH_TEST);
+
+    state->overlay_vao.glBindVertexArray(0);
 }

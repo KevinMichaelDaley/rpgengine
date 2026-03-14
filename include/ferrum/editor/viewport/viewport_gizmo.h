@@ -32,6 +32,7 @@ struct editor_ray;
  * @brief Gizmo transform mode.
  */
 typedef enum gizmo_mode {
+    GIZMO_MODE_NONE      = -1,  /**< No gizmo (selection-only mode). */
     GIZMO_MODE_TRANSLATE = 0,
     GIZMO_MODE_ROTATE    = 1,
     GIZMO_MODE_SCALE     = 2

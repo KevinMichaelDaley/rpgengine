@@ -101,8 +101,9 @@ typedef struct scene_editor {
 
     /* Viewport interaction state. */
     bool box_selecting;             /**< True during box select drag. */
-    float box_select_start_x;      /**< Screen X at box select start. */
-    float box_select_start_y;      /**< Screen Y at box select start. */
+    float box_select_start_x;      /**< Logical X at box select start. */
+    float box_select_start_y;      /**< Logical Y at box select start. */
+    bool free_dragging;            /**< True during camera-plane free move. */
 
     /* Interactive UI state. */
     scene_ui_state_t   ui;         /**< UI actions, scroll, mouse. */
@@ -115,6 +116,11 @@ typedef struct scene_editor {
 
     /* Divider drag state */
     divider_id_t       dragging_divider; /**< DIVIDER_NONE if not dragging. */
+
+    /** Entity refresh generation counter.  Incremented on each page-0
+     *  entity list response.  After the last page, entities with a
+     *  refresh_gen older than this are removed as stale. */
+    uint32_t           entity_refresh_gen;
 } scene_editor_t;
 
 /* ---- Lifecycle ---- */

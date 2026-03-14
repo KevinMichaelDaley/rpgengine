@@ -12,7 +12,10 @@ bool scene_connection_send_cmd(scene_connection_t *conn, const char *cmd) {
     if (!conn || !conn->initialized || !cmd) return false;
     if (conn->state != SCENE_CONN_CONNECTED) return false;
 
-    if (!ctrl_conn_send_cmd(&conn->tcp, cmd)) {
+    /* Send pre-formatted JSON (already has id/cmd/args envelope).
+     * Use send_raw instead of send_cmd to avoid double-wrapping. */
+    uint32_t len = (uint32_t)strlen(cmd);
+    if (!ctrl_conn_send_raw(&conn->tcp, cmd, len)) {
         return false;
     }
     conn->pending_cmds++;

@@ -49,48 +49,6 @@ static const Clay_Color COLOR_SELECTION_BG = {
 #define VP_STATUS_BUF_SIZE 128
 static char s_vp_status[VP_STATUS_BUF_SIZE];
 
-/* ---- Mode button hover callbacks ---- */
-
-/** @brief Hover callback for mode: Translate. */
-static void on_mode_translate_hover(Clay_ElementId id, Clay_PointerData data,
-                                     void *user) {
-    (void)id;
-    scene_editor_t *ed = (scene_editor_t *)user;
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
-        ed->ui.action = UI_ACTION_MODE_TRANSLATE;
-    }
-}
-
-/** @brief Hover callback for mode: Rotate. */
-static void on_mode_rotate_hover(Clay_ElementId id, Clay_PointerData data,
-                                  void *user) {
-    (void)id;
-    scene_editor_t *ed = (scene_editor_t *)user;
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
-        ed->ui.action = UI_ACTION_MODE_ROTATE;
-    }
-}
-
-/** @brief Hover callback for mode: Scale. */
-static void on_mode_scale_hover(Clay_ElementId id, Clay_PointerData data,
-                                 void *user) {
-    (void)id;
-    scene_editor_t *ed = (scene_editor_t *)user;
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
-        ed->ui.action = UI_ACTION_MODE_SCALE;
-    }
-}
-
-/** @brief Hover callback for basis cycle button. */
-static void on_basis_cycle_hover(Clay_ElementId id, Clay_PointerData data,
-                                  void *user) {
-    (void)id;
-    scene_editor_t *ed = (scene_editor_t *)user;
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
-        ed->gizmo.basis = transform_basis_next(ed->gizmo.basis);
-    }
-}
-
 /** Static buffer for basis label. */
 static char s_basis_label[32];
 
@@ -195,7 +153,6 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                     },
                     .backgroundColor = translate_bg,
                 }) {
-                    Clay_OnHover(on_mode_translate_hover, ed);
                     CLAY_TEXT(CLAY_STRING("Move(G)"),
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,
@@ -212,7 +169,6 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                     },
                     .backgroundColor = rotate_bg,
                 }) {
-                    Clay_OnHover(on_mode_rotate_hover, ed);
                     CLAY_TEXT(CLAY_STRING("Rot(R)"),
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,
@@ -229,7 +185,6 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                     },
                     .backgroundColor = scale_bg,
                 }) {
-                    Clay_OnHover(on_mode_scale_hover, ed);
                     CLAY_TEXT(CLAY_STRING("Scale(S)"),
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,
@@ -262,7 +217,6 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                     },
                     .backgroundColor = COLOR_BTN_BG,
                 }) {
-                    Clay_OnHover(on_basis_cycle_hover, ed);
                     Clay__OpenTextElement(basis_str,
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,

@@ -383,6 +383,33 @@ bool viewport_render_init(viewport_render_state_t *state,
         return false;
     }
 
+    /* Create separate overlay VBO/VAO for gizmo, cursor, box select.
+     * These are re-uploaded each frame and must not clobber the grid. */
+    {
+        const gl_loader_t *loader = &state->loader;
+        if (vbo_create(&state->overlay_vbo, loader) != VBO_OK) {
+            fprintf(stderr, "viewport_render: overlay VBO creation failed\n");
+            vao_destroy(&state->grid_vao);
+            vbo_destroy(&state->grid_vbo);
+            shader_program_destroy(&state->grid_shader);
+            shader_program_destroy(&state->shader);
+            render_pipeline_destroy(&state->pipeline);
+            destroy_fbo(state);
+            return false;
+        }
+        if (vao_create(&state->overlay_vao, loader) != VAO_OK) {
+            fprintf(stderr, "viewport_render: overlay VAO creation failed\n");
+            vbo_destroy(&state->overlay_vbo);
+            vao_destroy(&state->grid_vao);
+            vbo_destroy(&state->grid_vbo);
+            shader_program_destroy(&state->grid_shader);
+            shader_program_destroy(&state->shader);
+            render_pipeline_destroy(&state->pipeline);
+            destroy_fbo(state);
+            return false;
+        }
+    }
+
     /* Initialize mesh registry for dynamic/loaded meshes.
      * Capacity 256 covers typical editor scenes. */
     if (mesh_registry_init(&state->meshes, 256, &config->loader) != 0) {
@@ -436,6 +463,8 @@ void viewport_render_destroy(viewport_render_state_t *state) {
 
     mesh_registry_destroy(&state->meshes);
 
+    vao_destroy(&state->overlay_vao);
+    vbo_destroy(&state->overlay_vbo);
     vao_destroy(&state->grid_vao);
     vbo_destroy(&state->grid_vbo);
 
