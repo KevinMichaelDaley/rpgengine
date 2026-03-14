@@ -24,6 +24,8 @@
 
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/scene/scene_main.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/viewport/transform_basis.h"
@@ -264,34 +266,100 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
     static_mesh_unbind();
 }
 
-void viewport_render_draw_scene(struct scene_editor *ed) {
-    if (!ed) return;
+/**
+ * @brief Render the 3D scene into a single viewport's FBO.
+ *
+ * Uses the viewport's camera for view/proj matrices, the shared
+ * renderer for shaders/meshes, and the viewport's gizmo state.
+ */
+static void draw_scene_into_viewport(struct scene_editor *ed,
+                                     viewport_state_t *vs) {
     viewport_render_state_t *vp = &ed->viewport;
-    if (!vp->initialized) return;
 
-    /* Resize FBO to physical pixels (logical panel size * UI scale).
-     * The UI renders at scaled-down resolution, but the 3D viewport
-     * should render at full display resolution. */
-    panel_rect_t rect = panel_layout_get_rect(&ed->layout, PANEL_VIEWPORT);
+    /* Resize FBO if needed.  Each viewport uses its own FBO sized
+     * to its BSP rect (physical pixels = logical * UI scale). */
     float scale = ed->clay_be.ui_scale;
     if (scale < 1.0f) scale = 1.0f;
-    int phys_w = (int)((float)rect.w * scale);
-    int phys_h = (int)((float)rect.h * scale);
-    if (phys_w > 0 && phys_h > 0) {
+    int phys_w = (int)((float)vs->rect.w * scale);
+    int phys_h = (int)((float)vs->rect.h * scale);
+    if (phys_w <= 0 || phys_h <= 0) return;
+
+    /* For the first viewport, reuse the shared FBO from viewport_render_state.
+     * Additional viewports get their own FBOs created on demand. */
+    uint32_t fbo_handle;
+    int fbo_w, fbo_h;
+    if (vs == &ed->viewports[0]) {
         viewport_render_resize(vp, phys_w, phys_h);
+        fbo_handle = vp->fbo;
+        fbo_w = vp->fbo_width;
+        fbo_h = vp->fbo_height;
+        /* Keep color_tex in sync for Clay display. */
+        vs->color_tex = vp->color_tex;
+        vs->fbo = vp->fbo;
+        vs->fbo_width = fbo_w;
+        vs->fbo_height = fbo_h;
+    } else {
+        /* Create or resize per-viewport FBO. */
+        if (!vs->fbo_valid || vs->fbo_width != phys_w ||
+            vs->fbo_height != phys_h) {
+            /* Delete old resources if they exist. */
+            if (vs->fbo_valid) {
+                vp->glDeleteFramebuffers(1, &vs->fbo);
+                vp->glDeleteTextures(1, &vs->color_tex);
+                vp->glDeleteRenderbuffers(1, &vs->depth_rbo);
+            }
+            /* Create FBO. */
+            vp->glGenFramebuffers(1, &vs->fbo);
+            vp->glGenTextures(1, &vs->color_tex);
+            vp->glGenRenderbuffers(1, &vs->depth_rbo);
+
+            /* Set up color texture. */
+            vp->glBindTexture(GL_TEXTURE_2D, vs->color_tex);
+            vp->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+                             phys_w, phys_h, 0,
+                             GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            vp->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                GL_LINEAR);
+            vp->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                GL_LINEAR);
+            vp->glBindTexture(GL_TEXTURE_2D, 0);
+
+            /* Set up depth+stencil renderbuffer. */
+            vp->glBindRenderbuffer(GL_RENDERBUFFER, vs->depth_rbo);
+            vp->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
+                                      phys_w, phys_h);
+            vp->glBindRenderbuffer(GL_RENDERBUFFER, 0);
+
+            /* Attach to FBO. */
+            vp->glBindFramebuffer(GL_FRAMEBUFFER, vs->fbo);
+            vp->glFramebufferTexture2D(GL_FRAMEBUFFER,
+                                       GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, vs->color_tex, 0);
+            vp->glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                                          GL_DEPTH_STENCIL_ATTACHMENT,
+                                          GL_RENDERBUFFER, vs->depth_rbo);
+            vp->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            vs->fbo_width = phys_w;
+            vs->fbo_height = phys_h;
+            vs->fbo_valid = true;
+        }
+        fbo_handle = vs->fbo;
+        fbo_w = vs->fbo_width;
+        fbo_h = vs->fbo_height;
     }
 
-    /* Compute camera matrices. */
-    float aspect = (vp->fbo_width > 0 && vp->fbo_height > 0)
-        ? (float)vp->fbo_width / (float)vp->fbo_height : 1.0f;
+    /* Compute camera matrices from this viewport's camera. */
+    float aspect = (fbo_w > 0 && fbo_h > 0)
+        ? (float)fbo_w / (float)fbo_h : 1.0f;
     mat4_t view, proj;
-    editor_camera_view_matrix(&vp->camera, &view);
-    editor_camera_projection_matrix(&vp->camera, aspect, &proj);
-    vec3_t eye_pos = editor_camera_eye_position(&vp->camera);
+    editor_camera_view_matrix(&vs->camera, &view);
+    editor_camera_projection_matrix(&vs->camera, aspect, &proj);
+    vec3_t eye_pos = editor_camera_eye_position(&vs->camera);
 
-    /* Bind the viewport FBO. */
-    vp->glBindFramebuffer(GL_FRAMEBUFFER, vp->fbo);
-    vp->glViewport(0, 0, vp->fbo_width, vp->fbo_height);
+    /* Bind this viewport's FBO. */
+    vp->glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
+    vp->glViewport(0, 0, fbo_w, fbo_h);
     vp->glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
     vp->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     vp->glEnable(GL_DEPTH_TEST);
@@ -300,22 +368,20 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
     /* Draw grid. */
     viewport_render_draw_grid(vp, &view, &proj);
 
-    /* Draw all entities. */
+    /* Draw all entities (shared across viewports). */
     viewport_render_draw_entities(vp, &ed->entities, &ed->selection,
                                    ed->active_object_id,
                                    &view, &proj, &eye_pos);
 
-    /* Draw selection outlines (wireframe, slightly scaled up). */
+    /* Draw selection outlines. */
     viewport_render_draw_selection_outline(vp, &ed->entities, &ed->selection,
                                             ed->active_object_id, &view, &proj);
 
-    /* Update gizmo position and orientation based on basis mode. */
+    /* Update gizmo position and orientation for this viewport. */
     if (edit_selection_count(&ed->selection) > 0) {
-        if (ed->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
-            /* Cursor mode: gizmo at 3D cursor position. */
-            ed->gizmo.position = ed->cursor_3d;
+        if (vs->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
+            vs->gizmo.position = vs->cursor_3d;
         } else {
-            /* Other modes: gizmo at selection centroid. */
             vec3_t center = {0, 0, 0};
             uint32_t sel_n = 0;
             for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
@@ -334,12 +400,12 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
                 center.y *= inv;
                 center.z *= inv;
             }
-            ed->gizmo.position = center;
+            vs->gizmo.position = center;
         }
 
         /* Compute gizmo orientation from basis mode. */
         const quat_t *active_orient = NULL;
-        if (ed->gizmo.basis == TRANSFORM_BASIS_LOCAL &&
+        if (vs->gizmo.basis == TRANSFORM_BASIS_LOCAL &&
             ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
             const edit_entity_t *active_ent =
                 edit_entity_store_get(&ed->entities, ed->active_object_id);
@@ -347,39 +413,64 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
                 active_orient = &active_ent->orientation;
             }
         }
-        ed->gizmo.orientation = transform_basis_orientation(
-            ed->gizmo.basis, active_orient, &view);
+        vs->gizmo.orientation = transform_basis_orientation(
+            vs->gizmo.basis, active_orient, &view);
     }
 
-    /* Draw transform gizmo at selection center. */
-    viewport_render_draw_gizmo(vp, &ed->gizmo, &ed->selection, &view, &proj);
+    /* Draw transform gizmo (only in focused viewport). */
+    bool is_focused = (vs == &ed->viewports[ed->vp_bsp.focused_viewport]);
+    if (is_focused) {
+        viewport_render_draw_gizmo(vp, &vs->gizmo, &ed->selection,
+                                   &view, &proj);
+    }
 
     /* Draw 3D cursor crosshair. */
-    viewport_render_draw_cursor(vp, &ed->cursor_3d, &view, &proj);
+    viewport_render_draw_cursor(vp, &vs->cursor_3d, &view, &proj);
 
-    /* Draw box select rectangle if active.
-     * box_select_start is in logical coords; mouse_x/y are physical pixels.
-     * Panel rects are logical, so convert current mouse to logical too. */
-    if (ed->box_selecting) {
-        panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout,
-                                                       PANEL_VIEWPORT);
+    /* Draw box select rectangle if active in this viewport. */
+    if (vs->box_selecting) {
         float dsc = ed->clay_be.ui_scale;
         if (dsc < 1.0f) dsc = 1.0f;
         float cur_lx = ed->ui.mouse_x / dsc;
         float cur_ly = ed->ui.mouse_y / dsc;
-        float bx0 = (ed->box_select_start_x - (float)vp_rect.x)
-                     / (float)vp_rect.w;
-        float by0 = (ed->box_select_start_y - (float)vp_rect.y)
-                     / (float)vp_rect.h;
-        float bx1 = (cur_lx - (float)vp_rect.x) / (float)vp_rect.w;
-        float by1 = (cur_ly - (float)vp_rect.y) / (float)vp_rect.h;
+        float bx0 = (vs->box_select_start_x - (float)vs->rect.x)
+                     / (float)vs->rect.w;
+        float by0 = (vs->box_select_start_y - (float)vs->rect.y)
+                     / (float)vs->rect.h;
+        float bx1 = (cur_lx - (float)vs->rect.x) / (float)vs->rect.w;
+        float by1 = (cur_ly - (float)vs->rect.y) / (float)vs->rect.h;
         viewport_render_draw_box_select(vp, bx0, by0, bx1, by1);
     }
 
-    /* Unbind FBO (restore default framebuffer). */
+    /* Unbind FBO. */
     vp->glDisable(GL_CULL_FACE);
     vp->glDisable(GL_DEPTH_TEST);
     vp->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void viewport_render_draw_scene(struct scene_editor *ed) {
+    if (!ed) return;
+    viewport_render_state_t *vp = &ed->viewport;
+    if (!vp->initialized) return;
+
+    /* Compute BSP rects for all viewports. */
+    panel_rect_t panel = panel_layout_get_rect(&ed->layout, PANEL_VIEWPORT);
+    panel_rect_t vp_rects[VIEWPORT_MAX_COUNT];
+    memset(vp_rects, 0, sizeof(vp_rects));
+    viewport_bsp_compute_rects(&ed->vp_bsp, &panel, vp_rects);
+
+    /* Store computed rects into viewport states. */
+    for (int i = 0; i < VIEWPORT_MAX_COUNT; i++) {
+        ed->viewports[i].rect = vp_rects[i];
+    }
+
+    /* Render 3D scene into each active viewport's FBO. */
+    for (int i = 0; i < VIEWPORT_MAX_COUNT; i++) {
+        if (!ed->viewports[i].active) continue;
+        if (ed->viewports[i].rect.w <= 0 || ed->viewports[i].rect.h <= 0)
+            continue;
+        draw_scene_into_viewport(ed, &ed->viewports[i]);
+    }
 }
 
 /**

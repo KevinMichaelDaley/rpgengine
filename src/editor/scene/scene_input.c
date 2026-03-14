@@ -12,6 +12,8 @@
 #include "ferrum/editor/scene/scene_cmd.h"
 #include "ferrum/editor/scene/scene_connection.h"
 #include "ferrum/editor/scene/scene_sync.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/viewport/transform_basis.h"
@@ -88,18 +90,19 @@ static mat4_t build_delta_rotation(vec3_t delta_deg) {
  *   In cursor basis, rotation orbits entities around the 3D cursor pivot.
  */
 static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
+    viewport_state_t *fvp = scene_focused_vp(ed);
     /* For cursor-basis rotation, precompute the rotation matrix and pivot. */
-    bool pivot_rotate = (ed->gizmo.mode == GIZMO_MODE_ROTATE &&
-                          ed->gizmo.basis == TRANSFORM_BASIS_CURSOR);
+    bool pivot_rotate = (fvp->gizmo.mode == GIZMO_MODE_ROTATE &&
+                          fvp->gizmo.basis == TRANSFORM_BASIS_CURSOR);
     mat4_t rot_mat;
     vec3_t pivot;
     quat_t dq;
-    if (ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+    if (fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
         dq = build_delta_quat(delta);
     }
     if (pivot_rotate) {
         quat_to_mat4(dq, &rot_mat);
-        pivot = ed->cursor_3d;
+        pivot = fvp->cursor_3d;
     }
 
     for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
@@ -108,7 +111,7 @@ static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
             &ed->entities, i);
         if (!ent) continue;
 
-        switch (ed->gizmo.mode) {
+        switch (fvp->gizmo.mode) {
         case GIZMO_MODE_TRANSLATE:
             ent->pos[0] += delta.x;
             ent->pos[1] += delta.y;
@@ -167,8 +170,9 @@ static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
  */
 static void send_pivot_move_commands(scene_editor_t *ed,
                                        vec3_t total_rot_delta) {
+    viewport_state_t *fvp = scene_focused_vp(ed);
     mat4_t rot = build_delta_rotation(total_rot_delta);
-    vec3_t pivot = ed->cursor_3d;
+    vec3_t pivot = fvp->cursor_3d;
 
     for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
         if (!edit_selection_contains(&ed->selection, i)) continue;
@@ -217,11 +221,12 @@ static void send_pivot_move_commands(scene_editor_t *ed,
  * to update positions orbited around the cursor pivot.
  */
 static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
+    viewport_state_t *fvp = scene_focused_vp(ed);
     char cmd_buf[256];
     int cmd_len = 0;
     uint32_t cmd_id = scene_connection_next_id(&ed->connection);
 
-    switch (ed->gizmo.mode) {
+    switch (fvp->gizmo.mode) {
     case GIZMO_MODE_TRANSLATE: {
         float delta_arr[3] = {total_delta.x, total_delta.y, total_delta.z};
         cmd_len = scene_cmd_format_move(cmd_buf, sizeof(cmd_buf),
@@ -250,7 +255,7 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
 
         /* Log the command to TUI with pending status. */
         char echo[64];
-        switch (ed->gizmo.mode) {
+        switch (fvp->gizmo.mode) {
         case GIZMO_MODE_TRANSLATE:
             snprintf(echo, sizeof(echo), "move [%.2g,%.2g,%.2g]",
                      (double)total_delta.x, (double)total_delta.y,
@@ -277,8 +282,8 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     }
 
     /* For cursor-basis rotation, send per-entity position updates. */
-    if (ed->gizmo.mode == GIZMO_MODE_ROTATE &&
-        ed->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
+    if (fvp->gizmo.mode == GIZMO_MODE_ROTATE &&
+        fvp->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
         send_pivot_move_commands(ed, total_delta);
     }
 }
@@ -347,6 +352,18 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
             return true;
         }
 
+        /* Check for BSP divider drag start (within the viewport panel). */
+        {
+            panel_rect_t vp_panel = panel_layout_get_rect(&ed->layout,
+                                                           PANEL_VIEWPORT);
+            uint8_t bsp_node;
+            if (viewport_bsp_hit_test_divider(&ed->vp_bsp, &vp_panel,
+                                               lx, ly, &bsp_node)) {
+                ed->dragging_bsp_node = (int8_t)bsp_node;
+                return true;
+            }
+        }
+
         /* Check for scrollbar drag start. */
         int sb = scrollbar_hit_test(ed, lx, ly);
         if (sb > 0) {
@@ -366,8 +383,30 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
          * Skip if click is in the toolbar overlay area (title + mode bar)
          * at the top of the viewport — those clicks belong to Clay UI. */
         if (hit == PANEL_VIEWPORT) {
-            panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout,
-                                                           PANEL_VIEWPORT);
+            /* Compute fresh BSP rects and determine which viewport
+             * was clicked (rects may not be up-to-date yet this frame). */
+            panel_rect_t bsp_rects[VIEWPORT_MAX_COUNT];
+            {
+                panel_rect_t vp_panel = panel_layout_get_rect(&ed->layout,
+                                                               PANEL_VIEWPORT);
+                memset(bsp_rects, 0, sizeof(bsp_rects));
+                viewport_bsp_compute_rects(&ed->vp_bsp, &vp_panel, bsp_rects);
+                /* Store computed rects into viewport states. */
+                for (int vi = 0; vi < VIEWPORT_MAX_COUNT; vi++) {
+                    ed->viewports[vi].rect = bsp_rects[vi];
+                }
+                uint8_t hit_vp;
+                if (viewport_bsp_hit_test_viewport(&ed->vp_bsp, bsp_rects,
+                                                    lx, ly, &hit_vp)) {
+                    if (hit_vp != ed->vp_bsp.focused_viewport) {
+                        ed->prev_focused_vp = ed->vp_bsp.focused_viewport;
+                    }
+                    ed->vp_bsp.focused_viewport = hit_vp;
+                }
+            }
+
+            viewport_state_t *fvp = scene_focused_vp(ed);
+            panel_rect_t vp_rect = fvp->rect;
             int toolbar_h = THEME_ROW_HEIGHT * 2 + THEME_PADDING;
             if (ly < vp_rect.y + toolbar_h) {
                 /* Click is in the toolbar area.  Handle mode buttons
@@ -384,15 +423,15 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     int gap = THEME_PADDING_SMALL;
                     if (rel_x >= btn_start &&
                         rel_x < btn_start + btn_w) {
-                        ed->ui.action = (ed->gizmo.mode == GIZMO_MODE_TRANSLATE)
+                        ed->ui.action = (fvp->gizmo.mode == GIZMO_MODE_TRANSLATE)
                             ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_TRANSLATE;
                     } else if (rel_x >= btn_start + btn_w + gap &&
                                rel_x < btn_start + 2 * btn_w + gap) {
-                        ed->ui.action = (ed->gizmo.mode == GIZMO_MODE_ROTATE)
+                        ed->ui.action = (fvp->gizmo.mode == GIZMO_MODE_ROTATE)
                             ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_ROTATE;
                     } else if (rel_x >= btn_start + 2 * (btn_w + gap) &&
                                rel_x < btn_start + 3 * btn_w + 2 * gap) {
-                        ed->ui.action = (ed->gizmo.mode == GIZMO_MODE_SCALE)
+                        ed->ui.action = (fvp->gizmo.mode == GIZMO_MODE_SCALE)
                             ? UI_ACTION_MODE_NONE : UI_ACTION_MODE_SCALE;
                     } else {
                         /* Basis cycle button: after scale btn + separator.
@@ -402,11 +441,11 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                         int basis_w = 80; /* wider for label like "Local(,)" */
                         if (rel_x >= basis_start &&
                             rel_x < basis_start + basis_w) {
-                            ed->gizmo.basis = transform_basis_next(
-                                ed->gizmo.basis);
+                            fvp->gizmo.basis = transform_basis_next(
+                                fvp->gizmo.basis);
                             char msg[64];
                             snprintf(msg, sizeof(msg), "Basis: %s",
-                                     transform_basis_name(ed->gizmo.basis));
+                                     transform_basis_name(fvp->gizmo.basis));
                             scene_ui_tui_log(&ed->ui, msg);
                         }
                     }
@@ -423,22 +462,22 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
             vec2_t screen_pos = {nx, ny};
             vec2_t vp_size = {(float)vp_rect.w, (float)vp_rect.h};
             editor_ray_t ray;
-            if (editor_camera_screen_to_ray(&ed->viewport.camera,
+            if (editor_camera_screen_to_ray(&fvp->camera,
                                               screen_pos, vp_size, &ray) == 0) {
                 /* Test gizmo hit first (if we have a selection). */
                 bool gizmo_hit = false;
                 if (edit_selection_count(&ed->selection) > 0) {
                     vec3_t eye = editor_camera_eye_position(
-                        &ed->viewport.camera);
+                        &fvp->camera);
                     float gscale = viewport_gizmo_screen_scale(
-                        &ed->gizmo.position, &eye);
+                        &fvp->gizmo.position, &eye);
                     gizmo_axis_t axis = gizmo_hit_test(
-                        &ed->gizmo, &ray, gscale);
+                        &fvp->gizmo, &ray, gscale);
                     if (axis != GIZMO_AXIS_NONE) {
-                        ed->gizmo.active_axis = axis;
-                        ed->gizmo.dragging = true;
-                        ed->gizmo_drag_origin = ed->gizmo.position;
-                        ed->gizmo_drag_accum = (vec3_t){0, 0, 0};
+                        fvp->gizmo.active_axis = axis;
+                        fvp->gizmo.dragging = true;
+                        fvp->gizmo_drag_origin = fvp->gizmo.position;
+                        fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
                         gizmo_hit = true;
                     }
                 }
@@ -479,15 +518,15 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             }
                             ed->ui.action_target = picked_id;
                             ed->active_object_id = picked_id;
-                        } else if (ed->gizmo.mode == GIZMO_MODE_TRANSLATE &&
+                        } else if (fvp->gizmo.mode == GIZMO_MODE_TRANSLATE &&
                                    edit_selection_contains(&ed->selection,
                                                             picked_id)) {
                             /* Already-selected entity in translate mode:
                              * start free-move on camera-facing plane. */
-                            ed->gizmo.dragging = true;
-                            ed->free_dragging = true;
-                            ed->gizmo_drag_origin = ed->gizmo.position;
-                            ed->gizmo_drag_accum = (vec3_t){0, 0, 0};
+                            fvp->gizmo.dragging = true;
+                            fvp->free_dragging = true;
+                            fvp->gizmo_drag_origin = fvp->gizmo.position;
+                            fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
                         } else {
                             edit_selection_clear(&ed->selection);
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
@@ -498,11 +537,11 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                         /* No entity hit — start box select drag.
                          * Store logical coords (divide by UI scale) so
                          * they match panel_layout_get_rect() coordinates. */
-                        ed->box_selecting = true;
+                        fvp->box_selecting = true;
                         float bsc = ed->clay_be.ui_scale;
                         if (bsc < 1.0f) bsc = 1.0f;
-                        ed->box_select_start_x = ed->ui.mouse_x / bsc;
-                        ed->box_select_start_y = ed->ui.mouse_y / bsc;
+                        fvp->box_select_start_x = ed->ui.mouse_x / bsc;
+                        fvp->box_select_start_y = ed->ui.mouse_y / bsc;
                         if (!(mod & KMOD_SHIFT)) {
                             edit_selection_clear(&ed->selection);
                         }
@@ -527,7 +566,8 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
  * are added to the selection.
  */
 static void finish_box_select_(scene_editor_t *ed) {
-    panel_rect_t vp_rect = panel_layout_get_rect(&ed->layout, PANEL_VIEWPORT);
+    viewport_state_t *fvp = scene_focused_vp(ed);
+    panel_rect_t vp_rect = fvp->rect;
     if (vp_rect.w <= 0 || vp_rect.h <= 0) return;
 
     /* Convert current mouse to logical coords (start was already stored
@@ -540,8 +580,8 @@ static void finish_box_select_(scene_editor_t *ed) {
     /* Normalized box corners in viewport space [0,1].
      * FBO is displayed Y-flipped, so flip sy so projected entity
      * coords (which use standard NDC→screen mapping) match. */
-    float sx0 = (ed->box_select_start_x - (float)vp_rect.x) / (float)vp_rect.w;
-    float sy0 = 1.0f - (ed->box_select_start_y - (float)vp_rect.y) / (float)vp_rect.h;
+    float sx0 = (fvp->box_select_start_x - (float)vp_rect.x) / (float)vp_rect.w;
+    float sy0 = 1.0f - (fvp->box_select_start_y - (float)vp_rect.y) / (float)vp_rect.h;
     float sx1 = (cur_lx - (float)vp_rect.x) / (float)vp_rect.w;
     float sy1 = 1.0f - (cur_ly - (float)vp_rect.y) / (float)vp_rect.h;
 
@@ -557,8 +597,8 @@ static void finish_box_select_(scene_editor_t *ed) {
     /* Build view-projection matrix. */
     float aspect = (float)vp_rect.w / (float)vp_rect.h;
     mat4_t view, proj;
-    editor_camera_view_matrix(&ed->viewport.camera, &view);
-    editor_camera_projection_matrix(&ed->viewport.camera, aspect, &proj);
+    editor_camera_view_matrix(&fvp->camera, &view);
+    editor_camera_projection_matrix(&fvp->camera, aspect, &proj);
     mat4_t vp = mat4_mul(proj, view);
 
     uint32_t cap = ed->entities.capacity;
@@ -595,20 +635,27 @@ static void finish_box_select_(scene_editor_t *ed) {
 static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) {
     if (ev->button == SDL_BUTTON_LEFT) {
         ed->ui.mouse_down = false;
+        viewport_state_t *fvp = scene_focused_vp(ed);
 
         /* End box select: project entities to screen, select those inside. */
-        if (ed->box_selecting) {
-            ed->box_selecting = false;
+        if (fvp->box_selecting) {
+            fvp->box_selecting = false;
             finish_box_select_(ed);
             return true;
         }
 
         /* End gizmo drag (including free-move): send server commands. */
-        if (ed->gizmo.dragging) {
-            send_gizmo_commands(ed, ed->gizmo_drag_accum);
-            ed->gizmo.dragging = false;
-            ed->gizmo.active_axis = GIZMO_AXIS_NONE;
-            ed->free_dragging = false;
+        if (fvp->gizmo.dragging) {
+            send_gizmo_commands(ed, fvp->gizmo_drag_accum);
+            fvp->gizmo.dragging = false;
+            fvp->gizmo.active_axis = GIZMO_AXIS_NONE;
+            fvp->free_dragging = false;
+            return true;
+        }
+
+        /* End BSP divider drag. */
+        if (ed->dragging_bsp_node >= 0) {
+            ed->dragging_bsp_node = -1;
             return true;
         }
 
@@ -637,60 +684,85 @@ static bool handle_mouse_motion(scene_editor_t *ed,
     ed->ui.mouse_x = (float)ev->x;
     ed->ui.mouse_y = (float)ev->y;
 
+    viewport_state_t *fvp = scene_focused_vp(ed);
+
+    /* BSP divider drag: adjust split ratio of the dragged node. */
+    if (ed->dragging_bsp_node >= 0) {
+        viewport_bsp_node_t *node =
+            &ed->vp_bsp.nodes[ed->dragging_bsp_node];
+        /* Determine total size along the split axis. */
+        panel_rect_t vp_panel = panel_layout_get_rect(&ed->layout,
+                                                       PANEL_VIEWPORT);
+        int total_size = (node->split == SPLIT_VERTICAL)
+                         ? vp_panel.w : vp_panel.h;
+        /* Scale physical pixel delta to logical pixels. */
+        float sc = ed->clay_be.ui_scale;
+        if (sc < 1.0f) sc = 1.0f;
+        int raw_delta = (node->split == SPLIT_HORIZONTAL)
+                        ? ev->yrel : ev->xrel;
+        int delta = (int)((float)raw_delta / sc);
+        viewport_bsp_drag_divider(&ed->vp_bsp,
+                                   (uint8_t)ed->dragging_bsp_node,
+                                   delta, total_size);
+        return true;
+    }
+
     /* Gizmo drag: convert pixel delta to constrained world delta. */
-    if (ed->gizmo.dragging) {
+    if (fvp->gizmo.dragging) {
         vec3_t delta = {0, 0, 0};
 
         /* Free-move: translate on the camera-facing plane. */
-        if (ed->free_dragging) {
+        if (fvp->free_dragging) {
             mat4_t view;
-            editor_camera_view_matrix(&ed->viewport.camera, &view);
+            editor_camera_view_matrix(&fvp->camera, &view);
 
             /* Camera right = row 0 of view, camera up = row 1 of view.
              * View matrix rows are: right, up, -forward (column-major). */
             vec3_t cam_right = {view.m[0], view.m[4], view.m[8]};
             vec3_t cam_up    = {view.m[1], view.m[5], view.m[9]};
 
-            vec3_t eye = editor_camera_eye_position(&ed->viewport.camera);
+            vec3_t eye = editor_camera_eye_position(&fvp->camera);
             float cam_dist = viewport_gizmo_screen_scale(
-                &ed->gizmo.position, &eye);
+                &fvp->gizmo.position, &eye);
             float speed = cam_dist * GIZMO_DRAG_SPEED;
 
-            /* Mouse X → camera right, mouse Y (inverted) → camera up. */
+            /* Mouse X → camera right, mouse Y → camera up.
+             * FBO is displayed Y-flipped by Clay, so SDL's downward-positive
+             * Y already matches the visual direction — no negation. */
             float mx = (float)ev->xrel * speed;
-            float my = -(float)ev->yrel * speed;
+            float my = (float)ev->yrel * speed;
             delta.x = cam_right.x * mx + cam_up.x * my;
             delta.y = cam_right.y * mx + cam_up.y * my;
             delta.z = cam_right.z * mx + cam_up.z * my;
 
             apply_gizmo_drag(ed, delta);
-            ed->gizmo_drag_accum.x += delta.x;
-            ed->gizmo_drag_accum.y += delta.y;
-            ed->gizmo_drag_accum.z += delta.z;
+            fvp->gizmo_drag_accum.x += delta.x;
+            fvp->gizmo_drag_accum.y += delta.y;
+            fvp->gizmo_drag_accum.z += delta.z;
             return true;
         }
 
         /* Get the oriented axis direction from the gizmo orientation.
          * Column 0=X, 1=Y, 2=Z of the orientation matrix. */
         int axis_col = -1;
-        switch (ed->gizmo.active_axis) {
+        switch (fvp->gizmo.active_axis) {
         case GIZMO_AXIS_X: axis_col = 0; break;
         case GIZMO_AXIS_Y: axis_col = 1; break;
         case GIZMO_AXIS_Z: axis_col = 2; break;
         default: break;
         }
 
-        if (ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+        if (fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
             /* Project the rotation axis onto screen space to determine
              * which mouse direction maps to positive rotation.
              * This keeps rotation intuitive regardless of camera angle. */
             mat4_t view;
-            editor_camera_view_matrix(&ed->viewport.camera, &view);
+            editor_camera_view_matrix(&fvp->camera, &view);
 
             /* Get oriented axis direction from gizmo basis. */
             vec3_t axis_dir = {0, 0, 0};
             if (axis_col >= 0) {
-                const mat4_t *o = &ed->gizmo.orientation;
+                const mat4_t *o = &fvp->gizmo.orientation;
                 axis_dir.x = o->m[axis_col * 4 + 0];
                 axis_dir.y = o->m[axis_col * 4 + 1];
                 axis_dir.z = o->m[axis_col * 4 + 2];
@@ -720,7 +792,7 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             }
 
             /* Rotation delta is always in world euler angles. */
-            switch (ed->gizmo.active_axis) {
+            switch (fvp->gizmo.active_axis) {
             case GIZMO_AXIS_X: delta.x = rot_amount; break;
             case GIZMO_AXIS_Y: delta.y = rot_amount; break;
             case GIZMO_AXIS_Z: delta.z = rot_amount; break;
@@ -730,11 +802,11 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             /* Translate/Scale: project mouse motion along the
              * oriented axis direction in screen space. */
             mat4_t view;
-            editor_camera_view_matrix(&ed->viewport.camera, &view);
+            editor_camera_view_matrix(&fvp->camera, &view);
 
             vec3_t axis_dir = {0, 0, 0};
             if (axis_col >= 0) {
-                const mat4_t *o = &ed->gizmo.orientation;
+                const mat4_t *o = &fvp->gizmo.orientation;
                 axis_dir.x = o->m[axis_col * 4 + 0];
                 axis_dir.y = o->m[axis_col * 4 + 1];
                 axis_dir.z = o->m[axis_col * 4 + 2];
@@ -749,13 +821,15 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             if (slen > 1e-6f) { sx /= slen; sy /= slen; }
 
             /* Dot mouse delta with screen-space axis direction.
-             * Y is inverted (screen Y increases downward). */
+             * The FBO is displayed Y-flipped by Clay's ortho projection
+             * (screen top = FBO bottom), so SDL's downward-positive Y
+             * already matches the visual direction — no negation needed. */
             float mouse_proj = (float)ev->xrel * sx
-                              - (float)ev->yrel * sy;
+                              + (float)ev->yrel * sy;
 
-            vec3_t eye = editor_camera_eye_position(&ed->viewport.camera);
+            vec3_t eye = editor_camera_eye_position(&fvp->camera);
             float cam_dist = viewport_gizmo_screen_scale(
-                &ed->gizmo.position, &eye);
+                &fvp->gizmo.position, &eye);
             float speed = cam_dist * GIZMO_DRAG_SPEED;
 
             /* Apply along the world-space axis direction. */
@@ -765,9 +839,9 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         }
 
         apply_gizmo_drag(ed, delta);
-        ed->gizmo_drag_accum.x += delta.x;
-        ed->gizmo_drag_accum.y += delta.y;
-        ed->gizmo_drag_accum.z += delta.z;
+        fvp->gizmo_drag_accum.x += delta.x;
+        fvp->gizmo_drag_accum.y += delta.y;
+        fvp->gizmo_drag_accum.z += delta.z;
         return true;
     }
 
@@ -776,12 +850,12 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         SDL_Keymod mod = SDL_GetModState();
         if (mod & KMOD_SHIFT) {
             /* Shift+drag: pan. */
-            editor_camera_pan(&ed->viewport.camera,
+            editor_camera_pan(&fvp->camera,
                                -(float)ev->xrel * CAMERA_PAN_SPEED,
                                (float)ev->yrel * CAMERA_PAN_SPEED);
         } else {
             /* Drag: orbit. */
-            editor_camera_orbit(&ed->viewport.camera,
+            editor_camera_orbit(&fvp->camera,
                                  -(float)ev->xrel * CAMERA_ORBIT_SPEED,
                                  -(float)ev->yrel * CAMERA_ORBIT_SPEED);
         }
@@ -1106,33 +1180,90 @@ static bool handle_text_input(scene_editor_t *ed, const char *text) {
  */
 static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     SDL_Keycode key = ev->keysym.sym;
+    viewport_state_t *fvp = scene_focused_vp(ed);
 
     /* If TUI is active, route keys to TUI input handler first. */
     if (ed->ui.tui_active) {
         return handle_tui_key(ed, ev);
     }
 
+    /* Alt+Arrow: split focused viewport in the BSP tree.
+     * Alt+Number: focus viewport by display number (1-9). */
+    if (ev->keysym.mod & KMOD_ALT) {
+        /* Alt+1..9: switch focus to viewport by display number. */
+        if (key >= SDLK_1 && key <= SDLK_9) {
+            int target_num = key - SDLK_1 + 1;
+            int count = 0;
+            for (int i = 0; i < VIEWPORT_MAX_COUNT; i++) {
+                if (!ed->viewports[i].active) continue;
+                if (ed->viewports[i].rect.w <= 0) continue;
+                count++;
+                if (count == target_num) {
+                    if ((uint8_t)i != ed->vp_bsp.focused_viewport) {
+                        ed->prev_focused_vp = ed->vp_bsp.focused_viewport;
+                    }
+                    ed->vp_bsp.focused_viewport = (uint8_t)i;
+                    break;
+                }
+            }
+            return true;
+        }
+
+        viewport_split_dir_t split_dir = SPLIT_NONE;
+        bool original_first = true;
+        switch (key) {
+        case SDLK_LEFT:
+            split_dir = SPLIT_VERTICAL;
+            original_first = true;
+            break;
+        case SDLK_RIGHT:
+            split_dir = SPLIT_VERTICAL;
+            original_first = false;
+            break;
+        case SDLK_UP:
+            split_dir = SPLIT_HORIZONTAL;
+            original_first = true;
+            break;
+        case SDLK_DOWN:
+            split_dir = SPLIT_HORIZONTAL;
+            original_first = false;
+            break;
+        default:
+            break;
+        }
+        if (split_dir != SPLIT_NONE) {
+            uint8_t new_vp;
+            if (viewport_bsp_split(&ed->vp_bsp,
+                                    ed->vp_bsp.focused_viewport,
+                                    split_dir, original_first, &new_vp)) {
+                viewport_state_init(&ed->viewports[new_vp]);
+                viewport_state_copy_camera(&ed->viewports[new_vp], fvp);
+            }
+            return true;
+        }
+    }
+
     /* Gizmo nudge: arrow keys apply exact rotation steps when an axis
      * is active (either during drag or after selecting an axis). */
-    if (ed->gizmo.active_axis != GIZMO_AXIS_NONE &&
-        ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+    if (fvp->gizmo.active_axis != GIZMO_AXIS_NONE &&
+        fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
         float step_deg = 0.0f;
         if (key == SDLK_UP)   step_deg =  45.0f;
         if (key == SDLK_DOWN) step_deg = -45.0f;
         if (step_deg != 0.0f) {
             vec3_t delta = {0, 0, 0};
-            switch (ed->gizmo.active_axis) {
+            switch (fvp->gizmo.active_axis) {
             case GIZMO_AXIS_X: delta.x = step_deg; break;
             case GIZMO_AXIS_Y: delta.y = step_deg; break;
             case GIZMO_AXIS_Z: delta.z = step_deg; break;
             default: break;
             }
             apply_gizmo_drag(ed, delta);
-            ed->gizmo_drag_accum.x += delta.x;
-            ed->gizmo_drag_accum.y += delta.y;
-            ed->gizmo_drag_accum.z += delta.z;
+            fvp->gizmo_drag_accum.x += delta.x;
+            fvp->gizmo_drag_accum.y += delta.y;
+            fvp->gizmo_drag_accum.z += delta.z;
             /* If not mid-drag, send command immediately. */
-            if (!ed->gizmo.dragging) {
+            if (!fvp->gizmo.dragging) {
                 send_gizmo_commands(ed, delta);
             }
             return true;
@@ -1230,10 +1361,41 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         /* Activate TUI input when TUI receives focus. */
         ed->ui.tui_active = (ed->layout.focus == PANEL_TUI);
         return true;
-    case SDLK_ESCAPE:
+    case SDLK_ESCAPE: {
+        /* Close the focused viewport if multiple exist.
+         * The last remaining viewport cannot be closed. */
+        uint8_t fvp_idx = ed->vp_bsp.focused_viewport;
+        if (ed->vp_bsp.viewport_count > 1) {
+            if (viewport_bsp_close(&ed->vp_bsp, fvp_idx)) {
+                viewport_state_t *cvs = &ed->viewports[fvp_idx];
+                /* Viewport 0 shares the renderer's FBO — only delete
+                 * FBO resources for viewports that own their own. */
+                if (fvp_idx != 0 && cvs->fbo_valid) {
+                    viewport_render_state_t *rend = &ed->viewport;
+                    rend->glDeleteFramebuffers(1, &cvs->fbo);
+                    rend->glDeleteTextures(1, &cvs->color_tex);
+                    rend->glDeleteRenderbuffers(1, &cvs->depth_rbo);
+                }
+                viewport_state_init(cvs);
+                cvs->active = false;
+            }
+            return true;
+        }
         ed->ui.tui_active = false;
         panel_layout_focus_viewport(&ed->layout);
         return true;
+    }
+
+    /* '^': swap focused viewport with previously focused. */
+    case SDLK_CARET: {
+        uint8_t prev = ed->prev_focused_vp;
+        if (prev != ed->vp_bsp.focused_viewport &&
+            ed->viewports[prev].active) {
+            ed->prev_focused_vp = ed->vp_bsp.focused_viewport;
+            ed->vp_bsp.focused_viewport = prev;
+        }
+        return true;
+    }
 
     /* ':' activates TUI command input (vim-style). */
     case SDLK_SEMICOLON:
@@ -1266,21 +1428,21 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
 
     /* Transform mode shortcuts (toggle: pressing same key disables gizmo). */
     case SDLK_g:
-        if (ed->gizmo.mode == GIZMO_MODE_TRANSLATE) {
+        if (fvp->gizmo.mode == GIZMO_MODE_TRANSLATE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
             ed->ui.action = UI_ACTION_MODE_TRANSLATE;
         }
         return true;
     case SDLK_r:
-        if (ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+        if (fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
             ed->ui.action = UI_ACTION_MODE_ROTATE;
         }
         return true;
     case SDLK_s:
-        if (ed->gizmo.mode == GIZMO_MODE_SCALE) {
+        if (fvp->gizmo.mode == GIZMO_MODE_SCALE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
             ed->ui.action = UI_ACTION_MODE_SCALE;
@@ -1289,10 +1451,10 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
 
     /* Cycle transform basis: World → Local → View → Cursor. */
     case SDLK_COMMA: {
-        ed->gizmo.basis = transform_basis_next(ed->gizmo.basis);
+        fvp->gizmo.basis = transform_basis_next(fvp->gizmo.basis);
         char msg[64];
         snprintf(msg, sizeof(msg), "Basis: %s",
-                 transform_basis_name(ed->gizmo.basis));
+                 transform_basis_name(fvp->gizmo.basis));
         scene_ui_tui_log(&ed->ui, msg);
         return true;
     }
@@ -1300,10 +1462,10 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     /* Keyboard zoom: +/- (also = for unshifted plus). */
     case SDLK_PLUS:
     case SDLK_EQUALS:
-        editor_camera_zoom(&ed->viewport.camera, -CAMERA_ZOOM_SPEED);
+        editor_camera_zoom(&fvp->camera, -CAMERA_ZOOM_SPEED);
         return true;
     case SDLK_MINUS:
-        editor_camera_zoom(&ed->viewport.camera, CAMERA_ZOOM_SPEED);
+        editor_camera_zoom(&fvp->camera, CAMERA_ZOOM_SPEED);
         return true;
 
     case SDLK_a:
@@ -1312,49 +1474,49 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     /* Snap view shortcuts (number row keys). */
     case SDLK_1:
         if (ev->keysym.mod & KMOD_CTRL) {
-            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_BACK);
+            editor_camera_snap_view(&fvp->camera, EDITOR_VIEW_BACK);
         } else {
-            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_FRONT);
+            editor_camera_snap_view(&fvp->camera, EDITOR_VIEW_FRONT);
         }
         return true;
     case SDLK_3:
         if (ev->keysym.mod & KMOD_CTRL) {
-            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_LEFT);
+            editor_camera_snap_view(&fvp->camera, EDITOR_VIEW_LEFT);
         } else {
-            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_RIGHT);
+            editor_camera_snap_view(&fvp->camera, EDITOR_VIEW_RIGHT);
         }
         return true;
     case SDLK_7:
         if (ev->keysym.mod & KMOD_CTRL) {
-            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_BOTTOM);
+            editor_camera_snap_view(&fvp->camera, EDITOR_VIEW_BOTTOM);
         } else {
-            editor_camera_snap_view(&ed->viewport.camera, EDITOR_VIEW_TOP);
+            editor_camera_snap_view(&fvp->camera, EDITOR_VIEW_TOP);
         }
         return true;
     case SDLK_5:
-        editor_camera_toggle_projection(&ed->viewport.camera);
+        editor_camera_toggle_projection(&fvp->camera);
         return true;
 
     /* Incremental orbit (15-degree steps). */
     case SDLK_8:
-        editor_camera_orbit(&ed->viewport.camera,
+        editor_camera_orbit(&fvp->camera,
                              0.0f, 15.0f * INPUT_DEG_TO_RAD);
         return true;
     case SDLK_2:
-        editor_camera_orbit(&ed->viewport.camera,
+        editor_camera_orbit(&fvp->camera,
                              0.0f, -15.0f * INPUT_DEG_TO_RAD);
         return true;
     case SDLK_4:
-        editor_camera_orbit(&ed->viewport.camera,
+        editor_camera_orbit(&fvp->camera,
                              -15.0f * INPUT_DEG_TO_RAD, 0.0f);
         return true;
     case SDLK_6:
-        editor_camera_orbit(&ed->viewport.camera,
+        editor_camera_orbit(&fvp->camera,
                              15.0f * INPUT_DEG_TO_RAD, 0.0f);
         return true;
     case SDLK_9:
         /* Flip view 180° around yaw. */
-        editor_camera_orbit(&ed->viewport.camera,
+        editor_camera_orbit(&fvp->camera,
                              180.0f * INPUT_DEG_TO_RAD, 0.0f);
         return true;
     case SDLK_f:
@@ -1379,7 +1541,7 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
                 if (ent->pos[1] + hy > aabb_max.y) aabb_max.y = ent->pos[1] + hy;
                 if (ent->pos[2] + hz > aabb_max.z) aabb_max.z = ent->pos[2] + hz;
             }
-            editor_camera_frame_selection(&ed->viewport.camera,
+            editor_camera_frame_selection(&fvp->camera,
                                            aabb_min, aabb_max);
         }
         return true;
@@ -1427,7 +1589,8 @@ bool scene_input_process(struct scene_editor *ed, const union SDL_Event *event) 
         int ly = (int)(ed->ui.mouse_y / sc);
         panel_id_t hover_panel = panel_layout_hit_test(&ed->layout, lx, ly);
         if (hover_panel == PANEL_VIEWPORT) {
-            editor_camera_zoom(&ed->viewport.camera,
+            viewport_state_t *fvp = scene_focused_vp(ed);
+            editor_camera_zoom(&fvp->camera,
                                 -(float)event->wheel.y * CAMERA_ZOOM_SPEED);
         } else if (hover_panel == PANEL_TUI) {
             /* Scroll TUI log: wheel up = scroll back, wheel down = toward newest. */

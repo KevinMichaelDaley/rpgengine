@@ -31,6 +31,8 @@ extern "C" {
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/ui/clay_backend.h"
 #include "ferrum/math/vec3.h"
@@ -88,22 +90,16 @@ typedef struct scene_editor {
     edit_selection_t    selection; /**< Selected entity set. */
     uint32_t            active_object_id; /**< Active object for local basis (INVALID=none). */
 
-    /* 3D viewport renderer. */
-    viewport_render_state_t viewport; /**< FBO, shaders, meshes, camera. */
+    /* 3D viewport renderer (shared resources: shaders, meshes, pipeline). */
+    viewport_render_state_t viewport; /**< Shared shaders, meshes, GL fns. */
 
-    /* 3D cursor (world-space crosshair). */
-    vec3_t cursor_3d;               /**< 3D cursor world position. */
+    /* Multi-viewport BSP tiling. */
+    viewport_bsp_t         vp_bsp;    /**< BSP tree for viewport layout. */
+    viewport_state_t       viewports[VIEWPORT_MAX_COUNT]; /**< Per-viewport state. */
 
-    /* Transform gizmo state. */
-    gizmo_state_t gizmo;            /**< Gizmo mode, axis, drag state. */
-    vec3_t gizmo_drag_origin;       /**< World pos where gizmo drag started. */
-    vec3_t gizmo_drag_accum;        /**< Accumulated drag delta this drag. */
-
-    /* Viewport interaction state. */
-    bool box_selecting;             /**< True during box select drag. */
-    float box_select_start_x;      /**< Logical X at box select start. */
-    float box_select_start_y;      /**< Logical Y at box select start. */
-    bool free_dragging;            /**< True during camera-plane free move. */
+    /* BSP divider drag state. */
+    int8_t                 dragging_bsp_node; /**< BSP node being dragged (-1 = none). */
+    uint8_t                prev_focused_vp;   /**< Previously focused viewport (for ^ swap). */
 
     /* Interactive UI state. */
     scene_ui_state_t   ui;         /**< UI actions, scroll, mouse. */
@@ -157,6 +153,17 @@ void scene_editor_run(scene_editor_t *ed);
  * @param ed  Editor context (must be initialized).
  */
 void scene_editor_frame(scene_editor_t *ed);
+
+/* ---- Viewport helpers ---- */
+
+/**
+ * @brief Get the focused viewport state.
+ * @param ed  Editor context (non-NULL).
+ * @return Pointer to the focused viewport's state.
+ */
+static inline viewport_state_t *scene_focused_vp(scene_editor_t *ed) {
+    return &ed->viewports[ed->vp_bsp.focused_viewport];
+}
 
 #ifdef __cplusplus
 }

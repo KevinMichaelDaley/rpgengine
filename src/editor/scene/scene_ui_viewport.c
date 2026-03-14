@@ -1,12 +1,10 @@
 /**
  * @file scene_ui_viewport.c
- * @brief Viewport panel Clay UI layout: display 3D FBO texture.
+ * @brief Viewport panel Clay UI layout: display 3D FBO textures.
  *
- * Displays the viewport FBO's color texture as a Clay IMAGE element
- * covering the panel rectangle. The 3D scene is rendered into the
- * FBO by scene_viewport_draw.c before Clay layout runs.
- *
- * Also shows a title bar overlay and entity count.
+ * Iterates all active BSP leaf viewports and creates a floating
+ * Clay container for each, displaying its FBO color texture.
+ * The focused viewport shows a title bar overlay and mode toolbar.
  *
  * Non-static functions (1 / 4 limit):
  *   scene_ui_build_viewport
@@ -16,6 +14,8 @@
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
@@ -26,16 +26,6 @@
 
 /* ---- Constants ---- */
 
-/** Title bar background: normal (unfocused). */
-static const Clay_Color COLOR_TITLE_BG = {
-    THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 60
-};
-
-/** Title bar background: focused (brighter). */
-static const Clay_Color COLOR_TITLE_BG_FOCUSED = {
-    THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 140
-};
-
 /** Button background color (slightly lighter than panel). */
 static const Clay_Color COLOR_BTN_BG = {50, 52, 58, 255};
 
@@ -45,87 +35,94 @@ static const Clay_Color COLOR_SELECTION_BG = {
     THEME_SELECTION_B, THEME_SELECTION_A
 };
 
-/** Static buffer for viewport status text. */
-#define VP_STATUS_BUF_SIZE 128
-static char s_vp_status[VP_STATUS_BUF_SIZE];
+/** Per-viewport number label buffers (Clay defers rendering, so each
+ *  viewport needs its own buffer to avoid overwriting). */
+static char s_vp_num[VIEWPORT_MAX_COUNT][4];
 
 /** Static buffer for basis label. */
 static char s_basis_label[32];
 
-/* ---- Public API ---- */
+/* ---- Internal: build a single viewport panel ---- */
 
-void scene_ui_build_viewport(struct scene_editor *ed,
-                              const struct panel_rect *rect) {
-    if (!ed || !rect || rect->w <= 0 || rect->h <= 0) {
-        return;
-    }
+/**
+ * @brief Build the Clay UI for a single viewport leaf.
+ *
+ * @param ed        Editor context.
+ * @param vs        Viewport state for this leaf.
+ * @param vp_index      Viewport slot index (0-15) for unique Clay IDs.
+ * @param display_num   Sequential display number (1-N) for title text.
+ * @param is_focused    Whether this is the focused viewport.
+ */
+static void build_single_viewport(struct scene_editor *ed,
+                                  viewport_state_t *vs,
+                                  int vp_index,
+                                  int display_num,
+                                  bool is_focused) {
+    panel_rect_t *r = &vs->rect;
+    if (r->w <= 0 || r->h <= 0) return;
 
-    float panel_w = (float)rect->w;
-    float panel_h = (float)rect->h;
+    float vw = (float)r->w;
+    float vh = (float)r->h;
 
-    /* Get the FBO color texture handle for display. */
-    uint32_t tex = viewport_render_get_texture(&ed->viewport);
+    /* Get this viewport's FBO texture handle. */
+    uint32_t tex = vs->color_tex;
 
-    /* Format status text. */
-    snprintf(s_vp_status, sizeof(s_vp_status),
-             "Viewport  Entities: %u", ed->entities.active_count);
-
-    /* Root floating container positioned at the panel rectangle. */
-    CLAY(CLAY_ID("Viewport_Root"), {
+    CLAY(CLAY_IDI("VP_Root", vp_index), {
         .layout = {
-            .sizing = {CLAY_SIZING_FIXED(panel_w),
-                       CLAY_SIZING_FIXED(panel_h)},
+            .sizing = {CLAY_SIZING_FIXED(vw), CLAY_SIZING_FIXED(vh)},
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
         .floating = {
             .attachTo = CLAY_ATTACH_TO_ROOT,
-            .offset = {(float)rect->x, (float)rect->y},
+            .offset = {(float)r->x, (float)r->y},
         },
-        /* Display the FBO texture as the viewport background.
-         * imageData points to the GL texture handle (uint32_t). */
         .image = {
-            .imageData = tex > 0 ? &ed->viewport.color_tex : NULL,
+            .imageData = tex > 0 ? &vs->color_tex : NULL,
         },
         .backgroundColor = tex == 0
             ? (Clay_Color){THEME_BG_VIEWPORT_R, THEME_BG_VIEWPORT_G,
                             THEME_BG_VIEWPORT_B, THEME_BG_VIEWPORT_A}
             : (Clay_Color){0, 0, 0, 0},
     }) {
-        /* ---- Title bar overlay ---- */
-        bool vp_focused = (ed->layout.focus == PANEL_VIEWPORT);
-        CLAY(CLAY_ID("Viewport_Title"), {
+        /* ---- Small viewport number in top-left corner ---- */
+        snprintf(s_vp_num[vp_index], sizeof(s_vp_num[vp_index]),
+                 "%d", display_num);
+
+        CLAY(CLAY_IDI("VP_Num", vp_index), {
             .layout = {
-                .sizing = {CLAY_SIZING_GROW(0),
-                           CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
-                .padding = {THEME_PADDING_SMALL, THEME_PADDING_SMALL, 0, 0},
-                .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
+                .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0)},
+                .padding = {3, 3, 1, 1},
             },
-            .backgroundColor = vp_focused ? COLOR_TITLE_BG_FOCUSED
-                                          : COLOR_TITLE_BG,
         }) {
-            Clay_String status_str = {
-                .length = (int32_t)strlen(s_vp_status),
-                .chars = s_vp_status,
+            Clay_String num_str = {
+                .length = (int32_t)strlen(s_vp_num[vp_index]),
+                .chars = s_vp_num[vp_index],
             };
-            Clay__OpenTextElement(status_str,
+            Clay__OpenTextElement(num_str,
                 CLAY_TEXT_CONFIG({
                     .fontSize = THEME_FONT_SIZE_UI,
-                    .textColor = {THEME_TEXT_R, THEME_TEXT_G,
-                                  THEME_TEXT_B, THEME_TEXT_A},
+                    .textColor = is_focused
+                        ? (Clay_Color){THEME_TEXT_R, THEME_TEXT_G,
+                                       THEME_TEXT_B, 200}
+                        : (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                       THEME_TEXT_DIM_B, 120},
                     .fontId = CLAY_FONT_UI,
                 }));
         }
 
-        /* ---- Mode toolbar overlay (far left, below title) ---- */
-        {
-            Clay_Color translate_bg = (ed->ui.transform_mode == UI_MODE_TRANSLATE)
-                                        ? COLOR_SELECTION_BG : COLOR_BTN_BG;
-            Clay_Color rotate_bg = (ed->ui.transform_mode == UI_MODE_ROTATE)
-                                     ? COLOR_SELECTION_BG : COLOR_BTN_BG;
-            Clay_Color scale_bg = (ed->ui.transform_mode == UI_MODE_SCALE)
-                                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
+        /* ---- Mode toolbar (only on focused viewport) ---- */
+        if (is_focused) {
+            Clay_Color translate_bg =
+                (ed->ui.transform_mode == UI_MODE_TRANSLATE)
+                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
+            Clay_Color rotate_bg =
+                (ed->ui.transform_mode == UI_MODE_ROTATE)
+                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
+            Clay_Color scale_bg =
+                (ed->ui.transform_mode == UI_MODE_SCALE)
+                    ? COLOR_SELECTION_BG : COLOR_BTN_BG;
 
-            CLAY(CLAY_ID("VP_ModeBar"), {
+            CLAY(CLAY_IDI("VP_ModeBar", vp_index), {
                 .layout = {
                     .sizing = {CLAY_SIZING_FIT(0),
                                CLAY_SIZING_FIXED(THEME_ROW_HEIGHT + THEME_PADDING)},
@@ -146,7 +143,7 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                         .fontId = CLAY_FONT_UI,
                     }));
 
-                CLAY(CLAY_ID("VP_BtnTranslate"), {
+                CLAY(CLAY_IDI("VP_BtnTranslate", vp_index), {
                     .layout = {
                         .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
                         .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
@@ -162,7 +159,7 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                         }));
                 }
 
-                CLAY(CLAY_ID("VP_BtnRotate"), {
+                CLAY(CLAY_IDI("VP_BtnRotate", vp_index), {
                     .layout = {
                         .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
                         .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
@@ -178,7 +175,7 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                         }));
                 }
 
-                CLAY(CLAY_ID("VP_BtnScale"), {
+                CLAY(CLAY_IDI("VP_BtnScale", vp_index), {
                     .layout = {
                         .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
                         .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
@@ -195,7 +192,7 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                 }
 
                 /* Separator. */
-                CLAY(CLAY_ID("VP_BasisSep"), {
+                CLAY(CLAY_IDI("VP_BasisSep", vp_index), {
                     .layout = {
                         .sizing = {CLAY_SIZING_FIXED(1), CLAY_SIZING_FIXED(16)},
                     },
@@ -204,13 +201,14 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                 }) {}
 
                 /* Basis cycle button. */
+                viewport_state_t *fvp = scene_focused_vp(ed);
                 snprintf(s_basis_label, sizeof(s_basis_label), "%s(,)",
-                         transform_basis_name(ed->gizmo.basis));
+                         transform_basis_name(fvp->gizmo.basis));
                 Clay_String basis_str = {
                     .length = (int32_t)strlen(s_basis_label),
                     .chars = s_basis_label,
                 };
-                CLAY(CLAY_ID("VP_BtnBasis"), {
+                CLAY(CLAY_IDI("VP_BtnBasis", vp_index), {
                     .layout = {
                         .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
                         .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
@@ -230,7 +228,7 @@ void scene_ui_build_viewport(struct scene_editor *ed,
 
         /* ---- Empty scene message (only when no entities and no FBO) ---- */
         if (ed->entities.active_count == 0 && tex == 0) {
-            CLAY(CLAY_ID("Viewport_Empty"), {
+            CLAY(CLAY_IDI("VP_Empty", vp_index), {
                 .layout = {
                     .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
                     .childAlignment = {
@@ -248,5 +246,29 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                     }));
             }
         }
+    }
+}
+
+/* ---- Public API ---- */
+
+void scene_ui_build_viewport(struct scene_editor *ed,
+                              const struct panel_rect *rect) {
+    if (!ed || !rect || rect->w <= 0 || rect->h <= 0) {
+        return;
+    }
+
+    /* Iterate all active BSP leaf viewports and build their Clay UI.
+     * display_num counts sequentially (1, 2, 3, ...) for the title text. */
+    uint8_t focused_vp = ed->vp_bsp.focused_viewport;
+    int display_num = 0;
+    for (int i = 0; i < VIEWPORT_MAX_COUNT; i++) {
+        if (!ed->viewports[i].active) continue;
+        if (ed->viewports[i].rect.w <= 0 || ed->viewports[i].rect.h <= 0)
+            continue;
+
+        display_num++;
+        bool is_focused = ((uint8_t)i == focused_vp);
+        build_single_viewport(ed, &ed->viewports[i], i, display_num,
+                              is_focused);
     }
 }

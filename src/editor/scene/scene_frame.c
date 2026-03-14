@@ -478,16 +478,16 @@ static void dispatch_tui_command(scene_editor_t *ed)
         while (*rest == ' ') rest++;
         if (*rest == '\0') {
             /* No argument: cycle to next basis. */
-            ed->gizmo.basis = transform_basis_next(ed->gizmo.basis);
+            scene_focused_vp(ed)->gizmo.basis = transform_basis_next(scene_focused_vp(ed)->gizmo.basis);
         } else if (strcmp(rest, "world") == 0) {
-            ed->gizmo.basis = TRANSFORM_BASIS_WORLD;
+            scene_focused_vp(ed)->gizmo.basis = TRANSFORM_BASIS_WORLD;
         } else if (strcmp(rest, "local") == 0) {
-            ed->gizmo.basis = TRANSFORM_BASIS_LOCAL;
+            scene_focused_vp(ed)->gizmo.basis = TRANSFORM_BASIS_LOCAL;
         } else if (strcmp(rest, "view") == 0) {
-            ed->gizmo.basis = TRANSFORM_BASIS_VIEW;
+            scene_focused_vp(ed)->gizmo.basis = TRANSFORM_BASIS_VIEW;
         } else if (strncmp(rest, "@cursor", 7) == 0 ||
                    strcmp(rest, "cursor") == 0) {
-            ed->gizmo.basis = TRANSFORM_BASIS_CURSOR;
+            scene_focused_vp(ed)->gizmo.basis = TRANSFORM_BASIS_CURSOR;
         } else {
             scene_ui_tui_log_error(&ed->ui,
                 "Usage: basis [world|local|view|@cursor]");
@@ -495,7 +495,7 @@ static void dispatch_tui_command(scene_editor_t *ed)
         }
         char msg[64];
         snprintf(msg, sizeof(msg), "Basis: %s",
-                 transform_basis_name(ed->gizmo.basis));
+                 transform_basis_name(scene_focused_vp(ed)->gizmo.basis));
         scene_ui_tui_log_success(&ed->ui, msg);
         return;
     }
@@ -923,22 +923,22 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
 
     case UI_ACTION_MODE_NONE:
         ed->ui.transform_mode = UI_MODE_NONE;
-        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_NONE);
+        gizmo_state_set_mode(&scene_focused_vp(ed)->gizmo, GIZMO_MODE_NONE);
         break;
 
     case UI_ACTION_MODE_TRANSLATE:
         ed->ui.transform_mode = UI_MODE_TRANSLATE;
-        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_TRANSLATE);
+        gizmo_state_set_mode(&scene_focused_vp(ed)->gizmo, GIZMO_MODE_TRANSLATE);
         break;
 
     case UI_ACTION_MODE_ROTATE:
         ed->ui.transform_mode = UI_MODE_ROTATE;
-        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_ROTATE);
+        gizmo_state_set_mode(&scene_focused_vp(ed)->gizmo, GIZMO_MODE_ROTATE);
         break;
 
     case UI_ACTION_MODE_SCALE:
         ed->ui.transform_mode = UI_MODE_SCALE;
-        gizmo_state_set_mode(&ed->gizmo, GIZMO_MODE_SCALE);
+        gizmo_state_set_mode(&scene_focused_vp(ed)->gizmo, GIZMO_MODE_SCALE);
         break;
 
     case UI_ACTION_TUI_COMMAND:

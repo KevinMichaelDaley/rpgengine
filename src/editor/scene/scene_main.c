@@ -413,7 +413,7 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
     /* Register the text measurement callback. */
     Clay_SetMeasureTextFunction(measure_text_callback, &ed->clay_be);
 
-    /* Initialize viewport 3D renderer. */
+    /* Initialize viewport 3D renderer (shared resources). */
     {
         viewport_render_config_t vp_cfg = {
             .initial_width  = ed->config.window_w,
@@ -425,6 +425,16 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
             /* Non-fatal: editor still usable without 3D rendering. */
         }
     }
+
+    /* Initialize BSP viewport tiling with a single viewport. */
+    viewport_bsp_init(&ed->vp_bsp);
+    for (int i = 0; i < VIEWPORT_MAX_COUNT; i++) {
+        viewport_state_init(&ed->viewports[i]);
+        ed->viewports[i].active = false;
+    }
+    ed->viewports[0].active = true;
+    ed->dragging_bsp_node = -1;
+    ed->prev_focused_vp = 0;
 
     /* Try to connect to editor server (non-fatal if it fails). */
     if (scene_connection_connect(&ed->connection)) {
@@ -451,6 +461,15 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
 
 void scene_editor_shutdown(scene_editor_t *ed) {
     if (!ed->initialized) return;
+
+    /* Destroy per-viewport FBOs (viewports[1+]; vp 0 uses shared FBO). */
+    for (int i = 1; i < VIEWPORT_MAX_COUNT; i++) {
+        if (ed->viewports[i].fbo_valid) {
+            glDeleteFramebuffers(1, &ed->viewports[i].fbo);
+            glDeleteTextures(1, &ed->viewports[i].color_tex);
+            glDeleteRenderbuffers(1, &ed->viewports[i].depth_rbo);
+        }
+    }
 
     viewport_render_destroy_primitives();
     viewport_render_destroy(&ed->viewport);
