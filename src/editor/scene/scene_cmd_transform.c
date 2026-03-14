@@ -72,9 +72,17 @@ int scene_cmd_format_move(char *buf, size_t cap, uint32_t id,
 }
 
 int scene_cmd_format_rotate(char *buf, size_t cap, uint32_t id,
-                            const float delta[3])
+                            const float quat[4])
 {
-    return format_vec3_cmd(buf, cap, id, "rotate", "delta", delta);
+    if (!buf || cap == 0 || !quat) return -1;
+    int n = snprintf(buf, cap,
+                     "{\"id\":%u,\"cmd\":\"rotate\",\"args\":"
+                     "{\"quat\":[%.8g,%.8g,%.8g,%.8g]}}\n",
+                     (unsigned)id,
+                     (double)quat[0], (double)quat[1],
+                     (double)quat[2], (double)quat[3]);
+    if (n < 0 || (size_t)n >= cap) return -1;
+    return n;
 }
 
 int scene_cmd_format_scale(char *buf, size_t cap, uint32_t id,

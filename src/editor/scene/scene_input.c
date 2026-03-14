@@ -52,35 +52,79 @@ static float viewport_gizmo_screen_scale(const vec3_t *gizmo_pos,
     float dy = gizmo_pos->y - eye_pos->y;
     float dz = gizmo_pos->z - eye_pos->z;
     float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-    return dist * 0.15f;
+    float scale = dist * 0.15f;
+    if (scale < 0.3f) scale = 0.3f;
+    return scale;
 }
 
 /** Degrees to radians. */
 static const float INPUT_DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
 
 /**
- * @brief Build an incremental rotation quaternion from an euler delta (degrees).
- *
- * Only one component of delta is typically non-zero (constrained to axis).
- * Uses YXZ order to match engine convention.
- */
-static quat_t build_delta_quat(vec3_t delta_deg) {
-    return quat_from_euler_yxz(
-        delta_deg.x * INPUT_DEG_TO_RAD,
-        delta_deg.y * INPUT_DEG_TO_RAD,
-        delta_deg.z * INPUT_DEG_TO_RAD);
-}
-
-/**
- * @brief Build a rotation matrix from an euler delta (degrees).
+ * @brief Build a rotation matrix from a quaternion.
  *
  * Used for cursor-pivot orbit position computation.
  */
-static mat4_t build_delta_rotation(vec3_t delta_deg) {
-    quat_t dq = build_delta_quat(delta_deg);
+static mat4_t build_rotation_from_quat(quat_t dq) {
     mat4_t m;
     quat_to_mat4(dq, &m);
     return m;
+}
+
+/**
+ * @brief Apply a rotation quaternion to all selected entities (optimistic).
+ *
+ * Composes the incremental quaternion with each entity's orientation.
+ * In cursor basis, also orbits entity positions around the 3D cursor pivot.
+ *
+ * @param ed  Scene editor (non-NULL).
+ * @param dq  Incremental rotation quaternion.
+ */
+static void apply_gizmo_rotate(scene_editor_t *ed, quat_t dq) {
+    viewport_state_t *fvp = scene_focused_vp(ed);
+    bool pivot_rotate = (fvp->gizmo.basis == TRANSFORM_BASIS_CURSOR);
+    mat4_t rot_mat;
+    vec3_t pivot;
+    if (pivot_rotate) {
+        rot_mat = build_rotation_from_quat(dq);
+        pivot = fvp->cursor_3d;
+    }
+
+    for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+        if (!edit_selection_contains(&ed->selection, i)) continue;
+        edit_entity_t *ent = edit_entity_store_get_mut(&ed->entities, i);
+        if (!ent) continue;
+
+        /* Compose quaternion rotation. */
+        ent->orientation = quat_normalize_safe(
+            quat_mul(dq, ent->orientation), 1e-8f);
+
+        /* Sync euler cache for display. */
+        quat_to_euler_yxz(ent->orientation,
+                           &ent->rot[0], &ent->rot[1], &ent->rot[2]);
+        {
+            float r2d = 180.0f / 3.14159265358979323846f;
+            ent->rot[0] *= r2d;
+            ent->rot[1] *= r2d;
+            ent->rot[2] *= r2d;
+        }
+
+        /* In cursor basis, also orbit position around the cursor. */
+        if (pivot_rotate) {
+            float ox = ent->pos[0] - pivot.x;
+            float oy = ent->pos[1] - pivot.y;
+            float oz = ent->pos[2] - pivot.z;
+            float nx = rot_mat.m[0] * ox + rot_mat.m[4] * oy
+                      + rot_mat.m[8]  * oz;
+            float ny = rot_mat.m[1] * ox + rot_mat.m[5] * oy
+                      + rot_mat.m[9]  * oz;
+            float nz = rot_mat.m[2] * ox + rot_mat.m[6] * oy
+                      + rot_mat.m[10] * oz;
+            ent->pos[0] = pivot.x + nx;
+            ent->pos[1] = pivot.y + ny;
+            ent->pos[2] = pivot.z + nz;
+        }
+    }
 }
 
 /**
@@ -88,75 +132,27 @@ static mat4_t build_delta_rotation(vec3_t delta_deg) {
  *
  * For translate: moves entities by delta.
  * For scale: scales entities by (1 + delta component).
- * For rotate: rotates entities by delta (degrees).
- *   In cursor basis, rotation orbits entities around the 3D cursor pivot.
+ * For rotate: use apply_gizmo_rotate() instead.
  */
 static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
-    viewport_state_t *fvp = scene_focused_vp(ed);
-    /* For cursor-basis rotation, precompute the rotation matrix and pivot. */
-    bool pivot_rotate = (fvp->gizmo.mode == GIZMO_MODE_ROTATE &&
-                          fvp->gizmo.basis == TRANSFORM_BASIS_CURSOR);
-    mat4_t rot_mat;
-    vec3_t pivot;
-    quat_t dq;
-    if (fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
-        dq = build_delta_quat(delta);
-    }
-    if (pivot_rotate) {
-        quat_to_mat4(dq, &rot_mat);
-        pivot = fvp->cursor_3d;
-    }
-
     for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
         if (!edit_selection_contains(&ed->selection, i)) continue;
-        edit_entity_t *ent = edit_entity_store_get_mut(
-            &ed->entities, i);
+        edit_entity_t *ent = edit_entity_store_get_mut(&ed->entities, i);
         if (!ent) continue;
 
+        viewport_state_t *fvp = scene_focused_vp(ed);
         switch (fvp->gizmo.mode) {
         case GIZMO_MODE_TRANSLATE:
             ent->pos[0] += delta.x;
             ent->pos[1] += delta.y;
             ent->pos[2] += delta.z;
             break;
-        case GIZMO_MODE_ROTATE:
-            /* Compose quaternion rotation (correct world-axis rotation). */
-            ent->orientation = quat_normalize_safe(
-                quat_mul(dq, ent->orientation), 1e-8f);
-
-            /* Sync euler cache for display. */
-            quat_to_euler_yxz(ent->orientation,
-                               &ent->rot[0], &ent->rot[1], &ent->rot[2]);
-            {
-                float r2d = 180.0f / 3.14159265358979323846f;
-                ent->rot[0] *= r2d;
-                ent->rot[1] *= r2d;
-                ent->rot[2] *= r2d;
-            }
-
-            /* In cursor basis, also orbit position around the cursor. */
-            if (pivot_rotate) {
-                /* Offset from pivot. */
-                float ox = ent->pos[0] - pivot.x;
-                float oy = ent->pos[1] - pivot.y;
-                float oz = ent->pos[2] - pivot.z;
-                /* Rotate offset by the delta rotation matrix.
-                 * mat4 is column-major: column c = m[c*4+r]. */
-                float nx = rot_mat.m[0] * ox + rot_mat.m[4] * oy
-                          + rot_mat.m[8]  * oz;
-                float ny = rot_mat.m[1] * ox + rot_mat.m[5] * oy
-                          + rot_mat.m[9]  * oz;
-                float nz = rot_mat.m[2] * ox + rot_mat.m[6] * oy
-                          + rot_mat.m[10] * oz;
-                ent->pos[0] = pivot.x + nx;
-                ent->pos[1] = pivot.y + ny;
-                ent->pos[2] = pivot.z + nz;
-            }
-            break;
         case GIZMO_MODE_SCALE:
             ent->scale[0] *= (1.0f + delta.x);
             ent->scale[1] *= (1.0f + delta.y);
             ent->scale[2] *= (1.0f + delta.z);
+            break;
+        default:
             break;
         }
     }
@@ -171,9 +167,9 @@ static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
  * for the position deltas.
  */
 static void send_pivot_move_commands(scene_editor_t *ed,
-                                       vec3_t total_rot_delta) {
+                                       quat_t total_rot_quat) {
     viewport_state_t *fvp = scene_focused_vp(ed);
-    mat4_t rot = build_delta_rotation(total_rot_delta);
+    mat4_t rot = build_rotation_from_quat(total_rot_quat);
     vec3_t pivot = fvp->cursor_3d;
 
     for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
@@ -236,9 +232,11 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
         break;
     }
     case GIZMO_MODE_ROTATE: {
-        float delta_arr[3] = {total_delta.x, total_delta.y, total_delta.z};
+        /* Send the accumulated rotation quaternion. */
+        quat_t rq = fvp->gizmo_rot_accum;
+        float q[4] = {rq.x, rq.y, rq.z, rq.w};
         cmd_len = scene_cmd_format_rotate(cmd_buf, sizeof(cmd_buf),
-                                           cmd_id, delta_arr);
+                                           cmd_id, q);
         break;
     }
     case GIZMO_MODE_SCALE: {
@@ -263,11 +261,17 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
                      (double)total_delta.x, (double)total_delta.y,
                      (double)total_delta.z);
             break;
-        case GIZMO_MODE_ROTATE:
+        case GIZMO_MODE_ROTATE: {
+            /* Convert accumulated quat to euler for display. */
+            quat_t rq = fvp->gizmo_rot_accum;
+            float rx, ry, rz;
+            quat_to_euler_yxz(rq, &rx, &ry, &rz);
+            float r2d = 180.0f / 3.14159265358979323846f;
             snprintf(echo, sizeof(echo), "rotate [%.2g,%.2g,%.2g]",
-                     (double)total_delta.x, (double)total_delta.y,
-                     (double)total_delta.z);
+                     (double)(rx * r2d), (double)(ry * r2d),
+                     (double)(rz * r2d));
             break;
+        }
         case GIZMO_MODE_SCALE:
             snprintf(echo, sizeof(echo), "scale [%.2g,%.2g,%.2g]",
                      (double)(1.0f + total_delta.x),
@@ -286,7 +290,7 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     /* For cursor-basis rotation, send per-entity position updates. */
     if (fvp->gizmo.mode == GIZMO_MODE_ROTATE &&
         fvp->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
-        send_pivot_move_commands(ed, total_delta);
+        send_pivot_move_commands(ed, fvp->gizmo_rot_accum);
     }
 }
 
@@ -459,6 +463,9 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
             }
             float nx = (float)(lx - vp_rect.x) / (float)vp_rect.w;
             float ny = (float)(ly - vp_rect.y) / (float)vp_rect.h;
+            /* Screen coords for 2D gizmo test (0,0 = top-left). */
+            float screen_nx = nx;
+            float screen_ny = ny;
             /* FBO is displayed Y-flipped by Clay's ortho projection,
              * so screen top = FBO bottom.  Flip ny so the ray matches
              * the visual scene rather than the raw FBO layout. */
@@ -476,13 +483,23 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                         &fvp->camera);
                     float gscale = viewport_gizmo_screen_scale(
                         &fvp->gizmo.position, &eye);
+                    /* Build VP matrix for screen-space ring test. */
+                    float aspect = (vp_rect.w > 0 && vp_rect.h > 0)
+                        ? (float)vp_rect.w / (float)vp_rect.h : 1.0f;
+                    mat4_t view_m, proj_m;
+                    editor_camera_view_matrix(&fvp->camera, &view_m);
+                    editor_camera_projection_matrix(&fvp->camera,
+                                                      aspect, &proj_m);
+                    mat4_t vp_m = mat4_mul(proj_m, view_m);
                     gizmo_axis_t axis = gizmo_hit_test(
-                        &fvp->gizmo, &ray, gscale);
+                        &fvp->gizmo, &ray, gscale,
+                        &vp_m, screen_nx, screen_ny);
                     if (axis != GIZMO_AXIS_NONE) {
                         fvp->gizmo.active_axis = axis;
                         fvp->gizmo.dragging = true;
                         fvp->gizmo_drag_origin = fvp->gizmo.position;
                         fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
+                        fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
                         gizmo_hit = true;
                     }
                 }
@@ -532,6 +549,7 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             fvp->free_dragging = true;
                             fvp->gizmo_drag_origin = fvp->gizmo.position;
                             fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
+                            fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
                         } else {
                             edit_selection_clear(&ed->selection);
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
@@ -796,13 +814,14 @@ static bool handle_mouse_motion(scene_editor_t *ed,
                 rot_amount = (float)ev->xrel * GIZMO_ROTATE_SPEED;
             }
 
-            /* Rotation delta is always in world euler angles. */
-            switch (fvp->gizmo.active_axis) {
-            case GIZMO_AXIS_X: delta.x = rot_amount; break;
-            case GIZMO_AXIS_Y: delta.y = rot_amount; break;
-            case GIZMO_AXIS_Z: delta.z = rot_amount; break;
-            default: break;
-            }
+            /* Build rotation quaternion around the actual oriented axis
+             * (works correctly in both world and local basis). */
+            quat_t dq = quat_from_axis_angle(
+                axis_dir, rot_amount * INPUT_DEG_TO_RAD, 1e-8f);
+            apply_gizmo_rotate(ed, dq);
+            fvp->gizmo_rot_accum = quat_normalize_safe(
+                quat_mul(dq, fvp->gizmo_rot_accum), 1e-8f);
+            return true;
         } else {
             /* Translate/Scale: project mouse motion along the
              * oriented axis direction in screen space. */
@@ -1273,20 +1292,30 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         if (key == SDLK_UP)   step_deg =  45.0f;
         if (key == SDLK_DOWN) step_deg = -45.0f;
         if (step_deg != 0.0f) {
-            vec3_t delta = {0, 0, 0};
+            /* Get oriented axis from gizmo orientation matrix. */
+            int axis_col = -1;
             switch (fvp->gizmo.active_axis) {
-            case GIZMO_AXIS_X: delta.x = step_deg; break;
-            case GIZMO_AXIS_Y: delta.y = step_deg; break;
-            case GIZMO_AXIS_Z: delta.z = step_deg; break;
+            case GIZMO_AXIS_X: axis_col = 0; break;
+            case GIZMO_AXIS_Y: axis_col = 1; break;
+            case GIZMO_AXIS_Z: axis_col = 2; break;
             default: break;
             }
-            apply_gizmo_drag(ed, delta);
-            fvp->gizmo_drag_accum.x += delta.x;
-            fvp->gizmo_drag_accum.y += delta.y;
-            fvp->gizmo_drag_accum.z += delta.z;
+            vec3_t axis_dir = {0, 1, 0};
+            if (axis_col >= 0) {
+                const mat4_t *o = &fvp->gizmo.orientation;
+                axis_dir.x = o->m[axis_col * 4 + 0];
+                axis_dir.y = o->m[axis_col * 4 + 1];
+                axis_dir.z = o->m[axis_col * 4 + 2];
+            }
+            quat_t dq = quat_from_axis_angle(
+                axis_dir, step_deg * INPUT_DEG_TO_RAD, 1e-8f);
+            apply_gizmo_rotate(ed, dq);
+            fvp->gizmo_rot_accum = quat_normalize_safe(
+                quat_mul(dq, fvp->gizmo_rot_accum), 1e-8f);
             /* If not mid-drag, send command immediately. */
             if (!fvp->gizmo.dragging) {
-                send_gizmo_commands(ed, delta);
+                vec3_t unused = {0, 0, 0};
+                send_gizmo_commands(ed, unused);
             }
             return true;
         }

@@ -34,6 +34,18 @@ int editor_camera_view_matrix(const editor_camera_t *cam, mat4_t *out) {
     vec3_t eye = editor_camera_eye_position(cam);
     vec3_t up = {0.0f, 1.0f, 0.0f};
 
+    if (cam->distance < EDITOR_CAMERA_MIN_DISTANCE) {
+        /* Fly mode: eye == focus, so compute target from yaw/pitch.
+         * Look direction is negated eye-offset: at yaw=0 we look along -Z. */
+        float cos_p = cosf(cam->pitch);
+        vec3_t target = {
+            eye.x - sinf(cam->yaw) * cos_p,
+            eye.y - sinf(cam->pitch),
+            eye.z - cosf(cam->yaw) * cos_p,
+        };
+        return mat4_look_at(eye, target, up, out);
+    }
+
     return mat4_look_at(eye, cam->focus, up, out);
 }
 

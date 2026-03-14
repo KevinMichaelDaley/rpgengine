@@ -209,6 +209,7 @@ static bool resolve_gl_functions(viewport_render_state_t *state) {
     LOAD_GL_PROC(state->glDisable,                 l, "glDisable");
     LOAD_GL_PROC(state->glCullFace,                l, "glCullFace");
     LOAD_GL_PROC(state->glDrawArrays,              l, "glDrawArrays");
+    LOAD_GL_PROC(state->glLineWidth,               l, "glLineWidth");
 
     /* Minimum check — glBindFramebuffer is essential for FBO rendering. */
     return state->glBindFramebuffer != NULL;

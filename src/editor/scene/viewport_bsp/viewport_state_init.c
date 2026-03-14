@@ -18,6 +18,7 @@ void viewport_state_init(viewport_state_t *state) {
     gizmo_state_init(&state->gizmo);
 
     state->cursor_3d = (vec3_t){0.0f, 0.0f, 0.0f};
+    state->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
     state->box_selecting = false;
     state->active = true;
     state->fbo_valid = false;

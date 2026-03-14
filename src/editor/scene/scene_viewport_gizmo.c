@@ -39,10 +39,16 @@
 #define RING_SEGMENTS 32
 
 /** Dim color multiplier for inactive axes. */
-#define DIM_FACTOR 0.8f
+#define DIM_FACTOR 0.6f
 
 /** Bright color multiplier for active/hovered axis. */
 #define BRIGHT_FACTOR 1.0f
+
+/** Line width for normal gizmo lines. */
+#define GIZMO_LINE_WIDTH 3.0f
+
+/** Line width for the active/hovered axis. */
+#define GIZMO_ACTIVE_LINE_WIDTH 5.0f
 
 /** Scale handle cube half-size. */
 #define SCALE_CUBE_SIZE 0.06f
@@ -60,8 +66,11 @@ static float compute_gizmo_scale(const vec3_t *gizmo_pos,
     float dy = gizmo_pos->y - eye_pos->y;
     float dz = gizmo_pos->z - eye_pos->z;
     float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-    /* Scale factor: 0.15 units per unit of distance. */
-    return dist * 0.15f;
+    /* Scale factor: 0.15 units per unit of distance, with a floor
+     * so the gizmo remains usable when zoomed in very close. */
+    float scale = dist * 0.15f;
+    if (scale < 0.3f) scale = 0.3f;
+    return scale;
 }
 
 /**
@@ -168,47 +177,78 @@ static int build_translate_verts(float *buf, const vec3_t *pos,
 }
 
 /**
+ * @brief Build a single rotation ring into the buffer.
+ *
+ * @return Number of floats written (not vertices).
+ */
+static int build_one_ring(float *buf, int off, const vec3_t *pos,
+                            float radius, const vec3_t *normal,
+                            float r, float g, float b) {
+    float cx = pos->x, cy = pos->y, cz = pos->z;
+    float step = 2.0f * 3.14159265f / (float)RING_SEGMENTS;
+
+    vec3_t u = find_perp(*normal);
+    vec3_t v = vec3_cross(*normal, u);
+
+    for (int i = 0; i < RING_SEGMENTS; ++i) {
+        float a0 = (float)i * step;
+        float a1 = (float)(i + 1) * step;
+        float c0 = cosf(a0), s0 = sinf(a0);
+        float c1 = cosf(a1), s1 = sinf(a1);
+        off = push_line(buf, off,
+            cx + (u.x * c0 + v.x * s0) * radius,
+            cy + (u.y * c0 + v.y * s0) * radius,
+            cz + (u.z * c0 + v.z * s0) * radius,
+            cx + (u.x * c1 + v.x * s1) * radius,
+            cy + (u.y * c1 + v.y * s1) * radius,
+            cz + (u.z * c1 + v.z * s1) * radius,
+            r, g, b);
+    }
+
+    return off;
+}
+
+/**
  * @brief Build rotate gizmo geometry (3 axis rings).
+ *
+ * Inactive rings are written first, then the active ring last,
+ * so they can be drawn in two passes with different line widths.
  *
  * Each ring: RING_SEGMENTS line segments = RING_SEGMENTS * 2 verts.
  * Total: 3 * RING_SEGMENTS * 2 verts.
  *
- * @return Number of vertices written.
+ * @param[out] active_start_vert  First vertex index of the active ring
+ *                                 (-1 if no active ring).
+ * @return Total number of vertices written.
  */
 static int build_rotate_verts(float *buf, const vec3_t *pos,
                                float scale, gizmo_axis_t active,
-                               const mat4_t *orient) {
+                               const mat4_t *orient,
+                               int *active_start_vert) {
     int off = 0;
     float radius = GIZMO_AXIS_LENGTH * scale;
-    float cx = pos->x, cy = pos->y, cz = pos->z;
-    float step = 2.0f * 3.14159265f / (float)RING_SEGMENTS;
 
     gizmo_axis_t axis_ids[3] = {GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z};
 
-    for (int a = 0; a < 3; a++) {
-        /* Ring normal is the oriented axis. Build two perpendicular
-         * vectors in the ring plane using the other two axes. */
-        vec3_t normal = gizmo_axis_dir(orient, a);
-        vec3_t u = find_perp(normal);
-        vec3_t v = vec3_cross(normal, u);
+    *active_start_vert = -1;
 
+    /* First pass: inactive rings. */
+    for (int a = 0; a < 3; a++) {
+        if (axis_ids[a] == active) continue;
+        vec3_t normal = gizmo_axis_dir(orient, a);
         float r, g, b;
         axis_color(axis_ids[a], active, &r, &g, &b);
+        off = build_one_ring(buf, off, pos, radius, &normal, r, g, b);
+    }
 
-        for (int i = 0; i < RING_SEGMENTS; ++i) {
-            float a0 = (float)i * step;
-            float a1 = (float)(i + 1) * step;
-            float c0 = cosf(a0), s0 = sinf(a0);
-            float c1 = cosf(a1), s1 = sinf(a1);
-            off = push_line(buf, off,
-                cx + (u.x * c0 + v.x * s0) * radius,
-                cy + (u.y * c0 + v.y * s0) * radius,
-                cz + (u.z * c0 + v.z * s0) * radius,
-                cx + (u.x * c1 + v.x * s1) * radius,
-                cy + (u.y * c1 + v.y * s1) * radius,
-                cz + (u.z * c1 + v.z * s1) * radius,
-                r, g, b);
-        }
+    /* Second pass: active ring (drawn last with thicker line). */
+    for (int a = 0; a < 3; a++) {
+        if (axis_ids[a] != active) continue;
+        *active_start_vert = off / 6;
+        vec3_t normal = gizmo_axis_dir(orient, a);
+        float r, g, b;
+        axis_color(axis_ids[a], active, &r, &g, &b);
+        off = build_one_ring(buf, off, pos, radius, &normal, r, g, b);
     }
 
     return off / 6;
@@ -294,6 +334,7 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
      * Use 1200 to be safe. */
     float verts[1200];
     int vert_count = 0;
+    int active_start = -1; /* First vertex of the active ring (rotate only). */
 
     const mat4_t *orient = &gizmo->orientation;
     switch (gizmo->mode) {
@@ -303,7 +344,8 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
         break;
     case GIZMO_MODE_ROTATE:
         vert_count = build_rotate_verts(verts, &gizmo->position,
-                                         scale, gizmo->active_axis, orient);
+                                         scale, gizmo->active_axis, orient,
+                                         &active_start);
         break;
     case GIZMO_MODE_SCALE:
         vert_count = build_scale_verts(verts, &gizmo->position,
@@ -339,7 +381,35 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     /* Draw without depth test or face culling so gizmo is always visible. */
     state->glDisable(GL_DEPTH_TEST);
     state->glDisable(GL_CULL_FACE);
-    state->glDrawArrays(GL_LINES, 0, vert_count);
+
+    if (active_start >= 0 && state->glLineWidth) {
+        /* Two-pass draw for rotate mode: inactive rings at normal width,
+         * active ring at thicker width for visual feedback. */
+        int inactive_count = active_start;
+        int active_count = vert_count - active_start;
+
+        state->glLineWidth(GIZMO_LINE_WIDTH);
+        if (inactive_count > 0) {
+            state->glDrawArrays(GL_LINES, 0, inactive_count);
+        }
+
+        state->glLineWidth(GIZMO_ACTIVE_LINE_WIDTH);
+        if (active_count > 0) {
+            state->glDrawArrays(GL_LINES, active_start, active_count);
+        }
+
+        state->glLineWidth(1.0f); /* Restore default. */
+    } else {
+        /* Single-pass draw for translate/scale (or if no active ring). */
+        if (state->glLineWidth) {
+            state->glLineWidth(GIZMO_LINE_WIDTH);
+        }
+        state->glDrawArrays(GL_LINES, 0, vert_count);
+        if (state->glLineWidth) {
+            state->glLineWidth(1.0f);
+        }
+    }
+
     state->glEnable(GL_CULL_FACE);
     state->glEnable(GL_DEPTH_TEST);
 

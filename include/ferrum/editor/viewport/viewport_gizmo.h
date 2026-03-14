@@ -80,16 +80,21 @@ void gizmo_state_set_mode(gizmo_state_t *gizmo, gizmo_mode_t mode);
 /**
  * @brief Test which gizmo axis a ray hits.
  *
- * Tests the ray against axis-aligned cylinders (translate), tori (rotate),
- * or cubes (scale) at the gizmo position.
+ * For rotate mode, projects ring sample points to screen space and
+ * picks the ring closest to the cursor in 2D (pixel distance).
+ * For translate/scale, uses 3D ray-segment distance.
  *
  * @param gizmo       Gizmo state (non-NULL).
  * @param ray         World-space ray (non-NULL).
  * @param gizmo_scale Visual scale of gizmo (screen-size compensation).
+ * @param vp          View-projection matrix (for screen-space ring test).
+ * @param screen_x    Cursor X in normalized viewport coords [0,1].
+ * @param screen_y    Cursor Y in normalized viewport coords [0,1].
  * @return Hit axis, or GIZMO_AXIS_NONE if no hit.
  */
 gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
-                              const struct editor_ray *ray, float gizmo_scale);
+                              const struct editor_ray *ray, float gizmo_scale,
+                              const mat4_t *vp, float screen_x, float screen_y);
 
 /**
  * @brief Compute constrained drag delta between two world positions.

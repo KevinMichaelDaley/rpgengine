@@ -30,6 +30,7 @@ extern "C" {
 #include "ferrum/editor/viewport/viewport_nav.h"
 #include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/math/vec3.h"
+#include "ferrum/math/quat.h"
 
 /**
  * @brief Per-viewport state for a BSP leaf.
@@ -45,7 +46,8 @@ typedef struct viewport_state {
     /* Transform gizmo. */
     gizmo_state_t   gizmo;         /**< Gizmo mode, axis, drag state. */
     vec3_t          gizmo_drag_origin; /**< Where gizmo drag started. */
-    vec3_t          gizmo_drag_accum;  /**< Accumulated drag delta. */
+    vec3_t          gizmo_drag_accum;  /**< Accumulated drag delta (translate/scale). */
+    quat_t          gizmo_rot_accum;   /**< Accumulated rotation quaternion. */
 
     /* 3D cursor. */
     vec3_t          cursor_3d;     /**< 3D cursor world position. */

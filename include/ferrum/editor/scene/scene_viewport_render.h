@@ -139,6 +139,7 @@ typedef struct viewport_render_state {
     void     (*glDisable)(uint32_t cap);
     void     (*glCullFace)(uint32_t mode);
     void     (*glDrawArrays)(uint32_t mode, int32_t first, int32_t count);
+    void     (*glLineWidth)(float width);
 } viewport_render_state_t;
 
 /* ---- Lifecycle ---- */

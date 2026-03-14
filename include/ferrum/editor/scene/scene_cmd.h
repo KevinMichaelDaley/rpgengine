@@ -105,15 +105,15 @@ int scene_cmd_format_move(char *buf, size_t cap, uint32_t id,
                           const float delta[3]);
 
 /**
- * @brief Format a rotate command.
+ * @brief Format a rotate command with a quaternion.
  * @param buf   Output buffer.
  * @param cap   Buffer capacity.
  * @param id    Request ID.
- * @param delta Rotation delta [x, y, z] in degrees.
+ * @param quat  Rotation quaternion [x, y, z, w].
  * @return Bytes written (excluding NUL), or -1 if buffer too small.
  */
 int scene_cmd_format_rotate(char *buf, size_t cap, uint32_t id,
-                            const float delta[3]);
+                            const float quat[4]);
 
 /**
  * @brief Format a scale command.

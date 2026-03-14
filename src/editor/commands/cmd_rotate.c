@@ -32,20 +32,30 @@ bool cmd_rotate(edit_dispatch_t *d, const json_value_t *args,
     edit_cmd_ctx_t *ctx = (edit_cmd_ctx_t *)d->user_data;
     if (!ctx || !ctx->entities || !ctx->selection || !args) return false;
 
-    const json_value_t *delta_val = json_object_get(args, "delta");
-    float delta[3];
-    if (!extract_vec3_(delta_val, delta)) return false;
-
     uint32_t count = edit_selection_count(ctx->selection);
     if (count == 0) return true;
 
     const uint32_t *ids = edit_selection_ids(ctx->selection);
 
-    /* Build incremental rotation quaternion in YXZ order (matches engine
-     * convention R = Ry * Rx * Rz for euler angles). */
-    static const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
-    quat_t dq = quat_from_euler_yxz(
-        delta[0] * DEG_TO_RAD, delta[1] * DEG_TO_RAD, delta[2] * DEG_TO_RAD);
+    /* Accept either "quat":[x,y,z,w] (preferred) or "delta":[rx,ry,rz]
+     * (legacy euler angles in degrees, for TUI text commands). */
+    quat_t dq;
+    const json_value_t *quat_val = json_object_get(args, "quat");
+    if (quat_val && quat_val->type == JSON_ARRAY && quat_val->array.count >= 4) {
+        dq.x = (float)quat_val->array.items[0].number;
+        dq.y = (float)quat_val->array.items[1].number;
+        dq.z = (float)quat_val->array.items[2].number;
+        dq.w = (float)quat_val->array.items[3].number;
+        dq = quat_normalize_safe(dq, 1e-8f);
+    } else {
+        const json_value_t *delta_val = json_object_get(args, "delta");
+        float delta[3];
+        if (!extract_vec3_(delta_val, delta)) return false;
+        static const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+        dq = quat_from_euler_yxz(
+            delta[0] * DEG_TO_RAD, delta[1] * DEG_TO_RAD,
+            delta[2] * DEG_TO_RAD);
+    }
     quat_t inv_dq = quat_conjugate(dq);
 
     if (ctx->undo && count > 1) {

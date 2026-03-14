@@ -112,12 +112,11 @@ static bool test_fly_forward(void) {
 
     editor_camera_fly_move(&cam, 1.0f, 0.0f, 0.0f);
 
-    /* Forward with yaw=0 pitch=0 should move along +Z
-     * (forward = (sin(yaw)*cos(pitch), sin(pitch), cos(yaw)*cos(pitch))
-     *          = (0, 0, 1)) */
+    /* Forward with yaw=0 pitch=0 should move along -Z (look direction).
+     * At yaw=0 the eye is at focus+(0,0,d), looking toward focus along -Z. */
     ASSERT_NEAR(cam.focus.x, 0.0f, 0.01f);
     ASSERT_NEAR(cam.focus.y, 0.0f, 0.01f);
-    ASSERT_NEAR(cam.focus.z, 1.0f, 0.01f);
+    ASSERT_NEAR(cam.focus.z, -1.0f, 0.01f);
     return true;
 }
 
@@ -158,12 +157,12 @@ static bool test_fly_rotated(void) {
     editor_camera_init(&cam);
     cam.focus = (vec3_t){0, 0, 0};
     cam.distance = 0.0f;
-    cam.yaw = (float)(M_PI / 2.0); /* 90° → looking along +X */
+    cam.yaw = (float)(M_PI / 2.0); /* 90° → looking along -X */
 
     editor_camera_fly_move(&cam, 2.0f, 0.0f, 0.0f);
 
-    /* Forward with yaw=π/2: forward = (sin(π/2), 0, cos(π/2)) = (1, 0, 0) */
-    ASSERT_NEAR(cam.focus.x, 2.0f, 0.01f);
+    /* Forward with yaw=π/2: look dir = (-sin(π/2), 0, -cos(π/2)) = (-1, 0, 0) */
+    ASSERT_NEAR(cam.focus.x, -2.0f, 0.01f);
     ASSERT_NEAR(cam.focus.y, 0.0f, 0.01f);
     ASSERT_NEAR(cam.focus.z, 0.0f, 0.1f);
     return true;
@@ -178,10 +177,10 @@ static bool test_fly_backward(void) {
 
     editor_camera_fly_move(&cam, -1.0f, 0.0f, 0.0f);
 
-    /* Backward with yaw=0: -forward = (0, 0, -1) */
+    /* Backward with yaw=0: -forward = (0, 0, +1) */
     ASSERT_NEAR(cam.focus.x, 5.0f, 0.01f);
     ASSERT_NEAR(cam.focus.y, 0.0f, 0.01f);
-    ASSERT_NEAR(cam.focus.z, 4.0f, 0.01f);
+    ASSERT_NEAR(cam.focus.z, 6.0f, 0.01f);
     return true;
 }
 
@@ -214,11 +213,11 @@ static bool test_fly_exit(void) {
 
     editor_camera_exit_fly(&cam, 8.0f);
 
-    /* Focus should be at position + forward * distance.
-     * Forward = (0, 0, 1), so focus = (10, 5, 28). */
+    /* Focus should be at position + look_dir * distance.
+     * Look dir at yaw=0 = (0, 0, -1), so focus = (10, 5, 12). */
     ASSERT_NEAR(cam.focus.x, 10.0f, 0.01f);
     ASSERT_NEAR(cam.focus.y, 5.0f, 0.01f);
-    ASSERT_NEAR(cam.focus.z, 28.0f, 0.01f);
+    ASSERT_NEAR(cam.focus.z, 12.0f, 0.01f);
     ASSERT_NEAR(cam.distance, 8.0f, 0.01f);
     return true;
 }

@@ -1,6 +1,6 @@
 ---
 id: rpg-qzl1
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-14T06:47:58Z

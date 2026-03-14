@@ -23,10 +23,11 @@ void editor_camera_fly_move(editor_camera_t *cam, float forward,
     float cos_pitch = cosf(cam->pitch);
     float sin_pitch = sinf(cam->pitch);
 
-    /* Forward direction from yaw + pitch. */
-    float fwd_x = sin_yaw * cos_pitch;
-    float fwd_y = sin_pitch;
-    float fwd_z = cos_yaw * cos_pitch;
+    /* Look direction: negated eye-offset (camera looks from eye toward focus).
+     * At yaw=0, pitch=0 the eye is at focus+(0,0,d), looking along -Z. */
+    float fwd_x = -sin_yaw * cos_pitch;
+    float fwd_y = -sin_pitch;
+    float fwd_z = -cos_yaw * cos_pitch;
 
     /* Right direction (always horizontal, from yaw only). */
     float rgt_x =  cos_yaw;
@@ -58,9 +59,10 @@ void editor_camera_exit_fly(editor_camera_t *cam, float orbit_distance) {
     float cos_pitch = cosf(cam->pitch);
     float sin_pitch = sinf(cam->pitch);
 
+    /* Place focus ahead along look direction (negated eye-offset). */
     vec3_t pos = cam->focus; /* Current eye position in fly mode. */
-    cam->focus.x = pos.x + sin_yaw * cos_pitch * orbit_distance;
-    cam->focus.y = pos.y + sin_pitch * orbit_distance;
-    cam->focus.z = pos.z + cos_yaw * cos_pitch * orbit_distance;
+    cam->focus.x = pos.x - sin_yaw * cos_pitch * orbit_distance;
+    cam->focus.y = pos.y - sin_pitch * orbit_distance;
+    cam->focus.z = pos.z - cos_yaw * cos_pitch * orbit_distance;
     cam->distance = orbit_distance;
 }
