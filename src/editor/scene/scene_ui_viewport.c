@@ -17,6 +17,7 @@
 #include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
 #include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/viewport/transform_basis.h"
+#include "ferrum/editor/viewport/viewport_nav.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -39,6 +40,9 @@ static char s_mode_label[32];
 
 /** Static buffer for basis label. */
 static char s_basis_label[32];
+
+/** Static buffer for nav mode label. */
+static char s_nav_label[32];
 
 /* ---- Internal: build a single viewport panel ---- */
 
@@ -171,6 +175,38 @@ static void build_single_viewport(struct scene_editor *ed,
                     .backgroundColor = COLOR_BTN_BG,
                 }) {
                     Clay__OpenTextElement(basis_str,
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
+                                          THEME_TEXT_B, THEME_TEXT_A},
+                            .fontId = CLAY_FONT_UI,
+                        }));
+                }
+
+                /* Separator. */
+                CLAY(CLAY_IDI("VP_NavSep", vp_index), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIXED(1), CLAY_SIZING_FIXED(16)},
+                    },
+                    .backgroundColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                         THEME_TEXT_DIM_B, 80},
+                }) {}
+
+                /* Nav mode cycle button. */
+                snprintf(s_nav_label, sizeof(s_nav_label), "%s(N)",
+                         nav_mode_name(fvp->nav_mode));
+                Clay_String nav_str = {
+                    .length = (int32_t)strlen(s_nav_label),
+                    .chars = s_nav_label,
+                };
+                CLAY(CLAY_IDI("VP_BtnNav", vp_index), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
+                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
+                    },
+                    .backgroundColor = COLOR_BTN_BG,
+                }) {
+                    Clay__OpenTextElement(nav_str,
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,
                             .textColor = {THEME_TEXT_R, THEME_TEXT_G,

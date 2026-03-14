@@ -112,6 +112,39 @@ void editor_camera_orbit(editor_camera_t *cam, float delta_yaw,
  */
 void editor_camera_pan(editor_camera_t *cam, float dx, float dy);
 
+/* ---- viewport_camera_fly.c ---- */
+
+/**
+ * @brief Move the camera in fly mode (direct position movement).
+ *
+ * Moves focus (= eye position when distance=0) along the camera's
+ * forward, right, and world-up directions.
+ *
+ * @param cam      Camera (non-NULL).
+ * @param forward  Movement along look direction (positive = forward).
+ * @param right    Movement along camera right (positive = right).
+ * @param up       Movement along world Y (positive = up).
+ */
+void editor_camera_fly_move(editor_camera_t *cam, float forward,
+                             float right, float up);
+
+/**
+ * @brief Enter fly mode: set focus to current eye position, zero distance.
+ * @param cam  Camera (non-NULL).
+ */
+void editor_camera_enter_fly(editor_camera_t *cam);
+
+/**
+ * @brief Exit fly mode: place focus ahead and restore orbit distance.
+ *
+ * Sets focus = current_position + forward * orbit_distance, then
+ * sets distance = orbit_distance so the camera orbits around that point.
+ *
+ * @param cam             Camera (non-NULL).
+ * @param orbit_distance  Distance to set for orbit mode.
+ */
+void editor_camera_exit_fly(editor_camera_t *cam, float orbit_distance);
+
 /* ---- viewport_camera_zoom.c ---- */
 
 /**

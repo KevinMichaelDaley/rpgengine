@@ -27,6 +27,7 @@ extern "C" {
 
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
+#include "ferrum/editor/viewport/viewport_nav.h"
 #include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/math/vec3.h"
 
@@ -37,8 +38,9 @@ extern "C" {
  * box-select state, and FBO for independent rendering.
  */
 typedef struct viewport_state {
-    /* Camera. */
-    editor_camera_t camera;         /**< Independent orbit camera. */
+    /* Camera + navigation. */
+    editor_camera_t camera;         /**< Independent camera state. */
+    nav_mode_t      nav_mode;       /**< Navigation mode (orbit/fly/pan). */
 
     /* Transform gizmo. */
     gizmo_state_t   gizmo;         /**< Gizmo mode, axis, drag state. */

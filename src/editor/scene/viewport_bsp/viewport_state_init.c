@@ -26,6 +26,7 @@ void viewport_state_init(viewport_state_t *state) {
 void viewport_state_copy_camera(viewport_state_t *dst,
                                 const viewport_state_t *src) {
     dst->camera = src->camera;
+    dst->nav_mode = src->nav_mode;
     dst->gizmo.mode = src->gizmo.mode;
     dst->gizmo.basis = src->gizmo.basis;
     dst->cursor_3d = src->cursor_3d;

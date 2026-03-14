@@ -15,6 +15,7 @@
 #include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
 #include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
+#include "ferrum/editor/viewport/viewport_nav.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/math/quat.h"
@@ -32,6 +33,7 @@
 #define CAMERA_ORBIT_SPEED 0.005f
 #define CAMERA_PAN_SPEED   0.02f
 #define CAMERA_ZOOM_SPEED  1.0f
+#define CAMERA_FLY_SPEED   0.5f
 
 /** Gizmo drag sensitivity: world units per pixel of mouse motion. */
 #define GIZMO_DRAG_SPEED 0.01f
@@ -848,19 +850,36 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         return true;
     }
 
-    /* Right mouse or middle mouse drag: orbit or pan the viewport camera. */
+    /* Right mouse or middle mouse drag: camera control per nav mode. */
     if (ed->ui.right_mouse_down || ed->ui.middle_mouse_down) {
         SDL_Keymod mod = SDL_GetModState();
-        if (mod & KMOD_SHIFT) {
-            /* Shift+drag: pan. */
+        nav_mode_t nm = fvp->nav_mode;
+
+        if (nm == NAV_MODE_FLY) {
+            /* Fly mode: mouselook (rotate yaw/pitch). */
+            editor_camera_orbit(&fvp->camera,
+                                 -(float)ev->xrel * CAMERA_ORBIT_SPEED,
+                                 -(float)ev->yrel * CAMERA_ORBIT_SPEED);
+        } else if (nm == NAV_MODE_PAN_ZOOM) {
+            /* Pan-zoom: always pan, never orbit. */
             editor_camera_pan(&fvp->camera,
                                -(float)ev->xrel * CAMERA_PAN_SPEED,
                                (float)ev->yrel * CAMERA_PAN_SPEED);
         } else {
-            /* Drag: orbit. */
-            editor_camera_orbit(&fvp->camera,
-                                 -(float)ev->xrel * CAMERA_ORBIT_SPEED,
-                                 -(float)ev->yrel * CAMERA_ORBIT_SPEED);
+            /* Orbit modes: shift=pan, otherwise orbit. */
+            if (mod & KMOD_SHIFT) {
+                editor_camera_pan(&fvp->camera,
+                                   -(float)ev->xrel * CAMERA_PAN_SPEED,
+                                   (float)ev->yrel * CAMERA_PAN_SPEED);
+            } else {
+                /* For orbit-cursor, snap focus to cursor before orbiting. */
+                if (nm == NAV_MODE_ORBIT_CURSOR) {
+                    fvp->camera.focus = fvp->cursor_3d;
+                }
+                editor_camera_orbit(&fvp->camera,
+                                     -(float)ev->xrel * CAMERA_ORBIT_SPEED,
+                                     -(float)ev->yrel * CAMERA_ORBIT_SPEED);
+            }
         }
         return true;
     }
@@ -1445,6 +1464,10 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         return true;
     case SDLK_s:
+        if (fvp->nav_mode == NAV_MODE_FLY) {
+            editor_camera_fly_move(&fvp->camera, -CAMERA_FLY_SPEED, 0, 0);
+            return true;
+        }
         if (fvp->gizmo.mode == GIZMO_MODE_SCALE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
@@ -1479,6 +1502,23 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return true;
     }
 
+    /* Cycle viewport navigation mode: Orbit → OrbCur → Fly → PanZm. */
+    case SDLK_n: {
+        nav_mode_t old_mode = fvp->nav_mode;
+        nav_mode_t new_mode = nav_mode_next(old_mode);
+        /* Handle transitions to/from fly mode. */
+        if (old_mode == NAV_MODE_FLY && new_mode != NAV_MODE_FLY) {
+            editor_camera_exit_fly(&fvp->camera, 10.0f);
+        } else if (old_mode != NAV_MODE_FLY && new_mode == NAV_MODE_FLY) {
+            editor_camera_enter_fly(&fvp->camera);
+        }
+        fvp->nav_mode = new_mode;
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Nav: %s", nav_mode_name(new_mode));
+        scene_ui_tui_log(&ed->ui, msg);
+        return true;
+    }
+
     /* Keyboard zoom: +/- (also = for unshifted plus). */
     case SDLK_PLUS:
     case SDLK_EQUALS:
@@ -1488,7 +1528,36 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         editor_camera_zoom(&fvp->camera, CAMERA_ZOOM_SPEED);
         return true;
 
+    /* WASD + QE: fly mode movement. */
+    case SDLK_w:
+        if (fvp->nav_mode == NAV_MODE_FLY) {
+            editor_camera_fly_move(&fvp->camera, CAMERA_FLY_SPEED, 0, 0);
+            return true;
+        }
+        break;
     case SDLK_a:
+        if (fvp->nav_mode == NAV_MODE_FLY) {
+            editor_camera_fly_move(&fvp->camera, 0, -CAMERA_FLY_SPEED, 0);
+            return true;
+        }
+        break;
+    case SDLK_d:
+        if (fvp->nav_mode == NAV_MODE_FLY) {
+            editor_camera_fly_move(&fvp->camera, 0, CAMERA_FLY_SPEED, 0);
+            return true;
+        }
+        break;
+    case SDLK_q:
+        if (fvp->nav_mode == NAV_MODE_FLY) {
+            editor_camera_fly_move(&fvp->camera, 0, 0, -CAMERA_FLY_SPEED);
+            return true;
+        }
+        break;
+    case SDLK_e:
+        if (fvp->nav_mode == NAV_MODE_FLY) {
+            editor_camera_fly_move(&fvp->camera, 0, 0, CAMERA_FLY_SPEED);
+            return true;
+        }
         break;
 
     /* Snap view shortcuts (number row keys). */
