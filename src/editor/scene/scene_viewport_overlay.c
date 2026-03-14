@@ -18,11 +18,14 @@
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
+#include "ferrum/editor/viewport/viewport_shading.h"
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/math/mat4.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
+
+#include <math.h>
 
 /* ---- Constants ---- */
 
@@ -35,8 +38,13 @@ static const float OUTLINE_COLOR[3] = {1.0f, 0.5f, 0.0f};
 /** Active object outline color (whitish-yellow). */
 static const float OUTLINE_ACTIVE_COLOR[3] = {1.0f, 0.9f, 0.5f};
 
-/** Selection outline scale factor (slightly larger than entity). */
-#define OUTLINE_SCALE 1.05f
+/** Minimum selection outline thickness in pixels.  The outline scale
+ *  is computed per-entity so distant objects still get a visible border. */
+#define OUTLINE_MIN_PX 1.5f
+
+/** Maximum outline scale (prevents absurdly thick outlines on tiny
+ *  objects very close to camera). */
+#define OUTLINE_MAX_SCALE 1.05f
 
 /* ---- 3D Cursor ---- */
 
@@ -107,35 +115,99 @@ static mat4_t build_outline_model(const edit_entity_t *ent, float extra_scale) {
     return mat4_mul(trans, mat4_mul(rot, scale));
 }
 
+/**
+ * @brief Compute an outline scale factor that guarantees at least
+ *        OUTLINE_MIN_PX pixels of visible border on screen.
+ *
+ * Uses the camera distance, FOV, and FBO height to determine how many
+ * world units correspond to one pixel at the entity's depth.  The entity's
+ * average scale determines its approximate radius so we can convert
+ * the minimum pixel offset into a multiplicative scale factor.
+ *
+ * @param ent         Entity (for position and scale).
+ * @param eye_pos     Camera eye position.
+ * @param fov_y       Vertical FOV in radians.
+ * @param fbo_height  FBO height in pixels.
+ * @return Scale factor >= 1.0.
+ */
+static float compute_outline_scale_(const edit_entity_t *ent,
+                                     const vec3_t *eye_pos,
+                                     float fov_y, int fbo_height) {
+    /* Distance from camera to entity center. */
+    float dx = ent->pos[0] - eye_pos->x;
+    float dy = ent->pos[1] - eye_pos->y;
+    float dz = ent->pos[2] - eye_pos->z;
+    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (dist < 0.01f) dist = 0.01f;
+
+    /* World units per pixel at this distance:
+     *   visible_height = 2 * dist * tan(fov/2)
+     *   world_per_px   = visible_height / fbo_height  */
+    float half_tan = tanf(fov_y * 0.5f);
+    float world_per_px = (2.0f * dist * half_tan) / (float)fbo_height;
+
+    /* Minimum world-space offset for OUTLINE_MIN_PX pixels. */
+    float min_offset = OUTLINE_MIN_PX * world_per_px;
+
+    /* Approximate entity radius from average scale. */
+    float avg_scale = (ent->scale[0] + ent->scale[1] + ent->scale[2]) / 3.0f;
+    if (avg_scale < 0.001f) avg_scale = 0.001f;
+    float radius = avg_scale * 0.5f;
+
+    /* Scale factor = 1 + offset/radius, clamped. */
+    float scale = 1.0f + min_offset / radius;
+    if (scale > OUTLINE_MAX_SCALE) scale = OUTLINE_MAX_SCALE;
+    return scale;
+}
+
+/** Wireframe selection outline color (yellow). */
+static const float OUTLINE_WIRE_COLOR[3] = {1.0f, 0.9f, 0.2f};
+
+/** Wireframe active object outline color (bright white-yellow). */
+static const float OUTLINE_WIRE_ACTIVE_COLOR[3] = {1.0f, 1.0f, 0.6f};
+
+/** Wireframe selection line width. */
+#define OUTLINE_WIRE_WIDTH 2.5f
+
 void viewport_render_draw_selection_outline(viewport_render_state_t *state,
                                               const edit_entity_store_t *entities,
                                               const edit_selection_t *selection,
                                               uint32_t active_object_id,
                                               const mat4_t *view,
-                                              const mat4_t *proj) {
+                                              const mat4_t *proj,
+                                              const vec3_t *eye_pos,
+                                              float fov_y,
+                                              int fbo_height,
+                                              shading_mode_t shading_mode) {
     if (!state || !state->initialized || !entities || !selection) return;
     if (edit_selection_count(selection) == 0) return;
 
-    /* Bind entity shader. */
-    shader_program_bind(&state->shader);
-    shader_uniform_set_mat4(&state->uniforms, &state->shader,
+    /* Bind flat (unlit) shader for selection outlines so they remain
+     * consistently visible regardless of lighting conditions. */
+    shader_program_bind(&state->flat_shader);
+    shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
                              "u_view", view->m, GL_FALSE);
-    shader_uniform_set_mat4(&state->uniforms, &state->shader,
+    shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
                              "u_projection", proj->m, GL_FALSE);
 
-    float flat_light[3] = {0.0f, 1.0f, 0.0f};
-    shader_uniform_set_vec3(&state->uniforms, &state->shader,
-                             "u_light_dir", flat_light);
-    vec3_t zero_eye = {0.0f, 0.0f, 0.0f};
-    float ze[3] = {zero_eye.x, zero_eye.y, zero_eye.z};
-    shader_uniform_set_vec3(&state->uniforms, &state->shader,
-                             "u_eye_pos", ze);
+    bool wireframe = (shading_mode == SHADING_MODE_WIREFRAME);
 
-    /* Cull front faces so only back faces of the scaled-up mesh are
-     * visible. These back faces peek out around the edges of the
-     * original entity, creating the outline effect. */
-    state->glEnable(GL_CULL_FACE);
-    state->glCullFace(GL_FRONT);
+    if (wireframe) {
+        /* In wireframe mode, draw selected objects as yellow wireframe
+         * on top of the existing wireframe (no scale-up needed). */
+        if (state->glPolygonMode) {
+            state->glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+        }
+        if (state->glLineWidth) {
+            state->glLineWidth(OUTLINE_WIRE_WIDTH);
+        }
+        state->glDisable(GL_DEPTH_TEST);
+    } else {
+        /* In solid modes, cull front faces so only back faces of the
+         * scaled-up mesh peek out, creating a thin outline border. */
+        state->glEnable(GL_CULL_FACE);
+        state->glCullFace(GL_FRONT);
+    }
 
     uint32_t capacity = entities->capacity;
     for (uint32_t i = 0; i < capacity; ++i) {
@@ -147,18 +219,28 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
         if (ent->type == EDIT_ENTITY_TYPE_MESH) {
             mesh = viewport_render_get_entity_mesh(state, i);
         } else {
-            mesh = viewport_render_get_primitive_mesh(ent->type, &state->loader);
+            mesh = viewport_render_get_primitive_mesh(ent->type, state);
         }
         if (!mesh) continue;
 
-        /* Active object gets a distinct whitish-yellow outline. */
-        const float *color = (i == active_object_id)
-            ? OUTLINE_ACTIVE_COLOR : OUTLINE_COLOR;
-        shader_uniform_set_vec3(&state->uniforms, &state->shader,
+        /* Pick outline color based on mode and active state. */
+        const float *color;
+        if (wireframe) {
+            color = (i == active_object_id)
+                ? OUTLINE_WIRE_ACTIVE_COLOR : OUTLINE_WIRE_COLOR;
+        } else {
+            color = (i == active_object_id)
+                ? OUTLINE_ACTIVE_COLOR : OUTLINE_COLOR;
+        }
+        shader_uniform_set_vec3(&state->flat_uniforms, &state->flat_shader,
                                  "u_color", color);
 
-        mat4_t model = build_outline_model(ent, OUTLINE_SCALE);
-        shader_uniform_set_mat4(&state->uniforms, &state->shader,
+        /* Wireframe: draw at normal scale. Solid: dynamically compute scale
+         * to guarantee minimum OUTLINE_MIN_PX pixels of visible border. */
+        float scale = wireframe ? 1.0f
+            : compute_outline_scale_(ent, eye_pos, fov_y, fbo_height);
+        mat4_t model = build_outline_model(ent, scale);
+        shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
                                  "u_model", model.m, GL_FALSE);
 
         static_mesh_bind(mesh);
@@ -168,8 +250,19 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
     }
     static_mesh_unbind();
 
-    /* Restore back-face culling. */
-    state->glCullFace(GL_BACK);
+    if (wireframe) {
+        /* Restore solid polygon mode and depth test. */
+        if (state->glPolygonMode) {
+            state->glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
+        if (state->glLineWidth) {
+            state->glLineWidth(1.0f);
+        }
+        state->glEnable(GL_DEPTH_TEST);
+    } else {
+        /* Restore back-face culling. */
+        state->glCullFace(GL_BACK);
+    }
 }
 
 /* ---- Box Select Rectangle ---- */

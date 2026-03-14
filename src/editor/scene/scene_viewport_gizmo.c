@@ -95,10 +95,13 @@ static void axis_color(gizmo_axis_t axis, gizmo_axis_t active,
                         float *r, float *g, float *b) {
     float factor = (axis == active) ? BRIGHT_FACTOR : DIM_FACTOR;
     switch (axis) {
-    case GIZMO_AXIS_X: *r = 1.0f * factor; *g = 0.1f * factor; *b = 0.1f * factor; break;
-    case GIZMO_AXIS_Y: *r = 0.1f * factor; *g = 1.0f * factor; *b = 0.1f * factor; break;
-    case GIZMO_AXIS_Z: *r = 0.2f * factor; *g = 0.2f * factor; *b = 1.0f * factor; break;
-    default:           *r = 0.5f;           *g = 0.5f;           *b = 0.5f;           break;
+    case GIZMO_AXIS_X:  *r = 1.0f * factor; *g = 0.1f * factor; *b = 0.1f * factor; break;
+    case GIZMO_AXIS_Y:  *r = 0.1f * factor; *g = 1.0f * factor; *b = 0.1f * factor; break;
+    case GIZMO_AXIS_Z:  *r = 0.2f * factor; *g = 0.2f * factor; *b = 1.0f * factor; break;
+    case GIZMO_AXIS_XY: *r = 0.9f * factor; *g = 0.9f * factor; *b = 0.1f * factor; break;
+    case GIZMO_AXIS_XZ: *r = 0.9f * factor; *g = 0.1f * factor; *b = 0.9f * factor; break;
+    case GIZMO_AXIS_YZ: *r = 0.1f * factor; *g = 0.9f * factor; *b = 0.9f * factor; break;
+    default:            *r = 0.5f;           *g = 0.5f;           *b = 0.5f;           break;
     }
 }
 
@@ -127,6 +130,137 @@ static vec3_t find_perp(vec3_t axis) {
     return vec3_normalize_safe(perp, 1e-8f);
 }
 
+/** Plane square inner edge (fraction of axis length from gizmo center). */
+#define PLANE_QUAD_MIN 0.20f
+/** Plane square outer edge (fraction of axis length from gizmo center). */
+#define PLANE_QUAD_MAX 0.40f
+/** Normal offset for plane squares (fraction of axis length).
+ *  Lifts each square off the axis plane so it remains selectable
+ *  when viewed face-on (axes overlap the square). */
+#define PLANE_NORMAL_OFFSET 0.08f
+
+/**
+ * @brief Push a single vertex (position + color) into the buffer.
+ */
+static int push_vert(float *buf, int offset,
+                      float x, float y, float z,
+                      float r, float g, float b) {
+    int i = offset;
+    buf[i++] = x; buf[i++] = y; buf[i++] = z;
+    buf[i++] = r; buf[i++] = g; buf[i++] = b;
+    return i;
+}
+
+/**
+ * @brief Build filled plane constraint squares as triangles.
+ *
+ * Each square is drawn as 2 triangles (6 verts) for a solid fill,
+ * plus 4 outline lines (8 verts). Colors: XY=yellow, XZ=magenta,
+ * YZ=cyan. The fill uses a dimmer shade so outline edges are visible.
+ *
+ * @param[out] tri_count  Number of triangle vertices written.
+ * @return Updated float offset (past both triangles and lines).
+ */
+static int build_plane_squares_(float *buf, int off, const vec3_t *pos,
+                                  float scale, gizmo_axis_t active,
+                                  const mat4_t *orient,
+                                  int *tri_count) {
+    float L = GIZMO_AXIS_LENGTH * scale;
+    float lo = PLANE_QUAD_MIN * L;
+    float hi = PLANE_QUAD_MAX * L;
+    float cx = pos->x, cy = pos->y, cz = pos->z;
+
+    /* Plane pairs: (col_a, col_b, plane_axis). */
+    static const int pairs[3][2] = {{0, 1}, {0, 2}, {1, 2}};
+    static const gizmo_axis_t plane_ids[3] = {
+        GIZMO_AXIS_XY, GIZMO_AXIS_XZ, GIZMO_AXIS_YZ
+    };
+
+    int tri_off = off;
+    float noff = PLANE_NORMAL_OFFSET * L;
+
+    /* First pass: filled triangles (dimmer color). */
+    for (int p = 0; p < 3; p++) {
+        vec3_t a = gizmo_axis_dir(orient, pairs[p][0]);
+        vec3_t b = gizmo_axis_dir(orient, pairs[p][1]);
+        /* Normal is the excluded axis — offset along it. */
+        int ncol = (pairs[p][0] == 0 && pairs[p][1] == 1) ? 2
+                 : (pairs[p][0] == 0 && pairs[p][1] == 2) ? 1 : 0;
+        vec3_t n = gizmo_axis_dir(orient, ncol);
+
+        float r, g, bl;
+        axis_color(plane_ids[p], active, &r, &g, &bl);
+        /* Dim the fill to distinguish from outline. */
+        float fr = r * 0.5f, fg = g * 0.5f, fb = bl * 0.5f;
+
+        /* Base position offset along the plane normal. */
+        float ox = cx + n.x * noff;
+        float oy = cy + n.y * noff;
+        float oz = cz + n.z * noff;
+
+        /* Four corners. */
+        float c0x = ox + a.x * lo + b.x * lo;
+        float c0y = oy + a.y * lo + b.y * lo;
+        float c0z = oz + a.z * lo + b.z * lo;
+        float c1x = ox + a.x * hi + b.x * lo;
+        float c1y = oy + a.y * hi + b.y * lo;
+        float c1z = oz + a.z * hi + b.z * lo;
+        float c2x = ox + a.x * hi + b.x * hi;
+        float c2y = oy + a.y * hi + b.y * hi;
+        float c2z = oz + a.z * hi + b.z * hi;
+        float c3x = ox + a.x * lo + b.x * hi;
+        float c3y = oy + a.y * lo + b.y * hi;
+        float c3z = oz + a.z * lo + b.z * hi;
+
+        /* Triangle 1: c0-c1-c2. */
+        off = push_vert(buf, off, c0x, c0y, c0z, fr, fg, fb);
+        off = push_vert(buf, off, c1x, c1y, c1z, fr, fg, fb);
+        off = push_vert(buf, off, c2x, c2y, c2z, fr, fg, fb);
+        /* Triangle 2: c0-c2-c3. */
+        off = push_vert(buf, off, c0x, c0y, c0z, fr, fg, fb);
+        off = push_vert(buf, off, c2x, c2y, c2z, fr, fg, fb);
+        off = push_vert(buf, off, c3x, c3y, c3z, fr, fg, fb);
+    }
+
+    *tri_count = (off - tri_off) / 6;
+
+    /* Second pass: outline lines (full brightness, same normal offset). */
+    for (int p = 0; p < 3; p++) {
+        vec3_t a = gizmo_axis_dir(orient, pairs[p][0]);
+        vec3_t b = gizmo_axis_dir(orient, pairs[p][1]);
+        int ncol = (pairs[p][0] == 0 && pairs[p][1] == 1) ? 2
+                 : (pairs[p][0] == 0 && pairs[p][1] == 2) ? 1 : 0;
+        vec3_t n = gizmo_axis_dir(orient, ncol);
+
+        float r, g, bl;
+        axis_color(plane_ids[p], active, &r, &g, &bl);
+
+        float ox = cx + n.x * noff;
+        float oy = cy + n.y * noff;
+        float oz = cz + n.z * noff;
+
+        float c0x = ox + a.x * lo + b.x * lo;
+        float c0y = oy + a.y * lo + b.y * lo;
+        float c0z = oz + a.z * lo + b.z * lo;
+        float c1x = ox + a.x * hi + b.x * lo;
+        float c1y = oy + a.y * hi + b.y * lo;
+        float c1z = oz + a.z * hi + b.z * lo;
+        float c2x = ox + a.x * hi + b.x * hi;
+        float c2y = oy + a.y * hi + b.y * hi;
+        float c2z = oz + a.z * hi + b.z * hi;
+        float c3x = ox + a.x * lo + b.x * hi;
+        float c3y = oy + a.y * lo + b.y * hi;
+        float c3z = oz + a.z * lo + b.z * hi;
+
+        off = push_line(buf, off, c0x, c0y, c0z, c1x, c1y, c1z, r, g, bl);
+        off = push_line(buf, off, c1x, c1y, c1z, c2x, c2y, c2z, r, g, bl);
+        off = push_line(buf, off, c2x, c2y, c2z, c3x, c3y, c3z, r, g, bl);
+        off = push_line(buf, off, c3x, c3y, c3z, c0x, c0y, c0z, r, g, bl);
+    }
+
+    return off;
+}
+
 /**
  * @brief Build translate gizmo geometry (3 axis lines + arrowheads).
  *
@@ -135,10 +269,26 @@ static vec3_t find_perp(vec3_t axis) {
  *
  * @return Number of vertices written.
  */
+/**
+ * @param[out] plane_tri_start  First vertex of plane triangle fill (-1 if none).
+ * @param[out] plane_tri_count  Number of triangle vertices for plane fills.
+ * @param[out] line_start       First vertex of line geometry.
+ * @return Total number of vertices written.
+ */
 static int build_translate_verts(float *buf, const vec3_t *pos,
                                   float scale, gizmo_axis_t active,
-                                  const mat4_t *orient) {
+                                  const mat4_t *orient,
+                                  int *plane_tri_start,
+                                  int *plane_tri_count) {
+    /* Build plane fill triangles first so they're drawn behind lines. */
     int off = 0;
+    int tri_count = 0;
+    *plane_tri_start = 0;
+    off = build_plane_squares_(buf, off, pos, scale, active, orient,
+                                &tri_count);
+    *plane_tri_count = tri_count;
+
+    /* Line geometry starts after the triangles. */
     float L = GIZMO_AXIS_LENGTH * scale;
     float ah = ARROWHEAD_SIZE * scale;
     float ap = ARROWHEAD_PERP * scale;
@@ -149,12 +299,10 @@ static int build_translate_verts(float *buf, const vec3_t *pos,
         vec3_t dir = gizmo_axis_dir(orient, i);
         vec3_t perp = find_perp(dir);
 
-        /* Tip position. */
         float tx = cx + dir.x * L;
         float ty = cy + dir.y * L;
         float tz = cz + dir.z * L;
 
-        /* Arrowhead base position. */
         float bx = cx + dir.x * (L - ah);
         float by = cy + dir.y * (L - ah);
         float bz = cz + dir.z * (L - ah);
@@ -162,9 +310,7 @@ static int build_translate_verts(float *buf, const vec3_t *pos,
         float r, g, b;
         axis_color(axis_ids[i], active, &r, &g, &b);
 
-        /* Shaft line. */
         off = push_line(buf, off, cx, cy, cz, tx, ty, tz, r, g, b);
-        /* Arrowhead lines. */
         off = push_line(buf, off, tx, ty, tz,
                          bx + perp.x * ap, by + perp.y * ap, bz + perp.z * ap,
                          r, g, b);
@@ -173,7 +319,7 @@ static int build_translate_verts(float *buf, const vec3_t *pos,
                          r, g, b);
     }
 
-    return off / 6; /* 6 floats per vertex */
+    return off / 6;
 }
 
 /**
@@ -264,8 +410,17 @@ static int build_rotate_verts(float *buf, const vec3_t *pos,
  */
 static int build_scale_verts(float *buf, const vec3_t *pos,
                               float scale, gizmo_axis_t active,
-                              const mat4_t *orient) {
+                              const mat4_t *orient,
+                              int *plane_tri_start,
+                              int *plane_tri_count) {
+    /* Build plane fill triangles first so they're drawn behind lines. */
     int off = 0;
+    int tri_count = 0;
+    *plane_tri_start = 0;
+    off = build_plane_squares_(buf, off, pos, scale, active, orient,
+                                &tri_count);
+    *plane_tri_count = tri_count;
+
     float L = GIZMO_AXIS_LENGTH * scale;
     float cs = SCALE_CUBE_SIZE * scale;
     float cx = pos->x, cy = pos->y, cz = pos->z;
@@ -276,7 +431,6 @@ static int build_scale_verts(float *buf, const vec3_t *pos,
         vec3_t dir = gizmo_axis_dir(orient, i);
         vec3_t perp = find_perp(dir);
 
-        /* Tip position. */
         float tx = cx + dir.x * L;
         float ty = cy + dir.y * L;
         float tz = cz + dir.z * L;
@@ -284,13 +438,9 @@ static int build_scale_verts(float *buf, const vec3_t *pos,
         float r, g, b;
         axis_color(axis_ids[i], active, &r, &g, &b);
 
-        /* Shaft line. */
         off = push_line(buf, off, cx, cy, cz, tx, ty, tz, r, g, b);
 
-        /* Cube outline (4 lines forming a square at the tip,
-         * in the plane perpendicular to the axis). */
         vec3_t perp2 = vec3_cross(dir, perp);
-        /* Four corners: tip ± cs*perp ± cs*dir */
         float c1x = tx - dir.x * cs + perp.x * cs;
         float c1y = ty - dir.y * cs + perp.y * cs;
         float c1z = tz - dir.z * cs + perp.z * cs;
@@ -303,7 +453,7 @@ static int build_scale_verts(float *buf, const vec3_t *pos,
         float c4x = tx - dir.x * cs - perp.x * cs;
         float c4y = ty - dir.y * cs - perp.y * cs;
         float c4z = tz - dir.z * cs - perp.z * cs;
-        (void)perp2; /* Cube uses axis+perp plane for simplicity. */
+        (void)perp2;
 
         off = push_line(buf, off, c1x, c1y, c1z, c2x, c2y, c2z, r, g, b);
         off = push_line(buf, off, c2x, c2y, c2z, c3x, c3y, c3z, r, g, b);
@@ -330,17 +480,21 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     if (scale < 0.01f) scale = 0.01f;
 
     /* Build gizmo geometry based on current mode.
-     * Max buffer: rotate mode = 3 * 32 * 2 = 192 verts * 6 floats = 1152.
-     * Use 1200 to be safe. */
-    float verts[1200];
+     * Max buffer: rotate = 192 verts, translate/scale with plane fills
+     * (3*6 tri verts + 3*8 outline verts + 18/30 axis verts) ≈ 90 verts.
+     * Use 1500 floats to be safe. */
+    float verts[1500];
     int vert_count = 0;
     int active_start = -1; /* First vertex of the active ring (rotate only). */
+    int plane_tri_start = -1; /* First vertex of plane fill triangles. */
+    int plane_tri_count = 0;  /* Number of triangle vertices for plane fills. */
 
     const mat4_t *orient = &gizmo->orientation;
     switch (gizmo->mode) {
     case GIZMO_MODE_TRANSLATE:
         vert_count = build_translate_verts(verts, &gizmo->position,
-                                            scale, gizmo->active_axis, orient);
+                                            scale, gizmo->active_axis, orient,
+                                            &plane_tri_start, &plane_tri_count);
         break;
     case GIZMO_MODE_ROTATE:
         vert_count = build_rotate_verts(verts, &gizmo->position,
@@ -349,7 +503,8 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
         break;
     case GIZMO_MODE_SCALE:
         vert_count = build_scale_verts(verts, &gizmo->position,
-                                        scale, gizmo->active_axis, orient);
+                                        scale, gizmo->active_axis, orient,
+                                        &plane_tri_start, &plane_tri_count);
         break;
     case GIZMO_MODE_NONE:
     default:
@@ -382,6 +537,15 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     state->glDisable(GL_DEPTH_TEST);
     state->glDisable(GL_CULL_FACE);
 
+    /* Draw plane fill triangles first (behind the line geometry). */
+    if (plane_tri_count > 0) {
+        state->glDrawArrays(GL_TRIANGLES, plane_tri_start, plane_tri_count);
+    }
+
+    /* Line geometry starts after the triangle vertices. */
+    int line_start = plane_tri_start + plane_tri_count;
+    int line_count = vert_count - line_start;
+
     if (active_start >= 0 && state->glLineWidth) {
         /* Two-pass draw for rotate mode: inactive rings at normal width,
          * active ring at thicker width for visual feedback. */
@@ -398,13 +562,13 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
             state->glDrawArrays(GL_LINES, active_start, active_count);
         }
 
-        state->glLineWidth(1.0f); /* Restore default. */
-    } else {
-        /* Single-pass draw for translate/scale (or if no active ring). */
+        state->glLineWidth(1.0f);
+    } else if (line_count > 0) {
+        /* Draw line geometry (axis lines + plane outlines). */
         if (state->glLineWidth) {
             state->glLineWidth(GIZMO_LINE_WIDTH);
         }
-        state->glDrawArrays(GL_LINES, 0, vert_count);
+        state->glDrawArrays(GL_LINES, line_start, line_count);
         if (state->glLineWidth) {
             state->glLineWidth(1.0f);
         }

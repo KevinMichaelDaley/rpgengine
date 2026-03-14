@@ -37,6 +37,7 @@ extern "C" {
 #include "ferrum/renderer/shader_uniforms.h"
 #include "ferrum/renderer/vao.h"
 #include "ferrum/renderer/vbo.h"
+#include "ferrum/editor/viewport/viewport_shading.h"
 
 /* Forward declarations. */
 struct scene_editor;
@@ -74,9 +75,17 @@ typedef struct viewport_render_state {
     /* Render pipeline (forward + debug passes). */
     render_pipeline_t pipeline; /**< 9-pass render pipeline. */
 
-    /* 3D shader program (Blinn-Phong). */
+    /* 3D shader program (Blinn-Phong — "Shaded" mode). */
     shader_program_t       shader;   /**< Entity shading. */
     shader_uniform_cache_t uniforms; /**< Cached uniform locations. */
+
+    /* Matcap shader (half-lambert clay — "Matcap" mode). */
+    shader_program_t       matcap_shader;   /**< Matcap shading. */
+    shader_uniform_cache_t matcap_uniforms; /**< Matcap uniform cache. */
+
+    /* Flat unlit shader (selection outlines, wireframe mode). */
+    shader_program_t       flat_shader;   /**< Flat unlit shading. */
+    shader_uniform_cache_t flat_uniforms; /**< Flat uniform cache. */
 
     /* Grid shader and geometry (unlit lines). */
     shader_program_t       grid_shader;  /**< Grid line shader. */
@@ -140,6 +149,7 @@ typedef struct viewport_render_state {
     void     (*glCullFace)(uint32_t mode);
     void     (*glDrawArrays)(uint32_t mode, int32_t first, int32_t count);
     void     (*glLineWidth)(float width);
+    void     (*glPolygonMode)(uint32_t face, uint32_t mode);
 } viewport_render_state_t;
 
 /* ---- Lifecycle ---- */
@@ -228,7 +238,8 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
                                     uint32_t active_object_id,
                                     const struct mat4 *view,
                                     const struct mat4 *proj,
-                                    const struct vec3 *eye_pos);
+                                    const struct vec3 *eye_pos,
+                                    shading_mode_t shading_mode);
 
 /**
  * @brief Get a lazily-created primitive mesh for a given entity type.
@@ -241,14 +252,19 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
  * @return Pointer to static mesh, or NULL.
  */
 const static_mesh_t *viewport_render_get_primitive_mesh(
-    uint32_t entity_type, const gl_loader_t *loader);
+    uint32_t entity_type, const viewport_render_state_t *state);
 
 /**
- * @brief Destroy lazily-created primitive meshes.
+ * @brief Register primitive meshes (box, sphere, capsule, plane) in the
+ *        viewport's mesh registry.
  *
- * Must be called before GL context is destroyed.
+ * Must be called after the mesh registry is initialized. Primitives are
+ * owned by the registry and destroyed via mesh_registry_destroy().
+ *
+ * @param state  Render state (non-NULL, must have valid loader and meshes).
+ * @return true on success, false if primitive creation fails.
  */
-void viewport_render_destroy_primitives(void);
+bool viewport_render_init_primitives(viewport_render_state_t *state);
 
 /* ---- Gizmo drawing (scene_viewport_gizmo.c) ---- */
 
@@ -306,7 +322,11 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
                                               const struct edit_selection *selection,
                                               uint32_t active_object_id,
                                               const struct mat4 *view,
-                                              const struct mat4 *proj);
+                                              const struct mat4 *proj,
+                                              const struct vec3 *eye_pos,
+                                              float fov_y,
+                                              int fbo_height,
+                                              shading_mode_t shading_mode);
 
 /**
  * @brief Draw a box select rectangle overlay in the viewport.
@@ -323,6 +343,25 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
 void viewport_render_draw_box_select(viewport_render_state_t *state,
                                        float x0, float y0,
                                        float x1, float y1);
+
+/* ---- Shader init (scene_viewport_shaders.c) ---- */
+
+/**
+ * @brief Compile additional viewport shaders (matcap, flat).
+ *
+ * Must be called after the main entity shader is compiled. Creates
+ * the matcap (half-lambert clay) and flat (unlit) shader programs.
+ *
+ * @param state   Render state (non-NULL, must have valid loader).
+ * @return true on success, false if shader compilation fails.
+ */
+bool viewport_render_init_extra_shaders(viewport_render_state_t *state);
+
+/**
+ * @brief Destroy additional viewport shaders (matcap, flat).
+ * @param state  Render state (non-NULL).
+ */
+void viewport_render_destroy_extra_shaders(viewport_render_state_t *state);
 
 /* ---- Entity mesh loading (scene_viewport_mesh.c) ---- */
 

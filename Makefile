@@ -242,6 +242,7 @@ BIN_HEADLESS += build/edit_script_env_tests
 BIN_HEADLESS += build/edit_script_rebase_tests
 BIN_HEADLESS += build/viewport_bsp_tests
 BIN_HEADLESS += build/nav_mode_tests
+BIN_HEADLESS += build/shading_mode_tests
 BIN_HEADLESS += build/aegis_types_tests
 BIN_HEADLESS += build/aegis_memory_tests
 BIN_HEADLESS += build/aegis_decode_tests
@@ -876,6 +877,13 @@ NAV_MODE_SRC := \
 build/nav_mode_tests: tests/editor/viewport/nav_mode_tests.c $(NAV_MODE_SRC) | build
 	$(CC) $(CFLAGS) tests/editor/viewport/nav_mode_tests.c $(NAV_MODE_SRC) -o $@ $(LDFLAGS)
 
+SHADING_MODE_SRC := \
+	src/editor/scene/viewport_bsp/viewport_state_init.c \
+	src/editor/viewport/viewport_gizmo.c \
+	$(NAV_MODE_SRC)
+build/shading_mode_tests: tests/editor/viewport/shading_mode_tests.c $(SHADING_MODE_SRC) | build
+	$(CC) $(CFLAGS) tests/editor/viewport/shading_mode_tests.c $(SHADING_MODE_SRC) -o $@ $(LDFLAGS)
+
 build/aegis_types_tests: tests/aegis/test_aegis_types.c include/ferrum/aegis/aegis_types.h include/ferrum/aegis/aegis_bytecode.h include/ferrum/aegis/aegis_config.h | build
 	$(CC) $(CFLAGS) tests/aegis/test_aegis_types.c -o $@ $(LDFLAGS)
 
@@ -1315,6 +1323,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/edit_script_rebase_tests \
 	&& ./build/viewport_bsp_tests \
 	&& ./build/nav_mode_tests \
+	&& ./build/shading_mode_tests \
 	&& ./build/aegis_types_tests \
 	&& ./build/aegis_memory_tests \
 	&& ./build/aegis_decode_tests \

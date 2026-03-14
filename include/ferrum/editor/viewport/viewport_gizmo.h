@@ -40,13 +40,24 @@ typedef enum gizmo_mode {
 
 /**
  * @brief Gizmo axis identifier.
+ *
+ * Single-axis values (X, Y, Z) constrain to one axis.
+ * Planar values (XY, XZ, YZ) constrain to a plane defined by two axes.
  */
 typedef enum gizmo_axis {
     GIZMO_AXIS_NONE = 0,
     GIZMO_AXIS_X    = 1,
     GIZMO_AXIS_Y    = 2,
-    GIZMO_AXIS_Z    = 3
+    GIZMO_AXIS_Z    = 3,
+    GIZMO_AXIS_XY   = 4,  /**< XY plane (free X + Y, locked Z). */
+    GIZMO_AXIS_XZ   = 5,  /**< XZ plane (free X + Z, locked Y). */
+    GIZMO_AXIS_YZ   = 6   /**< YZ plane (free Y + Z, locked X). */
 } gizmo_axis_t;
+
+/** @brief True if the axis is a planar constraint (XY, XZ, or YZ). */
+static inline bool gizmo_axis_is_planar(gizmo_axis_t axis) {
+    return axis >= GIZMO_AXIS_XY && axis <= GIZMO_AXIS_YZ;
+}
 
 /**
  * @brief Gizmo state — current mode, position, active axis, drag state.

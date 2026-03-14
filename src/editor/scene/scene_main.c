@@ -472,7 +472,8 @@ void scene_editor_shutdown(scene_editor_t *ed) {
         }
     }
 
-    viewport_render_destroy_primitives();
+    /* Primitives are owned by the mesh registry; destroyed via
+     * mesh_registry_destroy() inside viewport_render_destroy(). */
     viewport_render_destroy(&ed->viewport);
 
     scene_sync_destroy(&ed->sync);

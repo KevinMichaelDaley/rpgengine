@@ -18,6 +18,7 @@
 #include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/viewport/viewport_nav.h"
+#include "ferrum/editor/viewport/viewport_shading.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -43,6 +44,9 @@ static char s_basis_label[32];
 
 /** Static buffer for nav mode label. */
 static char s_nav_label[32];
+
+/** Static buffer for shading mode label. */
+static char s_shading_label[32];
 
 /* ---- Internal: build a single viewport panel ---- */
 
@@ -207,6 +211,38 @@ static void build_single_viewport(struct scene_editor *ed,
                     .backgroundColor = COLOR_BTN_BG,
                 }) {
                     Clay__OpenTextElement(nav_str,
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
+                                          THEME_TEXT_B, THEME_TEXT_A},
+                            .fontId = CLAY_FONT_UI,
+                        }));
+                }
+
+                /* Separator. */
+                CLAY(CLAY_IDI("VP_ShadeSep", vp_index), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIXED(1), CLAY_SIZING_FIXED(16)},
+                    },
+                    .backgroundColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                         THEME_TEXT_DIM_B, 80},
+                }) {}
+
+                /* Shading mode cycle button. */
+                snprintf(s_shading_label, sizeof(s_shading_label), "%s(/)",
+                         shading_mode_name(fvp->shading_mode));
+                Clay_String shade_str = {
+                    .length = (int32_t)strlen(s_shading_label),
+                    .chars = s_shading_label,
+                };
+                CLAY(CLAY_IDI("VP_BtnShade", vp_index), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
+                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
+                    },
+                    .backgroundColor = COLOR_BTN_BG,
+                }) {
+                    Clay__OpenTextElement(shade_str,
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,
                             .textColor = {THEME_TEXT_R, THEME_TEXT_G,

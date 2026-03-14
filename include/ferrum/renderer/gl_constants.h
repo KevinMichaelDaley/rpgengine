@@ -144,6 +144,15 @@ extern "C" {
 #ifndef GL_BACK
 #define GL_BACK 0x0405
 #endif
+#ifndef GL_FRONT_AND_BACK
+#define GL_FRONT_AND_BACK 0x0408
+#endif
+#ifndef GL_LINE
+#define GL_LINE 0x1B01
+#endif
+#ifndef GL_FILL
+#define GL_FILL 0x1B02
+#endif
 
 /* ---- Clear buffer bits ---- */
 #ifndef GL_COLOR_BUFFER_BIT

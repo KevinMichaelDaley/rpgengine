@@ -29,6 +29,7 @@
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/viewport/transform_basis.h"
+#include "ferrum/editor/viewport/viewport_shading.h"
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/math/mat4.h"
@@ -54,102 +55,45 @@ static const float COLOR_MARKER[3]    = {1.0f, 1.0f, 0.0f};
 static const float COLOR_SELECTED[3]  = {1.0f, 0.5f, 0.1f};
 static const float COLOR_ACTIVE[3]   = {1.0f, 1.0f, 1.0f};
 
-/* ---- Primitive mesh cache ---- */
+/* ---- Primitive mesh lookup ---- */
 
 /**
- * @brief Lazily-created primitive meshes for entity rendering.
+ * @brief Look up the pre-registered primitive mesh for a given entity type.
  *
- * Created on first use and destroyed with the viewport renderer.
- * This avoids the need to store them in the mesh registry (which
- * is designed for dynamic/loaded meshes).
- */
-static struct {
-    static_mesh_t box;
-    static_mesh_t sphere;
-    static_mesh_t capsule;
-    static_mesh_t plane;
-    bool box_valid;
-    bool sphere_valid;
-    bool capsule_valid;
-    bool plane_valid;
-} s_primitives;
-
-/**
- * @brief Ensure the primitive mesh for the given entity type is created.
- *
- * Returns primitive geometry for BOX, SPHERE, CAPSULE, HALFSPACE,
- * and MARKER types. Returns NULL for MESH type (those use loaded
- * FVMA geometry from the entity mesh cache, looked up separately).
+ * Primitives are registered in the mesh registry at init time by
+ * viewport_render_init_primitives(). Returns NULL for MESH type
+ * (those use loaded FVMA geometry from the entity mesh cache).
  *
  * @return Pointer to the static mesh, or NULL if type has no primitive.
  */
 const static_mesh_t *viewport_render_get_primitive_mesh(
-    uint32_t entity_type, const gl_loader_t *loader) {
+    uint32_t entity_type, const viewport_render_state_t *state) {
+    mesh_handle_t handle;
+
     switch (entity_type) {
     case EDIT_ENTITY_TYPE_BOX:
-        if (!s_primitives.box_valid) {
-            if (static_mesh_create_box(loader, 1.0f, 1.0f, 1.0f,
-                                        &s_primitives.box) == 0) {
-                s_primitives.box_valid = true;
-            }
-        }
-        return s_primitives.box_valid ? &s_primitives.box : NULL;
-
+        handle = state->mesh_box;
+        break;
     case EDIT_ENTITY_TYPE_SPHERE:
-        if (!s_primitives.sphere_valid) {
-            if (static_mesh_create_sphere(loader, 0.5f, 16, 12,
-                                           &s_primitives.sphere) == 0) {
-                s_primitives.sphere_valid = true;
-            }
-        }
-        return s_primitives.sphere_valid ? &s_primitives.sphere : NULL;
-
+        handle = state->mesh_sphere;
+        break;
     case EDIT_ENTITY_TYPE_CAPSULE:
-        if (!s_primitives.capsule_valid) {
-            if (static_mesh_create_capsule(loader, 0.3f, 0.5f, 16, 4,
-                                            &s_primitives.capsule) == 0) {
-                s_primitives.capsule_valid = true;
-            }
-        }
-        return s_primitives.capsule_valid ? &s_primitives.capsule : NULL;
-
+        handle = state->mesh_capsule;
+        break;
     case EDIT_ENTITY_TYPE_HALFSPACE:
-        if (!s_primitives.plane_valid) {
-            if (static_mesh_create_plane(loader, 10.0f, 10.0f,
-                                          &s_primitives.plane) == 0) {
-                s_primitives.plane_valid = true;
-            }
-        }
-        return s_primitives.plane_valid ? &s_primitives.plane : NULL;
-
+        handle = state->mesh_plane;
+        break;
     case EDIT_ENTITY_TYPE_MESH:
-        /* MESH entities use loaded FVMA geometry from the entity mesh
-         * cache. The caller must look up the mesh separately via
-         * viewport_render_get_entity_mesh(). Return NULL here so
-         * unloaded MESH entities are simply not rendered. */
         return NULL;
-
     case EDIT_ENTITY_TYPE_MARKER:
-        /* Markers are rendered as small spheres (could be wireframe
-         * crosses, but solid sphere is more visible in the editor). */
-        if (!s_primitives.sphere_valid) {
-            if (static_mesh_create_sphere(loader, 0.5f, 16, 12,
-                                           &s_primitives.sphere) == 0) {
-                s_primitives.sphere_valid = true;
-            }
-        }
-        return s_primitives.sphere_valid ? &s_primitives.sphere : NULL;
-
+        handle = state->mesh_sphere;
+        break;
     default:
-        /* Unknown type: use box as fallback. */
-        if (!s_primitives.box_valid) {
-            if (static_mesh_create_box(loader, 1.0f, 1.0f, 1.0f,
-                                        &s_primitives.box) == 0) {
-                s_primitives.box_valid = true;
-            }
-        }
-        return s_primitives.box_valid ? &s_primitives.box : NULL;
+        handle = state->mesh_box;
+        break;
     }
+
+    return mesh_registry_get_static(&state->meshes, handle);
 }
 
 /**
@@ -212,20 +156,44 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
                                     const edit_selection_t *selection,
                                     uint32_t active_object_id,
                                     const mat4_t *view, const mat4_t *proj,
-                                    const vec3_t *eye_pos) {
+                                    const vec3_t *eye_pos,
+                                    shading_mode_t shading_mode) {
     if (!state || !state->initialized || !entities) return;
 
-    /* Bind entity shader and set per-frame uniforms. */
-    shader_program_bind(&state->shader);
-    shader_uniform_set_mat4(&state->uniforms, &state->shader,
-                             "u_view", view->m, GL_FALSE);
-    shader_uniform_set_mat4(&state->uniforms, &state->shader,
-                             "u_projection", proj->m, GL_FALSE);
-    shader_uniform_set_vec3(&state->uniforms, &state->shader,
-                             "u_light_dir", LIGHT_DIR);
+    /* Select shader + uniform cache based on shading mode. */
+    shader_program_t *shader;
+    shader_uniform_cache_t *ucache;
+    switch (shading_mode) {
+    case SHADING_MODE_MATCAP:
+        shader = &state->matcap_shader;
+        ucache = &state->matcap_uniforms;
+        break;
+    case SHADING_MODE_UNLIT:
+    case SHADING_MODE_WIREFRAME:
+        shader = &state->flat_shader;
+        ucache = &state->flat_uniforms;
+        break;
+    default: /* SHADING_MODE_SHADED */
+        shader = &state->shader;
+        ucache = &state->uniforms;
+        break;
+    }
+
+    /* Bind selected shader and set per-frame uniforms. */
+    shader_program_bind(shader);
+    shader_uniform_set_mat4(ucache, shader, "u_view", view->m, GL_FALSE);
+    shader_uniform_set_mat4(ucache, shader, "u_projection", proj->m, GL_FALSE);
+
+    /* Light direction and eye position (not used by flat shader but
+     * setting them is harmless — the uniforms just get ignored). */
+    shader_uniform_set_vec3(ucache, shader, "u_light_dir", LIGHT_DIR);
     float eye[3] = {eye_pos->x, eye_pos->y, eye_pos->z};
-    shader_uniform_set_vec3(&state->uniforms, &state->shader,
-                             "u_eye_pos", eye);
+    shader_uniform_set_vec3(ucache, shader, "u_eye_pos", eye);
+
+    /* Wireframe: set polygon mode to lines. */
+    if (shading_mode == SHADING_MODE_WIREFRAME && state->glPolygonMode) {
+        state->glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    }
 
     /* Iterate all active entities and draw each with its mesh. */
     uint32_t capacity = entities->capacity;
@@ -233,29 +201,25 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
         const edit_entity_t *ent = edit_entity_store_get(entities, i);
         if (!ent) continue;
 
-        /* Resolve the mesh for this entity.
-         * MESH type entities use loaded FVMA geometry from the entity
-         * mesh cache. All other types use built-in primitives. */
+        /* Resolve the mesh for this entity. */
         const static_mesh_t *mesh;
         if (ent->type == EDIT_ENTITY_TYPE_MESH) {
             mesh = viewport_render_get_entity_mesh(state, i);
         } else {
-            mesh = viewport_render_get_primitive_mesh(ent->type, &state->loader);
+            mesh = viewport_render_get_primitive_mesh(ent->type, state);
         }
         if (!mesh) continue;
 
         /* Build model matrix from entity transform. */
         mat4_t model = build_model_matrix(ent);
-        shader_uniform_set_mat4(&state->uniforms, &state->shader,
-                                 "u_model", model.m, GL_FALSE);
+        shader_uniform_set_mat4(ucache, shader, "u_model", model.m, GL_FALSE);
 
         /* Set entity color (selection-aware, active object highlight). */
         bool selected = selection
             ? edit_selection_contains(selection, i) : false;
         bool is_active = (i == active_object_id);
         const float *color = get_entity_color(ent->type, selected, is_active);
-        shader_uniform_set_vec3(&state->uniforms, &state->shader,
-                                 "u_color", color);
+        shader_uniform_set_vec3(ucache, shader, "u_color", color);
 
         /* Draw the mesh (all submeshes). */
         static_mesh_bind(mesh);
@@ -264,6 +228,11 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
         }
     }
     static_mesh_unbind();
+
+    /* Restore polygon mode after wireframe. */
+    if (shading_mode == SHADING_MODE_WIREFRAME && state->glPolygonMode) {
+        state->glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
 }
 
 /**
@@ -371,11 +340,14 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
     /* Draw all entities (shared across viewports). */
     viewport_render_draw_entities(vp, &ed->entities, &ed->selection,
                                    ed->active_object_id,
-                                   &view, &proj, &eye_pos);
+                                   &view, &proj, &eye_pos,
+                                   vs->shading_mode);
 
     /* Draw selection outlines. */
     viewport_render_draw_selection_outline(vp, &ed->entities, &ed->selection,
-                                            ed->active_object_id, &view, &proj);
+                                            ed->active_object_id, &view, &proj,
+                                            &eye_pos, vs->camera.fov, fbo_h,
+                                            vs->shading_mode);
 
     /* Update gizmo position and orientation for this viewport. */
     if (edit_selection_count(&ed->selection) > 0) {
@@ -473,15 +445,5 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
     }
 }
 
-/**
- * @brief Destroy lazily-created primitive meshes.
- *
- * Called from viewport_render_destroy() to clean up static primitives.
- */
-void viewport_render_destroy_primitives(void) {
-    if (s_primitives.box_valid)     static_mesh_destroy(&s_primitives.box);
-    if (s_primitives.sphere_valid)  static_mesh_destroy(&s_primitives.sphere);
-    if (s_primitives.capsule_valid) static_mesh_destroy(&s_primitives.capsule);
-    if (s_primitives.plane_valid)   static_mesh_destroy(&s_primitives.plane);
-    memset(&s_primitives, 0, sizeof(s_primitives));
-}
+/* viewport_render_destroy_primitives removed — primitives are now
+ * owned by the mesh registry and destroyed via mesh_registry_destroy(). */

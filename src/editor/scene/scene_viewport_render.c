@@ -210,6 +210,7 @@ static bool resolve_gl_functions(viewport_render_state_t *state) {
     LOAD_GL_PROC(state->glCullFace,                l, "glCullFace");
     LOAD_GL_PROC(state->glDrawArrays,              l, "glDrawArrays");
     LOAD_GL_PROC(state->glLineWidth,               l, "glLineWidth");
+    LOAD_GL_PROC(state->glPolygonMode,             l, "glPolygonMode");
 
     /* Minimum check — glBindFramebuffer is essential for FBO rendering. */
     return state->glBindFramebuffer != NULL;
@@ -359,6 +360,14 @@ bool viewport_render_init(viewport_render_state_t *state,
         shader_uniform_cache_init(&state->uniforms, &state->shader);
     }
 
+    /* Compile additional shaders (matcap, flat). */
+    if (!viewport_render_init_extra_shaders(state)) {
+        shader_program_destroy(&state->shader);
+        render_pipeline_destroy(&state->pipeline);
+        destroy_fbo(state);
+        return false;
+    }
+
     /* Compile the grid shader (unlit lines). */
     {
         char log[512];
@@ -446,6 +455,23 @@ bool viewport_render_init(viewport_render_state_t *state,
         state->entity_mesh_cache[i].generation = 0;
     }
 
+    /* Register primitive meshes (box, sphere, capsule, plane). */
+    if (!viewport_render_init_primitives(state)) {
+        fprintf(stderr, "viewport_render: primitive mesh init failed\n");
+        free(state->entity_mesh_cache);
+        mesh_registry_destroy(&state->meshes);
+        vao_destroy(&state->overlay_vao);
+        vbo_destroy(&state->overlay_vbo);
+        vao_destroy(&state->grid_vao);
+        vbo_destroy(&state->grid_vbo);
+        shader_program_destroy(&state->grid_shader);
+        viewport_render_destroy_extra_shaders(state);
+        shader_program_destroy(&state->shader);
+        render_pipeline_destroy(&state->pipeline);
+        destroy_fbo(state);
+        return false;
+    }
+
     /* Initialize camera with default orbit position. */
     editor_camera_init(&state->camera);
 
@@ -470,6 +496,7 @@ void viewport_render_destroy(viewport_render_state_t *state) {
     vbo_destroy(&state->grid_vbo);
 
     shader_program_destroy(&state->grid_shader);
+    viewport_render_destroy_extra_shaders(state);
     shader_program_destroy(&state->shader);
 
     render_pipeline_destroy(&state->pipeline);

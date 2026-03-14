@@ -28,6 +28,7 @@ extern "C" {
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/viewport/viewport_nav.h"
+#include "ferrum/editor/viewport/viewport_shading.h"
 #include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
@@ -42,6 +43,7 @@ typedef struct viewport_state {
     /* Camera + navigation. */
     editor_camera_t camera;         /**< Independent camera state. */
     nav_mode_t      nav_mode;       /**< Navigation mode (orbit/fly/pan). */
+    shading_mode_t  shading_mode;   /**< Viewport shading mode. */
 
     /* Transform gizmo. */
     gizmo_state_t   gizmo;         /**< Gizmo mode, axis, drag state. */

@@ -9,16 +9,16 @@
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include <math.h>
+#include <stddef.h>
 
 /** @brief Gizmo axis arrow length (world units, before scale). */
 static const float ARROW_LENGTH = 1.0f;
 /** @brief Gizmo axis hit radius for arrows (world units, before scale). */
 static const float AXIS_HIT_RADIUS = 0.25f;
-/** @brief Ring gate multiplier on projected gizmo radius.
- *  If cursor is within this multiple of the gizmo's screen-space
- *  radius from its center, the click is a gizmo interaction.
- *  The closest ring (by screen distance) always wins. */
-static const float RING_GATE_MULTIPLIER = 1.8f;
+/** @brief Maximum screen-space distance (normalized [0,1] coords) from
+ *  cursor to ring outline for a hit. Clicks closer than this threshold
+ *  to any ring outline count as a gizmo interaction. */
+static const float RING_HIT_THRESHOLD = 0.12f;
 
 /**
  * @brief Test if a ray passes near a line segment from p0 to p1.
@@ -216,9 +216,10 @@ static float screen_ring_distance_(const mat4_t *vp,
     }
     /* Aspect ratio: 0 = perfectly edge-on, 1 = perfectly face-on. */
     float aspect = (local_max_r > 1e-6f) ? (local_min_r / local_max_r) : 0.0f;
-    /* Penalty: face-on rings (aspect→1) get distance scaled up by up to 2x.
-     * Edge-on rings (aspect→0) get no penalty. */
-    float penalty = 1.0f + aspect;
+    /* Penalty: face-on rings (aspect→1) get distance scaled up slightly.
+     * Edge-on rings (aspect→0) get no penalty. Kept mild so face-on
+     * rings remain selectable without excessive precision. */
+    float penalty = 1.0f + 0.15f * aspect;
 
     /* Find minimum distance from cursor to any segment between
      * consecutive projected sample points on the ring outline. */
@@ -242,6 +243,95 @@ static vec3_t oriented_axis_(const mat4_t *orient, int col) {
     return (vec3_t){orient->m[col * 4 + 0],
                     orient->m[col * 4 + 1],
                     orient->m[col * 4 + 2]};
+}
+
+/** Plane square inner edge (fraction of axis length from gizmo center). */
+#define PLANE_QUAD_MIN 0.20f
+/** Plane square outer edge (fraction of axis length from gizmo center). */
+#define PLANE_QUAD_MAX 0.40f
+
+/** Extra padding around the plane square for easier hit detection
+ *  (fraction of axis length, added to each edge). */
+#define PLANE_HIT_PAD 0.06f
+
+/** Normal offset for plane squares (must match renderer). */
+#define PLANE_NORMAL_OFFSET 0.08f
+
+/**
+ * @brief Test if a ray hits any of the 3 plane constraint squares.
+ *
+ * Each plane square is a filled quad located between two axis arrows.
+ * For the XY plane square, the quad spans [PLANE_QUAD_MIN..MAX] along
+ * both the oriented X and Y axes, with Z=0 (in gizmo space).
+ * The entire interior of the square is a hit target, with extra padding
+ * around the edges for easier selection.
+ *
+ * Returns the hit plane axis, or GIZMO_AXIS_NONE if no hit.
+ * Populates *out_t with the ray parameter of the hit for priority.
+ */
+static gizmo_axis_t hit_test_plane_squares_(const editor_ray_t *ray,
+                                              vec3_t pos,
+                                              const vec3_t axis_dirs[3],
+                                              float length,
+                                              float *out_t) {
+    /* Plane pairs: (col_a, col_b, normal_col, result_axis). */
+    static const int pairs[3][3] = {
+        {0, 1, 2},  /* XY plane, normal = Z */
+        {0, 2, 1},  /* XZ plane, normal = Y */
+        {1, 2, 0},  /* YZ plane, normal = X */
+    };
+    static const gizmo_axis_t plane_axes[3] = {
+        GIZMO_AXIS_XY, GIZMO_AXIS_XZ, GIZMO_AXIS_YZ
+    };
+
+    float pad = PLANE_HIT_PAD * length;
+    float lo = PLANE_QUAD_MIN * length - pad;
+    float hi = PLANE_QUAD_MAX * length + pad;
+    gizmo_axis_t best = GIZMO_AXIS_NONE;
+    float best_t = 1e30f;
+
+    for (int p = 0; p < 3; ++p) {
+        vec3_t normal = axis_dirs[pairs[p][2]];
+        vec3_t a_dir  = axis_dirs[pairs[p][0]];
+        vec3_t b_dir  = axis_dirs[pairs[p][1]];
+
+        /* Offset the plane along its normal to match the rendered position. */
+        vec3_t plane_pos = {
+            pos.x + normal.x * PLANE_NORMAL_OFFSET * length,
+            pos.y + normal.y * PLANE_NORMAL_OFFSET * length,
+            pos.z + normal.z * PLANE_NORMAL_OFFSET * length,
+        };
+
+        /* Ray-plane intersection: t = dot(normal, plane_pos - ray.origin)
+         *                             / dot(normal, ray.direction) */
+        float denom = vec3_dot(normal, ray->direction);
+        if (fabsf(denom) < 1e-8f) continue; /* Parallel to plane. */
+
+        vec3_t to_pos = vec3_sub(plane_pos, ray->origin);
+        float t = vec3_dot(normal, to_pos) / denom;
+        if (t < 0.0f) continue; /* Behind camera. */
+
+        /* Intersection point in world space, relative to gizmo center
+         * (not the offset plane_pos — we measure along axes from center). */
+        vec3_t hit_world = vec3_add(ray->origin,
+                                     vec3_scale(ray->direction, t));
+        vec3_t local = vec3_sub(hit_world, pos);
+
+        /* Project onto the two plane axes. */
+        float u = vec3_dot(local, a_dir);
+        float v = vec3_dot(local, b_dir);
+
+        /* Check if within the padded square region (full interior). */
+        if (u >= lo && u <= hi && v >= lo && v <= hi) {
+            if (t < best_t) {
+                best_t = t;
+                best = plane_axes[p];
+            }
+        }
+    }
+
+    if (out_t) *out_t = best_t;
+    return best;
 }
 
 gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
@@ -271,52 +361,44 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
     };
 
     if (gizmo->mode == GIZMO_MODE_ROTATE && vp) {
-        /* Screen-space ring selection (two-pass):
+        /* Screen-space ring selection:
          *
-         * Gate: project gizmo center to screen, compute screen-space
-         *   radius (max projected distance from center to any ring point
-         *   across all 3 rings).  If cursor is within GATE_MULTIPLIER *
-         *   screen_radius of the center, it's a gizmo click.  This scales
-         *   naturally with zoom.
-         *
-         * Pick: among the 3 rings, select the one whose projected outline
-         *   is closest to the cursor in 2D screen space. */
+         * Measure the 2D screen distance from cursor to each ring outline.
+         * If the closest ring is within RING_HIT_THRESHOLD, select it.
+         * This works correctly for clicks inside or outside the ring. */
         float cx_s, cy_s;
         bool center_visible = project_to_screen_(vp, pos, &cx_s, &cy_s);
 
         if (center_visible) {
-            /* Compute screen-space ring distances and max screen radius. */
             float dists[3];
             float min_dist = 1e30f;
             int min_idx = -1;
-            float max_screen_radius = 0.0f;
 
             for (int i = 0; i < 3; i++) {
                 dists[i] = screen_ring_distance_(vp, pos, axis_dirs[i], length,
                                                   screen_x, screen_y,
-                                                  &max_screen_radius);
+                                                  NULL);
                 if (dists[i] < min_dist) {
                     min_dist = dists[i];
                     min_idx = i;
                 }
             }
 
-            /* Gate: cursor within GATE_MULTIPLIER * screen_radius of center. */
-            float cursor_dx = screen_x - cx_s;
-            float cursor_dy = screen_y - cy_s;
-            float cursor_to_center = sqrtf(cursor_dx * cursor_dx +
-                                            cursor_dy * cursor_dy);
-            float gate = max_screen_radius * RING_GATE_MULTIPLIER;
-            if (gate < 0.05f) gate = 0.05f; /* Floor for tiny gizmos. */
-
-            if (min_idx >= 0 && cursor_to_center < gate) {
+            /* Select the closest ring if cursor is near its outline. */
+            if (min_idx >= 0 && min_dist < RING_HIT_THRESHOLD) {
                 best = axis_ids[min_idx];
             }
         }
     } else {
-        /* Translate/Scale: test each axis as a line segment from pos
-         * to pos + oriented_axis * length. Also test the endpoint as
-         * a sphere so edge-on axes remain clickable. */
+        /* Translate/Scale: first test plane constraint squares, then
+         * test each axis line segment. Plane squares take priority. */
+        float plane_t;
+        gizmo_axis_t plane_hit = hit_test_plane_squares_(
+            ray, pos, axis_dirs, length, &plane_t);
+        if (plane_hit != GIZMO_AXIS_NONE) {
+            return plane_hit;
+        }
+
         float tip_threshold = TIP_HIT_RADIUS * gizmo_scale;
         for (int i = 0; i < 3; i++) {
             vec3_t end = {
@@ -360,6 +442,18 @@ vec3_t gizmo_compute_drag_delta(const gizmo_state_t *gizmo,
         result.y = full_delta.y;
         break;
     case GIZMO_AXIS_Z:
+        result.z = full_delta.z;
+        break;
+    case GIZMO_AXIS_XY:
+        result.x = full_delta.x;
+        result.y = full_delta.y;
+        break;
+    case GIZMO_AXIS_XZ:
+        result.x = full_delta.x;
+        result.z = full_delta.z;
+        break;
+    case GIZMO_AXIS_YZ:
+        result.y = full_delta.y;
         result.z = full_delta.z;
         break;
     default:

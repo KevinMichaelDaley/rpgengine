@@ -822,9 +822,107 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             fvp->gizmo_rot_accum = quat_normalize_safe(
                 quat_mul(dq, fvp->gizmo_rot_accum), 1e-8f);
             return true;
+        } else if (gizmo_axis_is_planar(fvp->gizmo.active_axis)) {
+            /* Planar constraint: use the plane's own orthonormal
+             * tangent/bitangent from the gizmo orientation.  Project
+             * both to screen space and invert the resulting 2×2 matrix
+             * so screen-space mouse delta maps correctly to plane
+             * coordinates regardless of viewing angle. */
+            mat4_t view;
+            editor_camera_view_matrix(&fvp->camera, &view);
+            const mat4_t *o = &fvp->gizmo.orientation;
+
+            /* Determine which two orientation columns are the plane axes. */
+            int col_a, col_b;
+            switch (fvp->gizmo.active_axis) {
+            case GIZMO_AXIS_XY: col_a = 0; col_b = 1; break;
+            case GIZMO_AXIS_XZ: col_a = 0; col_b = 2; break;
+            case GIZMO_AXIS_YZ: col_a = 1; col_b = 2; break;
+            default:            col_a = 0; col_b = 1; break;
+            }
+
+            /* Plane tangent and bitangent (already orthonormal). */
+            vec3_t tang = {o->m[col_a*4+0], o->m[col_a*4+1], o->m[col_a*4+2]};
+            vec3_t btan = {o->m[col_b*4+0], o->m[col_b*4+1], o->m[col_b*4+2]};
+
+            /* Project both to screen space (view rotation, XY only). */
+            float sa_x = view.m[0]*tang.x + view.m[4]*tang.y + view.m[8]*tang.z;
+            float sa_y = view.m[1]*tang.x + view.m[5]*tang.y + view.m[9]*tang.z;
+            float sb_x = view.m[0]*btan.x + view.m[4]*btan.y + view.m[8]*btan.z;
+            float sb_y = view.m[1]*btan.x + view.m[5]*btan.y + view.m[9]*btan.z;
+
+            /* Invert the 2×2 screen-projection matrix [sa | sb]:
+             *   [amount_a]   1   [ sb_y  -sb_x ] [mouse_dx]
+             *   [amount_b] = - * [-sa_y   sa_x ] [mouse_dy]
+             *                det                             */
+            float det = sa_x * sb_y - sa_y * sb_x;
+
+            vec3_t eye = editor_camera_eye_position(&fvp->camera);
+            float cam_dist = viewport_gizmo_screen_scale(
+                &fvp->gizmo.position, &eye);
+            float speed = cam_dist * GIZMO_DRAG_SPEED;
+            float mx = (float)ev->xrel;
+            float my = (float)ev->yrel;
+
+            /* Compute per-axis amounts (how much to move along each
+             * plane axis).  Used by both translate and scale. */
+            float amount_a = 0.0f, amount_b = 0.0f;
+
+            if (fabsf(det) > 0.01f) {
+                float inv_det = 1.0f / det;
+                amount_a = ( sb_y * mx - sb_x * my) * inv_det;
+                amount_b = (-sa_y * mx + sa_x * my) * inv_det;
+            } else {
+                /* Plane is edge-on: one axis is screen-visible, the
+                 * other points into/out of the screen.  Map mouse
+                 * motion along the visible axis's screen direction to
+                 * that axis, and perpendicular motion to the hidden. */
+                float la = sqrtf(sa_x*sa_x + sa_y*sa_y);
+                float lb = sqrtf(sb_x*sb_x + sb_y*sb_y);
+                bool a_vis = (la >= lb);
+                float vsx = a_vis ? sa_x : sb_x;
+                float vsy = a_vis ? sa_y : sb_y;
+                float vlen = a_vis ? la : lb;
+                vec3_t hid_dir = a_vis ? btan : tang;
+
+                float vis_amt = 0.0f, hid_amt = 0.0f;
+                if (vlen > 0.01f) {
+                    float nvx = vsx / vlen, nvy = vsy / vlen;
+                    vis_amt = mx * nvx + my * nvy;
+
+                    float px = -nvy, py = nvx;
+                    float perp_proj = mx * px + my * py;
+                    float hz = view.m[2]*hid_dir.x + view.m[6]*hid_dir.y
+                              + view.m[10]*hid_dir.z;
+                    float sign = (hz < 0.0f) ? 1.0f : -1.0f;
+                    hid_amt = perp_proj * sign;
+                }
+                amount_a = a_vis ? vis_amt : hid_amt;
+                amount_b = a_vis ? hid_amt : vis_amt;
+            }
+
+            if (fvp->gizmo.mode == GIZMO_MODE_SCALE) {
+                /* Scale: apply per-axis scale factors along each plane
+                 * axis independently. The normal axis gets zero delta
+                 * so scaling is truly planar-constrained. */
+                float sa = amount_a * speed;
+                float sb = amount_b * speed;
+                /* Map plane axis indices back to XYZ scale components. */
+                float scale_d[3] = {0.0f, 0.0f, 0.0f};
+                scale_d[col_a] = sa;
+                scale_d[col_b] = sb;
+                delta.x = scale_d[0];
+                delta.y = scale_d[1];
+                delta.z = scale_d[2];
+            } else {
+                /* Translate: reconstruct world-space displacement. */
+                delta.x = (tang.x * amount_a + btan.x * amount_b) * speed;
+                delta.y = (tang.y * amount_a + btan.y * amount_b) * speed;
+                delta.z = (tang.z * amount_a + btan.z * amount_b) * speed;
+            }
         } else {
-            /* Translate/Scale: project mouse motion along the
-             * oriented axis direction in screen space. */
+            /* Single-axis translate/scale: project mouse motion along
+             * the oriented axis direction in screen space. */
             mat4_t view;
             editor_camera_view_matrix(&fvp->camera, &view);
 
@@ -842,14 +940,25 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             float sy = view.m[1] * axis_dir.x + view.m[5] * axis_dir.y
                       + view.m[9] * axis_dir.z;
             float slen = sqrtf(sx * sx + sy * sy);
-            if (slen > 1e-6f) { sx /= slen; sy /= slen; }
 
-            /* Dot mouse delta with screen-space axis direction.
-             * The FBO is displayed Y-flipped by Clay's ortho projection
-             * (screen top = FBO bottom), so SDL's downward-positive Y
-             * already matches the visual direction — no negation needed. */
-            float mouse_proj = (float)ev->xrel * sx
-                              + (float)ev->yrel * sy;
+            float mouse_proj;
+            if (slen > 0.05f) {
+                /* Normal case: axis has visible screen projection.
+                 * Dot mouse delta with screen-space axis direction. */
+                sx /= slen;
+                sy /= slen;
+                mouse_proj = (float)ev->xrel * sx
+                            + (float)ev->yrel * sy;
+            } else {
+                /* Edge case: axis points toward/away from camera
+                 * (nearly parallel to view direction). Use mouse Y
+                 * to move along the axis, with sign from view-space Z
+                 * so dragging up moves the object toward the camera. */
+                float sz = view.m[2] * axis_dir.x + view.m[6] * axis_dir.y
+                          + view.m[10] * axis_dir.z;
+                float sign = (sz < 0.0f) ? 1.0f : -1.0f;
+                mouse_proj = (float)ev->yrel * sign;
+            }
 
             vec3_t eye = editor_camera_eye_position(&fvp->camera);
             float cam_dist = viewport_gizmo_screen_scale(
@@ -1477,26 +1586,23 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         break;
 
-    /* Transform mode shortcuts (toggle: pressing same key disables gizmo). */
-    case SDLK_g:
+    /* Transform mode shortcuts (toggle: pressing same key disables gizmo).
+     * W/E/R = Translate/Rotate/Scale (standard layout). */
+    case SDLK_w:
         if (fvp->gizmo.mode == GIZMO_MODE_TRANSLATE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
             ed->ui.action = UI_ACTION_MODE_TRANSLATE;
         }
         return true;
-    case SDLK_r:
+    case SDLK_e:
         if (fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
             ed->ui.action = UI_ACTION_MODE_ROTATE;
         }
         return true;
-    case SDLK_s:
-        if (fvp->nav_mode == NAV_MODE_FLY) {
-            editor_camera_fly_move(&fvp->camera, -CAMERA_FLY_SPEED, 0, 0);
-            return true;
-        }
+    case SDLK_r:
         if (fvp->gizmo.mode == GIZMO_MODE_SCALE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
@@ -1531,6 +1637,16 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return true;
     }
 
+    /* Cycle viewport shading mode: Shaded → Matcap → Wire. */
+    case SDLK_SLASH: {
+        fvp->shading_mode = shading_mode_next(fvp->shading_mode);
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Shading: %s",
+                 shading_mode_name(fvp->shading_mode));
+        scene_ui_tui_log(&ed->ui, msg);
+        return true;
+    }
+
     /* Cycle viewport navigation mode: Orbit → OrbCur → Fly → PanZm. */
     case SDLK_n: {
         nav_mode_t old_mode = fvp->nav_mode;
@@ -1557,34 +1673,37 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         editor_camera_zoom(&fvp->camera, CAMERA_ZOOM_SPEED);
         return true;
 
-    /* WASD + QE: fly mode movement. */
-    case SDLK_w:
+    /* D: duplicate selected entities. */
+    case SDLK_d:
+        if (edit_selection_count(&ed->selection) > 0) {
+            ed->ui.action = UI_ACTION_TUI_COMMAND;
+            strncpy(ed->ui.tui_cmd, "clone", UI_TUI_INPUT_MAX - 1);
+            ed->ui.tui_cmd[UI_TUI_INPUT_MAX - 1] = '\0';
+        }
+        return true;
+
+    /* Arrow keys: fly mode movement (forward/back/left/right). */
+    case SDLK_UP:
         if (fvp->nav_mode == NAV_MODE_FLY) {
             editor_camera_fly_move(&fvp->camera, CAMERA_FLY_SPEED, 0, 0);
             return true;
         }
         break;
-    case SDLK_a:
+    case SDLK_DOWN:
+        if (fvp->nav_mode == NAV_MODE_FLY) {
+            editor_camera_fly_move(&fvp->camera, -CAMERA_FLY_SPEED, 0, 0);
+            return true;
+        }
+        break;
+    case SDLK_LEFT:
         if (fvp->nav_mode == NAV_MODE_FLY) {
             editor_camera_fly_move(&fvp->camera, 0, -CAMERA_FLY_SPEED, 0);
             return true;
         }
         break;
-    case SDLK_d:
+    case SDLK_RIGHT:
         if (fvp->nav_mode == NAV_MODE_FLY) {
             editor_camera_fly_move(&fvp->camera, 0, CAMERA_FLY_SPEED, 0);
-            return true;
-        }
-        break;
-    case SDLK_q:
-        if (fvp->nav_mode == NAV_MODE_FLY) {
-            editor_camera_fly_move(&fvp->camera, 0, 0, -CAMERA_FLY_SPEED);
-            return true;
-        }
-        break;
-    case SDLK_e:
-        if (fvp->nav_mode == NAV_MODE_FLY) {
-            editor_camera_fly_move(&fvp->camera, 0, 0, CAMERA_FLY_SPEED);
             return true;
         }
         break;
