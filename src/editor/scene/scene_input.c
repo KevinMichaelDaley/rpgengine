@@ -30,6 +30,9 @@
 /** Gizmo drag sensitivity: world units per pixel of mouse motion. */
 #define GIZMO_DRAG_SPEED 0.01f
 
+/** Rotation drag sensitivity: degrees per pixel of mouse motion. */
+#define GIZMO_ROTATE_SPEED 0.5f
+
 /* ---- Internal helpers ---- */
 
 /**
@@ -263,9 +266,9 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
                         }
                         ed->ui.action_target = picked_id;
-                    } else if (!(mod & KMOD_SHIFT)) {
-                        edit_selection_clear(&ed->selection);
                     }
+                    /* Clicking empty space does nothing — selection is
+                     * only cleared by selecting a new entity without shift. */
                 }
             }
         }
@@ -319,26 +322,72 @@ static bool handle_mouse_motion(scene_editor_t *ed,
 
     /* Gizmo drag: convert pixel delta to constrained world delta. */
     if (ed->gizmo.dragging) {
-        vec3_t eye = editor_camera_eye_position(&ed->viewport.camera);
-        float cam_dist = viewport_gizmo_screen_scale(
-            &ed->gizmo.position, &eye);
-        /* Scale pixel motion by camera distance for consistent feel. */
-        float speed = cam_dist * GIZMO_DRAG_SPEED;
-
         vec3_t delta = {0, 0, 0};
-        switch (ed->gizmo.active_axis) {
-        case GIZMO_AXIS_X:
-            delta.x = (float)ev->xrel * speed;
-            break;
-        case GIZMO_AXIS_Y:
-            /* Mouse Y up = world Y up (invert screen Y). */
-            delta.y = -(float)ev->yrel * speed;
-            break;
-        case GIZMO_AXIS_Z:
-            delta.z = (float)ev->xrel * speed;
-            break;
-        default:
-            break;
+
+        if (ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+            /* Project the rotation axis onto screen space to determine
+             * which mouse direction maps to positive rotation.
+             * This keeps rotation intuitive regardless of camera angle. */
+            mat4_t view;
+            editor_camera_view_matrix(&ed->viewport.camera, &view);
+
+            /* Get the world-space axis direction. */
+            vec3_t axis_dir = {0, 0, 0};
+            switch (ed->gizmo.active_axis) {
+            case GIZMO_AXIS_X: axis_dir.x = 1.0f; break;
+            case GIZMO_AXIS_Y: axis_dir.y = 1.0f; break;
+            case GIZMO_AXIS_Z: axis_dir.z = 1.0f; break;
+            default: break;
+            }
+
+            /* Transform axis to view space (rotation only, no translation).
+             * The upper-left 3x3 of the view matrix rotates world→view. */
+            float sx = view.m[0] * axis_dir.x + view.m[4] * axis_dir.y
+                      + view.m[8] * axis_dir.z;
+            float sy = view.m[1] * axis_dir.x + view.m[5] * axis_dir.y
+                      + view.m[9] * axis_dir.z;
+
+            /* Screen-space perpendicular of the projected axis:
+             * rotating around a screen vector (sx, sy) means mouse
+             * motion along (-sy, sx) produces positive rotation. */
+            float perp_x = -sy;
+            float perp_y =  sx;
+            float perp_len = sqrtf(perp_x * perp_x + perp_y * perp_y);
+            if (perp_len > 1e-6f) {
+                perp_x /= perp_len;
+                perp_y /= perp_len;
+            }
+
+            /* Dot mouse delta with the perpendicular direction. */
+            float mouse_proj = (float)ev->xrel * perp_x
+                              + (float)ev->yrel * perp_y;
+            float rot_amount = mouse_proj * GIZMO_ROTATE_SPEED;
+
+            switch (ed->gizmo.active_axis) {
+            case GIZMO_AXIS_X: delta.x = rot_amount; break;
+            case GIZMO_AXIS_Y: delta.y = rot_amount; break;
+            case GIZMO_AXIS_Z: delta.z = rot_amount; break;
+            default: break;
+            }
+        } else {
+            vec3_t eye = editor_camera_eye_position(&ed->viewport.camera);
+            float cam_dist = viewport_gizmo_screen_scale(
+                &ed->gizmo.position, &eye);
+            float speed = cam_dist * GIZMO_DRAG_SPEED;
+
+            switch (ed->gizmo.active_axis) {
+            case GIZMO_AXIS_X:
+                delta.x = (float)ev->xrel * speed;
+                break;
+            case GIZMO_AXIS_Y:
+                delta.y = -(float)ev->yrel * speed;
+                break;
+            case GIZMO_AXIS_Z:
+                delta.z = (float)ev->xrel * speed;
+                break;
+            default:
+                break;
+            }
         }
 
         apply_gizmo_drag(ed, delta);
@@ -687,6 +736,33 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     /* If TUI is active, route keys to TUI input handler first. */
     if (ed->ui.tui_active) {
         return handle_tui_key(ed, ev);
+    }
+
+    /* Gizmo nudge: arrow keys apply exact rotation steps when an axis
+     * is active (either during drag or after selecting an axis). */
+    if (ed->gizmo.active_axis != GIZMO_AXIS_NONE &&
+        ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+        float step_deg = 0.0f;
+        if (key == SDLK_UP)   step_deg =  45.0f;
+        if (key == SDLK_DOWN) step_deg = -45.0f;
+        if (step_deg != 0.0f) {
+            vec3_t delta = {0, 0, 0};
+            switch (ed->gizmo.active_axis) {
+            case GIZMO_AXIS_X: delta.x = step_deg; break;
+            case GIZMO_AXIS_Y: delta.y = step_deg; break;
+            case GIZMO_AXIS_Z: delta.z = step_deg; break;
+            default: break;
+            }
+            apply_gizmo_drag(ed, delta);
+            ed->gizmo_drag_accum.x += delta.x;
+            ed->gizmo_drag_accum.y += delta.y;
+            ed->gizmo_drag_accum.z += delta.z;
+            /* If not mid-drag, send command immediately. */
+            if (!ed->gizmo.dragging) {
+                send_gizmo_commands(ed, delta);
+            }
+            return true;
+        }
     }
 
     /* Unified scroll keys: scroll whichever panel is focused. */

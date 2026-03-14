@@ -47,8 +47,10 @@ static const char *const UI_VERT_SRC =
     "}\n";
 
 /**
- * Fragment shader: solid color or single-channel texture (font atlas).
- * When u_use_texture != 0, samples the red channel as alpha.
+ * Fragment shader: solid color, single-channel texture, or RGBA texture.
+ *   u_use_texture == 0: solid v_color
+ *   u_use_texture == 1: font atlas — red channel as alpha, v_color tint
+ *   u_use_texture == 2: full RGBA texture (viewport FBO, images)
  */
 static const char *const UI_FRAG_SRC =
     "#version 330 core\n"
@@ -58,7 +60,9 @@ static const char *const UI_FRAG_SRC =
     "uniform int u_use_texture;\n"
     "uniform sampler2D u_texture;\n"
     "void main() {\n"
-    "    if (u_use_texture != 0) {\n"
+    "    if (u_use_texture == 2) {\n"
+    "        frag_color = texture(u_texture, v_uv) * v_color;\n"
+    "    } else if (u_use_texture == 1) {\n"
     "        float a = texture(u_texture, v_uv).r;\n"
     "        frag_color = vec4(v_color.rgb, v_color.a * a);\n"
     "    } else {\n"

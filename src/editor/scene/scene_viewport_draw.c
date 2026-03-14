@@ -266,10 +266,16 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
     viewport_render_state_t *vp = &ed->viewport;
     if (!vp->initialized) return;
 
-    /* Resize FBO if panel size changed. */
+    /* Resize FBO to physical pixels (logical panel size * UI scale).
+     * The UI renders at scaled-down resolution, but the 3D viewport
+     * should render at full display resolution. */
     panel_rect_t rect = panel_layout_get_rect(&ed->layout, PANEL_VIEWPORT);
-    if (rect.w > 0 && rect.h > 0) {
-        viewport_render_resize(vp, rect.w, rect.h);
+    float scale = ed->clay_be.ui_scale;
+    if (scale < 1.0f) scale = 1.0f;
+    int phys_w = (int)((float)rect.w * scale);
+    int phys_h = (int)((float)rect.h * scale);
+    if (phys_w > 0 && phys_h > 0) {
+        viewport_render_resize(vp, phys_w, phys_h);
     }
 
     /* Compute camera matrices. */

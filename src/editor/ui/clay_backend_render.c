@@ -296,7 +296,7 @@ static void render_image(clay_backend_t *b, const Clay_RenderCommand *cmd) {
         a  = img.backgroundColor.a / 255.0f;
     }
 
-    b->shader.glUniform1i(b->u_use_texture, 1);
+    b->shader.glUniform1i(b->u_use_texture, 2); /* Full RGBA texture. */
     b->shader.glUniform1i(b->u_texture, 0);
     b->glActiveTexture(GL_TEXTURE0);
     b->glBindTexture(GL_TEXTURE_2D, tex_handle);

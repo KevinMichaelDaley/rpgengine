@@ -13,7 +13,7 @@
 /** @brief Gizmo axis arrow length (world units, before scale). */
 static const float ARROW_LENGTH = 1.0f;
 /** @brief Gizmo axis hit radius (world units, before scale). */
-static const float AXIS_HIT_RADIUS = 0.08f;
+static const float AXIS_HIT_RADIUS = 0.15f;
 
 /**
  * @brief Test if a ray passes near a line segment from p0 to p1.
@@ -69,6 +69,51 @@ void gizmo_state_set_mode(gizmo_state_t *gizmo, gizmo_mode_t mode) {
     gizmo->dragging = false;
 }
 
+/** Number of sample points for ring hit test. */
+#define RING_SAMPLE_COUNT 24
+
+/**
+ * @brief Test if a ray passes near a circle (ring) in 3D.
+ *
+ * Samples points around the circle and tests the ray against line
+ * segments connecting them. This works from any viewing angle,
+ * including edge-on views where a plane intersection would fail.
+ */
+static float ray_ring_distance_(const editor_ray_t *ray,
+                                  vec3_t center, vec3_t plane_normal,
+                                  float radius) {
+    /* Build two perpendicular vectors in the ring plane. */
+    vec3_t arbitrary = (fabsf(plane_normal.y) < 0.9f)
+        ? (vec3_t){0, 1, 0}
+        : (vec3_t){1, 0, 0};
+    vec3_t u = vec3_normalize_safe(vec3_cross(plane_normal, arbitrary), 1e-8f);
+    vec3_t v = vec3_cross(plane_normal, u);
+
+    float step = 2.0f * 3.14159265f / (float)RING_SAMPLE_COUNT;
+    float best = 1e30f;
+
+    /* Test ray against line segments between adjacent sample points. */
+    vec3_t prev;
+    prev.x = center.x + u.x * radius;
+    prev.y = center.y + u.y * radius;
+    prev.z = center.z + u.z * radius;
+
+    for (int i = 1; i <= RING_SAMPLE_COUNT; ++i) {
+        float angle = (float)i * step;
+        float ca = cosf(angle), sa = sinf(angle);
+        vec3_t cur;
+        cur.x = center.x + (u.x * ca + v.x * sa) * radius;
+        cur.y = center.y + (u.y * ca + v.y * sa) * radius;
+        cur.z = center.z + (u.z * ca + v.z * sa) * radius;
+
+        float dist = ray_segment_distance_(ray, prev, cur);
+        if (dist < best) best = dist;
+        prev = cur;
+    }
+
+    return best;
+}
+
 gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
                               const struct editor_ray *ray,
                               float gizmo_scale) {
@@ -78,24 +123,44 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
     float threshold = AXIS_HIT_RADIUS * gizmo_scale;
     vec3_t pos = gizmo->position;
 
-    /* Test each axis arrow as a line segment. */
-    struct {
-        gizmo_axis_t axis;
-        vec3_t end;
-    } axes[3] = {
-        {GIZMO_AXIS_X, {pos.x + length, pos.y, pos.z}},
-        {GIZMO_AXIS_Y, {pos.x, pos.y + length, pos.z}},
-        {GIZMO_AXIS_Z, {pos.x, pos.y, pos.z + length}},
-    };
-
     gizmo_axis_t best = GIZMO_AXIS_NONE;
     float best_dist = threshold;
 
-    for (int i = 0; i < 3; i++) {
-        float dist = ray_segment_distance_(ray, pos, axes[i].end);
-        if (dist < best_dist) {
-            best_dist = dist;
-            best = axes[i].axis;
+    if (gizmo->mode == GIZMO_MODE_ROTATE) {
+        /* Test each axis ring as a circle in the perpendicular plane. */
+        vec3_t normals[3] = {
+            {1, 0, 0}, /* X-axis ring in YZ plane */
+            {0, 1, 0}, /* Y-axis ring in XZ plane */
+            {0, 0, 1}, /* Z-axis ring in XY plane */
+        };
+        gizmo_axis_t axes[3] = {
+            GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z
+        };
+
+        for (int i = 0; i < 3; i++) {
+            float dist = ray_ring_distance_(ray, pos, normals[i], length);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = axes[i];
+            }
+        }
+    } else {
+        /* Translate/Scale: test each axis as a line segment. */
+        struct {
+            gizmo_axis_t axis;
+            vec3_t end;
+        } axes[3] = {
+            {GIZMO_AXIS_X, {pos.x + length, pos.y, pos.z}},
+            {GIZMO_AXIS_Y, {pos.x, pos.y + length, pos.z}},
+            {GIZMO_AXIS_Z, {pos.x, pos.y, pos.z + length}},
+        };
+
+        for (int i = 0; i < 3; i++) {
+            float dist = ray_segment_distance_(ray, pos, axes[i].end);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = axes[i].axis;
+            }
         }
     }
 

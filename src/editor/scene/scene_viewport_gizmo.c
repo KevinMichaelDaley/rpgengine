@@ -36,7 +36,7 @@
 #define RING_SEGMENTS 32
 
 /** Dim color multiplier for inactive axes. */
-#define DIM_FACTOR 0.5f
+#define DIM_FACTOR 0.8f
 
 /** Bright color multiplier for active/hovered axis. */
 #define BRIGHT_FACTOR 1.0f
@@ -83,9 +83,9 @@ static void axis_color(gizmo_axis_t axis, gizmo_axis_t active,
                         float *r, float *g, float *b) {
     float factor = (axis == active) ? BRIGHT_FACTOR : DIM_FACTOR;
     switch (axis) {
-    case GIZMO_AXIS_X: *r = 1.0f * factor; *g = 0.2f * factor; *b = 0.2f * factor; break;
-    case GIZMO_AXIS_Y: *r = 0.2f * factor; *g = 1.0f * factor; *b = 0.2f * factor; break;
-    case GIZMO_AXIS_Z: *r = 0.3f * factor; *g = 0.3f * factor; *b = 1.0f * factor; break;
+    case GIZMO_AXIS_X: *r = 1.0f * factor; *g = 0.1f * factor; *b = 0.1f * factor; break;
+    case GIZMO_AXIS_Y: *r = 0.1f * factor; *g = 1.0f * factor; *b = 0.1f * factor; break;
+    case GIZMO_AXIS_Z: *r = 0.2f * factor; *g = 0.2f * factor; *b = 1.0f * factor; break;
     default:           *r = 0.5f;           *g = 0.5f;           *b = 0.5f;           break;
     }
 }
@@ -268,14 +268,26 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     shader_uniform_set_mat4(&state->grid_uniforms, &state->grid_shader,
                              "u_vp", vp.m, GL_FALSE);
 
-    /* Upload gizmo geometry to grid VBO. */
+    /* Upload gizmo geometry to grid VBO and re-bind vertex attributes.
+     * Some drivers invalidate attribute pointers after glBufferData
+     * changes the buffer size. Re-set the pointers to be safe. */
     state->grid_vao.glBindVertexArray(state->grid_vao.handle);
     vbo_upload(&state->grid_vbo, GL_ARRAY_BUFFER, verts,
                (size_t)vert_count * 6 * sizeof(float), GL_DYNAMIC_DRAW);
 
-    /* Draw without depth test so gizmo is always visible. */
+    /* Re-bind attribute pointers within the VAO. */
+    vao_attribute_t attrs[2] = {
+        {0, 3, GL_FLOAT, GL_FALSE, 0,                 0}, /* position */
+        {1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), 0}, /* color */
+    };
+    vao_bind_attributes(&state->grid_vao, &state->grid_vbo, attrs, 2,
+                        6 * sizeof(float));
+
+    /* Draw without depth test or face culling so gizmo is always visible. */
     state->glDisable(GL_DEPTH_TEST);
+    state->glDisable(GL_CULL_FACE);
     state->glDrawArrays(GL_LINES, 0, vert_count);
+    state->glEnable(GL_CULL_FACE);
     state->glEnable(GL_DEPTH_TEST);
 
     state->grid_vao.glBindVertexArray(0);

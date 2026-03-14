@@ -109,7 +109,14 @@ int editor_camera_screen_to_ray(const editor_camera_t *cam,
     vec3_t dir = vec3_sub(far_pt, origin);
     dir = vec3_normalize_safe(dir, 1e-8f);
 
-    out->origin = editor_camera_eye_position(cam);
+    if (cam->orthographic) {
+        /* Orthographic: ray originates from the near-plane point,
+         * direction is parallel for all pixels. */
+        out->origin = origin;
+    } else {
+        /* Perspective: ray originates from eye position. */
+        out->origin = editor_camera_eye_position(cam);
+    }
     out->direction = dir;
 
     return 0;
