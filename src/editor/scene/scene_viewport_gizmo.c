@@ -35,8 +35,11 @@
 /** Arrowhead perpendicular offset. */
 #define ARROWHEAD_PERP 0.06f
 
-/** Number of segments for rotation ring. */
-#define RING_SEGMENTS 32
+/** Number of line segments per rotation arc (quarter-circle). */
+#define ARC_SEGMENTS 12
+
+/** Arc angular span in radians (90 degrees = quarter circle). */
+#define ARC_SPAN (3.14159265f * 0.5f)
 
 /** Dim color multiplier for inactive axes. */
 #define DIM_FACTOR 0.6f
@@ -51,24 +54,33 @@
 #define GIZMO_ACTIVE_LINE_WIDTH 5.0f
 
 /** Scale handle cube half-size. */
-#define SCALE_CUBE_SIZE 0.06f
+#define SCALE_CUBE_SIZE 0.12f
 
 /* ---- Helpers ---- */
 
+/** Target gizmo screen fraction: the gizmo axis tip will be this
+ *  fraction of the viewport height away from center on screen. */
+#define GIZMO_SCREEN_FRACTION 0.12f
+
 /**
- * @brief Compute gizmo visual scale based on camera distance.
+ * @brief Compute gizmo visual scale so the gizmo occupies a fixed
+ *        fraction of screen height regardless of zoom and FOV.
  *
- * Keeps gizmo roughly constant screen size regardless of zoom.
+ * Uses the projection matrix to extract the effective FOV so the
+ * renderer doesn't need the camera struct directly.
  */
 static float compute_gizmo_scale(const vec3_t *gizmo_pos,
-                                  const vec3_t *eye_pos) {
+                                  const vec3_t *eye_pos,
+                                  const mat4_t *proj) {
     float dx = gizmo_pos->x - eye_pos->x;
     float dy = gizmo_pos->y - eye_pos->y;
     float dz = gizmo_pos->z - eye_pos->z;
     float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-    /* Scale factor: 0.15 units per unit of distance, with a floor
-     * so the gizmo remains usable when zoomed in very close. */
-    float scale = dist * 0.15f;
+    /* Extract tan(fov/2) from the projection matrix:
+     * proj[5] = 1 / tan(fov_y / 2)  for a standard perspective matrix. */
+    float inv_tan = proj->m[5];
+    float half_tan = (inv_tan > 0.001f) ? 1.0f / inv_tan : 1.0f;
+    float scale = dist * half_tan * GIZMO_SCREEN_FRACTION * 2.0f;
     if (scale < 0.3f) scale = 0.3f;
     return scale;
 }
@@ -327,27 +339,33 @@ static int build_translate_verts(float *buf, const vec3_t *pos,
  *
  * @return Number of floats written (not vertices).
  */
-static int build_one_ring(float *buf, int off, const vec3_t *pos,
-                            float radius, const vec3_t *normal,
-                            float r, float g, float b) {
+/**
+ * @brief Build a quarter-circle arc in the plane spanned by u and v.
+ *
+ * The arc sweeps from angle 0 to ARC_SPAN (90°), parameterized as
+ * point(t) = center + (u * cos(t) + v * sin(t)) * radius.
+ *
+ * @param u  First tangent axis (start direction of arc).
+ * @param v  Second tangent axis (90° from u in the ring plane).
+ */
+static int build_one_arc(float *buf, int off, const vec3_t *pos,
+                           float radius, const vec3_t *u, const vec3_t *v,
+                           float r, float g, float b) {
     float cx = pos->x, cy = pos->y, cz = pos->z;
-    float step = 2.0f * 3.14159265f / (float)RING_SEGMENTS;
+    float step = ARC_SPAN / (float)ARC_SEGMENTS;
 
-    vec3_t u = find_perp(*normal);
-    vec3_t v = vec3_cross(*normal, u);
-
-    for (int i = 0; i < RING_SEGMENTS; ++i) {
+    for (int i = 0; i < ARC_SEGMENTS; ++i) {
         float a0 = (float)i * step;
         float a1 = (float)(i + 1) * step;
         float c0 = cosf(a0), s0 = sinf(a0);
         float c1 = cosf(a1), s1 = sinf(a1);
         off = push_line(buf, off,
-            cx + (u.x * c0 + v.x * s0) * radius,
-            cy + (u.y * c0 + v.y * s0) * radius,
-            cz + (u.z * c0 + v.z * s0) * radius,
-            cx + (u.x * c1 + v.x * s1) * radius,
-            cy + (u.y * c1 + v.y * s1) * radius,
-            cz + (u.z * c1 + v.z * s1) * radius,
+            cx + (u->x * c0 + v->x * s0) * radius,
+            cy + (u->y * c0 + v->y * s0) * radius,
+            cz + (u->z * c0 + v->z * s0) * radius,
+            cx + (u->x * c1 + v->x * s1) * radius,
+            cy + (u->y * c1 + v->y * s1) * radius,
+            cz + (u->z * c1 + v->z * s1) * radius,
             r, g, b);
     }
 
@@ -355,46 +373,68 @@ static int build_one_ring(float *buf, int off, const vec3_t *pos,
 }
 
 /**
- * @brief Build rotate gizmo geometry (3 axis rings).
+ * @brief Build rotate gizmo geometry (3 quarter-circle arcs).
  *
- * Inactive rings are written first, then the active ring last,
+ * Each arc occupies a unique 90° sector so they don't overlap:
+ *   X ring (red):   arc in the +Y/+Z quadrant
+ *   Y ring (green): arc in the +Z/+X quadrant
+ *   Z ring (blue):  arc in the +X/+Y quadrant
+ *
+ * Inactive arcs are written first, then the active arc last,
  * so they can be drawn in two passes with different line widths.
  *
- * Each ring: RING_SEGMENTS line segments = RING_SEGMENTS * 2 verts.
- * Total: 3 * RING_SEGMENTS * 2 verts.
+ * Each arc: ARC_SEGMENTS line segments = ARC_SEGMENTS * 2 verts.
+ * Total: 3 * ARC_SEGMENTS * 2 verts.
  *
- * @param[out] active_start_vert  First vertex index of the active ring
- *                                 (-1 if no active ring).
+ * @param[out] active_start_vert  First vertex index of the active arc
+ *                                 (-1 if no active arc).
  * @return Total number of vertices written.
  */
 static int build_rotate_verts(float *buf, const vec3_t *pos,
                                float scale, gizmo_axis_t active,
                                const mat4_t *orient,
+                               const int8_t *arc_sign_u,
+                               const int8_t *arc_sign_v,
                                int *active_start_vert) {
     int off = 0;
     float radius = GIZMO_AXIS_LENGTH * scale;
 
     gizmo_axis_t axis_ids[3] = {GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z};
 
+    /* Each ring's arc uses the other two axes as u and v.
+     * col_u and col_v index into the orientation matrix.
+     * The arc_sign arrays flip u/v to face the camera. */
+    static const int ring_uv[3][2] = {
+        {1, 2},  /* X ring: u = Y, v = Z */
+        {2, 0},  /* Y ring: u = Z, v = X */
+        {0, 1},  /* Z ring: u = X, v = Y */
+    };
+
     *active_start_vert = -1;
 
-    /* First pass: inactive rings. */
+    /* First pass: inactive arcs. */
     for (int a = 0; a < 3; a++) {
         if (axis_ids[a] == active) continue;
-        vec3_t normal = gizmo_axis_dir(orient, a);
+        vec3_t u = vec3_scale(gizmo_axis_dir(orient, ring_uv[a][0]),
+                               (float)arc_sign_u[a]);
+        vec3_t v = vec3_scale(gizmo_axis_dir(orient, ring_uv[a][1]),
+                               (float)arc_sign_v[a]);
         float r, g, b;
         axis_color(axis_ids[a], active, &r, &g, &b);
-        off = build_one_ring(buf, off, pos, radius, &normal, r, g, b);
+        off = build_one_arc(buf, off, pos, radius, &u, &v, r, g, b);
     }
 
-    /* Second pass: active ring (drawn last with thicker line). */
+    /* Second pass: active arc (drawn last with thicker line). */
     for (int a = 0; a < 3; a++) {
         if (axis_ids[a] != active) continue;
         *active_start_vert = off / 6;
-        vec3_t normal = gizmo_axis_dir(orient, a);
+        vec3_t u = vec3_scale(gizmo_axis_dir(orient, ring_uv[a][0]),
+                               (float)arc_sign_u[a]);
+        vec3_t v = vec3_scale(gizmo_axis_dir(orient, ring_uv[a][1]),
+                               (float)arc_sign_v[a]);
         float r, g, b;
         axis_color(axis_ids[a], active, &r, &g, &b);
-        off = build_one_ring(buf, off, pos, radius, &normal, r, g, b);
+        off = build_one_arc(buf, off, pos, radius, &u, &v, r, g, b);
     }
 
     return off / 6;
@@ -474,14 +514,25 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     if (!state || !state->initialized || !gizmo || !selection) return;
     if (edit_selection_count(selection) == 0) return;
 
-    /* Compute eye position for distance-based scaling. */
-    vec3_t eye = editor_camera_eye_position(&state->camera);
-    float scale = compute_gizmo_scale(&gizmo->position, &eye);
+    /* Extract eye position from the view matrix.  The view matrix is
+     * column-major; eye = -R^T * t where R is the upper-left 3×3 and
+     * t is column 3.  Equivalently:
+     *   eye.x = -(row0 · col3), eye.y = -(row1 · col3), eye.z = -(row2 · col3)
+     * Row i of a column-major mat4 is m[i], m[4+i], m[8+i]. */
+    vec3_t eye = {
+        -(view->m[0] * view->m[12] + view->m[4] * view->m[13] +
+          view->m[8] * view->m[14]),
+        -(view->m[1] * view->m[12] + view->m[5] * view->m[13] +
+          view->m[9] * view->m[14]),
+        -(view->m[2] * view->m[12] + view->m[6] * view->m[13] +
+          view->m[10] * view->m[14]),
+    };
+    float scale = compute_gizmo_scale(&gizmo->position, &eye, proj);
     if (scale < 0.01f) scale = 0.01f;
 
     /* Build gizmo geometry based on current mode.
-     * Max buffer: rotate = 192 verts, translate/scale with plane fills
-     * (3*6 tri verts + 3*8 outline verts + 18/30 axis verts) ≈ 90 verts.
+     * Max buffer: rotate = 3 arcs × 12 segs × 2 verts = 72 verts,
+     * translate/scale with plane fills ≈ 90 verts.
      * Use 1500 floats to be safe. */
     float verts[1500];
     int vert_count = 0;
@@ -499,6 +550,7 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     case GIZMO_MODE_ROTATE:
         vert_count = build_rotate_verts(verts, &gizmo->position,
                                          scale, gizmo->active_axis, orient,
+                                         gizmo->arc_sign_u, gizmo->arc_sign_v,
                                          &active_start);
         break;
     case GIZMO_MODE_SCALE:

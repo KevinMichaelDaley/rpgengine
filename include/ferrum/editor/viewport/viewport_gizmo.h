@@ -21,6 +21,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stdint.h>
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/mat4.h"
 #include "ferrum/editor/viewport/transform_basis.h"
@@ -69,6 +70,12 @@ typedef struct gizmo_state {
     vec3_t            position;      /**< Gizmo world position (from selection). */
     mat4_t            orientation;   /**< Basis orientation matrix (rotation only). */
     bool              dragging;      /**< True if user is dragging a gizmo axis. */
+
+    /** Rotation arc quadrant signs (per ring, +1 or -1).
+     *  Determines which 90-degree quadrant each arc renders in.
+     *  Updated with hysteresis by gizmo_update_arc_quadrants(). */
+    int8_t            arc_sign_u[3]; /**< Sign for each ring's u tangent. */
+    int8_t            arc_sign_v[3]; /**< Sign for each ring's v tangent. */
 } gizmo_state_t;
 
 /* ---- Lifecycle ---- */
@@ -85,6 +92,19 @@ void gizmo_state_init(gizmo_state_t *gizmo);
  * @param mode   New mode.
  */
 void gizmo_state_set_mode(gizmo_state_t *gizmo, gizmo_mode_t mode);
+
+/* ---- Arc quadrant selection ---- */
+
+/**
+ * @brief Update rotation arc quadrant selection based on camera position.
+ *
+ * Picks the quadrant for each rotation arc that best faces the camera,
+ * with hysteresis to prevent flickering at decision boundaries.
+ *
+ * @param gizmo    Gizmo state (non-NULL, arc_sign fields updated).
+ * @param eye_pos  Camera eye position in world space.
+ */
+void gizmo_update_arc_quadrants(gizmo_state_t *gizmo, vec3_t eye_pos);
 
 /* ---- Hit testing ---- */
 

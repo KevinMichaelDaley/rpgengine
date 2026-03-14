@@ -105,6 +105,9 @@ typedef struct scene_editor {
     scene_ui_state_t   ui;         /**< UI actions, scroll, mouse. */
 
     scene_editor_config_t config; /**< Resolved config. */
+    /** Active video capture context (NULL when not streaming). */
+    struct fr_video_capture *capture;
+
     bool               running;   /**< Main loop flag. */
     bool               initialized; /**< Guard against double init. */
     bool               connected;   /**< True if server connection is live. */

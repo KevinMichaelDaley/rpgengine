@@ -22,7 +22,9 @@
 #include "ferrum/editor/json_parse.h"
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
+#include "ferrum/renderer/video_capture.h"
 
+#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -158,8 +160,21 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         /* Stamp with current refresh generation for stale detection. */
         snapshot.refresh_gen = ed->entity_refresh_gen;
 
-        /* Restore the entity at the server-assigned ID slot. */
-        edit_entity_store_restore(&ed->entities, eid, &snapshot);
+        /* Restore the entity at the server-assigned ID slot. If the
+         * entity is already active, update it in place so server-
+         * authoritative state (e.g. scale after clone) wins. */
+        if (!edit_entity_store_restore(&ed->entities, eid, &snapshot)) {
+            edit_entity_t *existing_mut =
+                edit_entity_store_get_mut(&ed->entities, eid);
+            if (existing_mut) {
+                bool was_pending = existing_mut->pending_delete;
+                memcpy(existing_mut, &snapshot, sizeof(edit_entity_t));
+                existing_mut->active = true;
+                if (was_pending) {
+                    existing_mut->pending_delete = true;
+                }
+            }
+        }
     }
 }
 
@@ -398,6 +413,7 @@ static void dispatch_tui_command(scene_editor_t *ed)
             first[fi] = '\0';
             if (strcmp(first, "help") == 0) is_local = true;
             if (strcmp(first, "basis") == 0) is_local = true;
+            if (strcmp(first, "stream") == 0) is_local = true;
             size_t clen = strlen(cmd);
             if (clen >= 2 && cmd[clen - 1] == '?') is_local = true;
         }
@@ -500,6 +516,54 @@ static void dispatch_tui_command(scene_editor_t *ed)
         return;
     }
 
+    /* Built-in local command: stream [filename.mp4]
+     * Starts or stops video capture. With a filename argument, starts
+     * capture to that file. Without arguments, stops active capture. */
+    if (strcmp(word, "stream") == 0) {
+        const char *rest = cmd + 6;
+        while (*rest == ' ') rest++;
+
+        if (ed->capture && *rest == '\0') {
+            /* Stop active capture. */
+            uint64_t frames = fr_video_capture_frames_written(ed->capture);
+            fr_video_capture_destroy(ed->capture);
+            ed->capture = NULL;
+            char msg[UI_TUI_LOG_LINE];
+            snprintf(msg, sizeof(msg),
+                     "Stream stopped (%llu frames written)",
+                     (unsigned long long)frames);
+            scene_ui_tui_log_success(&ed->ui, msg);
+        } else if (*rest != '\0') {
+            /* Start (or restart) capture. */
+            if (ed->capture) {
+                fr_video_capture_destroy(ed->capture);
+                ed->capture = NULL;
+            }
+            int dw, dh;
+            SDL_GL_GetDrawableSize(ed->window, &dw, &dh);
+            fr_video_capture_desc_t desc = {
+                .width = dw,
+                .height = dh,
+                .fps = 30,
+                .output_path = rest,
+            };
+            ed->capture = fr_video_capture_create(&desc);
+            if (ed->capture) {
+                char msg[UI_TUI_LOG_LINE];
+                snprintf(msg, sizeof(msg),
+                         "Streaming %dx%d @30fps -> %s", dw, dh, rest);
+                scene_ui_tui_log_success(&ed->ui, msg);
+            } else {
+                scene_ui_tui_log_error(&ed->ui,
+                    "Failed to start stream (ffmpeg on PATH?)");
+            }
+        } else {
+            scene_ui_tui_log_error(&ed->ui,
+                "Usage: stream <file.mp4> | stream (to stop)");
+        }
+        return;
+    }
+
     /* Look up command definition for validation. */
     const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(word);
     if (!def) {
@@ -575,6 +639,28 @@ void scene_frame_pump(struct scene_editor *ed)
             scene_sync_update_state(&ed->sync);
             /* Backfill the log entry for this command with green ok. */
             scene_ui_tui_log_resolve(&ed->ui, resp.id, true);
+
+            /* If this was a delete command, immediately remove
+             * confirmed-deleted entities from the store so the
+             * outliner updates without waiting for a list refresh. */
+            if (is_delete_resp) {
+                uint32_t write2 = 0;
+                for (uint32_t pi = 0;
+                     pi < ed->ui.pending_delete_count; pi++) {
+                    if (ed->ui.pending_delete_log_ids[pi] == resp.id) {
+                        uint32_t eid = ed->ui.pending_delete_ids[pi];
+                        edit_selection_remove(&ed->selection, eid);
+                        edit_entity_store_remove(&ed->entities, eid);
+                    } else {
+                        ed->ui.pending_delete_ids[write2] =
+                            ed->ui.pending_delete_ids[pi];
+                        ed->ui.pending_delete_log_ids[write2] =
+                            ed->ui.pending_delete_log_ids[pi];
+                        write2++;
+                    }
+                }
+                ed->ui.pending_delete_count = write2;
+            }
         } else if (is_delete_resp) {
             /* Suppress delete errors — retries happen automatically
              * via reconcile_pending_deletes after entity list refresh. */
@@ -808,6 +894,10 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         /* New selection always becomes the active object. */
         ed->active_object_id = ed->ui.action_target;
 
+        /* Track for outliner range operations. */
+        ed->ui.outliner_last_click_id = ed->ui.action_target;
+        ed->ui.outliner_last_was_select = true;
+
         snprintf(echo, sizeof(echo), "select entity_id=%u",
                  ed->ui.action_target);
         break;
@@ -831,8 +921,97 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
             }
         }
 
+        /* Track for outliner range operations. */
+        ed->ui.outliner_last_click_id = ed->ui.action_target;
+        ed->ui.outliner_last_was_select = false;
+
         snprintf(echo, sizeof(echo), "deselect entity_id=%u",
                  ed->ui.action_target);
+        break;
+    }
+
+    case UI_ACTION_REPLACE_SELECTION: {
+        /* Clear existing selection, then select the target. */
+        /* Send deselect commands for currently selected entities first. */
+        {
+            uint32_t sel_count = edit_selection_count(&ed->selection);
+            const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+            for (uint32_t si = 0; si < sel_count; ++si) {
+                if (sel_ids[si] == ed->ui.action_target) continue;
+                uint32_t dcmd = scene_connection_next_id(&ed->connection);
+                int dlen = scene_cmd_format_deselect(
+                    cmd_buf, sizeof(cmd_buf), dcmd, sel_ids[si]);
+                if (dlen > 0 && ed->connected) {
+                    ctrl_conn_send_raw(&ed->connection.tcp,
+                                       cmd_buf, (uint32_t)dlen);
+                }
+            }
+        }
+        edit_selection_clear(&ed->selection);
+        edit_selection_add(&ed->selection, ed->ui.action_target);
+        ed->active_object_id = ed->ui.action_target;
+
+        /* Track for range operations. */
+        ed->ui.outliner_last_click_id = ed->ui.action_target;
+        ed->ui.outliner_last_was_select = true;
+
+        cmd_id = scene_connection_next_id(&ed->connection);
+        cmd_len = scene_cmd_format_select(
+            cmd_buf, sizeof(cmd_buf), cmd_id, ed->ui.action_target);
+
+        snprintf(echo, sizeof(echo), "select (replace) entity_id=%u",
+                 ed->ui.action_target);
+        break;
+    }
+
+    case UI_ACTION_RANGE_SELECT: {
+        /* Shift-click: select all entities between last clicked and target.
+         * Noop if last outliner click was a deselect. */
+        if (!ed->ui.outliner_last_was_select) break;
+
+        uint32_t from = ed->ui.outliner_last_click_id;
+        uint32_t to = ed->ui.action_target;
+        uint32_t lo = from < to ? from : to;
+        uint32_t hi = from < to ? to : from;
+        uint32_t cap = ed->entities.capacity;
+        if (hi >= cap) hi = cap - 1;
+
+        for (uint32_t i = lo; i <= hi; ++i) {
+            const edit_entity_t *ent =
+                edit_entity_store_get(&ed->entities, i);
+            if (!ent) continue;
+            edit_selection_add(&ed->selection, i);
+        }
+        ed->active_object_id = ed->ui.action_target;
+
+        snprintf(echo, sizeof(echo), "range select %u..%u", lo, hi);
+        break;
+    }
+
+    case UI_ACTION_RANGE_DESELECT: {
+        /* Ctrl+Shift-click: deselect all between last clicked and target.
+         * Noop if last outliner click was a select. */
+        if (ed->ui.outliner_last_was_select) break;
+
+        uint32_t from = ed->ui.outliner_last_click_id;
+        uint32_t to = ed->ui.action_target;
+        uint32_t lo = from < to ? from : to;
+        uint32_t hi = from < to ? to : from;
+        uint32_t cap = ed->entities.capacity;
+        if (hi >= cap) hi = cap - 1;
+
+        for (uint32_t i = lo; i <= hi; ++i) {
+            edit_selection_remove(&ed->selection, i);
+        }
+        /* Update active object. */
+        if (edit_selection_count(&ed->selection) > 0) {
+            const uint32_t *ids = edit_selection_ids(&ed->selection);
+            ed->active_object_id = ids[0];
+        } else {
+            ed->active_object_id = EDIT_ENTITY_INVALID_ID;
+        }
+
+        snprintf(echo, sizeof(echo), "range deselect %u..%u", lo, hi);
         break;
     }
 

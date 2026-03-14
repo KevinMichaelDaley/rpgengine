@@ -161,6 +161,26 @@ extern "C" {
 #ifndef GL_DEPTH_BUFFER_BIT
 #define GL_DEPTH_BUFFER_BIT 0x00000100
 #endif
+#ifndef GL_STENCIL_BUFFER_BIT
+#define GL_STENCIL_BUFFER_BIT 0x00000400
+#endif
+
+/* ---- Stencil ---- */
+#ifndef GL_STENCIL_TEST
+#define GL_STENCIL_TEST 0x0B90
+#endif
+#ifndef GL_KEEP
+#define GL_KEEP 0x1E00
+#endif
+#ifndef GL_REPLACE
+#define GL_REPLACE 0x1E01
+#endif
+#ifndef GL_ALWAYS
+#define GL_ALWAYS 0x0207
+#endif
+#ifndef GL_NOTEQUAL
+#define GL_NOTEQUAL 0x0205
+#endif
 
 /* ---- Texture formats ---- */
 #ifndef GL_RED

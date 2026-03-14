@@ -43,16 +43,24 @@
 
 /* ---- Internal helpers ---- */
 
+/** Target gizmo screen fraction: the gizmo axis tip will be this
+ *  fraction of the viewport height away from center on screen. */
+#define GIZMO_SCREEN_FRACTION 0.12f
+
 /**
- * @brief Compute gizmo visual scale from camera distance.
+ * @brief Compute gizmo visual scale so the gizmo occupies a fixed
+ *        fraction of screen height regardless of zoom and FOV.
  */
 static float viewport_gizmo_screen_scale(const vec3_t *gizmo_pos,
-                                           const vec3_t *eye_pos) {
+                                           const vec3_t *eye_pos,
+                                           float fov_y) {
     float dx = gizmo_pos->x - eye_pos->x;
     float dy = gizmo_pos->y - eye_pos->y;
     float dz = gizmo_pos->z - eye_pos->z;
     float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-    float scale = dist * 0.15f;
+    /* visible_height = 2 * dist * tan(fov/2)
+     * gizmo should be GIZMO_SCREEN_FRACTION of that. */
+    float scale = dist * tanf(fov_y * 0.5f) * GIZMO_SCREEN_FRACTION * 2.0f;
     if (scale < 0.3f) scale = 0.3f;
     return scale;
 }
@@ -240,9 +248,12 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
         break;
     }
     case GIZMO_MODE_SCALE: {
-        float factor[3] = {1.0f + total_delta.x,
-                            1.0f + total_delta.y,
-                            1.0f + total_delta.z};
+        /* Use the multiplicatively-accumulated scale factor so the server
+         * matches the compounded local scale exactly (not the additive
+         * sum of per-frame deltas). */
+        float factor[3] = {fvp->gizmo_scale_accum.x,
+                            fvp->gizmo_scale_accum.y,
+                            fvp->gizmo_scale_accum.z};
         cmd_len = scene_cmd_format_scale(cmd_buf, sizeof(cmd_buf),
                                           cmd_id, factor);
         break;
@@ -482,7 +493,8 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     vec3_t eye = editor_camera_eye_position(
                         &fvp->camera);
                     float gscale = viewport_gizmo_screen_scale(
-                        &fvp->gizmo.position, &eye);
+                        &fvp->gizmo.position, &eye,
+                        fvp->camera.fov);
                     /* Build VP matrix for screen-space ring test. */
                     float aspect = (vp_rect.w > 0 && vp_rect.h > 0)
                         ? (float)vp_rect.w / (float)vp_rect.h : 1.0f;
@@ -499,6 +511,7 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                         fvp->gizmo.dragging = true;
                         fvp->gizmo_drag_origin = fvp->gizmo.position;
                         fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
+                        fvp->gizmo_scale_accum = (vec3_t){1, 1, 1};
                         fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
                         gizmo_hit = true;
                     }
@@ -549,6 +562,7 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             fvp->free_dragging = true;
                             fvp->gizmo_drag_origin = fvp->gizmo.position;
                             fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
+                            fvp->gizmo_scale_accum = (vec3_t){1, 1, 1};
                             fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
                         } else {
                             edit_selection_clear(&ed->selection);
@@ -746,7 +760,8 @@ static bool handle_mouse_motion(scene_editor_t *ed,
 
             vec3_t eye = editor_camera_eye_position(&fvp->camera);
             float cam_dist = viewport_gizmo_screen_scale(
-                &fvp->gizmo.position, &eye);
+                &fvp->gizmo.position, &eye,
+                fvp->camera.fov);
             float speed = cam_dist * GIZMO_DRAG_SPEED;
 
             /* Mouse X → camera right, mouse Y → camera up.
@@ -859,7 +874,8 @@ static bool handle_mouse_motion(scene_editor_t *ed,
 
             vec3_t eye = editor_camera_eye_position(&fvp->camera);
             float cam_dist = viewport_gizmo_screen_scale(
-                &fvp->gizmo.position, &eye);
+                &fvp->gizmo.position, &eye,
+                fvp->camera.fov);
             float speed = cam_dist * GIZMO_DRAG_SPEED;
             float mx = (float)ev->xrel;
             float my = (float)ev->yrel;
@@ -962,7 +978,8 @@ static bool handle_mouse_motion(scene_editor_t *ed,
 
             vec3_t eye = editor_camera_eye_position(&fvp->camera);
             float cam_dist = viewport_gizmo_screen_scale(
-                &fvp->gizmo.position, &eye);
+                &fvp->gizmo.position, &eye,
+                fvp->camera.fov);
             float speed = cam_dist * GIZMO_DRAG_SPEED;
 
             /* Apply along the world-space axis direction. */
@@ -975,6 +992,13 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         fvp->gizmo_drag_accum.x += delta.x;
         fvp->gizmo_drag_accum.y += delta.y;
         fvp->gizmo_drag_accum.z += delta.z;
+        /* Track multiplicative scale factor separately so the server
+         * command matches the compounded local scale exactly. */
+        if (fvp->gizmo.mode == GIZMO_MODE_SCALE) {
+            fvp->gizmo_scale_accum.x *= (1.0f + delta.x);
+            fvp->gizmo_scale_accum.y *= (1.0f + delta.y);
+            fvp->gizmo_scale_accum.z *= (1.0f + delta.z);
+        }
         return true;
     }
 

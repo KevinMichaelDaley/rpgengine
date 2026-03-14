@@ -37,6 +37,9 @@ typedef enum scene_ui_action {
     UI_ACTION_SPAWN_CAPSULE,
     UI_ACTION_SELECT_ENTITY,    /**< entity_id in action_target. */
     UI_ACTION_DESELECT_ENTITY,  /**< entity_id in action_target. */
+    UI_ACTION_REPLACE_SELECTION, /**< Clear selection, then select action_target. */
+    UI_ACTION_RANGE_SELECT,     /**< Shift-click: range select in outliner. */
+    UI_ACTION_RANGE_DESELECT,   /**< Ctrl+Shift-click: range deselect in outliner. */
     UI_ACTION_DELETE_SELECTED,
     UI_ACTION_MODE_NONE,        /**< Disable gizmo (selection-only). */
     UI_ACTION_MODE_TRANSLATE,
@@ -105,6 +108,8 @@ typedef struct scene_ui_state {
 
     /* Outliner state. */
     int               outliner_scroll; /**< Scroll offset in pixels. */
+    uint32_t          outliner_last_click_id; /**< Entity ID of last outliner click. */
+    bool              outliner_last_was_select; /**< True if last outliner click was select. */
 
     /* Inspector state. */
     int               inspector_scroll;

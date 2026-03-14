@@ -48,7 +48,8 @@ typedef struct viewport_state {
     /* Transform gizmo. */
     gizmo_state_t   gizmo;         /**< Gizmo mode, axis, drag state. */
     vec3_t          gizmo_drag_origin; /**< Where gizmo drag started. */
-    vec3_t          gizmo_drag_accum;  /**< Accumulated drag delta (translate/scale). */
+    vec3_t          gizmo_drag_accum;  /**< Accumulated drag delta (translate). */
+    vec3_t          gizmo_scale_accum; /**< Accumulated scale factor (multiplicative). */
     quat_t          gizmo_rot_accum;   /**< Accumulated rotation quaternion. */
 
     /* 3D cursor. */

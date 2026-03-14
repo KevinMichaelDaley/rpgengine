@@ -22,6 +22,8 @@
 
 #include "ferrum/memory/vm_alloc.h"
 
+#include "ferrum/renderer/video_capture.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -182,6 +184,11 @@ static void render_frame(scene_editor_t *ed) {
     build_clay_layout(ed, lw, lh);
     Clay_RenderCommandArray cmds = Clay_EndLayout();
     clay_backend_render(&ed->clay_be, cmds);
+
+    /* Submit frame for video capture if streaming. */
+    if (ed->capture) {
+        fr_video_capture_submit_frame(ed->capture);
+    }
 
     SDL_GL_SwapWindow(ed->window);
 }
@@ -462,6 +469,12 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
 
 void scene_editor_shutdown(scene_editor_t *ed) {
     if (!ed->initialized) return;
+
+    /* Stop video capture if active. */
+    if (ed->capture) {
+        fr_video_capture_destroy(ed->capture);
+        ed->capture = NULL;
+    }
 
     /* Destroy per-viewport FBOs (viewports[1+]; vp 0 uses shared FBO). */
     for (int i = 1; i < VIEWPORT_MAX_COUNT; i++) {

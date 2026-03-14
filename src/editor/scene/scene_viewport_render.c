@@ -208,9 +208,14 @@ static bool resolve_gl_functions(viewport_render_state_t *state) {
     LOAD_GL_PROC(state->glEnable,                  l, "glEnable");
     LOAD_GL_PROC(state->glDisable,                 l, "glDisable");
     LOAD_GL_PROC(state->glCullFace,                l, "glCullFace");
+    LOAD_GL_PROC(state->glDepthMask,               l, "glDepthMask");
     LOAD_GL_PROC(state->glDrawArrays,              l, "glDrawArrays");
     LOAD_GL_PROC(state->glLineWidth,               l, "glLineWidth");
     LOAD_GL_PROC(state->glPolygonMode,             l, "glPolygonMode");
+    LOAD_GL_PROC(state->glStencilFunc,             l, "glStencilFunc");
+    LOAD_GL_PROC(state->glStencilOp,               l, "glStencilOp");
+    LOAD_GL_PROC(state->glStencilMask,             l, "glStencilMask");
+    LOAD_GL_PROC(state->glColorMask,               l, "glColorMask");
 
     /* Minimum check — glBindFramebuffer is essential for FBO rendering. */
     return state->glBindFramebuffer != NULL;

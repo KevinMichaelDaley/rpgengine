@@ -14,6 +14,7 @@
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
 
+#include <SDL2/SDL.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -79,10 +80,14 @@ static struct {
 /* ------------------------------------------------------------------------ */
 
 /**
- * @brief Hover callback for an entity row click (select/deselect toggle).
+ * @brief Hover callback for an entity row click with modifier support.
  *
- * The userdata points into s_entity_click_ctx, which carries both the
- * editor pointer and the target entity ID.
+ * Plain click: clear selection, select this entity.
+ * Ctrl+click: toggle (add if unselected, deselect if selected).
+ * Shift+click: range select from last clicked entity to this one
+ *   (noop if last outliner click was a deselect).
+ * Ctrl+Shift+click: range deselect from last clicked to this one
+ *   (noop if last outliner click was a select).
  */
 static void on_entity_row_hover(Clay_ElementId id, Clay_PointerData data,
                                  void *user) {
@@ -92,7 +97,22 @@ static void on_entity_row_hover(Clay_ElementId id, Clay_PointerData data,
         uint32_t        entity_id;
     } *ctx = user;
 
-    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
+    if (data.state != CLAY_POINTER_DATA_PRESSED_THIS_FRAME) return;
+
+    SDL_Keymod mod = SDL_GetModState();
+    bool ctrl  = (mod & KMOD_CTRL) != 0;
+    bool shift = (mod & KMOD_SHIFT) != 0;
+
+    if (ctrl && shift) {
+        /* Ctrl+Shift: range deselect (noop if last was select). */
+        ctx->ed->ui.action = UI_ACTION_RANGE_DESELECT;
+        ctx->ed->ui.action_target = ctx->entity_id;
+    } else if (shift) {
+        /* Shift: range select (noop if last was deselect). */
+        ctx->ed->ui.action = UI_ACTION_RANGE_SELECT;
+        ctx->ed->ui.action_target = ctx->entity_id;
+    } else if (ctrl) {
+        /* Ctrl: toggle individual entity. */
         bool selected = edit_selection_contains(&ctx->ed->selection,
                                                  ctx->entity_id);
         if (selected) {
@@ -100,6 +120,10 @@ static void on_entity_row_hover(Clay_ElementId id, Clay_PointerData data,
         } else {
             ctx->ed->ui.action = UI_ACTION_SELECT_ENTITY;
         }
+        ctx->ed->ui.action_target = ctx->entity_id;
+    } else {
+        /* Plain click: replace selection with this entity. */
+        ctx->ed->ui.action = UI_ACTION_REPLACE_SELECTION;
         ctx->ed->ui.action_target = ctx->entity_id;
     }
 }

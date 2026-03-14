@@ -147,9 +147,16 @@ typedef struct viewport_render_state {
     void     (*glEnable)(uint32_t cap);
     void     (*glDisable)(uint32_t cap);
     void     (*glCullFace)(uint32_t mode);
+    void     (*glDepthMask)(uint8_t flag);
     void     (*glDrawArrays)(uint32_t mode, int32_t first, int32_t count);
     void     (*glLineWidth)(float width);
     void     (*glPolygonMode)(uint32_t face, uint32_t mode);
+
+    /* Stencil functions for selection outline rendering. */
+    void     (*glStencilFunc)(uint32_t func, int32_t ref, uint32_t mask);
+    void     (*glStencilOp)(uint32_t sfail, uint32_t dpfail, uint32_t dppass);
+    void     (*glStencilMask)(uint32_t mask);
+    void     (*glColorMask)(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 } viewport_render_state_t;
 
 /* ---- Lifecycle ---- */

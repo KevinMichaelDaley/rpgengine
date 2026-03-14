@@ -18,7 +18,7 @@ static const float AXIS_HIT_RADIUS = 0.25f;
 /** @brief Maximum screen-space distance (normalized [0,1] coords) from
  *  cursor to ring outline for a hit. Clicks closer than this threshold
  *  to any ring outline count as a gizmo interaction. */
-static const float RING_HIT_THRESHOLD = 0.12f;
+static const float RING_HIT_THRESHOLD = 0.08f;
 
 /**
  * @brief Test if a ray passes near a line segment from p0 to p1.
@@ -77,7 +77,7 @@ void gizmo_state_set_mode(gizmo_state_t *gizmo, gizmo_mode_t mode) {
 }
 
 /** Enlarged hit radius for axis endpoints (clickable from any angle). */
-static const float TIP_HIT_RADIUS = 0.25f;
+static const float TIP_HIT_RADIUS = 0.35f;
 
 /**
  * @brief Compute the closest distance from a ray to a point in 3D.
@@ -93,10 +93,14 @@ static float ray_point_distance_(const editor_ray_t *ray, vec3_t point) {
     return vec3_magnitude(vec3_sub(point, closest));
 }
 
-/** Number of sample points for ring screen-space distance test.
- *  Matches RING_SEGMENTS in the renderer so the hit region aligns
- *  exactly with the visible ring mesh edges. */
-#define RING_SAMPLE_COUNT 32
+/** Number of sample points for arc screen-space distance test.
+ *  Matches ARC_SEGMENTS in the renderer so the hit region aligns
+ *  exactly with the visible arc mesh edges. */
+#define ARC_SAMPLE_COUNT 12
+
+/** Arc angular span in radians (90 degrees = quarter circle).
+ *  Must match ARC_SPAN in scene_viewport_gizmo.c. */
+#define ARC_SPAN (3.14159265f * 0.5f)
 
 /**
  * @brief Project a world-space point to normalized screen coords [0,1].
@@ -143,41 +147,32 @@ static float point_seg_dist_2d_(float px, float py,
 }
 
 /**
- * @brief Compute the 2D screen-space distance from a cursor to a ring outline.
+ * @brief Compute the 2D screen-space distance from a cursor to an arc outline.
  *
- * Projects sample points on the ring to screen space and measures the
- * minimum distance from the cursor to any segment between consecutive
- * projected points. This works uniformly for face-on circles, edge-on
- * line segments, and all intermediate ellipses.
+ * Projects sample points on the quarter-circle arc to screen space and
+ * measures the minimum distance from the cursor to any segment between
+ * consecutive projected points.
  *
- * Also updates *max_screen_radius with the maximum projected distance
- * from the ring center to any sample point (used for gating).
+ * The arc is parameterized as: point(t) = center + (u*cos(t) + v*sin(t)) * radius
+ * for t in [0, ARC_SPAN].
  *
- * @return Distance from cursor to the ring outline in normalized screen
+ * @param u  First tangent direction (start of arc).
+ * @param v  Second tangent direction (end of arc at 90°).
+ * @return Distance from cursor to the arc outline in normalized screen
  *         coords, or 1e30 if projection fails.
  */
-static float screen_ring_distance_(const mat4_t *vp,
-                                     vec3_t center, vec3_t normal,
-                                     float radius,
-                                     float cursor_x, float cursor_y,
-                                     float *max_screen_radius) {
-    vec3_t arbitrary = (fabsf(normal.y) < 0.9f)
-        ? (vec3_t){0, 1, 0}
-        : (vec3_t){1, 0, 0};
-    vec3_t u = vec3_normalize_safe(vec3_cross(normal, arbitrary), 1e-8f);
-    vec3_t v = vec3_cross(normal, u);
-
-    /* Project the center (needed for max_screen_radius tracking). */
-    float cx_s, cy_s;
-    if (!project_to_screen_(vp, center, &cx_s, &cy_s)) return 1e30f;
-
-    /* Project all sample points to screen space. */
-    float step = 2.0f * 3.14159265f / (float)RING_SAMPLE_COUNT;
-    float sx_pts[RING_SAMPLE_COUNT];
-    float sy_pts[RING_SAMPLE_COUNT];
+static float screen_arc_distance_(const mat4_t *vp,
+                                    vec3_t center, vec3_t u, vec3_t v,
+                                    float radius,
+                                    float cursor_x, float cursor_y) {
+    /* Sample points along the arc (ARC_SAMPLE_COUNT segments =
+     * ARC_SAMPLE_COUNT + 1 endpoints). */
+    float step = ARC_SPAN / (float)ARC_SAMPLE_COUNT;
+    float sx_pts[ARC_SAMPLE_COUNT + 1];
+    float sy_pts[ARC_SAMPLE_COUNT + 1];
     int valid_count = 0;
 
-    for (int i = 0; i < RING_SAMPLE_COUNT; ++i) {
+    for (int i = 0; i <= ARC_SAMPLE_COUNT; ++i) {
         float angle = (float)i * step;
         float ca = cosf(angle), sa = sinf(angle);
         vec3_t pt = {
@@ -189,49 +184,22 @@ static float screen_ring_distance_(const mat4_t *vp,
         float sx, sy;
         if (!project_to_screen_(vp, pt, &sx, &sy)) continue;
 
-        /* Track max screen radius for gating. */
-        if (max_screen_radius) {
-            float rdx = sx - cx_s, rdy = sy - cy_s;
-            float r = sqrtf(rdx * rdx + rdy * rdy);
-            if (r > *max_screen_radius) *max_screen_radius = r;
-        }
-
         sx_pts[valid_count] = sx;
         sy_pts[valid_count] = sy;
         valid_count++;
     }
 
-    if (valid_count < 3) return 1e30f;
+    if (valid_count < 2) return 1e30f;
 
-    /* Compute projected aspect ratio to detect face-on vs edge-on.
-     * Face-on rings (aspect ≈ 1) have their circle boundary pass near
-     * many cursor positions, so they need a distance penalty to avoid
-     * dominating edge-on rings in the comparison. */
-    float local_min_r = 1e30f, local_max_r = 0.0f;
-    for (int i = 0; i < valid_count; ++i) {
-        float rdx = sx_pts[i] - cx_s, rdy = sy_pts[i] - cy_s;
-        float r = sqrtf(rdx * rdx + rdy * rdy);
-        if (r < local_min_r) local_min_r = r;
-        if (r > local_max_r) local_max_r = r;
-    }
-    /* Aspect ratio: 0 = perfectly edge-on, 1 = perfectly face-on. */
-    float aspect = (local_max_r > 1e-6f) ? (local_min_r / local_max_r) : 0.0f;
-    /* Penalty: face-on rings (aspect→1) get distance scaled up slightly.
-     * Edge-on rings (aspect→0) get no penalty. Kept mild so face-on
-     * rings remain selectable without excessive precision. */
-    float penalty = 1.0f + 0.15f * aspect;
-
-    /* Find minimum distance from cursor to any segment between
-     * consecutive projected sample points on the ring outline. */
+    /* Find minimum distance from cursor to any segment of the arc. */
     float min_dist = 1e30f;
-    for (int i = 0; i < valid_count; ++i) {
-        int next = (i + 1) % valid_count;
+    for (int i = 0; i < valid_count - 1; ++i) {
         float d = point_seg_dist_2d_(cursor_x, cursor_y,
                                        sx_pts[i], sy_pts[i],
-                                       sx_pts[next], sy_pts[next]);
+                                       sx_pts[i + 1], sy_pts[i + 1]);
         if (d < min_dist) min_dist = d;
     }
-    return min_dist * penalty;
+    return min_dist;
 }
 
 /**
@@ -334,6 +302,45 @@ static gizmo_axis_t hit_test_plane_squares_(const editor_ray_t *ray,
     return best;
 }
 
+/**
+ * @brief Compute 2D screen-space distance from cursor to a line segment.
+ *
+ * Projects both endpoints of the 3D segment to screen space and measures
+ * the 2D distance from the cursor to the projected segment.
+ *
+ * @return Distance in normalized screen coords, or 1e30 if projection fails.
+ */
+static float screen_segment_distance_(const mat4_t *vp,
+                                         vec3_t p0, vec3_t p1,
+                                         float cursor_x, float cursor_y) {
+    float sx0, sy0, sx1, sy1;
+    if (!project_to_screen_(vp, p0, &sx0, &sy0)) return 1e30f;
+    if (!project_to_screen_(vp, p1, &sx1, &sy1)) return 1e30f;
+    return point_seg_dist_2d_(cursor_x, cursor_y, sx0, sy0, sx1, sy1);
+}
+
+/**
+ * @brief Compute 2D screen-space distance from cursor to a point.
+ *
+ * @return Distance in normalized screen coords, or 1e30 if projection fails.
+ */
+static float screen_point_distance_(const mat4_t *vp, vec3_t point,
+                                       float cursor_x, float cursor_y) {
+    float sx, sy;
+    if (!project_to_screen_(vp, point, &sx, &sy)) return 1e30f;
+    float dx = sx - cursor_x;
+    float dy = sy - cursor_y;
+    return sqrtf(dx * dx + dy * dy);
+}
+
+/** Screen-space hit threshold for axis lines (normalized [0,1] coords).
+ *  Same as RING_HIT_THRESHOLD for consistent feel across all gizmo modes. */
+static const float AXIS_SCREEN_THRESHOLD = 0.04f;
+
+/** Screen-space hit threshold for axis tips (slightly larger for easier
+ *  clicking on arrow heads and scale cubes). */
+static const float TIP_SCREEN_THRESHOLD = 0.06f;
+
 gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
                               const struct editor_ray *ray,
                               float gizmo_scale,
@@ -343,12 +350,10 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
     if (gizmo->mode == GIZMO_MODE_NONE) return GIZMO_AXIS_NONE;
 
     float length = ARROW_LENGTH * gizmo_scale;
-    float threshold = AXIS_HIT_RADIUS * gizmo_scale;
     vec3_t pos = gizmo->position;
     const mat4_t *orient = &gizmo->orientation;
 
     gizmo_axis_t best = GIZMO_AXIS_NONE;
-    float best_dist = threshold;
 
     /* Get oriented axis directions. */
     vec3_t axis_dirs[3] = {
@@ -361,37 +366,48 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
     };
 
     if (gizmo->mode == GIZMO_MODE_ROTATE && vp) {
-        /* Screen-space ring selection:
+        /* Screen-space arc selection:
          *
-         * Measure the 2D screen distance from cursor to each ring outline.
-         * If the closest ring is within RING_HIT_THRESHOLD, select it.
-         * This works correctly for clicks inside or outside the ring. */
-        float cx_s, cy_s;
-        bool center_visible = project_to_screen_(vp, pos, &cx_s, &cy_s);
+         * Each axis has a 90° arc in the quadrant formed by the other
+         * two positive axes. Measure 2D screen distance from cursor
+         * to each arc; select the closest if within threshold.
+         *
+         * Arc u/v mapping (matches renderer):
+         *   X ring: u = +Y, v = +Z
+         *   Y ring: u = +Z, v = +X
+         *   Z ring: u = +X, v = +Y */
+        static const int ring_uv[3][2] = {
+            {1, 2}, {2, 0}, {0, 1},
+        };
 
-        if (center_visible) {
-            float dists[3];
-            float min_dist = 1e30f;
-            int min_idx = -1;
+        float dists[3];
+        float min_dist = 1e30f;
+        int min_idx = -1;
 
-            for (int i = 0; i < 3; i++) {
-                dists[i] = screen_ring_distance_(vp, pos, axis_dirs[i], length,
-                                                  screen_x, screen_y,
-                                                  NULL);
-                if (dists[i] < min_dist) {
-                    min_dist = dists[i];
-                    min_idx = i;
-                }
-            }
-
-            /* Select the closest ring if cursor is near its outline. */
-            if (min_idx >= 0 && min_dist < RING_HIT_THRESHOLD) {
-                best = axis_ids[min_idx];
+        for (int i = 0; i < 3; i++) {
+            vec3_t u = vec3_scale(axis_dirs[ring_uv[i][0]],
+                                   (float)gizmo->arc_sign_u[i]);
+            vec3_t v = vec3_scale(axis_dirs[ring_uv[i][1]],
+                                   (float)gizmo->arc_sign_v[i]);
+            dists[i] = screen_arc_distance_(vp, pos, u, v, length,
+                                              screen_x, screen_y);
+            if (dists[i] < min_dist) {
+                min_dist = dists[i];
+                min_idx = i;
             }
         }
-    } else {
-        /* Translate/Scale: first test plane constraint squares, then
-         * test each axis line segment. Plane squares take priority. */
+
+        /* Select the closest arc if cursor is near its outline. */
+        if (min_idx >= 0 && min_dist < RING_HIT_THRESHOLD) {
+            best = axis_ids[min_idx];
+        }
+    } else if (vp) {
+        /* Translate/Scale: screen-space hit testing for consistent
+         * selectability regardless of zoom level.
+         *
+         * First test plane constraint squares (ray-based, these have
+         * fixed visual size from gizmo scaling), then test each axis
+         * line segment using screen-space distance. */
         float plane_t;
         gizmo_axis_t plane_hit = hit_test_plane_squares_(
             ray, pos, axis_dirs, length, &plane_t);
@@ -399,6 +415,33 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
             return plane_hit;
         }
 
+        float best_dist = AXIS_SCREEN_THRESHOLD;
+        for (int i = 0; i < 3; i++) {
+            vec3_t end = {
+                pos.x + axis_dirs[i].x * length,
+                pos.y + axis_dirs[i].y * length,
+                pos.z + axis_dirs[i].z * length,
+            };
+            /* Test the full line segment in screen space. */
+            float dist = screen_segment_distance_(vp, pos, end,
+                                                     screen_x, screen_y);
+            if (dist < best_dist) {
+                best_dist = dist;
+                best = axis_ids[i];
+            }
+            /* Also test the endpoint in screen space (larger radius)
+             * so the axis tip is clickable even when viewed edge-on. */
+            float tip_dist = screen_point_distance_(vp, end,
+                                                       screen_x, screen_y);
+            if (tip_dist < TIP_SCREEN_THRESHOLD && tip_dist < best_dist) {
+                best_dist = tip_dist;
+                best = axis_ids[i];
+            }
+        }
+    } else {
+        /* Fallback: world-space ray testing (no VP matrix available). */
+        float threshold = AXIS_HIT_RADIUS * gizmo_scale;
+        float best_dist = threshold;
         float tip_threshold = TIP_HIT_RADIUS * gizmo_scale;
         for (int i = 0; i < 3; i++) {
             vec3_t end = {
@@ -406,14 +449,11 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
                 pos.y + axis_dirs[i].y * length,
                 pos.z + axis_dirs[i].z * length,
             };
-            /* Test the full line segment. */
             float dist = ray_segment_distance_(ray, pos, end);
             if (dist < best_dist) {
                 best_dist = dist;
                 best = axis_ids[i];
             }
-            /* Also test the endpoint sphere (larger radius) so the
-             * axis tip is clickable even when viewed edge-on. */
             float tip_dist = ray_point_distance_(ray, end);
             if (tip_dist < tip_threshold && tip_dist < best_dist) {
                 best_dist = tip_dist;

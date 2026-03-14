@@ -52,8 +52,6 @@ static const float COLOR_CAPSULE[3]   = {0.7f, 0.5f, 0.6f};
 static const float COLOR_HALFSPACE[3] = {0.4f, 0.4f, 0.4f};
 static const float COLOR_MESH[3]      = {0.65f, 0.65f, 0.55f};
 static const float COLOR_MARKER[3]    = {1.0f, 1.0f, 0.0f};
-static const float COLOR_SELECTED[3]  = {1.0f, 0.5f, 0.1f};
-static const float COLOR_ACTIVE[3]   = {1.0f, 1.0f, 1.0f};
 
 /* ---- Primitive mesh lookup ---- */
 
@@ -101,8 +99,10 @@ const static_mesh_t *viewport_render_get_primitive_mesh(
  */
 static const float *get_entity_color(uint32_t entity_type, bool selected,
                                        bool is_active) {
-    if (is_active) return COLOR_ACTIVE;
-    if (selected) return COLOR_SELECTED;
+    /* Selection/active state is indicated by the outline overlay pass,
+     * not by changing the entity's base color. */
+    (void)selected;
+    (void)is_active;
 
     switch (entity_type) {
     case EDIT_ENTITY_TYPE_BOX:       return COLOR_BOX;
@@ -330,7 +330,8 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
     vp->glBindFramebuffer(GL_FRAMEBUFFER, fbo_handle);
     vp->glViewport(0, 0, fbo_w, fbo_h);
     vp->glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
-    vp->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    vp->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT
+                | GL_STENCIL_BUFFER_BIT);
     vp->glEnable(GL_DEPTH_TEST);
     vp->glEnable(GL_CULL_FACE);
 
@@ -387,6 +388,9 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         }
         vs->gizmo.orientation = transform_basis_orientation(
             vs->gizmo.basis, active_orient, &view);
+
+        /* Update rotation arc quadrant selection based on camera. */
+        gizmo_update_arc_quadrants(&vs->gizmo, eye_pos);
     }
 
     /* Draw transform gizmo (only in focused viewport). */

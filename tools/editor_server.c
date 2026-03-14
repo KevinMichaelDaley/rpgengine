@@ -2,7 +2,7 @@
  * @file editor_server.c
  * @brief Standalone editor server — runs editor context with tick loop.
  *
- * Usage: ./editor_server [port]
+ * Usage: ./editor_server [--port PORT]
  * Default port: 9100
  */
 
@@ -12,6 +12,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "ferrum/editor/editor_ctx.h"
@@ -25,8 +26,13 @@ static void sigint_handler_(int sig) {
 
 int main(int argc, char **argv) {
     uint16_t port = 0;
-    if (argc > 1) {
-        port = (uint16_t)atoi(argv[1]);
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            port = (uint16_t)atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--help") == 0) {
+            printf("Usage: %s [--port PORT]\n", argv[0]);
+            return 0;
+        }
     }
 
     signal(SIGINT, sigint_handler_);

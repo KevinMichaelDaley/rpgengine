@@ -264,11 +264,6 @@ bool edit_io_start(edit_io_thread_t *io, uint16_t port,
         .sin_port = htons(port == 0 ? EDIT_IO_DEFAULT_PORT : port),
     };
 
-    /* If port 0 was requested, let OS assign ephemeral port. */
-    if (port == 0) {
-        addr.sin_port = 0;
-    }
-
     if (bind(io->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         close(io->listen_fd);
         return false;

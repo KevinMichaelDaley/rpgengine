@@ -191,6 +191,9 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
                              "u_projection", proj->m, GL_FALSE);
 
     bool wireframe = (shading_mode == SHADING_MODE_WIREFRAME);
+    bool use_stencil = !wireframe && state->glStencilFunc
+                       && state->glStencilOp && state->glStencilMask
+                       && state->glColorMask;
 
     if (wireframe) {
         /* In wireframe mode, draw selected objects as yellow wireframe
@@ -202,53 +205,172 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
             state->glLineWidth(OUTLINE_WIRE_WIDTH);
         }
         state->glDisable(GL_DEPTH_TEST);
-    } else {
-        /* In solid modes, cull front faces so only back faces of the
-         * scaled-up mesh peek out, creating a thin outline border. */
-        state->glEnable(GL_CULL_FACE);
-        state->glCullFace(GL_FRONT);
     }
 
     uint32_t capacity = entities->capacity;
-    for (uint32_t i = 0; i < capacity; ++i) {
-        if (!edit_selection_contains(selection, i)) continue;
-        const edit_entity_t *ent = edit_entity_store_get(entities, i);
-        if (!ent) continue;
 
-        const static_mesh_t *mesh;
-        if (ent->type == EDIT_ENTITY_TYPE_MESH) {
-            mesh = viewport_render_get_entity_mesh(state, i);
-        } else {
-            mesh = viewport_render_get_primitive_mesh(ent->type, state);
+    if (use_stencil) {
+        /* Stencil-based outline: works for all mesh types including
+         * smooth convex shapes (capsules, spheres) where the
+         * back-face-culling technique fails.
+         *
+         * Pass 1: Draw all selected entities at normal scale into the
+         *         stencil buffer (stencil = 1, no color output).
+         * Pass 2: Draw all selected entities scaled up with outline
+         *         color, but only where stencil != 1 (the border). */
+
+        /* ---- Pass 1: fill stencil ---- */
+        state->glEnable(GL_STENCIL_TEST);
+        state->glStencilFunc(GL_ALWAYS, 1, 0xFF);
+        state->glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        state->glStencilMask(0xFF);
+        state->glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        state->glDepthMask(GL_FALSE);
+        /* Disable depth test so stencil is written for all rasterized
+         * fragments.  The entity's depth already occupies the buffer
+         * so GL_LESS would reject every fragment at the same depth. */
+        state->glDisable(GL_DEPTH_TEST);
+
+        for (uint32_t i = 0; i < capacity; ++i) {
+            if (!edit_selection_contains(selection, i)) continue;
+            const edit_entity_t *ent = edit_entity_store_get(entities, i);
+            if (!ent) continue;
+
+            const static_mesh_t *mesh;
+            if (ent->type == EDIT_ENTITY_TYPE_MESH) {
+                mesh = viewport_render_get_entity_mesh(state, i);
+            } else {
+                mesh = viewport_render_get_primitive_mesh(ent->type, state);
+            }
+            if (!mesh) continue;
+
+            mat4_t model = build_outline_model(ent, 1.0f);
+            shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
+                                     "u_model", model.m, GL_FALSE);
+
+            static_mesh_bind(mesh);
+            for (uint32_t s = 0; s < mesh->submesh_count; ++s) {
+                static_mesh_draw_submesh(mesh, s);
+            }
         }
-        if (!mesh) continue;
+        static_mesh_unbind();
 
-        /* Pick outline color based on mode and active state. */
-        const float *color;
-        if (wireframe) {
-            color = (i == active_object_id)
-                ? OUTLINE_WIRE_ACTIVE_COLOR : OUTLINE_WIRE_COLOR;
-        } else {
-            color = (i == active_object_id)
+        /* ---- Pass 2: draw outline where stencil == 0 ---- */
+        state->glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+        state->glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+        state->glStencilMask(0x00);
+        state->glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        /* Re-enable depth test so outlines respect other objects'
+         * depth (don't bleed through geometry in front). */
+        state->glEnable(GL_DEPTH_TEST);
+
+        for (uint32_t i = 0; i < capacity; ++i) {
+            if (!edit_selection_contains(selection, i)) continue;
+            const edit_entity_t *ent = edit_entity_store_get(entities, i);
+            if (!ent) continue;
+
+            const static_mesh_t *mesh;
+            if (ent->type == EDIT_ENTITY_TYPE_MESH) {
+                mesh = viewport_render_get_entity_mesh(state, i);
+            } else {
+                mesh = viewport_render_get_primitive_mesh(ent->type, state);
+            }
+            if (!mesh) continue;
+
+            const float *color = (i == active_object_id)
                 ? OUTLINE_ACTIVE_COLOR : OUTLINE_COLOR;
-        }
-        shader_uniform_set_vec3(&state->flat_uniforms, &state->flat_shader,
-                                 "u_color", color);
+            shader_uniform_set_vec3(&state->flat_uniforms, &state->flat_shader,
+                                     "u_color", color);
 
-        /* Wireframe: draw at normal scale. Solid: dynamically compute scale
-         * to guarantee minimum OUTLINE_MIN_PX pixels of visible border. */
-        float scale = wireframe ? 1.0f
-            : compute_outline_scale_(ent, eye_pos, fov_y, fbo_height);
-        mat4_t model = build_outline_model(ent, scale);
-        shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
-                                 "u_model", model.m, GL_FALSE);
+            float scale = compute_outline_scale_(ent, eye_pos, fov_y,
+                                                   fbo_height);
+            mat4_t model = build_outline_model(ent, scale);
+            shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
+                                     "u_model", model.m, GL_FALSE);
 
-        static_mesh_bind(mesh);
-        for (uint32_t s = 0; s < mesh->submesh_count; ++s) {
-            static_mesh_draw_submesh(mesh, s);
+            static_mesh_bind(mesh);
+            for (uint32_t s = 0; s < mesh->submesh_count; ++s) {
+                static_mesh_draw_submesh(mesh, s);
+            }
         }
+        static_mesh_unbind();
+
+        /* Restore GL state. */
+        state->glStencilMask(0xFF);
+        state->glDisable(GL_STENCIL_TEST);
+        state->glDepthMask(GL_TRUE);
+        state->glEnable(GL_DEPTH_TEST);
+    } else if (!wireframe) {
+        /* Fallback if stencil functions not available: use back-face
+         * culling technique (may not work for all mesh types). */
+        state->glEnable(GL_CULL_FACE);
+        state->glCullFace(GL_FRONT);
+        state->glDepthMask(GL_FALSE);
+
+        for (uint32_t i = 0; i < capacity; ++i) {
+            if (!edit_selection_contains(selection, i)) continue;
+            const edit_entity_t *ent = edit_entity_store_get(entities, i);
+            if (!ent) continue;
+
+            const static_mesh_t *mesh;
+            if (ent->type == EDIT_ENTITY_TYPE_MESH) {
+                mesh = viewport_render_get_entity_mesh(state, i);
+            } else {
+                mesh = viewport_render_get_primitive_mesh(ent->type, state);
+            }
+            if (!mesh) continue;
+
+            const float *color = (i == active_object_id)
+                ? OUTLINE_ACTIVE_COLOR : OUTLINE_COLOR;
+            shader_uniform_set_vec3(&state->flat_uniforms, &state->flat_shader,
+                                     "u_color", color);
+
+            float scale = compute_outline_scale_(ent, eye_pos, fov_y,
+                                                   fbo_height);
+            mat4_t model = build_outline_model(ent, scale);
+            shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
+                                     "u_model", model.m, GL_FALSE);
+
+            static_mesh_bind(mesh);
+            for (uint32_t s = 0; s < mesh->submesh_count; ++s) {
+                static_mesh_draw_submesh(mesh, s);
+            }
+        }
+        static_mesh_unbind();
+
+        state->glCullFace(GL_BACK);
+        state->glDepthMask(GL_TRUE);
+    } else {
+        /* Wireframe mode: draw with wireframe overlay. */
+        for (uint32_t i = 0; i < capacity; ++i) {
+            if (!edit_selection_contains(selection, i)) continue;
+            const edit_entity_t *ent = edit_entity_store_get(entities, i);
+            if (!ent) continue;
+
+            const static_mesh_t *mesh;
+            if (ent->type == EDIT_ENTITY_TYPE_MESH) {
+                mesh = viewport_render_get_entity_mesh(state, i);
+            } else {
+                mesh = viewport_render_get_primitive_mesh(ent->type, state);
+            }
+            if (!mesh) continue;
+
+            const float *color = (i == active_object_id)
+                ? OUTLINE_WIRE_ACTIVE_COLOR : OUTLINE_WIRE_COLOR;
+            shader_uniform_set_vec3(&state->flat_uniforms, &state->flat_shader,
+                                     "u_color", color);
+
+            mat4_t model = build_outline_model(ent, 1.0f);
+            shader_uniform_set_mat4(&state->flat_uniforms, &state->flat_shader,
+                                     "u_model", model.m, GL_FALSE);
+
+            static_mesh_bind(mesh);
+            for (uint32_t s = 0; s < mesh->submesh_count; ++s) {
+                static_mesh_draw_submesh(mesh, s);
+            }
+        }
+        static_mesh_unbind();
     }
-    static_mesh_unbind();
 
     if (wireframe) {
         /* Restore solid polygon mode and depth test. */
@@ -259,9 +381,6 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
             state->glLineWidth(1.0f);
         }
         state->glEnable(GL_DEPTH_TEST);
-    } else {
-        /* Restore back-face culling. */
-        state->glCullFace(GL_BACK);
     }
 }
 
