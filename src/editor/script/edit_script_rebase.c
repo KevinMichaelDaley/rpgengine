@@ -17,6 +17,7 @@
 #include "ferrum/editor/edit_script_rebase.h"
 
 #include <string.h>
+#include "ferrum/math/quat.h"
 
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_script_env.h"
@@ -54,7 +55,17 @@ static bool apply_attr_to_entity_(edit_entity_t *entity,
         return apply_wellknown_vec3_(entity->pos, payload, aw->size);
 
     case SCRIPT_KEY_ROT:
-        return apply_wellknown_vec3_(entity->rot, payload, aw->size);
+        if (!apply_wellknown_vec3_(entity->rot, payload, aw->size))
+            return false;
+        /* Sync authoritative orientation from updated euler cache. */
+        {
+            static const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+            entity->orientation = quat_from_euler_yxz(
+                entity->rot[0] * DEG_TO_RAD,
+                entity->rot[1] * DEG_TO_RAD,
+                entity->rot[2] * DEG_TO_RAD);
+        }
+        return true;
 
     case SCRIPT_KEY_SCALE:
         return apply_wellknown_vec3_(entity->scale, payload, aw->size);

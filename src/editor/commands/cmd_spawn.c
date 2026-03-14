@@ -12,6 +12,7 @@
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_undo.h"
 #include "ferrum/entity/entity_attrs.h"
+#include "ferrum/math/quat.h"
 #include <string.h>
 
 /**
@@ -89,6 +90,9 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
             e->rot[0] = rot[0];
             e->rot[1] = rot[1];
             e->rot[2] = rot[2];
+            static const float D2R = 3.14159265358979323846f / 180.0f;
+            e->orientation = quat_from_euler_yxz(
+                rot[0] * D2R, rot[1] * D2R, rot[2] * D2R);
         }
     }
 

@@ -86,6 +86,7 @@ typedef struct scene_editor {
     /* Local entity data (mirrored from server). */
     edit_entity_store_t entities;  /**< Local entity store. */
     edit_selection_t    selection; /**< Selected entity set. */
+    uint32_t            active_object_id; /**< Active object for local basis (INVALID=none). */
 
     /* 3D viewport renderer. */
     viewport_render_state_t viewport; /**< FBO, shaders, meshes, camera. */

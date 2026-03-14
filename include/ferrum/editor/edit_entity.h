@@ -20,6 +20,7 @@ extern "C" {
 #include <stdint.h>
 
 #include "ferrum/entity/entity_attrs.h"
+#include "ferrum/math/quat.h"
 
 /* ------------------------------------------------------------------------ */
 /* Constants                                                                 */
@@ -59,8 +60,11 @@ extern "C" {
  */
 typedef struct edit_entity {
     float    pos[3];          /**< World position. */
-    float    rot[3];          /**< Euler rotation in degrees (pitch, yaw, roll). */
+    float    rot[3];          /**< Euler rotation cache in degrees (display only).
+                                   Derived from orientation; do not write directly
+                                   without also updating orientation. */
     float    scale[3];        /**< Per-axis scale factors. */
+    quat_t   orientation;     /**< Authoritative rotation (unit quaternion). */
     float    pivot_offset[3]; /**< Local-space pivot offset for transforms. */
     uint32_t type;         /**< Entity type (EDIT_ENTITY_TYPE_*). */
     uint32_t body_index;   /**< Physics body index (UINT32_MAX = none). */

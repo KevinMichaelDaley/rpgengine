@@ -19,6 +19,7 @@
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/math/mat4.h"
+#include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 
 /* ---- Constants ---- */
@@ -28,6 +29,9 @@
 
 /** Selection outline color (orange). */
 static const float OUTLINE_COLOR[3] = {1.0f, 0.5f, 0.0f};
+
+/** Active object outline color (whitish-yellow). */
+static const float OUTLINE_ACTIVE_COLOR[3] = {1.0f, 0.9f, 0.5f};
 
 /** Selection outline scale factor (slightly larger than entity). */
 #define OUTLINE_SCALE 1.05f
@@ -80,24 +84,24 @@ void viewport_render_draw_cursor(viewport_render_state_t *state,
 
 /**
  * @brief Build a model matrix from entity transform with scale factor.
+ *
+ * Uses quaternion orientation for rotation.
  */
 static mat4_t build_outline_model(const edit_entity_t *ent, float extra_scale) {
-    float deg_to_rad = 3.14159265358979323846f / 180.0f;
     mat4_t scale = mat4_scaling(
         ent->scale[0] * extra_scale,
         ent->scale[1] * extra_scale,
         ent->scale[2] * extra_scale);
-    mat4_t rot_x = mat4_rotation_x(ent->rot[0] * deg_to_rad);
-    mat4_t rot_y = mat4_rotation_y(ent->rot[1] * deg_to_rad);
-    mat4_t rot_z = mat4_rotation_z(ent->rot[2] * deg_to_rad);
+    mat4_t rot;
+    quat_to_mat4(ent->orientation, &rot);
     mat4_t trans = mat4_translation(ent->pos[0], ent->pos[1], ent->pos[2]);
-    mat4_t rot = mat4_mul(rot_y, mat4_mul(rot_x, rot_z));
     return mat4_mul(trans, mat4_mul(rot, scale));
 }
 
 void viewport_render_draw_selection_outline(viewport_render_state_t *state,
                                               const edit_entity_store_t *entities,
                                               const edit_selection_t *selection,
+                                              uint32_t active_object_id,
                                               const mat4_t *view,
                                               const mat4_t *proj) {
     if (!state || !state->initialized || !entities || !selection) return;
@@ -110,9 +114,6 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
     shader_uniform_set_mat4(&state->uniforms, &state->shader,
                              "u_projection", proj->m, GL_FALSE);
 
-    /* Use the outline color with flat shading (light from above). */
-    shader_uniform_set_vec3(&state->uniforms, &state->shader,
-                             "u_color", OUTLINE_COLOR);
     float flat_light[3] = {0.0f, 1.0f, 0.0f};
     shader_uniform_set_vec3(&state->uniforms, &state->shader,
                              "u_light_dir", flat_light);
@@ -140,6 +141,12 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
             mesh = viewport_render_get_primitive_mesh(ent->type, &state->loader);
         }
         if (!mesh) continue;
+
+        /* Active object gets a distinct whitish-yellow outline. */
+        const float *color = (i == active_object_id)
+            ? OUTLINE_ACTIVE_COLOR : OUTLINE_COLOR;
+        shader_uniform_set_vec3(&state->uniforms, &state->shader,
+                                 "u_color", color);
 
         mat4_t model = build_outline_model(ent, OUTLINE_SCALE);
         shader_uniform_set_mat4(&state->uniforms, &state->shader,

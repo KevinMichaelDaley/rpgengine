@@ -13,6 +13,8 @@
 #include "ferrum/editor/scene/scene_connection.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
+#include "ferrum/editor/viewport/transform_basis.h"
+#include "ferrum/math/quat.h"
 #include "ferrum/editor/viewport/selection_raycast.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
@@ -20,6 +22,7 @@
 
 #include <SDL2/SDL.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 /* Camera orbit/pan sensitivity. */
@@ -47,14 +50,57 @@ static float viewport_gizmo_screen_scale(const vec3_t *gizmo_pos,
     return dist * 0.15f;
 }
 
+/** Degrees to radians. */
+static const float INPUT_DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+
+/**
+ * @brief Build an incremental rotation quaternion from an euler delta (degrees).
+ *
+ * Only one component of delta is typically non-zero (constrained to axis).
+ * Uses YXZ order to match engine convention.
+ */
+static quat_t build_delta_quat(vec3_t delta_deg) {
+    return quat_from_euler_yxz(
+        delta_deg.x * INPUT_DEG_TO_RAD,
+        delta_deg.y * INPUT_DEG_TO_RAD,
+        delta_deg.z * INPUT_DEG_TO_RAD);
+}
+
+/**
+ * @brief Build a rotation matrix from an euler delta (degrees).
+ *
+ * Used for cursor-pivot orbit position computation.
+ */
+static mat4_t build_delta_rotation(vec3_t delta_deg) {
+    quat_t dq = build_delta_quat(delta_deg);
+    mat4_t m;
+    quat_to_mat4(dq, &m);
+    return m;
+}
+
 /**
  * @brief Apply gizmo drag delta to all selected entities (optimistic).
  *
  * For translate: moves entities by delta.
  * For scale: scales entities by (1 + delta component).
  * For rotate: rotates entities by delta (degrees).
+ *   In cursor basis, rotation orbits entities around the 3D cursor pivot.
  */
 static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
+    /* For cursor-basis rotation, precompute the rotation matrix and pivot. */
+    bool pivot_rotate = (ed->gizmo.mode == GIZMO_MODE_ROTATE &&
+                          ed->gizmo.basis == TRANSFORM_BASIS_CURSOR);
+    mat4_t rot_mat;
+    vec3_t pivot;
+    quat_t dq;
+    if (ed->gizmo.mode == GIZMO_MODE_ROTATE) {
+        dq = build_delta_quat(delta);
+    }
+    if (pivot_rotate) {
+        quat_to_mat4(dq, &rot_mat);
+        pivot = ed->cursor_3d;
+    }
+
     for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
         if (!edit_selection_contains(&ed->selection, i)) continue;
         edit_entity_t *ent = edit_entity_store_get_mut(
@@ -68,9 +114,38 @@ static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
             ent->pos[2] += delta.z;
             break;
         case GIZMO_MODE_ROTATE:
-            ent->rot[0] += delta.x;
-            ent->rot[1] += delta.y;
-            ent->rot[2] += delta.z;
+            /* Compose quaternion rotation (correct world-axis rotation). */
+            ent->orientation = quat_normalize_safe(
+                quat_mul(dq, ent->orientation), 1e-8f);
+
+            /* Sync euler cache for display. */
+            quat_to_euler_yxz(ent->orientation,
+                               &ent->rot[0], &ent->rot[1], &ent->rot[2]);
+            {
+                float r2d = 180.0f / 3.14159265358979323846f;
+                ent->rot[0] *= r2d;
+                ent->rot[1] *= r2d;
+                ent->rot[2] *= r2d;
+            }
+
+            /* In cursor basis, also orbit position around the cursor. */
+            if (pivot_rotate) {
+                /* Offset from pivot. */
+                float ox = ent->pos[0] - pivot.x;
+                float oy = ent->pos[1] - pivot.y;
+                float oz = ent->pos[2] - pivot.z;
+                /* Rotate offset by the delta rotation matrix.
+                 * mat4 is column-major: column c = m[c*4+r]. */
+                float nx = rot_mat.m[0] * ox + rot_mat.m[4] * oy
+                          + rot_mat.m[8]  * oz;
+                float ny = rot_mat.m[1] * ox + rot_mat.m[5] * oy
+                          + rot_mat.m[9]  * oz;
+                float nz = rot_mat.m[2] * ox + rot_mat.m[6] * oy
+                          + rot_mat.m[10] * oz;
+                ent->pos[0] = pivot.x + nx;
+                ent->pos[1] = pivot.y + ny;
+                ent->pos[2] = pivot.z + nz;
+            }
             break;
         case GIZMO_MODE_SCALE:
             ent->scale[0] *= (1.0f + delta.x);
@@ -82,9 +157,63 @@ static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
 }
 
 /**
+ * @brief Send per-entity move_id commands after cursor-pivot rotation.
+ *
+ * Each entity was orbited around the cursor by a different amount
+ * (different offsets from the cursor). The rotate command already handled
+ * the euler angle change, so we send per-entity move_id commands
+ * for the position deltas.
+ */
+static void send_pivot_move_commands(scene_editor_t *ed,
+                                       vec3_t total_rot_delta) {
+    mat4_t rot = build_delta_rotation(total_rot_delta);
+    vec3_t pivot = ed->cursor_3d;
+
+    for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+        if (!edit_selection_contains(&ed->selection, i)) continue;
+        const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
+        if (!ent) continue;
+
+        /* The entity's current position is already orbited (from the
+         * optimistic local update). Compute what position the server
+         * thinks it's at (before orbit) to get the delta. The server
+         * will have applied the rotate command (euler only), so its
+         * position is: current_pos rotated back by total_rot_delta. */
+        float cx = ent->pos[0] - pivot.x;
+        float cy = ent->pos[1] - pivot.y;
+        float cz = ent->pos[2] - pivot.z;
+        /* Inverse rotation: transpose of rot (orthonormal). */
+        float ox = rot.m[0] * cx + rot.m[1] * cy + rot.m[2]  * cz;
+        float oy = rot.m[4] * cx + rot.m[5] * cy + rot.m[6]  * cz;
+        float oz = rot.m[8] * cx + rot.m[9] * cy + rot.m[10] * cz;
+        /* Delta = current - original. */
+        float dx = cx - ox;
+        float dy = cy - oy;
+        float dz = cz - oz;
+
+        if (fabsf(dx) < 1e-6f && fabsf(dy) < 1e-6f && fabsf(dz) < 1e-6f) {
+            continue; /* Entity is at the pivot — no position change. */
+        }
+
+        char buf[256];
+        uint32_t cid = scene_connection_next_id(&ed->connection);
+        int n = snprintf(buf, sizeof(buf),
+            "{\"id\":%u,\"cmd\":\"move_id\",\"args\":"
+            "{\"entity_id\":%u,\"delta\":[%.6g,%.6g,%.6g]}}\n",
+            (unsigned)cid, (unsigned)i,
+            (double)dx, (double)dy, (double)dz);
+        if (n > 0 && (size_t)n < sizeof(buf)) {
+            scene_connection_send_cmd(&ed->connection, buf);
+        }
+    }
+}
+
+/**
  * @brief Send a single server command for the accumulated gizmo drag.
  *
  * The server applies the transform to all currently selected entities.
+ * For cursor-basis rotation, also sends per-entity move_id commands
+ * to update positions orbited around the cursor pivot.
  */
 static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     char cmd_buf[256];
@@ -116,6 +245,12 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
 
     if (cmd_len > 0) {
         scene_connection_send_cmd(&ed->connection, cmd_buf);
+    }
+
+    /* For cursor-basis rotation, send per-entity position updates. */
+    if (ed->gizmo.mode == GIZMO_MODE_ROTATE &&
+        ed->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
+        send_pivot_move_commands(ed, total_delta);
     }
 }
 
@@ -266,6 +401,8 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
                         }
                         ed->ui.action_target = picked_id;
+                        /* The picked entity becomes the active object. */
+                        ed->active_object_id = picked_id;
                     }
                     /* Clicking empty space does nothing — selection is
                      * only cleared by selecting a new entity without shift. */
@@ -324,6 +461,16 @@ static bool handle_mouse_motion(scene_editor_t *ed,
     if (ed->gizmo.dragging) {
         vec3_t delta = {0, 0, 0};
 
+        /* Get the oriented axis direction from the gizmo orientation.
+         * Column 0=X, 1=Y, 2=Z of the orientation matrix. */
+        int axis_col = -1;
+        switch (ed->gizmo.active_axis) {
+        case GIZMO_AXIS_X: axis_col = 0; break;
+        case GIZMO_AXIS_Y: axis_col = 1; break;
+        case GIZMO_AXIS_Z: axis_col = 2; break;
+        default: break;
+        }
+
         if (ed->gizmo.mode == GIZMO_MODE_ROTATE) {
             /* Project the rotation axis onto screen space to determine
              * which mouse direction maps to positive rotation.
@@ -331,38 +478,39 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             mat4_t view;
             editor_camera_view_matrix(&ed->viewport.camera, &view);
 
-            /* Get the world-space axis direction. */
+            /* Get oriented axis direction from gizmo basis. */
             vec3_t axis_dir = {0, 0, 0};
-            switch (ed->gizmo.active_axis) {
-            case GIZMO_AXIS_X: axis_dir.x = 1.0f; break;
-            case GIZMO_AXIS_Y: axis_dir.y = 1.0f; break;
-            case GIZMO_AXIS_Z: axis_dir.z = 1.0f; break;
-            default: break;
+            if (axis_col >= 0) {
+                const mat4_t *o = &ed->gizmo.orientation;
+                axis_dir.x = o->m[axis_col * 4 + 0];
+                axis_dir.y = o->m[axis_col * 4 + 1];
+                axis_dir.z = o->m[axis_col * 4 + 2];
             }
 
-            /* Transform axis to view space (rotation only, no translation).
-             * The upper-left 3x3 of the view matrix rotates world→view. */
+            /* Transform axis to view space (rotation only). */
             float sx = view.m[0] * axis_dir.x + view.m[4] * axis_dir.y
                       + view.m[8] * axis_dir.z;
             float sy = view.m[1] * axis_dir.x + view.m[5] * axis_dir.y
                       + view.m[9] * axis_dir.z;
 
-            /* Screen-space perpendicular of the projected axis:
-             * rotating around a screen vector (sx, sy) means mouse
-             * motion along (-sy, sx) produces positive rotation. */
-            float perp_x = -sy;
-            float perp_y =  sx;
+            /* Screen-space perpendicular: mouse along (sy, -sx)
+             * produces positive rotation around the axis. */
+            float perp_x =  sy;
+            float perp_y = -sx;
             float perp_len = sqrtf(perp_x * perp_x + perp_y * perp_y);
-            if (perp_len > 1e-6f) {
+
+            float rot_amount;
+            if (perp_len > 0.05f) {
                 perp_x /= perp_len;
                 perp_y /= perp_len;
+                float mouse_proj = (float)ev->xrel * perp_x
+                                  + (float)ev->yrel * perp_y;
+                rot_amount = mouse_proj * GIZMO_ROTATE_SPEED;
+            } else {
+                rot_amount = (float)ev->xrel * GIZMO_ROTATE_SPEED;
             }
 
-            /* Dot mouse delta with the perpendicular direction. */
-            float mouse_proj = (float)ev->xrel * perp_x
-                              + (float)ev->yrel * perp_y;
-            float rot_amount = mouse_proj * GIZMO_ROTATE_SPEED;
-
+            /* Rotation delta is always in world euler angles. */
             switch (ed->gizmo.active_axis) {
             case GIZMO_AXIS_X: delta.x = rot_amount; break;
             case GIZMO_AXIS_Y: delta.y = rot_amount; break;
@@ -370,24 +518,41 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             default: break;
             }
         } else {
+            /* Translate/Scale: project mouse motion along the
+             * oriented axis direction in screen space. */
+            mat4_t view;
+            editor_camera_view_matrix(&ed->viewport.camera, &view);
+
+            vec3_t axis_dir = {0, 0, 0};
+            if (axis_col >= 0) {
+                const mat4_t *o = &ed->gizmo.orientation;
+                axis_dir.x = o->m[axis_col * 4 + 0];
+                axis_dir.y = o->m[axis_col * 4 + 1];
+                axis_dir.z = o->m[axis_col * 4 + 2];
+            }
+
+            /* Project world axis to screen space (view rotation only). */
+            float sx = view.m[0] * axis_dir.x + view.m[4] * axis_dir.y
+                      + view.m[8] * axis_dir.z;
+            float sy = view.m[1] * axis_dir.x + view.m[5] * axis_dir.y
+                      + view.m[9] * axis_dir.z;
+            float slen = sqrtf(sx * sx + sy * sy);
+            if (slen > 1e-6f) { sx /= slen; sy /= slen; }
+
+            /* Dot mouse delta with screen-space axis direction.
+             * Y is inverted (screen Y increases downward). */
+            float mouse_proj = (float)ev->xrel * sx
+                              - (float)ev->yrel * sy;
+
             vec3_t eye = editor_camera_eye_position(&ed->viewport.camera);
             float cam_dist = viewport_gizmo_screen_scale(
                 &ed->gizmo.position, &eye);
             float speed = cam_dist * GIZMO_DRAG_SPEED;
 
-            switch (ed->gizmo.active_axis) {
-            case GIZMO_AXIS_X:
-                delta.x = (float)ev->xrel * speed;
-                break;
-            case GIZMO_AXIS_Y:
-                delta.y = -(float)ev->yrel * speed;
-                break;
-            case GIZMO_AXIS_Z:
-                delta.z = (float)ev->xrel * speed;
-                break;
-            default:
-                break;
-            }
+            /* Apply along the world-space axis direction. */
+            delta.x = axis_dir.x * mouse_proj * speed;
+            delta.y = axis_dir.y * mouse_proj * speed;
+            delta.z = axis_dir.z * mouse_proj * speed;
         }
 
         apply_gizmo_drag(ed, delta);
@@ -900,6 +1065,16 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     case SDLK_s:
         ed->ui.action = UI_ACTION_MODE_SCALE;
         return true;
+
+    /* Cycle transform basis: World → Local → View → Cursor. */
+    case SDLK_COMMA: {
+        ed->gizmo.basis = transform_basis_next(ed->gizmo.basis);
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Basis: %s",
+                 transform_basis_name(ed->gizmo.basis));
+        scene_ui_tui_log(&ed->ui, msg);
+        return true;
+    }
 
     /* Keyboard zoom: +/- (also = for unshifted plus). */
     case SDLK_PLUS:

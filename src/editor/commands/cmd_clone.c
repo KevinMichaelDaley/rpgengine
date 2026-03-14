@@ -62,6 +62,7 @@ bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
         dst->pos[1] = src->pos[1] + offset[1];
         dst->pos[2] = src->pos[2] + offset[2];
         memcpy(dst->rot,   src->rot,   sizeof(src->rot));
+        dst->orientation = src->orientation;
         memcpy(dst->scale, src->scale, sizeof(src->scale));
         memcpy(dst->materials, src->materials, sizeof(src->materials));
         /* Name is NOT copied — clones get empty names by default. */

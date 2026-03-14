@@ -86,6 +86,11 @@ bool cmd_alias_create(edit_dispatch_t *d, const json_value_t *args,
 
     e->pos[0] = pos[0]; e->pos[1] = pos[1]; e->pos[2] = pos[2];
     e->rot[0] = rot[0]; e->rot[1] = rot[1]; e->rot[2] = rot[2];
+    {
+        static const float D2R = 3.14159265358979323846f / 180.0f;
+        e->orientation = quat_from_euler_yxz(
+            rot[0] * D2R, rot[1] * D2R, rot[2] * D2R);
+    }
     memcpy(e->name, name, nlen + 1);
 
     return true;

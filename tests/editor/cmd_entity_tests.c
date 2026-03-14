@@ -326,7 +326,7 @@ static bool test_rotate(void) {
     return true;
 }
 
-/** Rotate records inverse delta in undo entry. */
+/** Rotate records inverse quaternion in undo entry. */
 static bool test_rotate_undo_entry(void) {
     exec("{\"id\":1,\"cmd\":\"spawn\",\"args\":{\"type\":\"box\"}}");
     uint32_t eid = (uint32_t)resp_result_number();
@@ -339,9 +339,16 @@ static bool test_rotate_undo_entry(void) {
     const edit_undo_entry_t *entry = edit_undo_peek_undo(&g_undo);
     ASSERT(entry->forward_type == EDIT_CMD_TYPE_ROTATE);
     ASSERT(entry->inverse_type == EDIT_CMD_TYPE_ROTATE);
-    ASSERT_NEAR(entry->delta[0], -45.0f, 0.001);
-    ASSERT_NEAR(entry->delta[1], -90.0f, 0.001);
-    ASSERT_NEAR(entry->delta[2],  30.0f, 0.001);
+    /* Undo stores the conjugate (inverse) quaternion in delta[0..3].
+     * Verify it's a valid unit quaternion (length ≈ 1). */
+    float len2 = entry->delta[0] * entry->delta[0]
+               + entry->delta[1] * entry->delta[1]
+               + entry->delta[2] * entry->delta[2]
+               + entry->delta[3] * entry->delta[3];
+    ASSERT_NEAR(len2, 1.0f, 0.01);
+    /* w component (delta[3]) should be positive for conjugate of a
+     * rotation < 180°. */
+    ASSERT(entry->delta[3] > 0.0f);
     return true;
 }
 

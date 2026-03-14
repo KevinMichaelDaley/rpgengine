@@ -18,7 +18,10 @@
 #include "ferrum/editor/ctrl_cmd_defs.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
+#include "ferrum/math/quat.h"
 #include "ferrum/editor/json_parse.h"
+#include "ferrum/editor/viewport/transform_basis.h"
+#include "ferrum/editor/viewport/viewport_gizmo.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -130,6 +133,15 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         /* Parse rotation. */
         const json_value_t *rot_val = json_object_get(item, "rot");
         parse_vec3(rot_val, snapshot.rot);
+
+        /* Sync authoritative orientation from euler cache. */
+        {
+            static const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+            snapshot.orientation = quat_from_euler_yxz(
+                snapshot.rot[0] * DEG_TO_RAD,
+                snapshot.rot[1] * DEG_TO_RAD,
+                snapshot.rot[2] * DEG_TO_RAD);
+        }
 
         /* Parse scale (overwrite the 1,1,1 defaults if present). */
         const json_value_t *scale_val = json_object_get(item, "scale");
@@ -374,6 +386,7 @@ static void dispatch_tui_command(scene_editor_t *ed)
                 first[fi++] = *p++;
             first[fi] = '\0';
             if (strcmp(first, "help") == 0) is_local = true;
+            if (strcmp(first, "basis") == 0) is_local = true;
             size_t clen = strlen(cmd);
             if (clen >= 2 && cmd[clen - 1] == '?') is_local = true;
         }
@@ -446,6 +459,34 @@ static void dispatch_tui_command(scene_editor_t *ed)
             }
             return;
         }
+    }
+
+    /* Built-in local command: basis [world|local|view|cursor] */
+    if (strcmp(word, "basis") == 0) {
+        const char *rest = cmd + 5;
+        while (*rest == ' ') rest++;
+        if (*rest == '\0') {
+            /* No argument: cycle to next basis. */
+            ed->gizmo.basis = transform_basis_next(ed->gizmo.basis);
+        } else if (strcmp(rest, "world") == 0) {
+            ed->gizmo.basis = TRANSFORM_BASIS_WORLD;
+        } else if (strcmp(rest, "local") == 0) {
+            ed->gizmo.basis = TRANSFORM_BASIS_LOCAL;
+        } else if (strcmp(rest, "view") == 0) {
+            ed->gizmo.basis = TRANSFORM_BASIS_VIEW;
+        } else if (strncmp(rest, "@cursor", 7) == 0 ||
+                   strcmp(rest, "cursor") == 0) {
+            ed->gizmo.basis = TRANSFORM_BASIS_CURSOR;
+        } else {
+            scene_ui_tui_log_error(&ed->ui,
+                "Usage: basis [world|local|view|@cursor]");
+            return;
+        }
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Basis: %s",
+                 transform_basis_name(ed->gizmo.basis));
+        scene_ui_tui_log_success(&ed->ui, msg);
+        return;
     }
 
     /* Look up command definition for validation. */
@@ -733,6 +774,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
 
         /* Optimistically update local selection. */
         edit_selection_add(&ed->selection, ed->ui.action_target);
+        /* New selection always becomes the active object. */
+        ed->active_object_id = ed->ui.action_target;
 
         snprintf(echo, sizeof(echo), "select entity_id=%u",
                  ed->ui.action_target);
@@ -746,6 +789,16 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
 
         /* Optimistically update local selection. */
         edit_selection_remove(&ed->selection, ed->ui.action_target);
+
+        /* If we deselected the active object, pick another. */
+        if (ed->active_object_id == ed->ui.action_target) {
+            if (edit_selection_count(&ed->selection) > 0) {
+                const uint32_t *ids = edit_selection_ids(&ed->selection);
+                ed->active_object_id = ids[0];
+            } else {
+                ed->active_object_id = EDIT_ENTITY_INVALID_ID;
+            }
+        }
 
         snprintf(echo, sizeof(echo), "deselect entity_id=%u",
                  ed->ui.action_target);
@@ -806,6 +859,7 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         edit_selection_clear(&ed->selection);
 
         /* Auto-select: try below first, then above. */
+        ed->active_object_id = EDIT_ENTITY_INVALID_ID;
         if (last_deleted != EDIT_ENTITY_INVALID_ID) {
             bool found = false;
             /* Try below. */
@@ -815,6 +869,7 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
                     edit_entity_store_get(&ed->entities, ni);
                 if (next && !next->pending_delete) {
                     edit_selection_add(&ed->selection, ni);
+                    ed->active_object_id = ni;
                     found = true;
                     break;
                 }
@@ -826,6 +881,7 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
                         edit_entity_store_get(&ed->entities, ni);
                     if (prev && !prev->pending_delete) {
                         edit_selection_add(&ed->selection, ni);
+                        ed->active_object_id = ni;
                         break;
                     }
                 }

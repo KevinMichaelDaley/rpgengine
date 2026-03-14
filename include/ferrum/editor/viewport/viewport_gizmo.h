@@ -22,6 +22,8 @@ extern "C" {
 
 #include <stdbool.h>
 #include "ferrum/math/vec3.h"
+#include "ferrum/math/mat4.h"
+#include "ferrum/editor/viewport/transform_basis.h"
 
 /* Forward declarations. */
 struct editor_ray;
@@ -49,10 +51,12 @@ typedef enum gizmo_axis {
  * @brief Gizmo state — current mode, position, active axis, drag state.
  */
 typedef struct gizmo_state {
-    gizmo_mode_t mode;          /**< Current transform mode. */
-    gizmo_axis_t active_axis;   /**< Currently hovered/active axis. */
-    vec3_t       position;      /**< Gizmo world position (from selection). */
-    bool         dragging;      /**< True if user is dragging a gizmo axis. */
+    gizmo_mode_t      mode;          /**< Current transform mode. */
+    gizmo_axis_t      active_axis;   /**< Currently hovered/active axis. */
+    transform_basis_t basis;         /**< Coordinate space for transforms. */
+    vec3_t            position;      /**< Gizmo world position (from selection). */
+    mat4_t            orientation;   /**< Basis orientation matrix (rotation only). */
+    bool              dragging;      /**< True if user is dragging a gizmo axis. */
 } gizmo_state_t;
 
 /* ---- Lifecycle ---- */

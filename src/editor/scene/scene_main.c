@@ -308,6 +308,8 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
     ed->ui.delete_cmd_ids = (uint32_t *)vm_reserve(
         (size_t)DEFAULT_ENTITY_CAP * sizeof(uint32_t));
 
+    ed->active_object_id = EDIT_ENTITY_INVALID_ID;
+
 /* Initialize selection */
     if (!edit_selection_init(&ed->selection)) {
         fprintf(stderr, "scene_editor: selection init failed\n");

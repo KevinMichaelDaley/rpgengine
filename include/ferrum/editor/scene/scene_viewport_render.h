@@ -220,6 +220,7 @@ void viewport_render_draw_grid(viewport_render_state_t *state,
 void viewport_render_draw_entities(viewport_render_state_t *state,
                                     const struct edit_entity_store *entities,
                                     const struct edit_selection *selection,
+                                    uint32_t active_object_id,
                                     const struct mat4 *view,
                                     const struct mat4 *proj,
                                     const struct vec3 *eye_pos);
@@ -298,6 +299,7 @@ void viewport_render_draw_cursor(viewport_render_state_t *state,
 void viewport_render_draw_selection_outline(viewport_render_state_t *state,
                                               const struct edit_entity_store *entities,
                                               const struct edit_selection *selection,
+                                              uint32_t active_object_id,
                                               const struct mat4 *view,
                                               const struct mat4 *proj);
 

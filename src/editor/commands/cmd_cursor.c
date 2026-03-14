@@ -135,6 +135,11 @@ bool cmd_cursor_snap(edit_dispatch_t *d, const json_value_t *args,
     cur->rot[0] = target_rot[0];
     cur->rot[1] = target_rot[1];
     cur->rot[2] = target_rot[2];
+    {
+        static const float D2R = 3.14159265358979323846f / 180.0f;
+        cur->orientation = quat_from_euler_yxz(
+            target_rot[0] * D2R, target_rot[1] * D2R, target_rot[2] * D2R);
+    }
 
     /* Notify bridge. */
     if (ctx->bridge && ctx->bridge->on_move) {

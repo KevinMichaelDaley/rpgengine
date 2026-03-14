@@ -13,6 +13,7 @@
 
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
+#include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/edit_selection.h"
 
 #include "ferrum/renderer/gl_constants.h"
@@ -91,6 +92,31 @@ static void axis_color(gizmo_axis_t axis, gizmo_axis_t active,
 }
 
 /**
+ * @brief Extract oriented axis direction from gizmo orientation matrix.
+ *
+ * Column 0 = oriented X, column 1 = oriented Y, column 2 = oriented Z.
+ */
+static vec3_t gizmo_axis_dir(const mat4_t *orient, int col) {
+    return (vec3_t){orient->m[col * 4 + 0],
+                    orient->m[col * 4 + 1],
+                    orient->m[col * 4 + 2]};
+}
+
+/**
+ * @brief Find a vector perpendicular to the given axis direction.
+ *
+ * Used for arrowhead and scale-cube offsets.
+ */
+static vec3_t find_perp(vec3_t axis) {
+    /* Cross with whichever world axis is least parallel. */
+    vec3_t up = (fabsf(axis.y) < 0.9f)
+        ? (vec3_t){0.0f, 1.0f, 0.0f}
+        : (vec3_t){1.0f, 0.0f, 0.0f};
+    vec3_t perp = vec3_cross(axis, up);
+    return vec3_normalize_safe(perp, 1e-8f);
+}
+
+/**
  * @brief Build translate gizmo geometry (3 axis lines + arrowheads).
  *
  * Each axis: 1 shaft line + 2 arrowhead lines = 3 lines = 6 verts.
@@ -99,31 +125,42 @@ static void axis_color(gizmo_axis_t axis, gizmo_axis_t active,
  * @return Number of vertices written.
  */
 static int build_translate_verts(float *buf, const vec3_t *pos,
-                                  float scale, gizmo_axis_t active) {
+                                  float scale, gizmo_axis_t active,
+                                  const mat4_t *orient) {
     int off = 0;
     float L = GIZMO_AXIS_LENGTH * scale;
     float ah = ARROWHEAD_SIZE * scale;
     float ap = ARROWHEAD_PERP * scale;
     float cx = pos->x, cy = pos->y, cz = pos->z;
 
-    /* X axis: shaft + arrowhead. */
-    float r, g, b;
-    axis_color(GIZMO_AXIS_X, active, &r, &g, &b);
-    off = push_line(buf, off, cx, cy, cz, cx + L, cy, cz, r, g, b);
-    off = push_line(buf, off, cx + L, cy, cz, cx + L - ah, cy + ap, cz, r, g, b);
-    off = push_line(buf, off, cx + L, cy, cz, cx + L - ah, cy - ap, cz, r, g, b);
+    gizmo_axis_t axis_ids[3] = {GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z};
+    for (int i = 0; i < 3; i++) {
+        vec3_t dir = gizmo_axis_dir(orient, i);
+        vec3_t perp = find_perp(dir);
 
-    /* Y axis: shaft + arrowhead. */
-    axis_color(GIZMO_AXIS_Y, active, &r, &g, &b);
-    off = push_line(buf, off, cx, cy, cz, cx, cy + L, cz, r, g, b);
-    off = push_line(buf, off, cx, cy + L, cz, cx + ap, cy + L - ah, cz, r, g, b);
-    off = push_line(buf, off, cx, cy + L, cz, cx - ap, cy + L - ah, cz, r, g, b);
+        /* Tip position. */
+        float tx = cx + dir.x * L;
+        float ty = cy + dir.y * L;
+        float tz = cz + dir.z * L;
 
-    /* Z axis: shaft + arrowhead. */
-    axis_color(GIZMO_AXIS_Z, active, &r, &g, &b);
-    off = push_line(buf, off, cx, cy, cz, cx, cy, cz + L, r, g, b);
-    off = push_line(buf, off, cx, cy, cz + L, cx + ap, cy, cz + L - ah, r, g, b);
-    off = push_line(buf, off, cx, cy, cz + L, cx - ap, cy, cz + L - ah, r, g, b);
+        /* Arrowhead base position. */
+        float bx = cx + dir.x * (L - ah);
+        float by = cy + dir.y * (L - ah);
+        float bz = cz + dir.z * (L - ah);
+
+        float r, g, b;
+        axis_color(axis_ids[i], active, &r, &g, &b);
+
+        /* Shaft line. */
+        off = push_line(buf, off, cx, cy, cz, tx, ty, tz, r, g, b);
+        /* Arrowhead lines. */
+        off = push_line(buf, off, tx, ty, tz,
+                         bx + perp.x * ap, by + perp.y * ap, bz + perp.z * ap,
+                         r, g, b);
+        off = push_line(buf, off, tx, ty, tz,
+                         bx - perp.x * ap, by - perp.y * ap, bz - perp.z * ap,
+                         r, g, b);
+    }
 
     return off / 6; /* 6 floats per vertex */
 }
@@ -137,44 +174,39 @@ static int build_translate_verts(float *buf, const vec3_t *pos,
  * @return Number of vertices written.
  */
 static int build_rotate_verts(float *buf, const vec3_t *pos,
-                               float scale, gizmo_axis_t active) {
+                               float scale, gizmo_axis_t active,
+                               const mat4_t *orient) {
     int off = 0;
     float radius = GIZMO_AXIS_LENGTH * scale;
     float cx = pos->x, cy = pos->y, cz = pos->z;
     float step = 2.0f * 3.14159265f / (float)RING_SEGMENTS;
 
-    /* X-axis ring (in YZ plane). */
-    float r, g, b;
-    axis_color(GIZMO_AXIS_X, active, &r, &g, &b);
-    for (int i = 0; i < RING_SEGMENTS; ++i) {
-        float a0 = (float)i * step;
-        float a1 = (float)(i + 1) * step;
-        off = push_line(buf, off,
-                         cx, cy + cosf(a0) * radius, cz + sinf(a0) * radius,
-                         cx, cy + cosf(a1) * radius, cz + sinf(a1) * radius,
-                         r, g, b);
-    }
+    gizmo_axis_t axis_ids[3] = {GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z};
 
-    /* Y-axis ring (in XZ plane). */
-    axis_color(GIZMO_AXIS_Y, active, &r, &g, &b);
-    for (int i = 0; i < RING_SEGMENTS; ++i) {
-        float a0 = (float)i * step;
-        float a1 = (float)(i + 1) * step;
-        off = push_line(buf, off,
-                         cx + cosf(a0) * radius, cy, cz + sinf(a0) * radius,
-                         cx + cosf(a1) * radius, cy, cz + sinf(a1) * radius,
-                         r, g, b);
-    }
+    for (int a = 0; a < 3; a++) {
+        /* Ring normal is the oriented axis. Build two perpendicular
+         * vectors in the ring plane using the other two axes. */
+        vec3_t normal = gizmo_axis_dir(orient, a);
+        vec3_t u = find_perp(normal);
+        vec3_t v = vec3_cross(normal, u);
 
-    /* Z-axis ring (in XY plane). */
-    axis_color(GIZMO_AXIS_Z, active, &r, &g, &b);
-    for (int i = 0; i < RING_SEGMENTS; ++i) {
-        float a0 = (float)i * step;
-        float a1 = (float)(i + 1) * step;
-        off = push_line(buf, off,
-                         cx + cosf(a0) * radius, cy + sinf(a0) * radius, cz,
-                         cx + cosf(a1) * radius, cy + sinf(a1) * radius, cz,
-                         r, g, b);
+        float r, g, b;
+        axis_color(axis_ids[a], active, &r, &g, &b);
+
+        for (int i = 0; i < RING_SEGMENTS; ++i) {
+            float a0 = (float)i * step;
+            float a1 = (float)(i + 1) * step;
+            float c0 = cosf(a0), s0 = sinf(a0);
+            float c1 = cosf(a1), s1 = sinf(a1);
+            off = push_line(buf, off,
+                cx + (u.x * c0 + v.x * s0) * radius,
+                cy + (u.y * c0 + v.y * s0) * radius,
+                cz + (u.z * c0 + v.z * s0) * radius,
+                cx + (u.x * c1 + v.x * s1) * radius,
+                cy + (u.y * c1 + v.y * s1) * radius,
+                cz + (u.z * c1 + v.z * s1) * radius,
+                r, g, b);
+        }
     }
 
     return off / 6;
@@ -189,37 +221,53 @@ static int build_rotate_verts(float *buf, const vec3_t *pos,
  * @return Number of vertices written.
  */
 static int build_scale_verts(float *buf, const vec3_t *pos,
-                              float scale, gizmo_axis_t active) {
+                              float scale, gizmo_axis_t active,
+                              const mat4_t *orient) {
     int off = 0;
     float L = GIZMO_AXIS_LENGTH * scale;
     float cs = SCALE_CUBE_SIZE * scale;
     float cx = pos->x, cy = pos->y, cz = pos->z;
 
-    /* X axis: shaft + cube at tip. */
-    float r, g, b;
-    axis_color(GIZMO_AXIS_X, active, &r, &g, &b);
-    off = push_line(buf, off, cx, cy, cz, cx + L, cy, cz, r, g, b);
-    /* Cube outline (4 lines forming a diamond). */
-    off = push_line(buf, off, cx + L - cs, cy - cs, cz, cx + L + cs, cy - cs, cz, r, g, b);
-    off = push_line(buf, off, cx + L + cs, cy - cs, cz, cx + L + cs, cy + cs, cz, r, g, b);
-    off = push_line(buf, off, cx + L + cs, cy + cs, cz, cx + L - cs, cy + cs, cz, r, g, b);
-    off = push_line(buf, off, cx + L - cs, cy + cs, cz, cx + L - cs, cy - cs, cz, r, g, b);
+    gizmo_axis_t axis_ids[3] = {GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z};
 
-    /* Y axis: shaft + cube at tip. */
-    axis_color(GIZMO_AXIS_Y, active, &r, &g, &b);
-    off = push_line(buf, off, cx, cy, cz, cx, cy + L, cz, r, g, b);
-    off = push_line(buf, off, cx - cs, cy + L - cs, cz, cx + cs, cy + L - cs, cz, r, g, b);
-    off = push_line(buf, off, cx + cs, cy + L - cs, cz, cx + cs, cy + L + cs, cz, r, g, b);
-    off = push_line(buf, off, cx + cs, cy + L + cs, cz, cx - cs, cy + L + cs, cz, r, g, b);
-    off = push_line(buf, off, cx - cs, cy + L + cs, cz, cx - cs, cy + L - cs, cz, r, g, b);
+    for (int i = 0; i < 3; i++) {
+        vec3_t dir = gizmo_axis_dir(orient, i);
+        vec3_t perp = find_perp(dir);
 
-    /* Z axis: shaft + cube at tip. */
-    axis_color(GIZMO_AXIS_Z, active, &r, &g, &b);
-    off = push_line(buf, off, cx, cy, cz, cx, cy, cz + L, r, g, b);
-    off = push_line(buf, off, cx - cs, cy, cz + L - cs, cx + cs, cy, cz + L - cs, r, g, b);
-    off = push_line(buf, off, cx + cs, cy, cz + L - cs, cx + cs, cy, cz + L + cs, r, g, b);
-    off = push_line(buf, off, cx + cs, cy, cz + L + cs, cx - cs, cy, cz + L + cs, r, g, b);
-    off = push_line(buf, off, cx - cs, cy, cz + L + cs, cx - cs, cy, cz + L - cs, r, g, b);
+        /* Tip position. */
+        float tx = cx + dir.x * L;
+        float ty = cy + dir.y * L;
+        float tz = cz + dir.z * L;
+
+        float r, g, b;
+        axis_color(axis_ids[i], active, &r, &g, &b);
+
+        /* Shaft line. */
+        off = push_line(buf, off, cx, cy, cz, tx, ty, tz, r, g, b);
+
+        /* Cube outline (4 lines forming a square at the tip,
+         * in the plane perpendicular to the axis). */
+        vec3_t perp2 = vec3_cross(dir, perp);
+        /* Four corners: tip ± cs*perp ± cs*dir */
+        float c1x = tx - dir.x * cs + perp.x * cs;
+        float c1y = ty - dir.y * cs + perp.y * cs;
+        float c1z = tz - dir.z * cs + perp.z * cs;
+        float c2x = tx + dir.x * cs + perp.x * cs;
+        float c2y = ty + dir.y * cs + perp.y * cs;
+        float c2z = tz + dir.z * cs + perp.z * cs;
+        float c3x = tx + dir.x * cs - perp.x * cs;
+        float c3y = ty + dir.y * cs - perp.y * cs;
+        float c3z = tz + dir.z * cs - perp.z * cs;
+        float c4x = tx - dir.x * cs - perp.x * cs;
+        float c4y = ty - dir.y * cs - perp.y * cs;
+        float c4z = tz - dir.z * cs - perp.z * cs;
+        (void)perp2; /* Cube uses axis+perp plane for simplicity. */
+
+        off = push_line(buf, off, c1x, c1y, c1z, c2x, c2y, c2z, r, g, b);
+        off = push_line(buf, off, c2x, c2y, c2z, c3x, c3y, c3z, r, g, b);
+        off = push_line(buf, off, c3x, c3y, c3z, c4x, c4y, c4z, r, g, b);
+        off = push_line(buf, off, c4x, c4y, c4z, c1x, c1y, c1z, r, g, b);
+    }
 
     return off / 6;
 }
@@ -245,18 +293,19 @@ void viewport_render_draw_gizmo(viewport_render_state_t *state,
     float verts[1200];
     int vert_count = 0;
 
+    const mat4_t *orient = &gizmo->orientation;
     switch (gizmo->mode) {
     case GIZMO_MODE_TRANSLATE:
         vert_count = build_translate_verts(verts, &gizmo->position,
-                                            scale, gizmo->active_axis);
+                                            scale, gizmo->active_axis, orient);
         break;
     case GIZMO_MODE_ROTATE:
         vert_count = build_rotate_verts(verts, &gizmo->position,
-                                         scale, gizmo->active_axis);
+                                         scale, gizmo->active_axis, orient);
         break;
     case GIZMO_MODE_SCALE:
         vert_count = build_scale_verts(verts, &gizmo->position,
-                                        scale, gizmo->active_axis);
+                                        scale, gizmo->active_axis, orient);
         break;
     }
 

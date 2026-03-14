@@ -26,9 +26,11 @@
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
+#include "ferrum/editor/viewport/transform_basis.h"
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/math/mat4.h"
+#include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 
 #include <math.h>
@@ -48,6 +50,7 @@ static const float COLOR_HALFSPACE[3] = {0.4f, 0.4f, 0.4f};
 static const float COLOR_MESH[3]      = {0.65f, 0.65f, 0.55f};
 static const float COLOR_MARKER[3]    = {1.0f, 1.0f, 0.0f};
 static const float COLOR_SELECTED[3]  = {1.0f, 0.6f, 0.2f};
+static const float COLOR_ACTIVE[3]   = {1.0f, 0.9f, 0.5f};
 
 /* ---- Primitive mesh cache ---- */
 
@@ -150,7 +153,9 @@ const static_mesh_t *viewport_render_get_primitive_mesh(
 /**
  * @brief Get the color for an entity based on its type and selection state.
  */
-static const float *get_entity_color(uint32_t entity_type, bool selected) {
+static const float *get_entity_color(uint32_t entity_type, bool selected,
+                                       bool is_active) {
+    if (is_active) return COLOR_ACTIVE;
     if (selected) return COLOR_SELECTED;
 
     switch (entity_type) {
@@ -165,22 +170,18 @@ static const float *get_entity_color(uint32_t entity_type, bool selected) {
 }
 
 /**
- * @brief Build a model matrix from entity position, rotation, and scale.
+ * @brief Build a model matrix from entity position, orientation, and scale.
  *
- * Rotation uses euler angles in degrees (pitch, yaw, roll) applied
- * in Y-X-Z order.
+ * Uses the quaternion orientation (authoritative) to build the rotation
+ * matrix, avoiding euler angle order-dependence issues.
  */
 static mat4_t build_model_matrix(const edit_entity_t *ent) {
-    float deg_to_rad = 3.14159265358979323846f / 180.0f;
-
     mat4_t scale = mat4_scaling(ent->scale[0], ent->scale[1], ent->scale[2]);
-    mat4_t rot_x = mat4_rotation_x(ent->rot[0] * deg_to_rad);
-    mat4_t rot_y = mat4_rotation_y(ent->rot[1] * deg_to_rad);
-    mat4_t rot_z = mat4_rotation_z(ent->rot[2] * deg_to_rad);
+    mat4_t rot;
+    quat_to_mat4(ent->orientation, &rot);
     mat4_t trans = mat4_translation(ent->pos[0], ent->pos[1], ent->pos[2]);
 
-    /* T * Ry * Rx * Rz * S */
-    mat4_t rot = mat4_mul(rot_y, mat4_mul(rot_x, rot_z));
+    /* T * R * S */
     return mat4_mul(trans, mat4_mul(rot, scale));
 }
 
@@ -207,6 +208,7 @@ void viewport_render_draw_grid(viewport_render_state_t *state,
 void viewport_render_draw_entities(viewport_render_state_t *state,
                                     const edit_entity_store_t *entities,
                                     const edit_selection_t *selection,
+                                    uint32_t active_object_id,
                                     const mat4_t *view, const mat4_t *proj,
                                     const vec3_t *eye_pos) {
     if (!state || !state->initialized || !entities) return;
@@ -245,10 +247,11 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
         shader_uniform_set_mat4(&state->uniforms, &state->shader,
                                  "u_model", model.m, GL_FALSE);
 
-        /* Set entity color (selection-aware). */
+        /* Set entity color (selection-aware, active object highlight). */
         bool selected = selection
             ? edit_selection_contains(selection, i) : false;
-        const float *color = get_entity_color(ent->type, selected);
+        bool is_active = (i == active_object_id);
+        const float *color = get_entity_color(ent->type, selected, is_active);
         shader_uniform_set_vec3(&state->uniforms, &state->shader,
                                  "u_color", color);
 
@@ -299,32 +302,53 @@ void viewport_render_draw_scene(struct scene_editor *ed) {
 
     /* Draw all entities. */
     viewport_render_draw_entities(vp, &ed->entities, &ed->selection,
+                                   ed->active_object_id,
                                    &view, &proj, &eye_pos);
 
     /* Draw selection outlines (wireframe, slightly scaled up). */
     viewport_render_draw_selection_outline(vp, &ed->entities, &ed->selection,
-                                            &view, &proj);
+                                            ed->active_object_id, &view, &proj);
 
-    /* Update gizmo position to selection centroid. */
+    /* Update gizmo position and orientation based on basis mode. */
     if (edit_selection_count(&ed->selection) > 0) {
-        vec3_t center = {0, 0, 0};
-        uint32_t sel_n = 0;
-        for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
-            if (!edit_selection_contains(&ed->selection, i)) continue;
-            const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
-            if (!ent) continue;
-            center.x += ent->pos[0];
-            center.y += ent->pos[1];
-            center.z += ent->pos[2];
-            sel_n++;
+        if (ed->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
+            /* Cursor mode: gizmo at 3D cursor position. */
+            ed->gizmo.position = ed->cursor_3d;
+        } else {
+            /* Other modes: gizmo at selection centroid. */
+            vec3_t center = {0, 0, 0};
+            uint32_t sel_n = 0;
+            for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+                if (!edit_selection_contains(&ed->selection, i)) continue;
+                const edit_entity_t *ent =
+                    edit_entity_store_get(&ed->entities, i);
+                if (!ent) continue;
+                center.x += ent->pos[0];
+                center.y += ent->pos[1];
+                center.z += ent->pos[2];
+                sel_n++;
+            }
+            if (sel_n > 0) {
+                float inv = 1.0f / (float)sel_n;
+                center.x *= inv;
+                center.y *= inv;
+                center.z *= inv;
+            }
+            ed->gizmo.position = center;
         }
-        if (sel_n > 0) {
-            float inv = 1.0f / (float)sel_n;
-            center.x *= inv;
-            center.y *= inv;
-            center.z *= inv;
+
+        /* Compute gizmo orientation from basis mode. */
+        const quat_t *active_orient = NULL;
+        if (ed->gizmo.basis == TRANSFORM_BASIS_LOCAL &&
+            ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
+            const edit_entity_t *active_ent =
+                edit_entity_store_get(&ed->entities, ed->active_object_id);
+            if (active_ent) {
+                active_orient = &active_ent->orientation;
+            }
         }
-        ed->gizmo.position = center;
+        ed->gizmo.orientation = transform_basis_orientation(
+            ed->gizmo.basis, active_orient, &view);
     }
 
     /* Draw transform gizmo at selection center. */

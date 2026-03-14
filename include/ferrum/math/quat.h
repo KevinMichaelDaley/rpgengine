@@ -109,6 +109,33 @@ quat_t quat_from_euler(float x, float y, float z);
  */
 quat_t quat_from_mat4(const mat4_t *m);
 
+/**
+ * @brief Build quaternion from Euler angles in YXZ matrix order.
+ *
+ * Computes q = qy * qx * qz, matching the engine convention
+ * R = Ry * Rx * Rz used for entity model matrices.
+ *
+ * @param x Rotation around X axis in radians.
+ * @param y Rotation around Y axis in radians.
+ * @param z Rotation around Z axis in radians.
+ * @return Normalized quaternion representing the combined rotation.
+ */
+quat_t quat_from_euler_yxz(float x, float y, float z);
+
+/**
+ * @brief Extract Euler angles (YXZ order) from a quaternion.
+ *
+ * Decomposes the quaternion into euler angles matching the engine
+ * convention R = Ry * Rx * Rz. At gimbal lock (x ≈ ±90°), z is
+ * set to 0 and the ambiguity is absorbed into y.
+ *
+ * @param q   Unit quaternion to decompose.
+ * @param x   Output X rotation in radians (non-NULL).
+ * @param y   Output Y rotation in radians (non-NULL).
+ * @param z   Output Z rotation in radians (non-NULL).
+ */
+void quat_to_euler_yxz(quat_t q, float *x, float *y, float *z);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

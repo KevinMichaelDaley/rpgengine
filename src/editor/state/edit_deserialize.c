@@ -113,6 +113,11 @@ bool edit_level_deserialize(struct edit_entity_store *store,
             ent_name[nlen] = '\0';
         }
 
+        /* Compute orientation quaternion from loaded euler angles. */
+        static const float D2R = 3.14159265358979323846f / 180.0f;
+        quat_t orient = quat_from_euler_yxz(
+            rot[0] * D2R, rot[1] * D2R, rot[2] * D2R);
+
         /* Place entity at target slot or first available. */
         if (target_id < store->capacity && !store->entities[target_id].active) {
             edit_entity_t *e = &store->entities[target_id];
@@ -121,6 +126,7 @@ bool edit_level_deserialize(struct edit_entity_store *store,
             e->type = type;
             memcpy(e->pos, pos, sizeof(pos));
             memcpy(e->rot, rot, sizeof(rot));
+            e->orientation = orient;
             memcpy(e->scale, scale, sizeof(scale));
             memcpy(e->pivot_offset, pivot_offset, sizeof(pivot_offset));
             memcpy(e->name, ent_name, sizeof(ent_name));
@@ -132,6 +138,7 @@ bool edit_level_deserialize(struct edit_entity_store *store,
                 edit_entity_t *e = edit_entity_store_get_mut(store, eid);
                 memcpy(e->pos, pos, sizeof(pos));
                 memcpy(e->rot, rot, sizeof(rot));
+                e->orientation = orient;
                 memcpy(e->scale, scale, sizeof(scale));
                 memcpy(e->pivot_offset, pivot_offset, sizeof(pivot_offset));
                 memcpy(e->name, ent_name, sizeof(ent_name));

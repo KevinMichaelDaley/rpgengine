@@ -11,6 +11,7 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/math/quat.h"
 
 /**
  * @brief Extract a 3-element float array from a JSON array value.
@@ -46,20 +47,33 @@ bool cmd_rotate_id(edit_dispatch_t *d, const json_value_t *args,
     edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
     if (!e) return false;
 
-    /* Apply rotation delta. */
-    e->rot[0] += delta[0];
-    e->rot[1] += delta[1];
-    e->rot[2] += delta[2];
+    /* Build incremental rotation quaternion in YXZ order. */
+    static const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+    quat_t dq = quat_from_euler_yxz(
+        delta[0] * DEG_TO_RAD, delta[1] * DEG_TO_RAD, delta[2] * DEG_TO_RAD);
 
-    /* Record undo with inverse delta. */
+    /* Compose quaternion rotation. */
+    e->orientation = quat_normalize_safe(
+        quat_mul(dq, e->orientation), 1e-8f);
+
+    /* Sync euler cache. */
+    quat_to_euler_yxz(e->orientation, &e->rot[0], &e->rot[1], &e->rot[2]);
+    float rad_to_deg = 180.0f / 3.14159265358979323846f;
+    e->rot[0] *= rad_to_deg;
+    e->rot[1] *= rad_to_deg;
+    e->rot[2] *= rad_to_deg;
+
+    /* Record undo with inverse quaternion. */
     if (ctx->undo) {
+        quat_t inv_dq = quat_conjugate(dq);
         edit_undo_entry_t entry = {0};
         entry.forward_type = EDIT_CMD_TYPE_ROTATE;
         entry.inverse_type = EDIT_CMD_TYPE_ROTATE;
         entry.entity_id    = eid;
-        entry.delta[0]     = -delta[0];
-        entry.delta[1]     = -delta[1];
-        entry.delta[2]     = -delta[2];
+        entry.delta[0]     = inv_dq.x;
+        entry.delta[1]     = inv_dq.y;
+        entry.delta[2]     = inv_dq.z;
+        entry.delta[3]     = inv_dq.w;
         edit_undo_record(ctx->undo, &entry, NULL, 0);
     }
 

@@ -59,7 +59,9 @@ static float ray_segment_distance_(const editor_ray_t *ray,
 void gizmo_state_init(gizmo_state_t *gizmo) {
     gizmo->mode = GIZMO_MODE_TRANSLATE;
     gizmo->active_axis = GIZMO_AXIS_NONE;
+    gizmo->basis = TRANSFORM_BASIS_WORLD;
     gizmo->position = (vec3_t){0.0f, 0.0f, 0.0f};
+    gizmo->orientation = mat4_identity();
     gizmo->dragging = false;
 }
 
@@ -67,6 +69,23 @@ void gizmo_state_set_mode(gizmo_state_t *gizmo, gizmo_mode_t mode) {
     gizmo->mode = mode;
     gizmo->active_axis = GIZMO_AXIS_NONE;
     gizmo->dragging = false;
+}
+
+/** Enlarged hit radius for axis endpoints (clickable from any angle). */
+static const float TIP_HIT_RADIUS = 0.25f;
+
+/**
+ * @brief Compute the closest distance from a ray to a point in 3D.
+ *
+ * Projects the point onto the ray and returns the perpendicular distance.
+ */
+static float ray_point_distance_(const editor_ray_t *ray, vec3_t point) {
+    vec3_t w = vec3_sub(point, ray->origin);
+    float t = vec3_dot(w, ray->direction);
+    if (t < 0.0f) t = 0.0f; /* Point is behind ray origin. */
+    vec3_t closest = vec3_add(ray->origin,
+                               vec3_scale(ray->direction, t));
+    return vec3_magnitude(vec3_sub(point, closest));
 }
 
 /** Number of sample points for ring hit test. */
@@ -114,6 +133,17 @@ static float ray_ring_distance_(const editor_ray_t *ray,
     return best;
 }
 
+/**
+ * @brief Extract an oriented axis direction from the gizmo orientation matrix.
+ *
+ * Column 0 = oriented X, column 1 = oriented Y, column 2 = oriented Z.
+ */
+static vec3_t oriented_axis_(const mat4_t *orient, int col) {
+    return (vec3_t){orient->m[col * 4 + 0],
+                    orient->m[col * 4 + 1],
+                    orient->m[col * 4 + 2]};
+}
+
 gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
                               const struct editor_ray *ray,
                               float gizmo_scale) {
@@ -122,44 +152,53 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
     float length = ARROW_LENGTH * gizmo_scale;
     float threshold = AXIS_HIT_RADIUS * gizmo_scale;
     vec3_t pos = gizmo->position;
+    const mat4_t *orient = &gizmo->orientation;
 
     gizmo_axis_t best = GIZMO_AXIS_NONE;
     float best_dist = threshold;
 
-    if (gizmo->mode == GIZMO_MODE_ROTATE) {
-        /* Test each axis ring as a circle in the perpendicular plane. */
-        vec3_t normals[3] = {
-            {1, 0, 0}, /* X-axis ring in YZ plane */
-            {0, 1, 0}, /* Y-axis ring in XZ plane */
-            {0, 0, 1}, /* Z-axis ring in XY plane */
-        };
-        gizmo_axis_t axes[3] = {
-            GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z
-        };
+    /* Get oriented axis directions. */
+    vec3_t axis_dirs[3] = {
+        oriented_axis_(orient, 0),
+        oriented_axis_(orient, 1),
+        oriented_axis_(orient, 2),
+    };
+    gizmo_axis_t axis_ids[3] = {
+        GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z
+    };
 
+    if (gizmo->mode == GIZMO_MODE_ROTATE) {
+        /* Test each axis ring — normal is the oriented axis direction. */
         for (int i = 0; i < 3; i++) {
-            float dist = ray_ring_distance_(ray, pos, normals[i], length);
+            float dist = ray_ring_distance_(ray, pos, axis_dirs[i], length);
             if (dist < best_dist) {
                 best_dist = dist;
-                best = axes[i];
+                best = axis_ids[i];
             }
         }
     } else {
-        /* Translate/Scale: test each axis as a line segment. */
-        struct {
-            gizmo_axis_t axis;
-            vec3_t end;
-        } axes[3] = {
-            {GIZMO_AXIS_X, {pos.x + length, pos.y, pos.z}},
-            {GIZMO_AXIS_Y, {pos.x, pos.y + length, pos.z}},
-            {GIZMO_AXIS_Z, {pos.x, pos.y, pos.z + length}},
-        };
-
+        /* Translate/Scale: test each axis as a line segment from pos
+         * to pos + oriented_axis * length. Also test the endpoint as
+         * a sphere so edge-on axes remain clickable. */
+        float tip_threshold = TIP_HIT_RADIUS * gizmo_scale;
         for (int i = 0; i < 3; i++) {
-            float dist = ray_segment_distance_(ray, pos, axes[i].end);
+            vec3_t end = {
+                pos.x + axis_dirs[i].x * length,
+                pos.y + axis_dirs[i].y * length,
+                pos.z + axis_dirs[i].z * length,
+            };
+            /* Test the full line segment. */
+            float dist = ray_segment_distance_(ray, pos, end);
             if (dist < best_dist) {
                 best_dist = dist;
-                best = axes[i].axis;
+                best = axis_ids[i];
+            }
+            /* Also test the endpoint sphere (larger radius) so the
+             * axis tip is clickable even when viewed edge-on. */
+            float tip_dist = ray_point_distance_(ray, end);
+            if (tip_dist < tip_threshold && tip_dist < best_dist) {
+                best_dist = tip_dist;
+                best = axis_ids[i];
             }
         }
     }

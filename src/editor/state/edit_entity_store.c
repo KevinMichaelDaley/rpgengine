@@ -58,6 +58,7 @@ uint32_t edit_entity_store_create(edit_entity_store_t *store, uint32_t type) {
     e->pos[0] = e->pos[1] = e->pos[2] = 0.0f;
     e->rot[0] = e->rot[1] = e->rot[2] = 0.0f;
     e->scale[0] = e->scale[1] = e->scale[2] = 1.0f;
+    e->orientation = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
     e->type = type;
     e->body_index = EDIT_ENTITY_INVALID_ID;
     e->active = true;

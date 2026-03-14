@@ -16,6 +16,7 @@
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
+#include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -79,6 +80,19 @@ static void on_mode_scale_hover(Clay_ElementId id, Clay_PointerData data,
         ed->ui.action = UI_ACTION_MODE_SCALE;
     }
 }
+
+/** @brief Hover callback for basis cycle button. */
+static void on_basis_cycle_hover(Clay_ElementId id, Clay_PointerData data,
+                                  void *user) {
+    (void)id;
+    scene_editor_t *ed = (scene_editor_t *)user;
+    if (data.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) {
+        ed->gizmo.basis = transform_basis_next(ed->gizmo.basis);
+    }
+}
+
+/** Static buffer for basis label. */
+static char s_basis_label[32];
 
 /* ---- Public API ---- */
 
@@ -217,6 +231,39 @@ void scene_ui_build_viewport(struct scene_editor *ed,
                 }) {
                     Clay_OnHover(on_mode_scale_hover, ed);
                     CLAY_TEXT(CLAY_STRING("Scale(S)"),
+                        CLAY_TEXT_CONFIG({
+                            .fontSize = THEME_FONT_SIZE_UI,
+                            .textColor = {THEME_TEXT_R, THEME_TEXT_G,
+                                          THEME_TEXT_B, THEME_TEXT_A},
+                            .fontId = CLAY_FONT_UI,
+                        }));
+                }
+
+                /* Separator. */
+                CLAY(CLAY_ID("VP_BasisSep"), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIXED(1), CLAY_SIZING_FIXED(16)},
+                    },
+                    .backgroundColor = {THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
+                                         THEME_TEXT_DIM_B, 80},
+                }) {}
+
+                /* Basis cycle button. */
+                snprintf(s_basis_label, sizeof(s_basis_label), "%s(,)",
+                         transform_basis_name(ed->gizmo.basis));
+                Clay_String basis_str = {
+                    .length = (int32_t)strlen(s_basis_label),
+                    .chars = s_basis_label,
+                };
+                CLAY(CLAY_ID("VP_BtnBasis"), {
+                    .layout = {
+                        .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(20)},
+                        .padding = {THEME_PADDING, THEME_PADDING, 0, 0},
+                    },
+                    .backgroundColor = COLOR_BTN_BG,
+                }) {
+                    Clay_OnHover(on_basis_cycle_hover, ed);
+                    Clay__OpenTextElement(basis_str,
                         CLAY_TEXT_CONFIG({
                             .fontSize = THEME_FONT_SIZE_UI,
                             .textColor = {THEME_TEXT_R, THEME_TEXT_G,

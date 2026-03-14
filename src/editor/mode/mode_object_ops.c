@@ -35,6 +35,7 @@ void object_mode_duplicate(struct edit_entity_store *store,
         /* Copy transform and properties. */
         memcpy(dst->pos, src->pos, sizeof(dst->pos));
         memcpy(dst->rot, src->rot, sizeof(dst->rot));
+        dst->orientation = src->orientation;
         memcpy(dst->scale, src->scale, sizeof(dst->scale));
         memcpy(dst->pivot_offset, src->pivot_offset, sizeof(dst->pivot_offset));
         memcpy(dst->name, src->name, sizeof(dst->name));
