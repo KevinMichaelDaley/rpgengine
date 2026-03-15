@@ -11,6 +11,7 @@
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/edit_entity_version.h"
 
 bool cmd_delete(edit_dispatch_t *d, const json_value_t *args,
                 json_value_t *result, json_arena_t *arena) {
@@ -44,6 +45,9 @@ bool cmd_delete(edit_dispatch_t *d, const json_value_t *args,
             entry.entity_id    = eid;
             edit_undo_record(ctx->undo, &entry, e, sizeof(edit_entity_t));
         }
+
+        /* Version tombstone before removal. */
+        if (ctx->version) edit_version_tombstone(ctx->version, eid);
 
         /* Bridge: notify physics engine before removing. */
         if (ctx->bridge && ctx->bridge->on_delete) {

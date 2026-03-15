@@ -1165,6 +1165,8 @@ build/p206a_snap_state_tests: build/libheadless.a tests/p206a_snap_state_tests.c
 	$(CC) $(CFLAGS) tests/p206a_snap_state_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p206b_pivot_tests: build/libheadless.a tests/p206b_pivot_tests.c | build
 	$(CC) $(CFLAGS) tests/p206b_pivot_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/p206b_snap_gizmo_tests: build/libheadless.a tests/p206b_snap_gizmo_tests.c | build
+	$(CC) $(CFLAGS) tests/p206b_snap_gizmo_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tools/scene_editor_main.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:

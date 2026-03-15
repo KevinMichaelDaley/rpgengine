@@ -116,6 +116,17 @@ int scene_cmd_format_rotate(char *buf, size_t cap, uint32_t id,
                             const float quat[4]);
 
 /**
+ * @brief Format a rotate command with absolute orientation.
+ * @param buf   Output buffer.
+ * @param cap   Buffer capacity.
+ * @param id    Request ID.
+ * @param quat  Absolute orientation quaternion [x, y, z, w].
+ * @return Bytes written (excluding NUL), or -1 if buffer too small.
+ */
+int scene_cmd_format_rotate_abs(char *buf, size_t cap, uint32_t id,
+                                const float quat[4]);
+
+/**
  * @brief Format a scale command.
  * @param buf    Output buffer.
  * @param cap    Buffer capacity.
@@ -125,6 +136,30 @@ int scene_cmd_format_rotate(char *buf, size_t cap, uint32_t id,
  */
 int scene_cmd_format_scale(char *buf, size_t cap, uint32_t id,
                            const float factor[3]);
+
+/* ---- Absolute transform commands (in scene_cmd_abs.c) ---- */
+
+/**
+ * @brief Format a move command with absolute position.
+ * @param buf  Output buffer.
+ * @param cap  Buffer capacity.
+ * @param id   Request ID.
+ * @param pos  Absolute position [x, y, z].
+ * @return Bytes written (excluding NUL), or -1 if buffer too small.
+ */
+int scene_cmd_format_move_abs(char *buf, size_t cap, uint32_t id,
+                               const float pos[3]);
+
+/**
+ * @brief Format a scale command with absolute scale.
+ * @param buf    Output buffer.
+ * @param cap    Buffer capacity.
+ * @param id     Request ID.
+ * @param scale  Absolute scale [x, y, z].
+ * @return Bytes written (excluding NUL), or -1 if buffer too small.
+ */
+int scene_cmd_format_scale_abs(char *buf, size_t cap, uint32_t id,
+                                const float scale[3]);
 
 /* ---- Response parsing (in scene_cmd_parse.c) ---- */
 

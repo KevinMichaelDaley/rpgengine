@@ -14,6 +14,8 @@
 extern "C" {
 #endif
 
+#include "ferrum/editor/json_parse.h"
+
 struct scene_editor;
 
 /**
@@ -54,6 +56,19 @@ void scene_frame_request_entity_list(struct scene_editor *ed);
  * @param ed  Editor context.
  */
 void scene_frame_flush_offline_queue(struct scene_editor *ed);
+
+/**
+ * @brief Process a sync_entities response (delta or full).
+ *
+ * For full responses: updates all entities, bumps refresh_gen, prunes stale.
+ * For delta responses: applies changed entities, removes tombstoned ones.
+ * Updates server_version from the response.
+ *
+ * @param ed          Editor context.
+ * @param result_val  The "result" JSON object from the parsed response.
+ */
+void scene_frame_process_sync_response(struct scene_editor *ed,
+                                        const json_value_t *result_val);
 
 #ifdef __cplusplus
 }

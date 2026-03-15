@@ -19,7 +19,9 @@
 #include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
+#include "ferrum/math/quat.h"
 #include "clay.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -198,7 +200,55 @@ void scene_ui_build_inspector(scene_editor_t *ed,
             format_label_value(1, "Type", type_name);
 
             format_vec3(2, ent->pos);   /* slots 2,3,4 */
-            format_vec3(5, ent->rot);   /* slots 5,6,7 */
+
+            /* Canonicalize euler display: decompose from quaternion with
+             * w >= 0, then enforce canonical ranges so the same rotation
+             * always shows the same angle triplet.
+             *
+             * YXZ euler: (x, y, z) and (π-x, y±π, z±π) represent the
+             * same rotation.  We canonicalize by keeping pitch (x) in
+             * [-90°, 90°]; if it lands outside, fold via the equivalent
+             * representation.  Yaw (y) and roll (z) are normalized to
+             * (-180°, 180°]. */
+            {
+                static const float R2D = 180.0f / 3.14159265358979323846f;
+                quat_t cq = ent->orientation;
+                if (cq.w < 0.0f) {
+                    cq.x = -cq.x; cq.y = -cq.y;
+                    cq.z = -cq.z; cq.w = -cq.w;
+                }
+                float ex, ey, ez;
+                quat_to_euler_yxz(cq, &ex, &ey, &ez);
+                float dx = ex * R2D;
+                float dy = ey * R2D;
+                float dz = ez * R2D;
+
+                /* If pitch outside [-90, 90], fold to equivalent form. */
+                if (dx > 90.0f) {
+                    dx = 180.0f - dx;
+                    dy += (dy <= 0.0f) ? 180.0f : -180.0f;
+                    dz += (dz <= 0.0f) ? 180.0f : -180.0f;
+                } else if (dx < -90.0f) {
+                    dx = -180.0f - dx;
+                    dy += (dy <= 0.0f) ? 180.0f : -180.0f;
+                    dz += (dz <= 0.0f) ? 180.0f : -180.0f;
+                }
+
+                /* Normalize yaw and roll to (-180, 180]. */
+                while (dy >  180.0f) dy -= 360.0f;
+                while (dy < -180.0f) dy += 360.0f;
+                while (dz >  180.0f) dz -= 360.0f;
+                while (dz < -180.0f) dz += 360.0f;
+
+                /* Flush -0 to +0 for clean display. */
+                float display_rot[3] = {
+                    dx == 0.0f ? 0.0f : dx,
+                    dy == 0.0f ? 0.0f : dy,
+                    dz == 0.0f ? 0.0f : dz,
+                };
+                format_vec3(5, display_rot);   /* slots 5,6,7 */
+            }
+
             format_vec3(8, ent->scale); /* slots 8,9,10 */
 
             /* ---- Compute total content height ---- */

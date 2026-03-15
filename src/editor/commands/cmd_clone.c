@@ -15,7 +15,9 @@
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/edit_entity_version.h"
 
+#include <stdio.h>
 #include <string.h>
 
 bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
@@ -57,15 +59,23 @@ bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
         edit_entity_t *dst = edit_entity_store_get_mut(ctx->entities, new_id);
         if (!dst) break;
 
-        /* Deep copy all properties. */
+        /* Save the auto-assigned name before memcpy overwrites it. */
+        char auto_name[EDIT_ENTITY_NAME_MAX];
+        memcpy(auto_name, dst->name, EDIT_ENTITY_NAME_MAX);
+
+        /* Copy entire entity, then fix up instance-specific fields. */
+        memcpy(dst, src, sizeof(*dst));
+        dst->active = true;
+        dst->body_index = EDIT_ENTITY_INVALID_ID;
+        dst->pending_delete = false;
+        dst->refresh_gen = 0;
+        /* Restore the monotonic name assigned by create(). */
+        memcpy(dst->name, auto_name, EDIT_ENTITY_NAME_MAX);
+
+        /* Apply position offset. */
         dst->pos[0] = src->pos[0] + offset[0];
         dst->pos[1] = src->pos[1] + offset[1];
         dst->pos[2] = src->pos[2] + offset[2];
-        memcpy(dst->rot,   src->rot,   sizeof(src->rot));
-        dst->orientation = src->orientation;
-        memcpy(dst->scale, src->scale, sizeof(src->scale));
-        memcpy(dst->materials, src->materials, sizeof(src->materials));
-        /* Name is NOT copied — clones get empty names by default. */
 
         /* Record undo: delete this clone to undo. */
         if (ctx->undo) {
@@ -83,6 +93,9 @@ bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
                 ctx->bridge->user_data, new_id, dst);
             dst->body_index = body;
         }
+
+        /* Version stamp the cloned entity. */
+        if (ctx->version) edit_version_stamp(ctx->version, new_id);
 
         clone_ids[clone_count++] = new_id;
     }

@@ -120,6 +120,9 @@ typedef struct scene_editor {
      *  entity list response.  After the last page, entities with a
      *  refresh_gen older than this are removed as stale. */
     uint32_t           entity_refresh_gen;
+
+    /** @brief Last known server version for delta sync (0 = never synced). */
+    uint64_t           server_version;
 } scene_editor_t;
 
 /* ---- Lifecycle ---- */

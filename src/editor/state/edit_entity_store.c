@@ -10,6 +10,7 @@
 
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/memory/vm_alloc.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,6 +30,7 @@ bool edit_entity_store_init(edit_entity_store_t *store, uint32_t capacity) {
     }
     store->capacity = capacity;
     store->active_count = 0;
+    store->next_name_id = 0;
     /* Populate freelist so that index 0 is popped first (top of stack). */
     store->free_count = capacity;
     for (uint32_t i = 0; i < capacity; i++) {
@@ -47,6 +49,7 @@ void edit_entity_store_destroy(edit_entity_store_t *store) {
     store->entities_bytes = 0;
     store->free_count = 0;
     store->active_count = 0;
+    store->next_name_id = 0;
 }
 
 uint32_t edit_entity_store_create(edit_entity_store_t *store, uint32_t type) {
@@ -63,6 +66,20 @@ uint32_t edit_entity_store_create(edit_entity_store_t *store, uint32_t type) {
     e->body_index = EDIT_ENTITY_INVALID_ID;
     e->active = true;
     store->active_count++;
+
+    /* Assign a default name using the monotonic counter so that
+     * entity names always increase regardless of freelist order. */
+    uint32_t type_count = 0;
+    const edit_entity_type_info_t *types = edit_entity_type_registry(&type_count);
+    const char *tname = "entity";
+    for (uint32_t t = 0; t < type_count; t++) {
+        if (types[t].type_id == type) {
+            tname = types[t].name;
+            break;
+        }
+    }
+    snprintf(e->name, EDIT_ENTITY_NAME_MAX, "%s_%u", tname, store->next_name_id++);
+
     return i;
 }
 

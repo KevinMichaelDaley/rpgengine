@@ -44,9 +44,12 @@ void object_mode_rotate(struct edit_entity_store *store,
         if (!e) continue;
         e->orientation = quat_normalize_safe(
             quat_mul(dq, e->orientation), 1e-8f);
-        /* Sync euler cache. */
-        quat_to_euler_yxz(e->orientation,
-                           &e->rot[0], &e->rot[1], &e->rot[2]);
+        /* Sync euler cache (canonicalize w >= 0 for consistent branches). */
+        {
+            quat_t cq = e->orientation;
+            if (cq.w < 0.0f) { cq.x = -cq.x; cq.y = -cq.y; cq.z = -cq.z; cq.w = -cq.w; }
+            quat_to_euler_yxz(cq, &e->rot[0], &e->rot[1], &e->rot[2]);
+        }
         e->rot[0] *= rad_to_deg;
         e->rot[1] *= rad_to_deg;
         e->rot[2] *= rad_to_deg;

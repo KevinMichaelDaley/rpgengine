@@ -26,6 +26,7 @@
 
 #include <SDL2/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------------ */
@@ -128,6 +129,7 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         snapshot.scale[0] = 1.0f;
         snapshot.scale[1] = 1.0f;
         snapshot.scale[2] = 1.0f;
+        snapshot.orientation = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
         snapshot.body_index = UINT32_MAX;
 
         /* Parse type name into type ID. */
@@ -152,17 +154,30 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         const json_value_t *pos_val = json_object_get(item, "pos");
         parse_vec3(pos_val, snapshot.pos);
 
-        /* Parse rotation. */
-        const json_value_t *rot_val = json_object_get(item, "rot");
-        parse_vec3(rot_val, snapshot.rot);
+        /* Parse orientation quaternion (xyzw). */
+        const json_value_t *orient_val = json_object_get(item, "orient");
+        if (orient_val && orient_val->type == JSON_ARRAY &&
+            orient_val->array.count >= 4) {
+            snapshot.orientation.x = (float)orient_val->array.items[0].number;
+            snapshot.orientation.y = (float)orient_val->array.items[1].number;
+            snapshot.orientation.z = (float)orient_val->array.items[2].number;
+            snapshot.orientation.w = (float)orient_val->array.items[3].number;
+            snapshot.orientation = quat_normalize_safe(
+                snapshot.orientation, 1e-8f);
+        }
 
-        /* Sync authoritative orientation from euler cache. */
+        /* Derive euler cache from authoritative quaternion.
+         * Canonicalize w >= 0 for consistent euler branches. */
         {
-            static const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
-            snapshot.orientation = quat_from_euler_yxz(
-                snapshot.rot[0] * DEG_TO_RAD,
-                snapshot.rot[1] * DEG_TO_RAD,
-                snapshot.rot[2] * DEG_TO_RAD);
+            static const float RAD_TO_DEG = 180.0f / 3.14159265358979323846f;
+            quat_t cq = snapshot.orientation;
+            if (cq.w < 0.0f) { cq.x = -cq.x; cq.y = -cq.y; cq.z = -cq.z; cq.w = -cq.w; }
+            quat_to_euler_yxz(cq,
+                               &snapshot.rot[0], &snapshot.rot[1],
+                               &snapshot.rot[2]);
+            snapshot.rot[0] *= RAD_TO_DEG;
+            snapshot.rot[1] *= RAD_TO_DEG;
+            snapshot.rot[2] *= RAD_TO_DEG;
         }
 
         /* Parse scale (overwrite the 1,1,1 defaults if present). */
@@ -347,29 +362,6 @@ static void tui_history_push(scene_ui_state_t *ui, const char *cmd)
 }
 
 /**
- * @brief Determine if a response contains an entity-modifying result.
- *
- * A numeric result indicates a spawn (entity ID returned) or delete
- * (count returned). A boolean result indicates select/deselect success.
- * In both cases the local entity list may be stale, so the caller
- * should request a full refresh after entity-modifying commands.
- *
- * @param resp  Parsed command response.
- * @return true if the response indicates an entity-modifying command.
- */
-static bool is_entity_modifying_response(const scene_cmd_response_t *resp)
-{
-    if (!resp->ok || !resp->has_result) {
-        return false;
-    }
-    /* Only numeric results indicate entity-modifying commands:
-     * spawn returns entity ID, delete returns count.
-     * Boolean results (select/deselect) don't change the entity list.
-     * Array results (entity list) are handled separately in pump. */
-    return resp->result_is_number;
-}
-
-/**
  * @brief Dispatch a TUI command string.
  *
  * Supports simple built-in commands:
@@ -424,6 +416,7 @@ static void dispatch_tui_command(scene_editor_t *ed)
             if (strcmp(first, "help") == 0) is_local = true;
             if (strcmp(first, "basis") == 0) is_local = true;
             if (strcmp(first, "stream") == 0) is_local = true;
+            if (strcmp(first, "snap") == 0) is_local = true;
             size_t clen = strlen(cmd);
             if (clen >= 2 && cmd[clen - 1] == '?') is_local = true;
         }
@@ -574,6 +567,97 @@ static void dispatch_tui_command(scene_editor_t *ed)
         return;
     }
 
+    /* Built-in local command: snap [on|off|position|rotation|scale|grid <value>] */
+    if (strcmp(word, "snap") == 0) {
+        snap_state_t *sn = &ed->snap;
+        const char *rest = cmd + 4;
+        while (*rest == ' ') rest++;
+
+        if (*rest == '\0') {
+            /* No argument: show current snap state. */
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                "Snap: pos=%s(%.2g) rot=%s(%.2g) scale=%s(%.2g)",
+                sn->enabled[SNAP_POSITION] ? "ON" : "off",
+                (double)sn->grid_size[SNAP_POSITION],
+                sn->enabled[SNAP_ROTATION] ? "ON" : "off",
+                (double)sn->grid_size[SNAP_ROTATION],
+                sn->enabled[SNAP_SCALE] ? "ON" : "off",
+                (double)sn->grid_size[SNAP_SCALE]);
+            scene_ui_tui_log(&ed->ui, msg);
+        } else if (strcmp(rest, "on") == 0) {
+            sn->enabled[SNAP_POSITION] = true;
+            sn->enabled[SNAP_ROTATION] = true;
+            sn->enabled[SNAP_SCALE]    = true;
+            scene_ui_tui_log_success(&ed->ui, "Snap: ALL ON");
+        } else if (strcmp(rest, "off") == 0) {
+            sn->enabled[SNAP_POSITION] = false;
+            sn->enabled[SNAP_ROTATION] = false;
+            sn->enabled[SNAP_SCALE]    = false;
+            scene_ui_tui_log_success(&ed->ui, "Snap: ALL OFF");
+        } else if (strcmp(rest, "position") == 0 || strcmp(rest, "pos") == 0) {
+            sn->enabled[SNAP_POSITION] = !sn->enabled[SNAP_POSITION];
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Position snap: %s",
+                     sn->enabled[SNAP_POSITION] ? "ON" : "OFF");
+            scene_ui_tui_log_success(&ed->ui, msg);
+        } else if (strcmp(rest, "rotation") == 0 || strcmp(rest, "rot") == 0) {
+            sn->enabled[SNAP_ROTATION] = !sn->enabled[SNAP_ROTATION];
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Rotation snap: %s",
+                     sn->enabled[SNAP_ROTATION] ? "ON" : "OFF");
+            scene_ui_tui_log_success(&ed->ui, msg);
+        } else if (strcmp(rest, "scale") == 0) {
+            sn->enabled[SNAP_SCALE] = !sn->enabled[SNAP_SCALE];
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Scale snap: %s",
+                     sn->enabled[SNAP_SCALE] ? "ON" : "OFF");
+            scene_ui_tui_log_success(&ed->ui, msg);
+        } else if (strncmp(rest, "grid ", 5) == 0) {
+            /* snap grid <type> <value> OR snap grid <value> */
+            const char *args = rest + 5;
+            while (*args == ' ') args++;
+            snap_transform_type_t type = SNAP_POSITION;
+            float val = 0.0f;
+            if (strncmp(args, "pos ", 4) == 0 ||
+                strncmp(args, "position ", 9) == 0) {
+                type = SNAP_POSITION;
+                args = strchr(args, ' ');
+                if (args) { while (*args == ' ') args++; }
+            } else if (strncmp(args, "rot ", 4) == 0 ||
+                       strncmp(args, "rotation ", 9) == 0) {
+                type = SNAP_ROTATION;
+                args = strchr(args, ' ');
+                if (args) { while (*args == ' ') args++; }
+            } else if (strncmp(args, "scale ", 6) == 0) {
+                type = SNAP_SCALE;
+                args = strchr(args, ' ');
+                if (args) { while (*args == ' ') args++; }
+            }
+            if (args && *args != '\0') {
+                val = (float)atof(args);
+                if (val > 0.0f) {
+                    sn->grid_size[type] = val;
+                    const char *names[] = {"position", "rotation", "scale"};
+                    char msg[64];
+                    snprintf(msg, sizeof(msg), "%s grid: %.4g",
+                             names[type], (double)val);
+                    scene_ui_tui_log_success(&ed->ui, msg);
+                } else {
+                    scene_ui_tui_log_error(&ed->ui,
+                        "Grid size must be > 0");
+                }
+            } else {
+                scene_ui_tui_log_error(&ed->ui,
+                    "Usage: snap grid [pos|rot|scale] <value>");
+            }
+        } else {
+            scene_ui_tui_log_error(&ed->ui,
+                "Usage: snap [on|off|pos|rot|scale|grid <type> <value>]");
+        }
+        return;
+    }
+
     /* Look up command definition for validation. */
     const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(word);
     if (!def) {
@@ -624,7 +708,7 @@ void scene_frame_pump(struct scene_editor *ed)
     /* Static buffer for extracting individual response lines.
      * Must be large enough for paginated entity list responses. */
     static char resp_buf[RESPONSE_BUF_SIZE];
-    bool needs_entity_refresh = false;
+    (void)0; /* Entity-modifying responses are handled inline or at call sites. */
 
     /* Process all complete response lines available. */
     for (;;) {
@@ -719,16 +803,46 @@ void scene_frame_pump(struct scene_editor *ed)
                 continue;
             }
 
-            /* Paginated: {"entities":[...], "total":N, "offset":N} */
+            /* Sync response: {"version":V, "entities":[...], "full":B, ...}
+             * Also handles legacy paginated: {"entities":[...], "total":N, "offset":N} */
             if (result_val && result_val->type == JSON_OBJECT) {
                 const json_value_t *ents_val =
                     json_object_get(result_val, "entities");
-                const json_value_t *total_val =
-                    json_object_get(result_val, "total");
-                const json_value_t *offset_val =
-                    json_object_get(result_val, "offset");
 
                 if (ents_val && ents_val->type == JSON_ARRAY) {
+                    /* Check for sync_entities response (has "full" key). */
+                    const json_value_t *full_val =
+                        json_object_get(result_val, "full");
+                    if (full_val) {
+                        /* Sync response — delegate to sync processor. */
+                        scene_frame_process_sync_response(ed, result_val);
+
+                        /* On full sync last page, reconcile pending deletes. */
+                        if (full_val->type == JSON_BOOL && full_val->boolean) {
+                            const json_value_t *total_val =
+                                json_object_get(result_val, "total");
+                            const json_value_t *offset_val =
+                                json_object_get(result_val, "offset");
+                            uint32_t offset = 0, total = 0;
+                            if (offset_val && offset_val->type == JSON_NUMBER)
+                                offset = (uint32_t)offset_val->number;
+                            if (total_val && total_val->type == JSON_NUMBER)
+                                total = (uint32_t)total_val->number;
+                            uint32_t received = offset + ents_val->array.count;
+                            if (received >= total) {
+                                reconcile_pending_deletes(ed);
+                                s_delete_tombstone_count = 0;
+                            }
+                        }
+                        continue;
+                    }
+
+                    /* Legacy paginated: {"entities":[...], "total":N, "offset":N} */
+                    const json_value_t *total_val =
+                        json_object_get(result_val, "total");
+                    const json_value_t *offset_val =
+                        json_object_get(result_val, "offset");
+
                     uint32_t offset = 0;
                     uint32_t total = 0;
                     if (offset_val && offset_val->type == JSON_NUMBER)
@@ -736,20 +850,14 @@ void scene_frame_pump(struct scene_editor *ed)
                     if (total_val && total_val->type == JSON_NUMBER)
                         total = (uint32_t)total_val->number;
 
-                    /* First page: bump refresh generation. */
                     if (offset == 0) {
                         ed->entity_refresh_gen++;
                     }
 
-                    /* Restore entities from this page (stamps refresh_gen). */
                     process_entity_list(ed, ents_val);
 
-                    /* Check if this is the last page. */
                     uint32_t received = offset + ents_val->array.count;
                     if (received >= total) {
-                        /* Remove entities that are pending_delete AND were
-                         * not in this refresh (server confirmed deletion).
-                         * Normal entities are kept to avoid selection flicker. */
                         for (uint32_t ei = 0; ei < ed->entities.capacity;
                              ei++) {
                             edit_entity_t *ent =
@@ -760,13 +868,10 @@ void scene_frame_pump(struct scene_editor *ed)
                                 edit_entity_store_remove(&ed->entities, ei);
                             }
                         }
-                        /* Full refresh complete — reconcile pending deletes
-                         * and clear tombstones (server list is authoritative). */
                         reconcile_pending_deletes(ed);
                         s_delete_tombstone_count = 0;
                     }
 
-                    /* Request next page if more entities remain. */
                     if (received < total) {
                         char cmd_buf2[256];
                         uint32_t cid =
@@ -786,16 +891,11 @@ void scene_frame_pump(struct scene_editor *ed)
             }
         }
 
-        /* For non-array successful responses, check if entity-modifying. */
-        if (is_entity_modifying_response(&resp)) {
-            needs_entity_refresh = true;
-        }
-    }
-
-    /* If any entity-modifying command succeeded, request a full refresh
-     * so the local store stays in sync with the server. */
-    if (needs_entity_refresh) {
-        scene_frame_request_entity_list(ed);
+        /* For non-array successful responses, check if entity-modifying.
+         * Entity-modifying commands that need immediate refresh (spawn,
+         * delete via TUI) already request their own entity list refresh
+         * at the call site. Commands that return sync-format responses
+         * (clone_id) are handled above. No automatic refresh here. */
     }
 
     /* Periodic retry for pending deletes: every N frames, request an entity
@@ -819,6 +919,7 @@ void scene_frame_pump(struct scene_editor *ed)
         }
         ed->ui.action_q_count = 0;
     }
+
 }
 
 void scene_frame_dispatch_action(struct scene_editor *ed)
@@ -1187,12 +1288,15 @@ void scene_frame_request_entity_list(struct scene_editor *ed)
         return;
     }
 
+    /* Send sync_entities with since_version=0 for a full refresh. */
     char cmd_buf[256];
     uint32_t cmd_id = scene_connection_next_id(&ed->connection);
-    int cmd_len = scene_cmd_format_list(cmd_buf, sizeof(cmd_buf), cmd_id);
-
-    if (cmd_len > 0) {
-        ctrl_conn_send_raw(&ed->connection.tcp, cmd_buf, (uint32_t)cmd_len);
+    int n = snprintf(cmd_buf, sizeof(cmd_buf),
+                     "{\"id\":%u,\"cmd\":\"sync_entities\",\"args\":"
+                     "{\"since_version\":0}}\n",
+                     (unsigned)cmd_id);
+    if (n > 0 && (size_t)n < sizeof(cmd_buf)) {
+        ctrl_conn_send_raw(&ed->connection.tcp, cmd_buf, (uint32_t)n);
         scene_sync_mark_sent(&ed->sync);
     }
 }

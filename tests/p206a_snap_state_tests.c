@@ -67,9 +67,9 @@ static int test_snap_scale_grid(void) {
     snap_state_t snap;
     snap_state_init(&snap);
     snap.enabled[SNAP_SCALE] = true;
-    /* Default scale grid is 0.1 */
-    ASSERT_FLOAT_NEAR(1.5f, snap_state_quantize(&snap, SNAP_SCALE, 1.47f, 0), 0.001f);
-    ASSERT_FLOAT_NEAR(1.5f, snap_state_quantize(&snap, SNAP_SCALE, 1.53f, 0), 0.001f);
+    /* Default scale grid is 1.0 */
+    ASSERT_FLOAT_NEAR(1.0f, snap_state_quantize(&snap, SNAP_SCALE, 1.47f, 0), 0.001f);
+    ASSERT_FLOAT_NEAR(2.0f, snap_state_quantize(&snap, SNAP_SCALE, 1.53f, 0), 0.001f);
     return 0;
 }
 

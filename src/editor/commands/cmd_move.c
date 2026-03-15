@@ -12,6 +12,7 @@
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/edit_entity_version.h"
 
 /**
  * @brief Extract a 3-element float array from a JSON array value.
@@ -32,10 +33,19 @@ bool cmd_move(edit_dispatch_t *d, const json_value_t *args,
     edit_cmd_ctx_t *ctx = (edit_cmd_ctx_t *)d->user_data;
     if (!ctx || !ctx->entities || !ctx->selection || !args) return false;
 
-    /* Extract delta vector. */
-    const json_value_t *delta_val = json_object_get(args, "delta");
-    float delta[3];
-    if (!extract_vec3_(delta_val, delta)) return false;
+    /* Accept "abs":[x,y,z] (set absolute position) or
+     * "delta":[dx,dy,dz] (translate by delta). */
+    bool is_absolute = false;
+    float abs_pos[3] = {0};
+    float delta[3] = {0};
+
+    const json_value_t *abs_val = json_object_get(args, "abs");
+    if (abs_val && extract_vec3_(abs_val, abs_pos)) {
+        is_absolute = true;
+    } else {
+        const json_value_t *delta_val = json_object_get(args, "delta");
+        if (!extract_vec3_(delta_val, delta)) return false;
+    }
 
     uint32_t count = edit_selection_count(ctx->selection);
     if (count == 0) return true;
@@ -51,16 +61,29 @@ bool cmd_move(edit_dispatch_t *d, const json_value_t *args,
         edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, ids[i]);
         if (!e) continue;
 
-        /* Apply delta. */
-        e->pos[0] += delta[0];
-        e->pos[1] += delta[1];
-        e->pos[2] += delta[2];
+        if (is_absolute) {
+            /* Set position directly. */
+            delta[0] = abs_pos[0] - e->pos[0];
+            delta[1] = abs_pos[1] - e->pos[1];
+            delta[2] = abs_pos[2] - e->pos[2];
+            e->pos[0] = abs_pos[0];
+            e->pos[1] = abs_pos[1];
+            e->pos[2] = abs_pos[2];
+        } else {
+            /* Apply delta. */
+            e->pos[0] += delta[0];
+            e->pos[1] += delta[1];
+            e->pos[2] += delta[2];
+        }
 
         /* Bridge: notify physics engine of new position. */
         if (ctx->bridge && ctx->bridge->on_move) {
             ctx->bridge->on_move(ctx->bridge->user_data, ids[i],
                                  e->body_index, e->pos);
         }
+
+        /* Version stamp the moved entity. */
+        if (ctx->version) edit_version_stamp(ctx->version, ids[i]);
 
         /* Record undo with inverse delta. */
         if (ctx->undo) {

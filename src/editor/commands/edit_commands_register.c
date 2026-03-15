@@ -54,6 +54,8 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "browse",          cmd_browse);
     edit_dispatch_register(dispatch, "material",        cmd_material);
     edit_dispatch_register(dispatch, "clone",           cmd_clone);
+    edit_dispatch_register(dispatch, "clone_id",        cmd_clone_id);
+    edit_dispatch_register(dispatch, "sync_entities",   cmd_sync_entities);
     edit_dispatch_register(dispatch, "script",          cmd_script);
     edit_dispatch_register(dispatch, "source",          cmd_source);
     edit_dispatch_register(dispatch, "setattr",         cmd_setattr);

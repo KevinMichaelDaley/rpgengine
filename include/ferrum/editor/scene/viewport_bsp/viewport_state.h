@@ -51,6 +51,13 @@ typedef struct viewport_state {
     vec3_t          gizmo_drag_accum;  /**< Accumulated drag delta (translate). */
     vec3_t          gizmo_scale_accum; /**< Accumulated scale factor (multiplicative). */
     quat_t          gizmo_rot_accum;   /**< Accumulated rotation quaternion. */
+    vec3_t          snap_origin_pos;   /**< Active entity position at drag start (for snap). */
+    vec3_t          snap_origin_scale; /**< Active entity scale at drag start (for snap). */
+    vec3_t          snap_applied_delta;/**< Last snapped delta applied to entities. */
+    vec3_t          snap_applied_scale;/**< Last snapped scale factor applied. */
+    float           snap_rot_accum_deg;/**< Accumulated raw rotation in degrees. */
+    float           snap_rot_applied_deg;/**< Last snapped rotation applied (degrees). */
+    float           snap_rot_origin[3]; /**< Entity euler angles (degrees) at drag start. */
 
     /* 3D cursor. */
     vec3_t          cursor_3d;     /**< 3D cursor world position. */

@@ -22,6 +22,7 @@
 #include "ferrum/editor/viewport/selection_raycast.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
+#include "ferrum/editor/scene/snap_state.h"
 #include "ferrum/editor/ui/clay_theme.h"
 
 #include <SDL2/SDL.h>
@@ -40,6 +41,35 @@
 
 /** Rotation drag sensitivity: degrees per pixel of mouse motion. */
 #define GIZMO_ROTATE_SPEED 0.5f
+
+/* ---- Held-key tracking ---- */
+
+/** @brief Check if a key is currently held (has had KEYDOWN without KEYUP). */
+static bool key_is_held(const scene_ui_state_t *ui, uint32_t keycode) {
+    for (int i = 0; i < ui->held_key_count; ++i) {
+        if (ui->held_keys[i] == keycode) return true;
+    }
+    return false;
+}
+
+/** @brief Mark a key as held. Returns false if already held. */
+static bool key_mark_held(scene_ui_state_t *ui, uint32_t keycode) {
+    if (key_is_held(ui, keycode)) return false;
+    if (ui->held_key_count < UI_HELD_KEYS_MAX) {
+        ui->held_keys[ui->held_key_count++] = keycode;
+    }
+    return true;
+}
+
+/** @brief Mark a key as released (remove from held set). */
+static void key_mark_released(scene_ui_state_t *ui, uint32_t keycode) {
+    for (int i = 0; i < ui->held_key_count; ++i) {
+        if (ui->held_keys[i] == keycode) {
+            ui->held_keys[i] = ui->held_keys[--ui->held_key_count];
+            return;
+        }
+    }
+}
 
 /* ---- Internal helpers ---- */
 
@@ -107,9 +137,14 @@ static void apply_gizmo_rotate(scene_editor_t *ed, quat_t dq) {
         ent->orientation = quat_normalize_safe(
             quat_mul(dq, ent->orientation), 1e-8f);
 
-        /* Sync euler cache for display. */
-        quat_to_euler_yxz(ent->orientation,
-                           &ent->rot[0], &ent->rot[1], &ent->rot[2]);
+        /* Sync euler cache for display.  Canonicalize w >= 0 to avoid
+         * branch jumps in the euler decomposition (q and -q are the
+         * same rotation but decompose to different euler angles). */
+        {
+            quat_t cq = ent->orientation;
+            if (cq.w < 0.0f) { cq.x = -cq.x; cq.y = -cq.y; cq.z = -cq.z; cq.w = -cq.w; }
+            quat_to_euler_yxz(cq, &ent->rot[0], &ent->rot[1], &ent->rot[2]);
+        }
         {
             float r2d = 180.0f / 3.14159265358979323846f;
             ent->rot[0] *= r2d;
@@ -133,6 +168,44 @@ static void apply_gizmo_rotate(scene_editor_t *ed, quat_t dq) {
             ent->pos[2] = pivot.z + nz;
         }
     }
+}
+
+/**
+ * @brief Snap all three euler axes on every selected entity.
+ *
+ * Called at rotation drag-end and when rotation snap is toggled ON,
+ * NOT per-frame during drag (which causes euler-quat round-trip issues).
+ */
+static void snap_selected_euler_axes(scene_editor_t *ed) {
+    if (!ed->snap.enabled[SNAP_ROTATION]) return;
+    static const float R2D = 180.0f / 3.14159265358979323846f;
+    static const float D2R = 3.14159265358979323846f / 180.0f;
+    for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+        if (!edit_selection_contains(&ed->selection, i)) continue;
+        edit_entity_t *ent = edit_entity_store_get_mut(&ed->entities, i);
+        if (!ent) continue;
+
+        /* Decompose fresh from the authoritative quaternion.
+         * Canonicalize to w >= 0 first so atan2 returns consistent
+         * euler branches (q and -q are the same rotation). */
+        quat_t cq = ent->orientation;
+        if (cq.w < 0.0f) { cq.x = -cq.x; cq.y = -cq.y; cq.z = -cq.z; cq.w = -cq.w; }
+        float ex, ey, ez;
+        quat_to_euler_yxz(cq, &ex, &ey, &ez);
+        ent->rot[0] = ex * R2D;
+        ent->rot[1] = ey * R2D;
+        ent->rot[2] = ez * R2D;
+
+        ent->rot[0] = snap_state_quantize(&ed->snap, SNAP_ROTATION,
+                                           ent->rot[0], 0);
+        ent->rot[1] = snap_state_quantize(&ed->snap, SNAP_ROTATION,
+                                           ent->rot[1], 1);
+        ent->rot[2] = snap_state_quantize(&ed->snap, SNAP_ROTATION,
+                                           ent->rot[2], 2);
+        ent->orientation = quat_from_euler_yxz(
+            ent->rot[0] * D2R, ent->rot[1] * D2R, ent->rot[2] * D2R);
+    }
+
 }
 
 /**
@@ -220,6 +293,56 @@ static void send_pivot_move_commands(scene_editor_t *ed,
 }
 
 /**
+ * @brief Send per-entity absolute transform commands via _id variants.
+ *
+ * Used when snap is enabled: each selected entity gets its own command
+ * with the exact snapped value, avoiding the issue where a single
+ * selection-wide command would set all entities to the same value.
+ */
+static void send_per_entity_abs_(scene_editor_t *ed, gizmo_mode_t mode) {
+    char buf[256];
+    for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+        if (!edit_selection_contains(&ed->selection, i)) continue;
+        const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
+        if (!ent) continue;
+
+        uint32_t cid = scene_connection_next_id(&ed->connection);
+        int n = 0;
+        switch (mode) {
+        case GIZMO_MODE_TRANSLATE:
+            n = snprintf(buf, sizeof(buf),
+                "{\"id\":%u,\"cmd\":\"move_id\",\"args\":"
+                "{\"entity_id\":%u,\"abs\":[%.8g,%.8g,%.8g]}}\n",
+                (unsigned)cid, (unsigned)i,
+                (double)ent->pos[0], (double)ent->pos[1],
+                (double)ent->pos[2]);
+            break;
+        case GIZMO_MODE_ROTATE:
+            n = snprintf(buf, sizeof(buf),
+                "{\"id\":%u,\"cmd\":\"rotate_id\",\"args\":"
+                "{\"entity_id\":%u,\"abs\":[%.8g,%.8g,%.8g,%.8g]}}\n",
+                (unsigned)cid, (unsigned)i,
+                (double)ent->orientation.x, (double)ent->orientation.y,
+                (double)ent->orientation.z, (double)ent->orientation.w);
+            break;
+        case GIZMO_MODE_SCALE:
+            n = snprintf(buf, sizeof(buf),
+                "{\"id\":%u,\"cmd\":\"scale_id\",\"args\":"
+                "{\"entity_id\":%u,\"abs\":[%.8g,%.8g,%.8g]}}\n",
+                (unsigned)cid, (unsigned)i,
+                (double)ent->scale[0], (double)ent->scale[1],
+                (double)ent->scale[2]);
+            break;
+        default:
+            break;
+        }
+        if (n > 0 && (size_t)n < sizeof(buf)) {
+            scene_connection_send_cmd(&ed->connection, buf);
+        }
+    }
+}
+
+/**
  * @brief Send a single server command for the accumulated gizmo drag.
  *
  * The server applies the transform to all currently selected entities.
@@ -232,67 +355,68 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     int cmd_len = 0;
     uint32_t cmd_id = scene_connection_next_id(&ed->connection);
 
+    /* Compute the final snapped values — used for both sending and echo. */
+    char echo[64];
+    echo[0] = '\0';
+
     switch (fvp->gizmo.mode) {
     case GIZMO_MODE_TRANSLATE: {
-        float delta_arr[3] = {total_delta.x, total_delta.y, total_delta.z};
-        cmd_len = scene_cmd_format_move(cmd_buf, sizeof(cmd_buf),
-                                         cmd_id, delta_arr);
+        vec3_t snapped = snap_apply_position(&ed->snap,
+            fvp->snap_origin_pos, fvp->gizmo_drag_accum);
+        if (ed->snap.enabled[SNAP_POSITION]) {
+            /* Send per-entity absolute position via move_id. */
+            send_per_entity_abs_(ed, GIZMO_MODE_TRANSLATE);
+        } else {
+            float delta_arr[3] = {snapped.x, snapped.y, snapped.z};
+            cmd_len = scene_cmd_format_move(cmd_buf, sizeof(cmd_buf),
+                                             cmd_id, delta_arr);
+        }
+        snprintf(echo, sizeof(echo), "move [%.4g,%.4g,%.4g]",
+                 (double)snapped.x, (double)snapped.y, (double)snapped.z);
         break;
     }
     case GIZMO_MODE_ROTATE: {
-        /* Send the accumulated rotation quaternion. */
-        quat_t rq = fvp->gizmo_rot_accum;
-        float q[4] = {rq.x, rq.y, rq.z, rq.w};
-        cmd_len = scene_cmd_format_rotate(cmd_buf, sizeof(cmd_buf),
-                                           cmd_id, q);
+        if (ed->snap.enabled[SNAP_ROTATION]) {
+            /* Send per-entity absolute orientation via rotate_id. */
+            send_per_entity_abs_(ed, GIZMO_MODE_ROTATE);
+        } else {
+            quat_t rq = fvp->gizmo_rot_accum;
+            float q[4] = {rq.x, rq.y, rq.z, rq.w};
+            cmd_len = scene_cmd_format_rotate(cmd_buf, sizeof(cmd_buf),
+                                               cmd_id, q);
+        }
+        float rx, ry, rz;
+        { quat_t cq = fvp->gizmo_rot_accum;
+          if (cq.w < 0.0f) { cq.x = -cq.x; cq.y = -cq.y; cq.z = -cq.z; cq.w = -cq.w; }
+          quat_to_euler_yxz(cq, &rx, &ry, &rz); }
+        float r2d = 180.0f / 3.14159265358979323846f;
+        snprintf(echo, sizeof(echo), "rotate [%.4g,%.4g,%.4g]",
+                 (double)(rx * r2d), (double)(ry * r2d),
+                 (double)(rz * r2d));
         break;
     }
     case GIZMO_MODE_SCALE: {
-        /* Use the multiplicatively-accumulated scale factor so the server
-         * matches the compounded local scale exactly (not the additive
-         * sum of per-frame deltas). */
-        float factor[3] = {fvp->gizmo_scale_accum.x,
-                            fvp->gizmo_scale_accum.y,
-                            fvp->gizmo_scale_accum.z};
-        cmd_len = scene_cmd_format_scale(cmd_buf, sizeof(cmd_buf),
-                                          cmd_id, factor);
+        vec3_t snapped = snap_apply_scale(&ed->snap,
+            fvp->snap_origin_scale, fvp->gizmo_scale_accum);
+        if (ed->snap.enabled[SNAP_SCALE]) {
+            /* Send per-entity absolute scale via scale_id. */
+            send_per_entity_abs_(ed, GIZMO_MODE_SCALE);
+        } else {
+            float factor[3] = {snapped.x, snapped.y, snapped.z};
+            cmd_len = scene_cmd_format_scale(cmd_buf, sizeof(cmd_buf),
+                                              cmd_id, factor);
+        }
+        snprintf(echo, sizeof(echo), "scale [%.4g,%.4g,%.4g]",
+                 (double)snapped.x, (double)snapped.y, (double)snapped.z);
         break;
     }
+    default:
+        break;
     }
 
     if (cmd_len > 0) {
         scene_connection_send_cmd(&ed->connection, cmd_buf);
         scene_sync_mark_sent(&ed->sync);
-
-        /* Log the command to TUI with pending status. */
-        char echo[64];
-        switch (fvp->gizmo.mode) {
-        case GIZMO_MODE_TRANSLATE:
-            snprintf(echo, sizeof(echo), "move [%.2g,%.2g,%.2g]",
-                     (double)total_delta.x, (double)total_delta.y,
-                     (double)total_delta.z);
-            break;
-        case GIZMO_MODE_ROTATE: {
-            /* Convert accumulated quat to euler for display. */
-            quat_t rq = fvp->gizmo_rot_accum;
-            float rx, ry, rz;
-            quat_to_euler_yxz(rq, &rx, &ry, &rz);
-            float r2d = 180.0f / 3.14159265358979323846f;
-            snprintf(echo, sizeof(echo), "rotate [%.2g,%.2g,%.2g]",
-                     (double)(rx * r2d), (double)(ry * r2d),
-                     (double)(rz * r2d));
-            break;
-        }
-        case GIZMO_MODE_SCALE:
-            snprintf(echo, sizeof(echo), "scale [%.2g,%.2g,%.2g]",
-                     (double)(1.0f + total_delta.x),
-                     (double)(1.0f + total_delta.y),
-                     (double)(1.0f + total_delta.z));
-            break;
-        default:
-            echo[0] = '\0';
-            break;
-        }
         if (echo[0] != '\0') {
             scene_ui_tui_log_pending(&ed->ui, echo, cmd_id);
         }
@@ -513,6 +637,35 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                         fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
                         fvp->gizmo_scale_accum = (vec3_t){1, 1, 1};
                         fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
+                        fvp->snap_applied_delta = (vec3_t){0, 0, 0};
+                        fvp->snap_applied_scale = (vec3_t){1, 1, 1};
+                        fvp->snap_rot_accum_deg = 0.0f;
+                        fvp->snap_rot_applied_deg = 0.0f;
+                        fvp->snap_rot_origin[0] = 0.0f;
+                        fvp->snap_rot_origin[1] = 0.0f;
+                        fvp->snap_rot_origin[2] = 0.0f;
+                        if (ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
+                            const edit_entity_t *re = edit_entity_store_get(
+                                &ed->entities, ed->active_object_id);
+                            if (re) {
+                                fvp->snap_rot_origin[0] = re->rot[0];
+                                fvp->snap_rot_origin[1] = re->rot[1];
+                                fvp->snap_rot_origin[2] = re->rot[2];
+                            }
+                        }
+                        /* Capture active entity's pos/scale for snap reference. */
+                        fvp->snap_origin_pos = fvp->gizmo.position;
+                        fvp->snap_origin_scale = (vec3_t){1, 1, 1};
+                        if (ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
+                            const edit_entity_t *ae = edit_entity_store_get(
+                                &ed->entities, ed->active_object_id);
+                            if (ae) {
+                                fvp->snap_origin_pos = (vec3_t){
+                                    ae->pos[0], ae->pos[1], ae->pos[2]};
+                                fvp->snap_origin_scale = (vec3_t){
+                                    ae->scale[0], ae->scale[1], ae->scale[2]};
+                            }
+                        }
                         gizmo_hit = true;
                     }
                 }
@@ -564,6 +717,18 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
                             fvp->gizmo_scale_accum = (vec3_t){1, 1, 1};
                             fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
+                            fvp->snap_applied_delta = (vec3_t){0, 0, 0};
+                            fvp->snap_applied_scale = (vec3_t){1, 1, 1};
+                            fvp->snap_origin_pos = fvp->gizmo.position;
+                            fvp->snap_origin_scale = (vec3_t){1, 1, 1};
+                            if (ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
+                                const edit_entity_t *ae = edit_entity_store_get(
+                                    &ed->entities, ed->active_object_id);
+                                if (ae) {
+                                    fvp->snap_origin_pos = (vec3_t){
+                                        ae->pos[0], ae->pos[1], ae->pos[2]};
+                                }
+                            }
                         } else {
                             edit_selection_clear(&ed->selection);
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
@@ -683,6 +848,9 @@ static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) 
 
         /* End gizmo drag (including free-move): send server commands. */
         if (fvp->gizmo.dragging) {
+            /* Snap euler axes BEFORE sending so the server gets the
+             * snapped absolute orientation (not the unsnapped delta). */
+            snap_selected_euler_axes(ed);
             send_gizmo_commands(ed, fvp->gizmo_drag_accum);
             fvp->gizmo.dragging = false;
             fvp->gizmo.active_axis = GIZMO_AXIS_NONE;
@@ -773,10 +941,19 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             delta.y = cam_right.y * mx + cam_up.y * my;
             delta.z = cam_right.z * mx + cam_up.z * my;
 
-            apply_gizmo_drag(ed, delta);
+            /* Accumulate raw delta, then compute snapped increment. */
             fvp->gizmo_drag_accum.x += delta.x;
             fvp->gizmo_drag_accum.y += delta.y;
             fvp->gizmo_drag_accum.z += delta.z;
+            vec3_t snapped = snap_apply_position(&ed->snap,
+                fvp->snap_origin_pos, fvp->gizmo_drag_accum);
+            vec3_t inc = {
+                snapped.x - fvp->snap_applied_delta.x,
+                snapped.y - fvp->snap_applied_delta.y,
+                snapped.z - fvp->snap_applied_delta.z,
+            };
+            fvp->snap_applied_delta = snapped;
+            apply_gizmo_drag(ed, inc);
             return true;
         }
 
@@ -829,13 +1006,29 @@ static bool handle_mouse_motion(scene_editor_t *ed,
                 rot_amount = (float)ev->xrel * GIZMO_ROTATE_SPEED;
             }
 
-            /* Build rotation quaternion around the actual oriented axis
-             * (works correctly in both world and local basis). */
-            quat_t dq = quat_from_axis_angle(
-                axis_dir, rot_amount * INPUT_DEG_TO_RAD, 1e-8f);
-            apply_gizmo_rotate(ed, dq);
-            fvp->gizmo_rot_accum = quat_normalize_safe(
-                quat_mul(dq, fvp->gizmo_rot_accum), 1e-8f);
+            /* Accumulate raw rotation, snap absolute euler, apply increment. */
+            fvp->snap_rot_accum_deg += rot_amount;
+            int snap_axis = (axis_col >= 0) ? axis_col : 0;
+
+            /* Compute absolute target euler = start + accum, snap it,
+             * then derive the corrected delta from start. */
+            float abs_target = fvp->snap_rot_origin[snap_axis]
+                             + fvp->snap_rot_accum_deg;
+            float snapped_abs = snap_apply_rotation(&ed->snap,
+                abs_target, snap_axis);
+            /* Corrected delta from the original orientation. */
+            float snapped_delta = snapped_abs
+                                - fvp->snap_rot_origin[snap_axis];
+            float inc_deg = snapped_delta - fvp->snap_rot_applied_deg;
+            fvp->snap_rot_applied_deg = snapped_delta;
+
+            if (fabsf(inc_deg) > 1e-6f) {
+                quat_t dq = quat_from_axis_angle(
+                    axis_dir, inc_deg * INPUT_DEG_TO_RAD, 1e-8f);
+                apply_gizmo_rotate(ed, dq);
+                fvp->gizmo_rot_accum = quat_normalize_safe(
+                    quat_mul(dq, fvp->gizmo_rot_accum), 1e-8f);
+            }
             return true;
         } else if (gizmo_axis_is_planar(fvp->gizmo.active_axis)) {
             /* Planar constraint: use the plane's own orthonormal
@@ -988,16 +1181,49 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             delta.z = axis_dir.z * mouse_proj * speed;
         }
 
-        apply_gizmo_drag(ed, delta);
+        /* Accumulate raw delta. */
         fvp->gizmo_drag_accum.x += delta.x;
         fvp->gizmo_drag_accum.y += delta.y;
         fvp->gizmo_drag_accum.z += delta.z;
-        /* Track multiplicative scale factor separately so the server
-         * command matches the compounded local scale exactly. */
+
         if (fvp->gizmo.mode == GIZMO_MODE_SCALE) {
+            /* Track multiplicative scale factor. */
             fvp->gizmo_scale_accum.x *= (1.0f + delta.x);
             fvp->gizmo_scale_accum.y *= (1.0f + delta.y);
             fvp->gizmo_scale_accum.z *= (1.0f + delta.z);
+
+            /* Snap the absolute scale and apply incremental difference. */
+            vec3_t snapped = snap_apply_scale(&ed->snap,
+                fvp->snap_origin_scale, fvp->gizmo_scale_accum);
+            /* Incremental scale delta from last applied. */
+            vec3_t inc;
+            inc.x = (1.0f + snapped.x - fvp->snap_applied_scale.x)
+                    / 1.0f - 1.0f;
+            /* Actually: entities are at scale (orig * applied_factor).
+             * We need to apply (snapped / applied) multiplicatively.
+             * Equivalently, delta = snapped_factor / applied_factor - 1. */
+            float safe_div_x = (fabsf(fvp->snap_applied_scale.x) > 1e-9f)
+                ? fvp->snap_applied_scale.x : 1.0f;
+            float safe_div_y = (fabsf(fvp->snap_applied_scale.y) > 1e-9f)
+                ? fvp->snap_applied_scale.y : 1.0f;
+            float safe_div_z = (fabsf(fvp->snap_applied_scale.z) > 1e-9f)
+                ? fvp->snap_applied_scale.z : 1.0f;
+            inc.x = snapped.x / safe_div_x - 1.0f;
+            inc.y = snapped.y / safe_div_y - 1.0f;
+            inc.z = snapped.z / safe_div_z - 1.0f;
+            fvp->snap_applied_scale = snapped;
+            apply_gizmo_drag(ed, inc);
+        } else {
+            /* Translate: snap absolute position, apply incremental. */
+            vec3_t snapped = snap_apply_position(&ed->snap,
+                fvp->snap_origin_pos, fvp->gizmo_drag_accum);
+            vec3_t inc = {
+                snapped.x - fvp->snap_applied_delta.x,
+                snapped.y - fvp->snap_applied_delta.y,
+                snapped.z - fvp->snap_applied_delta.z,
+            };
+            fvp->snap_applied_delta = snapped;
+            apply_gizmo_drag(ed, inc);
         }
         return true;
     }
@@ -1352,6 +1578,24 @@ static bool handle_text_input(scene_editor_t *ed, const char *text) {
 /**
  * @brief Handle key down: panel toggles, entity operations, TUI routing.
  */
+/** @brief Returns true for keys that should fire continuously while held
+ *  (camera movement, zoom, numpad orbit, scroll). */
+static bool key_is_continuous(SDL_Keycode key) {
+    switch (key) {
+    /* Fly mode camera movement. */
+    case SDLK_UP: case SDLK_DOWN: case SDLK_LEFT: case SDLK_RIGHT:
+    /* Zoom. */
+    case SDLK_PLUS: case SDLK_EQUALS: case SDLK_MINUS:
+    /* Numpad orbit. */
+    case SDLK_2: case SDLK_4: case SDLK_6: case SDLK_8: case SDLK_9:
+    /* Scroll (handled earlier but included for completeness). */
+    case SDLK_PAGEUP: case SDLK_PAGEDOWN: case SDLK_HOME: case SDLK_END:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     SDL_Keycode key = ev->keysym.sym;
     viewport_state_t *fvp = scene_focused_vp(ed);
@@ -1359,6 +1603,15 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     /* If TUI is active, route keys to TUI input handler first. */
     if (ed->ui.tui_active) {
         return handle_tui_key(ed, ev);
+    }
+
+    /* One-shot guard: for non-continuous keys, require a KEYUP between
+     * presses. This prevents double-fire from OS-level key repeat or
+     * brief release/repress generating two KEYDOWN events. */
+    if (!key_is_continuous(key)) {
+        if (!key_mark_held(&ed->ui, (uint32_t)key)) {
+            return true;  /* Already held — swallow the event. */
+        }
     }
 
     /* Alt+Arrow: split focused viewport in the BSP tree.
@@ -1445,8 +1698,9 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             apply_gizmo_rotate(ed, dq);
             fvp->gizmo_rot_accum = quat_normalize_safe(
                 quat_mul(dq, fvp->gizmo_rot_accum), 1e-8f);
-            /* If not mid-drag, send command immediately. */
+            /* If not mid-drag, snap then send so server gets abs orientation. */
             if (!fvp->gizmo.dragging) {
+                snap_selected_euler_axes(ed);
                 vec3_t unused = {0, 0, 0};
                 send_gizmo_commands(ed, unused);
             }
@@ -1596,10 +1850,9 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         break;
 
-    /* Entity operations — ignore key repeat (held key). */
+    /* Entity operations. */
     case SDLK_DELETE:
     case SDLK_x:
-        if (ev->repeat) break;
         if (ev->keysym.mod & KMOD_SHIFT) {
             ed->ui.action = UI_ACTION_DELETE_SELECTED;
             return true;
@@ -1740,14 +1993,34 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return true;
     }
 
-    /* D: duplicate selected entities. */
-    case SDLK_d:
-        if (edit_selection_count(&ed->selection) > 0) {
-            ed->ui.action = UI_ACTION_TUI_COMMAND;
-            strncpy(ed->ui.tui_cmd, "clone", UI_TUI_INPUT_MAX - 1);
-            ed->ui.tui_cmd[UI_TUI_INPUT_MAX - 1] = '\0';
+    /* D: duplicate selected entities via per-entity clone_id.
+     * clone_id returns a delta sync response, so new entities
+     * appear in the viewport immediately when the response arrives.
+     * Deselect originals so only the clones end up selected. */
+    case SDLK_d: {
+        uint32_t sel_count = edit_selection_count(&ed->selection);
+        if (sel_count > 0) {
+            const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+            uint32_t last_cid = 0;
+            for (uint32_t si = 0; si < sel_count; ++si) {
+                char buf[256];
+                uint32_t cid = scene_connection_next_id(&ed->connection);
+                int n = snprintf(buf, sizeof(buf),
+                    "{\"id\":%u,\"cmd\":\"clone_id\",\"args\":"
+                    "{\"entity_id\":%u}}\n",
+                    (unsigned)cid, (unsigned)sel_ids[si]);
+                if (n > 0 && (size_t)n < sizeof(buf)) {
+                    scene_connection_send_cmd(&ed->connection, buf);
+                }
+                last_cid = cid;
+            }
+            /* Deselect originals — clones will be selected when the
+             * delta sync response arrives and is processed. */
+            edit_selection_clear(&ed->selection);
+            scene_ui_tui_log_pending(&ed->ui, "clone", last_cid);
         }
         return true;
+    }
 
     /* Arrow keys: fly mode movement (forward/back/left/right). */
     case SDLK_UP:
@@ -1850,6 +2123,62 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         return true;
 
+    /* G: toggle snap for the current gizmo mode.
+     * Ctrl+G: toggle all snap types at once. */
+    case SDLK_g: {
+        snap_state_t *sn = &ed->snap;
+        if (ev->keysym.mod & KMOD_SHIFT) {
+            /* Shift+G: enable all three snaps, unless all three are
+             * already on — in that case, disable all three. */
+            bool all_on = sn->enabled[SNAP_POSITION] &&
+                          sn->enabled[SNAP_ROTATION] &&
+                          sn->enabled[SNAP_SCALE];
+            bool new_val = !all_on;
+            sn->enabled[SNAP_POSITION] = new_val;
+            sn->enabled[SNAP_ROTATION] = new_val;
+            sn->enabled[SNAP_SCALE]    = new_val;
+            /* When enabling, immediately snap selected entities' eulers
+             * and sync per-entity absolute orientation to server. */
+            if (new_val) {
+                snap_selected_euler_axes(ed);
+                send_per_entity_abs_(ed, GIZMO_MODE_ROTATE);
+            }
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Snap: %s", new_val ? "ALL ON" : "OFF");
+            scene_ui_tui_log(&ed->ui, msg);
+        } else {
+            /* G: toggle snap for the current gizmo mode. */
+            snap_transform_type_t st = SNAP_POSITION;
+            const char *type_name = "Position";
+            switch (fvp->gizmo.mode) {
+            case GIZMO_MODE_ROTATE:
+                st = SNAP_ROTATION;
+                type_name = "Rotation";
+                break;
+            case GIZMO_MODE_SCALE:
+                st = SNAP_SCALE;
+                type_name = "Scale";
+                break;
+            default:
+                break;
+            }
+            sn->enabled[st] = !sn->enabled[st];
+            /* When enabling rotation snap, immediately snap eulers
+             * and sync per-entity absolute orientation to server. */
+            if (sn->enabled[st] && st == SNAP_ROTATION) {
+                snap_selected_euler_axes(ed);
+                send_per_entity_abs_(ed, GIZMO_MODE_ROTATE);
+            }
+            char msg[64];
+            snprintf(msg, sizeof(msg), "%s snap: %s (grid=%.2g)",
+                     type_name,
+                     sn->enabled[st] ? "ON" : "OFF",
+                     (double)sn->grid_size[st]);
+            scene_ui_tui_log(&ed->ui, msg);
+        }
+        return true;
+    }
+
     default:
         break;
     }
@@ -1930,6 +2259,10 @@ bool scene_input_process(struct scene_editor *ed, const union SDL_Event *event) 
 
     case SDL_KEYDOWN:
         return handle_key_down(ed, &event->key);
+
+    case SDL_KEYUP:
+        key_mark_released(&ed->ui, (uint32_t)event->key.keysym.sym);
+        return false;
 
     case SDL_TEXTINPUT:
         return handle_text_input(ed, event->text.text);

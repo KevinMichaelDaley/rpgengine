@@ -218,6 +218,17 @@ bool cmd_material(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_clone(edit_dispatch_t *d, const json_value_t *args,
                json_value_t *result, json_arena_t *arena);
 
+/** @brief Clone by ID. Args: {"entity_id":N, "offset":[dx,dy,dz]}.
+ *  Returns new entity ID. */
+bool cmd_clone_id(edit_dispatch_t *d, const json_value_t *args,
+                  json_value_t *result, json_arena_t *arena);
+
+/** @brief Delta-compressed entity sync.
+ *  Args: {"since_version":V, "offset":N, "limit":N}.
+ *  Returns changed entities + tombstones (delta) or paginated full list. */
+bool cmd_sync_entities(edit_dispatch_t *d, const json_value_t *args,
+                        json_value_t *result, json_arena_t *arena);
+
 /* ------------------------------------------------------------------------ */
 /* Script commands                                                            */
 /* ------------------------------------------------------------------------ */

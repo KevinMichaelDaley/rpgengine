@@ -350,6 +350,20 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Duplicate selected entities. Clones become new selection.",
         .arg_fmt = "a:offset",
     },
+    {
+        .name    = "clone_id",
+        .alias   = "ci",
+        .usage   = "clone_id <entity_id> [offset_x offset_y offset_z]",
+        .help    = "Clone a specific entity by ID. Returns new entity ID.",
+        .arg_fmt = "u:entity_id a:offset",
+    },
+    {
+        .name    = "sync_entities",
+        .alias   = "se",
+        .usage   = "sync_entities [since_version] [offset] [limit]",
+        .help    = "Delta-compressed entity sync. Returns changed entities since version.",
+        .arg_fmt = "u:since_version u:offset u:limit",
+    },
     /* ── Script commands ────────────────────────────────────── */
     {
         .name    = "script",
@@ -492,6 +506,14 @@ static const ctrl_cmd_def_t s_defs[] = {
         .usage   = "physics_material <entity> <friction> <restitution>",
         .help    = "Set friction and restitution on an entity's physics body.",
         .arg_fmt = NULL, /* Custom parsing. */
+    },
+    /* ── Snap commands ──────────────────────────────────────────── */
+    {
+        .name    = "snap",
+        .alias   = NULL,
+        .usage   = "snap [on|off|pos|rot|scale|grid [type] <value>]",
+        .help    = "Toggle or configure grid snap. No args shows status.",
+        .arg_fmt = NULL, /* Handled locally. */
     },
 };
 

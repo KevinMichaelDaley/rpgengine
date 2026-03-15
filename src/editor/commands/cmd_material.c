@@ -13,6 +13,7 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/edit_entity_version.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -94,6 +95,9 @@ bool cmd_material(edit_dispatch_t *d, const json_value_t *args,
 
         /* Set the material slot. */
         memcpy(ent->materials[slot], path, sizeof(path));
+
+        /* Version stamp the entity after material change. */
+        if (ctx->version) edit_version_stamp(ctx->version, entity_id);
 
         /* Return true. */
         result->type = JSON_BOOL;

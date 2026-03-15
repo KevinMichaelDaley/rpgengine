@@ -15,6 +15,7 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/edit_entity_version.h"
 
 /**
  * @brief Extract a 3-element float array from a JSON array value.
@@ -41,14 +42,23 @@ bool cmd_scale_id(edit_dispatch_t *d, const json_value_t *args,
     uint32_t eid = edit_cmd_resolve_entity(ctx, id_val);
     if (eid == EDIT_ENTITY_INVALID_ID) return false;
 
-    /* Extract scale factor. */
-    const json_value_t *factor_val = json_object_get(args, "factor");
-    float factor[3];
-    if (!extract_vec3_(factor_val, factor)) return false;
+    /* Accept "abs":[sx,sy,sz] (set absolute) or "factor":[fx,fy,fz]. */
+    bool is_absolute = false;
+    float abs_scale[3] = {0};
+    float factor[3] = {0};
 
-    /* Reject zero scale factors (division by zero for inverse). */
-    for (int i = 0; i < 3; i++) {
-        if (factor[i] == 0.0f) return false;
+    const json_value_t *abs_val = json_object_get(args, "abs");
+    if (abs_val && extract_vec3_(abs_val, abs_scale)) {
+        is_absolute = true;
+        for (int i = 0; i < 3; i++) {
+            if (abs_scale[i] == 0.0f) return false;
+        }
+    } else {
+        const json_value_t *factor_val = json_object_get(args, "factor");
+        if (!extract_vec3_(factor_val, factor)) return false;
+        for (int i = 0; i < 3; i++) {
+            if (factor[i] == 0.0f) return false;
+        }
     }
 
     /* Validate entity exists. */
@@ -58,10 +68,22 @@ bool cmd_scale_id(edit_dispatch_t *d, const json_value_t *args,
     /* Store old scale for undo. */
     float old_scale[3] = { e->scale[0], e->scale[1], e->scale[2] };
 
-    /* Apply multiplicative scale (consistent with cmd_scale). */
-    e->scale[0] *= factor[0];
-    e->scale[1] *= factor[1];
-    e->scale[2] *= factor[2];
+    if (is_absolute) {
+        for (int i = 0; i < 3; i++) {
+            factor[i] = (e->scale[i] != 0.0f)
+                ? abs_scale[i] / e->scale[i] : 1.0f;
+        }
+        e->scale[0] = abs_scale[0];
+        e->scale[1] = abs_scale[1];
+        e->scale[2] = abs_scale[2];
+    } else {
+        e->scale[0] *= factor[0];
+        e->scale[1] *= factor[1];
+        e->scale[2] *= factor[2];
+    }
+
+    /* Version stamp the scaled entity. */
+    if (ctx->version) edit_version_stamp(ctx->version, eid);
 
     /* Record undo with inverse factors. */
     if (ctx->undo) {

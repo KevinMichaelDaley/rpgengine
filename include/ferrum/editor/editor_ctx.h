@@ -65,6 +65,9 @@ typedef struct editor_ctx {
     mesh_edit_t          mesh;          /**< Mesh editing subsystem. */
     edit_cmd_ctx_t       cmd_ctx;       /**< Handler context (pointers into above). */
 
+    /** @brief Entity version tracking for delta sync (heap-allocated). */
+    struct edit_version_state *version_state;
+
     editor_ctx_config_t  config;        /**< Resolved configuration. */
     bool                 initialized;   /**< Guard against double init/shutdown. */
 } editor_ctx_t;

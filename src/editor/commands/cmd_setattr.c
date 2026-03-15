@@ -19,6 +19,7 @@
 #include "ferrum/editor/edit_commands.h"
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_entity_version.h"
 #include "ferrum/entity/entity_attrs.h"
 
 #include <math.h>
@@ -90,6 +91,9 @@ bool cmd_setattr(edit_dispatch_t *d, const json_value_t *args,
     default:
         return false;
     }
+
+    /* Version stamp the entity after attr change. */
+    if (ok && ctx->version) edit_version_stamp(ctx->version, eid);
 
     result->type = JSON_BOOL;
     result->boolean = ok;

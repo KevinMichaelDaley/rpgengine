@@ -8,7 +8,9 @@
 
 #include "ferrum/editor/editor_ctx.h"
 #include "ferrum/editor/edit_commands.h"
+#include "ferrum/editor/edit_entity_version.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /** @brief Apply defaults to zero-valued config fields. */
@@ -66,10 +68,26 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
         return false;
     }
 
+    /* Entity version tracking for delta sync. */
+    ctx->version_state = malloc(sizeof(edit_version_state_t));
+    if (!ctx->version_state ||
+        !edit_version_init(ctx->version_state, ctx->config.max_entities)) {
+        fprintf(stderr, "[editor_ctx] version state init failed\n");
+        free(ctx->version_state);
+        ctx->version_state = NULL;
+        edit_undo_destroy(&ctx->undo);
+        edit_selection_destroy(&ctx->selection);
+        edit_entity_store_destroy(&ctx->entities);
+        edit_cmd_ring_destroy(&ctx->cmd_ring);
+        edit_cmd_ring_destroy(&ctx->resp_ring);
+        return false;
+    }
+
     /* Wire command context. */
     ctx->cmd_ctx.entities  = &ctx->entities;
     ctx->cmd_ctx.selection = &ctx->selection;
     ctx->cmd_ctx.undo      = &ctx->undo;
+    ctx->cmd_ctx.version   = ctx->version_state;
 
     /* Mesh editing subsystem. */
     if (!mesh_edit_init(&ctx->mesh)) {
@@ -123,6 +141,11 @@ void editor_ctx_shutdown(editor_ctx_t *ctx) {
     /* Destroy subsystems in reverse order. */
     edit_dispatch_destroy(&ctx->dispatch);
     mesh_edit_destroy(&ctx->mesh);
+    if (ctx->version_state) {
+        edit_version_destroy(ctx->version_state);
+        free(ctx->version_state);
+        ctx->version_state = NULL;
+    }
     edit_undo_destroy(&ctx->undo);
     edit_selection_destroy(&ctx->selection);
     edit_entity_store_destroy(&ctx->entities);

@@ -197,6 +197,14 @@ typedef struct scene_ui_state {
     scene_ui_action_t action_q_actions[UI_ACTION_Q_MAX];
     uint32_t          action_q_targets[UI_ACTION_Q_MAX];
     int               action_q_count;
+
+    /** Held-key tracker: prevents re-firing one-shot keys without a KEYUP
+     *  in between.  Stores raw SDL_Keycode values.  Keys flagged as
+     *  continuous (arrow keys in fly mode, zoom +/-, numpad orbit) bypass
+     *  this check.  Linear scan is fine — we'll never hold 64 keys. */
+#define UI_HELD_KEYS_MAX 4096
+    uint32_t          held_keys[UI_HELD_KEYS_MAX]; /**< SDL_Keycode values. */
+    int               held_key_count; /**< Number of entries in held_keys[]. */
 } scene_ui_state_t;
 
 /**

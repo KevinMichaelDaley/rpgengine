@@ -26,6 +26,7 @@ struct edit_physics_ctrl;
 struct json_value;
 struct edit_asset_registry;
 struct mesh_edit;
+struct edit_version_state;
 
 /* ------------------------------------------------------------------------ */
 /* Physics bridge callback                                                   */
@@ -223,6 +224,9 @@ typedef struct edit_cmd_ctx {
 
     /** @brief Script runtime (NULL if scripting not configured). */
     struct aegis_script_runtime *script_runtime;
+
+    /** @brief Entity version tracking for delta sync (NULL = disabled). */
+    struct edit_version_state *version;
 } edit_cmd_ctx_t;
 
 /* Forward declaration for JSON types. */

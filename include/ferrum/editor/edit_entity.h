@@ -93,6 +93,7 @@ typedef struct edit_entity_store {
     uint32_t       capacity;     /**< Total number of slots. */
     uint32_t       free_count;   /**< Number of entries in the freelist. */
     uint32_t       active_count; /**< Number of active entities (cached). */
+    uint32_t       next_name_id; /**< Monotonic counter for default entity names. */
 } edit_entity_store_t;
 
 /* ------------------------------------------------------------------------ */

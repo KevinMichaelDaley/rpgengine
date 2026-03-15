@@ -28,6 +28,7 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/edit_entity_version.h"
 #include "ferrum/entity/entity_attrs.h"
 
 #include <math.h>
@@ -183,6 +184,9 @@ bool cmd_entity_def(edit_dispatch_t *d, const json_value_t *args,
         e = edit_entity_store_get_mut(ctx->entities, eid);
         if (e) e->body_index = body_idx;
     }
+
+    /* Version stamp the new entity. */
+    if (ctx->version) edit_version_stamp(ctx->version, eid);
 
     /* Record undo entry. */
     if (ctx->undo) {

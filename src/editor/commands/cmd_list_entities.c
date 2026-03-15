@@ -26,11 +26,11 @@
 #define LIST_DEFAULT_LIMIT 200
 #define LIST_MAX_LIMIT     500
 
-/** Fields per entity object: id, name, type, pos, rot, scale. */
+/** Fields per entity object: id, name, type, pos, orient, scale. */
 #define FIELDS_PER_ENTITY 6
 
-/** Number of vec3 arrays per entity (pos, rot, scale). */
-#define VEC3_ARRAYS 3
+/** Number of vec3 arrays per entity (pos, scale). */
+#define VEC3_ARRAYS 2
 
 /**
  * @brief Check if an entity matches the filter criteria.
@@ -115,12 +115,13 @@ bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
     size_t klens_sz = ((page_count * FIELDS_PER_ENTITY * sizeof(uint32_t) + 7) & ~(size_t)7);
     size_t vals_sz = ((page_count * FIELDS_PER_ENTITY * sizeof(json_value_t) + 7) & ~(size_t)7);
     size_t vec3_sz = ((page_count * VEC3_ARRAYS * 3 * sizeof(json_value_t) + 7) & ~(size_t)7);
+    size_t quat_sz = ((page_count * 4 * sizeof(json_value_t) + 7) & ~(size_t)7);
     /* Wrapper object: 3 keys, 3 key_lens, 3 vals. */
     size_t wrap_keys_sz = ((3 * sizeof(const char *) + 7) & ~(size_t)7);
     size_t wrap_klens_sz = ((3 * sizeof(uint32_t) + 7) & ~(size_t)7);
     size_t wrap_vals_sz = ((3 * sizeof(json_value_t) + 7) & ~(size_t)7);
     size_t total = items_sz + keys_sz + klens_sz + vals_sz + vec3_sz
-                 + wrap_keys_sz + wrap_klens_sz + wrap_vals_sz;
+                 + quat_sz + wrap_keys_sz + wrap_klens_sz + wrap_vals_sz;
 
     if (arena->used + total > arena->cap) {
         if (has_pattern) regfree(&regex);
@@ -137,6 +138,8 @@ bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
     arena->used += vals_sz;
     json_value_t *vec3_items = (json_value_t *)(arena->buf + arena->used);
     arena->used += vec3_sz;
+    json_value_t *quat_items = (json_value_t *)(arena->buf + arena->used);
+    arena->used += quat_sz;
     const char **wrap_keys = (const char **)(arena->buf + arena->used);
     arena->used += wrap_keys_sz;
     uint32_t *wrap_klens = (uint32_t *)(arena->buf + arena->used);
@@ -145,8 +148,8 @@ bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
     arena->used += wrap_vals_sz;
 
     /* Static key names for entity fields. */
-    static const char *ent_key_strs[] = {"id", "name", "type", "pos", "rot", "scale"};
-    static const uint32_t ent_key_lens[] = {2, 4, 4, 3, 3, 5};
+    static const char *ent_key_strs[] = {"id", "name", "type", "pos", "orient", "scale"};
+    static const uint32_t ent_key_lens[] = {2, 4, 4, 3, 6, 5};
 
     /* Build entity objects for this page. */
     uint32_t idx = 0;       /* index into page items */
@@ -183,18 +186,43 @@ bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
         vals[2].string.ptr = tname;
         vals[2].string.len = (uint32_t)strlen(tname);
 
-        /* pos, rot, scale vec3 arrays. */
+        /* pos (vec3), orient (vec4/quat), scale (vec3). */
         json_value_t *v3 = &vec3_items[idx * VEC3_ARRAYS * 3];
-        const float *vecs[3] = {ent->pos, ent->rot, ent->scale};
-        for (int vi = 0; vi < 3; vi++) {
-            json_value_t *elems = &v3[vi * 3];
+
+        /* pos → vals[3] */
+        {
+            json_value_t *elems = &v3[0];
             for (int c = 0; c < 3; c++) {
                 elems[c].type = JSON_NUMBER;
-                elems[c].number = (double)vecs[vi][c];
+                elems[c].number = (double)ent->pos[c];
             }
-            vals[3 + vi].type = JSON_ARRAY;
-            vals[3 + vi].array.items = elems;
-            vals[3 + vi].array.count = 3;
+            vals[3].type = JSON_ARRAY;
+            vals[3].array.items = elems;
+            vals[3].array.count = 3;
+        }
+
+        /* orient → vals[4] (quaternion xyzw) */
+        {
+            json_value_t *qe = &quat_items[idx * 4];
+            qe[0].type = JSON_NUMBER; qe[0].number = (double)ent->orientation.x;
+            qe[1].type = JSON_NUMBER; qe[1].number = (double)ent->orientation.y;
+            qe[2].type = JSON_NUMBER; qe[2].number = (double)ent->orientation.z;
+            qe[3].type = JSON_NUMBER; qe[3].number = (double)ent->orientation.w;
+            vals[4].type = JSON_ARRAY;
+            vals[4].array.items = qe;
+            vals[4].array.count = 4;
+        }
+
+        /* scale → vals[5] */
+        {
+            json_value_t *elems = &v3[3];
+            for (int c = 0; c < 3; c++) {
+                elems[c].type = JSON_NUMBER;
+                elems[c].number = (double)ent->scale[c];
+            }
+            vals[5].type = JSON_ARRAY;
+            vals[5].array.items = elems;
+            vals[5].array.count = 3;
         }
 
         items[idx].type = JSON_OBJECT;
