@@ -116,19 +116,25 @@ static const float *get_entity_color(uint32_t entity_type, bool selected,
 }
 
 /**
- * @brief Build a model matrix from entity position, orientation, and scale.
+ * @brief Build a model matrix from entity position, orientation, scale,
+ *        and pivot offset.
  *
- * Uses the quaternion orientation (authoritative) to build the rotation
- * matrix, avoiding euler angle order-dependence issues.
+ * Model matrix = T(pos) * R * S * T(-pivot_offset).
+ * entity.pos is the pivot world position; geometry is offset by
+ * -pivot_offset in local space so rotation/scale naturally happen
+ * around the pivot.
  */
 static mat4_t build_model_matrix(const edit_entity_t *ent) {
+    mat4_t pivot_shift = mat4_translation(
+        -ent->pivot_offset[0], -ent->pivot_offset[1],
+        -ent->pivot_offset[2]);
     mat4_t scale = mat4_scaling(ent->scale[0], ent->scale[1], ent->scale[2]);
     mat4_t rot;
     quat_to_mat4(ent->orientation, &rot);
     mat4_t trans = mat4_translation(ent->pos[0], ent->pos[1], ent->pos[2]);
 
-    /* T * R * S */
-    return mat4_mul(trans, mat4_mul(rot, scale));
+    /* T(pos) * R * S * T(-pivot_offset) */
+    return mat4_mul(trans, mat4_mul(rot, mat4_mul(scale, pivot_shift)));
 }
 
 /* ---- Public API ---- */
@@ -200,6 +206,7 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
     for (uint32_t i = 0; i < capacity; ++i) {
         const edit_entity_t *ent = edit_entity_store_get(entities, i);
         if (!ent) continue;
+        if (ent->hidden) continue;
 
         /* Resolve the mesh for this entity. */
         const static_mesh_t *mesh;
@@ -411,6 +418,7 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                 const edit_entity_t *ent =
                     edit_entity_store_get(&ed->entities, i);
                 if (!ent) continue;
+                if (ent->hidden) continue;
                 center.x += ent->pos[0];
                 center.y += ent->pos[1];
                 center.z += ent->pos[2];

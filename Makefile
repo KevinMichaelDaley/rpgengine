@@ -240,6 +240,7 @@ endif
 BIN_HEADLESS += build/entity_attrs_tests
 BIN_HEADLESS += build/edit_script_env_tests
 BIN_HEADLESS += build/edit_script_rebase_tests
+BIN_HEADLESS += build/entity_hide_tests
 BIN_HEADLESS += build/viewport_bsp_tests
 BIN_HEADLESS += build/nav_mode_tests
 BIN_HEADLESS += build/shading_mode_tests
@@ -859,6 +860,12 @@ build/edit_script_env_tests: tests/editor/edit_script_env_tests.c build/libheadl
 build/edit_script_rebase_tests: tests/editor/edit_script_rebase_tests.c build/libheadless.a | build
 	$(CC) $(CFLAGS) tests/editor/edit_script_rebase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/entity_hide_tests: tests/editor/entity_hide_tests.c build/libheadless.a | build
+	$(CC) $(CFLAGS) tests/editor/entity_hide_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/cursor_place_tests: tests/editor/cursor_place_tests.c src/editor/scene/cursor_place.c | build
+	$(CC) $(CFLAGS) tests/editor/cursor_place_tests.c src/editor/scene/cursor_place.c -o $@ $(LDFLAGS)
+
 VIEWPORT_BSP_SRC := src/editor/scene/viewport_bsp/viewport_bsp_init.c \
 	src/editor/scene/viewport_bsp/viewport_bsp_split.c \
 	src/editor/scene/viewport_bsp/viewport_bsp_layout.c \
@@ -1167,6 +1174,8 @@ build/p206b_pivot_tests: build/libheadless.a tests/p206b_pivot_tests.c | build
 	$(CC) $(CFLAGS) tests/p206b_pivot_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/p206b_snap_gizmo_tests: build/libheadless.a tests/p206b_snap_gizmo_tests.c | build
 	$(CC) $(CFLAGS) tests/p206b_snap_gizmo_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/pivot_edit_tests: build/libheadless.a tests/editor/pivot_edit_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/pivot_edit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tools/scene_editor_main.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:
@@ -1323,6 +1332,7 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/entity_attrs_tests \
 	&& ./build/edit_script_env_tests \
 	&& ./build/edit_script_rebase_tests \
+	&& ./build/entity_hide_tests \
 	&& ./build/viewport_bsp_tests \
 	&& ./build/nav_mode_tests \
 	&& ./build/shading_mode_tests \
@@ -1356,7 +1366,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/phys_overlap_begin_tests \
 	&& ./build/collision_event_integration_tests \
 	&& ./build/turret_script_e2e_tests \
-	&& ./build/ctrl_cmd_parse_tests
+	&& ./build/ctrl_cmd_parse_tests \
+	&& ./build/pivot_edit_tests
 
 TEST_TIMEOUT ?= 20
 

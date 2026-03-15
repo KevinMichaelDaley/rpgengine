@@ -176,6 +176,13 @@ static const ctrl_cmd_def_t s_defs[] = {
         .arg_fmt = "s:entity_id f3:factor",
     },
     {
+        .name    = "pivot_id",
+        .alias   = "pi",
+        .usage   = "pivot_id <id_or_name> <px> <py> <pz>",
+        .help    = "Set pivot offset on entity (adjusts pos to keep geometry).",
+        .arg_fmt = "s:entity_id f3:pivot",
+    },
+    {
         .name    = "select_near",
         .alias   = "sn",
         .usage   = "select_near [x y z] <dist> [&group]",

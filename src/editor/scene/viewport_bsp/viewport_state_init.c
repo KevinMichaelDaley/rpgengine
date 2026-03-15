@@ -18,6 +18,7 @@ void viewport_state_init(viewport_state_t *state) {
     gizmo_state_init(&state->gizmo);
 
     state->cursor_3d = (vec3_t){0.0f, 0.0f, 0.0f};
+    state->cursor_orientation = (quat_t){0, 0, 0, 1};
     state->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
     state->box_selecting = false;
     state->active = true;
@@ -32,6 +33,7 @@ void viewport_state_copy_camera(viewport_state_t *dst,
     dst->gizmo.mode = src->gizmo.mode;
     dst->gizmo.basis = src->gizmo.basis;
     dst->cursor_3d = src->cursor_3d;
+    dst->cursor_orientation = src->cursor_orientation;
 }
 
 void viewport_state_reset(viewport_state_t *state) {

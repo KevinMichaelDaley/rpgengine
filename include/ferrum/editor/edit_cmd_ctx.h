@@ -60,14 +60,20 @@ typedef struct edit_physics_bridge {
                       uint32_t body_index);
 
     /**
-     * @brief Called after an entity is moved (position changed).
+     * @brief Called after an entity's transform changes (move/rotate/scale/pivot).
+     *
+     * The bridge should compute the physics body position from the entity's
+     * full transform: geometry_center = pos + R * S * (-pivot_offset).
+     * Use edit_entity_geometry_center() for this computation.
+     *
      * @param user_data   Opaque context.
      * @param entity_id   Editor entity ID.
      * @param body_index  Physics body index.
-     * @param pos         New position [x, y, z].
+     * @param entity      Updated entity (non-NULL).
      */
     void (*on_move)(void *user_data, uint32_t entity_id,
-                    uint32_t body_index, const float pos[3]);
+                    uint32_t body_index,
+                    const struct edit_entity *entity);
 
     /**
      * @brief Query which entities are touching a given entity.

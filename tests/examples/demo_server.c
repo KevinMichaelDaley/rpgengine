@@ -51,6 +51,7 @@
 #include "ferrum/editor/editor_ctx.h"
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_entity_pivot.h"
 #include "ferrum/editor/edit_physics_ctrl.h"
 #include "ferrum/editor/edit_script_env.h"
 #include "ferrum/physics/phys_overlap.h"
@@ -222,7 +223,10 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
 
     phys_cmd_spawn_body_t spawn;
     memset(&spawn, 0, sizeof(spawn));
-    spawn.position = (phys_vec3_t){entity->pos[0], entity->pos[1], entity->pos[2]};
+    /* Physics body position is the geometry center, not the pivot. */
+    float geo[3];
+    edit_entity_geometry_center(entity, geo);
+    spawn.position = (phys_vec3_t){geo[0], geo[1], geo[2]};
 
     /* Use entity's quaternion orientation directly. */
     spawn.orientation = PHYS_QUAT_FROM_QUAT(entity->orientation);
@@ -248,7 +252,7 @@ static uint32_t bridge_on_spawn_(void *user_data, uint32_t entity_id,
         nx /= len; ny /= len; nz /= len;
         spawn.shape_data.halfspace.normal = (phys_vec3_t){nx, ny, nz};
         spawn.shape_data.halfspace.distance =
-            nx * entity->pos[0] + ny * entity->pos[1] + nz * entity->pos[2];
+            nx * geo[0] + ny * geo[1] + nz * geo[2];
     } else {
         spawn.shape = PHYS_CMD_SHAPE_BOX;
         spawn.shape_data.box_half = (phys_vec3_t){
@@ -435,17 +439,23 @@ static void bridge_on_delete_(void *user_data, uint32_t entity_id,
 }
 
 /**
- * @brief Bridge: teleport a physics body when editor moves an entity.
+ * @brief Bridge: teleport a physics body when editor changes entity transform.
+ *
+ * Computes the physics body position from the entity's full transform:
+ * geometry_center = pos + R * S * (-pivot_offset).
  */
 static void bridge_on_move_(void *user_data, uint32_t entity_id,
-                             uint32_t body_index, const float pos[3]) {
+                             uint32_t body_index,
+                             const edit_entity_t *entity) {
     demo_ctx_t *ctx = (demo_ctx_t *)user_data;
     (void)entity_id;
 
     if (body_index < DEMO_MAX_BODIES) {
+        float geo[3];
+        edit_entity_geometry_center(entity, geo);
         phys_cmd_set_position_t setpos = {
             .body_index = body_index,
-            .position = {pos[0], pos[1], pos[2]},
+            .position = {geo[0], geo[1], geo[2]},
         };
         phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_POSITION,
                       &setpos, sizeof(setpos));
@@ -909,13 +919,16 @@ static void script_tick(demo_ctx_t *ctx) {
             if (!ent || ent->body_index == 0) continue;
 
             if (upd->key == SCRIPT_KEY_POS) {
-                /* Position update → SET_POSITION command. */
+                /* Position update → SET_POSITION command.
+                 * Script sets entity.pos (the pivot); physics body needs
+                 * the geometry center offset by pivot_offset. */
+                memcpy(ent->pos, upd->value, 12);
+                float geo[3];
+                edit_entity_geometry_center(ent, geo);
                 phys_cmd_set_position_t setpos;
                 memset(&setpos, 0, sizeof(setpos));
                 setpos.body_index = ent->body_index;
-                memcpy(&setpos.position, upd->value, 12);
-                /* Also update entity store so snapshots reflect it. */
-                memcpy(ent->pos, upd->value, 12);
+                setpos.position = (phys_vec3_t){geo[0], geo[1], geo[2]};
                 phys_cmd_push(ctx->cmd_channel, PHYS_CMD_SET_POSITION,
                               &setpos, sizeof(setpos));
             } else {

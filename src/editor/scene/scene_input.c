@@ -23,7 +23,9 @@
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
 #include "ferrum/editor/scene/snap_state.h"
+#include "ferrum/editor/scene/cursor_place.h"
 #include "ferrum/editor/ui/clay_theme.h"
+#include "ferrum/editor/edit_entity_pivot.h"
 
 #include <SDL2/SDL.h>
 #include <math.h>
@@ -216,12 +218,43 @@ static void snap_selected_euler_axes(scene_editor_t *ed) {
  * For rotate: use apply_gizmo_rotate() instead.
  */
 static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
+    viewport_state_t *fvp = scene_focused_vp(ed);
+
+    /* In pivot edit mode, drag modifies pivot_offset in local space
+     * instead of moving the entity position.  Also adjusts pos so
+     * the geometry center stays fixed (same formula as cmd_pivot_id). */
+    if (ed->ui.pivot_edit_mode &&
+        fvp->gizmo.mode == GIZMO_MODE_TRANSLATE &&
+        edit_selection_count(&ed->selection) == 1) {
+        const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+        edit_entity_t *ent = edit_entity_store_get_mut(
+            &ed->entities, sel_ids[0]);
+        if (ent) {
+            /* Delta is world-space; inverse-rotate into local space. */
+            quat_t inv = quat_conjugate(ent->orientation);
+            vec3_t local_delta = quat_rotate_vec3(inv, delta);
+            /* Compute world-space pos adjustment: R * S * dpivot. */
+            vec3_t scaled = {
+                local_delta.x * ent->scale[0],
+                local_delta.y * ent->scale[1],
+                local_delta.z * ent->scale[2],
+            };
+            vec3_t world_adj = quat_rotate_vec3(ent->orientation, scaled);
+            ent->pivot_offset[0] += local_delta.x;
+            ent->pivot_offset[1] += local_delta.y;
+            ent->pivot_offset[2] += local_delta.z;
+            ent->pos[0] += world_adj.x;
+            ent->pos[1] += world_adj.y;
+            ent->pos[2] += world_adj.z;
+        }
+        return;
+    }
+
     for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
         if (!edit_selection_contains(&ed->selection, i)) continue;
         edit_entity_t *ent = edit_entity_store_get_mut(&ed->entities, i);
         if (!ent) continue;
 
-        viewport_state_t *fvp = scene_focused_vp(ed);
         switch (fvp->gizmo.mode) {
         case GIZMO_MODE_TRANSLATE:
             ent->pos[0] += delta.x;
@@ -354,6 +387,31 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     char cmd_buf[256];
     int cmd_len = 0;
     uint32_t cmd_id = scene_connection_next_id(&ed->connection);
+
+    /* Pivot edit mode: send pivot_id with absolute pivot offset. */
+    if (ed->ui.pivot_edit_mode &&
+        fvp->gizmo.mode == GIZMO_MODE_TRANSLATE &&
+        edit_selection_count(&ed->selection) == 1) {
+        const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+        const edit_entity_t *ent =
+            edit_entity_store_get(&ed->entities, sel_ids[0]);
+        if (ent) {
+            int n = snprintf(cmd_buf, sizeof(cmd_buf),
+                "{\"id\":%u,\"cmd\":\"pivot_id\",\"args\":{"
+                "\"entity_id\":%u,"
+                "\"pivot\":[%g,%g,%g]}}",
+                cmd_id, sel_ids[0],
+                (double)ent->pivot_offset[0],
+                (double)ent->pivot_offset[1],
+                (double)ent->pivot_offset[2]);
+            if (n > 0 && (size_t)n < sizeof(cmd_buf)) {
+                scene_connection_send_cmd(&ed->connection, cmd_buf);
+                scene_sync_mark_sent(&ed->sync);
+                scene_ui_tui_log_pending(&ed->ui, "pivot_id", cmd_id);
+            }
+        }
+        return;
+    }
 
     /* Compute the final snapped values — used for both sending and echo. */
     char echo[64];
@@ -678,17 +736,18 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     for (uint32_t i = 0; i < cap && count < 256; ++i) {
                         const edit_entity_t *ent =
                             edit_entity_store_get(&ed->entities, i);
-                        if (!ent || ent->pending_delete) continue;
+                        if (!ent || ent->pending_delete || ent->hidden)
+                            continue;
+                        float gc[3];
+                        edit_entity_geometry_center(ent, gc);
                         float hw = ent->scale[0] * 0.5f;
                         float hh = ent->scale[1] * 0.5f;
                         float hd = ent->scale[2] * 0.5f;
                         candidates[count].entity_id = i;
                         candidates[count].aabb_min = (vec3_t){
-                            ent->pos[0] - hw, ent->pos[1] - hh,
-                            ent->pos[2] - hd};
+                            gc[0] - hw, gc[1] - hh, gc[2] - hd};
                         candidates[count].aabb_max = (vec3_t){
-                            ent->pos[0] + hw, ent->pos[1] + hh,
-                            ent->pos[2] + hd};
+                            gc[0] + hw, gc[1] + hh, gc[2] + hd};
                         count++;
                     }
 
@@ -731,6 +790,7 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             }
                         } else {
                             edit_selection_clear(&ed->selection);
+                            ed->ui.pivot_edit_mode = false;
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
                             ed->ui.action_target = picked_id;
                             ed->active_object_id = picked_id;
@@ -754,6 +814,92 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
     } else if (ev->button == SDL_BUTTON_MIDDLE) {
         ed->ui.middle_mouse_down = true;
     } else if (ev->button == SDL_BUTTON_RIGHT) {
+        SDL_Keymod mod = SDL_GetModState();
+        if (mod & KMOD_CTRL) {
+            /* Ctrl+right-click: place 3D cursor via raycast. */
+            float sc = ed->clay_be.ui_scale;
+            if (sc < 1.0f) sc = 1.0f;
+            int lx = (int)((float)ev->x / sc);
+            int ly = (int)((float)ev->y / sc);
+
+            panel_id_t hit = panel_layout_hit_test(&ed->layout, lx, ly);
+            if (hit == PANEL_VIEWPORT) {
+                viewport_state_t *fvp = scene_focused_vp(ed);
+                panel_rect_t vp_rect = fvp->rect;
+                float nx = (float)(lx - vp_rect.x) / (float)vp_rect.w;
+                float ny = (float)(ly - vp_rect.y) / (float)vp_rect.h;
+                /* FBO is displayed Y-flipped by Clay's ortho projection,
+                 * so screen top = FBO bottom.  Flip ny so the ray matches
+                 * the visual scene rather than the raw FBO layout. */
+                ny = 1.0f - ny;
+
+                vec2_t screen_pos = {nx, ny};
+                vec2_t vp_size = {(float)vp_rect.w, (float)vp_rect.h};
+                editor_ray_t ray;
+                if (editor_camera_screen_to_ray(&fvp->camera,
+                                                  screen_pos, vp_size,
+                                                  &ray) == 0) {
+                    /* Try entity hit first. */
+                    bool placed = false;
+                    uint32_t cap = ed->entities.capacity;
+                    pick_candidate_t candidates[256];
+                    uint32_t count = 0;
+                    for (uint32_t i = 0; i < cap && count < 256; ++i) {
+                        const edit_entity_t *ent =
+                            edit_entity_store_get(&ed->entities, i);
+                        if (!ent || ent->pending_delete || ent->hidden)
+                            continue;
+                        float gc[3];
+                        edit_entity_geometry_center(ent, gc);
+                        float hw = ent->scale[0] * 0.5f;
+                        float hh = ent->scale[1] * 0.5f;
+                        float hd = ent->scale[2] * 0.5f;
+                        candidates[count].entity_id = i;
+                        candidates[count].aabb_min = (vec3_t){
+                            gc[0] - hw, gc[1] - hh, gc[2] - hd};
+                        candidates[count].aabb_max = (vec3_t){
+                            gc[0] + hw, gc[1] + hh, gc[2] + hd};
+                        count++;
+                    }
+
+                    uint32_t picked_id;
+                    if (pick_nearest_entity(&ray, candidates, count,
+                                             &picked_id)) {
+                        const edit_entity_t *ent =
+                            edit_entity_store_get(&ed->entities, picked_id);
+                        if (ent) {
+                            fvp->cursor_3d = (vec3_t){
+                                ent->pos[0], ent->pos[1], ent->pos[2]};
+                            fvp->cursor_orientation = ent->orientation;
+                            placed = true;
+                        }
+                    }
+
+                    if (!placed) {
+                        /* No entity hit -- intersect Y=0 ground plane. */
+                        float t_hit;
+                        vec3_t hit_pt;
+                        if (cursor_ray_plane_intersect(ray.origin,
+                                                        ray.direction,
+                                                        0.0f, &t_hit,
+                                                        &hit_pt)) {
+                            fvp->cursor_3d = hit_pt;
+                            fvp->cursor_orientation = (quat_t){0, 0, 0, 1};
+                        }
+                    }
+
+                    char msg[64];
+                    snprintf(msg, sizeof(msg),
+                             "Cursor: (%.2f, %.2f, %.2f)",
+                             (double)fvp->cursor_3d.x,
+                             (double)fvp->cursor_3d.y,
+                             (double)fvp->cursor_3d.z);
+                    scene_ui_tui_log(&ed->ui, msg);
+                }
+            }
+            return true;
+        }
+        /* Non-Ctrl right-click: track for middle mouse pan alternative. */
         ed->ui.right_mouse_down = true;
     }
     return false; /* let Clay also handle the click */
@@ -806,15 +952,17 @@ static void finish_box_select_(scene_editor_t *ed) {
     uint32_t cap = ed->entities.capacity;
     for (uint32_t i = 0; i < cap; i++) {
         const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
-        if (!ent || ent->pending_delete) continue;
+        if (!ent || ent->pending_delete || ent->hidden) continue;
 
-        /* Project entity center to clip space. */
-        float px = vp.m[0] * ent->pos[0] + vp.m[4] * ent->pos[1]
-                  + vp.m[8]  * ent->pos[2] + vp.m[12];
-        float py = vp.m[1] * ent->pos[0] + vp.m[5] * ent->pos[1]
-                  + vp.m[9]  * ent->pos[2] + vp.m[13];
-        float pw = vp.m[3] * ent->pos[0] + vp.m[7] * ent->pos[1]
-                  + vp.m[11] * ent->pos[2] + vp.m[15];
+        /* Project geometry center to clip space. */
+        float gc[3];
+        edit_entity_geometry_center(ent, gc);
+        float px = vp.m[0] * gc[0] + vp.m[4] * gc[1]
+                  + vp.m[8]  * gc[2] + vp.m[12];
+        float py = vp.m[1] * gc[0] + vp.m[5] * gc[1]
+                  + vp.m[9]  * gc[2] + vp.m[13];
+        float pw = vp.m[3] * gc[0] + vp.m[7] * gc[1]
+                  + vp.m[11] * gc[2] + vp.m[15];
 
         /* Skip entities behind the camera. */
         if (pw <= 0.0f) continue;
@@ -1968,9 +2116,12 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
                 }
             }
             edit_selection_clear(&ed->selection);
+            ed->ui.pivot_edit_mode = false;
             ed->active_object_id = EDIT_ENTITY_INVALID_ID;
         } else {
-            /* A: select all non-deleted entities — sync each to server. */
+            /* A: select all non-deleted entities — sync each to server.
+             * Multi-selection exits pivot mode. */
+            ed->ui.pivot_edit_mode = false;
             for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
                 const edit_entity_t *ent =
                     edit_entity_store_get(&ed->entities, i);
@@ -2018,6 +2169,57 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
              * delta sync response arrives and is processed. */
             edit_selection_clear(&ed->selection);
             scene_ui_tui_log_pending(&ed->ui, "clone", last_cid);
+        }
+        return true;
+    }
+
+    /* Shift+P: toggle pivot edit mode (single selection only). */
+    case SDLK_p: {
+        SDL_Keymod mod = SDL_GetModState();
+        if (mod & KMOD_SHIFT) {
+            if (ed->ui.pivot_edit_mode) {
+                ed->ui.pivot_edit_mode = false;
+                scene_ui_tui_log(&ed->ui, "Pivot mode: OFF");
+            } else if (edit_selection_count(&ed->selection) == 1) {
+                ed->ui.pivot_edit_mode = true;
+                scene_ui_tui_log(&ed->ui, "Pivot mode: ON");
+            } else {
+                scene_ui_tui_log(&ed->ui,
+                                   "Pivot mode requires single selection");
+            }
+        }
+        return true;
+    }
+
+    case SDLK_h: {
+        SDL_Keymod mod = SDL_GetModState();
+        if (mod & KMOD_SHIFT) {
+            /* Shift+H: unhide selected entities. */
+            uint32_t sel_count = edit_selection_count(&ed->selection);
+            if (sel_count > 0) {
+                const uint32_t *sel_ids =
+                    edit_selection_ids(&ed->selection);
+                for (uint32_t si = 0; si < sel_count; ++si) {
+                    edit_entity_t *ent = edit_entity_store_get_mut(
+                        &ed->entities, sel_ids[si]);
+                    if (ent) ent->hidden = false;
+                }
+                scene_ui_tui_log(&ed->ui, "Show selected");
+            }
+        } else {
+            /* H: hide selected entities. */
+            uint32_t sel_count = edit_selection_count(&ed->selection);
+            if (sel_count > 0) {
+                const uint32_t *sel_ids =
+                    edit_selection_ids(&ed->selection);
+                for (uint32_t si = 0; si < sel_count; ++si) {
+                    edit_entity_t *ent = edit_entity_store_get_mut(
+                        &ed->entities, sel_ids[si]);
+                    if (ent) ent->hidden = true;
+                }
+                edit_selection_clear(&ed->selection);
+                scene_ui_tui_log(&ed->ui, "Hide selected");
+            }
         }
         return true;
     }
@@ -2107,16 +2309,18 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
                 const edit_entity_t *ent =
                     edit_entity_store_get(&ed->entities, sel_ids[si]);
                 if (!ent) continue;
-                /* Expand AABB by entity position ± half scale. */
+                /* Expand AABB by geometry center ± half scale. */
+                float gc[3];
+                edit_entity_geometry_center(ent, gc);
                 float hx = fabsf(ent->scale[0]) * 0.5f;
                 float hy = fabsf(ent->scale[1]) * 0.5f;
                 float hz = fabsf(ent->scale[2]) * 0.5f;
-                if (ent->pos[0] - hx < aabb_min.x) aabb_min.x = ent->pos[0] - hx;
-                if (ent->pos[1] - hy < aabb_min.y) aabb_min.y = ent->pos[1] - hy;
-                if (ent->pos[2] - hz < aabb_min.z) aabb_min.z = ent->pos[2] - hz;
-                if (ent->pos[0] + hx > aabb_max.x) aabb_max.x = ent->pos[0] + hx;
-                if (ent->pos[1] + hy > aabb_max.y) aabb_max.y = ent->pos[1] + hy;
-                if (ent->pos[2] + hz > aabb_max.z) aabb_max.z = ent->pos[2] + hz;
+                if (gc[0] - hx < aabb_min.x) aabb_min.x = gc[0] - hx;
+                if (gc[1] - hy < aabb_min.y) aabb_min.y = gc[1] - hy;
+                if (gc[2] - hz < aabb_min.z) aabb_min.z = gc[2] - hz;
+                if (gc[0] + hx > aabb_max.x) aabb_max.x = gc[0] + hx;
+                if (gc[1] + hy > aabb_max.y) aabb_max.y = gc[1] + hy;
+                if (gc[2] + hz > aabb_max.z) aabb_max.z = gc[2] + hz;
             }
             editor_camera_frame_selection(&fvp->camera,
                                            aabb_min, aabb_max);
@@ -2126,6 +2330,43 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     /* G: toggle snap for the current gizmo mode.
      * Ctrl+G: toggle all snap types at once. */
     case SDLK_g: {
+        if (ev->keysym.mod & KMOD_ALT) {
+            /* Alt+G: reset pivot offset to center for all selected.
+             * Adjusts pos so geometry stays in place, then sends
+             * pivot_id commands to the server. */
+            const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+            uint32_t sel_count = edit_selection_count(&ed->selection);
+            for (uint32_t si = 0; si < sel_count; ++si) {
+                edit_entity_t *ent = edit_entity_store_get_mut(
+                    &ed->entities, sel_ids[si]);
+                if (!ent) continue;
+                /* pos_new = pos_old + R*S*(0 - old_pivot) = pos_old - R*S*old_pivot */
+                vec3_t scaled = {
+                    -ent->pivot_offset[0] * ent->scale[0],
+                    -ent->pivot_offset[1] * ent->scale[1],
+                    -ent->pivot_offset[2] * ent->scale[2],
+                };
+                vec3_t adj = quat_rotate_vec3(ent->orientation, scaled);
+                ent->pos[0] += adj.x;
+                ent->pos[1] += adj.y;
+                ent->pos[2] += adj.z;
+                ent->pivot_offset[0] = 0.0f;
+                ent->pivot_offset[1] = 0.0f;
+                ent->pivot_offset[2] = 0.0f;
+                /* Send pivot_id to server. */
+                char buf[256];
+                uint32_t cid = scene_connection_next_id(&ed->connection);
+                int n = snprintf(buf, sizeof(buf),
+                    "{\"id\":%u,\"cmd\":\"pivot_id\",\"args\":{"
+                    "\"entity_id\":%u,\"pivot\":[0,0,0]}}",
+                    cid, sel_ids[si]);
+                if (n > 0 && (size_t)n < sizeof(buf)) {
+                    scene_connection_send_cmd(&ed->connection, buf);
+                }
+            }
+            scene_ui_tui_log(&ed->ui, "Pivot reset to center");
+            return true;
+        }
         snap_state_t *sn = &ed->snap;
         if (ev->keysym.mod & KMOD_SHIFT) {
             /* Shift+G: enable all three snaps, unless all three are

@@ -198,6 +198,9 @@ typedef struct scene_ui_state {
     uint32_t          action_q_targets[UI_ACTION_Q_MAX];
     int               action_q_count;
 
+    /** Pivot edit mode: gizmo moves pivot_offset instead of entity pos. */
+    bool              pivot_edit_mode;
+
     /** Held-key tracker: prevents re-firing one-shot keys without a KEYUP
      *  in between.  Stores raw SDL_Keycode values.  Keys flagged as
      *  continuous (arrow keys in fly mode, zoom +/-, numpad orbit) bypass

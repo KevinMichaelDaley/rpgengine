@@ -309,6 +309,10 @@ bool cmd_setattr(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_entity_def(edit_dispatch_t *d, const json_value_t *args,
                     json_value_t *result, json_arena_t *arena);
 
+/** @brief Set pivot offset on entity by ID. Args: {"entity_id":N, "pivot":[x,y,z]}. */
+bool cmd_pivot_id(edit_dispatch_t *d, const json_value_t *args,
+                  json_value_t *result, json_arena_t *arena);
+
 /** @brief Create a physics joint between two entities. Args: {"joint_type":"hinge","entity_a":...,"entity_b":...,...}. */
 bool cmd_joint(edit_dispatch_t *d, const json_value_t *args,
                json_value_t *result, json_arena_t *arena);

@@ -67,7 +67,7 @@ bool cmd_cursor_pop(edit_dispatch_t *d, const json_value_t *args,
     /* Notify bridge if configured. */
     if (ctx->bridge && ctx->bridge->on_move) {
         ctx->bridge->on_move(ctx->bridge->user_data, cid,
-                             cur->body_index, cur->pos);
+                             cur->body_index, cur);
     }
 
     return true;
@@ -144,7 +144,7 @@ bool cmd_cursor_snap(edit_dispatch_t *d, const json_value_t *args,
     /* Notify bridge. */
     if (ctx->bridge && ctx->bridge->on_move) {
         ctx->bridge->on_move(ctx->bridge->user_data, cid,
-                             cur->body_index, cur->pos);
+                             cur->body_index, cur);
     }
 
     return true;

@@ -72,6 +72,7 @@ void outliner_tree_rebuild(outliner_tree_t *tree,
     for (uint32_t i = 0; i < store->capacity && tree->all_count < tree->entry_capacity; i++) {
         const edit_entity_t *e = &store->entities[i];
         if (!e->active) continue;
+        if (e->hidden) continue;
 
         outliner_entry_t *entry = &tree->all_entries[tree->all_count];
         entry->entity_id = i;

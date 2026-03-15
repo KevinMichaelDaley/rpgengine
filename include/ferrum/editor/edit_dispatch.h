@@ -29,7 +29,7 @@ struct edit_history;
 /* ------------------------------------------------------------------------ */
 
 /** @brief Maximum registered command handlers. */
-#define EDIT_DISPATCH_MAX_HANDLERS  64
+#define EDIT_DISPATCH_MAX_HANDLERS  65536
 
 /** @brief Maximum command name length. */
 #define EDIT_DISPATCH_MAX_CMD_NAME  32
@@ -71,8 +71,9 @@ typedef struct edit_cmd_handler_entry {
  * - Ring pointers are borrowed.
  */
 typedef struct edit_dispatch {
-    edit_cmd_handler_entry_t handlers[EDIT_DISPATCH_MAX_HANDLERS];
-    uint32_t                 handler_count;
+    edit_cmd_handler_entry_t *handlers;      /**< Heap-allocated handler table. */
+    uint32_t                  handler_count;
+    uint32_t                  handler_capacity;
 
     /* Arenas for parsing incoming commands and building responses. */
     uint8_t *parse_arena_buf;    /**< Backing buffer for parse arena. */

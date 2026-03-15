@@ -84,6 +84,13 @@ bool cmd_scale(edit_dispatch_t *d, const json_value_t *args,
             e->scale[2] *= factor[2];
         }
 
+        /* Bridge: notify physics of new scale (body position may
+         * change if entity has non-zero pivot_offset). */
+        if (ctx->bridge && ctx->bridge->on_move) {
+            ctx->bridge->on_move(ctx->bridge->user_data, ids[i],
+                                 e->body_index, e);
+        }
+
         /* Version stamp the scaled entity. */
         if (ctx->version) edit_version_stamp(ctx->version, ids[i]);
 

@@ -106,6 +106,13 @@ bool cmd_rotate(edit_dispatch_t *d, const json_value_t *args,
         e->rot[1] *= rad_to_deg;
         e->rot[2] *= rad_to_deg;
 
+        /* Bridge: notify physics of new orientation (body position may
+         * change if entity has non-zero pivot_offset). */
+        if (ctx->bridge && ctx->bridge->on_move) {
+            ctx->bridge->on_move(ctx->bridge->user_data, ids[i],
+                                 e->body_index, e);
+        }
+
         /* Version stamp the rotated entity. */
         if (ctx->version) edit_version_stamp(ctx->version, ids[i]);
 

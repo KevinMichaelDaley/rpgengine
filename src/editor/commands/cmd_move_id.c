@@ -69,10 +69,10 @@ bool cmd_move_id(edit_dispatch_t *d, const json_value_t *args,
         e->pos[2] += delta[2];
     }
 
-    /* Bridge: notify physics engine of new position. */
+    /* Bridge: notify physics engine of transform change. */
     if (ctx->bridge && ctx->bridge->on_move) {
         ctx->bridge->on_move(ctx->bridge->user_data, eid,
-                             e->body_index, e->pos);
+                             e->body_index, e);
     }
 
     /* Version stamp the moved entity. */

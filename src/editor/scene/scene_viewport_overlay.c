@@ -17,6 +17,7 @@
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_entity_pivot.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/viewport/viewport_shading.h"
 
@@ -103,8 +104,12 @@ void viewport_render_draw_cursor(viewport_render_state_t *state,
  * @brief Build a model matrix from entity transform with scale factor.
  *
  * Uses quaternion orientation for rotation.
+ * Includes pivot offset: T(pos) * R * S(scale*extra) * T(-pivot_offset).
  */
 static mat4_t build_outline_model(const edit_entity_t *ent, float extra_scale) {
+    mat4_t pivot_shift = mat4_translation(
+        -ent->pivot_offset[0], -ent->pivot_offset[1],
+        -ent->pivot_offset[2]);
     mat4_t scale = mat4_scaling(
         ent->scale[0] * extra_scale,
         ent->scale[1] * extra_scale,
@@ -112,7 +117,7 @@ static mat4_t build_outline_model(const edit_entity_t *ent, float extra_scale) {
     mat4_t rot;
     quat_to_mat4(ent->orientation, &rot);
     mat4_t trans = mat4_translation(ent->pos[0], ent->pos[1], ent->pos[2]);
-    return mat4_mul(trans, mat4_mul(rot, scale));
+    return mat4_mul(trans, mat4_mul(rot, mat4_mul(scale, pivot_shift)));
 }
 
 /**
@@ -133,10 +138,12 @@ static mat4_t build_outline_model(const edit_entity_t *ent, float extra_scale) {
 static float compute_outline_scale_(const edit_entity_t *ent,
                                      const vec3_t *eye_pos,
                                      float fov_y, int fbo_height) {
-    /* Distance from camera to entity center. */
-    float dx = ent->pos[0] - eye_pos->x;
-    float dy = ent->pos[1] - eye_pos->y;
-    float dz = ent->pos[2] - eye_pos->z;
+    /* Distance from camera to entity geometry center. */
+    float gc[3];
+    edit_entity_geometry_center(ent, gc);
+    float dx = gc[0] - eye_pos->x;
+    float dy = gc[1] - eye_pos->y;
+    float dz = gc[2] - eye_pos->z;
     float dist = sqrtf(dx * dx + dy * dy + dz * dz);
     if (dist < 0.01f) dist = 0.01f;
 

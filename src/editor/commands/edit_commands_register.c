@@ -60,6 +60,7 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "source",          cmd_source);
     edit_dispatch_register(dispatch, "setattr",         cmd_setattr);
     edit_dispatch_register(dispatch, "entity_def",      cmd_entity_def);
+    edit_dispatch_register(dispatch, "pivot_id",         cmd_pivot_id);
     edit_dispatch_register(dispatch, "joint",           cmd_joint);
     edit_dispatch_register(dispatch, "physics_material", cmd_physics_material);
 

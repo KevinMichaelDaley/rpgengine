@@ -61,6 +61,7 @@ typedef struct viewport_state {
 
     /* 3D cursor. */
     vec3_t          cursor_3d;     /**< 3D cursor world position. */
+    quat_t          cursor_orientation; /**< 3D cursor orientation. */
 
     /* Box select. */
     bool            box_selecting;       /**< True during box select drag. */
