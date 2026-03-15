@@ -1422,8 +1422,8 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     if (fvp->gizmo.active_axis != GIZMO_AXIS_NONE &&
         fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
         float step_deg = 0.0f;
-        if (key == SDLK_UP)   step_deg =  45.0f;
-        if (key == SDLK_DOWN) step_deg = -45.0f;
+        if (key == SDLK_UP)   step_deg =  15.0f;
+        if (key == SDLK_DOWN) step_deg = -15.0f;
         if (step_deg != 0.0f) {
             /* Get oriented axis from gizmo orientation matrix. */
             int axis_col = -1;
@@ -1696,6 +1696,49 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     case SDLK_MINUS:
         editor_camera_zoom(&fvp->camera, CAMERA_ZOOM_SPEED);
         return true;
+
+    /* A: select all / Shift+A: deselect all. */
+    case SDLK_a: {
+        SDL_Keymod km = SDL_GetModState();
+        if (km & KMOD_SHIFT) {
+            /* Shift+A: deselect all — sync each to server. */
+            uint32_t sc = edit_selection_count(&ed->selection);
+            const uint32_t *sids = edit_selection_ids(&ed->selection);
+            for (uint32_t si = 0; si < sc; ++si) {
+                char buf[256];
+                uint32_t cid = scene_connection_next_id(&ed->connection);
+                int n = scene_cmd_format_deselect(buf, sizeof(buf),
+                                                   cid, sids[si]);
+                if (n > 0 && ed->connected) {
+                    ctrl_conn_send_raw(&ed->connection.tcp,
+                                       buf, (uint32_t)n);
+                }
+            }
+            edit_selection_clear(&ed->selection);
+            ed->active_object_id = EDIT_ENTITY_INVALID_ID;
+        } else {
+            /* A: select all non-deleted entities — sync each to server. */
+            for (uint32_t i = 0; i < ed->entities.capacity; ++i) {
+                const edit_entity_t *ent =
+                    edit_entity_store_get(&ed->entities, i);
+                if (ent && !ent->pending_delete) {
+                    if (!edit_selection_contains(&ed->selection, i)) {
+                        char buf[256];
+                        uint32_t cid =
+                            scene_connection_next_id(&ed->connection);
+                        int n = scene_cmd_format_select(buf, sizeof(buf),
+                                                        cid, i);
+                        if (n > 0 && ed->connected) {
+                            ctrl_conn_send_raw(&ed->connection.tcp,
+                                               buf, (uint32_t)n);
+                        }
+                    }
+                    edit_selection_add(&ed->selection, i);
+                }
+            }
+        }
+        return true;
+    }
 
     /* D: duplicate selected entities. */
     case SDLK_d:

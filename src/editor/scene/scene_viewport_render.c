@@ -217,17 +217,52 @@ static bool resolve_gl_functions(viewport_render_state_t *state) {
     LOAD_GL_PROC(state->glStencilMask,             l, "glStencilMask");
     LOAD_GL_PROC(state->glColorMask,               l, "glColorMask");
 
+    /* MSAA functions. */
+    LOAD_GL_PROC(state->glRenderbufferStorageMultisample, l,
+                 "glRenderbufferStorageMultisample");
+    LOAD_GL_PROC(state->glBlitFramebuffer, l, "glBlitFramebuffer");
+    LOAD_GL_PROC(state->glGetIntegerv,     l, "glGetIntegerv");
+
     /* Minimum check — glBindFramebuffer is essential for FBO rendering. */
     return state->glBindFramebuffer != NULL;
 }
 
 /* ---- FBO helpers ---- */
 
+/** Desired MSAA sample count (capped to GL_MAX_SAMPLES at runtime). */
+#define MSAA_DESIRED_SAMPLES 16
+
 /**
- * @brief Create the FBO with color texture and depth renderbuffer.
+ * @brief Query the maximum supported MSAA sample count.
+ */
+static int query_max_samples(viewport_render_state_t *state) {
+    if (!state->glGetIntegerv) return 1;
+    int32_t max_samples = 1;
+    state->glGetIntegerv(GL_MAX_SAMPLES, &max_samples);
+    return (int)max_samples;
+}
+
+/**
+ * @brief Create MSAA and resolve FBOs with color texture and depth.
+ *
+ * The MSAA FBO uses multisample renderbuffers for rendering.
+ * The resolve FBO uses a regular texture for display in Clay UI.
+ * After rendering, glBlitFramebuffer resolves MSAA → single-sample.
  */
 static bool create_fbo(viewport_render_state_t *state, int w, int h) {
-    /* Create color texture attachment. */
+    bool has_msaa = state->glRenderbufferStorageMultisample &&
+                    state->glBlitFramebuffer;
+    int samples = 1;
+
+    if (has_msaa) {
+        int max_s = query_max_samples(state);
+        samples = MSAA_DESIRED_SAMPLES;
+        if (samples > max_s) samples = max_s;
+        if (samples < 2) has_msaa = false;
+    }
+    state->msaa_samples = has_msaa ? samples : 1;
+
+    /* ---- Resolve FBO (single-sample, texture for display) ---- */
     state->glGenTextures(1, &state->color_tex);
     state->glBindTexture(GL_TEXTURE_2D, state->color_tex);
     state->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
@@ -237,12 +272,10 @@ static bool create_fbo(viewport_render_state_t *state, int w, int h) {
     state->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     state->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    /* Create depth renderbuffer attachment. */
     state->glGenRenderbuffers(1, &state->depth_rbo);
     state->glBindRenderbuffer(GL_RENDERBUFFER, state->depth_rbo);
     state->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
 
-    /* Create and configure FBO. */
     state->glGenFramebuffers(1, &state->fbo);
     state->glBindFramebuffer(GL_FRAMEBUFFER, state->fbo);
     state->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
@@ -251,23 +284,74 @@ static bool create_fbo(viewport_render_state_t *state, int w, int h) {
                                       GL_RENDERBUFFER, state->depth_rbo);
 
     uint32_t status = state->glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    state->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
     if (status != GL_FRAMEBUFFER_COMPLETE) {
-        fprintf(stderr, "viewport_render: FBO incomplete (status=0x%X)\n",
+        fprintf(stderr, "viewport_render: resolve FBO incomplete (0x%X)\n",
                 status);
+        state->glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return false;
     }
 
+    /* ---- MSAA FBO (multisample renderbuffers for rendering) ---- */
+    if (has_msaa) {
+        state->glGenRenderbuffers(1, &state->msaa_color_rbo);
+        state->glBindRenderbuffer(GL_RENDERBUFFER, state->msaa_color_rbo);
+        state->glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+                                                GL_RGBA8, w, h);
+
+        state->glGenRenderbuffers(1, &state->msaa_depth_rbo);
+        state->glBindRenderbuffer(GL_RENDERBUFFER, state->msaa_depth_rbo);
+        state->glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples,
+                                                GL_DEPTH24_STENCIL8, w, h);
+
+        state->glGenFramebuffers(1, &state->msaa_fbo);
+        state->glBindFramebuffer(GL_FRAMEBUFFER, state->msaa_fbo);
+        state->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                          GL_RENDERBUFFER,
+                                          state->msaa_color_rbo);
+        state->glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                                          GL_DEPTH_STENCIL_ATTACHMENT,
+                                          GL_RENDERBUFFER,
+                                          state->msaa_depth_rbo);
+
+        status = state->glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            fprintf(stderr,
+                    "viewport_render: MSAA FBO incomplete (0x%X), "
+                    "falling back to no MSAA\n", status);
+            state->glDeleteFramebuffers(1, &state->msaa_fbo);
+            state->glDeleteRenderbuffers(1, &state->msaa_color_rbo);
+            state->glDeleteRenderbuffers(1, &state->msaa_depth_rbo);
+            state->msaa_fbo = 0;
+            state->msaa_color_rbo = 0;
+            state->msaa_depth_rbo = 0;
+            state->msaa_samples = 1;
+        }
+    }
+
+    state->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     state->fbo_width = w;
     state->fbo_height = h;
     return true;
 }
 
 /**
- * @brief Delete the FBO, color texture, and depth renderbuffer.
+ * @brief Delete all FBO resources (MSAA + resolve).
  */
 static void destroy_fbo(viewport_render_state_t *state) {
+    /* MSAA resources. */
+    if (state->msaa_fbo) {
+        state->glDeleteFramebuffers(1, &state->msaa_fbo);
+        state->msaa_fbo = 0;
+    }
+    if (state->msaa_color_rbo) {
+        state->glDeleteRenderbuffers(1, &state->msaa_color_rbo);
+        state->msaa_color_rbo = 0;
+    }
+    if (state->msaa_depth_rbo) {
+        state->glDeleteRenderbuffers(1, &state->msaa_depth_rbo);
+        state->msaa_depth_rbo = 0;
+    }
+    /* Resolve resources. */
     if (state->fbo) {
         state->glDeleteFramebuffers(1, &state->fbo);
         state->fbo = 0;
@@ -481,7 +565,8 @@ bool viewport_render_init(viewport_render_state_t *state,
     editor_camera_init(&state->camera);
 
     state->initialized = true;
-    printf("viewport_render: initialized (%dx%d FBO)\n", w, h);
+    printf("viewport_render: initialized (%dx%d FBO, %dx MSAA)\n",
+           w, h, state->msaa_samples);
     return true;
 }
 

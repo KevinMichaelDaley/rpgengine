@@ -38,6 +38,15 @@
 /** Arena size for JSON parsing of entity list responses. */
 #define JSON_ARENA_SIZE   65536
 
+/** Maximum number of recently-deleted entity IDs to track as tombstones.
+ *  Prevents stale entity list responses from re-creating deleted entities. */
+#define DELETE_TOMBSTONE_CAP 1024
+
+/** Tombstone set of recently-deleted entity IDs. Cleared on each
+ *  entity list refresh (bump of entity_refresh_gen). */
+static uint32_t s_delete_tombstones[DELETE_TOMBSTONE_CAP];
+static uint32_t s_delete_tombstone_count;
+
 /* ------------------------------------------------------------------------ */
 /* Static helpers                                                            */
 /* ------------------------------------------------------------------------ */
@@ -100,6 +109,17 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
             continue;
         }
         uint32_t eid = (uint32_t)id_val->number;
+
+        /* Skip tombstoned entities — recently confirmed-deleted but
+         * appearing in a stale entity list response. */
+        bool tombstoned = false;
+        for (uint32_t ti = 0; ti < s_delete_tombstone_count; ti++) {
+            if (s_delete_tombstones[ti] == eid) {
+                tombstoned = true;
+                break;
+            }
+        }
+        if (tombstoned) continue;
 
         /* Build a snapshot with default values. */
         edit_entity_t snapshot;
@@ -279,34 +299,24 @@ static void reconcile_pending_deletes(scene_editor_t *ed)
 
     ed->ui.pending_delete_count = write;
 
-    /* Re-send delete for entities that reappeared.
-     * Select them, send delete, then clear selection.
-     * Track the delete cmd ID so error responses are suppressed. */
+    /* Re-send delete_id for entities that reappeared.
+     * Uses per-entity delete_id to avoid selection sync races. */
     if (need_retry && write > 0) {
-        /* Select all pending entities on the server.
-         * Track these cmd IDs as delete-related so errors are suppressed. */
         for (uint32_t i = 0; i < write; i++) {
             char cmd_buf[256];
             uint32_t cid = scene_connection_next_id(&ed->connection);
-            int len = scene_cmd_format_select(
-                cmd_buf, sizeof(cmd_buf), cid,
-                ed->ui.pending_delete_ids[i]);
+            int len = snprintf(cmd_buf, sizeof(cmd_buf),
+                "{\"id\":%u,\"cmd\":\"delete_id\",\"args\":"
+                "{\"entity_id\":%u}}\n",
+                (unsigned)cid,
+                (unsigned)ed->ui.pending_delete_ids[i]);
             if (len > 0) {
                 ctrl_conn_send_raw(&ed->connection.tcp,
                                    cmd_buf, (uint32_t)len);
                 scene_sync_mark_sent(&ed->sync);
                 track_delete_cmd(&ed->ui, cid);
             }
-        }
-        /* Send delete (tracked for silent error handling). */
-        char cmd_buf[256];
-        uint32_t cid = scene_connection_next_id(&ed->connection);
-        int len = scene_cmd_format_delete(cmd_buf, sizeof(cmd_buf), cid);
-        if (len > 0) {
-            ctrl_conn_send_raw(&ed->connection.tcp,
-                               cmd_buf, (uint32_t)len);
-            scene_sync_mark_sent(&ed->sync);
-            track_delete_cmd(&ed->ui, cid);
+            ed->ui.pending_delete_log_ids[i] = cid;
         }
         /* Reset retry timer (next retry after the refresh comes back). */
         ed->ui.delete_retry_timer = UI_DELETE_RETRY_INTERVAL;
@@ -651,6 +661,12 @@ void scene_frame_pump(struct scene_editor *ed)
                         uint32_t eid = ed->ui.pending_delete_ids[pi];
                         edit_selection_remove(&ed->selection, eid);
                         edit_entity_store_remove(&ed->entities, eid);
+                        /* Record tombstone so stale entity list responses
+                         * don't re-create this entity. */
+                        if (s_delete_tombstone_count < DELETE_TOMBSTONE_CAP) {
+                            s_delete_tombstones[s_delete_tombstone_count++] =
+                                eid;
+                        }
                     } else {
                         ed->ui.pending_delete_ids[write2] =
                             ed->ui.pending_delete_ids[pi];
@@ -699,6 +715,7 @@ void scene_frame_pump(struct scene_editor *ed)
                     }
                 }
                 reconcile_pending_deletes(ed);
+                s_delete_tombstone_count = 0;
                 continue;
             }
 
@@ -743,8 +760,10 @@ void scene_frame_pump(struct scene_editor *ed)
                                 edit_entity_store_remove(&ed->entities, ei);
                             }
                         }
-                        /* Full refresh complete — reconcile pending deletes. */
+                        /* Full refresh complete — reconcile pending deletes
+                         * and clear tombstones (server list is authoritative). */
                         reconcile_pending_deletes(ed);
+                        s_delete_tombstone_count = 0;
                     }
 
                     /* Request next page if more entities remain. */
@@ -1019,8 +1038,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         uint32_t sel_count = edit_selection_count(&ed->selection);
         if (sel_count == 0) break;
 
-        /* Mark selected entities as pending delete (greyed in outliner)
-         * and add to the persistent pending delete ID list. */
+        /* Send per-entity delete_id commands so we don't depend on
+         * server selection being in sync (avoids race conditions). */
         const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
         uint32_t last_deleted = EDIT_ENTITY_INVALID_ID;
         for (uint32_t si = 0; si < sel_count; si++) {
@@ -1031,12 +1050,27 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
                 ent->pending_delete = true;
                 last_deleted = eid;
             }
-            /* Add to pending ID list (survives entity list refresh).
-             * Log cmd_id is filled in after cmd_id is assigned below. */
+
+            /* Send delete_id for this specific entity. */
+            uint32_t del_cid = scene_connection_next_id(&ed->connection);
+            char del_buf[256];
+            int del_n = snprintf(del_buf, sizeof(del_buf),
+                "{\"id\":%u,\"cmd\":\"delete_id\",\"args\":"
+                "{\"entity_id\":%u}}\n",
+                (unsigned)del_cid, (unsigned)eid);
+            if (del_n > 0 && ed->connected) {
+                ctrl_conn_send_raw(&ed->connection.tcp,
+                                   del_buf, (uint32_t)del_n);
+                scene_sync_mark_sent(&ed->sync);
+            }
+            track_delete_cmd(&ed->ui, del_cid);
+
+            /* Add to pending ID list (survives entity list refresh). */
             if (ed->ui.pending_delete_ids &&
                 ed->ui.pending_delete_count < ed->ui.pending_delete_cap) {
                 ed->ui.pending_delete_ids[ed->ui.pending_delete_count] = eid;
-                ed->ui.pending_delete_log_ids[ed->ui.pending_delete_count] = 0;
+                ed->ui.pending_delete_log_ids[ed->ui.pending_delete_count] =
+                    del_cid;
                 ed->ui.pending_delete_count++;
             }
         }
@@ -1051,18 +1085,11 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
             snprintf(echo + ew, sizeof(echo) - (size_t)ew, "]");
         }
 
-        cmd_id = scene_connection_next_id(&ed->connection);
-        cmd_len = scene_cmd_format_delete(cmd_buf, sizeof(cmd_buf), cmd_id);
+        /* Don't send a single "delete" command — we already sent
+         * per-entity delete_id commands above. Just set flags. */
+        cmd_len = 0;
         is_entity_modify = true;
-        track_delete_cmd(&ed->ui, cmd_id);
         ed->ui.delete_retry_timer = UI_DELETE_RETRY_INTERVAL;
-
-        /* Backfill the log cmd_id on all pending entries that have 0. */
-        for (uint32_t pi = 0; pi < ed->ui.pending_delete_count; pi++) {
-            if (ed->ui.pending_delete_log_ids[pi] == 0) {
-                ed->ui.pending_delete_log_ids[pi] = cmd_id;
-            }
-        }
 
         /* Clear selection and auto-select the next active entity
          * so the user can rapidly delete in sequence. */

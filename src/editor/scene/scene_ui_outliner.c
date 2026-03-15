@@ -220,12 +220,12 @@ void scene_ui_build_outliner(struct scene_editor *ed,
         int vis_lines = (int)(list_h / (float)(THEME_ROW_HEIGHT + 1));
         if (vis_lines < 1) vis_lines = 1;
 
-        /* Count total active entities. */
+        /* Count total active (non-deleted) entities. */
         uint32_t total_entities = 0;
         uint32_t capacity = ed->entities.capacity;
         for (uint32_t i = 0; i < capacity; ++i) {
             const edit_entity_t *e = edit_entity_store_get(&ed->entities, i);
-            if (e) total_entities++;
+            if (e && !e->pending_delete) total_entities++;
         }
         ed->ui.outliner_total = (int)total_entities;
         ed->ui.outliner_visible_lines = vis_lines;
@@ -266,7 +266,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
 
                     const edit_entity_t *ent =
                         edit_entity_store_get(&ed->entities, i);
-                    if (!ent) {
+                    if (!ent || ent->pending_delete) {
                         continue;
                     }
 

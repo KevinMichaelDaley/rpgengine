@@ -64,11 +64,16 @@ typedef struct viewport_state {
     bool            free_dragging;       /**< True during free-move drag. */
 
     /* FBO (GPU resources — only valid with GL context). */
-    uint32_t        fbo;           /**< Off-screen framebuffer. */
+    uint32_t        fbo;           /**< Resolve framebuffer (single-sample). */
     uint32_t        color_tex;     /**< Color attachment texture. */
-    uint32_t        depth_rbo;     /**< Depth renderbuffer. */
+    uint32_t        depth_rbo;     /**< Depth renderbuffer (resolve). */
     int             fbo_width;     /**< Current FBO width. */
     int             fbo_height;    /**< Current FBO height. */
+
+    /* MSAA framebuffer (render target). */
+    uint32_t        msaa_fbo;      /**< Multisample framebuffer. */
+    uint32_t        msaa_color_rbo;/**< Multisample color renderbuffer. */
+    uint32_t        msaa_depth_rbo;/**< Multisample depth+stencil renderbuffer. */
 
     /* Computed layout rect (set by BSP layout pass). */
     panel_rect_t    rect;          /**< Screen rect for this viewport. */

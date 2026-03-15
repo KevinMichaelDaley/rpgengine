@@ -205,6 +205,20 @@ extern "C" {
 #define GL_UNPACK_ALIGNMENT 0x0CF5
 #endif
 
+/* ---- Multisampling ---- */
+#ifndef GL_MULTISAMPLE
+#define GL_MULTISAMPLE 0x809D
+#endif
+#ifndef GL_MAX_SAMPLES
+#define GL_MAX_SAMPLES 0x8D57
+#endif
+#ifndef GL_READ_FRAMEBUFFER
+#define GL_READ_FRAMEBUFFER 0x8CA8
+#endif
+#ifndef GL_DEPTH_ATTACHMENT
+#define GL_DEPTH_ATTACHMENT 0x8D00
+#endif
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

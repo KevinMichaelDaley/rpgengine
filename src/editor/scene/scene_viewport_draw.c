@@ -257,9 +257,16 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
      * Additional viewports get their own FBOs created on demand. */
     uint32_t fbo_handle;
     int fbo_w, fbo_h;
+    /* Track MSAA FBO handle for resolve blit after rendering. */
+    uint32_t msaa_fbo_handle = 0;
+    uint32_t resolve_fbo_handle = 0;
+
     if (vs == &ed->viewports[0]) {
         viewport_render_resize(vp, phys_w, phys_h);
-        fbo_handle = vp->fbo;
+        /* Render into MSAA FBO if available, otherwise resolve FBO. */
+        fbo_handle = vp->msaa_fbo ? vp->msaa_fbo : vp->fbo;
+        msaa_fbo_handle = vp->msaa_fbo;
+        resolve_fbo_handle = vp->fbo;
         fbo_w = vp->fbo_width;
         fbo_h = vp->fbo_height;
         /* Keep color_tex in sync for Clay display. */
@@ -276,13 +283,21 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                 vp->glDeleteFramebuffers(1, &vs->fbo);
                 vp->glDeleteTextures(1, &vs->color_tex);
                 vp->glDeleteRenderbuffers(1, &vs->depth_rbo);
+                if (vs->msaa_fbo) {
+                    vp->glDeleteFramebuffers(1, &vs->msaa_fbo);
+                    vp->glDeleteRenderbuffers(1, &vs->msaa_color_rbo);
+                    vp->glDeleteRenderbuffers(1, &vs->msaa_depth_rbo);
+                    vs->msaa_fbo = 0;
+                    vs->msaa_color_rbo = 0;
+                    vs->msaa_depth_rbo = 0;
+                }
             }
-            /* Create FBO. */
+
+            /* ---- Resolve FBO (single-sample, texture for display) ---- */
             vp->glGenFramebuffers(1, &vs->fbo);
             vp->glGenTextures(1, &vs->color_tex);
             vp->glGenRenderbuffers(1, &vs->depth_rbo);
 
-            /* Set up color texture. */
             vp->glBindTexture(GL_TEXTURE_2D, vs->color_tex);
             vp->glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
                              phys_w, phys_h, 0,
@@ -293,13 +308,11 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                                 GL_LINEAR);
             vp->glBindTexture(GL_TEXTURE_2D, 0);
 
-            /* Set up depth+stencil renderbuffer. */
             vp->glBindRenderbuffer(GL_RENDERBUFFER, vs->depth_rbo);
             vp->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8,
                                       phys_w, phys_h);
             vp->glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
-            /* Attach to FBO. */
             vp->glBindFramebuffer(GL_FRAMEBUFFER, vs->fbo);
             vp->glFramebufferTexture2D(GL_FRAMEBUFFER,
                                        GL_COLOR_ATTACHMENT0,
@@ -309,11 +322,44 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                                           GL_RENDERBUFFER, vs->depth_rbo);
             vp->glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+            /* ---- MSAA FBO (multisample renderbuffers) ---- */
+            if (vp->msaa_samples > 1 &&
+                vp->glRenderbufferStorageMultisample) {
+                int s = vp->msaa_samples;
+
+                vp->glGenRenderbuffers(1, &vs->msaa_color_rbo);
+                vp->glBindRenderbuffer(GL_RENDERBUFFER, vs->msaa_color_rbo);
+                vp->glRenderbufferStorageMultisample(GL_RENDERBUFFER, s,
+                                                     GL_RGBA8,
+                                                     phys_w, phys_h);
+
+                vp->glGenRenderbuffers(1, &vs->msaa_depth_rbo);
+                vp->glBindRenderbuffer(GL_RENDERBUFFER, vs->msaa_depth_rbo);
+                vp->glRenderbufferStorageMultisample(GL_RENDERBUFFER, s,
+                                                     GL_DEPTH24_STENCIL8,
+                                                     phys_w, phys_h);
+
+                vp->glGenFramebuffers(1, &vs->msaa_fbo);
+                vp->glBindFramebuffer(GL_FRAMEBUFFER, vs->msaa_fbo);
+                vp->glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                                              GL_COLOR_ATTACHMENT0,
+                                              GL_RENDERBUFFER,
+                                              vs->msaa_color_rbo);
+                vp->glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                                              GL_DEPTH_STENCIL_ATTACHMENT,
+                                              GL_RENDERBUFFER,
+                                              vs->msaa_depth_rbo);
+                vp->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+
             vs->fbo_width = phys_w;
             vs->fbo_height = phys_h;
             vs->fbo_valid = true;
         }
-        fbo_handle = vs->fbo;
+        /* Render into MSAA FBO if available. */
+        fbo_handle = vs->msaa_fbo ? vs->msaa_fbo : vs->fbo;
+        msaa_fbo_handle = vs->msaa_fbo;
+        resolve_fbo_handle = vs->fbo;
         fbo_w = vs->fbo_width;
         fbo_h = vs->fbo_height;
     }
@@ -334,6 +380,9 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                 | GL_STENCIL_BUFFER_BIT);
     vp->glEnable(GL_DEPTH_TEST);
     vp->glEnable(GL_CULL_FACE);
+    if (msaa_fbo_handle) {
+        vp->glEnable(GL_MULTISAMPLE);
+    }
 
     /* Draw grid. */
     viewport_render_draw_grid(vp, &view, &proj);
@@ -376,9 +425,15 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
             vs->gizmo.position = center;
         }
 
-        /* Compute gizmo orientation from basis mode. */
+        /* Compute gizmo orientation from basis mode.
+         * Scale always operates in local space, so force local
+         * orientation when the scale gizmo is active. */
         const quat_t *active_orient = NULL;
-        if (vs->gizmo.basis == TRANSFORM_BASIS_LOCAL &&
+        transform_basis_t effective_basis = vs->gizmo.basis;
+        if (vs->gizmo.mode == GIZMO_MODE_SCALE) {
+            effective_basis = TRANSFORM_BASIS_LOCAL;
+        }
+        if (effective_basis == TRANSFORM_BASIS_LOCAL &&
             ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
             const edit_entity_t *active_ent =
                 edit_entity_store_get(&ed->entities, ed->active_object_id);
@@ -387,7 +442,7 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
             }
         }
         vs->gizmo.orientation = transform_basis_orientation(
-            vs->gizmo.basis, active_orient, &view);
+            effective_basis, active_orient, &view);
 
         /* Update rotation arc quadrant selection based on camera. */
         gizmo_update_arc_quadrants(&vs->gizmo, eye_pos);
@@ -416,6 +471,15 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         float bx1 = (cur_lx - (float)vs->rect.x) / (float)vs->rect.w;
         float by1 = (cur_ly - (float)vs->rect.y) / (float)vs->rect.h;
         viewport_render_draw_box_select(vp, bx0, by0, bx1, by1);
+    }
+
+    /* Resolve MSAA → single-sample FBO for display. */
+    if (msaa_fbo_handle && resolve_fbo_handle && vp->glBlitFramebuffer) {
+        vp->glBindFramebuffer(GL_READ_FRAMEBUFFER, msaa_fbo_handle);
+        vp->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolve_fbo_handle);
+        vp->glBlitFramebuffer(0, 0, fbo_w, fbo_h,
+                               0, 0, fbo_w, fbo_h,
+                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
 
     /* Unbind FBO. */

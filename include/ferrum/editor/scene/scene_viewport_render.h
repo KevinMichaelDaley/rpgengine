@@ -65,12 +65,18 @@ typedef struct viewport_render_config {
  * entity visualization, grid mesh, and the orbit camera.
  */
 typedef struct viewport_render_state {
-    /* Framebuffer objects. */
-    uint32_t fbo;         /**< Off-screen framebuffer. */
+    /* Framebuffer objects (resolve target — single-sample, has color_tex). */
+    uint32_t fbo;         /**< Resolve framebuffer (single-sample). */
     uint32_t color_tex;   /**< Color attachment (GL_TEXTURE_2D). */
-    uint32_t depth_rbo;   /**< Depth renderbuffer. */
+    uint32_t depth_rbo;   /**< Depth renderbuffer (resolve). */
     int      fbo_width;   /**< Current FBO width. */
     int      fbo_height;  /**< Current FBO height. */
+
+    /* MSAA framebuffer (render target — multisample renderbuffers). */
+    uint32_t msaa_fbo;        /**< Multisample framebuffer. */
+    uint32_t msaa_color_rbo;  /**< Multisample color renderbuffer. */
+    uint32_t msaa_depth_rbo;  /**< Multisample depth+stencil renderbuffer. */
+    int      msaa_samples;    /**< Actual sample count (queried from GL). */
 
     /* Render pipeline (forward + debug passes). */
     render_pipeline_t pipeline; /**< 9-pass render pipeline. */
@@ -157,6 +163,16 @@ typedef struct viewport_render_state {
     void     (*glStencilOp)(uint32_t sfail, uint32_t dpfail, uint32_t dppass);
     void     (*glStencilMask)(uint32_t mask);
     void     (*glColorMask)(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+
+    /* MSAA functions. */
+    void     (*glRenderbufferStorageMultisample)(uint32_t target, int32_t samples,
+                                                 uint32_t fmt, int32_t w,
+                                                 int32_t h);
+    void     (*glBlitFramebuffer)(int32_t sx0, int32_t sy0, int32_t sx1,
+                                   int32_t sy1, int32_t dx0, int32_t dy0,
+                                   int32_t dx1, int32_t dy1, uint32_t mask,
+                                   uint32_t filter);
+    void     (*glGetIntegerv)(uint32_t pname, int32_t *params);
 } viewport_render_state_t;
 
 /* ---- Lifecycle ---- */
