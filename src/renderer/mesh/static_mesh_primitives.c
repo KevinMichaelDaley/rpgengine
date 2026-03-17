@@ -107,7 +107,7 @@ int static_mesh_create_plane(const gl_loader_t *loader,
     float uvs[4 * 2] = {
         0, 0,  1, 0,  1, 1,  0, 1
     };
-    uint32_t indices[6] = { 0, 1, 2, 0, 2, 3 };
+    uint32_t indices[6] = { 0, 2, 1, 0, 3, 2 };
 
     static_mesh_create_info_t info;
     memset(&info, 0, sizeof(info));

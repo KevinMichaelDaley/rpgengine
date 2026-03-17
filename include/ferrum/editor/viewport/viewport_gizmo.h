@@ -128,6 +128,36 @@ gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
                               const mat4_t *vp, float screen_x, float screen_y);
 
 /**
+ * @brief Compute per-ring screen-space distances for rotation hit testing.
+ *
+ * For each of the 3 rotation arcs (X, Y, Z rings), computes the 2D
+ * screen-space distance from the cursor to the arc outline. Used by
+ * per-object gizmo mode to compare ring distances across multiple
+ * gizmos before applying the hit threshold.
+ *
+ * @param gizmo       Gizmo state (non-NULL).
+ * @param gizmo_scale Visual scale (world units).
+ * @param vp          View-projection matrix (non-NULL).
+ * @param screen_x    Cursor X in normalized viewport coords [0,1].
+ * @param screen_y    Cursor Y in normalized viewport coords [0,1].
+ * @param out_dists   Output array of 3 distances [X, Y, Z rings].
+ *                    1e30 if projection failed.
+ */
+void gizmo_ring_screen_distances(const gizmo_state_t *gizmo,
+                                   float gizmo_scale,
+                                   const mat4_t *vp,
+                                   float screen_x, float screen_y,
+                                   float out_dists[3]);
+
+/**
+ * @brief Screen-space hit threshold for rotation rings.
+ *
+ * Exposed so per-object pick can apply the same threshold used
+ * by gizmo_hit_test() internally.
+ */
+#define GIZMO_RING_HIT_THRESHOLD 0.08f
+
+/**
  * @brief Compute constrained drag delta between two world positions.
  *
  * Projects the drag movement onto the active axis.

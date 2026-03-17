@@ -26,6 +26,12 @@
 #include "ferrum/editor/scene/cursor_place.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/edit_entity_pivot.h"
+#include "ferrum/editor/scene/scene_gizmo_per_object.h"
+#include "ferrum/editor/viewport/snap/snap_surface_cast.h"
+#include "ferrum/editor/viewport/snap/snap_surface_apply.h"
+#include "ferrum/editor/viewport/snap/snap_depenetrate.h"
+#include "ferrum/editor/edit_entity_matrix.h"
+#include "ferrum/editor/scene/scene_viewport_render.h"
 
 #include <SDL2/SDL.h>
 #include <math.h>
@@ -101,6 +107,278 @@ static float viewport_gizmo_screen_scale(const vec3_t *gizmo_pos,
 static const float INPUT_DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
 
 /**
+ * @brief Ensure an entity has a snap mesh (lazy primitive generation).
+ */
+static void ensure_entity_snap_mesh_(snap_mesh_cache_t *cache,
+                                       uint32_t entity_id,
+                                       uint32_t entity_type) {
+    if (snap_mesh_cache_has(cache, entity_id)) return;
+    switch (entity_type) {
+    case EDIT_ENTITY_TYPE_BOX:
+        snap_mesh_retain_box(cache, entity_id);
+        break;
+    case EDIT_ENTITY_TYPE_SPHERE:
+        snap_mesh_retain_sphere(cache, entity_id);
+        break;
+    case EDIT_ENTITY_TYPE_CAPSULE:
+        snap_mesh_retain_capsule(cache, entity_id);
+        break;
+    default:
+        break;
+    }
+}
+
+/** Maximum world-space environment triangles to collect for depenetration. */
+#define SNAP_MAX_ENV_TRIS 2048
+
+/**
+ * @brief Collect world-space triangles from all visible non-selected entities.
+ *
+ * Transforms each environment entity's snap mesh triangles into world space
+ * and appends them to the output buffer.
+ *
+ * @param ed           Scene editor.
+ * @param out_verts    Output buffer (3 vec3_t per triangle, packed).
+ * @param max_tris     Maximum triangles to collect.
+ * @return Number of triangles collected.
+ */
+static uint32_t collect_env_triangles_(scene_editor_t *ed,
+                                         vec3_t *out_verts,
+                                         uint32_t max_tris) {
+    uint32_t count = 0;
+    snap_mesh_cache_t *cache = &ed->viewport.snap_meshes;
+
+    for (uint32_t i = 0; i < ed->entities.capacity && count < max_tris; ++i) {
+        if (edit_selection_contains(&ed->selection, i)) continue;
+        const edit_entity_t *ent = edit_entity_store_get(&ed->entities, i);
+        if (!ent || ent->pending_delete || ent->hidden) continue;
+
+        /* Halfspaces are infinite planes — skip them here; they get
+         * separate analytical depenetration in the iterative loop. */
+        if (ent->type == EDIT_ENTITY_TYPE_HALFSPACE) continue;
+
+        /* Ensure snap mesh exists for primitives. */
+        ensure_entity_snap_mesh_(cache, i, ent->type);
+        const snap_mesh_t *mesh = snap_mesh_cache_get(cache, i);
+        if (!mesh || !mesh->positions) continue;
+
+        mat4_t model = edit_entity_build_model_matrix(ent);
+        uint32_t tri_count = mesh->index_count / 3;
+
+        for (uint32_t t = 0; t < tri_count && count < max_tris; ++t) {
+            for (int v = 0; v < 3; ++v) {
+                uint32_t idx = mesh->indices[t * 3 + v];
+                vec4_t local = {
+                    mesh->positions[idx * 3 + 0],
+                    mesh->positions[idx * 3 + 1],
+                    mesh->positions[idx * 3 + 2],
+                    1.0f
+                };
+                vec4_t world = mat4_mul_vec4(model, local);
+                out_verts[count * 3 + v] = (vec3_t){world.x, world.y, world.z};
+            }
+            count++;
+        }
+    }
+    return count;
+}
+
+/**
+ * @brief Try surface snap: cast ray from cursor, snap entity to hit surface.
+ *
+ * Ctrl+drag = snap position to nearest surface point (face snap).
+ * Ctrl+Shift+drag = snap to surface + push along normal until fully
+ * depenetrated from ALL environment geometry.
+ *
+ * Excludes all selected entities from the raycast.
+ *
+ * @param ed          Scene editor.
+ * @param shift_held  True if Shift is also held (surface offset mode).
+ * @return true if surface snap was applied (false = no hit, let normal drag run).
+ */
+static bool try_surface_snap_(scene_editor_t *ed, bool shift_held) {
+    viewport_state_t *fvp = scene_focused_vp(ed);
+
+    /* Cast a ray from the current cursor position. */
+    float sc = ed->clay_be.ui_scale;
+    if (sc < 1.0f) sc = 1.0f;
+    int lx = (int)(ed->ui.mouse_x / sc);
+    int ly = (int)(ed->ui.mouse_y / sc);
+    panel_rect_t vp_rect = fvp->rect;
+    if (vp_rect.w <= 0 || vp_rect.h <= 0) return false;
+
+    float nx = (float)(lx - vp_rect.x) / (float)vp_rect.w;
+    float ny = 1.0f - (float)(ly - vp_rect.y) / (float)vp_rect.h;
+
+    vec2_t screen_pos = {nx, ny};
+    vec2_t vp_size = {(float)vp_rect.w, (float)vp_rect.h};
+    editor_ray_t ray;
+    if (editor_camera_screen_to_ray(&fvp->camera, screen_pos,
+                                      vp_size, &ray) != 0) {
+        return false;
+    }
+
+    /* Determine the entity being dragged. */
+    uint32_t drag_id = UINT32_MAX;
+    if (fvp->per_object_gizmo &&
+        fvp->per_object_drag_entity != EDIT_ENTITY_INVALID_ID) {
+        drag_id = fvp->per_object_drag_entity;
+    } else if (edit_selection_count(&ed->selection) > 0) {
+        drag_id = ed->active_object_id;
+        if (drag_id == EDIT_ENTITY_INVALID_ID) {
+            const uint32_t *sel = edit_selection_ids(&ed->selection);
+            drag_id = sel[0];
+        }
+    }
+    if (drag_id == UINT32_MAX) return false;
+
+    /* Mark all selected entities as hidden for the raycast, then restore. */
+    uint32_t sel_count = edit_selection_count(&ed->selection);
+    const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
+
+    bool saved_hidden[256];
+    uint32_t hide_count = (sel_count < 256) ? sel_count : 256;
+    for (uint32_t i = 0; i < hide_count; ++i) {
+        edit_entity_t *ent = edit_entity_store_get_mut(
+            &ed->entities, sel_ids[i]);
+        if (ent) {
+            saved_hidden[i] = ent->hidden;
+            ent->hidden = true;
+        } else {
+            saved_hidden[i] = false;
+        }
+    }
+
+    /* Cast ray against scene. */
+    snap_hit_t hit;
+    snap_surface_cast_ray(ray.origin, ray.direction,
+                            ed->entities.entities, ed->entities.capacity,
+                            &ed->viewport.snap_meshes,
+                            UINT32_MAX, &hit);
+
+    /* Restore hidden state. */
+    for (uint32_t i = 0; i < hide_count; ++i) {
+        edit_entity_t *ent = edit_entity_store_get_mut(
+            &ed->entities, sel_ids[i]);
+        if (ent) ent->hidden = saved_hidden[i];
+    }
+
+    if (!hit.valid) return false;  /* No hit — let normal drag handle it. */
+
+    edit_entity_t *ent = edit_entity_store_get_mut(&ed->entities, drag_id);
+    if (!ent) return false;
+
+    /* Resolve snap mode: Shift forces SURFACE, otherwise use configured mode. */
+    snap_target_mode_t mode = shift_held ? SNAP_TARGET_SURFACE
+                                         : ed->snap_target;
+
+    if (mode == SNAP_TARGET_VERTEX) {
+        /* Vertex snap: snap to nearest vertex of the hit triangle. */
+        const snap_mesh_t *hit_mesh = snap_mesh_cache_get(
+            &ed->viewport.snap_meshes, hit.entity_id);
+        if (hit_mesh) {
+            mat4_t hit_model = edit_entity_build_model_matrix(
+                edit_entity_store_get(&ed->entities, hit.entity_id));
+            snap_apply_vertex(ent, &hit, hit_mesh, &hit_model);
+        } else {
+            /* Fallback to face snap if no mesh data for hit entity. */
+            snap_apply_face(ent, &hit);
+        }
+    } else if (mode == SNAP_TARGET_SURFACE) {
+        /* Surface offset: orient to face normal, place at hit point,
+         * then push outward until fully depenetrated from all env geo. */
+        snap_apply_face(ent, &hit);
+
+        /* Ensure the dragged entity has a snap mesh. */
+        ensure_entity_snap_mesh_(&ed->viewport.snap_meshes, drag_id,
+                                   ent->type);
+        const snap_mesh_t *smesh = snap_mesh_cache_get(
+            &ed->viewport.snap_meshes, drag_id);
+        if (!smesh) return true;
+
+        /* Step 1: initial push using the hit plane (fast, handles the
+         * primary surface). */
+        mat4_t model_b = edit_entity_build_model_matrix(ent);
+        snap_depenetrate_result_t dep;
+        if (snap_depenetrate_plane(smesh, &model_b,
+                                     hit.position, hit.normal, &dep)) {
+            ent->pos[0] += dep.push.x;
+            ent->pos[1] += dep.push.y;
+            ent->pos[2] += dep.push.z;
+        }
+
+        /* Step 2: collect all environment triangles and check for
+         * remaining penetrations (handles edges, corners, adjacent
+         * faces, multiple overlapping environment objects).
+         * Static buffer — only one drag can be active at a time. */
+        static vec3_t env_buf[SNAP_MAX_ENV_TRIS * 3];
+        uint32_t env_count = collect_env_triangles_(
+            ed, env_buf, SNAP_MAX_ENV_TRIS);
+
+        /* Iterative push: resolve until fully depenetrated.
+         * Each pass finds the deepest remaining penetration and pushes
+         * along that face normal. At corners this may cascade (pushing
+         * out of face A pushes into face B), so we iterate until clean.
+         * Safety cap at 64 to avoid infinite loops from degenerate geo. */
+        for (int iter = 0; iter < 64; ++iter) {
+            bool pushed = false;
+
+            /* Pass A: triangle mesh depenetration. */
+            if (env_count > 0) {
+                model_b = edit_entity_build_model_matrix(ent);
+                snap_depenetrate_result_t tri_dep;
+                if (snap_depenetrate_vs_tris(smesh, &model_b,
+                                                env_buf, env_count,
+                                                &tri_dep)) {
+                    float nudge = 1.001f;
+                    ent->pos[0] += tri_dep.push.x * nudge;
+                    ent->pos[1] += tri_dep.push.y * nudge;
+                    ent->pos[2] += tri_dep.push.z * nudge;
+                    pushed = true;
+                }
+            }
+
+            /* Pass B: halfspace plane depenetration.
+             * Halfspaces are infinite planes — no mesh representation.
+             * Check all non-selected HALFSPACE entities and push entity
+             * above their plane using signed-distance depenetration. */
+            model_b = edit_entity_build_model_matrix(ent);
+            for (uint32_t hi = 0; hi < ed->entities.capacity; ++hi) {
+                if (edit_selection_contains(&ed->selection, hi)) continue;
+                const edit_entity_t *hent = edit_entity_store_get(
+                    &ed->entities, hi);
+                if (!hent || hent->pending_delete || hent->hidden) continue;
+                if (hent->type != EDIT_ENTITY_TYPE_HALFSPACE) continue;
+
+                /* Compute halfspace plane: normal = rotated +Y. */
+                vec3_t up = {0.0f, 1.0f, 0.0f};
+                vec3_t hs_normal = quat_rotate_vec3(hent->orientation, up);
+                vec3_t hs_point = {hent->pos[0], hent->pos[1], hent->pos[2]};
+
+                snap_depenetrate_result_t plane_dep;
+                if (snap_depenetrate_plane(smesh, &model_b,
+                                             hs_point, hs_normal,
+                                             &plane_dep)) {
+                    float nudge = 1.001f;
+                    ent->pos[0] += plane_dep.push.x * nudge;
+                    ent->pos[1] += plane_dep.push.y * nudge;
+                    ent->pos[2] += plane_dep.push.z * nudge;
+                    model_b = edit_entity_build_model_matrix(ent);
+                    pushed = true;
+                }
+            }
+
+            if (!pushed) break; /* Fully depenetrated. */
+        }
+    } else {
+        /* Face snap: set position to hit point, orient to face normal. */
+        snap_apply_face(ent, &hit);
+    }
+
+    return true;
+}
+
+/**
  * @brief Build a rotation matrix from a quaternion.
  *
  * Used for cursor-pivot orbit position computation.
@@ -122,6 +400,20 @@ static mat4_t build_rotation_from_quat(quat_t dq) {
  */
 static void apply_gizmo_rotate(scene_editor_t *ed, quat_t dq) {
     viewport_state_t *fvp = scene_focused_vp(ed);
+
+    /* Per-object mode: rotate only the picked entity.
+     * In cursor basis, pass the cursor as pivot so the entity orbits it. */
+    if (fvp->per_object_gizmo &&
+        fvp->per_object_drag_entity != EDIT_ENTITY_INVALID_ID) {
+        const vec3_t *pivot = NULL;
+        if (fvp->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
+            pivot = &fvp->cursor_3d;
+        }
+        per_object_gizmo_apply_rotate(&ed->entities,
+            fvp->per_object_drag_entity, dq, pivot);
+        return;
+    }
+
     bool pivot_rotate = (fvp->gizmo.basis == TRANSFORM_BASIS_CURSOR);
     mat4_t rot_mat;
     vec3_t pivot;
@@ -219,6 +511,15 @@ static void snap_selected_euler_axes(scene_editor_t *ed) {
  */
 static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
     viewport_state_t *fvp = scene_focused_vp(ed);
+
+    /* Per-object mode: apply drag to the single picked entity only. */
+    if (fvp->per_object_gizmo &&
+        fvp->per_object_drag_entity != EDIT_ENTITY_INVALID_ID) {
+        per_object_gizmo_apply_drag(&ed->entities,
+            fvp->per_object_drag_entity,
+            fvp->gizmo.mode, delta);
+        return;
+    }
 
     /* In pivot edit mode, drag modifies pivot_offset in local space
      * instead of moving the entity position.  Also adjusts pos so
@@ -384,6 +685,15 @@ static void send_per_entity_abs_(scene_editor_t *ed, gizmo_mode_t mode) {
  */
 static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     viewport_state_t *fvp = scene_focused_vp(ed);
+
+    /* Per-object mode: send command for the single dragged entity. */
+    if (fvp->per_object_gizmo &&
+        fvp->per_object_drag_entity != EDIT_ENTITY_INVALID_ID) {
+        scene_per_object_send_commands(ed, total_delta);
+        fvp->per_object_drag_entity = EDIT_ENTITY_INVALID_ID;
+        return;
+    }
+
     char cmd_buf[256];
     int cmd_len = 0;
     uint32_t cmd_id = scene_connection_next_id(&ed->connection);
@@ -506,21 +816,41 @@ static int scrollbar_hit_test(const scene_editor_t *ed, int lx, int ly) {
     for (int p = 0; p < 3; p++) {
         if (!panel_layout_is_visible(&ed->layout, panels[p])) continue;
 
+        panel_rect_t r = panel_layout_get_rect(&ed->layout, panels[p]);
+        /* Scrollbar track: rightmost 8px of panel. */
+        int track_left = r.x + r.w - 8 - THEME_PADDING_SMALL;
+        int track_right = r.x + r.w - THEME_PADDING_SMALL;
+
+        /* Outliner is split: top 60% entity list (ID 1),
+         * bottom 40% asset browser (ID 4). */
+        if (panels[p] == PANEL_OUTLINER) {
+            int split_y = r.y + (r.h * 3) / 5;
+
+            if (lx >= track_left && lx <= track_right) {
+                if (ly >= split_y && ly <= r.y + r.h) {
+                    /* Asset browser scrollbar (bottom 40%). */
+                    bool has_sb = ed->ui.asset_browser_total
+                                  > ed->ui.asset_browser_visible_lines;
+                    if (has_sb) return 4;
+                } else if (ly >= r.y + THEME_ROW_HEIGHT && ly < split_y) {
+                    /* Outliner scrollbar (top 60%). */
+                    bool has_sb = ed->ui.outliner_total
+                                  > ed->ui.outliner_visible_lines;
+                    if (has_sb) return 1;
+                }
+            }
+            continue;
+        }
+
         /* Check if this panel actually has a scrollbar. */
         bool has_scrollbar = false;
-        if (panels[p] == PANEL_OUTLINER) {
-            has_scrollbar = ed->ui.outliner_total > ed->ui.outliner_visible_lines;
-        } else if (panels[p] == PANEL_INSPECTOR) {
+        if (panels[p] == PANEL_INSPECTOR) {
             has_scrollbar = ed->ui.inspector_total > ed->ui.inspector_visible_lines;
         } else if (panels[p] == PANEL_TUI) {
             has_scrollbar = ed->ui.tui_log_count > ed->ui.tui_log_visible;
         }
         if (!has_scrollbar) continue;
 
-        panel_rect_t r = panel_layout_get_rect(&ed->layout, panels[p]);
-        /* Scrollbar track: rightmost 8px of panel. */
-        int track_left = r.x + r.w - 8 - THEME_PADDING_SMALL;
-        int track_right = r.x + r.w - THEME_PADDING_SMALL;
         int track_top = r.y + THEME_ROW_HEIGHT; /* below title bar */
         int track_bottom = r.y + r.h;
 
@@ -685,6 +1015,13 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     editor_camera_projection_matrix(&fvp->camera,
                                                       aspect, &proj_m);
                     mat4_t vp_m = mat4_mul(proj_m, view_m);
+
+                    if (fvp->per_object_gizmo) {
+                        /* Per-object mode: hit test all entity gizmos. */
+                        gizmo_hit = scene_per_object_gizmo_hit_test(
+                            ed, &ray, gscale, &vp_m,
+                            screen_nx, screen_ny);
+                    } else {
                     gizmo_axis_t axis = gizmo_hit_test(
                         &fvp->gizmo, &ray, gscale,
                         &vp_m, screen_nx, screen_ny);
@@ -726,6 +1063,7 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                         }
                         gizmo_hit = true;
                     }
+                    } /* end unified gizmo branch */
                 }
 
                 /* If no gizmo hit, do entity picking. */
@@ -1066,6 +1404,13 @@ static bool handle_mouse_motion(scene_editor_t *ed,
 
         /* Free-move: translate on the camera-facing plane. */
         if (fvp->free_dragging) {
+            /* Check for Ctrl surface snap. */
+            SDL_Keymod free_mod = SDL_GetModState();
+            if (free_mod & KMOD_CTRL) {
+                try_surface_snap_(ed, (free_mod & KMOD_SHIFT) != 0);
+                return true;
+            }
+
             mat4_t view;
             editor_camera_view_matrix(&fvp->camera, &view);
 
@@ -1362,16 +1707,22 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             fvp->snap_applied_scale = snapped;
             apply_gizmo_drag(ed, inc);
         } else {
-            /* Translate: snap absolute position, apply incremental. */
-            vec3_t snapped = snap_apply_position(&ed->snap,
-                fvp->snap_origin_pos, fvp->gizmo_drag_accum);
-            vec3_t inc = {
-                snapped.x - fvp->snap_applied_delta.x,
-                snapped.y - fvp->snap_applied_delta.y,
-                snapped.z - fvp->snap_applied_delta.z,
-            };
-            fvp->snap_applied_delta = snapped;
-            apply_gizmo_drag(ed, inc);
+            /* Translate mode. Check if Ctrl is held for surface snap. */
+            SDL_Keymod kmod = SDL_GetModState();
+            if (kmod & KMOD_CTRL) {
+                try_surface_snap_(ed, (kmod & KMOD_SHIFT) != 0);
+            } else {
+                /* Normal translate: snap absolute position, apply incremental. */
+                vec3_t snapped = snap_apply_position(&ed->snap,
+                    fvp->snap_origin_pos, fvp->gizmo_drag_accum);
+                vec3_t inc = {
+                    snapped.x - fvp->snap_applied_delta.x,
+                    snapped.y - fvp->snap_applied_delta.y,
+                    snapped.z - fvp->snap_applied_delta.z,
+                };
+                fvp->snap_applied_delta = snapped;
+                apply_gizmo_drag(ed, inc);
+            }
         }
         return true;
     }
@@ -1428,15 +1779,26 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         } else if (sb == 3) {
             total = ed->ui.tui_log_count;
             visible = ed->ui.tui_log_visible;
+        } else if (sb == 4) {
+            total = ed->ui.asset_browser_total;
+            visible = ed->ui.asset_browser_visible_lines;
         }
 
         int max_scroll = total - visible;
         if (max_scroll < 0) max_scroll = 0;
 
         /* Get track height from panel rect. */
-        panel_id_t panels[] = {PANEL_OUTLINER, PANEL_INSPECTOR, PANEL_TUI};
-        panel_rect_t r = panel_layout_get_rect(&ed->layout, panels[sb - 1]);
-        float track_h = (float)(r.h - THEME_ROW_HEIGHT);
+        float track_h;
+        if (sb == 4) {
+            /* Asset browser: bottom 40% of outliner panel. */
+            panel_rect_t r = panel_layout_get_rect(&ed->layout, PANEL_OUTLINER);
+            int browser_h = r.h - (r.h * 3) / 5;
+            track_h = (float)(browser_h - THEME_ROW_HEIGHT);
+        } else {
+            panel_id_t sb_panels[] = {PANEL_OUTLINER, PANEL_INSPECTOR, PANEL_TUI};
+            panel_rect_t r = panel_layout_get_rect(&ed->layout, sb_panels[sb - 1]);
+            track_h = (float)(r.h - THEME_ROW_HEIGHT);
+        }
         if (track_h < 1.0f) track_h = 1.0f;
 
         /* Convert pixel drag to scroll units. */
@@ -1452,6 +1814,7 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         if (sb == 1) ed->ui.outliner_scroll = new_scroll;
         else if (sb == 2) ed->ui.inspector_scroll = new_scroll;
         else if (sb == 3) ed->ui.tui_log_scroll = new_scroll;
+        else if (sb == 4) ed->ui.asset_browser_scroll = new_scroll;
 
         return true;
     }
@@ -2035,6 +2398,14 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         return true;
 
+    /* Toggle per-object gizmo mode: each selected entity gets its own gizmo. */
+    case SDLK_t:
+        fvp->per_object_gizmo = !fvp->per_object_gizmo;
+        fvp->per_object_drag_entity = EDIT_ENTITY_INVALID_ID;
+        scene_ui_tui_log(&ed->ui, fvp->per_object_gizmo
+            ? "Per-object gizmo: ON" : "Per-object gizmo: OFF");
+        return true;
+
     /* Cycle transform mode: Nav → Sel → Move → Rot → Scale. */
     case SDLK_PERIOD: {
         uint8_t next = (ed->ui.transform_mode + 1) % UI_MODE_COUNT;
@@ -2061,6 +2432,13 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         scene_ui_tui_log(&ed->ui, msg);
         return true;
     }
+
+    /* Toggle collision wireframe overlay. */
+    case SDLK_c:
+        fvp->show_collision_wireframe = !fvp->show_collision_wireframe;
+        scene_ui_tui_log(&ed->ui, fvp->show_collision_wireframe
+            ? "Collision wireframe: ON" : "Collision wireframe: OFF");
+        return true;
 
     /* Cycle viewport shading mode: Shaded → Matcap → Wire. */
     case SDLK_SLASH: {
@@ -2475,13 +2853,31 @@ bool scene_input_process(struct scene_editor *ed, const union SDL_Event *event) 
             if (ed->ui.tui_log_scroll > max_scroll)
                 ed->ui.tui_log_scroll = max_scroll;
         } else if (hover_panel == PANEL_OUTLINER) {
-            /* Scroll outliner entity list. */
-            int max_scroll = ed->ui.outliner_total - ed->ui.outliner_visible_lines;
-            if (max_scroll < 0) max_scroll = 0;
-            ed->ui.outliner_scroll -= event->wheel.y;
-            if (ed->ui.outliner_scroll < 0) ed->ui.outliner_scroll = 0;
-            if (ed->ui.outliner_scroll > max_scroll)
-                ed->ui.outliner_scroll = max_scroll;
+            /* Outliner panel is split: top 60% entity list, bottom 40% asset browser.
+             * Route scroll to whichever sub-panel the mouse is over. */
+            panel_rect_t outliner_r = panel_layout_get_rect(&ed->layout, PANEL_OUTLINER);
+            int split_y = outliner_r.y + (outliner_r.h * 3) / 5;
+
+            if (ly >= split_y) {
+                /* Asset browser scroll. */
+                int max_scroll = ed->ui.asset_browser_total
+                                 - ed->ui.asset_browser_visible_lines;
+                if (max_scroll < 0) max_scroll = 0;
+                ed->ui.asset_browser_scroll -= event->wheel.y;
+                if (ed->ui.asset_browser_scroll < 0)
+                    ed->ui.asset_browser_scroll = 0;
+                if (ed->ui.asset_browser_scroll > max_scroll)
+                    ed->ui.asset_browser_scroll = max_scroll;
+            } else {
+                /* Outliner entity list scroll. */
+                int max_scroll = ed->ui.outliner_total
+                                 - ed->ui.outliner_visible_lines;
+                if (max_scroll < 0) max_scroll = 0;
+                ed->ui.outliner_scroll -= event->wheel.y;
+                if (ed->ui.outliner_scroll < 0) ed->ui.outliner_scroll = 0;
+                if (ed->ui.outliner_scroll > max_scroll)
+                    ed->ui.outliner_scroll = max_scroll;
+            }
         } else if (hover_panel == PANEL_INSPECTOR) {
             /* Scroll inspector (pixel-based). */
             int max_scroll = ed->ui.inspector_total

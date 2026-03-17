@@ -28,6 +28,7 @@ extern "C" {
 #include "ferrum/editor/scene/scene_sync.h"
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/snap_state.h"
+#include "ferrum/editor/viewport/snap/snap_raycast.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
@@ -35,6 +36,8 @@ extern "C" {
 #include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/ui/clay_backend.h"
+#include "ferrum/editor/edit_asset_registry.h"
+#include "ferrum/editor/panels/asset_browser.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/memory/arena.h"
 
@@ -57,6 +60,8 @@ typedef struct scene_editor_config {
     const char *server_host; /**< Server host (NULL = "127.0.0.1"). */
     uint16_t server_port;   /**< Server TCP port (0 = 9100). */
     float ui_scale;         /**< UI scale factor (0 = 2.0). */
+    const char *asset_dir;  /**< Asset root directory (NULL = env FERRUM_ASSET_DIR or "asset_src"). */
+    uint32_t entity_cache_cap; /**< Entity mesh cache capacity (0 = 1M, demand-paged). */
 } scene_editor_config_t;
 
 /* ---- Context ---- */
@@ -73,6 +78,7 @@ typedef struct scene_editor {
 
     panel_layout_t     layout;  /**< Panel layout (four regions + dividers). */
     snap_state_t       snap;    /**< Grid/snap state. */
+    snap_target_mode_t snap_target; /**< Surface snap mode (face/vertex/surface). */
     clay_backend_t     clay_be; /**< Clay UI renderer backend. */
 
     arena_t            arena;   /**< Main editor arena allocator. */
@@ -103,6 +109,10 @@ typedef struct scene_editor {
 
     /* Interactive UI state. */
     scene_ui_state_t   ui;         /**< UI actions, scroll, mouse. */
+
+    /* Asset system. */
+    edit_asset_registry_t asset_registry; /**< Scanned project assets. */
+    asset_browser_t    asset_browser;    /**< Built-in + project asset tree. */
 
     scene_editor_config_t config; /**< Resolved config. */
     /** Active video capture context (NULL when not streaming). */

@@ -151,6 +151,52 @@ int phys_capsule_vs_mesh(
     struct phys_contact_point *contacts_out,
     int max_contacts);
 
+/* ── Triangle vs Triangle ──────────────────────────────────────── */
+
+/**
+ * @brief Test triangle vs triangle intersection (SAT-based).
+ *
+ * Tests 11 potential separating axes (2 face normals + 9 edge cross
+ * products). Returns the axis with minimum overlap as the contact normal.
+ *
+ * @param a             First triangle (must not be NULL).
+ * @param b             Second triangle (must not be NULL).
+ * @param spec_margin   Max separation for speculative contacts (0 = disabled).
+ * @param contact_out   Output contact point (must not be NULL).
+ * @return true if contact generated.
+ */
+bool phys_triangle_vs_triangle(
+    const phys_triangle_t *a,
+    const phys_triangle_t *b,
+    float spec_margin,
+    struct phys_contact_point *contact_out);
+
+/* ── Mesh vs Mesh (dual BVH) ─────────────────────────────────── */
+
+/**
+ * @brief Mesh vs mesh with dual BVH traversal.
+ *
+ * For each triangle in mesh A, queries mesh B's BVH for overlapping
+ * triangles and tests each pair with phys_triangle_vs_triangle.
+ *
+ * @param tris_a        Mesh A triangles (must not be NULL).
+ * @param bvh_a         Mesh A BVH (must not be NULL).
+ * @param tris_b        Mesh B triangles (must not be NULL).
+ * @param bvh_b         Mesh B BVH (must not be NULL).
+ * @param spec_margin   Max separation for speculative contacts.
+ * @param contacts_out  Output array.
+ * @param max_contacts  Capacity of output array.
+ * @return Number of contacts generated.
+ */
+int phys_mesh_vs_mesh(
+    const phys_triangle_t *tris_a,
+    const phys_mesh_bvh_t *bvh_a,
+    const phys_triangle_t *tris_b,
+    const phys_mesh_bvh_t *bvh_b,
+    float spec_margin,
+    struct phys_contact_point *contacts_out,
+    int max_contacts);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

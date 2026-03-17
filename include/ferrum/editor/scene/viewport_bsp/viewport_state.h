@@ -83,6 +83,13 @@ typedef struct viewport_state {
     uint32_t        msaa_color_rbo;/**< Multisample color renderbuffer. */
     uint32_t        msaa_depth_rbo;/**< Multisample depth+stencil renderbuffer. */
 
+    /* Collision wireframe overlay. */
+    bool            show_collision_wireframe; /**< True = draw collision wireframe. */
+
+    /* Per-object gizmo mode. */
+    bool            per_object_gizmo;    /**< True = one gizmo per entity. */
+    uint32_t        per_object_drag_entity; /**< Entity being dragged in per-object mode. */
+
     /* Computed layout rect (set by BSP layout pass). */
     panel_rect_t    rect;          /**< Screen rect for this viewport. */
 

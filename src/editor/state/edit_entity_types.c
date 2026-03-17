@@ -15,6 +15,7 @@ static const edit_entity_type_info_t s_types[] = {
     { .name = "sphere",    .type_id = EDIT_ENTITY_TYPE_SPHERE },
     { .name = "capsule",   .type_id = EDIT_ENTITY_TYPE_CAPSULE },
     { .name = "marker",    .type_id = EDIT_ENTITY_TYPE_MARKER },
+    { .name = "mesh",      .type_id = EDIT_ENTITY_TYPE_MESH },
     { .name = "halfspace", .type_id = EDIT_ENTITY_TYPE_HALFSPACE },
 };
 

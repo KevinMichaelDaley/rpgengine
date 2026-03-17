@@ -51,8 +51,14 @@ static edit_asset_type_t type_from_ext_(const char *ext) {
 
     /* Mesh formats. */
     if (strcmp(ext, ".glb") == 0 || strcmp(ext, ".gltf") == 0 ||
-        strcmp(ext, ".obj") == 0 || strcmp(ext, ".fbx") == 0) {
+        strcmp(ext, ".obj") == 0 || strcmp(ext, ".fbx") == 0 ||
+        strcmp(ext, ".fvma") == 0) {
         return EDIT_ASSET_MESH;
+    }
+
+    /* Skeleton files. */
+    if (strcmp(ext, ".fskel") == 0) {
+        return EDIT_ASSET_SKELETON;
     }
 
     /* Texture formats. */
@@ -63,7 +69,7 @@ static edit_asset_type_t type_from_ext_(const char *ext) {
     }
 
     /* Material files. */
-    if (strcmp(ext, ".mat") == 0) {
+    if (strcmp(ext, ".mat") == 0 || strcmp(ext, ".fmat") == 0) {
         return EDIT_ASSET_MATERIAL;
     }
 

@@ -54,9 +54,10 @@ PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard
 MESH_SRC := $(wildcard src/mesh/*.c)
 ENGINE_SRC := src/engine_settings.c
 EDITOR_SRC := $(wildcard src/editor/*.c) $(wildcard src/editor/*/*.c) $(wildcard src/editor/*/*/*.c)
+ASSET_SRC := $(wildcard src/asset/*.c)
 AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
 ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(AEGIS_SRC) $(ANIM_SRC) $(RENDERER_DEBUG_LINES_SRC)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(ANIM_SRC) $(RENDERER_DEBUG_LINES_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -1176,6 +1177,38 @@ build/p206b_snap_gizmo_tests: build/libheadless.a tests/p206b_snap_gizmo_tests.c
 	$(CC) $(CFLAGS) tests/p206b_snap_gizmo_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/pivot_edit_tests: build/libheadless.a tests/editor/pivot_edit_tests.c | build
 	$(CC) $(CFLAGS) tests/editor/pivot_edit_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/per_object_gizmo_tests: build/libheadless.a tests/editor/per_object_gizmo_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/per_object_gizmo_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_mesh_cache_tests: build/libheadless.a tests/editor/snap_mesh_cache_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_mesh_cache_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_ray_triangle_tests: build/libheadless.a tests/editor/snap_ray_triangle_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_ray_triangle_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_surface_cast_tests: build/libheadless.a tests/editor/snap_surface_cast_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_surface_cast_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_surface_apply_tests: build/libheadless.a tests/editor/snap_surface_apply_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_surface_apply_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/tri_tri_tests: build/libheadless.a tests/physics/tri_tri_tests.c | build
+	$(CC) $(CFLAGS) tests/physics/tri_tri_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/mesh_mesh_tests: build/libheadless.a tests/physics/mesh_mesh_tests.c | build
+	$(CC) $(CFLAGS) tests/physics/mesh_mesh_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_depenetrate_tests: build/libheadless.a tests/editor/snap_depenetrate_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_depenetrate_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_mesh_retain_convex_tests: build/libheadless.a tests/editor/snap_mesh_retain_convex_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_mesh_retain_convex_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/collision_mesh_tests: build/libheadless.a tests/editor/collision_mesh_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/collision_mesh_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/collision_mesh_asset_tests: build/libheadless.a tests/asset/collision_mesh_asset_tests.c | build
+	$(CC) $(CFLAGS) tests/asset/collision_mesh_asset_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/asset_browser_tests: build/libheadless.a tests/editor/asset_browser_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/asset_browser_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/asset_load_tests: build/libheadless.a tests/editor/asset_load_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/asset_load_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/skeleton_registry_tests: build/libheadless.a tests/editor/skeleton_registry_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/skeleton_registry_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/vm_cache_tests: build/libheadless.a tests/editor/vm_cache_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/vm_cache_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/entity_json_tests: build/libheadless.a tests/editor/entity_json_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/entity_json_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tools/scene_editor_main.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:

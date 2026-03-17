@@ -15,13 +15,17 @@
 #include "ferrum/editor/scene/scene_cmd.h"
 #include "ferrum/editor/scene/scene_connection.h"
 #include "ferrum/editor/scene/scene_sync.h"
+#include "ferrum/editor/scene/scene_asset_load.h"
 #include "ferrum/editor/ctrl_cmd_defs.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_entity_json.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/editor/json_parse.h"
+#include "ferrum/entity/entity_attrs.h"
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
+#include "ferrum/editor/panels/asset_browser.h"
 #include "ferrum/renderer/video_capture.h"
 
 #include <SDL2/SDL.h>
@@ -52,28 +56,7 @@ static uint32_t s_delete_tombstone_count;
 /* Static helpers                                                            */
 /* ------------------------------------------------------------------------ */
 
-/**
- * @brief Parse a vec3 JSON array into a float[3].
- *
- * Reads up to 3 numeric elements from a JSON array value into the
- * output float array. Elements that are missing or non-numeric are
- * left unchanged.
- *
- * @param arr  JSON value of type JSON_ARRAY (may be NULL).
- * @param out  Output float array (must have at least 3 elements).
- */
-static void parse_vec3(const json_value_t *arr, float out[3])
-{
-    if (!arr || arr->type != JSON_ARRAY) {
-        return;
-    }
-    for (int i = 0; i < 3 && (uint32_t)i < arr->array.count; i++) {
-        const json_value_t *elem = json_array_get(arr, (uint32_t)i);
-        if (elem && elem->type == JSON_NUMBER) {
-            out[i] = (float)elem->number;
-        }
-    }
-}
+/* parse_vec3 removed — shared parser (edit_entity_json_parse) handles all fields. */
 
 /**
  * @brief Process a list_entities response and rebuild the local entity store.
@@ -95,24 +78,16 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         return;
     }
 
-    /* Restore each entity from the server's list.
-     * Clearing is handled by the caller for paginated responses,
-     * or done here for legacy plain-array responses. */
+    /* Restore each entity from the server's list using the shared parser. */
     for (uint32_t i = 0; i < result->array.count; i++) {
         const json_value_t *item = json_array_get(result, i);
-        if (!item || item->type != JSON_OBJECT) {
-            continue;
-        }
+        if (!item || item->type != JSON_OBJECT) continue;
 
-        /* Extract entity ID (required). */
         const json_value_t *id_val = json_object_get(item, "id");
-        if (!id_val || id_val->type != JSON_NUMBER) {
-            continue;
-        }
+        if (!id_val || id_val->type != JSON_NUMBER) continue;
         uint32_t eid = (uint32_t)id_val->number;
 
-        /* Skip tombstoned entities — recently confirmed-deleted but
-         * appearing in a stale entity list response. */
+        /* Skip tombstoned entities. */
         bool tombstoned = false;
         for (uint32_t ti = 0; ti < s_delete_tombstone_count; ti++) {
             if (s_delete_tombstones[ti] == eid) {
@@ -122,82 +97,20 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         }
         if (tombstoned) continue;
 
-        /* Build a snapshot with default values. */
+        /* Parse all fields using shared deserializer. */
         edit_entity_t snapshot;
-        memset(&snapshot, 0, sizeof(snapshot));
-        snapshot.active = true;
-        snapshot.scale[0] = 1.0f;
-        snapshot.scale[1] = 1.0f;
-        snapshot.scale[2] = 1.0f;
-        snapshot.orientation = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-        snapshot.body_index = UINT32_MAX;
+        edit_entity_json_parse(item, &snapshot);
 
-        /* Parse type name into type ID. */
-        const json_value_t *type_val = json_object_get(item, "type");
-        if (type_val && type_val->type == JSON_STRING) {
-            /* json_string_copy gives us a null-terminated copy for lookup. */
-            char type_name[32];
-            memset(type_name, 0, sizeof(type_name));
-            json_string_copy(type_val, type_name, sizeof(type_name));
-            uint32_t type_id = edit_entity_type_by_name(type_name);
-            snapshot.type = (type_id != UINT32_MAX) ? type_id
-                                                    : EDIT_ENTITY_TYPE_BOX;
-        }
-
-        /* Parse name. */
-        const json_value_t *name_val = json_object_get(item, "name");
-        if (name_val && name_val->type == JSON_STRING) {
-            json_string_copy(name_val, snapshot.name, sizeof(snapshot.name));
-        }
-
-        /* Parse position. */
-        const json_value_t *pos_val = json_object_get(item, "pos");
-        parse_vec3(pos_val, snapshot.pos);
-
-        /* Parse orientation quaternion (xyzw). */
-        const json_value_t *orient_val = json_object_get(item, "orient");
-        if (orient_val && orient_val->type == JSON_ARRAY &&
-            orient_val->array.count >= 4) {
-            snapshot.orientation.x = (float)orient_val->array.items[0].number;
-            snapshot.orientation.y = (float)orient_val->array.items[1].number;
-            snapshot.orientation.z = (float)orient_val->array.items[2].number;
-            snapshot.orientation.w = (float)orient_val->array.items[3].number;
-            snapshot.orientation = quat_normalize_safe(
-                snapshot.orientation, 1e-8f);
-        }
-
-        /* Derive euler cache from authoritative quaternion.
-         * Canonicalize w >= 0 for consistent euler branches. */
-        {
-            static const float RAD_TO_DEG = 180.0f / 3.14159265358979323846f;
-            quat_t cq = snapshot.orientation;
-            if (cq.w < 0.0f) { cq.x = -cq.x; cq.y = -cq.y; cq.z = -cq.z; cq.w = -cq.w; }
-            quat_to_euler_yxz(cq,
-                               &snapshot.rot[0], &snapshot.rot[1],
-                               &snapshot.rot[2]);
-            snapshot.rot[0] *= RAD_TO_DEG;
-            snapshot.rot[1] *= RAD_TO_DEG;
-            snapshot.rot[2] *= RAD_TO_DEG;
-        }
-
-        /* Parse scale (overwrite the 1,1,1 defaults if present). */
-        const json_value_t *scale_val = json_object_get(item, "scale");
-        parse_vec3(scale_val, snapshot.scale);
-
-        /* Preserve pending_delete flag if the entity is already marked
-         * for deletion locally — the server hasn't processed the delete
-         * yet, so the entity still appears in list responses. */
+        /* Preserve pending_delete from local state. */
         const edit_entity_t *existing = edit_entity_store_get(&ed->entities, eid);
         if (existing && existing->pending_delete) {
             snapshot.pending_delete = true;
         }
 
-        /* Stamp with current refresh generation for stale detection. */
+        /* Stamp with current refresh generation. */
         snapshot.refresh_gen = ed->entity_refresh_gen;
 
-        /* Restore the entity at the server-assigned ID slot. If the
-         * entity is already active, update it in place so server-
-         * authoritative state (e.g. scale after clone) wins. */
+        /* Restore or update. */
         if (!edit_entity_store_restore(&ed->entities, eid, &snapshot)) {
             edit_entity_t *existing_mut =
                 edit_entity_store_get_mut(&ed->entities, eid);
@@ -207,6 +120,21 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
                 existing_mut->active = true;
                 if (was_pending) {
                     existing_mut->pending_delete = true;
+                }
+            }
+        }
+
+        /* Trigger mesh load for entities with mesh_path attribute. */
+        uint8_t attr_type = 0, attr_size = 0;
+        edit_entity_t *ent_mut = edit_entity_store_get_mut(&ed->entities, eid);
+        if (ent_mut) {
+            const void *mp = entity_attrs_get(&ent_mut->attrs,
+                                               SCRIPT_KEY_MESH_PATH,
+                                               &attr_type, &attr_size);
+            if (mp && attr_type == SCRIPT_ATTR_STR) {
+                const char *mesh_path = (const char *)mp;
+                if (mesh_path[0] != '\0') {
+                    scene_load_entity_mesh(ed, eid, mesh_path);
                 }
             }
         }
@@ -613,6 +541,30 @@ static void dispatch_tui_command(scene_editor_t *ed)
             snprintf(msg, sizeof(msg), "Scale snap: %s",
                      sn->enabled[SNAP_SCALE] ? "ON" : "OFF");
             scene_ui_tui_log_success(&ed->ui, msg);
+        } else if (strncmp(rest, "target", 6) == 0) {
+            const char *targ = rest + 6;
+            while (*targ == ' ') targ++;
+            if (*targ == '\0') {
+                /* Show current snap target mode. */
+                const char *names[] = {"face", "vertex", "surface"};
+                int idx = (int)ed->snap_target;
+                if (idx < 0 || idx > 2) idx = 0;
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Snap target: %s", names[idx]);
+                scene_ui_tui_log(&ed->ui, msg);
+            } else if (strcmp(targ, "face") == 0) {
+                ed->snap_target = SNAP_TARGET_FACE;
+                scene_ui_tui_log_success(&ed->ui, "Snap target: face");
+            } else if (strcmp(targ, "vertex") == 0) {
+                ed->snap_target = SNAP_TARGET_VERTEX;
+                scene_ui_tui_log_success(&ed->ui, "Snap target: vertex");
+            } else if (strcmp(targ, "surface") == 0) {
+                ed->snap_target = SNAP_TARGET_SURFACE;
+                scene_ui_tui_log_success(&ed->ui, "Snap target: surface");
+            } else {
+                scene_ui_tui_log_error(&ed->ui,
+                    "Usage: snap target [face|vertex|surface]");
+            }
         } else if (strncmp(rest, "grid ", 5) == 0) {
             /* snap grid <type> <value> OR snap grid <value> */
             const char *args = rest + 5;
@@ -653,7 +605,7 @@ static void dispatch_tui_command(scene_editor_t *ed)
             }
         } else {
             scene_ui_tui_log_error(&ed->ui,
-                "Usage: snap [on|off|pos|rot|scale|grid <type> <value>]");
+                "Usage: snap [on|off|pos|rot|scale|grid|target] ...");
         }
         return;
     }
@@ -800,6 +752,8 @@ void scene_frame_pump(struct scene_editor *ed)
                 }
                 reconcile_pending_deletes(ed);
                 s_delete_tombstone_count = 0;
+                /* Load pending FVMA meshes for MESH entities. */
+                scene_load_pending_meshes(ed);
                 continue;
             }
 
@@ -832,6 +786,8 @@ void scene_frame_pump(struct scene_editor *ed)
                             if (received >= total) {
                                 reconcile_pending_deletes(ed);
                                 s_delete_tombstone_count = 0;
+                                /* Load pending FVMA meshes. */
+                                scene_load_pending_meshes(ed);
                             }
                         }
                         continue;
@@ -870,6 +826,8 @@ void scene_frame_pump(struct scene_editor *ed)
                         }
                         reconcile_pending_deletes(ed);
                         s_delete_tombstone_count = 0;
+                        /* Load pending FVMA meshes. */
+                        scene_load_pending_meshes(ed);
                     }
 
                     if (received < total) {
@@ -933,6 +891,8 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
     if (ed->connection.state != SCENE_CONN_CONNECTED) {
         switch (ed->ui.action) {
         case UI_ACTION_TUI_COMMAND:
+        case UI_ACTION_ASSET_SPAWN:
+        case UI_ACTION_ASSET_TOGGLE_SECTION:
         case UI_ACTION_MODE_NONE:
         case UI_ACTION_MODE_TRANSLATE:
         case UI_ACTION_MODE_ROTATE:
@@ -1250,6 +1210,17 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
 
     case UI_ACTION_TUI_COMMAND:
         dispatch_tui_command(ed);
+        break;
+
+    case UI_ACTION_ASSET_SPAWN:
+        /* Asset browser spawn: command is already in tui_cmd. */
+        dispatch_tui_command(ed);
+        break;
+
+    case UI_ACTION_ASSET_TOGGLE_SECTION:
+        /* Toggle asset browser section collapse (local-only, no server). */
+        asset_browser_toggle_section(&ed->asset_browser,
+                                       ed->ui.asset_browser_toggle_target);
         break;
 
     case UI_ACTION_NONE:

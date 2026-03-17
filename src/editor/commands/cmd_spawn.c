@@ -120,6 +120,22 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
         }
     }
 
+    /* Store mesh_path attribute if provided (for MESH entities). */
+    if (args && type == EDIT_ENTITY_TYPE_MESH) {
+        const json_value_t *mp_val = json_object_get(args, "mesh_path");
+        if (mp_val && mp_val->type == JSON_STRING &&
+            mp_val->string.len > 0) {
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            char mp[256];
+            uint32_t mplen = mp_val->string.len;
+            if (mplen >= sizeof(mp)) mplen = sizeof(mp) - 1;
+            memcpy(mp, mp_val->string.ptr, mplen);
+            mp[mplen] = '\0';
+            entity_attrs_set(&e->attrs, SCRIPT_KEY_MESH_PATH,
+                             SCRIPT_ATTR_STR, mp, (uint16_t)(mplen + 1));
+        }
+    }
+
     /* Bridge: notify physics engine about the new entity. */
     if (ctx->bridge && ctx->bridge->on_spawn) {
         const edit_entity_t *ent = edit_entity_store_get(ctx->entities, eid);

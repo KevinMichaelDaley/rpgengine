@@ -9,6 +9,7 @@
  */
 
 #include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
+#include "ferrum/editor/edit_entity.h"
 #include <string.h>
 
 void viewport_state_init(viewport_state_t *state) {
@@ -21,6 +22,8 @@ void viewport_state_init(viewport_state_t *state) {
     state->cursor_orientation = (quat_t){0, 0, 0, 1};
     state->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
     state->box_selecting = false;
+    state->per_object_gizmo = false;
+    state->per_object_drag_entity = EDIT_ENTITY_INVALID_ID;
     state->active = true;
     state->fbo_valid = false;
 }

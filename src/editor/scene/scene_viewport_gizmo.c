@@ -68,19 +68,35 @@
  *
  * Uses the projection matrix to extract the effective FOV so the
  * renderer doesn't need the camera struct directly.
+ *
+ * For perspective: scale = dist * tan(fov/2) * fraction * 2.
+ * For orthographic: scale = (view_height/2) * fraction * 2,
+ * where view_height/2 = 1/proj[5] (orthographic proj[5] = 2/height).
+ *
+ * Orthographic is detected by proj[15] == 1 (perspective has proj[15] == 0).
  */
 static float compute_gizmo_scale(const vec3_t *gizmo_pos,
                                   const vec3_t *eye_pos,
                                   const mat4_t *proj) {
-    float dx = gizmo_pos->x - eye_pos->x;
-    float dy = gizmo_pos->y - eye_pos->y;
-    float dz = gizmo_pos->z - eye_pos->z;
-    float dist = sqrtf(dx * dx + dy * dy + dz * dz);
-    /* Extract tan(fov/2) from the projection matrix:
-     * proj[5] = 1 / tan(fov_y / 2)  for a standard perspective matrix. */
-    float inv_tan = proj->m[5];
-    float half_tan = (inv_tan > 0.001f) ? 1.0f / inv_tan : 1.0f;
-    float scale = dist * half_tan * GIZMO_SCREEN_FRACTION * 2.0f;
+    float scale;
+    bool is_ortho = (proj->m[15] > 0.5f);
+
+    if (is_ortho) {
+        /* Orthographic: proj[5] = 2 / view_height, so
+         * half_height = 1 / proj[5]. Scale is independent of distance. */
+        float inv_proj5 = (proj->m[5] > 0.001f) ? 1.0f / proj->m[5] : 1.0f;
+        scale = inv_proj5 * GIZMO_SCREEN_FRACTION * 2.0f;
+    } else {
+        /* Perspective: proj[5] = 1 / tan(fov_y / 2). */
+        float dx = gizmo_pos->x - eye_pos->x;
+        float dy = gizmo_pos->y - eye_pos->y;
+        float dz = gizmo_pos->z - eye_pos->z;
+        float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        float inv_tan = proj->m[5];
+        float half_tan = (inv_tan > 0.001f) ? 1.0f / inv_tan : 1.0f;
+        scale = dist * half_tan * GIZMO_SCREEN_FRACTION * 2.0f;
+    }
+
     if (scale < 0.3f) scale = 0.3f;
     return scale;
 }

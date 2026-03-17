@@ -199,6 +199,7 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
      * "spawn box 0 5 0 0 90 0 2 2 2"         → + rot + scale=[2,2,2]
      * "spawn box myname 0 5 0 0 90 0 2 2 2"  → name + pos + rot + scale */
     char *name_token = NULL;
+    char *mesh_path_token = NULL;
     if (strcmp(wire_name, "spawn") == 0) {
         /* spawn requires at least a type argument. */
         if (token_count < 2) return 0;
@@ -217,10 +218,17 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         if (!valid_type) return 0;
     }
     if (strcmp(wire_name, "spawn") == 0 && token_count >= 3) {
-        /* tokens[1]=type, check if tokens[2] is NOT a number → it's a name. */
+        /* tokens[1]=type, check if tokens[2] is NOT a number → it's a name
+         * or mesh_path.  For mesh type, a token containing '.' is a mesh_path
+         * (e.g., "humanoid.fvma"), not a name. */
         if (!looks_numeric_(tokens[2])) {
-            name_token = tokens[2];
-            /* Shift tokens to remove the name from the arg stream. */
+            if (strcmp(tokens[1], "mesh") == 0 &&
+                strchr(tokens[2], '.') != NULL) {
+                mesh_path_token = tokens[2];
+            } else {
+                name_token = tokens[2];
+            }
+            /* Shift tokens to remove the name/path from the arg stream. */
             for (uint32_t i = 2; i + 1 < token_count; i++) {
                 tokens[i] = tokens[i + 1];
             }
@@ -241,8 +249,9 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         if (num_count > 0 && 2 + num_count < token_count) return 0;
 
         /* If there are tokens after type but none are numeric, and
-         * we didn't extract a name, the args are invalid. */
-        if (token_count > 2 && num_count == 0) return 0;
+         * we didn't extract a name or mesh_path, the args are invalid. */
+        if (token_count > 2 && num_count == 0 &&
+            !name_token && !mesh_path_token) return 0;
 
         /* Position requires exactly 3, rotation 3 more, scale 3 more.
          * Reject partial groups (1, 2, 4, 5, 7, 8). */
@@ -322,6 +331,35 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
                         tokens[1],
                         (double)px, (double)py, (double)pz);
                 }
+            }
+            /* Inject mesh_path into args if present. */
+            if (mesh_path_token) {
+                size_t alen = strlen(args_buf2);
+                if (alen > 1 && args_buf2[alen - 1] == '}') {
+                    snprintf(args_buf2 + alen - 1,
+                             sizeof(args_buf2) - alen + 1,
+                             ",\"mesh_path\":\"%s\"}", mesh_path_token);
+                }
+            }
+            int n2 = snprintf(out, out_cap,
+                               "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",
+                               cmd_id, wire_name, args_buf2);
+            if (n2 < 0 || (uint32_t)n2 >= out_cap) return 0;
+            return (uint32_t)n2;
+        }
+
+        /* No position args but mesh_path was provided:
+         * "spawn mesh humanoid.fvma" → {"type":"mesh","mesh_path":"humanoid.fvma"} */
+        if (mesh_path_token) {
+            char args_buf2[512];
+            if (name_token) {
+                snprintf(args_buf2, sizeof(args_buf2),
+                    "{\"type\":\"%s\",\"name\":\"%s\",\"mesh_path\":\"%s\"}",
+                    tokens[1], name_token, mesh_path_token);
+            } else {
+                snprintf(args_buf2, sizeof(args_buf2),
+                    "{\"type\":\"%s\",\"mesh_path\":\"%s\"}",
+                    tokens[1], mesh_path_token);
             }
             int n2 = snprintf(out, out_cap,
                                "{\"id\":%u,\"cmd\":\"%s\",\"args\":%s}\n",

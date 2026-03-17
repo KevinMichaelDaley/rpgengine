@@ -36,7 +36,10 @@
 #define DEFAULT_ARENA_SIZE   (4u * 1024u * 1024u) /* 4 MB */
 #define DEFAULT_SERVER_HOST  "127.0.0.1"
 #define DEFAULT_SERVER_PORT  9100
-#define DEFAULT_ENTITY_CAP   4096
+#define DEFAULT_ASSET_DIR    "asset_src"
+/** Default entity capacity (demand-paged via vm_reserve — physical pages
+ * only committed on first touch, so 1M slots is cheap in virtual memory). */
+#define DEFAULT_ENTITY_CAP   (1024u * 1024u)
 
 /* ---- Clay text measurement callback ---- */
 
@@ -86,6 +89,10 @@ static scene_editor_config_t resolve_config(const scene_editor_config_t *cfg) {
     if (!out.server_host) out.server_host = DEFAULT_SERVER_HOST;
     if (out.server_port == 0) out.server_port = DEFAULT_SERVER_PORT;
     if (out.ui_scale <= 0.0f) out.ui_scale = 2.0f;
+    if (!out.asset_dir) {
+        const char *env = getenv("FERRUM_ASSET_DIR");
+        out.asset_dir = env ? env : DEFAULT_ASSET_DIR;
+    }
     return out;
 }
 
@@ -133,9 +140,21 @@ static void build_clay_layout(scene_editor_t *ed, int ww, int wh) {
             if (r.w <= 0 || r.h <= 0) continue;
 
             switch ((panel_id_t)i) {
-            case PANEL_OUTLINER:
-                scene_ui_build_outliner(ed, &r);
+            case PANEL_OUTLINER: {
+                /* Split outliner rect: top 60% entity list, bottom 40% asset browser. */
+                int split_h = (r.h * 3) / 5;
+                if (split_h < PANEL_MIN_SIZE) split_h = r.h;
+                int browser_h = r.h - split_h;
+
+                panel_rect_t outliner_r = {r.x, r.y, r.w, split_h};
+                scene_ui_build_outliner(ed, &outliner_r);
+
+                if (browser_h >= PANEL_MIN_SIZE) {
+                    panel_rect_t browser_r = {r.x, r.y + split_h, r.w, browser_h};
+                    scene_ui_build_asset_browser(ed, &browser_r);
+                }
                 break;
+            }
             case PANEL_VIEWPORT:
                 scene_ui_build_viewport(ed, &r);
                 break;
@@ -423,9 +442,10 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
     /* Initialize viewport 3D renderer (shared resources). */
     {
         viewport_render_config_t vp_cfg = {
-            .initial_width  = ed->config.window_w,
-            .initial_height = ed->config.window_h,
-            .loader         = gl_loader,
+            .initial_width    = ed->config.window_w,
+            .initial_height   = ed->config.window_h,
+            .loader           = gl_loader,
+            .entity_cache_cap = ed->config.entity_cache_cap,
         };
         if (!viewport_render_init(&ed->viewport, &vp_cfg)) {
             fprintf(stderr, "scene_editor: viewport render init failed\n");
@@ -455,6 +475,19 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
         ed->connected = false;
         printf("Could not connect to editor server at %s:%u (running offline)\n",
                ed->config.server_host, ed->config.server_port);
+    }
+
+    /* Initialize asset registry and scan project assets directory. */
+    edit_asset_registry_init(&ed->asset_registry, 1024);
+    edit_asset_registry_scan(&ed->asset_registry, ed->config.asset_dir);
+
+    /* Initialize asset browser and populate from scanned registry. */
+    asset_browser_init(&ed->asset_browser, 512);
+    if (ed->asset_registry.count > 0) {
+        asset_browser_populate_from_registry(
+            &ed->asset_browser,
+            ed->asset_registry.entries,
+            ed->asset_registry.count);
     }
 
     ed->running = true;
@@ -517,6 +550,9 @@ void scene_editor_shutdown(scene_editor_t *ed) {
                    (size_t)ed->ui.delete_cmd_id_cap * sizeof(uint32_t));
         ed->ui.delete_cmd_ids = NULL;
     }
+
+    asset_browser_destroy(&ed->asset_browser);
+    edit_asset_registry_destroy(&ed->asset_registry);
 
     clay_backend_destroy(&ed->clay_be);
     free(ed->clay_mem);

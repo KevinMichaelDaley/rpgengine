@@ -13,12 +13,16 @@
  * The client iterates pages by advancing offset until
  * offset + returned_count >= total.
  *
+ * Entity objects include ALL fields (static + dynamic attrs) via
+ * edit_entity_json_build().
+ *
  * Non-static functions: cmd_list_entities (1).
  */
 
 #include "ferrum/editor/edit_commands.h"
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_entity_json.h"
 #include <regex.h>
 #include <string.h>
 
@@ -26,11 +30,8 @@
 #define LIST_DEFAULT_LIMIT 200
 #define LIST_MAX_LIMIT     500
 
-/** Fields per entity object: id, name, type, pos, orient, scale. */
-#define FIELDS_PER_ENTITY 6
-
-/** Number of vec3 arrays per entity (pos, scale). */
-#define VEC3_ARRAYS 2
+/** Alignment helper. */
+#define ALIGN8(x) (((x) + 7u) & ~(size_t)7u)
 
 /**
  * @brief Check if an entity matches the filter criteria.
@@ -42,18 +43,6 @@ static bool matches_(const edit_entity_t *ent, bool has_pattern,
     if (!has_pattern) return true;
     if (ent->name[0] == '\0') return false;
     return regexec(regex, ent->name, 0, NULL, 0) == 0;
-}
-
-/**
- * @brief Look up type name string from type ID via registry.
- */
-static const char *type_name_(uint32_t type_id) {
-    uint32_t count = 0;
-    const edit_entity_type_info_t *types = edit_entity_type_registry(&count);
-    for (uint32_t i = 0; i < count; i++) {
-        if (types[i].type_id == type_id) return types[i].name;
-    }
-    return "unknown";
 }
 
 bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
@@ -99,47 +88,27 @@ bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
         }
     }
 
-    /* Determine page size (how many entities to include in this response). */
+    /* Determine page size. */
     uint32_t page_count = 0;
     if (req_offset < total_count) {
         page_count = total_count - req_offset;
         if (page_count > req_limit) page_count = req_limit;
     }
 
-    /* Allocate from arena for the page of entities.
-     * Result structure: {"entities":[...], "total":N, "offset":N}
-     * = 1 wrapper object with 3 keys, page_count entity objects,
-     *   each with 6 fields + 3 vec3 arrays. */
-    size_t items_sz = ((page_count * sizeof(json_value_t) + 7) & ~(size_t)7);
-    size_t keys_sz = ((page_count * FIELDS_PER_ENTITY * sizeof(const char *) + 7) & ~(size_t)7);
-    size_t klens_sz = ((page_count * FIELDS_PER_ENTITY * sizeof(uint32_t) + 7) & ~(size_t)7);
-    size_t vals_sz = ((page_count * FIELDS_PER_ENTITY * sizeof(json_value_t) + 7) & ~(size_t)7);
-    size_t vec3_sz = ((page_count * VEC3_ARRAYS * 3 * sizeof(json_value_t) + 7) & ~(size_t)7);
-    size_t quat_sz = ((page_count * 4 * sizeof(json_value_t) + 7) & ~(size_t)7);
-    /* Wrapper object: 3 keys, 3 key_lens, 3 vals. */
-    size_t wrap_keys_sz = ((3 * sizeof(const char *) + 7) & ~(size_t)7);
-    size_t wrap_klens_sz = ((3 * sizeof(uint32_t) + 7) & ~(size_t)7);
-    size_t wrap_vals_sz = ((3 * sizeof(json_value_t) + 7) & ~(size_t)7);
-    size_t total = items_sz + keys_sz + klens_sz + vals_sz + vec3_sz
-                 + quat_sz + wrap_keys_sz + wrap_klens_sz + wrap_vals_sz;
+    /* Allocate items array + wrapper from arena. */
+    size_t items_sz     = ALIGN8(page_count * sizeof(json_value_t));
+    size_t wrap_keys_sz = ALIGN8(3 * sizeof(const char *));
+    size_t wrap_klens_sz = ALIGN8(3 * sizeof(uint32_t));
+    size_t wrap_vals_sz = ALIGN8(3 * sizeof(json_value_t));
+    size_t wrapper_total = items_sz + wrap_keys_sz + wrap_klens_sz + wrap_vals_sz;
 
-    if (arena->used + total > arena->cap) {
+    if (arena->used + wrapper_total > arena->cap) {
         if (has_pattern) regfree(&regex);
         return false;
     }
 
     json_value_t *items = (json_value_t *)(arena->buf + arena->used);
     arena->used += items_sz;
-    const char **all_keys = (const char **)(arena->buf + arena->used);
-    arena->used += keys_sz;
-    uint32_t *all_klens = (uint32_t *)(arena->buf + arena->used);
-    arena->used += klens_sz;
-    json_value_t *all_vals = (json_value_t *)(arena->buf + arena->used);
-    arena->used += vals_sz;
-    json_value_t *vec3_items = (json_value_t *)(arena->buf + arena->used);
-    arena->used += vec3_sz;
-    json_value_t *quat_items = (json_value_t *)(arena->buf + arena->used);
-    arena->used += quat_sz;
     const char **wrap_keys = (const char **)(arena->buf + arena->used);
     arena->used += wrap_keys_sz;
     uint32_t *wrap_klens = (uint32_t *)(arena->buf + arena->used);
@@ -147,89 +116,23 @@ bool cmd_list_entities(edit_dispatch_t *d, const json_value_t *args,
     json_value_t *wrap_vals = (json_value_t *)(arena->buf + arena->used);
     arena->used += wrap_vals_sz;
 
-    /* Static key names for entity fields. */
-    static const char *ent_key_strs[] = {"id", "name", "type", "pos", "orient", "scale"};
-    static const uint32_t ent_key_lens[] = {2, 4, 4, 3, 6, 5};
-
-    /* Build entity objects for this page. */
-    uint32_t idx = 0;       /* index into page items */
-    uint32_t match_idx = 0; /* index among all matching entities */
+    /* Build entity objects for this page using shared serializer. */
+    uint32_t idx = 0;
+    uint32_t match_idx = 0;
     for (uint32_t i = 0; i < store->capacity && idx < page_count; i++) {
         if (!matches_(&store->entities[i], has_pattern, &regex)) continue;
 
-        /* Skip entities before the requested offset. */
         if (match_idx < req_offset) {
             match_idx++;
             continue;
         }
         match_idx++;
 
-        const edit_entity_t *ent = &store->entities[i];
-        const char **keys = &all_keys[idx * FIELDS_PER_ENTITY];
-        uint32_t *klens = &all_klens[idx * FIELDS_PER_ENTITY];
-        json_value_t *vals = &all_vals[idx * FIELDS_PER_ENTITY];
-
-        for (int k = 0; k < FIELDS_PER_ENTITY; k++) {
-            keys[k] = ent_key_strs[k];
-            klens[k] = ent_key_lens[k];
+        if (!edit_entity_json_build(&store->entities[i], i,
+                                     &items[idx], arena)) {
+            if (has_pattern) regfree(&regex);
+            return false;
         }
-
-        vals[0].type = JSON_NUMBER;
-        vals[0].number = (double)i;
-
-        vals[1].type = JSON_STRING;
-        vals[1].string.ptr = ent->name[0] ? ent->name : "";
-        vals[1].string.len = (uint32_t)strlen(vals[1].string.ptr);
-
-        const char *tname = type_name_(ent->type);
-        vals[2].type = JSON_STRING;
-        vals[2].string.ptr = tname;
-        vals[2].string.len = (uint32_t)strlen(tname);
-
-        /* pos (vec3), orient (vec4/quat), scale (vec3). */
-        json_value_t *v3 = &vec3_items[idx * VEC3_ARRAYS * 3];
-
-        /* pos → vals[3] */
-        {
-            json_value_t *elems = &v3[0];
-            for (int c = 0; c < 3; c++) {
-                elems[c].type = JSON_NUMBER;
-                elems[c].number = (double)ent->pos[c];
-            }
-            vals[3].type = JSON_ARRAY;
-            vals[3].array.items = elems;
-            vals[3].array.count = 3;
-        }
-
-        /* orient → vals[4] (quaternion xyzw) */
-        {
-            json_value_t *qe = &quat_items[idx * 4];
-            qe[0].type = JSON_NUMBER; qe[0].number = (double)ent->orientation.x;
-            qe[1].type = JSON_NUMBER; qe[1].number = (double)ent->orientation.y;
-            qe[2].type = JSON_NUMBER; qe[2].number = (double)ent->orientation.z;
-            qe[3].type = JSON_NUMBER; qe[3].number = (double)ent->orientation.w;
-            vals[4].type = JSON_ARRAY;
-            vals[4].array.items = qe;
-            vals[4].array.count = 4;
-        }
-
-        /* scale → vals[5] */
-        {
-            json_value_t *elems = &v3[3];
-            for (int c = 0; c < 3; c++) {
-                elems[c].type = JSON_NUMBER;
-                elems[c].number = (double)ent->scale[c];
-            }
-            vals[5].type = JSON_ARRAY;
-            vals[5].array.items = elems;
-            vals[5].array.count = 3;
-        }
-
-        items[idx].type = JSON_OBJECT;
-        items[idx].object.keys = keys;
-        items[idx].object.key_lens = klens;
-        items[idx].object.vals = vals;
-        items[idx].object.count = FIELDS_PER_ENTITY;
         idx++;
     }
 

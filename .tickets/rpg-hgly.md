@@ -1,6 +1,6 @@
 ---
 id: rpg-hgly
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-13T08:02:25Z

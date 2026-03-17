@@ -25,6 +25,7 @@ struct edit_entity;
 struct edit_physics_ctrl;
 struct json_value;
 struct edit_asset_registry;
+struct edit_skeleton_registry;
 struct mesh_edit;
 struct edit_version_state;
 
@@ -224,6 +225,12 @@ typedef struct edit_cmd_ctx {
 
     /** @brief Asset registry (NULL if no asset directory configured). */
     struct edit_asset_registry *asset_registry;
+
+    /** @brief Skeleton registry (NULL if not initialized). */
+    struct edit_skeleton_registry *skeleton_registry;
+
+    /** @brief Asset root directory path (for resolving relative asset paths). */
+    const char *asset_dir;
 
     /** @brief Mesh editing context (NULL if mesh mode not initialized). */
     struct mesh_edit *mesh;

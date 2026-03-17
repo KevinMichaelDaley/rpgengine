@@ -10,6 +10,7 @@
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include <math.h>
 #include <stddef.h>
+#include <string.h>
 
 /** @brief Gizmo axis arrow length (world units, before scale). */
 static const float ARROW_LENGTH = 1.0f;
@@ -17,8 +18,9 @@ static const float ARROW_LENGTH = 1.0f;
 static const float AXIS_HIT_RADIUS = 0.25f;
 /** @brief Maximum screen-space distance (normalized [0,1] coords) from
  *  cursor to ring outline for a hit. Clicks closer than this threshold
- *  to any ring outline count as a gizmo interaction. */
-static const float RING_HIT_THRESHOLD = 0.08f;
+ *  to any ring outline count as a gizmo interaction.
+ *  Uses the public define from the header for consistency. */
+static const float RING_HIT_THRESHOLD = GIZMO_RING_HIT_THRESHOLD;
 
 /**
  * @brief Test if a ray passes near a line segment from p0 to p1.
@@ -62,6 +64,12 @@ static float ray_segment_distance_(const editor_ray_t *ray,
 }
 
 void gizmo_state_init(gizmo_state_t *gizmo) {
+    /* Zero everything first to catch fields like arc_sign_u/v that
+     * aren't explicitly set below. Without this, stack-allocated
+     * gizmo states (e.g. per-object gizmo temps) would have garbage
+     * in the arc sign arrays, causing rendering corruption and
+     * inverted rotation directions. */
+    memset(gizmo, 0, sizeof(*gizmo));
     gizmo->mode = GIZMO_MODE_TRANSLATE;
     gizmo->active_axis = GIZMO_AXIS_NONE;
     gizmo->basis = TRANSFORM_BASIS_WORLD;
@@ -334,12 +342,12 @@ static float screen_point_distance_(const mat4_t *vp, vec3_t point,
 }
 
 /** Screen-space hit threshold for axis lines (normalized [0,1] coords).
- *  Same as RING_HIT_THRESHOLD for consistent feel across all gizmo modes. */
-static const float AXIS_SCREEN_THRESHOLD = 0.04f;
+ *  Generous threshold for easy selection on viewports of any aspect ratio. */
+static const float AXIS_SCREEN_THRESHOLD = 0.06f;
 
 /** Screen-space hit threshold for axis tips (slightly larger for easier
  *  clicking on arrow heads and scale cubes). */
-static const float TIP_SCREEN_THRESHOLD = 0.06f;
+static const float TIP_SCREEN_THRESHOLD = 0.09f;
 
 gizmo_axis_t gizmo_hit_test(const gizmo_state_t *gizmo,
                               const struct editor_ray *ray,

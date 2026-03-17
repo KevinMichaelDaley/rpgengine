@@ -32,12 +32,13 @@ extern "C" {
 /** Asset type classification. */
 typedef enum edit_asset_type {
     EDIT_ASSET_ANY      = 0, /**< Wildcard for queries (not stored). */
-    EDIT_ASSET_MESH     = 1, /**< .glb, .obj mesh files. */
+    EDIT_ASSET_MESH     = 1, /**< .glb, .obj, .fvma mesh files. */
     EDIT_ASSET_TEXTURE  = 2, /**< .png, .ktx2, .jpg texture files. */
-    EDIT_ASSET_MATERIAL = 3, /**< .mat material definition files. */
+    EDIT_ASSET_MATERIAL = 3, /**< .mat, .fmat material definition files. */
     EDIT_ASSET_PREFAB   = 4, /**< .prefab entity template files. */
     EDIT_ASSET_SCRIPT   = 5, /**< .wren, .ed script files. */
     EDIT_ASSET_UNKNOWN  = 6, /**< Unrecognized extension. */
+    EDIT_ASSET_SKELETON = 7, /**< .fskel skeleton definition files. */
 } edit_asset_type_t;
 
 /* ------------------------------------------------------------------------ */

@@ -49,7 +49,7 @@ extern "C" {
 #define EDIT_MATERIAL_SLOT_ROUGHNESS 2
 #define EDIT_MATERIAL_SLOT_METALLIC  3
 #define EDIT_MATERIAL_SLOT_EMISSIVE  4
-#define EDIT_MATERIAL_SLOT_COUNT     5
+#define EDIT_MATERIAL_SLOT_COUNT     64
 
 /* ------------------------------------------------------------------------ */
 /* Types                                                                     */

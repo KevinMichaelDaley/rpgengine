@@ -29,14 +29,16 @@
 /**
  * @brief Sentinel mesh handle indicating "no mesh loaded".
  *
- * Uses UINT32_MAX as the index, which is always out of range for any
- * reasonable mesh registry capacity.
+ * Zero-initialized: {index=0, generation=0}. This is safe because
+ * mesh_registry_init sets all slot generations to 1, so generation 0
+ * is never valid. This allows vm_reserve'd (zero-filled) cache arrays
+ * to serve as "no mesh" without explicit initialization.
  */
-static const mesh_handle_t MESH_HANDLE_NONE = {UINT32_MAX, 0};
+static const mesh_handle_t MESH_HANDLE_NONE = {0, 0};
 
 /** Check if a handle is the "none" sentinel. */
 static bool is_handle_none_(mesh_handle_t h) {
-    return h.index == UINT32_MAX;
+    return h.index == 0 && h.generation == 0;
 }
 
 /* ---- Public API ---- */
@@ -53,9 +55,7 @@ bool viewport_render_load_entity_mesh(viewport_render_state_t *state,
     /* Deserialize FVMA binary into an editable mesh slot. */
     mesh_slot_t slot;
     memset(&slot, 0, sizeof(slot));
-    if (!mesh_vao_deserialize(fvma_data, fvma_size, &slot)) {
-        return false;
-    }
+    if (!mesh_vao_deserialize(fvma_data, fvma_size, &slot)) return false;
 
     /* Build static mesh creation descriptor from the deserialized slot. */
     static_mesh_create_info_t info;
@@ -74,12 +74,13 @@ bool viewport_render_load_entity_mesh(viewport_render_state_t *state,
     mesh_handle_t handle;
     int rc = mesh_registry_insert_static(&state->meshes, &info, &handle);
 
+    /* Retain CPU-side geometry for surface snap raycasting. */
+    snap_mesh_retain_from_slot(&state->snap_meshes, entity_id, &slot);
+
     /* Free the temporary deserialized slot (data is now on the GPU). */
     mesh_slot_destroy(&slot);
 
-    if (rc != MESH_REGISTRY_OK) {
-        return false;
-    }
+    if (rc != MESH_REGISTRY_OK) return false;
 
     /* Unload any previously loaded mesh for this entity. */
     mesh_handle_t old = state->entity_mesh_cache[entity_id];
@@ -107,6 +108,9 @@ void viewport_render_unload_entity_mesh(viewport_render_state_t *state,
         }
         state->entity_mesh_cache[entity_id] = MESH_HANDLE_NONE;
     }
+
+    /* Remove CPU-side snap mesh data. */
+    snap_mesh_cache_remove(&state->snap_meshes, entity_id);
 }
 
 const static_mesh_t *viewport_render_get_entity_mesh(

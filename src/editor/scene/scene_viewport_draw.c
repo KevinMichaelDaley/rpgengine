@@ -30,6 +30,7 @@
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/viewport/viewport_shading.h"
+#include "ferrum/editor/scene/scene_gizmo_per_object.h"
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/math/mat4.h"
@@ -400,14 +401,24 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                                    &view, &proj, &eye_pos,
                                    vs->shading_mode);
 
+    /* Draw collision wireframe overlay (if toggled on). */
+    if (vs->show_collision_wireframe) {
+        viewport_render_draw_collision_overlay(vp, &ed->entities,
+                                                &view, &proj);
+    }
+
     /* Draw selection outlines. */
     viewport_render_draw_selection_outline(vp, &ed->entities, &ed->selection,
                                             ed->active_object_id, &view, &proj,
                                             &eye_pos, vs->camera.fov, fbo_h,
                                             vs->shading_mode);
 
-    /* Update gizmo position and orientation for this viewport. */
-    if (edit_selection_count(&ed->selection) > 0) {
+    /* Update gizmo position and orientation for this viewport.
+     * Skip position update in per-object mode during drag — the
+     * picked entity's position was set at drag start and must remain
+     * stable for delta computation. */
+    if (edit_selection_count(&ed->selection) > 0 &&
+        !(vs->per_object_gizmo && vs->gizmo.dragging)) {
         if (vs->gizmo.basis == TRANSFORM_BASIS_CURSOR) {
             vs->gizmo.position = vs->cursor_3d;
         } else {
@@ -459,8 +470,15 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
     /* Draw transform gizmo (only in focused viewport). */
     bool is_focused = (vs == &ed->viewports[ed->vp_bsp.focused_viewport]);
     if (is_focused) {
-        viewport_render_draw_gizmo(vp, &vs->gizmo, &ed->selection,
-                                   &view, &proj);
+        if (vs->per_object_gizmo) {
+            /* Per-object mode: one gizmo per selected entity. */
+            scene_gizmo_per_object_draw(vp, &ed->entities, &ed->selection,
+                                         vs->gizmo.mode, vs->gizmo.basis,
+                                         &view, &proj, &eye_pos);
+        } else {
+            viewport_render_draw_gizmo(vp, &vs->gizmo, &ed->selection,
+                                       &view, &proj);
+        }
     }
 
     /* Draw 3D cursor crosshair. */

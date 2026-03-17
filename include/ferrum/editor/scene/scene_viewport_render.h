@@ -38,6 +38,7 @@ extern "C" {
 #include "ferrum/renderer/vao.h"
 #include "ferrum/renderer/vbo.h"
 #include "ferrum/editor/viewport/viewport_shading.h"
+#include "ferrum/editor/viewport/snap/snap_mesh_cache.h"
 
 /* Forward declarations. */
 struct scene_editor;
@@ -51,9 +52,10 @@ struct gizmo_state;
  * @brief Configuration for viewport renderer initialization.
  */
 typedef struct viewport_render_config {
-    int         initial_width;  /**< Initial FBO width (pixels). */
-    int         initial_height; /**< Initial FBO height (pixels). */
-    gl_loader_t loader;         /**< GL function loader. */
+    int         initial_width;   /**< Initial FBO width (pixels). */
+    int         initial_height;  /**< Initial FBO height (pixels). */
+    gl_loader_t loader;          /**< GL function loader. */
+    uint32_t    entity_cache_cap;/**< Entity mesh cache capacity (0 = default 1M). */
 } viewport_render_config_t;
 
 /* ---- State ---- */
@@ -117,6 +119,15 @@ typedef struct viewport_render_state {
      * Used by MESH type entities to look up their loaded FVMA geometry. */
     mesh_handle_t *entity_mesh_cache;      /**< entity_id → mesh_handle. */
     uint32_t       entity_mesh_cache_cap;  /**< Cache capacity. */
+
+    /* Collision mesh cache: maps entity_id → mesh_handle for collision geo.
+     * Parallel to entity_mesh_cache. When loaded, the collision mesh
+     * overrides the render mesh for snapping and physics. */
+    mesh_handle_t *collision_mesh_cache;     /**< entity_id → collision mesh. */
+    uint32_t       collision_mesh_cache_cap; /**< Collision cache capacity. */
+
+    /* CPU-side geometry cache for surface snap raycasting. */
+    snap_mesh_cache_t snap_meshes;  /**< entity_id → CPU vertex/index data. */
 
     /* Editor camera. */
     editor_camera_t camera;  /**< Orbit camera state. */
@@ -288,6 +299,71 @@ const static_mesh_t *viewport_render_get_primitive_mesh(
  * @return true on success, false if primitive creation fails.
  */
 bool viewport_render_init_primitives(viewport_render_state_t *state);
+
+/* ---- Collision mesh (scene_viewport_collision_mesh.c) ---- */
+
+/**
+ * @brief Load FVMA collision mesh data for an entity.
+ *
+ * Stores the resulting mesh handle in the collision mesh cache. Also
+ * updates the snap mesh cache to use collision geometry for snapping.
+ *
+ * @param state      Viewport render state (non-NULL, must be initialized).
+ * @param entity_id  Entity ID to associate the collision mesh with.
+ * @param fvma_data  FVMA binary data (non-NULL).
+ * @param fvma_size  FVMA data size in bytes (> 0).
+ * @return true on success, false on invalid args or load failure.
+ */
+bool viewport_render_load_collision_mesh(viewport_render_state_t *state,
+                                          uint32_t entity_id,
+                                          const uint8_t *fvma_data,
+                                          size_t fvma_size);
+
+/**
+ * @brief Unload an entity's collision mesh from the viewport mesh registry.
+ *
+ * Removes the collision mesh from the registry and clears the cache entry.
+ * Also removes the snap cache entry (caller should re-load render mesh snap
+ * data if needed).
+ *
+ * @param state      Viewport render state (NULL-safe).
+ * @param entity_id  Entity ID to unload.
+ */
+void viewport_render_unload_collision_mesh(viewport_render_state_t *state,
+                                            uint32_t entity_id);
+
+/**
+ * @brief Look up a loaded collision mesh for an entity.
+ *
+ * @param state      Viewport render state (NULL-safe).
+ * @param entity_id  Entity ID to look up.
+ * @return Pointer to the static mesh, or NULL if not loaded.
+ */
+const static_mesh_t *viewport_render_get_collision_mesh(
+    const viewport_render_state_t *state, uint32_t entity_id);
+
+/* ---- Collision overlay (scene_viewport_collision_overlay.c) ---- */
+
+/**
+ * @brief Draw green wireframe overlay showing collision geometry.
+ *
+ * For each active, visible entity:
+ *   - MESH: draws collision mesh if loaded, else render mesh
+ *   - BOX/SPHERE/CAPSULE: draws primitive mesh wireframe
+ *   - HALFSPACE/MARKER: skipped
+ *
+ * Uses flat_shader with glPolygonMode(GL_LINE), depth test disabled,
+ * depth write disabled. Green color for visual distinction.
+ *
+ * @param state      Render state (non-NULL).
+ * @param entities   Entity store (non-NULL).
+ * @param view       View matrix.
+ * @param proj       Projection matrix.
+ */
+void viewport_render_draw_collision_overlay(viewport_render_state_t *state,
+                                             const struct edit_entity_store *entities,
+                                             const struct mat4 *view,
+                                             const struct mat4 *proj);
 
 /* ---- Gizmo drawing (scene_viewport_gizmo.c) ---- */
 

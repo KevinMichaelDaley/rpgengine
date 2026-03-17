@@ -24,6 +24,7 @@ extern "C" {
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_io_thread.h"
 #include "ferrum/editor/edit_selection.h"
+#include "ferrum/editor/edit_skeleton_registry.h"
 #include "ferrum/editor/edit_undo.h"
 #include "ferrum/editor/mesh/mesh_edit.h"
 
@@ -43,6 +44,7 @@ typedef struct editor_ctx_config {
     uint32_t ring_capacity;     /**< Ring buffer slots (0 = 1024). */
     uint32_t ring_payload_max;  /**< Max payload per ring slot (0 = 8192). */
     uint32_t dispatch_arena;    /**< Dispatch arena size (0 = 32768). */
+    const char *asset_dir;      /**< Asset root directory (NULL = "asset_src"). */
 } editor_ctx_config_t;
 
 /* ------------------------------------------------------------------------ */
@@ -64,6 +66,7 @@ typedef struct editor_ctx {
     edit_entity_store_t  entities;      /**< Entity storage. */
     mesh_edit_t          mesh;          /**< Mesh editing subsystem. */
     edit_cmd_ctx_t       cmd_ctx;       /**< Handler context (pointers into above). */
+    edit_skeleton_registry_t skeleton_registry; /**< Loaded skeleton storage. */
 
     /** @brief Entity version tracking for delta sync (heap-allocated). */
     struct edit_version_state *version_state;

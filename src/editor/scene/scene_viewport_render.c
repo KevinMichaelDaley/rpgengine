@@ -20,12 +20,14 @@
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/vao_attribute.h"
 
+#include "ferrum/memory/vm_alloc.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/** Default entity mesh cache capacity. */
-#define ENTITY_MESH_CACHE_CAP 4096
+/** Default entity mesh cache capacity (1M entities, demand-paged). */
+#define DEFAULT_ENTITY_CACHE_CAP (1024u * 1024u)
 
 /* ---- GL proc loader macro (matches clay_backend.c pattern) ---- */
 
@@ -511,7 +513,7 @@ bool viewport_render_init(viewport_render_state_t *state,
 
     /* Initialize mesh registry for dynamic/loaded meshes.
      * Capacity 256 covers typical editor scenes. */
-    if (mesh_registry_init(&state->meshes, 256, &config->loader) != 0) {
+    if (mesh_registry_init(&state->meshes, 256, &state->loader) != 0) {
         fprintf(stderr, "viewport_render: mesh registry init failed\n");
         vao_destroy(&state->grid_vao);
         vbo_destroy(&state->grid_vbo);
@@ -522,12 +524,20 @@ bool viewport_render_init(viewport_render_state_t *state,
         return false;
     }
 
-    /* Allocate entity mesh cache (maps entity_id → mesh_handle).
-     * Initialized with UINT32_MAX index as sentinel ("no mesh"). */
-    state->entity_mesh_cache = malloc(ENTITY_MESH_CACHE_CAP
-                                       * sizeof(mesh_handle_t));
+    /* Resolve entity cache capacity (config → default). */
+    uint32_t cache_cap = config->entity_cache_cap > 0
+                         ? config->entity_cache_cap
+                         : DEFAULT_ENTITY_CACHE_CAP;
+    size_t cache_bytes = (size_t)cache_cap * sizeof(mesh_handle_t);
+
+    /* Reserve entity mesh cache via demand-paged virtual memory.
+     * Physical pages are committed only on first write, so 1M+ slots
+     * cost almost nothing until actually used. Zero-filled memory
+     * serves as "no mesh" sentinel since mesh_registry starts
+     * generations at 1, making {0,0} always invalid. */
+    state->entity_mesh_cache = (mesh_handle_t *)vm_reserve(cache_bytes);
     if (!state->entity_mesh_cache) {
-        fprintf(stderr, "viewport_render: entity mesh cache alloc failed\n");
+        fprintf(stderr, "viewport_render: entity mesh cache vm_reserve failed\n");
         mesh_registry_destroy(&state->meshes);
         vao_destroy(&state->grid_vao);
         vbo_destroy(&state->grid_vbo);
@@ -537,17 +547,32 @@ bool viewport_render_init(viewport_render_state_t *state,
         destroy_fbo(state);
         return false;
     }
-    state->entity_mesh_cache_cap = ENTITY_MESH_CACHE_CAP;
-    /* Fill with sentinel: index=UINT32_MAX means "no mesh loaded". */
-    for (uint32_t i = 0; i < ENTITY_MESH_CACHE_CAP; ++i) {
-        state->entity_mesh_cache[i].index = UINT32_MAX;
-        state->entity_mesh_cache[i].generation = 0;
+    state->entity_mesh_cache_cap = cache_cap;
+
+    /* Reserve collision mesh cache (parallel, same capacity). */
+    state->collision_mesh_cache = (mesh_handle_t *)vm_reserve(cache_bytes);
+    if (!state->collision_mesh_cache) {
+        fprintf(stderr, "viewport_render: collision mesh cache vm_reserve failed\n");
+        vm_release(state->entity_mesh_cache, cache_bytes);
+        mesh_registry_destroy(&state->meshes);
+        vao_destroy(&state->grid_vao);
+        vbo_destroy(&state->grid_vbo);
+        shader_program_destroy(&state->grid_shader);
+        shader_program_destroy(&state->shader);
+        render_pipeline_destroy(&state->pipeline);
+        destroy_fbo(state);
+        return false;
     }
+    state->collision_mesh_cache_cap = cache_cap;
+
+    /* Initialize snap mesh cache for surface snap raycasting. */
+    snap_mesh_cache_init(&state->snap_meshes, cache_cap);
 
     /* Register primitive meshes (box, sphere, capsule, plane). */
     if (!viewport_render_init_primitives(state)) {
         fprintf(stderr, "viewport_render: primitive mesh init failed\n");
-        free(state->entity_mesh_cache);
+        vm_release(state->collision_mesh_cache, cache_bytes);
+        vm_release(state->entity_mesh_cache, cache_bytes);
         mesh_registry_destroy(&state->meshes);
         vao_destroy(&state->overlay_vao);
         vbo_destroy(&state->overlay_vbo);
@@ -573,10 +598,24 @@ bool viewport_render_init(viewport_render_state_t *state,
 void viewport_render_destroy(viewport_render_state_t *state) {
     if (!state || !state->initialized) return;
 
-    /* Free entity mesh cache (meshes themselves freed by registry destroy). */
-    free(state->entity_mesh_cache);
+    /* Free snap mesh cache (CPU-side geometry for surface snap). */
+    snap_mesh_cache_destroy(&state->snap_meshes);
+
+    /* Release entity mesh cache (vm_reserve'd, demand-paged). */
+    if (state->entity_mesh_cache) {
+        vm_release(state->entity_mesh_cache,
+                   (size_t)state->entity_mesh_cache_cap * sizeof(mesh_handle_t));
+    }
     state->entity_mesh_cache = NULL;
     state->entity_mesh_cache_cap = 0;
+
+    /* Release collision mesh cache (vm_reserve'd, demand-paged). */
+    if (state->collision_mesh_cache) {
+        vm_release(state->collision_mesh_cache,
+                   (size_t)state->collision_mesh_cache_cap * sizeof(mesh_handle_t));
+    }
+    state->collision_mesh_cache = NULL;
+    state->collision_mesh_cache_cap = 0;
 
     mesh_registry_destroy(&state->meshes);
 

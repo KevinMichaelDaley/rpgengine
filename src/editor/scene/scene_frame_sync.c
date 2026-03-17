@@ -13,32 +13,28 @@
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_connection.h"
 #include "ferrum/editor/scene/scene_sync.h"
+#include "ferrum/editor/scene/scene_asset_load.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_entity_json.h"
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/json_parse.h"
+#include "ferrum/entity/entity_attrs.h"
 #include "ferrum/math/quat.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* ------------------------------------------------------------------------ */
 /* Static helpers                                                            */
 /* ------------------------------------------------------------------------ */
 
-/** @brief Parse a vec3 JSON array into a float[3]. */
-static void parse_vec3_(const json_value_t *arr, float out[3]) {
-    if (!arr || arr->type != JSON_ARRAY) return;
-    for (int i = 0; i < 3 && (uint32_t)i < arr->array.count; i++) {
-        const json_value_t *elem = json_array_get(arr, (uint32_t)i);
-        if (elem && elem->type == JSON_NUMBER) {
-            out[i] = (float)elem->number;
-        }
-    }
-}
-
 /**
  * @brief Apply a single entity from a sync response to the local store.
  *
- * Creates or updates the entity at the server-assigned ID slot.
+ * Uses the shared edit_entity_json_parse() to deserialize ALL entity
+ * fields from the JSON object, then restores or updates the entity
+ * in the local store. Triggers mesh loading for MESH entities with
+ * a mesh_path attribute.
  */
 static void apply_entity_(scene_editor_t *ed, const json_value_t *item) {
     if (!item || item->type != JSON_OBJECT) return;
@@ -47,68 +43,11 @@ static void apply_entity_(scene_editor_t *ed, const json_value_t *item) {
     if (!id_val || id_val->type != JSON_NUMBER) return;
     uint32_t eid = (uint32_t)id_val->number;
 
-    /* Build snapshot. */
+    /* Parse all fields into a snapshot using shared deserializer. */
     edit_entity_t snapshot;
-    memset(&snapshot, 0, sizeof(snapshot));
-    snapshot.active = true;
-    snapshot.scale[0] = 1.0f;
-    snapshot.scale[1] = 1.0f;
-    snapshot.scale[2] = 1.0f;
-    snapshot.orientation = (quat_t){0.0f, 0.0f, 0.0f, 1.0f};
-    snapshot.body_index = UINT32_MAX;
+    edit_entity_json_parse(item, &snapshot);
 
-    /* Type. */
-    const json_value_t *type_val = json_object_get(item, "type");
-    if (type_val && type_val->type == JSON_STRING) {
-        char type_name[32];
-        memset(type_name, 0, sizeof(type_name));
-        json_string_copy(type_val, type_name, sizeof(type_name));
-        uint32_t type_id = edit_entity_type_by_name(type_name);
-        snapshot.type = (type_id != UINT32_MAX) ? type_id
-                                                : EDIT_ENTITY_TYPE_BOX;
-    }
-
-    /* Name. */
-    const json_value_t *name_val = json_object_get(item, "name");
-    if (name_val && name_val->type == JSON_STRING) {
-        json_string_copy(name_val, snapshot.name, sizeof(snapshot.name));
-    }
-
-    /* Position. */
-    parse_vec3_(json_object_get(item, "pos"), snapshot.pos);
-
-    /* Orientation quaternion. */
-    const json_value_t *orient_val = json_object_get(item, "orient");
-    if (orient_val && orient_val->type == JSON_ARRAY &&
-        orient_val->array.count >= 4) {
-        snapshot.orientation.x = (float)orient_val->array.items[0].number;
-        snapshot.orientation.y = (float)orient_val->array.items[1].number;
-        snapshot.orientation.z = (float)orient_val->array.items[2].number;
-        snapshot.orientation.w = (float)orient_val->array.items[3].number;
-        snapshot.orientation = quat_normalize_safe(
-            snapshot.orientation, 1e-8f);
-    }
-
-    /* Derive euler cache. */
-    {
-        static const float RAD_TO_DEG = 180.0f / 3.14159265358979323846f;
-        quat_t cq = snapshot.orientation;
-        if (cq.w < 0.0f) {
-            cq.x = -cq.x; cq.y = -cq.y;
-            cq.z = -cq.z; cq.w = -cq.w;
-        }
-        quat_to_euler_yxz(cq,
-                           &snapshot.rot[0], &snapshot.rot[1],
-                           &snapshot.rot[2]);
-        snapshot.rot[0] *= RAD_TO_DEG;
-        snapshot.rot[1] *= RAD_TO_DEG;
-        snapshot.rot[2] *= RAD_TO_DEG;
-    }
-
-    /* Scale. */
-    parse_vec3_(json_object_get(item, "scale"), snapshot.scale);
-
-    /* Preserve pending_delete flag. */
+    /* Preserve pending_delete flag from local state. */
     const edit_entity_t *existing = edit_entity_store_get(&ed->entities, eid);
     if (existing && existing->pending_delete) {
         snapshot.pending_delete = true;
@@ -127,6 +66,22 @@ static void apply_entity_(scene_editor_t *ed, const json_value_t *item) {
             existing_mut->active = true;
             if (was_pending) {
                 existing_mut->pending_delete = true;
+            }
+        }
+    }
+
+    /* Trigger mesh load for entities with a mesh_path attribute. */
+    uint8_t attr_type = 0;
+    uint8_t attr_size = 0;
+    edit_entity_t *ent_mut = edit_entity_store_get_mut(&ed->entities, eid);
+    if (ent_mut) {
+        const void *mp = entity_attrs_get(&ent_mut->attrs,
+                                           SCRIPT_KEY_MESH_PATH,
+                                           &attr_type, &attr_size);
+        if (mp && attr_type == SCRIPT_ATTR_STR) {
+            const char *mesh_path = (const char *)mp;
+            if (mesh_path[0] != '\0') {
+                scene_load_entity_mesh(ed, eid, mesh_path);
             }
         }
     }

@@ -26,9 +26,12 @@ int main(int argc, char *argv[]) {
             config.server_port = (uint16_t)atoi(argv[++i]);
         } else if (strcmp(argv[i], "--scale") == 0 && i + 1 < argc) {
             config.ui_scale = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "--asset-dir") == 0 && i + 1 < argc) {
+            config.asset_dir = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
             printf("Usage: %s [--width W] [--height H] "
-                   "[--host HOST] [--port PORT] [--scale S]\n", argv[0]);
+                   "[--host HOST] [--port PORT] [--scale S] "
+                   "[--asset-dir DIR]\n", argv[0]);
             return 0;
         }
     }

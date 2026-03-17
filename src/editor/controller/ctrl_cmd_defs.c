@@ -514,6 +514,13 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Set friction and restitution on an entity's physics body.",
         .arg_fmt = NULL, /* Custom parsing. */
     },
+    {
+        .name    = "load_skeleton",
+        .alias   = "lskel",
+        .usage   = "load_skeleton <path.fskel>",
+        .help    = "Load a skeleton from an .fskel file into the skeleton registry.",
+        .arg_fmt = "s:path",
+    },
     /* ── Snap commands ──────────────────────────────────────────── */
     {
         .name    = "snap",

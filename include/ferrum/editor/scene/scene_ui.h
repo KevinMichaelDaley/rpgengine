@@ -46,6 +46,8 @@ typedef enum scene_ui_action {
     UI_ACTION_MODE_ROTATE,
     UI_ACTION_MODE_SCALE,
     UI_ACTION_TUI_COMMAND,      /**< Execute TUI command (text in tui_cmd). */
+    UI_ACTION_ASSET_SPAWN,      /**< Spawn from asset browser (cmd in tui_cmd). */
+    UI_ACTION_ASSET_TOGGLE_SECTION, /**< Toggle asset browser section collapse. */
 } scene_ui_action_t;
 
 /* Transform mode values for scene_ui_state_t.transform_mode. */
@@ -198,6 +200,12 @@ typedef struct scene_ui_state {
     uint32_t          action_q_targets[UI_ACTION_Q_MAX];
     int               action_q_count;
 
+    /* Asset browser state. */
+    int               asset_browser_scroll; /**< Scroll offset (rows). */
+    int               asset_browser_total;  /**< Total visible rows. */
+    int               asset_browser_visible_lines; /**< Visible rows. */
+    uint16_t          asset_browser_toggle_target; /**< Section to toggle. */
+
     /** Pivot edit mode: gizmo moves pivot_offset instead of entity pos. */
     bool              pivot_edit_mode;
 
@@ -280,6 +288,12 @@ void scene_ui_build_viewport(struct scene_editor *ed,
  */
 void scene_ui_build_tui(struct scene_editor *ed,
                         const struct panel_rect *rect);
+
+/**
+ * @brief Build the asset browser panel: built-in entities + project assets.
+ */
+void scene_ui_build_asset_browser(struct scene_editor *ed,
+                                    const struct panel_rect *rect);
 
 #ifdef __cplusplus
 }

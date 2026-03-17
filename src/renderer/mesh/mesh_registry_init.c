@@ -43,6 +43,13 @@ int mesh_registry_init(mesh_registry_t *reg, uint32_t capacity,
     reg->generations = (uint16_t *)ptr;      ptr += sz_gens;
     reg->freelist    = (uint32_t *)ptr;
 
+    /* Generations start at 1 so that a zero-filled mesh_handle_t {0,0}
+     * is never valid. This allows vm_reserve'd caches (zero-initialized)
+     * to use {0,0} as a "no mesh" sentinel without explicit init. */
+    for (uint32_t i = 0; i < capacity; ++i) {
+        reg->generations[i] = 1;
+    }
+
     /* Build freelist: push slots in reverse so slot 0 is popped first. */
     for (uint32_t i = 0; i < capacity; ++i) {
         reg->freelist[i] = capacity - 1 - i;

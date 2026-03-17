@@ -63,6 +63,7 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "pivot_id",         cmd_pivot_id);
     edit_dispatch_register(dispatch, "joint",           cmd_joint);
     edit_dispatch_register(dispatch, "physics_material", cmd_physics_material);
+    edit_dispatch_register(dispatch, "load_skeleton",    cmd_load_skeleton);
 
     /* Mesh modeling commands */
     edit_dispatch_register(dispatch, "mesh_create_box",      cmd_mesh_create_box);

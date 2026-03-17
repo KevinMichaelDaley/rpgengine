@@ -9,6 +9,7 @@
 #include "ferrum/editor/editor_ctx.h"
 #include "ferrum/editor/edit_commands.h"
 #include "ferrum/editor/edit_entity_version.h"
+#include "ferrum/editor/edit_skeleton_registry.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,11 +84,20 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
         return false;
     }
 
+    /* Skeleton registry. */
+    if (!edit_skeleton_registry_init(&ctx->skeleton_registry, 64)) {
+        fprintf(stderr, "[editor_ctx] skeleton_registry init failed\n");
+        /* Non-fatal — continue without skeleton support. */
+    }
+
     /* Wire command context. */
     ctx->cmd_ctx.entities  = &ctx->entities;
     ctx->cmd_ctx.selection = &ctx->selection;
     ctx->cmd_ctx.undo      = &ctx->undo;
     ctx->cmd_ctx.version   = ctx->version_state;
+    ctx->cmd_ctx.skeleton_registry = &ctx->skeleton_registry;
+    ctx->cmd_ctx.asset_dir = ctx->config.asset_dir
+                           ? ctx->config.asset_dir : "asset_src";
 
     /* Mesh editing subsystem. */
     if (!mesh_edit_init(&ctx->mesh)) {
@@ -141,6 +151,7 @@ void editor_ctx_shutdown(editor_ctx_t *ctx) {
     /* Destroy subsystems in reverse order. */
     edit_dispatch_destroy(&ctx->dispatch);
     mesh_edit_destroy(&ctx->mesh);
+    edit_skeleton_registry_destroy(&ctx->skeleton_registry);
     if (ctx->version_state) {
         edit_version_destroy(ctx->version_state);
         free(ctx->version_state);
