@@ -721,23 +721,17 @@ static void apply_gizmo_rotate(scene_editor_t *ed, quat_t dq) {
                             sk = &pose_view;
                         }
                     }
-                    /* Transform world-space rotation into parent-bone
-                     * local space: local_dq = conj(parent_q) * dq * parent_q
-                     * where parent_q = rotation of entity * parent_rest_world. */
+                    /* Transform world-space rotation into bone-local
+                     * space. per_bone_gizmo_apply_rotate post-multiplies
+                     * rest_local, so we need: local_dq = conj(bone_q) * dq * bone_q
+                     * where bone_q is the bone's full world-space rotation
+                     * (entity model * bone rest_world). */
                     uint32_t bidx = fvp->bone_drag_index;
                     mat4_t em = edit_entity_build_model_matrix(ae);
-                    mat4_t combined;
-                    uint32_t pidx = sk->parent_indices
-                        ? sk->parent_indices[bidx] : UINT32_MAX;
-                    if (pidx != UINT32_MAX && pidx < sk->joint_count) {
-                        combined = mat4_mul(em, sk->rest_world[pidx]);
-                    } else {
-                        combined = em;
-                    }
-                    quat_t parent_q = quat_from_mat4(&combined);
-                    quat_t conj_pq = quat_conjugate(parent_q);
-                    /* local_dq = conj(parent_q) * dq * parent_q */
-                    quat_t local_dq = quat_mul(quat_mul(conj_pq, dq), parent_q);
+                    mat4_t combined = mat4_mul(em, sk->rest_world[bidx]);
+                    quat_t bone_q = quat_from_mat4(&combined);
+                    quat_t conj_bq = quat_conjugate(bone_q);
+                    quat_t local_dq = quat_mul(quat_mul(conj_bq, dq), bone_q);
                     per_bone_gizmo_apply_rotate(
                         sk, bidx, local_dq);
                     if (ed->prefab_mode.active) {
