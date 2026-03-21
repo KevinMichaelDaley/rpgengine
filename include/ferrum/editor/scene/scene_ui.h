@@ -213,6 +213,10 @@ typedef struct scene_ui_state {
     int               asset_browser_visible_lines; /**< Visible rows. */
     uint16_t          asset_browser_toggle_target; /**< Section to toggle. */
 
+    /** Currently selected asset path in the asset browser (for K key etc). */
+    char              selected_asset_path[256];
+    uint8_t           selected_asset_type; /**< EDIT_ASSET_* type of selected asset. */
+
     /** Pivot edit mode: gizmo moves pivot_offset instead of entity pos. */
     bool              pivot_edit_mode;
 

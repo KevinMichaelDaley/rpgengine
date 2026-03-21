@@ -3692,14 +3692,24 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             skeleton_mode_exit(ed);
             scene_ui_tui_log(&ed->ui, "Skeleton mode: OFF");
         } else {
-            if (skeleton_mode_enter(ed)) {
+            bool entered = false;
+            /* Try entity-based entry first. */
+            if (edit_selection_count(&ed->selection) == 1) {
+                entered = skeleton_mode_enter(ed);
+            }
+            /* Try asset-based entry if no entity selected. */
+            if (!entered && ed->ui.selected_asset_path[0] != '\0') {
+                entered = skeleton_mode_enter_asset(
+                    ed, ed->ui.selected_asset_path);
+            }
+            if (entered) {
                 char smsg[320];
                 snprintf(smsg, sizeof(smsg), "Skeleton mode: %s",
                          ed->skeleton_mode.skel_path);
                 scene_ui_tui_log(&ed->ui, smsg);
             } else {
                 scene_ui_tui_log(&ed->ui,
-                    "Skeleton mode requires a single selected entity");
+                    "Select an entity or asset (.fskel/.fvma) then press K");
             }
         }
         return true;

@@ -50,6 +50,11 @@ static const Clay_Color COLOR_SECTION_COLLAPSED = {35, 37, 42, 255};
 /** Spawn action row hover highlight. */
 static const Clay_Color COLOR_ROW_BG = {0, 0, 0, 0};
 
+/** Selected asset highlight. */
+static const Clay_Color COLOR_SELECTION_BG = {
+    THEME_ACCENT_R, THEME_ACCENT_G, THEME_ACCENT_B, 60
+};
+
 /** Section expand/collapse indicators. */
 static const char *INDICATOR_EXPANDED  = "v ";
 static const char *INDICATOR_COLLAPSED = "> ";
@@ -98,6 +103,15 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
 
     if (ctx->entry_type == ASSET_ENTRY_SPAWN_ACTION ||
         ctx->entry_type == ASSET_ENTRY_ASSET_FILE) {
+        /* Track the selected asset for skeleton mode (K key) etc. */
+        if (ctx->entry_type == ASSET_ENTRY_ASSET_FILE) {
+            strncpy(ctx->ed->ui.selected_asset_path, ctx->command,
+                    sizeof(ctx->ed->ui.selected_asset_path) - 1);
+            ctx->ed->ui.selected_asset_path[
+                sizeof(ctx->ed->ui.selected_asset_path) - 1] = '\0';
+            ctx->ed->ui.selected_asset_type = ctx->asset_type;
+        }
+
         /* Intercept: if an asset_ref_widget has focus and the asset type
          * matches its filter, redirect the click to the widget. */
         if (ctx->ed->ui.active_asset_ref &&
@@ -292,7 +306,11 @@ void scene_ui_build_asset_browser(struct scene_editor *ed,
                             THEME_TEXT_R, THEME_TEXT_G,
                             THEME_TEXT_B, THEME_TEXT_A};
                     } else {
-                        row_bg = COLOR_ROW_BG;
+                        /* Highlight selected asset. */
+                        bool is_selected = (ed->ui.selected_asset_path[0] != '\0' &&
+                            entry->type == ASSET_ENTRY_ASSET_FILE &&
+                            strcmp(entry->path, ed->ui.selected_asset_path) == 0);
+                        row_bg = is_selected ? COLOR_SELECTION_BG : COLOR_ROW_BG;
                         text_color = (Clay_Color){
                             THEME_TEXT_R, THEME_TEXT_G,
                             THEME_TEXT_B, THEME_TEXT_A};
