@@ -79,6 +79,7 @@ static const Clay_Color COLOR_ROW_BG = {0, 0, 0, 0};
 static struct {
     scene_editor_t *ed;
     uint32_t        entity_id;
+    uint32_t        bone_index; /**< UINT32_MAX if entity row, else bone index. */
 } s_entity_click_ctx[OUTLINER_MAX_VISIBLE];
 
 /* ------------------------------------------------------------------------ */
@@ -101,24 +102,45 @@ static void on_entity_row_hover(Clay_ElementId id, Clay_PointerData data,
     struct {
         scene_editor_t *ed;
         uint32_t        entity_id;
+        uint32_t        bone_index;
     } *ctx = user;
 
     if (data.state != CLAY_POINTER_DATA_PRESSED_THIS_FRAME) return;
 
+    /* Bone row click: select/toggle bone in bone_selection. */
+    if (ctx->bone_index != UINT32_MAX) {
+        SDL_Keymod mod = SDL_GetModState();
+        if (mod & KMOD_SHIFT) {
+            edit_bone_selection_toggle(&ctx->ed->bone_selection,
+                                        ctx->entity_id, ctx->bone_index);
+        } else {
+            edit_bone_selection_clear(&ctx->ed->bone_selection);
+            edit_bone_selection_add(&ctx->ed->bone_selection,
+                                     ctx->entity_id, ctx->bone_index);
+        }
+        /* Also select the parent entity so gizmo targets it. */
+        if (!edit_selection_contains(&ctx->ed->selection, ctx->entity_id)) {
+            ctx->ed->ui.action = UI_ACTION_REPLACE_SELECTION;
+            ctx->ed->ui.action_target = ctx->entity_id;
+        }
+        return;
+    }
+
+    /* Entity row click. */
     SDL_Keymod mod = SDL_GetModState();
     bool ctrl  = (mod & KMOD_CTRL) != 0;
     bool shift = (mod & KMOD_SHIFT) != 0;
 
+    /* Clear bone selection when clicking an entity row. */
+    edit_bone_selection_clear(&ctx->ed->bone_selection);
+
     if (ctrl && shift) {
-        /* Ctrl+Shift: range deselect (noop if last was select). */
         ctx->ed->ui.action = UI_ACTION_RANGE_DESELECT;
         ctx->ed->ui.action_target = ctx->entity_id;
     } else if (shift) {
-        /* Shift: range select (noop if last was deselect). */
         ctx->ed->ui.action = UI_ACTION_RANGE_SELECT;
         ctx->ed->ui.action_target = ctx->entity_id;
     } else if (ctrl) {
-        /* Ctrl: toggle individual entity. */
         bool selected = edit_selection_contains(&ctx->ed->selection,
                                                  ctx->entity_id);
         if (selected) {
@@ -128,7 +150,6 @@ static void on_entity_row_hover(Clay_ElementId id, Clay_PointerData data,
         }
         ctx->ed->ui.action_target = ctx->entity_id;
     } else {
-        /* Plain click: replace selection with this entity. */
         ctx->ed->ui.action = UI_ACTION_REPLACE_SELECTION;
         ctx->ed->ui.action_target = ctx->entity_id;
     }
@@ -296,6 +317,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
 
                     s_entity_click_ctx[visible_index].ed = ed;
                     s_entity_click_ctx[visible_index].entity_id = i;
+                    s_entity_click_ctx[visible_index].bone_index = oe->bone_index;
 
                     Clay_Color row_bg = pending  ? (Clay_Color){60, 40, 40, 80}
                                       : selected ? COLOR_SELECTION_BG
