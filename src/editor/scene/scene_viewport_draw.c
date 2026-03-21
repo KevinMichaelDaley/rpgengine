@@ -41,7 +41,11 @@
 #include "ferrum/entity/entity_attrs.h"
 
 #include "ferrum/renderer/gl_constants.h"
+#include "ferrum/renderer/mesh/mesh_registry.h"
+#include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/mesh/skeletal_mesh.h"
+#include "ferrum/editor/mesh/mesh_slot.h"
+#include "ferrum/editor/mesh/mesh_vao_format.h"
 #include "ferrum/math/mat4.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
@@ -593,11 +597,8 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
     /* Skeleton mode: load and render ghost preview mesh. */
     if (ed->skeleton_mode.active &&
         ed->skeleton_mode.preview_path[0] != '\0') {
-        /* Lazy-load the preview mesh. Use a reserved entity slot
-         * (UINT32_MAX - 1) so it doesn't conflict with real entities. */
-        uint32_t preview_eid = UINT32_MAX - 1;
+        /* Lazy-load the preview mesh directly into the mesh registry. */
         if (!ed->skeleton_mode.preview_loaded) {
-            /* Load FVMA from disk and upload to mesh registry. */
             char prev_full[512];
             snprintf(prev_full, sizeof(prev_full), "%s/%s",
                      ed->config.asset_dir, ed->skeleton_mode.preview_path);
@@ -609,9 +610,25 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                 if (psz > 0) {
                     uint8_t *pdata = (uint8_t *)malloc((size_t)psz);
                     if (pdata && fread(pdata, 1, (size_t)psz, pf) == (size_t)psz) {
-                        viewport_render_load_entity_mesh(
-                            &ed->viewport, preview_eid,
-                            pdata, (size_t)psz);
+                        mesh_slot_t slot;
+                        memset(&slot, 0, sizeof(slot));
+                        if (mesh_vao_deserialize(pdata, (size_t)psz, &slot)) {
+                            static_mesh_create_info_t ci;
+                            memset(&ci, 0, sizeof(ci));
+                            ci.positions    = slot.positions;
+                            ci.normals      = slot.normals;
+                            ci.uv0          = slot.uvs[0];
+                            ci.indices      = slot.indices;
+                            ci.vertex_count = slot.vertex_count;
+                            ci.index_count  = slot.index_count;
+                            mesh_handle_t mh;
+                            if (mesh_registry_insert_static(
+                                    &vp->meshes, &ci, &mh) == 0) {
+                                ed->skeleton_mode.preview_mesh_index = mh.index;
+                                ed->skeleton_mode.preview_mesh_gen = mh.generation;
+                            }
+                            /* slot data consumed by registry insert. */
+                        }
                     }
                     free(pdata);
                 }
@@ -620,8 +637,14 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
             ed->skeleton_mode.preview_loaded = true;
         }
 
-        const static_mesh_t *preview_mesh =
-            viewport_render_get_entity_mesh(&ed->viewport, preview_eid);
+        const static_mesh_t *preview_mesh = NULL;
+        if (ed->skeleton_mode.preview_mesh_gen != 0) {
+            mesh_handle_t ph = {
+                ed->skeleton_mode.preview_mesh_index,
+                ed->skeleton_mode.preview_mesh_gen
+            };
+            preview_mesh = mesh_registry_get_static(&vp->meshes, ph);
+        }
         if (preview_mesh) {
             /* Render as ghost wireframe using flat shader. */
             shader_program_bind(&vp->flat_shader);
@@ -636,7 +659,6 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
             shader_uniform_set_vec3(&vp->flat_uniforms,
                 &vp->flat_shader, "u_color", ghost_color);
 
-            /* Wireframe mode for ghost appearance. */
             vp->glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
             vp->glDisable(GL_CULL_FACE);
 

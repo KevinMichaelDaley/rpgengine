@@ -47,7 +47,8 @@ typedef struct skeleton_mode_state {
 
     /** Preview mesh for reference (ghost rendering). */
     char     preview_path[256];         /**< Asset path of preview mesh/prefab. */
-    uint32_t preview_mesh_handle;       /**< Mesh registry handle (0 = none). */
+    uint32_t preview_mesh_index;        /**< Mesh registry handle index. */
+    uint16_t preview_mesh_gen;          /**< Mesh registry handle generation. */
     bool     preview_loaded;            /**< True if preview mesh is loaded. */
 
     /** Hidden entity IDs (restored on exit). */
