@@ -208,6 +208,16 @@ uint32_t edit_undo_count(const edit_undo_stack_t *stack);
  */
 uint32_t edit_undo_redo_count(const edit_undo_stack_t *stack);
 
+/**
+ * @brief Access an entry by absolute index (base-relative).
+ *
+ * @param stack      Stack to query.
+ * @param abs_index  Absolute index (must be in [base, top)).
+ * @return Pointer to the entry, or NULL if out of range.
+ */
+const edit_undo_entry_t *edit_undo_entry_at(const edit_undo_stack_t *stack,
+                                             uint32_t abs_index);
+
 #ifdef __cplusplus
 }
 #endif

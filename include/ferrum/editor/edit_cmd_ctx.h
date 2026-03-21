@@ -28,6 +28,7 @@ struct edit_asset_registry;
 struct edit_skeleton_registry;
 struct mesh_edit;
 struct edit_version_state;
+struct undo_branches;
 
 /* ------------------------------------------------------------------------ */
 /* Physics bridge callback                                                   */
@@ -210,6 +211,7 @@ typedef struct edit_cmd_ctx {
     struct edit_entity_store  *entities;   /**< Entity storage. */
     struct edit_selection     *selection;  /**< Current selection set. */
     struct edit_undo_stack    *undo;      /**< Undo/redo stack. */
+    struct undo_branches     *branches;  /**< Orphan branch storage (NULL = no branching). */
     edit_physics_bridge_t    *bridge;     /**< Physics bridge (NULL = no-op). */
     struct edit_physics_ctrl *physics;    /**< Physics sim control (NULL = no-op). */
 

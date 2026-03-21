@@ -8,6 +8,7 @@
 
 #include "ferrum/editor/editor_ctx.h"
 #include "ferrum/editor/edit_commands.h"
+#include "ferrum/editor/undo_rebase.h"
 #include "ferrum/editor/edit_entity_version.h"
 #include "ferrum/editor/edit_skeleton_registry.h"
 #include <stdio.h>
@@ -68,6 +69,11 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
         edit_cmd_ring_destroy(&ctx->resp_ring);
         return false;
     }
+    if (!undo_branches_init(&ctx->branches, UNDO_BRANCHES_DEFAULT_MAX,
+                             UNDO_BRANCH_DEFAULT_ENTRY_MAX)) {
+        fprintf(stderr, "[editor_ctx] undo branches init failed\n");
+        /* Non-fatal: branching undo disabled, linear undo still works. */
+    }
 
     /* Entity version tracking for delta sync. */
     ctx->version_state = malloc(sizeof(edit_version_state_t));
@@ -94,6 +100,7 @@ bool editor_ctx_init(editor_ctx_t *ctx, const editor_ctx_config_t *config) {
     ctx->cmd_ctx.entities  = &ctx->entities;
     ctx->cmd_ctx.selection = &ctx->selection;
     ctx->cmd_ctx.undo      = &ctx->undo;
+    ctx->cmd_ctx.branches  = &ctx->branches;
     ctx->cmd_ctx.version   = ctx->version_state;
     ctx->cmd_ctx.skeleton_registry = &ctx->skeleton_registry;
     ctx->cmd_ctx.asset_dir = ctx->config.asset_dir
@@ -157,6 +164,7 @@ void editor_ctx_shutdown(editor_ctx_t *ctx) {
         free(ctx->version_state);
         ctx->version_state = NULL;
     }
+    undo_branches_destroy(&ctx->branches);
     edit_undo_destroy(&ctx->undo);
     edit_selection_destroy(&ctx->selection);
     edit_entity_store_destroy(&ctx->entities);

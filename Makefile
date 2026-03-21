@@ -275,6 +275,9 @@ BIN_HEADLESS += build/phys_contact_begin_tests
 BIN_HEADLESS += build/phys_overlap_begin_tests
 BIN_HEADLESS += build/collision_event_integration_tests
 BIN_HEADLESS += build/turret_script_e2e_tests
+BIN_HEADLESS += build/undo_apply_tests
+BIN_HEADLESS += build/undo_conflict_tests
+BIN_HEADLESS += build/undo_rebase_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -863,6 +866,15 @@ build/edit_script_rebase_tests: tests/editor/edit_script_rebase_tests.c build/li
 
 build/entity_hide_tests: tests/editor/entity_hide_tests.c build/libheadless.a | build
 	$(CC) $(CFLAGS) tests/editor/entity_hide_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/undo_apply_tests: tests/editor/undo_apply_tests.c build/libheadless.a | build
+	$(CC) $(CFLAGS) tests/editor/undo_apply_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/undo_conflict_tests: tests/editor/undo_conflict_tests.c build/libheadless.a | build
+	$(CC) $(CFLAGS) tests/editor/undo_conflict_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/undo_rebase_tests: tests/editor/undo_rebase_tests.c build/libheadless.a | build
+	$(CC) $(CFLAGS) tests/editor/undo_rebase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 build/cursor_place_tests: tests/editor/cursor_place_tests.c src/editor/scene/cursor_place.c | build
 	$(CC) $(CFLAGS) tests/editor/cursor_place_tests.c src/editor/scene/cursor_place.c -o $@ $(LDFLAGS)

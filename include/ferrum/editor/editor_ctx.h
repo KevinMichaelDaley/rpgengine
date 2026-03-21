@@ -26,6 +26,7 @@ extern "C" {
 #include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/edit_skeleton_registry.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/undo_rebase.h"
 #include "ferrum/editor/mesh/mesh_edit.h"
 
 /* ------------------------------------------------------------------------ */
@@ -62,6 +63,7 @@ typedef struct editor_ctx {
     edit_cmd_ring_t      resp_ring;     /**< Responses: tick thread → I/O thread. */
     edit_dispatch_t      dispatch;      /**< Command dispatch table. */
     edit_undo_stack_t    undo;          /**< Undo/redo stack. */
+    undo_branches_t      branches;     /**< Orphan branches for rebaseable redo. */
     edit_selection_t     selection;     /**< Entity selection set. */
     edit_entity_store_t  entities;      /**< Entity storage. */
     mesh_edit_t          mesh;          /**< Mesh editing subsystem. */

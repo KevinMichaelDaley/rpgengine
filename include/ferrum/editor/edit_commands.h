@@ -325,6 +325,22 @@ bool cmd_physics_material(edit_dispatch_t *d, const json_value_t *args,
 bool cmd_load_skeleton(edit_dispatch_t *d, const json_value_t *args,
                         json_value_t *result, json_arena_t *arena);
 
+/* ------------------------------------------------------------------------ */
+/* Undo/redo commands                                                        */
+/* ------------------------------------------------------------------------ */
+
+/** @brief Undo the last operation (or group). Args: {} (none). */
+bool cmd_undo(edit_dispatch_t *d, const json_value_t *args,
+              json_value_t *result, json_arena_t *arena);
+
+/** @brief Redo the last undone operation (or group). Args: {} (none). */
+bool cmd_redo(edit_dispatch_t *d, const json_value_t *args,
+              json_value_t *result, json_arena_t *arena);
+
+/** @brief Display undo tree structure. Args: {} (none). */
+bool cmd_undo_tree(edit_dispatch_t *d, const json_value_t *args,
+                   json_value_t *result, json_arena_t *arena);
+
 #ifdef __cplusplus
 }
 #endif

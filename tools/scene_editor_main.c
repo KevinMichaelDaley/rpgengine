@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    scene_editor_t editor;
+    scene_editor_t editor = {0};
     if (!scene_editor_init(&editor, &config)) {
         fprintf(stderr, "Failed to initialize scene editor\n");
         return 1;

@@ -1,6 +1,6 @@
 ---
 id: rpg-97do
-status: in_progress
+status: closed
 deps: [rpg-4d9g]
 links: []
 created: 2026-03-12T06:48:51Z

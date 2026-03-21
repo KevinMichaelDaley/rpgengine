@@ -2960,6 +2960,19 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return true;
     }
 
+    /* Ctrl+Z: undo / Ctrl+Shift+Z: redo. */
+    case SDLK_z: {
+        if (!(ev->keysym.mod & KMOD_CTRL)) return false;
+        if (ev->keysym.mod & KMOD_SHIFT) {
+            strncpy(ed->ui.tui_cmd, "redo", UI_TUI_INPUT_MAX - 1);
+        } else {
+            strncpy(ed->ui.tui_cmd, "undo", UI_TUI_INPUT_MAX - 1);
+        }
+        ed->ui.tui_cmd[UI_TUI_INPUT_MAX - 1] = '\0';
+        ed->ui.action = UI_ACTION_TUI_COMMAND;
+        return true;
+    }
+
     /* Ctrl+S: save prefab (prefab mode) or bone poses (regular mode). */
     case SDLK_s: {
         if (!(ev->keysym.mod & KMOD_CTRL)) return false;

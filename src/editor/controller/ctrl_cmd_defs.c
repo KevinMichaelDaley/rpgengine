@@ -521,6 +521,28 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Load a skeleton from an .fskel file into the skeleton registry.",
         .arg_fmt = "s:path",
     },
+    /* ── Undo/redo commands ─────────────────────────────────────── */
+    {
+        .name    = "undo",
+        .alias   = "u",
+        .usage   = "undo",
+        .help    = "Undo last operation (or group). Ctrl+Z.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "redo",
+        .alias   = NULL,
+        .usage   = "redo",
+        .help    = "Redo last undone operation (or group). Ctrl+Shift+Z.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "undo_tree",
+        .alias   = "ut",
+        .usage   = "undo_tree",
+        .help    = "Display undo history tree with orphan branches.",
+        .arg_fmt = NULL,
+    },
     /* ── Snap commands ──────────────────────────────────────────── */
     {
         .name    = "snap",

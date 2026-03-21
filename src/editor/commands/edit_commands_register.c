@@ -65,6 +65,11 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "physics_material", cmd_physics_material);
     edit_dispatch_register(dispatch, "load_skeleton",    cmd_load_skeleton);
 
+    /* Undo/redo commands */
+    edit_dispatch_register(dispatch, "undo",      cmd_undo);
+    edit_dispatch_register(dispatch, "redo",      cmd_redo);
+    edit_dispatch_register(dispatch, "undo_tree", cmd_undo_tree);
+
     /* Mesh modeling commands */
     edit_dispatch_register(dispatch, "mesh_create_box",      cmd_mesh_create_box);
     edit_dispatch_register(dispatch, "mesh_create_sphere",   cmd_mesh_create_sphere);
