@@ -164,6 +164,7 @@ typedef enum edit_cmd_type {
     EDIT_CMD_TYPE_GROUP_DELETE = 7,
     EDIT_CMD_TYPE_BONE_MOVE    = 8,  /**< Bone translation (per-entity or prefab). */
     EDIT_CMD_TYPE_BONE_ROTATE  = 9,  /**< Bone rotation (per-entity or prefab). */
+    EDIT_CMD_TYPE_REPARENT     = 10, /**< Entity reparented (delta[0] = old parent as float). */
 } edit_cmd_type_t;
 
 /* ------------------------------------------------------------------------ */

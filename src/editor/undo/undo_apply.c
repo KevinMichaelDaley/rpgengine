@@ -12,6 +12,8 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_entity_version.h"
+#include "ferrum/editor/edit_scene_tree.h"
+#include "ferrum/entity/entity_attrs.h"
 #include "ferrum/math/quat.h"
 #include <string.h>
 
@@ -144,6 +146,34 @@ static bool apply_spawn_from_snapshot_(edit_cmd_ctx_t *ctx,
     return true;
 }
 
+/**
+ * @brief Apply a REPARENT operation.
+ *
+ * target_parent is a uint32 stored as float bits in the delta.
+ */
+static bool apply_reparent_(edit_cmd_ctx_t *ctx, uint32_t entity_id,
+                              uint32_t target_parent) {
+    edit_scene_tree_t *tree = ctx->entities->tree;
+    if (!tree) return false;
+
+    if (target_parent == EDIT_SCENE_TREE_NONE) {
+        edit_scene_tree_detach(tree, entity_id);
+    } else {
+        if (!edit_scene_tree_attach(tree, entity_id, target_parent)) {
+            return false;
+        }
+    }
+
+    /* Update attr. */
+    edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, entity_id);
+    if (e) {
+        entity_attrs_set(&e->attrs, SCRIPT_KEY_PARENT_ID,
+                          SCRIPT_ATTR_U32, &target_parent, sizeof(target_parent));
+    }
+    stamp_(ctx, entity_id);
+    return true;
+}
+
 /* ----------------------------------------------------------------------- */
 /* Internal: dispatch by command type                                        */
 /* ----------------------------------------------------------------------- */
@@ -167,6 +197,13 @@ static bool dispatch_cmd_type_(edit_cmd_ctx_t *ctx, uint32_t cmd_type,
         return apply_spawn_from_snapshot_(ctx, entry->entity_id,
                                            entry->snapshot_data,
                                            entry->snapshot_size);
+
+    case EDIT_CMD_TYPE_REPARENT: {
+        /* delta[0] = target parent for this direction (uint32 as float bits). */
+        uint32_t target;
+        memcpy(&target, &entry->delta[0], sizeof(uint32_t));
+        return apply_reparent_(ctx, entry->entity_id, target);
+    }
 
     default:
         return false;
@@ -225,6 +262,13 @@ bool edit_undo_apply_forward(edit_cmd_ctx_t *ctx,
         tmp.delta[1] = (entry->delta[1] != 0.0f) ? 1.0f / entry->delta[1] : 1.0f;
         tmp.delta[2] = (entry->delta[2] != 0.0f) ? 1.0f / entry->delta[2] : 1.0f;
         return apply_scale_(ctx, tmp.entity_id, tmp.delta);
+    }
+
+    if (fwd_type == EDIT_CMD_TYPE_REPARENT) {
+        /* Forward reparent uses delta[1] (new parent). */
+        uint32_t target;
+        memcpy(&target, &entry->delta[1], sizeof(uint32_t));
+        return apply_reparent_(ctx, entry->entity_id, target);
     }
 
     /* For SPAWN/DELETE forward, just dispatch directly. */

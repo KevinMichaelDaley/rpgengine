@@ -103,34 +103,30 @@ bool edit_entity_store_remove(edit_entity_store_t *store, uint32_t id) {
     if (!store || id >= store->capacity) return false;
     if (!store->entities[id].active) return false;
 
-    /* Reparent children to this entity's parent (or root) before removing.
-     * Also clear SCRIPT_KEY_PARENT_ID attr so children don't re-attach
-     * when the entity ID is reused by a future spawn. */
+    /* Clear PARENT_ID attr on any entity that lists this one as parent.
+     * Scan via attrs (not tree) since tree may be stale on the client. */
+    uint32_t none_val = EDIT_SCENE_TREE_NONE;
+    for (uint32_t ci = 0; ci < store->capacity; ci++) {
+        if (!store->entities[ci].active) continue;
+        uint8_t at = 0, as = 0;
+        const void *pv = entity_attrs_get(&store->entities[ci].attrs,
+                                            SCRIPT_KEY_PARENT_ID, &at, &as);
+        if (pv && at == SCRIPT_ATTR_U32 && as >= sizeof(uint32_t)) {
+            uint32_t pid = *(const uint32_t *)pv;
+            if (pid == id) {
+                entity_attrs_set(&store->entities[ci].attrs,
+                                  SCRIPT_KEY_PARENT_ID, SCRIPT_ATTR_U32,
+                                  &none_val, sizeof(none_val));
+            }
+        }
+    }
+
+    /* Also update the LCRS tree if available. */
     if (store->tree) {
-        uint32_t grandparent = edit_scene_tree_get_parent(store->tree, id);
         uint32_t child = edit_scene_tree_get_first_child(store->tree, id);
         while (child != EDIT_SCENE_TREE_NONE) {
             uint32_t next = edit_scene_tree_get_next_sibling(store->tree, child);
-
-            /* Update the child's PARENT_ID attr. */
-            if (child < store->capacity && store->entities[child].active) {
-                if (grandparent != EDIT_SCENE_TREE_NONE) {
-                    entity_attrs_set(&store->entities[child].attrs,
-                                      SCRIPT_KEY_PARENT_ID, SCRIPT_ATTR_U32,
-                                      &grandparent, sizeof(grandparent));
-                } else {
-                    uint32_t none = EDIT_SCENE_TREE_NONE;
-                    entity_attrs_set(&store->entities[child].attrs,
-                                      SCRIPT_KEY_PARENT_ID, SCRIPT_ATTR_U32,
-                                      &none, sizeof(none));
-                }
-            }
-
-            if (grandparent != EDIT_SCENE_TREE_NONE) {
-                edit_scene_tree_attach(store->tree, child, grandparent);
-            } else {
-                edit_scene_tree_detach(store->tree, child);
-            }
+            edit_scene_tree_detach(store->tree, child);
             child = next;
         }
         edit_scene_tree_detach(store->tree, id);
