@@ -35,6 +35,7 @@ extern "C" {
 #include "ferrum/editor/edit_skeleton_registry.h"
 #include "ferrum/editor/scene/bone_pose/bone_pose_store.h"
 #include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/scene/scene_outliner.h"
 #include "ferrum/editor/scene/prefab/prefab_mode_state.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
@@ -99,6 +100,12 @@ typedef struct scene_editor {
     /* Local entity data (mirrored from server). */
     edit_entity_store_t entities;  /**< Local entity store. */
     edit_selection_t    selection; /**< Selected entity set. */
+
+    /* Outliner hierarchy display. */
+    bool               *outliner_expanded;   /**< Per-entity expand state. */
+    scene_outliner_entry_t outliner_entries[SCENE_OUTLINER_MAX_ENTRIES];
+    uint32_t            outliner_entry_count; /**< Current display list size. */
+    uint32_t            outliner_tree_version; /**< Last tree version seen. */
     uint32_t            active_object_id; /**< Active object for local basis (INVALID=none). */
     edit_bone_selection_t bone_selection; /**< Bone selection state for skeleton editing. */
     edit_skeleton_registry_t skeleton_registry; /**< Loaded skeletons for bone overlay. */

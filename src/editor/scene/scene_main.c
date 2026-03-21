@@ -298,6 +298,16 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
         return false;
     }
 
+    /* Allocate outliner expanded state (all expanded by default). */
+    ed->outliner_expanded = (bool *)malloc(DEFAULT_ENTITY_CAP * sizeof(bool));
+    if (ed->outliner_expanded) {
+        for (uint32_t i = 0; i < DEFAULT_ENTITY_CAP; i++) {
+            ed->outliner_expanded[i] = true;
+        }
+    }
+    ed->outliner_entry_count = 0;
+    ed->outliner_tree_version = 0;
+
     /* Allocate offline command queue (demand-paged, ~2MB virtual). */
     ed->ui.offline_q = (char (*)[UI_TUI_INPUT_MAX])vm_reserve(
         (size_t)UI_TUI_OFFLINE_Q_MAX * UI_TUI_INPUT_MAX);
@@ -545,6 +555,8 @@ void scene_editor_shutdown(scene_editor_t *ed) {
 
     scene_sync_destroy(&ed->sync);
     scene_connection_destroy(&ed->connection);
+    free(ed->outliner_expanded);
+    ed->outliner_expanded = NULL;
     edit_selection_destroy(&ed->selection);
     edit_bone_selection_destroy(&ed->bone_selection);
     edit_skeleton_registry_destroy(&ed->skeleton_registry);

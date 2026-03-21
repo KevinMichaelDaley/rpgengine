@@ -9,6 +9,7 @@
  */
 
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_scene_tree.h"
 #include "ferrum/memory/vm_alloc.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,11 +37,25 @@ bool edit_entity_store_init(edit_entity_store_t *store, uint32_t capacity) {
     for (uint32_t i = 0; i < capacity; i++) {
         store->freelist[i] = capacity - 1 - i;
     }
+
+    /* Initialize LCRS scene tree for entity hierarchy. */
+    store->tree = (edit_scene_tree_t *)malloc(sizeof(edit_scene_tree_t));
+    if (!store->tree || !edit_scene_tree_init(store->tree, capacity)) {
+        free(store->tree);
+        store->tree = NULL;
+        /* Non-fatal: hierarchy disabled but store still works. */
+    }
+
     return true;
 }
 
 void edit_entity_store_destroy(edit_entity_store_t *store) {
     if (!store) return;
+    if (store->tree) {
+        edit_scene_tree_destroy(store->tree);
+        free(store->tree);
+        store->tree = NULL;
+    }
     vm_release(store->entities, store->entities_bytes);
     free(store->freelist);
     store->entities = NULL;
@@ -86,6 +101,23 @@ uint32_t edit_entity_store_create(edit_entity_store_t *store, uint32_t type) {
 bool edit_entity_store_remove(edit_entity_store_t *store, uint32_t id) {
     if (!store || id >= store->capacity) return false;
     if (!store->entities[id].active) return false;
+
+    /* Reparent children to this entity's parent (or root) before removing. */
+    if (store->tree) {
+        uint32_t grandparent = edit_scene_tree_get_parent(store->tree, id);
+        uint32_t child = edit_scene_tree_get_first_child(store->tree, id);
+        while (child != EDIT_SCENE_TREE_NONE) {
+            uint32_t next = edit_scene_tree_get_next_sibling(store->tree, child);
+            if (grandparent != EDIT_SCENE_TREE_NONE) {
+                edit_scene_tree_attach(store->tree, child, grandparent);
+            } else {
+                edit_scene_tree_detach(store->tree, child);
+            }
+            child = next;
+        }
+        edit_scene_tree_detach(store->tree, id);
+    }
+
     store->entities[id].active = false;
     /* Push back onto freelist stack. */
     store->freelist[store->free_count++] = id;

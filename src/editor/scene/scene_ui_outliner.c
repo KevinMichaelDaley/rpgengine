@@ -10,7 +10,9 @@
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_panel.h"
+#include "ferrum/editor/scene/scene_outliner.h"
 #include "ferrum/editor/scene/prefab/prefab_ui_outliner.h"
+#include "ferrum/editor/edit_scene_tree.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -231,25 +233,24 @@ void scene_ui_build_outliner(struct scene_editor *ed,
         int vis_lines = (int)(list_h / (float)(THEME_ROW_HEIGHT + 1));
         if (vis_lines < 1) vis_lines = 1;
 
-        /* Count total active (non-deleted) entities. */
-        uint32_t total_entities = 0;
-        uint32_t capacity = ed->entities.capacity;
-        for (uint32_t i = 0; i < capacity; ++i) {
-            const edit_entity_t *e = edit_entity_store_get(&ed->entities, i);
-            if (e && !e->pending_delete) total_entities++;
-        }
-        ed->ui.outliner_total = (int)total_entities;
+        /* Rebuild the hierarchical display list from the LCRS tree. */
+        ed->outliner_entry_count = scene_outliner_build(
+            ed->outliner_entries, &ed->entities,
+            ed->outliner_expanded, ed->entities.capacity);
+
+        uint32_t total_entries = ed->outliner_entry_count;
+        ed->ui.outliner_total = (int)total_entries;
         ed->ui.outliner_visible_lines = vis_lines;
 
         /* Clamp scroll offset. */
-        int max_scroll = (int)total_entities - vis_lines;
+        int max_scroll = (int)total_entries - vis_lines;
         if (max_scroll < 0) max_scroll = 0;
         if (ed->ui.outliner_scroll > max_scroll)
             ed->ui.outliner_scroll = max_scroll;
         if (ed->ui.outliner_scroll < 0)
             ed->ui.outliner_scroll = 0;
         int skip = ed->ui.outliner_scroll;
-        bool needs_scrollbar = (int)total_entities > vis_lines
+        bool needs_scrollbar = (int)total_entries > vis_lines
                                && panel_w > 40.0f;
 
         CLAY(CLAY_ID("Outliner_ListArea"), {
@@ -267,41 +268,29 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                 },
             }) {
                 uint32_t visible_index = 0;
-                uint32_t active_index = 0;
 
-                for (uint32_t i = 0; i < capacity; ++i) {
-                    if (visible_index >= (uint32_t)vis_lines ||
-                        visible_index >= OUTLINER_MAX_VISIBLE) {
-                        break;
-                    }
+                for (uint32_t ei = (uint32_t)skip;
+                     ei < total_entries &&
+                     visible_index < (uint32_t)vis_lines &&
+                     visible_index < OUTLINER_MAX_VISIBLE;
+                     ei++) {
+                    const scene_outliner_entry_t *oe = &ed->outliner_entries[ei];
+                    uint32_t i = oe->entity_id;
 
                     const edit_entity_t *ent =
                         edit_entity_store_get(&ed->entities, i);
-                    if (!ent || ent->pending_delete) {
-                        continue;
-                    }
+                    if (!ent) continue;
 
-                    /* Skip entries before scroll offset. */
-                    if ((int)active_index < skip) {
-                        active_index++;
-                        continue;
-                    }
-                    active_index++;
-
-                    /* Determine if this entity is selected or pending delete. */
                     bool selected = edit_selection_contains(&ed->selection, i);
                     bool pending = ent->pending_delete;
 
-                    /* Set up the click context for this row. */
                     s_entity_click_ctx[visible_index].ed = ed;
                     s_entity_click_ctx[visible_index].entity_id = i;
 
-                    /* Choose row background based on state. */
                     Clay_Color row_bg = pending  ? (Clay_Color){60, 40, 40, 80}
                                       : selected ? COLOR_SELECTION_BG
                                                  : COLOR_ROW_BG;
 
-                    /* Greyed-out text for pending delete entities. */
                     Clay_Color name_color = pending
                         ? (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
                                        THEME_TEXT_DIM_B, 100}
@@ -313,13 +302,16 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         : (Clay_Color){THEME_TEXT_DIM_R, THEME_TEXT_DIM_G,
                                        THEME_TEXT_DIM_B, THEME_TEXT_DIM_A};
 
-                    /* Build the entity row element. */
+                    /* Indent padding based on tree depth. */
+                    uint16_t indent_px = (uint16_t)(THEME_PADDING_SMALL
+                                          + oe->indent * 12);
+
                     CLAY(CLAY_IDI("Outliner_Row", visible_index), {
                         .layout = {
                             .sizing = {CLAY_SIZING_GROW(0),
                                        CLAY_SIZING_FIXED(THEME_ROW_HEIGHT)},
                             .layoutDirection = CLAY_LEFT_TO_RIGHT,
-                            .padding = {THEME_PADDING_SMALL,
+                            .padding = {indent_px,
                                         THEME_PADDING_SMALL, 0, 0},
                             .childGap = THEME_PADDING_SMALL,
                             .childAlignment = {
@@ -328,10 +320,24 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         },
                         .backgroundColor = row_bg,
                     }) {
-                        /* Only allow clicking non-pending entities. */
                         if (!pending) {
                             Clay_OnHover(on_entity_row_hover,
                                          &s_entity_click_ctx[visible_index]);
+                        }
+
+                        /* Expand/collapse indicator for entities with children. */
+                        if (oe->has_children) {
+                            const char *tri = oe->expanded ? "v " : "> ";
+                            Clay_String tri_str = {
+                                .length = 2,
+                                .chars = tri,
+                            };
+                            Clay__OpenTextElement(tri_str,
+                                CLAY_TEXT_CONFIG({
+                                    .fontSize = THEME_FONT_SIZE_UI,
+                                    .textColor = tag_color,
+                                    .fontId = CLAY_FONT_UI,
+                                }));
                         }
 
                         const char *name = ent->name;
@@ -375,7 +381,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
             /* ---- Scrollbar (fixed 8px wide) ---- */
             if (needs_scrollbar) {
                 float track_h = list_h;
-                float thumb_ratio = (float)vis_lines / (float)total_entities;
+                float thumb_ratio = (float)vis_lines / (float)total_entries;
                 if (thumb_ratio > 1.0f) thumb_ratio = 1.0f;
                 float thumb_h = track_h * thumb_ratio;
                 if (thumb_h < 12.0f) thumb_h = 12.0f;

@@ -65,6 +65,11 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "physics_material", cmd_physics_material);
     edit_dispatch_register(dispatch, "load_skeleton",    cmd_load_skeleton);
 
+    /* Hierarchy commands */
+    edit_dispatch_register(dispatch, "parent",          cmd_parent);
+    edit_dispatch_register(dispatch, "unparent",        cmd_unparent);
+    edit_dispatch_register(dispatch, "select_children", cmd_select_children);
+
     /* Undo/redo commands */
     edit_dispatch_register(dispatch, "undo",      cmd_undo);
     edit_dispatch_register(dispatch, "redo",      cmd_redo);

@@ -278,6 +278,7 @@ BIN_HEADLESS += build/turret_script_e2e_tests
 BIN_HEADLESS += build/undo_apply_tests
 BIN_HEADLESS += build/undo_conflict_tests
 BIN_HEADLESS += build/undo_rebase_tests
+BIN_HEADLESS += build/scene_tree_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -875,6 +876,9 @@ build/undo_conflict_tests: tests/editor/undo_conflict_tests.c build/libheadless.
 
 build/undo_rebase_tests: tests/editor/undo_rebase_tests.c build/libheadless.a | build
 	$(CC) $(CFLAGS) tests/editor/undo_rebase_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/scene_tree_tests: tests/editor/scene_tree_tests.c build/libheadless.a | build
+	$(CC) $(CFLAGS) tests/editor/scene_tree_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 build/cursor_place_tests: tests/editor/cursor_place_tests.c src/editor/scene/cursor_place.c | build
 	$(CC) $(CFLAGS) tests/editor/cursor_place_tests.c src/editor/scene/cursor_place.c -o $@ $(LDFLAGS)

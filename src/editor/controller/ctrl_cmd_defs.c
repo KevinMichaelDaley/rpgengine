@@ -521,6 +521,28 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Load a skeleton from an .fskel file into the skeleton registry.",
         .arg_fmt = "s:path",
     },
+    /* ── Hierarchy commands ─────────────────────────────────────── */
+    {
+        .name    = "parent",
+        .alias   = "par",
+        .usage   = "parent <child> <parent>",
+        .help    = "Attach child entity under parent in the scene tree.",
+        .arg_fmt = "s:child s:parent",
+    },
+    {
+        .name    = "unparent",
+        .alias   = "upar",
+        .usage   = "unparent <entity>",
+        .help    = "Detach entity to root (children stay attached to it).",
+        .arg_fmt = "s:entity_id",
+    },
+    {
+        .name    = "select_children",
+        .alias   = "sc2",
+        .usage   = "select_children",
+        .help    = "Select all descendants of currently selected entities.",
+        .arg_fmt = NULL,
+    },
     /* ── Undo/redo commands ─────────────────────────────────────── */
     {
         .name    = "undo",

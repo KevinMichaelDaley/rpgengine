@@ -329,6 +329,22 @@ bool cmd_load_skeleton(edit_dispatch_t *d, const json_value_t *args,
 /* Undo/redo commands                                                        */
 /* ------------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------------ */
+/* Hierarchy commands                                                        */
+/* ------------------------------------------------------------------------ */
+
+/** @brief Parent child under parent entity. Args: {"child":<id>,"parent":<id>}. */
+bool cmd_parent(edit_dispatch_t *d, const json_value_t *args,
+                json_value_t *result, json_arena_t *arena);
+
+/** @brief Detach entity to root. Args: {"entity_id":<id>}. */
+bool cmd_unparent(edit_dispatch_t *d, const json_value_t *args,
+                  json_value_t *result, json_arena_t *arena);
+
+/** @brief Select all descendants of selection. Args: {} (none). */
+bool cmd_select_children(edit_dispatch_t *d, const json_value_t *args,
+                          json_value_t *result, json_arena_t *arena);
+
 /** @brief Undo the last operation (or group). Args: {} (none). */
 bool cmd_undo(edit_dispatch_t *d, const json_value_t *args,
               json_value_t *result, json_arena_t *arena);
