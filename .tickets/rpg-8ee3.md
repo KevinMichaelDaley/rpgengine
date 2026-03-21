@@ -1,6 +1,6 @@
 ---
 id: rpg-8ee3
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-03-21T06:22:02Z

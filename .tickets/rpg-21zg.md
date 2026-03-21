@@ -1,6 +1,6 @@
 ---
 id: rpg-21zg
-status: open
+status: closed
 deps: [rpg-97do]
 links: [rpg-ebpv, rpg-bhqa]
 created: 2026-03-13T06:44:03Z
