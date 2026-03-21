@@ -41,6 +41,7 @@
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/undo_apply.h"
 #include "ferrum/editor/scene/skeleton_mode.h"
+#include "ferrum/editor/anim/skeleton_builder.h"
 #include "ferrum/editor/scene/bone_pose/bone_pose_file.h"
 #include "ferrum/editor/scene/scene_viewport_bone_overlay.h"
 #include "ferrum/editor/scene/prefab/prefab_mode_enter.h"
@@ -1493,6 +1494,61 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
             editor_ray_t ray;
             if (editor_camera_screen_to_ray(&fvp->camera,
                                               screen_pos, vp_size, &ray) == 0) {
+
+                /* Skeleton mode: Ctrl+click starts bone placement. */
+                if (ed->skeleton_mode.active &&
+                    (SDL_GetModState() & KMOD_CTRL) &&
+                    !ed->skeleton_mode.create_drag.active) {
+                    /* Intersect ray with ground plane (Y=0) or the
+                     * nearest grid plane. t = -origin.y / direction.y */
+                    float t = 0.0f;
+                    if (fabsf(ray.direction.y) > 1e-6f) {
+                        t = -ray.origin.y / ray.direction.y;
+                    }
+                    if (t < 0.0f) t = 5.0f; /* Fallback: 5 units ahead. */
+
+                    vec3_t hit_pos = {
+                        ray.origin.x + ray.direction.x * t,
+                        ray.origin.y + ray.direction.y * t,
+                        ray.origin.z + ray.direction.z * t,
+                    };
+
+                    /* Check if click is near an existing bone tail
+                     * to create a child bone. */
+                    uint32_t parent_bone = UINT32_MAX;
+                    const edit_skeleton_entry_t *sk_entry =
+                        edit_skeleton_registry_get(
+                            &ed->skeleton_registry,
+                            ed->skeleton_mode.skel_path);
+                    if (sk_entry && sk_entry->skel.tail_positions) {
+                        const skeleton_def_t *sk = &sk_entry->skel;
+                        float best_dist = 0.3f; /* Snap radius. */
+                        for (uint32_t bi = 0; bi < sk->joint_count; bi++) {
+                            float tx = sk->tail_positions[bi * 3 + 0];
+                            float ty = sk->tail_positions[bi * 3 + 1];
+                            float tz = sk->tail_positions[bi * 3 + 2];
+                            float dx = hit_pos.x - tx;
+                            float dy = hit_pos.y - ty;
+                            float dz = hit_pos.z - tz;
+                            float d = sqrtf(dx*dx + dy*dy + dz*dz);
+                            if (d < best_dist) {
+                                best_dist = d;
+                                parent_bone = bi;
+                                /* Snap head to the parent's tail. */
+                                hit_pos.x = tx;
+                                hit_pos.y = ty;
+                                hit_pos.z = tz;
+                            }
+                        }
+                    }
+
+                    ed->skeleton_mode.create_drag.active = true;
+                    ed->skeleton_mode.create_drag.head = hit_pos;
+                    ed->skeleton_mode.create_drag.tail = hit_pos;
+                    ed->skeleton_mode.create_drag.parent_bone = parent_bone;
+                    return true;
+                }
+
                 /* Test gizmo hit first (if we have a selection). */
                 bool gizmo_hit = false;
                 if (edit_selection_count(&ed->selection) > 0) {
@@ -1993,6 +2049,48 @@ static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) 
         ed->ui.mouse_down = false;
         viewport_state_t *fvp = scene_focused_vp(ed);
 
+        /* Skeleton mode: finish bone placement drag. */
+        if (ed->skeleton_mode.active &&
+            ed->skeleton_mode.create_drag.active) {
+            bone_create_drag_t *drag = &ed->skeleton_mode.create_drag;
+            drag->active = false;
+
+            /* Only create if head != tail (minimum drag distance). */
+            float dx = drag->tail.x - drag->head.x;
+            float dy = drag->tail.y - drag->head.y;
+            float dz = drag->tail.z - drag->head.z;
+            float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+            if (dist > 0.05f) {
+                /* Generate bone name. */
+                const edit_skeleton_entry_t *se =
+                    edit_skeleton_registry_get(&ed->skeleton_registry,
+                                                ed->skeleton_mode.skel_path);
+                char bname[64];
+                snprintf(bname, sizeof(bname), "bone_%u",
+                         se ? se->skel.joint_count : 0);
+
+                uint32_t new_idx = skeleton_builder_add_bone(
+                    &ed->skeleton_registry,
+                    ed->skeleton_mode.skel_path,
+                    bname,
+                    drag->parent_bone,
+                    drag->head, drag->tail);
+
+                if (new_idx != UINT32_MAX) {
+                    /* Select the new bone. */
+                    edit_bone_selection_clear(&ed->bone_selection);
+                    edit_bone_selection_add(&ed->bone_selection,
+                                             ed->skeleton_mode.entity_id,
+                                             new_idx);
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "Created bone %s (#%u)",
+                             bname, new_idx);
+                    scene_ui_tui_log(&ed->ui, msg);
+                }
+            }
+            return true;
+        }
+
         /* End box select: project entities to screen, select those inside. */
         if (fvp->box_selecting) {
             fvp->box_selecting = false;
@@ -2064,6 +2162,39 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         viewport_bsp_drag_divider(&ed->vp_bsp,
                                    (uint8_t)ed->dragging_bsp_node,
                                    delta, total_size);
+        return true;
+    }
+
+    /* Skeleton mode: update bone placement tail during drag. */
+    if (ed->skeleton_mode.active &&
+        ed->skeleton_mode.create_drag.active) {
+        /* Convert mouse position to viewport-local normalized coords. */
+        float sc = ed->clay_be.ui_scale;
+        if (sc < 1.0f) sc = 1.0f;
+        int mlx = (int)((float)ev->x / sc);
+        int mly = (int)((float)ev->y / sc);
+        panel_rect_t vp_rect = fvp->rect;
+        float mnx = ((float)(mlx - vp_rect.x) / (float)vp_rect.w) * 2.0f - 1.0f;
+        float mny = ((float)(mly - vp_rect.y) / (float)vp_rect.h) * 2.0f - 1.0f;
+        mny = 1.0f - mny; /* Flip Y. */
+
+        vec2_t msp = {mnx, mny};
+        vec2_t mvs = {(float)vp_rect.w, (float)vp_rect.h};
+        editor_ray_t mray;
+        if (editor_camera_screen_to_ray(&fvp->camera, msp, mvs, &mray) == 0) {
+            /* Intersect with ground plane (Y = head.y to keep coplanar). */
+            float plane_y = ed->skeleton_mode.create_drag.head.y;
+            float mt = 0.0f;
+            if (fabsf(mray.direction.y) > 1e-6f) {
+                mt = (plane_y - mray.origin.y) / mray.direction.y;
+            }
+            if (mt < 0.0f) mt = 5.0f;
+            ed->skeleton_mode.create_drag.tail = (vec3_t){
+                mray.origin.x + mray.direction.x * mt,
+                mray.origin.y + mray.direction.y * mt,
+                mray.origin.z + mray.direction.z * mt,
+            };
+        }
         return true;
     }
 
@@ -3223,9 +3354,27 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         break;
 
-    /* Entity operations. */
+    /* Skeleton mode: Delete removes selected bone, E extrudes from tail. */
     case SDLK_DELETE:
     case SDLK_x:
+        if (ed->skeleton_mode.active &&
+            edit_bone_selection_count(&ed->bone_selection) > 0) {
+            uint32_t bcount = 0;
+            const uint32_t *bones = edit_bone_selection_bones(
+                &ed->bone_selection, &bcount);
+            if (bcount > 0) {
+                /* Delete the first selected bone. */
+                bool ok = skeleton_builder_remove_bone(
+                    &ed->skeleton_registry,
+                    ed->skeleton_mode.skel_path, bones[0]);
+                if (ok) {
+                    edit_bone_selection_clear(&ed->bone_selection);
+                    scene_ui_tui_log(&ed->ui, "Bone deleted");
+                }
+            }
+            return true;
+        }
+        /* Fall through to entity delete if not in skeleton mode. */
         if (ev->keysym.mod & KMOD_SHIFT) {
             ed->ui.action = UI_ACTION_DELETE_SELECTED;
             return true;
@@ -3246,6 +3395,34 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         }
         return true;
     case SDLK_e:
+        /* Shift+E in skeleton mode: extrude bone from selected tail. */
+        if (ed->skeleton_mode.active && (ev->keysym.mod & KMOD_SHIFT) &&
+            edit_bone_selection_count(&ed->bone_selection) > 0) {
+            uint32_t bcount = 0;
+            const uint32_t *bones = edit_bone_selection_bones(
+                &ed->bone_selection, &bcount);
+            if (bcount > 0) {
+                const edit_skeleton_entry_t *se =
+                    edit_skeleton_registry_get(&ed->skeleton_registry,
+                                                ed->skeleton_mode.skel_path);
+                if (se && bones[0] < se->skel.joint_count &&
+                    se->skel.tail_positions) {
+                    uint32_t bi = bones[0];
+                    vec3_t tail_pos = {
+                        se->skel.tail_positions[bi * 3 + 0],
+                        se->skel.tail_positions[bi * 3 + 1],
+                        se->skel.tail_positions[bi * 3 + 2],
+                    };
+                    /* Start drag from parent's tail as new bone head. */
+                    ed->skeleton_mode.create_drag.active = true;
+                    ed->skeleton_mode.create_drag.head = tail_pos;
+                    ed->skeleton_mode.create_drag.tail = tail_pos;
+                    ed->skeleton_mode.create_drag.parent_bone = bi;
+                    scene_ui_tui_log(&ed->ui, "Extrude: drag to set tail");
+                }
+            }
+            return true;
+        }
         if (fvp->gizmo.mode == GIZMO_MODE_ROTATE) {
             ed->ui.action = UI_ACTION_MODE_NONE;
         } else {
