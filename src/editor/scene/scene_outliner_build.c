@@ -52,10 +52,52 @@ static void rebuild_tree_from_attrs_(edit_scene_tree_t *tree,
 }
 
 /**
+ * @brief Recursive DFS through bone hierarchy.
+ */
+static uint32_t bone_dfs_(scene_outliner_entry_t *entries,
+                            uint32_t max_entries,
+                            uint32_t write_pos,
+                            uint32_t entity_id,
+                            const skeleton_def_t *sk,
+                            uint32_t bone_index,
+                            uint32_t depth) {
+    if (write_pos >= max_entries) return write_pos;
+
+    /* Check if this bone has children. */
+    bool has_bone_children = false;
+    for (uint32_t c = 0; c < sk->joint_count; c++) {
+        if (sk->parent_indices && sk->parent_indices[c] == bone_index) {
+            has_bone_children = true;
+            break;
+        }
+    }
+
+    entries[write_pos].entity_id    = entity_id;
+    entries[write_pos].indent       = depth;
+    entries[write_pos].bone_index   = bone_index;
+    entries[write_pos].has_children = has_bone_children;
+    entries[write_pos].expanded     = true; /* Bones always expanded. */
+    entries[write_pos].is_bone      = true;
+    write_pos++;
+
+    /* Visit children of this bone. */
+    if (has_bone_children && sk->parent_indices) {
+        for (uint32_t c = 0; c < sk->joint_count && write_pos < max_entries; c++) {
+            if (sk->parent_indices[c] == bone_index) {
+                write_pos = bone_dfs_(entries, max_entries, write_pos,
+                                       entity_id, sk, c, depth + 1);
+            }
+        }
+    }
+
+    return write_pos;
+}
+
+/**
  * @brief Inject bone rows for an entity with a skeleton.
  *
  * Looks up the entity's SKEL_PATH attribute, finds the skeleton in
- * the registry, and appends one entry per bone at depth+1.
+ * the registry, and DFS the bone hierarchy to emit indented rows.
  */
 static uint32_t inject_bones_(scene_outliner_entry_t *entries,
                                 uint32_t max_entries,
@@ -85,15 +127,16 @@ static uint32_t inject_bones_(scene_outliner_entry_t *entries,
         edit_skeleton_registry_get(skel_reg, fname);
     if (!se || se->skel.joint_count == 0) return write_pos;
 
-    for (uint32_t bi = 0; bi < se->skel.joint_count &&
-         write_pos < max_entries; bi++) {
-        entries[write_pos].entity_id    = entity_id;
-        entries[write_pos].indent       = depth + 1;
-        entries[write_pos].bone_index   = bi;
-        entries[write_pos].has_children = false;
-        entries[write_pos].expanded     = false;
-        entries[write_pos].is_bone      = true;
-        write_pos++;
+    const skeleton_def_t *sk = &se->skel;
+
+    /* DFS from root bones (parent == UINT32_MAX). */
+    for (uint32_t bi = 0; bi < sk->joint_count && write_pos < max_entries; bi++) {
+        uint32_t parent = sk->parent_indices
+            ? sk->parent_indices[bi] : UINT32_MAX;
+        if (parent == UINT32_MAX) {
+            write_pos = bone_dfs_(entries, max_entries, write_pos,
+                                   entity_id, sk, bi, depth + 1);
+        }
     }
 
     return write_pos;
