@@ -590,6 +590,67 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         }
     }
 
+    /* Skeleton mode: load and render ghost preview mesh. */
+    if (ed->skeleton_mode.active &&
+        ed->skeleton_mode.preview_path[0] != '\0') {
+        /* Lazy-load the preview mesh. Use a reserved entity slot
+         * (UINT32_MAX - 1) so it doesn't conflict with real entities. */
+        uint32_t preview_eid = UINT32_MAX - 1;
+        if (!ed->skeleton_mode.preview_loaded) {
+            /* Load FVMA from disk and upload to mesh registry. */
+            char prev_full[512];
+            snprintf(prev_full, sizeof(prev_full), "%s/%s",
+                     ed->config.asset_dir, ed->skeleton_mode.preview_path);
+            FILE *pf = fopen(prev_full, "rb");
+            if (pf) {
+                fseek(pf, 0, SEEK_END);
+                long psz = ftell(pf);
+                fseek(pf, 0, SEEK_SET);
+                if (psz > 0) {
+                    uint8_t *pdata = (uint8_t *)malloc((size_t)psz);
+                    if (pdata && fread(pdata, 1, (size_t)psz, pf) == (size_t)psz) {
+                        viewport_render_load_entity_mesh(
+                            &ed->viewport, preview_eid,
+                            pdata, (size_t)psz);
+                    }
+                    free(pdata);
+                }
+                fclose(pf);
+            }
+            ed->skeleton_mode.preview_loaded = true;
+        }
+
+        const static_mesh_t *preview_mesh =
+            viewport_render_get_entity_mesh(&ed->viewport, preview_eid);
+        if (preview_mesh) {
+            /* Render as ghost wireframe using flat shader. */
+            shader_program_bind(&vp->flat_shader);
+            shader_uniform_set_mat4(&vp->flat_uniforms,
+                &vp->flat_shader, "u_view", view.m, GL_FALSE);
+            shader_uniform_set_mat4(&vp->flat_uniforms,
+                &vp->flat_shader, "u_projection", proj.m, GL_FALSE);
+            mat4_t identity = mat4_identity();
+            shader_uniform_set_mat4(&vp->flat_uniforms,
+                &vp->flat_shader, "u_model", identity.m, GL_FALSE);
+            float ghost_color[3] = {0.3f, 0.35f, 0.4f};
+            shader_uniform_set_vec3(&vp->flat_uniforms,
+                &vp->flat_shader, "u_color", ghost_color);
+
+            /* Wireframe mode for ghost appearance. */
+            vp->glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            vp->glDisable(GL_CULL_FACE);
+
+            static_mesh_bind(preview_mesh);
+            for (uint32_t s = 0; s < preview_mesh->submesh_count; s++) {
+                static_mesh_draw_submesh(preview_mesh, s);
+            }
+            static_mesh_unbind();
+
+            vp->glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            vp->glEnable(GL_CULL_FACE);
+        }
+    }
+
     /* Skeleton mode: draw bones directly from registry.
      * Always draw when skeleton mode is active, even if no entities. */
     if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0] != '\0') {

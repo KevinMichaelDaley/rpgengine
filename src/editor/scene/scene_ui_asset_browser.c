@@ -125,15 +125,19 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
             }
         }
 
-        /* Skeleton mode: clicking a mesh/prefab sets it as preview asset
-         * instead of spawning. Don't exit skeleton mode. */
+        /* Skeleton mode: clicking a mesh/prefab loads it as ghost preview. */
         if (ctx->ed->skeleton_mode.active &&
             ctx->entry_type == ASSET_ENTRY_ASSET_FILE &&
             (ctx->asset_type == 1 /* MESH */ ||
              ctx->asset_type == 4 /* PREFAB */)) {
-            /* Store the preview path for later rendering.
-             * For now, just log it — ghost preview rendering is TODO. */
-            scene_ui_tui_log(&ctx->ed->ui, "Preview asset set (ghost rendering TODO)");
+            strncpy(ctx->ed->skeleton_mode.preview_path, ctx->command,
+                    sizeof(ctx->ed->skeleton_mode.preview_path) - 1);
+            ctx->ed->skeleton_mode.preview_path[
+                sizeof(ctx->ed->skeleton_mode.preview_path) - 1] = '\0';
+            ctx->ed->skeleton_mode.preview_loaded = false;
+            char msg[320];
+            snprintf(msg, sizeof(msg), "Preview: %s", ctx->command);
+            scene_ui_tui_log(&ctx->ed->ui, msg);
             return;
         }
 

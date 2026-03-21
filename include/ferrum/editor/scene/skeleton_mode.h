@@ -45,6 +45,11 @@ typedef struct skeleton_mode_state {
     char     skel_full_path[512];       /**< Full path for saving. */
     bone_create_drag_t create_drag;     /**< In-progress bone placement. */
 
+    /** Preview mesh for reference (ghost rendering). */
+    char     preview_path[256];         /**< Asset path of preview mesh/prefab. */
+    uint32_t preview_mesh_handle;       /**< Mesh registry handle (0 = none). */
+    bool     preview_loaded;            /**< True if preview mesh is loaded. */
+
     /** Hidden entity IDs (restored on exit). */
     uint32_t hidden_ids[SKELETON_MODE_MAX_HIDDEN];
     uint32_t hidden_count;
