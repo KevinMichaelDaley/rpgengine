@@ -333,6 +333,22 @@ bool cmd_load_skeleton(edit_dispatch_t *d, const json_value_t *args,
 /* Hierarchy commands                                                        */
 /* ------------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------------ */
+/* Skeleton editing commands                                                 */
+/* ------------------------------------------------------------------------ */
+
+/** @brief Add bone to skeleton. Args: {"skel":"path","parent":<idx>,"head":[],"tail":[],"name":""}. */
+bool cmd_bone_add(edit_dispatch_t *d, const json_value_t *args,
+                   json_value_t *result, json_arena_t *arena);
+
+/** @brief Delete bone from skeleton. Args: {"skel":"path","bone":<idx>}. */
+bool cmd_bone_delete(edit_dispatch_t *d, const json_value_t *args,
+                      json_value_t *result, json_arena_t *arena);
+
+/** @brief Save skeleton to .fskel file. Args: {"path":"path.fskel"}. */
+bool cmd_skeleton_save(edit_dispatch_t *d, const json_value_t *args,
+                        json_value_t *result, json_arena_t *arena);
+
 /** @brief Parent child under parent entity. Args: {"child":<id>,"parent":<id>}. */
 bool cmd_parent(edit_dispatch_t *d, const json_value_t *args,
                 json_value_t *result, json_arena_t *arena);

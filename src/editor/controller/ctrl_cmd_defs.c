@@ -521,6 +521,28 @@ static const ctrl_cmd_def_t s_defs[] = {
         .help    = "Load a skeleton from an .fskel file into the skeleton registry.",
         .arg_fmt = "s:path",
     },
+    /* ── Skeleton editing commands ────────────────────────────── */
+    {
+        .name    = "bone_add",
+        .alias   = "ba",
+        .usage   = "bone_add [parent_idx] [hx hy hz] [tx ty tz] [name]",
+        .help    = "Add a bone to the active skeleton.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "bone_delete",
+        .alias   = "bd",
+        .usage   = "bone_delete <bone_index>",
+        .help    = "Remove a bone from the active skeleton.",
+        .arg_fmt = NULL,
+    },
+    {
+        .name    = "skeleton_save",
+        .alias   = "sksave",
+        .usage   = "skeleton_save <path.fskel>",
+        .help    = "Write the active skeleton to an .fskel file.",
+        .arg_fmt = "s:path",
+    },
     /* ── Hierarchy commands ─────────────────────────────────────── */
     {
         .name    = "parent",

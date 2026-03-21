@@ -40,6 +40,7 @@
 #include "ferrum/editor/edit_undo.h"
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/undo_apply.h"
+#include "ferrum/editor/scene/skeleton_mode.h"
 #include "ferrum/editor/scene/bone_pose/bone_pose_file.h"
 #include "ferrum/editor/scene/scene_viewport_bone_overlay.h"
 #include "ferrum/editor/scene/prefab/prefab_mode_enter.h"
@@ -2988,6 +2989,12 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         ed->ui.tui_active = (ed->layout.focus == PANEL_TUI);
         return true;
     case SDLK_ESCAPE: {
+        /* Exit skeleton mode if active. */
+        if (ed->skeleton_mode.active) {
+            skeleton_mode_exit(ed);
+            scene_ui_tui_log(&ed->ui, "Skeleton mode: OFF");
+            return true;
+        }
         /* Exit prefab mode if active. */
         if (ed->prefab_mode.active) {
             prefab_mode_exit(ed);
@@ -3469,6 +3476,26 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
                     scene_ui_tui_log(&ed->ui,
                         "Prefab mode requires a skeleton entity");
                 }
+            }
+        }
+        return true;
+    }
+
+    /* K: toggle skeleton editing mode. */
+    case SDLK_k: {
+        if (ed->prefab_mode.active) return false; /* Not in prefab mode. */
+        if (ed->skeleton_mode.active) {
+            skeleton_mode_exit(ed);
+            scene_ui_tui_log(&ed->ui, "Skeleton mode: OFF");
+        } else {
+            if (skeleton_mode_enter(ed)) {
+                char smsg[320];
+                snprintf(smsg, sizeof(smsg), "Skeleton mode: %s",
+                         ed->skeleton_mode.skel_path);
+                scene_ui_tui_log(&ed->ui, smsg);
+            } else {
+                scene_ui_tui_log(&ed->ui,
+                    "Skeleton mode requires a single selected entity");
             }
         }
         return true;

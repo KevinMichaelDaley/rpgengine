@@ -65,6 +65,11 @@ void edit_commands_register_all(edit_dispatch_t *dispatch) {
     edit_dispatch_register(dispatch, "physics_material", cmd_physics_material);
     edit_dispatch_register(dispatch, "load_skeleton",    cmd_load_skeleton);
 
+    /* Skeleton editing commands */
+    edit_dispatch_register(dispatch, "bone_add",       cmd_bone_add);
+    edit_dispatch_register(dispatch, "bone_delete",    cmd_bone_delete);
+    edit_dispatch_register(dispatch, "skeleton_save",  cmd_skeleton_save);
+
     /* Hierarchy commands */
     edit_dispatch_register(dispatch, "parent",          cmd_parent);
     edit_dispatch_register(dispatch, "unparent",        cmd_unparent);

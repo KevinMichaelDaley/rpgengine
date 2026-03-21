@@ -37,6 +37,7 @@ extern "C" {
 #include "ferrum/editor/edit_undo.h"
 #include "ferrum/editor/scene/scene_outliner.h"
 #include "ferrum/editor/scene/prefab/prefab_mode_state.h"
+#include "ferrum/editor/scene/skeleton_mode.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/scene/viewport_bsp/viewport_bsp.h"
 #include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
@@ -112,6 +113,7 @@ typedef struct scene_editor {
     bone_pose_store_t  bone_poses; /**< Per-entity bone pose overrides. */
     edit_undo_stack_t  bone_undo;  /**< Local undo stack for bone transforms. */
     prefab_mode_state_t prefab_mode; /**< Prefab editor mode state. */
+    skeleton_mode_state_t skeleton_mode; /**< Skeleton editing mode state (K key). */
 
     /* 3D viewport renderer (shared resources: shaders, meshes, pipeline). */
     viewport_render_state_t viewport; /**< Shared shaders, meshes, GL fns. */
