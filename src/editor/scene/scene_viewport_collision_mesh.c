@@ -16,6 +16,7 @@
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/mesh/mesh_vao_format.h"
 #include "ferrum/editor/mesh/mesh_slot.h"
+#include "ferrum/editor/viewport/snap/snap_mesh_decompose.h"
 #include "ferrum/renderer/mesh/mesh_registry.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 
@@ -66,8 +67,14 @@ bool viewport_render_load_collision_mesh(viewport_render_state_t *state,
 
     /* Retain CPU-side geometry for surface snap raycasting.
      * This overwrites any render mesh snap data for this entity —
-     * collision mesh takes priority for snapping. */
-    snap_mesh_retain_from_slot(&state->snap_meshes, entity_id, &slot);
+     * collision mesh takes priority for snapping.
+     * High-poly collision meshes get convex-decomposed. */
+    if (snap_mesh_should_decompose(&slot)) {
+        snap_mesh_retain_decomposed(&state->snap_meshes, entity_id, &slot,
+                                         &state->decompose_cache);
+    } else {
+        snap_mesh_retain_from_slot(&state->snap_meshes, entity_id, &slot);
+    }
 
     /* Free the temporary deserialized slot (data is now on the GPU). */
     mesh_slot_destroy(&slot);

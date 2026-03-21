@@ -27,11 +27,23 @@
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/edit_entity_pivot.h"
 #include "ferrum/editor/scene/scene_gizmo_per_object.h"
+#include "ferrum/editor/scene/scene_gizmo_bone.h"
+#include "ferrum/editor/edit_bone_selection.h"
+#include "ferrum/editor/edit_skeleton_registry.h"
+#include "ferrum/animation/constraint_params.h"
 #include "ferrum/editor/viewport/snap/snap_surface_cast.h"
 #include "ferrum/editor/viewport/snap/snap_surface_apply.h"
 #include "ferrum/editor/viewport/snap/snap_depenetrate.h"
 #include "ferrum/editor/edit_entity_matrix.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
+#include "ferrum/editor/viewport/bone_pick.h"
+#include "ferrum/editor/scene/bone_pose/bone_pose_file.h"
+#include "ferrum/editor/scene/scene_viewport_bone_overlay.h"
+#include "ferrum/editor/scene/prefab/prefab_mode_enter.h"
+#include "ferrum/editor/scene/prefab/prefab_def.h"
+#include "ferrum/editor/scene/prefab/prefab_collect.h"
+#include "ferrum/editor/scene/prefab/prefab_save.h"
+#include "ferrum/editor/scene/scene_asset_load.h"
 
 #include <SDL2/SDL.h>
 #include <math.h>
@@ -103,8 +115,254 @@ static float viewport_gizmo_screen_scale(const vec3_t *gizmo_pos,
     return scale;
 }
 
+/**
+ * @brief Try bone gizmo hit-test when per-object mode and bones selected.
+ *
+ * Builds per-bone gizmos for the active entity's skeleton, then runs
+ * proximity-based pick.  On hit, starts a bone drag and returns true.
+ *
+ * @param ed          Scene editor.
+ * @param fvp         Focused viewport state.
+ * @param ray         World-space ray from cursor.
+ * @param gizmo_scale Visual gizmo scale for hit radius.
+ * @return true if a bone gizmo was hit and drag started.
+ */
+static bool try_bone_gizmo_pick(scene_editor_t *ed,
+                                viewport_state_t *fvp,
+                                const editor_ray_t *ray,
+                                float gizmo_scale,
+                                const mat4_t *vp_matrix,
+                                float screen_x,
+                                float screen_y) {
+    if (edit_bone_selection_count(&ed->bone_selection) == 0) {
+        return false;
+    }
+    uint32_t bone_eid = ed->bone_selection.entity_id;
+    if (bone_eid == EDIT_BONE_SEL_NONE) {
+        return false;
+    }
+
+    const edit_entity_t *ae = edit_entity_store_get(
+        &ed->entities, bone_eid);
+    if (!ae || !ae->active || ae->hidden) { return false; }
+
+    /* Look up skeleton path attribute. */
+    uint8_t at = 0, as = 0;
+    const void *sp = entity_attrs_get(
+        &ae->attrs, SCRIPT_KEY_SKEL_PATH, &at, &as);
+    if (!sp || at != SCRIPT_ATTR_STR) { return false; }
+    const char *spath = (const char *)sp;
+    if (spath[0] == '\0') { return false; }
+
+    /* Extract filename for registry lookup. */
+    const char *fname = spath;
+    for (const char *p = spath; *p; p++) {
+        if (*p == '/') fname = p + 1;
+    }
+    const edit_skeleton_entry_t *entry =
+        edit_skeleton_registry_get(&ed->skeleton_registry, fname);
+    if (!entry) { return false; }
+
+    /* Use per-entity pose override if available. */
+    skeleton_def_t pick_skel_view;
+    const skeleton_def_t *pick_skel = &entry->skel;
+    const bone_pose_block_t *pick_bp =
+        bone_pose_store_get(&ed->bone_poses, bone_eid);
+    if (pick_bp) {
+        pick_skel_view = entry->skel;
+        pick_skel_view.rest_world = (mat4_t *)pick_bp->rest_world;
+        pick_skel_view.tail_positions = (float *)pick_bp->tail_positions;
+        pick_skel = &pick_skel_view;
+    }
+
+    /* Build model matrix and per-bone gizmo array. */
+    mat4_t model = mat4_translation(ae->pos[0], ae->pos[1], ae->pos[2]);
+    {
+        mat4_t rot;
+        quat_to_mat4(ae->orientation, &rot);
+        mat4_t scale = mat4_scaling(ae->scale[0], ae->scale[1], ae->scale[2]);
+        model = mat4_mul(model, mat4_mul(rot, scale));
+    }
+
+    per_bone_gizmo_t bone_gizmos[EDIT_BONE_SEL_MAX];
+    uint32_t bg_count = per_bone_gizmo_build(
+        pick_skel, &ed->bone_selection, &model,
+        fvp->gizmo.mode, bone_gizmos, EDIT_BONE_SEL_MAX);
+    if (bg_count == 0) { return false; }
+
+    vec3_t eye = editor_camera_eye_position(&fvp->camera);
+    int32_t best_idx = -1;
+    gizmo_axis_t best_axis = GIZMO_AXIS_NONE;
+    vec3_t hit_pos = {0, 0, 0};
+    uint32_t hit_bone = UINT32_MAX;
+
+    if (fvp->per_object_gizmo) {
+        /* Per-bone gizmo mode: hit test each bone's individual gizmo. */
+        /* Update arc quadrants for rotation ring hit testing. */
+        for (uint32_t i = 0; i < bg_count; i++) {
+            gizmo_update_arc_quadrants(
+                (gizmo_state_t *)&bone_gizmos[i].gizmo, eye);
+        }
+
+        if (bg_count > 0 && bone_gizmos[0].gizmo.mode == GIZMO_MODE_ROTATE) {
+            static const gizmo_axis_t ring_axes[3] = {
+                GIZMO_AXIS_X, GIZMO_AXIS_Y, GIZMO_AXIS_Z
+            };
+            float global_best = 1e30f;
+            int best_ring = -1;
+
+            for (uint32_t gi = 0; gi < bg_count; gi++) {
+                float scale_i = viewport_gizmo_screen_scale(
+                    &bone_gizmos[gi].gizmo.position, &eye, fvp->camera.fov);
+                float dists[3];
+                gizmo_ring_screen_distances(&bone_gizmos[gi].gizmo, scale_i,
+                                              vp_matrix, screen_x, screen_y,
+                                              dists);
+                for (int ri = 0; ri < 3; ri++) {
+                    if (dists[ri] < global_best) {
+                        global_best = dists[ri];
+                        best_idx = (int32_t)gi;
+                        best_ring = ri;
+                    }
+                }
+            }
+            if (best_ring >= 0 && global_best < GIZMO_RING_HIT_THRESHOLD) {
+                best_axis = ring_axes[best_ring];
+            } else {
+                best_idx = -1;
+            }
+        } else {
+            float best_dist = 1e30f;
+            for (uint32_t i = 0; i < bg_count; i++) {
+                float scale_i = viewport_gizmo_screen_scale(
+                    &bone_gizmos[i].gizmo.position, &eye, fvp->camera.fov);
+
+                gizmo_axis_t axis = gizmo_hit_test(
+                    &bone_gizmos[i].gizmo, ray, scale_i,
+                    vp_matrix, screen_x, screen_y);
+                if (axis != GIZMO_AXIS_NONE) {
+                    float dx = bone_gizmos[i].gizmo.position.x - eye.x;
+                    float dy = bone_gizmos[i].gizmo.position.y - eye.y;
+                    float dz = bone_gizmos[i].gizmo.position.z - eye.z;
+                    float dist = dx*dx + dy*dy + dz*dz;
+                    if (dist < best_dist) {
+                        best_dist = dist;
+                        best_idx = (int32_t)i;
+                        best_axis = axis;
+                    }
+                }
+            }
+        }
+        if (best_idx >= 0) {
+            hit_pos = bone_gizmos[best_idx].gizmo.position;
+            hit_bone = bone_gizmos[best_idx].bone_index;
+        }
+    } else {
+        /* Single centroid gizmo: hit test the shared viewport gizmo
+         * positioned at the centroid of selected bones. */
+        vec3_t centroid = {0, 0, 0};
+        for (uint32_t gi = 0; gi < bg_count; gi++) {
+            centroid.x += bone_gizmos[gi].gizmo.position.x;
+            centroid.y += bone_gizmos[gi].gizmo.position.y;
+            centroid.z += bone_gizmos[gi].gizmo.position.z;
+        }
+        centroid.x /= (float)bg_count;
+        centroid.y /= (float)bg_count;
+        centroid.z /= (float)bg_count;
+        fvp->gizmo.position = centroid;
+        gizmo_update_arc_quadrants(&fvp->gizmo, eye);
+
+        float gs = viewport_gizmo_screen_scale(
+            &centroid, &eye, fvp->camera.fov);
+        gizmo_axis_t axis = gizmo_hit_test(
+            &fvp->gizmo, ray, gs, vp_matrix, screen_x, screen_y);
+        if (axis != GIZMO_AXIS_NONE) {
+            best_idx = 0; /* Use first bone as drag target. */
+            best_axis = axis;
+            hit_pos = centroid;
+            hit_bone = bone_gizmos[0].bone_index;
+        }
+    }
+
+    if (best_idx < 0) { return false; }
+
+    /* Start bone drag. */
+    fvp->bone_drag_index = hit_bone;
+    fvp->gizmo.active_axis = best_axis;
+    fvp->gizmo.dragging = true;
+    fvp->gizmo.position = hit_pos;
+    fvp->gizmo_drag_origin = hit_pos;
+    fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
+    fvp->gizmo_scale_accum = (vec3_t){1, 1, 1};
+    fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
+    fvp->snap_applied_delta = (vec3_t){0, 0, 0};
+    fvp->snap_applied_scale = (vec3_t){1, 1, 1};
+    fvp->snap_rot_accum_deg = 0.0f;
+    fvp->snap_rot_applied_deg = 0.0f;
+    fvp->snap_origin_pos = hit_pos;
+    return true;
+}
+
 /** Degrees to radians. */
 static const float INPUT_DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+
+/**
+ * @brief Compute world-space AABB half-extents for a MESH entity from its
+ *        cached snap mesh vertex positions.
+ *
+ * Scans all vertex positions to find the local-space bounding box, then
+ * scales by the entity's scale.  If no snap mesh is cached, returns false
+ * and the caller should use a generous fallback.
+ *
+ * @param cache      Snap mesh cache (non-NULL).
+ * @param entity_id  Entity ID to look up.
+ * @param scale      Entity scale (3 floats).
+ * @param out_hw     Output half-width  (x).
+ * @param out_hh     Output half-height (y).
+ * @param out_hd     Output half-depth  (z).
+ * @return true if snap mesh was found and AABB computed, false otherwise.
+ */
+static bool mesh_entity_half_extents_(const snap_mesh_cache_t *cache,
+                                       uint32_t entity_id,
+                                       const float scale[3],
+                                       float *out_hw, float *out_hh,
+                                       float *out_hd) {
+    const snap_mesh_t *mesh = snap_mesh_cache_get(cache, entity_id);
+    if (!mesh || !mesh->positions || mesh->vertex_count == 0) return false;
+
+    /* Find local-space min/max from vertex positions. */
+    float lmin[3] = { mesh->positions[0], mesh->positions[1],
+                      mesh->positions[2] };
+    float lmax[3] = { lmin[0], lmin[1], lmin[2] };
+    for (uint32_t v = 1; v < mesh->vertex_count; ++v) {
+        const float *p = &mesh->positions[v * 3];
+        for (int a = 0; a < 3; ++a) {
+            if (p[a] < lmin[a]) lmin[a] = p[a];
+            if (p[a] > lmax[a]) lmax[a] = p[a];
+        }
+    }
+
+    /* Half-extents in world space = local half-extents * scale.
+     * We take the max of each axis's extent so the AABB covers the mesh
+     * even if the local origin isn't centered. */
+    float local_hw = (lmax[0] - lmin[0]) * 0.5f;
+    float local_hh = (lmax[1] - lmin[1]) * 0.5f;
+    float local_hd = (lmax[2] - lmin[2]) * 0.5f;
+
+    /* Also offset the center: the local AABB center may not be at origin.
+     * Account for this by expanding the half-extents to cover both sides. */
+    float cx = (lmax[0] + lmin[0]) * 0.5f;
+    float cy = (lmax[1] + lmin[1]) * 0.5f;
+    float cz = (lmax[2] + lmin[2]) * 0.5f;
+    float abs_cx = cx < 0.0f ? -cx : cx;
+    float abs_cy = cy < 0.0f ? -cy : cy;
+    float abs_cz = cz < 0.0f ? -cz : cz;
+
+    *out_hw = (local_hw + abs_cx) * scale[0];
+    *out_hh = (local_hh + abs_cy) * scale[1];
+    *out_hd = (local_hd + abs_cz) * scale[2];
+    return true;
+}
 
 /**
  * @brief Ensure an entity has a snap mesh (lazy primitive generation).
@@ -401,6 +659,76 @@ static mat4_t build_rotation_from_quat(quat_t dq) {
 static void apply_gizmo_rotate(scene_editor_t *ed, quat_t dq) {
     viewport_state_t *fvp = scene_focused_vp(ed);
 
+    /* Per-bone gizmo drag: rotate the dragged bone's rest pose. */
+    if (fvp->bone_drag_index != UINT32_MAX &&
+        ed->bone_selection.entity_id != EDIT_BONE_SEL_NONE) {
+        const edit_entity_t *ae = edit_entity_store_get(
+            &ed->entities, ed->bone_selection.entity_id);
+        if (ae && ae->active) {
+            uint8_t at = 0, as = 0;
+            const void *sp = entity_attrs_get(
+                &ae->attrs, SCRIPT_KEY_SKEL_PATH, &at, &as);
+            if (sp && at == SCRIPT_ATTR_STR) {
+                const char *spath = (const char *)sp;
+                const char *fname = spath;
+                for (const char *p = spath; *p; p++) {
+                    if (*p == '/') fname = p + 1;
+                }
+                edit_skeleton_entry_t *entry =
+                    edit_skeleton_registry_get_mut(
+                        &ed->skeleton_registry, fname);
+                if (entry) {
+                    /* Get the skeleton to operate on.  In prefab mode
+                     * we mutate the shared registry skeleton directly.
+                     * In regular mode we use per-entity overrides. */
+                    skeleton_def_t *sk = &entry->skel;
+                    skeleton_def_t pose_view;
+                    uint32_t eid = ed->bone_selection.entity_id;
+                    if (!ed->prefab_mode.active) {
+                        bone_pose_block_t *pose =
+                            bone_pose_store_get_mut(&ed->bone_poses, eid);
+                        if (!pose) {
+                            pose = bone_pose_store_ensure(
+                                &ed->bone_poses, eid, sk);
+                        }
+                        if (pose) {
+                            pose_view = *sk;
+                            pose_view.rest_local = pose->rest_local;
+                            pose_view.rest_world = pose->rest_world;
+                            pose_view.tail_positions = pose->tail_positions;
+                            sk = &pose_view;
+                        }
+                    }
+                    /* Transform world-space rotation into parent-bone
+                     * local space: local_dq = conj(parent_q) * dq * parent_q
+                     * where parent_q = rotation of entity * parent_rest_world. */
+                    uint32_t bidx = fvp->bone_drag_index;
+                    mat4_t em = edit_entity_build_model_matrix(ae);
+                    mat4_t combined;
+                    uint32_t pidx = sk->parent_indices
+                        ? sk->parent_indices[bidx] : UINT32_MAX;
+                    if (pidx != UINT32_MAX && pidx < sk->joint_count) {
+                        combined = mat4_mul(em, sk->rest_world[pidx]);
+                    } else {
+                        combined = em;
+                    }
+                    quat_t parent_q = quat_from_mat4(&combined);
+                    quat_t conj_pq = quat_conjugate(parent_q);
+                    /* local_dq = conj(parent_q) * dq * parent_q */
+                    quat_t local_dq = quat_mul(quat_mul(conj_pq, dq), parent_q);
+                    per_bone_gizmo_apply_rotate(
+                        sk, bidx, local_dq);
+                    if (ed->prefab_mode.active) {
+                        ed->prefab_mode.dirty = true;
+                    }
+                    /* Don't bump dirty_gen: bone pose changes don't
+                     * affect entity hierarchy (hull cache). */
+                }
+            }
+        }
+        return;
+    }
+
     /* Per-object mode: rotate only the picked entity.
      * In cursor basis, pass the cursor as pivot so the entity orbits it. */
     if (fvp->per_object_gizmo &&
@@ -511,6 +839,86 @@ static void snap_selected_euler_axes(scene_editor_t *ed) {
  */
 static void apply_gizmo_drag(scene_editor_t *ed, vec3_t delta) {
     viewport_state_t *fvp = scene_focused_vp(ed);
+
+    /* Per-bone gizmo drag: translate the dragged bone's rest pose. */
+    if (fvp->bone_drag_index != UINT32_MAX &&
+        ed->bone_selection.entity_id != EDIT_BONE_SEL_NONE) {
+        const edit_entity_t *ae = edit_entity_store_get(
+            &ed->entities, ed->bone_selection.entity_id);
+        if (ae && ae->active) {
+            uint8_t at = 0, as = 0;
+            const void *sp = entity_attrs_get(
+                &ae->attrs, SCRIPT_KEY_SKEL_PATH, &at, &as);
+            if (sp && at == SCRIPT_ATTR_STR) {
+                const char *spath = (const char *)sp;
+                const char *fname = spath;
+                for (const char *p = spath; *p; p++) {
+                    if (*p == '/') fname = p + 1;
+                }
+                edit_skeleton_entry_t *entry =
+                    edit_skeleton_registry_get_mut(
+                        &ed->skeleton_registry, fname);
+                if (entry) {
+                    /* Get the skeleton to operate on.  In prefab mode
+                     * we mutate the shared registry skeleton directly.
+                     * In regular mode we use per-entity overrides. */
+                    skeleton_def_t *sk = &entry->skel;
+                    skeleton_def_t pose_view;
+                    uint32_t eid = ed->bone_selection.entity_id;
+                    if (!ed->prefab_mode.active) {
+                        bone_pose_block_t *pose =
+                            bone_pose_store_get_mut(&ed->bone_poses, eid);
+                        if (!pose) {
+                            pose = bone_pose_store_ensure(
+                                &ed->bone_poses, eid, sk);
+                        }
+                        if (pose) {
+                            pose_view = *sk;
+                            pose_view.rest_local = pose->rest_local;
+                            pose_view.rest_world = pose->rest_world;
+                            pose_view.tail_positions = pose->tail_positions;
+                            sk = &pose_view;
+                        }
+                    }
+                    /* Transform world-space delta into parent-bone local space.
+                     * rest_local is relative to the parent bone's rest_world
+                     * (and the entity's model matrix).  We need:
+                     *   local_delta = inv_rot(entity_model * parent_rest_world) * delta
+                     * For rotation-only inverse, transpose the 3x3 part. */
+                    uint32_t bidx = fvp->bone_drag_index;
+                    mat4_t em = edit_entity_build_model_matrix(ae);
+                    mat4_t combined;
+                    uint32_t pidx = sk->parent_indices
+                        ? sk->parent_indices[bidx] : UINT32_MAX;
+                    if (pidx != UINT32_MAX && pidx < sk->joint_count) {
+                        combined = mat4_mul(em, sk->rest_world[pidx]);
+                    } else {
+                        combined = em;
+                    }
+                    /* Inverse-rotate delta: transpose of 3x3. */
+                    vec3_t local_delta;
+                    local_delta.x = combined.m[0] * delta.x
+                                  + combined.m[1] * delta.y
+                                  + combined.m[2] * delta.z;
+                    local_delta.y = combined.m[4] * delta.x
+                                  + combined.m[5] * delta.y
+                                  + combined.m[6] * delta.z;
+                    local_delta.z = combined.m[8] * delta.x
+                                  + combined.m[9] * delta.y
+                                  + combined.m[10] * delta.z;
+                    per_bone_gizmo_apply_drag(
+                        sk, bidx, local_delta);
+                    if (ed->prefab_mode.active) {
+                        ed->prefab_mode.dirty = true;
+                    }
+                    /* Don't bump dirty_gen here: bone pose changes don't
+                     * affect entity hierarchy, so hull cache doesn't need
+                     * rebuilding.  dirty_gen drives hull rebuilds. */
+                }
+            }
+        }
+        return;
+    }
 
     /* Per-object mode: apply drag to the single picked entity only. */
     if (fvp->per_object_gizmo &&
@@ -686,6 +1094,13 @@ static void send_per_entity_abs_(scene_editor_t *ed, gizmo_mode_t mode) {
 static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     viewport_state_t *fvp = scene_focused_vp(ed);
 
+    /* Per-bone gizmo drag: bone rest-pose edits are local and do not
+     * generate server commands (the skeleton is modified in-place). */
+    if (fvp->bone_drag_index != UINT32_MAX) {
+        fvp->bone_drag_index = UINT32_MAX;
+        return;
+    }
+
     /* Per-object mode: send command for the single dragged entity. */
     if (fvp->per_object_gizmo &&
         fvp->per_object_drag_entity != EDIT_ENTITY_INVALID_ID) {
@@ -833,10 +1248,17 @@ static int scrollbar_hit_test(const scene_editor_t *ed, int lx, int ly) {
                                   > ed->ui.asset_browser_visible_lines;
                     if (has_sb) return 4;
                 } else if (ly >= r.y + THEME_ROW_HEIGHT && ly < split_y) {
-                    /* Outliner scrollbar (top 60%). */
-                    bool has_sb = ed->ui.outliner_total
-                                  > ed->ui.outliner_visible_lines;
-                    if (has_sb) return 1;
+                    if (ed->prefab_mode.active) {
+                        /* Prefab outliner scrollbar (top 60%, prefab mode). */
+                        bool has_sb = ed->ui.prefab_outliner_total
+                                      > ed->ui.prefab_outliner_visible_lines;
+                        if (has_sb) return 5;
+                    } else {
+                        /* Outliner scrollbar (top 60%). */
+                        bool has_sb = ed->ui.outliner_total
+                                      > ed->ui.outliner_visible_lines;
+                        if (has_sb) return 1;
+                    }
                 }
             }
             continue;
@@ -901,6 +1323,8 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
             if (sb == 1) ed->ui.scrollbar_drag_scroll = ed->ui.outliner_scroll;
             else if (sb == 2) ed->ui.scrollbar_drag_scroll = ed->ui.inspector_scroll;
             else if (sb == 3) ed->ui.scrollbar_drag_scroll = ed->ui.tui_log_scroll;
+            else if (sb == 4) ed->ui.scrollbar_drag_scroll = ed->ui.asset_browser_scroll;
+            else if (sb == 5) ed->ui.scrollbar_drag_scroll = ed->ui.prefab_outliner_scroll;
             return true;
         }
 
@@ -1016,8 +1440,18 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                                                       aspect, &proj_m);
                     mat4_t vp_m = mat4_mul(proj_m, view_m);
 
-                    if (fvp->per_object_gizmo) {
-                        /* Per-object mode: hit test all entity gizmos. */
+                    /* When bones are selected, ALL gizmo interaction
+                     * targets bones — skip entity gizmos entirely. */
+                    fvp->bone_drag_index = UINT32_MAX;
+                    bool bones_active = edit_bone_selection_count(
+                        &ed->bone_selection) > 0;
+
+                    if (bones_active) {
+                        gizmo_hit = try_bone_gizmo_pick(
+                            ed, fvp, &ray, gscale,
+                            &vp_m, screen_nx, screen_ny);
+                    } else if (fvp->per_object_gizmo) {
+                        /* Per-object mode: hit test entity gizmos. */
                         gizmo_hit = scene_per_object_gizmo_hit_test(
                             ed, &ray, gscale, &vp_m,
                             screen_nx, screen_ny);
@@ -1066,8 +1500,88 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     } /* end unified gizmo branch */
                 }
 
-                /* If no gizmo hit, do entity picking. */
+                /* If no gizmo hit, try bone picking on any entity with
+                 * a visible skeleton, before falling back to entity pick. */
+                bool bone_picked = false;
                 if (!gizmo_hit) {
+                    /* Scan all visible entities with skeletons. */
+                    uint32_t ecap = ed->entities.capacity;
+                    for (uint32_t ei = 0;
+                         ei < ecap && !bone_picked; ei++) {
+                        const edit_entity_t *ae =
+                            edit_entity_store_get(&ed->entities, ei);
+                        if (!ae || !ae->active || ae->hidden) continue;
+                        uint8_t bat = 0, bas = 0;
+                        const void *bsp = entity_attrs_get(
+                            &ae->attrs, SCRIPT_KEY_SKEL_PATH, &bat, &bas);
+                        if (!bsp || bat != SCRIPT_ATTR_STR) continue;
+                        const char *bspath = (const char *)bsp;
+                        if (bspath[0] == '\0') continue;
+                        const char *bfn = bspath;
+                        for (const char *bp = bspath; *bp; bp++) {
+                            if (*bp == '/') bfn = bp + 1;
+                        }
+                        const edit_skeleton_entry_t *bse =
+                            edit_skeleton_registry_get(
+                                &ed->skeleton_registry, bfn);
+                        if (!bse || bse->skel.joint_count == 0 ||
+                            !bse->skel.tail_positions) continue;
+
+                        const skeleton_def_t *sk = &bse->skel;
+                        /* Use per-entity pose override if available. */
+                        const mat4_t *pick_rw = sk->rest_world;
+                        const float *pick_tp = sk->tail_positions;
+                        const bone_pose_block_t *pick_bpb =
+                            bone_pose_store_get(&ed->bone_poses, ei);
+                        if (pick_bpb) {
+                            pick_rw = pick_bpb->rest_world;
+                            pick_tp = pick_bpb->tail_positions;
+                        }
+                        uint32_t bcand_n = sk->joint_count;
+                        if (bcand_n > 256) bcand_n = 256;
+                        bone_pick_candidate_t bcands[256];
+                        for (uint32_t bj = 0; bj < bcand_n; bj++) {
+                            bcands[bj].bone_index = bj;
+                            bcands[bj].cap_a = (vec3_t){
+                                pick_rw[bj].m[12] + ae->pos[0],
+                                pick_rw[bj].m[13] + ae->pos[1],
+                                pick_rw[bj].m[14] + ae->pos[2]};
+                            bcands[bj].cap_b = (vec3_t){
+                                pick_tp[bj * 3 + 0] + ae->pos[0],
+                                pick_tp[bj * 3 + 1] + ae->pos[1],
+                                pick_tp[bj * 3 + 2] + ae->pos[2]};
+                            bone_capsule_params_t bcp;
+                            float bh[3] = {pick_rw[bj].m[12],
+                                           pick_rw[bj].m[13],
+                                           pick_rw[bj].m[14]};
+                            float bt[3] = {pick_tp[bj*3],
+                                           pick_tp[bj*3+1],
+                                           pick_tp[bj*3+2]};
+                            bone_capsule_params_from_joint(bh, bt, &bcp);
+                            bcands[bj].radius = bcp.radius;
+                        }
+                        uint32_t picked_bone;
+                        if (pick_nearest_bone(&ray, bcands, bcand_n,
+                                              &picked_bone)) {
+                            SDL_Keymod bmod = SDL_GetModState();
+                            if (bmod & KMOD_SHIFT) {
+                                edit_bone_selection_toggle(
+                                    &ed->bone_selection,
+                                    ei, picked_bone);
+                            } else {
+                                edit_bone_selection_clear(
+                                    &ed->bone_selection);
+                                edit_bone_selection_add(
+                                    &ed->bone_selection,
+                                    ei, picked_bone);
+                            }
+                            bone_picked = true;
+                        }
+                    }
+                }
+
+                /* If no gizmo hit and no bone picked, do entity picking. */
+                if (!gizmo_hit && !bone_picked) {
                     uint32_t cap = ed->entities.capacity;
                     uint32_t count = 0;
                     pick_candidate_t candidates[256];
@@ -1078,9 +1592,22 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             continue;
                         float gc[3];
                         edit_entity_geometry_center(ent, gc);
-                        float hw = ent->scale[0] * 0.5f;
-                        float hh = ent->scale[1] * 0.5f;
-                        float hd = ent->scale[2] * 0.5f;
+                        float hw, hh, hd;
+                        if (ent->type == EDIT_ENTITY_TYPE_MESH) {
+                            /* Use actual mesh AABB for picking accuracy. */
+                            if (!mesh_entity_half_extents_(
+                                    &ed->viewport.snap_meshes, i,
+                                    ent->scale, &hw, &hh, &hd)) {
+                                /* No cached mesh yet; use generous fallback. */
+                                hw = ent->scale[0] * 2.0f;
+                                hh = ent->scale[1] * 2.0f;
+                                hd = ent->scale[2] * 2.0f;
+                            }
+                        } else {
+                            hw = ent->scale[0] * 0.5f;
+                            hh = ent->scale[1] * 0.5f;
+                            hd = ent->scale[2] * 0.5f;
+                        }
                         candidates[count].entity_id = i;
                         candidates[count].aabb_min = (vec3_t){
                             gc[0] - hw, gc[1] - hh, gc[2] - hd};
@@ -1128,6 +1655,7 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             }
                         } else {
                             edit_selection_clear(&ed->selection);
+                            edit_bone_selection_clear(&ed->bone_selection);
                             ed->ui.pivot_edit_mode = false;
                             ed->ui.action = UI_ACTION_SELECT_ENTITY;
                             ed->ui.action_target = picked_id;
@@ -1144,6 +1672,8 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                         fvp->box_select_start_y = ed->ui.mouse_y / bsc;
                         if (!(mod & KMOD_SHIFT)) {
                             edit_selection_clear(&ed->selection);
+                            /* Bone selection is independent — don't clear
+                             * it on background click. */
                         }
                     }
                 }
@@ -1189,9 +1719,20 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                             continue;
                         float gc[3];
                         edit_entity_geometry_center(ent, gc);
-                        float hw = ent->scale[0] * 0.5f;
-                        float hh = ent->scale[1] * 0.5f;
-                        float hd = ent->scale[2] * 0.5f;
+                        float hw, hh, hd;
+                        if (ent->type == EDIT_ENTITY_TYPE_MESH) {
+                            if (!mesh_entity_half_extents_(
+                                    &ed->viewport.snap_meshes, i,
+                                    ent->scale, &hw, &hh, &hd)) {
+                                hw = ent->scale[0] * 2.0f;
+                                hh = ent->scale[1] * 2.0f;
+                                hd = ent->scale[2] * 2.0f;
+                            }
+                        } else {
+                            hw = ent->scale[0] * 0.5f;
+                            hh = ent->scale[1] * 0.5f;
+                            hd = ent->scale[2] * 0.5f;
+                        }
                         candidates[count].entity_id = i;
                         candidates[count].aabb_min = (vec3_t){
                             gc[0] - hw, gc[1] - hh, gc[2] - hd};
@@ -1315,6 +1856,63 @@ static void finish_box_select_(scene_editor_t *ed) {
             ed->active_object_id = i;
         }
     }
+
+    /* ---- Bone box select (prefab or regular mode with bone selection) ---- */
+    if (ed->bone_selection.entity_id != EDIT_BONE_SEL_NONE) {
+        uint32_t root_id = ed->bone_selection.entity_id;
+        const edit_entity_t *root_ent =
+            edit_entity_store_get(&ed->entities, root_id);
+        if (!root_ent) return;
+
+        /* Look up skeleton. */
+        uint8_t stype = 0, ssize = 0;
+        const void *sp = entity_attrs_get(&root_ent->attrs,
+            SCRIPT_KEY_SKEL_PATH, &stype, &ssize);
+        if (!sp || stype != SCRIPT_ATTR_STR || ssize == 0) return;
+
+        const char *path = (const char *)sp;
+        const char *slash = strrchr(path, '/');
+        const char *fname = slash ? slash + 1 : path;
+
+        const edit_skeleton_entry_t *sentry =
+            edit_skeleton_registry_get(&ed->skeleton_registry, fname);
+        if (!sentry) return;
+
+        const skeleton_def_t *skel = &sentry->skel;
+        /* Use per-entity override rest_world if available. */
+        const mat4_t *rest_world = skel->rest_world;
+        const bone_pose_block_t *bp =
+            bone_pose_store_get(&ed->bone_poses, root_id);
+        if (bp) rest_world = bp->rest_world;
+
+        mat4_t model = edit_entity_build_model_matrix(root_ent);
+
+        for (uint32_t bi = 0; bi < skel->joint_count; bi++) {
+            /* Bone head position in world space. */
+            float lx = rest_world[bi].m[12];
+            float ly = rest_world[bi].m[13];
+            float lz = rest_world[bi].m[14];
+
+            float wx = model.m[0]*lx + model.m[4]*ly + model.m[8]*lz  + model.m[12];
+            float wy = model.m[1]*lx + model.m[5]*ly + model.m[9]*lz  + model.m[13];
+            float wz = model.m[2]*lx + model.m[6]*ly + model.m[10]*lz + model.m[14];
+
+            /* Project to clip space. */
+            float px = vp.m[0]*wx + vp.m[4]*wy + vp.m[8]*wz  + vp.m[12];
+            float py = vp.m[1]*wx + vp.m[5]*wy + vp.m[9]*wz  + vp.m[13];
+            float pw = vp.m[3]*wx + vp.m[7]*wy + vp.m[11]*wz + vp.m[15];
+
+            if (pw <= 0.0f) continue;
+
+            float bnx = (px / pw) * 0.5f + 0.5f;
+            float bny = 0.5f - (py / pw) * 0.5f;
+
+            if (bnx >= bx0 && bnx <= bx1 && bny >= by0 && bny <= by1) {
+                edit_bone_selection_add(&ed->bone_selection,
+                                        root_id, bi);
+            }
+        }
+    }
 }
 
 /**
@@ -1341,6 +1939,7 @@ static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) 
             fvp->gizmo.dragging = false;
             fvp->gizmo.active_axis = GIZMO_AXIS_NONE;
             fvp->free_dragging = false;
+            fvp->bone_drag_index = UINT32_MAX;
             return true;
         }
 
@@ -1782,6 +2381,9 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         } else if (sb == 4) {
             total = ed->ui.asset_browser_total;
             visible = ed->ui.asset_browser_visible_lines;
+        } else if (sb == 5) {
+            total = ed->ui.prefab_outliner_total;
+            visible = ed->ui.prefab_outliner_visible_lines;
         }
 
         int max_scroll = total - visible;
@@ -1794,6 +2396,11 @@ static bool handle_mouse_motion(scene_editor_t *ed,
             panel_rect_t r = panel_layout_get_rect(&ed->layout, PANEL_OUTLINER);
             int browser_h = r.h - (r.h * 3) / 5;
             track_h = (float)(browser_h - THEME_ROW_HEIGHT);
+        } else if (sb == 5) {
+            /* Prefab outliner: top 60% of outliner panel. */
+            panel_rect_t r = panel_layout_get_rect(&ed->layout, PANEL_OUTLINER);
+            int outliner_h = (r.h * 3) / 5;
+            track_h = (float)(outliner_h - THEME_ROW_HEIGHT);
         } else {
             panel_id_t sb_panels[] = {PANEL_OUTLINER, PANEL_INSPECTOR, PANEL_TUI};
             panel_rect_t r = panel_layout_get_rect(&ed->layout, sb_panels[sb - 1]);
@@ -1815,6 +2422,7 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         else if (sb == 2) ed->ui.inspector_scroll = new_scroll;
         else if (sb == 3) ed->ui.tui_log_scroll = new_scroll;
         else if (sb == 4) ed->ui.asset_browser_scroll = new_scroll;
+        else if (sb == 5) ed->ui.prefab_outliner_scroll = new_scroll;
 
         return true;
     }
@@ -2311,6 +2919,12 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         ed->ui.tui_active = (ed->layout.focus == PANEL_TUI);
         return true;
     case SDLK_ESCAPE: {
+        /* Exit prefab mode if active. */
+        if (ed->prefab_mode.active) {
+            prefab_mode_exit(ed);
+            scene_ui_tui_log(&ed->ui, "Prefab mode: OFF");
+            return true;
+        }
         /* Close the focused viewport if multiple exist.
          * The last remaining viewport cannot be closed. */
         uint8_t fvp_idx = ed->vp_bsp.focused_viewport;
@@ -2342,6 +2956,130 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             ed->viewports[prev].active) {
             ed->prev_focused_vp = ed->vp_bsp.focused_viewport;
             ed->vp_bsp.focused_viewport = prev;
+        }
+        return true;
+    }
+
+    /* Ctrl+S: save prefab (prefab mode) or bone poses (regular mode). */
+    case SDLK_s: {
+        if (!(ev->keysym.mod & KMOD_CTRL)) return false;
+        if (!ed->prefab_mode.active) {
+            /* Regular mode: save any per-entity bone pose overrides. */
+            uint32_t saved = 0;
+            for (uint32_t si = 0; si < ed->bone_poses.block_cap; si++) {
+                const bone_pose_block_t *bp = &ed->bone_poses.blocks[si];
+                if (!bp->active) continue;
+                uint32_t eid = bp->entity_id;
+                const edit_entity_t *se_ent =
+                    edit_entity_store_get(&ed->entities, eid);
+                if (!se_ent || !se_ent->active) continue;
+
+                /* Build save path: asset_dir/bone_poses/<entity_name>.bpose */
+                uint8_t nat = 0, nas = 0;
+                const void *nv = entity_attrs_get(&se_ent->attrs,
+                    SCRIPT_KEY_NAME, &nat, &nas);
+                const char *ename = (nv && nat == SCRIPT_ATTR_STR)
+                    ? (const char *)nv : "entity";
+                char bpose_path[512];
+                snprintf(bpose_path, sizeof(bpose_path),
+                         "%s/bone_poses/%s_%u.bpose",
+                         ed->config.asset_dir, ename, eid);
+
+                if (bone_pose_file_write(bpose_path, bp)) {
+                    /* Store the path on the entity as an attribute. */
+                    char rel_path[256];
+                    snprintf(rel_path, sizeof(rel_path),
+                             "bone_poses/%s_%u.bpose", ename, eid);
+                    entity_attrs_set((entity_attrs_t *)&se_ent->attrs,
+                                      SCRIPT_KEY_BONE_POSE_PATH,
+                                      SCRIPT_ATTR_STR,
+                                      rel_path,
+                                      (uint8_t)(strlen(rel_path) + 1));
+                    saved++;
+                }
+            }
+            if (saved > 0) {
+                char msg[128];
+                snprintf(msg, sizeof(msg),
+                         "Saved %u bone pose override(s)", saved);
+                scene_ui_tui_log(&ed->ui, msg);
+            } else {
+                scene_ui_tui_log(&ed->ui,
+                    "No bone pose overrides to save");
+            }
+            return true;
+        }
+
+        /* Determine bone count from skeleton (if any). */
+        uint32_t bone_count = 0;
+        uint32_t root_id = ed->prefab_mode.root_entity_id;
+        const edit_skeleton_entry_t *se = NULL;
+        const edit_entity_t *root_ent =
+            edit_entity_store_get(&ed->entities, root_id);
+        if (root_ent) {
+            uint8_t sat = 0, sas = 0;
+            const void *ssp = entity_attrs_get(&root_ent->attrs,
+                SCRIPT_KEY_SKEL_PATH, &sat, &sas);
+            if (ssp && sat == SCRIPT_ATTR_STR) {
+                const char *sp = (const char *)ssp;
+                const char *fn = sp;
+                for (const char *p = sp; *p; p++) {
+                    if (*p == '/') fn = p + 1;
+                }
+                se = edit_skeleton_registry_get(&ed->skeleton_registry, fn);
+                if (se) bone_count = se->skel.joint_count;
+            }
+        }
+
+        /* Collect prefab data from entity store. */
+        static prefab_def_t s_save_def;
+        if (!prefab_collect_from_entities(&s_save_def, &ed->entities,
+                                           root_id, bone_count)) {
+            scene_ui_tui_log(&ed->ui, "Failed to collect prefab data");
+            return true;
+        }
+
+        /* Capture per-bone rest_local overrides into the prefab.
+         * These are stored in the fpfab, NOT in the fskel. */
+        if (se && bone_count > 0) {
+            uint32_t pose_n = bone_count < PREFAB_MAX_BONES
+                            ? bone_count : PREFAB_MAX_BONES;
+            s_save_def.bone_pose_count = pose_n;
+            for (uint32_t bi = 0; bi < pose_n; bi++) {
+                memcpy(s_save_def.bone_rest_local[bi],
+                       se->skel.rest_local[bi].m,
+                       16 * sizeof(float));
+            }
+        } else {
+            s_save_def.bone_pose_count = 0;
+        }
+
+        /* Build save path: use existing fpfab_path or derive from name. */
+        char save_path[512];
+        if (ed->prefab_mode.fpfab_path[0] != '\0') {
+            snprintf(save_path, sizeof(save_path), "%s",
+                     ed->prefab_mode.fpfab_path);
+        } else {
+            /* Default: asset_dir/prefabs/<name>.fpfab */
+            const char *name = ed->prefab_mode.name[0]
+                ? ed->prefab_mode.name : "untitled";
+            snprintf(save_path, sizeof(save_path), "%s/prefabs/%s.fpfab",
+                     ed->config.asset_dir, name);
+        }
+
+        if (prefab_save(save_path, &s_save_def)) {
+            /* Store path for future saves. */
+            strncpy(ed->prefab_mode.fpfab_path, save_path,
+                    sizeof(ed->prefab_mode.fpfab_path) - 1);
+            ed->prefab_mode.fpfab_path[sizeof(ed->prefab_mode.fpfab_path) - 1]
+                = '\0';
+            ed->prefab_mode.dirty = false;
+
+            char msg[128];
+            snprintf(msg, sizeof(msg), "Saved prefab: %s", save_path);
+            scene_ui_tui_log(&ed->ui, msg);
+        } else {
+            scene_ui_tui_log(&ed->ui, "Failed to save prefab");
         }
         return true;
     }
@@ -2476,9 +3214,43 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         editor_camera_zoom(&fvp->camera, CAMERA_ZOOM_SPEED);
         return true;
 
-    /* A: select all / Shift+A: deselect all. */
+    /* A: select all / Shift+A: deselect all / Ctrl+A: select all bones. */
     case SDLK_a: {
         SDL_Keymod km = SDL_GetModState();
+        if (km & KMOD_CTRL) {
+            /* Ctrl+A: select all bones if active entity has a skeleton. */
+            if (ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
+                const edit_entity_t *ae = edit_entity_store_get(
+                    &ed->entities, ed->active_object_id);
+                if (ae && ae->active) {
+                    uint8_t bat2 = 0, bas2 = 0;
+                    const void *bsp2 = entity_attrs_get(
+                        &ae->attrs, SCRIPT_KEY_SKEL_PATH, &bat2, &bas2);
+                    if (bsp2 && bat2 == SCRIPT_ATTR_STR) {
+                        const char *bp2 = (const char *)bsp2;
+                        if (bp2[0] != '\0') {
+                            const char *fn2 = bp2;
+                            for (const char *p = bp2; *p; p++) {
+                                if (*p == '/') fn2 = p + 1;
+                            }
+                            const edit_skeleton_entry_t *se2 =
+                                edit_skeleton_registry_get(
+                                    &ed->skeleton_registry, fn2);
+                            if (se2 && se2->skel.joint_count > 0) {
+                                edit_bone_selection_clear(&ed->bone_selection);
+                                for (uint32_t bj = 0;
+                                     bj < se2->skel.joint_count; bj++) {
+                                    edit_bone_selection_add(
+                                        &ed->bone_selection,
+                                        ed->active_object_id, bj);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return true;
+        }
         if (km & KMOD_SHIFT) {
             /* Shift+A: deselect all — sync each to server. */
             uint32_t sc = edit_selection_count(&ed->selection);
@@ -2551,7 +3323,7 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return true;
     }
 
-    /* Shift+P: toggle pivot edit mode (single selection only). */
+    /* P: toggle prefab mode / Shift+P: toggle pivot edit mode. */
     case SDLK_p: {
         SDL_Keymod mod = SDL_GetModState();
         if (mod & KMOD_SHIFT) {
@@ -2564,6 +3336,22 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             } else {
                 scene_ui_tui_log(&ed->ui,
                                    "Pivot mode requires single selection");
+            }
+        } else {
+            /* Bare P: toggle prefab editor mode. */
+            if (ed->prefab_mode.active) {
+                prefab_mode_exit(ed);
+                scene_ui_tui_log(&ed->ui, "Prefab mode: OFF");
+            } else {
+                if (prefab_mode_enter(ed)) {
+                    char pmsg[320];
+                    snprintf(pmsg, sizeof(pmsg), "Prefab mode: %s",
+                             ed->prefab_mode.name);
+                    scene_ui_tui_log(&ed->ui, pmsg);
+                } else {
+                    scene_ui_tui_log(&ed->ui,
+                        "Prefab mode requires a skeleton entity");
+                }
             }
         }
         return true;
@@ -2676,18 +3464,75 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         editor_camera_orbit(&fvp->camera,
                              180.0f * INPUT_DEG_TO_RAD, 0.0f);
         return true;
-    case SDLK_f:
-        /* Frame selection: compute AABB of selected entities and frame it. */
-        if (edit_selection_count(&ed->selection) > 0) {
-            vec3_t aabb_min = { 1e30f,  1e30f,  1e30f};
-            vec3_t aabb_max = {-1e30f, -1e30f, -1e30f};
+    case SDLK_f: {
+        /* Frame selection: compute AABB and center camera on it. */
+        vec3_t aabb_min = { 1e30f,  1e30f,  1e30f};
+        vec3_t aabb_max = {-1e30f, -1e30f, -1e30f};
+        bool have_bounds = false;
+
+        /* If bones are selected, frame the selected bones. */
+        uint32_t bone_count_f = 0;
+        const uint32_t *bone_indices_f = edit_bone_selection_bones(
+            &ed->bone_selection, &bone_count_f);
+        if (bone_count_f > 0 &&
+            ed->bone_selection.entity_id != EDIT_BONE_SEL_NONE) {
+            uint32_t beid = ed->bone_selection.entity_id;
+            const edit_entity_t *bent =
+                edit_entity_store_get(&ed->entities, beid);
+            if (bent) {
+                /* Get skeleton for bone positions. */
+                uint8_t bsat = 0, bsas = 0;
+                const void *bsp = entity_attrs_get(&bent->attrs,
+                    SCRIPT_KEY_SKEL_PATH, &bsat, &bsas);
+                const edit_skeleton_entry_t *bse = NULL;
+                if (bsp && bsat == SCRIPT_ATTR_STR)
+                    bse = edit_skeleton_registry_get(
+                        &ed->skeleton_registry, (const char *)bsp);
+                if (bse) {
+                    /* Use per-entity pose override if available. */
+                    const mat4_t *f_rest_world = bse->skel.rest_world;
+                    const bone_pose_block_t *f_bp =
+                        bone_pose_store_get(&ed->bone_poses, beid);
+                    if (f_bp) f_rest_world = f_bp->rest_world;
+
+                    /* Build entity model matrix. */
+                    mat4_t em = edit_entity_build_model_matrix(bent);
+
+                    for (uint32_t bi = 0; bi < bone_count_f; bi++) {
+                        uint32_t idx = bone_indices_f[bi];
+                        if (idx >= bse->skel.joint_count) continue;
+                        /* Bone head in skeleton-local space. */
+                        float bx = f_rest_world[idx].m[12];
+                        float by = f_rest_world[idx].m[13];
+                        float bz = f_rest_world[idx].m[14];
+                        /* Transform to world space. */
+                        float wx = em.m[0]*bx + em.m[4]*by + em.m[8]*bz + em.m[12];
+                        float wy = em.m[1]*bx + em.m[5]*by + em.m[9]*bz + em.m[13];
+                        float wz = em.m[2]*bx + em.m[6]*by + em.m[10]*bz + em.m[14];
+                        if (wx < aabb_min.x) aabb_min.x = wx;
+                        if (wy < aabb_min.y) aabb_min.y = wy;
+                        if (wz < aabb_min.z) aabb_min.z = wz;
+                        if (wx > aabb_max.x) aabb_max.x = wx;
+                        if (wy > aabb_max.y) aabb_max.y = wy;
+                        if (wz > aabb_max.z) aabb_max.z = wz;
+                    }
+                    /* Add a small padding so single-bone doesn't have zero AABB. */
+                    float pad = 0.5f;
+                    aabb_min.x -= pad; aabb_min.y -= pad; aabb_min.z -= pad;
+                    aabb_max.x += pad; aabb_max.y += pad; aabb_max.z += pad;
+                    have_bounds = true;
+                }
+            }
+        }
+
+        /* Fall back to entity selection. */
+        if (!have_bounds && edit_selection_count(&ed->selection) > 0) {
             uint32_t sel_count = edit_selection_count(&ed->selection);
             const uint32_t *sel_ids = edit_selection_ids(&ed->selection);
             for (uint32_t si = 0; si < sel_count; si++) {
                 const edit_entity_t *ent =
                     edit_entity_store_get(&ed->entities, sel_ids[si]);
                 if (!ent) continue;
-                /* Expand AABB by geometry center ± half scale. */
                 float gc[3];
                 edit_entity_geometry_center(ent, gc);
                 float hx = fabsf(ent->scale[0]) * 0.5f;
@@ -2700,10 +3545,14 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
                 if (gc[1] + hy > aabb_max.y) aabb_max.y = gc[1] + hy;
                 if (gc[2] + hz > aabb_max.z) aabb_max.z = gc[2] + hz;
             }
-            editor_camera_frame_selection(&fvp->camera,
-                                           aabb_min, aabb_max);
+            have_bounds = true;
+        }
+
+        if (have_bounds) {
+            editor_camera_frame_selection(&fvp->camera, aabb_min, aabb_max);
         }
         return true;
+    }
 
     /* G: toggle snap for the current gizmo mode.
      * Ctrl+G: toggle all snap types at once. */
@@ -2868,6 +3717,16 @@ bool scene_input_process(struct scene_editor *ed, const union SDL_Event *event) 
                     ed->ui.asset_browser_scroll = 0;
                 if (ed->ui.asset_browser_scroll > max_scroll)
                     ed->ui.asset_browser_scroll = max_scroll;
+            } else if (ed->prefab_mode.active) {
+                /* Prefab outliner scroll. */
+                int max_scroll = ed->ui.prefab_outliner_total
+                                 - ed->ui.prefab_outliner_visible_lines;
+                if (max_scroll < 0) max_scroll = 0;
+                ed->ui.prefab_outliner_scroll -= event->wheel.y;
+                if (ed->ui.prefab_outliner_scroll < 0)
+                    ed->ui.prefab_outliner_scroll = 0;
+                if (ed->ui.prefab_outliner_scroll > max_scroll)
+                    ed->ui.prefab_outliner_scroll = max_scroll;
             } else {
                 /* Outliner entity list scroll. */
                 int max_scroll = ed->ui.outliner_total

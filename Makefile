@@ -1209,6 +1209,56 @@ build/vm_cache_tests: build/libheadless.a tests/editor/vm_cache_tests.c | build
 	$(CC) $(CFLAGS) tests/editor/vm_cache_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/entity_json_tests: build/libheadless.a tests/editor/entity_json_tests.c | build
 	$(CC) $(CFLAGS) tests/editor/entity_json_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_mesh_decompose_tests: build/libheadless.a tests/editor/snap_mesh_decompose_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_mesh_decompose_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/snap_decompose_cache_tests: build/libheadless.a tests/editor/snap_decompose_cache_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/snap_decompose_cache_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/collision_mesh_path_tests: build/libheadless.a tests/editor/collision_mesh_path_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/collision_mesh_path_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/mesh_bone_segment_tests: build/libheadless.a tests/editor/mesh_bone_segment_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/mesh_bone_segment_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/mesh_bone_collision_tests: build/libheadless.a tests/editor/mesh_bone_collision_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/mesh_bone_collision_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/viewport_mesh_type_tests: build/libheadless.a tests/editor/viewport_mesh_type_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/viewport_mesh_type_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/viewport_skel_promote_tests: build/libheadless.a tests/editor/viewport_skel_promote_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/viewport_skel_promote_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/collider_entity_type_tests: build/libheadless.a tests/editor/collider_entity_type_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/collider_entity_type_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/bone_selection_tests: build/libheadless.a tests/editor/bone_selection_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/bone_selection_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/bone_overlay_tests: build/libheadless.a tests/editor/bone_overlay_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/bone_overlay_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/bone_pick_tests: build/libheadless.a tests/editor/bone_pick_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/bone_pick_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_mode_tests: build/libheadless.a tests/editor/prefab_mode_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_mode_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_bone_parent_tests: build/libheadless.a tests/editor/prefab_bone_parent_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_bone_parent_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_outliner_tests: build/libheadless.a tests/editor/prefab_outliner_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_outliner_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_hull_build_tests: build/libheadless.a tests/editor/prefab_hull_build_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_hull_build_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_hull_cache_tests: build/libheadless.a tests/editor/prefab_hull_cache_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_hull_cache_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_def_tests: build/libheadless.a tests/editor/prefab_def_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_def_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_serialize_tests: build/libheadless.a tests/editor/prefab_serialize_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_serialize_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_collect_tests: build/libheadless.a tests/editor/prefab_collect_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_collect_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_pose_apply_tests: build/libheadless.a tests/editor/prefab_pose_apply_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_pose_apply_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/bone_pose_store_tests: build/libheadless.a tests/editor/bone_pose_store_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/bone_pose_store_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/asset_ref_widget_tests: build/libheadless.a tests/editor/asset_ref_widget_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/asset_ref_widget_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/prefab_child_spawn_tests: build/libheadless.a tests/editor/prefab_child_spawn_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/prefab_child_spawn_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/skel_promote_tests: build/libheadless.a tests/editor/skel_promote_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/skel_promote_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+build/bone_gizmo_tests: build/libheadless.a tests/editor/bone_gizmo_tests.c | build
+	$(CC) $(CFLAGS) tests/editor/bone_gizmo_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tools/scene_editor_main.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 build:

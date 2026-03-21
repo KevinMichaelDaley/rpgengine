@@ -63,7 +63,7 @@ static const char *const ENTITY_VERT_SRC =
     "    gl_Position = u_projection * u_view * world;\n"
     "}\n";
 
-/** Simple Blinn-Phong fragment shader. */
+/** Simple Blinn-Phong fragment shader with selection tint. */
 static const char *const ENTITY_FRAG_SRC =
     "#version 330 core\n"
     "in vec3 v_world_pos;\n"
@@ -71,6 +71,8 @@ static const char *const ENTITY_FRAG_SRC =
     "uniform vec3 u_color;\n"
     "uniform vec3 u_light_dir;\n"
     "uniform vec3 u_eye_pos;\n"
+    "uniform vec3 u_select_color;\n"
+    "uniform float u_select_tint;\n"
     "out vec4 frag_color;\n"
     "void main() {\n"
     "    vec3 n = normalize(v_normal);\n"
@@ -81,6 +83,7 @@ static const char *const ENTITY_FRAG_SRC =
     "    float spec = pow(max(dot(n, h), 0.0), 32.0);\n"
     "    vec3 ambient = 0.15 * u_color;\n"
     "    vec3 result = ambient + diff * u_color + 0.3 * spec * vec3(1.0);\n"
+    "    result = mix(result, u_select_color, u_select_tint);\n"
     "    frag_color = vec4(result, 1.0);\n"
     "}\n";
 
@@ -549,10 +552,47 @@ bool viewport_render_init(viewport_render_state_t *state,
     }
     state->entity_mesh_cache_cap = cache_cap;
 
+    /* Reserve per-entity mesh type array (parallel, same capacity).
+     * Zero-filled = VIEWPORT_MESH_NONE for all slots. */
+    size_t type_bytes = (size_t)cache_cap * sizeof(viewport_mesh_type_t);
+    state->entity_mesh_types = (viewport_mesh_type_t *)vm_reserve(type_bytes);
+    if (!state->entity_mesh_types) {
+        fprintf(stderr, "viewport_render: entity_mesh_types vm_reserve failed\n");
+        vm_release(state->entity_mesh_cache, cache_bytes);
+        mesh_registry_destroy(&state->meshes);
+        vao_destroy(&state->grid_vao);
+        vbo_destroy(&state->grid_vbo);
+        shader_program_destroy(&state->grid_shader);
+        shader_program_destroy(&state->shader);
+        render_pipeline_destroy(&state->pipeline);
+        destroy_fbo(state);
+        return false;
+    }
+
+    /* Reserve skeletal mesh pointer array (parallel, same capacity).
+     * Zero-filled = NULL for all slots. */
+    size_t skel_bytes = (size_t)cache_cap * sizeof(struct skeletal_mesh *);
+    state->skeletal_mesh_cache = (struct skeletal_mesh **)vm_reserve(skel_bytes);
+    if (!state->skeletal_mesh_cache) {
+        fprintf(stderr, "viewport_render: skeletal_mesh_cache vm_reserve failed\n");
+        vm_release(state->entity_mesh_types, type_bytes);
+        vm_release(state->entity_mesh_cache, cache_bytes);
+        mesh_registry_destroy(&state->meshes);
+        vao_destroy(&state->grid_vao);
+        vbo_destroy(&state->grid_vbo);
+        shader_program_destroy(&state->grid_shader);
+        shader_program_destroy(&state->shader);
+        render_pipeline_destroy(&state->pipeline);
+        destroy_fbo(state);
+        return false;
+    }
+
     /* Reserve collision mesh cache (parallel, same capacity). */
     state->collision_mesh_cache = (mesh_handle_t *)vm_reserve(cache_bytes);
     if (!state->collision_mesh_cache) {
         fprintf(stderr, "viewport_render: collision mesh cache vm_reserve failed\n");
+        vm_release(state->skeletal_mesh_cache, skel_bytes);
+        vm_release(state->entity_mesh_types, type_bytes);
         vm_release(state->entity_mesh_cache, cache_bytes);
         mesh_registry_destroy(&state->meshes);
         vao_destroy(&state->grid_vao);
@@ -567,6 +607,9 @@ bool viewport_render_init(viewport_render_state_t *state,
 
     /* Initialize snap mesh cache for surface snap raycasting. */
     snap_mesh_cache_init(&state->snap_meshes, cache_cap);
+
+    /* Initialize decompose result cache for physics body creation. */
+    snap_decompose_cache_init(&state->decompose_cache, cache_cap);
 
     /* Register primitive meshes (box, sphere, capsule, plane). */
     if (!viewport_render_init_primitives(state)) {
@@ -601,6 +644,9 @@ void viewport_render_destroy(viewport_render_state_t *state) {
     /* Free snap mesh cache (CPU-side geometry for surface snap). */
     snap_mesh_cache_destroy(&state->snap_meshes);
 
+    /* Free decompose result cache. */
+    snap_decompose_cache_destroy(&state->decompose_cache);
+
     /* Release entity mesh cache (vm_reserve'd, demand-paged). */
     if (state->entity_mesh_cache) {
         vm_release(state->entity_mesh_cache,
@@ -608,6 +654,26 @@ void viewport_render_destroy(viewport_render_state_t *state) {
     }
     state->entity_mesh_cache = NULL;
     state->entity_mesh_cache_cap = 0;
+
+    /* Release per-entity mesh type array. */
+    if (state->entity_mesh_types) {
+        vm_release(state->entity_mesh_types,
+                   (size_t)state->entity_mesh_cache_cap
+                   * sizeof(viewport_mesh_type_t));
+    }
+    state->entity_mesh_types = NULL;
+
+    /* Destroy and release skeletal mesh cache.
+     * Each non-NULL entry is a heap-allocated skeletal_mesh_t. */
+    if (state->skeletal_mesh_cache) {
+        /* Note: individual skeletal meshes should be destroyed by
+         * viewport_render_unload_entity_mesh before we get here.
+         * The vm_release handles the pointer array memory. */
+        vm_release(state->skeletal_mesh_cache,
+                   (size_t)state->entity_mesh_cache_cap
+                   * sizeof(struct skeletal_mesh *));
+    }
+    state->skeletal_mesh_cache = NULL;
 
     /* Release collision mesh cache (vm_reserve'd, demand-paged). */
     if (state->collision_mesh_cache) {
@@ -626,6 +692,7 @@ void viewport_render_destroy(viewport_render_state_t *state) {
 
     shader_program_destroy(&state->grid_shader);
     viewport_render_destroy_extra_shaders(state);
+    viewport_skinning_destroy(state);
     shader_program_destroy(&state->shader);
 
     render_pipeline_destroy(&state->pipeline);

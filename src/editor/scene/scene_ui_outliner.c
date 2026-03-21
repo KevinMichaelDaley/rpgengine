@@ -10,6 +10,7 @@
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_panel.h"
+#include "ferrum/editor/scene/prefab/prefab_ui_outliner.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -145,6 +146,10 @@ static const char *type_tag_string(uint32_t type) {
         case EDIT_ENTITY_TYPE_MARKER:    return "[marker]";
         case EDIT_ENTITY_TYPE_MESH:      return "[mesh]";
         case EDIT_ENTITY_TYPE_HALFSPACE: return "[halfspace]";
+        case EDIT_ENTITY_TYPE_COLLIDER_SPHERE:  return "[C:sphere]";
+        case EDIT_ENTITY_TYPE_COLLIDER_BOX:     return "[C:box]";
+        case EDIT_ENTITY_TYPE_COLLIDER_CAPSULE: return "[C:capsule]";
+        case EDIT_ENTITY_TYPE_COLLIDER_HULL:    return "[C:hull]";
         default:                         return "[unknown]";
     }
 }
@@ -167,6 +172,12 @@ static const char *type_tag_string(uint32_t type) {
 void scene_ui_build_outliner(struct scene_editor *ed,
                               const struct panel_rect *rect) {
     if (!ed || !rect || rect->w <= 0 || rect->h <= 0) {
+        return;
+    }
+
+    /* In prefab mode, delegate to the prefab-specific outliner. */
+    if (ed->prefab_mode.active) {
+        scene_ui_build_prefab_outliner(ed, rect);
         return;
     }
 

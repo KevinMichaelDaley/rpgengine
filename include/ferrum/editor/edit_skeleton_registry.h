@@ -99,6 +99,19 @@ const edit_skeleton_entry_t *edit_skeleton_registry_get(
     const edit_skeleton_registry_t *reg, const char *path);
 
 /**
+ * @brief Look up a skeleton by asset path (mutable).
+ *
+ * Same as edit_skeleton_registry_get() but returns a mutable pointer.
+ * Used by bone gizmo mode to modify rest pose transforms.
+ *
+ * @param reg   Registry (non-NULL).
+ * @param path  Asset path to search for (non-NULL).
+ * @return Mutable pointer to the entry, or NULL if not found.
+ */
+edit_skeleton_entry_t *edit_skeleton_registry_get_mut(
+    edit_skeleton_registry_t *reg, const char *path);
+
+/**
  * @brief Load a skeleton from an .fskel file and add to the registry.
  *
  * Extracts the filename from the full path for the registry key.

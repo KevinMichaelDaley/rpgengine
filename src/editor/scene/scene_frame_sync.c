@@ -84,6 +84,33 @@ static void apply_entity_(scene_editor_t *ed, const json_value_t *item) {
                 scene_load_entity_mesh(ed, eid, mesh_path);
             }
         }
+
+        /* Trigger collision mesh load if the entity has a separate
+         * collision mesh path. This overrides the render mesh for
+         * snap raycasting and physics collision. */
+        const void *cp = entity_attrs_get(&ent_mut->attrs,
+                                           SCRIPT_KEY_COLLISION_MESH_PATH,
+                                           &attr_type, &attr_size);
+        if (cp && attr_type == SCRIPT_ATTR_STR) {
+            const char *col_path = (const char *)cp;
+            if (col_path[0] != '\0') {
+                scene_load_entity_collision_mesh(ed, eid, col_path);
+            }
+        }
+
+        /* Trigger skeleton binding if the entity has a skel_path.
+         * This promotes the static mesh to skeletal (if FVMA has bones).
+         * The promotion is explicit — only happens when a user assigns
+         * an .fskel file in the inspector. */
+        const void *sp = entity_attrs_get(&ent_mut->attrs,
+                                           SCRIPT_KEY_SKEL_PATH,
+                                           &attr_type, &attr_size);
+        if (sp && attr_type == SCRIPT_ATTR_STR) {
+            const char *skel_path = (const char *)sp;
+            if (skel_path[0] != '\0') {
+                scene_load_entity_skeleton(ed, eid, skel_path);
+            }
+        }
     }
 }
 

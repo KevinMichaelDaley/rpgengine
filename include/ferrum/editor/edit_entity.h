@@ -32,6 +32,14 @@ extern "C" {
 #define EDIT_ENTITY_TYPE_MARKER    3
 #define EDIT_ENTITY_TYPE_MESH      4
 #define EDIT_ENTITY_TYPE_HALFSPACE 5
+
+/* Collider-only types: physics bodies without rendered geometry.
+ * Visible only as wireframe in collision overlay mode (C key). */
+#define EDIT_ENTITY_TYPE_COLLIDER_SPHERE  6
+#define EDIT_ENTITY_TYPE_COLLIDER_BOX     7
+#define EDIT_ENTITY_TYPE_COLLIDER_CAPSULE 8
+#define EDIT_ENTITY_TYPE_COLLIDER_HULL    9
+
 #define EDIT_ENTITY_INVALID_ID   UINT32_MAX
 
 /** @brief Maximum number of entity types in the registry. */

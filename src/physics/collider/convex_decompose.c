@@ -44,7 +44,7 @@ typedef struct cluster_range {
 
 phys_decompose_params_t phys_decompose_params_default(void) {
     return (phys_decompose_params_t){
-        .resolution = 32,
+        .resolution = 48,
         .concavity_threshold = 0.05f,
         .max_hulls = 32,
         .min_voxels = 4,
@@ -63,6 +63,10 @@ int phys_decompose_mesh(const phys_triangle_t *triangles,
     uint32_t res = params->resolution;
     if (res < 2) res = 2;
     if (res > PHYS_DECOMPOSE_MAX_RESOLUTION) res = PHYS_DECOMPOSE_MAX_RESOLUTION;
+
+    /* Adaptive resolution is computed after the AABB is known (see below).
+     * Store the caller's requested resolution so we can take the max. */
+    const uint32_t caller_res = res;
 
     uint32_t max_hulls = params->max_hulls;
     if (max_hulls < 1) max_hulls = 1;
@@ -94,6 +98,19 @@ int phys_decompose_mesh(const phys_triangle_t *triangles,
     if (dy > max_extent) max_extent = dy;
     if (dz > max_extent) max_extent = dz;
     if (max_extent < 1e-6f) max_extent = 1.0f;
+
+    /* ── Adaptive voxel resolution ───────────────────────────────
+     * Target a cell size of ~0.02 units (2 cm) so small or detailed
+     * meshes get enough voxels to avoid gaps.  The caller can still
+     * override by passing a higher value in params->resolution. */
+    {
+        const float target_cell_size = 0.02f;
+        uint32_t adaptive_res = (uint32_t)ceilf(max_extent / target_cell_size);
+        if (adaptive_res < 16) adaptive_res = 16;
+        if (adaptive_res > PHYS_DECOMPOSE_MAX_RESOLUTION)
+            adaptive_res = PHYS_DECOMPOSE_MAX_RESOLUTION;
+        res = (caller_res > adaptive_res) ? caller_res : adaptive_res;
+    }
 
     float margin = max_extent * 0.05f;
     lo.x -= margin; lo.y -= margin; lo.z -= margin;

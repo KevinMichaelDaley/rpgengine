@@ -74,7 +74,7 @@ static edit_asset_type_t type_from_ext_(const char *ext) {
     }
 
     /* Prefab files. */
-    if (strcmp(ext, ".prefab") == 0) {
+    if (strcmp(ext, ".prefab") == 0 || strcmp(ext, ".fpfab") == 0) {
         return EDIT_ASSET_PREFAB;
     }
 

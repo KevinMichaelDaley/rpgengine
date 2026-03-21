@@ -17,6 +17,11 @@ static const edit_entity_type_info_t s_types[] = {
     { .name = "marker",    .type_id = EDIT_ENTITY_TYPE_MARKER },
     { .name = "mesh",      .type_id = EDIT_ENTITY_TYPE_MESH },
     { .name = "halfspace", .type_id = EDIT_ENTITY_TYPE_HALFSPACE },
+    /* Collider-only types: invisible physics bodies. */
+    { .name = "collider_sphere",  .type_id = EDIT_ENTITY_TYPE_COLLIDER_SPHERE },
+    { .name = "collider_box",     .type_id = EDIT_ENTITY_TYPE_COLLIDER_BOX },
+    { .name = "collider_capsule", .type_id = EDIT_ENTITY_TYPE_COLLIDER_CAPSULE },
+    { .name = "collider_hull",    .type_id = EDIT_ENTITY_TYPE_COLLIDER_HULL },
 };
 
 static const uint32_t s_type_count =

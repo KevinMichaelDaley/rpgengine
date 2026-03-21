@@ -26,9 +26,18 @@
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/panels/asset_browser.h"
+#include "ferrum/editor/scene/prefab/prefab_child_spawn.h"
+#include "ferrum/editor/scene/prefab/prefab_def.h"
+#include "ferrum/editor/scene/prefab/prefab_load.h"
+#include "ferrum/editor/scene/prefab/prefab_pose_apply.h"
+#include "ferrum/editor/scene/viewport_bsp/viewport_state.h"
+#include "ferrum/editor/scene/scene_gizmo_bone.h"
+#include "ferrum/editor/edit_bone_selection.h"
+#include "ferrum/editor/edit_skeleton_registry.h"
 #include "ferrum/renderer/video_capture.h"
 
 #include <SDL2/SDL.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -111,7 +120,9 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
         snapshot.refresh_gen = ed->entity_refresh_gen;
 
         /* Restore or update. */
-        if (!edit_entity_store_restore(&ed->entities, eid, &snapshot)) {
+        bool is_new_entity = edit_entity_store_restore(
+            &ed->entities, eid, &snapshot);
+        if (!is_new_entity) {
             edit_entity_t *existing_mut =
                 edit_entity_store_get_mut(&ed->entities, eid);
             if (existing_mut) {
@@ -122,6 +133,17 @@ static void process_entity_list(scene_editor_t *ed, const json_value_t *result)
                     existing_mut->pending_delete = true;
                 }
             }
+        }
+
+        /* In prefab mode, parent newly spawned entities to the root. */
+        if (is_new_entity && ed->prefab_mode.active &&
+            ed->prefab_mode.pending_spawns.count > 0) {
+            prefab_pending_spawn_resolve(
+                &ed->prefab_mode.pending_spawns,
+                &ed->entities, eid,
+                ed->prefab_mode.root_entity_id);
+            ed->prefab_mode.dirty = true;
+            ed->prefab_mode.dirty_gen++;
         }
 
         /* Trigger mesh load for entities with mesh_path attribute. */
@@ -610,6 +632,69 @@ static void dispatch_tui_command(scene_editor_t *ed)
         return;
     }
 
+    /* Intercept move/rotate when bones are selected — apply locally
+     * to skeleton rest poses instead of sending to the server. */
+    uint32_t bone_eid = ed->bone_selection.entity_id;
+    if (edit_bone_selection_count(&ed->bone_selection) > 0 &&
+        bone_eid != EDIT_BONE_SEL_NONE &&
+        (strcmp(word, "move") == 0 || strcmp(word, "rotate") == 0)) {
+        const edit_entity_t *ae = edit_entity_store_get(
+            &ed->entities, bone_eid);
+        if (ae && ae->active) {
+            uint8_t at = 0, as = 0;
+            const void *sp = entity_attrs_get(
+                &ae->attrs, SCRIPT_KEY_SKEL_PATH, &at, &as);
+            if (sp && at == SCRIPT_ATTR_STR) {
+                const char *spath = (const char *)sp;
+                const char *fname = spath;
+                for (const char *p = spath; *p; p++) {
+                    if (*p == '/') fname = p + 1;
+                }
+                edit_skeleton_entry_t *entry =
+                    edit_skeleton_registry_get_mut(
+                        &ed->skeleton_registry, fname);
+                if (entry) {
+                    /* Parse x y z from args. */
+                    const char *args = cmd + strlen(word);
+                    while (*args == ' ') args++;
+                    float x = 0, y = 0, z = 0;
+                    sscanf(args, "%f %f %f", &x, &y, &z);
+
+                    uint32_t bcount = 0;
+                    const uint32_t *bones = edit_bone_selection_bones(
+                        &ed->bone_selection, &bcount);
+
+                    if (strcmp(word, "move") == 0) {
+                        vec3_t delta = {x, y, z};
+                        for (uint32_t bi = 0; bi < bcount; bi++) {
+                            per_bone_gizmo_apply_drag(
+                                &entry->skel, bones[bi], delta);
+                        }
+                    } else {
+                        /* Convert euler degrees to quaternion. */
+                        float rx = x * 0.01745329f; /* deg to rad */
+                        float ry = y * 0.01745329f;
+                        float rz = z * 0.01745329f;
+                        quat_t qx = {sinf(rx*0.5f), 0, 0, cosf(rx*0.5f)};
+                        quat_t qy = {0, sinf(ry*0.5f), 0, cosf(ry*0.5f)};
+                        quat_t qz = {0, 0, sinf(rz*0.5f), cosf(rz*0.5f)};
+                        quat_t dq = quat_mul(qz, quat_mul(qy, qx));
+                        for (uint32_t bi = 0; bi < bcount; bi++) {
+                            per_bone_gizmo_apply_rotate(
+                                &entry->skel, bones[bi], dq);
+                        }
+                    }
+                    ed->prefab_mode.dirty = true;
+                    ed->prefab_mode.dirty_gen++;
+                    scene_ui_tui_log_success(&ed->ui,
+                        strcmp(word, "move") == 0
+                            ? "Bone(s) moved" : "Bone(s) rotated");
+                    return;
+                }
+            }
+        }
+    }
+
     /* Look up command definition for validation. */
     const ctrl_cmd_def_t *def = ctrl_cmd_defs_find(word);
     if (!def) {
@@ -641,6 +726,12 @@ static void dispatch_tui_command(scene_editor_t *ed)
         strcmp(wire, "delete_id") == 0 || strcmp(wire, "clone") == 0 ||
         strcmp(wire, "entity_def") == 0) {
         scene_frame_request_entity_list(ed);
+
+        /* Track spawns in prefab mode for child parenting. */
+        if (strcmp(wire, "spawn") == 0 && ed->prefab_mode.active) {
+            prefab_pending_spawn_add(&ed->prefab_mode.pending_spawns,
+                                      cmd_id);
+        }
     }
 }
 
@@ -893,6 +984,7 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         case UI_ACTION_TUI_COMMAND:
         case UI_ACTION_ASSET_SPAWN:
         case UI_ACTION_ASSET_TOGGLE_SECTION:
+        case UI_ACTION_LOAD_PREFAB:
         case UI_ACTION_MODE_NONE:
         case UI_ACTION_MODE_TRANSLATE:
         case UI_ACTION_MODE_ROTATE:
@@ -1222,6 +1314,116 @@ void scene_frame_dispatch_action(struct scene_editor *ed)
         asset_browser_toggle_section(&ed->asset_browser,
                                        ed->ui.asset_browser_toggle_target);
         break;
+
+    case UI_ACTION_LOAD_PREFAB: {
+        /* Load a .fpfab file from the asset browser.
+         * - In prefab mode: apply bone poses to current skeleton.
+         * - In edit mode:   spawn the root entity's mesh. */
+        char full_path[512];
+        int fp_len = snprintf(full_path, sizeof(full_path), "%s/%s",
+                              ed->config.asset_dir, ed->ui.tui_cmd);
+        if (fp_len <= 0 || (size_t)fp_len >= sizeof(full_path)) {
+            scene_ui_tui_log_error(&ed->ui, "Prefab path too long");
+            break;
+        }
+
+        prefab_def_t fpfab_def;
+        prefab_def_init(&fpfab_def);
+        if (!prefab_load(full_path, &fpfab_def)) {
+            char err[UI_TUI_LOG_LINE];
+            snprintf(err, sizeof(err), "Failed to load prefab: %s",
+                     ed->ui.tui_cmd);
+            scene_ui_tui_log_error(&ed->ui, err);
+            break;
+        }
+
+        if (ed->prefab_mode.active) {
+            /* Prefab mode: apply bone pose overrides to the skeleton
+             * of the currently selected root entity. */
+            uint32_t root_id = ed->prefab_mode.root_entity_id;
+            const edit_entity_t *root_ent =
+                edit_entity_store_get(&ed->entities, root_id);
+            if (!root_ent) {
+                scene_ui_tui_log_error(&ed->ui, "No prefab root entity");
+                break;
+            }
+
+            /* Look up skeleton path on root entity. */
+            uint8_t sat = 0, sas = 0;
+            const void *ssp = entity_attrs_get(&root_ent->attrs,
+                SCRIPT_KEY_SKEL_PATH, &sat, &sas);
+            if (ssp && sat == SCRIPT_ATTR_STR) {
+                const char *sp = (const char *)ssp;
+                edit_skeleton_entry_t *se =
+                    edit_skeleton_registry_get_mut(&ed->skeleton_registry, sp);
+                if (se) {
+                    prefab_pose_apply(&fpfab_def, &se->skel);
+                }
+            }
+
+            /* Store fpfab path and mark dirty. */
+            strncpy(ed->prefab_mode.fpfab_path, ed->ui.tui_cmd,
+                    sizeof(ed->prefab_mode.fpfab_path) - 1);
+            ed->prefab_mode.fpfab_path[
+                sizeof(ed->prefab_mode.fpfab_path) - 1] = '\0';
+            ed->prefab_mode.dirty = true;
+            ed->prefab_mode.dirty_gen++;
+
+            char msg[UI_TUI_LOG_LINE];
+            snprintf(msg, sizeof(msg), "Loaded prefab: %s", ed->ui.tui_cmd);
+            scene_ui_tui_log_success(&ed->ui, msg);
+        } else {
+            /* Edit mode: spawn the root entity's mesh as a new entity.
+             * Extract mesh_path from the prefab root's attrs. */
+            if (fpfab_def.entity_count == 0) {
+                scene_ui_tui_log_error(&ed->ui, "Prefab has no entities");
+                break;
+            }
+
+            const prefab_entity_snapshot_t *root_snap = &fpfab_def.entities[0];
+
+            /* Try to get mesh_path from root entity attrs. */
+            uint8_t mat = 0, mas = 0;
+            const void *mp = entity_attrs_get(&root_snap->attrs,
+                SCRIPT_KEY_MESH_PATH, &mat, &mas);
+            if (mp && mat == SCRIPT_ATTR_STR) {
+                /* Spawn mesh entity. */
+                snprintf(ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
+                         "spawn mesh %s", (const char *)mp);
+                dispatch_tui_command(ed);
+
+                /* If the prefab has a skeleton, queue a setattr for it
+                 * after the entity appears (tracked via pending spawn). */
+                const void *skp = entity_attrs_get(&root_snap->attrs,
+                    SCRIPT_KEY_SKEL_PATH, &mat, &mas);
+                if (skp && mat == SCRIPT_ATTR_STR) {
+                    char skel_msg[UI_TUI_LOG_LINE];
+                    snprintf(skel_msg, sizeof(skel_msg),
+                             "Prefab has skeleton: %s (assign after spawn)",
+                             (const char *)skp);
+                    scene_ui_tui_log(&ed->ui, skel_msg);
+                }
+            } else {
+                /* No mesh_path — spawn by entity type name. */
+                const char *type_name = "box";
+                switch (root_snap->type) {
+                case EDIT_ENTITY_TYPE_SPHERE:  type_name = "sphere";  break;
+                case EDIT_ENTITY_TYPE_CAPSULE: type_name = "capsule"; break;
+                case EDIT_ENTITY_TYPE_MESH:    type_name = "mesh";    break;
+                default: break;
+                }
+                snprintf(ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
+                         "spawn %s", type_name);
+                dispatch_tui_command(ed);
+            }
+
+            char msg[UI_TUI_LOG_LINE];
+            snprintf(msg, sizeof(msg), "Spawned from prefab: %s",
+                     full_path + strlen(ed->config.asset_dir) + 1);
+            scene_ui_tui_log(&ed->ui, msg);
+        }
+        break;
+    }
 
     case UI_ACTION_NONE:
         /* Already checked above, but satisfy the compiler. */

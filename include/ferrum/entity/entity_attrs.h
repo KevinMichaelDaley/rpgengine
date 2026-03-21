@@ -62,6 +62,16 @@ enum {
     SCRIPT_KEY_TIER      = 15,  /**< u8: physics tier (0=ANIM, 1=DIRECT, 2=NEAR, 3=VISIBLE). */
     SCRIPT_KEY_MESH_PATH = 16,  /**< str: mesh asset path relative to asset root (.fvma). */
     SCRIPT_KEY_SKEL_PATH = 17,  /**< str: skeleton asset path relative to asset root (.fskel). */
+    SCRIPT_KEY_COLLISION_MESH_PATH = 18, /**< str: collision mesh path relative to asset root (.fvma).
+                                          *   When set, this mesh is used for physics collision
+                                          *   instead of the render mesh. */
+    SCRIPT_KEY_RADIUS     = 19,  /**< f32: collider radius (sphere, capsule). */
+    SCRIPT_KEY_HEIGHT     = 20,  /**< f32: collider height (capsule). */
+    SCRIPT_KEY_HALF_EXTENTS = 21, /**< vec3: box collider half-extents (x,y,z). */
+    SCRIPT_KEY_PARENT_ID  = 22,  /**< u32: parent entity ID for hierarchy. */
+    SCRIPT_KEY_BONE_INDEX = 23,  /**< u32: bone index this entity is parented to. */
+    SCRIPT_KEY_PREFAB_PATH = 24, /**< str: prefab asset path (.fpfab). */
+    SCRIPT_KEY_BONE_POSE_PATH = 25, /**< str: bone pose override path (.bpose). */
 
     /* ECS component keys (mapped from registered sparse sets) */
     SCRIPT_KEY_ECS_BASE  = 64,  /**< ECS components start here. */

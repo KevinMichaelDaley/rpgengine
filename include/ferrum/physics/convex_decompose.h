@@ -37,7 +37,7 @@ extern "C" {
  * Ownership: value type, no pointers.
  */
 typedef struct phys_decompose_params {
-    uint32_t resolution;        /**< Voxel grid resolution per axis (8–64). */
+    uint32_t resolution;        /**< Voxel grid resolution per axis (8–128, adaptive). */
     float concavity_threshold;  /**< Max concavity before splitting (0.01–1.0). */
     uint32_t max_hulls;         /**< Max number of output hulls (1–64). */
     uint32_t min_voxels;        /**< Min voxels per cluster to keep (default: 4). */
@@ -59,7 +59,7 @@ typedef struct phys_decompose_result {
 /**
  * @brief Return default decomposition parameters.
  *
- * @return Default params: resolution=32, concavity=0.05, max_hulls=32,
+ * @return Default params: resolution=48, concavity=0.05, max_hulls=32,
  *         min_voxels=4.
  *
  * Side effects: none.

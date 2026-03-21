@@ -347,6 +347,22 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
         return false;
     }
 
+    /* Initialize bone selection state. */
+    edit_bone_selection_init(&ed->bone_selection);
+
+    /* Initialize prefab mode state. */
+    prefab_mode_state_init(&ed->prefab_mode);
+
+    /* Initialize skeleton registry for bone overlay rendering. */
+    if (!edit_skeleton_registry_init(&ed->skeleton_registry, 64)) {
+        fprintf(stderr, "scene_editor: skeleton registry init failed\n");
+    }
+
+    /* Initialize per-entity bone pose override store. */
+    if (!bone_pose_store_init(&ed->bone_poses, ed->entities.capacity)) {
+        fprintf(stderr, "scene_editor: bone pose store init failed\n");
+    }
+
     /* Initialize server connection */
     scene_conn_config_t conn_cfg = {
         .host     = ed->config.server_host,
@@ -525,6 +541,10 @@ void scene_editor_shutdown(scene_editor_t *ed) {
     scene_sync_destroy(&ed->sync);
     scene_connection_destroy(&ed->connection);
     edit_selection_destroy(&ed->selection);
+    edit_bone_selection_destroy(&ed->bone_selection);
+    edit_skeleton_registry_destroy(&ed->skeleton_registry);
+    bone_pose_store_destroy(&ed->bone_poses);
+    prefab_mode_state_reset(&ed->prefab_mode);
     edit_entity_store_destroy(&ed->entities);
 
     /* Free offline command queue. */

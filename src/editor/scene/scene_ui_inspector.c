@@ -17,6 +17,9 @@
 #include "ferrum/editor/scene/scene_ui.h"
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_panel.h"
+#include "ferrum/editor/scene/scene_ui_bone_inspector.h"
+#include "ferrum/editor/scene/scene_ui_bone_list.h"
+#include "ferrum/editor/scene/scene_ui_skel_promote.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "ferrum/math/quat.h"
@@ -265,6 +268,11 @@ void scene_ui_build_inspector(scene_editor_t *ed,
                           + row_h     /* Scale header */
                           + row_h * 3; /* X Y Z */
 
+            /* Account for skeleton promotion section (MESH entities). */
+            if (ent->type == EDIT_ENTITY_TYPE_MESH) {
+                total_h += row_h * 2; /* Gear button + path/confirm rows. */
+            }
+
             /* Store total content height for scroll clamping. */
             ed->ui.inspector_total = (int)total_h;
             ed->ui.inspector_visible_lines = (int)visible_h;
@@ -424,6 +432,19 @@ void scene_ui_build_inspector(scene_editor_t *ed,
                             clay_idx++;
                         }
                     }
+
+                    /* ---- Bone list (regular edit mode only) ---- */
+                    scene_ui_build_bone_list(ed, first_id, &y,
+                                              scroll_px, visible_h, &clay_idx);
+
+                    /* ---- Bone properties (if bones selected) ---- */
+                    scene_ui_build_bone_inspector(ed, &y, scroll_px,
+                                                   visible_h, &clay_idx);
+
+                    /* ---- Skeleton promotion (MESH entities) ---- */
+                    scene_ui_build_skel_promote(ed, first_id, y,
+                                                 (int)scroll_px, visible_h,
+                                                 (int)clay_idx);
                 }
 
                 /* ---- Scrollbar ---- */

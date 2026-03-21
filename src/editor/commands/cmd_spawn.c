@@ -136,6 +136,53 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
         }
     }
 
+    /* Store collision_mesh_path attribute if provided (for MESH entities). */
+    if (args && type == EDIT_ENTITY_TYPE_MESH) {
+        const json_value_t *cp_val = json_object_get(args,
+                                                      "collision_mesh_path");
+        if (cp_val && cp_val->type == JSON_STRING &&
+            cp_val->string.len > 0) {
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            char cp[256];
+            uint32_t cplen = cp_val->string.len;
+            if (cplen >= sizeof(cp)) cplen = sizeof(cp) - 1;
+            memcpy(cp, cp_val->string.ptr, cplen);
+            cp[cplen] = '\0';
+            entity_attrs_set(&e->attrs, SCRIPT_KEY_COLLISION_MESH_PATH,
+                             SCRIPT_ATTR_STR, cp, (uint16_t)(cplen + 1));
+        }
+    }
+
+    /* Store shape parameters for collider-only entities. */
+    if (args && (type == EDIT_ENTITY_TYPE_COLLIDER_SPHERE ||
+                 type == EDIT_ENTITY_TYPE_COLLIDER_CAPSULE)) {
+        const json_value_t *r_val = json_object_get(args, "radius");
+        if (r_val && r_val->type == JSON_NUMBER) {
+            float radius = (float)r_val->number;
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            entity_attrs_set(&e->attrs, SCRIPT_KEY_RADIUS,
+                             SCRIPT_ATTR_F32, &radius, sizeof(radius));
+        }
+    }
+    if (args && type == EDIT_ENTITY_TYPE_COLLIDER_CAPSULE) {
+        const json_value_t *h_val = json_object_get(args, "height");
+        if (h_val && h_val->type == JSON_NUMBER) {
+            float height = (float)h_val->number;
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            entity_attrs_set(&e->attrs, SCRIPT_KEY_HEIGHT,
+                             SCRIPT_ATTR_F32, &height, sizeof(height));
+        }
+    }
+    if (args && type == EDIT_ENTITY_TYPE_COLLIDER_BOX) {
+        float he[3] = {0.5f, 0.5f, 0.5f};
+        const json_value_t *he_val = json_object_get(args, "half_extents");
+        if (extract_vec3_(he_val, he)) {
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            entity_attrs_set(&e->attrs, SCRIPT_KEY_HALF_EXTENTS,
+                             SCRIPT_ATTR_VEC3, he, sizeof(he));
+        }
+    }
+
     /* Bridge: notify physics engine about the new entity. */
     if (ctx->bridge && ctx->bridge->on_spawn) {
         const edit_entity_t *ent = edit_entity_store_get(ctx->entities, eid);

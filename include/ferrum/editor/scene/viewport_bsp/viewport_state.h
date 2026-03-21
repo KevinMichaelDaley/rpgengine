@@ -89,6 +89,7 @@ typedef struct viewport_state {
     /* Per-object gizmo mode. */
     bool            per_object_gizmo;    /**< True = one gizmo per entity. */
     uint32_t        per_object_drag_entity; /**< Entity being dragged in per-object mode. */
+    uint32_t        bone_drag_index;     /**< Bone being dragged in per-bone gizmo (UINT32_MAX=none). */
 
     /* Computed layout rect (set by BSP layout pass). */
     panel_rect_t    rect;          /**< Screen rect for this viewport. */

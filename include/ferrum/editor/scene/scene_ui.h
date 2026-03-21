@@ -21,6 +21,7 @@ extern "C" {
 /* Forward declarations. */
 struct scene_editor;
 struct panel_rect;
+struct asset_ref_state;
 
 /* ---- Types ---- */
 
@@ -48,6 +49,7 @@ typedef enum scene_ui_action {
     UI_ACTION_TUI_COMMAND,      /**< Execute TUI command (text in tui_cmd). */
     UI_ACTION_ASSET_SPAWN,      /**< Spawn from asset browser (cmd in tui_cmd). */
     UI_ACTION_ASSET_TOGGLE_SECTION, /**< Toggle asset browser section collapse. */
+    UI_ACTION_LOAD_PREFAB,      /**< Load fpfab: path in tui_cmd. */
 } scene_ui_action_t;
 
 /* Transform mode values for scene_ui_state_t.transform_mode. */
@@ -200,6 +202,11 @@ typedef struct scene_ui_state {
     uint32_t          action_q_targets[UI_ACTION_Q_MAX];
     int               action_q_count;
 
+    /* Prefab outliner scroll state. */
+    int               prefab_outliner_scroll; /**< Scroll offset (rows). */
+    int               prefab_outliner_total;  /**< Total rows (set each frame). */
+    int               prefab_outliner_visible_lines; /**< Visible rows. */
+
     /* Asset browser state. */
     int               asset_browser_scroll; /**< Scroll offset (rows). */
     int               asset_browser_total;  /**< Total visible rows. */
@@ -208,6 +215,10 @@ typedef struct scene_ui_state {
 
     /** Pivot edit mode: gizmo moves pivot_offset instead of entity pos. */
     bool              pivot_edit_mode;
+
+    /** Active asset reference widget: when non-NULL, asset browser clicks
+     *  fill this widget instead of spawning entities. */
+    struct asset_ref_state *active_asset_ref;
 
     /** Held-key tracker: prevents re-firing one-shot keys without a KEYUP
      *  in between.  Stores raw SDL_Keycode values.  Keys flagged as

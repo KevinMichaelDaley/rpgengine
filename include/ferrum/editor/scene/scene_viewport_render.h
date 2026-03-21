@@ -39,12 +39,18 @@ extern "C" {
 #include "ferrum/renderer/vbo.h"
 #include "ferrum/editor/viewport/viewport_shading.h"
 #include "ferrum/editor/viewport/snap/snap_mesh_cache.h"
+#include "ferrum/editor/viewport/snap/snap_decompose_cache.h"
+#include "ferrum/editor/viewport/viewport_mesh_type.h"
+#include "ferrum/renderer/bone_palette.h"
 
 /* Forward declarations. */
 struct scene_editor;
 struct edit_entity_store;
 struct edit_selection;
 struct gizmo_state;
+struct skeletal_mesh;
+struct edit_skeleton_registry;
+struct bone_pose_store;
 
 /* ---- Configuration ---- */
 
@@ -120,6 +126,17 @@ typedef struct viewport_render_state {
     mesh_handle_t *entity_mesh_cache;      /**< entity_id → mesh_handle. */
     uint32_t       entity_mesh_cache_cap;  /**< Cache capacity. */
 
+    /* Per-entity mesh type classification (NONE / STATIC / SKELETAL).
+     * Parallel to entity_mesh_cache, same capacity. */
+    viewport_mesh_type_t *entity_mesh_types; /**< entity_id → mesh type. */
+
+    /* Skeletal mesh cache: maps entity_id → heap-allocated skeletal_mesh_t.
+     * Only populated for entities with VIEWPORT_MESH_SKELETAL type.
+     * Parallel to entity_mesh_cache, same capacity.
+     * For SKELETAL entities, entity_mesh_cache[id] is MESH_HANDLE_NONE
+     * and the mesh is accessed via skeletal_mesh_cache[id]->base instead. */
+    struct skeletal_mesh **skeletal_mesh_cache; /**< entity_id → skeletal mesh. */
+
     /* Collision mesh cache: maps entity_id → mesh_handle for collision geo.
      * Parallel to entity_mesh_cache. When loaded, the collision mesh
      * overrides the render mesh for snapping and physics. */
@@ -128,6 +145,9 @@ typedef struct viewport_render_state {
 
     /* CPU-side geometry cache for surface snap raycasting. */
     snap_mesh_cache_t snap_meshes;  /**< entity_id → CPU vertex/index data. */
+
+    /* Cached convex decomposition results for physics body creation. */
+    snap_decompose_cache_t decompose_cache; /**< entity_id → decompose result. */
 
     /* Editor camera. */
     editor_camera_t camera;  /**< Orbit camera state. */
@@ -168,6 +188,14 @@ typedef struct viewport_render_state {
     void     (*glDrawArrays)(uint32_t mode, int32_t first, int32_t count);
     void     (*glLineWidth)(float width);
     void     (*glPolygonMode)(uint32_t face, uint32_t mode);
+
+    /* Skinning shader (Blinn-Phong with bone palette). */
+    shader_program_t       skin_shader;   /**< Skinned entity shader. */
+    shader_uniform_cache_t skin_uniforms; /**< Skinning uniform cache. */
+    shader_program_t       skin_matcap_shader;   /**< Skinned matcap shader. */
+    shader_uniform_cache_t skin_matcap_uniforms; /**< Skinned matcap uniforms. */
+    bone_palette_buffer_t  bone_palette;  /**< GPU bone matrix buffer. */
+    bool                   skin_initialized; /**< True if skinning pipeline ready. */
 
     /* Stencil functions for selection outline rendering. */
     void     (*glStencilFunc)(uint32_t func, int32_t ref, uint32_t mask);
@@ -273,7 +301,9 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
                                     const struct mat4 *view,
                                     const struct mat4 *proj,
                                     const struct vec3 *eye_pos,
-                                    shading_mode_t shading_mode);
+                                    shading_mode_t shading_mode,
+                                    const struct edit_skeleton_registry *skel_reg,
+                                    const struct bone_pose_store *bone_poses);
 
 /**
  * @brief Get a lazily-created primitive mesh for a given entity type.
@@ -299,6 +329,40 @@ const static_mesh_t *viewport_render_get_primitive_mesh(
  * @return true on success, false if primitive creation fails.
  */
 bool viewport_render_init_primitives(viewport_render_state_t *state);
+
+/* ---- Skeletal promotion (scene_viewport_skel.c) ---- */
+
+/**
+ * @brief Promote a static mesh entity to skeletal by reloading its FVMA.
+ *
+ * This is an explicit user action triggered by assigning an .fskel file
+ * to a MESH entity in the inspector. The FVMA must have
+ * MESH_VAO_FLAG_BONES set. Destroys the existing static mesh and creates
+ * a skeletal_mesh_t in its place.
+ *
+ * @param state      Viewport render state (non-NULL, must be initialized).
+ * @param entity_id  Entity ID (must have a loaded static mesh).
+ * @param fvma_data  Original FVMA binary data (non-NULL, must have bones).
+ * @param fvma_size  FVMA data size in bytes.
+ * @return true on success, false if FVMA has no bones or type check fails.
+ */
+bool viewport_render_promote_to_skeletal(viewport_render_state_t *state,
+                                          uint32_t entity_id,
+                                          const uint8_t *fvma_data,
+                                          size_t fvma_size);
+
+/**
+ * @brief Check if skeletal→static demotion is blocked for an entity.
+ *
+ * Always returns true (blocked) for SKELETAL entities, printing an error
+ * message. The reverse switch is lossy and destructive.
+ *
+ * @param state      Viewport render state (non-NULL).
+ * @param entity_id  Entity ID to check.
+ * @return true if the entity is skeletal (demotion blocked), false otherwise.
+ */
+bool viewport_render_demote_to_static_blocked(
+    const viewport_render_state_t *state, uint32_t entity_id);
 
 /* ---- Collision mesh (scene_viewport_collision_mesh.c) ---- */
 
@@ -442,6 +506,54 @@ void viewport_render_draw_selection_outline(viewport_render_state_t *state,
 void viewport_render_draw_box_select(viewport_render_state_t *state,
                                        float x0, float y0,
                                        float x1, float y1);
+
+/* ---- Viewport skinning (scene_viewport_skinning.c) ---- */
+
+struct edit_skeleton_entry;
+
+/**
+ * @brief Initialize viewport skinning resources (shader + bone palette).
+ *
+ * Must be called after the main shader pipeline is initialized.
+ * Safe to call multiple times (no-op if already initialized).
+ *
+ * @param state  Render state (non-NULL, must have valid loader).
+ * @return true on success, false on shader compile / buffer creation failure.
+ */
+bool viewport_skinning_init(viewport_render_state_t *state);
+
+/**
+ * @brief Destroy viewport skinning resources.
+ * @param state  Render state (non-NULL).
+ */
+void viewport_skinning_destroy(viewport_render_state_t *state);
+
+/**
+ * @brief Draw a single skeletal mesh with bone skinning.
+ *
+ * Computes bone palette matrices (rest_world * IBM), uploads to GPU,
+ * and renders all submeshes with the skinning shader.
+ *
+ * @param state       Render state (non-NULL).
+ * @param skel_entry  Skeleton registry entry with live rest_world + IBMs.
+ * @param skel_mesh   Skeletal mesh to render (non-NULL).
+ * @param model       Entity model matrix.
+ * @param view        View matrix.
+ * @param proj        Projection matrix.
+ * @param eye_pos     Camera eye position for specular.
+ * @param color       Entity color (3 floats).
+ */
+void viewport_skinning_draw(viewport_render_state_t *state,
+                             const struct edit_skeleton_entry *skel_entry,
+                             const struct skeletal_mesh *skel_mesh,
+                             const struct mat4 *model,
+                             const struct mat4 *view,
+                             const struct mat4 *proj,
+                             const struct vec3 *eye_pos,
+                             const float *color,
+                             const float *select_color,
+                             float select_tint,
+                             shading_mode_t shading_mode);
 
 /* ---- Shader init (scene_viewport_shaders.c) ---- */
 

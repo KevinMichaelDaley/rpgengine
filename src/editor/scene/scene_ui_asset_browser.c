@@ -14,6 +14,11 @@
 #include "ferrum/editor/scene/scene_main.h"
 #include "ferrum/editor/scene/scene_panel.h"
 #include "ferrum/editor/panels/asset_browser.h"
+#include "ferrum/editor/panels/asset_ref_widget.h"
+#include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_selection.h"
+#include "ferrum/editor/scene/scene_asset_load.h"
+#include "ferrum/entity/entity_attrs.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -93,6 +98,19 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
 
     if (ctx->entry_type == ASSET_ENTRY_SPAWN_ACTION ||
         ctx->entry_type == ASSET_ENTRY_ASSET_FILE) {
+        /* Intercept: if an asset_ref_widget has focus and the asset type
+         * matches its filter, redirect the click to the widget. */
+        if (ctx->ed->ui.active_asset_ref &&
+            ctx->entry_type == ASSET_ENTRY_ASSET_FILE) {
+            asset_ref_state_t *aref = ctx->ed->ui.active_asset_ref;
+            if (aref->filter_type == 0 ||
+                aref->filter_type == ctx->asset_type) {
+                asset_ref_accept(aref, ctx->command);
+                ctx->ed->ui.active_asset_ref = NULL;
+                return;
+            }
+        }
+
         /* Queue spawn command. */
         if (ctx->entry_type == ASSET_ENTRY_ASSET_FILE) {
             /* Build command based on asset type. */
@@ -102,11 +120,48 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
                          "spawn mesh %s", ctx->command);
                 break;
             case 7: /* EDIT_ASSET_SKELETON */
+                /* If a MESH entity is selected, assign the skeleton
+                 * to it directly instead of just loading into registry.
+                 * Also send setattr to server for persistence. */
+                if (edit_selection_count(&ctx->ed->selection) == 1) {
+                    uint32_t sel_id = edit_selection_ids(
+                        &ctx->ed->selection)[0];
+                    const edit_entity_t *sel_ent =
+                        edit_entity_store_get(&ctx->ed->entities, sel_id);
+                    if (sel_ent &&
+                        sel_ent->type == EDIT_ENTITY_TYPE_MESH) {
+                        /* Set skel_path attr locally for immediate effect. */
+                        edit_entity_t *mut_ent =
+                            edit_entity_store_get_mut(
+                                &ctx->ed->entities, sel_id);
+                        if (mut_ent) {
+                            entity_attrs_set(&mut_ent->attrs,
+                                SCRIPT_KEY_SKEL_PATH, SCRIPT_ATTR_STR,
+                                ctx->command,
+                                (uint8_t)(strlen(ctx->command) + 1));
+                            scene_load_entity_skeleton(
+                                ctx->ed, sel_id, ctx->command);
+                        }
+                        /* Send setattr to server for persistence. */
+                        snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
+                                 "setattr %u %u %s",
+                                 sel_id, SCRIPT_KEY_SKEL_PATH,
+                                 ctx->command);
+                        break;
+                    }
+                }
                 snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
                          "load_skeleton %s", ctx->command);
                 break;
+            case 4: /* EDIT_ASSET_PREFAB */
+                /* Store path for frame dispatch to handle loading. */
+                strncpy(ctx->ed->ui.tui_cmd, ctx->command,
+                        UI_TUI_INPUT_MAX - 1);
+                ctx->ed->ui.tui_cmd[UI_TUI_INPUT_MAX - 1] = '\0';
+                ctx->ed->ui.action = UI_ACTION_LOAD_PREFAB;
+                return;
             default:
-                /* Materials, textures, prefabs, scripts — list only,
+                /* Materials, textures, scripts — list only,
                  * no load action implemented yet. */
                 return;
             }
@@ -202,9 +257,8 @@ void scene_ui_build_asset_browser(struct scene_editor *ed,
                 },
             }) {
                 uint32_t rendered = 0;
-                uint32_t vi = 0;
 
-                for (uint32_t raw_vi = 0;
+                for (uint32_t raw_vi = (uint32_t)skip;
                      raw_vi < total_visible &&
                      rendered < ASSET_BROWSER_MAX_VISIBLE &&
                      rendered < (uint32_t)vis_lines;
@@ -213,13 +267,6 @@ void scene_ui_build_asset_browser(struct scene_editor *ed,
                     const asset_browser_entry_t *entry =
                         asset_browser_get_visible(browser, raw_vi);
                     if (!entry) break;
-
-                    /* Skip entries before scroll offset. */
-                    if ((int)vi < skip) {
-                        vi++;
-                        continue;
-                    }
-                    vi++;
 
                     /* Set up click context. */
                     s_click_ctx[rendered].ed = ed;

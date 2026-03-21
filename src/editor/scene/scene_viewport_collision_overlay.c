@@ -79,12 +79,30 @@ void viewport_render_draw_collision_overlay(viewport_render_state_t *state,
 
         /* Resolve collision geometry mesh:
          * MESH entities: collision mesh if loaded, else render mesh.
-         * Primitives: built-in primitive mesh. */
+         * Collider-only types: use corresponding primitive mesh.
+         * Visual primitives: built-in primitive mesh. */
         const static_mesh_t *mesh = NULL;
         if (ent->type == EDIT_ENTITY_TYPE_MESH) {
             mesh = viewport_render_get_collision_mesh(state, i);
             if (!mesh) {
                 mesh = viewport_render_get_entity_mesh(state, i);
+            }
+        } else if (ent->type == EDIT_ENTITY_TYPE_COLLIDER_SPHERE) {
+            mesh = viewport_render_get_primitive_mesh(
+                EDIT_ENTITY_TYPE_SPHERE, state);
+        } else if (ent->type == EDIT_ENTITY_TYPE_COLLIDER_BOX) {
+            mesh = viewport_render_get_primitive_mesh(
+                EDIT_ENTITY_TYPE_BOX, state);
+        } else if (ent->type == EDIT_ENTITY_TYPE_COLLIDER_CAPSULE) {
+            mesh = viewport_render_get_primitive_mesh(
+                EDIT_ENTITY_TYPE_CAPSULE, state);
+        } else if (ent->type == EDIT_ENTITY_TYPE_COLLIDER_HULL) {
+            /* Hull colliders: check for entity-specific collision mesh,
+             * fall back to sphere primitive as placeholder. */
+            mesh = viewport_render_get_collision_mesh(state, i);
+            if (!mesh) {
+                mesh = viewport_render_get_primitive_mesh(
+                    EDIT_ENTITY_TYPE_SPHERE, state);
             }
         } else {
             mesh = viewport_render_get_primitive_mesh(ent->type, state);

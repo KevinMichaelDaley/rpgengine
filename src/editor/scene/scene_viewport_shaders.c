@@ -52,6 +52,8 @@ static const char *const MATCAP_FRAG_SRC =
     "uniform vec3 u_color;\n"
     "uniform vec3 u_light_dir;\n"
     "uniform vec3 u_eye_pos;\n"
+    "uniform vec3 u_select_color;\n"
+    "uniform float u_select_tint;\n"
     "out vec4 frag_color;\n"
     "void main() {\n"
     /* Beige off-white base tint for clay-like appearance. */
@@ -74,6 +76,7 @@ static const char *const MATCAP_FRAG_SRC =
     "    vec3 warm_fill = fill * vec3(0.95, 0.85, 0.75);\n"
     "    vec3 rim = fresnel * vec3(0.85, 0.85, 0.9);\n"
     "    vec3 result = ambient + diffuse + warm_fill + rim;\n"
+    "    result = mix(result, u_select_color, u_select_tint);\n"
     "    frag_color = vec4(result, 1.0);\n"
     "}\n";
 

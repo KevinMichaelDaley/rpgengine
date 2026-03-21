@@ -24,6 +24,7 @@ void viewport_state_init(viewport_state_t *state) {
     state->box_selecting = false;
     state->per_object_gizmo = false;
     state->per_object_drag_entity = EDIT_ENTITY_INVALID_ID;
+    state->bone_drag_index = UINT32_MAX;
     state->active = true;
     state->fbo_valid = false;
 }
