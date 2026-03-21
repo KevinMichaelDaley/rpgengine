@@ -190,7 +190,8 @@ static bool try_bone_gizmo_pick(scene_editor_t *ed,
     per_bone_gizmo_t bone_gizmos[EDIT_BONE_SEL_MAX];
     uint32_t bg_count = per_bone_gizmo_build(
         pick_skel, &ed->bone_selection, &model,
-        fvp->gizmo.mode, bone_gizmos, EDIT_BONE_SEL_MAX);
+        fvp->gizmo.mode, fvp->gizmo.basis,
+        bone_gizmos, EDIT_BONE_SEL_MAX);
     if (bg_count == 0) { return false; }
 
     vec3_t eye = editor_camera_eye_position(&fvp->camera);

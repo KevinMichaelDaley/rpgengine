@@ -793,6 +793,7 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                                 &ed->bone_selection,
                                 &bg_model,
                                 vs->gizmo.mode,
+                                vs->gizmo.basis,
                                 bone_gizmos,
                                 EDIT_BONE_SEL_MAX);
                             if (bg_count > 0) {

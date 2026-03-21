@@ -22,6 +22,7 @@ extern "C" {
 
 #include <stdint.h>
 #include "ferrum/editor/viewport/viewport_gizmo.h"
+#include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/quat.h"
 
@@ -54,6 +55,7 @@ typedef struct per_bone_gizmo {
  * @param bone_sel      Bone selection set (NULL-safe: returns 0).
  * @param entity_model  Entity model matrix for world transform (NULL-safe: returns 0).
  * @param mode          Gizmo mode (translate/rotate/scale).
+ * @param basis         Transform basis (WORLD = identity orientation, LOCAL = bone orientation).
  * @param out           Output array (caller-allocated).
  * @param capacity      Maximum entries in out array.
  * @return Number of gizmos written.
@@ -63,6 +65,7 @@ uint32_t per_bone_gizmo_build(
     const struct edit_bone_selection *bone_sel,
     const struct mat4 *entity_model,
     gizmo_mode_t mode,
+    transform_basis_t basis,
     per_bone_gizmo_t *out,
     uint32_t capacity);
 

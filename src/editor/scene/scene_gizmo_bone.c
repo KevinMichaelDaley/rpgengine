@@ -12,6 +12,7 @@
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/math/mat4.h"
+#include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
 
 #include <math.h>
@@ -21,6 +22,7 @@ uint32_t per_bone_gizmo_build(
     const struct edit_bone_selection *bone_sel,
     const struct mat4 *entity_model,
     gizmo_mode_t mode,
+    transform_basis_t basis,
     per_bone_gizmo_t *out,
     uint32_t capacity)
 {
@@ -55,6 +57,19 @@ uint32_t per_bone_gizmo_build(
         g->gizmo.position.x = em[0]*bx + em[4]*by + em[8]*bz  + em[12];
         g->gizmo.position.y = em[1]*bx + em[5]*by + em[9]*bz  + em[13];
         g->gizmo.position.z = em[2]*bx + em[6]*by + em[10]*bz + em[14];
+
+        /* Set gizmo orientation based on basis mode. */
+        if (basis == TRANSFORM_BASIS_LOCAL) {
+            /* Local: orient gizmo along bone's world-space rotation.
+             * Combine entity model rotation with bone rest_world rotation.
+             * Extract rotation-only (zero out translation). */
+            mat4_t combined = mat4_mul(*entity_model, skel->rest_world[bi]);
+            combined.m[12] = 0.0f;
+            combined.m[13] = 0.0f;
+            combined.m[14] = 0.0f;
+            g->gizmo.orientation = combined;
+        }
+        /* WORLD basis: identity orientation (set by gizmo_state_init). */
 
         written++;
     }
