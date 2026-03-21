@@ -296,6 +296,19 @@ static bool try_bone_gizmo_pick(scene_editor_t *ed,
     fvp->gizmo.dragging = true;
     fvp->gizmo.position = hit_pos;
     fvp->gizmo_drag_origin = hit_pos;
+
+    /* Set gizmo orientation for correct rotation ring axes.
+     * WORLD: identity. LOCAL: bone's world rotation. */
+    if (fvp->gizmo.basis == TRANSFORM_BASIS_LOCAL && pick_skel) {
+        mat4_t bone_em = edit_entity_build_model_matrix(ae);
+        mat4_t combined_orient = mat4_mul(bone_em, pick_skel->rest_world[hit_bone]);
+        combined_orient.m[12] = 0.0f;
+        combined_orient.m[13] = 0.0f;
+        combined_orient.m[14] = 0.0f;
+        fvp->gizmo.orientation = combined_orient;
+    } else {
+        fvp->gizmo.orientation = mat4_identity();
+    }
     fvp->gizmo_drag_accum = (vec3_t){0, 0, 0};
     fvp->gizmo_scale_accum = (vec3_t){1, 1, 1};
     fvp->gizmo_rot_accum = (quat_t){0, 0, 0, 1};
