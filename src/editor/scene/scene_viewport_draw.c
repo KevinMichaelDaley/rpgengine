@@ -590,17 +590,17 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         }
     }
 
-    /* Skeleton mode: draw bones directly from registry when no entity. */
+    /* Skeleton mode: draw bones directly from registry. */
     if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0] != '\0') {
         const edit_skeleton_entry_t *sk_entry =
             edit_skeleton_registry_get(&ed->skeleton_registry,
                                         ed->skeleton_mode.skel_path);
-        if (sk_entry && sk_entry->skel.joint_count > 0) {
+        if (sk_entry && sk_entry->skel.joint_count > 0 &&
+            sk_entry->skel.tail_positions) {
             shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
                                      "u_view", view.m, GL_FALSE);
             shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
                                      "u_projection", proj.m, GL_FALSE);
-            /* Use entity model if available, otherwise identity. */
             mat4_t skel_model = mat4_identity();
             uint32_t skel_eid = ed->skeleton_mode.entity_id;
             if (skel_eid != UINT32_MAX) {

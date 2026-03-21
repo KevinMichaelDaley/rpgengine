@@ -176,7 +176,11 @@ bool skeleton_mode_enter_asset(scene_editor_t *ed, const char *asset_path) {
         if (!edit_skeleton_registry_get(&ed->skeleton_registry, fname)) {
             edit_skeleton_registry_load(&ed->skeleton_registry, full);
         }
-        if (!edit_skeleton_registry_get(&ed->skeleton_registry, fname)) {
+        const edit_skeleton_entry_t *se =
+            edit_skeleton_registry_get(&ed->skeleton_registry, fname);
+        if (!se) return false;
+        /* Reject invalid skeletons (missing tail_positions). */
+        if (se->skel.joint_count > 0 && !se->skel.tail_positions) {
             return false;
         }
         activate_(ed, fname, full, UINT32_MAX);

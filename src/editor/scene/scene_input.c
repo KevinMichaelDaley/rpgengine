@@ -3715,6 +3715,12 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
                 snprintf(smsg, sizeof(smsg), "Skeleton mode: %s",
                          ed->skeleton_mode.skel_path);
                 scene_ui_tui_log(&ed->ui, smsg);
+            } else if (ed->ui.selected_asset_path[0] != '\0') {
+                char emsg[320];
+                snprintf(emsg, sizeof(emsg),
+                         "Cannot open skeleton: %s (invalid or missing tail data)",
+                         ed->ui.selected_asset_path);
+                scene_ui_tui_log_error(&ed->ui, emsg);
             } else {
                 scene_ui_tui_log(&ed->ui,
                     "Select an entity or asset (.fskel/.fvma) then press K");
