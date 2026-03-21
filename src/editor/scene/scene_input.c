@@ -143,46 +143,54 @@ static bool try_bone_gizmo_pick(scene_editor_t *ed,
         return false;
     }
     uint32_t bone_eid = ed->bone_selection.entity_id;
-    if (bone_eid == EDIT_BONE_SEL_NONE) {
-        return false;
+
+    const edit_entity_t *ae = NULL;
+    const edit_skeleton_entry_t *entry = NULL;
+
+    if (bone_eid != EDIT_BONE_SEL_NONE) {
+        ae = edit_entity_store_get(&ed->entities, bone_eid);
+        if (!ae || !ae->active || ae->hidden) ae = NULL;
     }
 
-    const edit_entity_t *ae = edit_entity_store_get(
-        &ed->entities, bone_eid);
-    if (!ae || !ae->active || ae->hidden) { return false; }
-
-    /* Look up skeleton path attribute. */
-    uint8_t at = 0, as = 0;
-    const void *sp = entity_attrs_get(
-        &ae->attrs, SCRIPT_KEY_SKEL_PATH, &at, &as);
-    if (!sp || at != SCRIPT_ATTR_STR) { return false; }
-    const char *spath = (const char *)sp;
-    if (spath[0] == '\0') { return false; }
-
-    /* Extract filename for registry lookup. */
-    const char *fname = spath;
-    for (const char *p = spath; *p; p++) {
-        if (*p == '/') fname = p + 1;
+    if (ae) {
+        /* Entity-based: look up skeleton from entity attrs. */
+        uint8_t at = 0, as = 0;
+        const void *sp = entity_attrs_get(
+            &ae->attrs, SCRIPT_KEY_SKEL_PATH, &at, &as);
+        if (!sp || at != SCRIPT_ATTR_STR) { return false; }
+        const char *spath = (const char *)sp;
+        if (spath[0] == '\0') { return false; }
+        const char *fname = spath;
+        for (const char *p = spath; *p; p++) {
+            if (*p == '/') fname = p + 1;
+        }
+        entry = edit_skeleton_registry_get(&ed->skeleton_registry, fname);
+    } else if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0]) {
+        /* Skeleton mode (asset-based): use skeleton from mode state. */
+        entry = edit_skeleton_registry_get(&ed->skeleton_registry,
+                                            ed->skeleton_mode.skel_path);
     }
-    const edit_skeleton_entry_t *entry =
-        edit_skeleton_registry_get(&ed->skeleton_registry, fname);
+
     if (!entry) { return false; }
 
     /* Use per-entity pose override if available. */
     skeleton_def_t pick_skel_view;
     const skeleton_def_t *pick_skel = &entry->skel;
-    const bone_pose_block_t *pick_bp =
-        bone_pose_store_get(&ed->bone_poses, bone_eid);
-    if (pick_bp) {
-        pick_skel_view = entry->skel;
-        pick_skel_view.rest_world = (mat4_t *)pick_bp->rest_world;
-        pick_skel_view.tail_positions = (float *)pick_bp->tail_positions;
-        pick_skel = &pick_skel_view;
+    if (bone_eid != EDIT_BONE_SEL_NONE) {
+        const bone_pose_block_t *pick_bp =
+            bone_pose_store_get(&ed->bone_poses, bone_eid);
+        if (pick_bp) {
+            pick_skel_view = entry->skel;
+            pick_skel_view.rest_world = (mat4_t *)pick_bp->rest_world;
+            pick_skel_view.tail_positions = (float *)pick_bp->tail_positions;
+            pick_skel = &pick_skel_view;
+        }
     }
 
-    /* Build model matrix and per-bone gizmo array. */
-    mat4_t model = mat4_translation(ae->pos[0], ae->pos[1], ae->pos[2]);
-    {
+    /* Build model matrix. Use entity transform if available, else identity. */
+    mat4_t model = mat4_identity();
+    if (ae) {
+        model = mat4_translation(ae->pos[0], ae->pos[1], ae->pos[2]);
         mat4_t rot;
         quat_to_mat4(ae->orientation, &rot);
         mat4_t scale = mat4_scaling(ae->scale[0], ae->scale[1], ae->scale[2]);

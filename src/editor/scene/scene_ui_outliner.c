@@ -109,19 +109,28 @@ static void on_entity_row_hover(Clay_ElementId id, Clay_PointerData data,
 
     /* Bone row click: select/toggle bone in bone_selection. */
     if (ctx->bone_index != UINT32_MAX) {
+        /* In skeleton mode (asset-based), use the skeleton mode entity_id
+         * for bone selection. This may be UINT32_MAX (no entity). */
+        uint32_t bone_eid = ctx->entity_id;
+        if (bone_eid == UINT32_MAX && ctx->ed->skeleton_mode.active) {
+            bone_eid = ctx->ed->skeleton_mode.entity_id;
+        }
+
         SDL_Keymod mod = SDL_GetModState();
         if (mod & KMOD_SHIFT) {
             edit_bone_selection_toggle(&ctx->ed->bone_selection,
-                                        ctx->entity_id, ctx->bone_index);
+                                        bone_eid, ctx->bone_index);
         } else {
             edit_bone_selection_clear(&ctx->ed->bone_selection);
             edit_bone_selection_add(&ctx->ed->bone_selection,
-                                     ctx->entity_id, ctx->bone_index);
+                                     bone_eid, ctx->bone_index);
         }
-        /* Also select the parent entity so gizmo targets it. */
-        if (!edit_selection_contains(&ctx->ed->selection, ctx->entity_id)) {
+        /* Also select the parent entity so gizmo targets it
+         * (skip if no entity, i.e., pure asset skeleton mode). */
+        if (bone_eid != UINT32_MAX &&
+            !edit_selection_contains(&ctx->ed->selection, bone_eid)) {
             ctx->ed->ui.action = UI_ACTION_REPLACE_SELECTION;
-            ctx->ed->ui.action_target = ctx->entity_id;
+            ctx->ed->ui.action_target = bone_eid;
         }
         return;
     }
