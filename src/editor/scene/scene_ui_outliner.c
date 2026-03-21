@@ -272,19 +272,12 @@ void scene_ui_build_outliner(struct scene_editor *ed,
             &ed->skeleton_registry,
             ed->outliner_expanded, ed->entities.capacity);
 
-        /* Skeleton mode (asset-based, no entity): inject bones from
-         * the registry skeleton directly into the outliner. */
+        /* Skeleton mode: inject bones from working copy into outliner. */
         if (ed->skeleton_mode.active &&
-            ed->skeleton_mode.entity_id == UINT32_MAX &&
             ed->outliner_entry_count == 0) {
-            const edit_skeleton_entry_t *sk_e =
-                edit_skeleton_registry_get(&ed->skeleton_registry,
-                                            ed->skeleton_mode.skel_path);
-            if (sk_e && sk_e->skel.joint_count > 0) {
-                /* Use the inject_bones DFS from scene_outliner_build.c
-                 * pattern — but we don't have the entity, so manually
-                 * add bone entries with entity_id=UINT32_MAX. */
-                const skeleton_def_t *sk = &sk_e->skel;
+            const skeleton_def_t *sk =
+                skeleton_mode_get_work_skel_const(&ed->skeleton_mode);
+            if (sk && sk->joint_count > 0) {
                 uint32_t wp = 0;
                 for (uint32_t bi = 0; bi < sk->joint_count &&
                      wp < SCENE_OUTLINER_MAX_ENTRIES; bi++) {
@@ -432,35 +425,44 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         if (oe->is_bone) {
                             /* Bone row: look up joint name from skeleton. */
                             tag = "[bone]";
-                            const char *skel_key = NULL;
+                            bool bone_name_found = false;
 
-                            /* Try entity attrs first, then skeleton mode path. */
-                            if (ent) {
+                            /* Skeleton mode: use working copy. */
+                            if (ed->skeleton_mode.active) {
+                                const skeleton_def_t *wsk =
+                                    skeleton_mode_get_work_skel_const(
+                                        &ed->skeleton_mode);
+                                if (wsk && oe->bone_index < wsk->joint_count
+                                    && wsk->joint_names) {
+                                    name = wsk->joint_names[oe->bone_index];
+                                    bone_name_found = true;
+                                }
+                            }
+
+                            /* Fall back to entity attrs → registry. */
+                            if (!bone_name_found && ent) {
                                 uint8_t sat = 0, sas = 0;
                                 const void *sp2 = entity_attrs_get(&ent->attrs,
                                     SCRIPT_KEY_SKEL_PATH, &sat, &sas);
                                 if (sp2 && sat == SCRIPT_ATTR_STR) {
-                                    skel_key = (const char *)sp2;
+                                    const char *skel_key = (const char *)sp2;
                                     for (const char *pp = skel_key; *pp; pp++)
                                         if (*pp == '/') skel_key = pp + 1;
+                                    const edit_skeleton_entry_t *se2 =
+                                        edit_skeleton_registry_get(
+                                            &ed->skeleton_registry, skel_key);
+                                    if (se2 && oe->bone_index < se2->skel.joint_count
+                                        && se2->skel.joint_names) {
+                                        name = se2->skel.joint_names[oe->bone_index];
+                                        bone_name_found = true;
+                                    }
                                 }
-                            }
-                            if (!skel_key && ed->skeleton_mode.active) {
-                                skel_key = ed->skeleton_mode.skel_path;
                             }
 
-                            if (skel_key) {
-                                const edit_skeleton_entry_t *se2 =
-                                    edit_skeleton_registry_get(
-                                        &ed->skeleton_registry, skel_key);
-                                if (se2 && oe->bone_index < se2->skel.joint_count
-                                    && se2->skel.joint_names) {
-                                    name = se2->skel.joint_names[oe->bone_index];
-                                } else {
-                                    snprintf(s_outliner_names[visible_index], 32,
-                                             "bone_%u", oe->bone_index);
-                                    name = s_outliner_names[visible_index];
-                                }
+                            if (!bone_name_found) {
+                                snprintf(s_outliner_names[visible_index], 32,
+                                         "bone_%u", oe->bone_index);
+                                name = s_outliner_names[visible_index];
                             }
                         } else {
                             tag = type_tag_string(ent->type);

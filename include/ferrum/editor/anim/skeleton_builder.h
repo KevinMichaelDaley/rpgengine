@@ -80,6 +80,29 @@ bool skeleton_builder_set_parent(
     uint32_t new_parent);
 
 /**
+ * @brief Add a bone directly to a skeleton_def_t (destroys and replaces it).
+ *
+ * The skeleton is destroyed and recreated with joint_count+1. The caller's
+ * pointer remains valid (the struct is modified in place).
+ *
+ * @return New bone index, or UINT32_MAX on failure.
+ */
+uint32_t skeleton_builder_add_bone_direct(
+    struct skeleton_def *skel,
+    const char *name,
+    uint32_t parent_idx,
+    vec3_t head_world,
+    vec3_t tail_world);
+
+/**
+ * @brief Remove a bone directly from a skeleton_def_t (destroys and replaces it).
+ * @return true on success.
+ */
+bool skeleton_builder_remove_bone_direct(
+    struct skeleton_def *skel,
+    uint32_t bone_idx);
+
+/**
  * @brief Recompute rest_world from rest_local and parent hierarchy.
  *
  * Must be called after modifying rest_local or parent_indices.

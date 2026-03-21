@@ -54,6 +54,35 @@ static bool create_initial_skeleton_(edit_skeleton_registry_t *reg,
 }
 
 /**
+ * @brief Deep-clone a skeleton_def_t into dst.
+ * dst must be uninitialized (will be zeroed first).
+ */
+static bool clone_skeleton_(skeleton_def_t *dst, const skeleton_def_t *src) {
+    if (!src || src->joint_count == 0) {
+        memset(dst, 0, sizeof(*dst));
+        return true;
+    }
+    if (!skeleton_def_init(dst, src->joint_count, src->max_constraints_per_joint)) {
+        return false;
+    }
+    uint32_t n = src->joint_count;
+    if (src->joint_names)
+        memcpy(dst->joint_names, src->joint_names, n * SKELETON_JOINT_NAME_MAX);
+    if (src->parent_indices)
+        memcpy(dst->parent_indices, src->parent_indices, n * sizeof(uint32_t));
+    if (src->rest_local)
+        memcpy(dst->rest_local, src->rest_local, n * sizeof(mat4_t));
+    if (src->rest_world)
+        memcpy(dst->rest_world, src->rest_world, n * sizeof(mat4_t));
+    if (src->tail_positions) {
+        dst->tail_positions = (float *)calloc(n * 3, sizeof(float));
+        if (dst->tail_positions)
+            memcpy(dst->tail_positions, src->tail_positions, n * 3 * sizeof(float));
+    }
+    return true;
+}
+
+/**
  * @brief Common activation logic (hide entities, set state).
  */
 static void activate_(scene_editor_t *ed, const char *fname,
@@ -74,10 +103,19 @@ static void activate_(scene_editor_t *ed, const char *fname,
 
     ed->skeleton_mode.active = true;
     ed->skeleton_mode.entity_id = entity_id;
+    ed->skeleton_mode.dirty = false;
     strncpy(ed->skeleton_mode.skel_path, fname,
             sizeof(ed->skeleton_mode.skel_path) - 1);
     strncpy(ed->skeleton_mode.skel_full_path, full_path,
             sizeof(ed->skeleton_mode.skel_full_path) - 1);
+
+    /* Clone the registry skeleton into the working copy. */
+    const edit_skeleton_entry_t *se =
+        edit_skeleton_registry_get(&ed->skeleton_registry, fname);
+    if (se) {
+        clone_skeleton_(&ed->skeleton_mode.work_skel, &se->skel);
+        ed->skeleton_mode.work_skel_valid = true;
+    }
 
     if (entity_id != UINT32_MAX) {
         ed->active_object_id = entity_id;
@@ -219,6 +257,12 @@ bool skeleton_mode_enter_asset(scene_editor_t *ed, const char *asset_path) {
 
 void skeleton_mode_exit(scene_editor_t *ed) {
     if (!ed || !ed->skeleton_mode.active) return;
+
+    /* Destroy the working copy (unsaved changes are discarded). */
+    if (ed->skeleton_mode.work_skel_valid) {
+        skeleton_def_destroy(&ed->skeleton_mode.work_skel);
+        ed->skeleton_mode.work_skel_valid = false;
+    }
 
     /* Restore hidden entities. */
     for (uint32_t i = 0; i < ed->skeleton_mode.hidden_count; i++) {

@@ -16,7 +16,9 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include "ferrum/animation/constraint_params.h"
 #include "ferrum/math/vec3.h"
 
 /** @brief Maximum entities hidden when entering skeleton mode. */
@@ -44,6 +46,11 @@ typedef struct skeleton_mode_state {
     char     skel_path[256];            /**< Skeleton filename (registry key). */
     char     skel_full_path[512];       /**< Full path for saving. */
     bone_create_drag_t create_drag;     /**< In-progress bone placement. */
+
+    /** Working copy of the skeleton (edits go here, not to registry). */
+    skeleton_def_t     work_skel;       /**< Mutable editing copy. */
+    bool               work_skel_valid; /**< True if work_skel is initialized. */
+    bool               dirty;           /**< True if work_skel differs from disk. */
 
     /** Preview mesh for reference (ghost rendering). */
     char     preview_path[256];         /**< Asset path of preview mesh/prefab. */
@@ -97,6 +104,27 @@ void skeleton_mode_exit(struct scene_editor *ed);
  * @param state  State to reset.
  */
 void skeleton_mode_state_reset(skeleton_mode_state_t *state);
+
+/**
+ * @brief Get the working skeleton for editing (NULL if not in skeleton mode).
+ *
+ * Returns the mutable working copy, not the registry skeleton.
+ * All skeleton mode edits should go through this.
+ */
+static inline skeleton_def_t *skeleton_mode_get_work_skel(
+    skeleton_mode_state_t *state) {
+    if (!state || !state->active || !state->work_skel_valid) return NULL;
+    return &state->work_skel;
+}
+
+/**
+ * @brief Get the working skeleton (const) for rendering/picking.
+ */
+static inline const skeleton_def_t *skeleton_mode_get_work_skel_const(
+    const skeleton_mode_state_t *state) {
+    if (!state || !state->active || !state->work_skel_valid) return NULL;
+    return &state->work_skel;
+}
 
 #ifdef __cplusplus
 }

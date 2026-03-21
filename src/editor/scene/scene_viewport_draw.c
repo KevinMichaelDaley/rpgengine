@@ -673,16 +673,11 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         }
     }
 
-    /* Skeleton mode: draw bones directly from registry.
-     * Always draw when skeleton mode is active, even if no entities. */
-    if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0] != '\0') {
-        const edit_skeleton_entry_t *sk_entry =
-            edit_skeleton_registry_get(&ed->skeleton_registry,
-                                        ed->skeleton_mode.skel_path);
-        if (sk_entry && sk_entry->skel.joint_count > 0 &&
-            sk_entry->skel.tail_positions) {
-            /* Bind flat shader before setting uniforms — in skeleton mode
-             * from an asset, no entity draw has bound it yet. */
+    /* Skeleton mode: draw bones from working copy. */
+    if (ed->skeleton_mode.active) {
+        const skeleton_def_t *work = skeleton_mode_get_work_skel_const(
+            &ed->skeleton_mode);
+        if (work && work->joint_count > 0 && work->tail_positions) {
             shader_program_bind(&vp->flat_shader);
             shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
                                      "u_view", view.m, GL_FALSE);
@@ -696,7 +691,7 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
                 if (skel_ent) skel_model = build_model_matrix(skel_ent);
             }
             viewport_render_draw_bone_overlay(
-                vp, &sk_entry->skel, skel_eid, skel_model.m,
+                vp, work, skel_eid, skel_model.m,
                 &ed->bone_selection);
         }
     }

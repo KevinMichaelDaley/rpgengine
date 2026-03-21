@@ -165,17 +165,23 @@ static bool try_bone_gizmo_pick(scene_editor_t *ed,
             if (*p == '/') fname = p + 1;
         }
         entry = edit_skeleton_registry_get(&ed->skeleton_registry, fname);
-    } else if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0]) {
-        /* Skeleton mode (asset-based): use skeleton from mode state. */
-        entry = edit_skeleton_registry_get(&ed->skeleton_registry,
-                                            ed->skeleton_mode.skel_path);
+    } else if (ed->skeleton_mode.active) {
+        /* Skeleton mode: use working copy skeleton. */
     }
 
-    if (!entry) { return false; }
+    /* In skeleton mode, prefer the working copy over registry. */
+    const skeleton_def_t *skel_mode_work = NULL;
+    if (ed->skeleton_mode.active) {
+        skel_mode_work = skeleton_mode_get_work_skel_const(&ed->skeleton_mode);
+    }
 
-    /* Use per-entity pose override if available. */
+    if (!entry && !skel_mode_work) { return false; }
+
+    /* Use working copy in skeleton mode, else registry entry. */
     skeleton_def_t pick_skel_view;
-    const skeleton_def_t *pick_skel = &entry->skel;
+    const skeleton_def_t *pick_skel = skel_mode_work
+        ? skel_mode_work : (entry ? &entry->skel : NULL);
+    if (!pick_skel) return false;
     if (bone_eid != EDIT_BONE_SEL_NONE) {
         const bone_pose_block_t *pick_bp =
             bone_pose_store_get(&ed->bone_poses, bone_eid);
@@ -1539,12 +1545,9 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     /* Check if click is near an existing bone tail
                      * to create a child bone. */
                     uint32_t parent_bone = UINT32_MAX;
-                    const edit_skeleton_entry_t *sk_entry =
-                        edit_skeleton_registry_get(
-                            &ed->skeleton_registry,
-                            ed->skeleton_mode.skel_path);
-                    if (sk_entry && sk_entry->skel.tail_positions) {
-                        const skeleton_def_t *sk = &sk_entry->skel;
+                    const skeleton_def_t *sk =
+                        skeleton_mode_get_work_skel_const(&ed->skeleton_mode);
+                    if (sk && sk->tail_positions) {
                         float best_dist = 0.3f; /* Snap radius. */
                         for (uint32_t bi = 0; bi < sk->joint_count; bi++) {
                             float tx = sk->tail_positions[bi * 3 + 0];
@@ -1729,16 +1732,12 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     }
                 }
 
-                /* Skeleton mode (asset-based): pick bones from registry. */
+                /* Skeleton mode: pick bones from working copy. */
                 if (!gizmo_hit && !bone_picked &&
-                    ed->skeleton_mode.active &&
-                    ed->skeleton_mode.skel_path[0] != '\0') {
-                    const edit_skeleton_entry_t *ske =
-                        edit_skeleton_registry_get(&ed->skeleton_registry,
-                            ed->skeleton_mode.skel_path);
-                    if (ske && ske->skel.joint_count > 0 &&
-                        ske->skel.tail_positions) {
-                        const skeleton_def_t *sk = &ske->skel;
+                    ed->skeleton_mode.active) {
+                    const skeleton_def_t *sk =
+                        skeleton_mode_get_work_skel_const(&ed->skeleton_mode);
+                    if (sk && sk->joint_count > 0 && sk->tail_positions) {
                         uint32_t bcn = sk->joint_count;
                         if (bcn > 256) bcn = 256;
                         bone_pick_candidate_t bcands[256];
@@ -2117,13 +2116,11 @@ static void finish_box_select_(scene_editor_t *ed) {
         }
     }
 
-    /* ---- Skeleton mode bone box select (asset-based, no entity) ---- */
-    if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0] != '\0') {
-        const edit_skeleton_entry_t *ske =
-            edit_skeleton_registry_get(&ed->skeleton_registry,
-                                        ed->skeleton_mode.skel_path);
-        if (ske && ske->skel.joint_count > 0 && ske->skel.rest_world) {
-            const skeleton_def_t *sk = &ske->skel;
+    /* ---- Skeleton mode bone box select (from working copy) ---- */
+    if (ed->skeleton_mode.active) {
+        const skeleton_def_t *sk =
+            skeleton_mode_get_work_skel_const(&ed->skeleton_mode);
+        if (sk && sk->joint_count > 0 && sk->rest_world) {
             uint32_t skel_eid = ed->skeleton_mode.entity_id;
 
             for (uint32_t bi = 0; bi < sk->joint_count; bi++) {
@@ -2169,20 +2166,22 @@ static bool handle_mouse_up(scene_editor_t *ed, const SDL_MouseButtonEvent *ev) 
             float dz = drag->tail.z - drag->head.z;
             float dist = sqrtf(dx*dx + dy*dy + dz*dz);
             if (dist > 0.05f) {
-                /* Generate bone name. */
-                const edit_skeleton_entry_t *se =
-                    edit_skeleton_registry_get(&ed->skeleton_registry,
-                                                ed->skeleton_mode.skel_path);
+                /* Generate bone name and add to working copy. */
+                skeleton_def_t *work =
+                    skeleton_mode_get_work_skel(&ed->skeleton_mode);
                 char bname[64];
                 snprintf(bname, sizeof(bname), "bone_%u",
-                         se ? se->skel.joint_count : 0);
+                         work ? work->joint_count : 0);
 
-                uint32_t new_idx = skeleton_builder_add_bone(
-                    &ed->skeleton_registry,
-                    ed->skeleton_mode.skel_path,
-                    bname,
-                    drag->parent_bone,
-                    drag->head, drag->tail);
+                uint32_t new_idx = UINT32_MAX;
+                if (work) {
+                    new_idx = skeleton_builder_add_bone_direct(
+                        work, bname, drag->parent_bone,
+                        drag->head, drag->tail);
+                    if (new_idx != UINT32_MAX) {
+                        ed->skeleton_mode.dirty = true;
+                    }
+                }
 
                 if (new_idx != UINT32_MAX) {
                     /* Select the new bone. */
@@ -3483,12 +3482,14 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
             const uint32_t *bones = edit_bone_selection_bones(
                 &ed->bone_selection, &bcount);
             if (bcount > 0) {
-                /* Delete the first selected bone. */
-                bool ok = skeleton_builder_remove_bone(
-                    &ed->skeleton_registry,
-                    ed->skeleton_mode.skel_path, bones[0]);
+                /* Delete the first selected bone from working copy. */
+                skeleton_def_t *del_work =
+                    skeleton_mode_get_work_skel(&ed->skeleton_mode);
+                bool ok = del_work &&
+                    skeleton_builder_remove_bone_direct(del_work, bones[0]);
                 if (ok) {
                     edit_bone_selection_clear(&ed->bone_selection);
+                    ed->skeleton_mode.dirty = true;
                     scene_ui_tui_log(&ed->ui, "Bone deleted");
                 }
             }
