@@ -263,6 +263,50 @@ void scene_ui_build_outliner(struct scene_editor *ed,
             &ed->skeleton_registry,
             ed->outliner_expanded, ed->entities.capacity);
 
+        /* Skeleton mode (asset-based, no entity): inject bones from
+         * the registry skeleton directly into the outliner. */
+        if (ed->skeleton_mode.active &&
+            ed->skeleton_mode.entity_id == UINT32_MAX &&
+            ed->outliner_entry_count == 0) {
+            const edit_skeleton_entry_t *sk_e =
+                edit_skeleton_registry_get(&ed->skeleton_registry,
+                                            ed->skeleton_mode.skel_path);
+            if (sk_e && sk_e->skel.joint_count > 0) {
+                /* Use the inject_bones DFS from scene_outliner_build.c
+                 * pattern — but we don't have the entity, so manually
+                 * add bone entries with entity_id=UINT32_MAX. */
+                const skeleton_def_t *sk = &sk_e->skel;
+                uint32_t wp = 0;
+                for (uint32_t bi = 0; bi < sk->joint_count &&
+                     wp < SCENE_OUTLINER_MAX_ENTRIES; bi++) {
+                    /* Compute depth from parent chain. */
+                    uint32_t depth = 0;
+                    uint32_t pidx = sk->parent_indices
+                        ? sk->parent_indices[bi] : UINT32_MAX;
+                    uint32_t walk = pidx;
+                    while (walk != UINT32_MAX && walk < sk->joint_count && depth < 32) {
+                        depth++;
+                        walk = sk->parent_indices[walk];
+                    }
+                    bool has_children = false;
+                    for (uint32_t c = 0; c < sk->joint_count; c++) {
+                        if (sk->parent_indices && sk->parent_indices[c] == bi) {
+                            has_children = true;
+                            break;
+                        }
+                    }
+                    ed->outliner_entries[wp].entity_id = UINT32_MAX;
+                    ed->outliner_entries[wp].indent = depth;
+                    ed->outliner_entries[wp].bone_index = bi;
+                    ed->outliner_entries[wp].has_children = has_children;
+                    ed->outliner_entries[wp].expanded = true;
+                    ed->outliner_entries[wp].is_bone = true;
+                    wp++;
+                }
+                ed->outliner_entry_count = wp;
+            }
+        }
+
         uint32_t total_entries = ed->outliner_entry_count;
         ed->ui.outliner_total = (int)total_entries;
         ed->ui.outliner_visible_lines = vis_lines;
@@ -304,7 +348,8 @@ void scene_ui_build_outliner(struct scene_editor *ed,
 
                     const edit_entity_t *ent =
                         edit_entity_store_get(&ed->entities, i);
-                    if (!ent) continue;
+                    /* Allow bone entries without an entity (skeleton mode asset-based). */
+                    if (!ent && !oe->is_bone) continue;
 
                     bool selected;
                     if (oe->is_bone) {
@@ -313,7 +358,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                     } else {
                         selected = edit_selection_contains(&ed->selection, i);
                     }
-                    bool pending = ent->pending_delete;
+                    bool pending = ent ? ent->pending_delete : false;
 
                     s_entity_click_ctx[visible_index].ed = ed;
                     s_entity_click_ctx[visible_index].entity_id = i;
@@ -372,22 +417,33 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                                 }));
                         }
 
-                        const char *name = ent->name;
+                        const char *name = ent ? ent->name : "";
                         const char *tag;
 
                         if (oe->is_bone) {
                             /* Bone row: look up joint name from skeleton. */
                             tag = "[bone]";
-                            uint8_t sat = 0, sas = 0;
-                            const void *sp2 = entity_attrs_get(&ent->attrs,
-                                SCRIPT_KEY_SKEL_PATH, &sat, &sas);
-                            if (sp2 && sat == SCRIPT_ATTR_STR) {
-                                const char *fn2 = (const char *)sp2;
-                                for (const char *pp = fn2; *pp; pp++)
-                                    if (*pp == '/') fn2 = pp + 1;
+                            const char *skel_key = NULL;
+
+                            /* Try entity attrs first, then skeleton mode path. */
+                            if (ent) {
+                                uint8_t sat = 0, sas = 0;
+                                const void *sp2 = entity_attrs_get(&ent->attrs,
+                                    SCRIPT_KEY_SKEL_PATH, &sat, &sas);
+                                if (sp2 && sat == SCRIPT_ATTR_STR) {
+                                    skel_key = (const char *)sp2;
+                                    for (const char *pp = skel_key; *pp; pp++)
+                                        if (*pp == '/') skel_key = pp + 1;
+                                }
+                            }
+                            if (!skel_key && ed->skeleton_mode.active) {
+                                skel_key = ed->skeleton_mode.skel_path;
+                            }
+
+                            if (skel_key) {
                                 const edit_skeleton_entry_t *se2 =
                                     edit_skeleton_registry_get(
-                                        &ed->skeleton_registry, fn2);
+                                        &ed->skeleton_registry, skel_key);
                                 if (se2 && oe->bone_index < se2->skel.joint_count
                                     && se2->skel.joint_names) {
                                     name = se2->skel.joint_names[oe->bone_index];

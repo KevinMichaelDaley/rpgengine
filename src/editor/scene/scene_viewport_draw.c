@@ -590,6 +590,30 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         }
     }
 
+    /* Skeleton mode: draw bones directly from registry when no entity. */
+    if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0] != '\0') {
+        const edit_skeleton_entry_t *sk_entry =
+            edit_skeleton_registry_get(&ed->skeleton_registry,
+                                        ed->skeleton_mode.skel_path);
+        if (sk_entry && sk_entry->skel.joint_count > 0) {
+            shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
+                                     "u_view", view.m, GL_FALSE);
+            shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
+                                     "u_projection", proj.m, GL_FALSE);
+            /* Use entity model if available, otherwise identity. */
+            mat4_t skel_model = mat4_identity();
+            uint32_t skel_eid = ed->skeleton_mode.entity_id;
+            if (skel_eid != UINT32_MAX) {
+                const edit_entity_t *skel_ent =
+                    edit_entity_store_get(&ed->entities, skel_eid);
+                if (skel_ent) skel_model = build_model_matrix(skel_ent);
+            }
+            viewport_render_draw_bone_overlay(
+                vp, &sk_entry->skel, skel_eid, skel_model.m,
+                &ed->bone_selection);
+        }
+    }
+
     /* Draw prefab hull wireframes in prefab mode. */
     if (ed->prefab_mode.active) {
         static prefab_hull_cache_t s_hull_cache;
