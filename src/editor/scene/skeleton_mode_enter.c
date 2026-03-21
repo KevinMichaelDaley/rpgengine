@@ -16,8 +16,10 @@
 #include "ferrum/editor/anim/skeleton_builder.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/entity/entity_attrs.h"
+#include "ferrum/math/mat4.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 void skeleton_mode_state_reset(skeleton_mode_state_t *state) {
@@ -55,9 +57,21 @@ bool skeleton_mode_enter(scene_editor_t *ed) {
                  ent->name[0] ? ent->name : "skeleton");
         skel_path = auto_path;
 
-        /* Create empty skeleton in registry. */
+        /* Create initial skeleton with a single root bone. */
         skeleton_def_t empty;
-        skeleton_def_init(&empty, 0, 0);
+        if (!skeleton_def_init(&empty, 1, 0)) return false;
+        strncpy(empty.joint_names[0], "root",
+                SKELETON_JOINT_NAME_MAX - 1);
+        empty.parent_indices[0] = UINT32_MAX;
+        empty.rest_local[0] = mat4_identity();
+        empty.rest_world[0] = mat4_identity();
+
+        /* Allocate tail_positions for the root bone. */
+        empty.tail_positions = (float *)calloc(3, sizeof(float));
+        if (empty.tail_positions) {
+            empty.tail_positions[1] = 0.5f; /* Tail 0.5 units up. */
+        }
+
         /* Extract filename for registry key. */
         const char *fname = skel_path;
         for (const char *p = skel_path; *p; p++) {
