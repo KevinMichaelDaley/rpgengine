@@ -1729,6 +1729,60 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                     }
                 }
 
+                /* Skeleton mode (asset-based): pick bones from registry. */
+                if (!gizmo_hit && !bone_picked &&
+                    ed->skeleton_mode.active &&
+                    ed->skeleton_mode.skel_path[0] != '\0') {
+                    const edit_skeleton_entry_t *ske =
+                        edit_skeleton_registry_get(&ed->skeleton_registry,
+                            ed->skeleton_mode.skel_path);
+                    if (ske && ske->skel.joint_count > 0 &&
+                        ske->skel.tail_positions) {
+                        const skeleton_def_t *sk = &ske->skel;
+                        uint32_t bcn = sk->joint_count;
+                        if (bcn > 256) bcn = 256;
+                        bone_pick_candidate_t bcands[256];
+                        for (uint32_t bj = 0; bj < bcn; bj++) {
+                            bcands[bj].bone_index = bj;
+                            bcands[bj].cap_a = (vec3_t){
+                                sk->rest_world[bj].m[12],
+                                sk->rest_world[bj].m[13],
+                                sk->rest_world[bj].m[14]};
+                            bcands[bj].cap_b = (vec3_t){
+                                sk->tail_positions[bj * 3 + 0],
+                                sk->tail_positions[bj * 3 + 1],
+                                sk->tail_positions[bj * 3 + 2]};
+                            bone_capsule_params_t bcp;
+                            float bh[3] = {sk->rest_world[bj].m[12],
+                                           sk->rest_world[bj].m[13],
+                                           sk->rest_world[bj].m[14]};
+                            float bt[3] = {sk->tail_positions[bj*3],
+                                           sk->tail_positions[bj*3+1],
+                                           sk->tail_positions[bj*3+2]};
+                            bone_capsule_params_from_joint(bh, bt, &bcp);
+                            bcands[bj].radius = bcp.radius;
+                        }
+                        uint32_t picked_bone;
+                        if (pick_nearest_bone(&ray, bcands, bcn,
+                                              &picked_bone)) {
+                            uint32_t skel_eid = ed->skeleton_mode.entity_id;
+                            SDL_Keymod bmod = SDL_GetModState();
+                            if (bmod & KMOD_SHIFT) {
+                                edit_bone_selection_toggle(
+                                    &ed->bone_selection,
+                                    skel_eid, picked_bone);
+                            } else {
+                                edit_bone_selection_clear(
+                                    &ed->bone_selection);
+                                edit_bone_selection_add(
+                                    &ed->bone_selection,
+                                    skel_eid, picked_bone);
+                            }
+                            bone_picked = true;
+                        }
+                    }
+                }
+
                 /* If no gizmo hit and no bone picked, do entity picking. */
                 if (!gizmo_hit && !bone_picked) {
                     uint32_t cap = ed->entities.capacity;
