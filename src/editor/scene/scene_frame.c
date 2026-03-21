@@ -23,6 +23,8 @@
 #include "ferrum/math/quat.h"
 #include "ferrum/editor/json_parse.h"
 #include "ferrum/entity/entity_attrs.h"
+#include "ferrum/editor/scene/skeleton_mode.h"
+#include "ferrum/animation/fskel_loader.h"
 #include "ferrum/editor/viewport/transform_basis.h"
 #include "ferrum/editor/viewport/viewport_gizmo.h"
 #include "ferrum/editor/panels/asset_browser.h"
@@ -372,6 +374,50 @@ static void dispatch_tui_command(scene_editor_t *ed)
         }
         if (!is_local) {
             offline_q_push(&ed->ui, cmd);
+            return;
+        }
+    }
+
+    /* Skeleton mode: intercept :w to save working copy locally. */
+    if (ed->skeleton_mode.active) {
+        char word2[64];
+        {
+            int wi2 = 0;
+            const char *p2 = cmd;
+            while (*p2 && *p2 != ' ' && wi2 < (int)sizeof(word2) - 1)
+                word2[wi2++] = *p2++;
+            word2[wi2] = '\0';
+        }
+        if (strcmp(word2, "w") == 0 || strcmp(word2, "save") == 0 ||
+            strcmp(word2, "skeleton_save") == 0 || strcmp(word2, "sksave") == 0) {
+            /* Get optional path argument, or use default. */
+            const char *save_path = ed->skeleton_mode.skel_full_path;
+            const char *rest = cmd + strlen(word2);
+            while (*rest == ' ') rest++;
+            char custom_path[512];
+            if (*rest != '\0') {
+                if (rest[0] == '/') {
+                    strncpy(custom_path, rest, sizeof(custom_path) - 1);
+                } else {
+                    snprintf(custom_path, sizeof(custom_path), "%s/%s",
+                             ed->config.asset_dir, rest);
+                }
+                custom_path[sizeof(custom_path) - 1] = '\0';
+                save_path = custom_path;
+            }
+
+            const skeleton_def_t *work =
+                skeleton_mode_get_work_skel_const(&ed->skeleton_mode);
+            if (work && fskel_write(save_path, work, NULL, 0)) {
+                char msg[320];
+                snprintf(msg, sizeof(msg), "Saved: %s", save_path);
+                scene_ui_tui_log_success(&ed->ui, msg);
+                ed->skeleton_mode.dirty = false;
+            } else {
+                char msg[320];
+                snprintf(msg, sizeof(msg), "Failed to save: %s", save_path);
+                scene_ui_tui_log_error(&ed->ui, msg);
+            }
             return;
         }
     }
