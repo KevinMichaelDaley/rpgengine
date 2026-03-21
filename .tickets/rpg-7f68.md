@@ -1,6 +1,6 @@
 ---
 id: rpg-7f68
-status: open
+status: closed
 deps: []
 links: [rpg-4418, rpg-8ee1]
 created: 2026-03-21T05:53:29Z
