@@ -433,9 +433,7 @@ void scene_ui_build_inspector(scene_editor_t *ed,
                         }
                     }
 
-                    /* ---- Bone list (regular edit mode only) ---- */
-                    scene_ui_build_bone_list(ed, first_id, &y,
-                                              scroll_px, visible_h, &clay_idx);
+                    /* Bone list moved to outliner (LCRS hierarchy). */
 
                     /* ---- Bone properties (if bones selected) ---- */
                     scene_ui_build_bone_inspector(ed, &y, scroll_px,

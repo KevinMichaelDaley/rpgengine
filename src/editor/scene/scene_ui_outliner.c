@@ -13,6 +13,9 @@
 #include "ferrum/editor/scene/scene_outliner.h"
 #include "ferrum/editor/scene/prefab/prefab_ui_outliner.h"
 #include "ferrum/editor/edit_scene_tree.h"
+#include "ferrum/editor/edit_bone_selection.h"
+#include "ferrum/editor/edit_skeleton_registry.h"
+#include "ferrum/entity/entity_attrs.h"
 #include "ferrum/editor/ui/clay_theme.h"
 #include "ferrum/editor/ui/clay_fonts.h"
 #include "clay.h"
@@ -236,6 +239,7 @@ void scene_ui_build_outliner(struct scene_editor *ed,
         /* Rebuild the hierarchical display list from the LCRS tree. */
         ed->outliner_entry_count = scene_outliner_build(
             ed->outliner_entries, &ed->entities,
+            &ed->skeleton_registry,
             ed->outliner_expanded, ed->entities.capacity);
 
         uint32_t total_entries = ed->outliner_entry_count;
@@ -281,7 +285,13 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         edit_entity_store_get(&ed->entities, i);
                     if (!ent) continue;
 
-                    bool selected = edit_selection_contains(&ed->selection, i);
+                    bool selected;
+                    if (oe->is_bone) {
+                        selected = edit_bone_selection_contains(
+                            &ed->bone_selection, i, oe->bone_index);
+                    } else {
+                        selected = edit_selection_contains(&ed->selection, i);
+                    }
                     bool pending = ent->pending_delete;
 
                     s_entity_click_ctx[visible_index].ed = ed;
@@ -341,15 +351,40 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                         }
 
                         const char *name = ent->name;
-                        int32_t name_len = (int32_t)strlen(name);
+                        const char *tag;
 
-                        if (name_len == 0) {
-                            snprintf(s_outliner_names[visible_index], 32,
-                                     "entity_%u", i);
-                            name = s_outliner_names[visible_index];
-                            name_len = (int32_t)strlen(name);
+                        if (oe->is_bone) {
+                            /* Bone row: look up joint name from skeleton. */
+                            tag = "[bone]";
+                            uint8_t sat = 0, sas = 0;
+                            const void *sp2 = entity_attrs_get(&ent->attrs,
+                                SCRIPT_KEY_SKEL_PATH, &sat, &sas);
+                            if (sp2 && sat == SCRIPT_ATTR_STR) {
+                                const char *fn2 = (const char *)sp2;
+                                for (const char *pp = fn2; *pp; pp++)
+                                    if (*pp == '/') fn2 = pp + 1;
+                                const edit_skeleton_entry_t *se2 =
+                                    edit_skeleton_registry_get(
+                                        &ed->skeleton_registry, fn2);
+                                if (se2 && oe->bone_index < se2->skel.joint_count
+                                    && se2->skel.joint_names) {
+                                    name = se2->skel.joint_names[oe->bone_index];
+                                } else {
+                                    snprintf(s_outliner_names[visible_index], 32,
+                                             "bone_%u", oe->bone_index);
+                                    name = s_outliner_names[visible_index];
+                                }
+                            }
+                        } else {
+                            tag = type_tag_string(ent->type);
+                            if (strlen(name) == 0) {
+                                snprintf(s_outliner_names[visible_index], 32,
+                                         "entity_%u", i);
+                                name = s_outliner_names[visible_index];
+                            }
                         }
 
+                        int32_t name_len = (int32_t)strlen(name);
                         Clay_String name_str = {
                             .length = name_len,
                             .chars = name,
@@ -360,8 +395,6 @@ void scene_ui_build_outliner(struct scene_editor *ed,
                                 .textColor = name_color,
                                 .fontId = CLAY_FONT_UI,
                             }));
-
-                        const char *tag = type_tag_string(ent->type);
                         Clay_String tag_str = {
                             .length = (int32_t)strlen(tag),
                             .chars = tag,
