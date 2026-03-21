@@ -22,6 +22,7 @@
 #include "ferrum/editor/anim/skeleton_builder.h"
 #include "ferrum/animation/constraint_params.h"
 #include "ferrum/entity/entity_attrs.h"
+#include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/math/mat4.h"
 
 #include <stdio.h>
@@ -80,6 +81,12 @@ static void activate_(scene_editor_t *ed, const char *fname,
 
     if (entity_id != UINT32_MAX) {
         ed->active_object_id = entity_id;
+    }
+
+    /* Reset camera to look at the skeleton origin so bones are visible. */
+    viewport_state_t *fvp = scene_focused_vp(ed);
+    if (fvp) {
+        editor_camera_reset(&fvp->camera);
     }
 }
 
