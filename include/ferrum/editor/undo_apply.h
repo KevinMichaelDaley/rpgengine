@@ -52,6 +52,47 @@ bool edit_undo_apply_inverse(struct edit_cmd_ctx *ctx,
 bool edit_undo_apply_forward(struct edit_cmd_ctx *ctx,
                               const struct edit_undo_entry *entry);
 
+/* ------------------------------------------------------------------------ */
+/* Bone-specific undo/redo (client-side only)                                */
+/* ------------------------------------------------------------------------ */
+
+/* Forward declarations. */
+struct edit_entity_store;
+struct edit_skeleton_registry;
+struct bone_pose_store;
+
+/**
+ * @brief Apply inverse of a bone transform undo entry.
+ *
+ * Restores the bone's rest_local to the original value saved in the
+ * snapshot, then propagates the hierarchy.
+ *
+ * @param entities   Entity store.
+ * @param skel_reg   Skeleton registry.
+ * @param bone_poses Per-entity bone pose store (NULL in prefab mode).
+ * @param is_prefab  True if operating in prefab mode.
+ * @param entry      Undo entry with BONE_MOVE or BONE_ROTATE type.
+ * @return true on success.
+ */
+bool edit_undo_apply_bone_inverse(
+    struct edit_entity_store *entities,
+    struct edit_skeleton_registry *skel_reg,
+    struct bone_pose_store *bone_poses,
+    bool is_prefab,
+    const struct edit_undo_entry *entry);
+
+/**
+ * @brief Apply forward of a bone transform undo entry (redo).
+ *
+ * Restores the bone's rest_local to the new value saved in the snapshot.
+ */
+bool edit_undo_apply_bone_forward(
+    struct edit_entity_store *entities,
+    struct edit_skeleton_registry *skel_reg,
+    struct bone_pose_store *bone_poses,
+    bool is_prefab,
+    const struct edit_undo_entry *entry);
+
 #ifdef __cplusplus
 }
 #endif

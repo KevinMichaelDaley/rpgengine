@@ -37,6 +37,9 @@
 #include "ferrum/editor/edit_entity_matrix.h"
 #include "ferrum/editor/scene/scene_viewport_render.h"
 #include "ferrum/editor/viewport/bone_pick.h"
+#include "ferrum/editor/edit_undo.h"
+#include "ferrum/editor/edit_cmd_ctx.h"
+#include "ferrum/editor/undo_apply.h"
 #include "ferrum/editor/scene/bone_pose/bone_pose_file.h"
 #include "ferrum/editor/scene/scene_viewport_bone_overlay.h"
 #include "ferrum/editor/scene/prefab/prefab_mode_enter.h"
@@ -300,6 +303,11 @@ static bool try_bone_gizmo_pick(scene_editor_t *ed,
     fvp->snap_rot_accum_deg = 0.0f;
     fvp->snap_rot_applied_deg = 0.0f;
     fvp->snap_origin_pos = hit_pos;
+
+    /* Save original rest_local for undo recording at drag end. */
+    memcpy(fvp->bone_drag_orig_local, pick_skel->rest_local[hit_bone].m,
+           sizeof(fvp->bone_drag_orig_local));
+
     return true;
 }
 
@@ -1095,8 +1103,61 @@ static void send_gizmo_commands(scene_editor_t *ed, vec3_t total_delta) {
     viewport_state_t *fvp = scene_focused_vp(ed);
 
     /* Per-bone gizmo drag: bone rest-pose edits are local and do not
-     * generate server commands (the skeleton is modified in-place). */
+     * generate server commands (the skeleton is modified in-place).
+     * Record a local bone undo entry with the original rest_local. */
     if (fvp->bone_drag_index != UINT32_MAX) {
+        uint32_t bone_eid = ed->bone_selection.entity_id;
+        uint32_t bone_idx = fvp->bone_drag_index;
+
+        /* Determine current rest_local (after drag) for redo snapshot. */
+        float new_local[16] = {0};
+        {
+            uint8_t bat = 0, bas = 0;
+            const edit_entity_t *bae = edit_entity_store_get(
+                &ed->entities, bone_eid);
+            if (bae) {
+                const void *bsp = entity_attrs_get(
+                    &bae->attrs, SCRIPT_KEY_SKEL_PATH, &bat, &bas);
+                if (bsp && bat == SCRIPT_ATTR_STR) {
+                    const char *bs = (const char *)bsp;
+                    const char *bfn = bs;
+                    for (const char *bp = bs; *bp; bp++)
+                        if (*bp == '/') bfn = bp + 1;
+                    const edit_skeleton_entry_t *bse =
+                        edit_skeleton_registry_get(&ed->skeleton_registry, bfn);
+                    if (bse && bone_idx < bse->skel.joint_count) {
+                        const skeleton_def_t *bsk = &bse->skel;
+                        const bone_pose_block_t *bbp =
+                            bone_pose_store_get(&ed->bone_poses, bone_eid);
+                        if (bbp && !ed->prefab_mode.active) {
+                            memcpy(new_local, bbp->rest_local[bone_idx].m,
+                                   sizeof(new_local));
+                        } else {
+                            memcpy(new_local, bsk->rest_local[bone_idx].m,
+                                   sizeof(new_local));
+                        }
+                    }
+                }
+            }
+        }
+
+        /* Record undo entry: snapshot = [original, new] rest_local
+         * (2 × 16 floats = 128 bytes). Inverse restores original;
+         * forward restores new. */
+        float bone_snapshot[32];
+        memcpy(bone_snapshot, fvp->bone_drag_orig_local, 64);
+        memcpy(bone_snapshot + 16, new_local, 64);
+
+        bool is_rotate = (fvp->gizmo.mode == GIZMO_MODE_ROTATE);
+        edit_undo_entry_t bone_entry = {0};
+        bone_entry.forward_type = is_rotate
+            ? EDIT_CMD_TYPE_BONE_ROTATE : EDIT_CMD_TYPE_BONE_MOVE;
+        bone_entry.inverse_type = bone_entry.forward_type;
+        bone_entry.entity_id   = bone_eid;
+        bone_entry.sub_index   = bone_idx;
+        edit_undo_record(&ed->bone_undo, &bone_entry,
+                          bone_snapshot, sizeof(bone_snapshot));
+
         fvp->bone_drag_index = UINT32_MAX;
         return;
     }
@@ -2960,14 +3021,49 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
         return true;
     }
 
-    /* Ctrl+Z: undo / Ctrl+Shift+Z: redo. */
+    /* Ctrl+Z: undo / Ctrl+Shift+Z: redo.
+     * Check local bone undo stack first; if empty, send to server. */
     case SDLK_z: {
         if (!(ev->keysym.mod & KMOD_CTRL)) return false;
-        if (ev->keysym.mod & KMOD_SHIFT) {
-            strncpy(ed->ui.tui_cmd, "redo", UI_TUI_INPUT_MAX - 1);
-        } else {
-            strncpy(ed->ui.tui_cmd, "undo", UI_TUI_INPUT_MAX - 1);
+        bool is_redo = (ev->keysym.mod & KMOD_SHIFT) != 0;
+
+        /* Try local bone undo first. */
+        if (!is_redo && edit_undo_count(&ed->bone_undo) > 0) {
+            uint32_t bc = ed->bone_undo.cursor;
+            uint32_t undone = edit_undo_step(&ed->bone_undo);
+            uint32_t ba = ed->bone_undo.cursor;
+            for (uint32_t bi = bc; bi > ba; bi--) {
+                uint32_t bidx = (bi - 1) % ed->bone_undo.capacity;
+                const edit_undo_entry_t *be = &ed->bone_undo.entries[bidx];
+                edit_undo_apply_bone_inverse(
+                    &ed->entities, &ed->skeleton_registry,
+                    &ed->bone_poses, ed->prefab_mode.active, be);
+            }
+            if (undone > 0) {
+                scene_ui_tui_log(&ed->ui, "Bone undo");
+                return true;
+            }
         }
+        if (is_redo && edit_undo_redo_count(&ed->bone_undo) > 0) {
+            uint32_t bc = ed->bone_undo.cursor;
+            uint32_t redone = edit_undo_redo(&ed->bone_undo);
+            uint32_t ba = ed->bone_undo.cursor;
+            for (uint32_t bi = bc; bi < ba; bi++) {
+                uint32_t bidx = bi % ed->bone_undo.capacity;
+                const edit_undo_entry_t *be = &ed->bone_undo.entries[bidx];
+                edit_undo_apply_bone_forward(
+                    &ed->entities, &ed->skeleton_registry,
+                    &ed->bone_poses, ed->prefab_mode.active, be);
+            }
+            if (redone > 0) {
+                scene_ui_tui_log(&ed->ui, "Bone redo");
+                return true;
+            }
+        }
+
+        /* No local bone undo — send to server for entity undo. */
+        strncpy(ed->ui.tui_cmd, is_redo ? "redo" : "undo",
+                UI_TUI_INPUT_MAX - 1);
         ed->ui.tui_cmd[UI_TUI_INPUT_MAX - 1] = '\0';
         ed->ui.action = UI_ACTION_TUI_COMMAND;
         return true;

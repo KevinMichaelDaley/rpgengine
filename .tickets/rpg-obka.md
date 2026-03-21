@@ -1,6 +1,6 @@
 ---
 id: rpg-obka
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-03-18T07:11:32Z

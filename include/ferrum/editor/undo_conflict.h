@@ -31,7 +31,8 @@ struct edit_undo_entry;
  */
 typedef struct undo_conflict_key {
     uint32_t entity_id;     /**< Primary conflict dimension. */
-    uint32_t key_type;      /**< 0 = entity-level (all current types). */
+    uint32_t sub_index;     /**< Sub-resource (bone index, 0 for entity-level). */
+    uint32_t key_type;      /**< 0 = entity-level, 1 = bone-level. */
 } undo_conflict_key_t;
 
 /**

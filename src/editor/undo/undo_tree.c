@@ -23,6 +23,8 @@ static const char *cmd_type_name_(uint32_t type) {
     case EDIT_CMD_TYPE_SCALE:        return "scale";
     case EDIT_CMD_TYPE_GROUP_CREATE: return "group+";
     case EDIT_CMD_TYPE_GROUP_DELETE: return "group-";
+    case EDIT_CMD_TYPE_BONE_MOVE:    return "bone_mv";
+    case EDIT_CMD_TYPE_BONE_ROTATE:  return "bone_rot";
     default:                         return "???";
     }
 }

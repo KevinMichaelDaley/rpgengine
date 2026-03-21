@@ -363,6 +363,11 @@ bool scene_editor_init(scene_editor_t *ed, const scene_editor_config_t *config) 
         fprintf(stderr, "scene_editor: bone pose store init failed\n");
     }
 
+    /* Initialize local bone undo stack (256 entries, 64KB arena). */
+    if (!edit_undo_init(&ed->bone_undo, 256, 64 * 1024)) {
+        fprintf(stderr, "scene_editor: bone undo init failed\n");
+    }
+
     /* Initialize server connection */
     scene_conn_config_t conn_cfg = {
         .host     = ed->config.server_host,
@@ -544,6 +549,7 @@ void scene_editor_shutdown(scene_editor_t *ed) {
     edit_bone_selection_destroy(&ed->bone_selection);
     edit_skeleton_registry_destroy(&ed->skeleton_registry);
     bone_pose_store_destroy(&ed->bone_poses);
+    edit_undo_destroy(&ed->bone_undo);
     prefab_mode_state_reset(&ed->prefab_mode);
     edit_entity_store_destroy(&ed->entities);
 

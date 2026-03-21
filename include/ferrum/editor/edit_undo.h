@@ -48,6 +48,7 @@ typedef struct edit_undo_entry {
     uint32_t inverse_type;      /**< Inverse command type tag. */
     uint32_t group_id;          /**< Group ID (0 = ungrouped). */
     uint32_t entity_id;         /**< Entity this command affected. */
+    uint32_t sub_index;         /**< Sub-resource index (bone index for bone ops, 0 otherwise). */
     void    *snapshot_data;     /**< Pointer into snapshot arena (or NULL). */
     uint32_t snapshot_size;     /**< Size of snapshot data in bytes. */
 
