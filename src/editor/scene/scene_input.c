@@ -2116,6 +2116,37 @@ static void finish_box_select_(scene_editor_t *ed) {
             }
         }
     }
+
+    /* ---- Skeleton mode bone box select (asset-based, no entity) ---- */
+    if (ed->skeleton_mode.active && ed->skeleton_mode.skel_path[0] != '\0') {
+        const edit_skeleton_entry_t *ske =
+            edit_skeleton_registry_get(&ed->skeleton_registry,
+                                        ed->skeleton_mode.skel_path);
+        if (ske && ske->skel.joint_count > 0 && ske->skel.rest_world) {
+            const skeleton_def_t *sk = &ske->skel;
+            uint32_t skel_eid = ed->skeleton_mode.entity_id;
+
+            for (uint32_t bi = 0; bi < sk->joint_count; bi++) {
+                float wx = sk->rest_world[bi].m[12];
+                float wy = sk->rest_world[bi].m[13];
+                float wz = sk->rest_world[bi].m[14];
+
+                float px = vp.m[0]*wx + vp.m[4]*wy + vp.m[8]*wz  + vp.m[12];
+                float py = vp.m[1]*wx + vp.m[5]*wy + vp.m[9]*wz  + vp.m[13];
+                float pw = vp.m[3]*wx + vp.m[7]*wy + vp.m[11]*wz + vp.m[15];
+
+                if (pw <= 0.0f) continue;
+
+                float bnx = (px / pw) * 0.5f + 0.5f;
+                float bny = 0.5f - (py / pw) * 0.5f;
+
+                if (bnx >= bx0 && bnx <= bx1 && bny >= by0 && bny <= by1) {
+                    edit_bone_selection_add(&ed->bone_selection,
+                                            skel_eid, bi);
+                }
+            }
+        }
+    }
 }
 
 /**
