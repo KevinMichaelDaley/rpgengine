@@ -724,7 +724,8 @@ static void dispatch_tui_command(scene_editor_t *ed)
     const char *wire = def->name;
     if (strcmp(wire, "spawn") == 0 || strcmp(wire, "delete") == 0 ||
         strcmp(wire, "delete_id") == 0 || strcmp(wire, "clone") == 0 ||
-        strcmp(wire, "entity_def") == 0) {
+        strcmp(wire, "entity_def") == 0 ||
+        strcmp(wire, "parent") == 0 || strcmp(wire, "unparent") == 0) {
         scene_frame_request_entity_list(ed);
 
         /* Track spawns in prefab mode for child parenting. */

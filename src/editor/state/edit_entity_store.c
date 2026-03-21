@@ -10,6 +10,7 @@
 
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_scene_tree.h"
+#include "ferrum/entity/entity_attrs.h"
 #include "ferrum/memory/vm_alloc.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -102,12 +103,29 @@ bool edit_entity_store_remove(edit_entity_store_t *store, uint32_t id) {
     if (!store || id >= store->capacity) return false;
     if (!store->entities[id].active) return false;
 
-    /* Reparent children to this entity's parent (or root) before removing. */
+    /* Reparent children to this entity's parent (or root) before removing.
+     * Also clear SCRIPT_KEY_PARENT_ID attr so children don't re-attach
+     * when the entity ID is reused by a future spawn. */
     if (store->tree) {
         uint32_t grandparent = edit_scene_tree_get_parent(store->tree, id);
         uint32_t child = edit_scene_tree_get_first_child(store->tree, id);
         while (child != EDIT_SCENE_TREE_NONE) {
             uint32_t next = edit_scene_tree_get_next_sibling(store->tree, child);
+
+            /* Update the child's PARENT_ID attr. */
+            if (child < store->capacity && store->entities[child].active) {
+                if (grandparent != EDIT_SCENE_TREE_NONE) {
+                    entity_attrs_set(&store->entities[child].attrs,
+                                      SCRIPT_KEY_PARENT_ID, SCRIPT_ATTR_U32,
+                                      &grandparent, sizeof(grandparent));
+                } else {
+                    uint32_t none = EDIT_SCENE_TREE_NONE;
+                    entity_attrs_set(&store->entities[child].attrs,
+                                      SCRIPT_KEY_PARENT_ID, SCRIPT_ATTR_U32,
+                                      &none, sizeof(none));
+                }
+            }
+
             if (grandparent != EDIT_SCENE_TREE_NONE) {
                 edit_scene_tree_attach(store->tree, child, grandparent);
             } else {

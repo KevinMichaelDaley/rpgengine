@@ -1,6 +1,11 @@
 /**
  * @file scene_outliner_build.c
- * @brief Build flat outliner display list from LCRS scene tree.
+ * @brief Build flat outliner display list from entity attrs hierarchy.
+ *
+ * Rebuilds the LCRS tree from SCRIPT_KEY_PARENT_ID entity attributes
+ * each frame, then performs DFS to create the flat display list.
+ * This ensures the outliner reflects the server's hierarchy state
+ * after sync_entities updates entity attrs.
  *
  * Non-static functions (2 / 4 limit):
  *   scene_outliner_build
@@ -10,12 +15,50 @@
 #include "ferrum/editor/scene/scene_outliner.h"
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/editor/edit_scene_tree.h"
+#include "ferrum/entity/entity_attrs.h"
+
+#include <string.h>
+
+/**
+ * @brief Rebuild the LCRS tree from entity PARENT_ID attributes.
+ *
+ * Clears the tree and re-attaches all entities based on their
+ * SCRIPT_KEY_PARENT_ID attribute. This keeps the local tree in
+ * sync with the server-replicated entity attrs.
+ */
+static void rebuild_tree_from_attrs_(edit_scene_tree_t *tree,
+                                      const edit_entity_store_t *store) {
+    /* Clear all links. */
+    for (uint32_t i = 0; i < tree->capacity; i++) {
+        tree->parent[i]       = EDIT_SCENE_TREE_NONE;
+        tree->first_child[i]  = EDIT_SCENE_TREE_NONE;
+        tree->next_sibling[i] = EDIT_SCENE_TREE_NONE;
+    }
+
+    /* Rebuild from attrs. */
+    for (uint32_t i = 0; i < store->capacity; i++) {
+        const edit_entity_t *ent = edit_entity_store_get(store, i);
+        if (!ent || !ent->active) continue;
+
+        uint8_t at = 0, as = 0;
+        const void *pv = entity_attrs_get(&ent->attrs,
+                                            SCRIPT_KEY_PARENT_ID, &at, &as);
+        if (pv && at == SCRIPT_ATTR_U32 && as >= sizeof(uint32_t)) {
+            uint32_t parent_id = *(const uint32_t *)pv;
+            if (parent_id != EDIT_SCENE_TREE_NONE &&
+                parent_id < store->capacity) {
+                const edit_entity_t *par =
+                    edit_entity_store_get(store, parent_id);
+                if (par && par->active) {
+                    edit_scene_tree_attach(tree, i, parent_id);
+                }
+            }
+        }
+    }
+}
 
 /**
  * @brief Recursive DFS to populate the flat display list.
- *
- * Visits the subtree rooted at `node`, appending entries for active
- * entities. Skips children of collapsed nodes.
  */
 static uint32_t dfs_build_(scene_outliner_entry_t *entries,
                             uint32_t max_entries,
@@ -31,7 +74,7 @@ static uint32_t dfs_build_(scene_outliner_entry_t *entries,
 
     bool has_children =
         edit_scene_tree_get_first_child(tree, node) != EDIT_SCENE_TREE_NONE;
-    bool is_expanded = (node < exp_cap) ? expanded[node] : true;
+    bool is_expanded = (node < exp_cap && expanded) ? expanded[node] : true;
 
     entries[write_pos].entity_id    = node;
     entries[write_pos].indent       = depth;
@@ -39,7 +82,6 @@ static uint32_t dfs_build_(scene_outliner_entry_t *entries,
     entries[write_pos].expanded     = is_expanded;
     write_pos++;
 
-    /* If expanded, visit children. */
     if (has_children && is_expanded) {
         uint32_t child = edit_scene_tree_get_first_child(tree, node);
         while (child != EDIT_SCENE_TREE_NONE && write_pos < max_entries) {
@@ -58,15 +100,19 @@ uint32_t scene_outliner_build(scene_outliner_entry_t *entries,
                                const bool *expanded, uint32_t exp_cap) {
     if (!entries || !store || !store->tree) return 0;
 
-    const edit_scene_tree_t *tree = store->tree;
+    edit_scene_tree_t *tree = store->tree;
+
+    /* Rebuild tree from entity attrs so it matches server state. */
+    rebuild_tree_from_attrs_(tree, store);
+
     uint32_t write_pos = 0;
 
-    /* Iterate all entities; start DFS from roots only. */
-    for (uint32_t i = 0; i < store->capacity && write_pos < SCENE_OUTLINER_MAX_ENTRIES; i++) {
+    /* DFS from root entities only. */
+    for (uint32_t i = 0; i < store->capacity &&
+         write_pos < SCENE_OUTLINER_MAX_ENTRIES; i++) {
         const edit_entity_t *ent = edit_entity_store_get(store, i);
         if (!ent || !ent->active || ent->pending_delete) continue;
 
-        /* Only start DFS from root entities (no parent). */
         if (!edit_scene_tree_is_root(tree, i)) continue;
 
         write_pos = dfs_build_(entries, SCENE_OUTLINER_MAX_ENTRIES,
