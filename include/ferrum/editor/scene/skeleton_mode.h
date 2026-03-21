@@ -65,6 +65,18 @@ struct scene_editor;
 bool skeleton_mode_enter(struct scene_editor *ed);
 
 /**
+ * @brief Enter skeleton mode for an asset path.
+ *
+ * Supports .fskel (open existing), .fvma/.fpfab (create new skeleton
+ * with mesh/prefab as ghost preview).
+ *
+ * @param ed          Scene editor context.
+ * @param asset_path  Relative asset path (e.g., "meshes/player.fvma").
+ * @return true on success.
+ */
+bool skeleton_mode_enter_asset(struct scene_editor *ed, const char *asset_path);
+
+/**
  * @brief Exit skeleton mode without saving.
  *
  * Restores hidden entities and clears skeleton mode state.

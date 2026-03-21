@@ -1499,13 +1499,28 @@ static bool handle_mouse_down(scene_editor_t *ed, const SDL_MouseButtonEvent *ev
                 if (ed->skeleton_mode.active &&
                     (SDL_GetModState() & KMOD_CTRL) &&
                     !ed->skeleton_mode.create_drag.active) {
-                    /* Intersect ray with ground plane (Y=0) or the
-                     * nearest grid plane. t = -origin.y / direction.y */
-                    float t = 0.0f;
-                    if (fabsf(ray.direction.y) > 1e-6f) {
-                        t = -ray.origin.y / ray.direction.y;
+                    /* Intersect ray with camera-facing plane through
+                     * the 3D cursor. Plane normal = view forward dir,
+                     * plane passes through cursor_3d position. */
+                    mat4_t skel_view;
+                    editor_camera_view_matrix(&fvp->camera, &skel_view);
+                    vec3_t cam_fwd = {
+                        -skel_view.m[2], -skel_view.m[6], -skel_view.m[10]
+                    };
+                    vec3_t plane_pt = fvp->cursor_3d;
+                    /* plane: dot(cam_fwd, P - plane_pt) = 0
+                     * t = dot(cam_fwd, plane_pt - ray.origin) / dot(cam_fwd, ray.dir) */
+                    float denom = cam_fwd.x * ray.direction.x
+                                + cam_fwd.y * ray.direction.y
+                                + cam_fwd.z * ray.direction.z;
+                    float t = 5.0f; /* Fallback. */
+                    if (fabsf(denom) > 1e-6f) {
+                        float numer = cam_fwd.x * (plane_pt.x - ray.origin.x)
+                                    + cam_fwd.y * (plane_pt.y - ray.origin.y)
+                                    + cam_fwd.z * (plane_pt.z - ray.origin.z);
+                        t = numer / denom;
                     }
-                    if (t < 0.0f) t = 5.0f; /* Fallback: 5 units ahead. */
+                    if (t < 0.0f) t = 5.0f;
 
                     vec3_t hit_pos = {
                         ray.origin.x + ray.direction.x * t,
@@ -2182,11 +2197,23 @@ static bool handle_mouse_motion(scene_editor_t *ed,
         vec2_t mvs = {(float)vp_rect.w, (float)vp_rect.h};
         editor_ray_t mray;
         if (editor_camera_screen_to_ray(&fvp->camera, msp, mvs, &mray) == 0) {
-            /* Intersect with ground plane (Y = head.y to keep coplanar). */
-            float plane_y = ed->skeleton_mode.create_drag.head.y;
-            float mt = 0.0f;
-            if (fabsf(mray.direction.y) > 1e-6f) {
-                mt = (plane_y - mray.origin.y) / mray.direction.y;
+            /* Intersect with camera-facing plane through the head
+             * position (same plane as the click that started the drag). */
+            mat4_t drag_view;
+            editor_camera_view_matrix(&fvp->camera, &drag_view);
+            vec3_t cam_fwd = {
+                -drag_view.m[2], -drag_view.m[6], -drag_view.m[10]
+            };
+            vec3_t plane_pt = ed->skeleton_mode.create_drag.head;
+            float denom = cam_fwd.x * mray.direction.x
+                        + cam_fwd.y * mray.direction.y
+                        + cam_fwd.z * mray.direction.z;
+            float mt = 5.0f;
+            if (fabsf(denom) > 1e-6f) {
+                float numer = cam_fwd.x * (plane_pt.x - mray.origin.x)
+                            + cam_fwd.y * (plane_pt.y - mray.origin.y)
+                            + cam_fwd.z * (plane_pt.z - mray.origin.z);
+                mt = numer / denom;
             }
             if (mt < 0.0f) mt = 5.0f;
             ed->skeleton_mode.create_drag.tail = (vec3_t){
