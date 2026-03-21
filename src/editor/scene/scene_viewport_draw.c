@@ -673,6 +673,49 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         }
     }
 
+    /* Skeleton mode: draw bone creation preview during drag.
+     * Use a temporary 1-bone skeleton_def_t and the existing
+     * bone overlay renderer for consistent appearance. */
+    if (ed->skeleton_mode.active && ed->skeleton_mode.create_drag.active) {
+        vec3_t h = ed->skeleton_mode.create_drag.head;
+        vec3_t t = ed->skeleton_mode.create_drag.tail;
+
+        /* Build a stack-allocated 1-bone skeleton. */
+        mat4_t preview_local = mat4_identity();
+        preview_local.m[12] = h.x;
+        preview_local.m[13] = h.y;
+        preview_local.m[14] = h.z;
+        mat4_t preview_world = preview_local;
+        uint32_t preview_parent = UINT32_MAX;
+        float preview_tail[3] = {t.x, t.y, t.z};
+        char preview_name[64] = "preview";
+
+        skeleton_def_t preview_skel;
+        memset(&preview_skel, 0, sizeof(preview_skel));
+        preview_skel.joint_count = 1;
+        preview_skel.rest_local = &preview_local;
+        preview_skel.rest_world = &preview_world;
+        preview_skel.parent_indices = &preview_parent;
+        preview_skel.tail_positions = preview_tail;
+        preview_skel.joint_names = (char (*)[SKELETON_JOINT_NAME_MAX])preview_name;
+
+        shader_program_bind(&vp->flat_shader);
+        shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
+                                 "u_view", view.m, GL_FALSE);
+        shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
+                                 "u_projection", proj.m, GL_FALSE);
+
+        /* Use a special bone_selection with the preview "selected"
+         * so it renders in highlight color (yellow). */
+        edit_bone_selection_t preview_sel;
+        edit_bone_selection_init(&preview_sel);
+        edit_bone_selection_add(&preview_sel, UINT32_MAX, 0);
+
+        mat4_t id_model = mat4_identity();
+        viewport_render_draw_bone_overlay(
+            vp, &preview_skel, UINT32_MAX, id_model.m, &preview_sel);
+    }
+
     /* Skeleton mode: draw bones from working copy. */
     if (ed->skeleton_mode.active) {
         const skeleton_def_t *work = skeleton_mode_get_work_skel_const(
