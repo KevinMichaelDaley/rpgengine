@@ -99,16 +99,39 @@ static void apply_entity_(scene_editor_t *ed, const json_value_t *item) {
         }
 
         /* Trigger skeleton binding if the entity has a skel_path.
-         * This promotes the static mesh to skeletal (if FVMA has bones).
-         * The promotion is explicit — only happens when a user assigns
-         * an .fskel file in the inspector. */
-        const void *sp = entity_attrs_get(&ent_mut->attrs,
-                                           SCRIPT_KEY_SKEL_PATH,
-                                           &attr_type, &attr_size);
-        if (sp && attr_type == SCRIPT_ATTR_STR) {
-            const char *skel_path = (const char *)sp;
-            if (skel_path[0] != '\0') {
-                scene_load_entity_skeleton(ed, eid, skel_path);
+         * Skip for ARMATURE entities — they have no mesh to promote.
+         * For mesh entities, promotes static mesh to skeletal. */
+        if (ent_mut->type != EDIT_ENTITY_TYPE_ARMATURE) {
+            const void *sp = entity_attrs_get(&ent_mut->attrs,
+                                               SCRIPT_KEY_SKEL_PATH,
+                                               &attr_type, &attr_size);
+            if (sp && attr_type == SCRIPT_ATTR_STR) {
+                const char *skel_path = (const char *)sp;
+                if (skel_path[0] != '\0') {
+                    scene_load_entity_skeleton(ed, eid, skel_path);
+                }
+            }
+        }
+
+        /* For ARMATURE entities, load the skeleton into the registry
+         * so bone overlay can render it. */
+        if (ent_mut->type == EDIT_ENTITY_TYPE_ARMATURE) {
+            const void *sp = entity_attrs_get(&ent_mut->attrs,
+                                               SCRIPT_KEY_SKEL_PATH,
+                                               &attr_type, &attr_size);
+            if (sp && attr_type == SCRIPT_ATTR_STR) {
+                const char *skel_path = (const char *)sp;
+                if (skel_path[0] != '\0') {
+                    const char *fn = skel_path;
+                    for (const char *pp = skel_path; *pp; pp++)
+                        if (*pp == '/') fn = pp + 1;
+                    if (!edit_skeleton_registry_get(&ed->skeleton_registry, fn)) {
+                        char full[512];
+                        snprintf(full, sizeof(full), "%s/%s",
+                                 ed->config.asset_dir, skel_path);
+                        edit_skeleton_registry_load(&ed->skeleton_registry, full);
+                    }
+                }
             }
         }
     }
