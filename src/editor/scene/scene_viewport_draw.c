@@ -46,6 +46,7 @@
 #include "ferrum/renderer/mesh/skeletal_mesh.h"
 #include "ferrum/editor/mesh/mesh_slot.h"
 #include "ferrum/editor/mesh/mesh_vao_format.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/math/mat4.h"
 #include "ferrum/math/quat.h"
 #include "ferrum/math/vec3.h"
@@ -736,6 +737,92 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
             viewport_render_draw_bone_overlay(
                 vp, work, skel_eid, skel_model.m,
                 &ed->bone_selection);
+        }
+    }
+
+    /* Skeleton mode: draw collision shape wireframes for bones with colliders. */
+    if (ed->skeleton_mode.active) {
+        const skeleton_def_t *work = skeleton_mode_get_work_skel_const(
+            &ed->skeleton_mode);
+        if (work && work->colliders && work->joint_count > 0) {
+            shader_program_bind(&vp->flat_shader);
+            shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
+                                     "u_view", view.m, GL_FALSE);
+            shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
+                                     "u_projection", proj.m, GL_FALSE);
+            float col_color[3] = {0.2f, 0.9f, 0.3f}; /* Green wireframe. */
+            shader_uniform_set_vec3(&vp->flat_uniforms, &vp->flat_shader,
+                                     "u_color", col_color);
+
+            vp->glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            vp->glDisable(GL_CULL_FACE);
+            vp->glDisable(GL_DEPTH_TEST);
+
+            for (uint32_t ci = 0; ci < work->joint_count; ci++) {
+                const bone_collider_desc_t *cd = &work->colliders[ci];
+                if (cd->shape_type == BONE_COLLIDER_NONE) continue;
+
+                /* Bone world position. */
+                float bx = work->rest_world[ci].m[12];
+                float by = work->rest_world[ci].m[13];
+                float bz = work->rest_world[ci].m[14];
+
+                /* Get the primitive mesh for the shape. */
+                mesh_handle_t shape_mesh = {0, 0};
+                mat4_t shape_model = mat4_identity();
+
+                switch (cd->shape_type) {
+                case BONE_COLLIDER_CAPSULE: {
+                    shape_mesh = vp->mesh_capsule;
+                    float r = cd->params[0];
+                    float h = cd->params[1];
+                    if (r < 0.001f) r = 0.01f;
+                    if (h < 0.001f) h = 0.01f;
+                    /* Capsule mesh is unit size — scale by radius*2 on X/Z, height on Y. */
+                    mat4_t sc = mat4_scaling(r * 2.0f, h, r * 2.0f);
+                    mat4_t tr = mat4_translation(bx, by, bz);
+                    shape_model = mat4_mul(tr, sc);
+                    break;
+                }
+                case BONE_COLLIDER_BOX: {
+                    shape_mesh = vp->mesh_box;
+                    float hx = cd->params[0];
+                    float hy = cd->params[1];
+                    float hz = cd->params[2];
+                    mat4_t sc = mat4_scaling(hx * 2.0f, hy * 2.0f, hz * 2.0f);
+                    mat4_t tr = mat4_translation(bx, by, bz);
+                    shape_model = mat4_mul(tr, sc);
+                    break;
+                }
+                case BONE_COLLIDER_SPHERE: {
+                    shape_mesh = vp->mesh_sphere;
+                    float r = cd->params[0];
+                    if (r < 0.001f) r = 0.01f;
+                    mat4_t sc = mat4_scaling(r * 2.0f, r * 2.0f, r * 2.0f);
+                    mat4_t tr = mat4_translation(bx, by, bz);
+                    shape_model = mat4_mul(tr, sc);
+                    break;
+                }
+                default:
+                    continue;
+                }
+
+                const static_mesh_t *sm = mesh_registry_get_static(
+                    &vp->meshes, shape_mesh);
+                if (!sm) continue;
+
+                shader_uniform_set_mat4(&vp->flat_uniforms, &vp->flat_shader,
+                                         "u_model", shape_model.m, GL_FALSE);
+                static_mesh_bind(sm);
+                for (uint32_t s = 0; s < sm->submesh_count; s++) {
+                    static_mesh_draw_submesh(sm, s);
+                }
+                static_mesh_unbind();
+            }
+
+            vp->glEnable(GL_DEPTH_TEST);
+            vp->glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            vp->glEnable(GL_CULL_FACE);
         }
     }
 
