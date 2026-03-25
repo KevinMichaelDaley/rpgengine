@@ -207,9 +207,10 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
         /* Validate entity type against known types. */
         static const char *const s_valid_types[] = {
             "box", "sphere", "capsule", "marker", "mesh", "halfspace",
+            "armature",
         };
         bool valid_type = false;
-        for (uint32_t i = 0; i < 6; i++) {
+        for (uint32_t i = 0; i < 7; i++) {
             if (strcmp(tokens[1], s_valid_types[i]) == 0) {
                 valid_type = true;
                 break;
@@ -222,7 +223,8 @@ uint32_t ctrl_cmd_build_json(const char *input, char *out, uint32_t out_cap,
          * or mesh_path.  For mesh type, a token containing '.' is a mesh_path
          * (e.g., "humanoid.fvma"), not a name. */
         if (!looks_numeric_(tokens[2])) {
-            if (strcmp(tokens[1], "mesh") == 0 &&
+            if ((strcmp(tokens[1], "mesh") == 0 ||
+                 strcmp(tokens[1], "armature") == 0) &&
                 strchr(tokens[2], '.') != NULL) {
                 mesh_path_token = tokens[2];
             } else {
