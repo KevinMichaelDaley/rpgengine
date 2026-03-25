@@ -72,6 +72,7 @@ enum {
     SCRIPT_KEY_BONE_INDEX = 23,  /**< u32: bone index this entity is parented to. */
     SCRIPT_KEY_PREFAB_PATH = 24, /**< str: prefab asset path (.fpfab). */
     SCRIPT_KEY_BONE_POSE_PATH = 25, /**< str: bone pose override path (.bpose). */
+    SCRIPT_KEY_ARMATURE_ID = 26,    /**< u32: entity ID of the bound armature. */
 
     /* ECS component keys (mapped from registered sparse sets) */
     SCRIPT_KEY_ECS_BASE  = 64,  /**< ECS components start here. */

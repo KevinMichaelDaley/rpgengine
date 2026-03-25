@@ -22,6 +22,7 @@ static const edit_entity_type_info_t s_types[] = {
     { .name = "collider_box",     .type_id = EDIT_ENTITY_TYPE_COLLIDER_BOX },
     { .name = "collider_capsule", .type_id = EDIT_ENTITY_TYPE_COLLIDER_CAPSULE },
     { .name = "collider_hull",    .type_id = EDIT_ENTITY_TYPE_COLLIDER_HULL },
+    { .name = "armature",         .type_id = EDIT_ENTITY_TYPE_ARMATURE },
 };
 
 static const uint32_t s_type_count =

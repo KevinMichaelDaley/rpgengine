@@ -100,7 +100,8 @@ const static_mesh_t *viewport_render_get_primitive_mesh(
         handle = state->mesh_plane;
         break;
     case EDIT_ENTITY_TYPE_MESH:
-        return NULL;
+    case EDIT_ENTITY_TYPE_ARMATURE:
+        return NULL; /* No geometry — bones render via overlay. */
     case EDIT_ENTITY_TYPE_MARKER:
     case EDIT_ENTITY_TYPE_COLLIDER_HULL:
         handle = state->mesh_sphere;

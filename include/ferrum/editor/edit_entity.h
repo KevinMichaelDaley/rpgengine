@@ -39,6 +39,7 @@ extern "C" {
 #define EDIT_ENTITY_TYPE_COLLIDER_BOX     7
 #define EDIT_ENTITY_TYPE_COLLIDER_CAPSULE 8
 #define EDIT_ENTITY_TYPE_COLLIDER_HULL    9
+#define EDIT_ENTITY_TYPE_ARMATURE        10  /**< Skeleton armature (bones only, no mesh). */
 
 #define EDIT_ENTITY_INVALID_ID   UINT32_MAX
 

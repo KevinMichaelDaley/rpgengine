@@ -185,6 +185,7 @@ static const char *type_tag_string(uint32_t type) {
         case EDIT_ENTITY_TYPE_COLLIDER_BOX:     return "[C:box]";
         case EDIT_ENTITY_TYPE_COLLIDER_CAPSULE: return "[C:capsule]";
         case EDIT_ENTITY_TYPE_COLLIDER_HULL:    return "[C:hull]";
+        case EDIT_ENTITY_TYPE_ARMATURE:         return "[armature]";
         default:                         return "[unknown]";
     }
 }
