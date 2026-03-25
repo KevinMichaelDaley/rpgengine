@@ -15,6 +15,7 @@
 #include "ferrum/math/mat4.h"
 #include "ferrum/math/quat.h"
 
+#include <math.h>
 #include <stddef.h>
 
 /**
@@ -140,6 +141,25 @@ void per_bone_gizmo_apply_rotate(
         rl->m[col * 4 + 0] = old[0] * rx + old[4] * ry + old[8]  * rz;
         rl->m[col * 4 + 1] = old[1] * rx + old[5] * ry + old[9]  * rz;
         rl->m[col * 4 + 2] = old[2] * rx + old[6] * ry + old[10] * rz;
+    }
+
+    /* Re-orthonormalize the 3x3 rotation part (Gram-Schmidt) to prevent
+     * accumulated floating-point drift from introducing scale. */
+    {
+        /* Column 0 = normalize(col0). */
+        float len0 = sqrtf(rl->m[0]*rl->m[0] + rl->m[1]*rl->m[1] + rl->m[2]*rl->m[2]);
+        if (len0 > 1e-8f) { rl->m[0] /= len0; rl->m[1] /= len0; rl->m[2] /= len0; }
+
+        /* Column 1 = normalize(col1 - proj(col1, col0)). */
+        float d10 = rl->m[4]*rl->m[0] + rl->m[5]*rl->m[1] + rl->m[6]*rl->m[2];
+        rl->m[4] -= d10 * rl->m[0]; rl->m[5] -= d10 * rl->m[1]; rl->m[6] -= d10 * rl->m[2];
+        float len1 = sqrtf(rl->m[4]*rl->m[4] + rl->m[5]*rl->m[5] + rl->m[6]*rl->m[6]);
+        if (len1 > 1e-8f) { rl->m[4] /= len1; rl->m[5] /= len1; rl->m[6] /= len1; }
+
+        /* Column 2 = cross(col0, col1). */
+        rl->m[8]  = rl->m[1]*rl->m[6] - rl->m[2]*rl->m[5];
+        rl->m[9]  = rl->m[2]*rl->m[4] - rl->m[0]*rl->m[6];
+        rl->m[10] = rl->m[0]*rl->m[5] - rl->m[1]*rl->m[4];
     }
 
     /* Restore translation. */
