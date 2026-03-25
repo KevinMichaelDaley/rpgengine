@@ -109,53 +109,40 @@ void per_bone_gizmo_apply_rotate(
     if (!skel) { return; }
     if (bone_index >= skel->joint_count) { return; }
 
-    /* Convert incremental rotation to matrix. */
-    mat4_t rot;
-    quat_to_mat4(dq, &rot);
-
-    /* Apply rotation to rest_local: new_local = rest_local * rot
-     * (post-multiply to rotate in bone-local space). */
     mat4_t *rl = skel->rest_local
                      ? &skel->rest_local[bone_index]
                      : &skel->rest_world[bone_index];
 
-    /* Save translation — rotation is orientation only. */
+    /* Save translation. */
     float tx = rl->m[12];
     float ty = rl->m[13];
     float tz = rl->m[14];
 
-    /* Compose rotation columns: new_col[j] = old * rot_col[j]
-     * Since we post-multiply: result = rl * rot
-     * Column j of result = rl * column j of rot */
-    float old[12];
-    for (int c = 0; c < 3; c++) {
-        old[c * 4 + 0] = rl->m[c * 4 + 0];
-        old[c * 4 + 1] = rl->m[c * 4 + 1];
-        old[c * 4 + 2] = rl->m[c * 4 + 2];
-    }
+    /* Extract per-column scale from the 3x3 part of rest_local.
+     * This preserves any baked scale from the skeleton exporter. */
+    float sx = sqrtf(rl->m[0]*rl->m[0] + rl->m[1]*rl->m[1] + rl->m[2]*rl->m[2]);
+    float sy = sqrtf(rl->m[4]*rl->m[4] + rl->m[5]*rl->m[5] + rl->m[6]*rl->m[6]);
+    float sz = sqrtf(rl->m[8]*rl->m[8] + rl->m[9]*rl->m[9] + rl->m[10]*rl->m[10]);
+    if (sx < 1e-8f) sx = 1.0f;
+    if (sy < 1e-8f) sy = 1.0f;
+    if (sz < 1e-8f) sz = 1.0f;
 
-    for (int col = 0; col < 3; col++) {
-        float rx = rot.m[col * 4 + 0];
-        float ry = rot.m[col * 4 + 1];
-        float rz = rot.m[col * 4 + 2];
-        rl->m[col * 4 + 0] = old[0] * rx + old[4] * ry + old[8]  * rz;
-        rl->m[col * 4 + 1] = old[1] * rx + old[5] * ry + old[9]  * rz;
-        rl->m[col * 4 + 2] = old[2] * rx + old[6] * ry + old[10] * rz;
-    }
+    /* Extract current rotation as quaternion (from scale-stripped matrix). */
+    mat4_t rot_only = *rl;
+    rot_only.m[0] /= sx; rot_only.m[1] /= sx; rot_only.m[2] /= sx;
+    rot_only.m[4] /= sy; rot_only.m[5] /= sy; rot_only.m[6] /= sy;
+    rot_only.m[8] /= sz; rot_only.m[9] /= sz; rot_only.m[10] /= sz;
+    quat_t cur_q = quat_from_mat4(&rot_only);
 
-    /* Re-orthonormalize via quaternion round-trip to prevent accumulated
-     * floating-point drift from introducing scale. This preserves the
-     * rotation exactly without axis reordering (unlike Gram-Schmidt). */
-    {
-        quat_t q = quat_from_mat4(rl);
-        q = quat_normalize_safe(q, 1e-8f);
-        mat4_t clean;
-        quat_to_mat4(q, &clean);
-        /* Copy only the 3x3 rotation part; keep translation intact. */
-        rl->m[0]  = clean.m[0];  rl->m[1]  = clean.m[1];  rl->m[2]  = clean.m[2];
-        rl->m[4]  = clean.m[4];  rl->m[5]  = clean.m[5];  rl->m[6]  = clean.m[6];
-        rl->m[8]  = clean.m[8];  rl->m[9]  = clean.m[9];  rl->m[10] = clean.m[10];
-    }
+    /* Compose: new_rotation = cur_rotation * dq (post-multiply = local-space). */
+    quat_t new_q = quat_normalize_safe(quat_mul(cur_q, dq), 1e-8f);
+
+    /* Rebuild rest_local = scale * new_rotation. */
+    mat4_t new_rot;
+    quat_to_mat4(new_q, &new_rot);
+    rl->m[0]  = new_rot.m[0]  * sx; rl->m[1]  = new_rot.m[1]  * sx; rl->m[2]  = new_rot.m[2]  * sx;
+    rl->m[4]  = new_rot.m[4]  * sy; rl->m[5]  = new_rot.m[5]  * sy; rl->m[6]  = new_rot.m[6]  * sy;
+    rl->m[8]  = new_rot.m[8]  * sz; rl->m[9]  = new_rot.m[9]  * sz; rl->m[10] = new_rot.m[10] * sz;
 
     /* Restore translation. */
     rl->m[12] = tx;
