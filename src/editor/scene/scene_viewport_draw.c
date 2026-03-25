@@ -978,23 +978,27 @@ static void draw_scene_into_viewport(struct scene_editor *ed,
         }
 
         /* Compute gizmo orientation from basis mode.
-         * Scale always operates in local space, so force local
-         * orientation when the scale gizmo is active. */
-        const quat_t *active_orient = NULL;
-        transform_basis_t effective_basis = vs->gizmo.basis;
-        if (vs->gizmo.mode == GIZMO_MODE_SCALE) {
-            effective_basis = TRANSFORM_BASIS_LOCAL;
-        }
-        if (effective_basis == TRANSFORM_BASIS_LOCAL &&
-            ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
-            const edit_entity_t *active_ent =
-                edit_entity_store_get(&ed->entities, ed->active_object_id);
-            if (active_ent) {
-                active_orient = &active_ent->orientation;
+         * Skip orientation update during bone drag — the bone drag
+         * start code sets orientation correctly for the bone's frame,
+         * and overwriting it with the entity's orientation breaks the
+         * rotation axis in world mode. */
+        if (vs->bone_drag_index == UINT32_MAX) {
+            const quat_t *active_orient = NULL;
+            transform_basis_t effective_basis = vs->gizmo.basis;
+            if (vs->gizmo.mode == GIZMO_MODE_SCALE) {
+                effective_basis = TRANSFORM_BASIS_LOCAL;
             }
+            if (effective_basis == TRANSFORM_BASIS_LOCAL &&
+                ed->active_object_id != EDIT_ENTITY_INVALID_ID) {
+                const edit_entity_t *active_ent =
+                    edit_entity_store_get(&ed->entities, ed->active_object_id);
+                if (active_ent) {
+                    active_orient = &active_ent->orientation;
+                }
+            }
+            vs->gizmo.orientation = transform_basis_orientation(
+                effective_basis, active_orient, &view);
         }
-        vs->gizmo.orientation = transform_basis_orientation(
-            effective_basis, active_orient, &view);
 
         /* Update rotation arc quadrant selection based on camera. */
         gizmo_update_arc_quadrants(&vs->gizmo, eye_pos);
