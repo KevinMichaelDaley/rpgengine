@@ -25,6 +25,7 @@
 #include "clay.h"
 #include <SDL2/SDL.h>
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -118,22 +119,38 @@ static void on_shape_cycle_(Clay_ElementId id, Clay_PointerData data, void *user
         if (!skel->colliders) return;
     }
 
+    /* Compute bone length for default params. */
+    float bone_len = 0.2f;
+    if (skel->tail_positions && skel->rest_world) {
+        float hx = skel->rest_world[bi].m[12];
+        float hy = skel->rest_world[bi].m[13];
+        float hz = skel->rest_world[bi].m[14];
+        float tx = skel->tail_positions[bi * 3 + 0];
+        float ty = skel->tail_positions[bi * 3 + 1];
+        float tz = skel->tail_positions[bi * 3 + 2];
+        float dx = tx - hx, dy = ty - hy, dz = tz - hz;
+        float l = sqrtf(dx*dx + dy*dy + dz*dz);
+        if (l > 0.01f) bone_len = l;
+    }
+    float bone_radius = bone_len * 0.15f;
+    if (bone_radius < 0.01f) bone_radius = 0.01f;
+
     /* Cycle: none → capsule → box → sphere → none. */
     uint32_t shape = skel->colliders[bi].shape_type;
-    shape = (shape + 1) % 4; /* 0=none, 1=capsule, 2=box, 3=sphere */
+    shape = (shape + 1) % 4;
     skel->colliders[bi].shape_type = shape;
 
-    /* Set default params for the new shape. */
+    /* Default params derived from bone geometry. */
     if (shape == BONE_COLLIDER_CAPSULE) {
-        skel->colliders[bi].params[0] = 0.05f;  /* radius */
-        skel->colliders[bi].params[1] = 0.2f;   /* height */
-        skel->colliders[bi].params[2] = 1.0f;   /* axis Y */
+        skel->colliders[bi].params[0] = bone_radius;
+        skel->colliders[bi].params[1] = bone_len;
+        skel->colliders[bi].params[2] = 1.0f;
     } else if (shape == BONE_COLLIDER_BOX) {
-        skel->colliders[bi].params[0] = 0.05f;  /* half_x */
-        skel->colliders[bi].params[1] = 0.1f;   /* half_y */
-        skel->colliders[bi].params[2] = 0.05f;  /* half_z */
+        skel->colliders[bi].params[0] = bone_radius;
+        skel->colliders[bi].params[1] = bone_len * 0.5f;
+        skel->colliders[bi].params[2] = bone_radius;
     } else if (shape == BONE_COLLIDER_SPHERE) {
-        skel->colliders[bi].params[0] = 0.08f;  /* radius */
+        skel->colliders[bi].params[0] = bone_len * 0.5f;
     }
 
     if (ed->skeleton_mode.active) {

@@ -21,6 +21,7 @@
 #include "ferrum/editor/edit_skeleton_registry.h"
 #include "ferrum/editor/anim/skeleton_builder.h"
 #include "ferrum/animation/constraint_params.h"
+#include "ferrum/animation/bone_collider.h"
 #include "ferrum/entity/entity_attrs.h"
 #include "ferrum/editor/viewport/viewport_camera.h"
 #include "ferrum/math/mat4.h"
@@ -78,6 +79,16 @@ static bool clone_skeleton_(skeleton_def_t *dst, const skeleton_def_t *src) {
         dst->tail_positions = (float *)calloc(n * 3, sizeof(float));
         if (dst->tail_positions)
             memcpy(dst->tail_positions, src->tail_positions, n * 3 * sizeof(float));
+    }
+    if (src->colliders) {
+        dst->colliders = (bone_collider_desc_t *)calloc(n, sizeof(bone_collider_desc_t));
+        if (dst->colliders)
+            memcpy(dst->colliders, src->colliders, n * sizeof(bone_collider_desc_t));
+    }
+    if (src->joints) {
+        dst->joints = (bone_joint_desc_t *)calloc(n, sizeof(bone_joint_desc_t));
+        if (dst->joints)
+            memcpy(dst->joints, src->joints, n * sizeof(bone_joint_desc_t));
     }
     return true;
 }
