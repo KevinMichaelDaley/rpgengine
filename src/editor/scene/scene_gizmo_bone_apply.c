@@ -137,12 +137,12 @@ void per_bone_gizmo_apply_rotate(
     /* Compose: new_rotation = cur_rotation * dq (post-multiply = local-space). */
     quat_t new_q = quat_normalize_safe(quat_mul(cur_q, dq), 1e-8f);
 
-    /* Rebuild rest_local = scale * new_rotation. */
+    /* Rebuild rest_local = new_rotation * scale. */
     mat4_t new_rot;
     quat_to_mat4(new_q, &new_rot);
-    rl->m[0]  = new_rot.m[0]  * sx; rl->m[1]  = new_rot.m[1]  * sx; rl->m[2]  = new_rot.m[2]  * sx;
-    rl->m[4]  = new_rot.m[4]  * sy; rl->m[5]  = new_rot.m[5]  * sy; rl->m[6]  = new_rot.m[6]  * sy;
-    rl->m[8]  = new_rot.m[8]  * sz; rl->m[9]  = new_rot.m[9]  * sz; rl->m[10] = new_rot.m[10] * sz;
+    rl->m[0]  = new_rot.m[0] * sx; rl->m[1]  = new_rot.m[1] * sx; rl->m[2]  = new_rot.m[2] * sx;
+    rl->m[4]  = new_rot.m[4] * sy; rl->m[5]  = new_rot.m[5] * sy; rl->m[6]  = new_rot.m[6] * sy;
+    rl->m[8]  = new_rot.m[8] * sz; rl->m[9]  = new_rot.m[9] * sz; rl->m[10] = new_rot.m[10] * sz;
 
     /* Restore translation. */
     rl->m[12] = tx;
