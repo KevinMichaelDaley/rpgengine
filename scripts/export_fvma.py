@@ -290,11 +290,14 @@ def _gather_mesh_data(obj, export_normals, export_tangents, export_uvs,
         for b in split_bone_indices:
             bone_indices_flat.extend(b)
 
-        # Compute inverse bind matrices (column-major, matching glTF path).
+        # Compute inverse bind matrices (column-major).
+        # Use bone.matrix_local (armature-space) to match the fskel's
+        # rest_world which also uses bone.matrix_local.  Do NOT include
+        # armature_obj.matrix_world — that transform is applied by the
+        # entity model matrix at render time.
         ibms = []
         for bone in armature_obj.data.bones:
-            bone_world = armature_obj.matrix_world @ bone.matrix_local
-            ibm_bl = bone_world.inverted_safe()
+            ibm_bl = bone.matrix_local.inverted_safe()
             ibm_engine = _blender_to_engine_matrix(ibm_bl)
             ibms.extend(ibm_engine)
 
