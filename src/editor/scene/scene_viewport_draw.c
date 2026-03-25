@@ -258,11 +258,31 @@ void viewport_render_draw_entities(viewport_render_state_t *state,
             state->skeletal_mesh_cache &&
             state->skeletal_mesh_cache[i] &&
             skel_reg) {
-            /* Look up skeleton for this entity from skel_path attr. */
+            /* Look up skeleton: check ARMATURE_ID first, then SKEL_PATH. */
             uint8_t sp_t = 0, sp_s = 0;
-            const void *sp_v = entity_attrs_get(&ent->attrs,
-                                                SCRIPT_KEY_SKEL_PATH,
-                                                &sp_t, &sp_s);
+            const void *sp_v = NULL;
+
+            /* Try ARMATURE_ID → armature entity → its SKEL_PATH. */
+            uint8_t arm_t = 0, arm_s = 0;
+            const void *arm_v = entity_attrs_get(&ent->attrs,
+                SCRIPT_KEY_ARMATURE_ID, &arm_t, &arm_s);
+            if (arm_v && arm_t == SCRIPT_ATTR_U32 && arm_s >= sizeof(uint32_t)) {
+                uint32_t arm_id = *(const uint32_t *)arm_v;
+                if (arm_id != UINT32_MAX) {
+                    const edit_entity_t *arm_ent =
+                        edit_entity_store_get(entities, arm_id);
+                    if (arm_ent && arm_ent->active) {
+                        sp_v = entity_attrs_get(&arm_ent->attrs,
+                            SCRIPT_KEY_SKEL_PATH, &sp_t, &sp_s);
+                    }
+                }
+            }
+
+            /* Fall back to entity's own SKEL_PATH. */
+            if (!sp_v) {
+                sp_v = entity_attrs_get(&ent->attrs,
+                    SCRIPT_KEY_SKEL_PATH, &sp_t, &sp_s);
+            }
             if (sp_v && sp_t == SCRIPT_ATTR_STR) {
                 const char *sp_path = (const char *)sp_v;
                 if (sp_path[0] != '\0') {

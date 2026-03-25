@@ -29,6 +29,10 @@ static asset_ref_state_t s_skel_ref;
 /** @brief Whether the skeleton section is expanded. */
 static bool s_skel_expanded = false;
 
+/** @brief Pending armature binding: mesh entity waiting for armature spawn. */
+static uint32_t s_pending_armature_mesh = UINT32_MAX;
+static char s_pending_armature_skel[256];
+
 /** @brief Whether the widget has been initialized. */
 static bool s_skel_inited = false;
 
@@ -83,6 +87,33 @@ float scene_ui_build_skel_promote(struct scene_editor *ed,
                                     float visible_h,
                                     int clay_idx) {
     if (!ed) return 0.0f;
+
+    /* Check for pending armature binding: find armature with matching
+     * SKEL_PATH and set ARMATURE_ID on the waiting mesh entity. */
+    if (s_pending_armature_mesh != UINT32_MAX &&
+        s_pending_armature_skel[0] != '\0') {
+        for (uint32_t ai = 0; ai < ed->entities.capacity; ai++) {
+            const edit_entity_t *ae = edit_entity_store_get(&ed->entities, ai);
+            if (!ae || !ae->active) continue;
+            if (ae->type != EDIT_ENTITY_TYPE_ARMATURE) continue;
+            uint8_t at2 = 0, as2 = 0;
+            const void *asp = entity_attrs_get(&ae->attrs,
+                SCRIPT_KEY_SKEL_PATH, &at2, &as2);
+            if (!asp || at2 != SCRIPT_ATTR_STR) continue;
+            if (strcmp((const char *)asp, s_pending_armature_skel) != 0) continue;
+
+            /* Found the armature — bind it to the mesh. */
+            edit_entity_t *mesh_mut = edit_entity_store_get_mut(
+                &ed->entities, s_pending_armature_mesh);
+            if (mesh_mut) {
+                entity_attrs_set(&mesh_mut->attrs, SCRIPT_KEY_ARMATURE_ID,
+                                  SCRIPT_ATTR_U32, &ai, sizeof(ai));
+            }
+            s_pending_armature_mesh = UINT32_MAX;
+            s_pending_armature_skel[0] = '\0';
+            break;
+        }
+    }
 
     /* Only show for MESH entities. */
     const edit_entity_t *ent = edit_entity_store_get(&ed->entities, entity_id);
@@ -218,30 +249,38 @@ float scene_ui_build_skel_promote(struct scene_editor *ed,
         consumed += row_h;
         clay_idx++;
 
-        /* Handle confirmation: spawn armature (if from asset) or bind
-         * existing armature entity. Set ARMATURE_ID on the mesh and
-         * copy SKEL_PATH for skinning. */
+        /* Handle confirmation: spawn armature and set ARMATURE_ID on mesh.
+         * Also set SKEL_PATH on mesh for skeletal promotion (one-time
+         * needed to create skeletal_mesh_t from FVMA bone data).
+         * Skinning reads rest_world from the shared registry skeleton,
+         * which the armature entity also references. */
         if (s_skel_ref.confirmed && s_skel_ref.path[0] != '\0') {
             edit_entity_t *mut_ent =
                 edit_entity_store_get_mut(&ed->entities, entity_id);
             if (mut_ent) {
-                /* Set SKEL_PATH on the mesh for skinning. */
+                /* Set SKEL_PATH for skeletal mesh promotion. */
                 entity_attrs_set(&mut_ent->attrs, SCRIPT_KEY_SKEL_PATH,
                                  SCRIPT_ATTR_STR, s_skel_ref.path,
                                  (uint8_t)(strlen(s_skel_ref.path) + 1));
                 scene_load_entity_skeleton(ed, entity_id, s_skel_ref.path);
 
-                /* Spawn an armature entity at the mesh's position. */
-                viewport_state_t *cvp = scene_focused_vp(ed);
-                float cx = mut_ent->pos[0];
-                float cy = mut_ent->pos[1];
-                float cz = mut_ent->pos[2];
+                /* Spawn armature at mesh position. After the server
+                 * creates it, we'll find it by searching for the
+                 * armature entity with matching SKEL_PATH and set
+                 * ARMATURE_ID on the mesh. */
                 snprintf(ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
                          "spawn armature %s %.4g %.4g %.4g",
                          s_skel_ref.path,
-                         (double)cx, (double)cy, (double)cz);
+                         (double)mut_ent->pos[0],
+                         (double)mut_ent->pos[1],
+                         (double)mut_ent->pos[2]);
                 ed->ui.action = UI_ACTION_TUI_COMMAND;
-                (void)cvp;
+
+                /* Store the mesh entity ID so we can bind ARMATURE_ID
+                 * when the armature entity appears in the next sync. */
+                s_pending_armature_mesh = entity_id;
+                strncpy(s_pending_armature_skel, s_skel_ref.path,
+                        sizeof(s_pending_armature_skel) - 1);
             }
             s_skel_ref.confirmed = false;
         }
