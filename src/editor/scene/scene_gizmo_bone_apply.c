@@ -143,23 +143,18 @@ void per_bone_gizmo_apply_rotate(
         rl->m[col * 4 + 2] = old[2] * rx + old[6] * ry + old[10] * rz;
     }
 
-    /* Re-orthonormalize the 3x3 rotation part (Gram-Schmidt) to prevent
-     * accumulated floating-point drift from introducing scale. */
+    /* Re-orthonormalize via quaternion round-trip to prevent accumulated
+     * floating-point drift from introducing scale. This preserves the
+     * rotation exactly without axis reordering (unlike Gram-Schmidt). */
     {
-        /* Column 0 = normalize(col0). */
-        float len0 = sqrtf(rl->m[0]*rl->m[0] + rl->m[1]*rl->m[1] + rl->m[2]*rl->m[2]);
-        if (len0 > 1e-8f) { rl->m[0] /= len0; rl->m[1] /= len0; rl->m[2] /= len0; }
-
-        /* Column 1 = normalize(col1 - proj(col1, col0)). */
-        float d10 = rl->m[4]*rl->m[0] + rl->m[5]*rl->m[1] + rl->m[6]*rl->m[2];
-        rl->m[4] -= d10 * rl->m[0]; rl->m[5] -= d10 * rl->m[1]; rl->m[6] -= d10 * rl->m[2];
-        float len1 = sqrtf(rl->m[4]*rl->m[4] + rl->m[5]*rl->m[5] + rl->m[6]*rl->m[6]);
-        if (len1 > 1e-8f) { rl->m[4] /= len1; rl->m[5] /= len1; rl->m[6] /= len1; }
-
-        /* Column 2 = cross(col0, col1). */
-        rl->m[8]  = rl->m[1]*rl->m[6] - rl->m[2]*rl->m[5];
-        rl->m[9]  = rl->m[2]*rl->m[4] - rl->m[0]*rl->m[6];
-        rl->m[10] = rl->m[0]*rl->m[5] - rl->m[1]*rl->m[4];
+        quat_t q = quat_from_mat4(rl);
+        q = quat_normalize_safe(q, 1e-8f);
+        mat4_t clean;
+        quat_to_mat4(q, &clean);
+        /* Copy only the 3x3 rotation part; keep translation intact. */
+        rl->m[0]  = clean.m[0];  rl->m[1]  = clean.m[1];  rl->m[2]  = clean.m[2];
+        rl->m[4]  = clean.m[4];  rl->m[5]  = clean.m[5];  rl->m[6]  = clean.m[6];
+        rl->m[8]  = clean.m[8];  rl->m[9]  = clean.m[9];  rl->m[10] = clean.m[10];
     }
 
     /* Restore translation. */
