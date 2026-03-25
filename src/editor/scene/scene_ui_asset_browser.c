@@ -152,7 +152,7 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
             case 7: /* EDIT_ASSET_SKELETON */
                 /* Always spawn an armature entity for skeleton files. */
                 snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
-                         "spawn armature 0 0 0 %s", ctx->command);
+                         "spawn armature %s 0 0 0", ctx->command);
                 break;
             case 4: /* EDIT_ASSET_PREFAB */
                 /* Store path for frame dispatch to handle loading. */
