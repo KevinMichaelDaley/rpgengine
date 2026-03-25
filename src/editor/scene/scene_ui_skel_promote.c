@@ -108,6 +108,13 @@ float scene_ui_build_skel_promote(struct scene_editor *ed,
             if (mesh_mut) {
                 entity_attrs_set(&mesh_mut->attrs, SCRIPT_KEY_ARMATURE_ID,
                                   SCRIPT_ATTR_U32, &ai, sizeof(ai));
+
+                /* Persist ARMATURE_ID to server. */
+                snprintf(ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
+                         "setattr %u %u %u",
+                         s_pending_armature_mesh,
+                         SCRIPT_KEY_ARMATURE_ID, ai);
+                ed->ui.action = UI_ACTION_TUI_COMMAND;
             }
             s_pending_armature_mesh = UINT32_MAX;
             s_pending_armature_skel[0] = '\0';
