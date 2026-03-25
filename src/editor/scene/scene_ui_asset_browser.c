@@ -150,37 +150,7 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
                          "spawn mesh %s", ctx->command);
                 break;
             case 7: /* EDIT_ASSET_SKELETON */
-                /* If a MESH entity is selected, assign the skeleton
-                 * to it directly instead of just loading into registry.
-                 * Also send setattr to server for persistence. */
-                if (edit_selection_count(&ctx->ed->selection) == 1) {
-                    uint32_t sel_id = edit_selection_ids(
-                        &ctx->ed->selection)[0];
-                    const edit_entity_t *sel_ent =
-                        edit_entity_store_get(&ctx->ed->entities, sel_id);
-                    if (sel_ent &&
-                        sel_ent->type == EDIT_ENTITY_TYPE_MESH) {
-                        /* Set skel_path attr locally for immediate effect. */
-                        edit_entity_t *mut_ent =
-                            edit_entity_store_get_mut(
-                                &ctx->ed->entities, sel_id);
-                        if (mut_ent) {
-                            entity_attrs_set(&mut_ent->attrs,
-                                SCRIPT_KEY_SKEL_PATH, SCRIPT_ATTR_STR,
-                                ctx->command,
-                                (uint8_t)(strlen(ctx->command) + 1));
-                            scene_load_entity_skeleton(
-                                ctx->ed, sel_id, ctx->command);
-                        }
-                        /* Send setattr to server for persistence. */
-                        snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
-                                 "setattr %u %u %s",
-                                 sel_id, SCRIPT_KEY_SKEL_PATH,
-                                 ctx->command);
-                        break;
-                    }
-                }
-                /* No mesh selected — spawn an armature entity. */
+                /* Always spawn an armature entity for skeleton files. */
                 snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
                          "spawn armature 0 0 0 %s", ctx->command);
                 break;
