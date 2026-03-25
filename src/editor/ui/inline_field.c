@@ -79,6 +79,10 @@ bool inline_field_commit(inline_field_ctx_t *ctx, float *out_value) {
     }
 
     if (out_value) *out_value = val;
+    /* Write back to target pointer if set. */
+    if (ctx->active_field->target) {
+        *ctx->active_field->target = val;
+    }
     ctx->active_field->active = false;
     ctx->active_field = NULL;
     return true;

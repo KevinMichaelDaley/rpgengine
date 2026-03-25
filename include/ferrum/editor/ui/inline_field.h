@@ -50,6 +50,7 @@ typedef struct inline_field_state {
     uint32_t cursor;                         /**< Cursor position in buf. */
     float    original_value;                 /**< Value before edit started. */
     uint32_t field_id;                       /**< Unique field identifier. */
+    float   *target;                         /**< Write-back pointer (commit writes here). */
 } inline_field_state_t;
 
 /**

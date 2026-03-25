@@ -2997,6 +2997,14 @@ static bool handle_tui_key(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
  * @brief Handle SDL_TEXTINPUT event: insert typed text into TUI input.
  */
 static bool handle_text_input(scene_editor_t *ed, const char *text) {
+    /* Route to inline field editor if active. */
+    if (inline_field_is_active(&ed->field_ctx)) {
+        for (int i = 0; text[i] != '\0'; i++) {
+            inline_field_handle_text(&ed->field_ctx, text[i]);
+        }
+        return true;
+    }
+
     if (!ed->ui.tui_active) return false;
 
     /* Skip the ':' character that triggered TUI activation. */
@@ -3042,6 +3050,38 @@ static bool handle_key_down(scene_editor_t *ed, const SDL_KeyboardEvent *ev) {
     /* If TUI is active, route keys to TUI input handler first. */
     if (ed->ui.tui_active) {
         return handle_tui_key(ed, ev);
+    }
+
+    /* If an inline field is being edited, route keys there. */
+    if (inline_field_is_active(&ed->field_ctx)) {
+        inline_field_key_t fk = 0;
+        switch (key) {
+        case SDLK_BACKSPACE: fk = INLINE_FIELD_KEY_BACKSPACE; break;
+        case SDLK_DELETE:    fk = INLINE_FIELD_KEY_DELETE;    break;
+        case SDLK_LEFT:      fk = INLINE_FIELD_KEY_LEFT;     break;
+        case SDLK_RIGHT:     fk = INLINE_FIELD_KEY_RIGHT;    break;
+        case SDLK_HOME:      fk = INLINE_FIELD_KEY_HOME;     break;
+        case SDLK_END:       fk = INLINE_FIELD_KEY_END;      break;
+        case SDLK_UP:        fk = INLINE_FIELD_KEY_UP;       break;
+        case SDLK_DOWN:      fk = INLINE_FIELD_KEY_DOWN;     break;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER: {
+            float committed;
+            inline_field_commit(&ed->field_ctx, &committed);
+            return true;
+        }
+        case SDLK_ESCAPE: {
+            float cancelled;
+            inline_field_cancel(&ed->field_ctx, &cancelled);
+            return true;
+        }
+        default: break;
+        }
+        if (fk != 0) {
+            inline_field_handle_key(&ed->field_ctx, fk);
+            return true;
+        }
+        return true; /* Swallow all keys while field is active. */
     }
 
     /* One-shot guard: for non-continuous keys, require a KEYUP between
