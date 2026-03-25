@@ -149,11 +149,17 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
                 snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
                          "spawn mesh %s", ctx->command);
                 break;
-            case 7: /* EDIT_ASSET_SKELETON */
-                /* Always spawn an armature entity for skeleton files. */
+            case 7: { /* EDIT_ASSET_SKELETON */
+                /* Spawn armature at the 3D cursor position. */
+                viewport_state_t *cvp = scene_focused_vp(ctx->ed);
+                float cx = cvp ? cvp->cursor_3d.x : 0.0f;
+                float cy = cvp ? cvp->cursor_3d.y : 0.0f;
+                float cz = cvp ? cvp->cursor_3d.z : 0.0f;
                 snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
-                         "spawn armature %s 0 0 0", ctx->command);
+                         "spawn armature %s %.4g %.4g %.4g",
+                         ctx->command, (double)cx, (double)cy, (double)cz);
                 break;
+            }
             case 4: /* EDIT_ASSET_PREFAB */
                 /* Store path for frame dispatch to handle loading. */
                 strncpy(ctx->ed->ui.tui_cmd, ctx->command,
