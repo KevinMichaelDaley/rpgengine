@@ -149,7 +149,7 @@ float scene_ui_build_skel_promote(struct scene_editor *ed,
             /* Format path for display. */
             int n = snprintf(s_skel_path_buf, sizeof(s_skel_path_buf),
                              "%s", s_skel_ref.display[0] ? s_skel_ref.display
-                                                         : "(click asset)");
+                                                         : "(select asset or object)");
             if (n < 0) n = 0;
             if (n >= (int)sizeof(s_skel_path_buf))
                 n = (int)sizeof(s_skel_path_buf) - 1;
@@ -218,25 +218,31 @@ float scene_ui_build_skel_promote(struct scene_editor *ed,
         consumed += row_h;
         clay_idx++;
 
-        /* Handle confirmation: set skel_path attr and load skeleton.
-         * Also send setattr to server for persistence. */
+        /* Handle confirmation: spawn armature (if from asset) or bind
+         * existing armature entity. Set ARMATURE_ID on the mesh and
+         * copy SKEL_PATH for skinning. */
         if (s_skel_ref.confirmed && s_skel_ref.path[0] != '\0') {
             edit_entity_t *mut_ent =
                 edit_entity_store_get_mut(&ed->entities, entity_id);
             if (mut_ent) {
+                /* Set SKEL_PATH on the mesh for skinning. */
                 entity_attrs_set(&mut_ent->attrs, SCRIPT_KEY_SKEL_PATH,
                                  SCRIPT_ATTR_STR, s_skel_ref.path,
                                  (uint8_t)(strlen(s_skel_ref.path) + 1));
                 scene_load_entity_skeleton(ed, entity_id, s_skel_ref.path);
 
-                /* Queue setattr command for server persistence. */
+                /* Spawn an armature entity at the mesh's position. */
+                viewport_state_t *cvp = scene_focused_vp(ed);
+                float cx = mut_ent->pos[0];
+                float cy = mut_ent->pos[1];
+                float cz = mut_ent->pos[2];
                 snprintf(ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
-                         "setattr %u %u %s",
-                         entity_id, SCRIPT_KEY_SKEL_PATH,
-                         s_skel_ref.path);
+                         "spawn armature %s %.4g %.4g %.4g",
+                         s_skel_ref.path,
+                         (double)cx, (double)cy, (double)cz);
                 ed->ui.action = UI_ACTION_TUI_COMMAND;
+                (void)cvp;
             }
-            /* Reset confirmed so we don't re-trigger every frame. */
             s_skel_ref.confirmed = false;
         }
     }
