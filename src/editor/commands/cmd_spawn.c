@@ -120,6 +120,22 @@ bool cmd_spawn(edit_dispatch_t *d, const json_value_t *args,
         }
     }
 
+    /* Store skel_path attribute for ARMATURE entities. */
+    if (args && type == EDIT_ENTITY_TYPE_ARMATURE) {
+        const json_value_t *sp_val = json_object_get(args, "mesh_path");
+        if (sp_val && sp_val->type == JSON_STRING &&
+            sp_val->string.len > 0) {
+            edit_entity_t *e = edit_entity_store_get_mut(ctx->entities, eid);
+            char sp[256];
+            uint32_t splen = sp_val->string.len;
+            if (splen >= sizeof(sp)) splen = sizeof(sp) - 1;
+            memcpy(sp, sp_val->string.ptr, splen);
+            sp[splen] = '\0';
+            entity_attrs_set(&e->attrs, SCRIPT_KEY_SKEL_PATH,
+                             SCRIPT_ATTR_STR, sp, (uint16_t)(splen + 1));
+        }
+    }
+
     /* Store mesh_path attribute if provided (for MESH entities). */
     if (args && type == EDIT_ENTITY_TYPE_MESH) {
         const json_value_t *mp_val = json_object_get(args, "mesh_path");

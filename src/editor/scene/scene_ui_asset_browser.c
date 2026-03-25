@@ -180,8 +180,9 @@ static void on_entry_hover(Clay_ElementId id, Clay_PointerData data,
                         break;
                     }
                 }
+                /* No mesh selected — spawn an armature entity. */
                 snprintf(ctx->ed->ui.tui_cmd, UI_TUI_INPUT_MAX,
-                         "load_skeleton %s", ctx->command);
+                         "spawn armature 0 0 0 %s", ctx->command);
                 break;
             case 4: /* EDIT_ASSET_PREFAB */
                 /* Store path for frame dispatch to handle loading. */
