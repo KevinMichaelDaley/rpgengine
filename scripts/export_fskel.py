@@ -509,63 +509,38 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
     rest_world_inv = rest_world.inverted_safe()
     half_len = bone.length * 0.5
 
-    # Determine mirrored vertex group name (.L ↔ .R).
-    mirror_vgroup = None
-    if vgroup_name.endswith('.L'):
-        mirror_vgroup = vgroup_name[:-2] + '.R'
-    elif vgroup_name.endswith('.R'):
-        mirror_vgroup = vgroup_name[:-2] + '.L'
-    elif vgroup_name.endswith('_L'):
-        mirror_vgroup = vgroup_name[:-2] + '_R'
-    elif vgroup_name.endswith('_R'):
-        mirror_vgroup = vgroup_name[:-2] + '_L'
-
-    def _collect_from_mesh(child, vg_name, mirror_x=False):
-        """Collect vertices from a vertex group on a child mesh."""
-        collected = []
-        vg = child.vertex_groups.get(vg_name)
+    # Search child meshes for vertex group.
+    # Use the evaluated (modifier-applied) mesh so mirror modifier
+    # geometry is included. The mirror modifier automatically maps
+    # vertex groups (.L↔.R when "Mirror Vertex Groups" is on, and
+    # same group for non-suffixed names), so all we need to do is
+    # collect every vertex in the group from the evaluated mesh.
+    for child in armature_obj.children:
+        if child.type != 'MESH':
+            continue
+        vg = child.vertex_groups.get(vgroup_name)
         if vg is None:
-            return collected
+            continue
         vg_idx = vg.index
 
-        # Use evaluated mesh (includes mirror modifier and other modifiers).
+        # Evaluate through depsgraph to apply mirror + other modifiers.
         depsgraph = bpy.context.evaluated_depsgraph_get()
         eval_child = child.evaluated_get(depsgraph)
         eval_mesh = eval_child.to_mesh()
 
-        # Build a set of vertex group indices for the evaluated mesh.
-        # Evaluated meshes preserve vertex group assignments.
         for v in eval_mesh.vertices:
             for g in v.groups:
                 if g.group == vg_idx and g.weight > 0.5:
                     # Mesh local → world → bone-local (head origin)
-                    co = v.co.copy()
-                    if mirror_x:
-                        co.x = -co.x
-                    world_co = child.matrix_world @ co
+                    world_co = child.matrix_world @ v.co
                     local_co = rest_world_inv @ world_co
                     # Shift from head-origin to midpoint-origin
                     local_co.y -= half_len
                     # Blender bone-local Z-up → engine Y-up
-                    collected.extend([local_co.x, local_co.z, -local_co.y])
+                    verts.extend([local_co.x, local_co.z, -local_co.y])
                     break
 
         eval_child.to_mesh_clear()
-        return collected
-
-    # Search child meshes for vertex group
-    for child in armature_obj.children:
-        if child.type != 'MESH':
-            continue
-
-        # Collect from the primary vertex group.
-        verts.extend(_collect_from_mesh(child, vgroup_name))
-
-        # For .L/.R bones: also collect from the mirrored group
-        # with X-flipped coordinates (mirror modifier convention).
-        if mirror_vgroup:
-            verts.extend(_collect_from_mesh(child, mirror_vgroup,
-                                           mirror_x=True))
 
     return verts
 
