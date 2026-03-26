@@ -510,11 +510,10 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
     half_len = bone.length * 0.5
 
     # Search child meshes for vertex group.
-    # Use the evaluated (modifier-applied) mesh so mirror modifier
-    # geometry is included. The mirror modifier automatically maps
-    # vertex groups (.L↔.R when "Mirror Vertex Groups" is on, and
-    # same group for non-suffixed names), so all we need to do is
-    # collect every vertex in the group from the evaluated mesh.
+    # Use the BASE mesh (not evaluated) for vertex group lookups, then
+    # manually mirror vertices if a mirror modifier is present. The
+    # evaluated mesh doesn't reliably preserve vertex group assignments
+    # for mirrored vertices.
     for child in armature_obj.children:
         if child.type != 'MESH':
             continue
@@ -522,25 +521,45 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
         if vg is None:
             continue
         vg_idx = vg.index
+        mesh = child.data
 
-        # Evaluate through depsgraph to apply mirror + other modifiers.
-        depsgraph = bpy.context.evaluated_depsgraph_get()
-        eval_child = child.evaluated_get(depsgraph)
-        eval_mesh = eval_child.to_mesh()
+        # Detect mirror modifier and its axis.
+        has_mirror = False
+        mirror_axis = 0  # 0=X, 1=Y, 2=Z
+        for mod in child.modifiers:
+            if mod.type == 'MIRROR' and mod.show_viewport:
+                has_mirror = True
+                if mod.use_axis[0]:
+                    mirror_axis = 0
+                elif mod.use_axis[1]:
+                    mirror_axis = 1
+                elif mod.use_axis[2]:
+                    mirror_axis = 2
+                break
 
-        for v in eval_mesh.vertices:
+        base_coords = []
+        for v in mesh.vertices:
             for g in v.groups:
                 if g.group == vg_idx and g.weight > 0.5:
-                    # Mesh local → world → bone-local (head origin)
-                    world_co = child.matrix_world @ v.co
-                    local_co = rest_world_inv @ world_co
-                    # Shift from head-origin to midpoint-origin
-                    local_co.y -= half_len
-                    # Blender bone-local Z-up → engine Y-up
-                    verts.extend([local_co.x, local_co.z, -local_co.y])
+                    base_coords.append(v.co.copy())
                     break
 
-        eval_child.to_mesh_clear()
+        # Transform base vertices to bone-local engine coords.
+        for co in base_coords:
+            world_co = child.matrix_world @ co
+            local_co = rest_world_inv @ world_co
+            local_co.y -= half_len
+            verts.extend([local_co.x, local_co.z, -local_co.y])
+
+        # Add mirrored copies if mirror modifier is active.
+        if has_mirror:
+            for co in base_coords:
+                mirrored = co.copy()
+                mirrored[mirror_axis] = -mirrored[mirror_axis]
+                world_co = child.matrix_world @ mirrored
+                local_co = rest_world_inv @ world_co
+                local_co.y -= half_len
+                verts.extend([local_co.x, local_co.z, -local_co.y])
 
     return verts
 
