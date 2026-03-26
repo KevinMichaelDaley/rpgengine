@@ -1988,8 +1988,11 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
 
         if shape != '0':
             box.prop(pb, "talarium_collision_group")
-            box.operator("bone.talarium_autofill_collision",
+            row = box.row(align=True)
+            row.operator("bone.talarium_autofill_collision",
                          icon='FILE_REFRESH')
+            row.operator("bone.talarium_mirror_collision",
+                         icon='MOD_MIRROR')
 
         # ── Physics flags ──
         box = layout.box()
@@ -2476,6 +2479,81 @@ def _draw_collision_overlay():
     gpu.state.line_width_set(1.0)
 
 
+def _opposite_bone_name(name):
+    """Return the .L/.R or _L/_R opposite of a bone name, or None."""
+    if name.endswith('.L'):
+        return name[:-2] + '.R'
+    elif name.endswith('.R'):
+        return name[:-2] + '.L'
+    elif name.endswith('_L'):
+        return name[:-2] + '_R'
+    elif name.endswith('_R'):
+        return name[:-2] + '_L'
+    return None
+
+
+class BONE_OT_talarium_mirror_collision(bpy.types.Operator):
+    """Copy collision settings from the opposite (.L/.R) bone,
+    flipping the convex hull vertex group name if present"""
+    bl_idname = "bone.talarium_mirror_collision"
+    bl_label = "Mirror from Opposite"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        pb = context.active_pose_bone
+        if pb is None:
+            return False
+        return _opposite_bone_name(pb.bone.name) is not None
+
+    def execute(self, context):
+        pb = context.active_pose_bone
+        opp_name = _opposite_bone_name(pb.bone.name)
+        if opp_name is None:
+            self.report({'WARNING'}, "No opposite bone name")
+            return {'CANCELLED'}
+
+        arm = context.active_object
+        if arm is None or arm.type != 'ARMATURE':
+            self.report({'WARNING'}, "No active armature")
+            return {'CANCELLED'}
+
+        opp_pb = arm.pose.bones.get(opp_name)
+        if opp_pb is None:
+            self.report({'WARNING'}, f"Opposite bone '{opp_name}' not found")
+            return {'CANCELLED'}
+
+        # Copy all collision properties.
+        _MIRROR_PROPS = [
+            "talarium_collision_shape",
+            "talarium_capsule_radius",
+            "talarium_capsule_height",
+            "talarium_capsule_axis",
+            "talarium_box_hx",
+            "talarium_box_hy",
+            "talarium_box_hz",
+            "talarium_sphere_radius",
+            "talarium_collision_group",
+            "talarium_kinematic",
+            "talarium_ccd",
+            "talarium_mass",
+        ]
+        for prop in _MIRROR_PROPS:
+            setattr(pb, prop, getattr(opp_pb, prop))
+
+        # For convex hull vertex group, swap the .L/.R suffix.
+        hull_vg = opp_pb.talarium_hull_vgroup
+        if hull_vg:
+            flipped = _opposite_bone_name(hull_vg)
+            pb.talarium_hull_vgroup = flipped if flipped else hull_vg
+        else:
+            pb.talarium_hull_vgroup = ""
+
+        self.report({'INFO'},
+                    f"Mirrored collision from '{opp_name}' → '{pb.bone.name}'")
+        return {'FINISHED'}
+
+
 class BONE_OT_talarium_refresh_collision(bpy.types.Operator):
     """Refresh collision wireframe preview in viewport"""
     bl_idname = "bone.talarium_refresh_collision"
@@ -2496,6 +2574,7 @@ class BONE_OT_talarium_refresh_collision(bpy.types.Operator):
 _CLASSES = [
     ExportFSKEL,
     BONE_OT_talarium_autofill_collision,
+    BONE_OT_talarium_mirror_collision,
     BONE_OT_talarium_refresh_collision,
     ARMATURE_OT_talarium_validate_pose,
     ARMATURE_OT_talarium_validate_stability,
