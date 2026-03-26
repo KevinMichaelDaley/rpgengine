@@ -1991,8 +1991,8 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
         # Drawn outside the parent guard so bulk editing works
         # regardless of joint type on each selected bone.
         bone = pb.bone
-        has_joint = (bone and bone.parent and
-                     pb.talarium_joint_type != '0')
+        has_joint = bool(bone and bone.parent and
+                        pb.talarium_joint_type != '0')
         multi = len(context.selected_pose_bones) > 1
         box = layout.box()
         box.label(text="Physical Properties", icon='MOD_PHYSICS')
@@ -2033,8 +2033,8 @@ class BONE_PT_talarium_physics(bpy.types.Panel):
 
         # ── Muscle Drive ──
         bone = pb.bone
-        has_joint = (bone and bone.parent and
-                     pb.talarium_joint_type != '0')
+        has_joint = bool(bone and bone.parent and
+                        pb.talarium_joint_type != '0')
         if has_joint:
             box = layout.box()
             box.label(text="Muscle Drive", icon='FORCE_MAGNETIC')
