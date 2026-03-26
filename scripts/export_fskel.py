@@ -2290,7 +2290,19 @@ def _convex_hull_wire(armature_obj, bone_name, vgroup_name, bone_matrix):
     rest_world = armature_obj.matrix_world @ bone.matrix_local
     rest_world_inv = rest_world.inverted_safe()
 
-    # Collect vertices in bone-local space (shifted to midpoint-origin)
+    # Determine the opposite vertex group for .L/.R mirroring.
+    mirror_vgroup = None
+    if vgroup_name.endswith('.L'):
+        mirror_vgroup = vgroup_name[:-2] + '.R'
+    elif vgroup_name.endswith('.R'):
+        mirror_vgroup = vgroup_name[:-2] + '.L'
+    elif vgroup_name.endswith('_L'):
+        mirror_vgroup = vgroup_name[:-2] + '_R'
+    elif vgroup_name.endswith('_R'):
+        mirror_vgroup = vgroup_name[:-2] + '_L'
+
+    # Collect vertices in bone-local space (shifted to midpoint-origin).
+    # Uses base mesh + manual mirror to match _gather_hull_vertices.
     hull_verts_local = []
     half_len = bone.length * 0.5
     for child in armature_obj.children:
@@ -2301,16 +2313,61 @@ def _convex_hull_wire(armature_obj, bone_name, vgroup_name, bone_matrix):
             continue
         vg_idx = vg.index
         mesh = child.data
+
+        # Detect mirror modifier and its axis.
+        has_mirror = False
+        mirror_axis = 0
+        for mod in child.modifiers:
+            if mod.type == 'MIRROR' and mod.show_viewport:
+                has_mirror = True
+                if mod.use_axis[0]:
+                    mirror_axis = 0
+                elif mod.use_axis[1]:
+                    mirror_axis = 1
+                elif mod.use_axis[2]:
+                    mirror_axis = 2
+                break
+
+        # Collect base vertices from primary group.
+        base_coords = []
         for v in mesh.vertices:
             for g in v.groups:
                 if g.group == vg_idx and g.weight > 0.5:
-                    # Mesh vertex → world → bone-local (head origin)
-                    world_co = child.matrix_world @ v.co
+                    base_coords.append(v.co.copy())
+                    break
+
+        for co in base_coords:
+            world_co = child.matrix_world @ co
+            local_co = rest_world_inv @ world_co
+            local_co.y -= half_len
+            hull_verts_local.append(local_co)
+
+        # Add mirrored copies if mirror modifier is active.
+        if has_mirror:
+            if mirror_vgroup:
+                # .L/.R: use opposite group's verts, mirrored.
+                opp_vg = child.vertex_groups.get(mirror_vgroup)
+                if opp_vg is not None:
+                    opp_idx = opp_vg.index
+                    for v in mesh.vertices:
+                        for g in v.groups:
+                            if g.group == opp_idx and g.weight > 0.5:
+                                mirrored = v.co.copy()
+                                mirrored[mirror_axis] = -mirrored[mirror_axis]
+                                world_co = child.matrix_world @ mirrored
+                                local_co = rest_world_inv @ world_co
+                                local_co.y -= half_len
+                                hull_verts_local.append(local_co)
+                                break
+            else:
+                # Non-suffixed: mirror own verts.
+                for co in base_coords:
+                    mirrored = co.copy()
+                    mirrored[mirror_axis] = -mirrored[mirror_axis]
+                    world_co = child.matrix_world @ mirrored
                     local_co = rest_world_inv @ world_co
-                    # Shift from head-origin to midpoint-origin
                     local_co.y -= half_len
                     hull_verts_local.append(local_co)
-                    break
 
     if len(hull_verts_local) < 4:
         return []
