@@ -537,6 +537,18 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
                     mirror_axis = 2
                 break
 
+        # Determine the opposite vertex group for .L/.R mirroring.
+        mirror_vgroup = None
+        if vgroup_name.endswith('.L'):
+            mirror_vgroup = vgroup_name[:-2] + '.R'
+        elif vgroup_name.endswith('.R'):
+            mirror_vgroup = vgroup_name[:-2] + '.L'
+        elif vgroup_name.endswith('_L'):
+            mirror_vgroup = vgroup_name[:-2] + '_R'
+        elif vgroup_name.endswith('_R'):
+            mirror_vgroup = vgroup_name[:-2] + '_L'
+
+        # Collect base vertices from the primary vertex group.
         base_coords = []
         for v in mesh.vertices:
             for g in v.groups:
@@ -553,13 +565,32 @@ def _gather_hull_vertices(armature_obj, bone_name, vgroup_name):
 
         # Add mirrored copies if mirror modifier is active.
         if has_mirror:
-            for co in base_coords:
-                mirrored = co.copy()
-                mirrored[mirror_axis] = -mirrored[mirror_axis]
-                world_co = child.matrix_world @ mirrored
-                local_co = rest_world_inv @ world_co
-                local_co.y -= half_len
-                verts.extend([local_co.x, local_co.z, -local_co.y])
+            if mirror_vgroup:
+                # .L/.R bone: use the OPPOSITE vertex group's vertices,
+                # mirrored along the mirror axis.
+                opp_vg = child.vertex_groups.get(mirror_vgroup)
+                if opp_vg is not None:
+                    opp_idx = opp_vg.index
+                    for v in mesh.vertices:
+                        for g in v.groups:
+                            if g.group == opp_idx and g.weight > 0.5:
+                                mirrored = v.co.copy()
+                                mirrored[mirror_axis] = -mirrored[mirror_axis]
+                                world_co = child.matrix_world @ mirrored
+                                local_co = rest_world_inv @ world_co
+                                local_co.y -= half_len
+                                verts.extend([local_co.x, local_co.z,
+                                              -local_co.y])
+                                break
+            else:
+                # Non-suffixed bone: mirror the SAME group's vertices.
+                for co in base_coords:
+                    mirrored = co.copy()
+                    mirrored[mirror_axis] = -mirrored[mirror_axis]
+                    world_co = child.matrix_world @ mirrored
+                    local_co = rest_world_inv @ world_co
+                    local_co.y -= half_len
+                    verts.extend([local_co.x, local_co.z, -local_co.y])
 
     return verts
 
