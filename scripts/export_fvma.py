@@ -291,13 +291,14 @@ def _gather_mesh_data(obj, export_normals, export_tangents, export_uvs,
             bone_indices_flat.extend(b)
 
         # Compute inverse bind matrices (column-major).
-        # Use bone.matrix_local (armature-space) to match the fskel's
-        # rest_world which also uses bone.matrix_local.  Do NOT include
-        # armature_obj.matrix_world — that transform is applied by the
-        # entity model matrix at render time.
+        # Include armature_obj.matrix_world because mesh vertices are
+        # evaluated through the armature modifier (which applies it).
+        # The fskel's rest_world also includes armature_world, so
+        # palette = rest_world * ibm = identity at rest pose.
         ibms = []
         for bone in armature_obj.data.bones:
-            ibm_bl = bone.matrix_local.inverted_safe()
+            bone_world = armature_obj.matrix_world @ bone.matrix_local
+            ibm_bl = bone_world.inverted_safe()
             ibm_engine = _blender_to_engine_matrix(ibm_bl)
             ibms.extend(ibm_engine)
 

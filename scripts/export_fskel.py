@@ -604,20 +604,26 @@ def export_fskel(context, filepath, export_ibms, default_collision='EMPTY'):
         else:
             parent_idx = -1
 
-        # Rest local transform
+        # Rest local transform (includes armature object transform for root).
+        # This matches the IBMs which use obj.matrix_world @ bone.matrix_local.
         if bone.parent:
-            local = bone.parent.matrix_local.inverted_safe() @ bone.matrix_local
+            parent_world = obj.matrix_world @ bone.parent.matrix_local
+            bone_world = obj.matrix_world @ bone.matrix_local
+            local = parent_world.inverted_safe() @ bone_world
         else:
-            local = bone.matrix_local
+            local = obj.matrix_world @ bone.matrix_local
         rest_local = list(blender_to_engine_matrix(local))
 
-        # Rest world transform
-        rest_world = list(blender_to_engine_matrix(bone.matrix_local))
+        # Rest world transform (includes armature object transform).
+        rest_world = list(blender_to_engine_matrix(
+            obj.matrix_world @ bone.matrix_local))
 
-        # Bone tail position in armature space (engine coords).
-        # bone.tail_local is (x,y,z) in Blender Z-up → (x,z,-y) engine.
-        bt = bone.tail_local
-        tail_pos = [bt[0], bt[2], -bt[1]]
+        # Bone tail position in world space (engine coords).
+        # Transform tail through armature_world, then Z-up → Y-up.
+        import mathutils
+        bt_local = mathutils.Vector(bone.tail_local)
+        bt_world = obj.matrix_world @ bt_local
+        tail_pos = [bt_world[0], bt_world[2], -bt_world[1]]
 
         # Collider descriptor
         shape_type = 0  # NONE
