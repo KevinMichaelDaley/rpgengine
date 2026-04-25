@@ -187,6 +187,9 @@ typedef enum aegis_opcode {
     /* -- Debug -- */
     AEGIS_OP_SHOW           = 0x49,  /**< Print register value to stderr. */
 
+    /* -- LLM prompting -- */
+    AEGIS_OP_LLM_PROMPT     = 0x4A,  /**< Submit async LLM prompt. */
+
     /** Sentinel: total number of opcodes. Not a valid instruction. */
     AEGIS_OP_COUNT
 } aegis_opcode_t;

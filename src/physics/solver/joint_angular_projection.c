@@ -36,24 +36,7 @@
 /** Minimum angular error (radians) worth correcting. */
 #define ANG_PROJ_MIN_ERROR 0.001f
 
-/**
- * @brief Integrate a quaternion by an angular velocity over dt.
- *
- * Uses the standard quaternion derivative: dq = 0.5 * omega_q * q.
- */
-static phys_quat_t ang_proj_quat_integrate(phys_quat_t q, phys_vec3_t w,
-                                            float dt) {
-    phys_quat_t omega_q = { w.x, w.y, w.z, 0.0f };
-    phys_quat_t dq = quat_mul(omega_q, q);
-    float half_dt = 0.5f * dt;
-    phys_quat_t result = {
-        q.x + dq.x * half_dt,
-        q.y + dq.y * half_dt,
-        q.z + dq.z * half_dt,
-        q.w + dq.w * half_dt,
-    };
-    return quat_normalize_safe(result, 1e-8f);
-}
+/* (quat_integrate_expmap is now static inline in ferrum/math/quat.h) */
 
 /**
  * @brief Decompose error quaternion into swing-twist angles.
@@ -227,9 +210,9 @@ void phys_project_joint_angular_limits(
                 args->velocities[j->body_b].angular,
                 args->pseudo_velocities[j->body_b].angular);
 
-            phys_quat_t ori_a = ang_proj_quat_integrate(
+            phys_quat_t ori_a = quat_integrate_expmap(
                 ba->orientation, total_ang_a, dt);
-            phys_quat_t ori_b = ang_proj_quat_integrate(
+            phys_quat_t ori_b = quat_integrate_expmap(
                 bb->orientation, total_ang_b, dt);
 
             /* Compute angular correction needed. */

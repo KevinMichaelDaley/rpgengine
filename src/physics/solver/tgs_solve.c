@@ -61,58 +61,7 @@
 
 /* ── Exponential map quaternion integration ───────────────────── */
 
-/**
- * @brief Integrate orientation using the exponential map.
- *
- * Computes q_new = exp(0.5 * dω * dt) * q_old, which is the exact
- * rotation for a constant angular velocity increment dω over timestep dt.
- * Unlike the Euler update (q += 0.5*dt*Ω*q), this stays on SO(3) exactly
- * and does not inject energy through quaternion drift.
- *
- * @param q     Current orientation quaternion.
- * @param dw    Angular velocity increment (rad/s).
- * @param dt    Timestep (seconds).
- * @return      Updated orientation quaternion (normalized).
- */
-static phys_quat_t quat_integrate_expmap(phys_quat_t q,
-                                          phys_vec3_t dw,
-                                          float dt)
-{
-    float wx = dw.x * dt;
-    float wy = dw.y * dt;
-    float wz = dw.z * dt;
-    float theta = sqrtf(wx * wx + wy * wy + wz * wz);
-
-    phys_quat_t dq;
-    if (theta > 1e-8f) {
-        float half_theta = 0.5f * theta;
-        float s = sinf(half_theta) / theta;
-        dq.w = cosf(half_theta);
-        dq.x = s * wx;
-        dq.y = s * wy;
-        dq.z = s * wz;
-    } else {
-        /* Small angle: sin(θ/2)/θ ≈ 0.5 */
-        dq.w = 1.0f;
-        dq.x = 0.5f * wx;
-        dq.y = 0.5f * wy;
-        dq.z = 0.5f * wz;
-    }
-
-    phys_quat_t result = quat_normalize_safe(quat_mul(dq, q), 1e-12f);
-
-    /* Shortest-path hemisphere consistency: keep the result in the
-     * same hemisphere as the input so that lever-arm cross products
-     * (r × axis) in Jacobian rows don't jitter from sign flips when
-     * the quaternion is near the w≈0 boundary. */
-    float qdot = q.x * result.x + q.y * result.y +
-                 q.z * result.z + q.w * result.w;
-    if (qdot < 0.0f) {
-        result.x = -result.x; result.y = -result.y;
-        result.z = -result.z; result.w = -result.w;
-    }
-    return result;
-}
+/* (quat_integrate_expmap is now static inline in ferrum/math/quat.h) */
 
 /* ── Implicit gyroscopic torque correction ────────────────────── */
 

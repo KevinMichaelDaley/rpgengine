@@ -14,6 +14,7 @@
  */
 
 #include "ferrum/physics/gjk_epa.h"
+#include "ferrum/physics/phys_vec3_ops.h"
 
 #include <float.h>
 #include <math.h>
@@ -39,27 +40,7 @@ typedef struct gjk_simplex {
 /* Shared simplex for EPA to pick up after GJK (external linkage). */
 _Thread_local gjk_simplex_t g_last_simplex;
 
-/* ── Vector helpers (local, avoid header dependency) ──────────── */
-
-static float dot3(phys_vec3_t a, phys_vec3_t b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static phys_vec3_t sub3(phys_vec3_t a, phys_vec3_t b) {
-    return (phys_vec3_t){a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-static phys_vec3_t neg3(phys_vec3_t v) {
-    return (phys_vec3_t){-v.x, -v.y, -v.z};
-}
-
-static phys_vec3_t cross3(phys_vec3_t a, phys_vec3_t b) {
-    return (phys_vec3_t){
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    };
-}
+/* ── Vector helpers (use phys_vec3_ops.h) ───────────────────────── */
 
 /** Compute Minkowski difference support: support_a(dir) - support_b(-dir). */
 static gjk_vertex_t gjk_support(phys_gjk_support_fn sa, const void *da,
@@ -67,8 +48,8 @@ static gjk_vertex_t gjk_support(phys_gjk_support_fn sa, const void *da,
                                  phys_vec3_t dir) {
     gjk_vertex_t v;
     v.a = sa(da, dir);
-    v.b = sb(db, neg3(dir));
-    v.p = sub3(v.a, v.b);
+    v.b = sb(db, phys_vec3_neg(dir));
+    v.p = phys_vec3_sub(v.a, v.b);
     return v;
 }
 
@@ -83,17 +64,17 @@ static gjk_vertex_t gjk_support(phys_gjk_support_fn sa, const void *da,
 static int gjk_do_line(gjk_simplex_t *s, phys_vec3_t *dir) {
     phys_vec3_t a = s->verts[1].p;  /* newest */
     phys_vec3_t b = s->verts[0].p;
-    phys_vec3_t ab = sub3(b, a);
-    phys_vec3_t ao = neg3(a);
+    phys_vec3_t ab = phys_vec3_sub(b, a);
+    phys_vec3_t ao = phys_vec3_neg(a);
 
-    if (dot3(ab, ao) > 0) {
+    if (phys_vec3_dot(ab, ao) > 0) {
         /* Origin is in the direction of B from A — keep line. */
-        *dir = cross3(cross3(ab, ao), ab);
+        *dir = phys_vec3_cross(phys_vec3_cross(ab, ao), ab);
         /* If direction is zero (origin on line), perturb. */
-        if (dot3(*dir, *dir) < 1e-14f) {
-            *dir = cross3(ab, (phys_vec3_t){1, 0, 0});
-            if (dot3(*dir, *dir) < 1e-14f) {
-                *dir = cross3(ab, (phys_vec3_t){0, 1, 0});
+        if (phys_vec3_dot(*dir, *dir) < 1e-14f) {
+            *dir = phys_vec3_cross(ab, (phys_vec3_t){1, 0, 0});
+            if (phys_vec3_dot(*dir, *dir) < 1e-14f) {
+                *dir = phys_vec3_cross(ab, (phys_vec3_t){0, 1, 0});
             }
         }
         return 0;
@@ -114,14 +95,14 @@ static int gjk_do_triangle(gjk_simplex_t *s, phys_vec3_t *dir) {
     phys_vec3_t a = s->verts[2].p;  /* newest */
     phys_vec3_t b = s->verts[1].p;
     phys_vec3_t c = s->verts[0].p;
-    phys_vec3_t ab = sub3(b, a);
-    phys_vec3_t ac = sub3(c, a);
-    phys_vec3_t ao = neg3(a);
-    phys_vec3_t abc = cross3(ab, ac);
+    phys_vec3_t ab = phys_vec3_sub(b, a);
+    phys_vec3_t ac = phys_vec3_sub(c, a);
+    phys_vec3_t ao = phys_vec3_neg(a);
+    phys_vec3_t abc = phys_vec3_cross(ab, ac);
 
     /* Check if origin is outside edge AB. */
-    phys_vec3_t ab_perp = cross3(ab, abc);
-    if (dot3(ab_perp, ao) > 0) {
+    phys_vec3_t ab_perp = phys_vec3_cross(ab, abc);
+    if (phys_vec3_dot(ab_perp, ao) > 0) {
         /* Reduce to line {B, A}. */
         s->verts[0] = s->verts[1];
         s->verts[1] = s->verts[2];
@@ -130,8 +111,8 @@ static int gjk_do_triangle(gjk_simplex_t *s, phys_vec3_t *dir) {
     }
 
     /* Check if origin is outside edge AC. */
-    phys_vec3_t ac_perp = cross3(abc, ac);
-    if (dot3(ac_perp, ao) > 0) {
+    phys_vec3_t ac_perp = phys_vec3_cross(abc, ac);
+    if (phys_vec3_dot(ac_perp, ao) > 0) {
         /* Reduce to line {C, A}. */
         s->verts[1] = s->verts[2];
         s->count = 2;
@@ -139,7 +120,7 @@ static int gjk_do_triangle(gjk_simplex_t *s, phys_vec3_t *dir) {
     }
 
     /* Origin is inside the triangle region — check which side. */
-    if (dot3(abc, ao) > 0) {
+    if (phys_vec3_dot(abc, ao) > 0) {
         /* Above triangle — search upward. */
         *dir = abc;
     } else {
@@ -147,7 +128,7 @@ static int gjk_do_triangle(gjk_simplex_t *s, phys_vec3_t *dir) {
         gjk_vertex_t tmp = s->verts[0];
         s->verts[0] = s->verts[1];
         s->verts[1] = tmp;
-        *dir = neg3(abc);
+        *dir = phys_vec3_neg(abc);
     }
     return 0;
 }
@@ -161,18 +142,18 @@ static int gjk_do_tetrahedron(gjk_simplex_t *s, phys_vec3_t *dir) {
     phys_vec3_t b = s->verts[2].p;
     phys_vec3_t c = s->verts[1].p;
     phys_vec3_t d = s->verts[0].p;
-    phys_vec3_t ab = sub3(b, a);
-    phys_vec3_t ac = sub3(c, a);
-    phys_vec3_t ad = sub3(d, a);
-    phys_vec3_t ao = neg3(a);
+    phys_vec3_t ab = phys_vec3_sub(b, a);
+    phys_vec3_t ac = phys_vec3_sub(c, a);
+    phys_vec3_t ad = phys_vec3_sub(d, a);
+    phys_vec3_t ao = phys_vec3_neg(a);
 
     /* Check each face (excluding the base BCD since A was just added
        and we came from the direction of A). */
 
     /* Face ABC (normal points away from D). */
-    phys_vec3_t abc = cross3(ab, ac);
-    if (dot3(abc, ad) > 0) abc = neg3(abc); /* ensure outward */
-    if (dot3(abc, ao) > 0) {
+    phys_vec3_t abc = phys_vec3_cross(ab, ac);
+    if (phys_vec3_dot(abc, ad) > 0) abc = phys_vec3_neg(abc); /* ensure outward */
+    if (phys_vec3_dot(abc, ao) > 0) {
         /* Origin is outside face ABC — reduce to triangle {C, B, A}. */
         s->verts[0] = s->verts[1];
         s->verts[1] = s->verts[2];
@@ -182,9 +163,9 @@ static int gjk_do_tetrahedron(gjk_simplex_t *s, phys_vec3_t *dir) {
     }
 
     /* Face ACD (normal points away from B). */
-    phys_vec3_t acd = cross3(ac, ad);
-    if (dot3(acd, ab) > 0) acd = neg3(acd);
-    if (dot3(acd, ao) > 0) {
+    phys_vec3_t acd = phys_vec3_cross(ac, ad);
+    if (phys_vec3_dot(acd, ab) > 0) acd = phys_vec3_neg(acd);
+    if (phys_vec3_dot(acd, ao) > 0) {
         /* Origin is outside face ACD — reduce to triangle {D, C, A}. */
         s->verts[2] = s->verts[3];
         s->count = 3;
@@ -192,9 +173,9 @@ static int gjk_do_tetrahedron(gjk_simplex_t *s, phys_vec3_t *dir) {
     }
 
     /* Face ADB (normal points away from C). */
-    phys_vec3_t adb = cross3(ad, ab);
-    if (dot3(adb, ac) > 0) adb = neg3(adb);
-    if (dot3(adb, ao) > 0) {
+    phys_vec3_t adb = phys_vec3_cross(ad, ab);
+    if (phys_vec3_dot(adb, ac) > 0) adb = phys_vec3_neg(adb);
+    if (phys_vec3_dot(adb, ao) > 0) {
         /* Origin is outside face ADB — reduce to triangle {B, D, A}. */
         s->verts[1] = s->verts[0];
         s->verts[0] = s->verts[2];
@@ -231,7 +212,7 @@ static void gjk_closest_points(const gjk_simplex_t *s,
     if (s->count == 1) {
         *closest_a = s->verts[0].a;
         *closest_b = s->verts[0].b;
-        *dist_out = sqrtf(dot3(s->verts[0].p, s->verts[0].p));
+        *dist_out = sqrtf(phys_vec3_dot(s->verts[0].p, s->verts[0].p));
         return;
     }
 
@@ -239,11 +220,11 @@ static void gjk_closest_points(const gjk_simplex_t *s,
         /* Closest point on line segment to origin. */
         phys_vec3_t a = s->verts[0].p;
         phys_vec3_t b = s->verts[1].p;
-        phys_vec3_t ab = sub3(b, a);
-        float ab2 = dot3(ab, ab);
+        phys_vec3_t ab = phys_vec3_sub(b, a);
+        float ab2 = phys_vec3_dot(ab, ab);
         float t = 0.5f;
         if (ab2 > 1e-12f) {
-            t = -dot3(a, ab) / ab2;
+            t = -phys_vec3_dot(a, ab) / ab2;
             if (t < 0) t = 0;
             if (t > 1) t = 1;
         }
@@ -263,7 +244,7 @@ static void gjk_closest_points(const gjk_simplex_t *s,
             a.y * s0 + b.y * t,
             a.z * s0 + b.z * t,
         };
-        *dist_out = sqrtf(dot3(cp, cp));
+        *dist_out = sqrtf(phys_vec3_dot(cp, cp));
         return;
     }
 
@@ -271,15 +252,15 @@ static void gjk_closest_points(const gjk_simplex_t *s,
     phys_vec3_t a = s->verts[0].p;
     phys_vec3_t b = s->verts[1].p;
     phys_vec3_t c = s->verts[2].p;
-    phys_vec3_t ab = sub3(b, a);
-    phys_vec3_t ac = sub3(c, a);
-    phys_vec3_t ao = neg3(a);
+    phys_vec3_t ab = phys_vec3_sub(b, a);
+    phys_vec3_t ac = phys_vec3_sub(c, a);
+    phys_vec3_t ao = phys_vec3_neg(a);
 
-    float d00 = dot3(ab, ab);
-    float d01 = dot3(ab, ac);
-    float d11 = dot3(ac, ac);
-    float d20 = dot3(ao, ab);
-    float d21 = dot3(ao, ac);
+    float d00 = phys_vec3_dot(ab, ab);
+    float d01 = phys_vec3_dot(ab, ac);
+    float d11 = phys_vec3_dot(ac, ac);
+    float d20 = phys_vec3_dot(ao, ab);
+    float d21 = phys_vec3_dot(ao, ac);
     float denom = d00 * d11 - d01 * d01;
 
     float v = 0.333f, w = 0.333f;
@@ -311,7 +292,7 @@ static void gjk_closest_points(const gjk_simplex_t *s,
         a.y * u + b.y * v + c.y * w,
         a.z * u + b.z * v + c.z * w,
     };
-    *dist_out = sqrtf(dot3(cp, cp));
+    *dist_out = sqrtf(phys_vec3_dot(cp, cp));
 }
 
 /* ── Public API ────────────────────────────────────────────────── */
@@ -341,8 +322,8 @@ bool phys_gjk_intersect(phys_gjk_support_fn support_a, const void *shape_a,
     simplex.count = 1;
 
     /* Search toward origin from first point. */
-    dir = neg3(v.p);
-    if (dot3(dir, dir) < 1e-14f) {
+    dir = phys_vec3_neg(v.p);
+    if (phys_vec3_dot(dir, dir) < 1e-14f) {
         /* First support point is at origin — shapes intersect. */
         result->intersecting = true;
         g_last_simplex = simplex;
@@ -353,7 +334,7 @@ bool phys_gjk_intersect(phys_gjk_support_fn support_a, const void *shape_a,
         v = gjk_support(support_a, shape_a, support_b, shape_b, dir);
 
         /* If the new point didn't pass the origin, shapes are separated. */
-        if (dot3(v.p, dir) < 0) {
+        if (phys_vec3_dot(v.p, dir) < 0) {
             result->intersecting = false;
             gjk_closest_points(&simplex, &result->closest_a,
                                &result->closest_b, &result->distance);
@@ -372,7 +353,7 @@ bool phys_gjk_intersect(phys_gjk_support_fn support_a, const void *shape_a,
         }
 
         /* Safety: if direction is zero, bail. */
-        if (dot3(dir, dir) < 1e-14f) {
+        if (phys_vec3_dot(dir, dir) < 1e-14f) {
             result->intersecting = true;
             g_last_simplex = simplex;
             return true;

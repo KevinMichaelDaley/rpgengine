@@ -1,0 +1,16 @@
+{
+  "name": "Crate (Wood)",
+  "mesh": "assets/meshes/crate.fvma",
+  "material": "assets/materials/wood_crate.fmat",
+  "physics": {
+    "static": false,
+    "mass": 50.0,
+    "friction": 0.7,
+    "restitution": 0.3
+  },
+  "attrs": {
+    "health": 100,
+    "destructible": true,
+    "pickup_type": "ammo"
+  }
+}

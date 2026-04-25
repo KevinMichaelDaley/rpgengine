@@ -17,6 +17,7 @@
 #include "ferrum/aegis/aegis_ops_entity.h"
 #include "ferrum/aegis/aegis_ops_update.h"
 #include "ferrum/aegis/aegis_ops_async.h"
+#include "ferrum/aegis/aegis_ops_llm.h"
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 #include "ferrum/aegis/aegis_ops_signal.h"
@@ -474,6 +475,18 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             /* Nav queries are expensive — burn 200 fuel. */
             if (vm->fuel > 200) {
                 vm->fuel -= 200;
+            } else {
+                vm->fuel = 0;
+            }
+            break;
+
+        case AEGIS_OP_LLM_PROMPT:
+            if (!aegis_op_llm_prompt(vm, &d)) {
+                return vm_error(vm, 0xFFBB);
+            }
+            /* LLM prompts are very expensive — burn 500 fuel. */
+            if (vm->fuel > 500) {
+                vm->fuel -= 500;
             } else {
                 vm->fuel = 0;
             }

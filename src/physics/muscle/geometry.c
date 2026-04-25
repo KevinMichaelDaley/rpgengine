@@ -9,51 +9,20 @@
 
 #include "ferrum/physics/muscle/geometry.h"
 #include "ferrum/physics/body.h"
+#include "ferrum/physics/phys_vec3_ops.h"
 #include "ferrum/math/quat.h"
 
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
 
-/* ── Static helpers ───────────────────────────────────────────────── */
-
-/** Dot product of two phys_vec3_t. */
-static float dot3_(phys_vec3_t a, phys_vec3_t b)
-{
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-/** Cross product of two phys_vec3_t. */
-static phys_vec3_t cross3_(phys_vec3_t a, phys_vec3_t b)
-{
-    return (phys_vec3_t){
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
-    };
-}
-
-/** Vector subtraction. */
-static phys_vec3_t sub3_(phys_vec3_t a, phys_vec3_t b)
-{
-    return (phys_vec3_t){ a.x - b.x, a.y - b.y, a.z - b.z };
-}
-
-/** Vector length. */
-static float len3_(phys_vec3_t v)
-{
-    return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-}
+/* ── Static helpers (use phys_vec3_ops.h) ─────────────────────────── */
 
 /** Transform a local-space point to world space using body position + orientation. */
 static phys_vec3_t body_to_world_(const phys_body_t *body, phys_vec3_t local)
 {
     phys_vec3_t rotated = quat_rotate_vec3(body->orientation, local);
-    return (phys_vec3_t){
-        body->position.x + rotated.x,
-        body->position.y + rotated.y,
-        body->position.z + rotated.z
-    };
+    return phys_vec3_add(body->position, rotated);
 }
 
 /* ── Public API ───────────────────────────────────────────────────── */
@@ -86,8 +55,8 @@ void phys_muscle_geometry_moment_arm(
     phys_vec3_t insertion_world = body_to_world_(body_b, attach->insertion_local);
 
     /* Muscle line of action: from origin to insertion. */
-    phys_vec3_t line = sub3_(insertion_world, origin_world);
-    float fiber_len = len3_(line);
+    phys_vec3_t line = phys_vec3_sub(insertion_world, origin_world);
+    float fiber_len = phys_vec3_magnitude(line);
 
     /* Apply cylinder wrapping if specified. */
     if (wrap && wrap->radius > 0.0f) {
@@ -100,12 +69,12 @@ void phys_muscle_geometry_moment_arm(
          * the wrap axis, compute the shortest path wrapping around the
          * cylinder.  For simplicity, we add pi*r to the straight-line
          * length when the line passes through the cylinder. */
-        phys_vec3_t to_origin = sub3_(origin_world, wrap_center);
-        phys_vec3_t to_insert = sub3_(insertion_world, wrap_center);
+        phys_vec3_t to_origin = phys_vec3_sub(origin_world, wrap_center);
+        phys_vec3_t to_insert = phys_vec3_sub(insertion_world, wrap_center);
 
         /* Remove component along wrap axis. */
-        float od = dot3_(to_origin, wrap_axis);
-        float id = dot3_(to_insert, wrap_axis);
+        float od = phys_vec3_dot(to_origin, wrap_axis);
+        float id = phys_vec3_dot(to_insert, wrap_axis);
         phys_vec3_t o_perp = {
             to_origin.x - od * wrap_axis.x,
             to_origin.y - od * wrap_axis.y,
@@ -117,8 +86,8 @@ void phys_muscle_geometry_moment_arm(
             to_insert.z - id * wrap_axis.z
         };
 
-        float o_dist = len3_(o_perp);
-        float i_dist = len3_(i_perp);
+        float o_dist = phys_vec3_magnitude(o_perp);
+        float i_dist = phys_vec3_magnitude(i_perp);
 
         /* If both points are outside the cylinder and the line midpoint
          * passes close to the center, add wrapping arc length. */
@@ -128,13 +97,13 @@ void phys_muscle_geometry_moment_arm(
                 (origin_world.y + insertion_world.y) * 0.5f - wrap_center.y,
                 (origin_world.z + insertion_world.z) * 0.5f - wrap_center.z
             };
-            float md = dot3_(mid, wrap_axis);
+            float md = phys_vec3_dot(mid, wrap_axis);
             phys_vec3_t m_perp = {
                 mid.x - md * wrap_axis.x,
                 mid.y - md * wrap_axis.y,
                 mid.z - md * wrap_axis.z
             };
-            float m_dist = len3_(m_perp);
+            float m_dist = phys_vec3_magnitude(m_perp);
             if (m_dist < wrap->radius) {
                 /* Approximate wrapping: add semicircle arc. */
                 float tangent_len_o = sqrtf(o_dist * o_dist -
@@ -166,10 +135,10 @@ void phys_muscle_geometry_moment_arm(
         (origin_world.y + insertion_world.y) * 0.5f,
         (origin_world.z + insertion_world.z) * 0.5f
     };
-    phys_vec3_t r = sub3_(midpoint, *joint_pos_world);
+    phys_vec3_t r = phys_vec3_sub(midpoint, *joint_pos_world);
 
     /* Project r perpendicular to joint axis. */
-    float r_along_axis = dot3_(r, *joint_axis_world);
+    float r_along_axis = phys_vec3_dot(r, *joint_axis_world);
     phys_vec3_t r_perp = {
         r.x - r_along_axis * joint_axis_world->x,
         r.y - r_along_axis * joint_axis_world->y,
@@ -182,8 +151,8 @@ void phys_muscle_geometry_moment_arm(
         phys_vec3_t line_dir = {
             line.x / fiber_len, line.y / fiber_len, line.z / fiber_len
         };
-        phys_vec3_t c = cross3_(r_perp, line_dir);
-        *moment_arm_out = dot3_(c, *joint_axis_world);
+        phys_vec3_t c = phys_vec3_cross(r_perp, line_dir);
+        *moment_arm_out = phys_vec3_dot(c, *joint_axis_world);
     } else {
         *moment_arm_out = 0.0f;
     }

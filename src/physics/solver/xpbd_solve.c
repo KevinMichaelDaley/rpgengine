@@ -46,7 +46,7 @@
  */
 static phys_vec3_t clamp_vec3_magnitude(phys_vec3_t v, float max_len)
 {
-    float sq = vec3_dot(v, v);
+    float sq = vec3_magnitude_sq(v);
     if (sq > max_len * max_len) {
         float scale = max_len / sqrtf(sq);
         return vec3_scale(v, scale);

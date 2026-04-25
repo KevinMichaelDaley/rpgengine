@@ -86,7 +86,7 @@ static int test_sphere_vs_tri_hit(void) {
     /* Sphere at (2, 0.5, 2), radius 1.0 → 0.5 above Y=0 face → penetration 0.5. */
     bool hit = phys_sphere_vs_triangle(
         (phys_vec3_t){2, 0.5f, 2}, 1.0f,
-        &tri, 0.0f, &c);
+        &tri, 0.0f, false, &c);
 
     ASSERT_TRUE(hit);
     ASSERT_FLOAT_NEAR(0.5f, c.penetration, 0.01f);
@@ -106,7 +106,7 @@ static int test_sphere_vs_tri_miss(void) {
 
     bool hit = phys_sphere_vs_triangle(
         (phys_vec3_t){2, 5.0f, 2}, 1.0f,
-        &tri, 0.0f, &c);
+        &tri, 0.0f, false, &c);
 
     ASSERT_TRUE(!hit);
     return 0;
@@ -121,7 +121,7 @@ static int test_sphere_vs_tri_edge(void) {
     /* Sphere just outside the X edge at y=0, close enough to touch. */
     bool hit = phys_sphere_vs_triangle(
         (phys_vec3_t){5, 0.0f, -0.3f}, 0.5f,
-        &tri, 0.0f, &c);
+        &tri, 0.0f, false, &c);
 
     ASSERT_TRUE(hit);
     ASSERT_TRUE(c.penetration > 0.0f);
@@ -137,7 +137,7 @@ static int test_sphere_vs_tri_vertex(void) {
     /* Sphere centered near vertex (0,0,0). */
     bool hit = phys_sphere_vs_triangle(
         (phys_vec3_t){-0.2f, 0.0f, -0.2f}, 0.5f,
-        &tri, 0.0f, &c);
+        &tri, 0.0f, false, &c);
 
     ASSERT_TRUE(hit);
     ASSERT_TRUE(c.penetration > 0.0f);
@@ -153,7 +153,7 @@ static int test_sphere_vs_tri_speculative(void) {
     /* Sphere at (2, 1.5, 2), radius 1.0 → 0.5 gap. Margin 1.0 → should hit speculative. */
     bool hit = phys_sphere_vs_triangle(
         (phys_vec3_t){2, 1.5f, 2}, 1.0f,
-        &tri, 1.0f, &c);
+        &tri, 1.0f, false, &c);
 
     ASSERT_TRUE(hit);
     ASSERT_TRUE(c.penetration < 0.0f); /* Negative = speculative */
@@ -216,7 +216,7 @@ static int test_capsule_vs_tri_hit(void) {
         (phys_vec3_t){3, 0.3f, 3},
         (phys_quat_t){0, 0, 0, 1},  /* identity = Y-axis aligned */
         0.5f, 1.0f,
-        &tri, 0.0f, &c);
+        &tri, 0.0f, false, &c);
 
     ASSERT_TRUE(hit);
     ASSERT_TRUE(c.penetration > 0.0f);
@@ -233,7 +233,7 @@ static int test_capsule_vs_tri_miss(void) {
         (phys_vec3_t){3, 10.0f, 3},
         (phys_quat_t){0, 0, 0, 1},
         0.5f, 1.0f,
-        &tri, 0.0f, &c);
+        &tri, 0.0f, false, &c);
 
     ASSERT_TRUE(!hit);
     return 0;
@@ -260,7 +260,7 @@ static int test_sphere_vs_mesh_bvh(void) {
     phys_contact_point_t contacts[8];
     int nc = phys_sphere_vs_mesh(
         (phys_vec3_t){2, 0.3f, 2}, 0.5f,
-        tris, &bvh, 0.0f,
+        tris, &bvh, 0.0f, false,
         contacts, 8);
 
     ASSERT_TRUE(nc >= 1);
@@ -317,7 +317,7 @@ static int test_capsule_vs_mesh_bvh(void) {
         (phys_vec3_t){2, 0.3f, 2},
         (phys_quat_t){0, 0, 0, 1},
         0.5f, 1.0f,
-        tris, &bvh, 0.0f,
+        tris, &bvh, 0.0f, false,
         contacts, 8);
 
     ASSERT_TRUE(nc >= 1);
@@ -332,9 +332,9 @@ static int test_mesh_narrowphase_null_safe(void) {
     memset(&c, 0, sizeof(c));
 
     ASSERT_TRUE(!phys_sphere_vs_triangle(
-        (phys_vec3_t){0,0,0}, 1.0f, NULL, 0.0f, &c));
+        (phys_vec3_t){0,0,0}, 1.0f, NULL, 0.0f, false, &c));
     ASSERT_TRUE(!phys_sphere_vs_triangle(
-        (phys_vec3_t){0,0,0}, 1.0f, NULL, 0.0f, NULL));
+        (phys_vec3_t){0,0,0}, 1.0f, NULL, 0.0f, false, NULL));
 
     ASSERT_TRUE(phys_box_vs_triangle(
         (phys_vec3_t){0,0,0}, (phys_quat_t){0,0,0,1},
@@ -342,10 +342,10 @@ static int test_mesh_narrowphase_null_safe(void) {
 
     ASSERT_TRUE(!phys_capsule_vs_triangle(
         (phys_vec3_t){0,0,0}, (phys_quat_t){0,0,0,1},
-        0.5f, 1.0f, NULL, 0.0f, &c));
+        0.5f, 1.0f, NULL, 0.0f, false, &c));
 
     ASSERT_TRUE(phys_sphere_vs_mesh(
-        (phys_vec3_t){0,0,0}, 1.0f, NULL, NULL, 0.0f, &c, 1) == 0);
+        (phys_vec3_t){0,0,0}, 1.0f, NULL, NULL, 0.0f, false, &c, 1) == 0);
 
     return 0;
 }

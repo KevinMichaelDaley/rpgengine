@@ -43,6 +43,17 @@ typedef struct fr_engine_settings {
     /** PRNG seed for the emulator (0 = auto). */
     uint32_t         net_emu_seed;
 #endif
+
+    /* ── LLM Provider Configuration ── */
+    char     llm_base_url[256];   /**< e.g. "http://localhost:11434/v1" */
+    char     llm_api_key[128];    /**< Empty = no auth (local Ollama). */
+    char     llm_model[64];       /**< e.g. "qwen2.5-coder:1.5b" */
+    uint32_t llm_timeout_ms;      /**< Per-prompt timeout. Default: 30000. */
+    uint32_t llm_max_tokens;      /**< Global cap per prompt. Default: 4096. */
+    float    llm_input_cost_per_1k;  /**< $ per 1K input tokens. */
+    float    llm_output_cost_per_1k; /**< $ per 1K output tokens. */
+    float    llm_budget_usd;      /**< Cumulative budget; 0 = unlimited. */
+
     /** Reserved for future settings (ensures the struct is never empty). */
     uint8_t _reserved;
 } fr_engine_settings_t;

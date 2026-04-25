@@ -17,36 +17,21 @@
 #include "ferrum/physics/mesh_collider.h"
 #include "ferrum/physics/manifold.h"
 #include "ferrum/physics/phys_vec3.h"
+#include "ferrum/physics/phys_vec3_ops.h"
 
 #include <math.h>
 #include <string.h>
 
-/* ---- Helpers ---- */
-
-static phys_vec3_t cross_(phys_vec3_t a, phys_vec3_t b) {
-    return (phys_vec3_t){
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x
-    };
-}
-
-static float dot_(phys_vec3_t a, phys_vec3_t b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static phys_vec3_t sub_(phys_vec3_t a, phys_vec3_t b) {
-    return (phys_vec3_t){a.x - b.x, a.y - b.y, a.z - b.z};
-}
+/* ---- Helpers (use phys_vec3_ops.h) ---- */
 
 /**
  * @brief Project triangle onto axis, return min and max projections.
  */
 static void project_tri_(const phys_triangle_t *tri, phys_vec3_t axis,
                            float *out_min, float *out_max) {
-    float p0 = dot_(tri->v[0], axis);
-    float p1 = dot_(tri->v[1], axis);
-    float p2 = dot_(tri->v[2], axis);
+    float p0 = phys_vec3_dot(tri->v[0], axis);
+    float p1 = phys_vec3_dot(tri->v[1], axis);
+    float p2 = phys_vec3_dot(tri->v[2], axis);
 
     *out_min = p0;
     *out_max = p0;
@@ -83,27 +68,27 @@ bool phys_triangle_vs_triangle(
 
     /* Compute edges. */
     phys_vec3_t a_edges[3] = {
-        sub_(a->v[1], a->v[0]),
-        sub_(a->v[2], a->v[1]),
-        sub_(a->v[0], a->v[2])
+        phys_vec3_sub(a->v[1], a->v[0]),
+        phys_vec3_sub(a->v[2], a->v[1]),
+        phys_vec3_sub(a->v[0], a->v[2])
     };
     phys_vec3_t b_edges[3] = {
-        sub_(b->v[1], b->v[0]),
-        sub_(b->v[2], b->v[1]),
-        sub_(b->v[0], b->v[2])
+        phys_vec3_sub(b->v[1], b->v[0]),
+        phys_vec3_sub(b->v[2], b->v[1]),
+        phys_vec3_sub(b->v[0], b->v[2])
     };
 
     /* Face normals. */
-    phys_vec3_t a_normal = cross_(a_edges[0], a_edges[1]);
-    phys_vec3_t b_normal = cross_(b_edges[0], b_edges[1]);
+    phys_vec3_t a_normal = phys_vec3_cross(a_edges[0], a_edges[1]);
+    phys_vec3_t b_normal = phys_vec3_cross(b_edges[0], b_edges[1]);
 
     /* Collect up to 11 axes. */
     phys_vec3_t axes[11];
     int num_axes = 0;
 
     /* Add face normals. */
-    float a_norm_len = sqrtf(dot_(a_normal, a_normal));
-    float b_norm_len = sqrtf(dot_(b_normal, b_normal));
+    float a_norm_len = sqrtf(phys_vec3_dot(a_normal, a_normal));
+    float b_norm_len = sqrtf(phys_vec3_dot(b_normal, b_normal));
     if (a_norm_len > 1e-8f) {
         axes[num_axes++] = (phys_vec3_t){
             a_normal.x / a_norm_len,
@@ -122,8 +107,8 @@ bool phys_triangle_vs_triangle(
     /* Add edge cross-product axes (9 of them). */
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
-            phys_vec3_t c = cross_(a_edges[i], b_edges[j]);
-            float len = sqrtf(dot_(c, c));
+            phys_vec3_t c = phys_vec3_cross(a_edges[i], b_edges[j]);
+            float len = sqrtf(phys_vec3_dot(c, c));
             if (len > 1e-8f) {
                 axes[num_axes++] = (phys_vec3_t){
                     c.x / len, c.y / len, c.z / len
@@ -163,8 +148,8 @@ bool phys_triangle_vs_triangle(
         (b->v[0].y + b->v[1].y + b->v[2].y) / 3.0f,
         (b->v[0].z + b->v[1].z + b->v[2].z) / 3.0f
     };
-    phys_vec3_t ab = sub_(b_center, a_center);
-    if (dot_(ab, best_axis) < 0.0f) {
+    phys_vec3_t ab = phys_vec3_sub(b_center, a_center);
+    if (phys_vec3_dot(ab, best_axis) < 0.0f) {
         best_axis.x = -best_axis.x;
         best_axis.y = -best_axis.y;
         best_axis.z = -best_axis.z;

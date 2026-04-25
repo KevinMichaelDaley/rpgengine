@@ -117,6 +117,7 @@ static const mnemonic_entry_t g_mnemonics[] = {
     {"cos",           AEGIS_OP_COS},
     {"vec3_pack",     AEGIS_OP_VEC3_PACK},
     {"show",          AEGIS_OP_SHOW},
+    {"llm_prompt",    AEGIS_OP_LLM_PROMPT},
     {NULL, 0}
 };
 

@@ -16,6 +16,7 @@
 #include "ferrum/editor/edit_commands.h"
 #include "ferrum/editor/edit_cmd_ctx.h"
 #include "ferrum/editor/edit_entity.h"
+#include "ferrum/editor/edit_selection.h"
 #include "ferrum/editor/edit_undo.h"
 #include "ferrum/editor/edit_entity_version.h"
 

@@ -182,28 +182,7 @@ void phys_stage_integrate(const phys_integrate_args_t *args)
             integrate_ang = vec3_add(integrate_ang, pseudo[i].angular);
         }
         {
-            float wx = integrate_ang.x * body_dt;
-            float wy = integrate_ang.y * body_dt;
-            float wz = integrate_ang.z * body_dt;
-            float theta = sqrtf(wx * wx + wy * wy + wz * wz);
-
-            phys_quat_t dq;
-            if (theta > 1e-8f) {
-                float half_theta = 0.5f * theta;
-                float s = sinf(half_theta) / theta;
-                dq.w = cosf(half_theta);
-                dq.x = s * wx;
-                dq.y = s * wy;
-                dq.z = s * wz;
-            } else {
-                /* Small angle: sin(θ/2)/θ ≈ 0.5 */
-                dq.w = 1.0f;
-                dq.x = 0.5f * wx;
-                dq.y = 0.5f * wy;
-                dq.z = 0.5f * wz;
-            }
-            out->orientation = quat_normalize_safe(
-                quat_mul(dq, in->orientation), 1e-8f);
+            out->orientation = quat_integrate_expmap(in->orientation, integrate_ang, body_dt);
         }
 
         /* Shortest-path hemisphere consistency: ensure the integrated

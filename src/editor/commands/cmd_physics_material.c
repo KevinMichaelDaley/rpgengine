@@ -12,6 +12,8 @@
 #include "ferrum/editor/edit_entity.h"
 #include "ferrum/entity/entity_attrs.h"
 
+#include <string.h>
+
 bool cmd_physics_material(edit_dispatch_t *d, const json_value_t *args,
                           json_value_t *result, json_arena_t *arena) {
     (void)result;

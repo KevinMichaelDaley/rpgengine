@@ -14,6 +14,7 @@
  */
 
 #include "ferrum/physics/gjk_epa.h"
+#include "ferrum/physics/phys_vec3_ops.h"
 
 #include <float.h>
 #include <math.h>
@@ -51,27 +52,7 @@ typedef struct epa_edge {
     uint16_t a, b;
 } epa_edge_t;
 
-/* ── Vector helpers ────────────────────────────────────────────── */
-
-static float dot3(phys_vec3_t a, phys_vec3_t b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-static phys_vec3_t sub3(phys_vec3_t a, phys_vec3_t b) {
-    return (phys_vec3_t){a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-static phys_vec3_t neg3(phys_vec3_t v) {
-    return (phys_vec3_t){-v.x, -v.y, -v.z};
-}
-
-static phys_vec3_t cross3(phys_vec3_t a, phys_vec3_t b) {
-    return (phys_vec3_t){
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    };
-}
+/* ── Vector helpers (use phys_vec3_ops.h) ─────────────────────────── */
 
 /* Shared simplex from GJK — defined in gjk.c. */
 typedef struct gjk_vertex {
@@ -94,14 +75,14 @@ static bool epa_face_normal(const epa_vertex_t *verts, const epa_face_t *f,
     phys_vec3_t a = verts[f->v[0]].p;
     phys_vec3_t b = verts[f->v[1]].p;
     phys_vec3_t c = verts[f->v[2]].p;
-    phys_vec3_t ab = sub3(b, a);
-    phys_vec3_t ac = sub3(c, a);
-    phys_vec3_t n = cross3(ab, ac);
-    float len = sqrtf(dot3(n, n));
+    phys_vec3_t ab = phys_vec3_sub(b, a);
+    phys_vec3_t ac = phys_vec3_sub(c, a);
+    phys_vec3_t n = phys_vec3_cross(ab, ac);
+    float len = sqrtf(phys_vec3_dot(n, n));
     if (len < 1e-10f) return false;
     float inv_len = 1.0f / len;
     *normal_out = (phys_vec3_t){n.x * inv_len, n.y * inv_len, n.z * inv_len};
-    *dist_out = dot3(*normal_out, a);
+    *dist_out = phys_vec3_dot(*normal_out, a);
     return true;
 }
 
@@ -122,7 +103,7 @@ static bool epa_init_face(epa_face_t *f, uint16_t va, uint16_t vb, uint16_t vc,
         uint16_t tmp = f->v[1];
         f->v[1] = f->v[2];
         f->v[2] = tmp;
-        f->normal = neg3(f->normal);
+        f->normal = phys_vec3_neg(f->normal);
         f->dist = -f->dist;
     }
     return true;
@@ -148,14 +129,14 @@ bool phys_epa_penetration(phys_gjk_support_fn support_a, const void *shape_a,
         for (int i = 0; i < 6 && simplex->count < 4; i++) {
             gjk_vertex_t v;
             v.a = support_a(shape_a, dirs[i]);
-            v.b = support_b(shape_b, neg3(dirs[i]));
-            v.p = sub3(v.a, v.b);
+            v.b = support_b(shape_b, phys_vec3_neg(dirs[i]));
+            v.p = phys_vec3_sub(v.a, v.b);
 
             /* Check that this point isn't already in the simplex. */
             int dup = 0;
             for (int j = 0; j < simplex->count; j++) {
-                phys_vec3_t diff = sub3(v.p, simplex->verts[j].p);
-                if (dot3(diff, diff) < 1e-8f) { dup = 1; break; }
+                phys_vec3_t diff = phys_vec3_sub(v.p, simplex->verts[j].p);
+                if (phys_vec3_dot(diff, diff) < 1e-8f) { dup = 1; break; }
             }
             if (!dup) {
                 simplex->verts[simplex->count++] = v;
@@ -202,13 +183,13 @@ bool phys_epa_penetration(phys_gjk_support_fn support_a, const void *shape_a,
     }
     for (uint32_t i = 0; i < face_count; i++) {
         if (!faces[i].alive) continue;
-        float cd = dot3(faces[i].normal, centroid) - faces[i].dist;
+        float cd = phys_vec3_dot(faces[i].normal, centroid) - faces[i].dist;
         if (cd > 0) {
             /* Normal points toward centroid — flip. */
             uint16_t tmp = faces[i].v[1];
             faces[i].v[1] = faces[i].v[2];
             faces[i].v[2] = tmp;
-            faces[i].normal = neg3(faces[i].normal);
+            faces[i].normal = phys_vec3_neg(faces[i].normal);
             faces[i].dist = -faces[i].dist;
         }
     }
@@ -232,10 +213,10 @@ bool phys_epa_penetration(phys_gjk_support_fn support_a, const void *shape_a,
         phys_vec3_t search_dir = faces[closest_face].normal;
         epa_vertex_t new_vert;
         new_vert.a = support_a(shape_a, search_dir);
-        new_vert.b = support_b(shape_b, neg3(search_dir));
-        new_vert.p = sub3(new_vert.a, new_vert.b);
+        new_vert.b = support_b(shape_b, phys_vec3_neg(search_dir));
+        new_vert.p = phys_vec3_sub(new_vert.a, new_vert.b);
 
-        float new_dist = dot3(new_vert.p, search_dir);
+        float new_dist = phys_vec3_dot(new_vert.p, search_dir);
 
         /* Check convergence: if new point doesn't extend polytope
            significantly, we're done. */
@@ -252,8 +233,8 @@ bool phys_epa_penetration(phys_gjk_support_fn support_a, const void *shape_a,
             phys_vec3_t va = verts[i0].p;
             phys_vec3_t vb = verts[i1].p;
             phys_vec3_t vc = verts[i2].p;
-            phys_vec3_t ab = sub3(vb, va);
-            phys_vec3_t ac = sub3(vc, va);
+            phys_vec3_t ab = phys_vec3_sub(vb, va);
+            phys_vec3_t ac = phys_vec3_sub(vc, va);
             phys_vec3_t n = faces[closest_face].normal;
             /* Project origin onto face plane: p = origin - dist * normal = -dist * normal,
                but we want it relative to va. */
@@ -269,11 +250,11 @@ bool phys_epa_penetration(phys_gjk_support_fn support_a, const void *shape_a,
                 closest_dist * n.z - va.z,
             };
 
-            float d00 = dot3(ab, ab);
-            float d01 = dot3(ab, ac);
-            float d11 = dot3(ac, ac);
-            float d20 = dot3(proj, ab);
-            float d21 = dot3(proj, ac);
+            float d00 = phys_vec3_dot(ab, ab);
+            float d01 = phys_vec3_dot(ab, ac);
+            float d11 = phys_vec3_dot(ac, ac);
+            float d20 = phys_vec3_dot(proj, ab);
+            float d21 = phys_vec3_dot(proj, ac);
             float denom = d00 * d11 - d01 * d01;
             float bv = 0.333f, bw = 0.333f;
             if (fabsf(denom) > 1e-12f) {
@@ -310,7 +291,7 @@ bool phys_epa_penetration(phys_gjk_support_fn support_a, const void *shape_a,
         memset(visible, 0, face_count);
         for (uint32_t i = 0; i < face_count; i++) {
             if (!faces[i].alive) continue;
-            float d = dot3(faces[i].normal, new_vert.p) - faces[i].dist;
+            float d = phys_vec3_dot(faces[i].normal, new_vert.p) - faces[i].dist;
             if (d > EPA_TOLERANCE * 0.1f) {
                 visible[i] = 1;
             }

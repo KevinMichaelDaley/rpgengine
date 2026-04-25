@@ -1,0 +1,20 @@
+{
+  "name": "Wood Crate",
+  "slots": {
+    "albedo": "textures/wood_albedo.png",
+    "normal": "textures/wood_normal.png",
+    "roughness": "textures/wood_roughness.png",
+    "metallic": null,
+    "emissive": null
+  },
+  "params": {
+    "roughness_factor": 0.8,
+    "metallic_factor": 0.0,
+    "emissive_strength": 0.0
+  },
+  "flags": {
+    "double_sided": false,
+    "alpha_blend": false,
+    "alpha_test": false
+  }
+}

@@ -145,12 +145,12 @@ static float clampf(float x, float lo, float hi) {
     return x;
 }
 
-static float vec3_distance(vec3_t a, vec3_t b) {
+/* static float vec3_distance(vec3_t a, vec3_t b) {
     const float dx = a.x - b.x;
     const float dy = a.y - b.y;
     const float dz = a.z - b.z;
     return sqrtf(dx * dx + dy * dy + dz * dz);
-}
+} */
 
 static vec3_t expected_pos(uint16_t owner_client_id, uint16_t max_clients) {
     const float spacing = 0.75f;

@@ -1,10 +1,10 @@
-CC ?= clang
+CC = /usr/bin/gcc
 JOB_INSTRUMENTATION ?= 0
 TRACY ?= 0
 STACK_CANARY ?= 0
 EMU ?= 0
 
-CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -Iextern/cgltf -Iextern/clay -O3
+CFLAGS ?= -std=c11 -Wall -Wextra -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -Iextern/cgltf -Iextern/clay -O3
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
 
@@ -28,7 +28,7 @@ ifeq ($(TRACY),1)
 endif
 
 JOB_SRC := $(wildcard src/job/*.c) $(wildcard src/job/*/*.c) $(wildcard src/job/*/*/*.c)
-MATH_SRC := $(wildcard src/math/*.c)
+MATH_SRC := src/math/vec3.c src/math/quat.c $(filter-out src/math/vec3.c src/math/quat.c, $(wildcard src/math/*.c))
 MEM_SRC_BASE := $(wildcard src/memory/*.c)
 MEM_TRACY_WRAP_SRC := $(wildcard src/memory/alloc_tracy/*.c)
 MEM_SRC := $(MEM_SRC_BASE)
@@ -56,8 +56,9 @@ ENGINE_SRC := src/engine_settings.c
 EDITOR_SRC := $(wildcard src/editor/*.c) $(wildcard src/editor/*/*.c) $(wildcard src/editor/*/*/*.c)
 ASSET_SRC := $(wildcard src/asset/*.c)
 AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
+LLM_SRC := $(wildcard src/llm/*/*.c) $(wildcard src/llm/*/*/*.c)
 ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(ANIM_SRC) $(RENDERER_DEBUG_LINES_SRC)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(RENDERER_DEBUG_LINES_SRC)
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -266,6 +267,8 @@ BIN_HEADLESS += build/aegis_ops_update_tests
 BIN_HEADLESS += build/aegis_async_buffer_tests
 BIN_HEADLESS += build/aegis_ops_async_tests
 BIN_HEADLESS += build/aegis_async_execute_tests
+BIN_HEADLESS += build/aegis_llm_prompt_tests
+BIN_HEADLESS += build/llm_cost_tracker_tests
 BIN_HEADLESS += build/aegis_ops_signal_tests
 BIN_HEADLESS += build/aegis_ops_await_tests
 BIN_HEADLESS += build/aegis_runtime_idle_tests
@@ -307,7 +310,12 @@ $(OBJDIR)/%.o: %.c | build
 # Renderer sources need SDL2 flags.
 $(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC)): $(OBJDIR)/%.o: %.c | build
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) -I/usr/include/aarch64-linux-gnu/SDL2 $(DEPFLAGS) -c $< -o $@
+
+# Editor sources also need SDL2 flags.
+$(patsubst %.c,$(OBJDIR)/%.o,$(EDITOR_SRC)): $(OBJDIR)/%.o: %.c | build
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(SDL2_CFLAGS) -I/usr/include/aarch64-linux-gnu/SDL2 -I/usr/include/SDL2 $(DEPFLAGS) -c $< -o $@
 
 # GLAD loader (third-party, suppress warnings).
 $(OBJ_GLAD): third_party/glad/src/glad.c | build
@@ -946,7 +954,8 @@ build/aegis_yield_tests: tests/aegis/aegis_yield_tests.c $(AEGIS_VM_SRC) | build
 
 AEGIS_ALL_SRC := $(AEGIS_VM_SRC) src/aegis/aegis_vm_run.c src/aegis/aegis_decode.c \
 	$(wildcard src/aegis/ops/*.c) \
-	src/aegis/aegis_event_queue.c src/aegis/aegis_topic_table.c src/aegis/aegis_topic_route.c
+	src/aegis/aegis_event_queue.c src/aegis/aegis_topic_table.c src/aegis/aegis_topic_route.c \
+	src/engine_settings.c
 build/aegis_vm_tests: tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
 
@@ -992,6 +1001,15 @@ build/aegis_ops_async_tests: build/libheadless.a tests/aegis/aegis_ops_async_tes
 
 build/aegis_async_execute_tests: build/libheadless.a tests/aegis/aegis_async_execute_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_async_execute_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/aegis_llm_prompt_tests: build/libheadless.a tests/aegis/aegis_llm_prompt_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_llm_prompt_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/llm_cost_tracker_tests: tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c | build
+	$(CC) $(CFLAGS) tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ $(LDFLAGS)
+
+build/llm_smoke_test: tests/llm/llm_smoke_test.c src/engine_settings.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c | build
+	$(CC) $(CFLAGS) tests/llm/llm_smoke_test.c src/engine_settings.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ $(shell pkg-config --libs libcurl) $(LDFLAGS)
 
 build/aegis_ops_signal_tests: tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
