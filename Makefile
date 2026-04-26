@@ -269,6 +269,7 @@ BIN_HEADLESS += build/aegis_ops_async_tests
 BIN_HEADLESS += build/aegis_async_execute_tests
 BIN_HEADLESS += build/aegis_llm_prompt_tests
 BIN_HEADLESS += build/llm_cost_tracker_tests
+BIN_HEADLESS += build/aegis_tools_tests
 BIN_HEADLESS += build/aegis_ops_signal_tests
 BIN_HEADLESS += build/aegis_ops_await_tests
 BIN_HEADLESS += build/aegis_runtime_idle_tests
@@ -1005,6 +1006,9 @@ build/aegis_async_execute_tests: build/libheadless.a tests/aegis/aegis_async_exe
 build/aegis_llm_prompt_tests: build/libheadless.a tests/aegis/aegis_llm_prompt_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_llm_prompt_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
+build/aegis_tools_tests: build/libheadless.a tests/aegis/aegis_tools_tests.c | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_tools_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
 build/llm_cost_tracker_tests: tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c | build
 	$(CC) $(CFLAGS) tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ $(LDFLAGS)
 
@@ -1482,6 +1486,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/aegis_async_buffer_tests \
 	&& ./build/aegis_ops_async_tests \
 	&& ./build/aegis_async_execute_tests \
+	&& ./build/aegis_llm_prompt_tests \
+	&& ./build/aegis_tools_tests \
 	&& ./build/aegis_ops_signal_tests \
 	&& ./build/aegis_ops_await_tests \
 	&& ./build/aegis_runtime_idle_tests \

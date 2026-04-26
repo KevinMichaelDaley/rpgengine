@@ -190,6 +190,9 @@ typedef enum aegis_opcode {
     /* -- LLM prompting -- */
     AEGIS_OP_LLM_PROMPT     = 0x4A,  /**< Submit async LLM prompt. */
 
+    /* -- Tool actions -- */
+    AEGIS_OP_TOOL_ACTION    = 0x4D,  /**< Immediate tool dispatch. */
+
     /** Sentinel: total number of opcodes. Not a valid instruction. */
     AEGIS_OP_COUNT
 } aegis_opcode_t;

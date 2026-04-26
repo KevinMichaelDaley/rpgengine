@@ -18,6 +18,7 @@
 #include "ferrum/aegis/aegis_ops_update.h"
 #include "ferrum/aegis/aegis_ops_async.h"
 #include "ferrum/aegis/aegis_ops_llm.h"
+#include "ferrum/aegis/aegis_ops_tools.h"
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 #include "ferrum/aegis/aegis_ops_signal.h"
@@ -490,6 +491,13 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             } else {
                 vm->fuel = 0;
             }
+            break;
+
+        case AEGIS_OP_TOOL_ACTION:
+            if (!aegis_op_tool_action(vm, &d)) {
+                return vm_error(vm, 0xFFBA);
+            }
+            /* Tool actions consume 50 fuel (already deducted by handler). */
             break;
 
         case AEGIS_OP_POLL:
