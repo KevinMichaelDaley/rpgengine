@@ -69,6 +69,17 @@ bool aegis_op_poll(struct aegis_vm *vm, const struct aegis_decode_result *d);
  */
 bool aegis_op_wait(struct aegis_vm *vm, const struct aegis_decode_result *d);
 
+/**
+ * @brief Submit an async sense query (sense_query r_handle, r_mode_flags, r_target).
+ *
+ * Allocates a 4 KB result slot in the heap arena, builds a task with
+ * AEGIS_TASK_SENSE_QUERY type, packs query_mode + sense_flags + target_entity
+ * + npc_position + max_range into params, submits to the async buffer.
+ *
+ * @return true on success, false if limit exceeded or buffer full.
+ */
+bool aegis_op_sense_query(struct aegis_vm *vm, const struct aegis_decode_result *d);
+
 #ifdef __cplusplus
 }
 #endif

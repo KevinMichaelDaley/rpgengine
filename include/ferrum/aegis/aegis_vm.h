@@ -109,6 +109,10 @@ typedef struct aegis_vm {
     /** Script ID for this VM instance (set by runtime). */
     uint32_t script_id;
 
+    /** Entity ID that owns this VM/script (set by runtime). Used by
+     *  SENSE_QUERY to determine the querier's position, range, etc. */
+    uint32_t entity_id;
+
     /** Topic table reference for subscribe/signal (set by runtime, not owned). */
     struct aegis_topic_table *topic_table;
 

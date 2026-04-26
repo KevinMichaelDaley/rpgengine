@@ -40,7 +40,8 @@ enum {
 enum {
     AEGIS_TASK_VIS_TEST  = 0, /**< Visibility / raycast test. */
     AEGIS_TASK_NAV_QUERY = 1, /**< Navigation mesh path query. */
-    AEGIS_TASK_LLM_PROMPT = 2 /**< LLM prompt (OpenAI-compatible API). */
+    AEGIS_TASK_LLM_PROMPT = 2, /**< LLM prompt (OpenAI-compatible API). */
+    AEGIS_TASK_SENSE_QUERY = 3 /**< NPC sense query (proximity + LOS + audio + smell + shadow). */
 };
 
 /* ------------------------------------------------------------------ */

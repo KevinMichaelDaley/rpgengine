@@ -190,6 +190,9 @@ typedef enum aegis_opcode {
     /* -- LLM prompting -- */
     AEGIS_OP_LLM_PROMPT     = 0x4A,  /**< Submit async LLM prompt. */
 
+    /* -- Sense queries -- */
+    AEGIS_OP_SENSE_QUERY    = 0x4B,  /**< Submit async NPC sense query. */
+
     /* -- Tool actions -- */
     AEGIS_OP_TOOL_ACTION    = 0x4D,  /**< Immediate tool dispatch. */
 

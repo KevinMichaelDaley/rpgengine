@@ -23,6 +23,7 @@
 #include <string.h>
 
 #include "ferrum/aegis/aegis_async.h"
+#include "ferrum/aegis/aegis_sense.h"
 #include "ferrum/physics/raycast.h"
 #include "ferrum/physics/world.h"
 
@@ -98,6 +99,162 @@ static void execute_vis_test_(const aegis_async_task_t *task,
     }
 }
 
+/* ── SENSE_QUERY executor ──────────────────────────────────────── */
+
+/**
+ * @brief Internal candidate record during sense sweep.
+ */
+typedef struct sense_candidate {
+    uint32_t entity_id;
+    float    distance;
+    float    salience;
+    uint16_t flags;
+} sense_candidate_t;
+
+/**
+ * @brief Compute Euclidean distance between two 3D points.
+ */
+static float dist3_(const float a[3], const float b[3]) {
+    float dx = a[0] - b[0];
+    float dy = a[1] - b[1];
+    float dz = a[2] - b[2];
+    return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+/**
+ * @brief Execute a single SENSE_QUERY task.
+ *
+ * Param layout (24 bytes):
+ *   params[0..1]   = query_mode    (uint16_t)
+ *   params[2..3]   = sense_flags   (uint16_t)
+ *   params[4..7]   = target_entity (uint32_t)
+ *   params[8..19]  = npc_position  (float[3])
+ *   params[20..23] = max_range     (float)
+ *
+ * Result layout (variable, up to result_cap):
+ *   aegis_sense_result_t header
+ *   entity_count × aegis_sense_entity_t
+ *   event_count  × aegis_sense_event_t
+ */
+static void execute_sense_query_(const aegis_async_task_t *task,
+                                 const struct phys_world *world) {
+    if (!task->result_ptr || task->result_cap < sizeof(aegis_sense_result_t)) {
+        return;
+    }
+
+    /* Unpack params. */
+    uint16_t query_mode;
+    uint16_t sense_flags;
+    uint32_t target_entity;
+    float    npc_pos[3];
+    float    max_range;
+    memcpy(&query_mode,     task->params,      2);
+    memcpy(&sense_flags,    task->params + 2,  2);
+    memcpy(&target_entity,  task->params + 4,  4);
+    memcpy(npc_pos,         task->params + 8,  12);
+    memcpy(&max_range,      task->params + 20, 4);
+
+    /* Write header. */
+    aegis_sense_result_t *header = (aegis_sense_result_t *)task->result_ptr;
+    memset(header, 0, sizeof(*header));
+    header->status = 0;
+
+    /* Gather candidates from physics world. */
+    sense_candidate_t candidates[128];
+    uint32_t candidate_count = 0;
+    uint32_t max_candidates = sizeof(candidates) / sizeof(candidates[0]);
+
+    const phys_body_pool_t *pool = &world->body_pool;
+    uint32_t body_count = pool->count;
+    const phys_body_t *bodies = pool->bodies_curr;
+    const uint8_t *active = pool->active;
+
+    for (uint32_t bi = 0; bi < body_count && candidate_count < max_candidates; bi++) {
+        if (!active[bi]) continue;
+        const phys_body_t *b = &bodies[bi];
+        uint32_t eid = b->entity_index;
+        if (eid == UINT32_MAX) continue;
+
+        float d = dist3_(npc_pos, (const float *)&b->position);
+        if (d > max_range) continue;
+
+        /* In targeted mode, only accept the target entity. */
+        if (query_mode == AEGIS_SENSE_MODE_TARGETED && eid != target_entity) {
+            continue;
+        }
+
+        uint16_t flags = 0;
+        if (sense_flags & AEGIS_SENSE_PROXIMITY) {
+            flags |= AEGIS_SENSE_ENTITY_VISIBLE; /* proximity = "detected nearby" */
+        }
+
+        /* LOS raycast (expensive — only for near-range candidates). */
+        if ((sense_flags & AEGIS_SENSE_LOS) && d < max_range) {
+            phys_ray_t ray;
+            ray.origin.x    = npc_pos[0];
+            ray.origin.y    = npc_pos[1];
+            ray.origin.z    = npc_pos[2];
+            ray.direction.x = (b->position.x - npc_pos[0]) / d;
+            ray.direction.y = (b->position.y - npc_pos[1]) / d;
+            ray.direction.z = (b->position.z - npc_pos[2]) / d;
+            ray.max_distance = d + 0.5f; /* slight margin */
+
+            phys_raycast_hit_t hit;
+            memset(&hit, 0, sizeof(hit));
+            if (phys_raycast(world, &ray, &hit, 0xFFFFFFFFu)) {
+                /* Hit something. If it's our target body, LOS is clear. */
+                if (hit.body_id == bi) {
+                    flags |= AEGIS_SENSE_ENTITY_VISIBLE;
+                }
+            }
+        }
+
+        /* Audio, smell, shadow are distance-approximated (stubs). */
+        if ((sense_flags & AEGIS_SENSE_AUDIO) && d < max_range * 0.5f) {
+            flags |= AEGIS_SENSE_ENTITY_AUDIBLE;
+        }
+        if ((sense_flags & AEGIS_SENSE_SMELL) && d < max_range * 0.3f) {
+            flags |= AEGIS_SENSE_ENTITY_SMELLED;
+        }
+
+        float salience = 1.0f - (d / max_range);
+        if (salience < 0.0f) salience = 0.0f;
+        if (salience > 1.0f) salience = 1.0f;
+
+        candidates[candidate_count].entity_id = eid;
+        candidates[candidate_count].distance  = d;
+        candidates[candidate_count].salience  = salience;
+        candidates[candidate_count].flags     = flags;
+        candidate_count++;
+    }
+
+    /* Determine how many entities fit in the result buffer. */
+    uint8_t *write_ptr = (uint8_t *)task->result_ptr + sizeof(aegis_sense_result_t);
+    uint32_t remaining = task->result_cap - sizeof(aegis_sense_result_t);
+    uint32_t written = 0;
+
+    for (uint32_t i = 0; i < candidate_count; i++) {
+        uint32_t need = sizeof(aegis_sense_entity_t); /* conservative: no name */
+        if (need > remaining) {
+            header->truncated = 1;
+            break;
+        }
+        aegis_sense_entity_t *ent = (aegis_sense_entity_t *)write_ptr;
+        ent->entity_id = candidates[i].entity_id;
+        ent->distance  = candidates[i].distance;
+        ent->salience  = candidates[i].salience;
+        ent->flags     = candidates[i].flags;
+        ent->name[0]   = '\0';
+        write_ptr += need;
+        remaining -= need;
+        written++;
+    }
+
+    header->entity_count = written;
+    header->total_found  = candidate_count;
+    header->event_count  = 0;
+}
+
 /* ── Public API ────────────────────────────────────────────────── */
 
 uint32_t aegis_async_execute_drain(struct aegis_async_buffer *buf,
@@ -126,6 +283,10 @@ uint32_t aegis_async_execute_drain(struct aegis_async_buffer *buf,
             write_miss_result_(t->result_ptr);
             final_status = AEGIS_ASYNC_ERROR;
             final_status = AEGIS_ASYNC_ERROR;
+            break;
+
+        case AEGIS_TASK_SENSE_QUERY:
+            execute_sense_query_(t, world);
             break;
 
         default:

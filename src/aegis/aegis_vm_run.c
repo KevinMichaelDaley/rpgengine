@@ -22,6 +22,7 @@
 #include "ferrum/aegis/aegis_ops_flow.h"
 #include "ferrum/aegis/aegis_ops_math.h"
 #include "ferrum/aegis/aegis_ops_signal.h"
+#include "ferrum/aegis/aegis_sense.h"
 #include <math.h>
 #include <stdio.h>
 
@@ -488,6 +489,18 @@ aegis_vm_status_t aegis_vm_run(aegis_vm_t *vm) {
             /* LLM prompts are very expensive — burn 500 fuel. */
             if (vm->fuel > 500) {
                 vm->fuel -= 500;
+            } else {
+                vm->fuel = 0;
+            }
+            break;
+
+        case AEGIS_OP_SENSE_QUERY:
+            if (!aegis_op_sense_query(vm, &d)) {
+                return vm_error(vm, 0xFFB9);
+            }
+            /* Sense queries are expensive — burn 300 fuel. */
+            if (vm->fuel > 300) {
+                vm->fuel -= 300;
             } else {
                 vm->fuel = 0;
             }
