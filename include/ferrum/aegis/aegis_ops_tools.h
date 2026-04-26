@@ -33,6 +33,8 @@ struct aegis_decode_result;
  */
 bool aegis_op_tool_action(struct aegis_vm *vm, const struct aegis_decode_result *d);
 
+bool aegis_op_knowledge_query(struct aegis_vm *vm, const char *args_json);
+
 #ifdef __cplusplus
 }
 #endif

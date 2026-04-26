@@ -1,10 +1,11 @@
-CC = /usr/bin/gcc
+CC  = /usr/bin/gcc
+CXX = /usr/bin/g++
 JOB_INSTRUMENTATION ?= 0
 TRACY ?= 0
 STACK_CANARY ?= 0
 EMU ?= 0
 
-CFLAGS ?= -std=c11 -Wall -Wextra -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -Iextern/cgltf -Iextern/clay -O3
+CFLAGS ?= -std=c11 -Wall -Wextra -pthread -Iinclude -Ithird_party/stb -Ithird_party/glad/include -Iextern/cgltf -Iextern/clay -Iextern/faiss -O3
 CFLAGS += -DFR_JOB_INSTRUMENTATION=$(JOB_INSTRUMENTATION)
 CFLAGS += -DJOB_STACK_CANARY=$(STACK_CANARY)
 
@@ -12,7 +13,8 @@ ifeq ($(EMU),1)
 	CFLAGS += -DFR_NET_EMULATION
 endif
 
-LDFLAGS ?= -lm
+LDFLAGS ?= -lm -fopenmp
+LDFLAGS += -Lextern/faiss/build/faiss -Lextern/faiss/build/c_api -lfaiss_c -lfaiss -lopenblas -lstdc++
 
 TRACY_DIR := extern/tracy
 TRACY_BUILD_DIR := $(TRACY_DIR)/build
@@ -58,7 +60,10 @@ ASSET_SRC := $(wildcard src/asset/*.c)
 AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
 LLM_SRC := $(wildcard src/llm/*/*.c) $(wildcard src/llm/*/*/*.c)
 ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(RENDERER_DEBUG_LINES_SRC)
+NPC_SRC := $(wildcard src/npc/graph/*.c)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(RENDERER_DEBUG_LINES_SRC)
+
+NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_wrapper.cpp
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -80,7 +85,8 @@ OBJDIR := build/obj
 OBJ_HEADLESS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRC_HEADLESS))
 OBJ_RENDERER := $(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC))
 OBJ_GLAD     := $(OBJDIR)/third_party/glad/src/glad.o
-OBJ_ALL      := $(OBJ_HEADLESS) $(OBJ_RENDERER) $(OBJ_GLAD)
+OBJ_NPC_FAISS := $(OBJDIR)/src/npc/graph/npc_kg_faiss_wrapper.o
+OBJ_ALL      := $(OBJ_HEADLESS) $(OBJ_RENDERER) $(OBJ_GLAD) $(OBJ_NPC_FAISS)
 
 # Auto-generate per-file dependency tracking (.d files).
 DEPFLAGS = -MMD -MP -MF $(OBJDIR)/$*.d
@@ -309,6 +315,11 @@ $(OBJDIR)/%.o: %.c | build
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
+# C++ rule for FAISS wrapper.
+$(OBJ_NPC_FAISS): src/npc/graph/npc_kg_faiss_wrapper.cpp | build
+	@mkdir -p $(dir $@)
+	$(CXX) $(CFLAGS) -std=c++17 -c $< -o $@
+
 # Renderer sources need SDL2 flags.
 $(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC)): $(OBJDIR)/%.o: %.c | build
 	@mkdir -p $(dir $@)
@@ -325,7 +336,7 @@ $(OBJ_GLAD): third_party/glad/src/glad.c | build
 	$(CC) $(CFLAGS) -w -c $< -o $@
 
 # Static libraries.
-build/libheadless.a: $(OBJ_HEADLESS) | build
+build/libheadless.a: $(OBJ_HEADLESS) $(OBJ_NPC_FAISS) | build
 	$(AR) rcs $@ $?
 
 build/liball.a: $(OBJ_ALL) | build
@@ -1012,6 +1023,13 @@ build/aegis_sense_tests: build/libheadless.a tests/aegis/aegis_sense_tests.c | b
 
 build/aegis_tools_tests: build/libheadless.a tests/aegis/aegis_tools_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_tools_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+NPC_KG_TEST_SRC := $(wildcard src/npc/graph/*.c)
+build/npc_knowledge_graph_tests: tests/npc/npc_knowledge_graph_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) | build
+	$(CC) $(CFLAGS) tests/npc/npc_knowledge_graph_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
+
+build/npc_faiss_tests: tests/npc/npc_faiss_tests.c src/npc/graph/npc_kg_faiss_wrapper.cpp | build
+	$(CXX) $(CFLAGS) -std=c++17 tests/npc/npc_faiss_tests.c src/npc/graph/npc_kg_faiss_wrapper.cpp -o $@ $(LDFLAGS)
 
 build/llm_cost_tracker_tests: tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c | build
 	$(CC) $(CFLAGS) tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ $(LDFLAGS)

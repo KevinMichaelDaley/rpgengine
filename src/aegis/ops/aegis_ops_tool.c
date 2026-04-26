@@ -17,6 +17,7 @@
 #include "ferrum/aegis/aegis_vm.h"
 #include "ferrum/aegis/aegis_decode.h"
 #include "ferrum/aegis/aegis_memory.h"
+#include "ferrum/npc/npc_knowledge_graph.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -184,6 +185,9 @@ bool aegis_op_tool_action(aegis_vm_t *vm, const aegis_decode_result_t *d) {
         vm->fuel = 0;
     }
 
-    /* Dispatch to stub (real handlers come in rpg-llm02a-d). */
+    /* Dispatch to real handler or stub. */
+    if (tool_id == AEGIS_TOOL_KNOWLEDGE_QUERY) {
+        return aegis_op_knowledge_query(vm, args_json);
+    }
     return tool_stub_not_implemented(vm, (aegis_tool_id_t)tool_id, args_json);
 }

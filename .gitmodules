@@ -7,3 +7,6 @@
 [submodule "extern/clay"]
 	path = extern/clay
 	url = https://github.com/nicbarker/clay.git
+[submodule "engine/extern/faiss"]
+	path = engine/extern/faiss
+	url = https://github.com/facebookresearch/faiss.git
