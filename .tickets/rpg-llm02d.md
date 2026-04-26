@@ -1,8 +1,8 @@
 ---
 id: rpg-llm02d
-status: open
+status: split
 deps: [rpg-llm02e]
-links: []
+links: [rpg-llm0d-nav, rpg-llm0d-combat]
 created: 2026-04-26T01:20:00Z
 type: task
 priority: 1
@@ -12,7 +12,11 @@ tags: [aegis, llm, npc, ai, combat, navigation, defend, attack, flee, goto]
 ---
 # Combat and Navigation Action Tools: DEFEND, ATTACK, FLEE, GOTO
 
-Implement the combat and navigation tools via the `tool_action` opcode. Each tool is immediate, validated, and signals an engine event.
+**SPLIT into two tickets:**
+- [`rpg-llm0d-nav`](rpg-llm0d-nav.md) — GOTO navigation tool (implementable now)
+- [`rpg-llm0d-combat`](rpg-llm0d-combat.md) — DEFEND/ATTACK/FLEE combat tools (deferred until combat subsystem exists)
+
+Original combined design retained below for reference.
 
 ## Requirements
 
