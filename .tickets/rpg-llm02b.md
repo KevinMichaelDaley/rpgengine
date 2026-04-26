@@ -16,13 +16,14 @@ Implement the `AEGIS_OP_KNOWLEDGE_QUERY = 0x4C` immediate opcode, the per-NPC kn
 
 ## Requirements
 
-### Opcode
+### Tool Action Entry
+KNOWLEDGE_QUERY does **not** have a standalone opcode. It is always invoked via `AEGIS_OP_TOOL_ACTION` with tool_id = 9. This ensures all results pass through the AEGIS VM, where deterministic callbacks can filter, sanitize, or augment the fact list before it reaches the LLM.
+
+```json
+{"name": "KNOWLEDGE_QUERY", "arguments": {"keyphrase": "where is the forge"}}
 ```
-knowledge_query r_result, r_keyphrase_handle
-```
-- `r_keyphrase_handle`: heap offset of null-terminated keyphrase string
-- `r_result`: heap offset of `aegis_knowledge_result_t`
-- Fuel cost: 100
+
+- Fuel cost: 100 (deducted by the tool_action handler)
 
 ### Knowledge Graph Data Structures
 ```c
@@ -50,6 +51,14 @@ typedef struct npc_knowledge_graph {
     void          *faiss_index;          /* opaque FAISS handle */
 } npc_knowledge_graph_t;
 ```
+
+### Execution Flow (inside tool_action dispatch)
+1. Embed keyphrase locally (lightweight model, e.g. `nomic-embed-text` via Ollama)
+2. Search personal FAISS index + shared faction FAISS index
+3. Merge, deduplicate by node_id
+4. Graph traversal: one hop outward from candidate nodes
+5. **Deterministic callback filter**: AEGIS VM applies registered filters (certainty threshold, faction censor) to the ranked fact list
+6. Return filtered `aegis_knowledge_result_t` in heap arena
 
 ### FAISS C++ Wrapper (C-compatible shim)
 ```c
@@ -88,13 +97,12 @@ typedef struct aegis_knowledge_fact {
 - `src/npc/graph/npc_kg_search.c` — semantic search via FAISS wrapper
 - `src/npc/graph/npc_kg_decay.c` — edge weight decay over time
 - `src/npc/graph/npc_kg_faiss_wrapper.cpp` — FAISS C++ shim
-- `src/aegis/ops/aegis_ops_knowledge.c` — knowledge_query opcode handler
+- `src/aegis/ops/aegis_ops_knowledge.c` — KNOWLEDGE_QUERY tool handler (called from aegis_ops_tool.c dispatch table)
 - `tests/npc/npc_knowledge_graph_tests.c` — insert/search/decay tests
 - `tests/npc/npc_faiss_tests.c` — FAISS create/add/search/destroy tests
 
 ## Files to Modify
-- `include/ferrum/aegis/aegis_types.h` — add `AEGIS_OP_KNOWLEDGE_QUERY`
-- `src/aegis/aegis_vm_run.c` — add case to interpreter switch
+- `src/aegis/ops/aegis_ops_tool.c` — wire tool_id=9 to `aegis_op_knowledge_query()`
 - `Makefile` — add FAISS build rules and `src/npc/` wildcard
 
 ## Acceptance
