@@ -60,7 +60,7 @@ ASSET_SRC := $(wildcard src/asset/*.c)
 AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
 LLM_SRC := $(wildcard src/llm/*/*.c) $(wildcard src/llm/*/*/*.c)
 ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
-NPC_SRC := $(wildcard src/npc/graph/*.c)
+NPC_SRC := $(wildcard src/npc/graph/*.c) $(wildcard src/npc/nav/*.c)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(RENDERER_DEBUG_LINES_SRC)
 
 NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_wrapper.cpp
@@ -1030,6 +1030,10 @@ build/npc_knowledge_graph_tests: tests/npc/npc_knowledge_graph_tests.c $(NPC_KG_
 
 build/npc_faiss_tests: tests/npc/npc_faiss_tests.c src/npc/graph/npc_kg_faiss_wrapper.cpp | build
 	$(CXX) $(CFLAGS) -std=c++17 tests/npc/npc_faiss_tests.c src/npc/graph/npc_kg_faiss_wrapper.cpp -o $@ $(LDFLAGS)
+
+NPC_SVO_TEST_SRC := $(wildcard src/npc/nav/*.c)
+build/npc_svo_tests: tests/npc/npc_svo_tests.c $(NPC_SVO_TEST_SRC) | build
+	$(CC) $(CFLAGS) tests/npc/npc_svo_tests.c $(NPC_SVO_TEST_SRC) -o $@ $(LDFLAGS)
 
 build/llm_cost_tracker_tests: tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c | build
 	$(CC) $(CFLAGS) tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ $(LDFLAGS)
