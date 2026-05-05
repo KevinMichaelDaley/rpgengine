@@ -1,8 +1,8 @@
 ---
 id: rpg-kg02
-status: open
+status: closed
 deps: [rpg-llm02b]
-links: [rpg-kg01, rpg-kg03]
+links: [rpg-kg01, rpg-kg03, rpg-kg04, rpg-kg05, rpg-kg06]
 created: 2026-04-27T04:25:00Z
 type: task
 priority: 2

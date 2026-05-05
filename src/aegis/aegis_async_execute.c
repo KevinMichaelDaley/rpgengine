@@ -1,21 +1,20 @@
 /**
  * @file aegis_async_execute.c
- * @brief Drains async tasks and dispatches raycasts against the physics world.
+ * @brief Drains async tasks and dispatches: VIS_TEST (raycast), SENSE_QUERY,
+ *        NAV_QUERY (pathfinding).
  *
- * Handles VIS_TEST by converting params → phys_ray_t, calling phys_raycast(),
- * and packing the result into the task's result_ptr.
- *
- * NAV_QUERY tasks are set to ERROR (not yet implemented).
- *
- * Non-static functions (2 of 4 max):
+ * Non-static functions (1 of 4 max):
  *   1. aegis_async_execute_drain
  *
  * Static helpers:
- *   - execute_vis_test_   — single VIS_TEST → phys_raycast
- *   - write_miss_result_  — write miss sentinel to result_ptr
+ *   - execute_vis_test_    — VIS_TEST → phys_raycast
+ *   - execute_sense_query_ — SENSE_QUERY → spatial query
+ *   - execute_nav_query_   — NAV_QUERY → pathfinding
+ *   - write_miss_result_   — write miss sentinel to result_ptr
  */
 
 #include "ferrum/aegis/aegis_async_execute.h"
+#include "ferrum/npc/npc_nav_world.h"
 
 #include <math.h>
 #include <stdatomic.h>
@@ -26,6 +25,11 @@
 #include "ferrum/aegis/aegis_sense.h"
 #include "ferrum/physics/raycast.h"
 #include "ferrum/physics/world.h"
+
+/* ── Navigation world hook ─────────────────────────────────────── */
+/* Global pointer set by the engine during initialization.
+ * If NULL, NAV_QUERY falls back to ERROR (backward compatible). */
+npc_nav_world_t *g_aegis_nav_world = NULL;
 
 /* ── Miss sentinel ─────────────────────────────────────────────── */
 
@@ -255,6 +259,20 @@ static void execute_sense_query_(const aegis_async_task_t *task,
     header->event_count  = 0;
 }
 
+/* ── Nav query executor ─────────────────────────────────────────── */
+
+static void execute_nav_query_(const aegis_async_task_t *task) {
+    if (!task || !task->result_ptr || task->result_cap == 0) return;
+    if (g_aegis_nav_world && g_aegis_nav_world->built) {
+        npc_nav_world_execute(g_aegis_nav_world,
+                              task->params,
+                              task->result_ptr,
+                              task->result_cap);
+    } else {
+        write_miss_result_(task->result_ptr);
+    }
+}
+
 /* ── Public API ────────────────────────────────────────────────── */
 
 uint32_t aegis_async_execute_drain(struct aegis_async_buffer *buf,
@@ -279,10 +297,7 @@ uint32_t aegis_async_execute_drain(struct aegis_async_buffer *buf,
             break;
 
         case AEGIS_TASK_NAV_QUERY:
-            /* Not yet implemented — write miss/error sentinel. */
-            write_miss_result_(t->result_ptr);
-            final_status = AEGIS_ASYNC_ERROR;
-            final_status = AEGIS_ASYNC_ERROR;
+            execute_nav_query_(t);
             break;
 
         case AEGIS_TASK_SENSE_QUERY:

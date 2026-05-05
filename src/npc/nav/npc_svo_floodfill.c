@@ -54,28 +54,37 @@ static uint8_t query_voxel_(const npc_svo_grid_t *grid,
 }
 
 /**
- * @brief Check if the voxel at (vx,vy,vz) has a solid floor within
- *        agent_height below it.
+ * @brief Check if the voxel at (vx,vy,vz) has a continuous solid floor
+ *        spanning agent_height/voxel_size voxels below it.
  */
 static bool has_floor_(const npc_svo_grid_t *grid,
                        uint32_t vx, uint32_t vy, uint32_t vz,
                        float agent_height) {
-    (void)agent_height; /* simple 1-voxel-down check for now */
-    if (vz == 0) return false;
-    uint8_t f = query_voxel_(grid, vx, vy, vz - 1);
-    return (f & NPC_SVO_FLAG_SOLID) != 0;
+    uint32_t needed = (uint32_t)(agent_height / grid->voxel_size);
+    if (needed < 1) needed = 1;
+    for (uint32_t i = 1; i <= needed; i++) {
+        if (vz < i) return false;
+        uint8_t f = query_voxel_(grid, vx, vy, vz - i);
+        if ((f & NPC_SVO_FLAG_SOLID) == 0) return false;
+    }
+    return true;
 }
 
 /**
- * @brief Check if the voxel at (vx,vy,vz) has no solid directly above
- *        (simplified headroom check).
+ * @brief Check if the voxel at (vx,vy,vz) has enough empty headroom
+ *        spanning agent_height/voxel_size voxels above it.
  */
 static bool has_headroom_(const npc_svo_grid_t *grid,
-                          uint32_t vx, uint32_t vy, uint32_t vz) {
+                          uint32_t vx, uint32_t vy, uint32_t vz,
+                          float agent_height) {
+    uint32_t needed = (uint32_t)(agent_height / grid->voxel_size);
     uint32_t cells = 1u << grid->max_depth;
-    if (vz + 1 >= cells) return false;
-    uint8_t f = query_voxel_(grid, vx, vy, vz + 1);
-    return (f & NPC_SVO_FLAG_SOLID) == 0;
+    for (uint32_t i = 1; i <= needed; i++) {
+        if (vz + i >= cells) return false;
+        uint8_t f = query_voxel_(grid, vx, vy, vz + i);
+        if (f & NPC_SVO_FLAG_SOLID) return false;
+    }
+    return true;
 }
 
 /* ── Public API ─────────────────────────────────────────────────── */
@@ -83,8 +92,10 @@ static bool has_headroom_(const npc_svo_grid_t *grid,
 uint32_t npc_svo_floodfill_walkable(npc_svo_grid_t *grid,
                                     phys_vec3_t seed_pos,
                                     float agent_height,
-                                    float agent_radius) {
-    (void)agent_radius; /* simplified — radius check deferred to A* */
+                                    float agent_radius,
+                                    bool *truncated) {
+    (void)agent_radius;
+    if (truncated) *truncated = false;
     if (!grid || grid->max_depth == 0) return 0;
 
     uint32_t cells = 1u << grid->max_depth;
@@ -93,13 +104,15 @@ uint32_t npc_svo_floodfill_walkable(npc_svo_grid_t *grid,
         return 0;
     }
 
-    /* BFS queue (worst case: one bool per voxel at max depth). */
     uint32_t queue_cap = cells * cells;
     if (queue_cap < 1024) queue_cap = 1024;
-    if (queue_cap > 256 * 256) queue_cap = 256 * 256; /* clamp */
 
     uint32_t *queue = (uint32_t *)malloc(queue_cap * sizeof(uint32_t));
-    if (!queue) return 0;
+    if (!queue) {
+        queue_cap = 4096;
+        queue = (uint32_t *)malloc(queue_cap * sizeof(uint32_t));
+        if (!queue) return 0;
+    }
 
     uint8_t *visited = (uint8_t *)calloc(cells * cells * cells, sizeof(uint8_t));
     if (!visited) {
@@ -108,15 +121,18 @@ uint32_t npc_svo_floodfill_walkable(npc_svo_grid_t *grid,
     }
 
     uint32_t qhead = 0, qtail = 0;
+    bool overflowed = false;
 
 #define PUSH(vx, vy, vz)                                                      \
     do {                                                                       \
         if ((vx) < cells && (vy) < cells && (vz) < cells) {                    \
             uint32_t idx_ = (vz) * cells * cells + (vy) * cells + (vx);        \
             if (!visited[idx_]) {                                              \
-                visited[idx_] = 1;                                             \
                 if (qtail < queue_cap) {                                       \
+                    visited[idx_] = 1;                                         \
                     queue[qtail++] = ((vx) << 20) | ((vy) << 10) | (vz);       \
+                } else {                                                       \
+                    overflowed = true;                                         \
                 }                                                              \
             }                                                                  \
         }                                                                      \
@@ -145,7 +161,7 @@ uint32_t npc_svo_floodfill_walkable(npc_svo_grid_t *grid,
         if (flags & NPC_SVO_FLAG_SOLID) continue; /* inside geometry */
 
         if (!has_floor_(grid, vx, vy, vz, agent_height)) continue;
-        if (!has_headroom_(grid, vx, vy, vz)) continue;
+        if (!has_headroom_(grid, vx, vy, vz, agent_height)) continue;
 
         /* Mark walkable. */
         {
@@ -174,6 +190,7 @@ uint32_t npc_svo_floodfill_walkable(npc_svo_grid_t *grid,
         if (vy + 1 < cells) PUSH(vx, vy + 1, vz);
         if (vz > 0) PUSH(vx, vy, vz - 1);
         if (vz + 1 < cells) PUSH(vx, vy, vz + 1);
+        if (overflowed) break;
     }
 
 #undef PUSH
@@ -181,6 +198,7 @@ uint32_t npc_svo_floodfill_walkable(npc_svo_grid_t *grid,
 #undef VY
 #undef VZ
 
+    if (truncated) *truncated = overflowed;
     free(queue);
     free(visited);
     return marked;

@@ -1,6 +1,6 @@
 ---
 id: rpg-llm0d-nav
-status: open
+status: closed
 deps: [rpg-llm02e]
 links: [rpg-llm02a]
 created: 2026-04-26T23:30:00Z

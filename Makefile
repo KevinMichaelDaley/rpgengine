@@ -60,7 +60,7 @@ ASSET_SRC := $(wildcard src/asset/*.c)
 AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
 LLM_SRC := $(wildcard src/llm/*/*.c) $(wildcard src/llm/*/*/*.c)
 ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
-NPC_SRC := $(wildcard src/npc/graph/*.c) $(wildcard src/npc/nav/*.c)
+NPC_SRC := $(wildcard src/npc/graph/*.c) $(wildcard src/npc/nav/*.c) $(wildcard src/npc/sense/*.c) $(wildcard src/npc/trade/*.c) $(wildcard src/npc/state/*.c) $(wildcard src/npc/demo/*.c) $(wildcard src/npc/audio/*.c)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(RENDERER_DEBUG_LINES_SRC)
 
 NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_wrapper.cpp
@@ -292,6 +292,11 @@ BIN_HEADLESS += build/undo_rebase_tests
 BIN_HEADLESS += build/scene_tree_tests
 BIN_HEADLESS += build/skeleton_builder_tests
 BIN_HEADLESS += build/inline_field_tests
+BIN_HEADLESS += build/npc_trade_state_tests
+BIN_HEADLESS += build/npc_demo_integration_tests
+BIN_HEADLESS += build/npc_state_tests
+BIN_HEADLESS += build/npc_scent_tests
+BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
@@ -965,44 +970,49 @@ AEGIS_VM_SRC := src/aegis/aegis_vm_init.c src/aegis/aegis_yield.c src/aegis/aegi
 build/aegis_yield_tests: tests/aegis/aegis_yield_tests.c $(AEGIS_VM_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_yield_tests.c $(AEGIS_VM_SRC) -o $@ $(LDFLAGS)
 
+JSON_PARSE_SRC := src/editor/protocol/json_parse.c src/editor/protocol/json_access.c
+AEGIS_KG_SRC := src/npc/graph/npc_kg_init.c src/npc/graph/npc_kg_insert.c src/npc/graph/npc_kg_astar.c
 AEGIS_ALL_SRC := $(AEGIS_VM_SRC) src/aegis/aegis_vm_run.c src/aegis/aegis_decode.c \
 	$(wildcard src/aegis/ops/*.c) \
 	src/aegis/aegis_event_queue.c src/aegis/aegis_topic_table.c src/aegis/aegis_topic_route.c \
-	src/engine_settings.c
-build/aegis_vm_tests: tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+	src/engine_settings.c $(JSON_PARSE_SRC) \
+	$(wildcard src/npc/trade/*.c) $(AEGIS_KG_SRC)
+AEGIS_EXTRA_OBJ := $(OBJ_NPC_FAISS)
 
-build/aegis_vm_math_stress_tests: tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_vm_tests: tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
-build/aegis_vm_memory_exhaust_tests: tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_vm_math_stress_tests: tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_math_stress_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
-build/aegis_vm_interrupt_tests: tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_vm_memory_exhaust_tests: tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_memory_exhaust_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
+
+build/aegis_vm_interrupt_tests: tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_vm_interrupt_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
 AEGIS_EVENT_SRC := src/aegis/aegis_event_queue.c src/aegis/aegis_topic_table.c \
 	src/aegis/aegis_topic_route.c
 build/aegis_event_tests: tests/aegis/aegis_event_tests.c $(AEGIS_EVENT_SRC) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_event_tests.c $(AEGIS_EVENT_SRC) -o $@ $(LDFLAGS)
 
-build/aegis_ops_event_tests: tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_event_tests: tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_event_tests.c $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
 AEGIS_ASM_SRC := src/aegis/aegis_asm_parse.c src/aegis/aegis_asm_compile.c
-build/aegis_asm_tests: tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_asm_tests: tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_asm_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
 AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load.c src/aegis/aegis_runtime_tick.c src/aegis/aegis_runtime_registry.c src/aegis/aegis_runtime_query.c src/aegis/aegis_runtime_idle.c
 build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
 AEGIS_ENTITY_DEPS := src/entity/entity_attrs.c src/entity/entity_attrs_mutate.c src/entity/entity_attrs_search.c
-build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
-build/aegis_ops_update_tests: tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_update_tests: tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_update_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
 AEGIS_ASYNC_BUF_SRC := src/aegis/aegis_async_buffer.c src/aegis/aegis_async_buffer_io.c
 AEGIS_ASYNC_SRC := $(AEGIS_ASYNC_BUF_SRC) src/aegis/aegis_async_execute.c
@@ -1028,12 +1038,53 @@ NPC_KG_TEST_SRC := $(wildcard src/npc/graph/*.c)
 build/npc_knowledge_graph_tests: tests/npc/npc_knowledge_graph_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) | build
 	$(CC) $(CFLAGS) tests/npc/npc_knowledge_graph_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
 
+build/npc_kg_astar_tests: tests/npc/npc_kg_astar_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) | build
+	$(CC) $(CFLAGS) tests/npc/npc_kg_astar_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
+
+build/npc_kg_spatial_tests: tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) | build
+	$(CC) $(CFLAGS) tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
+
 build/npc_faiss_tests: tests/npc/npc_faiss_tests.c src/npc/graph/npc_kg_faiss_wrapper.cpp | build
 	$(CXX) $(CFLAGS) -std=c++17 tests/npc/npc_faiss_tests.c src/npc/graph/npc_kg_faiss_wrapper.cpp -o $@ $(LDFLAGS)
 
-NPC_SVO_TEST_SRC := $(wildcard src/npc/nav/*.c)
+NPC_SVO_TEST_SRC := src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_floodfill.c src/npc/nav/npc_svo_blocker.c src/npc/nav/npc_pathfind_svo_astar.c src/npc/nav/npc_pathfind_graph_astar.c src/npc/nav/npc_pathfind_shortcut.c src/npc/nav/npc_nav_graph_build.c src/npc/nav/npc_nav_graph_reduce.c
 build/npc_svo_tests: tests/npc/npc_svo_tests.c $(NPC_SVO_TEST_SRC) | build
 	$(CC) $(CFLAGS) tests/npc/npc_svo_tests.c $(NPC_SVO_TEST_SRC) -o $@ $(LDFLAGS)
+
+build/npc_nav_graph_tests: tests/npc/npc_nav_graph_tests.c $(NPC_SVO_TEST_SRC) | build
+	$(CC) $(CFLAGS) tests/npc/npc_nav_graph_tests.c $(NPC_SVO_TEST_SRC) -o $@ $(LDFLAGS)
+
+build/npc_pathfind_tests: tests/npc/npc_pathfind_tests.c $(NPC_SVO_TEST_SRC) | build
+	$(CC) $(CFLAGS) tests/npc/npc_pathfind_tests.c $(NPC_SVO_TEST_SRC) -o $@ $(LDFLAGS)
+
+build/npc_nav_action_tests: build/libheadless.a tests/npc/npc_nav_action_tests.c | build
+	$(CC) $(CFLAGS) tests/npc/npc_nav_action_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+build/npc_nav_integration_tests: build/libheadless.a tests/npc/npc_nav_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/npc/npc_nav_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+NPC_TRADE_TEST_SRC := $(wildcard src/npc/trade/*.c)
+build/npc_trade_state_tests: tests/npc/npc_trade_state_tests.c $(NPC_TRADE_TEST_SRC) include/ferrum/npc/npc_trade.h | build
+	$(CC) $(CFLAGS) tests/npc/npc_trade_state_tests.c $(NPC_TRADE_TEST_SRC) -o $@ $(LDFLAGS)
+
+NPC_STATE_TEST_SRC := $(wildcard src/npc/state/*.c) src/npc/graph/npc_kg_init.c src/npc/graph/npc_kg_insert.c src/npc/sense/npc_sense_auto.c
+build/npc_state_tests: tests/npc/npc_state_tests.c $(NPC_STATE_TEST_SRC) $(OBJ_NPC_FAISS) | build
+	$(CC) $(CFLAGS) tests/npc/npc_state_tests.c $(NPC_STATE_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS) -lm
+
+build/npc_demo_integration_tests: build/libheadless.a tests/npc/npc_demo_integration_tests.c | build
+	$(CC) $(CFLAGS) tests/npc/npc_demo_integration_tests.c build/libheadless.a -o $@ $(LDFLAGS)
+
+NPC_SENSE_TEST_SRC := $(wildcard src/npc/sense/*.c) $(wildcard src/npc/graph/npc_kg_init.c) $(wildcard src/npc/graph/npc_kg_insert.c) $(wildcard src/npc/graph/npc_kg_decay.c)
+build/npc_sense_tests: tests/npc/npc_sense_tests.c $(NPC_SENSE_TEST_SRC) $(OBJ_NPC_FAISS) | build
+	$(CC) $(CFLAGS) tests/npc/npc_sense_tests.c $(NPC_SENSE_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
+
+NPC_SCENT_TEST_SRC := src/npc/sense/npc_sense_scent.c
+build/npc_scent_tests: tests/npc/npc_scent_tests.c $(NPC_SCENT_TEST_SRC) | build
+	$(CC) $(CFLAGS) tests/npc/npc_scent_tests.c $(NPC_SCENT_TEST_SRC) -o $@ $(LDFLAGS)
+
+NPC_AUDIO_PROP_TEST_SRC := $(wildcard src/npc/audio/*.c)
+build/npc_audio_propagation_tests: tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) | build
+	$(CC) $(CFLAGS) tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) -o $@ $(LDFLAGS)
 
 build/llm_cost_tracker_tests: tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c | build
 	$(CC) $(CFLAGS) tests/llm/llm_cost_tracker_tests.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ $(LDFLAGS)
@@ -1041,11 +1092,11 @@ build/llm_cost_tracker_tests: tests/llm/llm_cost_tracker_tests.c src/llm/cost/ll
 build/llm_smoke_test: tests/llm/llm_smoke_test.c src/engine_settings.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c | build
 	$(CC) $(CFLAGS) tests/llm/llm_smoke_test.c src/engine_settings.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ $(shell pkg-config --libs libcurl) $(LDFLAGS)
 
-build/aegis_ops_signal_tests: tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_signal_tests: tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_signal_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
-build/aegis_ops_await_tests: tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) | build
-	$(CC) $(CFLAGS) tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) -o $@ $(LDFLAGS)
+build/aegis_ops_await_tests: tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
+	$(CC) $(CFLAGS) tests/aegis/aegis_ops_await_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
 build/aegis_runtime_idle_tests: build/libheadless.a tests/aegis/aegis_runtime_idle_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_idle_tests.c build/libheadless.a -o $@ $(LDFLAGS)
@@ -1336,7 +1387,7 @@ build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 build:
 
 
-test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests
+test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests \
@@ -1525,7 +1576,21 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/collision_event_integration_tests \
 	&& ./build/turret_script_e2e_tests \
 	&& ./build/ctrl_cmd_parse_tests \
-	&& ./build/pivot_edit_tests
+	&& ./build/pivot_edit_tests \
+	&& ./build/npc_knowledge_graph_tests \
+	&& ./build/npc_kg_astar_tests \
+	&& ./build/npc_faiss_tests \
+	&& ./build/npc_svo_tests \
+	&& ./build/npc_sense_tests \
+	&& ./build/npc_scent_tests \
+	&& ./build/npc_nav_graph_tests \
+	&& ./build/npc_pathfind_tests \
+	&& ./build/npc_nav_action_tests \
+	&& ./build/npc_nav_integration_tests \
+	&& ./build/npc_trade_state_tests \
+	&& ./build/npc_state_tests \
+	&& ./build/npc_demo_integration_tests \
+	&& ./build/npc_kg_spatial_tests
 
 TEST_TIMEOUT ?= 20
 

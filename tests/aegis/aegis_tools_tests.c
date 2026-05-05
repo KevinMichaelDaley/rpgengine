@@ -22,6 +22,7 @@
 #include "ferrum/aegis/aegis_decode.h"
 #include "ferrum/aegis/aegis_tools.h"
 #include "ferrum/aegis/aegis_ops_tools.h"
+#include "ferrum/npc/npc_knowledge_graph.h"
 
 /* ------------------------------------------------------------------ */
 /* Minimal test harness                                               */
@@ -112,20 +113,19 @@ static void test_tool_action_unknown_tool(void) {
     PASS();
 }
 
-/* --- Direct handler: known tool_id dispatches stub ---------------- */
+/* --- Direct handler: combat tools return error status ------------- */
 
-static void test_tool_action_known_tool_stub(void) {
+static void test_tool_action_combat_error(void) {
     aegis_vm_t vm;
     aegis_bytecode_t bc = {0};
     uint8_t arena[4096];
     make_vm(&vm, &bc, arena, sizeof(arena));
 
-    /* Write empty args JSON at heap offset 256. */
     int32_t args_off = 256;
     write_json(&vm, args_off, "{}");
 
-    /* TRADE_INIT = 0 */
-    vm.regs[1].i32 = AEGIS_TOOL_TRADE_INIT;
+    /* ATTACK = 6 */
+    vm.regs[1].i32 = AEGIS_TOOL_ATTACK;
     vm.regs[2].i32 = args_off;
 
     aegis_decode_result_t d = {0};
@@ -134,13 +134,14 @@ static void test_tool_action_known_tool_stub(void) {
     d.raw_c = 2;
 
     bool ok = aegis_op_tool_action(&vm, &d);
-    /* Stub returns true but writes "not yet implemented" as status. */
     ASSERT_TRUE(ok);
-    /* Result should be a heap offset pointing to a status string. */
     ASSERT_TRUE(vm.regs[0].i32 >= 0);
 
+    int32_t *status_ptr = (int32_t *)(vm.memory.base + vm.regs[0].i32);
+    ASSERT_EQ(*status_ptr, (int32_t)AEGIS_TOOL_UNKNOWN);
+
     const char *result = (const char *)(vm.memory.base + vm.regs[0].i32 + sizeof(int32_t));
-    ASSERT_TRUE(strstr(result, "not yet implemented") != NULL);
+    ASSERT_TRUE(strstr(result, "Combat system not available") != NULL);
 
     PASS();
 }
@@ -169,7 +170,7 @@ static void test_tool_action_trade_sell_with_item(void) {
     ASSERT_TRUE(vm.regs[0].i32 >= 0);
 
     const char *result = (const char *)(vm.memory.base + vm.regs[0].i32 + sizeof(int32_t));
-    ASSERT_TRUE(strstr(result, "not yet implemented") != NULL);
+    ASSERT_TRUE(strstr(result, "Broadcasting") != NULL);
 
     PASS();
 }
@@ -197,8 +198,49 @@ static void test_tool_action_defend_with_target(void) {
     ASSERT_TRUE(ok);
     ASSERT_TRUE(vm.regs[0].i32 >= 0);
 
+    int32_t *status_ptr = (int32_t *)(vm.memory.base + vm.regs[0].i32);
+    ASSERT_EQ(*status_ptr, (int32_t)AEGIS_TOOL_UNKNOWN);
+
     const char *result = (const char *)(vm.memory.base + vm.regs[0].i32 + sizeof(int32_t));
-    ASSERT_TRUE(strstr(result, "not yet implemented") != NULL);
+    ASSERT_TRUE(strstr(result, "Combat system not available") != NULL);
+
+    PASS();
+}
+
+/* --- Direct handler: GOTO dispatches to real nav handler --------- */
+
+static void test_tool_action_goto_dispatches(void) {
+    aegis_vm_t vm;
+    aegis_bytecode_t bc = {0};
+    uint8_t arena[4096];
+    make_vm(&vm, &bc, arena, sizeof(arena));
+
+    aegis_async_buffer_t async_buf;
+    ASSERT_TRUE(aegis_async_buffer_init(&async_buf, 4));
+    vm.async_buffer = &async_buf;
+
+    int32_t args_off = 256;
+    write_json(&vm, args_off, "{\"target\":\"orc_camp\"}");
+
+    vm.regs[1].i32 = AEGIS_TOOL_GOTO;
+    vm.regs[2].i32 = args_off;
+
+    aegis_decode_result_t d = {0};
+    d.raw_a = 0;
+    d.raw_b = 1;
+    d.raw_c = 2;
+
+    bool ok = aegis_op_tool_action(&vm, &d);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(vm.regs[0].i32 >= 0);
+
+    int32_t *status_ptr = (int32_t *)(vm.memory.base + vm.regs[0].i32);
+    ASSERT_EQ(*status_ptr, (int32_t)AEGIS_TOOL_NAV);
+
+    const char *result = (const char *)(vm.memory.base + vm.regs[0].i32 + sizeof(int32_t));
+    ASSERT_TRUE(strstr(result, "GOTO failed: nav system not available") != NULL);
+
+    aegis_async_buffer_destroy(&async_buf);
 
     PASS();
 }
@@ -321,7 +363,7 @@ static void test_vm_tool_action_integration(void) {
     /* r0 should contain a heap offset (result string). */
     ASSERT_TRUE(vm.regs[0].i32 >= 0);
     const char *result = (const char *)(vm.memory.base + vm.regs[0].i32 + sizeof(int32_t));
-    ASSERT_TRUE(strstr(result, "not yet implemented") != NULL);
+    ASSERT_TRUE(strstr(result, "ok") != NULL);
 
     free(bc.instructions);
     PASS();
@@ -386,6 +428,80 @@ static void test_vm_tool_action_fuel_deducted(void) {
     PASS();
 }
 
+/* --- KNOWNLEDGE_QUERY with bound global KG ------------------------ */
+
+static void test_knowledge_query_with_global_kg(void) {
+    npc_knowledge_graph_t kg;
+    npc_kg_init(&kg, 8, 4);
+
+    float emb[4] = {0};
+    npc_kg_insert_node(&kg, 1, NPC_KG_NODE_ENTITY, emb);
+    npc_kg_insert_node(&kg, 2, NPC_KG_NODE_ENTITY, emb);
+    npc_kg_add_edge(&kg, 1, 2, npc_kg_relation_id("trusts"), 0.9f, 0);
+
+    aegis_set_knowledge_graph(&kg);
+
+    aegis_vm_t vm;
+    aegis_bytecode_t bc = {0};
+    uint8_t arena[4096];
+    make_vm(&vm, &bc, arena, sizeof(arena));
+    vm.fuel = 500;
+
+    int32_t args_off = 256;
+    write_json(&vm, args_off, "{\"keyphrase\":\"1\"}");
+    const char *args_str = (const char *)(vm.memory.base + args_off);
+
+    bool ok = aegis_op_knowledge_query(&vm, args_str);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(vm.regs[0].i32 >= 0);
+
+    aegis_knowledge_result_t *res =
+        (aegis_knowledge_result_t *)(vm.memory.base + vm.regs[0].i32);
+    ASSERT_EQ(res->status, (int32_t)AEGIS_TOOL_OK);
+    ASSERT_TRUE(res->fact_count > 0);
+
+    aegis_knowledge_fact_t *facts =
+        (aegis_knowledge_fact_t *)(vm.memory.base + vm.regs[0].i32
+                                    + sizeof(aegis_knowledge_result_t));
+    ASSERT_TRUE(strstr(facts[0].text, "node 1") != NULL);
+
+    aegis_set_knowledge_graph(NULL);
+    npc_kg_destroy(&kg);
+
+    PASS();
+}
+
+/* --- KNOWLEDGE_QUERY with NULL KG --------------------------------- */
+
+static void test_knowledge_query_no_graph(void) {
+    aegis_set_knowledge_graph(NULL);
+
+    aegis_vm_t vm;
+    aegis_bytecode_t bc = {0};
+    uint8_t arena[4096];
+    make_vm(&vm, &bc, arena, sizeof(arena));
+    vm.fuel = 500;
+
+    int32_t args_off = 256;
+    write_json(&vm, args_off, "{\"keyphrase\":\"test\"}");
+    const char *args_str = (const char *)(vm.memory.base + args_off);
+
+    bool ok = aegis_op_knowledge_query(&vm, args_str);
+    ASSERT_TRUE(ok);
+    ASSERT_TRUE(vm.regs[0].i32 >= 0);
+
+    aegis_knowledge_result_t *res =
+        (aegis_knowledge_result_t *)(vm.memory.base + vm.regs[0].i32);
+    ASSERT_EQ(res->status, (int32_t)AEGIS_TOOL_OK);
+
+    aegis_knowledge_fact_t *facts =
+        (aegis_knowledge_fact_t *)(vm.memory.base + vm.regs[0].i32
+                                    + sizeof(aegis_knowledge_result_t));
+    ASSERT_TRUE(strstr(facts[0].text, "no graph bound") != NULL);
+
+    PASS();
+}
+
 /* ================================================================== */
 /* Main                                                               */
 /* ================================================================== */
@@ -394,15 +510,18 @@ int main(void) {
     printf("=== Aegis Tools Tests ===\n\n");
 
     RUN(test_tool_action_unknown_tool);
-    RUN(test_tool_action_known_tool_stub);
+    RUN(test_tool_action_combat_error);
     RUN(test_tool_action_trade_sell_with_item);
     RUN(test_tool_action_defend_with_target);
+    RUN(test_tool_action_goto_dispatches);
     RUN(test_tool_action_fuel_consumption);
     RUN(test_tool_action_fuel_exhaustion);
     RUN(test_tool_action_all_whitelisted);
     RUN(test_vm_tool_action_integration);
     RUN(test_vm_tool_action_unknown_integration);
     RUN(test_vm_tool_action_fuel_deducted);
+    RUN(test_knowledge_query_with_global_kg);
+    RUN(test_knowledge_query_no_graph);
 
     printf("\n=== Results: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;

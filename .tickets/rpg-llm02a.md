@@ -1,8 +1,8 @@
 ---
 id: rpg-llm02a
-status: open
+status: closed
 deps: [rpg-llm01]
-links: []
+links: [rpg-sense01]
 created: 2026-04-26T01:20:00Z
 type: task
 priority: 1

@@ -2,7 +2,7 @@
 id: rpg-llm02d
 status: split
 deps: [rpg-llm02e]
-links: [rpg-llm0d-nav, rpg-llm0d-combat]
+links: [rpg-llm0d-nav, rpg-llm0d-combat, rpg-llm10]
 created: 2026-04-26T01:20:00Z
 type: task
 priority: 1

@@ -31,7 +31,9 @@ typedef enum {
     AEGIS_TOOL_FLEE         = 7,  /**< Set combat BT to escape. */
     AEGIS_TOOL_GOTO         = 8,  /**< Submit nav query for target. */
     AEGIS_TOOL_KNOWLEDGE_QUERY = 9, /**< Semantic search over knowledge graph. */
-    AEGIS_TOOL_COUNT        = 10  /**< Sentinel / max valid ID + 1. */
+    AEGIS_TOOL_RELATED_ENTITIES = 10, /**< Find entities related to a given node. */
+    AEGIS_TOOL_KG_SHORTEST_PATH = 11, /**< Find shortest path in knowledge graph. */
+    AEGIS_TOOL_COUNT        = 12  /**< Sentinel / max valid ID + 1. */
 } aegis_tool_id_t;
 
 /* ======================================================================= */

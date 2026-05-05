@@ -119,8 +119,7 @@ static void mark_voxel_solid_(npc_svo_grid_t *grid,
 /* ── Public API ─────────────────────────────────────────────────── */
 
 void npc_svo_rasterize_triangle(npc_svo_grid_t *grid,
-                                const phys_triangle_t *tri,
-                                const phys_aabb_t *mesh_aabb) {
+                                const phys_triangle_t *tri) {
     if (!grid || !tri) return;
 
     /* Compute triangle AABB. */
@@ -135,16 +134,6 @@ void npc_svo_rasterize_triangle(npc_svo_grid_t *grid,
         if (p.x > tri_aabb.max.x) tri_aabb.max.x = p.x;
         if (p.y > tri_aabb.max.y) tri_aabb.max.y = p.y;
         if (p.z > tri_aabb.max.z) tri_aabb.max.z = p.z;
-    }
-
-    /* Optionally expand by mesh AABB (conservative). */
-    if (mesh_aabb) {
-        if (mesh_aabb->min.x < tri_aabb.min.x) tri_aabb.min.x = mesh_aabb->min.x;
-        if (mesh_aabb->min.y < tri_aabb.min.y) tri_aabb.min.y = mesh_aabb->min.y;
-        if (mesh_aabb->min.z < tri_aabb.min.z) tri_aabb.min.z = mesh_aabb->min.z;
-        if (mesh_aabb->max.x > tri_aabb.max.x) tri_aabb.max.x = mesh_aabb->max.x;
-        if (mesh_aabb->max.y > tri_aabb.max.y) tri_aabb.max.y = mesh_aabb->max.y;
-        if (mesh_aabb->max.z > tri_aabb.max.z) tri_aabb.max.z = mesh_aabb->max.z;
     }
 
     uint32_t min_x, min_y, min_z, max_x, max_y, max_z;
@@ -167,6 +156,6 @@ void npc_svo_rasterize_mesh(npc_svo_grid_t *grid,
     if (!grid || !triangles || tri_count == 0) return;
 
     for (uint32_t i = 0; i < tri_count; i++) {
-        npc_svo_rasterize_triangle(grid, &triangles[i], NULL);
+        npc_svo_rasterize_triangle(grid, &triangles[i]);
     }
 }

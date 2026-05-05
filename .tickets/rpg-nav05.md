@@ -1,6 +1,6 @@
 ---
 id: rpg-nav05
-status: open
+status: closed
 deps: [rpg-nav04]
 links: [rpg-nav01, rpg-llm0d-nav]
 created: 2026-04-27T00:25:00Z

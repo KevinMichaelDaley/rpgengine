@@ -149,13 +149,11 @@ void npc_svo_grid_clear(npc_svo_grid_t *grid);
  * @brief Rasterize a single triangle into the SVO, marking intersected
  *        leaf voxels as SOLID.
  *
- * @param grid     SVO grid.
- * @param tri      Triangle vertices (world space).
- * @param mesh_aabb Precomputed AABB of the triangle (optional, may be NULL).
+ * @param grid SVO grid.
+ * @param tri  Triangle vertices (world space).
  */
 void npc_svo_rasterize_triangle(npc_svo_grid_t *grid,
-                                const phys_triangle_t *tri,
-                                const phys_aabb_t *mesh_aabb);
+                                const phys_triangle_t *tri);
 
 /**
  * @brief Rasterize an entire mesh into the SVO.
@@ -181,12 +179,15 @@ void npc_svo_rasterize_mesh(npc_svo_grid_t *grid,
  * @param seed_pos      World-space seed position.
  * @param agent_height  Minimum vertical clearance (meters).
  * @param agent_radius  Minimum horizontal clearance (meters).
+ * @param truncated     If non-NULL, set to true when the BFS queue overflowed
+ *                      and the floodfill may be incomplete.
  * @return Number of voxels marked walkable.
  */
 uint32_t npc_svo_floodfill_walkable(npc_svo_grid_t *grid,
                                     phys_vec3_t seed_pos,
                                     float agent_height,
-                                    float agent_radius);
+                                    float agent_radius,
+                                    bool *truncated);
 
 /* ── Blocker overlay ────────────────────────────────────────────── */
 

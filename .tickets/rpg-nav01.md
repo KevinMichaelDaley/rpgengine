@@ -1,6 +1,6 @@
 ---
 id: rpg-nav01
-status: open
+status: closed
 deps: []
 links: [rpg-nav02, rpg-nav03, rpg-nav04]
 created: 2026-04-27T00:25:00Z

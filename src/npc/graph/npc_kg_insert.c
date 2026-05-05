@@ -67,5 +67,6 @@ bool npc_kg_add_edge(npc_knowledge_graph_t *kg, uint64_t from_id,
     e->relation_id = relation_id;
     e->weight = weight;
     e->timestamp_us = timestamp_us;
+    e->flags = 0;
     return true;
 }

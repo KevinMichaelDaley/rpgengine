@@ -61,6 +61,12 @@
 #include "ferrum/aegis/aegis_async_execute.h"
 #include "ferrum/aegis/aegis_event.h"
 
+#include "ferrum/npc/npc_demo.h"
+#include "ferrum/npc/npc_nav_world.h"
+#include "ferrum/npc/npc_knowledge_graph.h"
+
+extern struct npc_nav_world *g_aegis_nav_world;
+
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
 #include "ferrum/net/emulation/net_emulator.h"
@@ -197,6 +203,12 @@ struct demo_ctx {
 
     /* Simulation tick counter (incremented each server tick). */
     uint64_t                            sim_tick_count;
+
+    /* NPC demo */
+    npc_nav_world_t                     nav_world;
+    npc_knowledge_graph_t               npc_shared_kg;
+    bool                                npc_initialized;
+    bool                                nav_built;
 
     /* Cached client addresses for raw UDP sends from physics thread. */
     net_udp_addr_t                      client_addrs[DEMO_MAX_CLIENTS];
@@ -971,6 +983,13 @@ static void script_tick(demo_ctx_t *ctx) {
     /* Tick idle tracking — auto-unschedule scripts that exited and
      * haven't received a new event within the grace window. */
     aegis_runtime_tick_idle(&ctx->script_runtime);
+
+    /* NPC demo tick. */
+    if (ctx->npc_initialized) {
+        npc_demo_tick(&ctx->script_runtime,
+                       &ctx->script_async_buf,
+                       &ctx->world);
+    }
 }
 
 /* ── Tick loop callbacks ────────────────────────────────────────── */
@@ -1513,6 +1532,58 @@ int main(int argc, char **argv) {
                scfg.max_instances);
     }
 
+    /* ── 10d. NPC demo ─────────────────────────────────────────── */
+    {
+        /* Build SVO from test geometry. */
+        phys_aabb_t bounds = {{-16, -16, -16}, {16, 16, 16}};
+        npc_nav_world_init(&ctx.nav_world);
+        npc_svo_grid_init(&ctx.nav_world.svo, bounds, 4);
+
+        phys_triangle_t floor[2];
+        {
+            phys_vec3_t a = {-15, -15, 0}, b = {15, -15, 0};
+            phys_vec3_t c = {15, 15, 0},  d = {-15, 15, 0};
+            floor[0] = (phys_triangle_t){{a, b, c}};
+            floor[1] = (phys_triangle_t){{a, c, d}};
+        }
+        npc_svo_rasterize_mesh(&ctx.nav_world.svo, floor, 2);
+
+        ctx.nav_world.built = true;
+        g_aegis_nav_world = &ctx.nav_world;
+        ctx.nav_built = true;
+
+        /* Initialize shared knowledge graph. */
+        npc_kg_init(&ctx.npc_shared_kg, 32, 4);
+
+        /* Spawn 1 NPC. */
+        {
+            npc_demo_spawn_t spawn;
+            memset(&spawn, 0, sizeof(spawn));
+            spawn.entity_id    = 1001u;
+            spawn.position[0]  = 0.0f;
+            spawn.position[1]  = 0.0f;
+            spawn.position[2]  = 2.0f;
+            memcpy(spawn.name, "Guard_01", 9);
+            spawn.statblock[0] = 100;
+            spawn.statblock[1] = 50;
+            spawn.statblock[2] = 5;
+            spawn.statblock[3] = 2;
+
+            uint32_t eid = npc_demo_spawn_npc(ctx.cmd_channel, &spawn);
+            if (eid != UINT32_MAX) {
+                ctx.npc_initialized = true;
+                printf("[server] NPC %u spawned: %s\n",
+                       (unsigned)eid, spawn.name);
+            } else {
+                printf("[server] WARN: NPC spawn failed\n");
+            }
+        }
+
+        printf("[server] NPC demo ready (nav=%s kg=%s)\n",
+               ctx.nav_built ? "yes" : "no",
+               ctx.npc_shared_kg.node_cap ? "yes" : "no");
+    }
+
     /* ── 11. Main loop ─────────────────────────────────────────── */
     const double start_time = now_seconds();
     double last_step_time = now_seconds();
@@ -1579,6 +1650,13 @@ int main(int argc, char **argv) {
     aegis_script_runtime_destroy(&ctx.script_runtime);
     aegis_async_buffer_destroy(&ctx.script_async_buf);
     printf("[server] script runtime stopped\n");
+
+    /* NPC cleanup. */
+    if (ctx.nav_built) {
+        g_aegis_nav_world = NULL;
+        npc_nav_world_destroy(&ctx.nav_world);
+    }
+    npc_kg_destroy(&ctx.npc_shared_kg);
 
     phys_tick_runner_destroy(&ctx.tick_runner);
     phys_job_context_destroy(&ctx.phys_jobs);

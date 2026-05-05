@@ -60,6 +60,7 @@ bool npc_svo_grid_init(npc_svo_grid_t *grid, phys_aabb_t bounds,
 
     /* Node 0 is reserved as a "null" node (all children invalid). */
     memset(&grid->nodes[0], 0xFF, sizeof(npc_svo_node_t));
+    grid->nodes[0].flags = 0;
     grid->node_count = 1;
 
     return true;

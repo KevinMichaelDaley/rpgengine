@@ -6,19 +6,29 @@
  *   params[0..3]  = prompt heap offset (int32_t)
  *   params[4..7]  = max_tokens (int32_t, clamped)
  *   params[8..11] = prompt length (int32_t)
+ *
+ * When g_npc_state_registry is available and the entity has NPC state,
+ * system_prompt, statblock, awareness summary are injected into the
+ * prompt before submission.
  */
 
 #include "ferrum/aegis/aegis_ops_llm.h"
 #include "ferrum/aegis/aegis_vm.h"
 #include "ferrum/aegis/aegis_async.h"
 #include "ferrum/aegis/aegis_decode.h"
+#include "ferrum/aegis/aegis_memory.h"
 #include "ferrum/engine_settings.h"
+#include "ferrum/npc/npc_state_manager.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define LLM_RESULT_SLOT_SIZE 256
 #define LLM_MAX_TOKENS_DEFAULT 4096
 #define LLM_MAX_PROMPT_LEN 16384
+
+/* Per-NPC state registry; when present, injects NPC-specific prompt. */
+npc_state_registry_t *g_npc_state_registry = NULL;
 
 static bool submit_llm_prompt(aegis_vm_t *vm, const aegis_decode_result_t *d) {
     if (vm->async_task_count >= vm->config.max_async_tasks) {
@@ -99,5 +109,34 @@ static bool submit_llm_prompt(aegis_vm_t *vm, const aegis_decode_result_t *d) {
 }
 
 bool aegis_op_llm_prompt(aegis_vm_t *vm, const aegis_decode_result_t *d) {
+    if (g_npc_state_registry) {
+        npc_state_t *npc = npc_state_registry_find(g_npc_state_registry,
+                                                    vm->entity_id);
+        if (npc) {
+            int32_t orig_off = vm->regs[d->raw_b].i32;
+            const char *user_msg = NULL;
+            if (orig_off >= 0 &&
+                (uint32_t)orig_off < vm->memory.arena_size) {
+                user_msg = (const char *)(vm->memory.base + orig_off);
+            }
+
+            char *full_prompt = npc_state_prompt_assemble(npc, user_msg);
+            if (full_prompt) {
+                size_t plen = strlen(full_prompt);
+                int32_t new_off = aegis_memory_alloc(
+                    &vm->memory, (uint32_t)(plen + 1));
+                if (new_off >= 0) {
+                    memcpy(vm->memory.base + new_off,
+                           full_prompt, plen + 1);
+                    vm->regs[d->raw_b].i32 = new_off;
+                }
+                free(full_prompt);
+            }
+
+            if (npc->context_dirty) {
+                npc_state_compact(npc);
+            }
+        }
+    }
     return submit_llm_prompt(vm, d);
 }

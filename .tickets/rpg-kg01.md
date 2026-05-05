@@ -1,6 +1,6 @@
 ---
 id: rpg-kg01
-status: open
+status: closed
 deps: [rpg-llm02b, rpg-nav04]
 links: [rpg-kg02, rpg-kg03]
 created: 2026-04-27T04:25:00Z

@@ -24,6 +24,12 @@ static const char *g_builtin_relations[] = {
     "reputation",
     "built",
     "destroyed",
+    "near",
+    "inside",
+    "adjacent_to",
+    "visible_from",
+    "reachable_from",
+    "path_to",
 };
 
 #define NPC_KG_BUILTIN_COUNT \

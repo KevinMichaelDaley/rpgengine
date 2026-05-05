@@ -1,8 +1,8 @@
 ---
 id: rpg-llm05
-status: open
+status: closed
 deps: [rpg-llm03]
-links: []
+links: [rpg-scent01]
 created: 2026-04-25T22:52:00Z
 type: task
 priority: 2

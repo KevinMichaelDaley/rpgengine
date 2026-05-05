@@ -27,6 +27,14 @@ extern "C" {
 #define NPC_KG_NODE_CONCEPT  4
 
 /* ======================================================================= */
+/* Edge flags                                                              */
+/* ======================================================================= */
+
+#define NPC_KG_EDGE_REACHABLE (1u << 0)
+#define NPC_KG_EDGE_STALE     (1u << 1)
+#define NPC_KG_EDGE_SPATIAL   (1u << 2)
+
+/* ======================================================================= */
 /* Graph structures                                                        */
 /* ======================================================================= */
 
@@ -35,6 +43,7 @@ typedef struct npc_kg_edge {
     uint32_t relation_id;    /* index into runtime relation name table */
     float    weight;
     uint64_t timestamp_us;
+    uint32_t flags;
 } npc_kg_edge_t;
 
 typedef struct npc_kg_node {
@@ -120,11 +129,66 @@ uint32_t npc_kg_search(npc_knowledge_graph_t *kg, const float *query_emb,
                        uint32_t k, uint64_t *out_ids, float *out_scores);
 
 /* ======================================================================= */
+/* Path request / result                                                   */
+/* ======================================================================= */
+
+typedef struct npc_kg_path_request {
+    uint64_t start_node_id;
+    uint64_t goal_node_id;
+    uint32_t allowed_relations[8];
+    uint32_t allowed_relation_count;
+    float    max_cost;
+} npc_kg_path_request_t;
+
+typedef struct npc_kg_path_result {
+    uint32_t  step_count;
+    uint64_t *node_ids;
+    uint32_t *relation_ids;
+    float     total_cost;
+    bool      found;
+} npc_kg_path_result_t;
+
+/* ======================================================================= */
+/* Graph traversal                                                         */
+/* ======================================================================= */
+
+bool npc_kg_astar(const npc_knowledge_graph_t *kg,
+                  const npc_kg_path_request_t *req,
+                  npc_kg_path_result_t *result);
+
+/* ======================================================================= */
 /* Edge decay                                                              */
 /* ======================================================================= */
 
 void npc_kg_decay_edges(npc_knowledge_graph_t *kg, float dt_seconds,
                         float lambda);
+
+void npc_kg_spatial_decay(npc_knowledge_graph_t *kg, float dt_seconds,
+                          float lambda);
+
+/* ======================================================================= */
+/* Spatial edge helpers                                                    */
+/* ======================================================================= */
+
+#include "ferrum/math/vec3.h"
+
+bool npc_kg_upsert_spatial_edge(npc_knowledge_graph_t *kg,
+                                uint64_t from_entity,
+                                uint64_t to_entity,
+                                uint32_t relation_id,
+                                float weight,
+                                uint64_t timestamp_us);
+
+/* ======================================================================= */
+/* Reachability sync                                                       */
+/* ======================================================================= */
+
+void npc_kg_set_reachable(npc_knowledge_graph_t *kg,
+                          uint64_t from_entity,
+                          uint64_t to_entity,
+                          float path_cost,
+                          const vec3_t *waypoints,
+                          uint32_t waypoint_count);
 
 /* ======================================================================= */
 /* FAISS C++ wrapper (C-compatible)                                        */

@@ -1,6 +1,6 @@
 ---
 id: rpg-llm06
-status: open
+status: closed
 deps: [rpg-llm03]
 links: []
 created: 2026-04-25T23:10:00Z

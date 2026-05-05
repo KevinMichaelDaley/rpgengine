@@ -19,6 +19,7 @@ extern "C" {
 
 struct aegis_vm;
 struct aegis_decode_result;
+struct npc_knowledge_graph;
 
 /**
  * @brief Execute a tool_action opcode (tool_action r_result, r_tool_id, r_args_handle).
@@ -34,6 +35,12 @@ struct aegis_decode_result;
 bool aegis_op_tool_action(struct aegis_vm *vm, const struct aegis_decode_result *d);
 
 bool aegis_op_knowledge_query(struct aegis_vm *vm, const char *args_json);
+
+bool aegis_op_related_entities(struct aegis_vm *vm, const char *args_json);
+
+bool aegis_op_kg_path(struct aegis_vm *vm, const char *args_json);
+
+void aegis_set_knowledge_graph(struct npc_knowledge_graph *kg);
 
 #ifdef __cplusplus
 }

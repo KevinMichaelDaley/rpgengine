@@ -1,8 +1,8 @@
 ---
 id: rpg-nav04
-status: open
+status: closed
 deps: [rpg-nav03]
-links: [rpg-nav01, rpg-nav05]
+links: [rpg-nav01, rpg-nav05, rpg-nav08, rpg-nav09]
 created: 2026-04-27T00:25:00Z
 type: task
 priority: 1

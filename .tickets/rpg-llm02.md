@@ -1,6 +1,6 @@
 ---
 id: rpg-llm02
-status: open
+status: closed
 deps: [rpg-llm01]
 links: [rpg-llm02a, rpg-llm02b, rpg-llm02c, rpg-llm02d, rpg-llm02e]
 created: 2026-04-25T22:40:00Z

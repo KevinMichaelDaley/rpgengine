@@ -70,7 +70,9 @@ static void make_box_mesh(phys_triangle_t *out_tris, phys_vec3_t min, phys_vec3_
     out_tris[idx++] = (phys_triangle_t){{v[1], v[6], v[2]}};
 }
 
-/* Helper: build a single horizontal floor quad at z = z_plane. */
+/* Helper: build a single horizontal floor quad at z = z_plane.
+ * (kept for use by other tests; unused here since we switched to
+ * make_box_mesh for thick floors) */
 static void make_floor(phys_triangle_t *out_tris, float z_plane) {
     phys_vec3_t a = {1.0f, 1.0f, z_plane};
     phys_vec3_t b = {9.0f, 1.0f, z_plane};
@@ -152,18 +154,23 @@ static void test_svo_floodfill(void) {
     phys_aabb_t bounds = {{0, 0, 0}, {10, 10, 10}};
     npc_svo_grid_init(&grid, bounds, 4);
 
-    /* Build a floor at z = 4. */
-    phys_triangle_t floor[2];
-    make_floor(floor, 4.0f);
-    npc_svo_rasterize_mesh(&grid, floor, 2);
+    /* Build a thick solid floor by stacking overlapping slabs so that
+     * surface rasterization produces continuous SOLID voxels from z=3
+     * to z=4, satisfying the enhanced has_floor_ check (agent_height
+     * 1.8 m / voxel_size 0.625 m = 3 voxels). */
+    phys_triangle_t slab_a[12], slab_b[12];
+    make_box_mesh(slab_a, (phys_vec3_t){1, 1, 3.0f}, (phys_vec3_t){9, 9, 3.4f});
+    make_box_mesh(slab_b, (phys_vec3_t){1, 1, 3.4f}, (phys_vec3_t){9, 9, 3.8f});
+    npc_svo_rasterize_mesh(&grid, slab_a, 12);
+    npc_svo_rasterize_mesh(&grid, slab_b, 12);
 
     /* Floor voxels should be solid before flood-fill. */
-    uint8_t f = npc_svo_query_point(&grid, (phys_vec3_t){5, 5, 4}, NULL);
+    uint8_t f = npc_svo_query_point(&grid, (phys_vec3_t){5, 5, 3.5f}, NULL);
     ASSERT_TRUE(f & NPC_SVO_FLAG_SOLID);
 
     /* Flood-fill from a point just above the floor. */
     uint32_t marked = npc_svo_floodfill_walkable(
-        &grid, (phys_vec3_t){5, 5, 4.7f}, 1.8f, 0.3f);
+        &grid, (phys_vec3_t){5, 5, 4.7f}, 1.8f, 0.3f, NULL);
     ASSERT_TRUE(marked > 0);
 
     /* The voxel directly above the floor should now be walkable. */
@@ -211,6 +218,41 @@ static void test_svo_voxel_blocked(void) {
     PASS();
 }
 
+static void test_svo_rasterize_triangle_aabb(void) {
+    npc_svo_grid_t grid;
+    phys_aabb_t bounds = {{0, 0, 0}, {10, 10, 10}};
+    npc_svo_grid_init(&grid, bounds, 4);
+
+    /* A tiny triangle in a tight corner. Voxels outside its AABB must not
+     * be marked SOLID, even though the triangle itself conservatively
+     * rasterizes all voxels that overlap its AABB. */
+    phys_triangle_t tri = {{
+        {1.0f, 1.0f, 1.0f},
+        {2.0f, 1.0f, 1.0f},
+        {1.0f, 2.0f, 1.0f},
+    }};
+    npc_svo_rasterize_triangle(&grid, &tri);
+
+    /* Points within the triangle's AABB should be solid. */
+    uint8_t f = npc_svo_query_point(&grid, (phys_vec3_t){1.5f, 1.5f, 1.0f}, NULL);
+    ASSERT_TRUE(f & NPC_SVO_FLAG_SOLID);
+
+    /* Points far outside the triangle AABB must NOT be solid.
+     * If the old mesh_aabb bug were present, the full grid would be solid. */
+    f = npc_svo_query_point(&grid, (phys_vec3_t){5, 5, 5}, NULL);
+    ASSERT_TRUE((f & NPC_SVO_FLAG_SOLID) == 0);
+
+    f = npc_svo_query_point(&grid, (phys_vec3_t){9, 9, 9}, NULL);
+    ASSERT_TRUE((f & NPC_SVO_FLAG_SOLID) == 0);
+
+    /* Points just outside the conservative AABB extension should be empty. */
+    f = npc_svo_query_point(&grid, (phys_vec3_t){3.5f, 3.5f, 1.0f}, NULL);
+    ASSERT_TRUE((f & NPC_SVO_FLAG_SOLID) == 0);
+
+    npc_svo_grid_destroy(&grid);
+    PASS();
+}
+
 static void test_svo_world_to_voxel(void) {
     npc_svo_grid_t grid;
     phys_aabb_t bounds = {{0, 0, 0}, {10, 10, 10}};
@@ -230,6 +272,69 @@ static void test_svo_world_to_voxel(void) {
     PASS();
 }
 
+/* ── Agent-dimension tests ───────────────────────────────────────── */
+
+/* Tall agent (height=2.0, voxel_size=0.625 → 3 additional voxels
+ * headroom) cannot path through a low ceiling (only 1 empty voxel
+ * between floor and ceiling). */
+static void test_svo_floodfill_tall_agent_low_ceiling(void) {
+    npc_svo_grid_t grid;
+    phys_aabb_t bounds = {{0, 0, 0}, {10, 10, 10}};
+    npc_svo_grid_init(&grid, bounds, 4);
+
+    /* Thick floor: overlapping slabs produce continuous SOLID
+     * voxels at vz=4,5,6 for the enhanced has_floor_ check. */
+    phys_triangle_t s[24];
+    make_box_mesh(s,      (phys_vec3_t){1, 1, 3.0f}, (phys_vec3_t){9, 9, 3.6f});
+    make_box_mesh(s + 12, (phys_vec3_t){1, 1, 3.5f}, (phys_vec3_t){9, 9, 4.2f});
+    npc_svo_rasterize_mesh(&grid, s, 24);
+
+    /* Low ceiling: solid slab starting at z=5.0 (vz=8).
+     * This leaves exactly 1 empty voxel (vz=7) between floor and
+     * ceiling.  The seed lands in vz=7. */
+    phys_triangle_t ceil_tris[12];
+    make_box_mesh(ceil_tris, (phys_vec3_t){1, 1, 5.0f}, (phys_vec3_t){9, 9, 5.5f});
+    npc_svo_rasterize_mesh(&grid, ceil_tris, 12);
+
+    /* Tall agent (height=2.0 → needed=3): vz+1 through vz+3 must be
+     * empty, but vz+1 = 8 is SOLID → 0 walkable voxels. */
+    uint32_t marked_tall = npc_svo_floodfill_walkable(
+        &grid, (phys_vec3_t){5.0f, 5.0f, 4.5f}, 2.0f, 0.3f, NULL);
+    ASSERT_INT_EQ(0, (int)marked_tall);
+
+    /* Short agent (height=0.4 → needed=0): no additional headroom
+     * required → can walk in the 1-voxel space. */
+    uint32_t marked_short = npc_svo_floodfill_walkable(
+        &grid, (phys_vec3_t){5.0f, 5.0f, 4.5f}, 0.4f, 0.3f, NULL);
+    ASSERT_TRUE(marked_short > 0);
+
+    npc_svo_grid_destroy(&grid);
+    PASS();
+}
+
+/* Test that the truncated output parameter works correctly.
+ * Normal (non-overflowing) flood-fill should set truncated=false. */
+static void test_svo_floodfill_truncated_flag(void) {
+    npc_svo_grid_t grid;
+    phys_aabb_t bounds = {{0, 0, 0}, {10, 10, 10}};
+    npc_svo_grid_init(&grid, bounds, 4);
+
+    phys_triangle_t slab_a[12], slab_b[12];
+    make_box_mesh(slab_a, (phys_vec3_t){1, 1, 3.0f}, (phys_vec3_t){9, 9, 3.4f});
+    make_box_mesh(slab_b, (phys_vec3_t){1, 1, 3.4f}, (phys_vec3_t){9, 9, 3.8f});
+    npc_svo_rasterize_mesh(&grid, slab_a, 12);
+    npc_svo_rasterize_mesh(&grid, slab_b, 12);
+
+    bool truncated = true;
+    uint32_t marked = npc_svo_floodfill_walkable(
+        &grid, (phys_vec3_t){5, 5, 4.7f}, 1.8f, 0.3f, &truncated);
+    ASSERT_TRUE(marked > 0);
+    ASSERT_TRUE(!truncated);
+
+    npc_svo_grid_destroy(&grid);
+    PASS();
+}
+
 /* ── Main ───────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -239,7 +344,10 @@ int main(void) {
     RUN(test_svo_query_point);
     RUN(test_svo_floodfill);
     RUN(test_svo_voxel_blocked);
+    RUN(test_svo_rasterize_triangle_aabb);
     RUN(test_svo_world_to_voxel);
+    RUN(test_svo_floodfill_tall_agent_low_ceiling);
+    RUN(test_svo_floodfill_truncated_flag);
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

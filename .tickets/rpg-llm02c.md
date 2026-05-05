@@ -1,8 +1,8 @@
 ---
 id: rpg-llm02c
-status: open
+status: closed
 deps: [rpg-llm02e]
-links: []
+links: [rpg-aegis01]
 created: 2026-04-26T01:20:00Z
 type: task
 priority: 1

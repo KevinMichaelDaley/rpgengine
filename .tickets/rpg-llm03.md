@@ -1,8 +1,8 @@
 ---
 id: rpg-llm03
-status: open
+status: closed
 deps: [rpg-llm02]
-links: []
+links: [rpg-llm09, rpg-npc01]
 created: 2026-04-25T22:50:00Z
 type: task
 priority: 1
