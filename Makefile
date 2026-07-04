@@ -61,7 +61,8 @@ AEGIS_SRC := $(wildcard src/aegis/*.c) $(wildcard src/aegis/ops/*.c)
 LLM_SRC := $(wildcard src/llm/*/*.c) $(wildcard src/llm/*/*/*.c)
 ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
 NPC_SRC := $(wildcard src/npc/graph/*.c) $(wildcard src/npc/nav/*.c) $(wildcard src/npc/sense/*.c) $(wildcard src/npc/trade/*.c) $(wildcard src/npc/state/*.c) $(wildcard src/npc/demo/*.c) $(wildcard src/npc/audio/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(RENDERER_DEBUG_LINES_SRC)
+PROCGEN_SRC := $(wildcard src/procgen/*.c) $(wildcard src/procgen/grammars/*.c) $(wildcard src/procgen/architect/*.c) $(wildcard src/procgen/critic/*.c) $(wildcard src/procgen/nitrogen/*.c)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(PROCGEN_SRC) $(RENDERER_DEBUG_LINES_SRC)
 
 NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_wrapper.cpp
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
@@ -1744,6 +1745,36 @@ editor_tui:
 	@echo "Built: build/editor_tui"
 	@echo "Usage: ./build/editor_tui [host:port] [--exec <script>]"
 
+# ── Procgen targets ───────────────────────────────────────────
+PROCGEN_TESTS :=
+
+# Procgen test binaries will be added here as they are created:
+# PROCGEN_TESTS += build/procgen_types_tests
+# PROCGEN_TESTS += build/procgen_tokenize_tests
+# PROCGEN_TESTS += build/procgen_rasterize_tests
+# PROCGEN_TESTS += build/procgen_grammar_blockout_tests
+# PROCGEN_TESTS += build/procgen_serialize_tests
+# PROCGEN_TESTS += build/procgen_architect_tests
+# PROCGEN_TESTS += build/procgen_critic_tests
+
+procgen: build/libheadless.a
+	@echo "procgen objects built via libheadless.a"
+
+procgen-test: $(PROCGEN_TESTS)
+	@for t in $(PROCGEN_TESTS); do ./$$t || exit 1; done
+	@echo "All procgen tests passed."
+
+procgen-bench:
+	@echo "No procgen benchmarks defined yet."
+
+test-procgen: procgen-test
+
+clean: clean-procgen
+clean-procgen:
+	$(RM) $(PROCGEN_TESTS)
+
+###########################
+
 clean:
-	$(RM) $(BIN) build/libheadless.a build/liball.a build/demo_server build/demo_client build/editor_tui
+	$(RM) $(BIN) $(PROCGEN_TESTS) build/libheadless.a build/liball.a build/demo_server build/demo_client build/editor_tui
 	$(RM) -r build/obj
