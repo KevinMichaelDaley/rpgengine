@@ -53,7 +53,7 @@ static void emit_err(char *err_buf, uint32_t err_cap,
     snprintf(err_buf, err_cap, "line %u:%u: %s", line, col, msg);
 }
 
-int procgen_tokenize(const char *input,
+tok_error_t procgen_tokenize(const char *input,
                      procgen_token_t *tokens, uint32_t tok_cap,
                      uint32_t *out_count,
                      char *err_buf, uint32_t err_cap) {
@@ -87,13 +87,13 @@ int procgen_tokenize(const char *input,
             if (count > 0) {
                 emit_err(err_buf, err_cap, line, col,
                          "@grammar must be the first token");
-                return -1;
+                return TOK_ERR_UNEXPECTED_TOKEN;
             }
             p++; col++;
             if (strncmp(p, "grammar", 7) != 0) {
                 emit_err(err_buf, err_cap, line, col,
                          "expected @grammar header");
-                return -1;
+                return TOK_ERR_UNEXPECTED_TOKEN;
             }
             p += 7; col += 7;
 
@@ -107,7 +107,7 @@ int procgen_tokenize(const char *input,
             if (name_len == 0 || name_len >= 64) {
                 emit_err(err_buf, err_cap, line, col,
                          "invalid or missing grammar name");
-                return -1;
+                return TOK_ERR_MISSING_PARAM;
             }
 
             /* Skip whitespace before version. */
@@ -117,7 +117,7 @@ int procgen_tokenize(const char *input,
             if (*p != 'v' && *p != 'V') {
                 emit_err(err_buf, err_cap, line, col,
                          "expected 'v' followed by version number");
-                return -1;
+                return TOK_ERR_INVALID_NUMBER;
             }
             p++; col++;
 
@@ -125,7 +125,7 @@ int procgen_tokenize(const char *input,
             if (!isdigit((unsigned char)*p)) {
                 emit_err(err_buf, err_cap, line, col,
                          "expected version number after 'v'");
-                return -1;
+                return TOK_ERR_INVALID_NUMBER;
             }
             uint32_t version = 0;
             while (*p && isdigit((unsigned char)*p)) {
@@ -135,7 +135,7 @@ int procgen_tokenize(const char *input,
 
             if (count >= tok_cap) {
                 emit_err(err_buf, err_cap, 0, 0, "token buffer overflow");
-                return -1;
+                return TOK_ERR_BUFFER_FULL;
             }
             procgen_token_t *tok = &tokens[count++];
             memset(tok, 0, sizeof(*tok));
@@ -152,7 +152,7 @@ int procgen_tokenize(const char *input,
         if (!seen_grammar) {
             emit_err(err_buf, err_cap, line, col,
                      "input must start with @grammar header");
-            return -1;
+            return TOK_ERR_UNEXPECTED_TOKEN;
         }
 
         /* Keyword or identifier. */
@@ -167,12 +167,12 @@ int procgen_tokenize(const char *input,
                 snprintf(msg, sizeof(msg), "unknown keyword '%.*s'",
                          (int)kw_len, kw_start);
                 emit_err(err_buf, err_cap, line, col - kw_len, msg);
-                return -1;
+                return TOK_ERR_UNEXPECTED_TOKEN;
             }
 
             if (count >= tok_cap) {
                 emit_err(err_buf, err_cap, 0, 0, "token buffer overflow");
-                return -1;
+                return TOK_ERR_BUFFER_FULL;
             }
             procgen_token_t *tok = &tokens[count++];
             memset(tok, 0, sizeof(*tok));
@@ -186,7 +186,7 @@ int procgen_tokenize(const char *input,
                 if (block_depth == 0) {
                     emit_err(err_buf, err_cap, line, col - 6,
                              "EBLOCK without matching BLOCK");
-                    return -1;
+                    return TOK_ERR_UNBALANCED_BLOCK;
                 }
                 block_depth--;
             }
@@ -209,7 +209,7 @@ int procgen_tokenize(const char *input,
                              "expected '=' after parameter '%.*s'",
                              (int)pn_len, param_name);
                     emit_err(err_buf, err_cap, line, col, msg);
-                    return -1;
+                    return TOK_ERR_MISSING_PARAM;
                 }
                 p++; col++;
 
@@ -220,7 +220,7 @@ int procgen_tokenize(const char *input,
                 if (*p == '\0') {
                     emit_err(err_buf, err_cap, line, col,
                              "unexpected end of input after '='");
-                    return -1;
+                    return TOK_ERR_MISSING_PARAM;
                 }
 
                 /* Parse the value — consumed tokens go inline. */
@@ -232,14 +232,14 @@ int procgen_tokenize(const char *input,
                     if (*p != '"') {
                         emit_err(err_buf, err_cap, line, col,
                                  "unterminated string literal");
-                        return -1;
+                        return TOK_ERR_UNEXPECTED_TOKEN;
                     }
                     uint32_t slen = (uint32_t)(p - str_start);
                     p++; col++; /* skip closing quote */
 
                     if (count >= tok_cap) {
                         emit_err(err_buf, err_cap, 0, 0, "token buffer overflow");
-                        return -1;
+                        return TOK_ERR_BUFFER_FULL;
                     }
                     procgen_token_t *pt = &tokens[count++];
                     memset(pt, 0, sizeof(*pt));
@@ -267,7 +267,7 @@ int procgen_tokenize(const char *input,
                     if (depth > 0) {
                         emit_err(err_buf, err_cap, line, col,
                                  "unterminated coordinate tuple");
-                        return -1;
+                        return TOK_ERR_UNEXPECTED_TOKEN;
                     }
                     p++; col++; /* skip closing ) */
                 } else if (*p == '-' || isdigit((unsigned char)*p)) {
@@ -283,7 +283,7 @@ int procgen_tokenize(const char *input,
 
                     if (count >= tok_cap) {
                         emit_err(err_buf, err_cap, 0, 0, "token buffer overflow");
-                        return -1;
+                        return TOK_ERR_BUFFER_FULL;
                     }
                     procgen_token_t *pt = &tokens[count++];
                     memset(pt, 0, sizeof(*pt));
@@ -309,7 +309,7 @@ int procgen_tokenize(const char *input,
 
                     if (count >= tok_cap) {
                         emit_err(err_buf, err_cap, 0, 0, "token buffer overflow");
-                        return -1;
+                        return TOK_ERR_BUFFER_FULL;
                     }
                     procgen_token_t *pt = &tokens[count++];
                     memset(pt, 0, sizeof(*pt));
@@ -335,7 +335,7 @@ int procgen_tokenize(const char *input,
                      isprint((unsigned char)*p) ? *p : '?',
                      (unsigned char)*p);
             emit_err(err_buf, err_cap, line, col, msg);
-            return -1;
+            return TOK_ERR_UNEXPECTED_TOKEN;
         }
     }
 
@@ -343,13 +343,13 @@ int procgen_tokenize(const char *input,
     if (block_depth > 0) {
         emit_err(err_buf, err_cap, 0, 0,
                  "unclosed BLOCK at end of input");
-        return -1;
+        return TOK_ERR_UNBALANCED_BLOCK;
     }
 
     if (!seen_grammar) {
         emit_err(err_buf, err_cap, 0, 0,
                  "empty input or missing @grammar header");
-        return -1;
+        return TOK_ERR_UNEXPECTED_TOKEN;
     }
 
     *out_count = count;

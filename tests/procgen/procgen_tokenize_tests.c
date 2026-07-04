@@ -63,7 +63,7 @@ static void test_missing_grammar_header_fails(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_UNEXPECTED_TOKEN);
     ASSERT_TRUE(err[0] != '\0');
     PASS();
 }
@@ -124,7 +124,7 @@ static void test_unknown_keyword_fails(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_UNEXPECTED_TOKEN);
     ASSERT_TRUE(err[0] != '\0');
     PASS();
 }
@@ -222,7 +222,7 @@ static void test_unbalanced_block_fails(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_UNBALANCED_BLOCK);
     ASSERT_TRUE(err[0] != '\0');
     PASS();
 }
@@ -236,7 +236,7 @@ static void test_missing_eblock_fails(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_UNBALANCED_BLOCK);
     ASSERT_TRUE(err[0] != '\0');
     PASS();
 }
@@ -247,7 +247,7 @@ static void test_eblock_without_block_fails(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_UNBALANCED_BLOCK);
     ASSERT_TRUE(err[0] != '\0');
     PASS();
 }
@@ -310,7 +310,7 @@ static void test_buffer_overflow(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, 3, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_BUFFER_FULL);
     PASS();
 }
 
@@ -322,7 +322,7 @@ static void test_empty_input_fails(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_UNEXPECTED_TOKEN);
     PASS();
 }
 
@@ -332,7 +332,7 @@ static void test_whitespace_only_fails(void) {
     char err[256];
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
-    ASSERT_INT_EQ(rc, -1);
+    ASSERT_INT_EQ(rc, (int)TOK_ERR_UNEXPECTED_TOKEN);
     PASS();
 }
 

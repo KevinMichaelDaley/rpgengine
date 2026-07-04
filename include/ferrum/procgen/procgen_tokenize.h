@@ -25,12 +25,13 @@ extern "C" {
  * @param out_count On success, set to the number of tokens emitted.
  * @param err_buf  Buffer for error message (set on failure).
  * @param err_cap  Size of err_buf in bytes.
- * @return 0 on success, -1 on parse error (err_buf populated).
+ * @return TOK_ERR_NONE (0) on success, or a negative tok_error_t code
+ *         on failure (err_buf populated with human-readable message).
  */
-int procgen_tokenize(const char *input,
-                     procgen_token_t *tokens, uint32_t tok_cap,
-                     uint32_t *out_count,
-                     char *err_buf, uint32_t err_cap);
+tok_error_t procgen_tokenize(const char *input,
+                             procgen_token_t *tokens, uint32_t tok_cap,
+                             uint32_t *out_count,
+                             char *err_buf, uint32_t err_cap);
 
 #ifdef __cplusplus
 }
