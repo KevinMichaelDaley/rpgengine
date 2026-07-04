@@ -1,6 +1,6 @@
 ---
 id: rpg-7rgr
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-04T23:00:39Z
