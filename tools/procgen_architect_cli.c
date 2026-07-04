@@ -121,15 +121,15 @@ int main(int argc, char **argv) {
         }
     }
     if (s->llm_model[0] == '\0') {
-        strncpy(s->llm_model, "google/gemini-2.0-flash-001",
+        strncpy(s->llm_model, "google/gemini-2.5-flash-lite:nitro",
                 sizeof(s->llm_model) - 1);
     }
 
     s->llm_timeout_ms = 60000;
     s->llm_max_tokens = 2048;
-    s->llm_input_cost_per_1k = 0.00015f;
-    s->llm_output_cost_per_1k = 0.0006f;
-    s->llm_budget_usd = 1.0f;
+    s->llm_input_cost_per_1k = 0.0000001f;
+    s->llm_output_cost_per_1k = 0.0000004f;
+    s->llm_budget_usd = 0.05f;
     fr_engine_settings_freeze();
 
     printf("=== Procgen Architect ===\n");

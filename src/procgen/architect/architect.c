@@ -52,7 +52,24 @@ static const char *find_key(const char *json, const char *key) {
 
 static void extract_str(const char *s, char *out, size_t cap) {
     size_t i = 0;
-    while (s && *s && *s != '"' && i < cap - 1) out[i++] = *s++;
+    while (s && *s && i < cap - 1) {
+        if (*s == '\\' && *(s + 1)) {
+            s++;
+            switch (*s) {
+            case 'n':  out[i++] = '\n'; break;
+            case 'r':  out[i++] = '\r'; break;
+            case 't':  out[i++] = '\t'; break;
+            case '"':  out[i++] = '"';  break;
+            case '\\': out[i++] = '\\'; break;
+            default:   out[i++] = '\\'; out[i++] = *s; break;
+            }
+            s++;
+        } else if (*s == '"') {
+            break;  /* closing quote */
+        } else {
+            out[i++] = *s++;
+        }
+    }
     out[i] = '\0';
 }
 

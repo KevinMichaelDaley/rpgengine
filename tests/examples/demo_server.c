@@ -69,6 +69,7 @@ extern struct npc_nav_world *g_aegis_nav_world;
 
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
+#include "ferrum/editor/edit_serialize.h"
 #include "ferrum/net/emulation/net_emulator.h"
 #endif
 
@@ -1496,6 +1497,18 @@ int main(int argc, char **argv) {
 
         printf("[server] editor listening on port %u (physics paused)\n",
                ctx.editor.io_thread.port);
+    }
+
+    /* ── Load scene from JSON if --scene specified ──────────────── */
+    if (scene_path) {
+        printf("[server] loading scene from %s...\n", scene_path);
+        if (edit_level_load(ctx.editor.cmd_ctx.entities, scene_path)) {
+            printf("[server] scene loaded: %u entities\n",
+                   edit_entity_store_count(ctx.editor.cmd_ctx.entities));
+        } else {
+            fprintf(stderr, "[server] WARNING: failed to load scene from %s\n",
+                    scene_path);
+        }
     }
 
     /* ── 10c. Script runtime ─────────────────────────────────── */

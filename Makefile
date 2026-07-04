@@ -15,6 +15,10 @@ endif
 
 LDFLAGS ?= -lm -fopenmp
 LDFLAGS += -Lextern/faiss/build/faiss -Lextern/faiss/build/c_api -lfaiss_c -lfaiss -lopenblas -lstdc++
+ifeq ($(FAISS_STUB),1)
+# Stub build: no FAISS libraries needed
+LDFLAGS := -lm -lpthread
+endif
 
 TRACY_DIR := extern/tracy
 TRACY_BUILD_DIR := $(TRACY_DIR)/build
@@ -65,6 +69,10 @@ PROCGEN_SRC := $(wildcard src/procgen/*.c) $(wildcard src/procgen/grammars/*.c) 
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(PROCGEN_SRC) $(RENDERER_DEBUG_LINES_SRC)
 
 NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_wrapper.cpp
+# Use stub if FAISS is unavailable (FAISS_STUB=1)
+ifeq ($(FAISS_STUB),1)
+NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_stub.cpp
+endif
 SRC_ALL := $(SRC_HEADLESS) $(RENDERER_SRC)
 
 # Legacy prerequisite variable used by some build rules.
@@ -87,6 +95,9 @@ OBJ_HEADLESS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRC_HEADLESS))
 OBJ_RENDERER := $(patsubst %.c,$(OBJDIR)/%.o,$(RENDERER_SRC))
 OBJ_GLAD     := $(OBJDIR)/third_party/glad/src/glad.o
 OBJ_NPC_FAISS := $(OBJDIR)/src/npc/graph/npc_kg_faiss_wrapper.o
+ifeq ($(FAISS_STUB),1)
+OBJ_NPC_FAISS := $(OBJDIR)/src/npc/graph/npc_kg_faiss_stub.o
+endif
 OBJ_ALL      := $(OBJ_HEADLESS) $(OBJ_RENDERER) $(OBJ_GLAD) $(OBJ_NPC_FAISS)
 
 # Auto-generate per-file dependency tracking (.d files).
@@ -330,7 +341,11 @@ $(OBJDIR)/%.o: %.c | build
 	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # C++ rule for FAISS wrapper.
-$(OBJ_NPC_FAISS): src/npc/graph/npc_kg_faiss_wrapper.cpp | build
+$(OBJDIR)/src/npc/graph/npc_kg_faiss_stub.o: src/npc/graph/npc_kg_faiss_stub.cpp | build
+	@mkdir -p $(dir $@)
+	$(CXX) $(CFLAGS) -std=c++17 -c $< -o $@
+
+$(OBJDIR)/src/npc/graph/npc_kg_faiss_wrapper.o: src/npc/graph/npc_kg_faiss_wrapper.cpp | build
 	@mkdir -p $(dir $@)
 	$(CXX) $(CFLAGS) -std=c++17 -c $< -o $@
 
