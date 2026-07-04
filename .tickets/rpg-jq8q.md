@@ -1,6 +1,6 @@
 ---
 id: rpg-jq8q
-status: open
+status: closed
 deps: [rpg-cras]
 links: []
 created: 2026-07-04T22:53:53Z

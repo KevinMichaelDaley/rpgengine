@@ -1,6 +1,6 @@
 ---
 id: rpg-h7c8
-status: open
+status: closed
 deps: [rpg-d8l8, rpg-5t38, rpg-dtrg]
 links: []
 created: 2026-07-04T20:39:25Z

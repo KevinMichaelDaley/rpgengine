@@ -1,6 +1,6 @@
 ---
 id: rpg-cras
-status: open
+status: closed
 deps: [rpg-6p4q]
 links: []
 created: 2026-07-04T22:53:53Z

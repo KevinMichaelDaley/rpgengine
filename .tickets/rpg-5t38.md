@@ -1,6 +1,6 @@
 ---
 id: rpg-5t38
-status: open
+status: closed
 deps: [rpg-d8l8]
 links: []
 created: 2026-07-04T20:39:25Z
