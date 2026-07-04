@@ -65,6 +65,7 @@ typedef struct procgen_token {
     uint32_t   line;            /**< Source line number (1-based). */
     uint32_t   col;             /**< Source column number (1-based). */
     uint32_t   grammar_version; /**< Grammar version (valid for TOK_GRAMMAR only). */
+    char       param_name[32];  /**< Parameter name (valid for param tokens). */
     union {
         int32_t  i;             /**< Integer value (counts, indices). */
         float    f;             /**< Float value (coordinates, dimensions). */
@@ -72,6 +73,14 @@ typedef struct procgen_token {
         char     s[64];         /**< String value (names, labels). */
     } value;                    /**< Token payload. */
 } procgen_token_t;
+
+/**
+ * @brief Parse parameter tokens following a keyword.
+ *
+ * A param token stores the parameter name in s and the value
+ * in i/f depending on type.  param_name holds the original
+ * name from the grammar string.
+ */
 
 /* ── 2D integer vector (grid coordinates) ─────────────────────── */
 

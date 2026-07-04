@@ -246,6 +246,9 @@ tok_error_t procgen_tokenize(const char *input,
                     pt->type = TOK_MARKER;  /* reuse for parameter */
                     pt->line = line;
                     pt->col  = col;
+                    memcpy(pt->param_name, param_name,
+                           pn_len < 31 ? pn_len : 31);
+                    pt->param_name[pn_len < 31 ? pn_len : 31] = '\0';
                     memcpy(pt->value.s, str_start,
                            slen < 63 ? slen : 63);
                     pt->value.s[slen < 63 ? slen : 63] = '\0';
@@ -274,9 +277,7 @@ tok_error_t procgen_tokenize(const char *input,
                     /* Number: int or float. */
                     const char *num_start = p;
                     if (*p == '-') { p++; col++; }
-                    int is_float = 0;
                     while (*p && (isdigit((unsigned char)*p) || *p == '.')) {
-                        if (*p == '.') is_float = 1;
                         p++; col++;
                     }
                     uint32_t num_len = (uint32_t)(p - num_start);
@@ -291,15 +292,15 @@ tok_error_t procgen_tokenize(const char *input,
                     pt->line = line;
                     pt->col  = col - num_len;
 
+                    memcpy(pt->param_name, param_name,
+                           pn_len < 31 ? pn_len : 31);
+                    pt->param_name[pn_len < 31 ? pn_len : 31] = '\0';
+
                     char num_buf[64];
                     uint32_t ncopy = num_len < 63 ? num_len : 63;
                     memcpy(num_buf, num_start, ncopy);
                     num_buf[ncopy] = '\0';
-                    if (is_float) {
-                        pt->value.f = (float)atof(num_buf);
-                    } else {
-                        pt->value.i = (int32_t)atoi(num_buf);
-                    }
+                    pt->value.f = (float)atof(num_buf);
                 }
                 /* else it's an unquoted string identifier */
                 else if (is_ident_start((unsigned char)*p)) {
@@ -316,6 +317,9 @@ tok_error_t procgen_tokenize(const char *input,
                     pt->type = TOK_MARKER;
                     pt->line = line;
                     pt->col  = col - slen;
+                    memcpy(pt->param_name, param_name,
+                           pn_len < 31 ? pn_len : 31);
+                    pt->param_name[pn_len < 31 ? pn_len : 31] = '\0';
                     memcpy(pt->value.s, str_start,
                            slen < 63 ? slen : 63);
                     pt->value.s[slen < 63 ? slen : 63] = '\0';
