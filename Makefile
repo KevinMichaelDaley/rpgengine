@@ -299,6 +299,7 @@ BIN_HEADLESS += build/npc_state_tests
 BIN_HEADLESS += build/npc_scent_tests
 BIN_HEADLESS += build/procgen_types_tests
 BIN_HEADLESS += build/procgen_tokenize_tests
+BIN_HEADLESS += build/procgen_integration_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
@@ -1090,6 +1091,9 @@ build/procgen_types_tests: tests/procgen/procgen_types_tests.c include/ferrum/pr
 
 build/procgen_tokenize_tests: tests/procgen/procgen_tokenize_tests.c src/procgen/procgen_tokenize.c include/ferrum/procgen/procgen_tokenize.h include/ferrum/procgen/procgen_types.h include/ferrum/procgen/procgen_layout.h | build
 	$(CC) $(CFLAGS) tests/procgen/procgen_tokenize_tests.c src/procgen/procgen_tokenize.c -o $@ -lm
+
+build/procgen_integration_tests: tests/procgen/procgen_integration_tests.c src/procgen/procgen_tokenize.c include/ferrum/procgen/procgen_tokenize.h include/ferrum/procgen/procgen_types.h include/ferrum/procgen/procgen_layout.h | build
+	$(CC) $(CFLAGS) tests/procgen/procgen_integration_tests.c src/procgen/procgen_tokenize.c -o $@ -lm
 
 NPC_AUDIO_PROP_TEST_SRC := $(wildcard src/npc/audio/*.c)
 build/npc_audio_propagation_tests: tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) | build
