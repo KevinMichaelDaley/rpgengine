@@ -6,12 +6,13 @@
  * 64-bit IDs are preserved during add/search.
  */
 
-#include "ferrum/npc/npc_knowledge_graph.h"
+#include <cstdint>
+#include <vector>
 
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIDMap.h>
-#include <cstdint>
-#include <vector>
+
+#include "ferrum/npc/npc_knowledge_graph.h"
 
 extern "C" {
 
