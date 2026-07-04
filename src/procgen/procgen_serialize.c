@@ -157,6 +157,35 @@ int procgen_serialize_to_json_buf(const fr_dungeon_layout_t *layout,
                      NULL);
     }
 
+    /* Openings (doors/windows). */
+    for (uint32_t i = 0; i < layout->opening_count; i++) {
+        const fr_opening_def_t *o = &layout->openings[i];
+        if (!first) jw_append(&w, ",");
+        first = 0;
+        const char *otype = (o->type == OPEN_DOOR) ? "door" : "window";
+        write_entity(&w, next_id(), otype,
+                     o->pos.x, o->pos.y, o->pos.z,
+                     o->width, o->height, 0.1f,
+                     NULL);
+    }
+
+    /* Ramps. */
+    for (uint32_t i = 0; i < layout->ramp_count; i++) {
+        const fr_ramp_def_t *r = &layout->ramps[i];
+        if (!first) jw_append(&w, ",");
+        first = 0;
+        float cx = (r->from.x + r->to.x) * 0.5f;
+        float cy = (r->from.y + r->to.y) * 0.5f;
+        float dx = r->to.x - r->from.x;
+        float dy = r->to.y - r->from.y;
+        float length = sqrtf(dx * dx + dy * dy);
+        float cz = (r->from.z + r->to.z) * 0.5f;
+        write_entity(&w, next_id(), "ramp",
+                     cx, cy, cz,
+                     length, r->width, fabsf(r->height_change) + 0.1f,
+                     NULL);
+    }
+
     /* Markers. */
     for (uint32_t i = 0; i < layout->marker_count; i++) {
         const fr_marker_def_t *m = &layout->markers[i];

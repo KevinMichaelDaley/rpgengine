@@ -90,6 +90,70 @@ static int find_param_string(const procgen_token_t *tokens, uint32_t count,
     return -1;
 }
 
+/* ── Coordinate tuple parser ──────────────────────────────────── */
+
+/**
+ * @brief Parse a coordinate tuple string like "(20,0)" or "(20,0,5)"
+ *        or "((x1,y1),(x2,y2),...)" into floats.
+ *
+ * Stores parsed floats in *out and returns count (2, 3, or 2*N).
+ * Returns -1 on parse error.
+ */
+static int parse_tuple(const char *tuple, float *out, uint32_t out_cap) {
+    if (!tuple || !out || tuple[0] != '(') return -1;
+
+    const char *p = tuple + 1;  /* skip opening ( */
+    uint32_t count = 0;
+
+    while (*p && *p != ')' && count < out_cap) {
+        /* Skip whitespace and commas. */
+        while (*p == ' ' || *p == ',' || *p == '\t') p++;
+
+        if (*p == '(') {
+            /* Nested tuple: ((x1,y1),(x2,y2),...).
+               Recursively parse each inner pair. */
+            p++; /* skip inner ( */
+            for (int j = 0; j < 2 && count < out_cap; j++) {
+                while (*p == ' ' || *p == ',' || *p == '\t') p++;
+                char *end = NULL;
+                out[count++] = strtof(p, &end);
+                if (end == p) return -1;
+                p = end;
+            }
+            /* skip closing ) of inner pair */
+            while (*p == ' ' || *p == '\t') p++;
+            if (*p == ')') p++;
+        } else if (*p == ')' || *p == '\0') {
+            break;
+        } else {
+            /* Plain number. */
+            char *end = NULL;
+            out[count++] = strtof(p, &end);
+            if (end == p) return -1;
+            p = end;
+        }
+    }
+
+    return (int)count;
+}
+
+/**
+ * @brief Find a coordinate-tuple parameter and parse it.
+ *
+ * Searches forward from @p start for a param token with the given
+ * name whose value is a tuple string. Parses it into floats.
+ *
+ * @return number of floats parsed (≥0), or -1 if param not found.
+ */
+static int find_param_tuple(const procgen_token_t *tokens, uint32_t count,
+                            uint32_t start, const char *name,
+                            float *out, uint32_t out_cap) {
+    char raw[256];
+    if (find_param_string(tokens, count, start, name, raw, sizeof(raw)) != 0)
+        return -1;
+    return parse_tuple(raw, out, out_cap);
+}
+
 /* ── Room rasterization ────────────────────────────────────────── */
 
 static int rasterize_room_quad(const procgen_token_t *tokens, uint32_t count,
@@ -199,15 +263,31 @@ static int rasterize_corridor(const procgen_token_t *tokens, uint32_t count,
                               char *err_buf, uint32_t err_cap) {
     float from_x = 0, from_y = 0, to_x = 0, to_y = 0, w = 0, floor_z = 0, ceil_z = 0;
 
-    /* from=(x,y) is parsed as coordinate tuple — currently skipped.
-       For now, look for from_x/from_y/to_x/to_y params or skip. */
-    /* Simplified: look for w, floor_z, ceil_z.  from/to defaults to 0. */
+    /* Try from=(x,y) and to=(x,y) coordinate tuples. */
+    float ftup[4];
+    if (find_param_tuple(tokens, count, pos + 1, "from", ftup, 4) >= 2) {
+        from_x = ftup[0]; from_y = ftup[1];
+    }
+    float ttup[4];
+    if (find_param_tuple(tokens, count, pos + 1, "to", ttup, 4) >= 2) {
+        to_x = ttup[0]; to_y = ttup[1];
+    }
+
     if (find_param_float(tokens, count, pos + 1, "w", &w) != 0) {
-        /* Not strictly required if from= coord is used.  Default. */
         w = 4.0f;
     }
-    find_param_float(tokens, count, pos + 1, "floor_z", &floor_z);
-    find_param_float(tokens, count, pos + 1, "ceil_z", &ceil_z);
+    if (find_param_float(tokens, count, pos + 1, "floor_z", &floor_z) != 0) {
+        snprintf(err_buf, err_cap, "corridor missing floor_z");
+        return -1;
+    }
+    if (find_param_float(tokens, count, pos + 1, "ceil_z", &ceil_z) != 0) {
+        snprintf(err_buf, err_cap, "corridor missing ceil_z");
+        return -1;
+    }
+    if (ceil_z <= floor_z) {
+        snprintf(err_buf, err_cap, "corridor ceil_z must be greater than floor_z");
+        return -1;
+    }
 
     fr_corridor_def_t corr;
     memset(&corr, 0, sizeof(corr));
@@ -223,7 +303,6 @@ static int rasterize_corridor(const procgen_token_t *tokens, uint32_t count,
     else if (kw == TOK_CORRIDOR_DIAG) corr.angle_type = CORR_ANGLE_45;
 
     return corridor_arr_push(corridors, &corr);
-    (void)err_buf; (void)err_cap;
 }
 
 /* ── Opening rasterization ─────────────────────────────────────── */
@@ -231,20 +310,30 @@ static int rasterize_corridor(const procgen_token_t *tokens, uint32_t count,
 static int rasterize_opening(const procgen_token_t *tokens, uint32_t count,
                              uint32_t pos, opening_arr *openings,
                              char *err_buf, uint32_t err_cap) {
-    float w = 0, h = 0;
+    float ox = 0, oy = 0, oz = 0, w = 0, h = 0;
 
-    find_param_float(tokens, count, pos + 1, "w", &w);
-    find_param_float(tokens, count, pos + 1, "h", &h);
+    float tup[3];
+    if (find_param_tuple(tokens, count, pos + 1, "at", tup, 3) >= 2) {
+        ox = tup[0]; oy = tup[1];
+        if (find_param_tuple(tokens, count, pos + 1, "at", tup, 3) >= 3)
+            oz = tup[2];
+    }
+
+    if (find_param_float(tokens, count, pos + 1, "w", &w) != 0) w = 2.0f;
+    if (find_param_float(tokens, count, pos + 1, "h", &h) != 0) h = 3.0f;
 
     fr_opening_def_t op;
     memset(&op, 0, sizeof(op));
-    op.pos    = (vec3_t){0.0f, 0.0f, 0.0f};
+    op.pos    = (vec3_t){ox, oy, oz};
     op.width  = w > 0 ? w : 2.0f;
     op.height = h > 0 ? h : 3.0f;
     op.type   = (tokens[pos].type == TOK_DOOR) ? OPEN_DOOR : OPEN_WINDOW;
 
-    return opening_arr_push(openings, &op);
-    (void)err_buf; (void)err_cap;
+    if (opening_arr_push(openings, &op) != 0) {
+        snprintf(err_buf, err_cap, "failed to add opening");
+        return -1;
+    }
+    return 0;
 }
 
 /* ── Ramp rasterization ────────────────────────────────────────── */
@@ -252,19 +341,33 @@ static int rasterize_opening(const procgen_token_t *tokens, uint32_t count,
 static int rasterize_ramp(const procgen_token_t *tokens, uint32_t count,
                           uint32_t pos, ramp_arr *ramps,
                           char *err_buf, uint32_t err_cap) {
-    float dz = 0, w = 4.0f;
-    find_param_float(tokens, count, pos + 1, "dz", &dz);
+    float fx = 0, fy = 0, tx = 10, ty = 0, dz = 0, w = 4.0f;
+
+    float ftup[4];
+    if (find_param_tuple(tokens, count, pos + 1, "from", ftup, 4) >= 2) {
+        fx = ftup[0]; fy = ftup[1];
+    }
+    float ttup[4];
+    if (find_param_tuple(tokens, count, pos + 1, "to", ttup, 4) >= 2) {
+        tx = ttup[0]; ty = ttup[1];
+    }
+
+    if (find_param_float(tokens, count, pos + 1, "dz", &dz) != 0) {
+        snprintf(err_buf, err_cap, "ramp missing dz parameter");
+        return -1;
+    }
     find_param_float(tokens, count, pos + 1, "w", &w);
+
+    float hc = (tokens[pos].type == TOK_RAMP_UP) ? dz : -dz;
 
     fr_ramp_def_t ramp;
     memset(&ramp, 0, sizeof(ramp));
-    ramp.from = (vec3_t){0.0f, 0.0f, 0.0f};
-    ramp.to   = (vec3_t){10.0f, 0.0f, dz};
-    ramp.height_change = (tokens[pos].type == TOK_RAMP_UP) ? dz : -dz;
+    ramp.from = (vec3_t){fx, fy, 0.0f};
+    ramp.to   = (vec3_t){tx, ty, hc};
+    ramp.height_change = hc;
     ramp.width = w > 0 ? w : 4.0f;
 
     return ramp_arr_push(ramps, &ramp);
-    (void)err_buf; (void)err_cap;
 }
 
 /* ── Marker rasterization ──────────────────────────────────────── */
@@ -281,10 +384,12 @@ static int rasterize_marker(const procgen_token_t *tokens, uint32_t count,
     memset(&m, 0, sizeof(m));
     m.pos = (vec3_t){x, y, z};
 
-    find_param_string(tokens, count, pos + 1, "name", m.name, sizeof(m.name));
+    if (find_param_string(tokens, count, pos + 1, "name", m.name, sizeof(m.name)) != 0) {
+        snprintf(err_buf, err_cap, "marker missing name parameter");
+        return -1;
+    }
 
     return marker_arr_push(markers, &m);
-    (void)err_buf; (void)err_cap;
 }
 
 /* ── Main rasterize function ───────────────────────────────────── */

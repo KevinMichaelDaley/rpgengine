@@ -256,8 +256,9 @@ tok_error_t procgen_tokenize(const char *input,
                        For now, just emit the value token. The
                        rasterizer knows the keyword's parameter order. */
                 } else if (*p == '(') {
-                    /* Coordinate tuple: (x,y) or (x,y,z). Skip for now —
-                       just consume until matching ')'. */
+                    /* Coordinate tuple: (x,y), (x,y,z), or ((x1,y1),...)
+                       Capture as a raw string for the rasterizer to parse. */
+                    const char *tup_start = p;
                     p++; col++;
                     int depth = 1;
                     while (*p && depth > 0) {
@@ -273,6 +274,24 @@ tok_error_t procgen_tokenize(const char *input,
                         return TOK_ERR_UNEXPECTED_TOKEN;
                     }
                     p++; col++; /* skip closing ) */
+                    uint32_t tup_len = (uint32_t)(p - tup_start);
+
+                    if (count >= tok_cap) {
+                        emit_err(err_buf, err_cap, 0, 0, "token buffer overflow");
+                        return TOK_ERR_BUFFER_FULL;
+                    }
+                    procgen_token_t *pt = &tokens[count++];
+                    memset(pt, 0, sizeof(*pt));
+                    pt->type = TOK_MARKER;
+                    pt->line = line;
+                    pt->col  = (uint32_t)(col - tup_len);
+                    memcpy(pt->param_name, param_name,
+                           pn_len < 31 ? pn_len : 31);
+                    pt->param_name[pn_len < 31 ? pn_len : 31] = '\0';
+                    /* Store the raw tuple string (with parens) in value.s. */
+                    uint32_t copy = tup_len < 63 ? tup_len : 63;
+                    memcpy(pt->value.s, tup_start, copy);
+                    pt->value.s[copy] = '\0';
                 } else if (*p == '-' || isdigit((unsigned char)*p)) {
                     /* Number: int or float. */
                     const char *num_start = p;
