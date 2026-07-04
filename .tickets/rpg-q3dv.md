@@ -1,6 +1,6 @@
 ---
 id: rpg-q3dv
-status: open
+status: closed
 deps: [rpg-xlnl]
 links: []
 created: 2026-07-04T20:37:58Z

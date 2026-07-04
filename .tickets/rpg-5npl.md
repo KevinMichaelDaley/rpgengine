@@ -1,6 +1,6 @@
 ---
 id: rpg-5npl
-status: open
+status: closed
 deps: [rpg-py13, rpg-xlnl, rpg-q3dv]
 links: []
 created: 2026-07-04T20:37:58Z
