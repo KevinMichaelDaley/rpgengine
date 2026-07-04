@@ -64,6 +64,7 @@ typedef struct procgen_token {
     tok_type_t type;            /**< Token classification. */
     uint32_t   line;            /**< Source line number (1-based). */
     uint32_t   col;             /**< Source column number (1-based). */
+    uint32_t   grammar_version; /**< Grammar version (valid for TOK_GRAMMAR only). */
     union {
         int32_t  i;             /**< Integer value (counts, indices). */
         float    f;             /**< Float value (coordinates, dimensions). */

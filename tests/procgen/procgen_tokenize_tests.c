@@ -53,7 +53,7 @@ static void test_parse_grammar_header(void) {
     ASSERT_TRUE(count >= 2);
     ASSERT_EQ(tokens[0].type, TOK_GRAMMAR);
     ASSERT_STREQ(tokens[0].value.s, "blockout");
-    ASSERT_INT_EQ(tokens[0].value.u, (uint32_t)1);
+    ASSERT_INT_EQ(tokens[0].grammar_version, (uint32_t)1);
     PASS();
 }
 
@@ -203,11 +203,11 @@ static void test_block_eblock_nesting_valid(void) {
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
     ASSERT_INT_EQ(rc, 0);
     /* Verify nested blocks: GRAMMAR, BLOCK, ROOM_QUAD, BLOCK, ROOM_PENT, EBLOCK, EBLOCK */
-    ASSERT_TRUE(count >= 7);
+    ASSERT_TRUE(count >= 8);
     ASSERT_EQ(tokens[1].type, TOK_BLOCK);
-    ASSERT_EQ(tokens[3].type, TOK_BLOCK);
-    ASSERT_EQ(tokens[5].type, TOK_EBLOCK);
+    ASSERT_EQ(tokens[4].type, TOK_BLOCK);
     ASSERT_EQ(tokens[6].type, TOK_EBLOCK);
+    ASSERT_EQ(tokens[7].type, TOK_EBLOCK);
     PASS();
 }
 
@@ -265,9 +265,9 @@ static void test_comments_ignored(void) {
     uint32_t count = 0;
     int rc = procgen_tokenize(input, tokens, TOK_BUF_CAP, &count, err, sizeof(err));
     ASSERT_INT_EQ(rc, 0);
-    ASSERT_TRUE(count >= 3);  /* GRAMMAR, ROOM_QUAD, ROOM_PENT */
+    ASSERT_TRUE(count >= 4);  /* GRAMMAR, ROOM_QUAD, x=0 param, ROOM_PENT */
     ASSERT_EQ(tokens[1].type, TOK_ROOM_QUAD);
-    ASSERT_EQ(tokens[2].type, TOK_ROOM_PENT);
+    ASSERT_EQ(tokens[3].type, TOK_ROOM_PENT);
     PASS();
 }
 
