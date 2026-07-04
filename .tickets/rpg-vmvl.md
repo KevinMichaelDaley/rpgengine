@@ -1,6 +1,6 @@
 ---
 id: rpg-vmvl
-status: open
+status: closed
 deps: [rpg-bdrv]
 links: []
 created: 2026-07-04T20:39:25Z

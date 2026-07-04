@@ -1,6 +1,6 @@
 ---
 id: rpg-47no
-status: open
+status: closed
 deps: [rpg-dltg, rpg-023m, rpg-vmvl]
 links: []
 created: 2026-07-04T20:39:25Z
