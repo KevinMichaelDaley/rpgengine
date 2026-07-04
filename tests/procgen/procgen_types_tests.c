@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "ferrum/math/vec3.h"
 #include "ferrum/procgen/procgen_types.h"
 #include "ferrum/procgen/procgen_layout.h"
 
@@ -84,22 +85,29 @@ static void test_token_struct_size(void) {
 
 static void test_token_has_required_fields(void) {
     procgen_token_t tok;
-    tok.type        = TOK_SPAWN;
-    tok.line        = 4;
-    tok.col         = 12;
-    tok.value.i     = 42;
-    tok.value.f     = 3.14f;
-    tok.value.s[0]  = 't';
-    tok.value.s[1]  = 'e';
-    tok.value.s[2]  = 's';
-    tok.value.s[3]  = 't';
-    tok.value.s[4]  = '\0';
 
+    /* Integer value via union. */
+    tok.type    = TOK_SPAWN;
+    tok.line    = 4;
+    tok.col     = 12;
+    tok.value.i = 42;
     ASSERT_EQ(tok.type, TOK_SPAWN);
     ASSERT_EQ(tok.line, (uint32_t)4);
     ASSERT_EQ(tok.col,  (uint32_t)12);
     ASSERT_INT_EQ(tok.value.i, 42);
+
+    /* Float value via union. */
+    tok.value.f = 3.14f;
+    ASSERT_TRUE(tok.value.f >= 3.13f && tok.value.f <= 3.15f);
+
+    /* String value via union. */
+    tok.value.s[0] = 't';
+    tok.value.s[1] = 'e';
+    tok.value.s[2] = 's';
+    tok.value.s[3] = 't';
+    tok.value.s[4] = '\0';
     ASSERT_TRUE(tok.value.s[0] == 't');
+    ASSERT_TRUE(tok.value.s[1] == 'e');
     PASS();
 }
 
@@ -126,7 +134,7 @@ static void test_room_def_has_required_fields(void) {
 
 static void test_room_def_max_vertices(void) {
     /* Must support at least 8 vertices (future hex rooms). */
-    ASSERT_TRUE(sizeof(((fr_room_def_t *)0)->vertices) / sizeof(fr_vec3_t) >= 8);
+    ASSERT_TRUE(sizeof(((fr_room_def_t *)0)->vertices) / sizeof(vec3_t) >= 8);
     PASS();
 }
 
@@ -141,8 +149,8 @@ static void test_corridor_def_angle_enum(void) {
 
 static void test_corridor_def_has_required_fields(void) {
     fr_corridor_def_t corr;
-    corr.from       = (fr_vec3_t){{0.0f, 0.0f, 0.0f}};
-    corr.to         = (fr_vec3_t){{10.0f, 0.0f, 0.0f}};
+    corr.from       = (vec3_t){0.0f, 0.0f, 0.0f};
+    corr.to         = (vec3_t){10.0f, 0.0f, 0.0f};
     corr.width      = 4.0f;
     corr.floor_z    = 0.0f;
     corr.ceil_z     = 5.0f;
@@ -164,7 +172,7 @@ static void test_opening_def_type_enum(void) {
 
 static void test_opening_def_has_required_fields(void) {
     fr_opening_def_t op;
-    op.pos    = (fr_vec3_t){{5.0f, 0.0f, 1.0f}};
+    op.pos    = (vec3_t){5.0f, 0.0f, 1.0f};
     op.width  = 2.0f;
     op.height = 3.0f;
     op.type   = OPEN_DOOR;
@@ -180,8 +188,8 @@ static void test_opening_def_has_required_fields(void) {
 
 static void test_ramp_def_has_required_fields(void) {
     fr_ramp_def_t ramp;
-    ramp.from          = (fr_vec3_t){{0.0f, 0.0f, 0.0f}};
-    ramp.to            = (fr_vec3_t){{10.0f, 0.0f, 6.0f}};
+    ramp.from          = (vec3_t){0.0f, 0.0f, 0.0f};
+    ramp.to            = (vec3_t){10.0f, 0.0f, 6.0f};
     ramp.height_change = 6.0f;
     ramp.width         = 4.0f;
 
@@ -194,7 +202,7 @@ static void test_ramp_def_has_required_fields(void) {
 
 static void test_marker_def_has_required_fields(void) {
     fr_marker_def_t m;
-    m.pos      = (fr_vec3_t){{10.0f, 5.0f, 1.0f}};
+    m.pos      = (vec3_t){10.0f, 5.0f, 1.0f};
     m.name[0]  = 'b';
     m.name[1]  = 'o';
     m.name[2]  = 's';
@@ -217,7 +225,7 @@ static void test_nav_node_type_enum(void) {
 static void test_nav_node_has_required_fields(void) {
     fr_nav_node_t node;
     node.type       = NAV_ROOM;
-    node.pos        = (fr_vec3_t){{0.0f, 0.0f, 0.0f}};
+    node.pos        = (vec3_t){0.0f, 0.0f, 0.0f};
     node.room_index = 3;
 
     ASSERT_EQ(node.type, NAV_ROOM);
@@ -252,7 +260,7 @@ static void test_dungeon_layout_has_required_fields(void) {
     layout.ramps           = NULL;
     layout.marker_count    = 0;
     layout.markers         = NULL;
-    layout.spawn_pos       = (fr_vec3_t){{0.0f, 0.0f, 0.0f}};
+    layout.spawn_pos       = (vec3_t){0.0f, 0.0f, 0.0f};
     layout.nav_node_count  = 0;
     layout.nav_nodes       = NULL;
     layout.nav_edge_count  = 0;

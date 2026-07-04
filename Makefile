@@ -297,6 +297,7 @@ BIN_HEADLESS += build/npc_trade_state_tests
 BIN_HEADLESS += build/npc_demo_integration_tests
 BIN_HEADLESS += build/npc_state_tests
 BIN_HEADLESS += build/npc_scent_tests
+BIN_HEADLESS += build/procgen_types_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
@@ -1082,6 +1083,9 @@ build/npc_sense_tests: tests/npc/npc_sense_tests.c $(NPC_SENSE_TEST_SRC) $(OBJ_N
 NPC_SCENT_TEST_SRC := src/npc/sense/npc_sense_scent.c
 build/npc_scent_tests: tests/npc/npc_scent_tests.c $(NPC_SCENT_TEST_SRC) | build
 	$(CC) $(CFLAGS) tests/npc/npc_scent_tests.c $(NPC_SCENT_TEST_SRC) -o $@ $(LDFLAGS)
+
+build/procgen_types_tests: tests/procgen/procgen_types_tests.c include/ferrum/procgen/procgen_types.h include/ferrum/procgen/procgen_layout.h | build
+	$(CC) $(CFLAGS) tests/procgen/procgen_types_tests.c -o $@ -lm
 
 NPC_AUDIO_PROP_TEST_SRC := $(wildcard src/npc/audio/*.c)
 build/npc_audio_propagation_tests: tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) | build
