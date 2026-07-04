@@ -29,7 +29,7 @@ static int g_fail = 0;
 
 static void free_l(fr_dungeon_layout_t *l) {
     free(l->rooms); free(l->corridors); free(l->openings);
-    free(l->ramps); free(l->markers);
+    free(l->ramps); free(l->markers); free(l->nav_nodes); free(l->nav_edges);
     memset(l, 0, sizeof(*l));
 }
 

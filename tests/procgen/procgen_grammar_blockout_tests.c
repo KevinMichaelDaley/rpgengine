@@ -33,7 +33,7 @@ static void free_layout(fr_dungeon_layout_t *layout) {
     free(layout->corridors);
     free(layout->openings);
     free(layout->ramps);
-    free(layout->markers);
+    free(layout->markers); free(layout->nav_nodes); free(layout->nav_edges);
     memset(layout, 0, sizeof(*layout));
 }
 

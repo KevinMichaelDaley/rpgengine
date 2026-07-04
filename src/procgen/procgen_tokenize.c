@@ -27,6 +27,8 @@ static const struct {
     {"MARKER",        TOK_MARKER},
     {"BLOCK",         TOK_BLOCK},
     {"EBLOCK",        TOK_EBLOCK},
+    {"CONNECT",       TOK_CONNECT},
+    {"JUNCTION",      TOK_JUNCTION},
 };
 #define KW_COUNT (sizeof(KEYWORD_TABLE) / sizeof(KEYWORD_TABLE[0]))
 

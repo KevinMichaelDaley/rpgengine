@@ -46,12 +46,16 @@ DEF_ARRAY(corridor_arr, fr_corridor_def_t);
 DEF_ARRAY(opening_arr,  fr_opening_def_t);
 DEF_ARRAY(ramp_arr,     fr_ramp_def_t);
 DEF_ARRAY(marker_arr,   fr_marker_def_t);
+DEF_ARRAY(nav_node_arr, fr_nav_node_t);
+DEF_ARRAY(nav_edge_arr, fr_nav_edge_t);
 
 static void rooms_free(room_arr *a)      { free(a->data); a->data = NULL; a->count = 0; a->cap = 0; }
 static void corridors_free(corridor_arr *a) { free(a->data); a->data = NULL; a->count = 0; a->cap = 0; }
 static void openings_free(opening_arr *a)  { free(a->data); a->data = NULL; a->count = 0; a->cap = 0; }
 static void ramps_free(ramp_arr *a)       { free(a->data); a->data = NULL; a->count = 0; a->cap = 0; }
 static void markers_free(marker_arr *a)   { free(a->data); a->data = NULL; a->count = 0; a->cap = 0; }
+static void nav_nodes_free(nav_node_arr *a) { free(a->data); a->data = NULL; a->count = 0; a->cap = 0; }
+static void nav_edges_free(nav_edge_arr *a) { free(a->data); a->data = NULL; a->count = 0; a->cap = 0; }
 
 /* ── Parameter lookups ─────────────────────────────────────────── */
 
@@ -411,12 +415,22 @@ int grammar_blockout_rasterize(const procgen_token_t *tokens,
     opening_arr   openings;
     ramp_arr      ramps;
     marker_arr    markers;
+    nav_node_arr  nav_nodes;
+    nav_edge_arr  nav_edges;
 
     if (room_arr_init(&rooms, 4) != 0)      return -1;
     if (corridor_arr_init(&corridors, 4) != 0) { rooms_free(&rooms); return -1; }
     if (opening_arr_init(&openings, 4) != 0)   { rooms_free(&rooms); corridors_free(&corridors); return -1; }
     if (ramp_arr_init(&ramps, 4) != 0)        { rooms_free(&rooms); corridors_free(&corridors); openings_free(&openings); return -1; }
     if (marker_arr_init(&markers, 4) != 0)    { rooms_free(&rooms); corridors_free(&corridors); openings_free(&openings); ramps_free(&ramps); return -1; }
+    if (nav_node_arr_init(&nav_nodes, 4) != 0) {
+        rooms_free(&rooms); corridors_free(&corridors); openings_free(&openings);
+        ramps_free(&ramps); markers_free(&markers); return -1;
+    }
+    if (nav_edge_arr_init(&nav_edges, 4) != 0) {
+        rooms_free(&rooms); corridors_free(&corridors); openings_free(&openings);
+        ramps_free(&ramps); markers_free(&markers); nav_nodes_free(&nav_nodes); return -1;
+    }
 
     /* Copy grammar name from header. */
     for (uint32_t i = 0; i < count; i++) {
@@ -432,6 +446,12 @@ int grammar_blockout_rasterize(const procgen_token_t *tokens,
     }
 
     int spawn_found = 0;
+
+    /* Collect CONNECT/JUNCTION token positions for deferred processing. */
+    uint32_t *conn_positions = NULL;
+    uint32_t  conn_count = 0;
+    uint32_t *junc_positions = NULL;
+    uint32_t  junc_count = 0;
 
     for (uint32_t i = 0; i < count; i++) {
         const procgen_token_t *t = &tokens[i];
@@ -474,13 +494,131 @@ int grammar_blockout_rasterize(const procgen_token_t *tokens,
         case TOK_BLOCK:
         case TOK_EBLOCK:
         case TOK_GRAMMAR:
-            /* Already handled or no-op. */
             break;
-        default:
-            /* Param tokens are skipped — they're consumed by keyword handlers. */
+        case TOK_CONNECT: {
+            uint32_t *tmp = realloc(conn_positions,
+                (conn_count + 1) * sizeof(*conn_positions));
+            if (!tmp) goto fail;
+            conn_positions = tmp;
+            conn_positions[conn_count++] = i;
             break;
         }
+        case TOK_JUNCTION: {
+            uint32_t *tmp = realloc(junc_positions,
+                (junc_count + 1) * sizeof(*junc_positions));
+            if (!tmp) goto fail;
+            junc_positions = tmp;
+            junc_positions[junc_count++] = i;
+            break;
+        }
+        default:
+        }
     }
+
+    /* ── Build navigation graph ──────────────────────────────── */
+
+    /* Room nodes: one nav node per room at its centroid. */
+    for (uint32_t ri = 0; ri < rooms.count; ri++) {
+        const fr_room_def_t *r = &rooms.data[ri];
+        float cx = 0, cy = 0;
+        for (uint32_t j = 0; j < r->vertex_count; j++) {
+            cx += r->vertices[j].x;
+            cy += r->vertices[j].y;
+        }
+        cx /= (float)r->vertex_count;
+        cy /= (float)r->vertex_count;
+
+        fr_nav_node_t node;
+        memset(&node, 0, sizeof(node));
+        node.type       = NAV_ROOM;
+        node.pos        = (vec3_t){cx, cy, r->floor_z};
+        node.room_index = ri;
+        nav_node_arr_push(&nav_nodes, &node);
+    }
+
+    /* Corridor edges: connect nearest rooms based on endpoint proximity. */
+    for (uint32_t ci = 0; ci < corridors.count; ci++) {
+        const fr_corridor_def_t *c = &corridors.data[ci];
+        int best_from = -1, best_to = -1;
+        float best_from_d = 1e9f, best_to_d = 1e9f;
+
+        for (uint32_t ri = 0; ri < rooms.count; ri++) {
+            const fr_room_def_t *r = &rooms.data[ri];
+            float cx = 0, cy = 0;
+            for (uint32_t j = 0; j < r->vertex_count; j++) {
+                cx += r->vertices[j].x;
+                cy += r->vertices[j].y;
+            }
+            cx /= (float)r->vertex_count;
+            cy /= (float)r->vertex_count;
+
+            float d1 = (c->from.x - cx) * (c->from.x - cx) + (c->from.y - cy) * (c->from.y - cy);
+            float d2 = (c->to.x   - cx) * (c->to.x   - cx) + (c->to.y   - cy) * (c->to.y   - cy);
+
+            if (d1 < best_from_d) { best_from_d = d1; best_from = (int)ri; }
+            if (d2 < best_to_d)   { best_to_d   = d2; best_to   = (int)ri; }
+        }
+
+        if (best_from >= 0 && best_to >= 0) {
+            fr_nav_edge_t e;
+            memset(&e, 0, sizeof(e));
+            e.from_node = (uint32_t)best_from;
+            e.to_node   = (uint32_t)best_to;
+            float dx = c->to.x - c->from.x;
+            float dy = c->to.y - c->from.y;
+            e.distance = sqrtf(dx * dx + dy * dy);
+            nav_edge_arr_push(&nav_edges, &e);
+        }
+    }
+
+    /* ── Process deferred JUNCTION tokens ────────────────────── */
+    for (uint32_t ji = 0; ji < junc_count; ji++) {
+        uint32_t i = junc_positions[ji];
+        float jx = 0, jy = 0, jz = 0;
+        find_param_float(tokens, count, i + 1, "x", &jx);
+        find_param_float(tokens, count, i + 1, "y", &jy);
+        find_param_float(tokens, count, i + 1, "z", &jz);
+        fr_nav_node_t n;
+        memset(&n, 0, sizeof(n));
+        n.type = NAV_JUNCTION;
+        n.pos  = (vec3_t){jx, jy, jz};
+        nav_node_arr_push(&nav_nodes, &n);
+    }
+
+    /* ── Process deferred CONNECT tokens ─────────────────────── */
+    for (uint32_t ci = 0; ci < conn_count; ci++) {
+        uint32_t i = conn_positions[ci];
+        char from[64], to[64];
+        from[0] = to[0] = '\0';
+        find_param_string(tokens, count, i + 1, "from", from, sizeof(from));
+        find_param_string(tokens, count, i + 1, "to", to, sizeof(to));
+        if (from[0] && to[0]) {
+            /* Find the nav node indices for these room names. */
+            int fi = -1, ti = -1;
+            for (uint32_t ri = 0; ri < nav_nodes.count; ri++) {
+                if (nav_nodes.data[ri].type != NAV_ROOM) continue;
+                uint32_t room_idx = nav_nodes.data[ri].room_index;
+                if (room_idx < rooms.count) {
+                    const char *rname = rooms.data[room_idx].name;
+                    if (rname[0] && strcmp(rname, from) == 0) fi = (int)ri;
+                    if (rname[0] && strcmp(rname, to) == 0) ti = (int)ri;
+                }
+            }
+            if (fi >= 0 && ti >= 0) {
+                fr_nav_edge_t e;
+                memset(&e, 0, sizeof(e));
+                e.from_node = (uint32_t)fi;
+                e.to_node   = (uint32_t)ti;
+                float dx = nav_nodes.data[fi].pos.x - nav_nodes.data[ti].pos.x;
+                float dy = nav_nodes.data[fi].pos.y - nav_nodes.data[ti].pos.y;
+                e.distance = sqrtf(dx * dx + dy * dy);
+                nav_edge_arr_push(&nav_edges, &e);
+            }
+        }
+    }
+
+    free(conn_positions);
+    free(junc_positions);
 
     /* Transfer to layout. */
     layout->room_count     = rooms.count;
@@ -493,6 +631,10 @@ int grammar_blockout_rasterize(const procgen_token_t *tokens,
     layout->ramps          = ramps.data;
     layout->marker_count   = markers.count;
     layout->markers        = markers.data;
+    layout->nav_node_count = nav_nodes.count;
+    layout->nav_nodes      = nav_nodes.data;
+    layout->nav_edge_count = nav_edges.count;
+    layout->nav_edges      = nav_edges.data;
 
     if (!spawn_found) {
         snprintf(err_buf, err_cap, "no SPAWN token found");
@@ -507,5 +649,7 @@ fail:
     openings_free(&openings);
     ramps_free(&ramps);
     markers_free(&markers);
+    nav_nodes_free(&nav_nodes);
+    nav_edges_free(&nav_edges);
     return -1;
 }
