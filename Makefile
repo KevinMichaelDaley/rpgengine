@@ -1115,6 +1115,16 @@ build/procgen_grammar_registry_tests: tests/procgen/procgen_grammar_registry_tes
 build/procgen_e2e_tests: tests/procgen/procgen_e2e_tests.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/procgen_grammar_registry.c include/ferrum/procgen/procgen_serialize.h include/ferrum/procgen/procgen_grammar_registry.h include/ferrum/procgen/procgen_tokenize.h include/ferrum/procgen/procgen_types.h include/ferrum/procgen/procgen_layout.h include/ferrum/procgen/grammar_blockout.h | build
 	$(CC) $(CFLAGS) tests/procgen/procgen_e2e_tests.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/procgen_grammar_registry.c -o $@ -lm
 
+CFLAGS_CURL := $(shell pkg-config --cflags libcurl 2>/dev/null)
+LDFLAGS_CURL := $(shell pkg-config --libs libcurl 2>/dev/null)
+
+build/procgen_architect_cli: tools/procgen_architect_cli.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/architect/architect.c src/engine_settings.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c include/ferrum/procgen/procgen_architect.h include/ferrum/procgen/procgen_tokenize.h include/ferrum/procgen/procgen_types.h include/ferrum/procgen/procgen_layout.h include/ferrum/procgen/grammar_blockout.h include/ferrum/procgen/procgen_serialize.h include/ferrum/engine_settings.h | build
+	$(CC) $(CFLAGS) $(CFLAGS_CURL) tools/procgen_architect_cli.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/architect/architect.c src/engine_settings.c src/llm/cost/llm_cost_tracker.c src/llm/cost/llm_cost_compute.c -o $@ -lm $(LDFLAGS_CURL)
+
+architect: build/procgen_architect_cli
+	@echo "Built: build/procgen_architect_cli"
+	@echo "Usage: ./build/procgen_architect_cli \"prompt\" --output /tmp/test.json"
+
 NPC_AUDIO_PROP_TEST_SRC := $(wildcard src/npc/audio/*.c)
 build/npc_audio_propagation_tests: tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) | build
 	$(CC) $(CFLAGS) tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) -o $@ $(LDFLAGS)

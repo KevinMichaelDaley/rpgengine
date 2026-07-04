@@ -1,6 +1,6 @@
 ---
 id: rpg-tljj
-status: open
+status: closed
 deps: [rpg-vgqt]
 links: []
 created: 2026-07-04T20:39:26Z

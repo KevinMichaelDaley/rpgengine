@@ -1,6 +1,6 @@
 ---
 id: rpg-1ssx
-status: open
+status: closed
 deps: [rpg-8ijf, rpg-vgqt, rpg-tljj, rpg-zx6t]
 links: []
 created: 2026-07-04T20:39:26Z
