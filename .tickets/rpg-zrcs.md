@@ -1,6 +1,6 @@
 ---
 id: rpg-zrcs
-status: open
+status: closed
 deps: [rpg-cpqa, rpg-tdfr, rpg-tn8q, rpg-ft81, rpg-mcsr, rpg-i2vh, rpg-ma6m, rpg-hcur]
 links: []
 created: 2026-07-04T20:37:59Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-i2vh
-status: open
+status: closed
 deps: [rpg-o9fl]
 links: []
 created: 2026-07-04T20:37:59Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-ma6m
-status: open
+status: closed
 deps: [rpg-o9fl, rpg-cpqa]
 links: []
 created: 2026-07-04T20:37:59Z
