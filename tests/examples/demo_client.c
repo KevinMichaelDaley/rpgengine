@@ -35,6 +35,7 @@
 #include "ferrum/mesh/obj_loader.h"
 
 #include "ferrum/procgen/procgen_level_load.h"
+#include "ferrum/procgen/procgen_srd_level_load.h"
 
 #include "ferrum/net/quantization.h"
 #include "ferrum/net/replication/body_spawn.h"
@@ -647,6 +648,7 @@ int main(int argc, char **argv) {
     int headless = 0;
     const char *record_path = NULL;
     const char *procgen_path = NULL;
+    int         use_srd = 0;
 
 #ifdef FR_NET_EMULATION
     float emu_delay = 0.0f, emu_jitter = 0.0f, emu_loss = 0.0f;
@@ -661,6 +663,9 @@ int main(int argc, char **argv) {
             record_path = argv[++i];
         } else if (strcmp(argv[i], "--procgen") == 0 && i + 1 < argc) {
             procgen_path = argv[++i];
+        } else if (strcmp(argv[i], "--srd") == 0 && i + 1 < argc) {
+            procgen_path = argv[++i];
+            use_srd = 1;
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -782,10 +787,38 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        /* ── Load procgen mesh if --procgen specified ──────────────── */
+        /* ── Load procgen mesh if --procgen/--srd specified ────────── */
         if (procgen_path) {
-            procgen_level_t lvl;
-            procgen_level_init(&lvl);
+            if (use_srd) {
+                procgen_srd_level_t srd_lvl;
+                procgen_srd_level_init(&srd_lvl);
+                if (procgen_srd_level_load(&srd_lvl, procgen_path, 0, 5.0) == 0
+                    && srd_lvl.mesh.vertex_count > 0) {
+                    uint32_t tris = srd_lvl.mesh.vertex_count / 9;
+                    GLint ploc = glGetAttribLocation(gl.program.handle, "in_pos");
+                    vao_attribute_t pattr = {(uint32_t)ploc, 3, GL_FLOAT, 0u, 0u, 0u};
+                    gl.arm_vert_count = tris * 3;
+                    float mn[3]={1e9f,1e9f,1e9f}, mx[3]={-1e9f,-1e9f,-1e9f};
+                    for(uint32_t i=0;i<srd_lvl.mesh.vertex_count;i+=3){
+                        float vv=srd_lvl.mesh.vertices[i];if(vv<mn[0])mn[0]=vv;if(vv>mx[0])mx[0]=vv;
+                        vv=srd_lvl.mesh.vertices[i+1];if(vv<mn[1])mn[1]=vv;if(vv>mx[1])mx[1]=vv;
+                        vv=srd_lvl.mesh.vertices[i+2];if(vv<mn[2])mn[2]=vv;if(vv>mx[2])mx[2]=vv;}
+                    printf("[client] mesh bounds: (%.1f,%.1f,%.1f)→(%.1f,%.1f,%.1f)\n",
+                           mn[0],mn[1],mn[2],mx[0],mx[1],mx[2]);
+                    vbo_create(&gl.arm_vbo, &gl.loader);
+                    vbo_upload(&gl.arm_vbo, GL_ARRAY_BUFFER,
+                               srd_lvl.mesh.vertices,
+                               srd_lvl.mesh.vertex_count * sizeof(float),
+                               GL_STATIC_DRAW);
+                    vao_create(&gl.arm_vao, &gl.loader);
+                    vao_bind_attributes(&gl.arm_vao, &gl.arm_vbo,
+                                        &pattr, 1u, 3u * sizeof(float));
+                    printf("[client] srd mesh: %u tris from %s\n", tris, procgen_path);
+                }
+                procgen_srd_level_free(&srd_lvl);
+            } else {
+                procgen_level_t lvl;
+                procgen_level_init(&lvl);
             if (procgen_level_load(&lvl, procgen_path) == 0) {
                 uint32_t tris = lvl.mesh.vertex_count / 9;
                 if (tris > 0) {
@@ -816,7 +849,8 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "[client] procgen load failed: %s\n",
                         procgen_path);
             }
-        }
+            }  /* closes else { for use_srd */
+        }      /* closes if (procgen_path) */
     }
 
     /* ── 3b. Video capture (if --record) ──────────────────────── */

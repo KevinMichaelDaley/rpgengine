@@ -1821,8 +1821,17 @@ demo_server:
 	@echo "Built: build/demo_server"
 	@echo "Usage: ./build/demo_server <port> [duration_s] [--net-workers N] [--phys-workers N]"
 
-build/demo_client: build/liball.a tests/examples/demo_client.c | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+SRD_OBJS := $(OBJDIR)/src/procgen/srd/srd_bridge.o \
+            $(OBJDIR)/src/procgen/srd/srd_optimizer.o \
+            $(OBJDIR)/src/procgen/srd/srd_energy.o \
+            $(OBJDIR)/src/procgen/srd/srd_loss_compiler.o \
+            $(OBJDIR)/src/procgen/srd/srd_loss_primitives.o \
+            $(OBJDIR)/src/procgen/srd/srd_loss_gradient.o \
+            $(OBJDIR)/src/procgen/srd/srd_eikonal.o \
+            $(OBJDIR)/src/procgen/srd/srd_transport.o
+
+build/demo_client: build/liball.a tests/examples/demo_client.c $(SRD_OBJS) $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c $(SRD_OBJS) build/liball.a $(SYMX_LIB) $(SYMX_FMT) build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl -lstdc++ -fopenmp
 
 demo_client:
 	@$(MAKE) build/demo_client
@@ -1922,7 +1931,31 @@ build/srd_pde_gradient_tests: tests/procgen/srd/srd_pde_gradient_tests.cpp src/p
 	$(CXX) $(CFLAGS) -xc++ -std=c++17 -Iinclude tests/procgen/srd/srd_pde_gradient_tests.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_srd_types.c -o $@ -lm
 
 PROCGEN_TESTS += build/srd_optimizer_tests
-PROCGEN_TESTS += build/srd_pde_gradient_tests
+# SRD static library (C++ objects + SymX for linking into C tests)
+SRD_LIB_CXX_OBJS := $(OBJDIR)/src/procgen/srd/srd_bridge.o \
+                    $(OBJDIR)/src/procgen/srd/srd_optimizer.o \
+                    $(OBJDIR)/src/procgen/srd/srd_energy.o \
+                    $(OBJDIR)/src/procgen/srd/srd_loss_compiler.o \
+                    $(OBJDIR)/src/procgen/srd/srd_loss_primitives.o \
+                    $(OBJDIR)/src/procgen/srd/srd_loss_gradient.o \
+                    $(OBJDIR)/src/procgen/srd/srd_eikonal.o \
+                    $(OBJDIR)/src/procgen/srd/srd_transport.o
+SRD_LIB_C_OBJS := $(OBJDIR)/src/procgen/procgen_srd_types.o \
+                  $(OBJDIR)/src/procgen/procgen_ascii_parse.o \
+                  $(OBJDIR)/src/procgen/procgen_srd_grammar.o \
+                  $(OBJDIR)/src/procgen/procgen_srd_rewrite.o \
+                  $(OBJDIR)/src/procgen/srd/srd_anneal.o \
+                  $(OBJDIR)/src/procgen/procgen_svo_builder.o \
+                  $(OBJDIR)/src/npc/nav/npc_svo_init.o \
+                  $(OBJDIR)/src/procgen/procgen_chunk_mesh.o
+build/srd_lib.a: $(SRD_LIB_C_OBJS) $(SRD_LIB_CXX_OBJS) $(SYMX_LIB) $(SYMX_FMT)
+	ar rcs $@ $(SRD_LIB_C_OBJS) $(SRD_LIB_CXX_OBJS)
+
+build/srd_m5_smoke: tests/procgen/srd/srd_m5_pipeline_smoke.c $(SRD_LIB_CXX_OBJS) $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CC) $(CFLAGS) -c tests/procgen/srd/srd_m5_pipeline_smoke.c -o $(OBJDIR)/tests/procgen/srd/srd_m5_smoke.o
+	$(CXX) $(OBJDIR)/tests/procgen/srd/srd_m5_smoke.o $(SRD_LIB_C_OBJS) $(SRD_LIB_CXX_OBJS) $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -lstdc++ -lm -o $@
+
+PROCGEN_TESTS += build/srd_m5_smoke
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
 PROCGEN_TESTS += build/procgen_architect_tests
