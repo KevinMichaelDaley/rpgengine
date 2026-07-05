@@ -1854,6 +1854,7 @@ PROCGEN_TESTS :=
 # SRD tests (depend on SymX)
 PROCGEN_TESTS += build/srd_build_test
 PROCGEN_TESTS += build/srd_types_tests
+PROCGEN_TESTS += build/procgen_ascii_parse_tests
 
 procgen: build/libheadless.a $(SYMX_LIB)
 	@echo "procgen objects built via libheadless.a"
@@ -1871,6 +1872,9 @@ build/srd_build_test: tests/procgen/srd/srd_build_test.cpp $(SYMX_LIB) $(SYMX_FM
 
 build/srd_types_tests: tests/procgen/srd/srd_types_tests.c src/procgen/procgen_srd_types.c include/ferrum/procgen/procgen_srd_types.h | build
 	$(CC) $(CFLAGS) tests/procgen/srd/srd_types_tests.c src/procgen/procgen_srd_types.c -o $@ -lm
+
+build/procgen_ascii_parse_tests: tests/procgen/procgen_ascii_parse_tests.c src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_types.c include/ferrum/procgen/procgen_ascii_parse.h include/ferrum/procgen/procgen_srd_types.h | build
+	$(CC) $(CFLAGS) tests/procgen/procgen_ascii_parse_tests.c src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_types.c -o $@ -lm
 
 test-procgen: procgen-test
 
