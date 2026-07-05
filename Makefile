@@ -1868,7 +1868,10 @@ build/srd_energy_tests: tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYM
 build/srd_m1_smoke: tests/procgen/srd/srd_m1_smoke.cpp $(OBJDIR)/src/procgen/procgen_ascii_parse.o $(OBJDIR)/src/procgen/procgen_srd_types.o | build
 	$(CXX) $(CFLAGS) -std=c++17 tests/procgen/srd/srd_m1_smoke.cpp $(OBJDIR)/src/procgen/procgen_ascii_parse.o $(OBJDIR)/src/procgen/procgen_srd_types.o -o $@ -lm
 
-PROCGEN_TESTS += build/srd_energy_tests
+build/srd_anneal_tests: tests/procgen/srd/srd_anneal_tests.cpp src/procgen/srd/srd_anneal.c | build
+	$(CXX) $(CFLAGS) -Iinclude -xc++ -std=c++17 tests/procgen/srd/srd_anneal_tests.cpp src/procgen/srd/srd_anneal.c -o $@ -lm
+
+PROCGEN_TESTS += build/srd_anneal_tests
 PROCGEN_TESTS += build/srd_grammar_tests
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests

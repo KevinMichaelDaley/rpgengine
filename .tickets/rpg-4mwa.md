@@ -1,6 +1,6 @@
 ---
 id: rpg-4mwa
-status: open
+status: in_progress
 deps: [rpg-5j3b]
 links: []
 created: 2026-07-05T06:25:47Z
