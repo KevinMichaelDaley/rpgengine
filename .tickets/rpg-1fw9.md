@@ -1,6 +1,6 @@
 ---
 id: rpg-1fw9
-status: in_progress
+status: closed
 deps: [rpg-5j3b]
 links: []
 created: 2026-07-05T06:25:47Z

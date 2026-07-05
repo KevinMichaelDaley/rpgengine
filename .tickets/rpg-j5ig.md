@@ -1,6 +1,6 @@
 ---
 id: rpg-j5ig
-status: in_progress
+status: closed
 deps: [rpg-btcr, rpg-9bbw, rpg-mfdj]
 links: []
 created: 2026-07-05T06:26:00Z

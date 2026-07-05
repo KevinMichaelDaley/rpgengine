@@ -1,6 +1,6 @@
 ---
 id: rpg-9bbw
-status: in_progress
+status: closed
 deps: [rpg-4mwa, rpg-gc07, rpg-mfdj]
 links: []
 created: 2026-07-05T06:26:00Z

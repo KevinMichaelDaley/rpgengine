@@ -1,6 +1,6 @@
 ---
 id: rpg-z1zz
-status: in_progress
+status: closed
 deps: [rpg-ndhj, rpg-gc07, rpg-9bbw]
 links: []
 created: 2026-07-05T06:51:26Z

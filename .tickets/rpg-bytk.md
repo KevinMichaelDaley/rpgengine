@@ -1,6 +1,6 @@
 ---
 id: rpg-bytk
-status: in_progress
+status: closed
 deps: [rpg-btcr]
 links: []
 created: 2026-07-05T06:26:00Z

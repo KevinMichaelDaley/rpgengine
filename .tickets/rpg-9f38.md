@@ -1,6 +1,6 @@
 ---
 id: rpg-9f38
-status: in_progress
+status: closed
 deps: [rpg-5j3b, rpg-1fw9, rpg-3551, rpg-giey, rpg-4mwa]
 links: []
 created: 2026-07-05T06:51:26Z
