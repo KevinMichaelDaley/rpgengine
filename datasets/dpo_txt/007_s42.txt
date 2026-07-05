@@ -1,33 +1,22 @@
 @grammar blockout v1
 ROOM_QUAD x=0 y=0 w=20 h=16 floor_z=0 ceil_z=6 name=entrance_hall
-CORRIDOR_H from=(0,8) to=(20,8) w=4 floor_z=0 ceil_z=6
-DOOR at=(0,8)
-DOOR at=(20,8)
-ROOM_QUAD x=20 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=storage
-DOOR at=(20,0)
-DOOR at=(20,10)
-RAMP_UP from=(10,8) to=(10,12) dz=6 w=4
+CORRIDOR_H from=(10,8) to=(20,8) w=4 floor_z=0 ceil_z=6
 DOOR at=(10,8)
-DOOR at=(10,12)
-ROOM_QUAD x=8 y=10 w=8 h=8 floor_z=6 ceil_z=12 name=study
-DOOR at=(8,10)
-DOOR at=(8,18)
-CORRIDOR_V from=(10,18) to=(10,12) w=4 floor_z=6 ceil_z=12
-DOOR at=(10,18)
-DOOR at=(10,12)
-ROOM_QUAD x=8 y=16 w=8 h=8 floor_z=12 ceil_z=18 name=library
-DOOR at=(8,16)
-DOOR at=(8,24)
-CORRIDOR_V from=(10,24) to=(10,18) w=4 floor_z=12 ceil_z=18
-DOOR at=(10,24)
-DOOR at=(10,18)
-ROOM_QUAD x=8 y=22 w=8 h=8 floor_z=18 ceil_z=24 name=observatory
-DOOR at=(8,22)
-DOOR at=(8,30)
-CORRIDOR_V from=(10,30) to=(10,24) w=4 floor_z=18 ceil_z=24
-DOOR at=(10,30)
-DOOR at=(10,24)
-SPAWN x=10 y=8 z=0
-MARKER x=0 y=0 z=0 name=ground_floor_entrance
-MARKER x=10 y=10 z=6 name=study_level_entry
-MARKER x=10 y=20 z=18 name=library_level_entry
+ROOM_QUAD x=22 y=6 w=8 h=8 floor_z=0 ceil_z=4 name=storage_room
+MARKER x=10 y=8 z=3 name=entrance_hall_center
+SPAWN x=10 y=8 z=3
+BLOCK
+  ROOM_QUAD x=10 y=10 w=6 h=6 floor_z=6 ceil_z=10 name=study
+  RAMP_UP from=(10,10) to=(10,10) dz=4 w=4
+  MARKER x=10 y=10 z=8 name=study_center
+  CORRIDOR_V from=(10,10) to=(10,12) w=4 floor_z=10 ceil_z=14
+  DOOR at=(10,10)
+  ROOM_QUAD x=10 y=14 w=6 h=6 floor_z=14 ceil_z=18 name=observatory
+  RAMP_UP from=(10,14) to=(10,14) dz=4 w=4
+  MARKER x=10 y=14 z=16 name=observatory_center
+  CORRIDOR_V from=(10,14) to=(10,16) w=4 floor_z=14 ceil_z=18
+  DOOR at=(10,14)
+  ROOM_QUAD x=10 y=18 w=6 h=6 floor_z=18 ceil_z=22 name=attic
+  RAMP_UP from=(10,18) to=(10,18) dz=4 w=4
+  MARKER x=10 y=18 z=20 name=attic_center
+EBLOCK

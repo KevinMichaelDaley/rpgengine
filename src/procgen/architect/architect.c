@@ -116,7 +116,12 @@ static const char *DEFAULT_SYSTEM_PROMPT =
     "   Corridor CORRIDOR_V must have same x in from and to.\n"
     "7. Coordinates are in world-space meters.\n"
     "8. Use RAMPs to change floor height between rooms.\n"
-    "9. Output ONLY valid grammar tokens. No commentary, no markdown.\n\n"
+    "9. Output ONLY valid grammar tokens. No commentary, no markdown.\n"
+    "10. IMPORTANT: Walls are 1m thick. Make rooms at least 6m wide and 6m\n"
+    "    deep for walkable interiors. Corridors need width≥3 for walkability.\n"
+    "    Ceiling height should be at least 4m (ceil_z - floor_z ≥ 4).\n"
+    "    Use generous proportions — small rooms and narrow corridors are\n"
+    "    unusable for gameplay.\n\n"
 
     "USER REQUEST: ";
 

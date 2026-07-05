@@ -1,43 +1,44 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=40 h=40 floor_z=0 ceil_z=10 name=central_chamber
-ROOM_QUAD x=-20 y=10 w=20 h=20 floor_z=0 ceil_z=8 name=side_room_west
-ROOM_QUAD x=20 y=10 w=20 h=20 floor_z=0 ceil_z=8 name=side_room_east
-ROOM_QUAD x=0 y=-20 w=20 h=20 floor_z=0 ceil_z=8 name=side_room_north
-ROOM_QUAD x=0 y=20 w=20 h=20 floor_z=0 ceil_z=8 name=side_room_south
-ROOM_QUAD x=-30 y=-30 w=20 h=20 floor_z=10 ceil_z=18 name=gallery_northwest
-ROOM_QUAD x=30 y=-30 w=20 h=20 floor_z=10 ceil_z=18 name=gallery_northeast
-ROOM_QUAD x=-30 y=30 w=20 h=20 floor_z=10 ceil_z=18 name=gallery_southwest
-ROOM_QUAD x=30 y=30 w=20 h=20 floor_z=10 ceil_z=18 name=gallery_southeast
-CORRIDOR_H from=(-20,0) to=(-40,0) w=4 floor_z=0 ceil_z=8
-DOOR at=(-20,0)
-CORRIDOR_H from=(20,0) to=(40,0) w=4 floor_z=0 ceil_z=8
-DOOR at=(20,0)
-CORRIDOR_V from=(0,-20) to=(0,-40) w=4 floor_z=0 ceil_z=8
-DOOR at=(0,-20)
-CORRIDOR_V from=(0,20) to=(0,40) w=4 floor_z=0 ceil_z=8
-DOOR at=(0,20)
-CORRIDOR_V from=(0,0) to=(0,10) w=6 floor_z=0 ceil_z=10
+SPAWN x=0 y=0 z=0
+MARKER x=0 y=0 z=0 name=center_hub
+MARKER x=30 y=0 z=0 name=east_wing_entrance
+MARKER x=-30 y=0 z=0 name=west_wing_entrance
+ROOM_QUAD x=0 y=0 w=30 h=30 floor_z=0 ceil_z=10 name=central_arena
+ROOM_QUAD x=40 y=10 w=15 h=15 floor_z=0 ceil_z=8 name=east_chamber_1
+ROOM_QUAD x=40 y=-10 w=15 h=15 floor_z=0 ceil_z=8 name=east_chamber_2
+ROOM_QUAD x=-40 y=10 w=15 h=15 floor_z=0 ceil_z=8 name=west_chamber_1
+ROOM_QUAD x=-40 y=-10 w=15 h=15 floor_z=0 ceil_z=8 name=west_chamber_2
+CORRIDOR_H from=(15,0) to=(40,0) w=5 floor_z=0 ceil_z=8
+DOOR at=(15,0)
+DOOR at=(40,0)
+CORRIDOR_H from=(-15,0) to=(-40,0) w=5 floor_z=0 ceil_z=8
+DOOR at=(-15,0)
+DOOR at=(-40,0)
+CORRIDOR_V from=(0,15) to=(0,40) w=5 floor_z=0 ceil_z=8
+DOOR at=(0,15)
+DOOR at=(0,40)
+CORRIDOR_V from=(0,-15) to=(0,-40) w=5 floor_z=0 ceil_z=8
+DOOR at=(0,-15)
+DOOR at=(0,-40)
+RAMP_UP from=(0,0) to=(0,20) dz=10 w=5
 DOOR at=(0,0)
-DOOR at=(0,10)
-RAMP_UP from=(0,5) to=(0,15) dz=10 w=6
-RAMP_UP from=(-5,0) to=(-15,0) dz=10 w=6
-DOOR at=(-5,0)
-RAMP_UP from=(5,0) to=(15,0) dz=10 w=6
-DOOR at=(5,0)
-RAMP_UP from=(0,-5) to=(0,-15) dz=10 w=6
-DOOR at=(0,-5)
-RAMP_UP from=(0,5) to=(0,15) dz=10 w=6
-DOOR at=(0,5)
-CORRIDOR_DIAG from=(-15,0) to=(-30,-15) w=4 floor_z=10 ceil_z=18
-DOOR at=(-15,0)
-CORRIDOR_DIAG from=(15,0) to=(30,-15) w=4 floor_z=10 ceil_z=18
-DOOR at=(15,0)
-CORRIDOR_DIAG from=(-15,0) to=(-30,15) w=4 floor_z=10 ceil_z=18
-DOOR at=(-15,0)
-CORRIDOR_DIAG from=(15,0) to=(30,15) w=4 floor_z=10 ceil_z=18
-DOOR at=(15,0)
-SPAWN x=0 y=0 z=1
-MARKER x=0 y=0 z=1 name=center_spawn
-MARKER x=-35 y=-35 z=11 name=gallery_nw_marker
-MARKER x=35 y=35 z=11 name=gallery_se_marker
-MARKER x=0 y=25 z=1 name=south_hall_marker
+DOOR at=(0,20)
+RAMP_UP from=(0,0) to=(0,-20) dz=10 w=5
+DOOR at=(0,0)
+DOOR at=(0,-20)
+ROOM_QUAD x=0 y=20 w=20 h=10 floor_z=10 ceil_z=18 name=east_gallery
+ROOM_QUAD x=0 y=-20 w=20 h=10 floor_z=10 ceil_z=18 name=west_gallery
+MARKER x=0 y=20 z=10 name=east_gallery_entrance
+MARKER x=0 y=-20 z=10 name=west_gallery_entrance
+CORRIDOR_H from=(10,20) to=(0,20) w=3 floor_z=10 ceil_z=18
+DOOR at=(10,20)
+DOOR at=(0,20)
+CORRIDOR_H from=(-10,20) to=(0,20) w=3 floor_z=10 ceil_z=18
+DOOR at=(-10,20)
+DOOR at=(0,20)
+CORRIDOR_H from=(10,-20) to=(0,-20) w=3 floor_z=10 ceil_z=18
+DOOR at=(10,-20)
+DOOR at=(0,-20)
+CORRIDOR_H from=(-10,-20) to=(0,-20) w=3 floor_z=10 ceil_z=18
+DOOR at=(-10,-20)
+DOOR at=(0,-20)

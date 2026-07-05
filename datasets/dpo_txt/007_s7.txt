@@ -1,18 +1,26 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=4 name=entrance_hall
-CORRIDOR_H from=(5,10) to=(5,20) w=4 floor_z=0 ceil_z=4
-ROOM_QUAD x=3 y=20 w=8 h=8 floor_z=4 ceil_z=8 name=study
-RAMP_UP from=(5,24) to=(5,24) dz=4 w=4
-ROOM_QUAD x=3 y=28 w=8 h=8 floor_z=8 ceil_z=12 name=library
-RAMP_UP from=(5,32) to=(5,32) dz=4 w=4
-ROOM_QUAD x=3 y=36 w=8 h=8 floor_z=12 ceil_z=16 name=observatory
-SPAWN x=5 y=5 z=2
-MARKER x=5 y=5 z=0 name=ground_floor_entrance
-MARKER x=7 y=24 z=4 name=study_door
-MARKER x=7 y=32 z=8 name=library_door
-DOOR at=(5,10)
-DOOR at=(5,20)
-DOOR at=(5,24)
-DOOR at=(5,28)
-DOOR at=(5,32)
-DOOR at=(5,36)
+SPAWN x=0 y=0 z=0
+ROOM_QUAD x=-10 y=-10 w=20 h=20 floor_z=0 ceil_z=6 name=entrance_hall
+CORRIDOR_H from=(-10,0) to=(10,0) w=6 floor_z=0 ceil_z=6
+DOOR at=(-10,0)
+DOOR at=(10,0)
+MARKER x=0 y=0 z=3 name=entrance_center
+BLOCK
+ROOM_QUAD x=-3 y=-3 w=6 h=6 floor_z=6 ceil_z=10 name=level_1_chamber
+RAMP_UP from=(0,0) to=(0,0) dz=4 w=4
+MARKER x=0 y=0 z=8 name=level_1_center
+EBLOCK
+BLOCK
+ROOM_QUAD x=-3 y=-3 w=6 h=6 floor_z=10 ceil_z=14 name=level_2_chamber
+RAMP_UP from=(0,0) to=(0,0) dz=4 w=4
+MARKER x=0 y=0 z=12 name=level_2_center
+EBLOCK
+BLOCK
+ROOM_QUAD x=-3 y=-3 w=6 h=6 floor_z=14 ceil_z=18 name=level_3_chamber
+RAMP_UP from=(0,0) to=(0,0) dz=4 w=4
+MARKER x=0 y=0 z=16 name=level_3_center
+EBLOCK
+ROOM_QUAD x=15 y=-5 w=10 h=10 floor_z=0 ceil_z=6 name=storage_room
+CORRIDOR_V from=(10,0) to=(15,0) w=4 floor_z=0 ceil_z=6
+DOOR at=(10,0)
+DOOR at=(15,0)

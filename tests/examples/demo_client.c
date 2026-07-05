@@ -1350,7 +1350,9 @@ int main(int argc, char **argv) {
                     glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mvp.m);
                     glUniform3f(u_color_loc, 0.85f, 0.80f, 0.72f);
                     glBindVertexArray(gl.arm_vao.handle);
+                    glDisable(GL_CULL_FACE);
                     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)gl.arm_vert_count);
+                    glEnable(GL_CULL_FACE);
                 }
 
                 /* ── Fix 3: Sort bodies by shape_type to minimise

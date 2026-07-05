@@ -1,49 +1,34 @@
 @grammar blockout v1
-SPAWN x=10 y=10 z=0
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=start_room
-ROOM_QUAD x=20 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=hallway_room
-ROOM_QUAD x=30 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=junction_room
-ROOM_QUAD x=40 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=dead_end_room
-ROOM_QUAD x=20 y=20 w=10 h=10 floor_z=0 ceil_z=5 name=upper_room
-ROOM_QUAD x=30 y=30 w=10 h=10 floor_z=0 ceil_z=5 name=platform_room
-ROOM_QUAD x=40 y=20 w=10 h=10 floor_z=-5 ceil_z=0 name=sunken_room_1
-ROOM_QUAD x=0 y=20 w=10 h=10 floor_z=-5 ceil_z=0 name=sunken_room_2
-CORRIDOR_H from=(10,0) to=(20,0) w=2 floor_z=0 ceil_z=5
-DOOR at=(10,0)
-DOOR at=(20,0)
-CORRIDOR_V from=(30,0) to=(30,10) w=2 floor_z=0 ceil_z=5
-DOOR at=(30,10)
-CORRIDOR_H from=(30,10) to=(40,10) w=2 floor_z=0 ceil_z=5
-DOOR at=(30,10)
-DOOR at=(40,10)
-CORRIDOR_V from=(30,10) to=(30,20) w=2 floor_z=0 ceil_z=5
-DOOR at=(30,20)
-CORRIDOR_H from=(30,20) to=(40,20) w=2 floor_z=0 ceil_z=5
-DOOR at=(30,20)
-DOOR at=(40,20)
-CORRIDOR_V from=(30,20) to=(30,30) w=2 floor_z=0 ceil_z=5
-DOOR at=(30,30)
-CORRIDOR_H from=(30,30) to=(40,30) w=2 floor_z=0 ceil_z=5
-DOOR at=(30,30)
-DOOR at=(40,30)
-CORRIDOR_V from=(20,10) to=(20,20) w=2 floor_z=0 ceil_z=5
+SPAWN x=0 y=0 z=0
+ROOM_QUAD x=-10 y=-10 w=20 h=20 floor_z=0 ceil_z=6 name=central_hub
+ROOM_QUAD x=20 y=-10 w=15 h=15 floor_z=0 ceil_z=5 name=east_wing
+ROOM_QUAD x=-10 y=20 w=18 h=12 floor_z=0 ceil_z=7 name=north_wing
+ROOM_QUAD x=-30 y=-10 w=10 h=10 floor_z=-5 ceil_z=2 name=sunken_chamber_1
+ROOM_QUAD x=0 y=-30 w=12 h=12 floor_z=-6 ceil_z=3 name=sunken_chamber_2
+ROOM_QUAD x=40 y=-10 w=10 h=10 floor_z=5 ceil_z=10 name=raised_platform_1
+ROOM_QUAD x=20 y=20 w=12 h=12 floor_z=6 ceil_z=11 name=raised_platform_2
+CORRIDOR_H from=(-10,10) to=(20,10) w=4 floor_z=0 ceil_z=6
+DOOR at=(-10,10)
+DOOR at=(20,10)
+CORRIDOR_V from=(-10,-10) to=(-10,20) w=4 floor_z=0 ceil_z=7
+DOOR at=(-10,-10)
+DOOR at=(-10,20)
+CORRIDOR_DIAG from=(-10,-10) to=(-30,-10) w=4 floor_z=-5 ceil_z=2
+DOOR at=(-10,-10)
+DOOR at=(-30,-10)
+CORRIDOR_DIAG from=(-10,-10) to=(0,-30) w=4 floor_z=-6 ceil_z=3
+DOOR at=(-10,-10)
+DOOR at=(0,-30)
+CORRIDOR_H from=(20,5) to=(40,5) w=4 floor_z=5 ceil_z=10
+DOOR at=(20,5)
+DOOR at=(40,5)
+CORRIDOR_DIAG from=(20,10) to=(20,20) w=4 floor_z=6 ceil_z=11
 DOOR at=(20,10)
 DOOR at=(20,20)
-CORRIDOR_H from=(0,10) to=(10,10) w=2 floor_z=-5 ceil_z=0
-DOOR at=(0,10)
-DOOR at=(10,10)
-CORRIDOR_V from=(10,10) to=(10,0) w=2 floor_z=-5 ceil_z=0
-DOOR at=(10,0)
-DOOR at=(10,10)
-CORRIDOR_H from=(10,10) to=(20,10) w=2 floor_z=-5 ceil_z=0
-DOOR at=(10,10)
+CORRIDOR_DIAG from=(20,10) to=(30,15) w=4 floor_z=0 ceil_z=11
 DOOR at=(20,10)
-CORRIDOR_V from=(20,10) to=(20,0) w=2 floor_z=-5 ceil_z=0
-DOOR at=(20,0)
-DOOR at=(20,10)
-RAMP_UP from=(20,0) to=(20,10) dz=5 w=2
-RAMP_DOWN from=(20,10) to=(20,0) dz=-5 w=2
-MARKER x=0 y=0 z=0 name=start_marker
-MARKER x=40 y=30 z=5 name=treasure_room_marker
-MARKER x=40 y=0 z=0 name=dead_end_marker
-MARKER x=0 y=20 z=-5 name=sunken_marker
+DOOR at=(30,15)
+MARKER x=-10 y=-10 z=-5 name=deep_well
+MARKER x=40 y=-10 z=5 name=sky_perch
+MARKER x=-10 y=20 z=7 name=high_balcony
+MARKER x=0 y=0 z=0 name=center_point

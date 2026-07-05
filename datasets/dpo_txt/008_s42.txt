@@ -1,42 +1,29 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=mine_entrance
-ROOM_PENT floor_z=0 ceil_z=5 name=ore_vein_1
-ROOM_QUAD x=20 y=0 w=15 h=15 floor_z=0 ceil_z=7 name=main_chamber
-ROOM_QUAD x=40 y=10 w=25 h=20 floor_z=5 ceil_z=10 name=great_cavern_1
-ROOM_QUAD x=60 y=30 w=20 h=20 floor_z=10 ceil_z=15 name=great_cavern_2
-ROOM_QUAD x=80 y=10 w=10 h=10 floor_z=15 ceil_z=20 name=deep_shaft_top
-ROOM_QUAD x=80 y=10 w=10 h=10 floor_z=20 ceil_z=30 name=deep_shaft_bottom
-CORRIDOR_H from=(10,5) to=(20,5) w=3 floor_z=0 ceil_z=5
-DOOR at=(10,5)
-DOOR at=(20,5)
-CORRIDOR_V from=(35,15) to=(35,25) w=3 floor_z=0 ceil_z=5
-DOOR at=(35,15)
-DOOR at=(35,25)
-CORRIDOR_DIAG from=(35,25) to=(40,10) w=3 floor_z=5 ceil_z=10
-DOOR at=(35,25)
-DOOR at=(40,10)
-CORRIDOR_H from=(65,30) to=(80,30) w=4 floor_z=10 ceil_z=15
-DOOR at=(65,30)
-DOOR at=(80,30)
-CORRIDOR_V from=(80,30) to=(80,20) w=4 floor_z=15 ceil_z=20
-DOOR at=(80,30)
-DOOR at=(80,20)
-CORRIDOR_V from=(80,20) to=(80,10) w=4 floor_z=20 ceil_z=30
-DOOR at=(80,20)
-DOOR at=(80,10)
-RAMP_UP from=(5,5) to=(15,5) dz=5 w=3
-DOOR at=(5,5)
-DOOR at=(15,5)
-RAMP_UP from=(30,15) to=(35,20) dz=5 w=3
-DOOR at=(30,15)
-DOOR at=(35,20)
-RAMP_UP from=(55,30) to=(65,30) dz=5 w=4
-DOOR at=(55,30)
-DOOR at=(65,30)
-RAMP_UP from=(70,10) to=(80,10) dz=5 w=4
-DOOR at=(70,10)
-DOOR at=(80,10)
-SPAWN x=5 y=5 z=0
-MARKER x=0 y=0 z=0 name=mine_entrance_marker
-MARKER x=40 y=10 z=5 name=great_cavern_1_marker
-MARKER x=80 y=10 z=30 name=deepest_point_marker
+SPAWN x=0 y=0 z=0
+ROOM_QUAD x=-10 y=-10 w=20 h=20 floor_z=0 ceil_z=8 name=mine_entrance
+MARKER x=0 y=0 z=0 name=entrance_marker
+ROOM_QUAD x=30 y=-10 w=15 h=15 floor_z=0 ceil_z=6 name=ore_vein_1
+CORRIDOR_H from=(-10,0) to=(30,0) w=4 floor_z=0 ceil_z=4
+DOOR at=(-10,0)
+DOOR at=(30,0)
+ROOM_QUAD x=30 y=20 w=15 h=15 floor_z=0 ceil_z=6 name=ore_vein_2
+CORRIDOR_V from=(30,-10) to=(30,20) w=4 floor_z=0 ceil_z=4
+DOOR at=(30,-10)
+DOOR at=(30,20)
+BLOCK
+ROOM_QUAD x=60 y=0 w=30 h=30 floor_z=8 ceil_z=20 name=great_cavern_1
+MARKER x=60 y=0 z=8 name=great_cavern_1_marker
+RAMP_UP from=(45,0) to=(60,0) dz=8 w=5
+DOOR at=(45,0)
+ROOM_QUAD x=60 y=50 w=30 h=30 floor_z=8 ceil_z=20 name=great_cavern_2
+MARKER x=60 y=50 z=8 name=great_cavern_2_marker
+RAMP_UP from=(60,30) to=(60,50) dz=8 w=5
+DOOR at=(60,30)
+EBLOCK
+BLOCK
+ROOM_QUAD x=100 y=0 w=10 h=10 floor_z=16 ceil_z=20 name=shaft_top
+ROOM_QUAD x=100 y=0 w=10 h=10 floor_z=-20 ceil_z=-16 name=shaft_bottom
+MARKER x=100 y=0 z=-20 name=shaft_bottom_marker
+RAMP_DOWN from=(100,0) to=(100,0) dz=-36 w=6
+DOOR at=(100,0)
+EBLOCK

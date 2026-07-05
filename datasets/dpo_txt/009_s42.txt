@@ -1,22 +1,22 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=30 h=20 floor_z=0 ceil_z=8 name=great_hall
-ROOM_QUAD x=10 y=30 w=10 h=10 floor_z=8 ceil_z=16 name=tower_room_1
-ROOM_QUAD x=-10 y=30 w=10 h=10 floor_z=8 ceil_z=16 name=tower_room_2
-ROOM_QUAD x=0 y=-10 w=10 h=10 floor_z=-5 ceil_z=0 name=crypt_chamber
-CORRIDOR_V from=(15,20) to=(15,30) w=4 floor_z=8 ceil_z=8
-DOOR at=(15,20)
-DOOR at=(15,30)
-CORRIDOR_V from=(5,20) to=(5,30) w=4 floor_z=8 ceil_z=8
+SPAWN x=0 y=0 z=0
+ROOM_QUAD x=-20 y=-20 w=40 h=40 floor_z=0 ceil_z=8 name=great_hall
+ROOM_QUAD x=-15 y=25 w=10 h=10 floor_z=8 ceil_z=16 name=north_tower_room
+ROOM_QUAD x=5 y=25 w=10 h=10 floor_z=8 ceil_z=16 name=east_tower_room
+ROOM_QUAD x=-10 y=-30 w=20 h=10 floor_z=-10 ceil_z=-2 name=crypt
+CORRIDOR_V from=(-5,20) to=(-5,25) w=5 floor_z=8 ceil_z=16
+DOOR at=(-5,20)
+DOOR at=(-5,25)
+CORRIDOR_V from=(5,20) to=(5,25) w=5 floor_z=8 ceil_z=16
 DOOR at=(5,20)
-DOOR at=(5,30)
-CORRIDOR_H from=(15,0) to=(0,0) w=4 floor_z=-5 ceil_z=-5
-DOOR at=(15,0)
-DOOR at=(0,0)
-CORRIDOR_H from=(0,-10) to=(0,0) w=4 floor_z=-5 ceil_z=-5
-DOOR at=(0,-10)
-DOOR at=(0,0)
-SPAWN x=15 y=10 z=0
-MARKER x=15 y=10 z=4 name=great_hall_center
-MARKER x=5 y=35 z=12 name=tower_north_west
-MARKER x=15 y=35 z=12 name=tower_north_east
-MARKER x=5 y=-5 z=-2 name=crypt_entrance
+DOOR at=(5,25)
+CORRIDOR_H from=(-15,20) to=(15,20) w=5 floor_z=0 ceil_z=8
+DOOR at=(-15,20)
+DOOR at=(15,20)
+CORRIDOR_DIAG from=(-10,-20) to=(10,-10) w=4 floor_z=-10 ceil_z=0
+DOOR at=(-10,-20)
+DOOR at=(10,-10)
+MARKER x=0 y=0 z=4 name=great_hall_center
+MARKER x=-10 y=30 z=12 name=north_tower_top
+MARKER x=10 y=30 z=12 name=east_tower_top
+MARKER x=0 y=-25 z=-6 name=crypt_entrance

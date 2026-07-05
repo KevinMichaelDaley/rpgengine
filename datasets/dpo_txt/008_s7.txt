@@ -1,29 +1,27 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=mine_entrance
-ROOM_PENT floor_z=0 ceil_z=5 name=ore_vein_1
-ROOM_QUAD x=20 y=0 w=15 h=12 floor_z=0 ceil_z=5 name=storage_area
-CORRIDOR_H from=(10,5) to=(20,5) w=3 floor_z=0 ceil_z=5
+SPAWN x=0 y=0 z=0
+MARKER x=0 y=0 z=0 name=mine_entrance
+MARKER x=50 y=50 z=10 name=deep_shaft_top
+MARKER x=100 y=100 z=20 name=upper_cavern_exit
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=mine_entrance_chamber
+ROOM_PENT floor_z=5 ceil_z=10 name=ore_vein_1
+ROOM_QUAD x=20 y=10 w=15 h=12 floor_z=10 ceil_z=15 name=processing_area
+ROOM_QUAD x=40 y=30 w=20 h=20 floor_z=15 ceil_z=25 name=upper_cavern
+ROOM_QUAD x=60 y=60 w=10 h=10 floor_z=20 ceil_z=30 name=storage_room
+ROOM_QUAD x=50 y=50 w=5 h=5 floor_z=30 ceil_z=40 name=deep_shaft_bottom
+CORRIDOR_H from=(10,5) to=(20,5) w=3 floor_z=5 ceil_z=8
 DOOR at=(10,5)
 DOOR at=(20,5)
-ROOM_QUAD x=35 y=5 w=25 h=20 floor_z=5 ceil_z=15 name=great_cavern_1
-ROOM_QUAD x=0 y=20 w=15 h=15 floor_z=5 ceil_z=10 name=processing_room
-CORRIDOR_V from=(17.5,15) to=(17.5,20) w=3 floor_z=5 ceil_z=10
-DOOR at=(17.5,15)
-DOOR at=(17.5,20)
-ROOM_QUAD x=40 y=30 w=20 h=25 floor_z=10 ceil_z=20 name=great_cavern_2
-CORRIDOR_DIAG from=(60,27.5) to=(40,30) w=3 floor_z=10 ceil_z=20
-DOOR at=(60,27.5)
-DOOR at=(40,30)
-ROOM_QUAD x=20 y=35 w=10 h=10 floor_z=15 ceil_z=20 name=shaft_top
-CORRIDOR_V from=(30,35) to=(20,35) w=3 floor_z=15 ceil_z=20
-DOOR at=(30,35)
-DOOR at=(20,35)
-ROOM_QUAD x=20 y=45 w=10 h=10 floor_z=20 ceil_z=30 name=shaft_bottom
-CORRIDOR_V from=(25,35) to=(25,45) w=3 floor_z=20 ceil_z=30
-DOOR at=(25,35)
-DOOR at=(25,45)
-SPAWN x=5 y=5 z=1
-MARKER x=0 y=0 z=0 name=entrance_marker
-MARKER x=60 y=27.5 z=10 name=great_cavern_exit
-MARKER x=25 y=45 z=20 name=shaft_deepest_point
-MARKER x=30 y=0 z=0 name=ore_vein_marker
+CORRIDOR_V from=(20,17) to=(20,30) w=3 floor_z=15 ceil_z=18
+DOOR at=(20,17)
+DOOR at=(20,30)
+CORRIDOR_DIAG from=(35,22) to=(50,35) w=3 floor_z=15 ceil_z=18
+DOOR at=(35,22)
+DOOR at=(50,35)
+CORRIDOR_DIAG from=(55,45) to=(60,55) w=3 floor_z=20 ceil_z=23
+DOOR at=(55,45)
+DOOR at=(60,55)
+RAMP_DOWN from=(50,50) to=(50,50) dz=10 w=4 floor_z=30 ceil_z=40
+DOOR at=(50,50)
+DOOR at=(50,50)
+MARKER x=50 y=50 z=40 name=deep_shaft_base

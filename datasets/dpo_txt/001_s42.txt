@@ -1,59 +1,59 @@
 @grammar blockout v1
+SPAWN x=0 y=0 z=0
+MARKER x=0 y=0 z=0 name=start_level_1
+MARKER x=20 y=20 z=8 name=exit_level_2
+MARKER x=40 y=40 z=16 name=exit_level_3
 BLOCK
-ROOM_QUAD x=0 y=0 w=20 h=16 floor_z=0 ceil_z=6 name=ground_floor_entry
-ROOM_QUAD x=25 y=0 w=15 h=12 floor_z=0 ceil_z=5 name=ground_floor_storage
-ROOM_QUAD x=0 y=20 w=18 h=14 floor_z=0 ceil_z=7 name=ground_floor_hall
-ROOM_QUAD x=25 y=20 w=16 h=16 floor_z=0 ceil_z=6 name=ground_floor_guard
-CORRIDOR_H from=(20,8) to=(25,8) w=4 floor_z=0 ceil_z=6
-DOOR at=(20,8)
-DOOR at=(25,8)
-CORRIDOR_V from=(10,16) to=(10,20) w=4 floor_z=0 ceil_z=7
-DOOR at=(10,16)
-DOOR at=(10,20)
-ROOM_QUAD x=50 y=0 w=20 h=16 floor_z=6 ceil_z=12 name=mid_floor_landing
-ROOM_QUAD x=75 y=0 w=15 h=12 floor_z=6 ceil_z=10 name=mid_floor_armory
-ROOM_QUAD x=50 y=20 w=18 h=14 floor_z=6 ceil_z=13 name=mid_floor_library
-ROOM_QUAD x=75 y=20 w=16 h=16 floor_z=6 ceil_z=11 name=mid_floor_study
-CORRIDOR_H from=(70,8) to=(75,8) w=4 floor_z=6 ceil_z=12
-DOOR at=(70,8)
-DOOR at=(75,8)
-CORRIDOR_V from=(60,16) to=(60,20) w=4 floor_z=6 ceil_z=13
-DOOR at=(60,16)
-DOOR at=(60,20)
-RAMP_UP from=(10,10) to=(50,10) dz=6 w=4
-DOOR at=(10,10)
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=entry_hall_l1
+ROOM_QUAD x=15 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=storage_l1
+ROOM_QUAD x=0 y=15 w=10 h=10 floor_z=0 ceil_z=5 name=armory_l1
+ROOM_QUAD x=15 y=15 w=10 h=10 floor_z=0 ceil_z=5 name=barracks_l1
+CORRIDOR_H from=(5,0) to=(10,0) w=3 floor_z=0 ceil_z=5
+DOOR at=(5,0)
+DOOR at=(10,0)
+CORRIDOR_V from=(0,5) to=(0,10) w=3 floor_z=0 ceil_z=5
+DOOR at=(0,5)
+DOOR at=(0,10)
+CORRIDOR_H from=(10,5) to=(15,5) w=3 floor_z=0 ceil_z=5
+DOOR at=(10,5)
+DOOR at=(15,5)
+CORRIDOR_V from=(5,10) to=(5,15) w=3 floor_z=0 ceil_z=5
+DOOR at=(5,10)
+DOOR at=(5,15)
+ROOM_QUAD x=25 y=0 w=10 h=10 floor_z=5 ceil_z=10 name=stair_landing_l2
+ROOM_QUAD x=40 y=0 w=10 h=10 floor_z=5 ceil_z=10 name=library_l2
+ROOM_QUAD x=25 y=15 w=10 h=10 floor_z=5 ceil_z=10 name=study_l2
+ROOM_QUAD x=40 y=15 w=10 h=10 floor_z=5 ceil_z=10 name=observatory_l2
+CORRIDOR_H from=(35,0) to=(40,0) w=3 floor_z=5 ceil_z=10
+DOOR at=(35,0)
+DOOR at=(40,0)
+CORRIDOR_V from=(25,5) to=(25,10) w=3 floor_z=5 ceil_z=10
+DOOR at=(25,5)
+DOOR at=(25,10)
+CORRIDOR_H from=(30,15) to=(35,15) w=3 floor_z=5 ceil_z=10
+DOOR at=(30,15)
+DOOR at=(35,15)
+CORRIDOR_V from=(45,5) to=(45,10) w=3 floor_z=5 ceil_z=10
+DOOR at=(45,5)
+DOOR at=(45,10)
+RAMP_UP from=(27.5,2.5) to=(27.5,7.5) dz=5 w=3
+RAMP_DOWN from=(27.5,7.5) to=(27.5,2.5) dz=-5 w=3
+ROOM_QUAD x=50 y=0 w=10 h=10 floor_z=10 ceil_z=15 name=stair_top_l3
+ROOM_QUAD x=65 y=0 w=10 h=10 floor_z=10 ceil_z=15 name=treasury_l3
+ROOM_QUAD x=50 y=15 w=10 h=10 floor_z=10 ceil_z=15 name=vault_l3
+ROOM_QUAD x=65 y=15 w=10 h=10 floor_z=10 ceil_z=15 name=escape_tunnel_l3
+CORRIDOR_H from=(55,0) to=(60,0) w=3 floor_z=10 ceil_z=15
+DOOR at=(55,0)
+DOOR at=(60,0)
+CORRIDOR_V from=(50,5) to=(50,10) w=3 floor_z=10 ceil_z=15
+DOOR at=(50,5)
 DOOR at=(50,10)
-ROOM_QUAD x=100 y=0 w=20 h=16 floor_z=12 ceil_z=18 name=top_floor_balcony
-ROOM_QUAD x=125 y=0 w=15 h=12 floor_z=12 ceil_z=15 name=top_floor_observatory
-ROOM_QUAD x=100 y=20 w=18 h=14 floor_z=12 ceil_z=20 name=top_floor_altar
-ROOM_QUAD x=125 y=20 w=16 h=16 floor_z=12 ceil_z=17 name=top_floor_chamber
-CORRIDOR_H from=(120,8) to=(125,8) w=4 floor_z=12 ceil_z=18
-DOOR at=(120,8)
-DOOR at=(125,8)
-CORRIDOR_V from=(110,16) to=(110,20) w=4 floor_z=12 ceil_z=20
-DOOR at=(110,16)
-DOOR at=(110,20)
-RAMP_UP from=(60,10) to=(100,10) dz=6 w=4
-DOOR at=(60,10)
-DOOR at=(100,10)
-SPAWN x=10 y=8 z=0
-MARKER x=10 y=8 z=0 name=ground_spawn
-MARKER x=60 y=10 z=6 name=mid_stair_top
-MARKER x=100 y=10 z=12 name=top_stair_top
-MARKER x=110 y=10 z=12 name=top_hall_marker
-MARKER x=125 y=10 z=12 name=top_observatory_marker
-MARKER x=125 y=10 z=0 name=ground_storage_marker
-MARKER x=75 y=10 z=6 name=mid_armory_marker
-MARKER x=125 y=10 z=12 name=top_observatory_marker
-BLOCK
-ROOM_QUAD x=10 y=8 w=4 h=4 floor_z=0 ceil_z=6 name=stair_room_ground
-ROOM_QUAD x=60 y=10 w=4 h=4 floor_z=6 ceil_z=12 name=stair_room_mid
-ROOM_QUAD x=100 y=10 w=4 h=4 floor_z=12 ceil_z=18 name=stair_room_top
-RAMP_UP from=(12,10) to=(62,10) dz=6 w=4
-DOOR at=(12,10)
-DOOR at=(62,10)
-RAMP_UP from=(62,10) to=(102,10) dz=6 w=4
-DOOR at=(62,10)
-DOOR at=(102,10)
-EBLOCK
+CORRIDOR_H from=(60,15) to=(65,15) w=3 floor_z=10 ceil_z=15
+DOOR at=(60,15)
+DOOR at=(65,15)
+CORRIDOR_V from=(70,5) to=(70,10) w=3 floor_z=10 ceil_z=15
+DOOR at=(70,5)
+DOOR at=(70,10)
+RAMP_UP from=(52.5,2.5) to=(52.5,7.5) dz=5 w=3
+RAMP_DOWN from=(52.5,7.5) to=(52.5,2.5) dz=-5 w=3
 EBLOCK

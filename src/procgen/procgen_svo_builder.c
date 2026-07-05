@@ -13,6 +13,7 @@
 #include "ferrum/procgen/procgen_svo_builder.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -178,17 +179,27 @@ static int point_in_corridor(const fr_dungeon_layout_t *layout,
     for (uint32_t ci = 0; ci < layout->corridor_count; ci++) {
         const fr_corridor_def_t *c = &layout->corridors[ci];
         float hw = c->width * 0.5f;
-        if (wy < c->floor_z || wy > c->ceil_z) continue;
         float dx = c->to.x - c->from.x;
-        float dy2 = c->to.y - c->from.y;
-        float len2 = dx * dx + dy2 * dy2;
-        float t = ((wx - c->from.x) * dx + (wz - c->from.y) * dy2) / len2;
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-        float cx = c->from.x + t * dx;
-        float cz = c->from.y + t * dy2;
-        float d2 = (wx - cx) * (wx - cx) + (wz - cz) * (wz - cz);
-        if (d2 <= hw * hw) return 1;
+        float dy = c->to.y - c->from.y;
+        float len = sqrtf(dx * dx + dy * dy);
+        float perp_x = (len > 0.001f) ? -dy / len * hw : hw;
+        float perp_y = (len > 0.001f) ?  dx / len * hw : 0.0f;
+
+        /* Use the same bounding-box convention as the corridor rasterizer. */
+        float bound_min_x = fminf(c->from.x, c->to.x) - fabsf(perp_x) - hw;
+        float bound_max_x = fmaxf(c->from.x, c->to.x) + fabsf(perp_x) + hw;
+        float bound_min_z = fminf(c->from.y, c->to.y) - fabsf(perp_y) - hw;
+        float bound_max_z = fmaxf(c->from.y, c->to.y) + fabsf(perp_y) + hw;
+
+        /* Height must match. */
+        if (wy < c->floor_z || wy > c->ceil_z) continue;
+
+        /* Inside the full bounding box (+ epsilon for discretisation)? */
+        float eps = 0.6f; /* half-voxel fudge to catch boundary voxels */
+        if (wx < bound_min_x - eps || wx > bound_max_x + eps) continue;
+        if (wz < bound_min_z - eps || wz > bound_max_z + eps) continue;
+
+        return 1;
     }
     return 0;
 }
@@ -285,12 +296,13 @@ static uint32_t rasterize_room(npc_svo_grid_t       *grid,
 
             /* Use same floor/ceiling levels as slabs for seamless join. */
             for (uint32_t y = vy_min; y <= ceiling_vy; y += block_size) {
-                /* Skip wall voxels that fall inside a corridor —
-                   the corridor pass fills the gap. */
-                if (point_in_corridor(layout,
-                    grid->world_bounds.min.x + (float)wall_vx * grid->voxel_size,
-                    grid->world_bounds.min.y + (float)y * grid->voxel_size,
-                    grid->world_bounds.min.z + (float)wall_vz * grid->voxel_size))
+                float wx = grid->world_bounds.min.x
+                         + ((float)wall_vx + block_world * 0.5f) * grid->voxel_size;
+                float wy_val = grid->world_bounds.min.y
+                             + ((float)y       + block_world * 0.5f) * grid->voxel_size;
+                float wz = grid->world_bounds.min.z
+                         + ((float)wall_vz + block_world * 0.5f) * grid->voxel_size;
+                if (point_in_corridor(layout, wx, wy_val, wz))
                     continue;
                 svo_mark_block(grid, wall_vx, y, wall_vz, block_size, MAT_WOOD);
                 marked++;
@@ -387,41 +399,55 @@ static uint32_t rasterize_corridor(npc_svo_grid_t *grid,
 
     uint32_t ceiling_vy = (vy_max / block_size) * block_size;
 
-    /* ── Walk along the centerline at block resolution ───────── */
-    int steps = (int)(len / block_world) + 1;  /* oversample to catch edges */
+    int horizontal = (fabsf(dx) >= fabsf(dy));
 
-    for (int step = 0; step <= steps; step++) {
-        float t = (len > 0.001f)
-                   ? (float)step / (float)steps
-                   : 0.0f;
-        float cx = x1 + t * dx;
-        float cz = y1 + t * dy;  /* layout Y → engine Z */
+    /* ── Mark floor and ceiling ────────────────────────────────── */
+    for (uint32_t vz = vz_min; vz <= vz_max; vz += block_size) {
+        for (uint32_t vx = vx_min; vx <= vx_max; vx += block_size) {
+            float wx = grid->world_bounds.min.x
+                     + ((float)vx + block_world * 0.5f) * grid->voxel_size;
+            float wz = grid->world_bounds.min.z
+                     + ((float)vz + block_world * 0.5f) * grid->voxel_size;
 
-        /* Floor blocks along the corridor. */
-        uint32_t fx, fy, fz;
-        world_to_voxel(grid, cx, floor_z, cz, &fx, &fy, &fz);
-        /* Scan laterally (left/right) at each step. */
-        for (int side = -1; side <= 1; side += 2) {
-            float sx = cx + (float)side * perp_x;
-            float sz = cz + (float)side * perp_y;
-            uint32_t sx_v, sy_v, sz_v;
-            world_to_voxel(grid, sx, floor_z, sz, &sx_v, &sy_v, &sz_v);
-            world_to_voxel(grid, sx, ceil_z,  sz, &sx_v, &sy_v, &sz_v);
+            float t = ((wx - x1) * dx + (wz - y1) * dy) / (len * len);
+            if (t < 0.0f) t = 0.0f;
+            if (t > 1.0f) t = 1.0f;
+            float cx = x1 + t * dx;
+            float cz = y1 + t * dy;
+            float d2 = (wx - cx) * (wx - cx) + (wz - cz) * (wz - cz);
 
-            /* Floor, ceiling, and wall column for this lateral position. */
-            svo_mark_block(grid, sx_v, vy_min,    sz_v, block_size, MAT_STONE);
-            svo_mark_block(grid, sx_v, ceiling_vy, sz_v, block_size, MAT_STONE);
-            for (uint32_t y = vy_min; y <= vy_max; y += block_size) {
-                svo_mark_block(grid, sx_v, y, sz_v, block_size, MAT_WOOD);
-                marked++;
+            int inside     = (d2 <= half_width * half_width);
+            int at_endpoint;  /* end caps — open, include one extra row */
+            int at_side;      /* side walls */
+            if (horizontal) {
+                at_endpoint = (vx <= vx_min + 1 || vx >= vx_max - 1);
+                at_side     = (vz == vz_min || vz == vz_max);
+            } else {
+                at_endpoint = (vz <= vz_min + 1 || vz >= vz_max - 1);
+                at_side     = (vx == vx_min || vx == vx_max);
             }
-            marked += 2;  /* floor + ceiling */
-        }
 
-        /* Floor and ceiling along centerline. */
-        svo_mark_block(grid, fx, vy_min,    fz, block_size, MAT_STONE);
-        svo_mark_block(grid, fx, ceiling_vy, fz, block_size, MAT_STONE);
-        marked += 2;
+            /* Floor and ceiling: interior band + full cross-section at
+               open endpoints so the floor reaches the rooms it connects. */
+            if (inside || at_endpoint) {
+                svo_mark_block(grid, vx, vy_min,    vz, block_size, MAT_STONE);
+                svo_mark_block(grid, vx, ceiling_vy, vz, block_size, MAT_STONE);
+                if (vx == 74 && vz == 66)
+                    fprintf(stderr, "corr floor/ceil at (%u,%u,%u) y=%u..%u\n",
+                            vx, vy_min, vz, vy_min, ceiling_vy);
+                marked += 2;
+            }
+
+            /* Side walls only: edges parallel to corridor direction,
+               but NOT at the open endpoints, and only where the
+               corridor interior actually reaches. */
+            if (inside && at_side && !at_endpoint) {
+                for (uint32_t y = vy_min; y <= vy_max; y += block_size) {
+                    svo_mark_block(grid, vx, y, vz, block_size, MAT_WOOD);
+                    marked++;
+                }
+            }
+        }
     }
 
     return marked;
@@ -445,28 +471,25 @@ uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,
         return 0;
     }
 
-    uint32_t total_marked = 0;
+     uint32_t total_marked = 0;
 
     /* Rooms. */
     for (uint32_t i = 0; i < layout->room_count; i++) {
         const fr_room_def_t *room = &layout->rooms[i];
 
-        float x_min = room->vertices[0].x;
-        float x_max = x_min;
-        float y_min = room->vertices[0].y;
-        float y_max = y_min;
-
-        for (uint32_t j = 1; j < room->vertex_count; j++) {
-            if (room->vertices[j].x < x_min) x_min = room->vertices[j].x;
-            if (room->vertices[j].x > x_max) x_max = room->vertices[j].x;
-            if (room->vertices[j].y < y_min) y_min = room->vertices[j].y;
-            if (room->vertices[j].y > y_max) y_max = room->vertices[j].y;
-        }
+        /* Snap to integer coordinates to avoid boundary gaps
+           from non-integer architect output. */
+        float x_min = roundf(room->vertices[0].x);
+        float x_max = roundf(room->vertices[1].x);
+        float y_min = roundf(room->vertices[0].y);
+        float y_max = roundf(room->vertices[2].y);
+        float fz    = roundf(room->floor_z);
+        float cz    = roundf(room->ceil_z);
 
         total_marked += rasterize_room(out_grid,
                                        x_min, x_max,
                                        y_min, y_max,
-                                       room->floor_z, room->ceil_z,
+                                       fz, cz,
                                        room->vertices,
                                        room->vertex_count,
                                        layout);
@@ -476,11 +499,11 @@ uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,
     for (uint32_t i = 0; i < layout->corridor_count; i++) {
         const fr_corridor_def_t *corr = &layout->corridors[i];
         total_marked += rasterize_corridor(out_grid,
-                                       corr->from.x, corr->from.y,
-                                       corr->to.x,   corr->to.y,
-                                       corr->width,
-                                       corr->floor_z,
-                                       corr->ceil_z);
+                                       roundf(corr->from.x), roundf(corr->from.y),
+                                       roundf(corr->to.x),   roundf(corr->to.y),
+                                       roundf(corr->width),
+                                       roundf(corr->floor_z),
+                                       roundf(corr->ceil_z));
     }
 
     /* Ramps. */
@@ -489,9 +512,9 @@ uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,
         float low  = fminf(ramp->from.z, ramp->to.z);
         float high = fmaxf(ramp->from.z, ramp->to.z);
         total_marked += rasterize_corridor(out_grid,
-                                       ramp->from.x, ramp->from.y,
-                                       ramp->to.x,   ramp->to.y,
-                                       ramp->width,
+                                       roundf(ramp->from.x), roundf(ramp->from.y),
+                                       roundf(ramp->to.x),   roundf(ramp->to.y),
+                                       roundf(ramp->width),
                                        low, high);
     }
 

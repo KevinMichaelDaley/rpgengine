@@ -1,36 +1,33 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=6 name=entrance
-ROOM_QUAD x=20 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_east_1
-ROOM_QUAD x=30 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_east_2
-ROOM_QUAD x=-10 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_west_1
-ROOM_QUAD x=-20 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_west_2
-ROOM_QUAD x=0 y=20 w=20 h=20 floor_z=0 ceil_z=18 name=library
-ROOM_QUAD x=0 y=-20 w=20 h=10 floor_z=-5 ceil_z=-2 name=basement_storage
-ROOM_QUAD x=0 y=40 w=10 h=10 floor_z=6 ceil_z=9 name=dorm_north_1
-ROOM_QUAD x=10 y=40 w=10 h=10 floor_z=6 ceil_z=9 name=dorm_north_2
-CORRIDOR_H from=(10,0) to=(20,0) w=4 floor_z=0 ceil_z=6
-CORRIDOR_H from=(-10,0) to=(0,0) w=4 floor_z=0 ceil_z=6
-CORRIDOR_V from=(25,0) to=(25,10) w=4 floor_z=0 ceil_z=6
-CORRIDOR_V from=(25,10) to=(25,20) w=4 floor_z=0 ceil_z=6
-CORRIDOR_V from=(-15,0) to=(-15,10) w=4 floor_z=0 ceil_z=6
-CORRIDOR_V from=(-15,10) to=(-15,20) w=4 floor_z=0 ceil_z=6
-CORRIDOR_H from=(0,20) to=(10,20) w=4 floor_z=0 ceil_z=18
-CORRIDOR_H from=(10,20) to=(20,20) w=4 floor_z=0 ceil_z=18
-CORRIDOR_H from=(0,30) to=(10,30) w=4 floor_z=6 ceil_z=9
-CORRIDOR_H from=(10,30) to=(20,30) w=4 floor_z=6 ceil_z=9
-DOOR at=(20,0)
-DOOR at=(-10,0)
-DOOR at=(25,10)
-DOOR at=(-15,10)
-DOOR at=(0,20)
-DOOR at=(10,20)
-DOOR at=(0,30)
-DOOR at=(10,30)
-RAMP_UP from=(10,10) to=(10,30) dz=6 w=4
-RAMP_UP from=(10,20) to=(10,30) dz=6 w=4
-SPAWN x=10 y=10 z=3
-MARKER x=10 y=10 z=9 name=library_center
-MARKER x=25 y=5 z=3 name=east_wing_junction
-MARKER x=-15 y=5 z=3 name=west_wing_junction
-MARKER x=10 y=35 z=7.5 name=dorm_hallway
-MARKER x=10 y=-10 z=-3 name=basement_entrance
+SPAWN x=0 y=0 z=0
+MARKER x=0 y=0 z=0 name=spawn_point
+MARKER x=30 y=30 z=0 name=library_entrance
+MARKER x=60 y=60 z=10 name=dorm_north_landing
+MARKER x=0 y=0 z=-5 name=storage_access
+ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=6 name=entrance_hall
+ROOM_QUAD x=25 y=25 w=30 h=30 floor_z=0 ceil_z=12 name=central_library
+CORRIDOR_H from=(10,0) to=(10,25) w=4 floor_z=0 ceil_z=6
+DOOR at=(10,25)
+CORRIDOR_V from=(25,10) to=(55,10) w=4 floor_z=0 ceil_z=6
+DOOR at=(55,10)
+ROOM_QUAD x=55 y=-10 w=20 h=20 floor_z=0 ceil_z=6 name=classroom_east
+CORRIDOR_H from=(55,0) to=(55,-10) w=4 floor_z=0 ceil_z=6
+DOOR at=(55,-10)
+ROOM_QUAD x=25 y=55 w=20 h=20 floor_z=0 ceil_z=6 name=classroom_north
+CORRIDOR_V from=(25,25) to=(25,55) w=4 floor_z=0 ceil_z=6
+DOOR at=(25,55)
+ROOM_QUAD x=5 y=55 w=20 h=20 floor_z=0 ceil_z=6 name=classroom_west
+CORRIDOR_H from=(25,55) to=(5,55) w=4 floor_z=0 ceil_z=6
+DOOR at=(5,55)
+ROOM_QUAD x=-15 y=25 w=20 h=20 floor_z=0 ceil_z=6 name=classroom_south
+CORRIDOR_V from=(10,25) to=(10,25) w=4 floor_z=0 ceil_z=6
+DOOR at=(10,25)
+RAMP_UP from=(25,25) to=(30,30) dz=6 w=4
+ROOM_QUAD x=28 y=28 w=15 h=15 floor_z=6 ceil_z=10 name=dorm_north_wing
+RAMP_UP from=(25,25) to=(30,-20) dz=6 w=4
+ROOM_QUAD x=28 y=-22 w=15 h=15 floor_z=6 ceil_z=10 name=dorm_south_wing
+BLOCK
+ROOM_QUAD x=25 y=25 w=30 h=30 floor_z=-5 ceil_z=-1 name=storage_area
+EBLOCK
+CORRIDOR_V from=(25,0) to=(25,-5) w=4 floor_z=0 ceil_z=-1
+DOOR at=(25,-5)

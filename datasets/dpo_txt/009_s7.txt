@@ -1,19 +1,39 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=30 h=25 floor_z=0 ceil_z=8 name=great_hall
-ROOM_QUAD x=5 y=30 w=10 h=10 floor_z=8 ceil_z=16 name=tower_room_1
-ROOM_QUAD x=15 y=30 w=10 h=10 floor_z=8 ceil_z=16 name=tower_room_2
-ROOM_QUAD x=0 y=-15 w=15 h=15 floor_z=-5 ceil_z=3 name=crypt_entrance
-CORRIDOR_V from=(15,12.5) to=(15,25) w=5 floor_z=0 ceil_z=8
-DOOR at=(15,25)
-CORRIDOR_H from=(15,25) to=(20,25) w=5 floor_z=8 ceil_z=16
-DOOR at=(15,25)
-CORRIDOR_H from=(10,25) to=(5,25) w=5 floor_z=8 ceil_z=16
-DOOR at=(10,25)
-CORRIDOR_V from=(15,12.5) to=(15,-5) w=5 floor_z=0 ceil_z=3
-DOOR at=(15,-5)
-RAMP_DOWN from=(15,0) to=(15,-10) dz=5 w=5
-DOOR at=(15,-5)
-SPAWN x=15 y=12.5 z=4
-MARKER x=15 y=12.5 z=4 name=great_hall_center
-MARKER x=10 y=35 z=12 name=tower_1_top
-MARKER x=0 y=-10 z=-2 name=crypt_entrance_marker
+ROOM_QUAD x=0 y=0 w=30 h=25 floor_z=0 ceil_z=6 name=great_hall
+ROOM_QUAD x=10 y=30 w=10 h=10 floor_z=6 ceil_z=10 name=tower_room_north
+ROOM_QUAD x=-10 y=30 w=10 h=10 floor_z=6 ceil_z=10 name=tower_room_south
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=-10 ceil_z=-4 name=crypt_chamber
+CORRIDOR_V from=(0,25) to=(0,30) w=4 floor_z=6 ceil_z=10
+CORRIDOR_H from=(-5,30) to=(5,30) w=4 floor_z=6 ceil_z=10
+CORRIDOR_DIAG from=(0,25) to=(0,-10) w=4 floor_z=0 ceil_z=0
+DOOR at=(0,25)
+DOOR at=(0,30)
+DOOR at=(-5,30)
+DOOR at=(5,30)
+DOOR at=(0,0)
+DOOR at=(0,-10)
+RAMP_DOWN from=(0,0) to=(0,-10) dz=10 w=4
+SPAWN x=0 y=12.5 z=3
+MARKER x=0 y=12.5 z=3 name=great_hall_center
+MARKER x=0 y=35 z=8 name=tower_junction
+MARKER x=0 y=-5 z=-7 name=crypt_entrance
+BLOCK
+ROOM_QUAD x=0 y=0 w=30 h=25 floor_z=0 ceil_z=6 name=great_hall
+ROOM_QUAD x=10 y=30 w=10 h=10 floor_z=6 ceil_z=10 name=tower_room_north
+ROOM_QUAD x=-10 y=30 w=10 h=10 floor_z=6 ceil_z=10 name=tower_room_south
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=-10 ceil_z=-4 name=crypt_chamber
+CORRIDOR_V from=(0,25) to=(0,30) w=4 floor_z=6 ceil_z=10
+CORRIDOR_H from=(-5,30) to=(5,30) w=4 floor_z=6 ceil_z=10
+CORRIDOR_DIAG from=(0,25) to=(0,-10) w=4 floor_z=0 ceil_z=0
+DOOR at=(0,25)
+DOOR at=(0,30)
+DOOR at=(-5,30)
+DOOR at=(5,30)
+DOOR at=(0,0)
+DOOR at=(0,-10)
+RAMP_DOWN from=(0,0) to=(0,-10) dz=10 w=4
+SPAWN x=0 y=12.5 z=3
+MARKER x=0 y=12.5 z=3 name=great_hall_center
+MARKER x=0 y=35 z=8 name=tower_junction
+MARKER x=0 y=-5 z=-7 name=crypt_entrance
+EBLOCK
