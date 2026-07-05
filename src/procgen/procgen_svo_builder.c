@@ -38,27 +38,26 @@ static int pip(const vec3_t *v,uint32_t n,float px,float py){int in=0;
     for(uint32_t i=0,j=n-1;i<n;j=i++){float xi=v[i].x,yi=v[i].y,xj=v[j].x,yj=v[j].y;
         if(((yi>py)!=(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))in=!in;}return in;}
 
-#define BS 3 /* 8 voxels per block = 1m at 0.125m voxels */
+#define BS 3
 
 static uint32_t shell(npc_svo_grid_t *g,float x1,float x2,float y1,float y2,float fz,float cz,const vec3_t *poly,uint32_t pn){
-    uint32_t bs=1u<<BS;float vs=g->voxel_size*bs,vm=(float)(1u<<g->max_depth);int md=0;
+    uint32_t bs=1u<<BS;float vs=g->voxel_size*bs,vm=(float)(1u<<g->max_depth);uint32_t md=0;
     uint32_t fx1,fy1,fz1,fx2,fy2,fz2;v2w(g,x1,fz,y1,&fx1,&fy1,&fz1);v2w(g,x2,cz,y2,&fx2,&fy2,&fz2);
     if(fx2>=vm)fx2=vm-1;if(fy2>=vm)fy2=vm-1;if(fz2>=vm)fz2=vm-1;
-    /* Floor */
     for(uint32_t vz=fz1;vz<=fz2;vz+=bs)for(uint32_t vx=fx1;vx<=fx2;vx+=bs){
         float cx=g->world_bounds.min.x+((float)vx+vs*0.5f)*g->voxel_size;
         float cz=g->world_bounds.min.z+((float)vz+vs*0.5f)*g->voxel_size;
-        if(pip(poly,pn,cx,cz))for(uint32_t vy=fy1;vy<=fy2;vy+=bs)mark_block_solid_(g,vx,vy,vz,bs);}
-    /* Walls */
+        if(pip(poly,pn,cx,cz)){for(uint32_t vy=fy1;vy<=fy2;vy+=bs){mark_block_solid_(g,vx,vy,vz,bs);md++;}}}
     for(uint32_t ei=0;ei<pn;ei++){uint32_t ej=(ei+1)%pn;float xa=poly[ei].x,ya=poly[ei].y,xb=poly[ej].x,yb=poly[ej].y;
         float dx=xb-xa,dy=yb-ya,len=sqrtf(dx*dx+dy*dy);int st=(int)(len/vs)+1;
         for(int s=0;s<=st;s++){float t=(float)s/(float)st,px=xa+t*dx,pz=ya+t*dy;
             uint32_t wx,wy,wz,_,wz2;v2w(g,px,fz,pz,&wx,&wy,&wz);v2w(g,px,cz,pz,&_,&_,&wz2);
-            for(uint32_t zy=wy;zy<=wz2;zy+=bs)mark_block_solid_(g,wx,zy,wz,bs);}}
+            for(uint32_t zy=wy;zy<=wz2;zy+=bs){mark_block_solid_(g,wx,zy,wz,bs);md++;}}}
+    return md;
 }
 
-static void line(npc_svo_grid_t *g,float x1,float y1,float x2,float y2,float w,float fz,float cz){
-    uint32_t bs=1u<<BS;float hw=w*0.5f,vm=(float)(1u<<g->max_depth);float vs=g->voxel_size*bs;
+static uint32_t line2(npc_svo_grid_t *g,float x1,float y1,float x2,float y2,float w,float fz,float cz){
+    uint32_t bs=1u<<BS,md=0;float hw=w*0.5f,vm=(float)(1u<<g->max_depth);float vs=g->voxel_size*bs;
     float xn=fminf(x1,x2)-hw,xx=fmaxf(x1,x2)+hw,zn=fminf(y1,y2)-hw,zx=fmaxf(y1,y2)+hw;
     uint32_t mvx,mvy,mvz,Mvx,Mvy,Mvz;v2w(g,xn,fz,zn,&mvx,&mvy,&mvz);v2w(g,xx,cz,zx,&Mvx,&Mvy,&Mvz);
     if(Mvx>=vm)Mvx=vm-1;if(Mvy>=vm)Mvy=vm-1;if(Mvz>=vm)Mvz=vm-1;
@@ -67,7 +66,9 @@ static void line(npc_svo_grid_t *g,float x1,float y1,float x2,float y2,float w,f
         float px=g->world_bounds.min.x+((float)vx+vs*0.5f)*g->voxel_size;
         float pz=g->world_bounds.min.z+((float)vz+vs*0.5f)*g->voxel_size;
         float t=((px-x1)*dx+(pz-y1)*dz2)/len2;if(t<0)t=0;if(t>1)t=1;float cx=x1+t*dx,cz2=y1+t*dz2;
-        if((px-cx)*(px-cx)+(pz-cz2)*(pz-cz2)<=hw*hw)mark_block_solid_(g,vx,vy,vz,bs);}}
+        if((px-cx)*(px-cx)+(pz-cz2)*(pz-cz2)<=hw*hw){mark_block_solid_(g,vx,vy,vz,bs);md++;}}
+    return md;
+}
 
 uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,const fr_dungeon_layout_t *l,npc_svo_grid_t *g){
     if(!cfg||!l||!g)return 0;phys_aabb_t b={{-cfg->world_extent,-cfg->world_extent,-cfg->world_extent},{cfg->world_extent,cfg->world_extent,cfg->world_extent}};
@@ -76,11 +77,11 @@ uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,const fr_dunge
         float xn=r->vertices[0].x,xx=xn,yn=r->vertices[0].y,yx=yn;
         for(uint32_t j=1;j<r->vertex_count;j++){if(r->vertices[j].x<xn)xn=r->vertices[j].x;if(r->vertices[j].x>xx)xx=r->vertices[j].x;
             if(r->vertices[j].y<yn)yn=r->vertices[j].y;if(r->vertices[j].y>yx)yx=r->vertices[j].y;}
-        shell(g,xn,xx,yn,yx,r->floor_z,r->ceil_z,r->vertices,r->vertex_count);t++;}
+        t+=shell(g,xn,xx,yn,yx,r->floor_z,r->ceil_z,r->vertices,r->vertex_count);}
     for(uint32_t ci=0;ci<l->corridor_count;ci++){const fr_corridor_def_t *c=&l->corridors[ci];
-        line(g,c->from.x,c->from.y,c->to.x,c->to.y,c->width,c->floor_z,c->ceil_z);t++;}
+        t+=line2(g,c->from.x,c->from.y,c->to.x,c->to.y,c->width,c->floor_z,c->ceil_z);}
     for(uint32_t ri=0;ri<l->ramp_count;ri++){const fr_ramp_def_t *r=&l->ramps[ri];float lo=fminf(r->from.z,r->to.z),hi=fmaxf(r->from.z,r->to.z);
-        line(g,r->from.x,r->from.y,r->to.x,r->to.y,r->width,lo,hi);t++;}
+        t+=line2(g,r->from.x,r->from.y,r->to.x,r->to.y,r->width,lo,hi);}
     return t;}
 
 uint32_t procgen_svo_build(npc_svo_grid_t *g,const fr_dungeon_layout_t *l){procgen_raster_config_t c;procgen_raster_config_default(&c);return procgen_svo_build_cfg(&c,l,g);}
