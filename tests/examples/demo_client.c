@@ -34,6 +34,8 @@
 
 #include "ferrum/mesh/obj_loader.h"
 
+#include "ferrum/procgen/procgen_level_load.h"
+
 #include "ferrum/net/quantization.h"
 #include "ferrum/net/replication/body_spawn.h"
 #include "ferrum/net/replication/body_state.h"
@@ -554,35 +556,9 @@ static int gl_init(gl_ctx_t *ctx) {
                             3u * sizeof(float));
     }
 
-    /* Armadillo mesh VBO + VAO. */
+    /* Armadillo or Procgen mesh VBO + VAO — placeholder, loaded after arg parse. */
     {
-        uint32_t tri_count = 0;
-        int rc = obj_load_triangles("assets/test/armadillo.obj",
-                                    3.0f, NULL, 0, &tri_count);
-        if (rc != 0 && tri_count > 0) {
-            float *arm_verts = (float *)malloc(
-                (size_t)tri_count * 9 * sizeof(float));
-            if (arm_verts) {
-                uint32_t loaded = 0;
-                rc = obj_load_triangles("assets/test/armadillo.obj",
-                                        3.0f, arm_verts, tri_count, &loaded);
-                if (rc == 0 && loaded > 0) {
-                    ctx->arm_vert_count = loaded * 3;
-                    vbo_create(&ctx->arm_vbo, &ctx->loader);
-                    vbo_upload(&ctx->arm_vbo, GL_ARRAY_BUFFER, arm_verts,
-                               (size_t)loaded * 9 * sizeof(float),
-                               GL_STATIC_DRAW);
-                    vao_create(&ctx->arm_vao, &ctx->loader);
-                    vao_bind_attributes(&ctx->arm_vao, &ctx->arm_vbo,
-                                        &attr, 1u, 3u * sizeof(float));
-                    printf("[client] armadillo mesh loaded: %u tris, "
-                           "%u verts\n", loaded, ctx->arm_vert_count);
-                }
-                free(arm_verts);
-            }
-        } else {
-            fprintf(stderr, "[client] WARN: could not load armadillo.obj\n");
-        }
+        /* Will be filled in after argument parsing. */
     }
 
     /* Ground plane quad VBO + VAO. */
@@ -655,6 +631,7 @@ int main(int argc, char **argv) {
                           ? atof(argv[3]) : 0.0;
     int headless = 0;
     const char *record_path = NULL;
+    const char *procgen_path = NULL;
 
 #ifdef FR_NET_EMULATION
     float emu_delay = 0.0f, emu_jitter = 0.0f, emu_loss = 0.0f;
@@ -667,6 +644,8 @@ int main(int argc, char **argv) {
             headless = 1;
         } else if (strcmp(argv[i], "--record") == 0 && i + 1 < argc) {
             record_path = argv[++i];
+        } else if (strcmp(argv[i], "--procgen") == 0 && i + 1 < argc) {
+            procgen_path = argv[++i];
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -786,6 +765,34 @@ int main(int argc, char **argv) {
             free(send_slots);
             net_udp_socket_close(&sock);
             return 1;
+        }
+
+        /* ── Load procgen mesh if --procgen specified ──────────────── */
+        if (procgen_path) {
+            procgen_level_t lvl;
+            procgen_level_init(&lvl);
+            if (procgen_level_load(&lvl, procgen_path) == 0) {
+                uint32_t tris = lvl.mesh.vertex_count / 9;
+                if (tris > 0) {
+                    GLint ploc = glGetAttribLocation(gl.program.handle, "a_position");
+                    vao_attribute_t pattr = {(uint32_t)ploc, 3, GL_FLOAT, 0u, 0u, 0u};
+                    gl.arm_vert_count = tris * 3;
+                    vbo_create(&gl.arm_vbo, &gl.loader);
+                    vbo_upload(&gl.arm_vbo, GL_ARRAY_BUFFER,
+                               lvl.mesh.vertices,
+                               lvl.mesh.vertex_count * sizeof(float),
+                               GL_STATIC_DRAW);
+                    vao_create(&gl.arm_vao, &gl.loader);
+                    vao_bind_attributes(&gl.arm_vao, &gl.arm_vbo,
+                                        &pattr, 1u, 3u * sizeof(float));
+                    printf("[client] procgen mesh: %u tris from %s\n",
+                           tris, procgen_path);
+                }
+                procgen_level_free(&lvl);
+            } else {
+                fprintf(stderr, "[client] procgen load failed: %s\n",
+                        procgen_path);
+            }
         }
     }
 
@@ -1311,6 +1318,16 @@ int main(int argc, char **argv) {
                             frustum[p][3] *= inv;
                         }
                     }
+                }
+
+                /* ── Draw procgen static mesh at world origin ────── */
+                if (gl.arm_vert_count > 0) {
+                    mat4_t model = mat4_identity();
+                    mat4_t mvp   = mat4_mul(vp, model);
+                    glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mvp.m);
+                    glUniform3f(u_color_loc, 0.55f, 0.50f, 0.45f);
+                    glBindVertexArray(gl.arm_vao.handle);
+                    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)gl.arm_vert_count);
                 }
 
                 /* ── Fix 3: Sort bodies by shape_type to minimise
