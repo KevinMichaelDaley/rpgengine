@@ -24,10 +24,10 @@ extern "C" {
 #define PROCGEN_DEFAULT_VOXEL_SIZE 0.125f
 
 /** @brief Default world half-extent: 64m (128m total span). */
-#define PROCGEN_DEFAULT_WORLD_EXTENT 512.0f
+#define PROCGEN_DEFAULT_WORLD_EXTENT 64.0f
 
 /** @brief Default octree depth.  9 → 512 cells/axis, 0.25m at 128m span. */
-#define PROCGEN_DEFAULT_MAX_DEPTH 13
+#define PROCGEN_DEFAULT_MAX_DEPTH 7
 
 /** @brief Rasterizer type (for pluggable interface). */
 typedef enum {
