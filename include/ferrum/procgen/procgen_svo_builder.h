@@ -16,6 +16,7 @@ extern "C" {
 
 #include <stdint.h>
 #include "ferrum/procgen/procgen_layout.h"
+#include "ferrum/procgen/procgen_srd_types.h"
 #include "ferrum/npc/npc_svo.h"
 
 /* ── Configuration ────────────────────────────────────────────── */
@@ -67,6 +68,16 @@ uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,
  */
 uint32_t procgen_svo_build(npc_svo_grid_t *grid,
                            const fr_dungeon_layout_t *layout);
+
+/**
+ * @brief Build SVO directly from SRD geometry arrays (no token parsing).
+ *
+ * Takes the room boxes and corridor segments produced by srd_generate()
+ * and rasterizes them into the SVO using the same rasterization logic.
+ */
+uint32_t procgen_svo_build_from_srd(npc_svo_grid_t *grid,
+                                    const fr_room_box_t *rooms, uint32_t n_rooms,
+                                    const fr_corridor_seg_t *corridors, uint32_t n_corridors);
 
 /* ── Mesh generation ──────────────────────────────────────────── */
 

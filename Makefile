@@ -1896,7 +1896,24 @@ build/srd_bridge_tests: tests/procgen/srd/srd_bridge_tests.cpp src/procgen/srd/s
 build/srd_m3_m4_smoke: tests/procgen/srd/srd_m3_m4_smoke.cpp src/procgen/srd/srd_bridge.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c src/procgen/srd/srd_anneal.c $(SYMX_LIB) $(SYMX_FMT) | build
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_m3_m4_smoke.cpp src/procgen/srd/srd_bridge.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c src/procgen/srd/srd_anneal.c $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
 
-PROCGEN_TESTS += build/srd_m3_m4_smoke
+SRD_TEST_C_SRCS  := tests/procgen/srd/srd_svo_integration_tests.c src/procgen/procgen_svo_builder.c src/npc/nav/npc_svo_init.c src/procgen/procgen_srd_types.c src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/srd/srd_anneal.c
+SRD_TEST_CXX_SRCS := src/procgen/srd/srd_bridge.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp
+SRD_TEST_C_OBJS   := $(patsubst %.c, $(OBJDIR)/%.o, $(SRD_TEST_C_SRCS))
+SRD_TEST_CXX_OBJS := $(patsubst %.cpp, $(OBJDIR)/%.o, $(SRD_TEST_CXX_SRCS))
+
+# Build rule for SRD C++ objects (need SymX includes)
+$(OBJDIR)/src/procgen/srd/%.o: src/procgen/srd/%.cpp | build
+	$(CXX) $(SYMX_FLAGS) -Iinclude -c $< -o $@
+
+$(OBJDIR)/tests/procgen/srd/%.o: tests/procgen/srd/%.cpp | build
+	$(CXX) $(SYMX_FLAGS) -Iinclude -c $< -o $@
+
+build/srd_svo_integration_tests: $(SRD_TEST_C_OBJS) $(SRD_TEST_CXX_OBJS) $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CXX) $(SRD_TEST_C_OBJS) $(SRD_TEST_CXX_OBJS) $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -lm -o $@
+
+PROCGEN_TESTS += build/srd_svo_integration_tests
+
+PROCGEN_TESTS += build/srd_svo_integration_tests
 
 build/srd_optimizer_tests: tests/procgen/srd/srd_optimizer_tests.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c $(SYMX_LIB) $(SYMX_FMT) | build
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_optimizer_tests.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@

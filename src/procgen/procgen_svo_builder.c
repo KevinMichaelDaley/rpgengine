@@ -527,3 +527,57 @@ uint32_t procgen_svo_build(npc_svo_grid_t               *grid,
     procgen_raster_config_default(&cfg);
     return procgen_svo_build_cfg(&cfg, layout, grid);
 }
+
+uint32_t procgen_svo_build_from_srd(npc_svo_grid_t *grid,
+                                    const fr_room_box_t *rooms, uint32_t n_rooms,
+                                    const fr_corridor_seg_t *corridors, uint32_t n_corridors) {
+    if (!grid || !rooms) return 0;
+
+    procgen_raster_config_t cfg;
+    procgen_raster_config_default(&cfg);
+
+    phys_aabb_t bounds = {
+        .min = { -cfg.world_extent, -cfg.world_extent, -cfg.world_extent },
+        .max = {  cfg.world_extent,  cfg.world_extent,  cfg.world_extent }
+    };
+
+    if (!npc_svo_grid_init(grid, bounds, cfg.max_depth))
+        return 0;
+
+    uint32_t total_marked = 0;
+
+    /* ── Rasterize rooms ── */
+    for (uint32_t i = 0; i < n_rooms; i++) {
+        const fr_room_box_t *r = &rooms[i];
+        float x_min = r->center_x - r->half_extent_x;
+        float x_max = r->center_x + r->half_extent_x;
+        float z_min = r->center_z - r->half_extent_z;
+        float z_max = r->center_z + r->half_extent_z;
+
+        /* Build 4-vertex polygon from room box */
+        vec3_t verts[4];
+        verts[0] = (vec3_t){ x_min, z_min, r->floor_z };
+        verts[1] = (vec3_t){ x_max, z_min, r->floor_z };
+        verts[2] = (vec3_t){ x_max, z_max, r->floor_z };
+        verts[3] = (vec3_t){ x_min, z_max, r->floor_z };
+
+        total_marked += rasterize_room(grid,
+                                       x_min, x_max,
+                                       z_min, z_max,
+                                       r->floor_z, r->ceil_z,
+                                       verts, 4,
+                                       NULL);  /* no layout → no corridor skip */
+    }
+
+    /* ── Rasterize corridors ── */
+    for (uint32_t i = 0; i < n_corridors; i++) {
+        const fr_corridor_seg_t *c = &corridors[i];
+        total_marked += rasterize_corridor(grid,
+                                           c->from_x, c->from_z,
+                                           c->to_x, c->to_z,
+                                           c->width,
+                                           c->floor_z, c->ceil_z);
+    }
+
+    return total_marked;
+}
