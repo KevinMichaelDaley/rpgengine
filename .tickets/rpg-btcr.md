@@ -1,6 +1,6 @@
 ---
 id: rpg-btcr
-status: in_progress
+status: closed
 deps: [rpg-a3dm]
 links: []
 created: 2026-07-05T06:25:47Z
