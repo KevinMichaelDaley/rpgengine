@@ -24,7 +24,7 @@ extern "C" {
 /* ── Constants ──────────────────────────────────────────────────── */
 
 /** @brief Maximum SVO depth (default 8 → ~0.4 m voxels for 100 m world). */
-#define NPC_SVO_MAX_DEPTH 8
+#define NPC_SVO_MAX_DEPTH 13
 
 /** @brief Invalid node / child index. */
 #define NPC_SVO_INVALID_NODE 0xFFFFFFFFu

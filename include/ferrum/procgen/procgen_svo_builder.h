@@ -20,11 +20,14 @@ extern "C" {
 
 /* ── Configuration ────────────────────────────────────────────── */
 
-/** @brief Default voxel size: 0.125m (1/8 of a Minecraft block). */
+/** @brief Default voxel size: 0.125m (1/8 Minecraft block). */
 #define PROCGEN_DEFAULT_VOXEL_SIZE 0.125f
 
-/** @brief Default octree depth. */
-#define PROCGEN_DEFAULT_MAX_DEPTH 8
+/** @brief Default world half-extent: 64m (128m total span). */
+#define PROCGEN_DEFAULT_WORLD_EXTENT 512.0f
+
+/** @brief Default octree depth.  9 → 512 cells/axis, 0.25m at 128m span. */
+#define PROCGEN_DEFAULT_MAX_DEPTH 13
 
 /** @brief Rasterizer type (for pluggable interface). */
 typedef enum {

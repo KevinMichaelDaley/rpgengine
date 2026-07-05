@@ -17,7 +17,7 @@
 /* ── Internal constants ─────────────────────────────────────────── */
 
 /** Initial node pool capacity. */
-#define NODE_POOL_INITIAL 4096
+#define NODE_POOL_INITIAL 65536
 
 /** Initial chunk array capacity. */
 #define CHUNK_POOL_INITIAL 64
