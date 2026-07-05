@@ -1881,7 +1881,10 @@ build/srd_m2_smoke: tests/procgen/srd/srd_m2_energy_smoke.cpp src/procgen/srd/sr
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_m2_energy_smoke.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
 
 PROCGEN_TESTS += build/srd_m2_smoke
-PROCGEN_TESTS += build/srd_grammar_tests
+build/srd_pde_tests: tests/procgen/srd/srd_pde_tests.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp | build
+	$(CXX) $(CFLAGS) -xc++ -std=c++17 tests/procgen/srd/srd_pde_tests.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp -o $@ -lm
+
+PROCGEN_TESTS += build/srd_pde_tests
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
 PROCGEN_TESTS += build/procgen_architect_tests

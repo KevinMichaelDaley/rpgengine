@@ -1,6 +1,6 @@
 ---
 id: rpg-icvq
-status: open
+status: in_progress
 deps: [rpg-a3dm, rpg-giey]
 links: []
 created: 2026-07-05T06:48:36Z
