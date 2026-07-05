@@ -15,8 +15,8 @@ int procgen_srd_apply_rewrite(void **elements, uint32_t *count_inout,
         if (idx >= n || n >= cap) return -1;
 
         fr_room_box_t *old = (fr_room_box_t *)elements[idx];
-        float axis = proposal->param_float[0];  /* 0=X, 1=Z */
-        float frac = proposal->param_float[1];  /* split fraction */
+        float axis = proposal->param_float[0];
+        float frac = proposal->param_float[1];
 
         fr_room_box_t *a = (fr_room_box_t *)calloc(1, sizeof(fr_room_box_t));
         fr_room_box_t *b = (fr_room_box_t *)calloc(1, sizeof(fr_room_box_t));
@@ -26,26 +26,21 @@ int procgen_srd_apply_rewrite(void **elements, uint32_t *count_inout,
         memcpy(b, old, sizeof(fr_room_box_t));
 
         if (axis < 0.5f) {
-            /* Split along X */
             a->half_extent_x = old->half_extent_x * frac;
             b->half_extent_x = old->half_extent_x * (1.0f - frac);
             a->center_x = old->center_x - old->half_extent_x + a->half_extent_x;
             b->center_x = old->center_x + old->half_extent_x - b->half_extent_x;
         } else {
-            /* Split along Z */
             a->half_extent_z = old->half_extent_z * frac;
             b->half_extent_z = old->half_extent_z * (1.0f - frac);
             a->center_z = old->center_z - old->half_extent_z + a->half_extent_z;
             b->center_z = old->center_z + old->half_extent_z - b->half_extent_z;
         }
 
-        free(elements[idx]);
-        elements[idx] = a;
-
-        /* Shift elements after idx to make room, then insert b */
+        elements[idx] = a;       /* replace old slot with new a */
         for (uint32_t i = n; i > idx + 1; i--)
             elements[i] = elements[i - 1];
-        elements[idx + 1] = b;
+        elements[idx + 1] = b;   /* insert b next to a */
         (*count_inout)++;
         break;
     }
@@ -71,7 +66,6 @@ int procgen_srd_apply_rewrite(void **elements, uint32_t *count_inout,
         ra->half_extent_x = (xmax - xmin) * 0.5f;
         ra->half_extent_z = (zmax - zmin) * 0.5f;
 
-        free(elements[ib]);
         /* Shift elements after ib down by 1 */
         for (uint32_t i = ib; i < n - 1; i++)
             elements[i] = elements[i + 1];
@@ -81,14 +75,13 @@ int procgen_srd_apply_rewrite(void **elements, uint32_t *count_inout,
     case FR_REWRITE_REMOVE_ROOM: {
         uint32_t idx = proposal->element_indices[0];
         if (idx >= n) return -1;
-        free(elements[idx]);
         for (uint32_t i = idx; i < n - 1; i++)
             elements[i] = elements[i + 1];
         (*count_inout)--;
         break;
     }
     default:
-        break; /* unimplemented rewrite types: no-op for now */
+        break;
     }
 
     return 0;
