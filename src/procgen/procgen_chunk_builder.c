@@ -61,15 +61,16 @@ int procgen_chunk_grid_chunk_at(const procgen_chunk_grid_t *grid,
     return cz * (int)grid->count_x + cx;
 }
 
-static void load_chunk(procgen_chunk_t *chunk) {
+static void load_chunk(procgen_chunk_t *chunk, float world_extent) {
     if (chunk->loaded) return;
+    uint32_t cells = 1u << chunk->max_depth;
     phys_aabb_t bounds = {
         .min = { chunk->origin_x,
-                 chunk->origin_y,
+                 -world_extent,
                  chunk->origin_z },
-        .max = { chunk->origin_x + (float)(1u << chunk->max_depth),
-                 chunk->origin_y + (float)(1u << chunk->max_depth),
-                 chunk->origin_z + (float)(1u << chunk->max_depth) },
+        .max = { chunk->origin_x + (float)cells,
+                  world_extent,
+                 chunk->origin_z + (float)cells },
     };
     if (!npc_svo_grid_init(&chunk->svo, bounds, chunk->max_depth)) return;
     procgen_mesh_init(&chunk->mesh);
@@ -103,52 +104,45 @@ uint32_t procgen_chunk_grid_unload_far(procgen_chunk_grid_t *grid,
  *        first access if not yet loaded.
  */
 static void chunk_mark(procgen_chunk_grid_t       *grid,
-                       int                         chunk_idx,
-                       float                       world_x,
-                       float                       world_y,
-                       float                       world_z,
-                       uint16_t                    material) {
+                        int                         chunk_idx,
+                        float                       world_x,
+                        float                       world_y,
+                        float                       world_z,
+                        uint16_t                    material) {
     if (chunk_idx < 0 || !grid || !grid->chunks) return;
     procgen_chunk_t *c = &grid->chunks[chunk_idx];
-    if (!c->loaded) load_chunk(c);
+    if (!c->loaded) load_chunk(c, grid->world_extent);
     if (!c->loaded) return;
 
-    /* Convert world to voxel within this chunk.
-     * X/Z span = chunk_size (horizontal grid).
-     * Y span = full height of the chunk (cells × voxel). */
-    uint32_t cells   = 1u << c->max_depth;
-    float    xz_span = grid->chunk_size;
-    float    y_span  = (float)cells;  /* voxel_size = 1m at current depth */
+    /* Convert world to voxel coordinates.
+     * The chunk SVO covers: X/Z = chunk_size (cells²), Y = full world height.
+     * voxel_size = 1.0m (chunk_size = cells). */
+    uint32_t cells = 1u << c->max_depth;
+    float    vs    = c->svo.voxel_size;
+    int vx = (int)((world_x - c->origin_x) / vs);
+    int vy = (int)((world_y - (-grid->world_extent)) / vs);
+    int vz = (int)((world_z - c->origin_z) / vs);
 
-    if (world_x < c->origin_x || world_x >= c->origin_x + xz_span) return;
-    if (world_z < c->origin_z || world_z >= c->origin_z + xz_span) return;
-    if (world_y < c->origin_y || world_y >= c->origin_y + y_span) return;
-
-    uint32_t vx = (uint32_t)((world_x - c->origin_x) / xz_span * (float)cells);
-    uint32_t vy = (uint32_t)((world_y - c->origin_y) / y_span  * (float)cells);
-    uint32_t vz = (uint32_t)((world_z - c->origin_z) / xz_span * (float)cells);
-
-    if (vx >= cells) vx = cells - 1;
-    if (vy >= cells) vy = cells - 1;
-    if (vz >= cells) vz = cells - 1;
+    if (vx < 0 || vy < 0 || vz < 0) return;
+    if ((uint32_t)vx >= cells || (uint32_t)vy >= cells || (uint32_t)vz >= cells) return;
 
     /* Walk/create octree path and set SOLID. */
-    uint32_t n = 0;
+    uint32_t n  = 0;
     uint32_t c2 = cells;
     for (uint32_t d = 0; d < c->max_depth; d++) {
         c2 >>= 1;
-        uint32_t cx2 = (vx / c2) & 1;
-        uint32_t cy2 = (vy / c2) & 1;
-        uint32_t cz2 = (vz / c2) & 1;
-        uint32_t ci  = (cz2 << 2) | (cy2 << 1) | cx2;
+        uint32_t cx = ((uint32_t)vz / c2) & 1;
+        uint32_t cy = ((uint32_t)vy / c2) & 1;
+        uint32_t cz2 = ((uint32_t)vx / c2) & 1;
+        uint32_t ci = (cx << 2) | (cy << 1) | cz2;
         npc_svo_node_t *node = &c->svo.nodes[n];
         uint32_t child = node->children[ci];
         if (child == NPC_SVO_INVALID_NODE) {
             child = npc_svo_alloc_node(&c->svo);
             if (child == NPC_SVO_INVALID_NODE) return;
-            node->children[ci]  = child;
+            node->children[ci]   = child;
             c->svo.nodes[child].parent = n;
-            node->occupancy    |= (1u << ci);
+            node->occupancy     |= (1u << ci);
         }
         n = child;
     }
@@ -225,6 +219,7 @@ uint32_t procgen_chunk_grid_build(procgen_chunk_grid_t       *grid,
                     int ci = procgen_chunk_grid_chunk_at(grid, (float)wx, (float)fy, (float)wz);
                     if (ci >= 0) {
                         chunk_mark(grid, ci, (float)wx, (float)fy, (float)wz, 1);
+                        active = 1;
                     }
                 }
             }

@@ -47,7 +47,7 @@ static void test_build_room(){
     fr_dungeon_layout_t l;procgen_rasterize_with_registry(tok,cnt,&l,err,sizeof(err));
 
     procgen_chunk_grid_t grid;
-    procgen_chunk_grid_init(&grid, 32.0f, 7, 64.0f); /* 32m chunks, 128 cells, 128m world */
+    procgen_chunk_grid_init(&grid, 64.0f, 6, 64.0f); /* 32m chunks, 32 cells, 128m world */
     uint32_t n = procgen_chunk_grid_build(&grid, &l);
     ASSERT_TRUE(n > 0);
 
@@ -71,7 +71,7 @@ static void test_build_corridor(){
     fr_dungeon_layout_t l;procgen_rasterize_with_registry(tok,cnt,&l,err,sizeof(err));
 
     procgen_chunk_grid_t grid;
-    procgen_chunk_grid_init(&grid, 32.0f, 7, 64.0f);
+    procgen_chunk_grid_init(&grid, 64.0f, 6, 64.0f);
     uint32_t n = procgen_chunk_grid_build(&grid, &l);
     ASSERT_TRUE(n > 0);
 
@@ -86,7 +86,7 @@ static void test_build_corridor(){
 
 static void test_unload(){
     procgen_chunk_grid_t g;
-    procgen_chunk_grid_init(&g, 32.0f, 7, 128.0f);
+    procgen_chunk_grid_init(&g, 32.0f, 5, 128.0f);
     procgen_chunk_grid_unload_far(&g, 0,0, 0);
     ASSERT_EQ(0u, 0u);
     procgen_chunk_grid_destroy(&g);
