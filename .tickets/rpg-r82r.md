@@ -1,6 +1,6 @@
 ---
 id: rpg-r82r
-status: open
+status: in_progress
 deps: [rpg-a3dm, rpg-5j3b, rpg-rnno, rpg-icvq]
 links: []
 created: 2026-07-05T06:48:36Z
