@@ -26,6 +26,19 @@ symx::Scalar srd_room_sdf_energy(symx::Workspace &ws,
                                  symx::Scalar hx, symx::Scalar hy, symx::Scalar hz,
                                  double temperature);
 
+/**
+ * @brief SDF-based corridor energy (centerline sample).
+ *
+ * Evaluates capped-cylinder SDF at the corridor midpoint and returns
+ * the squared occupancy error.
+ */
+symx::Scalar srd_corridor_sdf_energy(symx::Workspace &ws,
+                                     symx::Scalar fx, symx::Scalar fz,
+                                     symx::Scalar tx, symx::Scalar tz,
+                                     symx::Scalar radius,
+                                     symx::Scalar floor_y, symx::Scalar ceil_y,
+                                     double temperature);
+
 } /* namespace srd */
 
 #endif /* FERRUM_PROCGEN_SRD_ENERGY_H */

@@ -1852,7 +1852,10 @@ PROCGEN_TESTS :=
 # PROCGEN_TESTS += build/procgen_critic_tests
 
 # SRD tests (depend on SymX)
-PROCGEN_TESTS += build/srd_build_test
+build/srd_corridor_energy_tests: tests/procgen/srd/srd_corridor_energy_tests.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_corridor_energy_tests.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
+
+PROCGEN_TESTS += build/srd_corridor_energy_tests
 build/srd_energy_tests: tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) | build
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
 
