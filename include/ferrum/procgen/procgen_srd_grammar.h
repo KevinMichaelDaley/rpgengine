@@ -72,6 +72,22 @@ int procgen_srd_propose_rewrites_multiple(const fr_room_box_t *rooms,
                                           fr_rewrite_proposal_t *proposals_out,
                                           uint32_t cap, uint32_t *count_out);
 
+/**
+ * @brief Apply a rewrite proposal to an array of elements.
+ *
+ * Modifies the elements array and its count.  Caller owns the
+ * elements array and individual element allocations.
+ *
+ * @param elements   Array of void* pointing to elements (RoomBox, etc.).
+ * @param count_inout Pointer to current count; updated on success.
+ * @param cap         Capacity of the elements array.
+ * @param proposal   The rewrite to apply.
+ * @return 0 on success, -1 on error.
+ */
+int procgen_srd_apply_rewrite(void **elements, uint32_t *count_inout,
+                              uint32_t cap,
+                              const fr_rewrite_proposal_t *proposal);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1871,7 +1871,10 @@ build/srd_m1_smoke: tests/procgen/srd/srd_m1_smoke.cpp $(OBJDIR)/src/procgen/pro
 build/srd_anneal_tests: tests/procgen/srd/srd_anneal_tests.cpp src/procgen/srd/srd_anneal.c | build
 	$(CXX) $(CFLAGS) -Iinclude -xc++ -std=c++17 tests/procgen/srd/srd_anneal_tests.cpp src/procgen/srd/srd_anneal.c -o $@ -lm
 
-PROCGEN_TESTS += build/srd_anneal_tests
+build/srd_rewrite_tests: tests/procgen/srd/srd_rewrite_tests.cpp src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_types.c | build
+	$(CXX) $(CFLAGS) -xc++ -std=c++17 tests/procgen/srd/srd_rewrite_tests.cpp src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_types.c -o $@ -lm
+
+PROCGEN_TESTS += build/srd_rewrite_tests
 PROCGEN_TESTS += build/srd_grammar_tests
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
