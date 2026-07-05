@@ -1853,7 +1853,10 @@ PROCGEN_TESTS :=
 
 # SRD tests (depend on SymX)
 PROCGEN_TESTS += build/srd_build_test
-PROCGEN_TESTS += build/srd_types_tests
+build/srd_energy_tests: tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
+
+PROCGEN_TESTS += build/srd_energy_tests
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
 
 procgen: build/libheadless.a $(SYMX_LIB)
