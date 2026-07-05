@@ -1,6 +1,6 @@
 ---
 id: rpg-a3dm
-status: open
+status: in_progress
 deps: [rpg-aj72]
 links: []
 created: 2026-07-05T06:25:21Z
