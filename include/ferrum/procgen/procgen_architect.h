@@ -15,10 +15,28 @@ extern "C" {
 #endif
 
 #include <stdint.h>
+#include <stddef.h>
 #include "ferrum/procgen/procgen_types.h"
 
-/** @brief Maximum length of a generated token string. */
+/** @brief Maximum length of a generated ASCII floor plan string. */
 #define ARCHITECT_MAX_OUTPUT 65536
+
+/**
+ * @brief Build the system + user prompt for the architect VLM.
+ *
+ * @param grammar_name   (unused, kept for API compatibility).
+ * @param user_request   Natural language level description.
+ * @param grammar_prompt Custom system prompt (or NULL for default).
+ * @param error_context  Previous error for reprompting (or NULL).
+ * @param out            Output buffer.
+ * @param out_cap        Capacity of output buffer.
+ * @return Number of bytes written (including null), or negative on error.
+ */
+int procgen_architect_build_prompt(const char *grammar_name,
+                                   const char *user_request,
+                                   const char *grammar_prompt,
+                                   const char *error_context,
+                                   char *out, size_t out_cap);
 
 /**
  * @brief Result of an architect run.

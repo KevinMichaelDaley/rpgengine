@@ -1884,6 +1884,10 @@ PROCGEN_TESTS += build/srd_m2_smoke
 PROCGEN_TESTS += build/srd_grammar_tests
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
+PROCGEN_TESTS += build/procgen_architect_tests
+
+build/procgen_architect_tests: tests/procgen/procgen_architect_tests.c build/libheadless.a | build
+	$(CC) $(CFLAGS) tests/procgen/procgen_architect_tests.c -o $@ $(LDFLAGS) build/libheadless.a -lcurl -lm
 
 procgen: build/libheadless.a $(SYMX_LIB)
 	@echo "procgen objects built via libheadless.a"

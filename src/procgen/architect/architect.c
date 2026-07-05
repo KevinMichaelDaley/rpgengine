@@ -79,80 +79,95 @@ static int extract_int(const char *s) { return atoi(s); }
 
 static const char *DEFAULT_SYSTEM_PROMPT =
     "You are a dungeon architect for a survival/crafting RPG. "
-    "You generate level layouts using the following shape grammar. "
-    "Output ONLY valid grammar tokens — no explanation, no markdown, no code blocks.\n\n"
+    "You generate level layouts as multi-floor ASCII floor plans with "
+    "loss function specifications.\n\n"
 
-    "GRAMMAR: blockout v1\n\n"
+    "FORMAT:\n"
+    "=== FLOOR <N>: <label> ===\n"
+    "<grid of space-separated characters>\n"
+    "=== FLOOR <N+1>: <label> ===\n"
+    "<grid of space-separated characters>\n"
+    "LOSS:\n"
+    "  <loss_term_1>\n"
+    "  <loss_term_2>\n\n"
 
-    "Tokens:\n"
-    "  ROOM_QUAD   x=<float> y=<float> w=<width> h=<depth> floor_z=<float> ceil_z=<float> [name=<string>]\n"
-    "    → Creates a rectangular room. Example: ROOM_QUAD x=0 y=0 w=20 h=16 floor_z=0 ceil_z=6 name=entrance\n"
-    "  ROOM_PENT   floor_z=<float> ceil_z=<float> [name=<string>]\n"
-    "    → Creates a 5-sided room.\n"
-    "  CORRIDOR_H  from=(x1,y1) to=(x2,y2) w=<width> floor_z=<float> ceil_z=<float>\n"
-    "    → Horizontal corridor. y values must match.\n"
-    "  CORRIDOR_V  from=(x1,y1) to=(x2,y2) w=<width> floor_z=<float> ceil_z=<float>\n"
-    "    → Vertical corridor. x values must match.\n"
-    "  CORRIDOR_DIAG  from=(x1,y1) to=(x2,y2) w=<width> floor_z=<float> ceil_z=<float>\n"
-    "    → Diagonal corridor.\n"
-    "  DOOR   at=(x,y) [w=<width> h=<height>]\n"
-    "  WINDOW at=(x,y) [w=<width> h=<height>]\n"
-    "  RAMP_UP    from=(x1,y1) to=(x2,y2) dz=<height_change> [w=<width>]\n"
-    "  RAMP_DOWN  from=(x1,y1) to=(x2,y2) dz=<height_change> [w=<width>]\n"
-    "  SPAWN   x=<float> y=<float> z=<float>\n"
-    "    → Player start position. REQUIRED — exactly one per level.\n"
-    "  MARKER  x=<float> y=<float> z=<float> name=<string>\n"
-    "    → Named waypoint. REQUIRED — at least 3 with distinct names.\n"
-    "  BLOCK ... EBLOCK\n"
-    "    → Groups tokens for multi-floor nesting.\n\n"
+    "CHARACTER LEGEND:\n"
+    "  W = Outer wall / boundary (not a room)\n"
+    "  B = Bar area        R = Common room\n"
+    "  P = Private bedroom  G = Entrance\n"
+    "  ^ = Stairs up        v = Stairs down\n"
+    "  . = Open floor (merged into adjacent rooms)\n\n"
+
+    "GRID RULES:\n"
+    "1. Outer border must be entirely W.\n"
+    "2. Each contiguous region of same character forms one room.\n"
+    "3. Different character types sharing an edge = adjacency/connection.\n"
+    "4. ^ and v stair markers must be adjacent to room cells.\n"
+    "5. Floor 0 ^ must correspond to Floor 1 v in matching positions.\n"
+    "6. Grids must be rectangular with consistent row widths.\n"
+    "7. Minimum 3x3 interior space (not counting wall border).\n\n"
+
+    "LOSS FORMAT:\n"
+    "After the last floor block, include a LOSS: section with one term per line:\n"
+    "  PathDistance(room_a, room_b) [>|<|=] [distance]\n"
+    "  LineOfSight(room_a, room_b)\n"
+    "  NonPenetration(all)\n"
+    "  MinimumSize(rooms..., min_m)\n"
+    "  Separation(type_A, type_B) [>|<|=] [distance]\n"
+    "  Containment(room, region)\n"
+    "  AdjacencyCount(room, n)\n"
+    "  HeightSpan(room, min_y, max_y)\n"
+    "  StairAlignment(anchor_from, anchor_to)\n"
+    "  FloorAccessibility(floor)\n\n"
+
+    "EXAMPLE:\n"
+    "=== FLOOR 0: GROUND ===\n"
+    "W W W W W W\n"
+    "W B B R R W\n"
+    "W B B R R W\n"
+    "W W W G W W\n"
+    "=== FLOOR 1: UPPER ===\n"
+    "W W W W W W\n"
+    "W P P P P W\n"
+    "W P P P P W\n"
+    "W W W W W W\n"
+    "LOSS:\n"
+    "  PathDistance(entrance, bar) < 20\n"
+    "  NonPenetration(all)\n"
+    "  MinimumSize(all_rooms, 6)\n\n"
 
     "RULES:\n"
-    "1. Begin with: @grammar blockout v1\n"
-    "2. Exactly one SPAWN token.\n"
-    "3. At least 3 MARKER tokens with distinct descriptive names.\n"
-    "4. Rooms must not overlap. All rooms must have ceil_z > floor_z ≥ 0.\n"
-    "5. Corridors connect rooms. Place DOOR tokens at corridor endpoints.\n"
-    "6. Corridor CORRIDOR_H must have same y in from and to.\n"
-    "   Corridor CORRIDOR_V must have same x in from and to.\n"
-    "7. Coordinates are in world-space meters.\n"
-    "8. Use RAMPs to change floor height between rooms.\n"
-    "9. Output ONLY valid grammar tokens. No commentary, no markdown.\n"
-    "10. IMPORTANT: Walls are 1m thick. Make rooms at least 6m wide and 6m\n"
-    "    deep for walkable interiors. Corridors need width≥3 for walkability.\n"
-    "    Ceiling height should be at least 4m (ceil_z - floor_z ≥ 4).\n"
-    "    Use generous proportions — small rooms and narrow corridors are\n"
-    "    unusable for gameplay.\n\n"
+    "1. Output ONLY the ASCII floor plan + LOSS block. No explanation.\n"
+    "2. All grids must be surrounded by W on all four edges.\n"
+    "3. Every room type in the prompt must appear in the grid.\n"
+    "4. Stair markers (^, v) must have matching counterparts on adjacent floors.\n\n"
 
     "USER REQUEST: ";
 
 /* ── Build system prompt ──────────────────────────────────────── */
 
-static int build_prompt(const char *grammar_name,
+int procgen_architect_build_prompt(const char *grammar_name,
                         const char *user_request,
                         const char *grammar_prompt,
                         const char *error_context,
                         char *out, size_t out_cap) {
     const char *sys = grammar_prompt ? grammar_prompt : DEFAULT_SYSTEM_PROMPT;
-    int written;
+    (void)grammar_name;
 
     if (error_context && error_context[0]) {
-        written = snprintf(out, out_cap,
-            "@grammar %s v1\n\n"
+        return snprintf(out, out_cap,
             "%s\n\n"
             "USER REQUEST: %s\n\n"
             "PREVIOUS ATTEMPT FAILED: %s\n"
-            "Please correct the errors and output ONLY valid grammar tokens.",
-            grammar_name, sys, user_request, error_context);
+            "Please correct the errors and output ONLY the ASCII floor plan.",
+            sys, user_request, error_context);
     } else {
-        written = snprintf(out, out_cap,
-            "@grammar %s v1\n\n"
+        return snprintf(out, out_cap,
             "%s\n\n"
             "USER REQUEST: %s\n\n"
-            "Output ONLY valid grammar tokens. No explanation.",
-            grammar_name, sys, user_request);
+            "Output ONLY the ASCII floor plan + LOSS block. No explanation.",
+            sys, user_request);
     }
-
-    return (written > 0 && (size_t)written < out_cap) ? 0 : -1;
 }
 
 /* ── Call VLM ─────────────────────────────────────────────────── */
@@ -260,11 +275,22 @@ static int call_vlm(const char *user_prompt,
 
 /* ── Validate token string ────────────────────────────────────── */
 
-static int validate_token_string(const char *response, char *err, size_t err_cap) {
-    procgen_token_t tokens[8192];
-    uint32_t count = 0;
-    tok_error_t rc = procgen_tokenize(response, tokens, 8192, &count, err, (uint32_t)err_cap);
-    return (rc == TOK_ERR_NONE) ? 0 : -1;
+static int validate_ascii_grid(const char *response, char *err, size_t err_cap) {
+    if (!response || !err || err_cap == 0) return -1;
+
+    /* Check for at least one floor header */
+    if (!strstr(response, "=== FLOOR") && !strstr(response, "=== Floor")) {
+        snprintf(err, err_cap, "Missing === FLOOR header");
+        return -1;
+    }
+
+    /* Check for LOSS: section */
+    if (!strstr(response, "LOSS:") && !strstr(response, "Loss:")) {
+        snprintf(err, err_cap, "Missing LOSS: section");
+        return -1;
+    }
+
+    return 0;
 }
 
 /* ── Public API ────────────────────────────────────────────────── */
@@ -296,7 +322,7 @@ int architect_run(const char *grammar_name,
         parse_err[0] = '\0';
 
         /* Build prompt. */
-        if (build_prompt(grammar_name, user_request, grammar_prompt,
+        if (procgen_architect_build_prompt(grammar_name, user_request, grammar_prompt,
                          attempt > 0 ? parse_err : NULL,
                          prompt, sizeof(prompt)) != 0) {
             snprintf(out->error_message, sizeof(out->error_message),
@@ -335,7 +361,7 @@ int architect_run(const char *grammar_name,
         }
 
         /* Validate. */
-        if (validate_token_string(raw_response, parse_err, sizeof(parse_err)) == 0) {
+        if (validate_ascii_grid(raw_response, parse_err, sizeof(parse_err)) == 0) {
             /* Success — strip any leading/trailing whitespace. */
             size_t rlen = strlen(raw_response);
             while (rlen > 0 && (raw_response[rlen-1] == '\n' ||
