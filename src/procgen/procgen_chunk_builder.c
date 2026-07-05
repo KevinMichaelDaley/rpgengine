@@ -67,9 +67,9 @@ static void load_chunk(procgen_chunk_t *chunk) {
         .min = { chunk->origin_x,
                  chunk->origin_y,
                  chunk->origin_z },
-        .max = { chunk->origin_x + chunk->svo.voxel_size * (float)(1u << chunk->max_depth),
-                 chunk->origin_y + chunk->svo.voxel_size * (float)(1u << chunk->max_depth),
-                 chunk->origin_z + chunk->svo.voxel_size * (float)(1u << chunk->max_depth) },
+        .max = { chunk->origin_x + (float)(1u << chunk->max_depth),
+                 chunk->origin_y + (float)(1u << chunk->max_depth),
+                 chunk->origin_z + (float)(1u << chunk->max_depth) },
     };
     if (!npc_svo_grid_init(&chunk->svo, bounds, chunk->max_depth)) return;
     procgen_mesh_init(&chunk->mesh);
@@ -113,16 +113,20 @@ static void chunk_mark(procgen_chunk_grid_t       *grid,
     if (!c->loaded) load_chunk(c);
     if (!c->loaded) return;
 
-    /* Convert world to voxel within this chunk. */
-    uint32_t cells = 1u << c->max_depth;
-    float    span  = grid->chunk_size;
-    if (world_x < c->origin_x || world_x >= c->origin_x + span) return;
-    if (world_y < c->origin_y || world_y >= c->origin_y + span) return;
-    if (world_z < c->origin_z || world_z >= c->origin_z + span) return;
+    /* Convert world to voxel within this chunk.
+     * X/Z span = chunk_size (horizontal grid).
+     * Y span = full height of the chunk (cells × voxel). */
+    uint32_t cells   = 1u << c->max_depth;
+    float    xz_span = grid->chunk_size;
+    float    y_span  = (float)cells;  /* voxel_size = 1m at current depth */
 
-    uint32_t vx = (uint32_t)((world_x - c->origin_x) / span * (float)cells);
-    uint32_t vy = (uint32_t)((world_y - c->origin_y) / span * (float)cells);
-    uint32_t vz = (uint32_t)((world_z - c->origin_z) / span * (float)cells);
+    if (world_x < c->origin_x || world_x >= c->origin_x + xz_span) return;
+    if (world_z < c->origin_z || world_z >= c->origin_z + xz_span) return;
+    if (world_y < c->origin_y || world_y >= c->origin_y + y_span) return;
+
+    uint32_t vx = (uint32_t)((world_x - c->origin_x) / xz_span * (float)cells);
+    uint32_t vy = (uint32_t)((world_y - c->origin_y) / y_span  * (float)cells);
+    uint32_t vz = (uint32_t)((world_z - c->origin_z) / xz_span * (float)cells);
 
     if (vx >= cells) vx = cells - 1;
     if (vy >= cells) vy = cells - 1;
