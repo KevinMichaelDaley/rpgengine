@@ -1,6 +1,6 @@
 ---
 id: rpg-mfdj
-status: open
+status: in_progress
 deps: [rpg-a3dm, rpg-r82r, rpg-btcr]
 links: []
 created: 2026-07-05T06:48:36Z
