@@ -1,6 +1,6 @@
 ---
 id: rpg-aj72
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-05T06:24:23Z
