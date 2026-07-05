@@ -47,6 +47,11 @@ bool npc_svo_grid_init(npc_svo_grid_t *grid, phys_aabb_t bounds,
     grid->nodes = (npc_svo_node_t *)calloc(NODE_POOL_INITIAL,
                                             sizeof(npc_svo_node_t));
     if (!grid->nodes) return false;
+    /* Initialize root node: all child slots invalid, no flags. */
+    memset(grid->nodes, 0xFF, sizeof(npc_svo_node_t));
+    grid->nodes[0].flags = 0;
+    /* Reserve index 0 for the root: alloc_node starts from index 1. */
+    grid->node_count = 1;
     grid->node_cap = NODE_POOL_INITIAL;
 
     grid->chunks = (npc_svo_chunk_t *)calloc(CHUNK_POOL_INITIAL,

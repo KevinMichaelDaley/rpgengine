@@ -41,34 +41,40 @@ static void emit_quad(procgen_mesh_t *mesh,
     float *v = mesh->vertices + mesh->vertex_count;
 
     switch (axis) {
-    case 0: {  /* YZ plane at X */
+    case 0: {  /* YZ plane at X — +sign means normal +X */
         float xx = (sign > 0) ? x_max : x_min;
-        v[0] = xx; v[1] = y_min; v[2] = z_min;
-        v[3] = xx; v[4] = y_max; v[5] = z_min;
-        v[6] = xx; v[7] = y_max; v[8] = z_max;
-        v[9] = xx; v[10] = y_min; v[11] = z_min;
-        v[12]= xx; v[13] = y_max; v[14] = z_max;
-        v[15]= xx; v[16] = y_min; v[17] = z_max;
+        /* Standing on +X side looking toward origin: CCW → normal +X */
+        if (sign > 0) {
+            v[0]=xx;v[1]=y_min;v[2]=z_min; v[3]=xx;v[4]=y_min;v[5]=z_max; v[6]=xx;v[7]=y_max;v[8]=z_max;
+            v[9]=xx;v[10]=y_min;v[11]=z_min; v[12]=xx;v[13]=y_max;v[14]=z_max; v[15]=xx;v[16]=y_max;v[17]=z_min;
+        } else {
+            v[0]=xx;v[1]=y_min;v[2]=z_max; v[3]=xx;v[4]=y_min;v[5]=z_min; v[6]=xx;v[7]=y_max;v[8]=z_min;
+            v[9]=xx;v[10]=y_min;v[11]=z_max; v[12]=xx;v[13]=y_max;v[14]=z_min; v[15]=xx;v[16]=y_max;v[17]=z_max;
+        }
         break;
     }
-    case 1: {  /* XZ plane at Y */
+    case 1: {  /* XZ plane at Y — +sign means normal +Y (up) */
         float yy = (sign > 0) ? y_max : y_min;
-        v[0] = x_min; v[1] = yy; v[2] = z_min;
-        v[3] = x_max; v[4] = yy; v[5] = z_min;
-        v[6] = x_max; v[7] = yy; v[8] = z_max;
-        v[9] = x_min; v[10] = yy; v[11] = z_min;
-        v[12]= x_max; v[13] = yy; v[14] = z_max;
-        v[15]= x_min; v[16] = yy; v[17] = z_max;
+        /* Looking down from above: CCW → normal +Y */
+        if (sign > 0) {
+            v[0]=x_min;v[1]=yy;v[2]=z_min; v[3]=x_max;v[4]=yy;v[5]=z_min; v[6]=x_max;v[7]=yy;v[8]=z_max;
+            v[9]=x_min;v[10]=yy;v[11]=z_min; v[12]=x_max;v[13]=yy;v[14]=z_max; v[15]=x_min;v[16]=yy;v[17]=z_max;
+        } else {
+            v[0]=x_max;v[1]=yy;v[2]=z_min; v[3]=x_min;v[4]=yy;v[5]=z_min; v[6]=x_min;v[7]=yy;v[8]=z_max;
+            v[9]=x_max;v[10]=yy;v[11]=z_min; v[12]=x_min;v[13]=yy;v[14]=z_max; v[15]=x_max;v[16]=yy;v[17]=z_max;
+        }
         break;
     }
-    default: {  /* XY plane at Z */
+    default: {  /* XY plane at Z — +sign means normal +Z */
         float zz = (sign > 0) ? z_max : z_min;
-        v[0] = x_min; v[1] = y_min; v[2] = zz;
-        v[3] = x_max; v[4] = y_min; v[5] = zz;
-        v[6] = x_max; v[7] = y_max; v[8] = zz;
-        v[9] = x_min; v[10] = y_min; v[11] = zz;
-        v[12]= x_max; v[13] = y_max; v[14] = zz;
-        v[15]= x_min; v[16] = y_max; v[17] = zz;
+        /* Looking from +Z toward origin: CCW → normal +Z */
+        if (sign > 0) {
+            v[0]=x_min;v[1]=y_min;v[2]=zz; v[3]=x_max;v[4]=y_min;v[5]=zz; v[6]=x_max;v[7]=y_max;v[8]=zz;
+            v[9]=x_min;v[10]=y_min;v[11]=zz; v[12]=x_max;v[13]=y_max;v[14]=zz; v[15]=x_min;v[16]=y_max;v[17]=zz;
+        } else {
+            v[0]=x_max;v[1]=y_min;v[2]=zz; v[3]=x_min;v[4]=y_min;v[5]=zz; v[6]=x_min;v[7]=y_max;v[8]=zz;
+            v[9]=x_max;v[10]=y_min;v[11]=zz; v[12]=x_min;v[13]=y_max;v[14]=zz; v[15]=x_max;v[16]=y_max;v[17]=zz;
+        }
         break;
     }
     }
@@ -104,127 +110,74 @@ static int is_solid_at(const npc_svo_grid_t *grid, int x, int y, int z) {
 
 /* ── Greedy scan helpers ───────────────────────────────────────── */
 
-/**
- * @brief Allocate a 2D boolean array for one slice of the grid.
- */
-static int *alloc_slice(uint32_t cells) {
-    size_t count = (size_t)cells * (size_t)cells;
-    int *data = calloc(count, sizeof(int));
-    return data;
-}
+#define MESH_BLOCK_SHIFT 0  /* match SVO rasterizer block size */
 
-static void free_slice(int *data) { free(data); }
+uint32_t procgen_mesh_from_svo(const npc_svo_grid_t *grid,
+                                procgen_mesh_t       *mesh) {
+    uint32_t full_cells = 1u << grid->max_depth;
+    uint32_t block      = 1u << MESH_BLOCK_SHIFT;
+    uint32_t cells      = full_cells / block;
+    float    voxel      = grid->voxel_size * (float)block;
+    float    origin_x   = grid->world_bounds.min.x;
+    float    origin_y   = grid->world_bounds.min.y;
+    float    origin_z   = grid->world_bounds.min.z;
+    uint32_t total_tris = 0;
 
-/**
- * @brief Greedy-merge one axis-aligned direction.
- *
- * For each slice perpendicular to @p primary_axis, build a mask of
- * solid cells whose neighbor in @p direction (+dir) is air, then
- * merge adjacent cells into maximal rectangles and emit quads.
- */
-static uint32_t greedy_merge_axis(const npc_svo_grid_t *grid,
-                                   procgen_mesh_t       *mesh,
-                                   int                   axis,
-                                   int                   sign) {
-    uint32_t cells     = 1u << grid->max_depth;
-    float    voxel     = grid->voxel_size;
-    float    origin_x  = grid->world_bounds.min.x;
-    float    origin_y  = grid->world_bounds.min.y;
-    float    origin_z  = grid->world_bounds.min.z;
-    uint32_t triangles = 0;
+    /* Helper: check if a block is solid at block coordinates */
+    #define SOLID(bx,by,bz) is_solid_at(grid, (int)((bx)*block), (int)((by)*block), (int)((bz)*block))
 
-    /* Iterate over slices perpendicular to axis. */
-    /* The loop order: for axis 0 (X), slice varies X from 0..cells-1;
-       for axis 1 (Y), slice varies Y; for axis 2 (Z), slice varies Z. */
-    for (uint32_t slice = 0; slice < cells; slice++) {
-        int *mask = alloc_slice(cells);
+    /* For each of the 6 directions, scan slices and merge coplanar faces. */
+    for (int axis = 0; axis < 3; axis++) {
+        for (int sign = -1; sign <= 1; sign += 2) {
+            for (uint32_t slice = 0; slice < cells; slice++) {
+                int *mask = calloc(cells * cells, sizeof(int));
 
-        /* Build mask: true where this voxel is solid and neighbor is air. */
-        for (uint32_t b = 0; b < cells; b++) {
-            for (uint32_t a = 0; a < cells; a++) {
-                int sx = (int)slice, sy = (int)b, sz = (int)a;
-                int nx = sx, ny = sy, nz = sz;
-                if (axis == 0)      { sx = (int)slice; nx = sx + sign; }
-                else if (axis == 1) { sy = (int)slice; ny = sy + sign; }
-                else                { sz = (int)slice; nz = sz + sign; }
+                for (uint32_t b = 0; b < cells; b++) {
+                    for (uint32_t a = 0; a < cells; a++) {
+                        int sx=(int)slice,sy=(int)b,sz=(int)a;
+                        int nx=sx,ny=sy,nz=sz;
+                        if(axis==0){sx=(int)slice;nx=sx+sign;}
+                        else if(axis==1){sy=(int)slice;ny=sy+sign;}
+                        else{sz=(int)slice;nz=sz+sign;}
+                        int solid = SOLID(sx,sy,sz);
+                        int air   = (sign>0)?(slice+1>=cells||!SOLID(nx,ny,nz)):(slice==0||!SOLID(nx,ny,nz));
+                        mask[b*cells+a] = solid && air;
+                    }
+                }
 
-                int solid = is_solid_at(grid, sx, sy, sz);
-                int neighbor_air = (sign > 0)
-                    ? (slice + 1 >= cells || !is_solid_at(grid, nx, ny, nz))
-                    : (slice == 0 || !is_solid_at(grid, nx, ny, nz));
-                mask[b * cells + a] = solid && neighbor_air;
+                for (uint32_t b=0;b<cells;b++) for(uint32_t a=0;a<cells;a++){
+                    if(!mask[b*cells+a])continue;
+                    uint32_t a_end=a;while(a_end+1<cells&&mask[b*cells+(a_end+1)])a_end++;
+                    uint32_t b_end=b;int ok=1;while(b_end+1<cells&&ok){for(uint32_t ca=a;ca<=a_end;ca++)if(!mask[(b_end+1)*cells+ca]){ok=0;break;}if(ok)b_end++;}
+                    /* a runs in the first varying dimension, b in the second.
+                       axis→(a-axis, b-axis): 0→(Z,Y), 1→(X,Z), 2→(X,Y) */
+                    float a0 = origin_x + (float)a      * voxel;
+                    float a1 = origin_x + (float)(a_end + 1) * voxel;
+                    float b0 = origin_x + (float)b      * voxel;
+                    float b1 = origin_x + (float)(b_end + 1) * voxel;
+                    if (axis == 0) { a0 = origin_z + (float)a*voxel; a1 = origin_z + (float)(a_end+1)*voxel;
+                                     b0 = origin_y + (float)b*voxel; b1 = origin_y + (float)(b_end+1)*voxel; }
+                    else if (axis == 1) { /* a=X already */ 
+                                     b0 = origin_z + (float)b*voxel; b1 = origin_z + (float)(b_end+1)*voxel; }
+                    /* else axis==2: a=X, b=Y, both origin_x already correct */
+                    float fixed;
+                    if (axis == 0)      fixed = origin_x + (float)(slice + (sign > 0 ? 1 : 0)) * voxel;
+                    else if (axis == 1) fixed = origin_y + (float)(slice + (sign > 0 ? 1 : 0)) * voxel;
+                    else                fixed = origin_z + (float)(slice + (sign > 0 ? 1 : 0)) * voxel;
+
+                    if (axis == 0)      emit_quad(mesh, fixed, b0, a0, fixed, b1, a1, axis, sign);
+                    else if (axis == 1) emit_quad(mesh, a0, fixed, b0, a1, fixed, b1, axis, sign);
+                    else                emit_quad(mesh, a0, b0, fixed, a1, b1, fixed, axis, sign);
+                    total_tris+=2;
+                    for(uint32_t cb=b;cb<=b_end;cb++)for(uint32_t ca=a;ca<=a_end;ca++)mask[cb*cells+ca]=0;
+                }
+                free(mask);
             }
         }
-
-        /* Scan mask and emit merged quads. */
-        for (uint32_t b = 0; b < cells; b++) {
-            for (uint32_t a = 0; a < cells; a++) {
-                if (!mask[b * cells + a]) continue;
-
-                /* Extend in the a-direction. */
-                uint32_t a_end = a;
-                while (a_end + 1 < cells && mask[b * cells + (a_end + 1)]) {
-                    a_end++;
-                }
-
-                /* Extend in the b-direction. */
-                uint32_t b_end = b;
-                int can_extend = 1;
-                while (b_end + 1 < cells && can_extend) {
-                    for (uint32_t check_a = a; check_a <= a_end; check_a++) {
-                        if (!mask[(b_end + 1) * cells + check_a]) {
-                            can_extend = 0;
-                            break;
-                        }
-                    }
-                    if (can_extend) b_end++;
-                }
-
-                /* Compute world-space quad bounds. */
-                float ax_min, ax_max, bx_min, bx_max, fixed;
-                if (axis == 0) {
-                    ax_min = origin_x + (float)a      * voxel;
-                    ax_max = origin_x + (float)(a_end + 1) * voxel;
-                    bx_min = origin_y + (float)b      * voxel;
-                    bx_max = origin_y + (float)(b_end + 1) * voxel;
-                    fixed  = origin_x + (float)(slice + (sign > 0 ? 1 : 0)) * voxel;
-                    if (sign > 0) {  /* +X */
-                        emit_quad(mesh, fixed, bx_min, ax_min, fixed, bx_max, ax_max, axis, sign);
-                    } else {
-                        emit_quad(mesh, fixed, bx_max, ax_min, fixed, bx_min, ax_max, axis, sign);
-                    }
-                } else if (axis == 1) {
-                    ax_min = origin_x + (float)a      * voxel;
-                    ax_max = origin_x + (float)(a_end + 1) * voxel;
-                    bx_min = origin_z + (float)b      * voxel;
-                    bx_max = origin_z + (float)(b_end + 1) * voxel;
-                    fixed  = origin_y + (float)(slice + (sign > 0 ? 1 : 0)) * voxel;
-                    emit_quad(mesh, ax_min, fixed, bx_min, ax_max, fixed, bx_max, axis, sign);
-                } else {
-                    ax_min = origin_x + (float)a      * voxel;
-                    ax_max = origin_x + (float)(a_end + 1) * voxel;
-                    bx_min = origin_y + (float)b      * voxel;
-                    bx_max = origin_y + (float)(b_end + 1) * voxel;
-                    fixed  = origin_z + (float)(slice + (sign > 0 ? 1 : 0)) * voxel;
-                    emit_quad(mesh, ax_min, bx_min, fixed, ax_max, bx_max, fixed, axis, sign);
-                }
-                triangles += 2;
-
-                /* Mark merged region as consumed. */
-                for (uint32_t cb = b; cb <= b_end; cb++) {
-                    for (uint32_t ca = a; ca <= a_end; ca++) {
-                        mask[cb * cells + ca] = 0;
-                    }
-                }
-            }
-        }
-        free_slice(mask);
     }
-
-    return triangles;
+    #undef SOLID
+    return total_tris;
 }
-
-/* ── Public API ────────────────────────────────────────────────── */
 
 void procgen_mesh_init(procgen_mesh_t *mesh) {
     memset(mesh, 0, sizeof(*mesh));
@@ -233,18 +186,4 @@ void procgen_mesh_init(procgen_mesh_t *mesh) {
 void procgen_mesh_destroy(procgen_mesh_t *mesh) {
     free(mesh->vertices);
     memset(mesh, 0, sizeof(*mesh));
-}
-
-uint32_t procgen_mesh_from_svo(const npc_svo_grid_t *grid,
-                                procgen_mesh_t       *mesh) {
-    uint32_t total_tris = 0;
-
-    total_tris += greedy_merge_axis(grid, mesh, 1,  1);  /* +Y (top faces)   */
-    total_tris += greedy_merge_axis(grid, mesh, 1, -1);  /* -Y (bottom faces) */
-    total_tris += greedy_merge_axis(grid, mesh, 0,  1);  /* +X (right faces)  */
-    total_tris += greedy_merge_axis(grid, mesh, 0, -1);  /* -X (left faces)   */
-    total_tris += greedy_merge_axis(grid, mesh, 2,  1);  /* +Z (front faces)  */
-    total_tris += greedy_merge_axis(grid, mesh, 2, -1);  /* -Z (back faces)   */
-
-    return total_tris;
 }

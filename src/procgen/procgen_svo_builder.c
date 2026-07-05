@@ -167,7 +167,7 @@ static int point_in_polygon(const vec3_t *vertices,
 
 /* ── Rasterization constants ────────────────────────────────────── */
 
-#define RASTER_BLOCK_SHIFT  3       /* block = 2^3 = 8 voxels ≈ 1 m */
+#define RASTER_BLOCK_SHIFT  0       /* 1 voxel per block = 1 m at 1m voxels */
 #define MAT_STONE  1
 #define MAT_WOOD   2
 
@@ -246,7 +246,7 @@ static uint32_t rasterize_room(npc_svo_grid_t       *grid,
         float dx  = x2 - x1;
         float dy  = y2 - y1;
         float len = sqrtf(dx * dx + dy * dy);
-        int   steps = (int)(len / block_world) + 1;
+        int   steps = (int)(len / block_world) + 1;  /* oversample */
 
         for (int step = 0; step <= steps; step++) {
             float t  = (float)step / (float)steps;
@@ -355,7 +355,7 @@ static uint32_t rasterize_corridor(npc_svo_grid_t *grid,
     uint32_t ceiling_vy = (vy_max / block_size) * block_size;
 
     /* ── Walk along the centerline at block resolution ───────── */
-    int steps = (int)(len / block_world) + 1;
+    int steps = (int)(len / block_world) + 1;  /* oversample to catch edges */
 
     for (int step = 0; step <= steps; step++) {
         float t = (len > 0.001f)
