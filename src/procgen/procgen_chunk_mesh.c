@@ -65,27 +65,33 @@ static void emit_face(procgen_mesh_t *m,
     if (axis == 0) {
         float xx = (sign > 0) ? x1 : x0;
         if (sign > 0) {
-            v[0]=xx;v[1]=y0;v[2]=z0; v[3]=xx;v[4]=y1;v[5]=z0; v[6]=xx;v[7]=y1;v[8]=z1;
-            v[9]=xx;v[10]=y0;v[11]=z0; v[12]=xx;v[13]=y1;v[14]=z1; v[15]=xx;v[16]=y0;v[17]=z1;
+            /* +X face: normal points +X.  CCW from +X looking toward origin. */
+            v[0]=xx;v[1]=y0;v[2]=z0; v[3]=xx;v[4]=y0;v[5]=z1; v[6]=xx;v[7]=y1;v[8]=z1;
+            v[9]=xx;v[10]=y0;v[11]=z0; v[12]=xx;v[13]=y1;v[14]=z1; v[15]=xx;v[16]=y1;v[17]=z0;
         } else {
-            v[0]=xx;v[1]=y1;v[2]=z0; v[3]=xx;v[4]=y0;v[5]=z0; v[6]=xx;v[7]=y0;v[8]=z1;
-            v[9]=xx;v[10]=y1;v[11]=z0; v[12]=xx;v[13]=y0;v[14]=z1; v[15]=xx;v[16]=y1;v[17]=z1;
+            /* -X face: normal points -X.  CCW from -X looking toward origin. */
+            v[0]=xx;v[1]=y0;v[2]=z1; v[3]=xx;v[4]=y0;v[5]=z0; v[6]=xx;v[7]=y1;v[8]=z0;
+            v[9]=xx;v[10]=y0;v[11]=z1; v[12]=xx;v[13]=y1;v[14]=z0; v[15]=xx;v[16]=y1;v[17]=z1;
         }
     } else if (axis == 1) {
         float yy = (sign > 0) ? y1 : y0;
         if (sign > 0) {
+            /* +Y face (top): normal points +Y.  CCW from above. */
             v[0]=x0;v[1]=yy;v[2]=z0; v[3]=x1;v[4]=yy;v[5]=z0; v[6]=x1;v[7]=yy;v[8]=z1;
             v[9]=x0;v[10]=yy;v[11]=z0; v[12]=x1;v[13]=yy;v[14]=z1; v[15]=x0;v[16]=yy;v[17]=z1;
         } else {
+            /* -Y face (bottom): normal points -Y.  CCW from below. */
             v[0]=x1;v[1]=yy;v[2]=z0; v[3]=x0;v[4]=yy;v[5]=z0; v[6]=x0;v[7]=yy;v[8]=z1;
             v[9]=x1;v[10]=yy;v[11]=z0; v[12]=x0;v[13]=yy;v[14]=z1; v[15]=x1;v[16]=yy;v[17]=z1;
         }
     } else {
         float zz = (sign > 0) ? z1 : z0;
         if (sign > 0) {
+            /* +Z face (front): normal points +Z.  CCW from +Z looking toward origin. */
             v[0]=x0;v[1]=y0;v[2]=zz; v[3]=x1;v[4]=y0;v[5]=zz; v[6]=x1;v[7]=y1;v[8]=zz;
             v[9]=x0;v[10]=y0;v[11]=zz; v[12]=x1;v[13]=y1;v[14]=zz; v[15]=x0;v[16]=y1;v[17]=zz;
         } else {
+            /* -Z face (back): normal points -Z.  CCW from -Z looking toward origin. */
             v[0]=x1;v[1]=y0;v[2]=zz; v[3]=x0;v[4]=y0;v[5]=zz; v[6]=x0;v[7]=y1;v[8]=zz;
             v[9]=x1;v[10]=y0;v[11]=zz; v[12]=x0;v[13]=y1;v[14]=zz; v[15]=x1;v[16]=y1;v[17]=zz;
         }
