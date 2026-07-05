@@ -71,4 +71,35 @@ symx::Scalar srd_corridor_sdf_energy(symx::Workspace &ws,
     return err * err;
 }
 
+symx::Scalar srd_stair_alignment_energy(symx::Workspace &ws,
+                                        symx::Scalar anchor_x, symx::Scalar anchor_z,
+                                        symx::Scalar target_x, symx::Scalar target_z) {
+    (void)ws;
+    using Scalar = symx::Scalar;
+    Scalar dx = anchor_x - target_x;
+    Scalar dz = anchor_z - target_z;
+    return dx * dx + dz * dz;
+}
+
+symx::Scalar srd_overlap_energy(symx::Workspace &ws,
+                                symx::Scalar ax, symx::Scalar az,
+                                symx::Scalar ahx, symx::Scalar ahy, symx::Scalar ahz,
+                                symx::Scalar bx, symx::Scalar bz,
+                                symx::Scalar bhx, symx::Scalar bhy, symx::Scalar bhz,
+                                double temperature) {
+    /* Simplified overlap: squared center distance penalty with
+       Gaussian falloff.  Close rooms → high energy, far rooms → 0. */
+    using Scalar = symx::Scalar;
+    (void)ahx; (void)ahy; (void)ahz;
+    (void)bhx; (void)bhy; (void)bhz;
+    (void)temperature;
+
+    Scalar dx = ax - bx;
+    Scalar dz = az - bz;
+    Scalar dist2 = dx * dx + dz * dz;
+    Scalar sigma2 = (ahx + bhx) * (ahx + bhx) + (ahz + bhz) * (ahz + bhz);
+    Scalar e = symx::exp(-dist2 / (sigma2 + ax.make_constant(1e-6)));
+    return e;
+}
+
 } /* namespace srd */

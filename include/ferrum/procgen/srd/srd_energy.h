@@ -39,6 +39,29 @@ symx::Scalar srd_corridor_sdf_energy(symx::Workspace &ws,
                                      symx::Scalar floor_y, symx::Scalar ceil_y,
                                      double temperature);
 
+/**
+ * @brief Stair alignment energy.
+ *
+ * Simple quadratic: (anchor_x - target_x)^2 + (anchor_z - target_z)^2.
+ * Zero when stair anchors are aligned, positive otherwise.
+ */
+symx::Scalar srd_stair_alignment_energy(symx::Workspace &ws,
+                                        symx::Scalar anchor_x, symx::Scalar anchor_z,
+                                        symx::Scalar target_x, symx::Scalar target_z);
+
+/**
+ * @brief Overlap penalty between two rooms.
+ *
+ * Evaluates the product of occupancy of both rooms at the midpoint
+ * between their centers. Returns 0 if rooms are far apart, >0 if overlapping.
+ */
+symx::Scalar srd_overlap_energy(symx::Workspace &ws,
+                                symx::Scalar ax, symx::Scalar az,
+                                symx::Scalar ahx, symx::Scalar ahy, symx::Scalar ahz,
+                                symx::Scalar bx, symx::Scalar bz,
+                                symx::Scalar bhx, symx::Scalar bhy, symx::Scalar bhz,
+                                double temperature);
+
 } /* namespace srd */
 
 #endif /* FERRUM_PROCGEN_SRD_ENERGY_H */

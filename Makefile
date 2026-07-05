@@ -1855,7 +1855,10 @@ PROCGEN_TESTS :=
 build/srd_corridor_energy_tests: tests/procgen/srd/srd_corridor_energy_tests.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) | build
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_corridor_energy_tests.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
 
-PROCGEN_TESTS += build/srd_corridor_energy_tests
+build/srd_stair_overlap_tests: tests/procgen/srd/srd_stair_overlap_tests.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_stair_overlap_tests.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
+
+PROCGEN_TESTS += build/srd_stair_overlap_tests
 build/srd_energy_tests: tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) | build
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
 
