@@ -80,7 +80,9 @@ static void emit_face(procgen_mesh_t *m,
             v[0]=x0;v[1]=yy;v[2]=z0; v[3]=x1;v[4]=yy;v[5]=z0; v[6]=x1;v[7]=yy;v[8]=z1;
             v[9]=x0;v[10]=yy;v[11]=z0; v[12]=x1;v[13]=yy;v[14]=z1; v[15]=x0;v[16]=yy;v[17]=z1;
         } else {
-            /* -Y face (bottom): normal -Y.  From below: X right, Z up.  CCW = (x1,z0)→(x1,z1)→(x0,z1) */
+            /* -Y face (bottom): normal -Y (DOWN, into room for ceiling).
+               Engine reference has (x0,z1)→(x1,z1)→(x1,z0) = normal +Y.
+               We need the opposite: (x1,z0)→(x1,z1)→(x0,z1) = normal -Y. */
             v[0]=x1;v[1]=yy;v[2]=z0; v[3]=x1;v[4]=yy;v[5]=z1; v[6]=x0;v[7]=yy;v[8]=z1;
             v[9]=x1;v[10]=yy;v[11]=z0; v[12]=x0;v[13]=yy;v[14]=z1; v[15]=x0;v[16]=yy;v[17]=z0;
         }
