@@ -10,3 +10,6 @@
 [submodule "engine/extern/faiss"]
 	path = engine/extern/faiss
 	url = https://github.com/facebookresearch/faiss.git
+[submodule "extern/SymX"]
+	path = extern/SymX
+	url = https://github.com/InteractiveComputerGraphics/SymX

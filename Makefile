@@ -20,6 +20,33 @@ ifeq ($(FAISS_STUB),1)
 LDFLAGS := -lm -lpthread
 endif
 
+# SymX (symbolic differentiation + JIT compilation)
+SYMX_DIR  := extern/SymX
+SYMX_INC  := -I$(SYMX_DIR)/symx/include -I$(SYMX_DIR)/symx/src
+SYMX_INC  += -I$(SYMX_DIR)/symx/extern/Eigen
+SYMX_INC  += -I$(SYMX_DIR)/symx/extern/fmt/include
+SYMX_INC  += -I$(SYMX_DIR)/symx/extern/BlockedSparseMatrix/include
+SYMX_INC  += -I$(SYMX_DIR)/symx/extern/picoSHA2/include
+SYMX_DEF  := -DSYMX_CODEGEN_DIR='"/tmp/srd_codegen"'
+SYMX_DEF  += -DSYMX_HESS_STORAGE_FLOAT=double
+SYMX_DEF  += -DSYMX_COMPILER_PATH='"AUTO"'
+SYMX_DEF  += -DSYMX_ENABLE_AVX2 -DBSM_ENABLE_AVX2
+SYMX_LIB  := $(SYMX_DIR)/build/symx/libsymx.a
+SYMX_FMT  := $(SYMX_DIR)/build/symx/extern/fmt/libfmt.a
+SYMX_FLAGS:= -std=c++17 -mavx2 -mfma -O2 $(SYMX_INC) $(SYMX_DEF)
+SYMX_LIBS := $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp
+
+# Build SymX static library via its own CMake
+$(SYMX_LIB) $(SYMX_FMT):
+	@echo "Building SymX..."
+	mkdir -p $(SYMX_DIR)/build
+	cd $(SYMX_DIR)/build && cmake .. -DSYMX_ENABLE_AVX2=ON -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -1
+	cd $(SYMX_DIR)/build && $(MAKE) symx -j$$(nproc) 2>&1 | tail -1
+	cd $(SYMX_DIR)/build && $(MAKE) fmt -j$$(nproc) 2>&1 | tail -1
+
+.PHONY: symx
+symx: $(SYMX_LIB)
+
 TRACY_DIR := extern/tracy
 TRACY_BUILD_DIR := $(TRACY_DIR)/build
 TRACY_CLIENT_LIB := $(TRACY_BUILD_DIR)/libTracyClient.a
@@ -1824,7 +1851,10 @@ PROCGEN_TESTS :=
 # PROCGEN_TESTS += build/procgen_architect_tests
 # PROCGEN_TESTS += build/procgen_critic_tests
 
-procgen: build/libheadless.a
+# SRD tests (depend on SymX)
+PROCGEN_TESTS += build/srd_build_test
+
+procgen: build/libheadless.a $(SYMX_LIB)
 	@echo "procgen objects built via libheadless.a"
 
 procgen-test: $(PROCGEN_TESTS)
@@ -1834,11 +1864,16 @@ procgen-test: $(PROCGEN_TESTS)
 procgen-bench:
 	@echo "No procgen benchmarks defined yet."
 
+# ── SRD test targets ─────────────────────────────────────────
+build/srd_build_test: tests/procgen/srd/srd_build_test.cpp $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CXX) $(SYMX_FLAGS) tests/procgen/srd/srd_build_test.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
+
 test-procgen: procgen-test
 
 clean: clean-procgen
 clean-procgen:
 	$(RM) $(PROCGEN_TESTS)
+	$(RM) -r /tmp/srd_codegen
 
 ###########################
 
