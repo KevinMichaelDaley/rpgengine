@@ -1877,7 +1877,10 @@ build/srd_rewrite_tests: tests/procgen/srd/srd_rewrite_tests.cpp src/procgen/pro
 build/srd_sampler_tests: tests/procgen/srd/srd_sampler_tests.c src/procgen/srd/srd_sampler.c src/procgen/procgen_srd_types.c | build
 	$(CC) $(CFLAGS) tests/procgen/srd/srd_sampler_tests.c src/procgen/srd/srd_sampler.c src/procgen/procgen_srd_types.c -o $@ -lm
 
-PROCGEN_TESTS += build/srd_sampler_tests
+build/srd_m2_smoke: tests/procgen/srd/srd_m2_energy_smoke.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_m2_energy_smoke.cpp src/procgen/srd/srd_energy.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
+
+PROCGEN_TESTS += build/srd_m2_smoke
 PROCGEN_TESTS += build/srd_grammar_tests
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
