@@ -1890,7 +1890,14 @@ build/srd_loss_primitives_tests: tests/procgen/srd/srd_loss_primitives_tests.cpp
 build/srd_loss_compiler_tests: tests/procgen/srd/srd_loss_compiler_tests.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/procgen_srd_types.c | build
 	$(CXX) $(CFLAGS) -xc++ -std=c++17 -Iinclude tests/procgen/srd/srd_loss_compiler_tests.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/procgen_srd_types.c -o $@ -lm
 
-PROCGEN_TESTS += build/srd_loss_compiler_tests
+build/srd_optimizer_tests: tests/procgen/srd/srd_optimizer_tests.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_optimizer_tests.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
+
+build/srd_pde_gradient_tests: tests/procgen/srd/srd_pde_gradient_tests.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_srd_types.c | build
+	$(CXX) $(CFLAGS) -xc++ -std=c++17 -Iinclude tests/procgen/srd/srd_pde_gradient_tests.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_srd_types.c -o $@ -lm
+
+PROCGEN_TESTS += build/srd_optimizer_tests
+PROCGEN_TESTS += build/srd_pde_gradient_tests
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
 PROCGEN_TESTS += build/procgen_architect_tests

@@ -62,6 +62,26 @@ symx::Scalar srd_overlap_energy(symx::Workspace &ws,
                                 symx::Scalar bhx, symx::Scalar bhy, symx::Scalar bhz,
                                 double temperature);
 
+/**
+ * @brief Differentiable proxy for PathDistance via Euclidean distance.
+ *
+ * loss = max(0, |p_a - p_b| - target)²
+ * Gradients computed by SymX symbolic differentiation.
+ */
+symx::Scalar srd_path_distance_energy(symx::Workspace &ws,
+                                       symx::Scalar ax, symx::Scalar az,
+                                       symx::Scalar bx, symx::Scalar bz,
+                                       double target_distance);
+
+/**
+ * @brief Differentiable proxy for LineOfSight via dot-product falloff.
+ *
+ * loss = (1 - clamp(dot(d̂, b-a) / |b-a|, 0, 1))²
+ */
+symx::Scalar srd_line_of_sight_energy(symx::Workspace &ws,
+                                       symx::Scalar ax, symx::Scalar az,
+                                       symx::Scalar bx, symx::Scalar bz);
+
 } /* namespace srd */
 
 #endif /* FERRUM_PROCGEN_SRD_ENERGY_H */
