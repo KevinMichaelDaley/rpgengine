@@ -1,6 +1,6 @@
 ---
 id: rpg-hzok
-status: open
+status: closed
 deps: [rpg-bytk, rpg-omqm]
 links: []
 created: 2026-07-05T06:56:51Z

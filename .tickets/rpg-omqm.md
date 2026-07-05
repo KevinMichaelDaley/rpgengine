@@ -1,6 +1,6 @@
 ---
 id: rpg-omqm
-status: open
+status: closed
 deps: [rpg-j5ig, rpg-tep1]
 links: []
 created: 2026-07-05T06:51:26Z

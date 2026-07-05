@@ -1,6 +1,6 @@
 ---
 id: rpg-0wls
-status: open
+status: closed
 deps: [rpg-tep1]
 links: []
 created: 2026-07-05T06:26:00Z

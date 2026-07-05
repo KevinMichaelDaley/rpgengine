@@ -1,6 +1,6 @@
 ---
 id: rpg-tep1
-status: in_progress
+status: closed
 deps: [rpg-j5ig]
 links: []
 created: 2026-07-05T06:26:00Z
