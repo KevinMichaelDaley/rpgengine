@@ -165,21 +165,34 @@ static void chunk_line_mark(procgen_chunk_grid_t *grid,
     float hw = w * 0.5f;
     float dx = x2 - x1, dy2 = y2 - y1;
     float len = sqrtf(dx*dx + dy2*dy2);
-    int steps = (int)len + 1;
-    for (int s = 0; s <= steps; s++) {
-        float t = (float)s / (float)steps;
-        float px = x1 + t * dx;
-        float pz = y1 + t * dy2;
-        float cx = px, cz = pz;
-        for (int side = -1; side <= 1; side += 2) {
-            float sx = px + side * (-dy2 / len * hw);
-            float sz = pz + side * ( dx  / len * hw);
-            int ci = procgen_chunk_grid_chunk_at(grid, sx, floor_z, sz);
-            int ci2 = procgen_chunk_grid_chunk_at(grid, sx, ceil_z, sz);
-            for (float fy = floor_z; fy <= ceil_z; fy += 1.0f) {
-                chunk_mark(grid, ci,  sx,    fy, sz, mat);
-                chunk_mark(grid, ci,  cx,    fy, cz, mat);
-                chunk_mark(grid, ci2, sx,    fy, sz, mat);
+
+    /* Walk along the corridor at 1m resolution using integer steps. */
+    float perp_x = (len > 0.001f) ? -dy2 / len * hw : hw;
+    float perp_y = (len > 0.001f) ?  dx / len * hw : 0;
+
+    int x_min = (int)floorf(fminf(x1, x2) - fabsf(perp_x) - hw);
+    int x_max = (int)ceilf(fmaxf(x1, x2) + fabsf(perp_x) + hw);
+    int z_min = (int)floorf(fminf(y1, y2) - fabsf(perp_y) - hw);
+    int z_max = (int)ceilf(fmaxf(y1, y2) + fabsf(perp_y) + hw);
+
+    for (int fy = (int)floorf(floor_z); fy <= (int)ceilf(ceil_z); fy++) {
+        for (int wz = z_min; wz <= z_max; wz++) {
+            for (int wx = x_min; wx <= x_max; wx++) {
+                float px = (float)wx + 0.5f;
+                float pz = (float)wz + 0.5f;
+
+                float t = ((px - x1) * dx + (pz - y1) * dy2) / (len * len);
+                if (t < 0.0f) t = 0.0f;
+                if (t > 1.0f) t = 1.0f;
+                float cx = x1 + t * dx;
+                float cz = y1 + t * dy2;
+                float dist2 = (px - cx)*(px - cx) + (pz - cz)*(pz - cz);
+
+                if (dist2 <= hw * hw) {
+                    chunk_mark(grid,
+                               procgen_chunk_grid_chunk_at(grid, (float)wx, (float)fy, (float)wz),
+                               (float)wx, (float)fy, (float)wz, mat);
+                }
             }
         }
     }
@@ -202,14 +215,16 @@ uint32_t procgen_chunk_grid_build(procgen_chunk_grid_t       *grid,
             if (r->vertices[j].y < ymin) ymin = r->vertices[j].y;
             if (r->vertices[j].y > ymax) ymax = r->vertices[j].y;
         }
-        /* Mark room solid blocks: floor, ceiling, walls. */
-        for (float fy = r->floor_z; fy <= r->ceil_z; fy += 1.0f) {
-            for (float wz = ymin; wz <= ymax; wz += 1.0f) {
-                for (float wx = xmin; wx <= xmax; wx += 1.0f) {
-                    int ci = procgen_chunk_grid_chunk_at(grid, wx, fy, wz);
+        /* Mark room solid blocks: floor, ceiling, walls — whole volume. */
+        int ix_min = (int)floorf(xmin), ix_max = (int)ceilf(xmax);
+        int iy_min = (int)floorf(ymin), iy_max = (int)ceilf(ymax);
+        int iz_min = (int)floorf(r->floor_z), iz_max = (int)ceilf(r->ceil_z);
+        for (int fy = iz_min; fy <= iz_max; fy++) {
+            for (int wz = iy_min; wz <= iy_max; wz++) {
+                for (int wx = ix_min; wx <= ix_max; wx++) {
+                    int ci = procgen_chunk_grid_chunk_at(grid, (float)wx, (float)fy, (float)wz);
                     if (ci >= 0) {
-                        chunk_mark(grid, ci, wx, fy, wz, 1);
-                        active = 1;
+                        chunk_mark(grid, ci, (float)wx, (float)fy, (float)wz, 1);
                     }
                 }
             }
