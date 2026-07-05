@@ -1874,7 +1874,10 @@ build/srd_anneal_tests: tests/procgen/srd/srd_anneal_tests.cpp src/procgen/srd/s
 build/srd_rewrite_tests: tests/procgen/srd/srd_rewrite_tests.cpp src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_types.c | build
 	$(CXX) $(CFLAGS) -xc++ -std=c++17 tests/procgen/srd/srd_rewrite_tests.cpp src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_types.c -o $@ -lm
 
-PROCGEN_TESTS += build/srd_rewrite_tests
+build/srd_sampler_tests: tests/procgen/srd/srd_sampler_tests.c src/procgen/srd/srd_sampler.c src/procgen/procgen_srd_types.c | build
+	$(CC) $(CFLAGS) tests/procgen/srd/srd_sampler_tests.c src/procgen/srd/srd_sampler.c src/procgen/procgen_srd_types.c -o $@ -lm
+
+PROCGEN_TESTS += build/srd_sampler_tests
 PROCGEN_TESTS += build/srd_grammar_tests
 PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
