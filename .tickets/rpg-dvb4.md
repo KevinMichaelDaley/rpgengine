@@ -1,6 +1,6 @@
 ---
 id: rpg-dvb4
-status: open
+status: closed
 deps: [rpg-uzd4]
 links: []
 created: 2026-07-04T23:19:26Z

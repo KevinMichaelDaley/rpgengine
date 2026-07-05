@@ -1,18 +1,36 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=8 name=central_hub
-ROOM_QUAD x=30 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_east
-ROOM_QUAD x=-30 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_west
-ROOM_QUAD x=0 y=30 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_north
-ROOM_QUAD x=0 y=-30 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_south
-CORRIDOR_H from=(10,0) to=(20,0) w=4 floor_z=0 ceil_z=8
-CORRIDOR_H from=(-10,0) to=(-20,0) w=4 floor_z=0 ceil_z=8
-CORRIDOR_V from=(0,10) to=(0,20) w=4 floor_z=0 ceil_z=8
-CORRIDOR_V from=(0,-10) to=(0,-20) w=4 floor_z=0 ceil_z=8
+ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=6 name=entrance
+ROOM_QUAD x=20 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_east_1
+ROOM_QUAD x=30 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_east_2
+ROOM_QUAD x=-10 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_west_1
+ROOM_QUAD x=-20 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=classroom_west_2
+ROOM_QUAD x=0 y=20 w=20 h=20 floor_z=0 ceil_z=16 name=library
+ROOM_QUAD x=0 y=40 w=10 h=10 floor_z=6 ceil_z=12 name=dorm_north_1
+ROOM_QUAD x=10 y=40 w=10 h=10 floor_z=6 ceil_z=12 name=dorm_north_2
+ROOM_QUAD x=0 y=-20 w=20 h=10 floor_z=-4 ceil_z=0 name=storage_basement
+CORRIDOR_H from=(10,0) to=(20,0) w=4 floor_z=0 ceil_z=6
+CORRIDOR_H from=(-10,0) to=(0,0) w=4 floor_z=0 ceil_z=6
+CORRIDOR_V from=(25,0) to=(25,10) w=4 floor_z=0 ceil_z=6
+CORRIDOR_V from=(25,10) to=(25,20) w=4 floor_z=0 ceil_z=6
+CORRIDOR_V from=(-15,0) to=(-15,10) w=4 floor_z=0 ceil_z=6
+CORRIDOR_V from=(-15,10) to=(-15,20) w=4 floor_z=0 ceil_z=6
+CORRIDOR_V from=(0,20) to=(0,30) w=4 floor_z=0 ceil_z=16
+CORRIDOR_V from=(10,20) to=(10,30) w=4 floor_z=0 ceil_z=16
+CORRIDOR_H from=(0,30) to=(10,30) w=4 floor_z=6 ceil_z=12
+CORRIDOR_H from=(0,-10) to=(20,-10) w=4 floor_z=-4 ceil_z=0
 DOOR at=(20,0)
-DOOR at=(-20,0)
-DOOR at=(0,20)
-DOOR at=(0,-20)
-SPAWN x=0 y=0 z=4
-MARKER x=0 y=0 z=4 name=hub_center
-MARKER x=25 y=0 z=3 name=east_exit
-MARKER x=-25 y=0 z=3 name=west_exit
+DOOR at=(-10,0)
+DOOR at=(25,10)
+DOOR at=(-15,10)
+DOOR at=(0,30)
+DOOR at=(10,30)
+DOOR at=(0,-10)
+DOOR at=(20,-10)
+RAMP_UP from=(0,20) to=(0,30) dz=6 w=4
+RAMP_UP from=(10,20) to=(10,30) dz=6 w=4
+SPAWN x=10 y=10 z=3
+MARKER x=10 y=10 z=8 name=library_center
+MARKER x=25 y=10 z=3 name=east_wing_junction
+MARKER x=-15 y=10 z=3 name=west_wing_junction
+MARKER x=5 y=35 z=9 name=dorm_hallway
+MARKER x=10 y=-5 z=-2 name=storage_entrance

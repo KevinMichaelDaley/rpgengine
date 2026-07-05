@@ -1,0 +1,19 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=start_room
+ROOM_QUAD x=20 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=hallway_room
+ROOM_QUAD x=20 y=20 w=10 h=10 floor_z=0 ceil_z=5 name=storage_room
+ROOM_QUAD x=0 y=20 w=10 h=10 floor_z=0 ceil_z=5 name=exit_room
+CORRIDOR_H from=(10,5) to=(20,5) w=2 floor_z=0 ceil_z=5
+DOOR at=(10,5)
+DOOR at=(20,5)
+CORRIDOR_V from=(25,10) to=(25,20) w=2 floor_z=0 ceil_z=5
+DOOR at=(25,10)
+DOOR at=(25,20)
+CORRIDOR_H from=(10,15) to=(0,15) w=2 floor_z=0 ceil_z=5
+DOOR at=(10,15)
+DOOR at=(0,15)
+SPAWN x=5 y=5 z=2.5
+MARKER x=5 y=5 z=0 name=start_point
+MARKER x=25 y=25 z=2.5 name=storage_exit
+MARKER x=5 y=25 z=2.5 name=final_exit
+Layout: 4 rooms, 3 corridors, 6 openings, 0 ramps, 3 markers, 4 nav nodes, 3 nav edges

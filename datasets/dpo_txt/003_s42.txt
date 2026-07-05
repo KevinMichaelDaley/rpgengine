@@ -1,17 +1,43 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=20 floor_z=0 ceil_z=6 name=entrance_hall
-CORRIDOR_H from=(5,0) to=(5,10) w=4 floor_z=0 ceil_z=6
-DOOR at=(5,0)
-DOOR at=(5,10)
-ROOM_QUAD x=-10 y=10 w=10 h=10 floor_z=0 ceil_z=6 name=left_chamber
-CORRIDOR_V from=(0,10) to=(-10,10) w=4 floor_z=0 ceil_z=6
-DOOR at=(0,10)
-DOOR at=(-10,10)
-ROOM_QUAD x=20 y=10 w=10 h=10 floor_z=0 ceil_z=6 name=right_chamber
-CORRIDOR_V from=(10,10) to=(20,10) w=4 floor_z=0 ceil_z=6
-DOOR at=(10,10)
-DOOR at=(20,10)
-SPAWN x=5 y=5 z=3
-MARKER x=5 y=5 z=3 name=center_spawn
-MARKER x=-5 y=15 z=3 name=left_marker
-MARKER x=25 y=15 z=3 name=right_marker
+ROOM_QUAD x=0 y=0 w=40 h=40 floor_z=0 ceil_z=10 name=central_chamber
+ROOM_QUAD x=-20 y=10 w=15 h=15 floor_z=0 ceil_z=8 name=side_room_west
+ROOM_QUAD x=20 y=10 w=15 h=15 floor_z=0 ceil_z=8 name=side_room_east
+ROOM_QUAD x=10 y=-20 w=15 h=15 floor_z=0 ceil_z=8 name=side_room_north
+ROOM_QUAD x=-10 y=-20 w=15 h=15 floor_z=0 ceil_z=8 name=side_room_south
+CORRIDOR_H from=(-15,17.5) to=(15,17.5) w=5 floor_z=0 ceil_z=8
+DOOR at=(-15,17.5)
+DOOR at=(15,17.5)
+CORRIDOR_V from=(17.5,-15) to=(17.5,15) w=5 floor_z=0 ceil_z=8
+DOOR at=(17.5,-15)
+DOOR at=(17.5,15)
+CORRIDOR_H from=(-15,-17.5) to=(15,-17.5) w=5 floor_z=0 ceil_z=8
+DOOR at=(-15,-17.5)
+DOOR at=(15,-17.5)
+CORRIDOR_V from=(-17.5,-15) to=(-17.5,15) w=5 floor_z=0 ceil_z=8
+DOOR at=(-17.5,-15)
+DOOR at=(-17.5,15)
+CORRIDOR_V from=(0,-15) to=(0,15) w=5 floor_z=0 ceil_z=8
+DOOR at=(0,-15)
+DOOR at=(0,15)
+ROOM_QUAD x=-15 y=30 w=10 h=10 floor_z=8 ceil_z=16 name=gallery_northwest
+ROOM_QUAD x=15 y=30 w=10 h=10 floor_z=8 ceil_z=16 name=gallery_northeast
+ROOM_QUAD x=-15 y=-30 w=10 h=10 floor_z=8 ceil_z=16 name=gallery_southwest
+ROOM_QUAD x=15 y=-30 w=10 h=10 floor_z=8 ceil_z=16 name=gallery_southeast
+RAMP_UP from=(0,15) to=(0,25) dz=8 w=4
+DOOR at=(0,15)
+DOOR at=(0,25)
+RAMP_UP from=(0,-15) to=(0,-25) dz=8 w=4
+DOOR at=(0,-15)
+DOOR at=(0,-25)
+RAMP_UP from=(15,0) to=(25,0) dz=8 w=4
+DOOR at=(15,0)
+DOOR at=(25,0)
+RAMP_UP from=(-15,0) to=(-25,0) dz=8 w=4
+DOOR at=(-15,0)
+DOOR at=(-25,0)
+SPAWN x=0 y=0 z=1
+MARKER x=0 y=0 z=0 name=center_floor
+MARKER x=0 y=25 z=8 name=gallery_north_access
+MARKER x=25 y=0 z=8 name=gallery_east_access
+MARKER x=-25 y=0 z=8 name=gallery_west_access
+MARKER x=0 y=-25 z=8 name=gallery_south_access

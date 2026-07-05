@@ -1,14 +1,44 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=corner_room
-CORRIDOR_H from=(10,5) to=(30,5) w=5 floor_z=0 ceil_z=5
-DOOR at=(10,5)
-DOOR at=(30,5)
-CORRIDOR_V from=(20,5) to=(20,-15) w=5 floor_z=0 ceil_z=5
-DOOR at=(20,5)
-DOOR at=(20,-15)
-ROOM_QUAD x=17.5 y=-15 w=5 h=10 floor_z=0 ceil_z=5 name=hallway_end_1
-ROOM_QUAD x=30 y=2.5 w=10 h=5 floor_z=0 ceil_z=5 name=hallway_end_2
-SPAWN x=5 y=5 z=2.5
-MARKER x=0 y=0 z=2.5 name=start_point
-MARKER x=35 y=5 z=2.5 name=exit_point
-MARKER x=20 y=-20 z=2.5 name=secret_area
+ROOM_QUAD x=0 y=0 w=30 h=30 floor_z=0 ceil_z=15 name=main_chamber
+ROOM_QUAD x=-15 y=15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_north
+ROOM_QUAD x=15 y=15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_east
+ROOM_QUAD x=-15 y=-15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_west
+ROOM_QUAD x=15 y=-15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_south
+ROOM_QUAD x=0 y=40 w=10 h=10 floor_z=20 ceil_z=30 name=bell_tower
+ROOM_QUAD x=0 y=-30 w=10 h=10 floor_z=-10 ceil_z=-2 name=crypt_entrance
+CORRIDOR_H from=(-15,0) to=(15,0) w=5 floor_z=0 ceil_z=15
+CORRIDOR_V from=(0,-15) to=(0,15) w=5 floor_z=0 ceil_z=15
+CORRIDOR_V from=(0,15) to=(0,30) w=5 floor_z=15 ceil_z=20
+CORRIDOR_H from=(-5,30) to=(5,30) w=5 floor_z=15 ceil_z=20
+CORRIDOR_V from=(-15,15) to=(-15,5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_H from=(-15,5) to=(-5,5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(15,15) to=(15,5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_H from=(15,5) to=(5,5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(-15,-15) to=(-15,-5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_H from=(-15,-5) to=(-5,-5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(15,-15) to=(15,-5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_H from=(15,-5) to=(5,-5) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(0,-15) to=(0,-25) w=5 floor_z=0 ceil_z=-10
+DOOR at=(-15,0)
+DOOR at=(15,0)
+DOOR at=(0,15)
+DOOR at=(0,-15)
+DOOR at=(-15,5)
+DOOR at=(-5,5)
+DOOR at=(15,5)
+DOOR at=(5,5)
+DOOR at=(-15,-5)
+DOOR at=(-5,-5)
+DOOR at=(15,-5)
+DOOR at=(5,-5)
+DOOR at=(0,25)
+DOOR at=(0,-25)
+RAMP_DOWN from=(0,-25) to=(0,-30) dz=10 w=5
+SPAWN x=0 y=0 z=5
+MARKER x=0 y=0 z=7.5 name=chamber_center
+MARKER x=0 y=45 z=25 name=bell_tower_top
+MARKER x=0 y=-30 z=-5 name=crypt_entrance_marker
+MARKER x=-20 y=20 z=4 name=chapel_north_entrance
+MARKER x=20 y=20 z=4 name=chapel_east_entrance
+MARKER x=-20 y=-20 z=4 name=chapel_west_entrance
+MARKER x=20 y=-20 z=4 name=chapel_south_entrance

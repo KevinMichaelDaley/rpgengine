@@ -430,12 +430,27 @@ static int gl_init(gl_ctx_t *ctx) {
         "#version 330 core\n"
         "in vec3 in_pos;\n"
         "uniform mat4 u_mvp;\n"
-        "void main() { gl_Position = u_mvp * vec4(in_pos, 1.0); }\n";
+        "out vec3 v_world_pos;\n"
+        "void main() {\n"
+        "  vec4 wp = vec4(in_pos, 1.0);\n"
+        "  v_world_pos = wp.xyz;\n"
+        "  gl_Position = u_mvp * wp;\n"
+        "}\n";
     const char *fs =
         "#version 330 core\n"
         "uniform vec3 u_color;\n"
+        "in vec3 v_world_pos;\n"
         "out vec4 out_color;\n"
-        "void main() { out_color = vec4(u_color, 1.0); }\n";
+        "void main() {\n"
+        "  vec3 light_dir = normalize(vec3(0.5, 1.0, 0.3));\n"
+        "  vec3 dx = dFdx(v_world_pos);\n"
+        "  vec3 dy = dFdy(v_world_pos);\n"
+        "  vec3 n = normalize(cross(dx, dy));\n"
+        "  float ndotl = abs(dot(n, light_dir));\n"
+        "  float ambient = 0.3;\n"
+        "  float diff = ambient + ndotl * 0.7;\n"
+        "  out_color = vec4(u_color * diff, 1.0);\n"
+        "}\n";
 
     char log_buf[1024] = {0};
     if (shader_program_create(&ctx->program, &ctx->loader, vs, fs,
@@ -774,9 +789,17 @@ int main(int argc, char **argv) {
             if (procgen_level_load(&lvl, procgen_path) == 0) {
                 uint32_t tris = lvl.mesh.vertex_count / 9;
                 if (tris > 0) {
-                    GLint ploc = glGetAttribLocation(gl.program.handle, "a_position");
+                    GLint ploc = glGetAttribLocation(gl.program.handle, "in_pos");
                     vao_attribute_t pattr = {(uint32_t)ploc, 3, GL_FLOAT, 0u, 0u, 0u};
                     gl.arm_vert_count = tris * 3;
+                    /* Debug: compute mesh bounding box */
+                    float mn[3]={1e9f,1e9f,1e9f}, mx[3]={-1e9f,-1e9f,-1e9f};
+                    for(uint32_t i=0;i<lvl.mesh.vertex_count;i+=3){
+                        float vv=lvl.mesh.vertices[i];if(vv<mn[0])mn[0]=vv;if(vv>mx[0])mx[0]=vv;
+                        vv=lvl.mesh.vertices[i+1];if(vv<mn[1])mn[1]=vv;if(vv>mx[1])mx[1]=vv;
+                        vv=lvl.mesh.vertices[i+2];if(vv<mn[2])mn[2]=vv;if(vv>mx[2])mx[2]=vv;}
+                    printf("[client] mesh bounds: (%.1f,%.1f,%.1f)→(%.1f,%.1f,%.1f)\n",
+                           mn[0],mn[1],mn[2],mx[0],mx[1],mx[2]);
                     vbo_create(&gl.arm_vbo, &gl.loader);
                     vbo_upload(&gl.arm_vbo, GL_ARRAY_BUFFER,
                                lvl.mesh.vertices,
@@ -1325,7 +1348,7 @@ int main(int argc, char **argv) {
                     mat4_t model = mat4_identity();
                     mat4_t mvp   = mat4_mul(vp, model);
                     glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mvp.m);
-                    glUniform3f(u_color_loc, 0.55f, 0.50f, 0.45f);
+                    glUniform3f(u_color_loc, 0.85f, 0.80f, 0.72f);
                     glBindVertexArray(gl.arm_vao.handle);
                     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)gl.arm_vert_count);
                 }

@@ -1,16 +1,18 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=central_chamber
-ROOM_QUAD x=-15 y=15 w=10 h=10 floor_z=5 ceil_z=10 name=upper_room_left
-ROOM_QUAD x=15 y=15 w=10 h=10 floor_z=5 ceil_z=10 name=upper_room_right
-CORRIDOR_V from=(0,5) to=(0,15) w=2 floor_z=0 ceil_z=5
-DOOR at=(0,5)
-DOOR at=(0,15)
-CORRIDOR_H from=(-5,15) to=(15,15) w=2 floor_z=5 ceil_z=10
-DOOR at=(-5,15)
-DOOR at=(15,15)
-RAMP_DOWN from=(0,5) to=(-5,15) dz=5 w=2
-RAMP_DOWN from=(0,5) to=(15,15) dz=5 w=2
-SPAWN x=0 y=0 z=0
-MARKER x=0 y=0 z=0 name=central_spawn
-MARKER x=-15 y=15 z=5 name=upper_left_entry
-MARKER x=15 y=15 z=5 name=upper_right_entry
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=4 name=entrance_hall
+CORRIDOR_H from=(5,10) to=(5,20) w=4 floor_z=0 ceil_z=4
+ROOM_QUAD x=3 y=20 w=8 h=8 floor_z=4 ceil_z=8 name=study
+RAMP_UP from=(5,24) to=(5,24) dz=4 w=4
+ROOM_QUAD x=3 y=28 w=8 h=8 floor_z=8 ceil_z=12 name=library
+RAMP_UP from=(5,32) to=(5,32) dz=4 w=4
+ROOM_QUAD x=3 y=36 w=8 h=8 floor_z=12 ceil_z=16 name=observatory
+SPAWN x=5 y=5 z=2
+MARKER x=5 y=5 z=0 name=ground_floor_entrance
+MARKER x=7 y=24 z=4 name=study_door
+MARKER x=7 y=32 z=8 name=library_door
+DOOR at=(5,10)
+DOOR at=(5,20)
+DOOR at=(5,24)
+DOOR at=(5,28)
+DOOR at=(5,32)
+DOOR at=(5,36)

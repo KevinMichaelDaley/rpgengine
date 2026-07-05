@@ -1318,6 +1318,20 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_BODIES);
+
+    /* Add a ground plane so the player doesn't fall through. */
+    {
+        phys_cmd_spawn_body_t sp;
+        memset(&sp, 0, sizeof(sp));
+        sp.type = PHYS_SHAPE_HALFSPACE;
+        sp.shape_data.halfspace.normal   = (phys_vec3_t){0.0f, 1.0f, 0.0f};
+        sp.shape_data.halfspace.distance = 0.0f;
+        sp.mass      = 0.0f;
+        sp.flags     = PHYS_BODY_FLAG_STATIC;
+        sp.friction  = 0.8f;
+        sp.restitution = 0.1f;
+        phys_world_add_body(&ctx.world, &sp, NULL, NULL);
+    }
     /* ── 3. Physics command channel + tick runner ───────────────── */
     fr_topic_channel_config_t chan_cfg = {
         .capacity = 512u,

@@ -1,0 +1,15 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=start_room
+ROOM_QUAD x=20 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=hallway
+ROOM_QUAD x=40 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=end_room
+CORRIDOR_H from=(10,5) to=(20,5) w=2 floor_z=0 ceil_z=5
+DOOR at=(10,5)
+DOOR at=(20,5)
+CORRIDOR_H from=(30,5) to=(40,5) w=2 floor_z=0 ceil_z=5
+DOOR at=(30,5)
+DOOR at=(40,5)
+SPAWN x=5 y=5 z=2.5
+MARKER x=5 y=5 z=2.5 name=start_point
+MARKER x=25 y=5 z=2.5 name=mid_point
+MARKER x=45 y=5 z=2.5 name=end_point
+Layout: 3 rooms, 2 corridors, 4 openings, 0 ramps, 3 markers, 3 nav nodes, 2 nav edges

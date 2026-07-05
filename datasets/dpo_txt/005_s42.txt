@@ -1,19 +1,33 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=6 name=arena
-ROOM_QUAD x=-10 y=0 w=5 h=5 floor_z=0 ceil_z=6 name=west_room
-ROOM_QUAD x=10 y=0 w=5 h=5 floor_z=0 ceil_z=6 name=east_room
-ROOM_QUAD x=0 y=-10 w=5 h=5 floor_z=0 ceil_z=6 name=south_room
-ROOM_QUAD x=0 y=10 w=5 h=5 floor_z=0 ceil_z=6 name=north_room
-CORRIDOR_H from=(-10,0) to=(-5,0) w=2 floor_z=0 ceil_z=6
-DOOR at=(-5,0)
-CORRIDOR_H from=(5,0) to=(10,0) w=2 floor_z=0 ceil_z=6
-DOOR at=(5,0)
-CORRIDOR_V from=(0,-5) to=(0,-10) w=2 floor_z=0 ceil_z=6
-DOOR at=(0,-5)
-CORRIDOR_V from=(0,5) to=(0,10) w=2 floor_z=0 ceil_z=6
-DOOR at=(0,5)
-SPAWN x=0 y=0 z=3
-MARKER x=-10 y=0 z=3 name=west_marker
-MARKER x=10 y=0 z=3 name=east_marker
-MARKER x=0 y=-10 z=3 name=south_marker
-MARKER x=0 y=10 z=3 name=north_marker
+SPAWN x=10 y=10 z=0
+ROOM_QUAD x=0 y=0 w=15 h=15 floor_z=0 ceil_z=8 name=start_chamber
+ROOM_QUAD x=25 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=storage_room
+ROOM_QUAD x=40 y=0 w=12 h=12 floor_z=0 ceil_z=7 name=armory
+ROOM_QUAD x=0 y=20 w=10 h=10 floor_z=0 ceil_z=6 name=antechamber
+ROOM_QUAD x=20 y=20 w=15 h=15 floor_z=5 ceil_z=12 name=upper_hall
+ROOM_QUAD x=40 y=20 w=10 h=10 floor_z=8 ceil_z=15 name=observatory
+ROOM_QUAD x=25 y=35 w=12 h=12 floor_z=0 ceil_z=6 name=trophy_room
+CORRIDOR_H from=(15,7.5) to=(25,7.5) w=3 floor_z=0 ceil_z=5
+DOOR at=(15,7.5)
+DOOR at=(25,7.5)
+CORRIDOR_V from=(32.5,10) to=(32.5,0) w=3 floor_z=0 ceil_z=7
+DOOR at=(32.5,10)
+DOOR at=(32.5,0)
+CORRIDOR_H from=(10,10) to=(0,20) w=3 floor_z=0 ceil_z=6
+DOOR at=(10,10)
+DOOR at=(0,20)
+CORRIDOR_DIAG from=(10,10) to=(20,20) w=3 floor_z=0 ceil_z=12
+DOOR at=(10,10)
+DOOR at=(20,20)
+CORRIDOR_H from=(35,20) to=(40,20) w=3 floor_z=8 ceil_z=15
+DOOR at=(35,20)
+DOOR at=(40,20)
+CORRIDOR_V from=(25,30) to=(25,35) w=3 floor_z=0 ceil_z=6
+DOOR at=(25,30)
+DOOR at=(25,35)
+RAMP_UP from=(20,20) to=(20,20) dz=5 w=3
+RAMP_DOWN from=(20,20) to=(20,20) dz=-5 w=3
+MARKER x=0 y=0 z=0 name=start_corner
+MARKER x=40 y=20 z=15 name=observatory_peak
+MARKER x=25 y=35 z=6 name=trophy_room_center
+MARKER x=15 y=7.5 z=0 name=hallway_junction

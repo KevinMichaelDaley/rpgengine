@@ -316,6 +316,7 @@ BIN_HEADLESS += build/procgen_serialize_tests
 BIN_HEADLESS += build/procgen_smoke_tests
 BIN_HEADLESS += build/procgen_grammar_registry_tests
 BIN_HEADLESS += build/procgen_e2e_tests
+BIN_HEADLESS += build/procgen_svo_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
@@ -1129,6 +1130,9 @@ build/procgen_grammar_registry_tests: tests/procgen/procgen_grammar_registry_tes
 
 build/procgen_e2e_tests: tests/procgen/procgen_e2e_tests.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/procgen_grammar_registry.c include/ferrum/procgen/procgen_serialize.h include/ferrum/procgen/procgen_grammar_registry.h include/ferrum/procgen/procgen_tokenize.h include/ferrum/procgen/procgen_types.h include/ferrum/procgen/procgen_layout.h include/ferrum/procgen/grammar_blockout.h | build
 	$(CC) $(CFLAGS) tests/procgen/procgen_e2e_tests.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/procgen_grammar_registry.c -o $@ -lm
+
+build/procgen_svo_tests: tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_mesh.c src/npc/nav/npc_svo_init.c include/ferrum/procgen/procgen_svo_builder.h include/ferrum/procgen/procgen_layout.h | build
+	$(CC) $(CFLAGS) tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_mesh.c src/npc/nav/npc_svo_init.c -o $@ -lm
 
 CFLAGS_CURL := $(shell pkg-config --cflags libcurl 2>/dev/null)
 LDFLAGS_CURL := $(shell pkg-config --libs libcurl 2>/dev/null)

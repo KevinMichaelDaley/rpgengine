@@ -171,6 +171,28 @@ static int point_in_polygon(const vec3_t *vertices,
 #define MAT_STONE  1
 #define MAT_WOOD   2
 
+/* ── Corridor overlap test ─────────────────────────────────────── */
+static int point_in_corridor(const fr_dungeon_layout_t *layout,
+                             float wx, float wy, float wz) {
+    if (!layout) return 0;
+    for (uint32_t ci = 0; ci < layout->corridor_count; ci++) {
+        const fr_corridor_def_t *c = &layout->corridors[ci];
+        float hw = c->width * 0.5f;
+        if (wy < c->floor_z || wy > c->ceil_z) continue;
+        float dx = c->to.x - c->from.x;
+        float dy2 = c->to.y - c->from.y;
+        float len2 = dx * dx + dy2 * dy2;
+        float t = ((wx - c->from.x) * dx + (wz - c->from.y) * dy2) / len2;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        float cx = c->from.x + t * dx;
+        float cz = c->from.y + t * dy2;
+        float d2 = (wx - cx) * (wx - cx) + (wz - cz) * (wz - cz);
+        if (d2 <= hw * hw) return 1;
+    }
+    return 0;
+}
+
 /* ── Room rasterization ─────────────────────────────────────────── */
 
 /**
@@ -178,16 +200,21 @@ static int point_in_polygon(const vec3_t *vertices,
  *
  * Coordinates are remapped from layout Z-up to engine Y-up inside
  * the voxel coordinate conversion.
+ *
+ * If @p layout is non-NULL, corridor overlap is checked: room wall
+ * voxels that fall inside any corridor are skipped so the corridor
+ * pass (which runs afterwards) fills the gap.
  */
 static uint32_t rasterize_room(npc_svo_grid_t       *grid,
                                float                 min_x,
                                float                 max_x,
-                               float                 min_y,    /* layout Y → engine Z */
+                               float                 min_y,
                                float                 max_y,
-                               float                 floor_z,  /* layout Z → engine Y */
+                               float                 floor_z,
                                float                 ceil_z,
                                const vec3_t         *polygon_vertices,
-                               uint32_t              vertex_count) {
+                               uint32_t              vertex_count,
+                               const fr_dungeon_layout_t *layout) {
     uint32_t block_size  = 1u << RASTER_BLOCK_SHIFT;
     float    block_world = grid->voxel_size * (float)block_size;
     float    max_coord   = (float)(1u << grid->max_depth);
@@ -254,11 +281,17 @@ static uint32_t rasterize_room(npc_svo_grid_t       *grid,
             float pz = y1 + t * dy;  /* layout Y → engine Z */
 
             uint32_t wall_vx, wall_vy, wall_vz;
-            uint32_t wall_vx2, wall_vy2, wall_vz2;
             world_to_voxel(grid, px, floor_z, pz, &wall_vx, &wall_vy, &wall_vz);
-            world_to_voxel(grid, px, ceil_z,  pz, &wall_vx2, &wall_vy2, &wall_vz2);
 
-            for (uint32_t y = wall_vy; y <= wall_vy2; y += block_size) {
+            /* Use same floor/ceiling levels as slabs for seamless join. */
+            for (uint32_t y = vy_min; y <= ceiling_vy; y += block_size) {
+                /* Skip wall voxels that fall inside a corridor —
+                   the corridor pass fills the gap. */
+                if (point_in_corridor(layout,
+                    grid->world_bounds.min.x + (float)wall_vx * grid->voxel_size,
+                    grid->world_bounds.min.y + (float)y * grid->voxel_size,
+                    grid->world_bounds.min.z + (float)wall_vz * grid->voxel_size))
+                    continue;
                 svo_mark_block(grid, wall_vx, y, wall_vz, block_size, MAT_WOOD);
                 marked++;
             }
@@ -435,7 +468,8 @@ uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,
                                        y_min, y_max,
                                        room->floor_z, room->ceil_z,
                                        room->vertices,
-                                       room->vertex_count);
+                                       room->vertex_count,
+                                       layout);
     }
 
     /* Corridors. */

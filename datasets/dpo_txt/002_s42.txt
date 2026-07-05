@@ -1,12 +1,28 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=start_room
-CORRIDOR_H from=(10,5) to=(20,5) w=5 floor_z=0 ceil_z=5
-DOOR at=(10,5)
-ROOM_QUAD x=25 y=0 w=20 h=15 floor_z=0 ceil_z=5 name=middle_room
-CORRIDOR_H from=(45,7.5) to=(55,7.5) w=5 floor_z=0 ceil_z=5
-DOOR at=(45,7.5)
-ROOM_QUAD x=60 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=end_room
-SPAWN x=5 y=5 z=2.5
-MARKER x=5 y=5 z=2.5 name=start_marker
-MARKER x=35 y=7.5 z=2.5 name=middle_marker
-MARKER x=65 y=5 z=2.5 name=end_marker
+SPAWN x=0 y=0 z=0
+ROOM_QUAD x=-20 y=-20 w=40 h=40 floor_z=0 ceil_z=8 name=central_hub
+ROOM_QUAD x=-20 y=20 w=15 h=15 floor_z=0 ceil_z=8 name=north_wing
+ROOM_QUAD x=5 y=20 w=15 h=15 floor_z=0 ceil_z=8 name=north_east_wing
+ROOM_QUAD x=-20 y=-20 w=15 h=15 floor_z=8 ceil_z=16 name=south_west_platform
+ROOM_QUAD x=20 y=-20 w=15 h=15 floor_z=8 ceil_z=16 name=south_east_platform
+CORRIDOR_H from=(-20,0) to=(20,0) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(0,-20) to=(0,20) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(-20,0) to=(-20,20) w=5 floor_z=0 ceil_z=8
+CORRIDOR_H from=(-20,20) to=(5,20) w=5 floor_z=0 ceil_z=8
+CORRIDOR_H from=(5,20) to=(20,20) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(-20,-20) to=(-20,0) w=5 floor_z=0 ceil_z=8
+CORRIDOR_V from=(20,-20) to=(20,0) w=5 floor_z=0 ceil_z=8
+RAMP_UP from=(-20,0) to=(-20,10) dz=8 w=5
+RAMP_UP from=(20,0) to=(20,10) dz=8 w=5
+DOOR at=(-20,0)
+DOOR at=(0,-20)
+DOOR at=(-20,20)
+DOOR at=(-20,0)
+DOOR at=(5,20)
+DOOR at=(-20,-20)
+DOOR at=(20,-20)
+MARKER x=0 y=0 z=4 name=central_hub_marker
+MARKER x=-20 y=20 z=4 name=north_wing_marker
+MARKER x=20 y=-20 z=12 name=south_east_platform_marker
+MARKER x=-20 y=-20 z=12 name=south_west_platform_marker
+MARKER x=12.5 y=20 z=4 name=north_east_wing_marker

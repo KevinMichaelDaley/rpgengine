@@ -169,7 +169,9 @@ static void chunk_line_mark(procgen_chunk_grid_t *grid,
     int z_min = (int)floorf(fminf(y1, y2) - fabsf(perp_y) - hw);
     int z_max = (int)ceilf(fmaxf(y1, y2) + fabsf(perp_y) + hw);
 
-    for (int fy = (int)floorf(floor_z); fy <= (int)ceilf(ceil_z); fy++) {
+    int iz_min = (int)floorf(floor_z), iz_max = (int)ceilf(ceil_z);
+
+    for (int fy = iz_min; fy <= iz_max; fy++) {
         for (int wz = z_min; wz <= z_max; wz++) {
             for (int wx = x_min; wx <= x_max; wx++) {
                 float px = (float)wx + 0.5f;
@@ -183,13 +185,42 @@ static void chunk_line_mark(procgen_chunk_grid_t *grid,
                 float dist2 = (px - cx)*(px - cx) + (pz - cz)*(pz - cz);
 
                 if (dist2 <= hw * hw) {
-                    chunk_mark(grid,
-                               procgen_chunk_grid_chunk_at(grid, (float)wx, (float)fy, (float)wz),
-                               (float)wx, (float)fy, (float)wz, mat);
+                    /* Only mark floor, ceiling, and the two lateral edges.
+                       Leave interior hollow so it cuts through rooms. */
+                    int on_floor   = (fy == iz_min);
+                    int on_ceiling = (fy == iz_max);
+                    int on_edge    = (wz == z_min || wz == z_max
+                                      || wx == x_min || wx == x_max);
+                    if (!on_floor && !on_ceiling && !on_edge) continue;
+
+                    int ci = procgen_chunk_grid_chunk_at(grid, (float)wx, (float)fy, (float)wz);
+                    if (ci >= 0) {
+                        chunk_mark(grid, ci, (float)wx, (float)fy, (float)wz, mat);
+                    }
                 }
             }
         }
     }
+}
+
+static int is_in_corridor(const fr_dungeon_layout_t *layout,
+                          float wx, float wy, float wz) {
+    for (uint32_t ci = 0; ci < layout->corridor_count; ci++) {
+        const fr_corridor_def_t *c = &layout->corridors[ci];
+        float hw = c->width * 0.5f;
+        if (wy < c->floor_z || wy > c->ceil_z) continue;
+        float dx = c->to.x - c->from.x;
+        float dy2 = c->to.y - c->from.y;
+        float len2 = dx * dx + dy2 * dy2;
+        float t = ((wx - c->from.x) * dx + (wz - c->from.y) * dy2) / len2;
+        if (t < 0.0f) t = 0.0f;
+        if (t > 1.0f) t = 1.0f;
+        float cx = c->from.x + t * dx;
+        float cz = c->from.y + t * dy2;
+        float d2 = (wx - cx) * (wx - cx) + (wz - cz) * (wz - cz);
+        if (d2 <= hw * hw) return 1;
+    }
+    return 0;
 }
 
 /* ── Public API ─────────────────────────────────────────────────── */
@@ -199,6 +230,8 @@ uint32_t procgen_chunk_grid_build(procgen_chunk_grid_t       *grid,
     if (!grid || !layout) return 0;
     uint32_t active = 0;
 
+    /* Pass 1: rooms — skip voxels that fall inside corridors.
+       The corridor surfaces will fill the gap in pass 2. */
     for (uint32_t ri = 0; ri < layout->room_count; ri++) {
         const fr_room_def_t *r = &layout->rooms[ri];
         float xmin = r->vertices[0].x, xmax = xmin;
@@ -209,13 +242,20 @@ uint32_t procgen_chunk_grid_build(procgen_chunk_grid_t       *grid,
             if (r->vertices[j].y < ymin) ymin = r->vertices[j].y;
             if (r->vertices[j].y > ymax) ymax = r->vertices[j].y;
         }
-        /* Mark room solid blocks: floor, ceiling, walls — whole volume. */
         int ix_min = (int)floorf(xmin), ix_max = (int)ceilf(xmax);
         int iy_min = (int)floorf(ymin), iy_max = (int)ceilf(ymax);
         int iz_min = (int)floorf(r->floor_z), iz_max = (int)ceilf(r->ceil_z);
+
         for (int fy = iz_min; fy <= iz_max; fy++) {
             for (int wz = iy_min; wz <= iy_max; wz++) {
                 for (int wx = ix_min; wx <= ix_max; wx++) {
+                    int on_floor   = (fy == iz_min);
+                    int on_ceiling = (fy == iz_max);
+                    int on_wall    = (wx == ix_min || wx == ix_max
+                                      || wz == iy_min || wz == iy_max);
+                    if (!on_floor && !on_ceiling && !on_wall) continue;
+                    /* Skip positions that fall inside any corridor. */
+                    if (is_in_corridor(layout, (float)wx, (float)fy, (float)wz)) continue;
                     int ci = procgen_chunk_grid_chunk_at(grid, (float)wx, (float)fy, (float)wz);
                     if (ci >= 0) {
                         chunk_mark(grid, ci, (float)wx, (float)fy, (float)wz, 1);
@@ -226,6 +266,7 @@ uint32_t procgen_chunk_grid_build(procgen_chunk_grid_t       *grid,
         }
     }
 
+    /* Pass 2: corridors — fill the gaps left by pass 1. */
     for (uint32_t ci = 0; ci < layout->corridor_count; ci++) {
         const fr_corridor_def_t *c = &layout->corridors[ci];
         chunk_line_mark(grid, c->from.x, c->from.y, c->to.x, c->to.y,

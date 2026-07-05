@@ -1,13 +1,37 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=entrance
-ROOM_QUAD x=20 y=0 w=8 h=8 floor_z=0 ceil_z=5 name=treasure_chamber
-ROOM_QUAD x=20 y=10 w=6 h=6 floor_z=0 ceil_z=5 name=shrine
-CORRIDOR_H from=(5,0) to=(20,0) w=2 floor_z=0 ceil_z=5
-CORRIDOR_H from=(20,4) to=(20,10) w=2 floor_z=0 ceil_z=5
-DOOR at=(5,0)
-DOOR at=(20,4)
-DOOR at=(20,10)
-SPAWN x=5 y=5 z=2.5
-MARKER x=0 y=0 z=2.5 name=entrance_marker
-MARKER x=28 y=0 z=2.5 name=treasure_marker
-MARKER x=23 y=16 z=2.5 name=shrine_marker
+ROOM_QUAD x=0 y=0 w=20 h=16 floor_z=0 ceil_z=6 name=entry_hall
+ROOM_QUAD x=25 y=0 w=15 h=12 floor_z=0 ceil_z=5 name=storage_1
+ROOM_QUAD x=0 y=20 w=18 h=14 floor_z=0 ceil_z=7 name=antechamber
+ROOM_QUAD x=25 y=20 w=16 h=16 floor_z=0 ceil_z=6 name=guard_room
+CORRIDOR_H from=(20,8) to=(25,8) w=4 floor_z=0 ceil_z=6
+DOOR at=(20,8)
+DOOR at=(25,8)
+CORRIDOR_V from=(12.5,16) to=(12.5,20) w=4 floor_z=0 ceil_z=7
+DOOR at=(12.5,16)
+DOOR at=(12.5,20)
+RAMP_UP from=(10,10) to=(10,10) dz=6 w=4
+ROOM_QUAD x=0 y=0 w=20 h=16 floor_z=6 ceil_z=12 name=upper_hall
+ROOM_QUAD x=25 y=0 w=15 h=12 floor_z=6 ceil_z=11 name=armory
+ROOM_QUAD x=0 y=20 w=18 h=14 floor_z=6 ceil_z=13 name=chapel
+ROOM_QUAD x=25 y=20 w=16 h=16 floor_z=6 ceil_z=12 name=library
+CORRIDOR_H from=(20,8) to=(25,8) w=4 floor_z=6 ceil_z=12
+DOOR at=(20,8)
+DOOR at=(25,8)
+CORRIDOR_V from=(12.5,16) to=(12.5,20) w=4 floor_z=6 ceil_z=13
+DOOR at=(12.5,16)
+DOOR at=(12.5,20)
+RAMP_UP from=(10,10) to=(10,10) dz=6 w=4
+ROOM_QUAD x=0 y=0 w=20 h=16 floor_z=12 ceil_z=18 name=summit_hall
+ROOM_QUAD x=25 y=0 w=15 h=12 floor_z=12 ceil_z=17 name=observatory
+ROOM_QUAD x=0 y=20 w=18 h=14 floor_z=12 ceil_z=19 name=altar_room
+ROOM_QUAD x=25 y=20 w=16 h=16 floor_z=12 ceil_z=18 name=throne_room
+CORRIDOR_H from=(20,8) to=(25,8) w=4 floor_z=12 ceil_z=18
+DOOR at=(20,8)
+DOOR at=(25,8)
+CORRIDOR_V from=(12.5,16) to=(12.5,20) w=4 floor_z=12 ceil_z=19
+DOOR at=(12.5,16)
+DOOR at=(12.5,20)
+SPAWN x=10 y=8 z=0
+MARKER x=0 y=0 z=0 name=entrance_marker
+MARKER x=25 y=20 z=12 name=throne_marker
+MARKER x=10 y=8 z=18 name=summit_marker

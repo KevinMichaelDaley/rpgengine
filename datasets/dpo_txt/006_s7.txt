@@ -1,16 +1,34 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=corner_room
-CORRIDOR_H from=(10,0) to=(30,0) w=5 floor_z=0 ceil_z=5
-CORRIDOR_V from=(30,0) to=(30,20) w=5 floor_z=0 ceil_z=5
-ROOM_QUAD x=30 y=20 w=10 h=10 floor_z=0 ceil_z=5 name=east_wing
-ROOM_QUAD x=0 y=10 w=10 h=10 floor_z=0 ceil_z=5 name=north_wing
-DOOR at=(10,0)
-DOOR at=(30,0)
-DOOR at=(30,20)
-DOOR at=(30,15)
-DOOR at=(10,10)
-DOOR at=(5,10)
-SPAWN x=5 y=5 z=2.5
-MARKER x=0 y=0 z=2.5 name=start
-MARKER x=40 y=0 z=2.5 name=east_end
-MARKER x=30 y=30 z=2.5 name=north_end
+ROOM_QUAD x=0 y=0 w=30 h=30 floor_z=0 ceil_z=15 name=main_chamber
+ROOM_QUAD x=-15 y=15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_north
+ROOM_QUAD x=15 y=15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_east
+ROOM_QUAD x=-15 y=-15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_west
+ROOM_QUAD x=15 y=-15 w=10 h=10 floor_z=0 ceil_z=8 name=chapel_south
+ROOM_QUAD x=0 y=40 w=10 h=10 floor_z=20 ceil_z=30 name=bell_tower
+CORRIDOR_V from=(0,15) to=(0,30) w=5 floor_z=0 ceil_z=15
+DOOR at=(0,15)
+DOOR at=(0,30)
+CORRIDOR_H from=(-15,15) to=(15,15) w=5 floor_z=0 ceil_z=8
+DOOR at=(-15,15)
+DOOR at=(15,15)
+CORRIDOR_H from=(-15,-15) to=(15,-15) w=5 floor_z=0 ceil_z=8
+DOOR at=(-15,-15)
+DOOR at=(15,-15)
+CORRIDOR_V from=(-15,0) to=(-15,15) w=5 floor_z=0 ceil_z=8
+DOOR at=(-15,15)
+DOOR at=(-15,0)
+CORRIDOR_V from=(15,0) to=(15,15) w=5 floor_z=0 ceil_z=8
+DOOR at=(15,15)
+DOOR at=(15,0)
+RAMP_DOWN from=(0,-10) to=(0,-15) dz=10 w=5
+DOOR at=(0,-10)
+ROOM_QUAD x=0 y=-25 w=15 h=15 floor_z=-10 ceil_z=-5 name=crypt
+DOOR at=(0,-15)
+CORRIDOR_V from=(0,30) to=(0,40) w=5 floor_z=15 ceil_z=20
+DOOR at=(0,30)
+DOOR at=(0,40)
+SPAWN x=0 y=0 z=1
+MARKER x=0 y=0 z=1 name=center_hall
+MARKER x=-15 y=15 z=4 name=chapel_nw_entrance
+MARKER x=0 y=45 z=25 name=bell_tower_top
+MARKER x=0 y=-25 z=-7 name=crypt_floor

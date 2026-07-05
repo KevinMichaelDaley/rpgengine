@@ -1,14 +1,59 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=entrance
-ROOM_QUAD x=20 y=0 w=8 h=8 floor_z=0 ceil_z=5 name=treasure_chamber
-ROOM_QUAD x=20 y=10 w=6 h=6 floor_z=0 ceil_z=5 name=shrine
-CORRIDOR_H from=(10,5) to=(20,5) w=2 floor_z=0 ceil_z=5
-CORRIDOR_V from=(23,8) to=(23,10) w=2 floor_z=0 ceil_z=5
-DOOR at=(10,5)
-DOOR at=(20,5)
-DOOR at=(23,8)
-DOOR at=(23,10)
-SPAWN x=5 y=5 z=2.5
-MARKER x=0 y=0 z=2.5 name=entrance_marker
-MARKER x=24 y=4 z=2.5 name=treasure_marker
-MARKER x=23 y=13 z=2.5 name=shrine_marker
+BLOCK
+ROOM_QUAD x=0 y=0 w=20 h=16 floor_z=0 ceil_z=6 name=ground_floor_entry
+ROOM_QUAD x=25 y=0 w=15 h=12 floor_z=0 ceil_z=5 name=ground_floor_storage
+ROOM_QUAD x=0 y=20 w=18 h=14 floor_z=0 ceil_z=7 name=ground_floor_hall
+ROOM_QUAD x=25 y=20 w=16 h=16 floor_z=0 ceil_z=6 name=ground_floor_guard
+CORRIDOR_H from=(20,8) to=(25,8) w=4 floor_z=0 ceil_z=6
+DOOR at=(20,8)
+DOOR at=(25,8)
+CORRIDOR_V from=(10,16) to=(10,20) w=4 floor_z=0 ceil_z=7
+DOOR at=(10,16)
+DOOR at=(10,20)
+ROOM_QUAD x=50 y=0 w=20 h=16 floor_z=6 ceil_z=12 name=mid_floor_landing
+ROOM_QUAD x=75 y=0 w=15 h=12 floor_z=6 ceil_z=10 name=mid_floor_armory
+ROOM_QUAD x=50 y=20 w=18 h=14 floor_z=6 ceil_z=13 name=mid_floor_library
+ROOM_QUAD x=75 y=20 w=16 h=16 floor_z=6 ceil_z=11 name=mid_floor_study
+CORRIDOR_H from=(70,8) to=(75,8) w=4 floor_z=6 ceil_z=12
+DOOR at=(70,8)
+DOOR at=(75,8)
+CORRIDOR_V from=(60,16) to=(60,20) w=4 floor_z=6 ceil_z=13
+DOOR at=(60,16)
+DOOR at=(60,20)
+RAMP_UP from=(10,10) to=(50,10) dz=6 w=4
+DOOR at=(10,10)
+DOOR at=(50,10)
+ROOM_QUAD x=100 y=0 w=20 h=16 floor_z=12 ceil_z=18 name=top_floor_balcony
+ROOM_QUAD x=125 y=0 w=15 h=12 floor_z=12 ceil_z=15 name=top_floor_observatory
+ROOM_QUAD x=100 y=20 w=18 h=14 floor_z=12 ceil_z=20 name=top_floor_altar
+ROOM_QUAD x=125 y=20 w=16 h=16 floor_z=12 ceil_z=17 name=top_floor_chamber
+CORRIDOR_H from=(120,8) to=(125,8) w=4 floor_z=12 ceil_z=18
+DOOR at=(120,8)
+DOOR at=(125,8)
+CORRIDOR_V from=(110,16) to=(110,20) w=4 floor_z=12 ceil_z=20
+DOOR at=(110,16)
+DOOR at=(110,20)
+RAMP_UP from=(60,10) to=(100,10) dz=6 w=4
+DOOR at=(60,10)
+DOOR at=(100,10)
+SPAWN x=10 y=8 z=0
+MARKER x=10 y=8 z=0 name=ground_spawn
+MARKER x=60 y=10 z=6 name=mid_stair_top
+MARKER x=100 y=10 z=12 name=top_stair_top
+MARKER x=110 y=10 z=12 name=top_hall_marker
+MARKER x=125 y=10 z=12 name=top_observatory_marker
+MARKER x=125 y=10 z=0 name=ground_storage_marker
+MARKER x=75 y=10 z=6 name=mid_armory_marker
+MARKER x=125 y=10 z=12 name=top_observatory_marker
+BLOCK
+ROOM_QUAD x=10 y=8 w=4 h=4 floor_z=0 ceil_z=6 name=stair_room_ground
+ROOM_QUAD x=60 y=10 w=4 h=4 floor_z=6 ceil_z=12 name=stair_room_mid
+ROOM_QUAD x=100 y=10 w=4 h=4 floor_z=12 ceil_z=18 name=stair_room_top
+RAMP_UP from=(12,10) to=(62,10) dz=6 w=4
+DOOR at=(12,10)
+DOOR at=(62,10)
+RAMP_UP from=(62,10) to=(102,10) dz=6 w=4
+DOOR at=(62,10)
+DOOR at=(102,10)
+EBLOCK
+EBLOCK

@@ -1,12 +1,25 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=start_room
-CORRIDOR_H from=(10,5) to=(20,5) w=2 floor_z=0 ceil_z=5
-DOOR at=(10,5)
-ROOM_QUAD x=22 y=0 w=15 h=15 floor_z=0 ceil_z=5 name=middle_room
-CORRIDOR_H from=(37,7.5) to=(47,7.5) w=2 floor_z=0 ceil_z=5
-DOOR at=(37,7.5)
-ROOM_QUAD x=49 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=end_room
-SPAWN x=5 y=5 z=2.5
-MARKER x=5 y=5 z=2.5 name=start_marker
-MARKER x=30 y=7.5 z=2.5 name=middle_marker
-MARKER x=54 y=5 z=2.5 name=end_marker
+ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=6 name=central_hub
+ROOM_QUAD x=-25 y=0 w=15 h=15 floor_z=0 ceil_z=6 name=crypt_chamber_1
+ROOM_QUAD x=25 y=0 w=15 h=15 floor_z=0 ceil_z=6 name=crypt_chamber_2
+ROOM_QUAD x=0 y=-25 w=15 h=15 floor_z=6 ceil_z=12 name=crypt_chamber_3
+ROOM_QUAD x=0 y=25 w=15 h=15 floor_z=6 ceil_z=12 name=crypt_chamber_4
+CORRIDOR_H from=(-20,0) to=(-10,0) w=4 floor_z=0 ceil_z=6
+DOOR at=(-10,0)
+CORRIDOR_H from=(10,0) to=(20,0) w=4 floor_z=0 ceil_z=6
+DOOR at=(10,0)
+CORRIDOR_V from=(0,-10) to=(0,-20) w=4 floor_z=0 ceil_z=6
+DOOR at=(0,-10)
+CORRIDOR_V from=(0,10) to=(0,20) w=4 floor_z=0 ceil_z=6
+DOOR at=(0,10)
+RAMP_UP from=(-10,0) to=(0,-15) dz=6 w=4
+DOOR at=(-10,0)
+DOOR at=(0,-15)
+RAMP_UP from=(10,0) to=(0,15) dz=6 w=4
+DOOR at=(10,0)
+DOOR at=(0,15)
+SPAWN x=0 y=0 z=3
+MARKER x=-25 y=0 z=3 name=crypt_entrance
+MARKER x=0 y=-25 z=9 name=altar_room
+MARKER x=0 y=25 z=9 name=treasure_vault
+MARKER x=25 y=0 z=3 name=burial_hall

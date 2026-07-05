@@ -1,10 +1,42 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=50 h=40 floor_z=0 ceil_z=10 name=main_hall
-MARKER x=10 y=10 z=0 name=pillar_1
-MARKER x=40 y=10 z=0 name=pillar_2
-MARKER x=10 y=30 z=0 name=pillar_3
-MARKER x=40 y=30 z=0 name=pillar_4
-SPAWN x=25 y=20 z=5
-MARKER x=0 y=0 z=0 name=entrance_marker
-MARKER x=50 y=40 z=0 name=exit_marker
-MARKER x=25 y=0 z=0 name=north_wall_marker
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=mine_entrance
+ROOM_PENT floor_z=0 ceil_z=5 name=ore_vein_1
+ROOM_QUAD x=20 y=0 w=15 h=15 floor_z=0 ceil_z=7 name=main_chamber
+ROOM_QUAD x=40 y=10 w=25 h=20 floor_z=5 ceil_z=10 name=great_cavern_1
+ROOM_QUAD x=60 y=30 w=20 h=20 floor_z=10 ceil_z=15 name=great_cavern_2
+ROOM_QUAD x=80 y=10 w=10 h=10 floor_z=15 ceil_z=20 name=deep_shaft_top
+ROOM_QUAD x=80 y=10 w=10 h=10 floor_z=20 ceil_z=30 name=deep_shaft_bottom
+CORRIDOR_H from=(10,5) to=(20,5) w=3 floor_z=0 ceil_z=5
+DOOR at=(10,5)
+DOOR at=(20,5)
+CORRIDOR_V from=(35,15) to=(35,25) w=3 floor_z=0 ceil_z=5
+DOOR at=(35,15)
+DOOR at=(35,25)
+CORRIDOR_DIAG from=(35,25) to=(40,10) w=3 floor_z=5 ceil_z=10
+DOOR at=(35,25)
+DOOR at=(40,10)
+CORRIDOR_H from=(65,30) to=(80,30) w=4 floor_z=10 ceil_z=15
+DOOR at=(65,30)
+DOOR at=(80,30)
+CORRIDOR_V from=(80,30) to=(80,20) w=4 floor_z=15 ceil_z=20
+DOOR at=(80,30)
+DOOR at=(80,20)
+CORRIDOR_V from=(80,20) to=(80,10) w=4 floor_z=20 ceil_z=30
+DOOR at=(80,20)
+DOOR at=(80,10)
+RAMP_UP from=(5,5) to=(15,5) dz=5 w=3
+DOOR at=(5,5)
+DOOR at=(15,5)
+RAMP_UP from=(30,15) to=(35,20) dz=5 w=3
+DOOR at=(30,15)
+DOOR at=(35,20)
+RAMP_UP from=(55,30) to=(65,30) dz=5 w=4
+DOOR at=(55,30)
+DOOR at=(65,30)
+RAMP_UP from=(70,10) to=(80,10) dz=5 w=4
+DOOR at=(70,10)
+DOOR at=(80,10)
+SPAWN x=5 y=5 z=0
+MARKER x=0 y=0 z=0 name=mine_entrance_marker
+MARKER x=40 y=10 z=5 name=great_cavern_1_marker
+MARKER x=80 y=10 z=30 name=deepest_point_marker

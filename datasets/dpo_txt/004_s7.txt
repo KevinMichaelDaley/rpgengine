@@ -1,10 +1,24 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=player_start
-ROOM_QUAD x=0 y=15 w=10 h=10 floor_z=5 ceil_z=10 name=boss_arena
-RAMP_UP from=(5,5) to=(5,12) dz=5 w=2
-SPAWN x=5 y=5 z=0
-MARKER x=5 y=5 z=0 name=start_point
-MARKER x=5 y=17.5 z=7.5 name=boss_approach
-MARKER x=5 y=5 z=2.5 name=mid_point
-DOOR at=(5,10)
-DOOR at=(5,15)
+ROOM_QUAD x=0 y=0 w=40 h=30 floor_z=0 ceil_z=10 name=great_hall
+ROOM_QUAD x=10 y=40 w=20 h=15 floor_z=10 ceil_z=15 name=barracks_east
+ROOM_QUAD x=10 y=-15 w=20 h=15 floor_z=10 ceil_z=15 name=barracks_west
+ROOM_QUAD x=10 y=10 w=20 h=10 floor_z=-5 ceil_z=2 name=dungeon_cell
+CORRIDOR_V from=(20,15) to=(20,35) w=5 floor_z=10 ceil_z=10
+CORRIDOR_V from=(20,0) to=(20,10) w=5 floor_z=0 ceil_z=0
+CORRIDOR_H from=(10,40) to=(30,40) w=5 floor_z=10 ceil_z=10
+CORRIDOR_H from=(10,-15) to=(30,-15) w=5 floor_z=10 ceil_z=10
+CORRIDOR_V from=(20,10) to=(20,-5) w=5 floor_z=2 ceil_z=2
+DOOR at=(20,10)
+DOOR at=(20,35)
+DOOR at=(10,40)
+DOOR at=(30,40)
+DOOR at=(10,-15)
+DOOR at=(30,-15)
+DOOR at=(20,-5)
+RAMP_UP from=(20,15) to=(20,35) dz=10 w=5
+RAMP_DOWN from=(20,0) to=(20,10) dz=10 w=5
+RAMP_UP from=(20,10) to=(20,-5) dz=-7 w=5
+SPAWN x=20 y=15 z=0
+MARKER x=20 y=15 z=0 name=hall_center
+MARKER x=20 y=40 z=10 name=barracks_junction
+MARKER x=20 y=-15 z=10 name=dungeon_entrance

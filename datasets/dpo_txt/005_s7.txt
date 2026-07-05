@@ -1,22 +1,49 @@
 @grammar blockout v1
-ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=6 name=arena
-ROOM_QUAD x=0 y=23 w=6 h=6 floor_z=0 ceil_z=6 name=north_room
-ROOM_QUAD x=0 y=-26 w=6 h=6 floor_z=0 ceil_z=6 name=south_room
-ROOM_QUAD x=23 y=0 w=6 h=6 floor_z=0 ceil_z=6 name=east_room
-ROOM_QUAD x=-26 y=0 w=6 h=6 floor_z=0 ceil_z=6 name=west_room
-CORRIDOR_V from=(0,10) to=(0,23) w=4 floor_z=0 ceil_z=6
-DOOR at=(0,20)
-DOOR at=(0,23)
-CORRIDOR_V from=(0,-10) to=(0,-23) w=4 floor_z=0 ceil_z=6
-DOOR at=(0,-20)
-DOOR at=(0,-23)
-CORRIDOR_H from=(10,0) to=(23,0) w=4 floor_z=0 ceil_z=6
+SPAWN x=10 y=10 z=0
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=start_room
+ROOM_QUAD x=20 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=hallway_room
+ROOM_QUAD x=30 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=junction_room
+ROOM_QUAD x=40 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=dead_end_room
+ROOM_QUAD x=20 y=20 w=10 h=10 floor_z=0 ceil_z=5 name=upper_room
+ROOM_QUAD x=30 y=30 w=10 h=10 floor_z=0 ceil_z=5 name=platform_room
+ROOM_QUAD x=40 y=20 w=10 h=10 floor_z=-5 ceil_z=0 name=sunken_room_1
+ROOM_QUAD x=0 y=20 w=10 h=10 floor_z=-5 ceil_z=0 name=sunken_room_2
+CORRIDOR_H from=(10,0) to=(20,0) w=2 floor_z=0 ceil_z=5
+DOOR at=(10,0)
 DOOR at=(20,0)
-DOOR at=(23,0)
-CORRIDOR_H from=(-10,0) to=(-23,0) w=4 floor_z=0 ceil_z=6
-DOOR at=(-20,0)
-DOOR at=(-23,0)
-SPAWN x=0 y=0 z=3
-MARKER x=0 y=0 z=3 name=center
-MARKER x=0 y=26 z=3 name=north_exit
-MARKER x=0 y=-26 z=3 name=south_exit
+CORRIDOR_V from=(30,0) to=(30,10) w=2 floor_z=0 ceil_z=5
+DOOR at=(30,10)
+CORRIDOR_H from=(30,10) to=(40,10) w=2 floor_z=0 ceil_z=5
+DOOR at=(30,10)
+DOOR at=(40,10)
+CORRIDOR_V from=(30,10) to=(30,20) w=2 floor_z=0 ceil_z=5
+DOOR at=(30,20)
+CORRIDOR_H from=(30,20) to=(40,20) w=2 floor_z=0 ceil_z=5
+DOOR at=(30,20)
+DOOR at=(40,20)
+CORRIDOR_V from=(30,20) to=(30,30) w=2 floor_z=0 ceil_z=5
+DOOR at=(30,30)
+CORRIDOR_H from=(30,30) to=(40,30) w=2 floor_z=0 ceil_z=5
+DOOR at=(30,30)
+DOOR at=(40,30)
+CORRIDOR_V from=(20,10) to=(20,20) w=2 floor_z=0 ceil_z=5
+DOOR at=(20,10)
+DOOR at=(20,20)
+CORRIDOR_H from=(0,10) to=(10,10) w=2 floor_z=-5 ceil_z=0
+DOOR at=(0,10)
+DOOR at=(10,10)
+CORRIDOR_V from=(10,10) to=(10,0) w=2 floor_z=-5 ceil_z=0
+DOOR at=(10,0)
+DOOR at=(10,10)
+CORRIDOR_H from=(10,10) to=(20,10) w=2 floor_z=-5 ceil_z=0
+DOOR at=(10,10)
+DOOR at=(20,10)
+CORRIDOR_V from=(20,10) to=(20,0) w=2 floor_z=-5 ceil_z=0
+DOOR at=(20,0)
+DOOR at=(20,10)
+RAMP_UP from=(20,0) to=(20,10) dz=5 w=2
+RAMP_DOWN from=(20,10) to=(20,0) dz=-5 w=2
+MARKER x=0 y=0 z=0 name=start_marker
+MARKER x=40 y=30 z=5 name=treasure_room_marker
+MARKER x=40 y=0 z=0 name=dead_end_marker
+MARKER x=0 y=20 z=-5 name=sunken_marker
