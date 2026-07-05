@@ -1856,7 +1856,11 @@ PROCGEN_TESTS += build/srd_build_test
 build/srd_energy_tests: tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) | build
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_energy_tests.cpp $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
 
+build/srd_m1_smoke: tests/procgen/srd/srd_m1_smoke.cpp $(OBJDIR)/src/procgen/procgen_ascii_parse.o $(OBJDIR)/src/procgen/procgen_srd_types.o | build
+	$(CXX) $(CFLAGS) -std=c++17 tests/procgen/srd/srd_m1_smoke.cpp $(OBJDIR)/src/procgen/procgen_ascii_parse.o $(OBJDIR)/src/procgen/procgen_srd_types.o -o $@ -lm
+
 PROCGEN_TESTS += build/srd_energy_tests
+PROCGEN_TESTS += build/srd_m1_smoke
 PROCGEN_TESTS += build/procgen_ascii_parse_tests
 
 procgen: build/libheadless.a $(SYMX_LIB)
