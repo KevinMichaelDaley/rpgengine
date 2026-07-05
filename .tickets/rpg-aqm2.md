@@ -1,6 +1,6 @@
 ---
 id: rpg-aqm2
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-04T20:41:07Z

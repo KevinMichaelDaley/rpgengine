@@ -1,6 +1,6 @@
 ---
 id: rpg-rvtw
-status: open
+status: closed
 deps: [rpg-gc2a]
 links: []
 created: 2026-07-04T20:41:08Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-bux3
-status: open
+status: closed
 deps: [rpg-ynd4]
 links: []
 created: 2026-07-04T20:39:26Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-0i0y
-status: open
+status: closed
 deps: [rpg-bux3]
 links: []
 created: 2026-07-04T20:39:26Z

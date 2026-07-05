@@ -1,6 +1,6 @@
 ---
 id: rpg-wksd
-status: open
+status: closed
 deps: [rpg-8sc6]
 links: []
 created: 2026-07-04T20:40:15Z

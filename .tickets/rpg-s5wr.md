@@ -1,6 +1,6 @@
 ---
 id: rpg-s5wr
-status: open
+status: closed
 deps: [rpg-wksd, rpg-hbng, rpg-ry2l, rpg-zl24, rpg-n8ay]
 links: []
 created: 2026-07-04T20:40:15Z

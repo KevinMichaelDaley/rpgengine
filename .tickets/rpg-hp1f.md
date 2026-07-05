@@ -1,6 +1,6 @@
 ---
 id: rpg-hp1f
-status: open
+status: closed
 deps: [rpg-0d3z, rpg-dquq]
 links: []
 created: 2026-07-04T20:40:15Z

@@ -1,6 +1,6 @@
 ---
 id: rpg-8sc6
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-04T20:39:26Z

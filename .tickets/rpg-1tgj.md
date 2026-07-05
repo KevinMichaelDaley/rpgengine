@@ -1,6 +1,6 @@
 ---
 id: rpg-1tgj
-status: open
+status: closed
 deps: [rpg-oxnh]
 links: []
 created: 2026-07-04T20:41:07Z

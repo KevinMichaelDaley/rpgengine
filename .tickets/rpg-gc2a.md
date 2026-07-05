@@ -1,6 +1,6 @@
 ---
 id: rpg-gc2a
-status: open
+status: closed
 deps: [rpg-o9fl, rpg-bdrv, rpg-6p4q, rpg-npzr, rpg-uzd4, rpg-8sc6, rpg-fizd, rpg-oxnh]
 links: []
 created: 2026-07-04T20:41:08Z

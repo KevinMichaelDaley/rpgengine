@@ -1,6 +1,6 @@
 ---
 id: rpg-lhji
-status: open
+status: closed
 deps: [rpg-ynd4, rpg-bux3, rpg-0i0y, rpg-9ug6, rpg-kj6t]
 links: []
 created: 2026-07-04T20:39:26Z

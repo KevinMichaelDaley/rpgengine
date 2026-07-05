@@ -1,6 +1,6 @@
 ---
 id: rpg-0d3z
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-04T20:40:15Z

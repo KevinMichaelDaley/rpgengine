@@ -1,6 +1,6 @@
 ---
 id: rpg-a46u
-status: open
+status: closed
 deps: [rpg-nhjk, rpg-q6x7, rpg-1tgj, rpg-81mp]
 links: []
 created: 2026-07-04T20:41:07Z

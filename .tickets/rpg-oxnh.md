@@ -1,6 +1,6 @@
 ---
 id: rpg-oxnh
-status: open
+status: closed
 deps: [rpg-8sc6, rpg-fizd]
 links: []
 created: 2026-07-04T20:40:15Z

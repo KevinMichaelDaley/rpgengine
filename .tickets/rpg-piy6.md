@@ -1,6 +1,6 @@
 ---
 id: rpg-piy6
-status: open
+status: closed
 deps: [rpg-0d3z, rpg-dquq, rpg-hp1f]
 links: []
 created: 2026-07-04T20:40:15Z

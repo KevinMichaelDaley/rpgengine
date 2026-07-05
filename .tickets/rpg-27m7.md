@@ -1,6 +1,6 @@
 ---
 id: rpg-27m7
-status: open
+status: closed
 deps: [rpg-gc2a, rpg-gh4v, rpg-rvtw]
 links: []
 created: 2026-07-04T20:41:08Z
