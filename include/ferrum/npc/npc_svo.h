@@ -61,7 +61,7 @@ typedef struct npc_svo_node {
     uint32_t parent;      /**< Parent index, NPC_SVO_INVALID_NODE for root. */
     uint8_t  occupancy;   /**< Bitmask of occupied child slots. */
     uint8_t  flags;       /**< SOLID | WALKABLE | PORTAL. */
-    uint8_t  pad[2];
+    uint16_t material;    /**< Material ID (0=air, 1=stone, 2=wood, ...). */
 } npc_svo_node_t;
 
 _Static_assert(sizeof(npc_svo_node_t) == 40, "npc_svo_node_t must be 40 bytes");

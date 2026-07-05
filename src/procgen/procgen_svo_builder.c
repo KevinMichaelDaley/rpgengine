@@ -1,111 +1,472 @@
+/**
+ * @file procgen_svo_builder.c
+ * @brief Rasterize dungeon layout geometry into an SVO as solid voxels.
+ *
+ * Uses coarse block-level marking (1m blocks at 0.125m resolution = 8
+ * voxels per block).  Rooms get floor slabs, ceiling slabs, and wall
+ * columns.  Corridors and ramps get a thick line of blocks.
+ *
+ * Layout coordinates use Z-up (floor_z/ceil_z).  We remap to engine
+ * Y-up during rasterization: layout (x, y, floor_z) → SVO (x, floor_z, y).
+ */
+
 #include "ferrum/procgen/procgen_svo_builder.h"
+
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-void procgen_raster_config_default(procgen_raster_config_t *c) {
-    memset(c,0,sizeof(*c)); c->type=PROCGEN_RASTER_VOXEL;
-    c->voxel_size=PROCGEN_DEFAULT_VOXEL_SIZE; c->max_depth=PROCGEN_DEFAULT_MAX_DEPTH;
-    c->world_extent=PROCGEN_DEFAULT_WORLD_EXTENT;
+/* ── Configuration ──────────────────────────────────────────────── */
+
+void procgen_raster_config_default(procgen_raster_config_t *cfg) {
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->type         = PROCGEN_RASTER_VOXEL;
+    cfg->voxel_size   = PROCGEN_DEFAULT_VOXEL_SIZE;
+    cfg->max_depth    = PROCGEN_DEFAULT_MAX_DEPTH;
+    cfg->world_extent = PROCGEN_DEFAULT_WORLD_EXTENT;
 }
 
-static void mark_block_solid_(npc_svo_grid_t *g,uint32_t vx,uint32_t vy,uint32_t vz,uint32_t bs){
-    uint32_t n=0,cells=1u<<g->max_depth,target=bs;
-    for(uint32_t d=0;d<g->max_depth;d++){cells>>=1;if(cells<target)break;
-        uint32_t ci=((vz/cells)&1)<<2|((vy/cells)&1)<<1|((vx/cells)&1);npc_svo_node_t *nd=&g->nodes[n];
-        uint32_t ch=nd->children[ci];if(ch==NPC_SVO_INVALID_NODE){ch=npc_svo_alloc_node(g);if(ch==NPC_SVO_INVALID_NODE)return;
-            nd->children[ci]=ch;g->nodes[ch].parent=n;nd->occupancy|=(1u<<ci);}n=ch;}
-    g->nodes[n].flags|=NPC_SVO_FLAG_SOLID;
+/* ── SVO low-level helpers ──────────────────────────────────────── */
+
+/**
+ * @brief Walk the SVO octree from root to the level where each cell
+ *        covers @p block_size voxels, creating nodes as needed.  Once
+ *        at the target level, set the SOLID flag and material on the
+ *        node.
+ */
+static void svo_mark_block(npc_svo_grid_t         *grid,
+                           uint32_t                vx,
+                           uint32_t                vy,
+                           uint32_t                vz,
+                           uint32_t                block_size,
+                           uint16_t                material) {
+    uint32_t node_index  = 0;
+    uint32_t cell_count  = 1u << grid->max_depth;
+    uint32_t target_cell = block_size;
+
+    for (uint32_t depth = 0; depth < grid->max_depth; depth++) {
+        cell_count >>= 1;
+        if (cell_count < target_cell) {
+            break;  /* reached the target LOD level */
+        }
+
+        uint32_t child_x = (vx / cell_count) & 1;
+        uint32_t child_y = (vy / cell_count) & 1;
+        uint32_t child_z = (vz / cell_count) & 1;
+        uint32_t child_index = (child_z << 2) | (child_y << 1) | child_x;
+
+        npc_svo_node_t *node = &grid->nodes[node_index];
+        uint32_t child = node->children[child_index];
+
+        if (child == NPC_SVO_INVALID_NODE) {
+            child = npc_svo_alloc_node(grid);
+            if (child == NPC_SVO_INVALID_NODE) {
+                return;  /* allocation failed — skip this block */
+            }
+            node->children[child_index]  = child;
+            grid->nodes[child].parent    = node_index;
+            node->occupancy             |= (1u << child_index);
+        }
+        node_index = child;
+    }
+
+    grid->nodes[node_index].flags    |= NPC_SVO_FLAG_SOLID;
+    grid->nodes[node_index].material  = material;
 }
 
-static int is_solid_(const npc_svo_grid_t *g,int x,int y,int z){
-    uint32_t cells=1u<<g->max_depth;if(x<0||y<0||z<0||(uint32_t)x>=cells||(uint32_t)y>=cells||(uint32_t)z>=cells)return 0;
-    uint32_t n=0,c=cells;
-    for(uint32_t d=0;d<g->max_depth;d++){c>>=1;uint32_t ci=(((uint32_t)z/c)&1)<<2|(((uint32_t)y/c)&1)<<1|(((uint32_t)x/c)&1);
-        uint32_t ch=g->nodes[n].children[ci];if(ch==NPC_SVO_INVALID_NODE)return 0;n=ch;
-        if(g->nodes[n].flags&NPC_SVO_FLAG_SOLID)return 1;}
+/**
+ * @brief Query whether a given world-position voxel is solid.
+ */
+static int svo_is_solid(const npc_svo_grid_t *grid,
+                         int x, int y, int z) {
+    if (!grid) return 0;
+    uint32_t cell_count = 1u << grid->max_depth;
+    if (x < 0 || y < 0 || z < 0
+        || (uint32_t)x >= cell_count
+        || (uint32_t)y >= cell_count
+        || (uint32_t)z >= cell_count) {
+        return 0;
+    }
+
+    uint32_t node_index = 0;
+    uint32_t remaining  = cell_count;
+
+    for (uint32_t depth = 0; depth < grid->max_depth; depth++) {
+        remaining >>= 1;
+        uint32_t child_x = ((uint32_t)z / remaining) & 1;  /* Morton order: zyx */
+        uint32_t child_y = ((uint32_t)y / remaining) & 1;
+        uint32_t child_x2 = ((uint32_t)x / remaining) & 1;
+        (void)child_x2;
+        uint32_t child_index = (child_x << 2) | (child_y << 1) | child_x2;
+
+        uint32_t child = grid->nodes[node_index].children[child_index];
+        if (child == NPC_SVO_INVALID_NODE) {
+            return 0;
+        }
+        node_index = child;
+
+        /* If this node is already marked solid, all children are solid. */
+        if (grid->nodes[node_index].flags & NPC_SVO_FLAG_SOLID) {
+            return 1;
+        }
+    }
     return 0;
 }
 
-static void v2w(const npc_svo_grid_t *g,float wx,float wy,float wz,uint32_t *vx,uint32_t *vy,uint32_t *vz){
-    uint32_t c=1u<<g->max_depth;float sx=g->world_bounds.max.x-g->world_bounds.min.x,sy=g->world_bounds.max.y-g->world_bounds.min.y,sz=g->world_bounds.max.z-g->world_bounds.min.z;
-    float cx=(wx-g->world_bounds.min.x)/sx*(float)c,cy=(wy-g->world_bounds.min.y)/sy*(float)c,cz=(wz-g->world_bounds.min.z)/sz*(float)c;
-    *vx=(uint32_t)(cx<0?0:(cx>=(float)c?c-1:cx));*vy=(uint32_t)(cy<0?0:(cy>=(float)c?c-1:cy));*vz=(uint32_t)(cz<0?0:(cz>=(float)c?c-1:cz));
+/**
+ * @brief Convert world coordinates to integer voxel coordinates.
+ */
+static void world_to_voxel(const npc_svo_grid_t *grid,
+                           float wx, float wy, float wz,
+                           uint32_t *out_vx,
+                           uint32_t *out_vy,
+                           uint32_t *out_vz) {
+    uint32_t cell_count = 1u << grid->max_depth;
+    float span_x = grid->world_bounds.max.x - grid->world_bounds.min.x;
+    float span_y = grid->world_bounds.max.y - grid->world_bounds.min.y;
+    float span_z = grid->world_bounds.max.z - grid->world_bounds.min.z;
+
+    float fx = (wx - grid->world_bounds.min.x) / span_x * (float)cell_count;
+    float fy = (wy - grid->world_bounds.min.y) / span_y * (float)cell_count;
+    float fz = (wz - grid->world_bounds.min.z) / span_z * (float)cell_count;
+
+    uint32_t vx = (uint32_t)fx;
+    uint32_t vy = (uint32_t)fy;
+    uint32_t vz = (uint32_t)fz;
+
+    if (vx >= cell_count) vx = cell_count - 1;
+    if (vy >= cell_count) vy = cell_count - 1;
+    if (vz >= cell_count) vz = cell_count - 1;
+
+    *out_vx = vx;
+    *out_vy = vy;
+    *out_vz = vz;
 }
 
-static int pip(const vec3_t *v,uint32_t n,float px,float py){int in=0;
-    for(uint32_t i=0,j=n-1;i<n;j=i++){float xi=v[i].x,yi=v[i].y,xj=v[j].x,yj=v[j].y;
-        if(((yi>py)!=(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi))in=!in;}return in;}
+/**
+ * @brief Point-in-convex-polygon test (ray-casting algorithm).
+ */
+static int point_in_polygon(const vec3_t *vertices,
+                            uint32_t      vertex_count,
+                            float         test_x,
+                            float         test_y) {
+    int inside = 0;
+    for (uint32_t i = 0, j = vertex_count - 1; i < vertex_count; j = i++) {
+        float xi = vertices[i].x;
+        float yi = vertices[i].y;
+        float xj = vertices[j].x;
+        float yj = vertices[j].y;
 
-#define BS 3
-
-static uint32_t shell(npc_svo_grid_t *g,float x1,float x2,float y1,float y2,float fz,float cz,const vec3_t *poly,uint32_t pn){
-    uint32_t bs=1u<<BS;float vs=g->voxel_size*bs,vm=(float)(1u<<g->max_depth);uint32_t md=0;
-    uint32_t fx1,fy1,fz1,fx2,fy2,fz2;v2w(g,x1,fz,y1,&fx1,&fy1,&fz1);v2w(g,x2,cz,y2,&fx2,&fy2,&fz2);
-    if(fx2>=vm)fx2=vm-1;if(fy2>=vm)fy2=vm-1;if(fz2>=vm)fz2=vm-1;
-    for(uint32_t vz=fz1;vz<=fz2;vz+=bs)for(uint32_t vx=fx1;vx<=fx2;vx+=bs){
-        float cx=g->world_bounds.min.x+((float)vx+vs*0.5f)*g->voxel_size;
-        float cz=g->world_bounds.min.z+((float)vz+vs*0.5f)*g->voxel_size;
-        if(pip(poly,pn,cx,cz)){for(uint32_t vy=fy1;vy<=fy2;vy+=bs){mark_block_solid_(g,vx,vy,vz,bs);md++;}}}
-    for(uint32_t ei=0;ei<pn;ei++){uint32_t ej=(ei+1)%pn;float xa=poly[ei].x,ya=poly[ei].y,xb=poly[ej].x,yb=poly[ej].y;
-        float dx=xb-xa,dy=yb-ya,len=sqrtf(dx*dx+dy*dy);int st=(int)(len/vs)+1;
-        for(int s=0;s<=st;s++){float t=(float)s/(float)st,px=xa+t*dx,pz=ya+t*dy;
-            uint32_t wx,wy,wz,_,wz2;v2w(g,px,fz,pz,&wx,&wy,&wz);v2w(g,px,cz,pz,&_,&_,&wz2);
-            for(uint32_t zy=wy;zy<=wz2;zy+=bs){mark_block_solid_(g,wx,zy,wz,bs);md++;}}}
-    return md;
+        if (((yi > test_y) != (yj > test_y))
+            && (test_x < (xj - xi) * (test_y - yi) / (yj - yi) + xi)) {
+            inside = !inside;
+        }
+    }
+    return inside;
 }
 
-static uint32_t line2(npc_svo_grid_t *g,float x1,float y1,float x2,float y2,float w,float fz,float cz){
-    uint32_t bs=1u<<BS,md=0;float hw=w*0.5f,vm=(float)(1u<<g->max_depth);float vs=g->voxel_size*bs;
-    float xn=fminf(x1,x2)-hw,xx=fmaxf(x1,x2)+hw,zn=fminf(y1,y2)-hw,zx=fmaxf(y1,y2)+hw;
-    uint32_t mvx,mvy,mvz,Mvx,Mvy,Mvz;v2w(g,xn,fz,zn,&mvx,&mvy,&mvz);v2w(g,xx,cz,zx,&Mvx,&Mvy,&Mvz);
-    if(Mvx>=vm)Mvx=vm-1;if(Mvy>=vm)Mvy=vm-1;if(Mvz>=vm)Mvz=vm-1;
-    float dx=x2-x1,dz2=y2-y1,len2=dx*dx+dz2*dz2;
-    for(uint32_t vy=mvy;vy<=Mvy;vy+=bs)for(uint32_t vz=mvz;vz<=Mvz;vz+=bs)for(uint32_t vx=mvx;vx<=Mvx;vx+=bs){
-        float px=g->world_bounds.min.x+((float)vx+vs*0.5f)*g->voxel_size;
-        float pz=g->world_bounds.min.z+((float)vz+vs*0.5f)*g->voxel_size;
-        float t=((px-x1)*dx+(pz-y1)*dz2)/len2;if(t<0)t=0;if(t>1)t=1;float cx=x1+t*dx,cz2=y1+t*dz2;
-        if((px-cx)*(px-cx)+(pz-cz2)*(pz-cz2)<=hw*hw){mark_block_solid_(g,vx,vy,vz,bs);md++;}}
-    return md;
+/* ── Rasterization constants ────────────────────────────────────── */
+
+#define RASTER_BLOCK_SHIFT  3       /* block = 2^3 = 8 voxels ≈ 1 m */
+#define MAT_STONE  1
+#define MAT_WOOD   2
+
+/* ── Room rasterization ─────────────────────────────────────────── */
+
+/**
+ * @brief Rasterize a room as floor slab, ceiling slab, and wall columns.
+ *
+ * Coordinates are remapped from layout Z-up to engine Y-up inside
+ * the voxel coordinate conversion.
+ */
+static uint32_t rasterize_room(npc_svo_grid_t       *grid,
+                               float                 min_x,
+                               float                 max_x,
+                               float                 min_y,    /* layout Y → engine Z */
+                               float                 max_y,
+                               float                 floor_z,  /* layout Z → engine Y */
+                               float                 ceil_z,
+                               const vec3_t         *polygon_vertices,
+                               uint32_t              vertex_count) {
+    uint32_t block_size  = 1u << RASTER_BLOCK_SHIFT;
+    float    block_world = grid->voxel_size * (float)block_size;
+    float    max_coord   = (float)(1u << grid->max_depth);
+    uint32_t marked      = 0;
+
+    /* Convert room bounds to voxel coordinates (Y-up remapped). */
+    uint32_t vx_min, vy_min, vz_min;
+    uint32_t vx_max, vy_max, vz_max;
+    world_to_voxel(grid, min_x, floor_z,  min_y,  &vx_min, &vy_min, &vz_min);
+    world_to_voxel(grid, max_x, ceil_z,   max_y,  &vx_max, &vy_max, &vz_max);
+
+    if (vx_max >= (uint32_t)max_coord) vx_max = (uint32_t)max_coord - 1;
+    if (vy_max >= (uint32_t)max_coord) vy_max = (uint32_t)max_coord - 1;
+    if (vz_max >= (uint32_t)max_coord) vz_max = (uint32_t)max_coord - 1;
+
+    uint32_t ceiling_vy = (vy_max / block_size) * block_size;
+
+    /* Floor slab — one block thick at the bottom. */
+    for (uint32_t z = vz_min; z <= vz_max; z += block_size) {
+        for (uint32_t x = vx_min; x <= vx_max; x += block_size) {
+            float world_x = grid->world_bounds.min.x
+                          + ((float)x + block_world * 0.5f) * grid->voxel_size;
+            float world_z = grid->world_bounds.min.z
+                          + ((float)z + block_world * 0.5f) * grid->voxel_size;
+            if (point_in_polygon(polygon_vertices, vertex_count,
+                                 world_x, world_z)) {
+                svo_mark_block(grid, x, vy_min, z, block_size, MAT_STONE);
+                marked++;
+            }
+        }
+    }
+
+    /* Ceiling slab — one block thick at the top. */
+    for (uint32_t z = vz_min; z <= vz_max; z += block_size) {
+        for (uint32_t x = vx_min; x <= vx_max; x += block_size) {
+            float world_x = grid->world_bounds.min.x
+                          + ((float)x + block_world * 0.5f) * grid->voxel_size;
+            float world_z = grid->world_bounds.min.z
+                          + ((float)z + block_world * 0.5f) * grid->voxel_size;
+            if (point_in_polygon(polygon_vertices, vertex_count,
+                                 world_x, world_z)) {
+                svo_mark_block(grid, x, ceiling_vy, z, block_size, MAT_STONE);
+                marked++;
+            }
+        }
+    }
+
+    /* Wall columns — walk each polygon edge from floor to ceiling. */
+    for (uint32_t edge = 0; edge < vertex_count; edge++) {
+        uint32_t next = (edge + 1) % vertex_count;
+        float    x1   = polygon_vertices[edge].x;
+        float    y1   = polygon_vertices[edge].y;
+        float    x2   = polygon_vertices[next].x;
+        float    y2   = polygon_vertices[next].y;
+
+        float dx  = x2 - x1;
+        float dy  = y2 - y1;
+        float len = sqrtf(dx * dx + dy * dy);
+        int   steps = (int)(len / block_world) + 1;
+
+        for (int step = 0; step <= steps; step++) {
+            float t  = (float)step / (float)steps;
+            float px = x1 + t * dx;
+            float pz = y1 + t * dy;  /* layout Y → engine Z */
+
+            uint32_t wall_vx, wall_vy, wall_vz;
+            uint32_t wall_vx2, wall_vy2, wall_vz2;
+            world_to_voxel(grid, px, floor_z, pz, &wall_vx, &wall_vy, &wall_vz);
+            world_to_voxel(grid, px, ceil_z,  pz, &wall_vx2, &wall_vy2, &wall_vz2);
+
+            for (uint32_t y = wall_vy; y <= wall_vy2; y += block_size) {
+                svo_mark_block(grid, wall_vx, y, wall_vz, block_size, MAT_WOOD);
+                marked++;
+            }
+        }
+    }
+
+    return marked;
 }
 
-uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,const fr_dungeon_layout_t *l,npc_svo_grid_t *g){
-    if(!cfg||!l||!g)return 0;phys_aabb_t b={{-cfg->world_extent,-cfg->world_extent,-cfg->world_extent},{cfg->world_extent,cfg->world_extent,cfg->world_extent}};
-    if(!npc_svo_grid_init(g,b,cfg->max_depth))return 0;uint32_t t=0;
-    for(uint32_t ri=0;ri<l->room_count;ri++){const fr_room_def_t *r=&l->rooms[ri];
-        float xn=r->vertices[0].x,xx=xn,yn=r->vertices[0].y,yx=yn;
-        for(uint32_t j=1;j<r->vertex_count;j++){if(r->vertices[j].x<xn)xn=r->vertices[j].x;if(r->vertices[j].x>xx)xx=r->vertices[j].x;
-            if(r->vertices[j].y<yn)yn=r->vertices[j].y;if(r->vertices[j].y>yx)yx=r->vertices[j].y;}
-        t+=shell(g,xn,xx,yn,yx,r->floor_z,r->ceil_z,r->vertices,r->vertex_count);}
-    for(uint32_t ci=0;ci<l->corridor_count;ci++){const fr_corridor_def_t *c=&l->corridors[ci];
-        t+=line2(g,c->from.x,c->from.y,c->to.x,c->to.y,c->width,c->floor_z,c->ceil_z);}
-    for(uint32_t ri=0;ri<l->ramp_count;ri++){const fr_ramp_def_t *r=&l->ramps[ri];float lo=fminf(r->from.z,r->to.z),hi=fmaxf(r->from.z,r->to.z);
-        t+=line2(g,r->from.x,r->from.y,r->to.x,r->to.y,r->width,lo,hi);}
-    return t;}
+/* ── Corridor / ramp rasterization ──────────────────────────────── */
 
-uint32_t procgen_svo_build(npc_svo_grid_t *g,const fr_dungeon_layout_t *l){procgen_raster_config_t c;procgen_raster_config_default(&c);return procgen_svo_build_cfg(&c,l,g);}
+/**
+ * @brief Rasterize a corridor as a hollow tube: floor, ceiling, two walls.
+ *
+ * The corridor follows a line segment (x1,y1)→(x2,y2) with given width.
+ * Diagonal corridors are automatically snapped to the nearest allowed
+ * angle (90°, 45°, 30°, or 60°) by projecting the endpoint onto the
+ * closest grid-aligned direction.
+ */
+static uint32_t rasterize_corridor(npc_svo_grid_t *grid,
+                                   float x1, float y1,
+                                   float x2, float y2,
+                                   float width,
+                                   float floor_z,
+                                   float ceil_z) {
+    uint32_t block_size  = 1u << RASTER_BLOCK_SHIFT;
+    float    half_width  = width * 0.5f;
+    float    block_world = grid->voxel_size * (float)block_size;
+    float    max_coord   = (float)(1u << grid->max_depth);
+    uint32_t marked      = 0;
 
-void procgen_mesh_init(procgen_mesh_t *m){memset(m,0,sizeof(*m));}
-void procgen_mesh_destroy(procgen_mesh_t *m){free(m->vertices);memset(m,0,sizeof(*m));}
+    /* ── Snap diagonal corridors to allowed angles ────────────── */
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len = sqrtf(dx * dx + dy * dy);
 
-static void em(procgen_mesh_t *m,float x0,float y0,float z0,float x1,float y1,float z1){
-    uint32_t need=m->vertex_count+18;if(need>m->vertex_cap){uint32_t nc=m->vertex_cap?m->vertex_cap*2:65536;if(nc<need)nc=need;
-        float *nd=realloc(m->vertices,nc*sizeof(float));if(!nd)return;m->vertices=nd;m->vertex_cap=nc;}
-    float *v=m->vertices+m->vertex_count;
-    v[0]=x0;v[1]=y0;v[2]=z0;v[3]=x1;v[4]=y0;v[5]=z0;v[6]=x1;v[7]=y1;v[8]=z0;
-    v[9]=x0;v[10]=y0;v[11]=z0;v[12]=x1;v[13]=y1;v[14]=z0;v[15]=x0;v[16]=y1;v[17]=z0;
-    m->vertex_count+=18;}
+    if (len > 0.001f) {
+        float nx = dx / len;
+        float ny = dy / len;
 
-uint32_t procgen_mesh_from_svo(const npc_svo_grid_t *g,procgen_mesh_t *mesh){
-    uint32_t c2=1u<<g->max_depth,bs=1u<<BS;float vs=g->voxel_size*bs,ox=g->world_bounds.min.x,oy=g->world_bounds.min.y,oz=g->world_bounds.min.z;uint32_t tc=0,vc=c2/bs;
-    for(uint32_t vz=0;vz<vc;vz++)for(uint32_t vy=0;vy<vc;vy++)for(uint32_t vx=0;vx<vc;vx++){
-        if(!is_solid_(g,(int)(vx*bs),(int)(vy*bs),(int)(vz*bs)))continue;
-        float x0=ox+(float)(vx*bs)*g->voxel_size,x1=x0+vs,y0=oy+(float)(vy*bs)*g->voxel_size,y1=y0+vs,z0=oz+(float)(vz*bs)*g->voxel_size,z1=z0+vs;
-        if(vx+1>=vc||!is_solid_(g,(int)((vx+1)*bs),(int)(vy*bs),(int)(vz*bs))){em(mesh,x1,z0,y0,x1,z1,y1);tc+=2;}
-        if(vx==0||!is_solid_(g,(int)((vx-1)*bs),(int)(vy*bs),(int)(vz*bs))){em(mesh,x0,z0,y0,x0,z1,y1);tc+=2;}
-        if(vy+1>=vc||!is_solid_(g,(int)(vx*bs),(int)((vy+1)*bs),(int)(vz*bs))){em(mesh,x0,z0,y1,x1,z1,y1);tc+=2;}
-        if(vy==0||!is_solid_(g,(int)(vx*bs),(int)((vy-1)*bs),(int)(vz*bs))){em(mesh,x0,z0,y0,x1,z1,y0);tc+=2;}
-        if(vz+1>=vc||!is_solid_(g,(int)(vx*bs),(int)(vy*bs),(int)((vz+1)*bs))){em(mesh,x1,y0,z1,x0,y1,z1);tc+=2;}
-        if(vz==0||!is_solid_(g,(int)(vx*bs),(int)(vy*bs),(int)((vz-1)*bs))){em(mesh,x0,y0,z0,x1,y1,z0);tc+=2;}}
-    return tc;}
+        /* Allowed directions (angle in radians, unit vector). */
+        static const float allowed[6][2] = {
+            { 1.0f,  0.0f},           /*   0° */
+            {-1.0f,  0.0f},           /* 180° */
+            { 0.0f,  1.0f},           /*  90° */
+            { 0.0f, -1.0f},           /* 270° */
+            { 0.7071067f,  0.7071067f},  /*  45° */
+            { 0.7071067f, -0.7071067f},  /* -45° / 315° */
+        };
+
+        float best_dot = -2.0f;
+        int   best_idx = 0;
+        for (int i = 0; i < 6; i++) {
+            float d = nx * allowed[i][0] + ny * allowed[i][1];
+            if (d > best_dot) { best_dot = d; best_idx = i; }
+        }
+
+        /* Project endpoint onto the nearest allowed direction. */
+        float snap_nx = allowed[best_idx][0];
+        float snap_ny = allowed[best_idx][1];
+        float proj_len = dx * snap_nx + dy * snap_ny;
+        if (proj_len < 0.0f) proj_len = 0.0f;
+
+        x2 = x1 + snap_nx * proj_len;
+        y2 = y1 + snap_ny * proj_len;
+        dx = x2 - x1;
+        dy = y2 - y1;
+        len = sqrtf(dx * dx + dy * dy);
+    }
+
+    /* ── Cross-section information ────────────────────────────── */
+    /* The corridor runs along (dx, dy).  The perpendicular (left/right)
+       direction is (-dy, dy) rotated 90°. */
+    float perp_x =  (len > 0.001f) ? -dy / len * half_width :  half_width;
+    float perp_y =  (len > 0.001f) ?  dx / len * half_width :  0.0f;
+
+    /* Bound box in layout XY → engine XZ. */
+    float bound_min_x = fminf(x1, x2) - fabsf(perp_x) - half_width;
+    float bound_max_x = fmaxf(x1, x2) + fabsf(perp_x) + half_width;
+    float bound_min_z = fminf(y1, y2) - fabsf(perp_y) - half_width;
+    float bound_max_z = fmaxf(y1, y2) + fabsf(perp_y) + half_width;
+
+    uint32_t vx_min, vy_min, vz_min;
+    uint32_t vx_max, vy_max, vz_max;
+    world_to_voxel(grid, bound_min_x, floor_z, bound_min_z,
+                   &vx_min, &vy_min, &vz_min);
+    world_to_voxel(grid, bound_max_x, ceil_z,  bound_max_z,
+                   &vx_max, &vy_max, &vz_max);
+
+    if (vx_max >= (uint32_t)max_coord) vx_max = (uint32_t)max_coord - 1;
+    if (vy_max >= (uint32_t)max_coord) vy_max = (uint32_t)max_coord - 1;
+    if (vz_max >= (uint32_t)max_coord) vz_max = (uint32_t)max_coord - 1;
+
+    uint32_t ceiling_vy = (vy_max / block_size) * block_size;
+
+    /* ── Walk along the centerline at block resolution ───────── */
+    int steps = (int)(len / block_world) + 1;
+
+    for (int step = 0; step <= steps; step++) {
+        float t = (len > 0.001f)
+                   ? (float)step / (float)steps
+                   : 0.0f;
+        float cx = x1 + t * dx;
+        float cz = y1 + t * dy;  /* layout Y → engine Z */
+
+        /* Floor blocks along the corridor. */
+        uint32_t fx, fy, fz;
+        world_to_voxel(grid, cx, floor_z, cz, &fx, &fy, &fz);
+        /* Scan laterally (left/right) at each step. */
+        for (int side = -1; side <= 1; side += 2) {
+            float sx = cx + (float)side * perp_x;
+            float sz = cz + (float)side * perp_y;
+            uint32_t sx_v, sy_v, sz_v;
+            world_to_voxel(grid, sx, floor_z, sz, &sx_v, &sy_v, &sz_v);
+            world_to_voxel(grid, sx, ceil_z,  sz, &sx_v, &sy_v, &sz_v);
+
+            /* Floor, ceiling, and wall column for this lateral position. */
+            svo_mark_block(grid, sx_v, vy_min,    sz_v, block_size, MAT_STONE);
+            svo_mark_block(grid, sx_v, ceiling_vy, sz_v, block_size, MAT_STONE);
+            for (uint32_t y = vy_min; y <= vy_max; y += block_size) {
+                svo_mark_block(grid, sx_v, y, sz_v, block_size, MAT_WOOD);
+                marked++;
+            }
+            marked += 2;  /* floor + ceiling */
+        }
+
+        /* Floor and ceiling along centerline. */
+        svo_mark_block(grid, fx, vy_min,    fz, block_size, MAT_STONE);
+        svo_mark_block(grid, fx, ceiling_vy, fz, block_size, MAT_STONE);
+        marked += 2;
+    }
+
+    return marked;
+}
+
+/* ── Public API ─────────────────────────────────────────────────── */
+
+uint32_t procgen_svo_build_cfg(const procgen_raster_config_t *cfg,
+                                const fr_dungeon_layout_t     *layout,
+                                npc_svo_grid_t               *out_grid) {
+    if (!cfg || !layout || !out_grid) {
+        return 0;
+    }
+
+    phys_aabb_t bounds = {
+        .min = { -cfg->world_extent, -cfg->world_extent, -cfg->world_extent },
+        .max = {  cfg->world_extent,  cfg->world_extent,  cfg->world_extent }
+    };
+
+    if (!npc_svo_grid_init(out_grid, bounds, cfg->max_depth)) {
+        return 0;
+    }
+
+    uint32_t total_marked = 0;
+
+    /* Rooms. */
+    for (uint32_t i = 0; i < layout->room_count; i++) {
+        const fr_room_def_t *room = &layout->rooms[i];
+
+        float x_min = room->vertices[0].x;
+        float x_max = x_min;
+        float y_min = room->vertices[0].y;
+        float y_max = y_min;
+
+        for (uint32_t j = 1; j < room->vertex_count; j++) {
+            if (room->vertices[j].x < x_min) x_min = room->vertices[j].x;
+            if (room->vertices[j].x > x_max) x_max = room->vertices[j].x;
+            if (room->vertices[j].y < y_min) y_min = room->vertices[j].y;
+            if (room->vertices[j].y > y_max) y_max = room->vertices[j].y;
+        }
+
+        total_marked += rasterize_room(out_grid,
+                                       x_min, x_max,
+                                       y_min, y_max,
+                                       room->floor_z, room->ceil_z,
+                                       room->vertices,
+                                       room->vertex_count);
+    }
+
+    /* Corridors. */
+    for (uint32_t i = 0; i < layout->corridor_count; i++) {
+        const fr_corridor_def_t *corr = &layout->corridors[i];
+        total_marked += rasterize_corridor(out_grid,
+                                       corr->from.x, corr->from.y,
+                                       corr->to.x,   corr->to.y,
+                                       corr->width,
+                                       corr->floor_z,
+                                       corr->ceil_z);
+    }
+
+    /* Ramps. */
+    for (uint32_t i = 0; i < layout->ramp_count; i++) {
+        const fr_ramp_def_t *ramp = &layout->ramps[i];
+        float low  = fminf(ramp->from.z, ramp->to.z);
+        float high = fmaxf(ramp->from.z, ramp->to.z);
+        total_marked += rasterize_corridor(out_grid,
+                                       ramp->from.x, ramp->from.y,
+                                       ramp->to.x,   ramp->to.y,
+                                       ramp->width,
+                                       low, high);
+    }
+
+    return total_marked;
+}
+
+uint32_t procgen_svo_build(npc_svo_grid_t               *grid,
+                            const fr_dungeon_layout_t    *layout) {
+    procgen_raster_config_t cfg;
+    procgen_raster_config_default(&cfg);
+    return procgen_svo_build_cfg(&cfg, layout, grid);
+}
