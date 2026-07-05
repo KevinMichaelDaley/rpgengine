@@ -1,6 +1,6 @@
 ---
 id: rpg-jurp
-status: open
+status: in_progress
 deps: [rpg-r82r, rpg-mfdj, rpg-rnno, rpg-icvq]
 links: []
 created: 2026-07-05T06:51:26Z
