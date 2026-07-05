@@ -1,0 +1,12 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=start_room
+CORRIDOR_H from=(10,5) to=(20,5) w=5 floor_z=0 ceil_z=5
+DOOR at=(10,5)
+ROOM_QUAD x=25 y=0 w=20 h=15 floor_z=0 ceil_z=5 name=middle_room
+CORRIDOR_H from=(45,7.5) to=(55,7.5) w=5 floor_z=0 ceil_z=5
+DOOR at=(45,7.5)
+ROOM_QUAD x=60 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=end_room
+SPAWN x=5 y=5 z=2.5
+MARKER x=5 y=5 z=2.5 name=start_marker
+MARKER x=35 y=7.5 z=2.5 name=middle_marker
+MARKER x=65 y=5 z=2.5 name=end_marker

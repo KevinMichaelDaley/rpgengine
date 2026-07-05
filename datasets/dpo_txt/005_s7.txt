@@ -1,0 +1,22 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=6 name=arena
+ROOM_QUAD x=0 y=23 w=6 h=6 floor_z=0 ceil_z=6 name=north_room
+ROOM_QUAD x=0 y=-26 w=6 h=6 floor_z=0 ceil_z=6 name=south_room
+ROOM_QUAD x=23 y=0 w=6 h=6 floor_z=0 ceil_z=6 name=east_room
+ROOM_QUAD x=-26 y=0 w=6 h=6 floor_z=0 ceil_z=6 name=west_room
+CORRIDOR_V from=(0,10) to=(0,23) w=4 floor_z=0 ceil_z=6
+DOOR at=(0,20)
+DOOR at=(0,23)
+CORRIDOR_V from=(0,-10) to=(0,-23) w=4 floor_z=0 ceil_z=6
+DOOR at=(0,-20)
+DOOR at=(0,-23)
+CORRIDOR_H from=(10,0) to=(23,0) w=4 floor_z=0 ceil_z=6
+DOOR at=(20,0)
+DOOR at=(23,0)
+CORRIDOR_H from=(-10,0) to=(-23,0) w=4 floor_z=0 ceil_z=6
+DOOR at=(-20,0)
+DOOR at=(-23,0)
+SPAWN x=0 y=0 z=3
+MARKER x=0 y=0 z=3 name=center
+MARKER x=0 y=26 z=3 name=north_exit
+MARKER x=0 y=-26 z=3 name=south_exit

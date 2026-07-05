@@ -1,0 +1,10 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=player_start
+ROOM_QUAD x=0 y=15 w=10 h=10 floor_z=5 ceil_z=10 name=boss_arena
+RAMP_UP from=(5,5) to=(5,12) dz=5 w=2
+SPAWN x=5 y=5 z=0
+MARKER x=5 y=5 z=0 name=start_point
+MARKER x=5 y=17.5 z=7.5 name=boss_approach
+MARKER x=5 y=5 z=2.5 name=mid_point
+DOOR at=(5,10)
+DOOR at=(5,15)

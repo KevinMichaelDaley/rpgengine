@@ -1,0 +1,14 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=10 h=10 floor_z=0 ceil_z=5 name=entrance
+ROOM_QUAD x=20 y=0 w=8 h=8 floor_z=0 ceil_z=5 name=treasure_chamber
+ROOM_QUAD x=20 y=10 w=6 h=6 floor_z=0 ceil_z=5 name=shrine
+CORRIDOR_H from=(10,5) to=(20,5) w=2 floor_z=0 ceil_z=5
+CORRIDOR_V from=(23,8) to=(23,10) w=2 floor_z=0 ceil_z=5
+DOOR at=(10,5)
+DOOR at=(20,5)
+DOOR at=(23,8)
+DOOR at=(23,10)
+SPAWN x=5 y=5 z=2.5
+MARKER x=0 y=0 z=2.5 name=entrance_marker
+MARKER x=24 y=4 z=2.5 name=treasure_marker
+MARKER x=23 y=13 z=2.5 name=shrine_marker

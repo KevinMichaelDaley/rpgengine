@@ -1,0 +1,8 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=50 h=50 floor_z=0 ceil_z=10 name=main_hall
+MARKER x=25 y=25 z=5 name=center_pillar
+MARKER x=10 y=10 z=5 name=pillar_nw
+MARKER x=40 y=10 z=5 name=pillar_ne
+MARKER x=10 y=40 z=5 name=pillar_sw
+MARKER x=40 y=40 z=5 name=pillar_se
+SPAWN x=25 y=25 z=1

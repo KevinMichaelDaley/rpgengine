@@ -1,0 +1,17 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=10 h=20 floor_z=0 ceil_z=6 name=entrance_hall
+CORRIDOR_H from=(5,0) to=(5,10) w=4 floor_z=0 ceil_z=6
+DOOR at=(5,0)
+DOOR at=(5,10)
+ROOM_QUAD x=-10 y=10 w=15 h=10 floor_z=0 ceil_z=6 name=left_chamber
+CORRIDOR_V from=(5,10) to=(-5,10) w=4 floor_z=0 ceil_z=6
+DOOR at=(5,10)
+DOOR at=(-5,10)
+ROOM_QUAD x=10 y=10 w=15 h=10 floor_z=0 ceil_z=6 name=right_chamber
+CORRIDOR_V from=(5,10) to=(5,20) w=4 floor_z=0 ceil_z=6
+DOOR at=(5,10)
+DOOR at=(5,20)
+SPAWN x=5 y=5 z=3
+MARKER x=0 y=0 z=3 name=entrance_marker
+MARKER x=-10 y=15 z=3 name=left_exit
+MARKER x=20 y=15 z=3 name=right_exit

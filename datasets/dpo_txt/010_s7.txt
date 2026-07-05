@@ -1,0 +1,18 @@
+@grammar blockout v1
+ROOM_QUAD x=0 y=0 w=20 h=20 floor_z=0 ceil_z=8 name=central_hub
+ROOM_QUAD x=30 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_east
+ROOM_QUAD x=-30 y=0 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_west
+ROOM_QUAD x=0 y=30 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_north
+ROOM_QUAD x=0 y=-30 w=10 h=10 floor_z=0 ceil_z=6 name=spoke_south
+CORRIDOR_H from=(10,0) to=(20,0) w=4 floor_z=0 ceil_z=8
+CORRIDOR_H from=(-10,0) to=(-20,0) w=4 floor_z=0 ceil_z=8
+CORRIDOR_V from=(0,10) to=(0,20) w=4 floor_z=0 ceil_z=8
+CORRIDOR_V from=(0,-10) to=(0,-20) w=4 floor_z=0 ceil_z=8
+DOOR at=(20,0)
+DOOR at=(-20,0)
+DOOR at=(0,20)
+DOOR at=(0,-20)
+SPAWN x=0 y=0 z=4
+MARKER x=0 y=0 z=4 name=hub_center
+MARKER x=25 y=0 z=3 name=east_exit
+MARKER x=-25 y=0 z=3 name=west_exit

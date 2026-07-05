@@ -1140,6 +1140,12 @@ architect: build/procgen_architect_cli
 	@echo "Built: build/procgen_architect_cli"
 	@echo "Usage: ./build/procgen_architect_cli \"prompt\" --output /tmp/test.json"
 
+build/procgen_to_obj: tools/procgen_to_obj.c build/libheadless.a include/ferrum/procgen/procgen_level_load.h include/ferrum/procgen/procgen_svo_builder.h | build
+	$(CC) $(CFLAGS) tools/procgen_to_obj.c build/libheadless.a -o $@ -lm -lpthread
+
+build/procgen_viewer: tools/procgen_viewer.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tools/procgen_viewer.c -o $@ $(RENDERER_TEST_LIBS) -lGLU -lm
+
 NPC_AUDIO_PROP_TEST_SRC := $(wildcard src/npc/audio/*.c)
 build/npc_audio_propagation_tests: tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) | build
 	$(CC) $(CFLAGS) tests/npc/npc_audio_propagation_tests.c $(NPC_AUDIO_PROP_TEST_SRC) -o $@ $(LDFLAGS)
