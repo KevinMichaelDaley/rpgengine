@@ -142,6 +142,7 @@ public:
         float w_adjacency     = 0.2f;   /**< Weight: AdjacencyCount */
         float w_reachability  = 1.0f;   /**< Weight: SoftReachability */
         float w_bounds        = 2.0f;   /**< Weight: BoundsViolation */
+        Config() = default;
     };
 
     /**
@@ -150,7 +151,8 @@ public:
      * @param cfg  Configuration with loss weights and size constraints.
      *             Defaults are used if omitted.
      */
-    explicit AnalyticalCritic(const Config &cfg = {});
+    AnalyticalCritic();
+    explicit AnalyticalCritic(const Config &cfg);
 
     torch::Tensor score(torch::Tensor params,
                         torch::Tensor types) override;
