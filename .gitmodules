@@ -13,3 +13,6 @@
 [submodule "extern/SymX"]
 	path = extern/SymX
 	url = https://github.com/InteractiveComputerGraphics/SymX
+[submodule "extern/libtorch"]
+	path = extern/libtorch
+	url = https://github.com/pytorch/pytorch.git
