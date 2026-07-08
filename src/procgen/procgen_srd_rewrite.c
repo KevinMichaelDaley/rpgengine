@@ -80,6 +80,11 @@ int procgen_srd_apply_rewrite(void **elements, uint32_t *count_inout,
         (*count_inout)--;
         break;
     }
+    case FR_REWRITE_ADD_CONNECTION: {
+        /* Corridor connection: does not modify room count.
+           The optimizer uses this info to create corridors. */
+        break;
+    }
     default:
         break;
     }

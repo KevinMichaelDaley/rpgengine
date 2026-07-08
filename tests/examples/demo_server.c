@@ -1319,19 +1319,7 @@ int main(int argc, char **argv) {
     }
     printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_BODIES);
 
-    /* Add a ground plane so the player doesn't fall through. */
-    {
-        phys_cmd_spawn_body_t sp;
-        memset(&sp, 0, sizeof(sp));
-        sp.type = PHYS_SHAPE_HALFSPACE;
-        sp.shape_data.halfspace.normal   = (phys_vec3_t){0.0f, 1.0f, 0.0f};
-        sp.shape_data.halfspace.distance = 0.0f;
-        sp.mass      = 0.0f;
-        sp.flags     = PHYS_BODY_FLAG_STATIC;
-        sp.friction  = 0.8f;
-        sp.restitution = 0.1f;
-        phys_world_add_body(&ctx.world, &sp, NULL, NULL);
-    }
+    /* Ground plane handled by bridge or scene loading. */
     /* ── 3. Physics command channel + tick runner ───────────────── */
     fr_topic_channel_config_t chan_cfg = {
         .capacity = 512u,
@@ -1640,10 +1628,10 @@ int main(int argc, char **argv) {
             ctx.last_stats_tick = tick_id;
             uint64_t phys_tick = phys_tick_runner_tick_id(&ctx.tick_runner);
             uint64_t tick_ns = phys_tick_runner_last_tick_ns(&ctx.tick_runner);
-            printf("[server] tick=%lu phys=%lu clients=%u entities=%u tick_us=%lu\n",
+            /* printf("[server] tick=%lu phys=%lu clients=%u entities=%u tick_us=%lu\n",
                    (unsigned long)tick_id, (unsigned long)phys_tick,
                    ctx.clients_connected, ctx.total_spawned,
-                   (unsigned long)(tick_ns / 1000u));
+                   (unsigned long)(tick_ns / 1000u)); */
         }
 
         /* Yield to avoid busy spin. */

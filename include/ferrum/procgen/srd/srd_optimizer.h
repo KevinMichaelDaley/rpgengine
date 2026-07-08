@@ -1,21 +1,23 @@
 #ifndef FERRUM_PROCGEN_SRD_OPTIMIZER_H
 #define FERRUM_PROCGEN_SRD_OPTIMIZER_H
 
-#include <stdint.h>
 #include "ferrum/procgen/procgen_srd_types.h"
+#include "ferrum/procgen/srd/srd_grammar.h"
 #include "ferrum/procgen/srd/srd_loss_compiler.h"
-#include "ferrum/procgen/srd/srd_anneal.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct {
-    double  time_budget_s;
-    int     max_steps;
-    int     rewrite_interval;
-    double  lr;
-    double  min_improvement;
+  double time_budget_s;
+  int max_steps;
+  int rewrite_interval;
+  double lr;
+  double min_improvement;
+  int candidate_budget;
+  int verbose;
 } srd_optimize_config_t;
 
 void srd_optimize_config_default(srd_optimize_config_t *cfg);
@@ -37,9 +39,10 @@ void srd_optimize_config_default(srd_optimize_config_t *cfg);
  * @return Total energy after optimization.
  */
 double srd_optimize(fr_room_box_t *rooms, uint32_t *n_rooms, uint32_t cap,
-                    fr_corridor_seg_t *corridors, uint32_t *n_corridors,
+                    fr_corridor_seg_t **corridors, uint32_t *n_corridors,
                     const srd_loss_term_t *terms, uint32_t n_terms,
-                    const srd_optimize_config_t *config);
+                    const srd_optimize_config_t *config, const srd_grid_t *grid,
+                    srd_grammar_t *gram);
 
 #ifdef __cplusplus
 }

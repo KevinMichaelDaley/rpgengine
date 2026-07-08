@@ -1821,17 +1821,10 @@ demo_server:
 	@echo "Built: build/demo_server"
 	@echo "Usage: ./build/demo_server <port> [duration_s] [--net-workers N] [--phys-workers N]"
 
-SRD_OBJS := $(OBJDIR)/src/procgen/srd/srd_bridge.o \
-            $(OBJDIR)/src/procgen/srd/srd_optimizer.o \
-            $(OBJDIR)/src/procgen/srd/srd_energy.o \
-            $(OBJDIR)/src/procgen/srd/srd_loss_compiler.o \
-            $(OBJDIR)/src/procgen/srd/srd_loss_primitives.o \
-            $(OBJDIR)/src/procgen/srd/srd_loss_gradient.o \
-            $(OBJDIR)/src/procgen/srd/srd_eikonal.o \
-            $(OBJDIR)/src/procgen/srd/srd_transport.o
+SRD_OBJS = $(SRD2_C_OBJS)
 
 build/demo_client: build/liball.a tests/examples/demo_client.c $(SRD_OBJS) $(SYMX_LIB) $(SYMX_FMT) | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c $(SRD_OBJS) build/liball.a $(SYMX_LIB) $(SYMX_FMT) build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl -lstdc++ -fopenmp
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c $(SRD_OBJS) build/liball.a $(SYMX_LIB) $(SYMX_FMT) build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl
 
 demo_client:
 	@$(MAKE) build/demo_client
@@ -1899,8 +1892,7 @@ build/srd_loss_primitives_tests: tests/procgen/srd/srd_loss_primitives_tests.cpp
 build/srd_loss_compiler_tests: tests/procgen/srd/srd_loss_compiler_tests.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/procgen_srd_types.c | build
 	$(CXX) $(CFLAGS) -xc++ -std=c++17 -Iinclude tests/procgen/srd/srd_loss_compiler_tests.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/procgen_srd_types.c -o $@ -lm
 
-build/srd_bridge_tests: tests/procgen/srd/srd_bridge_tests.cpp src/procgen/srd/srd_bridge.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c src/procgen/srd/srd_anneal.c $(SYMX_LIB) $(SYMX_FMT) | build
-	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_bridge_tests.cpp src/procgen/srd/srd_bridge.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c src/procgen/srd/srd_anneal.c $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
+# Old C++ bridge test removed — replaced by pure-C srd_bridge_tests in SRD2 section
 
 build/srd_m3_m4_smoke: tests/procgen/srd/srd_m3_m4_smoke.cpp src/procgen/srd/srd_bridge.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c src/procgen/srd/srd_anneal.c $(SYMX_LIB) $(SYMX_FMT) | build
 	$(CXX) $(SYMX_FLAGS) -Iinclude tests/procgen/srd/srd_m3_m4_smoke.cpp src/procgen/srd/srd_bridge.cpp src/procgen/srd/srd_optimizer.cpp src/procgen/srd/srd_energy.cpp src/procgen/srd/srd_loss_compiler.cpp src/procgen/srd/srd_loss_primitives.cpp src/procgen/srd/srd_loss_gradient.cpp src/procgen/srd/srd_eikonal.cpp src/procgen/srd/srd_transport.cpp src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_grammar.c src/procgen/procgen_srd_rewrite.c src/procgen/procgen_srd_types.c src/procgen/srd/srd_anneal.c $(SYMX_LIB) $(SYMX_FMT) -ldl -fopenmp -o $@
@@ -1984,6 +1976,134 @@ build/procgen_ascii_parse_tests: tests/procgen/procgen_ascii_parse_tests.c src/p
 	$(CC) $(CFLAGS) tests/procgen/procgen_ascii_parse_tests.c src/procgen/procgen_ascii_parse.c src/procgen/procgen_srd_types.c -o $@ -lm
 
 test-procgen: procgen-test
+
+# ── SRD v2 (libtorch-based) ────────────────────────────────────
+# pip-installed torch; override with TORCH_DIR= if needed
+TORCH_DIR ?= $(shell python3 -c "import torch; print(torch.__path__[0])" 2>/dev/null)
+TORCH_INC  = -I$(TORCH_DIR)/include -I$(TORCH_DIR)/include/torch/csrc/api/include
+TORCH_LIB  = -L$(TORCH_DIR)/lib -Wl,-rpath,$(TORCH_DIR)/lib -ltorch -ltorch_cpu -lc10
+SRD2_CXXFLAGS = -std=c++17 -Wno-unused-parameter -Iinclude $(TORCH_INC) -D_GLIBCXX_USE_CXX11_ABI=1
+SRD2_CFLAGS   = -std=c11 -Wall -Wextra -Wno-switch -Wno-unused-parameter -Iinclude
+
+# C sources for the new SRD modules
+SRD2_C_SRCS := src/procgen/srd/srd_descent_config.c \
+               src/procgen/srd/srd_grammar.c \
+               src/procgen/srd/srd_sdf_grid.c \
+               src/procgen/srd/srd_sdf_grid_ops.c \
+               src/procgen/srd/srd_sdf_grid_stamp.c \
+               src/procgen/srd/srd_room_map.c \
+               src/procgen/srd/srd_room_map_ops.c \
+               src/procgen/srd/srd_room_map_adj.c \
+               src/procgen/srd/srd_seed_init.c \
+               src/procgen/srd/srd_sdf_to_svo.c \
+               src/procgen/srd/srd_grid_critic.c \
+               src/procgen/srd/srd_grid_critic_terms.c \
+               src/procgen/srd/srd_rules_wall.c \
+               src/procgen/srd/srd_rules_wall_shape.c \
+               src/procgen/srd/srd_rules_corner.c \
+               src/procgen/srd/srd_rules_height.c \
+               src/procgen/srd/srd_rules_vcorridor.c \
+               src/procgen/srd/srd_rules_vfeature.c \
+               src/procgen/srd/srd_rules_embellish.c \
+               src/procgen/srd/srd_room_map_copy.c \
+               src/procgen/srd/srd_voxel_rule_table.c \
+               src/procgen/srd/srd_descent_loop.c \
+               src/procgen/srd/srd_bridge.c \
+               tests/srd_stubs.c
+SRD2_C_OBJS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRD2_C_SRCS))
+
+# C++ sources for the new SRD modules (cleared — loop is now pure C)
+SRD2_CXX_SRCS :=
+SRD2_CXX_OBJS :=
+
+# Pattern rules for SRD2 objects
+$(OBJDIR)/src/procgen/srd/%.o: src/procgen/srd/%.c | build
+	@mkdir -p $(dir $@)
+	$(CC) $(SRD2_CFLAGS) -c $< -o $@
+
+$(OBJDIR)/src/procgen/srd/%.o: src/procgen/srd/%.cpp | build
+	@mkdir -p $(dir $@)
+	$(CXX) $(SRD2_CXXFLAGS) -c $< -o $@
+
+$(OBJDIR)/tests/srd_stubs.o: tests/srd_stubs.c | build
+	@mkdir -p $(dir $@)
+	$(CC) $(SRD2_CFLAGS) -c $< -o $@
+
+SRD2_ALL_OBJS = $(SRD2_C_OBJS)
+SRD2_LINK     = -lm
+SRD2_SVO_DEPS := src/npc/nav/npc_svo_init.c
+
+# Pure-C tests
+build/srd_descent_loop_tests: tests/srd_descent_loop_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_bridge_tests: tests/srd_bridge_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_property_tests: tests/srd_property_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_critic_value_tests: tests/srd_critic_value_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_pipeline_tests: tests/srd_pipeline_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_sdf_grid_tests: tests/srd_sdf_grid_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_room_map_tests: tests/srd_room_map_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_seed_init_tests: tests/srd_seed_init_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_sdf_to_svo_tests: tests/srd_sdf_to_svo_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_grid_critic_tests: tests/srd_grid_critic_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_rules_wall_tests: tests/srd_rules_wall_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_rules_corner_tests: tests/srd_rules_corner_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_rules_height_tests: tests/srd_rules_height_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_rules_vcorridor_tests: tests/srd_rules_vcorridor_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_rules_vfeature_tests: tests/srd_rules_vfeature_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_rules_embellish_tests: tests/srd_rules_embellish_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+SRD2_TESTS := build/srd_rules_embellish_tests \
+              build/srd_rules_vfeature_tests \
+              build/srd_rules_vcorridor_tests \
+              build/srd_rules_height_tests \
+              build/srd_rules_corner_tests \
+              build/srd_rules_wall_tests \
+              build/srd_grid_critic_tests \
+              build/srd_sdf_grid_tests \
+              build/srd_room_map_tests \
+              build/srd_seed_init_tests \
+              build/srd_sdf_to_svo_tests \
+              build/srd_descent_loop_tests \
+              build/srd_bridge_tests \
+              build/srd_property_tests \
+              build/srd_critic_value_tests \
+              build/srd_pipeline_tests
+
+srd2-test: $(SRD2_TESTS)
+	@for t in $(SRD2_TESTS); do echo "Running $$t..."; ./$$t || exit 1; done
+	@echo "All SRD v2 tests passed."
+
+PROCGEN_TESTS += $(SRD2_TESTS)
 
 clean: clean-procgen
 clean-procgen:

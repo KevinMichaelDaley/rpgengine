@@ -91,8 +91,9 @@ static bool repair_contained_cond(const srd_sdf_layout_t *layout,
 }
 
 /**
- * Apply: if inner has no neighbours outside outer, remove it.
- * Otherwise, extend inner so it protrudes beyond outer.
+ * Apply: push inner box out of outer along the axis of least
+ * containment depth.  Never removes boxes — the seed map topology
+ * must be preserved.
  */
 static int repair_contained_apply(srd_sdf_layout_t *layout,
                                   const srd_selection_t *sel,
@@ -104,33 +105,31 @@ static int repair_contained_apply(srd_sdf_layout_t *layout,
     if (outer_idx < 0 || outer_idx >= layout->n_boxes) return -1;
     if (inner_idx < 0 || inner_idx >= layout->n_boxes) return -1;
 
-    /* Check if inner has neighbours other than outer */
-    bool has_outside_neighbour = false;
-    for (int k = 0; k < layout->n_boxes; k++) {
-        if (k == outer_idx || k == inner_idx) continue;
-        if (srd_sdf_layout_get_adj(layout, inner_idx, k)) {
-            has_outside_neighbour = true;
-            break;
-        }
-    }
-
-    if (!has_outside_neighbour) {
-        /* Remove the isolated inner box */
-        srd_sdf_layout_remove_box(layout, inner_idx);
-        return 0;
-    }
-
-    /* Extend inner so it protrudes beyond outer on the east side */
-    srd_sdf_box_t *o = &layout->boxes[outer_idx];
+    srd_sdf_box_t *o  = &layout->boxes[outer_idx];
     srd_sdf_box_t *in = &layout->boxes[inner_idx];
 
-    float outer_right = o->cx + o->hw;
-    float inner_right = in->cx + in->hw;
-    if (inner_right <= outer_right) {
-        /* Need to extend right past outer */
-        float extend = (outer_right - inner_right) + 0.5f;
-        in->hw += extend * 0.5f;
-        in->cx += extend * 0.5f;
+    /* Compute how deeply inner is contained on each side.
+     * depth > 0 means inner edge is inside outer on that side. */
+    float depth_right = (o->cx + o->hw) - (in->cx + in->hw);
+    float depth_left  = (in->cx - in->hw) - (o->cx - o->hw);
+    float depth_down  = (o->cz + o->hd) - (in->cz + in->hd);
+    float depth_up    = (in->cz - in->hd) - (o->cz - o->hd);
+
+    /* Find the axis/direction of minimum depth — cheapest push-out. */
+    float min_depth = depth_right;
+    int   direction = 0; /* 0=right, 1=left, 2=down, 3=up */
+
+    if (depth_left < min_depth) { min_depth = depth_left;  direction = 1; }
+    if (depth_down < min_depth) { min_depth = depth_down;  direction = 2; }
+    if (depth_up   < min_depth) { min_depth = depth_up;    direction = 3; }
+
+    /* Push inner box out by min_depth + margin so it protrudes. */
+    float push = min_depth + 0.5f;
+    switch (direction) {
+        case 0: in->cx += push; break; /* push right */
+        case 1: in->cx -= push; break; /* push left  */
+        case 2: in->cz += push; break; /* push down  */
+        case 3: in->cz -= push; break; /* push up    */
     }
     return 0;
 }

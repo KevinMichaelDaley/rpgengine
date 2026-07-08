@@ -183,5 +183,6 @@ See `design/procgen_dungeon_grammar.md` for the full architecture document.
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - NEVER use `git stash` — it disrupts the working tree and can hide changes
+- NEVER use `sed` to edit files — always use the Edit tool
 - If push fails, resolve and retry until it succeeds
 

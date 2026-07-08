@@ -190,53 +190,13 @@ static int convert_type_apply(srd_sdf_layout_t *layout,
 int srd_rules_room_register_annex(srd_rule_table_t *tbl) {
     if (!tbl) return -1;
 
-    /* Register RemoveAlcove first (so AddAlcove can reference it) */
-    srd_descent_rule_t rem_alc = {0};
-    rem_alc.name = "RemoveAlcove";
-    rem_alc.inverse_rule_id = -1;  /* Patched below */
-    rem_alc.n_select = 1;
-    rem_alc.cond = remove_alcove_cond;
-    rem_alc.apply = remove_alcove_apply;
-    int rem_alc_idx = srd_rule_table_register(tbl, &rem_alc);
-    if (rem_alc_idx < 0) return -1;
-
-    /* AddAlcove — inverse is RemoveAlcove */
-    srd_descent_rule_t add_alc = {0};
-    add_alc.name = "AddAlcove";
-    add_alc.inverse_rule_id = rem_alc_idx;
-    add_alc.n_select = 1;
-    add_alc.jump_continuous = true;
-    add_alc.cond = box_exists_cond;
-    add_alc.apply = add_alcove_apply;
-    int add_alc_idx = srd_rule_table_register(tbl, &add_alc);
-    if (add_alc_idx < 0) return -1;
-
-    /* Patch RemoveAlcove inverse */
-    tbl->rules[rem_alc_idx].inverse_rule_id = add_alc_idx;
-
-    /* Register RemoveAntechamber first */
-    srd_descent_rule_t rem_ante = {0};
-    rem_ante.name = "RemoveAntechamber";
-    rem_ante.inverse_rule_id = -1;
-    rem_ante.n_select = 1;
-    rem_ante.cond = remove_antechamber_cond;
-    rem_ante.apply = remove_antechamber_apply;
-    int rem_ante_idx = srd_rule_table_register(tbl, &rem_ante);
-    if (rem_ante_idx < 0) return -1;
-
-    /* AddAntechamber — inverse is RemoveAntechamber */
-    srd_descent_rule_t add_ante = {0};
-    add_ante.name = "AddAntechamber";
-    add_ante.inverse_rule_id = rem_ante_idx;
-    add_ante.n_select = 1;
-    add_ante.jump_continuous = true;
-    add_ante.cond = box_exists_cond;
-    add_ante.apply = add_antechamber_apply;
-    int add_ante_idx = srd_rule_table_register(tbl, &add_ante);
-    if (add_ante_idx < 0) return -1;
-
-    /* Patch RemoveAntechamber inverse */
-    tbl->rules[rem_ante_idx].inverse_rule_id = add_ante_idx;
+    /* Only ConvertType is registered for the descent loop.
+     *
+     * AddAlcove / RemoveAlcove / AddAntechamber / RemoveAntechamber
+     * are excluded because they add or remove entire rooms, which
+     * violates the local-rewrite invariant.  Descent rules must be
+     * jump-continuous: they refine the seed geometry (split, resize,
+     * retype) but never create or destroy map features. */
 
     /* ConvertType — self-inverse */
     srd_descent_rule_t conv = {0};
@@ -252,5 +212,5 @@ int srd_rules_room_register_annex(srd_rule_table_t *tbl) {
     /* Self-inverse */
     tbl->rules[conv_idx].inverse_rule_id = conv_idx;
 
-    return 5;
+    return 1;
 }

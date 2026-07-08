@@ -32,8 +32,8 @@ static void tick_drain_async_(struct aegis_async_buffer *buf,
 
 static void tick_log_sense_(const npc_demo_npc_t *npc, uint32_t detected) {
     (void)npc;
-    printf("SENSE: detected %u entities (tick %u)\n",
-           (unsigned)detected, (unsigned)npc->tick_count);
+    /* printf("SENSE: detected %u entities (tick %u)\n",
+           (unsigned)detected, (unsigned)npc->tick_count); */
 }
 
 uint32_t npc_demo_tick_run_one(npc_demo_npc_t *npc,
