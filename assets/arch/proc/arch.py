@@ -722,6 +722,7 @@ def _bevel_object(obj, face_pair_lists, size, style, segments, seed=None,
     mod.width = bevel_w
     mod.profile_type = 'CUSTOM'
     mod.segments = max(2, len(pts) - 1)
+    mod.mark_seam = True            # seam the moulding's edges (topology change)
     _set_curve_profile(mod.custom_profile, pts)
     bpy.ops.object.modifier_apply(modifier=mod.name)
     stale = obj.vertex_groups.get("reveal_bevel")
@@ -936,6 +937,7 @@ def build_arched_doorway(
                       clamp_z=(None if sill_height > 0.0
                                and reveal_bevel_sill else sill_height))
         _smooth_mesh(obj, smooth_angle)
+        _finalize_uvs(obj)          # re-unwrap: the bevel changed topology
     return obj
 
 
@@ -1945,6 +1947,7 @@ def build_tower_doorway(
                       clamp_z=(None if sill_height > 0.0
                                and reveal_bevel_sill else sill_height))
         _smooth_mesh(obj, smooth_angle)
+        _finalize_uvs(obj)          # re-unwrap: the bevel changed topology
     return obj
 
 
@@ -2121,6 +2124,7 @@ def build_barrel_doorway(
                       clamp_z=(None if sill_height > 0.0
                                and reveal_bevel_sill else sill_height))
         _smooth_mesh(obj, smooth_angle)
+        _finalize_uvs(obj)          # re-unwrap: the bevel changed topology
     return obj
 
 

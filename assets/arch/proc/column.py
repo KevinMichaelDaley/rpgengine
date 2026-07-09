@@ -29,9 +29,123 @@ the way a box-modeler would:
 """
 
 import math
+from collections import defaultdict
 
 import bmesh
 import bpy
+
+
+# ---------------------------------------------------------------------------
+# UV seams and uniform texel density (shared convention with arch.py:
+# UV_SCALE UV units per world metre, unpacked so a tiling material tiles).
+# ---------------------------------------------------------------------------
+
+UV_SCALE = 1.0
+
+
+def _mark_column_seams(bm, start_azim):
+    """Seam a column for unwrapping: one vertical meridian down the *start_azim*
+    side unrolls the surface of revolution into a strip, and the flat cap grids
+    at the extreme Z are cut off along their rims."""
+    zs = [v.co.z for v in bm.verts]
+    zmin, zmax = min(zs), max(zs)
+
+    def azdiff(a, b):
+        d = (a - b) % (2.0 * math.pi)
+        return min(d, 2.0 * math.pi - d)
+
+    for e in bm.edges:
+        v0, v1 = e.verts
+        z0, z1 = v0.co.z, v1.co.z
+        if (abs(z0 - zmin) < 1e-4 and abs(z1 - zmin) < 1e-4) or \
+           (abs(z0 - zmax) < 1e-4 and abs(z1 - zmax) < 1e-4):
+            e.seam = True                       # top / bottom cap rim
+            continue
+        a0 = math.atan2(v0.co.y, v0.co.x)
+        a1 = math.atan2(v1.co.y, v1.co.x)
+        if azdiff(a0, start_azim) < 0.08 and azdiff(a1, start_azim) < 0.08:
+            e.seam = True                       # meridian cut
+
+
+def _normalize_island_density(obj, density):
+    """Scale each UV island so its texel density equals *density* UV/metre."""
+    me = obj.data
+    if not me.uv_layers.active:
+        return
+    uvl = me.uv_layers.active.data
+    seam = {frozenset(e.vertices): e.use_seam for e in me.edges}
+    edge_faces = defaultdict(list)
+    for p in me.polygons:
+        vs = list(p.vertices)
+        for a in range(len(vs)):
+            edge_faces[frozenset((vs[a], vs[(a + 1) % len(vs)]))].append(p.index)
+    parent = list(range(len(me.polygons)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for key, fs in edge_faces.items():
+        if len(fs) == 2 and not seam.get(key, False):
+            ra, rb = find(fs[0]), find(fs[1])
+            if ra != rb:
+                parent[ra] = rb
+    islands = defaultdict(list)
+    for p in me.polygons:
+        islands[find(p.index)].append(p.index)
+    for faces in islands.values():
+        a3 = sum(me.polygons[f].area for f in faces)
+        auv = cx = cy = cnt = 0.0
+        for f in faces:
+            li = list(me.polygons[f].loop_indices)
+            sh = 0.0
+            for a in range(len(li)):
+                u0, u1 = uvl[li[a]].uv, uvl[li[(a + 1) % len(li)]].uv
+                sh += u0.x * u1.y - u1.x * u0.y
+                cx += u0.x
+                cy += u0.y
+                cnt += 1
+            auv += abs(sh) * 0.5
+        if a3 < 1e-9 or auv < 1e-12 or cnt < 1.0:
+            continue
+        factor = density / (auv / a3) ** 0.5
+        cx /= cnt
+        cy /= cnt
+        for f in faces:
+            for li in me.polygons[f].loop_indices:
+                u = uvl[li].uv
+                uvl[li].uv = ((u.x - cx) * factor + cx, (u.y - cy) * factor + cy)
+
+
+def _finalize_uvs(obj, density=UV_SCALE):
+    """Unwrap along the marked seams, then equalise every island to *density*."""
+    win = bpy.context.window
+    area = next((a for a in (win.screen.areas if win else [])
+                 if a.type == 'VIEW_3D'), None)
+    if area is None:
+        return
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    prev_sel = list(bpy.context.selected_objects)
+    prev_act = bpy.context.view_layer.objects.active
+    for o in prev_sel:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    ov = dict(window=win, area=area, region=region,
+              active_object=obj, object=obj, edit_object=obj)
+    bpy.ops.object.mode_set(mode='EDIT')
+    with bpy.context.temp_override(**ov):
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.001)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    _normalize_island_density(obj, density)
+    obj.select_set(False)
+    for o in prev_sel:
+        o.select_set(True)
+    if prev_act:
+        bpy.context.view_layer.objects.active = prev_act
 
 
 # ---------------------------------------------------------------------------
@@ -1198,6 +1312,9 @@ def build_column(
             if len(e.link_faces) == 2:
                 e.smooth = e.calc_face_angle() <= thr
 
+    # UV seams: meridian down the profile's vertex-0 side + the cap rims.
+    _mark_column_seams(bm, math.atan2(profile[0][1], profile[0][0]))
+
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
     bm.free()
@@ -1213,4 +1330,5 @@ def build_column(
 
     obj = bpy.data.objects.new(name, mesh)
     (collection or bpy.context.scene.collection).objects.link(obj)
+    _finalize_uvs(obj)
     return obj
