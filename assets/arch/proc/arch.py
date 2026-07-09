@@ -301,6 +301,7 @@ def _frame_faces(half_w, half_wp, sill_h, opening_h, panel_h, shape,
     # opening bottom) is splay-tagged to narrow HORIZONTALLY toward centre so
     # the back-face bottom corners pull in with the jambs, while the sill face
     # stays flat. Column x-positions match the piers at +-half_w / +-half_wp.
+    sill_path = []
     if z_sill > 1e-9:
         left = [-half_wp + (half_wp - half_w) * c / wall_cols
                 for c in range(wall_cols + 1)]          # -half_wp .. -half_w
@@ -323,8 +324,15 @@ def _frame_faces(half_w, half_wp, sill_h, opening_h, panel_h, shape,
             for j in range(band_rows):
                 faces.append((grid[c][j], grid[c + 1][j],
                               grid[c + 1][j + 1], grid[c][j + 1]))
+        # Sill edge (opening bottom): the band top-row verts across the
+        # opening span, left corner -> right corner, for optional beveling.
+        sill_path = [grid[c][band_rows] for c, x in enumerate(cols_x)
+                     if abs(x) <= half_w + 1e-9]
 
-    return pos, faces, splay
+    # The opening boundary, ordered bottom-left -> up jamb -> arch -> down
+    # jamb -> bottom-right (vert indices), for beveling the reveal corner.
+    opening_path = list(inner_l) + list(crown[1:]) + list(inner_r[1:])
+    return pos, faces, splay, opening_path, sill_path
 
 
 def _extrude_panel(bm, pos, faces, y0, y1, off=None, off_front=False):
@@ -357,6 +365,261 @@ def _extrude_panel(bm, pos, faces, y0, y1, off=None, off_front=False):
             if und[frozenset((a, b))] == 1:
                 bm.faces.new((front[a], front[b], back[b], back[a]))
     return front, back
+
+
+def _bevel_shape(style, segments, seed=None):
+    """Map a bevel style to the operator's (profile, segments): profile is the
+    superellipse exponent — 0.5 is a straight chamfer / circular round, lower
+    pinches concave (cavetto), higher bulges convex (ovolo). "random" picks a
+    random curved profile and segment count deterministically from *seed*."""
+    if style == "random":
+        rng = random.Random(seed if seed is not None else 0)
+        return round(rng.uniform(0.15, 0.85), 3), rng.randint(2, 6)
+    seg = max(1, segments)
+    if style == "chamfer":
+        return 0.5, 1
+    if style in ("ovolo", "round"):
+        return 0.5, seg
+    if style == "cavetto":
+        return 0.2, seg
+    if style == "ogee":
+        return 0.85, max(2, seg)
+    return 0.5, 1
+
+
+def _pos_key(co):
+    return (round(co.x, 4), round(co.y, 4), round(co.z, 4))
+
+
+def _reveal_edge_pairs(vert_lists, opening_path):
+    """The reveal-to-face corner edges along the whole opening (jambs + arch)
+    for each face in *vert_lists* (front and/or back copies), as position
+    pairs (used to re-select the edges on the built object)."""
+    pairs = []
+    for verts in vert_lists:
+        for i in range(len(opening_path) - 1):
+            pairs.append((verts[opening_path[i]].co.copy(),
+                          verts[opening_path[i + 1]].co.copy()))
+    return pairs
+
+
+def _collect_reveal_pairs(front, back, opening_path, sill_path, faces_opt,
+                          sill_flag):
+    """Reveal edge position-pairs for the chosen face(s), returned as ONE list
+    per face (so each face's reveal is beveled as its own clean chamfer strip).
+    Each list covers the opening (jambs + arch) plus optionally the window
+    sill. Call AFTER any wrap so the recorded positions match the built
+    object."""
+    vlists = []
+    if faces_opt in ("inside", "both"):
+        vlists.append(front)
+    if faces_opt in ("outside", "both"):
+        vlists.append(back)
+    paths = [opening_path]
+    if sill_flag and sill_path:
+        paths.append(sill_path)
+    per_face = []
+    for verts in vlists:
+        pairs = []
+        for p in paths:
+            pairs += _reveal_edge_pairs([verts], p)
+        per_face.append(pairs)
+    return per_face
+
+
+def _reveal_style(style, segments, seed):
+    """Resolve the reveal bevel style to a classical molding name and a control
+    segment count. "random" picks a curved profile and resolution
+    deterministically from *seed*; curved styles are floored to enough segments
+    to read as a curve; "chamfer" stays a straight single segment."""
+    if style == "random":
+        rng = random.Random(seed if seed is not None else 0)
+        return (rng.choice(["ovolo", "cavetto", "ogee", "cyma_reversa"]),
+                rng.randint(3, 6))
+    if style == "chamfer":
+        return "chamfer", 1
+    return style, max(3, segments)
+
+
+def _set_curve_profile(cp, pts):
+    """Load a molding polyline (list of (x, y) from (1, 0) to (0, 1)) into a
+    bevel modifier's CurveProfile. The control points MUST be given explicit
+    handle types — the default 'FREE' handles have degenerate positions and
+    collapse the sampled curve to a wiggle/line. 'VECTOR' makes straight spans
+    between points, reproducing the analytic curve our polyline already
+    samples. Points are added then sorted by :meth:`CurveProfile.update`."""
+    while len(cp.points) > 2:
+        cp.points.remove(cp.points[-1])
+    cp.points[0].location = pts[0]
+    cp.points[1].location = pts[-1]
+    for (u, v) in pts[1:-1]:
+        cp.points.add(u, v)
+    for p in cp.points:
+        p.handle_type_1 = 'VECTOR'
+        p.handle_type_2 = 'VECTOR'
+    cp.update()
+
+
+def _reveal_chamfer_loopcut(me, ov, face_pairs, chamfer_w, push_amt, vg_index):
+    """Prepare one reveal strip for the shaped bevel and weight its middle loop
+    into vertex group *vg_index*:
+      1. single-segment 45 chamfer of the reveal edges -> clean quad strip,
+      2. a single LOOP CUT down the middle of that chamfer (the chamfer has no
+         poles, so the loop follows the whole ring).
+    Processing one face's strip at a time keeps every 'both faces are chamfer'
+    edge an unambiguous rung, so the loop cut runs down the reveal (not around
+    a jamb cross-section). The loop verts are tagged with weight 1.0 so a
+    VGROUP-limited bevel modifier can later mold just that loop."""
+    want = set()
+    for a, b in face_pairs:
+        want.add((_pos_key(a), _pos_key(b)))
+        want.add((_pos_key(b), _pos_key(a)))
+    bm = bmesh.from_edit_mesh(me)
+    for e in bm.edges:
+        e.select = False
+    for f in bm.faces:
+        f.select = False
+    for v in bm.verts:
+        v.select = False
+    n = 0
+    for e in bm.edges:
+        if (_pos_key(e.verts[0].co), _pos_key(e.verts[1].co)) in want:
+            e.select = True
+            n += 1
+    bmesh.update_edit_mesh(me)
+    if not n:
+        return
+    # 1. single-segment chamfer -> flat 45 support strip, pole-free.
+    with bpy.context.temp_override(**ov):
+        bpy.ops.mesh.bevel(offset=chamfer_w, segments=1, affect='EDGES')
+    # 2. loop cut down the middle of the chamfer band. A loop cut across the
+    #    band is topologically a 1-cut subdivision of every rung (an edge shared
+    #    by two chamfer quads; support edges border a non-chamfer face and are
+    #    excluded). Doing it in bmesh avoids the modal loopcut operator (which
+    #    can leave a pending edge-slide, and has crashed under temp-override).
+    bm = bmesh.from_edit_mesh(me)
+    # Verify the deform layer up front — adding a custom-data layer reallocates
+    # and would invalidate BMVert references taken afterwards.
+    dl = bm.verts.layers.deform.verify()
+    chamfer_faces = set(f for f in bm.faces if f.select and len(f.verts) == 4)
+    # Rungs are the chamfer band's cross edges. Interior rungs are shared by two
+    # chamfer quads, but that misses the band's OPEN ENDS (e.g. a jamb bottoms
+    # out on the floor band, a non-chamfer face) — excluding them stops the loop
+    # at the springers. So for each quad, take a cross edge (one shared with a
+    # chamfer neighbour) AND its opposite: the opposite of an interior rung is
+    # the next interior rung, and for an end quad it is the band's end edge.
+    rungs = set()
+    for q in chamfer_faces:
+        edges = list(q.edges)
+        cross_i = None
+        for i, e in enumerate(edges):
+            if sum(1 for f in e.link_faces if f in chamfer_faces) == 2:
+                cross_i = i
+                break
+        if cross_i is None:
+            continue
+        rungs.add(edges[cross_i])
+        rungs.add(edges[(cross_i + 2) % 4])
+    if not rungs:
+        return
+    rungs = list(rungs)
+    # Identify the new loop verts from the op's OWN return value — subdivide
+    # uses the .tag/flags internally, so tagging pre-existing verts to spot the
+    # new ones by difference is unreliable.
+    res = bmesh.ops.subdivide_edges(bm, edges=rungs, cuts=1, use_grid_fill=False)
+    loop_verts = [g for g in (res.get('geom_inner', []) + res.get('geom', []))
+                  if isinstance(g, bmesh.types.BMVert)]
+    # 3. Push the new loop OUT along its normal. The chamfer left the band flat
+    #    (coplanar), and beveling a flat edge cannot curve it — there is no
+    #    dihedral to shape. Displacing the loop toward where the original sharp
+    #    reveal corner was recreates that corner, now pole-free (the chamfer
+    #    resolved the pole), so the following bevel rounds it into a real
+    #    molding instead of a flat ripple.
+    bm.normal_update()
+    for v in loop_verts:
+        v.co += v.normal * push_amt
+        # Weight the loop into the vertex group directly — deterministic, no
+        # dependence on tool weight state.
+        v[dl][vg_index] = 1.0
+    bmesh.update_edit_mesh(me)
+
+
+def _bevel_object(obj, face_pair_lists, size, style, segments, seed=None,
+                  clamp_z=None):
+    """Apply the reveal-corner molding to *obj*. Each face's reveal strip is
+    chamfered and loop-cut (see :func:`_reveal_chamfer_loopcut`); the resulting
+    pole-free loops are then molded in one pass by a VGROUP-limited bevel
+    modifier carrying a CUSTOM classical profile. The chamfer's support loops
+    bound the shaped bevel, so it fills the reveal as a real molding rather
+    than a ripple on a flat 45. When *clamp_z* is set (an un-beveled window
+    sill), new geometry that dips below the sill plane is raised onto it."""
+    if size <= 0.0 or not any(face_pair_lists):
+        return
+    mstyle, mseg = _reveal_style(style, segments, seed)
+    pts = _molding_profile(mstyle, mseg)
+    # The chamfer opens the reveal and lays clean support loops; the loop cut is
+    # then pushed out ~to the old corner so the shaped bevel has a dihedral to
+    # round. The shaped bevel is kept inside the supports so it stays a molding.
+    chamfer_w = size
+    push_amt = size * 0.4
+    bevel_w = size * 0.6
+    for ob in list(bpy.context.selected_objects):
+        ob.select_set(False)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    vg = obj.vertex_groups.new(name="reveal_bevel")
+    vg_index = vg.index
+    bpy.ops.object.mode_set(mode='EDIT')
+    me = obj.data
+    win = bpy.context.window
+    area = next(a for a in win.screen.areas if a.type == 'VIEW_3D')
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    ov = dict(window=win, area=area, region=region,
+              active_object=obj, object=obj, edit_object=obj)
+    for face_pairs in face_pair_lists:
+        if face_pairs:
+            _reveal_chamfer_loopcut(me, ov, face_pairs, chamfer_w, push_amt,
+                                    vg_index)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    # Record pre-molding vertex positions so the sill clamp can target only the
+    # geometry the bevel newly creates/moves.
+    before = (set(_pos_key(v.co) for v in obj.data.vertices)
+              if clamp_z is not None else None)
+    mod = obj.modifiers.new("reveal_bevel", 'BEVEL')
+    mod.limit_method = 'VGROUP'
+    mod.vertex_group = "reveal_bevel"
+    mod.affect = 'EDGES'
+    mod.offset_type = 'OFFSET'
+    mod.width = bevel_w
+    mod.profile_type = 'CUSTOM'
+    mod.segments = max(2, len(pts) - 1)
+    _set_curve_profile(mod.custom_profile, pts)
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    stale = obj.vertex_groups.get("reveal_bevel")
+    if stale is not None:
+        obj.vertex_groups.remove(stale)
+    if clamp_z is not None:
+        for v in obj.data.vertices:
+            if (_pos_key(v.co) not in before
+                    and v.co.z < clamp_z - 1e-5):
+                v.co.z = clamp_z
+
+
+def _smooth_mesh(obj, angle):
+    """Re-apply angle-based smoothing to a mesh object (after an operator that
+    added faces, e.g. the reveal bevel)."""
+    if angle <= 0.0:
+        return
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    thr = math.radians(angle)
+    for f in bm.faces:
+        f.smooth = True
+    for e in bm.edges:
+        if len(e.link_faces) == 2:
+            e.smooth = e.calc_face_angle() <= thr
+    bm.to_mesh(obj.data)
+    bm.free()
 
 
 def _warp_cylinder(bm, tower_radius):
@@ -432,6 +695,12 @@ def build_arched_doorway(
     corner_rows=1,
     sill_columns=1,
     band_rows=1,
+    reveal_bevel=0.0,
+    reveal_bevel_style="chamfer",
+    reveal_bevel_segments=1,
+    reveal_bevel_faces="both",
+    reveal_bevel_seed=None,
+    reveal_bevel_sill=True,
     smooth_angle=35.0,
     grid_size=(0.25, 0.25, 0.25),
     snap_panel=False,
@@ -517,7 +786,7 @@ def build_arched_doorway(
     if splay >= half_w:
         raise ValueError("splay must be smaller than the opening half-width")
 
-    pos, faces, splay_dirs = _frame_faces(
+    pos, faces, splay_dirs, opening_path, sill_path = _frame_faces(
         half_w, half_wp, sill_height, opening_height, panel_height,
         arch_shape, head_rise, jamb_segments, head_segments, wall_columns,
         corner_rows, sill_columns, band_rows)
@@ -525,9 +794,20 @@ def build_arched_doorway(
            for i, (dx, dz) in splay_dirs.items()} if splay > 0 else None
 
     bm = bmesh.new()
-    _extrude_panel(bm, pos, faces, -wall_thickness * 0.5,
-                   wall_thickness * 0.5, off, off_front=(wide_side == "outer"))
-    return _finish(bm, name, collection, smooth_angle)
+    front, back = _extrude_panel(
+        bm, pos, faces, -wall_thickness * 0.5, wall_thickness * 0.5, off,
+        off_front=(wide_side == "outer"))
+    rev_pairs = _collect_reveal_pairs(
+        front, back, opening_path, sill_path, reveal_bevel_faces,
+        reveal_bevel_sill) if reveal_bevel > 0.0 else []
+    obj = _finish(bm, name, collection, smooth_angle)
+    if rev_pairs:
+        _bevel_object(obj, rev_pairs, reveal_bevel, reveal_bevel_style,
+                      reveal_bevel_segments, reveal_bevel_seed,
+                      clamp_z=(None if sill_height > 0.0
+                               and reveal_bevel_sill else sill_height))
+        _smooth_mesh(obj, smooth_angle)
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -997,6 +1277,12 @@ def build_tower_doorway(
     jamb_segments=1,
     corner_rows=1,
     band_rows=1,
+    reveal_bevel=0.0,
+    reveal_bevel_style="chamfer",
+    reveal_bevel_segments=1,
+    reveal_bevel_faces="both",
+    reveal_bevel_seed=None,
+    reveal_bevel_sill=True,
     smooth_angle=35.0,
     collection=None,
 ):
@@ -1040,7 +1326,7 @@ def build_tower_doorway(
 
     wall_cols, head_segs, sill_cols = _wrap_counts(
         tessellation_density, half_wp - half_w, opening_width, opening_width)
-    pos, faces, splay_dirs = _frame_faces(
+    pos, faces, splay_dirs, opening_path, sill_path = _frame_faces(
         half_w, half_wp, sill_height, opening_height, panel_height,
         arch_shape, head_rise, jamb_segments, max(4, head_segs), wall_cols,
         corner_rows, sill_cols, band_rows)
@@ -1048,10 +1334,21 @@ def build_tower_doorway(
            for i, (dx, dz) in splay_dirs.items()} if splay > 0 else None
 
     bm = bmesh.new()
-    _extrude_panel(bm, pos, faces, -wall_thickness * 0.5,
-                   wall_thickness * 0.5, off, off_front=(wide_side == "outer"))
+    front, back = _extrude_panel(
+        bm, pos, faces, -wall_thickness * 0.5, wall_thickness * 0.5, off,
+        off_front=(wide_side == "outer"))
     _warp_cylinder(bm, tower_radius)
-    return _finish(bm, name, collection, smooth_angle)
+    rev_pairs = _collect_reveal_pairs(
+        front, back, opening_path, sill_path, reveal_bevel_faces,
+        reveal_bevel_sill) if reveal_bevel > 0.0 else []
+    obj = _finish(bm, name, collection, smooth_angle)
+    if rev_pairs:
+        _bevel_object(obj, rev_pairs, reveal_bevel, reveal_bevel_style,
+                      reveal_bevel_segments, reveal_bevel_seed,
+                      clamp_z=(None if sill_height > 0.0
+                               and reveal_bevel_sill else sill_height))
+        _smooth_mesh(obj, smooth_angle)
+    return obj
 
 
 def build_tower_doorjamb(
@@ -1126,6 +1423,12 @@ def build_barrel_doorway(
     clip_top=False,
     floor_z=None,
     ceiling_z=None,
+    reveal_bevel=0.0,
+    reveal_bevel_style="chamfer",
+    reveal_bevel_segments=1,
+    reveal_bevel_faces="both",
+    reveal_bevel_seed=None,
+    reveal_bevel_sill=True,
     smooth_angle=35.0,
     collection=None,
 ):
@@ -1180,7 +1483,7 @@ def build_barrel_doorway(
     head_segs = max(4, math.ceil(opening_width * d))
     sill_cols = max(1, math.ceil(opening_width * d))
 
-    pos, faces, splay_dirs = _frame_faces(
+    pos, faces, splay_dirs, opening_path, sill_path = _frame_faces(
         half_w, half_wp, sill_height, opening_height, panel_height,
         arch_shape, head_rise, jamb_segs, head_segs, wall_columns,
         corner_rows, sill_cols, band_rows)
@@ -1205,13 +1508,23 @@ def build_barrel_doorway(
                  else max(v.co.y for v in exterior))
         for v in exterior:
             v.co.y = ext_y
+    rev_pairs = _collect_reveal_pairs(
+        front, back, opening_path, sill_path, reveal_bevel_faces,
+        reveal_bevel_sill) if reveal_bevel > 0.0 else []
     if clip_bottom:
         z = floor_z if floor_z is not None else max(v.co.z for v in bottom_v)
         _clip_plane(bm, z, keep_above=True)
     if clip_top:
         z = ceiling_z if ceiling_z is not None else min(v.co.z for v in top_v)
         _clip_plane(bm, z, keep_above=False)
-    return _finish(bm, name, collection, smooth_angle)
+    obj = _finish(bm, name, collection, smooth_angle)
+    if rev_pairs:
+        _bevel_object(obj, rev_pairs, reveal_bevel, reveal_bevel_style,
+                      reveal_bevel_segments, reveal_bevel_seed,
+                      clamp_z=(None if sill_height > 0.0
+                               and reveal_bevel_sill else sill_height))
+        _smooth_mesh(obj, smooth_angle)
+    return obj
 
 
 def build_barrel_doorjamb(
