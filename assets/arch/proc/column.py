@@ -39,7 +39,7 @@ import bpy
 # ---------------------------------------------------------------------------
 
 def _shaft_profile(sides, corner_chamfer, corner_chamfer_segments,
-                   rotation=0.0):
+                   rotation=0.0, corner_bow=1.0):
     """Build the shaft cross-section polycurve at unit circumradius.
 
     Returns a CCW list of (x, y) starting near the +45-degree corner. The
@@ -48,10 +48,13 @@ def _shaft_profile(sides, corner_chamfer, corner_chamfer_segments,
     diamond at pi/4. Each polygon corner is optionally chamfered:
     *corner_chamfer* in [0, 0.9] is the fraction of the half-edge cut back
     on each side of the corner, and *corner_chamfer_segments* >= 1 is the
-    number of edges across the cut (1 = flat chamfer, more = rounded bevel
-    via a quadratic arc). The result is padded to a multiple-of-4 vert
-    count by splitting its longest edges with collinear midpoints (geometry
-    unchanged)."""
+    number of edges across the cut (1 = flat chamfer, more = a shaped bevel).
+    *corner_bow* moulds the vertical arris by placing the arc's control point
+    between the chord midpoint and the corner: 1.0 bulges convex to the corner
+    (a rounded bead arris), 0.0 is a straight chamfer, negative bows concave
+    (a cove/flute cut into each corner). The result is padded to a multiple-of-
+    4 vert count by splitting its longest edges with collinear midpoints
+    (geometry unchanged)."""
     corners = []
     for k in range(sides):
         t = math.pi * 0.25 + rotation + 2.0 * math.pi * k / sides
@@ -71,14 +74,19 @@ def _shaft_profile(sides, corner_chamfer, corner_chamfer_segments,
             vx, vy = (rx - px) / edge_len, (ry - py) / edge_len
             ax, ay = px - ux * cut, py - uy * cut   # chamfer start
             bx, by = px + vx * cut, py + vy * cut   # chamfer end
+            # Control point on the line from the chord midpoint toward the
+            # corner: corner_bow 1 -> corner (convex), 0 -> midpoint (straight),
+            # < 0 -> past the midpoint toward centre (concave cove).
+            mx, my = (ax + bx) * 0.5, (ay + by) * 0.5
+            cxp = mx + (px - mx) * corner_bow
+            cyp = my + (py - my) * corner_bow
             seg = corner_chamfer_segments
-            # Quadratic bezier a -> corner -> b, sampled seg+1 times: a flat
-            # cut for seg=1, a rounded bevel for seg>1.
+            # Quadratic bezier a -> control -> b, sampled seg+1 times.
             for i in range(seg + 1):
                 f = i / seg
                 w0, w1, w2 = (1 - f) ** 2, 2 * f * (1 - f), f ** 2
-                pts.append((w0 * ax + w1 * px + w2 * bx,
-                            w0 * ay + w1 * py + w2 * by))
+                pts.append((w0 * ax + w1 * cxp + w2 * bx,
+                            w0 * ay + w1 * cyp + w2 * by))
 
     # Pad to a multiple of 4 by splitting the longest edges at their midpoint.
     needed = (-len(pts)) % 4
@@ -461,6 +469,129 @@ def _snap_size(value, grid):
 
 
 # ---------------------------------------------------------------------------
+# Classical moulding vocabulary (swept as surfaces of revolution)
+# ---------------------------------------------------------------------------
+
+def _moulding_shape(kind, t):
+    """Radial deviation of a classical moulding element at normalized height
+    t in [0, 1], in units of the element's bulge amplitude (added on top of
+    the element's linear radius baseline). Positive bows OUT (convex), negative
+    bows IN (concave / hollow)."""
+    q = math.pi * 0.5
+    if kind == "fillet":                        # straight band / listel
+        return 0.0
+    if kind == "ovolo":                         # convex quarter round (out)
+        return math.sin(t * q)
+    if kind == "cavetto":                       # concave quarter hollow (in)
+        return -(1.0 - math.cos(t * q))
+    if kind in ("torus", "astragal", "bead"):   # half-round bead (out)
+        return math.sin(t * math.pi)
+    if kind == "scotia":                        # deep hollow (in)
+        return -math.sin(t * math.pi)
+    if kind == "ogee":                          # cyma recta S: hollow -> round
+        return (-(1.0 - math.cos(t * math.pi)) * 0.5 if t < 0.5
+                else math.sin((t - 0.5) * math.pi) * 0.5)
+    if kind == "cyma":                          # cyma reversa S: round -> hollow
+        return (math.sin(t * math.pi) * 0.5 if t < 0.5
+                else -(1.0 - math.cos((t - 0.5) * math.pi)) * 0.5)
+    return 0.0
+
+
+def _moulding_rings(elements, r_start, r_end, z_start, z_end, unit,
+                    bulge_unit=None):
+    """Sweep a stack of classical moulding *elements* into (radius, z) rings
+    from (r_start, z_start) up to (r_end, z_end), bottom to top. Each element
+    is a tuple (kind, height_weight, radius_step, bulge): *height_weight* sets
+    its share of the vertical span, *radius_step* its net radius change (units
+    of *unit*, rescaled so the stack closes exactly on r_end), *bulge* its
+    convex/concave amplitude (units of *bulge_unit*, defaulting to *unit* —
+    scale it to widen/narrow every bead without changing the baseline taper).
+    Returns the rings ABOVE the (r_start, z_start) anchor, which the caller
+    already holds; the last lands exactly on (r_end, z_end)."""
+    if bulge_unit is None:
+        bulge_unit = unit
+    total_h = sum(max(1e-6, e[1]) for e in elements) or 1.0
+    steps = [e[2] * unit for e in elements]
+    net = sum(steps)
+    want = r_end - r_start
+    if abs(net) > 1e-9:
+        steps = [s * (want / net) for s in steps]   # keep proportions, close
+    else:
+        steps = [want / len(steps)] * len(steps)
+    rings = []
+    r, z = r_start, z_start
+    for (kind, _hw, _rs, bulge), dr in zip(elements, steps):
+        h = (z_end - z_start) * (_hw / total_h)
+        segs = 1 if kind == "fillet" else 8
+        for i in range(1, segs + 1):
+            t = i / segs
+            base = r + dr * t
+            rings.append((base + _moulding_shape(kind, t) * bulge * bulge_unit,
+                          z + h * t))
+        r += dr
+        z += h
+    if rings:
+        rings[-1] = (r_end, z_end)                   # snap the closing ring
+    return rings
+
+
+# Named moulding stacks. Steps are rescaled to the actual radius span, so they
+# read as proportions; bulges are in units of the projection (shaft radius x
+# the *_moulding_projection factor). Ordered bottom -> top.
+_BASE_MOULDINGS = {
+    # Tuscan/Doric: a single torus on a listel.
+    "tuscan": [("fillet", 0.3, 0.0, 0.0), ("torus", 1.7, -0.6, 0.5),
+               ("fillet", 0.35, -0.4, 0.0)],
+    # Attic: lower torus, scotia hollow, upper torus, fillet. The scotia is a
+    # shallow hollow — the neck stays close to the shaft radius, not pinched.
+    "attic": [("fillet", 0.22, 0.0, 0.0), ("torus", 1.0, -0.2, 0.36),
+              ("scotia", 0.95, -0.18, 0.22), ("torus", 0.85, -0.2, 0.28),
+              ("fillet", 0.22, -0.1, 0.0)],
+    # Dwarven: heavy angular steps, an ovolo instead of a round torus.
+    "dwarven": [("fillet", 0.45, -0.3, 0.0), ("ovolo", 0.8, -0.4, 0.3),
+                ("fillet", 0.5, -0.4, 0.0)],
+}
+
+# Capital moulding stacks: swept over the capital transition, shaft top
+# (narrow, r_start) up to the abacus underside (wide, echinus_r). Radius steps
+# are positive-leaning (the neck flares OUT to the block).
+_CAPITAL_MOULDINGS = {
+    # Doric: a big ovolo echinus under a fillet.
+    "echinus": [("fillet", 0.25, 0.1, 0.0), ("ovolo", 1.6, 0.7, 0.45),
+                ("fillet", 0.3, 0.2, 0.0)],
+    # Astragal bead, cavetto neck, then the ovolo echinus.
+    "astragal": [("astragal", 0.5, 0.1, 0.3), ("fillet", 0.2, 0.05, 0.0),
+                 ("ovolo", 1.3, 0.7, 0.4), ("fillet", 0.25, 0.15, 0.0)],
+    # Egyptian-ish concave bell (cavetto) flaring to the abacus.
+    "cavetto": [("fillet", 0.2, 0.05, 0.0), ("cavetto", 1.7, 0.85, 0.35),
+                ("fillet", 0.3, 0.1, 0.0)],
+}
+
+# Shaft inset (engraved horizontal band) profiles: swept over one groove; the
+# radius dips inward and returns, so both ends sit flush with the shaft.
+_INSET_MOULDINGS = {
+    "scotia": [("scotia", 1.0, 0.0, 1.0)],            # round hollow groove
+    "cavetto": [("cavetto", 0.5, 0.0, 1.0),           # V-ish concave notch
+                ("ovolo", 0.5, 0.0, -1.0)],
+    "astragal": [("astragal", 1.0, 0.0, -1.0)],       # raised bead band (out)
+    "ogee": [("ogee", 1.0, 0.0, 1.0)],                # S-profile fillet groove
+}
+
+
+def _resolve_moulding(spec, table):
+    """A moulding spec is either a preset name (str) or an explicit element
+    list. Returns the element list, or None if *spec* is falsy."""
+    if not spec:
+        return None
+    if isinstance(spec, str):
+        if spec not in table:
+            raise ValueError("unknown moulding preset %r (have %s)"
+                             % (spec, ", ".join(sorted(table))))
+        return table[spec]
+    return list(spec)
+
+
+# ---------------------------------------------------------------------------
 # Generator
 # ---------------------------------------------------------------------------
 
@@ -474,6 +605,12 @@ def build_column(
     shaft_rotation=0.0,
     corner_chamfer=0.0,
     corner_chamfer_segments=1,
+    corner_bow=1.0,
+    # Horizontal engraved bands cut into the shaft.
+    shaft_insets=0,
+    shaft_inset_style="scotia",
+    shaft_inset_depth=0.03,
+    shaft_inset_height=0.05,
     # Base block (the extruded rectangular plinth).
     base_block=True,
     base_width=0.72,
@@ -493,11 +630,15 @@ def build_column(
     base_flare_height=0.15,
     base_flare_segments=1,
     base_flare_curvature=0.0,
+    base_moulding=None,
+    base_moulding_projection=0.4,
     # Capital flare (shaft top -> block underside transition).
     capital_flare=0.6,
     capital_flare_height=0.16,
     capital_flare_segments=1,
     capital_flare_curvature=0.0,
+    capital_moulding=None,
+    capital_moulding_projection=0.4,
     # Grid snapping (origin is assumed to sit on a grid coordinate).
     grid_size=(0.25, 0.25, 0.25),
     snap_base=False,
@@ -658,7 +799,8 @@ def build_column(
                          "flare heights, and snapping")
 
     profile = _shaft_profile(shaft_sides, corner_chamfer,
-                             corner_chamfer_segments, shaft_rotation)
+                             corner_chamfer_segments, shaft_rotation,
+                             corner_bow)
     if capital_style == "cushion":
         # The inset-shield cushion needs at least 6 verts per quarter
         # (room for the shield plus a redirect diamond at each corner).
@@ -701,21 +843,67 @@ def build_column(
                           or abs(params[-1][1] - z) > eps):
             params.append((r, z))
 
-    S = base_flare_segments
-    for i in range(S + 1):
-        s = i / S
-        r = flare_r + (r_shaft_bot - flare_r) * _ease(s, base_flare_curvature)
-        _push(r, z_base_top + (z_shaft_bot - z_base_top) * s)
-    for i, w in enumerate(taper):
-        f = i / (len(taper) - 1)
-        _push(shaft_radius * w, z_shaft_bot + (z_shaft_top - z_shaft_bot) * f)
+    base_mould = _resolve_moulding(base_moulding, _BASE_MOULDINGS)
+    if base_mould:
+        # Classical moulding stack occupies the whole base transition, plinth
+        # top (flare_r) up to the shaft (r_shaft_bot). Bead amplitudes scale
+        # with base_moulding_projection (bulge width), independent of taper.
+        _push(flare_r, z_base_top)
+        for r, z in _moulding_rings(
+                base_mould, flare_r, r_shaft_bot, z_base_top, z_shaft_bot,
+                shaft_radius, shaft_radius * base_moulding_projection):
+            _push(r, z)
+    else:
+        S = base_flare_segments
+        for i in range(S + 1):
+            s = i / S
+            r = flare_r + (r_shaft_bot - flare_r) * _ease(
+                s, base_flare_curvature)
+            _push(r, z_base_top + (z_shaft_bot - z_base_top) * s)
+    # Shaft section: taper rings, plus optional evenly spaced engraved bands.
+    shaft_span = z_shaft_top - z_shaft_bot
+
+    def shaft_r_at(f):
+        """Baseline (un-grooved) shaft radius at fraction f in [0, 1]."""
+        f = min(max(f, 0.0), 1.0)
+        x = f * (len(taper) - 1)
+        i = min(int(x), len(taper) - 2)
+        return shaft_radius * (taper[i] + (taper[i + 1] - taper[i]) * (x - i))
+
+    shaft_rings = [(z_shaft_bot + shaft_span * (i / (len(taper) - 1)),
+                    shaft_radius * w) for i, w in enumerate(taper)]
+    if shaft_insets > 0 and shaft_inset_depth > 0.0 and shaft_span > 0.0:
+        inset_mould = _resolve_moulding(shaft_inset_style, _INSET_MOULDINGS)
+        gh = min(shaft_inset_height, shaft_span / (shaft_insets + 1) * 0.9)
+        for n in range(shaft_insets):
+            fc = (n + 1) / (shaft_insets + 1)          # groove centre fraction
+            zc = z_shaft_bot + shaft_span * fc
+            z0, z1 = zc - gh * 0.5, zc + gh * 0.5
+            r0 = shaft_r_at((z0 - z_shaft_bot) / shaft_span)
+            r1 = shaft_r_at((z1 - z_shaft_bot) / shaft_span)
+            shaft_rings.append((z0, r0))               # flush groove shoulders
+            for r, z in _moulding_rings(inset_mould, r0, r1, z0, z1,
+                                        shaft_radius, shaft_inset_depth):
+                shaft_rings.append((z, r))
+    for z, r in sorted(shaft_rings):
+        _push(r, z)
     if capital_style == "block":
-        S = capital_flare_segments
-        for i in range(1, S + 1):
-            t = i / S
-            r = echinus_r + (r_shaft_top - echinus_r) * _ease(
-                1.0 - t, capital_flare_curvature)
-            _push(r, z_shaft_top + (z_cap_block_bot - z_shaft_top) * t)
+        cap_mould = _resolve_moulding(capital_moulding, _CAPITAL_MOULDINGS)
+        if cap_mould:
+            # Classical capital moulding: shaft top (r_shaft_top) flaring up to
+            # the abacus underside (echinus_r).
+            for r, z in _moulding_rings(
+                    cap_mould, r_shaft_top, echinus_r, z_shaft_top,
+                    z_cap_block_bot, shaft_radius,
+                    shaft_radius * capital_moulding_projection):
+                _push(r, z)
+        else:
+            S = capital_flare_segments
+            for i in range(1, S + 1):
+                t = i / S
+                r = echinus_r + (r_shaft_top - echinus_r) * _ease(
+                    1.0 - t, capital_flare_curvature)
+                _push(r, z_shaft_top + (z_cap_block_bot - z_shaft_top) * t)
     if len(params) < 2:
         raise ValueError("degenerate column: no vertical extent")
 
