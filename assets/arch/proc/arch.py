@@ -875,6 +875,171 @@ def _opening_outline(shape, half_w, sill_h, opening_h, head_rise, head_segs,
     return pts, normals, closed
 
 
+def _arch_head_path(shape, half_w, z_spring, head_rise, head_segs, jamb_ext):
+    """The arch head as an ordered (x, z) path from the left springer over the
+    crown to the right springer, with matching OUTWARD unit normals (radially
+    away from the opening). *jamb_ext* > 0 extends the band straight down each
+    jamb below the springer (the label continuing past the impost). Returns an
+    open path (swept ends are capped)."""
+    pts = []
+    if jamb_ext > 0.0:
+        pts.append((-half_w, z_spring - jamb_ext))
+    for i in range(head_segs + 1):
+        pts.append(_head_point(shape, i / head_segs, half_w, z_spring,
+                               head_rise))
+    if jamb_ext > 0.0:
+        pts.append((half_w, z_spring - jamb_ext))
+
+    n = len(pts)
+    cx = 0.0
+    zs = [p[1] for p in pts]
+    cz = 0.5 * (min(zs) + max(zs))
+    edge_n = []
+    for i in range(n - 1):
+        dx = pts[i + 1][0] - pts[i][0]
+        dz = pts[i + 1][1] - pts[i][1]
+        length = math.hypot(dx, dz) or 1.0
+        nx, nz = -dz / length, dx / length
+        mx = 0.5 * (pts[i][0] + pts[i + 1][0]) - cx      # orient away from centre
+        mz = 0.5 * (pts[i][1] + pts[i + 1][1]) - cz
+        if nx * mx + nz * mz < 0.0:
+            nx, nz = -nx, -nz
+        edge_n.append((nx, nz))
+
+    normals = []
+    for i in range(n):
+        if i == 0:
+            e0 = e1 = edge_n[0]
+        elif i == n - 1:
+            e0 = e1 = edge_n[-1]
+        else:
+            e0, e1 = edge_n[i - 1], edge_n[i]
+        nx, nz = e0[0] + e1[0], e0[1] + e1[1]
+        length = math.hypot(nx, nz) or 1.0
+        normals.append((nx / length, nz / length))
+    return pts, normals
+
+
+def _resample_path(pts, normals, n_out):
+    """Resample an open (x, z) path and its unit normals to *n_out* points
+    spaced evenly by arc length — so ornament motifs tile at a constant pitch
+    regardless of the arch's varying curvature."""
+    seg_len = [math.dist(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
+    total = sum(seg_len) or 1.0
+    cum = [0.0]
+    for s in seg_len:
+        cum.append(cum[-1] + s)
+    out_pts, out_norm = [], []
+    for m in range(n_out):
+        target = total * m / (n_out - 1)
+        i = 0
+        while i < len(seg_len) - 1 and cum[i + 1] < target:
+            i += 1
+        t = 0.0 if seg_len[i] <= 1e-12 else (target - cum[i]) / seg_len[i]
+        out_pts.append((pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t,
+                        pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t))
+        nx = normals[i][0] + (normals[i + 1][0] - normals[i][0]) * t
+        nz = normals[i][1] + (normals[i + 1][1] - normals[i][1]) * t
+        length = math.hypot(nx, nz) or 1.0
+        out_norm.append((nx / length, nz / length))
+    return out_pts, out_norm
+
+
+_ORNAMENT_STATIONS = {          # path stations for *count* motifs, per pattern
+    "chevron": lambda c: c * 6,
+    "billet": lambda c: 2 * c,
+    "nailhead": lambda c: 2 * c,
+    "dogtooth": lambda c: c,
+}
+
+
+def _ornament_band(bm, pts, normals, inner, outer, y_base, sign, base_d,
+                   pattern, relief):
+    """Build one label band as an explicit watertight shell whose front carries
+    a sharp running ornament. *pts*/*normals* are the arc frames already
+    resampled to the pattern's station count (see _ORNAMENT_STATIONS); *inner*
+    /*outer* are the radial edges, *base_d* the flat band depth, *relief* the
+    ornament height. The back, the two radial sides and the end caps are common
+    to every pattern; the FRONT is per-motif geometry:
+      "dogtooth" -- every cell an X-ridged pyramid (apex linked to its 4 cell
+                    corners, so the hip edges read as an X); a continuous row,
+      "nailhead" -- the same X pyramid on alternate cells, flat between (bosses),
+      "billet"   -- alternate cells raised into flat-topped blocks with vertical
+                    walls, flush between,
+      "chevron"  -- a proud mid ridge whose radial position zig-zags cell to
+                    cell (creased V's)."""
+    n = len(pts)
+    mid = 0.5 * (inner + outer)
+    # Crown station: with an odd station count on a symmetric arch, the middle
+    # station lands exactly on the apex. Motifs are assigned by distance from it
+    # so the ornament is mirror-symmetric about the crown (and a flat cell sits
+    # on the apex, so blocks/bosses never straddle the point asymmetrically).
+    ci = (n - 1) * 0.5
+
+    def vert(r, d, i):
+        return bm.verts.new((pts[i][0] + normals[i][0] * r,
+                             y_base + sign * d,
+                             pts[i][1] + normals[i][1] * r))
+
+    bi = [vert(inner, 0.0, i) for i in range(n)]
+    bo = [vert(outer, 0.0, i) for i in range(n)]
+    fi = [vert(inner, base_d, i) for i in range(n)]
+    fo = [vert(outer, base_d, i) for i in range(n)]
+    add = bm.faces.new
+    for i in range(n - 1):
+        add((bi[i], bo[i], bo[i + 1], bi[i + 1]))       # back
+        add((bi[i], bi[i + 1], fi[i + 1], fi[i]))       # inner side
+        add((bo[i], fo[i], fo[i + 1], bo[i + 1]))       # outer side
+
+    if pattern == "chevron":
+        peak = []
+        for i in range(n):
+            phase = abs(i - ci) / 6.0                   # symmetric about crown
+            tri = 1.0 - abs(2.0 * (phase % 1.0) - 1.0)
+            peak.append(vert(inner + (outer - inner) * (0.1 + 0.8 * tri),
+                             base_d + relief, i))
+        for i in range(n - 1):
+            add((fi[i], peak[i], peak[i + 1], fi[i + 1]))
+            add((peak[i], fo[i], fo[i + 1], peak[i + 1]))
+        add((bi[0], fi[0], peak[0], fo[0], bo[0]))      # pentagon end caps
+        add((bi[-1], bo[-1], fo[-1], peak[-1], fi[-1]))
+        return
+
+    add((bi[0], fi[0], fo[0], bo[0]))                   # quad end caps
+    add((bi[-1], bo[-1], fo[-1], fi[-1]))
+
+    for c in range(n - 1):
+        # Cell centre at index c + 0.5; floor(distance-from-crown) odd -> raised,
+        # so raised cells are isolated and symmetric with a flat cell on the apex.
+        raised = (pattern == "dogtooth") or (int(abs(c + 0.5 - ci)) % 2 == 1)
+        if not raised:
+            add((fi[c], fo[c], fo[c + 1], fi[c + 1]))   # flush cell
+            continue
+        if pattern == "billet":                         # flat-topped block
+            ti0, to0 = vert(inner, base_d + relief, c), vert(outer, base_d + relief, c)
+            ti1 = vert(inner, base_d + relief, c + 1)
+            to1 = vert(outer, base_d + relief, c + 1)
+            add((ti0, to0, to1, ti1))                   # top
+            add((fi[c], fo[c], to0, ti0))               # start wall
+            add((fi[c + 1], ti1, to1, fo[c + 1]))       # end wall
+            add((fi[c], ti0, ti1, fi[c + 1]))           # inner wall
+            add((fo[c], fo[c + 1], to1, to0))           # outer wall
+        else:                                           # X-ridged pyramid
+            ax = 0.5 * (pts[c][0] + pts[c + 1][0])
+            az = 0.5 * (pts[c][1] + pts[c + 1][1])
+            anx = normals[c][0] + normals[c + 1][0]
+            anz = normals[c][1] + normals[c + 1][1]
+            al = math.hypot(anx, anz) or 1.0
+            apex = bm.verts.new((ax + anx / al * mid,
+                                 y_base + sign * (base_d + relief),
+                                 az + anz / al * mid))
+            a, b, cc, d = fi[c], fo[c], fo[c + 1], fi[c + 1]
+            add((apex, a, b))
+            add((apex, b, cc))
+            add((apex, cc, d))
+            add((apex, d, a))
+
+
 def _sweep_profile(bm, pts, normals, section, closed=False):
     """Sweep a cross-section *section* — a closed polygon of (r, y) points,
     r = radial offset from the opening edge along the outward normal, y =
@@ -1195,6 +1360,98 @@ def build_portal(
     sec = _portal_section(face, wall_thickness, width, depth, trim, section)
     bm = bmesh.new()
     _sweep_profile(bm, pts, normals, sec, closed)
+    return _finish(bm, name, collection, smooth_angle)
+
+
+def build_arch_label(
+    name="arch_label",
+    opening_width=1.2,
+    opening_height=1.8,
+    arch_shape="round",
+    head_rise=0.6,
+    sill_height=0.0,
+    wall_thickness=0.4,
+    inner_radius=0.05,
+    width=0.2,
+    depth=0.12,
+    rim_style="ovolo",
+    rim_size=0.04,
+    front_inset=0.0,
+    front_bevel_style="chamfer",
+    front_bevel_size=0.03,
+    trim_segments=3,
+    trim_seed=None,
+    jamb_extension=0.0,
+    pattern=None,
+    pattern_count=14,
+    pattern_relief=0.05,
+    pattern_stations=8,
+    face="outer",
+    smooth_angle=35.0,
+    head_segments=24,
+    collection=None,
+):
+    """Build a label mould / hood mould as a SEPARATE object.
+
+    A moulded band that follows the ARCH HEAD (springer to springer) on one
+    wall face, sitting concentrically OUTSIDE the opening — the dripstone /
+    archivolt order framing a Romanesque arch. It reuses the opening's arch
+    geometry so it registers exactly with a matching doorway.
+
+    Placement:
+      inner_radius   -- gap from the opening edge to the label's inner edge
+                        (stack several bands by increasing this to build
+                        concentric archivolt orders).
+      jamb_extension -- continue the band straight down each jamb below the
+                        springer by this much (0 = stop at the springer).
+      face           -- "outer" (+Y exterior) or "inner" (-Y).
+
+    Running ornament (when *pattern* is set the band carries a repeated carved
+    motif instead of the plain moulding):
+      pattern         -- "chevron" (zigzag), "billet" (alternating blocks),
+                         "nailhead" (pyramid bosses), "dogtooth" (pointed
+                         pyramids receding to the face between).
+      pattern_count   -- number of motifs along the arch head.
+      pattern_relief  -- how far the ornament stands proud of the band front.
+      pattern_stations-- path samples per motif (motif resolution).
+
+    Cross-section (width across the face x depth proud), rim/inset trim, and
+    trim_seed all match build_portal. opening_* / arch_shape / head_rise /
+    sill_height must match the doorway. Origin at the opening centre on the
+    floor.
+    """
+    if width <= 0.0 or depth <= 0.0:
+        raise ValueError("width and depth must be > 0")
+    if face not in ("outer", "inner"):
+        raise ValueError('face must be "outer" or "inner"')
+    half_w = opening_width * 0.5
+    z_spring = sill_height + opening_height
+    pts, normals = _arch_head_path(arch_shape, half_w, z_spring, head_rise,
+                                   head_segments, jamb_extension)
+    sign = 1.0 if face == "outer" else -1.0
+    y_base = sign * wall_thickness * 0.5
+    bm = bmesh.new()
+    if pattern:
+        if pattern not in _ORNAMENT_STATIONS:
+            raise ValueError('pattern must be chevron/billet/nailhead/'
+                             'dogtooth or None')
+        # Resample the arch evenly by arc length so motifs tile at a constant
+        # pitch, then build the sharp per-motif ornament band.
+        n_st = max(3, _ORNAMENT_STATIONS[pattern](int(pattern_count)) + 1)
+        if n_st % 2 == 0:            # odd -> a station lands on the crown
+            n_st += 1
+        rpts, rnorm = _resample_path(pts, normals, n_st)
+        _ornament_band(bm, rpts, rnorm, inner_radius, inner_radius + width,
+                       y_base, sign, depth, pattern, pattern_relief)
+    else:
+        trim = _resolve_trim(0.0, 1, rim_style, rim_size, front_inset,
+                             front_bevel_style, front_bevel_size, trim_segments,
+                             trim_seed)
+        rd = _band_section(width, depth, trim["rim_style"], trim["rim_size"],
+                           trim["front_inset"], trim["fb_style"],
+                           trim["fb_size"], trim["segments"])
+        sec = [(inner_radius + r, y_base + sign * d) for r, d in rd]
+        _sweep_profile(bm, pts, normals, sec, closed=False)
     return _finish(bm, name, collection, smooth_angle)
 
 
