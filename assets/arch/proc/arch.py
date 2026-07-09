@@ -360,10 +360,35 @@ def _extrude_panel(bm, pos, faces, y0, y1, off=None, off_front=False):
     for f in faces:
         for a, b in zip(f, f[1:] + f[:1]):
             und[frozenset((a, b))] += 1
+    boundary = []
     for f in faces:
         for a, b in zip(f, f[1:] + f[:1]):
             if und[frozenset((a, b))] == 1:
                 bm.faces.new((front[a], front[b], back[b], back[a]))
+                boundary.append((a, b))
+    # UV seams: seam every boundary edge on BOTH the flat front and back faces
+    # (so each unwraps as its own island), then cut one cross edge per boundary
+    # loop — the outer perimeter and the opening reveal — so each wall band
+    # unrolls into a flat strip instead of a closed tube.
+    for a, b in boundary:
+        _mark_seam(front[a], front[b])
+        _mark_seam(back[a], back[b])
+    adj = defaultdict(list)
+    for a, b in boundary:
+        adj[a].append(b)
+        adj[b].append(a)
+    seen = set()
+    for start in list(adj):
+        if start in seen:
+            continue
+        _mark_seam(front[start], back[start])       # open this wall loop
+        stack = [start]
+        while stack:
+            v = stack.pop()
+            if v in seen:
+                continue
+            seen.add(v)
+            stack.extend(nb for nb in adj[v] if nb not in seen)
     return front, back
 
 
@@ -389,6 +414,110 @@ def _bevel_shape(style, segments, seed=None):
 
 def _pos_key(co):
     return (round(co.x, 4), round(co.y, 4), round(co.z, 4))
+
+
+def _mark_seam(v0, v1):
+    """Mark the edge between two verts as a UV seam (no-op if not adjacent)."""
+    for e in v0.link_edges:
+        if e.other_vert(v0) is v1:
+            e.seam = True
+            return
+
+
+# Target texel density in UV units per world metre. Surfaces are unwrapped along
+# the marked seams, their islands equalised, then the whole layout scaled to
+# THIS density (not packed to [0, 1]) so a shared tiling material reads
+# consistently across every generated surface (walls, bands, columns).
+UV_SCALE = 1.0
+
+
+def _normalize_island_density(obj, density):
+    """Scale each UV island so its texel density equals *density* UV/metre —
+    equivalent to Average Islands Scale + a global rescale, but done directly on
+    the mesh (no UV-editor context needed). Islands are the face groups the
+    seams cut the mesh into; each is scaled about its own UV centroid."""
+    me = obj.data
+    if not me.uv_layers.active:
+        return
+    uvl = me.uv_layers.active.data
+    seam = {}
+    for e in me.edges:
+        seam[frozenset(e.vertices)] = e.use_seam
+    edge_faces = defaultdict(list)
+    for p in me.polygons:
+        vs = list(p.vertices)
+        for a in range(len(vs)):
+            edge_faces[frozenset((vs[a], vs[(a + 1) % len(vs)]))].append(p.index)
+    parent = list(range(len(me.polygons)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for key, fs in edge_faces.items():
+        if len(fs) == 2 and not seam.get(key, False):
+            ra, rb = find(fs[0]), find(fs[1])
+            if ra != rb:
+                parent[ra] = rb
+    islands = defaultdict(list)
+    for p in me.polygons:
+        islands[find(p.index)].append(p.index)
+    for faces in islands.values():
+        a3 = sum(me.polygons[f].area for f in faces)
+        auv = 0.0
+        cx = cy = cnt = 0.0
+        for f in faces:
+            li = list(me.polygons[f].loop_indices)
+            sh = 0.0
+            for a in range(len(li)):
+                u0, u1 = uvl[li[a]].uv, uvl[li[(a + 1) % len(li)]].uv
+                sh += u0.x * u1.y - u1.x * u0.y
+                cx += u0.x
+                cy += u0.y
+                cnt += 1
+            auv += abs(sh) * 0.5
+        if a3 < 1e-9 or auv < 1e-12 or cnt < 1.0:
+            continue
+        factor = density / (auv / a3) ** 0.5           # linear density -> target
+        cx /= cnt
+        cy /= cnt
+        for f in faces:
+            for li in me.polygons[f].loop_indices:
+                u = uvl[li].uv
+                uvl[li].uv = ((u.x - cx) * factor + cx, (u.y - cy) * factor + cy)
+
+
+def _finalize_uvs(obj, density=UV_SCALE):
+    """Unwrap *obj* along its marked seams, equalise per-island texel density,
+    then scale the whole UV layout to *density* UV/metre. Leaves UVs unpacked so
+    they tile; safe if there is no VIEW_3D context (skips)."""
+    win = bpy.context.window
+    area = next((a for a in (win.screen.areas if win else [])
+                 if a.type == 'VIEW_3D'), None)
+    if area is None:
+        return
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    prev_sel = list(bpy.context.selected_objects)
+    prev_act = bpy.context.view_layer.objects.active
+    for o in prev_sel:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    ov = dict(window=win, area=area, region=region,
+              active_object=obj, object=obj, edit_object=obj)
+    bpy.ops.object.mode_set(mode='EDIT')
+    with bpy.context.temp_override(**ov):
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.unwrap(method='ANGLE_BASED', margin=0.001)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    _normalize_island_density(obj, density)
+    obj.select_set(False)
+    for o in prev_sel:
+        o.select_set(True)
+    if prev_act:
+        bpy.context.view_layer.objects.active = prev_act
 
 
 def _reveal_edge_pairs(vert_lists, opening_path):
@@ -990,6 +1119,17 @@ def _ornament_band(bm, pts, normals, inner, outer, y_base, sign, base_d,
         add((bi[i], bo[i], bo[i + 1], bi[i + 1]))       # back
         add((bi[i], bi[i + 1], fi[i + 1], fi[i]))       # inner side
         add((bo[i], fo[i], fo[i + 1], bo[i + 1]))       # outer side
+    # UV seams: cut the four longitudinal rails so the back, the two radial
+    # sides and the ornamented front each unroll as their own strip. Also cut
+    # every front cross edge so each raised motif (a billet block's box, a
+    # pyramid) unwraps as its own flat island at uniform texel density instead
+    # of being dragged out of a shared strip.
+    for rail in (bi, bo, fi, fo):
+        for i in range(n - 1):
+            _mark_seam(rail[i], rail[i + 1])
+    if pattern != "chevron":
+        for c in range(n):
+            _mark_seam(fi[c], fo[c])
 
     if pattern == "chevron":
         peak = []
@@ -1024,6 +1164,13 @@ def _ornament_band(bm, pts, normals, inner, outer, y_base, sign, base_d,
             add((fi[c + 1], ti1, to1, fo[c + 1]))       # end wall
             add((fi[c], ti0, ti1, fi[c + 1]))           # inner wall
             add((fo[c], fo[c + 1], to1, to0))           # outer wall
+            # Seam the four vertical corners so the box unfolds into a flat
+            # cross (walls stay joined to the top) — a developable, undistorted
+            # unwrap at uniform texel density.
+            _mark_seam(fi[c], ti0)
+            _mark_seam(fo[c], to0)
+            _mark_seam(fi[c + 1], ti1)
+            _mark_seam(fo[c + 1], to1)
         else:                                           # X-ridged pyramid
             ax = 0.5 * (pts[c][0] + pts[c + 1][0])
             az = 0.5 * (pts[c][1] + pts[c + 1][1])
@@ -1038,6 +1185,7 @@ def _ornament_band(bm, pts, normals, inner, outer, y_base, sign, base_d,
             add((apex, b, cc))
             add((apex, cc, d))
             add((apex, d, a))
+            _mark_seam(apex, a)                          # slit the cone to unfold
 
 
 def _sweep_profile(bm, pts, normals, section, closed=False):
@@ -1063,6 +1211,19 @@ def _sweep_profile(bm, pts, normals, section, closed=False):
         faces.append(bm.faces.new([rails[k][0] for k in range(k_count)]))
         faces.append(bm.faces.new([rails[k][-1]
                                    for k in range(k_count - 1, -1, -1)]))
+    # UV seams: one longitudinal cut along rail 0 unrolls the tube into a flat
+    # strip. An open sweep also seams both end-cap rings (so the caps are their
+    # own islands); a closed loop seams one section ring to open the loop.
+    for i in range(span):
+        _mark_seam(rails[0][i], rails[0][(i + 1) % n])
+    if closed:
+        for k in range(k_count):
+            _mark_seam(rails[k][0], rails[(k + 1) % k_count][0])
+    else:
+        for k in range(k_count):
+            k2 = (k + 1) % k_count
+            _mark_seam(rails[k][0], rails[k2][0])
+            _mark_seam(rails[k][-1], rails[k2][-1])
     return faces
 
 
@@ -1216,6 +1377,7 @@ def _finish(bm, name, collection, smooth_angle=0.0):
     bm.free()
     obj = bpy.data.objects.new(name, mesh)
     (collection or bpy.context.scene.collection).objects.link(obj)
+    _finalize_uvs(obj)
     return obj
 
 
