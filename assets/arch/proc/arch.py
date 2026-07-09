@@ -1383,8 +1383,9 @@ def build_arch_label(
     trim_seed=None,
     jamb_extension=0.0,
     pattern=None,
-    pattern_count=14,
-    pattern_relief=0.05,
+    pattern_width=None,
+    pattern_count=22,
+    pattern_relief=0.03,
     pattern_stations=8,
     face="outer",
     smooth_angle=35.0,
@@ -1441,7 +1442,10 @@ def build_arch_label(
         if n_st % 2 == 0:            # odd -> a station lands on the crown
             n_st += 1
         rpts, rnorm = _resample_path(pts, normals, n_st)
-        _ornament_band(bm, rpts, rnorm, inner_radius, inner_radius + width,
+        # Ornament is TRIM: default it to a third of the band width unless an
+        # explicit pattern_width is given.
+        pw = pattern_width if pattern_width is not None else width * 0.33
+        _ornament_band(bm, rpts, rnorm, inner_radius, inner_radius + pw,
                        y_base, sign, depth, pattern, pattern_relief)
     else:
         trim = _resolve_trim(0.0, 1, rim_style, rim_size, front_inset,
@@ -1453,6 +1457,180 @@ def build_arch_label(
         sec = [(inner_radius + r, y_base + sign * d) for r, d in rd]
         _sweep_profile(bm, pts, normals, sec, closed=False)
     return _finish(bm, name, collection, smooth_angle)
+
+
+# A wide PLAIN flat order carries the archivolt's radial mass, framed by thin
+# roll mouldings; the carved patterns are narrow trim (roughly a third to a
+# fifth of the plain order's width).
+_DEFAULT_ARCHIVOLT = [
+    {"roll": "roll", "width": 0.05, "depth": 0.09},
+    {"pattern": "billet", "width": 0.055, "depth": 0.04, "relief": 0.03,
+     "count": 22},
+    {"roll": "roll", "width": 0.045, "depth": 0.14},
+    {"plain": True, "width": 0.2, "depth": 0.15, "rim": "ovolo",
+     "rim_size": 0.035},                                     # dominant flat band
+    {"roll": "roll", "width": 0.045, "depth": 0.14},
+    {"pattern": "chevron", "width": 0.06, "depth": 0.045, "relief": 0.035,
+     "count": 18},
+    {"roll": "roll", "width": 0.06, "depth": 0.09},
+]
+
+
+def _roll_section(width, depth, y_base, sign):
+    """A plain roll (bull-nose) moulding cross-section: the front is rounded
+    over, a half-round roll separating / framing the carved orders."""
+    return _molding_section(width, depth, y_base, sign,
+                            min(width * 0.5, depth), 6)
+
+
+def build_archivolt(
+    name="archivolt",
+    opening_width=1.3,
+    opening_height=1.8,
+    arch_shape="round",
+    head_rise=0.65,
+    sill_height=0.0,
+    wall_thickness=0.5,
+    inner_radius=0.03,
+    orders=None,
+    jamb_extension=0.0,
+    face="outer",
+    smooth_angle=35.0,
+    head_segments=28,
+    collection=None,
+):
+    """Build a full archivolt assembly as ONE object: a stack of concentric
+    orders following the arch head, contiguous so they read as one framed
+    surround rather than floating rings.
+
+    *orders* is a list (innermost first) of dicts, auto-placed at increasing
+    radii from *inner_radius* (each order's width sets its radial band, so radii
+    AND widths vary down the stack):
+      ornament order -- {"pattern": chevron/billet/nailhead/dogtooth, "width":,
+                         "depth":, "relief":, "count":}
+      roll order     -- {"roll": "roll", "width":, "depth":} : a plain
+                         bull-nose roll moulding — the framework that separates
+                         and ties the carved bands together (put one first and
+                         last to frame the assembly, and between carved bands).
+    Defaults to a chevron+billet archivolt framed and separated by rolls.
+    opening_* / arch_shape / head_rise / sill_height must match the doorway.
+    """
+    if face not in ("outer", "inner"):
+        raise ValueError('face must be "outer" or "inner"')
+    if orders is None:
+        orders = _DEFAULT_ARCHIVOLT
+    half_w = opening_width * 0.5
+    z_spring = sill_height + opening_height
+    pts, normals = _arch_head_path(arch_shape, half_w, z_spring, head_rise,
+                                   head_segments, jamb_extension)
+    sign = 1.0 if face == "outer" else -1.0
+    y_base = sign * wall_thickness * 0.5
+    bm = bmesh.new()
+    r = inner_radius
+    for od in orders:
+        w = od["width"]
+        if "pattern" in od:
+            pat = od["pattern"]
+            if pat not in _ORNAMENT_STATIONS:
+                raise ValueError("bad archivolt pattern %r" % pat)
+            n_st = max(3, _ORNAMENT_STATIONS[pat](int(od.get("count", 16))) + 1)
+            if n_st % 2 == 0:
+                n_st += 1
+            rp, rn = _resample_path(pts, normals, n_st)
+            _ornament_band(bm, rp, rn, r, r + w, y_base, sign,
+                           od.get("depth", 0.045), pat, od.get("relief", 0.06))
+        elif od.get("plain"):
+            # Flat fascia framed by rim mouldings, flat in between.
+            rim = od.get("rim", "ovolo")
+            rs = od.get("rim_size", min(w * 0.2, 0.04))
+            rd = _band_section(w, od.get("depth", 0.14), rim, rs, 0.0,
+                               "chamfer", 0.0, od.get("segments", 4))
+            _sweep_profile(bm, pts, normals,
+                           [(r + rr, y_base + sign * dd) for rr, dd in rd],
+                           closed=False)
+        else:
+            sec = _roll_section(w, od.get("depth", 0.12), y_base, sign)
+            _sweep_profile(bm, pts, normals,
+                           [(r + rr, yy) for rr, yy in sec], closed=False)
+        r += w
+    return _finish(bm, name, collection, smooth_angle)
+
+
+def embed_jamb_columns(
+    col_obj,
+    opening_width=1.3,
+    opening_height=1.8,
+    sill_height=0.0,
+    wall_thickness=0.5,
+    inset=0.12,
+    embed=None,
+    project=0.35,
+    flatten=1.0,
+    height=None,
+    face="outer",
+    name="jamb_column",
+    smooth_angle=30.0,
+    collection=None,
+):
+    """Embed an existing column as an engaged nook shaft on each jamb of an
+    opening. *col_obj* is any column mesh (built vertically, base at z ~ 0);
+    it is duplicated to the left and right jamb, scaled so its height spans
+    floor to springer (or *height*), optionally flattened in depth, sunk into
+    the wall face, and then BISECTED at the back wall plane so the part that
+    would poke through the far side is cut away and capped — the shaft embeds
+    cleanly, flush at the back.
+
+      inset   -- radial offset of the shaft axis outside the opening edge.
+      flatten -- scale the shaft depth (into-wall Y) — < 1 makes a flatter,
+                 more forward-facing relief shaft instead of a full round.
+      embed   -- how far the axis sits behind the wall face. None (default)
+                 auto-embeds so only *project* of the shaft's (flattened) depth
+                 stands proud — i.e. it always sits at LEAST halfway into the
+                 wall rather than reading as a free-standing column.
+      project -- proud fraction of the shaft depth when embed is auto.
+      face    -- which wall face (+Y "outer" / -Y "inner") the shafts sit on.
+
+    Returns the two created objects (left, right)."""
+    if face not in ("outer", "inner"):
+        raise ValueError('face must be "outer" or "inner"')
+    half_w = opening_width * 0.5
+    z_spring = sill_height + opening_height
+    src = col_obj.data
+    zs = [v.co.z for v in src.vertices]
+    z0 = min(zs)
+    native_h = (max(zs) - z0) or 1.0
+    scale = (height if height else z_spring) / native_h
+    sign = 1.0 if face == "outer" else -1.0
+    # Half the shaft's depth once scaled+flattened; used to auto-embed it so at
+    # most `project` of it projects past the wall face (never free-standing).
+    half_depth = 0.5 * (max(v.co.y for v in src.vertices)
+                        - min(v.co.y for v in src.vertices)) * scale * flatten
+    if embed is None:
+        # proud amount = project * full depth (2*half_depth); embed the rest.
+        embed = max(0.0, half_depth * (1.0 - 2.0 * project))
+    y_axis = sign * wall_thickness * 0.5 - sign * embed
+    back = -sign * wall_thickness * 0.5
+    coll = collection or bpy.context.scene.collection
+    objs = []
+    for tag, sx in (("l", -1.0), ("r", 1.0)):
+        bm = bmesh.new()
+        bm.from_mesh(src)
+        for v in bm.verts:
+            ox, oy, oz = v.co.x, v.co.y, v.co.z
+            v.co.x = ox * scale + sx * (half_w + inset)
+            v.co.y = oy * scale * flatten + y_axis
+            v.co.z = (oz - z0) * scale + sill_height
+        geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
+        res = bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-6,
+                                     plane_co=(0.0, back, 0.0),
+                                     plane_no=(0.0, sign, 0.0),
+                                     clear_inner=True)
+        cut = [e for e in res.get("geom_cut", [])
+               if isinstance(e, bmesh.types.BMEdge)]
+        if cut:
+            bmesh.ops.holes_fill(bm, edges=cut)          # cap the clipped back
+        objs.append(_finish(bm, "%s_%s" % (name, tag), coll, smooth_angle))
+    return objs
 
 
 def build_tower_portal(
