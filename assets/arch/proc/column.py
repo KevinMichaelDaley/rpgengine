@@ -109,6 +109,79 @@ def _shaft_profile(sides, corner_chamfer, corner_chamfer_segments,
     return pts[start:] + pts[:start]
 
 
+def _pad_and_align(pts):
+    """Pad a cross-section to a multiple-of-4 vert count (splitting the longest
+    edges with collinear midpoints) and rotate the list so vertex 0 sits
+    nearest the +45-degree direction — matching _shaft_profile so the bridge to
+    the axis-aligned block rings stays twist-free."""
+    needed = (-len(pts)) % 4
+    while needed:
+        n = len(pts)
+        longest = max(range(n),
+                      key=lambda i: math.dist(pts[i], pts[(i + 1) % n]))
+        ax, ay = pts[longest]
+        bx, by = pts[(longest + 1) % n]
+        pts.insert(longest + 1, ((ax + bx) * 0.5, (ay + by) * 0.5))
+        needed -= 1
+
+    def _angular_dist(p):
+        d = (math.atan2(p[1], p[0]) - math.pi * 0.25) % (2.0 * math.pi)
+        return min(d, 2.0 * math.pi - d)
+    start = min(range(len(pts)), key=lambda i: _angular_dist(pts[i]))
+    return pts[start:] + pts[:start]
+
+
+def _flute_section(count, style, depth, fillet_ratio, segments, rotation):
+    """Fluted / reeded shaft cross-section at unit reference radius (the arris
+    circle). *count* flutes each span a sector sampled *segments* times; *depth*
+    is the radial cut as a fraction of the radius. Styles:
+      "flute"        -- concave grooves meeting at sharp arrises (Doric),
+      "flute_fillet" -- grooves separated by flat fillets (Ionic); fillet_ratio
+                        is the fraction of each sector kept flat,
+      "reed"         -- convex ridges cresting at the reference circle with
+                        grooves between them (reeding / cabling).
+    Returns (flute_pts, smooth_pts): the fluted profile and the plain reference
+    circle at the SAME angles, so callers can fade flutes in/out per ring."""
+    flute_pts, smooth_pts = [], []
+    for k in range(count):
+        for i in range(segments):
+            s = i / segments                       # position across the sector
+            theta = rotation + 2.0 * math.pi * (k + s) / count
+            if style == "reed":                    # convex ridge, groove at edges
+                r = 1.0 - depth * (1.0 - math.sin(math.pi * s))
+            elif style == "flute_fillet":
+                fr = fillet_ratio * 0.5
+                if s < fr or s > 1.0 - fr:
+                    r = 1.0                        # flat fillet band
+                else:
+                    ss = (s - fr) / max(1e-6, 1.0 - 2.0 * fr)
+                    r = 1.0 - depth * math.sin(math.pi * ss)
+            else:                                  # concave flute, sharp arris
+                r = 1.0 - depth * math.sin(math.pi * s)
+            ct, st = math.cos(theta), math.sin(theta)
+            flute_pts.append((r * ct, r * st))
+            smooth_pts.append((ct, st))
+    # Pad both together with identical structure so they stay index-aligned.
+    n0 = len(flute_pts)
+    needed = (-n0) % 4
+    while needed:
+        n = len(flute_pts)
+        longest = max(range(n), key=lambda i: math.dist(
+            flute_pts[i], flute_pts[(i + 1) % n]))
+        for arr in (flute_pts, smooth_pts):
+            ax, ay = arr[longest]
+            bx, by = arr[(longest + 1) % n]
+            arr.insert(longest + 1, ((ax + bx) * 0.5, (ay + by) * 0.5))
+        needed -= 1
+
+    def _ad(p):
+        d = (math.atan2(p[1], p[0]) - math.pi * 0.25) % (2.0 * math.pi)
+        return min(d, 2.0 * math.pi - d)
+    start = min(range(len(flute_pts)), key=lambda i: _ad(flute_pts[i]))
+    return (flute_pts[start:] + flute_pts[:start],
+            smooth_pts[start:] + smooth_pts[:start])
+
+
 def _profile_normals(pts):
     """2D outward unit normals for a CCW polycurve: per-segment and
     per-vertex (bisector of the two adjacent segments)."""
@@ -606,6 +679,13 @@ def build_column(
     corner_chamfer=0.0,
     corner_chamfer_segments=1,
     corner_bow=1.0,
+    # Vertical fluting / reeding relief running along the shaft.
+    fluting=None,
+    flute_count=20,
+    flute_depth=0.07,
+    flute_segments=5,
+    flute_fillet_ratio=0.35,
+    flute_smooth_angle=26.0,
     # Horizontal engraved bands cut into the shaft.
     shaft_insets=0,
     shaft_inset_style="scotia",
@@ -798,9 +878,24 @@ def build_column(
         raise ValueError("inconsistent vertical stack: check heights, "
                          "flare heights, and snapping")
 
-    profile = _shaft_profile(shaft_sides, corner_chamfer,
-                             corner_chamfer_segments, shaft_rotation,
-                             corner_bow)
+    if fluting:
+        if fluting not in ("flute", "flute_fillet", "reed"):
+            raise ValueError('fluting must be "flute", "flute_fillet", '
+                             '"reed", or None')
+        if capital_style == "cushion":
+            raise ValueError("fluting is not supported with a cushion capital")
+        # The fluted cross-section replaces the polygon; flute_pts is the fully
+        # cut profile and smooth_pts the plain reference circle (fades the
+        # flutes out to smooth at the flares / blocks per ring).
+        flute_pts, smooth_pts = _flute_section(
+            flute_count, fluting, flute_depth, flute_fillet_ratio,
+            flute_segments, shaft_rotation)
+        profile = smooth_pts
+    else:
+        flute_pts = smooth_pts = None
+        profile = _shaft_profile(shaft_sides, corner_chamfer,
+                                 corner_chamfer_segments, shaft_rotation,
+                                 corner_bow)
     if capital_style == "cushion":
         # The inset-shield cushion needs at least 6 verts per quarter
         # (room for the shield plus a redirect diamond at each corner).
@@ -872,6 +967,13 @@ def build_column(
 
     shaft_rings = [(z_shaft_bot + shaft_span * (i / (len(taper) - 1)),
                     shaft_radius * w) for i, w in enumerate(taper)]
+    if fluting and shaft_span > 0.0:
+        # Fluting needs enough vertical rings to resolve the rounded flute
+        # stops where the grooves fade back to the smooth shaft at each end.
+        nsub = 18
+        for j in range(1, nsub):
+            f = j / nsub
+            shaft_rings.append((z_shaft_bot + shaft_span * f, shaft_r_at(f)))
     if shaft_insets > 0 and shaft_inset_depth > 0.0 and shaft_span > 0.0:
         inset_mould = _resolve_moulding(shaft_inset_style, _INSET_MOULDINGS)
         gh = min(shaft_inset_height, shaft_span / (shaft_insets + 1) * 0.9)
@@ -909,10 +1011,29 @@ def build_column(
 
     bm = bmesh.new()
 
+    def flute_amount(z):
+        """Flute depth fraction at height z: 0 at/below the shaft ends (so the
+        flares and blocks stay smooth), easing to 1 across the interior — the
+        rounded flute stops. Smoothstep over a short zone at each shaft end."""
+        if z <= z_shaft_bot or z >= z_shaft_top or shaft_span <= 0.0:
+            return 0.0
+        d = min(z - z_shaft_bot, z_shaft_top - z)
+        stop = shaft_span * 0.12
+        t = 1.0 if stop <= 0.0 else min(1.0, d / stop)
+        return t * t * (3.0 - 2.0 * t)
+
     prof_rings = []
     for r, z in params:
-        prof_rings.append([bm.verts.new((x * r, y * r, z))
-                           for x, y in profile])
+        if fluting:
+            a = flute_amount(z)
+            ring = []
+            for (sx, sy), (fx, fy) in zip(smooth_pts, flute_pts):
+                ring.append(bm.verts.new(((sx + (fx - sx) * a) * r,
+                                          (sy + (fy - sy) * a) * r, z)))
+            prof_rings.append(ring)
+        else:
+            prof_rings.append([bm.verts.new((x * r, y * r, z))
+                               for x, y in profile])
 
     # --- Bottom end: plinth block, or a flat inscribed cap.
     if base_block:
@@ -929,11 +1050,13 @@ def build_column(
         _grid_fill_cap(bm, ring1, h, h, params[0][1])
         _stitch_band(bm, ring1, prof_rings[0])         # flat annulus
 
-    # --- Curved section bands (custom normals apply here).
+    # --- Curved section bands (custom normals apply here). A fluted shaft is
+    # shaded smooth and creased by angle instead of by explicit normals.
     smooth_any = smooth_radial or smooth_vertical
+    face_smooth = smooth_any or bool(fluting)
     band_faces = []
     for lower, upper in zip(prof_rings, prof_rings[1:]):
-        band_faces.append(_stitch_band(bm, lower, upper, smooth=smooth_any))
+        band_faces.append(_stitch_band(bm, lower, upper, smooth=face_smooth))
 
     # --- Top end: cushion capital, abacus block, or a flat inscribed cap.
     cushion_bands = []
@@ -978,7 +1101,7 @@ def build_column(
     # from the meridian slope of the band (averaged across neighbor bands
     # when vertically smooth). Composed as (h.x*t_r, h.y*t_r, t_z).
     custom = {}
-    if smooth_any:
+    if smooth_any and not fluting:
         n_bands = len(band_faces)
         tilts = []  # per band: (t_r, t_z) unit meridian normal
         for b in range(n_bands):
@@ -1062,6 +1185,18 @@ def build_column(
                     normals.append(unit([hard[i] + (full[i] - hard[i]) * soft
                                          for i in range(3)]))
                 custom[f.index] = normals
+
+    if fluting:
+        # Angle-based auto-smooth: every face smooth, edges sharper than the
+        # threshold left as creases. This keeps the round shaft and the groove
+        # bottoms smooth while the flute arrises stay crisp — the same shading
+        # a modelled column has, without hand-authored per-loop normals.
+        thr = math.radians(flute_smooth_angle)
+        for f in bm.faces:
+            f.smooth = True
+        for e in bm.edges:
+            if len(e.link_faces) == 2:
+                e.smooth = e.calc_face_angle() <= thr
 
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
