@@ -29,6 +29,7 @@ Conventions (see assets/arch/proc/README.md):
 """
 
 import math
+import random
 from collections import defaultdict
 
 import bmesh
@@ -278,10 +279,22 @@ def _frame_faces(half_w, half_wp, sill_h, opening_h, panel_h, shape,
     pier(inner_r, inner_r_xz, half_wp)
     corner(inner_l_xz[-1][0], inner_l_xz[-1][1], -half_wp)
     corner(inner_r_xz[0][0], inner_r_xz[0][1], half_wp)
-    for i in range(len(crown_xz) - 1):               # crown (vertical rungs)
-        ta = add(crown_xz[i][0], panel_h)
-        tb = add(crown_xz[i + 1][0], panel_h)
-        faces.append((ta, tb, crown[i + 1], crown[i]))
+
+    # Crown spandrel: columns = crown samples, corner_rows rows each running
+    # from its arch height up to the panel top. Using corner_rows (the same
+    # count as the corner blocks) means the shared vertical edges at P_L / P_R
+    # match, and the vertical connectors get horizontal splits so they follow
+    # a barrel/vertical bend instead of staying straight.
+    scol = []
+    for i, (cx, cz) in enumerate(crown_xz):
+        col = [crown[i]]
+        for j in range(1, corner_rows + 1):
+            col.append(add(cx, cz + (panel_h - cz) * j / corner_rows))
+        scol.append(col)
+    for i in range(len(crown_xz) - 1):
+        for j in range(corner_rows):
+            faces.append((scol[i][j], scol[i + 1][j],
+                          scol[i + 1][j + 1], scol[i][j + 1]))
 
     # Bottom band (window): solid wall floor -> sill across the full width.
     # Its top row shares the pier bottoms; the middle span (the sill edge, the
@@ -343,7 +356,7 @@ def _extrude_panel(bm, pos, faces, y0, y1, off=None, off_front=False):
         for a, b in zip(f, f[1:] + f[:1]):
             if und[frozenset((a, b))] == 1:
                 bm.faces.new((front[a], front[b], back[b], back[a]))
-    return front
+    return front, back
 
 
 def _warp_cylinder(bm, tower_radius):
@@ -357,6 +370,48 @@ def _warp_cylinder(bm, tower_radius):
         theta = x / tower_radius
         r = tower_radius + y
         v.co = (r * math.sin(theta), r * math.cos(theta) - tower_radius, z)
+
+
+def _clip_plane(bm, z_plane, keep_above):
+    """Cut the mesh with the horizontal plane z = *z_plane*, discard the side
+    not kept (below when keep_above, above otherwise), and cap the cut so the
+    result stays watertight — used to level a barrel-curved wall's tilted top
+    or bottom against a floor / ceiling plane."""
+    geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
+    res = bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-7,
+                                 plane_co=(0.0, 0.0, z_plane),
+                                 plane_no=(0.0, 0.0, 1.0),
+                                 clear_inner=keep_above,
+                                 clear_outer=not keep_above)
+    cut = [e for e in res["geom_cut"] if isinstance(e, bmesh.types.BMEdge)]
+    if cut:
+        bmesh.ops.holes_fill(bm, edges=cut, sides=0)
+
+
+def _warp_barrel(bm, radius, axis_height, concave=False, flat_below=False):
+    """Bend the flat panel (built in XZ, thickness along Y) around a
+    HORIZONTAL cylinder whose axis runs along X — a barrel vault / tunnel.
+    VERTICAL position z becomes arc angle and depth y becomes cylinder
+    radius, so the panel curves up-and-over in the YZ plane. The wall is
+    tangent (flat) at *axis_height*; *concave* puts the axis in front (+Y)
+    for a tunnel/vault interior, otherwise behind (-Y) for the exterior.
+    Points at z = axis_height keep their x, y, z. With *flat_below* the wall
+    stays flat (vertical) below axis_height and only the part above it bends
+    — a vault springing from a straight wall (the arc is vertical-tangent at
+    axis_height, so the join is smooth)."""
+    for v in bm.verts:
+        x, y, z = v.co
+        if flat_below and z < axis_height:
+            continue
+        theta = (z - axis_height) / radius
+        if concave:
+            r = radius - y
+            v.co = (x, radius - r * math.cos(theta),
+                    axis_height + r * math.sin(theta))
+        else:
+            r = radius + y
+            v.co = (x, r * math.cos(theta) - radius,
+                    axis_height + r * math.sin(theta))
 
 
 def build_arched_doorway(
@@ -484,13 +539,15 @@ def build_arched_doorway(
 # from the opening edge and positioned in depth.
 # ---------------------------------------------------------------------------
 
-def _opening_outline(shape, half_w, sill_h, opening_h, head_rise, head_segs):
+def _opening_outline(shape, half_w, sill_h, opening_h, head_rise, head_segs,
+                     jamb_segs=1):
     """Ordered opening boundary as a list of (x, z) points with matching
     OUTWARD unit normals (pointing away from the opening interior) and a
-    `closed` flag. Jambs are straight (endpoints only); the arch is sampled
-    head_segs times. For a door (sill_h == 0) the outline is open at the
-    floor; for a window (sill_h > 0) it is a closed loop and the sill edge
-    closes it."""
+    `closed` flag. The arch is sampled head_segs times; each jamb is split
+    into jamb_segs segments (raise it so swept pieces bend smoothly around a
+    barrel/horizontal cylinder). For a door (sill_h == 0) the outline is open
+    at the floor; for a window (sill_h > 0) it is a closed loop closed by the
+    sill edge."""
     z_spring = sill_h + opening_h
     closed = sill_h > 1e-9
     z_bottom = sill_h if closed else 0.0
@@ -498,10 +555,12 @@ def _opening_outline(shape, half_w, sill_h, opening_h, head_rise, head_segs):
     def hp(a):
         return _head_point(shape, a, half_w, z_spring, head_rise)
 
-    pts = [(-half_w, z_bottom), (-half_w, z_spring)]
+    pts = [(-half_w, z_bottom + (z_spring - z_bottom) * k / jamb_segs)
+           for k in range(jamb_segs + 1)]
     for i in range(1, head_segs):
         pts.append(hp(i / head_segs))
-    pts.extend([(half_w, z_spring), (half_w, z_bottom)])
+    pts.extend([(half_w, z_spring - (z_spring - z_bottom) * k / jamb_segs)
+                for k in range(jamb_segs + 1)])
 
     n = len(pts)
     seg = n if closed else n - 1
@@ -567,6 +626,100 @@ def _sweep_tube(bm, pts, normals, r0, r1, y0, y1, closed=False):
     along the outline — a thin wrapper over _sweep_profile."""
     return _sweep_profile(bm, pts, normals,
                           [(r0, y0), (r1, y0), (r1, y1), (r0, y1)], closed)
+
+
+# ---------------------------------------------------------------------------
+# Classical molding profiles and trimmed band cross-sections
+# ---------------------------------------------------------------------------
+
+_MOLDING_STYLES = ("chamfer", "ovolo", "cavetto", "ogee", "cyma_reversa")
+
+
+def _molding_profile(style, segments):
+    """A classical edge-moulding profile as a polyline from (1, 0) to (0, 1)
+    in normalized (across, depth) space — how a corner is cut, to be scaled
+    and placed per rim. 'chamfer' is a flat bevel; 'ovolo'/'cavetto' are
+    convex/concave quarter rounds; 'ogee' (cyma recta) and 'cyma_reversa' are
+    S-curves."""
+    n = max(1, segments)
+    q = math.pi / 2
+    if style == "chamfer":
+        return [(1.0, 0.0), (0.0, 1.0)]
+    if style == "ovolo":
+        return [(math.cos(i / n * q), math.sin(i / n * q)) for i in range(n + 1)]
+    if style == "cavetto":
+        return [(1.0 - math.sin(i / n * q), 1.0 - math.cos(i / n * q))
+                for i in range(n + 1)]
+    if style == "ogee":                       # cavetto then ovolo
+        pts = [(1.0 - 0.5 * math.sin(i / n * q), 0.5 - 0.5 * math.cos(i / n * q))
+               for i in range(n + 1)]
+        pts += [(0.5 * math.cos(i / n * q), 0.5 + 0.5 * math.sin(i / n * q))
+                for i in range(1, n + 1)]
+        return pts
+    if style == "cyma_reversa":               # ovolo then cavetto
+        pts = [(0.5 + 0.5 * math.cos(i / n * q), 0.5 * math.sin(i / n * q))
+               for i in range(n + 1)]
+        pts += [(0.5 * (1.0 - math.sin(i / n * q)),
+                 0.5 + 0.5 * (1.0 - math.cos(i / n * q))) for i in range(1, n + 1)]
+        return pts
+    return [(1.0, 0.0), (0.0, 1.0)]
+
+
+def _dedup_ring(pts):
+    """Drop consecutive and wrap-around duplicate points from a closed
+    polygon."""
+    out = []
+    for p in pts:
+        if not out or math.dist(out[-1], p) > 1e-7:
+            out.append(p)
+    if len(out) > 1 and math.dist(out[0], out[-1]) < 1e-7:
+        out.pop()
+    return out
+
+
+def _band_section(width, depth, rim_style, rim_size, front_inset,
+                  fb_style, fb_size, segments):
+    """A moulded band cross-section in local (r, d): r runs 0 (opening edge)
+    -> width across the wall face, d = depth proud of the face. The inner
+    (r=0) and outer (r=width) front corners carry a *rim_style* moulding of
+    *rim_size*; the front face between the rims is recessed by *front_inset*
+    with a *fb_style* bevel of *fb_size* on each step. Returns a closed
+    polygon of (r, d) points."""
+    rs = 0.0 if rim_style == "none" else max(0.0, min(rim_size, 0.49 * width,
+                                                      0.49 * depth))
+    fb = max(0.0, min(fb_size, 0.24 * width))
+    fi = max(0.0, min(front_inset, 0.9 * depth))
+    pts = [(0.0, 0.0), (width, 0.0)]                    # base, at the face
+    if rs > 0.0:                                        # outer rim
+        pts.append((width, depth - rs))
+        for u, v in _molding_profile(rim_style, segments):
+            pts.append((width - rs * (1.0 - u), depth - rs * (1.0 - v)))
+    else:
+        pts.append((width, depth))
+    r_o, r_i = width - rs, rs                           # front face limits
+    if fi > 0.0 and (r_o - r_i) > 2.0 * fb + 1e-6:      # recessed front
+        for u, v in _molding_profile(fb_style, segments):
+            pts.append((r_o - fb * (1.0 - u), depth - fi * (1.0 - v)))
+        for u, v in _molding_profile(fb_style, segments):
+            pts.append((r_i + fb * u, depth - fi + fi * v))
+    if rs > 0.0:                                        # inner rim
+        for u, v in _molding_profile(rim_style, segments):
+            pts.append((rs * u, depth - rs * v))
+    else:
+        pts.append((0.0, depth))
+    return _dedup_ring(pts)
+
+
+def _random_band_trim(seed):
+    """Deterministically pick a moulding trim spec (rim + front inset) from
+    the classical preset styles for the given integer *seed*."""
+    rng = random.Random(seed)
+    inset = 0.0 if rng.random() < 0.4 else round(rng.uniform(0.03, 0.09), 4)
+    return dict(rim_style=rng.choice(_MOLDING_STYLES),
+                rim_size=round(rng.uniform(0.02, 0.06), 4),
+                front_inset=inset,
+                fb_style=rng.choice(_MOLDING_STYLES),
+                fb_size=round(rng.uniform(0.02, 0.05), 4))
 
 
 def _molding_section(width, depth, y_base, sign, chamfer, chamfer_segments):
@@ -668,17 +821,35 @@ def build_doorjamb(
     return _finish(bm, name, collection, smooth_angle)
 
 
-def _portal_section(face, wall_thickness, width, depth, chamfer,
-                    chamfer_segments, section):
+def _resolve_trim(chamfer, chamfer_segments, rim_style, rim_size, front_inset,
+                  front_bevel_style, front_bevel_size, trim_segments,
+                  trim_seed):
+    """Assemble a band-trim spec from explicit params, a random seed (picks
+    a classical preset), or the legacy chamfer fallback."""
+    if trim_seed is not None:
+        spec = _random_band_trim(trim_seed)
+        spec["segments"] = trim_segments
+        return spec
+    if rim_style == "none" and chamfer > 0.0:
+        return dict(rim_style="chamfer", rim_size=chamfer, front_inset=0.0,
+                    fb_style="chamfer", fb_size=0.0, segments=chamfer_segments)
+    return dict(rim_style=rim_style, rim_size=rim_size, front_inset=front_inset,
+                fb_style=front_bevel_style, fb_size=front_bevel_size,
+                segments=trim_segments)
+
+
+def _portal_section(face, wall_thickness, width, depth, trim, section):
     """Resolve a portal cross-section to a (r, y) polygon: an explicit
-    *section* of (r, d) local points (d = depth outward from the face) if
-    given, else the parametric molding profile."""
+    *section* of (r, d) local points if given, else the moulded band from the
+    *trim* spec placed on the chosen face."""
     sign = 1.0 if face == "outer" else -1.0
     y_base = sign * wall_thickness * 0.5
     if section is not None:
         return [(r, y_base + sign * d) for r, d in section]
-    return _molding_section(width, depth, y_base, sign, chamfer,
-                            chamfer_segments)
+    rd = _band_section(width, depth, trim["rim_style"], trim["rim_size"],
+                       trim["front_inset"], trim["fb_style"], trim["fb_size"],
+                       trim["segments"])
+    return [(r, y_base + sign * d) for r, d in rd]
 
 
 def build_portal(
@@ -691,6 +862,13 @@ def build_portal(
     sill_height=0.0,
     width=0.18,
     depth=0.14,
+    rim_style="none",
+    rim_size=0.03,
+    front_inset=0.0,
+    front_bevel_style="chamfer",
+    front_bevel_size=0.03,
+    trim_segments=3,
+    trim_seed=None,
     chamfer=0.0,
     chamfer_segments=1,
     section=None,
@@ -705,19 +883,22 @@ def build_portal(
     projects out from it — the raised architrave around a Romanesque doorway.
 
     Cross-section (in the radial x depth plane of the band):
-      width          -- radial width of the band across the wall face.
-      depth          -- how far the band projects proud of the face.
-      chamfer        -- bevel on the outer-front corner (0 = square edge).
-      chamfer_segments -- 1 = flat chamfer, > 1 = rounded roll.
-      section        -- optional explicit profile: a list of (r, d) points
-                        (r radial from the opening edge, d depth from the
-                        face) overriding the parametric knobs above.
-      face           -- which face it sits on: "outer" (+Y / exterior) or
-                        "inner" (-Y / interior).
+      width / depth  -- radial width across the face and projection proud.
+      rim_style      -- classical moulding on BOTH front rims (inner + outer):
+                        "none", "chamfer", "ovolo", "cavetto", "ogee",
+                        "cyma_reversa"; rim_size sets its size.
+      front_inset    -- recess the front face between the rims by this depth
+                        (0 = flat front), with a front_bevel_style bevel of
+                        front_bevel_size on each step — a panelled architrave.
+      trim_segments  -- roundness of the moulding curves.
+      trim_seed      -- if set, randomly pick a classical preset trim (rim +
+                        inset + bevel) deterministically from this seed.
+      section        -- optional explicit (r, d) profile overriding all trim.
+      chamfer / chamfer_segments -- legacy: a plain outer-rim chamfer.
+      face           -- "outer" (+Y / exterior) or "inner" (-Y / interior).
 
-    opening_* / arch_shape / head_rise / sill_height must match the doorway so
-    the surround registers with its opening. *smooth_angle* shades the arch
-    smooth (see _finish). Origin at the opening centre on the floor.
+    opening_* / arch_shape / head_rise / sill_height must match the doorway.
+    Origin at the opening centre on the floor.
     """
     if (width <= 0.0 or depth <= 0.0) and section is None:
         raise ValueError("width and depth must be > 0")
@@ -728,8 +909,10 @@ def build_portal(
     pts, normals, closed = _opening_outline(arch_shape, half_w, sill_height,
                                             opening_height, head_rise,
                                             head_segments)
-    sec = _portal_section(face, wall_thickness, width, depth, chamfer,
-                          chamfer_segments, section)
+    trim = _resolve_trim(chamfer, chamfer_segments, rim_style, rim_size,
+                         front_inset, front_bevel_style, front_bevel_size,
+                         trim_segments, trim_seed)
+    sec = _portal_section(face, wall_thickness, width, depth, trim, section)
     bm = bmesh.new()
     _sweep_profile(bm, pts, normals, sec, closed)
     return _finish(bm, name, collection, smooth_angle)
@@ -747,6 +930,13 @@ def build_tower_portal(
     sill_height=0.0,
     width=0.18,
     depth=0.14,
+    rim_style="none",
+    rim_size=0.03,
+    front_inset=0.0,
+    front_bevel_style="chamfer",
+    front_bevel_size=0.03,
+    trim_segments=3,
+    trim_seed=None,
     chamfer=0.0,
     chamfer_segments=1,
     section=None,
@@ -756,7 +946,7 @@ def build_tower_portal(
 ):
     """Projecting portal for a tower doorway — the surround wrapped around the
     same cylinder so it registers with build_tower_doorway. See build_portal
-    for the cross-section parameters and build_tower_doorway for the
+    for the cross-section / trim parameters and build_tower_doorway for the
     wrapping."""
     if (width <= 0.0 or depth <= 0.0) and section is None:
         raise ValueError("width and depth must be > 0")
@@ -770,8 +960,10 @@ def build_tower_portal(
     pts, normals, closed = _opening_outline(arch_shape, half_w, sill_height,
                                             opening_height, head_rise,
                                             head_segs)
-    sec = _portal_section(face, wall_thickness, width, depth, chamfer,
-                          chamfer_segments, section)
+    trim = _resolve_trim(chamfer, chamfer_segments, rim_style, rim_size,
+                         front_inset, front_bevel_style, front_bevel_size,
+                         trim_segments, trim_seed)
+    sec = _portal_section(face, wall_thickness, width, depth, trim, section)
     bm = bmesh.new()
     _sweep_profile(bm, pts, normals, sec, closed)
     _warp_cylinder(bm, tower_radius)
@@ -898,4 +1090,240 @@ def build_tower_doorjamb(
                 -wall_thickness * 0.5 + jamb_spacing,
                 wall_thickness * 0.5 - jamb_spacing, closed)
     _warp_cylinder(bm, tower_radius)
+    return _finish(bm, name, collection, smooth_angle)
+
+
+# ---------------------------------------------------------------------------
+# Barrel-wrapped variants (opening in a tunnel wall / barrel-vault surface)
+#
+# The wall bends around a HORIZONTAL axis (along X), so it curves up-and-over
+# in the vertical plane. Tessellation density drives VERTICAL subdivision
+# (jambs, corner blocks, sill band, arch) since the curvature is now vertical;
+# the horizontal direction is straight (one column). Origin at the opening
+# centre; the wall is tangent at *axis_height* and curves from there.
+# ---------------------------------------------------------------------------
+
+def build_barrel_doorway(
+    name="barrel_doorway",
+    barrel_radius=3.0,
+    axis_height=None,
+    concave=False,
+    tessellation_density=6.0,
+    opening_width=1.2,
+    opening_height=1.8,
+    arch_shape="round",
+    head_rise=0.6,
+    panel_width=2.4,
+    panel_height=3.0,
+    wall_thickness=0.4,
+    sill_height=0.0,
+    splay=0.0,
+    wide_side="outer",
+    wall_columns=1,
+    flat_below=False,
+    bend_interior_only=False,
+    clip_bottom=False,
+    clip_top=False,
+    floor_z=None,
+    ceiling_z=None,
+    smooth_angle=35.0,
+    collection=None,
+):
+    """Build an arched doorway (or window) wrapped around a HORIZONTAL
+    cylinder — an opening in a tunnel wall or the upper part of a barrel
+    vault. Built flat, then bent up-and-over around a horizontal axis of
+    *barrel_radius* (running along X). *axis_height* is the z where the wall
+    is tangent/flat (default: panel mid-height); *concave* bends it toward a
+    tunnel/vault interior. *tessellation_density* is the minimum vertical
+    lines per metre — it drives the jamb/corner/sill/arch subdivision so the
+    wall bends smoothly. Opening/panel parameters match build_arched_doorway.
+
+    *flat_below* keeps the wall straight below *axis_height* and bends only
+    the part above it (a vault springing from a vertical wall). With
+    *bend_interior_only* only the interior face (the one toward the cylinder)
+    follows the curve; the exterior face is flattened to a vertical plane
+    pushed out to the wall's outermost extent so it never intersects the
+    curve — a flat-backed wall with a vaulted inner surface.
+
+    The bend tilts the wall's top and bottom faces (their front/back edges end
+    at different heights). *clip_bottom* / *clip_top* level them by cutting
+    against a horizontal plane: *floor_z* / *ceiling_z* set the plane, or
+    default to the HIGHER edge of the bottom and the LOWER edge of the top so
+    no material dips below the floor or pokes above the ceiling. Returns the
+    object."""
+    if barrel_radius <= 0.0 or tessellation_density <= 0.0:
+        raise ValueError("barrel_radius and tessellation_density must be > 0")
+    if sill_height < 0.0 or splay < 0.0:
+        raise ValueError("sill_height and splay must be >= 0")
+    if wide_side not in ("outer", "inner"):
+        raise ValueError('wide_side must be "outer" or "inner"')
+
+    half_w = opening_width * 0.5
+    half_wp = panel_width * 0.5
+    apex = (sill_height + opening_height
+            + (0.0 if arch_shape == "flat" else head_rise))
+    if half_wp <= half_w:
+        raise ValueError("panel_width must exceed opening_width")
+    if panel_height <= apex:
+        raise ValueError("panel_height must clear the arch apex")
+    if panel_height > 2.0 * math.pi * barrel_radius:
+        raise ValueError("panel_height exceeds the barrel circumference")
+    if splay >= half_w:
+        raise ValueError("splay must be smaller than the opening half-width")
+    if axis_height is None:
+        axis_height = panel_height * 0.5
+
+    d = tessellation_density
+    jamb_segs = max(1, math.ceil(opening_height * d))
+    corner_rows = max(1, math.ceil((panel_height - apex) * d))
+    band_rows = max(1, math.ceil(sill_height * d)) if sill_height > 0 else 1
+    head_segs = max(4, math.ceil(opening_width * d))
+    sill_cols = max(1, math.ceil(opening_width * d))
+
+    pos, faces, splay_dirs = _frame_faces(
+        half_w, half_wp, sill_height, opening_height, panel_height,
+        arch_shape, head_rise, jamb_segs, head_segs, wall_columns,
+        corner_rows, sill_cols, band_rows)
+    off = {i: (splay * dx, splay * dz)
+           for i, (dx, dz) in splay_dirs.items()} if splay > 0 else None
+
+    bm = bmesh.new()
+    front, back = _extrude_panel(
+        bm, pos, faces, -wall_thickness * 0.5, wall_thickness * 0.5, off,
+        off_front=(wide_side == "outer"))
+    # Track the panel's bottom (z=0) and top (z=panel_height) verts before the
+    # bend so the default clip planes can follow their tilted edges.
+    bottom_v = [v for v in bm.verts if v.co.z < 1e-6]
+    top_v = [v for v in bm.verts if v.co.z > panel_height - 1e-6]
+    _warp_barrel(bm, barrel_radius, axis_height, concave, flat_below)
+    if bend_interior_only:
+        # The exterior face is the one away from the axis: front (-Y) for a
+        # concave bend, back (+Y) for convex. Flatten it to a vertical plane
+        # at its outermost extent so the curved interior never crosses it.
+        exterior = front if concave else back
+        ext_y = (min(v.co.y for v in exterior) if concave
+                 else max(v.co.y for v in exterior))
+        for v in exterior:
+            v.co.y = ext_y
+    if clip_bottom:
+        z = floor_z if floor_z is not None else max(v.co.z for v in bottom_v)
+        _clip_plane(bm, z, keep_above=True)
+    if clip_top:
+        z = ceiling_z if ceiling_z is not None else min(v.co.z for v in top_v)
+        _clip_plane(bm, z, keep_above=False)
+    return _finish(bm, name, collection, smooth_angle)
+
+
+def build_barrel_doorjamb(
+    name="barrel_doorjamb",
+    barrel_radius=3.0,
+    axis_height=0.0,
+    concave=False,
+    tessellation_density=6.0,
+    opening_width=1.2,
+    opening_height=1.8,
+    arch_shape="round",
+    head_rise=0.6,
+    wall_thickness=0.4,
+    sill_height=0.0,
+    jamb_thickness=0.12,
+    jamb_spacing=0.06,
+    flat_below=False,
+    clip_bottom=False,
+    floor_z=None,
+    smooth_angle=35.0,
+    collection=None,
+):
+    """Doorjamb lining for a barrel_doorway — wrapped around the same
+    horizontal cylinder so it registers. See build_doorjamb / build_barrel_
+    doorway. *axis_height*, *flat_below*, *clip_bottom* / *floor_z* should
+    match the doorway's so the pieces line up on the floor."""
+    if jamb_thickness <= 0.0:
+        raise ValueError("jamb_thickness must be > 0")
+    if 2.0 * jamb_spacing >= wall_thickness:
+        raise ValueError("jamb_spacing too large for wall_thickness")
+    if barrel_radius <= 0.0 or tessellation_density <= 0.0:
+        raise ValueError("barrel_radius and tessellation_density must be > 0")
+
+    d = tessellation_density
+    half_w = opening_width * 0.5
+    head_segs = max(6, math.ceil(opening_width * d))
+    jamb_segs = max(1, math.ceil(opening_height * d))
+    pts, normals, closed = _opening_outline(arch_shape, half_w, sill_height,
+                                            opening_height, head_rise,
+                                            head_segs, jamb_segs)
+    bm = bmesh.new()
+    _sweep_tube(bm, pts, normals, -jamb_thickness, 0.0,
+                -wall_thickness * 0.5 + jamb_spacing,
+                wall_thickness * 0.5 - jamb_spacing, closed)
+    z_floor = min(v.co.z for v in bm.verts)
+    bottom_v = [v for v in bm.verts if v.co.z < z_floor + 1e-6]
+    _warp_barrel(bm, barrel_radius, axis_height, concave, flat_below)
+    if clip_bottom:
+        z = floor_z if floor_z is not None else max(v.co.z for v in bottom_v)
+        _clip_plane(bm, z, keep_above=True)
+    return _finish(bm, name, collection, smooth_angle)
+
+
+def build_barrel_portal(
+    name="barrel_portal",
+    barrel_radius=3.0,
+    axis_height=0.0,
+    concave=False,
+    tessellation_density=6.0,
+    opening_width=1.2,
+    opening_height=1.8,
+    arch_shape="round",
+    head_rise=0.6,
+    wall_thickness=0.4,
+    sill_height=0.0,
+    width=0.18,
+    depth=0.14,
+    rim_style="none",
+    rim_size=0.03,
+    front_inset=0.0,
+    front_bevel_style="chamfer",
+    front_bevel_size=0.03,
+    trim_segments=3,
+    trim_seed=None,
+    chamfer=0.0,
+    chamfer_segments=1,
+    section=None,
+    face="outer",
+    flat_below=False,
+    clip_bottom=False,
+    floor_z=None,
+    smooth_angle=35.0,
+    collection=None,
+):
+    """Projecting portal for a barrel_doorway — wrapped around the same
+    horizontal cylinder so it registers. See build_portal / build_barrel_
+    doorway. *axis_height*, *flat_below*, *clip_bottom* / *floor_z* should
+    match the doorway's."""
+    if (width <= 0.0 or depth <= 0.0) and section is None:
+        raise ValueError("width and depth must be > 0")
+    if face not in ("outer", "inner"):
+        raise ValueError('face must be "outer" or "inner"')
+    if barrel_radius <= 0.0 or tessellation_density <= 0.0:
+        raise ValueError("barrel_radius and tessellation_density must be > 0")
+
+    d = tessellation_density
+    half_w = opening_width * 0.5
+    head_segs = max(6, math.ceil(opening_width * d))
+    jamb_segs = max(1, math.ceil(opening_height * d))
+    pts, normals, closed = _opening_outline(arch_shape, half_w, sill_height,
+                                            opening_height, head_rise,
+                                            head_segs, jamb_segs)
+    trim = _resolve_trim(chamfer, chamfer_segments, rim_style, rim_size,
+                         front_inset, front_bevel_style, front_bevel_size,
+                         trim_segments, trim_seed)
+    sec = _portal_section(face, wall_thickness, width, depth, trim, section)
+    bm = bmesh.new()
+    _sweep_profile(bm, pts, normals, sec, closed)
+    z_floor = min(v.co.z for v in bm.verts)
+    bottom_v = [v for v in bm.verts if v.co.z < z_floor + 1e-6]
+    _warp_barrel(bm, barrel_radius, axis_height, concave, flat_below)
+    if clip_bottom:
+        z = floor_z if floor_z is not None else max(v.co.z for v in bottom_v)
+        _clip_plane(bm, z, keep_above=True)
     return _finish(bm, name, collection, smooth_angle)
