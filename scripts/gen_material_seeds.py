@@ -87,27 +87,37 @@ MATERIALS = {
     "granite": "Honed grey granite surface: dense crystalline speckle of grey, "
         "white, black and faint pink mineral flecks evenly distributed, no "
         "directional structure.",
-    "flint": "Knapped flint set in pale lime mortar: irregular rounded dark "
-        "glassy grey-black nodules with pale chalky cortex rims, in a light "
-        "mortar matrix.",
+    "flint": "A pure solid FLINT STONE surface filling the entire frame -- the "
+        "freshly split/knapped face of flint: dark glassy blue-grey to black "
+        "stone with a smooth conchoidal (shell-like) fracture, faint waxy "
+        "lustre, subtle tonal mottling, and occasional patches of pale chalky "
+        "cortex. Just the flint material itself -- NO mortar, NO joints, NO "
+        "gaps, NO separate cobbles or nodules, NO wall or arrangement.",
     "marble": "Pale honed marble surface: soft cloudy off-white ground with a "
         "gentle branching network of faint grey veins, very low contrast.",
-    "brick": "Fired red-brown brickwork: fine clay grain with subtle brick-to-"
-        "brick colour variation and occasional darker fire-flash, thin mortar "
-        "joints in a running bond.",
-    "terracotta": "Fired terracotta surface: smooth warm orange-red clay with "
-        "fine surface pitting and subtle mottling.",
+    "terracotta": "Fired terracotta / brick clay surface: smooth warm orange-"
+        "red fired clay with fine surface pitting and subtle mottling (a single "
+        "brick face; the bond pattern is added later with nodes).",
     "plaster": "Old lime plaster / fresco ground: off-white cream matte plaster "
         "with broad soft mottling and faint trowel sweep arcs, almost no high-"
         "frequency detail.",
+    "mortar": "A lime mortar surface as found in the joints of medieval "
+        "masonry: pale off-white to buff coarse lime mortar with fine sand "
+        "aggregate, small pits, air holes and trowel texture, matte and slightly "
+        "rough. Flat and even.",
     "bronze": "Burnished bronze with age: warm gold-brown metal showing fine "
         "brushed micro-scratches and blotchy green-brown patina in low areas.",
-    "iron": "Wrought iron surface: dark near-black low-saturation metal with "
-        "hammer-planished dimples and streaky lighter wear marks.",
+    "iron": "A WROUGHT-IRON surface of medieval hand-forged ironwork (a door "
+        "strap, hinge or grille): dark blue-black hammered and planished forged "
+        "iron with subtle hammer-facet dents, fibrous forge grain and lighter "
+        "burnished wear on high spots. Worked, forged metal -- NOT raw iron ore, "
+        "mineral, rust deposit or rock.",
     "gold": "Gold leaf / gilding: warm yellow gold with a very fine slightly "
         "wrinkled leaf surface, faint micro-cracks.",
-    "oak": "Aged oak timber surface: mid-brown wood with directional grain "
-        "lines, ray fleck, and an occasional small knot; faint adze marks.",
+    "oak": "A rough hand-worked medieval oak timber surface: unplaned riven or "
+        "adze-hewn oak with a coarse open grain, tool facets and shallow "
+        "axe/adze marks, a few checks and knots, weathered and unpolished. Rough "
+        "structural carpentry timber -- NOT smooth modern planed or varnished oak.",
 }
 
 CHANNELS = {"albedo": ALBEDO_SUFFIX, "rough": ROUGH_SUFFIX}

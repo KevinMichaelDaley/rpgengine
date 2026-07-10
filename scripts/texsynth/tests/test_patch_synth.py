@@ -49,6 +49,17 @@ def test_grayscale_exemplar():
     assert out.shape == (40, 40)
 
 
+def test_multiple_exemplars_mix_all_variants():
+    # A field synthesised from several variants draws pixels from all of them.
+    a = np.full((40, 40, 3), 0.1)
+    b = np.full((40, 40, 3), 0.6)
+    c = np.full((40, 40, 3), 0.9)
+    out = synth_patchwork([a, b, c], 200, 200, patch=20, overlap=10, seed=0)
+    vals = set(np.unique(out).round(3))
+    assert {0.1, 0.6, 0.9}.issubset(vals)          # every variant appears
+    assert out.shape == (200, 200, 3)
+
+
 def test_graphcut_engine_matches_invariants():
     # The slower graphcut engine must satisfy the same shape/coverage/pixel-source
     # guarantees as the default DP engine.

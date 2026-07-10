@@ -2,16 +2,18 @@
 minimum-error seams so no axis-aligned grid forms (Efros-Freeman quilting /
 Kwatra graphcut textures).
 
+Patches are drawn across a *set* of exemplars (all the seed variants of one
+material channel), chosen by a deterministic hash, so a single field mixes every
+variant for maximum variation — one aperiodic map per material channel, not per
+seed image.
+
 Two seam engines:
   - 'dp'       : Efros-Freeman minimum-error boundary cut (dynamic programming)
-                 on the left + top overlap bands. Fast (no max-flow); the seams
-                 are irregular monotonic paths. Default — used for large bakes.
+                 on the left + top overlap bands. Fast; default for large bakes.
   - 'graphcut' : Kwatra min-cut/max-flow over the whole overlap. Fully arbitrary
                  polygonal seams, higher quality, much slower.
 
-Patch source locations are chosen by a deterministic hash of the cell
-coordinates, so the field is reproducible and aperiodic. Real exemplar pixels
-only; no blending, no blur.
+Real exemplar pixels only; no blending, no blur.
 """
 
 import numpy as np
@@ -32,22 +34,18 @@ def _positions(extent, patch, step):
     return xs
 
 
-def _source(exemplar, ph, pw, i, j, seed):
-    """Deterministic (hashed) source block of size (ph, pw) from *exemplar*."""
-    eh, ew = exemplar.shape[:2]
-    h = hash2d(i, j, seed)
+def _source(exemplars, ph, pw, i, j, seed):
+    """Hashed source block (ph, pw): pick a variant, then a region within it."""
+    ex = exemplars[hash2d(i, j, seed) % len(exemplars)]
+    h = hash2d(i, j, seed ^ 0x1234)
+    eh, ew = ex.shape[:2]
     sy = int(h % (eh - ph + 1))
     sx = int((h >> 20) % (ew - pw + 1))
-    return exemplar[sy:sy + ph, sx:sx + pw]
+    return ex[sy:sy + ph, sx:sx + pw]
 
 
 def _merge_dp(base, src, existing, ov_l, ov_t):
-    """New-patch mask via Efros-Freeman min-error boundary cuts on the bands.
-
-    A pixel takes the new patch unless a seam puts it on the old side of the
-    left (vertical) or top (horizontal) overlap. Old wins on either -> the two
-    monotonic cuts compose into one irregular boundary.
-    """
+    """New-patch mask via Efros-Freeman min-error boundary cuts on the bands."""
     ph, pw = existing.shape
     new_mask = np.ones((ph, pw), dtype=bool)
     if ov_l > 0:
@@ -74,25 +72,29 @@ def _merge_graphcut(base, src, existing, has_left, has_top):
     return graphcut_seam(base, src, force_a, force_b)
 
 
-def synth_patchwork(exemplar, width, height, patch=192, overlap=None, seed=0,
+def synth_patchwork(exemplars, width, height, patch=192, overlap=None, seed=0,
                     engine="dp"):
     """Synthesise a (height, width[, C]) field by irregular patch placement.
 
+    exemplars: one array, or a list of same-channel arrays (all seed variants).
     engine: 'dp' (fast, default) or 'graphcut' (slower, fully polygonal).
     """
-    if overlap is None:
-        overlap = patch // 2
+    if isinstance(exemplars, np.ndarray):
+        exemplars = [exemplars]
+    smallest = min(min(e.shape[0], e.shape[1]) for e in exemplars)
+    patch = min(patch, smallest)
+    overlap = patch // 2 if overlap is None else min(overlap, patch - 1)
     step = max(1, patch - overlap)
-    multichannel = exemplar.ndim == 3
-    shape = (height, width, exemplar.shape[2]) if multichannel else (height, width)
-    canvas = np.zeros(shape, dtype=exemplar.dtype)
+    multichannel = exemplars[0].ndim == 3
+    shape = (height, width, exemplars[0].shape[2]) if multichannel else (height, width)
+    canvas = np.zeros(shape, dtype=exemplars[0].dtype)
     filled = np.zeros((height, width), dtype=bool)
 
     for j, py in enumerate(_positions(height, patch, step)):
         ph = min(patch, height - py)
         for i, px in enumerate(_positions(width, patch, step)):
             pw = min(patch, width - px)
-            src = _source(exemplar, ph, pw, i, j, seed)
+            src = _source(exemplars, ph, pw, i, j, seed)
             existing = filled[py:py + ph, px:px + pw]
             if not existing.any():
                 canvas[py:py + ph, px:px + pw] = src

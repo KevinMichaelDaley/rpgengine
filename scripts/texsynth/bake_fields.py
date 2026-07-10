@@ -61,12 +61,19 @@ def highpass(exemplar, sigma):
     return np.clip(exemplar - lp + mean, 0.0, 1.0)
 
 
-def bake_field(exemplar, cfg, seed):
-    """Synthesise one square field of side cfg['field_size'] from *exemplar*."""
+def bake_field(exemplars, cfg, seed):
+    """Synthesise one square field (side cfg['field_size']) mixing all variants.
+
+    *exemplars* is one array or a list of the material channel's seed variants;
+    each is high-passed, then the field samples patches across all of them.
+    """
+    if isinstance(exemplars, np.ndarray):
+        exemplars = [exemplars]
+    sigma = float(cfg.get("highpass_sigma", 0) or 0)
+    exemplars = [highpass(e, sigma) for e in exemplars]
     n = int(cfg["field_size"])
-    exemplar = highpass(exemplar, float(cfg.get("highpass_sigma", 0) or 0))
     overlap = cfg.get("overlap")
-    return synth_field(exemplar, n, n, patch=int(cfg["patch"]),
+    return synth_field(exemplars, n, n, patch=int(cfg["patch"]),
                        overlap=None if overlap is None else int(overlap),
                        seed=seed)
 
@@ -76,6 +83,13 @@ def load_image(path):
     img = Image.open(path)
     img = img.convert("L" if img.mode in ("L", "I", "I;16") else "RGB")
     return np.asarray(img, dtype=np.float32) / np.float32(255.0)
+
+
+def _as_rgb(arr):
+    """Promote a grayscale array to 3 channels so a channel's variants match."""
+    if arr.ndim == 2:
+        return np.stack([arr, arr, arr], axis=2)
+    return arr
 
 
 def save_image(path, arr):
@@ -102,7 +116,6 @@ def main(argv=None):
     ap.add_argument("--channels", default="", help="comma-separated subset")
     ap.add_argument("--base-seed", type=int, default=0)
     ap.add_argument("--field-size", type=int, default=0, help="override field_size")
-    ap.add_argument("--num-fields", type=int, default=0, help="override num_fields")
     args = ap.parse_args(argv)
 
     with open(args.config) as fh:
@@ -116,7 +129,6 @@ def main(argv=None):
         cfg = merge_config(defaults, mats.get(material, {}))
         if args.field_size:
             cfg["field_size"] = args.field_size
-        num_fields = args.num_fields or int(cfg.get("num_fields", 2))
         channels = [c for c in cfg.get("channels", ["albedo", "rough"])
                     if not chan_filter or c in chan_filter]
         for channel in channels:
@@ -124,15 +136,16 @@ def main(argv=None):
             if not seeds:
                 print(f"  skip {material}/{channel}: no seed images", flush=True)
                 continue
-            for k in range(num_fields):
-                exemplar = load_image(seeds[k % len(seeds)])
-                t0 = time.monotonic()
-                field = bake_field(exemplar, cfg, seed=args.base_seed + k)
-                out = os.path.join(args.root, material, "fields",
-                                   f"{material}_{channel}_field_{k:02d}.png")
-                save_image(out, field)
-                print(f"  {out}  {field.shape[1]}x{field.shape[0]}  "
-                      f"({time.monotonic() - t0:.1f}s)", flush=True)
+            # One aperiodic field per material channel, mixing every variant.
+            exemplars = [_as_rgb(load_image(p)) for p in seeds]
+            t0 = time.monotonic()
+            field = bake_field(exemplars, cfg, seed=args.base_seed)
+            out = os.path.join(args.root, material, "fields",
+                               f"{material}_{channel}_field.png")
+            save_image(out, field)
+            print(f"  {out}  {field.shape[1]}x{field.shape[0]}  "
+                  f"from {len(seeds)} seeds  ({time.monotonic() - t0:.1f}s)",
+                  flush=True)
     return 0
 
 
