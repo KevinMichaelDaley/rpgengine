@@ -38,7 +38,11 @@ def _mark_seam(v0, v1):
 
 
 def _normalize_island_density(obj, density):
-    """Scale each UV island so its texel density equals *density* UV/metre."""
+    """Scale each UV island so its texel density equals *density* UV/metre.
+
+    Run before packing to give every island the same relative texel density;
+    the subsequent pack then uniformly scales the whole map into [0,1].
+    """
     me = obj.data
     if not me.uv_layers.active:
         return
@@ -89,8 +93,48 @@ def _normalize_island_density(obj, density):
                 uvl[li].uv = ((u.x - cx) * factor + cx, (u.y - cy) * factor + cy)
 
 
+def _pack_islands(obj):
+    """Pack the object's UV islands into the [0,1] bounds (scale-to-fill).
+
+    Uses Blender's built-in ``uv.pack_islands`` (with UV-sync selection so it
+    sees every island) — the whole UV map is fit into the unit square, so a
+    sampled material box covers the object once without tiling. Safe to re-run
+    (e.g. after the dome interior-lens rewrites its UVs). No-op headless.
+    """
+    win = bpy.context.window
+    area = next((a for a in (win.screen.areas if win else [])
+                 if a.type == 'VIEW_3D'), None)
+    if area is None:
+        return
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    prev_sel = list(bpy.context.selected_objects)
+    prev_act = bpy.context.view_layer.objects.active
+    ts = bpy.context.scene.tool_settings
+    prev_sync = ts.use_uv_select_sync
+    for o in prev_sel:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    ts.use_uv_select_sync = True
+    ov = dict(window=win, area=area, region=region,
+              active_object=obj, object=obj, edit_object=obj)
+    bpy.ops.object.mode_set(mode='EDIT')
+    with bpy.context.temp_override(**ov):
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.pack_islands(rotate=True, margin=0.003)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    ts.use_uv_select_sync = prev_sync
+    obj.select_set(False)
+    for o in prev_sel:
+        o.select_set(True)
+    if prev_act:
+        bpy.context.view_layer.objects.active = prev_act
+
+
 def _finalize_uvs(obj, density=UV_SCALE):
-    """Unwrap along the marked seams, then equalise every island to *density*."""
+    """Unwrap along the marked seams, equalise island density, then pack the
+    islands into the [0,1] bounds so a sampled material box covers the piece once
+    (no tiling)."""
     win = bpy.context.window
     area = next((a for a in (win.screen.areas if win else [])
                  if a.type == 'VIEW_3D'), None)
@@ -116,6 +160,7 @@ def _finalize_uvs(obj, density=UV_SCALE):
         o.select_set(True)
     if prev_act:
         bpy.context.view_layer.objects.active = prev_act
+    _pack_islands(obj)
 
 
 def _finish(bm, name, collection, smooth_angle=0.0):
@@ -665,7 +710,9 @@ def build_dome(
         if len(e.link_faces) == 2 and e.calc_face_angle() > thr:
             e.seam = True
     obj = _finish(bm, name, collection, smooth_angle)
-    # Optional corrective lens on the interior (intrados) UVs.
+    # Optional corrective lens on the interior (intrados) UVs; it rewrites those
+    # UVs at metre scale, so re-pack the whole map back into [0,1] afterwards.
     if interior_lens is not None:
         _apply_interior_lens(obj, float(interior_lens), radius, rise, thickness)
+        _pack_islands(obj)
     return obj

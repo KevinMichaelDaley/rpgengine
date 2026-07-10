@@ -489,10 +489,45 @@ def _normalize_island_density(obj, density):
                 uvl[li].uv = ((u.x - cx) * factor + cx, (u.y - cy) * factor + cy)
 
 
+def _pack_islands(obj):
+    """Pack the object's UV islands into the [0,1] bounds (scale-to-fill) with
+    Blender's built-in ``uv.pack_islands`` (UV-sync selection so it sees every
+    island), so a sampled material box covers the object once without tiling.
+    No-op headless."""
+    win = bpy.context.window
+    area = next((a for a in (win.screen.areas if win else [])
+                 if a.type == 'VIEW_3D'), None)
+    if area is None:
+        return
+    region = next(r for r in area.regions if r.type == 'WINDOW')
+    prev_sel = list(bpy.context.selected_objects)
+    prev_act = bpy.context.view_layer.objects.active
+    ts = bpy.context.scene.tool_settings
+    prev_sync = ts.use_uv_select_sync
+    for o in prev_sel:
+        o.select_set(False)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    ts.use_uv_select_sync = True
+    ov = dict(window=win, area=area, region=region,
+              active_object=obj, object=obj, edit_object=obj)
+    bpy.ops.object.mode_set(mode='EDIT')
+    with bpy.context.temp_override(**ov):
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.pack_islands(rotate=True, margin=0.003)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    ts.use_uv_select_sync = prev_sync
+    obj.select_set(False)
+    for o in prev_sel:
+        o.select_set(True)
+    if prev_act:
+        bpy.context.view_layer.objects.active = prev_act
+
+
 def _finalize_uvs(obj, density=UV_SCALE):
     """Unwrap *obj* along its marked seams, equalise per-island texel density,
-    then scale the whole UV layout to *density* UV/metre. Leaves UVs unpacked so
-    they tile; safe if there is no VIEW_3D context (skips)."""
+    then pack the islands into the [0,1] bounds so a sampled material box covers
+    the piece once (no tiling). Safe if there is no VIEW_3D context (skips)."""
     win = bpy.context.window
     area = next((a for a in (win.screen.areas if win else [])
                  if a.type == 'VIEW_3D'), None)
@@ -518,6 +553,7 @@ def _finalize_uvs(obj, density=UV_SCALE):
         o.select_set(True)
     if prev_act:
         bpy.context.view_layer.objects.active = prev_act
+    _pack_islands(obj)
 
 
 def _reveal_edge_pairs(vert_lists, opening_path):
