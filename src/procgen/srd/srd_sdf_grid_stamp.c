@@ -14,9 +14,9 @@
 /* ── SDF primitives ────────────────────────────────────────────── */
 
 /**
- * @brief Evaluate axis-aligned box SDF at a point.
+ * @brief Evaluate axis-aligned box SDF at a point (Euclidean).
  *
- * sdf(p) = max(|px - cx| - hx, |py - cy| - hy, |pz - cz| - hz)
+ * Uses iq's exact box SDF: rounded corners outside, exact L-inf inside.
  * Negative inside, positive outside, zero on surface.
  */
 static inline float box_sdf(float px, float py, float pz,
@@ -25,13 +25,20 @@ static inline float box_sdf(float px, float py, float pz,
     float dx = fabsf(px - cx) - hx;
     float dy = fabsf(py - cy) - hy;
     float dz = fabsf(pz - cz) - hz;
-    /* For an exact SDF we'd compute the exterior distance differently,
-     * but for grid stamping the L-infinity approximation is sufficient
-     * and much cheaper. The interior distance is exact. */
-    float m = dx;
-    if (dy > m) m = dy;
-    if (dz > m) m = dz;
-    return m;
+
+    /* Exterior: Euclidean distance to nearest surface point */
+    float ex = dx > 0.0f ? dx : 0.0f;
+    float ey = dy > 0.0f ? dy : 0.0f;
+    float ez = dz > 0.0f ? dz : 0.0f;
+    float outside = sqrtf(ex * ex + ey * ey + ez * ez);
+
+    /* Interior: max of negative components (exact for box interior) */
+    float inside = dx;
+    if (dy > inside) inside = dy;
+    if (dz > inside) inside = dz;
+    if (inside > 0.0f) inside = 0.0f;
+
+    return outside + inside;
 }
 
 /**
@@ -86,7 +93,7 @@ void srd_sdf_grid_stamp_box(srd_sdf_grid_t *grid,
     if (!grid || !grid->values) return;
 
     /* Compute affected voxel range (expand by 1 voxel for SDF margin) */
-    float margin = grid->voxel_size;
+    float margin = grid->voxel_size * 8.0f < 1.0f ? 1.0f : grid->voxel_size * 8.0f;
     int x0, y0, z0, x1, y1, z1;
     compute_voxel_range(grid,
                         cx - hx - margin, cy - hy - margin, cz - hz - margin,
@@ -116,7 +123,7 @@ void srd_sdf_grid_subtract_box(srd_sdf_grid_t *grid,
                                float hx, float hy, float hz) {
     if (!grid || !grid->values) return;
 
-    float margin = grid->voxel_size;
+    float margin = grid->voxel_size * 8.0f < 1.0f ? 1.0f : grid->voxel_size * 8.0f;
     int x0, y0, z0, x1, y1, z1;
     compute_voxel_range(grid,
                         cx - hx - margin, cy - hy - margin, cz - hz - margin,
@@ -147,7 +154,7 @@ void srd_sdf_grid_stamp_sphere(srd_sdf_grid_t *grid,
                                float radius) {
     if (!grid || !grid->values) return;
 
-    float margin = grid->voxel_size;
+    float margin = grid->voxel_size * 8.0f < 1.0f ? 1.0f : grid->voxel_size * 8.0f;
     int x0, y0, z0, x1, y1, z1;
     compute_voxel_range(grid,
                         cx - radius - margin, cy - radius - margin, cz - radius - margin,
@@ -177,7 +184,7 @@ void srd_sdf_grid_subtract_sphere(srd_sdf_grid_t *grid,
                                   float radius) {
     if (!grid || !grid->values) return;
 
-    float margin = grid->voxel_size;
+    float margin = grid->voxel_size * 8.0f < 1.0f ? 1.0f : grid->voxel_size * 8.0f;
     int x0, y0, z0, x1, y1, z1;
     compute_voxel_range(grid,
                         cx - radius - margin, cy - radius - margin, cz - radius - margin,

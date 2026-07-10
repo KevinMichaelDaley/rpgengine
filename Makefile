@@ -2009,6 +2009,7 @@ SRD2_C_SRCS := src/procgen/srd/srd_descent_config.c \
                src/procgen/srd/srd_voxel_rule_table.c \
                src/procgen/srd/srd_descent_loop.c \
                src/procgen/srd/srd_bridge.c \
+               src/procgen/srd/srd_sdf_raycast.c \
                tests/srd_stubs.c
 SRD2_C_OBJS := $(patsubst %.c,$(OBJDIR)/%.o,$(SRD2_C_SRCS))
 
@@ -2047,6 +2048,9 @@ build/srd_critic_value_tests: tests/srd_critic_value_tests.c $(SRD2_C_OBJS) $(SR
 	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
 
 build/srd_pipeline_tests: tests/srd_pipeline_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
+	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
+
+build/srd_raycast_tests: tests/srd_raycast_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
 	$(CC) $(SRD2_CFLAGS) $< $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) -o $@ -lm
 
 build/srd_sdf_grid_tests: tests/srd_sdf_grid_tests.c $(SRD2_C_OBJS) $(SRD2_SVO_DEPS) | build
@@ -2097,7 +2101,8 @@ SRD2_TESTS := build/srd_rules_embellish_tests \
               build/srd_bridge_tests \
               build/srd_property_tests \
               build/srd_critic_value_tests \
-              build/srd_pipeline_tests
+              build/srd_pipeline_tests \
+              build/srd_raycast_tests
 
 srd2-test: $(SRD2_TESTS)
 	@for t in $(SRD2_TESTS); do echo "Running $$t..."; ./$$t || exit 1; done

@@ -6,7 +6,8 @@
  * room layout, runs the discrete descent optimizer, and converts the
  * final grid to a sparse voxel octree (SVO).
  *
- * Non-static functions declared (3): srd_generate_svo, srd_generate, srd_free_geometry
+ * Non-static functions declared (4): srd_generate_svo, srd_generate_svo_ex,
+ *                                     srd_generate, srd_free_geometry
  */
 #ifndef FERRUM_PROCGEN_SRD_BRIDGE_H
 #define FERRUM_PROCGEN_SRD_BRIDGE_H
@@ -20,10 +21,31 @@ extern "C" {
 #endif
 
 /**
+ * @brief Configuration for dungeon SDF generation dimensions.
+ *
+ * Controls the spatial dimensions of the generated dungeon geometry.
+ * All values are in meters. Use srd_dungeon_config_default() or
+ * zero-initialize and call srd_generate_svo_ex() which fills defaults
+ * for any zero fields.
+ */
+typedef struct srd_dungeon_config {
+    float cell_size;      /**< Meters per ASCII grid cell (XZ). Default: 2.0 */
+    float room_height;    /**< Full room interior height (Y). Default: 4.0 */
+    float floor_spacing;  /**< Vertical distance between floor centers. Default: 5.0
+                               Must be > room_height to leave a solid slab between floors. */
+    float voxel_size;     /**< SDF grid resolution (meters per voxel). Default: 0.5 */
+    float margin;         /**< Extra margin around dungeon bounds (meters). Default: 2.0 */
+    int   stair_steps;    /**< Number of stair steps between floors. Default: 8 */
+} srd_dungeon_config_t;
+
+/**
  * @brief Generate dungeon SVO from an ASCII floor plan.
  *
  * Pipeline: parse ASCII → seed rooms → SDF grid + room map →
  * descent optimize → SDF to SVO.
+ *
+ * Uses default dungeon dimensions. For custom dimensions, use
+ * srd_generate_svo_ex().
  *
  * @param ascii       Multi-line ASCII grid string.
  * @param seed        Random seed for reproducibility (0 = time-based).
@@ -33,6 +55,24 @@ extern "C" {
  */
 int srd_generate_svo(const char *ascii, uint32_t seed, double time_budget,
                      npc_svo_grid_t *svo_out);
+
+/**
+ * @brief Generate dungeon SVO with custom dimension configuration.
+ *
+ * Same pipeline as srd_generate_svo(), but uses caller-provided
+ * dimensions for cell size, room height, floor spacing, etc.
+ * Any zero-valued fields in cfg are replaced with defaults.
+ *
+ * @param ascii       Multi-line ASCII grid string.
+ * @param seed        Random seed for reproducibility (0 = time-based).
+ * @param time_budget Maximum wall-clock seconds for optimization.
+ * @param cfg         Dungeon dimension config. NULL for defaults.
+ * @param svo_out     Output SVO grid. Caller must destroy via npc_svo_grid_destroy().
+ * @return 0 on success, -1 on error.
+ */
+int srd_generate_svo_ex(const char *ascii, uint32_t seed, double time_budget,
+                        const srd_dungeon_config_t *cfg,
+                        npc_svo_grid_t *svo_out);
 
 /**
  * @brief Legacy API: generate dungeon geometry from ASCII floor plan.

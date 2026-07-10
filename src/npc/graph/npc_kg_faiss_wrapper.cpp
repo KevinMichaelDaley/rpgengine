@@ -6,13 +6,15 @@
  * 64-bit IDs are preserved during add/search.
  */
 
+/* Include project header first (opens/closes extern "C") */
+#include "ferrum/npc/npc_knowledge_graph.h"
+
+/* C++ / FAISS headers after the extern "C" block is closed */
 #include <cstdint>
 #include <vector>
 
 #include <faiss/IndexFlat.h>
 #include <faiss/IndexIDMap.h>
-
-#include "ferrum/npc/npc_knowledge_graph.h"
 
 extern "C" {
 
@@ -54,4 +56,4 @@ void faiss_index_destroy(void *index) {
     delete static_cast<faiss::IndexIDMap *>(index);
 }
 
-}
+} /* extern "C" */

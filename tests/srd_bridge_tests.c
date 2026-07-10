@@ -115,15 +115,111 @@ static int test_legacy_generate(void) {
     return 0;
 }
 
+/* ── Test: two-floor dungeon with stairs ─────────────────────── */
+
+static const char *TWO_FLOOR_GRID =
+    "=== FLOOR 0: CRYPT ===\n"
+    "W W W W W W W W W W W W W W W\n"
+    "W E E E W R R R R R R R R R W\n"
+    "W E E E . R R R R R R R R R W\n"
+    "W E E E W R R R R R R R R R W\n"
+    "W W . W W W W W W W . W W W W\n"
+    "W R R R R W W W W W . W W W W\n"
+    "W R R R R . G G G G . ^ . W W\n"
+    "W R R R R W G G G G W W W W W\n"
+    "W R R R R W G G G G W W W W W\n"
+    "W W W W W W W W W W W W W W W\n"
+    "=== FLOOR 1: SANCTUM ===\n"
+    "W W W W W W W W W W W W W W W\n"
+    "W P P P P P P P P P W B B B W\n"
+    "W P P P P P P P P P W B B B W\n"
+    "W P P P P P P P P P . B B B W\n"
+    "W P P P P P P P P P W B B B W\n"
+    "W P P P P P P P P P W B B B W\n"
+    "W P P P P P P P P P . v . W W\n"
+    "W P P P P P P P P P W W W W W\n"
+    "W P P P P P P P P P W W W W W\n"
+    "W W W W W W W W W W W W W W W\n";
+
+static int test_two_floor_stacked(void) {
+    npc_svo_grid_t svo;
+    memset(&svo, 0, sizeof(svo));
+
+    int rc = srd_generate_svo(TWO_FLOOR_GRID, 42, 1.0, &svo);
+    ASSERT_INT_EQ(0, rc);
+    ASSERT_TRUE(svo.max_depth > 0);
+
+    /* SVO bounds should span Y range covering both floors.
+     * Default: room_height=4.0, floor_spacing=5.0.
+     * Floor 0: cy=2,hy=2 → Y=[0,4]. Floor 1: cy=7,hy=2 → Y=[5,9].
+     * With margin, max_y > 9. */
+    ASSERT_TRUE(svo.world_bounds.max.y > 7.0f);
+
+    npc_svo_grid_destroy(&svo);
+    return 0;
+}
+
+/* ── Test: custom config with srd_generate_svo_ex ────────────── */
+
+static int test_generate_svo_ex_custom_config(void) {
+    npc_svo_grid_t svo;
+    memset(&svo, 0, sizeof(svo));
+
+    srd_dungeon_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.cell_size     = 3.0f;   /* Larger cells */
+    cfg.room_height   = 5.0f;   /* Taller rooms */
+    cfg.floor_spacing = 7.0f;   /* Big gap between floors */
+    cfg.voxel_size    = 0.5f;
+    cfg.margin        = 2.0f;
+    cfg.stair_steps   = 10;
+
+    int rc = srd_generate_svo_ex(TWO_FLOOR_GRID, 42, 1.0, &cfg, &svo);
+    ASSERT_INT_EQ(0, rc);
+    ASSERT_TRUE(svo.max_depth > 0);
+
+    /* Floor 0: cy=2.5, hy=2.5 → Y=[0,5].
+     * Floor 1: cy=9.5, hy=2.5 → Y=[7,12].
+     * Gap between Y=5 and Y=7 is solid slab. */
+    ASSERT_TRUE(svo.world_bounds.max.y > 10.0f);
+
+    npc_svo_grid_destroy(&svo);
+    return 0;
+}
+
+/* ── Test: single floor with === header still works ─────────── */
+
+static int test_single_floor_with_header(void) {
+    static const char *grid =
+        "=== FLOOR 0: DUNGEON ===\n"
+        "EEGG\n"
+        "EEGG\n";
+
+    npc_svo_grid_t svo;
+    memset(&svo, 0, sizeof(svo));
+
+    int rc = srd_generate_svo(grid, 42, 0.5, &svo);
+    ASSERT_INT_EQ(0, rc);
+    ASSERT_TRUE(svo.max_depth > 0);
+
+    /* Should succeed without crashing — single floor with header */
+
+    npc_svo_grid_destroy(&svo);
+    return 0;
+}
+
 /* ── Test runner ──────────────────────────────────────────────── */
 
 struct test_case { const char *name; int (*fn)(void); };
 static struct test_case TESTS[] = {
-    {"generate_svo_simple",     test_generate_svo_simple},
-    {"generate_svo_three_rooms", test_generate_svo_three_rooms},
-    {"null_inputs",             test_null_inputs},
-    {"empty_grid",              test_empty_grid},
-    {"legacy_generate",         test_legacy_generate},
+    {"generate_svo_simple",          test_generate_svo_simple},
+    {"generate_svo_three_rooms",     test_generate_svo_three_rooms},
+    {"null_inputs",                  test_null_inputs},
+    {"empty_grid",                   test_empty_grid},
+    {"legacy_generate",              test_legacy_generate},
+    {"two_floor_stacked",            test_two_floor_stacked},
+    {"single_floor_with_header",     test_single_floor_with_header},
+    {"generate_svo_ex_custom_config", test_generate_svo_ex_custom_config},
 };
 
 int main(void) {
