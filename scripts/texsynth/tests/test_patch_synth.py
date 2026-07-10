@@ -47,3 +47,14 @@ def test_grayscale_exemplar():
     gray = np.random.default_rng(6).random((48, 48))
     out = synth_patchwork(gray, 40, 40, patch=16, overlap=8, seed=0)
     assert out.shape == (40, 40)
+
+
+def test_graphcut_engine_matches_invariants():
+    # The slower graphcut engine must satisfy the same shape/coverage/pixel-source
+    # guarantees as the default DP engine.
+    out = synth_patchwork(EX, 48, 48, patch=20, overlap=10, seed=1, engine="graphcut")
+    assert out.shape == (48, 48, 3)
+    assert set(np.unique(out)).issubset(set(np.unique(EX)))
+    const = np.full((40, 40, 3), 0.25)
+    assert np.allclose(synth_patchwork(const, 44, 44, patch=16, overlap=8,
+                                       seed=2, engine="graphcut"), 0.25)

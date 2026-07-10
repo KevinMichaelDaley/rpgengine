@@ -75,7 +75,7 @@ def load_image(path):
     """Load an image as a float array in [0, 1] (grayscale 2-D or RGB 3-D)."""
     img = Image.open(path)
     img = img.convert("L" if img.mode in ("L", "I", "I;16") else "RGB")
-    return np.asarray(img, dtype=np.float64) / 255.0
+    return np.asarray(img, dtype=np.float32) / np.float32(255.0)
 
 
 def save_image(path, arr):
@@ -101,6 +101,8 @@ def main(argv=None):
     ap.add_argument("--materials", default="", help="comma-separated subset")
     ap.add_argument("--channels", default="", help="comma-separated subset")
     ap.add_argument("--base-seed", type=int, default=0)
+    ap.add_argument("--field-size", type=int, default=0, help="override field_size")
+    ap.add_argument("--num-fields", type=int, default=0, help="override num_fields")
     args = ap.parse_args(argv)
 
     with open(args.config) as fh:
@@ -112,6 +114,9 @@ def main(argv=None):
 
     for material in wanted:
         cfg = merge_config(defaults, mats.get(material, {}))
+        if args.field_size:
+            cfg["field_size"] = args.field_size
+        num_fields = args.num_fields or int(cfg.get("num_fields", 2))
         channels = [c for c in cfg.get("channels", ["albedo", "rough"])
                     if not chan_filter or c in chan_filter]
         for channel in channels:
@@ -119,7 +124,7 @@ def main(argv=None):
             if not seeds:
                 print(f"  skip {material}/{channel}: no seed images", flush=True)
                 continue
-            for k in range(int(cfg.get("num_fields", 2))):
+            for k in range(num_fields):
                 exemplar = load_image(seeds[k % len(seeds)])
                 t0 = time.monotonic()
                 field = bake_field(exemplar, cfg, seed=args.base_seed + k)

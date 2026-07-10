@@ -1,17 +1,25 @@
-"""Irregular polygonal patch synthesis — Kwatra et al. graphcut textures.
+"""Irregular patch synthesis — overlapping exemplar patches merged along
+minimum-error seams so no axis-aligned grid forms (Efros-Freeman quilting /
+Kwatra graphcut textures).
 
-Overlapping exemplar patches are placed across the output and merged with the
-graphcut min-cut seam. Because each seam is an arbitrary min-error path, every
-patch ends up owning an irregular *polygonal* region — there is no axis-aligned
-square grid for the eye to lock onto (the failure mode of square Wang tiles).
-Patch source locations are chosen by a deterministic hash, so the result is
-reproducible and aperiodic. Real exemplar pixels only; no blending, no blur.
+Two seam engines:
+  - 'dp'       : Efros-Freeman minimum-error boundary cut (dynamic programming)
+                 on the left + top overlap bands. Fast (no max-flow); the seams
+                 are irregular monotonic paths. Default — used for large bakes.
+  - 'graphcut' : Kwatra min-cut/max-flow over the whole overlap. Fully arbitrary
+                 polygonal seams, higher quality, much slower.
+
+Patch source locations are chosen by a deterministic hash of the cell
+coordinates, so the field is reproducible and aperiodic. Real exemplar pixels
+only; no blending, no blur.
 """
 
 import numpy as np
 
+from .error_surface import ssd
 from .graphcut import graphcut_seam
 from .hashing import hash2d
+from .min_cut import min_horizontal_cut, min_vertical_cut
 
 
 def _positions(extent, patch, step):
@@ -33,13 +41,44 @@ def _source(exemplar, ph, pw, i, j, seed):
     return exemplar[sy:sy + ph, sx:sx + pw]
 
 
-def synth_patchwork(exemplar, width, height, patch=192, overlap=None, seed=0):
-    """Synthesise a (height, width[, C]) field by graphcut patch placement.
+def _merge_dp(base, src, existing, ov_l, ov_t):
+    """New-patch mask via Efros-Freeman min-error boundary cuts on the bands.
 
-    Args:
-        patch:   patch side in px.
-        overlap: overlap between neighbours (default patch//2); the wider it is,
-                 the more the seam can wander, breaking any residual grid.
+    A pixel takes the new patch unless a seam puts it on the old side of the
+    left (vertical) or top (horizontal) overlap. Old wins on either -> the two
+    monotonic cuts compose into one irregular boundary.
+    """
+    ph, pw = existing.shape
+    new_mask = np.ones((ph, pw), dtype=bool)
+    if ov_l > 0:
+        seam = min_vertical_cut(ssd(base[:, :ov_l], src[:, :ov_l]))     # col per row
+        new_mask[:, :ov_l] &= np.arange(ov_l)[None, :] > seam[:, None]
+    if ov_t > 0:
+        seam = min_horizontal_cut(ssd(base[:ov_t, :], src[:ov_t, :]))   # row per col
+        new_mask[:ov_t, :] &= np.arange(ov_t)[:, None] > seam[None, :]
+    new_mask |= ~existing        # no old content here -> must take new
+    return new_mask
+
+
+def _merge_graphcut(base, src, existing, has_left, has_top):
+    """New-patch mask via the Kwatra min-cut over the full overlap."""
+    ph, pw = existing.shape
+    force_b = ~existing
+    force_a = np.zeros((ph, pw), dtype=bool)
+    if has_left:
+        force_a[:, 0] |= existing[:, 0]
+    if has_top:
+        force_a[0, :] |= existing[0, :]
+    if not force_a.any():
+        force_a = existing & ~force_b
+    return graphcut_seam(base, src, force_a, force_b)
+
+
+def synth_patchwork(exemplar, width, height, patch=192, overlap=None, seed=0,
+                    engine="dp"):
+    """Synthesise a (height, width[, C]) field by irregular patch placement.
+
+    engine: 'dp' (fast, default) or 'graphcut' (slower, fully polygonal).
     """
     if overlap is None:
         overlap = patch // 2
@@ -49,11 +88,9 @@ def synth_patchwork(exemplar, width, height, patch=192, overlap=None, seed=0):
     canvas = np.zeros(shape, dtype=exemplar.dtype)
     filled = np.zeros((height, width), dtype=bool)
 
-    ys = _positions(height, patch, step)
-    xs = _positions(width, patch, step)
-    for j, py in enumerate(ys):
+    for j, py in enumerate(_positions(height, patch, step)):
         ph = min(patch, height - py)
-        for i, px in enumerate(xs):
+        for i, px in enumerate(_positions(width, patch, step)):
             pw = min(patch, width - px)
             src = _source(exemplar, ph, pw, i, j, seed)
             existing = filled[py:py + ph, px:px + pw]
@@ -62,17 +99,14 @@ def synth_patchwork(exemplar, width, height, patch=192, overlap=None, seed=0):
             else:
                 region = canvas[py:py + ph, px:px + pw]
                 sel_ex = existing[..., None] if multichannel else existing
-                base = np.where(sel_ex, region, src)     # A defined everywhere
-                force_b = ~existing                       # new-only pixels -> new
-                force_a = np.zeros((ph, pw), dtype=bool)  # anchor committed side
-                if px > 0:
-                    force_a[:, 0] |= existing[:, 0]
-                if py > 0:
-                    force_a[0, :] |= existing[0, :]
-                if not force_a.any():
-                    force_a = existing & ~force_b
-                take_new = graphcut_seam(base, src, force_a, force_b)
-                sel = take_new[..., None] if multichannel else take_new
+                base = np.where(sel_ex, region, src)
+                if engine == "graphcut":
+                    new_mask = _merge_graphcut(base, src, existing, px > 0, py > 0)
+                else:
+                    ov_l = min(overlap, pw) if px > 0 else 0
+                    ov_t = min(overlap, ph) if py > 0 else 0
+                    new_mask = _merge_dp(base, src, existing, ov_l, ov_t)
+                sel = new_mask[..., None] if multichannel else new_mask
                 canvas[py:py + ph, px:px + pw] = np.where(sel, src, base)
             filled[py:py + ph, px:px + pw] = True
     return canvas
