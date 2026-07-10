@@ -448,3 +448,158 @@ def build_groin_vault(
         if len(e.link_faces) == 2 and e.calc_face_angle() > thr:
             e.seam = True
     return _finish(bm, name, collection, smooth_angle)
+
+
+# ---------------------------------------------------------------------------
+# Dome
+# ---------------------------------------------------------------------------
+
+def build_dome(
+    name="dome",
+    diameter=4.0,
+    rise=None,
+    thickness=0.25,
+    oculus_radius=0.0,
+    oculus_shape="round",
+    drum_height=0.0,
+    subdivisions=10,
+    smooth_angle=40.0,
+    collection=None,
+):
+    """Build a dome cap as an even quad-sphere shell (a subdivided cube's upper
+    region projected to the sphere) — all quads, no apex pole, so the topology
+    and texel density stay even (unlike a polar surface-of-revolution dome,
+    which crowds and compresses at the pole).
+
+    Parameters:
+      diameter      -- base diameter.
+      rise          -- crown height. None -> radius (a hemisphere); smaller is a
+                       shallow saucer (an oblate cap).
+      thickness     -- shell thickness.
+      oculus_radius -- opening at the crown (0 = closed).
+      oculus_shape  -- "round" (default) snaps the opening rim to a true circle;
+                       "cross" leaves the raw quad-grid boundary (a rounded
+                       square that follows the cube-face arcs).
+      drum_height   -- straight drum extruded below the springing to a flat base
+                       (0 = none).
+      subdivisions  -- quads per cube-face edge (resolution).
+
+    Origin at the base centre on the springing plane (Z=0). Returns the object.
+    """
+    if diameter <= 0.0 or thickness <= 0.0:
+        raise ValueError("diameter and thickness must be > 0")
+    if subdivisions < 2:
+        raise ValueError("subdivisions must be >= 2")
+    radius = diameter * 0.5
+    if rise is None:
+        rise = radius
+    if rise <= 0.0:
+        raise ValueError("rise must be > 0")
+    if not 0.0 <= oculus_radius < radius:
+        raise ValueError("oculus_radius must be in [0, radius)")
+    n = subdivisions
+
+    bm = bmesh.new()
+    vdict = {}
+
+    def vert(cx, cy, cz):
+        """Project a unit-cube point onto the sphere and scale to the dome
+        (X/Y by radius, Z by rise; the base sits on Z=0)."""
+        length = math.sqrt(cx * cx + cy * cy + cz * cz) or 1.0
+        sx, sy, sz = cx / length, cy / length, cz / length
+        x, y, z = sx * radius, sy * radius, max(0.0, sz) * rise
+        key = (round(x, 5), round(y, 5), round(z, 5))
+        v = vdict.get(key)
+        if v is None:
+            v = bm.verts.new((x, y, z))
+            vdict[key] = v
+        return v
+
+    def t(i):
+        return -1.0 + 2.0 * i / n
+
+    faces = []
+    # Top cube face (z=1) and the upper half (z in [0,1]) of the four sides.
+    for i in range(n):
+        for j in range(n):
+            faces.append(bm.faces.new((
+                vert(t(i), t(j), 1.0), vert(t(i + 1), t(j), 1.0),
+                vert(t(i + 1), t(j + 1), 1.0), vert(t(i), t(j + 1), 1.0))))
+    for a, b in ((1.0, "x+"), (-1.0, "x-"), (1.0, "y+"), (-1.0, "y-")):
+        for u in range(n):
+            for k in range(n):
+                zk0, zk1 = k / n, (k + 1) / n
+                p = t(u)
+                q = t(u + 1)
+                if b[0] == "x":
+                    quad = (vert(a, p, zk0), vert(a, q, zk0),
+                            vert(a, q, zk1), vert(a, p, zk1))
+                else:
+                    quad = (vert(p, a, zk0), vert(q, a, zk0),
+                            vert(q, a, zk1), vert(p, a, zk1))
+                faces.append(bm.faces.new(quad))
+
+    bmesh.ops.recalc_face_normals(bm, faces=faces)
+    if faces and sum(f.normal.z for f in faces) < 0.0:
+        bmesh.ops.reverse_faces(bm, faces=faces)
+    # Weld the cube-edge seams (shared verts already deduped) and drop tiny
+    # sliver faces the projection can leave at the cube corners.
+    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=1e-4)
+
+    # Oculus: delete the crown faces inside oculus_radius; by default snap the
+    # exposed rim onto a true circle (otherwise it follows the quad grid as a
+    # rounded square / cross).
+    if oculus_radius > 0.0:
+        cut = []
+        for f in bm.faces:
+            c = f.calc_center_median()
+            if math.hypot(c.x, c.y) < oculus_radius:
+                cut.append(f)
+        bmesh.ops.delete(bm, geom=cut, context='FACES')
+        bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces],
+                         context='VERTS')
+        if oculus_shape == "round":
+            # The opening rim is the boundary loop up at the crown (small radius);
+            # the base rim (radius ~= radius) is the other boundary loop. Snap
+            # every rim vert to the circle at its own azimuth, at the sphere's
+            # height for that radius (a flat, level circular lip).
+            split = 0.5 * (radius + oculus_radius)
+            zlip = rise * math.sqrt(max(0.0, 1.0 - (oculus_radius / radius) ** 2))
+            rim = set()
+            for e in bm.edges:
+                if len(e.link_faces) == 1:
+                    for v in e.verts:
+                        if math.hypot(v.co.x, v.co.y) < split:
+                            rim.add(v)
+            for v in rim:
+                theta = math.atan2(v.co.y, v.co.x)
+                v.co = (oculus_radius * math.cos(theta),
+                        oculus_radius * math.sin(theta), zlip)
+
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    # Drum: extrude the base ring straight down to a flat base plane.
+    if drum_height > 0.0:
+        res = bmesh.ops.extrude_edge_only(
+            bm, edges=[e for e in bm.edges if len(e.link_faces) == 1
+                       and all(abs(v.co.z) < 1e-4 for v in e.verts)])
+        for g in res["geom"]:
+            if isinstance(g, bmesh.types.BMVert):
+                g.co.z = -drum_height
+
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    bmesh.ops.solidify(bm, geom=list(bm.faces), thickness=thickness)
+    bmesh.ops.bisect_plane(
+        bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces),
+        plane_co=(0.0, 0.0, -drum_height), plane_no=(0.0, 0.0, 1.0),
+        clear_inner=True, dist=1e-5)
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces],
+                     context='VERTS')
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    # UV seams: the quad-sphere's cube-edge arcs (great circles) split it into
+    # gentle patches; seam the base/oculus/drum rims and the cube edges so each
+    # patch unwraps with even, low distortion.
+    thr = math.radians(24.0)
+    for e in bm.edges:
+        if len(e.link_faces) == 2 and e.calc_face_angle() > thr:
+            e.seam = True
+    return _finish(bm, name, collection, smooth_angle)
