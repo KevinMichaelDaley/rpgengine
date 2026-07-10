@@ -144,9 +144,52 @@ def _field_layer(nt, x, material, box_frac, rough_base, rough_detail, salt,
     return alb.outputs["Color"], add.outputs[0]
 
 
+def _apply_normal(nt, bsdf, x, y, albedo_socket, normal_map, detail_strength):
+    """Drive the BSDF Normal from an optional baked normal map plus a detail bump.
+
+    *normal_map* is a tangent-space normal PNG baked to the object's packed UVs
+    (from mesoscale high-poly geometry, rpg-ilmc) — sampled directly on the UVs,
+    NOT through the material's random box. The detail bump refines that coarse
+    baked normal with fine per-material relief derived from the (box-sampled)
+    albedo luminance, chained onto the baked normal via the Bump node's Normal
+    input. Either part is optional.
+    """
+    base = None
+    if normal_map:
+        tc = nt.nodes.new("ShaderNodeTexCoord")
+        tc.location = (x, y)
+        img = nt.nodes.new("ShaderNodeTexImage")
+        img.location = (x + 200, y)
+        img.image = _field_image(normal_map, "Non-Color")
+        img.extension = 'CLIP'
+        nt.links.new(tc.outputs["UV"], img.inputs["Vector"])
+        nmap = nt.nodes.new("ShaderNodeNormalMap")
+        nmap.location = (x + 520, y)
+        nt.links.new(img.outputs["Color"], nmap.inputs["Color"])
+        base = nmap.outputs["Normal"]
+    if detail_strength > 0.0 and albedo_socket is not None:
+        bw = nt.nodes.new("ShaderNodeRGBToBW")
+        bw.location = (x + 520, y - 220)
+        nt.links.new(albedo_socket, bw.inputs["Color"])
+        bump = nt.nodes.new("ShaderNodeBump")
+        bump.location = (x + 720, y - 120)
+        bump.inputs["Strength"].default_value = detail_strength
+        nt.links.new(bw.outputs["Val"], bump.inputs["Height"])
+        if base is not None:
+            nt.links.new(base, bump.inputs["Normal"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    elif base is not None:
+        nt.links.new(base, bsdf.inputs["Normal"])
+
+
 def build_field_material(name, material, box_frac=0.5, rough_base=0.7,
-                         rough_detail=0.12, root=FIELD_ROOT):
-    """Single-material surface sampling *material*'s baked field (one layer)."""
+                         rough_detail=0.12, normal_map=None, detail=0.4,
+                         root=FIELD_ROOT):
+    """Single-material surface sampling *material*'s baked field (one layer).
+
+    normal_map -- optional baked tangent-space normal PNG (object UVs).
+    detail     -- micro detail-bump strength refining the (baked) normal.
+    """
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     nt = mat.node_tree
@@ -160,6 +203,7 @@ def build_field_material(name, material, box_frac=0.5, rough_base=0.7,
                                 rough_detail, 0.0, root)
     nt.links.new(color, bsdf.inputs["Base Color"])
     nt.links.new(rough, bsdf.inputs["Roughness"])
+    _apply_normal(nt, bsdf, 1150, -520, color, normal_map, detail)
     return mat
 
 
@@ -289,8 +333,13 @@ def _mix_float(nt, x, y, a_socket, b_socket, fac_socket):
     return add.outputs[0]
 
 
-def build_layered_material(name, layers, root=FIELD_ROOT):
+def build_layered_material(name, layers, normal_map=None, detail=0.4,
+                           root=FIELD_ROOT):
     """Composite a stack of field layers via per-layer masks.
+
+    normal_map -- optional baked tangent-space normal PNG on the object UVs
+                  (from mesoscale geometry, rpg-ilmc), refined by a detail bump.
+    detail     -- micro detail-bump strength.
 
     layers: list of dicts, painted bottom to top. Each layer:
         material     -- material key.
@@ -333,4 +382,5 @@ def build_layered_material(name, layers, root=FIELD_ROOT):
         rough = _mix_float(nt, 1800, -200 - i * 40, rough, r_i, fac)
     nt.links.new(color, bsdf.inputs["Base Color"])
     nt.links.new(rough, bsdf.inputs["Roughness"])
+    _apply_normal(nt, bsdf, 1500, -1100, color, normal_map, detail)
     return mat
