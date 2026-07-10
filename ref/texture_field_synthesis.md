@@ -45,120 +45,116 @@ material.
    We do NOT use it. Every material goes through the quilting/Wang path below,
    which keeps real pixels and real edges.
 
-## Approach: Wang tiles built by quilting (single method)
+## Approach: irregular polygonal patches via graphcut (single method)
 
-One method for **all** materials: image-quilting-constructed **Wang tiles**
-(Cohen 2003) laid out by a stateless coordinate hash. This keeps genuine exemplar
-pixels and crisp structure everywhere (no statistical blur), and gives a provably
-non-periodic, O(1)-sample-able, arbitrary-resolution field. A per-material config
-only varies the patch/overlap size and edge-color count `C` (below).
+One method for **all** materials: **graphcut textures** (Kwatra 2003). Overlapping
+exemplar patches are placed across the output and merged along **graphcut min-cut
+seams**, so each patch ends up owning an **irregular polygonal region** — there is
+no axis-aligned square grid for the eye to lock onto. This keeps genuine exemplar
+pixels and crisp structure everywhere (no statistical blur), is aperiodic, and
+synthesises to any size.
 
-**Construction (offline, per seed):**
-- Choose `C` edge colors (start `C = 2`). For each edge color pick a sample strip
-  from the exemplar; a tile with edge colors `(N,E,S,W)` is assembled from the
-  four corresponding samples placed in a **diamond** (each sample rotated so it
-  owns one edge of the tile), stitched along the diagonals with the **graphcut
-  seam** (min-cut), so two tiles sharing an edge color have identical boundary
-  pixels and abut seamlessly.
-- A compact **stochastic set** needs, for every incoming `(west,north)` color
-  pair, ≥2 candidate tiles (so the choice is free → aperiodic): Cohen's set is
-  `2·C²` tiles (8 for `C=2`, 32 for `C=4`). More colors ⇒ less repetition.
-- Save the tile set as a packed atlas + a small JSON manifest (tile → NESW colors).
+> **Why not square Wang tiles?** They were the first design (and are implemented
+> in git history), but square abutting tiles read as a periodic grid: the eye
+> groups the axis-aligned tile edges into rows/columns, and low-frequency mean
+> differences between tiles pool into visible blocks. KMD's call: *make the tiles
+> polygonal.* Irregular graphcut patches remove the grid entirely.
 
-**Runtime field sampling (`O(1)`, deterministic):**
-- For output tile cell `(i,j)`: the west color must equal cell `(i−1,j)`'s east
-  color and the north color equal `(i,j−1)`'s south — but to keep it stateless
-  and hashable we use Cohen's trick: assign each **grid corner/edge** a color by
-  hashing its integer coordinates (`edgeColor = hash(i,j,dir) mod C`), then the
-  tile at `(i,j)` is uniquely determined by its four surrounding hashed edge
-  colors. No scan, no state: any cell is reproducible from its coordinates alone.
-- Sample within the cell by local `(u,v)`; the tile atlas lookup gives the pixel.
+**Synthesis (offline, per seed):**
+- Place patches on a coarse grid with a large overlap (`overlap ≈ patch/2`), in
+  raster order. Each patch's source location in the exemplar is chosen by a
+  **deterministic hash** of its cell coordinates → reproducible and aperiodic.
+- Merge each new patch against the already-committed pixels over their overlap
+  with the **graphcut seam** (`min-cut/max-flow`, `scipy.sparse.csgraph`): pixels
+  only the new patch covers are forced to the new patch, the committed frontier
+  is anchored to the old, and the min-cut carves the irregular boundary between.
+- Because the seam wanders freely across a wide overlap and every patch draws
+  from a different hashed source, no two boundaries align — the result is a field
+  of interlocking polygons with no visible periodicity.
 
-Storage: the tile atlas (small, e.g. 8–32 tiles × patch size).
+**Low-frequency flattening (structured seeds):** graphcut hides high-frequency
+seams perfectly but leaves patches at slightly different overall brightness, which
+reads as faint tonal blocks on seeds with broad low-frequency variation (marble
+cloud, brick colour drift). A **high-pass** preprocess (`highpass_sigma`) removes
+variation coarser than ~a patch and re-centres on the global mean, so only the
+crisp detail — which the seams hide — is tiled. Off (`0`) for tonally-flat seeds
+(limestone, granite).
 
 ## Baking the "massive fields"
 
-The sampler exposes `field(u, v, seed) → RGB`. We **bake** each material's field
-once into large images the Blender graph samples like a noise texture, so no
-synthesis runs at shader time:
+We **bake** each material's field once into large images the Blender graph samples
+like a noise texture, so no synthesis runs at shader time:
 
-- Bake N large tiles (e.g. 4 × `4096²`) per material channel by evaluating the
-  sampler over a big grid with a fixed `seed`. Because the sampler is aperiodic,
-  the baked field shows no repeat within it; the node graph further randomises by
-  offsetting/rotating its read (rpg-lbky), so even the bake period is hidden.
-- Store baked fields at `assetsrc/materials/<mat>/fields/<mat>_<channel>_field_<k>.png`
-  (checked in, they are inputs like the seeds). Keep the tiny Tier-A LUTs /
-  Tier-B atlases alongside so fields can be regenerated/extended deterministically.
+- Bake N large fields (e.g. `2048²`) per material channel with a fixed `seed`.
+  The field is aperiodic within itself; the node graph further randomises by
+  offsetting/rotating its read (rpg-lbky), so even the bake extent is hidden.
+- Store baked fields at `assetsrc/materials/<mat>/fields/<mat>_<channel>_field_<k>.png`.
+  The synthesis is deterministic in `seed`, so fields regenerate exactly from the
+  seeds + `materials_synth.json` and need not be tracked if space is a concern.
 
 The baked field IS the "noise function": the material graph does an irregular
 (triplanar / random-offset) lookup into it and never sees a seam or a repeat.
 
-## Core primitive: minimum-error boundary cut
+## Core primitive: the graphcut seam
 
-The algorithm the tile construction rests on, spelled out (Efros-Freeman DP path;
-the graphcut variant swaps this step for min-cut on the diamond/corner overlaps):
-
-```
-place first patch at origin
-for each subsequent patch position (raster order):
-    pick a candidate patch from the exemplar (random, or best-SSD-in-overlap
-        within tolerance — Efros-Freeman pick rule)
-    E = (overlap(new) - overlap(placed))^2          # SSD error surface
-    # vertical seam: min-cost path top->bottom
-    Cumulative[i][j] = E[i][j] + min(Cum[i-1][j-1], Cum[i-1][j], Cum[i-1][j+1])
-    backtrack least-cost column -> cut mask
-    composite new patch over placed along the cut (feather 1-2 px)
-```
-
-Overlap `o ≈ patch/6`, patch size a per-material param (large enough to capture
-the biggest feature: small for grain, larger for veins/joints).
+Each patch merge is a min-cut/max-flow labelling of the overlap: adjacent pixels
+`s, t` are cut at cost `M(s,t) = ||A(s)-B(s)|| + ||A(t)-B(t)||` (Kwatra), pixels
+pinned to the old/new patch are `∞`-bound to the source/sink terminals, and the
+min-cut is the least-visible boundary. The `O(1)` **minimum-error boundary cut**
+(Efros-Freeman DP path, `min_cut.py`) is retained as the cheaper 1-D primitive and
+for cross-checking, but the 2-D graphcut is what carves the polygons.
 
 ## Module plan (`scripts/texsynth/`, extreme-modularity)
 
-- `error_surface.py` — SSD overlap error (≤4 funcs).
-- `min_cut.py` — DP minimum-error boundary path (vertical + horizontal).
-- `graphcut.py` — min-cut/max-flow seam for 2-D/corner overlaps, via
-  `scipy.sparse.csgraph.maximum_flow` (the diamond-tile diagonals).
-- `quilt.py` — Efros-Freeman quilting driver (uses the two above).
-- `wang_build.py` — construct the Wang tile atlas + manifest from an exemplar.
-- `wang_sample.py` — hashed, stateless aperiodic tile-field sampler.
-- `field_api.py` — unified `field(u,v,seed)` sampler; hashing utilities.
-- `bake_fields.py` — CLI: read per-material config, bake + write field PNGs.
-- `materials_synth.json` — per-material: patch/overlap size, `C` edge colors,
-  channels, output field size/count.
+- `hashing.py` — SplitMix64 integer hash → deterministic aperiodic patch sources.
+- `error_surface.py` — SSD overlap error.
+- `min_cut.py` — DP minimum-error boundary path (retained primitive).
+- `graphcut.py` — min-cut/max-flow seam via `scipy.sparse.csgraph.maximum_flow`.
+- `patches.py` — random exemplar region sampling.
+- `patch_synth.py` — graphcut-textures polygonal patch placement (the core).
+- `field_api.py` — `synth_field(exemplar, w, h, patch, overlap, seed)`.
+- `bake_fields.py` — `highpass` + CLI: read config, bake + write field PNGs.
+- `materials_synth.json` — per-material: patch/overlap, highpass_sigma, channels,
+  field size/count.
+
+All modules have `tests/` alongside (run: `.venv/bin/python -m pytest
+scripts/texsynth/tests`).
 
 Dependencies: **NumPy, SciPy, Pillow** in a **`uv` virtual environment** (this is
 offline tooling — it does NOT run inside Blender, so we are free to use SciPy's
 `csgraph` max-flow for the graphcut seam rather than vendoring one). Set up once:
 `uv venv .venv && uv pip install numpy scipy pillow`. No engine coupling.
 
-## Per-material config (edge colors / patch size)
+## Per-material config (patch / overlap / high-pass)
 
-All materials use the single quilting/Wang method; only the patch size and edge-
-color count vary with how much structure the seed carries:
+All materials use the single graphcut-patch method; the config varies patch size
+with the seed's feature scale and turns on high-pass for tonally-varying seeds
+(`materials_synth.json`). `overlap = patch/2` throughout:
 
-| Material | Patch | `C` | Note |
+| Material | Patch | High-pass | Note |
 |---|---|---|---|
-| limestone, sandstone, granite, terracotta | small | 2 | fine grain/speckle |
-| plaster / fresco | medium | 2 | broad low-freq mottle |
-| bronze, iron; all `rough` channels | small | 2 | micro-scratch/patina |
-| marble | large | 2–3 | veins must stay crisp |
-| flint | large | 3 | discrete nodules-in-mortar |
-| brick | large | 3 | joint / running-bond structure |
-| oak | medium (aniso) | 2 | directional grain |
+| limestone, sandstone, terracotta | ~176 | off | fine grain/speckle, tonally flat |
+| granite | ~144 | off | dense crystalline speckle |
+| bronze, iron; `rough` channels | ~176 | 48 / off | micro-scratch/patina |
+| plaster / fresco | ~224 | 64 | broad low-freq mottle |
+| marble | ~256 | 56 | veins must stay crisp |
+| flint | ~240 | 64 | discrete nodules-in-mortar |
+| brick | ~256 | 72 | joint / running-bond drift |
+| oak | ~208 | 48 | directional grain |
 
-More edge colors ⇒ less repetition but a bigger tile set; start at `C = 2` and
-raise where a material shows repeats.
+Bigger patches capture bigger features but leave fewer, larger polygons; raise
+high-pass where a material shows tonal blocks.
 
 ## Validation
 
-- **No seam:** autocorrelation of a baked field shows no periodic peaks;
-  visual tiling test at field edges.
-- **Aperiodic:** two far-apart regions of a field are uncorrelated; Wang tile
-  placement passes an edge-color-match assertion over a random grid.
-- **Structure preserved:** baked field keeps the seed's crisp features (no blur);
-  histogram ≈ seed within tolerance.
-- **Deterministic:** `field(u,v,seed)` reproducible across runs (hash-seeded).
+- **No grid:** the field has no axis-aligned periodicity (visual + autocorrelation
+  with no peaks at the patch spacing).
+- **Values are real pixels:** every output pixel is a verbatim exemplar pixel
+  (unit test: field values ⊆ exemplar values) — no blend/blur.
+- **Full coverage:** a constant exemplar fills every pixel (no holes).
+- **Structure preserved:** baked field keeps the seed's crisp features; high-pass
+  collapses low-frequency variation while local detail survives (unit-tested).
+- **Deterministic:** `synth_field(..., seed)` reproducible across runs (hashed).
 - **In-engine:** apply through rpg-lbky to column/arch/dome, confirm no repeat or
   seam across a large surface at grazing angles.
 

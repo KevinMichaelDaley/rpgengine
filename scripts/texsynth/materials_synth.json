@@ -1,0 +1,23 @@
+{
+  "defaults": {
+    "patch": 192,
+    "overlap": 96,
+    "field_size": 2048,
+    "num_fields": 2,
+    "channels": ["albedo", "rough"]
+  },
+  "materials": {
+    "limestone":   { "patch": 176, "overlap": 88 },
+    "sandstone":   { "patch": 176, "overlap": 88 },
+    "granite":     { "patch": 144, "overlap": 72 },
+    "terracotta":  { "patch": 176, "overlap": 88 },
+    "plaster":     { "patch": 224, "overlap": 112, "highpass_sigma": 64 },
+    "bronze":      { "patch": 176, "overlap": 88, "highpass_sigma": 48 },
+    "iron":        { "patch": 176, "overlap": 88 },
+    "gold":        { "patch": 192, "overlap": 96 },
+    "marble":      { "patch": 256, "overlap": 128, "highpass_sigma": 56 },
+    "flint":       { "patch": 240, "overlap": 120, "highpass_sigma": 64 },
+    "brick":       { "patch": 256, "overlap": 128, "highpass_sigma": 72 },
+    "oak":         { "patch": 208, "overlap": 104, "highpass_sigma": 48 }
+  }
+}
