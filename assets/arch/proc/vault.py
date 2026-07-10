@@ -454,6 +454,62 @@ def build_groin_vault(
 # Dome
 # ---------------------------------------------------------------------------
 
+def _apply_interior_lens(obj, k, radius, rise, thickness):
+    """Re-lay the dome's interior (intrados) UVs as an azimuthal map from the
+    crown, with an optional radial lens distortion.
+
+    A dome cap is viewed from below, from the floor at its centre. A uniform
+    unwrap of the curved intrados reads as stretched from that vantage, so the
+    interior is instead projected azimuthally: azimuth -> UV angle, radial
+    position -> UV radius, which keeps concentric detail (coffers, fresco rings)
+    concentric. *k* is the lens coefficient of a standard radial distortion
+    ``r' = r (1 + k r^2)/(1 + k)`` (the rim stays fixed): k > 0 pincushions
+    (enlarges crown detail), k < 0 (down to > -1) barrels. k == 0 is the plain
+    azimuthal map. Only the curved interior faces above the springing are
+    touched; the exterior, drum walls and rims keep their unwrap.
+
+    The interior UVs are scaled so the rim circle carries UV_SCALE texel density;
+    the map has one radial UV discontinuity (the azimuth wrap), like a globe's
+    date line, which reads invisibly on radially symmetric interior textures.
+    """
+    me = obj.data
+    if not me.uv_layers.active or k <= -1.0:
+        return
+    uvl = me.uv_layers.active.data
+    scale = radius * UV_SCALE
+    denom = 1.0 + k
+    # The solidified shell is an open (non-manifold-at-rim) surface, so face
+    # normals can't tell the intrados from the extrados. Classify by the
+    # normalised sphere radius instead: the original dome surface sits at rho=1
+    # (extrados) and solidify offsets the inner copy inward to rho<1 (intrados).
+    # Drum walls and the base rim fall at rho>=1 and are excluded too.
+    inner_rho = 1.0 - 0.5 * thickness / radius
+    for poly in me.polygons:
+        c = poly.center
+        rho = math.sqrt((c.x / radius) ** 2 + (c.y / radius) ** 2
+                        + (c.z / rise) ** 2)
+        # Interior cap faces only: above the springing and on the inner offset.
+        if c.z <= 1e-3 or rho >= inner_rho:
+            continue
+        li = list(poly.loop_indices)
+        # Resolve the azimuth wrap per face: keep every vertex angle within pi
+        # of the face's mean direction so no face straddles the +/-pi cut.
+        mx = sum(me.vertices[me.loops[l].vertex_index].co.x for l in li)
+        my = sum(me.vertices[me.loops[l].vertex_index].co.y for l in li)
+        base = math.atan2(my, mx)
+        for l in li:
+            co = me.vertices[me.loops[l].vertex_index].co
+            theta = math.atan2(co.y, co.x)
+            while theta - base > math.pi:
+                theta -= 2.0 * math.pi
+            while theta - base < -math.pi:
+                theta += 2.0 * math.pi
+            r = min(1.0, math.hypot(co.x, co.y) / radius)
+            r = r * (1.0 + k * r * r) / denom
+            uvl[l].uv = (scale * r * math.cos(theta),
+                         scale * r * math.sin(theta))
+
+
 def build_dome(
     name="dome",
     diameter=4.0,
@@ -463,6 +519,7 @@ def build_dome(
     oculus_shape="round",
     drum_height=0.0,
     subdivisions=10,
+    interior_lens=None,
     smooth_angle=40.0,
     collection=None,
 ):
@@ -483,6 +540,11 @@ def build_dome(
       drum_height   -- straight drum extruded below the springing to a flat base
                        (0 = none).
       subdivisions  -- quads per cube-face edge (resolution).
+      interior_lens -- None (default) leaves the interior on the standard
+                       unwrap; a float switches the intrados to a corrective
+                       azimuthal (radial-from-crown) UV map with that lens
+                       distortion coefficient (0 = plain azimuthal, >0
+                       pincushion, <0 barrel). See _apply_interior_lens.
 
     Origin at the base centre on the springing plane (Z=0). Returns the object.
     """
@@ -602,4 +664,8 @@ def build_dome(
     for e in bm.edges:
         if len(e.link_faces) == 2 and e.calc_face_angle() > thr:
             e.seam = True
-    return _finish(bm, name, collection, smooth_angle)
+    obj = _finish(bm, name, collection, smooth_angle)
+    # Optional corrective lens on the interior (intrados) UVs.
+    if interior_lens is not None:
+        _apply_interior_lens(obj, float(interior_lens), radius, rise, thickness)
+    return obj
