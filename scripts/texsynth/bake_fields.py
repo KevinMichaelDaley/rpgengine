@@ -26,8 +26,10 @@ from scipy.ndimage import gaussian_filter
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from texsynth.field_api import synth_field
+    from texsynth.paired_synth import synth_paired_field
 else:
     from .field_api import synth_field
+    from .paired_synth import synth_paired_field
 
 _CONFIG_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                "materials_synth.json")
@@ -113,7 +115,6 @@ def main(argv=None):
     ap.add_argument("--config", default=_CONFIG_DEFAULT)
     ap.add_argument("--root", default="assetsrc/materials")
     ap.add_argument("--materials", default="", help="comma-separated subset")
-    ap.add_argument("--channels", default="", help="comma-separated subset")
     ap.add_argument("--base-seed", type=int, default=0)
     ap.add_argument("--field-size", type=int, default=0, help="override field_size")
     args = ap.parse_args(argv)
@@ -123,29 +124,35 @@ def main(argv=None):
     defaults = conf.get("defaults", {})
     mats = conf.get("materials", {})
     wanted = [m.strip() for m in args.materials.split(",") if m.strip()] or list(mats)
-    chan_filter = {c.strip() for c in args.channels.split(",") if c.strip()}
 
     for material in wanted:
         cfg = merge_config(defaults, mats.get(material, {}))
         if args.field_size:
             cfg["field_size"] = args.field_size
-        channels = [c for c in cfg.get("channels", ["albedo", "rough"])
-                    if not chan_filter or c in chan_filter]
-        for channel in channels:
-            seeds = _seeds_for(args.root, material, channel)
-            if not seeds:
-                print(f"  skip {material}/{channel}: no seed images", flush=True)
-                continue
-            # One aperiodic field per material channel, mixing every variant.
-            exemplars = [_as_rgb(load_image(p)) for p in seeds]
-            t0 = time.monotonic()
-            field = bake_field(exemplars, cfg, seed=args.base_seed)
-            out = os.path.join(args.root, material, "fields",
-                               f"{material}_{channel}_field.png")
-            save_image(out, field)
-            print(f"  {out}  {field.shape[1]}x{field.shape[0]}  "
-                  f"from {len(seeds)} seeds  ({time.monotonic() - t0:.1f}s)",
-                  flush=True)
+        alb_seeds = _seeds_for(args.root, material, "albedo")
+        rgh_seeds = _seeds_for(args.root, material, "rough")
+        if not alb_seeds or not rgh_seeds:
+            print(f"  skip {material}: needs both albedo and rough seeds", flush=True)
+            continue
+        # Paired synthesis: one albedo field + the corresponding roughness field
+        # (each rough tile chosen to cross-correlate with its diffuse tile),
+        # both mixing every seed variant.
+        sigma = float(cfg.get("highpass_sigma", 0) or 0)
+        alb_exs = [highpass(_as_rgb(load_image(p)), sigma) for p in alb_seeds]
+        rgh_exs = [highpass(_as_rgb(load_image(p)), sigma) for p in rgh_seeds]
+        n = int(cfg["field_size"])
+        overlap = cfg.get("overlap")
+        t0 = time.monotonic()
+        alb, rgh = synth_paired_field(
+            alb_exs, rgh_exs, n, n, patch=int(cfg["patch"]),
+            overlap=None if overlap is None else int(overlap),
+            seed=args.base_seed, corr_downscale=int(cfg.get("corr_downscale", 8)))
+        fdir = os.path.join(args.root, material, "fields")
+        save_image(os.path.join(fdir, f"{material}_albedo_field.png"), alb)
+        save_image(os.path.join(fdir, f"{material}_rough_field.png"), rgh)
+        print(f"  {material}: {n}x{n} albedo+rough  "
+              f"({len(alb_seeds)}+{len(rgh_seeds)} seeds, "
+              f"{time.monotonic() - t0:.1f}s)", flush=True)
     return 0
 
 

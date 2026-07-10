@@ -80,6 +80,26 @@ variation coarser than ~a patch and re-centres on the global mean, so only the
 crisp detail — which the seams hide — is tiled. Off (`0`) for tonally-flat seeds
 (limestone, granite).
 
+## Paired diffuse + roughness (correlated channels)
+
+Albedo and roughness are synthesised **together**, not independently, so the
+roughness corresponds spatially to the diffuse (`paired_synth.py`). For each
+placed diffuse patch we search — sliding-window normalised cross-correlation on
+low-res copies of every roughness seed variant, then a full-res
+`match_template` refinement around the coarse peak — for the roughness window
+whose structure best matches the diffuse patch (either polarity: bright-polished
+and dark-rough both count). That roughness patch is placed at the same field
+location under the **same seam mask** as the diffuse patch, so the two fields
+share geometry exactly. The coarse/low-res search keeps it fast; the FFT
+refinement makes the alignment pixel-exact even on fine detail.
+
+**Roughness histogram normalisation:** each chosen roughness tile is matched to
+the material's overall mean and spread (`_normalize_tile`), removing its
+low-frequency level/contrast — the cause of roughness tonal blocks — while
+keeping the high-frequency detail that carries the correspondence. So the
+roughness field has a uniform overall level (the level itself is set later by
+the material's roughness parameter) with HF detail that tracks the diffuse.
+
 ## Baking the "massive fields"
 
 We **bake** each material's field once into large images the Blender graph samples
@@ -112,6 +132,8 @@ for cross-checking, but the 2-D graphcut is what carves the polygons.
 - `graphcut.py` — min-cut/max-flow seam via `scipy.sparse.csgraph.maximum_flow`.
 - `patches.py` — random exemplar region sampling.
 - `patch_synth.py` — graphcut-textures polygonal patch placement (the core).
+- `paired_synth.py` — joint diffuse+roughness synthesis with correlated rough
+  tile selection + per-tile roughness histogram normalisation.
 - `field_api.py` — `synth_field(exemplar, w, h, patch, overlap, seed)`.
 - `bake_fields.py` — `highpass` + CLI: read config, bake + write field PNGs.
 - `materials_synth.json` — per-material: patch/overlap, highpass_sigma, channels,

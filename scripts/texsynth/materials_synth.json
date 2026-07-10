@@ -2,8 +2,8 @@
   "defaults": {
     "patch": 192,
     "overlap": 96,
-    "field_size": 2048,
-    "num_fields": 2,
+    "field_size": 8192,
+    "corr_downscale": 8,
     "channels": ["albedo", "rough"]
   },
   "materials": {
