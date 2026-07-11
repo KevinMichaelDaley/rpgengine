@@ -138,18 +138,20 @@ def _import_mesh(brick, cache, prefab_dir):
 # --------------------------------------------------------------------------
 # Selection
 # --------------------------------------------------------------------------
-def _pick_next(orientations, index, prev, rng):
+def _pick_next(orientations, index, global_index, prev, rng):
     """Choose the next orientation to the right of ``prev`` (or any, if prev is
-    None). Prefers exact complementary side-colour matches, else nearest by
-    facing-normal dot product."""
+    None) from ``index`` (typically one aspect's pool). Prefers exact
+    complementary side-colour matches within ``index``, then within
+    ``global_index`` (any aspect), then nearest by facing-normal dot product."""
     if prev is None:
-        # Bias toward longer bricks to start a course.
-        weights = np.array([o["brick"]["dims"][0] for o in orientations])
-        return int(rng.choice(len(orientations), p=weights / weights.sum()))
+        pool = [i for lst in index.values() for i in lst] or \
+            list(range(len(orientations)))
+        weights = np.array([orientations[i]["brick"]["dims"][0] for i in pool])
+        return int(rng.choice(pool, p=weights / weights.sum()))
 
     ar = prev["right_n"]
     want = (int(round(-ar[1] / _TILT_BIN)), int(round(-ar[2] / _TILT_BIN)))
-    bucket = index.get(want)
+    bucket = index.get(want) or (global_index.get(want) if global_index else None)
     if bucket:
         return int(rng.choice(bucket))
 
@@ -277,6 +279,7 @@ def _build_mortar(name, x0, width, height, front_y, mortar_depth, cell,
 def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
                mortar_depth=0.02, seat_jitter=0.002, depth_jitter=0.004,
                tilt_deg=2.0, tilt_frac=0.5, seamless=True, mortar_cell=0.006,
+               main_aspect=1, variety=0.25,
                name="brick_wall", prefab_dir=PREFAB_DIR, collection=None):
     """Assemble a running-bond wall ``width`` x ``height`` metres, plus a
     recessed mortar plane behind it.
@@ -294,6 +297,11 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
         degree) random tilt.
       * A flat mortar plane set back ``mortar_depth`` behind the brick faces;
         ``mortar`` (head joint) and ``bed`` (bed joint) are the brick spacing.
+      * Romanesque coursing: each brick is the ``main_aspect`` stretcher length
+        with probability ``1 - variety``, else a random other length -- so
+        courses are a regular running bond of one dominant length with only
+        occasional deviations, not a jumble of every size. The course offset is
+        half the main stretcher.
 
     Returns a dict with ``collection``, ``mortar`` object, ``tile_width`` (==
     ``width``) and ``height`` (for downstream cropping/baking)."""
@@ -301,11 +309,17 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
     manifest = load_manifest(prefab_dir)
     _TILT_BIN = manifest["tilt_bin"]
     orientations = build_orientations(manifest)
-    index = _index_by_left_colour(orientations)
+    naspects = len(manifest["aspects"])
+    main_aspect = max(0, min(naspects - 1, main_aspect))
+    # One side-colour index per aspect (for length-consistent coursing) plus a
+    # global index (any aspect) as the match fallback.
+    global_index = _index_by_left_colour(orientations)
+    aspect_index = [_index_by_left_colour(orientations, aspect=a)
+                    for a in range(naspects)]
     nominal_h = manifest["aspects"][0]["height"]
     lengths = [a["length"] for a in manifest["aspects"]]
     min_len = min(lengths)
-    stagger = 0.5 * float(np.median(lengths))
+    stagger = 0.5 * manifest["aspects"][main_aspect]["length"]
     tile_width = width
     courses = max(1, int(round(height / (nominal_h + bed))))
     rng = np.random.default_rng(seed)
@@ -337,14 +351,19 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
             # Head-joint tolerance: a few mm, randomised a little per joint.
             tol = 0.0 if prev is None else max(
                 0.001, mortar * (1.0 + float(rng.uniform(-0.4, 0.4))))
-            oi = _pick_next(orientations, index, prev, rng)
+            # Romanesque coursing: mostly the main stretcher length, occasionally
+            # a different one. The chosen aspect's colour index is the primary
+            # match pool; global_index is the fallback so a match always exists.
+            ta = main_aspect if (prev is None or rng.random() > variety) \
+                else int(rng.integers(0, naspects))
+            oi = _pick_next(orientations, aspect_index[ta], global_index, prev, rng)
             o = orientations[oi]
             mesh = _import_mesh(o["brick"], mesh_cache, prefab_dir)
             dl, dr = _placed_supports(o, mesh, supp_cache)
             # If this brick's right face would cross the closing position, swap
             # it for the longest brick that fits; stop if nothing fits.
             if (cursor + tol) + dl + dr + tol > limit:
-                oi = _best_fit(orientations, index, prev, cursor + tol, limit)
+                oi = _best_fit(orientations, global_index, prev, cursor + tol, limit)
                 if oi is None:
                     break
                 o = orientations[oi]
