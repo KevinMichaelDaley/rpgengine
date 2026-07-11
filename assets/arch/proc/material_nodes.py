@@ -468,16 +468,84 @@ def _bw_scale(nt, x, y, color_socket, scale):
     return m.outputs["Value"]
 
 
+def _edge_wear(nt, x, y, albedo, ao_scalar, brick_fac, wear_color, strength,
+               ao_lo, ao_hi, band, rough=None, rough_delta=0.0):
+    """Edge-wear layer derived from the baked AO map (nodes only).
+
+    The wall's AO reads ~1 on the flat, fully-exposed brick faces, drops to a
+    mid ramp on the chamfered arris shoulders + the brick perimeter as it rolls
+    into the recessed joint, and near 0 in the deep joints. Isolating that MID
+    band therefore picks out exactly the exposed convex edges of each stone --
+    where masonry abrades. A trapezoid ColorRamp turns the AO into that band
+    mask; it is gated by the brick mask (mortar never wears) and ``strength``,
+    then used to lighten the brick albedo toward ``wear_color`` (abraded, chalky
+    stone) and nudge its roughness. Returns (albedo_socket, rough_socket)."""
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    ramp.location = (x, y)
+    ramp.color_ramp.interpolation = 'B_SPLINE'
+    e = ramp.color_ramp.elements
+    e[0].position = max(0.0, ao_lo - band)
+    e[0].color = (0.0, 0.0, 0.0, 1.0)
+    e[1].position = ao_lo
+    e[1].color = (1.0, 1.0, 1.0, 1.0)
+    e2 = ramp.color_ramp.elements.new(ao_hi)
+    e2.color = (1.0, 1.0, 1.0, 1.0)
+    e3 = ramp.color_ramp.elements.new(min(1.0, ao_hi + band))
+    e3.color = (0.0, 0.0, 0.0, 1.0)
+    nt.links.new(ao_scalar, ramp.inputs["Fac"])
+
+    # gate to bricks only, then scale by the wear strength -> 0..strength fac
+    g = nt.nodes.new("ShaderNodeMath")
+    g.operation = 'MULTIPLY'
+    g.location = (x + 260, y)
+    nt.links.new(ramp.outputs["Color"], g.inputs[0])
+    nt.links.new(brick_fac, g.inputs[1])
+    s = nt.nodes.new("ShaderNodeMath")
+    s.operation = 'MULTIPLY'
+    s.location = (x + 420, y)
+    s.inputs[1].default_value = strength
+    s.use_clamp = True
+    nt.links.new(g.outputs[0], s.inputs[0])
+    wear_fac = s.outputs[0]
+
+    worn = nt.nodes.new("ShaderNodeMixRGB")
+    worn.location = (x + 620, y + 120)
+    worn.blend_type = 'MIX'
+    worn.inputs["Color2"].default_value = (*wear_color, 1.0)
+    nt.links.new(wear_fac, worn.inputs["Fac"])
+    nt.links.new(albedo, worn.inputs["Color1"])
+    out_alb = worn.outputs["Color"]
+
+    out_rough = rough
+    if rough is not None and rough_delta != 0.0:
+        md = nt.nodes.new("ShaderNodeMath")
+        md.operation = 'MULTIPLY'
+        md.location = (x + 620, y - 160)
+        md.inputs[1].default_value = rough_delta
+        nt.links.new(wear_fac, md.inputs[0])
+        ad = nt.nodes.new("ShaderNodeMath")
+        ad.operation = 'ADD'
+        ad.location = (x + 780, y - 160)
+        ad.use_clamp = True
+        nt.links.new(rough, ad.inputs[0])
+        nt.links.new(md.outputs[0], ad.inputs[1])
+        out_rough = ad.outputs[0]
+    return out_alb, out_rough
+
+
 def build_masonry_material(name, mask, normal, ao, height,
                            brick="limestone", mortar="mortar",
                            tile=(4.5, 2.6), field_m=2.6,
-                           brick_tint=(0.58, 0.52, 0.42),
-                           mortar_tint=(0.66, 0.66, 0.63),
-                           brick_contrast=0.28, mortar_contrast=0.1,
-                           mask_hardness=0.9, ao_strength=0.9,
+                           brick_tint=(0.30, 0.25, 0.18),
+                           mortar_tint=(0.66, 0.63, 0.57),
+                           brick_contrast=0.35, mortar_contrast=0.08,
+                           brick_sat=1.35,
+                           wear=0.5, wear_color=(0.62, 0.58, 0.50),
+                           wear_ao=(0.45, 0.80), wear_band=0.12, wear_rough=0.12,
+                           mask_hardness=0.9, ao_strength=0.6,
                            rough_brick=0.72, rough_mortar=0.94,
-                           detail=0.2, disp_scale=0.0, rot_deg=0.0,
-                           root=FIELD_ROOT):
+                           tint_map=None, tint_var=0.22, normal_strength=1.0,
+                           disp_scale=0.0, rot_deg=0.0, root=FIELD_ROOT):
     """A tiling masonry material: limestone bricks + mortar joints selected by the
     baked mask, with the baked normal + AO, roughness from the material fields.
 
@@ -486,6 +554,13 @@ def build_masonry_material(name, mask, normal, ao, height,
     brick/mortar          -- field material keys (assetsrc/materials/<k>/fields).
     field_m               -- metres one limestone/mortar field patch spans (kept
         large so the aperiodic field does not visibly wrap on a small object).
+    brick_sat             -- brick saturation multiplier (>1 warms the near-neutral
+        limestone field toward sandstone; 1.0 leaves it unchanged).
+    wear                  -- edge-wear strength (0 disables). Derived from the AO
+        map's mid band (exposed convex arrises), gated to bricks, it lightens the
+        albedo toward ``wear_color`` and adds ``wear_rough`` roughness there.
+        ``wear_ao`` = the (lo, hi) AO band counted as an edge; ``wear_band`` = its
+        ramp softness.
     disp_scale>0          -- also drive true displacement from the height map.
     """
     def fld(k, ch):
@@ -513,6 +588,22 @@ def build_masonry_material(name, mask, normal, ao, height,
         nt, -1560, 460, _tex(nt, -1700, 460, fld(brick, "albedo"), "sRGB",
                              map_field).outputs["Color"], brick_contrast),
         brick_tint)
+    # per-brick tint variation: a baked map giving each brick a random value,
+    # remapped to a brightness multiplier so no two bricks are the same shade.
+    if tint_map:
+        tv = _tex(nt, -1700, 720, tint_map, "Non-Color", map_wall).outputs["Color"]
+        tmr = nt.nodes.new("ShaderNodeMapRange")
+        tmr.location = (-1400, 720)
+        tmr.inputs["To Min"].default_value = 1.0 - tint_var
+        tmr.inputs["To Max"].default_value = 1.0 + tint_var
+        nt.links.new(tv, tmr.inputs["Value"])
+        tmul = nt.nodes.new("ShaderNodeMixRGB")
+        tmul.location = (-1150, 560)
+        tmul.blend_type = 'MULTIPLY'
+        tmul.inputs["Fac"].default_value = 1.0
+        nt.links.new(b_alb, tmul.inputs["Color1"])
+        nt.links.new(tmr.outputs["Result"], tmul.inputs["Color2"])
+        b_alb = tmul.outputs["Color"]
     m_alb = _tint(nt, -1400, -120, _contrast(
         nt, -1560, -120, _tex(nt, -1700, -120, fld(mortar, "albedo"), "sRGB",
                               map_field).outputs["Color"], mortar_contrast),
@@ -524,14 +615,31 @@ def build_masonry_material(name, mask, normal, ao, height,
                     _tex(nt, -1700, -380, fld(mortar, "rough"), "Non-Color",
                          map_field).outputs["Color"], rough_mortar)
 
+    # push brick saturation (limestone/mortar fields are near-neutral, so a plain
+    # dark tint reads grey; boost chroma so the stone looks like warm sandstone).
+    if brick_sat != 1.0:
+        hsv = nt.nodes.new("ShaderNodeHueSaturation")
+        hsv.location = (-1150, 360)
+        hsv.inputs["Saturation"].default_value = brick_sat
+        nt.links.new(b_alb, hsv.inputs["Color"])
+        b_alb = hsv.outputs["Color"]
+
     # brick-vs-mortar selector from the baked mask (wall-scale, hardened binary)
     mask_c = _tex(nt, -1700, -640, mask, "Non-Color", map_wall).outputs["Color"]
     fac = _sharpen(nt, -1400, -640, mask_c, mask_hardness)   # 1 = brick, 0 = joint
+
+    # baked AO, sampled once and reused for edge wear + the final AO multiply
+    ao_c = _tex(nt, -900, 560, ao, "Non-Color", map_wall).outputs["Color"]
+
+    # edge wear: abrade/lighten the brick albedo on the exposed convex edges the
+    # AO map isolates as a mid-value band (mortar is excluded via the brick mask).
+    if wear > 0.0:
+        b_alb, b_r = _edge_wear(nt, -1150, 40, b_alb, ao_c, fac, wear_color,
+                                wear, wear_ao[0], wear_ao[1], wear_band,
+                                rough=b_r, rough_delta=wear_rough)
+
     color = _mix_color(nt, -900, 300, m_alb, b_alb, fac)
     rough = _mix_float(nt, -900, -250, m_r, b_r, fac)
-
-    # baked ambient occlusion multiplied into the base colour
-    ao_c = _tex(nt, -900, 560, ao, "Non-Color", map_wall).outputs["Color"]
     aomix = nt.nodes.new("ShaderNodeMixRGB")
     aomix.location = (-500, 400)
     aomix.blend_type = 'MULTIPLY'
@@ -541,23 +649,14 @@ def build_masonry_material(name, mask, normal, ao, height,
     nt.links.new(aomix.outputs["Color"], bsdf.inputs["Base Color"])
     nt.links.new(rough, bsdf.inputs["Roughness"])
 
-    # baked mesoscale normal, refined by a micro detail bump off the albedo
+    # baked mesoscale normal -> BSDF via a Normal Map node (the baked normal
+    # already carries the micro relief, so no extra bump).
     n_img = _tex(nt, -900, -560, normal, "Non-Color", map_wall)
     nmap = nt.nodes.new("ShaderNodeNormalMap")
     nmap.location = (-620, -560)
+    nmap.inputs["Strength"].default_value = normal_strength
     nt.links.new(n_img.outputs["Color"], nmap.inputs["Color"])
-    if detail > 0.0:
-        bw = nt.nodes.new("ShaderNodeRGBToBW")
-        bw.location = (1900, -700)
-        nt.links.new(aomix.outputs["Color"], bw.inputs["Color"])
-        bump = nt.nodes.new("ShaderNodeBump")
-        bump.location = (2080, -600)
-        bump.inputs["Strength"].default_value = detail
-        nt.links.new(bw.outputs["Val"], bump.inputs["Height"])
-        nt.links.new(nmap.outputs["Normal"], bump.inputs["Normal"])
-        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
-    else:
-        nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+    nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
 
     # optional true displacement from the baked height
     if disp_scale > 0.0 and height:

@@ -74,6 +74,16 @@ def _flat_mat(name, value):
     return mat
 
 
+def _objcolor_mat(name):
+    """Emission = the object's own display colour (Object Info -> Color), so one
+    material lets every brick emit a different per-object value."""
+    mat, nodes, links, emit = _emit_mat(name)
+    oi = nodes.new('ShaderNodeObjectInfo')
+    oi.location = (-300, 0)
+    links.new(oi.outputs['Color'], emit.inputs['Color'])
+    return mat
+
+
 def _height_mat(name, y_front, y_back):
     """Emission = remapped front depth: y_front (proud, toward camera) -> 1,
     y_back (recessed) -> 0."""
@@ -345,6 +355,17 @@ def bake_wall(width=2.0, height=1.15, seed=4, res=2048, out_dir=None,
     _assign([mortar], _flat_mat("bake_black", 0.0))
     out["mask"] = _render(cam, rx, ry, os.path.join(out_dir, "mask.png"),
                           engine='CYCLES', samples=16)
+
+    # 1b. per-brick tint map: every brick a distinct random value (mortar black),
+    # so the material can shade each stone slightly differently.
+    trng = np.random.default_rng(seed * 131 + 7)
+    for o in bricks:
+        v = float(trng.uniform(0.12, 1.0))
+        o.color = (v, v, v, 1.0)
+    _assign(bricks, _objcolor_mat("bake_objcolor"))
+    _assign([mortar], _flat_mat("bake_black", 0.0))
+    out["tint"] = _render(cam, rx, ry, os.path.join(out_dir, "tint.png"),
+                          engine='CYCLES', samples=8)
 
     # 2. clumpiness -> displace mortar (bed-joint width in px sets the threshold)
     mask = _load_gray(out["mask"])
