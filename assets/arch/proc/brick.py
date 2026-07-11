@@ -255,26 +255,26 @@ def _decimate(bm, ratio):
     bpy.data.meshes.remove(out)
 
 
-def _clip_chunks(bm, rng, count, depth, tilt=0.3):
-    """Stochastically clip small planar segments off corners/faces (chips &
-    cracks), BEFORE a remesh normalises them. Each clip picks a random surface
-    vertex, then bisects ONLY the faces within a small radius of it (so it takes
-    a LITTLE off, not a whole slab) with a plane facing outward-from-centre, and
-    caps the flat cut. `count` (probability) and `depth` are annealed down by the
-    caller: bigger/deeper spalls first, small chips later."""
+def _clip_chunks(bm, rng, count, depth, tilt=0.15):
+    """Stochastically clip small planar spalls off corners/faces (chips), BEFORE
+    a remesh normalises them. Each clip picks a random surface vertex and bisects
+    with a plane whose normal is close to that vertex's SURFACE NORMAL (small
+    tilt), so the cut is nearly tangent and shears off only a thin sliver of
+    volume -- not a harsh diagonal wedge -- ALWAYS keeping the bigger side.
+    `count` (probability) and `depth` anneal down per stage."""
     for _ in range(count):
         nv = len(bm.verts)
         if nv < 40:
             break
         bm.verts.ensure_lookup_table()
-        allco = np.array([w.co for w in bm.verts], dtype=np.float64)
-        center = allco.mean(axis=0)
-        p = allco[int(rng.integers(nv))]
-        outward = p - center
-        on = np.linalg.norm(outward)
-        if on < 1e-9:
+        bm.normal_update()
+        vv = bm.verts[int(rng.integers(nv))]
+        p = np.array(vv.co, dtype=np.float64)
+        base = np.array(vv.normal, dtype=np.float64)
+        nb = np.linalg.norm(base)
+        if nb < 1e-9:
             continue
-        nrm = outward / on + rng.normal(0.0, tilt, 3)
+        nrm = base / nb + rng.normal(0.0, tilt, 3)
         nrm /= np.linalg.norm(nrm) + 1e-12
         # plane just inside the surface at p, so the cut-off piece is a small
         # cap near p; the rest of the brick is the big side.
@@ -298,9 +298,118 @@ def _clip_chunks(bm, rng, count, depth, tilt=0.3):
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 
 
+def _crack(bm, rng, seeds=3, steps=16, step_len=0.004, branch=0.10, depth=0.02,
+           width=0.03, width_var=0.75, width_freq=45.0, vor_scale=40.0,
+           vor_bias=0.35, wander=0.4, corner_bias=2.5, profile=1.8, maxdisp=None):
+    """Grow cracks as CONTINUOUS tangent-space walks (decoupled from the mesh
+    grid, so they wander at any angle instead of snapping to horizontal/vertical
+    edges), seeded preferentially at CORNERS (curvature-weighted -- corners crack
+    most), then indent them as variable-width organic divots.
+
+    Each walk steps a fixed length along its heading in the local tangent plane;
+    the heading turns randomly each step (wander) and is nudged toward Voronoi
+    cell edges (natural fracture lines), with forward momentum so it wanders but
+    does not loop. The path points seed KD-tree divots whose radius/depth vary by
+    noise (organic width) with a `profile`-sharpened falloff. Caller may remesh
+    (pass 1, weathered) or leave it crisp (pass 2)."""
+    from mathutils import noise as bn, Vector
+    from mathutils.kdtree import KDTree
+    bm.verts.ensure_lookup_table()
+    bm.normal_update()
+    N = len(bm.verts)
+    if N < 40:
+        return
+    co = np.array([v.co for v in bm.verts], dtype=np.float64)
+    nrm = np.array([v.normal for v in bm.verts], dtype=np.float64)
+    # curvature (|umbrella Laplacian|) -> corner/edge weight for seeding
+    acc = np.zeros((N, 3))
+    deg = np.zeros(N)
+    for e in bm.edges:
+        a, b = e.verts[0].index, e.verts[1].index
+        acc[a] += co[b]; deg[a] += 1.0
+        acc[b] += co[a]; deg[b] += 1.0
+    deg[deg == 0] = 1.0
+    curv = np.linalg.norm(acc / deg[:, None] - co, axis=1)
+    wgt = curv ** corner_bias
+    probs = wgt / wgt.sum() if wgt.sum() > 1e-12 else np.full(N, 1.0 / N)
+    kd = KDTree(N)
+    for i in range(N):
+        kd.insert(Vector((co[i, 0], co[i, 1], co[i, 2])), i)
+    kd.balance()
+
+    def project(vec, nn):
+        w = vec - nn * (vec @ nn)
+        L = np.linalg.norm(w)
+        return w / L if L > 1e-9 else vec
+
+    def rot_axis(k, a, ang):
+        c, s = np.cos(ang), np.sin(ang)
+        return k * c + np.cross(a, k) * s + a * (a @ k) * (1.0 - c)
+
+    def vf(px, py, pz):                                  # Voronoi F2-F1 (0 at cell edge)
+        dd = bn.voronoi(Vector((px, py, pz)) * vor_scale)[0]
+        return dd[1] - dd[0]
+
+    seeds_i = rng.choice(N, size=min(seeds, N), replace=False, p=probs)
+    walks = []
+    for si in seeds_i:
+        g = rng.normal(0.0, 1.0, 3)
+        walks.append([co[si].copy(), project(g, nrm[si]), int(steps)])
+    path = []
+    guard = 0
+    while walks and guard < seeds * steps * 4:
+        guard += 1
+        nxt = []
+        for pos, dr, rem in walks:
+            if rem <= 0:
+                continue
+            path.append((pos[0], pos[1], pos[2]))
+            _, ji, _ = kd.find(Vector((pos[0], pos[1], pos[2])))
+            nj = nrm[ji]
+            dr = project(rot_axis(dr, nj, rng.uniform(-wander, wander)), nj)
+            if vor_bias > 0.0:                           # steer toward Voronoi cell edges
+                t1 = project(np.array([1.0, 0.0, 0.0]) if abs(nj[0]) < 0.9
+                             else np.array([0.0, 1.0, 0.0]), nj)
+                t2 = np.cross(nj, t1)
+                eps = step_len * 0.9
+                grad = ((vf(*(pos + eps * t1)) - vf(*(pos - eps * t1))) * t1
+                        + (vf(*(pos + eps * t2)) - vf(*(pos - eps * t2))) * t2)
+                gn = np.linalg.norm(grad)
+                if gn > 1e-9:
+                    dr = project((1.0 - vor_bias) * dr - vor_bias * grad / gn, nj)
+            npos = pos + dr * step_len
+            _, jk, _ = kd.find(Vector((npos[0], npos[1], npos[2])))
+            npos = npos - nrm[jk] * ((npos - co[jk]) @ nrm[jk])   # stay on surface
+            nxt.append([npos, project(dr, nrm[jk]), rem - 1])
+            if rng.random() < branch and rem > 4:
+                bd = project(rot_axis(dr, nj, (1.0 if rng.random() < 0.5 else -1.0)
+                                      * rng.uniform(0.7, 1.2)), nj)
+                nxt.append([pos.copy(), bd, rem // 2])
+        walks = nxt
+    # variable-width organic divots along the continuous path
+    off = Vector((5.7, 2.3, 9.1))
+    out = np.zeros(N)
+    for px, py, pz in path:
+        pv = Vector((px, py, pz))
+        wr = width * (1.0 - width_var + width_var * (0.5 + 0.5 * bn.noise(pv * width_freq)))
+        dp = depth * (0.4 + 0.6 * (0.5 + 0.5 * bn.noise(pv * width_freq + off)))
+        if wr < 1e-6:
+            continue
+        for _vco, j, dist in kd.find_range(pv, wr):
+            f = (1.0 - dist / wr) ** profile
+            if dp * f > out[j]:
+                out[j] = dp * f
+    if maxdisp is not None:
+        out = np.minimum(out, maxdisp)
+    moved = co - nrm * out[:, None]
+    for k, v in enumerate(bm.verts):
+        v.co = moved[k]
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
                 edge_chip=0.007, corner_chip=0.02, detail=3, refine=0.25,
-                chip=0.5, collection=None):
+                chip=0.5, cracks=0.6, cracks2=0.5, collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
     Phase A: box -> seed-driven chipping -> multi-resolution loop (voxel-remesh
@@ -340,6 +449,16 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
                       temp0=t0, temp1=t1, maxdisp=mdisp, feature=1.0)
         _decimate(bm, dec)
 
+    # --- Crack pass 1: subtle, ABSOLUTELY bounded, before the fine pass so it
+    #     gets weathered down by Phase B (hairline/healed cracks) ---
+    if cracks > 0.0:
+        _crack(bm, rng, seeds=max(3, int(round(5 * cracks))), steps=15,
+               step_len=mn * 0.03, branch=0.14, depth=mn * 0.014 * cracks,
+               width=mn * 0.055, width_var=0.8, width_freq=45.0,
+               vor_scale=34.0, vor_bias=0.35, wander=0.45, corner_bias=2.5,
+               profile=1.4, maxdisp=mn * 0.02)
+        _remesh_voxel(bm, mn / 26.0)                     # settle the cracks in
+
     # --- Phase B: fine refinement on the faceted base (topology kept) ---
     # A few cold passes with STRICTLY limited displacement and small feature
     # scale, where a coherent Blender-noise field seeds the kernel selection, so
@@ -351,6 +470,15 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
                       temp0=0.22, temp1=0.05, maxdisp=md0 * 0.08 * refine,
                       feature=1.0, kernel_noise=70.0)
     _graph_smooth(bm, iters=1, lam=0.10, feature=1.0)   # barely-there settle
+
+    # --- Crack pass 2: crisp, stronger, narrower, less frequent -- applied LAST
+    #     (no remesh/smoothing after) so it stays sharp ---
+    if cracks2 > 0.0:
+        _crack(bm, rng, seeds=max(2, int(round(3 * cracks2))), steps=13,
+               step_len=mn * 0.03, branch=0.06, depth=mn * 0.05 * cracks2,
+               width=mn * 0.028, width_var=0.75, width_freq=62.0,
+               vor_scale=48.0, vor_bias=0.4, wander=0.4, corner_bias=3.0,
+               profile=2.4, maxdisp=mn * 0.055)
 
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     mesh = bpy.data.meshes.new(name)
