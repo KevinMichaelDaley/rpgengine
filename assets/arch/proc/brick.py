@@ -255,9 +255,52 @@ def _decimate(bm, ratio):
     bpy.data.meshes.remove(out)
 
 
+def _clip_chunks(bm, rng, count, depth, tilt=0.3):
+    """Stochastically clip small planar segments off corners/faces (chips &
+    cracks), BEFORE a remesh normalises them. Each clip picks a random surface
+    vertex, then bisects ONLY the faces within a small radius of it (so it takes
+    a LITTLE off, not a whole slab) with a plane facing outward-from-centre, and
+    caps the flat cut. `count` (probability) and `depth` are annealed down by the
+    caller: bigger/deeper spalls first, small chips later."""
+    for _ in range(count):
+        nv = len(bm.verts)
+        if nv < 40:
+            break
+        bm.verts.ensure_lookup_table()
+        allco = np.array([w.co for w in bm.verts], dtype=np.float64)
+        center = allco.mean(axis=0)
+        p = allco[int(rng.integers(nv))]
+        outward = p - center
+        on = np.linalg.norm(outward)
+        if on < 1e-9:
+            continue
+        nrm = outward / on + rng.normal(0.0, tilt, 3)
+        nrm /= np.linalg.norm(nrm) + 1e-12
+        # plane just inside the surface at p, so the cut-off piece is a small
+        # cap near p; the rest of the brick is the big side.
+        co = p - nrm * depth
+        bmesh.ops.bisect_plane(bm, geom=list(bm.verts) + list(bm.edges)
+                               + list(bm.faces), dist=1e-6,
+                               plane_co=co.tolist(), plane_no=nrm.tolist())
+        # ALWAYS keep the bigger side: delete faces on whichever side is smaller.
+        plus, minus = [], []
+        for f in bm.faces:
+            c = f.calc_center_median()
+            s = ((c.x - co[0]) * nrm[0] + (c.y - co[1]) * nrm[1]
+                 + (c.z - co[2]) * nrm[2])
+            (plus if s > 0.0 else minus).append(f)
+        smaller = plus if len(plus) <= len(minus) else minus
+        if 0 < len(smaller) < len(bm.faces):
+            bmesh.ops.delete(bm, geom=smaller, context='FACES')
+            openb = [e for e in bm.edges if len(e.link_faces) == 1]
+            if openb:
+                bmesh.ops.holes_fill(bm, edges=openb)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
                 edge_chip=0.007, corner_chip=0.02, detail=3, refine=0.25,
-                collection=None):
+                chip=0.5, collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
     Phase A: box -> seed-driven chipping -> multi-resolution loop (voxel-remesh
@@ -283,7 +326,14 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
         (mn / 13.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.42, 0.30, 0.28), 0.42),
         (mn / 26.0, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.30, 0.34), 0.46),
     ][:max(1, detail)]
-    for vox, npl, tilt, iters, mdisp, t0, t1, mix, dec in schedule:
+    ns = len(schedule)
+    for stage, (vox, npl, tilt, iters, mdisp, t0, t1, mix, dec) in enumerate(schedule):
+        # Stochastic chip/crack pass BEFORE the remesh, annealed down per stage
+        # (more, deeper spalls early; small chips late).
+        cw = (ns - stage) / ns
+        nclip = int(round(3.0 * chip * cw))
+        if nclip > 0:
+            _clip_chunks(bm, rng, count=nclip, depth=mn * 0.16 * cw)
         _remesh_voxel(bm, vox)
         _facet_sculpt(bm, rng, n_planes=npl, tilt=tilt, iters=iters,
                       pull=0.45, sharp=0.38, smooth=0.42, mix=mix,
