@@ -122,10 +122,22 @@ def main():
             jr = np.random.default_rng(seed * 7 + 13)
             h = height + float(jr.uniform(-HW_JITTER, HW_JITTER))
             w = width + float(jr.uniform(-HW_JITTER, HW_JITTER))
-            # build_brick already bakes the micro geometry in and decimates to
-            # ~half, so the returned mesh is the final prefab mesh.
+            # Slightly jitter the dressing/weathering params per brick so no two
+            # stones in the wall are worked identically (crack amount, chamfer,
+            # deformation, micro strength, chip sizes).
+            jf = lambda base, lo, hi: float(base * jr.uniform(lo, hi))
             obj = build_brick(name=name, seed=seed, length=length,
                               height=h, width=w,
+                              disp_scale=jf(0.16, 0.85, 1.18),
+                              chamfer_frac=min(0.85, max(0.3, 0.6 + float(
+                                  jr.uniform(-0.15, 0.15)))),
+                              edge_chip=jf(0.007, 0.7, 1.4),
+                              corner_chip=jf(0.02, 0.75, 1.3),
+                              cracks=jf(0.6, 0.55, 1.35),
+                              cracks2=jf(0.5, 0.6, 1.35),
+                              micro=jf(0.65, 0.8, 1.2),
+                              micro_env=min(0.97, max(0.8, 0.9 + float(
+                                  jr.uniform(-0.06, 0.06)))),
                               collection=scene.collection)
             mesh = obj.data
             n_left, c_left = _end_color(mesh, -1)
