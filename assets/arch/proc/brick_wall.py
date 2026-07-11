@@ -165,6 +165,28 @@ def _pick_next(orientations, index, global_index, prev, rng):
     return best_i
 
 
+def _stagger_aspect(cursor, tol, prev_joints, lengths, main_aspect, variety,
+                    rng, min_stagger):
+    """Pick which aspect (stretcher length) to place next so that this brick's
+    HEAD JOINT does not land on a head joint of the course below -- the running-
+    bond stagger. Prefers the main stretcher when it already clears; otherwise
+    chooses among the lengths whose resulting joint clears by ``min_stagger``,
+    falling back to the length with the most clearance."""
+    if not prev_joints:
+        return main_aspect if rng.random() > variety \
+            else int(rng.integers(0, len(lengths)))
+
+    def clearance(a):
+        j = cursor + tol + lengths[a]
+        return min(abs(j - pj) for pj in prev_joints)
+
+    if clearance(main_aspect) >= min_stagger and rng.random() > variety:
+        return main_aspect
+    order = sorted(range(len(lengths)), key=clearance, reverse=True)
+    clear = [a for a in order if clearance(a) >= min_stagger]
+    return int(rng.choice(clear)) if clear else order[0]
+
+
 # --------------------------------------------------------------------------
 # Wall assembly
 # --------------------------------------------------------------------------
@@ -279,7 +301,7 @@ def _build_mortar(name, x0, width, height, front_y, mortar_depth, cell,
 def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
                mortar_depth=0.02, seat_jitter=0.002, depth_jitter=0.004,
                tilt_deg=2.0, tilt_frac=0.5, seamless=True, mortar_cell=0.006,
-               main_aspect=1, variety=0.25,
+               main_aspect=1, variety=0.25, min_stagger_frac=0.22,
                name="brick_wall", prefab_dir=PREFAB_DIR, collection=None):
     """Assemble a running-bond wall ``width`` x ``height`` metres, plus a
     recessed mortar plane behind it.
@@ -319,7 +341,9 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
     nominal_h = manifest["aspects"][0]["height"]
     lengths = [a["length"] for a in manifest["aspects"]]
     min_len = min(lengths)
-    stagger = 0.5 * manifest["aspects"][main_aspect]["length"]
+    main_len = manifest["aspects"][main_aspect]["length"]
+    stagger = 0.5 * main_len
+    min_stagger = min_stagger_frac * main_len
     tile_width = width
     courses = max(1, int(round(height / (nominal_h + bed))))
     rng = np.random.default_rng(seed)
@@ -332,6 +356,7 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
     supp_cache = {}
     baseline = 0.0
     count = 0
+    prev_joints = []            # head-joint X positions of the course below
     for c in range(courses):
         # Even courses start on the seam; odd courses straddle it (running bond).
         # ``cursor`` tracks the running X of the last brick's right support face,
@@ -342,6 +367,7 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
         prev = None
         first_tf = None
         placed = []             # this course's instances, in order, for justify
+        cur_joints = [x_start]  # this course's head joints (for the next course)
         guard = 0
         # Interior bricks fill up to where the closing brick's left face will sit
         # (one tile on from the first brick's left face).
@@ -351,11 +377,13 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
             # Head-joint tolerance: a few mm, randomised a little per joint.
             tol = 0.0 if prev is None else max(
                 0.001, mortar * (1.0 + float(rng.uniform(-0.4, 0.4))))
-            # Romanesque coursing: mostly the main stretcher length, occasionally
-            # a different one. The chosen aspect's colour index is the primary
-            # match pool; global_index is the fallback so a match always exists.
-            ta = main_aspect if (prev is None or rng.random() > variety) \
-                else int(rng.integers(0, naspects))
+            # Romanesque coursing: choose the stretcher length so this brick's
+            # head joint STAGGERS off the joints in the course below (running
+            # bond), mostly the main length with occasional variation. The chosen
+            # aspect's colour index is the primary match pool; global_index is the
+            # fallback so a match always exists.
+            ta = _stagger_aspect(cursor, tol, prev_joints, lengths, main_aspect,
+                                 variety, rng, min_stagger)
             oi = _pick_next(orientations, aspect_index[ta], global_index, prev, rng)
             o = orientations[oi]
             mesh = _import_mesh(o["brick"], mesh_cache, prefab_dir)
@@ -390,6 +418,7 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
                 first_tf = (mesh, o["flip"], rot, loc)
             cursor = loc_x + dr        # advance right support face
             cursor_b = loc_x + hi[0]   # advance right bbox edge
+            cur_joints.append(cursor)  # record this brick's right head joint
             prev = o
             count += 1
 
@@ -415,6 +444,7 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
                    flip0, rot0, loc_end)
             count += 1
 
+        prev_joints = cur_joints   # next course staggers off this course's joints
         baseline += nominal_h + bed
 
     height = baseline - bed

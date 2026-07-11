@@ -136,6 +136,26 @@ def _assign(objs, mat):
         o.material_slots[0].material = mat
 
 
+def _tint_bricks(bricks, shades=(1.0, 0.86, 0.72, 0.6)):
+    """Tint bricks with several distinct bright shades so touching stones always
+    differ in value and segment apart even when the mortar joint is hair-thin.
+    Two shades can't do it (an offset bond isn't 2-colourable), so cycle N shades
+    by ``pos + 2*course``: neighbours in a row step by 1, neighbours across a row
+    step by 2, and the half-brick-offset diagonals rarely collide with 4 shades.
+    Object names are ``..._{course}_{n}``. All shades are >0.5 so the mask still
+    thresholds cleanly to brick-vs-mortar."""
+    import re
+    mats = [_flat_mat(f"bake_tint{k}", v) for k, v in enumerate(shades)]
+    courses = {}
+    for o in bricks:
+        m = re.search(r'_(\d+)_\d+', o.name)
+        courses.setdefault(int(m.group(1)) if m else 0, []).append(o)
+    for c, objs in courses.items():
+        objs.sort(key=lambda o: o.matrix_world.translation.x)
+        for i, o in enumerate(objs):
+            _assign([o], mats[(i + 2 * c) % len(mats)])
+
+
 # --------------------------------------------------------------------------
 # Render a frame to a PNG
 # --------------------------------------------------------------------------
@@ -319,8 +339,9 @@ def bake_wall(width=2.0, height=1.15, seed=4, res=2048, out_dir=None,
     rx, ry = _res(W, Hh, res)
     out = {}
 
-    # 1. brick-vs-mortar mask
-    _assign(bricks, _flat_mat("bake_white", 1.0))
+    # 1. brick-vs-mortar mask. Bricks get several bright shades so every touching
+    # pair has a value step at the boundary (segmentable); mortar is black.
+    _tint_bricks(bricks)
     _assign([mortar], _flat_mat("bake_black", 0.0))
     out["mask"] = _render(cam, rx, ry, os.path.join(out_dir, "mask.png"),
                           engine='CYCLES', samples=16)
