@@ -91,12 +91,14 @@ def _random_box_offset(nt, x, span, salt=0.0):
 
 
 def _field_layer(nt, x, material, box_frac, rough_base, rough_detail, salt,
-                 root):
+                 root, tint=(1.0, 1.0, 1.0)):
     """Add nodes sampling *material*'s field as a random box; return sockets.
 
     Returns (colour_socket, roughness_socket). Roughness = rough_base +
     z-score(field)*rough_detail, so the base level is the material's PBR param
     and every material gets the same detail contrast regardless of its seed's.
+    *tint* multiplies the albedo (default white = unchanged) to shade a layer
+    darker/lighter — e.g. to separate masked layers tonally, or hit a PBR hue.
     """
     albedo = f"{root}/{material}/fields/{material}_albedo_field.png"
     rough = f"{root}/{material}/fields/{material}_rough_field.png"
@@ -141,7 +143,17 @@ def _field_layer(nt, x, material, box_frac, rough_base, rough_detail, salt,
     add.inputs[1].default_value = rough_base
     add.use_clamp = True
     nt.links.new(mul.outputs[0], add.inputs[0])
-    return alb.outputs["Color"], add.outputs[0]
+
+    color_out = alb.outputs["Color"]
+    if tuple(tint) != (1.0, 1.0, 1.0):
+        tintn = nt.nodes.new("ShaderNodeMixRGB")
+        tintn.blend_type = 'MULTIPLY'
+        tintn.location = (x + 800, 120)
+        tintn.inputs["Fac"].default_value = 1.0
+        tintn.inputs["Color2"].default_value = (tint[0], tint[1], tint[2], 1.0)
+        nt.links.new(alb.outputs["Color"], tintn.inputs["Color1"])
+        color_out = tintn.outputs["Color"]
+    return color_out, add.outputs[0]
 
 
 def _apply_normal(nt, bsdf, x, y, albedo_socket, normal_map, detail_strength):
@@ -183,10 +195,11 @@ def _apply_normal(nt, bsdf, x, y, albedo_socket, normal_map, detail_strength):
 
 
 def build_field_material(name, material, box_frac=0.5, rough_base=0.7,
-                         rough_detail=0.12, normal_map=None, detail=0.4,
-                         root=FIELD_ROOT):
+                         rough_detail=0.12, tint=(1.0, 1.0, 1.0),
+                         normal_map=None, detail=0.4, root=FIELD_ROOT):
     """Single-material surface sampling *material*'s baked field (one layer).
 
+    tint       -- albedo multiplier (default white) to shade darker/lighter.
     normal_map -- optional baked tangent-space normal PNG (object UVs).
     detail     -- micro detail-bump strength refining the (baked) normal.
     """
@@ -200,7 +213,7 @@ def build_field_material(name, material, box_frac=0.5, rough_base=0.7,
     bsdf.location = (1700, 0)
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     color, rough = _field_layer(nt, -1200, material, box_frac, rough_base,
-                                rough_detail, 0.0, root)
+                                rough_detail, 0.0, root, tint)
     nt.links.new(color, bsdf.inputs["Base Color"])
     nt.links.new(rough, bsdf.inputs["Roughness"])
     _apply_normal(nt, bsdf, 1150, -520, color, normal_map, detail)
@@ -370,13 +383,15 @@ def build_layered_material(name, layers, normal_map=None, detail=0.4,
     color, rough = _field_layer(nt, -1800, base["material"],
                                 base.get("box_frac", 0.5),
                                 base.get("rough_base", 0.7),
-                                base.get("rough_detail", 0.12), 0.0, root)
+                                base.get("rough_detail", 0.12), 0.0, root,
+                                base.get("tint", (1.0, 1.0, 1.0)))
     for i, layer in enumerate(layers[1:], start=1):
         c_i, r_i = _field_layer(nt, -1800, layer["material"],
                                 layer.get("box_frac", 0.5),
                                 layer.get("rough_base", 0.7),
                                 layer.get("rough_detail", 0.12),
-                                float(i) * 0.37, root)
+                                float(i) * 0.37, root,
+                                layer.get("tint", (1.0, 1.0, 1.0)))
         fac = _build_mask(nt, layer["mask"], 1500, -500 - i * 260)
         color = _mix_color(nt, 1800, 200 - i * 40, color, c_i, fac)
         rough = _mix_float(nt, 1800, -200 - i * 40, rough, r_i, fac)
