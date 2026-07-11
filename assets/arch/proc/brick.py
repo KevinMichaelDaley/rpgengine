@@ -394,9 +394,148 @@ def _crack(bm, rng, seeds=3, steps=16, step_len=0.004, branch=0.10, depth=0.02,
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 
 
+def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85):
+    """Build the micro-detail Geometry Nodes group: fBm grain plus a cellular
+    pitting field made of several SMOOTHED, offset, distorted Voronoi layers
+    combined with Minimum and clamped to bounds so only the small cell cores
+    dip inward. Displaces points along their normal. Returns the node group.
+
+    ``seed_offset`` is a 3-vector translating the sampling space so every brick
+    gets a different field. All feature sizes are fractions of ``mn`` (the
+    brick's smallest dimension); ``micro`` scales overall amplitude.
+    ``env_strength`` in [0,1] sets how deeply the low-frequency envelope
+    suppresses relief in its smooth patches: 0 = uniform everywhere, 1 = smooth
+    patches go fully flat (maximum contrast between smooth and rough)."""
+    ng = bpy.data.node_groups.new(group_name, 'GeometryNodeTree')
+    ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+    ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+    nodes, links = ng.nodes, ng.links
+
+    def nd(t, x, y):
+        n = nodes.new(t); n.location = (x, y); return n
+
+    gin = nd('NodeGroupInput', -1000, 0)
+    gout = nd('NodeGroupOutput', 1000, 0)
+
+    # Sampling coordinate = local Position translated by the per-brick seed.
+    pos = nd('GeometryNodeInputPosition', -900, -300)
+    seed_v = nd('FunctionNodeInputVector', -900, -440)
+    seed_v.vector = seed_offset
+    base = nd('ShaderNodeVectorMath', -740, -340); base.operation = 'ADD'
+    links.new(pos.outputs['Position'], base.inputs[0])
+    links.new(seed_v.outputs['Vector'], base.inputs[1])
+
+    # Shared cellular distortion: a low-scale vector noise nudges the sample
+    # position so cell walls meander instead of sitting on a clean grid.
+    dnoise = nd('ShaderNodeTexNoise', -740, -560)
+    dnoise.noise_dimensions = '3D'
+    dnoise.inputs['Scale'].default_value = 1.0 / (mn * 0.5)
+    dnoise.inputs['Detail'].default_value = 2.0
+    links.new(base.outputs['Vector'], dnoise.inputs['Vector'])
+    dsub = nd('ShaderNodeVectorMath', -560, -600); dsub.operation = 'SUBTRACT'
+    dsub.inputs[1].default_value = (0.5, 0.5, 0.5)
+    links.new(dnoise.outputs['Color'], dsub.inputs[0])
+    dscl = nd('ShaderNodeVectorMath', -400, -600); dscl.operation = 'SCALE'
+    dscl.inputs['Scale'].default_value = mn * 0.35
+    links.new(dsub.outputs['Vector'], dscl.inputs[0])
+    dpos = nd('ShaderNodeVectorMath', -240, -400); dpos.operation = 'ADD'
+    links.new(base.outputs['Vector'], dpos.inputs[0])
+    links.new(dscl.outputs['Vector'], dpos.inputs[1])
+
+    # Several small-cell SMOOTH_F1 Voronoi layers, each at its own scale and
+    # constant offset, combined with Minimum -> union of pits. High smoothness
+    # keeps the cell cores rounded rather than sharply pointed.
+    layers = [(1.0 / (mn * 0.16), (0.0, 0.0, 0.0), 1.0),
+              (1.0 / (mn * 0.12), (13.1, 4.7, 9.3), 1.0),
+              (1.0 / (mn * 0.09), (2.9, 21.4, 15.8), 0.9)]
+    prev = None
+    for k, (scale, off, smooth) in enumerate(layers):
+        ofs = nd('ShaderNodeVectorMath', -80, -200 - k * 220)
+        ofs.operation = 'ADD'; ofs.inputs[1].default_value = off
+        links.new(dpos.outputs['Vector'], ofs.inputs[0])
+        vor = nd('ShaderNodeTexVoronoi', 100, -200 - k * 220)
+        vor.voronoi_dimensions = '3D'; vor.feature = 'SMOOTH_F1'
+        vor.inputs['Scale'].default_value = scale
+        vor.inputs['Smoothness'].default_value = smooth
+        vor.inputs['Randomness'].default_value = 1.0
+        links.new(ofs.outputs['Vector'], vor.inputs['Vector'])
+        if prev is None:
+            prev = vor.outputs['Distance']
+        else:
+            mn_node = nd('ShaderNodeMath', 300, -200 - k * 220)
+            mn_node.operation = 'MINIMUM'
+            links.new(prev, mn_node.inputs[0])
+            links.new(vor.outputs['Distance'], mn_node.inputs[1])
+            prev = mn_node.outputs['Value']
+
+    # Flatten with bounds: cell cores (small distance) map to full depth, and
+    # anything past the band clamps flat. Negative -> pits bite inward. Gentle
+    # slope (wide band, shallow depth) so pits are soft dishes, not spikes.
+    pit = nd('ShaderNodeMapRange', 500, -300)
+    pit.clamp = True
+    pit.inputs['From Min'].default_value = 0.0
+    pit.inputs['From Max'].default_value = 0.55
+    pit.inputs['To Min'].default_value = -mn * 0.022 * micro
+    pit.inputs['To Max'].default_value = 0.0
+    links.new(prev, pit.inputs['Value'])
+
+    # Low-frequency fBm grain (few octaves) riding on top of the pits.
+    grain = nd('ShaderNodeTexNoise', 100, 300)
+    grain.noise_dimensions = '3D'
+    grain.inputs['Scale'].default_value = 1.0 / (mn * 0.6)
+    grain.inputs['Detail'].default_value = 2.0
+    grain.inputs['Roughness'].default_value = 0.5
+    links.new(base.outputs['Vector'], grain.inputs['Vector'])
+    gmap = nd('ShaderNodeMapRange', 300, 300)
+    gmap.inputs['To Min'].default_value = -mn * 0.014 * micro
+    gmap.inputs['To Max'].default_value = mn * 0.014 * micro
+    links.new(grain.outputs['Fac'], gmap.inputs['Value'])
+
+    # Sum grain + pits -> raw scalar displacement.
+    disp = nd('ShaderNodeMath', 660, 0); disp.operation = 'ADD'
+    links.new(gmap.outputs['Result'], disp.inputs[0])
+    links.new(pit.outputs['Result'], disp.inputs[1])
+
+    # Broad low-frequency envelope: modulates amplitude across the brick so some
+    # patches stay near-smooth while others are rougher -> non-uniform relief.
+    # A narrow input band makes the swing high-contrast (near-bimodal) rather
+    # than a gentle gradient; env_strength sets how flat the smooth patches go.
+    env = nd('ShaderNodeTexNoise', 300, -760)
+    env.noise_dimensions = '3D'
+    env.inputs['Scale'].default_value = 1.0 / (mn * 2.2)
+    env.inputs['Detail'].default_value = 1.0
+    links.new(base.outputs['Vector'], env.inputs['Vector'])
+    emap = nd('ShaderNodeMapRange', 500, -760)
+    emap.clamp = True
+    emap.inputs['From Min'].default_value = 0.38
+    emap.inputs['From Max'].default_value = 0.62
+    emap.inputs['To Min'].default_value = 1.0 - max(0.0, min(1.0, env_strength))
+    emap.inputs['To Max'].default_value = 1.0
+    links.new(env.outputs['Fac'], emap.inputs['Value'])
+    dmod = nd('ShaderNodeMath', 700, -400); dmod.operation = 'MULTIPLY'
+    links.new(disp.outputs['Value'], dmod.inputs[0])
+    links.new(emap.outputs['Result'], dmod.inputs[1])
+
+    # Offset = normal * modulated displacement.
+    nrm = nd('GeometryNodeInputNormal', 700, 200)
+    off_v = nd('ShaderNodeVectorMath', 900, 200); off_v.operation = 'SCALE'
+    links.new(nrm.outputs['Normal'], off_v.inputs[0])
+    links.new(dmod.outputs['Value'], off_v.inputs['Scale'])
+
+    setp = nd('GeometryNodeSetPosition', 950, 0)
+    links.new(gin.outputs['Geometry'], setp.inputs['Geometry'])
+    links.new(off_v.outputs['Vector'], setp.inputs['Offset'])
+    # Shade smooth so the resolved micro relief reads as form, not voxel facets.
+    smooth = nd('GeometryNodeSetShadeSmooth', 1120, 0)
+    links.new(setp.outputs['Geometry'], smooth.inputs['Geometry'])
+    links.new(smooth.outputs['Geometry'], gout.inputs['Geometry'])
+    return ng
+
+
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 edge_chip=0.007, corner_chip=0.02, detail=3, refine=0.25,
-                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.6, collection=None):
+                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.6,
+                micro=1.0, micro_env=0.85, micro_voxel_div=85.0, collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
     Phase A: box -> seed-driven chipping -> multi-resolution loop (voxel-remesh
@@ -472,4 +611,21 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     bm.free()
     obj = bpy.data.objects.new(name, mesh)
     (collection or bpy.context.scene.collection).objects.link(obj)
+
+    # --- Micro-scale detail phase: added as MODIFIERS (not applied) so the very
+    #     fine remesh the displacement needs can be DISABLED IN VIEWPORT for a
+    #     fast coarse preview, while render/bake evaluates it and resolves the
+    #     micro detail. Order: fine remesh -> geometry-nodes displacement. ---
+    if micro > 0.0:
+        fine = obj.modifiers.new("micro_remesh", 'REMESH')
+        fine.mode = 'VOXEL'
+        fine.voxel_size = mn / micro_voxel_div      # finer than any build stage
+        fine.adaptivity = 0.0
+        fine.show_viewport = False                  # off in viewport, on in render
+        seed_off = tuple(float(x) for x in rng.uniform(-50.0, 50.0, 3))
+        ng = _micro_node_group(name + "_micro", mn, micro, seed_off,
+                               env_strength=micro_env)
+        gn = obj.modifiers.new("micro_detail", 'NODES')
+        gn.node_group = ng
+        gn.show_viewport = False
     return obj
