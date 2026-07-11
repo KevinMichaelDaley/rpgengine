@@ -178,7 +178,8 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
                   pull=0.5, sharp=0.3, smooth=0.5, pinch=0.4, flatten=0.4,
                   flat_normal=0.5, mix=(0.5, 0.2, 0.12, 0.12), temp0=1.0,
                   temp1=0.1, maxdisp=0.03, feature=1.0, corner_preserve=0.75,
-                  box_preserve=0.7, box_run_reduce=0.5, kernel_noise=None):
+                  box_preserve=0.7, box_run_reduce=0.5, nfl_axis_swap=0.3,
+                  kernel_noise=None):
     """Sculpt hewn facets on the coupled vertex network with MULTIPLE graph
     kernels chosen stochastically per vertex (KMD's scheme), under a SIMULATED-
     ANNEALING temperature that cools over the passes:
@@ -266,6 +267,14 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         flt = (r >= p2) & (r < p3)
         nfl_sel = (r >= p3) & (r < p4)
         smo_sel = (r >= p4)
+        # In the first third of the passes, redirect a fraction of the normal-
+        # flatten verts to AXIS-flatten instead: early passes then bias toward
+        # axis-aligned dressed faces (box character), later passes keep normal-
+        # flatten (which follows arbitrary facet orientations).
+        if it < max(1, iters // 3) and nfl_axis_swap > 0.0:
+            swap = nfl_sel & (rng.random(n) < nfl_axis_swap)
+            flt = flt | swap
+            nfl_sel = nfl_sel & ~swap
         # Pinch never touches the box arrises (it would distort the corners).
         pin = (pin_sel & (rng.random(n) > box_edge * box_preserve))[:, None]
         # Both smoothing kernels are cut on detected creases; box arrises are cut
@@ -726,7 +735,7 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 refine=0.25,
                 chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.3, decimate0=0.4,
                 adaptivity=0.1, disp_scale=0.16,
-                bounds_radius=0.004, final_decimate=0.42, micro=0.65, micro_env=0.9,
+                bounds_radius=0.006, final_decimate=0.42, micro=0.65, micro_env=0.9,
                 micro_quant=0.008, micro_floor=0.025, micro_voxel_div=110.0,
                 collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
@@ -780,11 +789,11 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # --- Crack pass 1: subtle, ABSOLUTELY bounded, before the fine pass so it
     #     gets weathered down by Phase B (hairline/healed cracks) ---
     if cracks > 0.0:
-        _crack(bm, rng, seeds=max(3, int(round(5 * cracks))), steps=15,
-               step_len=mn * 0.03, branch=0.14, depth=mn * 0.014 * cracks,
-               width=mn * 0.055, width_var=0.8, width_freq=45.0,
+        _crack(bm, rng, seeds=max(3, int(round(5 * cracks))), steps=17,
+               step_len=mn * 0.03, branch=0.15, depth=mn * 0.016 * cracks,
+               width=mn * 0.052, width_var=0.8, width_freq=45.0,
                vor_scale=34.0, vor_bias=0.35, wander=0.45, corner_bias=2.5,
-               profile=1.4, maxdisp=mn * 0.02)
+               profile=1.45, maxdisp=mn * 0.024)
         _remesh_voxel(bm, mn / 40.0, adaptivity=adaptivity,
                       decimate=decimate)                  # settle the cracks in
 
