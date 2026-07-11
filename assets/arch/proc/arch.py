@@ -558,30 +558,26 @@ def _finalize_uvs(obj, density=UV_SCALE):
 
 
 def _masonry_course_uvs(obj):
-    """Overwrite the UVs (keeping the generator's seams) so a tiling masonry
-    material courses continuously over the whole piece -- through the window
-    reveal from the outer face to the inner -- with the bed joints joining
-    EXACTLY at every corner and the brick size identical everywhere.
+    """Overwrite the UVs so a tiling masonry material courses continuously over
+    the piece -- through the window reveal from the outer face to the inner --
+    with the bed joints joining at the corners and the brick size identical
+    everywhere. Works region by region (a good, mostly-connected UV map, not a
+    per-face box):
 
-    Each UV island is treated by its shape (found from its face normals):
+      * FLAT faces are projected planar from their own normal, so each coplanar
+        region (front, back, each jamb, the sill) is ONE continuous chart:
+          - normal ~ +/-Y (front/back wall): U = world X, V = world Z.
+          - normal ~ +/-Z (sill top):        U = world X, V = world Y.
+          - otherwise (vertical jamb):        U = depth run (world Y), V = world Z,
+            so the wall's horizontal bed joints continue straight into the reveal
+            and the courses join (both share V = world Z at the corner).
+      * The CURVED arch soffit faces are grouped into connected islands and each
+        gets ONE affine transform of its existing unwrap -- U = depth (world Y),
+        V = arc length along the arch -- anchored at the springline so V = world Z
+        there and it meets the top jamb course; the courses then wrap the arch.
 
-      * Flat wall faces (normals along +/-Y): an exact per-vertex world
-        projection, U = world X, V = world Z. Planar, so this stays continuous
-        (adds no seam) and is exact.
-      * Flat horizontal faces (normals along +/-Z, e.g. the sill top): U = world
-        X, V = world Y.
-      * The window reveal -- a strip extruded through the wall depth (Y), so its
-        faces' normals are perpendicular to Y -- gets ONE affine transform (it is
-        a single curved island, so it must stay one continuous piece): U = the
-        depth run (world Y), V = arc length along the opening perimeter. Along the
-        straight jambs the perimeter arc length IS the world height, so V = world
-        Z there and the courses join the front wall exactly; around the arch V
-        continues as arc length (the courses wrap the soffit). It is anchored on
-        a jamb vertex so V = world Z at the corner. The soffit crown stretches and
-        is meant to be trimmed separately.
-
-    1 UV unit = 1 m throughout, so the brick size matches everywhere. Overwrites
-    the packed [0,1] UVs -- use only for a tiling masonry material."""
+    1 UV unit = 1 m throughout. Overwrites the packed [0,1] UVs -- use only for a
+    tiling masonry material."""
     me = obj.data
     bm = bmesh.new()
     bm.from_mesh(me)
@@ -591,114 +587,56 @@ def _masonry_course_uvs(obj):
         bm.free()
         return
     bm.faces.ensure_lookup_table()
-
-    # Group faces into UV islands (adjacent faces whose shared edge has matching
-    # UVs) via union-find -- this respects the generator's seams.
-    parent = list(range(len(bm.faces)))
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for e in bm.edges:
-        if len(e.link_faces) != 2:
-            continue
-        f0, f1 = e.link_faces
-        same = True
-        for v in e.verts:
-            l0 = next(l for l in f0.loops if l.vert == v)
-            l1 = next(l for l in f1.loops if l.vert == v)
-            d = np.array(l0[uvl].uv) - np.array(l1[uvl].uv)
-            if d.dot(d) > 1e-10:
-                same = False
-                break
-        if same:
-            parent[find(f0.index)] = find(f1.index)
-    islands = defaultdict(list)
-    for f in bm.faces:
-        islands[find(f.index)].append(f)
-
-    Yh = np.array([0.0, 1.0, 0.0])
     Z = np.array([0.0, 0.0, 1.0])
 
-    def uv_image(face, world_dir):
-        """UV-space vector the world direction maps to (face's affine UV->world)."""
-        ls = face.loops
-        p0 = np.array(ls[0].vert.co)
-        w = np.column_stack([np.array(ls[1].vert.co) - p0,
-                             np.array(ls[2].vert.co) - p0])
-        ab, _, _, _ = np.linalg.lstsq(w, world_dir, rcond=None)
-        u0 = np.array(ls[0][uvl].uv)
-        return ab[0] * (np.array(ls[1][uvl].uv) - u0) + \
-            ab[1] * (np.array(ls[2][uvl].uv) - u0)
+    fn = {}
+    for f in bm.faces:
+        n = np.array(f.normal)
+        nl = np.linalg.norm(n)
+        fn[f.index] = n / nl if nl > 1e-8 else n
 
-    for faces in islands.values():
-        area = 0.0
-        navg = np.zeros(3)
-        for f in faces:
-            a = f.calc_area()
-            navg += a * np.array(f.normal)
-            area += a
-        if area <= 0.0:
-            continue
-        nlen = np.linalg.norm(navg)
-        if nlen < 1e-9:
-            continue
-        navg /= nlen
+    # A face is on the smoothly-CURVED arch soffit if it has >=2 edge-neighbours
+    # whose facet normal differs by a SMALL angle (continuous curvature, ~15 deg
+    # per arch facet). Coplanar neighbours (dot ~ 1) and sharp 90-degree corners
+    # between flat regions (dot ~ 0, e.g. a front face meeting a jamb at the
+    # opening) are both excluded, so flat regions stay flat.
+    curved = set()
+    for f in bm.faces:
+        cnt = 0
+        for e in f.edges:
+            for g in e.link_faces:
+                if g.index == f.index:
+                    continue
+                d = float(fn[f.index] @ fn[g.index])
+                if 0.9 < d < 0.9999:
+                    cnt += 1
+        if cnt >= 2:
+            curved.add(f.index)
 
-        if abs(navg[1]) > 0.7:                    # flat wall (+/-Y): exact planar
-            run = np.cross(Z, navg)
-            run /= (np.linalg.norm(run) + 1e-12)
-            for f in faces:
-                for l in f.loops:
-                    p = np.array(l.vert.co)
-                    l[uvl].uv = (float(p @ run), float(p[2]))
-        elif abs(navg[2]) > 0.7:                  # flat horizontal (+/-Z): sill top
-            for f in faces:
-                for l in f.loops:
-                    p = np.array(l.vert.co)
-                    l[uvl].uv = (float(p[0]), float(p[1]))
-        else:                                     # reveal strip (extruded in Y)
-            uvY = np.zeros(2)
-            uvP = np.zeros(2)
-            a2 = 0.0
-            for f in faces:
-                n = np.array(f.normal)
-                nl = np.linalg.norm(n)
-                if nl < 1e-8:
-                    continue
-                n /= nl
-                pdir = np.cross(n, Yh)            # perimeter tangent (in-plane)
-                if np.linalg.norm(pdir) < 1e-5:
-                    continue
-                pdir /= np.linalg.norm(pdir)
-                if pdir[2] < 0.0:
-                    pdir = -pdir                  # orient up the perimeter
-                a = f.calc_area()
-                try:
-                    uvY += a * uv_image(f, Yh)
-                    uvP += a * uv_image(f, pdir)
-                except np.linalg.LinAlgError:
-                    continue
-                a2 += a
-            if a2 <= 0.0:
-                continue
-            uvY /= a2
-            uvP /= a2
-            basis = np.column_stack([uvY, uvP])
-            if abs(np.linalg.det(basis)) < 1e-9:
-                continue
-            amat = np.linalg.inv(basis)
-            jamb = min(faces, key=lambda f: abs(f.normal.z))   # most vertical face
-            ref = jamb.loops[0]
-            p_ref = np.array(ref.vert.co)
-            uv_ref = np.array(ref[uvl].uv)
-            target = np.array([p_ref @ Yh, p_ref[2]])
-            for f in faces:
-                for l in f.loops:
-                    l[uvl].uv = tuple(amat @ (np.array(l[uvl].uv) - uv_ref) + target)
+    # Flat faces: planar projection from their own normal.
+    for f in bm.faces:
+        if f.index in curved:
+            continue
+        n = fn[f.index]
+        if abs(n[2]) > 0.6:                       # horizontal (sill top)
+            for l in f.loops:
+                p = np.array(l.vert.co)
+                l[uvl].uv = (float(p[0]), float(p[1]))
+        else:                                     # vertical (wall or jamb)
+            run = np.cross(Z, n)
+            run /= (np.linalg.norm(run) + 1e-12)  # +/-X on wall, +/-Y on a jamb
+            for l in f.loops:
+                p = np.array(l.vert.co)
+                l[uvl].uv = (float(p @ run), float(p[2]))
+
+    # Curved arch soffit: one coherent Y-Z planar chart (all its faces share the
+    # same projection, so it stays a single continuous island). V = world Z keeps
+    # its courses joining the top jamb course; depth (Y) runs across it. The
+    # near-horizontal crown foreshortens and is expected to be trimmed separately.
+    for i in curved:
+        for l in bm.faces[i].loops:
+            p = np.array(l.vert.co)
+            l[uvl].uv = (float(p[1]), float(p[2]))
 
     bm.to_mesh(me)
     bm.free()
