@@ -38,20 +38,30 @@ def _box(length, height, depth):
     return bm
 
 
-def _chip(bm, rng, edge_chip, corner_chip):
+def _chip(bm, rng, edge_chip, corner_chip, chamfer_frac=0.6):
     """Coarse hewn silhouette from intentional, seed-driven chipping only (no
-    noise): knock a random subset of the box corners off, chamfer all arrises,
-    then chip a random subset of arrises deeper. The irregular offsets and
-    selection are the source of per-brick variation; the graph kernels sculpt it.
-    """
+    noise): knock a random subset of the box corners off, chamfer a random SUBSET
+    of arrises -- each at a slightly different depth and profile -- so some box
+    edges stay sharp and none are dressed identically, then chip a random subset
+    of arrises deeper. The irregular offsets/selection are the source of per-brick
+    variation; the graph kernels sculpt it. ``chamfer_frac`` is the fraction of
+    arrises that get the initial chamfer (the rest stay crisp)."""
     corners = [v for v in bm.verts if len(v.link_edges) == 3]
     knock = [v for v in corners if rng.random() < 0.7]
     if knock:
         bmesh.ops.bevel(bm, geom=knock, offset=corner_chip, segments=1,
                         affect='VERTICES', profile=0.35, clamp_overlap=True)
         bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    bmesh.ops.bevel(bm, geom=list(bm.edges), offset=edge_chip, segments=1,
-                    affect='EDGES', profile=0.5, clamp_overlap=True)
+    # Per-arris chamfer on a random subset, each with its own depth (0.6-1.6x)
+    # and profile/angle (0.25-0.75); the unchamfered edges stay sharp.
+    for e in [e for e in bm.edges if len(e.link_faces) == 2]:
+        if rng.random() >= chamfer_frac or not e.is_valid:
+            continue
+        bmesh.ops.bevel(bm, geom=[e], segments=1, affect='EDGES',
+                        offset=edge_chip * float(rng.uniform(0.6, 1.6)),
+                        profile=float(rng.uniform(0.25, 0.75)),
+                        clamp_overlap=True)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     sharp = [e for e in bm.edges
              if len(e.link_faces) == 2 and e.calc_face_angle() > 0.45]
     deep = [e for e in sharp if rng.random() < 0.3]
@@ -145,7 +155,7 @@ def _corner_tags(vn, ii, jj, deg, crease_ref=0.12):
     return np.clip(disp / crease_ref, 0.0, 1.0)
 
 
-def _box_edge_tags(v, band=0.8):
+def _box_edge_tags(v, band=0.72):
     """Tag verts on the brick's principal box arrises/corners: those near at
     least two of the bounding-box faces. Returns (tag, near):
       tag  -- [0,1], high only where >=2 axes sit close to an extreme (edge/
@@ -166,9 +176,9 @@ def _box_edge_tags(v, band=0.8):
 
 def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
                   pull=0.5, sharp=0.3, smooth=0.5, pinch=0.4, flatten=0.4,
-                  mix=(0.5, 0.2, 0.12, 0.12), temp0=1.0, temp1=0.1, maxdisp=0.03,
-                  feature=1.0, corner_preserve=0.75, box_preserve=0.7,
-                  kernel_noise=None):
+                  flat_normal=0.5, mix=(0.5, 0.2, 0.12, 0.12), temp0=1.0,
+                  temp1=0.1, maxdisp=0.03, feature=1.0, corner_preserve=0.75,
+                  box_preserve=0.7, box_run_reduce=0.5, kernel_noise=None):
     """Sculpt hewn facets on the coupled vertex network with MULTIPLE graph
     kernels chosen stochastically per vertex (KMD's scheme), under a SIMULATED-
     ANNEALING temperature that cools over the passes:
@@ -209,9 +219,14 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
     box_order = np.argsort(box_near, axis=1)            # [:,0] = run axis
     smooth_aniso = np.ones((n, 3))
     rows = np.arange(n)
-    supp = 1.0 - box_edge * box_preserve
-    smooth_aniso[rows, box_order[:, 1]] = supp
-    smooth_aniso[rows, box_order[:, 2]] = supp
+    # Across the edge: strong downweight (keeps the arris from rounding). Along
+    # the edge: a partial downweight too (box_run_reduce) -- fully free along-edge
+    # smoothing still rounds SHORT edges (the vertical/end arrises), so limit it.
+    supp_trans = 1.0 - box_edge * box_preserve
+    supp_run = 1.0 - box_edge * box_preserve * box_run_reduce
+    smooth_aniso[rows, box_order[:, 0]] = supp_run
+    smooth_aniso[rows, box_order[:, 1]] = supp_trans
+    smooth_aniso[rows, box_order[:, 2]] = supp_trans
     # Optional: a COHERENT Blender-noise field seeds the per-vertex kernel
     # SELECTION (not the displacement). Contiguous noise regions then pick the
     # same kernel, so sharpen/smooth/facet lay down in coherent patches -> fine
@@ -240,16 +255,24 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         p1 = p0 + mix[1] * temp
         p2 = p1 + mix[2] * temp
         p3 = p2 + mix[3] * temp
+        # Split the smoothing remainder: half stays isotropic smoothing, half is
+        # a flatten-ALONG-THE-NORMAL kernel (removes only the Laplacian's normal
+        # component -> dresses the face flat WITHOUT the tangential pull that
+        # rounds edges). This trades away half the rounding-prone smoothing.
+        p4 = p3 + (1.0 - p3) * 0.5
         fac = (r < p0)[:, None]
         shp = ((r >= p0) & (r < p1))[:, None]
         pin_sel = (r >= p1) & (r < p2)
         flt = (r >= p2) & (r < p3)
-        smo_sel = (r >= p3)
+        nfl_sel = (r >= p3) & (r < p4)
+        smo_sel = (r >= p4)
         # Pinch never touches the box arrises (it would distort the corners).
         pin = (pin_sel & (rng.random(n) > box_edge * box_preserve))[:, None]
-        # Smoothing frequency is only cut on detected creases; box arrises smooth
-        # at full frequency but ANISOTROPICALLY (below), and flat faces smooth
-        # normally -- so flat faces are no longer over-limited.
+        # Both smoothing kernels are cut on detected creases; box arrises are cut
+        # for normal-flatten (would round them) and handled anisotropically for
+        # isotropic smoothing (below). Flat faces are unaffected.
+        edge_keep = np.maximum(corner * corner_preserve, box_edge * box_preserve)
+        nfl = (nfl_sel & (rng.random(n) > edge_keep))[:, None]
         smo = (smo_sel & (rng.random(n) > corner * corner_preserve))[:, None]
         v += fac * (pull * s) * (t - v)
         v -= shp * (sharp * s) * d
@@ -263,6 +286,11 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         # normal is along that axis toward a dressed, near-axis-aligned plane.
         a = int(rng.integers(0, 3))
         v[:, a] += flt * (flatten * s[:, 0]) * d[:, a]
+        # Normal-flatten: move along the surface normal by the Laplacian's normal
+        # component -> presses the face flat with NO tangential motion, so it
+        # dresses faces without rounding/shrinking edges the way smoothing does.
+        dn = (d * vn).sum(1, keepdims=True)
+        v += nfl * (flat_normal * s) * wflat[:, None] * dn * vn
         # Feature-preserving smoothing: gated by wflat so already-sharp arrises
         # are not smoothed away, weakened at cold temp (s carries strength), and
         # DOWNWEIGHTED anisotropically on box arrises (smooth_aniso) -- full along
@@ -575,7 +603,10 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     fnoise.inputs['Detail'].default_value = 1.0
     links.new(foff.outputs['Vector'], fnoise.inputs['Vector'])
     fvar = nd('ShaderNodeMapRange', 820, -540)
-    fvar.inputs['To Min'].default_value = 0.08   # near-zero pitting on some facets
+    fvar.clamp = True
+    fvar.inputs['From Min'].default_value = 0.35  # bias: many facets get no pits
+    fvar.inputs['From Max'].default_value = 0.85
+    fvar.inputs['To Min'].default_value = 0.0     # fully unpitted facets -> sparse
     fvar.inputs['To Max'].default_value = 1.0
     links.new(fnoise.outputs['Fac'], fvar.inputs['Value'])
     pit_mod = nd('ShaderNodeMath', 660, -300)
@@ -610,7 +641,7 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     # than a gentle gradient; env_strength sets how flat the smooth patches go.
     env = nd('ShaderNodeTexNoise', 300, -760)
     env.noise_dimensions = '3D'
-    env.inputs['Scale'].default_value = 1.0 / (mn * 2.2)
+    env.inputs['Scale'].default_value = 1.0 / (mn * 3.4)   # bigger smooth patches
     env.inputs['Detail'].default_value = 1.0
     links.new(base.outputs['Vector'], env.inputs['Vector'])
     emap = nd('ShaderNodeMapRange', 500, -760)
@@ -691,11 +722,12 @@ def _bake_modifiers(obj):
 
 
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
-                edge_chip=0.007, corner_chip=0.02, detail=3, refine=0.25,
-                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.45, decimate0=0.5,
-                adaptivity=0.1,
-                bounds_radius=0.004, final_decimate=0.5, micro=1.0, micro_env=0.85,
-                micro_quant=0.008, micro_floor=0.025, micro_voxel_div=85.0,
+                edge_chip=0.007, corner_chip=0.02, chamfer_frac=0.6, detail=3,
+                refine=0.25,
+                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.3, decimate0=0.4,
+                adaptivity=0.1, disp_scale=0.16,
+                bounds_radius=0.004, final_decimate=0.42, micro=0.65, micro_env=0.9,
+                micro_quant=0.008, micro_floor=0.025, micro_voxel_div=110.0,
                 collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
@@ -710,8 +742,8 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     """
     rng = np.random.default_rng(seed)
     bm = _box(length, height, width)        # height & width are fixed (coursing)
-    _chip(bm, rng, edge_chip, corner_chip)
-    md0 = 0.32 * min(height, width)         # coarse deformation bound
+    _chip(bm, rng, edge_chip, corner_chip, chamfer_frac=chamfer_frac)
+    md0 = disp_scale * min(height, width)   # coarse graph-kernel deformation bound
     mn = min(length, height, width)
 
     # --- Phase A: annealed faceting -> angular hewn base ---
@@ -719,10 +751,12 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # normalised AND faceting-reduced into angular dressed facets.
     # (voxel, n_planes, tilt, iters, maxdisp, temp0, temp1, mix)
     # mix = (facet, sharp, pinch, flatten) selection probs; smoothing = remainder.
+    # Voxel sizes are FINE (coarse voxels bevel the arrises); the strong decimate
+    # below collapses the extra polys back down while keeping the sharp edges.
     schedule = [
-        (mn / 6.0,  16, 0.28, 16, md0,        1.00, 0.15, (0.44, 0.24, 0.12, 0.16)),
-        (mn / 13.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.42, 0.24, 0.12, 0.16)),
-        (mn / 26.0, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.40, 0.24, 0.12, 0.16)),
+        (mn / 9.0,  16, 0.28, 16, md0,        1.00, 0.15, (0.44, 0.24, 0.12, 0.16)),
+        (mn / 20.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.42, 0.24, 0.12, 0.16)),
+        (mn / 40.0, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.40, 0.24, 0.12, 0.16)),
     ][:max(1, detail)]
     ns = len(schedule)
     half = (0.5 * length, 0.5 * width, 0.5 * height)
@@ -751,7 +785,7 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                width=mn * 0.055, width_var=0.8, width_freq=45.0,
                vor_scale=34.0, vor_bias=0.35, wander=0.45, corner_bias=2.5,
                profile=1.4, maxdisp=mn * 0.02)
-        _remesh_voxel(bm, mn / 26.0, adaptivity=adaptivity,
+        _remesh_voxel(bm, mn / 40.0, adaptivity=adaptivity,
                       decimate=decimate)                  # settle the cracks in
 
     # --- Phase B: fine refinement on the faceted base (topology kept) ---
