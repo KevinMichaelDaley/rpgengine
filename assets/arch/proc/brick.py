@@ -205,13 +205,17 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         vert.co = v[k]
 
 
-def _remesh_voxel(bm, voxel_size, adaptivity=0.0):
+def _remesh_voxel(bm, voxel_size, adaptivity=0.0, decimate=1.0):
     """Voxel-remesh the current bmesh in place: replaces the geometry with a
     ~voxel_size all-quad mesh. Normalises the topology (even vertex spacing, so
     graph kernels give controlled, evenly-spaced detail rather than density-
     dependent high-frequency spikes) and, at a smaller voxel_size each stage,
     increases the resolution -- true big->small refinement. *adaptivity* > 0
-    keeps more resolution on curved/sharp regions and less on flat faces.
+    keeps more resolution on curved/sharp regions.
+
+    *decimate* < 1 also collapse-decimates to that face ratio (in the SAME
+    modifier evaluation), so every remesh both normalises the topology and
+    faceting-reduces it -- forcing angular dressed facets at every scale.
     """
     tmp = bpy.data.meshes.new("_rm_src")
     bm.to_mesh(tmp)
@@ -221,6 +225,10 @@ def _remesh_voxel(bm, voxel_size, adaptivity=0.0):
     mod.mode = 'VOXEL'
     mod.voxel_size = voxel_size
     mod.adaptivity = adaptivity
+    if decimate < 0.999:
+        dmod = obj.modifiers.new("dec", 'DECIMATE')
+        dmod.decimate_type = 'COLLAPSE'
+        dmod.ratio = decimate
     bpy.context.view_layer.update()
     dg = bpy.context.evaluated_depsgraph_get()
     out = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
@@ -231,67 +239,46 @@ def _remesh_voxel(bm, voxel_size, adaptivity=0.0):
     bpy.data.meshes.remove(out)
 
 
-def _decimate(bm, ratio):
-    """Collapse-decimate the bmesh in place to *ratio* of its faces, forcing
-    angular flat facets. Applied heavily on the coarse stages and ANNEALED down
-    (ratio -> 1) on finer stages, so big dressed facets form first and finer
-    detail is layered on without being decimated away. No-op at ratio >= ~1."""
-    if ratio >= 0.999:
-        return
-    tmp = bpy.data.meshes.new("_dec_src")
-    bm.to_mesh(tmp)
-    obj = bpy.data.objects.new("_dec_src", tmp)
-    bpy.context.scene.collection.objects.link(obj)
-    mod = obj.modifiers.new("dec", 'DECIMATE')
-    mod.decimate_type = 'COLLAPSE'
-    mod.ratio = ratio
-    bpy.context.view_layer.update()
-    dg = bpy.context.evaluated_depsgraph_get()
-    out = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
-    bm.clear()
-    bm.from_mesh(out)
-    bpy.data.objects.remove(obj, do_unlink=True)
-    bpy.data.meshes.remove(tmp)
-    bpy.data.meshes.remove(out)
-
-
-def _clip_chunks(bm, rng, count, depth, tilt=0.15):
-    """Stochastically clip small planar spalls off corners/faces (chips), BEFORE
-    a remesh normalises them. Each clip picks a random surface vertex and bisects
-    with a plane whose normal is close to that vertex's SURFACE NORMAL (small
-    tilt), so the cut is nearly tangent and shears off only a thin sliver of
-    volume -- not a harsh diagonal wedge -- ALWAYS keeping the bigger side.
-    `count` (probability) and `depth` anneal down per stage."""
+def _clip_chunks(bm, rng, count, depth, tilt=0.16):
+    """Chisel the rough ENDS of the brick. A near LENGTH-axis plane, only
+    slightly rotated (small tolerance in the two perpendicular directions), trims
+    one end inward -- so the brick keeps its full HEIGHT and WIDTH (only its
+    length varies, like a coursing brick's rough-cut ends) and the cut is only
+    slightly diagonal, intersecting the boundary. A near-axis plane always shears
+    a whole slab, so cutting a Y/Z face would shrink width/height -- hence
+    length-axis ends only. Always keeps the body side. `count` (probability) and
+    `depth` anneal down per stage."""
     for _ in range(count):
         nv = len(bm.verts)
         if nv < 40:
             break
         bm.verts.ensure_lookup_table()
-        bm.normal_update()
-        vv = bm.verts[int(rng.integers(nv))]
-        p = np.array(vv.co, dtype=np.float64)
-        base = np.array(vv.normal, dtype=np.float64)
-        nb = np.linalg.norm(base)
-        if nb < 1e-9:
-            continue
-        nrm = base / nb + rng.normal(0.0, tilt, 3)
+        allco = np.array([w.co for w in bm.verts], dtype=np.float64)
+        s = 1.0 if rng.random() < 0.5 else -1.0          # +X or -X end
+        p = allco[int(np.argmax(s * allco[:, 0]))]       # the extreme end vertex
+        nrm = np.array([s, 0.0, 0.0])                    # length-axis normal ...
+        nrm[1] = float(rng.normal(0.0, tilt))            # ... only slightly rotated
+        nrm[2] = float(rng.normal(0.0, tilt))
         nrm /= np.linalg.norm(nrm) + 1e-12
-        # plane just inside the surface at p, so the cut-off piece is a small
-        # cap near p; the rest of the brick is the big side.
-        co = p - nrm * depth
+        plane_co = p - nrm * depth                       # trim the end inward
         bmesh.ops.bisect_plane(bm, geom=list(bm.verts) + list(bm.edges)
                                + list(bm.faces), dist=1e-6,
-                               plane_co=co.tolist(), plane_no=nrm.tolist())
-        # ALWAYS keep the bigger side: delete faces on whichever side is smaller.
-        plus, minus = [], []
+                               plane_co=plane_co.tolist(), plane_no=nrm.tolist())
+        # Keep the side containing the brick BODY (its centroid); delete only the
+        # thin cap on the far side. Face COUNT is an unreliable "bigger" test on
+        # uneven tessellation (it can keep the small cap -> triangular brick);
+        # the centroid side is robust.
+        cc = np.array([w.co for w in bm.verts], dtype=np.float64).mean(axis=0)
+        cs = (cc - plane_co) @ nrm
+        drop = []
         for f in bm.faces:
             c = f.calc_center_median()
-            s = ((c.x - co[0]) * nrm[0] + (c.y - co[1]) * nrm[1]
-                 + (c.z - co[2]) * nrm[2])
-            (plus if s > 0.0 else minus).append(f)
-        smaller = plus if len(plus) <= len(minus) else minus
-        if 0 < len(smaller) < len(bm.faces):
-            bmesh.ops.delete(bm, geom=smaller, context='FACES')
+            s = ((c.x - plane_co[0]) * nrm[0] + (c.y - plane_co[1]) * nrm[1]
+                 + (c.z - plane_co[2]) * nrm[2])
+            if (s > 0.0) != (cs > 0.0):                  # opposite side from body
+                drop.append(f)
+        if 0 < len(drop) < len(bm.faces):
+            bmesh.ops.delete(bm, geom=drop, context='FACES')
             openb = [e for e in bm.edges if len(e.link_faces) == 1]
             if openb:
                 bmesh.ops.holes_fill(bm, edges=openb)
@@ -407,9 +394,9 @@ def _crack(bm, rng, seeds=3, steps=16, step_len=0.004, branch=0.10, depth=0.02,
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
 
 
-def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
+def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 edge_chip=0.007, corner_chip=0.02, detail=3, refine=0.25,
-                chip=0.5, cracks=0.6, cracks2=0.5, collection=None):
+                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.6, collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
     Phase A: box -> seed-driven chipping -> multi-resolution loop (voxel-remesh
@@ -422,32 +409,31 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
               scales the strictly-bounded Phase-B displacement.
     """
     rng = np.random.default_rng(seed)
-    bm = _box(length, height, depth)
+    bm = _box(length, height, width)        # height & width are fixed (coursing)
     _chip(bm, rng, edge_chip, corner_chip)
-    md0 = 0.32 * min(height, depth)         # coarse deformation bound
-    mn = min(length, height, depth)
+    md0 = 0.32 * min(height, width)         # coarse deformation bound
+    mn = min(length, height, width)
 
-    # --- Phase A: annealed faceting + decimation -> angular hewn base ---
-    # decimate stays low (heavy faceting) so the block reads as dressed facets.
-    # (voxel, n_planes, tilt, iters, maxdisp, temp0, temp1, mix, decimate)
+    # --- Phase A: annealed faceting -> angular hewn base ---
+    # Every remesh also decimates (the `decimate` param) so each scale is
+    # normalised AND faceting-reduced into angular dressed facets.
+    # (voxel, n_planes, tilt, iters, maxdisp, temp0, temp1, mix)
     schedule = [
-        (mn / 6.0,  16, 0.28, 16, md0,        1.00, 0.15, (0.48, 0.28, 0.24), 0.25),
-        (mn / 13.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.42, 0.30, 0.28), 0.42),
-        (mn / 26.0, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.30, 0.34), 0.46),
+        (mn / 6.0,  16, 0.28, 16, md0,        1.00, 0.15, (0.48, 0.28, 0.24)),
+        (mn / 13.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.42, 0.30, 0.28)),
+        (mn / 26.0, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.30, 0.34)),
     ][:max(1, detail)]
     ns = len(schedule)
-    for stage, (vox, npl, tilt, iters, mdisp, t0, t1, mix, dec) in enumerate(schedule):
-        # Stochastic chip/crack pass BEFORE the remesh, annealed down per stage
-        # (more, deeper spalls early; small chips late).
+    for stage, (vox, npl, tilt, iters, mdisp, t0, t1, mix) in enumerate(schedule):
+        # Stochastic end-chisel pass BEFORE the remesh, annealed down per stage.
         cw = (ns - stage) / ns
         nclip = int(round(3.0 * chip * cw))
         if nclip > 0:
             _clip_chunks(bm, rng, count=nclip, depth=mn * 0.16 * cw)
-        _remesh_voxel(bm, vox)
+        _remesh_voxel(bm, vox, decimate=decimate)
         _facet_sculpt(bm, rng, n_planes=npl, tilt=tilt, iters=iters,
                       pull=0.45, sharp=0.38, smooth=0.42, mix=mix,
                       temp0=t0, temp1=t1, maxdisp=mdisp, feature=1.0)
-        _decimate(bm, dec)
 
     # --- Crack pass 1: subtle, ABSOLUTELY bounded, before the fine pass so it
     #     gets weathered down by Phase B (hairline/healed cracks) ---
@@ -457,7 +443,7 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, depth=0.11,
                width=mn * 0.055, width_var=0.8, width_freq=45.0,
                vor_scale=34.0, vor_bias=0.35, wander=0.45, corner_bias=2.5,
                profile=1.4, maxdisp=mn * 0.02)
-        _remesh_voxel(bm, mn / 26.0)                     # settle the cracks in
+        _remesh_voxel(bm, mn / 26.0, decimate=decimate)  # settle the cracks in
 
     # --- Phase B: fine refinement on the faceted base (topology kept) ---
     # A few cold passes with STRICTLY limited displacement and small feature
