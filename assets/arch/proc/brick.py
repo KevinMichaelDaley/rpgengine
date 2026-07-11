@@ -178,8 +178,8 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
                   pull=0.5, sharp=0.3, smooth=0.5, pinch=0.4, flatten=0.4,
                   flat_normal=0.5, mix=(0.5, 0.2, 0.12, 0.12), temp0=1.0,
                   temp1=0.1, maxdisp=0.03, feature=1.0, corner_preserve=0.75,
-                  box_preserve=0.7, box_run_reduce=0.5, nfl_axis_swap=0.3,
-                  kernel_noise=None):
+                  box_preserve=0.7, box_run_reduce=0.5, nfl_axis_swap=0.38,
+                  axis_rand=0.15, kernel_noise=None):
     """Sculpt hewn facets on the coupled vertex network with MULTIPLE graph
     kernels chosen stochastically per vertex (KMD's scheme), under a SIMULATED-
     ANNEALING temperature that cools over the passes:
@@ -291,10 +291,18 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         b /= np.linalg.norm(b) + 1e-12
         dproj = d @ b
         v -= pin * (pinch * s) * (dproj[:, None] * b[None, :])
-        # Axis-flatten: smooth only one axis component -> flattens faces whose
-        # normal is along that axis toward a dressed, near-axis-aligned plane.
-        a = int(rng.integers(0, 3))
-        v[:, a] += flt * (flatten * s[:, 0]) * d[:, a]
+        # Axis-flatten: flatten each selected vertex's DOMINANT-axis component
+        # (the axis closest to its normal) toward its neighbours -> dresses each
+        # face flat against its own axis plane. Occasionally, for INTERIOR verts
+        # (off the box arrises), use a random axis instead -> a little internal
+        # faceting variety rather than a single global flatten direction.
+        if flt.any():
+            ax = np.argmax(np.abs(vn), axis=1)
+            rmask = (rng.random(n) < axis_rand) & (box_edge < 0.3)
+            ax = np.where(rmask, rng.integers(0, 3, n), ax)
+            rows = np.nonzero(flt)[0]
+            axr = ax[rows]
+            v[rows, axr] += (flatten * s[rows, 0]) * d[rows, axr]
         # Normal-flatten: move along the surface normal by the Laplacian's normal
         # component -> presses the face flat with NO tangential motion, so it
         # dresses faces without rounding/shrinking edges the way smoothing does.
