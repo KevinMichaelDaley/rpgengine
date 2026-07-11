@@ -239,7 +239,7 @@ def _remesh_voxel(bm, voxel_size, adaptivity=0.0, decimate=1.0):
     bpy.data.meshes.remove(out)
 
 
-def _clip_chunks(bm, rng, count, depth, tilt=0.16):
+def _clip_chunks(bm, rng, count, depth, tilt=0.035):
     """Chisel the rough ENDS of the brick. A near LENGTH-axis plane, only
     slightly rotated (small tolerance in the two perpendicular directions), trims
     one end inward -- so the brick keeps its full HEIGHT and WIDTH (only its
@@ -257,8 +257,10 @@ def _clip_chunks(bm, rng, count, depth, tilt=0.16):
         s = 1.0 if rng.random() < 0.5 else -1.0          # +X or -X end
         p = allco[int(np.argmax(s * allco[:, 0]))]       # the extreme end vertex
         nrm = np.array([s, 0.0, 0.0])                    # length-axis normal ...
-        nrm[1] = float(rng.normal(0.0, tilt))            # ... only slightly rotated
-        nrm[2] = float(rng.normal(0.0, tilt))
+        # ... rotated only a hair off axis: `tilt` is the max off-axis tangent
+        # (tan(2 deg) ~= 0.035), so a chisel shears at most ~2 degrees.
+        nrm[1] = float(rng.uniform(-tilt, tilt))
+        nrm[2] = float(rng.uniform(-tilt, tilt))
         nrm /= np.linalg.norm(nrm) + 1e-12
         plane_co = p - nrm * depth                       # trim the end inward
         bmesh.ops.bisect_plane(bm, geom=list(bm.verts) + list(bm.edges)
@@ -471,13 +473,45 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85):
     # Flatten with bounds: cell cores (small distance) map to full depth, and
     # anything past the band clamps flat. Negative -> pits bite inward. Gentle
     # slope (wide band, shallow depth) so pits are soft dishes, not spikes.
+    pit_depth = mn * 0.022 * micro
     pit = nd('ShaderNodeMapRange', 500, -300)
     pit.clamp = True
     pit.inputs['From Min'].default_value = 0.0
     pit.inputs['From Max'].default_value = 0.55
-    pit.inputs['To Min'].default_value = -mn * 0.022 * micro
+    pit.inputs['To Min'].default_value = -pit_depth
     pit.inputs['To Max'].default_value = 0.0
     links.new(prev, pit.inputs['Value'])
+
+    # Per-facet variation: sample a noise field by the surface NORMAL (shifted by
+    # the per-brick seed) so the pitting amount varies from facet to facet -- some
+    # facets are heavily pitted, others barely -- instead of being uniform. Then
+    # clamp the modulated pit so it can never exceed the intended depth.
+    fnrm = nd('GeometryNodeInputNormal', 300, -560)
+    fscl = nd('ShaderNodeVectorMath', 460, -540)
+    fscl.operation = 'SCALE'
+    fscl.inputs['Scale'].default_value = 3.5
+    links.new(fnrm.outputs['Normal'], fscl.inputs[0])
+    foff = nd('ShaderNodeVectorMath', 560, -540)
+    foff.operation = 'ADD'
+    foff.inputs[1].default_value = seed_offset
+    links.new(fscl.outputs['Vector'], foff.inputs[0])
+    fnoise = nd('ShaderNodeTexNoise', 660, -540)
+    fnoise.noise_dimensions = '3D'
+    fnoise.inputs['Scale'].default_value = 1.0
+    fnoise.inputs['Detail'].default_value = 1.0
+    links.new(foff.outputs['Vector'], fnoise.inputs['Vector'])
+    fvar = nd('ShaderNodeMapRange', 820, -540)
+    fvar.inputs['To Min'].default_value = 0.08   # near-zero pitting on some facets
+    fvar.inputs['To Max'].default_value = 1.0
+    links.new(fnoise.outputs['Fac'], fvar.inputs['Value'])
+    pit_mod = nd('ShaderNodeMath', 660, -300)
+    pit_mod.operation = 'MULTIPLY'
+    links.new(pit.outputs['Result'], pit_mod.inputs[0])
+    links.new(fvar.outputs['Result'], pit_mod.inputs[1])
+    pit_clamp = nd('ShaderNodeClamp', 820, -300)
+    pit_clamp.inputs['Min'].default_value = -pit_depth
+    pit_clamp.inputs['Max'].default_value = 0.0
+    links.new(pit_mod.outputs['Value'], pit_clamp.inputs['Value'])
 
     # Low-frequency fBm grain (few octaves) riding on top of the pits.
     grain = nd('ShaderNodeTexNoise', 100, 300)
@@ -491,10 +525,10 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85):
     gmap.inputs['To Max'].default_value = mn * 0.014 * micro
     links.new(grain.outputs['Fac'], gmap.inputs['Value'])
 
-    # Sum grain + pits -> raw scalar displacement.
-    disp = nd('ShaderNodeMath', 660, 0); disp.operation = 'ADD'
+    # Sum grain + per-facet-modulated pits -> raw scalar displacement.
+    disp = nd('ShaderNodeMath', 980, 0); disp.operation = 'ADD'
     links.new(gmap.outputs['Result'], disp.inputs[0])
-    links.new(pit.outputs['Result'], disp.inputs[1])
+    links.new(pit_clamp.outputs['Result'], disp.inputs[1])
 
     # Broad low-frequency envelope: modulates amplitude across the brick so some
     # patches stay near-smooth while others are rougher -> non-uniform relief.
@@ -532,9 +566,34 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85):
     return ng
 
 
+def _clamp_bbox(bm, half, radius):
+    """Absolute cap on vertex COORDINATES: clamp every vertex into the initial
+    box (half-extents ``half`` = (length, width, height)/2) grown by ``radius``
+    (a few mm). Sculpt/crack passes can only recess or lightly bump within this
+    envelope, never balloon the brick into a lump."""
+    lx, ly, lz = half[0] + radius, half[1] + radius, half[2] + radius
+    for v in bm.verts:
+        v.co.x = min(max(v.co.x, -lx), lx)
+        v.co.y = min(max(v.co.y, -ly), ly)
+        v.co.z = min(max(v.co.z, -lz), lz)
+
+
+def _bake_modifiers(obj):
+    """Apply the object's current modifier stack into a plain mesh, in place."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    baked = bpy.data.meshes.new_from_object(obj.evaluated_get(dg))
+    obj.modifiers.clear()
+    old = obj.data
+    obj.data = baked
+    if old.users == 0:
+        bpy.data.meshes.remove(old)
+    return baked
+
+
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 edge_chip=0.007, corner_chip=0.02, detail=3, refine=0.25,
-                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.6,
+                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.45,
+                bounds_radius=0.003, final_decimate=0.5,
                 micro=1.0, micro_env=0.85, micro_voxel_div=85.0, collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
@@ -563,16 +622,21 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
         (mn / 26.0, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.30, 0.34)),
     ][:max(1, detail)]
     ns = len(schedule)
+    half = (0.5 * length, 0.5 * width, 0.5 * height)
     for stage, (vox, npl, tilt, iters, mdisp, t0, t1, mix) in enumerate(schedule):
         # Stochastic end-chisel pass BEFORE the remesh, annealed down per stage.
         cw = (ns - stage) / ns
         nclip = int(round(3.0 * chip * cw))
         if nclip > 0:
             _clip_chunks(bm, rng, count=nclip, depth=mn * 0.16 * cw)
-        _remesh_voxel(bm, vox, decimate=decimate)
+        # Decimate harder on the first (coarsest) stage so the base is crisply
+        # faceted rather than lumpy; ease off on the finer stages.
+        dec = max(0.2, decimate * 0.65) if stage == 0 else decimate
+        _remesh_voxel(bm, vox, decimate=dec)
         _facet_sculpt(bm, rng, n_planes=npl, tilt=tilt, iters=iters,
                       pull=0.45, sharp=0.38, smooth=0.42, mix=mix,
                       temp0=t0, temp1=t1, maxdisp=mdisp, feature=1.0)
+    _clamp_bbox(bm, half, bounds_radius)     # cap Phase-A bulges to bbox + radius
 
     # --- Crack pass 1: subtle, ABSOLUTELY bounded, before the fine pass so it
     #     gets weathered down by Phase B (hairline/healed cracks) ---
@@ -605,6 +669,7 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                vor_scale=48.0, vor_bias=0.4, wander=0.4, corner_bias=3.0,
                profile=2.4, maxdisp=mn * 0.055)
 
+    _clamp_bbox(bm, half, bounds_radius)     # final absolute coordinate cap
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
@@ -612,20 +677,26 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     obj = bpy.data.objects.new(name, mesh)
     (collection or bpy.context.scene.collection).objects.link(obj)
 
-    # --- Micro-scale detail phase: added as MODIFIERS (not applied) so the very
-    #     fine remesh the displacement needs can be DISABLED IN VIEWPORT for a
-    #     fast coarse preview, while render/bake evaluates it and resolves the
-    #     micro detail. Order: fine remesh -> geometry-nodes displacement. ---
+    # --- Micro-scale detail phase: a fine voxel remesh (so the displacement can
+    #     resolve) then a geometry-nodes displacement (grain + per-facet pitting).
+    #     These are baked in below rather than left as live modifiers. ---
     if micro > 0.0:
         fine = obj.modifiers.new("micro_remesh", 'REMESH')
         fine.mode = 'VOXEL'
         fine.voxel_size = mn / micro_voxel_div      # finer than any build stage
         fine.adaptivity = 0.0
-        fine.show_viewport = False                  # off in viewport, on in render
         seed_off = tuple(float(x) for x in rng.uniform(-50.0, 50.0, 3))
         ng = _micro_node_group(name + "_micro", mn, micro, seed_off,
                                env_strength=micro_env)
         gn = obj.modifiers.new("micro_detail", 'NODES')
         gn.node_group = ng
-        gn.show_viewport = False
+        # Realise the micro geometry, then collapse-decimate to ~half and realise
+        # again -- shedding the dense voxel tessellation while keeping the detail.
+        _bake_modifiers(obj)
+        dec = obj.modifiers.new("halve", 'DECIMATE')
+        dec.decimate_type = 'COLLAPSE'
+        dec.ratio = final_decimate
+        _bake_modifiers(obj)
+        if ng.users == 0:                    # drop the now-orphaned micro group
+            bpy.data.node_groups.remove(ng)
     return obj

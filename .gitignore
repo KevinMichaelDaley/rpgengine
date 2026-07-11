@@ -34,3 +34,6 @@ jacobian_dump.txt
 # Python virtualenvs (uv) — texsynth offline tooling
 .venv/
 *.venv/
+
+# Baked brick prefab library (large high-poly OBJs, regenerate via gen_brick_prefabs.py)
+assets/arch/proc/prefabs/
