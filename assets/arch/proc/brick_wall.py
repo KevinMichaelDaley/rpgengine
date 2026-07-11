@@ -327,6 +327,7 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
         cursor_b = x_start      # running right *bbox edge* X
         prev = None
         first_tf = None
+        placed = []             # this course's instances, in order, for justify
         guard = 0
         # Interior bricks fill up to where the closing brick's left face will sit
         # (one tile on from the first brick's left face).
@@ -363,14 +364,28 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.003, bed=0.006,
             loc_y = -0.5 * (lo[1] + hi[1]) + float(
                 rng.uniform(-depth_jitter, depth_jitter))
             loc = (loc_x, loc_y, loc_z)
-            _place(collection, f"{name}_{c:02d}_{count:04d}", mesh,
-                   o["flip"], rot, loc)
+            inst = _place(collection, f"{name}_{c:02d}_{count:04d}", mesh,
+                          o["flip"], rot, loc)
+            placed.append(inst)
             if first_tf is None:
                 first_tf = (mesh, o["flip"], rot, loc)
             cursor = loc_x + dr        # advance right support face
             cursor_b = loc_x + hi[0]   # advance right bbox edge
             prev = o
             count += 1
+
+        # Justify the course: whatever gap remains between the last brick and the
+        # closing position is distributed evenly across every head joint, so the
+        # joints just widen slightly instead of leaving a hole before the closer.
+        # The first brick stays put (it defines the seam); brick k shifts right by
+        # k * slack / m so the last brick meets the closer with one more joint.
+        m = len(placed)
+        if seamless and m > 0:
+            slack = limit - cursor
+            if slack > 0.0:
+                per = slack / m
+                for k, inst in enumerate(placed):
+                    inst.location.x += k * per
 
         # Seamless closer: duplicate the first brick exactly one tile later so
         # the [0, tile_width] crop repeats continuously.

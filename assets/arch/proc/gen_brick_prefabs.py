@@ -54,7 +54,7 @@ ASPECTS = [
     (0.13, 0.09, 0.11),
 ]
 
-N_PER = int(os.environ.get("PREFAB_N", "60"))
+N_PER = int(os.environ.get("PREFAB_N", "10"))
 ASPECT_LIMIT = int(os.environ.get("PREFAB_ASPECTS", str(len(ASPECTS))))
 OUT = os.environ.get("PREFAB_OUT", os.path.join(HERE, "prefabs", "bricks"))
 
