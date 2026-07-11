@@ -19,6 +19,8 @@ layer maps the whole surface into one box of the field -- materials do not tile.
 Field images live under assetsrc/materials/<mat>/fields/.
 """
 
+import os
+
 import bpy
 import numpy as np
 
@@ -398,4 +400,173 @@ def build_layered_material(name, layers, normal_map=None, detail=0.4,
     nt.links.new(color, bsdf.inputs["Base Color"])
     nt.links.new(rough, bsdf.inputs["Roughness"])
     _apply_normal(nt, bsdf, 1500, -1100, color, normal_map, detail)
+    return mat
+
+
+# ---------------------------------------------------------------------------
+# Masonry material: tiling brick wall from baked maps + limestone/mortar fields
+# ---------------------------------------------------------------------------
+# Unlike the field-box materials above (one [0,1] box per small object), a wall
+# is a TILING surface: the mesoscale maps baked from the high-poly wall
+# (rpg-ilmc: mask / height / normal / ao, a seamless [0,W]x[0,H] tile) and the
+# limestone/mortar fields are all sampled on WORLD-SCALED UVs with REPEAT, so the
+# stones come out at real size on any object (here an arched windowsill).
+
+def _mapping(nt, x, y, uv_out, span_x, span_y, rot_deg=0.0):
+    """UV -> a Mapping scaled so one repeat spans (span_x, span_y) metres, with an
+    optional Z rotation (to align brick coursing horizontal to the UV island)."""
+    m = nt.nodes.new("ShaderNodeMapping")
+    m.location = (x, y)
+    m.inputs["Scale"].default_value = (1.0 / span_x, 1.0 / span_y, 1.0)
+    m.inputs["Rotation"].default_value = (0.0, 0.0, np.radians(rot_deg))
+    nt.links.new(uv_out, m.inputs["Vector"])
+    return m.outputs["Vector"]
+
+
+def _tex(nt, x, y, path, colorspace, mapping_out, extension='REPEAT'):
+    """An image texture sampled through ``mapping_out``. Returns the node."""
+    img = nt.nodes.new("ShaderNodeTexImage")
+    img.location = (x, y)
+    img.image = _field_image(path, colorspace)
+    img.extension = extension
+    nt.links.new(mapping_out, img.inputs["Vector"])
+    return img
+
+
+def _tint(nt, x, y, color_socket, tint):
+    mul = nt.nodes.new("ShaderNodeMixRGB")
+    mul.location = (x, y)
+    mul.blend_type = 'MULTIPLY'
+    mul.inputs["Fac"].default_value = 1.0
+    mul.inputs["Color2"].default_value = (*tint, 1.0)
+    nt.links.new(color_socket, mul.inputs["Color1"])
+    return mul.outputs["Color"]
+
+
+def _contrast(nt, x, y, color_socket, contrast, bright=0.0):
+    """Bright/Contrast node (skipped when both are zero)."""
+    if contrast == 0.0 and bright == 0.0:
+        return color_socket
+    bc = nt.nodes.new("ShaderNodeBrightContrast")
+    bc.location = (x, y)
+    bc.inputs["Bright"].default_value = bright
+    bc.inputs["Contrast"].default_value = contrast
+    nt.links.new(color_socket, bc.inputs["Color"])
+    return bc.outputs["Color"]
+
+
+def _bw_scale(nt, x, y, color_socket, scale):
+    """Grayscale a (roughness) image and scale it -> scalar roughness socket."""
+    bw = nt.nodes.new("ShaderNodeRGBToBW")
+    bw.location = (x, y)
+    nt.links.new(color_socket, bw.inputs["Color"])
+    m = nt.nodes.new("ShaderNodeMath")
+    m.operation = 'MULTIPLY'
+    m.location = (x + 160, y)
+    m.inputs[1].default_value = scale
+    nt.links.new(bw.outputs["Val"], m.inputs[0])
+    return m.outputs["Value"]
+
+
+def build_masonry_material(name, mask, normal, ao, height,
+                           brick="limestone", mortar="mortar",
+                           tile=(4.5, 2.6), field_m=2.6,
+                           brick_tint=(0.58, 0.52, 0.42),
+                           mortar_tint=(0.66, 0.66, 0.63),
+                           brick_contrast=0.28, mortar_contrast=0.1,
+                           mask_hardness=0.9, ao_strength=0.9,
+                           rough_brick=0.72, rough_mortar=0.94,
+                           detail=0.2, disp_scale=0.0, rot_deg=0.0,
+                           root=FIELD_ROOT):
+    """A tiling masonry material: limestone bricks + mortar joints selected by the
+    baked mask, with the baked normal + AO, roughness from the material fields.
+
+    mask/normal/ao/height -- the seamless baked wall maps (PNG paths); sampled at
+        the ``tile`` (metres) scale so bricks come out real-size.
+    brick/mortar          -- field material keys (assetsrc/materials/<k>/fields).
+    field_m               -- metres one limestone/mortar field patch spans (kept
+        large so the aperiodic field does not visibly wrap on a small object).
+    disp_scale>0          -- also drive true displacement from the height map.
+    """
+    def fld(k, ch):
+        return os.path.join(root, k, "fields", f"{k}_{ch}_field.png")
+
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (2600, 0)
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (2300, 0)
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    tc.location = (-2200, 0)
+    uv = tc.outputs["UV"]
+    map_wall = _mapping(nt, -2000, 250, uv, tile[0], tile[1], rot_deg)
+    map_field = _mapping(nt, -2000, -250, uv, field_m, field_m, rot_deg)
+
+    # limestone + mortar albedo/roughness (field-scale), each contrast-boosted
+    # then tinted (limestone darker/higher-contrast; mortar a distinct tone).
+    b_alb = _tint(nt, -1400, 460, _contrast(
+        nt, -1560, 460, _tex(nt, -1700, 460, fld(brick, "albedo"), "sRGB",
+                             map_field).outputs["Color"], brick_contrast),
+        brick_tint)
+    m_alb = _tint(nt, -1400, -120, _contrast(
+        nt, -1560, -120, _tex(nt, -1700, -120, fld(mortar, "albedo"), "sRGB",
+                              map_field).outputs["Color"], mortar_contrast),
+        mortar_tint)
+    b_r = _bw_scale(nt, -1400, 200,
+                    _tex(nt, -1700, 200, fld(brick, "rough"), "Non-Color",
+                         map_field).outputs["Color"], rough_brick)
+    m_r = _bw_scale(nt, -1400, -380,
+                    _tex(nt, -1700, -380, fld(mortar, "rough"), "Non-Color",
+                         map_field).outputs["Color"], rough_mortar)
+
+    # brick-vs-mortar selector from the baked mask (wall-scale, hardened binary)
+    mask_c = _tex(nt, -1700, -640, mask, "Non-Color", map_wall).outputs["Color"]
+    fac = _sharpen(nt, -1400, -640, mask_c, mask_hardness)   # 1 = brick, 0 = joint
+    color = _mix_color(nt, -900, 300, m_alb, b_alb, fac)
+    rough = _mix_float(nt, -900, -250, m_r, b_r, fac)
+
+    # baked ambient occlusion multiplied into the base colour
+    ao_c = _tex(nt, -900, 560, ao, "Non-Color", map_wall).outputs["Color"]
+    aomix = nt.nodes.new("ShaderNodeMixRGB")
+    aomix.location = (-500, 400)
+    aomix.blend_type = 'MULTIPLY'
+    aomix.inputs["Fac"].default_value = ao_strength
+    nt.links.new(color, aomix.inputs["Color1"])
+    nt.links.new(ao_c, aomix.inputs["Color2"])
+    nt.links.new(aomix.outputs["Color"], bsdf.inputs["Base Color"])
+    nt.links.new(rough, bsdf.inputs["Roughness"])
+
+    # baked mesoscale normal, refined by a micro detail bump off the albedo
+    n_img = _tex(nt, -900, -560, normal, "Non-Color", map_wall)
+    nmap = nt.nodes.new("ShaderNodeNormalMap")
+    nmap.location = (-620, -560)
+    nt.links.new(n_img.outputs["Color"], nmap.inputs["Color"])
+    if detail > 0.0:
+        bw = nt.nodes.new("ShaderNodeRGBToBW")
+        bw.location = (1900, -700)
+        nt.links.new(aomix.outputs["Color"], bw.inputs["Color"])
+        bump = nt.nodes.new("ShaderNodeBump")
+        bump.location = (2080, -600)
+        bump.inputs["Strength"].default_value = detail
+        nt.links.new(bw.outputs["Val"], bump.inputs["Height"])
+        nt.links.new(nmap.outputs["Normal"], bump.inputs["Normal"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    else:
+        nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+
+    # optional true displacement from the baked height
+    if disp_scale > 0.0 and height:
+        h_img = _tex(nt, 1900, -1050, height, "Non-Color", map_wall)
+        disp = nt.nodes.new("ShaderNodeDisplacement")
+        disp.location = (2200, -1050)
+        disp.inputs["Scale"].default_value = disp_scale
+        disp.inputs["Midlevel"].default_value = 0.5
+        nt.links.new(h_img.outputs["Color"], disp.inputs["Height"])
+        nt.links.new(disp.outputs["Displacement"], out.inputs["Displacement"])
+        mat.cycles.displacement_method = 'BOTH'
     return mat
