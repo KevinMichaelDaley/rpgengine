@@ -87,6 +87,42 @@ def _adjacency(bm):
     return ii, jj, deg
 
 
+def _tri_indices(bm):
+    """Fan-triangulated (T,3) vertex-index array so vertex normals can be
+    recomputed from the live positions in numpy (faces may be quads or tris)."""
+    tris = []
+    for f in bm.faces:
+        vs = [vt.index for vt in f.verts]
+        for k in range(1, len(vs) - 1):
+            tris.append((vs[0], vs[k], vs[k + 1]))
+    return np.asarray(tris, dtype=np.intp)
+
+
+def _vertex_normals(v, tri, n):
+    """Area-weighted vertex normals from the CURRENT positions (bincount scatter).
+    Called every sculpt iteration so the normal-driven kernels track the geometry
+    as they move it, instead of steering by the pre-move (or post-decimate) normals."""
+    e1 = v[tri[:, 1]] - v[tri[:, 0]]
+    e2 = v[tri[:, 2]] - v[tri[:, 0]]
+    fn = np.cross(e1, e2)                       # magnitude ~ 2*triangle area
+    idx = tri.ravel()
+    vn = np.empty((n, 3))
+    for c in range(3):
+        vn[:, c] = np.bincount(idx, weights=np.repeat(fn[:, c], 3), minlength=n)
+    return vn / (np.linalg.norm(vn, axis=1, keepdims=True) + 1e-12)
+
+
+def _smooth_normals(vn, ii, jj, deg, iters):
+    """Relax the NORMAL field over the 1-ring graph (neighbour-average + renormalise),
+    WITHOUT moving any vertex. Evens out the blocky voxel/decimate normals the remesh
+    leaves so the normal-driven kernels dress against a smooth normal field; the true
+    arrises survive because their two face clusters keep pulling the normal apart."""
+    for _ in range(max(0, iters)):
+        vn = vn + _laplacian(vn, ii, jj, deg)           # = mean of neighbour normals
+        vn /= np.linalg.norm(vn, axis=1, keepdims=True) + 1e-12
+    return vn
+
+
 def _laplacian(v, ii, jj, deg):
     """Umbrella Laplacian delta_i = mean(neighbours) - v_i (a smoothing signal;
     its magnitude approximates local curvature). bincount is far faster here
@@ -176,9 +212,11 @@ def _box_edge_tags(v, band=0.72):
 
 def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
                   pull=0.5, sharp=0.3, smooth=0.5, pinch=0.4, flatten=0.4,
-                  flat_normal=0.5, mix=(0.5, 0.2, 0.12, 0.12), temp0=1.0,
+                  flat_normal=0.5, edge_sharp=0.38, smooth_flat_pow=1.0,
+                  smooth_feature=1.0, norm_smooth_iters=2,
+                  mix=(0.5, 0.2, 0.12, 0.12), temp0=1.0,
                   temp1=0.1, maxdisp=0.03, feature=1.0, corner_preserve=0.75,
-                  box_preserve=0.7, box_run_reduce=0.5, nfl_axis_swap=0.38,
+                  box_preserve=0.7, box_run_reduce=0.5, nfl_axis_swap=0.28,
                   axis_rand=0.15, kernel_noise=None):
     """Sculpt hewn facets on the coupled vertex network with MULTIPLE graph
     kernels chosen stochastically per vertex (KMD's scheme), under a SIMULATED-
@@ -207,11 +245,16 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
     v0 = v.copy()
     bm.normal_update()
     vn = np.array([vt.normal for vt in bm.verts], dtype=np.float64)
+    tri = _tri_indices(bm)                      # for per-iteration normal recompute
     n = len(v)
+    vn = _smooth_normals(vn, ii, jj, deg, norm_smooth_iters)   # relax remesh normals
     P, Nn = _facet_planes(v, vn, rng, n_planes, tilt)
     offs = (P * Nn).sum(1)
     corner = _corner_tags(vn, ii, jj, deg)              # persistent crease TAG
     box_edge, box_near = _box_edge_tags(v0)             # brick's principal arrises
+    # The 8 box CORNERS are where all three axes sit near a face, so the SMALLEST
+    # per-axis nearness is high only there (on an arris the run axis is far -> low).
+    box_corner = np.sort(box_near, axis=1)[:, 0]
     # Anisotropic smoothing weight for the box arrises: an edge RUNS along its
     # least-near axis; smoothing ALONG that axis straightens the edge (fine),
     # smoothing across it (the two most-near axes) rounds it (bad). So keep the
@@ -245,6 +288,14 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         t = _facet_targets(v, P, Nn, offs)
         d = _laplacian(v, ii, jj, deg)
         curv = np.linalg.norm(d, axis=1)
+        # Refresh vertex normals from the moved geometry so the normal-driven
+        # kernels (axis-flatten, normal-flatten) act on current normals, not the
+        # stale ones left over from the previous pass / the last decimate -- then
+        # relax the normal field (normals only, no vertex motion) so the remesh
+        # faceting doesn't steer the dressing.
+        if it > 0:
+            vn = _smooth_normals(_vertex_normals(v, tri, n), ii, jj, deg,
+                                 norm_smooth_iters)
         fscale = feature * (np.median(curv) + 1e-9)
         wflat = 1.0 / (1.0 + (curv / fscale) ** 2)      # 1 flat .. 0 sharp arris
         r = rfield if rfield is not None else rng.random(n)
@@ -256,16 +307,21 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         p1 = p0 + mix[1] * temp
         p2 = p1 + mix[2] * temp
         p3 = p2 + mix[3] * temp
-        # Split the smoothing remainder: half stays isotropic smoothing, half is
-        # a flatten-ALONG-THE-NORMAL kernel (removes only the Laplacian's normal
-        # component -> dresses the face flat WITHOUT the tangential pull that
-        # rounds edges). This trades away half the rounding-prone smoothing.
-        p4 = p3 + (1.0 - p3) * 0.5
+        # Edge-sharpen band (mix[4], optional -> 0 if the mix has only 4 entries):
+        # an anti-Laplacian push weighted to EXISTING creases, crisping arrises.
+        mix4 = mix[4] if len(mix) > 4 else 0.0
+        pes = p3 + mix4 * temp
+        # Split the smoothing remainder: most is a flatten-ALONG-THE-NORMAL kernel
+        # (removes only the Laplacian's normal component -> dresses the face flat
+        # WITHOUT the tangential pull that rounds edges), the rest isotropic
+        # smoothing. This trades away most of the rounding-prone smoothing.
+        p4 = pes + (1.0 - pes) * 0.58
         fac = (r < p0)[:, None]
         shp = ((r >= p0) & (r < p1))[:, None]
         pin_sel = (r >= p1) & (r < p2)
         flt = (r >= p2) & (r < p3)
-        nfl_sel = (r >= p3) & (r < p4)
+        es_sel = (r >= p3) & (r < pes)
+        nfl_sel = (r >= pes) & (r < p4)
         smo_sel = (r >= p4)
         # In the first third of the passes, redirect a fraction of the normal-
         # flatten verts to AXIS-flatten instead: early passes then bias toward
@@ -308,11 +364,26 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         # dresses faces without rounding/shrinking edges the way smoothing does.
         dn = (d * vn).sum(1, keepdims=True)
         v += nfl * (flat_normal * s) * wflat[:, None] * dn * vn
-        # Feature-preserving smoothing: gated by wflat so already-sharp arrises
-        # are not smoothed away, weakened at cold temp (s carries strength), and
+        # Edge-sharpen: anti-Laplacian push (v -= k*d moves AWAY from the neighbour
+        # mean) CONCENTRATED on existing creases via the edge weight (1 - wflat),
+        # so it re-crisps the arrises the voxel remesh rounded while leaving the
+        # flat faces untouched (unlike the general `sharp`, which acts everywhere).
+        # Keep edge-sharpen OFF the 8 box corners: sharpening there just spikes the
+        # corner outward along the diagonal and, once bbox-clamped, pinches it into
+        # a welt. Full strength stays on the arris runs (box_corner ~ 0 there).
+        es = (es_sel & (rng.random(n) > box_corner * corner_preserve))[:, None]
+        v -= es * (edge_sharp * s) * (1.0 - wflat)[:, None] * d
+        # Feature-preserving smoothing: gated by its OWN flatness weight. A larger
+        # smooth_feature widens the flatness scale (raises the angular threshold),
+        # so mildly-angular decimation facets read as flat and get smoothed while
+        # the true near-90 arrises stay far above it; smooth_flat_pow then restricts
+        # it to only the nearly-flat verts. Weakened at cold temp (s), and
         # DOWNWEIGHTED anisotropically on box arrises (smooth_aniso) -- full along
-        # the edge, reduced across it, so edges straighten without rounding.
-        v += smo * (smooth * s) * wflat[:, None] * (d * smooth_aniso)
+        # the edge, reduced across it, so it never smooths transverse to a corner.
+        wflat_s = 1.0 / (1.0 + (curv / (fscale * smooth_feature)) ** 2)
+        if smooth_flat_pow != 1.0:
+            wflat_s = wflat_s ** smooth_flat_pow
+        v += smo * (smooth * s) * wflat_s[:, None] * (d * smooth_aniso)
         # bound the deformation so it can't run away from the block silhouette
         disp = v - v0
         mag = np.linalg.norm(disp, axis=1)
@@ -726,6 +797,28 @@ def _clamp_bbox(bm, half, radius):
         v.co.z = min(max(v.co.z, -lz), lz)
 
 
+def _shade_auto_smooth(obj, angle_deg):
+    """Smooth-shade the mesh but keep hard edges wherever the dihedral angle is at
+    least ``angle_deg`` (the true ~90-degree brick arrises): mark those edges sharp
+    and every face smooth. Blender derives the split corner normals from that
+    directly (no modifier), so the remesh faceting shades smooth while the arrises
+    stay crisp -- and, being plain mesh data, it round-trips through OBJ export."""
+    import math
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    thr = math.radians(angle_deg)
+    for f in bm.faces:
+        f.smooth = True
+    bm.normal_update()
+    for e in bm.edges:
+        lf = e.link_faces
+        e.smooth = (len(lf) == 2 and lf[0].normal.angle(lf[1].normal, 0.0) < thr)
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
+
 def _bake_modifiers(obj):
     """Apply the object's current modifier stack into a plain mesh, in place."""
     dg = bpy.context.evaluated_depsgraph_get()
@@ -741,11 +834,11 @@ def _bake_modifiers(obj):
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 edge_chip=0.007, corner_chip=0.02, chamfer_frac=0.6, detail=3,
                 refine=0.25,
-                chip=0.5, cracks=0.6, cracks2=0.5, decimate=0.3, decimate0=0.4,
-                adaptivity=0.1, disp_scale=0.16,
-                bounds_radius=0.006, final_decimate=0.42, micro=0.65, micro_env=0.9,
-                micro_quant=0.008, micro_floor=0.025, micro_voxel_div=110.0,
-                collection=None):
+                chip=0.5, cracks=0.72, cracks2=0.5, decimate=0.42, decimate0=0.4,
+                adaptivity=0.1, fine_div=160.0, fine_adaptivity=0.6, disp_scale=0.19,
+                bounds_radius=0.006, final_decimate=0.42, micro=0.8, micro_env=0.9,
+                micro_quant=0.0, micro_floor=0.032, micro_voxel_div=220.0,
+                auto_smooth_deg=60.0, collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
     Phase A: box -> seed-driven chipping -> multi-resolution loop (voxel-remesh
@@ -771,9 +864,9 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # Voxel sizes are FINE (coarse voxels bevel the arrises); the strong decimate
     # below collapses the extra polys back down while keeping the sharp edges.
     schedule = [
-        (mn / 9.0,  16, 0.28, 16, md0,        1.00, 0.15, (0.44, 0.24, 0.12, 0.16)),
-        (mn / 20.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.42, 0.24, 0.12, 0.16)),
-        (mn / 40.0, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.40, 0.24, 0.12, 0.16)),
+        (mn / 9.0,  16, 0.28, 16, md0,        1.00, 0.15, (0.40, 0.16, 0.10, 0.14, 0.16)),
+        (mn / 20.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.38, 0.16, 0.10, 0.14, 0.16)),
+        (mn / fine_div, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.16, 0.10, 0.14, 0.16)),
     ][:max(1, detail)]
     ns = len(schedule)
     half = (0.5 * length, 0.5 * width, 0.5 * height)
@@ -787,11 +880,15 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
         # base loses the geometry later stages need, ending up too smooth; too
         # gentle and it stays lumpy. Finer stages use the base `decimate`.
         dec = decimate0 if stage == 0 else decimate
-        _remesh_voxel(bm, vox, adaptivity=adaptivity, decimate=dec)
+        # Finest stage: a much smaller voxel resolves the arrises, and a high
+        # adaptivity simplifies the (now huge) flat regions back down so the crisp
+        # convex edges survive without an explosion in poly count.
+        adap = fine_adaptivity if stage == ns - 1 else adaptivity
+        _remesh_voxel(bm, vox, adaptivity=adap, decimate=dec)
         _facet_sculpt(bm, rng, n_planes=npl, tilt=tilt, iters=iters,
                       pull=0.45, sharp=0.38, smooth=0.26, pinch=0.4, flatten=0.7,
                       mix=mix, temp0=t0, temp1=t1, maxdisp=mdisp, feature=1.0,
-                      corner_preserve=0.92)
+                      smooth_feature=1.3, corner_preserve=0.92)
     _clamp_bbox(bm, half, bounds_radius)     # cap Phase-A bulges to bbox + radius
 
     # --- Crack pass 1: subtle, ABSOLUTELY bounded, before the fine pass so it
@@ -802,7 +899,7 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                width=mn * 0.052, width_var=0.8, width_freq=45.0,
                vor_scale=34.0, vor_bias=0.35, wander=0.45, corner_bias=2.5,
                profile=1.45, maxdisp=mn * 0.024)
-        _remesh_voxel(bm, mn / 40.0, adaptivity=adaptivity,
+        _remesh_voxel(bm, mn / fine_div, adaptivity=fine_adaptivity,
                       decimate=decimate)                  # settle the cracks in
 
     # --- Phase B: fine refinement on the faceted base (topology kept) ---
@@ -812,8 +909,9 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # magnitude is the `refine` parameter (scales the displacement bound).
     if refine > 0.0:
         _facet_sculpt(bm, rng, n_planes=130, tilt=0.5, iters=6,
-                      pull=0.30, sharp=0.48, smooth=0.14, pinch=0.35, flatten=0.45,
-                      mix=(0.30, 0.40, 0.10, 0.14), temp0=0.22, temp1=0.05,
+                      pull=0.30, sharp=0.48, smooth=0.24, pinch=0.35, flatten=0.45,
+                      smooth_flat_pow=2.0, smooth_feature=1.5,
+                      mix=(0.22, 0.26, 0.08, 0.10, 0.16), temp0=0.22, temp1=0.05,
                       maxdisp=md0 * 0.08 * refine, feature=1.0,
                       corner_preserve=0.95, kernel_noise=70.0)
     _graph_smooth(bm, iters=1, lam=0.06, feature=1.0)   # barely-there settle
@@ -858,4 +956,6 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
         _bake_modifiers(obj)
         if ng.users == 0:                    # drop the now-orphaned micro group
             bpy.data.node_groups.remove(ng)
+    if auto_smooth_deg > 0.0:
+        _shade_auto_smooth(obj, auto_smooth_deg)
     return obj
