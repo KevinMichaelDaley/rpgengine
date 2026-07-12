@@ -587,32 +587,44 @@ def _voussoir_strip_uvs(obj, mat_index, strip):
         return
     lo, hi = sill_bbox if (deep and sill_bbox) else ((1.0, 1.0, 1.0),
                                                      (-1.0, -1.0, -1.0))
-    sill_loops = []                              # (loop, u, v) -- placed as its own
-    for f in bm.faces:                           # island below the strip afterwards
+    sill_loops = []                              # (loop, group_key, u, v)
+    for f in bm.faces:
         if f.material_index != mat_index:
             continue
         c = f.calc_center_median()
         in_sill = (lo[0] <= c.x <= hi[0] and lo[1] <= c.y <= hi[1]
                    and lo[2] <= c.z <= hi[2])
-        if in_sill:                              # box-project the sill by dominant axis
-            n = f.normal
+        if in_sill:                              # box-unfold: project each face by its
+            n = f.normal                         # dominant axis, group by axis+sign
             ax = max(range(3), key=lambda i: abs(n[i]))
+            key = (ax, 1 if n[ax] >= 0.0 else -1)
             for loop in f.loops:
                 p = loop.vert.co
-                u, v = ((p.x, p.z) if ax == 1
-                        else (p.x, p.y) if ax == 2 else (p.y, p.z))
-                sill_loops.append((loop, u, v))
+                u, v = ((p.y, p.z) if ax == 0
+                        else (p.x, p.z) if ax == 1 else (p.x, p.y))
+                sill_loops.append((loop, key, u, v))
         elif vstrip is not None:                 # copy the interpolated strip UVs
             for loop in f.loops:
                 loop[active].uv = loop[vstrip].uv
     if sill_loops:
-        # Put the whole sill box in its OWN UV island, translated clear of the strip:
-        # U from 0, and V entirely BELOW 0 (the strip lives at V >= 0), so the two
-        # never overlap in [0,1] space -- ready for separate packing / bake.
-        umin = min(u for _, u, _ in sill_loops)
-        vmax = max(v for _, _, v in sill_loops)
-        for loop, u, v in sill_loops:
-            loop[active].uv = (u - umin, v - vmax - 0.2)
+        # Unfold the sill box into its OWN island: each axis+sign group (front, back,
+        # left, right, top, bottom) is one contiguous chart, laid out in side-by-side
+        # COLUMNS so the groups never overlap each other, and the whole island sits
+        # entirely BELOW V=0 (the strip lives at V >= 0) so it is clear of the strip.
+        groups = {}
+        for _lp, key, u, v in sill_loops:
+            g = groups.setdefault(key, [1e30, -1e30, -1e30])   # umin, umax, vmax
+            g[0] = min(g[0], u)
+            g[1] = max(g[1], u)
+            g[2] = max(g[2], v)
+        vmax = max(g[2] for g in groups.values())
+        off, run, gap = {}, 0.0, 0.05
+        for key in sorted(groups):
+            g = groups[key]
+            off[key] = run - g[0]                # shift this group's umin to `run`
+            run += (g[1] - g[0]) + gap
+        for loop, key, u, v in sill_loops:
+            loop[active].uv = (u + off[key], v - vmax - 0.2)
     if vstrip is not None:
         bm.loops.layers.uv.remove(vstrip)        # drop the scratch layer before export
     bm.to_mesh(me)
