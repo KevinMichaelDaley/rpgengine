@@ -857,6 +857,58 @@ def _bevel_object(obj, face_pair_lists, size, style, segments, seed=None,
                 v.co.z = clamp_z
 
 
+def _weighted_normals(obj):
+    """Face-AREA-weighted custom split normals (the Weighted Normal modifier,
+    'Face Area', keep-sharp -- done as mesh data so it survives export). Each
+    corner's normal is the area-weighted average of the smooth-connected fan of
+    faces at that vertex, the fan bounded by the sharp edges _finish already
+    marked. Big flat faces dominate, so a small bevel eases the shading into a
+    soft roll instead of a hard arris, WITHOUT rounding the flats."""
+    from mathutils import Vector
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.faces.ensure_lookup_table()
+    bm.verts.ensure_lookup_table()
+    bm.normal_update()
+    area = [f.calc_area() for f in bm.faces]
+    fan_normal = {}                          # (face.index, vert.index) -> Vector
+    for v in bm.verts:
+        remaining = set(v.link_faces)
+        while remaining:
+            seed = remaining.pop()
+            if not seed.smooth:              # flat-shaded face: keep its own normal,
+                fan_normal[(seed.index, v.index)] = seed.normal.copy()  # never blend
+                continue
+            fan, stack = [seed], [seed]
+            while stack:                     # grow the fan across NON-sharp edges at v
+                f = stack.pop()
+                for e in f.edges:
+                    if v not in e.verts or not e.smooth or len(e.link_faces) != 2:
+                        continue
+                    other = (e.link_faces[0] if e.link_faces[1] is f
+                             else e.link_faces[1])
+                    if other in remaining and other.smooth:  # flats stay out of fans
+                        remaining.discard(other)
+                        fan.append(other)
+                        stack.append(other)
+            acc = Vector((0.0, 0.0, 0.0))
+            for f in fan:
+                acc += f.normal * area[f.index]
+            length = acc.length
+            nrm = (acc / length) if length > 1e-12 else seed.normal.copy()
+            for f in fan:
+                fan_normal[(f.index, v.index)] = nrm
+    bm.free()
+    loop_normals = [(0.0, 0.0, 0.0)] * len(me.loops)
+    for p in me.polygons:
+        for li in p.loop_indices:
+            n = fan_normal.get((p.index, me.loops[li].vertex_index))
+            loop_normals[li] = (n.x, n.y, n.z) if n is not None else tuple(p.normal)
+    me.normals_split_custom_set(loop_normals)
+    me.update()
+
+
 def _smooth_mesh(obj, angle):
     """Re-apply angle-based smoothing to a mesh object (after an operator that
     added faces, e.g. the reveal bevel)."""
@@ -929,6 +981,325 @@ def _warp_barrel(bm, radius, axis_height, concave=False, flat_below=False):
                     axis_height + r * math.sin(theta))
 
 
+def _loop_normals(points, closed):
+    """Outward unit (nx, nz) normals for an ordered XZ loop (closed) or path
+    (open) of ``points`` -- edge perpendiculars oriented away from the centroid,
+    then averaged per vertex (mitred corners). Same construction as
+    ``_opening_outline``, but taken off arbitrary points so a trim band can be
+    offset from the REAL (possibly splayed) opening verts rather than re-derived
+    parameters. The sill's ``splay`` dirs are horizontal, not the edge normal, so
+    this geometry-derived normal is what the band must use around the sill."""
+    n = len(points)
+    seg = n if closed else n - 1
+    cx = sum(p[0] for p in points) / n
+    cz = sum(p[1] for p in points) / n
+    edge_n = []
+    for i in range(seg):
+        j = (i + 1) % n
+        dx, dz = points[j][0] - points[i][0], points[j][1] - points[i][1]
+        length = math.hypot(dx, dz) or 1.0
+        nx, nz = -dz / length, dx / length
+        mx = 0.5 * (points[i][0] + points[j][0]) - cx      # away from centre
+        mz = 0.5 * (points[i][1] + points[j][1]) - cz
+        if nx * mx + nz * mz < 0.0:
+            nx, nz = -nx, -nz
+        edge_n.append((nx, nz))
+    units, raws = [], []
+    for i in range(n):
+        if closed:
+            e0, e1 = edge_n[(i - 1) % n], edge_n[i % seg]
+        elif i == 0:
+            e0 = e1 = edge_n[0]
+        elif i == n - 1:
+            e0 = e1 = edge_n[-1]
+        else:
+            e0, e1 = edge_n[i - 1], edge_n[i]
+        rx, rz = e0[0] + e1[0], e0[1] + e1[1]            # raw sum of edge normals
+        length = math.hypot(rx, rz) or 1.0
+        units.append((rx / length, rz / length))         # mitre bisector (unit)
+        raws.append((rx, rz))                            # reaches the square L-corner
+    return units, raws
+
+
+def _inset_flat_group(bm, faces, width, mat_index):
+    """Inset a group of coplanar faces IN-PLANE (no depth, no push) by ``width``,
+    leaving a thin border ring around a shrunken interior. The interior faces stay
+    dead flat; the border rings of the front/top/bottom groups meet at the sill's
+    arrises, and once the perimeter normals are face-weighted those thin rings roll
+    into a small soft bevel -- the manual, tear-proof equivalent of bevelling the
+    edge. Returns the interior faces (to be shaded flat). ``faces`` is modified in
+    place: its members become the shrunken interiors."""
+    faces = [f for f in faces if f.is_valid]
+    if not faces or width <= 0.0:
+        return list(faces), []
+    res = bmesh.ops.inset_region(bm, faces=faces, use_boundary=True,
+                                 use_even_offset=True, thickness=width, depth=0.0)
+    ring = list(res.get("faces", ()))
+    for f in ring:                           # the new border ring carries the material
+        f.material_index = mat_index
+    return [f for f in faces if f.is_valid], ring   # interiors, border ring
+
+
+def _front_trim_band(bm, verts, ring, closed, width, extrude=0.0, bevel=0.0,
+                     mat_index=1, square_idx=frozenset(), sill_idx=frozenset(),
+                     sill_extrude=0.0):
+    # sill_idx verts (the squared sill run) are lifted an extra ``sill_extrude``
+    # proud, with vertical step faces where they meet the shallower jamb band.
+    """Inset a trim band into the front wall face around the opening ``ring``
+    (ordered ``verts`` indices, closed for a window). The opening-edge verts stay
+    as the band's INNER support loop (so the reveal quads still share them); a new
+    OUTER support loop is offset ``width`` metres outward along the loop normal;
+    the front wall faces bordering the opening are pushed back onto the outer loop.
+
+    ``extrude`` == 0: a flat band fills the strip (coplanar with the front face).
+    ``extrude`` > 0: the strip is raised proud (toward -Y) as a real archivolt --
+      each segment becomes inner-return -> proud top -> outer-return, so no floor
+      is needed and the surface stays watertight (reveal -> up -> across -> down ->
+      wall). ``bevel`` > 0 then softens the two proud top arrises (bmesh, headless).
+
+    The band top (+ returns/caps) is tagged ``mat_index`` for the voussoir material.
+    Returns the band TOP faces (for the strip UV). Pure bmesh (headless)."""
+    pts = [(verts[i].co.x, verts[i].co.z) for i in ring]
+    units, raws = _loop_normals(pts, closed)
+    inner = [verts[i] for i in ring]
+    outer = []
+    for k, v in enumerate(inner):
+        # A squared sill corner offsets the outer support loop only HORIZONTALLY
+        # (into the jamb plane, keeping the sill-top z) so the jamb's outer stays at
+        # the sill top; the sill's own lower/outer edge is added deep below, giving
+        # a vertical square end instead of the pinched mitre bisector.
+        if k in square_idx:
+            sx = width if raws[k][0] > 0 else -width
+            outer.append(bm.verts.new((v.co.x + sx, v.co.y, v.co.z)))
+        else:
+            nx, nz = units[k]
+            outer.append(bm.verts.new((v.co.x + nx * width, v.co.y,
+                                       v.co.z + nz * width)))
+    sub = {inner[k]: outer[k] for k in range(len(inner))}
+    front_set = set(verts)
+    npair = len(inner) if closed else len(inner) - 1
+    # Remap EVERY front wall face touching the opening (any ring vert -- not just
+    # those on a ring edge) onto the outer loop, so the whole opening-adjacent
+    # front surface steps back by `width` and the strip opens up between it and
+    # the kept inner ring. Doing all touching faces keeps the corner/spandrel fan
+    # faces consistent with their neighbours instead of cracking at shared verts.
+    rebuild = set()
+    for rv in inner:
+        for f in rv.link_faces:
+            if all(v in front_set for v in f.verts):
+                rebuild.add(f)
+    for f in rebuild:
+        try:
+            nf = bm.faces.new([sub.get(v, v) for v in f.verts])
+            nf.smooth = f.smooth
+            nf.material_index = f.material_index
+        except ValueError:
+            pass
+    bmesh.ops.delete(bm, geom=list(rebuild), context='FACES_ONLY')
+    band, extra, outer_arris, step_verts = [], [], [], set()
+    sill_faces = []                          # the projecting sill's front faces
+    sill_flat = []                           # every flat face of the sill block (shade flat)
+    sill_smooth = set()                      # sill bevel-ring arrises (force smooth to roll)
+    sill_roll = set()                        # sill soft-bevel ROLL faces (must stay smooth)
+    sill_bbox = None                         # (min,max) corner of the sill block, for a
+    deep = False                             # geometric re-flatten after the rail bevel
+    if extrude <= 0.0:
+        # Flat band quads bridge the kept inner ring (shared with the reveal
+        # returns) to the outer loop (shared with the stepped-back wall faces).
+        for k in range(npair):
+            k2 = (k + 1) % len(inner)
+            band.append(bm.faces.new((inner[k], outer[k], outer[k2], inner[k2])))
+    else:
+        # Raised archivolt: lift a proud copy of both support loops and wall it in.
+        by = inner[0].co.y                   # front-plane y
+        itop = [bm.verts.new((v.co.x, by - extrude, v.co.z)) for v in inner]
+        otop = [bm.verts.new((v.co.x, by - extrude, v.co.z)) for v in outer]
+        # The sill run can be lifted an extra `sill_extrude` proud (a projecting
+        # sill) -- deep tops for its verts, with a vertical step where it meets the
+        # shallower jamb band.
+        deep = sill_extrude > 0.0 and bool(sill_idx)
+        # sill-run verts: the sill top+bottom sit at the OPENING x (so the opening-
+        # corner edge runs straight through the sill -> all quads, vertical ends);
+        # squared corners get a separate jamb-x block (stc/cob/cobf).
+        itop_d, otop_d, sob = {}, {}, {}
+        stc, cob, cobf, used_shallow = {}, {}, {}, set()
+        if deep:
+            dy = by - extrude - sill_extrude
+            for k in sill_idx:
+                ix, zb = inner[k].co.x, inner[k].co.z - width
+                itop_d[k] = bm.verts.new((ix, dy, inner[k].co.z))  # sill top, deep
+                otop_d[k] = bm.verts.new((ix, dy, zb))             # sill bottom, deep
+                sob[k] = bm.verts.new((ix, by, zb))               # sill bottom, front
+                if k in square_idx:
+                    ox = outer[k].co.x                             # jamb-x
+                    stc[k] = bm.verts.new((ox, dy, inner[k].co.z))  # corner top, deep
+                    cob[k] = bm.verts.new((ox, dy, zb))            # corner bottom, deep
+                    cobf[k] = bm.verts.new((ox, by, zb))           # corner bottom, front
+        for k in range(npair):
+            k2 = (k + 1) % len(inner)
+            is_sill = deep and k in sill_idx and k2 in sill_idx
+            if is_sill:                          # sill middle (opening width): clean quads
+                extra.append(bm.faces.new((inner[k], itop_d[k], itop_d[k2], inner[k2])))
+                fr = bm.faces.new((itop_d[k], otop_d[k], otop_d[k2], itop_d[k2]))
+                band.append(fr)
+                sill_faces.append(fr)            # sill front (chamfered by hand later)
+                extra.append(bm.faces.new((otop_d[k], sob[k], sob[k2], otop_d[k2])))
+            else:
+                ai, bi, ao, bo = itop[k], itop[k2], otop[k], otop[k2]
+                used_shallow.update((k, k2))
+                extra.append(bm.faces.new((inner[k], ai, bi, inner[k2])))
+                band.append(bm.faces.new((ai, ao, bo, bi)))
+                extra.append(bm.faces.new((ao, outer[k], outer[k2], bo)))
+                e_in, e_out = bm.edges.get((ai, bi)), bm.edges.get((ao, bo))
+                if e_in is not None:
+                    outer_arris.append(e_in)
+                if e_out is not None:
+                    outer_arris.append(e_out)
+        for k in square_idx:                 # squared corner: a jamb-x block, all quads
+            if k in stc:
+                fc = bm.faces.new((itop_d[k], stc[k], cob[k], otop_d[k]))          # corner front
+                band.append(fc)
+                sill_faces.append(fc)
+                extra.append(bm.faces.new((otop_d[k], cob[k], cobf[k], sob[k])))   # corner bottom
+                extra.append(bm.faces.new((stc[k], outer[k], cobf[k], cob[k])))    # corner end (jamb plane)
+                extra.append(bm.faces.new((itop[k], otop[k], stc[k], itop_d[k])))  # top ledge (jamb->sill)
+                extra.append(bm.faces.new((inner[k], itop[k], itop_d[k])))         # inner riser
+                extra.append(bm.faces.new((otop[k], outer[k], stc[k])))            # jamb outer->corner top
+        sq = sorted(k for k in square_idx if k in stc)
+        if len(sq) == 2:                     # close the sill back to the apron (front
+            a, b = sq                        # plane; a back-facing face against the wall)
+            extra.append(bm.faces.new((outer[a], outer[b], cobf[b], sob[b],
+                                       sob[a], cobf[a])))
+        if deep:                             # non-squared sill corners: plain step riser
+            for k in sill_idx:
+                if k in square_idx:
+                    continue
+                if k in used_shallow:
+                    extra.append(bm.faces.new((inner[k], itop[k], itop_d[k])))
+                    extra.append(bm.faces.new((itop[k], otop[k],
+                                               otop_d[k], itop_d[k])))
+                    extra.append(bm.faces.new((outer[k], otop_d[k], otop[k])))
+                    step_verts.update((itop[k], otop[k], itop_d[k], otop_d[k]))
+                else:                        # sill-interior: drop the unused shallow
+                    bm.verts.remove(itop[k])
+                    bm.verts.remove(otop[k])
+        if not closed:                       # cap the two open ends (a door)
+            extra.append(bm.faces.new((inner[0], outer[0], otop[0], itop[0])))
+            n = len(inner) - 1
+            extra.append(bm.faces.new((inner[n], itop[n], otop[n], outer[n])))
+    # Drop the wire edges orphaned by the old wall faces (inner->panel side edges).
+    wire = [e for e in bm.edges if not e.link_faces]
+    if wire:
+        bmesh.ops.delete(bm, geom=wire, context='EDGES')
+    for f in band + extra:                       # (some may have been merged away)
+        if f.is_valid:
+            f.material_index = mat_index
+    bevel_edges = set()                          # edges to force SMOOTH (never sharp)
+    # Hand-bevel the projecting sill FIRST, so its inset leaves the sill top ONE clean
+    # region. bmesh's edge-bevel tears the sill's branchy corners, so instead inset the
+    # front/top/bottom in-plane and let face-weighting roll the thin border rings.
+    sill_face_set = set()                        # sill faces the archivolt bevel skips
+    if extrude > 0.0 and deep:
+        bmesh.ops.recalc_face_normals(bm, faces=[f for f in band + extra if f.is_valid])
+        sill_verts = set()
+        for d in (itop_d, otop_d, sob, stc, cob, cobf):
+            sill_verts.update(d.values())
+        # Sill bounding box (captured now, before the dissolve can merge verts): used
+        # to re-flatten the sill's axis-aligned planes after the archivolt rail bevel,
+        # which splits sill faces at the junction and would otherwise leave the split
+        # children smooth -> blended into the jamb bevel.
+        m = 0.006
+        xs = [v.co.x for v in sill_verts]
+        ys = [v.co.y for v in sill_verts]
+        zs = [v.co.z for v in sill_verts]
+        sill_bbox = ((min(xs) - m, min(ys) - m, min(zs) - m),
+                     (max(xs) + m, max(ys) + m, max(zs) + m))
+        block = [f for f in band + extra
+                 if f.is_valid and any(v in sill_verts for v in f.verts)]
+        if bevel > 0.0:
+            # Merge away the zero-area riser slivers at the opening corners (their
+            # three verts are colinear) so the sill top is ONE clean region and
+            # inset_region borders it with a clean loop instead of a split fan.
+            bmesh.ops.dissolve_degenerate(
+                bm, dist=1e-5,
+                edges=list({e for f in block if f.is_valid for e in f.edges}))
+            block = [f for f in band + extra
+                     if f.is_valid and any(v.is_valid and v in sill_verts
+                                           for v in f.verts)]
+            # One inset_region per outward plane keeps each group a single region.
+            def _grp(axis, sign):
+                return [f for f in block if f.is_valid
+                        and getattr(f.normal, axis) * sign > 0.7]
+            _fi, front_ring = _inset_flat_group(bm, _grp('y', -1), bevel, mat_index)
+            _ti, top_ring = _inset_flat_group(bm, _grp('z', 1), bevel, mat_index)
+            _bi, bot_ring = _inset_flat_group(bm, _grp('z', -1), bevel, mat_index)
+            # The soft bevel lives ONLY on the genuine arrises where the front ring
+            # meets the top/bottom rings (perpendicular, X-aligned); force just those
+            # edges smooth and keep their two ring faces smooth. Every other ring face
+            # (corner wraps, ends, back) is flattened so it does not gradient-blend.
+            fr = set(front_ring)
+            tb = set(top_ring) | set(bot_ring)
+            for e in bm.edges:
+                if len(e.link_faces) != 2:
+                    continue
+                a, b = e.link_faces
+                if not ((a in fr and b in tb) or (b in fr and a in tb)):
+                    continue
+                d = (e.verts[1].co - e.verts[0].co)
+                if d.length > 1e-9 and abs(d.x) / d.length > 0.85:
+                    sill_smooth.add(e)
+                    sill_roll.update((a, b))
+            sill_face_set = set(block) | fr | set(top_ring) | set(bot_ring)
+        else:
+            sill_face_set = set(block)
+    if bevel > 0.0:
+        # A small 2-segment bevel, left SMOOTH (a soft rounded arris, not a razor edge),
+        # on the archivolt jamb + arch rails. When the sill dissolve ran it may have
+        # merged the loop-collected rail edges away, so re-derive the rails from the
+        # SURVIVING geometry: a rail is an edge of a proud jamb/arch band face shared
+        # with its inner-return / outer-step (a non-band face). Sill band faces are
+        # skipped -- the sill carries its own bevel above.
+        if extrude > 0.0 and deep:
+            band_set = set(f for f in band if f.is_valid)
+            arris = set()
+            for f in band_set:
+                if f in sill_face_set:
+                    continue
+                for e in f.edges:
+                    oth = [lf for lf in e.link_faces if lf is not f and lf.is_valid]
+                    if len(oth) == 1 and oth[0] not in band_set:
+                        arris.add(e)
+            edges = list(arris)
+        else:
+            edges = [e for e in outer_arris if e.is_valid]
+        res = bmesh.ops.bevel(bm, geom=edges, offset=bevel, segments=2,
+                              affect='EDGES', profile=0.5, clamp_overlap=True) \
+            if edges else {}
+        for f in res.get("faces", ()):
+            f.material_index = mat_index
+            f.smooth = True
+            bevel_edges.update(f.edges)
+    bevel_edges.update(e for e in sill_smooth if e.is_valid)  # sill soft-bevel arrises
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+    # Re-derive the sill's flat faces from the FINAL geometry (the rail bevel above
+    # split some at the junction): every axis-aligned plane inside the sill box shades
+    # flat, except the soft-bevel roll strips. This keeps the jamb bevel from blending
+    # its rolled normals across the sill top/front where the two meet.
+    if sill_bbox is not None:
+        (lo, hi) = sill_bbox
+        for f in bm.faces:
+            if not f.is_valid or f in sill_roll:
+                continue
+            n = f.normal
+            if max(abs(n.x), abs(n.y), abs(n.z)) < 0.9:   # tilted (a bevel facet)
+                continue
+            c = f.calc_center_median()
+            if (lo[0] <= c.x <= hi[0] and lo[1] <= c.y <= hi[1]
+                    and lo[2] <= c.z <= hi[2]):
+                sill_flat.append(f)
+    return band, bevel_edges, sill_flat
+
+
 def build_arched_doorway(
     name="arched_doorway",
     opening_width=1.2,
@@ -957,6 +1328,12 @@ def build_arched_doorway(
     grid_size=(0.25, 0.25, 0.25),
     snap_panel=False,
     masonry_uv=False,
+    voussoir_trim=False,
+    trim_width=0.12,
+    trim_extrude=0.0,
+    trim_bevel=0.008,
+    sill_square=False,
+    sill_extrude=0.0,
     collection=None,
 ):
     """Build an arched-doorway (or window) mesh object and link it in.
@@ -1050,10 +1427,31 @@ def build_arched_doorway(
     front, back = _extrude_panel(
         bm, pos, faces, -wall_thickness * 0.5, wall_thickness * 0.5, off,
         off_front=(wide_side == "outer"))
+    # Voussoir trim: inset a flat band around the opening on the front face (the
+    # ring runs the jambs + arch head, closed across the sill for a window). The
+    # band carries the stack-bonded voussoir strip material (rpg-o01r).
+    trim_smooth = None
+    trim_flat = None
+    if voussoir_trim:
+        ring = list(opening_path)
+        nop = len(opening_path)
+        if sill_path:
+            ring += [sill_path[k] for k in range(len(sill_path) - 2, 0, -1)]
+        # Sill run = the two bottom corners (opening_path ends) + any interior sill
+        # verts (appended above); its two corners can be squared / lifted deeper.
+        sill_idx = (frozenset({0, nop - 1} | set(range(nop, len(ring))))
+                    if sill_path else frozenset())
+        square = (frozenset({0, nop - 1})
+                  if sill_path and sill_square else frozenset())
+        _band, trim_smooth, trim_flat = _front_trim_band(
+            bm, front, ring, bool(sill_path), trim_width,
+            extrude=trim_extrude, bevel=trim_bevel,
+            square_idx=square, sill_idx=sill_idx, sill_extrude=sill_extrude)
     rev_pairs = _collect_reveal_pairs(
         front, back, opening_path, sill_path, reveal_bevel_faces,
         reveal_bevel_sill) if reveal_bevel > 0.0 else []
-    obj = _finish(bm, name, collection, smooth_angle)
+    obj = _finish(bm, name, collection, smooth_angle, keep_smooth=trim_smooth,
+                  keep_flat=trim_flat)
     if rev_pairs:
         _bevel_object(obj, rev_pairs, reveal_bevel, reveal_bevel_style,
                       reveal_bevel_segments, reveal_bevel_seed,
@@ -1063,6 +1461,8 @@ def build_arched_doorway(
         _finalize_uvs(obj)          # re-unwrap: the bevel changed topology
     if masonry_uv:
         _masonry_course_uvs(obj)   # world-coursed UVs for a tiling masonry material
+    if voussoir_trim and trim_extrude > 0.0 and trim_bevel > 0.0:
+        _weighted_normals(obj)     # soften the archivolt bevel (face-area weighted)
     return obj
 
 
@@ -1482,7 +1882,8 @@ def _molding_section(width, depth, y_base, sign, chamfer, chamfer_segments):
     return pts
 
 
-def _finish(bm, name, collection, smooth_angle=0.0):
+def _finish(bm, name, collection, smooth_angle=0.0, keep_smooth=None,
+            keep_flat=None):
     """Recalculate normals, apply angle-based smoothing, build the object,
     link it, and return it.
 
@@ -1490,15 +1891,23 @@ def _finish(bm, name, collection, smooth_angle=0.0):
     fully faceted (flat); a positive angle shades every face smooth and marks
     only edges whose dihedral exceeds the angle as sharp — so curved arches
     and cylinder-wrapped walls read smooth while structural corners (jambs,
-    panel faces, sills, block edges) stay crisp."""
+    panel faces, sills, block edges) stay crisp. *keep_smooth* is a set of
+    edges forced smooth regardless of angle (e.g. a bevel's own facets).
+    *keep_flat* is a set of FACES forced flat (use_smooth False) -- the
+    weighted-normal pass then shades them with their own face normal instead
+    of blending them into a neighbouring bevel."""
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     if smooth_angle > 0.0:
         thr = math.radians(smooth_angle)
+        keep = keep_smooth or set()
         for f in bm.faces:
             f.smooth = True
         for e in bm.edges:
             if len(e.link_faces) == 2:
-                e.smooth = e.calc_face_angle() <= thr   # False -> sharp edge
+                e.smooth = e in keep or e.calc_face_angle() <= thr  # False -> sharp
+    for f in (keep_flat or ()):              # flat-shaded islands win over smoothing
+        if f.is_valid:
+            f.smooth = False
     mesh = bpy.data.meshes.new(name)
     bm.to_mesh(mesh)
     bm.free()
