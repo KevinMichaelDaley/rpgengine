@@ -211,14 +211,12 @@ def _frame_faces(half_w, half_wp, sill_h, opening_h, panel_h, shape,
     a_lo, a_hi = _transitions(hp)
     if a_hi <= a_lo:                                 # whole head steep
         a_lo = a_hi = 0.5
-        n_crown = 0
         n_hl = _run_segments(hp, 0.0, 0.5, head_segs)
         n_hr = _run_segments(hp, 0.5, 1.0, head_segs)
     else:                                            # adaptive per run
         n_hl = _run_segments(hp, 0.0, a_lo, head_segs) if a_lo > 1e-9 else 0
         n_hr = (_run_segments(hp, a_hi, 1.0, head_segs)
                 if a_hi < 1.0 - 1e-9 else 0)
-        n_crown = _run_segments(hp, a_lo, a_hi, head_segs)
 
     # Opening boundary verts, each tagged with an inward splay direction.
     # The jambs splay uniformly inward (constant, horizontal), the arch
@@ -234,12 +232,20 @@ def _frame_faces(half_w, half_wp, sill_h, opening_h, panel_h, shape,
         inner_l.append(add_open(x, z, *arch_in(x, z)))
     inner_l_xz = [pos[v] for v in inner_l]
 
+    # The crown run, split at the apex a=0.5 so a POINTED / triangular head keeps a
+    # real vertex at its point instead of chording flat across it (a round head is
+    # unaffected -- its apex is just another smooth sample).
     crown = [inner_l[-1]]
     crown_xz = [pos[inner_l[-1]]]
-    for i in range(1, n_crown + 1):
-        x, z = hp(a_lo + (a_hi - a_lo) * i / n_crown)
-        crown.append(add_open(x, z, *arch_in(x, z)))
-        crown_xz.append((x, z))
+    if a_hi > a_lo:
+        stops = [a_lo, 0.5, a_hi] if a_lo < 0.5 < a_hi else [a_lo, a_hi]
+        for s in range(len(stops) - 1):
+            aa, bb = stops[s], stops[s + 1]
+            ns = _run_segments(hp, aa, bb, head_segs)
+            for i in range(1, ns + 1):
+                x, z = hp(aa + (bb - aa) * i / ns)
+                crown.append(add_open(x, z, *arch_in(x, z)))
+                crown_xz.append((x, z))
 
     inner_r = [crown[-1]]
     inner_r_xz = [crown_xz[-1]]
@@ -555,6 +561,62 @@ def _finalize_uvs(obj, density=UV_SCALE):
     if prev_act:
         bpy.context.view_layer.objects.active = prev_act
     _pack_islands(obj)
+
+
+def _voussoir_strip_uvs(obj, mat_index, strip):
+    """Finalise the UVs of the voussoir trim band (faces tagged *mat_index*):
+
+      * The jambs + arch head are ONE strip island -- copy the ring-parameter UVs
+        that _front_trim_band wrote to the 'vstrip' layer (and the sill inset / rail
+        bevel interpolated onto their new verts): U = arc length along the opening,
+        V = unrolled cross-section, so bricks are uniform and wrap round the arch
+        with no apex fan.
+      * A projecting (extruded) sill block is boxed instead -- each face is planar
+        projected from its dominant axis, so its top / front / ends / bottom read
+        undistorted (an extruded sill is its own box).
+
+    1 UV unit = 1 m. *strip* = (deep, sill_bbox) from _front_trim_band."""
+    deep, sill_bbox = strip
+    me = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    active = bm.loops.layers.uv.active
+    vstrip = bm.loops.layers.uv.get("vstrip")
+    if active is None:
+        bm.free()
+        return
+    lo, hi = sill_bbox if (deep and sill_bbox) else ((1.0, 1.0, 1.0),
+                                                     (-1.0, -1.0, -1.0))
+    sill_loops = []                              # (loop, u, v) -- placed as its own
+    for f in bm.faces:                           # island below the strip afterwards
+        if f.material_index != mat_index:
+            continue
+        c = f.calc_center_median()
+        in_sill = (lo[0] <= c.x <= hi[0] and lo[1] <= c.y <= hi[1]
+                   and lo[2] <= c.z <= hi[2])
+        if in_sill:                              # box-project the sill by dominant axis
+            n = f.normal
+            ax = max(range(3), key=lambda i: abs(n[i]))
+            for loop in f.loops:
+                p = loop.vert.co
+                u, v = ((p.x, p.z) if ax == 1
+                        else (p.x, p.y) if ax == 2 else (p.y, p.z))
+                sill_loops.append((loop, u, v))
+        elif vstrip is not None:                 # copy the interpolated strip UVs
+            for loop in f.loops:
+                loop[active].uv = loop[vstrip].uv
+    if sill_loops:
+        # Put the whole sill box in its OWN UV island, translated clear of the strip:
+        # U from 0, and V entirely BELOW 0 (the strip lives at V >= 0), so the two
+        # never overlap in [0,1] space -- ready for separate packing / bake.
+        umin = min(u for _, u, _ in sill_loops)
+        vmax = max(v for _, _, v in sill_loops)
+        for loop, u, v in sill_loops:
+            loop[active].uv = (u - umin, v - vmax - 0.2)
+    if vstrip is not None:
+        bm.loops.layers.uv.remove(vstrip)        # drop the scratch layer before export
+    bm.to_mesh(me)
+    bm.free()
 
 
 def _masonry_course_uvs(obj):
@@ -1072,10 +1134,33 @@ def _front_trim_band(bm, verts, ring, closed, width, extrude=0.0, bevel=0.0,
             sx = width if raws[k][0] > 0 else -width
             outer.append(bm.verts.new((v.co.x + sx, v.co.y, v.co.z)))
         else:
-            nx, nz = units[k]
-            outer.append(bm.verts.new((v.co.x + nx * width, v.co.y,
-                                       v.co.z + nz * width)))
+            # True MITRE offset: keep the outer loop `width` from BOTH adjacent
+            # edges. offset = width*(n1+n2)/(1+n1.n2) = raws * 2*width/|raws|^2.
+            # (Offsetting by the unit bisector*width falls short at a sharp convex
+            # corner -- it makes the triangular/pointed apex bow inward.) Clamped to
+            # a mitre limit so a very sharp apex can't spike out to infinity.
+            rx, rz = raws[k]
+            r2 = rx * rx + rz * rz
+            scale = (2.0 * width / r2) if r2 > 1e-9 else 0.0
+            ox, oz = rx * scale, rz * scale
+            olen = math.hypot(ox, oz)
+            if olen > 3.0 * width:
+                ox, oz = ox * (3.0 * width / olen), oz * (3.0 * width / olen)
+            outer.append(bm.verts.new((v.co.x + ox, v.co.y, v.co.z + oz)))
     sub = {inner[k]: outer[k] for k in range(len(inner))}
+    # Arc-length outline of the opening (the band's INNER support loop, world XZ):
+    # the parameter for the voussoir strip UV -- U runs ALONG this outline, V runs
+    # ACROSS the band. Cumulative length from the sill up one jamb, round the arch,
+    # down the other jamb; closed for a window.
+    cum = [0.0]
+    for k in range(1, len(pts)):
+        dx, dz = pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]
+        cum.append(cum[-1] + math.hypot(dx, dz))
+    strip_total = cum[-1]
+    if closed and len(pts) > 1:
+        dx, dz = pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]
+        strip_total += math.hypot(dx, dz)
+    strip_outline = [(pts[k][0], pts[k][1], cum[k]) for k in range(len(pts))]
     front_set = set(verts)
     npair = len(inner) if closed else len(inner) - 1
     # Remap EVERY front wall face touching the opening (any ring vert -- not just
@@ -1194,6 +1279,44 @@ def _front_trim_band(bm, verts, ring, closed, width, extrude=0.0, bevel=0.0,
     for f in band + extra:                       # (some may have been merged away)
         if f.is_valid:
             f.material_index = mat_index
+    # Voussoir STRIP parameterisation, written to a persistent 'vstrip' UV layer that
+    # the sill inset + rail bevel below then interpolate onto their new verts. U = arc
+    # length along the opening at ring index k, so inner[k] and outer[k] (radially
+    # paired) share U -> every band quad is a UV rectangle: uniform bricks, no apex
+    # fan/pinch. V unrolls the band cross-section (inner-return -> proud top ->
+    # outer-return). The projecting sill run is skipped -- an extruded sill gets its
+    # own box UVs (it is a deeper block); a flush sill stays part of the strip.
+    # Assign every SHALLOW band vert (inner / itop / otop / outer) at ring index k,
+    # including the sill-corner positions -- the straight jamb face's bottom is the
+    # sill corner's itop/otop, so it needs them. The DEEP sill verts (itop_d, stc, ...)
+    # are never added, so any face that touches one fails the all()-guard below and is
+    # routed to the sill box instead. (Removed sill-interior verts are skipped.)
+    vert_uv = {}
+    for k in range(len(inner)):
+        u = cum[k]
+        if inner[k].is_valid:
+            vert_uv[inner[k]] = (u, 0.0)
+        if extrude > 0.0:
+            if itop[k].is_valid:
+                vert_uv[itop[k]] = (u, extrude)
+            if otop[k].is_valid:
+                vert_uv[otop[k]] = (u, extrude + width)
+            if outer[k].is_valid:
+                vert_uv[outer[k]] = (u, 2.0 * extrude + width)
+        elif outer[k].is_valid:
+            vert_uv[outer[k]] = (u, width)
+    primary = bm.loops.layers.uv.active          # keep the real UV map active so the
+    if primary is None:                          # later angle-based unwrap does NOT
+        primary = bm.loops.layers.uv.new("UVMap")  # land on the scratch strip layer
+    vstrip = bm.loops.layers.uv.new("vstrip")
+    try:
+        bm.loops.layers.uv.active = primary
+    except (AttributeError, TypeError):
+        pass
+    for f in band + extra:
+        if f.is_valid and all(lp.vert in vert_uv for lp in f.loops):
+            for lp in f.loops:
+                lp[vstrip].uv = vert_uv[lp.vert]
     bevel_edges = set()                          # edges to force SMOOTH (never sharp)
     # Hand-bevel the projecting sill FIRST, so its inset leaves the sill top ONE clean
     # region. bmesh's edge-bevel tears the sill's branchy corners, so instead inset the
@@ -1297,7 +1420,7 @@ def _front_trim_band(bm, verts, ring, closed, width, extrude=0.0, bevel=0.0,
             if (lo[0] <= c.x <= hi[0] and lo[1] <= c.y <= hi[1]
                     and lo[2] <= c.z <= hi[2]):
                 sill_flat.append(f)
-    return band, bevel_edges, sill_flat
+    return band, bevel_edges, sill_flat, (deep, sill_bbox)
 
 
 def build_arched_doorway(
@@ -1432,6 +1555,7 @@ def build_arched_doorway(
     # band carries the stack-bonded voussoir strip material (rpg-o01r).
     trim_smooth = None
     trim_flat = None
+    trim_strip = None
     if voussoir_trim:
         ring = list(opening_path)
         nop = len(opening_path)
@@ -1443,7 +1567,7 @@ def build_arched_doorway(
                     if sill_path else frozenset())
         square = (frozenset({0, nop - 1})
                   if sill_path and sill_square else frozenset())
-        _band, trim_smooth, trim_flat = _front_trim_band(
+        _band, trim_smooth, trim_flat, trim_strip = _front_trim_band(
             bm, front, ring, bool(sill_path), trim_width,
             extrude=trim_extrude, bevel=trim_bevel,
             square_idx=square, sill_idx=sill_idx, sill_extrude=sill_extrude)
@@ -1461,6 +1585,8 @@ def build_arched_doorway(
         _finalize_uvs(obj)          # re-unwrap: the bevel changed topology
     if masonry_uv:
         _masonry_course_uvs(obj)   # world-coursed UVs for a tiling masonry material
+    if voussoir_trim and trim_strip is not None:
+        _voussoir_strip_uvs(obj, 1, trim_strip)   # arc-length strip for the band
     if voussoir_trim and trim_extrude > 0.0 and trim_bevel > 0.0:
         _weighted_normals(obj)     # soften the archivolt bevel (face-area weighted)
     return obj
