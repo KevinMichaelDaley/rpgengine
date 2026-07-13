@@ -346,6 +346,7 @@ BIN_HEADLESS += build/procgen_grammar_registry_tests
 BIN_HEADLESS += build/procgen_e2e_tests
 BIN_HEADLESS += build/procgen_svo_tests
 BIN_HEADLESS += build/lm_visibility_tests
+BIN_HEADLESS += build/lm_sh_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
@@ -1166,6 +1167,9 @@ build/procgen_svo_tests: tests/procgen/procgen_svo_tests.c src/procgen/procgen_s
 build/lm_visibility_tests: tests/lightmap/lm_visibility_tests.c src/lightmap/lm_visibility.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c src/math/vec3.c include/ferrum/lightmap/lm_visibility.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_visibility_tests.c src/lightmap/lm_visibility.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c src/math/vec3.c -o $@ -lm
 
+build/lm_sh_tests: tests/lightmap/lm_sh_tests.c src/lightmap/lm_sh.c src/math/vec3.c include/ferrum/lightmap/lm_sh.h | build
+	$(CC) $(CFLAGS) tests/lightmap/lm_sh_tests.c src/lightmap/lm_sh.c src/math/vec3.c -o $@ -lm
+
 CFLAGS_CURL := $(shell pkg-config --cflags libcurl 2>/dev/null)
 LDFLAGS_CURL := $(shell pkg-config --libs libcurl 2>/dev/null)
 
@@ -1691,7 +1695,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/npc_state_tests \
 	&& ./build/npc_demo_integration_tests \
 	&& ./build/npc_kg_spatial_tests \
-	&& ./build/lm_visibility_tests
+	&& ./build/lm_visibility_tests \
+	&& ./build/lm_sh_tests
 
 TEST_TIMEOUT ?= 20
 
