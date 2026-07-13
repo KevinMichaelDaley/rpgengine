@@ -91,6 +91,11 @@ typedef struct static_mesh {
     float    aabb_min[3];     /**< Axis-aligned bounding box minimum. */
     float    aabb_max[3];     /**< Axis-aligned bounding box maximum. */
 
+    /** Lightmap texel resolution for this mesh (texels along the longest
+     *  lightmap-UV extent); 0 = not lightmapped / use the scene default. The
+     *  baker sizes this mesh's atlas region from it. */
+    uint32_t lightmap_resolution;
+
     /** GL draw function pointer (resolved at creation time). */
     void (*glDrawElements)(uint32_t mode, int32_t count,
                            uint32_t type, const void *indices);
@@ -119,6 +124,8 @@ typedef struct static_mesh_create_info {
 
     const render_submesh_t *submeshes;   /**< Optional submesh array. */
     uint32_t                submesh_count;
+
+    uint32_t lightmap_resolution;        /**< Texel resolution for baking (0 = none). */
 } static_mesh_create_info_t;
 
 /* ── Creation / destruction ───────────────────────────────────────── */

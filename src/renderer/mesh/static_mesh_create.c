@@ -187,6 +187,7 @@ int static_mesh_create(const gl_loader_t *loader,
     /* Counts. */
     out->vertex_count = info->vertex_count;
     out->index_count  = info->index_count;
+    out->lightmap_resolution = info->lightmap_resolution;
 
     /* Submeshes. */
     if (info->submeshes && info->submesh_count > 0) {
