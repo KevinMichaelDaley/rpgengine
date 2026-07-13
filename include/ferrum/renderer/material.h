@@ -22,9 +22,9 @@
  *             u_ao_map u_emissive_map u_lightmap
  *   presence: u_has_albedo u_has_normal u_has_metallic u_has_roughness
  *             u_has_ao u_has_emissive u_has_lightmap   (int 0/1)
- *   params:   u_tint (vec3) u_specular_strength u_metalness
- *             u_roughness_min u_roughness_max u_emissive_strength
- *             u_normal_scale u_ao_strength                (float)
+ *   params:   u_tint (vec3) u_emissive_color (vec3)
+ *             u_specular_strength u_metalness u_roughness_min u_roughness_max
+ *             u_emissive_strength u_normal_scale u_ao_strength      (float)
  *
  * Ownership: texture maps are borrowed. Nullability: absent maps are NULL (the
  * presence flag is set to 0). Missing uniforms are tolerated (best effort) so a
@@ -55,6 +55,7 @@ typedef struct render_material {
     float metalness;          /**< scalar metalness / metal-map multiplier. */
     float roughness_min;      /**< remap: roughness map 0 -> this. */
     float roughness_max;      /**< remap: roughness map 1 -> this. */
+    float emissive_color[3];  /**< self-shading emissive colour (linear). */
     float emissive_strength;  /**< emissive self-shading scale. */
     float normal_scale;       /**< tangent-normal XY strength. */
     float ao_strength;        /**< AO map influence (0..1). */

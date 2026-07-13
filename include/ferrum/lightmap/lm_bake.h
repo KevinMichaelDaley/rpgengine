@@ -55,6 +55,17 @@ bool lm_bake(const lm_scene_t *scene, const lm_bake_config_t *config,
  */
 void lm_bake_readback(const lm_bake_result_t *result, float *out_rgb);
 
+/**
+ * @brief Read back one SH coefficient (@p coeff in 0..8) of the solved lightmap
+ *        into a linear-RGB atlas image @p out_rgb (atlas.width*atlas.height*3
+ *        floats): each texel holds that coefficient for the R, G, B channels.
+ *        The 9 coefficient images together let a shader reconstruct directional
+ *        irradiance against the per-pixel (normal-mapped) normal. No clamping
+ *        (SH coefficients may be negative). @p coeff >= 9 clears the image.
+ */
+void lm_bake_readback_sh(const lm_bake_result_t *result, uint32_t coeff,
+                         float *out_rgb);
+
 #ifdef __cplusplus
 }
 #endif

@@ -49,3 +49,34 @@ void lm_bake_readback(const lm_bake_result_t *result, float *out_rgb)
         }
     }
 }
+
+void lm_bake_readback_sh(const lm_bake_result_t *result, uint32_t coeff,
+                         float *out_rgb)
+{
+    uint32_t w = result->atlas.width;
+    uint32_t h = result->atlas.height;
+    for (uint32_t i = 0; i < w * h * 3; ++i)
+        out_rgb[i] = 0.0f;
+    if (coeff >= 9u)
+        return;
+
+    /* Pack SH coefficient @p coeff of the three colour channels into one RGB
+     * texel per luxel, so the runtime shader can reconstruct directional
+     * irradiance against the per-pixel normal (combines with the normal map). */
+    for (uint32_t s = 0; s < result->n_surfaces; ++s) {
+        const lm_atlas_rect_t *rect = &result->rects[s];
+        uint32_t base = result->surface_offsets[s];
+        for (uint32_t iv = 0; iv < rect->h; ++iv) {
+            for (uint32_t iu = 0; iu < rect->w; ++iu) {
+                const lm_luxel_t *lx =
+                    &result->combined.luxels[base + iv * rect->w + iu];
+                uint32_t px = rect->x + iu;
+                uint32_t py = rect->y + iv;
+                float *dst = &out_rgb[(py * w + px) * 3];
+                dst[0] = lx->sh[0].c[coeff];
+                dst[1] = lx->sh[1].c[coeff];
+                dst[2] = lx->sh[2].c[coeff];
+            }
+        }
+    }
+}
