@@ -115,16 +115,20 @@ def _field_layer(nt, x, material, box_frac, rough_base, rough_detail, salt,
     nt.links.new(_random_box_offset(nt, x, 1.0 - box_frac, salt),
                  mapping.inputs["Location"])
 
+    # REPEAT (not CLIP): a field box mapped from UVs inside [0,1] stays in range so
+    # the two are identical there, but REPEAT tiles instead of going BLACK when a UV
+    # falls outside the box (e.g. an island packed off in its own UV region). The
+    # aperiodic field does not tile seamlessly, but a wrap seam beats a black hole.
     alb = nt.nodes.new("ShaderNodeTexImage")
     alb.location = (x + 520, 120)
     alb.image = _field_image(albedo, "sRGB")
-    alb.extension = 'CLIP'
+    alb.extension = 'REPEAT'
     nt.links.new(mapping.outputs["Vector"], alb.inputs["Vector"])
 
     rgh = nt.nodes.new("ShaderNodeTexImage")
     rgh.location = (x + 520, -160)
     rgh.image = _field_image(rough, "Non-Color")
-    rgh.extension = 'CLIP'
+    rgh.extension = 'REPEAT'
     nt.links.new(mapping.outputs["Vector"], rgh.inputs["Vector"])
 
     center, sd = _image_stats(rgh.image)
@@ -669,3 +673,29 @@ def build_masonry_material(name, mask, normal, ao, height,
         nt.links.new(disp.outputs["Displacement"], out.inputs["Displacement"])
         mat.cycles.displacement_method = 'BOTH'
     return mat
+
+
+def build_voussoir_material(name="voussoir", bake_dir=None, u_tile=4.0, band=0.21,
+                            brick="limestone", mortar="mortar", field_m=0.8,
+                            brick_sat=1.2, brick_tint=(0.40, 0.34, 0.26),
+                            normal_strength=1.0, ao_strength=0.6, root=FIELD_ROOT,
+                            **kw):
+    """Archivolt VOUSSOIR material from the stack-bonded strip bake
+    (voussoir_strip.bake_voussoir). Same shader as build_masonry_material but the
+    baked maps are sampled at the band's STRIP UV: U = arc length round the opening,
+    V = the unrolled cross-section, so the tile spans ``u_tile`` x ``band`` metres
+    (``band`` must match the arch's 2*trim_extrude + trim_width). The stone fields
+    are sampled at a small ``field_m`` so the grain reads on the little voussoirs.
+
+    ``bake_dir`` defaults to ``<root>/voussoir/bake``. Extra keywords pass through
+    to build_masonry_material (wear, contrast, roughness, etc.)."""
+    bake_dir = bake_dir or os.path.join(root, "voussoir", "bake")
+
+    def m(n):
+        return os.path.join(bake_dir, f"{n}.png")
+
+    return build_masonry_material(
+        name, mask=m("mask"), normal=m("normal"), ao=m("ao"), height=m("height"),
+        tint_map=m("tint"), tile=(u_tile, band), field_m=field_m,
+        brick=brick, mortar=mortar, brick_sat=brick_sat, brick_tint=brick_tint,
+        normal_strength=normal_strength, ao_strength=ao_strength, root=root, **kw)

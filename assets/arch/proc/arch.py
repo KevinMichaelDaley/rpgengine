@@ -563,7 +563,7 @@ def _finalize_uvs(obj, density=UV_SCALE):
     _pack_islands(obj)
 
 
-def _voussoir_strip_uvs(obj, mat_index, strip):
+def _voussoir_strip_uvs(obj, mat_index, strip, sill_mat=None):
     """Finalise the UVs of the voussoir trim band (faces tagged *mat_index*):
 
       * The jambs + arch head are ONE strip island -- copy the ring-parameter UVs
@@ -595,6 +595,8 @@ def _voussoir_strip_uvs(obj, mat_index, strip):
         in_sill = (lo[0] <= c.x <= hi[0] and lo[1] <= c.y <= hi[1]
                    and lo[2] <= c.z <= hi[2])
         if in_sill:                              # box-unfold: project each face by its
+            if sill_mat is not None:             # a projecting sill is its OWN material
+                f.material_index = sill_mat      # (e.g. plain limestone, not voussoirs)
             n = f.normal                         # dominant axis, group by axis+sign
             ax = max(range(3), key=lambda i: abs(n[i]))
             key = (ax, 1 if n[ax] >= 0.0 else -1)
@@ -1598,7 +1600,8 @@ def build_arched_doorway(
     if masonry_uv:
         _masonry_course_uvs(obj)   # world-coursed UVs for a tiling masonry material
     if voussoir_trim and trim_strip is not None:
-        _voussoir_strip_uvs(obj, 1, trim_strip)   # arc-length strip for the band
+        # material 1 = arch/jamb voussoir strip; material 2 = the projecting sill box.
+        _voussoir_strip_uvs(obj, 1, trim_strip, sill_mat=2)
     if voussoir_trim and trim_extrude > 0.0 and trim_bevel > 0.0:
         _weighted_normals(obj)     # soften the archivolt bevel (face-area weighted)
     return obj
