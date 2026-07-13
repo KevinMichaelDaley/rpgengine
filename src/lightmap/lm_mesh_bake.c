@@ -177,6 +177,8 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
     if (!lm_atlas_pack(rects, nm, config->atlas_width, config->atlas_padding,
                        &result->atlas))
         return false;
+    result->rects = rects;
+    result->n_meshes = nm;
 
     /* Luxel storage (dense capacity = sum of rect areas). */
     cap = cap ? cap : 1u;

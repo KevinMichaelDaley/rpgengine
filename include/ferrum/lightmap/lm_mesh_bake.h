@@ -33,12 +33,14 @@ extern "C" {
 
 /** Output of a mesh bake: solved luxels + their atlas coordinates. */
 typedef struct lm_mesh_bake_result {
-    lm_lightmap_t combined;    /**< all luxels (res_u=n_luxels, res_v=1). */
-    uint32_t     *atlas_x;     /**< atlas X per luxel. */
-    uint32_t     *atlas_y;     /**< atlas Y per luxel. */
-    float        *luxel_areas; /**< per-luxel world area. */
-    lm_atlas_t    atlas;       /**< packed atlas dimensions. */
-    uint32_t      n_luxels;
+    lm_lightmap_t    combined;    /**< all luxels (res_u=n_luxels, res_v=1). */
+    uint32_t        *atlas_x;     /**< atlas X per luxel. */
+    uint32_t        *atlas_y;     /**< atlas Y per luxel. */
+    float           *luxel_areas; /**< per-luxel world area. */
+    lm_atlas_rect_t *rects;       /**< n_meshes atlas placements (for uv1 remap). */
+    lm_atlas_t       atlas;       /**< packed atlas dimensions. */
+    uint32_t         n_meshes;
+    uint32_t         n_luxels;
 } lm_mesh_bake_result_t;
 
 /**
