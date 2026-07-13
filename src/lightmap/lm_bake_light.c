@@ -36,9 +36,9 @@ bool lm_bake_run_lighting(const lm_scene_t *scene, const lm_bake_config_t *cfg,
 
     /* 3. Far-field distant reflectors/emitters via the SVO material table. */
     if (cfg->farfield_samples > 0)
-        lm_farfield_gather(lm, svo, &scene->materials, cfg->farfield_samples,
-                           cfg->farfield_near, cfg->farfield_maxdist,
-                           cfg->seed ^ 0x9E3779B9u);
+        lm_farfield_gather(lm, svo, &scene->materials, &cfg->sky,
+                           cfg->farfield_samples, cfg->farfield_near,
+                           cfg->farfield_maxdist, cfg->seed ^ 0x9E3779B9u);
 
     /* 4. kd-tree over all luxel centres for near-field form factors. */
     lm_kdtree_t kd;

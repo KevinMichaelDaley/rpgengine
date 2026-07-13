@@ -88,17 +88,18 @@ static uint32_t ensure_leaf_(npc_svo_grid_t *grid,
         uint32_t cz = (vz / cells) & 1;
         uint32_t child_idx = (cz << 2) | (cy << 1) | cx;
 
-        npc_svo_node_t *node = &grid->nodes[node_idx];
-        uint32_t child = node->children[child_idx];
+        uint32_t child = grid->nodes[node_idx].children[child_idx];
 
         if (child == NPC_SVO_INVALID_NODE) {
             child = npc_svo_alloc_node(grid);
             if (child == NPC_SVO_INVALID_NODE) {
                 return NPC_SVO_INVALID_NODE;
             }
-            node->children[child_idx] = child;
+            /* NB: alloc_node may realloc the pool, so index grid->nodes fresh
+             * here rather than caching a npc_svo_node_t* across the alloc. */
+            grid->nodes[node_idx].children[child_idx] = child;
             grid->nodes[child].parent = node_idx;
-            node->occupancy |= (1u << child_idx);
+            grid->nodes[node_idx].occupancy |= (1u << child_idx);
         }
         node_idx = child;
     }

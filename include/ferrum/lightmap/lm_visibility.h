@@ -37,6 +37,8 @@ typedef struct lm_ray_hit {
     vec3_t   normal;   /**< Axis-aligned outward normal of the crossed voxel face. */
     uint16_t material; /**< Material id of the hit voxel (0 if none). */
     bool     hit;      /**< True if a SOLID voxel was entered within maxdist. */
+    uint32_t node;     /**< SVO leaf node index of the hit (for the mip pyramid;
+                            NPC_SVO_INVALID_NODE if no hit). */
 } lm_ray_hit_t;
 
 /**

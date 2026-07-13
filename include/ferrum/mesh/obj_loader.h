@@ -66,7 +66,8 @@ typedef struct obj_mesh {
     float    *positions; /**< vec3 * vert_count. */
     float    *normals;   /**< vec3 * vert_count (from vn, else generated). */
     float    *tangents;  /**< vec4 * vert_count (xyz tangent + w handedness). */
-    float    *uvs;       /**< vec2 * vert_count (from vt, else 0). */
+    float    *uvs;       /**< vec2 * vert_count (channel 0, e.g. material UV). */
+    float    *uvs1;      /**< vec2 * vert_count (channel 1, e.g. lightmap UV; 0 if none). */
     uint32_t *indices;   /**< index_count triangle indices. */
     uint32_t  vert_count;
     uint32_t  index_count;
@@ -89,6 +90,16 @@ int obj_mesh_load(const char *path, float scale, obj_mesh_t *out);
  * @brief Free the arrays owned by @p mesh and zero it. NULL-safe.
  */
 void obj_mesh_free(obj_mesh_t *mesh);
+
+/**
+ * @brief Generate smooth per-vertex tangents (vec4, w = handedness) into
+ *        @p mesh->tangents from its positions, normals and channel-0 UVs.
+ *        Accumulates per-triangle tangent/bitangent over the shared (indexed)
+ *        vertices, then Gram-Schmidt orthonormalises against the vertex normal.
+ *        Requires positions/normals/uvs/indices populated. Allocates tangents.
+ * @return 0 on success, -1 on allocation failure.
+ */
+int obj_mesh_gen_tangents(obj_mesh_t *mesh);
 
 #ifdef __cplusplus
 }

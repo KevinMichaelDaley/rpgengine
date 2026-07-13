@@ -18,6 +18,7 @@
 
 #include "ferrum/lightmap/lm_light.h"
 #include "ferrum/lightmap/lm_material.h"
+#include "ferrum/lightmap/lm_sky.h"
 #include "ferrum/lightmap/lm_solve.h"
 #include "ferrum/lightmap/lm_types.h"
 #include "ferrum/physics/aabb.h"
@@ -46,6 +47,7 @@ typedef struct lm_bake_config {
     uint32_t    farfield_samples;/**< SVO hemisphere rays per luxel. */
     float       farfield_near;   /**< Near cutoff for the far-field gather. */
     float       farfield_maxdist;/**< Max far-field ray length. */
+    lm_sky_t    sky;             /**< Environment sky for escaping far-field rays. */
     lm_solve_params_t solve;     /**< Radiosity solve parameters + region gate. */
     uint32_t    seed;            /**< Base RNG seed. */
 } lm_bake_config_t;

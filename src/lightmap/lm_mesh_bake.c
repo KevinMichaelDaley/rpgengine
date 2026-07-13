@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "ferrum/lightmap/lm_farfield.h"
+#include "ferrum/lightmap/lm_svo_mip.h"
 #include "ferrum/lightmap/lm_kdtree.h"
 #include "ferrum/lightmap/lm_mesh_luxel.h"
 #include "ferrum/lightmap/lm_sh.h"
@@ -225,10 +226,15 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         lm_mesh_bake_emissive(&result->combined, scene, &svo,
                               config->direct_samples ? config->direct_samples : 64u,
                               config->seed ^ 0x51EDu);
-        if (config->farfield_samples > 0)
+        if (config->farfield_samples > 0) {
+            /* Pre-filter the SVO into a shading mip so far-field cone rays read
+             * smooth, pre-integrated distant reflectance/emission. */
+            lm_svo_mip_build(&svo, &scene->materials);
             lm_farfield_gather(&result->combined, &svo, &scene->materials,
-                               config->farfield_samples, config->farfield_near,
-                               config->farfield_maxdist, config->seed ^ 0x9E3779B9u);
+                               &config->sky, config->farfield_samples,
+                               config->farfield_near, config->farfield_maxdist,
+                               config->seed ^ 0x9E3779B9u);
+        }
         lm_kdtree_t kd;
         lm_solver_t solver;
         if (lm_kdtree_build(&kd, positions, total, arena) &&

@@ -108,6 +108,9 @@ static const char *const PBR_FS =
     "uniform sampler2D u_sh7;\n"
     "uniform sampler2D u_sh8;\n"
     "uniform int u_sh_enabled;\n"
+    /* Debug visualisation: 0=off, 1=raw SH DC term (coeff0) at v_uv1,
+     * 2=reconstructed SH irradiance E(N), 3=lightmap uv1 as colour. */
+    "uniform int u_debug_mode;\n"
     "const float PI = 3.14159265359;\n"
     /* Irradiance from the baked SH lightmap in direction n (Ramamoorthi cosine\n"
      * lobe: A0=pi, A1=2pi/3, A2=pi/4). Matches lm_sh9_irradiance exactly. */
@@ -205,6 +208,11 @@ static const char *const PBR_FS =
     "                               u_light_color[i], u_light_range[i], u_light_cos_inner[i],\n"
     "                               u_light_cos_outer[i], N,V,albedo,rough,metal,F0);\n"
     "  }\n"
+    "  if(u_debug_mode==1){ frag=vec4(texture(u_sh0,v_uv1).rgb,1.0); return; }\n"
+    "  if(u_debug_mode==2){ frag=vec4(max(pbr_sh_irradiance(N),vec3(0.0)),1.0); return; }\n"
+    "  if(u_debug_mode==3){ frag=vec4(v_uv1,0.0,1.0); return; }\n"
+    "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"
+    "  if(u_debug_mode==5){ frag=vec4(0.5+0.5*normalize(v_tangent),1.0); return; }\n"
     "  vec3 ambient;\n"
     "  if(u_sh_enabled==1){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E/PI*ao; }\n"
     "  else { ambient = u_ambient*albedo*ao; }\n"

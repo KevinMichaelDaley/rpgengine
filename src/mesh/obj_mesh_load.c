@@ -65,14 +65,14 @@ void obj_mesh_free(obj_mesh_t *mesh)
 {
     if (mesh == NULL) return;
     free(mesh->positions); free(mesh->normals); free(mesh->tangents);
-    free(mesh->uvs); free(mesh->indices);
+    free(mesh->uvs); free(mesh->uvs1); free(mesh->indices);
     memset(mesh, 0, sizeof(*mesh));
 }
 
 /* Generate per-vertex tangents (vec4, w = handedness) from positions + uvs +
  * normals, for tangent-space normal mapping. Accumulates per-triangle tangent/
  * bitangent, then Gram-Schmidt orthonormalises against the vertex normal. */
-static int obj_gen_tangents(obj_mesh_t *m)
+int obj_mesh_gen_tangents(obj_mesh_t *m)
 {
     m->tangents = malloc((size_t)m->vert_count * 4 * sizeof(float));
     float *bit = calloc((size_t)m->vert_count * 3, sizeof(float));
@@ -138,11 +138,13 @@ int obj_mesh_load(const char *path, float scale, obj_mesh_t *out)
     out->positions = malloc((size_t)vcap * 3 * sizeof(float));
     out->normals   = malloc((size_t)vcap * 3 * sizeof(float));
     out->uvs       = malloc((size_t)vcap * 2 * sizeof(float));
+    out->uvs1      = calloc((size_t)vcap * 2, sizeof(float)); /* OBJ has no 2nd UV */
     out->indices   = malloc((size_t)icap * sizeof(uint32_t));
     uint32_t hcap = obj_pow2_ceil(vcap * 2u + 8u), hmask = hcap - 1u;
     uint64_t *hkeys = calloc(hcap, sizeof(uint64_t));
     uint32_t *hvals = malloc((size_t)hcap * sizeof(uint32_t));
-    if (!pos || !out->positions || !out->normals || !out->uvs || !out->indices ||
+    if (!pos || !out->positions || !out->normals || !out->uvs || !out->uvs1 ||
+        !out->indices ||
         !hkeys || !hvals || (nvt && !uv) || (nvn && !nrm)) {
         free(pos); free(uv); free(nrm); free(hkeys); free(hvals);
         obj_mesh_free(out); fclose(fp); return -1;
@@ -212,6 +214,6 @@ int obj_mesh_load(const char *path, float scale, obj_mesh_t *out)
         }
     }
     free(pos); free(uv); free(nrm); free(hkeys); free(hvals);
-    if (obj_gen_tangents(out) != 0) { obj_mesh_free(out); return -1; }
+    if (obj_mesh_gen_tangents(out) != 0) { obj_mesh_free(out); return -1; }
     return 0;
 }

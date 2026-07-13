@@ -22,6 +22,17 @@
 /** Initial chunk array capacity. */
 #define CHUNK_POOL_INITIAL 64
 
+/* Reset one node to the empty state: all child slots invalid, no flags, and a
+ * zeroed shading pyramid (the 0xFF fill would otherwise leave the float colour
+ * fields as NaN, poisoning the lightmap far-field gather). */
+static void npc_svo_node_reset(npc_svo_node_t *node) {
+    memset(node, 0xFF, sizeof(*node)); /* child slots + parent -> INVALID */
+    node->flags = 0;
+    node->occupancy = 0; /* start empty so rasterize's |= bitmask is meaningful */
+    node->diffuse[0] = node->diffuse[1] = node->diffuse[2] = 0.0f;
+    node->emissive[0] = node->emissive[1] = node->emissive[2] = 0.0f;
+}
+
 /* ── Public API ─────────────────────────────────────────────────── */
 
 bool npc_svo_grid_init(npc_svo_grid_t *grid, phys_aabb_t bounds,
@@ -48,8 +59,7 @@ bool npc_svo_grid_init(npc_svo_grid_t *grid, phys_aabb_t bounds,
                                             sizeof(npc_svo_node_t));
     if (!grid->nodes) return false;
     /* Initialize root node: all child slots invalid, no flags. */
-    memset(grid->nodes, 0xFF, sizeof(npc_svo_node_t));
-    grid->nodes[0].flags = 0;
+    npc_svo_node_reset(&grid->nodes[0]);
     /* Reserve index 0 for the root: alloc_node starts from index 1. */
     grid->node_count = 1;
     grid->node_cap = NODE_POOL_INITIAL;
@@ -64,8 +74,7 @@ bool npc_svo_grid_init(npc_svo_grid_t *grid, phys_aabb_t bounds,
     grid->chunk_cap = CHUNK_POOL_INITIAL;
 
     /* Node 0 is reserved as a "null" node (all children invalid). */
-    memset(&grid->nodes[0], 0xFF, sizeof(npc_svo_node_t));
-    grid->nodes[0].flags = 0;
+    npc_svo_node_reset(&grid->nodes[0]);
     grid->node_count = 1;
 
     return true;
@@ -92,8 +101,7 @@ uint32_t npc_svo_alloc_node(npc_svo_grid_t *grid) {
     }
 
     uint32_t idx = grid->node_count++;
-    memset(&grid->nodes[idx], 0xFF, sizeof(npc_svo_node_t));
-    grid->nodes[idx].flags = 0;
+    npc_svo_node_reset(&grid->nodes[idx]);
     return idx;
 }
 
@@ -102,7 +110,7 @@ void npc_svo_grid_clear(npc_svo_grid_t *grid) {
 
     /* Reset node pool, preserving node 0 as null. */
     grid->node_count = 1;
-    memset(&grid->nodes[0], 0xFF, sizeof(npc_svo_node_t));
+    npc_svo_node_reset(&grid->nodes[0]);
 
     /* Clear chunks without freeing. */
     grid->chunk_count = 0;

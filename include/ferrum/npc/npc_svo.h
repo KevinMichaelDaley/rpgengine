@@ -62,9 +62,15 @@ typedef struct npc_svo_node {
     uint8_t  occupancy;   /**< Bitmask of occupied child slots. */
     uint8_t  flags;       /**< SOLID | WALKABLE | PORTAL. */
     uint16_t material;    /**< Material ID (0=air, 1=stone, 2=wood, ...). */
+    /* Filtered shading pyramid for the offline lightmap far-field gather: each
+     * level stores the average diffuse reflectance and emissive radiance of its
+     * subtree, so a distant cone ray can sample a coarse (pre-filtered) level
+     * instead of a single noisy leaf. Zero for nav-only grids. */
+    float    diffuse[3];  /**< Avg diffuse reflectance (albedo) of the subtree. */
+    float    emissive[3]; /**< Avg emissive radiance of the subtree. */
 } npc_svo_node_t;
 
-_Static_assert(sizeof(npc_svo_node_t) == 40, "npc_svo_node_t must be 40 bytes");
+_Static_assert(sizeof(npc_svo_node_t) == 64, "npc_svo_node_t must be 64 bytes");
 
 /**
  * @brief A spatial section (chunk) of the SVO.

@@ -8,6 +8,7 @@
 #include "ferrum/lightmap/lm_farfield.h"
 #include "ferrum/lightmap/lm_sh.h"
 #include "ferrum/lightmap/lm_svo_material.h"
+#include "ferrum/lightmap/lm_svo_mip.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/npc/npc_svo.h"
 
@@ -80,8 +81,9 @@ static int test_far_emissive(void)
                                 { { 0, 0, 0 }, { 0, 0, 0 } },
                                 { { 0.5f, 0.5f, 0.5f }, { 5, 5, 5 } } };
     lm_material_table_t table = emissive_table(entries);
+    lm_svo_mip_build(&svo, &table);
 
-    lm_farfield_gather(&lm, &svo, &table, 256, 1.0f, 20.0f, 42u);
+    lm_farfield_gather(&lm, &svo, &table, NULL, 256, 1.0f, 20.0f, 42u);
     ASSERT_TRUE(luxel_irradiance(&lm) > 0.0f);
     npc_svo_grid_destroy(&svo);
     return 0;
@@ -99,9 +101,10 @@ static int test_near_ignored(void)
                                 { { 0, 0, 0 }, { 0, 0, 0 } },
                                 { { 0.5f, 0.5f, 0.5f }, { 5, 5, 5 } } };
     lm_material_table_t table = emissive_table(entries);
+    lm_svo_mip_build(&svo, &table);
 
     /* near_radius past the wall at z=5 -> every hit is "near" -> skipped. */
-    lm_farfield_gather(&lm, &svo, &table, 256, 10.0f, 20.0f, 42u);
+    lm_farfield_gather(&lm, &svo, &table, NULL, 256, 10.0f, 20.0f, 42u);
     ASSERT_TRUE(luxel_irradiance(&lm) <= 1e-6f);
     npc_svo_grid_destroy(&svo);
     return 0;
@@ -119,8 +122,9 @@ static int test_backface(void)
                                 { { 0, 0, 0 }, { 0, 0, 0 } },
                                 { { 0.5f, 0.5f, 0.5f }, { 5, 5, 5 } } };
     lm_material_table_t table = emissive_table(entries);
+    lm_svo_mip_build(&svo, &table);
 
-    lm_farfield_gather(&lm, &svo, &table, 256, 1.0f, 20.0f, 42u);
+    lm_farfield_gather(&lm, &svo, &table, NULL, 256, 1.0f, 20.0f, 42u);
     ASSERT_TRUE(luxel_irradiance(&lm) <= 1e-6f);
     npc_svo_grid_destroy(&svo);
     return 0;

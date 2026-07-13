@@ -126,6 +126,7 @@ static bool lm_dda(const npc_svo_grid_t *svo, vec3_t origin, vec3_t dir,
                 hit->material = (node != NPC_SVO_INVALID_NODE)
                                     ? svo->nodes[node].material
                                     : (uint16_t)0;
+                hit->node = node;
             }
             return true;
         }
@@ -153,7 +154,8 @@ bool lm_visibility_occluded(const npc_svo_grid_t *svo, vec3_t origin,
 bool lm_visibility_trace(const npc_svo_grid_t *svo, vec3_t origin,
                          vec3_t dir, float maxdist, lm_ray_hit_t *out)
 {
-    lm_ray_hit_t h = { 0.0f, { 0, 0, 0 }, { 0, 0, 0 }, 0, false };
+    lm_ray_hit_t h = { 0.0f, { 0, 0, 0 }, { 0, 0, 0 }, 0, false,
+                       NPC_SVO_INVALID_NODE };
     vec3_t nd = vec3_normalize_safe(dir, 1e-8f);
     bool hit = false;
     if (!(nd.x == 0.0f && nd.y == 0.0f && nd.z == 0.0f))
