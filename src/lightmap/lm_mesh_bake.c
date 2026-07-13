@@ -193,9 +193,23 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         !result->luxel_areas || !positions || !visited)
         return false;
 
-    /* SVO for visibility + far field. */
+    /* SVO for visibility + far field. Derive the depth from the target voxel
+     * size when set (voxel edge = max_extent / 2^depth), so callers specify a
+     * physical resolution (default ~1cm) rather than a raw depth. */
+    uint32_t svo_depth = config->svo_depth;
+    if (config->voxel_size > 0.0f) {
+        phys_vec3_t mn = config->svo_bounds.min, mx = config->svo_bounds.max;
+        float ext = mx.x - mn.x;
+        if (mx.y - mn.y > ext) ext = mx.y - mn.y;
+        if (mx.z - mn.z > ext) ext = mx.z - mn.z;
+        uint32_t d = 1u;
+        while (d < NPC_SVO_MAX_DEPTH &&
+               ext / (float)(1u << d) > config->voxel_size)
+            ++d;
+        svo_depth = d;
+    }
     npc_svo_grid_t svo;
-    if (!npc_svo_grid_init(&svo, config->svo_bounds, config->svo_depth))
+    if (!npc_svo_grid_init(&svo, config->svo_bounds, svo_depth))
         return false;
 
     /* Luxelize each mesh + record areas + stamp the SVO. */

@@ -40,7 +40,10 @@ typedef struct lm_scene {
 /** Tunables for one bake: acceleration structures, sampling, and the solve. */
 typedef struct lm_bake_config {
     phys_aabb_t svo_bounds;      /**< World bounds of the SVO. */
-    uint32_t    svo_depth;       /**< SVO subdivision depth. */
+    uint32_t    svo_depth;       /**< SVO subdivision depth (used if voxel_size<=0). */
+    float       voxel_size;      /**< Target voxel edge (m) for this region; if
+                                      >0 the baker derives svo_depth from it.
+                                      Default 0 -> use svo_depth. ~0.01 typical. */
     uint32_t    atlas_width;     /**< Output atlas width (luxels). */
     uint32_t    atlas_padding;   /**< Gutter between packed surfaces. */
     uint32_t    direct_samples;  /**< Area-light samples per luxel. */

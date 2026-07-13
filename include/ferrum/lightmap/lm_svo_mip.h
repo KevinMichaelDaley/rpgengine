@@ -43,6 +43,18 @@ typedef struct lm_svo_shade {
 void lm_svo_mip_build(npc_svo_grid_t *svo, const lm_material_table_t *table);
 
 /**
+ * @brief Build the pyramid from per-luxel material instead of a table: splat
+ *        each luxel's albedo/emissive into the leaf voxel it occupies (averaged
+ *        when several share a voxel), then average up the octree. Use this when
+ *        the surface material is per-texel (e.g. sampled from an albedo image)
+ *        rather than a flat material id. @p count is scratch sized to the node
+ *        count. Reads @p pos[i]/@p albedo[i]/@p emissive[i] for i in [0,@p n).
+ */
+void lm_svo_mip_splat_luxels(npc_svo_grid_t *svo, const vec3_t *pos,
+                             const vec3_t *albedo, const vec3_t *emissive,
+                             uint32_t n, uint32_t *count);
+
+/**
  * @brief Sample the pyramid at @p leaf_node's ancestor @p levels_up levels
  *        toward the root (0 = the node itself; clamps at the root). Returns the
  *        black shade if @p svo is NULL or @p leaf_node is invalid.
