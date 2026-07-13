@@ -48,7 +48,8 @@ static int test_voxelize_tint(void)
 
     uint32_t *count = malloc((size_t)g.node_count * sizeof(uint32_t));
     ASSERT_TRUE(count != NULL);
-    lm_svo_voxelize(&g, &m, 1u, count);
+    vec3_t *vn = malloc((size_t)g.node_count*sizeof(vec3_t));
+    lm_svo_voxelize(&g, &m, 1u, count, vn);
 
     /* A solid voxel on the quad reports the tint reflectance. */
     uint32_t node = NPC_SVO_INVALID_NODE;
@@ -63,7 +64,7 @@ static int test_voxelize_tint(void)
      * the only lit geometry). */
     ASSERT_TRUE(g.nodes[0].diffuse[0] > 0.1f);
 
-    free(count);
+    free(count); free(vn);
     npc_svo_grid_destroy(&g);
     return 0;
 }
@@ -79,13 +80,14 @@ static int test_air_black(void)
     m.positions = QPOS; m.normals = QNRM; m.uv0 = QUV; m.indices = QIDX;
     m.vert_count = 4; m.index_count = 6; m.albedo = (vec3_t){ 1, 1, 1 };
     uint32_t *count = malloc((size_t)g.node_count * sizeof(uint32_t));
-    lm_svo_voxelize(&g, &m, 1u, count);
+    vec3_t *vn = malloc((size_t)g.node_count*sizeof(vec3_t));
+    lm_svo_voxelize(&g, &m, 1u, count, vn);
     uint32_t node = NPC_SVO_INVALID_NODE;
     /* z=0.1 is off the quad -> not solid (an interior node here may legitimately
      * carry mipped material for cone sampling, so we test occupancy, not colour). */
     uint8_t f = npc_svo_query_point(&g, (phys_vec3_t){ 0.5f, 0.5f, 0.1f }, &node);
     ASSERT_TRUE(!(f & NPC_SVO_FLAG_SOLID));
-    free(count);
+    free(count); free(vn);
     npc_svo_grid_destroy(&g);
     return 0;
 }

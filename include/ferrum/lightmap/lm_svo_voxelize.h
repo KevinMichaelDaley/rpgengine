@@ -31,11 +31,14 @@ extern "C" {
  * @brief Voxelize @p n_meshes meshes' material into @p svo: for every solid
  *        voxel a triangle covers, sample that triangle's albedo/emissive at the
  *        voxel's barycentric material-UV and average into the leaf; then average
- *        up the octree. @p count is node-count-sized scratch. Zeroes every
- *        node's diffuse/emissive first.
+ *        up the octree. Also writes the smooth (barycentric-interpolated) surface
+ *        NORMAL per leaf into @p normal (node-count sized) so the gather shades
+ *        near hits with the real surface normal instead of the blocky voxel face
+ *        (which otherwise facets curved surfaces). @p count is node-count-sized
+ *        scratch. Zeroes every node's diffuse/emissive and @p normal first.
  */
 void lm_svo_voxelize(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
-                     uint32_t n_meshes, uint32_t *count);
+                     uint32_t n_meshes, uint32_t *count, vec3_t *normal);
 
 #ifdef __cplusplus
 }

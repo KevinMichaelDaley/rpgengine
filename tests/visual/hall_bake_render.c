@@ -124,7 +124,7 @@ int main(int argc,char**argv){
      * (3cm) + few samples to validate the pipeline fast; drop to ~1cm for the
      * final bake. HALL_VOXEL / HALL_SAMPLES / HALL_BOUNCES override. */
     cfg.voxel_size = getenv("HALL_VOXEL")?(float)atof(getenv("HALL_VOXEL")):0.02f;
-    cfg.atlas_width=4096; cfg.atlas_padding=2; cfg.direct_samples=0;
+    cfg.atlas_width=1536; cfg.atlas_padding=2; cfg.direct_samples=0;
     cfg.farfield_samples = getenv("HALL_SAMPLES")?(uint32_t)atoi(getenv("HALL_SAMPLES")):256u;
     cfg.gi_bounces = getenv("HALL_BOUNCES")?(uint32_t)atoi(getenv("HALL_BOUNCES")):2u;
     cfg.farfield_near=half_diag; cfg.farfield_maxdist=1e9f; cfg.seed=11u;

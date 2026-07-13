@@ -247,13 +247,15 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
              * radiosity solve + discard-near far-field gather. */
             uint32_t *count = arena_alloc(arena, _Alignof(uint32_t),
                                           (size_t)svo.node_count * sizeof(uint32_t));
-            if (count) {
-                lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, count);
+            vec3_t *vnormal = arena_alloc(arena, _Alignof(vec3_t),
+                                          (size_t)svo.node_count * sizeof(vec3_t));
+            if (count && vnormal) {
+                lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, count, vnormal);
                 lm_gi_gather(&result->combined, &svo, scene->lights,
-                             scene->n_lights, &config->sky, config->farfield_near,
-                             config->farfield_maxdist, config->farfield_samples,
-                             config->gi_bounces, config->seed ^ 0x9E3779B9u,
-                             config->gi_threads);
+                             scene->n_lights, &config->sky, vnormal,
+                             config->farfield_near, config->farfield_maxdist,
+                             config->farfield_samples, config->gi_bounces,
+                             config->seed ^ 0x9E3779B9u, config->gi_threads);
             }
         }
     }

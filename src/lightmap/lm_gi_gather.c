@@ -93,9 +93,10 @@ static vec3_t lm_gi_direct(const npc_svo_grid_t *svo, const lm_light_t *lights,
 
 /* Path-trace one primary ray and return the incident radiance it carries. */
 static vec3_t lm_gi_trace(const npc_svo_grid_t *svo, const lm_light_t *lights,
-                          uint32_t nl, const lm_sky_t *sky, float transition,
-                          float maxdist, float solid_angle, uint32_t bounces,
-                          vec3_t origin, vec3_t dir, uint32_t *rng)
+                          uint32_t nl, const lm_sky_t *sky, const vec3_t *vnormal,
+                          float transition, float maxdist, float solid_angle,
+                          uint32_t bounces, vec3_t origin, vec3_t dir,
+                          uint32_t *rng)
 {
     vec3_t L = { 0, 0, 0 };
     vec3_t through = { 1, 1, 1 };
@@ -119,12 +120,20 @@ static vec3_t lm_gi_trace(const npc_svo_grid_t *svo, const lm_light_t *lights,
             L.z += through.z * (sh.emissive.z + sh.diffuse.z * amb.z);
             break;
         }
-        /* Near hit: read the surface material and light it (emission + direct). */
+        /* Near hit: read the surface material and light it (emission + direct).
+         * Shade with the SMOOTH per-voxel surface normal (not the blocky voxel
+         * face normal, which facets curved surfaces), oriented against the ray. */
         lm_svo_shade_t mat = lm_svo_mip_sample(svo, hit.node, 0u);
+        vec3_t n = hit.normal;
+        if (vnormal != NULL) {
+            vec3_t vn = vnormal[hit.node];
+            if (vn.x != 0.0f || vn.y != 0.0f || vn.z != 0.0f)
+                n = (vec3_dot(vn, dir) > 0.0f) ? vec3_scale(vn, -1.0f) : vn;
+        }
         L.x += through.x * mat.emissive.x;
         L.y += through.y * mat.emissive.y;
         L.z += through.z * mat.emissive.z;
-        vec3_t E = lm_gi_direct(svo, lights, nl, hit.position, hit.normal);
+        vec3_t E = lm_gi_direct(svo, lights, nl, hit.position, n);
         L.x += through.x * mat.diffuse.x * E.x * LM_GI_INV_PI;
         L.y += through.y * mat.diffuse.y * E.y * LM_GI_INV_PI;
         L.z += through.z * mat.diffuse.z * E.z * LM_GI_INV_PI;
@@ -133,8 +142,8 @@ static vec3_t lm_gi_trace(const npc_svo_grid_t *svo, const lm_light_t *lights,
         /* Scatter a cosine bounce; cosine-weighting cancels the cos/pi so the
          * throughput just picks up the albedo. */
         through.x *= mat.diffuse.x; through.y *= mat.diffuse.y; through.z *= mat.diffuse.z;
-        dir = lm_gi_cosine_dir(hit.normal, rng);
-        origin = vec3_add(hit.position, vec3_scale(hit.normal, bias));
+        dir = lm_gi_cosine_dir(n, rng);
+        origin = vec3_add(hit.position, vec3_scale(n, bias));
     }
     return L;
 }
@@ -142,9 +151,9 @@ static vec3_t lm_gi_trace(const npc_svo_grid_t *svo, const lm_light_t *lights,
 /* Gather one luxel: a stratified hemisphere of path-traced primary rays. */
 static void lm_gi_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
                                const lm_light_t *lights, uint32_t nl,
-                               const lm_sky_t *sky, float transition,
-                               float maxdist, uint32_t samples, uint32_t bounces,
-                               uint32_t *rng)
+                               const lm_sky_t *sky, const vec3_t *vnormal,
+                               float transition, float maxdist, uint32_t samples,
+                               uint32_t bounces, uint32_t *rng)
 {
     vec3_t t, b;
     lm_gi_basis(luxel->normal, &t, &b);
@@ -167,8 +176,8 @@ static void lm_gi_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
             vec3_t dir = vec3_add(vec3_add(vec3_scale(t, r * cosf(phi)),
                                            vec3_scale(b, r * sinf(phi))),
                                   vec3_scale(luxel->normal, z));
-            vec3_t Li = lm_gi_trace(svo, lights, nl, sky, transition, maxdist,
-                                    weight, bounces, origin, dir, rng);
+            vec3_t Li = lm_gi_trace(svo, lights, nl, sky, vnormal, transition,
+                                    maxdist, weight, bounces, origin, dir, rng);
             const float *lc = &Li.x;
             for (int c = 0; c < 3; ++c)
                 lm_sh9_add_sample(&luxel->sh[c], dir, lc[c], weight);
@@ -183,6 +192,7 @@ typedef struct lm_gi_ctx {
     const lm_light_t    *lights;
     uint32_t             n_lights;
     const lm_sky_t      *sky;
+    const vec3_t        *vnormal;
     float                transition, maxdist;
     uint32_t             samples, bounces, seed;
 } lm_gi_ctx_t;
@@ -194,23 +204,23 @@ static void lm_gi_chunk(uint32_t i0, uint32_t i1, void *vctx)
     for (uint32_t i = i0; i < i1; ++i) {
         uint32_t rng = c->seed ^ (i * 2654435761u);
         lm_gi_gather_luxel(&c->lm->luxels[i], c->svo, c->lights, c->n_lights,
-                           c->sky, c->transition, c->maxdist, c->samples,
-                           c->bounces, &rng);
+                           c->sky, c->vnormal, c->transition, c->maxdist,
+                           c->samples, c->bounces, &rng);
     }
 }
 
 void lm_gi_gather(lm_lightmap_t *lm, const npc_svo_grid_t *svo,
                   const lm_light_t *lights, uint32_t n_lights,
-                  const lm_sky_t *sky, float transition, float maxdist,
-                  uint32_t samples, uint32_t bounces, uint32_t seed,
-                  uint32_t n_threads)
+                  const lm_sky_t *sky, const vec3_t *vnormal, float transition,
+                  float maxdist, uint32_t samples, uint32_t bounces,
+                  uint32_t seed, uint32_t n_threads)
 {
     if (lm == NULL || svo == NULL || samples == 0)
         return;
     uint32_t n_luxels = lm->res_u * lm->res_v;
     /* Each luxel is independent (writes only its own SH; the SVO is read-only),
      * so split the luxels across the thread pool. */
-    lm_gi_ctx_t ctx = { lm, svo, lights, n_lights, sky, transition, maxdist,
-                        samples, bounces, seed };
+    lm_gi_ctx_t ctx = { lm, svo, lights, n_lights, sky, vnormal, transition,
+                        maxdist, samples, bounces, seed };
     lm_parallel_for(n_luxels, lm_gi_chunk, &ctx, n_threads);
 }

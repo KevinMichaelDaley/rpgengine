@@ -33,10 +33,11 @@ static int lm_vox_bary(const float *a, const float *b, const float *c,
     return 1;
 }
 
-/* Sample one mesh triangle's material into every solid voxel it covers. */
+/* Sample one mesh triangle's material + smooth normal into every solid voxel it
+ * covers. @p normal accumulates the barycentric surface normal per node. */
 static void lm_vox_triangle(npc_svo_grid_t *svo, const lm_mesh_t *m,
                             uint32_t i0, uint32_t i1, uint32_t i2,
-                            uint32_t *count)
+                            uint32_t *count, vec3_t *normal)
 {
     const float *a = &m->positions[i0*3], *b = &m->positions[i1*3],
                 *c = &m->positions[i2*3];
@@ -104,27 +105,35 @@ static void lm_vox_triangle(npc_svo_grid_t *svo, const lm_mesh_t *m,
         nd->diffuse[2]  += alb.z*m->albedo.z;
         nd->emissive[0] += emi.x*m->emissive.x; nd->emissive[1] += emi.y*m->emissive.y;
         nd->emissive[2] += emi.z*m->emissive.z;
+        /* Smooth (barycentric-interpolated vertex) normal -> per-voxel normal,
+         * so the gather shades this hit with the real surface normal. */
+        if (m->normals != NULL) {
+            normal[node].x += wa*m->normals[i0*3]   + wb*m->normals[i1*3]   + wc*m->normals[i2*3];
+            normal[node].y += wa*m->normals[i0*3+1] + wb*m->normals[i1*3+1] + wc*m->normals[i2*3+1];
+            normal[node].z += wa*m->normals[i0*3+2] + wb*m->normals[i1*3+2] + wc*m->normals[i2*3+2];
+        }
         count[node] += 1u;
     }
 }
 
 void lm_svo_voxelize(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
-                     uint32_t n_meshes, uint32_t *count)
+                     uint32_t n_meshes, uint32_t *count, vec3_t *normal)
 {
     if (svo == NULL || svo->nodes == NULL || svo->node_count == 0 ||
-        meshes == NULL || count == NULL)
+        meshes == NULL || count == NULL || normal == NULL)
         return;
     for (uint32_t i = 0; i < svo->node_count; ++i) {
         npc_svo_node_t *nd = &svo->nodes[i];
         nd->diffuse[0] = nd->diffuse[1] = nd->diffuse[2] = 0.0f;
         nd->emissive[0] = nd->emissive[1] = nd->emissive[2] = 0.0f;
+        normal[i] = (vec3_t){ 0.0f, 0.0f, 0.0f };
         count[i] = 0u;
     }
     for (uint32_t mi = 0; mi < n_meshes; ++mi) {
         const lm_mesh_t *m = &meshes[mi];
         for (uint32_t t = 0; t + 2 < m->index_count; t += 3)
             lm_vox_triangle(svo, m, m->indices[t], m->indices[t+1],
-                            m->indices[t+2], count);
+                            m->indices[t+2], count, normal);
     }
     for (uint32_t i = 0; i < svo->node_count; ++i) {
         if (count[i] > 1u) {
@@ -132,6 +141,11 @@ void lm_svo_voxelize(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
             npc_svo_node_t *nd = &svo->nodes[i];
             for (int k = 0; k < 3; ++k) { nd->diffuse[k] *= inv; nd->emissive[k] *= inv; }
         }
+        /* Normalise the accumulated per-voxel normal (leaves only; the gather
+         * reads leaf normals on near hits). */
+        float *nn = &normal[i].x;
+        float len = sqrtf(nn[0]*nn[0] + nn[1]*nn[1] + nn[2]*nn[2]);
+        if (len > 1e-8f) { nn[0]/=len; nn[1]/=len; nn[2]/=len; }
     }
     lm_svo_mip_average_up(svo);
 }
