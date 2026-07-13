@@ -8,12 +8,11 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "ferrum/lightmap/lm_farfield.h"
+#include "ferrum/lightmap/lm_gi_gather.h"
 #include "ferrum/lightmap/lm_svo_mip.h"
-#include "ferrum/lightmap/lm_kdtree.h"
+#include "ferrum/lightmap/lm_svo_voxelize.h"
 #include "ferrum/lightmap/lm_mesh_luxel.h"
 #include "ferrum/lightmap/lm_sh.h"
-#include "ferrum/lightmap/lm_solve.h"
 #include "ferrum/lightmap/lm_svo_material.h"
 #include "ferrum/lightmap/lm_visibility.h"
 #include "ferrum/physics/mesh_collider.h"
@@ -235,26 +234,26 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         positions[i] = result->combined.luxels[i].pos;
 
     if (total > 0) {
-        /* Direct from baked analytic lights + emissive meshes, far field, solve. */
+        /* Direct sun/emissive onto the luxels' own SH (their direct term). */
         lm_mesh_bake_direct(&result->combined, scene->lights, scene->n_lights, &svo);
         lm_mesh_bake_emissive(&result->combined, scene, &svo,
                               config->direct_samples ? config->direct_samples : 64u,
                               config->seed ^ 0x51EDu);
         if (config->farfield_samples > 0) {
-            /* Pre-filter the SVO into a shading mip so far-field cone rays read
-             * smooth, pre-integrated distant reflectance/emission. */
-            lm_svo_mip_build(&svo, &scene->materials);
-            lm_farfield_gather(&result->combined, &svo, &scene->materials,
-                               &config->sky, config->farfield_samples,
-                               config->farfield_near, config->farfield_maxdist,
-                               config->seed ^ 0x9E3779B9u);
-        }
-        lm_kdtree_t kd;
-        lm_solver_t solver;
-        if (lm_kdtree_build(&kd, positions, total, arena) &&
-            lm_solver_init(&solver, &result->combined, &kd, &svo, NULL,
-                           result->luxel_areas, 0.0f, arena)) {
-            lm_solver_run(&solver, &config->solve);
+            /* Voxelize the surfaces' textured material into the SVO, then do the
+             * unified path-traced GI gather: near hits path-trace the voxel
+             * material (direct + cosine bounce), rays past the transition cone
+             * the octree, escapes read the sky. Replaces the old near-field
+             * radiosity solve + discard-near far-field gather. */
+            uint32_t *count = arena_alloc(arena, _Alignof(uint32_t),
+                                          (size_t)svo.node_count * sizeof(uint32_t));
+            if (count) {
+                lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, count);
+                lm_gi_gather(&result->combined, &svo, scene->lights,
+                             scene->n_lights, &config->sky, config->farfield_near,
+                             config->farfield_maxdist, config->farfield_samples,
+                             config->gi_bounces, config->seed ^ 0x9E3779B9u);
+            }
         }
     }
     npc_svo_grid_destroy(&svo);

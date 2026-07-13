@@ -55,6 +55,13 @@ void lm_svo_mip_splat_luxels(npc_svo_grid_t *svo, const vec3_t *pos,
                              uint32_t n, uint32_t *count);
 
 /**
+ * @brief Average leaf diffuse/emissive up the octree (solid-leaf-weighted), so
+ *        every interior node holds the mean of its subtree. Call after filling
+ *        the leaves directly (e.g. @ref lm_svo_voxelize_mesh). NULL-safe.
+ */
+void lm_svo_mip_average_up(npc_svo_grid_t *svo);
+
+/**
  * @brief Sample the pyramid at @p leaf_node's ancestor @p levels_up levels
  *        toward the root (0 = the node itself; clamps at the root). Returns the
  *        black shade if @p svo is NULL or @p leaf_node is invalid.

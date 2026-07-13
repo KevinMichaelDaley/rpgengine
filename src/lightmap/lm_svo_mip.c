@@ -102,6 +102,13 @@ static uint32_t lm_svo_mip_up(npc_svo_grid_t *svo, uint32_t node_idx)
     return w;
 }
 
+void lm_svo_mip_average_up(npc_svo_grid_t *svo)
+{
+    if (svo == NULL || svo->nodes == NULL || svo->node_count == 0)
+        return;
+    lm_svo_mip_up(svo, 0u);
+}
+
 void lm_svo_mip_splat_luxels(npc_svo_grid_t *svo, const vec3_t *pos,
                              const vec3_t *albedo, const vec3_t *emissive,
                              uint32_t n, uint32_t *count)

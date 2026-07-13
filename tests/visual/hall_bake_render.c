@@ -113,12 +113,15 @@ int main(int argc,char**argv){
     printf("room diag=%.2f m, near/far transition=%.2f m\n",diag,half_diag);
     lm_bake_config_t cfg={0};
     cfg.svo_bounds=(phys_aabb_t){{-1.5f,-0.5f,-7.5f},{10.5f,5.5f,1.5f}};
-    cfg.svo_depth=7; cfg.atlas_width=2048; cfg.atlas_padding=2; cfg.direct_samples=0;
-    cfg.farfield_samples=256; cfg.farfield_near=half_diag; cfg.farfield_maxdist=1e9f;
-    cfg.solve.near_radius=half_diag; cfg.solve.max_shots=6000;
-    cfg.solve.residual_epsilon=1e-4f; cfg.seed=11u;
-    /* Constant daylight sky: escaping far-field rays pick this up as ambient,
-     * which then bounces through the solve (fills the interior via openings). */
+    /* Voxel-GI: fine SVO (target voxel edge), path-traced gather. Start coarse
+     * (3cm) + few samples to validate the pipeline fast; drop to ~1cm for the
+     * final bake. HALL_VOXEL / HALL_SAMPLES / HALL_BOUNCES override. */
+    cfg.voxel_size = getenv("HALL_VOXEL")?(float)atof(getenv("HALL_VOXEL")):0.03f;
+    cfg.atlas_width=2048; cfg.atlas_padding=2; cfg.direct_samples=0;
+    cfg.farfield_samples = getenv("HALL_SAMPLES")?(uint32_t)atoi(getenv("HALL_SAMPLES")):64u;
+    cfg.gi_bounces = getenv("HALL_BOUNCES")?(uint32_t)atoi(getenv("HALL_BOUNCES")):2u;
+    cfg.farfield_near=half_diag; cfg.farfield_maxdist=1e9f; cfg.seed=11u;
+    /* Constant daylight sky sampled by escaping gather rays. */
     cfg.sky.kind=LM_SKY_CONSTANT; cfg.sky.color=v3(0.55f,0.68f,0.95f); cfg.sky.hdri=NULL; cfg.sky.yaw=0.0f;
     lm_mesh_bake_result_t res;
     /* SKIP_BAKE=1 reuses the previously serialized lightmap so debug renders can
