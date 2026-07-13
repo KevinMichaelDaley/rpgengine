@@ -96,7 +96,14 @@ int main(int argc,char**argv){
         lms[i].indices=dm[i].indices; lms[i].vert_count=dm[i].vert_count; lms[i].index_count=dm[i].index_count;
         lms[i].albedo_image=grp_img[grp[i]]; lms[i].emissive_image=NULL;
         lms[i].albedo=v3(1,1,1); lms[i].emissive=v3(0,0,0);
-        lms[i].material=0; lms[i].lightmap_resolution = strstr(names[i],"floor")?128u:(grp[i]==0?64u:48u); }
+        lms[i].material=0;
+        /* Columns are smooth + prominent -> much higher lightmap res; everything
+         * else a small bump. */
+        lms[i].lightmap_resolution =
+            strstr(names[i],"col")   ? 224u :
+            strstr(names[i],"resp")  ? 128u :
+            strstr(names[i],"floor") ? 160u :
+            (grp[i]==0 ? 80u : 72u); }
     /* Low sun angled to enter through the long-wall windows (else the vaulted
      * ceiling blocks all interior light). */
     lm_light_t sun; memset(&sun,0,sizeof sun); sun.kind=LM_LIGHT_DIRECTIONAL;
@@ -116,9 +123,9 @@ int main(int argc,char**argv){
     /* Voxel-GI: fine SVO (target voxel edge), path-traced gather. Start coarse
      * (3cm) + few samples to validate the pipeline fast; drop to ~1cm for the
      * final bake. HALL_VOXEL / HALL_SAMPLES / HALL_BOUNCES override. */
-    cfg.voxel_size = getenv("HALL_VOXEL")?(float)atof(getenv("HALL_VOXEL")):0.03f;
-    cfg.atlas_width=2048; cfg.atlas_padding=2; cfg.direct_samples=0;
-    cfg.farfield_samples = getenv("HALL_SAMPLES")?(uint32_t)atoi(getenv("HALL_SAMPLES")):64u;
+    cfg.voxel_size = getenv("HALL_VOXEL")?(float)atof(getenv("HALL_VOXEL")):0.02f;
+    cfg.atlas_width=4096; cfg.atlas_padding=2; cfg.direct_samples=0;
+    cfg.farfield_samples = getenv("HALL_SAMPLES")?(uint32_t)atoi(getenv("HALL_SAMPLES")):256u;
     cfg.gi_bounces = getenv("HALL_BOUNCES")?(uint32_t)atoi(getenv("HALL_BOUNCES")):2u;
     cfg.farfield_near=half_diag; cfg.farfield_maxdist=1e9f; cfg.seed=11u;
     /* Constant daylight sky sampled by escaping gather rays. */
@@ -170,6 +177,13 @@ int main(int argc,char**argv){
     mats[1].roughness_min=0.2f; mats[1].roughness_max=1.0f;
     material_init(&mats[2]); mats[2].maps[MATERIAL_TEX_ALBEDO]=&tv_a; mats[2].maps[MATERIAL_TEX_ROUGHNESS]=&tv_r;
     mats[2].roughness_min=0.2f; mats[2].roughness_max=1.0f;
+    /* Flat tangent-space normal (128,128,255) so the ashlar + vault surfaces run
+     * through the SAME TBN path as the bricks (rules out the geometric-N path). */
+    texture_t tflat; { unsigned char fn[2*2*3]; for(int i=0;i<4;++i){fn[i*3]=128;fn[i*3+1]=128;fn[i*3+2]=255;}
+        texture_create(&tflat,&loader); texture_upload_2d(&tflat,TEXTURE_FORMAT_RGB8,2,2,fn,true);
+        texture_set_sampler(&tflat,GL_LINEAR,GL_LINEAR,GL_REPEAT,GL_REPEAT); }
+    mats[1].maps[MATERIAL_TEX_NORMAL]=&tflat; mats[1].normal_scale=1.0f;
+    mats[2].maps[MATERIAL_TEX_NORMAL]=&tflat; mats[2].normal_scale=1.0f;
 
     /* Build render geometry (pos,nrm,tan,uv0,uv1-remapped) + per-mesh ranges. */
     uint32_t tot=0; for(int i=0;i<nm;++i) tot+=dm[i].index_count;

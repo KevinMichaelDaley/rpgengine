@@ -53,6 +53,7 @@ typedef struct lm_bake_config {
     lm_sky_t    sky;             /**< Environment sky for escaping far-field rays. */
     uint32_t    gi_bounces;      /**< Path-traced GI bounce depth (0 = direct-lit
                                       near surfaces only; 2-3 typical). */
+    uint32_t    gi_threads;      /**< Gather thread count (0 = all online CPUs). */
     lm_solve_params_t solve;     /**< Radiosity solve parameters + region gate. */
     uint32_t    seed;            /**< Base RNG seed. */
 } lm_bake_config_t;

@@ -41,7 +41,8 @@ extern "C" {
 void lm_gi_gather(lm_lightmap_t *lm, const npc_svo_grid_t *svo,
                   const lm_light_t *lights, uint32_t n_lights,
                   const lm_sky_t *sky, float transition, float maxdist,
-                  uint32_t samples, uint32_t bounces, uint32_t seed);
+                  uint32_t samples, uint32_t bounces, uint32_t seed,
+                  uint32_t n_threads);
 
 #ifdef __cplusplus
 }

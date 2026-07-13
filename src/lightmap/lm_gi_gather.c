@@ -6,6 +6,7 @@
 
 #include <math.h>
 
+#include "ferrum/lightmap/lm_parallel.h"
 #include "ferrum/lightmap/lm_sh.h"
 #include "ferrum/lightmap/lm_svo_mip.h"
 #include "ferrum/lightmap/lm_visibility.h"
@@ -175,17 +176,41 @@ static void lm_gi_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
     }
 }
 
+/* Shared read-only context for the parallel luxel gather. */
+typedef struct lm_gi_ctx {
+    lm_lightmap_t       *lm;
+    const npc_svo_grid_t *svo;
+    const lm_light_t    *lights;
+    uint32_t             n_lights;
+    const lm_sky_t      *sky;
+    float                transition, maxdist;
+    uint32_t             samples, bounces, seed;
+} lm_gi_ctx_t;
+
+/* Gather a contiguous chunk of luxels (one thread's share). */
+static void lm_gi_chunk(uint32_t i0, uint32_t i1, void *vctx)
+{
+    lm_gi_ctx_t *c = (lm_gi_ctx_t *)vctx;
+    for (uint32_t i = i0; i < i1; ++i) {
+        uint32_t rng = c->seed ^ (i * 2654435761u);
+        lm_gi_gather_luxel(&c->lm->luxels[i], c->svo, c->lights, c->n_lights,
+                           c->sky, c->transition, c->maxdist, c->samples,
+                           c->bounces, &rng);
+    }
+}
+
 void lm_gi_gather(lm_lightmap_t *lm, const npc_svo_grid_t *svo,
                   const lm_light_t *lights, uint32_t n_lights,
                   const lm_sky_t *sky, float transition, float maxdist,
-                  uint32_t samples, uint32_t bounces, uint32_t seed)
+                  uint32_t samples, uint32_t bounces, uint32_t seed,
+                  uint32_t n_threads)
 {
     if (lm == NULL || svo == NULL || samples == 0)
         return;
     uint32_t n_luxels = lm->res_u * lm->res_v;
-    for (uint32_t i = 0; i < n_luxels; ++i) {
-        uint32_t rng = seed ^ (i * 2654435761u);
-        lm_gi_gather_luxel(&lm->luxels[i], svo, lights, n_lights, sky, transition,
-                           maxdist, samples, bounces, &rng);
-    }
+    /* Each luxel is independent (writes only its own SH; the SVO is read-only),
+     * so split the luxels across the thread pool. */
+    lm_gi_ctx_t ctx = { lm, svo, lights, n_lights, sky, transition, maxdist,
+                        samples, bounces, seed };
+    lm_parallel_for(n_luxels, lm_gi_chunk, &ctx, n_threads);
 }
