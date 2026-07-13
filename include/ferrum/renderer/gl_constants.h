@@ -204,6 +204,42 @@ extern "C" {
 #ifndef GL_UNPACK_ALIGNMENT
 #define GL_UNPACK_ALIGNMENT 0x0CF5
 #endif
+#ifndef GL_RGB
+#define GL_RGB 0x1907
+#endif
+#ifndef GL_RGB8
+#define GL_RGB8 0x8051
+#endif
+#ifndef GL_SRGB8
+#define GL_SRGB8 0x8C41
+#endif
+#ifndef GL_SRGB8_ALPHA8
+#define GL_SRGB8_ALPHA8 0x8C43
+#endif
+#ifndef GL_RG
+#define GL_RG 0x8227
+#endif
+#ifndef GL_RG8
+#define GL_RG8 0x822B
+#endif
+#ifndef GL_RGB16F
+#define GL_RGB16F 0x881B
+#endif
+#ifndef GL_RGBA16F
+#define GL_RGBA16F 0x881A
+#endif
+#ifndef GL_RGB32F
+#define GL_RGB32F 0x8815
+#endif
+#ifndef GL_LINEAR_MIPMAP_LINEAR
+#define GL_LINEAR_MIPMAP_LINEAR 0x2703
+#endif
+#ifndef GL_REPEAT
+#define GL_REPEAT 0x2901
+#endif
+#ifndef GL_TEXTURE_WRAP_R
+#define GL_TEXTURE_WRAP_R 0x8072
+#endif
 
 /* ---- Multisampling ---- */
 #ifndef GL_MULTISAMPLE
