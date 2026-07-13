@@ -358,6 +358,8 @@ BIN_HEADLESS += build/lm_solve_tests
 BIN_HEADLESS += build/lm_svo_material_tests
 BIN_HEADLESS += build/lm_farfield_tests
 BIN_HEADLESS += build/obj_mesh_load_tests
+BIN_HEADLESS += build/lm_mesh_luxel_tests
+BIN_HEADLESS += build/lm_mesh_bake_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests \
@@ -1759,7 +1761,9 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/lm_solve_tests \
 	&& ./build/lm_svo_material_tests \
 	&& ./build/lm_farfield_tests \
-	&& ./build/obj_mesh_load_tests
+	&& ./build/obj_mesh_load_tests \
+	&& ./build/lm_mesh_luxel_tests \
+	&& ./build/lm_mesh_bake_tests
 
 TEST_TIMEOUT ?= 20
 
@@ -2248,3 +2252,9 @@ build/obj_mesh_load_tests: tests/mesh/obj_mesh_load_tests.c src/mesh/obj_mesh_lo
 
 build/p004_visual_hall_forward: tests/visual/p004_visual_hall_forward.c src/renderer/forward_plus.c src/renderer/cluster_grid.c src/renderer/render_camera.c src/renderer/render_scene.c src/renderer/light_store.c src/mesh/obj_mesh_load.c src/renderer/mesh/static_mesh_create.c src/renderer/mesh/static_mesh_destroy.c src/renderer/mesh/static_mesh_draw.c src/renderer/vao_create.c src/renderer/vao_bind_attributes.c src/renderer/vao_destroy.c src/renderer/vbo_create.c src/renderer/vbo_upload.c src/renderer/vbo_destroy.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L $(RENDERER_TEST_CFLAGS) tests/visual/p004_visual_hall_forward.c src/renderer/forward_plus.c src/renderer/cluster_grid.c src/renderer/render_camera.c src/renderer/render_scene.c src/renderer/light_store.c src/mesh/obj_mesh_load.c src/renderer/mesh/static_mesh_create.c src/renderer/mesh/static_mesh_destroy.c src/renderer/mesh/static_mesh_draw.c src/renderer/vao_create.c src/renderer/vao_bind_attributes.c src/renderer/vao_destroy.c src/renderer/vbo_create.c src/renderer/vbo_upload.c src/renderer/vbo_destroy.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+
+build/lm_mesh_luxel_tests: tests/lightmap/lm_mesh_luxel_tests.c src/lightmap/lm_mesh_luxel.c src/lightmap/lm_sh.c src/math/vec3.c include/ferrum/lightmap/lm_mesh_luxel.h | build
+	$(CC) $(CFLAGS) tests/lightmap/lm_mesh_luxel_tests.c src/lightmap/lm_mesh_luxel.c src/lightmap/lm_sh.c src/math/vec3.c -o $@ -lm
+
+build/lm_mesh_bake_tests: tests/lightmap/lm_mesh_bake_tests.c src/lightmap/lm_material.c src/lightmap/lm_mesh_bake.c src/lightmap/lm_mesh_luxel.c src/lightmap/lm_farfield.c src/lightmap/lm_svo_material.c src/lightmap/lm_kdtree.c src/lightmap/lm_solve.c src/lightmap/lm_visibility.c src/lightmap/lm_light.c src/lightmap/lm_atlas.c src/lightmap/lm_lightmap.c src/lightmap/lm_sh.c src/math/vec3.c src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c include/ferrum/lightmap/lm_mesh_bake.h | build
+	$(CC) $(CFLAGS) tests/lightmap/lm_mesh_bake_tests.c src/lightmap/lm_material.c src/lightmap/lm_mesh_bake.c src/lightmap/lm_mesh_luxel.c src/lightmap/lm_farfield.c src/lightmap/lm_svo_material.c src/lightmap/lm_kdtree.c src/lightmap/lm_solve.c src/lightmap/lm_visibility.c src/lightmap/lm_light.c src/lightmap/lm_atlas.c src/lightmap/lm_lightmap.c src/lightmap/lm_sh.c src/math/vec3.c src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c -o $@ -lm
