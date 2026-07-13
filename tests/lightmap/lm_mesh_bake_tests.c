@@ -38,7 +38,9 @@ static int test_directional_bake(void) {
     arena_t arena; arena_init(&arena, buf, sizeof(buf));
 
     lm_mesh_t floor;
-    floor.positions=FPOS; floor.normals=FNRM; floor.uv1=FUV1; floor.indices=FIDX;
+    memset(&floor,0,sizeof floor);
+    floor.positions=FPOS; floor.normals=FNRM; floor.uv0=NULL; floor.uv1=FUV1; floor.indices=FIDX;
+    floor.albedo_image=NULL; floor.emissive_image=NULL;
     floor.vert_count=4; floor.index_count=6;
     floor.albedo=(vec3_t){0.7f,0.7f,0.7f}; floor.emissive=(vec3_t){0,0,0};
     floor.material=0; floor.lightmap_resolution=16;
@@ -73,7 +75,9 @@ static int test_readback(void) {
     static char buf[16 * 1024 * 1024];
     arena_t arena; arena_init(&arena, buf, sizeof(buf));
     lm_mesh_t floor;
-    floor.positions=FPOS; floor.normals=FNRM; floor.uv1=FUV1; floor.indices=FIDX;
+    memset(&floor,0,sizeof floor);
+    floor.positions=FPOS; floor.normals=FNRM; floor.uv0=NULL; floor.uv1=FUV1; floor.indices=FIDX;
+    floor.albedo_image=NULL; floor.emissive_image=NULL;
     floor.vert_count=4; floor.index_count=6;
     floor.albedo=(vec3_t){0.7f,0.7f,0.7f}; floor.emissive=(vec3_t){0,0,0};
     floor.material=0; floor.lightmap_resolution=16;

@@ -17,6 +17,7 @@
 
 #include <stdint.h>
 
+#include "ferrum/lightmap/lm_image.h"
 #include "ferrum/lightmap/lm_light.h"
 #include "ferrum/lightmap/lm_material.h"
 #include "ferrum/math/vec3.h"
@@ -25,16 +26,22 @@
 extern "C" {
 #endif
 
-/** An indexed triangle mesh to bake, with a lightmap UV. */
+/** An indexed triangle mesh to bake, with material + lightmap UVs. */
 typedef struct lm_mesh {
     const float    *positions; /**< vec3 * vert_count (world space). */
     const float    *normals;   /**< vec3 * vert_count. */
+    const float    *uv0;       /**< vec2 * vert_count, MATERIAL UV (sampling). */
     const float    *uv1;       /**< vec2 * vert_count, lightmap UV in [0,1]. */
     const uint32_t *indices;   /**< index_count triangle indices. */
     uint32_t        vert_count;
     uint32_t        index_count;
-    vec3_t          albedo;    /**< diffuse reflectance. */
-    vec3_t          emissive;  /**< self-emission. */
+    /* Diffuse reflectance + emissive come from the material TEXTURES sampled by
+     * uv0; albedo/emissive act as a tint/scale (default 1). If an image is NULL
+     * the tint value is used directly (flat). */
+    const lm_image_t *albedo_image;   /**< diffuse reflectance texture (nullable). */
+    const lm_image_t *emissive_image; /**< emissive texture (nullable). */
+    vec3_t          albedo;    /**< tint/fallback reflectance. */
+    vec3_t          emissive;  /**< tint/fallback emission. */
     uint16_t        material;  /**< SVO material id (for far-field reflectors). */
     uint32_t        lightmap_resolution; /**< atlas rect size in texels. */
 } lm_mesh_t;

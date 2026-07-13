@@ -84,8 +84,17 @@ uint32_t lm_mesh_luxelize(const lm_mesh_t *mesh, const lm_atlas_rect_t *rect,
                 lux->pos = lm_bary_vec3(mesh->positions, i0, i1, i2, wa, wb, wc);
                 lux->normal = vec3_normalize_safe(
                     lm_bary_vec3(mesh->normals, i0, i1, i2, wa, wb, wc), 1e-6f);
-                lux->albedo = mesh->albedo;
-                lux->emissive = mesh->emissive;
+                /* Diffuse reflectance + emissive from the material textures,
+                 * sampled at the barycentric material-UV, times the mesh tint. */
+                vec3_t alb = { 1.0f, 1.0f, 1.0f }, emi = { 1.0f, 1.0f, 1.0f };
+                if (mesh->uv0 != NULL) {
+                    float mu = wa*mesh->uv0[i0*2]   + wb*mesh->uv0[i1*2]   + wc*mesh->uv0[i2*2];
+                    float mv = wa*mesh->uv0[i0*2+1] + wb*mesh->uv0[i1*2+1] + wc*mesh->uv0[i2*2+1];
+                    if (mesh->albedo_image)   alb = lm_image_sample(mesh->albedo_image, mu, mv);
+                    if (mesh->emissive_image) emi = lm_image_sample(mesh->emissive_image, mu, mv);
+                }
+                lux->albedo = (vec3_t){ alb.x*mesh->albedo.x, alb.y*mesh->albedo.y, alb.z*mesh->albedo.z };
+                lux->emissive = (vec3_t){ emi.x*mesh->emissive.x, emi.y*mesh->emissive.y, emi.z*mesh->emissive.z };
                 for (int c = 0; c < 3; ++c)
                     lm_sh9_zero(&lux->sh[c]);
                 out_ax[count] = (uint32_t)px;

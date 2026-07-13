@@ -82,6 +82,81 @@ static void lm_mesh_bake_direct(lm_lightmap_t *lm, const lm_light_t *lights,
     }
 }
 
+static float lm_mesh_rngf(uint32_t *s)
+{
+    *s = *s * 1664525u + 1013904223u;
+    return (float)(*s >> 8) * (1.0f / 16777216.0f);
+}
+
+/* Direct illumination from EMISSIVE meshes treated as area lights: stratified
+ * triangle-area sampling, SVO-shadowed, deposited into each luxel's SH (the
+ * mesh analogue of lm_direct for quads). */
+static void lm_mesh_bake_emissive(lm_lightmap_t *lm, const lm_mesh_scene_t *scene,
+                                  const npc_svo_grid_t *svo, uint32_t samples,
+                                  uint32_t seed)
+{
+    uint32_t ns = (uint32_t)ceilf(sqrtf((float)(samples ? samples : 1)));
+    if (ns == 0) ns = 1;
+    float eps = svo ? svo->voxel_size * 1.5f : 0.0f;
+    uint32_t nlx = lm->res_u * lm->res_v;
+    for (uint32_t li = 0; li < nlx; ++li) {
+        lm_luxel_t *lx = &lm->luxels[li];
+        uint32_t rng = seed ^ (li * 2654435761u);
+        for (uint32_t mi = 0; mi < scene->n_meshes; ++mi) {
+            const lm_mesh_t *me = &scene->meshes[mi];
+            int emissive = me->emissive_image != NULL || me->emissive.x > 0.0f ||
+                           me->emissive.y > 0.0f || me->emissive.z > 0.0f;
+            if (!emissive)
+                continue;
+            for (uint32_t t = 0; t + 2 < me->index_count; t += 3) {
+                uint32_t a = me->indices[t], b = me->indices[t+1], c = me->indices[t+2];
+                vec3_t A = { me->positions[a*3], me->positions[a*3+1], me->positions[a*3+2] };
+                vec3_t B = { me->positions[b*3], me->positions[b*3+1], me->positions[b*3+2] };
+                vec3_t C = { me->positions[c*3], me->positions[c*3+1], me->positions[c*3+2] };
+                vec3_t cr = vec3_cross(vec3_sub(B, A), vec3_sub(C, A));
+                float mag = vec3_magnitude(cr);
+                if (mag < 1e-9f) continue;
+                float area = 0.5f * mag;
+                vec3_t tn = vec3_scale(cr, 1.0f / mag);
+                uint32_t total = ns * ns;
+                for (uint32_t s = 0; s < total; ++s) {
+                    float r1 = lm_mesh_rngf(&rng), r2 = lm_mesh_rngf(&rng);
+                    float su = sqrtf(r1);
+                    vec3_t p = vec3_add(vec3_add(vec3_scale(A, 1.0f - su),
+                                                 vec3_scale(B, su * (1.0f - r2))),
+                                        vec3_scale(C, su * r2));
+                    vec3_t d = vec3_sub(p, lx->pos);
+                    float r2d = vec3_dot(d, d);
+                    if (r2d < 1e-8f) continue;
+                    vec3_t dir = vec3_scale(d, 1.0f / sqrtf(r2d));
+                    if (vec3_dot(dir, lx->normal) <= 0.0f) continue;
+                    float cose = vec3_dot(vec3_scale(dir, -1.0f), tn);
+                    if (cose <= 0.0f) continue;
+                    if (svo) {
+                        vec3_t o = vec3_add(lx->pos, vec3_scale(lx->normal, eps));
+                        vec3_t pe = vec3_add(p, vec3_scale(tn, eps));
+                        if (!lm_visibility_segment(svo, o, pe)) continue;
+                    }
+                    /* Emissive radiance from the material's emissive texture at
+                     * the sampled point (barycentric uv0), times the tint. */
+                    vec3_t es = me->emissive;
+                    if (me->uv0 && me->emissive_image) {
+                        float w0 = 1.0f - su, w1 = su * (1.0f - r2), w2 = su * r2;
+                        float eu = w0*me->uv0[a*2]   + w1*me->uv0[b*2]   + w2*me->uv0[c*2];
+                        float ev = w0*me->uv0[a*2+1] + w1*me->uv0[b*2+1] + w2*me->uv0[c*2+1];
+                        vec3_t sv = lm_image_sample(me->emissive_image, eu, ev);
+                        es = (vec3_t){ sv.x*me->emissive.x, sv.y*me->emissive.y, sv.z*me->emissive.z };
+                    }
+                    float w = cose * area / (float)total / r2d;
+                    const float *ec = &es.x;
+                    for (int ch = 0; ch < 3; ++ch)
+                        lm_sh9_add_sample(&lx->sh[ch], dir, ec[ch], w);
+                }
+            }
+        }
+    }
+}
+
 bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                   lm_mesh_bake_result_t *result, arena_t *arena)
 {
@@ -143,8 +218,11 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         positions[i] = result->combined.luxels[i].pos;
 
     if (total > 0) {
-        /* Direct from the baked analytic lights, then far field, then solve. */
+        /* Direct from baked analytic lights + emissive meshes, far field, solve. */
         lm_mesh_bake_direct(&result->combined, scene->lights, scene->n_lights, &svo);
+        lm_mesh_bake_emissive(&result->combined, scene, &svo,
+                              config->direct_samples ? config->direct_samples : 64u,
+                              config->seed ^ 0x51EDu);
         if (config->farfield_samples > 0)
             lm_farfield_gather(&result->combined, &svo, &scene->materials,
                                config->farfield_samples, config->farfield_near,

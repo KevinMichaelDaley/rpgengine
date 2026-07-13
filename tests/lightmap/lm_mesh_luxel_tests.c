@@ -3,6 +3,7 @@
  * @brief Unit tests for triangle lightmap-UV luxelization.
  */
 #include <math.h>
+#include <string.h>
 #include <stdio.h>
 
 #include "ferrum/lightmap/lm_mesh_luxel.h"
@@ -18,9 +19,10 @@ static const float QUV1[] = { 0,0,    1,0,    1,1,    0,1 };
 static const uint32_t QIDX[] = { 0,1,2,  0,2,3 };
 
 static lm_mesh_t quad_mesh(void) {
-    lm_mesh_t m;
-    m.positions = QPOS; m.normals = QNRM; m.uv1 = QUV1; m.indices = QIDX;
+    lm_mesh_t m; memset(&m, 0, sizeof(m));
+    m.positions = QPOS; m.normals = QNRM; m.uv0 = NULL; m.uv1 = QUV1; m.indices = QIDX;
     m.vert_count = 4; m.index_count = 6;
+    m.albedo_image = NULL; m.emissive_image = NULL;
     m.albedo = (vec3_t){ 0.7f, 0.7f, 0.7f }; m.emissive = (vec3_t){ 0, 0, 0 };
     m.material = 0; m.lightmap_resolution = 8;
     return m;
