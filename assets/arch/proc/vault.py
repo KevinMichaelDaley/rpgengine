@@ -386,6 +386,7 @@ def build_groin_vault(
     rise=None,
     thickness=0.3,
     jamb_height=0.0,
+    base_clip=0.0,
     arch_segments=24,
     smooth_angle=35.0,
     collection=None,
@@ -479,7 +480,11 @@ def build_groin_vault(
     # Clip the base dead-flat at the springing (or jamb bottom): solidify pushes
     # the shell rim below the base plane, and an angled springing makes it worse,
     # so cut everything below with one plane for a flat, level base on any shape.
-    base_z = -jamb_height
+    # ``base_clip`` raises that plane above the springing (only meaningful when
+    # jamb_height == 0): the four corner springers leave tiny open quads exactly at
+    # z=0 that a z=0 cut can't catch -- clipping a hair above z=0 removes them and
+    # merges their rim into the lunette openings.
+    base_z = base_clip - jamb_height
     bmesh.ops.bisect_plane(
         bm, geom=list(bm.verts) + list(bm.edges) + list(bm.faces),
         plane_co=(0.0, 0.0, base_z), plane_no=(0.0, 0.0, 1.0),
