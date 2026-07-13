@@ -60,9 +60,16 @@ static void lm_direct_gather_emitter(lm_luxel_t *luxel, const lm_surface_t *e,
             if (cos_emit <= 0.0f)
                 continue; /* luxel is behind the emitter's front face */
 
-            /* SVO shadow ray between the two surface points. */
-            if (svo && !lm_visibility_segment(svo, luxel->pos, y))
-                continue;
+            /* SVO shadow ray between the two surface points. Offset each end
+             * off its surface along the normal by ~1.5 voxels so a point does
+             * not self-occlude inside its own solid voxel (shadow bias). */
+            if (svo) {
+                float eps = svo->voxel_size * 1.5f;
+                vec3_t o = vec3_add(luxel->pos, vec3_scale(luxel->normal, eps));
+                vec3_t ye = vec3_add(y, vec3_scale(e->normal, eps));
+                if (!lm_visibility_segment(svo, o, ye))
+                    continue;
+            }
 
             /* Solid-angle measure of this area sample as seen from the luxel. */
             float weight = cos_emit * area * inv_n / r2;

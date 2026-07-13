@@ -67,6 +67,8 @@
 #include "ferrum/renderer/vbo.h"
 #include "ferrum/renderer/video_capture.h"
 
+#include "cornell_demo.h"
+
 #ifdef FR_NET_EMULATION
 #include "ferrum/engine_settings.h"
 #include "ferrum/net/emulation/net_emulator.h"
@@ -628,6 +630,17 @@ static void gl_shutdown(gl_ctx_t *ctx) {
 /* ── Main ───────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
+    /* Self-contained Cornell-box lightmap demo: build + bake + render, no
+     * server. Usage: demo_client --cornell [screenshot.ppm] [seconds] */
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--cornell") == 0) {
+            const char *shot = (i + 1 < argc && argv[i + 1][0] != '-')
+                                   ? argv[i + 1] : NULL;
+            double secs = (shot && i + 2 < argc) ? atof(argv[i + 2]) : 6.0;
+            return cornell_demo_run(shot, secs);
+        }
+    }
+
     if (argc < 3) {
         fprintf(stderr,
                 "Usage: %s <server_ip> <port> [duration_s] [--headless]"

@@ -20,8 +20,14 @@ static void lm_indirect_add_light(const lm_luxel_t *luxel,
     float cos_recv = vec3_dot(dir, luxel->normal);
     if (cos_recv <= 0.0f)
         return; /* light is behind the surface */
-    if (svo && lm_visibility_occluded(svo, luxel->pos, dir, dist))
-        return; /* in shadow */
+    if (svo) {
+        /* Shadow bias: start the ray off the surface along its normal so the
+         * luxel does not self-occlude inside its own solid voxel. */
+        float eps = svo->voxel_size * 1.5f;
+        vec3_t o = vec3_add(luxel->pos, vec3_scale(luxel->normal, eps));
+        if (lm_visibility_occluded(svo, o, dir, dist))
+            return; /* in shadow */
+    }
     *accum = vec3_add(*accum, vec3_scale(irradiance, cos_recv));
 }
 

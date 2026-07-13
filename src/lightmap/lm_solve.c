@@ -54,8 +54,15 @@ static void lm_solve_shoot_to(lm_solver_t *solver,
     if (cos_j <= 0.0f)
         return;
 
-    if (solver->svo && !lm_visibility_segment(solver->svo, s->pos, j->pos))
-        return; /* occluded */
+    if (solver->svo) {
+        /* Shadow bias: lift each end off its surface along the normal so a
+         * patch does not self-occlude inside its own solid voxel. */
+        float eps = solver->svo->voxel_size * 1.5f;
+        vec3_t so = vec3_add(s->pos, vec3_scale(s->normal, eps));
+        vec3_t jo = vec3_add(j->pos, vec3_scale(j->normal, eps));
+        if (!lm_visibility_segment(solver->svo, so, jo))
+            return; /* occluded */
+    }
 
     /* Projected solid angle subtended by the shooter patch at the receiver. */
     float solid_angle = cos_s * solver->area[si] / r2;

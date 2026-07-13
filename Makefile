@@ -1890,8 +1890,8 @@ demo_server:
 
 SRD_OBJS = $(SRD2_C_OBJS)
 
-build/demo_client: build/liball.a tests/examples/demo_client.c $(SRD_OBJS) $(SYMX_LIB) $(SYMX_FMT) | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c $(SRD_OBJS) build/liball.a $(SYMX_LIB) $(SYMX_FMT) build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl
+build/demo_client: build/liball.a tests/examples/demo_client.c tests/examples/cornell_demo.c $(SRD_OBJS) $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c tests/examples/cornell_demo.c $(SRD_OBJS) build/liball.a $(SYMX_LIB) $(SYMX_FMT) build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl
 
 demo_client:
 	@$(MAKE) build/demo_client
