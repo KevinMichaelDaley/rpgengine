@@ -66,7 +66,7 @@ static int test_bleed_lit(void)
 
     float seed[6] = { 10, 10, 10, 0, 0, 0 }; /* only the shooter is lit */
     lm_solver_t solver;
-    ASSERT_TRUE(lm_solver_init(&solver, &lm, &kd, NULL, seed, 1.0f, &arena));
+    ASSERT_TRUE(lm_solver_init(&solver, &lm, &kd, NULL, seed, NULL, 1.0f, &arena));
 
     lm_solve_params_t p = { 0 };
     p.near_radius = 10.0f;
@@ -105,7 +105,7 @@ static int test_bleed_occluded(void)
 
     float seed[6] = { 10, 10, 10, 0, 0, 0 };
     lm_solver_t solver;
-    ASSERT_TRUE(lm_solver_init(&solver, &lm, &kd, &svo, seed, 1.0f, &arena));
+    ASSERT_TRUE(lm_solver_init(&solver, &lm, &kd, &svo, seed, NULL, 1.0f, &arena));
 
     lm_solve_params_t p = { 0 };
     p.near_radius = 10.0f;
@@ -136,7 +136,7 @@ static int test_region_gate(void)
 
     float seed[6] = { 10, 10, 10, 0, 0, 0 };
     lm_solver_t solver;
-    ASSERT_TRUE(lm_solver_init(&solver, &lm, &kd, NULL, seed, 1.0f, &arena));
+    ASSERT_TRUE(lm_solver_init(&solver, &lm, &kd, NULL, seed, NULL, 1.0f, &arena));
 
     lm_solve_params_t p = { 0 };
     p.near_radius = 10.0f;

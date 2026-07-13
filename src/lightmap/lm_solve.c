@@ -77,8 +77,8 @@ static void lm_solve_shoot_to(lm_solver_t *solver,
 
 bool lm_solver_init(lm_solver_t *solver, lm_lightmap_t *lm,
                     const lm_kdtree_t *kdtree, const npc_svo_grid_t *svo,
-                    const float *seed_irradiance, float luxel_area,
-                    arena_t *arena)
+                    const float *seed_irradiance, const float *luxel_areas,
+                    float uniform_area, arena_t *arena)
 {
     uint32_t n = lm->res_u * lm->res_v;
     solver->lm = lm;
@@ -103,7 +103,7 @@ bool lm_solver_init(lm_solver_t *solver, lm_lightmap_t *lm,
             float e_seed = seed_irradiance ? seed_irradiance[i * 3 + c] : 0.0f;
             res[c] = alb[c] * (e_area + e_seed);
         }
-        solver->area[i] = luxel_area;
+        solver->area[i] = luxel_areas ? luxel_areas[i] : uniform_area;
     }
     return true;
 }

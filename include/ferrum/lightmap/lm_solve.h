@@ -61,13 +61,16 @@ typedef struct lm_solver {
  * @brief Initialise a solver over @p lm using @p kdtree (built over an array
  *        whose index i is luxel i's position). Seeds each luxel's residual from
  *        its SH irradiance plus @p seed_irradiance (may be NULL; res_u*res_v*3
- *        floats), reflected by albedo, and records @p luxel_area for every
- *        patch. Buffers are arena-allocated. Returns false on arena exhaustion.
+ *        floats), reflected by albedo. Per-patch area comes from
+ *        @p luxel_areas[i] when non-NULL (res_u*res_v floats, required for a
+ *        multi-surface scene where patches differ in size); otherwise every
+ *        patch uses @p uniform_area. Buffers are arena-allocated. Returns false
+ *        on arena exhaustion.
  */
 bool lm_solver_init(lm_solver_t *solver, lm_lightmap_t *lm,
                     const lm_kdtree_t *kdtree, const npc_svo_grid_t *svo,
-                    const float *seed_irradiance, float luxel_area,
-                    arena_t *arena);
+                    const float *seed_irradiance, const float *luxel_areas,
+                    float uniform_area, arena_t *arena);
 
 /**
  * @brief Shoot the single highest-power residual patch to its near-field
