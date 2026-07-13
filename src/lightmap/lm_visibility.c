@@ -49,9 +49,26 @@ static bool lm_clip_to_bounds(const npc_svo_grid_t *svo, vec3_t origin,
 static bool lm_dda(const npc_svo_grid_t *svo, vec3_t origin, vec3_t dir,
                    float maxdist, lm_ray_hit_t *hit)
 {
-    const float vs = svo->voxel_size;
-    if (vs <= 0.0f)
+    /* The SVO gives every axis 2^max_depth cells, so cell size is per-axis
+     * (extent_i / cells) -- anisotropic for non-cubic bounds. Marching with a
+     * single cubic voxel_size would sample the wrong cell centres and miss thin
+     * geometry, so derive the true per-axis cell sizes here. */
+    if (svo->max_depth == 0)
         return false;
+    const float mn[3] = { svo->world_bounds.min.x, svo->world_bounds.min.y,
+                          svo->world_bounds.min.z };
+    const float mx[3] = { svo->world_bounds.max.x, svo->world_bounds.max.y,
+                          svo->world_bounds.max.z };
+    const float cells = (float)(1u << svo->max_depth);
+    float cs[3];
+    float min_cs = INFINITY;
+    for (int i = 0; i < 3; ++i) {
+        cs[i] = (mx[i] - mn[i]) / cells;
+        if (cs[i] <= 0.0f)
+            return false;
+        if (cs[i] < min_cs)
+            min_cs = cs[i];
+    }
 
     float t0, t1;
     if (!lm_clip_to_bounds(svo, origin, dir, maxdist, &t0, &t1))
@@ -59,28 +76,26 @@ static bool lm_dda(const npc_svo_grid_t *svo, vec3_t origin, vec3_t dir,
 
     const float o[3] = { origin.x, origin.y, origin.z };
     const float d[3] = { dir.x, dir.y, dir.z };
-    const float mn[3] = { svo->world_bounds.min.x, svo->world_bounds.min.y,
-                          svo->world_bounds.min.z };
 
     /* Enter a hair past t0 so we land inside the first cell, not on its face. */
-    float start = t0 + vs * 1e-3f;
+    float start = t0 + min_cs * 1e-3f;
     int cell[3];
     int step[3];
     float tmax[3];
     float tdelta[3];
     for (int i = 0; i < 3; ++i) {
         float p = o[i] + d[i] * start;
-        cell[i] = (int)floorf((p - mn[i]) / vs);
+        cell[i] = (int)floorf((p - mn[i]) / cs[i]);
         if (d[i] > 0.0f) {
             step[i] = 1;
-            float next = mn[i] + (float)(cell[i] + 1) * vs;
+            float next = mn[i] + (float)(cell[i] + 1) * cs[i];
             tmax[i] = (next - o[i]) / d[i];
-            tdelta[i] = vs / d[i];
+            tdelta[i] = cs[i] / d[i];
         } else if (d[i] < 0.0f) {
             step[i] = -1;
-            float next = mn[i] + (float)cell[i] * vs;
+            float next = mn[i] + (float)cell[i] * cs[i];
             tmax[i] = (next - o[i]) / d[i];
-            tdelta[i] = vs / -d[i];
+            tdelta[i] = cs[i] / -d[i];
         } else {
             step[i] = 0;
             tmax[i] = INFINITY;
@@ -90,12 +105,12 @@ static bool lm_dda(const npc_svo_grid_t *svo, vec3_t origin, vec3_t dir,
 
     int last_axis = -1;
     float t = t0;
-    /* Bound the walk: at most one cell per voxel of range, per axis. */
-    long max_steps = (long)((t1 - t0) / vs) + 8;
-    for (long s = 0; s < max_steps && t <= t1 + vs; ++s) {
-        vec3_t centre = { mn[0] + ((float)cell[0] + 0.5f) * vs,
-                          mn[1] + ((float)cell[1] + 0.5f) * vs,
-                          mn[2] + ((float)cell[2] + 0.5f) * vs };
+    /* Bound the walk: at most one cell per finest-axis cell of range. */
+    long max_steps = (long)((t1 - t0) / min_cs) + 8;
+    for (long s = 0; s < max_steps && t <= t1 + min_cs; ++s) {
+        vec3_t centre = { mn[0] + ((float)cell[0] + 0.5f) * cs[0],
+                          mn[1] + ((float)cell[1] + 0.5f) * cs[1],
+                          mn[2] + ((float)cell[2] + 0.5f) * cs[2] };
         uint32_t node = NPC_SVO_INVALID_NODE;
         uint8_t flags = npc_svo_query_point(svo, centre, &node);
         if (flags & NPC_SVO_FLAG_SOLID) {
