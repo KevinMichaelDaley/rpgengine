@@ -132,6 +132,18 @@ extern "C" {
 #ifndef GL_SCISSOR_TEST
 #define GL_SCISSOR_TEST 0x0C11
 #endif
+#ifndef GL_LESS
+#define GL_LESS 0x0201
+#endif
+#ifndef GL_EQUAL
+#define GL_EQUAL 0x0202
+#endif
+#ifndef GL_LEQUAL
+#define GL_LEQUAL 0x0203
+#endif
+#ifndef GL_DEPTH_COMPONENT
+#define GL_DEPTH_COMPONENT 0x1902
+#endif
 #ifndef GL_DEPTH_TEST
 #define GL_DEPTH_TEST 0x0B71
 #endif
