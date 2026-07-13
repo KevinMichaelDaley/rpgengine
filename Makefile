@@ -352,6 +352,7 @@ BIN_HEADLESS += build/lm_lightmap_tests
 BIN_HEADLESS += build/lm_light_tests
 BIN_HEADLESS += build/lm_material_tests
 BIN_HEADLESS += build/lm_atlas_tests
+BIN_HEADLESS += build/lm_direct_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
@@ -1191,6 +1192,10 @@ build/lm_material_tests: tests/lightmap/lm_material_tests.c src/lightmap/lm_mate
 build/lm_atlas_tests: tests/lightmap/lm_atlas_tests.c src/lightmap/lm_atlas.c include/ferrum/lightmap/lm_atlas.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_atlas_tests.c src/lightmap/lm_atlas.c -o $@ -lm
 
+LM_DIRECT_SRC := src/lightmap/lm_direct.c src/lightmap/lm_visibility.c $(LM_CORE_SRC) src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c
+build/lm_direct_tests: tests/lightmap/lm_direct_tests.c $(LM_DIRECT_SRC) include/ferrum/lightmap/lm_direct.h | build
+	$(CC) $(CFLAGS) tests/lightmap/lm_direct_tests.c $(LM_DIRECT_SRC) -o $@ -lm
+
 CFLAGS_CURL := $(shell pkg-config --cflags libcurl 2>/dev/null)
 LDFLAGS_CURL := $(shell pkg-config --libs libcurl 2>/dev/null)
 
@@ -1722,7 +1727,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/lm_lightmap_tests \
 	&& ./build/lm_light_tests \
 	&& ./build/lm_material_tests \
-	&& ./build/lm_atlas_tests
+	&& ./build/lm_atlas_tests \
+	&& ./build/lm_direct_tests
 
 TEST_TIMEOUT ?= 20
 
