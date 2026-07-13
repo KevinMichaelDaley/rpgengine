@@ -65,6 +65,7 @@ int obj_load_triangles(const char *path,
 typedef struct obj_mesh {
     float    *positions; /**< vec3 * vert_count. */
     float    *normals;   /**< vec3 * vert_count (from vn, else generated). */
+    float    *tangents;  /**< vec4 * vert_count (xyz tangent + w handedness). */
     float    *uvs;       /**< vec2 * vert_count (from vt, else 0). */
     uint32_t *indices;   /**< index_count triangle indices. */
     uint32_t  vert_count;

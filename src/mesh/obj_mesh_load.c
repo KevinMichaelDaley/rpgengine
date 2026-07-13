@@ -64,9 +64,47 @@ static uint32_t obj_hash_slot(uint64_t key, uint32_t mask)
 void obj_mesh_free(obj_mesh_t *mesh)
 {
     if (mesh == NULL) return;
-    free(mesh->positions); free(mesh->normals);
+    free(mesh->positions); free(mesh->normals); free(mesh->tangents);
     free(mesh->uvs); free(mesh->indices);
     memset(mesh, 0, sizeof(*mesh));
+}
+
+/* Generate per-vertex tangents (vec4, w = handedness) from positions + uvs +
+ * normals, for tangent-space normal mapping. Accumulates per-triangle tangent/
+ * bitangent, then Gram-Schmidt orthonormalises against the vertex normal. */
+static int obj_gen_tangents(obj_mesh_t *m)
+{
+    m->tangents = malloc((size_t)m->vert_count * 4 * sizeof(float));
+    float *bit = calloc((size_t)m->vert_count * 3, sizeof(float));
+    if (!m->tangents || !bit) { free(bit); return -1; }
+    for (uint32_t i = 0; i < m->vert_count * 4; ++i) m->tangents[i] = 0.0f;
+    for (uint32_t i = 0; i + 2 < m->index_count; i += 3) {
+        uint32_t a = m->indices[i], b = m->indices[i+1], c = m->indices[i+2];
+        float *p0=&m->positions[a*3], *p1=&m->positions[b*3], *p2=&m->positions[c*3];
+        float *u0=&m->uvs[a*2], *u1=&m->uvs[b*2], *u2=&m->uvs[c*2];
+        float e1[3]={p1[0]-p0[0],p1[1]-p0[1],p1[2]-p0[2]};
+        float e2[3]={p2[0]-p0[0],p2[1]-p0[1],p2[2]-p0[2]};
+        float du1=u1[0]-u0[0], dv1=u1[1]-u0[1], du2=u2[0]-u0[0], dv2=u2[1]-u0[1];
+        float det = du1*dv2 - du2*dv1;
+        float r = (fabsf(det) > 1e-12f) ? 1.0f/det : 0.0f;
+        float t[3]={(e1[0]*dv2 - e2[0]*dv1)*r, (e1[1]*dv2 - e2[1]*dv1)*r, (e1[2]*dv2 - e2[2]*dv1)*r};
+        float bt[3]={(e2[0]*du1 - e1[0]*du2)*r, (e2[1]*du1 - e1[1]*du2)*r, (e2[2]*du1 - e1[2]*du2)*r};
+        uint32_t ix[3]={a,b,c};
+        for (int j=0;j<3;++j){ for(int k=0;k<3;++k){ m->tangents[ix[j]*4+k]+=t[k]; bit[ix[j]*3+k]+=bt[k]; } }
+    }
+    for (uint32_t v=0; v<m->vert_count; ++v) {
+        float *n=&m->normals[v*3], *tg=&m->tangents[v*4], *bt=&bit[v*3];
+        float ndott = n[0]*tg[0]+n[1]*tg[1]+n[2]*tg[2];
+        float o[3]={tg[0]-n[0]*ndott, tg[1]-n[1]*ndott, tg[2]-n[2]*ndott};
+        float len = sqrtf(o[0]*o[0]+o[1]*o[1]+o[2]*o[2]);
+        if (len>1e-8f){ o[0]/=len;o[1]/=len;o[2]/=len; } else { o[0]=1;o[1]=0;o[2]=0; }
+        /* handedness: sign of dot(cross(n,t), bitangent). */
+        float cr[3]={n[1]*o[2]-n[2]*o[1], n[2]*o[0]-n[0]*o[2], n[0]*o[1]-n[1]*o[0]};
+        float w = (cr[0]*bt[0]+cr[1]*bt[1]+cr[2]*bt[2]) < 0.0f ? -1.0f : 1.0f;
+        tg[0]=o[0]; tg[1]=o[1]; tg[2]=o[2]; tg[3]=w;
+    }
+    free(bit);
+    return 0;
 }
 
 int obj_mesh_load(const char *path, float scale, obj_mesh_t *out)
@@ -174,5 +212,6 @@ int obj_mesh_load(const char *path, float scale, obj_mesh_t *out)
         }
     }
     free(pos); free(uv); free(nrm); free(hkeys); free(hvals);
+    if (obj_gen_tangents(out) != 0) { obj_mesh_free(out); return -1; }
     return 0;
 }

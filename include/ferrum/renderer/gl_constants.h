@@ -243,6 +243,9 @@ extern "C" {
 #ifndef GL_RGB32F
 #define GL_RGB32F 0x8815
 #endif
+#ifndef GL_R32I
+#define GL_R32I 0x8235
+#endif
 #ifndef GL_LINEAR_MIPMAP_LINEAR
 #define GL_LINEAR_MIPMAP_LINEAR 0x2703
 #endif
