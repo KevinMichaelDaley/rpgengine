@@ -359,7 +359,7 @@ BIN_HEADLESS += build/lm_svo_material_tests
 BIN_HEADLESS += build/lm_farfield_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
-BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_buffer_tests \
+BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_buffer_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
 	build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
 	build/p004_pipeline_resource_tests build/p004_pipeline_graph_tests
@@ -1822,7 +1822,7 @@ repro_p000_hang: build/p000_tests
 	ITERS=$(REPRO_ITERS) TIMEOUT_SECS=$(REPRO_TIMEOUT) ./scripts/repro_p000_hang.sh ./build/p000_tests
 
 test_renderer: $(BIN_RENDERER_TESTS)
-	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_texture_tests && ./build/p004_material_tests && ./build/p004_pbr_shader_tests && ./build/p004_buffer_tests \
+	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_texture_tests && ./build/p004_material_tests && ./build/p004_pbr_shader_tests && ./build/p004_light_store_tests && ./build/p004_buffer_tests \
 	&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
 	&& ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests \
 	&& ./build/p004_skinning_alloc_tests && ./build/p004_pipeline_resource_tests \
@@ -2216,3 +2216,9 @@ build/p004_visual_pbr_lights: tests/visual/p004_visual_pbr_lights.c src/renderer
 
 build/p004_visual_pbr_material: tests/visual/p004_visual_pbr_material.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p004_visual_pbr_material.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+
+build/p004_light_store_tests: tests/p004_renderer_light_store_tests.c src/renderer/light_store.c | build
+	$(CC) $(CFLAGS) tests/p004_renderer_light_store_tests.c src/renderer/light_store.c -o $@ -lm
+
+build/p004_visual_light_store: tests/visual/p004_visual_light_store.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/light_store.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p004_visual_light_store.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/light_store.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
