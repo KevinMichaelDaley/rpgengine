@@ -93,7 +93,8 @@ LLM_SRC := $(wildcard src/llm/*/*.c) $(wildcard src/llm/*/*/*.c)
 ANIM_SRC := $(wildcard src/animation/*.c) $(wildcard src/animation/*/*.c) $(wildcard src/animation/*/*/*.c)
 NPC_SRC := $(wildcard src/npc/graph/*.c) $(wildcard src/npc/nav/*.c) $(wildcard src/npc/sense/*.c) $(wildcard src/npc/trade/*.c) $(wildcard src/npc/state/*.c) $(wildcard src/npc/demo/*.c) $(wildcard src/npc/audio/*.c)
 PROCGEN_SRC := $(wildcard src/procgen/*.c) $(wildcard src/procgen/grammars/*.c) $(wildcard src/procgen/architect/*.c) $(wildcard src/procgen/critic/*.c) $(wildcard src/procgen/nitrogen/*.c)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(PROCGEN_SRC) $(RENDERER_DEBUG_LINES_SRC)
+LIGHTMAP_SRC := $(wildcard src/lightmap/*.c) $(wildcard src/lightmap/*/*.c)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(PROCGEN_SRC) $(LIGHTMAP_SRC) $(RENDERER_DEBUG_LINES_SRC)
 
 NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_wrapper.cpp
 # Use stub if FAISS is unavailable (FAISS_STUB=1)
@@ -344,6 +345,7 @@ BIN_HEADLESS += build/procgen_smoke_tests
 BIN_HEADLESS += build/procgen_grammar_registry_tests
 BIN_HEADLESS += build/procgen_e2e_tests
 BIN_HEADLESS += build/procgen_svo_tests
+BIN_HEADLESS += build/lm_visibility_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
@@ -1161,6 +1163,9 @@ build/procgen_e2e_tests: tests/procgen/procgen_e2e_tests.c src/procgen/procgen_t
 build/procgen_svo_tests: tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_mesh.c src/npc/nav/npc_svo_init.c include/ferrum/procgen/procgen_svo_builder.h include/ferrum/procgen/procgen_layout.h | build
 	$(CC) $(CFLAGS) tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_mesh.c src/npc/nav/npc_svo_init.c -o $@ -lm
 
+build/lm_visibility_tests: tests/lightmap/lm_visibility_tests.c src/lightmap/lm_visibility.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c src/math/vec3.c include/ferrum/lightmap/lm_visibility.h | build
+	$(CC) $(CFLAGS) tests/lightmap/lm_visibility_tests.c src/lightmap/lm_visibility.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c src/math/vec3.c -o $@ -lm
+
 CFLAGS_CURL := $(shell pkg-config --cflags libcurl 2>/dev/null)
 LDFLAGS_CURL := $(shell pkg-config --libs libcurl 2>/dev/null)
 
@@ -1685,7 +1690,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/npc_trade_state_tests \
 	&& ./build/npc_state_tests \
 	&& ./build/npc_demo_integration_tests \
-	&& ./build/npc_kg_spatial_tests
+	&& ./build/npc_kg_spatial_tests \
+	&& ./build/lm_visibility_tests
 
 TEST_TIMEOUT ?= 20
 
