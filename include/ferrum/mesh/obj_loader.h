@@ -57,6 +57,38 @@ int obj_load_triangles(const char *path,
                        uint32_t max_tris,
                        uint32_t *out_tri_count);
 
+/**
+ * @brief An indexed triangle mesh loaded from an OBJ, with per-vertex position,
+ *        normal and UV. The loader owns all four arrays; free with
+ *        @ref obj_mesh_free.
+ */
+typedef struct obj_mesh {
+    float    *positions; /**< vec3 * vert_count. */
+    float    *normals;   /**< vec3 * vert_count (from vn, else generated). */
+    float    *uvs;       /**< vec2 * vert_count (from vt, else 0). */
+    uint32_t *indices;   /**< index_count triangle indices. */
+    uint32_t  vert_count;
+    uint32_t  index_count;
+} obj_mesh_t;
+
+/**
+ * @brief Load an OBJ into an indexed mesh (positions + normals + UVs).
+ *
+ * Each unique v/vt/vn combination becomes one vertex; polygons are fan-
+ * triangulated. Missing UVs are (0,0). If the file has no vn lines, smooth
+ * per-position normals are generated; otherwise the file normals are used.
+ * Positions are scaled by @p scale. Allocates @p out's arrays (caller frees
+ * via @ref obj_mesh_free).
+ *
+ * @return 0 on success, -1 on error (NULL args, missing file, out of memory).
+ */
+int obj_mesh_load(const char *path, float scale, obj_mesh_t *out);
+
+/**
+ * @brief Free the arrays owned by @p mesh and zero it. NULL-safe.
+ */
+void obj_mesh_free(obj_mesh_t *mesh);
+
 #ifdef __cplusplus
 }
 #endif
