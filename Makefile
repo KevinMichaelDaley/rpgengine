@@ -349,6 +349,7 @@ BIN_HEADLESS += build/lm_visibility_tests
 BIN_HEADLESS += build/lm_sh_tests
 BIN_HEADLESS += build/lm_kdtree_tests
 BIN_HEADLESS += build/lm_lightmap_tests
+BIN_HEADLESS += build/lm_light_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_buffer_tests \
@@ -1179,6 +1180,9 @@ LM_CORE_SRC := src/lightmap/lm_lightmap.c src/lightmap/lm_sh.c src/math/vec3.c s
 build/lm_lightmap_tests: tests/lightmap/lm_lightmap_tests.c $(LM_CORE_SRC) include/ferrum/lightmap/lm_lightmap.h include/ferrum/lightmap/lm_types.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_lightmap_tests.c $(LM_CORE_SRC) -o $@ -lm
 
+build/lm_light_tests: tests/lightmap/lm_light_tests.c src/lightmap/lm_light.c src/math/vec3.c include/ferrum/lightmap/lm_light.h | build
+	$(CC) $(CFLAGS) tests/lightmap/lm_light_tests.c src/lightmap/lm_light.c src/math/vec3.c -o $@ -lm
+
 CFLAGS_CURL := $(shell pkg-config --cflags libcurl 2>/dev/null)
 LDFLAGS_CURL := $(shell pkg-config --libs libcurl 2>/dev/null)
 
@@ -1707,7 +1711,8 @@ test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_q
 	&& ./build/lm_visibility_tests \
 	&& ./build/lm_sh_tests \
 	&& ./build/lm_kdtree_tests \
-	&& ./build/lm_lightmap_tests
+	&& ./build/lm_lightmap_tests \
+	&& ./build/lm_light_tests
 
 TEST_TIMEOUT ?= 20
 
