@@ -12,12 +12,94 @@ tone, walls = brick (stone_wall) with limestone sills.
 """
 import math
 import os
+import struct
 
 import bpy
+from mathutils import Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() \
     else "/home/kmd/rpg/assets/arch/proc"
 BAKE = os.path.join(HERE, "prefabs", "bake")
+DMESH_DIR = "/home/kmd/rpg/datasets/hall_lm"
+
+
+def _gen_lightmap_uv(obj):
+    """Generate a clean, low-fragmentation lightmap UV in a 'lightmap' layer via
+    angle-based Smart UV Project (keeps a column/vault/wall as a few large
+    islands rather than lightmap_pack's per-face confetti), packed into [0,1].
+    Leaves the material UV (layer 0) untouched."""
+    me = obj.data
+    if len(me.uv_layers) == 0:
+        me.uv_layers.new(name="UVMap")  # ensure a material UV exists
+    lm = me.uv_layers.get("lightmap")
+    if lm is not None:
+        me.uv_layers.remove(lm)
+    lm = me.uv_layers.new(name="lightmap")
+    me.uv_layers.active = lm
+
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(angle_limit=math.radians(66.0),
+                             island_margin=0.02, area_weight=0.0,
+                             correct_aspect=True, scale_to_bounds=False)
+    bpy.ops.uv.pack_islands(margin=0.02)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def _export_dmesh(obj, path):
+    """Write the evaluated triangulated mesh as a dual-UV .dmesh: uint32
+    corner-count, then per corner pos3/nrm3/uv0_2/uv1_2 little-endian floats,
+    world-space and Y-up (Blender Z-up -> (x, z, -y)). uv0 = material (layer 0),
+    uv1 = lightmap."""
+    deps = bpy.context.evaluated_depsgraph_get()
+    ev = obj.evaluated_get(deps)
+    me = ev.to_mesh()
+    me.calc_loop_triangles()
+    try:
+        me.calc_normals_split()
+    except (AttributeError, RuntimeError):
+        pass  # Blender 4.1+ computes split normals automatically
+    mw = obj.matrix_world
+    nmat = mw.to_3x3().inverted_safe().transposed()
+    uv0 = me.uv_layers[0].data
+    uv1 = (me.uv_layers.get("lightmap") or me.uv_layers[0]).data
+
+    buf = bytearray()
+    n = 0
+    for tri in me.loop_triangles:
+        for k in range(3):
+            li = tri.loops[k]
+            vi = tri.vertices[k]
+            co = mw @ me.vertices[vi].co
+            no = (nmat @ Vector(tri.split_normals[k])).normalized()
+            a = uv0[li].uv
+            b = uv1[li].uv
+            buf += struct.pack("<10f", co.x, co.z, -co.y,
+                               no.x, no.z, -no.y, a.x, a.y, b.x, b.y)
+            n += 1
+    ev.to_mesh_clear()
+    with open(path, "wb") as f:
+        f.write(struct.pack("<I", n))
+        f.write(buf)
+    return n
+
+
+def export_scene(col, out_dir=DMESH_DIR):
+    """Generate lightmap UVs and export every mesh in *col* to <name>.dmesh."""
+    os.makedirs(out_dir, exist_ok=True)
+    total = 0
+    for obj in list(col.objects):
+        if obj.type != "MESH":
+            continue
+        _gen_lightmap_uv(obj)
+        n = _export_dmesh(obj, os.path.join(out_dir, f"{obj.name}.dmesh"))
+        total += 1
+        print(f"  exported {obj.name}: {n} corners")
+    print(f"exported {total} meshes to {out_dir}")
+    return total
 
 
 def _load(name):
@@ -189,4 +271,5 @@ def build_scene(materials=True, name="hall_demo"):
 
 
 if __name__ == "__main__":
-    build_scene()
+    _col = build_scene()
+    export_scene(_col)
