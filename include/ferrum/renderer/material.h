@@ -25,6 +25,7 @@
  *   params:   u_tint (vec3) u_emissive_color (vec3)
  *             u_specular_strength u_metalness u_roughness_min u_roughness_max
  *             u_emissive_strength u_normal_scale u_ao_strength      (float)
+ *             u_uv_scale (vec2)  material-texture UV tiling
  *
  * Ownership: texture maps are borrowed. Nullability: absent maps are NULL (the
  * presence flag is set to 0). Missing uniforms are tolerated (best effort) so a
@@ -59,6 +60,7 @@ typedef struct render_material {
     float emissive_strength;  /**< emissive self-shading scale. */
     float normal_scale;       /**< tangent-normal XY strength. */
     float ao_strength;        /**< AO map influence (0..1). */
+    float uv_scale[2];        /**< material-texture UV tiling (multiplies v_uv0). */
 } render_material_t;
 
 /**

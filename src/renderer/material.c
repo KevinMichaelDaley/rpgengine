@@ -29,6 +29,7 @@ void material_init(render_material_t *mat)
     mat->emissive_strength = 1.0f;
     mat->normal_scale = 1.0f;
     mat->ao_strength = 1.0f;
+    mat->uv_scale[0] = mat->uv_scale[1] = 1.0f;
 }
 
 uint32_t material_bind(const render_material_t *mat, uint32_t base_unit,
@@ -67,5 +68,6 @@ uint32_t material_bind(const render_material_t *mat, uint32_t base_unit,
                              mat->emissive_strength);
     shader_uniform_set_float(cache, program, "u_normal_scale", mat->normal_scale);
     shader_uniform_set_float(cache, program, "u_ao_strength", mat->ao_strength);
+    shader_uniform_set_vec2(cache, program, "u_uv_scale", mat->uv_scale);
     return bound;
 }
