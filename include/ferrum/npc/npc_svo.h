@@ -162,6 +162,19 @@ void npc_svo_rasterize_triangle(npc_svo_grid_t *grid,
                                 const phys_triangle_t *tri);
 
 /**
+ * @brief Tight triangle rasterization: mark SOLID only the voxels the triangle
+ *        actually crosses (centre within ~half a voxel diagonal), giving a
+ *        ~1-voxel surface shell instead of the conservative AABB fill. Use for
+ *        the lightmap SVO, where the AABB fill would bury the luxels of
+ *        diagonal/curved surfaces in a solid blob.
+ *
+ * @param grid SVO grid.
+ * @param tri  Triangle vertices (world space).
+ */
+void npc_svo_rasterize_triangle_tight(npc_svo_grid_t *grid,
+                                      const phys_triangle_t *tri);
+
+/**
  * @brief Rasterize an entire mesh into the SVO.
  *
  * @param grid      SVO grid.

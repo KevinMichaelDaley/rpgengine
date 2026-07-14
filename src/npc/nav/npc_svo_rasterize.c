@@ -151,6 +151,90 @@ void npc_svo_rasterize_triangle(npc_svo_grid_t *grid,
     }
 }
 
+/* Watertight triangle vs. axis-aligned box overlap (Akenine-Moller separating
+ * axes), box centred at origin with per-axis half-extents @p bh, triangle verts
+ * already translated into box space. */
+static int tri_box_overlap_(const float bh[3], const float v0[3],
+                            const float v1[3], const float v2[3]) {
+    /* 3 box-face axes (AABB of the triangle vs. the box). */
+    for (int k = 0; k < 3; k++) {
+        float mn = fminf(v0[k], fminf(v1[k], v2[k]));
+        float mx = fmaxf(v0[k], fmaxf(v1[k], v2[k]));
+        if (mn > bh[k] || mx < -bh[k]) return 0;
+    }
+    float e[3][3] = {
+        { v1[0]-v0[0], v1[1]-v0[1], v1[2]-v0[2] },
+        { v2[0]-v1[0], v2[1]-v1[1], v2[2]-v1[2] },
+        { v0[0]-v2[0], v0[1]-v2[1], v0[2]-v2[2] } };
+    /* Triangle-normal plane test. */
+    float n[3] = { e[0][1]*e[1][2]-e[0][2]*e[1][1],
+                   e[0][2]*e[1][0]-e[0][0]*e[1][2],
+                   e[0][0]*e[1][1]-e[0][1]*e[1][0] };
+    float d = n[0]*v0[0]+n[1]*v0[1]+n[2]*v0[2];
+    float r = bh[0]*fabsf(n[0])+bh[1]*fabsf(n[1])+bh[2]*fabsf(n[2]);
+    if (fabsf(d) > r) return 0;
+    /* 9 edge x box-axis tests. */
+    const float *V[3] = { v0, v1, v2 };
+    for (int i = 0; i < 3; i++) {
+        for (int ax = 0; ax < 3; ax++) {
+            /* axis = e[i] x boxaxis[ax] */
+            float a3[3] = { 0, 0, 0 };
+            if (ax == 0) { a3[1] = -e[i][2]; a3[2] = e[i][1]; }
+            else if (ax == 1) { a3[0] = e[i][2]; a3[2] = -e[i][0]; }
+            else { a3[0] = -e[i][1]; a3[1] = e[i][0]; }
+            float pmin = 1e30f, pmax = -1e30f;
+            for (int j = 0; j < 3; j++) {
+                float pr = a3[0]*V[j][0]+a3[1]*V[j][1]+a3[2]*V[j][2];
+                if (pr < pmin) pmin = pr;
+                if (pr > pmax) pmax = pr;
+            }
+            float rad = bh[0]*fabsf(a3[0])+bh[1]*fabsf(a3[1])+bh[2]*fabsf(a3[2]);
+            if (pmin > rad || pmax < -rad) return 0;
+        }
+    }
+    return 1;
+}
+
+void npc_svo_rasterize_triangle_tight(npc_svo_grid_t *grid,
+                                      const phys_triangle_t *tri) {
+    if (!grid || !tri) return;
+    phys_aabb_t bb; bb.min = tri->v[0]; bb.max = tri->v[0];
+    for (int i = 1; i < 3; i++) {
+        phys_vec3_t p = tri->v[i];
+        if (p.x < bb.min.x) bb.min.x = p.x;
+        if (p.y < bb.min.y) bb.min.y = p.y;
+        if (p.z < bb.min.z) bb.min.z = p.z;
+        if (p.x > bb.max.x) bb.max.x = p.x;
+        if (p.y > bb.max.y) bb.max.y = p.y;
+        if (p.z > bb.max.z) bb.max.z = p.z;
+    }
+    uint32_t mnx,mny,mnz,mxx,mxy,mxz;
+    world_to_voxel_range_(grid, bb, &mnx,&mny,&mnz,&mxx,&mxy,&mxz);
+    uint32_t cells = 1u << grid->max_depth;
+    float o[3] = { grid->world_bounds.min.x, grid->world_bounds.min.y, grid->world_bounds.min.z };
+    float cs[3] = { (grid->world_bounds.max.x-o[0])/(float)cells,
+                    (grid->world_bounds.max.y-o[1])/(float)cells,
+                    (grid->world_bounds.max.z-o[2])/(float)cells };
+    float bh[3] = { 0.5f*cs[0], 0.5f*cs[1], 0.5f*cs[2] };
+    float a[3]={tri->v[0].x,tri->v[0].y,tri->v[0].z};
+    float b[3]={tri->v[1].x,tri->v[1].y,tri->v[1].z};
+    float c[3]={tri->v[2].x,tri->v[2].y,tri->v[2].z};
+    /* Watertight: mark a voxel iff the triangle actually intersects its box ->
+     * a gap-free ~1-voxel shell (no ray leaks) that does not bury luxels the way
+     * the conservative AABB fill does for diagonal/curved surfaces. */
+    for (uint32_t z = mnz; z <= mxz; z++)
+    for (uint32_t y = mny; y <= mxy; y++)
+    for (uint32_t x = mnx; x <= mxx; x++) {
+        float bc[3] = { o[0]+((float)x+0.5f)*cs[0], o[1]+((float)y+0.5f)*cs[1],
+                        o[2]+((float)z+0.5f)*cs[2] };
+        float v0[3]={a[0]-bc[0],a[1]-bc[1],a[2]-bc[2]};
+        float v1[3]={b[0]-bc[0],b[1]-bc[1],b[2]-bc[2]};
+        float v2[3]={c[0]-bc[0],c[1]-bc[1],c[2]-bc[2]};
+        if (tri_box_overlap_(bh, v0, v1, v2))
+            mark_voxel_solid_(grid, x, y, z);
+    }
+}
+
 void npc_svo_rasterize_mesh(npc_svo_grid_t *grid,
                             const phys_triangle_t *triangles,
                             uint32_t tri_count) {

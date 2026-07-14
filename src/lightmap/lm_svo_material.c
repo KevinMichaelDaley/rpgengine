@@ -58,8 +58,9 @@ void lm_svo_stamp_triangle(npc_svo_grid_t *svo, const phys_triangle_t *tri,
     if (!svo || !tri)
         return;
 
-    /* Create the solid leaves first, then stamp their material. */
-    npc_svo_rasterize_triangle(svo, tri);
+    /* Create the solid leaves first (TIGHT: a ~1-voxel shell, not the nav AABB
+     * fill, which would bury luxels of diagonal surfaces), then stamp material. */
+    npc_svo_rasterize_triangle_tight(svo, tri);
 
     uint32_t cells = 1u << svo->max_depth;
     const float mn[3] = { svo->world_bounds.min.x, svo->world_bounds.min.y,
