@@ -110,7 +110,7 @@ static void lm_vox_triangle(npc_svo_grid_t *svo, const lm_mesh_t *m,
         float cpz[3] = { a[0]*wa+b[0]*wb+c[0]*wc, a[1]*wa+b[1]*wb+c[1]*wc,
                          a[2]*wa+b[2]*wb+c[2]*wc };
         float dx=p[0]-cpz[0], dy=p[1]-cpz[1], dz=p[2]-cpz[2];
-        float gate = 2.5f*thresh; /* cover the stamp's multi-voxel solid band */
+        float gate = 6.0f*thresh; /* cover the stamp's multi-voxel solid band */
         if (dx*dx+dy*dy+dz*dz > gate*gate)
             continue;
         (void)nrm;
