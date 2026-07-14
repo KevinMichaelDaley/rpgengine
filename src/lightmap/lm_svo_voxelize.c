@@ -33,20 +33,29 @@ static void lm_vox_closest_bary(const float *a, const float *b, const float *c,
     if (d3 >= 0.0f && d4 <= d3) { *wa=0; *wb=1; *wc=0; return; }
     float vc = d1*d4 - d3*d2;
     if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
-        float v = d1/(d1-d3); *wa=1-v; *wb=v; *wc=0; return;
+        float den = d1-d3; float v = (fabsf(den) > 1e-20f) ? d1/den : 0.0f;
+        *wa=1-v; *wb=v; *wc=0; return;
     }
     float cp[3] = { p[0]-c[0], p[1]-c[1], p[2]-c[2] };
     float d5 = lm_vox_dot(ab, cp), d6 = lm_vox_dot(ac, cp);
     if (d6 >= 0.0f && d5 <= d6) { *wa=0; *wb=0; *wc=1; return; }
     float vb = d5*d2 - d1*d6;
     if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
-        float w = d2/(d2-d6); *wa=1-w; *wb=0; *wc=w; return;
+        float den = d2-d6; float w = (fabsf(den) > 1e-20f) ? d2/den : 0.0f;
+        *wa=1-w; *wb=0; *wc=w; return;
     }
     float va = d3*d6 - d5*d4;
     if (va <= 0.0f && (d4-d3) >= 0.0f && (d5-d6) >= 0.0f) {
-        float w = (d4-d3)/((d4-d3)+(d5-d6)); *wa=0; *wb=1-w; *wc=w; return;
+        float den = (d4-d3)+(d5-d6);
+        float w = (fabsf(den) > 1e-20f) ? (d4-d3)/den : 0.0f;
+        *wa=0; *wb=1-w; *wc=w; return;
     }
-    float denom = 1.0f/(va+vb+vc);
+    /* Face interior. For a degenerate (zero-area) triangle va+vb+vc == 0, which
+     * would make denom infinite and the weights NaN -- fall back to the centroid,
+     * a valid point on the (collapsed) triangle. */
+    float sum = va+vb+vc;
+    if (fabsf(sum) <= 1e-20f) { *wa = *wb = *wc = 1.0f/3.0f; return; }
+    float denom = 1.0f/sum;
     float v = vb*denom, w = vc*denom; *wa=1-v-w; *wb=v; *wc=w;
 }
 
@@ -168,6 +177,14 @@ void lm_svo_voxelize(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
             float inv = 1.0f / (float)count[i];
             npc_svo_node_t *nd = &svo->nodes[i];
             for (int k = 0; k < 3; ++k) { nd->diffuse[k] *= inv; nd->emissive[k] *= inv; }
+        }
+        /* Guarantee no non-finite material ever reaches the gather: a single NaN
+         * voxel poisons every luxel whose GI rays hit it (directly and through
+         * bounces), which sprays NaN across the atlas. Clamp defensively. */
+        npc_svo_node_t *nd = &svo->nodes[i];
+        for (int k = 0; k < 3; ++k) {
+            if (!isfinite(nd->diffuse[k]))  nd->diffuse[k]  = 0.0f;
+            if (!isfinite(nd->emissive[k])) nd->emissive[k] = 0.0f;
         }
         /* Normalise the accumulated per-voxel normal (leaves only; the gather
          * reads leaf normals on near hits). */

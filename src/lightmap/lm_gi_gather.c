@@ -31,6 +31,14 @@ static void lm_gi_basis(vec3_t n, vec3_t *t, vec3_t *b)
     *b = vec3_cross(n, *t);
 }
 
+/* True if world point @p p is inside a SOLID voxel. */
+static int lm_gi_solid(const npc_svo_grid_t *svo, vec3_t p)
+{
+    uint32_t node = NPC_SVO_INVALID_NODE;
+    return npc_svo_query_point(svo, (phys_vec3_t){ p.x, p.y, p.z }, &node)
+           & NPC_SVO_FLAG_SOLID;
+}
+
 /* Cosine-weighted hemisphere direction about n (Malley's method). */
 static vec3_t lm_gi_cosine_dir(vec3_t n, uint32_t *rng)
 {
@@ -155,10 +163,26 @@ static void lm_gi_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
                                float transition, float maxdist, uint32_t samples,
                                uint32_t bounces, uint32_t *rng)
 {
-    vec3_t t, b;
-    lm_gi_basis(luxel->normal, &t, &b);
     float bias = svo->voxel_size * 1.5f;
-    vec3_t origin = vec3_add(luxel->pos, vec3_scale(luxel->normal, bias));
+    vec3_t nrm = luxel->normal;
+    vec3_t origin = vec3_add(luxel->pos, vec3_scale(nrm, bias));
+    /* ONLY correct luxels whose origin is actually inside solid (a concave
+     * corner where two surface shells overlap, or a flipped normal). The ~95%
+     * that are already in air keep the exact simple origin, so no neighbour is
+     * perturbed -> no checkerboard. For a stuck luxel, march both ways along the
+     * normal to the nearest air and orient there. */
+    if (lm_gi_solid(svo, origin)) {
+        float vs = svo->voxel_size;
+        int dp = 0; vec3_t op = origin;
+        while (dp < 16 && lm_gi_solid(svo, op)) { op = vec3_add(op, vec3_scale(nrm, vs)); ++dp; }
+        int dn = 0; vec3_t on = vec3_sub(luxel->pos, vec3_scale(nrm, bias));
+        while (dn < 16 && lm_gi_solid(svo, on)) { on = vec3_sub(on, vec3_scale(nrm, vs)); ++dn; }
+        if (dn < dp) { origin = on; nrm = vec3_scale(nrm, -1.0f); }
+        else { origin = op; }
+    }
+
+    vec3_t t, b;
+    lm_gi_basis(nrm, &t, &b);
 
     uint32_t n = (uint32_t)sqrtf((float)samples);
     if (n < 1u)
@@ -175,7 +199,7 @@ static void lm_gi_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
             float phi = LM_GI_TWO_PI * u2;
             vec3_t dir = vec3_add(vec3_add(vec3_scale(t, r * cosf(phi)),
                                            vec3_scale(b, r * sinf(phi))),
-                                  vec3_scale(luxel->normal, z));
+                                  vec3_scale(nrm, z));
             vec3_t Li = lm_gi_trace(svo, lights, nl, sky, vnormal, transition,
                                     maxdist, weight, bounces, origin, dir, rng);
             const float *lc = &Li.x;

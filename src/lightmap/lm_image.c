@@ -38,6 +38,11 @@ vec3_t lm_image_sample(const lm_image_t *img, float u, float v)
     if (img == NULL || img->pixels == NULL || img->width == 0 || img->height == 0)
         return (vec3_t){ 0.0f, 0.0f, 0.0f };
 
+    /* Reject non-finite coordinates (a degenerate-triangle barycentric UV can be
+     * NaN); a NaN here would propagate through every value that samples it. */
+    if (!isfinite(u) || !isfinite(v))
+        return (vec3_t){ 0.0f, 0.0f, 0.0f };
+
     /* Sample at texel centres; wrap. */
     float fx = u * (float)img->width - 0.5f;
     float fy = v * (float)img->height - 0.5f;
