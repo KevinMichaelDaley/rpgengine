@@ -5,32 +5,49 @@
 #include "ferrum/lightmap/lm_svo_voxelize.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ferrum/lightmap/lm_image.h"
 #include "ferrum/lightmap/lm_svo_mip.h"
 
-/* Barycentric coordinates of @p p projected onto triangle (a,b,c). Returns
- * false for a degenerate triangle. */
-static int lm_vox_bary(const float *a, const float *b, const float *c,
-                       const float p[3], float *wa, float *wb, float *wc)
+static float lm_vox_dot(const float a[3], const float b[3])
 {
-    float v0[3] = { b[0]-a[0], b[1]-a[1], b[2]-a[2] };
-    float v1[3] = { c[0]-a[0], c[1]-a[1], c[2]-a[2] };
-    float v2[3] = { p[0]-a[0], p[1]-a[1], p[2]-a[2] };
-    float d00 = v0[0]*v0[0]+v0[1]*v0[1]+v0[2]*v0[2];
-    float d01 = v0[0]*v1[0]+v0[1]*v1[1]+v0[2]*v1[2];
-    float d11 = v1[0]*v1[0]+v1[1]*v1[1]+v1[2]*v1[2];
-    float d20 = v2[0]*v0[0]+v2[1]*v0[1]+v2[2]*v0[2];
-    float d21 = v2[0]*v1[0]+v2[1]*v1[1]+v2[2]*v1[2];
-    float denom = d00*d11 - d01*d01;
-    if (fabsf(denom) < 1e-12f)
-        return 0;
-    float inv = 1.0f / denom;
-    *wb = (d11*d20 - d01*d21) * inv;
-    *wc = (d00*d21 - d01*d20) * inv;
-    *wa = 1.0f - *wb - *wc;
-    return 1;
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+
+/* Barycentric coords of the CLOSEST point on triangle (a,b,c) to @p p (Ericson,
+ * Real-Time Collision Detection): clamps to edges/vertices, so it is robust for
+ * points outside the triangle and for triangles smaller than a voxel. Always
+ * returns a valid point on the triangle. */
+static void lm_vox_closest_bary(const float *a, const float *b, const float *c,
+                                const float p[3], float *wa, float *wb, float *wc)
+{
+    float ab[3] = { b[0]-a[0], b[1]-a[1], b[2]-a[2] };
+    float ac[3] = { c[0]-a[0], c[1]-a[1], c[2]-a[2] };
+    float ap[3] = { p[0]-a[0], p[1]-a[1], p[2]-a[2] };
+    float d1 = lm_vox_dot(ab, ap), d2 = lm_vox_dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) { *wa=1; *wb=0; *wc=0; return; }
+    float bp[3] = { p[0]-b[0], p[1]-b[1], p[2]-b[2] };
+    float d3 = lm_vox_dot(ab, bp), d4 = lm_vox_dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) { *wa=0; *wb=1; *wc=0; return; }
+    float vc = d1*d4 - d3*d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) {
+        float v = d1/(d1-d3); *wa=1-v; *wb=v; *wc=0; return;
+    }
+    float cp[3] = { p[0]-c[0], p[1]-c[1], p[2]-c[2] };
+    float d5 = lm_vox_dot(ab, cp), d6 = lm_vox_dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) { *wa=0; *wb=0; *wc=1; return; }
+    float vb = d5*d2 - d1*d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) {
+        float w = d2/(d2-d6); *wa=1-w; *wb=0; *wc=w; return;
+    }
+    float va = d3*d6 - d5*d4;
+    if (va <= 0.0f && (d4-d3) >= 0.0f && (d5-d6) >= 0.0f) {
+        float w = (d4-d3)/((d4-d3)+(d5-d6)); *wa=0; *wb=1-w; *wc=w; return;
+    }
+    float denom = 1.0f/(va+vb+vc);
+    float v = vb*denom, w = vc*denom; *wa=1-v-w; *wb=v; *wc=w;
 }
 
 /* Sample one mesh triangle's material + smooth normal into every solid voxel it
@@ -83,15 +100,20 @@ static void lm_vox_triangle(npc_svo_grid_t *svo, const lm_mesh_t *m,
         uint8_t flags = npc_svo_query_point(svo, (phys_vec3_t){p[0],p[1],p[2]}, &node);
         if (!(flags & NPC_SVO_FLAG_SOLID) || node == NPC_SVO_INVALID_NODE)
             continue;
-        /* Voxel must lie within a voxel of the triangle plane. */
-        float dperp = fabsf(nrm[0]*(p[0]-a[0])+nrm[1]*(p[1]-a[1])+nrm[2]*(p[2]-a[2]));
-        if (dperp > thresh)
-            continue;
+        /* Sample at the CLOSEST point on the triangle to the voxel centre, and
+         * gate on that distance (the stamp marks a voxel whenever the triangle
+         * overlaps its box, so the centre may be a bit outside the triangle or a
+         * triangle may be smaller than the voxel -- a strict inside-test would
+         * leave half the solid voxels unshaded). */
         float wa, wb, wc;
-        if (!lm_vox_bary(a, b, c, p, &wa, &wb, &wc))
+        lm_vox_closest_bary(a, b, c, p, &wa, &wb, &wc);
+        float cpz[3] = { a[0]*wa+b[0]*wb+c[0]*wc, a[1]*wa+b[1]*wb+c[1]*wc,
+                         a[2]*wa+b[2]*wb+c[2]*wc };
+        float dx=p[0]-cpz[0], dy=p[1]-cpz[1], dz=p[2]-cpz[2];
+        float gate = 2.5f*thresh; /* cover the stamp's multi-voxel solid band */
+        if (dx*dx+dy*dy+dz*dz > gate*gate)
             continue;
-        if (wa < -0.05f || wb < -0.05f || wc < -0.05f)
-            continue;
+        (void)nrm;
         /* Sample the material textures at the barycentric UV, times the tint. */
         vec3_t alb = { 1.0f, 1.0f, 1.0f }, emi = { 1.0f, 1.0f, 1.0f };
         if (m->uv0 != NULL) {
@@ -135,7 +157,13 @@ void lm_svo_voxelize(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
             lm_vox_triangle(svo, m, m->indices[t], m->indices[t+1],
                             m->indices[t+2], count, normal);
     }
+    uint32_t solid_leaves = 0, solid_no_mat = 0;
     for (uint32_t i = 0; i < svo->node_count; ++i) {
+        const npc_svo_node_t *nc = &svo->nodes[i];
+        if (nc->occupancy == 0 && (nc->flags & NPC_SVO_FLAG_SOLID)) {
+            ++solid_leaves;
+            if (count[i] == 0u) ++solid_no_mat;
+        }
         if (count[i] > 1u) {
             float inv = 1.0f / (float)count[i];
             npc_svo_node_t *nd = &svo->nodes[i];
@@ -147,5 +175,8 @@ void lm_svo_voxelize(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
         float len = sqrtf(nn[0]*nn[0] + nn[1]*nn[1] + nn[2]*nn[2]);
         if (len > 1e-8f) { nn[0]/=len; nn[1]/=len; nn[2]/=len; }
     }
+    fprintf(stderr, "voxelize: %u solid leaves, %u with NO material (%.1f%% gap)\n",
+            solid_leaves, solid_no_mat,
+            solid_leaves ? 100.0f*(float)solid_no_mat/(float)solid_leaves : 0.0f);
     lm_svo_mip_average_up(svo);
 }
