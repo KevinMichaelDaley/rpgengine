@@ -32,6 +32,8 @@
 #include "ferrum/math/mat4.h"
 #include "ferrum/renderer/gl_loader.h"
 #include "ferrum/renderer/render_scene.h"
+#include "ferrum/renderer/resource/gpu_registry.h"
+#include "ferrum/renderer/resource/shadow_atlas.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/shader_uniforms.h"
 
@@ -65,8 +67,9 @@ typedef struct shadow_csm {
     float    lambda;
     float    max_distance; /**< far-split cap (0 = camera far). */
 
-    uint32_t static_array;   /**< RG32F 2D-array EVSM2 moments, one layer/cascade. */
-    uint32_t depth_rb_static;
+    gpu_registry_t registry;      /**< tracks shadow depth targets as GPU resources. */
+    shadow_atlas_t static_atlas;  /**< high-res EVSM2 cascade array (slotmap-managed). */
+    int32_t        static_base;   /**< base layer of this light's cascade run. */
     uint32_t dyn_map;        /**< single R32F 2D distance map for dynamic casters. */
     uint32_t dyn_depth_rb;
     uint32_t fbo;

@@ -50,21 +50,6 @@ static const char *const SC_FS =
         memcpy(&(dst), &p_, sizeof(p_));                                      \
     } while (0)
 
-/* Allocate the static EVSM2 moment array: RG32F 2D-array, one linear-filtered
- * layer per cascade. RG is universally colour-renderable (unlike RGBA32F); full
- * float precision keeps the exp-warp separable. Sampled at LOD 0 by the shader. */
-static void sc_make_array(shadow_csm_t *csm, uint32_t tex, uint32_t res,
-                          uint32_t layers)
-{
-    csm->glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
-    csm->glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RG32F, (int32_t)res,
-                      (int32_t)res, (int32_t)layers, 0, GL_RG, GL_FLOAT, NULL);
-    csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-}
-
 /* Allocate the single dynamic-caster distance map: R32F 2D, linear-filtered for
  * PCF interpolation, with its own depth renderbuffer. */
 static void sc_make_dyn(shadow_csm_t *csm, uint32_t res)
@@ -130,15 +115,24 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     SC_LOAD(csm->glGetError, "glGetError");
     SC_LOAD(csm->glCheckFramebufferStatus, "glCheckFramebufferStatus");
 
-    /* Static EVSM2 cascade array + its depth renderbuffer (reused per layer). */
-    csm->glGenTextures(1, &csm->static_array);
-    sc_make_array(csm, csm->static_array, csm->static_res, csm->cascades);
-    csm->glGenRenderbuffers(1, &csm->depth_rb_static);
-    csm->glBindRenderbuffer(GL_RENDERBUFFER, csm->depth_rb_static);
-    csm->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
-                               (int32_t)csm->static_res, (int32_t)csm->static_res);
+    /* Static cascades live in a resource-managed EVSM2 shadow atlas: the array
+     * texture is tracked in a registry and its layers handed out by a slotmap. */
+    if (gpu_registry_init(&csm->registry, 8u) != 0)
+        return false;
+    shadow_atlas_config_t sac = {
+        .loader = loader,
+        .registry = &csm->registry,
+        .resolution = csm->static_res,
+        .layers = csm->cascades,
+        .internal_format = GL_RG32F,
+    };
+    if (!shadow_atlas_init(&csm->static_atlas, &sac))
+        return false;
+    csm->static_base = shadow_atlas_alloc(&csm->static_atlas, csm->cascades);
+    if (csm->static_base < 0)
+        return false;
 
-    /* Single low-res dynamic-caster distance map. */
+    /* Single low-res dynamic-caster distance map (still a plain 2D target). */
     sc_make_dyn(csm, csm->dynamic_res);
 
     csm->glGenFramebuffers(1, &csm->fbo);
@@ -153,20 +147,13 @@ void shadow_csm_destroy(shadow_csm_t *csm)
         return;
     if (csm->glDeleteFramebuffers && csm->fbo)
         csm->glDeleteFramebuffers(1, &csm->fbo);
-    if (csm->glDeleteRenderbuffers) {
-        if (csm->depth_rb_static)
-            csm->glDeleteRenderbuffers(1, &csm->depth_rb_static);
-        if (csm->dyn_depth_rb)
-            csm->glDeleteRenderbuffers(1, &csm->dyn_depth_rb);
-    }
-    if (csm->glDeleteTextures) {
-        if (csm->static_array)
-            csm->glDeleteTextures(1, &csm->static_array);
-        if (csm->dyn_map)
-            csm->glDeleteTextures(1, &csm->dyn_map);
-    }
+    if (csm->glDeleteRenderbuffers && csm->dyn_depth_rb)
+        csm->glDeleteRenderbuffers(1, &csm->dyn_depth_rb);
+    if (csm->glDeleteTextures && csm->dyn_map)
+        csm->glDeleteTextures(1, &csm->dyn_map);
+    shadow_atlas_destroy(&csm->static_atlas);
+    gpu_registry_destroy(&csm->registry);
     shader_program_destroy(&csm->shader);
-    csm->fbo = csm->depth_rb_static = csm->dyn_depth_rb = 0;
-    csm->static_array = csm->dyn_map = 0;
+    csm->fbo = csm->dyn_depth_rb = csm->dyn_map = 0;
     csm->static_valid = false;
 }

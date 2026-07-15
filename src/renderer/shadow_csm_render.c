@@ -30,15 +30,13 @@ static void csm_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
     }
 }
 
-/* Common depth-pass GL state. Both sides are rendered (cull disabled) because the
- * room's single-sided surfaces would otherwise drop their sun-facing back faces
- * and leak light. u_view = identity; the light matrix is fed as u_projection. */
-static void csm_begin_pass(shadow_csm_t *csm, uint32_t res, uint32_t depth_rb, int mode)
+/* Common depth-pass draw state (no FBO bind -- the caller attaches its target).
+ * Both sides are rendered (cull disabled) because the room's single-sided
+ * surfaces would otherwise drop their sun-facing back faces and leak light.
+ * u_view = identity; the light matrix is fed as u_projection. */
+static void csm_begin_pass(shadow_csm_t *csm, uint32_t res, int mode)
 {
     mat4_t identity = mat4_identity();
-    csm->glBindFramebuffer(GL_FRAMEBUFFER, csm->fbo);
-    csm->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                   GL_RENDERBUFFER, depth_rb);
     csm->glViewport(0, 0, (int32_t)res, (int32_t)res);
     csm->glDisable(GL_CULL_FACE);
     csm->glEnable(GL_DEPTH_TEST);
@@ -50,7 +48,7 @@ static void csm_begin_pass(shadow_csm_t *csm, uint32_t res, uint32_t depth_rb, i
 
 void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
 {
-    if (csm == NULL || scene == NULL || csm->static_valid)
+    if (csm == NULL || scene == NULL || csm->static_valid || csm->static_base < 0)
         return;
     uint32_t to = scene->dynamic_from;
     if (to > scene->count)
@@ -58,10 +56,11 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
 
     float fw = expf(CSM_EVSM_C);
     float far_moments[2] = { fw, fw * fw };
-    csm_begin_pass(csm, csm->static_res, csm->depth_rb_static, 0 /* EVSM */);
+    csm_begin_pass(csm, csm->static_res, 0 /* EVSM */);
     for (uint32_t c = 0; c < csm->cascades; ++c) {
-        csm->glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                       csm->static_array, 0, (int32_t)c);
+        /* Attach this cascade's slice of the resource-managed shadow atlas. */
+        shadow_atlas_bind_layer(&csm->static_atlas,
+                                (uint32_t)csm->static_base + c);
         csm->glClearBufferfv(GL_COLOR, 0, far_moments); /* far state (unclamped). */
         csm->glClear(GL_DEPTH_BUFFER_BIT);
         shader_uniform_set_mat4(&csm->cache, &csm->shader, "u_projection",
@@ -85,9 +84,12 @@ void shadow_csm_render_dynamic(shadow_csm_t *csm, const render_scene_t *scene)
     /* One orthographic distance face; plain depth for PCF at receive time.
      * Cleared to 1 (= far / no occluder) so an empty dynamic set leaves only the
      * static term after the co-sample. */
-    csm_begin_pass(csm, csm->dynamic_res, csm->dyn_depth_rb, 1 /* distance */);
+    csm->glBindFramebuffer(GL_FRAMEBUFFER, csm->fbo);
     csm->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                 GL_TEXTURE_2D, csm->dyn_map, 0);
+    csm->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                   GL_RENDERBUFFER, csm->dyn_depth_rb);
+    csm_begin_pass(csm, csm->dynamic_res, 1 /* distance */);
     csm->glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
     csm->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     shader_uniform_set_mat4(&csm->cache, &csm->shader, "u_projection",

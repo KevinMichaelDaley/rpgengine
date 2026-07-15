@@ -28,10 +28,11 @@ void shadow_csm_bind(const shadow_csm_t *csm, shader_uniform_cache_t *cache,
 {
     if (csm == NULL || cache == NULL || program == NULL)
         return;
-    /* Static EVSM2 cascade array on unit_static; single dynamic distance map on
-     * unit_dynamic (co-sampled + PCF-filtered by the receiver). */
-    csm->glActiveTexture(GL_TEXTURE0 + unit_static);
-    csm->glBindTexture(GL_TEXTURE_2D_ARRAY, csm->static_array);
+    /* Static EVSM2 cascades from the resource-managed atlas on unit_static; the
+     * single dynamic distance map on unit_dynamic (co-sampled + PCF by receiver).
+     * The atlas is dedicated to this light so static_base == 0 and cascade layer
+     * ci in the shader maps directly to atlas layer ci. */
+    shadow_atlas_bind_sample(&csm->static_atlas, unit_static);
     csm->glActiveTexture(GL_TEXTURE0 + unit_dynamic);
     csm->glBindTexture(GL_TEXTURE_2D, csm->dyn_map);
 
