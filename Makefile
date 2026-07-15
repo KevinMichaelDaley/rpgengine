@@ -2326,6 +2326,7 @@ LM_HALL_BAKE_SRC := src/mesh/dmesh_load.c src/mesh/obj_mesh_load.c \
   src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c \
   src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c \
   src/lightmap/gpu/lm_gpu_gather.c src/lightmap/gpu/lm_gpu_pack.c \
+  src/lightmap/lm_bake_driver.c \
   src/math/vec3.c
 build/hall_bake: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) -D_POSIX_C_SOURCE=200809L tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
@@ -2333,6 +2334,10 @@ build/hall_bake: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) | bu
 # Headless (surfaceless EGL) bake -- no SDL/X, for the chimera GPU box.
 build/hall_bake_egl: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) -DHALL_EGL -D_POSIX_C_SOURCE=200809L tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) -o $@ -lEGL -lGL -ldl -lm
+
+# --- rpg-fzht: generic bake driver (headless CPU path unit test) ---
+build/lm_bake_driver_tests: tests/lightmap/lm_bake_driver_tests.c $(LM_HALL_BAKE_SRC) src/memory/arena_reset.c | build
+	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L tests/lightmap/lm_bake_driver_tests.c $(LM_HALL_BAKE_SRC) src/memory/arena_reset.c -o $@ -ldl -lm
 
 # --- rpg-xkdz: hall through the clustered forward+ pipeline driver ---
 build/hall_forward_pipeline: tests/visual/hall_forward_pipeline.c src/renderer/render_forward.c src/renderer/shadow_cube.c src/renderer/shadow_spot.c src/renderer/shadow_csm_init.c src/renderer/shadow_csm_cascade.c src/renderer/shadow_csm_render.c src/renderer/shadow_csm_bind.c src/renderer/resource/shadow_atlas.c src/renderer/resource/shadow_slotmap.c src/renderer/resource/gpu_registry_create.c src/renderer/resource/gpu_registry_access.c src/memory/pool_alloc.c src/memory/pool_destroy.c src/memory/pool_free.c src/memory/pool_get.c src/memory/pool_init.c src/renderer/depth_prepass.c src/renderer/render_pipeline_graph.c src/renderer/forward_plus.c src/renderer/cluster_grid.c src/renderer/render_camera.c src/renderer/render_scene.c src/renderer/light_store.c src/mesh/obj_mesh_load.c src/renderer/mesh/static_mesh_create.c src/renderer/mesh/static_mesh_destroy.c src/renderer/mesh/static_mesh_draw.c src/renderer/vao_create.c src/renderer/vao_bind_attributes.c src/renderer/vao_destroy.c src/renderer/vbo_create.c src/renderer/vbo_upload.c src/renderer/vbo_destroy.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_inverse.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) | build

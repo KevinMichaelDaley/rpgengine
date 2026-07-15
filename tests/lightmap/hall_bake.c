@@ -25,6 +25,7 @@
 #include "stb_image.h"
 
 #include "ferrum/lightmap/gpu/lm_gpu_gather.h"
+#include "ferrum/lightmap/lm_bake_driver.h"
 #include "ferrum/lightmap/lm_image.h"
 #include "ferrum/lightmap/lm_lightmap_file.h"
 #include "ferrum/lightmap/lm_mesh_bake.h"
@@ -58,29 +59,31 @@ static void load_cpu(const char *path, lm_image_t *img, int srgb)
     img->channels = 3; img->srgb = srgb != 0;
 }
 
-/* Progressive-batch hook: re-serialize the running lightmap after every gather
- * batch so an external viewer can render the refining result mid-bake. */
-struct hall_batch_ctx { lm_mesh_bake_result_t *res; const char *out; };
-static void hall_on_batch(void *ud, uint32_t done, uint32_t total)
-{
-    struct hall_batch_ctx *b = (struct hall_batch_ctx *)ud;
-    lm_lightmap_save(b->res, b->out);
-    fprintf(stderr, "batch %u/%u -> %s\n", done, total, b->out);
-    fflush(stderr);
-}
+/* --- Hall scene, loaded once into file-scope storage and assembled by the
+ * hall_setup callback that the generic bake driver (lm_bake_driver) invokes.
+ * The dmeshes/textures/meshes/sun must outlive the bake, hence file scope. --- */
+static obj_mesh_t g_dm[MAXM];
+static lm_mesh_t  g_lms[MAXM];
+static lm_image_t g_im_b, g_im_s, g_im_v;
+static lm_light_t g_sun;
+struct hall_input { const char *dir; const char *bake; };
 
-int main(int argc, char **argv)
+/* Build the romanesque-hall scene + bake config (rpg-fzht: one caller of the
+ * generic driver). @p user is a struct hall_input with the dmesh dir + texture
+ * dir; env vars tune voxel/samples/bounces/lmres. */
+static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
+                       arena_t *arena, void *user)
 {
-    const char *dir  = argc > 1 ? argv[1] : "datasets/hall_lm";
-    const char *bake = argc > 2 ? argv[2] : "assets/arch/proc/prefabs/bake";
-    const char *out  = argc > 3 ? argv[3] : "/tmp/hall.flm";
+    (void)arena;
+    struct hall_input *in = (struct hall_input *)user;
+    const char *dir = in->dir, *bake = in->bake;
 
-    obj_mesh_t dm[MAXM]; int grp[MAXM]; int nm = 0; char names[MAXM][128];
     /* Collect + SORT the .dmesh filenames. readdir() order is filesystem/machine
      * dependent, so baking on one box and rendering on another would otherwise
      * assign each mesh a different atlas index -> every surface samples the wrong
      * atlas region (splotches). A deterministic sort makes the mesh order (and
      * thus the baked rects) identical on every machine. The renderer sorts too. */
+    int grp[MAXM]; char names[MAXM][128]; int nm = 0;
     char fnames[MAXM][128]; int nf = 0;
     DIR *d = opendir(dir); struct dirent *e;
     while (d && (e = readdir(d)) && nf < MAXM) {
@@ -91,43 +94,44 @@ int main(int argc, char **argv)
     qsort(fnames, (size_t)nf, sizeof fnames[0], hb_cmpstr);
     for (int fi = 0; fi < nf; ++fi) {
         char p[512]; snprintf(p, sizeof p, "%s/%s", dir, fnames[fi]);
-        if (dmesh_load(p, &dm[nm]) == 0) {
+        if (dmesh_load(p, &g_dm[nm]) == 0) {
             grp[nm] = group_of(fnames[fi]);
             snprintf(names[nm], sizeof names[nm], "%s", fnames[fi]);
             ++nm;
         }
     }
     printf("loaded %d dual-uv meshes\n", nm);
+    if (nm == 0) return false;
 
     char pab[512], pas[512], pav[512];
     snprintf(pab, sizeof pab, "%s/albedo.png", bake);
     snprintf(pas, sizeof pas, "%s/ashlar_albedo.png", bake);
     snprintf(pav, sizeof pav, "%s/vault_albedo.png", bake);
-    lm_image_t im_b, im_s, im_v;
-    load_cpu(pab, &im_b, 1); load_cpu(pas, &im_s, 1); load_cpu(pav, &im_v, 1);
-    const lm_image_t *grp_img[3] = { &im_b, &im_s, &im_v };
+    load_cpu(pab, &g_im_b, 1); load_cpu(pas, &g_im_s, 1); load_cpu(pav, &g_im_v, 1);
+    const lm_image_t *grp_img[3] = { &g_im_b, &g_im_s, &g_im_v };
 
-    static char abuf[900 * 1024 * 1024]; arena_t arena;
-    arena_init(&arena, abuf, sizeof abuf);
-    lm_mesh_t lms[MAXM];
+    /* Per-mesh lightmap texel resolution, scaled by HALL_LMRES (default 1). Crank
+     * it for a high-res production bake (more, sharper luxels). */
+    float lmres = getenv("HALL_LMRES") ? (float)atof(getenv("HALL_LMRES")) : 1.0f;
     float bmin[3] = { 1e30f, 1e30f, 1e30f }, bmax[3] = { -1e30f, -1e30f, -1e30f };
     for (int i = 0; i < nm; ++i) {
-        memset(&lms[i], 0, sizeof(lm_mesh_t));
-        lms[i].positions = dm[i].positions; lms[i].normals = dm[i].normals;
-        lms[i].uv0 = dm[i].uvs; lms[i].uv1 = dm[i].uvs1;
-        lms[i].indices = dm[i].indices; lms[i].vert_count = dm[i].vert_count;
-        lms[i].index_count = dm[i].index_count;
-        lms[i].albedo_image = grp_img[grp[i]]; lms[i].emissive_image = NULL;
-        lms[i].albedo = v3(1, 1, 1); lms[i].emissive = v3(0, 0, 0);
-        lms[i].material = 0;
-        lms[i].lightmap_resolution =
+        memset(&g_lms[i], 0, sizeof(lm_mesh_t));
+        g_lms[i].positions = g_dm[i].positions; g_lms[i].normals = g_dm[i].normals;
+        g_lms[i].uv0 = g_dm[i].uvs; g_lms[i].uv1 = g_dm[i].uvs1;
+        g_lms[i].indices = g_dm[i].indices; g_lms[i].vert_count = g_dm[i].vert_count;
+        g_lms[i].index_count = g_dm[i].index_count;
+        g_lms[i].albedo_image = grp_img[grp[i]]; g_lms[i].emissive_image = NULL;
+        g_lms[i].albedo = v3(1, 1, 1); g_lms[i].emissive = v3(0, 0, 0);
+        g_lms[i].material = 0;
+        uint32_t base_lmres =
             strstr(names[i], "col")   ? 224u :
             strstr(names[i], "resp")  ? 128u :
             strstr(names[i], "floor") ? 160u :
             (grp[i] == 0 ? 80u : 72u);
-        for (uint32_t v = 0; v < dm[i].vert_count; ++v)
+        g_lms[i].lightmap_resolution = (uint32_t)(lmres * (float)base_lmres + 0.5f);
+        for (uint32_t v = 0; v < g_dm[i].vert_count; ++v)
             for (int c = 0; c < 3; ++c) {
-                float p = dm[i].positions[v*3+c];
+                float p = g_dm[i].positions[v*3+c];
                 if (p < bmin[c]) bmin[c] = p;
                 if (p > bmax[c]) bmax[c] = p;
             }
@@ -135,36 +139,49 @@ int main(int argc, char **argv)
     float diag = sqrtf((bmax[0]-bmin[0])*(bmax[0]-bmin[0]) +
                        (bmax[1]-bmin[1])*(bmax[1]-bmin[1]) +
                        (bmax[2]-bmin[2])*(bmax[2]-bmin[2]));
-    float half_diag = 0.5f * diag;
 
-    lm_light_t sun; memset(&sun, 0, sizeof sun); sun.kind = LM_LIGHT_DIRECTIONAL;
-    sun.direction = v3(0.15f, -0.42f, 0.90f); sun.color = v3(3.6f, 3.4f, 3.0f);
+    memset(&g_sun, 0, sizeof g_sun); g_sun.kind = LM_LIGHT_DIRECTIONAL;
+    g_sun.direction = v3(0.15f, -0.42f, 0.90f); g_sun.color = v3(3.6f, 3.4f, 3.0f);
     lm_material_t fb = { { 0, 0, 0 }, { 0, 0, 0 } };
-    lm_mesh_scene_t scene = { lms, (uint32_t)nm, &sun, 1, { NULL, 0, fb } };
+    *scene = (lm_mesh_scene_t){ g_lms, (uint32_t)nm, &g_sun, 1, { NULL, 0, fb } };
 
-    lm_bake_config_t cfg = { 0 };
-    cfg.svo_bounds = (phys_aabb_t){ { -1.5f, -0.5f, -7.5f }, { 10.5f, 5.5f, 1.5f } };
-    cfg.voxel_size = getenv("HALL_VOXEL") ? (float)atof(getenv("HALL_VOXEL")) : 0.02f;
-    cfg.atlas_width = 4096; cfg.atlas_padding = 2; cfg.direct_samples = 0;
-    cfg.farfield_samples = getenv("HALL_SAMPLES") ? (uint32_t)atoi(getenv("HALL_SAMPLES")) : 256u;
-    cfg.gi_bounces = getenv("HALL_BOUNCES") ? (uint32_t)atoi(getenv("HALL_BOUNCES")) : 2u;
-    cfg.gi_threads = getenv("HALL_THREADS") ? (uint32_t)atoi(getenv("HALL_THREADS")) : 0u;
-    cfg.farfield_near = half_diag; cfg.farfield_maxdist = 1e9f; cfg.seed = 11u;
-    cfg.sky.kind = LM_SKY_CONSTANT; cfg.sky.color = v3(0.55f, 0.68f, 0.95f);
+    memset(cfg, 0, sizeof *cfg);
+    cfg->svo_bounds = (phys_aabb_t){ { -1.5f, -0.5f, -7.5f }, { 10.5f, 5.5f, 1.5f } };
+    cfg->voxel_size = getenv("HALL_VOXEL") ? (float)atof(getenv("HALL_VOXEL")) : 0.02f;
+    cfg->atlas_width = 4096; cfg->atlas_padding = 2; cfg->direct_samples = 0;
+    cfg->farfield_samples = getenv("HALL_SAMPLES") ? (uint32_t)atoi(getenv("HALL_SAMPLES")) : 256u;
+    cfg->gi_bounces = getenv("HALL_BOUNCES") ? (uint32_t)atoi(getenv("HALL_BOUNCES")) : 2u;
+    cfg->gi_threads = getenv("HALL_THREADS") ? (uint32_t)atoi(getenv("HALL_THREADS")) : 0u;
+    cfg->farfield_near = 0.5f * diag; cfg->farfield_maxdist = 1e9f; cfg->seed = 11u;
+    cfg->sky.kind = LM_SKY_CONSTANT; cfg->sky.color = v3(0.55f, 0.68f, 0.95f);
+    cfg->gi_batch = getenv("HALL_BATCH") ? (uint32_t)atoi(getenv("HALL_BATCH")) : 64u;
 
     printf("baking hall: voxel=%.3fm samples=%u bounces=%u diag=%.2f\n",
-           cfg.voxel_size, cfg.farfield_samples, cfg.gi_bounces, diag);
+           cfg->voxel_size, cfg->farfield_samples, cfg->gi_bounces, diag);
     fflush(stdout);
-    cfg.gi_batch = getenv("HALL_BATCH") ? (uint32_t)atoi(getenv("HALL_BATCH")) : 64u;
+    return true;
+}
 
-    /* Optional GPU gather (rpg-k4lk): stand up a GL 4.3+ compute context. With
-     * HALL_EGL the context is surfaceless (headless GPU box, no X/SDL); otherwise
-     * a hidden SDL window is used. */
+int main(int argc, char **argv)
+{
+    struct hall_input in = {
+        argc > 1 ? argv[1] : "datasets/hall_lm",
+        argc > 2 ? argv[2] : "assets/arch/proc/prefabs/bake",
+    };
+    const char *out = argc > 3 ? argv[3] : "/tmp/hall.flm";
+
+    static char abuf[900 * 1024 * 1024]; arena_t arena;
+    arena_init(&arena, abuf, sizeof abuf);
+
+    /* Optional GPU compute context. With HALL_EGL it is surfaceless (headless GPU
+     * box, no X/SDL); otherwise a hidden SDL window is used. The driver runs the
+     * gather on it; with no HALL_GPU the driver bakes on the CPU. */
+    gl_loader_t gl_loader; const gl_loader_t *gl = NULL;
     if (getenv("HALL_GPU")) {
 #ifdef HALL_EGL
         if (!egl_headless_init(4, 3)) { fprintf(stderr, "egl init failed\n"); return 1; }
         if (!gladLoadGLLoader((GLADloadproc)egl_headless_getproc_glad)) { fprintf(stderr, "glad failed\n"); return 1; }
-        gl_loader_t gl_loader = { egl_headless_getproc, NULL };
+        gl_loader = (gl_loader_t){ egl_headless_getproc, NULL };
 #else
         if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL init failed\n"); return 1; }
         SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
@@ -174,26 +191,15 @@ int main(int argc, char **argv)
         SDL_GLContext gpuctx = SDL_GL_CreateContext(gpuwin); SDL_GL_MakeCurrent(gpuwin, gpuctx);
         (void)gpuctx;
         if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { fprintf(stderr, "glad failed\n"); return 1; }
-        gl_loader_t gl_loader = { hb_getproc, NULL };
+        gl_loader = (gl_loader_t){ hb_getproc, NULL };
 #endif
-        if (!lm_gpu_gather_init(&gl_loader)) { fprintf(stderr, "gpu gather init failed\n"); return 1; }
-        cfg.gpu_gather = 1;
+        gl = &gl_loader;
         printf("GPU gather ENABLED: %s\n", (const char *)glGetString(GL_RENDERER));
         fflush(stdout);
     }
 
-    lm_mesh_bake_result_t res;
-    struct hall_batch_ctx bctx = { &res, out };
-    cfg.on_batch = hall_on_batch;
-    cfg.on_batch_ud = &bctx;
-    if (!lm_mesh_bake(&scene, &cfg, &res, &arena)) {
+    if (!lm_bake_driver_run(gl, hall_setup, &in, out, &arena)) {
         fprintf(stderr, "bake failed\n");
-        return 1;
-    }
-    printf("baked %u luxels into %ux%u atlas\n", res.n_luxels,
-           res.atlas.width, res.atlas.height);
-    if (!lm_lightmap_save(&res, out)) {
-        fprintf(stderr, "save failed\n");
         return 1;
     }
     printf("wrote %s\n", out);

@@ -145,11 +145,13 @@ static const char *CS_GATHER =
      * sub-ULP ray-direction difference into a flipped grazing hit -> per-luxel\n"
      * splotches. A `precise` minimax polynomial on a deterministic range reduction\n"
      * (floor, not the impl-defined round) evaluates bit-identically on both. */
-    "precise float dsin(float x){ float k=floor(x*(1.0/TAU)+0.5); x=x-TAU*k; float x2=x*x;\n"
-    "  return x*(0.9999966+x2*(-0.16664824+x2*(0.00830629+x2*(-0.00018363)))); }\n"
-    "precise float dcos(float x){ return dsin(x+HALFPI); }\n"
+    /* `precise` on a LOCAL (not the return type -- Mesa rejects that) prevents\n"
+     * FMA contraction so the polynomial evaluates the same on every GPU. */
+    "float dsin(float x){ float k=floor(x*(1.0/TAU)+0.5); x=x-TAU*k; float x2=x*x;\n"
+    "  precise float r = x*(0.9999966+x2*(-0.16664824+x2*(0.00830629+x2*(-0.00018363)))); return r; }\n"
+    "float dcos(float x){ return dsin(x+HALFPI); }\n"
     /* IEEE sqrt is correctly-rounded (bit-identical); rsqrt/normalize is not. */
-    "precise vec3 dnorm(vec3 v){ float m=dot(v,v); return m>0.0 ? v*(1.0/sqrt(m)) : v; }\n"
+    "vec3 dnorm(vec3 v){ float m=dot(v,v); precise vec3 r = m>0.0 ? v*(1.0/sqrt(m)) : v; return r; }\n"
     "int cidx(ivec3 c){ return (c.z*dims.y+c.y)*dims.x+c.x; }\n"
     "bool inb(ivec3 c){ return all(greaterThanEqual(c,ivec3(0)))&&all(lessThan(c,dims)); }\n"
     "ivec3 toCell(vec3 p){ return ivec3(floor((p-origin)/voxel)); }\n"
