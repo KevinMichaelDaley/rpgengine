@@ -1198,6 +1198,9 @@ build/lm_gpu_pack_tests: tests/lightmap/lm_gpu_pack_tests.c src/lightmap/gpu/lm_
 build/lm_jfa_sdf: tests/visual/lm_jfa_sdf.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/lm_jfa_sdf.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
 
+build/lm_gather_gpu: tests/visual/lm_gather_gpu.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/lm_gather_gpu.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+
 build/lm_kdtree_tests: tests/lightmap/lm_kdtree_tests.c src/lightmap/lm_kdtree.c src/math/vec3.c src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c include/ferrum/lightmap/lm_kdtree.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_kdtree_tests.c src/lightmap/lm_kdtree.c src/math/vec3.c src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c -o $@ -lm
 
