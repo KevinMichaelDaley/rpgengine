@@ -172,6 +172,7 @@ int main(int argc,char **argv){
     float hall_len=(span[0]>span[2])?span[0]:span[2];
     int shadow_only = getenv("SHADOW_ONLY") && atoi(getenv("SHADOW_ONLY"));
     int one_light = getenv("HALL_ONE") && atoi(getenv("HALL_ONE")); /* 1 light + lightmap */
+    int spot_only = getenv("SPOT_ONLY") && atoi(getenv("SPOT_ONLY")); /* just the sconce */
     /* Light index 0: a bright SHADOW-CASTING point light. Placed near the camera
      * end and off to one side at mid height so the central column rakes a long
      * shadow across the floor and far columns. */
@@ -179,10 +180,22 @@ int main(int argc,char **argv){
       s.position[0]=cx; s.position[1]=amin[1]+0.45f*span[1]; s.position[2]=cz;
       s.position[lax]=amin[lax]+0.16f*span[lax];
       s.position[cax]=amin[cax]+0.80f*span[cax];
-      s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=shadow_only?14.0f:8.0f; s.range=hall_len*1.6f;
+      s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=spot_only?0.0f:(shadow_only?14.0f:8.0f); s.range=hall_len*1.6f;
       s.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&s); }
+    /* Light index 1: a warm-orange UPWARD sconce SPOTLIGHT (candle brightness),
+     * on a side wall pointing at the vault -- casts a 2D spot shadow of the ribs
+     * and column onto the ceiling. */
+    { render_light_t sp; memset(&sp,0,sizeof sp); sp.kind=RENDER_LIGHT_SPOT;
+      sp.position[cax]=amin[cax]+0.5f*span[cax]+0.55f; /* just to the side of the central column */
+      sp.position[1]=amin[1]+0.20f*span[1];
+      sp.position[lax]=amin[lax]+0.34f*span[lax];      /* at the near central column */
+      sp.direction[0]=0; sp.direction[1]=1; sp.direction[2]=0;
+      sp.color[0]=1.0f; sp.color[1]=0.55f; sp.color[2]=0.22f; /* warm orange */
+      sp.intensity=spot_only?22.0f:6.0f; sp.range=hall_len;
+      sp.cos_inner=cosf(0.80f); sp.cos_outer=cosf(1.05f); /* ~120-deg cone */
+      sp.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&sp); }
     uint32_t rng=4242;
-    for(int i=0;i<((shadow_only||one_light)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
+    for(int i=0;i<((shadow_only||one_light||spot_only)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
         l.position[0]=amin[0]+frand(&rng)*span[0]; l.position[1]=amin[1]+0.12f*span[1]+frand(&rng)*0.7f*span[1];
         l.position[2]=amin[2]+frand(&rng)*span[2]; const float *pc=pal[i%6];
         l.color[0]=pc[0]; l.color[1]=pc[1]; l.color[2]=pc[2];
@@ -208,9 +221,11 @@ int main(int argc,char **argv){
     fcfg.sun_dir[0]=0.15f; fcfg.sun_dir[1]=0.42f; fcfg.sun_dir[2]=-0.90f;
     fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* sun already baked into SH */
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
-    fcfg.sh_enabled=shadow_only?0:1; fcfg.sh_scale=0.4f; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=(shadow_only||spot_only)?0:1; fcfg.sh_scale=0.4f; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=0; fcfg.shadow_res=1024; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
+    fcfg.spot_light=1; fcfg.spot_res=1024; fcfg.spot_near=0.05f;
+    fcfg.spot_far=hall_len*1.5f; fcfg.spot_bias=0.05f;
     render_forward_t fwd;
     if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
 

@@ -28,6 +28,7 @@
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/shader_uniforms.h"
 #include "ferrum/renderer/shadow_cube.h"
+#include "ferrum/renderer/shadow_spot.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,6 +53,11 @@ typedef struct render_forward_config {
     float              shadow_near;   /**< cube shadow near plane. */
     float              shadow_far;    /**< cube shadow far plane. */
     float              shadow_bias;   /**< distance-compare bias (world units). */
+    int                spot_light;    /**< flat light index to cast a spot shadow (-1 = none). */
+    uint32_t           spot_res;      /**< spot map resolution (0 = no spot shadow). */
+    float              spot_near;     /**< spot shadow near plane. */
+    float              spot_far;      /**< spot shadow far plane. */
+    float              spot_bias;     /**< spot distance-compare bias. */
 } render_forward_config_t;
 
 /** Clustered forward+ driver context: the stages, their GL resources, the
@@ -62,6 +68,7 @@ typedef struct render_forward {
     cluster_grid_t          clusters;
     forward_plus_t          fp;
     shadow_cube_t           shadow;
+    shadow_spot_t           spot;
     shader_program_t        pbr;
     shader_uniform_cache_t  cache;
     render_forward_config_t cfg;

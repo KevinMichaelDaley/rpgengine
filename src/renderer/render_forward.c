@@ -5,6 +5,7 @@
 #include "ferrum/renderer/render_forward.h"
 
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 
 #include "ferrum/renderer/gl_constants.h"
@@ -98,6 +99,14 @@ static void fwd_forward_submit(void *ud)
     } else {
         shader_uniform_set_int(&f->cache, &f->pbr, "u_shadow_light", -1);
     }
+    /* Spot 2D shadow on unit 21. */
+    if (f->cfg.spot_light >= 0 && f->cfg.spot_res > 0u) {
+        shadow_spot_bind(&f->spot, &f->cache, &f->pbr, 21u);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_spot_light", f->cfg.spot_light);
+        shader_uniform_set_float(&f->cache, &f->pbr, "u_spot_bias", f->cfg.spot_bias);
+    } else {
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_spot_light", -1);
+    }
 
     for (uint32_t i = 0; i < s->count; ++i) {
         const render_renderable_t *r = &s->items[i];
@@ -133,6 +142,12 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     if (cfg->shadow_res > 0u &&
         !shadow_cube_init(&fwd->shadow, cfg->loader, cfg->shadow_res,
                           cfg->shadow_near, cfg->shadow_far)) {
+        render_forward_destroy(fwd);
+        return false;
+    }
+    if (cfg->spot_res > 0u &&
+        !shadow_spot_init(&fwd->spot, cfg->loader, cfg->spot_res,
+                          cfg->spot_near, cfg->spot_far)) {
         render_forward_destroy(fwd);
         return false;
     }
@@ -185,6 +200,17 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         fwd->shadow.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                                (int32_t)fwd->cfg.screen_h);
     }
+    if (fwd->cfg.spot_res > 0u && fwd->cfg.spot_light >= 0 &&
+        scene->lights != NULL &&
+        (uint32_t)fwd->cfg.spot_light < scene->lights->count) {
+        const render_light_t *sl = &scene->lights->lights[fwd->cfg.spot_light];
+        /* Full cone angle from the outer cutoff cosine (fall back to 60 deg). */
+        float fov = (sl->cos_outer > -1.0f && sl->cos_outer < 1.0f)
+                        ? 2.0f * acosf(sl->cos_outer) : 1.0472f;
+        shadow_spot_render(&fwd->spot, scene, sl->position, sl->direction, fov);
+        fwd->spot.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
+                             (int32_t)fwd->cfg.screen_h);
+    }
     /* Early-Z only pays off with overlapping geometry; skip it for a single
      * renderable so a trivial scene still executes (depth_pre is skippable). */
     int depth_enabled = (scene->count > 1u) ? 1 : 0;
@@ -197,6 +223,7 @@ void render_forward_destroy(render_forward_t *fwd)
     if (fwd == NULL)
         return;
     shadow_cube_destroy(&fwd->shadow);
+    shadow_spot_destroy(&fwd->spot);
     forward_plus_destroy(&fwd->fp);
     depth_prepass_destroy(&fwd->depth);
     shader_program_destroy(&fwd->pbr);
