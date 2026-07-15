@@ -367,7 +367,7 @@ BIN_HEADLESS += build/lm_mesh_bake_tests
 BIN_HEADLESS += build/lm_lightmap_file_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
-BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests build/p004_gpu_cmd_queue_tests \
+BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests build/p004_gpu_cmd_queue_tests build/p004_gpu_registry_tests \
 	build/p004_uniform_tests build/p004_palette_tests build/p004_pipeline_tests \
 	build/p004_skinning_tests build/p004_ecs_skinning_tests build/p004_skinning_alloc_tests \
 	build/p004_pipeline_resource_tests build/p004_pipeline_graph_tests
@@ -1847,7 +1847,7 @@ repro_p000_hang: build/p000_tests
 	ITERS=$(REPRO_ITERS) TIMEOUT_SECS=$(REPRO_TIMEOUT) ./scripts/repro_p000_hang.sh ./build/p000_tests
 
 test_renderer: $(BIN_RENDERER_TESTS)
-	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_texture_tests && ./build/p004_material_tests && ./build/p004_pbr_shader_tests && ./build/p004_light_store_tests && ./build/p004_scene_tests && ./build/p004_depth_prepass_tests && ./build/p004_cluster_tests && ./build/p004_buffer_tests && ./build/p004_gpu_cmd_queue_tests \
+	./build/p004_tests && ./build/p004_shader_tests && ./build/p004_texture_tests && ./build/p004_material_tests && ./build/p004_pbr_shader_tests && ./build/p004_light_store_tests && ./build/p004_scene_tests && ./build/p004_depth_prepass_tests && ./build/p004_cluster_tests && ./build/p004_buffer_tests && ./build/p004_gpu_cmd_queue_tests && ./build/p004_gpu_registry_tests \
 	&& ./build/p004_uniform_tests && ./build/p004_palette_tests && ./build/p004_pipeline_tests \
 	&& ./build/p004_skinning_tests && ./build/p004_ecs_skinning_tests \
 	&& ./build/p004_skinning_alloc_tests && ./build/p004_pipeline_resource_tests \
@@ -2253,6 +2253,9 @@ build/p004_scene_tests: tests/p004_renderer_scene_tests.c src/renderer/render_sc
 
 build/p004_gpu_cmd_queue_tests: tests/p004_renderer_gpu_cmd_queue_tests.c src/renderer/resource/gpu_cmd_queue.c | build
 	$(CC) $(CFLAGS) tests/p004_renderer_gpu_cmd_queue_tests.c src/renderer/resource/gpu_cmd_queue.c -o $@ -lpthread
+
+build/p004_gpu_registry_tests: tests/p004_renderer_gpu_registry_tests.c src/renderer/resource/gpu_registry_create.c src/renderer/resource/gpu_registry_access.c src/memory/pool_alloc.c src/memory/pool_destroy.c src/memory/pool_free.c src/memory/pool_get.c src/memory/pool_init.c | build
+	$(CC) $(CFLAGS) tests/p004_renderer_gpu_registry_tests.c src/renderer/resource/gpu_registry_create.c src/renderer/resource/gpu_registry_access.c src/memory/pool_alloc.c src/memory/pool_destroy.c src/memory/pool_free.c src/memory/pool_get.c src/memory/pool_init.c -o $@ -lpthread
 
 build/p004_visual_scene: tests/visual/p004_visual_scene.c src/renderer/render_scene.c src/renderer/render_camera.c src/renderer/light_store.c src/renderer/mesh/static_mesh_create.c src/renderer/mesh/static_mesh_destroy.c src/renderer/mesh/static_mesh_draw.c src/renderer/mesh/static_mesh_primitives.c src/renderer/vao_create.c src/renderer/vao_bind_attributes.c src/renderer/vao_destroy.c src/renderer/vbo_create.c src/renderer/vbo_upload.c src/renderer/vbo_destroy.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/p004_visual_scene.c src/renderer/render_scene.c src/renderer/render_camera.c src/renderer/light_store.c src/renderer/mesh/static_mesh_create.c src/renderer/mesh/static_mesh_destroy.c src/renderer/mesh/static_mesh_draw.c src/renderer/mesh/static_mesh_primitives.c src/renderer/vao_create.c src/renderer/vao_bind_attributes.c src/renderer/vao_destroy.c src/renderer/vbo_create.c src/renderer/vbo_upload.c src/renderer/vbo_destroy.c src/renderer/pbr_shader.c src/renderer/material.c src/renderer/texture_create.c src/renderer/texture_upload.c src/renderer/texture_bind.c src/renderer/shader_program_create.c src/renderer/shader_program_bind.c src/renderer/shader_program_destroy.c src/renderer/shader_program_handle.c src/renderer/shader_uniforms_init.c src/renderer/gl_loader_validate.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
