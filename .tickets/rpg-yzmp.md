@@ -1,6 +1,6 @@
 ---
 id: rpg-yzmp
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-15T08:30:01Z

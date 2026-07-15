@@ -37,3 +37,4 @@ jacobian_dump.txt
 
 # Baked brick prefab library (large high-poly OBJs, regenerate via gen_brick_prefabs.py)
 assets/arch/proc/prefabs/
+bake_out/
