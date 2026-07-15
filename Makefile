@@ -348,6 +348,8 @@ BIN_HEADLESS += build/procgen_svo_tests
 BIN_HEADLESS += build/lm_visibility_tests
 BIN_HEADLESS += build/lm_sh_tests
 BIN_HEADLESS += build/lm_gpu_pack_tests
+BIN_HEADLESS += build/lm_bake_driver_tests
+BIN_HEADLESS += build/chunk_grid_tests
 BIN_HEADLESS += build/lm_kdtree_tests
 BIN_HEADLESS += build/lm_lightmap_tests
 BIN_HEADLESS += build/lm_light_tests
@@ -1194,6 +1196,11 @@ build/lm_sh_tests: tests/lightmap/lm_sh_tests.c src/lightmap/lm_sh.c src/math/ve
 
 build/lm_gpu_pack_tests: tests/lightmap/lm_gpu_pack_tests.c src/lightmap/gpu/lm_gpu_pack.c include/ferrum/lightmap/gpu/lm_gpu_pack.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_gpu_pack_tests.c src/lightmap/gpu/lm_gpu_pack.c -o $@ -lm
+
+# --- rpg-fzht: scene chunk grid (headless geometry unit test) ---
+CHUNK_GRID_SRC := src/renderer/chunk/chunk_grid_init.c src/renderer/chunk/chunk_grid_index.c src/renderer/chunk/chunk_grid_bounds.c
+build/chunk_grid_tests: tests/renderer/chunk_grid_tests.c $(CHUNK_GRID_SRC) include/ferrum/renderer/chunk/chunk_grid.h | build
+	$(CC) $(CFLAGS) tests/renderer/chunk_grid_tests.c $(CHUNK_GRID_SRC) -o $@ -lm
 
 build/lm_jfa_sdf: tests/visual/lm_jfa_sdf.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/lm_jfa_sdf.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
