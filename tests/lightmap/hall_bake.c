@@ -38,7 +38,7 @@ static void *hb_getproc(const char *n, void *u) { (void)u; return SDL_GL_GetProc
 #include "ferrum/memory/arena.h"
 #include "ferrum/mesh/dmesh_loader.h"
 
-#define MAXM 32
+#define MAXM 256
 
 static vec3_t v3(float x, float y, float z) { return (vec3_t){ x, y, z }; }
 static int hb_cmpstr(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
@@ -146,7 +146,15 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
     *scene = (lm_mesh_scene_t){ g_lms, (uint32_t)nm, &g_sun, 1, { NULL, 0, fb } };
 
     memset(cfg, 0, sizeof *cfg);
-    cfg->svo_bounds = (phys_aabb_t){ { -1.5f, -0.5f, -7.5f }, { 10.5f, 5.5f, 1.5f } };
+    /* svo_bounds: the hall's hand-tuned box by default; for arbitrary generated
+     * scenes (the large zone) HALL_AUTOBOUNDS derives it from the vertex AABB. */
+    if (getenv("HALL_AUTOBOUNDS")) {
+        float pad = 1.0f;
+        cfg->svo_bounds = (phys_aabb_t){ { bmin[0]-pad, bmin[1]-pad, bmin[2]-pad },
+                                         { bmax[0]+pad, bmax[1]+pad, bmax[2]+pad } };
+    } else {
+        cfg->svo_bounds = (phys_aabb_t){ { -1.5f, -0.5f, -7.5f }, { 10.5f, 5.5f, 1.5f } };
+    }
     cfg->voxel_size = getenv("HALL_VOXEL") ? (float)atof(getenv("HALL_VOXEL")) : 0.02f;
     cfg->atlas_width = 4096; cfg->atlas_padding = 2; cfg->direct_samples = 0;
     cfg->farfield_samples = getenv("HALL_SAMPLES") ? (uint32_t)atoi(getenv("HALL_SAMPLES")) : 256u;
@@ -174,7 +182,7 @@ int main(int argc, char **argv)
     };
     const char *out = argc > 3 ? argv[3] : "/tmp/hall.flm";
 
-    static char abuf[900 * 1024 * 1024]; arena_t arena;
+    static char abuf[1800ull * 1024 * 1024]; arena_t arena;
     arena_init(&arena, abuf, sizeof abuf);
 
     /* Optional GPU compute context. With HALL_EGL it is surfaceless (headless GPU

@@ -98,7 +98,7 @@ static void finalize_sh(void *ctx, void *user) {
 #define M_PI 3.14159265358979323846
 #endif
 #define WIN 900
-#define MAXM 64
+#define MAXM 256
 #define MAX_LIGHTS 96
 
 static void *sdl_get_proc(const char *n, void *u) { (void)u; return SDL_GL_GetProcAddress(n); }
