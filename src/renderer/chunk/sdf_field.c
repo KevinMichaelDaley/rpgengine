@@ -63,3 +63,14 @@ void sdf_field_resample(const sdf_field_t *src, sdf_field_t *dst)
         dst->data[(size_t)(z*dst->dims[1]+y)*dst->dims[0]+x] = sdf_field_sample(src, wx, wy, wz);
     }
 }
+
+void sdf_field_downsample_region(const sdf_field_t *src, const float center[3],
+                                 float half, int res, sdf_field_t *out)
+{
+    if (res < 1) res = 1;
+    out->dims[0] = out->dims[1] = out->dims[2] = res;
+    out->voxel = (2.0f * half) / (float)res;
+    for (int a = 0; a < 3; ++a)
+        out->min[a] = center[a] - half;
+    sdf_field_resample(src, out);
+}

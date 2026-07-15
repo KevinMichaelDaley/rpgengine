@@ -49,6 +49,15 @@ float sdf_field_sample(const sdf_field_t *f, float x, float y, float z);
  */
 void sdf_field_resample(const sdf_field_t *src, sdf_field_t *dst);
 
+/**
+ * @brief Build a @p res^3 field over the axis-aligned cube centred at @p center
+ *        with half-extent @p half, resampled (trilinear) from @p src. Sets
+ *        @p out's dims/min/voxel; @c out->data must already hold @p res^3 floats.
+ *        Derives a chunk's 128^3 medium/far far-field SDF from a finer source.
+ */
+void sdf_field_downsample_region(const sdf_field_t *src, const float center[3],
+                                 float half, int res, sdf_field_t *out);
+
 /* ── Serialization (asset/on-disk form; native-endian) ─────────────────────
  * Layout: magic "SDFF", int32 dims[3], float min[3], float voxel, then
  * dims[0]*dims[1]*dims[2] float distances. Folds in the rpg-iudw FLM SDF chunk.

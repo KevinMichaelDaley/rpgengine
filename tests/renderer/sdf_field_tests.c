@@ -58,7 +58,24 @@ int main(void)
     /* sdf_field_cells helper. */
     CHECK(sdf_field_cells(&dst) == 125u, "cells(5^3) == 125");
 
-    free(fdat); free(cdat);
+    /* downsample_region: 8^3 field over the cube centred at (5,5,5), half 4
+     * (region [1,9]^3, voxel 1). min/voxel derived, values match analytic. */
+    float rc[3] = { 5, 5, 5 };
+    float *rdat = malloc((size_t)8*8*8 * sizeof(float));
+    sdf_field_t rgn = { { 0,0,0 }, { 0,0,0 }, 0.0f, rdat };
+    sdf_field_downsample_region(&src, rc, 4.0f, 8, &rgn);
+    CHECK(rgn.dims[0]==8 && rgn.dims[1]==8, "region dims are 8^3");
+    CHECK(near(rgn.voxel, 1.0f, 1e-4f), "region voxel = 2*half/res = 1");
+    CHECK(near(rgn.min[1], 1.0f, 1e-4f), "region min = center-half = 1");
+    int rbad = 0;
+    for (int y = 0; y < 8; ++y) {
+        float wy = 1.0f + ((float)y + 0.5f) * 1.0f;
+        float got = rdat[(size_t)(0*8+y)*8 + 0];   /* column x=z=0 */
+        if (!near(got, wy - 5.0f, 0.2f)) ++rbad;
+    }
+    CHECK(rbad == 0, "region field matches analytic plane along y");
+
+    free(fdat); free(cdat); free(rdat);
     printf(g_fail ? "\n%d FAILURES\n" : "\nALL PASS\n", g_fail);
     return g_fail ? 1 : 0;
 }
