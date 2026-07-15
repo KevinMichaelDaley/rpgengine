@@ -133,10 +133,15 @@ static const char *CS_GATHER =
     "layout(std430,binding=4) readonly buffer Lit { vec4 lit[]; };\n"
     "struct Node { uint children[8]; vec4 diffuse; vec4 emissive; };\n"
     "layout(std430,binding=5) readonly buffer Svo { Node nodes[]; };\n"
+    /* Optional coarse FAR-field SDF (rpg-fzht): a whole-scene distance field a\n"
+     * chunk ray marches into once it leaves its (small) near box, so distant\n"
+     * geometry occludes/reflects instead of the ray escaping straight to sky. */
+    "layout(std430,binding=6) readonly buffer FarSdf { float fsdf[]; };\n"
     "uniform ivec3 dims; uniform float voxel; uniform vec3 origin; uniform vec3 sky;\n"
     "uniform int samples; uniform int bounces; uniform uint seed; uniform int nlux; uniform int nlights;\n"
     "uniform float transition; uniform float finevox;\n"
     "uniform vec3 svomin; uniform vec3 svomax; uniform int svodepth; uniform int nodeCount;\n"
+    "uniform int hasFar; uniform ivec3 fdims; uniform vec3 forigin; uniform float fvoxel;\n"
     "const float TAU=6.28318530718, INVPI=0.31830988618, PI=3.14159265359, HALFPI=1.5707963268;\n"
     "uint pcg(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28)+4u))^s)*277803737u; return (w>>22)^w; }\n"
     "float rnd(inout uint s){ return float(pcg(s))*(1.0/4294967296.0); }\n"
@@ -155,7 +160,20 @@ static const char *CS_GATHER =
     "int cidx(ivec3 c){ return (c.z*dims.y+c.y)*dims.x+c.x; }\n"
     "bool inb(ivec3 c){ return all(greaterThanEqual(c,ivec3(0)))&&all(lessThan(c,dims)); }\n"
     "ivec3 toCell(vec3 p){ return ivec3(floor((p-origin)/voxel)); }\n"
-    "float sSDF(vec3 p){ ivec3 c=toCell(p); if(!inb(c)) return 1e9; return sdf[cidx(c)]; }\n"
+    /* Multi-level SDF sample: the fine per-chunk NEAR field where it covers p,\n"
+     * else the coarse whole-scene FAR field, else outside all fields. Returns the\n"
+     * signed distance and reports the level used (0 near, 1 far, -1 none) so the\n"
+     * tracer refines against the SVO only in the near field and does a plain\n"
+     * coarse hit far away. */
+    "float mSDF(vec3 p, out int lvl){\n"
+    "  ivec3 c=toCell(p);\n"
+    "  if(inb(c)){ lvl=0; return sdf[cidx(c)]; }\n"
+    "  if(hasFar==1){ ivec3 fc=ivec3(floor((p-forigin)/fvoxel));\n"
+    "    if(all(greaterThanEqual(fc,ivec3(0)))&&all(lessThan(fc,fdims))){\n"
+    "      lvl=1; return fsdf[(fc.z*fdims.y+fc.y)*fdims.x+fc.x]; } }\n"
+    "  lvl=-1; return 1e9; }\n"
+    "float mvox(int lvl){ return lvl==0 ? voxel : fvoxel; }\n"
+    "float sSDF(vec3 p){ int l; float d=mSDF(p,l); return l<0 ? 1e9 : d; }\n"
     "void basis(vec3 n, out vec3 t, out vec3 b){ vec3 u=abs(n.z)<0.999?vec3(0,0,1):vec3(1,0,0); t=dnorm(cross(u,n)); b=cross(n,t); }\n"
     "void shb(vec3 d, out float y[9]){ float x=d.x,yy=d.y,z=d.z;\n"
     "  y[0]=0.282094792; y[1]=0.488602512*yy; y[2]=0.488602512*z; y[3]=0.488602512*x;\n"
@@ -184,18 +202,28 @@ static const char *CS_GATHER =
      * exhausting maxT/steps -- never on a far hit. */
     "bool trace(vec3 o, vec3 dir, float maxT, out vec3 hp, out vec3 hn, out float ht){\n"
     "  float t=voxel; ht=0.0; const float CONE=0.06;\n"
-    "  for(int i=0;i<512 && t<maxT;++i){ vec3 p=o+dir*t; ivec3 c=toCell(p); if(!inb(c)) return false;\n"
-    "    float fp = t>transition ? voxel + (t-transition)*CONE : voxel;\n"
-    "    float d=sdf[cidx(c)];\n"
-    /* Near the coarse surface: REFINE against the true fine SVO. Step in fine\n"
-     * voxel increments and test exact occupancy, so the hit lands on the real\n"
-     * surface voxel (thin emissive panels, coloured walls) rather than the\n"
-     * coarse-SDF isosurface -- which is where the bounce material is read. */
-    "    if(d<fp*1.5){ float rs=finevox*0.5; for(int j=0;j<48 && t<maxT;++j){ t+=rs; p=o+dir*t; c=toCell(p); if(!inb(c)) return false;\n"
-    "        if(svoSolid(p)){ hp=p; ht=t; float e=voxel;\n"
-    "          vec3 g=vec3(sSDF(p+vec3(e,0,0))-sSDF(p-vec3(e,0,0)), sSDF(p+vec3(0,e,0))-sSDF(p-vec3(0,e,0)), sSDF(p+vec3(0,0,e))-sSDF(p-vec3(0,0,e)));\n"
-    "          hn = dot(g,g)>1e-10 ? dnorm(g) : -dir; return true; }\n"
-    "        if(sdf[cidx(c)]>fp*2.0) break; } }\n"
+    "  for(int i=0;i<512 && t<maxT;++i){ vec3 p=o+dir*t;\n"
+    "    int lvl; float d=mSDF(p,lvl); if(lvl<0) return false;\n"  /* escaped all fields -> sky */
+    "    float lv=mvox(lvl);\n"
+    "    float fp = t>transition ? lv + (t-transition)*CONE : lv;\n"
+    "    if(lvl==0){\n"
+    /* NEAR field: refine against the true fine SVO. Step in fine voxel increments\n"
+     * and test exact occupancy so the hit lands on the real surface voxel (thin\n"
+     * emissive panels, coloured walls) rather than the coarse-SDF isosurface. */
+    "      if(d<fp*1.5){ float rs=finevox*0.5; for(int j=0;j<48 && t<maxT;++j){ t+=rs; p=o+dir*t;\n"
+    "          int l2; float dd=mSDF(p,l2); if(l2<0) return false;\n"
+    "          if(svoSolid(p)){ hp=p; ht=t; float e=voxel;\n"
+    "            vec3 g=vec3(sSDF(p+vec3(e,0,0))-sSDF(p-vec3(e,0,0)), sSDF(p+vec3(0,e,0))-sSDF(p-vec3(0,e,0)), sSDF(p+vec3(0,0,e))-sSDF(p-vec3(0,0,e)));\n"
+    "            hn = dot(g,g)>1e-10 ? dnorm(g) : -dir; return true; }\n"
+    "          if(l2==0 && dd>fp*2.0) break; } }\n"
+    "    } else {\n"
+    /* FAR field: no SVO refine (its leaves are sub-far-voxel); the coarse SDF\n"
+     * sign IS the occluder. A negative sample means inside distant solid -> hit,\n"
+     * shade by the SVO material at that (approximate) point. */
+    "      if(d<0.0){ hp=p; ht=t; float e=fvoxel;\n"
+    "        vec3 g=vec3(sSDF(p+vec3(e,0,0))-sSDF(p-vec3(e,0,0)), sSDF(p+vec3(0,e,0))-sSDF(p-vec3(0,e,0)), sSDF(p+vec3(0,0,e))-sSDF(p-vec3(0,0,e)));\n"
+    "        hn = dot(g,g)>1e-10 ? dnorm(g) : -dir; return true; }\n"
+    "    }\n"
     "    t += max(d, fp); } return false; }\n"
     "bool shadow(vec3 o, vec3 dir, float maxT){ vec3 hp,hn; float ht; return trace(o,dir,maxT,hp,hn,ht); }\n"
     "vec3 direct(vec3 p, vec3 n){ vec3 e=vec3(0); vec3 o=p+n*voxel*1.5;\n"
@@ -333,6 +361,95 @@ static bool tri_box_overlap(const float bc[3], const float bh[3],
     return plane_box_overlap(nrm, v0, bh);
 }
 
+/* --- Coarse JFA signed-distance field over an arbitrary box --------------------
+ * Conservatively rasterise every scene triangle into a dense occupancy grid over
+ * [mn,mx] (longest axis <= @p max_dim cells, never finer than @p fine_voxel),
+ * then Jump-Flood it into a signed distance field. On success returns the SDF in
+ * a freshly-created SSBO (@p out_sdf, dims^3 floats, negative inside solid; the
+ * caller deletes it) and writes the grid @p out_dims + @p out_voxel. Used for
+ * both the per-chunk NEAR field and the whole-scene FAR field. Returns false on
+ * allocation failure. Uses the file-static JFA programs (init/step/fin). */
+static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
+                      const float mn[3], const float mx[3], int max_dim,
+                      GLuint *out_sdf, int out_dims[3], float *out_voxel) {
+    float ext[3] = { mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2] };
+    float longest = fmaxf(ext[0], fmaxf(ext[1], ext[2]));
+    float svoxel = longest / (float)max_dim; if (svoxel < fine_voxel) svoxel = fine_voxel;
+    int dims[3];
+    for (int a = 0; a < 3; ++a) { dims[a] = (int)ceilf(ext[a] / svoxel); if (dims[a] < 1) dims[a] = 1; }
+    size_t cells = (size_t)dims[0] * dims[1] * dims[2];
+
+    uint32_t *occ = malloc(cells * sizeof(uint32_t));
+    if (!occ) return false;
+    memset(occ, 0, cells * sizeof(uint32_t));
+    /* Conservative triangle rasterisation: stamp every scene triangle into every
+     * coarse cell it intersects -> watertight walls (the SDF then truly encloses). */
+    float bh[3] = { svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f };
+    for (uint32_t mi = 0; mi < (scene ? scene->n_meshes : 0u); ++mi) {
+        const lm_mesh_t *me = &scene->meshes[mi];
+        for (uint32_t t = 0; t + 2 < me->index_count; t += 3) {
+            const float *a = &me->positions[me->indices[t]*3];
+            const float *b = &me->positions[me->indices[t+1]*3];
+            const float *c = &me->positions[me->indices[t+2]*3];
+            float tmn[3], tmx[3];
+            for (int k = 0; k < 3; ++k) {
+                tmn[k] = fminf(a[k], fminf(b[k], c[k]));
+                tmx[k] = fmaxf(a[k], fmaxf(b[k], c[k]));
+            }
+            int lo[3], hi[3];
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = (int)floorf((tmn[k] - mn[k]) / svoxel);
+                hi[k] = (int)floorf((tmx[k] - mn[k]) / svoxel);
+                if (lo[k] < 0) lo[k] = 0;
+                if (hi[k] >= dims[k]) hi[k] = dims[k] - 1;
+            }
+            for (int z = lo[2]; z <= hi[2]; ++z)
+            for (int y = lo[1]; y <= hi[1]; ++y)
+            for (int x = lo[0]; x <= hi[0]; ++x) {
+                size_t idx = (size_t)(z*dims[1]+y)*dims[0]+x;
+                if (occ[idx]) continue;
+                float bc[3] = { mn[0]+((float)x+0.5f)*svoxel,
+                                mn[1]+((float)y+0.5f)*svoxel,
+                                mn[2]+((float)z+0.5f)*svoxel };
+                if (tri_box_overlap(bc, bh, a, b, c)) occ[idx] = 1u;
+            }
+        }
+    }
+
+    GLuint bo[4]; gl.GenBuffers(4, bo); /* [0]=occ [1]/[2]=JFA ping-pong seeds [3]=sdf */
+    #define UPB(b,sz,ptr) do{ gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,b); gl.BufferData(GL_SHADER_STORAGE_BUFFER,(GLsizeiptr)(sz),ptr,GL_DYNAMIC_COPY);}while(0)
+    UPB(bo[0], cells*sizeof(uint32_t), occ);
+    UPB(bo[1], cells*sizeof(int32_t), NULL); UPB(bo[2], cells*sizeof(int32_t), NULL);
+    UPB(bo[3], cells*sizeof(float), NULL);
+    #undef UPB
+    free(occ);
+
+    GLuint gx = (GLuint)((dims[0]+3)/4), gy=(GLuint)((dims[1]+3)/4), gz=(GLuint)((dims[2]+3)/4);
+    /* JFA: init -> ping-pong passes -> finalise. Full barrier between dispatches
+     * (NVIDIA needs it; harmless on Intel Xe). */
+    gl.UseProgram(g_init); gl.Uniform3iv(gl.GetUniformLocation(g_init,"dims"),1,dims);
+    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,bo[0]); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,bo[1]);
+    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu);
+    int maxd = dims[0]>dims[1]?(dims[0]>dims[2]?dims[0]:dims[2]):(dims[1]>dims[2]?dims[1]:dims[2]);
+    GLuint src=bo[1], dst=bo[2];
+    gl.UseProgram(g_step); gl.Uniform3iv(gl.GetUniformLocation(g_step,"dims"),1,dims);
+    for (int step = maxd/2; step >= 1; step /= 2) {
+        gl.Uniform1i(gl.GetUniformLocation(g_step,"step"),step);
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,src); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,dst);
+        gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu);
+        GLuint t=src; src=dst; dst=t;
+    }
+    gl.UseProgram(g_fin); gl.Uniform3iv(gl.GetUniformLocation(g_fin,"dims"),1,dims);
+    gl.Uniform1f(gl.GetUniformLocation(g_fin,"voxel"),svoxel);
+    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,src); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,bo[0]);
+    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,2,bo[3]);
+    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu);
+
+    GLuint discard[3] = { bo[0], bo[1], bo[2] }; gl.DeleteBuffers(3, discard);
+    *out_sdf = bo[3]; out_dims[0]=dims[0]; out_dims[1]=dims[1]; out_dims[2]=dims[2]; *out_voxel = svoxel;
+    return true;
+}
+
 bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
                        const phys_aabb_t *region, const lm_light_t *lights,
@@ -343,12 +460,14 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     uint32_t nlux = lm->res_u * lm->res_v;
 
     /* The SVO descent (svoSolid/svoMat) always spans the whole scene; the coarse
-     * SDF grid covers @p region (a chunk's outer box) when given, else the whole
-     * SVO -- so a chunked bake builds a per-chunk SDF over one shared full SVO. */
+     * NEAR SDF covers @p region (a chunk's outer box) when given, else the whole
+     * SVO. When a small chunk region is given we ALSO build a coarse whole-scene
+     * FAR SDF: a chunk ray that leaves its near box keeps marching in the far
+     * field (distant geometry still occludes/reflects) instead of escaping to
+     * sky -- otherwise small chunks read far too bright. */
     float svo_mn[3] = { svo->world_bounds.min.x, svo->world_bounds.min.y, svo->world_bounds.min.z };
     float svo_mx[3] = { svo->world_bounds.max.x, svo->world_bounds.max.y, svo->world_bounds.max.z };
 
-    /* Coarse SDF grid: cap the longest axis at 128, never finer than a voxel. */
     float mn[3], mx[3];
     if (region) {
         mn[0]=region->min.x; mn[1]=region->min.y; mn[2]=region->min.z;
@@ -356,118 +475,44 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     } else {
         for (int a=0;a<3;++a){ mn[a]=svo_mn[a]; mx[a]=svo_mx[a]; }
     }
-    float ext[3] = { mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2] };
-    float longest = fmaxf(ext[0], fmaxf(ext[1], ext[2]));
-    float svoxel = longest / 128.0f; if (svoxel < svo->voxel_size) svoxel = svo->voxel_size;
-    int dims[3];
-    for (int a = 0; a < 3; ++a) { dims[a] = (int)ceilf(ext[a] / svoxel); if (dims[a] < 1) dims[a] = 1; }
-    size_t cells = (size_t)dims[0] * dims[1] * dims[2];
 
-    /* Rasterise SVO occupancy conservatively (any overlap -> solid). */
-    uint32_t *occ = malloc(cells * sizeof(uint32_t));
+    /* NEAR field over the region; FAR field over the whole scene (chunked only). */
+    GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f;
+    if (!build_sdf(scene, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel))
+        return false;
+    GLuint b_fsdf = 0; int fdims[3] = {1,1,1}; float fvoxel = 1.0f; float forigin[3] = {0,0,0};
+    int hasFar = 0;
+    if (region) {
+        if (!build_sdf(scene, svo->voxel_size, svo_mn, svo_mx, 128, &b_fsdf, fdims, &fvoxel)) {
+            gl.DeleteBuffers(1, &b_sdf); return false;
+        }
+        forigin[0]=svo_mn[0]; forigin[1]=svo_mn[1]; forigin[2]=svo_mn[2]; hasFar = 1;
+    }
+    if (getenv("LM_GPU_DEBUG"))
+        fprintf(stderr, "[gpugather] near %dx%dx%d vox=%.3f  far %s %dx%dx%d vox=%.3f  nlux=%u\n",
+                dims[0],dims[1],dims[2],svoxel, hasFar?"on":"off", fdims[0],fdims[1],fdims[2],fvoxel, nlux);
+
     lm_gpu_node_t *nodes = malloc((size_t)svo->node_count * sizeof(lm_gpu_node_t));
     lm_gpu_luxel_t *plux = malloc((size_t)nlux * sizeof(lm_gpu_luxel_t));
     lm_gpu_light_t *plit = malloc((size_t)(n_lights ? n_lights : 1) * sizeof(lm_gpu_light_t));
     float *osh = malloc((size_t)nlux * 27 * sizeof(float));
-    if (!occ || !nodes || !plux || !plit || !osh) { free(occ); free(nodes); free(plux); free(plit); free(osh); return false; }
-    memset(occ, 0, cells * sizeof(uint32_t));
-    /* Conservative triangle rasterisation: stamp every scene triangle into every
-     * coarse cell it intersects. A cell is solid iff a triangle actually touches
-     * it -> watertight walls with no leak paths (the SDF then truly encloses). */
-    {
-        float bh[3] = { svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f };
-        for (uint32_t mi = 0; mi < (scene ? scene->n_meshes : 0u); ++mi) {
-            const lm_mesh_t *me = &scene->meshes[mi];
-            for (uint32_t t = 0; t + 2 < me->index_count; t += 3) {
-                const float *a = &me->positions[me->indices[t]*3];
-                const float *b = &me->positions[me->indices[t+1]*3];
-                const float *c = &me->positions[me->indices[t+2]*3];
-                float tmn[3], tmx[3];
-                for (int k = 0; k < 3; ++k) {
-                    tmn[k] = fminf(a[k], fminf(b[k], c[k]));
-                    tmx[k] = fmaxf(a[k], fmaxf(b[k], c[k]));
-                }
-                int lo[3], hi[3];
-                for (int k = 0; k < 3; ++k) {
-                    lo[k] = (int)floorf((tmn[k] - mn[k]) / svoxel);
-                    hi[k] = (int)floorf((tmx[k] - mn[k]) / svoxel);
-                    if (lo[k] < 0) lo[k] = 0;
-                    if (hi[k] >= dims[k]) hi[k] = dims[k] - 1;
-                }
-                for (int z = lo[2]; z <= hi[2]; ++z)
-                for (int y = lo[1]; y <= hi[1]; ++y)
-                for (int x = lo[0]; x <= hi[0]; ++x) {
-                    size_t idx = (size_t)(z*dims[1]+y)*dims[0]+x;
-                    if (occ[idx]) continue;
-                    float bc[3] = { mn[0]+((float)x+0.5f)*svoxel,
-                                    mn[1]+((float)y+0.5f)*svoxel,
-                                    mn[2]+((float)z+0.5f)*svoxel };
-                    if (tri_box_overlap(bc, bh, a, b, c)) occ[idx] = 1u;
-                }
-            }
-        }
-    }
-    if (getenv("LM_GPU_DEBUG")) {
-        size_t ns = 0; for (size_t i = 0; i < cells; ++i) ns += occ[i];
-        fprintf(stderr, "[gpugather] dims %dx%dx%d svoxel=%.3f  %zu/%zu solid  nodes=%u nlux=%u\n",
-                dims[0], dims[1], dims[2], svoxel, ns, cells, svo->node_count, nlux);
+    if (!nodes || !plux || !plit || !osh) {
+        gl.DeleteBuffers(1, &b_sdf); if (b_fsdf) gl.DeleteBuffers(1, &b_fsdf);
+        free(nodes); free(plux); free(plit); free(osh); return false;
     }
     lm_gpu_pack_nodes(svo, nodes, svo->node_count);
     lm_gpu_pack_luxels(lm, plux, nlux);
     lm_gpu_pack_lights(lights, n_lights, plit, n_lights ? n_lights : 1);
 
-    GLuint b_occ, b_a, b_b, b_sdf, b_nodes, b_lux, b_out, b_lit;
-    GLuint all[8]; gl.GenBuffers(8, all);
-    b_occ=all[0]; b_a=all[1]; b_b=all[2]; b_sdf=all[3]; b_nodes=all[4]; b_lux=all[5]; b_out=all[6]; b_lit=all[7];
+    GLuint b_nodes, b_lux, b_out, b_lit;
+    GLuint all[4]; gl.GenBuffers(4, all);
+    b_nodes=all[0]; b_lux=all[1]; b_out=all[2]; b_lit=all[3];
     #define UP(bo,sz,ptr) do{ gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,bo); gl.BufferData(GL_SHADER_STORAGE_BUFFER,(GLsizeiptr)(sz),ptr,GL_DYNAMIC_COPY);}while(0)
-    UP(b_occ, cells*sizeof(uint32_t), occ);
-    UP(b_a, cells*sizeof(int32_t), NULL); UP(b_b, cells*sizeof(int32_t), NULL);
-    UP(b_sdf, cells*sizeof(float), NULL);
     UP(b_nodes, (size_t)svo->node_count*sizeof(lm_gpu_node_t), nodes);
     UP(b_lux, (size_t)nlux*sizeof(lm_gpu_luxel_t), plux);
     UP(b_out, (size_t)nlux*27*sizeof(float), NULL);
     UP(b_lit, (size_t)(n_lights?n_lights:1)*sizeof(lm_gpu_light_t), plit);
 
-    GLuint gx = (GLuint)((dims[0]+3)/4), gy=(GLuint)((dims[1]+3)/4), gz=(GLuint)((dims[2]+3)/4);
-    /* JFA: init -> ping-pong passes -> finalise. */
-    gl.UseProgram(g_init); gl.Uniform3iv(gl.GetUniformLocation(g_init,"dims"),1,dims);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,b_occ); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,b_a);
-    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu); /* GL_ALL_BARRIER_BITS: NVIDIA needs full sync between JFA dispatches + before gather */
-    int maxd = dims[0]>dims[1]?(dims[0]>dims[2]?dims[0]:dims[2]):(dims[1]>dims[2]?dims[1]:dims[2]);
-    GLuint src=b_a, dst=b_b;
-    gl.UseProgram(g_step); gl.Uniform3iv(gl.GetUniformLocation(g_step,"dims"),1,dims);
-    for (int step = maxd/2; step >= 1; step /= 2) {
-        gl.Uniform1i(gl.GetUniformLocation(g_step,"step"),step);
-        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,src); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,dst);
-        gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu); /* GL_ALL_BARRIER_BITS: NVIDIA needs full sync between JFA dispatches + before gather */
-        GLuint t=src; src=dst; dst=t;
-    }
-    gl.UseProgram(g_fin); gl.Uniform3iv(gl.GetUniformLocation(g_fin,"dims"),1,dims);
-    gl.Uniform1f(gl.GetUniformLocation(g_fin,"voxel"),svoxel);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,src); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,b_occ);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,2,b_sdf);
-    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu); /* GL_ALL_BARRIER_BITS: NVIDIA needs full sync between JFA dispatches + before gather */
-
-    if (getenv("LM_GPU_DEBUG")) {
-        float *dbg = malloc(cells * sizeof(float));
-        gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, b_sdf);
-        gl.GetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)(cells*sizeof(float)), dbg);
-        size_t neg = 0; float lo2 = 1e30f, hi2 = -1e30f;
-        for (size_t i = 0; i < cells; ++i) { if (dbg[i] < 0) neg++;
-            if (dbg[i] < lo2) lo2 = dbg[i]; if (dbg[i] > hi2 && dbg[i] < 1e8f) hi2 = dbg[i]; }
-        fprintf(stderr, "[gpugather] sdf: %zu negative(solid), min=%.3f max=%.3f\n", neg, lo2, hi2);
-        /* Raw dump: header (dims[3] int32, svoxel/origin float) + full SDF grid,
-         * so an external tool can slice/verify every wall & box is enclosed. */
-        FILE *fp = fopen("/tmp/sdf.bin", "wb");
-        if (fp) {
-            int32_t hd[3] = { dims[0], dims[1], dims[2] };
-            float mv[4] = { svoxel, mn[0], mn[1], mn[2] };
-            fwrite(hd, sizeof hd, 1, fp); fwrite(mv, sizeof mv, 1, fp);
-            fwrite(dbg, sizeof(float), cells, fp); fclose(fp);
-            fprintf(stderr, "[gpugather] wrote /tmp/sdf.bin (%dx%dx%d)\n", dims[0], dims[1], dims[2]);
-        }
-        free(dbg);
-    }
     /* Gather. */
     float origin[3]={mn[0],mn[1],mn[2]};
     float skycol[3] = { sky?sky->color.x:0.0f, sky?sky->color.y:0.0f, sky?sky->color.z:0.0f };
@@ -484,11 +529,18 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     gl.Uniform1i(gl.GetUniformLocation(g_gather,"nodeCount"),(int)svo->node_count);
     gl.Uniform1f(gl.GetUniformLocation(g_gather,"transition"),transition);
     gl.Uniform1f(gl.GetUniformLocation(g_gather,"finevox"),svo->voxel_size);
+    /* Far-field level (rpg-fzht): bound the whole-scene coarse SDF; when absent,
+     * bind the near SDF to slot 6 too so the binding is always valid. */
+    gl.Uniform1i(gl.GetUniformLocation(g_gather,"hasFar"),hasFar);
+    gl.Uniform3iv(gl.GetUniformLocation(g_gather,"fdims"),1,fdims);
+    u3f(g_gather,"forigin",forigin);
+    gl.Uniform1f(gl.GetUniformLocation(g_gather,"fvoxel"),fvoxel);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,b_sdf);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,2,b_lux);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,3,b_out);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,4,b_lit);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,5,b_nodes);
+    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,6,hasFar?b_fsdf:b_sdf);
     /* Sample-batch the dispatch. A single dispatch of all samples over every
      * luxel trips the GPU watchdog (TDR) at high sample counts and comes back
      * zero; splitting into <=PER-sample batches keeps each dispatch short (the
@@ -505,7 +557,10 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
      * write-only per batch and the accumulator lives in host memory. The
      * readback also bounds each dispatch (TDR-safe). */
     double *osum = calloc((size_t)nlux * 27, sizeof(double));
-    if (!osum) { gl.DeleteBuffers(8, all); free(occ); free(nodes); free(plux); free(plit); free(osh); return false; }
+    if (!osum) {
+        gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); if (b_fsdf) gl.DeleteBuffers(1, &b_fsdf);
+        free(nodes); free(plux); free(plit); free(osh); return false;
+    }
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,3,b_out);
     for (int bi = 0; bi < nbatch; ++bi) {
         gl.Uniform1i(gl.GetUniformLocation(g_gather,"samples"), per);
@@ -542,8 +597,8 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                 accum[i*3+c].c[k] = (float)(osum[i*27 + c*9 + k] * invb);
     free(osum);
 
-    gl.DeleteBuffers(8, all);
-    free(occ); free(nodes); free(plux); free(plit); free(osh);
+    gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); if (b_fsdf) gl.DeleteBuffers(1, &b_fsdf);
+    free(nodes); free(plux); free(plit); free(osh);
     return true;
     #undef UP
 }
