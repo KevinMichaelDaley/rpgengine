@@ -70,7 +70,7 @@ ifeq ($(TRACY),1)
 endif
 ECS_SRC := $(wildcard src/ecs/*.c)
 ENTITY_SRC := $(wildcard src/entity/*.c)
-RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c)
+RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c) $(wildcard src/renderer/resource/*.c)
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_VIDEO_CAPTURE_SRC := $(wildcard src/renderer/video_capture/*.c)
 RENDERER_SRC += $(RENDERER_VIDEO_CAPTURE_SRC)
@@ -943,6 +943,9 @@ build/p008_net_perf_client_tests: build/libheadless.a tests/p008_net_perf_client
 
 build/p008_renderer_client: build/liball.a tests/p008_renderer_client.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/p008_renderer_client.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
+
+build/resource_pipeline: build/liball.a tests/visual/resource_pipeline.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/resource_pipeline.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS)
 
 build/p008_server_compute_jobs_tests: build/libheadless.a tests/p008_server_compute_jobs_tests.c | build
 	$(CC) $(CFLAGS) tests/p008_server_compute_jobs_tests.c build/libheadless.a -o $@ $(LDFLAGS)
