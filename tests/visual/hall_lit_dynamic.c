@@ -62,18 +62,34 @@ static void finalize_texture(void *ctx, void *user) {
     glBindTexture(GL_TEXTURE_2D, texture_handle(t->out));
     glTexParameterf(GL_TEXTURE_2D, GL_TEX_MAX_ANISO, maxa);
 }
-/* Fiber: decode the PNG into the arena, then enqueue the finaliser. */
+/* Fiber: decode the PNG into the arena, then enqueue the finaliser. A missing or
+ * corrupt asset must NEVER stall or silently drop the texture (that leaves the
+ * material bound to an uncreated handle) -- warn and substitute a bright
+ * magenta/black debug checkerboard so the surface is obviously unshaded and the
+ * load proceeds. */
 static void tex_load_fiber(void *ud) {
     tex_load_t *t = (tex_load_t *)ud;
     int w = 0, h = 0, n = 0; unsigned char *src = stbi_load(t->path, &w, &h, &n, 3);
-    if (!src) return;
-    size_t sz = (size_t)w * (size_t)h * 3u;
-    unsigned char *copy = arena_alloc(t->arena, 16u, sz);
-    if (copy) { memcpy(copy, src, sz); t->w = w; t->h = h; t->px = copy;
+    unsigned char *copy;
+    if (!src) {
+        fprintf(stderr, "WARN: texture load failed '%s' -- using debug checkerboard\n", t->path);
+        w = h = 64; size_t sz = (size_t)w * (size_t)h * 3u;
+        copy = arena_alloc(t->arena, 16u, sz);
+        if (copy) for (int y = 0; y < h; ++y) for (int x = 0; x < w; ++x) {
+            int on = ((x >> 3) ^ (y >> 3)) & 1;
+            unsigned char *p = copy + ((size_t)y * w + x) * 3;
+            p[0] = on ? 255 : 0; p[1] = 0; p[2] = on ? 255 : 0;
+        }
+    } else {
+        size_t sz = (size_t)w * (size_t)h * 3u;
+        copy = arena_alloc(t->arena, 16u, sz);
+        if (copy) memcpy(copy, src, sz);
+        stbi_image_free(src);
+    }
+    if (copy) { t->w = w; t->h = h; t->px = copy;
         gpu_cmd_t c; memset(&c, 0, sizeof c); c.type = GPU_CMD_CUSTOM;
         c.execute = finalize_texture; c.ctx = t;
         while (!gpu_cmd_push(t->queue, &c)) sched_yield(); }
-    stbi_image_free(src);
 }
 typedef struct mesh_load { static_mesh_create_info_t info; static_mesh_t *out; } mesh_load_t;
 static void finalize_mesh(void *ctx, void *user) {
@@ -121,6 +137,25 @@ int main(int argc,char **argv){
     const char *lmfile = argc>3?argv[3]:"/tmp/hall_prod.flm";
     const char *shot = argc>4?argv[4]:"/tmp/hall_lit_dynamic.ppm";
 
+    /* Count the .dmesh files up front so every per-mesh array + the GPU command
+     * queue / registry are sized to the ACTUAL mesh count -- this scales to
+     * thousands of meshes instead of a fixed MAXM (128-slot queues would spin
+     * forever once full). */
+    int nm_cap=0; { DIR *dc=opendir(dir); struct dirent *ec;
+        while(dc&&(ec=readdir(dc))){ if(strstr(ec->d_name,".dmesh")) ++nm_cap; }
+        if(dc)closedir(dc); }
+    if(nm_cap<1) nm_cap=1;
+    obj_mesh_t         *dm     = calloc((size_t)nm_cap,sizeof *dm);
+    int                *grp    = calloc((size_t)nm_cap,sizeof *grp);
+    char             (*fnames)[128] = calloc((size_t)nm_cap,sizeof *fnames);
+    static_mesh_t      *meshes = calloc((size_t)nm_cap,sizeof *meshes);
+    render_submesh_t   *subs   = calloc((size_t)nm_cap,sizeof *subs);
+    render_renderable_t *rb    = calloc((size_t)nm_cap,sizeof *rb);
+    if(!dm||!grp||!fnames||!meshes||!subs||!rb){ fprintf(stderr,"oom (nm_cap=%d)\n",nm_cap); return 1; }
+    /* GPU resources = meshes + 9 SH atlases + 8 material textures, all queued
+     * before a single drain -> the queue must hold them all at once. */
+    int res_cap = nm_cap + 9 + 8 + 16;
+
     if(SDL_Init(SDL_INIT_VIDEO)!=0) return 1;
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
@@ -147,9 +182,11 @@ int main(int argc,char **argv){
     job_system_start(&jobs);
     size_t arena_cap=192u*1024u*1024u; void *arena_mem=malloc(arena_cap);
     arena_t rarena; arena_init(&rarena,arena_mem,arena_cap);
-    gpu_registry_t greg; gpu_registry_init(&greg,128);
-    static gpu_cmd_t gslots[128]; static atomic_int gstates[128];
-    gpu_cmd_queue_t gqueue; gpu_cmd_queue_init(&gqueue,gslots,gstates,128);
+    gpu_registry_t greg; gpu_registry_init(&greg,(uint32_t)res_cap);
+    gpu_cmd_t *gslots=calloc((size_t)res_cap,sizeof *gslots);
+    atomic_int *gstates=calloc((size_t)res_cap,sizeof *gstates);
+    if(!gslots||!gstates){ fprintf(stderr,"oom (res_cap=%d)\n",res_cap); return 1; }
+    gpu_cmd_queue_t gqueue; gpu_cmd_queue_init(&gqueue,gslots,gstates,(uint32_t)res_cap);
     gpu_executor_t gexec; if(!gpu_executor_init(&gexec,&loader,&greg)){ fprintf(stderr,"executor init failed\n"); return 1; }
     job_counter_t rcounter; job_counter_init(&rcounter,0);
 
@@ -158,10 +195,9 @@ int main(int argc,char **argv){
      * baked it. readdir() order is filesystem-dependent; baking on one box and
      * rendering on another (e.g. a chimera GPU bake) would otherwise shuffle the
      * rects and splotch every surface. --- */
-    obj_mesh_t dm[MAXM]; int grp[MAXM]; int nm=0;
-    char fnames[MAXM][128]; int nf=0;
+    int nm=0; int nf=0;
     DIR *d=opendir(dir); struct dirent *e;
-    while(d&&(e=readdir(d))&&nf<MAXM){ if(!strstr(e->d_name,".dmesh"))continue;
+    while(d&&(e=readdir(d))&&nf<nm_cap){ if(!strstr(e->d_name,".dmesh"))continue;
         snprintf(fnames[nf],sizeof fnames[nf],"%s",e->d_name); ++nf; }
     if(d)closedir(d);
     qsort(fnames,(size_t)nf,sizeof fnames[0],hld_cmpstr);
@@ -194,7 +230,6 @@ int main(int argc,char **argv){
     }
 
     /* --- Build static meshes: uv1 remapped into each mesh's atlas rect. --- */
-    static_mesh_t meshes[MAXM]; render_submesh_t subs[MAXM];
     float amin[3]={1e30f,1e30f,1e30f},amax[3]={-1e30f,-1e30f,-1e30f};
     lm_atlas_t atlas={atlas_w,atlas_h};
     for(int i=0;i<nm;++i){
@@ -297,8 +332,10 @@ int main(int argc,char **argv){
     render_camera_t cam; float eye[3]={cx,cy,cz},tgt[3]={cx,cy,cz},up[3]={0,1,0};
     eye[lenax]=amin[lenax]+span[lenax]*0.08f; tgt[lenax]=amax[lenax]-span[lenax]*0.08f;
     eye[1]=amin[1]+span[1]*0.35f; tgt[1]=amin[1]+span[1]*0.35f;
-    render_camera_look_at(&cam,eye,tgt,up,60.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,60.0f);
-    render_renderable_t rb[MAXM]; render_scene_t scene; render_scene_init(&scene,rb,MAXM);
+    /* Far plane must clear the whole scene (a 400 m zone dwarfs the hall's 60 m). */
+    float cam_far=fmaxf(120.0f,hall_len*1.8f);
+    render_camera_look_at(&cam,eye,tgt,up,60.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,cam_far);
+    render_scene_t scene; render_scene_init(&scene,rb,nm_cap);
     float model[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     for(int i=0;i<nm;++i) render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
     /* A dynamic caster: everything above is static (baked once); the box below is
@@ -354,11 +391,33 @@ int main(int argc,char **argv){
         (t1_.tv_sec-t0_.tv_sec)*1e3+(t1_.tv_nsec-t0_.tv_nsec)*1e-6);
 
     glViewport(0,0,W,H);
-    int nframes=csm_demo?600:3;         /* run a few seconds so shadows animate. */
-    int save_frame=csm_demo?30:(nframes-2);
+    /* lm_only: run an interactive flythrough so a large baked zone can actually
+     * be looked at (ESC / window-close quits); others render a few frames. */
+    int nframes=csm_demo?600:(lm_only?1000000:3);
+    int save_frame=csm_demo?30:(lm_only?140:(nframes-2));
     struct timespec win_t0; clock_gettime(CLOCK_MONOTONIC,&win_t0);
     int win_frames=0;                    /* frames since the last per-second report. */
     for(int frame=0;frame<nframes;++frame){
+        if(lm_only){
+            /* Smooth ping-pong dolly down the colonnade, looking in the travel
+             * direction with a gentle side sway; poll for quit. */
+            SDL_Event ev; while(SDL_PollEvent(&ev)){
+                if(ev.type==SDL_QUIT || (ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE)) frame=nframes-1;
+            }
+            int sax=(lenax==0)?2:0;
+            float ph=(float)frame*0.0012f;
+            float t=0.5f-0.5f*cosf(ph);
+            float e[3]={cx,cy,cz}, tg[3]={cx,cy,cz};
+            e[lenax]=amin[lenax]+span[lenax]*(0.03f+0.94f*t);
+            e[1]=amin[1]+span[1]*0.42f;
+            e[sax]=cx+0.26f*span[sax]*sinf(ph*1.7f);
+            float dir=(sinf(ph)>=0.0f)?1.0f:-1.0f;
+            tg[lenax]=e[lenax]+dir*span[lenax];
+            tg[1]=e[1]-0.05f*span[1];
+            tg[sax]=cx;
+            render_camera_look_at(&cam,e,tg,up,62.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,cam_far);
+            scene.camera=cam;
+        }
         if(csm_demo && box_idx>=0){
             /* Fly the box back and forth right in front of the sun-side windows at
              * window height, so it intercepts the incoming beams and its dynamic
@@ -385,6 +444,8 @@ int main(int argc,char **argv){
     render_forward_destroy(&fwd);
     if(csm_demo) static_mesh_destroy(&box);
     for(int i=0;i<nm;++i){ static_mesh_destroy(&meshes[i]); obj_mesh_free(&dm[i]); }
+    free(dm); free(grp); free(fnames); free(meshes); free(subs); free(rb);
+    free(gslots); free(gstates);
     for(int c=0;c<9;c++) free(coeffs[c]); free(rects);
     gpu_executor_destroy(&gexec); gpu_registry_destroy(&greg);
     job_system_shutdown(&jobs); free(arena_mem);
