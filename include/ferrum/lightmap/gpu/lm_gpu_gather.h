@@ -94,18 +94,21 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        uint32_t samples, uint32_t bounces, uint32_t seed);
 
 /**
- * @brief Chunked gather (rpg-fzht): partition the scene into @p chunk_size cubic
- *        NEAR chunks (with @p margin overlap) and a coarser FAR grid whose cells
- *        each span a neighbourhood of near chunks. Each near chunk's luxels are
- *        gathered against its fine near SDF, a per-chunk medium field, and the
- *        coarse FAR SDF shared by every chunk in the same far cell (built once
- *        per far cell, not per chunk). LM_FAR_MULT (far cell = mult x chunk),
- *        LM_FAR_DIM (far grid resolution) and LM_MED_MULT tune the hierarchy.
- *        Writes the same per-luxel @p accum as @ref lm_gpu_gather_run. Returns
- *        false on allocation / GPU failure.
+ * @brief Chunked gather (rpg-fzht): partition @p scene_bounds into @p chunk_size
+ *        cubic NEAR chunks (with @p margin overlap) and a coarser FAR grid whose
+ *        cells each span a neighbourhood of near chunks. Each near chunk builds
+ *        its OWN fine SVO over its outer box (from @p scene, at @p fine_voxel) so
+ *        a massive scene never needs one whole-scene octree, and its luxels are
+ *        gathered against that near SVO + near SDF, a per-chunk medium field, and
+ *        the coarse FAR SDF shared by every chunk in the same far cell (built
+ *        once per far cell). LM_FAR_MULT (far cell = mult x chunk), LM_FAR_DIM
+ *        (far grid resolution) and LM_MED_MULT tune the hierarchy. Writes the
+ *        same per-luxel @p accum as @ref lm_gpu_gather_run. Returns false on
+ *        allocation / GPU failure.
  */
 bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
-                           const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
+                           phys_aabb_t scene_bounds, float fine_voxel,
+                           const lm_mesh_scene_t *scene,
                            float chunk_size, float margin, const lm_light_t *lights,
                            uint32_t n_lights, const lm_sky_t *sky, float transition,
                            float maxdist, uint32_t samples, uint32_t bounces,

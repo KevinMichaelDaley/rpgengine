@@ -218,8 +218,13 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         }
         svo_depth = d;
     }
-    npc_svo_grid_t svo;
-    if (!npc_svo_grid_init(&svo, config->svo_bounds, svo_depth))
+    /* The chunked GPU path (rpg-fzht) builds a fine SVO PER CHUNK inside the
+     * gather, so it must NOT build (or voxelize) one whole-scene octree -- that
+     * node count, and its node-count-sized voxelize scratch, is exactly what
+     * blows up on a massive scene. Every other path uses the whole-scene SVO. */
+    bool chunked_gpu = config->gpu_gather && config->chunk_size > 0.0f;
+    npc_svo_grid_t svo; memset(&svo, 0, sizeof svo);
+    if (!chunked_gpu && !npc_svo_grid_init(&svo, config->svo_bounds, svo_depth))
         return false;
 
     /* Luxelize each mesh + record areas + stamp the SVO. */
@@ -236,7 +241,7 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         for (uint32_t k = 0; k < c; ++k)
             result->luxel_areas[total + k] = per;
         total += c;
-        lm_mesh_stamp(&svo, m);
+        if (!chunked_gpu) lm_mesh_stamp(&svo, m);
     }
     result->combined.res_u = total;
     result->combined.res_v = 1;
@@ -265,9 +270,12 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
              * material (direct + cosine bounce), rays past the transition cone
              * the octree, escapes read the sky. Replaces the old near-field
              * radiosity solve + discard-near far-field gather. */
-            float *area = arena_alloc(arena, _Alignof(float),
+            /* area/vnormal are node-count sized -- only the whole-scene SVO paths
+             * (CPU + non-chunked GPU) allocate + voxelize them. The chunked GPU
+             * path builds + voxelizes a fine SVO PER CHUNK inside the gather. */
+            float  *area    = chunked_gpu ? NULL : arena_alloc(arena, _Alignof(float),
                                       (size_t)svo.node_count * sizeof(float));
-            vec3_t *vnormal = arena_alloc(arena, _Alignof(vec3_t),
+            vec3_t *vnormal = chunked_gpu ? NULL : arena_alloc(arena, _Alignof(vec3_t),
                                           (size_t)svo.node_count * sizeof(vec3_t));
             /* Progressive gather: the batch accumulator @c accum (3 SH sets per
              * luxel) sums independent small batches; @c de holds the luxels'
@@ -278,8 +286,9 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                                           (size_t)total * 3u * sizeof(lm_sh9_t));
             lm_sh9_t *de = arena_alloc(arena, _Alignof(lm_sh9_t),
                                        (size_t)total * 3u * sizeof(lm_sh9_t));
-            if (area && vnormal && accum && de) {
-                lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, area, vnormal);
+            if (accum && de && (chunked_gpu || (area && vnormal))) {
+                if (!chunked_gpu)
+                    lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, area, vnormal);
                 for (uint32_t i = 0; i < total; ++i)
                     for (int c = 0; c < 3; ++c) {
                         de[i * 3 + c] = result->combined.luxels[i].sh[c];
@@ -288,22 +297,28 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                 uint32_t batch = config->gi_batch ? config->gi_batch : 64u;
                 uint32_t nb = (config->farfield_samples + batch - 1u) / batch;
                 /* GPU path (rpg-k4lk): one gather does all samples; skip the CPU
-                 * batch loop. Falls back to CPU if the run fails. With chunk_size
-                 * > 0 the gather is chunked (rpg-fzht): a per-chunk SDF over each
-                 * chunk's outer box instead of one field over the whole scene. */
-                if (config->gpu_gather &&
-                    (config->chunk_size > 0.0f
-                       ? lm_gpu_gather_chunked(&result->combined, accum, &svo, scene,
+                 * batch loop. chunk_size > 0 -> chunked (rpg-fzht): a fine SVO +
+                 * near/medium/far SDF hierarchy PER CHUNK over the scene bounds,
+                 * so no whole-scene octree/field is ever built. On GPU failure the
+                 * non-chunked path falls back to the CPU gather; the chunked path
+                 * cannot (no whole-scene SVO) and reports the failure. */
+                bool gpu_ok = false;
+                if (config->gpu_gather) {
+                    gpu_ok = config->chunk_size > 0.0f
+                       ? lm_gpu_gather_chunked(&result->combined, accum,
+                                      config->svo_bounds, config->voxel_size, scene,
                                       config->chunk_size, config->chunk_margin, scene->lights,
                                       scene->n_lights, &config->sky,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,
                                       config->seed ^ 0x9E3779B9u)
-                       : lm_gpu_gather_run(&result->combined, accum, &svo, scene, NULL, NULL, scene->lights,
-                                      scene->n_lights, &config->sky,
+                       : lm_gpu_gather_run(&result->combined, accum, &svo, scene, NULL, NULL,
+                                      scene->lights, scene->n_lights, &config->sky,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,
-                                      config->seed ^ 0x9E3779B9u))) {
+                                      config->seed ^ 0x9E3779B9u);
+                }
+                if (gpu_ok) {
                     for (uint32_t i = 0; i < total; ++i)
                         for (int c = 0; c < 3; ++c)
                             for (int k = 0; k < 9; ++k)
@@ -311,6 +326,8 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                                     de[i * 3 + c].c[k] + accum[i * 3 + c].c[k];
                     if (config->on_batch) config->on_batch(config->on_batch_ud, nb, nb);
                     nb = 0; /* skip the CPU loop below. */
+                } else if (chunked_gpu) {
+                    nb = 0; /* no whole-scene SVO -> no CPU fallback available. */
                 }
                 for (uint32_t b = 0; b < nb; ++b) {
                     lm_gi_gather(&result->combined, accum, &svo, scene->lights,
@@ -333,7 +350,7 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
             }
         }
     }
-    npc_svo_grid_destroy(&svo);
+    if (!chunked_gpu) npc_svo_grid_destroy(&svo);
     return true;
 }
 

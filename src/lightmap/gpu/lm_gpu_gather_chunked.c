@@ -2,11 +2,11 @@
  * @file lm_gpu_gather_chunked.c
  * @brief Chunked GPU GI gather (rpg-fzht): partition the scene into cubic NEAR
  *        chunks, and into a coarser FAR grid whose cells each cover a whole
- *        neighbourhood of near chunks. A ray gathers against three fields: its
- *        chunk's fine near SDF, the per-chunk medium field (built inside
- *        @ref lm_gpu_gather_run), and the coarse FAR SDF SHARED by every near
- *        chunk in the same far cell -- so the far field is baked once per
- *        neighbourhood on a coarse grid instead of once per chunk. See
+ *        neighbourhood of near chunks. Each near chunk builds its OWN fine SVO
+ *        over its outer box (so a massive scene never needs one whole-scene
+ *        octree) and gathers against three fields: its chunk's fine near SDF, the
+ *        per-chunk medium field (built inside @ref lm_gpu_gather_run), and the
+ *        coarse FAR SDF SHARED by every near chunk in the same far cell. See
  *        lm_gpu_gather.h.
  */
 #include "ferrum/lightmap/gpu/lm_gpu_gather.h"
@@ -14,16 +14,18 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "ferrum/lightmap/lm_chunk_svo.h"
 #include "ferrum/renderer/chunk/chunk_grid.h"
 
 bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
-                           const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
+                           phys_aabb_t scene_bounds, float fine_voxel,
+                           const lm_mesh_scene_t *scene,
                            float chunk_size, float margin, const lm_light_t *lights,
                            uint32_t n_lights, const lm_sky_t *sky, float transition,
                            float maxdist, uint32_t samples, uint32_t bounces,
                            uint32_t seed)
 {
-    if (lm == NULL || accum == NULL || svo == NULL)
+    if (lm == NULL || accum == NULL || scene == NULL)
         return false;
     uint32_t nlux = lm->res_u * lm->res_v;
     if (nlux == 0)
@@ -38,9 +40,9 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
     if (far_dim  < 8)    far_dim  = 8;
 
     chunk_grid_t ngrid, fgrid;
-    if (!chunk_grid_init(&ngrid, svo->world_bounds, chunk_size, margin))
+    if (!chunk_grid_init(&ngrid, scene_bounds, chunk_size, margin))
         return false;
-    if (!chunk_grid_init(&fgrid, svo->world_bounds, chunk_size * far_mult, chunk_size * far_mult))
+    if (!chunk_grid_init(&fgrid, scene_bounds, chunk_size * far_mult, chunk_size * far_mult))
         return false;
     uint32_t nchunks = chunk_grid_count(&ngrid);
     uint32_t nfar    = chunk_grid_count(&fgrid);
@@ -87,7 +89,7 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
         phys_aabb_t fouter;
         chunk_grid_bounds(&fgrid, f, NULL, &fouter);
         lm_gpu_field_t farfield = {0};
-        bool has_far = lm_gpu_field_build(scene, svo->voxel_size, &fouter, far_dim, &farfield);
+        bool has_far = lm_gpu_field_build(scene, fine_voxel, &fouter, far_dim, &farfield);
 
         for (uint32_t c = 0; c < nchunks && ok; ++c) {
             if (farcell[c] != f)
@@ -99,12 +101,17 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
             if (m == 0)
                 continue;
 
-            lm_lightmap_t sub = { tlux, m, 1 };
+            /* Build this chunk's OWN fine SVO over its outer box, gather, free. */
             phys_aabb_t nouter;
             chunk_grid_bounds(&ngrid, c, NULL, &nouter);
-            ok = lm_gpu_gather_run(&sub, sacc, svo, scene, &nouter,
+            npc_svo_grid_t csvo;
+            if (!lm_chunk_svo_build(scene, nouter, fine_voxel, &csvo)) { ok = false; break; }
+
+            lm_lightmap_t sub = { tlux, m, 1 };
+            ok = lm_gpu_gather_run(&sub, sacc, &csvo, scene, &nouter,
                                    has_far ? &farfield : NULL, lights, n_lights, sky,
                                    transition, maxdist, samples, bounces, seed);
+            npc_svo_grid_destroy(&csvo);
             if (!ok)
                 break;
 
