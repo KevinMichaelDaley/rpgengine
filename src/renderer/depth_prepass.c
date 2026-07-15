@@ -6,11 +6,20 @@
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 
+/* gl_Position MUST be computed identically to the PBR forward shader
+ * (u_projection * u_view * (u_model * pos), all on the GPU) so the pre-pass and
+ * forward depths are bit-identical -- a CPU-composed MVP differs by ULPs and
+ * z-fights under LEQUAL on grazing/curved surfaces. */
 static const char *const DEPTH_VS =
     "#version 330 core\n"
     "layout(location=0) in vec3 in_position;\n"
-    "uniform mat4 u_mvp;\n"
-    "void main(){ gl_Position = u_mvp * vec4(in_position, 1.0); }\n";
+    "uniform mat4 u_model;\n"
+    "uniform mat4 u_view;\n"
+    "uniform mat4 u_projection;\n"
+    "void main(){\n"
+    "  vec4 wp = u_model * vec4(in_position, 1.0);\n"
+    "  gl_Position = u_projection * u_view * wp;\n"
+    "}\n";
 static const char *const DEPTH_FS =
     "#version 330 core\n"
     "void main(){}\n";
@@ -62,19 +71,19 @@ void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene)
     pass->glDepthMask(1);
     pass->glColorMask(0, 0, 0, 0); /* depth only */
 
-    mat4_t proj, view;
-    memcpy(proj.m, scene->camera.proj, sizeof(proj.m));
-    memcpy(view.m, scene->camera.view, sizeof(view.m));
-    mat4_t vp = mat4_mul(proj, view);
+    /* Upload view/projection once; the GPU composes with each model matrix
+     * exactly as the PBR forward shader does (see DEPTH_VS). */
+    shader_uniform_set_mat4(&pass->cache, &pass->shader, "u_view",
+                            scene->camera.view, 0);
+    shader_uniform_set_mat4(&pass->cache, &pass->shader, "u_projection",
+                            scene->camera.proj, 0);
     for (uint32_t i = 0; i < scene->count; ++i) {
         const render_renderable_t *r = &scene->items[i];
         if (r->mesh == NULL) {
             continue;
         }
-        mat4_t model;
-        memcpy(model.m, r->model, sizeof(model.m));
-        mat4_t mvp = mat4_mul(vp, model);
-        shader_uniform_set_mat4(&pass->cache, &pass->shader, "u_mvp", mvp.m, 0);
+        shader_uniform_set_mat4(&pass->cache, &pass->shader, "u_model",
+                                r->model, 0);
         static_mesh_bind(r->mesh);
         for (uint32_t s = 0; s < r->mesh->submesh_count; ++s) {
             static_mesh_draw_submesh(r->mesh, s);
