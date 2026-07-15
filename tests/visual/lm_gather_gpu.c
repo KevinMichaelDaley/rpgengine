@@ -69,9 +69,12 @@ static const char *CS =
     "layout(std430,binding=2) readonly buffer Lux { vec4 lux[]; };\n"    /* [2i]=pos,[2i+1]=normal */
     "layout(std430,binding=3) writeonly buffer Out { float osh[]; };\n"
     "layout(std430,binding=4) readonly buffer Lit { vec4 lit[]; };\n"    /* 4 vec4 per light */
+    "struct Node { uint children[8]; vec4 diffuse; vec4 emissive; };\n"
+    "layout(std430,binding=5) readonly buffer Svo { Node nodes[]; };\n"
     "uniform ivec3 dims; uniform float voxel; uniform vec3 origin;\n"
     "uniform vec3 sky; uniform int samples; uniform int bounces; uniform uint seed;\n"
     "uniform int nlux; uniform int nlights; uniform int mode;\n"
+    "uniform vec3 svomin; uniform vec3 svomax; uniform int svodepth; uniform int usesvo;\n"
     "const float PI=3.14159265, TAU=6.28318530718, INVPI=0.31830988618;\n"
     "uint pcg(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28)+4u))^s)*277803737u; return (w>>22)^w; }\n"
     "float rnd(inout uint s){ return float(pcg(s))*(1.0/4294967296.0); }\n"
@@ -109,9 +112,24 @@ static const char *CS =
     "    if(shadow(o,toL,md)) continue;\n"
     "    e += col*(cosNL*atten); }\n"
     "  return e; }\n"
+    /* Refine into the SVO octree at a surface point p (SDF already found it):\n"
+     * descend children[(cz<<2)|(cy<<1)|cx] to the finest node, read its material. */
+    "void svoMat(vec3 p, out vec3 diff, out vec3 emis){ diff=vec3(0); emis=vec3(0);\n"
+    "  if(any(lessThan(p,svomin))||any(greaterThan(p,svomax))) return;\n"
+    "  uint node=0u; vec3 lo=svomin, hi=svomax;\n"
+    "  for(int d=0; d<svodepth; ++d){ vec3 mid=(lo+hi)*0.5;\n"
+    "    uint cx=p.x>=mid.x?1u:0u, cy=p.y>=mid.y?1u:0u, cz=p.z>=mid.z?1u:0u;\n"
+    "    uint child=nodes[node].children[(cz<<2)|(cy<<1)|cx];\n"
+    "    if(child==0xFFFFFFFFu) break;\n"
+    "    if(cx==1u) lo.x=mid.x; else hi.x=mid.x;\n"
+    "    if(cy==1u) lo.y=mid.y; else hi.y=mid.y;\n"
+    "    if(cz==1u) lo.z=mid.z; else hi.z=mid.z; node=child; }\n"
+    "  diff=nodes[node].diffuse.rgb; emis=nodes[node].emissive.rgb; }\n"
     "void main(){ uint li=gl_GlobalInvocationID.x; if(li>=uint(nlux)) return;\n"
     "  vec3 pos=lux[2u*li].xyz; vec3 nrm=normalize(lux[2u*li+1u].xyz);\n"
     "  if(mode==1){ vec3 e=direct(pos,nrm); osh[27u*li]=e.x; osh[27u*li+1u]=e.y; osh[27u*li+2u]=e.z; return; }\n"
+    "  if(mode==2){ vec3 df,em; svoMat(pos,df,em); osh[27u*li]=df.x; osh[27u*li+1u]=df.y; osh[27u*li+2u]=df.z;\n"
+    "    osh[27u*li+3u]=em.x; osh[27u*li+4u]=em.y; osh[27u*li+5u]=em.z; return; }\n"
     "  vec3 tn,bt; basis(nrm,tn,bt);\n"
     "  int n=int(sqrt(float(samples))); if(n<1) n=1; float weight=TAU/float(n*n);\n"
     "  float sh[27]; for(int k=0;k<27;++k) sh[k]=0.0;\n"
@@ -123,7 +141,9 @@ static const char *CS =
     "    vec3 Li=vec3(0.0), thr=vec3(1.0); vec3 o=pos+nrm*voxel*1.5, d=dir;\n"
     "    for(int b=0;b<=bounces;++b){ vec3 hp; ivec3 hc; vec3 hn;\n"
     "      if(!trace(o,d,1e5,hp,hc,hn)){ Li+=thr*sky; break; }\n"
-    "      vec3 diff=mat[2*cidx(hc)].rgb, emis=mat[2*cidx(hc)+1].rgb;\n"
+    /* SDF found the surface; refine into the SVO for the exact material. */
+    "      vec3 diff, emis;\n"
+    "      if(usesvo==1){ svoMat(hp,diff,emis); } else { diff=mat[2*cidx(hc)].rgb; emis=mat[2*cidx(hc)+1].rgb; }\n"
     "      Li += thr*emis;\n"
     "      Li += thr*diff*direct(hp,hn)*INVPI;\n"           /* Lambertian rho/pi * E. */
     "      thr *= diff;\n"
@@ -167,13 +187,18 @@ int main(void){
     float *mat=malloc(cells*2*4*sizeof(float));
     float lux[8]={24.5f,24.5f,24.5f,0, 0,0,1,0};
     float lights[16]={0};                       /* up to 4 vec4 (1 light). */
-    GLuint bo_sdf,bo_mat,bo_lux,bo_out,bo_lit;
+    GLuint bo_sdf,bo_mat,bo_lux,bo_out,bo_lit,bo_svo;
     glGenBuffers(1,&bo_sdf); glGenBuffers(1,&bo_mat); glGenBuffers(1,&bo_lux);
-    glGenBuffers(1,&bo_out); glGenBuffers(1,&bo_lit);
+    glGenBuffers(1,&bo_out); glGenBuffers(1,&bo_lit); glGenBuffers(1,&bo_svo);
     float outsh[27]; int dims[3]={N,N,N};
+    /* Packed SVO node: children[8] + diffuse vec4 + emissive vec4 (64B, lm_gpu_node). */
+    typedef struct { uint32_t child[8]; float diffuse[4]; float emissive[4]; } gnode;
+    float svomin[3]={0,0,0}, svomax[3]={(float)N,(float)N,(float)N}; int svodepth=8;
+    gnode *svo=NULL; int svo_nodes=0;
 
-    #define RUN(sky_,bounces_,nx,ny,nz,nlit,mode_) do{ \
+    #define RUN(sky_,bounces_,nx,ny,nz,nlit,mode_,usesvo_) do{ \
         lux[4]=nx; lux[5]=ny; lux[6]=nz; \
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER,bo_svo); glBufferData(GL_SHADER_STORAGE_BUFFER,(svo?svo_nodes:1)*(GLsizeiptr)sizeof(gnode),svo,GL_STATIC_DRAW); \
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,bo_sdf); glBufferData(GL_SHADER_STORAGE_BUFFER,cells*sizeof(float),sdf,GL_STATIC_DRAW); \
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,bo_mat); glBufferData(GL_SHADER_STORAGE_BUFFER,cells*2*4*sizeof(float),mat,GL_STATIC_DRAW); \
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,bo_lux); glBufferData(GL_SHADER_STORAGE_BUFFER,sizeof lux,lux,GL_STATIC_DRAW); \
@@ -190,9 +215,13 @@ int main(void){
         glUniform1i(glGetUniformLocation(prog,"nlux"),1); \
         glUniform1i(glGetUniformLocation(prog,"nlights"),nlit); \
         glUniform1i(glGetUniformLocation(prog,"mode"),mode_); \
+        glUniform3fv(glGetUniformLocation(prog,"svomin"),1,svomin); \
+        glUniform3fv(glGetUniformLocation(prog,"svomax"),1,svomax); \
+        glUniform1i(glGetUniformLocation(prog,"svodepth"),svodepth); \
+        glUniform1i(glGetUniformLocation(prog,"usesvo"),usesvo_); \
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER,0,bo_sdf); glBindBufferBase(GL_SHADER_STORAGE_BUFFER,1,bo_mat); \
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER,2,bo_lux); glBindBufferBase(GL_SHADER_STORAGE_BUFFER,3,bo_out); \
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER,4,bo_lit); \
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER,4,bo_lit); glBindBufferBase(GL_SHADER_STORAGE_BUFFER,5,bo_svo); \
         glDispatchCompute(1,1,1); glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT); \
         glBindBuffer(GL_SHADER_STORAGE_BUFFER,bo_out); glGetBufferSubData(GL_SHADER_STORAGE_BUFFER,0,sizeof outsh,outsh); \
     }while(0)
@@ -202,7 +231,7 @@ int main(void){
     /* open sky=1 -> pi */
     for(size_t i=0;i<cells;++i) sdf[i]=1000.0f;
     for(size_t i=0;i<cells*8;++i) mat[i]=0.0f;
-    RUN(1.0f,0,0,0,1,0,0); float e_open=sh_irradiance(outsh,0,0,1);
+    RUN(1.0f,0,0,0,1,0,0,0); float e_open=sh_irradiance(outsh,0,0,1);
 
     /* enclosed shell SDF (air pocket, solid outside). */
     for(int z=0;z<N;++z)for(int y=0;y<N;++y)for(int x=0;x<N;++x)
@@ -212,9 +241,9 @@ int main(void){
     float E=1.0f, rho=0.5f;
     for(size_t i=0;i<cells;++i){ mat[i*8+0]=rho; mat[i*8+1]=rho; mat[i*8+2]=rho;
                                  mat[i*8+4]=E; mat[i*8+5]=E; mat[i*8+6]=E; }
-    RUN(0.0f,0,0,0,1,0,0); float b0=sh_irradiance(outsh,0,0,1);
-    RUN(0.0f,1,0,0,1,0,0); float b1=sh_irradiance(outsh,0,0,1);
-    RUN(0.0f,3,0,0,1,0,0); float b3=sh_irradiance(outsh,0,0,1);
+    RUN(0.0f,0,0,0,1,0,0,0); float b0=sh_irradiance(outsh,0,0,1);
+    RUN(0.0f,1,0,0,1,0,0,0); float b1=sh_irradiance(outsh,0,0,1);
+    RUN(0.0f,3,0,0,1,0,0,0); float b3=sh_irradiance(outsh,0,0,1);
     float exp0=PI*E, exp1=PI*E*(1+rho), exp3=PI*E*(1+rho+rho*rho+rho*rho*rho);
 
     /* DIRECT-LIGHT PROBE (mode 1), open scene so shadow rays escape. */
@@ -224,18 +253,40 @@ int main(void){
     lights[4]=0;lights[5]=-1;lights[6]=0;lights[7]=0; /* dir=down */
     lights[8]=2;lights[9]=2;lights[10]=2;lights[11]=0; /* colour, cos_inner */
     lights[12]=0;lights[13]=0;lights[14]=0;lights[15]=0;
-    RUN(0.0f,0,0,1,0,1,1); float e_dir=outsh[0];
+    RUN(0.0f,0,0,1,0,1,1,0); float e_dir=outsh[0];
     /* point: colour 3 at 5 above, normal up -> E = 3/25 = 0.12. */
     lights[0]=24.5f;lights[1]=29.5f;lights[2]=24.5f;lights[3]=0; /* pos, kind=0 point */
     lux[0]=24.5f;lux[1]=24.5f;lux[2]=24.5f;
     lights[8]=3;lights[9]=3;lights[10]=3;lights[11]=0;
-    RUN(0.0f,0,0,1,0,1,1); float e_pt=outsh[0];
+    RUN(0.0f,0,0,1,0,1,1,0); float e_pt=outsh[0];
     /* spot: colour 3 at 5 above, axis down, receiver on-axis -> passes cone = 0.12. */
     lights[3]=2; /* kind=2 spot */
     lights[4]=0;lights[5]=-1;lights[6]=0;lights[7]=0; /* axis down */
     lights[11]=cosf(0.35f); /* cos_inner */
     lights[12]=cosf(0.52f);lights[13]=0;lights[14]=0;lights[15]=0; /* cos_outer */
-    RUN(0.0f,0,0,1,0,1,1); float e_spot=outsh[0];
+    RUN(0.0f,0,0,1,0,1,1,0); float e_spot=outsh[0];
+
+    /* --- REAL SVO: octree traversal. 9-node SVO (root + 8 leaves), each octant
+     * carries its index as diffuse.r; probe each octant centre (mode 2). --- */
+    gnode hand[9]; memset(hand,0,sizeof hand);
+    for(int c=0;c<8;++c) hand[0].child[c]=(uint32_t)(1+c);
+    for(int k=0;k<8;++k){ for(int c=0;c<8;++c) hand[1+k].child[c]=0xFFFFFFFFu; hand[1+k].diffuse[0]=(float)k; }
+    svo=hand; svo_nodes=9; svomin[0]=svomin[1]=svomin[2]=0; svomax[0]=svomax[1]=svomax[2]=8; svodepth=8;
+    int svo_octants_ok=1;
+    for(int k=0;k<8;++k){ lux[0]=(k&1)*4+2; lux[1]=((k>>1)&1)*4+2; lux[2]=((k>>2)&1)*4+2;
+        RUN(0.0f,0,0,0,1,0,2,1);
+        if((int)(outsh[0]+0.5f)!=k){ svo_octants_ok=0; printf("  octant %d -> %.1f (expect %d)\n",k,outsh[0],k); } }
+
+    /* --- REAL SVO in the gather: single-leaf SVO (material rho/E) feeds the hit
+     * material after the SDF trace + refine; multibounce b1 must match dense. --- */
+    gnode leaf[1]; memset(leaf,0,sizeof leaf); for(int c=0;c<8;++c) leaf[0].child[c]=0xFFFFFFFFu;
+    leaf[0].diffuse[0]=leaf[0].diffuse[1]=leaf[0].diffuse[2]=rho;
+    leaf[0].emissive[0]=leaf[0].emissive[1]=leaf[0].emissive[2]=E;
+    svo=leaf; svo_nodes=1; svomax[0]=svomax[1]=svomax[2]=(float)N; svodepth=8;
+    for(int z=0;z<N;++z)for(int y=0;y<N;++y)for(int x=0;x<N;++x)
+        sdf[(size_t)(z*N+y)*N+x]=-sd_box((float)x+0.5f,(float)y+0.5f,(float)z+0.5f,lo,hi);
+    lux[0]=24.5f;lux[1]=24.5f;lux[2]=24.5f;
+    RUN(0.0f,1,0,0,1,0,0,1); float b1_svo=sh_irradiance(outsh,0,0,1);
 
     printf("open(sky=1)      E=%.3f (expect ~pi=%.3f)\n", e_open, PI);
     printf("multibounce b0   E=%.3f (expect %.3f)\n", b0, exp0);
@@ -244,8 +295,12 @@ int main(void){
     printf("direct sun       E=%.3f (expect 2.000)\n", e_dir);
     printf("direct point     E=%.3f (expect 0.120)\n", e_pt);
     printf("direct spot      E=%.3f (expect 0.120)\n", e_spot);
+    printf("svo octant descent %s\n", svo_octants_ok?"OK":"BAD");
+    printf("gather via SVO b1 E=%.3f (expect ~%.3f = dense b1)\n", b1_svo, b1);
 
     if (fabsf(e_open-PI)>0.35f) fail|=1;
+    if (!svo_octants_ok) fail|=128;
+    if (fabsf(b1_svo-b1)>0.30f) fail|=256;
     if (fabsf(b0-exp0)>0.35f) fail|=2;
     if (fabsf(b1-exp1)>0.5f) fail|=4;
     if (fabsf(b3-exp3)>0.7f) fail|=8;
