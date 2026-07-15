@@ -79,3 +79,7 @@ NEXT (correctness for small chunks) = medium/far far-field:
 2. far = downsample master -> 128^3 over the whole scene (shared by all chunks); per chunk medium = sdf_field_downsample_region(master) -> 128^3 over a ~3x-chunk region. Upload both as SSBO/3D-tex.
 3. Extend the gather trace: near SDF for close, then continue into medium, then far, escaping to sky only when leaving the far field (replaces today's escape-at-near-boundary).
 Then: shrink chunk_size for finer near SDFs at bounded memory + fold SDF chunk into the .flm (rpg-iudw).
+
+**2026-07-15T21:49:41Z**
+
+FAR-FIELD DONE (committed+pushed). Multi-level near/far SDF trace fixes small-chunk over-brightness. build_sdf() helper builds both the per-chunk NEAR field (region box 128^3) and a coarse whole-scene FAR field (128^3, once per chunked run). Shader mSDF() samples finest field covering a point (near->far->outside); trace() SVO-refines in near, plain coarse hit in far; escapes to sky only on leaving the far field. Hit material still from full-scene SVO. VERIFIED hall: chunk=6 mean SH 0.162, chunk=3 0.158, single-region 0.160 (was ~2x bright before). region=NULL path unchanged (hasFar=0). REMAINING (optional, not correctness-critical): (1) medium field between near/far for large scenes; (2) build far SDF once in lm_gpu_gather_chunked, pass down (avoid per-chunk rebuild); (3) fold SDF into .flm (rpg-iudw; sdf_field serialize exists).
