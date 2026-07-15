@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ferrum/renderer/gl_constants.h"
@@ -69,6 +70,8 @@ static void fwd_forward_submit(void *ud)
     shader_uniform_set_vec3(&f->cache, &f->pbr, "u_sun_color", f->cfg.sun_color);
     shader_uniform_set_vec3(&f->cache, &f->pbr, "u_ambient", f->cfg.ambient);
     shader_uniform_set_int(&f->cache, &f->pbr, "u_light_count", 0);
+    { const char *dbg = getenv("PBR_DEBUG");
+      shader_uniform_set_int(&f->cache, &f->pbr, "u_debug_mode", dbg ? atoi(dbg) : 0); }
     forward_plus_bind(&f->fp, &f->cache, &f->pbr, &f->cfg.cluster,
                       f->cfg.screen_w, f->cfg.screen_h);
 
@@ -107,6 +110,18 @@ static void fwd_forward_submit(void *ud)
     } else {
         shader_uniform_set_int(&f->cache, &f->pbr, "u_spot_light", -1);
     }
+    /* Cascaded directional (sun) shadow: static array on unit 22, dynamic on 23. */
+    if (f->cfg.dir_cascades > 0u) {
+        shadow_csm_bind(&f->csm, &f->cache, &f->pbr, 22u, 23u);
+        shader_uniform_set_float(&f->cache, &f->pbr, "u_dir_bias", f->cfg.dir_bias);
+    } else {
+        /* The u_csm_* sampler2DArrays are declared in the program, so they must
+         * be assigned distinct units (22/23) even when disabled -- two samplers
+         * of different types sharing unit 0 makes every draw INVALID_OPERATION. */
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_enabled", 0);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_static", 22);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_dynamic", 23);
+    }
 
     for (uint32_t i = 0; i < s->count; ++i) {
         const render_renderable_t *r = &s->items[i];
@@ -114,6 +129,10 @@ static void fwd_forward_submit(void *ud)
             continue;
         if (r->material != NULL)
             material_bind(r->material, 0u, &f->cache, &f->pbr);
+        /* Static renderables read the baked SH lightmap; dynamic ones (>=
+         * dynamic_from) are not in the bake, so use flat ambient instead. */
+        shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_object",
+                                 (i < s->dynamic_from) ? 1.0f : 0.0f);
         shader_uniform_set_mat4(&f->cache, &f->pbr, "u_model", r->model, 0);
         static_mesh_bind(r->mesh);
         for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)
@@ -150,6 +169,20 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
                           cfg->spot_near, cfg->spot_far)) {
         render_forward_destroy(fwd);
         return false;
+    }
+    if (cfg->dir_cascades > 0u) {
+        shadow_csm_config_t sc = {
+            .loader = cfg->loader,
+            .cascades = cfg->dir_cascades,
+            .static_res = cfg->dir_static_res ? cfg->dir_static_res : 2048u,
+            .dynamic_res = cfg->dir_dynamic_res ? cfg->dir_dynamic_res : 1024u,
+            .lambda = cfg->dir_lambda,
+            .max_distance = cfg->dir_max_distance,
+        };
+        if (!shadow_csm_init(&fwd->csm, &sc)) {
+            render_forward_destroy(fwd);
+            return false;
+        }
     }
 
     uint32_t ctot = cfg->cluster.tiles_x * cfg->cluster.tiles_y * cfg->cluster.slices;
@@ -211,6 +244,18 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         fwd->spot.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                              (int32_t)fwd->cfg.screen_h);
     }
+    if (fwd->cfg.dir_cascades > 0u) {
+        /* Sun travels along -u_sun_dir (u_sun_dir points toward the sun). Fit the
+         * cascades to the camera frustum, bake the static casters once (cached),
+         * and re-render only the dynamic casters this frame. */
+        float td[3] = { -fwd->cfg.sun_dir[0], -fwd->cfg.sun_dir[1],
+                        -fwd->cfg.sun_dir[2] };
+        shadow_csm_update(&fwd->csm, &scene->camera, td);
+        shadow_csm_bake_static(&fwd->csm, scene);
+        shadow_csm_render_dynamic(&fwd->csm, scene);
+        fwd->csm.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
+                            (int32_t)fwd->cfg.screen_h);
+    }
     /* Early-Z only pays off with overlapping geometry; skip it for a single
      * renderable so a trivial scene still executes (depth_pre is skippable). */
     int depth_enabled = (scene->count > 1u) ? 1 : 0;
@@ -224,6 +269,7 @@ void render_forward_destroy(render_forward_t *fwd)
         return;
     shadow_cube_destroy(&fwd->shadow);
     shadow_spot_destroy(&fwd->spot);
+    shadow_csm_destroy(&fwd->csm);
     forward_plus_destroy(&fwd->fp);
     depth_prepass_destroy(&fwd->depth);
     shader_program_destroy(&fwd->pbr);

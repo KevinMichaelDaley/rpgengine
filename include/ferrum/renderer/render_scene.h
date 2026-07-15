@@ -31,11 +31,16 @@ typedef struct render_renderable {
     float model[16];                 /**< model->world (column-major). */
 } render_renderable_t;
 
-/** A submitted frame: renderables + camera + lights. */
+/** A submitted frame: renderables + camera + lights.
+ *
+ * Renderables in [0, dynamic_from) are STATIC (never move -> their shadow term
+ * is baked once); [dynamic_from, count) are DYNAMIC (re-shadowed per frame).
+ * @ref render_scene_mark_dynamic draws the boundary. Default: all static. */
 typedef struct render_scene {
     render_renderable_t       *items;    /**< caller-owned backing array. */
     uint32_t                   count;    /**< renderables submitted. */
     uint32_t                   capacity; /**< backing capacity. */
+    uint32_t                   dynamic_from; /**< first dynamic renderable index. */
     render_camera_t            camera;    /**< view camera. */
     const render_light_store_t *lights;   /**< borrowed light store (may be NULL). */
 } render_scene_t;
@@ -53,7 +58,14 @@ bool render_scene_add(render_scene_t *scene, const static_mesh_t *mesh,
                       const render_material_t *material, const float model[16]);
 
 /**
- * @brief Remove all renderables (capacity/camera/lights unchanged).
+ * @brief Mark the static/dynamic boundary at the current count: everything
+ *        added so far is static; everything added afterwards is dynamic.
+ */
+void render_scene_mark_dynamic(render_scene_t *scene);
+
+/**
+ * @brief Remove all renderables (capacity/camera/lights unchanged). Resets the
+ *        dynamic boundary (all subsequently-added renderables are static again).
  */
 void render_scene_clear(render_scene_t *scene);
 

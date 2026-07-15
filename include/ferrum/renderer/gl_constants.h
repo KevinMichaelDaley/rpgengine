@@ -53,6 +53,9 @@ extern "C" {
 #ifndef GL_TEXTURE_2D
 #define GL_TEXTURE_2D 0x0DE1
 #endif
+#ifndef GL_TEXTURE_2D_ARRAY
+#define GL_TEXTURE_2D_ARRAY 0x8C1A
+#endif
 #ifndef GL_RGBA8
 #define GL_RGBA8 0x8058
 #endif
@@ -219,6 +222,15 @@ extern "C" {
 /* Cube shadow maps (shadow_cube). */
 #ifndef GL_R32F
 #define GL_R32F 0x822E
+#endif
+#ifndef GL_RG32F
+#define GL_RG32F 0x8230
+#endif
+#ifndef GL_TEXTURE_MAX_LEVEL
+#define GL_TEXTURE_MAX_LEVEL 0x813D
+#endif
+#ifndef GL_COLOR
+#define GL_COLOR 0x1800
 #endif
 #ifndef GL_DEPTH_COMPONENT24
 #define GL_DEPTH_COMPONENT24 0x81A6

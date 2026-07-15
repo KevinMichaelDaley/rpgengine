@@ -27,6 +27,7 @@
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/shader_uniforms.h"
+#include "ferrum/renderer/shadow_csm.h"
 #include "ferrum/renderer/shadow_cube.h"
 #include "ferrum/renderer/shadow_spot.h"
 
@@ -58,6 +59,12 @@ typedef struct render_forward_config {
     float              spot_near;     /**< spot shadow near plane. */
     float              spot_far;      /**< spot shadow far plane. */
     float              spot_bias;     /**< spot distance-compare bias. */
+    uint32_t           dir_cascades;    /**< sun CSM cascade count (0 = no sun shadow). */
+    uint32_t           dir_static_res;  /**< per-cascade static map resolution. */
+    uint32_t           dir_dynamic_res; /**< per-cascade dynamic map resolution. */
+    float              dir_lambda;      /**< cascade split blend (0=uniform,1=log). */
+    float              dir_bias;        /**< directional distance-compare bias. */
+    float              dir_max_distance;/**< cap the shadowed range (0 = camera far). */
 } render_forward_config_t;
 
 /** Clustered forward+ driver context: the stages, their GL resources, the
@@ -69,6 +76,7 @@ typedef struct render_forward {
     forward_plus_t          fp;
     shadow_cube_t           shadow;
     shadow_spot_t           spot;
+    shadow_csm_t            csm;
     shader_program_t        pbr;
     shader_uniform_cache_t  cache;
     render_forward_config_t cfg;

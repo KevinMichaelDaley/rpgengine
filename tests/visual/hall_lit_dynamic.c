@@ -12,6 +12,7 @@
 
 #include <dirent.h>
 #include <math.h>
+#include <time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,10 +85,12 @@ int main(int argc,char **argv){
     SDL_Window *win=SDL_CreateWindow("hall lit+dynamic",0,0,dmode.w,dmode.h,
         SDL_WINDOW_OPENGL|SDL_WINDOW_FULLSCREEN_DESKTOP);
     SDL_GLContext gc=SDL_GL_CreateContext(win); SDL_GL_MakeCurrent(win,gc);
+    SDL_GL_SetSwapInterval(0); /* vsync off: measure real render cost. */
     if(!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) return 1;
     int W,H; SDL_GL_GetDrawableSize(win,&W,&H); /* actual pixels (HiDPI-safe) */
     glEnable(GL_MULTISAMPLE);
     printf("fullscreen %dx%d (msaa 8x)\n",W,H);
+    printf("GL_RENDERER: %s\n", (const char*)glGetString(GL_RENDERER));
     gl_loader_t loader={sdl_get_proc,NULL};
 
     /* --- Load dual-UV dmeshes (readdir order == the bake's mesh order). --- */
@@ -173,6 +176,7 @@ int main(int argc,char **argv){
     int shadow_only = getenv("SHADOW_ONLY") && atoi(getenv("SHADOW_ONLY"));
     int one_light = getenv("HALL_ONE") && atoi(getenv("HALL_ONE")); /* 1 light + lightmap */
     int spot_only = getenv("SPOT_ONLY") && atoi(getenv("SPOT_ONLY")); /* just the sconce */
+    int csm_demo = getenv("HALL_CSM") && atoi(getenv("HALL_CSM")); /* sun CSM + moving box */
     /* Light index 0: a bright SHADOW-CASTING point light. Placed near the camera
      * end and off to one side at mid height so the central column rakes a long
      * shadow across the floor and far columns. */
@@ -180,7 +184,7 @@ int main(int argc,char **argv){
       s.position[0]=cx; s.position[1]=amin[1]+0.45f*span[1]; s.position[2]=cz;
       s.position[lax]=amin[lax]+0.16f*span[lax];
       s.position[cax]=amin[cax]+0.80f*span[cax];
-      s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=spot_only?0.0f:(shadow_only?14.0f:8.0f); s.range=hall_len*1.6f;
+      s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=(spot_only||csm_demo)?0.0f:(shadow_only?14.0f:8.0f); s.range=hall_len*1.6f;
       s.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&s); }
     /* Light index 1: a warm-orange UPWARD sconce SPOTLIGHT (candle brightness),
      * on a side wall pointing at the vault -- casts a 2D spot shadow of the ribs
@@ -191,11 +195,11 @@ int main(int argc,char **argv){
       sp.position[lax]=amin[lax]+0.34f*span[lax];      /* at the near central column */
       sp.direction[0]=0; sp.direction[1]=1; sp.direction[2]=0;
       sp.color[0]=1.0f; sp.color[1]=0.55f; sp.color[2]=0.22f; /* warm orange */
-      sp.intensity=spot_only?22.0f:6.0f; sp.range=hall_len;
+      sp.intensity=csm_demo?0.0f:(spot_only?22.0f:6.0f); sp.range=hall_len;
       sp.cos_inner=cosf(0.80f); sp.cos_outer=cosf(1.05f); /* ~120-deg cone */
       sp.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&sp); }
     uint32_t rng=4242;
-    for(int i=0;i<((shadow_only||one_light||spot_only)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
+    for(int i=0;i<((shadow_only||one_light||spot_only||csm_demo)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
         l.position[0]=amin[0]+frand(&rng)*span[0]; l.position[1]=amin[1]+0.12f*span[1]+frand(&rng)*0.7f*span[1];
         l.position[2]=amin[2]+frand(&rng)*span[2]; const float *pc=pal[i%6];
         l.color[0]=pc[0]; l.color[1]=pc[1]; l.color[2]=pc[2];
@@ -211,6 +215,17 @@ int main(int argc,char **argv){
     render_renderable_t rb[MAXM]; render_scene_t scene; render_scene_init(&scene,rb,MAXM);
     float model[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     for(int i=0;i<nm;++i) render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
+    /* A dynamic caster: everything above is static (baked once); the box below is
+     * re-shadowed every frame, so the CSM co-samples static wall + moving box. */
+    static_mesh_t box; int box_idx=-1;
+    if(csm_demo){
+      if(getenv("CSM_NOBOX")==NULL){
+        static_mesh_create_box(&loader,0.7f,0.7f,0.7f,&box);
+        render_scene_mark_dynamic(&scene);
+        box_idx=(int)scene.count;
+        render_scene_add(&scene,&box,&mats[grp[0]],model); /* model updated per frame */
+      }
+    }
     scene.camera=cam; scene.lights=&lights;
 
     /* --- Driver: forward+ with the baked SH lightmap enabled. --- */
@@ -218,25 +233,71 @@ int main(int argc,char **argv){
     fcfg.loader=&loader; fcfg.cluster=(cluster_config_t){16,16,24,0.2f,60.0f};
     fcfg.max_lights=MAX_LIGHTS; fcfg.index_capacity=16u*16u*24u*16u;
     fcfg.screen_w=(float)W; fcfg.screen_h=(float)H;
-    fcfg.sun_dir[0]=0.15f; fcfg.sun_dir[1]=0.42f; fcfg.sun_dir[2]=-0.90f;
+    /* u_sun_dir points TOWARD the sun; the CSM negates it for the travel dir.
+     * Must equal the lightmap bake's sun (hall_bake.c: travel (0.15,-0.42,0.90)),
+     * so to-sun = (-0.15,0.42,-0.90) -- the direct sun + its CSM shadow then line
+     * up with the baked indirect bounce. */
+    fcfg.sun_dir[0]=-0.15f; fcfg.sun_dir[1]=0.42f; fcfg.sun_dir[2]=-0.90f;
     fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* sun already baked into SH */
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
-    fcfg.sh_enabled=(shadow_only||spot_only)?0:1; fcfg.sh_scale=0.4f; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    /* CSM demo combines the baked indirect lightmap (reduced strength) with the
+     * direct sun + its CSM shadows. */
+    fcfg.sh_enabled=(shadow_only||spot_only)?0:1; fcfg.sh_scale=csm_demo?0.5f:0.4f; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=0; fcfg.shadow_res=1024; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
     fcfg.spot_light=1; fcfg.spot_res=1024; fcfg.spot_near=0.05f;
     fcfg.spot_far=hall_len*1.5f; fcfg.spot_bias=0.05f;
+    if(csm_demo){
+        /* Warm directional sun; 3 cascades split logarithmically, static baked
+         * once + a low-res dynamic map. Sun is NOT baked into the SH here. */
+        /* Direct sun -- brighter than the bake radiance so the shafts read
+         * strongly over the (reduced) baked indirect fill. */
+        fcfg.sun_color[0]=7.2f; fcfg.sun_color[1]=6.8f; fcfg.sun_color[2]=6.0f;
+        /* Small flat ambient so dynamic objects (no baked lightmap) aren't black. */
+        fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.15f;
+        fcfg.dir_cascades=6; fcfg.dir_static_res=4096; fcfg.dir_dynamic_res=2048;
+        fcfg.dir_lambda=0.6f; fcfg.dir_bias=0.08f; /* world-space depth bias (metres). */
+        /* Cap the shadowed range to the hall extent for crisp texels. */
+        fcfg.dir_max_distance=1.4f*hall_len;
+    }
+    struct timespec t0_,t1_; clock_gettime(CLOCK_MONOTONIC,&t0_);
     render_forward_t fwd;
     if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
+    clock_gettime(CLOCK_MONOTONIC,&t1_);
+    fprintf(stderr,"[perf] render_forward_init: %.1f ms\n",
+        (t1_.tv_sec-t0_.tv_sec)*1e3+(t1_.tv_nsec-t0_.tv_nsec)*1e-6);
 
     glViewport(0,0,W,H);
-    for(int frame=0;frame<3;++frame){
+    int nframes=csm_demo?600:3;         /* run a few seconds so shadows animate. */
+    int save_frame=csm_demo?30:(nframes-2);
+    struct timespec win_t0; clock_gettime(CLOCK_MONOTONIC,&win_t0);
+    int win_frames=0;                    /* frames since the last per-second report. */
+    for(int frame=0;frame<nframes;++frame){
+        if(csm_demo && box_idx>=0){
+            /* Slide the box back and forth along the hall in open floor beside the
+             * central column, low + hovering, so its dynamic-map shadow sweeps the
+             * floor while the static room self-shadow (baked once) holds. */
+            float ph=(float)frame/60.0f;
+            float t=0.5f+0.35f*sinf(ph);
+            float *m=scene.items[box_idx].model;
+            for(int k=0;k<16;++k) m[k]=(k%5==0)?1.0f:0.0f;
+            m[13]=amin[1]+0.28f*span[1];                       /* just off the floor. */
+            m[12+cax]=amin[cax]+0.68f*span[cax];               /* off to one side. */
+            m[12+lenax]=amin[lenax]+span[lenax]*t;
+        }
         glClearColor(0.02f,0.02f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         render_forward_render(&fwd,&scene);
-        if(frame==1) save_ppm(shot,W,H);
-        SDL_GL_SwapWindow(win); SDL_Delay(60);
+        if(frame==save_frame) save_ppm(shot,W,H);
+        SDL_GL_SwapWindow(win);
+        /* Report the average render FPS roughly once per second. */
+        ++win_frames;
+        struct timespec now; clock_gettime(CLOCK_MONOTONIC,&now);
+        double el=(now.tv_sec-win_t0.tv_sec)+(now.tv_nsec-win_t0.tv_nsec)*1e-9;
+        if(el>=1.0){ fprintf(stderr,"[perf] %.1f fps (%.2f ms/frame)\n",
+            win_frames/el,1e3*el/win_frames); win_frames=0; win_t0=now; }
     }
     render_forward_destroy(&fwd);
+    if(csm_demo) static_mesh_destroy(&box);
     for(int i=0;i<nm;++i){ static_mesh_destroy(&meshes[i]); obj_mesh_free(&dm[i]); }
     for(int c=0;c<9;c++) free(coeffs[c]); free(rects);
     SDL_GL_DeleteContext(gc); SDL_DestroyWindow(win); SDL_Quit();

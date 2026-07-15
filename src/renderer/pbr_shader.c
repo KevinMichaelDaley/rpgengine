@@ -110,6 +110,7 @@ static const char *const PBR_FS =
     "uniform sampler2D u_sh8;\n"
     "uniform int u_sh_enabled;\n"
     "uniform float u_sh_scale;\n" /* baked-lightmap intensity multiplier (default 1). */
+    "uniform float u_sh_object;\n" /* 1 for static (lightmapped) objects, 0 for dynamic. */
     /* Debug visualisation: 0=off, 1=raw SH DC term (coeff0) at v_uv1,
      * 2=reconstructed SH irradiance E(N), 3=lightmap uv1 as colour. */
     "uniform int u_debug_mode;\n"
@@ -207,6 +208,51 @@ static const char *const PBR_FS =
     "  }\n"
     "  return lit / 9.0;\n"
     "}\n"
+    /* Cascaded directional (sun) shadow via VARIANCE shadow mapping. The view\n"
+     * frustum is split into u_csm_count cascades; each has a light matrix +\n"
+     * virtual eye + far. Two RG32F moment arrays -- static (baked once) and\n"
+     * dynamic (per frame, dynamic casters only) -- are co-sampled and the darker\n"
+     * (nearer occluder) wins, so a static wall and a moving prop both shadow.\n"
+     * Moments are hardware-filtered (mipmapped), so one tap yields a soft edge. */
+    "uniform sampler2DArray u_csm_static;\n"
+    "uniform sampler2DArray u_csm_dynamic;\n"
+    "uniform mat4 u_csm_vp[8];\n"
+    "uniform vec3 u_csm_eye[8];\n"
+    "uniform float u_csm_far[8];\n"
+    "uniform float u_csm_split[8];\n"
+    "uniform int u_csm_count;\n"
+    "uniform int u_csm_enabled;\n"
+    "uniform float u_dir_bias;\n"
+    /* EVSM2 exponent -- MUST match the moment write in shadow_csm_init.c (SC_FS). */
+    "const float EVSM_C = 30.0;\n"
+    /* Chebyshev one-sided upper bound on the exp-warped depth. The warp makes the\n"
+     * lit/occluded transition near-binary, so a watertight room self-shadows\n"
+     * cleanly (little acne) and only the window shafts get a soft penumbra. */
+    "float pbr_evsm(vec2 m, float d){\n"
+    "  float w = exp(EVSM_C * d);\n"
+    "  if(w <= m.x) return 1.0;\n"
+    "  float var = max(m.y - m.x*m.x, 1e-6 * m.y);\n" /* relative min-variance. */
+    "  float dd = w - m.x;\n"
+    "  float p = var / (var + dd*dd);\n"
+    "  return clamp((p - 0.1) / 0.9, 0.0, 1.0);\n"  /* light-bleed reduction. */
+    "}\n"
+    "float pbr_csm_shadow(vec3 fragpos, float viewz){\n"
+    "  if(u_csm_enabled==0) return 1.0;\n"
+    /* Select the first cascade whose split covers this fragment's view depth. */
+    "  int ci = u_csm_count-1;\n"
+    "  for(int i=0;i<u_csm_count;++i){ if(viewz <= u_csm_split[i]){ ci=i; break; } }\n"
+    "  vec4 lc = u_csm_vp[ci] * vec4(fragpos, 1.0);\n"
+    "  vec3 ndc = lc.xyz / lc.w;\n"
+    "  vec2 uv = ndc.xy*0.5 + 0.5;\n"
+    "  if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) return 1.0;\n"
+    "  float d = clamp((length(fragpos - u_csm_eye[ci]) - u_dir_bias) / u_csm_far[ci], 0.0, 1.0);\n"
+    /* Co-sample static + dynamic moment maps; the nearer occluder shadows more.\n"
+     * Explicit LOD 0: auto-mip uses the shadow-coord derivatives (which jump at\n"
+     * cascade boundaries) and would sample a tiny over-blurred mip. */
+    "  float ls = pbr_evsm(textureLod(u_csm_static, vec3(uv, float(ci)), 0.0).rg, d);\n"
+    "  float ld = pbr_evsm(textureLod(u_csm_dynamic, vec3(uv, float(ci)), 0.0).rg, d);\n"
+    "  return min(ls, ld);\n"
+    "}\n"
     "void main() {\n"
     /* Material textures tile at u_uv_scale; the lightmap (v_uv1) is NOT scaled. */
     "  vec2 muv = v_uv0 * u_uv_scale;\n"
@@ -229,7 +275,7 @@ static const char *const PBR_FS =
     "  vec3 V = normalize(u_eye_pos - v_world_pos);\n"
     "  vec3 F0 = mix(vec3(0.08*u_specular_strength), albedo, metal);\n"
     /* Directional sun. */
-    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color;\n"
+    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, -v_view_z);\n"
     "  if(u_clustered==1){\n"
     /* Forward+: find this fragment's cluster and shade only its lights. */
     "    int dimx=int(u_cluster_dims.x), dimy=int(u_cluster_dims.y), dimz=int(u_cluster_dims.z);\n"
@@ -263,9 +309,16 @@ static const char *const PBR_FS =
     "  if(u_debug_mode==2){ frag=vec4(max(pbr_sh_irradiance(N),vec3(0.0)),1.0); return; }\n"
     "  if(u_debug_mode==3){ frag=vec4(v_uv1,0.0,1.0); return; }\n"
     "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"
+    /* 5 = raw CSM shadow factor (white=lit, black=occluded). 6 = which cascade. */
+    "  if(u_debug_mode==5){ float sh=pbr_csm_shadow(v_world_pos,-v_view_z); frag=vec4(vec3(sh),1.0); return; }\n"
+    "  if(u_debug_mode==6){ int ci=u_csm_count-1; for(int i=0;i<u_csm_count;++i){ if(-v_view_z<=u_csm_split[i]){ci=i;break;} }\n"
+    "    vec3 cc=ci==0?vec3(1,0,0):(ci==1?vec3(0,1,0):vec3(0,0,1)); vec4 lc=u_csm_vp[ci]*vec4(v_world_pos,1.0); vec3 nd=lc.xyz/lc.w; vec2 uv=nd.xy*0.5+0.5;\n"
+    "    float inr=(uv.x>=0.0&&uv.x<=1.0&&uv.y>=0.0&&uv.y<=1.0)?1.0:0.2; frag=vec4(cc*inr,1.0); return; }\n"
     "  if(u_debug_mode==5){ frag=vec4(0.5+0.5*normalize(v_tangent),1.0); return; }\n"
     "  vec3 ambient;\n"
-    "  if(u_sh_enabled==1){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E*u_sh_scale/PI*ao; }\n"
+    /* Dynamic objects (u_sh_object=0) are not in the bake -- their uv1 is
+     * meaningless, so fall back to the flat ambient instead of the lightmap. */
+    "  if(u_sh_enabled==1 && u_sh_object>0.5){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E*u_sh_scale/PI*ao; }\n"
     "  else { ambient = u_ambient*albedo*ao; }\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"
