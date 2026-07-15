@@ -351,6 +351,7 @@ BIN_HEADLESS += build/lm_gpu_pack_tests
 BIN_HEADLESS += build/lm_bake_driver_tests
 BIN_HEADLESS += build/chunk_grid_tests
 BIN_HEADLESS += build/sdf_field_tests
+BIN_HEADLESS += build/sdf_field_serialize_tests
 BIN_HEADLESS += build/lm_kdtree_tests
 BIN_HEADLESS += build/lm_lightmap_tests
 BIN_HEADLESS += build/lm_light_tests
@@ -1205,6 +1206,9 @@ build/chunk_grid_tests: tests/renderer/chunk_grid_tests.c $(CHUNK_GRID_SRC) incl
 
 build/sdf_field_tests: tests/renderer/sdf_field_tests.c src/renderer/chunk/sdf_field.c include/ferrum/renderer/chunk/sdf_field.h | build
 	$(CC) $(CFLAGS) tests/renderer/sdf_field_tests.c src/renderer/chunk/sdf_field.c -o $@ -lm
+
+build/sdf_field_serialize_tests: tests/renderer/sdf_field_serialize_tests.c src/renderer/chunk/sdf_field.c src/renderer/chunk/sdf_field_serialize.c include/ferrum/renderer/chunk/sdf_field.h | build
+	$(CC) $(CFLAGS) tests/renderer/sdf_field_serialize_tests.c src/renderer/chunk/sdf_field.c src/renderer/chunk/sdf_field_serialize.c -o $@ -lm
 
 build/lm_jfa_sdf: tests/visual/lm_jfa_sdf.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/lm_jfa_sdf.c $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
