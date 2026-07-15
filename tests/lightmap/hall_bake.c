@@ -34,11 +34,13 @@
 #ifndef HALL_EGL
 static void *hb_getproc(const char *n, void *u) { (void)u; return SDL_GL_GetProcAddress(n); }
 #endif
+#include "ferrum/lightmap/gpu/lm_gpu_gather.h"
 #include "ferrum/math/vec3.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/mesh/dmesh_loader.h"
+#include "ferrum/renderer/chunk/chunk_grid.h"
 
-#define MAXM 256
+#define MAXM 8192
 
 static vec3_t v3(float x, float y, float z) { return (vec3_t){ x, y, z }; }
 static int hb_cmpstr(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
@@ -83,8 +85,10 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
      * assign each mesh a different atlas index -> every surface samples the wrong
      * atlas region (splotches). A deterministic sort makes the mesh order (and
      * thus the baked rects) identical on every machine. The renderer sorts too. */
-    int grp[MAXM]; char names[MAXM][128]; int nm = 0;
-    char fnames[MAXM][128]; int nf = 0;
+    /* File-static (not stack) so MAXM can be large without overflowing the
+     * setup thread's stack. hall_setup runs once. */
+    static int grp[MAXM]; static char names[MAXM][128]; int nm = 0;
+    static char fnames[MAXM][128]; int nf = 0;
     DIR *d = opendir(dir); struct dirent *e;
     while (d && (e = readdir(d)) && nf < MAXM) {
         if (!strstr(e->d_name, ".dmesh")) continue;
@@ -174,6 +178,67 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
     return true;
 }
 
+/* Centroid of a mesh's vertices (for assigning it to an atlas chunk). */
+static void mesh_centroid(const lm_mesh_t *m, float c[3])
+{
+    double s[3] = { 0, 0, 0 };
+    for (uint32_t v = 0; v < m->vert_count; ++v)
+        for (int k = 0; k < 3; ++k) s[k] += m->positions[v*3+k];
+    double inv = m->vert_count ? 1.0 / (double)m->vert_count : 0.0;
+    for (int k = 0; k < 3; ++k) c[k] = (float)(s[k] * inv);
+}
+
+/* Per-chunk atlas bake (rpg-yfa4): partition the loaded meshes into an atlas
+ * chunk grid (HALL_ATLAS_CHUNK) by centroid and bake EACH chunk's meshes into
+ * their OWN lightmap (one <out>_cNNN.flm per chunk), gathering against the whole
+ * scene (geo_scene) so lighting is seamless across chunk borders. The gather's
+ * own chunk_size still bounds the per-chunk SVO. Returns the number written. */
+static int bake_per_chunk(const lm_mesh_scene_t *full, const lm_bake_config_t *base,
+                          const char *out_prefix, arena_t *arena)
+{
+    float atlas_chunk = getenv("HALL_ATLAS_CHUNK") ? (float)atof(getenv("HALL_ATLAS_CHUNK")) : 24.0f;
+    chunk_grid_t grid;
+    if (!chunk_grid_init(&grid, base->svo_bounds, atlas_chunk, 0.0f)) return 0;
+    uint32_t nchunks = chunk_grid_count(&grid);
+    uint32_t nm = full->n_meshes;
+
+    uint32_t   *chunk_of = malloc((size_t)nm * sizeof(uint32_t));
+    lm_mesh_t  *sub      = malloc((size_t)nm * sizeof(lm_mesh_t));
+    if (!chunk_of || !sub) { free(chunk_of); free(sub); return 0; }
+    for (uint32_t i = 0; i < nm; ++i) {
+        float c[3]; mesh_centroid(&full->meshes[i], c);
+        uint32_t ch = chunk_grid_of_point(&grid, c[0], c[1], c[2]);
+        chunk_of[i] = (ch == UINT32_MAX) ? 0u : ch;
+    }
+
+    int written = 0;
+    for (uint32_t c = 0; c < nchunks; ++c) {
+        uint32_t m = 0;
+        for (uint32_t i = 0; i < nm; ++i)
+            if (chunk_of[i] == c) sub[m++] = full->meshes[i];
+        if (m == 0) continue;
+
+        lm_mesh_scene_t ss = { sub, m, full->lights, full->n_lights, full->materials };
+        lm_bake_config_t cc = *base;
+        cc.geo_scene = full;                       /* GI sees the WHOLE scene */
+        if (cc.chunk_size <= 0.0f) cc.chunk_size = atlas_chunk; /* bound per-chunk SVO */
+
+        size_t mk = arena_mark(arena);
+        lm_mesh_bake_result_t res;
+        if (lm_mesh_bake(&ss, &cc, &res, arena)) {
+            char path[600]; snprintf(path, sizeof path, "%s_c%03u.flm", out_prefix, c);
+            if (lm_lightmap_save(&res, path)) {
+                printf("  chunk %u: %u meshes -> %s (atlas %ux%u)\n",
+                       c, m, path, res.atlas.width, res.atlas.height);
+                fflush(stdout); ++written;
+            }
+        }
+        arena_pop_to_mark(arena, mk);
+    }
+    free(chunk_of); free(sub);
+    return written;
+}
+
 int main(int argc, char **argv)
 {
     struct hall_input in = {
@@ -208,6 +273,21 @@ int main(int argc, char **argv)
         gl = &gl_loader;
         printf("GPU gather ENABLED: %s\n", (const char *)glGetString(GL_RENDERER));
         fflush(stdout);
+    }
+
+    /* Per-chunk atlas bake (rpg-yfa4): one lightmap per atlas chunk. Otherwise
+     * the normal single-atlas bake through the driver. */
+    if (getenv("HALL_PERCHUNK")) {
+        lm_mesh_scene_t full; lm_bake_config_t cfg;
+        memset(&full, 0, sizeof full); memset(&cfg, 0, sizeof cfg);
+        if (!hall_setup(&full, &cfg, &arena, &in)) { fprintf(stderr, "setup failed\n"); return 1; }
+        if (gl) {
+            if (!lm_gpu_gather_init(gl)) { fprintf(stderr, "gpu gather init failed\n"); return 1; }
+            cfg.gpu_gather = 1;
+        }
+        int n = bake_per_chunk(&full, &cfg, out, &arena);
+        printf("wrote %d per-chunk lightmaps (prefix %s)\n", n, out);
+        return n > 0 ? 0 : 1;
     }
 
     if (!lm_bake_driver_run(gl, hall_setup, &in, out, &arena)) {

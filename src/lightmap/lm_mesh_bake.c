@@ -223,6 +223,10 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
      * node count, and its node-count-sized voxelize scratch, is exactly what
      * blows up on a massive scene. Every other path uses the whole-scene SVO. */
     bool chunked_gpu = config->gpu_gather && config->chunk_size > 0.0f;
+    /* Geometry for the GI gather (SVO + SDF fields). Defaults to the luxelized
+     * meshes, but a per-chunk atlas bake (rpg-yfa4) sets geo_scene to the WHOLE
+     * scene so one chunk's atlas still occludes/bounces against everything. */
+    const lm_mesh_scene_t *geo = config->geo_scene ? config->geo_scene : scene;
     npc_svo_grid_t svo; memset(&svo, 0, sizeof svo);
     if (!chunked_gpu && !npc_svo_grid_init(&svo, config->svo_bounds, svo_depth))
         return false;
@@ -288,7 +292,7 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                                        (size_t)total * 3u * sizeof(lm_sh9_t));
             if (accum && de && (chunked_gpu || (area && vnormal))) {
                 if (!chunked_gpu)
-                    lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, area, vnormal);
+                    lm_svo_voxelize(&svo, geo->meshes, geo->n_meshes, area, vnormal);
                 for (uint32_t i = 0; i < total; ++i)
                     for (int c = 0; c < 3; ++c) {
                         de[i * 3 + c] = result->combined.luxels[i].sh[c];
@@ -306,14 +310,14 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                 if (config->gpu_gather) {
                     gpu_ok = config->chunk_size > 0.0f
                        ? lm_gpu_gather_chunked(&result->combined, accum,
-                                      config->svo_bounds, config->voxel_size, scene,
-                                      config->chunk_size, config->chunk_margin, scene->lights,
-                                      scene->n_lights, &config->sky,
+                                      config->svo_bounds, config->voxel_size, geo,
+                                      config->chunk_size, config->chunk_margin, geo->lights,
+                                      geo->n_lights, &config->sky,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,
                                       config->seed ^ 0x9E3779B9u)
-                       : lm_gpu_gather_run(&result->combined, accum, &svo, scene, NULL, NULL,
-                                      scene->lights, scene->n_lights, &config->sky,
+                       : lm_gpu_gather_run(&result->combined, accum, &svo, geo, NULL, NULL,
+                                      geo->lights, geo->n_lights, &config->sky,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,
                                       config->seed ^ 0x9E3779B9u);

@@ -75,6 +75,12 @@ typedef struct lm_bake_config {
                                       over the whole scene. 0 = single region. */
     float       chunk_margin;    /**< Overlap added to each chunk's SDF box so rays
                                       resolve across chunk boundaries (m). */
+    /** Per-chunk atlas bake (rpg-yfa4): geometry used for the GI gather (SVO +
+     *  SDF fields) when it must differ from the luxelized @ref lm_mesh_scene
+     *  meshes -- i.e. bake ONE chunk's meshes into their own atlas while still
+     *  occluding/bouncing against the WHOLE scene. NULL -> use the scene's own
+     *  meshes (the normal single-atlas bake). Borrowed. */
+    const struct lm_mesh_scene *geo_scene;
 } lm_bake_config_t;
 
 #ifdef __cplusplus
