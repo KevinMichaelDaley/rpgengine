@@ -66,6 +66,9 @@ typedef struct lm_bake_config {
     void       *on_batch_ud;     /**< User data passed to @ref on_batch. */
     lm_solve_params_t solve;     /**< Radiosity solve parameters + region gate. */
     uint32_t    seed;            /**< Base RNG seed. */
+    int         gpu_gather;      /**< Run the GI gather on the GPU (rpg-k4lk); the
+                                      caller must lm_gpu_gather_init() a compute
+                                      context first. 0 = CPU path. */
 } lm_bake_config_t;
 
 #ifdef __cplusplus

@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "ferrum/lightmap/gpu/lm_gpu_gather.h"
 #include "ferrum/lightmap/lm_gi_gather.h"
 #include "ferrum/lightmap/lm_svo_mip.h"
 #include "ferrum/lightmap/lm_svo_voxelize.h"
@@ -277,6 +278,22 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                     }
                 uint32_t batch = config->gi_batch ? config->gi_batch : 64u;
                 uint32_t nb = (config->farfield_samples + batch - 1u) / batch;
+                /* GPU path (rpg-k4lk): one dispatch does all samples; skip the CPU
+                 * batch loop. Falls back to CPU if the run fails. */
+                if (config->gpu_gather &&
+                    lm_gpu_gather_run(&result->combined, accum, &svo, scene->lights,
+                                      scene->n_lights, &config->sky,
+                                      config->farfield_near, config->farfield_maxdist,
+                                      config->farfield_samples, config->gi_bounces,
+                                      config->seed ^ 0x9E3779B9u)) {
+                    for (uint32_t i = 0; i < total; ++i)
+                        for (int c = 0; c < 3; ++c)
+                            for (int k = 0; k < 9; ++k)
+                                result->combined.luxels[i].sh[c].c[k] =
+                                    de[i * 3 + c].c[k] + accum[i * 3 + c].c[k];
+                    if (config->on_batch) config->on_batch(config->on_batch_ud, nb, nb);
+                    nb = 0; /* skip the CPU loop below. */
+                }
                 for (uint32_t b = 0; b < nb; ++b) {
                     lm_gi_gather(&result->combined, accum, &svo, scene->lights,
                                  scene->n_lights, &config->sky, vnormal,
