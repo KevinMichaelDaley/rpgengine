@@ -202,7 +202,13 @@ def main():
     mw, mh = _png_size(mask_png)
     print(f"[bake] mask: {mw} x {mh}")
 
-    tile = (4.5, 2.6)   # matches build_masonry_material's default tile.
+    # The mask/normal/ao maps were baked by bake_wall over ONE wall tile
+    # (width=2.0, height=1.15). build_masonry_material samples them at `tile`
+    # metres per [0,1], so tile MUST equal that wall tile or the composited
+    # albedo/roughness end up at a different brick scale than the normal map and
+    # slide out of registration at render. (Env WALL_TILE overrides.)
+    _wt = os.environ.get("WALL_TILE", "2.0,1.15").split(",")
+    tile = (float(_wt[0]), float(_wt[1]))
     masonry_plane = _bake_plane(tile[0], tile[1], "masonry_bake_plane")
     masonry = build_masonry(
         "bake_stone_wall",

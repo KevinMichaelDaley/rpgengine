@@ -52,10 +52,18 @@ static void save_ppm(const char *path,int w,int h){
         for(int y=h-1;y>=0;--y) fwrite(rgb+(size_t)y*row,1,row,f); fclose(f);
         printf("screenshot: %s\n",path);} free(rgb);
 }
+#define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY 0x84FF
 static int load_tex(texture_t *t,const gl_loader_t *l,const char *p,texture_format_t f){
     int w=0,h=0,n=0; unsigned char *px=stbi_load(p,&w,&h,&n,3); if(!px)return 0;
     texture_create(t,l); texture_upload_2d(t,f,(uint32_t)w,(uint32_t)h,px,true);
     texture_set_sampler(t,GL_LINEAR_MIPMAP_LINEAR,GL_LINEAR,GL_REPEAT,GL_REPEAT);
+    /* Anisotropic filtering: sharpen grazing-angle surfaces (floor/walls) that
+     * trilinear mipmapping over-blurs. Clamp to the driver's max (>=16 typical). */
+    GLfloat maxa=1.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY,&maxa);
+    if(maxa>16.0f) maxa=16.0f;
+    glBindTexture(GL_TEXTURE_2D,texture_handle(t));
+    glTexParameterf(GL_TEXTURE_2D,GL_TEXTURE_MAX_ANISOTROPY,maxa);
     stbi_image_free(px); return 1;
 }
 
@@ -70,9 +78,16 @@ int main(int argc,char **argv){
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,24);
-    SDL_Window *win=SDL_CreateWindow("hall lit+dynamic",0,0,WIN,WIN,SDL_WINDOW_OPENGL|SDL_WINDOW_SHOWN);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS,1);   /* MSAA */
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES,8);
+    SDL_DisplayMode dmode; SDL_GetDesktopDisplayMode(0,&dmode);
+    SDL_Window *win=SDL_CreateWindow("hall lit+dynamic",0,0,dmode.w,dmode.h,
+        SDL_WINDOW_OPENGL|SDL_WINDOW_FULLSCREEN_DESKTOP);
     SDL_GLContext gc=SDL_GL_CreateContext(win); SDL_GL_MakeCurrent(win,gc);
     if(!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) return 1;
+    int W,H; SDL_GL_GetDrawableSize(win,&W,&H); /* actual pixels (HiDPI-safe) */
+    glEnable(GL_MULTISAMPLE);
+    printf("fullscreen %dx%d (msaa 8x)\n",W,H);
     gl_loader_t loader={sdl_get_proc,NULL};
 
     /* --- Load dual-UV dmeshes (readdir order == the bake's mesh order). --- */
@@ -156,6 +171,7 @@ int main(int argc,char **argv){
     int lax=(span[0]>span[2])?0:2; int cax=(lax==0)?2:0;
     float hall_len=(span[0]>span[2])?span[0]:span[2];
     int shadow_only = getenv("SHADOW_ONLY") && atoi(getenv("SHADOW_ONLY"));
+    int one_light = getenv("HALL_ONE") && atoi(getenv("HALL_ONE")); /* 1 light + lightmap */
     /* Light index 0: a bright SHADOW-CASTING point light. Placed near the camera
      * end and off to one side at mid height so the central column rakes a long
      * shadow across the floor and far columns. */
@@ -166,7 +182,7 @@ int main(int argc,char **argv){
       s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=shadow_only?14.0f:8.0f; s.range=hall_len*1.6f;
       s.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&s); }
     uint32_t rng=4242;
-    for(int i=0;i<(shadow_only?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
+    for(int i=0;i<((shadow_only||one_light)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
         l.position[0]=amin[0]+frand(&rng)*span[0]; l.position[1]=amin[1]+0.12f*span[1]+frand(&rng)*0.7f*span[1];
         l.position[2]=amin[2]+frand(&rng)*span[2]; const float *pc=pal[i%6];
         l.color[0]=pc[0]; l.color[1]=pc[1]; l.color[2]=pc[2];
@@ -178,7 +194,7 @@ int main(int argc,char **argv){
     render_camera_t cam; float eye[3]={cx,cy,cz},tgt[3]={cx,cy,cz},up[3]={0,1,0};
     eye[lenax]=amin[lenax]+span[lenax]*0.08f; tgt[lenax]=amax[lenax]-span[lenax]*0.08f;
     eye[1]=amin[1]+span[1]*0.35f; tgt[1]=amin[1]+span[1]*0.35f;
-    render_camera_look_at(&cam,eye,tgt,up,60.0f*(float)M_PI/180.0f,1.0f,0.2f,60.0f);
+    render_camera_look_at(&cam,eye,tgt,up,60.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,60.0f);
     render_renderable_t rb[MAXM]; render_scene_t scene; render_scene_init(&scene,rb,MAXM);
     float model[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     for(int i=0;i<nm;++i) render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
@@ -188,21 +204,21 @@ int main(int argc,char **argv){
     render_forward_config_t fcfg; memset(&fcfg,0,sizeof fcfg);
     fcfg.loader=&loader; fcfg.cluster=(cluster_config_t){16,16,24,0.2f,60.0f};
     fcfg.max_lights=MAX_LIGHTS; fcfg.index_capacity=16u*16u*24u*16u;
-    fcfg.screen_w=(float)WIN; fcfg.screen_h=(float)WIN;
+    fcfg.screen_w=(float)W; fcfg.screen_h=(float)H;
     fcfg.sun_dir[0]=0.15f; fcfg.sun_dir[1]=0.42f; fcfg.sun_dir[2]=-0.90f;
     fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* sun already baked into SH */
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
-    fcfg.sh_enabled=shadow_only?0:1; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=shadow_only?0:1; fcfg.sh_scale=0.4f; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=0; fcfg.shadow_res=1024; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
     render_forward_t fwd;
     if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
 
-    glViewport(0,0,WIN,WIN);
+    glViewport(0,0,W,H);
     for(int frame=0;frame<3;++frame){
         glClearColor(0.02f,0.02f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         render_forward_render(&fwd,&scene);
-        if(frame==1) save_ppm(shot,WIN,WIN);
+        if(frame==1) save_ppm(shot,W,H);
         SDL_GL_SwapWindow(win); SDL_Delay(60);
     }
     render_forward_destroy(&fwd);
