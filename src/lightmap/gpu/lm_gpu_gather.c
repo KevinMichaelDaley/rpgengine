@@ -127,7 +127,9 @@ static const char *CS_GATHER =
     "layout(local_size_x=64) in;\n"
     "layout(std430,binding=0) readonly buffer Sdf { float sdf[]; };\n"
     "layout(std430,binding=2) readonly buffer Lux { vec4 lux[]; };\n"
-    "layout(std430,binding=3) coherent buffer Out { float osh[]; };\n"
+    /* Not 'writeonly': NVIDIA returns zero from glGetBufferSubData on a\n"
+     * write-only-qualified SSBO. Plain buffer reads back correctly. */
+    "layout(std430,binding=3) buffer Out { float osh[]; };\n"
     "layout(std430,binding=4) readonly buffer Lit { vec4 lit[]; };\n"
     "struct Node { uint children[8]; vec4 diffuse; vec4 emissive; };\n"
     "layout(std430,binding=5) readonly buffer Svo { Node nodes[]; };\n"
@@ -227,9 +229,9 @@ static const char *CS_GATHER =
     "      d=ct*(cr*cos(cp))+cb*(cr*sin(cp))+hn*cz; o=hp+hn*finevox*1.5; }\n"
     "    float y[9]; shb(normalize(dir),y);\n"
     "    for(int c=0;c<3;++c) for(int i=0;i<9;++i) sh[c*9+i]+=Li[c]*weight*y[i]; }\n"
-    /* ACCUMULATE across sample-batches (each dispatch adds its estimate; the\n"
-     * host zeroes the buffer once and divides by the batch count at the end). */
-    "  for(int k=0;k<27;++k) osh[27u*li+uint(k)]+=sh[k]; }\n";
+    /* One batch's estimate; the HOST reads this back and sums across batches\n"
+     * (cross-dispatch SSBO read-modify-write is not reliable across drivers). */
+    "  for(int k=0;k<27;++k) osh[27u*li+uint(k)]=sh[k]; }\n";
 
 bool lm_gpu_gather_init(const gl_loader_t *loader) {
     if (loader == NULL || loader->get_proc_address == NULL) return false;
@@ -471,22 +473,33 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     int throttle_us = getenv("LM_GPU_THROTTLE_US") ? atoi(getenv("LM_GPU_THROTTLE_US")) : 0;
     int per = (int)samples < PER ? (int)samples : PER; if (per < 1) per = 1;
     int nbatch = ((int)samples + per - 1) / per; if (nbatch < 1) nbatch = 1;
-    /* Zero the accumulator once; the shader adds each batch's estimate into it. */
-    memset(osh, 0, (size_t)nlux * 27 * sizeof(float));
-    gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, b_out);
-    gl.BufferData(GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)((size_t)nlux*27*sizeof(float)), osh, GL_DYNAMIC_COPY);
+    /* Host-side accumulation: each dispatch OVERWRITES osh with its own batch
+     * estimate; we read it back and sum on the CPU. Cross-dispatch SSBO
+     * read-modify-write is not reliable across drivers (races/incoherence gave
+     * non-deterministic darkening on both Intel and NVIDIA), so the buffer is
+     * write-only per batch and the accumulator lives in host memory. The
+     * readback also bounds each dispatch (TDR-safe). */
+    double *osum = calloc((size_t)nlux * 27, sizeof(double));
+    if (!osum) { gl.DeleteBuffers(8, all); free(occ); free(nodes); free(plux); free(plit); free(osh); return false; }
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,3,b_out);
     for (int bi = 0; bi < nbatch; ++bi) {
         gl.Uniform1i(gl.GetUniformLocation(g_gather,"samples"), per);
         gl.Uniform1ui(gl.GetUniformLocation(g_gather,"seed"), seed ^ ((uint32_t)bi * 0x9E3779B9u + 0x85EBCA6Bu));
         gl.DispatchCompute((GLuint)((nlux+63)/64),1,1);
-        /* Barrier so the next dispatch's read-modify-write sees this batch's
-         * accumulation (coherent buffer + SSBO barrier). glFinish EVERY batch:
-         * on a shared iGPU (Iris Xe drives the display too), letting dispatches
-         * queue back-to-back starves the compositor and freezes the desktop --
-         * syncing per batch keeps each GPU slice short so the display stays live. */
-        gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        /* GL_BUFFER_UPDATE_BARRIER_BIT (0x200): make the compute shader's SSBO
+         * writes visible to the client glGetBufferSubData readback below. */
+        gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | 0x00000200u);
+        /* NVIDIA does not implicitly flush the compute SSBO writes for the client
+         * readback below (it returned all-zero without this); glFinish forces the
+         * dispatch to complete + writes to land. Also bounds each dispatch under
+         * the GPU watchdog / keeps a shared iGPU's compositor alive. */
         gl.Finish();
+        /* Synchronous readback of this batch's estimate; summed on the host. */
+        gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,b_out);
+        gl.GetBufferSubData(GL_SHADER_STORAGE_BUFFER,0,(GLsizeiptr)((size_t)nlux*27*sizeof(float)),osh);
+        for (size_t k = 0; k < (size_t)nlux * 27; ++k) osum[k] += (double)osh[k];
+        if (getenv("LM_GPU_DEBUG") && (bi==0 || (bi+1)%16==0 || bi+1==nbatch))
+            fprintf(stderr, "[gpugather] batch %d/%d (%d spp)\n", bi+1, nbatch, per);
         /* Optional cooperative yield so the compositor gets the GPU between
          * batches on a heavily-loaded shared device. */
         if (throttle_us > 0) {
@@ -497,14 +510,12 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
             fprintf(stderr, "[gpugather] batch %d/%d (%d spp)\n", bi+1, nbatch, per); fflush(stderr);
         }
     }
-    /* Single readback; divide by the batch count for the mean estimate. */
-    gl.BindBuffer(GL_SHADER_STORAGE_BUFFER,b_out);
-    gl.GetBufferSubData(GL_SHADER_STORAGE_BUFFER,0,(GLsizeiptr)((size_t)nlux*27*sizeof(float)),osh);
     double invb = 1.0 / (double)nbatch;
     for (uint32_t i = 0; i < nlux; ++i)
         for (int c = 0; c < 3; ++c)
             for (int k = 0; k < 9; ++k)
-                accum[i*3+c].c[k] = (float)((double)osh[i*27 + c*9 + k] * invb);
+                accum[i*3+c].c[k] = (float)(osum[i*27 + c*9 + k] * invb);
+    free(osum);
 
     gl.DeleteBuffers(8, all);
     free(occ); free(nodes); free(plux); free(plit); free(osh);
