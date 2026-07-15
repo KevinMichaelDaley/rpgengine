@@ -109,6 +109,7 @@ static const char *const PBR_FS =
     "uniform sampler2D u_sh7;\n"
     "uniform sampler2D u_sh8;\n"
     "uniform int u_sh_enabled;\n"
+    "uniform float u_sh_scale;\n" /* baked-lightmap intensity multiplier (default 1). */
     /* Debug visualisation: 0=off, 1=raw SH DC term (coeff0) at v_uv1,
      * 2=reconstructed SH irradiance E(N), 3=lightmap uv1 as colour. */
     "uniform int u_debug_mode;\n"
@@ -241,7 +242,7 @@ static const char *const PBR_FS =
     "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"
     "  if(u_debug_mode==5){ frag=vec4(0.5+0.5*normalize(v_tangent),1.0); return; }\n"
     "  vec3 ambient;\n"
-    "  if(u_sh_enabled==1){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E/PI*ao; }\n"
+    "  if(u_sh_enabled==1){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E*u_sh_scale/PI*ao; }\n"
     "  else { ambient = u_ambient*albedo*ao; }\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"

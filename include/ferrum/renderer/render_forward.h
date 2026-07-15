@@ -46,6 +46,7 @@ typedef struct render_forward_config {
     float              ambient[3];    /**< flat ambient term. */
     int                sh_enabled;    /**< bind a baked SH lightmap (units 7-15). */
     uint32_t           sh_tex[9];     /**< 9 RGB32F SH-coeff atlas texture ids. */
+    float              sh_scale;      /**< lightmap intensity multiplier (0 -> 1). */
     int                shadow_light;  /**< flat light index to cast a cube shadow (-1 = none). */
     uint32_t           shadow_res;    /**< cube face resolution (0 = no shadow). */
     float              shadow_near;   /**< cube shadow near plane. */

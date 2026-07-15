@@ -83,6 +83,8 @@ static void fwd_forward_submit(void *ud)
             shader_uniform_set_int(&f->cache, &f->pbr, shn[c], 7 + c);
         }
         shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 1);
+        shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_scale",
+                                 f->cfg.sh_scale > 0.0f ? f->cfg.sh_scale : 1.0f);
     } else {
         shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 0);
     }
