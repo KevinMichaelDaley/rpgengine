@@ -347,6 +347,7 @@ BIN_HEADLESS += build/procgen_e2e_tests
 BIN_HEADLESS += build/procgen_svo_tests
 BIN_HEADLESS += build/lm_visibility_tests
 BIN_HEADLESS += build/lm_sh_tests
+BIN_HEADLESS += build/lm_gpu_pack_tests
 BIN_HEADLESS += build/lm_kdtree_tests
 BIN_HEADLESS += build/lm_lightmap_tests
 BIN_HEADLESS += build/lm_light_tests
@@ -1190,6 +1191,9 @@ build/lm_visibility_tests: tests/lightmap/lm_visibility_tests.c src/lightmap/lm_
 
 build/lm_sh_tests: tests/lightmap/lm_sh_tests.c src/lightmap/lm_sh.c src/math/vec3.c include/ferrum/lightmap/lm_sh.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_sh_tests.c src/lightmap/lm_sh.c src/math/vec3.c -o $@ -lm
+
+build/lm_gpu_pack_tests: tests/lightmap/lm_gpu_pack_tests.c src/lightmap/gpu/lm_gpu_pack.c include/ferrum/lightmap/gpu/lm_gpu_pack.h | build
+	$(CC) $(CFLAGS) tests/lightmap/lm_gpu_pack_tests.c src/lightmap/gpu/lm_gpu_pack.c -o $@ -lm
 
 build/lm_kdtree_tests: tests/lightmap/lm_kdtree_tests.c src/lightmap/lm_kdtree.c src/math/vec3.c src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c include/ferrum/lightmap/lm_kdtree.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_kdtree_tests.c src/lightmap/lm_kdtree.c src/math/vec3.c src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c -o $@ -lm
