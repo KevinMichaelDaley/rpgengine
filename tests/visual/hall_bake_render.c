@@ -187,6 +187,9 @@ int main(int argc,char**argv){
 
     /* Build render geometry (pos,nrm,tan,uv0,uv1-remapped) + per-mesh ranges. */
     uint32_t tot=0; for(int i=0;i<nm;++i) tot+=dm[i].index_count;
+    /* HALL_RAWUV=1 feeds the RAW lightmap uv1 to v_uv1 instead of the atlas-
+     * remapped uv, so HALL_DEBUG=3 visualizes the true lightmap parameterization. */
+    int rawuv = getenv("HALL_RAWUV") && atoi(getenv("HALL_RAWUV"));
     float *vtx=malloc((size_t)tot*14*sizeof(float)); uint32_t moff[MAXM]; int vi=0;
     for(int i=0;i<nm;++i){ moff[i]=(uint32_t)vi; const lm_atlas_rect_t *rc=&lm.rects[i];
         /* Expand the indexed mesh to non-indexed corners for glDrawArrays, using
@@ -197,8 +200,10 @@ int main(int argc,char**argv){
                 p[3]=dm[i].normals[id*3];p[4]=dm[i].normals[id*3+1];p[5]=dm[i].normals[id*3+2];
                 p[6]=dm[i].tangents[id*4];p[7]=dm[i].tangents[id*4+1];p[8]=dm[i].tangents[id*4+2];p[9]=dm[i].tangents[id*4+3];
                 p[10]=dm[i].uvs[id*2];p[11]=dm[i].uvs[id*2+1];
-                float au,av; lm_atlas_remap_uv(rc,&(lm_atlas_t){lm.atlas_w,lm.atlas_h},dm[i].uvs1[id*2],dm[i].uvs1[id*2+1],&au,&av);
-                p[12]=au;p[13]=av; ++vi; } } }
+                if(rawuv){ p[12]=dm[i].uvs1[id*2]; p[13]=dm[i].uvs1[id*2+1]; }
+                else { float au,av; lm_atlas_remap_uv(rc,&(lm_atlas_t){lm.atlas_w,lm.atlas_h},dm[i].uvs1[id*2],dm[i].uvs1[id*2+1],&au,&av);
+                    p[12]=au;p[13]=av; }
+                ++vi; } } }
     GLuint vao,vbo; glGenVertexArrays(1,&vao); glGenBuffers(1,&vbo);
     glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER,vbo);
     glBufferData(GL_ARRAY_BUFFER,(GLsizeiptr)((size_t)vi*14*sizeof(float)),vtx,GL_STATIC_DRAW);

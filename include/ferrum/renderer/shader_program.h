@@ -42,6 +42,7 @@ typedef struct shader_program {
     int32_t (*glGetUniformLocation)(uint32_t program, const char *name);
     void (*glUniformMatrix4fv)(int32_t location, int32_t count, uint8_t transpose, const float *value);
     void (*glUniform3fv)(int32_t location, int32_t count, const float *value);
+    void (*glUniform2fv)(int32_t location, int32_t count, const float *value);
     void (*glUniform1i)(int32_t location, int32_t v0);
     void (*glUniform1f)(int32_t location, float v0);
 } shader_program_t;

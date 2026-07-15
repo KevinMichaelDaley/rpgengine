@@ -29,6 +29,7 @@ shader_uniform_status_t shader_uniform_cache_init(shader_uniform_cache_t *cache,
     cache->glGetUniformLocation = program->glGetUniformLocation;
     cache->glUniformMatrix4fv = program->glUniformMatrix4fv;
     cache->glUniform3fv = program->glUniform3fv;
+    cache->glUniform2fv = program->glUniform2fv;
     cache->glUniform1i = program->glUniform1i;
     cache->glUniform1f = program->glUniform1f;
 
@@ -122,6 +123,26 @@ shader_uniform_status_t shader_uniform_set_vec3(shader_uniform_cache_t *cache,
         return status;
     }
     cache->glUniform3fv(location, 1, value);
+    return SHADER_UNIFORM_OK;
+}
+
+shader_uniform_status_t shader_uniform_set_vec2(shader_uniform_cache_t *cache,
+                                                const shader_program_t *program,
+                                                const char *name,
+                                                const float *value) {
+    if (cache == NULL || program == NULL || name == NULL || value == NULL) {
+        return SHADER_UNIFORM_ERR_INVALID;
+    }
+    if (cache->glUniform2fv == NULL) {
+        return SHADER_UNIFORM_ERR_MISSING_GL;
+    }
+    int32_t location = -1;
+    shader_uniform_status_t status = shader_uniform_resolve(cache, program, name,
+                                                            SHADER_UNIFORM_TYPE_VEC2, &location);
+    if (status != SHADER_UNIFORM_OK) {
+        return status;
+    }
+    cache->glUniform2fv(location, 1, value);
     return SHADER_UNIFORM_OK;
 }
 

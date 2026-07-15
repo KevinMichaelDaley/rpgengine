@@ -93,6 +93,7 @@ static int shader_program_load_gl(shader_program_t *program,
     SHADER_PROGRAM_LOAD_PROC(program->glGetUniformLocation, "glGetUniformLocation");
     SHADER_PROGRAM_LOAD_PROC(program->glUniformMatrix4fv, "glUniformMatrix4fv");
     SHADER_PROGRAM_LOAD_PROC(program->glUniform3fv, "glUniform3fv");
+    SHADER_PROGRAM_LOAD_PROC(program->glUniform2fv, "glUniform2fv");
     SHADER_PROGRAM_LOAD_PROC(program->glUniform1i, "glUniform1i");
     SHADER_PROGRAM_LOAD_PROC(program->glUniform1f, "glUniform1f");
 
