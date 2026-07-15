@@ -40,6 +40,7 @@ static void *hb_getproc(const char *n, void *u) { (void)u; return SDL_GL_GetProc
 #define MAXM 32
 
 static vec3_t v3(float x, float y, float z) { return (vec3_t){ x, y, z }; }
+static int hb_cmpstr(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
 
 static int group_of(const char *n)
 {
@@ -75,17 +76,27 @@ int main(int argc, char **argv)
     const char *out  = argc > 3 ? argv[3] : "/tmp/hall.flm";
 
     obj_mesh_t dm[MAXM]; int grp[MAXM]; int nm = 0; char names[MAXM][128];
+    /* Collect + SORT the .dmesh filenames. readdir() order is filesystem/machine
+     * dependent, so baking on one box and rendering on another would otherwise
+     * assign each mesh a different atlas index -> every surface samples the wrong
+     * atlas region (splotches). A deterministic sort makes the mesh order (and
+     * thus the baked rects) identical on every machine. The renderer sorts too. */
+    char fnames[MAXM][128]; int nf = 0;
     DIR *d = opendir(dir); struct dirent *e;
-    while (d && (e = readdir(d)) && nm < MAXM) {
+    while (d && (e = readdir(d)) && nf < MAXM) {
         if (!strstr(e->d_name, ".dmesh")) continue;
-        char p[512]; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
+        snprintf(fnames[nf], sizeof fnames[nf], "%s", e->d_name); ++nf;
+    }
+    if (d) closedir(d);
+    qsort(fnames, (size_t)nf, sizeof fnames[0], hb_cmpstr);
+    for (int fi = 0; fi < nf; ++fi) {
+        char p[512]; snprintf(p, sizeof p, "%s/%s", dir, fnames[fi]);
         if (dmesh_load(p, &dm[nm]) == 0) {
-            grp[nm] = group_of(e->d_name);
-            snprintf(names[nm], sizeof names[nm], "%s", e->d_name);
+            grp[nm] = group_of(fnames[fi]);
+            snprintf(names[nm], sizeof names[nm], "%s", fnames[fi]);
             ++nm;
         }
     }
-    if (d) closedir(d);
     printf("loaded %d dual-uv meshes\n", nm);
 
     char pab[512], pas[512], pav[512];

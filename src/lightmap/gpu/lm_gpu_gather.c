@@ -136,15 +136,25 @@ static const char *CS_GATHER =
     "uniform ivec3 dims; uniform float voxel; uniform vec3 origin; uniform vec3 sky;\n"
     "uniform int samples; uniform int bounces; uniform uint seed; uniform int nlux; uniform int nlights;\n"
     "uniform float transition; uniform float finevox;\n"
-    "uniform vec3 svomin; uniform vec3 svomax; uniform int svodepth;\n"
-    "const float TAU=6.28318530718, INVPI=0.31830988618;\n"
+    "uniform vec3 svomin; uniform vec3 svomax; uniform int svodepth; uniform int nodeCount;\n"
+    "const float TAU=6.28318530718, INVPI=0.31830988618, PI=3.14159265359, HALFPI=1.5707963268;\n"
     "uint pcg(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28)+4u))^s)*277803737u; return (w>>22)^w; }\n"
     "float rnd(inout uint s){ return float(pcg(s))*(1.0/4294967296.0); }\n"
+    /* Machine-INDEPENDENT sin/cos: hardware sin/cos/normalize differ across GPUs\n"
+     * (Intel Xe vs NVIDIA), and in an enclosed scene the path tracer amplifies a\n"
+     * sub-ULP ray-direction difference into a flipped grazing hit -> per-luxel\n"
+     * splotches. A `precise` minimax polynomial on a deterministic range reduction\n"
+     * (floor, not the impl-defined round) evaluates bit-identically on both. */
+    "precise float dsin(float x){ float k=floor(x*(1.0/TAU)+0.5); x=x-TAU*k; float x2=x*x;\n"
+    "  return x*(0.9999966+x2*(-0.16664824+x2*(0.00830629+x2*(-0.00018363)))); }\n"
+    "precise float dcos(float x){ return dsin(x+HALFPI); }\n"
+    /* IEEE sqrt is correctly-rounded (bit-identical); rsqrt/normalize is not. */
+    "precise vec3 dnorm(vec3 v){ float m=dot(v,v); return m>0.0 ? v*(1.0/sqrt(m)) : v; }\n"
     "int cidx(ivec3 c){ return (c.z*dims.y+c.y)*dims.x+c.x; }\n"
     "bool inb(ivec3 c){ return all(greaterThanEqual(c,ivec3(0)))&&all(lessThan(c,dims)); }\n"
     "ivec3 toCell(vec3 p){ return ivec3(floor((p-origin)/voxel)); }\n"
     "float sSDF(vec3 p){ ivec3 c=toCell(p); if(!inb(c)) return 1e9; return sdf[cidx(c)]; }\n"
-    "void basis(vec3 n, out vec3 t, out vec3 b){ vec3 u=abs(n.z)<0.999?vec3(0,0,1):vec3(1,0,0); t=normalize(cross(u,n)); b=cross(n,t); }\n"
+    "void basis(vec3 n, out vec3 t, out vec3 b){ vec3 u=abs(n.z)<0.999?vec3(0,0,1):vec3(1,0,0); t=dnorm(cross(u,n)); b=cross(n,t); }\n"
     "void shb(vec3 d, out float y[9]){ float x=d.x,yy=d.y,z=d.z;\n"
     "  y[0]=0.282094792; y[1]=0.488602512*yy; y[2]=0.488602512*z; y[3]=0.488602512*x;\n"
     "  y[4]=1.092548431*x*yy; y[5]=1.092548431*yy*z; y[6]=0.315391565*(3.0*z*z-1.0);\n"
@@ -157,12 +167,13 @@ static const char *CS_GATHER =
      * bit (packed into diffuse.w by the packer). */
     "bool svoSolid(vec3 p){ if(any(lessThan(p,svomin))||any(greaterThan(p,svomax))) return false;\n"
     "  uint node=0u; vec3 lo=svomin, hi=svomax;\n"
-    "  for(int d=0; d<svodepth-1; ++d){ vec3 mid=(lo+hi)*0.5;\n"
+    "  for(int d=0; d<svodepth-1; ++d){ if(node>=uint(nodeCount)) return false; vec3 mid=(lo+hi)*0.5;\n"
     "    uint cx=p.x>=mid.x?1u:0u, cy=p.y>=mid.y?1u:0u, cz=p.z>=mid.z?1u:0u;\n"
     "    uint child=nodes[node].children[(cz<<2)|(cy<<1)|cx];\n"
     "    if(child==0xFFFFFFFFu) return nodes[node].diffuse.w>0.5;\n"
     "    if(cx==1u) lo.x=mid.x; else hi.x=mid.x; if(cy==1u) lo.y=mid.y; else hi.y=mid.y;\n"
-    "    if(cz==1u) lo.z=mid.z; else hi.z=mid.z; node=child; } return nodes[node].diffuse.w>0.5; }\n"
+    "    if(cz==1u) lo.z=mid.z; else hi.z=mid.z; node=child; }\n"
+    "  if(node>=uint(nodeCount)) return false; return nodes[node].diffuse.w>0.5; }\n"
     /* Sphere-trace the SDF. Past `transition` we CONE-trace: the sampling\n"
      * footprint widens with distance (fp = voxel + (t-transition)*CONE), so far\n"
      * geometry is marched coarsely in a few big steps and the hit test triggers\n"
@@ -181,7 +192,7 @@ static const char *CS_GATHER =
     "    if(d<fp*1.5){ float rs=finevox*0.5; for(int j=0;j<48 && t<maxT;++j){ t+=rs; p=o+dir*t; c=toCell(p); if(!inb(c)) return false;\n"
     "        if(svoSolid(p)){ hp=p; ht=t; float e=voxel;\n"
     "          vec3 g=vec3(sSDF(p+vec3(e,0,0))-sSDF(p-vec3(e,0,0)), sSDF(p+vec3(0,e,0))-sSDF(p-vec3(0,e,0)), sSDF(p+vec3(0,0,e))-sSDF(p-vec3(0,0,e)));\n"
-    "          hn = dot(g,g)>1e-10 ? normalize(g) : -dir; return true; }\n"
+    "          hn = dot(g,g)>1e-10 ? dnorm(g) : -dir; return true; }\n"
     "        if(sdf[cidx(c)]>fp*2.0) break; } }\n"
     "    t += max(d, fp); } return false; }\n"
     "bool shadow(vec3 o, vec3 dir, float maxT){ vec3 hp,hn; float ht; return trace(o,dir,maxT,hp,hn,ht); }\n"
@@ -189,24 +200,24 @@ static const char *CS_GATHER =
     "  for(int i=0;i<nlights;++i){ vec3 lp=lit[4*i].xyz; int kind=int(lit[4*i].w);\n"
     "    vec3 ld=lit[4*i+1].xyz; vec3 col=lit[4*i+2].xyz; float ci=lit[4*i+2].w; float co=lit[4*i+3].x;\n"
     "    vec3 toL; float atten=1.0; float md;\n"
-    "    if(kind==1){ toL=normalize(-ld); md=1e5; }\n"
+    "    if(kind==1){ toL=dnorm(-ld); md=1e5; }\n"
     "    else { vec3 dd=lp-p; float dist=length(dd); if(dist<1e-4) continue; toL=dd/dist; atten=1.0/(dist*dist); md=dist-voxel*1.5; }\n"
     "    float cosNL=dot(n,toL); if(cosNL<=0.0) continue;\n"
-    "    if(kind==2){ float ca=dot(-toL,normalize(ld)); float sp=clamp((ca-co)/max(ci-co,1e-4),0.0,1.0); atten*=sp; if(atten<=0.0) continue; }\n"
+    "    if(kind==2){ float ca=dot(-toL,dnorm(ld)); float sp=clamp((ca-co)/max(ci-co,1e-4),0.0,1.0); atten*=sp; if(atten<=0.0) continue; }\n"
     "    if(shadow(o,toL,md)) continue; e += col*(cosNL*atten); } return e; }\n"
     "void svoMat(vec3 p, out vec3 diff, out vec3 emis){ diff=vec3(0); emis=vec3(0);\n"
     "  if(any(lessThan(p,svomin))||any(greaterThan(p,svomax))) return;\n"
     "  uint node=0u; vec3 lo=svomin, hi=svomax;\n"
-    "  for(int d=0; d<svodepth; ++d){ vec3 mid=(lo+hi)*0.5;\n"
+    "  for(int d=0; d<svodepth; ++d){ if(node>=uint(nodeCount)) return; vec3 mid=(lo+hi)*0.5;\n"
     "    uint cx=p.x>=mid.x?1u:0u, cy=p.y>=mid.y?1u:0u, cz=p.z>=mid.z?1u:0u;\n"
     "    uint child=nodes[node].children[(cz<<2)|(cy<<1)|cx]; if(child==0xFFFFFFFFu) break;\n"
     "    if(cx==1u) lo.x=mid.x; else hi.x=mid.x; if(cy==1u) lo.y=mid.y; else hi.y=mid.y;\n"
     "    if(cz==1u) lo.z=mid.z; else hi.z=mid.z; node=child; }\n"
-    "  diff=nodes[node].diffuse.rgb; emis=nodes[node].emissive.rgb; }\n"
+    "  if(node>=uint(nodeCount)) return; diff=nodes[node].diffuse.rgb; emis=nodes[node].emissive.rgb; }\n"
     "void main(){ uint li=gl_GlobalInvocationID.x; if(li>=uint(nlux)) return;\n"
     "  vec3 pos=lux[2u*li].xyz; vec3 nr=lux[2u*li+1u].xyz;\n"
     /* Stabilise a degenerate luxel normal (never normalize a zero vector). */
-    "  vec3 nrm = dot(nr,nr)>1e-12 ? normalize(nr) : vec3(0.0,1.0,0.0);\n"
+    "  vec3 nrm = dot(nr,nr)>1e-12 ? dnorm(nr) : vec3(0.0,1.0,0.0);\n"
     /* Match the CPU: if the offset origin is inside solid (concave shell overlap\n"
      * or a flipped normal), march along the normal to the nearest air. */
     "  vec3 obase = pos + nrm*finevox*1.5;\n"
@@ -217,7 +228,7 @@ static const char *CS_GATHER =
     "  for(int sy=0;sy<n;++sy) for(int sx=0;sx<n;++sx){\n"
     "    float u1=(float(sx)+rnd(rs))/float(n); float u2=(float(sy)+rnd(rs))/float(n);\n"
     "    float z=u1; float r=sqrt(max(1.0-z*z,0.0)); float phi=TAU*u2;\n"
-    "    vec3 dir=tn*(r*cos(phi))+bt*(r*sin(phi))+nrm*z;\n"
+    "    vec3 dir=tn*(r*dcos(phi))+bt*(r*dsin(phi))+nrm*z;\n"
     "    vec3 Li=vec3(0.0), thr=vec3(1.0); vec3 o=obase, d=dir;\n"
     "    for(int b=0;b<=bounces;++b){ vec3 hp,hn; float ht;\n"
     "      if(!trace(o,d,1e5,hp,hn,ht)){ Li+=thr*sky; break; }\n"
@@ -226,8 +237,8 @@ static const char *CS_GATHER =
     "      if(b==bounces) break;\n"
     "      vec3 ct,cb; basis(hn,ct,cb); float a=rnd(rs),e2=rnd(rs);\n"
     "      float cz=sqrt(a), cr=sqrt(1.0-a), cp=TAU*e2;\n"
-    "      d=ct*(cr*cos(cp))+cb*(cr*sin(cp))+hn*cz; o=hp+hn*finevox*1.5; }\n"
-    "    float y[9]; shb(normalize(dir),y);\n"
+    "      d=ct*(cr*dcos(cp))+cb*(cr*dsin(cp))+hn*cz; o=hp+hn*finevox*1.5; }\n"
+    "    float y[9]; shb(dnorm(dir),y);\n"
     "    for(int c=0;c<3;++c) for(int i=0;i<9;++i) sh[c*9+i]+=Li[c]*weight*y[i]; }\n"
     /* One batch's estimate; the HOST reads this back and sums across batches\n"
      * (cross-dispatch SSBO read-modify-write is not reliable across drivers). */
@@ -408,21 +419,21 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     /* JFA: init -> ping-pong passes -> finalise. */
     gl.UseProgram(g_init); gl.Uniform3iv(gl.GetUniformLocation(g_init,"dims"),1,dims);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,b_occ); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,b_a);
-    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu); /* GL_ALL_BARRIER_BITS: NVIDIA needs full sync between JFA dispatches + before gather */
     int maxd = dims[0]>dims[1]?(dims[0]>dims[2]?dims[0]:dims[2]):(dims[1]>dims[2]?dims[1]:dims[2]);
     GLuint src=b_a, dst=b_b;
     gl.UseProgram(g_step); gl.Uniform3iv(gl.GetUniformLocation(g_step,"dims"),1,dims);
     for (int step = maxd/2; step >= 1; step /= 2) {
         gl.Uniform1i(gl.GetUniformLocation(g_step,"step"),step);
         gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,src); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,dst);
-        gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu); /* GL_ALL_BARRIER_BITS: NVIDIA needs full sync between JFA dispatches + before gather */
         GLuint t=src; src=dst; dst=t;
     }
     gl.UseProgram(g_fin); gl.Uniform3iv(gl.GetUniformLocation(g_fin,"dims"),1,dims);
     gl.Uniform1f(gl.GetUniformLocation(g_fin,"voxel"),svoxel);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,src); gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,b_occ);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,2,b_sdf);
-    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    gl.DispatchCompute(gx,gy,gz); gl.MemoryBarrier(0xFFFFFFFFu); /* GL_ALL_BARRIER_BITS: NVIDIA needs full sync between JFA dispatches + before gather */
 
     if (getenv("LM_GPU_DEBUG")) {
         float *dbg = malloc(cells * sizeof(float));
@@ -457,6 +468,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     gl.Uniform1i(gl.GetUniformLocation(g_gather,"nlux"),(int)nlux);
     gl.Uniform1i(gl.GetUniformLocation(g_gather,"nlights"),(int)n_lights);
     gl.Uniform1i(gl.GetUniformLocation(g_gather,"svodepth"),(int)svo->max_depth+1);
+    gl.Uniform1i(gl.GetUniformLocation(g_gather,"nodeCount"),(int)svo->node_count);
     gl.Uniform1f(gl.GetUniformLocation(g_gather,"transition"),transition);
     gl.Uniform1f(gl.GetUniformLocation(g_gather,"finevox"),svo->voxel_size);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,b_sdf);
@@ -488,7 +500,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
         gl.DispatchCompute((GLuint)((nlux+63)/64),1,1);
         /* GL_BUFFER_UPDATE_BARRIER_BIT (0x200): make the compute shader's SSBO
          * writes visible to the client glGetBufferSubData readback below. */
-        gl.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | 0x00000200u);
+        gl.MemoryBarrier(0xFFFFFFFFu); /* GL_ALL_BARRIER_BITS */
         /* NVIDIA does not implicitly flush the compute SSBO writes for the client
          * readback below (it returned all-zero without this); glFinish forces the
          * dispatch to complete + writes to land. Also bounds each dispatch under

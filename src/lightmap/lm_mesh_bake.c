@@ -245,11 +245,20 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         positions[i] = result->combined.luxels[i].pos;
 
     if (total > 0) {
-        /* Direct sun/emissive onto the luxels' own SH (their direct term). */
-        lm_mesh_bake_direct(&result->combined, scene->lights, scene->n_lights, &svo);
-        lm_mesh_bake_emissive(&result->combined, scene, &svo,
-                              config->direct_samples ? config->direct_samples : 64u,
-                              config->seed ^ 0x51EDu);
+        /* The GPU gather path bakes INDIRECT ONLY: analytic-light direct (the sun)
+         * is provided at runtime by the realtime CSM, and area lights (emissive)
+         * are captured by the GPU gather itself (emissive voxels hit while
+         * tracing). Baking the sun's direct on the CPU here is both redundant with
+         * the realtime sun AND non-portable -- lm_visibility's DDA decides the
+         * shadow boundary at the ULP level, so it splotches differently per CPU
+         * (e.g. the chimera bake box). Only the legacy CPU path bakes direct. */
+        if (!config->gpu_gather) {
+            /* Direct sun/emissive onto the luxels' own SH (their direct term). */
+            lm_mesh_bake_direct(&result->combined, scene->lights, scene->n_lights, &svo);
+            lm_mesh_bake_emissive(&result->combined, scene, &svo,
+                                  config->direct_samples ? config->direct_samples : 64u,
+                                  config->seed ^ 0x51EDu);
+        }
         if (config->farfield_samples > 0) {
             /* Voxelize the surfaces' textured material into the SVO, then do the
              * unified path-traced GI gather: near hits path-trace the voxel

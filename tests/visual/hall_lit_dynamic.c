@@ -104,6 +104,7 @@ static void finalize_sh(void *ctx, void *user) {
 static void *sdl_get_proc(const char *n, void *u) { (void)u; return SDL_GL_GetProcAddress(n); }
 static float frand(uint32_t *s){ *s=*s*1664525u+1013904223u; return (float)(*s>>8)*(1.0f/16777216.0f); }
 static int group_of(const char *n){ if(strstr(n,"win")||strstr(n,"door"))return 0; if(strstr(n,"vault"))return 2; return 1; }
+static int hld_cmpstr(const void *a,const void *b){ return strcmp((const char *)a,(const char *)b); }
 
 static void save_ppm(const char *path,int w,int h){
     size_t row=(size_t)w*3; uint8_t *rgb=malloc(row*(size_t)h); if(!rgb)return;
@@ -152,13 +153,20 @@ int main(int argc,char **argv){
     gpu_executor_t gexec; if(!gpu_executor_init(&gexec,&loader,&greg)){ fprintf(stderr,"executor init failed\n"); return 1; }
     job_counter_t rcounter; job_counter_init(&rcounter,0);
 
-    /* --- Load dual-UV dmeshes (readdir order == the bake's mesh order). --- */
+    /* --- Load dual-UV dmeshes in a DETERMINISTIC (sorted) order so the mesh
+     * index -> atlas rect mapping matches the bake regardless of which machine
+     * baked it. readdir() order is filesystem-dependent; baking on one box and
+     * rendering on another (e.g. a chimera GPU bake) would otherwise shuffle the
+     * rects and splotch every surface. --- */
     obj_mesh_t dm[MAXM]; int grp[MAXM]; int nm=0;
+    char fnames[MAXM][128]; int nf=0;
     DIR *d=opendir(dir); struct dirent *e;
-    while(d&&(e=readdir(d))&&nm<MAXM){ if(!strstr(e->d_name,".dmesh"))continue;
-        char p[512]; snprintf(p,sizeof p,"%s/%s",dir,e->d_name);
-        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=group_of(e->d_name); ++nm; } }
+    while(d&&(e=readdir(d))&&nf<MAXM){ if(!strstr(e->d_name,".dmesh"))continue;
+        snprintf(fnames[nf],sizeof fnames[nf],"%s",e->d_name); ++nf; }
     if(d)closedir(d);
+    qsort(fnames,(size_t)nf,sizeof fnames[0],hld_cmpstr);
+    for(int fi=0;fi<nf;++fi){ char p[512]; snprintf(p,sizeof p,"%s/%s",dir,fnames[fi]);
+        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=group_of(fnames[fi]); ++nm; } }
     printf("loaded %d dmeshes\n",nm);
 
     /* --- Load the serialized SH lightmap (FLM1: magic, atlas_w/h, n_coeffs=9,
@@ -325,7 +333,7 @@ int main(int argc,char **argv){
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
     fcfg.spot_light=1; fcfg.spot_res=1024; fcfg.spot_near=0.05f;
     fcfg.spot_far=hall_len*1.5f; fcfg.spot_bias=0.05f;
-    if(csm_demo||lm_only){
+    if((csm_demo||lm_only) && getenv("LM_NOCSM")==NULL){
         /* Warm directional sun; 3 cascades split logarithmically, static baked
          * once + a low-res dynamic map. Sun is NOT baked into the SH here. */
         /* Direct sun -- brighter than the bake radiance so the shafts read
