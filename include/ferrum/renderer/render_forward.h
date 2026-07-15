@@ -43,6 +43,8 @@ typedef struct render_forward_config {
     float              sun_dir[3];    /**< static directional fill direction. */
     float              sun_color[3];  /**< directional fill colour. */
     float              ambient[3];    /**< flat ambient term. */
+    int                sh_enabled;    /**< bind a baked SH lightmap (units 7-15). */
+    uint32_t           sh_tex[9];     /**< 9 RGB32F SH-coeff atlas texture ids. */
 } render_forward_config_t;
 
 /** Clustered forward+ driver context: the stages, their GL resources, the

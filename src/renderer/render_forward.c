@@ -67,10 +67,25 @@ static void fwd_forward_submit(void *ud)
     shader_uniform_set_vec3(&f->cache, &f->pbr, "u_sun_dir", f->cfg.sun_dir);
     shader_uniform_set_vec3(&f->cache, &f->pbr, "u_sun_color", f->cfg.sun_color);
     shader_uniform_set_vec3(&f->cache, &f->pbr, "u_ambient", f->cfg.ambient);
-    shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 0);
     shader_uniform_set_int(&f->cache, &f->pbr, "u_light_count", 0);
     forward_plus_bind(&f->fp, &f->cache, &f->pbr, &f->cfg.cluster,
                       f->cfg.screen_w, f->cfg.screen_h);
+
+    /* Optional baked SH lightmap on units 7..15 (material uses 0..6, forward+
+     * 16..19). Combines static GI (SH) with the clustered dynamic lights. */
+    if (f->cfg.sh_enabled) {
+        static const char *const shn[9] = { "u_sh0", "u_sh1", "u_sh2", "u_sh3",
+                                            "u_sh4", "u_sh5", "u_sh6", "u_sh7",
+                                            "u_sh8" };
+        for (int c = 0; c < 9; ++c) {
+            f->fp.glActiveTexture(GL_TEXTURE0 + 7u + (uint32_t)c);
+            f->fp.glBindTexture(GL_TEXTURE_2D, f->cfg.sh_tex[c]);
+            shader_uniform_set_int(&f->cache, &f->pbr, shn[c], 7 + c);
+        }
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 1);
+    } else {
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 0);
+    }
 
     for (uint32_t i = 0; i < s->count; ++i) {
         const render_renderable_t *r = &s->items[i];
