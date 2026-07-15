@@ -87,6 +87,16 @@ static void fwd_forward_submit(void *ud)
         shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 0);
     }
 
+    /* Optional point-light cube shadow on unit 20 (the movable light whose flat
+     * index is shadow_light). Rendered before this pass in render_forward_render. */
+    if (f->cfg.shadow_light >= 0 && f->cfg.shadow_res > 0u) {
+        shadow_cube_bind(&f->shadow, &f->cache, &f->pbr, 20u);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_shadow_light", f->cfg.shadow_light);
+        shader_uniform_set_float(&f->cache, &f->pbr, "u_shadow_bias", f->cfg.shadow_bias);
+    } else {
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_shadow_light", -1);
+    }
+
     for (uint32_t i = 0; i < s->count; ++i) {
         const render_renderable_t *r = &s->items[i];
         if (r->mesh == NULL)
@@ -115,6 +125,12 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     shader_uniform_cache_init(&fwd->cache, &fwd->pbr);
     if (depth_prepass_init(&fwd->depth, cfg->loader) != SHADER_PROGRAM_OK ||
         !forward_plus_init(&fwd->fp, cfg->loader)) {
+        render_forward_destroy(fwd);
+        return false;
+    }
+    if (cfg->shadow_res > 0u &&
+        !shadow_cube_init(&fwd->shadow, cfg->loader, cfg->shadow_res,
+                          cfg->shadow_near, cfg->shadow_far)) {
         render_forward_destroy(fwd);
         return false;
     }
@@ -157,6 +173,16 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
     if (fwd == NULL || scene == NULL)
         return;
     fwd->scene = scene;
+    /* Render the point-light cube shadow first (own FBO), then restore the main
+     * viewport so the graph's passes draw at screen resolution. */
+    if (fwd->cfg.shadow_res > 0u && fwd->cfg.shadow_light >= 0 &&
+        scene->lights != NULL &&
+        (uint32_t)fwd->cfg.shadow_light < scene->lights->count) {
+        shadow_cube_render(&fwd->shadow, scene,
+                           scene->lights->lights[fwd->cfg.shadow_light].position);
+        fwd->shadow.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
+                               (int32_t)fwd->cfg.screen_h);
+    }
     /* Early-Z only pays off with overlapping geometry; skip it for a single
      * renderable so a trivial scene still executes (depth_pre is skippable). */
     int depth_enabled = (scene->count > 1u) ? 1 : 0;
@@ -168,6 +194,7 @@ void render_forward_destroy(render_forward_t *fwd)
 {
     if (fwd == NULL)
         return;
+    shadow_cube_destroy(&fwd->shadow);
     forward_plus_destroy(&fwd->fp);
     depth_prepass_destroy(&fwd->depth);
     shader_program_destroy(&fwd->pbr);

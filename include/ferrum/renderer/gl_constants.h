@@ -216,6 +216,25 @@ extern "C" {
 #ifndef GL_UNPACK_ALIGNMENT
 #define GL_UNPACK_ALIGNMENT 0x0CF5
 #endif
+/* Cube shadow maps (shadow_cube). */
+#ifndef GL_R32F
+#define GL_R32F 0x822E
+#endif
+#ifndef GL_DEPTH_COMPONENT24
+#define GL_DEPTH_COMPONENT24 0x81A6
+#endif
+#ifndef GL_TEXTURE_WRAP_R
+#define GL_TEXTURE_WRAP_R 0x8072
+#endif
+#ifndef GL_TEXTURE_CUBE_MAP
+#define GL_TEXTURE_CUBE_MAP 0x8513
+#endif
+#ifndef GL_TEXTURE_CUBE_MAP_POSITIVE_X
+#define GL_TEXTURE_CUBE_MAP_POSITIVE_X 0x8515
+#endif
+#ifndef GL_TEXTURE_CUBE_MAP_SEAMLESS
+#define GL_TEXTURE_CUBE_MAP_SEAMLESS 0x884F
+#endif
 #ifndef GL_RGB
 #define GL_RGB 0x1907
 #endif

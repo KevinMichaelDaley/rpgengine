@@ -27,6 +27,7 @@
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/shader_uniforms.h"
+#include "ferrum/renderer/shadow_cube.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +46,11 @@ typedef struct render_forward_config {
     float              ambient[3];    /**< flat ambient term. */
     int                sh_enabled;    /**< bind a baked SH lightmap (units 7-15). */
     uint32_t           sh_tex[9];     /**< 9 RGB32F SH-coeff atlas texture ids. */
+    int                shadow_light;  /**< flat light index to cast a cube shadow (-1 = none). */
+    uint32_t           shadow_res;    /**< cube face resolution (0 = no shadow). */
+    float              shadow_near;   /**< cube shadow near plane. */
+    float              shadow_far;    /**< cube shadow far plane. */
+    float              shadow_bias;   /**< distance-compare bias (world units). */
 } render_forward_config_t;
 
 /** Clustered forward+ driver context: the stages, their GL resources, the
@@ -54,6 +60,7 @@ typedef struct render_forward {
     depth_prepass_t         depth;
     cluster_grid_t          clusters;
     forward_plus_t          fp;
+    shadow_cube_t           shadow;
     shader_program_t        pbr;
     shader_uniform_cache_t  cache;
     render_forward_config_t cfg;

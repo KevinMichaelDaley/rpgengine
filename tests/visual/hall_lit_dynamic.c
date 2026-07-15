@@ -153,8 +153,20 @@ int main(int argc,char **argv){
     render_light_t lb[MAX_LIGHTS];
     render_light_store_t lights; render_light_store_init(&lights,lb,MAX_LIGHTS);
     float pal[6][3]={{1,0.3f,0.3f},{0.3f,1,0.4f},{0.35f,0.5f,1},{1,0.85f,0.3f},{1,0.4f,0.9f},{0.3f,1,1}};
+    int lax=(span[0]>span[2])?0:2; int cax=(lax==0)?2:0;
+    float hall_len=(span[0]>span[2])?span[0]:span[2];
+    int shadow_only = getenv("SHADOW_ONLY") && atoi(getenv("SHADOW_ONLY"));
+    /* Light index 0: a bright SHADOW-CASTING point light. Placed near the camera
+     * end and off to one side at mid height so the central column rakes a long
+     * shadow across the floor and far columns. */
+    { render_light_t s; memset(&s,0,sizeof s); s.kind=RENDER_LIGHT_POINT;
+      s.position[0]=cx; s.position[1]=amin[1]+0.45f*span[1]; s.position[2]=cz;
+      s.position[lax]=amin[lax]+0.16f*span[lax];
+      s.position[cax]=amin[cax]+0.80f*span[cax];
+      s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=shadow_only?14.0f:8.0f; s.range=hall_len*1.6f;
+      s.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&s); }
     uint32_t rng=4242;
-    for(int i=0;i<64;++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
+    for(int i=0;i<(shadow_only?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
         l.position[0]=amin[0]+frand(&rng)*span[0]; l.position[1]=amin[1]+0.12f*span[1]+frand(&rng)*0.7f*span[1];
         l.position[2]=amin[2]+frand(&rng)*span[2]; const float *pc=pal[i%6];
         l.color[0]=pc[0]; l.color[1]=pc[1]; l.color[2]=pc[2];
@@ -180,7 +192,9 @@ int main(int argc,char **argv){
     fcfg.sun_dir[0]=0.15f; fcfg.sun_dir[1]=0.42f; fcfg.sun_dir[2]=-0.90f;
     fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* sun already baked into SH */
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
-    fcfg.sh_enabled=1; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=shadow_only?0:1; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.shadow_light=0; fcfg.shadow_res=1024; fcfg.shadow_near=0.1f;
+    fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
     render_forward_t fwd;
     if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
 
