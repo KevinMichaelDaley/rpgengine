@@ -99,17 +99,22 @@ static const char *const PBR_FS =
     "uniform float u_cluster_far;\n"
     /* Baked SH9 lightmap: 9 coefficient maps (RGB = the coeff for R,G,B),\n"
      * sampled by uv1; u_sh_enabled toggles it as the diffuse indirect term. */
-    "uniform sampler2D u_sh0;\n"
-    "uniform sampler2D u_sh1;\n"
-    "uniform sampler2D u_sh2;\n"
-    "uniform sampler2D u_sh3;\n"
-    "uniform sampler2D u_sh4;\n"
-    "uniform sampler2D u_sh5;\n"
-    "uniform sampler2D u_sh6;\n"
-    "uniform sampler2D u_sh7;\n"
-    "uniform sampler2D u_sh8;\n"
+    /* Per-chunk lightmaps (rpg-yfa4): 9 SH coeff atlases as texture ARRAYS, one\n"
+     * layer per chunk; each mesh samples its own page via u_sh_layer. A single-\n"
+     * atlas bake just uploads a 1-layer array with u_sh_layer=0. */
+    "uniform sampler2DArray u_sh0;\n"
+    "uniform sampler2DArray u_sh1;\n"
+    "uniform sampler2DArray u_sh2;\n"
+    "uniform sampler2DArray u_sh3;\n"
+    "uniform sampler2DArray u_sh4;\n"
+    "uniform sampler2DArray u_sh5;\n"
+    "uniform sampler2DArray u_sh6;\n"
+    "uniform sampler2DArray u_sh7;\n"
+    "uniform sampler2DArray u_sh8;\n"
     "uniform int u_sh_enabled;\n"
+    "uniform int u_sh_layer;\n" /* per-chunk lightmap array layer for this mesh. */
     "uniform float u_sh_scale;\n" /* baked-lightmap intensity multiplier (default 1). */
+    "#define SHUV vec3(v_uv1, float(u_sh_layer))\n"
     "uniform float u_sh_object;\n" /* 1 for static (lightmapped) objects, 0 for dynamic. */
     /* Debug visualisation: 0=off, 1=raw SH DC term (coeff0) at v_uv1,
      * 2=reconstructed SH irradiance E(N), 3=lightmap uv1 as colour. */
@@ -123,9 +128,9 @@ static const char *const PBR_FS =
     "  float b1=0.488602512*y, b2=0.488602512*z, b3=0.488602512*x;\n"
     "  float b4=1.092548431*x*y, b5=1.092548431*y*z, b6=0.315391565*(3.0*z*z-1.0),\n"
     "        b7=1.092548431*x*z, b8=0.546274215*(x*x-y*y);\n"
-    "  vec3 E = 3.14159265*texture(u_sh0,v_uv1).rgb*b0;\n"
-    "  E += 2.09439510*(texture(u_sh1,v_uv1).rgb*b1 + texture(u_sh2,v_uv1).rgb*b2 + texture(u_sh3,v_uv1).rgb*b3);\n"
-    "  E += 0.78539816*(texture(u_sh4,v_uv1).rgb*b4 + texture(u_sh5,v_uv1).rgb*b5 + texture(u_sh6,v_uv1).rgb*b6 + texture(u_sh7,v_uv1).rgb*b7 + texture(u_sh8,v_uv1).rgb*b8);\n"
+    "  vec3 E = 3.14159265*texture(u_sh0,SHUV).rgb*b0;\n"
+    "  E += 2.09439510*(texture(u_sh1,SHUV).rgb*b1 + texture(u_sh2,SHUV).rgb*b2 + texture(u_sh3,SHUV).rgb*b3);\n"
+    "  E += 0.78539816*(texture(u_sh4,SHUV).rgb*b4 + texture(u_sh5,SHUV).rgb*b5 + texture(u_sh6,SHUV).rgb*b6 + texture(u_sh7,SHUV).rgb*b7 + texture(u_sh8,SHUV).rgb*b8);\n"
     "  return E;\n"
     "}\n"
     "float D_GGX(float NoH, float a){ float a2=a*a; float d=(NoH*NoH*(a2-1.0)+1.0); return a2/max(PI*d*d,1e-7); }\n"
@@ -322,7 +327,7 @@ static const char *const PBR_FS =
     "                               u_light_color[i], u_light_range[i], u_light_cos_inner[i],\n"
     "                               u_light_cos_outer[i], N,V,albedo,rough,metal,F0);\n"
     "  }\n"
-    "  if(u_debug_mode==1){ frag=vec4(texture(u_sh0,v_uv1).rgb,1.0); return; }\n"
+    "  if(u_debug_mode==1){ frag=vec4(texture(u_sh0,SHUV).rgb,1.0); return; }\n"
     "  if(u_debug_mode==2){ frag=vec4(max(pbr_sh_irradiance(N),vec3(0.0)),1.0); return; }\n"
     "  if(u_debug_mode==3){ frag=vec4(v_uv1,0.0,1.0); return; }\n"
     "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"

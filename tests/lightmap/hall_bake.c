@@ -204,14 +204,21 @@ static int bake_per_chunk(const lm_mesh_scene_t *full, const lm_bake_config_t *b
 
     uint32_t   *chunk_of = malloc((size_t)nm * sizeof(uint32_t));
     lm_mesh_t  *sub      = malloc((size_t)nm * sizeof(lm_mesh_t));
-    if (!chunk_of || !sub) { free(chunk_of); free(sub); return 0; }
+    /* Manifest, in the SAME global (sorted) mesh order the renderer sees: each
+     * mesh's texture-array layer + atlas rect, so the renderer needs no chunk
+     * logic of its own. */
+    int32_t    *g_layer  = malloc((size_t)nm * sizeof(int32_t));
+    uint32_t   *g_rect   = malloc((size_t)nm * 4 * sizeof(uint32_t));
+    if (!chunk_of || !sub || !g_layer || !g_rect) { free(chunk_of); free(sub); free(g_layer); free(g_rect); return 0; }
     for (uint32_t i = 0; i < nm; ++i) {
         float c[3]; mesh_centroid(&full->meshes[i], c);
         uint32_t ch = chunk_grid_of_point(&grid, c[0], c[1], c[2]);
         chunk_of[i] = (ch == UINT32_MAX) ? 0u : ch;
+        g_layer[i] = -1;
     }
 
-    int written = 0;
+    int written = 0;                 /* == the next layer index (non-empty chunks) */
+    uint32_t array_w = 0, array_h = 0;
     for (uint32_t c = 0; c < nchunks; ++c) {
         uint32_t m = 0;
         for (uint32_t i = 0; i < nm; ++i)
@@ -228,14 +235,41 @@ static int bake_per_chunk(const lm_mesh_scene_t *full, const lm_bake_config_t *b
         if (lm_mesh_bake(&ss, &cc, &res, arena)) {
             char path[600]; snprintf(path, sizeof path, "%s_c%03u.flm", out_prefix, c);
             if (lm_lightmap_save(&res, path)) {
-                printf("  chunk %u: %u meshes -> %s (atlas %ux%u)\n",
-                       c, m, path, res.atlas.width, res.atlas.height);
+                /* Record this chunk's meshes' layer + rect in global order. */
+                uint32_t k = 0;
+                for (uint32_t i = 0; i < nm; ++i)
+                    if (chunk_of[i] == c) {
+                        g_layer[i] = written;
+                        g_rect[i*4+0] = res.rects[k].x; g_rect[i*4+1] = res.rects[k].y;
+                        g_rect[i*4+2] = res.rects[k].w; g_rect[i*4+3] = res.rects[k].h;
+                        ++k;
+                    }
+                if (res.atlas.width  > array_w) array_w = res.atlas.width;
+                if (res.atlas.height > array_h) array_h = res.atlas.height;
+                printf("  chunk %u (layer %d): %u meshes -> %s (atlas %ux%u)\n",
+                       c, written, m, path, res.atlas.width, res.atlas.height);
                 fflush(stdout); ++written;
             }
         }
         arena_pop_to_mark(arena, mk);
     }
-    free(chunk_of); free(sub);
+
+    /* Write the manifest: header + per-mesh {layer, rect}. */
+    if (written > 0) {
+        char mp[600]; snprintf(mp, sizeof mp, "%s_manifest.bin", out_prefix);
+        FILE *mf = fopen(mp, "wb");
+        if (mf) {
+            uint32_t hdr[4] = { nm, (uint32_t)written, array_w, array_h };
+            fwrite("ZLM1", 1, 4, mf); fwrite(hdr, sizeof hdr, 1, mf);
+            for (uint32_t i = 0; i < nm; ++i) {
+                fwrite(&g_layer[i], 4, 1, mf); fwrite(&g_rect[i*4], 4, 4, mf);
+            }
+            fclose(mf);
+            printf("  manifest %s: %u meshes, %d layers, array %ux%u\n",
+                   mp, nm, written, array_w, array_h);
+        }
+    }
+    free(chunk_of); free(sub); free(g_layer); free(g_rect);
     return written;
 }
 

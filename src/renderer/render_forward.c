@@ -83,7 +83,10 @@ static void fwd_forward_submit(void *ud)
                                             "u_sh8" };
         for (int c = 0; c < 9; ++c) {
             f->fp.glActiveTexture(GL_TEXTURE0 + 7u + (uint32_t)c);
-            f->fp.glBindTexture(GL_TEXTURE_2D, f->cfg.sh_tex[c]);
+            /* Per-chunk lightmaps (rpg-yfa4): the SH coeff atlases are a
+             * TEXTURE_2D_ARRAY (one layer per chunk); each mesh samples its own
+             * layer via u_sh_layer. Single-atlas bakes upload a 1-layer array. */
+            f->fp.glBindTexture(GL_TEXTURE_2D_ARRAY, f->cfg.sh_tex[c]);
             shader_uniform_set_int(&f->cache, &f->pbr, shn[c], 7 + c);
         }
         shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 1);
@@ -133,6 +136,8 @@ static void fwd_forward_submit(void *ud)
          * dynamic_from) are not in the bake, so use flat ambient instead. */
         shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_object",
                                  (i < s->dynamic_from) ? 1.0f : 0.0f);
+        /* Per-chunk lightmap page for this mesh (rpg-yfa4). */
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_layer", r->sh_layer);
         shader_uniform_set_mat4(&f->cache, &f->pbr, "u_model", r->model, 0);
         static_mesh_bind(r->mesh);
         for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)

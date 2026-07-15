@@ -110,6 +110,81 @@ static void finalize_sh(void *ctx, void *user) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
+/* Build the 9 SH-coeff atlases as GL_TEXTURE_2D_ARRAY (one layer per chunk page,
+ * rpg-yfa4). perchunk=0: a single 1-layer atlas from <lmfile>. perchunk=1: read
+ * <lmfile>_manifest.bin (per-mesh layer+rect) + <lmfile>_c*.flm (one per layer,
+ * ascending chunk order). Fills sh_tex[9], per-mesh mrect[nm]+mlayer[nm], array
+ * dims. Meshes are in the renderer's sorted-dmesh order = the bake's. */
+static int load_sh_arrays(const char *lmfile, int perchunk, int nm,
+                          GLuint sh_tex[9], lm_atlas_rect_t *mrect, int *mlayer,
+                          uint32_t *out_w, uint32_t *out_h)
+{
+    uint32_t aw = 0, ah = 0, nlayers = 1;
+    for (int i = 0; i < nm; ++i) { mlayer[i] = 0; mrect[i] = (lm_atlas_rect_t){0,0,0,0}; }
+
+    if (perchunk) {
+        char mp[600]; snprintf(mp, sizeof mp, "%s_manifest.bin", lmfile);
+        FILE *mf = fopen(mp, "rb"); if (!mf) { fprintf(stderr, "no manifest %s\n", mp); return -1; }
+        char mg[4]; uint32_t hdr[4];
+        if (fread(mg,1,4,mf)!=4 || memcmp(mg,"ZLM1",4) || fread(hdr,sizeof hdr,1,mf)!=1) { fclose(mf); return -1; }
+        uint32_t nm_m = hdr[0]; nlayers = hdr[1]; aw = hdr[2]; ah = hdr[3];
+        for (uint32_t i = 0; i < nm_m; ++i) {
+            int32_t L; uint32_t r[4];
+            if (fread(&L,4,1,mf)!=1 || fread(r,4,4,mf)!=4) break;
+            if ((int)i < nm) { mlayer[i] = L < 0 ? 0 : (int)L;
+                mrect[i] = (lm_atlas_rect_t){ r[2], r[3], r[0], r[1] }; } /* w,h,x,y */
+        }
+        fclose(mf);
+    } else {
+        FILE *lf = fopen(lmfile, "rb"); if (!lf) { fprintf(stderr, "open %s failed\n", lmfile); return -1; }
+        char mg[4]; uint32_t nc, nmh;
+        if (fread(mg,1,4,lf)!=4 || memcmp(mg,"FLM1",4) || fread(&aw,4,1,lf)!=1 ||
+            fread(&ah,4,1,lf)!=1 || fread(&nc,4,1,lf)!=1 || fread(&nmh,4,1,lf)!=1) { fclose(lf); return -1; }
+        fclose(lf);
+    }
+    *out_w = aw; *out_h = ah;
+
+    for (int c = 0; c < 9; ++c) {
+        glGenTextures(1, &sh_tex[c]);
+        glActiveTexture(GL_TEXTURE0 + 7u + (GLenum)c);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, sh_tex[c]);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGB32F, (GLsizei)aw, (GLsizei)ah, (GLsizei)nlayers,
+                     0, GL_RGB, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+
+    float *buf = NULL; uint32_t L = 0;
+    uint32_t cc_max = perchunk ? 100000u : 1u;
+    for (uint32_t cc = 0; cc < cc_max && (perchunk ? L < nlayers : L < 1); ++cc) {
+        char path[600];
+        if (perchunk) snprintf(path, sizeof path, "%s_c%03u.flm", lmfile, cc);
+        else snprintf(path, sizeof path, "%s", lmfile);
+        FILE *lf = fopen(path, "rb"); if (!lf) { if (perchunk) continue; free(buf); return -1; }
+        char mg[4]; uint32_t caw, cah, nc, nmh;
+        if (fread(mg,1,4,lf)!=4 || memcmp(mg,"FLM1",4) || fread(&caw,4,1,lf)!=1 ||
+            fread(&cah,4,1,lf)!=1 || fread(&nc,4,1,lf)!=1 || fread(&nmh,4,1,lf)!=1) { fclose(lf); if (perchunk) continue; free(buf); return -1; }
+        size_t cpix = (size_t)caw * cah * 3;
+        buf = realloc(buf, cpix * sizeof(float));
+        for (int c = 0; c < 9; ++c) {
+            if (fread(buf, sizeof(float), cpix, lf) != cpix) break;
+            glActiveTexture(GL_TEXTURE0 + 7u + (GLenum)c);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, sh_tex[c]);
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, (GLint)L,
+                            (GLsizei)caw, (GLsizei)cah, 1, GL_RGB, GL_FLOAT, buf);
+        }
+        if (!perchunk) /* single mode: rects come from the flm itself */
+            for (uint32_t i = 0; i < nmh && (int)i < nm; ++i) { fread(&mrect[i], sizeof(lm_atlas_rect_t), 1, lf); mlayer[i] = 0; }
+        fclose(lf);
+        ++L;
+    }
+    free(buf);
+    if (perchunk && L != nlayers) fprintf(stderr, "WARN: loaded %u/%u chunk layers\n", L, nlayers);
+    return 0;
+}
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -205,29 +280,20 @@ int main(int argc,char **argv){
         if(dmesh_load(p,&dm[nm])==0){ grp[nm]=group_of(fnames[fi]); ++nm; } }
     printf("loaded %d dmeshes\n",nm);
 
-    /* --- Load the serialized SH lightmap (FLM1: magic, atlas_w/h, n_coeffs=9,
-     * n_meshes; 9*w*h*3 floats; n_meshes lm_atlas_rect_t) + upload 9 coeff
-     * atlases (units 7..15). Parsed inline to avoid the bake pipeline. --- */
-    FILE *lf=fopen(lmfile,"rb");
-    if(!lf){ fprintf(stderr,"lightmap open failed: %s\n",lmfile); return 1; }
-    char magic[4]; uint32_t atlas_w,atlas_h,ncoef,n_meshes;
-    if(fread(magic,1,4,lf)!=4||memcmp(magic,"FLM1",4)!=0){ fprintf(stderr,"bad flm\n"); return 1; }
-    if(fread(&atlas_w,4,1,lf)!=1||fread(&atlas_h,4,1,lf)!=1||fread(&ncoef,4,1,lf)!=1||fread(&n_meshes,4,1,lf)!=1){ return 1; }
-    printf("lightmap %ux%u, %u meshes\n",atlas_w,atlas_h,n_meshes);
-    size_t npix=(size_t)atlas_w*atlas_h*3;
-    float *coeffs[9]; for(int c=0;c<9;c++){ coeffs[c]=malloc(npix*sizeof(float)); if(fread(coeffs[c],sizeof(float),npix,lf)!=npix){ return 1; } }
-    lm_atlas_rect_t *rects=malloc((size_t)n_meshes*sizeof(lm_atlas_rect_t));
-    if(fread(rects,sizeof(lm_atlas_rect_t),n_meshes,lf)!=n_meshes){ return 1; }
-    fclose(lf);
-    /* The 9 SH coefficient atlases are baked-lightmap ASSETS: create them through
-     * the resource paradigm too (coeffs[] persist in RAM until the drain). */
+    /* --- Load the baked SH lightmap(s) into 9 GL_TEXTURE_2D_ARRAY pages. Single
+     * atlas (1 layer) or per-chunk (LM_PERCHUNK: <lmfile>_manifest.bin +
+     * <lmfile>_c*.flm, one layer per chunk). Each mesh carries its page layer. */
+    int perchunk = getenv("LM_PERCHUNK") != NULL;
     GLuint sh_tex[9]={0};
-    for(int c=0;c<9;c++){
-        sh_load_t *sl=arena_alloc(&rarena,16u,sizeof *sl);
-        sl->unit=7+c; sl->w=atlas_w; sl->h=atlas_h; sl->px=coeffs[c]; sl->out=&sh_tex[c];
-        gpu_cmd_t sc; memset(&sc,0,sizeof sc); sc.type=GPU_CMD_CUSTOM; sc.execute=finalize_sh; sc.ctx=sl;
-        while(!gpu_cmd_push(&gqueue,&sc)) sched_yield();
+    lm_atlas_rect_t *mrect = calloc((size_t)nm, sizeof *mrect);
+    int *mlayer = calloc((size_t)nm, sizeof *mlayer);
+    uint32_t atlas_w=0, atlas_h=0;
+    if(!mrect||!mlayer){ fprintf(stderr,"oom lightmap tables\n"); return 1; }
+    if(load_sh_arrays(lmfile, perchunk, nm, sh_tex, mrect, mlayer, &atlas_w, &atlas_h)!=0){
+        fprintf(stderr,"lightmap load failed (%s%s)\n", lmfile, perchunk?" [per-chunk]":"");
+        return 1;
     }
+    printf("lightmap array %ux%u (%s)\n", atlas_w, atlas_h, perchunk?"per-chunk":"single");
 
     /* --- Build static meshes: uv1 remapped into each mesh's atlas rect. --- */
     float amin[3]={1e30f,1e30f,1e30f},amax[3]={-1e30f,-1e30f,-1e30f};
@@ -238,7 +304,7 @@ int main(int argc,char **argv){
         /* uv1 remap + the create descriptor live in the arena so they persist
          * until the executor creates the mesh on the render thread. */
         float *uv1=arena_alloc(&rarena,16u,(size_t)dm[i].vert_count*2*sizeof(float));
-        const lm_atlas_rect_t *rc = (i<(int)n_meshes)?&rects[i]:NULL;
+        const lm_atlas_rect_t *rc = (mrect[i].w>0)?&mrect[i]:NULL;
         for(uint32_t v=0;v<dm[i].vert_count;++v){
             float au=dm[i].uvs1[v*2], av=dm[i].uvs1[v*2+1];
             if(rc) lm_atlas_remap_uv(rc,&atlas,dm[i].uvs1[v*2],dm[i].uvs1[v*2+1],&au,&av);
@@ -337,7 +403,8 @@ int main(int argc,char **argv){
     render_camera_look_at(&cam,eye,tgt,up,60.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,cam_far);
     render_scene_t scene; render_scene_init(&scene,rb,nm_cap);
     float model[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
-    for(int i=0;i<nm;++i) render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
+    for(int i=0;i<nm;++i){ render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
+        scene.items[i].sh_layer = mlayer[i]; }  /* per-chunk lightmap page */
     /* A dynamic caster: everything above is static (baked once); the box below is
      * re-shadowed every frame, so the CSM co-samples static wall + moving box. */
     static_mesh_t box; int box_idx=-1;
@@ -446,7 +513,7 @@ int main(int argc,char **argv){
     for(int i=0;i<nm;++i){ static_mesh_destroy(&meshes[i]); obj_mesh_free(&dm[i]); }
     free(dm); free(grp); free(fnames); free(meshes); free(subs); free(rb);
     free(gslots); free(gstates);
-    for(int c=0;c<9;c++) free(coeffs[c]); free(rects);
+    free(mrect); free(mlayer);
     gpu_executor_destroy(&gexec); gpu_registry_destroy(&greg);
     job_system_shutdown(&jobs); free(arena_mem);
     SDL_GL_DeleteContext(gc); SDL_DestroyWindow(win); SDL_Quit();

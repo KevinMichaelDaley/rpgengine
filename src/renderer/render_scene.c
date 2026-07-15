@@ -37,6 +37,7 @@ bool render_scene_add(render_scene_t *scene, const static_mesh_t *mesh,
     for (int i = 0; i < 16; ++i) {
         r->model[i] = model[i];
     }
+    r->sh_layer = 0; /* caller may override for per-chunk lightmap pages. */
     return true;
 }
 
