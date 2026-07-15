@@ -24,6 +24,7 @@ bool gpu_executor_init(gpu_executor_t *exec, const gl_loader_t *loader,
         return false;
     memset(exec, 0, sizeof(*exec));
     exec->registry = reg;
+    exec->loader = loader;
     GE_LOAD(exec->glGenTextures, "glGenTextures");
     GE_LOAD(exec->glDeleteTextures, "glDeleteTextures");
     GE_LOAD(exec->glBindTexture, "glBindTexture");
@@ -137,6 +138,12 @@ uint32_t gpu_executor_drain(gpu_executor_t *exec, gpu_cmd_queue_t *queue)
         case GPU_CMD_DESTROY_TEXTURE: ge_destroy_texture(exec, &c); break;
         case GPU_CMD_CREATE_BUFFER:   ge_create_buffer(exec, &c);   break;
         case GPU_CMD_DESTROY_BUFFER:  ge_destroy_buffer(exec, &c);  break;
+        case GPU_CMD_CUSTOM:
+            /* Render-thread finaliser: builds real texture_t / static_mesh_t via
+             * the renderer's own creation functions with the executor's loader. */
+            if (c.execute != NULL)
+                c.execute(c.ctx, (void *)(uintptr_t)exec->loader);
+            break;
         default: break; /* buffer-upload / shadow ops handled elsewhere. */
         }
         ++n;

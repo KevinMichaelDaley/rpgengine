@@ -12,6 +12,8 @@
 
 #include <dirent.h>
 #include <math.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <time.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,7 +23,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#include "ferrum/job/counter.h"
+#include "ferrum/job/system.h"
 #include "ferrum/lightmap/lm_atlas.h"
+#include "ferrum/memory/arena.h"
 #include "ferrum/mesh/dmesh_loader.h"
 #include "ferrum/mesh/obj_loader.h"
 #include "ferrum/renderer/gl_loader.h"
@@ -32,7 +37,49 @@
 #include "ferrum/renderer/render_camera.h"
 #include "ferrum/renderer/render_forward.h"
 #include "ferrum/renderer/render_scene.h"
+#include "ferrum/renderer/resource/gpu_cmd_queue.h"
+#include "ferrum/renderer/resource/gpu_executor.h"
+#include "ferrum/renderer/resource/gpu_registry.h"
 #include "ferrum/renderer/texture.h"
+
+/* --- Resource-paradigm creation: fibers decode + package, the render-thread
+ * executor calls the renderer's own texture_create / static_mesh_create. --- */
+typedef struct tex_load {
+    gpu_cmd_queue_t *queue; arena_t *arena;
+    const char *path; texture_format_t fmt; texture_t *out;
+    int w, h; unsigned char *px; /* filled by the fiber. */
+} tex_load_t;
+
+#define GL_TEX_MAX_ANISO 0x84FE
+#define GL_MAX_TEX_MAX_ANISO 0x84FF
+/* Render-thread finaliser: create + upload the texture_t and set filtering. */
+static void finalize_texture(void *ctx, void *user) {
+    tex_load_t *t = (tex_load_t *)ctx; const gl_loader_t *l = (const gl_loader_t *)user;
+    texture_create(t->out, l);
+    texture_upload_2d(t->out, t->fmt, (uint32_t)t->w, (uint32_t)t->h, t->px, true);
+    texture_set_sampler(t->out, GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR, GL_REPEAT, GL_REPEAT);
+    GLfloat maxa = 1.0f; glGetFloatv(GL_MAX_TEX_MAX_ANISO, &maxa); if (maxa > 16.0f) maxa = 16.0f;
+    glBindTexture(GL_TEXTURE_2D, texture_handle(t->out));
+    glTexParameterf(GL_TEXTURE_2D, GL_TEX_MAX_ANISO, maxa);
+}
+/* Fiber: decode the PNG into the arena, then enqueue the finaliser. */
+static void tex_load_fiber(void *ud) {
+    tex_load_t *t = (tex_load_t *)ud;
+    int w = 0, h = 0, n = 0; unsigned char *src = stbi_load(t->path, &w, &h, &n, 3);
+    if (!src) return;
+    size_t sz = (size_t)w * (size_t)h * 3u;
+    unsigned char *copy = arena_alloc(t->arena, 16u, sz);
+    if (copy) { memcpy(copy, src, sz); t->w = w; t->h = h; t->px = copy;
+        gpu_cmd_t c; memset(&c, 0, sizeof c); c.type = GPU_CMD_CUSTOM;
+        c.execute = finalize_texture; c.ctx = t;
+        while (!gpu_cmd_push(t->queue, &c)) sched_yield(); }
+    stbi_image_free(src);
+}
+typedef struct mesh_load { static_mesh_create_info_t info; static_mesh_t *out; } mesh_load_t;
+static void finalize_mesh(void *ctx, void *user) {
+    mesh_load_t *m = (mesh_load_t *)ctx;
+    static_mesh_create((const gl_loader_t *)user, &m->info, m->out);
+}
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -52,20 +99,6 @@ static void save_ppm(const char *path,int w,int h){
     if(f){ fprintf(f,"P6\n%d %d\n255\n",w,h);
         for(int y=h-1;y>=0;--y) fwrite(rgb+(size_t)y*row,1,row,f); fclose(f);
         printf("screenshot: %s\n",path);} free(rgb);
-}
-#define GL_TEXTURE_MAX_ANISOTROPY 0x84FE
-#define GL_MAX_TEXTURE_MAX_ANISOTROPY 0x84FF
-static int load_tex(texture_t *t,const gl_loader_t *l,const char *p,texture_format_t f){
-    int w=0,h=0,n=0; unsigned char *px=stbi_load(p,&w,&h,&n,3); if(!px)return 0;
-    texture_create(t,l); texture_upload_2d(t,f,(uint32_t)w,(uint32_t)h,px,true);
-    texture_set_sampler(t,GL_LINEAR_MIPMAP_LINEAR,GL_LINEAR,GL_REPEAT,GL_REPEAT);
-    /* Anisotropic filtering: sharpen grazing-angle surfaces (floor/walls) that
-     * trilinear mipmapping over-blurs. Clamp to the driver's max (>=16 typical). */
-    GLfloat maxa=1.0f; glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY,&maxa);
-    if(maxa>16.0f) maxa=16.0f;
-    glBindTexture(GL_TEXTURE_2D,texture_handle(t));
-    glTexParameterf(GL_TEXTURE_2D,GL_TEXTURE_MAX_ANISOTROPY,maxa);
-    stbi_image_free(px); return 1;
 }
 
 int main(int argc,char **argv){
@@ -92,6 +125,19 @@ int main(int argc,char **argv){
     printf("fullscreen %dx%d (msaa 8x)\n",W,H);
     printf("GL_RENDERER: %s\n", (const char*)glGetString(GL_RENDERER));
     gl_loader_t loader={sdl_get_proc,NULL};
+
+    /* --- Fiber-based resource subsystem: every PBR texture + static mesh is
+     * created through the job system -> command queue -> render-thread executor. --- */
+    job_system_t jobs;
+    if(job_system_create(&jobs,4,256,64*1024,4096,0)!=JOB_CREATE_OK){ fprintf(stderr,"job create failed\n"); return 1; }
+    job_system_start(&jobs);
+    size_t arena_cap=192u*1024u*1024u; void *arena_mem=malloc(arena_cap);
+    arena_t rarena; arena_init(&rarena,arena_mem,arena_cap);
+    gpu_registry_t greg; gpu_registry_init(&greg,128);
+    static gpu_cmd_t gslots[128]; static atomic_int gstates[128];
+    gpu_cmd_queue_t gqueue; gpu_cmd_queue_init(&gqueue,gslots,gstates,128);
+    gpu_executor_t gexec; if(!gpu_executor_init(&gexec,&loader,&greg)){ fprintf(stderr,"executor init failed\n"); return 1; }
+    job_counter_t rcounter; job_counter_init(&rcounter,0);
 
     /* --- Load dual-UV dmeshes (readdir order == the bake's mesh order). --- */
     obj_mesh_t dm[MAXM]; int grp[MAXM]; int nm=0;
@@ -129,7 +175,9 @@ int main(int argc,char **argv){
     for(int i=0;i<nm;++i){
         for(uint32_t v=0;v<dm[i].vert_count;++v) for(int c=0;c<3;++c){
             float q=dm[i].positions[v*3+c]; if(q<amin[c])amin[c]=q; if(q>amax[c])amax[c]=q; }
-        float *uv1=malloc((size_t)dm[i].vert_count*2*sizeof(float));
+        /* uv1 remap + the create descriptor live in the arena so they persist
+         * until the executor creates the mesh on the render thread. */
+        float *uv1=arena_alloc(&rarena,16u,(size_t)dm[i].vert_count*2*sizeof(float));
         const lm_atlas_rect_t *rc = (i<(int)n_meshes)?&rects[i]:NULL;
         for(uint32_t v=0;v<dm[i].vert_count;++v){
             float au=dm[i].uvs1[v*2], av=dm[i].uvs1[v*2+1];
@@ -137,27 +185,39 @@ int main(int argc,char **argv){
             uv1[v*2]=au; uv1[v*2+1]=av;
         }
         subs[i]=(render_submesh_t){0,dm[i].index_count,0};
-        static_mesh_create_info_t info; memset(&info,0,sizeof info);
-        info.positions=dm[i].positions; info.normals=dm[i].normals; info.tangents=dm[i].tangents;
-        info.uv0=dm[i].uvs; info.uv1=uv1;
-        info.indices=dm[i].indices; info.vertex_count=dm[i].vert_count; info.index_count=dm[i].index_count;
-        info.submeshes=&subs[i]; info.submesh_count=1;
-        static_mesh_create(&loader,&info,&meshes[i]);
-        free(uv1);
+        mesh_load_t *ml=arena_alloc(&rarena,16u,sizeof *ml); memset(&ml->info,0,sizeof ml->info);
+        ml->info.positions=dm[i].positions; ml->info.normals=dm[i].normals; ml->info.tangents=dm[i].tangents;
+        ml->info.uv0=dm[i].uvs; ml->info.uv1=uv1;
+        ml->info.indices=dm[i].indices; ml->info.vertex_count=dm[i].vert_count; ml->info.index_count=dm[i].index_count;
+        ml->info.submeshes=&subs[i]; ml->info.submesh_count=1; ml->out=&meshes[i];
+        gpu_cmd_t mc; memset(&mc,0,sizeof mc); mc.type=GPU_CMD_CUSTOM; mc.execute=finalize_mesh; mc.ctx=ml;
+        while(!gpu_cmd_push(&gqueue,&mc)) sched_yield();
     }
     float span[3]={amax[0]-amin[0],amax[1]-amin[1],amax[2]-amin[2]};
     float cx=(amin[0]+amax[0])*0.5f,cy=(amin[1]+amax[1])*0.5f,cz=(amin[2]+amax[2])*0.5f;
 
-    /* --- Materials. --- */
+    /* --- Materials: every PBR texture loaded on a fiber -> queue -> executor. --- */
     char q[512]; texture_t tb_a,tb_n,tb_o,tb_r,ts_a,ts_r,tv_a,tv_r;
-    snprintf(q,sizeof q,"%s/albedo.png",bake);    load_tex(&tb_a,&loader,q,TEXTURE_FORMAT_SRGB8);
-    snprintf(q,sizeof q,"%s/normal.png",bake);    load_tex(&tb_n,&loader,q,TEXTURE_FORMAT_RGB8);
-    snprintf(q,sizeof q,"%s/ao.png",bake);        load_tex(&tb_o,&loader,q,TEXTURE_FORMAT_RGB8);
-    snprintf(q,sizeof q,"%s/roughness.png",bake); load_tex(&tb_r,&loader,q,TEXTURE_FORMAT_RGB8);
-    snprintf(q,sizeof q,"%s/ashlar_albedo.png",bake);    load_tex(&ts_a,&loader,q,TEXTURE_FORMAT_SRGB8);
-    snprintf(q,sizeof q,"%s/ashlar_roughness.png",bake); load_tex(&ts_r,&loader,q,TEXTURE_FORMAT_RGB8);
-    snprintf(q,sizeof q,"%s/vault_albedo.png",bake);     load_tex(&tv_a,&loader,q,TEXTURE_FORMAT_SRGB8);
-    snprintf(q,sizeof q,"%s/vault_roughness.png",bake);  load_tex(&tv_r,&loader,q,TEXTURE_FORMAT_RGB8);
+    #define LOADT(outp,relpath,format) do{ \
+        snprintf(q,sizeof q,"%s/" relpath,bake); \
+        size_t pl_=strlen(q)+1; char *pc_=arena_alloc(&rarena,1u,pl_); memcpy(pc_,q,pl_); \
+        tex_load_t *tl_=arena_alloc(&rarena,16u,sizeof *tl_); \
+        tl_->queue=&gqueue; tl_->arena=&rarena; tl_->path=pc_; tl_->fmt=(format); tl_->out=(outp); tl_->px=NULL; \
+        job_dispatch(&jobs,tex_load_fiber,tl_,0,&rcounter); }while(0)
+    LOADT(&tb_a,"albedo.png",TEXTURE_FORMAT_SRGB8);
+    LOADT(&tb_n,"normal.png",TEXTURE_FORMAT_RGB8);
+    LOADT(&tb_o,"ao.png",TEXTURE_FORMAT_RGB8);
+    LOADT(&tb_r,"roughness.png",TEXTURE_FORMAT_RGB8);
+    LOADT(&ts_a,"ashlar_albedo.png",TEXTURE_FORMAT_SRGB8);
+    LOADT(&ts_r,"ashlar_roughness.png",TEXTURE_FORMAT_RGB8);
+    LOADT(&tv_a,"vault_albedo.png",TEXTURE_FORMAT_SRGB8);
+    LOADT(&tv_r,"vault_roughness.png",TEXTURE_FORMAT_RGB8);
+    #undef LOADT
+    /* Barrier: fibers decode + enqueue, then the render thread realises every
+     * mesh + texture in one drain. */
+    job_wait_counter(&rcounter,0);
+    uint32_t created=gpu_executor_drain(&gexec,&gqueue);
+    printf("resource executor created %u GPU resources (meshes + textures)\n",created);
     render_material_t mats[3];
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
     mats[0].maps[MATERIAL_TEX_AO]=&tb_o; mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_r; mats[0].normal_scale=1.3f;
@@ -300,6 +360,8 @@ int main(int argc,char **argv){
     if(csm_demo) static_mesh_destroy(&box);
     for(int i=0;i<nm;++i){ static_mesh_destroy(&meshes[i]); obj_mesh_free(&dm[i]); }
     for(int c=0;c<9;c++) free(coeffs[c]); free(rects);
+    gpu_executor_destroy(&gexec); gpu_registry_destroy(&greg);
+    job_system_shutdown(&jobs); free(arena_mem);
     SDL_GL_DeleteContext(gc); SDL_DestroyWindow(win); SDL_Quit();
     return 0;
 }

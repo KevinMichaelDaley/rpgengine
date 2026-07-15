@@ -24,7 +24,8 @@ extern "C" {
 
 /** Render-thread command executor + its GL entry points. */
 typedef struct gpu_executor {
-    gpu_registry_t *registry;   /**< borrowed: descriptors updated in place. */
+    gpu_registry_t    *registry;/**< borrowed: descriptors updated in place. */
+    const gl_loader_t *loader;  /**< passed to GPU_CMD_CUSTOM finalisers. */
 
     void (*glGenTextures)(int32_t, uint32_t *);
     void (*glDeleteTextures)(int32_t, const uint32_t *);
