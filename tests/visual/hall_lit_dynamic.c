@@ -80,6 +80,19 @@ static void finalize_mesh(void *ctx, void *user) {
     mesh_load_t *m = (mesh_load_t *)ctx;
     static_mesh_create((const gl_loader_t *)user, &m->info, m->out);
 }
+/* One baked SH9 lightmap coefficient atlas (RGB32F, clamped) as an asset. */
+typedef struct sh_load { int unit; uint32_t w, h; const float *px; GLuint *out; } sh_load_t;
+static void finalize_sh(void *ctx, void *user) {
+    sh_load_t *s = (sh_load_t *)ctx; (void)user;
+    glGenTextures(1, s->out);
+    glActiveTexture(GL_TEXTURE0 + (GLenum)s->unit);
+    glBindTexture(GL_TEXTURE_2D, *s->out);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, (GLsizei)s->w, (GLsizei)s->h, 0, GL_RGB, GL_FLOAT, s->px);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -162,11 +175,15 @@ int main(int argc,char **argv){
     lm_atlas_rect_t *rects=malloc((size_t)n_meshes*sizeof(lm_atlas_rect_t));
     if(fread(rects,sizeof(lm_atlas_rect_t),n_meshes,lf)!=n_meshes){ return 1; }
     fclose(lf);
-    GLuint sh_tex[9]; glGenTextures(9,sh_tex);
-    for(int c=0;c<9;c++){ glActiveTexture(GL_TEXTURE7+c); glBindTexture(GL_TEXTURE_2D,sh_tex[c]);
-        glTexImage2D(GL_TEXTURE_2D,0,GL_RGB32F,(GLsizei)atlas_w,(GLsizei)atlas_h,0,GL_RGB,GL_FLOAT,coeffs[c]);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR); glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE); }
+    /* The 9 SH coefficient atlases are baked-lightmap ASSETS: create them through
+     * the resource paradigm too (coeffs[] persist in RAM until the drain). */
+    GLuint sh_tex[9]={0};
+    for(int c=0;c<9;c++){
+        sh_load_t *sl=arena_alloc(&rarena,16u,sizeof *sl);
+        sl->unit=7+c; sl->w=atlas_w; sl->h=atlas_h; sl->px=coeffs[c]; sl->out=&sh_tex[c];
+        gpu_cmd_t sc; memset(&sc,0,sizeof sc); sc.type=GPU_CMD_CUSTOM; sc.execute=finalize_sh; sc.ctx=sl;
+        while(!gpu_cmd_push(&gqueue,&sc)) sched_yield();
+    }
 
     /* --- Build static meshes: uv1 remapped into each mesh's atlas rect. --- */
     static_mesh_t meshes[MAXM]; render_submesh_t subs[MAXM];
