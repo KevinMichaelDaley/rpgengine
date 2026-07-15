@@ -35,6 +35,21 @@ extern "C" {
 #endif
 
 /**
+ * @brief A GPU-resident coarse signed-distance field over an axis-aligned box.
+ *
+ * A dense JFA distance grid (@p dims cells, @p voxel edge, negative inside
+ * solid) uploaded to an SSBO. Used as a shared FAR / per-chunk MEDIUM field the
+ * gather ray marches once it leaves a finer field. Owns @p buf; free with
+ * @ref lm_gpu_field_free. @p buf == 0 means "absent".
+ */
+typedef struct lm_gpu_field {
+    uint32_t buf;        /**< GL SSBO name holding dims^3 floats (0 = absent). */
+    int32_t  dims[3];    /**< Grid resolution. */
+    float    origin[3];  /**< World-space minimum corner. */
+    float    voxel;      /**< Cell edge (m). */
+} lm_gpu_field_t;
+
+/**
  * @brief Load GL 4.3 entry points via @p loader and compile the JFA + gather
  *        compute programs. Requires a current compute-capable context. Returns
  *        false on a missing entry point or a shader compile/link failure.
@@ -45,25 +60,49 @@ bool lm_gpu_gather_init(const gl_loader_t *loader);
 void lm_gpu_gather_shutdown(void);
 
 /**
+ * @brief Build a coarse JFA distance field over @p box (longest axis capped at
+ *        @p max_dim cells, never finer than @p fine_voxel) by conservatively
+ *        rasterising @p scene's triangles. On success fills @p out (caller owns
+ *        @p out->buf; release with @ref lm_gpu_field_free). Needs a current
+ *        compute context + @ref lm_gpu_gather_init. Returns false on failure.
+ */
+bool lm_gpu_field_build(const lm_mesh_scene_t *scene, float fine_voxel,
+                        const phys_aabb_t *box, int max_dim, lm_gpu_field_t *out);
+
+/** @brief Delete a field's GL buffer and zero it. NULL-safe. */
+void lm_gpu_field_free(lm_gpu_field_t *field);
+
+/**
  * @brief Run the full GPU gather over @p lm's luxels and write the per-luxel
  *        SH9 estimate into @p accum (3 coeff-sets per luxel, laid out as the CPU
  *        gather's accum). @p samples is the total per-luxel sample count for
- *        this call (stratified n x n, n = floor(sqrt(samples))). Returns false
- *        on any GL/allocation failure or if @ref lm_gpu_gather_init was not run.
+ *        this call (stratified n x n, n = floor(sqrt(samples))).
+ *
+ *        Three trace levels: a fine NEAR field over @p region (or the whole SVO
+ *        when @p region is NULL), a per-call MEDIUM field over a ~3x-region box
+ *        (built internally when @p region is given), and an optional coarse
+ *        shared FAR field @p far (built by the caller, e.g. one per chunk
+ *        neighbourhood). A ray escapes to sky only after leaving all present
+ *        fields. @p far may be NULL. Returns false on any GL/allocation failure
+ *        or if @ref lm_gpu_gather_init was not run.
  */
 bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
-                       const phys_aabb_t *region, const lm_light_t *lights,
-                       uint32_t n_lights, const lm_sky_t *sky, float transition,
-                       float maxdist, uint32_t samples, uint32_t bounces,
-                       uint32_t seed);
+                       const phys_aabb_t *region, const lm_gpu_field_t *far,
+                       const lm_light_t *lights, uint32_t n_lights,
+                       const lm_sky_t *sky, float transition, float maxdist,
+                       uint32_t samples, uint32_t bounces, uint32_t seed);
 
 /**
  * @brief Chunked gather (rpg-fzht): partition the scene into @p chunk_size cubic
- *        chunks (with @p margin overlap) and gather each chunk's luxels against a
- *        per-chunk SDF over its outer box, sharing the full @p svo. Writes the
- *        same per-luxel @p accum as @ref lm_gpu_gather_run. Returns false on
- *        allocation / GPU failure.
+ *        NEAR chunks (with @p margin overlap) and a coarser FAR grid whose cells
+ *        each span a neighbourhood of near chunks. Each near chunk's luxels are
+ *        gathered against its fine near SDF, a per-chunk medium field, and the
+ *        coarse FAR SDF shared by every chunk in the same far cell (built once
+ *        per far cell, not per chunk). LM_FAR_MULT (far cell = mult x chunk),
+ *        LM_FAR_DIM (far grid resolution) and LM_MED_MULT tune the hierarchy.
+ *        Writes the same per-luxel @p accum as @ref lm_gpu_gather_run. Returns
+ *        false on allocation / GPU failure.
  */
 bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
                            const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,

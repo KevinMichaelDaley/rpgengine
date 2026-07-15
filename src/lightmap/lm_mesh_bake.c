@@ -299,7 +299,7 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,
                                       config->seed ^ 0x9E3779B9u)
-                       : lm_gpu_gather_run(&result->combined, accum, &svo, scene, NULL, scene->lights,
+                       : lm_gpu_gather_run(&result->combined, accum, &svo, scene, NULL, NULL, scene->lights,
                                       scene->n_lights, &config->sky,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,

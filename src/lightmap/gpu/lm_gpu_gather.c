@@ -133,14 +133,18 @@ static const char *CS_GATHER =
     "layout(std430,binding=4) readonly buffer Lit { vec4 lit[]; };\n"
     "struct Node { uint children[8]; vec4 diffuse; vec4 emissive; };\n"
     "layout(std430,binding=5) readonly buffer Svo { Node nodes[]; };\n"
-    /* Optional coarse FAR-field SDF (rpg-fzht): a whole-scene distance field a\n"
-     * chunk ray marches into once it leaves its (small) near box, so distant\n"
-     * geometry occludes/reflects instead of the ray escaping straight to sky. */
+    /* Coarser MEDIUM + FAR distance fields (rpg-fzht) a chunk ray marches into\n"
+     * once it leaves its (small) near box, so distant geometry occludes/reflects\n"
+     * instead of the ray escaping straight to sky. MEDIUM is a per-chunk ~3x box;\n"
+     * FAR is a coarse field shared by a neighbourhood of chunks. Either may be\n"
+     * absent (hasMed/hasFar == 0). */
     "layout(std430,binding=6) readonly buffer FarSdf { float fsdf[]; };\n"
+    "layout(std430,binding=7) readonly buffer MedSdf { float msdf[]; };\n"
     "uniform ivec3 dims; uniform float voxel; uniform vec3 origin; uniform vec3 sky;\n"
     "uniform int samples; uniform int bounces; uniform uint seed; uniform int nlux; uniform int nlights;\n"
     "uniform float transition; uniform float finevox;\n"
     "uniform vec3 svomin; uniform vec3 svomax; uniform int svodepth; uniform int nodeCount;\n"
+    "uniform int hasMed; uniform ivec3 mdims; uniform vec3 morigin; uniform float mvoxel;\n"
     "uniform int hasFar; uniform ivec3 fdims; uniform vec3 forigin; uniform float fvoxel;\n"
     "const float TAU=6.28318530718, INVPI=0.31830988618, PI=3.14159265359, HALFPI=1.5707963268;\n"
     "uint pcg(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28)+4u))^s)*277803737u; return (w>>22)^w; }\n"
@@ -161,18 +165,21 @@ static const char *CS_GATHER =
     "bool inb(ivec3 c){ return all(greaterThanEqual(c,ivec3(0)))&&all(lessThan(c,dims)); }\n"
     "ivec3 toCell(vec3 p){ return ivec3(floor((p-origin)/voxel)); }\n"
     /* Multi-level SDF sample: the fine per-chunk NEAR field where it covers p,\n"
-     * else the coarse whole-scene FAR field, else outside all fields. Returns the\n"
-     * signed distance and reports the level used (0 near, 1 far, -1 none) so the\n"
-     * tracer refines against the SVO only in the near field and does a plain\n"
-     * coarse hit far away. */
+     * else the per-chunk MEDIUM field, else the shared coarse FAR field, else\n"
+     * outside all fields. Returns the signed distance and reports the level used\n"
+     * (0 near, 1 medium, 2 far, -1 none) so the tracer refines against the SVO\n"
+     * only in the fine near field and does plain coarse hits further out. */
     "float mSDF(vec3 p, out int lvl){\n"
     "  ivec3 c=toCell(p);\n"
     "  if(inb(c)){ lvl=0; return sdf[cidx(c)]; }\n"
+    "  if(hasMed==1){ ivec3 mc=ivec3(floor((p-morigin)/mvoxel));\n"
+    "    if(all(greaterThanEqual(mc,ivec3(0)))&&all(lessThan(mc,mdims))){\n"
+    "      lvl=1; return msdf[(mc.z*mdims.y+mc.y)*mdims.x+mc.x]; } }\n"
     "  if(hasFar==1){ ivec3 fc=ivec3(floor((p-forigin)/fvoxel));\n"
     "    if(all(greaterThanEqual(fc,ivec3(0)))&&all(lessThan(fc,fdims))){\n"
-    "      lvl=1; return fsdf[(fc.z*fdims.y+fc.y)*fdims.x+fc.x]; } }\n"
+    "      lvl=2; return fsdf[(fc.z*fdims.y+fc.y)*fdims.x+fc.x]; } }\n"
     "  lvl=-1; return 1e9; }\n"
-    "float mvox(int lvl){ return lvl==0 ? voxel : fvoxel; }\n"
+    "float mvox(int lvl){ return lvl==0 ? voxel : (lvl==1 ? mvoxel : fvoxel); }\n"
     "float sSDF(vec3 p){ int l; float d=mSDF(p,l); return l<0 ? 1e9 : d; }\n"
     "void basis(vec3 n, out vec3 t, out vec3 b){ vec3 u=abs(n.z)<0.999?vec3(0,0,1):vec3(1,0,0); t=dnorm(cross(u,n)); b=cross(n,t); }\n"
     "void shb(vec3 d, out float y[9]){ float x=d.x,yy=d.y,z=d.z;\n"
@@ -217,10 +224,10 @@ static const char *CS_GATHER =
     "            hn = dot(g,g)>1e-10 ? dnorm(g) : -dir; return true; }\n"
     "          if(l2==0 && dd>fp*2.0) break; } }\n"
     "    } else {\n"
-    /* FAR field: no SVO refine (its leaves are sub-far-voxel); the coarse SDF\n"
-     * sign IS the occluder. A negative sample means inside distant solid -> hit,\n"
-     * shade by the SVO material at that (approximate) point. */
-    "      if(d<0.0){ hp=p; ht=t; float e=fvoxel;\n"
+    /* MEDIUM / FAR field: no SVO refine (leaves are sub-coarse-voxel); the coarse\n"
+     * SDF sign IS the occluder. A negative sample means inside distant solid ->\n"
+     * hit, shade by the SVO material at that (approximate) point. */
+    "      if(d<0.0){ hp=p; ht=t; float e=lv;\n"
     "        vec3 g=vec3(sSDF(p+vec3(e,0,0))-sSDF(p-vec3(e,0,0)), sSDF(p+vec3(0,e,0))-sSDF(p-vec3(0,e,0)), sSDF(p+vec3(0,0,e))-sSDF(p-vec3(0,0,e)));\n"
     "        hn = dot(g,g)>1e-10 ? dnorm(g) : -dir; return true; }\n"
     "    }\n"
@@ -450,21 +457,43 @@ static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
     return true;
 }
 
+bool lm_gpu_field_build(const lm_mesh_scene_t *scene, float fine_voxel,
+                        const phys_aabb_t *box, int max_dim, lm_gpu_field_t *out) {
+    if (!g_ready || out == NULL || box == NULL) return false;
+    float mn[3] = { box->min.x, box->min.y, box->min.z };
+    float mx[3] = { box->max.x, box->max.y, box->max.z };
+    GLuint buf; int dims[3]; float voxel;
+    if (!build_sdf(scene, fine_voxel, mn, mx, max_dim, &buf, dims, &voxel)) return false;
+    out->buf = (uint32_t)buf;
+    out->dims[0]=dims[0]; out->dims[1]=dims[1]; out->dims[2]=dims[2];
+    out->origin[0]=mn[0]; out->origin[1]=mn[1]; out->origin[2]=mn[2];
+    out->voxel = voxel;
+    return true;
+}
+
+void lm_gpu_field_free(lm_gpu_field_t *field) {
+    if (field == NULL || field->buf == 0) return;
+    GLuint b = (GLuint)field->buf; gl.DeleteBuffers(1, &b);
+    field->buf = 0;
+}
+
 bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
-                       const phys_aabb_t *region, const lm_light_t *lights,
-                       uint32_t n_lights, const lm_sky_t *sky, float transition,
-                       float maxdist, uint32_t samples, uint32_t bounces, uint32_t seed) {
+                       const phys_aabb_t *region, const lm_gpu_field_t *far,
+                       const lm_light_t *lights, uint32_t n_lights,
+                       const lm_sky_t *sky, float transition, float maxdist,
+                       uint32_t samples, uint32_t bounces, uint32_t seed) {
     (void)maxdist;
     if (!g_ready || lm == NULL || accum == NULL || svo == NULL) return false;
     uint32_t nlux = lm->res_u * lm->res_v;
 
-    /* The SVO descent (svoSolid/svoMat) always spans the whole scene; the coarse
-     * NEAR SDF covers @p region (a chunk's outer box) when given, else the whole
-     * SVO. When a small chunk region is given we ALSO build a coarse whole-scene
-     * FAR SDF: a chunk ray that leaves its near box keeps marching in the far
-     * field (distant geometry still occludes/reflects) instead of escaping to
-     * sky -- otherwise small chunks read far too bright. */
+    /* Three trace levels (rpg-fzht). The SVO descent (svoSolid/svoMat) always
+     * spans the whole scene; the fine NEAR SDF covers @p region (a chunk's outer
+     * box) when given, else the whole SVO. When a small chunk region is given we
+     * ALSO build a per-chunk MEDIUM field (~3x the region) so mid-range geometry
+     * resolves, and take an optional coarse shared FAR field @p far (built by the
+     * caller, one per chunk neighbourhood). A ray escapes to sky only after
+     * leaving all present fields -- otherwise small chunks read far too bright. */
     float svo_mn[3] = { svo->world_bounds.min.x, svo->world_bounds.min.y, svo->world_bounds.min.z };
     float svo_mx[3] = { svo->world_bounds.max.x, svo->world_bounds.max.y, svo->world_bounds.max.z };
 
@@ -476,28 +505,36 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
         for (int a=0;a<3;++a){ mn[a]=svo_mn[a]; mx[a]=svo_mx[a]; }
     }
 
-    /* NEAR field over the region; FAR field over the whole scene (chunked only). */
+    /* NEAR field over the region (fine, 128^3). */
     GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f;
     if (!build_sdf(scene, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel))
         return false;
-    GLuint b_fsdf = 0; int fdims[3] = {1,1,1}; float fvoxel = 1.0f; float forigin[3] = {0,0,0};
-    int hasFar = 0;
+
+    /* MEDIUM field: a ~MED_MULT x region box (chunked bakes only), clamped to the
+     * scene, 128^3 -> coarser than near since it spans a bigger box. */
+    lm_gpu_field_t med = {0}; int hasMed = 0;
     if (region) {
-        if (!build_sdf(scene, svo->voxel_size, svo_mn, svo_mx, 128, &b_fsdf, fdims, &fvoxel)) {
-            gl.DeleteBuffers(1, &b_sdf); return false;
-        }
-        forigin[0]=svo_mn[0]; forigin[1]=svo_mn[1]; forigin[2]=svo_mn[2]; hasFar = 1;
+        float med_mult = getenv("LM_MED_MULT") ? (float)atof(getenv("LM_MED_MULT")) : 3.0f;
+        phys_aabb_t mbox;
+        float mc[3] = { (mn[0]+mx[0])*0.5f, (mn[1]+mx[1])*0.5f, (mn[2]+mx[2])*0.5f };
+        float mh[3] = { (mx[0]-mn[0])*0.5f*med_mult, (mx[1]-mn[1])*0.5f*med_mult, (mx[2]-mn[2])*0.5f*med_mult };
+        mbox.min.x=fmaxf(mc[0]-mh[0],svo_mn[0]); mbox.min.y=fmaxf(mc[1]-mh[1],svo_mn[1]); mbox.min.z=fmaxf(mc[2]-mh[2],svo_mn[2]);
+        mbox.max.x=fminf(mc[0]+mh[0],svo_mx[0]); mbox.max.y=fminf(mc[1]+mh[1],svo_mx[1]); mbox.max.z=fminf(mc[2]+mh[2],svo_mx[2]);
+        if (lm_gpu_field_build(scene, svo->voxel_size, &mbox, 128, &med)) hasMed = 1;
+        else { gl.DeleteBuffers(1, &b_sdf); return false; }
     }
+    int hasFar = (far && far->buf) ? 1 : 0;
     if (getenv("LM_GPU_DEBUG"))
-        fprintf(stderr, "[gpugather] near %dx%dx%d vox=%.3f  far %s %dx%dx%d vox=%.3f  nlux=%u\n",
-                dims[0],dims[1],dims[2],svoxel, hasFar?"on":"off", fdims[0],fdims[1],fdims[2],fvoxel, nlux);
+        fprintf(stderr, "[gpugather] near %dx%dx%d vox=%.3f  med %s %dx%dx%d vox=%.3f  far %s vox=%.3f  nlux=%u\n",
+                dims[0],dims[1],dims[2],svoxel, hasMed?"on":"off", med.dims[0],med.dims[1],med.dims[2],med.voxel,
+                hasFar?"on":"off", hasFar?far->voxel:0.0f, nlux);
 
     lm_gpu_node_t *nodes = malloc((size_t)svo->node_count * sizeof(lm_gpu_node_t));
     lm_gpu_luxel_t *plux = malloc((size_t)nlux * sizeof(lm_gpu_luxel_t));
     lm_gpu_light_t *plit = malloc((size_t)(n_lights ? n_lights : 1) * sizeof(lm_gpu_light_t));
     float *osh = malloc((size_t)nlux * 27 * sizeof(float));
     if (!nodes || !plux || !plit || !osh) {
-        gl.DeleteBuffers(1, &b_sdf); if (b_fsdf) gl.DeleteBuffers(1, &b_fsdf);
+        gl.DeleteBuffers(1, &b_sdf); lm_gpu_field_free(&med);
         free(nodes); free(plux); free(plit); free(osh); return false;
     }
     lm_gpu_pack_nodes(svo, nodes, svo->node_count);
@@ -529,18 +566,27 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     gl.Uniform1i(gl.GetUniformLocation(g_gather,"nodeCount"),(int)svo->node_count);
     gl.Uniform1f(gl.GetUniformLocation(g_gather,"transition"),transition);
     gl.Uniform1f(gl.GetUniformLocation(g_gather,"finevox"),svo->voxel_size);
-    /* Far-field level (rpg-fzht): bound the whole-scene coarse SDF; when absent,
-     * bind the near SDF to slot 6 too so the binding is always valid. */
+    /* MEDIUM + FAR levels (rpg-fzht): absent levels bind the near SDF to their
+     * slot so the binding is always valid; hasMed/hasFar gate their use. */
+    int med_dims[3] = { med.dims[0], med.dims[1], med.dims[2] };
+    float med_origin[3] = { med.origin[0], med.origin[1], med.origin[2] };
+    int far_dims[3] = { hasFar?far->dims[0]:1, hasFar?far->dims[1]:1, hasFar?far->dims[2]:1 };
+    float far_origin[3] = { hasFar?far->origin[0]:0.0f, hasFar?far->origin[1]:0.0f, hasFar?far->origin[2]:0.0f };
+    gl.Uniform1i(gl.GetUniformLocation(g_gather,"hasMed"),hasMed);
+    gl.Uniform3iv(gl.GetUniformLocation(g_gather,"mdims"),1,med_dims);
+    u3f(g_gather,"morigin",med_origin);
+    gl.Uniform1f(gl.GetUniformLocation(g_gather,"mvoxel"),med.voxel);
     gl.Uniform1i(gl.GetUniformLocation(g_gather,"hasFar"),hasFar);
-    gl.Uniform3iv(gl.GetUniformLocation(g_gather,"fdims"),1,fdims);
-    u3f(g_gather,"forigin",forigin);
-    gl.Uniform1f(gl.GetUniformLocation(g_gather,"fvoxel"),fvoxel);
+    gl.Uniform3iv(gl.GetUniformLocation(g_gather,"fdims"),1,far_dims);
+    u3f(g_gather,"forigin",far_origin);
+    gl.Uniform1f(gl.GetUniformLocation(g_gather,"fvoxel"),hasFar?far->voxel:1.0f);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,b_sdf);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,2,b_lux);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,3,b_out);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,4,b_lit);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,5,b_nodes);
-    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,6,hasFar?b_fsdf:b_sdf);
+    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,6,hasFar?(GLuint)far->buf:b_sdf);
+    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,7,hasMed?(GLuint)med.buf:b_sdf);
     /* Sample-batch the dispatch. A single dispatch of all samples over every
      * luxel trips the GPU watchdog (TDR) at high sample counts and comes back
      * zero; splitting into <=PER-sample batches keeps each dispatch short (the
@@ -558,7 +604,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
      * readback also bounds each dispatch (TDR-safe). */
     double *osum = calloc((size_t)nlux * 27, sizeof(double));
     if (!osum) {
-        gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); if (b_fsdf) gl.DeleteBuffers(1, &b_fsdf);
+        gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); lm_gpu_field_free(&med);
         free(nodes); free(plux); free(plit); free(osh); return false;
     }
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,3,b_out);
@@ -597,7 +643,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                 accum[i*3+c].c[k] = (float)(osum[i*27 + c*9 + k] * invb);
     free(osum);
 
-    gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); if (b_fsdf) gl.DeleteBuffers(1, &b_fsdf);
+    gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); lm_gpu_field_free(&med);
     free(nodes); free(plux); free(plit); free(osh);
     return true;
     #undef UP
