@@ -2341,6 +2341,8 @@ LM_HALL_BAKE_SRC := src/mesh/dmesh_load.c src/mesh/obj_mesh_load.c \
   src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c \
   src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c \
   src/lightmap/gpu/lm_gpu_gather.c src/lightmap/gpu/lm_gpu_pack.c \
+  src/lightmap/gpu/lm_gpu_gather_chunked.c \
+  src/renderer/chunk/chunk_grid_init.c src/renderer/chunk/chunk_grid_index.c src/renderer/chunk/chunk_grid_bounds.c \
   src/lightmap/lm_bake_driver.c \
   src/math/vec3.c
 build/hall_bake: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) | build

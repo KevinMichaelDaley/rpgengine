@@ -69,6 +69,12 @@ typedef struct lm_bake_config {
     int         gpu_gather;      /**< Run the GI gather on the GPU (rpg-k4lk); the
                                       caller must lm_gpu_gather_init() a compute
                                       context first. 0 = CPU path. */
+    float       chunk_size;      /**< GPU chunked bake (rpg-fzht): if >0, partition
+                                      the scene into cubic chunks of this edge and
+                                      build a per-chunk SDF instead of one field
+                                      over the whole scene. 0 = single region. */
+    float       chunk_margin;    /**< Overlap added to each chunk's SDF box so rays
+                                      resolve across chunk boundaries (m). */
 } lm_bake_config_t;
 
 #ifdef __cplusplus

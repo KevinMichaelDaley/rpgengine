@@ -155,6 +155,10 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
     cfg->farfield_near = 0.5f * diag; cfg->farfield_maxdist = 1e9f; cfg->seed = 11u;
     cfg->sky.kind = LM_SKY_CONSTANT; cfg->sky.color = v3(0.55f, 0.68f, 0.95f);
     cfg->gi_batch = getenv("HALL_BATCH") ? (uint32_t)atoi(getenv("HALL_BATCH")) : 64u;
+    /* Chunked GPU bake (rpg-fzht): HALL_CHUNK = cubic chunk edge (m), 0 = single
+     * region. HALL_CHUNK_MARGIN overlaps chunks so rays resolve across borders. */
+    cfg->chunk_size = getenv("HALL_CHUNK") ? (float)atof(getenv("HALL_CHUNK")) : 0.0f;
+    cfg->chunk_margin = getenv("HALL_CHUNK_MARGIN") ? (float)atof(getenv("HALL_CHUNK_MARGIN")) : 2.0f;
 
     printf("baking hall: voxel=%.3fm samples=%u bounces=%u diag=%.2f\n",
            cfg->voxel_size, cfg->farfield_samples, cfg->gi_bounces, diag);

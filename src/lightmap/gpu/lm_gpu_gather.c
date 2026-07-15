@@ -335,16 +335,27 @@ static bool tri_box_overlap(const float bc[3], const float bh[3],
 
 bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
-                       const lm_light_t *lights,
+                       const phys_aabb_t *region, const lm_light_t *lights,
                        uint32_t n_lights, const lm_sky_t *sky, float transition,
                        float maxdist, uint32_t samples, uint32_t bounces, uint32_t seed) {
     (void)maxdist;
     if (!g_ready || lm == NULL || accum == NULL || svo == NULL) return false;
     uint32_t nlux = lm->res_u * lm->res_v;
 
+    /* The SVO descent (svoSolid/svoMat) always spans the whole scene; the coarse
+     * SDF grid covers @p region (a chunk's outer box) when given, else the whole
+     * SVO -- so a chunked bake builds a per-chunk SDF over one shared full SVO. */
+    float svo_mn[3] = { svo->world_bounds.min.x, svo->world_bounds.min.y, svo->world_bounds.min.z };
+    float svo_mx[3] = { svo->world_bounds.max.x, svo->world_bounds.max.y, svo->world_bounds.max.z };
+
     /* Coarse SDF grid: cap the longest axis at 128, never finer than a voxel. */
-    float mn[3] = { svo->world_bounds.min.x, svo->world_bounds.min.y, svo->world_bounds.min.z };
-    float mx[3] = { svo->world_bounds.max.x, svo->world_bounds.max.y, svo->world_bounds.max.z };
+    float mn[3], mx[3];
+    if (region) {
+        mn[0]=region->min.x; mn[1]=region->min.y; mn[2]=region->min.z;
+        mx[0]=region->max.x; mx[1]=region->max.y; mx[2]=region->max.z;
+    } else {
+        for (int a=0;a<3;++a){ mn[a]=svo_mn[a]; mx[a]=svo_mx[a]; }
+    }
     float ext[3] = { mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2] };
     float longest = fmaxf(ext[0], fmaxf(ext[1], ext[2]));
     float svoxel = longest / 128.0f; if (svoxel < svo->voxel_size) svoxel = svo->voxel_size;
@@ -460,7 +471,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     /* Gather. */
     float origin[3]={mn[0],mn[1],mn[2]};
     float skycol[3] = { sky?sky->color.x:0.0f, sky?sky->color.y:0.0f, sky?sky->color.z:0.0f };
-    float svomn[3]={mn[0],mn[1],mn[2]}, svomx[3]={mx[0],mx[1],mx[2]};
+    float svomn[3]={svo_mn[0],svo_mn[1],svo_mn[2]}, svomx[3]={svo_mx[0],svo_mx[1],svo_mx[2]};
     gl.UseProgram(g_gather);
     gl.Uniform3iv(gl.GetUniformLocation(g_gather,"dims"),1,dims);
     gl.Uniform1f(gl.GetUniformLocation(g_gather,"voxel"),svoxel);

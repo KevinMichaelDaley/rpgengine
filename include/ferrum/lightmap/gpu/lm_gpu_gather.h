@@ -27,6 +27,7 @@
 #include "ferrum/lightmap/lm_sh.h"
 #include "ferrum/lightmap/lm_sky.h"
 #include "ferrum/npc/npc_svo.h"
+#include "ferrum/physics/aabb.h"
 #include "ferrum/renderer/gl_loader.h"
 
 #ifdef __cplusplus
@@ -52,10 +53,24 @@ void lm_gpu_gather_shutdown(void);
  */
 bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
-                       const lm_light_t *lights,
+                       const phys_aabb_t *region, const lm_light_t *lights,
                        uint32_t n_lights, const lm_sky_t *sky, float transition,
                        float maxdist, uint32_t samples, uint32_t bounces,
                        uint32_t seed);
+
+/**
+ * @brief Chunked gather (rpg-fzht): partition the scene into @p chunk_size cubic
+ *        chunks (with @p margin overlap) and gather each chunk's luxels against a
+ *        per-chunk SDF over its outer box, sharing the full @p svo. Writes the
+ *        same per-luxel @p accum as @ref lm_gpu_gather_run. Returns false on
+ *        allocation / GPU failure.
+ */
+bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
+                           const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
+                           float chunk_size, float margin, const lm_light_t *lights,
+                           uint32_t n_lights, const lm_sky_t *sky, float transition,
+                           float maxdist, uint32_t samples, uint32_t bounces,
+                           uint32_t seed);
 
 #ifdef __cplusplus
 }

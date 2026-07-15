@@ -287,14 +287,23 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                     }
                 uint32_t batch = config->gi_batch ? config->gi_batch : 64u;
                 uint32_t nb = (config->farfield_samples + batch - 1u) / batch;
-                /* GPU path (rpg-k4lk): one dispatch does all samples; skip the CPU
-                 * batch loop. Falls back to CPU if the run fails. */
+                /* GPU path (rpg-k4lk): one gather does all samples; skip the CPU
+                 * batch loop. Falls back to CPU if the run fails. With chunk_size
+                 * > 0 the gather is chunked (rpg-fzht): a per-chunk SDF over each
+                 * chunk's outer box instead of one field over the whole scene. */
                 if (config->gpu_gather &&
-                    lm_gpu_gather_run(&result->combined, accum, &svo, scene, scene->lights,
+                    (config->chunk_size > 0.0f
+                       ? lm_gpu_gather_chunked(&result->combined, accum, &svo, scene,
+                                      config->chunk_size, config->chunk_margin, scene->lights,
                                       scene->n_lights, &config->sky,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,
-                                      config->seed ^ 0x9E3779B9u)) {
+                                      config->seed ^ 0x9E3779B9u)
+                       : lm_gpu_gather_run(&result->combined, accum, &svo, scene, NULL, scene->lights,
+                                      scene->n_lights, &config->sky,
+                                      config->farfield_near, config->farfield_maxdist,
+                                      config->farfield_samples, config->gi_bounces,
+                                      config->seed ^ 0x9E3779B9u))) {
                     for (uint32_t i = 0; i < total; ++i)
                         for (int c = 0; c < 3; ++c)
                             for (int k = 0; k < 9; ++k)
