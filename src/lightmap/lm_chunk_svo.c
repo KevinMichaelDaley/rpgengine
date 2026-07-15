@@ -10,6 +10,23 @@
 #include "ferrum/lightmap/lm_svo_material.h"
 #include "ferrum/lightmap/lm_svo_voxelize.h"
 
+/* Mesh world AABB overlaps @p box? (Cheap cull so a chunk only stamps/voxelizes
+ * the few meshes that touch it, instead of the whole scene, per chunk.) */
+static bool mesh_overlaps(const lm_mesh_t *m, phys_aabb_t box) {
+    if (m->vert_count == 0) return false;
+    float mn[3] = { m->positions[0], m->positions[1], m->positions[2] };
+    float mx[3] = { mn[0], mn[1], mn[2] };
+    for (uint32_t v = 1; v < m->vert_count; ++v)
+        for (int c = 0; c < 3; ++c) {
+            float p = m->positions[v*3+c];
+            if (p < mn[c]) mn[c] = p;
+            if (p > mx[c]) mx[c] = p;
+        }
+    return mx[0] >= box.min.x && mn[0] <= box.max.x &&
+           mx[1] >= box.min.y && mn[1] <= box.max.y &&
+           mx[2] >= box.min.z && mn[2] <= box.max.z;
+}
+
 /* Stamp one mesh's triangles into the SVO with its material id (mirrors the
  * whole-scene lm_mesh_stamp in lm_mesh_bake.c). Triangles outside the octree
  * bounds are clipped away by the stamp, so passing every mesh is correct -- only
@@ -47,16 +64,24 @@ bool lm_chunk_svo_build(const lm_mesh_scene_t *scene, phys_aabb_t box,
     uint32_t depth = chunk_depth(box, voxel);
     if (!npc_svo_grid_init(out_svo, box, depth)) return false;
 
+    /* Compact the meshes that actually overlap this chunk, so both the stamp and
+     * the voxelize are O(local geometry) rather than O(whole scene) per chunk. */
+    lm_mesh_t *local = malloc((size_t)(scene->n_meshes ? scene->n_meshes : 1) * sizeof(lm_mesh_t));
+    if (!local) { npc_svo_grid_destroy(out_svo); return false; }
+    uint32_t nlocal = 0;
     for (uint32_t i = 0; i < scene->n_meshes; ++i)
-        chunk_stamp(out_svo, &scene->meshes[i]);
+        if (mesh_overlaps(&scene->meshes[i], box)) local[nlocal++] = scene->meshes[i];
+
+    for (uint32_t i = 0; i < nlocal; ++i)
+        chunk_stamp(out_svo, &local[i]);
 
     /* Voxelize textured material + smooth normal into the leaves (node-count
      * sized scratch, small per chunk). */
     uint32_t nc = out_svo->node_count;
     float  *area = malloc((size_t)(nc ? nc : 1) * sizeof(float));
     vec3_t *nrm  = malloc((size_t)(nc ? nc : 1) * sizeof(vec3_t));
-    if (!area || !nrm) { free(area); free(nrm); npc_svo_grid_destroy(out_svo); return false; }
-    lm_svo_voxelize(out_svo, scene->meshes, scene->n_meshes, area, nrm);
-    free(area); free(nrm);
+    if (!area || !nrm) { free(area); free(nrm); free(local); npc_svo_grid_destroy(out_svo); return false; }
+    lm_svo_voxelize(out_svo, local, nlocal, area, nrm);
+    free(area); free(nrm); free(local);
     return true;
 }
