@@ -54,9 +54,10 @@ typedef struct shadow_csm_config {
                                      *   keeps texels fine over the shadowed range. */
 } shadow_csm_config_t;
 
-/** Cascaded shadow-map state: two texture arrays + per-cascade light matrices. */
+/** Shadow-map state: the static EVSM2 cascade array + a single low-res
+ *  orthographic depth map for dynamic casters, plus their light matrices. */
 typedef struct shadow_csm {
-    shader_program_t       shader;   /**< linear-distance depth program. */
+    shader_program_t       shader;   /**< EVSM/distance depth program. */
     shader_uniform_cache_t cache;
     uint32_t cascades;
     uint32_t static_res;
@@ -64,10 +65,10 @@ typedef struct shadow_csm {
     float    lambda;
     float    max_distance; /**< far-split cap (0 = camera far). */
 
-    uint32_t static_array;   /**< R32F 2D-array, one layer per cascade. */
-    uint32_t dynamic_array;
+    uint32_t static_array;   /**< RG32F 2D-array EVSM2 moments, one layer/cascade. */
     uint32_t depth_rb_static;
-    uint32_t depth_rb_dynamic;
+    uint32_t dyn_map;        /**< single R32F 2D distance map for dynamic casters. */
+    uint32_t dyn_depth_rb;
     uint32_t fbo;
     bool     static_valid;   /**< true once static casters have been baked. */
 
@@ -76,6 +77,11 @@ typedef struct shadow_csm {
     float  far_plane[SHADOW_CSM_MAX_CASCADES]; /**< per-cascade distance norm. */
     float  split_view[SHADOW_CSM_MAX_CASCADES];/**< cascade far in view depth. */
 
+    mat4_t dyn_view_proj;    /**< single-face ortho matrix for the dynamic map. */
+    float  dyn_eye[3];
+    float  dyn_far;
+
+    void (*glFramebufferTexture2D)(uint32_t, uint32_t, uint32_t, uint32_t, int32_t);
     void (*glGenFramebuffers)(int32_t, uint32_t *);
     void (*glDeleteFramebuffers)(int32_t, const uint32_t *);
     void (*glBindFramebuffer)(uint32_t, uint32_t);
@@ -89,7 +95,7 @@ typedef struct shadow_csm {
     void (*glDeleteTextures)(int32_t, const uint32_t *);
     void (*glBindTexture)(uint32_t, uint32_t);
     void (*glActiveTexture)(uint32_t);
-    void (*glGenerateMipmap)(uint32_t);
+    void (*glTexImage2D)(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void *);
     void (*glTexImage3D)(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void *);
     void (*glTexParameteri)(uint32_t, uint32_t, int32_t);
     void (*glViewport)(int32_t, int32_t, int32_t, int32_t);

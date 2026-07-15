@@ -120,7 +120,7 @@ static void fwd_forward_submit(void *ud)
          * of different types sharing unit 0 makes every draw INVALID_OPERATION. */
         shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_enabled", 0);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_static", 22);
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_dynamic", 23);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_dyn_map", 23);
     }
 
     for (uint32_t i = 0; i < s->count; ++i) {

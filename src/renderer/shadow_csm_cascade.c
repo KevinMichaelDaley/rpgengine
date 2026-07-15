@@ -44,6 +44,39 @@ static void csm_near_far(const float proj[16], float *near_out, float *far_out)
     *far_out = d / (c + 1.0f);
 }
 
+/* Fit a texel-snapped orthographic light matrix to the bounding sphere of 8
+ * world-space corners, viewed along `dir`. Stabilised: the radius is rounded to
+ * a fixed increment and the centre snapped to the `res` texel grid. */
+static void csm_fit_ortho(const vec3_t sc[8], vec3_t dir, vec3_t up, float res,
+                          mat4_t *vp_out, float eye_out[3], float *far_out)
+{
+    vec3_t centroid = { 0, 0, 0 };
+    for (int j = 0; j < 8; ++j) centroid = vec3_add(centroid, sc[j]);
+    centroid = vec3_scale(centroid, 1.0f / 8.0f);
+    float radius = 0.0f;
+    for (int j = 0; j < 8; ++j) {
+        float d = vec3_distance(centroid, sc[j]);
+        if (d > radius) radius = d;
+    }
+    if (radius < 1e-4f) radius = 1e-4f;
+    radius = ceilf(radius * 16.0f) / 16.0f;
+
+    vec3_t eye = vec3_sub(centroid, vec3_scale(dir, 2.0f * radius));
+    float far_plane = 4.0f * radius;
+    mat4_t lview;
+    mat4_look_at(eye, centroid, up, &lview);
+    mat4_t lproj = mat4_ortho(-radius, radius, -radius, radius, 0.0f, far_plane);
+    mat4_t vp = mat4_mul(lproj, lview);
+    vec4_t o = mat4_mul_vec4(vp, (vec4_t){ centroid.x, centroid.y, centroid.z, 1.0f });
+    float ow = (o.w != 0.0f) ? 1.0f / o.w : 1.0f;
+    float tx = o.x * ow * 0.5f * res, ty = o.y * ow * 0.5f * res;
+    lproj.m[12] += (roundf(tx) - tx) * 2.0f / res;
+    lproj.m[13] += (roundf(ty) - ty) * 2.0f / res;
+    *vp_out = mat4_mul(lproj, lview);
+    eye_out[0] = eye.x; eye_out[1] = eye.y; eye_out[2] = eye.z;
+    *far_out = far_plane;
+}
+
 void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
                        const float light_dir[3])
 {
@@ -61,6 +94,7 @@ void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
     csm_frustum_corners(camera, corners);
     float near_p, far_p;
     csm_near_far(camera->proj, &near_p, &far_p);
+    float far_cam = far_p; /* uncapped camera far (the far corners sit here). */
     /* Cap the shadowed range so texels stay fine over the scene rather than the
      * whole (possibly huge) camera far plane. */
     if (csm->max_distance > 0.0f && far_p > near_p + csm->max_distance)
@@ -81,45 +115,15 @@ void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
         float tn = (dn - near_p) / range, tf = (df - near_p) / range;
         csm->split_view[c] = df;
 
-        /* Interpolate the frustum edges to this slice's 8 corners; bound them
-         * with a sphere (centroid + max radius). */
+        /* Interpolate the frustum edges to this slice's 8 corners, then fit. */
         vec3_t sc[8];
-        vec3_t centroid = { 0, 0, 0 };
         for (int j = 0; j < 4; ++j) {
             sc[j] = vec3_lerp(corners[j], corners[j + 4], tn);
             sc[j + 4] = vec3_lerp(corners[j], corners[j + 4], tf);
         }
-        for (int j = 0; j < 8; ++j) centroid = vec3_add(centroid, sc[j]);
-        centroid = vec3_scale(centroid, 1.0f / 8.0f);
-        float radius = 0.0f;
-        for (int j = 0; j < 8; ++j) {
-            float d = vec3_distance(centroid, sc[j]);
-            if (d > radius) radius = d;
-        }
-        if (radius < 1e-4f) radius = 1e-4f;
-        /* Round the radius up to a stable increment so per-frame jitter in the
-         * corner set does not resize (and thus re-shimmer) the map. */
-        radius = ceilf(radius * 16.0f) / 16.0f;
-
-        /* Virtual eye two radii back so casters above the slice are captured. */
-        vec3_t eye = vec3_sub(centroid, vec3_scale(dir, 2.0f * radius));
-        float far_plane = 4.0f * radius;
-        mat4_t lview;
-        mat4_look_at(eye, centroid, up, &lview);
-        mat4_t lproj = mat4_ortho(-radius, radius, -radius, radius, 0.0f, far_plane);
-
-        /* Texel-snap: project the sphere centre to shadow NDC, round it to the
-         * texel grid, and translate the ortho by the sub-texel remainder. */
-        mat4_t vp = mat4_mul(lproj, lview);
-        vec4_t o = mat4_mul_vec4(vp, (vec4_t){ centroid.x, centroid.y, centroid.z, 1.0f });
-        float ow = (o.w != 0.0f) ? 1.0f / o.w : 1.0f;
-        float res = (float)csm->static_res;
-        float tx = o.x * ow * 0.5f * res, ty = o.y * ow * 0.5f * res;
-        float dx = (roundf(tx) - tx) * 2.0f / res;
-        float dy = (roundf(ty) - ty) * 2.0f / res;
-        lproj.m[12] += dx; /* translate clip-x (column-major translation col). */
-        lproj.m[13] += dy;
-        vp = mat4_mul(lproj, lview);
+        mat4_t vp;
+        float eye3[3], far_plane;
+        csm_fit_ortho(sc, dir, up, (float)csm->static_res, &vp, eye3, &far_plane);
 
         /* Invalidate the static cache if this cascade's matrix moved. */
         for (int i = 0; i < 16 && csm->static_valid; ++i)
@@ -127,7 +131,19 @@ void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
                 csm->static_valid = false;
 
         csm->view_proj[c] = vp;
-        csm->eye[c][0] = eye.x; csm->eye[c][1] = eye.y; csm->eye[c][2] = eye.z;
+        csm->eye[c][0] = eye3[0]; csm->eye[c][1] = eye3[1]; csm->eye[c][2] = eye3[2];
         csm->far_plane[c] = far_plane;
     }
+
+    /* Single dynamic-caster ortho fit to the whole capped shadowed frustum, so a
+     * dynamic object anywhere in the shadowed range lands in the one small map.
+     * Not texel-snapped to a cache -- it is re-rendered every frame anyway. */
+    float t_far = (far_cam > near_p) ? (far_p - near_p) / (far_cam - near_p) : 1.0f;
+    vec3_t dsc[8];
+    for (int j = 0; j < 4; ++j) {
+        dsc[j] = corners[j];
+        dsc[j + 4] = vec3_lerp(corners[j], corners[j + 4], t_far);
+    }
+    csm_fit_ortho(dsc, dir, up, (float)csm->dynamic_res, &csm->dyn_view_proj,
+                  csm->dyn_eye, &csm->dyn_far);
 }

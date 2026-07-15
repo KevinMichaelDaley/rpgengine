@@ -33,13 +33,15 @@ static const char *const SC_FS =
     "in vec3 v_world;\n"
     "uniform vec3 u_eye;\n"
     "uniform float u_far;\n"
+    "uniform int u_mode;\n" /* 0 = EVSM2 moments (static array), 1 = plain distance (dynamic). */
     "layout(location=0) out vec2 o_moments;\n"
     /* C=30: exp(30)^2 = exp(60) ~ 1e26, well under FLT_MAX, with plenty of\n"
      * mantissa left to separate nearby depths. Depth normalised + clamped first. */
     "const float EVSM_C = 30.0;\n"
     "void main(){ float d = clamp(distance(v_world, u_eye) / u_far, 0.0, 1.0);\n"
-    "  float w = exp(EVSM_C * d);\n"
-    "  o_moments = vec2(w, w*w); }\n";
+    "  if(u_mode == 0){ float w = exp(EVSM_C * d); o_moments = vec2(w, w*w); }\n"
+    "  else { o_moments = vec2(d, d); }\n" /* the dynamic R32F map keeps .r for PCF. */
+    "}\n";
 
 #define SC_LOAD(dst, name)                                                    \
     do {                                                                      \
@@ -48,24 +50,37 @@ static const char *const SC_FS =
         memcpy(&(dst), &p_, sizeof(p_));                                      \
     } while (0)
 
-/* Allocate one RGBA32F 2D-array texture (the EVSM4 moments) with `layers` layers
- * at `res`. Linear + mipmapped so the moments hardware-filter for soft,
- * anti-aliased shadows. */
+/* Allocate the static EVSM2 moment array: RG32F 2D-array, one linear-filtered
+ * layer per cascade. RG is universally colour-renderable (unlike RGBA32F); full
+ * float precision keeps the exp-warp separable. Sampled at LOD 0 by the shader. */
 static void sc_make_array(shadow_csm_t *csm, uint32_t tex, uint32_t res,
                           uint32_t layers)
 {
-    /* RG32F: two 32-bit float moments. Full float precision (the warp needs it)
-     * and RG is universally colour-renderable, unlike RGBA32F. */
     csm->glBindTexture(GL_TEXTURE_2D_ARRAY, tex);
     csm->glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RG32F, (int32_t)res,
                       (int32_t)res, (int32_t)layers, 0, GL_RG, GL_FLOAT, NULL);
-    csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
-                         GL_LINEAR_MIPMAP_LINEAR);
+    csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    /* Allocate the mip chain now (glGenerateMipmap after each render fills it). */
-    csm->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAX_LEVEL, 4);
+}
+
+/* Allocate the single dynamic-caster distance map: R32F 2D, linear-filtered for
+ * PCF interpolation, with its own depth renderbuffer. */
+static void sc_make_dyn(shadow_csm_t *csm, uint32_t res)
+{
+    csm->glGenTextures(1, &csm->dyn_map);
+    csm->glBindTexture(GL_TEXTURE_2D, csm->dyn_map);
+    csm->glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, (int32_t)res, (int32_t)res, 0,
+                      GL_RED, GL_FLOAT, NULL);
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    csm->glGenRenderbuffers(1, &csm->dyn_depth_rb);
+    csm->glBindRenderbuffer(GL_RENDERBUFFER, csm->dyn_depth_rb);
+    csm->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
+                               (int32_t)res, (int32_t)res);
 }
 
 bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
@@ -101,7 +116,8 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     SC_LOAD(csm->glDeleteTextures, "glDeleteTextures");
     SC_LOAD(csm->glBindTexture, "glBindTexture");
     SC_LOAD(csm->glActiveTexture, "glActiveTexture");
-    SC_LOAD(csm->glGenerateMipmap, "glGenerateMipmap");
+    SC_LOAD(csm->glFramebufferTexture2D, "glFramebufferTexture2D");
+    SC_LOAD(csm->glTexImage2D, "glTexImage2D");
     SC_LOAD(csm->glTexImage3D, "glTexImage3D");
     SC_LOAD(csm->glTexParameteri, "glTexParameteri");
     SC_LOAD(csm->glViewport, "glViewport");
@@ -114,21 +130,16 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     SC_LOAD(csm->glGetError, "glGetError");
     SC_LOAD(csm->glCheckFramebufferStatus, "glCheckFramebufferStatus");
 
+    /* Static EVSM2 cascade array + its depth renderbuffer (reused per layer). */
     csm->glGenTextures(1, &csm->static_array);
     sc_make_array(csm, csm->static_array, csm->static_res, csm->cascades);
-    csm->glGenTextures(1, &csm->dynamic_array);
-    sc_make_array(csm, csm->dynamic_array, csm->dynamic_res, csm->cascades);
-
-    /* One depth renderbuffer per resolution (reused across cascade layers, one
-     * layer rendered at a time). */
     csm->glGenRenderbuffers(1, &csm->depth_rb_static);
     csm->glBindRenderbuffer(GL_RENDERBUFFER, csm->depth_rb_static);
     csm->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
                                (int32_t)csm->static_res, (int32_t)csm->static_res);
-    csm->glGenRenderbuffers(1, &csm->depth_rb_dynamic);
-    csm->glBindRenderbuffer(GL_RENDERBUFFER, csm->depth_rb_dynamic);
-    csm->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
-                               (int32_t)csm->dynamic_res, (int32_t)csm->dynamic_res);
+
+    /* Single low-res dynamic-caster distance map. */
+    sc_make_dyn(csm, csm->dynamic_res);
 
     csm->glGenFramebuffers(1, &csm->fbo);
     csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -145,17 +156,17 @@ void shadow_csm_destroy(shadow_csm_t *csm)
     if (csm->glDeleteRenderbuffers) {
         if (csm->depth_rb_static)
             csm->glDeleteRenderbuffers(1, &csm->depth_rb_static);
-        if (csm->depth_rb_dynamic)
-            csm->glDeleteRenderbuffers(1, &csm->depth_rb_dynamic);
+        if (csm->dyn_depth_rb)
+            csm->glDeleteRenderbuffers(1, &csm->dyn_depth_rb);
     }
     if (csm->glDeleteTextures) {
         if (csm->static_array)
             csm->glDeleteTextures(1, &csm->static_array);
-        if (csm->dynamic_array)
-            csm->glDeleteTextures(1, &csm->dynamic_array);
+        if (csm->dyn_map)
+            csm->glDeleteTextures(1, &csm->dyn_map);
     }
     shader_program_destroy(&csm->shader);
-    csm->fbo = csm->depth_rb_static = csm->depth_rb_dynamic = 0;
-    csm->static_array = csm->dynamic_array = 0;
+    csm->fbo = csm->depth_rb_static = csm->dyn_depth_rb = 0;
+    csm->static_array = csm->dyn_map = 0;
     csm->static_valid = false;
 }

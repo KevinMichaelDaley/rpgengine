@@ -215,7 +215,10 @@ static const char *const PBR_FS =
      * (nearer occluder) wins, so a static wall and a moving prop both shadow.\n"
      * Moments are hardware-filtered (mipmapped), so one tap yields a soft edge. */
     "uniform sampler2DArray u_csm_static;\n"
-    "uniform sampler2DArray u_csm_dynamic;\n"
+    "uniform sampler2D u_dyn_map;\n"      /* single ortho distance map, dynamic casters. */
+    "uniform mat4 u_dyn_vp;\n"
+    "uniform vec3 u_dyn_eye;\n"
+    "uniform float u_dyn_far;\n"
     "uniform mat4 u_csm_vp[8];\n"
     "uniform vec3 u_csm_eye[8];\n"
     "uniform float u_csm_far[8];\n"
@@ -236,6 +239,20 @@ static const char *const PBR_FS =
     "  float p = var / (var + dd*dd);\n"
     "  return clamp((p - 0.1) / 0.9, 0.0, 1.0);\n"  /* light-bleed reduction. */
     "}\n"
+    /* Dynamic casters: one ortho distance map, 3x3 PCF. Returns lit fraction. */
+    "float pbr_dyn_shadow(vec3 fragpos){\n"
+    "  vec4 lc = u_dyn_vp * vec4(fragpos, 1.0);\n"
+    "  vec3 ndc = lc.xyz / lc.w;\n"
+    "  vec2 uv = ndc.xy*0.5 + 0.5;\n"
+    "  if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) return 1.0;\n"
+    "  float cur = length(fragpos - u_dyn_eye) - u_dir_bias;\n"
+    "  float lit = 0.0; float st = 1.0/float(textureSize(u_dyn_map,0).x);\n"
+    "  for(int y=-1;y<=1;++y) for(int x=-1;x<=1;++x){\n"
+    "    float d = texture(u_dyn_map, uv + vec2(x,y)*st).r * u_dyn_far;\n"
+    "    lit += (cur > d) ? 0.0 : 1.0;\n"
+    "  }\n"
+    "  return lit / 9.0;\n"
+    "}\n"
     "float pbr_csm_shadow(vec3 fragpos, float viewz){\n"
     "  if(u_csm_enabled==0) return 1.0;\n"
     /* Select the first cascade whose split covers this fragment's view depth. */
@@ -246,11 +263,11 @@ static const char *const PBR_FS =
     "  vec2 uv = ndc.xy*0.5 + 0.5;\n"
     "  if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) return 1.0;\n"
     "  float d = clamp((length(fragpos - u_csm_eye[ci]) - u_dir_bias) / u_csm_far[ci], 0.0, 1.0);\n"
-    /* Co-sample static + dynamic moment maps; the nearer occluder shadows more.\n"
-     * Explicit LOD 0: auto-mip uses the shadow-coord derivatives (which jump at\n"
-     * cascade boundaries) and would sample a tiny over-blurred mip. */
+    /* Co-sample the static EVSM cascade and the dynamic PCF map; the nearer\n"
+     * occluder shadows more. Explicit LOD 0 (the array coord jumps at cascade\n"
+     * boundaries, which would blow up auto-mip). */
     "  float ls = pbr_evsm(textureLod(u_csm_static, vec3(uv, float(ci)), 0.0).rg, d);\n"
-    "  float ld = pbr_evsm(textureLod(u_csm_dynamic, vec3(uv, float(ci)), 0.0).rg, d);\n"
+    "  float ld = pbr_dyn_shadow(fragpos);\n"
     "  return min(ls, ld);\n"
     "}\n"
     "void main() {\n"

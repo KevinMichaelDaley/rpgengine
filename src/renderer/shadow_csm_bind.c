@@ -28,15 +28,20 @@ void shadow_csm_bind(const shadow_csm_t *csm, shader_uniform_cache_t *cache,
 {
     if (csm == NULL || cache == NULL || program == NULL)
         return;
+    /* Static EVSM2 cascade array on unit_static; single dynamic distance map on
+     * unit_dynamic (co-sampled + PCF-filtered by the receiver). */
     csm->glActiveTexture(GL_TEXTURE0 + unit_static);
     csm->glBindTexture(GL_TEXTURE_2D_ARRAY, csm->static_array);
     csm->glActiveTexture(GL_TEXTURE0 + unit_dynamic);
-    csm->glBindTexture(GL_TEXTURE_2D_ARRAY, csm->dynamic_array);
+    csm->glBindTexture(GL_TEXTURE_2D, csm->dyn_map);
 
     shader_uniform_set_int(cache, program, "u_csm_static", (int32_t)unit_static);
-    shader_uniform_set_int(cache, program, "u_csm_dynamic", (int32_t)unit_dynamic);
+    shader_uniform_set_int(cache, program, "u_dyn_map", (int32_t)unit_dynamic);
     shader_uniform_set_int(cache, program, "u_csm_count", (int32_t)csm->cascades);
     shader_uniform_set_int(cache, program, "u_csm_enabled", 1);
+    shader_uniform_set_mat4(cache, program, "u_dyn_vp", csm->dyn_view_proj.m, 0);
+    shader_uniform_set_vec3(cache, program, "u_dyn_eye", csm->dyn_eye);
+    shader_uniform_set_float(cache, program, "u_dyn_far", csm->dyn_far);
 
     for (uint32_t c = 0; c < csm->cascades; ++c) {
         shader_uniform_set_mat4(cache, program, CSM_VP[c], csm->view_proj[c].m, 0);
