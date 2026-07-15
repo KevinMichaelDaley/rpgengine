@@ -201,10 +201,20 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
         float ext = mx.x - mn.x;
         if (mx.y - mn.y > ext) ext = mx.y - mn.y;
         if (mx.z - mn.z > ext) ext = mx.z - mn.z;
+        /* Pick the depth whose voxel edge is CLOSEST to the requested size (round
+         * to nearest), not the first one at or below it -- the latter overshoots
+         * by up to 2x (e.g. 4cm requested -> 2.3cm), needlessly doubling voxel
+         * count in every axis. */
         uint32_t d = 1u;
         while (d < NPC_SVO_MAX_DEPTH &&
                ext / (float)(1u << d) > config->voxel_size)
             ++d;
+        if (d > 1u) {
+            float coarse = ext / (float)(1u << (d - 1u)); /* > requested */
+            float fine = ext / (float)(1u << d);          /* <= requested */
+            if (coarse - config->voxel_size < config->voxel_size - fine)
+                --d; /* the coarser (bigger) voxel is closer to the target */
+        }
         svo_depth = d;
     }
     npc_svo_grid_t svo;
@@ -245,17 +255,46 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
              * material (direct + cosine bounce), rays past the transition cone
              * the octree, escapes read the sky. Replaces the old near-field
              * radiosity solve + discard-near far-field gather. */
-            uint32_t *count = arena_alloc(arena, _Alignof(uint32_t),
-                                          (size_t)svo.node_count * sizeof(uint32_t));
+            float *area = arena_alloc(arena, _Alignof(float),
+                                      (size_t)svo.node_count * sizeof(float));
             vec3_t *vnormal = arena_alloc(arena, _Alignof(vec3_t),
                                           (size_t)svo.node_count * sizeof(vec3_t));
-            if (count && vnormal) {
-                lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, count, vnormal);
-                lm_gi_gather(&result->combined, &svo, scene->lights,
-                             scene->n_lights, &config->sky, vnormal,
-                             config->farfield_near, config->farfield_maxdist,
-                             config->farfield_samples, config->gi_bounces,
-                             config->seed ^ 0x9E3779B9u, config->gi_threads);
+            /* Progressive gather: the batch accumulator @c accum (3 SH sets per
+             * luxel) sums independent small batches; @c de holds the luxels'
+             * direct/emissive SH so each preview rebases onto it. The running
+             * lightmap after batch b is de + accum/(b+1). Never does one huge
+             * per-luxel gather -- reaches farfield_samples by averaging batches. */
+            lm_sh9_t *accum = arena_alloc(arena, _Alignof(lm_sh9_t),
+                                          (size_t)total * 3u * sizeof(lm_sh9_t));
+            lm_sh9_t *de = arena_alloc(arena, _Alignof(lm_sh9_t),
+                                       (size_t)total * 3u * sizeof(lm_sh9_t));
+            if (area && vnormal && accum && de) {
+                lm_svo_voxelize(&svo, scene->meshes, scene->n_meshes, area, vnormal);
+                for (uint32_t i = 0; i < total; ++i)
+                    for (int c = 0; c < 3; ++c) {
+                        de[i * 3 + c] = result->combined.luxels[i].sh[c];
+                        lm_sh9_zero(&accum[i * 3 + c]);
+                    }
+                uint32_t batch = config->gi_batch ? config->gi_batch : 64u;
+                uint32_t nb = (config->farfield_samples + batch - 1u) / batch;
+                for (uint32_t b = 0; b < nb; ++b) {
+                    lm_gi_gather(&result->combined, accum, &svo, scene->lights,
+                                 scene->n_lights, &config->sky, vnormal,
+                                 config->farfield_near, config->farfield_maxdist,
+                                 batch, config->gi_bounces,
+                                 config->seed ^ 0x9E3779B9u ^ (b * 0x85EBCA6Bu),
+                                 config->gi_threads);
+                    /* Fold the running mean (accum / batches so far) onto the
+                     * direct/emissive base into the luxel SH. */
+                    float inv = 1.0f / (float)(b + 1u);
+                    for (uint32_t i = 0; i < total; ++i)
+                        for (int c = 0; c < 3; ++c)
+                            for (int k = 0; k < 9; ++k)
+                                result->combined.luxels[i].sh[c].c[k] =
+                                    de[i * 3 + c].c[k] + accum[i * 3 + c].c[k] * inv;
+                    if (config->on_batch)
+                        config->on_batch(config->on_batch_ud, b + 1u, nb);
+                }
             }
         }
     }

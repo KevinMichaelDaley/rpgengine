@@ -47,7 +47,7 @@ static bool lm_clip_to_bounds(const npc_svo_grid_t *svo, vec3_t origin,
  * non-NULL it is filled for that voxel. @p dir must be normalised.
  */
 static bool lm_dda(const npc_svo_grid_t *svo, vec3_t origin, vec3_t dir,
-                   float maxdist, lm_ray_hit_t *hit)
+                   float tmin, float maxdist, lm_ray_hit_t *hit)
 {
     /* The SVO gives every axis 2^max_depth cells, so cell size is per-axis
      * (extent_i / cells) -- anisotropic for non-cubic bounds. Marching with a
@@ -113,7 +113,12 @@ static bool lm_dda(const npc_svo_grid_t *svo, vec3_t origin, vec3_t dir,
                           mn[2] + ((float)cell[2] + 0.5f) * cs[2] };
         uint32_t node = NPC_SVO_INVALID_NODE;
         uint8_t flags = npc_svo_query_point(svo, centre, &node);
-        if (flags & NPC_SVO_FLAG_SOLID) {
+        /* Ignore solid hits closer than @p tmin: a gather ray's origin is pushed
+         * just off its own surface, and a grazing ray at a thin curved shell can
+         * re-hit that shell within a voxel or two -- self-occlusion whose "hit vs
+         * miss" is decided at the ULP level (hence non-portable across CPUs).
+         * Skipping the first tmin lets the ray clear its own surface. */
+        if ((flags & NPC_SVO_FLAG_SOLID) && t >= tmin) {
             if (hit) {
                 hit->hit = true;
                 hit->t = t;
@@ -148,18 +153,18 @@ bool lm_visibility_occluded(const npc_svo_grid_t *svo, vec3_t origin,
     vec3_t nd = vec3_normalize_safe(dir, 1e-8f);
     if (nd.x == 0.0f && nd.y == 0.0f && nd.z == 0.0f)
         return false;
-    return lm_dda(svo, origin, nd, maxdist, NULL);
+    return lm_dda(svo, origin, nd, 0.0f, maxdist, NULL);
 }
 
 bool lm_visibility_trace(const npc_svo_grid_t *svo, vec3_t origin,
-                         vec3_t dir, float maxdist, lm_ray_hit_t *out)
+                         vec3_t dir, float tmin, float maxdist, lm_ray_hit_t *out)
 {
     lm_ray_hit_t h = { 0.0f, { 0, 0, 0 }, { 0, 0, 0 }, 0, false,
                        NPC_SVO_INVALID_NODE };
     vec3_t nd = vec3_normalize_safe(dir, 1e-8f);
     bool hit = false;
     if (!(nd.x == 0.0f && nd.y == 0.0f && nd.z == 0.0f))
-        hit = lm_dda(svo, origin, nd, maxdist, &h);
+        hit = lm_dda(svo, origin, nd, tmin, maxdist, &h);
     if (out)
         *out = h;
     return hit;
@@ -178,5 +183,5 @@ bool lm_visibility_segment(const npc_svo_grid_t *svo, vec3_t p1, vec3_t p2)
     if (len <= 2.0f * bias)
         return true;
     vec3_t origin = vec3_add(p1, vec3_scale(dir, bias));
-    return !lm_dda(svo, origin, dir, len - 2.0f * bias, NULL);
+    return !lm_dda(svo, origin, dir, 0.0f, len - 2.0f * bias, NULL);
 }

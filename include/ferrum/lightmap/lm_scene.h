@@ -54,6 +54,16 @@ typedef struct lm_bake_config {
     uint32_t    gi_bounces;      /**< Path-traced GI bounce depth (0 = direct-lit
                                       near surfaces only; 2-3 typical). */
     uint32_t    gi_threads;      /**< Gather thread count (0 = all online CPUs). */
+    uint32_t    gi_batch;        /**< Gather samples per progressive batch (0 ->
+                                      64). farfield_samples is reached by summing
+                                      ceil(farfield_samples/gi_batch) batches and
+                                      averaging, so no single huge per-luxel
+                                      gather is ever done. */
+    /** Optional progress hook, invoked after each batch is folded into the
+     *  luxel SH (so @p result is renderable for a progressive preview). @p done
+     *  / @p total are batch counts. NULL to disable. */
+    void      (*on_batch)(void *ud, uint32_t done, uint32_t total);
+    void       *on_batch_ud;     /**< User data passed to @ref on_batch. */
     lm_solve_params_t solve;     /**< Radiosity solve parameters + region gate. */
     uint32_t    seed;            /**< Base RNG seed. */
 } lm_bake_config_t;

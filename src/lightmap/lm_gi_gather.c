@@ -23,6 +23,31 @@ static float lm_gi_rngf(uint32_t *state)
     return (float)(*state >> 8) * (1.0f / 16777216.0f);
 }
 
+/* Machine-INDEPENDENT sin over [-pi, pi] (~1e-6). glibc's libm sinf/cosf are
+ * IFUNC-dispatched per CPU microarchitecture, so the same binary yields
+ * ULP-different trig on different machines; the chaotic path tracer amplifies
+ * that into structurally different bakes. This polynomial uses only +,-,* and
+ * floorf (the roundss instruction) -- bit-identical on any x86_64. */
+static float lm_gi_sin_poly(float x)
+{
+    float x2 = x * x;
+    return x * (0.9999966f + x2 * (-0.16664824f +
+               x2 * (0.00830629f + x2 * (-0.00018363f))));
+}
+
+/* Deterministic (sin, cos) of @p a via range reduction to [-pi, pi]. */
+static void lm_gi_sincos(float a, float *sn, float *cs)
+{
+    const float TWO_PI = 6.28318530717958648f;
+    const float INV_TWO_PI = 0.15915494309189535f;
+    const float HALF_PI = 1.57079632679489662f;
+    float xs = a - TWO_PI * floorf(a * INV_TWO_PI + 0.5f);
+    float ac = a + HALF_PI;
+    float xc = ac - TWO_PI * floorf(ac * INV_TWO_PI + 0.5f);
+    *sn = lm_gi_sin_poly(xs);
+    *cs = lm_gi_sin_poly(xc); /* cos(a) = sin(a + pi/2) */
+}
+
 /* Orthonormal basis (t, b) perpendicular to n. */
 static void lm_gi_basis(vec3_t n, vec3_t *t, vec3_t *b)
 {
@@ -46,8 +71,9 @@ static vec3_t lm_gi_cosine_dir(vec3_t n, uint32_t *rng)
     lm_gi_basis(n, &t, &b);
     float u1 = lm_gi_rngf(rng), u2 = lm_gi_rngf(rng);
     float r = sqrtf(u1), z = sqrtf(1.0f - u1), phi = LM_GI_TWO_PI * u2;
-    return vec3_add(vec3_add(vec3_scale(t, r * cosf(phi)),
-                             vec3_scale(b, r * sinf(phi))),
+    float sp, cp; lm_gi_sincos(phi, &sp, &cp);
+    return vec3_add(vec3_add(vec3_scale(t, r * cp),
+                             vec3_scale(b, r * sp)),
                     vec3_scale(n, z));
 }
 
@@ -112,7 +138,9 @@ static vec3_t lm_gi_trace(const npc_svo_grid_t *svo, const lm_light_t *lights,
 
     for (uint32_t bounce = 0; bounce <= bounces; ++bounce) {
         lm_ray_hit_t hit;
-        if (!lm_visibility_trace(svo, origin, dir, maxdist, &hit)) {
+        /* Skip self-hits within one voxel of the (surface-offset) origin so a
+         * grazing ray at a thin curved shell cannot occlude its own surface. */
+        if (!lm_visibility_trace(svo, origin, dir, svo->voxel_size, maxdist, &hit)) {
             vec3_t s = sky ? lm_sky_sample(sky, dir) : (vec3_t){ 0, 0, 0 };
             L.x += through.x * s.x; L.y += through.y * s.y; L.z += through.z * s.z;
             break;
@@ -156,8 +184,12 @@ static vec3_t lm_gi_trace(const npc_svo_grid_t *svo, const lm_light_t *lights,
     return L;
 }
 
-/* Gather one luxel: a stratified hemisphere of path-traced primary rays. */
-static void lm_gi_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
+/* Gather one luxel: a stratified hemisphere of path-traced primary rays. The
+ * per-channel SH estimate of this batch is ACCUMULATED into @p out (3 coeffs
+ * sets), read-modify-write, so repeated batches sum into the same accumulator
+ * (the caller divides by the batch count for the running mean). */
+static void lm_gi_gather_luxel(const lm_luxel_t *luxel, lm_sh9_t out[3],
+                               const npc_svo_grid_t *svo,
                                const lm_light_t *lights, uint32_t nl,
                                const lm_sky_t *sky, const vec3_t *vnormal,
                                float transition, float maxdist, uint32_t samples,
@@ -197,21 +229,23 @@ static void lm_gi_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
             float z = u1; /* uniform solid-angle primary (SH cosine lobe applies) */
             float r = sqrtf(1.0f - z * z);
             float phi = LM_GI_TWO_PI * u2;
-            vec3_t dir = vec3_add(vec3_add(vec3_scale(t, r * cosf(phi)),
-                                           vec3_scale(b, r * sinf(phi))),
+            float sp, cp; lm_gi_sincos(phi, &sp, &cp);
+            vec3_t dir = vec3_add(vec3_add(vec3_scale(t, r * cp),
+                                           vec3_scale(b, r * sp)),
                                   vec3_scale(nrm, z));
             vec3_t Li = lm_gi_trace(svo, lights, nl, sky, vnormal, transition,
                                     maxdist, weight, bounces, origin, dir, rng);
             const float *lc = &Li.x;
             for (int c = 0; c < 3; ++c)
-                lm_sh9_add_sample(&luxel->sh[c], dir, lc[c], weight);
+                lm_sh9_add_sample(&out[c], dir, lc[c], weight);
         }
     }
 }
 
 /* Shared read-only context for the parallel luxel gather. */
 typedef struct lm_gi_ctx {
-    lm_lightmap_t       *lm;
+    const lm_lightmap_t *lm;
+    lm_sh9_t            *accum;    /**< 3 coeff-sets per luxel; accumulated into. */
     const npc_svo_grid_t *svo;
     const lm_light_t    *lights;
     uint32_t             n_lights;
@@ -227,24 +261,27 @@ static void lm_gi_chunk(uint32_t i0, uint32_t i1, void *vctx)
     lm_gi_ctx_t *c = (lm_gi_ctx_t *)vctx;
     for (uint32_t i = i0; i < i1; ++i) {
         uint32_t rng = c->seed ^ (i * 2654435761u);
-        lm_gi_gather_luxel(&c->lm->luxels[i], c->svo, c->lights, c->n_lights,
-                           c->sky, c->vnormal, c->transition, c->maxdist,
-                           c->samples, c->bounces, &rng);
+        lm_gi_gather_luxel(&c->lm->luxels[i], &c->accum[i * 3], c->svo,
+                           c->lights, c->n_lights, c->sky, c->vnormal,
+                           c->transition, c->maxdist, c->samples, c->bounces,
+                           &rng);
     }
 }
 
-void lm_gi_gather(lm_lightmap_t *lm, const npc_svo_grid_t *svo,
+void lm_gi_gather(const lm_lightmap_t *lm, lm_sh9_t *accum,
+                  const npc_svo_grid_t *svo,
                   const lm_light_t *lights, uint32_t n_lights,
                   const lm_sky_t *sky, const vec3_t *vnormal, float transition,
                   float maxdist, uint32_t samples, uint32_t bounces,
                   uint32_t seed, uint32_t n_threads)
 {
-    if (lm == NULL || svo == NULL || samples == 0)
+    if (lm == NULL || accum == NULL || svo == NULL || samples == 0)
         return;
     uint32_t n_luxels = lm->res_u * lm->res_v;
-    /* Each luxel is independent (writes only its own SH; the SVO is read-only),
-     * so split the luxels across the thread pool. */
-    lm_gi_ctx_t ctx = { lm, svo, lights, n_lights, sky, vnormal, transition,
-                        maxdist, samples, bounces, seed };
+    /* Each luxel is independent (writes only its own accumulator slot; the SVO
+     * is read-only), so split the luxels across the thread pool. Repeated calls
+     * with different seeds accumulate into @p accum for progressive batching. */
+    lm_gi_ctx_t ctx = { lm, accum, svo, lights, n_lights, sky, vnormal,
+                        transition, maxdist, samples, bounces, seed };
     lm_parallel_for(n_luxels, lm_gi_chunk, &ctx, n_threads);
 }

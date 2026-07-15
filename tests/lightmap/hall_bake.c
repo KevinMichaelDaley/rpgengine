@@ -45,6 +45,17 @@ static void load_cpu(const char *path, lm_image_t *img, int srgb)
     img->channels = 3; img->srgb = srgb != 0;
 }
 
+/* Progressive-batch hook: re-serialize the running lightmap after every gather
+ * batch so an external viewer can render the refining result mid-bake. */
+struct hall_batch_ctx { lm_mesh_bake_result_t *res; const char *out; };
+static void hall_on_batch(void *ud, uint32_t done, uint32_t total)
+{
+    struct hall_batch_ctx *b = (struct hall_batch_ctx *)ud;
+    lm_lightmap_save(b->res, b->out);
+    fprintf(stderr, "batch %u/%u -> %s\n", done, total, b->out);
+    fflush(stderr);
+}
+
 int main(int argc, char **argv)
 {
     const char *dir  = argc > 1 ? argv[1] : "datasets/hall_lm";
@@ -121,7 +132,11 @@ int main(int argc, char **argv)
     printf("baking hall: voxel=%.3fm samples=%u bounces=%u diag=%.2f\n",
            cfg.voxel_size, cfg.farfield_samples, cfg.gi_bounces, diag);
     fflush(stdout);
+    cfg.gi_batch = getenv("HALL_BATCH") ? (uint32_t)atoi(getenv("HALL_BATCH")) : 64u;
     lm_mesh_bake_result_t res;
+    struct hall_batch_ctx bctx = { &res, out };
+    cfg.on_batch = hall_on_batch;
+    cfg.on_batch_ud = &bctx;
     if (!lm_mesh_bake(&scene, &cfg, &res, &arena)) {
         fprintf(stderr, "bake failed\n");
         return 1;

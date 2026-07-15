@@ -49,11 +49,14 @@ bool lm_visibility_occluded(const npc_svo_grid_t *svo, vec3_t origin,
                             vec3_t dir, float maxdist);
 
 /**
- * @brief Trace to the first SOLID voxel along the ray. Fills *out (if non-NULL)
- *        with the hit and returns whether anything was hit within maxdist.
+ * @brief Trace to the first SOLID voxel along the ray at distance >= @p tmin.
+ *        Fills *out (if non-NULL) with the hit and returns whether anything was
+ *        hit within maxdist. @p tmin skips self-hits just off the origin surface
+ *        (pass 0 for an unbiased trace).
  */
 bool lm_visibility_trace(const npc_svo_grid_t *svo, vec3_t origin,
-                         vec3_t dir, float maxdist, lm_ray_hit_t *out);
+                         vec3_t dir, float tmin, float maxdist,
+                         lm_ray_hit_t *out);
 
 /**
  * @brief True if the two points are mutually visible (the connecting segment is

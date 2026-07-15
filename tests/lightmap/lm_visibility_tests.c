@@ -76,7 +76,7 @@ static int test_trace_reports_hit(void)
     npc_svo_grid_t grid;
     ASSERT_TRUE(build_wall_grid(&grid));
     lm_ray_hit_t h;
-    bool hit = lm_visibility_trace(&grid, v3(1, 4, 4), v3(1, 0, 0), 6.0f, &h);
+    bool hit = lm_visibility_trace(&grid, v3(1, 4, 4), v3(1, 0, 0), 0.0f, 6.0f, &h);
     npc_svo_grid_destroy(&grid);
     ASSERT_TRUE(hit && h.hit);
     ASSERT_FLOAT_NEAR(4.0f, h.position.x, 0.3f);   /* within a voxel of the wall */
@@ -118,7 +118,7 @@ static int test_degenerate_inputs(void)
     ASSERT_TRUE(build_wall_grid(&grid));
     ASSERT_TRUE(!lm_visibility_occluded(&grid, v3(1, 4, 4), v3(0, 0, 0), 6.0f));
     lm_ray_hit_t h;
-    bool hit = lm_visibility_trace(&grid, v3(-50, -50, -50), v3(-1, 0, 0), 6.0f, &h);
+    bool hit = lm_visibility_trace(&grid, v3(-50, -50, -50), v3(-1, 0, 0), 0.0f, 6.0f, &h);
     npc_svo_grid_destroy(&grid);
     ASSERT_TRUE(!hit && !h.hit);
     return 0;

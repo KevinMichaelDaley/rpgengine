@@ -10,11 +10,16 @@
  * cosine bounce and continues -- iterative path tracing. Once a ray's length
  * exceeds the transition it BECOMES A CONE: it reads a coarse pre-filtered
  * ancestor (mip) and terminates. A ray that escapes reads the environment sky.
- * The gathered incident radiance is added into each luxel's SH, so the caller
- * seeds the SH with the luxels' own direct term first.
+ * The gathered incident radiance is ACCUMULATED into a caller-provided @p accum
+ * (3 SH coeff-sets per luxel), NOT into the luxel's own SH -- so the gather can
+ * be run in repeated small batches with different seeds and the caller forms the
+ * running mean (accum / batch_count) + the luxels' direct/emissive term. Keeping
+ * every batch at a modest sample count (e.g. 64) and averaging is both how a
+ * progressively refined preview is produced and how large total sample counts
+ * are reached without a single huge per-luxel gather.
  *
- * Ownership: writes luxel SH; everything else borrowed. Nullability: pointers
- * non-NULL except @p sky (may be NULL). Offline (bake-time) only.
+ * Ownership: accumulates into @p accum; everything else borrowed. Nullability:
+ * pointers non-NULL except @p sky (may be NULL). Offline (bake-time) only.
  */
 #ifndef FERRUM_LIGHTMAP_LM_GI_GATHER_H
 #define FERRUM_LIGHTMAP_LM_GI_GATHER_H
@@ -23,6 +28,7 @@
 
 #include "ferrum/lightmap/lm_light.h"
 #include "ferrum/lightmap/lm_lightmap.h"
+#include "ferrum/lightmap/lm_sh.h"
 #include "ferrum/lightmap/lm_sky.h"
 #include "ferrum/npc/npc_svo.h"
 
@@ -31,14 +37,17 @@ extern "C" {
 #endif
 
 /**
- * @brief Path-trace one indirect gather into every luxel of @p lm. @p samples
- *        primary rays per luxel (stratified into floor(sqrt) squared); each path
- *        bounces up to @p bounces times in the near field, cones the octree past
- *        @p transition, and reads @p sky on escape (rays bounded by @p maxdist).
- *        @p lights are the analytic lights sampled at each near hit. @p seed
- *        makes the sampling deterministic.
+ * @brief Path-trace one indirect gather BATCH into @p accum (3 SH coeff-sets per
+ *        luxel of @p lm, read-modify-add). @p samples primary rays per luxel
+ *        (stratified into floor(sqrt) squared); each path bounces up to @p
+ *        bounces times in the near field, cones the octree past @p transition,
+ *        and reads @p sky on escape (rays bounded by @p maxdist). @p lights are
+ *        the analytic lights sampled at each near hit. @p seed makes the sampling
+ *        deterministic; use a different seed per batch. Call repeatedly and form
+ *        accum/batch_count for the running estimate.
  */
-void lm_gi_gather(lm_lightmap_t *lm, const npc_svo_grid_t *svo,
+void lm_gi_gather(const lm_lightmap_t *lm, lm_sh9_t *accum,
+                  const npc_svo_grid_t *svo,
                   const lm_light_t *lights, uint32_t n_lights,
                   const lm_sky_t *sky, const vec3_t *vnormal, float transition,
                   float maxdist, uint32_t samples, uint32_t bounces,

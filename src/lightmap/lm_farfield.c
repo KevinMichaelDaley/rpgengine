@@ -86,7 +86,7 @@ static void lm_ff_gather_luxel(lm_luxel_t *luxel, const npc_svo_grid_t *svo,
                                   vec3_scale(luxel->normal, z));
 
             lm_ray_hit_t hit;
-            if (!lm_visibility_trace(svo, origin, dir, max_dist, &hit)) {
+            if (!lm_visibility_trace(svo, origin, dir, 0.0f, max_dist, &hit)) {
                 /* Escaped the scene: this direction sees open sky. */
                 if (sky != NULL) {
                     vec3_t s = lm_sky_sample(sky, dir);
