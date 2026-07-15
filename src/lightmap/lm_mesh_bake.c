@@ -281,7 +281,7 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                 /* GPU path (rpg-k4lk): one dispatch does all samples; skip the CPU
                  * batch loop. Falls back to CPU if the run fails. */
                 if (config->gpu_gather &&
-                    lm_gpu_gather_run(&result->combined, accum, &svo, scene->lights,
+                    lm_gpu_gather_run(&result->combined, accum, &svo, scene, scene->lights,
                                       scene->n_lights, &config->sky,
                                       config->farfield_near, config->farfield_maxdist,
                                       config->farfield_samples, config->gi_bounces,

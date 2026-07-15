@@ -19,7 +19,10 @@ uint32_t lm_gpu_pack_nodes(const npc_svo_grid_t *svo, lm_gpu_node_t *out,
         lm_gpu_node_t *d = &out[i];
         for (int c = 0; c < 8; ++c) d->children[c] = s->children[c];
         d->diffuse[0] = s->diffuse[0]; d->diffuse[1] = s->diffuse[1];
-        d->diffuse[2] = s->diffuse[2]; d->diffuse[3] = 0.0f;
+        /* Pack the SOLID flag into the diffuse pad so the gather's fine-SVO refine
+         * can test true occupancy (matching npc_svo_query_point). */
+        d->diffuse[2] = s->diffuse[2];
+        d->diffuse[3] = (s->flags & NPC_SVO_FLAG_SOLID) ? 1.0f : 0.0f;
         d->emissive[0] = s->emissive[0]; d->emissive[1] = s->emissive[1];
         d->emissive[2] = s->emissive[2]; d->emissive[3] = 0.0f;
     }

@@ -23,6 +23,7 @@
 
 #include "ferrum/lightmap/lm_light.h"
 #include "ferrum/lightmap/lm_lightmap.h"
+#include "ferrum/lightmap/lm_mesh.h"
 #include "ferrum/lightmap/lm_sh.h"
 #include "ferrum/lightmap/lm_sky.h"
 #include "ferrum/npc/npc_svo.h"
@@ -50,7 +51,8 @@ void lm_gpu_gather_shutdown(void);
  *        on any GL/allocation failure or if @ref lm_gpu_gather_init was not run.
  */
 bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
-                       const npc_svo_grid_t *svo, const lm_light_t *lights,
+                       const npc_svo_grid_t *svo, const lm_mesh_scene_t *scene,
+                       const lm_light_t *lights,
                        uint32_t n_lights, const lm_sky_t *sky, float transition,
                        float maxdist, uint32_t samples, uint32_t bounces,
                        uint32_t seed);

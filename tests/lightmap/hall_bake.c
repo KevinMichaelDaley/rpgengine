@@ -15,12 +15,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <glad/glad.h>
+#ifdef HALL_EGL
+#include "ferrum/renderer/egl_headless.h"
+#else
+#include <SDL2/SDL.h>
+#endif
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#include "ferrum/lightmap/gpu/lm_gpu_gather.h"
 #include "ferrum/lightmap/lm_image.h"
 #include "ferrum/lightmap/lm_lightmap_file.h"
 #include "ferrum/lightmap/lm_mesh_bake.h"
+#include "ferrum/renderer/gl_loader.h"
+
+#ifndef HALL_EGL
+static void *hb_getproc(const char *n, void *u) { (void)u; return SDL_GL_GetProcAddress(n); }
+#endif
 #include "ferrum/math/vec3.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/mesh/dmesh_loader.h"
@@ -133,6 +145,32 @@ int main(int argc, char **argv)
            cfg.voxel_size, cfg.farfield_samples, cfg.gi_bounces, diag);
     fflush(stdout);
     cfg.gi_batch = getenv("HALL_BATCH") ? (uint32_t)atoi(getenv("HALL_BATCH")) : 64u;
+
+    /* Optional GPU gather (rpg-k4lk): stand up a GL 4.3+ compute context. With
+     * HALL_EGL the context is surfaceless (headless GPU box, no X/SDL); otherwise
+     * a hidden SDL window is used. */
+    if (getenv("HALL_GPU")) {
+#ifdef HALL_EGL
+        if (!egl_headless_init(4, 3)) { fprintf(stderr, "egl init failed\n"); return 1; }
+        if (!gladLoadGLLoader((GLADloadproc)egl_headless_getproc_glad)) { fprintf(stderr, "glad failed\n"); return 1; }
+        gl_loader_t gl_loader = { egl_headless_getproc, NULL };
+#else
+        if (SDL_Init(SDL_INIT_VIDEO) != 0) { fprintf(stderr, "SDL init failed\n"); return 1; }
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+        SDL_Window *gpuwin = SDL_CreateWindow("hallbake", 0, 0, 16, 16, SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN);
+        SDL_GLContext gpuctx = SDL_GL_CreateContext(gpuwin); SDL_GL_MakeCurrent(gpuwin, gpuctx);
+        (void)gpuctx;
+        if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) { fprintf(stderr, "glad failed\n"); return 1; }
+        gl_loader_t gl_loader = { hb_getproc, NULL };
+#endif
+        if (!lm_gpu_gather_init(&gl_loader)) { fprintf(stderr, "gpu gather init failed\n"); return 1; }
+        cfg.gpu_gather = 1;
+        printf("GPU gather ENABLED: %s\n", (const char *)glGetString(GL_RENDERER));
+        fflush(stdout);
+    }
+
     lm_mesh_bake_result_t res;
     struct hall_batch_ctx bctx = { &res, out };
     cfg.on_batch = hall_on_batch;
