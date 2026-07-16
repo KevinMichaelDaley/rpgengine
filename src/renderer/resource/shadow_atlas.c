@@ -53,11 +53,9 @@ bool shadow_atlas_init(shadow_atlas_t *atlas, const shadow_atlas_config_t *confi
     atlas->glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, (int32_t)config->internal_format,
                         (int32_t)config->resolution, (int32_t)config->resolution,
                         (int32_t)config->layers, 0, ext, GL_FLOAT, NULL);
-    /* Trilinear: the EVSM moments are mipmapped (shadow_atlas holds the sun's
-     * variance cascades) so a receiver can sample a coarser level for a soft,
-     * variable-width penumbra. Mips are (re)generated after each static bake. */
-    atlas->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER,
-                           GL_LINEAR_MIPMAP_LINEAR);
+    /* Bilinear, no mips: the PCSS receiver samples explicit taps (blocker search
+     * + variable-width PCF) at the base level. */
+    atlas->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     atlas->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     atlas->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     atlas->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);

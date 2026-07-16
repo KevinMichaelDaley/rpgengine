@@ -23,25 +23,17 @@ static const char *const SC_VS =
     "  v_world = wp.xyz;\n"
     "  gl_Position = u_projection * u_view * wp;\n"
     "}\n";
-/* EVSM2 (positive-exponential variance shadow map). The normalised depth is
- * warped by exp(C*(d-1)) -- a monotonic map into (0,1] that stays hardware-
- * filterable (so no overflow, plain glClearColor works) yet pushes occluder and
- * receiver far apart, turning the variance compare into a near-binary threshold.
- * Store the two moments (w, w^2). Keep EVSM_C in sync with the receiver. */
+/* Plain linear-distance depth map (R32F): stores normalised distance from the
+ * cascade eye. Both the static cascades and the dynamic map store the same thing;
+ * the receiver runs PCSS (blocker search + variable PCF) over it. */
 static const char *const SC_FS =
     "#version 330 core\n"
     "in vec3 v_world;\n"
     "uniform vec3 u_eye;\n"
     "uniform float u_far;\n"
-    "uniform int u_mode;\n" /* 0 = EVSM2 moments (static array), 1 = plain distance (dynamic). */
-    "layout(location=0) out vec2 o_moments;\n"
-    /* C=30: exp(30)^2 = exp(60) ~ 1e26, well under FLT_MAX, with plenty of\n"
-     * mantissa left to separate nearby depths. Depth normalised + clamped first. */
-    "const float EVSM_C = 20.0;\n"
-    "void main(){ float d = clamp(distance(v_world, u_eye) / u_far, 0.0, 1.0);\n"
-    "  if(u_mode == 0){ float w = exp(EVSM_C * d); o_moments = vec2(w, w*w); }\n"
-    "  else { o_moments = vec2(d, d); }\n" /* the dynamic R32F map keeps .r for PCF. */
-    "}\n";
+    "uniform int u_mode;\n" /* unused now; both modes store linear distance. */
+    "layout(location=0) out float o_depth;\n"
+    "void main(){ o_depth = clamp(distance(v_world, u_eye) / u_far, 0.0, 1.0); }\n";
 
 #define SC_LOAD(dst, name)                                                    \
     do {                                                                      \
@@ -103,6 +95,8 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     SC_LOAD(csm->glBindTexture, "glBindTexture");
     SC_LOAD(csm->glActiveTexture, "glActiveTexture");
     SC_LOAD(csm->glGenerateMipmap, "glGenerateMipmap");
+    SC_LOAD(csm->glGetTexImage, "glGetTexImage");
+    SC_LOAD(csm->glTexSubImage3D, "glTexSubImage3D");
     SC_LOAD(csm->glFramebufferTexture2D, "glFramebufferTexture2D");
     SC_LOAD(csm->glTexImage2D, "glTexImage2D");
     SC_LOAD(csm->glTexImage3D, "glTexImage3D");
@@ -127,7 +121,7 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
         .registry = &csm->registry,
         .resolution = csm->static_res,
         .layers = csm->cascades,
-        .internal_format = GL_RG32F,
+        .internal_format = GL_R32F, /* plain linear depth for PCSS. */
     };
     if (!shadow_atlas_init(&csm->static_atlas, &sac))
         return false;

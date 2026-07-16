@@ -678,10 +678,14 @@ int main(int argc,char **argv){
         fcfg.sun_color[0]=7.2f; fcfg.sun_color[1]=6.8f; fcfg.sun_color[2]=6.0f;
         /* Small flat ambient so dynamic objects (no baked lightmap) aren't black. */
         fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.15f;
-        fcfg.dir_cascades=6; fcfg.dir_static_res=4096; fcfg.dir_dynamic_res=2048;
-        fcfg.dir_lambda=0.6f; fcfg.dir_bias=0.08f; /* world-space depth bias (metres). */
-        /* Sun penumbra softness = EVSM moment mip LOD (CSM_SOFT env, default 2.5). */
-        fcfg.dir_softness=getenv("CSM_SOFT")?(float)atof(getenv("CSM_SOFT")):2.5f;
+        fcfg.dir_cascades=6; fcfg.dir_static_res=2048; fcfg.dir_dynamic_res=2048;
+        fcfg.dir_lambda=0.6f;
+        /* PCSS depth-compare bias in metres (DIR_BIAS env, default 5cm). */
+        fcfg.dir_bias=getenv("DIR_BIAS")?(float)atof(getenv("DIR_BIAS")):0.05f;
+        /* Sun light-source size in METRES: the PCSS penumbra grows with the
+         * occluder->receiver gap times this, mapped per-cascade to a mip LOD via
+         * the cascade texel size (world-aligned). CSM_SOFT env, default 0.7m. */
+        fcfg.dir_softness=getenv("CSM_SOFT")?(float)atof(getenv("CSM_SOFT")):0.7f;
         /* Slice the WHOLE view frustum (to the far clip) into the fixed cascade
          * count; 0 = use the camera far plane rather than a fixed cap. */
         fcfg.dir_max_distance=0.0f;
@@ -717,7 +721,21 @@ int main(int argc,char **argv){
             float ph=(float)frame*0.0012f;
             float t=0.5f-0.5f*cosf(ph);
             float e[3]={cx,cy,cz}, tg[3]={cx,cy,cz};
-            if(is_hall){
+            if(csm_demo && !is_hall){
+                /* Open colonnade: stand on the SHADOW side and look toward the sun
+                 * so the columns' floor shadows lead straight toward the camera and
+                 * the sun-lit column faces are visible. u_sun_dir points to the sun;
+                 * -h is the shadow side. */
+                float h[3]={fcfg.sun_dir[0],0.0f,fcfg.sun_dir[2]};
+                float hl=sqrtf(h[0]*h[0]+h[2]*h[2]); if(hl<1e-4f)hl=1.0f; h[0]/=hl; h[2]/=hl;
+                float pan=0.18f*sinf(ph);          /* gentle side drift. */
+                e[0]=cx - h[0]*0.42f*span[0] + h[2]*pan*span[0];
+                e[2]=cz - h[2]*0.42f*span[2] - h[0]*pan*span[2];
+                e[1]=amin[1]+0.24f*span[1];         /* low, so shadows rake across. */
+                tg[0]=cx + h[0]*0.30f*span[0];      /* look toward the sun. */
+                tg[2]=cz + h[2]*0.30f*span[2];
+                tg[1]=amin[1]+0.06f*span[1];        /* down onto the lit floor. */
+            } else if(is_hall){
                 /* Begin behind the central pillar and dolly forward down the aisle
                  * (ping-pong around the middle), staying centred and looking down
                  * the hall so the camera never leaves the interior. */

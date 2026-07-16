@@ -12,10 +12,6 @@
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 
-/* Far-plane EVSM2 moments (d=1): w=exp(C), w^2=exp(2C). An empty texel must read
- * as the most distant occluder. These exceed [0,1], so they are cleared with the
- * unclamped glClearBufferfv (glClearColor would clamp to 1). C matches SC_FS. */
-#define CSM_EVSM_C 20.0f
 
 /* Extract the 6 frustum planes (Gribb-Hartmann) from a column-major light MVP,
  * each normalised so plane.dot(p) is a signed distance. */
@@ -115,14 +111,13 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
     if (to > scene->count)
         to = scene->count;
 
-    float fw = expf(CSM_EVSM_C);
-    float far_moments[2] = { fw, fw * fw };
-    csm_begin_pass(csm, csm->static_res, 0 /* EVSM */);
+    float far_depth[4] = { 1.0f, 1.0f, 1.0f, 1.0f }; /* empty texel = farthest. */
+    csm_begin_pass(csm, csm->static_res, 0);
     for (uint32_t c = 0; c < csm->cascades; ++c) {
         /* Attach this cascade's slice of the resource-managed shadow atlas. */
         shadow_atlas_bind_layer(&csm->static_atlas,
                                 (uint32_t)csm->static_base + c);
-        csm->glClearBufferfv(GL_COLOR, 0, far_moments); /* far state (unclamped). */
+        csm->glClearBufferfv(GL_COLOR, 0, far_depth);
         csm->glClear(GL_DEPTH_BUFFER_BIT);
         shader_uniform_set_mat4(&csm->cache, &csm->shader, "u_projection",
                                 csm->view_proj[c].m, 0);
@@ -130,14 +125,13 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
         shader_uniform_set_float(&csm->cache, &csm->shader, "u_far", csm->far_plane[c]);
         csm_draw_items(csm, scene, 0u, to, csm->view_proj[c].m, (int)c);
 
-        /* CSM_DUMP: read this cascade's EVSM2 map back and write its DEPTH
-         * (decoded from the first moment, d = ln(m)/C) as a grayscale PPM, so the
-         * caster depth per cascade can be inspected directly. */
+        /* CSM_DUMP: read this cascade's linear-depth map back and write it as a
+         * grayscale PPM so the caster depth per cascade can be inspected. */
         if (getenv("CSM_DUMP")) {
             uint32_t res = csm->static_res;
-            float *buf = malloc((size_t)res * res * 2 * sizeof(float));
+            float *buf = malloc((size_t)res * res * sizeof(float));
             if (buf) {
-                csm->glReadPixels(0, 0, (int32_t)res, (int32_t)res, GL_RG, GL_FLOAT, buf);
+                csm->glReadPixels(0, 0, (int32_t)res, (int32_t)res, GL_RED, GL_FLOAT, buf);
                 char path[64]; snprintf(path, sizeof path, "csm_cascade_%u.pgm", c);
                 FILE *fp = fopen(path, "wb");
                 if (fp) {
@@ -145,8 +139,7 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
                     /* glReadPixels rows are bottom-to-top; write top row first. */
                     for (int y = (int)res - 1; y >= 0; --y)
                     for (uint32_t x = 0; x < res; ++x) {
-                        float m = buf[((uint32_t)y * res + x) * 2];
-                        float d = m > 1.0f ? logf(m) / CSM_EVSM_C : 0.0f;
+                        float d = buf[(uint32_t)y * res + x];
                         int v = (int)(d * 255.0f); v = v < 0 ? 0 : (v > 255 ? 255 : v);
                         unsigned char b = (unsigned char)v; fwrite(&b, 1, 1, fp);
                     }
@@ -158,15 +151,6 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
         }
     }
     csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    /* Build the moment mip chain so the receiver can sample a coarse level for a
-     * soft, variable-width penumbra (EVSM moments average correctly under a box
-     * filter, so mipmapping is a valid blur). Done once per static bake. */
-    if (csm->glGenerateMipmap) {
-        csm->glActiveTexture(GL_TEXTURE0);
-        csm->glBindTexture(GL_TEXTURE_2D_ARRAY, csm->static_atlas.texture);
-        csm->glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
-    }
     csm->static_valid = true;
 }
 

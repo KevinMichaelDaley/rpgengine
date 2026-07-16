@@ -90,6 +90,10 @@ typedef struct shadow_csm {
     mat4_t view_proj[SHADOW_CSM_MAX_CASCADES]; /**< per-cascade light matrix. */
     float  eye[SHADOW_CSM_MAX_CASCADES][3];    /**< per-cascade virtual eye. */
     float  far_plane[SHADOW_CSM_MAX_CASCADES]; /**< per-cascade distance norm. */
+    float  texel_world[SHADOW_CSM_MAX_CASCADES]; /**< world size of one LOD-0 texel;
+                                          converts a world penumbra to this
+                                          cascade's mip LOD so cross-cascade
+                                          samples align. */
 
     /* Caster size -> cascade classification (natural-log of the world-AABB
      * diagonal), computed over the static casters in shadow_csm_update and reused
@@ -130,6 +134,8 @@ typedef struct shadow_csm {
     uint32_t (*glCheckFramebufferStatus)(uint32_t);
     void (*glReadPixels)(int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, void *);
     void (*glGenerateMipmap)(uint32_t);
+    void (*glGetTexImage)(uint32_t, int32_t, uint32_t, uint32_t, void *);
+    void (*glTexSubImage3D)(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void *);
 } shadow_csm_t;
 
 /**
@@ -184,6 +190,14 @@ void shadow_csm_render_dynamic(shadow_csm_t *csm, const render_scene_t *scene);
 void shadow_csm_bind(const shadow_csm_t *csm, shader_uniform_cache_t *cache,
                      const shader_program_t *program, uint32_t unit_static,
                      uint32_t unit_dynamic);
+
+/**
+ * @brief Gaussian pre-blur the baked EVSM cascade moments (once per static bake,
+ *        before the mip chain is built) so the near-binary moments gain the
+ *        variance that becomes a soft penumbra. Called by @ref
+ *        shadow_csm_bake_static; NULL-safe.
+ */
+void shadow_csm_blur_moments(shadow_csm_t *csm);
 
 /** @brief Release all GL resources. NULL-safe. */
 void shadow_csm_destroy(shadow_csm_t *csm);

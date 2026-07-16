@@ -78,7 +78,8 @@ uint32_t shadow_csm_cascade_of(const shadow_csm_t *csm,
  * drives that clamp/extension. */
 static void csm_fit_ortho(const vec3_t sc[8], vec3_t dir, vec3_t up, float res,
                           const vec3_t *scene,
-                          mat4_t *vp_out, float eye_out[3], float *far_out)
+                          mat4_t *vp_out, float eye_out[3], float *far_out,
+                          float *texel_world_out)
 {
     vec3_t centroid = { 0, 0, 0 };
     for (int j = 0; j < 8; ++j) centroid = vec3_add(centroid, sc[j]);
@@ -140,6 +141,10 @@ static void csm_fit_ortho(const vec3_t sc[8], vec3_t dir, vec3_t up, float res,
     *vp_out = mat4_mul(lproj, lview);
     eye_out[0] = eye.x; eye_out[1] = eye.y; eye_out[2] = eye.z;
     *far_out = farp;
+    /* World size of one LOD-0 texel (mean of X/Y), so a world-space penumbra maps
+     * to this cascade's mip LOD and cross-cascade samples align. */
+    if (texel_world_out)
+        *texel_world_out = 0.5f * (wx + wy) / res;
 }
 
 /* The 8 corners of an AABB as vec3s. */
@@ -239,7 +244,8 @@ void shadow_csm_update(shadow_csm_t *csm, const render_scene_t *scene,
         }
         vec3_t sc[8]; csm_box_corners(bmin, bmax, sc);
         csm_fit_ortho(sc, dir, up, (float)csm->static_res, scene_c,
-                      &csm->view_proj[c], csm->eye[c], &csm->far_plane[c]);
+                      &csm->view_proj[c], csm->eye[c], &csm->far_plane[c],
+                      &csm->texel_world[c]);
         if (getenv("CSM_DEBUG"))
             fprintf(stderr, "  cascade %u: %s box(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f) far=%.1f\n",
                     c, (c==csm->cascades-1u)?"scene":(chas[c]?"casters":"empty"),
@@ -249,5 +255,5 @@ void shadow_csm_update(shadow_csm_t *csm, const render_scene_t *scene,
     /* --- Single dynamic map: fit to the whole scene so a dynamic caster
      * anywhere lands in it. --- */
     csm_fit_ortho(scene_c, dir, up, (float)csm->dynamic_res, scene_c,
-                  &csm->dyn_view_proj, csm->dyn_eye, &csm->dyn_far);
+                  &csm->dyn_view_proj, csm->dyn_eye, &csm->dyn_far, NULL);
 }

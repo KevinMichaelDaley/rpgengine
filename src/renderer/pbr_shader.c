@@ -231,30 +231,25 @@ static const char *const PBR_FS =
     "uniform mat4 u_csm_vp[8];\n"
     "uniform vec3 u_csm_eye[8];\n"
     "uniform float u_csm_far[8];\n"
+    "uniform float u_csm_texel[8];\n" /* world size of one LOD-0 texel per cascade. */
     "uniform int u_csm_count;\n"
     "uniform int u_csm_enabled;\n"
-    "uniform float u_dir_bias;\n"
-    "uniform float u_csm_soft;\n" /* sun-penumbra mip LOD (0 = crisp). */
-    /* EVSM2 exponent -- MUST match the moment write in shadow_csm_init.c (SC_FS). */
-    "const float EVSM_C = 20.0;\n"
-    /* Chebyshev one-sided upper bound on the exp-warped depth. The warp makes the\n"
-     * lit/occluded transition near-binary, so a watertight room self-shadows\n"
-     * cleanly (little acne) and only the window shafts get a soft penumbra. */
-    "float pbr_evsm(vec2 m, float d){\n"
-    "  float w = exp(EVSM_C * d);\n"
-    "  if(w <= m.x) return 1.0;\n"
-    "  float var = max(m.y - m.x*m.x, 1e-6 * m.y);\n" /* relative min-variance. */
-    "  float dd = w - m.x;\n"
-    "  float p = var / (var + dd*dd);\n"
-    "  return clamp((p - 0.1) / 0.9, 0.0, 1.0);\n"  /* light-bleed reduction. */
-    "}\n"
+    "uniform float u_dir_bias;\n"   /* PCSS depth-compare bias (metres). */
+    "uniform float u_csm_soft;\n"   /* sun source size (metres) -> penumbra width. */
+    "uniform float u_csm_res;\n"    /* static cascade resolution (texels). */
+    /* 16-tap Poisson disk in [-1,1]^2, reused for the blocker search and PCF. */
+    "const vec2 PZ[16] = vec2[](\n"
+    "  vec2(-0.94,-0.34),vec2(0.95,-0.06),vec2(-0.09,-0.93),vec2(0.34,0.29),\n"
+    "  vec2(-0.58,0.42),vec2(0.28,0.79),vec2(-0.79,-0.77),vec2(0.75,0.52),\n"
+    "  vec2(-0.30,-0.55),vec2(0.55,-0.55),vec2(-0.42,0.90),vec2(0.10,-0.40),\n"
+    "  vec2(0.62,0.02),vec2(-0.16,0.30),vec2(-0.83,0.07),vec2(0.42,-0.91));\n"
     /* Dynamic casters: one ortho distance map, 3x3 PCF. Returns lit fraction. */
     "float pbr_dyn_shadow(vec3 fragpos){\n"
     "  vec4 lc = u_dyn_vp * vec4(fragpos, 1.0);\n"
     "  vec3 ndc = lc.xyz / lc.w;\n"
     "  vec2 uv = ndc.xy*0.5 + 0.5;\n"
     "  if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) return 1.0;\n"
-    "  float cur = length(fragpos - u_dyn_eye) - u_dir_bias;\n"
+    "  float cur = length(fragpos - u_dyn_eye) - 0.03;\n" /* small linear bias (metres). */
     "  float lit = 0.0; float st = 1.0/float(textureSize(u_dyn_map,0).x);\n"
     "  for(int y=-1;y<=1;++y) for(int x=-1;x<=1;++x){\n"
     "    float d = texture(u_dyn_map, uv + vec2(x,y)*st).r * u_dyn_far;\n"
@@ -262,23 +257,49 @@ static const char *const PBR_FS =
     "  }\n"
     "  return lit / 9.0;\n"
     "}\n"
-    /* View-INDEPENDENT: casters are partitioned across cascades by size, so a\n"
-     * fragment samples EVERY cascade whose light box contains it and takes the\n"
-     * UNION of their occlusion (min visibility) -- a big-structure shadow (coarse\n"
-     * cascade) and a small-prop shadow (fine cascade) both apply. The dynamic map\n"
-     * is co-sampled once. */
+    /* PCSS soft sun shadow on plain linear-depth cascades. Casters are\n"
+     * partitioned across cascades by size, so we sample EVERY cascade the fragment\n"
+     * lands in and union the occlusion (min). Per cascade: (1) blocker search over\n"
+     * the light-source footprint -> average blocker depth, (2) penumbra width =\n"
+     * (d_recv - d_blk)/d_blk * lightSize (PCSS), converted to a uv radius via the\n"
+     * cascade's world size so all cascades agree, (3) variable-width PCF. */
     "float pbr_csm_shadow(vec3 fragpos){\n"
     "  if(u_csm_enabled==0) return 1.0;\n"
     "  float vis = 1.0;\n"
     "  for(int i=0;i<u_csm_count;++i){\n"
     "    vec4 lc = u_csm_vp[i] * vec4(fragpos, 1.0);\n"
     "    vec3 ndc = lc.xyz / lc.w;\n"        /* ortho: w = 1. */
-    "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n" /* outside this box. */
+    "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n" /* no data here. */
     "    vec2 uv = ndc.xy*0.5 + 0.5;\n"
-    "    float d = clamp((length(fragpos - u_csm_eye[i]) - u_dir_bias) / u_csm_far[i], 0.0, 1.0);\n"
-    /* Sample a coarser moment mip for a soft penumbra (u_csm_soft LOD bias). */
-    "    float ls = pbr_evsm(textureLod(u_csm_static, vec3(uv, float(i)), u_csm_soft).rg, d);\n"
-    "    vis = min(vis, ls);\n"              /* union of occlusion. */
+    "    float d = clamp(length(fragpos - u_csm_eye[i]) / u_csm_far[i], 0.0, 1.0);\n"
+    "    float bias = u_dir_bias / u_csm_far[i];\n"       /* metres -> normalised. */
+    "    float uvPerM = 1.0 / (u_csm_texel[i] * u_csm_res);\n" /* uv per world metre. */
+    "    float texuv = 1.0 / u_csm_res;\n"
+    /* Per-pixel kernel rotation: turns the 16-tap banding into fine noise. */
+    "    float a = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)))*43758.545)*6.2831853;\n"
+    "    float ca = cos(a), sa = sin(a); mat2 rot = mat2(ca,-sa,sa,ca);\n"
+    /* Blocker search over the source footprint; average the depths in front. */
+    "    float srad = max(u_csm_soft * uvPerM, texuv);\n"
+    "    float bsum = 0.0, bcnt = 0.0;\n"
+    "    for(int s=0;s<16;++s){\n"
+    "      float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*srad, float(i))).r;\n"
+    "      if(dp < d - bias){ bsum += dp; bcnt += 1.0; }\n"
+    "    }\n"
+    "    if(bcnt < 0.5) continue;\n"        /* no blocker in this cascade -> lit. */
+    "    float dblk = bsum / bcnt;\n"
+    /* PCSS penumbra grows with the occluder->receiver gap, but is CLAMPED to a\n"
+     * small world size so the PCF taps never reach across a wall (which would\n"
+     * sample lit depths beyond the occluder and leak light through it). */
+    "    float pen = (d - dblk) / max(dblk, 1e-4);\n"       /* scale-invariant ratio. */
+    "    float penM = min(pen * u_csm_soft, 0.6);\n"        /* world metres, capped. */
+    "    float prad = clamp(penM * uvPerM, texuv, 12.0*texuv);\n"
+    /* Variable-width PCF. */
+    "    float lit = 0.0;\n"
+    "    for(int s=0;s<16;++s){\n"
+    "      float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*prad, float(i))).r;\n"
+    "      lit += (dp < d - bias) ? 0.0 : 1.0;\n"
+    "    }\n"
+    "    vis = min(vis, lit / 16.0);\n"     /* union of occlusion. */
     "  }\n"
     "  return min(vis, pbr_dyn_shadow(fragpos));\n"
     "}\n"
