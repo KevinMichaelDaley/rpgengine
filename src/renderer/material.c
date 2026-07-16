@@ -30,6 +30,7 @@ void material_init(render_material_t *mat)
     mat->normal_scale = 1.0f;
     mat->ao_strength = 1.0f;
     mat->uv_scale[0] = mat->uv_scale[1] = 1.0f;
+    mat->contrast = 1.0f;
 }
 
 uint32_t material_bind(const render_material_t *mat, uint32_t base_unit,
@@ -56,6 +57,8 @@ uint32_t material_bind(const render_material_t *mat, uint32_t base_unit,
     }
 
     shader_uniform_set_vec3(cache, program, "u_tint", mat->tint);
+    shader_uniform_set_float(cache, program, "u_contrast",
+                             mat->contrast > 0.0f ? mat->contrast : 1.0f);
     shader_uniform_set_vec3(cache, program, "u_emissive_color", mat->emissive_color);
     shader_uniform_set_float(cache, program, "u_specular_strength",
                              mat->specular_strength);

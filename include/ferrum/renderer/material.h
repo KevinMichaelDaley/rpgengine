@@ -61,6 +61,7 @@ typedef struct render_material {
     float normal_scale;       /**< tangent-normal XY strength. */
     float ao_strength;        /**< AO map influence (0..1). */
     float uv_scale[2];        /**< material-texture UV tiling (multiplies v_uv0). */
+    float contrast;           /**< albedo contrast about 0.5 (1 = none, >1 punchier). */
 } render_material_t;
 
 /**

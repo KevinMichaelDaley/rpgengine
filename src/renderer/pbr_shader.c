@@ -61,6 +61,7 @@ static const char *const PBR_FS =
     "uniform int u_has_ao;\n"
     "uniform int u_has_emissive;\n"
     "uniform vec3 u_tint;\n"
+    "uniform float u_contrast;\n"
     "uniform vec3 u_emissive_color;\n"
     "uniform float u_specular_strength;\n"
     "uniform float u_metalness;\n"
@@ -280,6 +281,9 @@ static const char *const PBR_FS =
     "  vec2 muv = v_uv0 * u_uv_scale;\n"
     "  vec3 albedo = u_tint;\n"
     "  if(u_has_albedo==1) albedo *= texture(u_albedo_map, muv).rgb;\n"
+    /* Albedo contrast about mid-grey (1 = none; >1 makes brick faces vs mortar\n"
+     * pop). Applied in linear space before lighting. */
+    "  albedo = clamp((albedo - 0.5) * u_contrast + 0.5, 0.0, 1.0);\n"
     "  float metal = u_metalness;\n"
     "  if(u_has_metallic==1) metal *= texture(u_metallic_map, muv).r;\n"
     "  metal = clamp(metal, 0.0, 1.0);\n"

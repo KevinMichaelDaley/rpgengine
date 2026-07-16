@@ -277,7 +277,7 @@ int main(int argc,char **argv){
     if(d)closedir(d);
     qsort(fnames,(size_t)nf,sizeof fnames[0],hld_cmpstr);
     for(int fi=0;fi<nf;++fi){ char p[512]; snprintf(p,sizeof p,"%s/%s",dir,fnames[fi]);
-        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=strstr(fnames[fi],"floor")?3:group_of(fnames[fi]); ++nm; } }
+        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=(getenv("RENDER_FLOOR_GREEN")&&strstr(fnames[fi],"floor"))?3:group_of(fnames[fi]); ++nm; } }
     printf("loaded %d dmeshes\n",nm);
 
     /* --- Load the baked SH lightmap(s) into 9 GL_TEXTURE_2D_ARRAY pages. Single
@@ -345,13 +345,16 @@ int main(int argc,char **argv){
     uint32_t created=gpu_executor_drain(&gexec,&gqueue);
     printf("resource executor created %u GPU resources (meshes + textures)\n",created);
     render_material_t mats[4];
+    /* Brick/stone contrast (u_contrast): punch up the brick-vs-mortar tonal range
+     * so the masonry reads with more depth. */
+    float brick_contrast = getenv("BRICK_CONTRAST") ? (float)atof(getenv("BRICK_CONTRAST")) : 1.6f;
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
-    mats[0].maps[MATERIAL_TEX_AO]=&tb_o; mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_r; mats[0].normal_scale=1.3f;
-    mats[0].roughness_min=0.25f; mats[0].roughness_max=1.0f;
+    mats[0].maps[MATERIAL_TEX_AO]=&tb_o; mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_r; mats[0].normal_scale=1.6f;
+    mats[0].roughness_min=0.25f; mats[0].roughness_max=1.0f; mats[0].contrast=brick_contrast;
     material_init(&mats[1]); mats[1].maps[MATERIAL_TEX_ALBEDO]=&ts_a; mats[1].maps[MATERIAL_TEX_ROUGHNESS]=&ts_r;
-    mats[1].roughness_min=0.2f; mats[1].roughness_max=1.0f;
+    mats[1].roughness_min=0.2f; mats[1].roughness_max=1.0f; mats[1].contrast=brick_contrast;
     material_init(&mats[2]); mats[2].maps[MATERIAL_TEX_ALBEDO]=&tv_a; mats[2].maps[MATERIAL_TEX_ROUGHNESS]=&tv_r;
-    mats[2].roughness_min=0.2f; mats[2].roughness_max=1.0f;
+    mats[2].roughness_min=0.2f; mats[2].roughness_max=1.0f; mats[2].contrast=brick_contrast*0.9f;
     /* Floor (group 3): lush-grass green -- ashlar albedo tinted green, matching
      * the bake's green floor reflectance so the render + colour-bleed agree. */
     material_init(&mats[3]); mats[3].maps[MATERIAL_TEX_ALBEDO]=&ts_a; mats[3].maps[MATERIAL_TEX_ROUGHNESS]=&ts_r;
