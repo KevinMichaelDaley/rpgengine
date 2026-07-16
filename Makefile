@@ -391,6 +391,7 @@ BIN_HEADLESS += build/lm_lightmap_file_tests
 BIN_HEADLESS += build/lm_denoise_tests
 BIN_HEADLESS += build/lm_sdf_file_tests
 BIN_HEADLESS += build/gi_probe_tests
+BIN_HEADLESS += build/gi_sdf_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests build/p004_gpu_cmd_queue_tests build/p004_gpu_registry_tests build/p004_shadow_slotmap_tests \
@@ -2354,6 +2355,10 @@ build/lm_sdf_file_tests: tests/lightmap/lm_sdf_file_tests.c src/lightmap/lm_sdf_
 
 build/gi_probe_tests: tests/renderer/gi_probe_tests.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_probe_grid.c | build
 	$(CC) $(CFLAGS) tests/renderer/gi_probe_tests.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_probe_grid.c -o $@ -lm
+
+build/gi_sdf_tests: tests/renderer/gi_sdf_tests.c src/renderer/gi/gi_sdf.c include/ferrum/renderer/gi/gi_sdf.h | build
+	$(CC) $(CFLAGS) tests/renderer/gi_sdf_tests.c src/renderer/gi/gi_sdf.c -o $@ -lm
+
 
 
 
