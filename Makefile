@@ -70,7 +70,7 @@ ifeq ($(TRACY),1)
 endif
 ECS_SRC := $(wildcard src/ecs/*.c)
 ENTITY_SRC := $(wildcard src/entity/*.c)
-RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c) $(wildcard src/renderer/resource/*.c)
+RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/gi/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c) $(wildcard src/renderer/resource/*.c)
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_VIDEO_CAPTURE_SRC := $(wildcard src/renderer/video_capture/*.c)
 RENDERER_SRC += $(RENDERER_VIDEO_CAPTURE_SRC)
@@ -390,6 +390,7 @@ BIN_HEADLESS += build/lm_mesh_bake_tests
 BIN_HEADLESS += build/lm_lightmap_file_tests
 BIN_HEADLESS += build/lm_denoise_tests
 BIN_HEADLESS += build/lm_sdf_file_tests
+BIN_HEADLESS += build/gi_probe_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests build/p004_gpu_cmd_queue_tests build/p004_gpu_registry_tests build/p004_shadow_slotmap_tests \
@@ -2350,6 +2351,10 @@ build/lm_denoise_tests: tests/lightmap/lm_denoise_tests.c $(LM_DENOISE_SRC) incl
 
 build/lm_sdf_file_tests: tests/lightmap/lm_sdf_file_tests.c src/lightmap/lm_sdf_file.c include/ferrum/lightmap/lm_sdf_file.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_sdf_file_tests.c src/lightmap/lm_sdf_file.c -o $@ -lm
+
+build/gi_probe_tests: tests/renderer/gi_probe_tests.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_probe_grid.c | build
+	$(CC) $(CFLAGS) tests/renderer/gi_probe_tests.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_probe_grid.c -o $@ -lm
+
 
 
 build/lm_lightmap_file_tests: tests/lightmap/lm_lightmap_file_tests.c src/lightmap/lm_lightmap_file.c $(LM_DENOISE_SRC) src/lightmap/lm_material.c src/lightmap/lm_mesh_bake.c src/lightmap/lm_svo_voxelize.c src/lightmap/lm_gi_gather.c src/lightmap/lm_parallel.c src/lightmap/lm_mesh_luxel.c src/lightmap/lm_image.c src/lightmap/lm_farfield.c src/lightmap/lm_sky.c src/lightmap/lm_svo_mip.c src/lightmap/lm_svo_material.c src/lightmap/lm_kdtree.c src/lightmap/lm_solve.c src/lightmap/lm_visibility.c src/lightmap/lm_light.c src/lightmap/lm_atlas.c src/lightmap/lm_lightmap.c src/lightmap/lm_sh.c src/math/vec3.c src/memory/arena_init.c src/memory/arena_alloc.c src/memory/arena_mark.c src/memory/arena_pop.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c | build
