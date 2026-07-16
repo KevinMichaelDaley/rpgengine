@@ -45,6 +45,7 @@ typedef struct gi_runtime_config {
     int   prepass_w, prepass_h;  /**< SDF vis-prepass resolution. */
     uint32_t max_lights, max_boxes;
     float soft_k;                /**< penumbra sharpness. */
+    int   update_interval;       /**< recompute probes every N frames (0 -> 8). */
 } gi_runtime_config_t;
 
 /** The dynamic-GI runtime (owns everything). */
@@ -64,6 +65,8 @@ typedef struct gi_runtime {
     struct gi_light *light_scratch; /**< converted DYNAMIC_INDIRECT scene lights. */
     uint32_t         max_lights;
     float            soft_k;
+    int              update_interval; /**< recompute cadence (frames). */
+    int              frame_counter;
     bool             ready;
 } gi_runtime_t;
 

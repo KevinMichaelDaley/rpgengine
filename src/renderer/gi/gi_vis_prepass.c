@@ -49,6 +49,18 @@ int gi_vis_prepass_init(gi_vis_prepass_t *pp, int w, int h, int n_chunks)
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, pp->depth);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    /* Ping-pong pack buffers: glReadPixels into a PBO is async, and we consume
+     * the PREVIOUS frame's PBO (already transferred) so the CPU never stalls on
+     * the GPU. Residency is thus 1 frame stale -- fine for streaming. */
+    glGenBuffers(2, pp->pbo);
+    for (int i = 0; i < 2; ++i) {
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pp->pbo[i]);
+        glBufferData(GL_PIXEL_PACK_BUFFER, (GLsizeiptr)w * h * sizeof(uint32_t),
+                     NULL, GL_STREAM_READ);
+    }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    pp->cur = 0; pp->primed = 2;
+
     pp->prog_mesh = compile2(
         "#version 330 core\nlayout(location=0) in vec3 p;\nuniform mat4 u_mvp;\n"
         "void main(){ gl_Position = u_mvp * vec4(p,1.0); }\n",
@@ -83,16 +95,34 @@ static void pp_begin(gi_vis_prepass_t *pp)
 
 static void pp_readback(gi_vis_prepass_t *pp, int main_w, int main_h)
 {
+    int cur = pp->cur, prev = pp->cur ^ 1;
+    /* Issue THIS frame's readback into pbo[cur] asynchronously (offset, not ptr). */
     glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glReadPixels(0, 0, pp->w, pp->h, GL_RED_INTEGER, GL_UNSIGNED_INT, pp->read);
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, pp->pbo[cur]);
+    glReadPixels(0, 0, pp->w, pp->h, GL_RED_INTEGER, GL_UNSIGNED_INT, (void *)0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(0, 0, main_w, main_h);
-    memset(pp->visible, 0, (size_t)pp->n_chunks);
-    int npx = pp->w * pp->h;
-    for (int i = 0; i < npx; ++i) {
-        uint32_t v = pp->read[i];
-        if (v > 0u && (int)(v - 1u) < pp->n_chunks) pp->visible[v - 1u] = 1;
+
+    if (pp->primed > 0) {
+        /* Pipeline not warm yet -- page everything so nothing is missing. */
+        memset(pp->visible, 1, (size_t)pp->n_chunks);
+        pp->primed--;
+    } else {
+        /* Consume the PREVIOUS frame's PBO (already on the CPU -> no stall). */
+        glBindBuffer(GL_PIXEL_PACK_BUFFER, pp->pbo[prev]);
+        uint32_t *m = (uint32_t *)glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+        memset(pp->visible, 0, (size_t)pp->n_chunks);
+        if (m != NULL) {
+            int npx = pp->w * pp->h;
+            for (int i = 0; i < npx; ++i) {
+                uint32_t v = m[i];
+                if (v > 0u && (int)(v - 1u) < pp->n_chunks) pp->visible[v - 1u] = 1;
+            }
+            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        }
     }
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    pp->cur ^= 1;
 }
 
 /* Compute vp = proj*view (column-major). */
@@ -158,6 +188,7 @@ void gi_vis_prepass_destroy(gi_vis_prepass_t *pp)
     if (pp->fbo) glDeleteFramebuffers(1, &pp->fbo);
     if (pp->col) glDeleteTextures(1, &pp->col);
     if (pp->depth) glDeleteRenderbuffers(1, &pp->depth);
+    if (pp->pbo[0] || pp->pbo[1]) glDeleteBuffers(2, pp->pbo);
     free(pp->read);
     free(pp->visible);
     memset(pp, 0, sizeof *pp);

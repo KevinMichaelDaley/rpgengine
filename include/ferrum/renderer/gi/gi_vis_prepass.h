@@ -35,8 +35,11 @@ typedef struct gi_vis_prepass {
     unsigned int fbo, col, depth;        /**< R32UI colour + depth. */
     int          w, h;
     uint32_t    *read;                   /**< w*h readback buffer. */
-    uint8_t     *visible;                /**< [n_chunks] visible-this-frame flags. */
+    uint8_t     *visible;                /**< [n_chunks] visible flags (1 frame late). */
     int          n_chunks;               /**< sizing of visible[] (>= both modes). */
+    unsigned int pbo[2];                 /**< ping-pong pack buffers for async readback. */
+    int          cur;                    /**< which pbo this frame writes. */
+    int          primed;                 /**< frames until the async pipeline is warm. */
 } gi_vis_prepass_t;
 
 /**

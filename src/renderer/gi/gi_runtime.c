@@ -21,6 +21,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
         return false;
     memset(gi, 0, sizeof *gi);
     gi->soft_k = cfg->soft_k > 0.0f ? cfg->soft_k : 8.0f;
+    gi->update_interval = cfg->update_interval > 0 ? cfg->update_interval : 8;
 
     /* --- Baked SDF residency. --- */
     if (gi_sdf_stream_load(&gi->sdf, cfg->sdf_prefix) <= 0) {
@@ -112,6 +113,11 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
                       int main_w, int main_h)
 {
     if (gi == NULL || !gi->ready || scene == NULL) return;
+    /* GI is low-frequency: recompute only every update_interval frames. Between
+     * updates the probe SH persists in its buffer and the forward+ keeps sampling
+     * it, so the indirect just lags slightly (imperceptible for slow lights). */
+    if (gi->frame_counter++ % gi->update_interval != 0)
+        return;
     /* Page the on-screen SDF chunks (per-fragment world-pos classification). */
     gi_vis_prepass_run_world(&gi->pp, scene, view, proj, gi->box_min, gi->box_max,
                              gi->n_sdf_boxes, main_w, main_h);

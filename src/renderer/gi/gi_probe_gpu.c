@@ -19,8 +19,8 @@
 static const char *CS_SRC =
     "#version 430\n"
     "layout(local_size_x=64) in;\n"
-    "uniform int u_nprobes,u_nlights,u_nboxes,u_soft_i;\n"
-    "uniform float u_soft;\n"
+    "uniform int u_nprobes,u_nlights,u_nboxes,u_ncones;\n"
+    "uniform float u_soft, u_albedo;\n"
     "uniform sampler3D u_sdf[8];\n"
     "uniform vec3 u_sdf_origin[8];\n"
     "uniform vec3 u_sdf_dim[8];\n"
@@ -30,6 +30,7 @@ static const char *CS_SRC =
     "layout(std430,binding=1) writeonly buffer PS { float psh[]; };\n"
     "layout(std430,binding=2) readonly buffer LB { vec4 lt[]; };\n"
     "layout(std430,binding=3) readonly buffer BX { vec4 bx[]; };\n"
+    "const float PI=3.14159265;\n"
     "float box_sdf(vec3 p,vec3 c,vec3 h){ vec3 q=abs(p-c)-h; return length(max(q,vec3(0.0)))+min(max(q.x,max(q.y,q.z)),0.0); }\n"
     "float scene_sdf(vec3 p){ float d=1e30;\n"
     "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
@@ -38,27 +39,51 @@ static const char *CS_SRC =
     "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).r); } }\n"
     "  for(int i=0;i<u_nboxes;++i){ d=min(d, box_sdf(p,bx[i*2].xyz,bx[i*2+1].xyz)); }\n"
     "  return d; }\n"
-    "float soft_vis(vec3 o,vec3 dir,float maxd){ float res=1.0,t=0.05;\n"
-    "  for(int i=0;i<48 && t<maxd;++i){ float h=scene_sdf(o+dir*t);\n"
-    "    if(h<0.001) return 0.0; res=min(res,u_soft*h/t); t+=clamp(h,0.02,0.5); }\n"
+    "vec3 sdf_normal(vec3 p){ float e=0.06;\n"
+    "  return normalize(vec3(scene_sdf(p+vec3(e,0,0))-scene_sdf(p-vec3(e,0,0)),\n"
+    "                        scene_sdf(p+vec3(0,e,0))-scene_sdf(p-vec3(0,e,0)),\n"
+    "                        scene_sdf(p+vec3(0,0,e))-scene_sdf(p-vec3(0,0,e)))); }\n"
+    /* Hard-ish shadow ray (sphere-march) from a surface point to a light. */
+    "float shadow(vec3 o,vec3 dir,float maxd){ float res=1.0,t=0.08;\n"
+    "  for(int i=0;i<32 && t<maxd;++i){ float h=scene_sdf(o+dir*t);\n"
+    "    if(h<0.02) return 0.0; res=min(res,u_soft*h/t); t+=clamp(h,0.03,0.4); }\n"
     "  return clamp(res,0.0,1.0); }\n"
+    /* Direct irradiance at a surface point p (normal n) from all dynamic lights. */
+    "vec3 direct_at(vec3 p,vec3 n){ vec3 sum=vec3(0.0);\n"
+    "  for(int l=0;l<u_nlights;++l){ vec4 a=lt[l*4],b=lt[l*4+1],c=lt[l*4+2],e=lt[l*4+3];\n"
+    "    int kind=int(a.x); vec3 lpos=a.yzw; vec3 ldir=b.xyz; float range=b.w; vec3 col=c.xyz; float ci=c.w,co=e.x;\n"
+    "    vec3 dir; float maxd; float atten=1.0;\n"
+    "    if(kind==0){ float ll=length(ldir); if(ll<1e-6) continue; dir=-ldir/ll; maxd=1e4; }\n"
+    "    else { vec3 to=lpos-p; float dd=length(to); if(dd<1e-4) continue; dir=to/dd; maxd=dd;\n"
+    "      float x=dd/max(range,1e-4); if(x>=1.0) continue; float f=1.0-x*x; atten=f*f;\n"
+    "      if(kind==2){ float ll=length(ldir); if(ll<1e-6) continue; float cd=dot(-dir,ldir)/ll;\n"
+    "        float tt=(cd-co)/(ci-co+1e-6); if(tt<=0.0) continue; tt=clamp(tt,0.0,1.0); atten*=tt*tt*(3.0-2.0*tt); } }\n"
+    "    float ndl=max(dot(n,dir),0.0); if(ndl<=0.0) continue;\n"
+    "    float vis=shadow(p,dir,maxd); if(vis<=0.0) continue;\n"
+    "    sum += col*atten*ndl*vis; }\n"
+    "  return sum; }\n"
+    /* Cone-trace the SDF from the probe along dir; at the hit, return the diffuse\n"
+     * radiance the surface bounces back toward the probe. Miss -> 0 (no sky). */
+    "vec3 trace(vec3 o,vec3 dir){ float t=0.12;\n"
+    "  for(int i=0;i<64;++i){ vec3 p=o+dir*t; float h=scene_sdf(p);\n"
+    "    if(h<0.03){ vec3 n=sdf_normal(p); if(dot(n,dir)>0.0) n=-n;\n"
+    "      return u_albedo * direct_at(p+n*0.06, n) / PI; }\n"
+    "    t += max(h,0.04); if(t>25.0) break; }\n"
+    "  return vec3(0.0); }\n"
     "void sh_basis(vec3 d, out float y[9]){\n"
     "  y[0]=0.282094792; y[1]=0.488602512*d.y; y[2]=0.488602512*d.z; y[3]=0.488602512*d.x;\n"
     "  y[4]=1.092548431*d.x*d.y; y[5]=1.092548431*d.y*d.z; y[6]=0.315391565*(3.0*d.z*d.z-1.0);\n"
     "  y[7]=1.092548431*d.x*d.z; y[8]=0.546274215*(d.x*d.x-d.y*d.y); }\n"
     "void main(){ uint gid=gl_GlobalInvocationID.x; if(gid>=uint(u_nprobes)) return;\n"
-    "  vec3 p=ppos[gid].xyz; float sh[27]; for(int k=0;k<27;++k) sh[k]=0.0;\n"
-    "  for(int l=0;l<u_nlights;++l){ vec4 a=lt[l*4],b=lt[l*4+1],c=lt[l*4+2],e=lt[l*4+3];\n"
-    "    int kind=int(a.x); vec3 lpos=a.yzw; vec3 ldir=b.xyz; float range=b.w; vec3 col=c.xyz; float ci=c.w, co=e.x;\n"
-    "    vec3 dir; float maxd; float atten=1.0;\n"
-    "    if(kind==0){ float ll=length(ldir); if(ll<1e-6) continue; dir=-ldir/ll; maxd=1e4; }\n"
-    "    else { vec3 to=lpos-p; float dd=length(to); if(dd<1e-5) continue; dir=to/dd; maxd=dd;\n"
-    "      float x=dd/max(range,1e-4); if(x>=1.0) continue; float f=1.0-x*x; atten=f*f;\n"
-    "      if(kind==2){ float ll=length(ldir); if(ll<1e-6) continue; float cd=dot(-dir,ldir)/ll;\n"
-    "        float t=(cd-co)/(ci-co+1e-6); if(t<=0.0) continue; t=clamp(t,0.0,1.0); atten*=t*t*(3.0-2.0*t); } }\n"
-    "    float vis=soft_vis(p,dir,maxd); if(vis<=0.0) continue; float s=vis*atten;\n"
+    "  vec3 o=ppos[gid].xyz; float sh[27]; for(int k=0;k<27;++k) sh[k]=0.0;\n"
+    "  float ga=2.399963229728653; float w=4.0*PI/float(u_ncones);\n"
+    /* Fibonacci sphere of directions: gather one-bounce indirect over the sphere. */
+    "  for(int s=0;s<u_ncones;++s){ float z=1.0-(2.0*float(s)+1.0)/float(u_ncones);\n"
+    "    float r=sqrt(max(0.0,1.0-z*z)); float phi=ga*float(s);\n"
+    "    vec3 dir=vec3(r*cos(phi), r*sin(phi), z);\n"
+    "    vec3 rad=trace(o,dir); if(dot(rad,rad)<=0.0) continue;\n"
     "    float y[9]; sh_basis(dir,y);\n"
-    "    for(int k=0;k<9;++k){ sh[k]+=col.r*s*y[k]; sh[9+k]+=col.g*s*y[k]; sh[18+k]+=col.b*s*y[k]; } }\n"
+    "    for(int k=0;k<9;++k){ sh[k]+=rad.r*y[k]*w; sh[9+k]+=rad.g*y[k]*w; sh[18+k]+=rad.b*y[k]*w; } }\n"
     "  for(int k=0;k<27;++k) psh[gid*27+k]=sh[k]; }\n";
 
 static GLuint cs_build(void)
@@ -174,6 +199,8 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glUniform1i(glGetUniformLocation(g->prog, "u_nlights"), (GLint)n_lights);
     glUniform1i(glGetUniformLocation(g->prog, "u_nboxes"), (GLint)nb);
     glUniform1f(glGetUniformLocation(g->prog, "u_soft"), soft_k);
+    glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 32);   /* sphere samples. */
+    glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 0.6f); /* assumed bounce albedo. */
 
     /* Bind the resident SDF chunks (one per used slot) + metadata. */
     char nm[32];
