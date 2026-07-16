@@ -394,6 +394,7 @@ BIN_HEADLESS += build/gi_probe_tests
 BIN_HEADLESS += build/gi_sdf_tests
 BIN_HEADLESS += build/gi_probe_kernel_tests
 BIN_HEADLESS += build/gi_probe_sample_tests
+BIN_HEADLESS += build/gi_probe_place_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests build/p004_gpu_cmd_queue_tests build/p004_gpu_registry_tests build/p004_shadow_slotmap_tests \
@@ -2364,6 +2365,10 @@ build/gi_sdf_tests: tests/renderer/gi_sdf_tests.c src/renderer/gi/gi_sdf.c inclu
 
 build/gi_probe_sample_tests: tests/renderer/gi_probe_sample_tests.c src/renderer/gi/gi_probe_sample.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_probe_grid.c src/lightmap/lm_sh.c src/math/vec3.c | build
 	$(CC) $(CFLAGS) tests/renderer/gi_probe_sample_tests.c src/renderer/gi/gi_probe_sample.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_probe_grid.c src/lightmap/lm_sh.c src/math/vec3.c -o $@ -lm
+
+
+build/gi_probe_place_tests: tests/renderer/gi_probe_place_tests.c src/renderer/gi/gi_probe_place.c src/renderer/gi/gi_probe_set.c | build
+	$(CC) $(CFLAGS) tests/renderer/gi_probe_place_tests.c src/renderer/gi/gi_probe_place.c src/renderer/gi/gi_probe_set.c -o $@ -lm
 
 build/gi_probe_kernel_tests: tests/renderer/gi_probe_kernel_tests.c src/renderer/gi/gi_probe_kernel.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_sdf.c src/lightmap/lm_sh.c src/math/vec3.c | build
 	$(CC) $(CFLAGS) tests/renderer/gi_probe_kernel_tests.c src/renderer/gi/gi_probe_kernel.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_sdf.c src/lightmap/lm_sh.c src/math/vec3.c -o $@ -lm
