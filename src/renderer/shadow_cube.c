@@ -56,7 +56,8 @@ static void sc_face_view(uint32_t face, const float lp[3], mat4_t *out)
     } while (0)
 
 bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
-                      uint32_t resolution, float near_plane, float far_plane)
+                      uint32_t resolution, float near_plane, float far_plane,
+                      uint32_t max_lights)
 {
     if (sc == NULL || loader == NULL || loader->get_proc_address == NULL ||
         resolution == 0)
@@ -65,6 +66,7 @@ bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
     sc->resolution = resolution;
     sc->near_plane = near_plane;
     sc->far_plane = far_plane;
+    sc->max_lights = max_lights ? max_lights : 1u;
 
     if (shader_program_create(&sc->shader, loader, SC_VS, SC_FS, NULL, 0) !=
         SHADER_PROGRAM_OK)
@@ -75,6 +77,8 @@ bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
     SC_LOAD(sc->glDeleteFramebuffers, "glDeleteFramebuffers");
     SC_LOAD(sc->glBindFramebuffer, "glBindFramebuffer");
     SC_LOAD(sc->glFramebufferTexture2D, "glFramebufferTexture2D");
+    SC_LOAD(sc->glFramebufferTextureLayer, "glFramebufferTextureLayer");
+    SC_LOAD(sc->glTexImage3D, "glTexImage3D");
     SC_LOAD(sc->glGenRenderbuffers, "glGenRenderbuffers");
     SC_LOAD(sc->glDeleteRenderbuffers, "glDeleteRenderbuffers");
     SC_LOAD(sc->glBindRenderbuffer, "glBindRenderbuffer");
@@ -92,18 +96,18 @@ bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
     SC_LOAD(sc->glEnable, "glEnable");
     SC_LOAD(sc->glDepthFunc, "glDepthFunc");
 
-    /* R32F cubemap (linear distance / far). */
+    /* R32F cube-map ARRAY: 6*max_lights faces (linear distance / far). One cube
+     * (6 consecutive array layers) per shadow-casting point light. */
     sc->glGenTextures(1, &sc->cube);
-    sc->glBindTexture(GL_TEXTURE_CUBE_MAP, sc->cube);
-    for (uint32_t f = 0; f < 6; ++f)
-        sc->glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, GL_R32F,
-                         (int32_t)resolution, (int32_t)resolution, 0, GL_RED,
-                         GL_FLOAT, NULL);
-    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    sc->glBindTexture(GL_TEXTURE_CUBE_MAP_ARRAY, sc->cube);
+    sc->glTexImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, 0, GL_R32F,
+                     (int32_t)resolution, (int32_t)resolution,
+                     (int32_t)(6u * sc->max_lights), 0, GL_RED, GL_FLOAT, NULL);
+    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    sc->glTexParameteri(GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
     sc->glGenRenderbuffers(1, &sc->depth_rb);
     sc->glBindRenderbuffer(GL_RENDERBUFFER, sc->depth_rb);
@@ -118,10 +122,10 @@ bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
     return true;
 }
 
-void shadow_cube_render(shadow_cube_t *sc, const render_scene_t *scene,
-                        const float light_pos[3])
+void shadow_cube_render_light(shadow_cube_t *sc, const render_scene_t *scene,
+                              const float light_pos[3], uint32_t slot)
 {
-    if (sc == NULL || scene == NULL || light_pos == NULL)
+    if (sc == NULL || scene == NULL || light_pos == NULL || slot >= sc->max_lights)
         return;
     mat4_t proj;
     mat4_perspective(1.57079633f, 1.0f, sc->near_plane, sc->far_plane, &proj);
@@ -136,8 +140,9 @@ void shadow_cube_render(shadow_cube_t *sc, const render_scene_t *scene,
     shader_uniform_set_float(&sc->cache, &sc->shader, "u_far", sc->far_plane);
 
     for (uint32_t f = 0; f < 6; ++f) {
-        sc->glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                   GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, sc->cube, 0);
+        /* Cube-array layer-face for this slot's face f. */
+        sc->glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                      sc->cube, 0, (int32_t)(slot * 6u + f));
         sc->glClearColor(1.0f, 1.0f, 1.0f, 1.0f); /* unwritten texels == far */
         sc->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         mat4_t view;
@@ -162,8 +167,8 @@ void shadow_cube_bind(const shadow_cube_t *sc, shader_uniform_cache_t *cache,
     if (sc == NULL || cache == NULL || program == NULL)
         return;
     sc->glActiveTexture(GL_TEXTURE0 + unit);
-    sc->glBindTexture(GL_TEXTURE_CUBE_MAP, sc->cube);
-    shader_uniform_set_int(cache, program, "u_shadow_cube", (int32_t)unit);
+    sc->glBindTexture(GL_TEXTURE_CUBE_MAP_ARRAY, sc->cube);
+    shader_uniform_set_int(cache, program, "u_shadow_cube_arr", (int32_t)unit);
     shader_uniform_set_float(cache, program, "u_shadow_far", sc->far_plane);
 }
 

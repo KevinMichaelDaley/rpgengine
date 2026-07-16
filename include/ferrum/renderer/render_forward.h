@@ -49,7 +49,10 @@ typedef struct render_forward_config {
     int                sh_enabled;    /**< bind a baked SH lightmap (units 7-15). */
     uint32_t           sh_tex[9];     /**< 9 RGB32F SH-coeff atlas texture ids. */
     float              sh_scale;      /**< lightmap intensity multiplier (0 -> 1). */
-    int                shadow_light;  /**< flat light index to cast a cube shadow (-1 = none). */
+    int                shadow_light;  /**< legacy single cube-shadow light (-1); the
+                                        *  multi-light path shadows every point light
+                                        *  tagged RENDER_LIGHT_FLAG_SHADOW instead. */
+    uint32_t           shadow_max;    /**< cube-array capacity (max shadow lights). */
     uint32_t           shadow_res;    /**< cube face resolution (0 = no shadow). */
     float              shadow_near;   /**< cube shadow near plane. */
     float              shadow_far;    /**< cube shadow far plane. */
@@ -96,6 +99,7 @@ typedef struct render_forward {
     render_forward_config_t cfg;
     const render_scene_t   *scene;    /**< set per @ref render_forward_render. */
 
+    int      *shadow_slot; /**< per-light cube-array slot (-1 = none), max_lights. */
     uint32_t *offsets;   /**< owned cluster storage. */
     uint32_t *counts;
     uint32_t *indices;

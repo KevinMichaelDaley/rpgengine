@@ -41,8 +41,12 @@ static void fwd_cull_submit(void *ud)
         lights = s->lights->lights;
     }
     cluster_grid_build(&f->clusters, &s->camera, lights, n);
-    for (uint32_t i = 0; i < n; ++i)
+    for (uint32_t i = 0; i < n; ++i) {
         forward_plus_pack_light(&lights[i], &f->light_data[i * 16]);
+        /* t3.y = this light's cube-array shadow slot (-1 = none), assigned in
+         * render_forward_render before the graph runs. */
+        f->light_data[i * 16 + 13] = (float)(f->shadow_slot ? f->shadow_slot[i] : -1);
+    }
     forward_plus_upload(&f->fp, &f->clusters, f->light_data, n);
 }
 
@@ -98,12 +102,12 @@ static void fwd_forward_submit(void *ud)
 
     /* Optional point-light cube shadow on unit 20 (the movable light whose flat
      * index is shadow_light). Rendered before this pass in render_forward_render. */
-    if (f->cfg.shadow_light >= 0 && f->cfg.shadow_res > 0u) {
+    if (f->cfg.shadow_res > 0u) {
+        /* Cube-map ARRAY on unit 20; each light's slot rides in its packed data. */
         shadow_cube_bind(&f->shadow, &f->cache, &f->pbr, 20u);
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_shadow_light", f->cfg.shadow_light);
         shader_uniform_set_float(&f->cache, &f->pbr, "u_shadow_bias", f->cfg.shadow_bias);
     } else {
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_shadow_light", -1);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_shadow_cube_arr", 20);
     }
     /* Spot 2D shadow on unit 21. */
     if (f->cfg.spot_light >= 0 && f->cfg.spot_res > 0u) {
@@ -178,10 +182,14 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     }
     if (cfg->shadow_res > 0u &&
         !shadow_cube_init(&fwd->shadow, cfg->loader, cfg->shadow_res,
-                          cfg->shadow_near, cfg->shadow_far)) {
+                          cfg->shadow_near, cfg->shadow_far,
+                          cfg->shadow_max ? cfg->shadow_max : 16u)) {
         render_forward_destroy(fwd);
         return false;
     }
+    fwd->shadow_slot = malloc((size_t)cfg->max_lights * sizeof(int));
+    if (fwd->shadow_slot == NULL) { render_forward_destroy(fwd); return false; }
+    for (uint32_t i = 0; i < cfg->max_lights; ++i) fwd->shadow_slot[i] = -1;
     if (cfg->spot_res > 0u &&
         !shadow_spot_init(&fwd->spot, cfg->loader, cfg->spot_res,
                           cfg->spot_near, cfg->spot_far)) {
@@ -242,13 +250,24 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
     if (fwd == NULL || scene == NULL)
         return;
     fwd->scene = scene;
-    /* Render the point-light cube shadow first (own FBO), then restore the main
-     * viewport so the graph's passes draw at screen resolution. */
-    if (fwd->cfg.shadow_res > 0u && fwd->cfg.shadow_light >= 0 &&
-        scene->lights != NULL &&
-        (uint32_t)fwd->cfg.shadow_light < scene->lights->count) {
-        shadow_cube_render(&fwd->shadow, scene,
-                           scene->lights->lights[fwd->cfg.shadow_light].position);
+    /* Render an omnidirectional cube shadow for EVERY point light tagged
+     * RENDER_LIGHT_FLAG_SHADOW, each into its own cube-array slot (assigned here,
+     * consumed by fwd_cull_submit -> light_data.t3.y). Then restore the viewport. */
+    if (fwd->cfg.shadow_res > 0u && scene->lights != NULL && fwd->shadow_slot != NULL) {
+        uint32_t n = scene->lights->count;
+        if (n > fwd->cfg.max_lights) n = fwd->cfg.max_lights;
+        uint32_t slot = 0;
+        for (uint32_t i = 0; i < n; ++i) {
+            const render_light_t *L = &scene->lights->lights[i];
+            if ((L->kind == RENDER_LIGHT_POINT || L->kind == RENDER_LIGHT_SPOT) &&
+                (L->flags & RENDER_LIGHT_FLAG_SHADOW) && slot < fwd->shadow.max_lights) {
+                shadow_cube_render_light(&fwd->shadow, scene, L->position, slot);
+                fwd->shadow_slot[i] = (int)slot;
+                ++slot;
+            } else {
+                fwd->shadow_slot[i] = -1;
+            }
+        }
         fwd->shadow.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                                (int32_t)fwd->cfg.screen_h);
     }
@@ -298,6 +317,7 @@ void render_forward_destroy(render_forward_t *fwd)
     forward_plus_destroy(&fwd->fp);
     depth_prepass_destroy(&fwd->depth);
     shader_program_destroy(&fwd->pbr);
+    free(fwd->shadow_slot);
     free(fwd->offsets);
     free(fwd->counts);
     free(fwd->indices);

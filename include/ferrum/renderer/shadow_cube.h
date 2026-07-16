@@ -33,7 +33,8 @@ typedef struct shadow_cube {
     uint32_t resolution;             /**< per-face pixel size. */
     float    near_plane;
     float    far_plane;
-    uint32_t cube;                   /**< R32F cubemap (linear distance/far). */
+    uint32_t cube;                   /**< R32F cube-map ARRAY (6*max_lights faces). */
+    uint32_t max_lights;             /**< cube-array capacity (shadow slots). */
     uint32_t depth_rb;               /**< shared depth renderbuffer. */
     uint32_t fbo;
 
@@ -42,6 +43,8 @@ typedef struct shadow_cube {
     void (*glDeleteFramebuffers)(int32_t, const uint32_t *);
     void (*glBindFramebuffer)(uint32_t, uint32_t);
     void (*glFramebufferTexture2D)(uint32_t, uint32_t, uint32_t, uint32_t, int32_t);
+    void (*glFramebufferTextureLayer)(uint32_t, uint32_t, uint32_t, int32_t, int32_t);
+    void (*glTexImage3D)(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void *);
     void (*glGenRenderbuffers)(int32_t, uint32_t *);
     void (*glDeleteRenderbuffers)(int32_t, const uint32_t *);
     void (*glBindRenderbuffer)(uint32_t, uint32_t);
@@ -66,20 +69,20 @@ typedef struct shadow_cube {
  *        @p far_plane bound the light's shadow range.
  */
 bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
-                      uint32_t resolution, float near_plane, float far_plane);
+                      uint32_t resolution, float near_plane, float far_plane,
+                      uint32_t max_lights);
 
 /**
- * @brief Render the scene's depth-distance into all six cube faces from
- *        @p light_pos. Binds the FBO + a per-face 90-degree projection; restores
- *        nothing (caller re-binds its framebuffer/viewport afterwards).
+ * @brief Render the scene's depth-distance into cube-array SLOT @p slot's six
+ *        faces from @p light_pos (so many point lights each get their own
+ *        omnidirectional shadow). Caller re-binds its framebuffer/viewport after.
  */
-void shadow_cube_render(shadow_cube_t *sc, const render_scene_t *scene,
-                        const float light_pos[3]);
+void shadow_cube_render_light(shadow_cube_t *sc, const render_scene_t *scene,
+                              const float light_pos[3], uint32_t slot);
 
 /**
- * @brief Bind the cubemap to @p unit and set the PBR shadow uniforms
- *        (u_shadow_cube, u_shadow_far). The caller sets u_shadow_light /
- *        u_shadow_pos / u_shadow_bias to select which light it shadows.
+ * @brief Bind the cube-map ARRAY to @p unit and set u_shadow_cube_arr +
+ *        u_shadow_far. Each shadowed light carries its slot in its packed data.
  */
 void shadow_cube_bind(const shadow_cube_t *sc, shader_uniform_cache_t *cache,
                       const shader_program_t *program, uint32_t unit);

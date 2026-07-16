@@ -678,7 +678,8 @@ int main(int argc,char **argv){
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
      * direct sun + its CSM shadows. */
     fcfg.sh_enabled=(shadow_only||spot_only)?0:1; fcfg.sh_scale=lm_only?1.0f:(csm_demo?0.5f:0.4f); for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
-    fcfg.shadow_light=0; fcfg.shadow_res=1024; fcfg.shadow_near=0.1f;
+    fcfg.shadow_light=-1; /* multi-light path: point lights tagged FLAG_SHADOW cast. */
+    fcfg.shadow_max=8; fcfg.shadow_res=512; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
     fcfg.spot_light=1; fcfg.spot_res=1024; fcfg.spot_near=0.05f;
     fcfg.spot_far=hall_len*1.5f; fcfg.spot_bias=0.05f;
@@ -690,7 +691,7 @@ int main(int argc,char **argv){
         fcfg.sun_color[0]=9.0f; fcfg.sun_color[1]=8.4f; fcfg.sun_color[2]=7.2f;
         /* Small flat ambient so dynamic objects (no baked lightmap) aren't black. */
         fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.15f;
-        fcfg.dir_cascades=6; fcfg.dir_static_res=2048; fcfg.dir_dynamic_res=2048;
+        fcfg.dir_cascades=3; fcfg.dir_static_res=2048; fcfg.dir_dynamic_res=2048;
         fcfg.dir_lambda=0.6f;
         /* PCSS depth-compare bias in metres (DIR_BIAS env, default 5cm). */
         fcfg.dir_bias=getenv("DIR_BIAS")?(float)atof(getenv("DIR_BIAS")):0.05f;
@@ -735,20 +736,25 @@ int main(int argc,char **argv){
             g_box_item[b]=(int)scene.count;
             render_scene_add(&scene,&gib[b],&mats[grp[1]],bm);
         }
-        /* Tiny (< a foot) moving particle POINT lights added to the scene light
-         * store, tagged REALTIME (direct + PCF shadows) | DYNAMIC_INDIRECT (the
-         * probes gather them for the SDF-traced indirect). */
-        g_npart = getenv("GI_NPART")?atoi(getenv("GI_NPART")):4;
-        if(g_npart>256) g_npart=256;
-        g_part_base=(int)lights.count;
-        for(int i=0;i<g_npart;++i){
-            render_light_t pl; memset(&pl,0,sizeof pl); pl.kind=RENDER_LIGHT_POINT;
-            const float *pc=pal[i%6];
-            pl.color[0]=pc[0]; pl.color[1]=pc[1]; pl.color[2]=pc[2];
-            pl.intensity=6.0f; pl.range=2.2f;   /* small local light. */
-            pl.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT;
-            render_light_add(&lights,&pl);
-        }
+        /* Two orange SPOT lights hugging the central column, halfway up: one
+         * facing the left window, one facing the player. Tagged REALTIME (direct +
+         * cube shadow) | DYNAMIC_INDIRECT (probes gather them for SDF-traced GI). */
+        g_npart = 2; g_part_base=(int)lights.count;
+        { render_light_t a; memset(&a,0,sizeof a); a.kind=RENDER_LIGHT_SPOT;
+          a.color[0]=1.0f; a.color[1]=0.46f; a.color[2]=0.12f; a.intensity=20.0f; a.range=4.0f;
+          a.cos_inner=cosf(0.55f); a.cos_outer=cosf(0.95f);
+          a.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_SHADOW;
+          /* Sconces sit ON the central pillar's surface (shaft ~0.4m), halfway up,
+           * pointing UP like wall sconces. Central pillar = col_0 at (3,-3). */
+          float pcx=6.0f, pcz=-3.0f, prad=0.44f, py=amin[1]+1.05f; /* low on the shaft. */
+          /* On the window-side face, up + toward the left window. */
+          a.position[0]=pcx; a.position[1]=py; a.position[2]=pcz+prad;
+          a.direction[0]=0.05f; a.direction[1]=1.0f; a.direction[2]=0.45f;
+          render_light_add(&lights,&a);
+          /* On the player-side face, up + toward the player. */
+          render_light_t b=a; b.position[0]=pcx-prad; b.position[2]=pcz;
+          b.direction[0]=-0.45f; b.direction[1]=1.0f; b.direction[2]=0.0f;
+          render_light_add(&lights,&b); }
         /* Manual adaptive probes for this hall: a coarse set near the vaults +
          * aisle + side walls (scene-specific -> lives in this invocation). */
         static const float hall_probes[] = {
@@ -840,14 +846,10 @@ int main(int argc,char **argv){
         glClearColor(0.02f,0.02f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         if(gi_demo){
             float ts=(float)frame*0.016f;
-            for(int i=0;i<g_npart;++i){
-                float ph=ts*0.7f + (float)i*0.53f;
-                float jx=(((i*53)%100)/100.0f-0.5f), jz=(((i*29)%100)/100.0f-0.5f);
-                render_light_t *pl=&lights.lights[g_part_base+i];
-                pl->position[0]=cx + span[0]*(0.38f*sinf(ph) + jx*0.7f);
-                pl->position[2]=cz + span[2]*(0.38f*cosf(ph*0.8f) + jz*0.7f);
-                pl->position[1]=amax[1]-0.35f - 0.20f*fabsf(sinf(ph*1.3f));
-            }
+            /* Flicker the two spots in/out on a slow, offset sinusoid (direct AND
+             * the SDF-probe indirect follow, since the probes re-read intensity). */
+            lights.lights[g_part_base+0].intensity = 20.0f*(0.5f+0.5f*sinf(ts*0.45f));
+            lights.lights[g_part_base+1].intensity = 20.0f*(0.5f+0.5f*sinf(ts*0.45f+2.4f));
             for(int b=0;b<g_nboxes;++b){
                 float dx=0.6f*sinf(ts*0.5f+(float)b);
                 g_boxes[b].a[0]=g_box_home[b][0]+dx;
