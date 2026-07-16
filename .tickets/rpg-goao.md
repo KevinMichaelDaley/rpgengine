@@ -1,6 +1,6 @@
 ---
 id: rpg-goao
-status: open
+status: closed
 deps: []
 links: [rpg-t9l2, rpg-ca3y, rpg-hf0x, rpg-n1kq, rpg-k80x, rpg-qhya, rpg-sae6, rpg-z40l, rpg-rt38, rpg-p6bd, rpg-k04n]
 created: 2026-07-09T02:48:46Z
@@ -43,3 +43,9 @@ Partition walls assign voxels to room_id=0 (wall) and set SDF to positive. The g
 - Partition walls bisect the room in the correct axis based on face selection
 - Apply then remove restores original grid
 
+
+## Notes
+
+**2026-07-16T03:19:32Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).

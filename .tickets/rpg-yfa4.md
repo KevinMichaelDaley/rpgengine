@@ -53,3 +53,13 @@ RENDER HALF DONE + SEAM FIXED (committed+pushed).
 - CHUNK-BOUNDARY SEAM FIXED: per-luxel RNG now seeded by WORLD POSITION (floatBitsToUint hash) not chunk-local index -> noise field identical across chunk borders; 4-chunk now matches whole-scene bake. Verified on 94-mesh column/vault zone at 256spp: blotchy center gone.
 
 REMAINING: (1) scale to the full 400m/1345-mesh zone (froxel streaming so only visible chunk layers resident; current all-resident array is fine for small zones but ~690MB VRAM for 4 layers at 4096x390 -> too big for many layers). (2) float16 SH + fixed/smaller per-chunk atlas to cut file+VRAM. (3) fold per-chunk near/med SDF into flm (rpg-iudw). (4) reduce the 22% no-material voxelize gap (darker indirect bounce off untextured voxels).
+
+**2026-07-16T03:13:48Z**
+
+RENDER HALF COMPLETE (all committed/pushed). Full per-chunk lightmap pipeline works end to end:
+- Bake: HALL_PERCHUNK emits per-chunk atlases + ZLM1 manifest (per-mesh layer+rect). geo_scene lets a chunk bake against the whole scene.
+- Render: 9 SH coeff atlases as GL_TEXTURE_2D_ARRAY (layer per chunk), per-mesh u_sh_layer; hall_lit_dynamic load_sh_arrays builds the array from manifest+_cNNN.flm.
+- Chunk-boundary SEAM fixed (per-luxel RNG seeded by world position, not chunk-local index).
+- Per-cell per-light visibility STORE (CS_LIGHTVIS) so the gather samples direct light without per-hit shadow rays; no-material voxels get a fallback albedo.
+- Verified: instanced column/vault zones + big-bay diagnostic; color bleed confirmed (green floor -> green columns); ~60-470fps.
+REMAINING (optional): the froxel/streaming residency for the FULL 400m zone (all-resident array is fine up to a few chunks; large zones need visible-chunk streaming). Uniform/float16 atlas for VRAM. Fold SDF into flm (rpg-iudw).

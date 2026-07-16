@@ -1,6 +1,6 @@
 ---
 id: rpg-t9l2
-status: open
+status: closed
 deps: []
 links: [rpg-ca3y, rpg-hf0x, rpg-goao, rpg-n1kq, rpg-k80x, rpg-qhya, rpg-sae6, rpg-z40l, rpg-rt38, rpg-p6bd, rpg-umku]
 created: 2026-07-09T02:52:58Z
@@ -40,3 +40,9 @@ Columns are stamped as solid (CSG subtract) with room_id=0. Base and capital use
 - Grid spacing is proportional to room size (no columns outside room)
 - Apply then remove restores original grid
 
+
+## Notes
+
+**2026-07-16T03:19:33Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).

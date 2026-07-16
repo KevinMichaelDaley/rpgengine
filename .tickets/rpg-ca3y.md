@@ -1,6 +1,6 @@
 ---
 id: rpg-ca3y
-status: open
+status: closed
 deps: []
 links: [rpg-t9l2, rpg-hf0x, rpg-goao, rpg-n1kq, rpg-k80x, rpg-qhya, rpg-sae6, rpg-z40l, rpg-rt38, rpg-p6bd, rpg-kbuf]
 created: 2026-07-09T02:47:31Z
@@ -39,3 +39,9 @@ These rules stamp SOLID geometry (CSG subtract) that projects into the room inte
 - Apply then remove restores original grid
 - Pilasters do not block doorways (skip placement where adjacent room detected)
 
+
+## Notes
+
+**2026-07-16T03:19:32Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).

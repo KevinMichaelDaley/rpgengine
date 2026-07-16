@@ -1,6 +1,6 @@
 ---
 id: rpg-n1kq
-status: open
+status: closed
 deps: []
 links: [rpg-t9l2, rpg-ca3y, rpg-hf0x, rpg-goao, rpg-k80x, rpg-qhya, rpg-sae6, rpg-z40l, rpg-rt38, rpg-p6bd, rpg-imlo]
 created: 2026-07-09T02:42:01Z
@@ -57,3 +57,9 @@ Differentiable w.r.t. t, local, reversible.
 - All rules reversible: apply then remove restores grid within float tolerance
 - make test passes with FAISS_STUB=1
 
+
+## Notes
+
+**2026-07-16T03:19:32Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).

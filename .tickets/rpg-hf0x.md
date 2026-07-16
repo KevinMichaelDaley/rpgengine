@@ -1,6 +1,6 @@
 ---
 id: rpg-hf0x
-status: open
+status: closed
 deps: []
 links: [rpg-t9l2, rpg-ca3y, rpg-goao, rpg-n1kq, rpg-k80x, rpg-qhya, rpg-sae6, rpg-z40l, rpg-rt38, rpg-p6bd, rpg-iotp]
 created: 2026-07-09T02:54:07Z
@@ -39,3 +39,9 @@ Openings carve into solid wall (CSG union, set SDF negative). Slits go fully thr
 - Recesses do not punch fully through wall (depth-limited)
 - Apply then remove restores original grid
 
+
+## Notes
+
+**2026-07-16T03:19:32Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).

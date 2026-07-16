@@ -16,3 +16,6 @@
 [submodule "extern/libtorch"]
 	path = extern/libtorch
 	url = https://github.com/pytorch/pytorch.git
+[submodule "extern/oidn"]
+	path = extern/oidn
+	url = https://github.com/RenderKit/oidn

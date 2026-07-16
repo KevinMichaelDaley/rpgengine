@@ -1,6 +1,6 @@
 ---
 id: rpg-fzht
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-07-15T20:49:13Z
@@ -87,3 +87,7 @@ FAR-FIELD DONE (committed+pushed). Multi-level near/far SDF trace fixes small-ch
 **2026-07-15T22:01:57Z**
 
 MEDIUM + SHARED-COARSE-FAR DONE (committed+pushed). Full 3-level hierarchy: NEAR (fine per-chunk 128^3, SVO-refined) -> MEDIUM (per-chunk ~LM_MED_MULT=3x region 128^3, built in lm_gpu_gather_run) -> FAR (coarse LM_FAR_DIM=64^3, baked ONCE per cell of a coarser FAR grid LM_FAR_MULT=4x chunk, SHARED by all near chunks in that far cell -- not rebuilt per chunk, not one global field). Reusable lm_gpu_field_t + lm_gpu_field_build/free expose the JFA build; run() gains a far param + builds its own medium; shader mSDF samples near->medium->far->outside, escapes to sky only after leaving all fields. Verified hall chunk=3 3-level 0.1577, far_mult=2 (multi far cell) 0.1577, single-region 0.1597 (~1.3% parity, seamless). region=NULL path unchanged. REMAINING (optional): fold SDF fields into .flm (rpg-iudw; sdf_field serialize exists) for runtime streaming.
+
+**2026-07-16T03:32:44Z**
+
+CLOSING: 3-level near/med/far SDF + per-chunk SVO + mesh AABB culling all done and validated (400m zone baked). Per-chunk lightmaps/streaming continued in rpg-yfa4/rpg-ojuq.

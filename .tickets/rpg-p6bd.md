@@ -1,6 +1,6 @@
 ---
 id: rpg-p6bd
-status: open
+status: closed
 deps: []
 links: [rpg-t9l2, rpg-ca3y, rpg-hf0x, rpg-goao, rpg-n1kq, rpg-k80x, rpg-qhya, rpg-sae6, rpg-z40l, rpg-rt38, rpg-okya]
 created: 2026-07-09T02:49:08Z
@@ -39,3 +39,9 @@ Gallery voxels become solid (SDF positive, room_id=0) for the shelf structure, b
 - Space above shelf remains air (walkable), space below remains air (main floor)
 - Apply then remove restores original grid
 
+
+## Notes
+
+**2026-07-16T03:19:32Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).

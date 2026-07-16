@@ -1,6 +1,6 @@
 ---
 id: rpg-sae6
-status: open
+status: closed
 deps: []
 links: [rpg-t9l2, rpg-ca3y, rpg-hf0x, rpg-goao, rpg-n1kq, rpg-k80x, rpg-qhya, rpg-z40l, rpg-rt38, rpg-p6bd, rpg-jr2w]
 created: 2026-07-09T02:53:47Z
@@ -39,3 +39,9 @@ Stairs are stamped as solid (CSG subtract, room_id=0) stacking from floor up. Ea
 - Steps are full room width, each 1 voxel high
 - Apply then remove restores original grid
 
+
+## Notes
+
+**2026-07-16T03:19:33Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).

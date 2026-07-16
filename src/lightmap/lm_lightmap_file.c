@@ -8,7 +8,25 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ferrum/lightmap/lm_denoise.h"
+
 static const char LM_MAGIC[4] = { 'F', 'L', 'M', '1' };
+
+/* Post-bake denoise policy, from the LM_DENOISE env var:
+ *   unset/"0" -> off; "1"/"dc" -> denoise the DC band (coeff 0) only;
+ *   "all"      -> denoise every SH band. Directional bands (1..8) carry little
+ * energy and can over-smooth, so DC-only is the conservative default. The stub
+ * backend makes any of these a no-op. Returns true if coeff @p c should be
+ * denoised. */
+static bool lm_denoise_wanted(uint32_t c)
+{
+    const char *v = getenv("LM_DENOISE");
+    if (v == NULL || v[0] == '\0' || strcmp(v, "0") == 0)
+        return false;
+    if (strcmp(v, "all") == 0)
+        return true;
+    return c == 0u; /* "1" / "dc" / anything else -> DC only. */
+}
 
 /* Texels of luxel value bled into the atlas gutter so bilinear filtering at an
  * island edge never samples the unwritten (black) background -> UV seams. */
@@ -79,6 +97,13 @@ bool lm_lightmap_save(const lm_mesh_bake_result_t *result, const char *path)
                 scratch[t * 3 + 1] = scratch[(size_t)s * 3 + 1];
                 scratch[t * 3 + 2] = scratch[(size_t)s * 3 + 2];
             }
+        }
+        /* Denoise after gutter fill so OIDN sees dense neighbourhoods at island
+         * edges (empty texels would pull chart borders toward black). */
+        if (lm_denoise_wanted(c)) {
+            lm_denoise_image_t di = { scratch, NULL, NULL, result->atlas.width,
+                                      result->atlas.height };
+            lm_denoise_image(&di); /* best effort: on error, write raw scratch. */
         }
         ok = fwrite(scratch, sizeof(float), npx, f) == npx;
     }

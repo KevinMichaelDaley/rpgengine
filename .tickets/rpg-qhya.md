@@ -1,6 +1,6 @@
 ---
 id: rpg-qhya
-status: open
+status: closed
 deps: []
 links: [rpg-t9l2, rpg-ca3y, rpg-hf0x, rpg-goao, rpg-n1kq, rpg-k80x, rpg-sae6, rpg-z40l, rpg-rt38, rpg-p6bd, rpg-xr08]
 created: 2026-07-09T02:47:46Z
@@ -39,3 +39,9 @@ These stamp solid geometry projecting from the wall face (CSG subtract) and mark
 - Apply then remove restores original grid
 - Ledges do not block doorways
 
+
+## Notes
+
+**2026-07-16T03:19:32Z**
+
+OBSOLETE: SDF-rewrite-rules approach abandoned; replaced by Blender procgen (bpy/bmesh arch-mesh generators).
