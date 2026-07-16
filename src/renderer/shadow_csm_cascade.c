@@ -10,6 +10,8 @@
 #include "ferrum/renderer/shadow_csm.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "ferrum/math/vec3.h"
 #include "ferrum/math/vec4.h"
@@ -44,37 +46,84 @@ static void csm_near_far(const float proj[16], float *near_out, float *far_out)
     *far_out = d / (c + 1.0f);
 }
 
-/* Fit a texel-snapped orthographic light matrix to the bounding sphere of 8
- * world-space corners, viewed along `dir`. Stabilised: the radius is rounded to
- * a fixed increment and the centre snapped to the `res` texel grid. */
+/* Fit a texel-snapped orthographic light matrix to the TIGHT light-space AABB of
+ * this cascade's 8 frustum-slice corners (a slice's bounding SPHERE is far larger
+ * than the slice and makes adjacent cascades overlap -- so we use the AABB). The
+ * X/Y box is tight to the slice (each cascade covers a distinct region); only the
+ * NEAR plane is pulled back toward the light, past the most-upstream @p scene
+ * caster, so tall casters (a vault above the slice) still write into the map. */
 static void csm_fit_ortho(const vec3_t sc[8], vec3_t dir, vec3_t up, float res,
+                          const vec3_t *scene,
                           mat4_t *vp_out, float eye_out[3], float *far_out)
 {
     vec3_t centroid = { 0, 0, 0 };
     for (int j = 0; j < 8; ++j) centroid = vec3_add(centroid, sc[j]);
     centroid = vec3_scale(centroid, 1.0f / 8.0f);
-    float radius = 0.0f;
-    for (int j = 0; j < 8; ++j) {
-        float d = vec3_distance(centroid, sc[j]);
-        if (d > radius) radius = d;
-    }
-    if (radius < 1e-4f) radius = 1e-4f;
-    radius = ceilf(radius * 16.0f) / 16.0f;
 
-    vec3_t eye = vec3_sub(centroid, vec3_scale(dir, 2.0f * radius));
-    float far_plane = 4.0f * radius;
+    /* Place the eye far enough back along -dir that every slice AND scene caster
+     * is in front of it (parallel projection: the eye's distance only offsets
+     * depth, not the X/Y box). */
+    float back = 0.0f;
+    for (int j = 0; j < 8; ++j) {
+        float t = vec3_dot(vec3_sub(centroid, sc[j]), dir);
+        if (t > back) back = t;
+    }
+    if (scene)
+        for (int j = 0; j < 8; ++j) {
+            float t = vec3_dot(vec3_sub(centroid, scene[j]), dir);
+            if (t > back) back = t;
+        }
+    back += 1.0f;
+    vec3_t eye = vec3_sub(centroid, vec3_scale(dir, back));
     mat4_t lview;
     mat4_look_at(eye, centroid, up, &lview);
-    mat4_t lproj = mat4_ortho(-radius, radius, -radius, radius, 0.0f, far_plane);
-    mat4_t vp = mat4_mul(lproj, lview);
-    vec4_t o = mat4_mul_vec4(vp, (vec4_t){ centroid.x, centroid.y, centroid.z, 1.0f });
-    float ow = (o.w != 0.0f) ? 1.0f / o.w : 1.0f;
-    float tx = o.x * ow * 0.5f * res, ty = o.y * ow * 0.5f * res;
-    lproj.m[12] += (roundf(tx) - tx) * 2.0f / res;
-    lproj.m[13] += (roundf(ty) - ty) * 2.0f / res;
+
+    /* Tight light-space AABB of the slice corners. */
+    float lmin[3] = { 1e30f, 1e30f, 1e30f }, lmax[3] = { -1e30f, -1e30f, -1e30f };
+    for (int j = 0; j < 8; ++j) {
+        vec4_t p = mat4_mul_vec4(lview, (vec4_t){ sc[j].x, sc[j].y, sc[j].z, 1.0f });
+        float v[3] = { p.x, p.y, p.z };
+        for (int k = 0; k < 3; ++k) { if (v[k] < lmin[k]) lmin[k] = v[k]; if (v[k] > lmax[k]) lmax[k] = v[k]; }
+    }
+    /* Shrink the box to the geometry actually in this cascade = the frustum slice
+     * INTERSECTED with the scene bounds (both in light space). Otherwise a far
+     * cascade's box is the huge empty slice and the 32m of geometry clumps into
+     * the middle of the 4096^2 map, wasting resolution. X/Y clamp to the scene;
+     * the near plane (larger z) still extends to the scene top for tall casters. */
+    if (scene) {
+        float smin[3] = { 1e30f,1e30f,1e30f }, smax[3] = { -1e30f,-1e30f,-1e30f };
+        for (int j = 0; j < 8; ++j) {
+            vec4_t p = mat4_mul_vec4(lview, (vec4_t){ scene[j].x, scene[j].y, scene[j].z, 1.0f });
+            float v[3] = { p.x, p.y, p.z };
+            for (int k = 0; k < 3; ++k) { if (v[k] < smin[k]) smin[k] = v[k]; if (v[k] > smax[k]) smax[k] = v[k]; }
+        }
+        for (int k = 0; k < 2; ++k) {              /* X/Y: intersect slice with scene */
+            if (smin[k] > lmin[k]) lmin[k] = smin[k];
+            if (smax[k] < lmax[k]) lmax[k] = smax[k];
+        }
+        if (smax[2] > lmax[2]) lmax[2] = smax[2];  /* near: enclose upstream casters */
+        if (smin[2] > lmin[2]) lmin[2] = smin[2];  /* far: don't render past the scene */
+    }
+    /* Empty intersection -> this cascade sees no geometry; keep a tiny valid box
+     * (its meshes are all culled anyway). */
+    for (int k = 0; k < 3; ++k) if (lmax[k] <= lmin[k]) lmax[k] = lmin[k] + 0.01f;
+    float nearp = -lmax[2], farp = -lmin[2];
+    if (nearp < 0.01f) nearp = 0.01f;
+
+    /* Texel-snap the X/Y box origin so shadows don't shimmer as the camera moves. */
+    float wx = lmax[0] - lmin[0], wy = lmax[1] - lmin[1];
+    float tx = wx / res, ty = wy / res;
+    if (tx > 1e-8f) lmin[0] = floorf(lmin[0] / tx) * tx;
+    if (ty > 1e-8f) lmin[1] = floorf(lmin[1] / ty) * ty;
+    lmax[0] = lmin[0] + wx; lmax[1] = lmin[1] + wy;
+
+    mat4_t lproj = mat4_ortho(lmin[0], lmax[0], lmin[1], lmax[1], nearp, farp);
     *vp_out = mat4_mul(lproj, lview);
     eye_out[0] = eye.x; eye_out[1] = eye.y; eye_out[2] = eye.z;
-    *far_out = far_plane;
+    *far_out = farp;
+    if (getenv("CSM_DEBUG"))
+        fprintf(stderr, "  fit: box %.1f x %.1f  depth[%.1f,%.1f]  back=%.1f\n",
+                lmax[0]-lmin[0], lmax[1]-lmin[1], nearp, farp, back);
 }
 
 void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
@@ -82,6 +131,12 @@ void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
                        const float scene_min[3], const float scene_max[3])
 {
     if (csm == NULL || camera == NULL || light_dir == NULL)
+        return;
+    /* Cache the cascade matrices FOREVER once baked: the sun is static and the
+     * player barely moves, so re-fitting to the camera every frame (and the
+     * re-bake it triggers) is wasted work. The owner invalidates explicitly
+     * (static_valid = false) on a zone change / teleport. */
+    if (csm->static_valid)
         return;
     /* When the whole-scene AABB is given, every cascade is fit to the ENTIRE
      * scene so no caster (tall vaults, geometry behind the view) is ever clipped
@@ -128,26 +183,20 @@ void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
         float tn = (dn - near_p) / range, tf = (df - near_p) / range;
         csm->split_view[c] = df;
 
-        /* Interpolate the frustum edges to this slice's 8 corners, then fit --
-         * unless fitting the whole scene, in which case use the scene AABB. */
+        /* Interpolate the frustum edges to this slice's 8 corners, then fit. Each
+         * cascade covers ONLY its depth slice (nested CSM), so the XY box stays
+         * tight for resolution; caster inclusion is handled by extending the near
+         * plane toward the light with the scene AABB (see csm_fit_ortho). */
         vec3_t sc[8];
-        if (fit_scene) {
-            for (int j = 0; j < 8; ++j) sc[j] = scene_corners[j];
-        } else {
-            for (int j = 0; j < 4; ++j) {
-                sc[j] = vec3_lerp(corners[j], corners[j + 4], tn);
-                sc[j + 4] = vec3_lerp(corners[j], corners[j + 4], tf);
-            }
+        for (int j = 0; j < 4; ++j) {
+            sc[j] = vec3_lerp(corners[j], corners[j + 4], tn);
+            sc[j + 4] = vec3_lerp(corners[j], corners[j + 4], tf);
         }
         mat4_t vp;
         float eye3[3], far_plane;
-        csm_fit_ortho(sc, dir, up, (float)csm->static_res, &vp, eye3, &far_plane);
-
-        /* Invalidate the static cache if this cascade's matrix moved. */
-        for (int i = 0; i < 16 && csm->static_valid; ++i)
-            if (fabsf(vp.m[i] - csm->view_proj[c].m[i]) > 1e-5f)
-                csm->static_valid = false;
-
+        csm_fit_ortho(sc, dir, up, (float)csm->static_res,
+                      fit_scene ? scene_corners : NULL, &vp, eye3, &far_plane);
+        /* (Cached forever after the first bake -- see the early-out above.) */
         csm->view_proj[c] = vp;
         csm->eye[c][0] = eye3[0]; csm->eye[c][1] = eye3[1]; csm->eye[c][2] = eye3[2];
         csm->far_plane[c] = far_plane;
@@ -162,6 +211,7 @@ void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
         dsc[j] = corners[j];
         dsc[j + 4] = vec3_lerp(corners[j], corners[j + 4], t_far);
     }
-    csm_fit_ortho(dsc, dir, up, (float)csm->dynamic_res, &csm->dyn_view_proj,
+    csm_fit_ortho(dsc, dir, up, (float)csm->dynamic_res,
+                  fit_scene ? scene_corners : NULL, &csm->dyn_view_proj,
                   csm->dyn_eye, &csm->dyn_far);
 }

@@ -277,7 +277,7 @@ int main(int argc,char **argv){
     if(d)closedir(d);
     qsort(fnames,(size_t)nf,sizeof fnames[0],hld_cmpstr);
     for(int fi=0;fi<nf;++fi){ char p[512]; snprintf(p,sizeof p,"%s/%s",dir,fnames[fi]);
-        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=group_of(fnames[fi]); ++nm; } }
+        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=strstr(fnames[fi],"floor")?3:group_of(fnames[fi]); ++nm; } }
     printf("loaded %d dmeshes\n",nm);
 
     /* --- Load the baked SH lightmap(s) into 9 GL_TEXTURE_2D_ARRAY pages. Single
@@ -344,7 +344,7 @@ int main(int argc,char **argv){
     job_wait_counter(&rcounter,0);
     uint32_t created=gpu_executor_drain(&gexec,&gqueue);
     printf("resource executor created %u GPU resources (meshes + textures)\n",created);
-    render_material_t mats[3];
+    render_material_t mats[4];
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
     mats[0].maps[MATERIAL_TEX_AO]=&tb_o; mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_r; mats[0].normal_scale=1.3f;
     mats[0].roughness_min=0.25f; mats[0].roughness_max=1.0f;
@@ -352,6 +352,11 @@ int main(int argc,char **argv){
     mats[1].roughness_min=0.2f; mats[1].roughness_max=1.0f;
     material_init(&mats[2]); mats[2].maps[MATERIAL_TEX_ALBEDO]=&tv_a; mats[2].maps[MATERIAL_TEX_ROUGHNESS]=&tv_r;
     mats[2].roughness_min=0.2f; mats[2].roughness_max=1.0f;
+    /* Floor (group 3): lush-grass green -- ashlar albedo tinted green, matching
+     * the bake's green floor reflectance so the render + colour-bleed agree. */
+    material_init(&mats[3]); mats[3].maps[MATERIAL_TEX_ALBEDO]=&ts_a; mats[3].maps[MATERIAL_TEX_ROUGHNESS]=&ts_r;
+    mats[3].roughness_min=0.5f; mats[3].roughness_max=1.0f;
+    mats[3].tint[0]=0.15f; mats[3].tint[1]=0.85f; mats[3].tint[2]=0.12f;
 
     /* --- Dynamic clustered point lights ("magic particles"). --- */
     render_light_t lb[MAX_LIGHTS];
@@ -427,7 +432,7 @@ int main(int argc,char **argv){
      * Must equal the lightmap bake's sun (hall_bake.c: travel (0.15,-0.42,0.90)),
      * so to-sun = (-0.15,0.42,-0.90) -- the direct sun + its CSM shadow then line
      * up with the baked indirect bounce. */
-    fcfg.sun_dir[0]=-0.15f; fcfg.sun_dir[1]=0.42f; fcfg.sun_dir[2]=-0.90f;
+    fcfg.sun_dir[0]=-0.30f; fcfg.sun_dir[1]=0.87f; fcfg.sun_dir[2]=-0.40f;
     fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* sun already baked into SH */
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
@@ -447,8 +452,9 @@ int main(int argc,char **argv){
         fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.15f;
         fcfg.dir_cascades=6; fcfg.dir_static_res=4096; fcfg.dir_dynamic_res=2048;
         fcfg.dir_lambda=0.6f; fcfg.dir_bias=0.08f; /* world-space depth bias (metres). */
-        /* Cap the shadowed range to the hall extent for crisp texels. */
-        fcfg.dir_max_distance=1.4f*hall_len;
+        /* Slice the WHOLE view frustum (to the far clip) into the fixed cascade
+         * count; 0 = use the camera far plane rather than a fixed cap. */
+        fcfg.dir_max_distance=0.0f;
         /* Fit the CSM cascades to the whole scene AABB (+pad) so tall casters
          * (vaults) and geometry outside the view are never clipped. */
         for(int k=0;k<3;++k){ fcfg.shadow_scene_min[k]=amin[k]-1.0f; fcfg.shadow_scene_max[k]=amax[k]+1.0f; }

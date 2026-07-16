@@ -128,7 +128,7 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
         /* HALL_FLOOR_GREEN: tint floor reflectance grassy-green so the GI colour-
          * bleeds onto the columns/vault (diagnostic for indirect colour). */
         g_lms[i].albedo = (getenv("HALL_FLOOR_GREEN") && strstr(names[i], "floor"))
-                          ? v3(0.25f, 0.65f, 0.20f) : v3(1, 1, 1);
+                          ? v3(0.12f, 0.72f, 0.10f) : v3(1, 1, 1); /* lush grass */
         g_lms[i].emissive = v3(0, 0, 0);
         g_lms[i].material = 0;
         uint32_t base_lmres =
@@ -150,7 +150,7 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
                        (bmax[2]-bmin[2])*(bmax[2]-bmin[2]));
 
     memset(&g_sun, 0, sizeof g_sun); g_sun.kind = LM_LIGHT_DIRECTIONAL;
-    g_sun.direction = v3(0.15f, -0.42f, 0.90f); g_sun.color = v3(3.6f, 3.4f, 3.0f);
+    g_sun.direction = v3(0.30f, -0.87f, 0.40f); g_sun.color = v3(3.6f, 3.4f, 3.0f); /* down at an angle */
     lm_material_t fb = { { 0, 0, 0 }, { 0, 0, 0 } };
     *scene = (lm_mesh_scene_t){ g_lms, (uint32_t)nm, &g_sun, 1, { NULL, 0, fb } };
 
@@ -170,7 +170,11 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
     cfg->gi_bounces = getenv("HALL_BOUNCES") ? (uint32_t)atoi(getenv("HALL_BOUNCES")) : 2u;
     cfg->gi_threads = getenv("HALL_THREADS") ? (uint32_t)atoi(getenv("HALL_THREADS")) : 0u;
     cfg->farfield_near = 0.5f * diag; cfg->farfield_maxdist = 1e9f; cfg->seed = 11u;
-    cfg->sky.kind = LM_SKY_CONSTANT; cfg->sky.color = v3(0.55f, 0.68f, 0.95f);
+    cfg->sky.kind = LM_SKY_CONSTANT;
+    /* HALL_SKY scales the sky brightness; dim it (e.g. 0.2) so the sun-lit floor's
+     * colour bounce dominates the indirect and colour bleed is actually visible. */
+    { float sk = getenv("HALL_SKY") ? (float)atof(getenv("HALL_SKY")) : 1.0f;
+      cfg->sky.color = v3(0.55f*sk, 0.68f*sk, 0.95f*sk); }
     cfg->gi_batch = getenv("HALL_BATCH") ? (uint32_t)atoi(getenv("HALL_BATCH")) : 64u;
     /* Chunked GPU bake (rpg-fzht): HALL_CHUNK = cubic chunk edge (m), 0 = single
      * region. HALL_CHUNK_MARGIN overlaps chunks so rays resolve across borders. */
