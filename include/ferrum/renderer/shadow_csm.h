@@ -63,6 +63,8 @@ typedef struct shadow_csm_config {
     float              lambda;      /**< split blend: 0=uniform, 1=logarithmic. */
     float              max_distance;/**< cap the far split here (0 = camera far);
                                      *   keeps texels fine over the shadowed range. */
+    float              softness;    /**< sun-penumbra mip LOD bias for the EVSM
+                                     *   sample (0 = crisp; ~2-3 = soft). */
 } shadow_csm_config_t;
 
 /** Shadow-map state: the static EVSM2 cascade array + a single low-res
@@ -75,6 +77,7 @@ typedef struct shadow_csm {
     uint32_t dynamic_res;
     float    lambda;
     float    max_distance; /**< far-split cap (0 = camera far). */
+    float    softness;     /**< sun-penumbra EVSM mip LOD bias. */
 
     gpu_registry_t registry;      /**< tracks shadow depth targets as GPU resources. */
     shadow_atlas_t static_atlas;  /**< high-res EVSM2 cascade array (slotmap-managed). */
@@ -126,6 +129,7 @@ typedef struct shadow_csm {
     uint32_t (*glGetError)(void);
     uint32_t (*glCheckFramebufferStatus)(uint32_t);
     void (*glReadPixels)(int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, void *);
+    void (*glGenerateMipmap)(uint32_t);
 } shadow_csm_t;
 
 /**

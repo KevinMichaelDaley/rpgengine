@@ -15,7 +15,7 @@
 /* Far-plane EVSM2 moments (d=1): w=exp(C), w^2=exp(2C). An empty texel must read
  * as the most distant occluder. These exceed [0,1], so they are cleared with the
  * unclamped glClearBufferfv (glClearColor would clamp to 1). C matches SC_FS. */
-#define CSM_EVSM_C 30.0f
+#define CSM_EVSM_C 20.0f
 
 /* Extract the 6 frustum planes (Gribb-Hartmann) from a column-major light MVP,
  * each normalised so plane.dot(p) is a signed distance. */
@@ -158,6 +158,15 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
         }
     }
     csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    /* Build the moment mip chain so the receiver can sample a coarse level for a
+     * soft, variable-width penumbra (EVSM moments average correctly under a box
+     * filter, so mipmapping is a valid blur). Done once per static bake. */
+    if (csm->glGenerateMipmap) {
+        csm->glActiveTexture(GL_TEXTURE0);
+        csm->glBindTexture(GL_TEXTURE_2D_ARRAY, csm->static_atlas.texture);
+        csm->glGenerateMipmap(GL_TEXTURE_2D_ARRAY);
+    }
     csm->static_valid = true;
 }
 

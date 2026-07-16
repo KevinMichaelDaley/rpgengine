@@ -65,6 +65,8 @@ typedef struct render_forward_config {
     float              dir_lambda;      /**< cascade split blend (0=uniform,1=log). */
     float              dir_bias;        /**< directional distance-compare bias. */
     float              dir_max_distance;/**< cap the shadowed range (0 = camera far). */
+    float              dir_softness;    /**< sun-penumbra EVSM mip LOD (0 = crisp,
+                                         *   ~2-3 = soft). */
     float              shadow_scene_min[3];/**< whole-scene AABB min; when max>min the
                                              CSM fits every cascade to this box so no
                                              caster is clipped (0,0,0..0,0,0 = off). */

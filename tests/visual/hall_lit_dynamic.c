@@ -680,6 +680,8 @@ int main(int argc,char **argv){
         fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.15f;
         fcfg.dir_cascades=6; fcfg.dir_static_res=4096; fcfg.dir_dynamic_res=2048;
         fcfg.dir_lambda=0.6f; fcfg.dir_bias=0.08f; /* world-space depth bias (metres). */
+        /* Sun penumbra softness = EVSM moment mip LOD (CSM_SOFT env, default 2.5). */
+        fcfg.dir_softness=getenv("CSM_SOFT")?(float)atof(getenv("CSM_SOFT")):2.5f;
         /* Slice the WHOLE view frustum (to the far clip) into the fixed cascade
          * count; 0 = use the camera far plane rather than a fixed cap. */
         fcfg.dir_max_distance=0.0f;

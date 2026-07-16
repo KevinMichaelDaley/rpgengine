@@ -183,6 +183,7 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
             .dynamic_res = cfg->dir_dynamic_res ? cfg->dir_dynamic_res : 1024u,
             .lambda = cfg->dir_lambda,
             .max_distance = cfg->dir_max_distance,
+            .softness = cfg->dir_softness,
         };
         if (!shadow_csm_init(&fwd->csm, &sc)) {
             render_forward_destroy(fwd);

@@ -37,7 +37,7 @@ static const char *const SC_FS =
     "layout(location=0) out vec2 o_moments;\n"
     /* C=30: exp(30)^2 = exp(60) ~ 1e26, well under FLT_MAX, with plenty of\n"
      * mantissa left to separate nearby depths. Depth normalised + clamped first. */
-    "const float EVSM_C = 30.0;\n"
+    "const float EVSM_C = 20.0;\n"
     "void main(){ float d = clamp(distance(v_world, u_eye) / u_far, 0.0, 1.0);\n"
     "  if(u_mode == 0){ float w = exp(EVSM_C * d); o_moments = vec2(w, w*w); }\n"
     "  else { o_moments = vec2(d, d); }\n" /* the dynamic R32F map keeps .r for PCF. */
@@ -82,6 +82,7 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     csm->dynamic_res = config->dynamic_res;
     csm->lambda = config->lambda;
     csm->max_distance = config->max_distance;
+    csm->softness = config->softness;
 
     if (shader_program_create(&csm->shader, loader, SC_VS, SC_FS, NULL, 0) !=
         SHADER_PROGRAM_OK)
@@ -101,6 +102,7 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     SC_LOAD(csm->glDeleteTextures, "glDeleteTextures");
     SC_LOAD(csm->glBindTexture, "glBindTexture");
     SC_LOAD(csm->glActiveTexture, "glActiveTexture");
+    SC_LOAD(csm->glGenerateMipmap, "glGenerateMipmap");
     SC_LOAD(csm->glFramebufferTexture2D, "glFramebufferTexture2D");
     SC_LOAD(csm->glTexImage2D, "glTexImage2D");
     SC_LOAD(csm->glTexImage3D, "glTexImage3D");

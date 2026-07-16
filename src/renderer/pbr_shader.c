@@ -234,8 +234,9 @@ static const char *const PBR_FS =
     "uniform int u_csm_count;\n"
     "uniform int u_csm_enabled;\n"
     "uniform float u_dir_bias;\n"
+    "uniform float u_csm_soft;\n" /* sun-penumbra mip LOD (0 = crisp). */
     /* EVSM2 exponent -- MUST match the moment write in shadow_csm_init.c (SC_FS). */
-    "const float EVSM_C = 30.0;\n"
+    "const float EVSM_C = 20.0;\n"
     /* Chebyshev one-sided upper bound on the exp-warped depth. The warp makes the\n"
      * lit/occluded transition near-binary, so a watertight room self-shadows\n"
      * cleanly (little acne) and only the window shafts get a soft penumbra. */
@@ -275,7 +276,8 @@ static const char *const PBR_FS =
     "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n" /* outside this box. */
     "    vec2 uv = ndc.xy*0.5 + 0.5;\n"
     "    float d = clamp((length(fragpos - u_csm_eye[i]) - u_dir_bias) / u_csm_far[i], 0.0, 1.0);\n"
-    "    float ls = pbr_evsm(textureLod(u_csm_static, vec3(uv, float(i)), 0.0).rg, d);\n"
+    /* Sample a coarser moment mip for a soft penumbra (u_csm_soft LOD bias). */
+    "    float ls = pbr_evsm(textureLod(u_csm_static, vec3(uv, float(i)), u_csm_soft).rg, d);\n"
     "    vis = min(vis, ls);\n"              /* union of occlusion. */
     "  }\n"
     "  return min(vis, pbr_dyn_shadow(fragpos));\n"
