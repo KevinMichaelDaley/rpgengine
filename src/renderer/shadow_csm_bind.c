@@ -18,9 +18,6 @@ static const char *const CSM_EYE[SHADOW_CSM_MAX_CASCADES] = {
 static const char *const CSM_FAR[SHADOW_CSM_MAX_CASCADES] = {
     "u_csm_far[0]", "u_csm_far[1]", "u_csm_far[2]", "u_csm_far[3]",
     "u_csm_far[4]", "u_csm_far[5]", "u_csm_far[6]", "u_csm_far[7]" };
-static const char *const CSM_SPLIT[SHADOW_CSM_MAX_CASCADES] = {
-    "u_csm_split[0]", "u_csm_split[1]", "u_csm_split[2]", "u_csm_split[3]",
-    "u_csm_split[4]", "u_csm_split[5]", "u_csm_split[6]", "u_csm_split[7]" };
 
 void shadow_csm_bind(const shadow_csm_t *csm, shader_uniform_cache_t *cache,
                      const shader_program_t *program, uint32_t unit_static,
@@ -48,6 +45,5 @@ void shadow_csm_bind(const shadow_csm_t *csm, shader_uniform_cache_t *cache,
         shader_uniform_set_mat4(cache, program, CSM_VP[c], csm->view_proj[c].m, 0);
         shader_uniform_set_vec3(cache, program, CSM_EYE[c], csm->eye[c]);
         shader_uniform_set_float(cache, program, CSM_FAR[c], csm->far_plane[c]);
-        shader_uniform_set_float(cache, program, CSM_SPLIT[c], csm->split_view[c]);
     }
 }

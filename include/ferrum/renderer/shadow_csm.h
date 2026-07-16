@@ -2,10 +2,19 @@
  * @file shadow_csm.h
  * @brief Cascaded shadow maps for a stationary directional light (rpg-fsvq).
  *
- * The view frustum is split by depth into N cascades; each cascade owns an
- * orthographic light-space projection fit to (and texel-snapped over) that
- * frustum slice, so near geometry gets fine resolution without wasting texels
- * on the far field. Each cascade is shadowed by TWO co-sampled maps:
+ * The cascades are VIEW-INDEPENDENT: because the static map is baked once and
+ * cached forever (the sun is stationary and the player may roam the whole
+ * scene), fitting the cascades to the camera frustum would clip out casters
+ * behind the view (a back wall would stop shadowing). Instead each STATIC caster
+ * is classified into a cascade by SIZE / "background"-ness (see @ref
+ * shadow_csm_cascade_of): big background structures (walls, vaults, floor) land
+ * in a coarse cascade fit to the WHOLE scene, while smaller localised objects
+ * land in finer cascades fit tightly to their own bounds (higher effective
+ * resolution). At shade time a fragment samples EVERY cascade whose light box
+ * contains it and takes the union of their occlusion, so a big-structure shadow
+ * and a small-prop shadow both apply regardless of where the camera is.
+ *
+ * Each cascade is shadowed by TWO co-sampled maps:
  *
  *   - a STATIC array (@ref shadow_csm_bake_static), rendering every static
  *     caster once and caching the depth -- for a stationary light + stationary
@@ -78,7 +87,13 @@ typedef struct shadow_csm {
     mat4_t view_proj[SHADOW_CSM_MAX_CASCADES]; /**< per-cascade light matrix. */
     float  eye[SHADOW_CSM_MAX_CASCADES][3];    /**< per-cascade virtual eye. */
     float  far_plane[SHADOW_CSM_MAX_CASCADES]; /**< per-cascade distance norm. */
-    float  split_view[SHADOW_CSM_MAX_CASCADES];/**< cascade far in view depth. */
+
+    /* Caster size -> cascade classification (natural-log of the world-AABB
+     * diagonal), computed over the static casters in shadow_csm_update and reused
+     * to place each caster in both the fit and the draw. Smallest size -> cascade
+     * 0 (finest); largest -> the last cascade (coarse, whole-scene background). */
+    float  size_log_min;
+    float  size_log_max;
 
     mat4_t dyn_view_proj;    /**< single-face ortho matrix for the dynamic map. */
     float  dyn_eye[3];
@@ -121,14 +136,28 @@ typedef struct shadow_csm {
 bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config);
 
 /**
- * @brief Recompute the cascade split distances and per-cascade texel-snapped
- *        light matrices from the camera frustum and @p light_dir (the direction
- *        light travels). Invalidates the static cache when the matrices move, so
- *        the caller re-bakes. Call once per frame (cheap CPU math).
+ * @brief Classify the static casters by size and fit each cascade's texel-snapped
+ *        light matrix (view-INDEPENDENT), for @p light_dir (the direction light
+ *        travels). @p scene_min/@p scene_max bound the whole scene (the coarse
+ *        background cascade is fit to it and the near planes are extended to it).
+ *        Cached forever: returns immediately once the static map is valid, since
+ *        nothing here depends on the camera. The owner sets @c static_valid=false
+ *        to force a refit on a scene/light change.
  */
-void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
+void shadow_csm_update(shadow_csm_t *csm, const render_scene_t *scene,
                        const float light_dir[3],
                        const float scene_min[3], const float scene_max[3]);
+
+/**
+ * @brief The cascade a caster is assigned to. Honours an explicit tag
+ *        (@c renderable.shadow_cascade in [0,cascades)); otherwise classifies by
+ *        the caster's world-AABB size against the range found in the last
+ *        @ref shadow_csm_update (small -> fine cascade 0, large -> coarse last).
+ *        Returns 0 before any classification. Used by both the fit and the draw
+ *        so a caster always lands in the cascade its box was fit to include.
+ */
+uint32_t shadow_csm_cascade_of(const shadow_csm_t *csm,
+                               const render_renderable_t *r);
 
 /**
  * @brief Render every STATIC caster ([0, scene->dynamic_from)) into the static

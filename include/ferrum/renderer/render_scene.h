@@ -31,6 +31,9 @@ typedef struct render_renderable {
     float model[16];                 /**< model->world (column-major). */
     int   sh_layer;                  /**< baked-SH texture-array layer (per-chunk
                                           lightmap page, rpg-yfa4). 0 by default. */
+    int   shadow_cascade;            /**< CSM cascade this caster is assigned to,
+                                          by size/background (rpg-fsvq). -1 = not
+                                          yet classified; set by shadow_csm_update. */
 } render_renderable_t;
 
 /** A submitted frame: renderables + camera + lights.

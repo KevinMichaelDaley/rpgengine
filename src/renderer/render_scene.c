@@ -38,6 +38,7 @@ bool render_scene_add(render_scene_t *scene, const static_mesh_t *mesh,
         r->model[i] = model[i];
     }
     r->sh_layer = 0; /* caller may override for per-chunk lightmap pages. */
+    r->shadow_cascade = -1; /* classified lazily by shadow_csm_update. */
     return true;
 }
 

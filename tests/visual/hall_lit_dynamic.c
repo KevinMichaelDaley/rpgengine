@@ -530,6 +530,8 @@ int main(int argc,char **argv){
     }
     float span[3]={amax[0]-amin[0],amax[1]-amin[1],amax[2]-amin[2]};
     float cx=(amin[0]+amax[0])*0.5f,cy=(amin[1]+amax[1])*0.5f,cz=(amin[2]+amax[2])*0.5f;
+    printf("scene AABB: min(%.2f,%.2f,%.2f) max(%.2f,%.2f,%.2f) span(%.2f,%.2f,%.2f)\n",
+           amin[0],amin[1],amin[2],amax[0],amax[1],amax[2],span[0],span[1],span[2]);
 
     /* --- Materials: every PBR texture loaded on a fiber -> queue -> executor. --- */
     char q[512]; texture_t tb_a,tb_n,tb_o,tb_r,ts_a,ts_r,tv_a,tv_r;
@@ -611,10 +613,24 @@ int main(int argc,char **argv){
     printf("point lights: %u\n",lights.count);
 
     /* --- Camera + scene. --- */
-    int lenax=(span[0]>span[2])?0:2;
+    int lenax=(span[0]>span[2])?0:2; int crossax=(lenax==0)?2:0;
+    /* The hall is a compact colonnade; the 400 m open zone dwarfs it. Detect the
+     * hall so we can frame a specific interior shot for it. */
+    int is_hall=(hall_len<100.0f);
+    float center[3]={cx,cy,cz};   /* per-axis centre — index by axis, NOT cx/cz. */
     render_camera_t cam; float eye[3]={cx,cy,cz},tgt[3]={cx,cy,cz},up[3]={0,1,0};
-    eye[lenax]=amin[lenax]+span[lenax]*0.08f; tgt[lenax]=amax[lenax]-span[lenax]*0.08f;
-    eye[1]=amin[1]+span[1]*0.35f; tgt[1]=amin[1]+span[1]*0.35f;
+    if(is_hall){
+        /* Start behind the middle pillar (pillar row is centred on lenax), in the
+         * aisle, at standing eye height, looking down the colonnade. */
+        eye[lenax]=amin[lenax]+span[lenax]*0.42f; /* just behind the central pillar */
+        eye[crossax]=center[crossax];             /* centred in the aisle */
+        eye[1]=amin[1]+span[1]*0.30f;             /* ~eye height above the floor */
+        tgt[lenax]=amax[lenax];                   /* look down the hall */
+        tgt[crossax]=center[crossax]; tgt[1]=eye[1];
+    } else {
+        eye[lenax]=amin[lenax]+span[lenax]*0.08f; tgt[lenax]=amax[lenax]-span[lenax]*0.08f;
+        eye[1]=amin[1]+span[1]*0.35f; tgt[1]=amin[1]+span[1]*0.35f;
+    }
     /* Far plane must clear the whole scene (a 400 m zone dwarfs the hall's 60 m). */
     float cam_far=fmaxf(120.0f,hall_len*1.8f);
     render_camera_look_at(&cam,eye,tgt,up,60.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,cam_far);
@@ -687,9 +703,11 @@ int main(int argc,char **argv){
     int win_frames=0;                    /* frames since the last per-second report. */
     if(stream) sh_stream_prepass_init(&sstream, W/4>0?W/4:1, H/4>0?H/4:1);
     for(int frame=0;frame<nframes;++frame){
-        if(lm_only){
+        if(lm_only||csm_demo){
             /* Smooth ping-pong dolly down the colonnade, looking in the travel
-             * direction with a gentle side sway; poll for quit. */
+             * direction with a gentle side sway; poll for quit. Used for both the
+             * lightmap-only flythrough and the CSM demo so the camera stays
+             * inside the building either way. */
             SDL_Event ev; while(SDL_PollEvent(&ev)){
                 if(ev.type==SDL_QUIT || (ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE)) frame=nframes-1;
             }
@@ -697,13 +715,24 @@ int main(int argc,char **argv){
             float ph=(float)frame*0.0012f;
             float t=0.5f-0.5f*cosf(ph);
             float e[3]={cx,cy,cz}, tg[3]={cx,cy,cz};
-            e[lenax]=amin[lenax]+span[lenax]*(0.03f+0.94f*t);
-            e[1]=amin[1]+span[1]*0.42f;
-            e[sax]=cx+0.26f*span[sax]*sinf(ph*1.7f);
-            float dir=(sinf(ph)>=0.0f)?1.0f:-1.0f;
-            tg[lenax]=e[lenax]+dir*span[lenax];
-            tg[1]=e[1]-0.05f*span[1];
-            tg[sax]=cx;
+            if(is_hall){
+                /* Begin behind the central pillar and dolly forward down the aisle
+                 * (ping-pong around the middle), staying centred and looking down
+                 * the hall so the camera never leaves the interior. */
+                e[lenax]=amin[lenax]+span[lenax]*(0.42f-0.30f*sinf(ph));
+                e[1]=amin[1]+span[1]*0.30f;
+                e[sax]=center[sax]+0.08f*span[sax]*sinf(ph*1.7f);
+                tg[lenax]=amax[lenax];            /* always look down the colonnade */
+                tg[1]=e[1]; tg[sax]=center[sax];
+            } else {
+                e[lenax]=amin[lenax]+span[lenax]*(0.03f+0.94f*t);
+                e[1]=amin[1]+span[1]*0.42f;
+                e[sax]=center[sax]+0.26f*span[sax]*sinf(ph*1.7f);
+                float dir=(sinf(ph)>=0.0f)?1.0f:-1.0f;
+                tg[lenax]=e[lenax]+dir*span[lenax];
+                tg[1]=e[1]-0.05f*span[1];
+                tg[sax]=center[sax];
+            }
             render_camera_look_at(&cam,e,tg,up,62.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,cam_far);
             scene.camera=cam;
         }

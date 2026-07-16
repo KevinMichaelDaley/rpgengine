@@ -231,7 +231,6 @@ static const char *const PBR_FS =
     "uniform mat4 u_csm_vp[8];\n"
     "uniform vec3 u_csm_eye[8];\n"
     "uniform float u_csm_far[8];\n"
-    "uniform float u_csm_split[8];\n"
     "uniform int u_csm_count;\n"
     "uniform int u_csm_enabled;\n"
     "uniform float u_dir_bias;\n"
@@ -262,22 +261,24 @@ static const char *const PBR_FS =
     "  }\n"
     "  return lit / 9.0;\n"
     "}\n"
-    "float pbr_csm_shadow(vec3 fragpos, float viewz){\n"
+    /* View-INDEPENDENT: casters are partitioned across cascades by size, so a\n"
+     * fragment samples EVERY cascade whose light box contains it and takes the\n"
+     * UNION of their occlusion (min visibility) -- a big-structure shadow (coarse\n"
+     * cascade) and a small-prop shadow (fine cascade) both apply. The dynamic map\n"
+     * is co-sampled once. */
+    "float pbr_csm_shadow(vec3 fragpos){\n"
     "  if(u_csm_enabled==0) return 1.0;\n"
-    /* Select the first cascade whose split covers this fragment's view depth. */
-    "  int ci = u_csm_count-1;\n"
-    "  for(int i=0;i<u_csm_count;++i){ if(viewz <= u_csm_split[i]){ ci=i; break; } }\n"
-    "  vec4 lc = u_csm_vp[ci] * vec4(fragpos, 1.0);\n"
-    "  vec3 ndc = lc.xyz / lc.w;\n"
-    "  vec2 uv = ndc.xy*0.5 + 0.5;\n"
-    "  if(uv.x<0.0||uv.x>1.0||uv.y<0.0||uv.y>1.0) return 1.0;\n"
-    "  float d = clamp((length(fragpos - u_csm_eye[ci]) - u_dir_bias) / u_csm_far[ci], 0.0, 1.0);\n"
-    /* Co-sample the static EVSM cascade and the dynamic PCF map; the nearer\n"
-     * occluder shadows more. Explicit LOD 0 (the array coord jumps at cascade\n"
-     * boundaries, which would blow up auto-mip). */
-    "  float ls = pbr_evsm(textureLod(u_csm_static, vec3(uv, float(ci)), 0.0).rg, d);\n"
-    "  float ld = pbr_dyn_shadow(fragpos);\n"
-    "  return min(ls, ld);\n"
+    "  float vis = 1.0;\n"
+    "  for(int i=0;i<u_csm_count;++i){\n"
+    "    vec4 lc = u_csm_vp[i] * vec4(fragpos, 1.0);\n"
+    "    vec3 ndc = lc.xyz / lc.w;\n"        /* ortho: w = 1. */
+    "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n" /* outside this box. */
+    "    vec2 uv = ndc.xy*0.5 + 0.5;\n"
+    "    float d = clamp((length(fragpos - u_csm_eye[i]) - u_dir_bias) / u_csm_far[i], 0.0, 1.0);\n"
+    "    float ls = pbr_evsm(textureLod(u_csm_static, vec3(uv, float(i)), 0.0).rg, d);\n"
+    "    vis = min(vis, ls);\n"              /* union of occlusion. */
+    "  }\n"
+    "  return min(vis, pbr_dyn_shadow(fragpos));\n"
     "}\n"
     "void main() {\n"
     /* Material textures tile at u_uv_scale; the lightmap (v_uv1) is NOT scaled. */
@@ -304,7 +305,7 @@ static const char *const PBR_FS =
     "  vec3 V = normalize(u_eye_pos - v_world_pos);\n"
     "  vec3 F0 = mix(vec3(0.08*u_specular_strength), albedo, metal);\n"
     /* Directional sun. */
-    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, -v_view_z);\n"
+    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos);\n"
     "  if(u_clustered==1){\n"
     /* Forward+: find this fragment's cluster and shade only its lights. */
     "    int dimx=int(u_cluster_dims.x), dimy=int(u_cluster_dims.y), dimz=int(u_cluster_dims.z);\n"
@@ -338,11 +339,11 @@ static const char *const PBR_FS =
     "  if(u_debug_mode==2){ frag=vec4(max(pbr_sh_irradiance(N),vec3(0.0)),1.0); return; }\n"
     "  if(u_debug_mode==3){ frag=vec4(v_uv1,0.0,1.0); return; }\n"
     "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"
-    /* 5 = raw CSM shadow factor (white=lit, black=occluded). 6 = which cascade. */
-    "  if(u_debug_mode==5){ float sh=pbr_csm_shadow(v_world_pos,-v_view_z); frag=vec4(vec3(sh),1.0); return; }\n"
-    "  if(u_debug_mode==6){ int ci=u_csm_count-1; for(int i=0;i<u_csm_count;++i){ if(-v_view_z<=u_csm_split[i]){ci=i;break;} }\n"
-    "    vec3 cc=ci==0?vec3(1,0,0):(ci==1?vec3(0,1,0):vec3(0,0,1)); vec4 lc=u_csm_vp[ci]*vec4(v_world_pos,1.0); vec3 nd=lc.xyz/lc.w; vec2 uv=nd.xy*0.5+0.5;\n"
-    "    float inr=(uv.x>=0.0&&uv.x<=1.0&&uv.y>=0.0&&uv.y<=1.0)?1.0:0.2; frag=vec4(cc*inr,1.0); return; }\n"
+    /* 5 = raw CSM shadow factor (white=lit, black=occluded). 6 = finest cascade\n"
+     * whose box contains the fragment (red=0, green=1, blue=2+). */
+    "  if(u_debug_mode==5){ float sh=pbr_csm_shadow(v_world_pos); frag=vec4(vec3(sh),1.0); return; }\n"
+    "  if(u_debug_mode==6){ int ci=-1; for(int i=0;i<u_csm_count;++i){ vec4 lc=u_csm_vp[i]*vec4(v_world_pos,1.0); vec3 nd=lc.xyz/lc.w; if(all(lessThanEqual(abs(nd),vec3(1.0)))){ci=i;break;} }\n"
+    "    vec3 cc=ci<0?vec3(0.1):(ci==0?vec3(1,0,0):(ci==1?vec3(0,1,0):vec3(0,0,1))); frag=vec4(cc,1.0); return; }\n"
     "  if(u_debug_mode==5){ frag=vec4(0.5+0.5*normalize(v_tangent),1.0); return; }\n"
     "  vec3 ambient;\n"
     /* Dynamic objects (u_sh_object=0) are not in the bake -- their uv1 is

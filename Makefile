@@ -102,10 +102,14 @@ LIGHTMAP_SRC := $(wildcard src/lightmap/*.c) $(wildcard src/lightmap/*/*.c)
 OIDN ?= 0
 OIDN_DIR := extern/oidn
 LM_DENOISE_SRC := src/lightmap/lm_denoise_stub.c
+# OIDN_LDFLAGS: link flags for targets with explicit (non-$(LDFLAGS)) link lines
+# — add $(OIDN_LDFLAGS) to any recipe that compiles $(LM_DENOISE_SRC).
+OIDN_LDFLAGS :=
 ifeq ($(OIDN),1)
 LM_DENOISE_SRC := src/lightmap/lm_denoise.c
 CFLAGS  += -DFR_OIDN_ENABLE -I$(OIDN_DIR)/include -I$(OIDN_DIR)/build/include
-LDFLAGS += -L$(OIDN_DIR)/build -lOpenImageDenoise
+OIDN_LDFLAGS := -L$(OIDN_DIR)/build -lOpenImageDenoise -Wl,-rpath,$(abspath $(OIDN_DIR)/build)
+LDFLAGS += $(OIDN_LDFLAGS)
 endif
 LIGHTMAP_SRC := $(filter-out src/lightmap/lm_denoise.c src/lightmap/lm_denoise_stub.c, $(LIGHTMAP_SRC)) $(LM_DENOISE_SRC)
 SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(PROCGEN_SRC) $(LIGHTMAP_SRC) $(RENDERER_DEBUG_LINES_SRC)
@@ -2368,7 +2372,7 @@ build/hall_bake: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) | bu
 
 # Headless (surfaceless EGL) bake -- no SDL/X, for the chimera GPU box.
 build/hall_bake_egl: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) | build
-	$(CC) $(CFLAGS) -DHALL_EGL -D_POSIX_C_SOURCE=200809L tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) -o $@ -lEGL -lGL -ldl -lm
+	$(CC) $(CFLAGS) -DHALL_EGL -D_POSIX_C_SOURCE=200809L tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) -o $@ -lEGL -lGL -ldl -lm $(OIDN_LDFLAGS)
 
 # --- rpg-fzht: generic bake driver (headless CPU path unit test) ---
 build/lm_bake_driver_tests: tests/lightmap/lm_bake_driver_tests.c $(LM_HALL_BAKE_SRC) src/memory/arena_reset.c | build

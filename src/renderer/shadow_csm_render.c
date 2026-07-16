@@ -58,10 +58,13 @@ static int csm_cull(const float pl[6][4], const float model[16],
     return 0;
 }
 
-/* Draw scene items [from, to) into the cascade whose light MVP is @p vp, culling
- * casters that don't intersect it so each cascade renders only its own slice. */
+/* Draw scene items [from, to) into the cascade whose light MVP is @p vp. When
+ * @p cascade_filter >= 0 only casters CLASSIFIED into that cascade are drawn (so
+ * each static cascade holds just its size tier); -1 draws all (the single
+ * dynamic map). The light-frustum box cull is a secondary guard. */
 static void csm_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
-                           uint32_t from, uint32_t to, const float vp[16])
+                           uint32_t from, uint32_t to, const float vp[16],
+                           int cascade_filter)
 {
     float planes[6][4];
     csm_extract_planes(vp, planes);
@@ -71,6 +74,11 @@ static void csm_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
         if (r->mesh == NULL)
             continue;
         ++total;
+        /* Size/background classification: a caster belongs to exactly one static
+         * cascade. (Dynamic pass passes -1 -> no filter.) */
+        if (cascade_filter >= 0 &&
+            shadow_csm_cascade_of(csm, r) != (uint32_t)cascade_filter)
+            continue;
         if (csm_cull(planes, r->model, r->mesh->aabb_min, r->mesh->aabb_max))
             continue;
         ++drawn;
@@ -120,7 +128,7 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
                                 csm->view_proj[c].m, 0);
         shader_uniform_set_vec3(&csm->cache, &csm->shader, "u_eye", csm->eye[c]);
         shader_uniform_set_float(&csm->cache, &csm->shader, "u_far", csm->far_plane[c]);
-        csm_draw_items(csm, scene, 0u, to, csm->view_proj[c].m);
+        csm_draw_items(csm, scene, 0u, to, csm->view_proj[c].m, (int)c);
 
         /* CSM_DUMP: read this cascade's EVSM2 map back and write its DEPTH
          * (decoded from the first moment, d = ln(m)/C) as a grayscale PPM, so the
@@ -176,6 +184,6 @@ void shadow_csm_render_dynamic(shadow_csm_t *csm, const render_scene_t *scene)
                             csm->dyn_view_proj.m, 0);
     shader_uniform_set_vec3(&csm->cache, &csm->shader, "u_eye", csm->dyn_eye);
     shader_uniform_set_float(&csm->cache, &csm->shader, "u_far", csm->dyn_far);
-    csm_draw_items(csm, scene, from, scene->count, csm->dyn_view_proj.m);
+    csm_draw_items(csm, scene, from, scene->count, csm->dyn_view_proj.m, -1);
     csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
