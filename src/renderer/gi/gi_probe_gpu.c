@@ -32,13 +32,22 @@ static const char *CS_SRC =
     "layout(std430,binding=3) readonly buffer BX { vec4 bx[]; };\n"
     "const float PI=3.14159265;\n"
     "float box_sdf(vec3 p,vec3 c,vec3 h){ vec3 q=abs(p-c)-h; return length(max(q,vec3(0.0)))+min(max(q.x,max(q.y,q.z)),0.0); }\n"
+    /* Distance is the ALPHA of the RGBA voxel texture (rgb = static albedo). */
     "float scene_sdf(vec3 p){ float d=1e30;\n"
     "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
-    "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).r); } }\n"
+    "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
     "  for(int i=0;i<u_nboxes;++i){ d=min(d, box_sdf(p,bx[i*2].xyz,bx[i*2+1].xyz)); }\n"
     "  return d; }\n"
+    /* Voxelised static albedo at p, sampled at mip @p lod (cone footprint). Dynamic\n"
+     * collider boxes have no baked albedo -> neutral grey fallback. */
+    "vec3 scene_albedo(vec3 p, float lod){\n"
+    "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
+    "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
+    "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
+    "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; return textureLod(u_sdf[i],uvw,lod).rgb; } }\n"
+    "  return vec3(0.5); }\n"
     "vec3 sdf_normal(vec3 p){ float e=0.06;\n"
     "  return normalize(vec3(scene_sdf(p+vec3(e,0,0))-scene_sdf(p-vec3(e,0,0)),\n"
     "                        scene_sdf(p+vec3(0,e,0))-scene_sdf(p-vec3(0,e,0)),\n"
@@ -67,7 +76,11 @@ static const char *CS_SRC =
     "vec3 trace(vec3 o,vec3 dir){ float t=0.12;\n"
     "  for(int i=0;i<64;++i){ vec3 p=o+dir*t; float h=scene_sdf(p);\n"
     "    if(h<0.03){ vec3 n=sdf_normal(p); if(dot(n,dir)>0.0) n=-n;\n"
-    "      return u_albedo * direct_at(p+n*0.06, n) / PI; }\n"
+    /* Tint the bounce by the surface's voxelised albedo; the cone footprint\n"
+     * widens with t, so read a coarser albedo mip further out. u_albedo scales. */
+    "      float lod = clamp(log2(1.0 + t*1.5), 0.0, 5.0);\n"
+    "      vec3 alb = scene_albedo(p - n*u_sdf_vox[0]*0.5, lod);\n"
+    "      return u_albedo * alb * direct_at(p+n*0.06, n) / PI; }\n"
     "    t += max(h,0.04); if(t>25.0) break; }\n"
     "  return vec3(0.0); }\n"
     /* Linear SH (band 0 + band 1 = 4 coeffs) -- cheap, ample for diffuse indirect. */
@@ -201,7 +214,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glUniform1i(glGetUniformLocation(g->prog, "u_nboxes"), (GLint)nb);
     glUniform1f(glGetUniformLocation(g->prog, "u_soft"), soft_k);
     glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 8);    /* sphere samples. */
-    glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 0.6f); /* assumed bounce albedo. */
+    glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 1.0f); /* gain; real albedo now from the voxel map. */
 
     /* Bind the resident SDF chunks (one per used slot) + metadata. */
     char nm[32];

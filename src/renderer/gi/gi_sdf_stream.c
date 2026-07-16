@@ -47,6 +47,7 @@ int gi_sdf_stream_load(gi_sdf_stream_t *s, const char *prefix)
         tmp[loaded].origin[0] = d.origin[0]; tmp[loaded].origin[1] = d.origin[1];
         tmp[loaded].origin[2] = d.origin[2];
         tmp[loaded].dist = d.dist;           /* take ownership (don't free d). */
+        tmp[loaded].albedo = d.albedo;       /* v2 albedo (NULL for v1); owned. */
         ++loaded;
     }
     if (loaded == 0)
@@ -67,11 +68,17 @@ int gi_sdf_stream_load(gi_sdf_stream_t *s, const char *prefix)
     for (int c = 0; c < loaded; ++c)
         for (int a = 0; a < 3; ++a)
             if (s->ram[c].dims[a] > mx[a]) mx[a] = s->ram[c].dims[a];
+    s->slot_dims[0] = mx[0]; s->slot_dims[1] = mx[1]; s->slot_dims[2] = mx[2];
+    /* Scratch to interleave a chunk's (albedo.rgb, dist) -> RGBA at upload time. */
+    s->upload_rgba = malloc((size_t)mx[0] * mx[1] * mx[2] * 4 * sizeof(float));
+    if (s->upload_rgba == NULL) { gi_sdf_stream_destroy(s); return -1; }
     for (int i = 0; i < GI_SDF_MAX_RESIDENT; ++i) {
         glBindTexture(GL_TEXTURE_3D, s->tex[i]);
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, mx[0], mx[1], mx[2], 0,
-                     GL_RED, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        /* RGBA32F: rgb = voxelised static albedo, a = signed distance. Mipmapped
+         * so a GI cone hit reads a footprint-appropriate albedo LOD. */
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA32F, mx[0], mx[1], mx[2], 0,
+                     GL_RGBA, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -100,9 +107,24 @@ int gi_sdf_stream_boxes(const gi_sdf_stream_t *s, float *out_min, float *out_max
 static void sdf_upload(gi_sdf_stream_t *s, int c, int slot)
 {
     const gi_sdf_chunk_ram_t *r = &s->ram[c];
+    size_t n = (size_t)r->dims[0] * r->dims[1] * r->dims[2];
+    /* Interleave (albedo.rgb, dist) into the RGBA scratch. Chunks with no baked
+     * albedo (v1) fall back to a neutral mid-grey so the bounce isn't black. */
+    float *rgba = s->upload_rgba;
+    for (size_t i = 0; i < n; ++i) {
+        if (r->albedo != NULL) {
+            rgba[i*4+0] = r->albedo[i*3+0];
+            rgba[i*4+1] = r->albedo[i*3+1];
+            rgba[i*4+2] = r->albedo[i*3+2];
+        } else {
+            rgba[i*4+0] = rgba[i*4+1] = rgba[i*4+2] = 0.5f;
+        }
+        rgba[i*4+3] = r->dist[i];
+    }
     glBindTexture(GL_TEXTURE_3D, s->tex[slot]);
     glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, r->dims[0], r->dims[1], r->dims[2],
-                    GL_RED, GL_FLOAT, r->dist);
+                    GL_RGBA, GL_FLOAT, rgba);
+    glGenerateMipmap(GL_TEXTURE_3D);
     s->page[c] = slot;
     s->slot_chunk[slot] = c;
 }
@@ -143,11 +165,15 @@ void gi_sdf_stream_destroy(gi_sdf_stream_t *s)
 {
     if (s == NULL) return;
     if (s->ram) {
-        for (int c = 0; c < s->n_chunks; ++c) free(s->ram[c].dist);
+        for (int c = 0; c < s->n_chunks; ++c) {
+            free(s->ram[c].dist);
+            free(s->ram[c].albedo);
+        }
         free(s->ram);
     }
     for (int i = 0; i < GI_SDF_MAX_RESIDENT; ++i)
         if (s->tex[i]) glDeleteTextures(1, &s->tex[i]);
+    free(s->upload_rgba);
     free(s->page);
     memset(s, 0, sizeof *s);
 }

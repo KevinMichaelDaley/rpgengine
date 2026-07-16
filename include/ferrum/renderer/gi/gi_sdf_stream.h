@@ -32,6 +32,7 @@ typedef struct gi_sdf_chunk_ram {
     float   voxel;
     float   origin[3];   /**< world min corner of the chunk box. */
     float  *dist;        /**< dims product floats (owned). */
+    float  *albedo;      /**< v2: dims product * 3 RGB (owned); NULL for v1 chunks. */
 } gi_sdf_chunk_ram_t;
 
 /** Streaming residency for the scene's baked SDF chunks. */
@@ -45,6 +46,8 @@ typedef struct gi_sdf_stream {
     int                 frame;
     int                 resident;                    /**< resident chunk count this frame. */
     int                 resident_slot[GI_SDF_MAX_RESIDENT]; /**< the resident slots this frame. */
+    float              *upload_rgba;                  /**< scratch: interleave dist+albedo -> RGBA. */
+    int                 slot_dims[3];                 /**< allocated 3D-texture dims (max chunk). */
 } gi_sdf_stream_t;
 
 /**

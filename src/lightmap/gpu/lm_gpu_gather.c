@@ -423,9 +423,13 @@ static bool tri_box_overlap(const float bc[3], const float bh[3],
  * caller deletes it) and writes the grid @p out_dims + @p out_voxel. Used for
  * both the per-chunk NEAR field and the whole-scene FAR field. Returns false on
  * allocation failure. Uses the file-static JFA programs (init/step/fin). */
+/* @p out_albedo (nullable): when non-NULL, receives a malloc'd cells*3 planar RGB
+ * grid stamped with each surface voxel's mesh diffuse tint (caller frees). Voxels
+ * no triangle touches stay 0. Used to colour the GI bounce (v2 SDF sidecar). */
 static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
                       const float mn[3], const float mx[3], int max_dim,
-                      GLuint *out_sdf, int out_dims[3], float *out_voxel) {
+                      GLuint *out_sdf, int out_dims[3], float *out_voxel,
+                      float **out_albedo) {
     float ext[3] = { mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2] };
     float longest = fmaxf(ext[0], fmaxf(ext[1], ext[2]));
     float svoxel = longest / (float)max_dim; if (svoxel < fine_voxel) svoxel = fine_voxel;
@@ -436,6 +440,11 @@ static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
     uint32_t *occ = malloc(cells * sizeof(uint32_t));
     if (!occ) return false;
     memset(occ, 0, cells * sizeof(uint32_t));
+    float *alb = NULL;
+    if (out_albedo != NULL) {
+        alb = calloc(cells * 3, sizeof(float));
+        if (alb == NULL) { free(occ); return false; }
+    }
     /* Conservative triangle rasterisation: stamp every scene triangle into every
      * coarse cell it intersects -> watertight walls (the SDF then truly encloses). */
     float bh[3] = { svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f };
@@ -465,7 +474,15 @@ static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
                 float bc[3] = { mn[0]+((float)x+0.5f)*svoxel,
                                 mn[1]+((float)y+0.5f)*svoxel,
                                 mn[2]+((float)z+0.5f)*svoxel };
-                if (tri_box_overlap(bc, bh, a, b, c)) occ[idx] = 1u;
+                if (tri_box_overlap(bc, bh, a, b, c)) {
+                    occ[idx] = 1u;
+                    /* Stamp this surface voxel with the mesh's diffuse tint. */
+                    if (alb != NULL) {
+                        alb[idx*3+0] = me->albedo.x;
+                        alb[idx*3+1] = me->albedo.y;
+                        alb[idx*3+2] = me->albedo.z;
+                    }
+                }
             }
         }
     }
@@ -501,6 +518,7 @@ static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
 
     GLuint discard[3] = { bo[0], bo[1], bo[2] }; gl.DeleteBuffers(3, discard);
     *out_sdf = bo[3]; out_dims[0]=dims[0]; out_dims[1]=dims[1]; out_dims[2]=dims[2]; *out_voxel = svoxel;
+    if (out_albedo != NULL) *out_albedo = alb;
     return true;
 }
 
@@ -510,7 +528,7 @@ bool lm_gpu_field_build(const lm_mesh_scene_t *scene, float fine_voxel,
     float mn[3] = { box->min.x, box->min.y, box->min.z };
     float mx[3] = { box->max.x, box->max.y, box->max.z };
     GLuint buf; int dims[3]; float voxel;
-    if (!build_sdf(scene, fine_voxel, mn, mx, max_dim, &buf, dims, &voxel)) return false;
+    if (!build_sdf(scene, fine_voxel, mn, mx, max_dim, &buf, dims, &voxel, NULL)) return false;
     out->buf = (uint32_t)buf;
     out->dims[0]=dims[0]; out->dims[1]=dims[1]; out->dims[2]=dims[2];
     out->origin[0]=mn[0]; out->origin[1]=mn[1]; out->origin[2]=mn[2];
@@ -553,13 +571,17 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
         for (int a=0;a<3;++a){ mn[a]=svo_mn[a]; mx[a]=svo_mx[a]; }
     }
 
-    /* NEAR field over the region (fine, 128^3). */
-    GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f;
-    if (!build_sdf(scene, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel))
+    /* NEAR field over the region (fine, 128^3). Also voxelise per-surface albedo
+     * (only needed for the persisted sidecar) so the runtime GI cone-trace can
+     * tint its bounce by the static surface colour. */
+    GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f; float *near_alb = NULL;
+    if (!build_sdf(scene, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel,
+                   sdf_out != NULL ? &near_alb : NULL))
         return false;
 
-    /* Persist this chunk's near SDF (rpg-iudw): reuse the field we just built --
-     * read the SSBO back and write the .sdf sidecar. Non-fatal on failure. */
+    /* Persist this chunk's near SDF + albedo (rpg-iudw/rpg-fo9r): reuse the field
+     * we just built -- read the SSBO back and write the v2 .sdf sidecar (RGBA =
+     * albedo + distance). Non-fatal on failure. */
     if (sdf_out != NULL) {
         size_t nf = (size_t)dims[0] * (size_t)dims[1] * (size_t)dims[2];
         float *sd = malloc(nf * sizeof(float));
@@ -568,10 +590,14 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
             gl.GetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
                                 (GLsizeiptr)(nf * sizeof(float)), sd);
             int32_t d32[3] = { dims[0], dims[1], dims[2] };
-            lm_sdf_save(sdf_out, d32, svoxel, mn, sd);
+            if (near_alb != NULL)
+                lm_sdf_save_rgba(sdf_out, d32, svoxel, mn, sd, near_alb);
+            else
+                lm_sdf_save(sdf_out, d32, svoxel, mn, sd);
             free(sd);
         }
     }
+    free(near_alb);
 
     /* MEDIUM field: a ~MED_MULT x region box (chunked bakes only), clamped to the
      * scene, 128^3 -> coarser than near since it spans a bigger box. */
