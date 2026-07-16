@@ -1,6 +1,6 @@
 ---
 id: rpg-5fn3
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-16T03:37:51Z
@@ -22,3 +22,10 @@ Scope:
 
 This is the IMMEDIATE next task after this ticket lands.
 
+
+## Notes
+
+**2026-07-16T03:47:27Z**
+
+MODULE DONE + committed. lm_denoise.[ch] wraps OIDN RT/hdr filter over one float-RGB atlas image in place (optional albedo/normal guides). Two build variants share the header (real=OIDN=1 links libOpenImageDenoise; stub=default no-op so headless/CI builds). OIDN v2.5.0 vendored at extern/oidn. Wired into lm_lightmap_save gated by LM_DENOISE env (unset=off / '1'|'dc'=DC band only / 'all'=all 9 bands); runs after gutter dilate. lm_denoise_tests pass under stub.
+REMAINING: (1) build OIDN on chimera (needs ISPC+TBB+weights submodule; cmake to extern/oidn/build), rebuild bake with OIDN=1. (2) A/B validate: bake hall at LOW spp (256) + LM_DENOISE=dc vs 4096-spp reference; denoised-low-spp should approach reference. (3) evaluate DC-only vs all-band; consider feeding real per-luxel albedo/geo-normal aux atlases for better edge retention (currently color-only).

@@ -20,3 +20,9 @@ Core renderer module only; nothing in demo_client. CSM: per-light frustum-split 
 
 Stationary lights cast correct cascaded shadows with static geometry shadowed from a pre-generated map (no per-frame static redraw) and dynamic objects shadowed from a per-frame low-res map, co-sampled correctly. Shadow term combines with lightmap ambient in the material shader. Entirely in core renderer. Clean under -Wpedantic.
 
+
+## Notes
+
+**2026-07-16T06:07:21Z**
+
+CSM substantially implemented this session (view-independent + PCSS soft shadows). Static-baked cascades + per-frame dynamic map co-sampled; integrated in pbr_shader. Cascades are VIEW-INDEPENDENT (casters classified by size/background, cached forever) since the map is static and the player roams. Soft shadows via PCSS on a plain R32F linear-depth map (EVSM tried and rejected). Verified on hall + zone_small colonnade. See memory feedback_csm_view_independent.

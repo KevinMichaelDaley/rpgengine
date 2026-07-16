@@ -1,6 +1,6 @@
 ---
 id: rpg-ojuq
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-16T03:20:09Z
