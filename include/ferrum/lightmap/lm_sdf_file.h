@@ -29,12 +29,15 @@
 extern "C" {
 #endif
 
-/** A loaded distance field: grid metadata + the dense distances. */
+/** A loaded distance field: grid metadata, dense distances, optional albedo.
+ *  @c albedo is non-NULL only for v2 files; it carries the voxelised static-scene
+ *  diffuse colour so a GI cone hit can tint its bounce (RGB, planar, 3/voxel). */
 typedef struct lm_sdf_data {
     int32_t dims[3];   /**< Grid resolution (cells per axis). */
     float   voxel;     /**< Cell edge length (metres). */
     float   origin[3]; /**< World-space minimum corner. */
     float  *dist;      /**< dims.x*dims.y*dims.z floats, x fastest (owned). */
+    float  *albedo;    /**< v2 only: dims product * 3 floats (RGB), else NULL (owned). */
 } lm_sdf_data_t;
 
 /**
@@ -44,6 +47,16 @@ typedef struct lm_sdf_data {
  */
 bool lm_sdf_save(const char *path, const int32_t dims[3], float voxel,
                  const float origin[3], const float *dist);
+
+/**
+ * @brief Write a distance field PLUS per-voxel RGB albedo (v2). @p albedo holds
+ *        dims product * 3 floats (planar RGB, x fastest, same layout as @p dist).
+ *        Loads back through @ref lm_sdf_load (which sets @c out->albedo). Same
+ *        error semantics as @ref lm_sdf_save; @p albedo must be non-NULL.
+ */
+bool lm_sdf_save_rgba(const char *path, const int32_t dims[3], float voxel,
+                      const float origin[3], const float *dist,
+                      const float *albedo);
 
 /**
  * @brief Load an @c .sdf file into @p out (allocates @c out->dist). Returns
