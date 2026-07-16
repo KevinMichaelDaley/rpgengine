@@ -49,7 +49,8 @@ typedef struct gi_runtime_config {
     int   update_interval;       /**< recompute probes every N frames (0 -> 8). */
     cluster_config_t froxel;     /**< MUST match the forward+ cluster config so
                                   *   probes bin into the exact same froxels. */
-    float probe_radius;          /**< probe influence radius (m) for froxel overlap. */
+    uint32_t probe_min;          /**< guaranteed K-nearest probes per froxel (0 -> 4). */
+    float probe_sphere_margin;   /**< world halo added to each froxel sphere (m, 0->1.5). */
     int   bin_interval;          /**< re-bin probes into froxels every N frames (0 -> 1). */
 } gi_runtime_config_t;
 
@@ -82,7 +83,8 @@ typedef struct gi_runtime {
     unsigned int     tbo_fo, tbo_fo_tex;  /**< froxel offset buffer texture. */
     unsigned int     tbo_fc, tbo_fc_tex;  /**< froxel count buffer texture. */
     unsigned int     tbo_fi, tbo_fi_tex;  /**< froxel index buffer texture. */
-    float            probe_radius;
+    uint32_t         probe_min;
+    float            probe_sphere_margin;
     int              bin_interval;
     unsigned int     fx_last_unit;    /**< last texture unit used by the froxel bind. */
 } gi_runtime_t;

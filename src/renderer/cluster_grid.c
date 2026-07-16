@@ -112,30 +112,79 @@ void cluster_grid_build(cluster_grid_t *grid, const render_camera_t *camera,
     }
 }
 
+/* Precompute cap for probe view positions (kept off the frame-alloc path). */
+#define CLUSTER_POINT_SCRATCH 1024u
+/* Cap on the guaranteed-minimum K-nearest probe set per froxel. */
+#define CLUSTER_MIN_PROBES_MAX 16u
+
 void cluster_grid_build_points(cluster_grid_t *grid, const render_camera_t *camera,
                                const float *positions, uint32_t n_points,
-                               float radius)
+                               uint32_t min_probes, float sphere_margin)
 {
     if (grid == NULL || camera == NULL || grid->offsets == NULL) {
         return;
     }
-    float r2 = radius * radius;
+    const cluster_config_t *c = &grid->config;
+
+    /* Probe positions in VIEW space (same space as the froxel AABBs). */
+    float vx[CLUSTER_POINT_SCRATCH], vy[CLUSTER_POINT_SCRATCH], vz[CLUSTER_POINT_SCRATCH];
+    uint32_t np = n_points < CLUSTER_POINT_SCRATCH ? n_points : CLUSTER_POINT_SCRATCH;
+    for (uint32_t p = 0; p < np; ++p) {
+        float vp[3];
+        view_transform(camera->view, &positions[p * 3], vp);
+        vx[p] = vp[0]; vy[p] = vp[1]; vz[p] = vp[2];
+    }
+    uint32_t K = min_probes;
+    if (K > CLUSTER_MIN_PROBES_MAX) K = CLUSTER_MIN_PROBES_MAX;
+    if (K > np) K = np;
+
     grid->index_count = 0u;
-    for (uint32_t s = 0; s < grid->config.slices; ++s) {
-        for (uint32_t ty = 0; ty < grid->config.tiles_y; ++ty) {
-            for (uint32_t tx = 0; tx < grid->config.tiles_x; ++tx) {
+    for (uint32_t s = 0; s < c->slices; ++s) {
+        for (uint32_t ty = 0; ty < c->tiles_y; ++ty) {
+            for (uint32_t tx = 0; tx < c->tiles_x; ++tx) {
                 uint32_t ci = cluster_grid_index(grid, tx, ty, s);
                 float lo[3], hi[3];
                 cluster_aabb(grid, camera, tx, ty, s, lo, hi);
+                float cx = 0.5f * (lo[0] + hi[0]), cy = 0.5f * (lo[1] + hi[1]),
+                      cz = 0.5f * (lo[2] + hi[2]);
+                /* Froxel bounding sphere: half the AABB diagonal, + margin. */
+                float rx = 0.5f * (hi[0] - lo[0]), ry = 0.5f * (hi[1] - lo[1]),
+                      rz = 0.5f * (hi[2] - lo[2]);
+                float thr = sqrtf(rx * rx + ry * ry + rz * rz) + sphere_margin;
+                float thr2 = thr * thr;
+
+                /* One pass: distance of every probe to the froxel centre, tracking
+                 * the K nearest (insertion-sorted) for the guaranteed minimum. */
+                int nidx[CLUSTER_MIN_PROBES_MAX]; float nd2[CLUSTER_MIN_PROBES_MAX];
+                for (uint32_t k = 0; k < K; ++k) { nidx[k] = -1; nd2[k] = 1e30f; }
+                for (uint32_t p = 0; p < np; ++p) {
+                    float dx = vx[p] - cx, dy = vy[p] - cy, dz = vz[p] - cz;
+                    float d2 = dx * dx + dy * dy + dz * dz;
+                    if (K > 0 && d2 < nd2[K - 1]) {
+                        uint32_t j = K - 1;
+                        while (j > 0 && nd2[j - 1] > d2) {
+                            nd2[j] = nd2[j - 1]; nidx[j] = nidx[j - 1]; --j;
+                        }
+                        nd2[j] = d2; nidx[j] = (int)p;
+                    }
+                }
+
                 grid->offsets[ci] = grid->index_count;
                 uint32_t count = 0u;
-                for (uint32_t p = 0; p < n_points; ++p) {
-                    float vp[3];
-                    view_transform(camera->view, &positions[p * 3], vp);
-                    if (aabb_point_dist2(lo, hi, vp) <= r2 &&
+                /* All probes inside the bounding sphere + margin. */
+                for (uint32_t p = 0; p < np; ++p) {
+                    float dx = vx[p] - cx, dy = vy[p] - cy, dz = vz[p] - cz;
+                    if (dx * dx + dy * dy + dz * dz <= thr2 &&
                         grid->index_count < grid->index_capacity) {
-                        grid->indices[grid->index_count++] = p;
-                        ++count;
+                        grid->indices[grid->index_count++] = p; ++count;
+                    }
+                }
+                /* Guarantee the K nearest even when they fall outside the sphere,
+                 * so a froxel is never starved of probes as the camera moves. */
+                for (uint32_t k = 0; k < K; ++k) {
+                    if (nidx[k] < 0 || nd2[k] <= thr2) continue; /* already added. */
+                    if (grid->index_count < grid->index_capacity) {
+                        grid->indices[grid->index_count++] = (uint32_t)nidx[k]; ++count;
                     }
                 }
                 grid->counts[ci] = count;

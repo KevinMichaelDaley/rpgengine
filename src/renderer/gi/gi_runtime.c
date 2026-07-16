@@ -98,7 +98,8 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     /* --- Probe froxel grid: bins probes into the SAME clusters the forward+
      * lights use (config MUST match fcfg.cluster), so the material samples probe
      * candidates from the fragment's own froxel via the forward+ cluster uniforms. */
-    gi->probe_radius = cfg->probe_radius > 0.0f ? cfg->probe_radius : cell;
+    gi->probe_min = cfg->probe_min > 0 ? cfg->probe_min : 4u;
+    gi->probe_sphere_margin = cfg->probe_sphere_margin > 0.0f ? cfg->probe_sphere_margin : 1.5f;
     gi->bin_interval = cfg->bin_interval > 0 ? cfg->bin_interval : 1;
     {
         cluster_config_t fc = cfg->froxel;
@@ -158,7 +159,8 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
         memset(&cam, 0, sizeof cam);
         for (int i = 0; i < 16; ++i) { cam.view[i] = view[i]; cam.proj[i] = proj[i]; }
         cluster_grid_build_points(&gi->froxel, &cam, gi->probe_pos,
-                                  gi->probes.count, gi->probe_radius);
+                                  gi->probes.count, gi->probe_min,
+                                  gi->probe_sphere_margin);
         uint32_t ctot = gi->froxel.cluster_total;
         uint32_t nidx = gi->froxel.index_count > 0 ? gi->froxel.index_count : 1u;
         glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fo);

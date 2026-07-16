@@ -778,23 +778,31 @@ int main(int argc,char **argv){
           pt.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT;
           if(!getenv("GI_NOSHADOW")) pt.flags|=RENDER_LIGHT_FLAG_SHADOW;
           render_light_add(&lights,&pt); }
-        /* Manual adaptive probes for this hall: a coarse set near the vaults +
-         * aisle + side walls (scene-specific -> lives in this invocation). */
-        static const float hall_probes[] = {
-            2.5f,3.6f,-3.0f,  4.5f,3.7f,-3.0f,  6.5f,3.6f,-3.0f,   /* under the vaults */
-            2.5f,1.6f,-3.0f,  4.5f,1.6f,-3.0f,  6.5f,1.6f,-3.0f,   /* mid-aisle */
-            0.6f,2.6f,-0.8f,  8.4f,2.6f,-5.2f,  4.5f,2.6f,-3.0f    /* side walls + centre */
-        };
+        /* ~40 probes spread on a regular grid through the hall interior (inset from
+         * the walls), at two heights (aisle + under the vaults). Froxel binning +
+         * nearest-2 blend make a denser, more even set cheap. */
+        static float hall_probes[40 * 3]; int n_probes = 0;
+        { int pnx = 5, pny = 2, pnz = 4; float ins = 0.14f;
+          for (int iz = 0; iz < pnz; ++iz) for (int iy = 0; iy < pny; ++iy)
+          for (int ix = 0; ix < pnx; ++ix) {
+            float fx = (pnx>1)?(float)ix/(float)(pnx-1):0.5f;
+            float fy = (pny>1)?(float)iy/(float)(pny-1):0.5f;
+            float fz = (pnz>1)?(float)iz/(float)(pnz-1):0.5f;
+            hall_probes[n_probes*3+0] = amin[0]+span[0]*(ins+(1.0f-2.0f*ins)*fx);
+            hall_probes[n_probes*3+1] = amin[1]+span[1]*(0.22f+0.52f*fy); /* mid heights. */
+            hall_probes[n_probes*3+2] = amin[2]+span[2]*(ins+(1.0f-2.0f*ins)*fz);
+            ++n_probes;
+          } }
         gi_runtime_config_t gc; memset(&gc,0,sizeof gc);
         gc.loader=&loader; gc.sdf_prefix=lmfile;
         gc.aabb_min[0]=amin[0]; gc.aabb_min[1]=amin[1]+0.3f; gc.aabb_min[2]=amin[2];
         gc.aabb_max[0]=amax[0]; gc.aabb_max[1]=amax[1]-0.2f; gc.aabb_max[2]=amax[2];
-        gc.probe_pos_in=hall_probes; gc.n_probe_in=9;
+        gc.probe_pos_in=hall_probes; gc.n_probe_in=(uint32_t)n_probes;
         gc.grid_cell=4.0f; gc.prepass_w=(W/8>0)?W/8:1; gc.prepass_h=(H/8>0)?H/8:1;
         gc.max_lights=512; gc.max_boxes=8; gc.soft_k=8.0f;
         /* Bin probes into the SAME froxels as forward+ (identical cluster config)
          * so the material reads probe candidates from the fragment's own cluster. */
-        gc.froxel=fcfg.cluster; gc.probe_radius=4.0f; gc.bin_interval=1;
+        gc.froxel=fcfg.cluster; gc.probe_min=4; gc.probe_sphere_margin=1.5f; gc.bin_interval=1;
         if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
     }
 

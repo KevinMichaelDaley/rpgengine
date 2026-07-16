@@ -62,16 +62,19 @@ void cluster_grid_build(cluster_grid_t *grid, const render_camera_t *camera,
                         const render_light_t *lights, uint32_t n_lights);
 
 /**
- * @brief Assign point samples (@p positions, 3 floats each) to the clusters whose
- *        froxel AABB is within @p radius of the point, filling offsets/counts/
- *        indices exactly like @ref cluster_grid_build. Used to bin GI probes into
- *        the SAME froxels the forward+ lights use, so a fragment reads its probe
- *        candidates from its own cluster instead of a separate world accel grid.
- * @param radius influence radius (m) each probe reaches into neighbouring froxels.
+ * @brief Bin point samples (@p positions, 3 floats each) into the SAME froxels the
+ *        forward+ lights use. Each froxel gets: (1) the @p min_probes nearest probes
+ *        by world-space distance to the froxel centre -- a GUARANTEED minimum so a
+ *        froxel is never starved and probes don't pop in/out as the camera moves --
+ *        PLUS (2) every probe inside the froxel's bounding sphere grown by
+ *        @p sphere_margin. Fills offsets/counts/indices like @ref cluster_grid_build.
+ *
+ * @param min_probes    guaranteed K-nearest probes per froxel (clamped to 16).
+ * @param sphere_margin world-space halo (m) added to each froxel's bounding sphere.
  */
 void cluster_grid_build_points(cluster_grid_t *grid, const render_camera_t *camera,
                                const float *positions, uint32_t n_points,
-                               float radius);
+                               uint32_t min_probes, float sphere_margin);
 
 /** @return The linear cluster index for (tile x, tile y, depth slice). */
 static inline uint32_t cluster_grid_index(const cluster_grid_t *grid,
