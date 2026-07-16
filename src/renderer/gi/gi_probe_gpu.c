@@ -132,7 +132,9 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     /* Texture buffers so the forward+ material can sample probe SH + positions. */
     glGenTextures(1, &g->tbo_sh_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_sh_tex);
-    glTexBuffer(GL_TEXTURE_BUFFER, GL_R32F, g->b_sh);
+    /* RGBA32F view: each probe's SH4 is 12 floats = 3 vec4 texels (R,G,B coeffs),
+     * so the material reads a probe's SH in 3 fetches instead of 12 scalars. */
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g->b_sh);
     glGenTextures(1, &g->tbo_pos_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_pos_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g->b_pos);
