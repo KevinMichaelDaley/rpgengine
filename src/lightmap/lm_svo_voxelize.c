@@ -159,7 +159,15 @@ void lm_svo_voxelize(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
         npc_svo_node_t *nd = &svo->nodes[i];
         if (nd->occupancy == 0 && (nd->flags & NPC_SVO_FLAG_SOLID)) {
             ++solid_leaves;
-            if (area[i] <= 0.0f) ++solid_no_mat;
+            if (area[i] <= 0.0f) {
+                ++solid_no_mat;
+                /* No surface disk hit this solid voxel (grazing / thin geometry
+                 * the subsampling missed). Leaving it black makes it a light
+                 * SINK -- every gather ray that hits it dies (thr *= 0), which
+                 * blotches and darkens the indirect. Give it a neutral fallback
+                 * reflectance so it bounces light like the surface it is. */
+                nd->diffuse[0] = nd->diffuse[1] = nd->diffuse[2] = 0.5f;
+            }
         }
         /* diffuse: area-weighted MEAN reflectance (the disk area cancels). */
         if (area[i] > 0.0f) {

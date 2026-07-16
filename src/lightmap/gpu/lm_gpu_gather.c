@@ -63,7 +63,7 @@ static struct {
     void   (*MemoryBarrier)(GLbitfield);
     void   (*Finish)(void);
 } gl;
-static GLuint g_init, g_step, g_fin, g_gather;
+static GLuint g_init, g_step, g_fin, g_gather, g_lightvis;
 static bool g_ready;
 
 #define GG_LOAD(field, name) do { \
@@ -122,6 +122,33 @@ static const char *CS_JFA_FIN =
     "  int i=lidx(c); int se=sin[i]; float d=se>=0?distance(vec3(c),vec3(lcoord(se)))*voxel:1e30;\n"
     "  dist[i]=occ[i]!=0u?-d:d; }\n";
 
+/* Per-cell, per-light visibility (rpg-yfa4). For each near-grid cell, cast a
+ * shadow ray through the coarse SDF to every static light and store 1 (lit) or 0
+ * (occluded). Directional lights march to the region edge; point/spot to the
+ * light. Computed ONCE per bake region, then read by the gather's direct(). */
+static const char *CS_LIGHTVIS =
+    "#version 430\n"
+    "layout(local_size_x=4,local_size_y=4,local_size_z=4) in;\n"
+    "layout(std430,binding=0) readonly buffer Sdf { float sdf[]; };\n"
+    "layout(std430,binding=1) writeonly buffer Vis { float vis[]; };\n"
+    "layout(std430,binding=2) readonly buffer Lit { vec4 lit[]; };\n"
+    "uniform ivec3 dims; uniform float voxel; uniform vec3 origin; uniform int nlights;\n"
+    "int cidx(ivec3 c){ return (c.z*dims.y+c.y)*dims.x+c.x; }\n"
+    "bool inb(ivec3 c){ return all(greaterThanEqual(c,ivec3(0)))&&all(lessThan(c,dims)); }\n"
+    /* SDF sphere-march from p toward dir; true if it enters solid before maxT or\n"
+     * the region edge (edge/exhaustion => reached the light unoccluded). */
+    "bool occluded(vec3 p, vec3 dir, float maxT){ float t=voxel*1.5;\n"
+    "  for(int k=0;k<512 && t<maxT;++k){ vec3 q=p+dir*t; ivec3 c=ivec3(floor((q-origin)/voxel));\n"
+    "    if(!inb(c)) return false; float sd=sdf[cidx(c)]; if(sd<0.0) return true;\n"
+    "    t += max(sd, voxel); } return false; }\n"
+    "void main(){ ivec3 c=ivec3(gl_GlobalInvocationID); if(any(greaterThanEqual(c,dims))) return;\n"
+    "  int ci=cidx(c); vec3 p=origin+(vec3(c)+0.5)*voxel;\n"
+    "  for(int i=0;i<nlights;++i){ int kind=int(lit[4*i].w); vec3 lp=lit[4*i].xyz; vec3 ld=lit[4*i+1].xyz;\n"
+    "    vec3 toL; float maxT;\n"
+    "    if(kind==1){ toL=normalize(-ld); maxT=1e5; }\n"
+    "    else { vec3 dd=lp-p; float dist=length(dd); if(dist<1e-4){ vis[ci*nlights+i]=1.0; continue; } toL=dd/dist; maxT=dist; }\n"
+    "    vis[ci*nlights+i] = occluded(p,toL,maxT) ? 0.0 : 1.0; } }\n";
+
 static const char *CS_GATHER =
     "#version 430\n"
     "layout(local_size_x=64) in;\n"
@@ -140,6 +167,12 @@ static const char *CS_GATHER =
      * absent (hasMed/hasFar == 0). */
     "layout(std430,binding=6) readonly buffer FarSdf { float fsdf[]; };\n"
     "layout(std430,binding=7) readonly buffer MedSdf { float msdf[]; };\n"
+    /* Precomputed per-cell, per-LIGHT visibility store over the near grid\n"
+     * (rpg-yfa4): lightvis[cell*nlights + i] = 1 if static light i reaches this\n"
+     * cell, else 0 (shadowed). Cast once per cell to every static directional /\n"
+     * point / spot light at bake time, so the gather reads it at a bounce hit\n"
+     * instead of firing a per-hit shadow ray (noisy + coarse-SDF inaccurate). */
+    "layout(std430,binding=8) readonly buffer LightVis { float lightvis[]; };\n"
     "uniform ivec3 dims; uniform float voxel; uniform vec3 origin; uniform vec3 sky;\n"
     "uniform int samples; uniform int bounces; uniform uint seed; uniform int nlux; uniform int nlights;\n"
     "uniform float transition; uniform float finevox;\n"
@@ -241,7 +274,12 @@ static const char *CS_GATHER =
     "    else { vec3 dd=lp-p; float dist=length(dd); if(dist<1e-4) continue; toL=dd/dist; atten=1.0/(dist*dist); md=dist-voxel*1.5; }\n"
     "    float cosNL=dot(n,toL); if(cosNL<=0.0) continue;\n"
     "    if(kind==2){ float ca=dot(-toL,dnorm(ld)); float sp=clamp((ca-co)/max(ci-co,1e-4),0.0,1.0); atten*=sp; if(atten<=0.0) continue; }\n"
-    "    if(shadow(o,toL,md)) continue; e += col*(cosNL*atten); } return e; }\n"
+    /* Read this light's visibility from the precomputed store at the offset\n"
+     * origin's near cell; outside the near grid fall back to a live shadow ray. */
+    "    ivec3 sc=toCell(o); float vis;\n"
+    "    if(inb(sc)) vis = lightvis[cidx(sc)*nlights + i];\n"
+    "    else vis = shadow(o,toL,md) ? 0.0 : 1.0;\n"
+    "    e += col*(cosNL*atten*vis); } return e; }\n"
     "void svoMat(vec3 p, out vec3 diff, out vec3 emis){ diff=vec3(0); emis=vec3(0);\n"
     "  if(any(lessThan(p,svomin))||any(greaterThan(p,svomax))) return;\n"
     "  uint node=0u; vec3 lo=svomin, hi=svomax;\n"
@@ -306,15 +344,16 @@ bool lm_gpu_gather_init(const gl_loader_t *loader) {
     GG_LOAD(Finish,"glFinish");
     g_init = gg_compile(CS_JFA_INIT); g_step = gg_compile(CS_JFA_STEP);
     g_fin = gg_compile(CS_JFA_FIN);  g_gather = gg_compile(CS_GATHER);
-    g_ready = g_init && g_step && g_fin && g_gather;
+    g_lightvis = gg_compile(CS_LIGHTVIS);
+    g_ready = g_init && g_step && g_fin && g_gather && g_lightvis;
     return g_ready;
 }
 
 void lm_gpu_gather_shutdown(void) {
     if (!g_ready) return;
     gl.DeleteProgram(g_init); gl.DeleteProgram(g_step);
-    gl.DeleteProgram(g_fin); gl.DeleteProgram(g_gather);
-    g_init = g_step = g_fin = g_gather = 0; g_ready = false;
+    gl.DeleteProgram(g_fin); gl.DeleteProgram(g_gather); gl.DeleteProgram(g_lightvis);
+    g_init = g_step = g_fin = g_gather = g_lightvis = 0; g_ready = false;
 }
 
 static void u3f(GLuint p, const char *n, const float v[3]) { gl.Uniform3fv(gl.GetUniformLocation(p,n),1,v); }
@@ -557,6 +596,26 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     UP(b_out, (size_t)nlux*27*sizeof(float), NULL);
     UP(b_lit, (size_t)(n_lights?n_lights:1)*sizeof(lm_gpu_light_t), plit);
 
+    /* Precompute the per-cell, per-light visibility store (rpg-yfa4): cast a
+     * shadow ray from each near-grid cell to every static light ONCE, so the
+     * gather reads visibility at a bounce hit instead of tracing per-hit. */
+    size_t ncells = (size_t)dims[0] * dims[1] * dims[2];
+    uint32_t nlv = n_lights ? n_lights : 1u;
+    GLuint b_lightvis; gl.GenBuffers(1, &b_lightvis);
+    UP(b_lightvis, ncells * nlv * sizeof(float), NULL);
+    if (n_lights > 0) {
+        gl.UseProgram(g_lightvis);
+        gl.Uniform3iv(gl.GetUniformLocation(g_lightvis,"dims"),1,dims);
+        gl.Uniform1f(gl.GetUniformLocation(g_lightvis,"voxel"),svoxel);
+        u3f(g_lightvis,"origin",mn);
+        gl.Uniform1i(gl.GetUniformLocation(g_lightvis,"nlights"),(int)n_lights);
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,0,b_sdf);
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,1,b_lightvis);
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,2,b_lit);
+        gl.DispatchCompute((GLuint)((dims[0]+3)/4),(GLuint)((dims[1]+3)/4),(GLuint)((dims[2]+3)/4));
+        gl.MemoryBarrier(0xFFFFFFFFu);
+    }
+
     /* Gather. */
     float origin[3]={mn[0],mn[1],mn[2]};
     float skycol[3] = { sky?sky->color.x:0.0f, sky?sky->color.y:0.0f, sky?sky->color.z:0.0f };
@@ -594,6 +653,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,5,b_nodes);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,6,hasFar?(GLuint)far->buf:b_sdf);
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,7,hasMed?(GLuint)med.buf:b_sdf);
+    gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,8,b_lightvis);
     /* Sample-batch the dispatch. A single dispatch of all samples over every
      * luxel trips the GPU watchdog (TDR) at high sample counts and comes back
      * zero; splitting into <=PER-sample batches keeps each dispatch short (the
@@ -611,7 +671,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
      * readback also bounds each dispatch (TDR-safe). */
     double *osum = calloc((size_t)nlux * 27, sizeof(double));
     if (!osum) {
-        gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); lm_gpu_field_free(&med);
+        gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); gl.DeleteBuffers(1, &b_lightvis); lm_gpu_field_free(&med);
         free(nodes); free(plux); free(plit); free(osh); return false;
     }
     gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER,3,b_out);
@@ -650,7 +710,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                 accum[i*3+c].c[k] = (float)(osum[i*27 + c*9 + k] * invb);
     free(osum);
 
-    gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); lm_gpu_field_free(&med);
+    gl.DeleteBuffers(4, all); gl.DeleteBuffers(1, &b_sdf); gl.DeleteBuffers(1, &b_lightvis); lm_gpu_field_free(&med);
     free(nodes); free(plux); free(plit); free(osh);
     return true;
     #undef UP
