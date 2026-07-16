@@ -65,6 +65,10 @@ typedef struct render_forward_config {
     float              dir_lambda;      /**< cascade split blend (0=uniform,1=log). */
     float              dir_bias;        /**< directional distance-compare bias. */
     float              dir_max_distance;/**< cap the shadowed range (0 = camera far). */
+    float              shadow_scene_min[3];/**< whole-scene AABB min; when max>min the
+                                             CSM fits every cascade to this box so no
+                                             caster is clipped (0,0,0..0,0,0 = off). */
+    float              shadow_scene_max[3];
 } render_forward_config_t;
 
 /** Clustered forward+ driver context: the stages, their GL resources, the

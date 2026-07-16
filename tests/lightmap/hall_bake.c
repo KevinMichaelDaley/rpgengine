@@ -125,7 +125,11 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
         g_lms[i].indices = g_dm[i].indices; g_lms[i].vert_count = g_dm[i].vert_count;
         g_lms[i].index_count = g_dm[i].index_count;
         g_lms[i].albedo_image = grp_img[grp[i]]; g_lms[i].emissive_image = NULL;
-        g_lms[i].albedo = v3(1, 1, 1); g_lms[i].emissive = v3(0, 0, 0);
+        /* HALL_FLOOR_GREEN: tint floor reflectance grassy-green so the GI colour-
+         * bleeds onto the columns/vault (diagnostic for indirect colour). */
+        g_lms[i].albedo = (getenv("HALL_FLOOR_GREEN") && strstr(names[i], "floor"))
+                          ? v3(0.25f, 0.65f, 0.20f) : v3(1, 1, 1);
+        g_lms[i].emissive = v3(0, 0, 0);
         g_lms[i].material = 0;
         uint32_t base_lmres =
             strstr(names[i], "col")   ? 224u :

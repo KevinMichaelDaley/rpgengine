@@ -40,16 +40,17 @@ static int dmesh_load_raw(const char *path, DMesh *m) {
     fclose(f); return 0;
 }
 
-/* Write a translated copy of @p src (positions += off, normals/uvs unchanged). */
+/* Write a scaled + translated copy of @p src (pos = pos*scale + off; normals/uvs
+ * unchanged -- uniform scale keeps normal direction, lightmap uv stays [0,1]). */
 static int write_instance(const char *path, const DMesh *src, const float off[3],
-                          float wmin[3], float wmax[3]) {
+                          float scale, float wmin[3], float wmax[3]) {
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     fwrite(&src->n, 4, 1, f);
     for (uint32_t c = 0; c < src->n; ++c) {
         float rec[10];
         memcpy(rec, &src->d[c*10], 10 * sizeof(float));
-        rec[0] += off[0]; rec[1] += off[1]; rec[2] += off[2];
+        rec[0] = rec[0]*scale + off[0]; rec[1] = rec[1]*scale + off[1]; rec[2] = rec[2]*scale + off[2];
         for (int k = 0; k < 3; ++k) {
             if (rec[k] < wmin[k]) wmin[k] = rec[k];
             if (rec[k] > wmax[k]) wmax[k] = rec[k];
@@ -88,7 +89,9 @@ int main(int argc, char **argv) {
     const char *outdir = argc > 1 ? argv[1] : "datasets/zone";
     int   bays = argc > 2 ? atoi(argv[2]) : 24;    /* bays per axis */
     const char *hall = argc > 3 ? argv[3] : "datasets/hall_lm";
+    float scale = argc > 4 ? (float)atof(argv[4]) : 1.0f; /* uniform scale of the module */
     if (bays < 1) bays = 1;
+    if (scale <= 0.0f) scale = 1.0f;
 
     char cp[512], vp[512];
     snprintf(cp, sizeof cp, "%s/hall_demo_col_0.dmesh", hall);
@@ -106,26 +109,26 @@ int main(int argc, char **argv) {
      * (COL_CX,0,COL_CZ) to world (BAY*gi, 0, -BAY*gj). */
     for (int gj = 0; gj <= bays; ++gj)
         for (int gi = 0; gi <= bays; ++gi) {
-            float off[3] = { BAY*(float)gi - COL_CX, 0.0f, -BAY*(float)gj - COL_CZ };
+            float off[3] = { scale*(BAY*(float)gi - COL_CX), 0.0f, scale*(-BAY*(float)gj - COL_CZ) };
             char p[512]; snprintf(p, sizeof p, "%s/col_%03d_%03d.dmesh", outdir, gi, gj);
-            if (write_instance(p, &col, off, wmin, wmax) == 0) ++ncol;
+            if (write_instance(p, &col, off, scale, wmin, wmax) == 0) ++ncol;
         }
     /* Vaults over every bay (bi,bj) in [0,bays): vault_0_0 spans x[0,3] z[-3,0]
      * (bay 0,0), so translate by (BAY*bi, 0, -BAY*bj). */
     for (int bj = 0; bj < bays; ++bj)
         for (int bi = 0; bi < bays; ++bi) {
-            float off[3] = { BAY*(float)bi, 0.0f, -BAY*(float)bj };
+            float off[3] = { scale*BAY*(float)bi, 0.0f, scale*(-BAY*(float)bj) };
             char p[512]; snprintf(p, sizeof p, "%s/vault_%03d_%03d.dmesh", outdir, bi, bj);
-            if (write_instance(p, &vault, off, wmin, wmax) == 0) ++nvault;
+            if (write_instance(p, &vault, off, scale, wmin, wmax) == 0) ++nvault;
         }
     /* Floor: one tile per 2x2 bays (keeps each tile's lightmap rect reasonable). */
     int step = 2;
     for (int bj = 0; bj < bays; bj += step)
         for (int bi = 0; bi < bays; bi += step) {
-            float x0 = BAY*(float)bi - (bi==0?1.5f:0.0f);
-            float x1 = BAY*(float)(bi+step < bays ? bi+step : bays) + (bi+step>=bays?1.5f:0.0f);
-            float z1 = -BAY*(float)bj + (bj==0?1.5f:0.0f);
-            float z0 = -BAY*(float)(bj+step < bays ? bj+step : bays) - (bj+step>=bays?1.5f:0.0f);
+            float x0 = scale*(BAY*(float)bi - (bi==0?1.5f:0.0f));
+            float x1 = scale*(BAY*(float)(bi+step < bays ? bi+step : bays) + (bi+step>=bays?1.5f:0.0f));
+            float z1 = scale*(-BAY*(float)bj + (bj==0?1.5f:0.0f));
+            float z0 = scale*(-BAY*(float)(bj+step < bays ? bj+step : bays) - (bj+step>=bays?1.5f:0.0f));
             char p[512]; snprintf(p, sizeof p, "%s/floor_%03d_%03d.dmesh", outdir, bi, bj);
             if (write_floor(p, x0, x1, z0, z1, wmin, wmax) == 0) ++nfloor;
         }

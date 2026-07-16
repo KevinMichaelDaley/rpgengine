@@ -449,6 +449,9 @@ int main(int argc,char **argv){
         fcfg.dir_lambda=0.6f; fcfg.dir_bias=0.08f; /* world-space depth bias (metres). */
         /* Cap the shadowed range to the hall extent for crisp texels. */
         fcfg.dir_max_distance=1.4f*hall_len;
+        /* Fit the CSM cascades to the whole scene AABB (+pad) so tall casters
+         * (vaults) and geometry outside the view are never clipped. */
+        for(int k=0;k<3;++k){ fcfg.shadow_scene_min[k]=amin[k]-1.0f; fcfg.shadow_scene_max[k]=amax[k]+1.0f; }
     }
     struct timespec t0_,t1_; clock_gettime(CLOCK_MONOTONIC,&t0_);
     render_forward_t fwd;

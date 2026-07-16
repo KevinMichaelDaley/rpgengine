@@ -255,7 +255,12 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
          * and re-render only the dynamic casters this frame. */
         float td[3] = { -fwd->cfg.sun_dir[0], -fwd->cfg.sun_dir[1],
                         -fwd->cfg.sun_dir[2] };
-        shadow_csm_update(&fwd->csm, &scene->camera, td);
+        /* Fit the cascades to the whole scene AABB (if set) so tall/off-view
+         * casters are never clipped from the shadow map. */
+        int has_b = (fwd->cfg.shadow_scene_max[0] > fwd->cfg.shadow_scene_min[0]);
+        shadow_csm_update(&fwd->csm, &scene->camera, td,
+                          has_b ? fwd->cfg.shadow_scene_min : NULL,
+                          has_b ? fwd->cfg.shadow_scene_max : NULL);
         shadow_csm_bake_static(&fwd->csm, scene);
         shadow_csm_render_dynamic(&fwd->csm, scene);
         fwd->csm.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,

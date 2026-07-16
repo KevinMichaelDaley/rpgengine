@@ -114,6 +114,7 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     SC_LOAD(csm->glDepthFunc, "glDepthFunc");
     SC_LOAD(csm->glGetError, "glGetError");
     SC_LOAD(csm->glCheckFramebufferStatus, "glCheckFramebufferStatus");
+    SC_LOAD(csm->glReadPixels, "glReadPixels");
 
     /* Static cascades live in a resource-managed EVSM2 shadow atlas: the array
      * texture is tracked in a registry and its layers handed out by a slotmap. */

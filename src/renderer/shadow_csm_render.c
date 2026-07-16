@@ -6,6 +6,8 @@
 #include "ferrum/renderer/shadow_csm.h"
 
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
@@ -68,6 +70,33 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
         shader_uniform_set_vec3(&csm->cache, &csm->shader, "u_eye", csm->eye[c]);
         shader_uniform_set_float(&csm->cache, &csm->shader, "u_far", csm->far_plane[c]);
         csm_draw_items(csm, scene, 0u, to);
+
+        /* CSM_DUMP: read this cascade's EVSM2 map back and write its DEPTH
+         * (decoded from the first moment, d = ln(m)/C) as a grayscale PPM, so the
+         * caster depth per cascade can be inspected directly. */
+        if (getenv("CSM_DUMP")) {
+            uint32_t res = csm->static_res;
+            float *buf = malloc((size_t)res * res * 2 * sizeof(float));
+            if (buf) {
+                csm->glReadPixels(0, 0, (int32_t)res, (int32_t)res, GL_RG, GL_FLOAT, buf);
+                char path[64]; snprintf(path, sizeof path, "csm_cascade_%u.pgm", c);
+                FILE *fp = fopen(path, "wb");
+                if (fp) {
+                    fprintf(fp, "P5\n%u %u\n255\n", res, res);
+                    /* glReadPixels rows are bottom-to-top; write top row first. */
+                    for (int y = (int)res - 1; y >= 0; --y)
+                    for (uint32_t x = 0; x < res; ++x) {
+                        float m = buf[((uint32_t)y * res + x) * 2];
+                        float d = m > 1.0f ? logf(m) / CSM_EVSM_C : 0.0f;
+                        int v = (int)(d * 255.0f); v = v < 0 ? 0 : (v > 255 ? 255 : v);
+                        unsigned char b = (unsigned char)v; fwrite(&b, 1, 1, fp);
+                    }
+                    fclose(fp);
+                    fprintf(stderr, "CSM_DUMP: wrote %s (%ux%u)\n", path, res, res);
+                }
+                free(buf);
+            }
+        }
     }
     csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     csm->static_valid = true;

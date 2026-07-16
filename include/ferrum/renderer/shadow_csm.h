@@ -110,6 +110,7 @@ typedef struct shadow_csm {
     void (*glDepthFunc)(uint32_t);
     uint32_t (*glGetError)(void);
     uint32_t (*glCheckFramebufferStatus)(uint32_t);
+    void (*glReadPixels)(int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, void *);
 } shadow_csm_t;
 
 /**
@@ -126,7 +127,8 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config);
  *        the caller re-bakes. Call once per frame (cheap CPU math).
  */
 void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
-                       const float light_dir[3]);
+                       const float light_dir[3],
+                       const float scene_min[3], const float scene_max[3]);
 
 /**
  * @brief Render every STATIC caster ([0, scene->dynamic_from)) into the static

@@ -78,10 +78,23 @@ static void csm_fit_ortho(const vec3_t sc[8], vec3_t dir, vec3_t up, float res,
 }
 
 void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
-                       const float light_dir[3])
+                       const float light_dir[3],
+                       const float scene_min[3], const float scene_max[3])
 {
     if (csm == NULL || camera == NULL || light_dir == NULL)
         return;
+    /* When the whole-scene AABB is given, every cascade is fit to the ENTIRE
+     * scene so no caster (tall vaults, geometry behind the view) is ever clipped
+     * out of the shadow map. The 8 scene corners drive csm_fit_ortho below. */
+    int fit_scene = (scene_min != NULL && scene_max != NULL &&
+                     scene_max[0] > scene_min[0] && scene_max[1] > scene_min[1] &&
+                     scene_max[2] > scene_min[2]);
+    vec3_t scene_corners[8];
+    if (fit_scene)
+        for (int i = 0; i < 8; ++i)
+            scene_corners[i] = (vec3_t){ (i&1)?scene_max[0]:scene_min[0],
+                                         (i&2)?scene_max[1]:scene_min[1],
+                                         (i&4)?scene_max[2]:scene_min[2] };
     vec3_t dir = vec3_normalize_safe((vec3_t){ light_dir[0], light_dir[1],
                                                light_dir[2] }, 1e-6f);
     if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
@@ -115,11 +128,16 @@ void shadow_csm_update(shadow_csm_t *csm, const render_camera_t *camera,
         float tn = (dn - near_p) / range, tf = (df - near_p) / range;
         csm->split_view[c] = df;
 
-        /* Interpolate the frustum edges to this slice's 8 corners, then fit. */
+        /* Interpolate the frustum edges to this slice's 8 corners, then fit --
+         * unless fitting the whole scene, in which case use the scene AABB. */
         vec3_t sc[8];
-        for (int j = 0; j < 4; ++j) {
-            sc[j] = vec3_lerp(corners[j], corners[j + 4], tn);
-            sc[j + 4] = vec3_lerp(corners[j], corners[j + 4], tf);
+        if (fit_scene) {
+            for (int j = 0; j < 8; ++j) sc[j] = scene_corners[j];
+        } else {
+            for (int j = 0; j < 4; ++j) {
+                sc[j] = vec3_lerp(corners[j], corners[j + 4], tn);
+                sc[j + 4] = vec3_lerp(corners[j], corners[j + 4], tf);
+            }
         }
         mat4_t vp;
         float eye3[3], far_plane;
