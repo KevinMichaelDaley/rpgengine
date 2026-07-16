@@ -70,21 +70,20 @@ static const char *CS_SRC =
     "      return u_albedo * direct_at(p+n*0.06, n) / PI; }\n"
     "    t += max(h,0.04); if(t>25.0) break; }\n"
     "  return vec3(0.0); }\n"
-    "void sh_basis(vec3 d, out float y[9]){\n"
-    "  y[0]=0.282094792; y[1]=0.488602512*d.y; y[2]=0.488602512*d.z; y[3]=0.488602512*d.x;\n"
-    "  y[4]=1.092548431*d.x*d.y; y[5]=1.092548431*d.y*d.z; y[6]=0.315391565*(3.0*d.z*d.z-1.0);\n"
-    "  y[7]=1.092548431*d.x*d.z; y[8]=0.546274215*(d.x*d.x-d.y*d.y); }\n"
+    /* Linear SH (band 0 + band 1 = 4 coeffs) -- cheap, ample for diffuse indirect. */
+    "void sh_basis(vec3 d, out float y[4]){\n"
+    "  y[0]=0.282094792; y[1]=0.488602512*d.y; y[2]=0.488602512*d.z; y[3]=0.488602512*d.x; }\n"
     "void main(){ uint gid=gl_GlobalInvocationID.x; if(gid>=uint(u_nprobes)) return;\n"
-    "  vec3 o=ppos[gid].xyz; float sh[27]; for(int k=0;k<27;++k) sh[k]=0.0;\n"
+    "  vec3 o=ppos[gid].xyz; float sh[12]; for(int k=0;k<12;++k) sh[k]=0.0;\n"
     "  float ga=2.399963229728653; float w=4.0*PI/float(u_ncones);\n"
     /* Fibonacci sphere of directions: gather one-bounce indirect over the sphere. */
     "  for(int s=0;s<u_ncones;++s){ float z=1.0-(2.0*float(s)+1.0)/float(u_ncones);\n"
     "    float r=sqrt(max(0.0,1.0-z*z)); float phi=ga*float(s);\n"
     "    vec3 dir=vec3(r*cos(phi), r*sin(phi), z);\n"
     "    vec3 rad=trace(o,dir); if(dot(rad,rad)<=0.0) continue;\n"
-    "    float y[9]; sh_basis(dir,y);\n"
-    "    for(int k=0;k<9;++k){ sh[k]+=rad.r*y[k]*w; sh[9+k]+=rad.g*y[k]*w; sh[18+k]+=rad.b*y[k]*w; } }\n"
-    "  for(int k=0;k<27;++k) psh[gid*27+k]=sh[k]; }\n";
+    "    float y[4]; sh_basis(dir,y);\n"
+    "    for(int k=0;k<4;++k){ sh[k]+=rad.r*y[k]*w; sh[4+k]+=rad.g*y[k]*w; sh[8+k]+=rad.b*y[k]*w; } }\n"
+    "  for(int k=0;k<12;++k) psh[gid*12+k]=sh[k]; }\n";
 
 static GLuint cs_build(void)
 {
@@ -124,7 +123,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_pos);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 27 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 12 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_lights);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)g->max_lights * 4 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_boxes);
@@ -199,7 +198,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glUniform1i(glGetUniformLocation(g->prog, "u_nlights"), (GLint)n_lights);
     glUniform1i(glGetUniformLocation(g->prog, "u_nboxes"), (GLint)nb);
     glUniform1f(glGetUniformLocation(g->prog, "u_soft"), soft_k);
-    glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 32);   /* sphere samples. */
+    glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 8);    /* sphere samples. */
     glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 0.6f); /* assumed bounce albedo. */
 
     /* Bind the resident SDF chunks (one per used slot) + metadata. */
