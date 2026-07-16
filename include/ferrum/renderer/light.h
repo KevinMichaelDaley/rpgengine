@@ -36,6 +36,9 @@ typedef enum render_light_kind {
 #define RENDER_LIGHT_FLAG_BAKED    0x2u
 /** This light casts shadows. */
 #define RENDER_LIGHT_FLAG_SHADOW   0x4u
+/** Contributes to dynamic GI: the SDF-probe runtime gathers this light for the
+ *  dynamic indirect term (in addition to its normal direct lighting). */
+#define RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT 0x8u
 
 /** A scene light. */
 typedef struct render_light {

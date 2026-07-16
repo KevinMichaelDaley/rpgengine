@@ -71,6 +71,14 @@ typedef struct render_forward_config {
                                              CSM fits every cascade to this box so no
                                              caster is clipped (0,0,0..0,0,0 = off). */
     float              shadow_scene_max[3];
+    /** Optional hook called once per forward pass after the PBR program is bound
+     *  and its shadow uniforms are set, so an external system (e.g. the dynamic-
+     *  GI runtime) can bind extra samplers/uniforms for the draw loop. NULL =
+     *  disabled (u_gi_enabled is then forced 0). Keeps GI out of the renderer's
+     *  knowledge while staying inside the forward pass. */
+    void (*material_extra_bind)(void *user, shader_uniform_cache_t *cache,
+                                const shader_program_t *pbr);
+    void  *material_extra_user;
 } render_forward_config_t;
 
 /** Clustered forward+ driver context: the stages, their GL resources, the

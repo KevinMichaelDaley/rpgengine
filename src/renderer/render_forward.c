@@ -126,6 +126,19 @@ static void fwd_forward_submit(void *ud)
         shader_uniform_set_int(&f->cache, &f->pbr, "u_dyn_map", 23);
     }
 
+    /* Dynamic-GI (or other) extra binds: probe samplers on units 24+. When no
+     * hook is set, force the probe path off but still assign the buffer samplers
+     * distinct units so their declarations don't clash. */
+    if (f->cfg.material_extra_bind != NULL) {
+        f->cfg.material_extra_bind(f->cfg.material_extra_user, &f->cache, &f->pbr);
+    } else {
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_gi_enabled", 0);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_pos", 24);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_sh", 25);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_cellstart", 26);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_idx", 27);
+    }
+
     for (uint32_t i = 0; i < s->count; ++i) {
         const render_renderable_t *r = &s->items[i];
         if (r->mesh == NULL)

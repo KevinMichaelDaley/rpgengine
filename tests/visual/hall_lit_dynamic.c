@@ -37,6 +37,7 @@
 #include "ferrum/renderer/render_camera.h"
 #include "ferrum/renderer/render_forward.h"
 #include "ferrum/renderer/render_scene.h"
+#include "ferrum/renderer/gi/gi_runtime.h"
 #include "ferrum/renderer/resource/gpu_cmd_queue.h"
 #include "ferrum/renderer/resource/gpu_executor.h"
 #include "ferrum/renderer/resource/gpu_registry.h"
@@ -406,6 +407,17 @@ static void save_ppm(const char *path,int w,int h){
         printf("screenshot: %s\n",path);} free(rgb);
 }
 
+/* ── Dynamic-light SDF-probe GI demo (rpg-fo9r) ─────────────────────────────
+ * All the GI machinery lives in renderer modules (gi_runtime); this file only
+ * spawns the moving particle lights + dynamic floor boxes and invokes it. */
+static gi_runtime_t g_gi;
+static int g_part_base, g_npart;   /* index range of the particle lights in the store. */
+static gi_collider_t g_boxes[8];   static int g_nboxes;
+static float g_box_home[8][3];     static int g_box_item[8];
+static void gi_bind_cb(void *u, shader_uniform_cache_t *c, const shader_program_t *p){
+    gi_runtime_bind((gi_runtime_t *)u, c, p, 24u);
+}
+
 int main(int argc,char **argv){
     const char *dir = argc>1?argv[1]:"datasets/hall_lm";
     const char *bake = argc>2?argv[2]:"assets/arch/proc/prefabs/bake";
@@ -432,8 +444,8 @@ int main(int argc,char **argv){
     int res_cap = nm_cap + 9 + 8 + 16;
 
     if(SDL_Init(SDL_INIT_VIDEO)!=0) return 1;
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION,4);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3); /* 4.3: compute for GI probes */
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,24);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS,1);   /* MSAA */
@@ -693,12 +705,66 @@ int main(int argc,char **argv){
          * (vaults) and geometry outside the view are never clipped. */
         for(int k=0;k<3;++k){ fcfg.shadow_scene_min[k]=amin[k]-1.0f; fcfg.shadow_scene_max[k]=amax[k]+1.0f; }
     }
+    /* Dynamic-light SDF-probe GI (LM_GI): the runtime binds the probe samplers
+     * into the forward pass via this hook. Set before init so fwd captures it. */
+    int gi_demo = getenv("LM_GI") != NULL;
+    if(gi_demo){ fcfg.material_extra_bind = gi_bind_cb; fcfg.material_extra_user = &g_gi; }
     struct timespec t0_,t1_; clock_gettime(CLOCK_MONOTONIC,&t0_);
     render_forward_t fwd;
     if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
     clock_gettime(CLOCK_MONOTONIC,&t1_);
     fprintf(stderr,"[perf] render_forward_init: %.1f ms\n",
         (t1_.tv_sec-t0_.tv_sec)*1e3+(t1_.tv_nsec-t0_.tv_nsec)*1e-6);
+
+    /* --- Dynamic-GI scene: floor boxes (rendered + injected into the SDF) +
+     * a swarm of moving ceiling particle lights; all GI logic is in gi_runtime. */
+    static static_mesh_t gib[8];
+    if(gi_demo){
+        render_scene_mark_dynamic(&scene);
+        g_nboxes = 4;
+        for(int b=0;b<g_nboxes;++b){
+            float hs=0.4f;
+            static_mesh_create_box(&loader, hs*2.0f, hs*2.0f, hs*2.0f, &gib[b]);
+            float bx = amin[0]+span[0]*(0.30f+0.5f*((float)b/(float)g_nboxes));
+            float bz = cz + ((b&1)?1.6f:-1.6f);
+            g_box_home[b][0]=bx; g_box_home[b][1]=amin[1]+hs+0.02f; g_box_home[b][2]=bz;
+            g_boxes[b].kind=GI_COLLIDER_BOX;
+            g_boxes[b].ext[0]=hs; g_boxes[b].ext[1]=hs; g_boxes[b].ext[2]=hs;
+            g_boxes[b].a[0]=bx; g_boxes[b].a[1]=g_box_home[b][1]; g_boxes[b].a[2]=bz;
+            float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, bx,g_box_home[b][1],bz,1};
+            g_box_item[b]=(int)scene.count;
+            render_scene_add(&scene,&gib[b],&mats[grp[1]],bm);
+        }
+        /* Tiny (< a foot) moving particle POINT lights added to the scene light
+         * store, tagged REALTIME (direct + PCF shadows) | DYNAMIC_INDIRECT (the
+         * probes gather them for the SDF-traced indirect). */
+        g_npart = getenv("GI_NPART")?atoi(getenv("GI_NPART")):4;
+        if(g_npart>256) g_npart=256;
+        g_part_base=(int)lights.count;
+        for(int i=0;i<g_npart;++i){
+            render_light_t pl; memset(&pl,0,sizeof pl); pl.kind=RENDER_LIGHT_POINT;
+            const float *pc=pal[i%6];
+            pl.color[0]=pc[0]; pl.color[1]=pc[1]; pl.color[2]=pc[2];
+            pl.intensity=6.0f; pl.range=2.2f;   /* small local light. */
+            pl.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT;
+            render_light_add(&lights,&pl);
+        }
+        /* Manual adaptive probes for this hall: a coarse set near the vaults +
+         * aisle + side walls (scene-specific -> lives in this invocation). */
+        static const float hall_probes[] = {
+            2.5f,3.6f,-3.0f,  4.5f,3.7f,-3.0f,  6.5f,3.6f,-3.0f,   /* under the vaults */
+            2.5f,1.6f,-3.0f,  4.5f,1.6f,-3.0f,  6.5f,1.6f,-3.0f,   /* mid-aisle */
+            0.6f,2.6f,-0.8f,  8.4f,2.6f,-5.2f,  4.5f,2.6f,-3.0f    /* side walls + centre */
+        };
+        gi_runtime_config_t gc; memset(&gc,0,sizeof gc);
+        gc.loader=&loader; gc.sdf_prefix=lmfile;
+        gc.aabb_min[0]=amin[0]; gc.aabb_min[1]=amin[1]+0.3f; gc.aabb_min[2]=amin[2];
+        gc.aabb_max[0]=amax[0]; gc.aabb_max[1]=amax[1]-0.2f; gc.aabb_max[2]=amax[2];
+        gc.probe_pos_in=hall_probes; gc.n_probe_in=9;
+        gc.grid_cell=4.0f; gc.prepass_w=(W/8>0)?W/8:1; gc.prepass_h=(H/8>0)?H/8:1;
+        gc.max_lights=512; gc.max_boxes=8; gc.soft_k=8.0f;
+        if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
+    }
 
     glViewport(0,0,W,H);
     /* lm_only: run an interactive flythrough so a large baked zone can actually
@@ -772,6 +838,26 @@ int main(int argc,char **argv){
          * and set each mesh's resident layer before the main pass. */
         if(stream) sh_stream_frame(&sstream,&scene,scene.camera.view,scene.camera.proj,mlayer,scene.items,nm,W,H);
         glClearColor(0.02f,0.02f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        if(gi_demo){
+            float ts=(float)frame*0.016f;
+            for(int i=0;i<g_npart;++i){
+                float ph=ts*0.7f + (float)i*0.53f;
+                float jx=(((i*53)%100)/100.0f-0.5f), jz=(((i*29)%100)/100.0f-0.5f);
+                render_light_t *pl=&lights.lights[g_part_base+i];
+                pl->position[0]=cx + span[0]*(0.38f*sinf(ph) + jx*0.7f);
+                pl->position[2]=cz + span[2]*(0.38f*cosf(ph*0.8f) + jz*0.7f);
+                pl->position[1]=amax[1]-0.35f - 0.20f*fabsf(sinf(ph*1.3f));
+            }
+            for(int b=0;b<g_nboxes;++b){
+                float dx=0.6f*sinf(ts*0.5f+(float)b);
+                g_boxes[b].a[0]=g_box_home[b][0]+dx;
+                g_boxes[b].a[1]=g_box_home[b][1]; g_boxes[b].a[2]=g_box_home[b][2];
+                scene.items[g_box_item[b]].model[12]=g_boxes[b].a[0];
+                scene.items[g_box_item[b]].model[14]=g_boxes[b].a[2];
+            }
+            gi_runtime_frame(&g_gi,&scene,scene.camera.view,scene.camera.proj,
+                             g_boxes,(uint32_t)g_nboxes,W,H);
+        }
         render_forward_render(&fwd,&scene);
         if(frame==save_frame) save_ppm(shot,W,H);
         SDL_GL_SwapWindow(win);
