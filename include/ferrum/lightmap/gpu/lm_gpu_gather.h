@@ -91,7 +91,8 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const phys_aabb_t *region, const lm_gpu_field_t *far,
                        const lm_light_t *lights, uint32_t n_lights,
                        const lm_sky_t *sky, float transition, float maxdist,
-                       uint32_t samples, uint32_t bounces, uint32_t seed);
+                       uint32_t samples, uint32_t bounces, uint32_t seed,
+                       const char *sdf_out);
 
 /**
  * @brief Chunked gather (rpg-fzht): partition @p scene_bounds into @p chunk_size
@@ -112,7 +113,7 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
                            float chunk_size, float margin, const lm_light_t *lights,
                            uint32_t n_lights, const lm_sky_t *sky, float transition,
                            float maxdist, uint32_t samples, uint32_t bounces,
-                           uint32_t seed);
+                           uint32_t seed, const char *sdf_prefix);
 
 #ifdef __cplusplus
 }

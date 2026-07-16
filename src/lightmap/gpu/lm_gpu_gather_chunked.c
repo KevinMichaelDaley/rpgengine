@@ -12,6 +12,7 @@
 #include "ferrum/lightmap/gpu/lm_gpu_gather.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "ferrum/lightmap/lm_chunk_svo.h"
@@ -23,7 +24,7 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
                            float chunk_size, float margin, const lm_light_t *lights,
                            uint32_t n_lights, const lm_sky_t *sky, float transition,
                            float maxdist, uint32_t samples, uint32_t bounces,
-                           uint32_t seed)
+                           uint32_t seed, const char *sdf_prefix)
 {
     if (lm == NULL || accum == NULL || scene == NULL)
         return false;
@@ -107,10 +108,19 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
             npc_svo_grid_t csvo;
             if (!lm_chunk_svo_build(scene, nouter, fine_voxel, &csvo)) { ok = false; break; }
 
+            /* Per near-chunk SDF sidecar path (rpg-iudw): <prefix>_cNNN.sdf. */
+            char sdf_path[512];
+            const char *chunk_sdf = NULL;
+            if (sdf_prefix != NULL &&
+                snprintf(sdf_path, sizeof sdf_path, "%s_c%03u.sdf", sdf_prefix, c) <
+                    (int)sizeof sdf_path)
+                chunk_sdf = sdf_path;
+
             lm_lightmap_t sub = { tlux, m, 1 };
             ok = lm_gpu_gather_run(&sub, sacc, &csvo, scene, &nouter,
                                    has_far ? &farfield : NULL, lights, n_lights, sky,
-                                   transition, maxdist, samples, bounces, seed);
+                                   transition, maxdist, samples, bounces, seed,
+                                   chunk_sdf);
             npc_svo_grid_destroy(&csvo);
             if (!ok)
                 break;

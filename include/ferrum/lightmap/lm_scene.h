@@ -81,6 +81,10 @@ typedef struct lm_bake_config {
      *  occluding/bouncing against the WHOLE scene. NULL -> use the scene's own
      *  meshes (the normal single-atlas bake). Borrowed. */
     const struct lm_mesh_scene *geo_scene;
+    /** GPU bake (rpg-iudw): if non-NULL, persist each near chunk's baked SDF to
+     *  "<sdf_out_prefix>_cNNN.sdf" (chunked path) for runtime reuse. Borrowed;
+     *  NULL disables SDF export. */
+    const char *sdf_out_prefix;
 } lm_bake_config_t;
 
 #ifdef __cplusplus

@@ -125,10 +125,23 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
         g_lms[i].indices = g_dm[i].indices; g_lms[i].vert_count = g_dm[i].vert_count;
         g_lms[i].index_count = g_dm[i].index_count;
         g_lms[i].albedo_image = grp_img[grp[i]]; g_lms[i].emissive_image = NULL;
-        /* HALL_FLOOR_GREEN: tint floor reflectance grassy-green so the GI colour-
-         * bleeds onto the columns/vault (diagnostic for indirect colour). */
-        g_lms[i].albedo = (getenv("HALL_FLOOR_GREEN") && strstr(names[i], "floor"))
-                          ? v3(0.12f, 0.72f, 0.10f) : v3(1, 1, 1); /* lush grass */
+        /* Per-mesh reflectance tint (multiplies the albedo texture). Columns +
+         * wall responds are pulled DOWN to a darkened brick-terracotta so they
+         * read like the high-contrast brick walls; the vaults get a slightly
+         * darker terra-cotta; the floor is nudged a touch darker. HALL_FLOOR_GREEN
+         * still overrides the floor for the colour-bleed diagnostic. */
+        vec3_t tint;
+        if (getenv("HALL_FLOOR_GREEN") && strstr(names[i], "floor"))
+            tint = v3(0.12f, 0.72f, 0.10f);                 /* lush grass */
+        else if (strstr(names[i], "col") || strstr(names[i], "resp"))
+            tint = v3(0.60f, 0.38f, 0.30f);                 /* darkened brick terracotta */
+        else if (strstr(names[i], "vault"))
+            tint = v3(0.78f, 0.50f, 0.40f);                 /* darker terra-cotta */
+        else if (strstr(names[i], "floor"))
+            tint = v3(0.82f, 0.80f, 0.78f);                 /* slightly darker */
+        else
+            tint = v3(1.0f, 1.0f, 1.0f);                    /* brick walls: unchanged */
+        g_lms[i].albedo = tint;
         g_lms[i].emissive = v3(0, 0, 0);
         g_lms[i].material = 0;
         uint32_t base_lmres =
@@ -150,7 +163,10 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
                        (bmax[2]-bmin[2])*(bmax[2]-bmin[2]));
 
     memset(&g_sun, 0, sizeof g_sun); g_sun.kind = LM_LIGHT_DIRECTIONAL;
-    g_sun.direction = v3(0.30f, -0.87f, 0.40f); g_sun.color = v3(3.6f, 3.4f, 3.0f); /* down at an angle */
+    /* Low, raking sun (travel dir): shallow elevation (~30 deg) casts a long,
+     * dramatic window shaft, rotated about Y so it also rakes in through the
+     * doorway. Keep in sync with hall_lit_dynamic's fcfg.sun_dir (= -this). */
+    g_sun.direction = v3(0.42f, -0.50f, 0.76f); g_sun.color = v3(5.4f, 5.0f, 4.3f);
     lm_material_t fb = { { 0, 0, 0 }, { 0, 0, 0 } };
     *scene = (lm_mesh_scene_t){ g_lms, (uint32_t)nm, &g_sun, 1, { NULL, 0, fb } };
 
@@ -174,11 +190,13 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
     /* HALL_SKY scales the sky brightness; dim it (e.g. 0.2) so the sun-lit floor's
      * colour bounce dominates the indirect and colour bleed is actually visible. */
     { float sk = getenv("HALL_SKY") ? (float)atof(getenv("HALL_SKY")) : 1.0f;
-      cfg->sky.color = v3(0.55f*sk, 0.68f*sk, 0.95f*sk); }
+      cfg->sky.color = v3(0.78f*sk, 0.94f*sk, 1.28f*sk); } /* brighter sky */
     cfg->gi_batch = getenv("HALL_BATCH") ? (uint32_t)atoi(getenv("HALL_BATCH")) : 64u;
     /* Chunked GPU bake (rpg-fzht): HALL_CHUNK = cubic chunk edge (m), 0 = single
      * region. HALL_CHUNK_MARGIN overlaps chunks so rays resolve across borders. */
     cfg->chunk_size = getenv("HALL_CHUNK") ? (float)atof(getenv("HALL_CHUNK")) : 0.0f;
+    /* Persist each near chunk's baked SDF to "<HALL_SDF>_cNNN.sdf" (rpg-iudw). */
+    cfg->sdf_out_prefix = getenv("HALL_SDF");
     cfg->chunk_margin = getenv("HALL_CHUNK_MARGIN") ? (float)atof(getenv("HALL_CHUNK_MARGIN")) : 2.0f;
 
     printf("baking hall: voxel=%.3fm samples=%u bounces=%u diag=%.2f\n",

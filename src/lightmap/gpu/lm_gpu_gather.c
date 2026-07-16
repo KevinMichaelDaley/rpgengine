@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "ferrum/lightmap/gpu/lm_gpu_pack.h"
+#include "ferrum/lightmap/lm_sdf_file.h"
 
 /* ── GL constants (no glad; headless lib) ── */
 #define GL_COMPUTE_SHADER            0x91B9
@@ -528,7 +529,8 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const phys_aabb_t *region, const lm_gpu_field_t *far,
                        const lm_light_t *lights, uint32_t n_lights,
                        const lm_sky_t *sky, float transition, float maxdist,
-                       uint32_t samples, uint32_t bounces, uint32_t seed) {
+                       uint32_t samples, uint32_t bounces, uint32_t seed,
+                       const char *sdf_out) {
     (void)maxdist;
     if (!g_ready || lm == NULL || accum == NULL || svo == NULL) return false;
     uint32_t nlux = lm->res_u * lm->res_v;
@@ -555,6 +557,21 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
     GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f;
     if (!build_sdf(scene, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel))
         return false;
+
+    /* Persist this chunk's near SDF (rpg-iudw): reuse the field we just built --
+     * read the SSBO back and write the .sdf sidecar. Non-fatal on failure. */
+    if (sdf_out != NULL) {
+        size_t nf = (size_t)dims[0] * (size_t)dims[1] * (size_t)dims[2];
+        float *sd = malloc(nf * sizeof(float));
+        if (sd != NULL) {
+            gl.BindBuffer(GL_SHADER_STORAGE_BUFFER, b_sdf);
+            gl.GetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                                (GLsizeiptr)(nf * sizeof(float)), sd);
+            int32_t d32[3] = { dims[0], dims[1], dims[2] };
+            lm_sdf_save(sdf_out, d32, svoxel, mn, sd);
+            free(sd);
+        }
+    }
 
     /* MEDIUM field: a ~MED_MULT x region box (chunked bakes only), clamped to the
      * scene, 128^3 -> coarser than near since it spans a bigger box. */

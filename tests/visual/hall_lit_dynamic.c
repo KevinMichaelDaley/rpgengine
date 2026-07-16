@@ -657,10 +657,10 @@ int main(int argc,char **argv){
     fcfg.max_lights=MAX_LIGHTS; fcfg.index_capacity=16u*16u*24u*16u;
     fcfg.screen_w=(float)W; fcfg.screen_h=(float)H;
     /* u_sun_dir points TOWARD the sun; the CSM negates it for the travel dir.
-     * Must equal the lightmap bake's sun (hall_bake.c: travel (0.15,-0.42,0.90)),
-     * so to-sun = (-0.15,0.42,-0.90) -- the direct sun + its CSM shadow then line
+     * Must equal the lightmap bake's sun (hall_bake.c: travel (0.42,-0.50,0.76)),
+     * so to-sun = (-0.42,0.50,-0.76) -- the direct sun + its CSM shadow then line
      * up with the baked indirect bounce. */
-    fcfg.sun_dir[0]=-0.30f; fcfg.sun_dir[1]=0.87f; fcfg.sun_dir[2]=-0.40f;
+    fcfg.sun_dir[0]=-0.42f; fcfg.sun_dir[1]=0.50f; fcfg.sun_dir[2]=-0.76f;
     fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* sun already baked into SH */
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
@@ -675,7 +675,7 @@ int main(int argc,char **argv){
          * once + a low-res dynamic map. Sun is NOT baked into the SH here. */
         /* Direct sun -- brighter than the bake radiance so the shafts read
          * strongly over the (reduced) baked indirect fill. */
-        fcfg.sun_color[0]=7.2f; fcfg.sun_color[1]=6.8f; fcfg.sun_color[2]=6.0f;
+        fcfg.sun_color[0]=9.0f; fcfg.sun_color[1]=8.4f; fcfg.sun_color[2]=7.2f;
         /* Small flat ambient so dynamic objects (no baked lightmap) aren't black. */
         fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.15f;
         fcfg.dir_cascades=6; fcfg.dir_static_res=2048; fcfg.dir_dynamic_res=2048;
