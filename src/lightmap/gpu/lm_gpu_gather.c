@@ -16,6 +16,7 @@
 
 #include "ferrum/lightmap/gpu/lm_gpu_pack.h"
 #include "ferrum/lightmap/lm_sdf_file.h"
+#include "ferrum/npc/npc_svo.h"
 
 /* ── GL constants (no glad; headless lib) ── */
 #define GL_COMPUTE_SHADER            0x91B9
@@ -426,10 +427,10 @@ static bool tri_box_overlap(const float bc[3], const float bh[3],
 /* @p out_albedo (nullable): when non-NULL, receives a malloc'd cells*3 planar RGB
  * grid stamped with each surface voxel's mesh diffuse tint (caller frees). Voxels
  * no triangle touches stay 0. Used to colour the GI bounce (v2 SDF sidecar). */
-static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
-                      const float mn[3], const float mx[3], int max_dim,
-                      GLuint *out_sdf, int out_dims[3], float *out_voxel,
-                      float **out_albedo) {
+static bool build_sdf(const lm_mesh_scene_t *scene, const npc_svo_grid_t *svo,
+                      float fine_voxel, const float mn[3], const float mx[3],
+                      int max_dim, GLuint *out_sdf, int out_dims[3],
+                      float *out_voxel, float **out_albedo) {
     float ext[3] = { mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2] };
     float longest = fmaxf(ext[0], fmaxf(ext[1], ext[2]));
     float svoxel = longest / (float)max_dim; if (svoxel < fine_voxel) svoxel = fine_voxel;
@@ -476,11 +477,22 @@ static bool build_sdf(const lm_mesh_scene_t *scene, float fine_voxel,
                                 mn[2]+((float)z+0.5f)*svoxel };
                 if (tri_box_overlap(bc, bh, a, b, c)) {
                     occ[idx] = 1u;
-                    /* Stamp this surface voxel with the mesh's diffuse tint. */
+                    /* Stamp this surface voxel's albedo from the SVO material at the
+                     * voxel centre (the real, texture-averaged diffuse the gather
+                     * uses), falling back to the mesh tint if the SVO has no leaf. */
                     if (alb != NULL) {
-                        alb[idx*3+0] = me->albedo.x;
-                        alb[idx*3+1] = me->albedo.y;
-                        alb[idx*3+2] = me->albedo.z;
+                        float ar = me->albedo.x, ag = me->albedo.y, ab = me->albedo.z;
+                        if (svo != NULL) {
+                            phys_vec3_t qp = { bc[0], bc[1], bc[2] };
+                            uint32_t node = 0u;
+                            uint8_t fl = npc_svo_query_point(svo, qp, &node);
+                            if ((fl & NPC_SVO_FLAG_SOLID) && node < svo->node_count) {
+                                ar = svo->nodes[node].diffuse[0];
+                                ag = svo->nodes[node].diffuse[1];
+                                ab = svo->nodes[node].diffuse[2];
+                            }
+                        }
+                        alb[idx*3+0] = ar; alb[idx*3+1] = ag; alb[idx*3+2] = ab;
                     }
                 }
             }
@@ -528,7 +540,7 @@ bool lm_gpu_field_build(const lm_mesh_scene_t *scene, float fine_voxel,
     float mn[3] = { box->min.x, box->min.y, box->min.z };
     float mx[3] = { box->max.x, box->max.y, box->max.z };
     GLuint buf; int dims[3]; float voxel;
-    if (!build_sdf(scene, fine_voxel, mn, mx, max_dim, &buf, dims, &voxel, NULL)) return false;
+    if (!build_sdf(scene, NULL, fine_voxel, mn, mx, max_dim, &buf, dims, &voxel, NULL)) return false;
     out->buf = (uint32_t)buf;
     out->dims[0]=dims[0]; out->dims[1]=dims[1]; out->dims[2]=dims[2];
     out->origin[0]=mn[0]; out->origin[1]=mn[1]; out->origin[2]=mn[2];
@@ -575,7 +587,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
      * (only needed for the persisted sidecar) so the runtime GI cone-trace can
      * tint its bounce by the static surface colour. */
     GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f; float *near_alb = NULL;
-    if (!build_sdf(scene, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel,
+    if (!build_sdf(scene, svo, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel,
                    sdf_out != NULL ? &near_alb : NULL))
         return false;
 
