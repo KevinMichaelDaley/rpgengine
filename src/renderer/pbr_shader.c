@@ -113,9 +113,12 @@ static const char *const PBR_FS =
     "uniform sampler2DArray u_sh7;\n"
     "uniform sampler2DArray u_sh8;\n"
     "uniform int u_sh_enabled;\n"
-    "uniform int u_sh_layer;\n" /* per-chunk lightmap array layer for this mesh. */
+    /* Per-mesh RESIDENT lightmap array layer (rpg-ojuq streaming): the CPU sets it\n"
+     * each frame to the mesh's chunk's paged-in layer, or -1 when that chunk isn't\n"
+     * resident (-> no baked term this frame). */
+    "uniform int u_sh_layer;\n"
     "uniform float u_sh_scale;\n" /* baked-lightmap intensity multiplier (default 1). */
-    "#define SHUV vec3(v_uv1, float(u_sh_layer))\n"
+    "#define SHUV vec3(v_uv1, float(max(u_sh_layer,0)))\n"
     "uniform float u_sh_object;\n" /* 1 for static (lightmapped) objects, 0 for dynamic. */
     /* Debug visualisation: 0=off, 1=raw SH DC term (coeff0) at v_uv1,
      * 2=reconstructed SH irradiance E(N), 3=lightmap uv1 as colour. */
@@ -344,7 +347,7 @@ static const char *const PBR_FS =
     "  vec3 ambient;\n"
     /* Dynamic objects (u_sh_object=0) are not in the bake -- their uv1 is
      * meaningless, so fall back to the flat ambient instead of the lightmap. */
-    "  if(u_sh_enabled==1 && u_sh_object>0.5){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E*u_sh_scale/PI*ao; }\n"
+    "  if(u_sh_enabled==1 && u_sh_object>0.5 && u_sh_layer>=0){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E*u_sh_scale/PI*ao; }\n"
     "  else { ambient = u_ambient*albedo*ao; }\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"

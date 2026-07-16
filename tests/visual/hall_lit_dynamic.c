@@ -115,6 +115,61 @@ static void finalize_sh(void *ctx, void *user) {
  * <lmfile>_manifest.bin (per-mesh layer+rect) + <lmfile>_c*.flm (one per layer,
  * ascending chunk order). Fills sh_tex[9], per-mesh mrect[nm]+mlayer[nm], array
  * dims. Meshes are in the renderer's sorted-dmesh order = the bake's. */
+/* ── Streaming lightmap residency (rpg-ojuq) ───────────────────────────────
+ * All per-chunk SH coeff images live in host RAM; only the chunks whose geometry
+ * is on-screen (found by a lightmap-index prepass) are paged into a bounded
+ * GL_TEXTURE_2D_ARRAY. A page table maps chunk id -> resident layer (-1 = out). */
+#define SH_MAX_RESIDENT 12
+typedef struct { int w, h; float *coeff[9]; } sh_chunk_ram_t;
+typedef struct {
+    int            n_chunks;
+    uint32_t       aw, ah;                 /* uniform array layer size (max chunk) */
+    sh_chunk_ram_t *ram;                   /* [n_chunks] host-cached coeffs */
+    GLuint         tex[9];                 /* 9 arrays, SH_MAX_RESIDENT layers */
+    int           *page;                   /* [n_chunks] chunk -> layer (-1) */
+    int            slot_chunk[SH_MAX_RESIDENT]; /* layer -> chunk (-1 free) */
+    int            slot_used[SH_MAX_RESIDENT];  /* last frame each slot was needed */
+    int            frame;
+    int            resident;               /* live layer count */
+    /* Lightmap-index prepass: render chunk-id to an R32UI target, read it back. */
+    GLuint         pp_prog, pp_fbo, pp_col, pp_depth;
+    int            pp_w, pp_h;
+    uint32_t      *pp_read;                /* pp_w*pp_h readback buffer */
+    uint8_t       *vis;                    /* [n_chunks] visible-this-frame flags */
+} sh_stream_t;
+
+/* Upload chunk c's 9 coeff images from RAM into array layer `slot`. */
+static void sh_stream_upload(sh_stream_t *s, int c, int slot)
+{
+    const sh_chunk_ram_t *r = &s->ram[c];
+    for (int k = 0; k < 9; ++k) {
+        glActiveTexture(GL_TEXTURE0 + 7u + (GLenum)k);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s->tex[k]);
+        glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, 0, 0, slot,
+                        (GLsizei)r->w, (GLsizei)r->h, 1, GL_RGB, GL_FLOAT, r->coeff[k]);
+    }
+    s->page[c] = slot; s->slot_chunk[slot] = c;
+}
+
+/* Ensure chunk c is resident; page it in (evicting the least-recently-needed
+ * slot if full). Returns its layer, or -1 if it can't be cached. */
+static int sh_stream_touch(sh_stream_t *s, int c)
+{
+    if (c < 0 || c >= s->n_chunks) return -1;
+    if (s->page[c] >= 0) { s->slot_used[s->page[c]] = s->frame; return s->page[c]; }
+    int slot = -1;
+    for (int i = 0; i < SH_MAX_RESIDENT; ++i) if (s->slot_chunk[i] < 0) { slot = i; break; }
+    if (slot < 0) { /* evict the slot needed longest ago */
+        int oldest = s->frame + 1;
+        for (int i = 0; i < SH_MAX_RESIDENT; ++i)
+            if (s->slot_used[i] < oldest) { oldest = s->slot_used[i]; slot = i; }
+        if (s->slot_chunk[slot] >= 0) s->page[s->slot_chunk[slot]] = -1;
+    }
+    sh_stream_upload(s, c, slot);
+    s->slot_used[slot] = s->frame;
+    return slot;
+}
+
 static int load_sh_arrays(const char *lmfile, int perchunk, int nm,
                           GLuint sh_tex[9], lm_atlas_rect_t *mrect, int *mlayer,
                           uint32_t *out_w, uint32_t *out_h)
@@ -183,6 +238,151 @@ static int load_sh_arrays(const char *lmfile, int perchunk, int nm,
     free(buf);
     if (perchunk && L != nlayers) fprintf(stderr, "WARN: loaded %u/%u chunk layers\n", L, nlayers);
     return 0;
+}
+
+/* Load the per-chunk manifest + cache every chunk's coeffs in RAM, and create a
+ * bounded SH texture array (SH_MAX_RESIDENT layers). Fills per-mesh chunk id
+ * (mchunk) + atlas rect (mrect). Returns 0 on success. */
+static int sh_stream_load(sh_stream_t *s, const char *lmfile, int nm,
+                          lm_atlas_rect_t *mrect, int *mchunk)
+{
+    memset(s, 0, sizeof *s);
+    char mp[600]; snprintf(mp, sizeof mp, "%s_manifest.bin", lmfile);
+    FILE *mf = fopen(mp, "rb"); if (!mf) { fprintf(stderr, "no manifest %s\n", mp); return -1; }
+    char mg[4]; uint32_t hdr[4];
+    if (fread(mg,1,4,mf)!=4 || memcmp(mg,"ZLM1",4) || fread(hdr,sizeof hdr,1,mf)!=1) { fclose(mf); return -1; }
+    uint32_t nm_m = hdr[0]; s->n_chunks = (int)hdr[1]; s->aw = hdr[2]; s->ah = hdr[3];
+    for (int i = 0; i < nm; ++i) { mchunk[i] = -1; mrect[i] = (lm_atlas_rect_t){0,0,0,0}; }
+    for (uint32_t i = 0; i < nm_m; ++i) {
+        int32_t L; uint32_t r[4];
+        if (fread(&L,4,1,mf)!=1 || fread(r,4,4,mf)!=4) break;
+        if ((int)i < nm) { mchunk[i] = (int)L; mrect[i] = (lm_atlas_rect_t){ r[2], r[3], r[0], r[1] }; }
+    }
+    fclose(mf);
+
+    s->ram = calloc((size_t)s->n_chunks, sizeof *s->ram);
+    s->page = malloc((size_t)s->n_chunks * sizeof(int));
+    s->vis = calloc((size_t)s->n_chunks, 1);
+    if (!s->ram || !s->page || !s->vis) return -1;
+    for (int c = 0; c < s->n_chunks; ++c) s->page[c] = -1;
+    for (int i = 0; i < SH_MAX_RESIDENT; ++i) { s->slot_chunk[i] = -1; s->slot_used[i] = -1; }
+
+    /* Cache each chunk's 9 coeff images in host RAM. */
+    int loaded = 0;
+    for (uint32_t cc = 0; cc < 100000u && loaded < s->n_chunks; ++cc) {
+        char path[600]; snprintf(path, sizeof path, "%s_c%03u.flm", lmfile, cc);
+        FILE *lf = fopen(path, "rb"); if (!lf) continue;
+        char m2[4]; uint32_t caw, cah, nc, nmh;
+        if (fread(m2,1,4,lf)!=4 || memcmp(m2,"FLM1",4) || fread(&caw,4,1,lf)!=1 ||
+            fread(&cah,4,1,lf)!=1 || fread(&nc,4,1,lf)!=1 || fread(&nmh,4,1,lf)!=1) { fclose(lf); continue; }
+        sh_chunk_ram_t *r = &s->ram[loaded]; r->w = (int)caw; r->h = (int)cah;
+        size_t cpix = (size_t)caw * cah * 3;
+        for (int k = 0; k < 9; ++k) {
+            r->coeff[k] = malloc(cpix * sizeof(float));
+            if (!r->coeff[k] || fread(r->coeff[k], sizeof(float), cpix, lf) != cpix) { fclose(lf); return -1; }
+        }
+        fclose(lf); ++loaded;
+    }
+    s->n_chunks = loaded;
+
+    for (int k = 0; k < 9; ++k) {
+        glGenTextures(1, &s->tex[k]);
+        glActiveTexture(GL_TEXTURE0 + 7u + (GLenum)k);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, s->tex[k]);
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGB32F, (GLsizei)s->aw, (GLsizei)s->ah,
+                     SH_MAX_RESIDENT, 0, GL_RGB, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    fprintf(stderr, "sh_stream: %d chunks cached in RAM, %d resident layers, array %ux%u\n",
+            s->n_chunks, SH_MAX_RESIDENT, s->aw, s->ah);
+    return 0;
+}
+
+static GLuint sh_pp_compile(const char *vs, const char *fs)
+{
+    GLuint v = glCreateShader(GL_VERTEX_SHADER), f = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(v,1,&vs,NULL); glCompileShader(v);
+    glShaderSource(f,1,&fs,NULL); glCompileShader(f);
+    GLint ok; glGetShaderiv(f,GL_COMPILE_STATUS,&ok);
+    if(!ok){ char log[1024]; glGetShaderInfoLog(f,sizeof log,NULL,log); fprintf(stderr,"pp fs: %s\n",log); }
+    GLuint p = glCreateProgram(); glAttachShader(p,v); glAttachShader(p,f); glLinkProgram(p);
+    glDeleteShader(v); glDeleteShader(f); return p;
+}
+
+/* Create the lightmap-index prepass: an R32UI colour target the fragment writes
+ * its chunk id (+1) into, so a readback yields the on-screen chunk set. */
+static void sh_stream_prepass_init(sh_stream_t *s, int w, int h)
+{
+    s->pp_w = w; s->pp_h = h;
+    s->pp_read = malloc((size_t)w * h * sizeof(uint32_t));
+    glGenTextures(1, &s->pp_col);
+    glBindTexture(GL_TEXTURE_2D, s->pp_col);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R32UI, w, h, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glGenRenderbuffers(1, &s->pp_depth);
+    glBindRenderbuffer(GL_RENDERBUFFER, s->pp_depth);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    glGenFramebuffers(1, &s->pp_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, s->pp_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s->pp_col, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, s->pp_depth);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    s->pp_prog = sh_pp_compile(
+        "#version 330 core\nlayout(location=0) in vec3 p;\nuniform mat4 u_mvp;\n"
+        "void main(){ gl_Position = u_mvp * vec4(p,1.0); }\n",
+        "#version 330 core\nout uint o;\nuniform uint u_chunk;\n"
+        "void main(){ o = u_chunk + 1u; }\n");
+}
+
+/* Per frame: render the chunk-id prepass, read back the visible chunk set, page
+ * those chunks into the bounded array, and set each mesh's resident layer. */
+static void sh_stream_frame(sh_stream_t *s, const render_scene_t *scene,
+                            const float view[16], const float proj[16],
+                            const int *mchunk, render_renderable_t *items, int nm,
+                            int main_w, int main_h)
+{
+    ++s->frame;
+    /* vp = proj * view (column-major). */
+    float vp[16];
+    for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r) {
+        float sum = 0; for (int k = 0; k < 4; ++k) sum += proj[k*4+r] * view[c*4+k];
+        vp[c*4+r] = sum;
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, s->pp_fbo);
+    glViewport(0, 0, s->pp_w, s->pp_h);
+    GLuint zero[4] = {0,0,0,0}; glClearBufferuiv(GL_COLOR, 0, zero);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LESS); glDisable(GL_CULL_FACE);
+    glUseProgram(s->pp_prog);
+    glUniformMatrix4fv(glGetUniformLocation(s->pp_prog,"u_mvp"), 1, GL_FALSE, vp);
+    GLint u_chunk = glGetUniformLocation(s->pp_prog, "u_chunk");
+    for (uint32_t i = 0; i < scene->count; ++i) {
+        const render_renderable_t *r = &scene->items[i];
+        if (!r->mesh || (int)i >= nm || mchunk[i] < 0) continue;
+        glUniform1ui(u_chunk, (GLuint)mchunk[i]);
+        static_mesh_bind(r->mesh);
+        for (uint32_t sm = 0; sm < r->mesh->submesh_count; ++sm)
+            static_mesh_draw_submesh(r->mesh, sm);
+    }
+    /* Read back the chunk-id image and mark visible chunks. */
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glReadPixels(0, 0, s->pp_w, s->pp_h, GL_RED_INTEGER, GL_UNSIGNED_INT, s->pp_read);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, main_w, main_h);
+
+    memset(s->vis, 0, (size_t)s->n_chunks);
+    for (int p = 0; p < s->pp_w * s->pp_h; ++p) {
+        uint32_t v = s->pp_read[p];
+        if (v > 0 && (int)(v-1) < s->n_chunks) s->vis[v-1] = 1;
+    }
+    for (int c = 0; c < s->n_chunks; ++c) if (s->vis[c]) sh_stream_touch(s, c);
+    /* Set each mesh's resident layer (or -1 if its chunk isn't paged in). */
+    for (int i = 0; i < nm; ++i)
+        items[i].sh_layer = (mchunk[i] >= 0 && mchunk[i] < s->n_chunks) ? s->page[mchunk[i]] : -1;
 }
 
 #ifndef M_PI
@@ -284,16 +484,25 @@ int main(int argc,char **argv){
      * atlas (1 layer) or per-chunk (LM_PERCHUNK: <lmfile>_manifest.bin +
      * <lmfile>_c*.flm, one layer per chunk). Each mesh carries its page layer. */
     int perchunk = getenv("LM_PERCHUNK") != NULL;
+    /* LM_STREAM (rpg-ojuq): keep all chunks in RAM and page only visible ones into
+     * a bounded array via a lightmap-index prepass. Implies per-chunk. */
+    int stream = getenv("LM_STREAM") != NULL;
     GLuint sh_tex[9]={0};
     lm_atlas_rect_t *mrect = calloc((size_t)nm, sizeof *mrect);
-    int *mlayer = calloc((size_t)nm, sizeof *mlayer);
+    int *mlayer = calloc((size_t)nm, sizeof *mlayer);   /* stream: mesh chunk id */
     uint32_t atlas_w=0, atlas_h=0;
+    static sh_stream_t sstream;
     if(!mrect||!mlayer){ fprintf(stderr,"oom lightmap tables\n"); return 1; }
-    if(load_sh_arrays(lmfile, perchunk, nm, sh_tex, mrect, mlayer, &atlas_w, &atlas_h)!=0){
+    if(stream){
+        if(sh_stream_load(&sstream, lmfile, nm, mrect, mlayer)!=0){
+            fprintf(stderr,"stream lightmap load failed (%s)\n", lmfile); return 1; }
+        for(int c=0;c<9;++c) sh_tex[c]=sstream.tex[c];
+        atlas_w=sstream.aw; atlas_h=sstream.ah;
+    } else if(load_sh_arrays(lmfile, perchunk, nm, sh_tex, mrect, mlayer, &atlas_w, &atlas_h)!=0){
         fprintf(stderr,"lightmap load failed (%s%s)\n", lmfile, perchunk?" [per-chunk]":"");
         return 1;
     }
-    printf("lightmap array %ux%u (%s)\n", atlas_w, atlas_h, perchunk?"per-chunk":"single");
+    printf("lightmap array %ux%u (%s)\n", atlas_w, atlas_h, stream?"streaming":(perchunk?"per-chunk":"single"));
 
     /* --- Build static meshes: uv1 remapped into each mesh's atlas rect. --- */
     float amin[3]={1e30f,1e30f,1e30f},amax[3]={-1e30f,-1e30f,-1e30f};
@@ -412,7 +621,7 @@ int main(int argc,char **argv){
     render_scene_t scene; render_scene_init(&scene,rb,nm_cap);
     float model[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     for(int i=0;i<nm;++i){ render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
-        scene.items[i].sh_layer = mlayer[i]; }  /* per-chunk lightmap page */
+        scene.items[i].sh_layer = stream ? -1 : mlayer[i]; }  /* stream: set per frame */
     /* A dynamic caster: everything above is static (baked once); the box below is
      * re-shadowed every frame, so the CSM co-samples static wall + moving box. */
     static_mesh_t box; int box_idx=-1;
@@ -476,6 +685,7 @@ int main(int argc,char **argv){
     int save_frame=csm_demo?30:(lm_only?140:(nframes-2));
     struct timespec win_t0; clock_gettime(CLOCK_MONOTONIC,&win_t0);
     int win_frames=0;                    /* frames since the last per-second report. */
+    if(stream) sh_stream_prepass_init(&sstream, W/4>0?W/4:1, H/4>0?H/4:1);
     for(int frame=0;frame<nframes;++frame){
         if(lm_only){
             /* Smooth ping-pong dolly down the colonnade, looking in the travel
@@ -509,6 +719,9 @@ int main(int argc,char **argv){
             m[12+cax]=amin[cax]+0.20f*span[cax];               /* just inside the sun-side wall. */
             m[12+lenax]=amin[lenax]+span[lenax]*t;             /* sweep past the windows. */
         }
+        /* Stream: page in the chunks visible this frame (lightmap-index prepass)
+         * and set each mesh's resident layer before the main pass. */
+        if(stream) sh_stream_frame(&sstream,&scene,scene.camera.view,scene.camera.proj,mlayer,scene.items,nm,W,H);
         glClearColor(0.02f,0.02f,0.03f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         render_forward_render(&fwd,&scene);
         if(frame==save_frame) save_ppm(shot,W,H);
