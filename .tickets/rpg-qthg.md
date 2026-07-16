@@ -19,3 +19,7 @@ Probes have EXPLICIT stored positions (adaptive placement, NOT a grid). Storage:
 **2026-07-16T06:52:49Z**
 
 Storage + lookup accel done (TDD, gi_probe_tests pass): gi_probe_set (adaptive probes over caller backing -- pos[3*cap] + sh[27*cap], add/reset) and gi_probe_grid (uniform CSR bin grid over an AABB: build counting-sort, cell(), gather() over the query cell + 26 neighbours, cap-respecting). Pure CPU, uploads as SSBOs. REMAINING for this ticket: adaptive placement/seeding of probe positions (near surfaces/play space) -- will add when wiring the demo/kernel.
+
+**2026-07-16T07:10:37Z**
+
+Placement seeder added (gi_probe_seed_box, TDD): fills a box with probes at a spacing lattice's cell centres, appends to the set, stops at capacity. Full probe CPU foundation now done (set + grid + placement, all tests green). Epic-level GPU end-to-end still open per rpg-cyx1.

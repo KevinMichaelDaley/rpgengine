@@ -111,3 +111,35 @@ void cluster_grid_build(cluster_grid_t *grid, const render_camera_t *camera,
         }
     }
 }
+
+void cluster_grid_build_points(cluster_grid_t *grid, const render_camera_t *camera,
+                               const float *positions, uint32_t n_points,
+                               float radius)
+{
+    if (grid == NULL || camera == NULL || grid->offsets == NULL) {
+        return;
+    }
+    float r2 = radius * radius;
+    grid->index_count = 0u;
+    for (uint32_t s = 0; s < grid->config.slices; ++s) {
+        for (uint32_t ty = 0; ty < grid->config.tiles_y; ++ty) {
+            for (uint32_t tx = 0; tx < grid->config.tiles_x; ++tx) {
+                uint32_t ci = cluster_grid_index(grid, tx, ty, s);
+                float lo[3], hi[3];
+                cluster_aabb(grid, camera, tx, ty, s, lo, hi);
+                grid->offsets[ci] = grid->index_count;
+                uint32_t count = 0u;
+                for (uint32_t p = 0; p < n_points; ++p) {
+                    float vp[3];
+                    view_transform(camera->view, &positions[p * 3], vp);
+                    if (aabb_point_dist2(lo, hi, vp) <= r2 &&
+                        grid->index_count < grid->index_capacity) {
+                        grid->indices[grid->index_count++] = p;
+                        ++count;
+                    }
+                }
+                grid->counts[ci] = count;
+            }
+        }
+    }
+}

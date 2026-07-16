@@ -95,6 +95,41 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     glGenTextures(1, &gi->tbo_pi_tex); glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_pi_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gi->tbo_pi);
 
+    /* --- Probe froxel grid: bins probes into the SAME clusters the forward+
+     * lights use (config MUST match fcfg.cluster), so the material samples probe
+     * candidates from the fragment's own froxel via the forward+ cluster uniforms. */
+    gi->probe_radius = cfg->probe_radius > 0.0f ? cfg->probe_radius : cell;
+    gi->bin_interval = cfg->bin_interval > 0 ? cfg->bin_interval : 1;
+    {
+        cluster_config_t fc = cfg->froxel;
+        if (fc.tiles_x == 0) fc = (cluster_config_t){ 16, 16, 24, 0.2f, 60.0f };
+        uint32_t ctot = fc.tiles_x * fc.tiles_y * fc.slices;
+        uint32_t per = gi->probes.count < 64u ? gi->probes.count : 64u;
+        uint32_t icap = ctot * (per < 1u ? 1u : per);
+        gi->fx_off = malloc((size_t)ctot * sizeof(uint32_t));
+        gi->fx_cnt = malloc((size_t)ctot * sizeof(uint32_t));
+        gi->fx_idx = malloc((size_t)icap * sizeof(uint32_t));
+        if (gi->fx_off == NULL || gi->fx_cnt == NULL || gi->fx_idx == NULL) {
+            gi_runtime_destroy(gi); return false;
+        }
+        cluster_grid_init(&gi->froxel, fc, gi->fx_off, gi->fx_cnt, gi->fx_idx, icap);
+        glGenBuffers(1, &gi->tbo_fo); glGenTextures(1, &gi->tbo_fo_tex);
+        glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fo);
+        glBufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)ctot * sizeof(uint32_t), NULL, GL_DYNAMIC_DRAW);
+        glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fo_tex);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gi->tbo_fo);
+        glGenBuffers(1, &gi->tbo_fc); glGenTextures(1, &gi->tbo_fc_tex);
+        glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fc);
+        glBufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)ctot * sizeof(uint32_t), NULL, GL_DYNAMIC_DRAW);
+        glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fc_tex);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gi->tbo_fc);
+        glGenBuffers(1, &gi->tbo_fi); glGenTextures(1, &gi->tbo_fi_tex);
+        glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fi);
+        glBufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)icap * sizeof(uint32_t), NULL, GL_DYNAMIC_DRAW);
+        glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fi_tex);
+        glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gi->tbo_fi);
+    }
+
     /* --- SDF vis prepass. --- */
     if (gi_vis_prepass_init(&gi->pp, cfg->prepass_w > 0 ? cfg->prepass_w : 240,
                             cfg->prepass_h > 0 ? cfg->prepass_h : 135,
@@ -113,6 +148,27 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
                       int main_w, int main_h)
 {
     if (gi == NULL || !gi->ready || scene == NULL) return;
+
+    /* Re-bin probes into the forward+ froxels. Camera-dependent, so this runs
+     * independently of the (slower) probe-SH update below; probes are not static,
+     * and the froxel assignment tracks both moving probes and the moving camera.
+     * bin_interval lets it skip frames when the view barely changes. */
+    if (gi->frame_counter % gi->bin_interval == 0) {
+        render_camera_t cam;
+        memset(&cam, 0, sizeof cam);
+        for (int i = 0; i < 16; ++i) { cam.view[i] = view[i]; cam.proj[i] = proj[i]; }
+        cluster_grid_build_points(&gi->froxel, &cam, gi->probe_pos,
+                                  gi->probes.count, gi->probe_radius);
+        uint32_t ctot = gi->froxel.cluster_total;
+        uint32_t nidx = gi->froxel.index_count > 0 ? gi->froxel.index_count : 1u;
+        glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fo);
+        glBufferSubData(GL_TEXTURE_BUFFER, 0, (GLsizeiptr)ctot * sizeof(uint32_t), gi->fx_off);
+        glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fc);
+        glBufferSubData(GL_TEXTURE_BUFFER, 0, (GLsizeiptr)ctot * sizeof(uint32_t), gi->fx_cnt);
+        glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fi);
+        glBufferSubData(GL_TEXTURE_BUFFER, 0, (GLsizeiptr)nidx * sizeof(uint32_t), gi->fx_idx);
+    }
+
     /* GI is low-frequency: recompute only every update_interval frames. Between
      * updates the probe SH persists in its buffer and the forward+ keeps sampling
      * it, so the indirect just lags slightly (imperceptible for slow lights). */
@@ -151,16 +207,16 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_probe_pos", (int32_t)u); ++u;
     glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->gpu.tbo_sh_tex);
     shader_uniform_set_int(cache, program, "u_probe_sh", (int32_t)u); ++u;
-    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_cs_tex);
-    shader_uniform_set_int(cache, program, "u_probe_cellstart", (int32_t)u); ++u;
-    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_pi_tex);
-    shader_uniform_set_int(cache, program, "u_probe_idx", (int32_t)u); ++u;
+    /* Probe froxel lists (same clusters as the forward+ lights). The shader
+     * recomputes the fragment's cluster from the forward+ cluster uniforms and
+     * reads its probe candidates from these. */
+    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fo_tex);
+    shader_uniform_set_int(cache, program, "u_probe_froxel_off", (int32_t)u); ++u;
+    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fc_tex);
+    shader_uniform_set_int(cache, program, "u_probe_froxel_cnt", (int32_t)u); ++u;
+    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fi_tex);
+    shader_uniform_set_int(cache, program, "u_probe_froxel_idx", (int32_t)u); ++u;
 
-    float origin[3] = { gi->grid.origin[0], gi->grid.origin[1], gi->grid.origin[2] };
-    float dims[3] = { (float)gi->grid.dims[0], (float)gi->grid.dims[1], (float)gi->grid.dims[2] };
-    shader_uniform_set_vec3(cache, program, "u_probe_grid_origin", origin);
-    shader_uniform_set_float(cache, program, "u_probe_grid_cell", gi->grid.cell_size);
-    shader_uniform_set_vec3(cache, program, "u_probe_grid_dims", dims);
     shader_uniform_set_int(cache, program, "u_gi_enabled", 1);
 }
 
@@ -174,6 +230,13 @@ void gi_runtime_destroy(gi_runtime_t *gi)
     if (gi->tbo_cs_tex) glDeleteTextures(1, &gi->tbo_cs_tex);
     if (gi->tbo_pi) glDeleteBuffers(1, &gi->tbo_pi);
     if (gi->tbo_pi_tex) glDeleteTextures(1, &gi->tbo_pi_tex);
+    if (gi->tbo_fo) glDeleteBuffers(1, &gi->tbo_fo);
+    if (gi->tbo_fo_tex) glDeleteTextures(1, &gi->tbo_fo_tex);
+    if (gi->tbo_fc) glDeleteBuffers(1, &gi->tbo_fc);
+    if (gi->tbo_fc_tex) glDeleteTextures(1, &gi->tbo_fc_tex);
+    if (gi->tbo_fi) glDeleteBuffers(1, &gi->tbo_fi);
+    if (gi->tbo_fi_tex) glDeleteTextures(1, &gi->tbo_fi_tex);
+    free(gi->fx_off); free(gi->fx_cnt); free(gi->fx_idx);
     free(gi->probe_pos); free(gi->probe_sh);
     free(gi->cell_start); free(gi->probe_idx);
     free(gi->light_scratch);

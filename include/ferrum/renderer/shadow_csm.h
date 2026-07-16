@@ -65,6 +65,8 @@ typedef struct shadow_csm_config {
                                      *   keeps texels fine over the shadowed range. */
     float              softness;    /**< sun-penumbra mip LOD bias for the EVSM
                                      *   sample (0 = crisp; ~2-3 = soft). */
+    bool               pcss;        /**< true = variable-width PCSS penumbra;
+                                     *   false (default) = cheaper fixed-width PCF. */
 } shadow_csm_config_t;
 
 /** Shadow-map state: the static EVSM2 cascade array + a single low-res
@@ -78,6 +80,7 @@ typedef struct shadow_csm {
     float    lambda;
     float    max_distance; /**< far-split cap (0 = camera far). */
     float    softness;     /**< sun-penumbra EVSM mip LOD bias. */
+    bool     pcss;         /**< variable-width PCSS (true) vs fixed-width PCF (false). */
 
     gpu_registry_t registry;      /**< tracks shadow depth targets as GPU resources. */
     shadow_atlas_t static_atlas;  /**< high-res EVSM2 cascade array (slotmap-managed). */

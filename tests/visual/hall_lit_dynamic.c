@@ -665,6 +665,9 @@ int main(int argc,char **argv){
 
     /* --- Driver: forward+ with the baked SH lightmap enabled. --- */
     render_forward_config_t fcfg; memset(&fcfg,0,sizeof fcfg);
+    /* GI_DIM: crush the lightmap/sun/sconces to almost nothing so the dynamic
+     * point light and its cube shadow are the only thing lighting the scene. */
+    float gdim = getenv("GI_DIM") ? 0.04f : 1.0f;
     fcfg.loader=&loader; fcfg.cluster=(cluster_config_t){16,16,24,0.2f,60.0f};
     fcfg.max_lights=MAX_LIGHTS; fcfg.index_capacity=16u*16u*24u*16u;
     fcfg.screen_w=(float)W; fcfg.screen_h=(float)H;
@@ -677,9 +680,9 @@ int main(int argc,char **argv){
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
      * direct sun + its CSM shadows. */
-    fcfg.sh_enabled=(shadow_only||spot_only)?0:1; fcfg.sh_scale=lm_only?1.0f:(csm_demo?0.5f:0.4f); for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=(shadow_only||spot_only)?0:1; fcfg.sh_scale=(lm_only?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=-1; /* multi-light path: point lights tagged FLAG_SHADOW cast. */
-    fcfg.shadow_max=8; fcfg.shadow_res=512; fcfg.shadow_near=0.1f;
+    fcfg.shadow_max=8; fcfg.shadow_res=256; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
     fcfg.spot_light=1; fcfg.spot_res=1024; fcfg.spot_near=0.05f;
     fcfg.spot_far=hall_len*1.5f; fcfg.spot_bias=0.05f;
@@ -688,10 +691,11 @@ int main(int argc,char **argv){
          * once + a low-res dynamic map. Sun is NOT baked into the SH here. */
         /* Direct sun -- brighter than the bake radiance so the shafts read
          * strongly over the (reduced) baked indirect fill. */
-        fcfg.sun_color[0]=9.0f; fcfg.sun_color[1]=8.4f; fcfg.sun_color[2]=7.2f;
-        /* Small flat ambient so dynamic objects (no baked lightmap) aren't black. */
-        fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.15f;
-        fcfg.dir_cascades=3; fcfg.dir_static_res=2048; fcfg.dir_dynamic_res=2048;
+        fcfg.sun_color[0]=9.0f*gdim; fcfg.sun_color[1]=8.4f*gdim; fcfg.sun_color[2]=7.2f*gdim;
+        /* No flat ambient: indirect comes entirely from the baked lightmap SH and
+         * the dynamic SDF probes. A constant fill only flattens/washes the scene. */
+        fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
+        fcfg.dir_cascades=2; fcfg.dir_static_res=2048; fcfg.dir_dynamic_res=2048;
         fcfg.dir_lambda=0.6f;
         /* PCSS depth-compare bias in metres (DIR_BIAS env, default 5cm). */
         fcfg.dir_bias=getenv("DIR_BIAS")?(float)atof(getenv("DIR_BIAS")):0.05f;
@@ -699,6 +703,9 @@ int main(int argc,char **argv){
          * occluder->receiver gap times this, mapped per-cascade to a mip LOD via
          * the cascade texel size (world-aligned). CSM_SOFT env, default 0.7m. */
         fcfg.dir_softness=getenv("CSM_SOFT")?(float)atof(getenv("CSM_SOFT")):0.7f;
+        /* Fixed-width PCF by default (one shadow pass); CSM_PCSS=1 opts into the
+         * costlier variable-width blocker-search penumbra. */
+        fcfg.dir_pcss=getenv("CSM_PCSS")!=NULL;
         /* Slice the WHOLE view frustum (to the far clip) into the fixed cascade
          * count; 0 = use the camera far plane rather than a fixed cap. */
         fcfg.dir_max_distance=0.0f;
@@ -709,7 +716,12 @@ int main(int argc,char **argv){
     /* Dynamic-light SDF-probe GI (LM_GI): the runtime binds the probe samplers
      * into the forward pass via this hook. Set before init so fwd captures it. */
     int gi_demo = getenv("LM_GI") != NULL;
+    int ptonly = gi_demo && getenv("GI_PTONLY")!=NULL; /* isolate the point-light cube shadow. */
     if(gi_demo){ fcfg.material_extra_bind = gi_bind_cb; fcfg.material_extra_user = &g_gi; }
+    if(ptonly){ /* kill the sun + baked lightmap so only the point light lights the scene. */
+        fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f;
+        fcfg.sh_enabled=0; fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
+    }
     struct timespec t0_,t1_; clock_gettime(CLOCK_MONOTONIC,&t0_);
     render_forward_t fwd;
     if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
@@ -741,7 +753,7 @@ int main(int argc,char **argv){
          * cube shadow) | DYNAMIC_INDIRECT (probes gather them for SDF-traced GI). */
         g_npart = 2; g_part_base=(int)lights.count;
         { render_light_t a; memset(&a,0,sizeof a); a.kind=RENDER_LIGHT_SPOT;
-          a.color[0]=1.0f; a.color[1]=0.46f; a.color[2]=0.12f; a.intensity=20.0f; a.range=4.0f;
+          a.color[0]=1.0f; a.color[1]=0.46f; a.color[2]=0.12f; a.intensity=(ptonly?0.0f:13.0f)*gdim; a.range=4.0f;
           a.cos_inner=cosf(0.55f); a.cos_outer=cosf(0.95f);
           a.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_SHADOW;
           /* Sconces sit ON the central pillar's surface (shaft ~0.4m), halfway up,
@@ -755,6 +767,17 @@ int main(int argc,char **argv){
           render_light_t b=a; b.position[0]=pcx-prad; b.position[2]=pcz;
           b.direction[0]=-0.45f; b.direction[1]=1.0f; b.direction[2]=0.0f;
           render_light_add(&lights,&b); }
+        /* A shadow-casting POINT light (blue) in the aisle -- exercises the full
+         * omnidirectional cube shadow (spots only use part of it). Always on. */
+        { render_light_t pt; memset(&pt,0,sizeof pt); pt.kind=RENDER_LIGHT_POINT;
+          pt.color[0]=0.5f; pt.color[1]=0.7f; pt.color[2]=1.0f;
+          pt.intensity=ptonly?26.0f:6.0f; pt.range=7.0f;
+          /* Mid-aisle, in clear view: lights the central column + floor + boxes and
+           * casts its omnidirectional shadow. */
+          pt.position[0]=4.7f; pt.position[1]=amin[1]+1.7f; pt.position[2]=cz-1.2f;
+          pt.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT;
+          if(!getenv("GI_NOSHADOW")) pt.flags|=RENDER_LIGHT_FLAG_SHADOW;
+          render_light_add(&lights,&pt); }
         /* Manual adaptive probes for this hall: a coarse set near the vaults +
          * aisle + side walls (scene-specific -> lives in this invocation). */
         static const float hall_probes[] = {
@@ -769,6 +792,9 @@ int main(int argc,char **argv){
         gc.probe_pos_in=hall_probes; gc.n_probe_in=9;
         gc.grid_cell=4.0f; gc.prepass_w=(W/8>0)?W/8:1; gc.prepass_h=(H/8>0)?H/8:1;
         gc.max_lights=512; gc.max_boxes=8; gc.soft_k=8.0f;
+        /* Bin probes into the SAME froxels as forward+ (identical cluster config)
+         * so the material reads probe candidates from the fragment's own cluster. */
+        gc.froxel=fcfg.cluster; gc.probe_radius=4.0f; gc.bin_interval=1;
         if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
     }
 
@@ -848,8 +874,10 @@ int main(int argc,char **argv){
             float ts=(float)frame*0.016f;
             /* Flicker the two spots in/out on a slow, offset sinusoid (direct AND
              * the SDF-probe indirect follow, since the probes re-read intensity). */
-            lights.lights[g_part_base+0].intensity = 20.0f*(0.5f+0.5f*sinf(ts*0.45f));
-            lights.lights[g_part_base+1].intensity = 20.0f*(0.5f+0.5f*sinf(ts*0.45f+2.4f));
+            if(!ptonly){
+              lights.lights[g_part_base+0].intensity = 13.0f*gdim*(0.5f+0.5f*sinf(ts*0.45f));
+              lights.lights[g_part_base+1].intensity = 13.0f*gdim*(0.5f+0.5f*sinf(ts*0.45f+2.4f));
+            }
             for(int b=0;b<g_nboxes;++b){
                 float dx=0.6f*sinf(ts*0.5f+(float)b);
                 g_boxes[b].a[0]=g_box_home[b][0]+dx;
@@ -862,6 +890,29 @@ int main(int argc,char **argv){
         }
         render_forward_render(&fwd,&scene);
         if(frame==save_frame) save_ppm(shot,W,H);
+        if(frame==save_frame && getenv("GI_DUMP")){
+            #ifndef GL_TEXTURE_CUBE_MAP_ARRAY
+            #define GL_TEXTURE_CUBE_MAP_ARRAY 0x9009
+            #endif
+            int R=(int)fwd.shadow.resolution, ML=(int)fwd.shadow.max_lights; size_t nf=(size_t)R*R;
+            float *cb=malloc(nf*6*(size_t)ML*sizeof(float));
+            glBindTexture(GL_TEXTURE_CUBE_MAP_ARRAY, fwd.shadow.cube);
+            glGetTexImage(GL_TEXTURE_CUBE_MAP_ARRAY,0,GL_RED,GL_FLOAT,cb);
+            double sum=0; for(size_t k=0;k<nf*6;++k) sum+=cb[k];
+            for(int f=0;f<6;++f){ char p[128]; snprintf(p,sizeof p,"bake_out/ptshadow_face%d.pgm",f);
+                FILE*fp=fopen(p,"wb"); if(fp){ fprintf(fp,"P5\n%d %d\n255\n",R,R);
+                    float*L=cb+(size_t)f*nf;
+                    for(int y=R-1;y>=0;--y)for(int x=0;x<R;++x){float d=L[(size_t)y*R+x];int v=(int)(d*255.0f);v=v<0?0:v>255?255:v;unsigned char b=(unsigned char)v;fwrite(&b,1,1,fp);} fclose(fp);} }
+            free(cb);
+            fprintf(stderr,"GI_DUMP: slot0 6 faces written; mean cube val=%.4f\n", sum/(double)(nf*6));
+            fprintf(stderr,"clusters: total=%u index_count=%u index_cap=%u\n",
+                fwd.clusters.cluster_total, fwd.clusters.index_count, fwd.clusters.index_capacity);
+            fprintf(stderr,"lights.count=%u\n",lights.count);
+            for(uint32_t li=0;li<lights.count;++li)
+                fprintf(stderr,"  light %u kind=%d flags=0x%x slot=%d pos=(%.1f,%.1f,%.1f) int=%.1f\n",
+                    li,lights.lights[li].kind,lights.lights[li].flags,fwd.shadow_slot?fwd.shadow_slot[li]:-99,
+                    lights.lights[li].position[0],lights.lights[li].position[1],lights.lights[li].position[2],lights.lights[li].intensity);
+        }
         SDL_GL_SwapWindow(win);
         /* Report the average render FPS roughly once per second. */
         ++win_frames;

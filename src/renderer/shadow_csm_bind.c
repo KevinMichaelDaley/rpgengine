@@ -42,6 +42,7 @@ void shadow_csm_bind(const shadow_csm_t *csm, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_csm_enabled", 1);
     shader_uniform_set_float(cache, program, "u_csm_soft", csm->softness);
     shader_uniform_set_float(cache, program, "u_csm_res", (float)csm->static_res);
+    shader_uniform_set_int(cache, program, "u_csm_pcss", csm->pcss ? 1 : 0);
     shader_uniform_set_mat4(cache, program, "u_dyn_vp", csm->dyn_view_proj.m, 0);
     shader_uniform_set_vec3(cache, program, "u_dyn_eye", csm->dyn_eye);
     shader_uniform_set_float(cache, program, "u_dyn_far", csm->dyn_far);

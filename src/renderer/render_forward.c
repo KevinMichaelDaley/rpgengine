@@ -205,6 +205,7 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
             .lambda = cfg->dir_lambda,
             .max_distance = cfg->dir_max_distance,
             .softness = cfg->dir_softness,
+            .pcss = cfg->dir_pcss,
         };
         if (!shadow_csm_init(&fwd->csm, &sc)) {
             render_forward_destroy(fwd);
@@ -257,6 +258,7 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         uint32_t n = scene->lights->count;
         if (n > fwd->cfg.max_lights) n = fwd->cfg.max_lights;
         uint32_t slot = 0;
+        shadow_cube_clear(&fwd->shadow);  /* clear all layers once (layered FBO). */
         for (uint32_t i = 0; i < n; ++i) {
             const render_light_t *L = &scene->lights->lights[i];
             if ((L->kind == RENDER_LIGHT_POINT || L->kind == RENDER_LIGHT_SPOT) &&

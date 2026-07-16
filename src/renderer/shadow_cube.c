@@ -13,17 +13,22 @@
 
 /* Vertex: world-space position for the distance write + clip position (composed
  * on the GPU, matching the PBR/depth-prepass transform). */
+/* Single-pass layered render: one instanced draw emits all 6 faces. The VS
+ * writes gl_Layer per instance (GL_ARB_shader_viewport_layer_array), routing each
+ * instance to its cube-array layer, and picks that face's view-proj. */
 static const char *const SC_VS =
     "#version 330 core\n"
+    "#extension GL_ARB_shader_viewport_layer_array : require\n"
     "layout(location=0) in vec3 in_position;\n"
     "uniform mat4 u_model;\n"
-    "uniform mat4 u_view;\n"
-    "uniform mat4 u_projection;\n"
+    "uniform mat4 u_faceVP[6];\n"
+    "uniform int u_layer_base;\n"
     "out vec3 v_world;\n"
     "void main(){\n"
     "  vec4 wp = u_model * vec4(in_position, 1.0);\n"
     "  v_world = wp.xyz;\n"
-    "  gl_Position = u_projection * u_view * wp;\n"
+    "  gl_Layer = u_layer_base + gl_InstanceID;\n"
+    "  gl_Position = u_faceVP[gl_InstanceID] * wp;\n"
     "}\n";
 /* Fragment: linear light->fragment distance, normalised by the far plane. */
 static const char *const SC_FS =
@@ -78,6 +83,8 @@ bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
     SC_LOAD(sc->glBindFramebuffer, "glBindFramebuffer");
     SC_LOAD(sc->glFramebufferTexture2D, "glFramebufferTexture2D");
     SC_LOAD(sc->glFramebufferTextureLayer, "glFramebufferTextureLayer");
+    SC_LOAD(sc->glFramebufferTexture, "glFramebufferTexture");
+    SC_LOAD(sc->glDrawElementsInstanced, "glDrawElementsInstanced");
     SC_LOAD(sc->glTexImage3D, "glTexImage3D");
     SC_LOAD(sc->glGenRenderbuffers, "glGenRenderbuffers");
     SC_LOAD(sc->glDeleteRenderbuffers, "glDeleteRenderbuffers");
@@ -109,17 +116,42 @@ bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
     sc->glTexParameteri(GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     sc->glTexParameteri(GL_TEXTURE_CUBE_MAP_ARRAY, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-    sc->glGenRenderbuffers(1, &sc->depth_rb);
-    sc->glBindRenderbuffer(GL_RENDERBUFFER, sc->depth_rb);
-    sc->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
-                              (int32_t)resolution, (int32_t)resolution);
+    /* Layered depth 2D-array (matches the colour array's layer count) so each
+     * layer gets independent depth during the single-pass layered render. */
+    sc->glGenTextures(1, &sc->depth_arr);
+    sc->glBindTexture(GL_TEXTURE_2D_ARRAY, sc->depth_arr);
+    /* 32-bit float depth: the cube's near/far span is large (near 0.1 .. far
+     * ~30 m), and 24-bit fixed-point z-fights badly on distant surfaces, banding
+     * the stored linear distances. 32F depth removes the banding. */
+    sc->glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_DEPTH_COMPONENT32F,
+                     (int32_t)resolution, (int32_t)resolution,
+                     (int32_t)(6u * sc->max_lights), 0, GL_DEPTH_COMPONENT,
+                     GL_FLOAT, NULL);
+    sc->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    sc->glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
+    /* Layered FBO: attach whole arrays; gl_Layer (written by the VS) routes each
+     * instance to its face layer. */
     sc->glGenFramebuffers(1, &sc->fbo);
     sc->glBindFramebuffer(GL_FRAMEBUFFER, sc->fbo);
-    sc->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                                  GL_RENDERBUFFER, sc->depth_rb);
+    sc->glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, sc->cube, 0);
+    sc->glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, sc->depth_arr, 0);
     sc->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     return true;
+}
+
+/* Face-index names for the per-face view-proj uniform array (stable literals). */
+static const char *const SC_FACEVP[6] = {
+    "u_faceVP[0]", "u_faceVP[1]", "u_faceVP[2]",
+    "u_faceVP[3]", "u_faceVP[4]", "u_faceVP[5]" };
+
+void shadow_cube_clear(shadow_cube_t *sc)
+{
+    if (sc == NULL) return;
+    sc->glBindFramebuffer(GL_FRAMEBUFFER, sc->fbo);
+    sc->glViewport(0, 0, (int32_t)sc->resolution, (int32_t)sc->resolution);
+    sc->glClearColor(1.0f, 1.0f, 1.0f, 1.0f); /* every unwritten texel == far. */
+    sc->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); /* all layers at once. */
 }
 
 void shadow_cube_render_light(shadow_cube_t *sc, const render_scene_t *scene,
@@ -135,27 +167,28 @@ void shadow_cube_render_light(shadow_cube_t *sc, const render_scene_t *scene,
     sc->glEnable(GL_DEPTH_TEST);
     sc->glDepthFunc(GL_LESS);
     shader_program_bind(&sc->shader);
-    shader_uniform_set_mat4(&sc->cache, &sc->shader, "u_projection", proj.m, 0);
     shader_uniform_set_vec3(&sc->cache, &sc->shader, "u_light_pos", light_pos);
     shader_uniform_set_float(&sc->cache, &sc->shader, "u_far", sc->far_plane);
-
+    shader_uniform_set_int(&sc->cache, &sc->shader, "u_layer_base", (int32_t)(slot * 6u));
+    /* The 6 face view-projections for this light. */
     for (uint32_t f = 0; f < 6; ++f) {
-        /* Cube-array layer-face for this slot's face f. */
-        sc->glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                      sc->cube, 0, (int32_t)(slot * 6u + f));
-        sc->glClearColor(1.0f, 1.0f, 1.0f, 1.0f); /* unwritten texels == far */
-        sc->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        mat4_t view;
+        mat4_t view, vp;
         sc_face_view(f, light_pos, &view);
-        shader_uniform_set_mat4(&sc->cache, &sc->shader, "u_view", view.m, 0);
-        for (uint32_t i = 0; i < scene->count; ++i) {
-            const render_renderable_t *r = &scene->items[i];
-            if (r->mesh == NULL)
-                continue;
-            shader_uniform_set_mat4(&sc->cache, &sc->shader, "u_model", r->model, 0);
-            static_mesh_bind(r->mesh);
-            for (uint32_t s = 0; s < r->mesh->submesh_count; ++s)
-                static_mesh_draw_submesh(r->mesh, s);
+        vp = mat4_mul(proj, view);
+        shader_uniform_set_mat4(&sc->cache, &sc->shader, SC_FACEVP[f], vp.m, 0);
+    }
+    /* One INSTANCED draw per submesh: 6 instances -> 6 faces (VS routes gl_Layer). */
+    for (uint32_t i = 0; i < scene->count; ++i) {
+        const render_renderable_t *r = &scene->items[i];
+        if (r->mesh == NULL)
+            continue;
+        shader_uniform_set_mat4(&sc->cache, &sc->shader, "u_model", r->model, 0);
+        static_mesh_bind(r->mesh);
+        for (uint32_t s = 0; s < r->mesh->submesh_count; ++s) {
+            const render_submesh_t *sub = &r->mesh->submeshes[s];
+            size_t off = (size_t)sub->index_offset * sizeof(uint32_t);
+            sc->glDrawElementsInstanced(GL_TRIANGLES, (int32_t)sub->index_count,
+                                        GL_UNSIGNED_INT, (const void *)off, 6);
         }
     }
     sc->glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -178,10 +211,10 @@ void shadow_cube_destroy(shadow_cube_t *sc)
         return;
     if (sc->glDeleteFramebuffers && sc->fbo)
         sc->glDeleteFramebuffers(1, &sc->fbo);
-    if (sc->glDeleteRenderbuffers && sc->depth_rb)
-        sc->glDeleteRenderbuffers(1, &sc->depth_rb);
+    if (sc->glDeleteTextures && sc->depth_arr)
+        sc->glDeleteTextures(1, &sc->depth_arr);
     if (sc->glDeleteTextures && sc->cube)
         sc->glDeleteTextures(1, &sc->cube);
     shader_program_destroy(&sc->shader);
-    sc->fbo = sc->depth_rb = sc->cube = 0;
+    sc->fbo = sc->depth_arr = sc->cube = 0;
 }

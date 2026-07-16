@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/cluster_grid.h"
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/shader_uniforms.h"
@@ -46,6 +47,10 @@ typedef struct gi_runtime_config {
     uint32_t max_lights, max_boxes;
     float soft_k;                /**< penumbra sharpness. */
     int   update_interval;       /**< recompute probes every N frames (0 -> 8). */
+    cluster_config_t froxel;     /**< MUST match the forward+ cluster config so
+                                  *   probes bin into the exact same froxels. */
+    float probe_radius;          /**< probe influence radius (m) for froxel overlap. */
+    int   bin_interval;          /**< re-bin probes into froxels every N frames (0 -> 1). */
 } gi_runtime_config_t;
 
 /** The dynamic-GI runtime (owns everything). */
@@ -68,6 +73,18 @@ typedef struct gi_runtime {
     int              update_interval; /**< recompute cadence (frames). */
     int              frame_counter;
     bool             ready;
+
+    /* --- Probe froxel binning: probes assigned to the SAME froxels the forward+
+     * lights use, so a fragment reads its probe candidates from its own cluster
+     * (via the forward+ cluster uniforms) instead of a separate world grid. --- */
+    cluster_grid_t   froxel;          /**< probe cluster grid (forward+ geometry). */
+    uint32_t        *fx_off, *fx_cnt, *fx_idx; /**< froxel grid backing. */
+    unsigned int     tbo_fo, tbo_fo_tex;  /**< froxel offset buffer texture. */
+    unsigned int     tbo_fc, tbo_fc_tex;  /**< froxel count buffer texture. */
+    unsigned int     tbo_fi, tbo_fi_tex;  /**< froxel index buffer texture. */
+    float            probe_radius;
+    int              bin_interval;
+    unsigned int     fx_last_unit;    /**< last texture unit used by the froxel bind. */
 } gi_runtime_t;
 
 /** @brief Build the whole runtime. Returns false on any failure. */

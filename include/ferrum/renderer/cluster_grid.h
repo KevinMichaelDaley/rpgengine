@@ -61,6 +61,18 @@ void cluster_grid_init(cluster_grid_t *grid, cluster_config_t config,
 void cluster_grid_build(cluster_grid_t *grid, const render_camera_t *camera,
                         const render_light_t *lights, uint32_t n_lights);
 
+/**
+ * @brief Assign point samples (@p positions, 3 floats each) to the clusters whose
+ *        froxel AABB is within @p radius of the point, filling offsets/counts/
+ *        indices exactly like @ref cluster_grid_build. Used to bin GI probes into
+ *        the SAME froxels the forward+ lights use, so a fragment reads its probe
+ *        candidates from its own cluster instead of a separate world accel grid.
+ * @param radius influence radius (m) each probe reaches into neighbouring froxels.
+ */
+void cluster_grid_build_points(cluster_grid_t *grid, const render_camera_t *camera,
+                               const float *positions, uint32_t n_points,
+                               float radius);
+
 /** @return The linear cluster index for (tile x, tile y, depth slice). */
 static inline uint32_t cluster_grid_index(const cluster_grid_t *grid,
                                           uint32_t tx, uint32_t ty, uint32_t s)

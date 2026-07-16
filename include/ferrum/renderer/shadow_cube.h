@@ -44,7 +44,10 @@ typedef struct shadow_cube {
     void (*glBindFramebuffer)(uint32_t, uint32_t);
     void (*glFramebufferTexture2D)(uint32_t, uint32_t, uint32_t, uint32_t, int32_t);
     void (*glFramebufferTextureLayer)(uint32_t, uint32_t, uint32_t, int32_t, int32_t);
+    void (*glFramebufferTexture)(uint32_t, uint32_t, uint32_t, int32_t);
+    void (*glDrawElementsInstanced)(uint32_t, int32_t, uint32_t, const void *, int32_t);
     void (*glTexImage3D)(uint32_t, int32_t, int32_t, int32_t, int32_t, int32_t, int32_t, uint32_t, uint32_t, const void *);
+    uint32_t depth_arr;              /**< layered depth 2D-array (6*max_lights). */
     void (*glGenRenderbuffers)(int32_t, uint32_t *);
     void (*glDeleteRenderbuffers)(int32_t, const uint32_t *);
     void (*glBindRenderbuffer)(uint32_t, uint32_t);
@@ -71,6 +74,12 @@ typedef struct shadow_cube {
 bool shadow_cube_init(shadow_cube_t *sc, const gl_loader_t *loader,
                       uint32_t resolution, float near_plane, float far_plane,
                       uint32_t max_lights);
+
+/**
+ * @brief Clear EVERY slot's faces to "far" (call once per frame before the
+ *        per-light renders; the layered FBO's clear touches all layers at once).
+ */
+void shadow_cube_clear(shadow_cube_t *sc);
 
 /**
  * @brief Render the scene's depth-distance into cube-array SLOT @p slot's six

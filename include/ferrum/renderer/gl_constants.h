@@ -235,6 +235,9 @@ extern "C" {
 #ifndef GL_DEPTH_COMPONENT24
 #define GL_DEPTH_COMPONENT24 0x81A6
 #endif
+#ifndef GL_DEPTH_COMPONENT32F
+#define GL_DEPTH_COMPONENT32F 0x8CAC
+#endif
 #ifndef GL_TEXTURE_WRAP_R
 #define GL_TEXTURE_WRAP_R 0x8072
 #endif

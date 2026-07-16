@@ -189,9 +189,17 @@ static const char *const PBR_FS =
     "  float cur = length(ftl);\n"
     "  if(cur >= u_shadow_far) return 1.0;\n"
     "  float radius = 0.015*cur + 0.01;\n"
+    /* Rotate the fixed 20-tap kernel by a per-fragment random angle about the\n"
+     * sample axis, so the PCF penumbra dithers instead of banding. Interleaved\n"
+     * gradient noise -> angle; Rodrigues rotation about the light->frag axis. */
+    "  float ign = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056,0.00583715))));\n"
+    "  float ang = ign*6.2831853; float ca=cos(ang), sa=sin(ang);\n"
+    "  vec3 a = ftl/cur;\n"
+    "  mat3 R = mat3(ca) + (1.0-ca)*mat3(a.x*a.x,a.x*a.y,a.x*a.z, a.y*a.x,a.y*a.y,a.y*a.z, a.z*a.x,a.z*a.y,a.z*a.z)\n"
+    "         + sa*mat3(0.0,a.z,-a.y, -a.z,0.0,a.x, a.y,-a.x,0.0);\n"
     "  float lit = 0.0;\n"
     "  for(int i=0;i<20;++i){\n"
-    "    float d = texture(u_shadow_cube_arr, vec4(ftl + SC_OFFS[i]*radius, slot)).r * u_shadow_far;\n"
+    "    float d = texture(u_shadow_cube_arr, vec4(ftl + R*SC_OFFS[i]*radius, slot)).r * u_shadow_far;\n"
     "    lit += (cur - u_shadow_bias > d) ? 0.0 : 1.0;\n"
     "  }\n"
     "  return lit / 20.0;\n"
@@ -237,6 +245,7 @@ static const char *const PBR_FS =
     "uniform float u_dir_bias;\n"   /* PCSS depth-compare bias (metres). */
     "uniform float u_csm_soft;\n"   /* sun source size (metres) -> penumbra width. */
     "uniform float u_csm_res;\n"    /* static cascade resolution (texels). */
+    "uniform int u_csm_pcss;\n"     /* 1 = PCSS variable penumbra; 0 = fixed-width PCF. */
     /* 16-tap Poisson disk in [-1,1]^2, reused for the blocker search and PCF. */
     "const vec2 PZ[16] = vec2[](\n"
     "  vec2(-0.94,-0.34),vec2(0.95,-0.06),vec2(-0.09,-0.93),vec2(0.34,0.29),\n"
@@ -278,21 +287,27 @@ static const char *const PBR_FS =
     /* Per-pixel kernel rotation: turns the 16-tap banding into fine noise. */
     "    float a = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)))*43758.545)*6.2831853;\n"
     "    float ca = cos(a), sa = sin(a); mat2 rot = mat2(ca,-sa,sa,ca);\n"
-    /* Blocker search over the source footprint; average the depths in front. */
-    "    float srad = max(u_csm_soft * uvPerM, texuv);\n"
-    "    float bsum = 0.0, bcnt = 0.0;\n"
-    "    for(int s=0;s<16;++s){\n"
-    "      float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*srad, float(i))).r;\n"
-    "      if(dp < d - bias){ bsum += dp; bcnt += 1.0; }\n"
+    /* Penumbra radius (uv). Default: a fixed width from the sun source size --\n"
+     * one PCF pass, no blocker search. PCSS mode: search the source footprint for\n"
+     * the average blocker depth and grow the penumbra with the occluder gap. */
+    "    float prad;\n"
+    "    if(u_csm_pcss==1){\n"
+    "      float srad = max(u_csm_soft * uvPerM, texuv);\n"
+    "      float bsum = 0.0, bcnt = 0.0;\n"
+    "      for(int s=0;s<16;++s){\n"
+    "        float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*srad, float(i))).r;\n"
+    "        if(dp < d - bias){ bsum += dp; bcnt += 1.0; }\n"
+    "      }\n"
+    "      if(bcnt < 0.5) continue;\n"      /* no blocker in this cascade -> lit. */
+    "      float dblk = bsum / bcnt;\n"
+    /* Penumbra grows with the occluder->receiver gap, CLAMPED to a small world\n"
+     * size so the PCF taps never reach across a wall and leak light. */
+    "      float pen = (d - dblk) / max(dblk, 1e-4);\n"     /* scale-invariant ratio. */
+    "      float penM = min(pen * u_csm_soft, 0.6);\n"      /* world metres, capped. */
+    "      prad = clamp(penM * uvPerM, texuv, 12.0*texuv);\n"
+    "    } else {\n"
+    "      prad = clamp(u_csm_soft * uvPerM, texuv, 6.0*texuv);\n"  /* fixed width. */
     "    }\n"
-    "    if(bcnt < 0.5) continue;\n"        /* no blocker in this cascade -> lit. */
-    "    float dblk = bsum / bcnt;\n"
-    /* PCSS penumbra grows with the occluder->receiver gap, but is CLAMPED to a\n"
-     * small world size so the PCF taps never reach across a wall (which would\n"
-     * sample lit depths beyond the occluder and leak light through it). */
-    "    float pen = (d - dblk) / max(dblk, 1e-4);\n"       /* scale-invariant ratio. */
-    "    float penM = min(pen * u_csm_soft, 0.6);\n"        /* world metres, capped. */
-    "    float prad = clamp(penM * uvPerM, texuv, 12.0*texuv);\n"
     /* Variable-width PCF. */
     "    float lit = 0.0;\n"
     "    for(int s=0;s<16;++s){\n"
@@ -309,33 +324,31 @@ static const char *const PBR_FS =
     "uniform int u_gi_enabled;\n"
     "uniform samplerBuffer u_probe_pos;\n"
     "uniform samplerBuffer u_probe_sh;\n"
-    "uniform usamplerBuffer u_probe_cellstart;\n"
-    "uniform usamplerBuffer u_probe_idx;\n"
-    "uniform vec3 u_probe_grid_origin;\n"
-    "uniform float u_probe_grid_cell;\n"
-    "uniform vec3 u_probe_grid_dims;\n"
+    "uniform usamplerBuffer u_probe_froxel_off;\n"
+    "uniform usamplerBuffer u_probe_froxel_cnt;\n"
+    "uniform usamplerBuffer u_probe_froxel_idx;\n"
     "vec3 gi_probe_indirect(vec3 wp, vec3 N){\n"
     "  if(u_gi_enabled==0) return vec3(0.0);\n"
-    "  ivec3 D = ivec3(u_probe_grid_dims);\n"
-    "  ivec3 c = ivec3(floor((wp - u_probe_grid_origin)/u_probe_grid_cell));\n"
-    "  c = clamp(c, ivec3(0), D-1);\n"
-    /* Find the NEAREST 3 probes (scan positions in the cell + neighbours) -- only\n"
-     * their SH is fetched, so a fragment does 3*27 texelFetches, not all probes. */
+    /* Probes are binned into the SAME froxels as the forward+ lights; recompute\n"
+     * this fragment's cluster exactly as the light loop does and read only that\n"
+     * cluster's probe candidates -- no per-fragment world-grid neighbour scan. */
+    "  int dimx=int(u_cluster_dims.x),dimy=int(u_cluster_dims.y),dimz=int(u_cluster_dims.z);\n"
+    "  int ptx=clamp(int(gl_FragCoord.x/u_screen.x*u_cluster_dims.x),0,dimx-1);\n"
+    "  int pty=clamp(int(gl_FragCoord.y/u_screen.y*u_cluster_dims.y),0,dimy-1);\n"
+    "  float pvz=max(-v_view_z,u_cluster_near);\n"
+    "  int psl=clamp(int(log(pvz/u_cluster_near)/log(u_cluster_far/u_cluster_near)*u_cluster_dims.z),0,dimz-1);\n"
+    "  int pcl=(psl*dimy+pty)*dimx+ptx;\n"
+    "  int poff=int(texelFetch(u_probe_froxel_off,pcl).r);\n"
+    "  int pcnt=int(texelFetch(u_probe_froxel_cnt,pcl).r);\n"
+    /* Nearest 3 probes among this froxel's candidates. */
     "  int n0=-1,n1=-1,n2=-1; float e0=1e30,e1=1e30,e2=1e30;\n"
-    "  for(int dz=-1;dz<=1;++dz) for(int dy=-1;dy<=1;++dy) for(int dx=-1;dx<=1;++dx){\n"
-    "    ivec3 cc=c+ivec3(dx,dy,dz);\n"
-    "    if(any(lessThan(cc,ivec3(0)))||any(greaterThanEqual(cc,D))) continue;\n"
-    "    int cell=(cc.z*D.y+cc.y)*D.x+cc.x;\n"
-    "    uint s=texelFetch(u_probe_cellstart,cell).r;\n"
-    "    uint en=texelFetch(u_probe_cellstart,cell+1).r;\n"
-    "    for(uint pit=s; pit<en; ++pit){\n"
-    "      int probe=int(texelFetch(u_probe_idx,int(pit)).r);\n"
-    "      vec3 pp=texelFetch(u_probe_pos,probe).xyz;\n"
-    "      vec3 dd=wp-pp; float e=dot(dd,dd);\n"
-    "      if(e<e0){ e2=e1;n2=n1; e1=e0;n1=n0; e0=e;n0=probe; }\n"
-    "      else if(e<e1){ e2=e1;n2=n1; e1=e;n1=probe; }\n"
-    "      else if(e<e2){ e2=e;n2=probe; }\n"
-    "    }\n"
+    "  for(int pit=0; pit<pcnt; ++pit){\n"
+    "    int probe=int(texelFetch(u_probe_froxel_idx,poff+pit).r);\n"
+    "    vec3 pp=texelFetch(u_probe_pos,probe).xyz;\n"
+    "    vec3 dd=wp-pp; float e=dot(dd,dd);\n"
+    "    if(e<e0){ e2=e1;n2=n1; e1=e0;n1=n0; e0=e;n0=probe; }\n"
+    "    else if(e<e1){ e2=e1;n2=n1; e1=e;n1=probe; }\n"
+    "    else if(e<e2){ e2=e;n2=probe; }\n"
     "  }\n"
     "  if(n0<0) return vec3(0.0);\n"
     "  float shr[9]; float shg[9]; float shb[9];\n"
@@ -385,6 +398,7 @@ static const char *const PBR_FS =
     "  vec3 F0 = mix(vec3(0.08*u_specular_strength), albedo, metal);\n"
     /* Directional sun. */
     "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos);\n"
+    "  float dbg_cubesh = 1.0;\n"   /* raw cube-shadow of the nearest shadowed clustered light. */
     "  if(u_clustered==1){\n"
     /* Forward+: find this fragment's cluster and shade only its lights. */
     "    int dimx=int(u_cluster_dims.x), dimy=int(u_cluster_dims.y), dimz=int(u_cluster_dims.z);\n"
@@ -402,7 +416,7 @@ static const char *const PBR_FS =
     "      vec4 t0=texelFetch(u_light_data,b), t1=texelFetch(u_light_data,b+1),\n"
     "           t2=texelFetch(u_light_data,b+2), t3=texelFetch(u_light_data,b+3);\n"
     "      float sh = 1.0;\n"
-    "      if(t3.y>=0.0) sh *= pbr_cube_shadow(t0.yzw, t3.y);\n"
+    "      if(t3.y>=0.0){ float cs=pbr_cube_shadow(t0.yzw, t3.y); sh *= cs; dbg_cubesh=min(dbg_cubesh,cs); }\n"
     "      if(li==u_spot_light) sh *= pbr_spot_shadow(v_world_pos, t0.yzw);\n"
     "      direct += sh * pbr_accumulate(int(t0.x), t0.yzw, t1.xyz, t2.xyz, t1.w, t2.w, t3.x,\n"
     "                               N,V,albedo,rough,metal,F0);\n"
@@ -414,6 +428,7 @@ static const char *const PBR_FS =
     "                               u_light_color[i], u_light_range[i], u_light_cos_inner[i],\n"
     "                               u_light_cos_outer[i], N,V,albedo,rough,metal,F0);\n"
     "  }\n"
+    "  if(u_debug_mode==8){ frag=vec4(vec3(dbg_cubesh),1.0); return; }\n"
     "  if(u_debug_mode==1){ frag=vec4(texture(u_sh0,SHUV).rgb,1.0); return; }\n"
     "  if(u_debug_mode==2){ frag=vec4(max(pbr_sh_irradiance(N),vec3(0.0)),1.0); return; }\n"
     "  if(u_debug_mode==3){ frag=vec4(v_uv1,0.0,1.0); return; }\n"

@@ -75,6 +75,7 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     csm->lambda = config->lambda;
     csm->max_distance = config->max_distance;
     csm->softness = config->softness;
+    csm->pcss = config->pcss;
 
     if (shader_program_create(&csm->shader, loader, SC_VS, SC_FS, NULL, 0) !=
         SHADER_PROGRAM_OK)
