@@ -129,8 +129,9 @@ static bool hall_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
         g_lms[i].material = 0;
         uint32_t base_lmres =
             strstr(names[i], "col")   ? 224u :
+            strstr(names[i], "vault") ? 192u :  /* curved, large -> needs res, was 72 (blotchy) */
             strstr(names[i], "resp")  ? 128u :
-            strstr(names[i], "floor") ? 160u :
+            strstr(names[i], "floor") ? 192u :
             (grp[i] == 0 ? 80u : 72u);
         g_lms[i].lightmap_resolution = (uint32_t)(lmres * (float)base_lmres + 0.5f);
         for (uint32_t v = 0; v < g_dm[i].vert_count; ++v)
