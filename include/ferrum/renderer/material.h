@@ -62,6 +62,8 @@ typedef struct render_material {
     float ao_strength;        /**< AO map influence (0..1). */
     float uv_scale[2];        /**< material-texture UV tiling (multiplies v_uv0). */
     float contrast;           /**< albedo contrast about 0.5 (1 = none, >1 punchier). */
+    int   orm_packed;         /**< 1 = ROUGHNESS map is ORM (R=ao, G=roughness); the
+                               *   AO slot is then unused (one fetch, not two). */
 } render_material_t;
 
 /**

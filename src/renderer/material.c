@@ -31,6 +31,7 @@ void material_init(render_material_t *mat)
     mat->ao_strength = 1.0f;
     mat->uv_scale[0] = mat->uv_scale[1] = 1.0f;
     mat->contrast = 1.0f;
+    mat->orm_packed = 0;
 }
 
 uint32_t material_bind(const render_material_t *mat, uint32_t base_unit,
@@ -67,6 +68,7 @@ uint32_t material_bind(const render_material_t *mat, uint32_t base_unit,
                              mat->roughness_min);
     shader_uniform_set_float(cache, program, "u_roughness_max",
                              mat->roughness_max);
+    shader_uniform_set_int(cache, program, "u_orm_packed", mat->orm_packed);
     shader_uniform_set_float(cache, program, "u_emissive_strength",
                              mat->emissive_strength);
     shader_uniform_set_float(cache, program, "u_normal_scale", mat->normal_scale);

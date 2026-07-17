@@ -546,7 +546,7 @@ int main(int argc,char **argv){
            amin[0],amin[1],amin[2],amax[0],amax[1],amax[2],span[0],span[1],span[2]);
 
     /* --- Materials: every PBR texture loaded on a fiber -> queue -> executor. --- */
-    char q[512]; texture_t tb_a,tb_n,tb_o,tb_r,ts_a,ts_r,tv_a,tv_r;
+    char q[512]; texture_t tb_a,tb_n,tb_orm,ts_a,ts_r,tv_a,tv_r;
     #define LOADT(outp,relpath,format) do{ \
         snprintf(q,sizeof q,"%s/" relpath,bake); \
         size_t pl_=strlen(q)+1; char *pc_=arena_alloc(&rarena,1u,pl_); memcpy(pc_,q,pl_); \
@@ -555,8 +555,7 @@ int main(int argc,char **argv){
         job_dispatch(&jobs,tex_load_fiber,tl_,0,&rcounter); }while(0)
     LOADT(&tb_a,"albedo.png",TEXTURE_FORMAT_SRGB8);
     LOADT(&tb_n,"normal.png",TEXTURE_FORMAT_RGB8);
-    LOADT(&tb_o,"ao.png",TEXTURE_FORMAT_RGB8);
-    LOADT(&tb_r,"roughness.png",TEXTURE_FORMAT_RGB8);
+    LOADT(&tb_orm,"orm.png",TEXTURE_FORMAT_RGB8); /* R=ao, G=roughness (packed). */
     LOADT(&ts_a,"ashlar_albedo.png",TEXTURE_FORMAT_SRGB8);
     LOADT(&ts_r,"ashlar_roughness.png",TEXTURE_FORMAT_RGB8);
     LOADT(&tv_a,"vault_albedo.png",TEXTURE_FORMAT_SRGB8);
@@ -572,7 +571,7 @@ int main(int argc,char **argv){
      * so the masonry reads with more depth. */
     float brick_contrast = getenv("BRICK_CONTRAST") ? (float)atof(getenv("BRICK_CONTRAST")) : 1.6f;
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
-    mats[0].maps[MATERIAL_TEX_AO]=&tb_o; mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_r; mats[0].normal_scale=1.6f;
+    mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_orm; mats[0].orm_packed=1; mats[0].normal_scale=1.6f;
     mats[0].roughness_min=0.25f; mats[0].roughness_max=1.0f; mats[0].contrast=brick_contrast;
     material_init(&mats[1]); mats[1].maps[MATERIAL_TEX_ALBEDO]=&ts_a; mats[1].maps[MATERIAL_TEX_ROUGHNESS]=&ts_r;
     mats[1].roughness_min=0.2f; mats[1].roughness_max=1.0f; mats[1].contrast=brick_contrast;
