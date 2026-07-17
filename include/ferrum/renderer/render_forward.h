@@ -111,6 +111,8 @@ typedef struct render_forward {
     render_pipeline_graph_node_t nodes[3];
     render_pipeline_graph_t      graph;
     const char                  *dep_fwd[2]; /**< {"depth_pre","light_cull"} */
+    void (*glFinish)(void); /**< for PROF per-pass GPU timing (NULL otherwise). */
+    int   prof;             /**< 1 = print per-pass GPU-inclusive ms (PROF env). */
 } render_forward_t;
 
 /**

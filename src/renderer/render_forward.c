@@ -8,11 +8,21 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/material.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/pbr_shader.h"
+
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#define FR_ZONE(v, name) TracyCZoneN(v, name, true)
+#define FR_ZONE_END(v) TracyCZoneEnd(v)
+#else
+#define FR_ZONE(v, name)
+#define FR_ZONE_END(v)
+#endif
 
 /* ── Pass callbacks (driven from the graph nodes; user_data == driver) ── */
 
@@ -170,6 +180,11 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
         return false;
     memset(fwd, 0, sizeof(*fwd));
     fwd->cfg = *cfg;
+    fwd->prof = getenv("PROF") != NULL;
+    if (fwd->prof && cfg->loader->get_proc_address) {
+        void *p = cfg->loader->get_proc_address("glFinish", cfg->loader->user_data);
+        memcpy(&fwd->glFinish, &p, sizeof p);
+    }
 
     char log[1024] = { 0 };
     if (pbr_shader_create(&fwd->pbr, cfg->loader, log, sizeof log) != SHADER_PROGRAM_OK)
@@ -246,15 +261,30 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     return true;
 }
 
+/* PROF: glFinish + stamp; returns ms since *prev and advances it. */
+static double fr_prof_tick(render_forward_t *fwd, struct timespec *prev)
+{
+    if (!fwd->prof || fwd->glFinish == NULL) return 0.0;
+    fwd->glFinish();
+    struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
+    double ms = (now.tv_sec - prev->tv_sec) * 1e3 + (now.tv_nsec - prev->tv_nsec) * 1e-6;
+    *prev = now;
+    return ms;
+}
+
 void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
 {
     if (fwd == NULL || scene == NULL)
         return;
     fwd->scene = scene;
+    static double a_cube = 0, a_csm = 0, a_fwd = 0; static int a_n = 0;
+    struct timespec pt;
+    if (fwd->prof && fwd->glFinish) { fwd->glFinish(); clock_gettime(CLOCK_MONOTONIC, &pt); }
     /* Render an omnidirectional cube shadow for EVERY point light tagged
      * RENDER_LIGHT_FLAG_SHADOW, each into its own cube-array slot (assigned here,
      * consumed by fwd_cull_submit -> light_data.t3.y). Then restore the viewport. */
     if (fwd->cfg.shadow_res > 0u && scene->lights != NULL && fwd->shadow_slot != NULL) {
+        FR_ZONE(z_cube, "Render.Shadow.Cube");
         uint32_t n = scene->lights->count;
         if (n > fwd->cfg.max_lights) n = fwd->cfg.max_lights;
         uint32_t slot = 0;
@@ -272,7 +302,9 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         }
         fwd->shadow.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                                (int32_t)fwd->cfg.screen_h);
+        FR_ZONE_END(z_cube);
     }
+    a_cube += fr_prof_tick(fwd, &pt);
     if (fwd->cfg.spot_res > 0u && fwd->cfg.spot_light >= 0 &&
         scene->lights != NULL &&
         (uint32_t)fwd->cfg.spot_light < scene->lights->count) {
@@ -285,6 +317,7 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
                              (int32_t)fwd->cfg.screen_h);
     }
     if (fwd->cfg.dir_cascades > 0u) {
+        FR_ZONE(z_csm, "Render.Shadow.CSM");
         /* Sun travels along -u_sun_dir (u_sun_dir points toward the sun). Fit the
          * cascades to the camera frustum, bake the static casters once (cached),
          * and re-render only the dynamic casters this frame. */
@@ -301,11 +334,21 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         shadow_csm_render_dynamic(&fwd->csm, scene);
         fwd->csm.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                             (int32_t)fwd->cfg.screen_h);
+        FR_ZONE_END(z_csm);
     }
+    a_csm += fr_prof_tick(fwd, &pt);
     /* Early-Z only pays off with overlapping geometry; skip it for a single
      * renderable so a trivial scene still executes (depth_pre is skippable). */
     int depth_enabled = (scene->count > 1u) ? 1 : 0;
+    FR_ZONE(z_fwd, "Render.Forward.Graph");
     render_pipeline_graph_execute(&fwd->graph, depth_enabled);
+    FR_ZONE_END(z_fwd);
+    a_fwd += fr_prof_tick(fwd, &pt);
+    if (fwd->prof && fwd->glFinish && ++a_n >= 60) {
+        fprintf(stderr, "[prof] cube=%.2f  csm=%.2f  forward=%.2f  (ms/frame, GPU-incl)\n",
+                a_cube / a_n, a_csm / a_n, a_fwd / a_n);
+        a_cube = a_csm = a_fwd = 0; a_n = 0;
+    }
     fwd->scene = NULL;
 }
 

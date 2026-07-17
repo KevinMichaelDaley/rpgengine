@@ -896,7 +896,13 @@ int main(int argc,char **argv){
             gi_runtime_frame(&g_gi,&scene,scene.camera.view,scene.camera.proj,
                              g_boxes,(uint32_t)g_nboxes,W,H);
         }
+        int prof=getenv("PROF")!=NULL;
+        static double pr=0; static int pn=0; struct timespec pb,pc;
+        if(prof){ glFinish(); clock_gettime(CLOCK_MONOTONIC,&pb); }
         render_forward_render(&fwd,&scene);
+        if(prof){ glFinish(); clock_gettime(CLOCK_MONOTONIC,&pc);
+            pr += (pc.tv_sec-pb.tv_sec)*1e3+(pc.tv_nsec-pb.tv_nsec)*1e-6;
+            if(++pn>=60){ fprintf(stderr,"[prof] render(shadow+forward, GPU-incl)=%.2f ms/frame\n", pr/pn); pr=0; pn=0; } }
         if(frame==save_frame) save_ppm(shot,W,H);
         if(frame==save_frame && getenv("GI_DUMP")){
             #ifndef GL_TEXTURE_CUBE_MAP_ARRAY

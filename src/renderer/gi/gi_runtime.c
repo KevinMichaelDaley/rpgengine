@@ -13,6 +13,15 @@
 #include "ferrum/renderer/light.h"
 #include "ferrum/renderer/light_store.h"
 
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#define GI_ZONE(v, name) TracyCZoneN(v, name, true)
+#define GI_ZONE_END(v) TracyCZoneEnd(v)
+#else
+#define GI_ZONE(v, name)
+#define GI_ZONE_END(v)
+#endif
+
 #define GI_MAX_PROBES 65536u
 
 bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
@@ -155,12 +164,14 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
      * and the froxel assignment tracks both moving probes and the moving camera.
      * bin_interval lets it skip frames when the view barely changes. */
     if (gi->frame_counter % gi->bin_interval == 0) {
+        GI_ZONE(z_bin, "Game.GI.FroxelBin");
         render_camera_t cam;
         memset(&cam, 0, sizeof cam);
         for (int i = 0; i < 16; ++i) { cam.view[i] = view[i]; cam.proj[i] = proj[i]; }
         cluster_grid_build_points(&gi->froxel, &cam, gi->probe_pos,
                                   gi->probes.count, gi->probe_min,
                                   gi->probe_sphere_margin);
+        GI_ZONE_END(z_bin);
         uint32_t ctot = gi->froxel.cluster_total;
         uint32_t nidx = gi->froxel.index_count > 0 ? gi->froxel.index_count : 1u;
         glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_fo);
