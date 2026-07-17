@@ -99,6 +99,7 @@ static const char *const PBR_FS =
     "uniform vec3 u_screen;\n"           /* viewport pixels in .xy */
     "uniform float u_cluster_near;\n"
     "uniform float u_cluster_far;\n"
+    "uniform float u_inv_log_farnear;\n" /* 1/log(far/near), precomputed CPU-side. */
     /* Baked SH9 lightmap: 9 coefficient maps (RGB = the coeff for R,G,B),\n"
      * sampled by uv1; u_sh_enabled toggles it as the diffuse indirect term. */
     /* Per-chunk lightmaps (rpg-yfa4): 9 SH coeff atlases as texture ARRAYS, one\n"
@@ -184,27 +185,22 @@ static const char *const PBR_FS =
     "  vec3(1,1,-1),vec3(1,-1,-1),vec3(-1,-1,-1),vec3(-1,1,-1),vec3(1,1,0),vec3(1,-1,0),\n"
     "  vec3(-1,-1,0),vec3(-1,1,0),vec3(1,0,1),vec3(-1,0,1),vec3(1,0,-1),vec3(-1,0,-1),\n"
     "  vec3(0,1,1),vec3(0,-1,1),vec3(0,-1,-1),vec3(0,1,-1));\n"
-    "float pbr_cube_shadow(vec3 lpos, float slot){\n"
+    "float pbr_cube_shadow(vec3 lpos, float slot, mat2 krot){\n"
     "  vec3 ftl = v_world_pos - lpos;\n"
     "  float cur = length(ftl);\n"
     "  if(cur >= u_shadow_far) return 1.0;\n"
     "  float radius = 0.015*cur + 0.01;\n"
-    /* Rotate the fixed 20-tap kernel by a per-fragment random angle about the\n"
-     * sample axis, so the PCF penumbra dithers instead of banding. Interleaved\n"
-     * gradient noise -> angle; Rodrigues rotation about the light->frag axis. */
-    "  float ign = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056,0.00583715))));\n"
-    "  float ang = ign*6.2831853; float ca=cos(ang), sa=sin(ang);\n"
-    "  vec3 a = ftl/cur;\n"
-    "  mat3 R = mat3(ca) + (1.0-ca)*mat3(a.x*a.x,a.x*a.y,a.x*a.z, a.y*a.x,a.y*a.y,a.y*a.z, a.z*a.x,a.z*a.y,a.z*a.z)\n"
-    "         + sa*mat3(0.0,a.z,-a.y, -a.z,0.0,a.x, a.y,-a.x,0.0);\n"
+    "  float invfar = 1.0/u_shadow_far;\n"
+    "  float thresh = (cur - u_shadow_bias) * invfar;\n"  /* compare in normalised units. */
     "  float lit = 0.0;\n"
-    /* 8-tap PCF (the 8 cube-corner directions) -- rotation dithers the penumbra so\n"
-     * far fewer taps still read smooth. */
+    /* 8-tap PCF (cube-corner dirs), the 8 taps' xy dithered by the shared\n"
+     * per-fragment rotation so the penumbra reads smooth without banding. */
     "  for(int i=0;i<8;++i){\n"
-    "    float d = texture(u_shadow_cube_arr, vec4(ftl + R*SC_OFFS[i]*radius, slot)).r * u_shadow_far;\n"
-    "    lit += (cur - u_shadow_bias > d) ? 0.0 : 1.0;\n"
+    "    vec3 o = vec3(krot*SC_OFFS[i].xy, SC_OFFS[i].z)*radius;\n"
+    "    float d = texture(u_shadow_cube_arr, vec4(ftl + o, slot)).r;\n"
+    "    lit += (thresh > d) ? 0.0 : 1.0;\n"
     "  }\n"
-    "  return lit / 8.0;\n"
+    "  return lit * 0.125;\n"
     "}\n"
     /* Spot (2D) shadow: project the fragment through the light-space matrix and\n"
      * PCF-compare stored linear distance. u_spot_light == the light's flat index. */
@@ -274,21 +270,19 @@ static const char *const PBR_FS =
      * the light-source footprint -> average blocker depth, (2) penumbra width =\n"
      * (d_recv - d_blk)/d_blk * lightSize (PCSS), converted to a uv radius via the\n"
      * cascade's world size so all cascades agree, (3) variable-width PCF. */
-    "float pbr_csm_shadow(vec3 fragpos){\n"
+    "float pbr_csm_shadow(vec3 fragpos, mat2 rot){\n"
     "  if(u_csm_enabled==0) return 1.0;\n"
     "  float vis = 1.0;\n"
+    "  float texuv = 1.0 / u_csm_res;\n"                   /* cascade-independent. */
     "  for(int i=0;i<u_csm_count;++i){\n"
     "    vec4 lc = u_csm_vp[i] * vec4(fragpos, 1.0);\n"
     "    vec3 ndc = lc.xyz / lc.w;\n"        /* ortho: w = 1. */
     "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n" /* no data here. */
     "    vec2 uv = ndc.xy*0.5 + 0.5;\n"
-    "    float d = clamp(length(fragpos - u_csm_eye[i]) / u_csm_far[i], 0.0, 1.0);\n"
-    "    float bias = u_dir_bias / u_csm_far[i];\n"       /* metres -> normalised. */
+    "    float invfar = 1.0 / u_csm_far[i];\n"
+    "    float d = clamp(length(fragpos - u_csm_eye[i]) * invfar, 0.0, 1.0);\n"
+    "    float bias = u_dir_bias * invfar;\n"             /* metres -> normalised. */
     "    float uvPerM = 1.0 / (u_csm_texel[i] * u_csm_res);\n" /* uv per world metre. */
-    "    float texuv = 1.0 / u_csm_res;\n"
-    /* Per-pixel kernel rotation: turns the 16-tap banding into fine noise. */
-    "    float a = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)))*43758.545)*6.2831853;\n"
-    "    float ca = cos(a), sa = sin(a); mat2 rot = mat2(ca,-sa,sa,ca);\n"
     /* Penumbra radius (uv). Default: a fixed width from the sun source size --\n"
      * one PCF pass, no blocker search. PCSS mode: search the source footprint for\n"
      * the average blocker depth and grow the penumbra with the occluder gap. */
@@ -329,17 +323,10 @@ static const char *const PBR_FS =
     "uniform usamplerBuffer u_probe_froxel_off;\n"
     "uniform usamplerBuffer u_probe_froxel_cnt;\n"
     "uniform usamplerBuffer u_probe_froxel_idx;\n"
-    "vec3 gi_probe_indirect(vec3 wp, vec3 N){\n"
+    "vec3 gi_probe_indirect(vec3 wp, vec3 nn, int pcl){\n"
     "  if(u_gi_enabled==0) return vec3(0.0);\n"
-    /* Probes are binned into the SAME froxels as the forward+ lights; recompute\n"
-     * this fragment's cluster exactly as the light loop does and read only that\n"
-     * cluster's probe candidates -- no per-fragment world-grid neighbour scan. */
-    "  int dimx=int(u_cluster_dims.x),dimy=int(u_cluster_dims.y),dimz=int(u_cluster_dims.z);\n"
-    "  int ptx=clamp(int(gl_FragCoord.x/u_screen.x*u_cluster_dims.x),0,dimx-1);\n"
-    "  int pty=clamp(int(gl_FragCoord.y/u_screen.y*u_cluster_dims.y),0,dimy-1);\n"
-    "  float pvz=max(-v_view_z,u_cluster_near);\n"
-    "  int psl=clamp(int(log(pvz/u_cluster_near)/log(u_cluster_far/u_cluster_near)*u_cluster_dims.z),0,dimz-1);\n"
-    "  int pcl=(psl*dimy+pty)*dimx+ptx;\n"
+    /* Probes are binned into the SAME froxels as the forward+ lights; @p pcl is the\n"
+     * fragment's cluster (computed once in main), so just read its probe list. */
     "  int poff=int(texelFetch(u_probe_froxel_off,pcl).r);\n"
     "  int pcnt=int(texelFetch(u_probe_froxel_cnt,pcl).r);\n"
     /* Nearest 2 probes among this froxel's candidates (denser probe set -> 2 is\n"
@@ -364,7 +351,7 @@ static const char *const PBR_FS =
     "    aB+=texelFetch(u_probe_sh,base+2)*w;\n"
     "  }\n"
     "  if(wsum<=0.0) return vec3(0.0);\n"
-    "  float inv=1.0/wsum; vec3 nn=normalize(N);\n"
+    "  float inv=1.0/wsum;\n"       /* nn is already normalised (passed from main). */
     /* Linear SH (band 0 + band 1) cosine-convolved irradiance: A0=pi, A1=2pi/3. */
     "  vec4 Y=vec4(0.282094792, 0.488602512*nn.y, 0.488602512*nn.z, 0.488602512*nn.x);\n"
     "  vec4 A=vec4(3.14159265, 2.0943951, 2.0943951, 2.0943951);\n"
@@ -395,18 +382,25 @@ static const char *const PBR_FS =
     "  }\n"
     "  vec3 V = normalize(u_eye_pos - v_world_pos);\n"
     "  vec3 F0 = mix(vec3(0.08*u_specular_strength), albedo, metal);\n"
+    /* This fragment's forward+ cluster -- computed ONCE (one log) and shared by\n"
+     * both the clustered light loop and the probe gather. */
+    "  int cdimx=int(u_cluster_dims.x), cdimy=int(u_cluster_dims.y), cdimz=int(u_cluster_dims.z);\n"
+    "  int ctx=clamp(int(gl_FragCoord.x/u_screen.x*u_cluster_dims.x),0,cdimx-1);\n"
+    "  int cty=clamp(int(gl_FragCoord.y/u_screen.y*u_cluster_dims.y),0,cdimy-1);\n"
+    "  float cvz=max(-v_view_z,u_cluster_near);\n"
+    "  int csl=clamp(int(log(cvz/u_cluster_near)*u_inv_log_farnear*u_cluster_dims.z),0,cdimz-1);\n"
+    "  int frag_cluster=(csl*cdimy+cty)*cdimx+ctx;\n"
+    /* Fragment-constant PCF kernel rotation (dithers both the CSM and cube taps),\n"
+     * built ONCE instead of per shadowed light. Interleaved gradient noise angle. */
+    "  float kang = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056,0.00583715))))*6.2831853;\n"
+    "  float kc=cos(kang), ks=sin(kang);\n"
+    "  mat2 krot = mat2(kc,-ks,ks,kc);\n"
     /* Directional sun. */
-    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos);\n"
+    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot);\n"
     "  float dbg_cubesh = 1.0;\n"   /* raw cube-shadow of the nearest shadowed clustered light. */
     "  if(u_clustered==1){\n"
-    /* Forward+: find this fragment's cluster and shade only its lights. */
-    "    int dimx=int(u_cluster_dims.x), dimy=int(u_cluster_dims.y), dimz=int(u_cluster_dims.z);\n"
-    "    int tx = int(gl_FragCoord.x / u_screen.x * u_cluster_dims.x);\n"
-    "    int ty = int(gl_FragCoord.y / u_screen.y * u_cluster_dims.y);\n"
-    "    float vz = max(-v_view_z, u_cluster_near);\n"
-    "    int sl = int(log(vz/u_cluster_near) / log(u_cluster_far/u_cluster_near) * u_cluster_dims.z);\n"
-    "    tx = clamp(tx,0,dimx-1); ty = clamp(ty,0,dimy-1); sl = clamp(sl,0,dimz-1);\n"
-    "    int cluster = (sl*dimy + ty)*dimx + tx;\n"
+    /* Forward+: shade only this cluster's lights. */
+    "    int cluster = frag_cluster;\n"
     "    int roff = texelFetch(u_cluster_offset, cluster).r;\n"
     "    int rcnt = texelFetch(u_cluster_count, cluster).r;\n"
     "    for(int i=0; i<rcnt; ++i){\n"
@@ -415,7 +409,7 @@ static const char *const PBR_FS =
     "      vec4 t0=texelFetch(u_light_data,b), t1=texelFetch(u_light_data,b+1),\n"
     "           t2=texelFetch(u_light_data,b+2), t3=texelFetch(u_light_data,b+3);\n"
     "      float sh = 1.0;\n"
-    "      if(t3.y>=0.0){ float cs=pbr_cube_shadow(t0.yzw, t3.y); sh *= cs; dbg_cubesh=min(dbg_cubesh,cs); }\n"
+    "      if(t3.y>=0.0){ float cs=pbr_cube_shadow(t0.yzw, t3.y, krot); sh *= cs; dbg_cubesh=min(dbg_cubesh,cs); }\n"
     "      if(li==u_spot_light) sh *= pbr_spot_shadow(v_world_pos, t0.yzw);\n"
     "      direct += sh * pbr_accumulate(int(t0.x), t0.yzw, t1.xyz, t2.xyz, t1.w, t2.w, t3.x,\n"
     "                               N,V,albedo,rough,metal,F0);\n"
@@ -434,7 +428,7 @@ static const char *const PBR_FS =
     "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"
     /* 5 = raw CSM shadow factor (white=lit, black=occluded). 6 = finest cascade\n"
      * whose box contains the fragment (red=0, green=1, blue=2+). */
-    "  if(u_debug_mode==5){ float sh=pbr_csm_shadow(v_world_pos); frag=vec4(vec3(sh),1.0); return; }\n"
+    "  if(u_debug_mode==5){ float sh=pbr_csm_shadow(v_world_pos, krot); frag=vec4(vec3(sh),1.0); return; }\n"
     "  if(u_debug_mode==6){ int ci=-1; for(int i=0;i<u_csm_count;++i){ vec4 lc=u_csm_vp[i]*vec4(v_world_pos,1.0); vec3 nd=lc.xyz/lc.w; if(all(lessThanEqual(abs(nd),vec3(1.0)))){ci=i;break;} }\n"
     "    vec3 cc=ci<0?vec3(0.1):(ci==0?vec3(1,0,0):(ci==1?vec3(0,1,0):vec3(0,0,1))); frag=vec4(cc,1.0); return; }\n"
     "  if(u_debug_mode==5){ frag=vec4(0.5+0.5*normalize(v_tangent),1.0); return; }\n"
@@ -445,8 +439,8 @@ static const char *const PBR_FS =
     "  else { ambient = u_ambient*albedo*ao; }\n"
     /* Dynamic-light indirect from the SDF-probe GI: incident irradiance E(N) ->\n"
      * diffuse albedo/PI * E, on top of the baked static ambient. */
-    "  ambient += albedo * gi_probe_indirect(v_world_pos, N) / PI * ao;\n"
-    "  if(u_debug_mode==7){ frag=vec4(gi_probe_indirect(v_world_pos, N),1.0); return; }\n"
+    "  ambient += albedo * gi_probe_indirect(v_world_pos, N, frag_cluster) * (ao/PI);\n"
+    "  if(u_debug_mode==7){ frag=vec4(gi_probe_indirect(v_world_pos, N, frag_cluster),1.0); return; }\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"
      * emissive LIGHTING of the scene is baked into the lightmap). Driven by the\n"

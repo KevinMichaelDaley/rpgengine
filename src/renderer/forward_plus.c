@@ -1,4 +1,5 @@
 #include "ferrum/renderer/forward_plus.h"
+#include <math.h>
 
 #include <string.h>
 
@@ -92,6 +93,9 @@ void forward_plus_bind(forward_plus_t *fp, shader_uniform_cache_t *cache,
     shader_uniform_set_vec3(cache, program, "u_screen", screen);
     shader_uniform_set_float(cache, program, "u_cluster_near", config->near_plane);
     shader_uniform_set_float(cache, program, "u_cluster_far", config->far_plane);
+    /* Precompute 1/log(far/near) so the fragment's depth-slice needs no log-ratio. */
+    shader_uniform_set_float(cache, program, "u_inv_log_farnear",
+                             1.0f / logf(config->far_plane / config->near_plane));
 }
 
 void forward_plus_destroy(forward_plus_t *fp)
