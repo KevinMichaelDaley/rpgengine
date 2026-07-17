@@ -309,7 +309,7 @@ static const char *const PBR_FS =
     "      float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*prad, float(i))).r;\n"
     "      lit += (dp < d - bias) ? 0.0 : 1.0;\n"
     "    }\n"
-    "    vis = min(vis, lit / 8.0);\n"     /* union of occlusion. */
+    "    vis = lit * 0.125; break;\n"     /* finest containing cascade wins (nested). */
     "  }\n"
     "  return min(vis, pbr_dyn_shadow(fragpos));\n"
     "}\n"
