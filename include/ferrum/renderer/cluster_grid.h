@@ -66,11 +66,12 @@ void cluster_grid_build(cluster_grid_t *grid, const render_camera_t *camera,
  *        forward+ lights use. Each froxel gets: (1) the @p min_probes nearest probes
  *        by world-space distance to the froxel centre -- a GUARANTEED minimum so a
  *        froxel is never starved and probes don't pop in/out as the camera moves --
- *        PLUS (2) every probe inside the froxel's bounding sphere grown by
- *        @p sphere_margin. Fills offsets/counts/indices like @ref cluster_grid_build.
+ *        PLUS (2) every probe inside the froxel's AABB inflated by @p sphere_margin
+ *        (a tight box test; the circumscribed sphere over-includes corner probes
+ *        and bloats the list). Fills offsets/counts/indices like @ref cluster_grid_build.
  *
  * @param min_probes    guaranteed K-nearest probes per froxel (clamped to 16).
- * @param sphere_margin world-space halo (m) added to each froxel's bounding sphere.
+ * @param sphere_margin world-space halo (m) added to each froxel's AABB bounds.
  */
 void cluster_grid_build_points(cluster_grid_t *grid, const render_camera_t *camera,
                                const float *positions, uint32_t n_points,

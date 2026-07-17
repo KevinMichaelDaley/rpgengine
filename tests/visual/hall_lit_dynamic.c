@@ -695,7 +695,7 @@ int main(int argc,char **argv){
         /* No flat ambient: indirect comes entirely from the baked lightmap SH and
          * the dynamic SDF probes. A constant fill only flattens/washes the scene. */
         fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
-        fcfg.dir_cascades=2; fcfg.dir_static_res=2048; fcfg.dir_dynamic_res=2048;
+        fcfg.dir_cascades=2; fcfg.dir_static_res=1024; fcfg.dir_dynamic_res=1024;
         fcfg.dir_lambda=0.6f;
         /* PCSS depth-compare bias in metres (DIR_BIAS env, default 5cm). */
         fcfg.dir_bias=getenv("DIR_BIAS")?(float)atof(getenv("DIR_BIAS")):0.05f;
@@ -802,7 +802,7 @@ int main(int argc,char **argv){
         gc.max_lights=512; gc.max_boxes=8; gc.soft_k=8.0f;
         /* Bin probes into the SAME froxels as forward+ (identical cluster config)
          * so the material reads probe candidates from the fragment's own cluster. */
-        gc.froxel=fcfg.cluster; gc.probe_min=4; gc.probe_sphere_margin=1.5f; gc.bin_interval=1;
+        gc.froxel=fcfg.cluster; gc.probe_min=4; gc.probe_sphere_margin=0.5f; gc.bin_interval=1;
         if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
     }
 

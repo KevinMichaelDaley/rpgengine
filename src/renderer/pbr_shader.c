@@ -310,13 +310,13 @@ static const char *const PBR_FS =
     "    } else {\n"
     "      prad = clamp(u_csm_soft * uvPerM, texuv, 6.0*texuv);\n"  /* fixed width. */
     "    }\n"
-    /* Variable-width PCF. */
+    /* PCF: 8 taps (per-pixel rotation dithers them so 8 reads smooth). */
     "    float lit = 0.0;\n"
-    "    for(int s=0;s<16;++s){\n"
+    "    for(int s=0;s<8;++s){\n"
     "      float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*prad, float(i))).r;\n"
     "      lit += (dp < d - bias) ? 0.0 : 1.0;\n"
     "    }\n"
-    "    vis = min(vis, lit / 16.0);\n"     /* union of occlusion. */
+    "    vis = min(vis, lit / 8.0);\n"     /* union of occlusion. */
     "  }\n"
     "  return min(vis, pbr_dyn_shadow(fragpos));\n"
     "}\n"
