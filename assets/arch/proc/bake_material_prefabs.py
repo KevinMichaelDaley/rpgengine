@@ -226,7 +226,23 @@ def main():
                os.path.join(BAKE, "roughness.png"), 'Non-Color', 16)
     print(f"[bake] masonry: {mw} x {mh} albedo + roughness")
 
+    # Pack ao (R) + roughness (G) into a single ORM texture so the renderer reads
+    # both in ONE fetch (orm_packed material). B unused (metallic = 0 here).
+    _write_orm(os.path.join(BAKE, "ao.png"),
+               os.path.join(BAKE, "roughness.png"),
+               os.path.join(BAKE, "orm.png"))
+
     print("[bake] done. normal.png / ao.png left untouched (bake_wall.py owns them).")
+
+
+def _write_orm(ao_path, rough_path, out_path):
+    """Merge ao(.r) + roughness(.r) into orm.png (R=ao, G=roughness, B=0)."""
+    from PIL import Image
+    ao = Image.open(ao_path).convert('L')
+    ro = Image.open(rough_path).convert('L').resize(ao.size)
+    orm = Image.merge('RGB', (ao, ro, Image.new('L', ao.size, 0)))
+    orm.save(out_path)
+    print(f"[bake] orm: {orm.size[0]} x {orm.size[1]} (R=ao, G=roughness)")
 
 
 if __name__ == "__main__":
