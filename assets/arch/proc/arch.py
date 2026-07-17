@@ -342,6 +342,69 @@ def _frame_faces(half_w, half_wp, sill_h, opening_h, panel_h, shape,
     return pos, faces, splay, opening_path, sill_path
 
 
+def _extrude_blind(bm, pos, faces, opening_path, sill_path, y0, y1, yn,
+                   off=None, off_front=False):
+    """Extrude the frame as a recessed NICHE (blind arch): the opening does not
+    pass through. y0 = front (visible) face, y1 = solid back face, yn = niche
+    back (y0 < yn < y1). Builds the front frame (with the opening), the reveal
+    walls front->niche, a niche-back cap, the perimeter walls front->back, and a
+    SOLID back (frame + a cap filling the opening). *off* splays the recessed
+    (niche) end unless *off_front*. Returns (front, back) vert lists."""
+    off = off or {}
+    foff = off if off_front else {}
+    noff = {} if off_front else off
+    front = [bm.verts.new((x + foff.get(i, (0, 0))[0], y0,
+                           z + foff.get(i, (0, 0))[1]))
+             for i, (x, z) in enumerate(pos)]
+    back = [bm.verts.new((x, y1, z)) for (x, z) in pos]
+    niche = {}
+    for i in set(opening_path) | set(sill_path or []):
+        ox, oz = noff.get(i, (0.0, 0.0))
+        x, z = pos[i]
+        niche[i] = bm.verts.new((x + ox, yn, z + oz))
+
+    for f in faces:
+        bm.faces.new([front[i] for i in f])           # front frame (opening open)
+        bm.faces.new([back[i] for i in reversed(f)])   # back frame (filled below)
+
+    # Classify boundary edges: opening (both ends on the opening/sill loop) vs
+    # the panel perimeter.
+    und = defaultdict(int)
+    for f in faces:
+        for a, b in zip(f, f[1:] + f[:1]):
+            und[frozenset((a, b))] += 1
+    op_index = set(opening_path) | set(sill_path or [])
+    for f in faces:
+        for a, b in zip(f, f[1:] + f[:1]):
+            if und[frozenset((a, b))] != 1:
+                continue
+            if a in op_index and b in op_index:        # opening: reveal to niche
+                bm.faces.new((front[a], front[b], niche[b], niche[a]))
+            else:                                       # perimeter: front -> back
+                bm.faces.new((front[a], front[b], back[b], back[a]))
+
+    # Both caps (niche back + solid back) bridge the opening's LEFT reveal edge to
+    # its RIGHT as horizontal quads (opening_path is symmetric bottom-left -> apex
+    # -> bottom-right), not an n-gon. A single keystone triangle closes the apex.
+    _bridge_cap(bm, [niche[i] for i in opening_path])
+    _bridge_cap(bm, [back[i] for i in opening_path], flip=True)
+    return front, back
+
+
+def _bridge_cap(bm, chain, flip=False):
+    """Fill the symmetric opening outline *chain* (bottom-left .. apex ..
+    bottom-right) by bridging mirror verts left<->right into horizontal quads;
+    the bottom edge (chain[0]->chain[-1]) closes the sill. *flip* reverses the
+    winding (for the +Y solid-back cap). One apex triangle when the count is odd."""
+    v = list(reversed(chain)) if flip else list(chain)
+    i, j = 0, len(v) - 1
+    while j - i > 2:
+        bm.faces.new((v[i], v[i + 1], v[j - 1], v[j]))
+        i += 1; j -= 1
+    if j - i == 2:                       # keystone: three verts left
+        bm.faces.new((v[i], v[i + 1], v[j]))
+
+
 def _extrude_panel(bm, pos, faces, y0, y1, off=None, off_front=False):
     """Realize the planar frame at depth y0, mirror it at y1, and wall every
     boundary edge — one watertight quad solid. *off* optionally shifts the
@@ -1471,9 +1534,18 @@ def build_arched_doorway(
     trim_bevel=0.008,
     sill_square=False,
     sill_extrude=0.0,
+    blind=False,
+    blind_recess=None,
     collection=None,
 ):
     """Build an arched-doorway (or window) mesh object and link it in.
+
+    blind -- if True, the opening does not go through: its BACK end is capped
+             with a flat panel, so the piece reads as a recessed arch NICHE (a
+             blind arch). The recess depth is the wall thickness; all the shape /
+             splay / reveal-bevel / voussoir-trim / masonry-UV machinery is reused
+             on the front exactly as for a real opening. Use a sill (sill_height >
+             0) so the niche has a closed bottom.
 
     Opening (the doorway / window hole):
       opening_width  -- clearance width of the opening (> 0).
@@ -1561,9 +1633,19 @@ def build_arched_doorway(
            for i, (dx, dz) in splay_dirs.items()} if splay > 0 else None
 
     bm = bmesh.new()
-    front, back = _extrude_panel(
-        bm, pos, faces, -wall_thickness * 0.5, wall_thickness * 0.5, off,
-        off_front=(wide_side == "outer"))
+    if blind:
+        # Recessed niche: front at -t/2, solid back at +t/2, niche back yn set by
+        # blind_recess (default 60% of the wall thickness).
+        y0 = -wall_thickness * 0.5
+        recess = blind_recess if blind_recess is not None else wall_thickness * 0.6
+        recess = max(min(recess, wall_thickness - 1e-3), 1e-3)
+        front, back = _extrude_blind(
+            bm, pos, faces, opening_path, sill_path, y0, wall_thickness * 0.5,
+            y0 + recess, off, off_front=(wide_side == "outer"))
+    else:
+        front, back = _extrude_panel(
+            bm, pos, faces, -wall_thickness * 0.5, wall_thickness * 0.5, off,
+            off_front=(wide_side == "outer"))
     # Voussoir trim: inset a flat band around the opening on the front face (the
     # ring runs the jambs + arch head, closed across the sill for a window). The
     # band carries the stack-bonded voussoir strip material (rpg-o01r).
@@ -1587,7 +1669,7 @@ def build_arched_doorway(
             square_idx=square, sill_idx=sill_idx, sill_extrude=sill_extrude)
     rev_pairs = _collect_reveal_pairs(
         front, back, opening_path, sill_path, reveal_bevel_faces,
-        reveal_bevel_sill) if reveal_bevel > 0.0 else []
+        reveal_bevel_sill) if reveal_bevel > 0.0 and not blind else []
     obj = _finish(bm, name, collection, smooth_angle, keep_smooth=trim_smooth,
                   keep_flat=trim_flat)
     if rev_pairs:
