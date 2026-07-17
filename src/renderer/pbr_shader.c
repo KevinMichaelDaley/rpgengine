@@ -394,6 +394,8 @@ static const char *const PBR_FS =
     "  float kang = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056,0.00583715))))*6.2831853;\n"
     "  float kc=cos(kang), ks=sin(kang);\n"
     "  mat2 krot = mat2(kc,-ks,ks,kc);\n"
+    /* Perf probe: 9 = material fetches only (no lighting), isolates fill/bandwidth. */
+    "  if(u_debug_mode==9){ frag=vec4(albedo*ao,1.0); return; }\n"
     /* Directional sun. */
     "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot);\n"
     "  float dbg_cubesh = 1.0;\n"   /* raw cube-shadow of the nearest shadowed clustered light. */
@@ -407,11 +409,17 @@ static const char *const PBR_FS =
     "      int b = li*4;\n"
     "      vec4 t0=texelFetch(u_light_data,b), t1=texelFetch(u_light_data,b+1),\n"
     "           t2=texelFetch(u_light_data,b+2), t3=texelFetch(u_light_data,b+3);\n"
-    "      float sh = 1.0;\n"
-    "      if(t3.y>=0.0){ float cs=pbr_cube_shadow(t0.yzw, t3.y, krot); sh *= cs; dbg_cubesh=min(dbg_cubesh,cs); }\n"
-    "      if(li==u_spot_light) sh *= pbr_spot_shadow(v_world_pos, t0.yzw);\n"
-    "      direct += sh * pbr_accumulate(int(t0.x), t0.yzw, t1.xyz, t2.xyz, t1.w, t2.w, t3.x,\n"
+    /* Unshadowed contribution FIRST (cheap: range/cone/N.L cull). Only sample the\n"
+     * shadow map when the light actually reaches this fragment -- skips ~8 cube\n"
+     * taps for every out-of-range shadowed light in the cluster. */
+    "      vec3 lc = pbr_accumulate(int(t0.x), t0.yzw, t1.xyz, t2.xyz, t1.w, t2.w, t3.x,\n"
     "                               N,V,albedo,rough,metal,F0);\n"
+    "      if(dot(lc,lc) > 1e-8){\n"
+    "        float sh = 1.0;\n"
+    "        if(t3.y>=0.0){ float cs=pbr_cube_shadow(t0.yzw, t3.y, krot); sh *= cs; dbg_cubesh=min(dbg_cubesh,cs); }\n"
+    "        if(li==u_spot_light) sh *= pbr_spot_shadow(v_world_pos, t0.yzw);\n"
+    "        direct += sh * lc;\n"
+    "      }\n"
     "    }\n"
     "  } else {\n"
     /* Direct uniform-array path (non-clustered). */
