@@ -510,11 +510,15 @@ static const char *const PBR_FS =
     "    vec3 pd=wp_b-ppos; float pl=length(pd);\n"
     "    if(pl>1e-4) w*=max(probe_vis(probe, pd/pl, pl), 0.02);\n"
     "    if(w<=0.0) continue;\n"
-    "    vec4 a=texelFetch(u_probe_sg, probe*2+0);\n"   /* axis.xyz, kappa. */
-    "    vec4 b=texelFetch(u_probe_sg, probe*2+1);\n"   /* rgb, pad. */
-    "    float keff=a.w*rw;\n"                          /* rougher -> lower sharpness. */
-    "    float lobe=exp(keff*(dot(R, a.xyz)-1.0));\n"
-    "    acc+=w*b.rgb*lobe; wsum+=w;\n"
+    /* Sum the probe's 3 SG lobes evaluated along R (multi-lobe: fire + windows). */
+    "    vec3 lobesum=vec3(0.0);\n"
+    "    for(int L=0;L<3;++L){\n"
+    "      vec4 a=texelFetch(u_probe_sg, (probe*3+L)*2+0);\n"   /* axis.xyz, kappa. */
+    "      vec4 b=texelFetch(u_probe_sg, (probe*3+L)*2+1);\n"   /* rgb, pad. */
+    "      float keff=a.w*rw;\n"                                /* rougher -> lower sharpness. */
+    "      lobesum += b.rgb*exp(keff*(dot(R, a.xyz)-1.0));\n"
+    "    }\n"
+    "    acc+=w*lobesum; wsum+=w;\n"
     "  }\n"
     "  if(wsum>1e-5) acc/=wsum;\n"
     "  return acc*u_gi_spec_gain;\n"

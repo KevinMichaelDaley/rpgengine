@@ -143,31 +143,38 @@ static const char *CS_SRC =
     /* Two SH4 sets per probe: [0..11] dynamic, [12..23] static. */
     "  vec3 o=ppos[gid].xyz; float shd[12]; float shs[12];\n"
     "  for(int k=0;k<12;++k){ shd[k]=0.0; shs[k]=0.0; }\n"
-    "  float ga=2.399963229728653; float w=4.0*PI/float(u_ncones);\n"
-    /* SG specular lobe moments: luminance-weighted mean direction + total colour. */
-    "  vec3 sgVec=vec3(0.0), sgCol=vec3(0.0); float sgLum=0.0;\n"
-    /* Fibonacci sphere of directions: gather one-bounce indirect over the sphere. */
-    "  for(int s=0;s<u_ncones;++s){ float z=1.0-(2.0*float(s)+1.0)/float(u_ncones);\n"
+    "  const int NR=32; const int NL=3;\n"           /* rays; SG lobes. */
+    "  float ga=2.399963229728653; float w=4.0*PI/float(NR);\n"
+    /* Store per-ray direction + radiance so the multi-lobe fit can re-scan them. */
+    "  vec3 rdir[32]; vec3 rcol[32];\n"
+    "  for(int s=0;s<NR;++s){ float z=1.0-(2.0*float(s)+1.0)/float(NR);\n"
     "    float r=sqrt(max(0.0,1.0-z*z)); float phi=ga*float(s);\n"
-    "    vec3 dir=vec3(r*cos(phi), r*sin(phi), z);\n"
-    "    vec3 rd, rs; trace(o,dir, rd, rs);\n"
-    "    vec3 col=rd+rs; float lum=dot(col, vec3(0.2126,0.7152,0.0722));\n"
-    "    sgVec+=lum*dir; sgCol+=col; sgLum+=lum;\n"
+    "    vec3 dir=vec3(r*cos(phi), r*sin(phi), z); rdir[s]=dir;\n"
+    "    vec3 rd, rs; trace(o,dir, rd, rs); rcol[s]=rd+rs;\n"
     "    float y[4]; sh_basis(dir,y);\n"
     "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*w; shd[4+k]+=rd.g*y[k]*w; shd[8+k]+=rd.b*y[k]*w;\n"
     "                          shs[k]+=rs.r*y[k]*w; shs[4+k]+=rs.g*y[k]*w; shs[8+k]+=rs.b*y[k]*w; } }\n"
     "  for(int k=0;k<12;++k){ psh[gid*24+k]=shd[k]; psh[gid*24+12+k]=shs[k]; }\n"
-    /* Moment-match one SG lobe: mean resultant length Rbar -> vMF sharpness; axis =\n"
-     * dominant radiance direction; amplitude = mean radiance scaled by the lobe's\n"
-     * peakiness so the SG reconstructs the environment's bright direction. */
-    "  vec3 axis=vec3(0.0,1.0,0.0); float kappa=1.0;\n"
-    "  if(sgLum>1e-5){ float ml=length(sgVec); float Rbar=clamp(ml/sgLum,0.0,0.999);\n"
-    "    axis=(ml>1e-5)? sgVec/ml : axis;\n"
-    "    kappa=Rbar*(3.0-Rbar*Rbar)/max(1.0-Rbar*Rbar,1e-3); kappa=clamp(kappa,0.5,40.0); }\n"
-    "  vec3 amp=sgCol*(kappa/(float(u_ncones)))*2.0;\n"   /* heuristic peak scaling. */
-    "  int gi5=int(gid)*8;\n"
-    "  psg[gi5+0]=axis.x; psg[gi5+1]=axis.y; psg[gi5+2]=axis.z; psg[gi5+3]=kappa;\n"
-    "  psg[gi5+4]=amp.r; psg[gi5+5]=amp.g; psg[gi5+6]=amp.b; psg[gi5+7]=0.0;\n"
+    /* Multi-lobe SG fit by GREEDY RESIDUAL: fit a lobe to the dominant residual\n"
+     * direction (luminance-weighted mean dir -> vMF sharpness), project its\n"
+     * amplitude as the lobe-kernel-weighted mean radiance, then SUBTRACT it so the\n"
+     * next lobe captures the next bright direction (fire vs windows). */
+    "  int base=int(gid)*NL*8;\n"
+    "  for(int L=0;L<NL;++L){\n"
+    "    vec3 mvec=vec3(0.0); float mlum=0.0;\n"
+    "    for(int s=0;s<NR;++s){ vec3 c=max(rcol[s],vec3(0.0));\n"
+    "      float lum=dot(c,vec3(0.2126,0.7152,0.0722)); mvec+=lum*rdir[s]; mlum+=lum; }\n"
+    "    vec3 axis=vec3(0.0,1.0,0.0); float kappa=1.0;\n"
+    "    if(mlum>1e-5){ float ml=length(mvec); float Rbar=clamp(ml/mlum,0.0,0.999);\n"
+    "      axis=(ml>1e-5)? mvec/ml : axis;\n"
+    "      kappa=Rbar*(3.0-Rbar*Rbar)/max(1.0-Rbar*Rbar,1e-3); kappa=clamp(kappa,0.6,60.0); }\n"
+    "    vec3 num=vec3(0.0); float den=0.0;\n"
+    "    for(int s=0;s<NR;++s){ float g=exp(kappa*(dot(rdir[s],axis)-1.0));\n"
+    "      num+=max(rcol[s],vec3(0.0))*g; den+=g; }\n"
+    "    vec3 amp=num/max(den,1e-4);\n"
+    "    for(int s=0;s<NR;++s){ float g=exp(kappa*(dot(rdir[s],axis)-1.0)); rcol[s]-=amp*g; }\n"
+    "    psg[base+L*8+0]=axis.x; psg[base+L*8+1]=axis.y; psg[base+L*8+2]=axis.z; psg[base+L*8+3]=kappa;\n"
+    "    psg[base+L*8+4]=amp.r; psg[base+L*8+5]=amp.g; psg[base+L*8+6]=amp.b; psg[base+L*8+7]=0.0; }\n"
     /* DDGI depth probe. Per octahedral texel (a direction), estimate the depth\n"
      * distribution from 3 cone-traces: a ray (k=0) gives the MEAN (median sample),\n"
      * a wide + a narrow cone are blocked in the near tail. Treat each cone radius\n"
@@ -255,9 +262,9 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_depth_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, g->b_depth);
 
-    /* SG specular lobe: 8 floats/probe (2 RGBA32F texels). */
+    /* SG specular: 3 lobes/probe * 8 floats = 24 (6 RGBA32F texels). */
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sg);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 8 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glGenTextures(1, &g->tbo_sg_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_sg_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g->b_sg);

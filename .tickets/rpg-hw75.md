@@ -67,3 +67,16 @@ Also this pass:
 
 TODO: multi-lobe residual fit; interpolate lobe params vs evaluate-then-blend;
 static bake path; TDD for host SG-fit/serialize.
+
+**2026-07-18T21:42:01Z**
+
+Multi-lobe SG fit (committed): 3 lobes/probe by GREEDY RESIDUAL. The kernel now
+stores per-ray dir+radiance (NR=32 rays); for each of NL=3 lobes it moment-fits
+the dominant residual direction (luminance-weighted mean dir -> vMF sharpness),
+projects the amplitude as the lobe-kernel-weighted mean radiance, then subtracts
+that lobe so the next captures the next bright direction (fire vs windows).
+Stored 24 floats/probe (3 * {axis,kappa,rgb,pad}); the forward+ sums the 3 lobes
+along R. Probes with multiple bright directions now reflect each.
+
+TODO: static bake path (compress static-region probes once offline); host-side
+TDD for the SG fit/serialize.
