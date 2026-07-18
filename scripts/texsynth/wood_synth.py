@@ -33,6 +33,64 @@ from .error_surface import ssd
 from .min_cut import min_vertical_cut
 
 
+def synth_wood_beams(variants, overlap=220, seed=0, band=(0.32, 0.76),
+                     normalize=True, source_hp=150.0, local_norm=150.0,
+                     order=None):
+    """Stitch the WHOLE beams end-to-end into one X-tileable field: each beam is
+    laid at its FULL width and consecutive beams are joined by a single
+    Efros-Freeman minimum-error cut across an ``overlap`` band -- so the only seams
+    are the joins between beams (N of them, including the last->first wrap), NOT a
+    per-tile lattice. Use this when you want "one tile per beam" (three real boards
+    stitched), rather than the patch-quilted :func:`synth_wood_aligned`.
+
+    Brightness is matched + high-passed per source (``normalize``/``source_hp``)
+    and the albedo is finally trend-flattened (``local_norm``) exactly as in the
+    patch synth. All channels move in lockstep under the same seam. ``order`` picks
+    the beam sequence (default source order). Returns ``(fields, info)``."""
+    keys = list(variants[0].keys())
+    sel = "albedo" if "albedo" in keys else keys[0]
+    dtype = variants[0][sel].dtype
+    variants = _crop_band(variants, keys, sel, band)
+    if normalize:
+        tmean = {k: np.median([v[k].reshape(-1, 3).mean(0) for v in variants],
+                              axis=0) for k in keys}
+        tstd = {k: np.median([v[k].reshape(-1, 3).std(0) for v in variants],
+                             axis=0) for k in keys}
+        variants = _normalize_beams(variants, keys, tmean, tstd, source_hp)
+    h = min(v[sel].shape[0] for v in variants)
+    variants = [{k: v[k][:h] for k in keys} for v in variants]   # equal height
+    order = list(range(len(variants))) if order is None else list(order)
+    n = len(order)
+    widths = [variants[b][sel].shape[1] for b in order]
+    ov = min(overlap, min(widths) // 2)
+    tile_w = sum(widths) - n * ov                       # cyclic: N joins, N overlaps
+
+    fields = {k: np.zeros((h, tile_w, 3), dtype=dtype) for k in keys}
+    filled = np.zeros((h, tile_w), dtype=bool)
+    cursor = 0
+    for w, b in zip(widths, order):
+        cols = (cursor + np.arange(w)) % tile_w
+        existing = filled[:, cols]
+        region = fields[sel][:, cols]
+        src = variants[b][sel]
+        mask = np.ones((h, w), dtype=bool)
+        if existing[:, :ov].any():                      # join to the previous beam
+            seam = min_vertical_cut(ssd(region[:, :ov], src[:, :ov]))
+            mask[:, :ov] &= np.arange(ov)[None, :] > seam[:, None]
+        if existing[:, w - ov:].any():                  # wrap join to the first beam
+            seam = min_vertical_cut(ssd(region[:, w - ov:], src[:, w - ov:]))
+            mask[:, w - ov:] &= np.arange(ov)[None, :] < seam[:, None]
+        mask |= ~existing
+        sel3 = mask[..., None]
+        for k in keys:
+            fields[k][:, cols] = np.where(sel3, variants[b][k], fields[k][:, cols])
+        filled[:, cols] = True
+        cursor += w - ov
+    if local_norm > 0.0 and "albedo" in keys:
+        fields["albedo"] = _local_normalize(fields["albedo"], local_norm)
+    return fields, {"tile_width": tile_w, "height": h, "nbeams": n, "overlap": ov}
+
+
 def _grain_density(luma, sigma):
     """Local grain DENSITY map: the gradient magnitude (how fast the wood value
     changes -- high in tight grain, low in clear wood) smoothed to ``sigma`` px, so

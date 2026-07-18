@@ -99,7 +99,7 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
         wall_thickness=surround_t, arch_shape="flat", opening_width=1.5,
         opening_height=1.75, head_rise=0.0, sill_height=0.0, splay=0.0,
         blind=True, blind_recess=surround_t * 0.7, voussoir_trim=True,
-        trim_width=0.24, collection=col)   # square-topped opening, WIDE voussoir
+        trim_width=0.24, masonry_uv=True, collection=col)  # coursed reveal/inset UVs
     # front (voussoir) face is -Y; for the north wall the room is at -Y, so no
     # rotation. Seat the back on the wall, projecting `surround_t` into the room.
     fire.location = (wx, yin + proj * (surround_t * 0.5), 0.0)
@@ -295,13 +295,16 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
         yS = scy + (midy - scy) * fr
         _box(col, f"{name}_collar_{tt}", x, 0.5 * (yN + yS), zc,
              0.22, (yN - yS), 0.20)
-    # longitudinal purlins seated on the rafters, tying the trusses
-    for yc, zc, nm in [
-            (ncy + (midy - ncy) * 0.32, top + (apex - top) * 0.32, "N"),
-            (scy + (midy - scy) * 0.32, top + (apex - top) * 0.32, "S"),
-            (midy, apex, "ridge")]:
+    # longitudinal purlins seated on the rafters, tying the trusses. The RIDGE
+    # purlin hangs BELOW the apex (its top just under the peak) as an exposed ridge
+    # beam running door-to-dais along the roof seam, VISIBLE from inside -- at the
+    # apex it would sit inside the roof skin and read as nothing.
+    for yc, zc, nm, sz in [
+            (ncy + (midy - ncy) * 0.32, top + (apex - top) * 0.32, "N", 0.14),
+            (scy + (midy - scy) * 0.32, top + (apex - top) * 0.32, "S", 0.14),
+            (midy, apex - 0.18, "ridge", 0.30)]:
         _box(col, f"{name}_purlin_{nm}", 0.5 * (x0 + x1), yc, zc,
-             (x1 - x0), 0.14, 0.14)
+             (x1 - x0), 0.16, sz)
 
     # roof skin: eave AT the wall top (over the wall outer face), ridge at apex.
     bm_verts = [
@@ -421,7 +424,7 @@ def prepare_uvs(col, scale=1.0):
 # end-wall arches. Everything else (floor, dais, timber roof, fireplace stone) is
 # left UV-ready for its own material.
 _WALL_STEMS = ("win_N", "win_S", "wall_N", "pier_N", "pier_S",
-               "entrance", "dais_arch")
+               "entrance", "dais_arch", "fp_")   # fireplace stone = wall masonry
 
 
 def assign_wall_material(col, bake_dir, name="great_hall_stone_wall"):
@@ -452,8 +455,104 @@ def assign_wall_material(col, bake_dir, name="great_hall_stone_wall"):
     return mat
 
 
-# object-name stems that read as TIMBER (roof trusses + the roof/ceiling planes).
-_TIMBER_STEMS = ("collar", "king", "praf", "purlin", "tie", "roof")
+# object-name stems that read as TIMBER beams (roof trusses).
+_TIMBER_STEMS = ("collar", "king", "praf", "purlin", "tie")
+# beams whose geometry spans a cube-ish bbox (compound / steeply diagonal), where
+# the perimeter unwrap's frame is unreliable -- their UVs are fit to the image
+# bounds instead of scaled by the (mis-measured) cross-perimeter.
+_COMPOUND_BEAMS = ("king", "praf")
+
+#: directory holding the stitched 3-beam wood maps (beam_albedo/rough/normal.png).
+try:
+    _TIMBER_DIR = os.path.normpath(os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "assetsrc", "materials", "timber"))
+except NameError:
+    _TIMBER_DIR = "/home/kmd/rpg/assetsrc/materials/timber"
+
+
+def _beam_uv(obj, aspect):
+    """Perimeter-wrap UV for a single box beam: U runs ALONG the beam (longest
+    edge is the axis), V wraps around the cross-section perimeter as one continuous
+    band with a single seam along the length. Sized in texture space so grain is
+    proportional (U scaled by the texture ``aspect``); a per-beam length offset
+    keeps beams from looking identical. Works in the beam's own frame, so any
+    orientation is handled without stretching."""
+    import numpy as np
+    import bmesh
+    me = obj.data
+    co = np.array([v.co for v in me.vertices])
+    ev = np.array([(e.vertices[0], e.vertices[1]) for e in me.edges])
+    d = co[ev[:, 1]] - co[ev[:, 0]]
+    el = np.linalg.norm(d, axis=1)
+    axis = d[int(np.argmax(el))].astype(float)
+    axis /= np.linalg.norm(axis)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    bm.normal_update()
+    best = None
+    for f in bm.faces:                       # e1 = normal of the widest long face
+        n = np.array(f.normal)
+        if abs(n @ axis) < 0.5:
+            ar = f.calc_area()
+            if best is None or ar > best[0]:
+                best = (ar, n)
+    e1 = best[1].astype(float)
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(axis, e1)
+    c = co.mean(0)
+    X = co - c
+    a = X @ e1
+    b = X @ e2
+    amin, amax, bmin, bmax = a.min(), a.max(), b.min(), b.max()
+    wa = max(amax - amin, 1e-4)
+    wb = max(bmax - bmin, 1e-4)
+    perim = 2.0 * (wa + wb)
+    off = float(np.random.default_rng(abs(hash(obj.name)) % (2 ** 32)).uniform(0, 1))
+    uvl = bm.loops.layers.uv.verify()
+    for f in bm.faces:
+        n = np.array(f.normal)
+        ne1, ne2, nax = n @ e1, n @ e2, n @ axis
+        side = 'cap'
+        if abs(nax) < 0.7:
+            side = ('+e1' if ne1 > 0 else '-e1') if abs(ne1) >= abs(ne2) \
+                else ('+e2' if ne2 > 0 else '-e2')
+        for lp in f.loops:
+            p = np.array(lp.vert.co) - c
+            pa, pb, pl = p @ e1, p @ e2, p @ axis
+            if side == '+e1':
+                pos = pb - bmin
+            elif side == '+e2':
+                pos = wb + (amax - pa)
+            elif side == '-e1':
+                pos = wb + wa + (bmax - pb)
+            elif side == '-e2':
+                pos = 2 * wb + wa + (pa - amin)
+            else:
+                pos = pb - bmin
+            lp[uvl].uv = (pl / (perim * aspect) + off, pos / perim)
+    bm.to_mesh(me)
+    bm.free()
+
+
+def _fit_uv_bounds(obj, rotate90=False):
+    """Rescale the active UVs so their bounding box exactly fills the image [0,1].
+    Used for the compound beams, whose perimeter frame is unreliable -- fitting to
+    the image gives a clean, correctly-scaled result. ``rotate90`` swaps U/V first:
+    on those beams the longest edge picks a CROSS direction, so the grain comes out
+    90 deg rotated -- swapping puts it back along the beam length."""
+    import numpy as np
+    uvl = obj.data.uv_layers.active.data
+    if rotate90:
+        for lp in uvl:
+            lp.uv = (lp.uv[1], lp.uv[0])
+    uv = np.array([lp.uv for lp in uvl])
+    lo = uv.min(0)
+    span = np.maximum(uv.max(0) - lo, 1e-9)
+    # per-beam U offset so fitted beams don't all show the identical crop (the
+    # wood map is X-tileable, so a U shift just wraps to a different stretch).
+    off = float(np.random.default_rng(abs(hash(obj.name)) % (2 ** 32)).uniform(0, 1))
+    for lp in uvl:
+        lp.uv = ((lp.uv[0] - lo[0]) / span[0] + off, (lp.uv[1] - lo[1]) / span[1])
 
 
 def assign_floor_material(col, bake_dir, name="great_hall_floor_stone"):
@@ -472,7 +571,9 @@ def assign_floor_material(col, bake_dir, name="great_hall_floor_stone"):
         tint_map=os.path.join(bake_dir, "tint.png"), tile=(4.2, 4.2),
         brick_contrast=0.62, mortar_contrast=0.25,
         mortar_tint=(0.014, 0.013, 0.012),           # super-dark joints
-        brick_tint=(0.30, 0.32, 0.37), brick_sat=0.55,  # cool, lightly desaturated
+        brick_tint=(0.22, 0.24, 0.28), brick_sat=0.55,  # darker cool grey stone
+        rough_brick=0.52, rough_mortar=0.78,         # less rough (a touch polished)
+        normal_strength=1.6,                          # slightly more bumpy relief
         ao_strength=0.8)
     fl = bpy.data.objects.get(col.name + "_floor")
     if fl:
@@ -516,26 +617,170 @@ def assign_reveal_weave(col, bake_dir, name="great_hall_reveal_weave"):
     return mat
 
 
-def assign_timber_material(col, name="great_hall_timber"):
-    """Build + assign a flat rustic-oak TIMBER material (solid base colour +
-    roughness, no pattern) to the roof trusses and the roof/ceiling planes."""
+def assign_timber_material(col, timber_dir=None, name="great_hall_timber"):
+    """Build + assign the rustic TIMBER material to the roof-truss beams. The base
+    colour + roughness come from the stitched THREE-BEAM wood maps
+    (``beam_albedo/rough.png`` in ``timber_dir``, from
+    ``texsynth.wood_synth.synth_wood_beams``) plus the normal map, sampled through a
+    per-beam perimeter-wrap UV (:func:`_beam_uv`) so the grain runs along each beam
+    with one length seam. Beam scale is APPLIED first so unit-cube-plus-scale beams
+    unwrap correctly in local space. The maps tile (REPEAT) so long beams repeat."""
+    timber_dir = timber_dir or _TIMBER_DIR
     old = bpy.data.materials.get(name)
     if old:
         bpy.data.materials.remove(old)
+
+    def _img(fname, non_color):
+        im = bpy.data.images.get(fname)
+        if im:
+            bpy.data.images.remove(im)
+        im = bpy.data.images.load(os.path.join(timber_dir, fname))
+        im.colorspace_settings.name = 'Non-Color' if non_color else 'sRGB'
+        return im
+
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
-    bsdf = mat.node_tree.nodes.get("Principled BSDF")
-    bsdf.inputs["Base Color"].default_value = (0.105, 0.058, 0.030, 1.0)
-    bsdf.inputs["Roughness"].default_value = 0.72
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    out.location = (600, 0)
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.location = (300, 0)
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    tc.location = (-600, 0)
+    alb = nt.nodes.new("ShaderNodeTexImage")
+    alb.location = (-350, 150)
+    alb.image = _img("beam_albedo.png", False)
+    alb.extension = 'REPEAT'
+    rgh = nt.nodes.new("ShaderNodeTexImage")
+    rgh.location = (-350, -180)
+    rgh.image = _img("beam_rough.png", True)
+    rgh.extension = 'REPEAT'
+    nrm = nt.nodes.new("ShaderNodeTexImage")
+    nrm.location = (-350, -480)
+    nrm.image = _img("beam_normal.png", True)
+    nrm.extension = 'REPEAT'
+    nmap = nt.nodes.new("ShaderNodeNormalMap")
+    nmap.location = (-80, -480)
+    nt.links.new(tc.outputs["UV"], alb.inputs["Vector"])
+    nt.links.new(tc.outputs["UV"], rgh.inputs["Vector"])
+    nt.links.new(tc.outputs["UV"], nrm.inputs["Vector"])
+    nt.links.new(alb.outputs["Color"], bsdf.inputs["Base Color"])
+    nt.links.new(rgh.outputs["Color"], bsdf.inputs["Roughness"])
+    nt.links.new(nrm.outputs["Color"], nmap.inputs["Color"])
+    nt.links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
     bsdf.inputs["Specular IOR Level"].default_value = 0.3
+
+    aspect = alb.image.size[0] / max(alb.image.size[1], 1)
+    pre = col.name + "_"
+    beams = [o for o in col.objects if o.type == "MESH"
+             and any((o.name[len(pre):] if o.name.startswith(pre) else o.name)
+                     .startswith(s) for s in _TIMBER_STEMS)]
+    # Several beams are unit cubes shaped only by a non-uniform object SCALE, so
+    # APPLY the scale first (single-user the mesh) -> the real beam proportions live
+    # in the LOCAL mesh and the plain local unwrap is correct for every beam.
+    for o in beams:
+        if o.data.users > 1:
+            o.data = o.data.copy()
+    for x in list(bpy.context.selected_objects):
+        x.select_set(False)
+    for o in beams:
+        o.select_set(True)
+    if beams:
+        bpy.context.view_layer.objects.active = beams[0]
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    for o in beams:
+        _beam_uv(o, aspect)
+        o.data.materials.clear()
+        o.data.materials.append(mat)
+    return mat
+
+
+def assign_roof_material(col, uv_scale=0.2, name="great_hall_roof_limestone"):
+    """The flat roof planes read as LIMESTONE (not timber): an aperiodic limestone
+    field material on a world-cube UV. ``uv_scale`` multiplies the world-cube UVs
+    -- the field feature size is INVERSELY proportional to it, so the default 0.2
+    (< the 1 m default) scales the UVs DOWN and makes the limestone blocks LARGER
+    (at 1.0 the detail reads too small on the big roof). Applied to ``roof``."""
+    import material_nodes
+    old = bpy.data.materials.get(name)
+    if old:
+        bpy.data.materials.remove(old)
+    try:
+        mat = material_nodes.build_field_material(name, "limestone")
+    except Exception:                              # no limestone fields -> flat stone
+        mat = bpy.data.materials.new(name)
+        mat.use_nodes = True
+        b = mat.node_tree.nodes.get("Principled BSDF")
+        b.inputs["Base Color"].default_value = (0.62, 0.60, 0.55, 1.0)
+        b.inputs["Roughness"].default_value = 0.85
     pre = col.name + "_"
     for o in col.objects:
         if o.type != "MESH":
             continue
         stem = o.name[len(pre):] if o.name.startswith(pre) else o.name
-        if any(stem.startswith(s) for s in _TIMBER_STEMS):
+        if stem.startswith("roof"):
+            world_cube_uv(o, uv_scale)
             o.data.materials.clear()
             o.data.materials.append(mat)
+    return mat
+
+
+def _dais_bevel(obj, width=0.006, segments=2, angle_deg=40.0):
+    """Give a dais block a THIN double-bevel (2 segments) on every edge plus
+    FACE-WEIGHTED normals, so the arrises catch a soft highlight instead of a
+    razor-sharp CGI knife edge. Idempotent (refreshes its own modifiers)."""
+    import math
+    for m in [m for m in obj.modifiers if m.name in ("dais_bevel", "dais_wn")]:
+        obj.modifiers.remove(m)
+    for x in list(bpy.context.selected_objects):
+        x.select_set(False)
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    try:                                 # smooth + auto-smooth so weighted normals read
+        bpy.ops.object.shade_auto_smooth(angle=math.radians(angle_deg))
+    except (AttributeError, RuntimeError):
+        bpy.ops.object.shade_smooth()
+    bev = obj.modifiers.new("dais_bevel", 'BEVEL')
+    bev.width = width
+    bev.segments = segments
+    bev.limit_method = 'ANGLE'
+    bev.angle_limit = math.radians(angle_deg)
+    bev.harden_normals = True
+    wn = obj.modifiers.new("dais_wn", 'WEIGHTED_NORMAL')
+    wn.mode = 'FACE_AREA_WITH_ANGLE'
+    wn.keep_sharp = True
+    wn.weight = 50
+
+
+def assign_dais_material(col, uv_scale=0.5, name="great_hall_dais_marble"):
+    """Dark polished MARBLE for the raised dais + its steps: an aperiodic marble
+    field, tinted dark and made low-roughness (polished), on a world-cube UV. The
+    dais ARCH keeps the wall masonry (handled by ``assign_wall_material``)."""
+    import material_nodes
+    old = bpy.data.materials.get(name)
+    if old:
+        bpy.data.materials.remove(old)
+    try:
+        mat = material_nodes.build_field_material(
+            name, "marble", rough_base=0.30, tint=(0.11, 0.11, 0.14))
+    except Exception:                              # no marble fields -> flat polish
+        mat = bpy.data.materials.new(name)
+        mat.use_nodes = True
+        b = mat.node_tree.nodes.get("Principled BSDF")
+        b.inputs["Base Color"].default_value = (0.05, 0.05, 0.07, 1.0)
+        b.inputs["Roughness"].default_value = 0.18
+    pre = col.name + "_"
+    for o in col.objects:
+        if o.type != "MESH":
+            continue
+        stem = o.name[len(pre):] if o.name.startswith(pre) else o.name
+        if stem == "dais" or stem.startswith("dais_step"):
+            world_cube_uv(o, uv_scale)
+            o.data.materials.clear()
+            o.data.materials.append(mat)
+            _dais_bevel(o)
     return mat
 
 
@@ -552,4 +797,6 @@ def build_hall_scene(bake_root, collection=None, name="great_hall"):
     assign_floor_material(col, os.path.join(bake_root, "bake_floor"))
     assign_reveal_weave(col, os.path.join(bake_root, "bake_weave"))
     assign_timber_material(col)
+    assign_roof_material(col)
+    assign_dais_material(col)
     return col

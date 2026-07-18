@@ -24,9 +24,9 @@ from PIL import Image
 
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from texsynth.wood_synth import synth_wood_aligned
+    from texsynth.wood_synth import synth_wood_aligned, synth_wood_beams
 else:
-    from .wood_synth import synth_wood_aligned
+    from .wood_synth import synth_wood_aligned, synth_wood_beams
 
 _CHANNELS = ("albedo", "normal", "rough")
 
@@ -78,6 +78,9 @@ def main(argv=None):
                     help="min columns read from one tile before jumping")
     ap.add_argument("--run-max", type=int, default=1,
                     help="max columns read from one tile before jumping")
+    ap.add_argument("--whole-beams", action="store_true",
+                    help="stitch the whole beams end-to-end (1 tile per beam, seams "
+                         "only at the joins) instead of patch-quilting")
     ap.add_argument("--local-norm", type=float, default=150.0,
                     help="sigma (px) for final-field albedo trend removal")
     ap.add_argument("--source-hp", type=float, default=150.0,
@@ -102,20 +105,26 @@ def main(argv=None):
                 for paths in found.values()]
 
     t0 = time.monotonic()
-    fields, info = synth_wood_aligned(
-        variants, args.width, args.height, patch=args.patch,
-        overlap=args.overlap, seed=args.seed, candidates=args.candidates,
-        tol=args.tol, band=(args.band_lo, args.band_hi),
-        normalize=args.normalize, splits=args.splits,
-        run_min=args.run_min, run_max=args.run_max, local_norm=args.local_norm,
-        source_hp=args.source_hp, density_weight=args.density_weight,
-        density_sigma=args.density_sigma)
+    if args.whole_beams:
+        fields, info = synth_wood_beams(
+            variants, overlap=args.overlap, seed=args.seed,
+            band=(args.band_lo, args.band_hi), normalize=args.normalize,
+            source_hp=args.source_hp, local_norm=args.local_norm)
+    else:
+        fields, info = synth_wood_aligned(
+            variants, args.width, args.height, patch=args.patch,
+            overlap=args.overlap, seed=args.seed, candidates=args.candidates,
+            tol=args.tol, band=(args.band_lo, args.band_hi),
+            normalize=args.normalize, splits=args.splits,
+            run_min=args.run_min, run_max=args.run_max, local_norm=args.local_norm,
+            source_hp=args.source_hp, density_weight=args.density_weight,
+            density_sigma=args.density_sigma)
     fdir = os.path.join(tdir, "fields")
     for c in _CHANNELS:
         _save_rgb(os.path.join(fdir, f"{args.material}_{c}_field.png"), fields[c])
     print(f"{args.material}: {info['tile_width']}x{info['height']} "
-          f"({info['ncols']} cols, patch {info['patch']}"
-          f"/ov {info['overlap']}, {len(variants)} variants) "
+          f"({info.get('ncols', info['nbeams'])} segs, "
+          f"ov {info['overlap']}, {len(variants)} variants) "
           f"in {time.monotonic() - t0:.1f}s -> {fdir}", flush=True)
     return 0
 

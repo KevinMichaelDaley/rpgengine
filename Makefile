@@ -2404,6 +2404,16 @@ build/hall_bake: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) | bu
 build/hall_bake_egl: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) | build
 	$(CC) $(CFLAGS) -DHALL_EGL -D_POSIX_C_SOURCE=200809L tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) -o $@ -lEGL -lGL -ldl -lm $(OIDN_LDFLAGS)
 
+# Generic scene bake: the harness + a GENERATED scene_bake.c (scene callback) from
+# scripts/export_scene.py. SCENE_BAKE_C points at the exported scene's callback.
+SCENE_BAKE_C ?= datasets/great_hall_export/scene_bake.c
+build/scene_bake: tests/lightmap/scene_bake_main.c $(SCENE_BAKE_C) $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) -D_POSIX_C_SOURCE=200809L tests/lightmap/scene_bake_main.c $(SCENE_BAKE_C) $(LM_HALL_BAKE_SRC) $(OBJ_GLAD) -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+
+# Headless (surfaceless EGL) scene bake for the chimera GPU box.
+build/scene_bake_egl: tests/lightmap/scene_bake_main.c $(SCENE_BAKE_C) $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) | build
+	$(CC) $(CFLAGS) -DSCENE_BAKE_EGL -D_POSIX_C_SOURCE=200809L tests/lightmap/scene_bake_main.c $(SCENE_BAKE_C) $(LM_HALL_BAKE_SRC) src/renderer/egl_headless.c $(OBJ_GLAD) -o $@ -lEGL -lGL -ldl -lm $(OIDN_LDFLAGS)
+
 # --- rpg-fzht: generic bake driver (headless CPU path unit test) ---
 build/lm_bake_driver_tests: tests/lightmap/lm_bake_driver_tests.c $(LM_HALL_BAKE_SRC) src/memory/arena_reset.c | build
 	$(CC) $(CFLAGS) -D_POSIX_C_SOURCE=200809L tests/lightmap/lm_bake_driver_tests.c $(LM_HALL_BAKE_SRC) src/memory/arena_reset.c -o $@ -ldl -lm
