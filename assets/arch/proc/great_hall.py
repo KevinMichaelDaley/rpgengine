@@ -19,6 +19,7 @@ a fresh collection. The timber is sized from the walls' ACTUAL world bounding
 boxes (never assumed), so every tie/rafter lands exactly on its support.
 """
 import math
+import os
 
 import bpy
 import mathutils
@@ -351,3 +352,85 @@ def _punch_flue(col, roof, name, wx, yc, sx, sy):
     bpy.ops.object.modifier_apply(modifier="flue")
     bpy.data.objects.remove(cutter, do_unlink=True)
     roof.select_set(False)
+
+
+# ---------------------------------------------------------------------------
+# UV finalize + material assignment (prepare the hall for texturing)
+# ---------------------------------------------------------------------------
+def world_cube_uv(obj, scale=1.0):
+    """Replace @p obj's material UV (``UVMap``) with a WORLD-SPACE cube
+    projection: each face is projected onto the world plane perpendicular to its
+    dominant world-normal axis, so one UV unit == one metre. The baked masonry
+    tile and the aperiodic material fields then sit at real-world size on EVERY
+    surface -- boxes, struts and swept arch geometry alike -- instead of the
+    per-face 0..1 unwrap that ``primitive_cube_add`` leaves on the boxes (which
+    would stretch one tile across a whole face regardless of its size)."""
+    import bmesh
+    me = obj.data
+    if not me.polygons:
+        return
+    uvl = me.uv_layers.get("UVMap") or me.uv_layers.new(name="UVMap")
+    me.uv_layers.active = uvl
+    mw = obj.matrix_world
+    mw3 = mw.to_3x3()
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    uv = bm.loops.layers.uv.get("UVMap")
+    for f in bm.faces:
+        n = mw3 @ f.normal
+        ax = max(range(3), key=lambda i: abs(n[i]))   # dominant world axis
+        for lp in f.loops:
+            co = mw @ lp.vert.co
+            if ax == 0:
+                u, v = co.y, co.z
+            elif ax == 1:
+                u, v = co.x, co.z
+            else:
+                u, v = co.x, co.y
+            lp[uv].uv = (u * scale, v * scale)
+    bm.to_mesh(me)
+    bm.free()
+
+
+def prepare_uvs(col, scale=1.0):
+    """World-scale cube-UV every mesh in the hall so all new geometry is ready
+    for (tiling) material assignment at real-world size."""
+    for o in col.objects:
+        if o.type == "MESH":
+            world_cube_uv(o, scale)
+
+
+# object-name stems (after the ``<hall>_`` prefix) that read as masonry WALL:
+# the arched window bays, the solid fireplace bay, the engaged piers and the two
+# end-wall arches. Everything else (floor, dais, timber roof, fireplace stone) is
+# left UV-ready for its own material.
+_WALL_STEMS = ("win_N", "win_S", "wall_N", "pier_N", "pier_S",
+               "entrance", "dais_arch")
+
+
+def assign_wall_material(col, bake_dir, name="great_hall_stone_wall"):
+    """Build the baked hewn-brick MASONRY material (limestone brick + mortar,
+    selected by the baked mask, with the baked normal/AO/height and tint) from
+    the chimera bake maps in @p bake_dir and assign it to the hall's wall
+    objects (see ``_WALL_STEMS``). Returns the material."""
+    import material_nodes
+    mat = bpy.data.materials.get(name)
+    if mat:
+        bpy.data.materials.remove(mat)
+    mat = material_nodes.build_masonry_material(
+        name,
+        mask=os.path.join(bake_dir, "mask.png"),
+        normal=os.path.join(bake_dir, "normal.png"),
+        ao=os.path.join(bake_dir, "ao.png"),
+        height=os.path.join(bake_dir, "height.png"),
+        tint_map=os.path.join(bake_dir, "tint.png"))
+    pre = col.name + "_"
+    for o in col.objects:
+        if o.type != "MESH":
+            continue
+        stem = o.name[len(pre):] if o.name.startswith(pre) else o.name
+        if any(stem.startswith(s) for s in _WALL_STEMS):
+            me = o.data
+            me.materials.clear()
+            me.materials.append(mat)
+    return mat
