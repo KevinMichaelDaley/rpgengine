@@ -780,7 +780,7 @@ int main(int argc,char **argv){
     int fp_idx=-1;
     /* Average fireplace intensity (the loop flickers around this). Bright warm
      * hearth -- overridable with FP_INT for quick tuning. */
-    const float fp_base=getenv("FP_INT")?(float)atof(getenv("FP_INT")):52.0f;
+    const float fp_base=getenv("FP_INT")?(float)atof(getenv("FP_INT")):34.0f;
     if(great_hall){
       float fp[3]={cx,amin[1]+0.6f,cz}; int found=0;
       for(int i=0;i<nm;++i){
@@ -795,7 +795,7 @@ int main(int argc,char **argv){
       /* Sit the flame in the OPEN firebox cavity: above the hearth and forward of
        * the solid back wall (fp_opening slab, z<=-3.05), toward the +z opening, so
        * its own shadow doesn't self-occlude it against the back wall. */
-      f.position[0]=fp[0]; f.position[1]=fp[1]+0.7f; f.position[2]=fp[2]+0.55f;
+      f.position[0]=fp[0]; f.position[1]=fp[1]+0.85f; f.position[2]=fp[2]+0.32f;
       f.color[0]=1.0f; f.color[1]=0.42f; f.color[2]=0.13f;   /* warm orange fire */
       f.intensity=fp_base; f.range=9.0f;
       f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
