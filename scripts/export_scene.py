@@ -159,20 +159,34 @@ def _bake_pass(obj, res, bake_type, non_color, **kw):
     nt = mat.node_tree
     tex = nt.nodes.new("ShaderNodeTexImage")
     tex.image = img
+    # The bake target is the SELECTED + ACTIVE image-texture node; without the
+    # selection the bake writes nothing and the image stays black.
+    for n in nt.nodes:
+        n.select = False
+    tex.select = True
     nt.nodes.active = tex
     for o in bpy.context.selected_objects:
         o.select_set(False)
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
-    bpy.context.scene.render.engine = 'CYCLES'
-    bpy.context.scene.cycles.samples = kw.pop("samples", 8)
+    sc = bpy.context.scene
+    sc.render.engine = 'CYCLES'
+    sc.cycles.samples = kw.pop("samples", 8)
+    # For DIFFUSE (albedo) isolate the COLOR pass -- otherwise it bakes the LIT
+    # diffuse (direct+indirect) and, with no lights, comes out black.
+    if bake_type == 'DIFFUSE':
+        sc.render.bake.use_pass_direct = False
+        sc.render.bake.use_pass_indirect = False
+        sc.render.bake.use_pass_color = True
     bpy.ops.object.bake(type=bake_type, **kw)
     nt.nodes.remove(tex)
     return img
 
 
-def _save_img(img, path, non_color):
-    img.colorspace_settings.name = 'Non-Color' if non_color else 'sRGB'
+def _save_img(img, path):
+    # NB: do NOT touch img.colorspace_settings here -- reassigning it after the
+    # bake invalidates/clears the pixel buffer and writes a BLACK PNG. The
+    # colorspace is already set correctly at creation via the is_data flag.
     img.filepath_raw = path
     img.file_format = 'PNG'
     img.save()
@@ -215,16 +229,17 @@ def export_material(mat, out_dir, tiles, res):
     os.makedirs(mdir, exist_ok=True)
     plane = _bake_plane(tile)
     plane.data.materials.append(mat)
+    # No AO pass: a flat material tile has no macro occluders (bakes ~0/garbage),
+    # and the masonry AO is already folded into the albedo. The engine uses ao=1.
     passes = [
         ("albedo", 'DIFFUSE', False, dict(pass_filter={'COLOR'})),
         ("roughness", 'ROUGHNESS', True, {}),
         ("normal", 'NORMAL', True, {}),
-        ("ao", 'AO', True, dict(samples=16)),
     ]
     for ch, bt, non_color, kw in passes:
         img = _bake_pass(plane, res, bt, non_color, **kw)
         rel = os.path.join("materials", name, ch + ".png")
-        _save_img(img, os.path.join(out_dir, rel), non_color)
+        _save_img(img, os.path.join(out_dir, rel))
         rec["maps"][ch] = rel
     bpy.data.objects.remove(plane, do_unlink=True)
     # Mesh UVs are world-scale (1 uv unit = 1 m); the atlas is one tile, so the
@@ -402,6 +417,14 @@ def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
     if col is None:
         raise RuntimeError(f"collection {collection_name!r} not found")
     os.makedirs(out_dir, exist_ok=True)
+
+    # A camera must exist for Cycles to render/bake (a scene with no camera bakes
+    # PURE BLACK). Create a throwaway one if the scene has none.
+    if bpy.context.scene.camera is None:
+        cam_data = bpy.data.cameras.new("_bake_cam")
+        cam_obj = bpy.data.objects.new("_bake_cam", cam_data)
+        bpy.context.scene.collection.objects.link(cam_obj)
+        bpy.context.scene.camera = cam_obj
 
     # 1. materials (unique, deterministic order)
     mats = []

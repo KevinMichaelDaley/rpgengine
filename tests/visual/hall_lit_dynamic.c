@@ -579,11 +579,11 @@ int main(int argc,char **argv){
     static const char *GH_MATS[6]={"great_hall_stone_wall","great_hall_floor_stone",
         "great_hall_reveal_weave","great_hall_timber","great_hall_roof_limestone",
         "great_hall_dais_marble"};
-    static texture_t gh_tex[6][4];   /* [material][albedo,normal,roughness,ao] */
+    static texture_t gh_tex[6][3];   /* [material][albedo,normal,roughness] (no AO map) */
     if(great_hall){
-        const char *chn[4]={"albedo","normal","roughness","ao"};
+        const char *chn[3]={"albedo","normal","roughness"};
         int gfmt[4]={TEXTURE_FORMAT_SRGB8,TEXTURE_FORMAT_RGB8,TEXTURE_FORMAT_RGB8,TEXTURE_FORMAT_RGB8};
-        for(int m=0;m<6;++m) for(int k=0;k<4;++k){
+        for(int m=0;m<6;++m) for(int k=0;k<3;++k){
             char qq[700]; snprintf(qq,sizeof qq,"%s/materials/%s/%s.png",gh_root,GH_MATS[m],chn[k]);
             size_t pl_=strlen(qq)+1; char *pc_=arena_alloc(&rarena,1u,pl_); memcpy(pc_,qq,pl_);
             tex_load_t *tl_=arena_alloc(&rarena,16u,sizeof *tl_);
@@ -618,7 +618,6 @@ int main(int argc,char **argv){
             mats[m].maps[MATERIAL_TEX_ALBEDO]=&gh_tex[m][0];
             mats[m].maps[MATERIAL_TEX_NORMAL]=&gh_tex[m][1];
             mats[m].maps[MATERIAL_TEX_ROUGHNESS]=&gh_tex[m][2];
-            mats[m].maps[MATERIAL_TEX_AO]=&gh_tex[m][3];
             mats[m].normal_scale=1.0f; mats[m].roughness_min=0.05f; mats[m].roughness_max=1.0f;
             mats[m].contrast=1.0f;
         }
