@@ -70,6 +70,66 @@ def _world_bbox(objs):
     return a.min(0), a.max(0)
 
 
+def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
+    """A hooded wall fireplace against a side wall at x=@p wx. @p wall_inner_y is
+    the wall's inner (room) face; @p sign is +1 when the room is on the -Y side
+    of that face (north wall). The fire OPENING is a real arched niche built with
+    the arch primitive (round arch + voussoir archivolt); the projecting hood +
+    chimney stack are ONE merged, all-quad lofted shell (rectangular section
+    rings bridged: wide hood mouth -> narrow throat -> stack through the roof)."""
+    import arch
+    import bmesh
+    yin = wall_inner_y
+    proj = -sign                       # into-room direction along Y
+    fw = 2.4                           # surround width (X)
+    surround_h = 2.2
+    surround_t = 0.7
+
+    def yb(off):                       # Y `off` m into the room from the wall face
+        return yin + proj * off
+
+    # hearth slab
+    _box(col, f"{name}_fp_hearth", wx, yb(0.75), 0.09, fw + 0.5, 1.5, 0.18)
+
+    # arched fire opening: a blind arched niche (the firebox), voussoirs on the
+    # ROOM face. Panel back sits on the wall; it projects into the room.
+    fire = arch.build_arched_doorway(
+        name=f"{name}_fp_opening", panel_width=fw, panel_height=surround_h,
+        wall_thickness=surround_t, arch_shape="round", opening_width=1.5,
+        opening_height=1.15, head_rise=0.52, sill_height=0.0, splay=0.0,
+        blind=True, blind_recess=surround_t * 0.7, voussoir_trim=True,
+        trim_width=0.11, collection=col)
+    # front (voussoir) face is -Y; for the north wall the room is at -Y, so no
+    # rotation. Seat the back on the wall, projecting `surround_t` into the room.
+    fire.location = (wx, yin + proj * (surround_t * 0.5), 0.0)
+    if sign < 0:
+        fire.rotation_euler = (0, 0, math.pi)   # south wall: face +Y (its room)
+
+    # merged all-quad hood + chimney: bridge rectangular section rings.
+    yface = yin                        # back of the mass sits on the wall face
+    rings_spec = [                     # (z, half_width X, projection into room)
+        (surround_h,             fw / 2,  0.75),   # hood mouth (wide, projecting)
+        (surround_h + 1.7,       0.48,    0.30),   # throat
+        (chimney_top_z,          0.48,    0.30),   # stack top (through the roof)
+    ]
+    bm = bmesh.new()
+    rings = []
+    for z, hw, p in rings_spec:
+        yf = yface + proj * p
+        rings.append([bm.verts.new((wx - hw, yface, z)),
+                      bm.verts.new((wx + hw, yface, z)),
+                      bm.verts.new((wx + hw, yf, z)),
+                      bm.verts.new((wx - hw, yf, z))])
+    for i in range(len(rings) - 1):
+        for j in range(4):
+            k = (j + 1) % 4
+            bm.faces.new((rings[i][j], rings[i][k], rings[i + 1][k], rings[i + 1][j]))
+    bm.faces.new(tuple(rings[-1]))     # cap the stack top
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    me = bpy.data.meshes.new(f"{name}_fp_hood"); bm.to_mesh(me); bm.free()
+    hood = bpy.data.objects.new(f"{name}_fp_hood", me); col.objects.link(hood)
+
+
 def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
                      wall_t=0.5, roof_rise=3.6, collection=None):
     """Build the great hall into (a fresh child of) @p collection. Returns the
@@ -168,36 +228,37 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     apex = top + roof_rise
     tie_z, rt = 0.34, 0.26
 
+    # The roof SPRINGS FROM THE WALL TOP (eave = wall top), so the walls and roof
+    # meet with no exposed gap: rafters foot on the wall head, the roof skin's
+    # eave sits at the wall top, and the gable triangles close onto the end walls.
     for tt in range(nbay + 1):
         x = x0 + tt * bay
         _box(col, f"{name}_tie_{tt}", x, 0.5 * (nO + sO), top + tie_z / 2.0,
              0.30, (nO - sO), tie_z)             # tie bears on both wall heads
-        fN = (x, ncy, top + tie_z)
-        fS = (x, scy, top + tie_z)
+        fN = (x, ncy, top)                       # rafters foot ON the wall top
+        fS = (x, scy, top)
         ap = (x, midy, apex)
         _strut(col, f"{name}_praf_{tt}_L", fN, ap, rt)   # wall head -> ridge
         _strut(col, f"{name}_praf_{tt}_R", fS, ap, rt)
         _strut(col, f"{name}_king_{tt}", (x, midy, top + tie_z), ap, 0.20)
         fr = 0.55
-        zc = top + tie_z + (apex - (top + tie_z)) * fr
+        zc = top + (apex - top) * fr
         yN = ncy + (midy - ncy) * fr
         yS = scy + (midy - scy) * fr
         _box(col, f"{name}_collar_{tt}", x, 0.5 * (yN + yS), zc,
              0.22, (yN - yS), 0.20)
     # longitudinal purlins seated on the rafters, tying the trusses
     for yc, zc, nm in [
-            (ncy + (midy - ncy) * 0.32, top + tie_z + (apex - top - tie_z) * 0.32, "N"),
-            (scy + (midy - scy) * 0.32, top + tie_z + (apex - top - tie_z) * 0.32, "S"),
+            (ncy + (midy - ncy) * 0.32, top + (apex - top) * 0.32, "N"),
+            (scy + (midy - scy) * 0.32, top + (apex - top) * 0.32, "S"),
             (midy, apex, "ridge")]:
         _box(col, f"{name}_purlin_{nm}", 0.5 * (x0 + x1), yc, zc,
              (x1 - x0), 0.14, 0.14)
 
-    # roof skin: lifted RT/2/cos(pitch) above the rafters so the timber is exposed
-    pitch = math.atan2(apex - (top + tie_z), ncy - midy)
-    gap = rt / 2.0 / math.cos(pitch) + 0.03
+    # roof skin: eave AT the wall top (over the wall outer face), ridge at apex.
     bm_verts = [
-        (x0, ncy, top + tie_z + gap), (x0, scy, top + tie_z + gap), (x0, midy, apex + gap),
-        (x1, ncy, top + tie_z + gap), (x1, scy, top + tie_z + gap), (x1, midy, apex + gap)]
+        (x0, nO, top), (x0, sO, top), (x0, midy, apex),
+        (x1, nO, top), (x1, sO, top), (x1, midy, apex)]
     import bmesh
     bm = bmesh.new()
     v = [bm.verts.new(p) for p in bm_verts]
@@ -213,4 +274,8 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     sol = roof.modifiers.new("solid", 'SOLIDIFY')
     sol.thickness = 0.12
     sol.offset = 1.0
+
+    # --- hooded wall fireplace against the north wall, beside the dais ---
+    _fireplace(col, name, wx=length - 2.6, wall_inner_y=float(Nlo[1]),
+               chimney_top_z=apex + 1.6, sign=+1)
     return col
