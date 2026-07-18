@@ -1,6 +1,6 @@
 ---
 id: rpg-pau4
-status: in_progress
+status: closed
 deps: []
 links: [rpg-hw75]
 created: 2026-07-18T18:50:36Z
@@ -38,3 +38,32 @@ Modularity: extend the existing gi voxelization + probe-update modules in src/re
 - The injected voxel radiance is reusable by the reflection-probe capture (rpg-hw75).
 - Boost factor exposed/tunable; clean under -Wall -Wextra -Wpedantic; TDD for the voxel-radiance fill + SH accumulation host logic (trace kernel validated by parity/visual). Demo: the hall reads correct static + dynamic indirect from probes alone, and the added bounce is visible vs probes-off.
 
+
+## Notes
+
+**2026-07-18T20:39:27Z**
+
+SOLUTION (commits fe98802..43fea10c on main):
+
+Static term folded into the probes by injecting the baked lightmap irradiance
+into a coarse world volume (gi_static_volume, built from the .flm SH0..3 + mesh
+uv1) that the probe cone-trace gathers at each SDF-occluded hit, sampled on the
+probe-facing side so thin walls don't leak -- one bounce beyond the offline bake.
+
+Stored as a SEPARATE static SH4 set per probe (24 floats/probe = dynamic SH4 +
+static SH4) so the forward+ weights it per object: baked surfaces take a small
+extra-bounce fraction (they already have the lightmap), dynamic objects take it
+boosted (their only static ambience) -- gi_runtime_set_static_weights.
+
+Sampling rewritten from froxel nearest-2-probe blend (which seamed across froxel
+boundaries) to TRILINEAR interpolation over a regular probe grid
+(gi_runtime_set_probe_grid); the froxel list is now just a cull. Probes densified
+to a full interior grid so every cluster has coverage.
+
+Leak-through-walls fixed with DDGI-style visibility: each probe stores an 8x8
+octahedral depth map (mean + mean-squared distance) whose per-texel distribution
+is estimated CHEAPLY from 3 SDF cone-traces (ray = mean; wide/narrow cones =
+near-tail quantiles via probit, sigma from the quantile formula) instead of a
+ray fan. Forward+ Chebyshev-weights each trilinear probe by the visibility of the
+shading point; bilinear depth sampling + a normal bias remove the diamond and
+probe-dot artifacts.
