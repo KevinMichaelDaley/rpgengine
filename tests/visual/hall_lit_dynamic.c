@@ -438,7 +438,7 @@ int main(int argc,char **argv){
     if(great_hall && argc<=1){ snprintf(gh_meshdir,sizeof gh_meshdir,"%s/meshes",gh_root); }
     const char *dir = argc>1?argv[1]:(great_hall?gh_meshdir:"datasets/hall_lm");
     const char *bake = argc>2?argv[2]:"assets/arch/proc/prefabs/bake";
-    const char *lmfile = argc>3?argv[3]:(great_hall?"/tmp/great_hall.flm":"/tmp/hall_prod.flm");
+    const char *lmfile = argc>3?argv[3]:(great_hall?"datasets/great_hall_export/great_hall.flm":"/tmp/hall_prod.flm");
     const char *shot = argc>4?argv[4]:(great_hall?"/tmp/great_hall_lit.ppm":"/tmp/hall_lit_dynamic.ppm");
 
     /* Count the .dmesh files up front so every per-mesh array + the GPU command
@@ -606,6 +606,8 @@ int main(int argc,char **argv){
     job_wait_counter(&rcounter,0);
     uint32_t created=gpu_executor_drain(&gexec,&gqueue);
     printf("resource executor created %u GPU resources (meshes + textures)\n",created);
+    #define GHK(loc) do{ GLenum ge_; while((ge_=glGetError())) fprintf(stderr,"GLERR @%s: 0x%04x\n",(loc),ge_); }while(0)
+    GHK("after resource drain");
     render_material_t mats[8];
     /* Brick/stone contrast (u_contrast): punch up the brick-vs-mortar tonal range
      * so the masonry reads with more depth. */
@@ -688,16 +690,9 @@ int main(int argc,char **argv){
       f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
       render_light_add(&lights,&f);
       printf("great_hall fireplace light at (%.1f,%.1f,%.1f)\n",f.position[0],f.position[1],f.position[2]);
-      /* Explicitly opt the SUN into dynamic probe GI (temporary -- will move to the
-       * baked lightmap later): a DIRECTIONAL light tagged PROBE_GI|SHADOW but NOT
-       * REALTIME, so the CSM still owns the direct sun and the probes trace the
-       * sun's bounced indirect. Travel dir matches the bake / .blend. */
-      render_light_t sun; memset(&sun,0,sizeof sun); sun.kind=RENDER_LIGHT_DIRECTIONAL;
-      { float sd[3]={-0.5568f,-0.6022f,-0.5721f}; float l=sqrtf(sd[0]*sd[0]+sd[1]*sd[1]+sd[2]*sd[2]);
-        sun.direction[0]=sd[0]/l; sun.direction[1]=sd[1]/l; sun.direction[2]=sd[2]/l; }
-      sun.color[0]=1.0f; sun.color[1]=0.95f; sun.color[2]=0.85f; sun.intensity=4.0f;
-      sun.flags=RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
-      render_light_add(&lights,&sun);
+      /* The SUN is NOT a dynamic probe light: its direct term is the CSM (below)
+       * and its indirect is the baked SH lightmap. Only the dynamic fireplace
+       * light drives the SDF-probe GI. */
     }
     uint32_t rng=4242;
     for(int i=0;i<((shadow_only||one_light||spot_only||csm_demo||lm_only||great_hall)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
@@ -763,7 +758,7 @@ int main(int argc,char **argv){
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
      * direct sun + its CSM shadows. */
-    fcfg.sh_enabled=(shadow_only||spot_only||no_lm)?0:1; fcfg.sh_scale=(lm_only?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=(shadow_only||spot_only||no_lm)?0:1; fcfg.sh_scale=(lm_only||great_hall?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=-1; /* multi-light path: point lights tagged FLAG_SHADOW cast. */
     fcfg.shadow_max=8; fcfg.shadow_res=256; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
@@ -807,7 +802,12 @@ int main(int argc,char **argv){
     }
     struct timespec t0_,t1_; clock_gettime(CLOCK_MONOTONIC,&t0_);
     render_forward_t fwd;
+    fprintf(stderr,"CFG sh_enabled=%d sh_scale=%.2f sun=(%.1f,%.1f,%.1f) amb=(%.2f,%.2f,%.2f) cascades=%d sh_tex0=%u\n",
+            fcfg.sh_enabled, fcfg.sh_scale, fcfg.sun_color[0],fcfg.sun_color[1],fcfg.sun_color[2],
+            fcfg.ambient[0],fcfg.ambient[1],fcfg.ambient[2], fcfg.dir_cascades, fcfg.sh_tex[0]);
+    GHK("before render_forward_init");
     if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
+    GHK("after render_forward_init");
     clock_gettime(CLOCK_MONOTONIC,&t1_);
     fprintf(stderr,"[perf] render_forward_init: %.1f ms\n",
         (t1_.tv_sec-t0_.tv_sec)*1e3+(t1_.tv_nsec-t0_.tv_nsec)*1e-6);
@@ -988,7 +988,9 @@ int main(int argc,char **argv){
         int prof=getenv("PROF")!=NULL;
         static double pr=0; static int pn=0; struct timespec pb,pc;
         if(prof){ glFinish(); clock_gettime(CLOCK_MONOTONIC,&pb); }
+        if(frame<2) GHK("before render_forward_render");
         render_forward_render(&fwd,&scene);
+        if(frame<2) GHK("after render_forward_render");
         if(prof){ glFinish(); clock_gettime(CLOCK_MONOTONIC,&pc);
             pr += (pc.tv_sec-pb.tv_sec)*1e3+(pc.tv_nsec-pb.tv_nsec)*1e-6;
             if(++pn>=60){ fprintf(stderr,"[prof] render(shadow+forward, GPU-incl)=%.2f ms/frame\n", pr/pn); pr=0; pn=0; } }

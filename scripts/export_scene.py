@@ -39,6 +39,12 @@ DEFAULT_TILES = {
     "great_hall_stone_wall": 4.0,
     "great_hall_floor_stone": 4.2,
     "great_hall_reveal_weave": 1.2,
+    # Timber uses beam-space UVs directly (tile 1 -> uv_scale 1); the limestone
+    # roof / marble dais are field materials whose world-cube UV scale (0.2 / 0.5)
+    # times uv_scale=1/tile reproduces their in-Blender repeat.
+    "great_hall_timber": 1.0,
+    "great_hall_roof_limestone": 2.0,
+    "great_hall_dais_marble": 2.0,
 }
 
 

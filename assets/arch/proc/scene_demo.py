@@ -24,9 +24,10 @@ DMESH_DIR = "/home/kmd/rpg/datasets/hall_lm"
 
 
 def _gen_lightmap_uv(obj):
-    """Generate a clean, low-fragmentation lightmap UV in a 'lightmap' layer via
-    angle-based Smart UV Project (keeps a column/vault/wall as a few large
-    islands rather than lightmap_pack's per-face confetti), packed into [0,1].
+    """Generate a NON-OVERLAPPING lightmap UV in a 'lightmap' layer via Lightmap
+    Pack (every face unwrapped + packed into [0,1] with no overlap). Smart UV
+    Project collapses degenerately on some meshes (e.g. thin scale-applied beams ->
+    zero-area islands), which bakes a garbage lightmap; lightmap_pack is robust.
     Leaves the material UV (layer 0) untouched."""
     me = obj.data
     if len(me.uv_layers) == 0:
@@ -42,10 +43,13 @@ def _gen_lightmap_uv(obj):
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(angle_limit=math.radians(66.0),
-                             island_margin=0.02, area_weight=0.0,
-                             correct_aspect=True, scale_to_bounds=False)
-    bpy.ops.uv.pack_islands(margin=0.02)
+    # Lightmap Pack: per-face, packed into one [0,1] atlas, no overlap. (Param
+    # names vary a little across Blender versions -> fall back if needed.)
+    try:
+        bpy.ops.uv.lightmap_pack(PREF_CONTEXT="ALL_FACES", PREF_PACK_IN_ONE=True,
+                                 PREF_NEW_UVLAYER=False, PREF_MARGIN_DIV=0.2)
+    except TypeError:
+        bpy.ops.uv.lightmap_pack()
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
