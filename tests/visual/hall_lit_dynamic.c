@@ -513,6 +513,7 @@ int main(int argc,char **argv){
      * atlas (1 layer) or per-chunk (LM_PERCHUNK: <lmfile>_manifest.bin +
      * <lmfile>_c*.flm, one layer per chunk). Each mesh carries its page layer. */
     int perchunk = getenv("LM_PERCHUNK") != NULL;
+    int no_lm = 0;   /* set if the baked .flm is absent -> skip the static SH GI. */
     /* LM_STREAM (rpg-ojuq): keep all chunks in RAM and page only visible ones into
      * a bounded array via a lightmap-index prepass. Implies per-chunk. */
     int stream = getenv("LM_STREAM") != NULL;
@@ -529,9 +530,13 @@ int main(int argc,char **argv){
         atlas_w=sstream.aw; atlas_h=sstream.ah;
     } else if(load_sh_arrays(lmfile, perchunk, nm, sh_tex, mrect, mlayer, &atlas_w, &atlas_h)!=0){
         fprintf(stderr,"lightmap load failed (%s%s)\n", lmfile, perchunk?" [per-chunk]":"");
-        return 1;
+        /* No baked lightmap yet: render WITHOUT the static SH GI (direct + dynamic
+         * probe GI only). The mrect/sh_tex tables are already zeroed, so uv1 is not
+         * remapped and the SH sampler is disabled below. The .flm folds in later. */
+        no_lm=1; atlas_w=atlas_h=1;
     }
-    printf("lightmap array %ux%u (%s)\n", atlas_w, atlas_h, stream?"streaming":(perchunk?"per-chunk":"single"));
+    if(!no_lm) printf("lightmap array %ux%u (%s)\n", atlas_w, atlas_h, stream?"streaming":(perchunk?"per-chunk":"single"));
+    else printf("no lightmap -- rendering direct + dynamic probe GI only\n");
 
     /* --- Build static meshes: uv1 remapped into each mesh's atlas rect. --- */
     float amin[3]={1e30f,1e30f,1e30f},amax[3]={-1e30f,-1e30f,-1e30f};
@@ -680,9 +685,19 @@ int main(int argc,char **argv){
       f.position[0]=fp[0]; f.position[1]=fp[1]+0.6f; f.position[2]=fp[2];
       f.color[0]=1.0f; f.color[1]=0.42f; f.color[2]=0.13f;   /* warm orange fire */
       f.intensity=16.0f; f.range=9.0f;
-      f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_SHADOW;
+      f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
       render_light_add(&lights,&f);
       printf("great_hall fireplace light at (%.1f,%.1f,%.1f)\n",f.position[0],f.position[1],f.position[2]);
+      /* Explicitly opt the SUN into dynamic probe GI (temporary -- will move to the
+       * baked lightmap later): a DIRECTIONAL light tagged PROBE_GI|SHADOW but NOT
+       * REALTIME, so the CSM still owns the direct sun and the probes trace the
+       * sun's bounced indirect. Travel dir matches the bake / .blend. */
+      render_light_t sun; memset(&sun,0,sizeof sun); sun.kind=RENDER_LIGHT_DIRECTIONAL;
+      { float sd[3]={-0.5568f,-0.6022f,-0.5721f}; float l=sqrtf(sd[0]*sd[0]+sd[1]*sd[1]+sd[2]*sd[2]);
+        sun.direction[0]=sd[0]/l; sun.direction[1]=sd[1]/l; sun.direction[2]=sd[2]/l; }
+      sun.color[0]=1.0f; sun.color[1]=0.95f; sun.color[2]=0.85f; sun.intensity=4.0f;
+      sun.flags=RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
+      render_light_add(&lights,&sun);
     }
     uint32_t rng=4242;
     for(int i=0;i<((shadow_only||one_light||spot_only||csm_demo||lm_only||great_hall)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
@@ -748,13 +763,13 @@ int main(int argc,char **argv){
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
      * direct sun + its CSM shadows. */
-    fcfg.sh_enabled=(shadow_only||spot_only)?0:1; fcfg.sh_scale=(lm_only?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=(shadow_only||spot_only||no_lm)?0:1; fcfg.sh_scale=(lm_only?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=-1; /* multi-light path: point lights tagged FLAG_SHADOW cast. */
     fcfg.shadow_max=8; fcfg.shadow_res=256; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
     fcfg.spot_light=1; fcfg.spot_res=1024; fcfg.spot_near=0.05f;
     fcfg.spot_far=hall_len*1.5f; fcfg.spot_bias=0.05f;
-    if((csm_demo||lm_only) && getenv("LM_NOCSM")==NULL){
+    if((csm_demo||lm_only||great_hall) && getenv("LM_NOCSM")==NULL){
         /* Warm directional sun; 3 cascades split logarithmically, static baked
          * once + a low-res dynamic map. Sun is NOT baked into the SH here. */
         /* Direct sun -- brighter than the bake radiance so the shafts read
@@ -824,7 +839,7 @@ int main(int argc,char **argv){
         { render_light_t a; memset(&a,0,sizeof a); a.kind=RENDER_LIGHT_SPOT;
           a.color[0]=1.0f; a.color[1]=0.46f; a.color[2]=0.12f; a.intensity=(ptonly?0.0f:13.0f)*gdim; a.range=4.0f;
           a.cos_inner=cosf(0.55f); a.cos_outer=cosf(0.95f);
-          a.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_SHADOW;
+          a.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
           /* Sconces sit ON the central pillar's surface (shaft ~0.4m), halfway up,
            * pointing UP like wall sconces. Central pillar = col_0 at (3,-3). */
           float pcx=6.0f, pcz=-3.0f, prad=0.44f, py=amin[1]+1.05f; /* low on the shaft. */
@@ -844,7 +859,7 @@ int main(int argc,char **argv){
           /* Mid-aisle, in clear view: lights the central column + floor + boxes and
            * casts its omnidirectional shadow. */
           pt.position[0]=4.7f; pt.position[1]=amin[1]+1.7f; pt.position[2]=cz-1.2f;
-          pt.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT;
+          pt.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI;
           if(!getenv("GI_NOSHADOW")) pt.flags|=RENDER_LIGHT_FLAG_SHADOW;
           render_light_add(&lights,&pt); }
       } /* end !great_hall generic demo geometry */

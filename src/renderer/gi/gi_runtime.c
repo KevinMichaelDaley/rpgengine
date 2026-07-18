@@ -192,13 +192,15 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
                              gi->n_sdf_boxes, main_w, main_h);
     gi_sdf_stream_page(&gi->sdf, gi->pp.visible);
 
-    /* Gather the scene lights tagged DYNAMIC_INDIRECT into the trace's light set. */
+    /* Gather the scene lights tagged PROBE_GI into the trace's light set: the
+     * probes trace indirect from ONLY these (a static light like the sun can opt
+     * in without becoming a realtime direct light; dynamic lights can opt out). */
     uint32_t n = 0;
     const render_light_store_t *ls = scene->lights;
     if (ls != NULL) {
         for (uint32_t i = 0; i < ls->count && n < gi->max_lights; ++i) {
             const render_light_t *L = &ls->lights[i];
-            if (!(L->flags & RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT)) continue;
+            if (!(L->flags & RENDER_LIGHT_FLAG_PROBE_GI)) continue;
             gi_light_t *g = &gi->light_scratch[n++];
             g->kind = (L->kind == RENDER_LIGHT_DIRECTIONAL) ? GI_LIGHT_DIRECTIONAL
                     : (L->kind == RENDER_LIGHT_SPOT) ? GI_LIGHT_SPOT : GI_LIGHT_POINT;

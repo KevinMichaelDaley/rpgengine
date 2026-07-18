@@ -352,16 +352,21 @@ bool scene_bake_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
     float pad=1.0f;
     cfg->svo_bounds=(phys_aabb_t){ {bmin[0]-pad,bmin[1]-pad,bmin[2]-pad},
                                    {bmax[0]+pad,bmax[1]+pad,bmax[2]+pad} };
-    cfg->voxel_size=getenv("HALL_VOXEL")?(float)atof(getenv("HALL_VOXEL")):0.03f;
+    cfg->voxel_size=getenv("HALL_VOXEL")?(float)atof(getenv("HALL_VOXEL")):0.06f;
     cfg->atlas_width=4096; cfg->atlas_padding=2; cfg->direct_samples=0;
-    cfg->farfield_samples=getenv("HALL_SAMPLES")?(uint32_t)atoi(getenv("HALL_SAMPLES")):8192u;
+    cfg->farfield_samples=getenv("HALL_SAMPLES")?(uint32_t)atoi(getenv("HALL_SAMPLES")):2048u;
     cfg->gi_bounces=getenv("HALL_BOUNCES")?(uint32_t)atoi(getenv("HALL_BOUNCES")):8u;
     cfg->gi_threads=getenv("HALL_THREADS")?(uint32_t)atoi(getenv("HALL_THREADS")):0u;
     cfg->farfield_near=0.5f*diag; cfg->farfield_maxdist=1e9f; cfg->seed=11u;
     cfg->sky.kind=LM_SKY_CONSTANT; cfg->sky.color=SKY_COLOR;
     cfg->gi_batch=getenv("HALL_BATCH")?(uint32_t)atoi(getenv("HALL_BATCH")):64u;
-    printf("bake: %d meshes voxel=%.3f samples=%u bounces=%u diag=%.2f\\n",
-           nm,cfg->voxel_size,cfg->farfield_samples,cfg->gi_bounces,diag);
+    /* Persist the near-field SDF chunks (<HALL_SDF>_cNNN.sdf) so the runtime's
+     * dynamic SDF-probe GI can trace them; HALL_CHUNK sets the chunk edge (m). */
+    cfg->chunk_size=getenv("HALL_CHUNK")?(float)atof(getenv("HALL_CHUNK")):0.0f;
+    cfg->chunk_margin=getenv("HALL_CHUNK_MARGIN")?(float)atof(getenv("HALL_CHUNK_MARGIN")):2.0f;
+    cfg->sdf_out_prefix=getenv("HALL_SDF");
+    printf("bake: %d meshes voxel=%.3f samples=%u bounces=%u chunk=%.1f diag=%.2f\\n",
+           nm,cfg->voxel_size,cfg->farfield_samples,cfg->gi_bounces,cfg->chunk_size,diag);
     fflush(stdout);
     return true;
 }

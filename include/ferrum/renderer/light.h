@@ -39,6 +39,11 @@ typedef enum render_light_kind {
 /** Contributes to dynamic GI: the SDF-probe runtime gathers this light for the
  *  dynamic indirect term (in addition to its normal direct lighting). */
 #define RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT 0x8u
+/** Gathered by the SDF-probe GI. The probe runtime traces indirect from ONLY the
+ *  lights carrying this flag (so a normally-static light -- e.g. the sun -- can be
+ *  opted into dynamic probe GI without being turned into a realtime direct light,
+ *  and dynamic lights can opt OUT of probe GI). Independent of REALTIME/SHADOW. */
+#define RENDER_LIGHT_FLAG_PROBE_GI 0x10u
 
 /** A scene light. */
 typedef struct render_light {
