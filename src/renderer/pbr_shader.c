@@ -339,12 +339,34 @@ static const char *const PBR_FS =
     "uniform float u_gi_static_dyn_w;\n"
     "uniform samplerBuffer u_probe_pos;\n"
     "uniform samplerBuffer u_probe_sh;\n"
+    "uniform samplerBuffer u_probe_depth;\n" /* DDGI: 8x8 octahedral (mean, meanSq)/probe. */
     "uniform usamplerBuffer u_probe_froxel_off;\n"
     "uniform usamplerBuffer u_probe_froxel_cnt;\n"
     "uniform usamplerBuffer u_probe_froxel_idx;\n"
     /* Fills @p e_dyn (dynamic-light indirect) and @p e_stat (baked static indirect)
      * from the nearest probes' two SH4 sets, so main() can weight the static term
      * per object (rpg-pau4). */
+    /* Octahedral encode (matches the probe kernel) for the DDGI depth lookup. */
+    "vec2 oct_enc(vec3 d){ d/=(abs(d.x)+abs(d.y)+abs(d.z));\n"
+    "  vec2 o=(d.z>=0.0)? d.xy : (vec2(1.0)-abs(d.yx))*vec2(d.x>=0.0?1.0:-1.0, d.y>=0.0?1.0:-1.0);\n"
+    "  return o*0.5+0.5; }\n"
+    /* DDGI visibility weight: probability the shading point @p wp (dist @p dist to
+     * the probe along @p dir) is in front of what the probe sees in that
+     * direction. Chebyshev on the stored depth mean/variance. */
+    "vec2 depth_texel(int probe, ivec2 tc){ tc=clamp(tc, ivec2(0), ivec2(7));\n"
+    "  return texelFetch(u_probe_depth, probe*64 + tc.y*8 + tc.x).rg; }\n"
+    "float probe_vis(int probe, vec3 dir, float dist){\n"
+    /* BILINEAR-filter the octahedral depth map (border-clamped -- the seam error\n"
+     * at the octahedron edges is negligible for a soft visibility weight); nearest\n"
+     * texel picking would step across texels and diamond-pattern the result. */
+    "  vec2 uv=oct_enc(dir)*8.0-0.5; ivec2 t0=ivec2(floor(uv)); vec2 f=uv-vec2(t0);\n"
+    "  vec2 mm=mix(mix(depth_texel(probe,t0),               depth_texel(probe,t0+ivec2(1,0)), f.x),\n"
+    "             mix(depth_texel(probe,t0+ivec2(0,1)),     depth_texel(probe,t0+ivec2(1,1)), f.x), f.y);\n"
+    "  float mean=mm.x; float var=max(mm.y-mean*mean, 1e-3);\n"
+    "  if(dist<=mean+0.15) return 1.0;\n"                /* small bias: self-visible. */
+    "  float d=dist-mean; float ch=var/(var+d*d);\n"
+    "  return ch*ch;\n"                                 /* square: softer than DDGI's cube. */
+    "}\n"
     /* Reconstruct SH4 irradiance (dyn + stat) from 6 interpolated coeff vectors. */
     "void sh_recon(vec4 dR,vec4 dG,vec4 dB,vec4 sR,vec4 sG,vec4 sB,vec3 nn,out vec3 e_dyn,out vec3 e_stat){\n"
     "  vec4 Y=vec4(0.282094792, 0.488602512*nn.y, 0.488602512*nn.z, 0.488602512*nn.x);\n"
@@ -358,21 +380,34 @@ static const char *const PBR_FS =
     /* Regular-grid path: trilinearly blend the 8 surrounding grid probes' SH. */
     "  if(u_probe_grid_on==1){\n"
     "    ivec3 gdim=ivec3(u_probe_grid_dim+vec3(0.5));\n"
-    "    vec3 g=(wp - u_probe_grid_origin)/u_probe_grid_cell;\n"
+    /* Normal bias: push the sample point off the surface so it sits IN FRONT of\n"
+     * what the probe recorded (dist < mean) -- otherwise a surface exactly at the\n"
+     * recorded depth self-occludes and each probe stamps a dark dot (DDGI). */
+    "    vec3 wp_b = wp + nn*(0.35*min(min(u_probe_grid_cell.x,u_probe_grid_cell.y),u_probe_grid_cell.z));\n"
+    "    vec3 g=(wp_b - u_probe_grid_origin)/u_probe_grid_cell;\n"
     "    vec3 gmax=vec3(gdim)-vec3(1.0);\n"
     "    g=clamp(g, vec3(0.0), gmax-vec3(0.0001));\n"
     "    ivec3 g0=ivec3(floor(g)); vec3 fr=g-vec3(g0);\n"
     "    vec4 dR=vec4(0.0),dG=vec4(0.0),dB=vec4(0.0),sR=vec4(0.0),sG=vec4(0.0),sB=vec4(0.0);\n"
+    "    float wsum=0.0;\n"
     "    for(int c=0;c<8;++c){\n"
     "      ivec3 o=ivec3(c&1,(c>>1)&1,(c>>2)&1);\n"
     "      vec3 wv=mix(vec3(1.0)-fr, fr, vec3(o));\n"
     "      float w=wv.x*wv.y*wv.z; if(w<=0.0) continue;\n"
     "      ivec3 gc=min(g0+o, gdim-ivec3(1));\n"
     "      int probe=(gc.z*gdim.y + gc.y)*gdim.x + gc.x;\n"
+    /* Visibility weight: cut probes the fragment can't see (behind geometry from\n"
+     * the probe) so their irradiance doesn't leak through walls. */
+    "      vec3 ppos=u_probe_grid_origin + vec3(gc)*u_probe_grid_cell;\n"
+    "      vec3 pd=wp_b-ppos; float pl=length(pd);\n"
+    "      if(pl>1e-4) w*=max(probe_vis(probe, pd/pl, pl), 0.02);\n"
+    "      if(w<=0.0) continue; wsum+=w;\n"
     "      int base=probe*6;\n"
     "      dR+=texelFetch(u_probe_sh,base+0)*w; dG+=texelFetch(u_probe_sh,base+1)*w; dB+=texelFetch(u_probe_sh,base+2)*w;\n"
     "      sR+=texelFetch(u_probe_sh,base+3)*w; sG+=texelFetch(u_probe_sh,base+4)*w; sB+=texelFetch(u_probe_sh,base+5)*w;\n"
     "    }\n"
+    "    if(wsum>1e-5){ float inv=1.0/wsum;\n"
+    "      dR*=inv;dG*=inv;dB*=inv;sR*=inv;sG*=inv;sB*=inv; }\n"
     "    sh_recon(dR,dG,dB,sR,sG,sB,nn,e_dyn,e_stat); return;\n"
     "  }\n"
     /* Probes are binned into the SAME froxels as the forward+ lights; @p pcl is the\n"

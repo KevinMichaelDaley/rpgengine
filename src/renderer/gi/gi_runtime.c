@@ -235,6 +235,8 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_probe_froxel_cnt", (int32_t)u); ++u;
     glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fi_tex);
     shader_uniform_set_int(cache, program, "u_probe_froxel_idx", (int32_t)u); ++u;
+    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi_probe_gpu_depth_tbo(&gi->gpu));
+    shader_uniform_set_int(cache, program, "u_probe_depth", (int32_t)u); ++u;
 
     shader_uniform_set_int(cache, program, "u_gi_enabled", 1);
     shader_uniform_set_float(cache, program, "u_gi_static_baked_w", gi->static_baked_w);

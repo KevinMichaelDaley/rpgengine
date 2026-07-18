@@ -40,6 +40,10 @@ static const char *CS_SRC =
     "layout(std430,binding=1) writeonly buffer PS { float psh[]; };\n"
     "layout(std430,binding=2) readonly buffer LB { vec4 lt[]; };\n"
     "layout(std430,binding=3) readonly buffer BX { vec4 bx[]; };\n"
+    /* DDGI depth probe: OCTRES^2 texels/probe, each (mean dist, mean sq dist)\n"
+     * for the Chebyshev visibility test at interpolation time. OCTRES fixed at 8\n"
+     * (must match the forward+ sampler). */
+    "layout(std430,binding=4) writeonly buffer PD { float pdepth[]; };\n"
     "const float PI=3.14159265;\n"
     "float box_sdf(vec3 p,vec3 c,vec3 h){ vec3 q=abs(p-c)-h; return length(max(q,vec3(0.0)))+min(max(q.x,max(q.y,q.z)),0.0); }\n"
     /* Distance is the ALPHA of the RGBA voxel texture (rgb = static albedo). */
@@ -72,6 +76,23 @@ static const char *CS_SRC =
     "  for(int i=0;i<32 && t<maxd;++i){ float h=scene_sdf(o+dir*t);\n"
     "    if(h<0.02) return 0.0; res=min(res,u_soft*h/t); t+=clamp(h,0.03,0.4); }\n"
     "  return clamp(res,0.0,1.0); }\n"
+    /* Distance along dir at which a CONE of footprint-slope k (radius = k*t) is\n"
+     * first blocked by the SDF (clearance h < k*t). k=0 -> a plain ray (exact hit\n"
+     * distance). A wider cone is blocked nearer than a ray, so a few cones of\n"
+     * increasing k sample the depth distribution's near tail cheaply -- no dense\n"
+     * ray fan needed to estimate mean + variance for the DDGI depth probe. */
+    "float cone_block(vec3 o, vec3 dir, float k){ float t=0.1;\n"
+    "  for(int i=0;i<48;++i){ vec3 p=o+dir*t; float h=scene_sdf(p);\n"
+    "    if(h < k*t + 0.015) return t;\n"
+    "    t += max(h,0.05); if(t>30.0) break; }\n"
+    "  return 30.0; }\n"
+    /* Octahedral map: unit direction <-> [0,1]^2 (equal-area-ish, seamless). */
+    "vec2 oct_encode(vec3 d){ d/=(abs(d.x)+abs(d.y)+abs(d.z));\n"
+    "  vec2 o=(d.z>=0.0)? d.xy : (vec2(1.0)-abs(d.yx))*vec2(d.x>=0.0?1.0:-1.0, d.y>=0.0?1.0:-1.0);\n"
+    "  return o*0.5+0.5; }\n"
+    "vec3 oct_decode(vec2 f){ vec2 e=f*2.0-1.0; vec3 v=vec3(e, 1.0-abs(e.x)-abs(e.y));\n"
+    "  if(v.z<0.0) v.xy=(vec2(1.0)-abs(v.yx))*vec2(v.x>=0.0?1.0:-1.0, v.y>=0.0?1.0:-1.0);\n"
+    "  return normalize(v); }\n"
     /* Direct irradiance at a surface point p (normal n) from all dynamic lights. */
     "vec3 direct_at(vec3 p,vec3 n){ vec3 sum=vec3(0.0);\n"
     "  for(int l=0;l<u_nlights;++l){ vec4 a=lt[l*4],b=lt[l*4+1],c=lt[l*4+2],e=lt[l*4+3];\n"
@@ -127,7 +148,23 @@ static const char *CS_SRC =
     "    float y[4]; sh_basis(dir,y);\n"
     "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*w; shd[4+k]+=rd.g*y[k]*w; shd[8+k]+=rd.b*y[k]*w;\n"
     "                          shs[k]+=rs.r*y[k]*w; shs[4+k]+=rs.g*y[k]*w; shs[8+k]+=rs.b*y[k]*w; } }\n"
-    "  for(int k=0;k<12;++k){ psh[gid*24+k]=shd[k]; psh[gid*24+12+k]=shs[k]; } }\n";
+    "  for(int k=0;k<12;++k){ psh[gid*24+k]=shd[k]; psh[gid*24+12+k]=shs[k]; }\n"
+    /* DDGI depth probe. Per octahedral texel (a direction), estimate the depth\n"
+     * distribution from 3 cone-traces: a ray (k=0) gives the MEAN (median sample),\n"
+     * a wide + a narrow cone are blocked in the near tail. Treat each cone radius\n"
+     * as a normal-CDF quantile (z = probit(p)); the ray is z=0 so it fixes the\n"
+     * mean, and each cone gives sigma = (mean - d_cone)/|z|. Store mean + meanSq\n"
+     * (= mean^2 + sigma^2) so the sampler can form the variance for Chebyshev. */
+    "  const int OR=8;\n"
+    "  for(int ty=0;ty<OR;++ty) for(int tx=0;tx<OR;++tx){\n"
+    "    vec3 td=oct_decode((vec2(float(tx),float(ty))+0.5)/float(OR));\n"
+    "    float dr=cone_block(o,td,0.0);\n"     /* ray  -> mean. */
+    "    float dw=cone_block(o,td,0.40);\n"    /* wide -> p~0.15, z~-1.036. */
+    "    float dn=cone_block(o,td,0.15);\n"    /* narrow -> p~0.30, z~-0.524. */
+    "    float mean=dr;\n"
+    "    float sig=0.5*((mean-dw)/1.036 + (mean-dn)/0.524); sig=clamp(sig,0.02,mean);\n"
+    "    int di=(int(gid)*OR*OR + ty*OR+tx)*2;\n"
+    "    pdepth[di]=mean; pdepth[di+1]=mean*mean+sig*sig; } }\n";
 
 static GLuint cs_build(void)
 {
@@ -164,6 +201,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glGenBuffers(1, &g->b_sh);
     glGenBuffers(1, &g->b_lights);
     glGenBuffers(1, &g->b_boxes);
+    glGenBuffers(1, &g->b_depth);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_pos);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
@@ -183,6 +221,13 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glGenTextures(1, &g->tbo_pos_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_pos_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g->b_pos);
+
+    /* DDGI depth: 8x8 octahedral texels/probe, 2 floats (mean, meanSq) each. */
+    glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_depth);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 64 * 2 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glGenTextures(1, &g->tbo_depth_tex);
+    glBindTexture(GL_TEXTURE_BUFFER, g->tbo_depth_tex);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, g->b_depth);
 
     g->ready = true;
     return true;
@@ -303,6 +348,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 1, g->b_sh);
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 2, g->b_lights);
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 3, g->b_boxes);
+    glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 4, g->b_depth);
 
     g->DispatchCompute((g->n_probes + 63u) / 64u, 1u, 1u);
     g->MemoryBarrier(GI_GL_SHADER_STORAGE_BARRIER_BIT | GI_GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -310,14 +356,16 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
 
 unsigned int gi_probe_gpu_sh_tbo(const gi_probe_gpu_t *g) { return g ? g->tbo_sh_tex : 0u; }
 unsigned int gi_probe_gpu_pos_tbo(const gi_probe_gpu_t *g) { return g ? g->tbo_pos_tex : 0u; }
+unsigned int gi_probe_gpu_depth_tbo(const gi_probe_gpu_t *g) { return g ? g->tbo_depth_tex : 0u; }
 
 void gi_probe_gpu_destroy(gi_probe_gpu_t *g)
 {
     if (g == NULL) return;
     if (g->prog) glDeleteProgram(g->prog);
-    GLuint b[4] = { g->b_pos, g->b_sh, g->b_lights, g->b_boxes };
-    glDeleteBuffers(4, b);
+    GLuint b[5] = { g->b_pos, g->b_sh, g->b_lights, g->b_boxes, g->b_depth };
+    glDeleteBuffers(5, b);
     if (g->tbo_sh_tex) glDeleteTextures(1, &g->tbo_sh_tex);
     if (g->tbo_pos_tex) glDeleteTextures(1, &g->tbo_pos_tex);
+    if (g->tbo_depth_tex) glDeleteTextures(1, &g->tbo_depth_tex);
     memset(g, 0, sizeof *g);
 }
