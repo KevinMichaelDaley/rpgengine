@@ -298,8 +298,8 @@ def _build_mortar(name, x0, width, height, front_y, mortar_depth, cell,
     return obj
 
 
-def build_wall(width=4.0, height=3.0, seed=0, mortar=0.001, bed=0.0012,
-               mortar_depth=0.02, seat_jitter=0.002, depth_jitter=0.004,
+def build_wall(width=4.0, height=3.0, seed=0, mortar=0.001, bed=0.001,
+               mortar_depth=0.02, seat_jitter=0.002, depth_jitter=0.006,
                tilt_deg=2.0, tilt_frac=0.5, seamless=True, mortar_cell=0.006,
                main_aspect=1, variety=0.25, min_stagger_frac=0.22,
                name="brick_wall", prefab_dir=PREFAB_DIR, collection=None):

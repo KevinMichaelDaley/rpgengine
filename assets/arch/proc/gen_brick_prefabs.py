@@ -43,15 +43,16 @@ with open(os.path.join(HERE, "brick.py")) as _f:
     exec(compile(_f.read(), "brick.py", "exec"), _brick_ns)
 build_brick = _brick_ns["build_brick"]
 
-# (length, height, width) in metres. Height and width are held constant so every
-# course is the same bed depth and stacks evenly; only the length (aspect ratio)
-# varies across the discrete set.
+# (length, height, width) in METRES. Medieval hewn-stone ashlar is far bigger
+# than a modern brick: ~24 cm course height, ~26 cm bed depth, blocks 25-52 cm
+# long. Height + width are held constant so every course beds evenly; only the
+# length (aspect ratio) varies across the discrete set.
 ASPECTS = [
-    (0.32, 0.09, 0.11),
-    (0.27, 0.09, 0.11),
-    (0.22, 0.09, 0.11),
-    (0.17, 0.09, 0.11),
-    (0.13, 0.09, 0.11),
+    (0.52, 0.24, 0.26),
+    (0.44, 0.24, 0.26),
+    (0.37, 0.24, 0.26),
+    (0.30, 0.24, 0.26),
+    (0.25, 0.24, 0.26),
 ]
 
 N_PER = int(os.environ.get("PREFAB_N", "10"))
@@ -63,7 +64,8 @@ TILT_BIN = 0.07
 
 # Per-brick sub-centimetre jitter on height and width so no two bricks are the
 # exact same bed depth/thickness; the mortar bed absorbs the small differences.
-HW_JITTER = 0.004  # metres (max +/- deviation, i.e. under 1 cm total range)
+HW_JITTER = 0.009  # metres (+/- ; slight per-stone depth/height variation on the
+                   # ~24 cm blocks, backs still bedding near the common plane)
 
 
 def _end_color(mesh, sign):
@@ -126,13 +128,13 @@ def main():
             # stones in the wall are worked identically (crack amount, chamfer,
             # deformation, micro strength, chip sizes).
             jf = lambda base, lo, hi: float(base * jr.uniform(lo, hi))
+            # boxy=1.0 -> crisp dressed-ashlar blocks (straight arrises, boxy
+            # silhouette) with the organic tool-dressed surface retained. boxy
+            # internally suppresses the chamfer/chip/deformation, so those knobs
+            # only jitter the (now subtle) weathering; cracks + micro carry the
+            # per-stone surface variety.
             obj = build_brick(name=name, seed=seed, length=length,
-                              height=h, width=w,
-                              disp_scale=jf(0.16, 0.85, 1.18),
-                              chamfer_frac=min(0.85, max(0.3, 0.6 + float(
-                                  jr.uniform(-0.15, 0.15)))),
-                              edge_chip=jf(0.007, 0.7, 1.4),
-                              corner_chip=jf(0.02, 0.75, 1.3),
+                              height=h, width=w, boxy=1.0,
                               cracks=jf(0.6, 0.55, 1.35),
                               cracks2=jf(0.5, 0.6, 1.35),
                               micro=jf(0.65, 0.8, 1.2),
