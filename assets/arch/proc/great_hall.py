@@ -323,7 +323,9 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     roof = bpy.data.objects.new(f"{name}_roof", me)
     col.objects.link(roof)
     sol = roof.modifiers.new("solid", 'SOLIDIFY')
-    sol.thickness = 0.12
+    # Thick enough to span several SDF voxels (~0.06 m) so the lightmap/GI SDF bake
+    # doesn't leak sun/sky through the roof skin. 0.12 (~2 voxels) leaked.
+    sol.thickness = 0.35
     sol.offset = 1.0
 
     # --- hooded wall fireplace against the north wall, in the last (dais) bay ---
@@ -784,6 +786,32 @@ def assign_dais_material(col, uv_scale=0.5, name="great_hall_dais_marble"):
     return mat
 
 
+def _setup_lighting(name="great_hall"):
+    """Explicit sun + sky so the bake lighting is deterministic (not dependent on
+    session/factory defaults). Direction is the design's raking sun; brightness is
+    DOUBLED (sun energy 20, sky ~0.31,0.38,0.52) per the hall's lit look."""
+    import mathutils
+    for o in list(bpy.data.objects):
+        if o.type == 'LIGHT' and o.data.type == 'SUN':
+            bpy.data.objects.remove(o, do_unlink=True)
+    sd = bpy.data.lights.new(name + "_sun", 'SUN')
+    sd.energy = 20.0                       # doubled (was 10)
+    sd.color = (1.0, 1.0, 1.0)
+    so = bpy.data.objects.new(name + "_sun", sd)
+    bpy.context.scene.collection.objects.link(so)
+    # Blender sun points along local -Z; orient it to the design travel direction
+    # (engine SUN_DIR (-0.557,-0.602,-0.572) -> Blender fwd (-0.557, 0.572, -0.602)).
+    fwd = mathutils.Vector((-0.557, 0.572, -0.602)).normalized()
+    so.rotation_euler = fwd.to_track_quat('-Z', 'Y').to_euler()
+    w = bpy.context.scene.world or bpy.data.worlds.new("World")
+    bpy.context.scene.world = w
+    w.use_nodes = True
+    bg = w.node_tree.nodes.get("Background")
+    if bg is not None:
+        bg.inputs[0].default_value = (0.3078, 0.3770, 0.5176, 1.0)  # doubled sky
+        bg.inputs[1].default_value = 1.0
+
+
 def build_hall_scene(bake_root, collection=None, name="great_hall"):
     """Regenerate the whole great-hall scene: geometry (``build_great_hall``),
     world-scale UVs (``prepare_uvs``), then every material -- wall, floor, reveal
@@ -799,4 +827,5 @@ def build_hall_scene(bake_root, collection=None, name="great_hall"):
     assign_timber_material(col)
     assign_roof_material(col)
     assign_dais_material(col)
+    _setup_lighting(name)
     return col
