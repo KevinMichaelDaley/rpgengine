@@ -359,89 +359,92 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.001, bed=0.001,
     prev_joints = []            # head-joint X positions of the course below
     for c in range(courses):
         # Even courses start on the seam; odd courses straddle it (running bond).
-        # ``cursor`` tracks the running X of the last brick's right support face,
-        # so the next brick's left face is butted to it with the joint tolerance.
         x_start = 0.0 if (c % 2 == 0) else -stagger
-        cursor = x_start        # running right *support face* X
-        cursor_b = x_start      # running right *bbox edge* X
-        prev = None
-        first_tf = None
-        placed = []             # this course's instances, in order, for justify
-        cur_joints = [x_start]  # this course's head joints (for the next course)
-        guard = 0
-        # Interior bricks fill up to where the closing brick's left face will sit
-        # (one tile on from the first brick's left face).
         limit = x_start + tile_width
-        while cursor < limit and guard < 512:
+
+        # --- 1) SELECT the course's bricks. The dressed blocks are rectangular,
+        # so bricks simply BUTT by their bounding boxes with a fixed 1 mm head
+        # joint. We only choose lengths/orientations here; exact placement waits
+        # until the whole course is known so the small width remainder can be
+        # absorbed by a sub-percent brick stretch (bounding the width difference)
+        # rather than by widening the joints.
+        picks = []              # (o, mesh, lo0, w) left-to-right
+        cursor = x_start        # running right bbox edge (natural lengths)
+        prev = None
+        guard = 0
+        while guard < 512:
             guard += 1
-            # Head-joint tolerance: a few mm, randomised a little per joint.
-            tol = 0.0 if prev is None else max(
-                0.001, mortar * (1.0 + float(rng.uniform(-0.4, 0.4))))
+            joint = 0.0 if prev is None else mortar
+            left = cursor + joint
+            if prev is not None and left >= limit:
+                break
             # Romanesque coursing: choose the stretcher length so this brick's
             # head joint STAGGERS off the joints in the course below (running
-            # bond), mostly the main length with occasional variation. The chosen
-            # aspect's colour index is the primary match pool; global_index is the
-            # fallback so a match always exists.
-            ta = _stagger_aspect(cursor, tol, prev_joints, lengths, main_aspect,
+            # bond), mostly the main length with occasional variation.
+            ta = _stagger_aspect(left, 0.0, prev_joints, lengths, main_aspect,
                                  variety, rng, min_stagger)
             oi = _pick_next(orientations, aspect_index[ta], global_index, prev, rng)
             o = orientations[oi]
             mesh = _import_mesh(o["brick"], mesh_cache, prefab_dir)
-            dl, dr = _placed_supports(o, mesh, supp_cache)
-            # If this brick's right face would cross the closing position, swap
-            # it for the longest brick that fits; stop if nothing fits.
-            if (cursor + tol) + dl + dr + tol > limit:
-                oi = _best_fit(orientations, global_index, prev, cursor + tol, limit)
-                if oi is None:
-                    break
-                o = orientations[oi]
-                mesh = _import_mesh(o["brick"], mesh_cache, prefab_dir)
-                dl, dr = _placed_supports(o, mesh, supp_cache)
+            w = o["hi"][0] - o["lo"][0]
+            # If it would overshoot the seam, swap for the longest brick that
+            # still fits so the leftover width stays small (bounded).
+            if prev is not None and left + w > limit:
+                oi2 = _best_fit(orientations, global_index, prev, left, limit)
+                if oi2 is not None:
+                    oi = oi2
+                    o = orientations[oi]
+                    mesh = _import_mesh(o["brick"], mesh_cache, prefab_dir)
+                    w = o["hi"][0] - o["lo"][0]
+            picks.append((o, mesh, o["lo"][0], w))
+            cursor = left + w
+            prev = o
+            if cursor + mortar >= limit:
+                break
+
+        m = len(picks)
+        if m == 0:
+            baseline += nominal_h + bed
+            continue
+
+        # --- 2) BOUND THE WIDTH DIFFERENCE. Scale every brick's length by a
+        # single per-course factor so the m bricks + m exact 1 mm joints fill the
+        # tile precisely. By construction the natural sum is within one short
+        # brick of the target, so f ~= 1 (a sub-percent, invisible stretch). This
+        # replaces the old justification, which spread the remainder across the
+        # joints and blew them open; here the joints stay 1 mm all the way across.
+        natural = sum(w for _, _, _, w in picks)
+        target = tile_width - m * mortar
+        f = target / natural if natural > 0.0 else 1.0
+
+        # --- 3) PLACE the bricks, scaled and butted, recording the true joints.
+        cur_joints = [x_start]
+        cx = x_start
+        first_tf = None
+        for (o, mesh, lo0, w) in picks:
             lo, hi = o["lo"], o["hi"]
             rot = _rand_tilt(rng, tilt_deg, tilt_frac)
-
-            # Butt this brick's left support face to cursor + tolerance...
-            loc_support = (cursor + tol) + dl
-            # ...but if the support planes leave the actual bboxes further apart
-            # than a joint width (e.g. imperfectly matched ends), pull the brick
-            # closer so the bbox edges are only `tol` apart -- never a gap.
-            loc_bbox = (cursor_b + tol) - lo[0]
-            loc_x = loc_support if prev is None else min(loc_support, loc_bbox)
+            loc_x = cx - f * lo0                       # left bbox edge sits at cx
             loc_z = baseline - lo[2] + float(rng.uniform(0.0, seat_jitter))
             loc_y = -0.5 * (lo[1] + hi[1]) + float(
                 rng.uniform(-depth_jitter, depth_jitter))
-            loc = (loc_x, loc_y, loc_z)
             inst = _place(collection, f"{name}_{c:02d}_{count:04d}", mesh,
-                          o["flip"], rot, loc)
-            placed.append(inst)
+                          o["flip"], rot, (loc_x, loc_y, loc_z))
+            inst.scale.x = f
             if first_tf is None:
-                first_tf = (mesh, o["flip"], rot, loc)
-            cursor = loc_x + dr        # advance right support face
-            cursor_b = loc_x + hi[0]   # advance right bbox edge
-            cur_joints.append(cursor)  # record this brick's right head joint
-            prev = o
+                first_tf = (mesh, o["flip"], rot, (loc_x, loc_y, loc_z))
+            cx += f * w
+            cur_joints.append(cx)
+            cx += mortar
             count += 1
 
-        # Justify the course: whatever gap remains between the last brick and the
-        # closing position is distributed evenly across every head joint, so the
-        # joints just widen slightly instead of leaving a hole before the closer.
-        # The first brick stays put (it defines the seam); brick k shifts right by
-        # k * slack / m so the last brick meets the closer with one more joint.
-        m = len(placed)
-        if seamless and m > 0:
-            slack = limit - cursor
-            if slack > 0.0:
-                per = slack / m
-                for k, inst in enumerate(placed):
-                    inst.location.x += k * per
-
-        # Seamless closer: duplicate the first brick exactly one tile later so
-        # the [0, tile_width] crop repeats continuously.
+        # Seamless closer: duplicate the first brick exactly one tile later (same
+        # scale) so the [0, tile_width] crop repeats continuously.
         if seamless and first_tf is not None:
             m0, flip0, rot0, loc0 = first_tf
-            loc_end = (loc0[0] + tile_width, loc0[1], loc0[2])
-            _place(collection, f"{name}_{c:02d}_{count:04d}_seam", m0,
-                   flip0, rot0, loc_end)
+            inst = _place(collection, f"{name}_{c:02d}_{count:04d}_seam", m0,
+                          flip0, rot0, (loc0[0] + tile_width, loc0[1], loc0[2]))
+            inst.scale.x = f
             count += 1
 
         prev_joints = cur_joints   # next course staggers off this course's joints
