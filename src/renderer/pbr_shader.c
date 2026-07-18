@@ -337,6 +337,10 @@ static const char *const PBR_FS =
      * ambience. main() picks between them by u_sh_object. */
     "uniform float u_gi_static_baked_w;\n"
     "uniform float u_gi_static_dyn_w;\n"
+    /* Sky-openness AO (from the probe depth maps): openness * this colour is added
+     * as ambient. u_gi_sky_ref is the overhead distance considered "fully open". */
+    "uniform vec3 u_gi_sky_color;\n"
+    "uniform float u_gi_sky_ref;\n"
     "uniform samplerBuffer u_probe_pos;\n"
     "uniform samplerBuffer u_probe_sh;\n"
     "uniform samplerBuffer u_probe_depth;\n" /* DDGI: 8x8 octahedral (mean, meanSq)/probe. */
@@ -355,18 +359,26 @@ static const char *const PBR_FS =
      * direction. Chebyshev on the stored depth mean/variance. */
     "vec2 depth_texel(int probe, ivec2 tc){ tc=clamp(tc, ivec2(0), ivec2(7));\n"
     "  return texelFetch(u_probe_depth, probe*64 + tc.y*8 + tc.x).rg; }\n"
-    "float probe_vis(int probe, vec3 dir, float dist){\n"
     /* BILINEAR-filter the octahedral depth map (border-clamped -- the seam error\n"
-     * at the octahedron edges is negligible for a soft visibility weight); nearest\n"
-     * texel picking would step across texels and diamond-pattern the result. */
+     * at the octahedron edges is negligible; nearest-texel picking would step\n"
+     * across texels and diamond-pattern the result). Returns (mean, meanSq). */
+    "vec2 depth_bilinear(int probe, vec3 dir){\n"
     "  vec2 uv=oct_enc(dir)*8.0-0.5; ivec2 t0=ivec2(floor(uv)); vec2 f=uv-vec2(t0);\n"
-    "  vec2 mm=mix(mix(depth_texel(probe,t0),               depth_texel(probe,t0+ivec2(1,0)), f.x),\n"
-    "             mix(depth_texel(probe,t0+ivec2(0,1)),     depth_texel(probe,t0+ivec2(1,1)), f.x), f.y);\n"
+    "  return mix(mix(depth_texel(probe,t0),           depth_texel(probe,t0+ivec2(1,0)), f.x),\n"
+    "            mix(depth_texel(probe,t0+ivec2(0,1)),  depth_texel(probe,t0+ivec2(1,1)), f.x), f.y); }\n"
+    "float probe_vis(int probe, vec3 dir, float dist){\n"
+    "  vec2 mm=depth_bilinear(probe,dir);\n"
     "  float mean=mm.x; float var=max(mm.y-mean*mean, 1e-3);\n"
     "  if(dist<=mean+0.15) return 1.0;\n"                /* small bias: self-visible. */
     "  float d=dist-mean; float ch=var/(var+d*d);\n"
     "  return ch*ch;\n"                                 /* square: softer than DDGI's cube. */
     "}\n"
+    /* Sky openness: how far the probe sees toward the sky (world up). A large mean\n"
+     * distance overhead -> open -> lets the constant sky ambient in; close geometry\n"
+     * overhead -> occluded (cheap AO from the same depth probe). */
+    "float probe_sky(int probe){\n"
+    "  float mean=depth_bilinear(probe, vec3(0.0,1.0,0.0)).x;\n"
+    "  return smoothstep(0.5, u_gi_sky_ref, mean); }\n"
     /* Reconstruct SH4 irradiance (dyn + stat) from 6 interpolated coeff vectors. */
     "void sh_recon(vec4 dR,vec4 dG,vec4 dB,vec4 sR,vec4 sG,vec4 sB,vec3 nn,out vec3 e_dyn,out vec3 e_stat){\n"
     "  vec4 Y=vec4(0.282094792, 0.488602512*nn.y, 0.488602512*nn.z, 0.488602512*nn.x);\n"
@@ -374,8 +386,8 @@ static const char *const PBR_FS =
     "  e_dyn  = max(vec3(dot(dR, A*Y), dot(dG, A*Y), dot(dB, A*Y)), vec3(0.0));\n"
     "  e_stat = max(vec3(dot(sR, A*Y), dot(sG, A*Y), dot(sB, A*Y)), vec3(0.0));\n"
     "}\n"
-    "void gi_probe_indirect2(vec3 wp, vec3 nn, int pcl, out vec3 e_dyn, out vec3 e_stat){\n"
-    "  e_dyn=vec3(0.0); e_stat=vec3(0.0);\n"
+    "void gi_probe_indirect2(vec3 wp, vec3 nn, int pcl, out vec3 e_dyn, out vec3 e_stat, out float sky_ao){\n"
+    "  e_dyn=vec3(0.0); e_stat=vec3(0.0); sky_ao=0.0;\n"
     "  if(u_gi_enabled==0) return;\n"
     /* Regular-grid path: trilinearly blend the 8 surrounding grid probes' SH. */
     "  if(u_probe_grid_on==1){\n"
@@ -389,13 +401,15 @@ static const char *const PBR_FS =
     "    g=clamp(g, vec3(0.0), gmax-vec3(0.0001));\n"
     "    ivec3 g0=ivec3(floor(g)); vec3 fr=g-vec3(g0);\n"
     "    vec4 dR=vec4(0.0),dG=vec4(0.0),dB=vec4(0.0),sR=vec4(0.0),sG=vec4(0.0),sB=vec4(0.0);\n"
-    "    float wsum=0.0;\n"
+    "    float wsum=0.0, skyacc=0.0, wtri=0.0;\n"
     "    for(int c=0;c<8;++c){\n"
     "      ivec3 o=ivec3(c&1,(c>>1)&1,(c>>2)&1);\n"
     "      vec3 wv=mix(vec3(1.0)-fr, fr, vec3(o));\n"
     "      float w=wv.x*wv.y*wv.z; if(w<=0.0) continue;\n"
     "      ivec3 gc=min(g0+o, gdim-ivec3(1));\n"
     "      int probe=(gc.z*gdim.y + gc.y)*gdim.x + gc.x;\n"
+    /* Sky openness interpolated by the plain trilinear (spatial) weight. */
+    "      skyacc+=w*probe_sky(probe); wtri+=w;\n"
     /* Visibility weight: cut probes the fragment can't see (behind geometry from\n"
      * the probe) so their irradiance doesn't leak through walls. */
     "      vec3 ppos=u_probe_grid_origin + vec3(gc)*u_probe_grid_cell;\n"
@@ -408,6 +422,7 @@ static const char *const PBR_FS =
     "    }\n"
     "    if(wsum>1e-5){ float inv=1.0/wsum;\n"
     "      dR*=inv;dG*=inv;dB*=inv;sR*=inv;sG*=inv;sB*=inv; }\n"
+    "    if(wtri>1e-5) sky_ao=skyacc/wtri;\n"
     "    sh_recon(dR,dG,dB,sR,sG,sB,nn,e_dyn,e_stat); return;\n"
     "  }\n"
     /* Probes are binned into the SAME froxels as the forward+ lights; @p pcl is the\n"
@@ -543,9 +558,12 @@ static const char *const PBR_FS =
      * diffuse albedo/PI * E, on top of the baked static ambient. */
     /* Probe indirect: dynamic always; static weighted by whether this object is\n"
      * baked (has the lightmap) or dynamic (needs the boosted static ambience). */
-    "  vec3 gi_dyn, gi_stat; gi_probe_indirect2(v_world_pos, N, frag_cluster, gi_dyn, gi_stat);\n"
+    "  vec3 gi_dyn, gi_stat; float gi_sky; gi_probe_indirect2(v_world_pos, N, frag_cluster, gi_dyn, gi_stat, gi_sky);\n"
     "  float sgw = (u_sh_object>0.5) ? u_gi_static_baked_w : u_gi_static_dyn_w;\n"
     "  ambient += albedo * (gi_dyn + sgw*gi_stat) * (ao/PI);\n"
+    /* Sky-openness ambient (cheap AO from the probe depth): sky visible overhead\n"
+     * (weighted up-facing) * a constant sky colour, occluded in enclosed spots. */
+    "  ambient += albedo * gi_sky * (0.5+0.5*N.y) * u_gi_sky_color * ao;\n"
     "  if(u_debug_mode==7){ frag=vec4(gi_dyn + sgw*gi_stat,1.0); return; }\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"

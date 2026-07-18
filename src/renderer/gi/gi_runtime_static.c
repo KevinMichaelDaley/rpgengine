@@ -34,3 +34,10 @@ void gi_runtime_set_probe_grid(gi_runtime_t *gi, const float origin[3],
         gi->probe_grid_dim[i] = on ? dim[i] : 0;
     }
 }
+
+void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref)
+{
+    if (gi == NULL) return;
+    for (int i = 0; i < 3; ++i) gi->sky_ao_color[i] = color ? color[i] : 0.0f;
+    gi->sky_ao_ref = ref > 0.1f ? ref : 6.0f;
+}

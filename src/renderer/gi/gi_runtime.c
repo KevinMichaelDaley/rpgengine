@@ -35,6 +35,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
      * dynamic objects get the full static ambience. Overridable per demo. */
     gi->static_baked_w = 0.35f;
     gi->static_dyn_w = 1.0f;
+    gi->sky_ao_ref = 6.0f;   /* sky_ao_color defaults to 0 (off) until set. */
 
     /* --- Baked SDF residency. --- */
     if (gi_sdf_stream_load(&gi->sdf, cfg->sdf_prefix) <= 0) {
@@ -249,6 +250,8 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
         shader_uniform_set_vec3(cache, program, "u_probe_grid_cell", gi->probe_grid_cell);
         shader_uniform_set_vec3(cache, program, "u_probe_grid_dim", dimf);
     }
+    shader_uniform_set_vec3(cache, program, "u_gi_sky_color", gi->sky_ao_color);
+    shader_uniform_set_float(cache, program, "u_gi_sky_ref", gi->sky_ao_ref);
 }
 
 void gi_runtime_destroy(gi_runtime_t *gi)

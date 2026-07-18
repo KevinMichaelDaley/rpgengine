@@ -84,6 +84,9 @@ typedef struct gi_runtime {
     float            probe_grid_origin[3];
     float            probe_grid_cell[3];
     int              probe_grid_dim[3];
+    /* Sky-openness AO from the probe depth maps (0 colour = off). */
+    float            sky_ao_color[3];
+    float            sky_ao_ref;
     bool             ready;
 
     /* --- Probe froxel binning: probes assigned to the SAME froxels the forward+
@@ -150,6 +153,14 @@ void gi_runtime_set_static_weights(gi_runtime_t *gi, float baked_w, float dyn_w)
  */
 void gi_runtime_set_probe_grid(gi_runtime_t *gi, const float origin[3],
                                const float cell[3], const int dim[3]);
+
+/**
+ * @brief Set the sky-openness ambient AO (rpg-hw75 prelude): @p color is the
+ *        constant sky ambient added where the probe depth maps see open sky
+ *        overhead; @p ref is the overhead distance (m) treated as fully open.
+ *        @p color NULL or zero disables it. NULL-safe.
+ */
+void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref);
 
 /** @brief Free everything. NULL-safe. */
 void gi_runtime_destroy(gi_runtime_t *gi);

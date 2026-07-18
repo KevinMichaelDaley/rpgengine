@@ -1060,6 +1060,11 @@ int main(int argc,char **argv){
                     float bw=getenv("GI_STATIC_BAKED")?(float)atof(getenv("GI_STATIC_BAKED")):0.35f;
                     float dw=getenv("GI_STATIC_DYN")?(float)atof(getenv("GI_STATIC_DYN")):3.0f;
                     gi_runtime_set_static_weights(&g_gi, bw, dw);
+                    /* Sky-openness AO from the probe depth maps: a faint cool fill
+                     * where probes see open sky overhead (SKY_AO scales it, 0=off). */
+                    float sa=getenv("SKY_AO")?(float)atof(getenv("SKY_AO")):0.4f;
+                    float sky_ao[3]={0.15390f*sa,0.18851f*sa,0.25879f*sa};
+                    gi_runtime_set_sky_ao(&g_gi, sky_ao, getenv("SKY_AO_REF")?(float)atof(getenv("SKY_AO_REF")):5.0f);
                 }
             }
         }
