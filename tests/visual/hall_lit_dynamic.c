@@ -722,6 +722,9 @@ int main(int argc,char **argv){
         }
         mats[3].normal_scale=1.4f;   /* timber: a touch more grain relief. */
         mats[5].roughness_min=0.45f; /* dais marble: rougher -> less mirror, softer sheen. */
+        /* Masonry: punch up the brick/mortar relief so the courses read with depth. */
+        mats[0].normal_scale=2.0f;   /* stone_wall brick. */
+        mats[1].normal_scale=1.8f;   /* floor stone. */
     } else {
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
     mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_orm; mats[0].orm_packed=1; mats[0].normal_scale=1.6f;
@@ -825,7 +828,7 @@ int main(int argc,char **argv){
     if(is_hall){
         /* Start behind the middle pillar (pillar row is centred on lenax), in the
          * aisle, at standing eye height, looking down the colonnade. */
-        eye[lenax]=amin[lenax]+span[lenax]*0.42f; /* just behind the central pillar */
+        eye[lenax]=amin[lenax]+span[lenax]*0.28f; /* pulled back toward the entrance */
         eye[crossax]=center[crossax];             /* centred in the aisle */
         eye[1]=amin[1]+span[1]*0.30f;             /* ~eye height above the floor */
         tgt[lenax]=amax[lenax];                   /* look down the hall */
