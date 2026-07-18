@@ -721,6 +721,7 @@ int main(int argc,char **argv){
             mats[m].contrast=1.0f;
         }
         mats[3].normal_scale=1.4f;   /* timber: a touch more grain relief. */
+        mats[5].roughness_min=0.45f; /* dais marble: rougher -> less mirror, softer sheen. */
     } else {
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
     mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_orm; mats[0].orm_packed=1; mats[0].normal_scale=1.6f;
