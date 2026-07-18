@@ -671,7 +671,13 @@ int main(int argc,char **argv){
       sp.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&sp); }
     /* GREAT_HALL: a warm-orange fire glow inside the fireplace (a shadow-casting
      * point light raised into the firebox above the hearth), gathered by the GI
-     * probes for bounced indirect. Positioned from the fp mesh centroid. */
+     * probes for bounced indirect. Positioned from the fp mesh centroid.
+     * fp_base is the AVERAGE intensity; the render loop mean-reverts around it in
+     * small random steps to make the fire flicker. */
+    int fp_idx=-1;
+    /* Average fireplace intensity (the loop flickers around this). Bright warm
+     * hearth -- overridable with FP_INT for quick tuning. */
+    const float fp_base=getenv("FP_INT")?(float)atof(getenv("FP_INT")):52.0f;
     if(great_hall){
       float fp[3]={cx,amin[1]+0.6f,cz}; int found=0;
       for(int i=0;i<nm;++i){
@@ -685,8 +691,9 @@ int main(int argc,char **argv){
       render_light_t f; memset(&f,0,sizeof f); f.kind=RENDER_LIGHT_POINT;
       f.position[0]=fp[0]; f.position[1]=fp[1]+0.6f; f.position[2]=fp[2];
       f.color[0]=1.0f; f.color[1]=0.42f; f.color[2]=0.13f;   /* warm orange fire */
-      f.intensity=16.0f; f.range=9.0f;
+      f.intensity=fp_base; f.range=9.0f;
       f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
+      fp_idx=(int)lights.count;   /* remember it so the loop can flicker its intensity. */
       render_light_add(&lights,&f);
       printf("great_hall fireplace light at (%.1f,%.1f,%.1f)\n",f.position[0],f.position[1],f.position[2]);
       /* The SUN is NOT a dynamic probe light: its direct term is the CSM (below)
@@ -769,9 +776,13 @@ int main(int argc,char **argv){
         /* Direct sun -- brighter than the bake radiance so the shafts read
          * strongly over the (reduced) baked indirect fill. */
         fcfg.sun_color[0]=9.0f*gdim; fcfg.sun_color[1]=8.4f*gdim; fcfg.sun_color[2]=7.2f*gdim;
-        /* No flat ambient: indirect comes entirely from the baked lightmap SH and
-         * the dynamic SDF probes. A constant fill only flattens/washes the scene. */
-        fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
+        /* Optional sky-colour ambient fill (added ON TOP of the lightmap SH in the
+         * shader) to lift the deepest shadows to a faint cool sky tint. OFF by
+         * default -- a flat fill washes the scene out; opt in with AMB_SKY>0.
+         * Sky radiance matches the .blend used for the bake (SKY_COLOR). */
+        const float sky[3]={0.15390f,0.18851f,0.25879f};
+        float amb_k=getenv("AMB_SKY")?(float)atof(getenv("AMB_SKY")):0.0f;
+        fcfg.ambient[0]=sky[0]*amb_k; fcfg.ambient[1]=sky[1]*amb_k; fcfg.ambient[2]=sky[2]*amb_k;
         fcfg.dir_cascades=2; fcfg.dir_static_res=1024; fcfg.dir_dynamic_res=1024;
         fcfg.dir_lambda=0.6f;
         /* PCSS depth-compare bias in metres (DIR_BIAS env, default 5cm). */
@@ -895,14 +906,77 @@ int main(int argc,char **argv){
     }
 
     glViewport(0,0,W,H);
+    /* Noclip free-fly camera: WASD to move, mouse to look, Space/LCtrl for
+     * up/down, LShift to sprint, ESC to quit. Enabled by default for the
+     * great-hall walkthrough (set NOCLIP_OFF=1 to fall back to a static view).
+     * State is seeded from the scripted opening eye/target so the first frame
+     * matches the old fixed shot. */
+    int noclip = great_hall && getenv("NOCLIP_OFF")==NULL;
+    float fly_pos[3]={eye[0],eye[1],eye[2]};
+    float fly_yaw, fly_pitch;
+    {
+        float dx=tgt[0]-eye[0], dy=tgt[1]-eye[1], dz=tgt[2]-eye[2];
+        fly_yaw=atan2f(dz,dx);
+        float hl=sqrtf(dx*dx+dz*dz);
+        fly_pitch=atan2f(dy,hl>1e-6f?hl:1e-6f);
+    }
+    struct timespec fly_t; clock_gettime(CLOCK_MONOTONIC,&fly_t);
+    if(noclip) SDL_SetRelativeMouseMode(SDL_TRUE);
+    /* Fire flicker: a mean-reverting random walk of the fireplace intensity in
+     * small steps, so the average stays at fp_base but the glow shimmers. */
+    uint32_t fp_rng=20260718u;
+    float fp_cur=fp_base;
     /* lm_only: run an interactive flythrough so a large baked zone can actually
      * be looked at (ESC / window-close quits); others render a few frames. */
-    int nframes=csm_demo?600:(lm_only?1000000:3);
+    int nframes=(csm_demo?600:(lm_only?1000000:3));
+    if(noclip) nframes=1000000;
     int save_frame=csm_demo?30:(lm_only?140:(nframes-2));
+    if(noclip) save_frame=90; /* still drop one screenshot early for headless checks. */
     struct timespec win_t0; clock_gettime(CLOCK_MONOTONIC,&win_t0);
     int win_frames=0;                    /* frames since the last per-second report. */
     if(stream) sh_stream_prepass_init(&sstream, W/4>0?W/4:1, H/4>0?H/4:1);
     for(int frame=0;frame<nframes;++frame){
+        if(fp_idx>=0){
+            /* Small random step toward and away from the mean; reversion keeps the
+             * average at fp_base, the noise makes it flicker frame to frame. */
+            fp_cur += (fp_base-fp_cur)*0.08f + (frand(&fp_rng)-0.5f)*0.14f*fp_base;
+            if(fp_cur<0.62f*fp_base) fp_cur=0.62f*fp_base;
+            if(fp_cur>1.42f*fp_base) fp_cur=1.42f*fp_base;
+            lights.lights[fp_idx].intensity=fp_cur;
+        }
+        if(noclip){
+            /* Frame delta (clamped so a stall doesn't teleport the camera). */
+            struct timespec cn; clock_gettime(CLOCK_MONOTONIC,&cn);
+            float dt=(float)((cn.tv_sec-fly_t.tv_sec)+(cn.tv_nsec-fly_t.tv_nsec)*1e-9);
+            fly_t=cn; if(dt>0.1f) dt=0.1f; if(dt<0.0f) dt=0.0f;
+            SDL_Event ev;
+            while(SDL_PollEvent(&ev)){
+                if(ev.type==SDL_QUIT) frame=nframes-1;
+                else if(ev.type==SDL_KEYDOWN && ev.key.keysym.sym==SDLK_ESCAPE) frame=nframes-1;
+                else if(ev.type==SDL_MOUSEMOTION){
+                    fly_yaw   += (float)ev.motion.xrel*0.0022f;
+                    fly_pitch -= (float)ev.motion.yrel*0.0022f;
+                    const float lim=1.553f; /* ~89deg: never fully vertical. */
+                    if(fly_pitch> lim) fly_pitch= lim;
+                    if(fly_pitch<-lim) fly_pitch=-lim;
+                }
+            }
+            /* Camera basis from yaw/pitch; right is the flattened horizontal. */
+            float cp=cosf(fly_pitch);
+            float fwd[3]={cp*cosf(fly_yaw), sinf(fly_pitch), cp*sinf(fly_yaw)};
+            float rgt[3]={-sinf(fly_yaw), 0.0f, cosf(fly_yaw)};
+            const Uint8 *ks=SDL_GetKeyboardState(NULL);
+            float sp=((ks[SDL_SCANCODE_LSHIFT]||ks[SDL_SCANCODE_RSHIFT])?9.0f:3.2f)*dt;
+            if(ks[SDL_SCANCODE_W]){ fly_pos[0]+=fwd[0]*sp; fly_pos[1]+=fwd[1]*sp; fly_pos[2]+=fwd[2]*sp; }
+            if(ks[SDL_SCANCODE_S]){ fly_pos[0]-=fwd[0]*sp; fly_pos[1]-=fwd[1]*sp; fly_pos[2]-=fwd[2]*sp; }
+            if(ks[SDL_SCANCODE_D]){ fly_pos[0]+=rgt[0]*sp; fly_pos[1]+=rgt[1]*sp; fly_pos[2]+=rgt[2]*sp; }
+            if(ks[SDL_SCANCODE_A]){ fly_pos[0]-=rgt[0]*sp; fly_pos[1]-=rgt[1]*sp; fly_pos[2]-=rgt[2]*sp; }
+            if(ks[SDL_SCANCODE_SPACE]) fly_pos[1]+=sp;
+            if(ks[SDL_SCANCODE_LCTRL]||ks[SDL_SCANCODE_RCTRL]) fly_pos[1]-=sp;
+            float tg2[3]={fly_pos[0]+fwd[0], fly_pos[1]+fwd[1], fly_pos[2]+fwd[2]};
+            render_camera_look_at(&cam,fly_pos,tg2,up,60.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,cam_far);
+            scene.camera=cam;
+        }
         if(lm_only||csm_demo){
             /* Smooth ping-pong dolly down the colonnade, looking in the travel
              * direction with a gentle side sway; poll for quit. Used for both the

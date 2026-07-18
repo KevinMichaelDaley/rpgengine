@@ -454,8 +454,11 @@ static const char *const PBR_FS =
     "  vec3 ambient;\n"
     /* Dynamic objects (u_sh_object=0) are not in the bake -- their uv1 is
      * meaningless, so fall back to the flat ambient instead of the lightmap. */
-    "  if(u_sh_enabled==1 && u_sh_object>0.5 && u_sh_layer>=0){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient = albedo*E*u_sh_scale/PI*ao; }\n"
-    "  else { ambient = u_ambient*albedo*ao; }\n"
+    /* u_ambient is a flat sky-colour fill applied everywhere; the baked lightmap\n"
+     * SH then adds on top for static (baked) geometry. Dynamic geometry, whose\n"
+     * uv1 is meaningless, gets only the flat fill. */
+    "  ambient = u_ambient*albedo*ao;\n"
+    "  if(u_sh_enabled==1 && u_sh_object>0.5 && u_sh_layer>=0){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient += albedo*E*u_sh_scale/PI*ao; }\n"
     /* Dynamic-light indirect from the SDF-probe GI: incident irradiance E(N) ->\n"
      * diffuse albedo/PI * E, on top of the baked static ambient. */
     "  ambient += albedo * gi_probe_indirect(v_world_pos, N, frag_cluster) * (ao/PI);\n"
