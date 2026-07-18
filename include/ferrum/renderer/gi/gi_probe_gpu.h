@@ -87,7 +87,7 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
 void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
-                           float soft_k);
+                           float soft_k, float temporal);
 
 /** @brief The probe-SH texture buffer (samplerBuffer, R32F, 27/probe). */
 unsigned int gi_probe_gpu_sh_tbo(const gi_probe_gpu_t *g);

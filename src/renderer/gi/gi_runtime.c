@@ -215,7 +215,12 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
         }
     }
     /* March every probe to every tagged light through the resident combined SDF. */
-    gi_probe_gpu_dispatch(&gi->gpu, &gi->sdf, gi->light_scratch, n, boxes, n_boxes, gi->soft_k);
+    /* Temporal EMA of the probe coefficients + visibility: full replace on the
+     * first update (buffers start uninitialised), then blend so a moving occluder
+     * fades in/out instead of snapping. frame_counter==1 right after the 1st. */
+    float temporal = (gi->frame_counter == 1) ? 1.0f : 0.25f;
+    gi_probe_gpu_dispatch(&gi->gpu, &gi->sdf, gi->light_scratch, n, boxes, n_boxes,
+                          gi->soft_k, temporal);
 }
 
 void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,

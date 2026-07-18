@@ -846,7 +846,11 @@ int main(int argc,char **argv){
     render_scene_t scene; render_scene_init(&scene,rb,nm_cap+8);
     float model[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     for(int i=0;i<nm;++i){ render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
-        scene.items[i].sh_layer = stream ? -1 : mlayer[i]; }  /* stream: set per frame */
+        /* The diagonal principal rafters (praf_*) are thin geo whose baked lightmap
+         * UVs leak light from the far side; drop their bake (sh_layer=-1) so they
+         * are lit only by the runtime, visibility-aware probe GI (no baked leaks). */
+        int rafter = great_hall && strstr(fnames[i],"praf")!=NULL;
+        scene.items[i].sh_layer = (stream||rafter) ? -1 : mlayer[i]; }  /* stream: set per frame */
     /* A dynamic caster: everything above is static (baked once); the box below is
      * re-shadowed every frame, so the CSM co-samples static wall + moving box. */
     static_mesh_t box; int box_idx=-1;

@@ -516,7 +516,8 @@ static const char *const PBR_FS =
     "      vec4 a=texelFetch(u_probe_sg, (probe*3+L)*2+0);\n"   /* axis.xyz, kappa. */
     "      vec4 b=texelFetch(u_probe_sg, (probe*3+L)*2+1);\n"   /* rgb, pad. */
     "      float keff=a.w*rw;\n"                                /* rougher -> lower sharpness. */
-    "      lobesum += b.rgb*exp(keff*(dot(R, a.xyz)-1.0));\n"
+    "      vec3 ax=normalize(a.xyz);\n"                         /* temporal blend shortens it. */
+    "      lobesum += b.rgb*exp(keff*(dot(R, ax)-1.0));\n"
     "    }\n"
     "    acc+=w*lobesum; wsum+=w;\n"
     "  }\n"

@@ -21,6 +21,7 @@ static const char *CS_SRC =
     "layout(local_size_x=64) in;\n"
     "uniform int u_nprobes,u_nlights,u_nboxes,u_ncones;\n"
     "uniform float u_soft, u_albedo;\n"
+    "uniform float u_temporal;\n"   /* EMA blend: 1 = replace, <1 = smooth over time. */
     "uniform sampler3D u_sdf[8];\n"
     "uniform vec3 u_sdf_origin[8];\n"
     "uniform vec3 u_sdf_dim[8];\n"
@@ -37,17 +38,17 @@ static const char *CS_SRC =
     "uniform int u_static_on;\n"
     "uniform float u_static_k;\n"
     "layout(std430,binding=0) readonly buffer PP { vec4 ppos[]; };\n"
-    "layout(std430,binding=1) writeonly buffer PS { float psh[]; };\n"
+    "layout(std430,binding=1) buffer PS { float psh[]; };\n"        /* r/w for temporal blend. */
     "layout(std430,binding=2) readonly buffer LB { vec4 lt[]; };\n"
     "layout(std430,binding=3) readonly buffer BX { vec4 bx[]; };\n"
     /* DDGI depth probe: OCTRES^2 texels/probe, each (mean dist, mean sq dist)\n"
      * for the Chebyshev visibility test at interpolation time. OCTRES fixed at 8\n"
      * (must match the forward+ sampler). */
-    "layout(std430,binding=4) writeonly buffer PD { float pdepth[]; };\n"
+    "layout(std430,binding=4) buffer PD { float pdepth[]; };\n"       /* r/w for temporal blend. */
     /* One spherical-Gaussian specular lobe per probe (rpg-hw75): 8 floats =\n"
      * axis.xyz + sharpness, then rgb amplitude + pad. Fit by moment-matching the\n"
      * traced radiance so glossy surfaces get a cheap directional reflection. */
-    "layout(std430,binding=5) writeonly buffer PG { float psg[]; };\n"
+    "layout(std430,binding=5) buffer PG { float psg[]; };\n"          /* r/w for temporal blend. */
     "const float PI=3.14159265;\n"
     "float box_sdf(vec3 p,vec3 c,vec3 h){ vec3 q=abs(p-c)-h; return length(max(q,vec3(0.0)))+min(max(q.x,max(q.y,q.z)),0.0); }\n"
     /* Distance is the ALPHA of the RGBA voxel texture (rgb = static albedo). */
@@ -154,7 +155,9 @@ static const char *CS_SRC =
     "    float y[4]; sh_basis(dir,y);\n"
     "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*w; shd[4+k]+=rd.g*y[k]*w; shd[8+k]+=rd.b*y[k]*w;\n"
     "                          shs[k]+=rs.r*y[k]*w; shs[4+k]+=rs.g*y[k]*w; shs[8+k]+=rs.b*y[k]*w; } }\n"
-    "  for(int k=0;k<12;++k){ psh[gid*24+k]=shd[k]; psh[gid*24+12+k]=shs[k]; }\n"
+    /* Temporal EMA so a moving occluder (cube) doesn't snap the coefficients. */
+    "  for(int k=0;k<12;++k){ psh[gid*24+k]=mix(psh[gid*24+k], shd[k], u_temporal);\n"
+    "                         psh[gid*24+12+k]=mix(psh[gid*24+12+k], shs[k], u_temporal); }\n"
     /* Multi-lobe SG fit by GREEDY RESIDUAL: fit a lobe to the dominant residual\n"
      * direction (luminance-weighted mean dir -> vMF sharpness), project its\n"
      * amplitude as the lobe-kernel-weighted mean radiance, then SUBTRACT it so the\n"
@@ -173,8 +176,10 @@ static const char *CS_SRC =
     "      num+=max(rcol[s],vec3(0.0))*g; den+=g; }\n"
     "    vec3 amp=num/max(den,1e-4);\n"
     "    for(int s=0;s<NR;++s){ float g=exp(kappa*(dot(rdir[s],axis)-1.0)); rcol[s]-=amp*g; }\n"
-    "    psg[base+L*8+0]=axis.x; psg[base+L*8+1]=axis.y; psg[base+L*8+2]=axis.z; psg[base+L*8+3]=kappa;\n"
-    "    psg[base+L*8+4]=amp.r; psg[base+L*8+5]=amp.g; psg[base+L*8+6]=amp.b; psg[base+L*8+7]=0.0; }\n"
+    "    int b=base+L*8; float A=u_temporal;\n"
+    "    psg[b+0]=mix(psg[b+0],axis.x,A); psg[b+1]=mix(psg[b+1],axis.y,A); psg[b+2]=mix(psg[b+2],axis.z,A);\n"
+    "    psg[b+3]=mix(psg[b+3],kappa,A);\n"
+    "    psg[b+4]=mix(psg[b+4],amp.r,A); psg[b+5]=mix(psg[b+5],amp.g,A); psg[b+6]=mix(psg[b+6],amp.b,A); }\n"
     /* DDGI depth probe. Per octahedral texel (a direction), estimate the depth\n"
      * distribution from 3 cone-traces: a ray (k=0) gives the MEAN (median sample),\n"
      * a wide + a narrow cone are blocked in the near tail. Treat each cone radius\n"
@@ -196,7 +201,8 @@ static const char *CS_SRC =
     "    float mean=dr;\n"
     "    float sig=0.5*((mean-dw)/1.036 + (mean-dn)/0.524); sig=clamp(sig,0.02,mean);\n"
     "    int di=(int(gid)*OR*OR + ty*OR+tx)*2;\n"
-    "    pdepth[di]=mean; pdepth[di+1]=mean*mean+sig*sig; } }\n";
+    "    pdepth[di]=mix(pdepth[di], mean, u_temporal);\n"
+    "    pdepth[di+1]=mix(pdepth[di+1], mean*mean+sig*sig, u_temporal); } }\n";
 
 static GLuint cs_build(void)
 {
@@ -306,7 +312,7 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
 void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
-                           float soft_k)
+                           float soft_k, float temporal)
 {
     if (g == NULL || !g->ready || g->n_probes == 0) return;
     if (n_lights > g->max_lights) n_lights = g->max_lights;
@@ -346,6 +352,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glUniform1f(glGetUniformLocation(g->prog, "u_soft"), soft_k);
     glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 8);    /* sphere samples. */
     glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 1.0f); /* gain; real albedo now from the voxel map. */
+    glUniform1f(glGetUniformLocation(g->prog, "u_temporal"), temporal);
 
     /* Static irradiance volume: bound past the SDF slot units. */
     {
