@@ -81,8 +81,8 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
     import bmesh
     yin = wall_inner_y
     proj = -sign                       # into-room direction along Y
-    fw = 2.4                           # surround width (X)
-    surround_h = 2.2
+    fw = 3.0                           # surround width (X): room for the orders
+    surround_h = 2.7                    # taller surround panel
     surround_t = 0.7
 
     def yb(off):                       # Y `off` m into the room from the wall face
@@ -95,10 +95,10 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
     # ROOM face. Panel back sits on the wall; it projects into the room.
     fire = arch.build_arched_doorway(
         name=f"{name}_fp_opening", panel_width=fw, panel_height=surround_h,
-        wall_thickness=surround_t, arch_shape="round", opening_width=1.5,
-        opening_height=1.15, head_rise=0.52, sill_height=0.0, splay=0.0,
+        wall_thickness=surround_t, arch_shape="flat", opening_width=1.5,
+        opening_height=1.75, head_rise=0.0, sill_height=0.0, splay=0.0,
         blind=True, blind_recess=surround_t * 0.7, voussoir_trim=True,
-        trim_width=0.11, collection=col)
+        trim_width=0.24, collection=col)   # square-topped opening, WIDE voussoir
     # front (voussoir) face is -Y; for the north wall the room is at -Y, so no
     # rotation. Seat the back on the wall, projecting `surround_t` into the room.
     fire.location = (wx, yin + proj * (surround_t * 0.5), 0.0)
@@ -128,6 +128,39 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     me = bpy.data.meshes.new(f"{name}_fp_hood"); bm.to_mesh(me); bm.free()
     hood = bpy.data.objects.new(f"{name}_fp_hood", me); col.objects.link(hood)
+
+    # concentric ⊓ orders around the square opening, all built by the arch script
+    # so they register exactly with the flat head and mitre crisply at the corners,
+    # then transformed onto the fireplace like `fire`:
+    #   1. a carved CHEVRON order between the voussoir and the label (the
+    #      "decorative thing" framing the arch), then
+    #   2. the outer LABEL MOULD (hood mould) with label-stop returns.
+    def _order(obj):
+        obj.location = fire.location.copy()
+        obj.rotation_euler = fire.rotation_euler.copy()
+        return obj
+
+    # thin inner roll moulding framing the inner edge of the chevron order
+    _order(arch.build_arch_label(
+        name=f"{name}_fp_roll", opening_width=1.5, opening_height=1.75,
+        arch_shape="flat", head_rise=0.0, sill_height=0.0,
+        wall_thickness=surround_t, inner_radius=0.22, width=0.05, depth=0.09,
+        rim_style="ovolo", rim_size=0.02, jamb_extension=0.55,
+        face="inner", collection=col))
+
+    _order(arch.build_arch_label(
+        name=f"{name}_fp_chevron", opening_width=1.5, opening_height=1.75,
+        arch_shape="flat", head_rise=0.0, sill_height=0.0,
+        wall_thickness=surround_t, inner_radius=0.28, width=0.16, depth=0.05,
+        pattern="chevron", pattern_width=0.16, pattern_relief=0.05,
+        pattern_count=12, jamb_extension=0.55, face="inner", collection=col))
+
+    _order(arch.build_arch_label(
+        name=f"{name}_fp_label", opening_width=1.5, opening_height=1.75,
+        arch_shape="flat", head_rise=0.0, sill_height=0.0,
+        wall_thickness=surround_t, inner_radius=0.48, width=0.18, depth=0.14,
+        rim_style="ovolo", rim_size=0.04, jamb_extension=0.55,
+        face="inner", collection=col))
 
 
 def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
@@ -163,13 +196,22 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
             reveal_bevel=0.025, voussoir_trim=True, trim_width=0.12,
             trim_extrude=0.05, collection=col)
 
+    # The fireplace occupies the last north bay (by the dais) -- skip that window
+    # so they don't intersect.
+    fp_bay = nbay - 1
+    fp_wx = (fp_bay + 0.5) * bay
     for i in range(nbay):
-        n = window(f"{name}_win_N_{i}")
-        n.location = ((i + 0.5) * bay, half, 0.0)
-        n.rotation_euler = (0, 0, math.pi)          # voussoir face -> +Y (exterior)
+        if i != fp_bay:
+            n = window(f"{name}_win_N_{i}")
+            n.location = ((i + 0.5) * bay, half, 0.0)
+            n.rotation_euler = (0, 0, math.pi)      # voussoir face -> +Y (exterior)
         s = window(f"{name}_win_S_{i}")
         s.location = ((i + 0.5) * bay, -half, 0.0)
         s.rotation_euler = (0, 0, 0.0)              # voussoir face -> -Y (exterior)
+    # solid wall behind the fireplace bay (a plain box on the same bay grid /
+    # thickness as the window panels), so the flue has a wall to back onto.
+    _box(col, f"{name}_wall_N_{fp_bay}", fp_wx, half, wall_h / 2.0,
+         bay, wall_t, wall_h)
 
     # --- engaged piers at every bay division, projecting INTO the hall, rising
     #     nearly to the wall head where the roof trusses land. ---
@@ -204,13 +246,18 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     b.rotation_euler = (0, 0, math.pi / 2.0)
 
     # --- dais + two steps at the far (lord's) end ---
-    dais_d = 3.2
+    # The dais runs all the way back to the end wall (back face at x=length) and
+    # its top (z=0.46) sits just BELOW the pier plinth tops (z=0.5) so the two
+    # surfaces do not z-fight where the plinths meet the platform.
+    dais_d = 3.6
     dais_w = width - 1.0
-    _box(col, f"{name}_dais", length - dais_d / 2.0 - 0.4, 0.0, 0.25,
-         dais_d, dais_w, 0.5)
+    dais_top = 0.46
+    dais_front = length - dais_d                    # room-side edge of the dais
+    _box(col, f"{name}_dais", length - dais_d / 2.0, 0.0, dais_top / 2.0,
+         dais_d, dais_w, dais_top)
     for s2 in range(2):
         _box(col, f"{name}_dais_step_{s2}",
-             length - dais_d - 0.4 - 0.4 * (s2 + 0.5), 0.0, 0.09 * (2 - s2),
+             dais_front - 0.4 * (s2 + 0.5), 0.0, 0.09 * (2 - s2),
              0.4, dais_w - 1.0, 0.18 * (2 - s2))
 
     # --- high open timber roof, sized from the ACTUAL wall bounding boxes ---
@@ -224,7 +271,7 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     ncy = 0.5 * (float(Nhi[1]) + float(Nlo[1]))    # wall centrelines
     scy = 0.5 * (float(Slo[1]) + float(Shi[1]))
     midy = 0.5 * (ncy + scy)
-    x0, x1 = float(Alo[0]), float(Ahi[0])
+    x0, x1 = 0.0, length              # full length (a bay's N window is skipped)
     apex = top + roof_rise
     tie_z, rt = 0.34, 0.26
 
@@ -275,7 +322,32 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     sol.thickness = 0.12
     sol.offset = 1.0
 
-    # --- hooded wall fireplace against the north wall, beside the dais ---
-    _fireplace(col, name, wx=length - 2.6, wall_inner_y=float(Nlo[1]),
+    # --- hooded wall fireplace against the north wall, in the last (dais) bay ---
+    yin = float(Nlo[1])
+    _fireplace(col, name, wx=fp_wx, wall_inner_y=yin,
                chimney_top_z=apex + 1.6, sign=+1)
+    # punch the flue hole so the chimney exits through the roof (boolean cutter
+    # over the stack footprint: wx +/- 0.48 in X, yin-0.3..yin in Y).
+    _punch_flue(col, roof, f"{name}_flue", fp_wx, yin - 0.15, 0.66, 0.20)
     return col
+
+
+def _punch_flue(col, roof, name, wx, yc, sx, sy):
+    """Cut a rectangular flue hole through @p roof for the chimney: apply the
+    roof's solidify, then boolean-difference a tall cutter over the stack
+    footprint (centre X=@p wx, Y=@p yc; size @p sx x @p sy)."""
+    cutter = _box(col, name + "_cut", wx, yc, 6.0, sx, sy, 12.0)
+    bpy.context.view_layer.objects.active = roof
+    for o in bpy.context.selected_objects:
+        o.select_set(False)
+    roof.select_set(True)
+    for m in list(roof.modifiers):
+        if m.type == 'SOLIDIFY':
+            bpy.ops.object.modifier_apply(modifier=m.name)
+    bm = roof.modifiers.new("flue", 'BOOLEAN')
+    bm.operation = 'DIFFERENCE'
+    bm.object = cutter
+    bm.solver = 'EXACT'
+    bpy.ops.object.modifier_apply(modifier="flue")
+    bpy.data.objects.remove(cutter, do_unlink=True)
+    roof.select_set(False)

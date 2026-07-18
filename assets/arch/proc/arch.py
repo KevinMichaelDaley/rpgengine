@@ -1833,12 +1833,15 @@ _ORNAMENT_STATIONS = {          # path stations for *count* motifs, per pattern
 
 
 def _ornament_band(bm, pts, normals, inner, outer, y_base, sign, base_d,
-                   pattern, relief):
+                   pattern, relief, cap_start=True, cap_end=True):
     """Build one label band as an explicit watertight shell whose front carries
     a sharp running ornament. *pts*/*normals* are the arc frames already
     resampled to the pattern's station count (see _ORNAMENT_STATIONS); *inner*
     /*outer* are the radial edges, *base_d* the flat band depth, *relief* the
-    ornament height. The back, the two radial sides and the end caps are common
+    ornament height. *cap_start*/*cap_end* close the two ends with a section-
+    profile cap (set False where another cell butts against that end and will
+    close it — e.g. a mitred corner quad), leaving the section ring open to weld.
+    The back, the two radial sides and the end caps are common
     to every pattern; the FRONT is per-motif geometry:
       "dogtooth" -- every cell an X-ridged pyramid (apex linked to its 4 cell
                     corners, so the hip edges read as an X); a continuous row,
@@ -1891,12 +1894,16 @@ def _ornament_band(bm, pts, normals, inner, outer, y_base, sign, base_d,
         for i in range(n - 1):
             add((fi[i], peak[i], peak[i + 1], fi[i + 1]))
             add((peak[i], fo[i], fo[i + 1], peak[i + 1]))
-        add((bi[0], fi[0], peak[0], fo[0], bo[0]))      # pentagon end caps
-        add((bi[-1], bo[-1], fo[-1], peak[-1], fi[-1]))
+        if cap_start:
+            add((bi[0], fi[0], peak[0], fo[0], bo[0]))      # pentagon end caps
+        if cap_end:
+            add((bi[-1], bo[-1], fo[-1], peak[-1], fi[-1]))
         return
 
-    add((bi[0], fi[0], fo[0], bo[0]))                   # quad end caps
-    add((bi[-1], bo[-1], fo[-1], fi[-1]))
+    if cap_start:
+        add((bi[0], fi[0], fo[0], bo[0]))                   # quad end caps
+    if cap_end:
+        add((bi[-1], bo[-1], fo[-1], fi[-1]))
 
     for c in range(n - 1):
         # Cell centre at index c + 0.5; floor(distance-from-crown) odd -> raised,
@@ -2284,6 +2291,108 @@ def build_portal(
     return _finish(bm, name, collection, smooth_angle)
 
 
+def _line_stations(p0, p1, n):
+    """*n* evenly spaced XZ stations from p0 to p1 inclusive (n >= 2)."""
+    return [(p0[0] + (p1[0] - p0[0]) * i / (n - 1),
+             p0[1] + (p1[1] - p0[1]) * i / (n - 1)) for i in range(n)]
+
+
+def _corner_ornament_cell(bm, corners, y_base, sign, base_d, relief):
+    """One CORNER quad of a square ornament band, carrying the same raised motif
+    (a peak nub) as the straight runs. *corners* = (Pii, Poi, Poo, Pio) in XZ:
+    the inner corner Pii and the two edges meeting there ([Pii,Poi], [Pii,Pio])
+    are SHARED with the adjoining jamb/head runs — left open (no wall) so the
+    section rings weld — while the two OUTER edges ([Poi,Poo], [Poo,Pio]) get
+    side walls. Back + front-pyramid close the cell. This makes the corner a real
+    QUAD (jamb quad + corner quad + head quad, all connected) rather than a
+    diagonal mitre that would stretch the motif across the joint."""
+    def V(p, d):
+        return bm.verts.new((p[0], y_base + sign * d, p[1]))
+    b = [V(p, 0.0) for p in corners]
+    f = [V(p, base_d) for p in corners]
+    cx = 0.25 * sum(p[0] for p in corners)
+    cz = 0.25 * sum(p[1] for p in corners)
+    peak = V((cx, cz), base_d + relief)
+    add = bm.faces.new
+    add((b[0], b[1], b[2], b[3]))                     # back
+    for i in range(4):                                # front pyramid (peak nub)
+        add((f[i], f[(i + 1) % 4], peak))
+    add((b[1], f[1], f[2], b[2]))                     # outer wall Poi->Poo
+    add((b[2], f[2], f[3], b[3]))                     # outer wall Poo->Pio
+
+
+def _square_ornament_band(bm, half_w, z_spring, z_bottom, inner, outer,
+                          y_base, sign, base_d, pattern, relief, count):
+    """A running-ornament label band around a SQUARE (flat) head, built as three
+    straight ornament runs (left jamb, head, right jamb) plus two explicit CORNER
+    QUADS. Each run tiles its motif with no distortion; the corners are their own
+    quads (see _corner_ornament_cell), butt-jointed to the runs and welded — so
+    the motif turns the corner as a discrete cell instead of being stretched over
+    a diagonal mitre. *inner*/*outer* are the radial band edges; *count* the motif
+    count across the head (drives the station pitch)."""
+    hw, zs, zb = half_w, z_spring, z_bottom
+    P = ((-hw - inner, zs + inner), (-hw - outer, zs + inner),
+         (-hw - outer, zs + outer), (-hw - inner, zs + outer))   # left corner
+    Q = ((hw + inner, zs + inner), (hw + outer, zs + inner),
+         (hw + outer, zs + outer), (hw + inner, zs + outer))     # right corner
+    pitch = (2.0 * hw) / max(1, _ORNAMENT_STATIONS[pattern](max(1, int(count))))
+
+    def nseg(length):
+        return max(2, int(round(length / max(pitch, 1e-6))) + 1)
+
+    n_j = nseg((zs + inner) - zb)
+    # jambs: foot (capped) -> top corner (open); head: corner -> corner (open).
+    _ornament_band(bm, _line_stations((-hw, zb), (-hw, zs + inner), n_j),
+                   [(-1.0, 0.0)] * n_j, inner, outer, y_base, sign, base_d,
+                   pattern, relief, cap_start=True, cap_end=False)
+    _ornament_band(bm, _line_stations((hw, zb), (hw, zs + inner), n_j),
+                   [(1.0, 0.0)] * n_j, inner, outer, y_base, sign, base_d,
+                   pattern, relief, cap_start=True, cap_end=False)
+    n_t = nseg(2.0 * hw + 2.0 * inner)
+    _ornament_band(bm, _line_stations((-hw - inner, zs), (hw + inner, zs), n_t),
+                   [(0.0, 1.0)] * n_t, inner, outer, y_base, sign, base_d,
+                   pattern, relief, cap_start=False, cap_end=False)
+    _corner_ornament_cell(bm, P, y_base, sign, base_d, relief)
+    _corner_ornament_cell(bm, Q, y_base, sign, base_d, relief)
+    bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=1e-5)
+
+
+def _square_label_band(bm, half_w, z_spring, z_bottom, sec):
+    """Loft a MITRED rectangular (square-headed) label band.
+
+    A flat/square arch head has no curve, so the label is a picture-frame ``⊓``:
+    two vertical jambs and a horizontal head meeting at true 90-degree mitred
+    corners. Averaging edge normals (as the curved sweep does) would bevel those
+    corners; instead each concentric section ring is offset OUTWARD as a whole
+    rectangle, so its corner lands at the exact mitre point (-/+ (half_w + r),
+    z_spring + r) and consecutive rings bridge into crisp mitred corner faces.
+
+    *sec* is the closed cross-section as a list of (r, y): r = radial offset from
+    the opening edge (already including any inner_radius), y = world-Y depth. The
+    band is open at the two jamb feet (z = *z_bottom*), which are capped with the
+    section polygon. Returns the created faces."""
+    def outline(r):
+        # 4-point ⊓ path at radial offset r; corners are sharp mitres.
+        return [(-half_w - r, z_bottom),        # left jamb foot
+                (-half_w - r, z_spring + r),     # left mitred corner
+                ( half_w + r, z_spring + r),     # right mitred corner
+                ( half_w + r, z_bottom)]         # right jamb foot
+
+    rails = [[bm.verts.new((x, y, z)) for (x, z) in outline(r)]
+             for r, y in sec]
+    n, span, k_count = 4, 3, len(sec)
+    faces = []
+    for k in range(k_count):
+        k2 = (k + 1) % k_count
+        for i in range(span):
+            faces.append(bm.faces.new((rails[k][i], rails[k][i + 1],
+                                       rails[k2][i + 1], rails[k2][i])))
+    # cap the two open jamb-foot ends with the section polygon
+    faces.append(bm.faces.new([rails[k][0] for k in range(k_count)]))
+    faces.append(bm.faces.new([rails[k][span] for k in range(k_count - 1, -1, -1)]))
+    return faces
+
+
 def build_arch_label(
     name="arch_label",
     opening_width=1.2,
@@ -2348,10 +2457,37 @@ def build_arch_label(
         raise ValueError('face must be "outer" or "inner"')
     half_w = opening_width * 0.5
     z_spring = sill_height + opening_height
-    pts, normals = _arch_head_path(arch_shape, half_w, z_spring, head_rise,
-                                   head_segments, jamb_extension)
     sign = 1.0 if face == "outer" else -1.0
     y_base = sign * wall_thickness * 0.5
+
+    if arch_shape == "flat":
+        # Square head: build on a mitred ``⊓`` path (duplicated corner stations,
+        # never averaged) so both a running ornament band and a plain picture-
+        # frame moulding turn the two top corners at a crisp 90-degree mitre.
+        if pattern:
+            if pattern not in _ORNAMENT_STATIONS:
+                raise ValueError('pattern must be chevron/billet/nailhead/'
+                                 'dogtooth or None')
+            pw = pattern_width if pattern_width is not None else width * 0.33
+            bm = bmesh.new()
+            _square_ornament_band(
+                bm, half_w, z_spring, z_spring - jamb_extension,
+                inner_radius, inner_radius + pw, y_base, sign, depth,
+                pattern, pattern_relief, pattern_count)
+            return _finish(bm, name, collection, smooth_angle)
+        trim = _resolve_trim(0.0, 1, rim_style, rim_size, front_inset,
+                             front_bevel_style, front_bevel_size, trim_segments,
+                             trim_seed)
+        rd = _band_section(width, depth, trim["rim_style"], trim["rim_size"],
+                           trim["front_inset"], trim["fb_style"],
+                           trim["fb_size"], trim["segments"])
+        sec = [(inner_radius + r, y_base + sign * d) for r, d in rd]
+        bm = bmesh.new()
+        _square_label_band(bm, half_w, z_spring, z_spring - jamb_extension, sec)
+        return _finish(bm, name, collection, smooth_angle)
+
+    pts, normals = _arch_head_path(arch_shape, half_w, z_spring, head_rise,
+                                   head_segments, jamb_extension)
     bm = bmesh.new()
     if pattern:
         if pattern not in _ORNAMENT_STATIONS:
