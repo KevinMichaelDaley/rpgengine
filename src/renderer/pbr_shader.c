@@ -143,6 +143,14 @@ static const char *const PBR_FS =
     "float G_SchlickGGX(float NoX, float k){ return NoX/(NoX*(1.0-k)+k); }\n"
     "float G_Smith(float NoV, float NoL, float r){ float k=(r+1.0); k=k*k/8.0; return G_SchlickGGX(NoV,k)*G_SchlickGGX(NoL,k); }\n"
     "vec3 F_Schlick(float VoH, vec3 F0){ return F0 + (1.0-F0)*pow(clamp(1.0-VoH,0.0,1.0),5.0); }\n"
+    /* Split-sum environment BRDF (Karis' analytic fit, no LUT): integrates the\n"
+     * specular BRDF over the hemisphere for IBL so the probe reflection responds\n"
+     * to F0, roughness and grazing angle (the NdotH-dependent term we can't do\n"
+     * per-fragment for environment light). Returns the specular scale for F0. */
+    "vec3 env_brdf_approx(vec3 F0, float rough, float NoV){\n"
+    "  const vec4 c0=vec4(-1.0,-0.0275,-0.572,0.022); const vec4 c1=vec4(1.0,0.0425,1.04,-0.04);\n"
+    "  vec4 r=rough*c0+c1; float a004=min(r.x*r.x, exp2(-9.28*NoV))*r.x + r.y;\n"
+    "  vec2 ab=vec2(-1.04,1.04)*a004 + r.zw; return F0*ab.x + ab.y; }\n"
     /* Outgoing radiance for one light of unit colour arriving along L (includes\n"
      * the N.L cosine): Cook-Torrance specular + Lambert diffuse. */
     "vec3 pbr_light(vec3 N, vec3 V, vec3 L, vec3 albedo, float rough, float metal, vec3 F0){\n"
@@ -594,20 +602,26 @@ static const char *const PBR_FS =
      * baked (has the lightmap) or dynamic (needs the boosted static ambience). */
     "  vec3 gi_dyn, gi_stat; float gi_sky; gi_probe_indirect2(v_world_pos, N, frag_cluster, gi_dyn, gi_stat, gi_sky);\n"
     "  float sgw = (u_sh_object>0.5) ? u_gi_static_baked_w : u_gi_static_dyn_w;\n"
-    /* AO from sky openness, applied MULTIPLICATIVELY to the static + probe indirect\n"
-     * (enclosed creases lose bounce). u_gi_ao_mult blends 1..openness. */
-    "  float ao_o = mix(1.0, gi_sky, u_gi_ao_mult);\n"
-    "  ambient += albedo * (gi_dyn + sgw*gi_stat) * (ao/PI) * ao_o;\n"
-    /* Sky-openness ambient (constant sky colour where open overhead). */
-    "  ambient += albedo * gi_sky * (0.5+0.5*N.y) * u_gi_sky_color * ao;\n"
-    "  if(u_debug_mode==7){ frag=vec4(gi_dyn + sgw*gi_stat,1.0); return; }\n"
-    /* Probe specular (rpg-hw75): environment reflection from the probes' SG lobe,\n"
-     * Fresnel-weighted, AO-modulated, on top of the diffuse indirect. */
+    /* AO from sky openness, applied MULTIPLICATIVELY to the indirect (enclosed\n"
+     * creases lose bounce). u_gi_ao_mult blends 1..openness. */
+    "  float ao_o = mix(1.0, gi_sky, u_gi_ao_mult) * ao;\n"
+    /* Full split-sum IBL from the probes: the SH gives the diffuse irradiance and\n"
+     * the SG lobe the prefiltered specular reflection; the environment BRDF splits\n"
+     * energy between them (kS specular, kD = (1-kS)(1-metal) diffuse) so the probes\n"
+     * drive the WHOLE PBR response, not just diffuse. */
+    "  float NoV = max(dot(N,V), 1e-4);\n"
+    "  vec3 kS = env_brdf_approx(F0, rough, NoV);\n"
+    "  vec3 kD = (vec3(1.0)-kS) * (1.0-metal);\n"
+    "  vec3 irr = gi_dyn + sgw*gi_stat;\n"
     "  vec3 Rspec = reflect(-V, N);\n"
-    "  vec3 Fspec = F_Schlick(max(dot(N,V),0.0), F0);\n"
-    "  vec3 spec_ibl = Fspec * gi_probe_specular(v_world_pos, N, Rspec, rough) * ao_o;\n"
-    "  if(u_debug_mode==10){ frag=vec4(spec_ibl,1.0); return; }\n"
-    "  ambient += spec_ibl;\n"
+    "  vec3 prefiltered = gi_probe_specular(v_world_pos, N, Rspec, rough);\n"
+    "  vec3 diff_ibl = kD * albedo * irr / PI;\n"
+    "  vec3 spec_ibl = kS * prefiltered;\n"
+    "  if(u_debug_mode==7){ frag=vec4(irr,1.0); return; }\n"
+    "  if(u_debug_mode==10){ frag=vec4(spec_ibl*ao_o,1.0); return; }\n"
+    "  ambient += (diff_ibl + spec_ibl) * ao_o;\n"
+    /* Sky-openness ambient (constant sky colour where open overhead). */
+    "  ambient += kD * albedo * gi_sky * (0.5+0.5*N.y) * u_gi_sky_color * ao;\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"
      * emissive LIGHTING of the scene is baked into the lightmap). Driven by the\n"

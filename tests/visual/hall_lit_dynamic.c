@@ -747,6 +747,10 @@ int main(int argc,char **argv){
     int spot_only = getenv("SPOT_ONLY") && atoi(getenv("SPOT_ONLY")); /* just the sconce */
     int csm_demo = getenv("HALL_CSM") && atoi(getenv("HALL_CSM")); /* sun CSM + moving box */
     int lm_only = getenv("LM_ONLY") && atoi(getenv("LM_ONLY")); /* pure baked lightmap, no dynamic lights */
+    /* FIRE_ONLY: isolate the fireplace's probe contribution -- kill the sun, the
+     * lightmap surface term, the static probe term and the sky ambient, so all
+     * that remains is the fireplace (direct + its dynamic probe GI/specular). */
+    int fire_only = getenv("FIRE_ONLY") && atoi(getenv("FIRE_ONLY"));
     /* Light index 0: a bright SHADOW-CASTING point light. Placed near the camera
      * end and off to one side at mid height so the central column rakes a long
      * shadow across the floor and far columns. */
@@ -788,7 +792,10 @@ int main(int argc,char **argv){
         }
       }
       render_light_t f; memset(&f,0,sizeof f); f.kind=RENDER_LIGHT_POINT;
-      f.position[0]=fp[0]; f.position[1]=fp[1]+0.6f; f.position[2]=fp[2];
+      /* Sit the flame in the OPEN firebox cavity: above the hearth and forward of
+       * the solid back wall (fp_opening slab, z<=-3.05), toward the +z opening, so
+       * its own shadow doesn't self-occlude it against the back wall. */
+      f.position[0]=fp[0]; f.position[1]=fp[1]+0.7f; f.position[2]=fp[2]+0.55f;
       f.color[0]=1.0f; f.color[1]=0.42f; f.color[2]=0.13f;   /* warm orange fire */
       f.intensity=fp_base; f.range=9.0f;
       f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
@@ -863,7 +870,7 @@ int main(int argc,char **argv){
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
      * direct sun + its CSM shadows. */
-    fcfg.sh_enabled=(shadow_only||spot_only||no_lm)?0:1; fcfg.sh_scale=(lm_only||great_hall?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=(shadow_only||spot_only||no_lm||fire_only)?0:1; fcfg.sh_scale=(lm_only||great_hall?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=-1; /* multi-light path: point lights tagged FLAG_SHADOW cast. */
     fcfg.shadow_max=8; fcfg.shadow_res=256; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
@@ -875,6 +882,7 @@ int main(int argc,char **argv){
         /* Direct sun -- brighter than the bake radiance so the shafts read
          * strongly over the (reduced) baked indirect fill. */
         fcfg.sun_color[0]=9.0f*gdim; fcfg.sun_color[1]=8.4f*gdim; fcfg.sun_color[2]=7.2f*gdim;
+        if(fire_only){ fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; } /* isolate fireplace. */
         /* Optional sky-colour ambient fill (added ON TOP of the lightmap SH in the
          * shader) to lift the deepest shadows to a faint cool sky tint. OFF by
          * default -- a flat fill washes the scene out; opt in with AMB_SKY>0.
@@ -1057,12 +1065,15 @@ int main(int argc,char **argv){
                     gi_runtime_set_static_volume(&g_gi, g_svol.tex, g_svol.origin, dimf, g_svol.voxel, sk);
                     /* Per-object static weights: baked surfaces get a mild extra bounce,
                      * the dynamic cube gets the full (boosted) static ambience. */
-                    float bw=getenv("GI_STATIC_BAKED")?(float)atof(getenv("GI_STATIC_BAKED")):0.35f;
-                    float dw=getenv("GI_STATIC_DYN")?(float)atof(getenv("GI_STATIC_DYN")):3.0f;
+                    /* fire_only zeroes the static (lightmap-fed) probe term so only
+                     * the dynamic fireplace bounce remains in the probes. */
+                    float bw=fire_only?0.0f:(getenv("GI_STATIC_BAKED")?(float)atof(getenv("GI_STATIC_BAKED")):0.35f);
+                    float dw=fire_only?0.0f:(getenv("GI_STATIC_DYN")?(float)atof(getenv("GI_STATIC_DYN")):3.0f);
                     gi_runtime_set_static_weights(&g_gi, bw, dw);
                     /* Sky-openness AO from the probe depth maps: a faint cool fill
-                     * where probes see open sky overhead (SKY_AO scales it, 0=off). */
-                    float sa=getenv("SKY_AO")?(float)atof(getenv("SKY_AO")):0.4f;
+                     * where probes see open sky overhead (SKY_AO scales it, 0=off).
+                     * Turned down a bit; off entirely under fire_only. */
+                    float sa=fire_only?0.0f:(getenv("SKY_AO")?(float)atof(getenv("SKY_AO")):0.25f);
                     float sky_ao[3]={0.15390f*sa,0.18851f*sa,0.25879f*sa};
                     gi_runtime_set_sky_ao(&g_gi, sky_ao, getenv("SKY_AO_REF")?(float)atof(getenv("SKY_AO_REF")):5.0f,
                                           getenv("AO_MULT")?(float)atof(getenv("AO_MULT")):0.6f);

@@ -91,7 +91,12 @@ static void fwd_forward_submit(void *ud)
 
     /* Optional baked SH lightmap on units 7..15 (material uses 0..6, forward+
      * 16..19). Combines static GI (SH) with the clustered dynamic lights. */
-    if (f->cfg.sh_enabled) {
+    /* ALWAYS bind the SH array samplers to units 7..15 and point the uniforms
+     * there, even when disabled: otherwise u_sh0..8 (sampler2DArray) default to
+     * unit 0, which holds the albedo (sampler2D) -> a type conflict that makes
+     * every draw INVALID_OPERATION and corrupts the whole pass. u_sh_enabled
+     * alone gates the sampling; a 0 texture here is just incomplete (reads black). */
+    {
         static const char *const shn[9] = { "u_sh0", "u_sh1", "u_sh2", "u_sh3",
                                             "u_sh4", "u_sh5", "u_sh6", "u_sh7",
                                             "u_sh8" };
@@ -103,11 +108,9 @@ static void fwd_forward_submit(void *ud)
             f->fp.glBindTexture(GL_TEXTURE_2D_ARRAY, f->cfg.sh_tex[c]);
             shader_uniform_set_int(&f->cache, &f->pbr, shn[c], 7 + c);
         }
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 1);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", f->cfg.sh_enabled ? 1 : 0);
         shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_scale",
                                  f->cfg.sh_scale > 0.0f ? f->cfg.sh_scale : 1.0f);
-    } else {
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", 0);
     }
 
     /* Optional point-light cube shadow on unit 20 (the movable light whose flat
