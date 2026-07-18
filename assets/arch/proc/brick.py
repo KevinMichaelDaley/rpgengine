@@ -637,9 +637,9 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     # Several small-cell SMOOTH_F1 Voronoi layers, each at its own scale and
     # constant offset, combined with Minimum -> union of pits. High smoothness
     # keeps the cell cores rounded rather than sharply pointed.
-    layers = [(1.0 / (mn * 0.16), (0.0, 0.0, 0.0), 1.0),
-              (1.0 / (mn * 0.12), (13.1, 4.7, 9.3), 1.0),
-              (1.0 / (mn * 0.09), (2.9, 21.4, 15.8), 0.9)]
+    layers = [(1.0 / (mn * 0.085), (0.0, 0.0, 0.0), 1.0),   # smaller cells = higher freq
+              (1.0 / (mn * 0.060), (13.1, 4.7, 9.3), 1.0),
+              (1.0 / (mn * 0.045), (2.9, 21.4, 15.8), 0.9)]
     prev = None
     for k, (scale, off, smooth) in enumerate(layers):
         ofs = nd('ShaderNodeVectorMath', -80, -200 - k * 220)
@@ -663,7 +663,7 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     # Flatten with bounds: cell cores (small distance) map to full depth, and
     # anything past the band clamps flat. Negative -> pits bite inward. Gentle
     # slope (wide band, shallow depth) so pits are soft dishes, not spikes.
-    pit_depth = mn * 0.022 * micro
+    pit_depth = mn * 0.011 * micro          # half depth: shallow pitting
     pit = nd('ShaderNodeMapRange', 500, -300)
     pit.clamp = True
     pit.inputs['From Min'].default_value = 0.0
@@ -706,16 +706,17 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     pit_clamp.inputs['Max'].default_value = 0.0
     links.new(pit_mod.outputs['Value'], pit_clamp.inputs['Value'])
 
-    # Low-frequency fBm grain (few octaves) riding on top of the pits.
+    # Fine fBm grain (higher frequency, more octaves, shallow) riding on the pits:
+    # tool-tooth tooling, not a coarse swell.
     grain = nd('ShaderNodeTexNoise', 100, 300)
     grain.noise_dimensions = '3D'
-    grain.inputs['Scale'].default_value = 1.0 / (mn * 0.6)
-    grain.inputs['Detail'].default_value = 2.0
-    grain.inputs['Roughness'].default_value = 0.5
+    grain.inputs['Scale'].default_value = 1.0 / (mn * 0.13)   # ~4.5x higher freq
+    grain.inputs['Detail'].default_value = 5.0
+    grain.inputs['Roughness'].default_value = 0.55
     links.new(base.outputs['Vector'], grain.inputs['Vector'])
     gmap = nd('ShaderNodeMapRange', 300, 300)
-    gmap.inputs['To Min'].default_value = -mn * 0.014 * micro
-    gmap.inputs['To Max'].default_value = mn * 0.014 * micro
+    gmap.inputs['To Min'].default_value = -mn * 0.006 * micro  # ~0.4x amplitude
+    gmap.inputs['To Max'].default_value = mn * 0.006 * micro
     links.new(grain.outputs['Fac'], gmap.inputs['Value'])
 
     # Sum grain + per-facet-modulated pits -> raw scalar displacement.
@@ -831,6 +832,43 @@ def _bake_modifiers(obj):
     return baked
 
 
+def _relax_arris(obj, half, band, strength=1.0, boost_far_axis=None, boost=1.0):
+    """RELAX arris (box-edge) vertices toward the ideal straight box edges with a
+    weight that FADES with distance from the edge -- straight where it counts,
+    organic elsewhere. For each vertex the two nearest box faces define the local
+    arris; the vertex's distance to that arris line is d = hypot(d0, d1) of the
+    two face gaps. Weight w = strength * (1 - d/band)^2 (0 beyond *band*), and the
+    two near coords are lerped toward their box bound by w. Right on the arris the
+    edge is pulled straight; a band in it fades to the untouched textured face, so
+    no dead-flat shelf.
+
+    boost_far_axis / boost: multiply the weight for arrises PARALLEL to that axis
+    (i.e. whose far/untouched axis is boost_far_axis) -- e.g. crisp the
+    depth-running (Y) edges of a wall harder than the face edges. Vectorised."""
+    me = obj.data
+    n = len(me.vertices)
+    if n == 0:
+        return
+    co = np.empty(n * 3, dtype=np.float64)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(n, 3)
+    b = np.array(half, dtype=np.float64)
+    df = b - np.abs(co)                              # gap inside each face (n,3)
+    order = np.argsort(df, axis=1)                   # ascending gaps
+    idx = np.arange(n)
+    a0, a1 = order[:, 0], order[:, 1]                # the two NEAREST faces = arris
+    d = np.hypot(np.maximum(df[idx, a0], 0.0), np.maximum(df[idx, a1], 0.0))
+    w = strength * np.clip(1.0 - d / max(band, 1e-9), 0.0, 1.0) ** 2
+    if boost_far_axis is not None and boost != 1.0:
+        far = order[:, 2]                            # arris runs parallel to this axis
+        w = np.where(far == boost_far_axis, np.clip(w * boost, 0.0, 1.0), w)
+    for a in (a0, a1):
+        tgt = np.sign(co[idx, a]) * b[a]
+        co[idx, a] = co[idx, a] * (1.0 - w) + tgt * w
+    me.vertices.foreach_set("co", co.reshape(-1))
+    me.update()
+
+
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 edge_chip=0.007, corner_chip=0.02, chamfer_frac=0.6, detail=3,
                 refine=0.25,
@@ -838,7 +876,8 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 adaptivity=0.1, fine_div=160.0, fine_adaptivity=0.6, disp_scale=0.19,
                 bounds_radius=0.006, final_decimate=0.42, micro=0.8, micro_env=0.9,
                 micro_quant=0.0, micro_floor=0.032, micro_voxel_div=220.0,
-                auto_smooth_deg=60.0, collection=None):
+                auto_smooth_deg=60.0, boxy=0.0, depth_edge_boost=1.0,
+                collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
     Phase A: box -> seed-driven chipping -> multi-resolution loop (voxel-remesh
@@ -850,10 +889,32 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     refine -- magnitude of the Phase-B fine tooling (0 = none, ~1 = strong); it
               scales the strictly-bounded Phase-B displacement.
     """
+    # `boxy` in [0,1] keeps the SILHOUETTE a crisp rectangular box: it flattens
+    # the facet tilt (so sides stay vertical / top horizontal instead of sloping
+    # into dressed facets), clamps the graph deformation, and kills the arris
+    # chamfer + end-clipping. The fine surface grain (micro/refine) is retained,
+    # so the faces still read as tool-dressed stone -- just on a true box.
+    boxy = float(min(max(boxy, 0.0), 1.0))
+    tilt_k = 1.0 - 0.92 * boxy               # -> nearly axis-aligned facets
+    disp_k = 1.0 - 0.85 * boxy               # -> shallow deformation
+    edge_chip *= (1.0 - 0.7 * boxy)
+    corner_chip *= (1.0 - 0.85 * boxy)
+    chamfer_frac *= (1.0 - 0.95 * boxy)
+    chip *= (1.0 - boxy)
+    cracks *= (1.0 - 0.6 * boxy)
+    cracks2 *= (1.0 - 0.6 * boxy)
+    bounds_radius *= (1.0 - 0.7 * boxy)
+    # Mask the smoothing kernel on the box arrises/corners: crank box_preserve /
+    # corner_preserve toward 1.0 so cross-edge smoothing is fully suppressed there
+    # (otherwise the default 0.7/0.92 still lets ~30%/8% through -> rounded corners).
+    box_pre = 0.7 + 0.30 * boxy
+    corn_pre_a = 0.92 + 0.08 * boxy
+    corn_pre_b = 0.95 + 0.05 * boxy
+
     rng = np.random.default_rng(seed)
     bm = _box(length, height, width)        # height & width are fixed (coursing)
     _chip(bm, rng, edge_chip, corner_chip, chamfer_frac=chamfer_frac)
-    md0 = disp_scale * min(height, width)   # coarse graph-kernel deformation bound
+    md0 = disp_scale * min(height, width) * disp_k  # coarse deformation bound
     mn = min(length, height, width)
 
     # --- Phase A: annealed faceting -> angular hewn base ---
@@ -863,10 +924,16 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # mix = (facet, sharp, pinch, flatten) selection probs; smoothing = remainder.
     # Voxel sizes are FINE (coarse voxels bevel the arrises); the strong decimate
     # below collapses the extra polys back down while keeping the sharp edges.
+    # `boxy` makes the voxel remesh MUCH finer: a coarse voxel bevels the box
+    # arrises before any masking can help, so the resolution must be fine enough
+    # that the remesh preserves the sharp box edges. Divisors grow with boxy.
+    vd0 = 9.0 * (1.0 + 5.0 * boxy)          # stage 0 was the big edge-rounder
+    vd1 = 20.0 * (1.0 + 3.0 * boxy)
+    vd2 = fine_div * (1.0 + 0.6 * boxy)
     schedule = [
-        (mn / 9.0,  16, 0.28, 16, md0,        1.00, 0.15, (0.40, 0.16, 0.10, 0.14, 0.16)),
-        (mn / 20.0, 40, 0.36, 14, md0 * 0.55, 0.70, 0.10, (0.38, 0.16, 0.10, 0.14, 0.16)),
-        (mn / fine_div, 88, 0.44, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.16, 0.10, 0.14, 0.16)),
+        (mn / vd0,  16, 0.28 * tilt_k, 16, md0,        1.00, 0.15, (0.40, 0.16, 0.10, 0.14, 0.16)),
+        (mn / vd1,  40, 0.36 * tilt_k, 14, md0 * 0.55, 0.70, 0.10, (0.38, 0.16, 0.10, 0.14, 0.16)),
+        (mn / vd2,  88, 0.44 * tilt_k, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.16, 0.10, 0.14, 0.16)),
     ][:max(1, detail)]
     ns = len(schedule)
     half = (0.5 * length, 0.5 * width, 0.5 * height)
@@ -888,7 +955,8 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
         _facet_sculpt(bm, rng, n_planes=npl, tilt=tilt, iters=iters,
                       pull=0.45, sharp=0.38, smooth=0.26, pinch=0.4, flatten=0.7,
                       mix=mix, temp0=t0, temp1=t1, maxdisp=mdisp, feature=1.0,
-                      smooth_feature=1.3, corner_preserve=0.92)
+                      smooth_feature=1.3, corner_preserve=corn_pre_a,
+                      box_preserve=box_pre)
     _clamp_bbox(bm, half, bounds_radius)     # cap Phase-A bulges to bbox + radius
 
     # --- Crack pass 1: subtle, ABSOLUTELY bounded, before the fine pass so it
@@ -908,13 +976,14 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # fine tooling/chip patches lay down coherently over the dressed facets. Its
     # magnitude is the `refine` parameter (scales the displacement bound).
     if refine > 0.0:
-        _facet_sculpt(bm, rng, n_planes=130, tilt=0.5, iters=6,
+        _facet_sculpt(bm, rng, n_planes=130, tilt=0.5 * tilt_k, iters=6,
                       pull=0.30, sharp=0.48, smooth=0.24, pinch=0.35, flatten=0.45,
                       smooth_flat_pow=2.0, smooth_feature=1.5,
                       mix=(0.22, 0.26, 0.08, 0.10, 0.16), temp0=0.22, temp1=0.05,
                       maxdisp=md0 * 0.08 * refine, feature=1.0,
-                      corner_preserve=0.95, kernel_noise=70.0)
-    _graph_smooth(bm, iters=1, lam=0.06, feature=1.0)   # barely-there settle
+                      corner_preserve=corn_pre_b, box_preserve=box_pre,
+                      kernel_noise=70.0)
+    _graph_smooth(bm, iters=1, lam=0.06 * (1.0 - boxy), feature=1.0)  # settle (off when boxy)
 
     # --- Crack pass 2: crisp, stronger, narrower, less frequent -- applied LAST
     #     (no remesh/smoothing after) so it stays sharp ---
