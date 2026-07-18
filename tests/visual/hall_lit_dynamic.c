@@ -38,6 +38,7 @@
 #include "ferrum/renderer/render_forward.h"
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/gi/gi_runtime.h"
+#include "ferrum/renderer/gi/gi_static_volume.h"
 #include "ferrum/renderer/resource/gpu_cmd_queue.h"
 #include "ferrum/renderer/resource/gpu_executor.h"
 #include "ferrum/renderer/resource/gpu_registry.h"
@@ -416,6 +417,103 @@ static void save_ppm(const char *path,int w,int h){
         printf("screenshot: %s\n",path);} free(rgb);
 }
 
+/* ── Static irradiance volume (rpg-pau4) ────────────────────────────────────
+ * Splat the baked lightmap's irradiance E into a coarse world grid so the probe
+ * cone trace can gather the STATIC ambience by position (one bounce beyond the
+ * bake). Reads SH layers 0..3 straight from the .flm, evaluates E(n) per vertex
+ * exactly as the forward+ shader does, bins into cells, averages, and dilates
+ * once so cells adjacent to surfaces are filled. Uploads into @p vol.
+ * Returns 0 on success. Load-time only -- heap allocation here is fine. */
+static int build_static_irr_volume(gi_static_volume_t *vol,
+        const obj_mesh_t *dm, int nm, const lm_atlas_rect_t *mrect,
+        uint32_t aw, uint32_t ah, const char *lmfile,
+        const float amin[3], const float amax[3])
+{
+    if (aw == 0 || ah == 0) return -1;
+    /* Read SH layers 0..3 (RGB) from the single-atlas .flm (skip the 20-byte
+     * FLM1 header: magic + aw + ah + nc + nmh). */
+    FILE *lf = fopen(lmfile, "rb"); if (!lf) return -1;
+    if (fseek(lf, 20, SEEK_SET) != 0) { fclose(lf); return -1; }
+    size_t npix = (size_t)aw * ah * 3;
+    float *sh[4] = {0,0,0,0};
+    for (int c = 0; c < 4; ++c) {
+        sh[c] = malloc(npix * sizeof(float));
+        if (!sh[c] || fread(sh[c], sizeof(float), npix, lf) != npix) {
+            for (int k = 0; k <= c; ++k) free(sh[k]); fclose(lf); return -1; }
+    }
+    fclose(lf);
+
+    /* Grid over the padded scene AABB. */
+    float vox = getenv("GI_SVOX") ? (float)atof(getenv("GI_SVOX")) : 0.5f;
+    if (vox < 0.05f) vox = 0.05f;
+    float org[3]; int dims[3];
+    for (int a = 0; a < 3; ++a) {
+        org[a] = amin[a] - vox;
+        int d = (int)((amax[a] - amin[a]) / vox) + 3;
+        dims[a] = d < 1 ? 1 : (d > 128 ? 128 : d);
+    }
+    size_t cells = (size_t)dims[0] * dims[1] * dims[2];
+    float *sum = calloc(cells * 3, sizeof(float));
+    uint32_t *cnt = calloc(cells, sizeof(uint32_t));
+    if (!sum || !cnt) { free(sum); free(cnt); for (int k=0;k<4;++k) free(sh[k]); return -1; }
+    lm_atlas_t atlas = { aw, ah };
+
+    for (int i = 0; i < nm; ++i) {
+        const obj_mesh_t *m = &dm[i];
+        const lm_atlas_rect_t *rc = (mrect[i].w > 0) ? &mrect[i] : NULL;
+        for (uint32_t v = 0; v < m->vert_count; ++v) {
+            float u0 = m->uvs1[v*2], v0 = m->uvs1[v*2+1];
+            if (u0 == 0.0f && v0 == 0.0f) continue;      /* no lightmap here. */
+            float au = u0, av = v0;
+            if (rc) lm_atlas_remap_uv(rc, &atlas, u0, v0, &au, &av);
+            int px = (int)(au * (float)aw); int py = (int)(av * (float)ah);
+            if (px < 0) px = 0; else if (px >= (int)aw) px = (int)aw - 1;
+            if (py < 0) py = 0; else if (py >= (int)ah) py = (int)ah - 1;
+            size_t sp = ((size_t)py * aw + px) * 3;
+            const float *nrm = &m->normals[v*3];
+            float b0 = 0.282094792f;
+            float b1 = 0.488602512f * nrm[1], b2 = 0.488602512f * nrm[2], b3 = 0.488602512f * nrm[0];
+            float E[3];
+            for (int c = 0; c < 3; ++c) {
+                float e = 3.14159265f * sh[0][sp+c] * b0
+                        + 2.09439510f * (sh[1][sp+c]*b1 + sh[2][sp+c]*b2 + sh[3][sp+c]*b3);
+                E[c] = e > 0.0f ? e : 0.0f;
+            }
+            const float *p = &m->positions[v*3];
+            int cx = (int)((p[0]-org[0])/vox), cy = (int)((p[1]-org[1])/vox), cz = (int)((p[2]-org[2])/vox);
+            if (cx<0||cy<0||cz<0||cx>=dims[0]||cy>=dims[1]||cz>=dims[2]) continue;
+            size_t ci = ((size_t)cz*dims[1] + cy)*dims[0] + cx;
+            sum[ci*3+0]+=E[0]; sum[ci*3+1]+=E[1]; sum[ci*3+2]+=E[2]; cnt[ci]++;
+        }
+    }
+    for (int k = 0; k < 4; ++k) free(sh[k]);
+
+    float *rgb = calloc(cells * 3, sizeof(float));
+    if (!rgb) { free(sum); free(cnt); return -1; }
+    for (size_t c = 0; c < cells; ++c)
+        if (cnt[c]) { float inv=1.0f/(float)cnt[c];
+            rgb[c*3+0]=sum[c*3+0]*inv; rgb[c*3+1]=sum[c*3+1]*inv; rgb[c*3+2]=sum[c*3+2]*inv; }
+    /* One dilation pass: fill empty cells from filled 6-neighbours so a cone hit
+     * that lands just off a splatted vertex still reads irradiance. */
+    for (int z = 0; z < dims[2]; ++z) for (int y = 0; y < dims[1]; ++y) for (int x = 0; x < dims[0]; ++x) {
+        size_t ci = ((size_t)z*dims[1]+y)*dims[0]+x; if (cnt[ci]) continue;
+        float acc[3]={0,0,0}; int nn=0;
+        int off[6][3]={{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
+        for (int o=0;o<6;++o){ int nx=x+off[o][0],ny=y+off[o][1],nz=z+off[o][2];
+            if(nx<0||ny<0||nz<0||nx>=dims[0]||ny>=dims[1]||nz>=dims[2]) continue;
+            size_t nci=((size_t)nz*dims[1]+ny)*dims[0]+nx; if(!cnt[nci]) continue;
+            acc[0]+=rgb[nci*3+0]; acc[1]+=rgb[nci*3+1]; acc[2]+=rgb[nci*3+2]; ++nn; }
+        if(nn){ rgb[ci*3+0]=acc[0]/nn; rgb[ci*3+1]=acc[1]/nn; rgb[ci*3+2]=acc[2]/nn; }
+    }
+    free(sum); free(cnt);
+
+    int ok = gi_static_volume_upload(vol, rgb, dims, org, vox) ? 0 : -1;
+    fprintf(stderr, "static_irr volume %dx%dx%d @ %.2fm (%s)\n",
+            dims[0], dims[1], dims[2], vox, ok==0?"ok":"FAILED");
+    free(rgb);
+    return ok;
+}
+
 /* ── Dynamic-light SDF-probe GI demo (rpg-fo9r) ─────────────────────────────
  * All the GI machinery lives in renderer modules (gi_runtime); this file only
  * spawns the moving particle lights + dynamic floor boxes and invokes it. */
@@ -439,7 +537,7 @@ int main(int argc,char **argv){
     const char *dir = argc>1?argv[1]:(great_hall?gh_meshdir:"datasets/hall_lm");
     const char *bake = argc>2?argv[2]:"assets/arch/proc/prefabs/bake";
     const char *lmfile = argc>3?argv[3]:(great_hall?"datasets/great_hall_export/great_hall.flm":"/tmp/hall_prod.flm");
-    const char *shot = argc>4?argv[4]:(great_hall?"/tmp/great_hall_lit.ppm":"/tmp/hall_lit_dynamic.ppm");
+    const char *shot = getenv("GH_SHOT")?getenv("GH_SHOT"):(argc>4?argv[4]:(great_hall?"/tmp/great_hall_lit.ppm":"/tmp/hall_lit_dynamic.ppm"));
 
     /* Count the .dmesh files up front so every per-mesh array + the GPU command
      * queue / registry are sized to the ACTUAL mesh count -- this scales to
@@ -903,6 +1001,18 @@ int main(int argc,char **argv){
          * so the material reads probe candidates from the fragment's own cluster. */
         gc.froxel=fcfg.cluster; gc.probe_min=4; gc.probe_sphere_margin=0.5f; gc.bin_interval=1;
         if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
+        /* rpg-pau4: fold the baked lightmap ambience into the probes. Build the
+         * static irradiance volume from the atlas + meshes and bind it so the
+         * cone trace gathers it. GI_STATIC=0 disables (for before/after diffs);
+         * GI_STATIC_K scales the boost. */
+        else if(great_hall && !no_lm && (getenv("GI_STATIC")==NULL || atoi(getenv("GI_STATIC")))){
+            static gi_static_volume_t g_svol;
+            if(build_static_irr_volume(&g_svol, dm, nm, mrect, atlas_w, atlas_h, lmfile, amin, amax)==0){
+                float dimf[3]={(float)g_svol.dims[0],(float)g_svol.dims[1],(float)g_svol.dims[2]};
+                float sk=getenv("GI_STATIC_K")?(float)atof(getenv("GI_STATIC_K")):1.0f;
+                gi_runtime_set_static_volume(&g_gi, g_svol.tex, g_svol.origin, dimf, g_svol.voxel, sk);
+            }
+        }
     }
 
     glViewport(0,0,W,H);

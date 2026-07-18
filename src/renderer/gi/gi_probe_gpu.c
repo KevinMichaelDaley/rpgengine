@@ -26,6 +26,16 @@ static const char *CS_SRC =
     "uniform vec3 u_sdf_dim[8];\n"
     "uniform float u_sdf_vox[8];\n"
     "uniform int u_sdf_active[8];\n"
+    /* Static irradiance volume (rpg-pau4): the baked lightmap E, splatted to a\n"
+     * coarse world grid. A cone that hits a surface gathers this so the probe\n"
+     * carries the STATIC bounced ambience (one bounce beyond the lightmapper),\n"
+     * not just the dynamic-light term. u_static_k boosts it. */
+    "uniform sampler3D u_static_irr;\n"
+    "uniform vec3 u_static_origin;\n"
+    "uniform vec3 u_static_dim;\n"
+    "uniform float u_static_vox;\n"
+    "uniform int u_static_on;\n"
+    "uniform float u_static_k;\n"
     "layout(std430,binding=0) readonly buffer PP { vec4 ppos[]; };\n"
     "layout(std430,binding=1) writeonly buffer PS { float psh[]; };\n"
     "layout(std430,binding=2) readonly buffer LB { vec4 lt[]; };\n"
@@ -48,6 +58,11 @@ static const char *CS_SRC =
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
     "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; return textureLod(u_sdf[i],uvw,lod).rgb; } }\n"
     "  return vec3(0.5); }\n"
+    /* Baked static irradiance E at world p (trilinear); 0 outside the volume. */
+    "vec3 static_irr(vec3 p){ if(u_static_on==0) return vec3(0.0);\n"
+    "  vec3 g=(p-u_static_origin)/u_static_vox;\n"
+    "  if(any(lessThan(g,vec3(0.0)))||any(greaterThanEqual(g,u_static_dim))) return vec3(0.0);\n"
+    "  vec3 uvw=(g+0.5)/u_static_dim; return texture(u_static_irr,uvw).rgb; }\n"
     "vec3 sdf_normal(vec3 p){ float e=0.06;\n"
     "  return normalize(vec3(scene_sdf(p+vec3(e,0,0))-scene_sdf(p-vec3(e,0,0)),\n"
     "                        scene_sdf(p+vec3(0,e,0))-scene_sdf(p-vec3(0,e,0)),\n"
@@ -80,7 +95,16 @@ static const char *CS_SRC =
      * widens with t, so read a coarser albedo mip further out. u_albedo scales. */
     "      float lod = clamp(log2(1.0 + t*1.5), 0.0, 5.0);\n"
     "      vec3 alb = scene_albedo(p - n*u_sdf_vox[0]*0.5, lod);\n"
-    "      return u_albedo * alb * direct_at(p+n*0.06, n) / PI; }\n"
+    /* Outgoing radiance = albedo * (dynamic-light direct + boosted baked static\n"
+     * irradiance) / PI. The static term is the lightmap ambience gathered per\n"
+     * cone -- one bounce more than the offline bake.\n"
+     * SDF occlusion: the cone sphere-marched the SDF to reach p, so this surface\n"
+     * is already visible to the probe. The irradiance volume is sampled on the\n"
+     * PROBE-FACING side (p + n*..., n points back toward the probe) so a thin\n"
+     * wall's far (unlit/occluded) side can never bleed through -- reading into\n"
+     * the solid (-n) would cross the wall and leak. */
+    "      vec3 Es = static_irr(p + n*u_static_vox*0.5);\n"
+    "      return u_albedo * alb * (direct_at(p+n*0.06, n) + u_static_k*Es) / PI; }\n"
     "    t += max(h,0.04); if(t>25.0) break; }\n"
     "  return vec3(0.0); }\n"
     /* Linear SH (band 0 + band 1 = 4 coeffs) -- cheap, ample for diffuse indirect. */
@@ -172,6 +196,20 @@ void gi_probe_gpu_set_probes(gi_probe_gpu_t *g, const float *pos, uint32_t n)
     free(tmp);
 }
 
+void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
+                             const float origin[3], const float dim[3],
+                             float vox, float k)
+{
+    if (g == NULL) return;
+    g->static_tex = tex;
+    g->static_vox = vox;
+    g->static_k = k;
+    for (int i = 0; i < 3; ++i) {
+        g->static_origin[i] = origin ? origin[i] : 0.0f;
+        g->static_dim[i] = dim ? dim[i] : 0.0f;
+    }
+}
+
 void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
@@ -215,6 +253,20 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glUniform1f(glGetUniformLocation(g->prog, "u_soft"), soft_k);
     glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 8);    /* sphere samples. */
     glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 1.0f); /* gain; real albedo now from the voxel map. */
+
+    /* Static irradiance volume: bound past the SDF slot units. */
+    {
+        int on = (g->static_tex != 0) ? 1 : 0;
+        int unit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT; /* first unit after the SDF chunks. */
+        glUniform1i(glGetUniformLocation(g->prog, "u_static_on"), on);
+        glUniform1f(glGetUniformLocation(g->prog, "u_static_k"), g->static_k);
+        glUniform1i(glGetUniformLocation(g->prog, "u_static_irr"), unit);
+        glUniform3fv(glGetUniformLocation(g->prog, "u_static_origin"), 1, g->static_origin);
+        glUniform3fv(glGetUniformLocation(g->prog, "u_static_dim"), 1, g->static_dim);
+        glUniform1f(glGetUniformLocation(g->prog, "u_static_vox"), g->static_vox);
+        glActiveTexture(GL_TEXTURE0 + (GLenum)unit);
+        glBindTexture(GL_TEXTURE_3D, on ? g->static_tex : 0);
+    }
 
     /* Bind the resident SDF chunks (one per used slot) + metadata. */
     char nm[32];

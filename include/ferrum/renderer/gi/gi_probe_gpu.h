@@ -38,6 +38,13 @@ typedef struct gi_probe_gpu {
     unsigned int tbo_pos_tex;  /**< probe-position buffer texture (for the sampler). */
     uint32_t     n_probes;
     uint32_t     max_lights, max_boxes;
+    /* Static irradiance volume (rpg-pau4): baked-lightmap E on a coarse world
+     * grid, gathered by the cone trace so probes carry the static ambience. */
+    unsigned int static_tex;          /**< GL sampler3D (0 = none). */
+    float        static_origin[3];    /**< world-space grid origin (min corner). */
+    float        static_dim[3];       /**< grid dims in cells (x,y,z). */
+    float        static_vox;          /**< cell size (metres). */
+    float        static_k;            /**< boost applied to the gathered E. */
     void (*DispatchCompute)(unsigned int, unsigned int, unsigned int);
     void (*MemoryBarrier)(unsigned int);
     bool ready;
@@ -54,6 +61,17 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
 
 /** @brief Upload probe positions (3 floats/probe) and set the live probe count. */
 void gi_probe_gpu_set_probes(gi_probe_gpu_t *g, const float *pos, uint32_t n);
+
+/**
+ * @brief Bind the static irradiance volume the cone trace gathers (rpg-pau4).
+ *        @p tex is a GL sampler3D of RGB irradiance covering the grid at
+ *        @p origin with @p dim cells of size @p vox; @p k boosts the gathered E.
+ *        @p tex == 0 disables the term. Metadata is copied; the texture is not
+ *        owned. NULL-safe.
+ */
+void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
+                             const float origin[3], const float dim[3],
+                             float vox, float k);
 
 /**
  * @brief Dispatch the update: bind the resident SDF chunks from @p sdf, upload

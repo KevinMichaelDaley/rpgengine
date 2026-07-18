@@ -112,6 +112,16 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
 void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
                      const shader_program_t *program, uint32_t base_unit);
 
+/**
+ * @brief Bind a static irradiance volume (rpg-pau4) so the probe cone trace
+ *        gathers the baked-lightmap ambience in addition to the dynamic-light
+ *        term. Forwards to @ref gi_probe_gpu_set_static; @p tex == 0 disables it.
+ *        The texture is not owned. NULL-safe.
+ */
+void gi_runtime_set_static_volume(gi_runtime_t *gi, unsigned int tex,
+                                  const float origin[3], const float dim[3],
+                                  float vox, float k);
+
 /** @brief Free everything. NULL-safe. */
 void gi_runtime_destroy(gi_runtime_t *gi);
 
