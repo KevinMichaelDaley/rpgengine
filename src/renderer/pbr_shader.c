@@ -132,13 +132,32 @@ static const char *const PBR_FS =
     /* SH4 (bands 0-1) only: 4 lightmap fetches instead of 9. The band-2 detail is\n"
      * dropped at sample time -- the baked maps still hold it, we just don't read\n"
      * u_sh4..u_sh8. Ample for smooth diffuse indirect. */
-    "vec3 pbr_sh_irradiance(vec3 n){\n"
-    "  float b0=0.282094792;\n"
-    "  float b1=0.488602512*n.y, b2=0.488602512*n.z, b3=0.488602512*n.x;\n"
-    "  vec3 E = 3.14159265*texture(u_sh0,SHUV).rgb*b0;\n"
-    "  E += 2.09439510*(texture(u_sh1,SHUV).rgb*b1 + texture(u_sh2,SHUV).rgb*b2 + texture(u_sh3,SHUV).rgb*b3);\n"
-    "  return E;\n"
+    /* Full SH9 real basis evaluated along d (bands 0,1,2). */
+    "void sh9_basis(vec3 d, out float y[9]){\n"
+    "  y[0]=0.282094792;\n"
+    "  y[1]=0.488602512*d.y; y[2]=0.488602512*d.z; y[3]=0.488602512*d.x;\n"
+    "  y[4]=1.092548431*d.x*d.y; y[5]=1.092548431*d.y*d.z; y[6]=0.315391565*(3.0*d.z*d.z-1.0);\n"
+    "  y[7]=1.092548431*d.x*d.z; y[8]=0.546274215*(d.x*d.x-d.y*d.y);\n"
     "}\n"
+    /* Fetch this luxel's 9 SH coefficients (the lightmap bakes the full SH9). */
+    "void sh9_fetch(out vec3 L[9]){\n"
+    "  L[0]=texture(u_sh0,SHUV).rgb; L[1]=texture(u_sh1,SHUV).rgb; L[2]=texture(u_sh2,SHUV).rgb;\n"
+    "  L[3]=texture(u_sh3,SHUV).rgb; L[4]=texture(u_sh4,SHUV).rgb; L[5]=texture(u_sh5,SHUV).rgb;\n"
+    "  L[6]=texture(u_sh6,SHUV).rgb; L[7]=texture(u_sh7,SHUV).rgb; L[8]=texture(u_sh8,SHUV).rgb;\n"
+    "}\n"
+    /* Cosine-convolved irradiance along n (A0=pi, A1=2pi/3, A2=pi/4) -- diffuse. */
+    "vec3 sh9_irradiance(vec3 L[9], vec3 n){ float y[9]; sh9_basis(n,y);\n"
+    "  vec3 E = 3.14159265*L[0]*y[0];\n"
+    "  E += 2.09439510*(L[1]*y[1]+L[2]*y[2]+L[3]*y[3]);\n"
+    "  E += 0.785398163*(L[4]*y[4]+L[5]*y[5]+L[6]*y[6]+L[7]*y[7]+L[8]*y[8]);\n"
+    "  return E; }\n"
+    /* Raw radiance reconstruction along d (no cosine convolution) -- the incident\n"
+     * environment radiance for the split-sum specular IBL (band-limited/blurry,\n"
+     * which is exactly a very-rough prefiltered reflection). */
+    "vec3 sh9_radiance(vec3 L[9], vec3 d){ float y[9]; sh9_basis(d,y);\n"
+    "  vec3 R=vec3(0.0); for(int i=0;i<9;++i) R+=L[i]*y[i]; return R; }\n"
+    /* Back-compat wrapper (debug view): full-SH9 irradiance along n. */
+    "vec3 pbr_sh_irradiance(vec3 n){ vec3 L[9]; sh9_fetch(L); return sh9_irradiance(L,n); }\n"
     "float D_GGX(float NoH, float a){ float a2=a*a; float d=(NoH*NoH*(a2-1.0)+1.0); return a2/max(PI*d*d,1e-7); }\n"
     "float G_SchlickGGX(float NoX, float k){ return NoX/(NoX*(1.0-k)+k); }\n"
     "float G_Smith(float NoV, float NoL, float r){ float k=(r+1.0); k=k*k/8.0; return G_SchlickGGX(NoV,k)*G_SchlickGGX(NoL,k); }\n"
@@ -595,7 +614,22 @@ static const char *const PBR_FS =
      * SH then adds on top for static (baked) geometry. Dynamic geometry, whose\n"
      * uv1 is meaningless, gets only the flat fill. */
     "  ambient = u_ambient*albedo*ao;\n"
-    "  if(u_sh_enabled==1 && u_sh_object>0.5 && u_sh_layer>=0){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient += albedo*E*u_sh_scale/PI*ao; }\n"
+    /* Environment BRDF split (Karis): kS = specular env response, kD = diffuse
+     * remainder * (1-metal). Shared by the lightmap IBL and the probe IBL so the
+     * static AND dynamic indirect both drive the full PBR (diffuse + specular). */
+    "  float NoV = max(dot(N,V), 1e-4);\n"
+    "  vec3 kS = env_brdf_approx(F0, rough, NoV);\n"
+    "  vec3 kD = (vec3(1.0)-kS) * (1.0-metal);\n"
+    "  vec3 Rspec = reflect(-V, N);\n"
+    /* Baked lightmap as a FULL split-sum IBL term: fetch the luxel's SH9 once,\n"
+     * take the cosine-convolved SH9 irradiance for diffuse and the raw SH9
+     * radiance along R for the (blurry, static) specular reflection. */
+    "  if(u_sh_enabled==1 && u_sh_object>0.5 && u_sh_layer>=0){\n"
+    "    vec3 L[9]; sh9_fetch(L);\n"
+    "    vec3 E = max(sh9_irradiance(L,N), vec3(0.0));\n"
+    "    vec3 Lr = max(sh9_radiance(L,Rspec), vec3(0.0));\n"
+    "    ambient += (kD*albedo*E/PI + kS*Lr) * u_sh_scale * ao;\n"
+    "  }\n"
     /* Dynamic-light indirect from the SDF-probe GI: incident irradiance E(N) ->\n"
      * diffuse albedo/PI * E, on top of the baked static ambient. */
     /* Probe indirect: dynamic always; static weighted by whether this object is\n"
@@ -608,12 +642,8 @@ static const char *const PBR_FS =
     /* Full split-sum IBL from the probes: the SH gives the diffuse irradiance and\n"
      * the SG lobe the prefiltered specular reflection; the environment BRDF splits\n"
      * energy between them (kS specular, kD = (1-kS)(1-metal) diffuse) so the probes\n"
-     * drive the WHOLE PBR response, not just diffuse. */
-    "  float NoV = max(dot(N,V), 1e-4);\n"
-    "  vec3 kS = env_brdf_approx(F0, rough, NoV);\n"
-    "  vec3 kD = (vec3(1.0)-kS) * (1.0-metal);\n"
+     * drive the WHOLE PBR response, not just diffuse. (kS/kD/Rspec above.) */
     "  vec3 irr = gi_dyn + sgw*gi_stat;\n"
-    "  vec3 Rspec = reflect(-V, N);\n"
     "  vec3 prefiltered = gi_probe_specular(v_world_pos, N, Rspec, rough);\n"
     "  vec3 diff_ibl = kD * albedo * irr / PI;\n"
     "  vec3 spec_ibl = kS * prefiltered;\n"
