@@ -319,9 +319,10 @@ def displace_mortar(mortar, clump, W, H, amp):
 # Orchestrator
 # --------------------------------------------------------------------------
 def bake_wall(width=2.0, height=1.15, seed=4, res=2048, out_dir=None,
-              clump=0.7, mortar_depth=0.02, prefab_dir=None, name="brick_wall"):
-    """Build a wall then bake mask / height / normal / ao maps over its tile.
-    Returns a dict of the written file paths."""
+              clump=0.7, mortar_depth=0.02, prefab_dir=None, name="brick_wall",
+              builder="build_wall", build_kw=None):
+    """Build a wall (or any *builder* in brick_wall.py, e.g. ``build_weave``) then
+    bake mask / height / normal / ao maps over its tile. Returns the file paths."""
     here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() \
         else "/home/kmd/rpg/assets/arch/proc"
     if out_dir is None:
@@ -335,7 +336,9 @@ def bake_wall(width=2.0, height=1.15, seed=4, res=2048, out_dir=None,
           "mortar_depth": mortar_depth, "name": name}
     if prefab_dir:
         kw["prefab_dir"] = prefab_dir
-    wall = ns["build_wall"](**kw)
+    if build_kw:
+        kw.update(build_kw)
+    wall = ns[builder](**kw)
     col, mortar = wall["collection"], wall["mortar"]
     W, Hh = wall["tile_width"], wall["height"]
     bricks = [o for o in col.objects if o is not mortar]

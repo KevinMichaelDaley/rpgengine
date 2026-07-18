@@ -299,7 +299,7 @@ def _build_mortar(name, x0, width, height, front_y, mortar_depth, cell,
 
 
 def build_wall(width=4.0, height=3.0, seed=0, mortar=0.001, bed=0.001,
-               mortar_depth=0.02, seat_jitter=0.002, depth_jitter=0.006,
+               mortar_depth=0.02, seat_jitter=0.002, depth_jitter=0.015,
                tilt_deg=2.0, tilt_frac=0.5, seamless=True, mortar_cell=0.006,
                main_aspect=1, variety=0.25, min_stagger_frac=0.22,
                name="brick_wall", prefab_dir=PREFAB_DIR, collection=None):
@@ -457,6 +457,81 @@ def build_wall(width=4.0, height=3.0, seed=0, mortar=0.001, bed=0.001,
 
     return {"collection": collection, "mortar": mortar_obj,
             "tile_width": tile_width, "height": height}
+
+
+def build_weave(width=0.9, height=0.55, seed=0, mortar=0.002, bed=0.002,
+                tooth=0.022, aspect=4, mortar_depth=0.02, mortar_cell=0.006,
+                name="brick_weave", prefab_dir=PREFAB_DIR, collection=None):
+    """Assemble a tight TOOTHED reveal coursing for window splays.
+
+    Small header-scale stones in a half-offset running bond where ALTERNATE stones
+    step proud by ``tooth`` and the next course reverses which stones project -- so
+    the face reads as an interlocking woven tooth (an over/under checker of proud
+    and flush stones), tightly jointed. Tileable over ``[0, width] x [0, height]``.
+    It is baked to the same map set as the wall and mapped onto the arch's
+    course-continuous reveal UVs, so the toothed coursing radiates around the splay
+    (fanning over the arch head, running toward the light slit down the jambs).
+
+    Returns the same dict shape as ``build_wall`` (collection / mortar / tile_width
+    / height) so the existing bake machinery consumes it unchanged."""
+    manifest = load_manifest(prefab_dir)
+    rng = np.random.default_rng(seed)
+    # Draw from the ENTIRE prefab set (every aspect), each stone scaled to the
+    # uniform cell -- so the dressing varies stone to stone and the tile does not
+    # repeat trivially. `aspect` only sets the cell SIZE (the coursing scale).
+    pool = manifest["bricks"]
+    asp = manifest["aspects"][aspect]
+    bl, bh, bw = asp["length"], asp["height"], asp["width"]
+    if collection is None:
+        collection = bpy.data.collections.new(name)
+        bpy.context.scene.collection.children.link(collection)
+
+    cache = {}
+    front_y = -0.5 * bw
+    # Courses are MOVED DOWN (pitch < stone height) so successive courses overlap
+    # and the visible bed joint closes -- the dressed top/bottom edges recede, so a
+    # full-height stone at pitch = height would still read a wide vertical gap.
+    course_pitch = 0.95 * bh
+    ncourses = max(1, int(round(height / course_pitch)))
+    step = bl + mortar
+    # Grid with an EXACT whole number of stones per course so the [0, tile_width]
+    # crop tiles seamlessly without a duplicated closer (which would overlap the
+    # last stone). No horizontal offset -- the proud/recessed teeth then form an
+    # INTERLOCKING checkerboard weave (each proud stone flanked above/below and
+    # left/right by recessed ones, meshing over-under).
+    nx = max(1, int(round(width / step)))
+    tile_width = nx * step
+    cellw = step - mortar                          # target stone width (X)
+    cellh = bh                                      # full stone height (courses
+    #                                                overlap via the reduced pitch)
+    count = 0
+    for c in range(ncourses):
+        z0 = c * course_pitch
+        for i in range(nx):
+            b = pool[int(rng.integers(0, len(pool)))]
+            mesh = _import_mesh(b, cache, prefab_dir)
+            lo, hi = b["bbox"]
+            # Scale each (jittered) stone to fill its cell exactly, so the grid has
+            # uniform TIGHT joints (mortar/bed) rather than gaps that vary with the
+            # stone's own size. Depth (Y) is left unscaled.
+            sx = cellw / max(hi[0] - lo[0], 1e-6)
+            sz = cellh / max(hi[2] - lo[2], 1e-6)
+            proud = ((i + c) % 2 == 0)            # woven tooth, reversed each course
+            fy = front_y - (tooth if proud else 0.0)
+            inst = _place(collection, f"{name}_{c:02d}_{count:04d}", mesh, False,
+                          (0.0, 0.0, 0.0),
+                          (i * step - sx * lo[0], fy - lo[1], z0 - sz * lo[2]))
+            inst.scale = (sx, 1.0, sz)
+            count += 1
+
+    height_out = ncourses * course_pitch - bed
+    # Mortar sits BEHIND the recessed (backmost) stone faces at `front_y`, so both
+    # the proud (front_y - tooth) and the recessed stones read proud of it -- not
+    # only the proud ones (which would hide every other stone behind the plane).
+    mortar_obj = _build_mortar(f"{name}_mortar", 0.0, tile_width, height_out,
+                               front_y, mortar_depth, mortar_cell, collection)
+    return {"collection": collection, "mortar": mortar_obj,
+            "tile_width": tile_width, "height": height_out}
 
 
 if __name__ == "__main__":
