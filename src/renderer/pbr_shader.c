@@ -323,13 +323,58 @@ static const char *const PBR_FS =
      * in texture buffers) and inverse-distance blend their SH, reconstructed as\n"
      * cosine irradiance for N -- the dynamic indirect term, added to ambient. */
     "uniform int u_gi_enabled;\n"
+    /* Regular probe-grid layout (rpg-pau4): when u_probe_grid_on, indirect is
+     * TRILINEARLY interpolated from the 8 surrounding grid probes (smooth), not
+     * blended from a froxel's nearest-2 candidates (which seams at froxel edges).
+     * Probe index = (z*dim.y + y)*dim.x + x; origin/cell are per-axis. */
+    "uniform int u_probe_grid_on;\n"
+    "uniform vec3 u_probe_grid_origin;\n"
+    "uniform vec3 u_probe_grid_cell;\n"
+    "uniform vec3 u_probe_grid_dim;\n"   /* float dims (no ivec3 setter); cast in-shader. */
+    /* Per-object weights for the probe STATIC indirect (rpg-pau4): baked surfaces
+     * already carry the lightmap so want little of it (extra bounce only), while
+     * dynamic objects have NO baked GI and take it (boosted) as their only static
+     * ambience. main() picks between them by u_sh_object. */
+    "uniform float u_gi_static_baked_w;\n"
+    "uniform float u_gi_static_dyn_w;\n"
     "uniform samplerBuffer u_probe_pos;\n"
     "uniform samplerBuffer u_probe_sh;\n"
     "uniform usamplerBuffer u_probe_froxel_off;\n"
     "uniform usamplerBuffer u_probe_froxel_cnt;\n"
     "uniform usamplerBuffer u_probe_froxel_idx;\n"
-    "vec3 gi_probe_indirect(vec3 wp, vec3 nn, int pcl){\n"
-    "  if(u_gi_enabled==0) return vec3(0.0);\n"
+    /* Fills @p e_dyn (dynamic-light indirect) and @p e_stat (baked static indirect)
+     * from the nearest probes' two SH4 sets, so main() can weight the static term
+     * per object (rpg-pau4). */
+    /* Reconstruct SH4 irradiance (dyn + stat) from 6 interpolated coeff vectors. */
+    "void sh_recon(vec4 dR,vec4 dG,vec4 dB,vec4 sR,vec4 sG,vec4 sB,vec3 nn,out vec3 e_dyn,out vec3 e_stat){\n"
+    "  vec4 Y=vec4(0.282094792, 0.488602512*nn.y, 0.488602512*nn.z, 0.488602512*nn.x);\n"
+    "  vec4 A=vec4(3.14159265, 2.0943951, 2.0943951, 2.0943951);\n"
+    "  e_dyn  = max(vec3(dot(dR, A*Y), dot(dG, A*Y), dot(dB, A*Y)), vec3(0.0));\n"
+    "  e_stat = max(vec3(dot(sR, A*Y), dot(sG, A*Y), dot(sB, A*Y)), vec3(0.0));\n"
+    "}\n"
+    "void gi_probe_indirect2(vec3 wp, vec3 nn, int pcl, out vec3 e_dyn, out vec3 e_stat){\n"
+    "  e_dyn=vec3(0.0); e_stat=vec3(0.0);\n"
+    "  if(u_gi_enabled==0) return;\n"
+    /* Regular-grid path: trilinearly blend the 8 surrounding grid probes' SH. */
+    "  if(u_probe_grid_on==1){\n"
+    "    ivec3 gdim=ivec3(u_probe_grid_dim+vec3(0.5));\n"
+    "    vec3 g=(wp - u_probe_grid_origin)/u_probe_grid_cell;\n"
+    "    vec3 gmax=vec3(gdim)-vec3(1.0);\n"
+    "    g=clamp(g, vec3(0.0), gmax-vec3(0.0001));\n"
+    "    ivec3 g0=ivec3(floor(g)); vec3 fr=g-vec3(g0);\n"
+    "    vec4 dR=vec4(0.0),dG=vec4(0.0),dB=vec4(0.0),sR=vec4(0.0),sG=vec4(0.0),sB=vec4(0.0);\n"
+    "    for(int c=0;c<8;++c){\n"
+    "      ivec3 o=ivec3(c&1,(c>>1)&1,(c>>2)&1);\n"
+    "      vec3 wv=mix(vec3(1.0)-fr, fr, vec3(o));\n"
+    "      float w=wv.x*wv.y*wv.z; if(w<=0.0) continue;\n"
+    "      ivec3 gc=min(g0+o, gdim-ivec3(1));\n"
+    "      int probe=(gc.z*gdim.y + gc.y)*gdim.x + gc.x;\n"
+    "      int base=probe*6;\n"
+    "      dR+=texelFetch(u_probe_sh,base+0)*w; dG+=texelFetch(u_probe_sh,base+1)*w; dB+=texelFetch(u_probe_sh,base+2)*w;\n"
+    "      sR+=texelFetch(u_probe_sh,base+3)*w; sG+=texelFetch(u_probe_sh,base+4)*w; sB+=texelFetch(u_probe_sh,base+5)*w;\n"
+    "    }\n"
+    "    sh_recon(dR,dG,dB,sR,sG,sB,nn,e_dyn,e_stat); return;\n"
+    "  }\n"
     /* Probes are binned into the SAME froxels as the forward+ lights; @p pcl is the\n"
      * fragment's cluster (computed once in main), so just read its probe list. */
     "  int poff=int(texelFetch(u_probe_froxel_off,pcl).r);\n"
@@ -344,24 +389,24 @@ static const char *const PBR_FS =
     "    if(e<e0){ e1=e0;n1=n0; e0=e;n0=probe; }\n"
     "    else if(e<e1){ e1=e;n1=probe; }\n"
     "  }\n"
-    "  if(n0<0) return vec3(0.0);\n"
-    /* Each probe's SH4 = 3 RGBA texels (R,G,B coeff vectors). Inverse-distance\n"
-     * blend the nearest probes' coeff vectors, then reconstruct once. */
-    "  vec4 aR=vec4(0.0), aG=vec4(0.0), aB=vec4(0.0); float wsum=0.0;\n"
+    "  if(n0<0) return;\n"
+    /* Each probe is 6 RGBA texels: 3 dynamic SH4 coeff vectors then 3 static.\n"
+     * Inverse-distance blend the nearest probes' coeff vectors, reconstruct once. */
+    "  vec4 dR=vec4(0.0), dG=vec4(0.0), dB=vec4(0.0);\n"
+    "  vec4 sR=vec4(0.0), sG=vec4(0.0), sB=vec4(0.0); float wsum=0.0;\n"
     "  int ni[2]; float ne[2]; ni[0]=n0;ni[1]=n1; ne[0]=e0;ne[1]=e1;\n"
     "  for(int j=0;j<2;++j){ if(ni[j]<0) continue; float w=1.0/(ne[j]+1e-4); wsum+=w;\n"
-    "    int base=ni[j]*3;\n"
-    "    aR+=texelFetch(u_probe_sh,base+0)*w;\n"
-    "    aG+=texelFetch(u_probe_sh,base+1)*w;\n"
-    "    aB+=texelFetch(u_probe_sh,base+2)*w;\n"
+    "    int base=ni[j]*6;\n"
+    "    dR+=texelFetch(u_probe_sh,base+0)*w; dG+=texelFetch(u_probe_sh,base+1)*w; dB+=texelFetch(u_probe_sh,base+2)*w;\n"
+    "    sR+=texelFetch(u_probe_sh,base+3)*w; sG+=texelFetch(u_probe_sh,base+4)*w; sB+=texelFetch(u_probe_sh,base+5)*w;\n"
     "  }\n"
-    "  if(wsum<=0.0) return vec3(0.0);\n"
+    "  if(wsum<=0.0) return;\n"
     "  float inv=1.0/wsum;\n"       /* nn is already normalised (passed from main). */
     /* Linear SH (band 0 + band 1) cosine-convolved irradiance: A0=pi, A1=2pi/3. */
     "  vec4 Y=vec4(0.282094792, 0.488602512*nn.y, 0.488602512*nn.z, 0.488602512*nn.x);\n"
     "  vec4 A=vec4(3.14159265, 2.0943951, 2.0943951, 2.0943951);\n"
-    "  vec3 r = vec3(dot(aR, A*Y), dot(aG, A*Y), dot(aB, A*Y));\n"
-    "  return max(r*inv, vec3(0.0));\n"
+    "  e_dyn  = max(vec3(dot(dR, A*Y), dot(dG, A*Y), dot(dB, A*Y))*inv, vec3(0.0));\n"
+    "  e_stat = max(vec3(dot(sR, A*Y), dot(sG, A*Y), dot(sB, A*Y))*inv, vec3(0.0));\n"
     "}\n"
     "void main() {\n"
     /* Material textures tile at u_uv_scale; the lightmap (v_uv1) is NOT scaled. */
@@ -461,8 +506,12 @@ static const char *const PBR_FS =
     "  if(u_sh_enabled==1 && u_sh_object>0.5 && u_sh_layer>=0){ vec3 E = max(pbr_sh_irradiance(N), vec3(0.0)); ambient += albedo*E*u_sh_scale/PI*ao; }\n"
     /* Dynamic-light indirect from the SDF-probe GI: incident irradiance E(N) ->\n"
      * diffuse albedo/PI * E, on top of the baked static ambient. */
-    "  ambient += albedo * gi_probe_indirect(v_world_pos, N, frag_cluster) * (ao/PI);\n"
-    "  if(u_debug_mode==7){ frag=vec4(gi_probe_indirect(v_world_pos, N, frag_cluster),1.0); return; }\n"
+    /* Probe indirect: dynamic always; static weighted by whether this object is\n"
+     * baked (has the lightmap) or dynamic (needs the boosted static ambience). */
+    "  vec3 gi_dyn, gi_stat; gi_probe_indirect2(v_world_pos, N, frag_cluster, gi_dyn, gi_stat);\n"
+    "  float sgw = (u_sh_object>0.5) ? u_gi_static_baked_w : u_gi_static_dyn_w;\n"
+    "  ambient += albedo * (gi_dyn + sgw*gi_stat) * (ao/PI);\n"
+    "  if(u_debug_mode==7){ frag=vec4(gi_dyn + sgw*gi_stat,1.0); return; }\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"
      * emissive LIGHTING of the scene is baked into the lightmap). Driven by the\n"

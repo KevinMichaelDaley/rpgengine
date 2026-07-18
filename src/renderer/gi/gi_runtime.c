@@ -31,6 +31,10 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     memset(gi, 0, sizeof *gi);
     gi->soft_k = cfg->soft_k > 0.0f ? cfg->soft_k : 8.0f;
     gi->update_interval = cfg->update_interval > 0 ? cfg->update_interval : 8;
+    /* Static-indirect weights (rpg-pau4): baked surfaces get a mild extra bounce,
+     * dynamic objects get the full static ambience. Overridable per demo. */
+    gi->static_baked_w = 0.35f;
+    gi->static_dyn_w = 1.0f;
 
     /* --- Baked SDF residency. --- */
     if (gi_sdf_stream_load(&gi->sdf, cfg->sdf_prefix) <= 0) {
@@ -233,6 +237,16 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_probe_froxel_idx", (int32_t)u); ++u;
 
     shader_uniform_set_int(cache, program, "u_gi_enabled", 1);
+    shader_uniform_set_float(cache, program, "u_gi_static_baked_w", gi->static_baked_w);
+    shader_uniform_set_float(cache, program, "u_gi_static_dyn_w", gi->static_dyn_w);
+    shader_uniform_set_int(cache, program, "u_probe_grid_on", gi->probe_grid_on);
+    if (gi->probe_grid_on) {
+        float dimf[3] = { (float)gi->probe_grid_dim[0], (float)gi->probe_grid_dim[1],
+                          (float)gi->probe_grid_dim[2] };
+        shader_uniform_set_vec3(cache, program, "u_probe_grid_origin", gi->probe_grid_origin);
+        shader_uniform_set_vec3(cache, program, "u_probe_grid_cell", gi->probe_grid_cell);
+        shader_uniform_set_vec3(cache, program, "u_probe_grid_dim", dimf);
+    }
 }
 
 void gi_runtime_destroy(gi_runtime_t *gi)

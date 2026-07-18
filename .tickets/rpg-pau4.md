@@ -1,6 +1,6 @@
 ---
 id: rpg-pau4
-status: open
+status: in_progress
 deps: []
 links: [rpg-hw75]
 created: 2026-07-18T18:50:36Z

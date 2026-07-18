@@ -88,39 +88,46 @@ static const char *CS_SRC =
     "  return sum; }\n"
     /* Cone-trace the SDF from the probe along dir; at the hit, return the diffuse\n"
      * radiance the surface bounces back toward the probe. Miss -> 0 (no sky). */
-    "vec3 trace(vec3 o,vec3 dir){ float t=0.12;\n"
+    /* @p rdyn = the DYNAMIC-light bounce, @p rstat = the baked STATIC (lightmap)\n"
+     * bounce. Kept separate so the forward+ can weight them per object: static\n"
+     * surfaces already carry the lightmap (so want little/none of rstat), while\n"
+     * dynamic objects have NO baked GI and rely on rstat entirely. */
+    "void trace(vec3 o,vec3 dir, out vec3 rdyn, out vec3 rstat){\n"
+    "  rdyn=vec3(0.0); rstat=vec3(0.0); float t=0.12;\n"
     "  for(int i=0;i<64;++i){ vec3 p=o+dir*t; float h=scene_sdf(p);\n"
     "    if(h<0.03){ vec3 n=sdf_normal(p); if(dot(n,dir)>0.0) n=-n;\n"
     /* Tint the bounce by the surface's voxelised albedo; the cone footprint\n"
      * widens with t, so read a coarser albedo mip further out. u_albedo scales. */
     "      float lod = clamp(log2(1.0 + t*1.5), 0.0, 5.0);\n"
     "      vec3 alb = scene_albedo(p - n*u_sdf_vox[0]*0.5, lod);\n"
-    /* Outgoing radiance = albedo * (dynamic-light direct + boosted baked static\n"
-     * irradiance) / PI. The static term is the lightmap ambience gathered per\n"
-     * cone -- one bounce more than the offline bake.\n"
-     * SDF occlusion: the cone sphere-marched the SDF to reach p, so this surface\n"
+    /* SDF occlusion: the cone sphere-marched the SDF to reach p, so this surface\n"
      * is already visible to the probe. The irradiance volume is sampled on the\n"
      * PROBE-FACING side (p + n*..., n points back toward the probe) so a thin\n"
      * wall's far (unlit/occluded) side can never bleed through -- reading into\n"
      * the solid (-n) would cross the wall and leak. */
     "      vec3 Es = static_irr(p + n*u_static_vox*0.5);\n"
-    "      return u_albedo * alb * (direct_at(p+n*0.06, n) + u_static_k*Es) / PI; }\n"
+    "      rdyn  = u_albedo * alb * direct_at(p+n*0.06, n) / PI;\n"
+    "      rstat = u_albedo * alb * (u_static_k*Es) / PI;\n"
+    "      return; }\n"
     "    t += max(h,0.04); if(t>25.0) break; }\n"
-    "  return vec3(0.0); }\n"
+    "}\n"
     /* Linear SH (band 0 + band 1 = 4 coeffs) -- cheap, ample for diffuse indirect. */
     "void sh_basis(vec3 d, out float y[4]){\n"
     "  y[0]=0.282094792; y[1]=0.488602512*d.y; y[2]=0.488602512*d.z; y[3]=0.488602512*d.x; }\n"
     "void main(){ uint gid=gl_GlobalInvocationID.x; if(gid>=uint(u_nprobes)) return;\n"
-    "  vec3 o=ppos[gid].xyz; float sh[12]; for(int k=0;k<12;++k) sh[k]=0.0;\n"
+    /* Two SH4 sets per probe: [0..11] dynamic, [12..23] static. */
+    "  vec3 o=ppos[gid].xyz; float shd[12]; float shs[12];\n"
+    "  for(int k=0;k<12;++k){ shd[k]=0.0; shs[k]=0.0; }\n"
     "  float ga=2.399963229728653; float w=4.0*PI/float(u_ncones);\n"
     /* Fibonacci sphere of directions: gather one-bounce indirect over the sphere. */
     "  for(int s=0;s<u_ncones;++s){ float z=1.0-(2.0*float(s)+1.0)/float(u_ncones);\n"
     "    float r=sqrt(max(0.0,1.0-z*z)); float phi=ga*float(s);\n"
     "    vec3 dir=vec3(r*cos(phi), r*sin(phi), z);\n"
-    "    vec3 rad=trace(o,dir); if(dot(rad,rad)<=0.0) continue;\n"
+    "    vec3 rd, rs; trace(o,dir, rd, rs);\n"
     "    float y[4]; sh_basis(dir,y);\n"
-    "    for(int k=0;k<4;++k){ sh[k]+=rad.r*y[k]*w; sh[4+k]+=rad.g*y[k]*w; sh[8+k]+=rad.b*y[k]*w; } }\n"
-    "  for(int k=0;k<12;++k) psh[gid*12+k]=sh[k]; }\n";
+    "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*w; shd[4+k]+=rd.g*y[k]*w; shd[8+k]+=rd.b*y[k]*w;\n"
+    "                          shs[k]+=rs.r*y[k]*w; shs[4+k]+=rs.g*y[k]*w; shs[8+k]+=rs.b*y[k]*w; } }\n"
+    "  for(int k=0;k<12;++k){ psh[gid*24+k]=shd[k]; psh[gid*24+12+k]=shs[k]; } }\n";
 
 static GLuint cs_build(void)
 {
@@ -160,7 +167,8 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_pos);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 12 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    /* 24 floats/probe: SH4 dynamic [0..11] + SH4 static [12..23] (rpg-pau4). */
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_lights);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)g->max_lights * 4 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_boxes);
@@ -169,8 +177,8 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     /* Texture buffers so the forward+ material can sample probe SH + positions. */
     glGenTextures(1, &g->tbo_sh_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_sh_tex);
-    /* RGBA32F view: each probe's SH4 is 12 floats = 3 vec4 texels (R,G,B coeffs),
-     * so the material reads a probe's SH in 3 fetches instead of 12 scalars. */
+    /* RGBA32F view: each probe is 24 floats = 6 vec4 texels -- 3 for the dynamic
+     * SH4 (R,G,B coeffs) then 3 for the static SH4 (rpg-pau4). */
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g->b_sh);
     glGenTextures(1, &g->tbo_pos_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_pos_tex);

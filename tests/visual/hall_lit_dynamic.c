@@ -552,7 +552,8 @@ int main(int argc,char **argv){
     char             (*fnames)[128] = calloc((size_t)nm_cap,sizeof *fnames);
     static_mesh_t      *meshes = calloc((size_t)nm_cap,sizeof *meshes);
     render_submesh_t   *subs   = calloc((size_t)nm_cap,sizeof *subs);
-    render_renderable_t *rb    = calloc((size_t)nm_cap,sizeof *rb);
+    /* +8 slack for dynamic props added after the meshes (GI boxes, hall cube). */
+    render_renderable_t *rb    = calloc((size_t)nm_cap+8,sizeof *rb);
     if(!dm||!grp||!fnames||!meshes||!subs||!rb){ fprintf(stderr,"oom (nm_cap=%d)\n",nm_cap); return 1; }
     /* GPU resources = meshes + 9 SH atlases + 8 material textures, all queued
      * before a single drain -> the queue must hold them all at once. */
@@ -828,7 +829,7 @@ int main(int argc,char **argv){
     /* Far plane must clear the whole scene (a 400 m zone dwarfs the hall's 60 m). */
     float cam_far=fmaxf(120.0f,hall_len*1.8f);
     render_camera_look_at(&cam,eye,tgt,up,60.0f*(float)M_PI/180.0f,(float)W/(float)H,0.2f,cam_far);
-    render_scene_t scene; render_scene_init(&scene,rb,nm_cap);
+    render_scene_t scene; render_scene_init(&scene,rb,nm_cap+8);
     float model[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
     for(int i=0;i<nm;++i){ render_scene_add(&scene,&meshes[i],&mats[grp[i]],model);
         scene.items[i].sh_layer = stream ? -1 : mlayer[i]; }  /* stream: set per frame */
@@ -971,25 +972,65 @@ int main(int argc,char **argv){
           if(!getenv("GI_NOSHADOW")) pt.flags|=RENDER_LIGHT_FLAG_SHADOW;
           render_light_add(&lights,&pt); }
       } /* end !great_hall generic demo geometry */
-        /* Probes on a stratified interior grid, inset from the walls, at two
-         * heights. GREAT_HALL uses a 6x2x4 = 48 set jittered per cell (adaptive
-         * stratified placement); the generic demo uses 5x2x4 = 40. */
-        static float hall_probes[48 * 3]; int n_probes = 0;
-        { int pnx = great_hall?6:5, pny = 2, pnz = 4; float ins = 0.14f;
-          uint32_t pj = 9157u;
-          for (int iz = 0; iz < pnz; ++iz) for (int iy = 0; iy < pny; ++iy)
-          for (int ix = 0; ix < pnx; ++ix) {
-            float fx = (pnx>1)?(float)ix/(float)(pnx-1):0.5f;
-            float fy = (pny>1)?(float)iy/(float)(pny-1):0.5f;
-            float fz = (pnz>1)?(float)iz/(float)(pnz-1):0.5f;
-            if(great_hall){ float j=0.045f;   /* per-cell jitter -> adaptive spread */
-              fx+=(frand(&pj)-0.5f)*j; fz+=(frand(&pj)-0.5f)*j;
-              fx=fx<0?0:(fx>1?1:fx); fz=fz<0?0:(fz>1?1:fz); }
-            hall_probes[n_probes*3+0] = amin[0]+span[0]*(ins+(1.0f-2.0f*ins)*fx);
-            hall_probes[n_probes*3+1] = amin[1]+span[1]*(0.22f+0.52f*fy); /* mid heights. */
-            hall_probes[n_probes*3+2] = amin[2]+span[2]*(ins+(1.0f-2.0f*ins)*fz);
-            ++n_probes;
-          } }
+        /* GREAT_HALL: opt-in DYNAMIC test cube (u_sh_object=0 -> not in the bake)
+         * for exercising the boosted static-probe ambience on non-baked geometry.
+         * Off by default (needs probe coverage at its spot to light up); GH_CUBE=1. */
+        if(great_hall && getenv("GH_CUBE")!=NULL){
+            render_scene_mark_dynamic(&scene);            /* items after here are dynamic. */
+            static static_mesh_t gh_cube;
+            static_mesh_create_box(&loader, 1.0f,1.0f,1.0f, &gh_cube);
+            /* Centred in the aisle, just ahead of the opening camera, floating at
+             * waist height so it reads clearly against the floor. */
+            float bx=amin[lenax]+span[lenax]*0.78f, by=amin[1]+span[1]*0.22f, bz=center[crossax]-span[crossax]*0.12f;
+            float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+            bm[12+lenax]=bx; bm[13]=by; bm[12+crossax]=bz;
+            render_scene_add(&scene,&gh_cube,&mats[5],bm);  /* marble material. */
+        }
+        /* Probe placement. GREAT_HALL: a DENSE interior grid at ~GI_PSPACE metres
+         * (default 1.3) that fills the whole volume -- floor to roof -- so every
+         * froxel cluster has a probe within reach. Dynamic objects mid-hall (and
+         * the shadowed faces of static geometry) then always find indirect instead
+         * of rendering black. The generic demo keeps its sparse 5x2x4 stratified
+         * set. */
+        int probe_cap; float *hall_probes; int n_probes = 0;
+        /* Regular-grid layout for trilinear sampling (0 dims = not a grid). */
+        float pg_origin[3]={0,0,0}, pg_cell[3]={1,1,1}; int pg_dim[3]={0,0,0};
+        if(great_hall){
+            float sp = getenv("GI_PSPACE")?(float)atof(getenv("GI_PSPACE")):1.3f; if(sp<0.4f) sp=0.4f;
+            int pnx=(int)(span[0]/sp)+1, pny=(int)(span[1]/sp)+1, pnz=(int)(span[2]/sp)+1;
+            if(pnx<2)pnx=2; if(pny<2)pny=2; if(pnz<2)pnz=2;
+            if(pnx>40)pnx=40; if(pny>24)pny=24; if(pnz>24)pnz=24;
+            probe_cap=pnx*pny*pnz; hall_probes=malloc((size_t)probe_cap*3*sizeof(float));
+            float ins=0.06f, fylo=0.05f, fyhi=0.95f;
+            /* Grid layout the shader interpolates over: origin = probe (0,0,0),
+             * per-axis cell = spacing between adjacent probes. Order below is
+             * (z outer, y, x inner) so probe index = (z*pny + y)*pnx + x. */
+            pg_dim[0]=pnx; pg_dim[1]=pny; pg_dim[2]=pnz;
+            pg_origin[0]=amin[0]+span[0]*ins; pg_origin[1]=amin[1]+span[1]*fylo; pg_origin[2]=amin[2]+span[2]*ins;
+            pg_cell[0]=span[0]*(1.0f-2.0f*ins)/(float)(pnx-1);
+            pg_cell[1]=span[1]*(fyhi-fylo)/(float)(pny-1);
+            pg_cell[2]=span[2]*(1.0f-2.0f*ins)/(float)(pnz-1);
+            for(int iz=0;iz<pnz;++iz) for(int iy=0;iy<pny;++iy) for(int ix=0;ix<pnx;++ix){
+                hall_probes[n_probes*3+0]=pg_origin[0]+pg_cell[0]*(float)ix;
+                hall_probes[n_probes*3+1]=pg_origin[1]+pg_cell[1]*(float)iy;
+                hall_probes[n_probes*3+2]=pg_origin[2]+pg_cell[2]*(float)iz;
+                ++n_probes;
+            }
+            fprintf(stderr,"gh probes: %dx%dx%d = %d (spacing %.2fm)\n",pnx,pny,pnz,n_probes,sp);
+        } else {
+            int pnx=5,pny=2,pnz=4; float ins=0.14f;
+            probe_cap=pnx*pny*pnz; hall_probes=malloc((size_t)probe_cap*3*sizeof(float));
+            for(int iz=0;iz<pnz;++iz) for(int iy=0;iy<pny;++iy) for(int ix=0;ix<pnx;++ix){
+                float fx=(pnx>1)?(float)ix/(float)(pnx-1):0.5f;
+                float fy=(pny>1)?(float)iy/(float)(pny-1):0.5f;
+                float fz=(pnz>1)?(float)iz/(float)(pnz-1):0.5f;
+                hall_probes[n_probes*3+0]=amin[0]+span[0]*(ins+(1.0f-2.0f*ins)*fx);
+                hall_probes[n_probes*3+1]=amin[1]+span[1]*(0.22f+0.52f*fy);
+                hall_probes[n_probes*3+2]=amin[2]+span[2]*(ins+(1.0f-2.0f*ins)*fz);
+                ++n_probes;
+            }
+        }
+        (void)probe_cap;
         gi_runtime_config_t gc; memset(&gc,0,sizeof gc);
         gc.loader=&loader; gc.sdf_prefix=lmfile;
         gc.aabb_min[0]=amin[0]; gc.aabb_min[1]=amin[1]+0.3f; gc.aabb_min[2]=amin[2];
@@ -999,20 +1040,30 @@ int main(int argc,char **argv){
         gc.max_lights=512; gc.max_boxes=8; gc.soft_k=8.0f;
         /* Bin probes into the SAME froxels as forward+ (identical cluster config)
          * so the material reads probe candidates from the fragment's own cluster. */
-        gc.froxel=fcfg.cluster; gc.probe_min=4; gc.probe_sphere_margin=0.5f; gc.bin_interval=1;
+        gc.froxel=fcfg.cluster; gc.probe_min=4;
+        /* Dense grid -> a modest margin already reaches every cluster. */
+        gc.probe_sphere_margin=great_hall?1.2f:0.5f; gc.bin_interval=1;
         if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
-        /* rpg-pau4: fold the baked lightmap ambience into the probes. Build the
-         * static irradiance volume from the atlas + meshes and bind it so the
-         * cone trace gathers it. GI_STATIC=0 disables (for before/after diffs);
-         * GI_STATIC_K scales the boost. */
-        else if(great_hall && !no_lm && (getenv("GI_STATIC")==NULL || atoi(getenv("GI_STATIC")))){
-            static gi_static_volume_t g_svol;
-            if(build_static_irr_volume(&g_svol, dm, nm, mrect, atlas_w, atlas_h, lmfile, amin, amax)==0){
-                float dimf[3]={(float)g_svol.dims[0],(float)g_svol.dims[1],(float)g_svol.dims[2]};
-                float sk=getenv("GI_STATIC_K")?(float)atof(getenv("GI_STATIC_K")):1.0f;
-                gi_runtime_set_static_volume(&g_gi, g_svol.tex, g_svol.origin, dimf, g_svol.voxel, sk);
+        else {
+            if(pg_dim[0]>0) gi_runtime_set_probe_grid(&g_gi, pg_origin, pg_cell, pg_dim); /* trilinear. */
+            /* rpg-pau4: fold the baked lightmap ambience into the probes. Build the
+             * static irradiance volume from the atlas + meshes and bind it so the
+             * cone trace gathers it. GI_STATIC=0 disables it; GI_STATIC_K scales it. */
+            if(great_hall && !no_lm && (getenv("GI_STATIC")==NULL || atoi(getenv("GI_STATIC")))){
+                static gi_static_volume_t g_svol;
+                if(build_static_irr_volume(&g_svol, dm, nm, mrect, atlas_w, atlas_h, lmfile, amin, amax)==0){
+                    float dimf[3]={(float)g_svol.dims[0],(float)g_svol.dims[1],(float)g_svol.dims[2]};
+                    float sk=getenv("GI_STATIC_K")?(float)atof(getenv("GI_STATIC_K")):1.0f;
+                    gi_runtime_set_static_volume(&g_gi, g_svol.tex, g_svol.origin, dimf, g_svol.voxel, sk);
+                    /* Per-object static weights: baked surfaces get a mild extra bounce,
+                     * the dynamic cube gets the full (boosted) static ambience. */
+                    float bw=getenv("GI_STATIC_BAKED")?(float)atof(getenv("GI_STATIC_BAKED")):0.35f;
+                    float dw=getenv("GI_STATIC_DYN")?(float)atof(getenv("GI_STATIC_DYN")):3.0f;
+                    gi_runtime_set_static_weights(&g_gi, bw, dw);
+                }
             }
         }
+        free(hall_probes);   /* gi_runtime_init copied the positions into its own set. */
     }
 
     glViewport(0,0,W,H);

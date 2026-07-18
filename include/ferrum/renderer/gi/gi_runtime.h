@@ -73,6 +73,17 @@ typedef struct gi_runtime {
     float            soft_k;
     int              update_interval; /**< recompute cadence (frames). */
     int              frame_counter;
+    /* Per-object weights for the probe STATIC indirect (rpg-pau4). baked_w scales
+     * it for lightmapped surfaces (small: extra bounce only); dyn_w for dynamic
+     * objects (their only static ambience). Bound as forward+ uniforms. */
+    float            static_baked_w;
+    float            static_dyn_w;
+    /* Regular probe-grid layout for trilinear indirect (rpg-pau4). grid_on=0 ->
+     * the forward+ falls back to froxel nearest-probe blending. */
+    int              probe_grid_on;
+    float            probe_grid_origin[3];
+    float            probe_grid_cell[3];
+    int              probe_grid_dim[3];
     bool             ready;
 
     /* --- Probe froxel binning: probes assigned to the SAME froxels the forward+
@@ -121,6 +132,24 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
 void gi_runtime_set_static_volume(gi_runtime_t *gi, unsigned int tex,
                                   const float origin[3], const float dim[3],
                                   float vox, float k);
+
+/**
+ * @brief Set the per-object static-indirect weights (rpg-pau4): @p baked_w for
+ *        lightmapped surfaces (small -- they already have the bake), @p dyn_w for
+ *        dynamic objects (their only source of static ambience). NULL-safe.
+ */
+void gi_runtime_set_static_weights(gi_runtime_t *gi, float baked_w, float dyn_w);
+
+/**
+ * @brief Declare that the probes form a regular grid so the forward+ samples
+ *        indirect by TRILINEAR interpolation of the 8 surrounding probes instead
+ *        of froxel nearest-probe blending (rpg-pau4). Probe index must be
+ *        (z*dim[1] + y)*dim[0] + x. @p origin is the world position of probe
+ *        (0,0,0); @p cell is the per-axis spacing. Pass dim all-zero to disable.
+ *        NULL-safe.
+ */
+void gi_runtime_set_probe_grid(gi_runtime_t *gi, const float origin[3],
+                               const float cell[3], const int dim[3]);
 
 /** @brief Free everything. NULL-safe. */
 void gi_runtime_destroy(gi_runtime_t *gi);
