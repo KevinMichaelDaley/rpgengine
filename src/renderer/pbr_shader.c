@@ -310,7 +310,12 @@ static const char *const PBR_FS =
     "      float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*prad, float(i))).r;\n"
     "      lit += (dp < d - bias) ? 0.0 : 1.0;\n"
     "    }\n"
-    "    vis = lit * 0.125; break;\n"     /* finest containing cascade wins (nested). */
+    /* Cascades PARTITION casters by size, so a fragment lands in several and each\n"
+     * holds different occluders (small props in one, the wall+roof shell in\n"
+     * another). Union the occlusion by keeping the most-occluded result across\n"
+     * every containing cascade -- do NOT break at the first, or a floor point in\n"
+     * the small-prop cascade never sees the roof and the sun leaks through it. */
+    "    vis = min(vis, lit * 0.125);\n"
     "  }\n"
     "  return min(vis, pbr_dyn_shadow(fragpos));\n"
     "}\n"
