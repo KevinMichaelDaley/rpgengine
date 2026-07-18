@@ -2,7 +2,7 @@
 id: rpg-hw75
 status: open
 deps: []
-links: []
+links: [rpg-pau4]
 created: 2026-07-18T18:45:50Z
 type: feature
 priority: 2
