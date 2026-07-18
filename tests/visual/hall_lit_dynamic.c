@@ -521,6 +521,9 @@ static gi_runtime_t g_gi;
 static int g_part_base, g_npart;   /* index range of the particle lights in the store. */
 static gi_collider_t g_boxes[8];   static int g_nboxes;
 static float g_box_home[8][3];     static int g_box_item[8];
+/* Two glossy metal cubes that slide sinusoidally through the hall centre (out of
+ * phase) so the moving low-roughness surfaces show the probe SG specular. */
+static static_mesh_t gh_mov[2];    static int gh_mov_item[2]={-1,-1};
 static void gi_bind_cb(void *u, shader_uniform_cache_t *c, const shader_program_t *p){
     gi_runtime_bind((gi_runtime_t *)u, c, p, 24u);
 }
@@ -799,7 +802,7 @@ int main(int argc,char **argv){
       /* Sit the flame in the OPEN firebox cavity: above the hearth and forward of
        * the solid back wall (fp_opening slab, z<=-3.05), toward the +z opening, so
        * its own shadow doesn't self-occlude it against the back wall. */
-      f.position[0]=fp[0]; f.position[1]=fp[1]+0.85f; f.position[2]=fp[2]+0.32f;
+      f.position[0]=fp[0]; f.position[1]=fp[1]+0.8f; f.position[2]=fp[2]+0.08f;
       f.color[0]=1.0f; f.color[1]=0.42f; f.color[2]=0.13f;   /* warm orange fire */
       f.intensity=fp_base; f.range=9.0f;
       f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
@@ -874,7 +877,7 @@ int main(int argc,char **argv){
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
      * direct sun + its CSM shadows. */
-    fcfg.sh_enabled=(shadow_only||spot_only||no_lm||fire_only)?0:1; fcfg.sh_scale=(lm_only||great_hall?1.0f:(csm_demo?0.5f:0.4f))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    fcfg.sh_enabled=(shadow_only||spot_only||no_lm||fire_only)?0:1; fcfg.sh_scale=(lm_only?1.0f:(great_hall?0.7f:(csm_demo?0.5f:0.4f)))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
     fcfg.shadow_light=-1; /* multi-light path: point lights tagged FLAG_SHADOW cast. */
     fcfg.shadow_max=8; fcfg.shadow_res=256; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;
@@ -984,19 +987,23 @@ int main(int argc,char **argv){
           if(!getenv("GI_NOSHADOW")) pt.flags|=RENDER_LIGHT_FLAG_SHADOW;
           render_light_add(&lights,&pt); }
       } /* end !great_hall generic demo geometry */
-        /* GREAT_HALL: opt-in DYNAMIC test cube (u_sh_object=0 -> not in the bake)
-         * for exercising the boosted static-probe ambience on non-baked geometry.
-         * Off by default (needs probe coverage at its spot to light up); GH_CUBE=1. */
-        if(great_hall && getenv("GH_CUBE")!=NULL){
+        /* GREAT_HALL: two DYNAMIC glossy-metal cubes (u_sh_object=0 -> not baked)
+         * that slide through the hall centre; low roughness -> they mirror the
+         * probe SG specular (fire + windows) as they move. GH_NOCUBE disables. */
+        if(great_hall && getenv("GH_NOCUBE")==NULL){
             render_scene_mark_dynamic(&scene);            /* items after here are dynamic. */
-            static static_mesh_t gh_cube;
-            static_mesh_create_box(&loader, 1.0f,1.0f,1.0f, &gh_cube);
-            /* Centred in the aisle, just ahead of the opening camera, floating at
-             * waist height so it reads clearly against the floor. */
-            float bx=amin[lenax]+span[lenax]*0.78f, by=amin[1]+span[1]*0.22f, bz=center[crossax]-span[crossax]*0.12f;
-            float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
-            bm[12+lenax]=bx; bm[13]=by; bm[12+crossax]=bz;
-            render_scene_add(&scene,&gh_cube,&mats[5],bm);  /* marble material. */
+            material_init(&mats[6]);                      /* polished metal (no maps -> tint). */
+            mats[6].tint[0]=mats[6].tint[1]=mats[6].tint[2]=0.85f;
+            mats[6].metalness=0.85f; mats[6].roughness_min=0.14f; mats[6].roughness_max=0.14f;
+            for(int c=0;c<2;++c){
+                static_mesh_create_box(&loader, 0.8f,0.8f,0.8f, &gh_mov[c]);
+                float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+                bm[13]=amin[1]+span[1]*0.28f;                       /* waist height. */
+                bm[12+lenax]=center[lenax];
+                bm[12+crossax]=center[crossax]+(c?0.9f:-0.9f);      /* side by side. */
+                gh_mov_item[c]=(int)scene.count;
+                render_scene_add(&scene,&gh_mov[c],&mats[6],bm);
+            }
         }
         /* Probe placement. GREAT_HALL: a DENSE interior grid at ~GI_PSPACE metres
          * (default 1.3) that fills the whole volume -- floor to roof -- so every
@@ -1121,12 +1128,18 @@ int main(int argc,char **argv){
     if(stream) sh_stream_prepass_init(&sstream, W/4>0?W/4:1, H/4>0?H/4:1);
     for(int frame=0;frame<nframes;++frame){
         if(fp_idx>=0){
-            /* Small random step toward and away from the mean; reversion keeps the
-             * average at fp_base, the noise makes it flicker frame to frame. */
-            fp_cur += (fp_base-fp_cur)*0.08f + (frand(&fp_rng)-0.5f)*0.14f*fp_base;
-            if(fp_cur<0.62f*fp_base) fp_cur=0.62f*fp_base;
-            if(fp_cur>1.42f*fp_base) fp_cur=1.42f*fp_base;
+            /* Mean-reverting random walk; wider noise + clamp = livelier flicker. */
+            fp_cur += (fp_base-fp_cur)*0.10f + (frand(&fp_rng)-0.5f)*0.30f*fp_base;
+            if(fp_cur<0.45f*fp_base) fp_cur=0.45f*fp_base;
+            if(fp_cur>1.65f*fp_base) fp_cur=1.65f*fp_base;
             lights.lights[fp_idx].intensity=fp_cur;
+        }
+        /* Slide the two glossy cubes sinusoidally through the hall centre, out of
+         * phase, so their low-roughness faces sweep the probe SG reflections. */
+        if(gh_mov_item[0]>=0){
+            float ph=(float)frame*0.035f, amp=span[lenax]*0.32f;
+            for(int c=0;c<2;++c)
+                scene.items[gh_mov_item[c]].model[12+lenax]=center[lenax]+amp*sinf(ph+(c?1.8f:0.0f));
         }
         if(noclip){
             /* Frame delta (clamped so a stall doesn't teleport the camera). */
