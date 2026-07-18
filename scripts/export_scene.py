@@ -131,16 +131,16 @@ def export_mesh(obj, out_dir):
 # --------------------------------------------------------------------------
 # Material bake
 # --------------------------------------------------------------------------
-def _bake_plane(tx, ty):
-    """A temporary grid at the origin spanning [0,tx] x [0,ty] m, whose UVs equal
-    the world position (== one map repeat per axis, since our materials sample
-    world-scale UVs), so a bake of it captures one seamless tile of the material.
-    The bake image is square (res x res); the per-axis uv_scale un-stretches it."""
+def _bake_plane():
+    """A unit grid whose UVs span exactly [0,1] x [0,1] so the whole plane fills
+    the [0,1] bake image (Cycles only rasterises UVs in [0,1] into the target,
+    so a [0,tile] UV would capture just a FRAGMENT of the map). The caller scales
+    the material's Mapping nodes so ONE full map repeat lands on this [0,1]."""
     import bmesh
     me = bpy.data.meshes.new("_bake_tmp")
     bm = bmesh.new()
     n = 2
-    vs = [[bm.verts.new((tx * i / n, ty * j / n, 0.0))
+    vs = [[bm.verts.new((i / n, j / n, 0.0))
            for i in range(n + 1)] for j in range(n + 1)]
     uvl = bm.loops.layers.uv.new("UVMap")
     for j in range(n):
@@ -230,12 +230,23 @@ def export_material(mat, out_dir, tiles, res):
         _write_json(os.path.join(out_dir, "materials", name + ".mat.json"), rec)
         return rec
 
-    # Tiling material: bake one repeat. Tile is per-axis (x, y); a scalar = square.
+    # Tiling material: bake one FULL repeat. Tile is per-axis (x, y); scalar=square.
     t = tiles[name]
     tx, ty = (float(t), float(t)) if isinstance(t, (int, float)) else (float(t[0]), float(t[1]))
     os.makedirs(mdir, exist_ok=True)
-    plane = _bake_plane(tx, ty)
+    plane = _bake_plane()
     plane.data.materials.append(mat)
+    # Scale every Mapping node by the tile so a mapping whose repeat == tile lands
+    # exactly one full repeat on the [0,1] bake UV; other mappings (e.g. the finer
+    # aperiodic field) keep their RELATIVE density (their_repeat/tile). Restored
+    # after, so the live material is untouched.
+    saved = []
+    for nd in mat.node_tree.nodes:
+        if nd.type == 'MAPPING':
+            s = nd.inputs["Scale"].default_value
+            saved.append((nd, (s[0], s[1], s[2])))
+            s[0] *= tx
+            s[1] *= ty
     # No AO pass: a flat material tile has no macro occluders (bakes ~0/garbage),
     # and the masonry AO is already folded into the albedo. The engine uses ao=1.
     passes = [
@@ -243,11 +254,15 @@ def export_material(mat, out_dir, tiles, res):
         ("roughness", 'ROUGHNESS', True, {}),
         ("normal", 'NORMAL', True, {}),
     ]
-    for ch, bt, non_color, kw in passes:
-        img = _bake_pass(plane, res, bt, non_color, **kw)
-        rel = os.path.join("materials", name, ch + ".png")
-        _save_img(img, os.path.join(out_dir, rel))
-        rec["maps"][ch] = rel
+    try:
+        for ch, bt, non_color, kw in passes:
+            img = _bake_pass(plane, res, bt, non_color, **kw)
+            rel = os.path.join("materials", name, ch + ".png")
+            _save_img(img, os.path.join(out_dir, rel))
+            rec["maps"][ch] = rel
+    finally:
+        for nd, s0 in saved:
+            nd.inputs["Scale"].default_value = s0
     bpy.data.objects.remove(plane, do_unlink=True)
     # Mesh UVs are world-scale (1 uv unit = 1 m); the atlas is one tile, so the
     # engine tiles it every (tx, ty) m -> uv_scale = (1/tx, 1/ty).
