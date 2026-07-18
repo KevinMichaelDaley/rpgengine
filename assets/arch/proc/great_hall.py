@@ -1,0 +1,216 @@
+"""Romanesque great hall -- a demo COMPOSITION of the arch-primitive library
+(ticket rpg-pm1c). Not a single primitive: it assembles arched windows
+(``arch.build_arched_doorway``), engaged wall piers (``pier.build_wall_pier``),
+a raised dais, and a high open TIMBER roof into one great hall.
+
+Great-hall character (see the ref):
+  * a large OPEN space -- no internal columns dividing it;
+  * a high open TIMBER roof (king-post trusses + purlins), not a vault;
+  * elaborate archwork -- an arcade of deep single-splayed round windows;
+  * a raised DAIS at the lord's end, up two steps, with a blind arch behind.
+
+Romanesque light windows are single-splayed: a NARROW aperture + voussoir
+archivolt on the EXTERIOR, splaying WIDE into the interior. So each window panel
+is oriented voussoir-face-out (the north panels are turned 180) and built with
+``wide_side="outer"`` (wide reveal on the room side).
+
+Runs through the Blender MCP bridge: ``build_great_hall()`` builds the scene into
+a fresh collection. The timber is sized from the walls' ACTUAL world bounding
+boxes (never assumed), so every tie/rafter lands exactly on its support.
+"""
+import math
+
+import bpy
+import mathutils
+import numpy as np
+
+
+def _link(col, obj):
+    for c in list(obj.users_collection):
+        c.objects.unlink(obj)
+    col.objects.link(obj)
+
+
+def _box(col, name, cx, cy, cz, sx, sy, sz):
+    """Axis-aligned box of EXACT dimensions (sx,sy,sz) centred at (cx,cy,cz).
+    Uses a size=2 cube so the /2 scale gives the true size (a size=1 cube would
+    come out half-size)."""
+    bpy.ops.mesh.primitive_cube_add(size=2.0, location=(cx, cy, cz))
+    o = bpy.context.active_object
+    o.name = name
+    o.scale = (sx / 2.0, sy / 2.0, sz / 2.0)
+    bpy.ops.object.transform_apply(scale=True)
+    _link(col, o)
+    return o
+
+
+def _strut(col, name, p0, p1, t):
+    """A square-section beam of side @p t running exactly from p0 to p1 (its
+    local Z axis is aligned to the p0->p1 direction, length = |p1-p0|)."""
+    p0 = mathutils.Vector(p0)
+    p1 = mathutils.Vector(p1)
+    d = p1 - p0
+    bpy.ops.mesh.primitive_cube_add(size=2.0, location=(p0 + p1) / 2.0)
+    o = bpy.context.active_object
+    o.name = name
+    o.rotation_mode = 'QUATERNION'
+    o.rotation_quaternion = d.to_track_quat('Z', 'Y')
+    o.scale = (t / 2.0, t / 2.0, d.length / 2.0)
+    _link(col, o)
+    return o
+
+
+def _world_bbox(objs):
+    pts = []
+    for o in objs:
+        for c in o.bound_box:
+            w = o.matrix_world @ mathutils.Vector(c)
+            pts.append((w.x, w.y, w.z))
+    a = np.array(pts)
+    return a.min(0), a.max(0)
+
+
+def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
+                     wall_t=0.5, roof_rise=3.6, collection=None):
+    """Build the great hall into (a fresh child of) @p collection. Returns the
+    collection. @p nbay bays of @p bay metres give the length; @p width is the
+    clear span; @p wall_h the wall height; @p roof_rise the timber-roof apex
+    above the walls."""
+    import arch
+    import pier
+
+    length = nbay * bay
+    half = width / 2.0
+
+    if collection is None:
+        col = bpy.data.collections.new(name)
+        bpy.context.scene.collection.children.link(col)
+    else:
+        col = collection
+
+    # --- floor ---
+    _box(col, f"{name}_floor", length / 2.0, 0.0, -0.1,
+         length + 2 * wall_t, width + 2 * wall_t, 0.2)
+
+    # --- side walls: a bay-by-bay arcade of deep single-splayed light windows.
+    #     Each panel's voussoir/front face points OUTWARD (north panels turned
+    #     180); wide_side="outer" splays the reveal wide on the room side. ---
+    def window(nm):
+        return arch.build_arched_doorway(
+            name=nm, panel_width=bay, panel_height=wall_h, wall_thickness=wall_t,
+            arch_shape="round", opening_width=1.15, opening_height=2.5,
+            head_rise=0.58, sill_height=2.0, splay=0.34, wide_side="outer",
+            reveal_bevel=0.025, voussoir_trim=True, trim_width=0.12,
+            trim_extrude=0.05, collection=col)
+
+    for i in range(nbay):
+        n = window(f"{name}_win_N_{i}")
+        n.location = ((i + 0.5) * bay, half, 0.0)
+        n.rotation_euler = (0, 0, math.pi)          # voussoir face -> +Y (exterior)
+        s = window(f"{name}_win_S_{i}")
+        s.location = ((i + 0.5) * bay, -half, 0.0)
+        s.rotation_euler = (0, 0, 0.0)              # voussoir face -> -Y (exterior)
+
+    # --- engaged piers at every bay division, projecting INTO the hall, rising
+    #     nearly to the wall head where the roof trusses land. ---
+    pier_h = wall_h - 0.1
+    for i in range(nbay + 1):
+        pn = pier.build_wall_pier(
+            name=f"{name}_pier_N_{i}", width=0.7, depth=0.55, height=pier_h,
+            plinth_height=0.5, plinth_project=0.11, collection=col)
+        pn.location = (i * bay, half - wall_t * 0.5, 0.0)
+        pn.rotation_euler = (0, 0, math.pi)         # project toward -Y (into room)
+        ps = pier.build_wall_pier(
+            name=f"{name}_pier_S_{i}", width=0.7, depth=0.55, height=pier_h,
+            plinth_height=0.5, plinth_project=0.11, collection=col)
+        ps.location = (i * bay, -half + wall_t * 0.5, 0.0)
+
+    # --- end walls: grand arched entrance (near) + a blind-arch dais backdrop. ---
+    d = arch.build_arched_doorway(
+        name=f"{name}_entrance", panel_width=width, panel_height=wall_h,
+        wall_thickness=wall_t, arch_shape="round", opening_width=2.2,
+        opening_height=3.4, head_rise=1.1, sill_height=0.0, splay=0.16,
+        wide_side="inner", reveal_bevel=0.03, voussoir_trim=True, trim_width=0.14,
+        collection=col)
+    d.location = (0.0, 0.0, 0.0)
+    d.rotation_euler = (0, 0, math.pi / 2.0)
+    b = arch.build_arched_doorway(
+        name=f"{name}_dais_arch", panel_width=width, panel_height=wall_h,
+        wall_thickness=wall_t, arch_shape="round", opening_width=3.0,
+        opening_height=3.0, head_rise=1.5, sill_height=0.9, splay=0.10,
+        wide_side="inner", blind=True, blind_recess=0.22, voussoir_trim=True,
+        trim_width=0.14, collection=col)
+    b.location = (length, 0.0, 0.0)
+    b.rotation_euler = (0, 0, math.pi / 2.0)
+
+    # --- dais + two steps at the far (lord's) end ---
+    dais_d = 3.2
+    dais_w = width - 1.0
+    _box(col, f"{name}_dais", length - dais_d / 2.0 - 0.4, 0.0, 0.25,
+         dais_d, dais_w, 0.5)
+    for s2 in range(2):
+        _box(col, f"{name}_dais_step_{s2}",
+             length - dais_d - 0.4 - 0.4 * (s2 + 0.5), 0.0, 0.09 * (2 - s2),
+             0.4, dais_w - 1.0, 0.18 * (2 - s2))
+
+    # --- high open timber roof, sized from the ACTUAL wall bounding boxes ---
+    wN = [o for o in col.objects if o.name.startswith(f"{name}_win_N_")]
+    wS = [o for o in col.objects if o.name.startswith(f"{name}_win_S_")]
+    Nlo, Nhi = _world_bbox(wN)
+    Slo, Shi = _world_bbox(wS)
+    Alo, Ahi = _world_bbox(wN + wS)
+    top = float(max(Nhi[2], Shi[2]))               # true wall top
+    nO, sO = float(Nhi[1]), float(Slo[1])          # wall outer faces (+/-Y)
+    ncy = 0.5 * (float(Nhi[1]) + float(Nlo[1]))    # wall centrelines
+    scy = 0.5 * (float(Slo[1]) + float(Shi[1]))
+    midy = 0.5 * (ncy + scy)
+    x0, x1 = float(Alo[0]), float(Ahi[0])
+    apex = top + roof_rise
+    tie_z, rt = 0.34, 0.26
+
+    for tt in range(nbay + 1):
+        x = x0 + tt * bay
+        _box(col, f"{name}_tie_{tt}", x, 0.5 * (nO + sO), top + tie_z / 2.0,
+             0.30, (nO - sO), tie_z)             # tie bears on both wall heads
+        fN = (x, ncy, top + tie_z)
+        fS = (x, scy, top + tie_z)
+        ap = (x, midy, apex)
+        _strut(col, f"{name}_praf_{tt}_L", fN, ap, rt)   # wall head -> ridge
+        _strut(col, f"{name}_praf_{tt}_R", fS, ap, rt)
+        _strut(col, f"{name}_king_{tt}", (x, midy, top + tie_z), ap, 0.20)
+        fr = 0.55
+        zc = top + tie_z + (apex - (top + tie_z)) * fr
+        yN = ncy + (midy - ncy) * fr
+        yS = scy + (midy - scy) * fr
+        _box(col, f"{name}_collar_{tt}", x, 0.5 * (yN + yS), zc,
+             0.22, (yN - yS), 0.20)
+    # longitudinal purlins seated on the rafters, tying the trusses
+    for yc, zc, nm in [
+            (ncy + (midy - ncy) * 0.32, top + tie_z + (apex - top - tie_z) * 0.32, "N"),
+            (scy + (midy - scy) * 0.32, top + tie_z + (apex - top - tie_z) * 0.32, "S"),
+            (midy, apex, "ridge")]:
+        _box(col, f"{name}_purlin_{nm}", 0.5 * (x0 + x1), yc, zc,
+             (x1 - x0), 0.14, 0.14)
+
+    # roof skin: lifted RT/2/cos(pitch) above the rafters so the timber is exposed
+    pitch = math.atan2(apex - (top + tie_z), ncy - midy)
+    gap = rt / 2.0 / math.cos(pitch) + 0.03
+    bm_verts = [
+        (x0, ncy, top + tie_z + gap), (x0, scy, top + tie_z + gap), (x0, midy, apex + gap),
+        (x1, ncy, top + tie_z + gap), (x1, scy, top + tie_z + gap), (x1, midy, apex + gap)]
+    import bmesh
+    bm = bmesh.new()
+    v = [bm.verts.new(p) for p in bm_verts]
+    bm.faces.new((v[0], v[3], v[5], v[2]))         # +Y slope
+    bm.faces.new((v[1], v[2], v[5], v[4]))         # -Y slope
+    bm.faces.new((v[0], v[2], v[1]))               # near gable
+    bm.faces.new((v[3], v[4], v[5]))               # far gable
+    me = bpy.data.meshes.new(f"{name}_roof")
+    bm.to_mesh(me)
+    bm.free()
+    roof = bpy.data.objects.new(f"{name}_roof", me)
+    col.objects.link(roof)
+    sol = roof.modifiers.new("solid", 'SOLIDIFY')
+    sol.thickness = 0.12
+    sol.offset = 1.0
+    return col
