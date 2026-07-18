@@ -1000,7 +1000,9 @@ int main(int argc,char **argv){
             mats[6].tint[0]=mats[6].tint[1]=mats[6].tint[2]=0.85f;
             mats[6].metalness=0.85f; mats[6].roughness_min=0.14f; mats[6].roughness_max=0.14f;
             float cuy=amin[1]+span[1]*0.16f;                       /* low, in the window-beam path. */
-            float cwz=center[crossax]+span[crossax]*0.30f;         /* toward the side windows. */
+            /* Sun rakes toward +crossax, so sit on the -crossax (sun-side) window so
+             * the cubes' shadows fall onto the lit floor the camera sees. */
+            float cwz=center[crossax]-span[crossax]*0.30f;
             for(int c=0;c<2;++c){
                 static_mesh_create_box(&loader, 0.8f,0.8f,0.8f, &gh_mov[c]);
                 float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
