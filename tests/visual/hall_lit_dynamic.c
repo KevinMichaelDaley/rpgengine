@@ -802,7 +802,7 @@ int main(int argc,char **argv){
       /* Sit the flame in the OPEN firebox cavity: above the hearth and forward of
        * the solid back wall (fp_opening slab, z<=-3.05), toward the +z opening, so
        * its own shadow doesn't self-occlude it against the back wall. */
-      f.position[0]=fp[0]; f.position[1]=fp[1]+0.8f; f.position[2]=fp[2]+0.08f;
+      f.position[0]=fp[0]; f.position[1]=fp[1]+0.75f; f.position[2]=fp[2]-0.05f;
       f.color[0]=1.0f; f.color[1]=0.42f; f.color[2]=0.13f;   /* warm orange fire */
       f.intensity=fp_base; f.range=9.0f;
       f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
@@ -999,12 +999,13 @@ int main(int argc,char **argv){
             material_init(&mats[6]);                      /* polished metal (no maps -> tint). */
             mats[6].tint[0]=mats[6].tint[1]=mats[6].tint[2]=0.85f;
             mats[6].metalness=0.85f; mats[6].roughness_min=0.14f; mats[6].roughness_max=0.14f;
-            float cuy=amin[1]+span[1]*0.28f;                       /* waist height. */
+            float cuy=amin[1]+span[1]*0.16f;                       /* low, in the window-beam path. */
+            float cwz=center[crossax]+span[crossax]*0.30f;         /* toward the side windows. */
             for(int c=0;c<2;++c){
                 static_mesh_create_box(&loader, 0.8f,0.8f,0.8f, &gh_mov[c]);
                 float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
                 bm[13]=cuy; bm[12+lenax]=center[lenax];
-                bm[12+crossax]=center[crossax]+(c?0.9f:-0.9f);      /* side by side. */
+                bm[12+crossax]=cwz+(c?0.45f:-0.45f);               /* side by side, near the window. */
                 gh_mov_item[c]=(int)scene.count;
                 render_scene_add(&scene,&gh_mov[c],&mats[6],bm);
                 /* Register as an analytic GI collider box so the probe trace folds
@@ -1012,7 +1013,7 @@ int main(int argc,char **argv){
                  * then occlude/reflect each other + the scene in the dynamic GI. */
                 g_boxes[c].kind=GI_COLLIDER_BOX;
                 g_boxes[c].ext[0]=g_boxes[c].ext[1]=g_boxes[c].ext[2]=0.4f;
-                g_boxes[c].a[1]=cuy; g_boxes[c].a[crossax]=center[crossax]+(c?0.9f:-0.9f);
+                g_boxes[c].a[1]=cuy; g_boxes[c].a[crossax]=cwz+(c?0.45f:-0.45f);
                 g_boxes[c].a[lenax]=center[lenax];
             }
             g_nboxes=2;   /* fed to gi_runtime_frame each frame. */
