@@ -220,12 +220,12 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     for i in range(nbay + 1):
         pn = pier.build_wall_pier(
             name=f"{name}_pier_N_{i}", width=0.7, depth=0.55, height=pier_h,
-            plinth_height=0.5, plinth_project=0.11, collection=col)
+            plinth_height=0.5, plinth_project=0.11, masonry_uv=True, collection=col)
         pn.location = (i * bay, half - wall_t * 0.5, 0.0)
         pn.rotation_euler = (0, 0, math.pi)         # project toward -Y (into room)
         ps = pier.build_wall_pier(
             name=f"{name}_pier_S_{i}", width=0.7, depth=0.55, height=pier_h,
-            plinth_height=0.5, plinth_project=0.11, collection=col)
+            plinth_height=0.5, plinth_project=0.11, masonry_uv=True, collection=col)
         ps.location = (i * bay, -half + wall_t * 0.5, 0.0)
 
     # --- end walls: grand arched entrance (near) + a blind-arch dais backdrop. ---
@@ -450,3 +450,106 @@ def assign_wall_material(col, bake_dir, name="great_hall_stone_wall"):
             me.materials.clear()
             me.materials.append(mat)
     return mat
+
+
+# object-name stems that read as TIMBER (roof trusses + the roof/ceiling planes).
+_TIMBER_STEMS = ("collar", "king", "praf", "purlin", "tie", "roof")
+
+
+def assign_floor_material(col, bake_dir, name="great_hall_floor_stone"):
+    """Build + assign the big dressed-flagstone FLOOR material (the square stone
+    tile bake): larger tiles, a cooler/less-saturated grey stone and SUPER-DARK
+    joints between the flags. Assigned to the ``floor`` slab."""
+    import material_nodes
+    old = bpy.data.materials.get(name)
+    if old:
+        bpy.data.materials.remove(old)
+    mat = material_nodes.build_masonry_material(
+        name, mask=os.path.join(bake_dir, "mask.png"),
+        normal=os.path.join(bake_dir, "normal.png"),
+        ao=os.path.join(bake_dir, "ao.png"),
+        height=os.path.join(bake_dir, "height.png"),
+        tint_map=os.path.join(bake_dir, "tint.png"), tile=(4.2, 4.2),
+        brick_contrast=0.62, mortar_contrast=0.25,
+        mortar_tint=(0.014, 0.013, 0.012),           # super-dark joints
+        brick_tint=(0.30, 0.32, 0.37), brick_sat=0.55,  # cool, lightly desaturated
+        ao_strength=0.8)
+    fl = bpy.data.objects.get(col.name + "_floor")
+    if fl:
+        fl.data.materials.clear()
+        fl.data.materials.append(mat)
+    return mat
+
+
+def assign_reveal_weave(col, bake_dir, name="great_hall_reveal_weave"):
+    """Build the toothed window-splay WEAVE material and assign it (as a second
+    slot) to the window REVEAL faces -- the splayed jambs + arch soffit -- so the
+    coursing there reads as the interlocking reveal weave rather than plain wall.
+    Reveal faces are the inward-facing ones (|n.y|<0.65) within the opening's
+    X/Z extent; the flat wall faces keep slot 0 (the wall material)."""
+    import material_nodes
+    old = bpy.data.materials.get(name)
+    if old:
+        bpy.data.materials.remove(old)
+    mat = material_nodes.build_masonry_material(
+        name, mask=os.path.join(bake_dir, "mask.png"),
+        normal=os.path.join(bake_dir, "normal.png"),
+        ao=os.path.join(bake_dir, "ao.png"),
+        height=os.path.join(bake_dir, "height.png"),
+        tint_map=os.path.join(bake_dir, "tint.png"), tile=(1.2, 1.0))
+    pre = col.name + "_"
+    for o in col.objects:
+        if o.type != "MESH":
+            continue
+        stem = o.name[len(pre):] if o.name.startswith(pre) else o.name
+        if not (stem.startswith("win_N") or stem.startswith("win_S")):
+            continue
+        me = o.data
+        if mat.name not in [m.name for m in me.materials]:
+            me.materials.append(mat)
+        wslot = [m.name for m in me.materials].index(mat.name)
+        for p in me.polygons:
+            n, c = p.normal, p.center
+            if abs(n.y) < 0.65 and abs(c.x) < 0.9 and 1.85 < c.z < 5.25:
+                p.material_index = wslot
+        me.update()
+    return mat
+
+
+def assign_timber_material(col, name="great_hall_timber"):
+    """Build + assign a flat rustic-oak TIMBER material (solid base colour +
+    roughness, no pattern) to the roof trusses and the roof/ceiling planes."""
+    old = bpy.data.materials.get(name)
+    if old:
+        bpy.data.materials.remove(old)
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    bsdf.inputs["Base Color"].default_value = (0.105, 0.058, 0.030, 1.0)
+    bsdf.inputs["Roughness"].default_value = 0.72
+    bsdf.inputs["Specular IOR Level"].default_value = 0.3
+    pre = col.name + "_"
+    for o in col.objects:
+        if o.type != "MESH":
+            continue
+        stem = o.name[len(pre):] if o.name.startswith(pre) else o.name
+        if any(stem.startswith(s) for s in _TIMBER_STEMS):
+            o.data.materials.clear()
+            o.data.materials.append(mat)
+    return mat
+
+
+def build_hall_scene(bake_root, collection=None, name="great_hall"):
+    """Regenerate the whole great-hall scene: geometry (``build_great_hall``),
+    world-scale UVs (``prepare_uvs``), then every material -- wall, floor, reveal
+    weave and timber -- from the bake maps under ``bake_root`` (which holds
+    ``bake`` / ``bake_floor`` / ``bake_weave``). One call reproduces the scene, so
+    it can be passed as the regeneration callback to the exporter/baker. Returns
+    the collection."""
+    col = build_great_hall(name=name, collection=collection)
+    prepare_uvs(col)
+    assign_wall_material(col, os.path.join(bake_root, "bake"))
+    assign_floor_material(col, os.path.join(bake_root, "bake_floor"))
+    assign_reveal_weave(col, os.path.join(bake_root, "bake_weave"))
+    assign_timber_material(col)
+    return col

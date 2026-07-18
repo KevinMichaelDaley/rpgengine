@@ -320,7 +320,7 @@ def displace_mortar(mortar, clump, W, H, amp):
 # --------------------------------------------------------------------------
 def bake_wall(width=2.0, height=1.15, seed=4, res=2048, out_dir=None,
               clump=0.7, mortar_depth=0.02, prefab_dir=None, name="brick_wall",
-              builder="build_wall", build_kw=None):
+              builder="build_wall", build_kw=None, device="GPU"):
     """Build a wall (or any *builder* in brick_wall.py, e.g. ``build_weave``) then
     bake mask / height / normal / ao maps over its tile. Returns the file paths."""
     here = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() \
@@ -347,7 +347,12 @@ def bake_wall(width=2.0, height=1.15, seed=4, res=2048, out_dir=None,
     wall_objs = set(col.objects)
     for o in bpy.data.objects:
         o.hide_render = o not in wall_objs
-    _enable_gpu()
+    # CPU Cycles for large tiles: the GPU (OptiX) runs out of VRAM on the big
+    # many-instance scenes; CPU uses system RAM and completes (just slower).
+    if str(device).upper() == "CPU":
+        bpy.context.scene.cycles.device = 'CPU'
+    else:
+        _enable_gpu()
     cam = _ortho_cam(W, Hh)
     rx, ry = _res(W, Hh, res)
     out = {}

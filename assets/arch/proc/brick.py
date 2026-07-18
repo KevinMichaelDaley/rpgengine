@@ -303,7 +303,8 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
                   box_preserve=0.7, box_run_reduce=0.5, nfl_axis_swap=0.28,
                   axis_rand=0.15, kernel_noise=None, box_band=0.72,
                   side_relief=1.0, lap_steps=1, dropout=0.0,
-                  facet_offset=0.0, facet_push=0.0):
+                  facet_offset=0.0, facet_push=0.0, edge_min=0.0,
+                  face_smooth=0.0):
     """Sculpt hewn facets on the coupled vertex network with MULTIPLE graph
     kernels chosen stochastically per vertex (KMD's scheme), under a SIMULATED-
     ANNEALING temperature that cools over the passes:
@@ -354,6 +355,11 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
     # arrises and corners. EVERY sculpt kernel's net move is scaled by this, so the
     # whole dressing falls off at the block's edges and never distorts them.
     edge_falloff = 1.0 - np.maximum(box_edge, box_corner)
+    # Optionally pull the arris/corner weight slightly OFF zero so the edges still
+    # get a MILD share of the displacement/flatten/smooth kernels (a fully dead
+    # edge_min=0 keeps them perfectly crisp; a small edge_min softens them a touch).
+    if edge_min > 0.0:
+        edge_falloff = edge_min + (1.0 - edge_min) * edge_falloff
     # Stochastic facet assignment grown from the seeds, bounded to a single face.
     assign = _grow_facets(ii, jj, seed_idx, len(fbias), rng, n, edge_ok=edge_same)
     # Anisotropic smoothing weight for the box arrises: an edge RUNS along its
@@ -520,6 +526,14 @@ def _facet_sculpt(bm, rng, n_planes=28, tilt=0.35, iters=18,
         if smooth_flat_pow != 1.0:
             wflat_s = wflat_s ** smooth_flat_pow
         v += smo * (smooth * s) * wflat_s[:, None] * (d_sm * smooth_aniso)
+        # Extra broad-FACE smoothing: an additional feature-preserving smooth applied
+        # ONLY on the front/back (+/-Y) faces (weighted by |normal.Y|^2), for a
+        # softer, more worn dressed surface there without rounding the arrises (the
+        # net-move edge_falloff below still protects them). Applied to every vert on
+        # those faces (not gated by smo) so it evens the whole broad face.
+        if face_smooth > 0.0:
+            fy = (vn[:, 1] * vn[:, 1])[:, None]
+            v += (face_smooth * s) * wflat_s[:, None] * fy * (d_sm * smooth_aniso)
         # Orientation weighting: keep the FULL dressing on the front/back (+/-Y)
         # faces -- the broad faces the wall/bake sees -- but scale the whole pass's
         # net move down to `side_relief` on the SIDE faces (+/-X ends, +/-Z top/
@@ -763,7 +777,7 @@ def _crack(bm, rng, seeds=3, steps=16, step_len=0.004, branch=0.10, depth=0.02,
 
 def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
                       quant_step=0.008, quant_mix=0.3, floor_frac=0.025,
-                      side_relief=1.0):
+                      side_relief=1.0, pit_boost=1.0):
     """Build the micro-detail Geometry Nodes group: fBm grain plus a cellular
     pitting field made of several SMOOTHED, offset, distorted Voronoi layers
     combined with Minimum and clamped to bounds so only the small cell cores
@@ -840,7 +854,7 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     # Flatten with bounds: cell cores (small distance) map to full depth, and
     # anything past the band clamps flat. Negative -> pits bite inward. Gentle
     # slope (wide band, shallow depth) so pits are soft dishes, not spikes.
-    pit_depth = mn * 0.015 * micro          # half depth: shallow pitting
+    pit_depth = mn * 0.015 * micro * pit_boost   # shallow pitting (pit_boost deepens carves)
     pit = nd('ShaderNodeMapRange', 500, -300)
     pit.clamp = True
     pit.inputs['From Min'].default_value = 0.0
@@ -1079,7 +1093,8 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 bounds_radius=0.006, final_decimate=0.8, micro=0.8, micro_env=0.9,
                 micro_quant=0.0, micro_floor=0.032, micro_voxel_div=220.0,
                 auto_smooth_deg=60.0, boxy=0.0, depth_edge_boost=1.0,
-                collection=None):
+                flatten_boost=1.0, steps_scale=1.0, pit_boost=1.0, edge_min=0.0,
+                face_smooth=0.0, collection=None):
     """Build one hewn brick object and return it (graph-based, no noise displace).
 
     Phase A: box -> seed-driven chipping -> multi-resolution loop (voxel-remesh
@@ -1143,10 +1158,10 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # at the ~cm stone scale. Held constant in metres; converted to edge-steps per
     # stage from the stage voxel size (see the loop). Cap bounds the finest stage.
     lap_radius = mn * 0.26                    # kernels START wide (dressing scale)
-    lap_steps_cap = 160                       # high enough that the coarse early
-    #                                           stages reach the full (low-freq)
-    #                                           radius; fine stages self-limit (tiny
-    #                                           edges -> small radius -> fine detail).
+    # High enough that the coarse early stages reach the full (low-freq) radius;
+    # fine stages self-limit (tiny edges -> small radius). steps_scale < 1 halves
+    # the diffusion cost for cheaper, lower-detail stone (e.g. floor tiles).
+    lap_steps_cap = max(4, int(round(160 * steps_scale)))
 
     # --- Phase A: annealed faceting -> angular hewn base ---
     # Every remesh also decimates (the `decimate` param) so each scale is
@@ -1191,13 +1206,16 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
         el = _mean_edge(bm)
         lap_steps = int(np.clip(round((lap_radius / max(el, 1e-6)) ** 2),
                                 1, lap_steps_cap))
-        _facet_sculpt(bm, rng, n_planes=npl, tilt=tilt, iters=iters,
-                      pull=0.45, sharp=0.38, smooth=0.26, pinch=0.4, flatten=0.7,
+        _facet_sculpt(bm, rng, n_planes=npl, tilt=tilt,
+                      iters=max(1, int(round(iters * steps_scale))),
+                      pull=0.45, sharp=0.38, smooth=0.26, pinch=0.4,
+                      flatten=0.7 * flatten_boost,
                       mix=mix, temp0=t0, temp1=t1, maxdisp=mdisp, feature=1.0,
                       smooth_feature=1.3, corner_preserve=corn_pre_a,
                       box_preserve=box_pre, box_band=box_band,
                       side_relief=side_relief, lap_steps=lap_steps,
-                      dropout=dressing_dropout,
+                      dropout=dressing_dropout, edge_min=edge_min,
+                      face_smooth=face_smooth,
                       facet_offset=mdisp * 0.65, facet_push=mdisp * 0.6)
         # Decimation ANNEALS: strongish on the early (coarse) remeshes and gentle
         # by the final stage, so the base is thinned cheaply while the resolved
@@ -1234,15 +1252,18 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
         # too (a bit tighter than Phase A -- this is fine tooling on the facets).
         lap_steps_b = int(np.clip(
             round((lap_radius * 0.55 / (mn / fine_div)) ** 2), 1, lap_steps_cap))
-        _facet_sculpt(bm, rng, n_planes=320, tilt=0.5 * tilt_k, iters=6,
-                      pull=0.30, sharp=0.48, smooth=0.24, pinch=0.35, flatten=0.45,
+        _facet_sculpt(bm, rng, n_planes=320, tilt=0.5 * tilt_k,
+                      iters=max(1, int(round(6 * steps_scale))),
+                      pull=0.30, sharp=0.48, smooth=0.24, pinch=0.35,
+                      flatten=0.45 * flatten_boost,
                       smooth_flat_pow=2.0, smooth_feature=1.5,
                       mix=(0.22, 0.26, 0.08, 0.10, 0.09), temp0=0.22, temp1=0.05,
                       maxdisp=md0 * 0.08 * refine, feature=1.0,
                       corner_preserve=corn_pre_b, box_preserve=box_pre,
                       box_band=box_band, side_relief=side_relief,
                       lap_steps=lap_steps_b, dropout=dressing_dropout,
-                      facet_offset=md0 * 0.08 * refine * 0.4,
+                      facet_offset=md0 * 0.08 * refine * 0.4, edge_min=edge_min,
+                      face_smooth=face_smooth,
                       facet_push=md0 * 0.08 * refine * 0.4, kernel_noise=70.0)
     # Final settle: even out the long COLLAPSE-decimation diagonals on the flat
     # faces (which read as diagonal divots) with a light, FEATURE-PRESERVING smooth.
@@ -1280,7 +1301,8 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
         seed_off = tuple(float(x) for x in rng.uniform(-50.0, 50.0, 3))
         ng = _micro_node_group(name + "_micro", mn, micro, seed_off,
                                env_strength=micro_env, quant_step=micro_quant,
-                               floor_frac=micro_floor, side_relief=side_relief)
+                               floor_frac=micro_floor, side_relief=side_relief,
+                               pit_boost=pit_boost)
         gn = obj.modifiers.new("micro_detail", 'NODES')
         gn.node_group = ng
         # Realise the micro geometry, then collapse-decimate to ~half and realise

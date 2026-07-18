@@ -42,6 +42,7 @@ except NameError:
     if not os.path.isdir(os.path.join(HERE, "prefabs")):
         HERE = "/home/kmd/rpg/assets/arch/proc"
 PREFAB_DIR = os.path.join(HERE, "prefabs", "bricks")
+TILE_DIR = os.path.join(HERE, "prefabs", "tiles")   # square dressed floor tiles
 
 
 # --------------------------------------------------------------------------
@@ -532,6 +533,94 @@ def build_weave(width=0.9, height=0.55, seed=0, mortar=0.002, bed=0.002,
                                front_y, mortar_depth, mortar_cell, collection)
     return {"collection": collection, "mortar": mortar_obj,
             "tile_width": tile_width, "height": height_out}
+
+
+def build_floor(width=3.0, height=3.0, seed=0, gap=0.006, tile_aspect=1,
+                offset_jitter=0.0, rot_deg=1.0, depth_var=0.02,
+                mortar_depth=0.02, mortar_cell=0.006, name="stone_floor",
+                prefab_dir=TILE_DIR, collection=None):
+    """Lay the square dressed-stone TILE prefabs into a paved ground plane and
+    return the same dict shape as ``build_wall`` so ``bake_wall`` bakes it with the
+    identical front-orthographic machinery (the tiles lie in the X-Z plane with
+    their broad dressed face toward -Y, i.e. toward the bake camera -- for a floor
+    that camera direction is simply "straight down onto the paving").
+
+    Defaults to a clean SQUARE grid of tiles, each drawn at random from the whole
+    prefab set (so the dressing never repeats trivially) and scaled to fill its
+    cell so the joints are a uniform ``gap``. Per tile:
+      * ``rot_deg`` -- a small in-plane rotation (<= this many degrees, default 1)
+        so the paving looks hand-set rather than machine-perfect;
+      * ``depth_var`` -- each tile is seated PROUD of the mortar by a random
+        0..``depth_var`` metres, giving the ground SIGNIFICANT height variation
+        (uneven, settled flagstones) in the baked height/normal maps;
+      * ``offset_jitter`` -- optional random X-Z displacement off the grid node
+        (metres). Default 0 -> a true square tiling; raise it for a looser,
+        irregular paving.
+
+    Tileable over ``[0, tile_width] x [0, height]`` (an exact whole number of
+    cells, so the crop repeats without a seam). ``tile_aspect`` selects which
+    manifest aspect sets the CELL SIZE (the paving scale); every aspect's stones
+    are still drawn into it.
+
+    Returns ``{collection, mortar, tile_width, height}``."""
+    manifest = load_manifest(prefab_dir)
+    rng = np.random.default_rng(seed)
+    pool = manifest["bricks"]
+    asp = manifest["aspects"][max(0, min(len(manifest["aspects"]) - 1,
+                                         tile_aspect))]
+    tsize = asp["length"]                      # square tile edge (length == height)
+    bw = asp["width"]
+    if collection is None:
+        collection = bpy.data.collections.new(name)
+        bpy.context.scene.collection.children.link(collection)
+
+    cache = {}
+    front_y = -0.5 * bw
+    step = tsize + gap
+    # Exact whole number of cells each way so the [0,tile_width] x [0,height] crop
+    # tiles seamlessly (no partial tile at the far edge, no duplicated closer).
+    nx = max(1, int(round(width / step)))
+    nz = max(1, int(round(height / step)))
+    tile_width = nx * step
+    tile_height = nz * step
+    cell = step - gap                          # target stone edge (fills the cell)
+    yaw = math.radians(rot_deg)
+    # Keep the in-plane rotation from poking a corner past the joint: a square of
+    # edge e rotated by a tiny angle grows its footprint by ~e*(|sin|+|cos|-1);
+    # shrink the tile a hair so even the max rotation stays inside the cell.
+    fit = 1.0 / (abs(math.cos(yaw)) + abs(math.sin(yaw)))
+    count = 0
+    for iz in range(nz):
+        for ix in range(nx):
+            b = pool[int(rng.integers(0, len(pool)))]
+            mesh = _import_mesh(b, cache, prefab_dir)
+            lo, hi = b["bbox"]
+            sx = fit * cell / max(hi[0] - lo[0], 1e-6)
+            sz = fit * cell / max(hi[2] - lo[2], 1e-6)
+            # Grid node (cell CENTRE) with optional off-grid jitter.
+            cxc = ix * step + 0.5 * cell + float(
+                rng.uniform(-offset_jitter, offset_jitter))
+            czc = iz * step + 0.5 * cell + float(
+                rng.uniform(-offset_jitter, offset_jitter))
+            # Seat the tile PROUD of the mortar by a random 0..depth_var -> uneven
+            # paving height. The broad face then sits at fy (<= front_y).
+            fy = front_y - float(rng.uniform(0.0, depth_var))
+            ry = float(rng.uniform(-yaw, yaw))     # small in-plane rotation
+            # Local bbox centre -> place so the (scaled) tile centres on the node.
+            mx = 0.5 * (lo[0] + hi[0])
+            mz = 0.5 * (lo[2] + hi[2])
+            inst = _place(collection, f"{name}_{iz:02d}_{count:04d}", mesh, False,
+                          (0.0, ry, 0.0),
+                          (cxc - sx * mx, fy - lo[1], czc - sz * mz))
+            inst.scale = (sx, 1.0, sz)
+            count += 1
+
+    # Mortar sits behind the backmost (front_y) tile faces; every tile is proud of
+    # it, so the bedding reads as recessed grout between the flags.
+    mortar_obj = _build_mortar(f"{name}_mortar", 0.0, tile_width, tile_height,
+                               front_y, mortar_depth, mortar_cell, collection)
+    return {"collection": collection, "mortar": mortar_obj,
+            "tile_width": tile_width, "height": tile_height}
 
 
 if __name__ == "__main__":
