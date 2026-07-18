@@ -35,16 +35,21 @@ _write_fvma = _FV["_write_fvma"]
 
 # Physical tile size (metres one map repeat spans) per tiling material. Solid
 # materials (not listed) export as flat tint + roughness with no maps.
+# Physical tile (metres one map repeat spans), per axis (x, y). MUST match the
+# material's own `tile=` so the baked square image + per-axis uv_scale reproduce
+# the in-Blender pattern at the right size/aspect. The masonry wall/reveal tiles
+# are NON-SQUARE (brick courses are shorter than they are wide), which a single
+# square tile got wrong (bricks came out mis-sized). A scalar still works (square).
 DEFAULT_TILES = {
-    "great_hall_stone_wall": 4.0,
-    "great_hall_floor_stone": 4.2,
-    "great_hall_reveal_weave": 1.2,
+    "great_hall_stone_wall": (4.5, 2.6),   # = build_masonry_material default tile
+    "great_hall_floor_stone": (4.2, 4.2),
+    "great_hall_reveal_weave": (1.2, 1.0),
     # Timber uses beam-space UVs directly (tile 1 -> uv_scale 1); the limestone
     # roof / marble dais are field materials whose world-cube UV scale (0.2 / 0.5)
     # times uv_scale=1/tile reproduces their in-Blender repeat.
-    "great_hall_timber": 1.0,
-    "great_hall_roof_limestone": 2.0,
-    "great_hall_dais_marble": 2.0,
+    "great_hall_timber": (1.0, 1.0),
+    "great_hall_roof_limestone": (2.0, 2.0),
+    "great_hall_dais_marble": (2.0, 2.0),
 }
 
 
@@ -126,15 +131,16 @@ def export_mesh(obj, out_dir):
 # --------------------------------------------------------------------------
 # Material bake
 # --------------------------------------------------------------------------
-def _bake_plane(tile):
-    """A temporary grid at the origin, ``tile`` m square, whose UVs span exactly
-    [0, tile] (== one map repeat, since our materials sample world-scale UVs), so
-    a bake of it captures one seamless tile of the material."""
+def _bake_plane(tx, ty):
+    """A temporary grid at the origin spanning [0,tx] x [0,ty] m, whose UVs equal
+    the world position (== one map repeat per axis, since our materials sample
+    world-scale UVs), so a bake of it captures one seamless tile of the material.
+    The bake image is square (res x res); the per-axis uv_scale un-stretches it."""
     import bmesh
     me = bpy.data.meshes.new("_bake_tmp")
     bm = bmesh.new()
     n = 2
-    vs = [[bm.verts.new((tile * i / n, tile * j / n, 0.0))
+    vs = [[bm.verts.new((tx * i / n, ty * j / n, 0.0))
            for i in range(n + 1)] for j in range(n + 1)]
     uvl = bm.loops.layers.uv.new("UVMap")
     for j in range(n):
@@ -224,10 +230,11 @@ def export_material(mat, out_dir, tiles, res):
         _write_json(os.path.join(out_dir, "materials", name + ".mat.json"), rec)
         return rec
 
-    # Tiling material: bake one repeat.
-    tile = float(tiles[name])
+    # Tiling material: bake one repeat. Tile is per-axis (x, y); a scalar = square.
+    t = tiles[name]
+    tx, ty = (float(t), float(t)) if isinstance(t, (int, float)) else (float(t[0]), float(t[1]))
     os.makedirs(mdir, exist_ok=True)
-    plane = _bake_plane(tile)
+    plane = _bake_plane(tx, ty)
     plane.data.materials.append(mat)
     # No AO pass: a flat material tile has no macro occluders (bakes ~0/garbage),
     # and the masonry AO is already folded into the albedo. The engine uses ao=1.
@@ -243,8 +250,8 @@ def export_material(mat, out_dir, tiles, res):
         rec["maps"][ch] = rel
     bpy.data.objects.remove(plane, do_unlink=True)
     # Mesh UVs are world-scale (1 uv unit = 1 m); the atlas is one tile, so the
-    # engine tiles it every `tile` m -> uv_scale = 1/tile.
-    rec["uv_scale"] = [1.0 / tile, 1.0 / tile]
+    # engine tiles it every (tx, ty) m -> uv_scale = (1/tx, 1/ty).
+    rec["uv_scale"] = [1.0 / tx, 1.0 / ty]
     _write_json(os.path.join(out_dir, "materials", name + ".mat.json"), rec)
     return rec
 
