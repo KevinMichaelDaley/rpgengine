@@ -1064,7 +1064,10 @@ int main(int argc,char **argv){
                      * where probes see open sky overhead (SKY_AO scales it, 0=off). */
                     float sa=getenv("SKY_AO")?(float)atof(getenv("SKY_AO")):0.4f;
                     float sky_ao[3]={0.15390f*sa,0.18851f*sa,0.25879f*sa};
-                    gi_runtime_set_sky_ao(&g_gi, sky_ao, getenv("SKY_AO_REF")?(float)atof(getenv("SKY_AO_REF")):5.0f);
+                    gi_runtime_set_sky_ao(&g_gi, sky_ao, getenv("SKY_AO_REF")?(float)atof(getenv("SKY_AO_REF")):5.0f,
+                                          getenv("AO_MULT")?(float)atof(getenv("AO_MULT")):0.6f);
+                    /* rpg-hw75: probe SG specular reflections (SPEC_GAIN, 0=off). */
+                    gi_runtime_set_spec_gain(&g_gi, getenv("SPEC_GAIN")?(float)atof(getenv("SPEC_GAIN")):1.0f);
                 }
             }
         }

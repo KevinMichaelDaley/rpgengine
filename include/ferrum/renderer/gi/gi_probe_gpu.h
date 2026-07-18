@@ -35,9 +35,11 @@ typedef struct gi_probe_gpu {
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
     unsigned int b_lights, b_boxes; /**< dynamic light + box SSBOs. */
     unsigned int b_depth;      /**< DDGI octahedral depth SSBO (mean, meanSq / texel). */
+    unsigned int b_sg;         /**< SG specular lobe SSBO (8 floats/probe). */
     unsigned int tbo_sh, tbo_sh_tex; /**< SH buffer texture (for the forward+ sampler). */
     unsigned int tbo_pos_tex;  /**< probe-position buffer texture (for the sampler). */
     unsigned int tbo_depth_tex; /**< depth buffer texture (RG32F: mean, meanSq). */
+    unsigned int tbo_sg_tex;   /**< SG lobe texture (RGBA32F: axis+kappa, rgb+pad). */
     uint32_t     n_probes;
     uint32_t     max_lights, max_boxes;
     /* Static irradiance volume (rpg-pau4): baked-lightmap E on a coarse world
@@ -94,6 +96,9 @@ unsigned int gi_probe_gpu_pos_tbo(const gi_probe_gpu_t *g);
 /** @brief The DDGI depth texture buffer (samplerBuffer, RG32F: mean, meanSq),
  *         8x8 octahedral texels per probe. 0 if unavailable. */
 unsigned int gi_probe_gpu_depth_tbo(const gi_probe_gpu_t *g);
+/** @brief The SG specular-lobe texture buffer (samplerBuffer, RGBA32F): 2 texels
+ *         per probe (axis+kappa, rgb+pad). 0 if unavailable. */
+unsigned int gi_probe_gpu_sg_tbo(const gi_probe_gpu_t *g);
 
 /** @brief Free GL resources. NULL-safe. */
 void gi_probe_gpu_destroy(gi_probe_gpu_t *g);

@@ -341,9 +341,12 @@ static const char *const PBR_FS =
      * as ambient. u_gi_sky_ref is the overhead distance considered "fully open". */
     "uniform vec3 u_gi_sky_color;\n"
     "uniform float u_gi_sky_ref;\n"
+    "uniform float u_gi_ao_mult;\n"   /* 0 = no AO on indirect, 1 = full openness multiply. */
     "uniform samplerBuffer u_probe_pos;\n"
     "uniform samplerBuffer u_probe_sh;\n"
     "uniform samplerBuffer u_probe_depth;\n" /* DDGI: 8x8 octahedral (mean, meanSq)/probe. */
+    "uniform samplerBuffer u_probe_sg;\n"    /* SG specular lobe: 2 texels/probe. */
+    "uniform float u_gi_spec_gain;\n"        /* master scale for probe specular (0=off). */
     "uniform usamplerBuffer u_probe_froxel_off;\n"
     "uniform usamplerBuffer u_probe_froxel_cnt;\n"
     "uniform usamplerBuffer u_probe_froxel_idx;\n"
@@ -458,6 +461,37 @@ static const char *const PBR_FS =
     "  e_dyn  = max(vec3(dot(dR, A*Y), dot(dG, A*Y), dot(dB, A*Y))*inv, vec3(0.0));\n"
     "  e_stat = max(vec3(dot(sR, A*Y), dot(sG, A*Y), dot(sB, A*Y))*inv, vec3(0.0));\n"
     "}\n"
+    /* Probe SPECULAR (rpg-hw75): trilinearly blend the 8 grid probes' single SG\n"
+     * lobe evaluated along the reflection vector R. Roughness widens the lobe\n"
+     * (smaller effective sharpness) -> blurrier reflection. Returns radiance. */
+    "vec3 gi_probe_specular(vec3 wp, vec3 nn, vec3 R, float rough){\n"
+    "  if(u_gi_enabled==0 || u_probe_grid_on==0 || u_gi_spec_gain<=0.0) return vec3(0.0);\n"
+    "  ivec3 gdim=ivec3(u_probe_grid_dim+vec3(0.5));\n"
+    "  vec3 wp_b = wp + nn*(0.35*min(min(u_probe_grid_cell.x,u_probe_grid_cell.y),u_probe_grid_cell.z));\n"
+    "  vec3 g=(wp_b - u_probe_grid_origin)/u_probe_grid_cell;\n"
+    "  g=clamp(g, vec3(0.0), vec3(gdim)-vec3(1.0001));\n"
+    "  ivec3 g0=ivec3(floor(g)); vec3 fr=g-vec3(g0);\n"
+    "  vec3 acc=vec3(0.0); float wsum=0.0;\n"
+    "  float rw=clamp(1.0-rough, 0.05, 1.0);\n"        /* roughness -> lobe narrowing. */
+    "  for(int c=0;c<8;++c){\n"
+    "    ivec3 o=ivec3(c&1,(c>>1)&1,(c>>2)&1);\n"
+    "    vec3 wv=mix(vec3(1.0)-fr, fr, vec3(o)); float w=wv.x*wv.y*wv.z; if(w<=0.0) continue;\n"
+    "    ivec3 gc=min(g0+o, gdim-ivec3(1)); int probe=(gc.z*gdim.y + gc.y)*gdim.x + gc.x;\n"
+    /* Visibility-weight like the diffuse so probes behind the roof/walls can't\n"
+     * leak their reflection onto surfaces they don't see. */
+    "    vec3 ppos=u_probe_grid_origin + vec3(gc)*u_probe_grid_cell;\n"
+    "    vec3 pd=wp_b-ppos; float pl=length(pd);\n"
+    "    if(pl>1e-4) w*=max(probe_vis(probe, pd/pl, pl), 0.02);\n"
+    "    if(w<=0.0) continue;\n"
+    "    vec4 a=texelFetch(u_probe_sg, probe*2+0);\n"   /* axis.xyz, kappa. */
+    "    vec4 b=texelFetch(u_probe_sg, probe*2+1);\n"   /* rgb, pad. */
+    "    float keff=a.w*rw;\n"                          /* rougher -> lower sharpness. */
+    "    float lobe=exp(keff*(dot(R, a.xyz)-1.0));\n"
+    "    acc+=w*b.rgb*lobe; wsum+=w;\n"
+    "  }\n"
+    "  if(wsum>1e-5) acc/=wsum;\n"
+    "  return acc*u_gi_spec_gain;\n"
+    "}\n"
     "void main() {\n"
     /* Material textures tile at u_uv_scale; the lightmap (v_uv1) is NOT scaled. */
     "  vec2 muv = v_uv0 * u_uv_scale;\n"
@@ -560,11 +594,20 @@ static const char *const PBR_FS =
      * baked (has the lightmap) or dynamic (needs the boosted static ambience). */
     "  vec3 gi_dyn, gi_stat; float gi_sky; gi_probe_indirect2(v_world_pos, N, frag_cluster, gi_dyn, gi_stat, gi_sky);\n"
     "  float sgw = (u_sh_object>0.5) ? u_gi_static_baked_w : u_gi_static_dyn_w;\n"
-    "  ambient += albedo * (gi_dyn + sgw*gi_stat) * (ao/PI);\n"
-    /* Sky-openness ambient (cheap AO from the probe depth): sky visible overhead\n"
-     * (weighted up-facing) * a constant sky colour, occluded in enclosed spots. */
+    /* AO from sky openness, applied MULTIPLICATIVELY to the static + probe indirect\n"
+     * (enclosed creases lose bounce). u_gi_ao_mult blends 1..openness. */
+    "  float ao_o = mix(1.0, gi_sky, u_gi_ao_mult);\n"
+    "  ambient += albedo * (gi_dyn + sgw*gi_stat) * (ao/PI) * ao_o;\n"
+    /* Sky-openness ambient (constant sky colour where open overhead). */
     "  ambient += albedo * gi_sky * (0.5+0.5*N.y) * u_gi_sky_color * ao;\n"
     "  if(u_debug_mode==7){ frag=vec4(gi_dyn + sgw*gi_stat,1.0); return; }\n"
+    /* Probe specular (rpg-hw75): environment reflection from the probes' SG lobe,\n"
+     * Fresnel-weighted, AO-modulated, on top of the diffuse indirect. */
+    "  vec3 Rspec = reflect(-V, N);\n"
+    "  vec3 Fspec = F_Schlick(max(dot(N,V),0.0), F0);\n"
+    "  vec3 spec_ibl = Fspec * gi_probe_specular(v_world_pos, N, Rspec, rough) * ao_o;\n"
+    "  if(u_debug_mode==10){ frag=vec4(spec_ibl,1.0); return; }\n"
+    "  ambient += spec_ibl;\n"
     "  vec3 color = direct + ambient;\n"
     /* Emissive self-shading: the surface shows its own emission (the actual\n"
      * emissive LIGHTING of the scene is baked into the lightmap). Driven by the\n"

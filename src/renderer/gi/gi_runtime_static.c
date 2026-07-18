@@ -35,9 +35,16 @@ void gi_runtime_set_probe_grid(gi_runtime_t *gi, const float origin[3],
     }
 }
 
-void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref)
+void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref, float ao_mult)
 {
     if (gi == NULL) return;
     for (int i = 0; i < 3; ++i) gi->sky_ao_color[i] = color ? color[i] : 0.0f;
     gi->sky_ao_ref = ref > 0.1f ? ref : 6.0f;
+    gi->ao_mult = ao_mult < 0.0f ? 0.0f : (ao_mult > 1.0f ? 1.0f : ao_mult);
+}
+
+void gi_runtime_set_spec_gain(gi_runtime_t *gi, float gain)
+{
+    if (gi == NULL) return;
+    gi->spec_gain = gain > 0.0f ? gain : 0.0f;
 }

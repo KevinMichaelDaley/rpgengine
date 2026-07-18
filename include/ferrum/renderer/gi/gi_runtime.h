@@ -87,6 +87,8 @@ typedef struct gi_runtime {
     /* Sky-openness AO from the probe depth maps (0 colour = off). */
     float            sky_ao_color[3];
     float            sky_ao_ref;
+    float            spec_gain;   /**< probe specular master scale (0 = off). */
+    float            ao_mult;     /**< openness->AO multiply on indirect (0..1). */
     bool             ready;
 
     /* --- Probe froxel binning: probes assigned to the SAME froxels the forward+
@@ -160,7 +162,10 @@ void gi_runtime_set_probe_grid(gi_runtime_t *gi, const float origin[3],
  *        overhead; @p ref is the overhead distance (m) treated as fully open.
  *        @p color NULL or zero disables it. NULL-safe.
  */
-void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref);
+void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref, float ao_mult);
+
+/** @brief Master scale for the probe SG specular reflection (rpg-hw75); 0 = off. */
+void gi_runtime_set_spec_gain(gi_runtime_t *gi, float gain);
 
 /** @brief Free everything. NULL-safe. */
 void gi_runtime_destroy(gi_runtime_t *gi);

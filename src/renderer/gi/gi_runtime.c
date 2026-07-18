@@ -238,6 +238,8 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_probe_froxel_idx", (int32_t)u); ++u;
     glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi_probe_gpu_depth_tbo(&gi->gpu));
     shader_uniform_set_int(cache, program, "u_probe_depth", (int32_t)u); ++u;
+    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi_probe_gpu_sg_tbo(&gi->gpu));
+    shader_uniform_set_int(cache, program, "u_probe_sg", (int32_t)u); ++u;
 
     shader_uniform_set_int(cache, program, "u_gi_enabled", 1);
     shader_uniform_set_float(cache, program, "u_gi_static_baked_w", gi->static_baked_w);
@@ -252,6 +254,8 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     }
     shader_uniform_set_vec3(cache, program, "u_gi_sky_color", gi->sky_ao_color);
     shader_uniform_set_float(cache, program, "u_gi_sky_ref", gi->sky_ao_ref);
+    shader_uniform_set_float(cache, program, "u_gi_spec_gain", gi->spec_gain);
+    shader_uniform_set_float(cache, program, "u_gi_ao_mult", gi->ao_mult);
 }
 
 void gi_runtime_destroy(gi_runtime_t *gi)

@@ -1,6 +1,6 @@
 ---
 id: rpg-hw75
-status: open
+status: in_progress
 deps: [rpg-pau4]
 links: [rpg-pau4]
 created: 2026-07-18T18:45:50Z
@@ -43,3 +43,27 @@ Modularity: build in the renderer GI modules (src/renderer/gi/), demo only invok
 - Probe storage stays compact enough for trilinear interpolation of the SG set to remain cheap in the forward+ shader.
 - Clean under -Wall -Wextra -Wpedantic; TDD for host-side probe-buffer/SG-fit/serialization logic (trace + fit kernel validated by parity/visual). Demo: the hall floor/dais reflect the firelight + window light, updating as the fire flickers.
 
+
+## Notes
+
+**2026-07-18T20:58:42Z**
+
+FIRST INCREMENT (committed): single moment-fit SG lobe/probe.
+
+- Lobe fit in the existing probe trace: luminance-weighted mean radiance dir =
+  axis; vMF sharpness from the mean resultant length; total colour = amplitude.
+  8 floats/probe in a new SSBO/TBO beside the SH + DDGI depth.
+- Forward+: trilinear blend of the 8 grid probes' lobe along the reflection R,
+  roughness lowers the effective sharpness, Fresnel-weighted, VISIBILITY-weighted
+  (probe_vis + normal bias) so probes behind the roof/walls don't leak their
+  reflection, AO-modulated. gi_runtime_set_spec_gain / SPEC_GAIN (subtle default).
+
+Also this pass:
+- Depth-probe leak fix: cone radius shrinks with the ray distance (tight creases
+  like roof edges use tight cones) + lowered base cone slopes so they don't
+  subsample the SDF; sharpens the Chebyshev visibility everywhere.
+- Sky-openness AO now applied MULTIPLICATIVELY to the static + probe indirect
+  (u_gi_ao_mult, gi_runtime_set_sky_ao's new arg), not just additive sky ambient.
+
+TODO: multi-lobe residual fit; interpolate lobe params vs evaluate-then-blend;
+static bake path; TDD for host SG-fit/serialize.
