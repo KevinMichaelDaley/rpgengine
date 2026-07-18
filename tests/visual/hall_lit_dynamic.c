@@ -396,6 +396,15 @@ static void sh_stream_frame(sh_stream_t *s, const render_scene_t *scene,
 static void *sdl_get_proc(const char *n, void *u) { (void)u; return SDL_GL_GetProcAddress(n); }
 static float frand(uint32_t *s){ *s=*s*1664525u+1013904223u; return (float)(*s>>8)*(1.0f/16777216.0f); }
 static int group_of(const char *n){ if(strstr(n,"win")||strstr(n,"door"))return 0; if(strstr(n,"vault"))return 2; return 1; }
+/* Great-hall export: mesh name -> material index (order matches GH_MATS below:
+ * 0 stone_wall, 1 floor, 2 weave, 3 timber, 4 roof limestone, 5 dais marble). */
+static int gh_group(const char *n){
+    if(strstr(n,"floor")) return 1;
+    if(strstr(n,"roof")) return 4;
+    if(strstr(n,"tie")||strstr(n,"king")||strstr(n,"praf")||strstr(n,"collar")||strstr(n,"purlin")) return 3;
+    if(strstr(n,"dais_step")||(strstr(n,"dais")&&!strstr(n,"dais_arch"))) return 5;
+    return 0; /* win / wall / pier / entrance / dais_arch / fp -> wall masonry. */
+}
 static int hld_cmpstr(const void *a,const void *b){ return strcmp((const char *)a,(const char *)b); }
 
 static void save_ppm(const char *path,int w,int h){
@@ -419,10 +428,18 @@ static void gi_bind_cb(void *u, shader_uniform_cache_t *c, const shader_program_
 }
 
 int main(int argc,char **argv){
-    const char *dir = argc>1?argv[1]:"datasets/hall_lm";
+    /* GREAT_HALL: render the exported great-hall scene (scripts/export_scene.py):
+     * dmeshes under <root>/meshes and one PBR material per <root>/materials/<name>.
+     * An orange point light sits in the fireplace + 48 adaptively-placed GI probes;
+     * the baked .flm lightmap folds in via the FLM arg once it is baked. */
+    int great_hall = getenv("GREAT_HALL")!=NULL;
+    const char *gh_root = great_hall?(argc>2?argv[2]:"datasets/great_hall_export"):NULL;
+    static char gh_meshdir[512];
+    if(great_hall && argc<=1){ snprintf(gh_meshdir,sizeof gh_meshdir,"%s/meshes",gh_root); }
+    const char *dir = argc>1?argv[1]:(great_hall?gh_meshdir:"datasets/hall_lm");
     const char *bake = argc>2?argv[2]:"assets/arch/proc/prefabs/bake";
-    const char *lmfile = argc>3?argv[3]:"/tmp/hall_prod.flm";
-    const char *shot = argc>4?argv[4]:"/tmp/hall_lit_dynamic.ppm";
+    const char *lmfile = argc>3?argv[3]:(great_hall?"/tmp/great_hall.flm":"/tmp/hall_prod.flm");
+    const char *shot = argc>4?argv[4]:(great_hall?"/tmp/great_hall_lit.ppm":"/tmp/hall_lit_dynamic.ppm");
 
     /* Count the .dmesh files up front so every per-mesh array + the GPU command
      * queue / registry are sized to the ACTUAL mesh count -- this scales to
@@ -489,7 +506,7 @@ int main(int argc,char **argv){
     if(d)closedir(d);
     qsort(fnames,(size_t)nf,sizeof fnames[0],hld_cmpstr);
     for(int fi=0;fi<nf;++fi){ char p[512]; snprintf(p,sizeof p,"%s/%s",dir,fnames[fi]);
-        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=(getenv("RENDER_FLOOR_GREEN")&&strstr(fnames[fi],"floor"))?3:group_of(fnames[fi]); ++nm; } }
+        if(dmesh_load(p,&dm[nm])==0){ grp[nm]=great_hall?gh_group(fnames[fi]):((getenv("RENDER_FLOOR_GREEN")&&strstr(fnames[fi],"floor"))?3:group_of(fnames[fi])); ++nm; } }
     printf("loaded %d dmeshes\n",nm);
 
     /* --- Load the baked SH lightmap(s) into 9 GL_TEXTURE_2D_ARRAY pages. Single
@@ -553,6 +570,23 @@ int main(int argc,char **argv){
         tex_load_t *tl_=arena_alloc(&rarena,16u,sizeof *tl_); \
         tl_->queue=&gqueue; tl_->arena=&rarena; tl_->path=pc_; tl_->fmt=(format); tl_->out=(outp); tl_->px=NULL; \
         job_dispatch(&jobs,tex_load_fiber,tl_,0,&rcounter); }while(0)
+    /* GREAT_HALL: one PBR set (albedo/normal/roughness/ao) per exported material. */
+    static const char *GH_MATS[6]={"great_hall_stone_wall","great_hall_floor_stone",
+        "great_hall_reveal_weave","great_hall_timber","great_hall_roof_limestone",
+        "great_hall_dais_marble"};
+    static texture_t gh_tex[6][4];   /* [material][albedo,normal,roughness,ao] */
+    if(great_hall){
+        const char *chn[4]={"albedo","normal","roughness","ao"};
+        int gfmt[4]={TEXTURE_FORMAT_SRGB8,TEXTURE_FORMAT_RGB8,TEXTURE_FORMAT_RGB8,TEXTURE_FORMAT_RGB8};
+        for(int m=0;m<6;++m) for(int k=0;k<4;++k){
+            char qq[700]; snprintf(qq,sizeof qq,"%s/materials/%s/%s.png",gh_root,GH_MATS[m],chn[k]);
+            size_t pl_=strlen(qq)+1; char *pc_=arena_alloc(&rarena,1u,pl_); memcpy(pc_,qq,pl_);
+            tex_load_t *tl_=arena_alloc(&rarena,16u,sizeof *tl_);
+            tl_->queue=&gqueue; tl_->arena=&rarena; tl_->path=pc_; tl_->fmt=gfmt[k];
+            tl_->out=&gh_tex[m][k]; tl_->px=NULL;
+            job_dispatch(&jobs,tex_load_fiber,tl_,0,&rcounter);
+        }
+    } else {
     LOADT(&tb_a,"albedo.png",TEXTURE_FORMAT_SRGB8);
     LOADT(&tb_n,"normal.png",TEXTURE_FORMAT_RGB8);
     LOADT(&tb_orm,"orm.png",TEXTURE_FORMAT_RGB8); /* R=ao, G=roughness (packed). */
@@ -560,16 +594,29 @@ int main(int argc,char **argv){
     LOADT(&ts_r,"ashlar_roughness.png",TEXTURE_FORMAT_RGB8);
     LOADT(&tv_a,"vault_albedo.png",TEXTURE_FORMAT_SRGB8);
     LOADT(&tv_r,"vault_roughness.png",TEXTURE_FORMAT_RGB8);
+    }
     #undef LOADT
     /* Barrier: fibers decode + enqueue, then the render thread realises every
      * mesh + texture in one drain. */
     job_wait_counter(&rcounter,0);
     uint32_t created=gpu_executor_drain(&gexec,&gqueue);
     printf("resource executor created %u GPU resources (meshes + textures)\n",created);
-    render_material_t mats[4];
+    render_material_t mats[8];
     /* Brick/stone contrast (u_contrast): punch up the brick-vs-mortar tonal range
      * so the masonry reads with more depth. */
     float brick_contrast = getenv("BRICK_CONTRAST") ? (float)atof(getenv("BRICK_CONTRAST")) : 1.6f;
+    if(great_hall){
+        for(int m=0;m<6;++m){
+            material_init(&mats[m]);
+            mats[m].maps[MATERIAL_TEX_ALBEDO]=&gh_tex[m][0];
+            mats[m].maps[MATERIAL_TEX_NORMAL]=&gh_tex[m][1];
+            mats[m].maps[MATERIAL_TEX_ROUGHNESS]=&gh_tex[m][2];
+            mats[m].maps[MATERIAL_TEX_AO]=&gh_tex[m][3];
+            mats[m].normal_scale=1.0f; mats[m].roughness_min=0.05f; mats[m].roughness_max=1.0f;
+            mats[m].contrast=1.0f;
+        }
+        mats[3].normal_scale=1.4f;   /* timber: a touch more grain relief. */
+    } else {
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
     mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_orm; mats[0].orm_packed=1; mats[0].normal_scale=1.6f;
     mats[0].roughness_min=0.25f; mats[0].roughness_max=1.0f; mats[0].contrast=brick_contrast;
@@ -582,6 +629,7 @@ int main(int argc,char **argv){
     material_init(&mats[3]); mats[3].maps[MATERIAL_TEX_ALBEDO]=&ts_a; mats[3].maps[MATERIAL_TEX_ROUGHNESS]=&ts_r;
     mats[3].roughness_min=0.5f; mats[3].roughness_max=1.0f;
     mats[3].tint[0]=0.15f; mats[3].tint[1]=0.85f; mats[3].tint[2]=0.12f;
+    }
 
     /* --- Dynamic clustered point lights ("magic particles"). --- */
     render_light_t lb[MAX_LIGHTS];
@@ -601,7 +649,7 @@ int main(int argc,char **argv){
       s.position[0]=cx; s.position[1]=amin[1]+0.45f*span[1]; s.position[2]=cz;
       s.position[lax]=amin[lax]+0.16f*span[lax];
       s.position[cax]=amin[cax]+0.80f*span[cax];
-      s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=(spot_only||csm_demo||lm_only)?0.0f:(shadow_only?14.0f:8.0f); s.range=hall_len*1.6f;
+      s.color[0]=s.color[1]=s.color[2]=1.0f; s.intensity=(spot_only||csm_demo||lm_only||great_hall)?0.0f:(shadow_only?14.0f:8.0f); s.range=hall_len*1.6f;
       s.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&s); }
     /* Light index 1: a warm-orange UPWARD sconce SPOTLIGHT (candle brightness),
      * on a side wall pointing at the vault -- casts a 2D spot shadow of the ribs
@@ -612,11 +660,32 @@ int main(int argc,char **argv){
       sp.position[lax]=amin[lax]+0.34f*span[lax];      /* at the near central column */
       sp.direction[0]=0; sp.direction[1]=1; sp.direction[2]=0;
       sp.color[0]=1.0f; sp.color[1]=0.55f; sp.color[2]=0.22f; /* warm orange */
-      sp.intensity=(csm_demo||lm_only)?0.0f:(spot_only?22.0f:6.0f); sp.range=hall_len;
+      sp.intensity=(csm_demo||lm_only||great_hall)?0.0f:(spot_only?22.0f:6.0f); sp.range=hall_len;
       sp.cos_inner=cosf(0.80f); sp.cos_outer=cosf(1.05f); /* ~120-deg cone */
       sp.flags=RENDER_LIGHT_FLAG_REALTIME; render_light_add(&lights,&sp); }
+    /* GREAT_HALL: a warm-orange fire glow inside the fireplace (a shadow-casting
+     * point light raised into the firebox above the hearth), gathered by the GI
+     * probes for bounced indirect. Positioned from the fp mesh centroid. */
+    if(great_hall){
+      float fp[3]={cx,amin[1]+0.6f,cz}; int found=0;
+      for(int i=0;i<nm;++i){
+        int hearth=strstr(fnames[i],"fp_hearth")!=NULL;
+        if(hearth||(!found&&strstr(fnames[i],"fp_opening"))){
+          double sm[3]={0,0,0}; uint32_t vc=dm[i].vert_count;
+          for(uint32_t v=0;v<vc;++v){ sm[0]+=dm[i].positions[v*3]; sm[1]+=dm[i].positions[v*3+1]; sm[2]+=dm[i].positions[v*3+2]; }
+          if(vc){ fp[0]=(float)(sm[0]/vc); fp[1]=(float)(sm[1]/vc); fp[2]=(float)(sm[2]/vc); found=1; if(hearth) break; }
+        }
+      }
+      render_light_t f; memset(&f,0,sizeof f); f.kind=RENDER_LIGHT_POINT;
+      f.position[0]=fp[0]; f.position[1]=fp[1]+0.6f; f.position[2]=fp[2];
+      f.color[0]=1.0f; f.color[1]=0.42f; f.color[2]=0.13f;   /* warm orange fire */
+      f.intensity=16.0f; f.range=9.0f;
+      f.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT|RENDER_LIGHT_FLAG_SHADOW;
+      render_light_add(&lights,&f);
+      printf("great_hall fireplace light at (%.1f,%.1f,%.1f)\n",f.position[0],f.position[1],f.position[2]);
+    }
     uint32_t rng=4242;
-    for(int i=0;i<((shadow_only||one_light||spot_only||csm_demo||lm_only)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
+    for(int i=0;i<((shadow_only||one_light||spot_only||csm_demo||lm_only||great_hall)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
         l.position[0]=amin[0]+frand(&rng)*span[0]; l.position[1]=amin[1]+0.12f*span[1]+frand(&rng)*0.7f*span[1];
         l.position[2]=amin[2]+frand(&rng)*span[2]; const float *pc=pal[i%6];
         l.color[0]=pc[0]; l.color[1]=pc[1]; l.color[2]=pc[2];
@@ -714,7 +783,7 @@ int main(int argc,char **argv){
     }
     /* Dynamic-light SDF-probe GI (LM_GI): the runtime binds the probe samplers
      * into the forward pass via this hook. Set before init so fwd captures it. */
-    int gi_demo = getenv("LM_GI") != NULL;
+    int gi_demo = getenv("LM_GI") != NULL || great_hall;
     int ptonly = gi_demo && getenv("GI_PTONLY")!=NULL; /* isolate the point-light cube shadow. */
     if(gi_demo){ fcfg.material_extra_bind = gi_bind_cb; fcfg.material_extra_user = &g_gi; }
     if(ptonly){ /* kill the sun + baked lightmap so only the point light lights the scene. */
@@ -732,6 +801,7 @@ int main(int argc,char **argv){
      * a swarm of moving ceiling particle lights; all GI logic is in gi_runtime. */
     static static_mesh_t gib[8];
     if(gi_demo){
+      if(!great_hall){   /* the generic GI demo props/particles -- not the hall. */
         render_scene_mark_dynamic(&scene);
         g_nboxes = 4;
         for(int b=0;b<g_nboxes;++b){
@@ -777,16 +847,21 @@ int main(int argc,char **argv){
           pt.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT;
           if(!getenv("GI_NOSHADOW")) pt.flags|=RENDER_LIGHT_FLAG_SHADOW;
           render_light_add(&lights,&pt); }
-        /* ~40 probes spread on a regular grid through the hall interior (inset from
-         * the walls), at two heights (aisle + under the vaults). Froxel binning +
-         * nearest-2 blend make a denser, more even set cheap. */
-        static float hall_probes[40 * 3]; int n_probes = 0;
-        { int pnx = 5, pny = 2, pnz = 4; float ins = 0.14f;
+      } /* end !great_hall generic demo geometry */
+        /* Probes on a stratified interior grid, inset from the walls, at two
+         * heights. GREAT_HALL uses a 6x2x4 = 48 set jittered per cell (adaptive
+         * stratified placement); the generic demo uses 5x2x4 = 40. */
+        static float hall_probes[48 * 3]; int n_probes = 0;
+        { int pnx = great_hall?6:5, pny = 2, pnz = 4; float ins = 0.14f;
+          uint32_t pj = 9157u;
           for (int iz = 0; iz < pnz; ++iz) for (int iy = 0; iy < pny; ++iy)
           for (int ix = 0; ix < pnx; ++ix) {
             float fx = (pnx>1)?(float)ix/(float)(pnx-1):0.5f;
             float fy = (pny>1)?(float)iy/(float)(pny-1):0.5f;
             float fz = (pnz>1)?(float)iz/(float)(pnz-1):0.5f;
+            if(great_hall){ float j=0.045f;   /* per-cell jitter -> adaptive spread */
+              fx+=(frand(&pj)-0.5f)*j; fz+=(frand(&pj)-0.5f)*j;
+              fx=fx<0?0:(fx>1?1:fx); fz=fz<0?0:(fz>1?1:fz); }
             hall_probes[n_probes*3+0] = amin[0]+span[0]*(ins+(1.0f-2.0f*ins)*fx);
             hall_probes[n_probes*3+1] = amin[1]+span[1]*(0.22f+0.52f*fy); /* mid heights. */
             hall_probes[n_probes*3+2] = amin[2]+span[2]*(ins+(1.0f-2.0f*ins)*fz);
