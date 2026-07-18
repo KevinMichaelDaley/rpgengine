@@ -840,7 +840,7 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     # Flatten with bounds: cell cores (small distance) map to full depth, and
     # anything past the band clamps flat. Negative -> pits bite inward. Gentle
     # slope (wide band, shallow depth) so pits are soft dishes, not spikes.
-    pit_depth = mn * 0.011 * micro          # half depth: shallow pitting
+    pit_depth = mn * 0.015 * micro          # half depth: shallow pitting
     pit = nd('ShaderNodeMapRange', 500, -300)
     pit.clamp = True
     pit.inputs['From Min'].default_value = 0.0
@@ -892,8 +892,8 @@ def _micro_node_group(group_name, mn, micro, seed_offset, env_strength=0.85,
     grain.inputs['Roughness'].default_value = 0.55
     links.new(base.outputs['Vector'], grain.inputs['Vector'])
     gmap = nd('ShaderNodeMapRange', 300, 300)
-    gmap.inputs['To Min'].default_value = -mn * 0.006 * micro  # ~0.4x amplitude
-    gmap.inputs['To Max'].default_value = mn * 0.006 * micro
+    gmap.inputs['To Min'].default_value = -mn * 0.0085 * micro  # tool-grain amplitude
+    gmap.inputs['To Max'].default_value = mn * 0.0085 * micro
     links.new(grain.outputs['Fac'], gmap.inputs['Value'])
 
     # Sum grain + per-facet-modulated pits -> raw scalar displacement.
@@ -1074,7 +1074,7 @@ def _relax_arris(obj, half, band, strength=1.0, boost_far_axis=None, boost=1.0):
 def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
                 edge_chip=0.007, corner_chip=0.02, chamfer_frac=0.6, detail=3,
                 refine=0.25,
-                chip=0.5, cracks=0.72, cracks2=0.5, decimate=0.75, decimate0=0.45,
+                chip=0.5, cracks=0.72, cracks2=0.5, decimate=0.75, decimate0=0.18,
                 adaptivity=0.25, fine_div=130.0, fine_adaptivity=0.65, disp_scale=0.19,
                 bounds_radius=0.006, final_decimate=0.8, micro=0.8, micro_env=0.9,
                 micro_quant=0.0, micro_floor=0.032, micro_voxel_div=220.0,
@@ -1142,8 +1142,11 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     # is sub-mm, so the dressing kernels need a much wider radius to sculpt facets
     # at the ~cm stone scale. Held constant in metres; converted to edge-steps per
     # stage from the stage voxel size (see the loop). Cap bounds the finest stage.
-    lap_radius = mn * 0.20                    # kernels START wide (dressing scale)
-    lap_steps_cap = 40                        # bound the diffusion cost per pass
+    lap_radius = mn * 0.26                    # kernels START wide (dressing scale)
+    lap_steps_cap = 160                       # high enough that the coarse early
+    #                                           stages reach the full (low-freq)
+    #                                           radius; fine stages self-limit (tiny
+    #                                           edges -> small radius -> fine detail).
 
     # --- Phase A: annealed faceting -> angular hewn base ---
     # Every remesh also decimates (the `decimate` param) so each scale is
@@ -1159,8 +1162,8 @@ def build_brick(name="brick", seed=0, length=0.25, height=0.09, width=0.11,
     vd1 = 20.0 * (1.0 + 3.0 * boxy)
     vd2 = fine_div * (1.0 + 0.6 * boxy)
     schedule = [
-        (mn / vd0,  90, 0.28 * tilt_k, 16, md0,        1.00, 0.15, (0.40, 0.19, 0.10, 0.18, 0.06)),
-        (mn / vd1, 230, 0.36 * tilt_k, 14, md0 * 0.55, 0.70, 0.10, (0.38, 0.19, 0.10, 0.18, 0.06)),
+        (mn / vd0,  90, 0.28 * tilt_k, 16, md0 * 1.35, 1.00, 0.15, (0.40, 0.19, 0.10, 0.18, 0.06)),
+        (mn / vd1, 230, 0.36 * tilt_k, 14, md0 * 0.80, 0.70, 0.10, (0.38, 0.19, 0.10, 0.18, 0.06)),
         (mn / vd2, 480, 0.44 * tilt_k, 12, md0 * 0.26, 0.48, 0.06, (0.36, 0.19, 0.10, 0.18, 0.06)),
     ][:max(1, detail)]
     ns = len(schedule)
