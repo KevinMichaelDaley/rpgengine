@@ -726,8 +726,11 @@ int main(int argc,char **argv){
         mats[3].normal_scale=1.4f;   /* timber: a touch more grain relief. */
         mats[5].roughness_min=0.45f; /* dais marble: rougher -> less mirror, softer sheen. */
         /* Masonry: punch up the brick/mortar relief so the courses read with depth. */
-        mats[0].normal_scale=2.0f;   /* stone_wall brick. */
-        mats[1].normal_scale=1.8f;   /* floor stone. */
+        /* Normal-map strength: at 2.0 the brick relief OVER-shaded under the
+         * direct (CSM) sun -- every brick facet swung hard bright/dark. ~1.0 reads
+         * as relief without the harsh per-brick shading. Env-tunable. */
+        mats[0].normal_scale=getenv("GH_WALL_NRM")?(float)atof(getenv("GH_WALL_NRM")):1.0f;
+        mats[1].normal_scale=getenv("GH_FLOOR_NRM")?(float)atof(getenv("GH_FLOOR_NRM")):1.0f;
         /* Runtime UV scale: the SAME baked atlas tiled over more world metres to
          * scale features UP (u_uv_scale multiplies the world-metre uv0). Smaller
          * -> bigger bricks/flags. Walls + floor (esp. the floor tiles) read too
@@ -907,11 +910,19 @@ int main(int argc,char **argv){
      * so to-sun = (-0.42,0.50,-0.76) -- the direct sun + its CSM shadow then line
      * up with the baked indirect bounce. */
     fcfg.sun_dir[0]=-0.42f; fcfg.sun_dir[1]=0.50f; fcfg.sun_dir[2]=-0.76f;
-    fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* sun already baked into SH */
+    fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* default off; the
+        CSM block below turns the direct sun ON for great_hall (lightmap is INDIRECT
+        only, so the sun's DIRECT term must come from the realtime CSM). */
     fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     /* CSM demo combines the baked indirect lightmap (reduced strength) with the
      * direct sun + its CSM shadows. */
     fcfg.sh_enabled=(shadow_only||spot_only||no_lm||fire_only)?0:1; fcfg.sh_scale=(lm_only?1.0f:(great_hall?0.7f:(csm_demo?0.5f:0.4f)))*gdim; for(int c=0;c<9;c++) fcfg.sh_tex[c]=sh_tex[c];
+    /* Indirect (lightmap + probe GI) normal bias: mute the detail normal for the
+     * low-frequency indirect terms so the brick relief doesn't over-modulate the
+     * soft bounce. Evaluated along a normal only partway toward the mapped normal
+     * (great_hall); other scenes keep the full mapped normal (1.0). GH_SH_NBIAS. */
+    fcfg.sh_normal_bias = getenv("GH_SH_NBIAS") ? (float)atof(getenv("GH_SH_NBIAS"))
+                                                : (great_hall ? 0.5f : 1.0f);
     fcfg.shadow_light=-1; /* multi-light path: point lights tagged FLAG_SHADOW cast. */
     fcfg.shadow_max=8; fcfg.shadow_res=256; fcfg.shadow_near=0.1f;
     fcfg.shadow_far=hall_len*1.8f; fcfg.shadow_bias=0.08f;

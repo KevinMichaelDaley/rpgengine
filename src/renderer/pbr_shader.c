@@ -121,6 +121,9 @@ static const char *const PBR_FS =
      * resident (-> no baked term this frame). */
     "uniform int u_sh_layer;\n"
     "uniform float u_sh_scale;\n" /* baked-lightmap intensity multiplier (default 1). */
+    "uniform float u_sh_normal_bias;\n" /* 0=geometric N, 1=full normal-mapped N for
+                                         * the baked-lightmap diffuse (avoids the detail
+                                         * normal OVER-shading the baked directional sun). */
     "#define SHUV vec3(v_uv1, float(max(u_sh_layer,0)))\n"
     "uniform float u_sh_object;\n" /* 1 for static (lightmapped) objects, 0 for dynamic. */
     /* Debug visualisation: 0=off, 1=raw SH DC term (coeff0) at v_uv1,
@@ -545,13 +548,18 @@ static const char *const PBR_FS =
     "    if(u_has_ao==1) ao = mix(1.0, texture(u_ao_map, muv).r, u_ao_strength);\n"
     "  }\n"
     "  float rough = clamp(mix(u_roughness_min, u_roughness_max, rsample), 0.045, 1.0);\n"
-    "  vec3 N = normalize(v_normal);\n"
+    "  vec3 Ng = normalize(v_normal);\n"   /* geometric (unmapped) normal. */
+    "  vec3 N = Ng;\n"
     "  if(u_has_normal==1){\n"
     "    vec3 tn = texture(u_normal_map, muv).xyz*2.0-1.0;\n"
     "    tn.xy *= u_normal_scale;\n"
     "    mat3 TBN = mat3(normalize(v_tangent), normalize(v_bitangent), N);\n"
     "    N = normalize(TBN * tn);\n"
     "  }\n"
+    /* Muted normal for the low-frequency INDIRECT terms (baked lightmap + probe\n"
+     * GI): partway from geometric to mapped so the detail relief doesn't over-\n"
+     * modulate the soft bounce. Direct sun + specular still use the full N. */
+    "  vec3 Nsh = normalize(mix(Ng, N, u_sh_normal_bias));\n"
     "  vec3 V = normalize(u_eye_pos - v_world_pos);\n"
     "  vec3 F0 = mix(vec3(0.08*u_specular_strength), albedo, metal);\n"
     /* This fragment's forward+ cluster -- computed ONCE (one log) and shared by\n"
@@ -631,7 +639,9 @@ static const char *const PBR_FS =
      * radiance along R for the (blurry, static) specular reflection. */
     "  if(u_sh_enabled==1 && u_sh_object>0.5 && u_sh_layer>=0){\n"
     "    vec3 L[9]; sh9_fetch(L);\n"
-    "    vec3 E = max(sh9_irradiance(L,N), vec3(0.0));\n"
+    /* Diffuse irradiance along the muted indirect normal (Nsh); specular (Lr)\n"
+     * keeps the full mapped N. */
+    "    vec3 E = max(sh9_irradiance(L,Nsh), vec3(0.0));\n"
     "    vec3 Lr = max(sh9_radiance(L,Rspec), vec3(0.0));\n"
     "    ambient += (kD*albedo*E/PI + kS*Lr) * u_sh_scale * ao;\n"
     "  }\n"
@@ -639,7 +649,7 @@ static const char *const PBR_FS =
      * diffuse albedo/PI * E, on top of the baked static ambient. */
     /* Probe indirect: dynamic always; static weighted by whether this object is\n"
      * baked (has the lightmap) or dynamic (needs the boosted static ambience). */
-    "  vec3 gi_dyn, gi_stat; float gi_sky; gi_probe_indirect2(v_world_pos, N, frag_cluster, gi_dyn, gi_stat, gi_sky);\n"
+    "  vec3 gi_dyn, gi_stat; float gi_sky; gi_probe_indirect2(v_world_pos, Nsh, frag_cluster, gi_dyn, gi_stat, gi_sky);\n"
     "  float sgw = (u_sh_object>0.5) ? u_gi_static_baked_w : u_gi_static_dyn_w;\n"
     /* AO from sky openness, applied MULTIPLICATIVELY to the indirect (enclosed\n"
      * creases lose bounce). u_gi_ao_mult blends 1..openness. */

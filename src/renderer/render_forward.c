@@ -111,6 +111,9 @@ static void fwd_forward_submit(void *ud)
         shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_enabled", f->cfg.sh_enabled ? 1 : 0);
         shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_scale",
                                  f->cfg.sh_scale > 0.0f ? f->cfg.sh_scale : 1.0f);
+        /* 0 (unset by other callers) -> 1.0: full mapped normal = old behavior. */
+        shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_normal_bias",
+                                 f->cfg.sh_normal_bias > 0.0f ? f->cfg.sh_normal_bias : 1.0f);
     }
 
     /* Optional point-light cube shadow on unit 20 (the movable light whose flat

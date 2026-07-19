@@ -49,6 +49,10 @@ typedef struct render_forward_config {
     int                sh_enabled;    /**< bind a baked SH lightmap (units 7-15). */
     uint32_t           sh_tex[9];     /**< 9 RGB32F SH-coeff atlas texture ids. */
     float              sh_scale;      /**< lightmap intensity multiplier (0 -> 1). */
+    float              sh_normal_bias;/**< baked-lightmap diffuse normal blend: 0 =
+                                        *  geometric normal, 1 = full normal-mapped
+                                        *  (avoids detail-normal over-shading the
+                                        *  baked directional sun). Default 1. */
     int                shadow_light;  /**< legacy single cube-shadow light (-1); the
                                         *  multi-light path shadows every point light
                                         *  tagged RENDER_LIGHT_FLAG_SHADOW instead. */
