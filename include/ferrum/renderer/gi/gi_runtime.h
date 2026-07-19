@@ -96,6 +96,13 @@ typedef struct gi_runtime {
     float            spec_gain;   /**< probe specular master scale (0 = off). */
     int              spec_lobes;  /**< SG lobes summed per probe (1..3; GI_SG_LOBES). */
     float            ao_mult;     /**< openness->AO multiply on indirect (0..1). */
+    /* Probe visibility (Chebyshev) softening -- controls the per-probe light/dark
+     * transition at dynamic-occluder edges. Softer = fewer probe-lattice "dot"
+     * artifacts where the trilinear corners flip near-binary, at the cost of a
+     * little more leak / softer indirect contact shadows. */
+    float            vis_bias;     /**< self-visible band (m): dist<=mean+bias is fully lit. GI_VIS_BIAS. */
+    float            vis_varmin;   /**< Chebyshev variance floor: larger = softer falloff. GI_VIS_VARMIN. */
+    float            vis_sharp;    /**< falloff exponent: 1=soft, 2=old/sharp. GI_VIS_SHARP. */
     bool             ready;
 
     /* --- Probe froxel binning: probes assigned to the SAME froxels the forward+

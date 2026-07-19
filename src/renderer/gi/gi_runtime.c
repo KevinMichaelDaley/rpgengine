@@ -63,6 +63,15 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     gi->static_baked_w = 0.35f;
     gi->static_dyn_w = 1.0f;
     gi->sky_ao_ref = 6.0f;   /* sky_ao_color defaults to 0 (off) until set. */
+    /* Probe-visibility softening (dot-artifact fix at dynamic-occluder edges).
+     * Defaults are softer than the old hardcoded (0.15 bias, 1e-3 var, squared)
+     * so the per-probe light/dark transition blends instead of stamping the grid. */
+    gi->vis_bias = 0.30f;
+    { const char *e = getenv("GI_VIS_BIAS"); if (e) { float v=(float)atof(e); if (v>=0.0f) gi->vis_bias=v; } }
+    gi->vis_varmin = 0.02f;
+    { const char *e = getenv("GI_VIS_VARMIN"); if (e) { float v=(float)atof(e); if (v>0.0f) gi->vis_varmin=v; } }
+    gi->vis_sharp = 1.0f;
+    { const char *e = getenv("GI_VIS_SHARP"); if (e) { float v=(float)atof(e); if (v>0.0f) gi->vis_sharp=v; } }
 
     /* --- Baked SDF residency. --- */
     if (gi_sdf_stream_load(&gi->sdf, cfg->sdf_prefix) <= 0) {
@@ -322,6 +331,9 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_float(cache, program, "u_gi_spec_gain", gi->spec_gain);
     shader_uniform_set_int(cache, program, "u_gi_spec_lobes", gi->spec_lobes);
     shader_uniform_set_float(cache, program, "u_gi_ao_mult", gi->ao_mult);
+    shader_uniform_set_float(cache, program, "u_gi_vis_bias", gi->vis_bias);
+    shader_uniform_set_float(cache, program, "u_gi_vis_varmin", gi->vis_varmin);
+    shader_uniform_set_float(cache, program, "u_gi_vis_sharp", gi->vis_sharp);
 }
 
 void gi_runtime_destroy(gi_runtime_t *gi)

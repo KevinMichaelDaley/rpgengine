@@ -803,6 +803,7 @@ int main(int argc,char **argv){
      * fp_base is the AVERAGE intensity; the render loop mean-reverts around it in
      * small random steps to make the fire flicker. */
     int fp_idx=-1;
+    int lantern_idx=-1;   /* the carried-lantern point light (driven per-frame). */
     /* Average fireplace intensity (the loop flickers around this). Bright warm
      * hearth -- overridable with FP_INT for quick tuning. */
     const float fp_base=getenv("FP_INT")?(float)atof(getenv("FP_INT")):34.0f;
@@ -852,6 +853,24 @@ int main(int argc,char **argv){
       }
       printf("great_hall sconce lights at x=%.1f y=%.1f z=+/-%.1f\n",
              sconce_x,sconce_y,sconce_z[0]);
+
+      /* A CARRIED LANTERN: a warm point light that walks slowly down the hall and
+       * sways side to side like someone holding it. Shadow-casting + PROBE_GI, so
+       * it throws a MOVING shadow of the metal cube (parked between it and the
+       * room centre) and feeds the dynamic GI. Its real position needs lenax /
+       * center (computed further below), so seed a placeholder here to reserve the
+       * light + cube-shadow slot; the render loop drives the true position. */
+      render_light_t lan; memset(&lan,0,sizeof lan); lan.kind=RENDER_LIGHT_POINT;
+      lan.position[0]=cx; lan.position[1]=amin[1]+2.1f; lan.position[2]=cz;
+      lan.color[0]=1.0f; lan.color[1]=0.60f; lan.color[2]=0.26f;   /* warm lantern flame */
+      /* Outside the arcade + partly occluded by piers -> brighter & longer reach. */
+      lan.intensity=getenv("LANTERN_INT")?(float)atof(getenv("LANTERN_INT")):40.0f;
+      lan.range=getenv("LANTERN_RANGE")?(float)atof(getenv("LANTERN_RANGE")):22.0f;
+      lan.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT
+               |RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
+      lantern_idx=(int)lights.count;
+      render_light_add(&lights,&lan);
+      printf("great_hall carried lantern light idx=%d\n",lantern_idx);
     }
     uint32_t rng=4242;
     for(int i=0;i<((shadow_only||one_light||spot_only||csm_demo||lm_only||great_hall)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;
@@ -1040,34 +1059,28 @@ int main(int argc,char **argv){
           if(!getenv("GI_NOSHADOW")) pt.flags|=RENDER_LIGHT_FLAG_SHADOW;
           render_light_add(&lights,&pt); }
       } /* end !great_hall generic demo geometry */
-        /* GREAT_HALL: two DYNAMIC glossy-metal cubes (u_sh_object=0 -> not baked)
-         * that slide through the hall centre; low roughness -> they mirror the
-         * probe SG specular (fire + windows) as they move. GH_NOCUBE disables. */
+        /* GREAT_HALL: a CARRIED-LANTERN scene -- a single small emissive lantern
+         * BODY (the warm point light added above rides with it) that walks OUTSIDE
+         * the pier arcade so its light rakes in between the columns. The moving
+         * pier shadows are the effect; no dynamic occluder cube is needed. The body
+         * is driven per-frame. GH_NOCUBE disables. */
         if(great_hall && getenv("GH_NOCUBE")==NULL){
             render_scene_mark_dynamic(&scene);            /* items after here are dynamic. */
-            material_init(&mats[6]);                      /* polished metal (no maps -> tint). */
-            mats[6].tint[0]=mats[6].tint[1]=mats[6].tint[2]=0.85f;
-            mats[6].metalness=0.85f; mats[6].roughness_min=0.14f; mats[6].roughness_max=0.14f;
-            float cuy=amin[1]+1.42f;                               /* 2.4 m cube resting on the floor. */
-            /* Sun rakes toward +crossax, so sit on the -crossax (sun-side) window so
-             * the cubes' shadows fall onto the lit floor the camera sees. */
-            float cwz=center[crossax]-span[crossax]*0.30f;
-            for(int c=0;c<2;++c){
-                static_mesh_create_box(&loader, 2.4f,2.4f,2.4f, &gh_mov[c]);
-                float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
-                bm[13]=cuy; bm[12+lenax]=center[lenax];
-                bm[12+crossax]=cwz+(c?0.45f:-0.45f);               /* side by side, near the window. */
-                gh_mov_item[c]=(int)scene.count;
-                render_scene_add(&scene,&gh_mov[c],&mats[6],bm);
-                /* Register as an analytic GI collider box so the probe trace folds
-                 * it into the combined SDF (min with the baked field): the cubes
-                 * then occlude/reflect each other + the scene in the dynamic GI. */
-                g_boxes[c].kind=GI_COLLIDER_BOX;
-                g_boxes[c].ext[0]=g_boxes[c].ext[1]=g_boxes[c].ext[2]=1.2f;
-                g_boxes[c].a[1]=cuy; g_boxes[c].a[crossax]=cwz+(c?0.45f:-0.45f);
-                g_boxes[c].a[lenax]=center[lenax];
-            }
-            g_nboxes=2;   /* fed to gi_runtime_frame each frame. */
+            /* Self-lit warm lantern body (no maps; emissive drives its own glow). */
+            material_init(&mats[7]);
+            mats[7].tint[0]=0.9f; mats[7].tint[1]=0.55f; mats[7].tint[2]=0.22f;
+            mats[7].emissive_color[0]=1.0f; mats[7].emissive_color[1]=0.60f; mats[7].emissive_color[2]=0.26f;
+            mats[7].emissive_strength=6.0f;
+            mats[7].roughness_min=mats[7].roughness_max=0.6f;
+
+            /* Small emissive lantern box; placeholder transform (render loop drives
+             * it and the light together). */
+            static_mesh_create_box(&loader, 0.40f,0.55f,0.40f, &gh_mov[0]);
+            { float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+              bm[12]=center[0]; bm[13]=amin[1]+1.6f; bm[14]=center[2];
+              gh_mov_item[0]=(int)scene.count;
+              render_scene_add(&scene,&gh_mov[0],&mats[7],bm); }
+            g_nboxes=0;   /* no dynamic GI colliders -- only the static piers occlude. */
         }
         /* Probe placement. GREAT_HALL: a DENSE interior grid at ~GI_PSPACE metres
          * (default 1.3) that fills the whole volume -- floor to roof -- so every
@@ -1212,6 +1225,11 @@ int main(int argc,char **argv){
     int win_frames=0;                    /* frames since the last per-second report. */
     double win_min=1e9, win_max=0.0;     /* min/max single-frame ms over the window. */
     if(stream) sh_stream_prepass_init(&sstream, W/4>0?W/4:1, H/4>0?H/4:1);
+    /* Carried lantern placement (OUTSIDE the -crossax pier arcade), env-tunable so
+     * the rake angle / height can be dialled live: LANTERN_OUT metres beyond the
+     * wall, LANTERN_Y height above the floor. */
+    float lan_out = getenv("LANTERN_OUT")?(float)atof(getenv("LANTERN_OUT")):2.0f;
+    float lan_y   = getenv("LANTERN_Y")?(float)atof(getenv("LANTERN_Y")):3.2f;
     for(int frame=0;frame<nframes;++frame){
         if(fp_idx>=0){
             /* Mean-reverting random walk; wider noise + clamp = livelier flicker. */
@@ -1220,14 +1238,27 @@ int main(int argc,char **argv){
             if(fp_cur>1.65f*fp_base) fp_cur=1.65f*fp_base;
             lights.lights[fp_idx].intensity=fp_cur;
         }
-        /* Slide the two glossy cubes sinusoidally through the hall centre, out of
-         * phase, so their low-roughness faces sweep the probe SG reflections. */
+        /* Carried lantern OUTSIDE the hall: a warm light walks slowly along the
+         * length (lenax) just beyond the -crossax pier arcade, swaying gently
+         * toward/away from the wall with a slight vertical bob -- so its light rakes
+         * IN between the piers and sweeps moving column-shadows across the floor. */
         if(gh_mov_item[0]>=0){
-            float ph=(float)frame*0.011f, amp=span[lenax]*0.32f;   /* slow: a realistic GI-scale mover. */
-            for(int c=0;c<2;++c){
-                float lp=center[lenax]+amp*sinf(ph+(c?1.8f:0.0f));
-                scene.items[gh_mov_item[c]].model[12+lenax]=lp;
-                g_boxes[c].a[lenax]=lp;   /* keep the GI collider in sync. */
+            float wph=(float)frame*0.006f;                 /* slow walk. */
+            float sph=(float)frame*0.045f;                 /* faster hand-sway. */
+            float outz=amin[crossax]-lan_out;              /* just outside the arcade. */
+            float walk=center[lenax]+span[lenax]*0.35f*sinf(wph);   /* down-length travel. */
+            float sway=outz-0.6f*(0.5f+0.5f*sinf(sph));    /* drift a little further out on the swing. */
+            float bodyy=amin[1]+lan_y+0.10f*sinf(sph*2.0f);/* carry height + slight bob. */
+            /* Lantern BODY (the visible emissive box) and its LIGHT ride together
+             * (the box is tiny relative to the range, so no self-occlusion worry
+             * from outside). */
+            scene.items[gh_mov_item[0]].model[12]=(lenax==0)?walk:sway;
+            scene.items[gh_mov_item[0]].model[13]=bodyy;
+            scene.items[gh_mov_item[0]].model[14]=(lenax==0)?sway:walk;
+            if(lantern_idx>=0){
+                lights.lights[lantern_idx].position[lenax]=walk;
+                lights.lights[lantern_idx].position[crossax]=sway;
+                lights.lights[lantern_idx].position[1]=bodyy;
             }
         }
         if(noclip){

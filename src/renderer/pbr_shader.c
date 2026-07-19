@@ -397,12 +397,21 @@ static const char *const PBR_FS =
      * clamped -- the octahedron-edge seam error is negligible. (mean, meanSq). */
     "vec2 depth_bilinear(int probe, vec3 dir){\n"
     "  return texture(u_probe_depth, vec3(oct_enc(dir), float(probe))).rg; }\n"
+    /* Softening controls (GI_VIS_*): a larger self-visible band (u_gi_vis_bias) and\n"
+     * variance floor (u_gi_vis_varmin), and a gentler exponent (u_gi_vis_sharp,\n"
+     * 1=soft) spread the per-probe light/dark transition so the trilinear corners\n"
+     * don't flip near-binary at a dynamic occluder's edge (the probe-lattice\n"
+     * "dots"). Falloff starts AT the bias edge (d>=0), so it is C0-continuous with\n"
+     * the fully-lit branch -- the old code jumped from 1.0 to var/(var+0.15^2). */
+    "uniform float u_gi_vis_bias;\n"
+    "uniform float u_gi_vis_varmin;\n"
+    "uniform float u_gi_vis_sharp;\n"
     "float probe_vis(int probe, vec3 dir, float dist){\n"
     "  vec2 mm=depth_bilinear(probe,dir);\n"
-    "  float mean=mm.x; float var=max(mm.y-mean*mean, 1e-3);\n"
-    "  if(dist<=mean+0.15) return 1.0;\n"                /* small bias: self-visible. */
-    "  float d=dist-mean; float ch=var/(var+d*d);\n"
-    "  return ch*ch;\n"                                 /* square: softer than DDGI's cube. */
+    "  float mean=mm.x; float var=max(mm.y-mean*mean, u_gi_vis_varmin);\n"
+    "  if(dist<=mean+u_gi_vis_bias) return 1.0;\n"       /* self-visible band. */
+    "  float d=dist-mean-u_gi_vis_bias; float ch=var/(var+d*d);\n"
+    "  return pow(ch, u_gi_vis_sharp);\n"                /* 1=soft transition, 2=old/sharp. */
     "}\n"
     /* Sky openness: how far the probe sees toward the sky (world up). A large mean\n"
      * distance overhead -> open -> lets the constant sky ambient in; close geometry\n"
