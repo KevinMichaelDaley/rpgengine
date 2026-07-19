@@ -70,7 +70,7 @@ ifeq ($(TRACY),1)
 endif
 ECS_SRC := $(wildcard src/ecs/*.c)
 ENTITY_SRC := $(wildcard src/entity/*.c)
-RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/gi/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c) $(wildcard src/renderer/resource/*.c) $(wildcard src/renderer/world/*.c)
+RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/gi/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c) $(wildcard src/renderer/resource/*.c) $(wildcard src/renderer/world/*.c) $(wildcard src/renderer/chunk/*.c)
 RENDER_WORLD_SRC := src/renderer/world/render_world_init.c src/renderer/world/render_world_update.c
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_VIDEO_CAPTURE_SRC := $(wildcard src/renderer/video_capture/*.c)

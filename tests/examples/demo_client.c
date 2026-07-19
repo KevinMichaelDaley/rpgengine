@@ -35,6 +35,7 @@
 #include "ferrum/mesh/obj_loader.h"
 #include "ferrum/renderer/client_scene.h"
 #include "ferrum/renderer/light_stream.h"
+#include "ferrum/renderer/client_bake.h"
 #include "ferrum/job/system.h"
 #include "ferrum/renderer/render_camera.h"
 #include "ferrum/scene/scene_desc.h"
@@ -674,6 +675,7 @@ int main(int argc, char **argv) {
     int headless = 0;
     const char *record_path = NULL;
     const char *level_path = NULL;   /* .scene descriptor -> client_scene (rpg-8302). */
+    const char *bake_path = NULL;    /* --bake <out.flm>: in-client lightmap bake (rpg-jro2). */
 
 #ifdef FR_NET_EMULATION
     float emu_delay = 0.0f, emu_jitter = 0.0f, emu_loss = 0.0f;
@@ -688,6 +690,8 @@ int main(int argc, char **argv) {
             record_path = argv[++i];
         } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
             level_path = argv[++i];
+        } else if (strcmp(argv[i], "--bake") == 0 && i + 1 < argc) {
+            bake_path = argv[++i];
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -809,6 +813,31 @@ int main(int argc, char **argv) {
             return 1;
         }
 
+    }
+
+    /* ── 3b. Bake mode (--bake): load the level's static objects (the same loader
+     * path the renderer uses) and bake its lightmap with the client's compute
+     * context, then exit. Baking in the client lets the geometry be streamed to a
+     * baking client over the network (rpg-jro2). ── */
+    if (!headless && bake_path && level_path) {
+        static uint8_t bake_buf[8 * 1024 * 1024];
+        arena_t ba; arena_init(&ba, bake_buf, sizeof bake_buf);
+        scene_desc_t bdesc;
+        char bbase[512]; snprintf(bbase, sizeof bbase, "%s", level_path);
+        char *bsl = strrchr(bbase, '/'); if (bsl) *bsl = '\0'; else snprintf(bbase, sizeof bbase, ".");
+        int brc = 1;
+        if (scene_desc_load(level_path, &ba, &bdesc)) {
+            printf("[client] baking '%s' (%u objects) -> %s\n", bdesc.name, bdesc.object_count, bake_path);
+            fflush(stdout);
+            brc = client_bake_run(&gl.loader, &bdesc, bbase, client_img_load, bake_path) ? 0 : 1;
+            printf("[client] bake %s\n", brc == 0 ? "OK" : "FAILED");
+        } else {
+            fprintf(stderr, "[client] bake: descriptor load failed '%s'\n", level_path);
+        }
+        gl_shutdown(&gl);
+        free(send_slots);
+        net_udp_socket_close(&sock);
+        return brc;
     }
 
     /* ── 3a. Level scene (--level): load the base descriptor from disk and
