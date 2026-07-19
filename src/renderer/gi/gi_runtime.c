@@ -194,8 +194,17 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
     /* Re-bin probes into the forward+ froxels. Camera-dependent, so this runs
      * independently of the (slower) probe-SH update below; probes are not static,
      * and the froxel assignment tracks both moving probes and the moving camera.
-     * bin_interval lets it skip frames when the view barely changes. */
-    if (gi->frame_counter % gi->bin_interval == 0) {
+     * bin_interval lets it skip frames when the view barely changes.
+     *
+     * SKIP ENTIRELY when the regular-grid trilinear path is active
+     * (probe_grid_on): in that mode the PBR shader interpolates the 8 surrounding
+     * GRID probes and returns before it ever reads the froxel probe lists
+     * (u_probe_froxel_off/cnt/idx), so binning them is pure dead work. The bin is
+     * O(clusters x probes x 2) on the CPU every frame (e.g. 16x16x24 froxels x
+     * 1024 probes ~= 12.6M iterations) -- the dominant per-frame cost at high probe
+     * counts. The froxel TBOs stay validly allocated (bound but never sampled), so
+     * leaving them un-updated is safe. Only the nearest-froxel fallback needs them. */
+    if (!gi->probe_grid_on && gi->frame_counter % gi->bin_interval == 0) {
         GI_ZONE(z_bin, "Game.GI.FroxelBin");
         render_camera_t cam;
         memset(&cam, 0, sizeof cam);
