@@ -994,6 +994,12 @@ int main(int argc, char **argv) {
     float cam_yaw   = 0.0f;
     float cam_pitch = 0.0f;
     vec3_t cam_pos  = {0.0f, 5.0f, 20.0f};
+    /* CLIENT_CAM="x,y,z,yaw,pitch" overrides the start pose (e.g. an interior
+     * vantage) for scripted/headless captures. */
+    { const char *cc = getenv("CLIENT_CAM");
+      if (cc) { float x=cam_pos.x,y=cam_pos.y,z=cam_pos.z,yw=cam_yaw,pt=cam_pitch;
+        if (sscanf(cc, "%f,%f,%f,%f,%f", &x,&y,&z,&yw,&pt) >= 3) {
+            cam_pos.x=x; cam_pos.y=y; cam_pos.z=z; cam_yaw=yw; cam_pitch=pt; } } }
 
     /* ── 6. Main loop ──────────────────────────────────────────── */
     const double start_time = now_s();

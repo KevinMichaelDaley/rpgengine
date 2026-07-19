@@ -178,6 +178,16 @@ static void add_descriptor_lights(client_scene_t *cs, const scene_desc_t *desc)
 {
     for (uint32_t i = 0; i < desc->light_count; ++i) {
         const scene_desc_light_t *sl = &desc->lights[i];
+        /* Only REALTIME punctual (point/spot) lights belong in the forward+ store.
+         * The sun is a BAKED directional light: its direct term is
+         * cfg.forward.sun_dir/color + CSM and its indirect is the baked lightmap;
+         * feeding a directional light into the clustered punctual pack corrupts
+         * the froxel light grid and drops the point/spot lights (matches
+         * hall_lit_dynamic, whose store holds only the dynamic punctual lights). */
+        if (sl->kind == SCENE_DESC_LIGHT_DIRECTIONAL ||
+            sl->kind == SCENE_DESC_LIGHT_AREA ||
+            !(sl->flags & SCENE_DESC_LIGHT_FLAG_REALTIME))
+            continue;
         render_light_t rl;
         memset(&rl, 0, sizeof rl);
         rl.kind = (render_light_kind_t)sl->kind;
@@ -286,7 +296,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
 
     render_light_store_init(&cs->lights, cs->light_buf, 64);
     cs->scene.lights = &cs->lights;
-    add_descriptor_lights(cs, desc);   /* exporter-emitted lights incl. the sun. */
+    add_descriptor_lights(cs, desc);   /* realtime punctual lights (sun excluded). */
 
     /* Probe grid from the descriptor spec. */
     static uint8_t probe_arena_buf[4 * 1024 * 1024];
@@ -370,6 +380,15 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     }
     cfg.has_static_weights = 1; cfg.static_baked_w = 0.35f; cfg.static_dyn_w = 3.0f;
     cfg.has_spec_gain = 1; cfg.spec_gain = 1.0f;
+
+    /* Debug: CLIENT_NOSUN isolates the dynamic punctual lights (kills the sun +
+     * baked lightmap + ambient) so their direct contribution is visible alone. */
+    if (getenv("CLIENT_NOSUN")) {
+        cfg.forward.sun_color[0] = cfg.forward.sun_color[1] = cfg.forward.sun_color[2] = 0.0f;
+        cfg.forward.sh_enabled = 0;
+        cfg.forward.dir_cascades = 0;
+        cfg.forward.ambient[0] = cfg.forward.ambient[1] = cfg.forward.ambient[2] = 0.0f;
+    }
 
     if (!render_world_init(&cs->world, &cfg)) { client_scene_destroy(cs); return false; }
     return true;
