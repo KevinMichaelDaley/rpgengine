@@ -32,6 +32,7 @@ extern "C" {
 #define NET_REPL_SCHEMA_BODY_STATE_BATCH 0x200Eu
 #define NET_REPL_SCHEMA_SNAPSHOT_CHUNK 0x200Fu
 #define NET_REPL_SCHEMA_MESH_DATA     0x2010u
+#define NET_REPL_SCHEMA_STREAM_PRIORITY 0x2011u /* server-assigned asset/chunk stream priority. */
 
 #ifdef __cplusplus
 } /* extern "C" */

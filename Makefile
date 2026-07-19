@@ -1179,6 +1179,10 @@ build/gi_collider_pose_tests build/server_level_load_tests: tests/asset/gi_colli
 build/server_level_load_tests: tests/server/server_level_load_tests.c build/libheadless.a | build
 	$(CC) $(CFLAGS) tests/server/server_level_load_tests.c build/libheadless.a -o $@ -lm
 
+# Server-assigned streaming priority protocol (rpg-3ldk). Headless.
+build/stream_priority_tests: tests/net/stream_priority_tests.c src/net/replication/stream_priority.c src/net/replication/stream_priority_apply.c src/server/level/server_stream_priority.c $(ASSET_STREAM_SRC) $(JOB_SRC) $(MEM_SRC) | build
+	$(CC) $(CFLAGS) tests/net/stream_priority_tests.c src/net/replication/stream_priority.c src/net/replication/stream_priority_apply.c src/server/level/server_stream_priority.c $(ASSET_STREAM_SRC) $(JOB_SRC) $(MEM_SRC) -o $@ -lm
+
 build/npc_kg_spatial_tests: tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) | build
 	$(CC) $(CFLAGS) tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
 
@@ -1644,7 +1648,7 @@ build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 build:
 
 
-test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/probe_tests build/asset_stream_tests build/collider_prim_tests build/gi_collider_pose_tests build/server_level_load_tests
+test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/probe_tests build/asset_stream_tests build/collider_prim_tests build/gi_collider_pose_tests build/server_level_load_tests build/stream_priority_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests \
