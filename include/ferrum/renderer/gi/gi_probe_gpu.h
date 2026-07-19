@@ -37,13 +37,17 @@ typedef struct gi_probe_gpu {
      * (~55 of them) add up; cache them. sdf_* arrays are sized GI_SDF_MAX_RESIDENT
      * (8). */
     struct { int nprobes, nlights, nboxes, soft, ncones, albedo, temporal;
-             int ngroups, group, grid_dim, static_on, static_k, static_irr;
+             int ngroups, group, grid_dim, grid_origin, grid_cell;
+             int field_on, near_dist, static_on, static_k, static_irr;
+             int pass, seed, dmax, emin, nsamp, bounce;
              int static_origin, static_dim, static_vox;
              int sdf_active[8], sdf[8], sdf_origin[8], sdf_dim[8], sdf_vox[8]; } loc;
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
     unsigned int b_lights, b_boxes; /**< dynamic light + box SSBOs. */
     unsigned int b_depth;      /**< DDGI octahedral depth SSBO (mean, meanSq / texel). */
     unsigned int b_sg;         /**< SG specular lobe SSBO (8 floats/probe). */
+    unsigned int b_active;     /**< stochastic-radiosity scratch: [count][indices..]. */
+    unsigned int b_emit;       /**< per-probe direct-injection SH (24 floats/probe). */
     unsigned int tbo_sh, tbo_sh_tex; /**< SH buffer texture (for the forward+ sampler). */
     unsigned int tbo_pos_tex;  /**< probe-position buffer texture (for the sampler). */
     unsigned int tbo_depth_tex; /**< depth buffer texture (RG32F: mean, meanSq). */
@@ -106,7 +110,8 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
                            float soft_k, float temporal, int ngroups, int group,
-                           const int grid_dim[3]);
+                           const int grid_dim[3], const float grid_origin[3],
+                           const float grid_cell[3]);
 
 /** @brief The probe-SH texture buffer (samplerBuffer, R32F, 27/probe). */
 unsigned int gi_probe_gpu_sh_tbo(const gi_probe_gpu_t *g);

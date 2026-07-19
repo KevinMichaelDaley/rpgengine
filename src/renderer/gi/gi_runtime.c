@@ -269,7 +269,8 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
      * visibly "shifting fast" as groups cycle. gi->smooth is the steady blend. */
     float temporal = (tick < (uint32_t)K) ? 1.0f : gi->smooth;
     gi_probe_gpu_dispatch(&gi->gpu, &gi->sdf, gi->light_scratch, n, boxes, n_boxes,
-                          gi->soft_k, temporal, K, group, gi->probe_grid_dim);
+                          gi->soft_k, temporal, K, group, gi->probe_grid_dim,
+                          gi->probe_grid_origin, gi->probe_grid_cell);
 }
 
 void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
