@@ -1117,7 +1117,9 @@ AEGIS_RUNTIME_SRC := src/aegis/aegis_runtime_init.c src/aegis/aegis_runtime_load
 build/aegis_runtime_tests: build/libheadless.a tests/aegis/aegis_runtime_tests.c | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_runtime_tests.c build/libheadless.a -o $@ $(LDFLAGS)
 
-AEGIS_ENTITY_DEPS := src/entity/entity_attrs.c src/entity/entity_attrs_mutate.c src/entity/entity_attrs_search.c
+AEGIS_ENTITY_DEPS := src/entity/entity_attrs.c src/entity/entity_attrs_mutate.c src/entity/entity_attrs_search.c \
+	src/npc/state/npc_state_registry.c src/npc/state/npc_state_prompt.c src/npc/state/npc_state_compact.c \
+	src/npc/nav/npc_nav_action.c
 build/aegis_ops_entity_tests: tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) | build
 	$(CC) $(CFLAGS) tests/aegis/aegis_ops_entity_tests.c $(AEGIS_ASM_SRC) $(AEGIS_ALL_SRC) $(AEGIS_ASYNC_BUF_SRC) $(AEGIS_ENTITY_DEPS) $(AEGIS_EXTRA_OBJ) -o $@ $(LDFLAGS)
 
@@ -1248,8 +1250,8 @@ build/procgen_grammar_registry_tests: tests/procgen/procgen_grammar_registry_tes
 build/procgen_e2e_tests: tests/procgen/procgen_e2e_tests.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/procgen_grammar_registry.c include/ferrum/procgen/procgen_serialize.h include/ferrum/procgen/procgen_grammar_registry.h include/ferrum/procgen/procgen_tokenize.h include/ferrum/procgen/procgen_types.h include/ferrum/procgen/procgen_layout.h include/ferrum/procgen/grammar_blockout.h | build
 	$(CC) $(CFLAGS) tests/procgen/procgen_e2e_tests.c src/procgen/procgen_tokenize.c src/procgen/grammars/grammar_blockout.c src/procgen/procgen_serialize.c src/procgen/procgen_grammar_registry.c -o $@ -lm
 
-build/procgen_svo_tests: tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_mesh.c src/npc/nav/npc_svo_init.c include/ferrum/procgen/procgen_svo_builder.h include/ferrum/procgen/procgen_layout.h | build
-	$(CC) $(CFLAGS) tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_mesh.c src/npc/nav/npc_svo_init.c -o $@ -lm
+build/procgen_svo_tests: tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_chunk_mesh.c src/npc/nav/npc_svo_init.c include/ferrum/procgen/procgen_svo_builder.h include/ferrum/procgen/procgen_layout.h | build
+	$(CC) $(CFLAGS) tests/procgen/procgen_svo_tests.c src/procgen/procgen_svo_builder.c src/procgen/procgen_chunk_mesh.c src/npc/nav/npc_svo_init.c -o $@ -lm
 
 build/lm_visibility_tests: tests/lightmap/lm_visibility_tests.c src/lightmap/lm_visibility.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c src/math/vec3.c include/ferrum/lightmap/lm_visibility.h | build
 	$(CC) $(CFLAGS) tests/lightmap/lm_visibility_tests.c src/lightmap/lm_visibility.c src/npc/nav/npc_svo_init.c src/npc/nav/npc_svo_rasterize.c src/npc/nav/npc_svo_blocker.c src/math/vec3.c -o $@ -lm

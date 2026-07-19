@@ -810,7 +810,13 @@ job_system_create_status_t sys_create_status =  job_system_create(sys,2, 2048, 6
     before = job_instrument_count();
     ASSERT_TRUE(job_dispatch(sys, instr_noop, NULL, 0, NULL) != JOB_ID_INVALID);
     ASSERT_EQ_INT(0, job_system_wait_idle(sys));
+#if FR_JOB_INSTRUMENTATION
     ASSERT_TRUE(job_instrument_count() > before);
+#else
+    /* Instrumentation compiled out (FR_JOB_INSTRUMENTATION=0): counters are a
+     * no-op, so there is nothing to record -- the toggle assertion doesn't apply. */
+    (void)before;
+#endif
 
     job_system_shutdown(sys);
     return 0;
