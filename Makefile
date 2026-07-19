@@ -2009,8 +2009,10 @@ demo_server:
 
 SRD_OBJS = $(SRD2_C_OBJS)
 
-build/demo_client: build/liball.a tests/examples/demo_client.c tests/examples/cornell_demo.c $(SRD_OBJS) $(SYMX_LIB) $(SYMX_FMT) | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c tests/examples/cornell_demo.c $(SRD_OBJS) build/liball.a $(SYMX_LIB) $(SYMX_FMT) build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl
+# Client: the level backdrop is loaded via client_scene (rpg-8302), so the client
+# no longer depends on the procgen/SRD level generators ($(SRD_OBJS) dropped).
+build/demo_client: build/liball.a tests/examples/demo_client.c tests/examples/cornell_demo.c $(SYMX_LIB) $(SYMX_FMT) | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/examples/demo_client.c tests/examples/cornell_demo.c build/liball.a $(SYMX_LIB) $(SYMX_FMT) build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl
 
 demo_client:
 	@$(MAKE) build/demo_client

@@ -33,9 +33,13 @@
 #include "ferrum/math/vec3.h"
 
 #include "ferrum/mesh/obj_loader.h"
+#include "ferrum/renderer/client_scene.h"
+#include "ferrum/renderer/render_camera.h"
+#include "ferrum/scene/scene_desc.h"
+#include "ferrum/memory/arena.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
-#include "ferrum/procgen/procgen_level_load.h"
-#include "ferrum/procgen/procgen_srd_level_load.h"
 
 #include "ferrum/net/quantization.h"
 #include "ferrum/net/replication/body_spawn.h"
@@ -180,9 +184,6 @@ typedef struct gl_ctx {
     vbo_t             sph_vbo;   /* sphere mesh */
     vao_t             sph_vao;
     uint32_t          sph_vert_count;
-    vbo_t             arm_vbo;   /* armadillo mesh */
-    vao_t             arm_vao;
-    uint32_t          arm_vert_count;
     vbo_t             plane_vbo;  /* ground plane quad */
     vao_t             plane_vao;
 } gl_ctx_t;
@@ -608,9 +609,7 @@ static int gl_init(gl_ctx_t *ctx) {
 static void gl_shutdown(gl_ctx_t *ctx) {
     vao_destroy(&ctx->plane_vao);
     vbo_destroy(&ctx->plane_vbo);
-    if (ctx->arm_vert_count > 0) {
-        vao_destroy(&ctx->arm_vao);
-        vbo_destroy(&ctx->arm_vbo);
+    if (0) {
     }
     vao_destroy(&ctx->cap_vao);
     vbo_destroy(&ctx->cap_vbo);
@@ -628,6 +627,16 @@ static void gl_shutdown(gl_ctx_t *ctx) {
 }
 
 /* ── Main ───────────────────────────────────────────────────────── */
+
+/* Image-decode callback for client_scene: stb_image -> tightly-packed RGB. */
+static bool client_img_load(const char *path, int *w, int *h, unsigned char **px)
+{
+    int n = 0;
+    unsigned char *d = stbi_load(path, w, h, &n, 3);
+    if (d == NULL) return false;
+    *px = d;   /* stbi malloc'd; client_scene frees with free(). */
+    return true;
+}
 
 int main(int argc, char **argv) {
     /* Self-contained Cornell-box lightmap demo: build + bake + render, no
@@ -660,11 +669,7 @@ int main(int argc, char **argv) {
                           ? atof(argv[3]) : 0.0;
     int headless = 0;
     const char *record_path = NULL;
-    const char *procgen_path = NULL;
-    int         use_srd = 0;
-    double      srd_budget = 30.0;
-    procgen_srd_level_t srd_level;  /* persistent — no free until end */
-    int srd_loaded = 0;
+    const char *level_path = NULL;   /* .scene descriptor -> client_scene (rpg-8302). */
 
 #ifdef FR_NET_EMULATION
     float emu_delay = 0.0f, emu_jitter = 0.0f, emu_loss = 0.0f;
@@ -677,13 +682,8 @@ int main(int argc, char **argv) {
             headless = 1;
         } else if (strcmp(argv[i], "--record") == 0 && i + 1 < argc) {
             record_path = argv[++i];
-        } else if (strcmp(argv[i], "--procgen") == 0 && i + 1 < argc) {
-            procgen_path = argv[++i];
-        } else if (strcmp(argv[i], "--srd") == 0 && i + 1 < argc) {
-            procgen_path = argv[++i];
-            use_srd = 1;
-        } else if (strcmp(argv[i], "--srd-budget") == 0 && i + 1 < argc) {
-            srd_budget = atof(argv[++i]);
+        } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
+            level_path = argv[++i];
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -805,70 +805,25 @@ int main(int argc, char **argv) {
             return 1;
         }
 
-        /* ── Load procgen mesh if --procgen/--srd specified ────────── */
-        if (procgen_path) {
-            if (use_srd) {
-                procgen_srd_level_init(&srd_level);
-                if (procgen_srd_level_load(&srd_level, procgen_path, 0, srd_budget) == 0
-                    && srd_level.mesh.vertex_count > 0) {
-                    srd_loaded = 1;
-                    uint32_t tris = srd_level.mesh.vertex_count / 9;
-                    GLint ploc = glGetAttribLocation(gl.program.handle, "in_pos");
-                    vao_attribute_t pattr = {(uint32_t)ploc, 3, GL_FLOAT, 0u, 0u, 0u};
-                    gl.arm_vert_count = tris * 3;
-                    float mn[3]={1e9f,1e9f,1e9f}, mx[3]={-1e9f,-1e9f,-1e9f};
-                    for(uint32_t i=0;i<srd_level.mesh.vertex_count;i+=3){
-                        float vv=srd_level.mesh.vertices[i];if(vv<mn[0])mn[0]=vv;if(vv>mx[0])mx[0]=vv;
-                        vv=srd_level.mesh.vertices[i+1];if(vv<mn[1])mn[1]=vv;if(vv>mx[1])mx[1]=vv;
-                        vv=srd_level.mesh.vertices[i+2];if(vv<mn[2])mn[2]=vv;if(vv>mx[2])mx[2]=vv;}
-                    printf("[client] mesh bounds: (%.1f,%.1f,%.1f)→(%.1f,%.1f,%.1f)\n",
-                           mn[0],mn[1],mn[2],mx[0],mx[1],mx[2]);
-                    vbo_create(&gl.arm_vbo, &gl.loader);
-                    vbo_upload(&gl.arm_vbo, GL_ARRAY_BUFFER,
-                               srd_level.mesh.vertices,
-                               srd_level.mesh.vertex_count * sizeof(float),
-                               GL_STATIC_DRAW);
-                    vao_create(&gl.arm_vao, &gl.loader);
-                    vao_bind_attributes(&gl.arm_vao, &gl.arm_vbo,
-                                        &pattr, 1u, 3u * sizeof(float));
-                    printf("[client] srd mesh: %u tris from %s\n", tris, procgen_path);
-                } else {
-                    procgen_srd_level_free(&srd_level);
-                }
-            } else {
-                procgen_level_t lvl;
-                procgen_level_init(&lvl);
-            if (procgen_level_load(&lvl, procgen_path) == 0) {
-                uint32_t tris = lvl.mesh.vertex_count / 9;
-                if (tris > 0) {
-                    GLint ploc = glGetAttribLocation(gl.program.handle, "in_pos");
-                    vao_attribute_t pattr = {(uint32_t)ploc, 3, GL_FLOAT, 0u, 0u, 0u};
-                    gl.arm_vert_count = tris * 3;
-                    /* Debug: compute mesh bounding box */
-                    float mn[3]={1e9f,1e9f,1e9f}, mx[3]={-1e9f,-1e9f,-1e9f};
-                    for(uint32_t i=0;i<lvl.mesh.vertex_count;i+=3){
-                        float vv=lvl.mesh.vertices[i];if(vv<mn[0])mn[0]=vv;if(vv>mx[0])mx[0]=vv;
-                        vv=lvl.mesh.vertices[i+1];if(vv<mn[1])mn[1]=vv;if(vv>mx[1])mx[1]=vv;
-                        vv=lvl.mesh.vertices[i+2];if(vv<mn[2])mn[2]=vv;if(vv>mx[2])mx[2]=vv;}
-                    printf("[client] mesh bounds: (%.1f,%.1f,%.1f)→(%.1f,%.1f,%.1f)\n",
-                           mn[0],mn[1],mn[2],mx[0],mx[1],mx[2]);
-                    vbo_create(&gl.arm_vbo, &gl.loader);
-                    vbo_upload(&gl.arm_vbo, GL_ARRAY_BUFFER,
-                               lvl.mesh.vertices,
-                               lvl.mesh.vertex_count * sizeof(float),
-                               GL_STATIC_DRAW);
-                    vao_create(&gl.arm_vao, &gl.loader);
-                    vao_bind_attributes(&gl.arm_vao, &gl.arm_vbo,
-                                        &pattr, 1u, 3u * sizeof(float));
-                    printf("[client] procgen mesh: %u tris from %s\n",
-                           tris, procgen_path);
-                }
-                procgen_level_free(&lvl);
-            } else {
-                fprintf(stderr, "[client] procgen load failed: %s\n",
-                        procgen_path);
-            }
-            }
+    }
+
+    /* ── 3a. Level scene (--level): load the base descriptor from disk and
+     * assemble the render_world via client_scene (rpg-8302). ── */
+    client_scene_t cs; int cs_active = 0;
+    if (!headless && level_path) {
+        static uint8_t lvl_buf[8 * 1024 * 1024];
+        arena_t la; arena_init(&la, lvl_buf, sizeof lvl_buf);
+        scene_desc_t desc;
+        char base[512]; snprintf(base, sizeof base, "%s", level_path);
+        char *sl = strrchr(base, '/'); if (sl) *sl = '\0'; else snprintf(base, sizeof base, ".");
+        if (scene_desc_load(level_path, &la, &desc) &&
+            client_scene_load(&cs, &gl.loader, &desc, base, client_img_load,
+                              CLIENT_WIN_W, CLIENT_WIN_H)) {
+            cs_active = 1;
+            printf("[client] level '%s' loaded: %u objects, %u materials\n",
+                   desc.name, desc.object_count, desc.material_count);
+        } else {
+            fprintf(stderr, "[client] level load failed '%s'\n", level_path);
         }
     }
 
@@ -1341,6 +1296,20 @@ int main(int argc, char **argv) {
             glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+            /* rpg-8302: render the static level via client_scene (real forward+ /
+             * GI). Networked bodies draw on top with the inline pass below. */
+            if (cs_active) {
+                vec3_t ld = { cosf(cam_pitch) * (-sinf(cam_yaw)), sinf(cam_pitch),
+                              cosf(cam_pitch) * (-cosf(cam_yaw)) };
+                float eye[3] = { cam_pos.x, cam_pos.y, cam_pos.z };
+                float tgt[3] = { cam_pos.x + ld.x, cam_pos.y + ld.y, cam_pos.z + ld.z };
+                float up[3] = { 0, 1, 0 };
+                render_camera_t rc;
+                render_camera_look_at(&rc, eye, tgt, up, 70.0f * (FERRUM_PI / 180.0f),
+                                      (float)CLIENT_WIN_W / (float)CLIENT_WIN_H, 0.1f, 5000.0f);
+                client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);
+            }
+
             if (shader_program_bind(&gl.program) == SHADER_PROGRAM_OK) {
 
                 mat4_t proj;
@@ -1396,17 +1365,6 @@ int main(int argc, char **argv) {
                     }
                 }
 
-                /* ── Draw procgen static mesh at world origin ────── */
-                if (gl.arm_vert_count > 0) {
-                    mat4_t model = mat4_identity();
-                    mat4_t mvp   = mat4_mul(vp, model);
-                    glUniformMatrix4fv(u_mvp_loc, 1, GL_FALSE, mvp.m);
-                    glUniform3f(u_color_loc, 0.85f, 0.80f, 0.72f);
-                    glBindVertexArray(gl.arm_vao.handle);
-                    glDisable(GL_CULL_FACE);
-                    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)gl.arm_vert_count);
-                    glEnable(GL_CULL_FACE);
-                }
 
                 /* ── Fix 3: Sort bodies by shape_type to minimise
                  *  VAO state changes.  Build index list, then sort
@@ -1539,9 +1497,6 @@ int main(int argc, char **argv) {
                         case 4:
                             glBindVertexArray(gl.plane_vao.handle);
                             break;
-                        case 3:
-                            glBindVertexArray(gl.arm_vao.handle);
-                            break;
                         case 2:
                             glBindVertexArray(gl.cap_vao.handle);
                             break;
@@ -1564,12 +1519,6 @@ int main(int argc, char **argv) {
                         break;
                     case 4:
                         glDrawArrays(GL_TRIANGLES, 0, 6);
-                        break;
-                    case 3:
-                        if (gl.arm_vert_count > 0) {
-                            glDrawArrays(GL_TRIANGLES, 0,
-                                         (GLsizei)gl.arm_vert_count);
-                        }
                         break;
                     case 2:
                         glDrawArrays(GL_TRIANGLES, 0,
@@ -1637,9 +1586,7 @@ done:
                 glDeleteVertexArrays(1, &render_info[ci].custom_vao);
             }
         }
-        if (srd_loaded) {
-            procgen_srd_level_free(&srd_level);
-        }
+        if (cs_active) client_scene_destroy(&cs);
         gl_shutdown(&gl);
     }
 
