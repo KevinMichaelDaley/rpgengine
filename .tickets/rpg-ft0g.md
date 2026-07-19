@@ -1,6 +1,6 @@
 ---
 id: rpg-ft0g
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-19T07:44:03Z
@@ -31,3 +31,9 @@ CHUNK-DRIVEN LOAD/GEN: which probes are loaded or generated is gated by which ba
 
 Default path unchanged (no file -> auto-grid). A level can (a) load manually-placed probes, (b) specify probe resolution that varies by distance/LOD, and (c) raise probe density inside AABB importance boxes; the loaded manual set reproduces a hall_lit_dynamic-style pg_origin/pg_cell/pg_dim grid; probe load/generation is gated by resident light-data chunks (probe in an evicted chunk's box is not resident); spec loads headlessly.
 
+
+## Notes
+
+**2026-07-19T17:57:13Z**
+
+Completed. Headless src/probe/ module (folded into libheadless.a): probe_place_grid reproduces hall_lit_dynamic's lower-volume grid EXACTLY (great_hall 1.1/0.8 -> 16x8x8=1024, same origin/cell, (z*dim1+y)*dim0+x order); probe_place_refine_importance densifies inside AABB boxes at cell/density_mult (distance/LOD resolution); probe_place_filter_chunks gates probes by resident light-data chunk boxes; probe_file save/load = .probes binary (magic PRB1, grid layout + positions + optional baked SH). Default path unchanged (no file -> auto-grid). 9/9 tests green, -Wall -Wextra -Wpedantic clean.
