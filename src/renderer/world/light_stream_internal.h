@@ -27,6 +27,17 @@ typedef struct lm_chunk_slot {
     char                   path[512];  /**< <base_dir>/<chunk>.flm. */
 } lm_chunk_slot_t;
 
+/* Per-chunk slot_user for a streamed SDF chunk (sdf_stream, streamed mode). */
+typedef struct sdf_chunk_slot {
+    client_light_stream_t *owner;
+    int                    chunk;   /**< index into owner->sdf. */
+} sdf_chunk_slot_t;
+
+/* SDF stream callbacks (sdf_stream): disk->RAM on a fiber, free on the owner
+ * thread. No VRAM tier -- gi_runtime GPU-pages the RAM-resident chunks. */
+size_t client_sdf_load(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user);
+void   client_sdf_evict(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user, int drop);
+
 /* fr_asset_stream callbacks (set by client_light_stream_init).
  *  - load   runs on a job fiber: decode the chunk file into slot->coeff (no GL).
  *  - upload runs on the render thread: glTexSubImage3D into a resident layer.

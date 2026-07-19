@@ -13,6 +13,9 @@ void client_light_stream_tick(client_light_stream_t *ls, const float cam_pos[3])
     /* One streaming step: harvest completed decodes, admit + upload the top
      * chunks within budget (upload runs here on the render thread), evict the rest. */
     fr_asset_stream_tick(&ls->stream);
+    /* SDF chunks page disk->RAM on demand (streamed mode); gi_runtime GPU-pages
+     * the RAM-resident set each frame via the borrowed stream. */
+    if (ls->sdf_streamed) fr_asset_stream_tick(&ls->sdf_stream);
 }
 
 int client_light_stream_mesh_layer(const client_light_stream_t *ls, uint32_t mesh_idx)

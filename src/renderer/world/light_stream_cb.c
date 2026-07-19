@@ -13,6 +13,24 @@
 #include "ferrum/asset/asset_stream_config.h"  /* FR_ASSET_DROP_* */
 #include "light_stream_internal.h"
 
+/* JOB FIBER: read one SDF chunk's distance+albedo into host RAM (no GL). */
+size_t client_sdf_load(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user)
+{
+    (void)user; (void)id; (void)cls;
+    sdf_chunk_slot_t *s = slot_user;
+    return gi_sdf_stream_chunk_load(&s->owner->sdf, s->chunk, s->owner->sdf_prefix);
+}
+
+/* OWNER THREAD: free an evicted SDF chunk's RAM (+ its GPU slot). */
+void client_sdf_evict(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user, int drop)
+{
+    (void)user; (void)id; (void)cls;
+    if (drop & FR_ASSET_DROP_RAM) {
+        sdf_chunk_slot_t *s = slot_user;
+        gi_sdf_stream_chunk_evict(&s->owner->sdf, s->chunk);
+    }
+}
+
 /* JOB FIBER: decode the chunk's 9 SH coefficient images into slot RAM. No GL.
  * Returns RAM bytes loaded (0 = failure => the slot stays ABSENT). */
 size_t client_ls_load(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user)

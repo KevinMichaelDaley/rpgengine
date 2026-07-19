@@ -66,7 +66,11 @@ typedef struct client_light_stream {
     int                *mchunk;         /**< [n_meshes] per-mesh chunk id (-1 none). */
     uint32_t            n_meshes;
     gi_sdf_stream_t     sdf;           /**< SDF/voxel chunks (owned; GI borrows via ext_sdf). */
-    int                 has_sdf;       /**< 1 = @c sdf loaded. */
+    int                 has_sdf;       /**< 1 = @c sdf loaded (all-RAM or scanned). */
+    int                 sdf_streamed;  /**< 1 = SDF chunks page via @c sdf_stream. */
+    fr_asset_stream_t   sdf_stream;    /**< per-chunk SDF disk->RAM residency (streamed mode). */
+    void               *sdf_slots;     /**< [sdf.n_chunks] SDF chunk slot_users. */
+    char                sdf_prefix[512];/**< resolved SDF prefix for on-demand chunk load. */
     const gl_loader_t  *loader;
 } client_light_stream_t;
 

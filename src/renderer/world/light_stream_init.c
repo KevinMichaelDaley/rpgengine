@@ -116,11 +116,38 @@ bool client_light_stream_init(client_light_stream_t *ls,
     }
 
     /* SDF/voxel chunks: the GI streamer OWNS the SDF stream (gi_runtime borrows it
-     * via ext_sdf, rpg-c7fk). Loaded here; per-chunk fr_asset_stream residency is
-     * the follow-on -- for now gi_sdf_stream keeps its GPU visibility paging. */
+     * via ext_sdf, rpg-c7fk). SDF_STREAM=on-demand per-chunk disk->RAM residency
+     * via a dedicated fr_asset_stream (load on fibers, RAM budget); default =
+     * load-all-to-RAM (unchanged). gi_sdf_stream GPU-pages the RAM-resident set. */
     if (cfg->sdf_prefix != NULL && cfg->sdf_prefix[0] != '\0') {
-        char sp[512]; snprintf(sp, sizeof sp, "%s/%s", cfg->base_dir, cfg->sdf_prefix);
-        if (gi_sdf_stream_load(&ls->sdf, sp) > 0) ls->has_sdf = 1;
+        snprintf(ls->sdf_prefix, sizeof ls->sdf_prefix, "%s/%s", cfg->base_dir, cfg->sdf_prefix);
+        if (getenv("SDF_STREAM") != NULL && gi_sdf_stream_scan(&ls->sdf, ls->sdf_prefix) > 0) {
+            ls->has_sdf = 1;
+            uint32_t n = (uint32_t)ls->sdf.n_chunks;
+            sdf_chunk_slot_t *ss = calloc(n ? n : 1, sizeof *ss);
+            ls->sdf_slots = ss;
+            fr_asset_stream_config_t sc;
+            memset(&sc, 0, sizeof sc);
+            sc.jobs = cfg->jobs;
+            sc.ram_budget = cfg->ram_budget;
+            sc.vram_budget = 0;          /* no VRAM tier -- gi_runtime GPU-pages RAM chunks. */
+            sc.max_in_flight = 4u;
+            sc.capacity = n + 1u;
+            sc.cbs.load = client_sdf_load;
+            sc.cbs.evict = client_sdf_evict;
+            sc.user = ls;
+            if (ss != NULL && fr_asset_stream_init(&ls->sdf_stream, &sc)) {
+                ls->sdf_streamed = 1;
+                for (uint32_t c = 0; c < n; ++c) {
+                    ss[c].owner = ls; ss[c].chunk = (int)c;
+                    const int32_t *dm = ls->sdf.ram[c].dims;
+                    size_t ram = (size_t)dm[0] * dm[1] * dm[2] * 4u * sizeof(float);
+                    fr_asset_stream_add(&ls->sdf_stream, c, FR_ASSET_SDF_CHUNK, ram, 0, 0, &ss[c]);
+                }
+            }
+        } else if (gi_sdf_stream_load(&ls->sdf, ls->sdf_prefix) > 0) {
+            ls->has_sdf = 1;
+        }
     }
     return true;
 }
@@ -135,6 +162,8 @@ void client_light_stream_destroy(client_light_stream_t *ls)
             for (int c = 0; c < 9; ++c) { free(slots[i].coeff[c]); slots[i].coeff[c] = NULL; }
     }
     if (ls->stream.slots != NULL) fr_asset_stream_destroy(&ls->stream);
+    if (ls->sdf_streamed && ls->sdf_stream.slots != NULL) fr_asset_stream_destroy(&ls->sdf_stream);
+    free(ls->sdf_slots);
     if (ls->has_sdf) gi_sdf_stream_destroy(&ls->sdf);
     for (int c = 0; c < 9; ++c) if (ls->sh_tex[c]) glDeleteTextures(1, &ls->sh_tex[c]);
     free(ls->slots); free(ls->entries); free(ls->layer_chunk);
