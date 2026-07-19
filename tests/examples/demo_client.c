@@ -34,6 +34,8 @@
 
 #include "ferrum/mesh/obj_loader.h"
 #include "ferrum/renderer/client_scene.h"
+#include "ferrum/renderer/light_stream.h"
+#include "ferrum/job/system.h"
 #include "ferrum/renderer/render_camera.h"
 #include "ferrum/scene/scene_desc.h"
 #include "ferrum/memory/arena.h"
@@ -392,7 +394,9 @@ static int gl_init(gl_ctx_t *ctx) {
         return -1;
     }
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    /* 4.3 core: the GI probe gather + the in-client lightmap bake both use
+     * compute shaders (GL 4.3), so the client context must be compute-ready. */
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,
                         SDL_GL_CONTEXT_PROFILE_CORE);
@@ -810,20 +814,56 @@ int main(int argc, char **argv) {
     /* ── 3a. Level scene (--level): load the base descriptor from disk and
      * assemble the render_world via client_scene (rpg-8302). ── */
     client_scene_t cs; int cs_active = 0;
+    client_light_stream_t lstream; int lstream_active = 0;
+    job_system_t lm_jobs; int lm_jobs_active = 0;
     if (!headless && level_path) {
         static uint8_t lvl_buf[8 * 1024 * 1024];
         arena_t la; arena_init(&la, lvl_buf, sizeof lvl_buf);
         scene_desc_t desc;
         char base[512]; snprintf(base, sizeof base, "%s", level_path);
         char *sl = strrchr(base, '/'); if (sl) *sl = '\0'; else snprintf(base, sizeof base, ".");
-        if (scene_desc_load(level_path, &la, &desc) &&
-            client_scene_load(&cs, &gl.loader, &desc, base, client_img_load,
-                              CLIENT_WIN_W, CLIENT_WIN_H)) {
-            cs_active = 1;
-            printf("[client] level '%s' loaded: %u objects, %u materials\n",
-                   desc.name, desc.object_count, desc.material_count);
+        if (scene_desc_load(level_path, &la, &desc)) {
+            /* Light-data streaming subsystem (rpg-oda7): stream the baked lightmap
+             * SH chunks via fr_asset_stream (decode on job fibers), SEPARATE from
+             * the descriptor load below, which borrows the streamer's SH pages +
+             * per-mesh atlas rects instead of reading the .flm synchronously. */
+            const unsigned int *ext_sh = NULL;
+            const lm_atlas_rect_t *ext_mrect = NULL;
+            const lm_atlas_t *ext_atlas = NULL;
+            if (desc.lightdata.lightmap_prefix[0] &&
+                job_system_create(&lm_jobs, 2, 128, 64u * 1024u, 1024, 0) == JOB_CREATE_OK &&
+                job_system_start(&lm_jobs) == 0) {
+                lm_jobs_active = 1;
+                client_light_stream_config_t lcfg;
+                memset(&lcfg, 0, sizeof lcfg);
+                lcfg.loader = &gl.loader;
+                lcfg.jobs = &lm_jobs;
+                lcfg.base_dir = base;
+                lcfg.lm_prefix = desc.lightdata.lightmap_prefix;
+                lcfg.n_meshes = desc.object_count;
+                lcfg.ram_budget = (size_t)2u * 1024u * 1024u * 1024u;   /* 2 GiB */
+                lcfg.vram_budget = (size_t)2u * 1024u * 1024u * 1024u;  /* 2 GiB */
+                const float big_min[3] = { -1e5f, -1e5f, -1e5f };
+                const float big_max[3] = { 1e5f, 1e5f, 1e5f };
+                if (client_light_stream_init(&lstream, &lcfg, big_min, big_max)) {
+                    lstream_active = 1;
+                    ext_sh = lstream.sh_tex;
+                    ext_mrect = lstream.mrect;
+                    ext_atlas = &lstream.atlas;
+                    printf("[client] light streamer: %u lightmap chunk(s), atlas %ux%u\n",
+                           lstream.n_chunks, lstream.atlas.width, lstream.atlas.height);
+                }
+            }
+            if (client_scene_load(&cs, &gl.loader, &desc, base, client_img_load,
+                                  CLIENT_WIN_W, CLIENT_WIN_H, ext_sh, ext_mrect, ext_atlas)) {
+                cs_active = 1;
+                printf("[client] level '%s' loaded: %u objects, %u materials\n",
+                       desc.name, desc.object_count, desc.material_count);
+            } else {
+                fprintf(stderr, "[client] level load failed '%s'\n", level_path);
+            }
         } else {
-            fprintf(stderr, "[client] level load failed '%s'\n", level_path);
+            fprintf(stderr, "[client] descriptor load failed '%s'\n", level_path);
         }
     }
 
@@ -1284,6 +1324,12 @@ int main(int argc, char **argv) {
             printf("[client] frame=%u ms/f=%.1f bodies=%u snaps=%u cam=(%.1f,%.1f,%.1f)\n",
                    frame_count, ms_per_frame, body_count, snap_applied_count,
                    cam_pos.x, cam_pos.y, cam_pos.z);
+            if (lstream_active)
+                printf("[lm] resident=%u ram=%zuMB vram=%zuMB layer0=%d sh_enabled_tex=%u\n",
+                       fr_asset_stream_resident_count(&lstream.stream),
+                       fr_asset_stream_ram_used(&lstream.stream) >> 20,
+                       fr_asset_stream_vram_used(&lstream.stream) >> 20,
+                       client_light_stream_mesh_layer(&lstream, 0), lstream.sh_tex[0]);
             diag_frame_start = frame_count;
             diag_time_start_ms = now_ms;
             next_diag_ms = now_ms + 2000u;
@@ -1307,6 +1353,15 @@ int main(int argc, char **argv) {
                 render_camera_t rc;
                 render_camera_look_at(&rc, eye, tgt, up, 70.0f * (FERRUM_PI / 180.0f),
                                       (float)CLIENT_WIN_W / (float)CLIENT_WIN_H, 0.1f, 5000.0f);
+                /* rpg-oda7: stream the baked lightmap chunks by proximity (decode on
+                 * job fibers, upload here on the render thread) and point each mesh
+                 * at the resident SH-array layer of its chunk (-1 until resident). */
+                if (lstream_active) {
+                    client_light_stream_tick(&lstream, eye);
+                    for (int i = 0; i < cs.static_count; ++i)
+                        cs.scene.items[i].sh_layer =
+                            client_light_stream_mesh_layer(&lstream, (uint32_t)i);
+                }
                 client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);
             }
 
@@ -1587,6 +1642,10 @@ done:
             }
         }
         if (cs_active) client_scene_destroy(&cs);
+        /* Stop decode fibers BEFORE freeing the streamer's slots (a fiber holds a
+         * slot pointer while loading), then delete its GL SH pages, then the GL. */
+        if (lm_jobs_active) job_system_shutdown(&lm_jobs);
+        if (lstream_active) client_light_stream_destroy(&lstream);
         gl_shutdown(&gl);
     }
 

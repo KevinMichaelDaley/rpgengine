@@ -56,6 +56,7 @@ typedef struct client_scene {
     render_material_t   *materials;   /**< [material_count]. */
     uint32_t             material_count;
     unsigned int         sh_tex[9];   /**< baked-lightmap SH coeff arrays (0 = none). */
+    int                  sh_borrowed;  /**< 1 = sh_tex owned by the light streamer (don't delete). */
     render_light_store_t lights;
     render_light_t      *light_buf;   /**< lights backing. */
     const gl_loader_t   *loader;
@@ -65,12 +66,24 @@ typedef struct client_scene {
 /**
  * @brief Load a level's assets from @p base_dir per @p desc and assemble the
  *        render_world. @p base_dir is prepended to relative asset paths.
+ *
+ * Baked lightmap: if @p ext_sh_tex is non-NULL the baked SH pages are supplied by
+ * an external light-data streamer (client_light_stream) -- @p ext_sh_tex[9] are
+ * borrowed GL_TEXTURE_2D_ARRAY ids, @p ext_mrect[desc->object_count] the per-mesh
+ * atlas rects, and @p ext_atlas the atlas dims -- and this function neither reads
+ * the .flm nor owns the textures (the streamer pages layers; the caller sets each
+ * item's sh_layer per frame). If @p ext_sh_tex is NULL the lightmap is loaded
+ * synchronously from @p desc->lightdata (legacy path).
+ *
  * @return false on a fatal error (OOM, render_world init). Missing individual
  *         textures fall back to a debug pattern (non-fatal).
  */
 bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        const struct scene_desc *desc, const char *base_dir,
-                       client_image_load_fn image_load, int screen_w, int screen_h);
+                       client_image_load_fn image_load, int screen_w, int screen_h,
+                       const unsigned int *ext_sh_tex,
+                       const lm_atlas_rect_t *ext_mrect,
+                       const lm_atlas_t *ext_atlas);
 
 /** Render the scene for @p cam with the given dynamic GI collider proxies. */
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,

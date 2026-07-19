@@ -32,7 +32,10 @@ BAKE_ROOT = os.path.join(AP, "prefabs")
 OUT = os.environ.get("HALL_OUT", os.path.join(REPO, "datasets", "great_hall_export"))
 RES = int(os.environ.get("HALL_BAKE_RES", "1024"))
 
+# HALL_BAKE_MATERIALS=0 skips the slow Cycles material bake (reuse on-disk maps).
+BAKE_MATERIALS = os.environ.get("HALL_BAKE_MATERIALS", "1") not in ("0", "false", "")
+
 export_scene.export_scene(
-    "great_hall", OUT, bake_res=RES,
+    "great_hall", OUT, bake_res=RES, bake_materials=BAKE_MATERIALS,
     scene_callback=lambda: great_hall.build_hall_scene(BAKE_ROOT))
 print("[run_hall_export] done ->", OUT, flush=True)

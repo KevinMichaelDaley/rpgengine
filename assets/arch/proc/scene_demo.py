@@ -34,7 +34,11 @@ def _gen_lightmap_uv(obj):
         me.uv_layers.new(name="UVMap")  # ensure a material UV exists
     lm = me.uv_layers.get("lightmap")
     if lm is not None:
-        me.uv_layers.remove(lm)
+        # Idempotent: reuse an already-generated unwrap so the fvma (client mesh),
+        # the dmesh (baker input) and the baked atlas rects all share ONE lightmap
+        # UV. Regenerating here would desync the fvma from the baked .flm rects.
+        me.uv_layers.active = lm
+        return
     lm = me.uv_layers.new(name="lightmap")
     me.uv_layers.active = lm
 

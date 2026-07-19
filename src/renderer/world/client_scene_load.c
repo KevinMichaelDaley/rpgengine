@@ -200,7 +200,10 @@ static void add_descriptor_lights(client_scene_t *cs, const scene_desc_t *desc)
 
 bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        const struct scene_desc *descp, const char *base_dir,
-                       client_image_load_fn image_load, int screen_w, int screen_h)
+                       client_image_load_fn image_load, int screen_w, int screen_h,
+                       const unsigned int *ext_sh_tex,
+                       const lm_atlas_rect_t *ext_mrect,
+                       const lm_atlas_t *ext_atlas)
 {
     if (cs == NULL || loader == NULL || descp == NULL || base_dir == NULL) return false;
     const scene_desc_t *desc = descp;
@@ -221,15 +224,29 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     for (uint32_t m = 0; m < nmat; ++m)
         build_material(cs, &cs->materials[m], &desc->materials[m], base_dir, image_load);
 
-    /* Baked lightmap atlas FIRST: it yields the per-mesh atlas rects, so each
-     * mesh's uv1 can be remapped into the shared atlas as the mesh is built.
-     * (Single-atlas == the one-chunk case of the chunked lightmap system.) */
-    lm_atlas_rect_t *mrect = calloc(nobj ? nobj : 1, sizeof *mrect);
+    /* Baked lightmap atlas: EITHER supplied by the external light-data streamer
+     * (ext_sh_tex: borrowed SH pages + per-mesh rects; the streamer pages layers
+     * and the caller sets each item's sh_layer per frame) OR loaded synchronously
+     * here (legacy). Either way the per-mesh atlas rects let us remap each mesh's
+     * uv1 into the shared atlas as the mesh is built (single-atlas == 1 chunk). */
+    lm_atlas_rect_t *mrect_own = NULL;   /* freed here iff we loaded internally. */
+    const lm_atlas_rect_t *mrect = NULL;
     lm_atlas_t atlas = { 0, 0 };
-    bool have_lm = false;
-    if (mrect != NULL && desc->lightdata.lightmap_prefix[0]) {
-        char lm[512]; snprintf(lm, sizeof lm, "%s/%s", base_dir, desc->lightdata.lightmap_prefix);
-        have_lm = client_scene_load_lightmap(loader, lm, nobj, cs->sh_tex, mrect, &atlas);
+    bool have_lm = false, streamed = false;
+    if (ext_sh_tex != NULL) {
+        for (int c = 0; c < 9; ++c) cs->sh_tex[c] = ext_sh_tex[c];
+        cs->sh_borrowed = 1;             /* streamer owns the SH pages. */
+        mrect = ext_mrect;
+        if (ext_atlas != NULL) atlas = *ext_atlas;
+        have_lm = (ext_sh_tex[0] != 0u);
+        streamed = true;
+    } else if (desc->lightdata.lightmap_prefix[0]) {
+        mrect_own = calloc(nobj ? nobj : 1, sizeof *mrect_own);
+        if (mrect_own != NULL) {
+            char lm[512]; snprintf(lm, sizeof lm, "%s/%s", base_dir, desc->lightdata.lightmap_prefix);
+            have_lm = client_scene_load_lightmap(loader, lm, nobj, cs->sh_tex, mrect_own, &atlas);
+            mrect = mrect_own;
+        }
     }
 
     /* Meshes (uv1 remapped into the atlas) + scene AABB (transformed bounds). */
@@ -245,8 +262,11 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         int mi = (o->material_count > 0) ? o->material_idx[0] : -1;
         const render_material_t *mat = (mi >= 0 && (uint32_t)mi < nmat) ? &cs->materials[mi] : NULL;
         if (render_scene_add(&cs->scene, sm, mat, model)) {
-            /* Single atlas => layer 0; no lightmap => -1 (SH sampler skips it). */
-            cs->scene.items[cs->scene.count - 1].sh_layer = have_lm ? 0 : -1;
+            /* Internal single atlas => layer 0. Streamed => -1 until the chunk is
+             * resident; the caller sets sh_layer per frame from the streamer. No
+             * lightmap => -1 (SH sampler skips it). */
+            cs->scene.items[cs->scene.count - 1].sh_layer =
+                (have_lm && !streamed) ? 0 : -1;
         }
         for (int cx = 0; cx < 8; ++cx) {
             float lp[3] = { (cx & 1) ? sm->aabb_max[0] : sm->aabb_min[0],
@@ -262,7 +282,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     }
     cs->static_count = (int)cs->scene.count;
     if (amin[0] > amax[0]) { for (int a = 0; a < 3; ++a) { amin[a] = -10; amax[a] = 10; } }
-    free(mrect);
+    free(mrect_own);
 
     render_light_store_init(&cs->lights, cs->light_buf, 64);
     cs->scene.lights = &cs->lights;
@@ -370,7 +390,9 @@ void client_scene_destroy(client_scene_t *cs)
     render_world_destroy(&cs->world);
     for (uint32_t i = 0; i < cs->mesh_count; ++i) static_mesh_destroy(&cs->meshes[i]);
     for (uint32_t i = 0; i < cs->texture_count; ++i) texture_destroy(&cs->textures[i]);
-    for (int c = 0; c < 9; ++c) if (cs->sh_tex[c]) glDeleteTextures(1, &cs->sh_tex[c]);
+    /* SH pages: delete only if we own them (streamed pages belong to the streamer). */
+    if (!cs->sh_borrowed)
+        for (int c = 0; c < 9; ++c) if (cs->sh_tex[c]) glDeleteTextures(1, &cs->sh_tex[c]);
     free(cs->meshes); free(cs->materials); free(cs->textures);
     free(cs->rb); free(cs->light_buf);
     memset(cs, 0, sizeof *cs);

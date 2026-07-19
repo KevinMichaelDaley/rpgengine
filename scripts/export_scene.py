@@ -348,10 +348,14 @@ def _principled(mat):
     return None
 
 
-def export_material(mat, out_dir, tiles, res):
+def export_material(mat, out_dir, tiles, res, bake=True):
     """Write ``materials/<mat>.mat.json`` (engine PBR contract). Tiling materials
     (in ``tiles``) are Cycles-baked to albedo/normal/roughness/ao PNGs; solid
-    materials export flat base-colour tint + roughness with no maps."""
+    materials export flat base-colour tint + roughness with no maps.
+
+    ``bake`` False skips the (slow) Cycles bake and instead references the map PNGs
+    already on disk from a prior bake -- for iterating on geometry/descriptor
+    without re-baking. The record + uv_scale are still emitted."""
     name = mat.name
     mdir = os.path.join(out_dir, "materials", name)
     rec = {"name": name, "tint": [1.0, 1.0, 1.0], "metalness": 0.0,
@@ -373,6 +377,16 @@ def export_material(mat, out_dir, tiles, res):
     t = tiles[name]
     tx, ty = (float(t), float(t)) if isinstance(t, (int, float)) else (float(t[0]), float(t[1]))
     os.makedirs(mdir, exist_ok=True)
+
+    if not bake:
+        # Reuse the maps already on disk (no Cycles bake); still emit the record.
+        for ch in ("albedo", "roughness", "normal"):
+            rel = os.path.join("materials", name, ch + ".png")
+            if os.path.exists(os.path.join(out_dir, rel)):
+                rec["maps"][ch] = rel
+        rec["uv_scale"] = [1.0 / tx, 1.0 / ty]
+        _write_json(os.path.join(out_dir, "materials", name + ".mat.json"), rec)
+        return rec
     plane = _bake_plane()
     plane.data.materials.append(mat)
     # Scale every Mapping node by the tile so a mapping whose repeat == tile lands
@@ -563,14 +577,18 @@ bool scene_bake_setup(lm_mesh_scene_t *scene, lm_bake_config_t *cfg,
 # Orchestrator
 # --------------------------------------------------------------------------
 def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
-                 scene_callback=None):
+                 scene_callback=None, bake_materials=True):
     """Export every mesh of ``collection_name`` + its materials + the manifest.
 
     ``scene_callback`` -- optional zero-arg callable that (re)generates the scene
     before export (e.g. ``great_hall.build_hall_scene``). It lets the exporter run
     headless from an empty .blend: regenerate the geometry via the EXISTING
     generator, then record each mesh's placement straight from Blender. When given,
-    the collection it builds must be named ``collection_name``."""
+    the collection it builds must be named ``collection_name``.
+
+    ``bake_materials`` False skips the slow Cycles material bake and reuses the
+    map PNGs already on disk -- for iterating on meshes/lightmap-UVs/descriptor
+    without re-baking materials."""
     tiles = DEFAULT_TILES if tiles is None else tiles
     if scene_callback is not None:
         scene_callback()
@@ -597,7 +615,18 @@ def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
             if slot and slot.name not in seen:
                 seen.add(slot.name)
                 mats.append(slot)
-    mat_records = [export_material(m, out_dir, tiles, bake_res) for m in mats]
+    mat_records = [export_material(m, out_dir, tiles, bake_res, bake=bake_materials)
+                   for m in mats]
+
+    # Lightmap UVs FIRST: generate the non-overlapping 'lightmap' unwrap on every
+    # mesh BEFORE the fvma export so the client's .fvma carries uv1 (the lightmap
+    # coordinates). The unwrap is idempotent (scene_demo reuses it in step 3), so
+    # the .fvma, the .dmesh (baker input) and the baked atlas rects share ONE
+    # lightmap UV. Without this the .fvma has no lightmap coords and the baked GI
+    # cannot be sampled -- the "lightmap_unpack" the client needs (rpg-jro2).
+    import scene_demo
+    for o in (o for o in col.objects if o.type == 'MESH'):
+        scene_demo._gen_lightmap_uv(o)
 
     # 2. meshes + manifest
     objs = []
@@ -665,4 +694,7 @@ if __name__ == "__main__" or "OUT" in globals():
     _out = globals().get("OUT", "/home/kmd/rpg/datasets/great_hall_export")
     _col = globals().get("COLLECTION", "great_hall")
     _res = int(globals().get("BAKE_RES", 1024))
-    export_scene(_col, _out, bake_res=_res)
+    # BAKE_MATERIALS=0 (env or global) reuses on-disk maps -- fast geometry iteration.
+    _bake = str(globals().get("BAKE_MATERIALS",
+                              os.environ.get("BAKE_MATERIALS", "1"))) not in ("0", "false", "")
+    export_scene(_col, _out, bake_res=_res, bake_materials=_bake)
