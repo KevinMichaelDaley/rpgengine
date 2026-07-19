@@ -63,6 +63,17 @@ static const char *const DESC_FULL =
 "    {\"kind\":\"capsule\",\"name\":\"pillar\",\"position\":[1,1,1],"
 "     \"radius\":0.5,\"half_height\":2.0,\"static\":false}"
 "  ],"
+"  \"lights\": ["
+"    {\"kind\":\"directional\",\"name\":\"sun\",\"direction\":[-0.3,-1.0,-0.2],"
+"     \"color\":[1.0,0.96,0.9],\"intensity\":3.0,"
+"     \"flags\":[\"baked\",\"dynamic_indirect\",\"shadow\"]},"
+"    {\"kind\":\"point\",\"name\":\"lantern\",\"position\":[4,2,0],"
+"     \"color\":[1.0,0.7,0.3],\"intensity\":5.0,\"range\":12.0,\"radius\":0.15,"
+"     \"flags\":[\"realtime\"]},"
+"    {\"kind\":\"spot\",\"position\":[0,6,0],\"direction\":[0,-1,0],"
+"     \"intensity\":2.0,\"range\":20.0,\"cone_inner_deg\":0.0,\"cone_outer_deg\":60.0,"
+"     \"flags\":[\"realtime\",\"shadow\"]}"
+"  ],"
 "  \"lightmap\": {\"prefix\":\"unit.flm\",\"perchunk\":true,\"manifest\":\"unit.flm_manifest.bin\"},"
 "  \"sdf\": {\"prefix\":\"unit.flm\"},"
 "  \"probes\": {\"spacing\":1.1,\"vspacing\":0.8,\"manual\":\"unit.probes\","
@@ -250,11 +261,73 @@ static int test_optional_sections_default(void)
     ASSERT_INT_EQ(d.objects[0].skeleton[0], 0);   /* no skeleton -> static */
     /* Missing optional sections -> empty / engine-default sentinels. */
     ASSERT_INT_EQ(d.collider_count, 0);
+    ASSERT_INT_EQ(d.light_count, 0);          /* no lights section -> none */
+    ASSERT_TRUE(d.lights == NULL);
     ASSERT_INT_EQ(d.lightdata.lightmap_prefix[0], 0);
     ASSERT_INT_EQ(d.lightdata.sdf_prefix[0], 0);
     ASSERT_TRUE(d.probes.spacing <= 0.0f);   /* <=0 => use engine default */
     ASSERT_INT_EQ(d.probes.box_count, 0);
     ASSERT_FALSE(d.probes.has_manual);
+    return 0;
+}
+
+static int test_lights_section(void)
+{
+    arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
+    scene_desc_t d;
+    ASSERT_TRUE(scene_desc_parse(DESC_FULL, strlen(DESC_FULL), &a, &d));
+    ASSERT_INT_EQ(d.light_count, 3);
+    ASSERT_TRUE(d.lights != NULL);
+
+    /* [0] the sun: directional, baked into the lightmap + fed to dynamic probe GI. */
+    const scene_desc_light_t *sun = &d.lights[0];
+    ASSERT_STR_EQ(sun->name, "sun");
+    ASSERT_INT_EQ(sun->kind, SCENE_DESC_LIGHT_DIRECTIONAL);
+    ASSERT_FLT_EQ(sun->direction[1], -1.0f);
+    ASSERT_FLT_EQ(sun->color[1], 0.96f);
+    ASSERT_FLT_EQ(sun->intensity, 3.0f);
+    ASSERT_INT_EQ(sun->flags, SCENE_DESC_LIGHT_FLAG_BAKED |
+                              SCENE_DESC_LIGHT_FLAG_DYNAMIC_INDIRECT |
+                              SCENE_DESC_LIGHT_FLAG_SHADOW);
+
+    /* [1] a realtime point light with finite range + emitter radius. */
+    const scene_desc_light_t *lantern = &d.lights[1];
+    ASSERT_STR_EQ(lantern->name, "lantern");
+    ASSERT_INT_EQ(lantern->kind, SCENE_DESC_LIGHT_POINT);
+    ASSERT_FLT_EQ(lantern->position[0], 4.0f);
+    ASSERT_FLT_EQ(lantern->range, 12.0f);
+    ASSERT_FLT_EQ(lantern->radius, 0.15f);
+    ASSERT_INT_EQ(lantern->flags, SCENE_DESC_LIGHT_FLAG_REALTIME);
+
+    /* [2] a spot: exporter degree cones stored as cosines (inner 0deg=>1, 60deg=>0.5). */
+    const scene_desc_light_t *spot = &d.lights[2];
+    ASSERT_INT_EQ(spot->kind, SCENE_DESC_LIGHT_SPOT);
+    ASSERT_FLT_EQ(spot->cos_inner, 1.0f);
+    ASSERT_FLT_EQ(spot->cos_outer, 0.5f);   /* cos(60deg) */
+    ASSERT_INT_EQ(spot->flags, SCENE_DESC_LIGHT_FLAG_REALTIME |
+                               SCENE_DESC_LIGHT_FLAG_SHADOW);
+    return 0;
+}
+
+static int test_light_defaults(void)
+{
+    /* A light with only "kind" -> engine defaults: white, unit intensity, no
+     * flags, identity cone (cos_inner 1 / cos_outer 0), unknown flags ignored. */
+    static const char *const LD =
+        "{\"name\":\"m\",\"objects\":[],\"lights\":["
+        "  {\"kind\":\"point\",\"flags\":[\"realtime\",\"bogus_flag\"]}"
+        "]}";
+    arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
+    scene_desc_t d;
+    ASSERT_TRUE(scene_desc_parse(LD, strlen(LD), &a, &d));
+    ASSERT_INT_EQ(d.light_count, 1);
+    const scene_desc_light_t *l = &d.lights[0];
+    ASSERT_FLT_EQ(l->color[0], 1.0f);
+    ASSERT_FLT_EQ(l->color[2], 1.0f);
+    ASSERT_FLT_EQ(l->intensity, 1.0f);
+    ASSERT_FLT_EQ(l->cos_inner, 1.0f);
+    ASSERT_FLT_EQ(l->cos_outer, 0.0f);
+    ASSERT_INT_EQ(l->flags, SCENE_DESC_LIGHT_FLAG_REALTIME); /* bogus_flag dropped */
     return 0;
 }
 
@@ -351,6 +424,8 @@ int main(void)
         {"collider_set",                test_collider_set},
         {"lightdata_section",           test_lightdata_section},
         {"probe_spec_and_importance",   test_probe_spec_and_importance},
+        {"lights_section",              test_lights_section},
+        {"light_defaults",              test_light_defaults},
         {"optional_sections_default",   test_optional_sections_default},
         {"empty_objects_ok",            test_empty_objects_ok},
         {"malformed_json_fails",        test_malformed_json_fails},

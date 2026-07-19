@@ -26,6 +26,7 @@ extern "C" {
 #include "ferrum/scene/scene_desc_object.h"
 #include "ferrum/scene/scene_desc_material.h"
 #include "ferrum/scene/scene_desc_collider.h"
+#include "ferrum/scene/scene_desc_light.h"
 #include "ferrum/scene/scene_desc_lightdata.h"
 #include "ferrum/scene/scene_desc_probes.h"
 
@@ -51,6 +52,8 @@ typedef struct scene_desc {
     scene_desc_object_t    *objects;    /**< arena-allocated [object_count], bake order. */
     uint32_t                collider_count;
     scene_desc_collider_t  *colliders;  /**< arena-allocated [collider_count] (may be NULL). */
+    uint32_t                light_count;
+    scene_desc_light_t     *lights;     /**< arena-allocated [light_count] (may be NULL). */
     scene_desc_lightdata_t  lightdata;  /**< baked light-data refs (empty if omitted). */
     scene_desc_probes_t     probes;     /**< probe placement spec (defaults if omitted). */
 } scene_desc_t;

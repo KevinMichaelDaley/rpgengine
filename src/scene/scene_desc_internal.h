@@ -29,6 +29,10 @@ bool scene_desc_parse_objects(const json_value_t *root, struct arena *arena,
 bool scene_desc_parse_colliders(const json_value_t *root, struct arena *arena,
                                 scene_desc_t *out);
 
+/** Fill out->lights (arena-allocated) from the optional "lights" array. */
+bool scene_desc_parse_lights(const json_value_t *root, struct arena *arena,
+                             scene_desc_t *out);
+
 /** Fill out->lightdata from the optional "lightmap"/"sdf" sections. */
 bool scene_desc_parse_lightdata(const json_value_t *root, scene_desc_t *out);
 
