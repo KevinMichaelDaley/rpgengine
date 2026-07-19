@@ -29,6 +29,7 @@ extern "C" {
 #include "ferrum/renderer/texture.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/light_store.h"
+#include "ferrum/renderer/gi/gi_static_volume.h"
 #include "ferrum/lightmap/lm_atlas.h"
 
 struct scene_desc; /* ferrum/scene/scene_desc.h */
@@ -57,6 +58,7 @@ typedef struct client_scene {
     uint32_t             material_count;
     unsigned int         sh_tex[9];   /**< baked-lightmap SH coeff arrays (0 = none). */
     int                  sh_borrowed;  /**< 1 = sh_tex owned by the light streamer (don't delete). */
+    gi_static_volume_t   static_vol;   /**< baked-irradiance volume for the probe GI. */
     render_light_store_t lights;
     render_light_t      *light_buf;   /**< lights backing. */
     const gl_loader_t   *loader;
@@ -92,6 +94,19 @@ void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
 
 /** Free all owned GL resources. */
 void client_scene_destroy(client_scene_t *cs);
+
+/**
+ * @brief Build the static-irradiance GI volume from the level's fvma meshes + the
+ *        baked SH lightmap (rpg-zygg): folds the baked lightmap ambience into a
+ *        coarse 3D world grid the dynamic GI probes gather, so shadowed interior
+ *        surfaces read the baked bounce. @p mrect/@p atlas are the per-mesh atlas
+ *        rects + dims; @p amin/@p amax the scene AABB. @return true on success
+ *        (fills @p vol with a GL_TEXTURE_3D). Needs a current GL context.
+ */
+bool client_static_volume_build(gi_static_volume_t *vol, const struct scene_desc *desc,
+                                const char *base_dir, const lm_atlas_rect_t *mrect,
+                                const lm_atlas_t *atlas, const float amin[3],
+                                const float amax[3]);
 
 /** Load the baked SH lightmap atlas (9 GL_TEXTURE_2D_ARRAY pages, layer 0) from
  *  @p lm_prefix, plus the per-mesh atlas rectangles + atlas dimensions the caller

@@ -292,6 +292,14 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     }
     cs->static_count = (int)cs->scene.count;
     if (amin[0] > amax[0]) { for (int a = 0; a < 3; ++a) { amin[a] = -10; amax[a] = 10; } }
+
+    /* Static irradiance volume (rpg-zygg): fold the baked lightmap into the probe
+     * GI so shadowed interior surfaces read the baked bounce. Built here while the
+     * per-mesh atlas rects (mrect) + atlas dims are still valid. */
+    bool have_svol = false;
+    if (have_lm)
+        have_svol = client_static_volume_build(&cs->static_vol, desc, base_dir,
+                                               mrect, &atlas, amin, amax);
     free(mrect_own);
 
     render_light_store_init(&cs->lights, cs->light_buf, 64);
@@ -381,6 +389,25 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.has_static_weights = 1; cfg.static_baked_w = 0.35f; cfg.static_dyn_w = 3.0f;
     cfg.has_spec_gain = 1; cfg.spec_gain = 1.0f;
 
+    /* Fold the baked lightmap into the probes (built above) + sky-openness AO,
+     * matching hall_lit_dynamic so shadowed interior surfaces get baked bounce. */
+    if (have_svol) {
+        cfg.has_static_volume = 1;
+        cfg.static_vol_tex = cs->static_vol.tex;
+        for (int a = 0; a < 3; ++a) {
+            cfg.static_vol_origin[a] = cs->static_vol.origin[a];
+            cfg.static_vol_dim[a] = (float)cs->static_vol.dims[a];
+        }
+        cfg.static_vol_voxel = cs->static_vol.voxel;
+        cfg.static_k = 1.0f;
+        cfg.has_sky_ao = 1;
+        cfg.sky_ao_color[0] = 0.15390f * 0.25f;
+        cfg.sky_ao_color[1] = 0.18851f * 0.25f;
+        cfg.sky_ao_color[2] = 0.25879f * 0.25f;
+        cfg.sky_ao_ref = 5.0f;
+        cfg.sky_ao_mult = 0.6f;
+    }
+
     /* Debug: CLIENT_NOSUN isolates the dynamic punctual lights (kills the sun +
      * baked lightmap + ambient) so their direct contribution is visible alone. */
     if (getenv("CLIENT_NOSUN")) {
@@ -412,6 +439,7 @@ void client_scene_destroy(client_scene_t *cs)
     /* SH pages: delete only if we own them (streamed pages belong to the streamer). */
     if (!cs->sh_borrowed)
         for (int c = 0; c < 9; ++c) if (cs->sh_tex[c]) glDeleteTextures(1, &cs->sh_tex[c]);
+    gi_static_volume_destroy(&cs->static_vol);
     free(cs->meshes); free(cs->materials); free(cs->textures);
     free(cs->rb); free(cs->light_buf);
     memset(cs, 0, sizeof *cs);

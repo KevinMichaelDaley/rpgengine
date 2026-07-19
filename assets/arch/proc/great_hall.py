@@ -1191,35 +1191,58 @@ def _add_spot_up(name, loc, color, energy, rng, outer_deg, inner_deg):
     return o
 
 
-def _setup_dynamic_lights(name, col):
-    """Add the hall's DYNAMIC punctual lights (the carried lantern + the two
-    orange pillar sconces + a blue aisle point), matching tests/visual/
-    hall_lit_dynamic.c. These are realtime + SDF-probe-GI lights (NOT baked), so
-    they need no lightmap re-bake; the exporter tags them dynamic_indirect/probe_gi.
-    Positions are derived from the hall's world bounds (Blender Z-up)."""
+def _mesh_group_bbox(col, substr):
+    """World-space (found, center, min, max) of the meshes whose name contains
+    ``substr`` (empty min/max if none found)."""
     import mathutils
     mn = mathutils.Vector(( 1e30,  1e30,  1e30))
     mx = mathutils.Vector((-1e30, -1e30, -1e30))
+    found = False
     for o in col.objects:
-        if o.type != 'MESH':
+        if o.type != 'MESH' or substr not in o.name:
             continue
+        found = True
         for c in o.bound_box:
             w = o.matrix_world @ mathutils.Vector(c)
             mn = mathutils.Vector((min(mn.x, w.x), min(mn.y, w.y), min(mn.z, w.z)))
             mx = mathutils.Vector((max(mx.x, w.x), max(mx.y, w.y), max(mx.z, w.z)))
-    cx = 0.5 * (mn.x + mx.x); cy = 0.5 * (mn.y + mx.y); floor = mn.z
-    # Carried lantern: warm point OUTSIDE the +Y arcade wall so its light rakes in
-    # between the piers (the iconic moving light; exported at its rest position).
-    _add_point(name + "_lantern", (cx, mx.y + 2.0, floor + 1.6),
-               (1.0, 0.60, 0.26), 13.0, 8.0, radius=0.15)
-    # Blue shadow-casting point in the aisle centre.
-    _add_point(name + "_aisle", (mn.x + 0.35 * (mx.x - mn.x), cy, floor + 1.7),
-               (0.5, 0.7, 1.0), 6.0, 7.0, radius=0.1)
-    # Two orange sconce spots low on the central axis, pointing up.
-    _add_spot_up(name + "_sconce_0", (mn.x + 0.40 * (mx.x - mn.x), cy, floor + 1.05),
-                 (1.0, 0.46, 0.12), 13.0, 4.0, outer_deg=54.0, inner_deg=31.0)
-    _add_spot_up(name + "_sconce_1", (mn.x + 0.60 * (mx.x - mn.x), cy, floor + 1.05),
-                 (1.0, 0.46, 0.12), 13.0, 4.0, outer_deg=54.0, inner_deg=31.0)
+    return found, (mn + mx) * 0.5, mn, mx
+
+
+def _setup_dynamic_lights(name, col):
+    """Add the hall's DYNAMIC punctual lights, PLACED AT the architecture: a warm
+    fire light inside the fireplace opening and a warm lamp in each carved arched
+    niche (lamp_vous). Realtime + SDF-probe-GI + shadow-casting; NOT baked (no
+    lightmap re-bake). Energies are in the engine's radiance units (a few hundred,
+    the exporter passes Blender `energy` straight to descriptor `intensity`), tuned
+    to read as strongly as hall_lit_dynamic. Each light is nudged toward the hall
+    centre so it spills into the room rather than sitting buried in the recess."""
+    _, hall_c, _, _ = _mesh_group_bbox(col, name)   # whole-hall centre.
+
+    def place_toward_room(cen, dist=0.35):
+        import mathutils
+        d = hall_c - cen
+        if d.length > 1e-4:
+            return cen + d.normalized() * dist
+        return cen
+
+    # Fireplace: a warm fire light in the hearth opening.
+    ok, c, _, _ = _mesh_group_bbox(col, name + "_fp_opening")
+    if not ok:
+        ok, c, _, _ = _mesh_group_bbox(col, name + "_fp_hearth")
+    if ok:
+        p = place_toward_room(c, 0.4)
+        _add_point(name + "_fire", (p.x, p.y, p.z), (1.0, 0.45, 0.15),
+                   500.0, 6.0, radius=0.2, shadow=True)
+
+    # Lamp niches (arched wall niches): a warm lamp in each.
+    for i in range(8):
+        ok, c, _, _ = _mesh_group_bbox(col, name + "_lamp_vous_%d" % i)
+        if not ok:
+            break
+        p = place_toward_room(c, 0.3)
+        _add_point(name + "_niche_%d" % i, (p.x, p.y, p.z), (1.0, 0.62, 0.28),
+                   400.0, 5.0, radius=0.1, shadow=True)
 
 
 def build_hall_scene(bake_root, collection=None, name="great_hall"):

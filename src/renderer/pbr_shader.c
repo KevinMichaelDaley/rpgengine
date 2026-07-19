@@ -622,6 +622,7 @@ static const char *const PBR_FS =
     "                               u_light_color[i], u_light_range[i], u_light_cos_inner[i],\n"
     "                               u_light_cos_outer[i], N,V,albedo,rough,metal,F0);\n"
     "  }\n"
+    "  if(u_debug_mode==12){ frag=vec4(direct,1.0); return; }\n"  /* sun + clustered punctual (debug). */
     "  if(u_debug_mode==8){ frag=vec4(vec3(dbg_cubesh),1.0); return; }\n"
     "  if(u_debug_mode==1){ frag=vec4(texture(u_sh0,SHUV).rgb,1.0); return; }\n"
     "  if(u_debug_mode==2){ frag=vec4(max(pbr_sh_irradiance(N),vec3(0.0)),1.0); return; }\n"
