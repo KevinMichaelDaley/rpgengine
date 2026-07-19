@@ -71,6 +71,35 @@ def _world_bbox(objs):
     return a.min(0), a.max(0)
 
 
+def _wall_base_plinths(col, name, length, half, wall_t, dais_top, dais_w,
+                       steps=((0.0, 0.10, 0.10), (0.10, 0.06, 0.06))):
+    """A low, shallow STEPPED base plinth along the foot of each wall's inner
+    face -- a wider bottom course with a set-back top course (skirting, not a
+    bench). @p steps = list of (z0, height, projection). Side + entrance walls sit
+    on the floor (z=0); the dais backdrop wall's plinth sits ON the dais platform
+    (z=dais_top) since the platform covers its floor-level foot. Stem 'plinth' ->
+    wall masonry."""
+    hw = half - wall_t / 2.0                   # side-wall inner face |Y|
+    ex = length - wall_t / 2.0                 # dais backdrop inner face X
+    # (tag, run start, run end, (axis, face pos, room dir), z base)
+    walls = [
+        ("N", 0.0, length, ("y", hw, -1.0), 0.0),
+        ("S", 0.0, length, ("y", -hw, 1.0), 0.0),
+        ("W", -half, half, ("x", wall_t / 2.0, 1.0), 0.0),
+        ("E", -dais_w / 2.0, dais_w / 2.0, ("x", ex, -1.0), dais_top),
+    ]
+    for tag, a0, a1, (axis, pos, rd), zb in walls:
+        span = a1 - a0
+        ctr = 0.5 * (a0 + a1)
+        for si, (z0, h, proj) in enumerate(steps):
+            cz = zb + z0 + h / 2.0
+            if axis == "y":                    # wall runs along X, projects in Y
+                cx, cy, sx, sy, sz = ctr, pos + rd * proj / 2.0, span, proj, h
+            else:                              # wall runs along Y, projects in X
+                cx, cy, sx, sy, sz = pos + rd * proj / 2.0, ctr, proj, span, h
+            _box(col, f"{name}_plinth_{tag}_{si}", cx, cy, cz, sx, sy, sz)
+
+
 def _arched_niche_cutter(col, name, x_front, depth, yc, half_w, straight_h, z0):
     """A solid arched prism used to BOOLEAN-cut a lamp niche into an end wall.
 
@@ -140,6 +169,74 @@ def _cube_uv_faces_in_aabb(obj, aabb_min, aabb_max, scale=1.0):
     bm.free()
 
 
+def _niche_voussoirs(col, name, x_room_face, yc, z_spring, r_in, r_out,
+                     protrude, segs=24, u_scale=1.0, v_scale=1.0):
+    """One swept VOUSSOIR BAND (a raised archivolt) framing the SEMICIRCULAR head
+    of a lamp niche -- angles 0..pi over the top only, NOT down the vertical
+    jambs. Built as a single object: a rectangular cross-section (on the wall room
+    face at @p x_room_face, protruding @p protrude into the room, spanning radius
+    @p r_in..@p r_out) swept round the arc in @p segs steps.
+
+    The wall/voussoir texture is TILED AROUND THE CURVE like the window arches
+    (arch._voussoir_strip_uvs convention): U = ARC LENGTH along the opening,
+    V = the unrolled cross-section, both in metres, so the brick head-joints wrap
+    the arch as uniform radial voussoir joints (no per-brick apex fan). @p u_scale
+    / @p v_scale tune how many stones / courses show. Registered stem 'lamp_vous'
+    (wall masonry material, arch-authored UVs). Returns the object."""
+    import bmesh
+    bm = bmesh.new()
+    uvl = bm.loops.layers.uv.new("UVMap")
+    x_back = x_room_face                          # flush with the wall room face
+    x_front = x_room_face - protrude              # protrudes into the room (-X)
+    r_mid = 0.5 * (r_in + r_out)
+    band = r_out - r_in
+    # Cross-section, unrolled along V (metres): outer edge (0..protrude), then the
+    # front face (protrude..protrude+band), so U=arc,V=section wraps continuously.
+    def yz(a, r):
+        return (yc + r * math.cos(a), z_spring + r * math.sin(a))
+    rings = []                                    # per-angle vert rings (4 section pts)
+    for j in range(segs + 1):
+        a = math.pi * j / segs
+        yo, zo = yz(a, r_out)
+        yi, zi = yz(a, r_in)
+        # section verts: outer-back, outer-front, inner-front, inner-back
+        vb_o = bm.verts.new((x_back, yo, zo))
+        vf_o = bm.verts.new((x_front, yo, zo))
+        vf_i = bm.verts.new((x_front, yi, zi))
+        vb_i = bm.verts.new((x_back, yi, zi))
+        rings.append((vb_o, vf_o, vf_i, vb_i))
+    # arc length (U) per angular station, and the unrolled section V coordinates.
+    def u_of(j):
+        return (math.pi * j / segs) * r_mid * u_scale
+    v_sec = [0.0, protrude, protrude + band, 2.0 * protrude + band]  # around the section
+    v_sec = [v * v_scale for v in v_sec]
+    for j in range(segs):
+        a_ring, b_ring = rings[j], rings[j + 1]
+        ua, ub = u_of(j), u_of(j + 1)
+        for k in range(3):                        # outer / front / inner faces
+            f = bm.faces.new((a_ring[k], a_ring[k + 1], b_ring[k + 1], b_ring[k]))
+            uv = [(ua, v_sec[k]), (ua, v_sec[k + 1]),
+                  (ub, v_sec[k + 1]), (ub, v_sec[k])]
+            for lp, c in zip(f.loops, uv):
+                lp[uvl].uv = c
+        # close the back onto the wall (hidden) + this segment gets no back face
+        fb = bm.faces.new((a_ring[3], a_ring[0], b_ring[0], b_ring[3]))
+        for lp in fb.loops:
+            lp[uvl].uv = (ua, 0.0)
+    # end caps at the two springs (angle 0 and pi)
+    for r, sgn in ((rings[0], 1), (rings[-1], -1)):
+        f = bm.faces.new(r if sgn > 0 else list(reversed(r)))
+        for lp in f.loops:
+            lp[uvl].uv = (0.0, 0.0)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    _link(col, o)
+    return o
+
+
 def _carve_lamp_niches(col, wall, x_room_face, centre_z, y_offsets,
                        half_w, straight_h, recess):
     """Boolean-cut arched lamp niches into @p wall (the dais backdrop). Each niche
@@ -167,14 +264,30 @@ def _carve_lamp_niches(col, wall, x_room_face, centre_z, y_offsets,
         mod.solver = 'EXACT'
         bpy.context.view_layer.objects.active = wall
         bpy.ops.object.modifier_apply(modifier=mod.name)
-    # Re-UV each carved pocket (world AABB of its cutter span, padded a touch).
+    # Re-UV each carved pocket's INTERIOR only (the jambs + soffit + blind back,
+    # which the boolean created fresh). The pocket runs from the room face INTO the
+    # wall by `recess` (+X); start the AABB just PAST the room face so the front
+    # wall faces around the opening keep the boolean-interpolated authored wall UV
+    # -- re-projecting them to world-cube left a long seam where they met the rest
+    # of the (authored-UV) backdrop wall around the arch.
     for _cut, yc in cutters:
-        amin = (x_room_face - recess - 0.05, yc - half_w - 0.05, z0 - 0.05)
-        amax = (x_room_face + 0.05, yc + half_w + 0.05,
-                z0 + straight_h + half_w + 0.05)
+        amin = (x_room_face + 0.02, yc - half_w - 0.06, z0 - 0.06)
+        amax = (x_room_face + recess + 0.06, yc + half_w + 0.06,
+                z0 + straight_h + half_w + 0.06)
         _cube_uv_faces_in_aabb(wall, amin, amax)
     for cut, _yc in cutters:
         bpy.data.objects.remove(cut, do_unlink=True)
+    # Frame each niche's arch head with protruding voussoirs (over the semicircle
+    # only, not the jambs). z_spring = jamb top = z0 + straight_h. Name off the
+    # hall stem (wall is "<name>_dais_arch") so the stem-matched material assign
+    # picks them up regardless of the collection's (possibly suffixed) name.
+    hall = wall.name[:-len("_dais_arch")] if wall.name.endswith("_dais_arch") else col.name
+    for i, yc in enumerate(y_offsets):
+        # r_in a touch INSIDE the opening radius so the archivolt lip overhangs
+        # the reveal, covering the opening-to-wall arris (no exposed edge).
+        _niche_voussoirs(col, f"{hall}_lamp_vous_{i}", x_room_face, yc,
+                         z0 + straight_h, r_in=half_w - 0.02, r_out=half_w + 0.14,
+                         protrude=0.05, segs=24, u_scale=1.0, v_scale=1.0)
 
 
 def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
@@ -216,8 +329,8 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
     yface = yin                        # back of the mass sits on the wall face
     rings_spec = [                     # (z, half_width X, projection into room)
         (surround_h,             fw / 2,  0.75),   # hood mouth (wide, projecting)
-        (surround_h + 1.7,       0.48,    0.30),   # throat
-        (chimney_top_z,          0.48,    0.30),   # stack top (through the roof)
+        (surround_h + 1.7,       0.95,    0.30),   # throat -> broad chimney breast
+        (chimney_top_z,          0.95,    0.30),   # stack top (through the roof)
     ]
     bm = bmesh.new()
     rings = []
@@ -232,6 +345,27 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
             k = (j + 1) % 4
             bm.faces.new((rings[i][j], rings[i][k], rings[i + 1][k], rings[i + 1][j]))
     bm.faces.new(tuple(rings[-1]))     # cap the stack top
+    bm.faces.new(tuple(rings[0]))      # CLOSE the hood: cap the wide bottom mouth
+    # Chamfer the hood's exposed arrises (a soft masonry edge, not knife-sharp).
+    # SKIP (a) edges on the wall back face (yface) -- keep the mass flush to the
+    # wall -- and (b) the throat transition ring (z_throat), whose junction between
+    # the tapering hood and the vertical chimney is CONCAVE: beveling it cut an
+    # inset notch into the sides. Leaving it unbeveled keeps a clean crease.
+    # Only chamfer the vertical arrises: skip the wall-back edges (keep flush) and
+    # BOTH horizontal transition rings -- the throat (concave hood->chimney) and
+    # the mouth (where the hood sits on the surround). Beveling either cut inset
+    # notches at the side corners that don't bridge to the neighbouring mass.
+    z_rings = (surround_h, surround_h + 1.7)
+    def _on_wall(e):
+        return (abs(e.verts[0].co.y - yface) < 1e-5
+                and abs(e.verts[1].co.y - yface) < 1e-5)
+    def _ring_edge(e):
+        return any(abs(e.verts[0].co.z - z) < 1e-4 and abs(e.verts[1].co.z - z) < 1e-4
+                   for z in z_rings)
+    chamfer_edges = [e for e in bm.edges if not _on_wall(e) and not _ring_edge(e)]
+    if chamfer_edges:
+        bmesh.ops.bevel(bm, geom=chamfer_edges, offset=0.04, segments=1,
+                        affect='EDGES', clamp_overlap=True)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
     me = bpy.data.meshes.new(f"{name}_fp_hood"); bm.to_mesh(me); bm.free()
     hood = bpy.data.objects.new(f"{name}_fp_hood", me); col.objects.link(hood)
@@ -269,6 +403,38 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
         rim_style="ovolo", rim_size=0.04, jamb_extension=0.55,
         face="inner", collection=col))
 
+    # a DISTINCT ornamental band (BILLET blocks, not the chevron) running FLAT
+    # ACROSS THE TOP ONLY -- no jambs, no corner returns -- above the label. Built
+    # straight from the arch ornament-band primitive on a horizontal path (this is
+    # exactly its head run, without the jamb/corner runs a full label adds).
+    fr_hw, fr_zs, fr_in, fr_out = 0.75, 1.75, 0.70, 0.90
+    fr_n = max(3, arch._ORNAMENT_STATIONS["billet"](13) + 1)
+    fr_bm = bmesh.new()
+    arch._ornament_band(
+        fr_bm, arch._line_stations((-fr_hw - fr_in, fr_zs), (fr_hw + fr_in, fr_zs), fr_n),
+        [(0.0, 1.0)] * fr_n, fr_in, fr_out, -surround_t * 0.5, -1.0, 0.10,
+        "billet", 0.05, cap_start=True, cap_end=True)
+    bmesh.ops.remove_doubles(fr_bm, verts=list(fr_bm.verts), dist=1e-5)
+    bmesh.ops.recalc_face_normals(fr_bm, faces=fr_bm.faces[:])
+    fr_me = bpy.data.meshes.new(f"{name}_fp_frieze"); fr_bm.to_mesh(fr_me); fr_bm.free()
+    frieze = bpy.data.objects.new(f"{name}_fp_frieze", fr_me); col.objects.link(frieze)
+    _order(frieze)
+
+    # TALL PLINTHS under the ornament: the carved orders' jambs stop ~1.2 m up, so
+    # seat each side's jamb on a plain pedestal running from the hearth top to that
+    # foot (a pedestal beside the fire on each side). Spans the ornament band out
+    # to the opening edge, projecting a touch proud of the label.
+    hw_op, orn_out = 0.75, 0.66             # opening half-width; ornament outer radius
+    pz0, pz1 = 0.18, 1.20                   # hearth top -> ornament jamb foot
+    py0 = yin + proj * surround_t           # surround front face
+    py1 = yin + proj * (surround_t + 0.20)  # plinth front (proud of the label)
+    for sx, tag in ((-1.0, "L"), (1.0, "R")):
+        x_in = wx + sx * hw_op              # fire-opening edge
+        x_out = wx + sx * (hw_op + orn_out)  # ornament outer
+        _box(col, f"{name}_fp_plinth_{tag}",
+             0.5 * (x_in + x_out), 0.5 * (py0 + py1), 0.5 * (pz0 + pz1),
+             abs(x_out - x_in), abs(py1 - py0), pz1 - pz0)
+
 
 def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
                      wall_t=0.5, roof_rise=3.6,
@@ -288,6 +454,7 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     cut depth into the wall (kept < @p wall_t so a solid backing remains)."""
     import arch
     import pier
+    import column
 
     length = nbay * bay
     half = width / 2.0
@@ -358,9 +525,47 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
         wall_thickness=wall_t, arch_shape="round", opening_width=3.0,
         opening_height=3.0, head_rise=1.5, sill_height=0.9, splay=0.10,
         wide_side="inner", blind=True, blind_recess=0.22, voussoir_trim=True,
-        trim_width=0.14, masonry_uv=True, collection=col)
+        trim_width=0.14, masonry_uv=True, sill_square=True, sill_extrude=0.08,
+        collection=col)
     b.location = (length, 0.0, 0.0)
-    b.rotation_euler = (0, 0, math.pi / 2.0)
+    # Face the INTERIOR (-X, down the hall). The entrance at x=0 faces +X into the
+    # room with rot +pi/2; the dais wall is the OPPOSITE end, so its blind recess +
+    # voussoirs must face -X -- the opposite rotation (-pi/2), or they point into
+    # the wall behind. (The wall body stays centred on x=length either way, so the
+    # lamp niches carved on the -X room face are unaffected.)
+    b.rotation_euler = (0, 0, -math.pi / 2.0)
+
+    # --- dais blind arch dressing (following scene_demo.py): a patterned
+    #     ARCHIVOLT stack (rolls framing carved billet + chevron bands + a plain
+    #     fascia) around the head, and an engaged RESPOND with a cushion capital
+    #     on each jamb. Named without "dais" so they read as wall masonry (group
+    #     0), and placed in the arch's own frame. ---
+    dais_top = 0.46                                  # dais platform top (see below)
+    def _place_on_arch(obj):
+        obj.location = b.location.copy()
+        obj.rotation_euler = b.rotation_euler.copy()
+        return obj
+
+    _place_on_arch(arch.build_archivolt(
+        name=f"{name}_dvolt", opening_width=3.0, opening_height=3.0,
+        arch_shape="round", head_rise=1.5, sill_height=0.9, wall_thickness=wall_t,
+        inner_radius=0.16, face="inner", collection=col))
+
+    # a cushion-capital column, embedded as an engaged half-shaft on each jamb.
+    _respsrc = column.build_column(
+        name=f"{name}_respsrc", total_height=3.0, shaft_radius=0.24,
+        capital_style="cushion", capital_width=0.58, capital_depth=0.58,
+        capital_block_height=0.14, capital_flare=0.5, capital_flare_height=0.26,
+        base_block=True, base_width=0.66, base_depth=0.66, base_block_height=0.22,
+        base_flare=0.25, base_flare_height=0.10, collection=col)
+    _respL, _respR = arch.embed_jamb_columns(
+        _respsrc, opening_width=3.0, opening_height=3.0, sill_height=dais_top,
+        wall_thickness=wall_t, inset=0.12, flatten=0.75, project=0.5,
+        height=0.9 + 3.0 - dais_top, face="inner", name=f"{name}_dresp",
+        collection=col)
+    bpy.data.objects.remove(_respsrc, do_unlink=True)
+    _place_on_arch(_respL)
+    _place_on_arch(_respR)
 
     # --- twin arched LAMP NICHES carved INTO the dais backdrop wall, flanking the
     #     central blind arch. Sited ~8 ft (2.44 m) above the dais platform (a lamp
@@ -391,6 +596,9 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
         _box(col, f"{name}_dais_step_{s2}",
              dais_front - 0.4 * (s2 + 0.5), 0.0, 0.09 * (2 - s2),
              0.4, dais_w - 1.0, 0.18 * (2 - s2))
+
+    # low stepped base plinth along the foot of every wall
+    _wall_base_plinths(col, name, length, half, wall_t, dais_top, dais_w)
 
     # --- high open timber roof, sized from the ACTUAL wall bounding boxes ---
     wN = [o for o in col.objects if o.name.startswith(f"{name}_win_N_")]
@@ -475,7 +683,7 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
                chimney_top_z=apex + 1.6, sign=+1)
     # punch the flue hole so the chimney exits through the roof (boolean cutter
     # over the stack footprint: wx +/- 0.48 in X, yin-0.3..yin in Y).
-    _punch_flue(col, roof, f"{name}_flue", fp_wx, yin - 0.15, 0.66, 0.20)
+    _punch_flue(col, roof, f"{name}_flue", fp_wx, yin - 0.15, 2.05, 0.20)
     return col
 
 
@@ -542,8 +750,10 @@ def world_cube_uv(obj, scale=1.0):
 # course-continuous reveal UVs (that WRAP the splayed reveal + arch soffit) and
 # voussoir-strip UVs. A world-cube projection would smear the coursing off the
 # curved reveal and flatten the voussoir band, so prepare_uvs leaves these alone.
-_ARCH_AUTHORED = ("win_N", "win_S", "entrance", "dais_arch", "pier_N", "pier_S",
+_ARCH_AUTHORED = ("win_N", "win_S", "entrance", "dais_arch", "lamp_vous",
+                  "pier_N", "pier_S",
                   "fp_opening", "fp_roll", "fp_chevron", "fp_label")
+# (fp_frieze is a raw ornament band -> world-cube UV via prepare_uvs, not authored)
 
 
 def prepare_uvs(col, scale=1.0):
@@ -567,7 +777,9 @@ def prepare_uvs(col, scale=1.0):
 # end-wall arches. Everything else (floor, dais, timber roof, fireplace stone) is
 # left UV-ready for its own material.
 _WALL_STEMS = ("win_N", "win_S", "wall_N", "pier_N", "pier_S",
-               "entrance", "dais_arch", "fp_")   # fireplace stone = wall masonry
+               "entrance", "dais_arch", "lamp_vous",  # niche voussoirs = masonry
+               "dvolt", "dresp", "plinth",             # dais dressing + wall plinths
+               "fp_")                                  # fireplace stone = wall masonry
 
 
 def assign_wall_material(col, bake_dir, name="great_hall_stone_wall"):
@@ -897,33 +1109,35 @@ def _dais_bevel(obj, width=0.006, segments=2, angle_deg=40.0):
     wn.weight = 50
 
 
-def assign_dais_material(col, uv_scale=0.5, name="great_hall_dais_marble"):
-    """Dark polished MARBLE for the raised dais + its steps: an aperiodic marble
-    field, tinted dark and made low-roughness (polished), on a world-cube UV. The
-    dais ARCH keeps the wall masonry (handled by ``assign_wall_material``)."""
-    import material_nodes
-    old = bpy.data.materials.get(name)
-    if old:
-        bpy.data.materials.remove(old)
-    try:
-        mat = material_nodes.build_field_material(
-            name, "marble", rough_base=0.30, tint=(0.11, 0.11, 0.14))
-    except Exception:                              # no marble fields -> flat polish
-        mat = bpy.data.materials.new(name)
-        mat.use_nodes = True
-        b = mat.node_tree.nodes.get("Principled BSDF")
-        b.inputs["Base Color"].default_value = (0.05, 0.05, 0.07, 1.0)
-        b.inputs["Roughness"].default_value = 0.18
+def assign_dais_material(col, bake_dir, name="great_hall_floor_stone"):
+    """The raised dais + its steps read as the SAME big STONE FLAGS as the floor
+    (not marble): reuse the floor flagstone material at WORLD scale (1 uv unit ==
+    1 m, matching the floor) with a small edge bevel. The dais ARCH keeps the wall
+    masonry (handled by ``assign_wall_material``)."""
+    mat = bpy.data.materials.get(name)             # built by assign_floor_material
+    if mat is None:                                # standalone call -> build it
+        mat = assign_floor_material(col, bake_dir, name)
     pre = col.name + "_"
+
+    def _level(stem):                              # ascending: lower step -> dais top
+        if stem == "dais":
+            return 3
+        if stem.startswith("dais_step_"):
+            return 2 - int(stem.rsplit("_", 1)[-1])   # step_0 higher(2), step_1(1)
+        return 0
+
     for o in col.objects:
         if o.type != "MESH":
             continue
         stem = o.name[len(pre):] if o.name.startswith(pre) else o.name
         if stem == "dais" or stem.startswith("dais_step"):
-            world_cube_uv(o, uv_scale)
+            _dais_bevel(o)
+            # Scale the world-cube UV up ever so slightly per step level so the
+            # flag pattern does NOT continue unbroken across the step edges (the
+            # tiles would otherwise line up straight up the risers/treads).
+            world_cube_uv(o, 1.0 + 0.02 * _level(stem))
             o.data.materials.clear()
             o.data.materials.append(mat)
-            _dais_bevel(o)
     return mat
 
 
@@ -967,6 +1181,6 @@ def build_hall_scene(bake_root, collection=None, name="great_hall"):
     assign_reveal_weave(col, os.path.join(bake_root, "bake_weave"))
     assign_timber_material(col)
     assign_roof_material(col)
-    assign_dais_material(col)
+    assign_dais_material(col, os.path.join(bake_root, "bake_floor"))
     _setup_lighting(name)
     return col

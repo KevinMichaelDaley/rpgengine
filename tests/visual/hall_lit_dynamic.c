@@ -398,13 +398,15 @@ static void *sdl_get_proc(const char *n, void *u) { (void)u; return SDL_GL_GetPr
 static float frand(uint32_t *s){ *s=*s*1664525u+1013904223u; return (float)(*s>>8)*(1.0f/16777216.0f); }
 static int group_of(const char *n){ if(strstr(n,"win")||strstr(n,"door"))return 0; if(strstr(n,"vault"))return 2; return 1; }
 /* Great-hall export: mesh name -> material index (order matches GH_MATS below:
- * 0 stone_wall, 1 floor, 2 weave, 3 timber, 4 roof limestone, 5 dais marble). */
+ * 0 stone_wall, 1 floor/dais stone, 2 weave, 3 timber, 4 roof limestone, 5 unused). */
 static int gh_group(const char *n){
     if(strstr(n,"floor")) return 1;
     if(strstr(n,"roof")) return 4;
     if(strstr(n,"tie")||strstr(n,"king")||strstr(n,"praf")||strstr(n,"collar")||strstr(n,"purlin")) return 3;
-    if(strstr(n,"dais_step")||(strstr(n,"dais")&&!strstr(n,"dais_arch"))) return 5;
-    return 0; /* win / wall / pier / entrance / dais_arch / fp -> wall masonry. */
+    /* Dais + steps read as the same floor STONE FLAGS (was marble). dais_arch
+     * (the backdrop wall + its lamp niches/voussoirs) stays wall masonry (0). */
+    if(strstr(n,"dais_step")||(strstr(n,"dais")&&!strstr(n,"dais_arch"))) return 1;
+    return 0; /* win / wall / pier / entrance / dais_arch / lamp_vous / fp -> masonry. */
 }
 static int hld_cmpstr(const void *a,const void *b){ return strcmp((const char *)a,(const char *)b); }
 
@@ -680,7 +682,7 @@ int main(int argc,char **argv){
     /* GREAT_HALL: one PBR set (albedo/normal/roughness/ao) per exported material. */
     static const char *GH_MATS[6]={"great_hall_stone_wall","great_hall_floor_stone",
         "great_hall_reveal_weave","great_hall_timber","great_hall_roof_limestone",
-        "great_hall_dais_marble"};
+        "great_hall_floor_stone"};  /* slot 5 unused (dais now = floor stone, group 1). */
     static texture_t gh_tex[6][3];   /* [material][albedo,normal,roughness] (no AO map) */
     if(great_hall){
         const char *chn[3]={"albedo","normal","roughness"};
@@ -724,7 +726,7 @@ int main(int argc,char **argv){
             mats[m].contrast=1.0f;
         }
         mats[3].normal_scale=1.4f;   /* timber: a touch more grain relief. */
-        mats[5].roughness_min=0.45f; /* dais marble: rougher -> less mirror, softer sheen. */
+        /* (mats[5] unused: the dais now uses the floor stone, group 1.) */
         /* Masonry: punch up the brick/mortar relief so the courses read with depth. */
         /* Normal-map strength: at 2.0 the brick relief OVER-shaded under the
          * direct (CSM) sun -- every brick facet swung hard bright/dark. ~1.0 reads
@@ -905,11 +907,12 @@ int main(int argc,char **argv){
     fcfg.loader=&loader; fcfg.cluster=(cluster_config_t){16,16,24,0.2f,60.0f};
     fcfg.max_lights=MAX_LIGHTS; fcfg.index_capacity=16u*16u*24u*16u;
     fcfg.screen_w=(float)W; fcfg.screen_h=(float)H;
-    /* u_sun_dir points TOWARD the sun; the CSM negates it for the travel dir.
-     * Must equal the lightmap bake's sun (hall_bake.c: travel (0.42,-0.50,0.76)),
-     * so to-sun = (-0.42,0.50,-0.76) -- the direct sun + its CSM shadow then line
-     * up with the baked indirect bounce. */
-    fcfg.sun_dir[0]=-0.42f; fcfg.sun_dir[1]=0.50f; fcfg.sun_dir[2]=-0.76f;
+    /* u_sun_dir points TOWARD the sun; the CSM negates it for the travel dir. It
+     * MUST match the lightmap bake's sun so the runtime direct sun + its CSM
+     * shadows line up with the baked indirect bounce. The great-hall bake sun is
+     * set in great_hall.py (_setup_lighting) and exported to scene_bake.c as
+     * SUN_DIR = (-0.557,-0.602,-0.572) (engine TRAVEL dir), so to-sun = -SUN_DIR. */
+    fcfg.sun_dir[0]=0.557f; fcfg.sun_dir[1]=0.602f; fcfg.sun_dir[2]=0.572f;
     fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f; /* default off; the
         CSM block below turns the direct sun ON for great_hall (lightmap is INDIRECT
         only, so the sun's DIRECT term must come from the realtime CSM). */
