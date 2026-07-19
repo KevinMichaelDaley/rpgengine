@@ -26,6 +26,7 @@ static const char *CS_SRC =
      * across the whole volume so every region gets a few refreshes per frame.\n"
      * u_ngroups<=1 disables (every probe every dispatch). */
     "uniform int u_ngroups,u_group;\n"
+    "uniform ivec3 u_grid_dim;\n"    /* probe grid dims (0 -> not a grid, hash instead). */
     "uniform float u_soft, u_albedo;\n"
     "uniform float u_temporal;\n"   /* EMA blend: 1 = replace, <1 = smooth over time. */
     "uniform sampler3D u_sdf[8];\n"
@@ -154,8 +155,13 @@ static const char *CS_SRC =
     /* Staggered/dithered gate: hash the probe index (spatial neighbours differ in\n"
      * gid, so the hash scatters them across groups) and skip probes not in this\n"
      * frame's group -- they keep their previous SH/depth/SG in the r/w buffers. */
-    "  if(u_ngroups>1){ uint h=gid*2654435761u; h^=h>>15; h*=2246822519u; h^=h>>13;\n"
-    "    if(int(h%uint(u_ngroups))!=u_group) return; }\n"
+    "  if(u_ngroups>1){ int grp;\n"
+    "    if(u_grid_dim.x>0){ int W=u_grid_dim.x, H=u_grid_dim.y; int g=int(gid);\n"
+    /* 3D CHECKERBOARD: adjacent probes (differ by 1 on any axis) get different\n"
+     * groups, so no spatially-coherent block ever updates together. */
+    "      ivec3 gc=ivec3(g%W,(g/W)%H,g/(W*H)); grp=(gc.x+gc.y+gc.z)%u_ngroups; }\n"
+    "    else { uint h=gid*2654435761u; h^=h>>15; h*=2246822519u; grp=int(h%uint(u_ngroups)); }\n"
+    "    if(grp!=u_group) return; }\n"
     /* Two SH4 sets per probe: [0..11] dynamic, [12..23] static. */
     "  vec3 o=ppos[gid].xyz; float shd[12]; float shs[12];\n"
     "  for(int k=0;k<12;++k){ shd[k]=0.0; shs[k]=0.0; }\n"
@@ -263,6 +269,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
         g->loc.temporal= glGetUniformLocation(p, "u_temporal");
         g->loc.ngroups = glGetUniformLocation(p, "u_ngroups");
         g->loc.group   = glGetUniformLocation(p, "u_group");
+        g->loc.grid_dim= glGetUniformLocation(p, "u_grid_dim");
         g->loc.static_on  = glGetUniformLocation(p, "u_static_on");
         g->loc.static_k   = glGetUniformLocation(p, "u_static_k");
         g->loc.static_irr = glGetUniformLocation(p, "u_static_irr");
@@ -369,7 +376,8 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
 void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
-                           float soft_k, float temporal, int ngroups, int group)
+                           float soft_k, float temporal, int ngroups, int group,
+                           const int grid_dim[3])
 {
     if (g == NULL || !g->ready || g->n_probes == 0) return;
     if (n_lights > g->max_lights) n_lights = g->max_lights;
@@ -412,6 +420,8 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glUniform1f(g->loc.temporal, temporal);
     glUniform1i(g->loc.ngroups, (GLint)ngroups);
     glUniform1i(g->loc.group, (GLint)group);
+    glUniform3i(g->loc.grid_dim, grid_dim ? grid_dim[0] : 0,
+                grid_dim ? grid_dim[1] : 0, grid_dim ? grid_dim[2] : 0);
 
     /* Static irradiance volume: bound past the SDF slot units. */
     {

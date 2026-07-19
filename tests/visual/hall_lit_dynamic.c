@@ -1048,12 +1048,12 @@ int main(int argc,char **argv){
             material_init(&mats[6]);                      /* polished metal (no maps -> tint). */
             mats[6].tint[0]=mats[6].tint[1]=mats[6].tint[2]=0.85f;
             mats[6].metalness=0.85f; mats[6].roughness_min=0.14f; mats[6].roughness_max=0.14f;
-            float cuy=amin[1]+span[1]*0.16f;                       /* low, in the window-beam path. */
+            float cuy=amin[1]+1.42f;                               /* 2.4 m cube resting on the floor. */
             /* Sun rakes toward +crossax, so sit on the -crossax (sun-side) window so
              * the cubes' shadows fall onto the lit floor the camera sees. */
             float cwz=center[crossax]-span[crossax]*0.30f;
             for(int c=0;c<2;++c){
-                static_mesh_create_box(&loader, 0.8f,0.8f,0.8f, &gh_mov[c]);
+                static_mesh_create_box(&loader, 2.4f,2.4f,2.4f, &gh_mov[c]);
                 float bm[16]={1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
                 bm[13]=cuy; bm[12+lenax]=center[lenax];
                 bm[12+crossax]=cwz+(c?0.45f:-0.45f);               /* side by side, near the window. */
@@ -1063,7 +1063,7 @@ int main(int argc,char **argv){
                  * it into the combined SDF (min with the baked field): the cubes
                  * then occlude/reflect each other + the scene in the dynamic GI. */
                 g_boxes[c].kind=GI_COLLIDER_BOX;
-                g_boxes[c].ext[0]=g_boxes[c].ext[1]=g_boxes[c].ext[2]=0.4f;
+                g_boxes[c].ext[0]=g_boxes[c].ext[1]=g_boxes[c].ext[2]=1.2f;
                 g_boxes[c].a[1]=cuy; g_boxes[c].a[crossax]=cwz+(c?0.45f:-0.45f);
                 g_boxes[c].a[lenax]=center[lenax];
             }
@@ -1083,12 +1083,20 @@ int main(int argc,char **argv){
              * (1200): probe count doesn't move fps (fillrate-bound) but a small
              * set STAGGERED over many frames (GI_PROBE_GROUPS) kills the periodic
              * all-probe-burst stutter with equal-or-better temporal coherence. */
-            float sp = getenv("GI_PSPACE")?(float)atof(getenv("GI_PSPACE")):3.0f; if(sp<0.4f) sp=0.4f;
-            int pnx=(int)(span[0]/sp)+1, pny=(int)(span[1]/sp)+1, pnz=(int)(span[2]/sp)+1;
+            /* Horizontal spacing GI_PSPACE; a SEPARATE, tighter VERTICAL spacing
+             * GI_VSPACE, and the grid concentrated in the LOWER volume (fylo..fyhi)
+             * where the GI gradient is steep (floor/wall contact, object bounce) --
+             * the roof air needs few probes. Denser near the ground/walls kills the
+             * trilinear blockiness. Probe count doesn't move fps (fillrate-bound). */
+            float sp = getenv("GI_PSPACE")?(float)atof(getenv("GI_PSPACE")):2.0f; if(sp<0.4f) sp=0.4f;
+            float vsp = getenv("GI_VSPACE")?(float)atof(getenv("GI_VSPACE")):1.1f; if(vsp<0.3f) vsp=0.3f;
+            float ins=0.04f, fylo=0.01f, fyhi=0.52f;   /* lower ~half of the hall. */
+            int pnx=(int)(span[0]*(1.0f-2.0f*ins)/sp)+1;
+            int pnz=(int)(span[2]*(1.0f-2.0f*ins)/sp)+1;
+            int pny=(int)(span[1]*(fyhi-fylo)/vsp)+1;
             if(pnx<2)pnx=2; if(pny<2)pny=2; if(pnz<2)pnz=2;
-            if(pnx>40)pnx=40; if(pny>24)pny=24; if(pnz>24)pnz=24;
+            if(pnx>40)pnx=40; if(pny>40)pny=40; if(pnz>40)pnz=40;
             probe_cap=pnx*pny*pnz; hall_probes=malloc((size_t)probe_cap*3*sizeof(float));
-            float ins=0.06f, fylo=0.05f, fyhi=0.95f;
             /* Grid layout the shader interpolates over: origin = probe (0,0,0),
              * per-axis cell = spacing between adjacent probes. Order below is
              * (z outer, y, x inner) so probe index = (z*pny + y)*pnx + x. */
@@ -1130,11 +1138,14 @@ int main(int argc,char **argv){
         gc.froxel=fcfg.cluster; gc.probe_min=4;
         /* Dense grid -> a modest margin already reaches every cluster. */
         gc.probe_sphere_margin=great_hall?1.2f:0.5f; gc.bin_interval=1;
-        /* Staggered probe updates (rpg-iuiy): trace ~1/16 of the (small) probe set
-         * each frame so the trace + SDF paging are a steady trickle, not a spike
-         * every 8 frames. Each probe still refreshes every 16 frames. */
-        gc.n_probe_groups = great_hall ? 16 : 0;   /* 0 -> off (1) */
-        gc.update_interval = great_hall ? 16 : 0;  /* 0 -> default 8; paging cadence */
+        /* Probe update cadence (rpg-iuiy). update_interval = FLUSH cadence (the
+         * compute->graphics tile-buffer flush is the dominant per-dispatch cost on
+         * this iGPU); n_probe_groups = ticks (dithered probe subsets) to cover all
+         * probes -> a probe refreshes every update_interval*n_probe_groups frames.
+         * Fewer flushes (bigger interval) = higher fps + rarer hitch; the GI is
+         * low-freq so a long refresh is fine. Tunable: GI_UPDATE / GI_PROBE_GROUPS. */
+        gc.update_interval = great_hall ? 8 : 0;   /* flush every 8 frames (0 -> 8) */
+        gc.n_probe_groups  = great_hall ? 2 : 0;   /* 2 ticks -> refresh every 16 frames */
         if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
         else {
             if(pg_dim[0]>0) gi_runtime_set_probe_grid(&g_gi, pg_origin, pg_cell, pg_dim); /* trilinear. */
@@ -1197,7 +1208,9 @@ int main(int argc,char **argv){
     int save_frame=csm_demo?30:(lm_only?140:(nframes-2));
     if(noclip) save_frame=90; /* still drop one screenshot early for headless checks. */
     struct timespec win_t0; clock_gettime(CLOCK_MONOTONIC,&win_t0);
+    struct timespec win_prev=win_t0;     /* previous frame's swap time (for dt). */
     int win_frames=0;                    /* frames since the last per-second report. */
+    double win_min=1e9, win_max=0.0;     /* min/max single-frame ms over the window. */
     if(stream) sh_stream_prepass_init(&sstream, W/4>0?W/4:1, H/4>0?H/4:1);
     for(int frame=0;frame<nframes;++frame){
         if(fp_idx>=0){
@@ -1210,7 +1223,7 @@ int main(int argc,char **argv){
         /* Slide the two glossy cubes sinusoidally through the hall centre, out of
          * phase, so their low-roughness faces sweep the probe SG reflections. */
         if(gh_mov_item[0]>=0){
-            float ph=(float)frame*0.035f, amp=span[lenax]*0.32f;
+            float ph=(float)frame*0.011f, amp=span[lenax]*0.32f;   /* slow: a realistic GI-scale mover. */
             for(int c=0;c<2;++c){
                 float lp=center[lenax]+amp*sinf(ph+(c?1.8f:0.0f));
                 scene.items[gh_mov_item[c]].model[12+lenax]=lp;
@@ -1328,12 +1341,13 @@ int main(int argc,char **argv){
                 scene.items[g_box_item[b]].model[12]=g_boxes[b].a[0];
                 scene.items[g_box_item[b]].model[14]=g_boxes[b].a[2];
             }
-            gi_runtime_frame(&g_gi,&scene,scene.camera.view,scene.camera.proj,
-                             g_boxes,(uint32_t)g_nboxes,W,H);
         }
         int prof=getenv("PROF")!=NULL;
         static double pr=0; static int pn=0; struct timespec pb,pc;
         if(prof){ glFinish(); clock_gettime(CLOCK_MONOTONIC,&pb); }
+        if(gi_demo)
+            gi_runtime_frame(&g_gi,&scene,scene.camera.view,scene.camera.proj,
+                             g_boxes,(uint32_t)g_nboxes,W,H);
         if(frame<2) GHK("before render_forward_render");
         render_forward_render(&fwd,&scene);
         if(frame<2) GHK("after render_forward_render");
@@ -1368,9 +1382,12 @@ int main(int argc,char **argv){
         /* Report the average render FPS roughly once per second. */
         ++win_frames;
         struct timespec now; clock_gettime(CLOCK_MONOTONIC,&now);
+        double dtms=((now.tv_sec-win_prev.tv_sec)+(now.tv_nsec-win_prev.tv_nsec)*1e-9)*1e3;
+        win_prev=now; if(dtms<win_min)win_min=dtms; if(dtms>win_max)win_max=dtms;
         double el=(now.tv_sec-win_t0.tv_sec)+(now.tv_nsec-win_t0.tv_nsec)*1e-9;
-        if(el>=1.0){ fprintf(stderr,"[perf] %.1f fps (%.2f ms/frame)\n",
-            win_frames/el,1e3*el/win_frames); win_frames=0; win_t0=now; }
+        if(el>=1.0){ fprintf(stderr,"[perf] %.1f fps (avg %.2f, min %.2f, MAX %.2f ms)\n",
+            win_frames/el,1e3*el/win_frames,win_min,win_max);
+            win_frames=0; win_t0=now; win_min=1e9; win_max=0.0; }
     }
     render_forward_destroy(&fwd);
     if(csm_demo) static_mesh_destroy(&box);

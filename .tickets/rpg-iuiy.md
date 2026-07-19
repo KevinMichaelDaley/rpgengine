@@ -2,7 +2,7 @@
 id: rpg-iuiy
 status: in_progress
 deps: []
-links: [rpg-tpcg]
+links: [rpg-tpcg, rpg-3c6g]
 created: 2026-07-19T03:10:28Z
 type: task
 priority: 1

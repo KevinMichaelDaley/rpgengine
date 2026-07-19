@@ -76,6 +76,8 @@ typedef struct gi_runtime {
     float            soft_k;
     int              update_interval; /**< recompute cadence (frames). */
     int              n_groups;        /**< staggered dithered probe groups (>=1). */
+    float            smooth;          /**< steady-state temporal-EMA blend (0..1;
+                                        *   smaller = smoother/slower). GI_SMOOTH. */
     int              frame_counter;
     /* Per-object weights for the probe STATIC indirect (rpg-pau4). baked_w scales
      * it for lightmapped surfaces (small: extra bounce only); dyn_w for dynamic

@@ -37,7 +37,7 @@ typedef struct gi_probe_gpu {
      * (~55 of them) add up; cache them. sdf_* arrays are sized GI_SDF_MAX_RESIDENT
      * (8). */
     struct { int nprobes, nlights, nboxes, soft, ncones, albedo, temporal;
-             int ngroups, group, static_on, static_k, static_irr;
+             int ngroups, group, grid_dim, static_on, static_k, static_irr;
              int static_origin, static_dim, static_vox;
              int sdf_active[8], sdf[8], sdf_origin[8], sdf_dim[8], sdf_vox[8]; } loc;
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
@@ -105,7 +105,8 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
 void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
-                           float soft_k, float temporal, int ngroups, int group);
+                           float soft_k, float temporal, int ngroups, int group,
+                           const int grid_dim[3]);
 
 /** @brief The probe-SH texture buffer (samplerBuffer, R32F, 27/probe). */
 unsigned int gi_probe_gpu_sh_tbo(const gi_probe_gpu_t *g);
