@@ -72,6 +72,9 @@ extern struct npc_nav_world *g_aegis_nav_world;
 #include "ferrum/editor/edit_serialize.h"
 #include "ferrum/net/emulation/net_emulator.h"
 #endif
+#include "ferrum/scene/scene_desc.h"
+#include "ferrum/server/server_level_load.h"
+#include "ferrum/memory/arena.h"
 
 /* ── Constants ──────────────────────────────────────────────────── */
 
@@ -1212,6 +1215,7 @@ int main(int argc, char **argv) {
     uint16_t edit_port    = 9100u; /* Editor protocol port. */
     bool no_pacing = false;        /* Skip realtime pacing (benchmark). */
     const char *scene_path = NULL; /* Optional scene JSON to auto-load. */
+    const char *level_path = NULL; /* Optional .scene descriptor: load collision geo (rpg-q1cp). */
 
 #ifdef FR_NET_EMULATION
     /* Network emulation parameters (all zero = disabled). */
@@ -1234,6 +1238,8 @@ int main(int argc, char **argv) {
             no_pacing = true;
         } else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc) {
             scene_path = argv[++i];
+        } else if (strcmp(argv[i], "--level") == 0 && i + 1 < argc) {
+            level_path = argv[++i];
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -1318,6 +1324,22 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("[server] physics world created (max %u bodies)\n", DEMO_MAX_BODIES);
+
+    /* rpg-q1cp: load the level's collision geometry straight from a .scene
+     * descriptor into the authoritative physics world (physics starts paused, so
+     * populating the world here is race-free). Colliders become static bodies. */
+    if (level_path != NULL) {
+        static uint8_t level_arena_buf[8u * 1024u * 1024u];
+        arena_t level_arena; arena_init(&level_arena, level_arena_buf, sizeof level_arena_buf);
+        scene_desc_t level_desc;
+        if (scene_desc_load(level_path, &level_arena, &level_desc)) {
+            uint32_t nc = server_level_load_colliders(&ctx.world, &level_desc);
+            printf("[server] level '%s': loaded %u collider bodies from %u meshes\n",
+                   level_desc.name, nc, level_desc.object_count);
+        } else {
+            fprintf(stderr, "[server] failed to load level descriptor '%s'\n", level_path);
+        }
+    }
 
     /* Ground plane handled by bridge or scene loading. */
     /* ── 3. Physics command channel + tick runner ───────────────── */
