@@ -118,7 +118,14 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     }
     if (gi->probes.count == 0) { fprintf(stderr, "gi_runtime: 0 probes\n"); gi_runtime_destroy(gi); return false; }
 
+    /* Probe backing capacity: room for runtime set-probe updates (streamed / per-
+     * zone sets) without reallocation. 0 => fixed at the init count. */
+    gi->probe_cap = (cfg->max_probes > gi->probes.count) ? cfg->max_probes : gi->probes.count;
+    if (gi->probe_cap > GI_MAX_PROBES) gi->probe_cap = GI_MAX_PROBES;
+    for (int a = 0; a < 3; ++a) { gi->gi_aabb_min[a] = cfg->aabb_min[a]; gi->gi_aabb_max[a] = cfg->aabb_max[a]; }
+
     float cell = cfg->grid_cell > 0.0f ? cfg->grid_cell : (spacing * 2.0f);
+    gi->gi_cell = cell;
     /* Grid cell count for the accel structure. */
     int gd[3];
     for (int a = 0; a < 3; ++a) {
@@ -126,8 +133,9 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
         int d = (int)(span / cell); if ((float)d * cell < span) d++; gd[a] = d < 1 ? 1 : d;
     }
     uint32_t ncells = (uint32_t)gd[0] * (uint32_t)gd[1] * (uint32_t)gd[2];
+    gi->gi_ncells = ncells;
     gi->cell_start = malloc((size_t)(ncells + 1) * sizeof(uint32_t));
-    gi->probe_idx = malloc((size_t)gi->probes.count * sizeof(uint32_t));
+    gi->probe_idx = malloc((size_t)gi->probe_cap * sizeof(uint32_t));
     if (gi->cell_start == NULL || gi->probe_idx == NULL) { gi_runtime_destroy(gi); return false; }
     if (!gi_probe_grid_build(&gi->grid, &gi->probes, cfg->aabb_min, cfg->aabb_max,
                              cell, gi->cell_start, ncells + 1u, gi->probe_idx, gi->probes.count)) {
@@ -138,7 +146,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     gi->max_lights = cfg->max_lights ? cfg->max_lights : 512u;
     gi->light_scratch = malloc((size_t)gi->max_lights * sizeof(gi_light_t));
     if (gi->light_scratch == NULL) { gi_runtime_destroy(gi); return false; }
-    if (!gi_probe_gpu_init(&gi->gpu, cfg->loader, gi->probes.count,
+    if (!gi_probe_gpu_init(&gi->gpu, cfg->loader, gi->probe_cap,
                            gi->max_lights, cfg->max_boxes ? cfg->max_boxes : 64u)) {
         gi_runtime_destroy(gi); return false;
     }
@@ -146,11 +154,13 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
 
     /* --- Accel grid as texture buffers for the forward+ sampler. --- */
     glGenBuffers(1, &gi->tbo_cs); glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_cs);
-    glBufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)(ncells + 1) * sizeof(uint32_t), gi->cell_start, GL_STATIC_DRAW);
+    glBufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)(ncells + 1) * sizeof(uint32_t), gi->cell_start, GL_DYNAMIC_DRAW);
     glGenTextures(1, &gi->tbo_cs_tex); glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_cs_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gi->tbo_cs);
     glGenBuffers(1, &gi->tbo_pi); glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_pi);
-    glBufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)gi->probes.count * sizeof(uint32_t), gi->probe_idx, GL_STATIC_DRAW);
+    /* Capacity-sized (probe_cap) so runtime set-probe updates fit; count valid. */
+    glBufferData(GL_TEXTURE_BUFFER, (GLsizeiptr)gi->probe_cap * sizeof(uint32_t), NULL, GL_DYNAMIC_DRAW);
+    glBufferSubData(GL_TEXTURE_BUFFER, 0, (GLsizeiptr)gi->probes.count * sizeof(uint32_t), gi->probe_idx);
     glGenTextures(1, &gi->tbo_pi_tex); glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_pi_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_R32UI, gi->tbo_pi);
 
@@ -164,7 +174,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
         cluster_config_t fc = cfg->froxel;
         if (fc.tiles_x == 0) fc = (cluster_config_t){ 16, 16, 24, 0.2f, 60.0f };
         uint32_t ctot = fc.tiles_x * fc.tiles_y * fc.slices;
-        uint32_t per = gi->probes.count < 64u ? gi->probes.count : 64u;
+        uint32_t per = gi->probe_cap < 64u ? gi->probe_cap : 64u;   /* size for the cap. */
         uint32_t icap = ctot * (per < 1u ? 1u : per);
         gi->fx_off = malloc((size_t)ctot * sizeof(uint32_t));
         gi->fx_cnt = malloc((size_t)ctot * sizeof(uint32_t));
@@ -200,6 +210,30 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
             gi->probes.count, gi->sdf_ptr->n_chunks, gd[0], gd[1], gd[2]);
     gi->ready = true;
     return true;
+}
+
+void gi_runtime_set_probes(gi_runtime_t *gi, const float *pos, uint32_t count)
+{
+    if (gi == NULL || pos == NULL || !gi->ready) return;
+    if (count > gi->probe_cap) count = gi->probe_cap;
+
+    /* Refill the probe set (backing = gi->probe_pos, capacity GI_MAX_PROBES). */
+    gi_probe_set_reset(&gi->probes);
+    for (uint32_t i = 0; i < count; ++i)
+        gi_probe_add(&gi->probes, pos[i*3+0], pos[i*3+1], pos[i*3+2]);
+    if (gi->probes.count == 0) return;
+
+    /* Rebuild the world accel grid over the same bounds/cell + re-upload it and
+     * the probe positions. The per-frame froxel binning picks up the new set. */
+    gi_probe_grid_build(&gi->grid, &gi->probes, gi->gi_aabb_min, gi->gi_aabb_max,
+                        gi->gi_cell, gi->cell_start, gi->gi_ncells + 1u,
+                        gi->probe_idx, gi->probes.count);
+    gi_probe_gpu_set_probes(&gi->gpu, gi->probe_pos, gi->probes.count);
+    glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_cs);
+    glBufferSubData(GL_TEXTURE_BUFFER, 0, (GLsizeiptr)(gi->gi_ncells + 1) * sizeof(uint32_t), gi->cell_start);
+    glBindBuffer(GL_TEXTURE_BUFFER, gi->tbo_pi);
+    glBufferSubData(GL_TEXTURE_BUFFER, 0, (GLsizeiptr)gi->probes.count * sizeof(uint32_t), gi->probe_idx);
+    glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
 void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,

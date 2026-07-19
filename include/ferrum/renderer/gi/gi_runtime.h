@@ -45,6 +45,10 @@ typedef struct gi_runtime_config {
     const float *probe_pos_in;   /**< explicit probe positions (3/probe) for manual
                                   *   adaptive placement; NULL = seed a lattice. */
     uint32_t n_probe_in;         /**< count for @c probe_pos_in (0 = auto-seed). */
+    uint32_t max_probes;         /**< probe backing capacity for runtime updates via
+                                  *   @ref gi_runtime_set_probes (streamed/per-zone
+                                  *   probe sets, rpg-zygg); 0 => fixed at the init
+                                  *   count (no growth). */
     float probe_spacing;         /**< auto-seed spacing (m) when no explicit set. */
     float grid_cell;             /**< accel-grid cell size (m). */
     int   prepass_w, prepass_h;  /**< SDF vis-prepass resolution. */
@@ -72,6 +76,10 @@ typedef struct gi_runtime {
     gi_probe_grid_t  grid;
     float           *probe_pos, *probe_sh;   /**< probe backing. */
     uint32_t        *cell_start, *probe_idx; /**< accel backing. */
+    uint32_t         probe_cap;   /**< probe backing capacity (>= any set count). */
+    float            gi_aabb_min[3], gi_aabb_max[3]; /**< accel-grid bounds (for rebuild). */
+    float            gi_cell;     /**< accel cell size (for rebuild). */
+    uint32_t         gi_ncells;   /**< accel cell count (for rebuild). */
     unsigned int     tbo_cs, tbo_cs_tex;     /**< accel cell_start buffer texture. */
     unsigned int     tbo_pi, tbo_pi_tex;     /**< accel probe_idx buffer texture. */
     float            box_min[GI_VIS_MAX_BOXES * 3];
@@ -127,6 +135,15 @@ typedef struct gi_runtime {
 
 /** @brief Build the whole runtime. Returns false on any failure. */
 bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg);
+
+/**
+ * @brief Replace the probe set at runtime (streamed / per-zone probes, rpg-zygg):
+ *        rebuild the accel grid + re-upload the probe positions/index buffers.
+ *        @p count is clamped to the init @c max_probes capacity. Call on the GL
+ *        thread when the resident probe set changes; the per-frame froxel binning
+ *        picks the new set up automatically. NULL/over-capacity safe.
+ */
+void gi_runtime_set_probes(gi_runtime_t *gi, const float *pos, uint32_t count);
 
 /**
  * @brief Per frame: page the visible SDF chunks (world prepass over @p scene with
