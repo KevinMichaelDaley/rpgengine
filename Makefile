@@ -87,6 +87,7 @@ PHYS_SRC := $(wildcard src/physics/*.c) $(wildcard src/physics/*/*.c) $(wildcard
 MESH_SRC := $(wildcard src/mesh/*.c)
 SCENE_DESC_SRC := $(wildcard src/scene/*.c)
 PROBE_SRC := $(wildcard src/probe/*.c)
+ASSET_STREAM_SRC := $(wildcard src/asset/stream/*.c) $(wildcard src/asset/chunk/*.c)
 ENGINE_SRC := src/engine_settings.c
 EDITOR_SRC := $(wildcard src/editor/*.c) $(wildcard src/editor/*/*.c) $(wildcard src/editor/*/*/*.c)
 ASSET_SRC := $(wildcard src/asset/*.c)
@@ -114,7 +115,7 @@ OIDN_LDFLAGS := -L$(OIDN_DIR)/build -lOpenImageDenoise -Wl,-rpath,$(abspath $(OI
 LDFLAGS += $(OIDN_LDFLAGS)
 endif
 LIGHTMAP_SRC := $(filter-out src/lightmap/lm_denoise.c src/lightmap/lm_denoise_stub.c, $(LIGHTMAP_SRC)) $(LM_DENOISE_SRC)
-SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(SCENE_DESC_SRC) $(PROBE_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(PROCGEN_SRC) $(LIGHTMAP_SRC) $(RENDERER_DEBUG_LINES_SRC)
+SRC_HEADLESS := $(JOB_SRC) $(MATH_SRC) $(MEM_SRC) $(ECS_SRC) $(ENTITY_SRC) $(NET_SRC) $(SERVER_SRC) $(PHYS_SRC) $(MESH_SRC) $(SCENE_DESC_SRC) $(PROBE_SRC) $(ASSET_STREAM_SRC) $(ENGINE_SRC) $(EDITOR_SRC) $(ASSET_SRC) $(AEGIS_SRC) $(LLM_SRC) $(ANIM_SRC) $(NPC_SRC) $(PROCGEN_SRC) $(LIGHTMAP_SRC) $(RENDERER_DEBUG_LINES_SRC)
 
 NPC_FAISS_SRC := src/npc/graph/npc_kg_faiss_wrapper.cpp
 # Use stub if FAISS is unavailable (FAISS_STUB=1)
@@ -1158,6 +1159,11 @@ build/scene_desc_tests: tests/scene/scene_desc_tests.c $(SCENE_DESC_SRC) $(JSON_
 build/probe_tests: tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c | build
 	$(CC) $(CFLAGS) tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c -o $@ -lm
 
+# Asset streaming manager + chunk table (rpg-nbp2). Headless: streamer + chunk
+# table + probe module (for the chunk->probe integration) + job system + memory.
+build/asset_stream_tests: tests/asset/asset_stream_tests.c $(ASSET_STREAM_SRC) $(PROBE_SRC) $(JOB_SRC) $(MEM_SRC) | build
+	$(CC) $(CFLAGS) tests/asset/asset_stream_tests.c $(ASSET_STREAM_SRC) $(PROBE_SRC) $(JOB_SRC) $(MEM_SRC) -o $@ -lm
+
 build/npc_kg_spatial_tests: tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) | build
 	$(CC) $(CFLAGS) tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
 
@@ -1623,7 +1629,7 @@ build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 build:
 
 
-test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/probe_tests
+test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/probe_tests build/asset_stream_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests \

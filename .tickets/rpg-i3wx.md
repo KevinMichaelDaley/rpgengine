@@ -22,3 +22,9 @@ Preserve the coupling contracts: gi cfg.froxel == fwd cfg.cluster; material_extr
 
 A single reusable call assembles + renders the great_hall scene identically to hall_lit_dynamic.c (same look, same ~fps); the demo is refactored to call the new module; module has no static/global scene state.
 
+
+## Notes
+
+**2026-07-19T18:10:33Z**
+
+Inherits from rpg-nbp2: when lifting the demo assembly, rewire the two existing GL chunk streamers to flow through the new streaming manager -- retire the demo-local sh_stream (promote its GL_TEXTURE_2D_ARRAY upload into a load/upload callback) and make gi_sdf_stream's 3D-texture upload a callback too, registering both via fr_chunk_table over an fr_asset_stream_t. The headless residency model + chunk_table + probe gating already exist (rpg-nbp2); this is the GL wiring at the point the streamers are instantiated.

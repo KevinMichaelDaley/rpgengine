@@ -1,6 +1,6 @@
 ---
 id: rpg-nbp2
-status: open
+status: closed
 deps: [rpg-51nf]
 links: []
 created: 2026-07-19T07:44:03Z
@@ -39,3 +39,9 @@ CHUNK RESIDENCY DRIVES PROBES: which probes are loaded/generated follows which l
 
 Streamer loads a mesh, a skeleton, a lightmap page, and an SDF chunk asynchronously, admitting in priority order within configurable RAM and VRAM budgets; raising an asset's priority pulls it resident ahead of lower-priority ones; under budget pressure the lowest-priority resident is evicted first; gi_sdf_stream + lightmap chunks share the residency model; the headless (no-GL) build streams the CPU-side assets (RAM tier only); an integration test streams a small scene by priority without blocking the main thread and shows the top-priority assets resident first.
 
+
+## Notes
+
+**2026-07-19T18:10:33Z**
+
+Completed. Headless src/asset/stream/ streaming manager (in libheadless.a): priority-owned admission with RAM + VRAM residency budgets, in-flight reservation, lowest-priority-first eviction, async via job_dispatch (plain priority 0; order comes from the manager), synchronous fallback (jobs=NULL), GPU upload via callback (GPU_CMD_CUSTOM in the client). fr_chunk_table registers SDF + lightmap chunks as assets under the SAME model, prioritizes by interest, and reports resident chunk boxes that gate probe generation (probe_place_filter_chunks) -- proven end-to-end. 8/8 tests incl. off-main-thread loading. GL rewiring of the existing gi_sdf_stream/sh_stream flows through this manager at rpg-i3wx (demo lift) -- noted there.
