@@ -232,7 +232,11 @@ def _light_record(kind, name, position, direction, color, energy,
         # The sun: baked into the lightmap, opted into dynamic probe GI, shadowing.
         rec["flags"] = ["baked", "dynamic_indirect", "shadow"]
     else:
-        rec["flags"] = ["realtime"] + (["shadow"] if use_shadow else [])
+        # Dynamic punctual lights: realtime direct + gathered by the SDF-probe GI
+        # (dynamic_indirect + probe_gi) for indirect bounce, like the hall demo's
+        # lantern/sconces. They are NOT baked (no re-bake when they move).
+        rec["flags"] = (["realtime", "dynamic_indirect", "probe_gi"] +
+                        (["shadow"] if use_shadow else []))
     return rec
 
 

@@ -213,7 +213,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 160,
-   "vertices": 387,
+   "vertices": 619,
    "faces": 310
   },
   {
@@ -291,7 +291,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 69,
-   "vertices": 609,
+   "vertices": 1440,
    "faces": 750
   },
   {
@@ -317,7 +317,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 69,
-   "vertices": 609,
+   "vertices": 1440,
    "faces": 750
   },
   {
@@ -343,7 +343,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 87,
-   "vertices": 4131,
+   "vertices": 9162,
    "faces": 4614
   },
   {
@@ -369,7 +369,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 160,
-   "vertices": 421,
+   "vertices": 791,
    "faces": 402
   },
   {
@@ -421,7 +421,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 48,
-   "vertices": 2098,
+   "vertices": 3638,
    "faces": 1816
   },
   {
@@ -447,7 +447,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 58,
-   "vertices": 416,
+   "vertices": 616,
    "faces": 308
   },
   {
@@ -499,7 +499,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 180,
-   "vertices": 100,
+   "vertices": 107,
    "faces": 40
   },
   {
@@ -551,7 +551,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 60,
-   "vertices": 92,
+   "vertices": 134,
    "faces": 66
   },
   {
@@ -811,7 +811,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 16,
-   "vertices": 544,
+   "vertices": 548,
    "faces": 196
   },
   {
@@ -837,7 +837,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 16,
-   "vertices": 546,
+   "vertices": 548,
    "faces": 196
   },
   {
@@ -863,7 +863,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -889,7 +889,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -915,7 +915,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -941,7 +941,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -967,7 +967,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -993,7 +993,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -1019,7 +1019,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -1045,7 +1045,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -1071,7 +1071,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -1097,7 +1097,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -1123,7 +1123,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -1149,7 +1149,7 @@
     "great_hall_stone_wall"
    ],
    "lightmap_res": 128,
-   "vertices": 70,
+   "vertices": 104,
    "faces": 52
   },
   {
@@ -1773,7 +1773,7 @@
     "great_hall_roof_limestone"
    ],
    "lightmap_res": 373,
-   "vertices": 100,
+   "vertices": 102,
    "faces": 40
   },
   {
@@ -1982,7 +1982,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2009,7 +2009,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2036,7 +2036,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2063,7 +2063,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2090,7 +2090,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2117,7 +2117,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2144,7 +2144,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2171,7 +2171,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   },
   {
@@ -2198,7 +2198,7 @@
     "great_hall_reveal_weave"
    ],
    "lightmap_res": 130,
-   "vertices": 570,
+   "vertices": 1204,
    "faces": 602
   }
  ]

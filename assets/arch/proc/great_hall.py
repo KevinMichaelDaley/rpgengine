@@ -1167,6 +1167,61 @@ def _setup_lighting(name="great_hall"):
         bg.inputs[1].default_value = 1.0
 
 
+def _add_point(name, loc, color, energy, rng, radius=0.12, shadow=True):
+    d = bpy.data.lights.new(name, 'POINT')
+    d.color = color; d.energy = energy
+    d.use_custom_distance = True; d.cutoff_distance = rng
+    d.shadow_soft_size = radius
+    try: d.use_shadow = shadow
+    except AttributeError: pass
+    o = bpy.data.objects.new(name, d); o.location = loc
+    bpy.context.scene.collection.objects.link(o)
+    return o
+
+
+def _add_spot_up(name, loc, color, energy, rng, outer_deg, inner_deg):
+    d = bpy.data.lights.new(name, 'SPOT')
+    d.color = color; d.energy = energy
+    d.use_custom_distance = True; d.cutoff_distance = rng
+    d.spot_size = math.radians(2.0 * outer_deg)          # full cone angle
+    d.spot_blend = max(0.0, 1.0 - inner_deg / max(outer_deg, 1e-3))
+    o = bpy.data.objects.new(name, d); o.location = loc
+    o.rotation_euler = (math.pi, 0.0, 0.0)               # local -Z -> world +Z (up)
+    bpy.context.scene.collection.objects.link(o)
+    return o
+
+
+def _setup_dynamic_lights(name, col):
+    """Add the hall's DYNAMIC punctual lights (the carried lantern + the two
+    orange pillar sconces + a blue aisle point), matching tests/visual/
+    hall_lit_dynamic.c. These are realtime + SDF-probe-GI lights (NOT baked), so
+    they need no lightmap re-bake; the exporter tags them dynamic_indirect/probe_gi.
+    Positions are derived from the hall's world bounds (Blender Z-up)."""
+    import mathutils
+    mn = mathutils.Vector(( 1e30,  1e30,  1e30))
+    mx = mathutils.Vector((-1e30, -1e30, -1e30))
+    for o in col.objects:
+        if o.type != 'MESH':
+            continue
+        for c in o.bound_box:
+            w = o.matrix_world @ mathutils.Vector(c)
+            mn = mathutils.Vector((min(mn.x, w.x), min(mn.y, w.y), min(mn.z, w.z)))
+            mx = mathutils.Vector((max(mx.x, w.x), max(mx.y, w.y), max(mx.z, w.z)))
+    cx = 0.5 * (mn.x + mx.x); cy = 0.5 * (mn.y + mx.y); floor = mn.z
+    # Carried lantern: warm point OUTSIDE the +Y arcade wall so its light rakes in
+    # between the piers (the iconic moving light; exported at its rest position).
+    _add_point(name + "_lantern", (cx, mx.y + 2.0, floor + 1.6),
+               (1.0, 0.60, 0.26), 13.0, 8.0, radius=0.15)
+    # Blue shadow-casting point in the aisle centre.
+    _add_point(name + "_aisle", (mn.x + 0.35 * (mx.x - mn.x), cy, floor + 1.7),
+               (0.5, 0.7, 1.0), 6.0, 7.0, radius=0.1)
+    # Two orange sconce spots low on the central axis, pointing up.
+    _add_spot_up(name + "_sconce_0", (mn.x + 0.40 * (mx.x - mn.x), cy, floor + 1.05),
+                 (1.0, 0.46, 0.12), 13.0, 4.0, outer_deg=54.0, inner_deg=31.0)
+    _add_spot_up(name + "_sconce_1", (mn.x + 0.60 * (mx.x - mn.x), cy, floor + 1.05),
+                 (1.0, 0.46, 0.12), 13.0, 4.0, outer_deg=54.0, inner_deg=31.0)
+
+
 def build_hall_scene(bake_root, collection=None, name="great_hall"):
     """Regenerate the whole great-hall scene: geometry (``build_great_hall``),
     world-scale UVs (``prepare_uvs``), then every material -- wall, floor, reveal
@@ -1183,6 +1238,7 @@ def build_hall_scene(bake_root, collection=None, name="great_hall"):
     assign_roof_material(col)
     assign_dais_material(col, os.path.join(bake_root, "bake_floor"))
     _setup_lighting(name)
+    _setup_dynamic_lights(name, col)   # carried lantern + sconces (dynamic, unbaked)
     # Level probe-density tuning, authored on the scene so the exporter emits it
     # into the descriptor's probe spec (not hardcoded in the exporter). These are
     # the hall's tuned grid steps (denser than the engine default).
