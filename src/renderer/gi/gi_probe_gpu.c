@@ -251,6 +251,32 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
 
     g->prog = cs_build();
     if (g->prog == 0) return false;
+    /* Cache all uniform locations once (the staggered path dispatches every frame). */
+    {
+        GLuint p = g->prog; char nm[32];
+        g->loc.nprobes = glGetUniformLocation(p, "u_nprobes");
+        g->loc.nlights = glGetUniformLocation(p, "u_nlights");
+        g->loc.nboxes  = glGetUniformLocation(p, "u_nboxes");
+        g->loc.soft    = glGetUniformLocation(p, "u_soft");
+        g->loc.ncones  = glGetUniformLocation(p, "u_ncones");
+        g->loc.albedo  = glGetUniformLocation(p, "u_albedo");
+        g->loc.temporal= glGetUniformLocation(p, "u_temporal");
+        g->loc.ngroups = glGetUniformLocation(p, "u_ngroups");
+        g->loc.group   = glGetUniformLocation(p, "u_group");
+        g->loc.static_on  = glGetUniformLocation(p, "u_static_on");
+        g->loc.static_k   = glGetUniformLocation(p, "u_static_k");
+        g->loc.static_irr = glGetUniformLocation(p, "u_static_irr");
+        g->loc.static_origin = glGetUniformLocation(p, "u_static_origin");
+        g->loc.static_dim    = glGetUniformLocation(p, "u_static_dim");
+        g->loc.static_vox    = glGetUniformLocation(p, "u_static_vox");
+        for (int i = 0; i < GI_SDF_MAX_RESIDENT; ++i) {
+            snprintf(nm, sizeof nm, "u_sdf_active[%d]", i); g->loc.sdf_active[i] = glGetUniformLocation(p, nm);
+            snprintf(nm, sizeof nm, "u_sdf[%d]", i);        g->loc.sdf[i]        = glGetUniformLocation(p, nm);
+            snprintf(nm, sizeof nm, "u_sdf_origin[%d]", i); g->loc.sdf_origin[i] = glGetUniformLocation(p, nm);
+            snprintf(nm, sizeof nm, "u_sdf_dim[%d]", i);    g->loc.sdf_dim[i]    = glGetUniformLocation(p, nm);
+            snprintf(nm, sizeof nm, "u_sdf_vox[%d]", i);    g->loc.sdf_vox[i]    = glGetUniformLocation(p, nm);
+        }
+    }
     g->max_lights = max_lights ? max_lights : 1u;
     g->max_boxes = max_boxes ? max_boxes : 1u;
 
@@ -377,50 +403,44 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     free(bb);
 
     glUseProgram(g->prog);
-    glUniform1i(glGetUniformLocation(g->prog, "u_nprobes"), (GLint)g->n_probes);
-    glUniform1i(glGetUniformLocation(g->prog, "u_nlights"), (GLint)n_lights);
-    glUniform1i(glGetUniformLocation(g->prog, "u_nboxes"), (GLint)nb);
-    glUniform1f(glGetUniformLocation(g->prog, "u_soft"), soft_k);
-    glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 8);    /* sphere samples. */
-    glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 1.0f); /* gain; real albedo now from the voxel map. */
-    glUniform1f(glGetUniformLocation(g->prog, "u_temporal"), temporal);
-    glUniform1i(glGetUniformLocation(g->prog, "u_ngroups"), (GLint)ngroups);
-    glUniform1i(glGetUniformLocation(g->prog, "u_group"), (GLint)group);
+    glUniform1i(g->loc.nprobes, (GLint)g->n_probes);
+    glUniform1i(g->loc.nlights, (GLint)n_lights);
+    glUniform1i(g->loc.nboxes, (GLint)nb);
+    glUniform1f(g->loc.soft, soft_k);
+    glUniform1i(g->loc.ncones, 8);        /* sphere samples. */
+    glUniform1f(g->loc.albedo, 1.0f);     /* gain; real albedo now from the voxel map. */
+    glUniform1f(g->loc.temporal, temporal);
+    glUniform1i(g->loc.ngroups, (GLint)ngroups);
+    glUniform1i(g->loc.group, (GLint)group);
 
     /* Static irradiance volume: bound past the SDF slot units. */
     {
         int on = (g->static_tex != 0) ? 1 : 0;
         int unit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT; /* first unit after the SDF chunks. */
-        glUniform1i(glGetUniformLocation(g->prog, "u_static_on"), on);
-        glUniform1f(glGetUniformLocation(g->prog, "u_static_k"), g->static_k);
-        glUniform1i(glGetUniformLocation(g->prog, "u_static_irr"), unit);
-        glUniform3fv(glGetUniformLocation(g->prog, "u_static_origin"), 1, g->static_origin);
-        glUniform3fv(glGetUniformLocation(g->prog, "u_static_dim"), 1, g->static_dim);
-        glUniform1f(glGetUniformLocation(g->prog, "u_static_vox"), g->static_vox);
+        glUniform1i(g->loc.static_on, on);
+        glUniform1f(g->loc.static_k, g->static_k);
+        glUniform1i(g->loc.static_irr, unit);
+        glUniform3fv(g->loc.static_origin, 1, g->static_origin);
+        glUniform3fv(g->loc.static_dim, 1, g->static_dim);
+        glUniform1f(g->loc.static_vox, g->static_vox);
         glActiveTexture(GL_TEXTURE0 + (GLenum)unit);
         glBindTexture(GL_TEXTURE_3D, on ? g->static_tex : 0);
     }
 
     /* Bind the resident SDF chunks (one per used slot) + metadata. */
-    char nm[32];
     for (int i = 0; i < GI_SDF_MAX_RESIDENT; ++i) {
         int active = (sdf != NULL && sdf->slot_chunk[i] >= 0) ? 1 : 0;
-        snprintf(nm, sizeof nm, "u_sdf_active[%d]", i);
-        glUniform1i(glGetUniformLocation(g->prog, nm), active);
-        snprintf(nm, sizeof nm, "u_sdf[%d]", i);
-        glUniform1i(glGetUniformLocation(g->prog, nm), GI_SDF_UNIT_BASE + i);
+        glUniform1i(g->loc.sdf_active[i], active);
+        glUniform1i(g->loc.sdf[i], GI_SDF_UNIT_BASE + i);
         glActiveTexture(GL_TEXTURE0 + (GLenum)(GI_SDF_UNIT_BASE + i));
         glBindTexture(GL_TEXTURE_3D, active ? sdf->tex[i] : 0);
         if (active) {
             const gi_sdf_chunk_ram_t *r = &sdf->ram[sdf->slot_chunk[i]];
             float o3[3] = { r->origin[0], r->origin[1], r->origin[2] };
             float d3[3] = { (float)r->dims[0], (float)r->dims[1], (float)r->dims[2] };
-            snprintf(nm, sizeof nm, "u_sdf_origin[%d]", i);
-            glUniform3fv(glGetUniformLocation(g->prog, nm), 1, o3);
-            snprintf(nm, sizeof nm, "u_sdf_dim[%d]", i);
-            glUniform3fv(glGetUniformLocation(g->prog, nm), 1, d3);
-            snprintf(nm, sizeof nm, "u_sdf_vox[%d]", i);
-            glUniform1f(glGetUniformLocation(g->prog, nm), r->voxel);
+            glUniform3fv(g->loc.sdf_origin[i], 1, o3);
+            glUniform3fv(g->loc.sdf_dim[i], 1, d3);
+            glUniform1f(g->loc.sdf_vox[i], r->voxel);
         }
     }
 

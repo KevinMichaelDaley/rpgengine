@@ -32,6 +32,14 @@ extern "C" {
 /** GPU probe-update state. */
 typedef struct gi_probe_gpu {
     unsigned int prog;         /**< compute program. */
+    /* Cached uniform locations (queried ONCE at init). The staggered path
+     * dispatches every frame, so per-dispatch glGetUniformLocation string lookups
+     * (~55 of them) add up; cache them. sdf_* arrays are sized GI_SDF_MAX_RESIDENT
+     * (8). */
+    struct { int nprobes, nlights, nboxes, soft, ncones, albedo, temporal;
+             int ngroups, group, static_on, static_k, static_irr;
+             int static_origin, static_dim, static_vox;
+             int sdf_active[8], sdf[8], sdf_origin[8], sdf_dim[8], sdf_vox[8]; } loc;
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
     unsigned int b_lights, b_boxes; /**< dynamic light + box SSBOs. */
     unsigned int b_depth;      /**< DDGI octahedral depth SSBO (mean, meanSq / texel). */
