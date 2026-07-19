@@ -1,6 +1,6 @@
 ---
 id: rpg-51nf
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-07-19T07:44:03Z
@@ -33,3 +33,7 @@ Descriptor parses headlessly into a struct listing every asset class with paths 
 **2026-07-19T08:08:12Z**
 
 Core descriptor + headless loader landed (TDD, 13/13 green incl. great_hall round-trip). Module src/scene/ + include/ferrum/scene/: scene_desc_t with ordered objects (bake order preserved), material table + name->index resolution, chunked light-data refs (lightmap/sdf prefixes, perchunk, manifest), and the probe spec (spacing/vspacing + AABB importance boxes + optional manual). JSON via the existing arena-based json_parse (no malloc, no GL); folded into libheadless.a so the server can parse levels headlessly. Test data: datasets/great_hall_export/great_hall.scene (generated from the exporter scene.json). REMAINING (add test-first when a consumer needs them with real data): explicit skeleton (fskel) refs and a physics collider-set section -- great_hall has neither, so per the no-backfilling rule they are deferred to rpg-q1cp (server colliders) / the skeletal path rather than added speculatively.
+
+**2026-07-19T08:21:22Z**
+
+Completed: added per-object fskel skeleton refs and the full physics collider-set section (box/sphere/capsule/halfspace/mesh, transform, object_ref, static flag) -- both test-first with real great_hall data (ground halfspace + static mesh colliders for the floor/piers). 15/15 tests green, -Wall -Wextra -Wpedantic clean, folded into libheadless.a. Every asset class in the descriptor is now enumerated + covered.

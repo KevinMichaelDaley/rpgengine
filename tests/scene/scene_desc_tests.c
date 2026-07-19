@@ -52,9 +52,16 @@ static const char *const DESC_FULL =
 "    {\"name\":\"b_second\",\"mesh\":\"meshes/b.fvma\","
 "     \"position\":[1.0,2.0,3.0],\"rotation\":[0.0,0.0,0.0,1.0],\"scale\":[1,1,1],"
 "     \"materials\":[\"timber\"],\"lightmap_res\":72,\"sh_layer\":0},"
-"    {\"name\":\"a_first\",\"mesh\":\"meshes/a.dmesh\","
+"    {\"name\":\"a_first\",\"mesh\":\"meshes/a.dmesh\",\"skeleton\":\"skel/a.fskel\","
 "     \"position\":[0,0,0],\"rotation\":[0,0,0,1],\"scale\":[2,2,2],"
 "     \"materials\":[\"stone\",\"metal\"],\"lightmap_res\":128,\"sh_layer\":3}"
+"  ],"
+"  \"colliders\": ["
+"    {\"kind\":\"box\",\"name\":\"floor_box\",\"position\":[0,-0.5,0],"
+"     \"half_extents\":[10,0.5,10],\"static\":true,\"object_ref\":1},"
+"    {\"kind\":\"halfspace\",\"name\":\"ground\",\"normal\":[0,1,0],\"plane_offset\":0.0},"
+"    {\"kind\":\"capsule\",\"name\":\"pillar\",\"position\":[1,1,1],"
+"     \"radius\":0.5,\"half_height\":2.0,\"static\":false}"
 "  ],"
 "  \"lightmap\": {\"prefix\":\"unit.flm\",\"perchunk\":true,\"manifest\":\"unit.flm_manifest.bin\"},"
 "  \"sdf\": {\"prefix\":\"unit.flm\"},"
@@ -123,6 +130,43 @@ static int test_material_name_to_index(void)
     return 0;
 }
 
+static int test_skeleton_ref(void)
+{
+    arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
+    scene_desc_t d;
+    ASSERT_TRUE(scene_desc_parse(DESC_FULL, strlen(DESC_FULL), &a, &d));
+    /* b_second has no skeleton (static); a_first is skinned. */
+    ASSERT_INT_EQ(d.objects[0].skeleton[0], 0);
+    ASSERT_STR_EQ(d.objects[1].skeleton, "skel/a.fskel");
+    return 0;
+}
+
+static int test_collider_set(void)
+{
+    arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
+    scene_desc_t d;
+    ASSERT_TRUE(scene_desc_parse(DESC_FULL, strlen(DESC_FULL), &a, &d));
+    ASSERT_INT_EQ(d.collider_count, 3);
+    /* [0] box, static, bound to object 1. */
+    ASSERT_INT_EQ(d.colliders[0].kind, SCENE_DESC_COLLIDER_BOX);
+    ASSERT_STR_EQ(d.colliders[0].name, "floor_box");
+    ASSERT_FLT_EQ(d.colliders[0].half_extents[0], 10.0f);
+    ASSERT_FLT_EQ(d.colliders[0].half_extents[1], 0.5f);
+    ASSERT_TRUE(d.colliders[0].is_static);
+    ASSERT_INT_EQ(d.colliders[0].object_ref, 1);
+    ASSERT_FLT_EQ(d.colliders[0].rotation[3], 1.0f);   /* identity default */
+    /* [1] halfspace ground. */
+    ASSERT_INT_EQ(d.colliders[1].kind, SCENE_DESC_COLLIDER_HALFSPACE);
+    ASSERT_FLT_EQ(d.colliders[1].normal[1], 1.0f);
+    ASSERT_INT_EQ(d.colliders[1].object_ref, -1);      /* standalone default */
+    /* [2] dynamic capsule. */
+    ASSERT_INT_EQ(d.colliders[2].kind, SCENE_DESC_COLLIDER_CAPSULE);
+    ASSERT_FLT_EQ(d.colliders[2].radius, 0.5f);
+    ASSERT_FLT_EQ(d.colliders[2].half_height, 2.0f);
+    ASSERT_FALSE(d.colliders[2].is_static);
+    return 0;
+}
+
 static int test_lightdata_section(void)
 {
     arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
@@ -167,7 +211,9 @@ static int test_optional_sections_default(void)
     ASSERT_FLT_EQ(d.objects[0].rotation[3], 1.0f);
     ASSERT_INT_EQ(d.objects[0].sh_layer, 0);
     ASSERT_INT_EQ(d.objects[0].material_count, 0);
+    ASSERT_INT_EQ(d.objects[0].skeleton[0], 0);   /* no skeleton -> static */
     /* Missing optional sections -> empty / engine-default sentinels. */
+    ASSERT_INT_EQ(d.collider_count, 0);
     ASSERT_INT_EQ(d.lightdata.lightmap_prefix[0], 0);
     ASSERT_INT_EQ(d.lightdata.sdf_prefix[0], 0);
     ASSERT_TRUE(d.probes.spacing <= 0.0f);   /* <=0 => use engine default */
@@ -245,6 +291,15 @@ static int test_load_great_hall(void)
     ASSERT_STR_EQ(d.lightdata.sdf_prefix, "great_hall.flm");
     ASSERT_FLT_EQ(d.probes.spacing, 1.1f);
     ASSERT_FLT_EQ(d.probes.vspacing, 0.8f);
+    /* Collision set: a ground halfspace + static mesh colliders for real geo. */
+    ASSERT_INT_EQ(d.collider_count, 4);
+    ASSERT_INT_EQ(d.colliders[0].kind, SCENE_DESC_COLLIDER_HALFSPACE);
+    ASSERT_STR_EQ(d.colliders[0].name, "ground");
+    ASSERT_FLT_EQ(d.colliders[0].normal[1], 1.0f);
+    ASSERT_INT_EQ(d.colliders[1].kind, SCENE_DESC_COLLIDER_MESH);
+    ASSERT_STR_EQ(d.colliders[1].mesh, "meshes/great_hall_floor.fvma");
+    ASSERT_TRUE(d.colliders[1].object_ref >= 0);
+    ASSERT_TRUE(d.colliders[1].is_static);
     return 0;
 }
 
@@ -255,6 +310,8 @@ int main(void)
         {"object_bake_order_preserved", test_object_bake_order_preserved},
         {"object_transform_and_lightmap", test_object_transform_and_lightmap},
         {"material_name_to_index",      test_material_name_to_index},
+        {"skeleton_ref",                test_skeleton_ref},
+        {"collider_set",                test_collider_set},
         {"lightdata_section",           test_lightdata_section},
         {"probe_spec_and_importance",   test_probe_spec_and_importance},
         {"optional_sections_default",   test_optional_sections_default},

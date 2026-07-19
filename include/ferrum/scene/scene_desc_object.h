@@ -36,6 +36,7 @@ extern "C" {
 typedef struct scene_desc_object {
     char     name[SCENE_DESC_OBJ_NAME_CAP]; /**< object identifier. */
     char     mesh[SCENE_DESC_PATH_CAP];     /**< relative asset path (fvma/glb/dmesh/obj). */
+    char     skeleton[SCENE_DESC_PATH_CAP]; /**< skinning skeleton (.fskel); empty = static mesh. */
     float    position[3];                   /**< world translation. */
     float    rotation[4];                   /**< orientation quaternion (x,y,z,w). */
     float    scale[3];                      /**< per-axis scale. */

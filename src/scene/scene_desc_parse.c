@@ -34,6 +34,7 @@ bool scene_desc_parse(const char *json, size_t len, struct arena *arena,
 
     if (!scene_desc_parse_materials(&root, out)) return false;
     if (!scene_desc_parse_objects(&root, arena, out)) return false; /* required */
+    if (!scene_desc_parse_colliders(&root, arena, out)) return false;
     if (!scene_desc_parse_lightdata(&root, out)) return false;
     if (!scene_desc_parse_probes(&root, out)) return false;
     return true;

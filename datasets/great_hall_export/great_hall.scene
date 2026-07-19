@@ -2118,6 +2118,40 @@
    "sh_layer": 0
   }
  ],
+ "colliders": [
+  {
+   "kind": "halfspace",
+   "name": "ground",
+   "normal": [
+    0.0,
+    1.0,
+    0.0
+   ],
+   "plane_offset": -0.2,
+   "static": true
+  },
+  {
+   "kind": "mesh",
+   "name": "great_hall_floor",
+   "mesh": "meshes/great_hall_floor.fvma",
+   "object_ref": 14,
+   "static": true
+  },
+  {
+   "kind": "mesh",
+   "name": "great_hall_pier_N_0",
+   "mesh": "meshes/great_hall_pier_N_0.fvma",
+   "object_ref": 32,
+   "static": true
+  },
+  {
+   "kind": "mesh",
+   "name": "great_hall_pier_S_0",
+   "mesh": "meshes/great_hall_pier_S_0.fvma",
+   "object_ref": 38,
+   "static": true
+  }
+ ],
  "lightmap": {
   "prefix": "great_hall.flm",
   "perchunk": false,

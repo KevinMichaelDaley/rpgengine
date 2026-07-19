@@ -64,6 +64,7 @@ bool scene_desc_parse_objects(const json_value_t *root, struct arena *arena,
 
         sd_field_str(o, "name", d->name, SCENE_DESC_OBJ_NAME_CAP);
         sd_field_str(o, "mesh", d->mesh, SCENE_DESC_PATH_CAP);
+        sd_field_str(o, "skeleton", d->skeleton, SCENE_DESC_PATH_CAP);
         sd_field_vec(o, "position", d->position, 3);
         sd_field_vec(o, "rotation", d->rotation, 4);
         sd_field_vec(o, "scale", d->scale, 3);
