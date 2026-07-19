@@ -71,6 +71,112 @@ def _world_bbox(objs):
     return a.min(0), a.max(0)
 
 
+def _arched_niche_cutter(col, name, x_front, depth, yc, half_w, straight_h, z0):
+    """A solid arched prism used to BOOLEAN-cut a lamp niche into an end wall.
+
+    The wall faces along X; the niche opening lives in the Y-Z plane. The profile
+    is a rectangle (width ``2*half_w``, height ``straight_h`` from ``z0``) capped
+    by a semicircle of radius ``half_w``, extruded along +X from ``x_front`` by
+    ``depth`` into the wall. ``x_front`` is set just OUTSIDE the wall's room face
+    so the cut opens cleanly onto the interior surface. Returns the cutter obj."""
+    import bmesh
+    seg = 10                                   # semicircle segments (crown)
+    # 2-D arched outline (world Y,Z) traced CCW: up the left jamb, over the crown,
+    # down the right jamb, across the sill.
+    prof = [(yc - half_w, z0), (yc - half_w, z0 + straight_h)]
+    cz = z0 + straight_h                        # spring line of the semicircle
+    for s in range(1, seg):
+        ang = math.pi * (1.0 - s / float(seg))  # pi -> 0 (left -> right over top)
+        prof.append((yc + half_w * math.cos(ang), cz + half_w * math.sin(ang)))
+    prof.append((yc + half_w, z0 + straight_h))
+    prof.append((yc + half_w, z0))
+    bm = bmesh.new()
+    front = [bm.verts.new((x_front, y, z)) for (y, z) in prof]
+    bm.faces.new(front)                         # front cap
+    ret = bmesh.ops.extrude_face_region(bm, geom=bm.faces[:])
+    verts = [e for e in ret["geom"] if isinstance(e, bmesh.types.BMVert)]
+    bmesh.ops.translate(bm, vec=(depth, 0.0, 0.0), verts=verts)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    _link(col, o)
+    return o
+
+
+def _cube_uv_faces_in_aabb(obj, aabb_min, aabb_max, scale=1.0):
+    """World-scale cube-project ONLY the faces whose centroid lies within the
+    world AABB [aabb_min, aabb_max] (the freshly carved niche pocket). Leaves the
+    wall's authored arch UVs untouched. Mirrors ``world_cube_uv``'s per-face
+    world-plane projection (1 UV unit == 1 m)."""
+    import bmesh
+    me = obj.data
+    uvl = me.uv_layers.get("UVMap") or me.uv_layers.new(name="UVMap")
+    me.uv_layers.active = uvl
+    mw = obj.matrix_world
+    mw3 = mw.to_3x3()
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    uv = bm.loops.layers.uv.get("UVMap")
+    for f in bm.faces:
+        c = mw @ f.calc_center_median()
+        if not (aabb_min[0] <= c.x <= aabb_max[0] and
+                aabb_min[1] <= c.y <= aabb_max[1] and
+                aabb_min[2] <= c.z <= aabb_max[2]):
+            continue
+        n = mw3 @ f.normal
+        ax = max(range(3), key=lambda i: abs(n[i]))
+        for lp in f.loops:
+            w = mw @ lp.vert.co
+            if ax == 0:
+                u, v = w.y, w.z
+            elif ax == 1:
+                u, v = w.x, w.z
+            else:
+                u, v = w.x, w.y
+            lp[uv].uv = (u * scale, v * scale)
+    bm.to_mesh(me)
+    bm.free()
+
+
+def _carve_lamp_niches(col, wall, x_room_face, centre_z, y_offsets,
+                       half_w, straight_h, recess):
+    """Boolean-cut arched lamp niches into @p wall (the dais backdrop). Each niche
+    opens on the room face (@p x_room_face, interior at smaller X) and recesses
+    @p recess into the wall. @p centre_z is the opening's vertical centre; the
+    profile is a @p straight_h rectangle (half-width @p half_w) under a semicircle.
+    Re-UVs only the carved pocket faces so they read as masonry."""
+    # z0 (sill) chosen so the opening centre (mid of straight + crown) lands on
+    # centre_z: opening spans z0 .. z0 + straight_h + half_w, centre = z0 + (that)/2.
+    z0 = centre_z - (straight_h + half_w) / 2.0
+    # The interior face is at x_room_face; the wall body extends toward +X. Start
+    # the cutter a hair PROUD of that face (-X) and extrude +X into the wall by
+    # `recess`, so the pocket opens on the interior surface and stops short of the
+    # far face (recess < wall_t -> solid backing, no leak).
+    x_front = x_room_face - 0.02
+    cutters = []
+    for i, yc in enumerate(y_offsets):
+        cut = _arched_niche_cutter(col, f"{wall.name}_niche_cut_{i}", x_front,
+                                   recess + 0.02, yc, half_w, straight_h, z0)
+        cutters.append((cut, yc))
+    for cut, _yc in cutters:
+        mod = wall.modifiers.new(f"{cut.name}_bool", 'BOOLEAN')
+        mod.operation = 'DIFFERENCE'
+        mod.object = cut
+        mod.solver = 'EXACT'
+        bpy.context.view_layer.objects.active = wall
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+    # Re-UV each carved pocket (world AABB of its cutter span, padded a touch).
+    for _cut, yc in cutters:
+        amin = (x_room_face - recess - 0.05, yc - half_w - 0.05, z0 - 0.05)
+        amax = (x_room_face + 0.05, yc + half_w + 0.05,
+                z0 + straight_h + half_w + 0.05)
+        _cube_uv_faces_in_aabb(wall, amin, amax)
+    for cut, _yc in cutters:
+        bpy.data.objects.remove(cut, do_unlink=True)
+
+
 def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
     """A hooded wall fireplace against a side wall at x=@p wx. @p wall_inner_y is
     the wall's inner (room) face; @p sign is +1 when the room is on the -Y side
@@ -165,11 +271,21 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
 
 
 def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
-                     wall_t=0.5, roof_rise=3.6, collection=None):
+                     wall_t=0.5, roof_rise=3.6,
+                     lamp_niches=True, niche_above_dais=2.4384, niche_spacing=2.6,
+                     niche_width=0.5, niche_straight_h=0.55, niche_recess=0.26,
+                     collection=None):
     """Build the great hall into (a fresh child of) @p collection. Returns the
     collection. @p nbay bays of @p bay metres give the length; @p width is the
     clear span; @p wall_h the wall height; @p roof_rise the timber-roof apex
-    above the walls."""
+    above the walls.
+
+    Lamp niches (arched recesses in the dais backdrop wall, one each side of the
+    lord's seat): @p lamp_niches toggles them; @p niche_above_dais is the opening
+    centre height above the dais platform (default 8 ft); @p niche_spacing is each
+    niche's Y offset from centre; @p niche_width / @p niche_straight_h size the
+    opening (round-arch crown adds niche_width/2 of rise); @p niche_recess is the
+    cut depth into the wall (kept < @p wall_t so a solid backing remains)."""
     import arch
     import pier
 
@@ -246,6 +362,21 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     b.location = (length, 0.0, 0.0)
     b.rotation_euler = (0, 0, math.pi / 2.0)
 
+    # --- twin arched LAMP NICHES carved INTO the dais backdrop wall, flanking the
+    #     central blind arch. Sited ~8 ft (2.44 m) above the dais platform (a lamp
+    #     glowing over the lord's head), one to each side of the seat at the wall
+    #     centre. They are true recesses BOOLEAN-CUT into the backdrop wall (the
+    #     dais arch object), opening toward the INTERIOR (-X, down the hall), and
+    #     stop short of the far face (recess < wall_t) so no light leaks. ---
+    dais_top = 0.46                                  # dais platform top (see below)
+    if lamp_niches:
+        _carve_lamp_niches(
+            col, b, x_room_face=length - wall_t / 2.0,
+            centre_z=dais_top + niche_above_dais,
+            y_offsets=(niche_spacing, -niche_spacing),
+            half_w=niche_width / 2.0, straight_h=niche_straight_h,
+            recess=niche_recess)
+
     # --- dais + two steps at the far (lord's) end ---
     # The dais runs all the way back to the end wall (back face at x=length) and
     # its top (z=0.46) sits just BELOW the pier plinth tops (z=0.5) so the two
@@ -306,10 +437,16 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
         _box(col, f"{name}_purlin_{nm}", 0.5 * (x0 + x1), yc, zc,
              (x1 - x0), 0.16, sz)
 
-    # roof skin: eave AT the wall top (over the wall outer face), ridge at apex.
+    # roof skin: eave AT the wall top (over the wall outer face), ridge LIFTED
+    # above the rafters. The rafters (praf) foot on the wall head and rise to
+    # `apex` on the same plane as the skin, so a skin drawn to `apex` would be
+    # pierced by the 0.26-thick rafters (they poke through -> overlap + leak).
+    # Raising ONLY the ridge tilts the skin up so its underside clears the rafter
+    # tops, while the eave stays seated on the wall head (no gap to leak through).
+    apex_skin = apex + 0.40
     bm_verts = [
-        (x0, nO, top), (x0, sO, top), (x0, midy, apex),
-        (x1, nO, top), (x1, sO, top), (x1, midy, apex)]
+        (x0, nO, top), (x0, sO, top), (x0, midy, apex_skin),
+        (x1, nO, top), (x1, sO, top), (x1, midy, apex_skin)]
     import bmesh
     bm = bmesh.new()
     v = [bm.verts.new(p) for p in bm_verts]
@@ -323,10 +460,14 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     roof = bpy.data.objects.new(f"{name}_roof", me)
     col.objects.link(roof)
     sol = roof.modifiers.new("solid", 'SOLIDIFY')
-    # Thick enough to span several SDF voxels (~0.06 m) so the lightmap/GI SDF bake
-    # doesn't leak sun/sky through the roof skin. 0.12 (~2 voxels) leaked.
-    sol.thickness = 0.35
-    sol.offset = 1.0
+    # Thick enough to span many SDF voxels (~0.06 m) so the lightmap/GI SDF bake
+    # doesn't leak sun/sky through the roof skin. 0.12 (~2 voxels) and 0.35 both
+    # left thin spots along the ridge/gable seams; 0.55 fully seals it.
+    # Extrude UPWARD/outward (-normal here, since the skin faces wind
+    # inward/down): the inner face stays on the lifted skin plane clearing the
+    # rafters, and the shell thickens away from the room.
+    sol.thickness = 0.55
+    sol.offset = -1.0
 
     # --- hooded wall fireplace against the north wall, in the last (dais) bay ---
     yin = float(Nlo[1])

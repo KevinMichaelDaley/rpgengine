@@ -6,6 +6,7 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "ferrum/lightmap/gpu/lm_gpu_gather.h"
@@ -290,7 +291,15 @@ bool lm_mesh_bake(const lm_mesh_scene_t *scene, const lm_bake_config_t *config,
                                           (size_t)total * 3u * sizeof(lm_sh9_t));
             lm_sh9_t *de = arena_alloc(arena, _Alignof(lm_sh9_t),
                                        (size_t)total * 3u * sizeof(lm_sh9_t));
-            if (accum && de && (chunked_gpu || (area && vnormal))) {
+            if (!(accum && de && (chunked_gpu || (area && vnormal)))) {
+                /* Scratch alloc failed (arena too small for this luxel count) --
+                 * fail loudly instead of silently writing an unlit, SDF-less .flm. */
+                fprintf(stderr, "lm_mesh_bake: GI scratch alloc failed "
+                        "(luxels=%u); arena too small -- aborting.\n", total);
+                if (!chunked_gpu) npc_svo_grid_destroy(&svo);
+                return false;
+            }
+            {
                 if (!chunked_gpu)
                     lm_svo_voxelize(&svo, geo->meshes, geo->n_meshes, area, vnormal);
                 for (uint32_t i = 0; i < total; ++i)

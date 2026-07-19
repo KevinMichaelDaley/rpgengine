@@ -728,6 +728,14 @@ int main(int argc,char **argv){
         /* Masonry: punch up the brick/mortar relief so the courses read with depth. */
         mats[0].normal_scale=2.0f;   /* stone_wall brick. */
         mats[1].normal_scale=1.8f;   /* floor stone. */
+        /* Runtime UV scale: the SAME baked atlas tiled over more world metres to
+         * scale features UP (u_uv_scale multiplies the world-metre uv0). Smaller
+         * -> bigger bricks/flags. Walls + floor (esp. the floor tiles) read too
+         * small at 1.0; enlarge them. Env-tunable for quick tuning. */
+        float wall_uv=getenv("GH_WALL_UV")?(float)atof(getenv("GH_WALL_UV")):0.42f;
+        float floor_uv=getenv("GH_FLOOR_UV")?(float)atof(getenv("GH_FLOOR_UV")):0.30f;
+        mats[0].uv_scale[0]=mats[0].uv_scale[1]=wall_uv;   /* bricks ~2.4x bigger */
+        mats[1].uv_scale[0]=mats[1].uv_scale[1]=floor_uv;  /* flags ~3.3x bigger  */
     } else {
     material_init(&mats[0]); mats[0].maps[MATERIAL_TEX_ALBEDO]=&tb_a; mats[0].maps[MATERIAL_TEX_NORMAL]=&tb_n;
     mats[0].maps[MATERIAL_TEX_ROUGHNESS]=&tb_orm; mats[0].orm_packed=1; mats[0].normal_scale=1.6f;
@@ -812,6 +820,28 @@ int main(int argc,char **argv){
       /* The SUN is NOT a dynamic probe light: its direct term is the CSM (below)
        * and its indirect is the baked SH lightmap. Only the dynamic fireplace
        * light drives the SDF-probe GI. */
+
+      /* Two wall-sconce point lights, one in each dais LAMP NICHE (carved into
+       * the backdrop wall by great_hall.py: opening centre 8 ft above the dais at
+       * height ~2.9, at width +/-niche_spacing, in the end-wall room face
+       * amax[0]-0.75). Like the hearth fire but a bit WHITER and much DIMMER --
+       * a steady oil-lamp glow that lights the recess + backdrop and feeds the GI
+       * probes. Sat just in front of each niche mouth so the light doesn't
+       * self-occlude on the pocket back. */
+      const float sconce_x = amax[0] - 0.90f;   /* niche mouth 17.75, 0.15 forward */
+      const float sconce_y = 2.90f;             /* opening-centre height */
+      const float sconce_z[2] = { 2.60f, -2.60f };
+      for(int si=0; si<2; ++si){
+        render_light_t sc; memset(&sc,0,sizeof sc); sc.kind=RENDER_LIGHT_POINT;
+        sc.position[0]=sconce_x; sc.position[1]=sconce_y; sc.position[2]=sconce_z[si];
+        sc.color[0]=1.0f; sc.color[1]=0.80f; sc.color[2]=0.58f;  /* pale warm lamp */
+        sc.intensity=7.0f; sc.range=5.0f;
+        sc.flags=RENDER_LIGHT_FLAG_REALTIME|RENDER_LIGHT_FLAG_DYNAMIC_INDIRECT
+                |RENDER_LIGHT_FLAG_PROBE_GI|RENDER_LIGHT_FLAG_SHADOW;
+        render_light_add(&lights,&sc);
+      }
+      printf("great_hall sconce lights at x=%.1f y=%.1f z=+/-%.1f\n",
+             sconce_x,sconce_y,sconce_z[0]);
     }
     uint32_t rng=4242;
     for(int i=0;i<((shadow_only||one_light||spot_only||csm_demo||lm_only||great_hall)?0:64);++i){ render_light_t l; memset(&l,0,sizeof l); l.kind=RENDER_LIGHT_POINT;

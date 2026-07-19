@@ -583,11 +583,15 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
         for (int a=0;a<3;++a){ mn[a]=svo_mn[a]; mx[a]=svo_mx[a]; }
     }
 
-    /* NEAR field over the region (fine, 128^3). Also voxelise per-surface albedo
-     * (only needed for the persisted sidecar) so the runtime GI cone-trace can
-     * tint its bounce by the static surface colour. */
+    /* NEAR field over the region (fine, 128^3 by default). Also voxelise
+     * per-surface albedo (only needed for the persisted sidecar) so the runtime
+     * GI cone-trace can tint its bounce by the static surface colour. LM_NEAR_DIM
+     * raises the near grid (e.g. 256) so a SINGLE room-sized chunk keeps a fine
+     * voxel edge -- the runtime auto-sizes its resident SDF textures to match. */
+    int near_dim = getenv("LM_NEAR_DIM") ? atoi(getenv("LM_NEAR_DIM")) : 128;
+    if (near_dim < 16) near_dim = 16;
     GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f; float *near_alb = NULL;
-    if (!build_sdf(scene, svo, svo->voxel_size, mn, mx, 128, &b_sdf, dims, &svoxel,
+    if (!build_sdf(scene, svo, svo->voxel_size, mn, mx, near_dim, &b_sdf, dims, &svoxel,
                    sdf_out != NULL ? &near_alb : NULL))
         return false;
 

@@ -43,9 +43,21 @@ int main(int argc, char **argv)
     const char *root = argc > 1 ? argv[1] : ".";
     const char *out = argc > 2 ? argv[2] : "scene.flm";
 
-    static char abuf[1800ull * 1024 * 1024];
+    /* Big enough for high-res (HALL_LMRES>1) bakes: the per-luxel accum+de SH9
+     * scratch scales with luxel count, and at 2x res the old 1.8 GB arena
+     * overflowed -- arena_alloc then returned NULL and the GI+SDF gather block
+     * was silently skipped (a valid but UNLIT .flm with no SDF chunks). Heap-
+     * allocated (not a static array) so it can exceed the 2 GB small-code-model
+     * .bss relocation limit; overridable via SCENE_BAKE_ARENA_MB. One-shot bake
+     * tool, so a single malloc at startup is fine. */
+    size_t arena_mb = getenv("SCENE_BAKE_ARENA_MB")
+                    ? (size_t)strtoull(getenv("SCENE_BAKE_ARENA_MB"), NULL, 10)
+                    : 8192ull;
+    size_t abuf_size = arena_mb * 1024ull * 1024ull;
+    char *abuf = malloc(abuf_size);
+    if (!abuf) { fprintf(stderr, "arena malloc(%zu MB) failed\n", arena_mb); return 1; }
     arena_t arena;
-    arena_init(&arena, abuf, sizeof abuf);
+    arena_init(&arena, abuf, abuf_size);
 
     gl_loader_t gl_loader;
     const gl_loader_t *gl = NULL;
