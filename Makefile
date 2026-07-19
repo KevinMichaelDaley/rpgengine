@@ -1171,7 +1171,7 @@ build/collider_prim_tests: tests/asset/collider_prim_tests.c $(COLLIDER_PRIM_TES
 	$(CC) $(CFLAGS) tests/asset/collider_prim_tests.c $(COLLIDER_PRIM_TEST_SRC) -o $@ -lm
 
 # Posed GI collider-proxy builder (rpg-85as). Pure math, no GL.
-build/gi_collider_pose_tests build/server_level_load_tests: tests/asset/gi_collider_pose_tests.c src/renderer/gi/gi_collider_pose.c | build
+build/gi_collider_pose_tests: tests/asset/gi_collider_pose_tests.c src/renderer/gi/gi_collider_pose.c | build
 	$(CC) $(CFLAGS) tests/asset/gi_collider_pose_tests.c src/renderer/gi/gi_collider_pose.c -o $@ -lm
 
 # Server level loader (rpg-q1cp): descriptor colliders -> physics world. Links

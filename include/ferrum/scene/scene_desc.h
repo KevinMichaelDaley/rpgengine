@@ -24,6 +24,7 @@ extern "C" {
 #include <stdint.h>
 
 #include "ferrum/scene/scene_desc_object.h"
+#include "ferrum/scene/scene_desc_material.h"
 #include "ferrum/scene/scene_desc_collider.h"
 #include "ferrum/scene/scene_desc_lightdata.h"
 #include "ferrum/scene/scene_desc_probes.h"
@@ -45,7 +46,7 @@ struct arena; /* forward decl: ferrum/memory/arena.h */
 typedef struct scene_desc {
     char                    name[SCENE_DESC_OBJ_NAME_CAP];
     uint32_t                material_count;
-    char                    materials[SCENE_DESC_MAX_MATERIALS][SCENE_DESC_MAT_NAME_CAP];
+    scene_desc_material_t   materials[SCENE_DESC_MAX_MATERIALS]; /**< full PBR defs. */
     uint32_t                object_count;
     scene_desc_object_t    *objects;    /**< arena-allocated [object_count], bake order. */
     uint32_t                collider_count;

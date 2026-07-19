@@ -13,9 +13,51 @@
 static int32_t material_index(const scene_desc_t *out, const char *name)
 {
     for (uint32_t i = 0; i < out->material_count; ++i) {
-        if (strcmp(out->materials[i], name) == 0) return (int32_t)i;
+        if (strcmp(out->materials[i].name, name) == 0) return (int32_t)i;
     }
     return -1;
+}
+
+/* Engine-neutral material defaults (before a definition overrides them). */
+static void material_defaults(scene_desc_material_t *m)
+{
+    memset(m, 0, sizeof *m);
+    m->tint[0] = m->tint[1] = m->tint[2] = 1.0f;
+    m->roughness_max = 1.0f;
+    m->normal_scale = 1.0f;
+    m->uv_scale[0] = m->uv_scale[1] = 1.0f;
+    m->contrast = 1.0f;
+    m->ao_strength = 1.0f;
+}
+
+/* A "materials" entry may be a bare string (name only) or a full PBR object. */
+static void parse_material_def(const json_value_t *e, scene_desc_material_t *m)
+{
+    material_defaults(m);
+    if (e == NULL) return;
+    if (e->type == JSON_STRING) {
+        json_string_copy(e, m->name, SCENE_DESC_MATERIAL_NAME_CAP);
+        return;
+    }
+    if (e->type != JSON_OBJECT) return;
+    sd_field_str(e, "name",      m->name, SCENE_DESC_MATERIAL_NAME_CAP);
+    sd_field_str(e, "albedo",    m->tex[SCENE_DESC_MAT_TEX_ALBEDO], SCENE_DESC_PATH_CAP);
+    sd_field_str(e, "normal",    m->tex[SCENE_DESC_MAT_TEX_NORMAL], SCENE_DESC_PATH_CAP);
+    sd_field_str(e, "metallic",  m->tex[SCENE_DESC_MAT_TEX_METALLIC], SCENE_DESC_PATH_CAP);
+    sd_field_str(e, "roughness", m->tex[SCENE_DESC_MAT_TEX_ROUGHNESS], SCENE_DESC_PATH_CAP);
+    sd_field_str(e, "ao",        m->tex[SCENE_DESC_MAT_TEX_AO], SCENE_DESC_PATH_CAP);
+    sd_field_str(e, "emissive",  m->tex[SCENE_DESC_MAT_TEX_EMISSIVE], SCENE_DESC_PATH_CAP);
+    sd_field_vec(e, "tint", m->tint, 3);
+    m->metalness = sd_field_num(e, "metalness", 0.0f);
+    m->roughness_min = sd_field_num(e, "roughness_min", 0.0f);
+    m->roughness_max = sd_field_num(e, "roughness_max", 1.0f);
+    m->normal_scale = sd_field_num(e, "normal_scale", 1.0f);
+    sd_field_vec(e, "uv_scale", m->uv_scale, 2);
+    m->contrast = sd_field_num(e, "contrast", 1.0f);
+    m->ao_strength = sd_field_num(e, "ao_strength", 1.0f);
+    sd_field_vec(e, "emissive_color", m->emissive_color, 3);
+    m->emissive_strength = sd_field_num(e, "emissive_strength", 0.0f);
+    m->orm_packed = sd_field_bool(e, "orm_packed", false) ? 1 : 0;
 }
 
 bool scene_desc_parse_materials(const json_value_t *root, scene_desc_t *out)
@@ -26,12 +68,7 @@ bool scene_desc_parse_materials(const json_value_t *root, scene_desc_t *out)
     uint32_t n = arr->array.count;
     if (n > SCENE_DESC_MAX_MATERIALS) n = SCENE_DESC_MAX_MATERIALS;
     for (uint32_t i = 0; i < n; ++i) {
-        const json_value_t *e = json_array_get(arr, i);
-        char *slot = out->materials[out->material_count];
-        if (e == NULL || e->type != JSON_STRING ||
-            !json_string_copy(e, slot, SCENE_DESC_MAT_NAME_CAP)) {
-            slot[0] = '\0';
-        }
+        parse_material_def(json_array_get(arr, i), &out->materials[out->material_count]);
         out->material_count++;
     }
     return true;

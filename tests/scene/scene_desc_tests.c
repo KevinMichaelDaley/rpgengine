@@ -76,9 +76,45 @@ static int test_happy_name_and_materials(void)
     ASSERT_TRUE(scene_desc_parse(DESC_FULL, strlen(DESC_FULL), &a, &d));
     ASSERT_STR_EQ(d.name, "unit_hall");
     ASSERT_INT_EQ(d.material_count, 3);
-    ASSERT_STR_EQ(d.materials[0], "stone");
-    ASSERT_STR_EQ(d.materials[1], "timber");
-    ASSERT_STR_EQ(d.materials[2], "metal");
+    ASSERT_STR_EQ(d.materials[0].name, "stone");
+    ASSERT_STR_EQ(d.materials[1].name, "timber");
+    ASSERT_STR_EQ(d.materials[2].name, "metal");
+    return 0;
+}
+
+static int test_material_definition(void)
+{
+    /* A "materials" entry may be a bare string (name + defaults) or a full PBR
+     * object (rpg-8302). */
+    static const char *const MD =
+        "{\"name\":\"m\",\"materials\":["
+        "  \"plainname\","
+        "  {\"name\":\"pbr\",\"albedo\":\"t/a.png\",\"normal\":\"t/n.png\","
+        "   \"metalness\":0.8,\"roughness_min\":0.1,\"roughness_max\":0.9,"
+        "   \"uv_scale\":[0.5,0.5],\"emissive_color\":[1,0.5,0.2],"
+        "   \"emissive_strength\":3.0,\"orm_packed\":true}"
+        "],\"objects\":[]}";
+    arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
+    scene_desc_t d;
+    ASSERT_TRUE(scene_desc_parse(MD, strlen(MD), &a, &d));
+    ASSERT_INT_EQ(d.material_count, 2);
+    /* String entry -> name + engine defaults, no textures. */
+    ASSERT_STR_EQ(d.materials[0].name, "plainname");
+    ASSERT_FLT_EQ(d.materials[0].tint[0], 1.0f);
+    ASSERT_FLT_EQ(d.materials[0].roughness_max, 1.0f);
+    ASSERT_FLT_EQ(d.materials[0].uv_scale[0], 1.0f);
+    ASSERT_INT_EQ(d.materials[0].tex[SCENE_DESC_MAT_TEX_ALBEDO][0], 0);
+    /* Object entry -> full PBR definition. */
+    ASSERT_STR_EQ(d.materials[1].name, "pbr");
+    ASSERT_STR_EQ(d.materials[1].tex[SCENE_DESC_MAT_TEX_ALBEDO], "t/a.png");
+    ASSERT_STR_EQ(d.materials[1].tex[SCENE_DESC_MAT_TEX_NORMAL], "t/n.png");
+    ASSERT_FLT_EQ(d.materials[1].metalness, 0.8f);
+    ASSERT_FLT_EQ(d.materials[1].roughness_min, 0.1f);
+    ASSERT_FLT_EQ(d.materials[1].roughness_max, 0.9f);
+    ASSERT_FLT_EQ(d.materials[1].uv_scale[0], 0.5f);
+    ASSERT_FLT_EQ(d.materials[1].emissive_color[1], 0.5f);
+    ASSERT_FLT_EQ(d.materials[1].emissive_strength, 3.0f);
+    ASSERT_INT_EQ(d.materials[1].orm_packed, 1);
     return 0;
 }
 
@@ -282,7 +318,7 @@ static int test_load_great_hall(void)
         return 0;   /* data-dependent: don't fail CI if the asset is absent */
     }
     ASSERT_INT_EQ(d.material_count, 5);
-    ASSERT_STR_EQ(d.materials[0], "great_hall_floor_stone");
+    ASSERT_STR_EQ(d.materials[0].name, "great_hall_floor_stone");
     ASSERT_INT_EQ(d.object_count, 84);
     /* First object == first baked mesh (bake order). */
     ASSERT_STR_EQ(d.objects[0].name, "great_hall_collar_0");
@@ -307,6 +343,7 @@ int main(void)
 {
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"happy_name_and_materials",    test_happy_name_and_materials},
+        {"material_definition",         test_material_definition},
         {"object_bake_order_preserved", test_object_bake_order_preserved},
         {"object_transform_and_lightmap", test_object_transform_and_lightmap},
         {"material_name_to_index",      test_material_name_to_index},
