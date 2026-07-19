@@ -1,7 +1,7 @@
 ---
 id: rpg-q1cp
 status: open
-deps: [rpg-51nf, rpg-k4jk]
+deps: [rpg-51nf]
 links: []
 created: 2026-07-19T07:44:03Z
 type: task
@@ -22,3 +22,9 @@ Insertion point: demo_server main() around the --scene edit_level_load hook and 
 
 Server boots from a scene descriptor into a populated physics world + initialized headless GI; a joining client receives the level identity + initial stream priorities; no editor interaction required to load a level.
 
+
+## Notes
+
+**2026-07-19T18:27:14Z**
+
+Dep on rpg-k4jk removed: k4jk (headless stealth/visibility GI) is deferred to the end of the pipeline, so q1cp loads collision geo + physics world + per-client stream priorities WITHOUT it; the headless GI init is wired in when k4jk lands.

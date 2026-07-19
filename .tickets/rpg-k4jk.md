@@ -5,7 +5,7 @@ deps: [rpg-51nf, rpg-ft0g]
 links: []
 created: 2026-07-19T07:44:03Z
 type: task
-priority: 2
+priority: 4
 assignee: KMD
 parent: rpg-hjck
 tags: [server, gi, headless]
@@ -22,3 +22,9 @@ MUST be GL-free (server links libheadless.a). Do NOT use the GPU compute probe p
 
 Server loads collision geo + low-res SDF + coarse probes headlessly and answers a lit-ness/visibility query for arbitrary points; builds and links into libheadless.a with no GL symbols; a headless test asserts lit vs shadowed points in the great_hall.
 
+
+## Notes
+
+**2026-07-19T18:27:14Z**
+
+Deferred to end-ish of the pipeline (priority lowered). Nothing on the critical path depends on it now (q1cp dep removed).

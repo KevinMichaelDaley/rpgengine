@@ -36,6 +36,7 @@
 #include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/render_camera.h"
 #include "ferrum/renderer/render_forward.h"
+#include "ferrum/renderer/render_world.h"
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/gi/gi_runtime.h"
 #include "ferrum/renderer/gi/gi_static_volume.h"
@@ -519,16 +520,12 @@ static int build_static_irr_volume(gi_static_volume_t *vol,
 /* ── Dynamic-light SDF-probe GI demo (rpg-fo9r) ─────────────────────────────
  * All the GI machinery lives in renderer modules (gi_runtime); this file only
  * spawns the moving particle lights + dynamic floor boxes and invokes it. */
-static gi_runtime_t g_gi;
 static int g_part_base, g_npart;   /* index range of the particle lights in the store. */
 static gi_collider_t g_boxes[8];   static int g_nboxes;
 static float g_box_home[8][3];     static int g_box_item[8];
 /* Two glossy metal cubes that slide sinusoidally through the hall centre (out of
  * phase) so the moving low-roughness surfaces show the probe SG specular. */
 static static_mesh_t gh_mov[2];    static int gh_mov_item[2]={-1,-1};
-static void gi_bind_cb(void *u, shader_uniform_cache_t *c, const shader_program_t *p){
-    gi_runtime_bind((gi_runtime_t *)u, c, p, 24u);
-}
 
 int main(int argc,char **argv){
     /* GREAT_HALL: render the exported great-hall scene (scripts/export_scene.py):
@@ -991,22 +988,19 @@ int main(int argc,char **argv){
      * into the forward pass via this hook. Set before init so fwd captures it. */
     int gi_demo = getenv("LM_GI") != NULL || great_hall;
     int ptonly = gi_demo && getenv("GI_PTONLY")!=NULL; /* isolate the point-light cube shadow. */
-    if(gi_demo){ fcfg.material_extra_bind = gi_bind_cb; fcfg.material_extra_user = &g_gi; }
+    /* GI bind hook is installed by render_world_init (rpg-i3wx). */
     if(ptonly){ /* kill the sun + baked lightmap so only the point light lights the scene. */
         fcfg.sun_color[0]=fcfg.sun_color[1]=fcfg.sun_color[2]=0.0f;
         fcfg.sh_enabled=0; fcfg.ambient[0]=fcfg.ambient[1]=fcfg.ambient[2]=0.0f;
     }
-    struct timespec t0_,t1_; clock_gettime(CLOCK_MONOTONIC,&t0_);
-    render_forward_t fwd;
+    /* rpg-i3wx: the render_forward + gi_runtime + wiring now live in render_world.
+     * Gather config here; the single render_world_init call happens once the GI
+     * config (probes / static volume) is ready (below). */
+    render_world_t rw; render_world_config_t rwcfg; memset(&rwcfg,0,sizeof rwcfg);
+    int rw_inited=0;
     fprintf(stderr,"CFG sh_enabled=%d sh_scale=%.2f sun=(%.1f,%.1f,%.1f) amb=(%.2f,%.2f,%.2f) cascades=%d sh_tex0=%u\n",
             fcfg.sh_enabled, fcfg.sh_scale, fcfg.sun_color[0],fcfg.sun_color[1],fcfg.sun_color[2],
             fcfg.ambient[0],fcfg.ambient[1],fcfg.ambient[2], fcfg.dir_cascades, fcfg.sh_tex[0]);
-    GHK("before render_forward_init");
-    if(!render_forward_init(&fwd,&fcfg)){ fprintf(stderr,"render_forward_init failed\n"); return 1; }
-    GHK("after render_forward_init");
-    clock_gettime(CLOCK_MONOTONIC,&t1_);
-    fprintf(stderr,"[perf] render_forward_init: %.1f ms\n",
-        (t1_.tv_sec-t0_.tv_sec)*1e3+(t1_.tv_nsec-t0_.tv_nsec)*1e-6);
 
     /* --- Dynamic-GI scene: floor boxes (rendered + injected into the SDF) +
      * a swarm of moving ceiling particle lights; all GI logic is in gi_runtime. */
@@ -1139,59 +1133,57 @@ int main(int argc,char **argv){
             }
         }
         (void)probe_cap;
-        gi_runtime_config_t gc; memset(&gc,0,sizeof gc);
-        gc.loader=&loader; gc.sdf_prefix=lmfile;
-        gc.aabb_min[0]=amin[0]; gc.aabb_min[1]=amin[1]+0.3f; gc.aabb_min[2]=amin[2];
-        gc.aabb_max[0]=amax[0]; gc.aabb_max[1]=amax[1]-0.2f; gc.aabb_max[2]=amax[2];
-        gc.probe_pos_in=hall_probes; gc.n_probe_in=(uint32_t)n_probes;
-        gc.grid_cell=4.0f; gc.prepass_w=(W/8>0)?W/8:1; gc.prepass_h=(H/8>0)?H/8:1;
-        gc.max_lights=512; gc.max_boxes=8; gc.soft_k=8.0f;
-        /* Bin probes into the SAME froxels as forward+ (identical cluster config)
-         * so the material reads probe candidates from the fragment's own cluster. */
-        gc.froxel=fcfg.cluster; gc.probe_min=4;
-        /* Dense grid -> a modest margin already reaches every cluster. */
-        gc.probe_sphere_margin=great_hall?1.2f:0.5f; gc.bin_interval=1;
-        /* Probe update cadence (rpg-iuiy). update_interval = FLUSH cadence (the
-         * compute->graphics tile-buffer flush is the dominant per-dispatch cost on
-         * this iGPU); n_probe_groups = ticks (dithered probe subsets) to cover all
-         * probes -> a probe refreshes every update_interval*n_probe_groups frames.
-         * Fewer flushes (bigger interval) = higher fps + rarer hitch; the GI is
-         * low-freq so a long refresh is fine. Tunable: GI_UPDATE / GI_PROBE_GROUPS. */
-        gc.update_interval = great_hall ? 8 : 0;   /* flush every 8 frames (0 -> 8) */
-        gc.n_probe_groups  = great_hall ? 2 : 0;   /* 2 ticks -> refresh every 16 frames */
-        if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
-        else {
-            if(pg_dim[0]>0) gi_runtime_set_probe_grid(&g_gi, pg_origin, pg_cell, pg_dim); /* trilinear. */
-            /* rpg-pau4: fold the baked lightmap ambience into the probes. Build the
-             * static irradiance volume from the atlas + meshes and bind it so the
-             * cone trace gathers it. GI_STATIC=0 disables it; GI_STATIC_K scales it. */
-            if(great_hall && !no_lm && (getenv("GI_STATIC")==NULL || atoi(getenv("GI_STATIC")))){
-                static gi_static_volume_t g_svol;
-                if(build_static_irr_volume(&g_svol, dm, nm, mrect, atlas_w, atlas_h, lmfile, amin, amax)==0){
-                    float dimf[3]={(float)g_svol.dims[0],(float)g_svol.dims[1],(float)g_svol.dims[2]};
-                    float sk=getenv("GI_STATIC_K")?(float)atof(getenv("GI_STATIC_K")):1.0f;
-                    gi_runtime_set_static_volume(&g_gi, g_svol.tex, g_svol.origin, dimf, g_svol.voxel, sk);
-                    /* Per-object static weights: baked surfaces get a mild extra bounce,
-                     * the dynamic cube gets the full (boosted) static ambience. */
-                    /* fire_only zeroes the static (lightmap-fed) probe term so only
-                     * the dynamic fireplace bounce remains in the probes. */
-                    float bw=fire_only?0.0f:(getenv("GI_STATIC_BAKED")?(float)atof(getenv("GI_STATIC_BAKED")):0.35f);
-                    float dw=fire_only?0.0f:(getenv("GI_STATIC_DYN")?(float)atof(getenv("GI_STATIC_DYN")):3.0f);
-                    gi_runtime_set_static_weights(&g_gi, bw, dw);
-                    /* Sky-openness AO from the probe depth maps: a faint cool fill
-                     * where probes see open sky overhead (SKY_AO scales it, 0=off).
-                     * Turned down a bit; off entirely under fire_only. */
-                    float sa=fire_only?0.0f:(getenv("SKY_AO")?(float)atof(getenv("SKY_AO")):0.25f);
-                    float sky_ao[3]={0.15390f*sa,0.18851f*sa,0.25879f*sa};
-                    gi_runtime_set_sky_ao(&g_gi, sky_ao, getenv("SKY_AO_REF")?(float)atof(getenv("SKY_AO_REF")):5.0f,
-                                          getenv("AO_MULT")?(float)atof(getenv("AO_MULT")):0.6f);
-                    /* rpg-hw75: probe SG specular reflections (SPEC_GAIN, 0=off). */
-                    gi_runtime_set_spec_gain(&g_gi, getenv("SPEC_GAIN")?(float)atof(getenv("SPEC_GAIN")):1.0f);
-                }
+        /* rpg-i3wx: gather the GI config + setters into the render_world config
+         * (instead of driving gi_runtime directly); render_world_init applies them,
+         * enforcing gc.froxel==fcfg.cluster and the unit-24 GI bind internally. */
+        rwcfg.gi_enabled = 1;
+        rwcfg.gi_sdf_prefix = lmfile;
+        rwcfg.gi_aabb_min[0]=amin[0]; rwcfg.gi_aabb_min[1]=amin[1]+0.3f; rwcfg.gi_aabb_min[2]=amin[2];
+        rwcfg.gi_aabb_max[0]=amax[0]; rwcfg.gi_aabb_max[1]=amax[1]-0.2f; rwcfg.gi_aabb_max[2]=amax[2];
+        rwcfg.gi_probe_pos=hall_probes; rwcfg.gi_probe_count=(uint32_t)n_probes;
+        rwcfg.gi_grid_cell=4.0f; rwcfg.gi_prepass_w=(W/8>0)?W/8:1; rwcfg.gi_prepass_h=(H/8>0)?H/8:1;
+        rwcfg.gi_max_lights=512; rwcfg.gi_max_boxes=8; rwcfg.gi_soft_k=8.0f;
+        rwcfg.gi_probe_min=4; rwcfg.gi_probe_sphere_margin=great_hall?1.2f:0.5f; rwcfg.gi_bin_interval=1;
+        /* update_interval = flush cadence; n_probe_groups = dithered subsets. */
+        rwcfg.gi_update_interval = great_hall ? 8 : 0;
+        rwcfg.gi_n_probe_groups  = great_hall ? 2 : 0;
+        if(pg_dim[0]>0){ for(int i=0;i<3;++i){ rwcfg.gi_grid_origin[i]=pg_origin[i];
+            rwcfg.gi_grid_cell3[i]=pg_cell[i]; rwcfg.gi_grid_dim[i]=pg_dim[i]; } }  /* trilinear. */
+        /* rpg-pau4: fold the baked lightmap ambience into the probes via a static
+         * irradiance volume. GI_STATIC=0 disables it; GI_STATIC_K scales it. */
+        if(great_hall && !no_lm && (getenv("GI_STATIC")==NULL || atoi(getenv("GI_STATIC")))){
+            static gi_static_volume_t g_svol;
+            if(build_static_irr_volume(&g_svol, dm, nm, mrect, atlas_w, atlas_h, lmfile, amin, amax)==0){
+                rwcfg.has_static_volume=1; rwcfg.static_vol_tex=g_svol.tex;
+                for(int i=0;i<3;++i){ rwcfg.static_vol_origin[i]=g_svol.origin[i];
+                    rwcfg.static_vol_dim[i]=(float)g_svol.dims[i]; }
+                rwcfg.static_vol_voxel=g_svol.voxel;
+                rwcfg.static_k=getenv("GI_STATIC_K")?(float)atof(getenv("GI_STATIC_K")):1.0f;
+                /* Per-object static weights (fire_only zeroes the lightmap-fed term). */
+                rwcfg.has_static_weights=1;
+                rwcfg.static_baked_w=fire_only?0.0f:(getenv("GI_STATIC_BAKED")?(float)atof(getenv("GI_STATIC_BAKED")):0.35f);
+                rwcfg.static_dyn_w=fire_only?0.0f:(getenv("GI_STATIC_DYN")?(float)atof(getenv("GI_STATIC_DYN")):3.0f);
+                /* Sky-openness AO from the probe depth maps (SKY_AO scales; 0=off). */
+                float sa=fire_only?0.0f:(getenv("SKY_AO")?(float)atof(getenv("SKY_AO")):0.25f);
+                rwcfg.has_sky_ao=1;
+                rwcfg.sky_ao_color[0]=0.15390f*sa; rwcfg.sky_ao_color[1]=0.18851f*sa; rwcfg.sky_ao_color[2]=0.25879f*sa;
+                rwcfg.sky_ao_ref=getenv("SKY_AO_REF")?(float)atof(getenv("SKY_AO_REF")):5.0f;
+                rwcfg.sky_ao_mult=getenv("AO_MULT")?(float)atof(getenv("AO_MULT")):0.6f;
+                /* rpg-hw75: probe SG specular reflections (SPEC_GAIN, 0=off). */
+                rwcfg.has_spec_gain=1;
+                rwcfg.spec_gain=getenv("SPEC_GAIN")?(float)atof(getenv("SPEC_GAIN")):1.0f;
             }
         }
+        rwcfg.forward=fcfg; rwcfg.scene=&scene;
+        if(!render_world_init(&rw,&rwcfg)){ fprintf(stderr,"render_world_init failed\n"); return 1; }
+        rw_inited=1;
+        if(!rw.gi_enabled) gi_demo=0;   /* GI failed inside; degrade like before. */
         free(hall_probes);   /* gi_runtime_init copied the positions into its own set. */
     }
+    /* Non-GI path (no gi_demo): render_world still owns the forward+ pipeline. */
+    if(!rw_inited){ rwcfg.forward=fcfg; rwcfg.scene=&scene; rwcfg.gi_enabled=0;
+        if(!render_world_init(&rw,&rwcfg)){ fprintf(stderr,"render_world_init failed\n"); return 1; }
+        rw_inited=1; }
 
     glViewport(0,0,W,H);
     /* Noclip free-fly camera: WASD to move, mouse to look, Space/LCtrl for
@@ -1376,12 +1368,9 @@ int main(int argc,char **argv){
         int prof=getenv("PROF")!=NULL;
         static double pr=0; static int pn=0; struct timespec pb,pc;
         if(prof){ glFinish(); clock_gettime(CLOCK_MONOTONIC,&pb); }
-        if(gi_demo)
-            gi_runtime_frame(&g_gi,&scene,scene.camera.view,scene.camera.proj,
-                             g_boxes,(uint32_t)g_nboxes,W,H);
-        if(frame<2) GHK("before render_forward_render");
-        render_forward_render(&fwd,&scene);
-        if(frame<2) GHK("after render_forward_render");
+        if(frame<2) GHK("before render_world_update");
+        render_world_update(&rw, g_boxes,(uint32_t)g_nboxes, W, H);
+        if(frame<2) GHK("after render_world_update");
         if(prof){ glFinish(); clock_gettime(CLOCK_MONOTONIC,&pc);
             pr += (pc.tv_sec-pb.tv_sec)*1e3+(pc.tv_nsec-pb.tv_nsec)*1e-6;
             if(++pn>=60){ fprintf(stderr,"[prof] render(shadow+forward, GPU-incl)=%.2f ms/frame\n", pr/pn); pr=0; pn=0; } }
@@ -1390,9 +1379,9 @@ int main(int argc,char **argv){
             #ifndef GL_TEXTURE_CUBE_MAP_ARRAY
             #define GL_TEXTURE_CUBE_MAP_ARRAY 0x9009
             #endif
-            int R=(int)fwd.shadow.resolution, ML=(int)fwd.shadow.max_lights; size_t nf=(size_t)R*R;
+            int R=(int)rw.forward.shadow.resolution, ML=(int)rw.forward.shadow.max_lights; size_t nf=(size_t)R*R;
             float *cb=malloc(nf*6*(size_t)ML*sizeof(float));
-            glBindTexture(GL_TEXTURE_CUBE_MAP_ARRAY, fwd.shadow.cube);
+            glBindTexture(GL_TEXTURE_CUBE_MAP_ARRAY, rw.forward.shadow.cube);
             glGetTexImage(GL_TEXTURE_CUBE_MAP_ARRAY,0,GL_RED,GL_FLOAT,cb);
             double sum=0; for(size_t k=0;k<nf*6;++k) sum+=cb[k];
             for(int f=0;f<6;++f){ char p[128]; snprintf(p,sizeof p,"bake_out/ptshadow_face%d.pgm",f);
@@ -1402,11 +1391,11 @@ int main(int argc,char **argv){
             free(cb);
             fprintf(stderr,"GI_DUMP: slot0 6 faces written; mean cube val=%.4f\n", sum/(double)(nf*6));
             fprintf(stderr,"clusters: total=%u index_count=%u index_cap=%u\n",
-                fwd.clusters.cluster_total, fwd.clusters.index_count, fwd.clusters.index_capacity);
+                rw.forward.clusters.cluster_total, rw.forward.clusters.index_count, rw.forward.clusters.index_capacity);
             fprintf(stderr,"lights.count=%u\n",lights.count);
             for(uint32_t li=0;li<lights.count;++li)
                 fprintf(stderr,"  light %u kind=%d flags=0x%x slot=%d pos=(%.1f,%.1f,%.1f) int=%.1f\n",
-                    li,lights.lights[li].kind,lights.lights[li].flags,fwd.shadow_slot?fwd.shadow_slot[li]:-99,
+                    li,lights.lights[li].kind,lights.lights[li].flags,rw.forward.shadow_slot?rw.forward.shadow_slot[li]:-99,
                     lights.lights[li].position[0],lights.lights[li].position[1],lights.lights[li].position[2],lights.lights[li].intensity);
         }
         SDL_GL_SwapWindow(win);
@@ -1420,7 +1409,7 @@ int main(int argc,char **argv){
             win_frames/el,1e3*el/win_frames,win_min,win_max);
             win_frames=0; win_t0=now; win_min=1e9; win_max=0.0; }
     }
-    render_forward_destroy(&fwd);
+    render_world_destroy(&rw);
     if(csm_demo) static_mesh_destroy(&box);
     for(int i=0;i<nm;++i){ static_mesh_destroy(&meshes[i]); obj_mesh_free(&dm[i]); }
     free(dm); free(grp); free(fnames); free(meshes); free(subs); free(rb);
