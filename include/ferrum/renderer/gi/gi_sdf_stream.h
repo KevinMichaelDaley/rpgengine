@@ -17,6 +17,7 @@
 #ifndef FERRUM_RENDERER_GI_GI_SDF_STREAM_H
 #define FERRUM_RENDERER_GI_GI_SDF_STREAM_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -48,6 +49,7 @@ typedef struct gi_sdf_stream {
     int                 resident_slot[GI_SDF_MAX_RESIDENT]; /**< the resident slots this frame. */
     float              *upload_rgba;                  /**< scratch: interleave dist+albedo -> RGBA. */
     int                 slot_dims[3];                 /**< allocated 3D-texture dims (max chunk). */
+    int                *scan_cc;                       /**< [n_chunks] source file index (on-demand load). */
 } gi_sdf_stream_t;
 
 /**
@@ -55,6 +57,25 @@ typedef struct gi_sdf_stream {
  *        create the bounded 3D-texture pool. Returns the chunk count, or -1.
  */
 int gi_sdf_stream_load(gi_sdf_stream_t *s, const char *prefix);
+
+/**
+ * @brief On-demand variant of @ref gi_sdf_stream_load: scan every
+ *        `<prefix>_cNNN.sdf` HEADER only (dims/voxel/origin/file-index, no field
+ *        data) and create the GPU pool. Chunk distance/albedo then loads on demand
+ *        via @ref gi_sdf_stream_chunk_load (driven by the asset streamer). Returns
+ *        the chunk count, or -1. Needs a current GL context.
+ */
+int gi_sdf_stream_scan(gi_sdf_stream_t *s, const char *prefix);
+
+/** @brief Load chunk @p c's distance (+ albedo) into host RAM from @p prefix.
+ *  @return RAM bytes loaded (0 on failure). No GL. Safe on a job fiber. */
+size_t gi_sdf_stream_chunk_load(gi_sdf_stream_t *s, int c, const char *prefix);
+
+/** @brief Free chunk @p c's host RAM + evict its GPU slot (render thread). */
+void gi_sdf_stream_chunk_evict(gi_sdf_stream_t *s, int c);
+
+/** @brief 1 if chunk @p c's distance field is RAM-resident, else 0. */
+int gi_sdf_stream_chunk_loaded(const gi_sdf_stream_t *s, int c);
 
 /**
  * @brief Fill @p out_min / @p out_max (3 floats per chunk) with each SDF chunk's
