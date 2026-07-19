@@ -1,0 +1,29 @@
+---
+id: rpg-51nf
+status: in_progress
+deps: []
+links: []
+created: 2026-07-19T07:44:03Z
+type: task
+priority: 1
+assignee: KMD
+parent: rpg-hjck
+tags: [asset, format]
+---
+# Scene descriptor format + runtime loader
+
+A standard on-disk scene/level descriptor that enumerates the level's meshes (fvma/glb/dmesh/obj), skeletons (fskel), lightmaps (.flm), manually-placed probes + probe-grid importance volumes, sdf/voxel chunks, materials, and physics colliders -- plus a runtime loader that resolves and hands them to the asset streamer. glTF is the top-level container for the visual scene graph (transforms/skeletons), with external mesh/asset refs allowed.
+
+## Design
+
+Prefer glTF (gltf_scene_load already exists) as the scene graph + a sidecar manifest for engine-specific lists. The manifest must reference, as first-class entries, the BAKER-GENERATED CHUNKED LIGHT DATA (already produced + consumed by hall_lit_dynamic.c; see rpg-nbp2 for the residency model):
+- lightmap: base <lm>.flm and/or per-chunk <lm>_cNNN.flm + <lm>_manifest.bin (per-mesh layer/atlas-rect table).
+- SDF / albedo-voxel chunks: <lm>_cNNN.sdf prefix (RGBA32F, rgb=albedo voxels / a=distance), sparse (empty regions have no chunk, e.g. great_hall c005 absent); each chunk carries its own world box.
+- far-field: the baker's distant-reflector/sky contribution (lm_farfield) folded into the chunk data -- the descriptor just needs to mark that chunks are self-contained.
+Plus: the probe spec (rpg-ft0g: optional manual probes / resolution-by-distance-LOD / AABB importance boxes), materials, and the physics collider set.
+MUST capture the implicit invariant currently living only in hall_lit_dynamic.c: mesh enumeration order == lightmap bake order (today: sorted .dmesh names) and the per-mesh sh_layer/atlas-rect mapping. Loader emits a descriptor struct the render-world builder (rpg-i3wx) and server level-load (rpg-q1cp) both consume, and that the streamer (rpg-nbp2) resolves to chunk ids + priorities. No GL in the descriptor parse (server needs it headless).
+
+## Acceptance Criteria
+
+Descriptor parses headlessly into a struct listing every asset class with paths + transforms + the bake-order/sh-layer mapping; round-trips the great_hall scene (same mesh order, lightmap, probes, sdf) as hall_lit_dynamic.c assembles today; unit test loads a descriptor and asserts the asset lists + ordering.
+
