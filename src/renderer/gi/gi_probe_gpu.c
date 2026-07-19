@@ -83,13 +83,22 @@ static const char *CS_SRC =
     "layout(rg32f,binding=0) uniform image2DArray u_depth_img;\n"
     "const float PI=3.14159265;\n"
     "float box_sdf(vec3 p,vec3 c,vec3 h){ vec3 q=abs(p-c)-h; return length(max(q,vec3(0.0)))+min(max(q.x,max(q.y,q.z)),0.0); }\n"
+    /* Capsule = distance to segment a..b minus radius r (posed bone limbs, rpg-85as). */
+    "float capsule_sdf(vec3 p,vec3 a,vec3 b,float r){ vec3 pa=p-a, ba=b-a;\n"
+    "  float h=clamp(dot(pa,ba)/max(dot(ba,ba),1e-6),0.0,1.0); return length(pa-ba*h)-r; }\n"
     /* Distance is the ALPHA of the RGBA voxel texture (rgb = static albedo). */
     "float scene_sdf(vec3 p){ float d=1e30;\n"
     "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
     "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
-    "  for(int i=0;i<u_nboxes;++i){ d=min(d, box_sdf(p,bx[i*2].xyz,bx[i*2+1].xyz)); }\n"
+    /* Colliders: bx[i*2].w = kind (0=sphere,1=box,2=capsule). Sphere: radius in\n"
+     * bx[i*2+1].w. Box: half-extents in bx[i*2+1].xyz. Capsule: endpoint B in\n"
+     * bx[i*2+1].xyz, radius in .w. (rpg-85as: posed capsule/sphere proxies.) */
+    "  for(int i=0;i<u_nboxes;++i){ int bk=int(bx[i*2].w+0.5);\n"
+    "    if(bk==2) d=min(d, capsule_sdf(p, bx[i*2].xyz, bx[i*2+1].xyz, bx[i*2+1].w));\n"
+    "    else if(bk==0) d=min(d, length(p-bx[i*2].xyz)-bx[i*2+1].w);\n"
+    "    else d=min(d, box_sdf(p,bx[i*2].xyz,bx[i*2+1].xyz)); }\n"
     "  return d; }\n"
     /* Voxelised static albedo at p, sampled at mip @p lod (cone footprint). Dynamic\n"
      * collider boxes have no baked albedo -> neutral grey fallback. */
@@ -513,15 +522,22 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)n_lights*16*sizeof(float), lb); }
     free(lb);
 
-    /* Pack boxes: 2 vec4/box (centre, half). Spheres -> box of half=radius. */
+    /* Pack colliders: 2 vec4 each. vec4_0 = (a.xyz, kind); vec4_1 depends on kind:
+     * box -> half-extents.xyz; sphere -> (_, _, _, radius); capsule -> (b.xyz, radius).
+     * Kind codes match GI_COLLIDER_* (0=sphere,1=box,2=capsule). (rpg-85as) */
     float *bb = malloc((size_t)(n_boxes ? n_boxes : 1) * 8 * sizeof(float));
     uint32_t nb = 0;
     for (uint32_t i = 0; i < n_boxes; ++i) {
         const gi_collider_t *c = &boxes[i]; float *o = &bb[nb*8];
-        o[0]=c->a[0]; o[1]=c->a[1]; o[2]=c->a[2]; o[3]=0;
-        if (c->kind == GI_COLLIDER_BOX) { o[4]=c->ext[0]; o[5]=c->ext[1]; o[6]=c->ext[2]; }
-        else { o[4]=c->ext[0]; o[5]=c->ext[0]; o[6]=c->ext[0]; } /* sphere approx. */
-        o[7]=0; ++nb;
+        o[0]=c->a[0]; o[1]=c->a[1]; o[2]=c->a[2]; o[3]=(float)c->kind;
+        if (c->kind == GI_COLLIDER_CAPSULE) {
+            o[4]=c->b[0]; o[5]=c->b[1]; o[6]=c->b[2]; o[7]=c->ext[0]; /* B + radius. */
+        } else if (c->kind == GI_COLLIDER_SPHERE) {
+            o[4]=0.0f; o[5]=0.0f; o[6]=0.0f; o[7]=c->ext[0];         /* radius. */
+        } else {
+            o[4]=c->ext[0]; o[5]=c->ext[1]; o[6]=c->ext[2]; o[7]=0.0f; /* box half. */
+        }
+        ++nb;
     }
     if (nb) { glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_boxes);
         glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)nb*8*sizeof(float), bb); }
