@@ -569,8 +569,9 @@ int main(int argc,char **argv){
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION,3); /* 4.3: compute for GI probes */
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK,SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE,24);
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS,1);   /* MSAA */
-    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES,8);
+    int msaa = getenv("GH_MSAA") ? atoi(getenv("GH_MSAA")) : 8;   /* MSAA samples */
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
+    SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
     SDL_DisplayMode dmode; SDL_GetDesktopDisplayMode(0,&dmode);
     SDL_Window *win=SDL_CreateWindow("hall lit+dynamic",0,0,dmode.w,dmode.h,
         SDL_WINDOW_OPENGL|SDL_WINDOW_FULLSCREEN_DESKTOP);

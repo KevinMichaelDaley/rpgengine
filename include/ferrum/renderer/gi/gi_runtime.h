@@ -47,6 +47,9 @@ typedef struct gi_runtime_config {
     uint32_t max_lights, max_boxes;
     float soft_k;                /**< penumbra sharpness. */
     int   update_interval;       /**< recompute probes every N frames (0 -> 8). */
+    int   n_probe_groups;        /**< stagger: spread the probe trace over N frames,
+                                  *   a spatially-dithered 1/N slice each frame
+                                  *   (0 -> update_interval; 1 = no stagger). */
     cluster_config_t froxel;     /**< MUST match the forward+ cluster config so
                                   *   probes bin into the exact same froxels. */
     uint32_t probe_min;          /**< guaranteed K-nearest probes per froxel (0 -> 4). */
@@ -72,6 +75,7 @@ typedef struct gi_runtime {
     uint32_t         max_lights;
     float            soft_k;
     int              update_interval; /**< recompute cadence (frames). */
+    int              n_groups;        /**< staggered dithered probe groups (>=1). */
     int              frame_counter;
     /* Per-object weights for the probe STATIC indirect (rpg-pau4). baked_w scales
      * it for lightmapped surfaces (small: extra bounce only); dyn_w for dynamic
@@ -88,6 +92,7 @@ typedef struct gi_runtime {
     float            sky_ao_color[3];
     float            sky_ao_ref;
     float            spec_gain;   /**< probe specular master scale (0 = off). */
+    int              spec_lobes;  /**< SG lobes summed per probe (1..3; GI_SG_LOBES). */
     float            ao_mult;     /**< openness->AO multiply on indirect (0..1). */
     bool             ready;
 

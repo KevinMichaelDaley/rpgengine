@@ -31,6 +31,25 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     memset(gi, 0, sizeof *gi);
     gi->soft_k = cfg->soft_k > 0.0f ? cfg->soft_k : 8.0f;
     gi->update_interval = cfg->update_interval > 0 ? cfg->update_interval : 8;
+    /* Staggered probe updates (rpg-iuiy): spread the per-update cone-trace over
+     * n_groups frames -- a spatially-DITHERED 1/n slice each frame. NOTE: profiling
+     * the great hall showed the probe trace is NOT the fps bottleneck (1200 vs 72
+     * probes: same fps; the forward PBR shading dominates), and dispatching every
+     * frame instead of every update_interval ADDS overhead -- so this defaults OFF
+     * (1). It stays available for frame-time smoothing / scaling to many more
+     * probes+lights, via cfg or GI_PROBE_GROUPS. */
+    gi->n_groups = cfg->n_probe_groups > 0 ? cfg->n_probe_groups : 1;
+    { const char *e = getenv("GI_PROBE_GROUPS");
+      if (e != NULL) { int v = atoi(e); if (v >= 1) gi->n_groups = v; } }
+    if (gi->n_groups < 1) gi->n_groups = 1;
+    /* Probe specular SG lobes summed per fragment (each = 8 corners * 2 texelFetch
+     * + exp). 2 by default: ~all the fps of 1 lobe (26.2 vs 26.9, vs 22.9 for 3)
+     * while keeping the multi-lobe quality 1 loses. GI_SG_LOBES overrides. */
+    gi->spec_lobes = 2;
+    { const char *e = getenv("GI_SG_LOBES");
+      if (e != NULL) { int v = atoi(e); if (v >= 0) gi->spec_lobes = v; } }
+    if (gi->spec_lobes < 0) gi->spec_lobes = 0;
+    if (gi->spec_lobes > 3) gi->spec_lobes = 3;
     /* Static-indirect weights (rpg-pau4): baked surfaces get a mild extra bounce,
      * dynamic objects get the full static ambience. Overridable per demo. */
     gi->static_baked_w = 0.35f;
@@ -187,15 +206,23 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
         glBufferSubData(GL_TEXTURE_BUFFER, 0, (GLsizeiptr)nidx * sizeof(uint32_t), gi->fx_idx);
     }
 
-    /* GI is low-frequency: recompute only every update_interval frames. Between
-     * updates the probe SH persists in its buffer and the forward+ keeps sampling
-     * it, so the indirect just lags slightly (imperceptible for slow lights). */
-    if (gi->frame_counter++ % gi->update_interval != 0)
-        return;
-    /* Page the on-screen SDF chunks (per-fragment world-pos classification). */
-    gi_vis_prepass_run_world(&gi->pp, scene, view, proj, gi->box_min, gi->box_max,
-                             gi->n_sdf_boxes, main_w, main_h);
-    gi_sdf_stream_page(&gi->sdf, gi->pp.visible);
+    /* GI is low-frequency. Two cadences:
+     *  - PAGING (SDF residency + light gather): the coarse update_interval, since
+     *    residency and the light set change slowly.
+     *  - PROBE TRACE: when staggering (n_groups>1) it runs EVERY frame on a
+     *    dithered 1/n slice so the ~1200-probe cost is amortised; otherwise it
+     *    runs only on the coarse update frame (legacy all-at-once). */
+    uint32_t frame = (uint32_t)gi->frame_counter++;
+    int K = gi->n_groups > 1 ? gi->n_groups : 1;
+    bool page_frame = (frame % (uint32_t)gi->update_interval == 0);
+    if (K <= 1 && !page_frame)
+        return;                        /* legacy: nothing between coarse updates. */
+    if (page_frame) {
+        /* Page the on-screen SDF chunks (per-fragment world-pos classification). */
+        gi_vis_prepass_run_world(&gi->pp, scene, view, proj, gi->box_min, gi->box_max,
+                                 gi->n_sdf_boxes, main_w, main_h);
+        gi_sdf_stream_page(&gi->sdf, gi->pp.visible);
+    }
 
     /* Gather the scene lights tagged PROBE_GI into the trace's light set: the
      * probes trace indirect from ONLY these (a static light like the sun can opt
@@ -218,9 +245,13 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
     /* Temporal EMA of the probe coefficients + visibility: full replace on the
      * first update (buffers start uninitialised), then blend so a moving occluder
      * fades in/out instead of snapping. frame_counter==1 right after the 1st. */
-    float temporal = (gi->frame_counter == 1) ? 1.0f : 0.25f;
+    /* Staggered slice this frame; full replace until every group has debuted once
+     * (buffers start uninitialised: frames 0..K-1), then blend so a moving
+     * occluder fades rather than snaps. */
+    int group = (K > 1) ? (int)(frame % (uint32_t)K) : 0;
+    float temporal = (frame < (uint32_t)K) ? 1.0f : 0.25f;
     gi_probe_gpu_dispatch(&gi->gpu, &gi->sdf, gi->light_scratch, n, boxes, n_boxes,
-                          gi->soft_k, temporal);
+                          gi->soft_k, temporal, K, group);
 }
 
 void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
@@ -241,7 +272,8 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_probe_froxel_cnt", (int32_t)u); ++u;
     glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fi_tex);
     shader_uniform_set_int(cache, program, "u_probe_froxel_idx", (int32_t)u); ++u;
-    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi_probe_gpu_depth_tbo(&gi->gpu));
+    /* Depth is now a GL_LINEAR RG32F 2D-array (hardware-filtered Chebyshev). */
+    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_2D_ARRAY, gi->gpu.depth_arr);
     shader_uniform_set_int(cache, program, "u_probe_depth", (int32_t)u); ++u;
     glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi_probe_gpu_sg_tbo(&gi->gpu));
     shader_uniform_set_int(cache, program, "u_probe_sg", (int32_t)u); ++u;
@@ -260,6 +292,7 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_vec3(cache, program, "u_gi_sky_color", gi->sky_ao_color);
     shader_uniform_set_float(cache, program, "u_gi_sky_ref", gi->sky_ao_ref);
     shader_uniform_set_float(cache, program, "u_gi_spec_gain", gi->spec_gain);
+    shader_uniform_set_int(cache, program, "u_gi_spec_lobes", gi->spec_lobes);
     shader_uniform_set_float(cache, program, "u_gi_ao_mult", gi->ao_mult);
 }
 

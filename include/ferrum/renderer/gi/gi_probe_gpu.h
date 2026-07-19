@@ -39,6 +39,10 @@ typedef struct gi_probe_gpu {
     unsigned int tbo_sh, tbo_sh_tex; /**< SH buffer texture (for the forward+ sampler). */
     unsigned int tbo_pos_tex;  /**< probe-position buffer texture (for the sampler). */
     unsigned int tbo_depth_tex; /**< depth buffer texture (RG32F: mean, meanSq). */
+    unsigned int depth_arr;    /**< RG32F 2D-array (8x8 octahedral/probe, one layer
+                                *   per probe) the compute mirrors the depth into, so
+                                *   the forward+ samples it with HARDWARE bilinear
+                                *   (GL_LINEAR) -- one tap vs 4 texelFetch + manual mix. */
     unsigned int tbo_sg_tex;   /**< SG lobe texture (RGBA32F: axis+kappa, rgb+pad). */
     uint32_t     n_probes;
     uint32_t     max_lights, max_boxes;
@@ -51,6 +55,8 @@ typedef struct gi_probe_gpu {
     float        static_k;            /**< boost applied to the gathered E. */
     void (*DispatchCompute)(unsigned int, unsigned int, unsigned int);
     void (*MemoryBarrier)(unsigned int);
+    void (*BindImageTexture)(unsigned int, unsigned int, int, unsigned char,
+                             int, unsigned int, unsigned int);
     bool ready;
 } gi_probe_gpu_t;
 
@@ -83,11 +89,15 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
  *        capsule -> only box/sphere folded here) and march every probe to every
  *        light. @p soft_k sets penumbra sharpness. Barriers so the SH TBO is
  *        ready for the forward+ pass.
+ *
+ * Staggered updates: @p ngroups > 1 splits the probes into that many spatially-
+ * dithered groups; only group @p group re-traces this dispatch (the rest keep
+ * their previous coefficients). @p ngroups <= 1 traces every probe.
  */
 void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
-                           float soft_k, float temporal);
+                           float soft_k, float temporal, int ngroups, int group);
 
 /** @brief The probe-SH texture buffer (samplerBuffer, R32F, 27/probe). */
 unsigned int gi_probe_gpu_sh_tbo(const gi_probe_gpu_t *g);

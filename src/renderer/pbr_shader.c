@@ -374,9 +374,10 @@ static const char *const PBR_FS =
     "uniform float u_gi_ao_mult;\n"   /* 0 = no AO on indirect, 1 = full openness multiply. */
     "uniform samplerBuffer u_probe_pos;\n"
     "uniform samplerBuffer u_probe_sh;\n"
-    "uniform samplerBuffer u_probe_depth;\n" /* DDGI: 8x8 octahedral (mean, meanSq)/probe. */
+    "uniform sampler2DArray u_probe_depth;\n" /* DDGI: 8x8 octahedral (mean, meanSq)/probe, one layer/probe, GL_LINEAR. */
     "uniform samplerBuffer u_probe_sg;\n"    /* SG specular lobe: 2 texels/probe. */
     "uniform float u_gi_spec_gain;\n"        /* master scale for probe specular (0=off). */
+    "uniform int u_gi_spec_lobes;\n"         /* SG lobes summed per probe (1..3). */
     "uniform usamplerBuffer u_probe_froxel_off;\n"
     "uniform usamplerBuffer u_probe_froxel_cnt;\n"
     "uniform usamplerBuffer u_probe_froxel_idx;\n"
@@ -390,15 +391,12 @@ static const char *const PBR_FS =
     /* DDGI visibility weight: probability the shading point @p wp (dist @p dist to
      * the probe along @p dir) is in front of what the probe sees in that
      * direction. Chebyshev on the stored depth mean/variance. */
-    "vec2 depth_texel(int probe, ivec2 tc){ tc=clamp(tc, ivec2(0), ivec2(7));\n"
-    "  return texelFetch(u_probe_depth, probe*64 + tc.y*8 + tc.x).rg; }\n"
-    /* BILINEAR-filter the octahedral depth map (border-clamped -- the seam error\n"
-     * at the octahedron edges is negligible; nearest-texel picking would step\n"
-     * across texels and diamond-pattern the result). Returns (mean, meanSq). */
+    /* HARDWARE-bilinear the octahedral depth map: one GL_LINEAR tap on the RG32F\n"
+     * 2D-array (8x8/probe, one layer/probe) the compute mirrors into. Replaces the\n"
+     * old 4x texelFetch + manual mix (u_probe_depth was a samplerBuffer). Border-\n"
+     * clamped -- the octahedron-edge seam error is negligible. (mean, meanSq). */
     "vec2 depth_bilinear(int probe, vec3 dir){\n"
-    "  vec2 uv=oct_enc(dir)*8.0-0.5; ivec2 t0=ivec2(floor(uv)); vec2 f=uv-vec2(t0);\n"
-    "  return mix(mix(depth_texel(probe,t0),           depth_texel(probe,t0+ivec2(1,0)), f.x),\n"
-    "            mix(depth_texel(probe,t0+ivec2(0,1)),  depth_texel(probe,t0+ivec2(1,1)), f.x), f.y); }\n"
+    "  return texture(u_probe_depth, vec3(oct_enc(dir), float(probe))).rg; }\n"
     "float probe_vis(int probe, vec3 dir, float dist){\n"
     "  vec2 mm=depth_bilinear(probe,dir);\n"
     "  float mean=mm.x; float var=max(mm.y-mean*mean, 1e-3);\n"
@@ -515,7 +513,7 @@ static const char *const PBR_FS =
     "    if(w<=0.0) continue;\n"
     /* Sum the probe's 3 SG lobes evaluated along R (multi-lobe: fire + windows). */
     "    vec3 lobesum=vec3(0.0);\n"
-    "    for(int L=0;L<3;++L){\n"
+    "    for(int L=0;L<u_gi_spec_lobes;++L){\n"
     "      vec4 a=texelFetch(u_probe_sg, (probe*3+L)*2+0);\n"   /* axis.xyz, kappa. */
     "      vec4 b=texelFetch(u_probe_sg, (probe*3+L)*2+1);\n"   /* rgb, pad. */
     "      float keff=a.w*rw;\n"                                /* rougher -> lower sharpness. */

@@ -14,12 +14,18 @@
 #define GI_GL_SHADER_STORAGE_BUFFER     0x90D2
 #define GI_GL_SHADER_STORAGE_BARRIER_BIT 0x00002000
 #define GI_GL_TEXTURE_FETCH_BARRIER_BIT 0x00000008
+#define GI_GL_READ_WRITE 0x88BA
 #define GI_SDF_UNIT_BASE 8   /* SDF resident textures bound to units 8.. */
 
 static const char *CS_SRC =
     "#version 430\n"
     "layout(local_size_x=64) in;\n"
     "uniform int u_nprobes,u_nlights,u_nboxes,u_ncones;\n"
+    /* Staggered updates (rpg-iuiy): only probes in the active group this frame\n"
+     * re-trace; a spatial-DITHER hash of the probe index scatters each group\n"
+     * across the whole volume so every region gets a few refreshes per frame.\n"
+     * u_ngroups<=1 disables (every probe every dispatch). */
+    "uniform int u_ngroups,u_group;\n"
     "uniform float u_soft, u_albedo;\n"
     "uniform float u_temporal;\n"   /* EMA blend: 1 = replace, <1 = smooth over time. */
     "uniform sampler3D u_sdf[8];\n"
@@ -49,6 +55,10 @@ static const char *CS_SRC =
      * axis.xyz + sharpness, then rgb amplitude + pad. Fit by moment-matching the\n"
      * traced radiance so glossy surfaces get a cheap directional reflection. */
     "layout(std430,binding=5) buffer PG { float psg[]; };\n"          /* r/w for temporal blend. */
+    /* Hardware-filterable mirror of the depth (image unit 0): the compute writes\n"
+     * the same octahedral (mean, meanSq) it puts in pdepth here, so the forward+\n"
+     * pass can sample it with GL_LINEAR (one bilinear tap in probe_vis). */
+    "layout(rg32f,binding=0) uniform image2DArray u_depth_img;\n"
     "const float PI=3.14159265;\n"
     "float box_sdf(vec3 p,vec3 c,vec3 h){ vec3 q=abs(p-c)-h; return length(max(q,vec3(0.0)))+min(max(q.x,max(q.y,q.z)),0.0); }\n"
     /* Distance is the ALPHA of the RGBA voxel texture (rgb = static albedo). */
@@ -141,6 +151,11 @@ static const char *CS_SRC =
     "void sh_basis(vec3 d, out float y[4]){\n"
     "  y[0]=0.282094792; y[1]=0.488602512*d.y; y[2]=0.488602512*d.z; y[3]=0.488602512*d.x; }\n"
     "void main(){ uint gid=gl_GlobalInvocationID.x; if(gid>=uint(u_nprobes)) return;\n"
+    /* Staggered/dithered gate: hash the probe index (spatial neighbours differ in\n"
+     * gid, so the hash scatters them across groups) and skip probes not in this\n"
+     * frame's group -- they keep their previous SH/depth/SG in the r/w buffers. */
+    "  if(u_ngroups>1){ uint h=gid*2654435761u; h^=h>>15; h*=2246822519u; h^=h>>13;\n"
+    "    if(int(h%uint(u_ngroups))!=u_group) return; }\n"
     /* Two SH4 sets per probe: [0..11] dynamic, [12..23] static. */
     "  vec3 o=ppos[gid].xyz; float shd[12]; float shs[12];\n"
     "  for(int k=0;k<12;++k){ shd[k]=0.0; shs[k]=0.0; }\n"
@@ -201,8 +216,10 @@ static const char *CS_SRC =
     "    float mean=dr;\n"
     "    float sig=0.5*((mean-dw)/1.036 + (mean-dn)/0.524); sig=clamp(sig,0.02,mean);\n"
     "    int di=(int(gid)*OR*OR + ty*OR+tx)*2;\n"
-    "    pdepth[di]=mix(pdepth[di], mean, u_temporal);\n"
-    "    pdepth[di+1]=mix(pdepth[di+1], mean*mean+sig*sig, u_temporal); } }\n";
+    "    float nm=mix(pdepth[di], mean, u_temporal);\n"
+    "    float nq=mix(pdepth[di+1], mean*mean+sig*sig, u_temporal);\n"
+    "    pdepth[di]=nm; pdepth[di+1]=nq;\n"
+    "    imageStore(u_depth_img, ivec3(tx,ty,int(gid)), vec4(nm,nq,0.0,0.0)); } }\n";
 
 static GLuint cs_build(void)
 {
@@ -226,6 +243,8 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     memset(g, 0, sizeof *g);
     void *dc = loader->get_proc_address("glDispatchCompute", loader->user_data);
     void *mb = loader->get_proc_address("glMemoryBarrier", loader->user_data);
+    void *bi = loader->get_proc_address("glBindImageTexture", loader->user_data);
+    memcpy(&g->BindImageTexture, &bi, sizeof bi);
     if (dc == NULL || mb == NULL) { fprintf(stderr, "gi_probe_gpu: no compute (need GL 4.3)\n"); return false; }
     memcpy(&g->DispatchCompute, &dc, sizeof dc);
     memcpy(&g->MemoryBarrier, &mb, sizeof mb);
@@ -267,6 +286,18 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glGenTextures(1, &g->tbo_depth_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_depth_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, g->b_depth);
+    /* Hardware-filterable mirror of the octahedral depth: an RG32F 2D array, 8x8
+     * per probe (one layer/probe), GL_LINEAR so the forward+ Chebyshev test is a
+     * single bilinear tap instead of 4 texelFetch + a hand-rolled mix. The compute
+     * imageStores each texel here alongside the SSBO write. */
+    glGenTextures(1, &g->depth_arr);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, g->depth_arr);
+    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RG32F, 8, 8, (GLsizei)max_probes,
+                 0, GL_RG, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     /* SG specular: 3 lobes/probe * 8 floats = 24 (6 RGBA32F texels). */
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sg);
@@ -312,7 +343,7 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
 void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const gi_light_t *lights, uint32_t n_lights,
                            const gi_collider_t *boxes, uint32_t n_boxes,
-                           float soft_k, float temporal)
+                           float soft_k, float temporal, int ngroups, int group)
 {
     if (g == NULL || !g->ready || g->n_probes == 0) return;
     if (n_lights > g->max_lights) n_lights = g->max_lights;
@@ -353,6 +384,8 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glUniform1i(glGetUniformLocation(g->prog, "u_ncones"), 8);    /* sphere samples. */
     glUniform1f(glGetUniformLocation(g->prog, "u_albedo"), 1.0f); /* gain; real albedo now from the voxel map. */
     glUniform1f(glGetUniformLocation(g->prog, "u_temporal"), temporal);
+    glUniform1i(glGetUniformLocation(g->prog, "u_ngroups"), (GLint)ngroups);
+    glUniform1i(glGetUniformLocation(g->prog, "u_group"), (GLint)group);
 
     /* Static irradiance volume: bound past the SDF slot units. */
     {
@@ -397,6 +430,11 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 3, g->b_boxes);
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 4, g->b_depth);
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 5, g->b_sg);
+    /* Bind the depth 2D-array as an r/w image (unit 0) so the compute mirrors the
+     * octahedral depth into it for hardware-filtered sampling in the forward+. */
+    if (g->BindImageTexture != NULL)
+        g->BindImageTexture(0, g->depth_arr, 0, /*layered=*/1, 0,
+                            GI_GL_READ_WRITE, GL_RG32F);
 
     g->DispatchCompute((g->n_probes + 63u) / 64u, 1u, 1u);
     g->MemoryBarrier(GI_GL_SHADER_STORAGE_BARRIER_BIT | GI_GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -416,6 +454,7 @@ void gi_probe_gpu_destroy(gi_probe_gpu_t *g)
     if (g->tbo_sh_tex) glDeleteTextures(1, &g->tbo_sh_tex);
     if (g->tbo_pos_tex) glDeleteTextures(1, &g->tbo_pos_tex);
     if (g->tbo_depth_tex) glDeleteTextures(1, &g->tbo_depth_tex);
+    if (g->depth_arr) glDeleteTextures(1, &g->depth_arr);
     if (g->tbo_sg_tex) glDeleteTextures(1, &g->tbo_sg_tex);
     memset(g, 0, sizeof *g);
 }
