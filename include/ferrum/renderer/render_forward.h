@@ -117,6 +117,12 @@ typedef struct render_forward {
     const char                  *dep_fwd[2]; /**< {"depth_pre","light_cull"} */
     void (*glFinish)(void); /**< for PROF per-pass GPU timing (NULL otherwise). */
     int   prof;             /**< 1 = print per-pass GPU-inclusive ms (PROF env). */
+    /* Debug: overdraw heatmap (PBR_OVERDRAW) + skip the depth pre-pass
+     * (PBR_NOPREPASS) to A/B its early-Z benefit. */
+    void (*glBlendFunc)(uint32_t sfactor, uint32_t dfactor);
+    void (*glDisable)(uint32_t cap);
+    int   overdraw;         /**< 1 = additive overdraw heatmap (debug mode 11). */
+    int   no_prepass;       /**< 1 = skip the depth pre-pass. */
 } render_forward_t;
 
 /**

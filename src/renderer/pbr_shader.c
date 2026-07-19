@@ -526,6 +526,12 @@ static const char *const PBR_FS =
     "  return acc*u_gi_spec_gain;\n"
     "}\n"
     "void main() {\n"
+    /* OVERDRAW debug (mode 11): emit a small constant and bail BEFORE any shading.
+     * Drawn with additive blend + GL_ALWAYS depth (see render_forward), so the
+     * framebuffer accumulates one increment per fragment that WOULD shade -- a
+     * heatmap of overdraw (== redundant probe/lightmap sampling on occluded geo:
+     * every such fragment runs the full 8-corner probe trilinear). */
+    "  if(u_debug_mode==11){ frag=vec4(0.07,0.025,0.006,1.0); return; }\n"
     /* Material textures tile at u_uv_scale; the lightmap (v_uv1) is NOT scaled. */
     "  vec2 muv = v_uv0 * u_uv_scale;\n"
     "  vec3 albedo = u_tint;\n"

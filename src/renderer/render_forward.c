@@ -11,6 +11,9 @@
 #include <time.h>
 
 #include "ferrum/renderer/gl_constants.h"
+#ifndef GL_ONE
+#define GL_ONE 1  /* additive-blend factor for the overdraw pass. */
+#endif
 #include "ferrum/renderer/material.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/pbr_shader.h"
@@ -30,7 +33,7 @@
 static void fwd_depth_submit(void *ud)
 {
     render_forward_t *f = (render_forward_t *)ud;
-    if (f->scene != NULL)
+    if (f->scene != NULL && !f->no_prepass)   /* PBR_NOPREPASS: A/B the early-Z. */
         depth_prepass_execute(&f->depth, f->scene);
 }
 
@@ -75,6 +78,15 @@ static void fwd_forward_submit(void *ud)
     f->depth.glEnable(GL_DEPTH_TEST);
     f->depth.glDepthFunc(GL_LEQUAL);
     f->depth.glDepthMask(1);
+    /* Overdraw heatmap: pass EVERY fragment (GL_ALWAYS, no depth write) and
+     * ADDITIVELY blend the debug-mode-11 constant, so the framebuffer sums one
+     * increment per shaded fragment. */
+    if (f->overdraw && f->glBlendFunc != NULL) {
+        f->depth.glDepthFunc(GL_ALWAYS);
+        f->depth.glDepthMask(0);
+        f->depth.glEnable(GL_BLEND);
+        f->glBlendFunc(GL_ONE, GL_ONE);
+    }
 
     shader_program_bind(&f->pbr);
     shader_uniform_set_mat4(&f->cache, &f->pbr, "u_view", s->camera.view, 0);
@@ -85,7 +97,8 @@ static void fwd_forward_submit(void *ud)
     shader_uniform_set_vec3(&f->cache, &f->pbr, "u_ambient", f->cfg.ambient);
     shader_uniform_set_int(&f->cache, &f->pbr, "u_light_count", 0);
     { const char *dbg = getenv("PBR_DEBUG");
-      shader_uniform_set_int(&f->cache, &f->pbr, "u_debug_mode", dbg ? atoi(dbg) : 0); }
+      int mode = f->overdraw ? 11 : (dbg ? atoi(dbg) : 0);   /* 11 = overdraw. */
+      shader_uniform_set_int(&f->cache, &f->pbr, "u_debug_mode", mode); }
     forward_plus_bind(&f->fp, &f->cache, &f->pbr, &f->cfg.cluster,
                       f->cfg.screen_w, f->cfg.screen_h);
 
@@ -176,6 +189,8 @@ static void fwd_forward_submit(void *ud)
         for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)
             static_mesh_draw_submesh(r->mesh, sub);
     }
+    if (f->overdraw && f->glDisable != NULL)      /* restore for the next pass. */
+        f->glDisable(GL_BLEND);
 }
 
 /* ── Public API ── */
@@ -190,6 +205,14 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     if (fwd->prof && cfg->loader->get_proc_address) {
         void *p = cfg->loader->get_proc_address("glFinish", cfg->loader->user_data);
         memcpy(&fwd->glFinish, &p, sizeof p);
+    }
+    fwd->overdraw = getenv("PBR_OVERDRAW") != NULL;
+    fwd->no_prepass = getenv("PBR_NOPREPASS") != NULL;
+    if (cfg->loader->get_proc_address) {
+        void *b = cfg->loader->get_proc_address("glBlendFunc", cfg->loader->user_data);
+        void *d = cfg->loader->get_proc_address("glDisable", cfg->loader->user_data);
+        memcpy(&fwd->glBlendFunc, &b, sizeof b);
+        memcpy(&fwd->glDisable, &d, sizeof d);
     }
 
     char log[1024] = { 0 };

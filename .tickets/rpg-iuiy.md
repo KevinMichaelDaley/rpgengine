@@ -74,3 +74,7 @@ PROFILING (great hall, Iris Xe, 1080p, driving): baseline 1200 probes no-stagger
 **2026-07-19T03:43:05Z**
 
 OUTCOMES: (1) SG lobes 3->2 default: +14% fps (22.9->26.2), minimal quality loss (1 lobe lost too much); GI_SG_LOBES env. (2) Octahedral depth moved SSBO/samplerBuffer -> RG32F 2D-array (GL_LINEAR, one layer/probe); probe_vis is now 1 hardware bilinear tap vs 4 texelFetch+manual mix; GI verified correct (no seams/leaks/diamonds). Marginal fps on this scene (~1fps, within +-3 noise) but correct architecture + scales with probe count/res. (3) Staggered+dithered probe updates implemented, DEFAULT OFF (regressed - probes aren't the bottleneck). (4) GH_MSAA knob. Forward PBR shading remains the bottleneck; SG lobe count was the single biggest lever found.
+
+**2026-07-19T03:58:34Z**
+
+DEPTH PREPASS + OVERDRAW: a depth pre-pass already exists (fwd_depth_submit, LEQUAL forward, no discard -> early-Z auto). Added PBR_NOPREPASS to A/B it: prepass ON ~26 fps vs OFF 17 fps = +50%! Occluded-fragment shading (each running the full 8-corner probe trilinear = 'probes sampled by occluded geo') was the cost the prepass kills. Added PBR_OVERDRAW: additive-blend GL_ALWAYS heatmap (debug mode 11, constant per fragment) -> overdraw hotspots are the roof trusses (overlapping thin beams) + geometry edges/intersections. Prepass depth buffer is available for postprocessing.
