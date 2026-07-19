@@ -27,3 +27,9 @@ MUST capture the implicit invariant currently living only in hall_lit_dynamic.c:
 
 Descriptor parses headlessly into a struct listing every asset class with paths + transforms + the bake-order/sh-layer mapping; round-trips the great_hall scene (same mesh order, lightmap, probes, sdf) as hall_lit_dynamic.c assembles today; unit test loads a descriptor and asserts the asset lists + ordering.
 
+
+## Notes
+
+**2026-07-19T08:08:12Z**
+
+Core descriptor + headless loader landed (TDD, 13/13 green incl. great_hall round-trip). Module src/scene/ + include/ferrum/scene/: scene_desc_t with ordered objects (bake order preserved), material table + name->index resolution, chunked light-data refs (lightmap/sdf prefixes, perchunk, manifest), and the probe spec (spacing/vspacing + AABB importance boxes + optional manual). JSON via the existing arena-based json_parse (no malloc, no GL); folded into libheadless.a so the server can parse levels headlessly. Test data: datasets/great_hall_export/great_hall.scene (generated from the exporter scene.json). REMAINING (add test-first when a consumer needs them with real data): explicit skeleton (fskel) refs and a physics collider-set section -- great_hall has neither, so per the no-backfilling rule they are deferred to rpg-q1cp (server colliders) / the skeletal path rather than added speculatively.
