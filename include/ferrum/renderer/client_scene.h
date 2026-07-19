@@ -59,6 +59,10 @@ typedef struct client_scene {
     unsigned int         sh_tex[9];   /**< baked-lightmap SH coeff arrays (0 = none). */
     int                  sh_borrowed;  /**< 1 = sh_tex owned by the light streamer (don't delete). */
     gi_static_volume_t   static_vol;   /**< baked-irradiance volume for the probe GI. */
+    float               *probe_pos_full;/**< full generated probe set [probe_count_full*3]. */
+    uint32_t             probe_count_full;
+    float               *probe_scratch; /**< [probe_count_full*3] scratch for the resident subset. */
+    uint32_t             probe_resident; /**< last resident probe count pushed (churn guard). */
     render_light_store_t lights;
     render_light_t      *light_buf;   /**< lights backing. */
     const gl_loader_t   *loader;
@@ -92,6 +96,16 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
                          const gi_collider_t *boxes, uint32_t n_boxes,
                          int screen_w, int screen_h);
+
+/**
+ * @brief Stream the probe set to the RESIDENT light-data chunks (rpg-zygg): keep
+ *        only the generated probes inside one of the @p n_boxes resident chunk
+ *        world boxes and push them to the GI runtime (gi_runtime_set_probes). As
+ *        chunks page in/out (SDF streaming), the probe set follows. No-op if the
+ *        scene wasn't loaded with a full probe set. Call per frame on the GL thread.
+ */
+void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
+                                const float *box_max, uint32_t n_boxes);
 
 /** Free all owned GL resources. */
 void client_scene_destroy(client_scene_t *cs);

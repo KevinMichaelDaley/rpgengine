@@ -383,6 +383,17 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     for (int a = 0; a < 3; ++a) { cfg.gi_aabb_min[a] = amin[a]; cfg.gi_aabb_max[a] = amax[a]; }
     cfg.gi_aabb_min[1] += 0.3f; cfg.gi_aabb_max[1] -= 0.2f;
     cfg.gi_probe_pos = pset.positions; cfg.gi_probe_count = pset.count;
+    cfg.gi_max_probes = pset.count;   /* allow set_probes to restore the full set. */
+    /* Keep a persistent copy of the full generated probe set so it can be streamed
+     * down to the resident chunks each frame (client_scene_stream_probes). */
+    cs->probe_count_full = pset.count;
+    cs->probe_resident = 0xFFFFFFFFu;
+    if (pset.count > 0 && pset.positions != NULL) {
+        cs->probe_pos_full = malloc((size_t)pset.count * 3 * sizeof(float));
+        cs->probe_scratch = malloc((size_t)pset.count * 3 * sizeof(float));
+        if (cs->probe_pos_full != NULL)
+            memcpy(cs->probe_pos_full, pset.positions, (size_t)pset.count * 3 * sizeof(float));
+    }
     cfg.gi_grid_cell = 4.0f;
     cfg.gi_prepass_w = (screen_w / 8 > 0) ? screen_w / 8 : 1;
     cfg.gi_prepass_h = (screen_h / 8 > 0) ? screen_h / 8 : 1;
@@ -431,6 +442,35 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     return true;
 }
 
+void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
+                                const float *box_max, uint32_t n_boxes)
+{
+    if (cs == NULL || cs->probe_pos_full == NULL || cs->probe_scratch == NULL ||
+        cs->probe_count_full == 0 || box_min == NULL || box_max == NULL || n_boxes == 0)
+        return;
+    /* Keep probes inside at least one resident chunk box. */
+    uint32_t keep = 0;
+    for (uint32_t i = 0; i < cs->probe_count_full; ++i) {
+        const float *p = &cs->probe_pos_full[i * 3];
+        int inside = 0;
+        for (uint32_t b = 0; b < n_boxes && !inside; ++b) {
+            const float *mn = &box_min[b * 3], *mx = &box_max[b * 3];
+            inside = (p[0] >= mn[0] && p[0] <= mx[0] && p[1] >= mn[1] && p[1] <= mx[1] &&
+                      p[2] >= mn[2] && p[2] <= mx[2]);
+        }
+        if (inside) {
+            cs->probe_scratch[keep*3+0] = p[0]; cs->probe_scratch[keep*3+1] = p[1];
+            cs->probe_scratch[keep*3+2] = p[2]; ++keep;
+        }
+    }
+    /* Only re-push when the resident count changes (avoid per-frame accel rebuild
+     * when residency is stable). */
+    if (keep != cs->probe_resident) {
+        render_world_set_probes(&cs->world, cs->probe_scratch, keep);
+        cs->probe_resident = keep;
+    }
+}
+
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
                          const gi_collider_t *boxes, uint32_t n_boxes,
                          int screen_w, int screen_h)
@@ -452,5 +492,6 @@ void client_scene_destroy(client_scene_t *cs)
     gi_static_volume_destroy(&cs->static_vol);
     free(cs->meshes); free(cs->materials); free(cs->textures);
     free(cs->rb); free(cs->light_buf);
+    free(cs->probe_pos_full); free(cs->probe_scratch);
     memset(cs, 0, sizeof *cs);
 }

@@ -177,6 +177,23 @@ int gi_sdf_stream_chunk_loaded(const gi_sdf_stream_t *s, int c)
     return (s != NULL && s->ram != NULL && c >= 0 && c < s->n_chunks && s->ram[c].dist != NULL) ? 1 : 0;
 }
 
+int gi_sdf_stream_resident_boxes(const gi_sdf_stream_t *s, float *out_min,
+                                 float *out_max, int cap)
+{
+    if (s == NULL || out_min == NULL || out_max == NULL) return 0;
+    int n = 0;
+    for (int c = 0; c < s->n_chunks && n < cap; ++c) {
+        if (s->ram[c].dist == NULL) continue;   /* not RAM-resident */
+        const gi_sdf_chunk_ram_t *r = &s->ram[c];
+        for (int a = 0; a < 3; ++a) {
+            out_min[n*3+a] = r->origin[a];
+            out_max[n*3+a] = r->origin[a] + (float)r->dims[a] * r->voxel;
+        }
+        ++n;
+    }
+    return n;
+}
+
 int gi_sdf_stream_boxes(const gi_sdf_stream_t *s, float *out_min, float *out_max)
 {
     if (s == NULL || out_min == NULL || out_max == NULL)

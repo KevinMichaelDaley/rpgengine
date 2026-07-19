@@ -77,6 +77,11 @@ void gi_sdf_stream_chunk_evict(gi_sdf_stream_t *s, int c);
 /** @brief 1 if chunk @p c's distance field is RAM-resident, else 0. */
 int gi_sdf_stream_chunk_loaded(const gi_sdf_stream_t *s, int c);
 
+/** @brief World boxes (3 floats each) of the RAM-resident chunks, up to @p cap.
+ *  Used to gate streamed probe sets to the loaded chunks. Returns the count. */
+int gi_sdf_stream_resident_boxes(const gi_sdf_stream_t *s, float *out_min,
+                                 float *out_max, int cap);
+
 /**
  * @brief Fill @p out_min / @p out_max (3 floats per chunk) with each SDF chunk's
  *        world box, for the WORLD-mode visibility prepass to classify fragments

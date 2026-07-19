@@ -33,6 +33,7 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
         }
         gc.probe_pos_in = cfg->gi_probe_pos;
         gc.n_probe_in = cfg->gi_probe_count;
+        gc.max_probes = cfg->gi_max_probes;
         gc.grid_cell = cfg->gi_grid_cell;
         gc.prepass_w = cfg->gi_prepass_w;
         gc.prepass_h = cfg->gi_prepass_h;

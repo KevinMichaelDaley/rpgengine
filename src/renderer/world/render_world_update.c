@@ -13,3 +13,8 @@ void render_world_update(render_world_t *rw, const gi_collider_t *boxes,
                          rw->scene->camera.proj, boxes, n_boxes, screen_w, screen_h);
     render_forward_render(&rw->forward, rw->scene);
 }
+
+void render_world_set_probes(render_world_t *rw, const float *pos, uint32_t count)
+{
+    if (rw != NULL && rw->gi_enabled) gi_runtime_set_probes(&rw->gi, pos, count);
+}

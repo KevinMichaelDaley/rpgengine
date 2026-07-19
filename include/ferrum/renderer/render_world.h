@@ -50,6 +50,8 @@ typedef struct render_world_config {
     float        gi_aabb_min[3], gi_aabb_max[3];
     const float *gi_probe_pos;          /**< [gi_probe_count*3], copied by gi_runtime_init. */
     uint32_t     gi_probe_count;
+    uint32_t     gi_max_probes;         /**< probe backing cap for runtime set-probe
+                                         *   updates (streamed probes); 0 => fixed. */
     float        gi_grid_cell;
     int          gi_prepass_w, gi_prepass_h;
     uint32_t     gi_max_lights, gi_max_boxes;
@@ -90,6 +92,10 @@ void render_world_destroy(render_world_t *rw);
  *  FBO/viewport is bound. */
 void render_world_update(render_world_t *rw, const gi_collider_t *boxes,
                          uint32_t n_boxes, int screen_w, int screen_h);
+
+/** Replace the GI probe set at runtime (streamed / per-zone probes, rpg-zygg):
+ *  forwards to gi_runtime_set_probes. @p count clamped to the init max_probes. */
+void render_world_set_probes(render_world_t *rw, const float *pos, uint32_t count);
 
 #ifdef __cplusplus
 }

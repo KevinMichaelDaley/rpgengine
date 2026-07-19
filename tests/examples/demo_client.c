@@ -1398,6 +1398,13 @@ int main(int argc, char **argv) {
                     for (int i = 0; i < cs.static_count; ++i)
                         cs.scene.items[i].sh_layer =
                             client_light_stream_mesh_layer(&lstream, (uint32_t)i);
+                    /* PROBE_STREAM: gate the probe set to the resident SDF chunks so
+                     * probes page with the light-data streaming (rpg-zygg). */
+                    if (getenv("PROBE_STREAM") && lstream.has_sdf) {
+                        static float pbmin[64 * 3], pbmax[64 * 3];
+                        int nb = gi_sdf_stream_resident_boxes(&lstream.sdf, pbmin, pbmax, 64);
+                        client_scene_stream_probes(&cs, pbmin, pbmax, (uint32_t)nb);
+                    }
                 }
                 client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);
             }
