@@ -26,7 +26,8 @@
 
 bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
 {
-    if (gi == NULL || cfg == NULL || cfg->loader == NULL || cfg->sdf_prefix == NULL)
+    if (gi == NULL || cfg == NULL || cfg->loader == NULL ||
+        (cfg->sdf_prefix == NULL && cfg->ext_sdf == NULL))
         return false;
     memset(gi, 0, sizeof *gi);
     gi->soft_k = cfg->soft_k > 0.0f ? cfg->soft_k : 8.0f;
@@ -73,12 +74,20 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     gi->vis_sharp = 1.0f;
     { const char *e = getenv("GI_VIS_SHARP"); if (e) { float v=(float)atof(e); if (v>0.0f) gi->vis_sharp=v; } }
 
-    /* --- Baked SDF residency. --- */
-    if (gi_sdf_stream_load(&gi->sdf, cfg->sdf_prefix) <= 0) {
-        fprintf(stderr, "gi_runtime: no SDF chunks at %s\n", cfg->sdf_prefix);
-        return false;
+    /* --- Baked SDF residency: borrow an external (streamed) SDF stream if given
+     * (rpg-c7fk), else self-load all chunks from the prefix. --- */
+    if (cfg->ext_sdf != NULL) {
+        gi->sdf_ptr = cfg->ext_sdf;
+        gi->sdf_owned = 0;
+    } else {
+        if (gi_sdf_stream_load(&gi->sdf, cfg->sdf_prefix) <= 0) {
+            fprintf(stderr, "gi_runtime: no SDF chunks at %s\n", cfg->sdf_prefix);
+            return false;
+        }
+        gi->sdf_ptr = &gi->sdf;
+        gi->sdf_owned = 1;
     }
-    gi->n_sdf_boxes = gi_sdf_stream_boxes(&gi->sdf, gi->box_min, gi->box_max);
+    gi->n_sdf_boxes = gi_sdf_stream_boxes(gi->sdf_ptr, gi->box_min, gi->box_max);
 
     /* --- Adaptive probes seeded over the play volume + accel grid. --- */
     gi->probe_pos = malloc((size_t)GI_MAX_PROBES * 3 * sizeof(float));
@@ -98,7 +107,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
         uint32_t seeded = gi->probes.count; float band = spacing * 0.9f; uint32_t keep = 0;
         for (uint32_t i = 0; i < gi->probes.count; ++i) {
             const float *p = &gi->probe_pos[i * 3];
-            float d = gi_sdf_stream_sample(&gi->sdf, p);
+            float d = gi_sdf_stream_sample(gi->sdf_ptr, p);
             if (d > 0.05f && d < band) {
                 if (keep != i) { gi->probe_pos[keep*3+0]=p[0]; gi->probe_pos[keep*3+1]=p[1]; gi->probe_pos[keep*3+2]=p[2]; }
                 ++keep;
@@ -184,11 +193,11 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     /* --- SDF vis prepass. --- */
     if (gi_vis_prepass_init(&gi->pp, cfg->prepass_w > 0 ? cfg->prepass_w : 240,
                             cfg->prepass_h > 0 ? cfg->prepass_h : 135,
-                            gi->sdf.n_chunks) != 0) {
+                            gi->sdf_ptr->n_chunks) != 0) {
         gi_runtime_destroy(gi); return false;
     }
     fprintf(stderr, "gi_runtime: %u probes, %d SDF chunks, accel %dx%dx%d\n",
-            gi->probes.count, gi->sdf.n_chunks, gd[0], gd[1], gd[2]);
+            gi->probes.count, gi->sdf_ptr->n_chunks, gd[0], gd[1], gd[2]);
     gi->ready = true;
     return true;
 }
@@ -254,7 +263,7 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
         /* Page the on-screen SDF chunks (per-fragment world-pos classification). */
         gi_vis_prepass_run_world(&gi->pp, scene, view, proj, gi->box_min, gi->box_max,
                                  gi->n_sdf_boxes, main_w, main_h);
-        gi_sdf_stream_page(&gi->sdf, gi->pp.visible);
+        gi_sdf_stream_page(gi->sdf_ptr, gi->pp.visible);
     }
 
     /* Gather the scene lights tagged PROBE_GI into the trace's light set: the
@@ -286,7 +295,7 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
      * (checkerboard-scattered) update nudges the probe gently -- avoids the GI
      * visibly "shifting fast" as groups cycle. gi->smooth is the steady blend. */
     float temporal = (tick < (uint32_t)K) ? 1.0f : gi->smooth;
-    gi_probe_gpu_dispatch(&gi->gpu, &gi->sdf, gi->light_scratch, n, boxes, n_boxes,
+    gi_probe_gpu_dispatch(&gi->gpu, gi->sdf_ptr, gi->light_scratch, n, boxes, n_boxes,
                           gi->soft_k, temporal, K, group, gi->probe_grid_dim,
                           gi->probe_grid_origin, gi->probe_grid_cell);
 }
@@ -340,7 +349,7 @@ void gi_runtime_destroy(gi_runtime_t *gi)
 {
     if (gi == NULL) return;
     gi_vis_prepass_destroy(&gi->pp);
-    gi_sdf_stream_destroy(&gi->sdf);
+    if (gi->sdf_owned) gi_sdf_stream_destroy(&gi->sdf);  /* external stream: not ours. */
     gi_probe_gpu_destroy(&gi->gpu);
     if (gi->tbo_cs) glDeleteBuffers(1, &gi->tbo_cs);
     if (gi->tbo_cs_tex) glDeleteTextures(1, &gi->tbo_cs_tex);

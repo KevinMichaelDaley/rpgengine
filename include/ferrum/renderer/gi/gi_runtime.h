@@ -37,6 +37,10 @@ extern "C" {
 typedef struct gi_runtime_config {
     const gl_loader_t *loader;
     const char *sdf_prefix;      /**< baked SDF sidecar prefix (<prefix>_cNNN.sdf). */
+    gi_sdf_stream_t *ext_sdf;    /**< optional externally-owned SDF stream (streamed
+                                  *   residency, rpg-c7fk). If set, gi_runtime does
+                                  *   NOT self-load @c sdf_prefix -- it borrows this
+                                  *   (the owner loads/pages chunks); NULL = self-load. */
     float aabb_min[3], aabb_max[3]; /**< probe play volume (accel-grid bounds). */
     const float *probe_pos_in;   /**< explicit probe positions (3/probe) for manual
                                   *   adaptive placement; NULL = seed a lattice. */
@@ -60,7 +64,9 @@ typedef struct gi_runtime_config {
 /** The dynamic-GI runtime (owns everything). */
 typedef struct gi_runtime {
     gi_vis_prepass_t pp;
-    gi_sdf_stream_t  sdf;
+    gi_sdf_stream_t  sdf;         /**< self-owned SDF stream (used iff @c sdf_owned). */
+    gi_sdf_stream_t *sdf_ptr;     /**< active SDF stream (&sdf, or the external one). */
+    int              sdf_owned;   /**< 1 = gi_runtime loaded+owns @c sdf; 0 = external. */
     gi_probe_gpu_t   gpu;
     gi_probe_set_t   probes;
     gi_probe_grid_t  grid;
