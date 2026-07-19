@@ -1,106 +1,11 @@
 {
- "name": "great_hall",
+ "collection": "great_hall",
  "materials": [
-  {
-   "name": "great_hall_floor_stone",
-   "tint": [
-    1.0,
-    1.0,
-    1.0
-   ],
-   "metalness": 0.0,
-   "roughness_min": 0.0,
-   "roughness_max": 1.0,
-   "normal_scale": 1.0,
-   "ao_strength": 1.0,
-   "uv_scale": [
-    0.23809523809523808,
-    0.23809523809523808
-   ],
-   "albedo": "materials/great_hall_floor_stone/albedo.png",
-   "normal": "materials/great_hall_floor_stone/normal.png",
-   "roughness": "materials/great_hall_floor_stone/roughness.png"
-  },
-  {
-   "name": "great_hall_stone_wall",
-   "tint": [
-    1.0,
-    1.0,
-    1.0
-   ],
-   "metalness": 0.0,
-   "roughness_min": 0.0,
-   "roughness_max": 1.0,
-   "normal_scale": 1.0,
-   "ao_strength": 1.0,
-   "uv_scale": [
-    0.2222222222222222,
-    0.3846153846153846
-   ],
-   "albedo": "materials/great_hall_stone_wall/albedo.png",
-   "normal": "materials/great_hall_stone_wall/normal.png",
-   "roughness": "materials/great_hall_stone_wall/roughness.png"
-  },
-  {
-   "name": "great_hall_reveal_weave",
-   "tint": [
-    1.0,
-    1.0,
-    1.0
-   ],
-   "metalness": 0.0,
-   "roughness_min": 0.0,
-   "roughness_max": 1.0,
-   "normal_scale": 1.0,
-   "ao_strength": 1.0,
-   "uv_scale": [
-    0.8333333333333334,
-    1.0
-   ],
-   "albedo": "materials/great_hall_reveal_weave/albedo.png",
-   "normal": "materials/great_hall_reveal_weave/normal.png",
-   "roughness": "materials/great_hall_reveal_weave/roughness.png"
-  },
-  {
-   "name": "great_hall_timber",
-   "tint": [
-    1.0,
-    1.0,
-    1.0
-   ],
-   "metalness": 0.0,
-   "roughness_min": 0.0,
-   "roughness_max": 1.0,
-   "normal_scale": 1.0,
-   "ao_strength": 1.0,
-   "uv_scale": [
-    1.0,
-    1.0
-   ],
-   "albedo": "materials/great_hall_timber/albedo.png",
-   "normal": "materials/great_hall_timber/normal.png",
-   "roughness": "materials/great_hall_timber/roughness.png"
-  },
-  {
-   "name": "great_hall_roof_limestone",
-   "tint": [
-    1.0,
-    1.0,
-    1.0
-   ],
-   "metalness": 0.0,
-   "roughness_min": 0.0,
-   "roughness_max": 1.0,
-   "normal_scale": 1.0,
-   "ao_strength": 1.0,
-   "uv_scale": [
-    0.5,
-    0.5
-   ],
-   "albedo": "materials/great_hall_roof_limestone/albedo.png",
-   "normal": "materials/great_hall_roof_limestone/normal.png",
-   "roughness": "materials/great_hall_roof_limestone/roughness.png"
-  }
+  "great_hall_floor_stone",
+  "great_hall_stone_wall",
+  "great_hall_reveal_weave",
+  "great_hall_timber",
+  "great_hall_roof_limestone"
  ],
  "objects": [
   {
@@ -2296,45 +2201,5 @@
    "vertices": 570,
    "faces": 602
   }
- ],
- "lights": [
-  {
-   "kind": "directional",
-   "name": "great_hall_sun",
-   "position": [
-    0.0,
-    0.0,
-    -0.0
-   ],
-   "direction": [
-    -0.5570453405380249,
-    -0.6020491719245911,
-    -0.5720465779304504
-   ],
-   "color": [
-    1.0,
-    1.0,
-    1.0
-   ],
-   "intensity": 20.0,
-   "flags": [
-    "baked",
-    "dynamic_indirect",
-    "shadow"
-   ]
-  }
- ],
- "colliders": [],
- "lightmap": {
-  "prefix": "great_hall.flm",
-  "perchunk": false,
-  "manifest": ""
- },
- "sdf": {
-  "prefix": "great_hall.flm"
- },
- "probes": {
-  "spacing": 1.1,
-  "vspacing": 0.8
- }
+ ]
 }

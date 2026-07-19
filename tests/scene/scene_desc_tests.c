@@ -392,6 +392,9 @@ static int test_load_great_hall(void)
     }
     ASSERT_INT_EQ(d.material_count, 5);
     ASSERT_STR_EQ(d.materials[0].name, "great_hall_floor_stone");
+    /* Exporter-produced descriptor carries FULL material defs (baked map refs),
+     * not just names (rpg-8302 step b). */
+    ASSERT_TRUE(d.materials[0].tex[SCENE_DESC_MAT_TEX_ALBEDO][0] != '\0');
     ASSERT_INT_EQ(d.object_count, 84);
     /* First object == first baked mesh (bake order). */
     ASSERT_STR_EQ(d.objects[0].name, "great_hall_collar_0");
@@ -400,15 +403,16 @@ static int test_load_great_hall(void)
     ASSERT_STR_EQ(d.lightdata.sdf_prefix, "great_hall.flm");
     ASSERT_FLT_EQ(d.probes.spacing, 1.1f);
     ASSERT_FLT_EQ(d.probes.vspacing, 0.8f);
-    /* Collision set: a ground halfspace + static mesh colliders for real geo. */
-    ASSERT_INT_EQ(d.collider_count, 4);
-    ASSERT_INT_EQ(d.colliders[0].kind, SCENE_DESC_COLLIDER_HALFSPACE);
-    ASSERT_STR_EQ(d.colliders[0].name, "ground");
-    ASSERT_FLT_EQ(d.colliders[0].normal[1], 1.0f);
-    ASSERT_INT_EQ(d.colliders[1].kind, SCENE_DESC_COLLIDER_MESH);
-    ASSERT_STR_EQ(d.colliders[1].mesh, "meshes/great_hall_floor.fvma");
-    ASSERT_TRUE(d.colliders[1].object_ref >= 0);
-    ASSERT_TRUE(d.colliders[1].is_static);
+    /* The hall is all-static: the exporter emits colliders only for objects
+     * marked dynamic (there are none), so the collision set is empty. */
+    ASSERT_INT_EQ(d.collider_count, 0);
+    /* The sun: a single directional light baked into the lightmap and opted into
+     * the dynamic probe GI (exporter-emitted, not hardcoded in the runtime). */
+    ASSERT_INT_EQ(d.light_count, 1);
+    ASSERT_INT_EQ(d.lights[0].kind, SCENE_DESC_LIGHT_DIRECTIONAL);
+    ASSERT_INT_EQ(d.lights[0].flags, SCENE_DESC_LIGHT_FLAG_BAKED |
+                                     SCENE_DESC_LIGHT_FLAG_DYNAMIC_INDIRECT |
+                                     SCENE_DESC_LIGHT_FLAG_SHADOW);
     return 0;
 }
 

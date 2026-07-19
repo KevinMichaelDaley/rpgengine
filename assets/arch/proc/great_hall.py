@@ -1183,4 +1183,10 @@ def build_hall_scene(bake_root, collection=None, name="great_hall"):
     assign_roof_material(col)
     assign_dais_material(col, os.path.join(bake_root, "bake_floor"))
     _setup_lighting(name)
+    # Level probe-density tuning, authored on the scene so the exporter emits it
+    # into the descriptor's probe spec (not hardcoded in the exporter). These are
+    # the hall's tuned grid steps (denser than the engine default).
+    scn = bpy.context.scene
+    scn["ferrum_probe_spacing"] = 1.1
+    scn["ferrum_probe_vspacing"] = 0.8
     return col

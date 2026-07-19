@@ -19,6 +19,7 @@ Run inside Blender (the scene must be loaded)::
 or headless with the same globals via --python-expr.
 """
 import json
+import math
 import os
 
 import bpy
@@ -83,6 +84,77 @@ def _read_lighting():
     return {"sun_dir": d, "sun_color": c, "sky_color": sky}
 
 
+def _scene_light(o):
+    """Extract a scene-descriptor light dict from a Blender LIGHT object (engine
+    Y-up conversion here; the pure ::_light_record does the schema mapping)."""
+    import mathutils
+    L = o.data
+    kind = _LIGHT_KIND.get(L.type, "point")
+    fwd = (o.matrix_world.to_3x3() @ mathutils.Vector((0, 0, -1))).normalized()
+    direction = [float(fwd.x), float(fwd.z), float(-fwd.y)]  # travel dir, Y-up
+    rng = (float(getattr(L, "cutoff_distance", 0.0))
+           if getattr(L, "use_custom_distance", False) else 0.0)
+    return _light_record(
+        kind, o.name,
+        _engine_pos(o.matrix_world.translation), direction,
+        [float(L.color[0]), float(L.color[1]), float(L.color[2])],
+        float(L.energy), rng=rng,
+        radius=float(getattr(L, "shadow_soft_size", 0.0)),
+        spot_size_rad=float(getattr(L, "spot_size", 0.0)),
+        spot_blend=float(getattr(L, "spot_blend", 0.0)),
+        use_shadow=bool(getattr(L, "use_shadow", True)))
+
+
+def _export_lights():
+    """Every light in the scene -> descriptor light list. The exporter emits ALL
+    lights (incl. the sun) so the descriptor is the single source of level
+    lighting -- nothing is hand-authored or hardcoded in the runtime."""
+    return [_scene_light(o) for o in bpy.context.scene.objects
+            if o.type == 'LIGHT']
+
+
+def _object_collider(o):
+    """A streamed physics collider for a DYNAMIC-marked object, or None. Static
+    level geometry (the great hall) is unmarked and gets no collider -- collision
+    is opt-in per object via the Talarium ``talarium_dynamic`` marking. Non-
+    armature dynamic bodies carry a primitive shape (``talarium_obj_shape``);
+    armature-driven bodies get their bone-keyed colliders from the .fskel."""
+    if not bool(o.get("talarium_dynamic", False)):
+        return None
+    shape = str(o.get("talarium_obj_shape", "box"))
+    kind = _COLLIDER_KIND.get(shape, "box")
+    loc, rot_q, _scale = o.matrix_world.decompose()
+    dim = o.dimensions
+    rec = {"kind": kind, "name": o.name, "static": False,
+           "position": _engine_pos(loc), "rotation": _engine_quat(rot_q)}
+    if kind == "box":
+        rec["half_extents"] = [float(dim.x) * 0.5, float(dim.z) * 0.5,
+                               float(dim.y) * 0.5]
+    elif kind == "sphere":
+        rec["radius"] = float(max(dim)) * 0.5
+    elif kind == "capsule":
+        rec["radius"] = float(o.get("talarium_capsule_radius",
+                                    max(float(dim.x), float(dim.y)) * 0.5))
+        rec["half_height"] = float(o.get("talarium_capsule_height",
+                                         float(dim.z) * 0.5))
+    elif kind in ("convex", "mesh"):
+        rec["mesh"] = os.path.join("meshes", o.name + ".fvma")
+    return rec
+
+
+def _export_colliders(col):
+    """Colliders for every DYNAMIC-marked mesh object in the collection (empty for
+    an all-static level like the great hall)."""
+    out = []
+    for o in col.objects:
+        if o.type != 'MESH':
+            continue
+        c = _object_collider(o)
+        if c is not None:
+            out.append(c)
+    return out
+
+
 def _lmres_for(obj):
     """Per-mesh lightmap atlas-rect size for the target luxel density (1 luxel per
     LUXEL_METRES at most): the mesh's largest world dimension / LUXEL_METRES,
@@ -101,6 +173,73 @@ def _engine_quat(q):
     deg rotation about X, so the axis (imaginary) part transforms like a vector
     (x, y, z)->(x, z, -y) and the scalar w is unchanged."""
     return [float(q.x), float(q.z), float(-q.y), float(q.w)]
+
+
+# --------------------------------------------------------------------------
+# Descriptor section builders (pure -- no bpy -- so they can be unit-tested)
+# --------------------------------------------------------------------------
+
+#: Blender light data-type -> scene-descriptor light kind.
+_LIGHT_KIND = {"SUN": "directional", "POINT": "point",
+               "SPOT": "spot", "AREA": "area"}
+
+
+def _material_desc(rec):
+    """Map an ``export_material`` record to a scene-descriptor material object
+    (the schema scene_desc_material_t parses). Baked map paths (albedo/normal/
+    roughness/ao) become texture references; scalar PBR params pass through. Pure:
+    takes/returns plain dicts, so it is unit-testable without Blender."""
+    maps = rec.get("maps", {})
+    d = {
+        "name": rec["name"],
+        "tint": list(rec.get("tint", [1.0, 1.0, 1.0])),
+        "metalness": float(rec.get("metalness", 0.0)),
+        "roughness_min": float(rec.get("roughness_min", 0.0)),
+        "roughness_max": float(rec.get("roughness_max", 1.0)),
+        "normal_scale": float(rec.get("normal_scale", 1.0)),
+        "ao_strength": float(rec.get("ao_strength", 1.0)),
+        "uv_scale": list(rec.get("uv_scale", [1.0, 1.0])),
+    }
+    # Descriptor texture keys (see scene_desc_parse_objects.c material parser).
+    for ch in ("albedo", "normal", "roughness", "ao"):
+        if maps.get(ch):
+            d[ch] = maps[ch]
+    return d
+
+
+def _light_record(kind, name, position, direction, color, energy,
+                  rng=0.0, radius=0.0, spot_size_rad=0.0, spot_blend=0.0,
+                  use_shadow=True):
+    """Build a scene-descriptor light dict from already-converted (engine Y-up)
+    values. The sun (a directional light) is flagged baked+dynamic_indirect+shadow
+    so it folds into the offline lightmap AND is gathered by the runtime SDF-probe
+    GI; other lights are realtime (+shadow). Spot cones (Blender full-angle
+    radians + blend) become inner/outer DEGREES the descriptor stores as cosines.
+    Pure -- no bpy -- so it is unit-testable."""
+    rec = {"kind": kind, "name": name,
+           "position": [float(c) for c in position],
+           "direction": [float(c) for c in direction],
+           "color": [float(c) for c in color],
+           "intensity": float(energy)}
+    if kind in ("point", "spot"):
+        rec["range"] = float(rng)
+        rec["radius"] = float(radius)
+    if kind == "spot":
+        outer_deg = math.degrees(spot_size_rad) * 0.5
+        rec["cone_outer_deg"] = outer_deg
+        rec["cone_inner_deg"] = outer_deg * (1.0 - float(spot_blend))
+    if kind == "directional":
+        # The sun: baked into the lightmap, opted into dynamic probe GI, shadowing.
+        rec["flags"] = ["baked", "dynamic_indirect", "shadow"]
+    else:
+        rec["flags"] = ["realtime"] + (["shadow"] if use_shadow else [])
+    return rec
+
+
+#: Talarium object collider shape -> scene-descriptor collider kind.
+_COLLIDER_KIND = {"box": "box", "sphere": "sphere", "capsule": "capsule",
+                  "convex_hull": "convex", "convex": "convex", "mesh": "mesh",
+                  "point": "point"}
 
 
 # --------------------------------------------------------------------------
@@ -484,6 +623,29 @@ def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
                 "materials": [m.name for m in mats],
                 "objects": objs}
     _write_json(os.path.join(out_dir, "scene.json"), manifest)
+
+    # Full engine level descriptor (<collection>.scene) -- the exporter-produced
+    # single source of truth loaded identically by server + client. Emits every
+    # section: full material PBR defs, objects (bake order), ALL lights (incl. the
+    # sun, baked into the lightmap), dynamic-object colliders, baked light-data
+    # refs, and the probe-placement spec. Nothing is hand-authored downstream.
+    scn = bpy.context.scene
+    descriptor = {
+        "name": collection_name,
+        "materials": [_material_desc(r) for r in mat_records],
+        "objects": objs,
+        "lights": _export_lights(),
+        "colliders": _export_colliders(col),
+        # Baker output naming: <collection>.flm lightmap + <collection>.flm_cNNN.sdf.
+        "lightmap": {"prefix": collection_name + ".flm", "perchunk": False,
+                     "manifest": ""},
+        "sdf": {"prefix": collection_name + ".flm"},
+        # Probe spacing is level-tuning: read from scene props if authored, else
+        # engine defaults. Manual probes / importance boxes are authored separately.
+        "probes": {"spacing": float(scn.get("ferrum_probe_spacing", 1.0)),
+                   "vspacing": float(scn.get("ferrum_probe_vspacing", 0.75))},
+    }
+    _write_json(os.path.join(out_dir, collection_name + ".scene"), descriptor)
 
     # 3. dual-UV .dmesh export (world-space + generated lightmap UVs) via the
     #    existing exporter -- what the lightmap baker consumes.
