@@ -312,6 +312,14 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     arena_t pa; arena_init(&pa, probe_arena_buf, sizeof probe_arena_buf);
     probe_set_t pset; memset(&pset, 0, sizeof pset);
     probe_place_grid(&desc->probes, amin, amax, &pa, &pset);
+    /* Probe-volume importance boxes densify chosen regions (distance/LOD),
+     * realising the generated-with-volume case; only when the scene specifies them
+     * (else keep the regular grid for trilinear sampling). rpg-ft0g/rpg-zygg. */
+    if (desc->probes.box_count > 0) {
+        probe_set_t refined; memset(&refined, 0, sizeof refined);
+        if (probe_place_refine_importance(&pset, &desc->probes, amin, amax, &pa, &refined))
+            pset = refined;
+    }
 
     /* render_world config: forward + GI, from the descriptor. */
     render_world_config_t cfg; memset(&cfg, 0, sizeof cfg);
