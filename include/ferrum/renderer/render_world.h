@@ -44,6 +44,9 @@ typedef struct render_world_config {
 
     int          gi_enabled;
     const char  *gi_sdf_prefix;
+    gi_sdf_stream_t *gi_ext_sdf;  /**< optional externally-owned SDF stream (streamed
+                                   *   residency); if set, gi_runtime borrows it
+                                   *   instead of self-loading @c gi_sdf_prefix. */
     float        gi_aabb_min[3], gi_aabb_max[3];
     const float *gi_probe_pos;          /**< [gi_probe_count*3], copied by gi_runtime_init. */
     uint32_t     gi_probe_count;

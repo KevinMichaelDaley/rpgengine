@@ -869,6 +869,7 @@ int main(int argc, char **argv) {
                 lcfg.jobs = &lm_jobs;
                 lcfg.base_dir = base;
                 lcfg.lm_prefix = desc.lightdata.lightmap_prefix;
+                lcfg.sdf_prefix = desc.lightdata.sdf_prefix;   /* GI streamer owns the SDF. */
                 lcfg.n_meshes = desc.object_count;
                 lcfg.ram_budget = (size_t)2u * 1024u * 1024u * 1024u;   /* 2 GiB */
                 lcfg.vram_budget = (size_t)2u * 1024u * 1024u * 1024u;  /* 2 GiB */
@@ -883,8 +884,9 @@ int main(int argc, char **argv) {
                            lstream.n_chunks, lstream.atlas.width, lstream.atlas.height);
                 }
             }
+            gi_sdf_stream_t *ext_sdf = (lstream_active && lstream.has_sdf) ? &lstream.sdf : NULL;
             if (client_scene_load(&cs, &gl.loader, &desc, base, client_img_load,
-                                  CLIENT_WIN_W, CLIENT_WIN_H, ext_sh, ext_mrect, ext_atlas)) {
+                                  CLIENT_WIN_W, CLIENT_WIN_H, ext_sh, ext_mrect, ext_atlas, ext_sdf)) {
                 cs_active = 1;
                 printf("[client] level '%s' loaded: %u objects, %u materials\n",
                        desc.name, desc.object_count, desc.material_count);

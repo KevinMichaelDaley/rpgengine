@@ -85,7 +85,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        client_image_load_fn image_load, int screen_w, int screen_h,
                        const unsigned int *ext_sh_tex,
                        const lm_atlas_rect_t *ext_mrect,
-                       const lm_atlas_t *ext_atlas);
+                       const lm_atlas_t *ext_atlas,
+                       gi_sdf_stream_t *ext_sdf);
 
 /** Render the scene for @p cam with the given dynamic GI collider proxies. */
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,

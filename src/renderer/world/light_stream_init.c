@@ -114,6 +114,14 @@ bool client_light_stream_init(client_light_stream_t *ls,
                             scene_min, scene_max, cb, cb, &slots[0])) {
         client_light_stream_destroy(ls); return false;
     }
+
+    /* SDF/voxel chunks: the GI streamer OWNS the SDF stream (gi_runtime borrows it
+     * via ext_sdf, rpg-c7fk). Loaded here; per-chunk fr_asset_stream residency is
+     * the follow-on -- for now gi_sdf_stream keeps its GPU visibility paging. */
+    if (cfg->sdf_prefix != NULL && cfg->sdf_prefix[0] != '\0') {
+        char sp[512]; snprintf(sp, sizeof sp, "%s/%s", cfg->base_dir, cfg->sdf_prefix);
+        if (gi_sdf_stream_load(&ls->sdf, sp) > 0) ls->has_sdf = 1;
+    }
     return true;
 }
 
@@ -127,6 +135,7 @@ void client_light_stream_destroy(client_light_stream_t *ls)
             for (int c = 0; c < 9; ++c) { free(slots[i].coeff[c]); slots[i].coeff[c] = NULL; }
     }
     if (ls->stream.slots != NULL) fr_asset_stream_destroy(&ls->stream);
+    if (ls->has_sdf) gi_sdf_stream_destroy(&ls->sdf);
     for (int c = 0; c < 9; ++c) if (ls->sh_tex[c]) glDeleteTextures(1, &ls->sh_tex[c]);
     free(ls->slots); free(ls->entries); free(ls->layer_chunk);
     free(ls->mrect); free(ls->mchunk);

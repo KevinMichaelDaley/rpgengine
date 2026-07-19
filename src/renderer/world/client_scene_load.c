@@ -213,7 +213,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        client_image_load_fn image_load, int screen_w, int screen_h,
                        const unsigned int *ext_sh_tex,
                        const lm_atlas_rect_t *ext_mrect,
-                       const lm_atlas_t *ext_atlas)
+                       const lm_atlas_t *ext_atlas,
+                       gi_sdf_stream_t *ext_sdf)
 {
     if (cs == NULL || loader == NULL || descp == NULL || base_dir == NULL) return false;
     const scene_desc_t *desc = descp;
@@ -365,8 +366,9 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
 
     cfg.gi_enabled = 1;
     cfg.gi_sdf_prefix = NULL;   /* set below to a persistent string. */
+    cfg.gi_ext_sdf = ext_sdf;   /* borrow the streamer's SDF stream if provided. */
     static char sdf_path[512];
-    if (desc->lightdata.sdf_prefix[0]) {
+    if (ext_sdf == NULL && desc->lightdata.sdf_prefix[0]) {
         snprintf(sdf_path, sizeof sdf_path, "%s/%s", base_dir, desc->lightdata.sdf_prefix);
         cfg.gi_sdf_prefix = sdf_path;
     }

@@ -32,6 +32,7 @@ extern "C" {
 #include "ferrum/asset/chunk_table.h"
 #include "ferrum/lightmap/lm_atlas.h"
 #include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/gi/gi_sdf_stream.h"
 
 struct job_system; /* ferrum/job/job_system.h */
 
@@ -44,6 +45,7 @@ typedef struct client_light_stream_config {
     struct job_system  *jobs;        /**< async decode executor (NULL => inline). */
     const char         *base_dir;    /**< level asset directory. */
     const char         *lm_prefix;   /**< lightmap ref, e.g. "great_hall.flm". */
+    const char         *sdf_prefix;  /**< SDF/voxel chunk ref (<prefix>_cNNN.sdf); NULL = none. */
     uint32_t            n_meshes;     /**< scene mesh count (per-mesh chunk/rect). */
     size_t              ram_budget;   /**< RAM residency budget in bytes (0=unbounded). */
     size_t              vram_budget;  /**< VRAM residency budget in bytes (0=disabled). */
@@ -63,6 +65,8 @@ typedef struct client_light_stream {
     lm_atlas_rect_t    *mrect;          /**< [n_meshes] per-mesh atlas rect. */
     int                *mchunk;         /**< [n_meshes] per-mesh chunk id (-1 none). */
     uint32_t            n_meshes;
+    gi_sdf_stream_t     sdf;           /**< SDF/voxel chunks (owned; GI borrows via ext_sdf). */
+    int                 has_sdf;       /**< 1 = @c sdf loaded. */
     const gl_loader_t  *loader;
 } client_light_stream_t;
 

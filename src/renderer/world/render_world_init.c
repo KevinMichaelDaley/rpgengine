@@ -26,6 +26,7 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
         gi_runtime_config_t gc; memset(&gc, 0, sizeof gc);
         gc.loader = cfg->forward.loader;
         gc.sdf_prefix = cfg->gi_sdf_prefix;
+        gc.ext_sdf = cfg->gi_ext_sdf;   /* borrow the streamed SDF if provided. */
         for (int i = 0; i < 3; ++i) {
             gc.aabb_min[i] = cfg->gi_aabb_min[i];
             gc.aabb_max[i] = cfg->gi_aabb_max[i];
