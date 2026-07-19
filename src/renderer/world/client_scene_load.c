@@ -4,6 +4,7 @@
  *        the reusable counterpart of hall_lit_dynamic.c's inline assembly.
  */
 #include <glad/glad.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,9 @@
 #include "ferrum/scene/scene_desc.h"
 #include "ferrum/probe/probe_place.h"
 #include "ferrum/memory/arena.h"
+#include "ferrum/lightmap/lm_atlas.h"
+#include "ferrum/editor/mesh/mesh_vao_format.h"
+#include "ferrum/editor/mesh/mesh_slot.h"
 
 /* ── Small helpers ─────────────────────────────────────────────── */
 
@@ -48,14 +52,46 @@ static uint8_t *read_file(const char *path, size_t *out_size)
     return buf;
 }
 
-/* Load a mesh (.fvma) into a GPU static mesh. Returns 0 on success. */
-static int load_mesh(const gl_loader_t *loader, const char *path, static_mesh_t *out)
+/* Load a mesh (.fvma) into a GPU static mesh, remapping its local lightmap uv1
+ * into the mesh's atlas rect so the shared SH atlas samples correctly (the
+ * forward pass has no per-mesh rect uniform -- uv1 must already be atlas-space,
+ * exactly as hall_lit_dynamic remaps its .dmesh uv1). @p rect may be NULL / zero
+ * (mesh has no lightmap rect) in which case uv1 is left untouched. Returns 0 on
+ * success. */
+static int load_mesh(const gl_loader_t *loader, const char *path,
+                     const lm_atlas_rect_t *rect, const lm_atlas_t *atlas,
+                     static_mesh_t *out)
 {
     size_t sz = 0;
     uint8_t *bytes = read_file(path, &sz);
     if (bytes == NULL) return -1;
-    int rc = static_mesh_create_from_fvma(loader, bytes, sz, out);
+
+    mesh_slot_t slot;
+    memset(&slot, 0, sizeof slot);
+    if (!mesh_vao_deserialize(bytes, sz, &slot)) { free(bytes); return -1; }
     free(bytes);
+
+    /* Remap uv1 (surface-local [0,1]) into the atlas rect, in place. */
+    if (rect != NULL && rect->w > 0 && atlas != NULL && atlas->width > 0 &&
+        slot.uvs[1] != NULL) {
+        for (uint32_t v = 0; v < slot.vertex_count; ++v) {
+            float au, av;
+            lm_atlas_remap_uv(rect, atlas, slot.uvs[1][v * 2], slot.uvs[1][v * 2 + 1],
+                              &au, &av);
+            slot.uvs[1][v * 2] = au;
+            slot.uvs[1][v * 2 + 1] = av;
+        }
+    }
+
+    static_mesh_create_info_t info;
+    memset(&info, 0, sizeof info);
+    info.positions = slot.positions; info.normals = slot.normals;
+    info.tangents = slot.tangents;   info.uv0 = slot.uvs[0];
+    info.uv1 = slot.uvs[1];          info.colors = slot.colors;
+    info.indices = slot.indices;     info.vertex_count = slot.vertex_count;
+    info.index_count = slot.index_count;
+    int rc = static_mesh_create(loader, &info, out);
+    mesh_slot_destroy(&slot);
     return rc;
 }
 
@@ -107,6 +143,59 @@ static void build_material(client_scene_t *cs, render_material_t *mat,
     }
 }
 
+/* Empirical map from a Blender directional-light irradiance (energy, ~W/m^2) to
+ * the engine's realtime sun radiance: an energy-20 sun lands near the reference
+ * hall's tuned (~9) direct-sun colour. */
+#define CLIENT_SUN_ENERGY_SCALE 0.45f
+
+/* Find the descriptor's sun (first DIRECTIONAL light) and derive the forward
+ * pass's realtime sun. render_forward's u_sun_dir points TOWARD the sun, so it is
+ * the negated travel direction. sun_color = light colour * intensity * scale.
+ * Returns true if a sun was found (fills to_sun[3] + color[3]). */
+static bool find_sun(const scene_desc_t *desc, float to_sun[3], float color[3])
+{
+    for (uint32_t i = 0; i < desc->light_count; ++i) {
+        const scene_desc_light_t *l = &desc->lights[i];
+        if (l->kind != SCENE_DESC_LIGHT_DIRECTIONAL) continue;
+        float len = 0.0f;
+        for (int a = 0; a < 3; ++a) len += l->direction[a] * l->direction[a];
+        len = (len > 1e-8f) ? 1.0f / sqrtf(len) : 0.0f;
+        for (int a = 0; a < 3; ++a) {
+            to_sun[a] = -l->direction[a] * len;                 /* toward the sun */
+            color[a] = l->color[a] * l->intensity * CLIENT_SUN_ENERGY_SCALE;
+        }
+        return true;
+    }
+    return false;
+}
+
+/* Translate the descriptor's lights into the render light store. scene_desc_light
+ * mirrors render_light field-for-field (kind values + flag bit-values match by
+ * contract), so this is a straight copy. The sun (directional, BAKED +
+ * DYNAMIC_INDIRECT) is added too: the realtime packer skips baked-only lights,
+ * but the SDF-probe GI gathers DYNAMIC_INDIRECT lights from scene->lights. */
+static void add_descriptor_lights(client_scene_t *cs, const scene_desc_t *desc)
+{
+    for (uint32_t i = 0; i < desc->light_count; ++i) {
+        const scene_desc_light_t *sl = &desc->lights[i];
+        render_light_t rl;
+        memset(&rl, 0, sizeof rl);
+        rl.kind = (render_light_kind_t)sl->kind;
+        for (int a = 0; a < 3; ++a) {
+            rl.position[a] = sl->position[a];
+            rl.direction[a] = sl->direction[a];
+            rl.color[a] = sl->color[a];
+        }
+        rl.intensity = sl->intensity;
+        rl.range = sl->range;
+        rl.radius = sl->radius;
+        rl.cos_inner = sl->cos_inner;
+        rl.cos_outer = sl->cos_outer;
+        rl.flags = sl->flags;   /* SCENE_DESC_LIGHT_FLAG_* == RENDER_LIGHT_FLAG_*. */
+        if (!render_light_add(&cs->lights, &rl)) break;   /* store full */
+    }
+}
+
 /* ── Public API ────────────────────────────────────────────────── */
 
 bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
@@ -132,21 +221,32 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     for (uint32_t m = 0; m < nmat; ++m)
         build_material(cs, &cs->materials[m], &desc->materials[m], base_dir, image_load);
 
-    /* Meshes + scene AABB (transformed mesh bounds). */
+    /* Baked lightmap atlas FIRST: it yields the per-mesh atlas rects, so each
+     * mesh's uv1 can be remapped into the shared atlas as the mesh is built.
+     * (Single-atlas == the one-chunk case of the chunked lightmap system.) */
+    lm_atlas_rect_t *mrect = calloc(nobj ? nobj : 1, sizeof *mrect);
+    lm_atlas_t atlas = { 0, 0 };
+    bool have_lm = false;
+    if (mrect != NULL && desc->lightdata.lightmap_prefix[0]) {
+        char lm[512]; snprintf(lm, sizeof lm, "%s/%s", base_dir, desc->lightdata.lightmap_prefix);
+        have_lm = client_scene_load_lightmap(loader, lm, nobj, cs->sh_tex, mrect, &atlas);
+    }
+
+    /* Meshes (uv1 remapped into the atlas) + scene AABB (transformed bounds). */
     float amin[3] = { 1e30f, 1e30f, 1e30f }, amax[3] = { -1e30f, -1e30f, -1e30f };
     render_scene_init(&cs->scene, cs->rb, cs->rb_cap);
-    int *sh_layer = calloc(nobj ? nobj : 1, sizeof(int));
     for (uint32_t i = 0; i < nobj; ++i) {
         const scene_desc_object_t *o = &desc->objects[i];
         char path[512]; snprintf(path, sizeof path, "%s/%s", base_dir, o->mesh);
-        if (load_mesh(loader, path, &cs->meshes[cs->mesh_count]) != 0) continue;
+        const lm_atlas_rect_t *rc = (have_lm && mrect != NULL) ? &mrect[i] : NULL;
+        if (load_mesh(loader, path, rc, &atlas, &cs->meshes[cs->mesh_count]) != 0) continue;
         static_mesh_t *sm = &cs->meshes[cs->mesh_count];
         float model[16]; model_from_trs(o->position, o->rotation, o->scale, model);
         int mi = (o->material_count > 0) ? o->material_idx[0] : -1;
         const render_material_t *mat = (mi >= 0 && (uint32_t)mi < nmat) ? &cs->materials[mi] : NULL;
         if (render_scene_add(&cs->scene, sm, mat, model)) {
-            cs->scene.items[cs->scene.count - 1].sh_layer =
-                (sh_layer && i < nobj) ? sh_layer[i] : 0;
+            /* Single atlas => layer 0; no lightmap => -1 (SH sampler skips it). */
+            cs->scene.items[cs->scene.count - 1].sh_layer = have_lm ? 0 : -1;
         }
         for (int cx = 0; cx < 8; ++cx) {
             float lp[3] = { (cx & 1) ? sm->aabb_max[0] : sm->aabb_min[0],
@@ -162,20 +262,11 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     }
     cs->static_count = (int)cs->scene.count;
     if (amin[0] > amax[0]) { for (int a = 0; a < 3; ++a) { amin[a] = -10; amax[a] = 10; } }
-
-    /* Baked lightmap SH arrays. */
-    if (desc->lightdata.lightmap_prefix[0]) {
-        char lm[512]; snprintf(lm, sizeof lm, "%s/%s", base_dir, desc->lightdata.lightmap_prefix);
-        int *sl = calloc(nobj ? nobj : 1, sizeof(int));
-        client_scene_load_lightmap(loader, lm, nobj, cs->sh_tex, sl);
-        for (uint32_t i = 0; i < nobj && i < cs->scene.count; ++i)
-            cs->scene.items[i].sh_layer = sl ? sl[i] : 0;
-        free(sl);
-    }
-    free(sh_layer);
+    free(mrect);
 
     render_light_store_init(&cs->lights, cs->light_buf, 64);
     cs->scene.lights = &cs->lights;
+    add_descriptor_lights(cs, desc);   /* exporter-emitted lights incl. the sun. */
 
     /* Probe grid from the descriptor spec. */
     static uint8_t probe_arena_buf[4 * 1024 * 1024];
@@ -190,11 +281,49 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.forward.max_lights = 512;
     cfg.forward.index_capacity = 16u * 16u * 24u * 16u;
     cfg.forward.screen_w = (float)screen_w; cfg.forward.screen_h = (float)screen_h;
-    cfg.forward.ambient[0] = cfg.forward.ambient[1] = cfg.forward.ambient[2] = 0.05f;
+    cfg.forward.ambient[0] = cfg.forward.ambient[1] = cfg.forward.ambient[2] = 0.0f;
+    /* Baked SH lightmap carries the INDIRECT bounce only (the sun's DIRECT term is
+     * the realtime directional light + CSM below), so keep sh_scale < 1. */
     cfg.forward.sh_enabled = cs->sh_tex[0] ? 1 : 0;
-    cfg.forward.sh_scale = 0.7f; cfg.forward.sh_normal_bias = 1.0f;
+    cfg.forward.sh_scale = 0.7f; cfg.forward.sh_normal_bias = 0.5f;
     for (int c = 0; c < 9; ++c) cfg.forward.sh_tex[c] = cs->sh_tex[c];
     cfg.scene = &cs->scene;
+
+    /* Realtime sun (direct term) + shadows, from the descriptor's directional
+     * light. The lightmap holds the sun's baked indirect; the direct sun and its
+     * cascaded shadows come from here so dynamic geometry shadows correctly. */
+    float to_sun[3], sun_col[3];
+    if (find_sun(desc, to_sun, sun_col)) {
+        for (int a = 0; a < 3; ++a) {
+            cfg.forward.sun_dir[a] = to_sun[a];
+            cfg.forward.sun_color[a] = sun_col[a];
+        }
+        /* Cascaded directional shadow maps fit to the whole scene AABB (+pad). */
+        cfg.forward.dir_cascades = 2;
+        cfg.forward.dir_static_res = 1024;
+        cfg.forward.dir_dynamic_res = 1024;
+        cfg.forward.dir_lambda = 0.6f;
+        cfg.forward.dir_bias = 0.05f;
+        cfg.forward.dir_softness = 0.7f;
+        cfg.forward.dir_pcss = 0;
+        cfg.forward.dir_max_distance = 0.0f;
+        for (int a = 0; a < 3; ++a) {
+            cfg.forward.shadow_scene_min[a] = amin[a] - 1.0f;
+            cfg.forward.shadow_scene_max[a] = amax[a] + 1.0f;
+        }
+    }
+    /* Omnidirectional cube shadows for every point/spot light flagged
+     * RENDER_LIGHT_FLAG_SHADOW (multi-light path, shadow_light=-1). */
+    float diag = 0.0f;
+    for (int a = 0; a < 3; ++a) { float e = amax[a] - amin[a]; diag += e * e; }
+    diag = sqrtf(diag);
+    cfg.forward.shadow_light = -1;
+    cfg.forward.shadow_max = 8;
+    cfg.forward.shadow_res = 256;
+    cfg.forward.shadow_near = 0.1f;
+    cfg.forward.shadow_far = (diag > 1.0f) ? diag * 1.2f : 60.0f;
+    cfg.forward.shadow_bias = 0.08f;
+    cfg.forward.spot_light = -1;   /* no dedicated spot; cube path covers spots. */
 
     cfg.gi_enabled = 1;
     cfg.gi_sdf_prefix = NULL;   /* set below to a persistent string. */

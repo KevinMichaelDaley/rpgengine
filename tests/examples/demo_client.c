@@ -81,8 +81,8 @@
 /* ── Constants ──────────────────────────────────────────────────── */
 
 #define CLIENT_MAX_BODIES   1024u
-#define CLIENT_WIN_W        960
-#define CLIENT_WIN_H        540
+#define CLIENT_WIN_W        1920
+#define CLIENT_WIN_H        1080
 #define CLIENT_MOVE_SPEED   5.0f
 #define CLIENT_MOUSE_SENS   0.002f
 

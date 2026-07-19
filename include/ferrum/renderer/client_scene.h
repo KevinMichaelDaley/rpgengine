@@ -29,6 +29,7 @@ extern "C" {
 #include "ferrum/renderer/texture.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/light_store.h"
+#include "ferrum/lightmap/lm_atlas.h"
 
 struct scene_desc; /* ferrum/scene/scene_desc.h */
 
@@ -79,12 +80,16 @@ void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
 /** Free all owned GL resources. */
 void client_scene_destroy(client_scene_t *cs);
 
-/** Load the baked SH lightmap (9 GL_TEXTURE_2D_ARRAY pages) from @p lm_prefix.
- *  Fills @p sh_tex[9] and per-mesh @p sh_layer (0). @return true if a lightmap
- *  was found. Lifted from hall_lit_dynamic.c's load_sh_arrays. */
+/** Load the baked SH lightmap atlas (9 GL_TEXTURE_2D_ARRAY pages, layer 0) from
+ *  @p lm_prefix, plus the per-mesh atlas rectangles + atlas dimensions the caller
+ *  needs to remap each mesh's uv1 into the shared atlas (lm_atlas_remap_uv). This
+ *  is the one-chunk case of the general chunked lightmap system.
+ *  @param mrect      out: [n_meshes] per-mesh atlas rects (w=0 => mesh has none).
+ *  @param atlas_out  out: atlas width/height.
+ *  @return true if a lightmap was found + loaded. */
 bool client_scene_load_lightmap(const gl_loader_t *loader, const char *lm_prefix,
                                 uint32_t n_meshes, unsigned int sh_tex[9],
-                                int *sh_layer);
+                                lm_atlas_rect_t *mrect, lm_atlas_t *atlas_out);
 
 #ifdef __cplusplus
 }
