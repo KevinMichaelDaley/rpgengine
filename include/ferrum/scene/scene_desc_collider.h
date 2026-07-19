@@ -19,13 +19,16 @@ extern "C" {
 
 #include "ferrum/scene/scene_desc_object.h" /* SCENE_DESC_OBJ_NAME_CAP, SCENE_DESC_PATH_CAP */
 
-/** Collider shape kinds (mirror the physics primitive set the server spawns). */
+/** Collider shape kinds (mirror the full physics primitive set). */
 typedef enum scene_desc_collider_kind {
     SCENE_DESC_COLLIDER_BOX       = 0, /**< half_extents. */
     SCENE_DESC_COLLIDER_SPHERE    = 1, /**< radius. */
     SCENE_DESC_COLLIDER_CAPSULE   = 2, /**< radius + half_height (local Y axis). */
     SCENE_DESC_COLLIDER_HALFSPACE = 3, /**< normal + plane_offset. */
-    SCENE_DESC_COLLIDER_MESH      = 4, /**< mesh[] collision asset. */
+    SCENE_DESC_COLLIDER_MESH      = 4, /**< mesh[] triangle collision asset. */
+    SCENE_DESC_COLLIDER_CONVEX    = 5, /**< mesh[] convex-hull point asset. */
+    SCENE_DESC_COLLIDER_COMPOUND  = 6, /**< mesh[] convex-decomposition asset. */
+    SCENE_DESC_COLLIDER_POINT     = 7, /**< offset-only point collider. */
 } scene_desc_collider_kind_t;
 
 /**
@@ -46,8 +49,11 @@ typedef struct scene_desc_collider {
     float    half_height;       /**< CAPSULE (segment half-length along local Y). */
     float    normal[3];         /**< HALFSPACE plane normal. */
     float    plane_offset;      /**< HALFSPACE signed distance along normal. */
-    char     mesh[SCENE_DESC_PATH_CAP]; /**< MESH collision asset path. */
+    char     mesh[SCENE_DESC_PATH_CAP]; /**< MESH/CONVEX/COMPOUND geometry asset path. */
+    uint64_t geom_asset;        /**< resolved streamed geometry asset id (0 = by path). */
+    int      solid;             /**< MESH: 1 = solid. */
     int32_t  object_ref;        /**< owning object index, or -1 (standalone). */
+    int32_t  bone;              /**< bone index this collider is keyed to (-1 = root). */
     bool     is_static;         /**< true => inv_mass 0 (immovable). */
 } scene_desc_collider_t;
 

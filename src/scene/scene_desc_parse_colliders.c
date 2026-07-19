@@ -19,6 +19,9 @@ static scene_desc_collider_kind_t collider_kind(const json_value_t *o)
     if (strcmp(s, "capsule") == 0)   return SCENE_DESC_COLLIDER_CAPSULE;
     if (strcmp(s, "halfspace") == 0) return SCENE_DESC_COLLIDER_HALFSPACE;
     if (strcmp(s, "mesh") == 0)      return SCENE_DESC_COLLIDER_MESH;
+    if (strcmp(s, "convex") == 0)    return SCENE_DESC_COLLIDER_CONVEX;
+    if (strcmp(s, "compound") == 0)  return SCENE_DESC_COLLIDER_COMPOUND;
+    if (strcmp(s, "point") == 0)     return SCENE_DESC_COLLIDER_POINT;
     return SCENE_DESC_COLLIDER_BOX;
 }
 
@@ -41,9 +44,10 @@ bool scene_desc_parse_colliders(const json_value_t *root, struct arena *arena,
     for (uint32_t i = 0; i < n; ++i) {
         const json_value_t *o = json_array_get(arr, i);
         scene_desc_collider_t *c = &cols[i];
-        /* Defaults: identity orientation, standalone, static (level geo). */
+        /* Defaults: identity orientation, standalone, root (not bone-keyed), static. */
         c->rotation[3] = 1.0f;
         c->object_ref = -1;
+        c->bone = -1;
         c->is_static = true;
         if (o == NULL || o->type != JSON_OBJECT) continue; /* keep defaults */
 
@@ -57,7 +61,9 @@ bool scene_desc_parse_colliders(const json_value_t *root, struct arena *arena,
         sd_field_vec(o, "normal", c->normal, 3);
         c->plane_offset = sd_field_num(o, "plane_offset", 0.0f);
         sd_field_str(o, "mesh", c->mesh, SCENE_DESC_PATH_CAP);
+        c->solid = sd_field_bool(o, "solid", false) ? 1 : 0;
         c->object_ref = (int32_t)sd_field_num(o, "object_ref", -1.0f);
+        c->bone = (int32_t)sd_field_num(o, "bone", -1.0f);   /* bone-keyed colliders. */
         c->is_static = sd_field_bool(o, "static", true);
     }
     out->colliders = cols;

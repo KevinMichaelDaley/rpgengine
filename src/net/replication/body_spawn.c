@@ -53,6 +53,9 @@ int net_repl_body_spawn_encode(const net_repl_body_spawn_t *msg,
     write_u16_be(out + o, msg->half_x_f16);      o += 2;
     write_u16_be(out + o, msg->half_y_f16);       o += 2;
     write_u16_be(out + o, msg->half_z_f16);       o += 2;
+    write_u16_be(out + o, msg->off_x_f16);        o += 2;
+    write_u16_be(out + o, msg->off_y_f16);        o += 2;
+    write_u16_be(out + o, msg->off_z_f16);        o += 2;
 
     return NET_REPL_OK;
 }
@@ -80,6 +83,9 @@ int net_repl_body_spawn_decode(net_repl_body_spawn_t *msg,
     msg->half_x_f16 = read_u16_be(payload + o);     o += 2;
     msg->half_y_f16 = read_u16_be(payload + o);     o += 2;
     msg->half_z_f16 = read_u16_be(payload + o);     o += 2;
+    msg->off_x_f16  = read_u16_be(payload + o);     o += 2;
+    msg->off_y_f16  = read_u16_be(payload + o);     o += 2;
+    msg->off_z_f16  = read_u16_be(payload + o);     o += 2;
 
     return NET_REPL_OK;
 }

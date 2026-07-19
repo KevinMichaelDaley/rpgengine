@@ -1165,6 +1165,11 @@ build/probe_tests: tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.
 build/asset_stream_tests: tests/asset/asset_stream_tests.c $(ASSET_STREAM_SRC) $(PROBE_SRC) $(JOB_SRC) $(MEM_SRC) | build
 	$(CC) $(CFLAGS) tests/asset/asset_stream_tests.c $(ASSET_STREAM_SRC) $(PROBE_SRC) $(JOB_SRC) $(MEM_SRC) -o $@ -lm
 
+# Canonical collider primitive + BODY_SPAWN schema + converters (rpg-b5r3).
+COLLIDER_PRIM_TEST_SRC := src/net/replication/body_spawn.c src/net/replication/body_spawn_collider.c src/net/replication/quat_smallest3.c src/net/quantization/float16.c src/scene/scene_desc_collider_prim.c
+build/collider_prim_tests: tests/asset/collider_prim_tests.c $(COLLIDER_PRIM_TEST_SRC) | build
+	$(CC) $(CFLAGS) tests/asset/collider_prim_tests.c $(COLLIDER_PRIM_TEST_SRC) -o $@ -lm
+
 build/npc_kg_spatial_tests: tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) | build
 	$(CC) $(CFLAGS) tests/npc/npc_kg_spatial_tests.c $(NPC_KG_TEST_SRC) $(OBJ_NPC_FAISS) -o $@ $(LDFLAGS)
 
@@ -1630,7 +1635,7 @@ build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 build:
 
 
-test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/probe_tests build/asset_stream_tests
+test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/probe_tests build/asset_stream_tests build/collider_prim_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests \
