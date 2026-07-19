@@ -573,8 +573,12 @@ int main(int argc,char **argv){
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, msaa > 1 ? 1 : 0);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa > 1 ? msaa : 0);
     SDL_DisplayMode dmode; SDL_GetDesktopDisplayMode(0,&dmode);
-    SDL_Window *win=SDL_CreateWindow("hall lit+dynamic",0,0,dmode.w,dmode.h,
-        SDL_WINDOW_OPENGL|SDL_WINDOW_FULLSCREEN_DESKTOP);
+    /* GH_WIN=WxH renders in a WINDOW at that size instead of fullscreen -- a clean
+     * fillrate A/B (fewer pixels = less fragment shading; fps should scale with
+     * pixel count if fillrate-bound). */
+    int win_w=dmode.w, win_h=dmode.h; uint32_t win_flags=SDL_WINDOW_OPENGL|SDL_WINDOW_FULLSCREEN_DESKTOP;
+    { const char *e=getenv("GH_WIN"); if(e){ int a,b; if(sscanf(e,"%dx%d",&a,&b)==2 && a>0 && b>0){ win_w=a; win_h=b; win_flags=SDL_WINDOW_OPENGL; } } }
+    SDL_Window *win=SDL_CreateWindow("hall lit+dynamic",0,0,win_w,win_h,win_flags);
     SDL_GLContext gc=SDL_GL_CreateContext(win); SDL_GL_MakeCurrent(win,gc);
     SDL_GL_SetSwapInterval(0); /* vsync off: measure real render cost. */
     if(!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) return 1;
@@ -1075,7 +1079,11 @@ int main(int argc,char **argv){
         /* Regular-grid layout for trilinear sampling (0 dims = not a grid). */
         float pg_origin[3]={0,0,0}, pg_cell[3]={1,1,1}; int pg_dim[3]={0,0,0};
         if(great_hall){
-            float sp = getenv("GI_PSPACE")?(float)atof(getenv("GI_PSPACE")):1.3f; if(sp<0.4f) sp=0.4f;
+            /* ~3 m spacing -> ~112 probes (7x4x4). Far fewer than the old 1.3 m
+             * (1200): probe count doesn't move fps (fillrate-bound) but a small
+             * set STAGGERED over many frames (GI_PROBE_GROUPS) kills the periodic
+             * all-probe-burst stutter with equal-or-better temporal coherence. */
+            float sp = getenv("GI_PSPACE")?(float)atof(getenv("GI_PSPACE")):3.0f; if(sp<0.4f) sp=0.4f;
             int pnx=(int)(span[0]/sp)+1, pny=(int)(span[1]/sp)+1, pnz=(int)(span[2]/sp)+1;
             if(pnx<2)pnx=2; if(pny<2)pny=2; if(pnz<2)pnz=2;
             if(pnx>40)pnx=40; if(pny>24)pny=24; if(pnz>24)pnz=24;
@@ -1122,6 +1130,11 @@ int main(int argc,char **argv){
         gc.froxel=fcfg.cluster; gc.probe_min=4;
         /* Dense grid -> a modest margin already reaches every cluster. */
         gc.probe_sphere_margin=great_hall?1.2f:0.5f; gc.bin_interval=1;
+        /* Staggered probe updates (rpg-iuiy): trace ~1/16 of the (small) probe set
+         * each frame so the trace + SDF paging are a steady trickle, not a spike
+         * every 8 frames. Each probe still refreshes every 16 frames. */
+        gc.n_probe_groups = great_hall ? 16 : 0;   /* 0 -> off (1) */
+        gc.update_interval = great_hall ? 16 : 0;  /* 0 -> default 8; paging cadence */
         if(!gi_runtime_init(&g_gi,&gc)){ fprintf(stderr,"gi_runtime_init failed\n"); gi_demo=0; }
         else {
             if(pg_dim[0]>0) gi_runtime_set_probe_grid(&g_gi, pg_origin, pg_cell, pg_dim); /* trilinear. */
