@@ -1299,7 +1299,7 @@ def _setup_dynamic_lights(name, col):
     if ok:
         p = place_toward_room(c, 0.4)
         _add_point(name + "_fire", (p.x, p.y, p.z), (1.0, 0.45, 0.15),
-                   500.0, 6.0, radius=0.2, shadow=True)
+                   280.0, 6.0, radius=0.2, shadow=True)
 
     # Lamp niches (arched wall niches): a warm lamp in each.
     for i in range(8):
@@ -1308,7 +1308,7 @@ def _setup_dynamic_lights(name, col):
             break
         p = place_toward_room(c, 0.3)
         _add_point(name + "_niche_%d" % i, (p.x, p.y, p.z), (1.0, 0.62, 0.28),
-                   400.0, 5.0, radius=0.1, shadow=True)
+                   210.0, 5.0, radius=0.1, shadow=True)
 
 
 def build_hall_scene(bake_root, collection=None, name="great_hall"):

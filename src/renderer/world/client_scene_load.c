@@ -112,6 +112,25 @@ static void load_material_tex(client_scene_t *cs, render_material_t *mat,
     if (texture_create(tex, cs->loader) == TEXTURE_OK &&
         texture_upload_2d(tex, fmt, (uint32_t)w, (uint32_t)h, px, true) == TEXTURE_OK) {
         texture_set_sampler(tex, GL_LINEAR_MIPMAP_LINEAR, GL_LINEAR, GL_REPEAT, GL_REPEAT);
+        /* ANISOTROPIC filtering. Trilinear alone selects the mip from the WORST-axis
+         * footprint, so any surface seen at a grazing angle -- roof rafters, a floor
+         * receding down the hall -- collapses to a far too blurry mip even though the
+         * texture and its tiling are correct. Anisotropy samples along the elongated
+         * axis instead and is the single biggest sharpness win here. Clamp to the
+         * driver's max; FR_ANISO=<n> overrides (1 = off). */
+        {
+            GLfloat maxa = 1.0f;
+            glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY */, &maxa);
+            float want = 16.0f;
+            const char *e = getenv("FR_ANISO");
+            if (e != NULL) { float v = (float)atof(e); if (v >= 1.0f) want = v; }
+            if (want > (float)maxa) want = (float)maxa;
+            if (want > 1.0f) {
+                glBindTexture(GL_TEXTURE_2D, tex->handle);
+                glTexParameterf(GL_TEXTURE_2D, 0x84FE /* GL_TEXTURE_MAX_ANISOTROPY */,
+                                (GLfloat)want);
+            }
+        }
         mat->maps[map_slot] = tex;
         cs->texture_count++;
     }

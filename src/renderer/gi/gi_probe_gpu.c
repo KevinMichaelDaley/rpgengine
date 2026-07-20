@@ -265,7 +265,13 @@ static const char *CS_SRC =
      * wall's far (unlit/occluded) side can never bleed through -- reading into\n"
      * the solid (-n) would cross the wall and leak. */
     "      vec3 Es = static_irr(p + n*u_static_vox*0.5);\n"
-    "      vec3 Ei = field_irr(p + n*0.05, n);\n"   /* INDIRECT incoming from the probe field (multi-bounce) */
+    /* INDIRECT incoming from the probe field = one more bounce per gather. It is a
+     * FEEDBACK path (field -> hit -> back into the probe), so it must carry the same
+     * per-bounce decay as the probe-to-probe gather: the recurrence only converges
+     * while the total transport gain stays < 1. Feeding it back undecayed (albedo
+     * alone) pushes the gain to ~1 and the GI piles up frame over frame -- it reads
+     * as everything being far too bright. */
+    "      vec3 Ei = u_bounce * field_irr(p + n*0.05, n);\n"
     "      rdyn  = u_albedo * alb * (direct_at(p+n*0.06, n) + Ei) / PI;\n"
     "      rstat = u_stat_scale * u_albedo * alb * (u_static_k*Es) / PI;\n"
     "      return; }\n"

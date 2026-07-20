@@ -404,6 +404,18 @@ static int gl_init(gl_ctx_t *ctx) {
                         SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    /* MSAA: geometry edges (rafter silhouettes, arch voussoirs) alias badly without
+     * it. FR_MSAA=<samples> overrides; 0 disables. Texture sharpness at grazing
+     * angles is anisotropy's job, not this -- MSAA only antialiases coverage. */
+    {
+        int msaa = 4;
+        const char *e = getenv("FR_MSAA");
+        if (e != NULL) msaa = atoi(e);
+        if (msaa > 1) {
+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
+            SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, msaa);
+        }
+    }
 
     ctx->window = SDL_CreateWindow("demo_client",
                                    SDL_WINDOWPOS_UNDEFINED,
@@ -432,6 +444,10 @@ static int gl_init(gl_ctx_t *ctx) {
         SDL_Quit();
         return -1;
     }
+    /* The context only ADVERTISES MSAA; it still has to be enabled -- and only
+     * after glad has resolved the entry points. */
+    { const char *e = getenv("FR_MSAA");
+      if (e == NULL || atoi(e) > 1) glEnable(0x809D /* GL_MULTISAMPLE */); }
 
     ctx->loader.get_proc_address = sdl_get_proc;
     ctx->loader.user_data = NULL;
