@@ -116,12 +116,13 @@ def _export_lights():
 def _object_collider(o):
     """A streamed physics collider for a DYNAMIC-marked object, or None. Static
     level geometry (the great hall) is unmarked and gets no collider -- collision
-    is opt-in per object via the Talarium ``talarium_dynamic`` marking. Non-
-    armature dynamic bodies carry a primitive shape (``talarium_obj_shape``);
+    is opt-in per object via the ``ferrum_dynamic`` marking, the SAME property the
+    object/bake path reads (a generator sets it once and both consumers agree).
+    Non-armature dynamic bodies carry a primitive shape (``ferrum_obj_shape``);
     armature-driven bodies get their bone-keyed colliders from the .fskel."""
-    if not bool(o.get("talarium_dynamic", False)):
+    if not bool(o.get("ferrum_dynamic", False)):
         return None
-    shape = str(o.get("talarium_obj_shape", "box"))
+    shape = str(o.get("ferrum_obj_shape", "box"))
     kind = _COLLIDER_KIND.get(shape, "box")
     loc, rot_q, _scale = o.matrix_world.decompose()
     dim = o.dimensions
@@ -133,9 +134,9 @@ def _object_collider(o):
     elif kind == "sphere":
         rec["radius"] = float(max(dim)) * 0.5
     elif kind == "capsule":
-        rec["radius"] = float(o.get("talarium_capsule_radius",
+        rec["radius"] = float(o.get("ferrum_capsule_radius",
                                     max(float(dim.x), float(dim.y)) * 0.5))
-        rec["half_height"] = float(o.get("talarium_capsule_height",
+        rec["half_height"] = float(o.get("ferrum_capsule_height",
                                          float(dim.z) * 0.5))
     elif kind in ("convex", "mesh"):
         rec["mesh"] = os.path.join("meshes", o.name + ".fvma")
