@@ -65,6 +65,9 @@ typedef struct client_scene {
     float               *probe_pos_full;/**< full generated probe set [probe_count_full*3]. */
     uint32_t             probe_count_full;
     float               *probe_scratch; /**< [probe_count_full*3] scratch for the resident subset. */
+    unsigned char       *probe_active;  /**< [probe_count_full] residency mask; the grid
+                                         *   stays DENSE (positional addressing) and
+                                         *   non-resident probes are skipped, not removed. */
     uint32_t             probe_resident; /**< last resident probe count pushed (churn guard). */
     gi_vis_prepass_t     gi_pp;          /**< shared dual visibility prepass (SDF + lm chunks). */
     int                  gi_pp_ready;    /**< 1 = gi_pp initialised. */

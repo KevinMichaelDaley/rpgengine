@@ -160,6 +160,16 @@ void gi_runtime_set_probes(gi_runtime_t *gi, const float *pos, uint32_t count);
  */
 void gi_runtime_set_visible(gi_runtime_t *gi, const uint8_t *visible, int n_chunks);
 
+/**
+ * @brief Set the per-probe ACTIVE mask for probe streaming (@p active[@p n]).
+ *
+ * The probe set must stay a DENSE grid -- the forward+ addresses probes
+ * positionally -- so residency is expressed here instead of by removing probes.
+ * Inactive probes keep their slot + last coefficients; the update skips them.
+ */
+void gi_runtime_set_probe_active(gi_runtime_t *gi, const unsigned char *active,
+                                 uint32_t n);
+
 
 /**
  * @brief Per frame: page the visible SDF chunks (world prepass over @p scene with

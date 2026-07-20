@@ -430,6 +430,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     if (pset.count > 0 && pset.positions != NULL) {
         cs->probe_pos_full = malloc((size_t)pset.count * 3 * sizeof(float));
         cs->probe_scratch = malloc((size_t)pset.count * 3 * sizeof(float));
+        cs->probe_active = malloc((size_t)pset.count);   /* residency mask (dense grid). */
         if (cs->probe_pos_full != NULL)
             memcpy(cs->probe_pos_full, pset.positions, (size_t)pset.count * 3 * sizeof(float));
     }
@@ -505,8 +506,17 @@ void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
     if (cs == NULL || cs->probe_pos_full == NULL || cs->probe_scratch == NULL ||
         cs->probe_count_full == 0 || box_min == NULL || box_max == NULL || n_boxes == 0)
         return;
-    /* Keep probes inside at least one resident chunk box. */
-    uint32_t keep = 0;
+    /* Probe streaming POPULATES THE GRID: the forward+ addresses probes
+     * POSITIONALLY -- probe = (z*dimY + y)*dimX + x (gi_probe_specular /
+     * gi_probe_indirect2) -- so the set must stay a dense lattice. Compacting it to
+     * the resident subset shifts every probe after the first dropped one and the
+     * shader then reads unrelated probes (garbage SG lobes => no specular/roughness
+     * response, lattice-shaped diffuse artifacts). So residency is expressed as a
+     * per-probe ACTIVE mask instead: every grid slot keeps its position, and
+     * non-resident probes are simply skipped by the update (keeping their last
+     * coefficients) -- which still bounds the per-frame trace work. */
+    if (cs->probe_active == NULL) return;
+    uint32_t live = 0;
     for (uint32_t i = 0; i < cs->probe_count_full; ++i) {
         const float *p = &cs->probe_pos_full[i * 3];
         int inside = 0;
@@ -515,16 +525,14 @@ void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
             inside = (p[0] >= mn[0] && p[0] <= mx[0] && p[1] >= mn[1] && p[1] <= mx[1] &&
                       p[2] >= mn[2] && p[2] <= mx[2]);
         }
-        if (inside) {
-            cs->probe_scratch[keep*3+0] = p[0]; cs->probe_scratch[keep*3+1] = p[1];
-            cs->probe_scratch[keep*3+2] = p[2]; ++keep;
-        }
+        cs->probe_active[i] = (unsigned char)(inside ? 1 : 0);
+        live += (uint32_t)inside;
     }
-    /* Only re-push when the resident count changes (avoid per-frame accel rebuild
-     * when residency is stable). */
-    if (keep != cs->probe_resident) {
-        render_world_set_probes(&cs->world, cs->probe_scratch, keep);
-        cs->probe_resident = keep;
+    /* The full lattice is uploaded once (at load); only the mask changes here, and
+     * only when residency actually moved (avoids a per-frame buffer round-trip). */
+    if (live != cs->probe_resident) {
+        gi_runtime_set_probe_active(&cs->world.gi, cs->probe_active, cs->probe_count_full);
+        cs->probe_resident = live;
     }
 }
 
@@ -585,6 +593,6 @@ void client_scene_destroy(client_scene_t *cs)
     free(cs->dyn_idx); free(cs->dyn_albedo); free(cs->dyn_col);
     free(cs->meshes); free(cs->materials); free(cs->textures);
     free(cs->rb); free(cs->light_buf);
-    free(cs->probe_pos_full); free(cs->probe_scratch);
+    free(cs->probe_pos_full); free(cs->probe_scratch); free(cs->probe_active);
     memset(cs, 0, sizeof *cs);
 }

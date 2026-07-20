@@ -51,6 +51,11 @@ typedef struct gi_probe_gpu {
     unsigned int b_active;     /**< stochastic-radiosity scratch: [count][indices..]. */
     unsigned int b_emit;       /**< per-probe direct-injection SH (24 floats/probe). */
     unsigned int b_norm;       /**< per-probe surface normal (vec4: xyz + validity). */
+    float       *pos_shadow;   /**< CPU shadow of the packed probe vec4s [max_probes*4]
+                                *   (xyz + active flag). Lets the ACTIVE mask be
+                                *   rewritten without a glGetBufferSubData read-back
+                                *   (a GPU->CPU sync) on every residency change. */
+    uint32_t     pos_cap;      /**< probe capacity of @c pos_shadow. */
     unsigned int dyn_tex;      /**< sparse DYNAMIC albedo volume (RGBA8 3D, 0 = none). */
     int          dyn_dim[3];   /**< dynamic-volume voxel dims. */
     float        dyn_origin[3];/**< dynamic-volume world origin (min corner). */
@@ -122,6 +127,14 @@ unsigned int gi_probe_gpu_dyn_volume(gi_probe_gpu_t *g, const float aabb_min[3],
 
 /** @brief Enable/disable the dynamic-albedo term for the next dispatch. */
 void gi_probe_gpu_dyn_enable(gi_probe_gpu_t *g, int on);
+
+/**
+ * @brief Set the per-probe ACTIVE mask (@p active[@p n], 1 = resident) used by
+ *        probe streaming. Inactive probes keep their slot (the forward+ addresses
+ *        the grid positionally, so the array must stay dense) and their last
+ *        coefficients, but the update skips them. NULL = all active.
+ */
+void gi_probe_gpu_set_active(gi_probe_gpu_t *g, const unsigned char *active, uint32_t n);
 
 /**
  * @brief Dispatch the update: bind the resident SDF chunks from @p sdf, upload

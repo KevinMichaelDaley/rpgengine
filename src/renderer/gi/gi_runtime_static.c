@@ -48,3 +48,10 @@ void gi_runtime_set_spec_gain(gi_runtime_t *gi, float gain)
     if (gi == NULL) return;
     gi->spec_gain = gain > 0.0f ? gain : 0.0f;
 }
+
+void gi_runtime_set_probe_active(gi_runtime_t *gi, const unsigned char *active,
+                                 uint32_t n)
+{
+    if (gi == NULL) return;
+    gi_probe_gpu_set_active(&gi->gpu, active, n);
+}

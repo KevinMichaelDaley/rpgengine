@@ -358,6 +358,12 @@ static const char *CS_SRC =
     "  for(int k=0;k<12;++k){ shd[k]=emit[gid*24+k]; shs[k]=emit[gid*24+12+k]; }\n"
     "  uint N=acount;\n"
     "  vec4 pn=probe_normal(gid); vec3 nrm=pn.xyz; float nv=pn.w;\n"
+    /* Directional samples for the SG specular fit. pass_classify only ever saw the
+     * NEAR-field direct injection, so without re-fitting here the probe's specular
+     * lobes miss ALL the gathered indirect -- i.e. probes read diffuse-only once
+     * sampled. Collect (dir, radiance) from the gather + hero rays and re-fit. */
+    "  vec3 rdir[32]; vec3 rcol[32]; int nrs=0;\n"
+    "  for(int i=0;i<32;++i){ rdir[i]=vec3(0.0,1.0,0.0); rcol[i]=vec3(0.0); }\n"
     /* Hero selection (hybrid): scan sources, keep the top-KH by emissive_luminance *\n"
      * unocclusion * N.L. DETERMINISTIC top-K => temporally stable; these get an\n"
      * accurate SDF march below and are skipped in the average (no double-count). */
@@ -393,18 +399,28 @@ static const char *CS_SRC =
     "      vec3 Lmd=max(psh_irr(int(m)*24, -dir), vec3(0.0));\n"
     "      vec3 Lms=max(psh_irr(int(m)*24+12, -dir), vec3(0.0));\n"
     "      float wt=vis*ndl*(cellsq/max(dist*dist,cellsq)); wsum+=wt;\n"
+    "      if(nrs<32){ rdir[nrs]=dir; rcol[nrs]=(Lmd+Lms)*wt; ++nrs; }\n"
     "      float y[4]; sh_basis(dir,y);\n"
     "      for(int j=0;j<4;++j){ bd[j]+=Lmd.r*y[j]*wt; bd[4+j]+=Lmd.g*y[j]*wt; bd[8+j]+=Lmd.b*y[j]*wt;\n"
     "                            bs[j]+=Lms.r*y[j]*wt; bs[4+j]+=Lms.g*y[j]*wt; bs[8+j]+=Lms.b*y[j]*wt; } }\n"
     "    if(wsum>1e-4){ float nrm2=u_bounce/wsum;\n"
-    "      for(int k=0;k<12;++k){ shd[k]+=bd[k]*nrm2; shs[k]+=bs[k]*nrm2; } } }\n"
+    "      for(int k=0;k<12;++k){ shd[k]+=bd[k]*nrm2; shs[k]+=bs[k]*nrm2; }\n"
+    /* Same normalisation the diffuse gets, so the specular lobe carries the same
+     * energy the SH does rather than an arbitrary scale. */
+    "      for(int i=0;i<nrs;++i) rcol[i]*=nrm2; } }\n"
     /* Hero SDF marches: accurate first-bounce radiance toward the top-KH sources,\n"
      * spread over nh with the bounce gain. trace() sphere-marches the resident SDF. */
     "  for(int j=0;j<nh;++j){ uint m=hero[j]; vec3 pm=ppos[m].xyz; vec3 d=pm-o; float dist=length(d);\n"
     "    if(dist<0.35) continue; vec3 dir=d/dist; vec3 rd,rs; trace(gid,o,dir,rd,rs);\n"
     "    float y[4]; sh_basis(dir,y); float w=u_bounce/float(nh);\n"
+    /* Hero rays are the brightest directions -- exactly what a specular lobe should
+     * lock onto -- so seed the fit with them. */
+    "    if(nrs<32){ rdir[nrs]=dir; rcol[nrs]=(rd+rs)*w; ++nrs; }\n"
     "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*w; shd[4+k]+=rd.g*y[k]*w; shd[8+k]+=rd.b*y[k]*w;\n"
     "                          shs[k]+=rs.r*y[k]*w; shs[4+k]+=rs.g*y[k]*w; shs[8+k]+=rs.b*y[k]*w; } }\n"
+    /* Re-fit the SG specular from the GATHERED radiance: the probes now carry a
+     * directional (IBL) response, not just the diffuse SH. */
+    "  if(nrs>0) fit_sg(gid, rdir, rcol);\n"
     "  for(int k=0;k<12;++k){ psh[gid*24+k]=mix(psh[gid*24+k], shd[k], u_temporal);\n"
     "                         psh[gid*24+12+k]=mix(psh[gid*24+12+k], shs[k], u_temporal); } }\n"
     /* --- OLD full-SDF-march baseline (u_field_on==0): 32 rays cone-march the SDF. --- */
@@ -457,7 +473,11 @@ static const char *CS_SRC =
     "  for(int k=0;k<12;++k){ psh[gid*24+k]=mix(psh[gid*24+k], shd[k], u_temporal);\n"
     "                         psh[gid*24+12+k]=mix(psh[gid*24+12+k], shs[k], u_temporal); }\n"
     "  fit_sg(gid, rdir, rcol); }\n"
+    /* Streaming: the grid stays DENSE (positional addressing) and non-resident
+     * probes are marked INACTIVE in ppos.w -- skip their update, keeping their last
+     * coefficients, instead of removing them from the array. */
     "void main(){ uint gid=gl_GlobalInvocationID.x; if(gid>=uint(u_nprobes)) return;\n"
+    "  if(ppos[gid].w < 0.5) return;\n"
     "  if(u_field_on==0){ if(u_mis!=0) update_mis(gid); else update_baseline(gid); return; }\n"
     "  if(u_pass==0) pass_classify(gid); else pass_gather(gid); }\n";
 
@@ -549,6 +569,10 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glGenBuffers(1, &g->b_sg);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_pos);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    /* CPU shadow of the packed positions so the ACTIVE mask never needs a read-back. */
+    g->pos_shadow = calloc((size_t)max_probes * 4u, sizeof(float));
+    g->pos_cap = max_probes;
+    if (g->pos_shadow == NULL) return false;
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
     /* 24 floats/probe: SH4 dynamic [0..11] + SH4 static [12..23] (rpg-pau4). */
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
@@ -612,18 +636,23 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
 
 void gi_probe_gpu_set_probes(gi_probe_gpu_t *g, const float *pos, uint32_t n)
 {
-    if (g == NULL || !g->ready || pos == NULL) return;
+    if (g == NULL || !g->ready || pos == NULL || g->pos_shadow == NULL) return;
+    if (n > g->pos_cap) n = g->pos_cap;
     g->n_probes = n;
-    /* Pack xyz -> vec4 (w unused). */
-    float *tmp = malloc((size_t)n * 4 * sizeof(float));
-    if (tmp == NULL) return;
+    /* Pack xyz -> vec4 straight into the CPU SHADOW copy, so a later ACTIVE-mask
+     * flip is a plain upload rather than a read-back (see gi_probe_gpu_active.c). */
     for (uint32_t i = 0; i < n; ++i) {
-        tmp[i*4+0] = pos[i*3+0]; tmp[i*4+1] = pos[i*3+1];
-        tmp[i*4+2] = pos[i*3+2]; tmp[i*4+3] = 0.0f;
+        g->pos_shadow[i*4+0] = pos[i*3+0];
+        g->pos_shadow[i*4+1] = pos[i*3+1];
+        g->pos_shadow[i*4+2] = pos[i*3+2];
+        /* w = ACTIVE flag. Probe streaming keeps the grid DENSE (the forward+
+         * addresses probes positionally) and instead marks non-resident probes
+         * inactive, so they stay addressable but are skipped by the update. */
+        g->pos_shadow[i*4+3] = 1.0f;
     }
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_pos);
-    glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)n * 4 * sizeof(float), tmp);
-    free(tmp);
+    glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, (GLsizeiptr)n * 4 * sizeof(float),
+                    g->pos_shadow);
 }
 
 void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
@@ -841,6 +870,7 @@ unsigned int gi_probe_gpu_sg_tbo(const gi_probe_gpu_t *g) { return g ? g->tbo_sg
 void gi_probe_gpu_destroy(gi_probe_gpu_t *g)
 {
     if (g == NULL) return;
+    free(g->pos_shadow); g->pos_shadow = NULL; g->pos_cap = 0;
     if (g->prog) glDeleteProgram(g->prog);
     GLuint b[8] = { g->b_pos, g->b_sh, g->b_lights, g->b_boxes, g->b_depth, g->b_sg,
                     g->b_active, g->b_emit };
