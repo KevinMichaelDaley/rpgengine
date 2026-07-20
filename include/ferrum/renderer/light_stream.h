@@ -65,6 +65,7 @@ typedef struct client_light_stream {
     lm_atlas_rect_t    *mrect;          /**< [n_meshes] per-mesh atlas rect. */
     int                *mchunk;         /**< [n_meshes] per-mesh chunk id (-1 none). */
     uint32_t            n_meshes;
+    uint8_t            *lm_visible;     /**< [n_chunks] on-screen flag (dual prepass); pins interest. */
     gi_sdf_stream_t     sdf;           /**< SDF/voxel chunks (owned; GI borrows via ext_sdf). */
     int                 has_sdf;       /**< 1 = @c sdf loaded (all-RAM or scanned). */
     int                 sdf_streamed;  /**< 1 = SDF chunks page via @c sdf_stream. */
@@ -91,6 +92,16 @@ bool client_light_stream_init(client_light_stream_t *ls,
  *        highest-priority chunks within budget, evict the rest).
  */
 void client_light_stream_tick(client_light_stream_t *ls, const float cam_pos[3]);
+
+/**
+ * @brief Feed the on-screen lightmap-chunk set (dual visibility prepass's
+ *        @c visible_lm) so the next tick PINS visible chunks above distance
+ *        priority -- residency then follows what the camera actually sees, not
+ *        just proximity, which is what lets chunk count exceed resident layers in
+ *        large worlds (rpg-gky0). @p vis[@p n] : 1 = chunk on screen. NULL/0 clears
+ *        (proximity only). @p n is clamped to the chunk count. Render thread.
+ */
+void client_light_stream_set_visible(client_light_stream_t *ls, const uint8_t *vis, int n);
 
 /**
  * @brief The resident SH-array layer for a mesh's lightmap chunk, or -1 if its

@@ -93,7 +93,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        const unsigned int *ext_sh_tex,
                        const lm_atlas_rect_t *ext_mrect,
                        const lm_atlas_t *ext_atlas,
-                       gi_sdf_stream_t *ext_sdf);
+                       gi_sdf_stream_t *ext_sdf,
+                       uint32_t lm_chunk_count);
 
 /** Render the scene for @p cam with the given dynamic GI collider proxies. */
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
@@ -116,12 +117,16 @@ void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
  *        chunk set (render_world_set_visible) and gate the probe set to the
  *        VISIBLE SDF chunks (instead of RAM residency). @p sdf_box_min/@p _max are
  *        the @p n_sdf_boxes SDF chunk world boxes (same order as gi_sdf_stream).
- *        Retires gi_runtime's internal prepass. Call per frame before render; GL
- *        thread. No-op if the scene has no dual prepass.
+ *        @p lm_mchunk[@p lm_nm] is the per-mesh lightmap-chunk id (the streamer's
+ *        mchunk; NULL/0 => single atlas): it drives the prepass's lightmap channel
+ *        so @c gi_pp.visible_lm reports the on-screen lightmap chunk set (feed it
+ *        to client_light_stream_set_visible). Retires gi_runtime's internal
+ *        prepass. Call per frame before render; GL thread. No-op without a dual prepass.
  */
 void client_scene_gi_visibility(client_scene_t *cs, const float view[16],
                                 const float proj[16], const float *sdf_box_min,
                                 const float *sdf_box_max, int n_sdf_boxes,
+                                const int *lm_mchunk, int lm_nm,
                                 int screen_w, int screen_h);
 
 /** Free all owned GL resources. */

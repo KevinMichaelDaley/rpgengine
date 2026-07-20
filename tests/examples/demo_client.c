@@ -885,8 +885,10 @@ int main(int argc, char **argv) {
                 }
             }
             gi_sdf_stream_t *ext_sdf = (lstream_active && lstream.has_sdf) ? &lstream.sdf : NULL;
+            uint32_t lm_chunks = lstream_active ? lstream.n_chunks : 1u;
             if (client_scene_load(&cs, &gl.loader, &desc, base, client_img_load,
-                                  CLIENT_WIN_W, CLIENT_WIN_H, ext_sh, ext_mrect, ext_atlas, ext_sdf)) {
+                                  CLIENT_WIN_W, CLIENT_WIN_H, ext_sh, ext_mrect, ext_atlas, ext_sdf,
+                                  lm_chunks)) {
                 cs_active = 1;
                 printf("[client] level '%s' loaded: %u objects, %u materials\n",
                        desc.name, desc.object_count, desc.material_count);
@@ -1405,8 +1407,14 @@ int main(int argc, char **argv) {
                     if (getenv("LEGACY_GI") == NULL && lstream.has_sdf) {
                         static float sbmin[64 * 3], sbmax[64 * 3];
                         int nb = gi_sdf_stream_boxes(&lstream.sdf, sbmin, sbmax);
+                        /* Dual prepass: SDF chunk (box) + lightmap chunk (per-mesh
+                         * mchunk) visibility in one pass. */
                         client_scene_gi_visibility(&cs, rc.view, rc.proj, sbmin, sbmax, nb,
+                                                   lstream.mchunk, (int)lstream.n_meshes,
                                                    CLIENT_WIN_W, CLIENT_WIN_H);
+                        /* Pin the on-screen lightmap chunks (multi-chunk residency). */
+                        client_light_stream_set_visible(&lstream, cs.gi_pp.visible_lm,
+                                                        cs.gi_pp.n_lm_chunks);
                     }
                 }
                 client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);

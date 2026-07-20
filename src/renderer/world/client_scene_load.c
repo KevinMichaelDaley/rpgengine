@@ -214,7 +214,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        const unsigned int *ext_sh_tex,
                        const lm_atlas_rect_t *ext_mrect,
                        const lm_atlas_t *ext_atlas,
-                       gi_sdf_stream_t *ext_sdf)
+                       gi_sdf_stream_t *ext_sdf,
+                       uint32_t lm_chunk_count)
 {
     if (cs == NULL || loader == NULL || descp == NULL || base_dir == NULL) return false;
     const scene_desc_t *desc = descp;
@@ -440,14 +441,17 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
 
     if (!render_world_init(&cs->world, &cfg)) { client_scene_destroy(cs); return false; }
 
-    /* Shared dual visibility prepass over the SDF chunks (+ 1 lm atlas chunk):
-     * when driven each frame it retires gi_runtime's internal prepass and gates
-     * probes by on-screen visibility (rpg-sazm). Sized from the streamed SDF. */
+    /* Shared dual visibility prepass over the SDF chunks + the lightmap chunks:
+     * when driven each frame it retires gi_runtime's internal prepass, gates probes
+     * by on-screen visibility, and reports the visible lightmap-chunk set for the
+     * light streamer (rpg-sazm/gky0). SDF channel sized from the streamed SDF; the
+     * lightmap channel from @p lm_chunk_count (1 = single atlas, always resident). */
     if (ext_sdf != NULL && ext_sdf->n_chunks > 0) {
         int pw = (screen_w / 8 > 0) ? screen_w / 8 : 1;
         int ph = (screen_h / 8 > 0) ? screen_h / 8 : 1;
+        int n_lm = (lm_chunk_count > 0) ? (int)lm_chunk_count : 1;
         if (gi_vis_prepass_init(&cs->gi_pp, pw, ph, ext_sdf->n_chunks) == 0 &&
-            gi_vis_prepass_enable_dual(&cs->gi_pp, 1) == 0)
+            gi_vis_prepass_enable_dual(&cs->gi_pp, n_lm) == 0)
             cs->gi_pp_ready = 1;
     }
     return true;
@@ -485,14 +489,15 @@ void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
 void client_scene_gi_visibility(client_scene_t *cs, const float view[16],
                                 const float proj[16], const float *sdf_box_min,
                                 const float *sdf_box_max, int n_sdf_boxes,
+                                const int *lm_mchunk, int lm_nm,
                                 int screen_w, int screen_h)
 {
     if (cs == NULL || !cs->gi_pp_ready || sdf_box_min == NULL || sdf_box_max == NULL) return;
-    /* One prepass: SDF chunk visibility per fragment (box test). Lightmap chunk
-     * ids omitted (single atlas -> always resident); mchunk becomes relevant with
-     * multi-chunk lightmaps. */
+    /* One geometry pass writes BOTH chunk id sets: per-fragment SDF chunk (box
+     * test, low 16 bits) + per-mesh lightmap chunk (@p lm_mchunk, high 16 bits).
+     * gi_pp.visible / visible_lm come back one frame late. */
     gi_vis_prepass_run_dual(&cs->gi_pp, &cs->scene, view, proj, sdf_box_min, sdf_box_max,
-                            n_sdf_boxes, NULL, 0, screen_w, screen_h);
+                            n_sdf_boxes, lm_mchunk, lm_nm, screen_w, screen_h);
     /* Drive gi_runtime's SDF paging from the shared mask (retires its own prepass). */
     render_world_set_visible(&cs->world, cs->gi_pp.visible, n_sdf_boxes);
     /* Gate the probe set to the VISIBLE SDF chunks (was RAM residency). */

@@ -148,6 +148,23 @@ streaming requirements (any of them missing caps the world size):
 Chunk streaming (fr_asset_stream + dual prepass + gi_runtime external residency) is
 done + default. Items 1–3 make the CHUNK tier scale; item 4 adds the ZONE tier.
 
+**Status (2026-07-19):**
+- Item 1 (chunked lightmap bake, rpg-yfa4/jro2): **DONE.** `client_bake_chunked`
+  partitions meshes into a centroid chunk grid, bakes each chunk's meshes into their
+  own atlas with `cfg.geo_scene` = the full scene (shared far-field), and emits
+  `<prefix>_cNNN.flm` + a `ZLM1 <prefix>_manifest.bin` (per-mesh chunk id + rect +
+  a per-chunk world-box trailer). Gated by `CLIENT_BAKE_CHUNK` (chunk edge, m);
+  unset keeps the single global atlas. Verified: great_hall 84 meshes -> 10 chunks.
+- Item 2 (multi-chunk lightmap streaming, rpg-gky0): **DONE.**
+  `client_light_stream_init` auto-detects the ZLM1 manifest and registers N chunks
+  over their per-chunk world boxes (falls back to the scene box / single atlas). The
+  existing per-chunk load/upload/evict callbacks already generalize. The dual
+  prepass's `visible_lm` is wired end-to-end: `client_scene_gi_visibility` feeds the
+  per-mesh `mchunk` into `run_dual`, and `client_light_stream_set_visible` pins
+  on-screen chunks above distance priority so residency follows what the camera sees
+  (the gate that lets chunk count exceed resident SH layers). Verified in-client.
+- Item 3 (unified RAM/VRAM budget, rpg-vfmi) + item 4 (world zones, rpg-yrnu): TODO.
+
 ## Reference implementations to lift from
 
 - `tests/visual/hall_lit_dynamic.c` — `sh_stream` (lightmap chunk paging, atlas +
