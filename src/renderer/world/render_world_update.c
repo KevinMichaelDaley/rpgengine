@@ -18,3 +18,8 @@ void render_world_set_probes(render_world_t *rw, const float *pos, uint32_t coun
 {
     if (rw != NULL && rw->gi_enabled) gi_runtime_set_probes(&rw->gi, pos, count);
 }
+
+void render_world_set_visible(render_world_t *rw, const uint8_t *visible, int n_chunks)
+{
+    if (rw != NULL && rw->gi_enabled) gi_runtime_set_visible(&rw->gi, visible, n_chunks);
+}

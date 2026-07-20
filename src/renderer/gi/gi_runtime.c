@@ -236,6 +236,13 @@ void gi_runtime_set_probes(gi_runtime_t *gi, const float *pos, uint32_t count)
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
+void gi_runtime_set_visible(gi_runtime_t *gi, const uint8_t *visible, int n_chunks)
+{
+    if (gi == NULL) return;
+    gi->ext_visible = visible;
+    gi->ext_visible_n = n_chunks;
+}
+
 void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
                       const float view[16], const float proj[16],
                       const gi_collider_t *boxes, uint32_t n_boxes,
@@ -294,10 +301,16 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
     uint32_t tick = frame / (uint32_t)gi->update_interval;
     int K = gi->n_groups > 1 ? gi->n_groups : 1;
     {
-        /* Page the on-screen SDF chunks (per-fragment world-pos classification). */
-        gi_vis_prepass_run_world(&gi->pp, scene, view, proj, gi->box_min, gi->box_max,
-                                 gi->n_sdf_boxes, main_w, main_h);
-        gi_sdf_stream_page(gi->sdf_ptr, gi->pp.visible);
+        /* Page the on-screen SDF chunks. Use the external (shared dual-prepass)
+         * visible mask if the client provides one; else run the internal world
+         * prepass (per-fragment world-pos classification). */
+        if (gi->ext_visible != NULL) {
+            gi_sdf_stream_page(gi->sdf_ptr, gi->ext_visible);
+        } else {
+            gi_vis_prepass_run_world(&gi->pp, scene, view, proj, gi->box_min, gi->box_max,
+                                     gi->n_sdf_boxes, main_w, main_h);
+            gi_sdf_stream_page(gi->sdf_ptr, gi->pp.visible);
+        }
     }
 
     /* Gather the scene lights tagged PROBE_GI into the trace's light set: the

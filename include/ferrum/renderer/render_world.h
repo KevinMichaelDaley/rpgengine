@@ -97,6 +97,10 @@ void render_world_update(render_world_t *rw, const gi_collider_t *boxes,
  *  forwards to gi_runtime_set_probes. @p count clamped to the init max_probes. */
 void render_world_set_probes(render_world_t *rw, const float *pos, uint32_t count);
 
+/** Provide the GI runtime an external visible-SDF-chunk mask (shared dual prepass,
+ *  rpg-sazm); forwards to gi_runtime_set_visible. NULL restores the internal pass. */
+void render_world_set_visible(render_world_t *rw, const uint8_t *visible, int n_chunks);
+
 #ifdef __cplusplus
 }
 #endif

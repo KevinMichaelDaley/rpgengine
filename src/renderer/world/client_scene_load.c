@@ -439,6 +439,17 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     }
 
     if (!render_world_init(&cs->world, &cfg)) { client_scene_destroy(cs); return false; }
+
+    /* Shared dual visibility prepass over the SDF chunks (+ 1 lm atlas chunk):
+     * when driven each frame it retires gi_runtime's internal prepass and gates
+     * probes by on-screen visibility (rpg-sazm). Sized from the streamed SDF. */
+    if (ext_sdf != NULL && ext_sdf->n_chunks > 0) {
+        int pw = (screen_w / 8 > 0) ? screen_w / 8 : 1;
+        int ph = (screen_h / 8 > 0) ? screen_h / 8 : 1;
+        if (gi_vis_prepass_init(&cs->gi_pp, pw, ph, ext_sdf->n_chunks) == 0 &&
+            gi_vis_prepass_enable_dual(&cs->gi_pp, 1) == 0)
+            cs->gi_pp_ready = 1;
+    }
     return true;
 }
 
@@ -471,6 +482,29 @@ void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
     }
 }
 
+void client_scene_gi_visibility(client_scene_t *cs, const float view[16],
+                                const float proj[16], const float *sdf_box_min,
+                                const float *sdf_box_max, int n_sdf_boxes,
+                                int screen_w, int screen_h)
+{
+    if (cs == NULL || !cs->gi_pp_ready || sdf_box_min == NULL || sdf_box_max == NULL) return;
+    /* One prepass: SDF chunk visibility per fragment (box test). Lightmap chunk
+     * ids omitted (single atlas -> always resident); mchunk becomes relevant with
+     * multi-chunk lightmaps. */
+    gi_vis_prepass_run_dual(&cs->gi_pp, &cs->scene, view, proj, sdf_box_min, sdf_box_max,
+                            n_sdf_boxes, NULL, 0, screen_w, screen_h);
+    /* Drive gi_runtime's SDF paging from the shared mask (retires its own prepass). */
+    render_world_set_visible(&cs->world, cs->gi_pp.visible, n_sdf_boxes);
+    /* Gate the probe set to the VISIBLE SDF chunks (was RAM residency). */
+    float vmin[64 * 3], vmax[64 * 3]; uint32_t nv = 0;
+    for (int c = 0; c < n_sdf_boxes && c < cs->gi_pp.n_chunks && nv < 64u; ++c) {
+        if (!cs->gi_pp.visible[c]) continue;
+        for (int a = 0; a < 3; ++a) { vmin[nv*3+a] = sdf_box_min[c*3+a]; vmax[nv*3+a] = sdf_box_max[c*3+a]; }
+        ++nv;
+    }
+    client_scene_stream_probes(cs, vmin, vmax, nv);
+}
+
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
                          const gi_collider_t *boxes, uint32_t n_boxes,
                          int screen_w, int screen_h)
@@ -490,6 +524,7 @@ void client_scene_destroy(client_scene_t *cs)
     if (!cs->sh_borrowed)
         for (int c = 0; c < 9; ++c) if (cs->sh_tex[c]) glDeleteTextures(1, &cs->sh_tex[c]);
     gi_static_volume_destroy(&cs->static_vol);
+    if (cs->gi_pp_ready) gi_vis_prepass_destroy(&cs->gi_pp);
     free(cs->meshes); free(cs->materials); free(cs->textures);
     free(cs->rb); free(cs->light_buf);
     free(cs->probe_pos_full); free(cs->probe_scratch);

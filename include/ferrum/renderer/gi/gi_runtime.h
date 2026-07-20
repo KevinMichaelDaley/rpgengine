@@ -77,6 +77,9 @@ typedef struct gi_runtime {
     float           *probe_pos, *probe_sh;   /**< probe backing. */
     uint32_t        *cell_start, *probe_idx; /**< accel backing. */
     uint32_t         probe_cap;   /**< probe backing capacity (>= any set count). */
+    const uint8_t   *ext_visible; /**< external visible-SDF-chunk mask (borrowed); if
+                                   *   set, skip the internal world prepass + page it. */
+    int              ext_visible_n;
     float            gi_aabb_min[3], gi_aabb_max[3]; /**< accel-grid bounds (for rebuild). */
     float            gi_cell;     /**< accel cell size (for rebuild). */
     uint32_t         gi_ncells;   /**< accel cell count (for rebuild). */
@@ -144,6 +147,16 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg);
  *        picks the new set up automatically. NULL/over-capacity safe.
  */
 void gi_runtime_set_probes(gi_runtime_t *gi, const float *pos, uint32_t count);
+
+/**
+ * @brief Provide an EXTERNAL visible-SDF-chunk mask (rpg-sazm/zygg): when set,
+ *        gi_runtime skips its internal WORLD visibility prepass and pages the SDF
+ *        from this mask instead -- so ONE shared dual prepass (in the client)
+ *        drives both SDF and lightmap chunk residency. @p visible is borrowed
+ *        ([@p n_chunks] flags, indexed like gi_sdf_stream chunks). NULL restores
+ *        the internal prepass. Set each frame before gi_runtime_frame.
+ */
+void gi_runtime_set_visible(gi_runtime_t *gi, const uint8_t *visible, int n_chunks);
 
 /**
  * @brief Per frame: page the visible SDF chunks (world prepass over @p scene with

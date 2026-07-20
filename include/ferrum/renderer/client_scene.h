@@ -30,6 +30,7 @@ extern "C" {
 #include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/light_store.h"
 #include "ferrum/renderer/gi/gi_static_volume.h"
+#include "ferrum/renderer/gi/gi_vis_prepass.h"
 #include "ferrum/lightmap/lm_atlas.h"
 
 struct scene_desc; /* ferrum/scene/scene_desc.h */
@@ -63,6 +64,8 @@ typedef struct client_scene {
     uint32_t             probe_count_full;
     float               *probe_scratch; /**< [probe_count_full*3] scratch for the resident subset. */
     uint32_t             probe_resident; /**< last resident probe count pushed (churn guard). */
+    gi_vis_prepass_t     gi_pp;          /**< shared dual visibility prepass (SDF + lm chunks). */
+    int                  gi_pp_ready;    /**< 1 = gi_pp initialised. */
     render_light_store_t lights;
     render_light_t      *light_buf;   /**< lights backing. */
     const gl_loader_t   *loader;
@@ -106,6 +109,20 @@ void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
  */
 void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
                                 const float *box_max, uint32_t n_boxes);
+
+/**
+ * @brief Run the shared dual visibility prepass (rpg-sazm) over the scene and use
+ *        it to drive GI residency: page the GI runtime's SDF from the on-screen
+ *        chunk set (render_world_set_visible) and gate the probe set to the
+ *        VISIBLE SDF chunks (instead of RAM residency). @p sdf_box_min/@p _max are
+ *        the @p n_sdf_boxes SDF chunk world boxes (same order as gi_sdf_stream).
+ *        Retires gi_runtime's internal prepass. Call per frame before render; GL
+ *        thread. No-op if the scene has no dual prepass.
+ */
+void client_scene_gi_visibility(client_scene_t *cs, const float view[16],
+                                const float proj[16], const float *sdf_box_min,
+                                const float *sdf_box_max, int n_sdf_boxes,
+                                int screen_w, int screen_h);
 
 /** Free all owned GL resources. */
 void client_scene_destroy(client_scene_t *cs);
