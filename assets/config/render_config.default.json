@@ -1,0 +1,51 @@
+{
+  "_comment": "Engine-default render tuning (rpg-da8c). Every key is optional; a level or zone ships a partial JSON that overrides only what it needs (missing keys keep these defaults). Loaded by render_config_load / render_config_parse; consumed by client_scene_load. Values here mirror render_config_defaults() and the hall_lit_dynamic reference.",
+
+  "cluster_tiles_x": 16,
+  "cluster_tiles_y": 16,
+  "cluster_slices": 24,
+  "cluster_near": 0.2,
+  "cluster_far": 60.0,
+  "max_lights": 512,
+
+  "sh_scale": 0.7,
+  "sh_normal_bias": 0.5,
+  "ambient": [0.0, 0.0, 0.0],
+
+  "sun_energy_scale": 0.45,
+  "dir_cascades": 2,
+  "dir_static_res": 1024,
+  "dir_dynamic_res": 1024,
+  "dir_lambda": 0.6,
+  "dir_bias": 0.05,
+  "dir_softness": 0.7,
+  "dir_max_distance": 0.0,
+  "dir_pcss": 0,
+
+  "shadow_max": 8,
+  "shadow_res": 256,
+  "shadow_near": 0.1,
+  "shadow_far_scale": 1.2,
+  "shadow_bias": 0.08,
+
+  "gi_enabled": 1,
+  "gi_grid_cell": 4.0,
+  "gi_soft_k": 8.0,
+  "gi_max_lights": 512,
+  "gi_max_boxes": 64,
+  "gi_probe_min": 4,
+  "gi_probe_sphere_margin": 1.2,
+  "gi_bin_interval": 1,
+  "gi_update_interval": 8,
+  "gi_n_probe_groups": 2,
+  "gi_aabb_pad_lo": [0.0, 0.3, 0.0],
+  "gi_aabb_pad_hi": [0.0, 0.2, 0.0],
+
+  "static_baked_w": 0.35,
+  "static_dyn_w": 3.0,
+  "static_k": 1.0,
+  "spec_gain": 1.0,
+  "sky_ao_color": [0.038475, 0.0471275, 0.0646975],
+  "sky_ao_ref": 5.0,
+  "sky_ao_mult": 0.6
+}

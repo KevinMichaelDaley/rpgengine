@@ -11,6 +11,7 @@
 
 #include "ferrum/renderer/client_scene.h"
 #include "ferrum/scene/scene_desc.h"
+#include "ferrum/scene/render_config.h"
 #include "ferrum/probe/probe_place.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/lightmap/lm_atlas.h"
@@ -143,16 +144,16 @@ static void build_material(client_scene_t *cs, render_material_t *mat,
     }
 }
 
-/* Empirical map from a Blender directional-light irradiance (energy, ~W/m^2) to
- * the engine's realtime sun radiance: an energy-20 sun lands near the reference
- * hall's tuned (~9) direct-sun colour. */
-#define CLIENT_SUN_ENERGY_SCALE 0.45f
+/* The Blender directional-light irradiance (energy, ~W/m^2) -> engine realtime sun
+ * radiance scale now lives in render_config (sun_energy_scale, default 0.45): an
+ * energy-20 sun lands near the reference hall's tuned (~9) direct-sun colour. */
 
 /* Find the descriptor's sun (first DIRECTIONAL light) and derive the forward
  * pass's realtime sun. render_forward's u_sun_dir points TOWARD the sun, so it is
  * the negated travel direction. sun_color = light colour * intensity * scale.
  * Returns true if a sun was found (fills to_sun[3] + color[3]). */
-static bool find_sun(const scene_desc_t *desc, float to_sun[3], float color[3])
+static bool find_sun(const scene_desc_t *desc, float to_sun[3], float color[3],
+                     float energy_scale)
 {
     for (uint32_t i = 0; i < desc->light_count; ++i) {
         const scene_desc_light_t *l = &desc->lights[i];
@@ -162,7 +163,7 @@ static bool find_sun(const scene_desc_t *desc, float to_sun[3], float color[3])
         len = (len > 1e-8f) ? 1.0f / sqrtf(len) : 0.0f;
         for (int a = 0; a < 3; ++a) {
             to_sun[a] = -l->direction[a] * len;                 /* toward the sun */
-            color[a] = l->color[a] * l->intensity * CLIENT_SUN_ENERGY_SCALE;
+            color[a] = l->color[a] * l->intensity * energy_scale;
         }
         return true;
     }
@@ -215,7 +216,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        const lm_atlas_rect_t *ext_mrect,
                        const lm_atlas_t *ext_atlas,
                        gi_sdf_stream_t *ext_sdf,
-                       uint32_t lm_chunk_count)
+                       uint32_t lm_chunk_count,
+                       const struct render_config *render_cfg)
 {
     if (cs == NULL || loader == NULL || descp == NULL || base_dir == NULL) return false;
     const scene_desc_t *desc = descp;
@@ -322,18 +324,26 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
             pset = refined;
     }
 
-    /* render_world config: forward + GI, from the descriptor. */
+    /* render_world config. Scalar tuning comes from the render_config (JSON-loadable
+     * per level/zone, rpg-da8c); this function supplies the DATA-driven bits
+     * (textures, scene pointer, scene AABB, sun from the descriptor, streamed probes)
+     * that a config file cannot know. NULL render_cfg => engine defaults. */
+    render_config_t rc;
+    if (render_cfg != NULL) rc = *(const render_config_t *)render_cfg;
+    else render_config_defaults(&rc);
+
     render_world_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.forward.loader = loader;
-    cfg.forward.cluster = (cluster_config_t){ 16, 16, 24, 0.2f, 60.0f };
-    cfg.forward.max_lights = 512;
-    cfg.forward.index_capacity = 16u * 16u * 24u * 16u;
+    cfg.forward.cluster = (cluster_config_t){ rc.cluster_tiles_x, rc.cluster_tiles_y,
+                                              rc.cluster_slices, rc.cluster_near, rc.cluster_far };
+    cfg.forward.max_lights = rc.max_lights;
+    cfg.forward.index_capacity = rc.cluster_tiles_x * rc.cluster_tiles_y * rc.cluster_slices * 16u;
     cfg.forward.screen_w = (float)screen_w; cfg.forward.screen_h = (float)screen_h;
-    cfg.forward.ambient[0] = cfg.forward.ambient[1] = cfg.forward.ambient[2] = 0.0f;
+    for (int a = 0; a < 3; ++a) cfg.forward.ambient[a] = rc.ambient[a];
     /* Baked SH lightmap carries the INDIRECT bounce only (the sun's DIRECT term is
-     * the realtime directional light + CSM below), so keep sh_scale < 1. */
+     * the realtime directional light + CSM below), so sh_scale < 1 by default. */
     cfg.forward.sh_enabled = cs->sh_tex[0] ? 1 : 0;
-    cfg.forward.sh_scale = 0.7f; cfg.forward.sh_normal_bias = 0.5f;
+    cfg.forward.sh_scale = rc.sh_scale; cfg.forward.sh_normal_bias = rc.sh_normal_bias;
     for (int c = 0; c < 9; ++c) cfg.forward.sh_tex[c] = cs->sh_tex[c];
     cfg.scene = &cs->scene;
 
@@ -341,20 +351,20 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
      * light. The lightmap holds the sun's baked indirect; the direct sun and its
      * cascaded shadows come from here so dynamic geometry shadows correctly. */
     float to_sun[3], sun_col[3];
-    if (find_sun(desc, to_sun, sun_col)) {
+    if (find_sun(desc, to_sun, sun_col, rc.sun_energy_scale)) {
         for (int a = 0; a < 3; ++a) {
             cfg.forward.sun_dir[a] = to_sun[a];
             cfg.forward.sun_color[a] = sun_col[a];
         }
         /* Cascaded directional shadow maps fit to the whole scene AABB (+pad). */
-        cfg.forward.dir_cascades = 2;
-        cfg.forward.dir_static_res = 1024;
-        cfg.forward.dir_dynamic_res = 1024;
-        cfg.forward.dir_lambda = 0.6f;
-        cfg.forward.dir_bias = 0.05f;
-        cfg.forward.dir_softness = 0.7f;
-        cfg.forward.dir_pcss = 0;
-        cfg.forward.dir_max_distance = 0.0f;
+        cfg.forward.dir_cascades = rc.dir_cascades;
+        cfg.forward.dir_static_res = rc.dir_static_res;
+        cfg.forward.dir_dynamic_res = rc.dir_dynamic_res;
+        cfg.forward.dir_lambda = rc.dir_lambda;
+        cfg.forward.dir_bias = rc.dir_bias;
+        cfg.forward.dir_softness = rc.dir_softness;
+        cfg.forward.dir_pcss = rc.dir_pcss;
+        cfg.forward.dir_max_distance = rc.dir_max_distance;
         for (int a = 0; a < 3; ++a) {
             cfg.forward.shadow_scene_min[a] = amin[a] - 1.0f;
             cfg.forward.shadow_scene_max[a] = amax[a] + 1.0f;
@@ -366,14 +376,14 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     for (int a = 0; a < 3; ++a) { float e = amax[a] - amin[a]; diag += e * e; }
     diag = sqrtf(diag);
     cfg.forward.shadow_light = -1;
-    cfg.forward.shadow_max = 8;
-    cfg.forward.shadow_res = 256;
-    cfg.forward.shadow_near = 0.1f;
-    cfg.forward.shadow_far = (diag > 1.0f) ? diag * 1.2f : 60.0f;
-    cfg.forward.shadow_bias = 0.08f;
+    cfg.forward.shadow_max = rc.shadow_max;
+    cfg.forward.shadow_res = rc.shadow_res;
+    cfg.forward.shadow_near = rc.shadow_near;
+    cfg.forward.shadow_far = (diag > 1.0f) ? diag * rc.shadow_far_scale : 60.0f;
+    cfg.forward.shadow_bias = rc.shadow_bias;
     cfg.forward.spot_light = -1;   /* no dedicated spot; cube path covers spots. */
 
-    cfg.gi_enabled = 1;
+    cfg.gi_enabled = rc.gi_enabled;
     cfg.gi_sdf_prefix = NULL;   /* set below to a persistent string. */
     cfg.gi_ext_sdf = ext_sdf;   /* borrow the streamer's SDF stream if provided. */
     static char sdf_path[512];
@@ -381,8 +391,10 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         snprintf(sdf_path, sizeof sdf_path, "%s/%s", base_dir, desc->lightdata.sdf_prefix);
         cfg.gi_sdf_prefix = sdf_path;
     }
-    for (int a = 0; a < 3; ++a) { cfg.gi_aabb_min[a] = amin[a]; cfg.gi_aabb_max[a] = amax[a]; }
-    cfg.gi_aabb_min[1] += 0.3f; cfg.gi_aabb_max[1] -= 0.2f;
+    for (int a = 0; a < 3; ++a) {
+        cfg.gi_aabb_min[a] = amin[a] + rc.gi_aabb_pad_lo[a];
+        cfg.gi_aabb_max[a] = amax[a] - rc.gi_aabb_pad_hi[a];
+    }
     cfg.gi_probe_pos = pset.positions; cfg.gi_probe_count = pset.count;
     cfg.gi_max_probes = pset.count;   /* allow set_probes to restore the full set. */
     /* Keep a persistent copy of the full generated probe set so it can be streamed
@@ -395,12 +407,13 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         if (cs->probe_pos_full != NULL)
             memcpy(cs->probe_pos_full, pset.positions, (size_t)pset.count * 3 * sizeof(float));
     }
-    cfg.gi_grid_cell = 4.0f;
+    cfg.gi_grid_cell = rc.gi_grid_cell;
     cfg.gi_prepass_w = (screen_w / 8 > 0) ? screen_w / 8 : 1;
     cfg.gi_prepass_h = (screen_h / 8 > 0) ? screen_h / 8 : 1;
-    cfg.gi_max_lights = 512; cfg.gi_max_boxes = 64; cfg.gi_soft_k = 8.0f;
-    cfg.gi_probe_min = 4; cfg.gi_probe_sphere_margin = 1.2f; cfg.gi_bin_interval = 1;
-    cfg.gi_update_interval = 8; cfg.gi_n_probe_groups = 2;
+    cfg.gi_max_lights = rc.gi_max_lights; cfg.gi_max_boxes = rc.gi_max_boxes; cfg.gi_soft_k = rc.gi_soft_k;
+    cfg.gi_probe_min = rc.gi_probe_min; cfg.gi_probe_sphere_margin = rc.gi_probe_sphere_margin;
+    cfg.gi_bin_interval = rc.gi_bin_interval;
+    cfg.gi_update_interval = rc.gi_update_interval; cfg.gi_n_probe_groups = rc.gi_n_probe_groups;
     if (pset.grid_dim[0] > 0) {
         for (int a = 0; a < 3; ++a) {
             cfg.gi_grid_origin[a] = pset.grid_origin[a];
@@ -408,8 +421,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
             cfg.gi_grid_dim[a] = pset.grid_dim[a];
         }
     }
-    cfg.has_static_weights = 1; cfg.static_baked_w = 0.35f; cfg.static_dyn_w = 3.0f;
-    cfg.has_spec_gain = 1; cfg.spec_gain = 1.0f;
+    cfg.has_static_weights = 1; cfg.static_baked_w = rc.static_baked_w; cfg.static_dyn_w = rc.static_dyn_w;
+    cfg.has_spec_gain = 1; cfg.spec_gain = rc.spec_gain;
 
     /* Fold the baked lightmap into the probes (built above) + sky-openness AO,
      * matching hall_lit_dynamic so shadowed interior surfaces get baked bounce. */
@@ -421,13 +434,11 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
             cfg.static_vol_dim[a] = (float)cs->static_vol.dims[a];
         }
         cfg.static_vol_voxel = cs->static_vol.voxel;
-        cfg.static_k = 1.0f;
+        cfg.static_k = rc.static_k;
         cfg.has_sky_ao = 1;
-        cfg.sky_ao_color[0] = 0.15390f * 0.25f;
-        cfg.sky_ao_color[1] = 0.18851f * 0.25f;
-        cfg.sky_ao_color[2] = 0.25879f * 0.25f;
-        cfg.sky_ao_ref = 5.0f;
-        cfg.sky_ao_mult = 0.6f;
+        for (int a = 0; a < 3; ++a) cfg.sky_ao_color[a] = rc.sky_ao_color[a];
+        cfg.sky_ao_ref = rc.sky_ao_ref;
+        cfg.sky_ao_mult = rc.sky_ao_mult;
     }
 
     /* Debug: CLIENT_NOSUN isolates the dynamic punctual lights (kills the sun +

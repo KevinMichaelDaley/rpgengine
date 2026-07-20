@@ -1,0 +1,22 @@
+{
+  "_comment": "Example world descriptor (rpg-da8c / rpg-yrnu). A world is a set of ZONES -- irregular, variable-size world boxes (NOT a regular grid); a zone may span several light-data chunks. Each zone names its own scene descriptor and, optionally, its own render config, so the config + scene subsystems load PER ZONE: world_desc_zone_at(player) picks the active zone, world_desc_zone_config(i) resolves its render config (own -> world default -> engine default). Paths are relative to the world file's directory. Parsed by world_desc_load.",
+
+  "name": "example_world",
+  "render_config": "config/world_default.json",
+
+  "zones": [
+    {
+      "name": "great_hall_keep",
+      "min": [-20, -2, -20],
+      "max": [ 20, 18,  20],
+      "scene": "great_hall/great_hall.scene"
+    },
+    {
+      "name": "outer_bailey",
+      "min": [ 20, -2, -60],
+      "max": [180, 40,  90],
+      "scene": "bailey/bailey.scene",
+      "render_config": "bailey/bailey_bright.json"
+    }
+  ]
+}

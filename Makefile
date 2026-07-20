@@ -1158,6 +1158,11 @@ build/npc_kg_astar_tests: tests/npc/npc_kg_astar_tests.c $(NPC_KG_TEST_SRC) $(OB
 build/scene_desc_tests: tests/scene/scene_desc_tests.c $(SCENE_DESC_SRC) $(JSON_PARSE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c | build
 	$(CC) $(CFLAGS) tests/scene/scene_desc_tests.c $(SCENE_DESC_SRC) $(JSON_PARSE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c -o $@ -lm
 
+# Render-world config + world/zone descriptor (rpg-da8c). Headless: same scene
+# descriptor sources (render_config + world_desc live in src/scene/) + JSON + arena.
+build/render_config_tests: tests/scene/render_config_tests.c $(SCENE_DESC_SRC) $(JSON_PARSE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c | build
+	$(CC) $(CFLAGS) tests/scene/render_config_tests.c $(SCENE_DESC_SRC) $(JSON_PARSE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c -o $@ -lm
+
 # Probe placement + .probes file (rpg-ft0g). Headless: probe module + arena only.
 build/probe_tests: tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c | build
 	$(CC) $(CFLAGS) tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c -o $@ -lm
@@ -1650,7 +1655,7 @@ build/scene_editor: build/liball.a tools/scene_editor_main.c | build
 build:
 
 
-test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/probe_tests build/asset_stream_tests build/collider_prim_tests build/gi_collider_pose_tests build/server_level_load_tests build/stream_priority_tests
+test: $(BIN_HEADLESS) build/p008_net_replication_protocol_tests build/p000_job_queue_sharding_tests build/p000_job_queue_diagnostics_tests build/p000_ws_deque_tests build/p007_net_client_rx_tests build/p007_net_client_rx_udp_topic_tests build/p007_net_topic_dispatch_tests build/npc_kg_astar_tests build/npc_kg_spatial_tests build/scene_desc_tests build/render_config_tests build/probe_tests build/asset_stream_tests build/collider_prim_tests build/gi_collider_pose_tests build/server_level_load_tests build/stream_priority_tests
 	./build/p000_tests && ./build/p001_tests && ./build/p002_tests && ./build/p002_memory_apool_tests && ./build/p003_tests \
 && ./build/p007_net_tests && ./build/p007_net_header_tests && ./build/p007_net_ack_tests \
 && ./build/p007_net_unreliable_tests && ./build/p007_net_reliable_tests && ./build/p007_net_test_client_api_tests \

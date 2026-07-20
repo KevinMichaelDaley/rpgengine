@@ -39,6 +39,7 @@
 #include "ferrum/job/system.h"
 #include "ferrum/renderer/render_camera.h"
 #include "ferrum/scene/scene_desc.h"
+#include "ferrum/scene/render_config.h"
 #include "ferrum/memory/arena.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -886,9 +887,24 @@ int main(int argc, char **argv) {
             }
             gi_sdf_stream_t *ext_sdf = (lstream_active && lstream.has_sdf) ? &lstream.sdf : NULL;
             uint32_t lm_chunks = lstream_active ? lstream.n_chunks : 1u;
+            /* Render tuning (rpg-da8c): defaults, overlaid by a per-level JSON if
+             * present. CLIENT_RENDER_CONFIG=<path> overrides; else <base>/render.json.
+             * When zones land, each zone loads its own config through this same call. */
+            render_config_t rcfg; render_config_defaults(&rcfg);
+            {
+                static uint8_t rc_buf[256 * 1024];
+                arena_t rca; arena_init(&rca, rc_buf, sizeof rc_buf);
+                const char *rcenv = getenv("CLIENT_RENDER_CONFIG");
+                char rcpath[600];
+                if (rcenv == NULL) { snprintf(rcpath, sizeof rcpath, "%s/render.json", base); rcenv = rcpath; }
+                if (render_config_load(rcenv, &rca, &rcfg))
+                    printf("[client] render config: %s (sh_scale=%.2f)\n", rcenv, (double)rcfg.sh_scale);
+                else
+                    printf("[client] render config: engine defaults (sh_scale=%.2f)\n", (double)rcfg.sh_scale);
+            }
             if (client_scene_load(&cs, &gl.loader, &desc, base, client_img_load,
                                   CLIENT_WIN_W, CLIENT_WIN_H, ext_sh, ext_mrect, ext_atlas, ext_sdf,
-                                  lm_chunks)) {
+                                  lm_chunks, &rcfg)) {
                 cs_active = 1;
                 printf("[client] level '%s' loaded: %u objects, %u materials\n",
                        desc.name, desc.object_count, desc.material_count);

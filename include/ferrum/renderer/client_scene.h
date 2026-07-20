@@ -33,7 +33,8 @@ extern "C" {
 #include "ferrum/renderer/gi/gi_vis_prepass.h"
 #include "ferrum/lightmap/lm_atlas.h"
 
-struct scene_desc; /* ferrum/scene/scene_desc.h */
+struct scene_desc;    /* ferrum/scene/scene_desc.h */
+struct render_config; /* ferrum/scene/render_config.h */
 
 /**
  * @brief Decode an image file to a tightly-packed 3-channel (RGB) buffer.
@@ -94,7 +95,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
                        const lm_atlas_rect_t *ext_mrect,
                        const lm_atlas_t *ext_atlas,
                        gi_sdf_stream_t *ext_sdf,
-                       uint32_t lm_chunk_count);
+                       uint32_t lm_chunk_count,
+                       const struct render_config *render_cfg);
 
 /** Render the scene for @p cam with the given dynamic GI collider proxies. */
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
