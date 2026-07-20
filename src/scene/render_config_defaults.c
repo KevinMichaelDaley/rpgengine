@@ -23,7 +23,11 @@ void render_config_defaults(render_config_t *rc)
      * iff a lightmap texture is present); set 0 to force the lightmap OFF. */
     rc->sh_enabled = -1;
     rc->sh_scale = 0.7f;
-    rc->sh_normal_bias = 0.5f;
+    /* GI diffuse normal = mix(geometric, normal-mapped) by this. It drives BOTH the
+     * baked-lightmap diffuse and the probe diffuse, so a low value averages the
+     * normal map away and GI-lit surfaces read flat/detail-less. Keep it close to
+     * the mapped normal (the renderer's own default is 1). */
+    rc->sh_normal_bias = 0.9f;
     rc->ambient[0] = rc->ambient[1] = rc->ambient[2] = 0.0f;
 
     /* Sun + cascaded shadow maps. */

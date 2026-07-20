@@ -49,7 +49,7 @@ static int test_defaults_match_reference(void)
     render_config_defaults(&rc);
     /* Values mirrored from hall_lit_dynamic / client_scene_load. */
     ASSERT_FLT_EQ(rc.sh_scale, 0.7f);
-    ASSERT_FLT_EQ(rc.sh_normal_bias, 0.5f);
+    ASSERT_FLT_EQ(rc.sh_normal_bias, 0.9f);
     ASSERT_INT_EQ(rc.dir_cascades, 2);
     ASSERT_INT_EQ(rc.dir_static_res, 1024);
     ASSERT_FLT_EQ(rc.dir_lambda, 0.6f);
@@ -80,7 +80,7 @@ static int test_json_overlay_partial(void)
     ASSERT_FLT_EQ(rc.gi_soft_k, 12.0f);       /* overridden */
     ASSERT_INT_EQ(rc.dir_cascades, 3);        /* overridden */
     ASSERT_FLT_EQ(rc.sky_ao_mult, 0.9f);      /* overridden */
-    ASSERT_FLT_EQ(rc.sh_normal_bias, 0.5f);   /* default survives */
+    ASSERT_FLT_EQ(rc.sh_normal_bias, 0.9f);   /* default survives */
     ASSERT_INT_EQ(rc.shadow_res, 256);        /* default survives */
     ASSERT_FLT_EQ(rc.spec_gain, 1.0f);        /* default survives */
     return 0;
