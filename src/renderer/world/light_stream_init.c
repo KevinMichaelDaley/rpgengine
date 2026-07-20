@@ -143,8 +143,17 @@ bool client_light_stream_init(client_light_stream_t *ls,
         snprintf(slots[0].path, sizeof slots[0].path, "%s", single_path);
     }
 
-    /* Resident SH layers: one per chunk up to the residency cap. */
-    ls->n_layers = ls->n_chunks < CLIENT_LM_MAX_RESIDENT ? ls->n_chunks : CLIENT_LM_MAX_RESIDENT;
+    /* Resident SH layers: min(chunk count, hard cap, VRAM budget / per-layer bytes).
+     * The physical SH-array layer count == the stream's VRAM budget below, so the
+     * streamer's priority eviction is exactly what frees a layer for a new chunk. */
+    size_t layer_bytes = lm_chunk_bytes((int)ls->atlas.width, (int)ls->atlas.height);
+    uint32_t layer_cap = CLIENT_LM_MAX_RESIDENT;
+    if (cfg->vram_budget > 0 && layer_bytes > 0) {
+        uint32_t by_budget = (uint32_t)(cfg->vram_budget / layer_bytes);
+        if (by_budget < 1u) by_budget = 1u;              /* always room for at least one. */
+        if (by_budget < layer_cap) layer_cap = by_budget;
+    }
+    ls->n_layers = ls->n_chunks < layer_cap ? ls->n_chunks : layer_cap;
     ls->layer_chunk = malloc(ls->n_layers * sizeof(int));
     if (ls->layer_chunk == NULL) { free(boxes); client_light_stream_destroy(ls); return false; }
     for (uint32_t l = 0; l < ls->n_layers; ++l) ls->layer_chunk[l] = -1;
@@ -162,25 +171,43 @@ bool client_light_stream_init(client_light_stream_t *ls,
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
 
-    /* Streamer + chunk table. load runs on a job fiber; upload/evict on the
-     * render thread from client_light_stream_tick. */
+    /* Scan the SDF chunks FIRST (headers only -> chunk count + world boxes + GPU
+     * pool) so they can share ONE stream + budget with the lightmap (rpg-vfmi).
+     * Per-chunk on-demand residency is the DEFAULT; LEGACY_SDF=1 forces the old
+     * load-all-to-RAM path (fallback if the scan fails -- then not in the stream). */
+    uint32_t n_sdf = 0;
+    if (cfg->sdf_prefix != NULL && cfg->sdf_prefix[0] != '\0') {
+        snprintf(ls->sdf_prefix, sizeof ls->sdf_prefix, "%s/%s", cfg->base_dir, cfg->sdf_prefix);
+        if (getenv("LEGACY_SDF") == NULL && gi_sdf_stream_scan(&ls->sdf, ls->sdf_prefix) > 0) {
+            ls->has_sdf = 1; ls->sdf_streamed = 1;
+            n_sdf = (uint32_t)ls->sdf.n_chunks;
+        } else if (gi_sdf_stream_load(&ls->sdf, ls->sdf_prefix) > 0) {
+            ls->has_sdf = 1;   /* legacy load-all: resident in RAM, outside the stream. */
+        }
+    }
+
+    /* ONE stream owns lightmap SH chunks + SDF chunks under a single RAM/VRAM
+     * budget (rpg-vfmi). Callbacks dispatch by asset class; load runs on job
+     * fibers, upload/evict on the render thread from client_light_stream_tick. The
+     * VRAM budget == the physical SH layer capacity so priority eviction frees a
+     * layer for a newly-visible chunk; SDF chunks carry vram_size=0 (RAM-only). */
+    size_t cb = layer_bytes;
     fr_asset_stream_config_t sc;
     memset(&sc, 0, sizeof sc);
     sc.jobs = cfg->jobs;
     sc.ram_budget = cfg->ram_budget;
-    sc.vram_budget = cfg->vram_budget;
-    sc.max_in_flight = 2u;
-    sc.capacity = ls->n_chunks + 1u;
+    sc.vram_budget = (size_t)ls->n_layers * cb;
+    sc.max_in_flight = 4u;
+    sc.capacity = ls->n_chunks + n_sdf + 1u;
     sc.cbs.load = client_ls_load;
     sc.cbs.upload = client_ls_upload;
     sc.cbs.evict = client_ls_evict;
     sc.user = ls;
     if (!fr_asset_stream_init(&ls->stream, &sc)) { free(boxes); client_light_stream_destroy(ls); return false; }
 
-    /* One chunk-table entry per lightmap chunk over its world box (proximity
-     * residency). Single-atlas + trailer-less manifests use the whole scene box. */
+    /* Lightmap chunks: ids [0, n_lm) over their world boxes, VRAM tier (vram_size=cb).
+     * Single-atlas + trailer-less manifests fall back to the whole scene box. */
     fr_chunk_table_init(&ls->table, &ls->stream, ls->entries, ls->n_chunks);
-    size_t cb = lm_chunk_bytes((int)ls->atlas.width, (int)ls->atlas.height);
     for (uint32_t c = 0; c < ls->n_chunks; ++c) {
         const float *bmin = scene_min, *bmax = scene_max;
         if (have_boxes) { bmin = &boxes[c*6]; bmax = &boxes[c*6+3]; }
@@ -191,41 +218,31 @@ bool client_light_stream_init(client_light_stream_t *ls,
     }
     free(boxes);
 
-    /* SDF/voxel chunks: the GI streamer OWNS the SDF stream (gi_runtime borrows it
-     * via ext_sdf, rpg-c7fk). SDF_STREAM=on-demand per-chunk disk->RAM residency
-     * via a dedicated fr_asset_stream (load on fibers, RAM budget); default =
-     * load-all-to-RAM (unchanged). gi_sdf_stream GPU-pages the RAM-resident set. */
-    if (cfg->sdf_prefix != NULL && cfg->sdf_prefix[0] != '\0') {
-        snprintf(ls->sdf_prefix, sizeof ls->sdf_prefix, "%s/%s", cfg->base_dir, cfg->sdf_prefix);
-        /* Per-chunk on-demand SDF residency is the DEFAULT; LEGACY_SDF=1 forces the
-         * old load-all-to-RAM path (fallback if the scan fails). */
-        if (getenv("LEGACY_SDF") == NULL && gi_sdf_stream_scan(&ls->sdf, ls->sdf_prefix) > 0) {
-            ls->has_sdf = 1;
-            uint32_t n = (uint32_t)ls->sdf.n_chunks;
-            sdf_chunk_slot_t *ss = calloc(n ? n : 1, sizeof *ss);
-            ls->sdf_slots = ss;
-            fr_asset_stream_config_t sc;
-            memset(&sc, 0, sizeof sc);
-            sc.jobs = cfg->jobs;
-            sc.ram_budget = cfg->ram_budget;
-            sc.vram_budget = 0;          /* no VRAM tier -- gi_runtime GPU-pages RAM chunks. */
-            sc.max_in_flight = 4u;
-            sc.capacity = n + 1u;
-            sc.cbs.load = client_sdf_load;
-            sc.cbs.evict = client_sdf_evict;
-            sc.user = ls;
-            if (ss != NULL && fr_asset_stream_init(&ls->sdf_stream, &sc)) {
-                ls->sdf_streamed = 1;
-                for (uint32_t c = 0; c < n; ++c) {
-                    ss[c].owner = ls; ss[c].chunk = (int)c;
-                    const int32_t *dm = ls->sdf.ram[c].dims;
-                    size_t ram = (size_t)dm[0] * dm[1] * dm[2] * 4u * sizeof(float);
-                    fr_asset_stream_add(&ls->sdf_stream, c, FR_ASSET_SDF_CHUNK, ram, 0, 0, &ss[c]);
-                }
-            }
-        } else if (gi_sdf_stream_load(&ls->sdf, ls->sdf_prefix) > 0) {
-            ls->has_sdf = 1;
+    /* SDF chunks: ids [CLIENT_SDF_ID_BASE, +n_sdf) over their world boxes in a
+     * SECOND chunk table on the SAME stream, RAM-only (vram_size=0). gi_runtime
+     * GPU-pages the RAM-resident set (borrows ls->sdf). */
+    if (n_sdf > 0) {
+        sdf_chunk_slot_t *ss = calloc(n_sdf, sizeof *ss);
+        ls->sdf_slots = ss;
+        ls->sdf_entries = calloc(n_sdf, sizeof *ls->sdf_entries);
+        ls->sdf_visible = calloc(n_sdf, 1);
+        float *sbmin = malloc((size_t)n_sdf * 3u * sizeof(float));
+        float *sbmax = malloc((size_t)n_sdf * 3u * sizeof(float));
+        if (!ss || !ls->sdf_entries || !ls->sdf_visible || !sbmin || !sbmax) {
+            free(sbmin); free(sbmax); client_light_stream_destroy(ls); return false;
         }
+        gi_sdf_stream_boxes(&ls->sdf, sbmin, sbmax);
+        fr_chunk_table_init(&ls->sdf_table, &ls->stream, ls->sdf_entries, n_sdf);
+        for (uint32_t c = 0; c < n_sdf; ++c) {
+            ss[c].owner = ls; ss[c].chunk = (int)c;
+            const int32_t *dm = ls->sdf.ram[c].dims;
+            size_t ram = (size_t)dm[0] * dm[1] * dm[2] * 4u * sizeof(float);
+            if (!fr_chunk_table_add(&ls->sdf_table, CLIENT_SDF_ID_BASE + c, FR_ASSET_SDF_CHUNK,
+                                    &sbmin[c*3], &sbmax[c*3], ram, 0, &ss[c])) {
+                free(sbmin); free(sbmax); client_light_stream_destroy(ls); return false;
+            }
+        }
+        free(sbmin); free(sbmax);
     }
     return true;
 }
@@ -239,9 +256,8 @@ void client_light_stream_destroy(client_light_stream_t *ls)
         for (uint32_t i = 0; i < ls->n_chunks; ++i)
             for (int c = 0; c < 9; ++c) { free(slots[i].coeff[c]); slots[i].coeff[c] = NULL; }
     }
-    if (ls->stream.slots != NULL) fr_asset_stream_destroy(&ls->stream);
-    if (ls->sdf_streamed && ls->sdf_stream.slots != NULL) fr_asset_stream_destroy(&ls->sdf_stream);
-    free(ls->sdf_slots);
+    if (ls->stream.slots != NULL) fr_asset_stream_destroy(&ls->stream);   /* unified lm+SDF. */
+    free(ls->sdf_slots); free(ls->sdf_entries); free(ls->sdf_visible);
     if (ls->has_sdf) gi_sdf_stream_destroy(&ls->sdf);
     for (int c = 0; c < 9; ++c) if (ls->sh_tex[c]) glDeleteTextures(1, &ls->sh_tex[c]);
     free(ls->slots); free(ls->entries); free(ls->layer_chunk);

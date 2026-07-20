@@ -163,7 +163,18 @@ done + default. Items 1–3 make the CHUNK tier scale; item 4 adds the ZONE tier
   per-mesh `mchunk` into `run_dual`, and `client_light_stream_set_visible` pins
   on-screen chunks above distance priority so residency follows what the camera sees
   (the gate that lets chunk count exceed resident SH layers). Verified in-client.
-- Item 3 (unified RAM/VRAM budget, rpg-vfmi) + item 4 (world zones, rpg-yrnu): TODO.
+- Item 3 (unified RAM/VRAM budget, rpg-vfmi): **DONE.** `client_light_stream` now
+  owns ONE `fr_asset_stream` for BOTH lightmap SH chunks and SDF chunks under a
+  single RAM/VRAM budget. Two chunk tables (`table` + `sdf_table`) layer world boxes
+  over the same stream; callbacks dispatch by `fr_asset_class_t`; SDF chunks carry
+  `vram_size=0` (RAM-only — the streamer's `try_upload` auto-skips them), lightmap
+  chunks use the VRAM tier whose budget == the physical SH-array layer count so
+  priority eviction is what frees a layer. Proximity interest + on-screen pins
+  (`set_visible` / `set_sdf_visible`) span both classes. The streamer also gained a
+  `promote_ram` retry so a GPU chunk that decoded but lost the layer race is
+  promoted once a lower-priority resident evicts. Verified: 10 lightmap + 8 SDF =
+  18 chunks resident under one stream.
+- Item 4 (world zones, rpg-yrnu): TODO — the coarse ZONE tier above chunks.
 
 ## Reference implementations to lift from
 

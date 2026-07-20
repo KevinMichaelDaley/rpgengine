@@ -1412,9 +1412,12 @@ int main(int argc, char **argv) {
                         client_scene_gi_visibility(&cs, rc.view, rc.proj, sbmin, sbmax, nb,
                                                    lstream.mchunk, (int)lstream.n_meshes,
                                                    CLIENT_WIN_W, CLIENT_WIN_H);
-                        /* Pin the on-screen lightmap chunks (multi-chunk residency). */
+                        /* Pin the on-screen lightmap + SDF chunks (both classes share
+                         * one unified stream + budget, rpg-vfmi). */
                         client_light_stream_set_visible(&lstream, cs.gi_pp.visible_lm,
                                                         cs.gi_pp.n_lm_chunks);
+                        client_light_stream_set_sdf_visible(&lstream, cs.gi_pp.visible,
+                                                            cs.gi_pp.n_chunks);
                     }
                 }
                 client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);

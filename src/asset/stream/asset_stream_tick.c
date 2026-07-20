@@ -110,6 +110,22 @@ static void harvest(fr_asset_stream_t *s)
     }
 }
 
+/* Retry RAM->VRAM promotion for GPU assets that decoded but could not upload when
+ * first harvested (VRAM full, or the callback had no free GPU slot that tick).
+ * try_upload() only runs on the LOADING->RAM edge, so without this a chunk that
+ * lost the layer race stays RAM-resident forever even after residents evict --
+ * the newly-visible chunk would never reach VRAM. Cheap O(capacity) sweep; only
+ * touches RAM-resident GPU slots (vram_size>0), so one-shot RAM assets are skipped. */
+static void promote_ram(fr_asset_stream_t *s)
+{
+    if (s->cfg.vram_budget == 0u || s->cfg.cbs.upload == NULL) return;
+    for (uint32_t i = 0; i < s->cfg.capacity; ++i) {
+        fr_asset_slot_t *c = &s->slots[i];
+        if (c->used && c->residency == FR_RESIDENCY_RAM && c->vram_size > 0u)
+            try_upload(s, c);
+    }
+}
+
 /* Admit the highest-priority pending assets that fit, up to max_in_flight. */
 static void admit(fr_asset_stream_t *s)
 {
@@ -136,4 +152,5 @@ void fr_asset_stream_tick(fr_asset_stream_t *s)
     admit(s);         /* dispatch new loads from the top of the priority order. */
     if (s->cfg.jobs == NULL)
         harvest(s);   /* synchronous loads completed inline during admit. */
+    promote_ram(s);   /* retry uploads for RAM-stuck GPU assets (post-eviction). */
 }

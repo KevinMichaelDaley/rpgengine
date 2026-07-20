@@ -4,8 +4,11 @@
  *        into bounded GPU residency via the prioritized asset streamer (rpg-oda7).
  *
  * This is a SEPARATE subsystem from scene-descriptor loading (client_scene). It
- * owns one fr_asset_stream + a chunk table over the lightmap SH chunks, and the
- * 9 GL_TEXTURE_2D_ARRAY SH coefficient pages the forward pass samples. Chunk file
+ * owns ONE fr_asset_stream shared by the lightmap SH chunks AND the SDF/voxel
+ * chunks under a single RAM/VRAM budget (rpg-vfmi) -- two chunk tables (lightmap +
+ * SDF) layer world boxes over the same stream, callbacks dispatch by asset class,
+ * and eviction spans both classes by priority -- plus the 9 GL_TEXTURE_2D_ARRAY SH
+ * coefficient pages the forward pass samples. Chunk file
  * decode runs on a JOB FIBER (fr_asset_stream load callback, no GL); the GPU
  * upload runs on the render/GL thread (the streamer's upload callback, invoked
  * from fr_asset_stream_tick on the owner thread) -- the job/command-buffer
@@ -68,9 +71,11 @@ typedef struct client_light_stream {
     uint8_t            *lm_visible;     /**< [n_chunks] on-screen flag (dual prepass); pins interest. */
     gi_sdf_stream_t     sdf;           /**< SDF/voxel chunks (owned; GI borrows via ext_sdf). */
     int                 has_sdf;       /**< 1 = @c sdf loaded (all-RAM or scanned). */
-    int                 sdf_streamed;  /**< 1 = SDF chunks page via @c sdf_stream. */
-    fr_asset_stream_t   sdf_stream;    /**< per-chunk SDF disk->RAM residency (streamed mode). */
+    int                 sdf_streamed;  /**< 1 = SDF chunks page through the UNIFIED @c stream. */
+    fr_chunk_table_t    sdf_table;     /**< world-boxed SDF chunks over @c stream (same budget). */
+    fr_chunk_entry_t   *sdf_entries;   /**< SDF chunk-table storage [sdf.n_chunks]. */
     void               *sdf_slots;     /**< [sdf.n_chunks] SDF chunk slot_users. */
+    uint8_t            *sdf_visible;   /**< [sdf.n_chunks] on-screen flag (dual prepass); pins interest. */
     char                sdf_prefix[512];/**< resolved SDF prefix for on-demand chunk load. */
     const gl_loader_t  *loader;
 } client_light_stream_t;
@@ -102,6 +107,14 @@ void client_light_stream_tick(client_light_stream_t *ls, const float cam_pos[3])
  *        (proximity only). @p n is clamped to the chunk count. Render thread.
  */
 void client_light_stream_set_visible(client_light_stream_t *ls, const uint8_t *vis, int n);
+
+/**
+ * @brief Feed the on-screen SDF-chunk set (dual prepass's @c visible) so the next
+ *        tick pins visible SDF chunks above distance priority in the SAME unified
+ *        stream + budget as the lightmap (rpg-vfmi). @p vis[@p n] : 1 = on screen.
+ *        NULL/0 clears (proximity only). Render thread.
+ */
+void client_light_stream_set_sdf_visible(client_light_stream_t *ls, const uint8_t *vis, int n);
 
 /**
  * @brief The resident SH-array layer for a mesh's lightmap chunk, or -1 if its

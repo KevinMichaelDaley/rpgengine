@@ -10,6 +10,11 @@
 
 #include "ferrum/renderer/light_stream.h"
 
+/** Asset-id offset for SDF chunks in the unified stream (rpg-vfmi): lightmap
+ * chunks use ids [0, n_lm); SDF chunks use [CLIENT_SDF_ID_BASE, +n_sdf) so the two
+ * classes never collide while sharing one fr_asset_stream. */
+#define CLIENT_SDF_ID_BASE 0x40000000ull
+
 /** Bytes of SH data for one w*h atlas chunk: 9 RGB32F coefficient images. */
 static inline size_t lm_chunk_bytes(int w, int h)
 {

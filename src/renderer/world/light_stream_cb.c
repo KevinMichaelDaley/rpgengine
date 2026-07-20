@@ -31,11 +31,13 @@ void client_sdf_evict(void *user, uint64_t id, fr_asset_class_t cls, void *slot_
     }
 }
 
-/* JOB FIBER: decode the chunk's 9 SH coefficient images into slot RAM. No GL.
- * Returns RAM bytes loaded (0 = failure => the slot stays ABSENT). */
+/* JOB FIBER: decode a chunk into slot RAM. No GL. Dispatches by asset class so
+ * the unified stream (rpg-vfmi) serves both lightmap SH and SDF chunks. Returns
+ * RAM bytes loaded (0 = failure => the slot stays ABSENT). */
 size_t client_ls_load(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user)
 {
-    (void)user; (void)id; (void)cls;
+    if (cls == FR_ASSET_SDF_CHUNK) return client_sdf_load(user, id, cls, slot_user);
+    (void)user; (void)id;
     lm_chunk_slot_t *s = slot_user;
     FILE *f = fopen(s->path, "rb");
     if (f == NULL) return 0;
@@ -70,7 +72,8 @@ size_t client_ls_load(void *user, uint64_t id, fr_asset_class_t cls, void *slot_
  * layer (stays RAM-resident; picked up a later tick after an eviction). */
 size_t client_ls_upload(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user)
 {
-    (void)id; (void)cls;
+    (void)id;
+    if (cls == FR_ASSET_SDF_CHUNK) return 0;   /* SDF: RAM-only (gi_runtime GPU-pages). */
     client_light_stream_t *ls = user;
     lm_chunk_slot_t *s = slot_user;
     if (s->coeff[0] == NULL) return 0;   /* nothing decoded */
@@ -94,7 +97,8 @@ size_t client_ls_upload(void *user, uint64_t id, fr_asset_class_t cls, void *slo
 /* RENDER THREAD: release the GPU layer and/or the RAM copy per the drop mask. */
 void client_ls_evict(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user, int drop)
 {
-    (void)id; (void)cls;
+    (void)id;
+    if (cls == FR_ASSET_SDF_CHUNK) { client_sdf_evict(user, id, cls, slot_user, drop); return; }
     client_light_stream_t *ls = user;
     lm_chunk_slot_t *s = slot_user;
     if ((drop & FR_ASSET_DROP_VRAM) && s->layer >= 0) {
