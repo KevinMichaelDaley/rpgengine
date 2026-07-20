@@ -118,6 +118,36 @@ zone table). A zone's admission bundles its chunk manifest + boxes.
 6. **STREAM_PRIORITY** (server hints, rpg-3ldk) + player-distance interest feed the
    priorities; ties the whole thing to server-assigned order.
 
+## Scaling to massive worlds (CORE, not polish)
+
+The target is not one hall but **open zones / worlds of many castles, each with its
+own great-hall-class interior somewhere inside**. That makes the following CORE
+streaming requirements (any of them missing caps the world size):
+
+1. **Chunked lightmaps** (rpg-yfa4 bake + rpg-jro2 manifest). A single global atlas
+   (one 109 MB `.flm` for one hall) does not scale and is too low-res spread over a
+   zone. The baker emits **one atlas per chunk** (`<prefix>_cNNN.flm`) + a `ZLM1`
+   manifest (per-mesh chunk id + atlas rect), baking each chunk's meshes against the
+   FULL scene (shared far-field). The in-client bake (client_bake.c) must gain the
+   per-chunk loop.
+2. **Multi-chunk lightmap streaming** (rpg-zygg). The client pages N lightmap SH
+   chunks through `fr_asset_stream` (per-mesh `sh_layer` = the resident layer of the
+   mesh's chunk, single-pass — like hall_lit_dynamic's `sh_stream`), gated by the
+   dual prepass's **`visible_lm`** channel (already produced, currently unused
+   because there is only 1 chunk). uv1 remapped into each mesh's chunk atlas rect
+   from the manifest.
+3. **Unified residency budget**. One `fr_asset_stream` RAM/VRAM budget shared across
+   lightmap + SDF + probe chunks so residency is bounded regardless of world size
+   (today the lightmap + SDF are separate streams / budgets — fine for one hall,
+   wrong for a world).
+4. **World zones** (separate epic rpg-yrnu). The coarse tier above chunks: a world =
+   many zones (a castle each); zones admit/evict by proximity + coarse visibility
+   before their chunks stream; distant zones fully evict. Each zone owns its chunk
+   set + geometry + colliders + far-field handoff at borders.
+
+Chunk streaming (fr_asset_stream + dual prepass + gi_runtime external residency) is
+done + default. Items 1–3 make the CHUNK tier scale; item 4 adds the ZONE tier.
+
 ## Reference implementations to lift from
 
 - `tests/visual/hall_lit_dynamic.c` — `sh_stream` (lightmap chunk paging, atlas +
