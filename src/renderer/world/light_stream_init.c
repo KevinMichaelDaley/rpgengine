@@ -121,7 +121,9 @@ bool client_light_stream_init(client_light_stream_t *ls,
      * load-all-to-RAM (unchanged). gi_sdf_stream GPU-pages the RAM-resident set. */
     if (cfg->sdf_prefix != NULL && cfg->sdf_prefix[0] != '\0') {
         snprintf(ls->sdf_prefix, sizeof ls->sdf_prefix, "%s/%s", cfg->base_dir, cfg->sdf_prefix);
-        if (getenv("SDF_STREAM") != NULL && gi_sdf_stream_scan(&ls->sdf, ls->sdf_prefix) > 0) {
+        /* Per-chunk on-demand SDF residency is the DEFAULT; LEGACY_SDF=1 forces the
+         * old load-all-to-RAM path (fallback if the scan fails). */
+        if (getenv("LEGACY_SDF") == NULL && gi_sdf_stream_scan(&ls->sdf, ls->sdf_prefix) > 0) {
             ls->has_sdf = 1;
             uint32_t n = (uint32_t)ls->sdf.n_chunks;
             sdf_chunk_slot_t *ss = calloc(n ? n : 1, sizeof *ss);
