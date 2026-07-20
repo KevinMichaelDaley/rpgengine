@@ -477,6 +477,12 @@ def _dais_banner(col, name, length, wall_t, width):
     bm.free()
     o = bpy.data.objects.new(f"{name}_banner", me)
     _link(col, o)
+    # DYNAMIC: cloth moves, so it is excluded from the offline bake entirely (no
+    # lightmap slot, not in the baked voxel albedo). The runtime instead voxelises
+    # it into the sparse dynamic albedo volume each probe update, which is what
+    # makes its red bleed into the probe GI. The exporter emits this flag.
+    o["ferrum_dynamic"] = 1
+    o["ferrum_lightmap_res"] = 0
     mat = bpy.data.materials.get(f"{name}_banner")
     if mat:
         bpy.data.materials.remove(mat)
@@ -651,9 +657,6 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
              dais_front - 0.4 * (s2 + 0.5), 0.0, 0.09 * (2 - s2),
              0.4, dais_w - 1.0, 0.18 * (2 - s2))
 
-    # red heraldic cloth banner in the dais' central blind arch (GI bleed test)
-    _dais_banner(col, name, length, wall_t, width)
-
     # low stepped base plinth along the foot of every wall
     _wall_base_plinths(col, name, length, half, wall_t, dais_top, dais_w)
 
@@ -741,6 +744,12 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
     # punch the flue hole so the chimney exits through the roof (boolean cutter
     # over the stack footprint: wx +/- 0.48 in X, yin-0.3..yin in Y).
     _punch_flue(col, roof, f"{name}_flue", fp_wx, yin - 0.15, 2.05, 0.20)
+
+    # --- red heraldic cloth banner in the dais' central blind arch. Built LAST on
+    #     purpose: it is a DYNAMIC object (tagged below), so it takes no lightmap
+    #     slot, and appending it keeps every existing mesh's index -- and therefore
+    #     the already-baked lightmap's per-mesh atlas rects -- valid. No re-bake. ---
+    _dais_banner(col, name, length, wall_t, width)
     return col
 
 

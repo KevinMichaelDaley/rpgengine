@@ -106,6 +106,9 @@ bool scene_desc_parse_objects(const json_value_t *root, struct arena *arena,
         sd_field_vec(o, "rotation", d->rotation, 4);
         sd_field_vec(o, "scale", d->scale, 3);
         d->lightmap_res = (int32_t)sd_field_num(o, "lightmap_res", 0.0f);
+        /* DYNAMIC objects are outside the offline bake; the runtime voxelises them
+         * into its dynamic albedo volume each probe update (rpg-3c6g). */
+        d->dynamic = sd_field_bool(o, "dynamic", false) ? 1 : 0;
         d->sh_layer = (int32_t)sd_field_num(o, "sh_layer", 0.0f);
 
         const json_value_t *mats = json_object_get(o, "materials");

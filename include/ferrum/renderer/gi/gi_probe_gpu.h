@@ -41,6 +41,7 @@ typedef struct gi_probe_gpu {
              int field_on, near_dist, static_on, static_k, static_irr;
              int pass, seed, dmax, emin, nsamp, bounce;
              int mis, norm_gate, hybrid, hero, stat_scale;
+             int dyn_alb, dyn_origin, dyn_dim, dyn_vox, dyn_on;
              int static_origin, static_dim, static_vox;
              int sdf_active[8], sdf[8], sdf_origin[8], sdf_dim[8], sdf_vox[8]; } loc;
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
@@ -50,6 +51,11 @@ typedef struct gi_probe_gpu {
     unsigned int b_active;     /**< stochastic-radiosity scratch: [count][indices..]. */
     unsigned int b_emit;       /**< per-probe direct-injection SH (24 floats/probe). */
     unsigned int b_norm;       /**< per-probe surface normal (vec4: xyz + validity). */
+    unsigned int dyn_tex;      /**< sparse DYNAMIC albedo volume (RGBA8 3D, 0 = none). */
+    int          dyn_dim[3];   /**< dynamic-volume voxel dims. */
+    float        dyn_origin[3];/**< dynamic-volume world origin (min corner). */
+    float        dyn_vox;      /**< dynamic-volume voxel size (m). */
+    int          dyn_on;       /**< 1 = the volume has dynamic coverage this update. */
     unsigned int tbo_sh, tbo_sh_tex; /**< SH buffer texture (for the forward+ sampler). */
     unsigned int tbo_pos_tex;  /**< probe-position buffer texture (for the sampler). */
     unsigned int tbo_depth_tex; /**< depth buffer texture (RG32F: mean, meanSq). */
@@ -96,6 +102,26 @@ void gi_probe_gpu_set_probes(gi_probe_gpu_t *g, const float *pos, uint32_t n);
 void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
                              const float origin[3], const float dim[3],
                              float vox, float k);
+
+/**
+ * @brief (Re)create + CLEAR the sparse DYNAMIC albedo volume covering
+ *        @p aabb_min..@p aabb_max at ~@p vox metres/voxel, and return its texture
+ *        so the caller can rasterise dynamic geometry into it (gi_voxelize).
+ *
+ * Dynamic objects are absent from the baked voxel albedo, so without this a probe
+ * ray that hits one bounces the neutral grey fallback (occlusion only). Call once
+ * per probe update on the GL thread, then voxelise, then gi_probe_gpu_dyn_enable(1).
+ * The volume is clamped to a low-res voxel budget (probe scale).
+ *
+ * @param out_dim,out_extent  filled with the chosen voxel dims + world extent.
+ * @return the 3D texture id (0 on failure).
+ */
+unsigned int gi_probe_gpu_dyn_volume(gi_probe_gpu_t *g, const float aabb_min[3],
+                                     const float aabb_max[3], float vox,
+                                     int out_dim[3], float out_extent[3]);
+
+/** @brief Enable/disable the dynamic-albedo term for the next dispatch. */
+void gi_probe_gpu_dyn_enable(gi_probe_gpu_t *g, int on);
 
 /**
  * @brief Dispatch the update: bind the resident SDF chunks from @p sdf, upload

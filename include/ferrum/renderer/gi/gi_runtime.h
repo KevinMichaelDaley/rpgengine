@@ -160,6 +160,7 @@ void gi_runtime_set_probes(gi_runtime_t *gi, const float *pos, uint32_t count);
  */
 void gi_runtime_set_visible(gi_runtime_t *gi, const uint8_t *visible, int n_chunks);
 
+
 /**
  * @brief Per frame: page the visible SDF chunks (world prepass over @p scene with
  *        @p view/@p proj), then GPU-march every probe to every scene light tagged

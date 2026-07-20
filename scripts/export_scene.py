@@ -635,13 +635,17 @@ def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
     # 2. meshes + manifest
     objs = []
     mesh_lmres = []
+    # STATIC objects first (alphabetical), DYNAMIC ones last. Dynamic props take no
+    # lightmap slot, so keeping them after every static mesh means adding/removing
+    # one never shifts a static mesh's index -- and the baked lightmap's per-mesh
+    # atlas rects (indexed by that order) stay valid, i.e. no re-bake.
     for o in sorted((o for o in col.objects if o.type == 'MESH'),
-                    key=lambda o: o.name):
+                    key=lambda o: (1 if bool(o.get("ferrum_dynamic", 0)) else 0, o.name)):
         rel, vc, fc = export_mesh(o, out_dir)
         loc, rot_q, scale = o.matrix_world.decompose()
         lmr = _lmres_for(o)
         mesh_lmres.append(lmr)
-        objs.append({
+        rec = {
             "name": o.name,
             "mesh": rel,
             "position": _engine_pos(loc),
@@ -650,7 +654,13 @@ def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
             "materials": [m.name if m else None for m in o.data.materials],
             "lightmap_res": lmr,
             "vertices": vc, "faces": fc,
-        })
+        }
+        # DYNAMIC objects (ferrum_dynamic custom property): excluded from the offline
+        # bake -- the runtime voxelises them into its dynamic albedo volume instead,
+        # so their colour still bleeds through the probe GI.
+        if bool(o.get("ferrum_dynamic", 0)):
+            rec["dynamic"] = True
+        objs.append(rec)
 
     manifest = {"collection": collection_name,
                 "materials": [m.name for m in mats],

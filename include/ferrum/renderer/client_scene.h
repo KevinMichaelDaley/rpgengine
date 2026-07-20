@@ -31,6 +31,7 @@ extern "C" {
 #include "ferrum/renderer/light_store.h"
 #include "ferrum/renderer/gi/gi_static_volume.h"
 #include "ferrum/renderer/gi/gi_vis_prepass.h"
+#include "ferrum/renderer/gi/gi_voxelize.h"
 #include "ferrum/lightmap/lm_atlas.h"
 
 struct scene_desc;    /* ferrum/scene/scene_desc.h */
@@ -67,6 +68,13 @@ typedef struct client_scene {
     uint32_t             probe_resident; /**< last resident probe count pushed (churn guard). */
     gi_vis_prepass_t     gi_pp;          /**< shared dual visibility prepass (SDF + lm chunks). */
     int                  gi_pp_ready;    /**< 1 = gi_pp initialised. */
+    gi_voxelize_t        vox;            /**< dynamic-geometry voxeliser (GI colour bleed). */
+    int                  vox_ready;      /**< 1 = vox initialised. */
+    uint32_t            *dyn_idx;        /**< [dyn_count] renderable indices of DYNAMIC objects. */
+    float               *dyn_albedo;     /**< [dyn_count*3] their material albedo. */
+    gi_collider_t       *dyn_col;        /**< [dyn_count] world-AABB proxies so dynamic
+                                          *   objects also OCCLUDE in the probe SDF. */
+    uint32_t             dyn_count;      /**< dynamic objects (0 = none; term disabled). */
     render_light_store_t lights;
     render_light_t      *light_buf;   /**< lights backing. */
     const gl_loader_t   *loader;
@@ -130,6 +138,18 @@ void client_scene_gi_visibility(client_scene_t *cs, const float view[16],
                                 const float *sdf_box_max, int n_sdf_boxes,
                                 const int *lm_mchunk, int lm_nm,
                                 int screen_w, int screen_h);
+
+/**
+ * @brief Rasterise the scene's DYNAMIC objects into the probe GI's sparse dynamic
+ *        albedo volume so their colour bleeds into the indirect (rpg-3c6g).
+ *
+ * Dynamic objects are excluded from the offline bake, so without this the probes
+ * only see them as occluders and bounce a neutral grey (a red cloth banner bleeds
+ * grey). Clears + refills the volume from the objects tagged @c dynamic in the
+ * descriptor, using their real material albedo. No-op if the scene has none.
+ * Call once per frame before render; GL thread.
+ */
+void client_scene_voxelize_dynamic(client_scene_t *cs);
 
 /** Free all owned GL resources. */
 void client_scene_destroy(client_scene_t *cs);

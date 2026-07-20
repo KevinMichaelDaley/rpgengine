@@ -1436,6 +1436,10 @@ int main(int argc, char **argv) {
                                                             cs.gi_pp.n_chunks);
                     }
                 }
+                /* Rasterise the level's DYNAMIC objects (tagged in the descriptor)
+                 * into the GI's sparse dynamic albedo volume, so their real colour
+                 * bleeds into the indirect instead of a neutral grey (rpg-3c6g). */
+                client_scene_voxelize_dynamic(&cs);
                 client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);
             }
 

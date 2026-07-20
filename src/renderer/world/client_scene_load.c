@@ -232,6 +232,11 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cs->textures = calloc((nmat ? nmat : 1) * SCENE_DESC_MAT_TEX_COUNT, sizeof(texture_t));
     cs->rb = calloc(cs->rb_cap, sizeof(render_renderable_t));
     cs->light_buf = calloc(64, sizeof(render_light_t));
+    /* DYNAMIC object tracking (voxelised into the GI dynamic albedo volume). */
+    cs->dyn_idx = calloc(nobj ? nobj : 1, sizeof *cs->dyn_idx);
+    cs->dyn_albedo = calloc((nobj ? nobj : 1) * 3u, sizeof *cs->dyn_albedo);
+    cs->dyn_col = calloc(nobj ? nobj : 1, sizeof *cs->dyn_col);
+    cs->dyn_count = 0;
     if (!cs->meshes || !cs->materials || !cs->textures || !cs->rb || !cs->light_buf) {
         client_scene_destroy(cs); return false;
     }
@@ -279,9 +284,20 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         if (render_scene_add(&cs->scene, sm, mat, model)) {
             /* Internal single atlas => layer 0. Streamed => -1 until the chunk is
              * resident; the caller sets sh_layer per frame from the streamer. No
-             * lightmap => -1 (SH sampler skips it). */
+             * lightmap => -1 (SH sampler skips it). DYNAMIC objects are outside the
+             * bake entirely, so they never carry a lightmap layer. */
             cs->scene.items[cs->scene.count - 1].sh_layer =
-                (have_lm && !streamed) ? 0 : -1;
+                (have_lm && !streamed && !o->dynamic) ? 0 : -1;
+            /* Record DYNAMIC objects: absent from the baked voxel albedo, so they
+             * are voxelised into the GI's dynamic albedo volume each frame with
+             * their real material albedo (else they bleed neutral grey). */
+            if (o->dynamic && cs->dyn_idx != NULL && cs->dyn_albedo != NULL) {
+                uint32_t k = cs->dyn_count++;
+                cs->dyn_idx[k] = cs->scene.count - 1;
+                const float *tint = (mi >= 0 && (uint32_t)mi < nmat)
+                                    ? desc->materials[mi].tint : NULL;
+                for (int a = 0; a < 3; ++a) cs->dyn_albedo[k*3+a] = tint ? tint[a] : 0.5f;
+            }
         }
         for (int cx = 0; cx < 8; ++cx) {
             float lp[3] = { (cx & 1) ? sm->aabb_max[0] : sm->aabb_min[0],
@@ -476,6 +492,10 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
             gi_vis_prepass_enable_dual(&cs->gi_pp, n_lm) == 0)
             cs->gi_pp_ready = 1;
     }
+    /* Voxeliser for DYNAMIC geometry -> the GI's dynamic albedo volume. Only worth
+     * standing up if the level actually has dynamic objects. */
+    if (cs->dyn_count > 0 && gi_voxelize_init(&cs->vox, loader))
+        cs->vox_ready = 1;
     return true;
 }
 
@@ -541,6 +561,12 @@ void client_scene_render(client_scene_t *cs, const render_camera_t *cam,
 {
     if (cs == NULL || cam == NULL) return;
     cs->scene.camera = *cam;
+    /* With no caller-supplied proxies, feed the scene's own DYNAMIC objects so they
+     * occlude in the probe SDF (their colour comes from the dynamic albedo volume). */
+    if (boxes == NULL && n_boxes == 0 && cs->dyn_count > 0 && cs->dyn_col != NULL) {
+        boxes = cs->dyn_col;
+        n_boxes = cs->dyn_count;
+    }
     render_world_update(&cs->world, boxes, n_boxes, screen_w, screen_h);
 }
 
@@ -555,6 +581,8 @@ void client_scene_destroy(client_scene_t *cs)
         for (int c = 0; c < 9; ++c) if (cs->sh_tex[c]) glDeleteTextures(1, &cs->sh_tex[c]);
     gi_static_volume_destroy(&cs->static_vol);
     if (cs->gi_pp_ready) gi_vis_prepass_destroy(&cs->gi_pp);
+    if (cs->vox_ready) gi_voxelize_destroy(&cs->vox);
+    free(cs->dyn_idx); free(cs->dyn_albedo); free(cs->dyn_col);
     free(cs->meshes); free(cs->materials); free(cs->textures);
     free(cs->rb); free(cs->light_buf);
     free(cs->probe_pos_full); free(cs->probe_scratch);

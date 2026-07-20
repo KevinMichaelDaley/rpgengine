@@ -44,6 +44,11 @@ typedef struct scene_desc_object {
     int32_t  material_idx[SCENE_DESC_MAX_OBJ_MATERIALS]; /**< into scene_desc materials[]; -1 = unresolved. */
     int32_t  lightmap_res;                  /**< baked luxel resolution hint (0 = none). */
     int32_t  sh_layer;                      /**< baked-SH atlas layer (-1 = no bake). */
+    int32_t  dynamic;                       /**< 1 = DYNAMIC: excluded from the offline
+                                             *   bake (no lightmap slot, absent from the
+                                             *   baked voxel albedo); the runtime
+                                             *   voxelises it into the dynamic albedo
+                                             *   volume so its colour still bleeds. */
 } scene_desc_object_t;
 
 #ifdef __cplusplus

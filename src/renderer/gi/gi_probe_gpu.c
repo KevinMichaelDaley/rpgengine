@@ -66,6 +66,18 @@ static const char *CS_SRC =
      * coarse world grid. A cone that hits a surface gathers this so the probe\n"
      * carries the STATIC bounced ambience (one bounce beyond the lightmapper),\n"
      * not just the dynamic-light term. u_static_k boosts it. */
+    /* SPARSE DYNAMIC ALBEDO VOLUME: a low-res (probe-scale) RGBA volume over the GI\n"
+     * AABB, cleared + injected each probe update with the DYNAMIC objects' real\n"
+     * material albedo (rgb) + coverage (a). Dynamic geometry is deliberately NOT in\n"
+     * the baked SDF, so without this a trace that hits a dynamic object only sees the\n"
+     * collider's distance -- i.e. occlusion only -- and bounces the neutral grey\n"
+     * fallback. Sampling this gives the hit its true colour, so a red cloth banner\n"
+     * bleeds RED into the probe field. */
+    "uniform sampler3D u_dyn_alb;\n"
+    "uniform vec3 u_dyn_origin;\n"
+    "uniform vec3 u_dyn_dim;\n"
+    "uniform float u_dyn_vox;\n"
+    "uniform int u_dyn_on;\n"
     "uniform sampler3D u_static_irr;\n"
     "uniform vec3 u_static_origin;\n"
     "uniform vec3 u_static_dim;\n"
@@ -123,7 +135,15 @@ static const char *CS_SRC =
     "  return d; }\n"
     /* Voxelised static albedo at p, sampled at mip @p lod (cone footprint). Dynamic\n"
      * collider boxes have no baked albedo -> neutral grey fallback. */
+    /* Dynamic albedo lookup: rgb = injected albedo, a = coverage (0 = no dynamic
+     * geometry in this voxel). Trilinear so a coarse volume still reads smoothly. */
+    "vec4 dyn_alb_at(vec3 p){ if(u_dyn_on==0) return vec4(0.0);\n"
+    "  vec3 g=(p-u_dyn_origin)/u_dyn_vox;\n"
+    "  if(any(lessThan(g,vec3(0.0)))||any(greaterThanEqual(g,u_dyn_dim))) return vec4(0.0);\n"
+    "  return texture(u_dyn_alb,(g+0.5)/u_dyn_dim); }\n"
     "vec3 scene_albedo(vec3 p, float lod){\n"
+    /* Dynamic objects win: they are not in the baked voxel albedo at all. */
+    "  { vec4 dc=dyn_alb_at(p); if(dc.a>0.02) return dc.rgb/max(dc.a,1e-3); }\n"
     "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
@@ -499,6 +519,11 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
         g->loc.hybrid    = glGetUniformLocation(p, "u_hybrid");
         g->loc.hero      = glGetUniformLocation(p, "u_hero");
         g->loc.stat_scale= glGetUniformLocation(p, "u_stat_scale");
+        g->loc.dyn_alb   = glGetUniformLocation(p, "u_dyn_alb");
+        g->loc.dyn_origin= glGetUniformLocation(p, "u_dyn_origin");
+        g->loc.dyn_dim   = glGetUniformLocation(p, "u_dyn_dim");
+        g->loc.dyn_vox   = glGetUniformLocation(p, "u_dyn_vox");
+        g->loc.dyn_on    = glGetUniformLocation(p, "u_dyn_on");
         g->loc.static_on  = glGetUniformLocation(p, "u_static_on");
         g->loc.static_k   = glGetUniformLocation(p, "u_static_k");
         g->loc.static_irr = glGetUniformLocation(p, "u_static_irr");
@@ -738,6 +763,20 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         glUniform1f(g->loc.static_vox, g->static_vox);
         glActiveTexture(GL_TEXTURE0 + (GLenum)unit);
         glBindTexture(GL_TEXTURE_3D, on ? g->static_tex : 0);
+    }
+
+    /* Sparse dynamic albedo volume: one unit past the static irradiance volume. */
+    {
+        int on = (g->dyn_on && g->dyn_tex != 0) ? 1 : 0;
+        int unit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 1;
+        float dimf[3] = { (float)g->dyn_dim[0], (float)g->dyn_dim[1], (float)g->dyn_dim[2] };
+        glUniform1i(g->loc.dyn_on, on);
+        glUniform1i(g->loc.dyn_alb, unit);
+        glUniform3fv(g->loc.dyn_origin, 1, g->dyn_origin);
+        glUniform3fv(g->loc.dyn_dim, 1, dimf);
+        glUniform1f(g->loc.dyn_vox, g->dyn_vox > 0.0f ? g->dyn_vox : 1.0f);
+        glActiveTexture(GL_TEXTURE0 + (GLenum)unit);
+        glBindTexture(GL_TEXTURE_3D, on ? g->dyn_tex : 0);
     }
 
     /* Bind the resident SDF chunks (one per used slot) + metadata. */
