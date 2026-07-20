@@ -48,7 +48,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     /* Probe specular SG lobes summed per fragment (each = 8 corners * 2 texelFetch
      * + exp). 2 by default: ~all the fps of 1 lobe (26.2 vs 26.9, vs 22.9 for 3)
      * while keeping the multi-lobe quality 1 loses. GI_SG_LOBES overrides. */
-    gi->spec_lobes = 2;
+    gi->spec_lobes = cfg->tuning.spec_lobes > 0 ? cfg->tuning.spec_lobes : 2;
     { const char *e = getenv("GI_SG_LOBES");
       if (e != NULL) { int v = atoi(e); if (v >= 0) gi->spec_lobes = v; } }
     if (gi->spec_lobes < 0) gi->spec_lobes = 0;
@@ -67,11 +67,11 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     /* Probe-visibility softening (dot-artifact fix at dynamic-occluder edges).
      * Defaults are softer than the old hardcoded (0.15 bias, 1e-3 var, squared)
      * so the per-probe light/dark transition blends instead of stamping the grid. */
-    gi->vis_bias = 0.30f;
+    gi->vis_bias = cfg->tuning.vis_bias > 0.0f ? cfg->tuning.vis_bias : 0.30f;
     { const char *e = getenv("GI_VIS_BIAS"); if (e) { float v=(float)atof(e); if (v>=0.0f) gi->vis_bias=v; } }
-    gi->vis_varmin = 0.02f;
+    gi->vis_varmin = cfg->tuning.vis_varmin > 0.0f ? cfg->tuning.vis_varmin : 0.02f;
     { const char *e = getenv("GI_VIS_VARMIN"); if (e) { float v=(float)atof(e); if (v>0.0f) gi->vis_varmin=v; } }
-    gi->vis_sharp = 1.0f;
+    gi->vis_sharp = cfg->tuning.vis_sharp > 0.0f ? cfg->tuning.vis_sharp : 1.0f;
     { const char *e = getenv("GI_VIS_SHARP"); if (e) { float v=(float)atof(e); if (v>0.0f) gi->vis_sharp=v; } }
 
     /* --- Baked SDF residency: borrow an external (streamed) SDF stream if given
@@ -170,6 +170,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     gi->probe_min = cfg->probe_min > 0 ? cfg->probe_min : 4u;
     gi->probe_sphere_margin = cfg->probe_sphere_margin > 0.0f ? cfg->probe_sphere_margin : 1.5f;
     gi->bin_interval = cfg->bin_interval > 0 ? cfg->bin_interval : 1;
+    gi_probe_gpu_set_tuning(&gi->gpu, &cfg->tuning);
     {
         cluster_config_t fc = cfg->froxel;
         if (fc.tiles_x == 0) fc = (cluster_config_t){ 16, 16, 24, 0.2f, 60.0f };

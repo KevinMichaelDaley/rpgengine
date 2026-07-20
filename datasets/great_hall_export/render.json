@@ -1,0 +1,19 @@
+{
+  "_mode": "great_hall: fully dynamic GI, no baked lightmap (stealth-dark).",
+
+  "sh_enabled": 0,
+  "sh_normal_bias": 0.9,
+  "static_baked_w": 0.0,
+  "static_dyn_w": 3.0,
+
+  "gi_hybrid": 1,
+  "gi_hero": 2,
+  "gi_samples": 1024,
+  "gi_bounce": 0.45,
+  "gi_stat_scale": 0.3,
+  "gi_update_interval": 2,
+  "gi_n_probe_groups": 1,
+  "gi_smooth": 0.25,
+  "gi_vis_bias": 0.55,
+  "gi_vis_varmin": 0.06
+}

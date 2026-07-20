@@ -48,6 +48,14 @@ void render_config_defaults(render_config_t *rc)
     rc->gi_probe_sphere_margin = 1.2f; rc->gi_bin_interval = 1;
     rc->gi_update_interval = 8; rc->gi_n_probe_groups = 2;
     rc->gi_smooth = 0.15f;            /* steady probe temporal-EMA blend. */
+    /* Probe-GI tuning (formerly GI_* env only). */
+    rc->gi_field = 1; rc->gi_mis = 0; rc->gi_hybrid = 0; rc->gi_hero = 2;
+    rc->gi_samples = 24; rc->gi_spec_lobes = 2;
+    rc->gi_bounce = 0.9f;   /* NOTE steady state = 1/(1-gain): 0.9 settles at 10x. */
+    rc->gi_near = 2.2f; rc->gi_dmax = 2.5f; rc->gi_emin = 0.02f;
+    rc->gi_norm_gate = 0.75f; rc->gi_stat_scale = 1.0f;
+    rc->gi_vis_bias = 0.30f; rc->gi_vis_varmin = 0.02f; rc->gi_vis_sharp = 1.0f;
+    rc->aniso = 16.0f; rc->msaa = 4;
     rc->probe_spacing_scale = 1.0f;   /* 1 = descriptor spacing as authored. */
     /* Probe AABB inset (client nudges min.y up, max.y down to avoid floor/ceiling). */
     rc->gi_aabb_pad_lo[0] = 0.0f; rc->gi_aabb_pad_lo[1] = 0.3f; rc->gi_aabb_pad_lo[2] = 0.0f;

@@ -62,6 +62,26 @@ typedef struct render_config {
     int      gi_bin_interval, gi_update_interval, gi_n_probe_groups;
     float    gi_smooth;             /**< steady-state probe temporal-EMA blend (0..1;
                                      *   smaller = smoother/slower convergence). */
+    /* Probe-GI tuning that used to be env-only (GI_*), rpg-2vfm. The GI_* vars are
+     * still honoured as a live-tuning override, but these are the source of truth. */
+    int      gi_field;              /**< DDGI recurrent gather (0 = pure SDF march). */
+    int      gi_mis;                /**< MIS-sampled march directions. */
+    int      gi_hybrid;             /**< field bounce + hero SDF marches. */
+    int      gi_hero;               /**< hero SDF marches per probe (0..4). */
+    int      gi_samples;            /**< source samples per gather (>= sources => exact). */
+    int      gi_spec_lobes;         /**< SG specular lobes per probe (0..3). */
+    float    gi_bounce;             /**< transport gain; steady state = 1/(1-gain). */
+    float    gi_near;               /**< direct-sample vs stochastic-gather threshold (m). */
+    float    gi_dmax;               /**< nearest-surface distance for a SOURCE probe. */
+    float    gi_emin;               /**< emission luminance for a SOURCE probe. */
+    float    gi_norm_gate;          /**< |sdf| under which a probe is a SURFACE probe. */
+    float    gi_stat_scale;         /**< scale on the probes' STATIC bounce gather. */
+    float    gi_vis_bias;           /**< Chebyshev self-visible band (probe dot artifacts). */
+    float    gi_vis_varmin;         /**< Chebyshev variance floor (softer falloff). */
+    float    gi_vis_sharp;          /**< Chebyshev falloff exponent (1 soft, 2 sharp). */
+    /* Texture/AA quality (were FR_ANISO / FR_MSAA). */
+    float    aniso;                 /**< max anisotropy for material textures (1 = off). */
+    int      msaa;                  /**< MSAA samples for the client context (0/1 = off). */
     float    probe_spacing_scale;   /**< multiplies the descriptor probe spacing
                                      *   (<1 = denser/more probes; 1 = as authored). */
     float    gi_aabb_pad_lo[3], gi_aabb_pad_hi[3]; /**< inset applied to the probe AABB. */

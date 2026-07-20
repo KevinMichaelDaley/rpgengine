@@ -80,6 +80,7 @@ typedef struct client_scene {
     uint32_t             dyn_count;      /**< dynamic objects (0 = none; term disabled). */
     render_light_store_t lights;
     render_light_t      *light_buf;   /**< lights backing. */
+    float                aniso;       /**< material-texture anisotropy (from render_config). */
     const gl_loader_t   *loader;
     int                  static_count;/**< number of static (level) renderables. */
 } client_scene_t;

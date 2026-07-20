@@ -636,6 +636,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_norm);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
 
+    gi_probe_tuning_defaults(&g->tuning);
     g->ready = true;
     return true;
 }
@@ -743,24 +744,25 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         /* DDGI recurrent-irradiance gather (rpg-3c6g): each ray's hit gathers the
          * probe field's bounced irradiance (multi-bounce over frames). Needs a grid;
          * GI_FIELD=0 disables to A/B against the pure per-ray trace. */
-        field_on = have_grid && (getenv("GI_FIELD") == NULL || atoi(getenv("GI_FIELD")) != 0);
+        field_on = have_grid && g->tuning.field_on;
+        { const char *e = getenv("GI_FIELD"); if (e) field_on = have_grid && (atoi(e) != 0); }
         glUniform1i(g->loc.field_on, field_on);
         /* "Very close" threshold: hits nearer than this get a direct voxel+light
          * sample (accurate 1st bounce); farther hits are dropped from the direct
          * injection and rebuilt by the stochastic gather. ~1 probe cell by default. */
-        float near_dist = 2.2f;
+        float near_dist = g->tuning.near_dist;
         { const char *e = getenv("GI_NEAR"); if (e) { float v = (float)atof(e); if (v > 0.0f) near_dist = v; } }
         glUniform1f(g->loc.near_dist, near_dist);
         /* Stochastic probe-radiosity knobs (rpg-3c6g). GI_DMAX: nearest-surface
          * distance under which a probe counts as a light SOURCE. GI_SAMPLES: random
          * source probes each gather. GI_BOUNCE: bounce gain (energy tune). */
-        float dmax = 2.5f; { const char *e = getenv("GI_DMAX"); if (e) { float v=(float)atof(e); if (v>0.0f) dmax=v; } }
-        float emin = 0.02f; { const char *e = getenv("GI_EMIN"); if (e) { float v=(float)atof(e); if (v>=0.0f) emin=v; } }
-        int nsamp = 24; { const char *e = getenv("GI_SAMPLES"); if (e) { int v=atoi(e); if (v>=1) nsamp=v; } }
+        float dmax = g->tuning.dmax; { const char *e = getenv("GI_DMAX"); if (e) { float v=(float)atof(e); if (v>0.0f) dmax=v; } }
+        float emin = g->tuning.emin; { const char *e = getenv("GI_EMIN"); if (e) { float v=(float)atof(e); if (v>=0.0f) emin=v; } }
+        int nsamp = g->tuning.samples; { const char *e = getenv("GI_SAMPLES"); if (e) { int v=atoi(e); if (v>=1) nsamp=v; } }
         /* Bounce decay/albedo: the gather is a weight-normalised average, so this is
          * the per-bounce transport gain -- keep < ~1 (well under the ~4 divergence
          * ceiling the double-cosine SH convolution allows) so it converges. */
-        float bounce = 0.9f; { const char *e = getenv("GI_BOUNCE"); if (e) { float v=(float)atof(e); if (v>=0.0f) bounce=v; } }
+        float bounce = g->tuning.bounce; { const char *e = getenv("GI_BOUNCE"); if (e) { float v=(float)atof(e); if (v>=0.0f) bounce=v; } }
         glUniform1f(g->loc.dmax, dmax);
         glUniform1f(g->loc.emin, emin);
         glUniform1i(g->loc.nsamp, nsamp);
@@ -771,18 +773,20 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
      * radiance guide. GI_MIS=1 enables (baseline path only). GI_NORM_GATE sets the
      * surface-proximity distance under which a probe gets a normal (else omni). */
     {
-        int mis = (getenv("GI_MIS") != NULL && atoi(getenv("GI_MIS")) != 0) ? 1 : 0;
-        float ngate = 0.75f; { const char *e = getenv("GI_NORM_GATE"); if (e) { float v=(float)atof(e); if (v>0.0f) ngate=v; } }
+        int mis = g->tuning.mis;
+        { const char *e = getenv("GI_MIS"); if (e) mis = (atoi(e) != 0); }
+        float ngate = g->tuning.norm_gate; { const char *e = getenv("GI_NORM_GATE"); if (e) { float v=(float)atof(e); if (v>0.0f) ngate=v; } }
         glUniform1i(g->loc.mis, mis);
         glUniform1f(g->loc.norm_gate, ngate);
         /* Hybrid: cheap field bounce + u_hero deterministic hero SDF marches. */
-        int hybrid = (getenv("GI_HYBRID") != NULL && atoi(getenv("GI_HYBRID")) != 0) ? 1 : 0;
-        int hero = 2; { const char *e = getenv("GI_HERO"); if (e) { int v=atoi(e); if (v>=0 && v<=4) hero=v; } }
+        int hybrid = g->tuning.hybrid;
+        { const char *e = getenv("GI_HYBRID"); if (e) hybrid = (atoi(e) != 0); }
+        int hero = g->tuning.hero; { const char *e = getenv("GI_HERO"); if (e) { int v=atoi(e); if (v>=0 && v<=4) hero=v; } }
         glUniform1i(g->loc.hybrid, hybrid);
         glUniform1i(g->loc.hero, hero);
         /* Probe static-bounce dim (GI_STAT_SCALE, 1 = full). Lower it when the baked
          * lightmap is on so probes add only dynamic bleed, not double-counted static. */
-        float sscale = 1.0f; { const char *e = getenv("GI_STAT_SCALE"); if (e) { float v=(float)atof(e); if (v>=0.0f) sscale=v; } }
+        float sscale = g->tuning.stat_scale; { const char *e = getenv("GI_STAT_SCALE"); if (e) { float v=(float)atof(e); if (v>=0.0f) sscale=v; } }
         glUniform1f(g->loc.stat_scale, sscale);
     }
 

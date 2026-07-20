@@ -65,6 +65,9 @@ typedef struct gi_runtime_config {
     int   bin_interval;          /**< re-bin probes into froxels every N frames (0 -> 1). */
     float smooth;                /**< steady-state probe temporal-EMA blend (0..1;
                                   *   <=0 -> 0.15 default; GI_SMOOTH env still overrides). */
+    gi_probe_tuning_t tuning;    /**< full probe-GI tuning from render_config (rpg-2vfm).
+                                  *   Supersedes the GI_* env vars, which remain only as
+                                  *   a live-tuning override. */
 } gi_runtime_config_t;
 
 /** The dynamic-GI runtime (owns everything). */

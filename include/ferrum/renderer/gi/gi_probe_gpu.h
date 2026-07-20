@@ -29,6 +29,40 @@
 extern "C" {
 #endif
 
+/**
+ * @brief All probe-GI tuning in one value type (rpg-2vfm).
+ *
+ * These were previously env-only (GI_*), so the client render path ran them blind
+ * at their defaults and a level could not carry its own look. They now travel
+ * render_config (JSON) -> render_world_config -> gi_runtime_config -> here. The
+ * GI_* env vars are still honoured as a LIVE-TUNING override on top, but the
+ * config is the source of truth. Zero-initialising this struct is not valid --
+ * use gi_probe_tuning_defaults().
+ */
+typedef struct gi_probe_tuning {
+    int   field_on;      /**< DDGI recurrent gather (0 = pure per-ray SDF march). */
+    int   mis;           /**< MIS-importance-sampled march directions. */
+    int   hybrid;        /**< field bounce + hero SDF marches. */
+    int   hero;          /**< hero SDF marches per probe (0..4). */
+    int   samples;       /**< source-probe samples per gather (>= source count => exact). */
+    int   spec_lobes;    /**< SG specular lobes summed per probe (0..3). */
+    int   update_interval;/**< re-trace cadence in frames. */
+    int   n_probe_groups;/**< staggered dithered probe groups (1 = no stagger). */
+    float bounce;        /**< per-bounce transport gain; steady state = 1/(1-bounce). */
+    float near_dist;     /**< direct-sample vs stochastic-gather threshold (m). */
+    float dmax;          /**< nearest-surface distance for a probe to be a SOURCE. */
+    float emin;          /**< emission luminance over which a probe is a SOURCE. */
+    float norm_gate;     /**< |sdf| under which a probe is a SURFACE probe (has a normal). */
+    float stat_scale;    /**< scale on the probes' STATIC bounce gather. */
+    float smooth;        /**< steady-state probe temporal-EMA blend. */
+    float vis_bias;      /**< Chebyshev self-visible band (m) -- probe-lattice dot artifacts. */
+    float vis_varmin;    /**< Chebyshev variance floor: larger = softer falloff. */
+    float vis_sharp;     /**< Chebyshev falloff exponent: 1 = soft, 2 = sharp. */
+} gi_probe_tuning_t;
+
+/** @brief Fill @p t with the engine defaults (the values the GI_* envs defaulted to). */
+void gi_probe_tuning_defaults(gi_probe_tuning_t *t);
+
 /** GPU probe-update state. */
 typedef struct gi_probe_gpu {
     unsigned int prog;         /**< compute program. */
@@ -56,6 +90,7 @@ typedef struct gi_probe_gpu {
                                 *   rewritten without a glGetBufferSubData read-back
                                 *   (a GPU->CPU sync) on every residency change. */
     uint32_t     pos_cap;      /**< probe capacity of @c pos_shadow. */
+    gi_probe_tuning_t tuning;  /**< probe-GI tuning (config-driven; GI_* env overrides). */
     unsigned int dyn_tex;      /**< sparse DYNAMIC albedo volume (RGBA8 3D, 0 = none). */
     int          dyn_dim[3];   /**< dynamic-volume voxel dims. */
     float        dyn_origin[3];/**< dynamic-volume world origin (min corner). */
@@ -124,6 +159,9 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
 unsigned int gi_probe_gpu_dyn_volume(gi_probe_gpu_t *g, const float aabb_min[3],
                                      const float aabb_max[3], float vox,
                                      int out_dim[3], float out_extent[3]);
+
+/** @brief Set the probe-GI tuning used by the next dispatch (NULL = defaults). */
+void gi_probe_gpu_set_tuning(gi_probe_gpu_t *g, const gi_probe_tuning_t *t);
 
 /** @brief Enable/disable the dynamic-albedo term for the next dispatch. */
 void gi_probe_gpu_dyn_enable(gi_probe_gpu_t *g, int on);

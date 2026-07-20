@@ -121,7 +121,7 @@ static void load_material_tex(client_scene_t *cs, render_material_t *mat,
         {
             GLfloat maxa = 1.0f;
             glGetFloatv(0x84FF /* GL_MAX_TEXTURE_MAX_ANISOTROPY */, &maxa);
-            float want = 16.0f;
+            float want = cs->aniso > 0.0f ? cs->aniso : 16.0f;
             const char *e = getenv("FR_ANISO");
             if (e != NULL) { float v = (float)atof(e); if (v >= 1.0f) want = v; }
             if (want > (float)maxa) want = (float)maxa;
@@ -242,7 +242,15 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     if (cs == NULL || loader == NULL || descp == NULL || base_dir == NULL) return false;
     const scene_desc_t *desc = descp;
     memset(cs, 0, sizeof *cs);
+    /* Resolve the render config FIRST (NULL => engine defaults): it drives material
+     * texture filtering, probe density and all forward/GI tuning below, and the
+     * material load happens before any of those. */
+    render_config_t rc;
+    if (render_cfg != NULL) rc = *(const render_config_t *)render_cfg;
+    else render_config_defaults(&rc);
+
     cs->loader = loader;
+    cs->aniso = rc.aniso;   /* material texture anisotropy (config-driven). */
 
     uint32_t nobj = desc->object_count, nmat = desc->material_count;
     cs->rb_cap = nobj + 64u;   /* slack for networked dynamic bodies. */
@@ -345,12 +353,6 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     render_light_store_init(&cs->lights, cs->light_buf, 64);
     cs->scene.lights = &cs->lights;
     add_descriptor_lights(cs, desc);   /* realtime punctual lights (sun excluded). */
-
-    /* Resolve the render config up-front (NULL => engine defaults); it drives probe
-     * density + all forward/GI tuning below. */
-    render_config_t rc;
-    if (render_cfg != NULL) rc = *(const render_config_t *)render_cfg;
-    else render_config_defaults(&rc);
 
     /* Probe grid from the descriptor spec, with the config's density scale applied
      * to the authored spacing (<1 = denser/more probes). */
@@ -461,6 +463,26 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.gi_bin_interval = rc.gi_bin_interval;
     cfg.gi_update_interval = rc.gi_update_interval; cfg.gi_n_probe_groups = rc.gi_n_probe_groups;
     cfg.gi_smooth = rc.gi_smooth;
+    /* Probe-GI tuning: config is the source of truth (GI_* env only overrides). */
+    gi_probe_tuning_defaults(&cfg.gi_tuning);
+    cfg.gi_tuning.field_on        = rc.gi_field;
+    cfg.gi_tuning.mis             = rc.gi_mis;
+    cfg.gi_tuning.hybrid          = rc.gi_hybrid;
+    cfg.gi_tuning.hero            = rc.gi_hero;
+    cfg.gi_tuning.samples         = rc.gi_samples;
+    cfg.gi_tuning.spec_lobes      = rc.gi_spec_lobes;
+    cfg.gi_tuning.update_interval = rc.gi_update_interval;
+    cfg.gi_tuning.n_probe_groups  = rc.gi_n_probe_groups;
+    cfg.gi_tuning.bounce          = rc.gi_bounce;
+    cfg.gi_tuning.near_dist       = rc.gi_near;
+    cfg.gi_tuning.dmax            = rc.gi_dmax;
+    cfg.gi_tuning.emin            = rc.gi_emin;
+    cfg.gi_tuning.norm_gate       = rc.gi_norm_gate;
+    cfg.gi_tuning.stat_scale      = rc.gi_stat_scale;
+    cfg.gi_tuning.smooth          = rc.gi_smooth;
+    cfg.gi_tuning.vis_bias        = rc.gi_vis_bias;
+    cfg.gi_tuning.vis_varmin      = rc.gi_vis_varmin;
+    cfg.gi_tuning.vis_sharp       = rc.gi_vis_sharp;
     if (pset.grid_dim[0] > 0) {
         for (int a = 0; a < 3; ++a) {
             cfg.gi_grid_origin[a] = pset.grid_origin[a];

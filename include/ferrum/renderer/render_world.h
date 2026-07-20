@@ -58,6 +58,7 @@ typedef struct render_world_config {
     float        gi_soft_k;
     int          gi_update_interval, gi_n_probe_groups;
     float        gi_smooth;             /**< probe temporal-EMA blend (0 -> 0.15). */
+    gi_probe_tuning_t gi_tuning;        /**< full probe-GI tuning from render_config. */
     uint32_t     gi_probe_min;
     float        gi_probe_sphere_margin;
     int          gi_bin_interval;
