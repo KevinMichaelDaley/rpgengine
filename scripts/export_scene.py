@@ -23,6 +23,7 @@ import math
 import os
 
 import bpy
+from mathutils import Vector
 
 _HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() \
     else "/home/kmd/rpg/scripts"
@@ -124,10 +125,18 @@ def _object_collider(o):
         return None
     shape = str(o.get("ferrum_obj_shape", "box"))
     kind = _COLLIDER_KIND.get(shape, "box")
-    loc, rot_q, _scale = o.matrix_world.decompose()
+    _loc, rot_q, _scale = o.matrix_world.decompose()
     dim = o.dimensions
+    # Centre the proxy on the world-space BOUNDING BOX, not the object origin.
+    # A generator that emits world-space vertices leaves the object transform at
+    # identity (great_hall's cloth banner does), so the origin is (0,0,0) while
+    # the geometry sits metres away -- the proxy would land in empty space. The
+    # bbox centre is correct under both conventions, and matches o.dimensions,
+    # which is already the bbox size.
+    centre = o.matrix_world @ (sum((Vector(c) for c in o.bound_box),
+                                   Vector()) / 8.0)
     rec = {"kind": kind, "name": o.name, "static": False,
-           "position": _engine_pos(loc), "rotation": _engine_quat(rot_q)}
+           "position": _engine_pos(centre), "rotation": _engine_quat(rot_q)}
     if kind == "box":
         rec["half_extents"] = [float(dim.x) * 0.5, float(dim.z) * 0.5,
                                float(dim.y) * 0.5]
