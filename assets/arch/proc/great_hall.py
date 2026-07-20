@@ -436,6 +436,60 @@ def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
              abs(x_out - x_in), abs(py1 - py0), pz1 - pz0)
 
 
+def _dais_banner(col, name, length, wall_t, width):
+    """A red heraldic CLOTH banner hung in the dais' central blind arch (rpg GI
+    color-bleed test). A subdivided quad given a gentle cloth billow + a rippled,
+    pointed (pennant) bottom edge, facing down the hall (-X). Flat red Principled
+    material -> the exporter reads its Base Color as albedo, so it voxelises RED
+    into the SDF and the warm dais lamps bleed red onto the surrounding stone."""
+    import bmesh
+    x0 = length - wall_t / 2.0 - 0.10        # just proud of the backdrop wall face
+    z_top, z_bot = 3.80, 0.90                # ~2.9 m drop from near the arch crown
+    half_w = 0.88                            # 1.76 m wide
+    nu, nv = 12, 20
+    me = bpy.data.meshes.new(f"{name}_banner")
+    bm = bmesh.new()
+    grid = [[None] * (nv + 1) for _ in range(nu + 1)]
+    for i in range(nu + 1):
+        u = i / nu
+        y = (u - 0.5) * 2.0 * half_w
+        for j in range(nv + 1):
+            v = j / nv
+            z = z_top + (z_bot - z_top) * v
+            # cloth billow toward the hall (grows toward the free bottom edge) +
+            # a vertical drape wave; the last row dips to a central pennant point.
+            billow = 0.06 * math.sin(u * math.pi * 2.0) * (0.25 + 0.75 * v)
+            billow += 0.03 * math.sin(v * math.pi * 3.0)
+            zz = z - (0.18 * (1.0 - abs(u - 0.5) * 2.0)) * (1.0 if j == nv else 0.0)
+            grid[i][j] = bm.verts.new((x0 - billow, y, zz))
+    bm.verts.ensure_lookup_table()
+    for i in range(nu):
+        for j in range(nv):
+            bm.faces.new((grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1]))
+    bm.normal_update()
+    uv = bm.loops.layers.uv.new("UVMap")
+    for f in bm.faces:
+        for lp in f.loops:
+            co = lp.vert.co
+            lp[uv].uv = ((co.y + half_w) / (2.0 * half_w),
+                         (z_top - co.z) / (z_top - z_bot))
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(f"{name}_banner", me)
+    _link(col, o)
+    mat = bpy.data.materials.get(f"{name}_banner")
+    if mat:
+        bpy.data.materials.remove(mat)
+    mat = bpy.data.materials.new(f"{name}_banner")
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = (0.88, 0.012, 0.012, 1.0)  # deep saturated red
+        bsdf.inputs["Roughness"].default_value = 0.9
+    me.materials.append(mat)
+    return o
+
+
 def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
                      wall_t=0.5, roof_rise=3.6,
                      lamp_niches=True, niche_above_dais=2.4384, niche_spacing=2.6,
@@ -596,6 +650,9 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
         _box(col, f"{name}_dais_step_{s2}",
              dais_front - 0.4 * (s2 + 0.5), 0.0, 0.09 * (2 - s2),
              0.4, dais_w - 1.0, 0.18 * (2 - s2))
+
+    # red heraldic cloth banner in the dais' central blind arch (GI bleed test)
+    _dais_banner(col, name, length, wall_t, width)
 
     # low stepped base plinth along the foot of every wall
     _wall_base_plinths(col, name, length, half, wall_t, dais_top, dais_w)

@@ -35,7 +35,10 @@ typedef struct render_config {
     float    cluster_near, cluster_far;
     uint32_t max_lights;
 
-    /* Baked-lightmap sampling (sh_scale is the over-bright tuning knob). */
+    /* Baked-lightmap sampling (sh_scale is the over-bright tuning knob). Note the
+     * renderer remaps sh_scale==0 to 1.0, so use sh_enabled to turn the lightmap
+     * OFF: -1 = auto (on iff a lightmap texture is present), 0 = force off, 1 = on. */
+    int      sh_enabled;
     float    sh_scale;
     float    sh_normal_bias;
     float    ambient[3];
@@ -57,6 +60,10 @@ typedef struct render_config {
     uint32_t gi_max_lights, gi_max_boxes, gi_probe_min;
     float    gi_probe_sphere_margin;
     int      gi_bin_interval, gi_update_interval, gi_n_probe_groups;
+    float    gi_smooth;             /**< steady-state probe temporal-EMA blend (0..1;
+                                     *   smaller = smoother/slower convergence). */
+    float    probe_spacing_scale;   /**< multiplies the descriptor probe spacing
+                                     *   (<1 = denser/more probes; 1 = as authored). */
     float    gi_aabb_pad_lo[3], gi_aabb_pad_hi[3]; /**< inset applied to the probe AABB. */
 
     /* GI static/irradiance/spec/sky-AO weights. */

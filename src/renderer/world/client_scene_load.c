@@ -12,6 +12,7 @@
 #include "ferrum/renderer/client_scene.h"
 #include "ferrum/scene/scene_desc.h"
 #include "ferrum/scene/render_config.h"
+#include "ferrum/renderer/gi/gi_sdf_stream.h"
 #include "ferrum/probe/probe_place.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/lightmap/lm_atlas.h"
@@ -310,28 +311,36 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cs->scene.lights = &cs->lights;
     add_descriptor_lights(cs, desc);   /* realtime punctual lights (sun excluded). */
 
-    /* Probe grid from the descriptor spec. */
+    /* Resolve the render config up-front (NULL => engine defaults); it drives probe
+     * density + all forward/GI tuning below. */
+    render_config_t rc;
+    if (render_cfg != NULL) rc = *(const render_config_t *)render_cfg;
+    else render_config_defaults(&rc);
+
+    /* Probe grid from the descriptor spec, with the config's density scale applied
+     * to the authored spacing (<1 = denser/more probes). */
+    scene_desc_probes_t probes = desc->probes;
+    if (rc.probe_spacing_scale > 0.0f && rc.probe_spacing_scale != 1.0f) {
+        if (probes.spacing  > 0.0f) probes.spacing  *= rc.probe_spacing_scale;
+        if (probes.vspacing > 0.0f) probes.vspacing *= rc.probe_spacing_scale;
+    }
     static uint8_t probe_arena_buf[4 * 1024 * 1024];
     arena_t pa; arena_init(&pa, probe_arena_buf, sizeof probe_arena_buf);
     probe_set_t pset; memset(&pset, 0, sizeof pset);
-    probe_place_grid(&desc->probes, amin, amax, &pa, &pset);
+    probe_place_grid(&probes, amin, amax, &pa, &pset);
     /* Probe-volume importance boxes densify chosen regions (distance/LOD),
      * realising the generated-with-volume case; only when the scene specifies them
      * (else keep the regular grid for trilinear sampling). rpg-ft0g/rpg-zygg. */
-    if (desc->probes.box_count > 0) {
+    if (probes.box_count > 0) {
         probe_set_t refined; memset(&refined, 0, sizeof refined);
-        if (probe_place_refine_importance(&pset, &desc->probes, amin, amax, &pa, &refined))
+        if (probe_place_refine_importance(&pset, &probes, amin, amax, &pa, &refined))
             pset = refined;
     }
 
     /* render_world config. Scalar tuning comes from the render_config (JSON-loadable
      * per level/zone, rpg-da8c); this function supplies the DATA-driven bits
      * (textures, scene pointer, scene AABB, sun from the descriptor, streamed probes)
-     * that a config file cannot know. NULL render_cfg => engine defaults. */
-    render_config_t rc;
-    if (render_cfg != NULL) rc = *(const render_config_t *)render_cfg;
-    else render_config_defaults(&rc);
-
+     * that a config file cannot know. (rc resolved above.) */
     render_world_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.forward.loader = loader;
     cfg.forward.cluster = (cluster_config_t){ rc.cluster_tiles_x, rc.cluster_tiles_y,
@@ -342,7 +351,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     for (int a = 0; a < 3; ++a) cfg.forward.ambient[a] = rc.ambient[a];
     /* Baked SH lightmap carries the INDIRECT bounce only (the sun's DIRECT term is
      * the realtime directional light + CSM below), so sh_scale < 1 by default. */
-    cfg.forward.sh_enabled = cs->sh_tex[0] ? 1 : 0;
+    /* sh_enabled: -1 => auto (on iff a lightmap texture loaded); 0/1 => forced. */
+    cfg.forward.sh_enabled = (rc.sh_enabled >= 0) ? rc.sh_enabled : (cs->sh_tex[0] ? 1 : 0);
     cfg.forward.sh_scale = rc.sh_scale; cfg.forward.sh_normal_bias = rc.sh_normal_bias;
     for (int c = 0; c < 9; ++c) cfg.forward.sh_tex[c] = cs->sh_tex[c];
     cfg.scene = &cs->scene;
@@ -414,6 +424,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.gi_probe_min = rc.gi_probe_min; cfg.gi_probe_sphere_margin = rc.gi_probe_sphere_margin;
     cfg.gi_bin_interval = rc.gi_bin_interval;
     cfg.gi_update_interval = rc.gi_update_interval; cfg.gi_n_probe_groups = rc.gi_n_probe_groups;
+    cfg.gi_smooth = rc.gi_smooth;
     if (pset.grid_dim[0] > 0) {
         for (int a = 0; a < 3; ++a) {
             cfg.gi_grid_origin[a] = pset.grid_origin[a];
@@ -509,16 +520,19 @@ void client_scene_gi_visibility(client_scene_t *cs, const float view[16],
      * gi_pp.visible / visible_lm come back one frame late. */
     gi_vis_prepass_run_dual(&cs->gi_pp, &cs->scene, view, proj, sdf_box_min, sdf_box_max,
                             n_sdf_boxes, lm_mchunk, lm_nm, screen_w, screen_h);
-    /* Drive gi_runtime's SDF paging from the shared mask (retires its own prepass). */
+    /* The prepass only prioritizes which SDF chunks to SWAP IN; it must NOT evict
+     * on-screen state. Feed the visible mask to gi_runtime as a load/priority hint. */
     render_world_set_visible(&cs->world, cs->gi_pp.visible, n_sdf_boxes);
-    /* Gate the probe set to the VISIBLE SDF chunks (was RAM residency). */
-    float vmin[64 * 3], vmax[64 * 3]; uint32_t nv = 0;
-    for (int c = 0; c < n_sdf_boxes && c < cs->gi_pp.n_chunks && nv < 64u; ++c) {
-        if (!cs->gi_pp.visible[c]) continue;
-        for (int a = 0; a < 3; ++a) { vmin[nv*3+a] = sdf_box_min[c*3+a]; vmax[nv*3+a] = sdf_box_max[c*3+a]; }
-        ++nv;
-    }
-    client_scene_stream_probes(cs, vmin, vmax, nv);
+    /* Gate the probe set to the RESIDENT SDF chunks (the persistent page cache) --
+     * NOT the instantaneous on-screen set. Gating by visibility drops a chunk's
+     * probes the moment you look away, so the indirect it carried vanishes
+     * (view-dependent darkening). Residency persists until the cache is full, so
+     * this keeps the GI stable as the camera turns. */
+    float vmin[64 * 3], vmax[64 * 3];
+    int nv = 0;
+    if (cs->world.gi.sdf_ptr != NULL)
+        nv = gi_sdf_stream_resident_boxes(cs->world.gi.sdf_ptr, vmin, vmax, 64);
+    if (nv > 0) client_scene_stream_probes(cs, vmin, vmax, (uint32_t)nv);
 }
 
 void client_scene_render(client_scene_t *cs, const render_camera_t *cam,

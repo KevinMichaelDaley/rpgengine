@@ -56,7 +56,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     /* Steady-state temporal EMA blend per probe update. Smaller = each update
      * nudges less -> smoother, less "fast shifting" as checkerboard groups cycle
      * (at the cost of slower convergence, fine for low-freq GI). GI_SMOOTH env. */
-    gi->smooth = 0.15f;
+    gi->smooth = (cfg->smooth > 0.0f && cfg->smooth <= 1.0f) ? cfg->smooth : 0.15f;
     { const char *e = getenv("GI_SMOOTH");
       if (e != NULL) { float v = (float)atof(e); if (v > 0.0f && v <= 1.0f) gi->smooth = v; } }
     /* Static-indirect weights (rpg-pau4): baked surfaces get a mild extra bounce,

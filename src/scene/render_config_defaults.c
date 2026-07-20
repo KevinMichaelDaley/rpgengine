@@ -19,7 +19,9 @@ void render_config_defaults(render_config_t *rc)
     rc->max_lights = 512;
 
     /* Baked lightmap. sh_scale < 1: the lightmap is INDIRECT (direct is the
-     * realtime sun + CSM + clustered punctual lights). */
+     * realtime sun + CSM + clustered punctual lights). sh_enabled=-1 => auto (on
+     * iff a lightmap texture is present); set 0 to force the lightmap OFF. */
+    rc->sh_enabled = -1;
     rc->sh_scale = 0.7f;
     rc->sh_normal_bias = 0.5f;
     rc->ambient[0] = rc->ambient[1] = rc->ambient[2] = 0.0f;
@@ -41,6 +43,8 @@ void render_config_defaults(render_config_t *rc)
     rc->gi_max_lights = 512; rc->gi_max_boxes = 64; rc->gi_probe_min = 4;
     rc->gi_probe_sphere_margin = 1.2f; rc->gi_bin_interval = 1;
     rc->gi_update_interval = 8; rc->gi_n_probe_groups = 2;
+    rc->gi_smooth = 0.15f;            /* steady probe temporal-EMA blend. */
+    rc->probe_spacing_scale = 1.0f;   /* 1 = descriptor spacing as authored. */
     /* Probe AABB inset (client nudges min.y up, max.y down to avoid floor/ceiling). */
     rc->gi_aabb_pad_lo[0] = 0.0f; rc->gi_aabb_pad_lo[1] = 0.3f; rc->gi_aabb_pad_lo[2] = 0.0f;
     rc->gi_aabb_pad_hi[0] = 0.0f; rc->gi_aabb_pad_hi[1] = 0.2f; rc->gi_aabb_pad_hi[2] = 0.0f;

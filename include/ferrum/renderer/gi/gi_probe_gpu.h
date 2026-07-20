@@ -40,6 +40,7 @@ typedef struct gi_probe_gpu {
              int ngroups, group, grid_dim, grid_origin, grid_cell;
              int field_on, near_dist, static_on, static_k, static_irr;
              int pass, seed, dmax, emin, nsamp, bounce;
+             int mis, norm_gate, hybrid, hero, stat_scale;
              int static_origin, static_dim, static_vox;
              int sdf_active[8], sdf[8], sdf_origin[8], sdf_dim[8], sdf_vox[8]; } loc;
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
@@ -48,6 +49,7 @@ typedef struct gi_probe_gpu {
     unsigned int b_sg;         /**< SG specular lobe SSBO (8 floats/probe). */
     unsigned int b_active;     /**< stochastic-radiosity scratch: [count][indices..]. */
     unsigned int b_emit;       /**< per-probe direct-injection SH (24 floats/probe). */
+    unsigned int b_norm;       /**< per-probe surface normal (vec4: xyz + validity). */
     unsigned int tbo_sh, tbo_sh_tex; /**< SH buffer texture (for the forward+ sampler). */
     unsigned int tbo_pos_tex;  /**< probe-position buffer texture (for the sampler). */
     unsigned int tbo_depth_tex; /**< depth buffer texture (RG32F: mean, meanSq). */

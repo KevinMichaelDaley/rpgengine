@@ -8,6 +8,7 @@
   "cluster_far": 60.0,
   "max_lights": 512,
 
+  "sh_enabled": -1,
   "sh_scale": 0.7,
   "sh_normal_bias": 0.5,
   "ambient": [0.0, 0.0, 0.0],

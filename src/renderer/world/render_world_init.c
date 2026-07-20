@@ -46,6 +46,7 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
         gc.bin_interval = cfg->gi_bin_interval;
         gc.update_interval = cfg->gi_update_interval;
         gc.n_probe_groups = cfg->gi_n_probe_groups;
+        gc.smooth = cfg->gi_smooth;
         if (gi_runtime_init(&rw->gi, &gc)) {
             rw->gi_enabled = 1;
             if (cfg->gi_grid_dim[0] > 0)

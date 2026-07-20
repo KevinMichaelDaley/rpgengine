@@ -146,7 +146,16 @@ static uint32_t client_bake_meshes(client_bake_ctx_t *c, arena_t *arena,
         lm->uv0 = slot->uvs[0]; lm->uv1 = slot->uvs[1];
         lm->indices = slot->indices; lm->vert_count = vc; lm->index_count = slot->index_count;
         lm->albedo_image = (mi >= 0 && c->images[mi].pixels) ? &c->images[mi] : NULL;
+        /* REAL material albedo: a solid-colour material (no baked albedo map -- e.g.
+         * the dais banner) carries its Base Colour in the descriptor's tint. Using a
+         * hardcoded white here voxelised every untextured surface as WHITE, so the
+         * probe bounce lost its colour (a red banner bled grey). Textured materials
+         * keep tint as a multiplier over the albedo image. */
         lm->albedo = (vec3_t){ 1.0f, 1.0f, 1.0f };
+        if (mi >= 0 && (uint32_t)mi < d->material_count) {
+            const float *t = d->materials[mi].tint;
+            lm->albedo = (vec3_t){ t[0], t[1], t[2] };
+        }
         lm->emissive = (vec3_t){ 0.0f, 0.0f, 0.0f };
         lm->material = 0;
         int lr = (o->lightmap_res > 0) ? o->lightmap_res : 64;
@@ -183,8 +192,13 @@ static void client_bake_config(lm_bake_config_t *cfg,
     cfg->sky.kind = LM_SKY_CONSTANT;
     /* TODO(descriptor): emit sky radiance in the level file. Hall sky for now. */
     cfg->sky.color = (vec3_t){ 0.30780f, 0.37700f, 0.51760f };
-    cfg->chunk_size = 0.0f;   /* keep existing _cNNN.sdf; bake the .flm only. */
-    cfg->sdf_out_prefix = NULL;
+    /* SDF/voxel export (the baker client also produces the runtime SDF chunks):
+     * CLIENT_BAKE_SDF=<prefix> emits <prefix>_cNNN.sdf (distance + voxel ALBEDO, so
+     * coloured surfaces bleed in the probe GI); CLIENT_BAKE_SDF_CHUNK sets the chunk
+     * edge (m). Unset => bake the .flm only and keep any existing _cNNN.sdf. */
+    cfg->chunk_size = env_f("CLIENT_BAKE_SDF_CHUNK", 0.0f);
+    cfg->chunk_margin = env_f("CLIENT_BAKE_SDF_MARGIN", 2.0f);
+    cfg->sdf_out_prefix = getenv("CLIENT_BAKE_SDF");
 }
 
 /* --------------------------------------------------------------------------

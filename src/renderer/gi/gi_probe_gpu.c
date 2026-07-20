@@ -44,6 +44,19 @@ static const char *CS_SRC =
     "uniform float u_bounce;\n"      /* bounce gain (GI_BOUNCE). */
     "uniform float u_soft, u_albedo;\n"
     "uniform float u_temporal;\n"   /* EMA blend: 1 = replace, <1 = smooth over time. */
+    /* MIS-importance-sampled march directions (GI_MIS): build a per-probe pdf over the\n"
+     * 64 octahedral texels from hit-likelihood (depth) x N.L (sample dir . the probe's\n"
+     * OWN surface normal) x a radiance guide, and draw the SVO march rays from it so\n"
+     * they concentrate where light actually arrives instead of a uniform sphere. */
+    "uniform int u_mis;\n"
+    "uniform float u_norm_gate;\n" /* |scene_sdf(probe)| below this => probe is a SURFACE probe (has a normal). */
+    /* Hybrid field gather (GI_HYBRID): cheap probe-field bounce PLUS u_hero DETERMINISTIC\n"
+     * 'hero' SDF marches toward the brightest, unoccluded, high-N.L source probes --\n"
+     * accurate first-bounce detail the diffuse field smears, and deterministic so it\n"
+     * doesn't flicker frame-to-frame. Heroes are excluded from the field average so\n"
+     * their energy isn't double-counted. */
+    "uniform int u_hybrid;\n"
+    "uniform int u_hero;\n"          /* number of hero SDF marches (0..4). */
     "uniform sampler3D u_sdf[8];\n"
     "uniform vec3 u_sdf_origin[8];\n"
     "uniform vec3 u_sdf_dim[8];\n"
@@ -59,6 +72,10 @@ static const char *CS_SRC =
     "uniform float u_static_vox;\n"
     "uniform int u_static_on;\n"
     "uniform float u_static_k;\n"
+    /* Scale on the probe's STATIC bounce gather (rstat): with the baked lightmap\n"
+     * re-enabled the static GI is already on-screen, so dim (don't hard-cut) what the\n"
+     * probes re-gather -- they keep the DYNAMIC color bleed, add only a little static. */
+    "uniform float u_stat_scale;\n"
     "layout(std430,binding=0) readonly buffer PP { vec4 ppos[]; };\n"
     "layout(std430,binding=1) buffer PS { float psh[]; };\n"        /* r/w for temporal blend. */
     "layout(std430,binding=2) readonly buffer LB { vec4 lt[]; };\n"
@@ -77,6 +94,10 @@ static const char *CS_SRC =
     /* Per-probe direct-light injection SH (24 floats: dyn[0..11]+stat[12..23]),\n"
      * written in pass 0, used as the gather's starting radiance in pass 1. */
     "layout(std430,binding=7) buffer EM { float emit[]; };\n"
+    /* Per-probe surface normal (xyz) + validity (w): the SDF normal at the probe,\n"
+     * cached in the depth prepass only when the probe is near a surface (w=1). Gates\n"
+     * the MIS march pdf (N.L) and is the shading normal for cheap field bounces. */
+    "layout(std430,binding=8) buffer PN { vec4 pnrm[]; };\n"
     /* Hardware-filterable mirror of the depth (image unit 0): the compute writes\n"
      * the same octahedral (mean, meanSq) it puts in pdepth here, so the forward+\n"
      * pass can sample it with GL_LINEAR (one bilinear tap in probe_vis). */
@@ -117,6 +138,12 @@ static const char *CS_SRC =
     "  return normalize(vec3(scene_sdf(p+vec3(e,0,0))-scene_sdf(p-vec3(e,0,0)),\n"
     "                        scene_sdf(p+vec3(0,e,0))-scene_sdf(p-vec3(0,e,0)),\n"
     "                        scene_sdf(p+vec3(0,0,e))-scene_sdf(p-vec3(0,0,e)))); }\n"
+    /* Cache the probe's OWN surface normal, gated by proximity: a probe within\n"
+     * u_norm_gate of a surface is a SURFACE probe -> store sdf_normal(o) (points\n"
+     * away from the surface) with w=1; an open-air probe stores w=0 (omni sampling). */
+    "void store_probe_normal(uint gid, vec3 o){ float sd=scene_sdf(o);\n"
+    "  vec4 r=vec4(0.0); if(abs(sd)<u_norm_gate){ r=vec4(sdf_normal(o),1.0); } pnrm[gid]=r; }\n"
+    "vec4 probe_normal(uint gid){ return pnrm[gid]; }\n"
     /* Hard-ish shadow ray (sphere-march) from a surface point to a light. */
     "float shadow(vec3 o,vec3 dir,float maxd){ float res=1.0,t=0.08;\n"
     "  for(int i=0;i<32 && t<maxd;++i){ float h=scene_sdf(o+dir*t);\n"
@@ -185,6 +212,24 @@ static const char *CS_SRC =
      * @p rdyn = DYNAMIC-light bounce, @p rstat = baked STATIC (lightmap) bounce --\n"
      * kept separate so the forward+ can weight them per object. Used both by the OLD\n"
      * full-march baseline and, restricted to NEAR hits, by the pass-1 light inject. */
+    /* Indirect irradiance at world p (normal n) sampled from the probe FIELD:\n"
+     * trilinear over the 8 grid-neighbour probes, each Chebyshev-visibility weighted\n"
+     * (occluders block leak). This is last-frame's converged probe irradiance, so\n"
+     * adding albedo*field_irr at a trace hit gives the surface's INDIRECT incoming --\n"
+     * i.e. one more bounce per gather; temporal recurrence -> infinite bounces. 0 if\n"
+     * there is no probe grid (manual-only probes) or p is outside it. */
+    "vec3 field_irr(vec3 p, vec3 n){ if(u_grid_dim.x<=0) return vec3(0.0);\n"
+    "  vec3 g=(p-u_grid_origin)/u_grid_cell; vec3 f=fract(g); ivec3 b=ivec3(floor(g));\n"
+    "  vec3 E=vec3(0.0); float wsum=0.0;\n"
+    "  for(int i=0;i<8;++i){ ivec3 od=ivec3(i&1,(i>>1)&1,(i>>2)&1);\n"
+    "    ivec3 c=clamp(b+od, ivec3(0), u_grid_dim-ivec3(1));\n"
+    "    int idx=(c.z*u_grid_dim.y+c.y)*u_grid_dim.x+c.x; if(idx<0||idx>=u_nprobes) continue;\n"
+    "    float tw=(od.x==1?f.x:1.0-f.x)*(od.y==1?f.y:1.0-f.y)*(od.z==1?f.z:1.0-f.z);\n"
+    "    vec3 pd=p-ppos[idx].xyz; float dist=length(pd); float vis=1.0;\n"
+    "    if(dist>1e-3){ vis=probe_vis(uint(idx), pd/dist, dist); }\n"
+    "    float w=tw*vis; if(w<=0.0) continue;\n"
+    "    E += w*max(psh_irr(idx*24,n)+psh_irr(idx*24+12,n), vec3(0.0)); wsum+=w; }\n"
+    "  return (wsum>1e-4)? E/wsum : vec3(0.0); }\n"
     "void trace(uint self, vec3 o,vec3 dir, out vec3 rdyn, out vec3 rstat){\n"
     "  rdyn=vec3(0.0); rstat=vec3(0.0);\n"
     "  float t=0.12;\n"
@@ -200,8 +245,9 @@ static const char *CS_SRC =
      * wall's far (unlit/occluded) side can never bleed through -- reading into\n"
      * the solid (-n) would cross the wall and leak. */
     "      vec3 Es = static_irr(p + n*u_static_vox*0.5);\n"
-    "      rdyn  = u_albedo * alb * direct_at(p+n*0.06, n) / PI;\n"
-    "      rstat = u_albedo * alb * (u_static_k*Es) / PI;\n"
+    "      vec3 Ei = field_irr(p + n*0.05, n);\n"   /* INDIRECT incoming from the probe field (multi-bounce) */
+    "      rdyn  = u_albedo * alb * (direct_at(p+n*0.06, n) + Ei) / PI;\n"
+    "      rstat = u_stat_scale * u_albedo * alb * (u_static_k*Es) / PI;\n"
     "      return; }\n"
     "    t += max(h,0.04); if(t>25.0) break; }\n"
     "}\n"
@@ -259,7 +305,7 @@ static const char *CS_SRC =
      * probe near a surface (surf_min<u_dmax) or itself bright (emit>u_emin) is a\n"
      * SOURCE -> atomically appended to the compact scratch list for pass 1. */
     "void pass_classify(uint gid){ vec3 o=ppos[gid].xyz;\n"
-    "  float surf_min = compute_depth(gid,o);\n"
+    "  float surf_min = compute_depth(gid,o); store_probe_normal(gid,o);\n"
     "  const int NR=32; float ga=2.399963229728653; float w=4.0*PI/float(NR);\n"
     "  float ed[12]; float es[12]; for(int k=0;k<12;++k){ ed[k]=0.0; es[k]=0.0; }\n"
     "  vec3 rdir[32]; vec3 rcol[32];\n"
@@ -273,7 +319,7 @@ static const char *CS_SRC =
     "    vec3 alb=scene_albedo(p-n*u_sdf_vox[0]*0.5, lod);\n"
     "    vec3 Es=static_irr(p+n*u_static_vox*0.5);\n"
     "    vec3 direct = near ? direct_at(p+n*0.06,n) : vec3(0.0);\n"
-    "    vec3 rd=u_albedo*alb*direct/PI; vec3 rs=u_albedo*alb*(u_static_k*Es)/PI; rcol[s]=rd+rs;\n"
+    "    vec3 rd=u_albedo*alb*direct/PI; vec3 rs=u_stat_scale*u_albedo*alb*(u_static_k*Es)/PI; rcol[s]=rd+rs;\n"
     "    float y[4]; sh_basis(dir,y);\n"
     "    for(int k=0;k<4;++k){ ed[k]+=rd.r*y[k]*w; ed[4+k]+=rd.g*y[k]*w; ed[8+k]+=rd.b*y[k]*w;\n"
     "                          es[k]+=rs.r*y[k]*w; es[4+k]+=rs.g*y[k]*w; es[8+k]+=rs.b*y[k]*w; } }\n"
@@ -291,24 +337,54 @@ static const char *CS_SRC =
     "  float shd[12]; float shs[12];\n"
     "  for(int k=0;k<12;++k){ shd[k]=emit[gid*24+k]; shs[k]=emit[gid*24+12+k]; }\n"
     "  uint N=acount;\n"
+    "  vec4 pn=probe_normal(gid); vec3 nrm=pn.xyz; float nv=pn.w;\n"
+    /* Hero selection (hybrid): scan sources, keep the top-KH by emissive_luminance *\n"
+     * unocclusion * N.L. DETERMINISTIC top-K => temporally stable; these get an\n"
+     * accurate SDF march below and are skipped in the average (no double-count). */
+    "  uint hero[4]; int nh=0; int KH=clamp(u_hero,0,4);\n"
+    "  if(u_hybrid!=0 && KH>0 && N>0u){ float hs[4];\n"
+    "    for(int c=0;c<4;++c){ hero[c]=0xffffffffu; hs[c]=0.0; }\n"
+    /* Scan the WHOLE source list (no RNG) and keep the top-KH by score. The alist is\n"
+     * atomic-appended (nondeterministic ORDER), so selecting by list position would\n"
+     * pick different sources each frame -> flicker. Selecting by (temporally stable)\n"
+     * score is order-independent => the SAME heroes every frame. Capped for cost. */
+    "    int SCAN=int(min(N,1024u));\n"
+    "    for(int c=0;c<SCAN;++c){ uint m=alist[uint(c)]; if(m==gid) continue;\n"
+    "      vec3 pm=ppos[m].xyz; vec3 d=pm-o; float dist=length(d); if(dist<0.35) continue; vec3 dir=d/dist;\n"
+    "      float vis=probe_vis(gid,dir,dist); if(vis<0.05) continue;\n"
+    "      float ndl=(nv>0.5)? max(dot(dir,nrm),0.0) : 1.0; if(ndl<=0.0) continue;\n"
+    "      vec3 Em=max(psh_irr(int(m)*24,-dir),vec3(0.0));\n"
+    "      float score=dot(Em,vec3(0.2126,0.7152,0.0722))*vis*ndl;\n"
+    "      for(int j=0;j<KH;++j){ if(score>hs[j]){ for(int t=KH-1;t>j;--t){hs[t]=hs[t-1];hero[t]=hero[t-1];} hs[j]=score; hero[j]=m; break; } } }\n"
+    "    for(int j=0;j<KH;++j) if(hs[j]>0.0) nh=j+1; }\n"
+    /* Cheap probe-field gather: weighted AVERAGE (/wsum, gain u_bounce<1 => converges)\n"
+     * of source irradiances, receiver-cosine-weighted by the probe normal (N.L),\n"
+     * EXCLUDING the hero sources. When sources are few (N<=u_nsamp) scan them ALL\n"
+     * deterministically -> no per-frame RNG jitter (the main temporal-coherence win). */
     "  if(N>0u){ uint seed=gid*9781u ^ uint(u_seed)*6271u ^ 0x9e3779b9u; int K=max(u_nsamp,1);\n"
     "    float cellsq=max(u_grid_cell.x*u_grid_cell.x, 0.25);\n"
-    /* Accumulate the bounce SEPARATELY with its total weight, then take the WEIGHTED\n"
-     * AVERAGE (/wsum) and scale by the decay u_bounce (< 1, an albedo). Normalising\n"
-     * makes the transport operator's gain = u_bounce < 1, so the frame-to-frame\n"
-     * recurrence CONVERGES instead of accumulating to white. */
+    "    bool full=(N<=uint(K)); int iters= full? int(N) : K;\n"
     "    float bd[12]; float bs[12]; for(int k=0;k<12;++k){ bd[k]=0.0; bs[k]=0.0; } float wsum=0.0;\n"
-    "    for(int k=0;k<K;++k){ uint m=alist[uint(rnd(seed)*float(N))%N]; if(m==gid) continue;\n"
+    "    for(int c=0;c<iters;++c){ uint m= full? alist[uint(c)] : alist[uint(rnd(seed)*float(N))%N]; if(m==gid) continue;\n"
+    "      bool ish=false; for(int j=0;j<nh;++j) if(hero[j]==m) ish=true; if(ish) continue;\n"
     "      vec3 pm=ppos[m].xyz; vec3 d=pm-o; float dist=length(d); if(dist<0.35) continue; vec3 dir=d/dist;\n"
     "      float vis=probe_vis(gid,dir,dist); if(vis<0.02) continue;\n"
+    "      float ndl=(nv>0.5)? max(dot(dir,nrm),0.0)+0.04 : 1.0;\n"
     "      vec3 Lmd=max(psh_irr(int(m)*24, -dir), vec3(0.0));\n"
     "      vec3 Lms=max(psh_irr(int(m)*24+12, -dir), vec3(0.0));\n"
-    "      float wt=vis*(cellsq/max(dist*dist,cellsq)); wsum+=wt;\n"
+    "      float wt=vis*ndl*(cellsq/max(dist*dist,cellsq)); wsum+=wt;\n"
     "      float y[4]; sh_basis(dir,y);\n"
     "      for(int j=0;j<4;++j){ bd[j]+=Lmd.r*y[j]*wt; bd[4+j]+=Lmd.g*y[j]*wt; bd[8+j]+=Lmd.b*y[j]*wt;\n"
     "                            bs[j]+=Lms.r*y[j]*wt; bs[4+j]+=Lms.g*y[j]*wt; bs[8+j]+=Lms.b*y[j]*wt; } }\n"
-    "    if(wsum>1e-4){ float nrm=u_bounce/wsum;\n"
-    "      for(int k=0;k<12;++k){ shd[k]+=bd[k]*nrm; shs[k]+=bs[k]*nrm; } } }\n"
+    "    if(wsum>1e-4){ float nrm2=u_bounce/wsum;\n"
+    "      for(int k=0;k<12;++k){ shd[k]+=bd[k]*nrm2; shs[k]+=bs[k]*nrm2; } } }\n"
+    /* Hero SDF marches: accurate first-bounce radiance toward the top-KH sources,\n"
+     * spread over nh with the bounce gain. trace() sphere-marches the resident SDF. */
+    "  for(int j=0;j<nh;++j){ uint m=hero[j]; vec3 pm=ppos[m].xyz; vec3 d=pm-o; float dist=length(d);\n"
+    "    if(dist<0.35) continue; vec3 dir=d/dist; vec3 rd,rs; trace(gid,o,dir,rd,rs);\n"
+    "    float y[4]; sh_basis(dir,y); float w=u_bounce/float(nh);\n"
+    "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*w; shd[4+k]+=rd.g*y[k]*w; shd[8+k]+=rd.b*y[k]*w;\n"
+    "                          shs[k]+=rs.r*y[k]*w; shs[4+k]+=rs.g*y[k]*w; shs[8+k]+=rs.b*y[k]*w; } }\n"
     "  for(int k=0;k<12;++k){ psh[gid*24+k]=mix(psh[gid*24+k], shd[k], u_temporal);\n"
     "                         psh[gid*24+12+k]=mix(psh[gid*24+12+k], shs[k], u_temporal); } }\n"
     /* --- OLD full-SDF-march baseline (u_field_on==0): 32 rays cone-march the SDF. --- */
@@ -328,8 +404,41 @@ static const char *CS_SRC =
     "                         psh[gid*24+12+k]=mix(psh[gid*24+12+k], shs[k], u_temporal); }\n"
     "  fit_sg(gid, rdir, rcol);\n"
     "  compute_depth(gid,o); }\n"
+    /* --- MIS-sampled SVO march (u_mis==1): importance-sample the 32-ray march over
+     * the 64 octahedral texels by w = hit-likelihood(depth) * N.L(dir . probe normal)
+     * * radiance-guide(last-frame directional radiance). Draw the rays from that pdf
+     * and divide each hit by the pdf (unbiased) -- rays land where light arrives. --- */
+    "void update_mis(uint gid){ if(!in_group(gid)) return; vec3 o=ppos[gid].xyz;\n"
+    "  store_probe_normal(gid,o); compute_depth(gid,o);\n"       /* fresh normal + oct depth guide */
+    "  vec4 pn=probe_normal(gid); vec3 nrm=pn.xyz; float nvalid=pn.w;\n"
+    "  const int OR=8, NT=64; float wt[64]; float wsum=0.0;\n"
+    "  for(int i=0;i<NT;++i){ int tx=i%OR, ty=i/OR;\n"
+    "    vec3 d=oct_decode((vec2(float(tx),float(ty))+0.5)/float(OR));\n"
+    "    float mean=pdepth[(int(gid)*NT+i)*2];\n"
+    "    float wd=(mean<20.0)? clamp(2.5/(mean+0.4),0.15,6.0) : 0.04;\n"      /* hit-likelihood */
+    "    float wl=(nvalid>0.5)? max(dot(d,nrm),0.0)+0.05 : 1.0;\n"            /* N.L about probe normal */
+    "    vec3 Lr=max(psh_irr(int(gid)*24,d)+psh_irr(int(gid)*24+12,d),vec3(0.0));\n"
+    "    float wr=0.15+dot(Lr,vec3(0.2126,0.7152,0.0722));\n"                 /* radiance guide (temporal) */
+    "    wt[i]=wd*wl*wr; wsum+=wt[i]; }\n"
+    "  if(wsum<1e-6){ update_baseline(gid); return; }\n"
+    "  const int NR=32; float shd[12]; float shs[12]; for(int k=0;k<12;++k){ shd[k]=0.0; shs[k]=0.0; }\n"
+    "  vec3 rdir[32]; vec3 rcol[32];\n"
+    "  uint seed=gid*7919u ^ uint(u_seed)*2654435761u ^ 0x9e3779b9u;\n"
+    "  for(int s=0;s<NR;++s){ float xi=rnd(seed)*wsum; int i=NT-1; float acc=0.0;\n"
+    "    for(int j=0;j<NT;++j){ acc+=wt[j]; if(acc>=xi){ i=j; break; } }\n"
+    "    vec2 f=(vec2(float(i%OR),float(i/OR))+vec2(rnd(seed),rnd(seed)))/float(OR);\n"
+    "    vec3 dir=oct_decode(f);\n"
+    "    float pdf=(wt[i]/wsum)*float(NT)/(4.0*PI);\n"                        /* per-texel prob -> solid-angle pdf */
+    "    float invp=1.0/max(pdf*float(NR),1e-6);\n"
+    "    vec3 rd,rs; trace(gid,o,dir,rd,rs); rdir[s]=dir; rcol[s]=rd+rs;\n"
+    "    float y[4]; sh_basis(dir,y);\n"
+    "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*invp; shd[4+k]+=rd.g*y[k]*invp; shd[8+k]+=rd.b*y[k]*invp;\n"
+    "                          shs[k]+=rs.r*y[k]*invp; shs[4+k]+=rs.g*y[k]*invp; shs[8+k]+=rs.b*y[k]*invp; } }\n"
+    "  for(int k=0;k<12;++k){ psh[gid*24+k]=mix(psh[gid*24+k], shd[k], u_temporal);\n"
+    "                         psh[gid*24+12+k]=mix(psh[gid*24+12+k], shs[k], u_temporal); }\n"
+    "  fit_sg(gid, rdir, rcol); }\n"
     "void main(){ uint gid=gl_GlobalInvocationID.x; if(gid>=uint(u_nprobes)) return;\n"
-    "  if(u_field_on==0){ update_baseline(gid); return; }\n"
+    "  if(u_field_on==0){ if(u_mis!=0) update_mis(gid); else update_baseline(gid); return; }\n"
     "  if(u_pass==0) pass_classify(gid); else pass_gather(gid); }\n";
 
 static GLuint cs_build(void)
@@ -385,6 +494,11 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
         g->loc.emin   = glGetUniformLocation(p, "u_emin");
         g->loc.nsamp  = glGetUniformLocation(p, "u_nsamp");
         g->loc.bounce = glGetUniformLocation(p, "u_bounce");
+        g->loc.mis       = glGetUniformLocation(p, "u_mis");
+        g->loc.norm_gate = glGetUniformLocation(p, "u_norm_gate");
+        g->loc.hybrid    = glGetUniformLocation(p, "u_hybrid");
+        g->loc.hero      = glGetUniformLocation(p, "u_hero");
+        g->loc.stat_scale= glGetUniformLocation(p, "u_stat_scale");
         g->loc.static_on  = glGetUniformLocation(p, "u_static_on");
         g->loc.static_k   = glGetUniformLocation(p, "u_static_k");
         g->loc.static_irr = glGetUniformLocation(p, "u_static_irr");
@@ -462,6 +576,10 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glGenBuffers(1, &g->b_emit);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_emit);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    /* Per-probe surface normal cache (vec4: xyz + validity), gated by proximity. */
+    glGenBuffers(1, &g->b_norm);
+    glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_norm);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
 
     g->ready = true;
     return true;
@@ -589,6 +707,24 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         glUniform1f(g->loc.bounce, bounce);
         glUniform1i(g->loc.seed, (GLint)(s_tick & 0x7fffffffu));
     }
+    /* MIS-sampled march directions (rpg-3c6g): pdf = depth-hit x N.L(probe normal) x
+     * radiance guide. GI_MIS=1 enables (baseline path only). GI_NORM_GATE sets the
+     * surface-proximity distance under which a probe gets a normal (else omni). */
+    {
+        int mis = (getenv("GI_MIS") != NULL && atoi(getenv("GI_MIS")) != 0) ? 1 : 0;
+        float ngate = 0.75f; { const char *e = getenv("GI_NORM_GATE"); if (e) { float v=(float)atof(e); if (v>0.0f) ngate=v; } }
+        glUniform1i(g->loc.mis, mis);
+        glUniform1f(g->loc.norm_gate, ngate);
+        /* Hybrid: cheap field bounce + u_hero deterministic hero SDF marches. */
+        int hybrid = (getenv("GI_HYBRID") != NULL && atoi(getenv("GI_HYBRID")) != 0) ? 1 : 0;
+        int hero = 2; { const char *e = getenv("GI_HERO"); if (e) { int v=atoi(e); if (v>=0 && v<=4) hero=v; } }
+        glUniform1i(g->loc.hybrid, hybrid);
+        glUniform1i(g->loc.hero, hero);
+        /* Probe static-bounce dim (GI_STAT_SCALE, 1 = full). Lower it when the baked
+         * lightmap is on so probes add only dynamic bleed, not double-counted static. */
+        float sscale = 1.0f; { const char *e = getenv("GI_STAT_SCALE"); if (e) { float v=(float)atof(e); if (v>=0.0f) sscale=v; } }
+        glUniform1f(g->loc.stat_scale, sscale);
+    }
 
     /* Static irradiance volume: bound past the SDF slot units. */
     {
@@ -629,6 +765,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 5, g->b_sg);
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 6, g->b_active);
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 7, g->b_emit);
+    glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 8, g->b_norm);
     /* Bind the depth 2D-array as an r/w image (unit 0) so the compute mirrors the
      * octahedral depth into it for hardware-filtered sampling in the forward+. */
     if (g->BindImageTexture != NULL)

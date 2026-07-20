@@ -63,6 +63,8 @@ typedef struct gi_runtime_config {
     uint32_t probe_min;          /**< guaranteed K-nearest probes per froxel (0 -> 4). */
     float probe_sphere_margin;   /**< world halo added to each froxel sphere (m, 0->1.5). */
     int   bin_interval;          /**< re-bin probes into froxels every N frames (0 -> 1). */
+    float smooth;                /**< steady-state probe temporal-EMA blend (0..1;
+                                  *   <=0 -> 0.15 default; GI_SMOOTH env still overrides). */
 } gi_runtime_config_t;
 
 /** The dynamic-GI runtime (owns everything). */
