@@ -51,11 +51,12 @@ class _Shell:
     Rule 5: quads carry a ``tag``; tags become vertex groups on the object.
     """
 
-    def __init__(self):
+    def __init__(self, recalc=False):
         self.bm = bmesh.new()
         self._cache = {}
         self.tag = None           # current subpart tag (rule 5)
         self._face_tags = {}      # bmesh face -> tag string
+        self.recalc = recalc      # closed-solid shells: recalc normals
 
     def vert(self, co):
         key = (round(co[0] / _WELD), round(co[1] / _WELD), round(co[2] / _WELD))
@@ -92,6 +93,10 @@ class _Shell:
                 loop[uv].uv = (s_u * co[ua] * _UV_SCALE, co[va] * _UV_SCALE)
 
     def to_object(self, name, materials):
+        if self.recalc:
+            # all-closed-solid shells: make face normals consistently outward
+            # regardless of authoring winding (open strips must NOT do this).
+            bmesh.ops.recalc_face_normals(self.bm, faces=self.bm.faces)
         self.bm.normal_update()      # BEFORE UVs: projection needs real normals
         self._write_uvs()
         me = bpy.data.meshes.new(name)
@@ -138,6 +143,63 @@ def _box(shell, mn, mx, mat=0):
     shell.quad((x1, y1, z0), (x0, y1, z0), (x0, y1, z1), (x1, y1, z1), mat)  # +y
     shell.quad((x0, y1, z0), (x0, y0, z0), (x0, y0, z1), (x0, y1, z1), mat)  # -x
     shell.quad((x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1), mat)  # +x
+
+
+def _wall_solid(shell, axis, at, a0, a1, zlo, zhi, t=0.09, door=None, mat=0):
+    """ONE manifold all-quad wall solid along @p axis ('x' or 'y'), spanning
+    @p a0..a1 at cross position @p at, thickness @p t. @p door = (g0, g1, dh)
+    cuts a doorway INTO the topology: the faces subdivide on the door lines
+    (5 quads per side, split end caps, jamb quads, header soffit) -- one
+    closed mesh, nothing overlapping, nothing to z-fight."""
+    if a1 - a0 < 0.05:
+        return
+
+    def P(u, w, z):
+        return (u, at + w, z) if axis == 'x' else (at + w, u, z)
+
+    q = shell.quad
+    if door is None:
+        q(P(a0, 0, zlo), P(a1, 0, zlo), P(a1, 0, zhi), P(a0, 0, zhi), mat)
+        q(P(a0, t, zlo), P(a0, t, zhi), P(a1, t, zhi), P(a1, t, zlo), mat)
+        q(P(a0, 0, zhi), P(a1, 0, zhi), P(a1, t, zhi), P(a0, t, zhi), mat)
+        q(P(a0, 0, zlo), P(a0, t, zlo), P(a1, t, zlo), P(a1, 0, zlo), mat)
+        q(P(a0, 0, zlo), P(a0, 0, zhi), P(a0, t, zhi), P(a0, t, zlo), mat)
+        q(P(a1, 0, zlo), P(a1, t, zlo), P(a1, t, zhi), P(a1, 0, zhi), mat)
+        return
+    g0, g1, dh = door
+    g0 = max(a0 + 0.05, g0)
+    g1 = min(a1 - 0.05, g1)
+    dh = min(dh, zhi - 0.08)
+    for w, flip in ((0.0, False), (t, True)):
+        # 5 face quads: legs (2 rows each) + header cell; door cell omitted.
+        cells = [(a0, g0, zlo, dh), (a0, g0, dh, zhi),
+                 (g1, a1, zlo, dh), (g1, a1, dh, zhi),
+                 (g0, g1, dh, zhi)]
+        for (u0, u1, z0, z1) in cells:
+            pts = [P(u0, w, z0), P(u1, w, z0), P(u1, w, z1), P(u0, w, z1)]
+            if flip:
+                pts.reverse()
+            q(*pts, mat)
+    # top cap: 3 segments (verts at g0/g1 exist on the face top rows).
+    for (u0, u1) in ((a0, g0), (g0, g1), (g1, a1)):
+        q(P(u0, 0, zhi), P(u1, 0, zhi), P(u1, t, zhi), P(u0, t, zhi), mat)
+    # leg undersides.
+    for (u0, u1) in ((a0, g0), (g1, a1)):
+        q(P(u0, 0, zlo), P(u0, t, zlo), P(u1, t, zlo), P(u1, 0, zlo), mat)
+    # end caps, split at the door head line (the faces have that vert).
+    for u, flip in ((a0, False), (a1, True)):
+        for (z0, z1) in ((zlo, dh), (dh, zhi)):
+            pts = [P(u, 0, z0), P(u, 0, z1), P(u, t, z1), P(u, t, z0)]
+            if flip:
+                pts.reverse()
+            q(*pts, mat)
+    # jambs + header soffit lining the doorway.
+    for u, flip in ((g0, True), (g1, False)):
+        pts = [P(u, 0, zlo), P(u, 0, dh), P(u, t, dh), P(u, t, zlo)]
+        if flip:
+            pts.reverse()
+        q(*pts, mat)
+    q(P(g0, 0, dh), P(g1, 0, dh), P(g1, t, dh), P(g0, t, dh), mat)
 
 
 class _Wall:
@@ -611,7 +673,7 @@ def build_dingbat(p, rng):
         # unit partitions: one wall between window bays per storey, spanning
         # liner to liner. Thin closed boxes; carried on both floors so they
         # read load-bearing. 2 mm shy of the liners (no shared planes).
-        parts = _Shell()
+        parts = _Shell(recalc=True)
         parts.tag = 'partitions'
         pt = 0.10
         # one storey per floor band: that band's slab top to the next band's
@@ -638,38 +700,23 @@ def build_dingbat(p, rng):
         #    (the front-corner placement clipped straight through them).
         DOOR_W, DOOR_H = 0.78, 2.03
 
-        def wall_x(x, ya2, yb2, zlo, zhi):
-            if yb2 - ya2 > 0.05:
-                _box(parts, (x - 0.045, ya2, zlo), (x + 0.045, yb2, zhi),
-                     M_GYPSUM)
+        def wall_x(x, ya2, yb2, zlo, zhi, door=None):
+            _wall_solid(parts, 'y', x - 0.045, ya2, yb2, zlo, zhi, 0.09,
+                        door, M_GYPSUM)
 
-        def wall_y(y, xa2, xb2, zlo, zhi):
-            if xb2 - xa2 > 0.05:
-                _box(parts, (xa2, y - 0.045, zlo), (xb2, y + 0.045, zhi),
-                     M_GYPSUM)
+        def wall_y(y, xa2, xb2, zlo, zhi, door=None):
+            _wall_solid(parts, 'x', y - 0.045, xa2, xb2, zlo, zhi, 0.09,
+                        door, M_GYPSUM)
 
         def doored_wall_y(y, xa2, xb2, door_at, zlo, zhi):
-            """Wall along x at @p y with a FRAMED doorway: two full-height
-            segments + a header above the opening."""
-            g0 = max(xa2, min(door_at, xb2 - DOOR_W))
-            g1 = g0 + DOOR_W
-            wall_y(y, xa2, g0, zlo, zhi)
-            wall_y(y, g1, xb2, zlo, zhi)
-            zh_door = min(zlo + DOOR_H, zhi - 0.05)
-            # header overlaps 3 cm INTO the segments with a hair-thinner
-            # profile: coincident planes weld into non-manifold soup and
-            # land corners on segment edges (auditor-caught).
-            _box(parts, (g0 - 0.03, y - 0.043, zh_door),
-                 (g1 + 0.03, y + 0.043, zhi - 0.003), M_GYPSUM)
+            g0 = max(xa2 + 0.05, min(door_at, xb2 - DOOR_W - 0.05))
+            wall_y(y, xa2, xb2, zlo, zhi,
+                   door=(g0, g0 + DOOR_W, zlo + DOOR_H))
 
         def doored_wall_x(x, ya2, yb2, door_at, zlo, zhi):
-            g0 = max(ya2, min(door_at, yb2 - DOOR_W))
-            g1 = g0 + DOOR_W
-            wall_x(x, ya2, g0, zlo, zhi)
-            wall_x(x, g1, yb2, zlo, zhi)
-            zh_door = min(zlo + DOOR_H, zhi - 0.05)
-            _box(parts, (x - 0.043, g0 - 0.03, zh_door),
-                 (x + 0.043, g1 + 0.03, zhi - 0.003), M_GYPSUM)
+            g0 = max(ya2 + 0.05, min(door_at, yb2 - DOOR_W - 0.05))
+            wall_x(x, ya2, yb2, zlo, zhi,
+                   door=(g0, g0 + DOOR_W, zlo + DOOR_H))
 
         n_units = cols // 2
         bayw = (W - 2 * margin) / cols
@@ -808,12 +855,17 @@ def build_dingbat(p, rng):
                             (a - 0.1, -0.45, zh - 0.40),
                             (b + 0.1, -0.45, zh - 0.40), M_METAL)
     extras.tag = 'ac_units'
-    for (a, b) in xjambs:
-        for (s, h) in upper_rows:
+    # per-UNIT: the AC goes in the LIVING-ROOM window (the unit's door bay).
+    # The bathroom is a windowless island, and this placement cannot even
+    # express "AC in the bathroom" -- the unit's single AC serves the unit.
+    for u2 in range(max(1, cols // 2)):
+        bay = min(2 * u2, len(xjambs) - 1)
+        (a, b) = xjambs[bay]
+        for (sll, _hh) in upper_rows:
             if rng.random() < p["ac_units"]:
                 cx = (a + b) / 2.0
-                _box(extras, (cx - 0.30, -0.28, s + 0.02),
-                     (cx + 0.30, 0.10, s + 0.42), M_METAL)
+                _box(extras, (cx - 0.30, -0.28, sll + 0.02),
+                     (cx + 0.30, 0.10, sll + 0.42), M_METAL)
     extras_ob = extras.to_object("LA_Dingbat_Extras", mats)
 
     # ---- engine tags --------------------------------------------------------
