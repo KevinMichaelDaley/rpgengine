@@ -622,13 +622,8 @@ def build_dingbat(p, rng):
             if sll - 1e-6 < zc0 < hh - 1e-6 and near(u0, jamb_x):
                 return 'window'
         if not has_carport:
-            # grounded: one entry + one window per two-bay unit.
-            if near(u0, door_x):
-                if abs(zc0 - z_grade) < 1e-6:
-                    return 'doorL'
-                if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
-                    return 'doorU'
-            elif near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
+            # grounded: windows only -- unit entries are on the back.
+            if near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
                 return 'window'
         return 'wall'
 
@@ -654,6 +649,13 @@ def build_dingbat(p, rng):
     kitchen_x = [a for (a, _b) in xjambs[1::2]]   # window-bay jambs
 
     def back_classify(u0, zc0):
+        # ground units enter from the BACK too ("appear like houses" -- no
+        # doors visible from the street), same 0.9 m jambs as upstairs.
+        if near(u0, doorj_x):
+            if abs(zc0 - z_grade) < 1e-6:
+                return 'doorL'
+            if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
+                return 'doorU'
         # ground row: kitchen window (window bay) + HIGH bath window.
         if z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6 and near(u0, kitchen_x):
             return 'window'
@@ -691,11 +693,37 @@ def build_dingbat(p, rng):
         return 'wall'
 
     shell.tag = 'facade_side'
+    open_sides = has_carport and not p["carport_sides"]
+
+    def side_classify(u0, zc0):
+        # monotony breaker: the ground-floor side over the carport opens up
+        # (posts carry the building) -- a real dingbat variant.
+        if open_sides and u0 < cd - 1e-6 and zc0 < z_soffit - 1e-6:
+            return 'void'
+        return 'wall'
+
     for sx, snrm in ((0.0, (-1, 0, 0)), (W, (1, 0, 0))):
         _ws = _Wall(shell, (sx, 0, 0), (0, 1, 0), yl, zl, snrm, M_STUCCO,
                     thickness=thick, inner_zmax=top_z_all, inner_mat=M_GYPSUM)
         _ws.inner_u0, _ws.inner_u1 = wt, D - wt
-        _ws.fill(plain)
+        _ws.fill(side_classify)
+    if thick > 0.0 and has_carport:
+        # EDGE CLOSURE (carport mouth only -- in grounded mode the front
+        # wall itself fills the corner): the side walls' outer+inner sheets
+        # must never end as two disconnected faces at an exposed edge.
+        # Split at the wall's z-rows so its row verts weld (they landed
+        # mid-edge on a single tall quad). When the sides are open, also
+        # close the vertical edge where the ground wall resumes at y = cd.
+        shell.tag = 'facade_side'
+        closure_rows = [v for v in zl if v <= z_soffit + 1e-6]
+        for x0c, x1c in ((0.0, wt), (W - wt, W)):
+            for ri in range(len(closure_rows) - 1):
+                r0, r1 = closure_rows[ri], closure_rows[ri + 1]
+                shell.quad((x0c, 0.0, r0), (x1c, 0.0, r0),
+                           (x1c, 0.0, r1), (x0c, 0.0, r1), M_STUCCO)
+                if open_sides:
+                    shell.quad((x0c, cd, r0), (x1c, cd, r0),
+                               (x1c, cd, r1), (x0c, cd, r1), M_STUCCO)
     shell.tag = 'parapet'
 
     # ---- carport liner: recessed ground wall + soffit. A SEPARATE SHELL --
@@ -706,13 +734,9 @@ def build_dingbat(p, rng):
     ground_z = [v for v in zl if v <= z_soffit]
 
     def ground_classify(u0, zc0):
-        # one door + one window per (two-bay) ground unit.
-        if near(u0, door_x):
-            if abs(zc0 - z_grade) < 1e-6:
-                return 'doorL'
-            if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
-                return 'doorU'
-        elif near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
+        # recessed carport wall: WINDOWS only -- entries are on the back
+        # (doors were never visible from the street; house-like fronts).
+        if near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
             return 'window'
         return 'wall'
 
@@ -1124,6 +1148,8 @@ SPEC = [
     # with a ground window row + entry door.
     dict(name="carport", type='BOOL', default=True,
          desc="Tuck-under carport; off = building drops to grade"),
+    dict(name="carport_sides", type='BOOL', default=True,
+         desc="Walled carport sides; off = open sides on posts"),
     # story options (rule 3) -- off by default, thematically coherent.
     dict(name="all_broken", type='BOOL', default=False,
          desc="Abandonment: every window shattered, many boarded"),
