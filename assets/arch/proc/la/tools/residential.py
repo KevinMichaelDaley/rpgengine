@@ -160,7 +160,7 @@ class _Wall:
              mat_frame=None, mat_pane=None):
         for iz in range(len(self.zl) - 1):
             for iu in range(len(self.ul) - 1):
-                kind = classify(iu, self.zl[iz])
+                kind = classify(self.ul[iu], self.zl[iz])
                 if kind == 'void':
                     continue
                 u0, u1 = self.ul[iu], self.ul[iu + 1]
@@ -266,30 +266,27 @@ def build_dingbat(p, rng):
 
     shell = _Shell()
 
-    def row_of(zlist, zval):
-        return zlist.index(zval)
-
     has_carport = p["carport"]
     # ---- front wall (y=0, faces -Y). With a carport: fascia + upper floors
     # only (the ground is the void). Without one the building sits on grade:
     # full-height wall, ground window row, centre-bay entry door. ------------
     front_z = [v for v in zl if v >= z_soffit] if has_carport else zl
-    win_rows = {row_of(front_z, s) for (s, _h) in upper_rows}
-    jamb_cols = set()
-    for (a, b) in xjambs:
-        jamb_cols.add(xl.index(a))
 
-    jamb_sorted = sorted(jamb_cols)
-    door_bay_iu = jamb_sorted[len(jamb_sorted) // 2]   # centre bay = entry
+    def near(u0, vals):
+        return any(abs(u0 - v) < 1e-6 for v in vals)
 
-    def front_classify(iu, zc0):
-        for (s, h) in upper_rows:
-            if abs(zc0 - s) < 1e-6 and iu in jamb_cols:
+    jamb_x = [a for (a, _b) in xjambs]
+    door_x = [a for (a, _b) in xjambs[::2]]      # every other bay: unit doors
+    entry_x = xjambs[len(xjambs) // 2][0]        # centre bay: entry door
+
+    def front_classify(u0, zc0):
+        for (sll, _hh) in upper_rows:
+            if abs(zc0 - sll) < 1e-6 and near(u0, jamb_x):
                 return 'window'
         if not has_carport:
-            if abs(zc0 - z_sill1) < 1e-6 and iu in jamb_cols:
-                return 'door' if iu == door_bay_iu else 'window'
-            if abs(zc0 - z_grade) < 1e-6 and iu == door_bay_iu:
+            if abs(zc0 - z_sill1) < 1e-6 and near(u0, jamb_x):
+                return 'door' if abs(u0 - entry_x) < 1e-6 else 'window'
+            if abs(zc0 - z_grade) < 1e-6 and abs(u0 - entry_x) < 1e-6:
                 return 'door'          # the door continues down to grade
         return 'wall'
 
@@ -301,11 +298,11 @@ def build_dingbat(p, rng):
     # ---- back wall (y=D, faces +Y): full height, windows on all floors -----
     back_z = zl
 
-    def back_classify(iu, zc0):
-        if abs(zc0 - z_sill1) < 1e-6 and iu in jamb_cols:
+    def back_classify(u0, zc0):
+        if abs(zc0 - z_sill1) < 1e-6 and near(u0, jamb_x):
             return 'window'
-        for (s, h) in upper_rows:
-            if abs(zc0 - s) < 1e-6 and iu in jamb_cols:
+        for (sll, _hh) in upper_rows:
+            if abs(zc0 - sll) < 1e-6 and near(u0, jamb_x):
                 return 'window'
         return 'wall'
 
@@ -315,8 +312,8 @@ def build_dingbat(p, rng):
                          mat_frame=M_TRIM, mat_pane=M_GLASS)
 
     # ---- side walls (x=0 faces -X; x=W faces +X): plain full-height grids --
-    def plain(iu, zc0):
-        del iu, zc0
+    def plain(u0, zc0):
+        del u0, zc0
         return 'wall'
 
     shell.tag = 'facade_side'
@@ -330,10 +327,9 @@ def build_dingbat(p, rng):
     # quality bar's sanctioned form.
     liner = _Shell() if has_carport else None
     ground_z = [v for v in zl if v <= z_soffit]
-    door_cols = {xl.index(a) for (a, _b) in xjambs[::2]}   # every other bay
 
-    def ground_classify(iu, zc0):
-        if zc0 < z_head1 - 1e-6 and iu in door_cols:
+    def ground_classify(u0, zc0):
+        if zc0 < z_head1 - 1e-6 and near(u0, door_x):
             return 'door'
         return 'wall'
 
@@ -449,34 +445,44 @@ def build_dingbat(p, rng):
         inner.tag = 'interior_walls'
 
         def void_openings(classify):
-            def cls(iu, zc0):
-                k = classify(iu, zc0)
+            def cls(u0, zc0):
+                k = classify(u0, zc0)
                 return 'void' if k in ('window', 'door') else k
             return cls
 
-        def inner_front_classify(iu, zc0):
-            """Full-height inner front: mirrors the recessed ground wall's
-            doors below the soffit, the facade windows above."""
-            if has_carport and zc0 < z_soffit - 1e-6:
-                return ground_classify(iu, zc0)
-            return front_classify(iu, zc0)
-
         ix0, ix1 = wt, W - wt
-        iy0 = (cd + wt) if has_carport else wt
         iy1 = D - wt
         in_xl = sorted({ix0, ix1} | {v for v in xl if ix0 < v < ix1})
-        in_yl = sorted({iy0, iy1} | {v for v in yl if iy0 < v < iy1})
         top_z = zl[-1] - 0.4                   # underside of roof structure
         in_zl = sorted({v for v in zl if v <= top_z} | {top_z})
+        lo_zl = [v for v in in_zl if v <= z_soffit]
+        hi_zl = [v for v in in_zl if v >= z_soffit]
+        # cd+wt joins the full-depth y-lines: the ground side-liner tops out
+        # there, and without a matching vert the upper segment's bottom edge
+        # takes a T-junction (auditor-caught, x2 sides).
+        in_yl_full = sorted({wt, iy1, cd + wt} | {v for v in yl if wt < v < iy1})
+        in_yl_gnd = sorted({cd + wt, iy1} | {v for v in yl if cd + wt < v < iy1})
         # inner faces point INTO the rooms (normals reversed vs exterior).
-        _Wall(inner, (0, iy0, 0), (1, 0, 0), in_xl, in_zl, (0, 1, 0),
-              M_GYPSUM).fill(void_openings(inner_front_classify))
+        if has_carport:
+            # ground: recessed behind the carport; upper: at the facade.
+            _Wall(inner, (0, cd + wt, 0), (1, 0, 0), in_xl, lo_zl, (0, 1, 0),
+                  M_GYPSUM).fill(void_openings(ground_classify))
+            _Wall(inner, (0, wt, 0), (1, 0, 0), in_xl, hi_zl, (0, 1, 0),
+                  M_GYPSUM).fill(void_openings(front_classify))
+        else:
+            _Wall(inner, (0, wt, 0), (1, 0, 0), in_xl, in_zl, (0, 1, 0),
+                  M_GYPSUM).fill(void_openings(front_classify))
         _Wall(inner, (0, iy1, 0), (1, 0, 0), in_xl, in_zl, (0, -1, 0),
               M_GYPSUM).fill(void_openings(back_classify))
-        _Wall(inner, (ix0, 0, 0), (0, 1, 0), in_yl, in_zl, (1, 0, 0),
-              M_GYPSUM).fill(plain)
-        _Wall(inner, (ix1, 0, 0), (0, 1, 0), in_yl, in_zl, (-1, 0, 0),
-              M_GYPSUM).fill(plain)
+        for sx, snrm in ((ix0, (1, 0, 0)), (ix1, (-1, 0, 0))):
+            if has_carport:
+                _Wall(inner, (sx, 0, 0), (0, 1, 0), in_yl_gnd, lo_zl, snrm,
+                      M_GYPSUM).fill(plain)
+                _Wall(inner, (sx, 0, 0), (0, 1, 0), in_yl_full, hi_zl, snrm,
+                      M_GYPSUM).fill(plain)
+            else:
+                _Wall(inner, (sx, 0, 0), (0, 1, 0), in_yl_full, in_zl, snrm,
+                      M_GYPSUM).fill(plain)
         interior_obs.append(inner.to_object("LA_Dingbat_Interior", mats))
 
         # slabs: one closed plate per storey (top face = floor, underside =
@@ -485,11 +491,12 @@ def build_dingbat(p, rng):
         slabs = _Shell()
         slabs.tag = 'slabs'
         e = 0.001
-        slab_boxes = [(lo, hi) for (lo, hi, _bt) in floor_bands]
-        if not has_carport:
-            slab_boxes.insert(0, (z_grade, z_grade + 0.12))
-        for (z_lo, z_hi) in slab_boxes:
-            _box(slabs, (ix0 + e, iy0 + e, z_lo), (ix1 - e, iy1 - e, z_hi),
+        gy0 = (cd + wt) if has_carport else wt
+        slab_boxes = [(z_grade + (0.0 if has_carport else 0.0),
+                       z_grade + 0.12, gy0)]
+        slab_boxes += [(lo, hi, wt) for (lo, hi, _bt) in floor_bands]
+        for (z_lo, z_hi, y0s) in slab_boxes:
+            _box(slabs, (ix0 + e, y0s + e, z_lo), (ix1 - e, iy1 - e, z_hi),
                  M_CONCRETE)
         interior_obs.append(slabs.to_object("LA_Dingbat_Slabs", mats))
 
@@ -501,15 +508,15 @@ def build_dingbat(p, rng):
         pt = 0.10
         # one storey per floor band: that band's slab top to the next band's
         # slab bottom (roof structure underside for the last).
-        storeys = [(z_grade + (0.12 if not has_carport else 0.002),
-                    floor_bands[0][0])]
+        storeys = [(z_grade + 0.12, floor_bands[0][0],
+                    ((cd + wt) if has_carport else wt) + 0.002)]
         for i2, (lo, hi, _bt) in enumerate(floor_bands):
             nxt = floor_bands[i2 + 1][0] if i2 + 1 < len(floor_bands) else top_z
-            storeys.append((hi, nxt))
+            storeys.append((hi, nxt, wt + 0.002))
         for k in range(1, cols):
             xb = margin + (W - 2 * margin) * (k / cols)
-            for (zlo, zhi) in storeys:
-                _box(parts, (xb - pt / 2, iy0 + 0.002, zlo),
+            for (zlo, zhi, ys) in storeys:
+                _box(parts, (xb - pt / 2, ys, zlo),
                      (xb + pt / 2, iy1 - 0.002, zhi - 0.001), M_GYPSUM)
         interior_obs.append(parts.to_object("LA_Dingbat_Partitions", mats))
 
