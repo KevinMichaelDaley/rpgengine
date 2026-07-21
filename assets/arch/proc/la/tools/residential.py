@@ -113,6 +113,21 @@ class _Shell:
         return ob
 
 
+def _sheared_box(shell, x0, x1, y0, y1, z_at_y0, z_at_y1, depth, mat=0, tag=None):
+    """A box sheared along Y: top/bottom follow the line z(y), thickness
+    @p depth below it. Every face stays PLANAR (shear is linear), so this is
+    6 quads -- the natural stair stringer / sloped-beam primitive."""
+    a0, a1 = z_at_y0, z_at_y1
+    b0, b1 = a0 - depth, a1 - depth
+    q = shell.quad
+    q((x0, y0, b0), (x1, y0, b0), (x1, y1, b1), (x0, y1, b1), mat, tag)  # bottom
+    q((x0, y0, a0), (x0, y1, a1), (x1, y1, a1), (x1, y0, a0), mat, tag)  # top
+    q((x0, y0, b0), (x0, y1, b1), (x0, y1, a1), (x0, y0, a0), mat, tag)  # -x side
+    q((x1, y0, b0), (x1, y0, a0), (x1, y1, a1), (x1, y1, b1), mat, tag)  # +x side
+    q((x0, y0, b0), (x0, y0, a0), (x1, y0, a0), (x1, y0, b0), mat, tag)  # y0 end
+    q((x0, y1, b1), (x1, y1, b1), (x1, y1, a1), (x0, y1, a1), mat, tag)  # y1 end
+
+
 def _box(shell, mn, mx, mat=0):
     """Closed axis-aligned 6-quad box (its own welded island)."""
     x0, y0, z0 = mn
@@ -404,55 +419,84 @@ def build_dingbat(p, rng):
                  (x + px / 2, 0.30 + px, z_soffit), M_METAL)
         post_ob = posts.to_object("LA_Dingbat_Posts", mats)
 
-    # ---- rear stair tower (separate shells): per storey, two flights with a
-    # half-landing, arriving FLUSH on that storey's walkway level. Lane A
-    # (outer) climbs away from the building, lane B (inner) climbs back and
-    # steps straight onto the walkway extension over the lanes. Boxes carry
-    # the cycled plane-inset (no shared planes / weld soup). --------------
+    # ---- rear stair tower: stringer-carried flights + posted landings (see
+    # the ticket's rev-2 topology plan). Each flight: two SHEARED-BOX
+    # stringers (planar 6-quad prisms) carrying a folded tread/riser strip,
+    # underside closed by one sloped soffit quad -- the sawtooth profile that
+    # would be an ngon end-cap terminates INSIDE the stringer faces, which is
+    # what stringers are for. Landings are slab plates on four continuous
+    # posts to grade. All separate clean shells. -----------------------------
     stair = _Shell()
     stair.tag = 'steps'
-    tread, s_w, ov = 0.26, 1.1, 0.02
+    tread, s_w, st = 0.26, 1.1, 0.09          # tread run, lane width, stringer
     side = p["stair_side"]
+    sdir = -1.0 if side == 'left' else 1.0
     laneB_x0 = (-s_w - 0.05) if side == 'left' else (W + 0.05)
-    lane_off = (s_w + 0.03) * (-1 if side == 'left' else 1)
-    laneA_x0 = laneB_x0 + lane_off
+    laneA_x0 = laneB_x0 + sdir * (s_w + 0.06)
     wd = 1.25
     levels = [0.0] + [lo + 0.12 for (lo, _hi, _bt) in floor_bands]
-    gidx = 0                                  # global step index (plane jitter)
+    y_arr = D + wd * 0.45
 
-    def jbox(x0, y0, z0, x1, y1, z1):
-        nonlocal gidx
-        dx = 0.006 * ((gidx % 3) - 1)
-        gidx += 1
-        _box(stair, (min(x0, x1) + dx, y0, z0), (max(x0, x1) - dx, y1, z1),
-             M_CONCRETE)
+    def flight(x0, y_from, y_to, z_from, z_to):
+        """One flight between two levels along y (either direction)."""
+        x1 = x0 + s_w
+        n = max(3, int(round(abs(z_to - z_from) / 0.185)))
+        rise = (z_to - z_from) / n
+        run = (y_to - y_from) / n
+        # stringers: parallel to the nosing line (z_from..z_to + cover).
+        for sx0, sx1 in ((x0, x0 + st), (x1 - st, x1)):
+            _sheared_box(stair, min(sx0, sx1), max(sx0, sx1),
+                         y_from, y_to, z_from + 0.06, z_to + 0.06,
+                         0.34, M_METAL, 'steps')
+        # tread/riser strip between the stringers, inset 1 mm: its boundary
+        # hides inside the joint but never lands on a stringer edge (the
+        # auditor's 16 T-junctions per flight when coincident).
+        ix0, ix1 = x0 + st + 0.001, x1 - st - 0.001
+        for k2 in range(n):
+            ya2, yb2 = y_from + run * k2, y_from + run * (k2 + 1)
+            zlo2, zhi2 = z_from + rise * k2, z_from + rise * (k2 + 1)
+            stair.quad((ix0, ya2, zlo2), (ix1, ya2, zlo2),
+                       (ix1, ya2, zhi2), (ix0, ya2, zhi2), M_CONCRETE)  # riser
+            stair.quad((ix0, ya2, zhi2), (ix1, ya2, zhi2),
+                       (ix1, yb2, zhi2), (ix0, yb2, zhi2), M_CONCRETE)  # tread
+        # soffit: one sloped quad closing the underside.
+        stair.quad((ix0, y_from, z_from - 0.10), (ix1, y_from, z_from - 0.10),
+                   (ix1, y_to, z_to - 0.10), (ix0, y_to, z_to - 0.10),
+                   M_CONCRETE)
 
-    y_arr = D + wd * 0.45                     # arrival: mid walkway band
-    sdir = -1.0 if side == 'left' else 1.0
+    land_y0 = None
     for i in range(len(levels) - 1):
         zb, zt = levels[i], levels[i + 1]
-        # per-storey micro-offset: stacked flights share lanes, and identical
-        # planes at the inter-storey level put corners on edges (auditor: 8
-        # T-junctions at floors=3). 8 mm per storey is invisible.
-        ax0 = laneA_x0 + sdir * 0.008 * i
-        bx0 = laneB_x0 + sdir * 0.008 * i
-        ya = y_arr + 0.004 * i
-        n = max(4, int((zt - zb) / 0.18 + 0.999))
-        half = n // 2
-        rise = (zt - zb) / n
-        run = tread * max(half, n - half)
-        # flight A: outer lane, base level -> half height, climbing away (+y)
-        for j in range(half):
-            jbox(ax0, ya + tread * j - ov, zb,
-                 ax0 + s_w, ya + tread * (j + 1), zb + rise * (j + 1))
-        # half landing spanning both lanes at the far end
-        jbox(min(ax0, bx0), ya + run - ov, zb,
-             max(ax0, bx0) + s_w, ya + run + s_w, zb + rise * half)
-        # flight B: inner lane, half height -> walkway level, climbing back
-        for k in range(1, n - half + 1):
-            jbox(bx0, ya + run - tread * k - ov, zb,
-                 bx0 + s_w, ya + run - tread * (k - 1),
-                 zb + rise * (half + k))
+        zh = (zb + zt) / 2.0
+        n_half = max(3, int(round((zh - zb) / 0.185)))
+        run = tread * n_half
+        # flight A (outer lane): away from the building, zb -> mid.
+        flight(min(laneA_x0, laneA_x0 + s_w * 0) + 0.0, y_arr, y_arr + run, zb, zh)
+        # half landing plate.
+        lx0 = min(laneA_x0, laneB_x0)
+        lx1 = max(laneA_x0, laneB_x0) + s_w
+        land_y0 = y_arr + run + 0.003
+        _box(stair, (lx0, land_y0, zh - 0.10), (lx1, land_y0 + s_w, zh),
+             M_CONCRETE)
+        # flight B (inner lane): back toward the building, mid -> walkway.
+        flight(laneB_x0, land_y0 + s_w - 0.003, y_arr, zh, zt)
+
+    # four continuous posts carry the stacked half-landings, grade -> top;
+    # 20 mm proud of the slab corners (touching, no shared planes).
+    stair.tag = 'columns'
+    top_land = (levels[-2] + levels[-1]) / 2.0 if len(levels) > 1 else levels[-1]
+    lx0 = min(laneA_x0, laneB_x0)
+    lx1 = max(laneA_x0, laneB_x0) + s_w
+    for (px2, py2) in ((lx0 - 0.10, land_y0 - 0.10), (lx1 + 0.02, land_y0 - 0.10),
+                       (lx0 - 0.10, land_y0 + s_w + 0.02),
+                       (lx1 + 0.02, land_y0 + s_w + 0.02)):
+        _box(stair, (px2, py2, 0.0), (px2 + 0.08, py2 + 0.08, top_land - 0.10),
+             M_METAL)
+    # walkway-extension posts: carry the arrival edge over the lanes.
+    wpx = lx0 - 0.10 if side == 'left' else lx1 + 0.02
+    for wy in (D + 0.05, D + wd - 0.13):
+        _box(stair, (wpx, wy, 0.0), (wpx + 0.08, wy + 0.08,
+             floor_bands[-1][0] - 0.02), M_METAL)
     stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
 
     # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,

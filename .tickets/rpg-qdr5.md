@@ -109,3 +109,29 @@ real, non-degenerate UV layout (seams as deliberate as edge flow; consistent
 texel density); never deferred. (5) NATURAL VERTEX GROUPS per subpart as you
 build (e.g. steps/windows/awnings/facade_front/carport/doors/parapet) from
 the shared name vocabulary -- one-click subpart selection forever after.
+
+## Stair topology plan (rev 2 -- proper structure, no box kit)
+
+FLIGHT (side view, one storey; all quads):
+
+      stringer (sheared box, 6 planar quads: shear keeps every face planar)
+     ____________________________________
+    /                                   /|___ tread quad (horizontal)
+   /   _/|_/|_/|_/|  <- riser quads    / /
+  /___/________________________________/ /   soffit: ONE sloped quad closing
+  |______________________________________/    the underside between stringers
+
+  - tread/riser STRIP spans between the two stringers' inner faces; its open
+    side boundaries terminate INSIDE the stringer faces (vert-on-face contact
+    between clean shells -- sanctioned; never vert-on-EDGE).
+  - the sawtooth profile that would be an ngon end-cap is exactly what the
+    stringers cover: that is what stringers are FOR.
+
+TOWER (plan): lane A (outer) up to the half-landing, lane B (inner) back up
+to the walkway. Half-landing = slab plate carried by FOUR continuous square
+posts grade -> top (outside the slab corners, 20 mm proud: touching reads
+structural, no shared planes). Walkway extension over the lanes carries the
+arrival; its own posts land under the extension edge.
+
+Every flight element repeats per storey; stringers/strips/posts are separate
+clean shells; the auditor gates: all-quad, no T-junction, no doubles, UVs.
