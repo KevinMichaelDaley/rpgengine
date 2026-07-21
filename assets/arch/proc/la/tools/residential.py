@@ -1346,6 +1346,27 @@ def build_dingbat(p, rng):
              floor_bands[-1][1] - 0.10), M_METAL)
     stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
 
+    # ---- rear walkway serving the upper units: slab + square posts. Built
+    # in BOTH modes -- it is exterior circulation, and the stair tower
+    # (always built) arrives at it: facade-mode buildings otherwise had
+    # stairs climbing to platforms that did not exist. --------------------
+    walk = _Shell()
+    walk.tag = 'walkway'
+    s_w2 = 1.1
+    wx0 = (-2 * s_w2 - 0.10) if p["stair_side"] == 'left' else 0.0
+    wx1 = W if p["stair_side"] == 'left' else (W + 2 * s_w2 + 0.10)
+    for wi, (_lo3, hi3, _bt3) in enumerate(floor_bands):
+        # top FLUSH with the unit floor line (= slab band top = door
+        # bottom): threshold steps were expensive, nobody poured them.
+        _box(walk, (wx0, D + 0.003 + 0.002 * wi, hi3 - 0.12),
+             (wx1 + 0.001 * wi, D + wd, hi3), M_CONCRETE)
+    walk.tag = 'columns'
+    for i in range(3):
+        x = 0.2 + (W - 0.4) * (i / 2.0)
+        _box(walk, (x - 0.06, D + wd - 0.14, 0.0),
+             (x + 0.06, D + wd - 0.02, floor_bands[-1][1] - 0.10), M_METAL)
+    walkway_ob = walk.to_object("LA_Dingbat_Walkway", mats)
+
     # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,
     # rear walkway -- everything structural, just-built, walkable. Each piece
     # is a clean separate shell; inner liners mirror the exterior openings as
@@ -1483,25 +1504,6 @@ def build_dingbat(p, rng):
 
         interior_obs.append(parts.to_object("LA_Dingbat_Partitions", mats))
 
-        # rear walkway serving the upper units: slab + square posts.
-        walk = _Shell()
-        walk.tag = 'walkway'
-        wd = 1.25
-        s_w2 = 1.1
-        wx0 = (-2 * s_w2 - 0.10) if p["stair_side"] == 'left' else 0.0
-        wx1 = W if p["stair_side"] == 'left' else (W + 2 * s_w2 + 0.10)
-        for wi, (lo, hi, _bt) in enumerate(floor_bands):
-            # top FLUSH with the unit floor line (= slab band top = door
-            # bottom): threshold steps were expensive, nobody poured them.
-            _box(walk, (wx0, D + 0.003 + 0.002 * wi, hi - 0.12),
-                 (wx1 + 0.001 * wi, D + wd, hi), M_CONCRETE)
-        walk.tag = 'columns'
-        for i in range(3):
-            x = 0.2 + (W - 0.4) * (i / 2.0)
-            _box(walk, (x - 0.06, D + wd - 0.14, 0.0),
-                 (x + 0.06, D + wd - 0.02, floor_bands[-1][1] - 0.10), M_METAL)
-        interior_obs.append(walk.to_object("LA_Dingbat_Walkway", mats))
-
     # ---- STORY OPTIONS (rule 3, off by default; theme: abandonment /
     # regime / resistance) ---------------------------------------------------
     story = _Shell()
@@ -1602,7 +1604,7 @@ def build_dingbat(p, rng):
     extras_ob = extras.to_object("LA_Dingbat_Extras", mats)
 
     # ---- engine tags --------------------------------------------------------
-    out = [body, liner_ob, post_ob, stair_ob, extras_ob, story_ob,
+    out = [body, liner_ob, post_ob, stair_ob, walkway_ob, extras_ob, story_ob,
            loggia_platform] + interior_obs
     out = [ob for ob in out if ob is not None]
     for ob in out:
