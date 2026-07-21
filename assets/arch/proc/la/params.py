@@ -36,6 +36,20 @@ import random
 
 import bpy
 
+#: Shared spec entries (rules 1 + 3): every building tool includes MODE_PARAM;
+#: story options are off-by-default BoolProperties declared LAST in the spec so
+#: they group at the bottom of the redo panel.
+MODE_PARAM = dict(name="mode", type='ENUM', default='facade',
+                  items=('facade', 'interior'),
+                  desc="facade = shell only; interior = all structural walls/"
+                       "slabs/columns, just-built and walkable")
+
+#: Shared vertex-group vocabulary (rule 5). Tools pick from these names.
+VGROUPS = ("facade_front", "facade_back", "facade_side", "windows", "doors",
+           "parapet", "roof", "carport", "steps", "awnings", "ac_units",
+           "interior_walls", "partitions", "slabs", "columns", "walkway",
+           "story")
+
 #: idname -> dict(idname, label, family, build, spec). Declaration order is
 #: preserved and drives menu order within a family.
 _REGISTRY = {}

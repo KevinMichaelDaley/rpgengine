@@ -203,8 +203,10 @@ def _material(name):
 
 
 #: material slot order for every dingbat mesh.
-_MATS = ["la_stucco", "la_trim", "la_glass", "la_concrete", "la_metal"]
-M_STUCCO, M_TRIM, M_GLASS, M_CONCRETE, M_METAL = range(5)
+_MATS = ["la_stucco", "la_trim", "la_glass", "la_concrete", "la_metal",
+         "la_gypsum", "la_plywood", "la_resin"]
+(M_STUCCO, M_TRIM, M_GLASS, M_CONCRETE, M_METAL,
+ M_GYPSUM, M_PLYWOOD, M_RESIN) = range(8)
 
 
 def _window_lines(width, cols, margin, win_w):
@@ -264,19 +266,29 @@ def build_dingbat(p, rng):
     def row_of(zlist, zval):
         return zlist.index(zval)
 
-    # ---- front wall (y=0, faces -Y): fascia + upper floors + parapet -------
-    front_z = [v for v in zl if v >= z_soffit]
+    has_carport = p["carport"]
+    # ---- front wall (y=0, faces -Y). With a carport: fascia + upper floors
+    # only (the ground is the void). Without one the building sits on grade:
+    # full-height wall, ground window row, centre-bay entry door. ------------
+    front_z = [v for v in zl if v >= z_soffit] if has_carport else zl
     win_rows = {row_of(front_z, s) for (s, _h) in upper_rows}
     jamb_cols = set()
     for (a, b) in xjambs:
         jamb_cols.add(xl.index(a))
 
+    jamb_sorted = sorted(jamb_cols)
+    door_bay_iu = jamb_sorted[len(jamb_sorted) // 2]   # centre bay = entry
+
     def front_classify(iu, iz):
         zc0 = front_z[iz]
         for (s, h) in upper_rows:
-            if abs(zc0 - s) < 1e-6:
-                if iu in jamb_cols:
-                    return 'window'
+            if abs(zc0 - s) < 1e-6 and iu in jamb_cols:
+                return 'window'
+        if not has_carport:
+            if abs(zc0 - z_sill1) < 1e-6 and iu in jamb_cols:
+                return 'door' if iu == door_bay_iu else 'window'
+            if abs(zc0 - z_grade) < 1e-6 and iu == door_bay_iu:
+                return 'door'          # the door continues down to grade
         return 'wall'
 
     shell.tag = 'facade_front'
@@ -315,8 +327,7 @@ def build_dingbat(p, rng):
     # welding its edges into the side/front wall faces would put 3 faces on
     # one edge (non-manifold, auditor-caught); a clean abutting shell is the
     # quality bar's sanctioned form.
-    liner = _Shell()
-    liner.tag = 'carport'
+    liner = _Shell() if has_carport else None
     ground_z = [v for v in zl if v <= z_soffit]
     door_cols = {xl.index(a) for (a, _b) in xjambs[::2]}   # every other bay
 
@@ -326,18 +337,19 @@ def build_dingbat(p, rng):
             return 'door'
         return 'wall'
 
-    liner.tag = 'doors'
-    _Wall(liner, (0, cd, 0), (1, 0, 0), xl, ground_z, (0, -1, 0),
-          M_STUCCO).fill(ground_classify, frame=frame,
-                         mat_frame=M_TRIM, mat_pane=M_TRIM)
-    liner.tag = 'carport'
-    soffit_y = [v for v in yl if v <= cd]
-    for iy in range(len(soffit_y) - 1):
-        for iu in range(len(xl) - 1):
-            x0, x1 = xl[iu], xl[iu + 1]
-            y0, y1 = soffit_y[iy], soffit_y[iy + 1]
-            liner.quad((x0, y0, z_soffit), (x1, y0, z_soffit),
-                       (x1, y1, z_soffit), (x0, y1, z_soffit), M_CONCRETE)
+    if has_carport:
+        liner.tag = 'doors'
+        _Wall(liner, (0, cd, 0), (1, 0, 0), xl, ground_z, (0, -1, 0),
+              M_STUCCO).fill(ground_classify, frame=frame,
+                             mat_frame=M_TRIM, mat_pane=M_TRIM)
+        liner.tag = 'carport'
+        soffit_y = [v for v in yl if v <= cd]
+        for iy in range(len(soffit_y) - 1):
+            for iu in range(len(xl) - 1):
+                x0, x1 = xl[iu], xl[iu + 1]
+                y0, y1 = soffit_y[iy], soffit_y[iy + 1]
+                liner.quad((x0, y0, z_soffit), (x1, y0, z_soffit),
+                           (x1, y1, z_soffit), (x0, y1, z_soffit), M_CONCRETE)
 
     # ---- parapet cap + inner drop + roof plane -----------------------------
     rx = sorted({0.0, t, W - t, W} | set(v for v in xl if t < v < W - t))
@@ -373,19 +385,21 @@ def build_dingbat(p, rng):
 
     mats = [_material(n) for n in _MATS]
     body = shell.to_object("LA_Dingbat_Body", mats)
-    liner_ob = liner.to_object("LA_Dingbat_Carport", mats)
+    liner_ob = liner.to_object("LA_Dingbat_Carport", mats) if has_carport else None
 
     # ---- posts (separate closed shells) ------------------------------------
-    posts = _Shell()
-    posts.tag = 'carport'
-    n_posts = max(2, p["carport_bays"] + 1)
-    px = 0.14
-    for i in range(n_posts):
-        x = margin + (W - 2 * margin) * (i / (n_posts - 1))
-        x = min(max(x, px), W - px)
-        _box(posts, (x - px / 2, 0.30, 0.0), (x + px / 2, 0.30 + px, z_soffit),
-             M_METAL)
-    post_ob = posts.to_object("LA_Dingbat_Posts", mats)
+    post_ob = None
+    if has_carport:
+        posts = _Shell()
+        posts.tag = 'carport'
+        n_posts = max(2, p["carport_bays"] + 1)
+        px = 0.14
+        for i in range(n_posts):
+            x = margin + (W - 2 * margin) * (i / (n_posts - 1))
+            x = min(max(x, px), W - px)
+            _box(posts, (x - px / 2, 0.30, 0.0),
+                 (x + px / 2, 0.30 + px, z_soffit), M_METAL)
+        post_ob = posts.to_object("LA_Dingbat_Posts", mats)
 
     # ---- switchback stair (separate shells) --------------------------------
     stair = _Shell()
@@ -424,6 +438,147 @@ def build_dingbat(p, rng):
                  min(rise * (i + 2), run_z))
     stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
 
+    # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,
+    # rear walkway -- everything structural, just-built, walkable. Each piece
+    # is a clean separate shell; inner liners mirror the exterior openings as
+    # VOID cells so the existing jamb returns read as reveals from inside. ---
+    interior_obs = []
+    if p["mode"] == 'interior':
+        wt = 0.15                              # wall thickness (liner offset)
+        inner = _Shell()
+        inner.tag = 'interior_walls'
+
+        def void_openings(classify):
+            def cls(iu, iz):
+                k = classify(iu, iz)
+                return 'void' if k in ('window', 'door') else k
+            return cls
+
+        ix0, ix1 = wt, W - wt
+        iy0 = (cd + wt) if has_carport else wt
+        iy1 = D - wt
+        in_xl = sorted({ix0, ix1} | {v for v in xl if ix0 < v < ix1})
+        in_yl = sorted({iy0, iy1} | {v for v in yl if iy0 < v < iy1})
+        top_z = zl[-1] - 0.4                   # underside of roof structure
+        in_zl = sorted({v for v in zl if v <= top_z} | {top_z})
+        in_front_z = [v for v in in_zl if v >= z_soffit] if has_carport else in_zl
+        # inner faces point INTO the rooms (normals reversed vs exterior).
+        _Wall(inner, (0, iy0, 0), (1, 0, 0), in_xl, in_front_z, (0, 1, 0),
+              M_GYPSUM).fill(void_openings(front_classify) if not has_carport
+                             else void_openings(ground_classify))
+        _Wall(inner, (0, iy1, 0), (1, 0, 0), in_xl, in_zl, (0, -1, 0),
+              M_GYPSUM).fill(void_openings(back_classify))
+        _Wall(inner, (ix0, 0, 0), (0, 1, 0), in_yl, in_zl, (1, 0, 0),
+              M_GYPSUM).fill(plain)
+        _Wall(inner, (ix1, 0, 0), (0, 1, 0), in_yl, in_zl, (-1, 0, 0),
+              M_GYPSUM).fill(plain)
+        interior_obs.append(inner.to_object("LA_Dingbat_Interior", mats))
+
+        # slabs: one closed plate per storey (top face = floor, underside =
+        # ceiling below). Inset 1 mm from the liner so shells never share
+        # planes. Ground slab only without a carport (else the soffit is it).
+        slabs = _Shell()
+        slabs.tag = 'slabs'
+        e = 0.001
+        slab_levels = [z_soffit]
+        if not has_carport:
+            slab_levels.insert(0, z_grade)
+        for lvl_i, z_lo in enumerate(slab_levels):
+            z_hi = z_lo + (slab if z_lo > z_grade else 0.12)
+            _box(slabs, (ix0 + e, iy0 + e, z_lo), (ix1 - e, iy1 - e, z_hi),
+                 M_CONCRETE)
+        interior_obs.append(slabs.to_object("LA_Dingbat_Slabs", mats))
+
+        # unit partitions: one wall between window bays per storey, spanning
+        # liner to liner. Thin closed boxes; carried on both floors so they
+        # read load-bearing. 2 mm shy of the liners (no shared planes).
+        parts = _Shell()
+        parts.tag = 'partitions'
+        pt = 0.10
+        storeys = [(z_soffit + slab, top_z)]
+        if not has_carport:
+            storeys.insert(0, (z_grade + 0.12, z_soffit))
+        else:
+            storeys.insert(0, (z_grade + 0.002, z_soffit))  # rear ground units
+        for k in range(1, cols):
+            xb = margin + (W - 2 * margin) * (k / cols)
+            for (zlo, zhi) in storeys:
+                _box(parts, (xb - pt / 2, iy0 + 0.002, zlo),
+                     (xb + pt / 2, iy1 - 0.002, zhi - 0.001), M_GYPSUM)
+        interior_obs.append(parts.to_object("LA_Dingbat_Partitions", mats))
+
+        # rear walkway serving the upper units: slab + square posts.
+        walk = _Shell()
+        walk.tag = 'walkway'
+        wd = 1.25
+        _box(walk, (0.0, D + 0.003, z_soffit), (W, D + wd, z_soffit + 0.12),
+             M_CONCRETE)
+        walk.tag = 'columns'
+        for i in range(3):
+            x = 0.2 + (W - 0.4) * (i / 2.0)
+            _box(walk, (x - 0.06, D + wd - 0.14, 0.0),
+                 (x + 0.06, D + wd - 0.02, z_soffit), M_METAL)
+        interior_obs.append(walk.to_object("LA_Dingbat_Walkway", mats))
+
+    # ---- STORY OPTIONS (rule 3, off by default; theme: abandonment /
+    # regime / resistance) ---------------------------------------------------
+    story = _Shell()
+    story.tag = 'story'
+    if p["all_broken"]:
+        # shattered panes: 2 quad shards per window + plywood behind some.
+        for (a2, b2) in xjambs:
+            for (sll, hh) in upper_rows:
+                cx, cz = (a2 + b2) / 2.0, (sll + hh) / 2.0
+                for k in range(2):
+                    ang = rng.uniform(-0.6, 0.6)
+                    dx = 0.28 * (1 if k == 0 else -1)
+                    story.quad((cx + dx - 0.18, 0.06, cz - 0.22 + ang * 0.1),
+                               (cx + dx + 0.10, 0.06, cz - 0.30 - ang * 0.1),
+                               (cx + dx + 0.16, 0.065, cz + 0.24 + ang * 0.1),
+                               (cx + dx - 0.12, 0.065, cz + 0.30 - ang * 0.1),
+                               M_GLASS)
+                if rng.random() < 0.45:
+                    _box(story, (a2 + 0.02, 0.10, sll + 0.02),
+                         (b2 - 0.02, 0.14, hh - 0.02), M_PLYWOOD)
+    if p["sealed_unit"] and cols >= 2:
+        # one unit's openings swallowed in aberration resin: a bulged panel
+        # (3x3 quad grid, centre pushed proud) over the bay, floor to head.
+        k = rng.randrange(cols)
+        a2, b2 = xjambs[k]
+        x0, x1 = a2 - 0.25, b2 + 0.25
+        zlo = z_soffit + slab - 0.1 if has_carport else z_grade
+        zhi = upper_rows[0][1] + 0.25
+        xs = [x0, x0 + (x1 - x0) / 3, x0 + 2 * (x1 - x0) / 3, x1]
+        zs = [zlo, zlo + (zhi - zlo) / 3, zlo + 2 * (zhi - zlo) / 3, zhi]
+        for iz2 in range(3):
+            for ix2 in range(3):
+                bulge = 0.22 if (ix2 == 1 and iz2 == 1) else 0.10
+                def co(xx, zz, bb):
+                    return (xx, -bb, zz)
+                c00 = co(xs[ix2], zs[iz2], 0.10 if (ix2 in (0,) or iz2 in (0,)) else bulge)
+                c10 = co(xs[ix2+1], zs[iz2], 0.10 if (ix2+1 in (3,) or iz2 in (0,)) else bulge)
+                c11 = co(xs[ix2+1], zs[iz2+1], 0.10 if (ix2+1 in (3,) or iz2+1 in (3,)) else bulge)
+                c01 = co(xs[ix2], zs[iz2+1], 0.10 if (ix2 in (0,) or iz2+1 in (3,)) else bulge)
+                story.quad(c00, c10, c11, c01, M_RESIN)
+    if p["rooftop_roost"]:
+        # pigeon-loft signal post: shed + cage posts + perch, rear roof corner.
+        rx0, ry0 = W - 3.2, D - 2.6
+        _box(story, (rx0, ry0, z_roof + 0.001), (rx0 + 1.6, ry0 + 1.2, z_roof + 1.1),
+             M_PLYWOOD)
+        story.quad((rx0 - 0.05, ry0 - 0.05, z_roof + 1.35),
+                   (rx0 + 1.65, ry0 - 0.05, z_roof + 1.25),
+                   (rx0 + 1.65, ry0 + 1.25, z_roof + 1.25),
+                   (rx0 - 0.05, ry0 + 1.25, z_roof + 1.35), M_METAL)
+        for (px2, py2) in ((rx0 - 0.02, ry0 - 0.02), (rx0 + 1.58, ry0 - 0.02),
+                           (rx0 - 0.02, ry0 + 1.18), (rx0 + 1.58, ry0 + 1.18)):
+            _box(story, (px2, py2, z_roof + 0.001), (px2 + 0.05, py2 + 0.05,
+                 z_roof + 1.3), M_METAL)
+        _box(story, (rx0 + 2.2, ry0 + 0.4, z_roof + 0.001),
+             (rx0 + 2.26, ry0 + 0.46, z_roof + 2.1), M_METAL)
+        _box(story, (rx0 + 1.85, ry0 + 0.40, z_roof + 1.95),
+             (rx0 + 2.65, ry0 + 0.46, z_roof + 2.01), M_METAL)
+    story_ob = story.to_object("LA_Dingbat_Story", mats)         if story._face_tags or story.bm.faces else None
+
     # ---- awnings + AC units -------------------------------------------------
     extras = _Shell()
     extras.tag = 'awnings'
@@ -448,12 +603,15 @@ def build_dingbat(p, rng):
     extras_ob = extras.to_object("LA_Dingbat_Extras", mats)
 
     # ---- engine tags --------------------------------------------------------
-    for ob in (body, liner_ob, post_ob, stair_ob, extras_ob):
-        ob["ferrum_lightmap_res"] = 0 if ob is extras_ob else 128
-    return [body, liner_ob, post_ob, stair_ob, extras_ob]
+    out = [body, liner_ob, post_ob, stair_ob, extras_ob, story_ob] + interior_obs
+    out = [ob for ob in out if ob is not None]
+    for ob in out:
+        ob["ferrum_lightmap_res"] = 0 if ob in (extras_ob, story_ob) else 128
+    return out
 
 
 SPEC = [
+    params.MODE_PARAM,
     dict(name="width", type='FLOAT', default=14.0, min=8.0, max=22.0,
          unit='LENGTH', desc="Building width"),
     dict(name="depth", type='FLOAT', default=9.0, min=6.0, max=14.0,
@@ -468,6 +626,17 @@ SPEC = [
          items=('left', 'right')),
     dict(name="facade_style", type='ENUM', default='plain',
          items=('plain', 'starburst', 'mansard', 'tiki', 'script')),
+    # monotony breaker (rule 2): no carport => the building sits on grade
+    # with a ground window row + entry door.
+    dict(name="carport", type='BOOL', default=True,
+         desc="Tuck-under carport; off = building drops to grade"),
+    # story options (rule 3) -- off by default, thematically coherent.
+    dict(name="all_broken", type='BOOL', default=False,
+         desc="Abandonment: every window shattered, many boarded"),
+    dict(name="sealed_unit", type='BOOL', default=False,
+         desc="Regime: one unit's openings swallowed in aberration resin"),
+    dict(name="rooftop_roost", type='BOOL', default=False,
+         desc="Resistance: pigeon-loft signal post on the roof"),
 ]
 
 params.register_tool(idname="la_dingbat", label="Dingbat Apartment",
