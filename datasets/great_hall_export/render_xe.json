@@ -1,27 +1,26 @@
 {
   "_mode": "great_hall on an Intel Iris Xe iGPU: same look as render.json, cut to fit the frame budget. Select with CLIENT_RENDER_CONFIG=datasets/great_hall_export/render_xe.json.",
-
   "sh_enabled": 0,
   "sh_normal_bias": 0.9,
   "static_baked_w": 0.0,
   "static_dyn_w": 3.0,
-
   "gi_hybrid": 1,
   "gi_hero": 2,
   "_gi_samples": "1024 on the discrete-GPU config; 8x fewer rays per probe solve measured as no material change in frame time, so the rays were never the bottleneck.",
   "gi_samples": 128,
   "gi_bounce": 0.45,
   "gi_stat_scale": 0.3,
-
   "_gi_cadence": "THE perf knob, and also a correctness one. render.json's 2/1 re-solves every probe every other frame with no staggering; the gi_bounce feedback then never settles to the same equilibrium it reaches on a faster machine, so the hall renders DARKER at the same settings. Back on the engine-default 8/2 cadence the probe solves per frame drop ~8x AND both machines converge to the same brightness.",
   "gi_update_interval": 8,
   "gi_n_probe_groups": 2,
-
   "gi_smooth": 0.25,
   "gi_vis_bias": 0.55,
   "gi_vis_varmin": 0.06,
-
   "_perf": "4x MSAA on every forward-pass fragment is the other big iGPU cost and buys little at this resolution.",
   "msaa": 1,
-  "aniso": 4.0
+  "aniso": 4.0,
+  "_pagecache": "rpg leak fix: sdf_resident_slots sizes the fine-chunk GPU pool (12 fits every gh chunk on a discrete GPU); sdf_fp16/lm_fp16 halve chunk textures + SH pages. The _zone.sdf coarse fallback covers any page fault.",
+  "sdf_resident_slots": 8,
+  "sdf_fp16": 1,
+  "lm_fp16": 1
 }

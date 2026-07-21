@@ -869,6 +869,21 @@ int main(int argc, char **argv) {
         char base[512]; snprintf(base, sizeof base, "%s", level_path);
         char *sl = strrchr(base, '/'); if (sl) *sl = '\0'; else snprintf(base, sizeof base, ".");
         if (scene_desc_load(level_path, &la, &desc)) {
+            /* Render tuning (rpg-da8c): defaults, overlaid by a per-level JSON if
+             * present. CLIENT_RENDER_CONFIG=<path> overrides; else <base>/render.json.
+             * When zones land, each zone loads its own config through this same call. */
+            render_config_t rcfg; render_config_defaults(&rcfg);
+            {
+                static uint8_t rc_buf[256 * 1024];
+                arena_t rca; arena_init(&rca, rc_buf, sizeof rc_buf);
+                const char *rcenv = getenv("CLIENT_RENDER_CONFIG");
+                char rcpath[600];
+                if (rcenv == NULL) { snprintf(rcpath, sizeof rcpath, "%s/render.json", base); rcenv = rcpath; }
+                if (render_config_load(rcenv, &rca, &rcfg))
+                    printf("[client] render config: %s (sh_scale=%.2f)\n", rcenv, (double)rcfg.sh_scale);
+                else
+                    printf("[client] render config: engine defaults (sh_scale=%.2f)\n", (double)rcfg.sh_scale);
+            }
             /* Light-data streaming subsystem (rpg-oda7): stream the baked lightmap
              * SH chunks via fr_asset_stream (decode on job fibers), SEPARATE from
              * the descriptor load below, which borrows the streamer's SH pages +
@@ -890,6 +905,12 @@ int main(int argc, char **argv) {
                 lcfg.n_meshes = desc.object_count;
                 lcfg.ram_budget = (size_t)2u * 1024u * 1024u * 1024u;   /* 2 GiB */
                 lcfg.vram_budget = (size_t)2u * 1024u * 1024u * 1024u;  /* 2 GiB */
+                /* Pagecache + format knobs from the render config (rpg leak fix):
+                 * sdf_resident_slots sizes the fine-chunk GPU pool, sdf_fp16/lm_fp16
+                 * halve the chunk textures / SH pages. */
+                lcfg.sdf_resident_slots = rcfg.sdf_resident_slots;
+                lcfg.sdf_fp16 = rcfg.sdf_fp16;
+                lcfg.lm_fp16 = rcfg.lm_fp16;
                 const float big_min[3] = { -1e5f, -1e5f, -1e5f };
                 const float big_max[3] = { 1e5f, 1e5f, 1e5f };
                 if (client_light_stream_init(&lstream, &lcfg, big_min, big_max)) {
@@ -903,21 +924,6 @@ int main(int argc, char **argv) {
             }
             gi_sdf_stream_t *ext_sdf = (lstream_active && lstream.has_sdf) ? &lstream.sdf : NULL;
             uint32_t lm_chunks = lstream_active ? lstream.n_chunks : 1u;
-            /* Render tuning (rpg-da8c): defaults, overlaid by a per-level JSON if
-             * present. CLIENT_RENDER_CONFIG=<path> overrides; else <base>/render.json.
-             * When zones land, each zone loads its own config through this same call. */
-            render_config_t rcfg; render_config_defaults(&rcfg);
-            {
-                static uint8_t rc_buf[256 * 1024];
-                arena_t rca; arena_init(&rca, rc_buf, sizeof rc_buf);
-                const char *rcenv = getenv("CLIENT_RENDER_CONFIG");
-                char rcpath[600];
-                if (rcenv == NULL) { snprintf(rcpath, sizeof rcpath, "%s/render.json", base); rcenv = rcpath; }
-                if (render_config_load(rcenv, &rca, &rcfg))
-                    printf("[client] render config: %s (sh_scale=%.2f)\n", rcenv, (double)rcfg.sh_scale);
-                else
-                    printf("[client] render config: engine defaults (sh_scale=%.2f)\n", (double)rcfg.sh_scale);
-            }
             if (client_scene_load(&cs, &gl.loader, &desc, base, client_img_load,
                                   CLIENT_WIN_W, CLIENT_WIN_H, ext_sh, ext_mrect, ext_atlas, ext_sdf,
                                   lm_chunks, &rcfg)) {

@@ -57,11 +57,20 @@ static const char *CS_SRC =
      * their energy isn't double-counted. */
     "uniform int u_hybrid;\n"
     "uniform int u_hero;\n"          /* number of hero SDF marches (0..4). */
-    "uniform sampler3D u_sdf[8];\n"
-    "uniform vec3 u_sdf_origin[8];\n"
-    "uniform vec3 u_sdf_dim[8];\n"
-    "uniform float u_sdf_vox[8];\n"
-    "uniform int u_sdf_active[8];\n"
+    "uniform sampler3D u_sdf[16];\n"
+    "uniform vec3 u_sdf_origin[16];\n"
+    "uniform vec3 u_sdf_dim[16];\n"
+    "uniform float u_sdf_vox[16];\n"
+    "uniform int u_sdf_active[16];\n"
+    /* GLOBAL low-res ZONE SDF: the page-fault fallback. Sampled wherever no fine\n"
+     * chunk is bound so a ray NEVER sees empty space where geometry exists (the\n"
+     * 12-chunks-vs-8-slots light leak). Coarse but CONSERVATIVE (min-downsampled\n"
+     * from the bake), so it can only stop a march earlier, never later. */
+    "uniform sampler3D u_zone_sdf;\n"
+    "uniform vec3 u_zone_origin;\n"
+    "uniform vec3 u_zone_dim;\n"
+    "uniform float u_zone_vox;\n"
+    "uniform int u_zone_on;\n"
     /* Static irradiance volume (rpg-pau4): the baked lightmap E, splatted to a\n"
      * coarse world grid. A cone that hits a surface gathers this so the probe\n"
      * carries the STATIC bounced ambience (one bounce beyond the lightmapper),\n"
@@ -120,11 +129,16 @@ static const char *CS_SRC =
     "float capsule_sdf(vec3 p,vec3 a,vec3 b,float r){ vec3 pa=p-a, ba=b-a;\n"
     "  float h=clamp(dot(pa,ba)/max(dot(ba,ba),1e-6),0.0,1.0); return length(pa-ba*h)-r; }\n"
     /* Distance is the ALPHA of the RGBA voxel texture (rgb = static albedo). */
-    "float scene_sdf(vec3 p){ float d=1e30;\n"
-    "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
+    "float scene_sdf(vec3 p){ float d=1e30; bool cov=false;\n"
+    "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
-    "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
+    "      cov=true; vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
+    /* PAGE FAULT: no resident fine chunk covers p -> the coarse zone field keeps\n"
+     * occlusion alive instead of returning empty space. */
+    "  if(!cov && u_zone_on!=0){ vec3 g=(p-u_zone_origin)/u_zone_vox;\n"
+    "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_zone_dim))){\n"
+    "      vec3 uvw=(g+0.5)/u_zone_dim; d=min(d, texture(u_zone_sdf,uvw).a); } }\n"
     /* Colliders: bx[i*2].w = kind (0=sphere,1=box,2=capsule). Sphere: radius in\n"
      * bx[i*2+1].w. Box: half-extents in bx[i*2+1].xyz. Capsule: endpoint B in\n"
      * bx[i*2+1].xyz, radius in .w. (rpg-85as: posed capsule/sphere proxies.) */
@@ -144,10 +158,14 @@ static const char *CS_SRC =
     "vec3 scene_albedo(vec3 p, float lod){\n"
     /* Dynamic objects win: they are not in the baked voxel albedo at all. */
     "  { vec4 dc=dyn_alb_at(p); if(dc.a>0.02) return dc.rgb/max(dc.a,1e-3); }\n"
-    "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
+    "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
     "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; return textureLod(u_sdf[i],uvw,lod).rgb; } }\n"
+    /* Page-fault albedo: the zone field's nearest-surface colour beats flat grey. */
+    "  if(u_zone_on!=0){ vec3 g=(p-u_zone_origin)/u_zone_vox;\n"
+    "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_zone_dim))){\n"
+    "      vec3 uvw=(g+0.5)/u_zone_dim; return texture(u_zone_sdf,uvw).rgb; } }\n"
     "  return vec3(0.5); }\n"
     /* Baked static irradiance E at world p (trilinear); 0 outside the volume. */
     "vec3 static_irr(vec3 p){ if(u_static_on==0) return vec3(0.0);\n"
@@ -556,6 +574,11 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
         g->loc.static_origin = glGetUniformLocation(p, "u_static_origin");
         g->loc.static_dim    = glGetUniformLocation(p, "u_static_dim");
         g->loc.static_vox    = glGetUniformLocation(p, "u_static_vox");
+        g->loc.zone_on     = glGetUniformLocation(p, "u_zone_on");
+        g->loc.zone_sdf    = glGetUniformLocation(p, "u_zone_sdf");
+        g->loc.zone_origin = glGetUniformLocation(p, "u_zone_origin");
+        g->loc.zone_dim    = glGetUniformLocation(p, "u_zone_dim");
+        g->loc.zone_vox    = glGetUniformLocation(p, "u_zone_vox");
         for (int i = 0; i < GI_SDF_MAX_RESIDENT; ++i) {
             snprintf(nm, sizeof nm, "u_sdf_active[%d]", i); g->loc.sdf_active[i] = glGetUniformLocation(p, nm);
             snprintf(nm, sizeof nm, "u_sdf[%d]", i);        g->loc.sdf[i]        = glGetUniformLocation(p, nm);
@@ -802,6 +825,25 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         glUniform1f(g->loc.static_vox, g->static_vox);
         glActiveTexture(GL_TEXTURE0 + (GLenum)unit);
         glBindTexture(GL_TEXTURE_3D, on ? g->static_tex : 0);
+    }
+
+    /* GLOBAL zone SDF (page-fault fallback): always bound while the stream has
+     * one, two units past the static irradiance volume. */
+    {
+        int zon = (sdf != NULL && sdf->has_zone && sdf->zone_tex != 0) ? 1 : 0;
+        int zunit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 2;
+        glUniform1i(g->loc.zone_on, zon);
+        glUniform1i(g->loc.zone_sdf, zunit);
+        if (zon) {
+            float o3[3] = { sdf->zone_origin[0], sdf->zone_origin[1], sdf->zone_origin[2] };
+            float d3[3] = { (float)sdf->zone_dims[0], (float)sdf->zone_dims[1],
+                            (float)sdf->zone_dims[2] };
+            glUniform3fv(g->loc.zone_origin, 1, o3);
+            glUniform3fv(g->loc.zone_dim, 1, d3);
+            glUniform1f(g->loc.zone_vox, sdf->zone_voxel);
+        }
+        glActiveTexture(GL_TEXTURE0 + (GLenum)zunit);
+        glBindTexture(GL_TEXTURE_3D, zon ? sdf->zone_tex : 0);
     }
 
     /* Sparse dynamic albedo volume: one unit past the static irradiance volume. */

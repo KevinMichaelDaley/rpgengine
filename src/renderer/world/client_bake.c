@@ -106,6 +106,11 @@ static uint32_t client_bake_meshes(client_bake_ctx_t *c, arena_t *arena,
     uint32_t nm = 0;
     for (uint32_t i = 0; i < d->object_count; ++i) {
         const scene_desc_object_t *o = &d->objects[i];
+        /* DYNAMIC objects are OUTSIDE the offline bake by definition: no lightmap
+         * slot, not in the baked SDF/voxel albedo (the runtime voxelises them per
+         * frame instead). Baking one freezes it into the masonry -- the cloth
+         * banner ended up a static occluder. */
+        if (o->dynamic) continue;
         char path[512]; snprintf(path, sizeof path, "%s/%s", c->base_dir, o->mesh);
         size_t sz = 0; FILE *f = fopen(path, "rb");
         if (f == NULL) continue;
@@ -417,6 +422,15 @@ bool client_bake_run(const gl_loader_t *loader, const struct scene_desc *descp,
             ok = lm_bake_driver_run(loader, client_bake_setup, &ctx, out_flm, &arena);
         }
         free(abuf);
+    }
+    /* Compose the GLOBAL low-res zone SDF from whatever _cNNN.sdf chunks exist
+     * (the fresh ones if this bake wrote them, the on-disk set otherwise): the
+     * runtime's page-fault fallback so probe rays never see empty space where a
+     * non-resident chunk's geometry is. */
+    if (ok) {
+        const char *sdfp = getenv("CLIENT_BAKE_SDF");
+        if (sdfp != NULL && sdfp[0] != '\0')
+            client_bake_zone_sdf(sdfp, (int)env_u("CLIENT_BAKE_ZONE_DIM", 64u));
     }
 
     for (uint32_t i = 0; i < desc->object_count; ++i)
