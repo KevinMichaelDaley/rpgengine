@@ -35,3 +35,9 @@ Acceptance: (1) build_* passes the programmatic topology validation; (2) redo-pa
    resistance). See the doc 3b table for this tool's canonical set.
 
 Story options: crown_grafts on skyline silhouettes; dark_city (sparse lit windows); banner_scale drops. Breakers: silhouette family mix.
+
+RULES 4+5 (addendum): (4) UV-unwrap AS YOU GO -- every object ships with a
+real, non-degenerate UV layout (seams as deliberate as edge flow; consistent
+texel density); never deferred. (5) NATURAL VERTEX GROUPS per subpart as you
+build (e.g. steps/windows/awnings/facade_front/carport/doors/parapet) from
+the shared name vocabulary -- one-click subpart selection forever after.

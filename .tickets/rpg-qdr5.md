@@ -103,3 +103,9 @@ AC boxes]. Auditor must report: 100% quads, 0 T-junction, 0 doubles.
    resistance). See the doc 3b table for this tool's canonical set.
 
 Story options: all_broken (shattered+boarded windows); sealed_unit (aberration resin); rooftop_roost (signal pigeon loft). Monotony breakers: carport optional (building drops to grade), L-plan variant, flat vs mansard roofline.
+
+RULES 4+5 (addendum): (4) UV-unwrap AS YOU GO -- every object ships with a
+real, non-degenerate UV layout (seams as deliberate as edge flow; consistent
+texel density); never deferred. (5) NATURAL VERTEX GROUPS per subpart as you
+build (e.g. steps/windows/awnings/facade_front/carport/doors/parapet) from
+the shared name vocabulary -- one-click subpart selection forever after.

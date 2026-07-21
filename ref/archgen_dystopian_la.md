@@ -102,6 +102,16 @@ ticket and is part of its acceptance.
    broken and boarded; a unit sealed in aberration resin; a rooftop turned
    pigeon-loft signal post). The catalog table below assigns each tool its
    canonical story options; tools may add more.
+4. **UV-unwrapped as you go.** Every emitted object ships with a real UV
+   layout (seams placed with the same deliberation as edge flow: walls as
+   rectilinear strips at consistent texel density, window rings contiguous).
+   Never deferred -- retrofitting UVs is exactly the pain this rule prevents.
+   The smoke check asserts a non-degenerate UV layer on every mesh.
+5. **Natural vertex groups per subpart, as you build.** Every mesh is
+   partitioned into named vertex groups -- the dingbat: `steps`, `windows`,
+   `awnings`, `facade_front`, `carport`, `doors`, `parapet` -- so any subpart
+   is one click to select and modify later. Names come from a shared
+   vocabulary in la/params.py so tools stay consistent.
 
 ## 2. Visual language (grounded in the reference set)
 
