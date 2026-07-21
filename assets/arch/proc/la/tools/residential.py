@@ -202,6 +202,110 @@ def _wall_solid(shell, axis, at, a0, a1, zlo, zhi, t=0.09, door=None, mat=0):
     q(P(g0, 0, dh), P(g1, 0, dh), P(g1, t, dh), P(g0, t, dh), mat)
 
 
+def _wall_L(shell, cx, cy, y_end, x_end, zlo, zhi, t=0.09, door=None, mat=0):
+    """ONE merged L-wall: arm A along y (at x=cx, from the corner to y_end)
+    + arm B along x (at y=cy, from the corner to x_end), PROPERLY BOXED at
+    the corner -- outline-prism topology, every face subdivided so the
+    corner block welds (separate boxes step/z-fight at a visible convex
+    corner). @p door = (g0, g1, dh) cuts a framed doorway into arm B."""
+    h = t / 2.0
+    right = x_end > cx                      # arm B extends toward +x?
+    up = y_end > cy
+    ya, yb = (cy - h, cy + h)               # arm B face planes
+    xa, xb = (cx - h, cx + h)               # arm A face planes
+    # arm B x-range: far end .. THROUGH the corner to arm A's far plane.
+    bx_far = x_end
+    # concave (inner) face stops at the FIRST arm-A plane in the approach
+    # direction; the convex (outer) face runs THROUGH to the far plane.
+    bx_near_in = xb if right else xa
+    bx_near_out = xa if right else xb
+    ay_near = yb if up else ya              # arm A starts at arm B's inner
+    ay_far = y_end
+    q = shell.quad
+
+    def face_x_cells(x_lo, x_hi):
+        """Sorted x cell lines for arm B faces, incl. corner + door lines."""
+        lines = {x_lo, x_hi, min(xa, xb), max(xa, xb)}
+        if door is not None:
+            lines.update((door[0], door[1]))
+        return sorted(v for v in lines if min(x_lo, x_hi) - 1e-9 <= v
+                      <= max(x_lo, x_hi) + 1e-9)
+
+    def emit_face_y(yp, x_lo, x_hi, flip):
+        xs = face_x_cells(x_lo, x_hi)
+        for i in range(len(xs) - 1):
+            x0c, x1c = xs[i], xs[i + 1]
+            in_door = (door is not None and
+                       x0c >= door[0] - 1e-9 and x1c <= door[1] + 1e-9)
+            rows = ((zlo, door[2]), (door[2], zhi)) if door is not None                 else ((zlo, zhi),)
+            for (r0, r1) in rows:
+                if in_door and r1 <= door[2] + 1e-9:
+                    continue                     # the doorway itself
+                pts = [(x0c, yp, r0), (x1c, yp, r0),
+                       (x1c, yp, r1), (x0c, yp, r1)]
+                if flip:
+                    pts.reverse()
+                q(*pts, mat)
+
+    # arm B faces (outer runs through the corner; inner stops at arm A inner).
+    emit_face_y(ya, bx_far, bx_near_out, flip=False)
+    emit_face_y(yb, bx_far, bx_near_in, flip=True)
+    # arm A faces, split at the corner line so top quads weld.
+    zrows = ((zlo, door[2]), (door[2], zhi)) if door is not None         else ((zlo, zhi),)
+    for (xp, y0f, flip) in ((bx_near_out, ya, right), (bx_near_in, ay_near,
+                                                       not right)):
+        segs = ((ya, yb), (yb, ay_far)) if xp == bx_near_out and up             else ((y0f, ay_far),)
+        for (s0, s1) in segs:
+            # rows split at the door head so arm B's corner-column verts
+            # weld here too (they landed mid-edge otherwise).
+            for (r0, r1) in zrows:
+                pts = [(xp, s0, r0), (xp, s1, r0), (xp, s1, r1), (xp, s0, r1)]
+                if flip:
+                    pts.reverse()
+                q(*pts, mat)
+    # top: arm B strip (to the corner block edge), corner block, arm A strip.
+    bx_block = min(xa, xb) if not right else max(xa, xb)
+    for (x0c, x1c, y0c, y1c) in (
+            (min(bx_far, bx_block), max(bx_far, bx_block), ya, yb),
+            (min(xa, xb), max(xa, xb), ya, yb),
+            (min(xa, xb), max(xa, xb), ay_near, ay_far)):
+        # split the arm B strip at door lines so its verts weld the faces.
+        xs = face_x_cells(x0c, x1c) if y0c == ya and y1c == yb and             abs(x1c - x0c) > t + 1e-6 else [x0c, x1c]
+        for i in range(len(xs) - 1):
+            q((xs[i], y0c, zhi), (xs[i + 1], y0c, zhi),
+              (xs[i + 1], y1c, zhi), (xs[i], y1c, zhi), mat)
+        for i in range(len(xs) - 1):
+            x0d, x1d = xs[i], xs[i + 1]
+            if (door is not None and y0c == ya and y1c == yb and
+                    x0d >= door[0] - 1e-9 and x1d <= door[1] + 1e-9):
+                continue                          # no bottom under the door
+            q((x0d, y0c, zlo), (x0d, y1c, zlo),
+              (x1d, y1c, zlo), (x1d, y0c, zlo), mat)
+    # end caps.
+    rows = ((zlo, door[2]), (door[2], zhi)) if door is not None else ((zlo, zhi),)
+    for (r0, r1) in rows:
+        pts = [(bx_far, ya, r0), (bx_far, ya, r1),
+               (bx_far, yb, r1), (bx_far, yb, r0)]
+        if right:
+            pts.reverse()
+        q(*pts, mat)
+    for (r0, r1) in zrows:
+        pts = [(xa, ay_far, r0), (xb, ay_far, r0), (xb, ay_far, r1),
+               (xa, ay_far, r1)]
+        if not up:
+            pts.reverse()
+        q(*pts, mat)
+    # door jambs + header soffit.
+    if door is not None:
+        g0, g1, dh = door
+        for (gx, flip) in ((g0, False), (g1, True)):
+            pts = [(gx, ya, zlo), (gx, yb, zlo), (gx, yb, dh), (gx, ya, dh)]
+            if flip:
+                pts.reverse()
+            q(*pts, mat)
+        q((g0, ya, dh), (g1, ya, dh), (g1, yb, dh), (g0, yb, dh), mat)
+
+
 class _Wall:
     """One planar wall grid: origin + u direction (horizontal) + z up.
 
@@ -312,51 +416,92 @@ class _Wall:
                                  self._co(u0, z1, self.th))
                         self.s.tag = keep2
                     continue
-                # opening cell: inset ring -> jamb return -> recessed pane
+                # opening cell (window / window_awning): may span SEVERAL
+                # contiguous rows (global z-lines split cells; matching only
+                # one row made squat half-windows -- the door lesson again).
+                # The ring/jambs are SEGMENTED at interior grid lines so
+                # neighbouring wall cells' verts always weld.
+                if iz > 0 and classify(u0, self.zl[iz - 1]) == kind:
+                    continue        # consumed by the run below
+                jz = iz + 1
+                while (jz + 1 < len(self.zl) and
+                       classify(u0, self.zl[jz]) == kind):
+                    jz += 1
+                z1w = self.zl[jz]
                 fu0, fu1 = u0 + frame, u1 - frame
-                fz0, fz1 = z0 + frame, z1 - frame
-                oc = [self._co(u0, z0), self._co(u1, z0),
-                      self._co(u1, z1), self._co(u0, z1)]
-                ic = [self._co(fu0, fz0), self._co(fu1, fz0),
-                      self._co(fu1, fz1), self._co(fu0, fz1)]
-                rc = [self._co(fu0, fz0, recess), self._co(fu1, fz0, recess),
-                      self._co(fu1, fz1, recess), self._co(fu0, fz1, recess)]
+                fz0, fz1 = z0 + frame, z1w - frame
+                mids = [zv for zv in self.zl if z0 + 1e-6 < zv < z1w - 1e-6]
+                zs = [z0] + mids + [z1w]
+
+                def zc(v):   # clamp an outer z to the inner ring range
+                    return min(max(v, fz0), fz1)
+
                 mf = self.mat if mat_frame is None else mat_frame
                 mp = self.mat if mat_pane is None else mat_pane
-                # openings get their own subpart tag (rule 5)
                 keep = self.s.tag
-                self.s.tag = 'windows' if kind == 'window' else 'doors'
-                for k in range(4):
-                    a, b = k, (k + 1) % 4
-                    self._q(oc[a], oc[b], ic[b], ic[a], mf)   # face ring
-                    self._q(ic[a], ic[b], rc[b], rc[a], mf)   # jamb return
-                if kind == 'window':
-                    # pane: 1 mm-inset ISLAND membrane -- welded to the ring
-                    # it put 3 faces on the rc edges once the interior
-                    # reveal joined (jamb + pane + reveal = non-manifold).
-                    e2 = 0.001
+                self.s.tag = 'windows'
+                # bottom + top face bands (no interior line crosses them).
+                self._q(self._co(u0, z0), self._co(u1, z0),
+                        self._co(fu1, fz0), self._co(fu0, fz0), mf)
+                self._q(self._co(fu0, fz1), self._co(fu1, fz1),
+                        self._co(u1, z1w), self._co(u0, z1w), mf)
+                # side face rings, segmented at interior lines.
+                for si2 in range(len(zs) - 1):
+                    za, zb = zs[si2], zs[si2 + 1]
+                    self._q(self._co(u0, za), self._co(fu0, zc(za)),
+                            self._co(fu0, zc(zb)), self._co(u0, zb), mf)
+                    self._q(self._co(fu1, zc(za)), self._co(u1, za),
+                            self._co(u1, zb), self._co(fu1, zc(zb)), mf)
+                # jamb returns: top/bottom bands + segmented sides.
+                self._q(self._co(fu0, fz0), self._co(fu1, fz0),
+                        self._co(fu1, fz0, recess), self._co(fu0, fz0, recess), mf)
+                self._q(self._co(fu0, fz1, recess), self._co(fu1, fz1, recess),
+                        self._co(fu1, fz1), self._co(fu0, fz1), mf)
+                inz = sorted({fz0, fz1} | {zc(v) for v in mids})
+                for si2 in range(len(inz) - 1):
+                    za, zb = inz[si2], inz[si2 + 1]
+                    self._q(self._co(fu0, za), self._co(fu0, za, recess),
+                            self._co(fu0, zb, recess), self._co(fu0, zb), mf)
+                    self._q(self._co(fu1, za, recess), self._co(fu1, za),
+                            self._co(fu1, zb), self._co(fu1, zb, recess), mf)
+                # pane: 1 mm-inset ISLAND. window_awning (the dingbat bath
+                # sash) hinges at the TOP and swings OUT past the wall plane.
+                e2 = 0.001
+                if kind == 'window_awning':
+                    swing = -0.22
+                    pc = [self._co(fu0 + e2, fz0 + e2, swing),
+                          self._co(fu1 - e2, fz0 + e2, swing),
+                          self._co(fu1 - e2, fz1 - e2, recess),
+                          self._co(fu0 + e2, fz1 - e2, recess)]
+                else:
                     pc = [self._co(fu0 + e2, fz0 + e2, recess),
                           self._co(fu1 - e2, fz0 + e2, recess),
                           self._co(fu1 - e2, fz1 - e2, recess),
                           self._co(fu0 + e2, fz1 - e2, recess)]
-                    self._q(pc[0], pc[1], pc[2], pc[3], mp)
-                    if (self.th > 0.0 and z0 < self.inner_zmax and
-                            u0 >= self.inner_u0 - 1e-6 and
-                            u1 <= self.inner_u1 + 1e-6):
-                        # THICK: inner face ring + reveal from the inner face
-                        # to the pane assembly -- the window is cut THROUGH.
-                        tc = [self._co(fu0, fz0, self.th),
-                              self._co(fu1, fz0, self.th),
-                              self._co(fu1, fz1, self.th),
-                              self._co(fu0, fz1, self.th)]
-                        ocT = [self._co(u0, z0, self.th),
-                               self._co(u1, z0, self.th),
-                               self._co(u1, z1, self.th),
-                               self._co(u0, z1, self.th)]
-                        for k in range(4):
-                            a, b = k, (k + 1) % 4
-                            self._qi(ocT[a], ocT[b], tc[b], tc[a], self.inner_mat)
-                            self._qi(tc[a], tc[b], rc[b], rc[a], self.inner_mat)
+                self._q(pc[0], pc[1], pc[2], pc[3], mp)
+                if self.th > 0.0 and z0 < self.inner_zmax:
+                    # THICK: inner face ring + reveal, same segmentation.
+                    self._q(self._co(u0, z0, self.th), self._co(fu0, fz0, self.th),
+                            self._co(fu1, fz0, self.th), self._co(u1, z0, self.th), mf)
+                    self._q(self._co(fu0, fz1, self.th), self._co(u0, z1w, self.th),
+                            self._co(u1, z1w, self.th), self._co(fu1, fz1, self.th), mf)
+                    for si2 in range(len(zs) - 1):
+                        za, zb = zs[si2], zs[si2 + 1]
+                        self._q(self._co(fu0, zc(za), self.th), self._co(u0, za, self.th),
+                                self._co(u0, zb, self.th), self._co(fu0, zc(zb), self.th), mf)
+                        self._q(self._co(u1, za, self.th), self._co(fu1, zc(za), self.th),
+                                self._co(fu1, zc(zb), self.th), self._co(u1, zb, self.th), mf)
+                    # reveal from the inner ring to the jamb line.
+                    self._q(self._co(fu1, fz0, self.th), self._co(fu0, fz0, self.th),
+                            self._co(fu0, fz0, recess), self._co(fu1, fz0, recess), mf)
+                    self._q(self._co(fu0, fz1, self.th), self._co(fu1, fz1, self.th),
+                            self._co(fu1, fz1, recess), self._co(fu0, fz1, recess), mf)
+                    for si2 in range(len(inz) - 1):
+                        za, zb = inz[si2], inz[si2 + 1]
+                        self._q(self._co(fu0, za, self.th), self._co(fu0, zb, self.th),
+                                self._co(fu0, zb, recess), self._co(fu0, za, recess), mf)
+                        self._q(self._co(fu1, zb, self.th), self._co(fu1, za, self.th),
+                                self._co(fu1, za, recess), self._co(fu1, zb, recess), mf)
                 self.s.tag = keep
 
 
@@ -406,7 +551,7 @@ def build_dingbat(p, rng):
     # ---- z levels ----------------------------------------------------------
     z_grade, z_sill1, z_head1, z_soffit = 0.0, 0.9, 2.1, 2.45
     slab, spandrel, win_h, head = 0.30, 0.90, 1.20, 0.30
-    zl = [z_grade, z_sill1, z_sill1 + 0.55, z_head1, z_soffit]
+    zl = [z_grade, z_sill1, z_sill1 + 0.70, z_head1, z_soffit]
     z = z_soffit
     upper_rows = []                  # (sill, head) per upper floor
     floor_bands = []                 # (slab_lo, slab_hi, band_top) per floor
@@ -421,7 +566,7 @@ def build_dingbat(p, rng):
         z = h + head
         zl.append(z)
         floor_bands.append((slab_lo, slab_lo + slab, z))
-        zl.append(s + 0.55)              # high bath-window sill line
+        zl.append(s + 0.70)              # high bath-window sill (0.5 tall)
     z_roof = z
     z_par = z + 0.4
     zl.extend([z_par])
@@ -443,10 +588,10 @@ def build_dingbat(p, rng):
         b1 = b0 + bayw0                      # door bay end
         if not mir:
             door_jambs.append((b0 + 1.70, b0 + 1.70 + 0.90))
-            bath_wins.append((b0 + 0.55, b0 + 1.05))
+            bath_wins.append((b0 + 0.30, b0 + 1.20))   # 0.9 wide (wider than tall)
         else:
             door_jambs.append((b1 - 1.70 - 0.90, b1 - 1.70))
-            bath_wins.append((b1 - 1.05, b1 - 0.55))
+            bath_wins.append((b1 - 1.20, b1 - 0.30))
 
     t = 0.15                         # parapet ring width -- ALSO a wall line:
     # the cap ring's outer-edge verts at x=t / W-t must exist in the wall top
@@ -473,8 +618,8 @@ def build_dingbat(p, rng):
     # bay + window bay (one entry per apartment, not one per bay).
 
     def front_classify(u0, zc0):
-        for (sll, _hh) in upper_rows:
-            if abs(zc0 - sll) < 1e-6 and near(u0, jamb_x):
+        for (sll, hh) in upper_rows:
+            if sll - 1e-6 < zc0 < hh - 1e-6 and near(u0, jamb_x):
                 return 'window'
         if not has_carport:
             # grounded: one entry + one window per two-bay unit.
@@ -483,7 +628,7 @@ def build_dingbat(p, rng):
                     return 'doorL'
                 if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
                     return 'doorU'
-            elif near(u0, jamb_x) and abs(zc0 - z_sill1) < 1e-6:
+            elif near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
                 return 'window'
         return 'wall'
 
@@ -510,10 +655,10 @@ def build_dingbat(p, rng):
 
     def back_classify(u0, zc0):
         # ground row: kitchen window (window bay) + HIGH bath window.
-        if abs(zc0 - z_sill1) < 1e-6 and near(u0, kitchen_x):
+        if z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6 and near(u0, kitchen_x):
             return 'window'
-        if abs(zc0 - (z_sill1 + 0.55)) < 1e-6 and near(u0, bathw_x):
-            return 'window'
+        if abs(zc0 - (z_sill1 + 0.70)) < 1e-6 and near(u0, bathw_x):
+            return 'window_awning'
         # upper floors: walkway door (own off-centre jambs), kitchen window,
         # and the small high bathroom window beside the door.
         if near(u0, doorj_x):
@@ -524,13 +669,13 @@ def build_dingbat(p, rng):
                 if st2 + 1e-6 < zc0 < hh - 1e-6:
                     return 'doorU'
         if near(u0, kitchen_x):
-            for (sll, _hh) in upper_rows:
-                if abs(zc0 - sll) < 1e-6:
+            for (sll, hh) in upper_rows:
+                if sll - 1e-6 < zc0 < hh - 1e-6:
                     return 'window'
         if near(u0, bathw_x):
             for (sll, _hh) in upper_rows:
-                if abs(zc0 - (sll + 0.55)) < 1e-6:
-                    return 'window'
+                if abs(zc0 - (sll + 0.70)) < 1e-6:
+                    return 'window_awning'
         return 'wall'
 
     shell.tag = 'facade_back'
@@ -567,7 +712,7 @@ def build_dingbat(p, rng):
                 return 'doorL'
             if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
                 return 'doorU'
-        elif near(u0, jamb_x) and abs(zc0 - z_sill1) < 1e-6:
+        elif near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
             return 'window'
         return 'wall'
 
@@ -818,14 +963,19 @@ def build_dingbat(p, rng):
                 by0 = y1u - 2.25                   # bath front wall line
                 # rear-corner bathroom: side wall + doored front wall; the
                 # building's rear wall (with its high window) closes it.
+                keep_tag = parts.tag
+                parts.tag = 'partitions'
                 if not mir:
-                    wall_x(bx_in, by0, y1u - 0.002, zl2, zh2)
-                    doored_wall_y(by0, ux0 + 0.001, bx_in,
-                                  bx_in - DOOR_W - 0.10, zl2, zh2)
+                    g0d = max(ux0 + 0.06, bx_in - DOOR_W - 0.10)
+                    _wall_L(parts, bx_in, by0, y1u - 0.002, ux0 + 0.001,
+                            zl2, zh2, 0.09, (g0d, g0d + DOOR_W, zl2 + DOOR_H),
+                            M_GYPSUM)
                 else:
-                    wall_x(bx_in, by0, y1u - 0.002, zl2, zh2)
-                    doored_wall_y(by0, bx_in, ux1 - 0.001,
-                                  bx_in + 0.10, zl2, zh2)
+                    g0d = min(ux1 - 0.06 - DOOR_W, bx_in + 0.10)
+                    _wall_L(parts, bx_in, by0, y1u - 0.002, ux1 - 0.001,
+                            zl2, zh2, 0.09, (g0d, g0d + DOOR_W, zl2 + DOOR_H),
+                            M_GYPSUM)
+                parts.tag = keep_tag
                 # kitchen stub on the window-bay side, ahead of its window.
                 kx0 = ux1 - 2.0 if not mir else ux0
                 kx1 = ux1 if not mir else ux0 + 2.0
