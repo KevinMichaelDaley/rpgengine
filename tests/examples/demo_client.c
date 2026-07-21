@@ -1696,6 +1696,30 @@ int main(int argc, char **argv) {
                 fr_video_capture_submit_frame(video_cap);
             }
 
+            /* FR_SNAP=<path-prefix>: dump the frame to <prefix>_NNN.ppm every ~2 s
+             * (debug: lets a headless session LOOK at the render). */
+            { static int snap_n = 0; static uint64_t snap_last = 0; uint64_t snap_now = now_ms_val();
+              const char *sp = getenv("FR_SNAP");
+              if (sp != NULL && frame_count > 60 && snap_now - snap_last > 2000 && snap_n < 12) {
+                  static unsigned char *px = NULL;
+                  if (px == NULL) px = malloc((size_t)CLIENT_WIN_W * CLIENT_WIN_H * 3u);
+                  if (px != NULL) {
+                      glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                      glReadPixels(0, 0, CLIENT_WIN_W, CLIENT_WIN_H, GL_RGB, GL_UNSIGNED_BYTE, px);
+                      char sp_path[640];
+                      snprintf(sp_path, sizeof sp_path, "%s_%03d.ppm", sp, snap_n);
+                      FILE *pf = fopen(sp_path, "wb");
+                      if (pf != NULL) {
+                          fprintf(pf, "P6\n%d %d\n255\n", CLIENT_WIN_W, CLIENT_WIN_H);
+                          /* flip vertically (GL reads bottom-up). */
+                          for (int y = CLIENT_WIN_H - 1; y >= 0; --y)
+                              fwrite(px + (size_t)y * CLIENT_WIN_W * 3u, 1, (size_t)CLIENT_WIN_W * 3u, pf);
+                          fclose(pf);
+                          fprintf(stderr, "[snap] %s\n", sp_path);
+                      }
+                      snap_last = snap_now; ++snap_n;
+                  }
+              } }
             SDL_GL_SwapWindow(gl.window);
             uint64_t t_render_end = now_ns();
 

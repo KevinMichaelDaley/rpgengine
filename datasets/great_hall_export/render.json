@@ -20,5 +20,8 @@
   "_pagecache": "rpg leak fix: sdf_resident_slots sizes the fine-chunk GPU pool (12 fits every gh chunk on a discrete GPU); sdf_fp16/lm_fp16 halve chunk textures + SH pages. The _zone.sdf coarse fallback covers any page fault.",
   "sdf_resident_slots": 12,
   "sdf_fp16": 1,
-  "lm_fp16": 1
+  "lm_fp16": 1,
+  "_csm": "4096 cascades: the re-export grew the scene AABB the cascades fit (chimney + dais doorway), so 1024 texels stretched too coarse -- bias-sized light gaps at the wall/floor contact read as sun leaking through the wall base.",
+  "dir_static_res": 4096,
+  "dir_dynamic_res": 4096
 }
