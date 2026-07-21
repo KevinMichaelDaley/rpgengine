@@ -176,10 +176,34 @@ class _Wall:
         for iz in range(len(self.zl) - 1):
             for iu in range(len(self.ul) - 1):
                 kind = classify(self.ul[iu], self.zl[iz])
-                if kind == 'void':
-                    continue
+                if kind in ('void', 'doorU'):
+                    continue        # doorU is consumed by its doorL below
                 u0, u1 = self.ul[iu], self.ul[iu + 1]
                 z0, z1 = self.zl[iz], self.zl[iz + 1]
+                if kind == 'doorL':
+                    # TALL walk-through door: the rough opening IS the full
+                    # two-cell rect (head = the grid head line), so every
+                    # boundary lies on grid lines -- no face rings (any
+                    # sub-grid frame line lands mid-edge on neighbours; the
+                    # auditor kept proving it). The "frame" is the recessed
+                    # jamb reveal; trim is a later decor pass. Open at the
+                    # floor: no threshold, no pane.
+                    z1t = self.zl[iz + 2] if iz + 2 < len(self.zl) else z1
+                    zs = [z0] + [zv for zv in self.zl
+                                 if z0 + 1e-6 < zv < z1t - 1e-6] + [z1t]
+                    keep = self.s.tag
+                    self.s.tag = 'doors'
+                    mfd = self.mat if mat_frame is None else mat_frame
+                    for zi in range(len(zs) - 1):
+                        za, zb = zs[zi], zs[zi + 1]
+                        self._q(self._co(u0, za, 0.0), self._co(u0, za, recess),
+                                self._co(u0, zb, recess), self._co(u0, zb, 0.0), mfd)
+                        self._q(self._co(u1, za, recess), self._co(u1, za, 0.0),
+                                self._co(u1, zb, 0.0), self._co(u1, zb, recess), mfd)
+                    self._q(self._co(u0, z1t, recess), self._co(u1, z1t, recess),
+                            self._co(u1, z1t, 0.0), self._co(u0, z1t, 0.0), mfd)
+                    self.s.tag = keep
+                    continue
                 if kind == 'wall':
                     self._q(self._co(u0, z0), self._co(u1, z0),
                             self._co(u1, z1), self._co(u0, z1))
@@ -202,7 +226,8 @@ class _Wall:
                     a, b = k, (k + 1) % 4
                     self._q(oc[a], oc[b], ic[b], ic[a], mf)   # face ring
                     self._q(ic[a], ic[b], rc[b], rc[a], mf)   # jamb return
-                self._q(rc[0], rc[1], rc[2], rc[3], mp)       # pane
+                if kind == 'window':
+                    self._q(rc[0], rc[1], rc[2], rc[3], mp)   # pane
                 self.s.tag = keep
 
 
@@ -291,16 +316,22 @@ def build_dingbat(p, rng):
         return any(abs(u0 - v) < 1e-6 for v in vals)
 
     jamb_x = [a for (a, _b) in xjambs]
+    door_x = [a for (a, _b) in xjambs[::2]]   # units are TWO bays wide: door
+    # bay + window bay (one entry per apartment, not one per bay).
 
     def front_classify(u0, zc0):
         for (sll, _hh) in upper_rows:
             if abs(zc0 - sll) < 1e-6 and near(u0, jamb_x):
                 return 'window'
         if not has_carport:
-            # grounded: every bay is a unit entry -- full-height door
-            # (grade cell + sill-band cell stack into one opening).
-            if zc0 < z_head1 - 1e-6 and near(u0, jamb_x):
-                return 'door'
+            # grounded: one entry + one window per two-bay unit.
+            if near(u0, door_x):
+                if abs(zc0 - z_grade) < 1e-6:
+                    return 'doorL'
+                if abs(zc0 - z_sill1) < 1e-6:
+                    return 'doorU'
+            elif near(u0, jamb_x) and abs(zc0 - z_sill1) < 1e-6:
+                return 'window'
         return 'wall'
 
     shell.tag = 'facade_front'
@@ -316,15 +347,19 @@ def build_dingbat(p, rng):
     def back_classify(u0, zc0):
         if abs(zc0 - z_sill1) < 1e-6 and near(u0, jamb_x):
             return 'window'
-        # upper units: the walkway door -- spandrel cell + window cell stack
-        # into a door with a transom light over it.
-        if near(u0, jamb_x):
-            for st in spandrel_tops:
-                if abs(zc0 - st) < 1e-6:
-                    return 'door'
+        # upper units: ONE walkway door (spandrel doorL + window doorU) in
+        # the unit's door bay; the other bay keeps its window.
+        if near(u0, door_x):
+            for st2 in spandrel_tops:
+                if abs(zc0 - st2) < 1e-6:
+                    return 'doorL'
             for (sll, _hh) in upper_rows:
                 if abs(zc0 - sll) < 1e-6:
-                    return 'door'
+                    return 'doorU'
+        elif near(u0, jamb_x):
+            for (sll, _hh) in upper_rows:
+                if abs(zc0 - sll) < 1e-6:
+                    return 'window'
         return 'wall'
 
     shell.tag = 'facade_back'
@@ -350,9 +385,14 @@ def build_dingbat(p, rng):
     ground_z = [v for v in zl if v <= z_soffit]
 
     def ground_classify(u0, zc0):
-        # every unit bay is a door: these are the ground apartments' entries.
-        if zc0 < z_head1 - 1e-6 and near(u0, jamb_x):
-            return 'door'
+        # one door + one window per (two-bay) ground unit.
+        if near(u0, door_x):
+            if abs(zc0 - z_grade) < 1e-6:
+                return 'doorL'
+            if abs(zc0 - z_sill1) < 1e-6:
+                return 'doorU'
+        elif near(u0, jamb_x) and abs(zc0 - z_sill1) < 1e-6:
+            return 'window'
         return 'wall'
 
     if has_carport:
@@ -435,7 +475,9 @@ def build_dingbat(p, rng):
     laneA_x0 = laneB_x0 + sdir * (s_w + 0.06)
     wd = 1.25
     levels = [0.0] + [lo + 0.12 for (lo, _hi, _bt) in floor_bands]
-    y_arr = D + wd * 0.45
+    y_arr = D + wd + 0.02     # flights meet the walkway at its outer EDGE:
+    # starting/arriving inside the band collided with the slab (user-hit:
+    # "joined at the wrong places except the bottom one").
 
     def flight(x0, y_from, y_to, z_from, z_to):
         """One flight between two levels along y (either direction)."""
@@ -512,7 +554,7 @@ def build_dingbat(p, rng):
         def void_openings(classify):
             def cls(u0, zc0):
                 k = classify(u0, zc0)
-                return 'void' if k in ('window', 'door') else k
+                return 'void' if k in ('window', 'doorL', 'doorU') else k
             return cls
 
         ix0, ix1 = wt, W - wt
@@ -578,7 +620,7 @@ def build_dingbat(p, rng):
         for i2, (lo, hi, _bt) in enumerate(floor_bands):
             nxt = floor_bands[i2 + 1][0] if i2 + 1 < len(floor_bands) else top_z
             storeys.append((hi, nxt, wt + 0.002))
-        for k in range(1, cols):
+        for k in range(2, cols, 2):   # two-bay units -> every other boundary
             xb = margin + (W - 2 * margin) * (k / cols)
             for (zlo, zhi, ys) in storeys:
                 _box(parts, (xb - pt / 2, ys, zlo),
