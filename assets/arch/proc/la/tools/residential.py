@@ -367,6 +367,14 @@ class _Wall:
                     continue        # doorU is consumed by its doorL below
                 u0, u1 = self.ul[iu], self.ul[iu + 1]
                 z0, z1 = self.zl[iz], self.zl[iz + 1]
+                if kind == 'void_in':
+                    # Outer face present, inner face void: the loggia's
+                    # inner-skin hole is WIDER than the facade hole by the
+                    # cheek thickness, so these strip cells keep their
+                    # street-side skin only.
+                    self._q(self._co(u0, z0), self._co(u1, z0),
+                            self._co(u1, z1), self._co(u0, z1))
+                    continue
                 if kind == 'doorL':
                     # TALL walk-through door: the rough opening IS the full
                     # two-cell rect (head = the grid head line) -- every
@@ -593,13 +601,38 @@ def build_dingbat(p, rng):
             door_jambs.append((b1 - 1.70 - 0.90, b1 - 1.70))
             bath_wins.append((b1 - 1.20, b1 - 0.30))
 
+    # partial carport (rule-2 breaker done RIGHT: dingbats often carved only
+    # part of the ground floor, with real support where the wall resumed).
+    cb = max(1, min(cols, p["carport_bays"]))
+    carport_end = W if cb >= cols else margin + bayw0 * cb
+    # loggia: recessed balcony on the TOP floor's end bay; crops the concave
+    # profile corner to convex cheeks, platform+railing ship separately.
+    loggia = p["loggia"] if floors >= 2 else 'none'
+    ld = min(1.6, cd - 0.3) if p["carport"] else 1.5   # loggia depth
+    if loggia == 'right':
+        lg0, lg1 = margin + bayw0 * (cols - 1), W - margin
+    elif loggia == 'left':
+        lg0, lg1 = margin, margin + bayw0
+    else:
+        lg0 = lg1 = None
+    wt0 = 0.15
+    if lg0 is not None:
+        lcx = (lg0 + lg1) / 2.0
+        lw = 1.6 if p["loggia_door"] == 'sliding' else 0.9
+        loggia_door = (lcx - lw / 2.0, lcx + lw / 2.0)
+    else:
+        loggia_door = None
+
     t = 0.15                         # parapet ring width -- ALSO a wall line:
     # the cap ring's outer-edge verts at x=t / W-t must exist in the wall top
     # edges or they land mid-edge (T-junction, caught by the auditor).
     xl, xjambs = _window_lines(W, cols, margin, win_w)
     xl = sorted(set(xl) | {t, W - t} |
                 {v for pr in door_jambs for v in pr} |
-                {v for pr in bath_wins for v in pr})
+                {v for pr in bath_wins for v in pr} |
+                ({carport_end, min(carport_end + wt0, W)} if cb < cols else set()) |
+                (({lg0, lg1, max(lg0 - wt0, 0.0), min(lg1 + wt0, W)} |
+                  set(loggia_door)) if lg0 is not None else set()))
     yl = sorted({0.0, cd, D, t, D - t})
 
     shell = _Shell()
@@ -608,7 +641,7 @@ def build_dingbat(p, rng):
     # ---- front wall (y=0, faces -Y). With a carport: fascia + upper floors
     # only (the ground is the void). Without one the building sits on grade:
     # full-height wall, ground window row, centre-bay entry door. ------------
-    front_z = [v for v in zl if v >= z_soffit] if has_carport else zl
+    front_z = zl        # full height; the classifier voids the carport span
 
     def near(u0, vals):
         return any(abs(u0 - v) < 1e-6 for v in vals)
@@ -617,7 +650,28 @@ def build_dingbat(p, rng):
     door_x = [a for (a, _b) in xjambs[::2]]   # units are TWO bays wide: door
     # bay + window bay (one entry per apartment, not one per bay).
 
+    top_hi = floor_bands[-1][1]
+    top_head = upper_rows[-1][1]     # loggia recess stops at the HEAD line:
+    # the head band stays as fascia over the recess (a ceiling coplanar with
+    # the roof plane is both ahistorical and non-manifold).
+
     def front_classify(u0, zc0):
+        # loggia recess: the top storey of its bay is VOID in the facade;
+        # the strips one cheek-thickness wide either side keep the outer
+        # skin but drop the inner skin (the room corner turns at the cheek).
+        if lg0 is not None and top_hi - 1e-6 <= zc0 < top_head - 1e-6:
+            if lg0 - 1e-6 <= u0 < lg1 - 1e-6:
+                return 'void'
+            if (max(lg0 - 0.15, 0.0) - 1e-6 <= u0 < lg1 + 0.15 - 1e-6):
+                return 'void_in'
+        # carport: only the carport span of the ground floor is void; the
+        # rest is a real supported wall with ground windows (house look).
+        if has_carport and zc0 < z_soffit - 1e-6:
+            if u0 < carport_end - 1e-6:
+                return 'void'
+            if near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
+                return 'window'
+            return 'wall'
         for (sll, hh) in upper_rows:
             if sll - 1e-6 < zc0 < hh - 1e-6 and near(u0, jamb_x):
                 return 'window'
@@ -742,19 +796,38 @@ def build_dingbat(p, rng):
 
     if has_carport:
         liner.tag = 'doors'
-        _wg = _Wall(liner, (0, cd, 0), (1, 0, 0), xl, ground_z, (0, -1, 0),
+        cxl = [v for v in xl if v <= carport_end + 1e-6]
+        _wg = _Wall(liner, (0, cd, 0), (1, 0, 0), cxl, ground_z, (0, -1, 0),
                     M_STUCCO, thickness=thick, inner_zmax=top_z_all,
                     inner_mat=M_GYPSUM)
-        _wg.inner_u0, _wg.inner_u1 = wt, W - wt
+        _wg.inner_u0, _wg.inner_u1 = wt, carport_end - (0.0 if cb >= cols else -wt)
         _wg.fill(ground_classify, frame=frame, mat_frame=M_TRIM, mat_pane=M_TRIM)
         liner.tag = 'carport'
         soffit_y = [v for v in yl if v <= cd]
         for iy in range(len(soffit_y) - 1):
-            for iu in range(len(xl) - 1):
-                x0, x1 = xl[iu], xl[iu + 1]
+            for iu in range(len(cxl) - 1):
+                x0, x1 = cxl[iu], cxl[iu + 1]
                 y0, y1 = soffit_y[iy], soffit_y[iy + 1]
                 liner.quad((x0, y0, z_soffit), (x1, y0, z_soffit),
                            (x1, y1, z_soffit), (x0, y1, z_soffit), M_CONCRETE)
+        if cb < cols:
+            # SUPPORT where the carport ends: a return wall from the facade
+            # to the recessed wall -- even dingbats didn't go that cheap.
+            liner.tag = 'carport'
+            ret_rows = [v for v in ground_z]
+            ret_y = [0.0, wt0, cd]    # split at the front wall's inner-skin
+            # line: its verts otherwise land mid-edge on a full-span quad.
+            for ri in range(len(ret_rows) - 1):
+                r0, r1 = ret_rows[ri], ret_rows[ri + 1]
+                for yi in range(len(ret_y) - 1):
+                    ya4, yb4 = ret_y[yi], ret_y[yi + 1]
+                    liner.quad((carport_end, ya4, r0), (carport_end, yb4, r0),
+                               (carport_end, yb4, r1), (carport_end, ya4, r1),
+                               M_STUCCO)
+                    if thick > 0.0:
+                        xw = min(carport_end + wt0, W)
+                        liner.quad((xw, yb4, r0), (xw, ya4, r0),
+                                   (xw, ya4, r1), (xw, yb4, r1), M_GYPSUM)
 
     # ---- parapet cap + inner drop + roof plane -----------------------------
     rx = sorted({0.0, t, W - t, W} | set(v for v in xl if t < v < W - t))
@@ -789,6 +862,74 @@ def build_dingbat(p, rng):
                    (W - t, y1, z_roof), (W - t, y0, z_roof), M_TRIM)
 
     mats = [_material(n) for n in _MATS]
+    # ---- loggia: cheeks + recessed thick wall (with door) + ceiling -------
+    loggia_platform = None
+    if lg0 is not None:
+        shell.tag = 'loggia'
+        l_rows = [v for v in zl if top_hi - 1e-6 <= v <= top_head + 1e-6]
+        lgi0, lgi1 = max(lg0 - wt, 0.0), min(lg1 + wt, W)
+
+        def lg_door_classify(u0, zc0):
+            if loggia_door and abs(u0 - loggia_door[0]) < 1e-6:
+                if abs(zc0 - top_hi) < 1e-6:
+                    return 'doorL'
+                if top_hi + 1e-6 < zc0 < upper_rows[-1][1] - 1e-6:
+                    return 'doorU'
+            return 'wall'
+
+        # cheeks: outer face into the loggia, inner face to the neighbour room.
+        cheek_y = [0.0, wt, ld]   # split at the inner-skin line: the front
+        # wall's inner corner verts otherwise land mid-edge on the cheek.
+        for (cx2, inner_x, out_sign) in ((lg0, lgi0, 1.0), (lg1, lgi1, -1.0)):
+            for ri in range(len(l_rows) - 1):
+                r0, r1 = l_rows[ri], l_rows[ri + 1]
+                for yi in range(len(cheek_y) - 1):
+                    ya5, yb5 = cheek_y[yi], cheek_y[yi + 1]
+                    pts = [(cx2, ya5, r0), (cx2, yb5, r0), (cx2, yb5, r1),
+                           (cx2, ya5, r1)]
+                    if out_sign < 0:
+                        pts.reverse()
+                    shell.quad(*pts, M_STUCCO)
+                if interior_on:
+                    pts = [(inner_x, wt, r0), (inner_x, ld + wt, r0),
+                           (inner_x, ld + wt, r1), (inner_x, wt, r1)]
+                    if out_sign > 0:
+                        pts.reverse()
+                    shell.quad(*pts, M_GYPSUM)
+        # recessed wall segment (thick, with the loggia door cut through).
+        lxl = [v for v in xl if lg0 - 1e-6 <= v <= lg1 + 1e-6]
+        _wl = _Wall(shell, (0, ld, 0), (1, 0, 0), lxl, l_rows, (0, -1, 0),
+                    M_STUCCO, thickness=thick, inner_zmax=top_z_all,
+                    inner_mat=M_GYPSUM)
+        _wl.fill(lg_door_classify, frame=frame, mat_frame=M_TRIM)
+        if interior_on:
+            # inner-skin corner fillers (row-split so the wall's verts weld).
+            for (fx0, fx1) in ((lgi0, lg0), (lg1, lgi1)):
+                for ri in range(len(l_rows) - 1):
+                    r0, r1 = l_rows[ri], l_rows[ri + 1]
+                    shell.quad((fx0, ld + wt, r0), (fx1, ld + wt, r0),
+                               (fx1, ld + wt, r1), (fx0, ld + wt, r1),
+                               M_GYPSUM)
+        # loggia ceiling at the HEAD line (faces down), x-split on the grid
+        # and y-split at the cheeks' inner-skin line so all corners weld.
+        for iu in range(len(lxl) - 1):
+            x0c, x1c = lxl[iu], lxl[iu + 1]
+            for yi in range(len(cheek_y) - 1):
+                ya6, yb6 = cheek_y[yi], cheek_y[yi + 1]
+                shell.quad((x0c, ya6, top_head), (x0c, yb6, top_head),
+                           (x1c, yb6, top_head), (x1c, ya6, top_head),
+                           M_STUCCO)
+
+        # platform + SOLID stucco railing: the separate loggia object.
+        plat = _Shell(recalc=True)
+        plat.tag = 'loggia'
+        e3 = 0.004
+        _box(plat, (lg0 + e3, e3, top_hi - 0.28), (lg1 - e3, ld - e3, top_hi),
+             M_CONCRETE)
+        _wall_solid(plat, 'x', 0.03, lg0 + 0.02, lg1 - 0.02, top_hi,
+                    top_hi + 1.02, 0.12, None, M_STUCCO)
+        loggia_platform = plat.to_object("LA_Dingbat_Loggia", mats)
+
     body = shell.to_object("LA_Dingbat_Body", mats)
     liner_ob = liner.to_object("LA_Dingbat_Carport", mats) if has_carport else None
 
@@ -797,10 +938,11 @@ def build_dingbat(p, rng):
     if has_carport:
         posts = _Shell()
         posts.tag = 'carport'
-        n_posts = max(2, p["carport_bays"] + 1)
+        n_posts = max(2, cb + 1)
         px = 0.14
+        span_hi = (carport_end - margin) if cb < cols else (W - margin)
         for i in range(n_posts):
-            x = margin + (W - 2 * margin) * (i / (n_posts - 1))
+            x = margin + (span_hi - margin) * (i / (n_posts - 1))
             x = min(max(x, px), W - px)
             _box(posts, (x - px / 2, 0.30, 0.0),
                  (x + px / 2, 0.30 + px, z_soffit), M_METAL)
@@ -1097,7 +1239,12 @@ def build_dingbat(p, rng):
     extras.tag = 'awnings'
     if p["awnings"]:
         for (a, b) in xjambs:
+            if b - a < 1.2:
+                continue      # awnings were EXPENSIVE: wide windows only
             for (s, h) in upper_rows:
+                if lg0 is not None and lg0 - 1e-6 <= a and b <= lg1 + 1e-6 \
+                        and abs(s - upper_rows[-1][0]) < 1e-6:
+                    continue  # loggia bay: no facade window there
                 zh = h + 0.05
                 extras.quad((a - 0.1, 0.0, zh), (b + 0.1, 0.0, zh),
                             (b + 0.1, -0.45, zh - 0.28),
@@ -1114,6 +1261,9 @@ def build_dingbat(p, rng):
         bay = min(2 * u2, len(xjambs) - 1)
         (a, b) = xjambs[bay]
         for (sll, _hh) in upper_rows:
+            if lg0 is not None and lg0 - 1e-6 <= a and b <= lg1 + 1e-6 \
+                    and abs(sll - upper_rows[-1][0]) < 1e-6:
+                continue      # loggia bay: no facade window there
             if rng.random() < p["ac_units"]:
                 cx = (a + b) / 2.0
                 _box(extras, (cx - 0.30, -0.28, sll + 0.02),
@@ -1121,7 +1271,8 @@ def build_dingbat(p, rng):
     extras_ob = extras.to_object("LA_Dingbat_Extras", mats)
 
     # ---- engine tags --------------------------------------------------------
-    out = [body, liner_ob, post_ob, stair_ob, extras_ob, story_ob] + interior_obs
+    out = [body, liner_ob, post_ob, stair_ob, extras_ob, story_ob,
+           loggia_platform] + interior_obs
     out = [ob for ob in out if ob is not None]
     for ob in out:
         ob["ferrum_lightmap_res"] = 0 if ob in (extras_ob, story_ob) else 128
@@ -1150,6 +1301,12 @@ SPEC = [
          desc="Tuck-under carport; off = building drops to grade"),
     dict(name="carport_sides", type='BOOL', default=True,
          desc="Walled carport sides; off = open sides on posts"),
+    dict(name="loggia", type='ENUM', default='none',
+         items=('none', 'right', 'left'),
+         desc="Recessed top-floor loggia (platform + solid railing)"),
+    dict(name="loggia_door", type='ENUM', default='walkup',
+         items=('walkup', 'sliding'),
+         desc="Loggia access: narrow walk-up door or wide sliding reveal"),
     # story options (rule 3) -- off by default, thematically coherent.
     dict(name="all_broken", type='BOOL', default=False,
          desc="Abandonment: every window shattered, many boarded"),
