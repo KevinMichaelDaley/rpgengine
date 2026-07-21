@@ -210,7 +210,8 @@ class _Wall:
     Face winding: CCW seen from ``outward``.
     """
 
-    def __init__(self, shell, origin, u_dir, u_lines, z_lines, outward, mat=0):
+    def __init__(self, shell, origin, u_dir, u_lines, z_lines, outward, mat=0,
+                 thickness=0.0, inner_zmax=None, inner_mat=None):
         self.s = shell
         self.o = Vector(origin)
         self.u = Vector(u_dir).normalized()
@@ -218,6 +219,18 @@ class _Wall:
         self.zl = list(z_lines)
         self.n = Vector(outward).normalized()
         self.mat = mat
+        # THICK walls (interior mode): one mesh carries the outer face, the
+        # inner face (at depth=thickness, faces reversed), and openings CUT
+        # THROUGH -- the reveal is the wall's own cut faces, the door floor
+        # runs through the thickness. No liner shell, no cavity.
+        self.th = thickness
+        self.inner_zmax = inner_zmax if inner_zmax is not None else 1e30
+        self.inner_mat = self.mat if inner_mat is None else inner_mat
+        # inner-face clip range along u: adjacent walls' inner faces must
+        # stop at the inset corner (unclipped they run INTO each other's
+        # thickness -- coplanar crossings, non-manifold).
+        self.inner_u0 = -1e30
+        self.inner_u1 = 1e30
         # A wall's quad (u0,z0)-(u1,z1) must read CCW from `outward`:
         flip = self.u.cross(Vector((0, 0, 1))).dot(self.n) < 0
         self.flip = flip
@@ -233,6 +246,14 @@ class _Wall:
         else:
             self.s.quad(a, b, c, d, m)
 
+    def _qi(self, a, b, c, d, mat=None):
+        """Inner-face quad: reversed relative to _q (normal points inward)."""
+        m = self.inner_mat if mat is None else mat
+        if self.flip:
+            self.s.quad(a, b, c, d, m)
+        else:
+            self.s.quad(a, d, c, b, m)
+
     def fill(self, classify, frame=0.07, recess=0.08,
              mat_frame=None, mat_pane=None):
         for iz in range(len(self.zl) - 1):
@@ -244,13 +265,20 @@ class _Wall:
                 z0, z1 = self.zl[iz], self.zl[iz + 1]
                 if kind == 'doorL':
                     # TALL walk-through door: the rough opening IS the full
-                    # two-cell rect (head = the grid head line), so every
-                    # boundary lies on grid lines -- no face rings (any
-                    # sub-grid frame line lands mid-edge on neighbours; the
-                    # auditor kept proving it). The "frame" is the recessed
-                    # jamb reveal; trim is a later decor pass. Open at the
-                    # floor: no threshold, no pane.
-                    z1t = self.zl[iz + 2] if iz + 2 < len(self.zl) else z1
+                    # two-cell rect (head = the grid head line) -- every
+                    # boundary on grid lines, no face rings. Thin walls get a
+                    # `recess`-deep reveal; THICK walls cut clean through:
+                    # jambs + header span the full thickness and the FLOOR
+                    # strip carries the slab out to the exterior plane
+                    # (continuous walk-through, no cavity).
+                    # absorb ALL contiguous doorU rows above (a global
+                    # z-line insertion once silently shortened every door).
+                    jz = iz + 1
+                    while (jz + 1 < len(self.zl) and
+                           classify(u0, self.zl[jz]) == 'doorU'):
+                        jz += 1
+                    z1t = self.zl[jz]
+                    depth = self.th if self.th > 0.0 else recess
                     zs = [z0] + [zv for zv in self.zl
                                  if z0 + 1e-6 < zv < z1t - 1e-6] + [z1t]
                     keep = self.s.tag
@@ -258,17 +286,31 @@ class _Wall:
                     mfd = self.mat if mat_frame is None else mat_frame
                     for zi in range(len(zs) - 1):
                         za, zb = zs[zi], zs[zi + 1]
-                        self._q(self._co(u0, za, 0.0), self._co(u0, za, recess),
-                                self._co(u0, zb, recess), self._co(u0, zb, 0.0), mfd)
-                        self._q(self._co(u1, za, recess), self._co(u1, za, 0.0),
-                                self._co(u1, zb, 0.0), self._co(u1, zb, recess), mfd)
-                    self._q(self._co(u0, z1t, recess), self._co(u1, z1t, recess),
+                        self._q(self._co(u0, za, 0.0), self._co(u0, za, depth),
+                                self._co(u0, zb, depth), self._co(u0, zb, 0.0), mfd)
+                        self._q(self._co(u1, za, depth), self._co(u1, za, 0.0),
+                                self._co(u1, zb, 0.0), self._co(u1, zb, depth), mfd)
+                    self._q(self._co(u0, z1t, depth), self._co(u1, z1t, depth),
                             self._co(u1, z1t, 0.0), self._co(u0, z1t, 0.0), mfd)
+                    if self.th > 0.0:
+                        self._q(self._co(u0, z0, 0.0), self._co(u0, z0, depth),
+                                self._co(u1, z0, depth), self._co(u1, z0, 0.0),
+                                M_CONCRETE)   # through-floor strip
                     self.s.tag = keep
                     continue
                 if kind == 'wall':
                     self._q(self._co(u0, z0), self._co(u1, z0),
                             self._co(u1, z1), self._co(u0, z1))
+                    if (self.th > 0.0 and z0 < self.inner_zmax - 1e-6 and
+                            u0 >= self.inner_u0 - 1e-6 and
+                            u1 <= self.inner_u1 + 1e-6):
+                        keep2 = self.s.tag
+                        self.s.tag = 'interior_walls'
+                        self._qi(self._co(u0, z0, self.th),
+                                 self._co(u1, z0, self.th),
+                                 self._co(u1, z1, self.th),
+                                 self._co(u0, z1, self.th))
+                        self.s.tag = keep2
                     continue
                 # opening cell: inset ring -> jamb return -> recessed pane
                 fu0, fu1 = u0 + frame, u1 - frame
@@ -289,7 +331,32 @@ class _Wall:
                     self._q(oc[a], oc[b], ic[b], ic[a], mf)   # face ring
                     self._q(ic[a], ic[b], rc[b], rc[a], mf)   # jamb return
                 if kind == 'window':
-                    self._q(rc[0], rc[1], rc[2], rc[3], mp)   # pane
+                    # pane: 1 mm-inset ISLAND membrane -- welded to the ring
+                    # it put 3 faces on the rc edges once the interior
+                    # reveal joined (jamb + pane + reveal = non-manifold).
+                    e2 = 0.001
+                    pc = [self._co(fu0 + e2, fz0 + e2, recess),
+                          self._co(fu1 - e2, fz0 + e2, recess),
+                          self._co(fu1 - e2, fz1 - e2, recess),
+                          self._co(fu0 + e2, fz1 - e2, recess)]
+                    self._q(pc[0], pc[1], pc[2], pc[3], mp)
+                    if (self.th > 0.0 and z0 < self.inner_zmax and
+                            u0 >= self.inner_u0 - 1e-6 and
+                            u1 <= self.inner_u1 + 1e-6):
+                        # THICK: inner face ring + reveal from the inner face
+                        # to the pane assembly -- the window is cut THROUGH.
+                        tc = [self._co(fu0, fz0, self.th),
+                              self._co(fu1, fz0, self.th),
+                              self._co(fu1, fz1, self.th),
+                              self._co(fu0, fz1, self.th)]
+                        ocT = [self._co(u0, z0, self.th),
+                               self._co(u1, z0, self.th),
+                               self._co(u1, z1, self.th),
+                               self._co(u0, z1, self.th)]
+                        for k in range(4):
+                            a, b = k, (k + 1) % 4
+                            self._qi(ocT[a], ocT[b], tc[b], tc[a], self.inner_mat)
+                            self._qi(tc[a], tc[b], rc[b], rc[a], self.inner_mat)
                 self.s.tag = keep
 
 
@@ -414,16 +481,24 @@ def build_dingbat(p, rng):
             if near(u0, door_x):
                 if abs(zc0 - z_grade) < 1e-6:
                     return 'doorL'
-                if abs(zc0 - z_sill1) < 1e-6:
+                if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
                     return 'doorU'
             elif near(u0, jamb_x) and abs(zc0 - z_sill1) < 1e-6:
                 return 'window'
         return 'wall'
 
     shell.tag = 'facade_front'
-    _Wall(shell, (0, 0, 0), (1, 0, 0), xl, front_z, (0, -1, 0),
-          M_STUCCO).fill(front_classify, frame=frame,
-                         mat_frame=M_TRIM, mat_pane=M_GLASS)
+    interior_on = p["mode"] == 'interior'
+    wt = 0.15
+    top_z_all = upper_rows[-1][1]      # rooms end at the top window head:
+    # the roof plane / parapet drop / wall inner face otherwise meet 3 faces
+    # to an edge at z_roof (genuine non-manifold).
+    thick = wt if interior_on else 0.0
+    _wf = _Wall(shell, (0, 0, 0), (1, 0, 0), xl, front_z, (0, -1, 0),
+                M_STUCCO, thickness=thick, inner_zmax=top_z_all,
+                inner_mat=M_GYPSUM)
+    _wf.inner_u0, _wf.inner_u1 = wt, W - wt
+    _wf.fill(front_classify, frame=frame, mat_frame=M_TRIM, mat_pane=M_GLASS)
 
     # ---- back wall (y=D, faces +Y): full height, windows on all floors -----
     back_z = zl
@@ -442,11 +517,11 @@ def build_dingbat(p, rng):
         # upper floors: walkway door (own off-centre jambs), kitchen window,
         # and the small high bathroom window beside the door.
         if near(u0, doorj_x):
-            for st2 in spandrel_tops:
+            for fi2, (sll, hh) in enumerate(upper_rows):
+                st2 = spandrel_tops[fi2]
                 if abs(zc0 - st2) < 1e-6:
                     return 'doorL'
-            for (sll, _hh) in upper_rows:
-                if abs(zc0 - sll) < 1e-6:
+                if st2 + 1e-6 < zc0 < hh - 1e-6:
                     return 'doorU'
         if near(u0, kitchen_x):
             for (sll, _hh) in upper_rows:
@@ -459,9 +534,11 @@ def build_dingbat(p, rng):
         return 'wall'
 
     shell.tag = 'facade_back'
-    _Wall(shell, (0, D, 0), (1, 0, 0), xl, back_z, (0, 1, 0),
-          M_STUCCO).fill(back_classify, frame=frame,
-                         mat_frame=M_TRIM, mat_pane=M_GLASS)
+    _wb = _Wall(shell, (0, D, 0), (1, 0, 0), xl, back_z, (0, 1, 0),
+                M_STUCCO, thickness=thick, inner_zmax=top_z_all,
+                inner_mat=M_GYPSUM)
+    _wb.inner_u0, _wb.inner_u1 = wt, W - wt
+    _wb.fill(back_classify, frame=frame, mat_frame=M_TRIM, mat_pane=M_GLASS)
 
     # ---- side walls (x=0 faces -X; x=W faces +X): plain full-height grids --
     def plain(u0, zc0):
@@ -469,8 +546,11 @@ def build_dingbat(p, rng):
         return 'wall'
 
     shell.tag = 'facade_side'
-    _Wall(shell, (0, 0, 0), (0, 1, 0), yl, zl, (-1, 0, 0), M_STUCCO).fill(plain)
-    _Wall(shell, (W, 0, 0), (0, 1, 0), yl, zl, (1, 0, 0), M_STUCCO).fill(plain)
+    for sx, snrm in ((0.0, (-1, 0, 0)), (W, (1, 0, 0))):
+        _ws = _Wall(shell, (sx, 0, 0), (0, 1, 0), yl, zl, snrm, M_STUCCO,
+                    thickness=thick, inner_zmax=top_z_all, inner_mat=M_GYPSUM)
+        _ws.inner_u0, _ws.inner_u1 = wt, D - wt
+        _ws.fill(plain)
     shell.tag = 'parapet'
 
     # ---- carport liner: recessed ground wall + soffit. A SEPARATE SHELL --
@@ -485,7 +565,7 @@ def build_dingbat(p, rng):
         if near(u0, door_x):
             if abs(zc0 - z_grade) < 1e-6:
                 return 'doorL'
-            if abs(zc0 - z_sill1) < 1e-6:
+            if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
                 return 'doorU'
         elif near(u0, jamb_x) and abs(zc0 - z_sill1) < 1e-6:
             return 'window'
@@ -493,9 +573,11 @@ def build_dingbat(p, rng):
 
     if has_carport:
         liner.tag = 'doors'
-        _Wall(liner, (0, cd, 0), (1, 0, 0), xl, ground_z, (0, -1, 0),
-              M_STUCCO).fill(ground_classify, frame=frame,
-                             mat_frame=M_TRIM, mat_pane=M_TRIM)
+        _wg = _Wall(liner, (0, cd, 0), (1, 0, 0), xl, ground_z, (0, -1, 0),
+                    M_STUCCO, thickness=thick, inner_zmax=top_z_all,
+                    inner_mat=M_GYPSUM)
+        _wg.inner_u0, _wg.inner_u1 = wt, W - wt
+        _wg.fill(ground_classify, frame=frame, mat_frame=M_TRIM, mat_pane=M_TRIM)
         liner.tag = 'carport'
         soffit_y = [v for v in yl if v <= cd]
         for iy in range(len(soffit_y) - 1):
@@ -644,50 +726,12 @@ def build_dingbat(p, rng):
     # VOID cells so the existing jamb returns read as reveals from inside. ---
     interior_obs = []
     if p["mode"] == 'interior':
-        wt = 0.15                              # wall thickness (liner offset)
-        inner = _Shell()
-        inner.tag = 'interior_walls'
-
-        def void_openings(classify):
-            def cls(u0, zc0):
-                k = classify(u0, zc0)
-                return 'void' if k in ('window', 'doorL', 'doorU') else k
-            return cls
-
+        # exterior walls already carry their inner faces + cut-through
+        # openings (thick walls, one mesh); only the free-standing interior
+        # structure is added here. Geometry references:
         ix0, ix1 = wt, W - wt
         iy1 = D - wt
-        in_xl = sorted({ix0, ix1} | {v for v in xl if ix0 < v < ix1})
-        top_z = zl[-1] - 0.4                   # underside of roof structure
-        in_zl = sorted({v for v in zl if v <= top_z} | {top_z})
-        lo_zl = [v for v in in_zl if v <= z_soffit]
-        hi_zl = [v for v in in_zl if v >= z_soffit]
-        # cd+wt joins the full-depth y-lines: the ground side-liner tops out
-        # there, and without a matching vert the upper segment's bottom edge
-        # takes a T-junction (auditor-caught, x2 sides).
-        in_yl_full = sorted({wt, iy1, cd + wt} | {v for v in yl if wt < v < iy1})
-        in_yl_gnd = sorted({cd + wt, iy1} | {v for v in yl if cd + wt < v < iy1})
-        # inner faces point INTO the rooms (normals reversed vs exterior).
-        if has_carport:
-            # ground: recessed behind the carport; upper: at the facade.
-            _Wall(inner, (0, cd + wt, 0), (1, 0, 0), in_xl, lo_zl, (0, 1, 0),
-                  M_GYPSUM).fill(void_openings(ground_classify))
-            _Wall(inner, (0, wt, 0), (1, 0, 0), in_xl, hi_zl, (0, 1, 0),
-                  M_GYPSUM).fill(void_openings(front_classify))
-        else:
-            _Wall(inner, (0, wt, 0), (1, 0, 0), in_xl, in_zl, (0, 1, 0),
-                  M_GYPSUM).fill(void_openings(front_classify))
-        _Wall(inner, (0, iy1, 0), (1, 0, 0), in_xl, in_zl, (0, -1, 0),
-              M_GYPSUM).fill(void_openings(back_classify))
-        for sx, snrm in ((ix0, (1, 0, 0)), (ix1, (-1, 0, 0))):
-            if has_carport:
-                _Wall(inner, (sx, 0, 0), (0, 1, 0), in_yl_gnd, lo_zl, snrm,
-                      M_GYPSUM).fill(plain)
-                _Wall(inner, (sx, 0, 0), (0, 1, 0), in_yl_full, hi_zl, snrm,
-                      M_GYPSUM).fill(plain)
-            else:
-                _Wall(inner, (sx, 0, 0), (0, 1, 0), in_yl_full, in_zl, snrm,
-                      M_GYPSUM).fill(plain)
-        interior_obs.append(inner.to_object("LA_Dingbat_Interior", mats))
+        top_z = top_z_all
 
         # slabs: one closed plate per storey (top face = floor, underside =
         # ceiling below). Inset 1 mm from the liner so shells never share
@@ -699,6 +743,8 @@ def build_dingbat(p, rng):
         slab_boxes = [(z_grade + (0.0 if has_carport else 0.0),
                        z_grade + 0.12, gy0)]
         slab_boxes += [(lo, hi, wt) for (lo, hi, _bt) in floor_bands]
+        # top-storey CEILING slab (the roof structure underside).
+        slab_boxes.append((top_z, top_z + 0.12, wt))
         for (z_lo, z_hi, y0s) in slab_boxes:
             _box(slabs, (ix0 + e, y0s + e, z_lo), (ix1 - e, iy1 - e, z_hi),
                  M_CONCRETE)
