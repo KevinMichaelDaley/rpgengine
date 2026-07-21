@@ -366,9 +366,18 @@ def bake_wall(width=2.0, height=1.15, seed=4, res=2048, out_dir=None,
 
     # 1b. per-brick tint map: every brick a distinct random value (mortar black),
     # so the material can shade each stone slightly differently.
+    # Keyed on the stone's IDENTITY, not iteration order: build_floor emits a
+    # wrapped copy of any stone overhanging the crop (named "<orig>~w..") so the
+    # paving tiles seamlessly, and a wrap MUST carry its original's tint or the
+    # tint map seams even though the geometry does not. Names without "~" (every
+    # build_wall brick) are unaffected.
     trng = np.random.default_rng(seed * 131 + 7)
+    tint_of = {}
     for o in bricks:
-        v = float(trng.uniform(0.12, 1.0))
+        key = o.name.split("~", 1)[0]
+        if key not in tint_of:
+            tint_of[key] = float(trng.uniform(0.12, 1.0))
+        v = tint_of[key]
         o.color = (v, v, v, 1.0)
     _assign(bricks, _objcolor_mat("bake_objcolor"))
     _assign([mortar], _flat_mat("bake_black", 0.0))

@@ -25,12 +25,7 @@ extern "C" {
 #endif
 
 /** Max SDF chunks resident on the GPU at once (bounds VRAM). */
-/* Hard CAP on resident fine-chunk slots (array sizing + shader sampler array).
- * The RUNTIME count is gi_sdf_stream_t.n_slots (config `sdf_resident_slots`,
- * default 8) so a level/tier picks its own pool without a recompile. 16 slots of
- * 128^3 RGBA = 512 MB at fp32 / 256 MB with `sdf_fp16` -- discrete-GPU territory;
- * iGPUs stay at 8. */
-#define GI_SDF_MAX_RESIDENT 16
+#define GI_SDF_MAX_RESIDENT 8
 
 /** One baked SDF chunk cached in host RAM (loaded from a .sdf sidecar). */
 typedef struct gi_sdf_chunk_ram {
@@ -55,33 +50,12 @@ typedef struct gi_sdf_stream {
     float              *upload_rgba;                  /**< scratch: interleave dist+albedo -> RGBA. */
     int                 slot_dims[3];                 /**< allocated 3D-texture dims (max chunk). */
     int                *scan_cc;                       /**< [n_chunks] source file index (on-demand load). */
-    int                 n_slots;   /**< resident GPU slots in use (1..MAX; 0 -> 8).
-                                    *   Set via gi_sdf_stream_configure BEFORE load/scan. */
-    int                 fp16;      /**< 1 = RGBA16F chunk textures (half the VRAM). */
-    /* GLOBAL low-res ZONE SDF (page-fault fallback): always resident; sampled by
-     * the probe trace wherever no fine chunk is bound, so rays NEVER see empty
-     * space where geometry exists (light leak). Composed from the bake
-     * ("<prefix>_zone.sdf", gi_zone_sdf); absent file -> has_zone 0 (old data). */
-    unsigned int        zone_tex;
-    int32_t             zone_dims[3];
-    float               zone_voxel;
-    float               zone_origin[3];
-    int                 has_zone;
 } gi_sdf_stream_t;
 
 /**
  * @brief Load every `<prefix>_cNNN.sdf` (N scanned from 0) into host RAM and
  *        create the bounded 3D-texture pool. Returns the chunk count, or -1.
  */
-/**
- * @brief Configure pool sizing/format BEFORE @ref gi_sdf_stream_load /
- *        @ref gi_sdf_stream_scan (both preserve these across their reset).
- * @param n_slots resident GPU slots (clamped to [1, GI_SDF_MAX_RESIDENT]; 0 -> 8).
- * @param fp16    1 = RGBA16F chunk textures (halves VRAM; distances keep ample
- *                precision near zero, where the marcher needs it).
- */
-void gi_sdf_stream_configure(gi_sdf_stream_t *s, int n_slots, int fp16);
-
 int gi_sdf_stream_load(gi_sdf_stream_t *s, const char *prefix);
 
 /**

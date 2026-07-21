@@ -1,12 +1,11 @@
 {
   "_mode": "great_hall: fully dynamic GI, no baked lightmap (stealth-dark).",
-  "_quality": "discrete-GPU high tier: pin the old engine defaults (msaa 4, aniso 16) explicitly now that the engine default is low-end-safe (2 / 4) -- rpg-96ia.",
-  "msaa": 4,
-  "aniso": 16.0,
+
   "sh_enabled": 0,
   "sh_normal_bias": 0.9,
   "static_baked_w": 0.0,
   "static_dyn_w": 3.0,
+
   "gi_hybrid": 1,
   "gi_hero": 2,
   "gi_samples": 1024,
@@ -16,12 +15,5 @@
   "gi_n_probe_groups": 1,
   "gi_smooth": 0.25,
   "gi_vis_bias": 0.55,
-  "gi_vis_varmin": 0.06,
-  "_pagecache": "rpg leak fix: sdf_resident_slots sizes the fine-chunk GPU pool (12 fits every gh chunk on a discrete GPU); sdf_fp16/lm_fp16 halve chunk textures + SH pages. The _zone.sdf coarse fallback covers any page fault.",
-  "sdf_resident_slots": 12,
-  "sdf_fp16": 1,
-  "lm_fp16": 1,
-  "_csm": "4096 cascades: the re-export grew the scene AABB the cascades fit (chimney + dais doorway), so 1024 texels stretched too coarse -- bias-sized light gaps at the wall/floor contact read as sun leaking through the wall base.",
-  "dir_static_res": 4096,
-  "dir_dynamic_res": 4096
+  "gi_vis_varmin": 0.06
 }

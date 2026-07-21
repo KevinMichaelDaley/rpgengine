@@ -609,10 +609,35 @@ def build_floor(width=3.0, height=3.0, seed=0, gap=0.006, tile_aspect=1,
             # Local bbox centre -> place so the (scaled) tile centres on the node.
             mx = 0.5 * (lo[0] + hi[0])
             mz = 0.5 * (lo[2] + hi[2])
-            inst = _place(collection, f"{name}_{iz:02d}_{count:04d}", mesh, False,
-                          (0.0, ry, 0.0),
-                          (cxc - sx * mx, fy - lo[1], czc - sz * mz))
-            inst.scale = (sx, 1.0, sz)
+            # WRAP for a seamless crop. Off-grid jitter lets a stone overhang the
+            # [0,tile_width] x [0,tile_height] bounds; cropped, that stone is cut
+            # off and nothing takes its place on the opposite edge, so the tiling
+            # seams. Emit the overhanging stone AGAIN one period across -- the
+            # SAME mesh, rotation, jitter and seating depth -- so the pattern is
+            # exactly periodic and the two crop edges are identical.
+            half = 0.5 * cell
+            dxs = [0.0]
+            if cxc - half < 0.0:
+                dxs.append(tile_width)
+            if cxc + half > tile_width:
+                dxs.append(-tile_width)
+            dzs = [0.0]
+            if czc - half < 0.0:
+                dzs.append(tile_height)
+            if czc + half > tile_height:
+                dzs.append(-tile_height)
+            for wi, dx in enumerate(dxs):
+                for wj, dz in enumerate(dzs):
+                    # "~w.." marks a wrapped copy. bake_wall keys the per-stone
+                    # tint on the part BEFORE the "~", so a wrap shares its
+                    # original's tint and the tint map stays periodic too.
+                    suffix = "" if (dx == 0.0 and dz == 0.0) else f"~w{wi}{wj}"
+                    inst = _place(collection,
+                                  f"{name}_{iz:02d}_{count:04d}{suffix}",
+                                  mesh, False, (0.0, ry, 0.0),
+                                  (cxc + dx - sx * mx, fy - lo[1],
+                                   czc + dz - sz * mz))
+                    inst.scale = (sx, 1.0, sz)
             count += 1
 
     # Mortar sits behind the backmost (front_y) tile faces; every tile is proud of

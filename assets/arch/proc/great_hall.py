@@ -97,7 +97,10 @@ def _wall_base_plinths(col, name, length, half, wall_t, dais_top, dais_w,
                 cx, cy, sx, sy, sz = ctr, pos + rd * proj / 2.0, span, proj, h
             else:                              # wall runs along Y, projects in X
                 cx, cy, sx, sy, sz = pos + rd * proj / 2.0, ctr, proj, span, h
-            _box(col, f"{name}_plinth_{tag}_{si}", cx, cy, cz, sx, sy, sz)
+            pl = _box(col, f"{name}_plinth_{tag}_{si}", cx, cy, cz, sx, sy, sz)
+            # Same worked-arris treatment as the dais and steps: these skirting
+            # courses meet the floor right where the eye sits (see _stone_bevel).
+            _dais_bevel(pl)
 
 
 def _arched_niche_cutter(col, name, x_front, depth, yc, half_w, straight_h, z0):
@@ -290,6 +293,75 @@ def _carve_lamp_niches(col, wall, x_room_face, centre_z, y_offsets,
                          protrude=0.05, segs=24, u_scale=1.0, v_scale=1.0)
 
 
+def _dais_doorway(col, wall, name, length, wall_t, blind_recess,
+                  half_w=0.60, z0=0.70, straight_h=1.30,
+                  dais_top=0.46, step_rise=0.12, step_tread=0.30,
+                  step_half_w=0.80):
+    """Cut a REAL arched doorway THROUGH the back of the dais blind arch.
+
+    The blind arch is a recess: its front (room) face is at ``length - wall_t/2``
+    and its blind cap sits ``blind_recess`` deeper. This punches an arched opening
+    through the masonry REMAINING behind that cap (``wall_t - blind_recess``), so
+    the niche stops being blind and reads as a doorway set within the arch -- the
+    lord's door off the dais. Same boolean machinery as the lamp niches, but the
+    cutter runs past the far face so the hole goes all the way through.
+
+    @p half_w / @p straight_h / @p z0 shape the opening: a ``2*half_w`` wide,
+    ``straight_h`` tall rectangle from @p z0, capped by a semicircle of radius
+    @p half_w (crown at ``z0 + straight_h + half_w``). @p z0 is the THRESHOLD, set
+    below the blind arch's own sill (0.9) so the door is walkable rather than a
+    high niche -- the cut therefore takes the sill out across the door's width,
+    and a short flight of @p step_rise steps climbs the remaining
+    ``z0 - dais_top`` from the dais platform up to it.
+
+    Returns the wall (mutated in place)."""
+    x_room = length - wall_t / 2.0          # blind arch front (room) face
+    x_cap = x_room + blind_recess           # blind cap: back of the recess
+    # Run the cutter from just PROUD of the room face all the way past the far
+    # face: it must remove the blind cap, the masonry behind it AND the arch's own
+    # sill band across the opening, so the threshold is continuous from the recess
+    # floor through the wall (starting at the cap would leave a 0.2 m sill lip
+    # standing in front of a lower threshold -- a step down, then up).
+    cut = _arched_niche_cutter(col, f"{name}_dais_door_cut", x_room - 0.02,
+                               wall_t + 0.08, 0.0,
+                               half_w, straight_h, z0)
+    mod = wall.modifiers.new(f"{cut.name}_bool", 'BOOLEAN')
+    mod.operation = 'DIFFERENCE'
+    mod.object = cut
+    mod.solver = 'EXACT'
+    bpy.context.view_layer.objects.active = wall
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    # Re-UV only the fresh reveal (jambs + soffit through the wall). Start the
+    # AABB past the cap so the niche's authored arch UVs around the opening are
+    # left alone -- same reasoning as the lamp-niche pockets.
+    _cube_uv_faces_in_aabb(wall,
+                           (x_room + 0.02, -half_w - 0.06, z0 - 0.06),
+                           (x_room + wall_t + 0.08, half_w + 0.06,
+                            z0 + straight_h + half_w + 0.06))
+    bpy.data.objects.remove(cut, do_unlink=True)
+
+    # Steps from the dais platform up to the threshold, projecting out of the
+    # recess into the room. Built top-down so the highest tread is the one
+    # against the wall. Stem "dais_step_<n>" so assign_dais_material picks them
+    # up with the platform's own stone (it matches on startswith).
+    n_steps = max(0, int(round((z0 - dais_top) / step_rise)))
+    for s in range(n_steps):
+        top = z0 - s * step_rise                    # this tread's top surface
+        x_out = x_room - s * step_tread             # its room-side edge
+        _box(col, f"{name}_dais_step_door_{s}",
+             x_out - step_tread / 2.0, 0.0, (top + dais_top) / 2.0,
+             step_tread, step_half_w * 2.0, top - dais_top)
+    # Archivolt over the head, standing proud on the NICHE side (facing -X down
+    # the hall) so the doorway reads as dressed rather than a bare punched hole.
+    # Named off the "lamp_vous" stem so prepare_uvs keeps its authored voussoir
+    # UVs and the wall-material pass picks it up as masonry (see _ARCH_AUTHORED /
+    # _WALL_STEMS -- both match on startswith).
+    _niche_voussoirs(col, f"{name}_lamp_vous_door", x_cap, 0.0,
+                     z0 + straight_h, r_in=half_w - 0.02, r_out=half_w + 0.14,
+                     protrude=0.05, segs=24, u_scale=1.0, v_scale=1.0)
+    return wall
+
+
 def _fireplace(col, name, wx, wall_inner_y, chimney_top_z, sign):
     """A hooded wall fireplace against a side wall at x=@p wx. @p wall_inner_y is
     the wall's inner (room) face; @p sign is +1 when the room is on the -Y side
@@ -444,8 +516,14 @@ def _dais_banner(col, name, length, wall_t, width):
     into the SDF and the warm dais lamps bleed red onto the surrounding stone."""
     import bmesh
     x0 = length - wall_t / 2.0 - 0.10        # just proud of the backdrop wall face
-    z_top, z_bot = 3.80, 0.90                # ~2.9 m drop from near the arch crown
-    half_w = 0.88                            # 1.76 m wide
+    # Hangs above the doorway, in the TYMPANUM: the head is carried UP INTO the
+    # blind arch's semicircular head (springing 3.9, crown 5.4) rather than
+    # stopping at the springing, so the banner fills the arch the way a hung
+    # heraldic cloth would. At z_top the arch is still 1.33 m half-width, so a
+    # 0.62 half-width clears it. The hem stops above the doorway's archivolt
+    # (crown 0.70 + 1.30 + 0.60 = 2.60, lip to ~2.74), leaving the door legible.
+    z_top, z_bot = 4.60, 3.00                # 1.6 m drop into the arch head
+    half_w = 0.62                            # 1.24 m wide -- matches the doorway
     nu, nv = 12, 20
     me = bpy.data.meshes.new(f"{name}_banner")
     bm = bmesh.new()
@@ -570,6 +648,10 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
             name=f"{name}_pier_S_{i}", width=0.7, depth=0.55, height=pier_h,
             plinth_height=0.5, plinth_project=0.11, masonry_uv=True, collection=col)
         ps.location = (i * bay, -half + wall_t * 0.5, 0.0)
+        # Soften the upright arrises (see _pier_bevel): the piers are the closest
+        # dressed stone to the camera down the length of the hall.
+        _pier_bevel(pn)
+        _pier_bevel(ps)
 
     # --- end walls: grand arched entrance (near) + a blind-arch dais backdrop. ---
     d = arch.build_arched_doorway(
@@ -641,6 +723,12 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
             y_offsets=(niche_spacing, -niche_spacing),
             half_w=niche_width / 2.0, straight_h=niche_straight_h,
             recess=niche_recess)
+
+    # --- the lord's DOOR: an arched opening cut clean through the BACK of the
+    #     central blind arch, so the niche becomes a real doorway off the dais.
+    #     Must run AFTER the lamp niches -- both boolean the same wall object, and
+    #     each apply rebuilds its mesh. The banner is re-hung above this head. ---
+    _dais_doorway(col, b, name, length, wall_t, blind_recess=0.22)
 
     # --- dais + two steps at the far (lord's) end ---
     # The dais runs all the way back to the end wall (back face at x=length) and
@@ -863,7 +951,19 @@ def assign_wall_material(col, bake_dir, name="great_hall_stone_wall"):
         normal=os.path.join(bake_dir, "normal.png"),
         ao=os.path.join(bake_dir, "ao.png"),
         height=os.path.join(bake_dir, "height.png"),
-        tint_map=os.path.join(bake_dir, "tint.png"))
+        tint_map=os.path.join(bake_dir, "tint.png"),
+        # MEDIEVAL ASHLAR, not fired brick. The baked mask holds 17 courses x 8
+        # blocks per tile, so `tile` metres divided by those counts IS the block
+        # size. The old (4.5, 2.6) gave 0.56 x 0.15 m blocks -- a 3.7:1 aspect,
+        # essentially a fired brick (3.3:1) -- which read far too small and wide
+        # for coursed stone. (4.4, 7.15) gives 0.55 x 0.42 m blocks at ~1.3:1 --
+        # squarish dressed stones with deep courses, the way coursed ashlar reads.
+        # All four maps share this tile, so mask/normal/ao/height stay in
+        # registration whatever it is set to; but note U and V are scaled by
+        # different factors off the source bake, so the baked stone relief is
+        # squashed ~1.6x horizontally. If that shows as visibly stretched stones,
+        # the real fix is re-baking the wall with a squarer bond, not more UV.
+        tile=(4.4, 7.15))
     pre = col.name + "_"
     for o in col.objects:
         if o.type != "MESH":
@@ -990,10 +1090,16 @@ def assign_floor_material(col, bake_dir, name="great_hall_floor_stone"):
         ao=os.path.join(bake_dir, "ao.png"),
         height=os.path.join(bake_dir, "height.png"),
         tint_map=os.path.join(bake_dir, "tint.png"), tile=(4.2, 4.2),
+        # Cut from GRANITE, not the default limestone: a real dark crystalline
+        # paving stone rather than pale blocks tinted grey.
+        brick="granite",
         brick_contrast=0.62, mortar_contrast=0.25,
-        mortar_tint=(0.014, 0.013, 0.012),           # super-dark joints
-        brick_tint=(0.22, 0.24, 0.28), brick_sat=0.55,  # darker cool grey stone
-        rough_brick=0.52, rough_mortar=0.78,         # less rough (a touch polished)
+        mortar_tint=(0.010, 0.010, 0.011),           # super-dark joints
+        # MUCH darker: worn flagstone in a hall lit by fire, not showroom stone.
+        brick_tint=(0.085, 0.090, 0.105), brick_sat=0.60,
+        # MUCH less rough: centuries of footfall polish flagstone to a sheen, and
+        # that low roughness is what makes the fire read across the floor.
+        rough_brick=0.22, rough_mortar=0.55,
         normal_strength=1.6,                          # slightly more bumpy relief
         ao_strength=0.8)
     fl = bpy.data.objects.get(col.name + "_floor")
@@ -1148,31 +1254,89 @@ def assign_roof_material(col, uv_scale=0.2, name="great_hall_roof_limestone"):
     return mat
 
 
-def _dais_bevel(obj, width=0.006, segments=2, angle_deg=40.0):
-    """Give a dais block a THIN double-bevel (2 segments) on every edge plus
-    FACE-WEIGHTED normals, so the arrises catch a soft highlight instead of a
-    razor-sharp CGI knife edge. Idempotent (refreshes its own modifiers)."""
-    import math
-    for m in [m for m in obj.modifiers if m.name in ("dais_bevel", "dais_wn")]:
+def _stone_bevel(obj, width=0.014, segments=2, vertical_only=False,
+                 angle_deg=40.0):
+    """Bevel a dressed-stone block's arrises and give it true FACE-WEIGHTED
+    NORMALS. A razor arris is the giveaway CGI edge; real cut stone always has a
+    slight worked chamfer that catches a highlight.
+
+    @p vertical_only True marks only Z-parallel edges (bevel limited to WEIGHT),
+    for pieces whose horizontal arrises should stay crisp -- an engaged pier's bed
+    joints, say. False bevels every edge sharper than @p angle_deg, which is what
+    a free-standing block wants (dais, step nosings, plinth courses).
+
+    The bevel is APPLIED, so it is real geometry and the exporter's evaluated mesh
+    is unambiguous.
+
+    Face-weighted normals are then computed HERE rather than left to modifiers:
+    each vertex normal is the sum of its adjacent face normals weighted by face
+    AREA, written as custom split normals. Large flat faces dominate completely,
+    so the broad faces stay perfectly flat while the narrow bevel strips inherit
+    their neighbours' normals and read as a highlight on the arris. ("Smooth by
+    Angle" is a different thing entirely -- it splits normals at an angle
+    threshold and rounds the faces off.)"""
+    for m in [m for m in obj.modifiers
+              if m.name in ("stone_bevel", "pier_bevel", "pier_wn", "dais_bevel",
+                            "dais_wn") or
+              (m.type == 'NODES' and m.name.startswith("Smooth by Angle"))]:
         obj.modifiers.remove(m)
+    me = obj.data
+    if vertical_only:
+        # Blender 4.1+ keeps edge bevel weight in a named FLOAT attribute on the
+        # EDGE domain (the old edge.bevel_weight field is gone).
+        attr = me.attributes.get("bevel_weight_edge")
+        if attr is None:
+            attr = me.attributes.new("bevel_weight_edge", 'FLOAT', 'EDGE')
+        vs = me.vertices
+        for e in me.edges:
+            d = vs[e.vertices[1]].co - vs[e.vertices[0]].co
+            upright = (abs(d.z) > 1e-5 and abs(d.x) < 1e-5 and abs(d.y) < 1e-5)
+            attr.data[e.index].value = 1.0 if upright else 0.0
     for x in list(bpy.context.selected_objects):
         x.select_set(False)
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
-    try:                                 # smooth + auto-smooth so weighted normals read
-        bpy.ops.object.shade_auto_smooth(angle=math.radians(angle_deg))
-    except (AttributeError, RuntimeError):
-        bpy.ops.object.shade_smooth()
-    bev = obj.modifiers.new("dais_bevel", 'BEVEL')
+
+    bev = obj.modifiers.new("stone_bevel", 'BEVEL')
     bev.width = width
     bev.segments = segments
-    bev.limit_method = 'ANGLE'
-    bev.angle_limit = math.radians(angle_deg)
-    bev.harden_normals = True
-    wn = obj.modifiers.new("dais_wn", 'WEIGHTED_NORMAL')
-    wn.mode = 'FACE_AREA_WITH_ANGLE'
-    wn.keep_sharp = True
-    wn.weight = 50
+    if vertical_only:
+        bev.limit_method = 'WEIGHT'
+    else:
+        bev.limit_method = 'ANGLE'
+        bev.angle_limit = math.radians(angle_deg)
+    bev.harden_normals = False           # normals are set by hand, below
+    bpy.ops.object.modifier_apply(modifier=bev.name)
+
+    # --- face-weighted normals, computed directly on the applied mesh ---
+    me = obj.data                        # re-fetch: modifier_apply rebuilt it
+    bpy.ops.object.shade_smooth()        # custom split normals need smooth shading
+    acc = [mathutils.Vector((0.0, 0.0, 0.0)) for _ in me.vertices]
+    for poly in me.polygons:
+        contrib = poly.normal * poly.area          # AREA weighting is the point
+        for vi in poly.vertices:
+            acc[vi] += contrib
+    for i, n in enumerate(acc):
+        if n.length > 1e-9:
+            acc[i] = n.normalized()
+        else:                            # degenerate: fall back to the mesh normal
+            acc[i] = me.vertices[i].normal.copy()
+    me.normals_split_custom_set_from_vertices(acc)
+    return obj
+
+
+def _pier_bevel(obj, width=0.014, segments=2):
+    """An engaged pier: bevel the UPRIGHT arrises only (see @ref _stone_bevel),
+    leaving the horizontal bed joints crisp."""
+    return _stone_bevel(obj, width=width, segments=segments, vertical_only=True)
+
+
+def _dais_bevel(obj, width=0.008, segments=2, angle_deg=40.0):
+    """A free-standing dressed block -- the dais platform, a step, a plinth
+    course: bevel EVERY arris (the tread nosings matter as much as the uprights)
+    with the same applied-bevel + face-weighted-normal treatment as the piers."""
+    return _stone_bevel(obj, width=width, segments=segments,
+                        vertical_only=False, angle_deg=angle_deg)
 
 
 def assign_dais_material(col, bake_dir, name="great_hall_floor_stone"):

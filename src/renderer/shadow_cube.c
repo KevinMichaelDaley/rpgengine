@@ -8,7 +8,6 @@
 
 #include "ferrum/math/mat4.h"
 #include "ferrum/math/vec3.h"
-#include "ferrum/renderer/cull/frustum_cull.h"
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 
@@ -156,7 +155,7 @@ void shadow_cube_clear(shadow_cube_t *sc)
 }
 
 void shadow_cube_render_light(shadow_cube_t *sc, const render_scene_t *scene,
-                              const float light_pos[3], uint32_t slot, float range)
+                              const float light_pos[3], uint32_t slot)
 {
     if (sc == NULL || scene == NULL || light_pos == NULL || slot >= sc->max_lights)
         return;
@@ -178,15 +177,10 @@ void shadow_cube_render_light(shadow_cube_t *sc, const render_scene_t *scene,
         vp = mat4_mul(proj, view);
         shader_uniform_set_mat4(&sc->cache, &sc->shader, SC_FACEVP[f], vp.m, 0);
     }
-    /* One INSTANCED draw per submesh: 6 instances -> 6 faces (VS routes gl_Layer).
-     * Range-cull casters outside the light's reach (rpg-9u96): a mesh farther than
-     * `range` from the light contributes nothing to its shadow. */
+    /* One INSTANCED draw per submesh: 6 instances -> 6 faces (VS routes gl_Layer). */
     for (uint32_t i = 0; i < scene->count; ++i) {
         const render_renderable_t *r = &scene->items[i];
         if (r->mesh == NULL)
-            continue;
-        if (sphere_cull_aabb(light_pos, range, r->model,
-                             r->mesh->aabb_min, r->mesh->aabb_max))
             continue;
         shader_uniform_set_mat4(&sc->cache, &sc->shader, "u_model", r->model, 0);
         static_mesh_bind(r->mesh);

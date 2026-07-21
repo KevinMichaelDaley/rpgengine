@@ -9,10 +9,50 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "ferrum/renderer/cull/frustum_cull.h"
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 
+
+/* Extract the 6 frustum planes (Gribb-Hartmann) from a column-major light MVP,
+ * each normalised so plane.dot(p) is a signed distance. */
+static void csm_extract_planes(const float m[16], float pl[6][4])
+{
+    /* rows of the matrix: row_r = (m[r], m[4+r], m[8+r], m[12+r]). */
+    for (int i = 0; i < 6; ++i) {
+        int r = i >> 1;             /* 0=x,1=y,2=z plane pair */
+        float s = (i & 1) ? -1.0f : 1.0f;  /* + = left/bottom/near, - = right/top/far */
+        for (int k = 0; k < 4; ++k)
+            pl[i][k] = m[k*4 + 3] + s * m[k*4 + r];
+        float n = sqrtf(pl[i][0]*pl[i][0] + pl[i][1]*pl[i][1] + pl[i][2]*pl[i][2]);
+        if (n > 1e-8f) for (int k = 0; k < 4; ++k) pl[i][k] /= n;
+    }
+}
+
+/* True if the mesh's world AABB (from its local AABB * model) is fully outside
+ * any cascade plane -> can be skipped for this cascade's shadow pass. Uses the
+ * exact AABB-vs-plane "positive vertex" test (tight, no sphere approximation). */
+static int csm_cull(const float pl[6][4], const float model[16],
+                    const float lmin[3], const float lmax[3])
+{
+    float wmin[3] = { 1e30f,1e30f,1e30f }, wmax[3] = { -1e30f,-1e30f,-1e30f };
+    for (int c = 0; c < 8; ++c) {
+        float lc[3] = { (c&1)?lmax[0]:lmin[0], (c&2)?lmax[1]:lmin[1], (c&4)?lmax[2]:lmin[2] };
+        for (int r = 0; r < 3; ++r) {
+            float w = model[0*4+r]*lc[0] + model[1*4+r]*lc[1] + model[2*4+r]*lc[2] + model[3*4+r];
+            if (w < wmin[r]) wmin[r] = w;
+            if (w > wmax[r]) wmax[r] = w;
+        }
+    }
+    for (int i = 0; i < 6; ++i) {
+        /* positive vertex: the AABB corner farthest along this plane's normal. */
+        float px = pl[i][0] >= 0.0f ? wmax[0] : wmin[0];
+        float py = pl[i][1] >= 0.0f ? wmax[1] : wmin[1];
+        float pz = pl[i][2] >= 0.0f ? wmax[2] : wmin[2];
+        if (pl[i][0]*px + pl[i][1]*py + pl[i][2]*pz + pl[i][3] < 0.0f)
+            return 1; /* even the nearest corner is behind the plane -> outside */
+    }
+    return 0;
+}
 
 /* Draw scene items [from, to) into the cascade whose light MVP is @p vp. When
  * @p cascade_filter >= 0 only casters CLASSIFIED into that cascade are drawn (so
@@ -23,7 +63,7 @@ static void csm_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
                            int cascade_filter)
 {
     float planes[6][4];
-    frustum_extract_planes(vp, planes);
+    csm_extract_planes(vp, planes);
     uint32_t drawn = 0, total = 0;
     for (uint32_t i = from; i < to; ++i) {
         const render_renderable_t *r = &scene->items[i];
@@ -35,7 +75,7 @@ static void csm_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
         if (cascade_filter >= 0 &&
             shadow_csm_cascade_of(csm, r) != (uint32_t)cascade_filter)
             continue;
-        if (frustum_cull_aabb(planes, r->model, r->mesh->aabb_min, r->mesh->aabb_max))
+        if (csm_cull(planes, r->model, r->mesh->aabb_min, r->mesh->aabb_max))
             continue;
         ++drawn;
         shader_uniform_set_mat4(&csm->cache, &csm->shader, "u_model", r->model, 0);

@@ -52,9 +52,6 @@ typedef struct client_light_stream_config {
     uint32_t            n_meshes;     /**< scene mesh count (per-mesh chunk/rect). */
     size_t              ram_budget;   /**< RAM residency budget in bytes (0=unbounded). */
     size_t              vram_budget;  /**< VRAM residency budget in bytes (0=disabled). */
-    int                 sdf_resident_slots; /**< fine-SDF GPU pool slots (0 -> 8; <= 16). */
-    int                 sdf_fp16;     /**< 1 = RGBA16F SDF chunk textures (half VRAM). */
-    int                 lm_fp16;      /**< 1 = RGB16F lightmap SH pages (half VRAM). */
 } client_light_stream_config_t;
 
 /** A lightmap SH chunk streamer. Fields are read-only from outside. */

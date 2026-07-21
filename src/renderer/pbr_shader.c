@@ -449,36 +449,12 @@ static const char *const PBR_FS =
     "      ivec3 gc=min(g0+o, gdim-ivec3(1));\n"
     "      int probe=(gc.z*gdim.y + gc.y)*gdim.x + gc.x;\n"
     /* Sky openness interpolated by the plain trilinear (spatial) weight. */
-
+    "      skyacc+=w*probe_sky(probe); wtri+=w;\n"
     /* Visibility weight: cut probes the fragment can't see (behind geometry from\n"
      * the probe) so their irradiance doesn't leak through walls. */
     "      vec3 ppos=u_probe_grid_origin + vec3(gc)*u_probe_grid_cell;\n"
     "      vec3 pd=wp_b-ppos; float pl=length(pd);\n"
-    /* SQUARED Chebyshev, NO floor. max(vis, 0.02) guaranteed every probe >= 2%,\n"
-     * and a sunlit exterior probe is 50-100x interior brightness -- 2% of it\n"
-     * re-lit interior wall bases from outside. Squaring keeps open pairs ~1 and\n"
-     * cuts soft through-wall transmission quadratically. */
-    /* Small floor (0.015, vs the old 0.02 pre-square) so a probe never hits an\n"
-     * exact zero: with hard zeros, the trilinear cell boundary becomes a visible\n"
-     * seam on indirect-lit faces (the vertical scuff down shadow-side piers). The\n"
-     * sky/ao terms are gated separately now, so the residual through-wall term is\n"
-     * ~0.5% -- imperceptible -- while transitions blend again. */
-    /* Shaped visibility: ~v in the open/midtone range (no darkening band where\n"
-     * the Chebyshev transition zone crosses a face -- the pier scuff), crushed\n"
-     * hard below ~0.45 (the through-wall tail -- the leak). No additive floor:\n"
-     * floors re-admit occluded sun-bright probes. */
-    "      if(pl>1e-4){ float v=probe_vis(probe, pd/pl, pl); w*=v*smoothstep(0.0,0.45,v); }\n"
-    /* Fragment-side hemisphere wrap (DDGI): probes behind the fragment's own\n"
-     * surface are discounted; probes above a floor fragment keep full weight. */
-    "      if(pl>1e-4){ float wn=clamp(dot(nn,-pd/pl)*0.5+0.5, 0.0, 1.0); w*=wn*wn+0.05; }\n"
-    /* Sky openness with the SAME occlusion-gated weight as the irradiance. The\n"
-     * old plain-trilinear accumulation let exterior probes (openness ~1) push sky\n"
-     * through walls: a sky-tinted ambient stripe along interior wall bases (x1.0\n"
-     * on floors via 0.5+0.5*N.y) AND an ao_o = mix(1, gi_sky, ao_mult) boost of\n"
-     * ALL indirect there -- the floor leak visible in the composed frame but in\n"
-     * neither the probe-irradiance (7) nor the CSM (13) debug views. Enclosed\n"
-     * fragments now keep sky_ao = 0 (no sky is correct indoors). */
-    "      skyacc+=w*probe_sky(probe); wtri+=w;\n"
+    "      if(pl>1e-4) w*=max(probe_vis(probe, pd/pl, pl), 0.02);\n"
     "      if(w<=0.0) continue; wsum+=w;\n"
     "      int base=probe*6;\n"
     "      dR+=texelFetch(u_probe_sh,base+0)*w; dG+=texelFetch(u_probe_sh,base+1)*w; dB+=texelFetch(u_probe_sh,base+2)*w;\n"
@@ -534,12 +510,6 @@ static const char *const PBR_FS =
     "  ivec3 g0=ivec3(floor(g)); vec3 fr=g-vec3(g0);\n"
     "  vec3 acc=vec3(0.0); float wsum=0.0;\n"
     "  float rw=clamp(1.0-rough, 0.05, 1.0);\n"        /* roughness -> lobe narrowing. */
-    /* Rough surfaces get their indirect from the (occlusion-gated) DIFFUSE SH;\n"
-     * fading the SG term out with roughness stops a sun-bright lobe from arriving\n"
-     * as an isotropic wash (keff -> 0 made exp() ~ 1 in every direction -- the\n"
-     * wall-base floor leak). Glossy surfaces keep their reflection. */
-    "  float spec_fade = (1.0-rough)*(1.0-rough);\n"
-    "  if(spec_fade < 1e-3) return vec3(0.0);\n"
     "  for(int c=0;c<8;++c){\n"
     "    ivec3 o=ivec3(c&1,(c>>1)&1,(c>>2)&1);\n"
     "    vec3 wv=mix(vec3(1.0)-fr, fr, vec3(o)); float w=wv.x*wv.y*wv.z; if(w<=0.0) continue;\n"
@@ -548,22 +518,20 @@ static const char *const PBR_FS =
      * leak their reflection onto surfaces they don't see. */
     "    vec3 ppos=u_probe_grid_origin + vec3(gc)*u_probe_grid_cell;\n"
     "    vec3 pd=wp_b-ppos; float pl=length(pd);\n"
-    "    if(pl>1e-4){ float v=probe_vis(probe, pd/pl, pl); w*=v*smoothstep(0.0,0.45,v);\n"
-    "      float wn=clamp(dot(nn,-pd/pl)*0.5+0.5, 0.0, 1.0); w*=wn*wn+0.05; }\n"
+    "    if(pl>1e-4) w*=max(probe_vis(probe, pd/pl, pl), 0.02);\n"
     "    if(w<=0.0) continue;\n"
     /* Sum the probe's 3 SG lobes evaluated along R (multi-lobe: fire + windows). */
     "    vec3 lobesum=vec3(0.0);\n"
     "    for(int L=0;L<u_gi_spec_lobes;++L){\n"
     "      vec4 a=texelFetch(u_probe_sg, (probe*3+L)*2+0);\n"   /* axis.xyz, kappa. */
     "      vec4 b=texelFetch(u_probe_sg, (probe*3+L)*2+1);\n"   /* rgb, pad. */
-    "      float keff=max(a.w*rw, 1.5);\n"   /* never fully isotropic. */                                /* rougher -> lower sharpness. */
+    "      float keff=a.w*rw;\n"                                /* rougher -> lower sharpness. */
     "      vec3 ax=normalize(a.xyz);\n"                         /* temporal blend shortens it. */
     "      lobesum += b.rgb*exp(keff*(dot(R, ax)-1.0));\n"
     "    }\n"
     "    acc+=w*lobesum; wsum+=w;\n"
     "  }\n"
     "  if(wsum>1e-5) acc/=wsum;\n"
-    "  acc*=spec_fade;\n"
     "  return acc*u_gi_spec_gain;\n"
     "}\n"
     "void main() {\n"
@@ -655,8 +623,6 @@ static const char *const PBR_FS =
     "                               u_light_cos_outer[i], N,V,albedo,rough,metal,F0);\n"
     "  }\n"
     "  if(u_debug_mode==12){ frag=vec4(direct,1.0); return; }\n"  /* sun + clustered punctual (debug). */
-    /* 13: the CSM sun-shadow factor alone (union over cascades + dynamic map). */
-    "  if(u_debug_mode==13){ float sv=pbr_csm_shadow(v_world_pos, krot); frag=vec4(vec3(sv),1.0); return; }\n"
     "  if(u_debug_mode==8){ frag=vec4(vec3(dbg_cubesh),1.0); return; }\n"
     "  if(u_debug_mode==1){ frag=vec4(texture(u_sh0,SHUV).rgb,1.0); return; }\n"
     "  if(u_debug_mode==2){ frag=vec4(max(pbr_sh_irradiance(N),vec3(0.0)),1.0); return; }\n"

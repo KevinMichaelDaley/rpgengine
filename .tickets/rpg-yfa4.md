@@ -1,6 +1,6 @@
 ---
 id: rpg-yfa4
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-15T23:21:18Z

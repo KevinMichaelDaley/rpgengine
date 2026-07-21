@@ -41,9 +41,14 @@ paths = ns["bake_wall"](
     width=W, height=H, res=RES, seed=SEED, out_dir=OUT, device=DEVICE,
     name="stone_floor", builder="build_floor",
     build_kw={
-        # Clean square paving, hand-set look, uneven settled height.
-        "gap": 0.006, "tile_aspect": 1, "offset_jitter": 0.0,
-        "rot_deg": 1.0, "depth_var": 0.02,
+        # HAND-SET paving, not a machine-cut grid. rot_deg 1 deg + zero jitter
+        # read as a printed tile sheet; a mason setting flags by eye leaves each
+        # stone a few degrees off square and a centimetre off the grid node, and
+        # that irregularity is most of what makes stone paving look real.
+        # (build_floor shrinks each stone by 1/(|cos|+|sin|) so the larger
+        # rotation still cannot poke a corner across the joint.)
+        "gap": 0.008, "tile_aspect": 1, "offset_jitter": 0.014,
+        "rot_deg": 4.0, "depth_var": 0.028,
     },
 )
 print("[floor] baked ->", OUT, flush=True)

@@ -283,54 +283,6 @@ extern "C" {
 #ifndef GL_R32I
 #define GL_R32I 0x8235
 #endif
-#ifndef GL_RG32I
-#define GL_RG32I 0x823B
-#endif
-
-/* fp16 colour formats (shadow / lightmap / SDF format-shrink, rpg-jj8j/3exi/iz57).
- * RGB16F/RGBA16F are defined above; add the 1- and 2-channel variants. */
-#ifndef GL_R16F
-#define GL_R16F 0x822D
-#endif
-#ifndef GL_RG16F
-#define GL_RG16F 0x822F
-#endif
-/* Packed HDR alternatives for the static GI volume (rpg-iz57). */
-#ifndef GL_RGB9_E5
-#define GL_RGB9_E5 0x8C3D
-#endif
-#ifndef GL_R11F_G11F_B10F
-#define GL_R11F_G11F_B10F 0x8C3A
-#endif
-/* 16-bit depth for transient shadow depth attachments (rpg-jj8j). */
-#ifndef GL_DEPTH_COMPONENT16
-#define GL_DEPTH_COMPONENT16 0x81A5
-#endif
-
-/* BC / S3TC + RGTC compressed material formats (rpg-wcc4). S3TC needs
- * EXT_texture_compression_s3tc; RGTC is core since GL 3.0. Probe the extension
- * before use -- these are the enum values only. */
-#ifndef GL_COMPRESSED_RGB_S3TC_DXT1_EXT
-#define GL_COMPRESSED_RGB_S3TC_DXT1_EXT 0x83F0        /* BC1, no alpha */
-#endif
-#ifndef GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
-#define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT 0x83F1       /* BC1, 1-bit alpha */
-#endif
-#ifndef GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
-#define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3       /* BC3 */
-#endif
-#ifndef GL_COMPRESSED_SRGB_S3TC_DXT1_EXT
-#define GL_COMPRESSED_SRGB_S3TC_DXT1_EXT 0x8C4C
-#endif
-#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
-#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
-#endif
-#ifndef GL_COMPRESSED_RED_RGTC1
-#define GL_COMPRESSED_RED_RGTC1 0x8DBB                /* BC4, single channel */
-#endif
-#ifndef GL_COMPRESSED_RG_RGTC2
-#define GL_COMPRESSED_RG_RGTC2 0x8DBD                 /* BC5, two channel (normals) */
-#endif
 #ifndef GL_LINEAR_MIPMAP_LINEAR
 #define GL_LINEAR_MIPMAP_LINEAR 0x2703
 #endif

@@ -68,7 +68,8 @@ typedef struct gi_probe_gpu {
     unsigned int prog;         /**< compute program. */
     /* Cached uniform locations (queried ONCE at init). The staggered path
      * dispatches every frame, so per-dispatch glGetUniformLocation string lookups
-     * (~55 of them) add up; cache them. sdf_* arrays are sized GI_SDF_MAX_RESIDENT. */
+     * (~55 of them) add up; cache them. sdf_* arrays are sized GI_SDF_MAX_RESIDENT
+     * (8). */
     struct { int nprobes, nlights, nboxes, soft, ncones, albedo, temporal;
              int ngroups, group, grid_dim, grid_origin, grid_cell;
              int field_on, near_dist, static_on, static_k, static_irr;
@@ -76,8 +77,7 @@ typedef struct gi_probe_gpu {
              int mis, norm_gate, hybrid, hero, stat_scale;
              int dyn_alb, dyn_origin, dyn_dim, dyn_vox, dyn_on;
              int static_origin, static_dim, static_vox;
-             int zone_on, zone_sdf, zone_origin, zone_dim, zone_vox;
-             int sdf_active[16], sdf[16], sdf_origin[16], sdf_dim[16], sdf_vox[16]; } loc;
+             int sdf_active[8], sdf[8], sdf_origin[8], sdf_dim[8], sdf_vox[8]; } loc;
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
     unsigned int b_lights, b_boxes; /**< dynamic light + box SSBOs. */
     unsigned int b_depth;      /**< DDGI octahedral depth SSBO (mean, meanSq / texel). */

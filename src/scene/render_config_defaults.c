@@ -51,16 +51,11 @@ void render_config_defaults(render_config_t *rc)
     /* Probe-GI tuning (formerly GI_* env only). */
     rc->gi_field = 1; rc->gi_mis = 0; rc->gi_hybrid = 0; rc->gi_hero = 2;
     rc->gi_samples = 24; rc->gi_spec_lobes = 2;
-    /* rpg-96ia: steady state = 1/(1-gain). 0.9 settled at ~10x (over-bright/
-     * cadence-dependent); every shipped config already used 0.45. */
-    rc->gi_bounce = 0.45f;
+    rc->gi_bounce = 0.9f;   /* NOTE steady state = 1/(1-gain): 0.9 settles at 10x. */
     rc->gi_near = 2.2f; rc->gi_dmax = 2.5f; rc->gi_emin = 0.02f;
     rc->gi_norm_gate = 0.75f; rc->gi_stat_scale = 1.0f;
     rc->gi_vis_bias = 0.30f; rc->gi_vis_varmin = 0.02f; rc->gi_vis_sharp = 1.0f;
-    /* rpg-96ia: low-end-safe engine defaults. 4xMSAA + 16x aniso are a heavy
-     * iGPU fill/fetch cost; levels that want them pin their own value (the
-     * discrete great_hall render.json now sets msaa 4 / aniso 16 explicitly). */
-    rc->aniso = 4.0f; rc->msaa = 2;
+    rc->aniso = 16.0f; rc->msaa = 4;
     rc->probe_spacing_scale = 1.0f;   /* 1 = descriptor spacing as authored. */
     /* Probe AABB inset (client nudges min.y up, max.y down to avoid floor/ceiling). */
     rc->gi_aabb_pad_lo[0] = 0.0f; rc->gi_aabb_pad_lo[1] = 0.3f; rc->gi_aabb_pad_lo[2] = 0.0f;
@@ -73,40 +68,4 @@ void render_config_defaults(render_config_t *rc)
     rc->sky_ao_color[1] = 0.18851f * 0.25f;
     rc->sky_ao_color[2] = 0.25879f * 0.25f;
     rc->sky_ao_ref = 5.0f; rc->sky_ao_mult = 0.6f;
-
-    /* Low-end performance knobs (rpg-vwyk / rpg-iplq). Every value below
-     * REPRODUCES today's behavior so a configless level is unchanged; presets
-     * and per-level overrides opt into cheaper rendering. */
-    rc->render_scale = 1.0f;            /* native resolution. */
-    rc->pbr_quality = 2;                /* full ubershader. */
-    rc->texture_quality = 0;            /* no mips dropped. */
-    rc->depth_prepass = -1;             /* auto: on when >1 renderable, as today. */
-
-    rc->shadow_fp16 = 0;                /* R32F shadow maps, as today. */
-    rc->shadow_update_interval = 0;     /* all cube-shadow slots every frame. */
-    rc->shadow_distance = 0.0f;         /* unlimited. */
-    rc->shadow_static_cache = 0;        /* re-render every frame, as today. */
-    rc->dir_pcf_taps = 8;               /* CSM 8-tap PCF, as today. */
-    rc->shadow_pcf_taps = 8;            /* point-shadow 8-tap, as today. */
-    rc->dir_dynamic_interval = 1;       /* dynamic CSM every frame. */
-
-    rc->lightmap_bands = 9;             /* full SH9, as today. */
-    rc->lm_fp16 = 0;                    /* RGB32F SH atlases, as today. */
-    rc->lm_resident_layers = 8;         /* CLIENT_LM_MAX_RESIDENT. */
-
-    rc->gi_dyn_voxel = 2;               /* voxelize every frame, as today. */
-    rc->gi_march_quality = 1.0f;        /* full march. */
-    rc->gi_frag_quality = 1;            /* full 8-corner probe gather. */
-    rc->gi_prepass_scale = 8;           /* w/8 visibility prepass, as today. */
-    rc->gi_probe_cap = 0;               /* unlimited probes per tick. */
-    rc->gi_adaptive_ms = 0.0f;          /* never skip a GI tick. */
-    rc->sdf_fp16 = 0;                   /* RGBA32F SDF chunks, as today. */
-    rc->sdf_resident_slots = 8;         /* as today. */
-    rc->sdf_uploads_per_frame = 0;      /* uncapped, as today. */
-
-    rc->stream_upload_mb_per_frame = 0; /* uncapped, as today. */
-    rc->stream_ram_budget_mb = 2048;    /* demo_client's hardcoded 2 GiB. */
-    rc->stream_vram_budget_mb = 2048;
-
-    rc->draw_distance = 0.0f;           /* unlimited. */
 }
