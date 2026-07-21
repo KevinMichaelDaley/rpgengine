@@ -400,6 +400,7 @@ BIN_HEADLESS += build/gi_probe_kernel_tests
 BIN_HEADLESS += build/gi_probe_sample_tests
 BIN_HEADLESS += build/gi_probe_place_tests
 BIN_HEADLESS += build/probe_brick_tests
+BIN_HEADLESS += build/probe_fixup_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests build/p004_gpu_cmd_queue_tests build/p004_gpu_registry_tests build/p004_shadow_slotmap_tests \
@@ -1183,6 +1184,9 @@ build/probe_tests: tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.
 
 build/probe_brick_tests: tests/probe/probe_brick_tests.c src/probe/place/probe_brick_place.c src/memory/arena_init.c src/memory/arena_alloc.c | build
 	$(CC) $(CFLAGS) tests/probe/probe_brick_tests.c src/probe/place/probe_brick_place.c src/memory/arena_init.c src/memory/arena_alloc.c -o $@ -lm
+
+build/probe_fixup_tests: tests/probe/probe_fixup_tests.c src/probe/place/probe_fixup_apply.c | build
+	$(CC) $(CFLAGS) tests/probe/probe_fixup_tests.c src/probe/place/probe_fixup_apply.c -o $@ -lm
 
 # Asset streaming manager + chunk table (rpg-nbp2). Headless: streamer + chunk
 # table + probe module (for the chunk->probe integration) + job system + memory.
