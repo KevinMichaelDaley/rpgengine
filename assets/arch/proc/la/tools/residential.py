@@ -705,7 +705,7 @@ def build_dingbat(p, rng):
     # tall, awning-opening) -- some dingbats punched a couple into each
     # gable end where the lot line allowed.
     side_wins = []
-    if p["side_windows"]:
+    if p["side_windows"] != 'none':
         for fc2 in (0.34, 0.66):
             yc2 = D * fc2
             side_wins.append((yc2 - 0.45, yc2 + 0.45))
@@ -855,7 +855,10 @@ def build_dingbat(p, rng):
             # up (posts carry the building) -- a real dingbat variant.
             if open_sides and u0 < cd - 1e-6 and zc0 < z_soffit - 1e-6:
                 return 'void'
-            if side_wins and in_pairs(u0, side_wins):
+            side_sel = p["side_windows"]
+            this_side = 'left' if sx < W / 2 else 'right'
+            if (side_wins and (side_sel == 'both' or side_sel == this_side)
+                    and in_pairs(u0, side_wins)):
                 for (sll2, _hh2) in upper_rows:
                     if abs(zc0 - (sll2 + 0.70)) < 1e-6:
                         return 'window_awning'
@@ -1253,7 +1256,10 @@ def build_dingbat(p, rng):
         # tread/riser strip between the stringers, inset 1 mm: its boundary
         # hides inside the joint but never lands on a stringer edge (the
         # auditor's 16 T-junctions per flight when coincident).
-        ix0, ix1 = x0 + st + 0.001, x1 - st - 0.001
+        # 6 mm channel reveal between strip and stringers (1 mm put the
+        # ground flight's first riser corners visually ON the stringer
+        # feet -- the same 'merged vertices' read as the old soffit).
+        ix0, ix1 = x0 + st + 0.006, x1 - st - 0.006
         dflip = y_to < y_from
 
         def qf(a, b, c, d):
@@ -1272,23 +1278,25 @@ def build_dingbat(p, rng):
                (ix1, ya2, zhi2), (ix0, ya2, zhi2))                      # riser
             qf((ix0, ya2, zhi2), (ix1, ya2, zhi2),
                (ix1, yb2, zhi2), (ix0, yb2, zhi2))                      # tread
-        # soffit: follows the footed bottom line, 1 mm proud, hidden
-        # between the stringers (the single sloped quad ran under grade).
-        # Ends pull in 1 mm along y so the corners never sit on the first/
-        # last riser's side edges.
+        # soffit: a RECESSED panel between the stringers -- 6 mm in from
+        # their faces, 20 mm above the footed bottom line. A 1 mm shadow
+        # copy of the stringer profile put its corners 1.4-3 mm from the
+        # stringer corners at every kink/end: in wireframe that read as
+        # doubled 'merged' vertices along the rails (user-hit).
         cover, depth = 0.06, 0.34
         rise_t = z_to - z_from
         t1 = min(0.45, (depth - cover - foot_base) / rise_t)
         t2 = max(0.55, 1.0 - (depth - cover - foot_top) / rise_t)
         ydir = 1.0 if y_to > y_from else -1.0
+        sx0f, sx1f = x0 + st + 0.006, x1 - st - 0.006
         ysf = [y_from + (y_to - y_from) * t for t in (0.0, t1, t2, 1.0)]
-        ysf[0] += 0.001 * ydir
-        ysf[3] -= 0.001 * ydir
-        bsf = [z_from - foot_base + 0.001, z_from - foot_base + 0.001,
-               z_to - foot_top + 0.001, z_to - foot_top + 0.001]
+        ysf[0] += 0.006 * ydir
+        ysf[3] -= 0.006 * ydir
+        bsf = [z_from - foot_base + 0.02, z_from - foot_base + 0.02,
+               z_to - foot_top + 0.02, z_to - foot_top + 0.02]
         for k4 in range(3):
-            qf((ix0, ysf[k4], bsf[k4]), (ix0, ysf[k4 + 1], bsf[k4 + 1]),
-               (ix1, ysf[k4 + 1], bsf[k4 + 1]), (ix1, ysf[k4], bsf[k4]))
+            qf((sx0f, ysf[k4], bsf[k4]), (sx0f, ysf[k4 + 1], bsf[k4 + 1]),
+               (sx1f, ysf[k4 + 1], bsf[k4 + 1]), (sx1f, ysf[k4], bsf[k4]))
 
     land_y0 = None
     for i in range(len(levels) - 1):
@@ -1299,7 +1307,7 @@ def build_dingbat(p, rng):
         land_y0 = y_arr + run + 0.003
         # flight A (outer lane): away from the building, base at the
         # walkway edge (grade for the first), TOP at the plate's near edge.
-        flight(laneA_x0, y_arr, land_y0 - 0.003, zb, zh,
+        flight(laneA_x0, y_arr, land_y0 - 0.006, zb, zh,
                0.0 if i == 0 else 0.12, 0.10)
         # half landing plate.
         lx0 = min(laneA_x0, laneB_x0)
@@ -1311,7 +1319,7 @@ def build_dingbat(p, rng):
         # plate, and board the upper flight from where you stand. (Basing
         # it at the FAR edge put every upper flight's first riser across
         # the plate from the arriving walker: consistently un-ascendable.)
-        flight(laneB_x0, land_y0 - 0.003, y_arr, zh, zt, 0.10, 0.12)
+        flight(laneB_x0, land_y0 - 0.006, y_arr, zh, zt, 0.10, 0.12)
 
     # four continuous posts carry the stacked half-landings, grade -> top.
     # UNDER the plate corners and embedded 20 mm into the underside --
@@ -1629,9 +1637,10 @@ SPEC = [
     dict(name="loggia_platform", type='BOOL', default=True,
          desc="Finished deck + solid railing; off = bare slab, but the "
               "steps get built anyway (they always were)"),
-    dict(name="side_windows", type='BOOL', default=False,
-         desc="Small high awning sashes on the gable ends (two per side "
-              "per upper floor)"),
+    dict(name="side_windows", type='ENUM', default='none',
+         items=('none', 'left', 'right', 'both'),
+         desc="Small high awning sashes on the gable ends (two per upper "
+              "floor), per side"),
     # story options (rule 3) -- off by default, thematically coherent.
     dict(name="all_broken", type='BOOL', default=False,
          desc="Abandonment: every window shattered, many boarded"),
