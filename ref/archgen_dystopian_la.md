@@ -11,6 +11,30 @@ Reference photo set: `assetsrc/ref/la/` (12 categories, gathered + curated
 
 ---
 
+## 0. MODELING QUALITY BAR (non-negotiable)
+
+None of this is to be done with simplified blockouts or bare primitives — no
+corner-cutting anywhere. Every generator emits **production topology from the
+first commit**:
+
+- **All-quad meshes.** No n-gons; triangles only where genuinely unavoidable.
+  No mesh errors: non-manifold edges, zero-area faces, doubled verts — none.
+- **No T-junctions.** Adjoining parts share vertices or keep clean separate
+  shells; a face edge never lands mid-edge of a neighbour.
+- **Good edge flow.** Loops follow the form: openings (windows/doors/carport
+  voids) get complete surrounding face loops; bevels get holding edges; poles
+  (3- and 5-valence verts) are steered away from visible flats via standard
+  reroutes (diamonds/spirals), never dumped as triangles.
+- **When in doubt, draw the topology FIRST**: an ASCII diagram of the edge
+  loops around each opening/corner/transition, referencing common 3D-modeling
+  practice, goes into the module docstring (and the ticket) before any bmesh
+  code is written.
+- **Programmatic validation** in every generator's smoke check: quad
+  percentage, manifoldness, no doubles, junction audit.
+- **Interactive wireframe sign-off**: every tool ticket's acceptance includes
+  displaying the result to the user and getting approval of the wireframes in
+  a live session before close.
+
 ## 1. The workflow contract (the catch)
 
 Every generator ships as a **`bpy.types.Operator`** the user picks from a menu,

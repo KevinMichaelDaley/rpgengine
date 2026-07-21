@@ -4,7 +4,7 @@ status: open
 deps: []
 links: []
 created: 2026-07-21T07:44:10Z
-type: feature
+type: epic
 priority: 2
 assignee: KMD
 ---
