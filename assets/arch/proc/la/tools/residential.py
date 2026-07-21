@@ -701,8 +701,17 @@ def build_dingbat(p, rng):
                 ({carport_end, min(carport_end + wt0, W)} if cb < cols else set()) |
                 (({lg0, lg1, max(lg0 - wt0, 0.0), min(lg1 + wt0, W)} |
                   set(loggia_door)) if lg0 is not None else set()))
+    # optional small HIGH side windows (bath-sash proportions, wider than
+    # tall, awning-opening) -- some dingbats punched a couple into each
+    # gable end where the lot line allowed.
+    side_wins = []
+    if p["side_windows"]:
+        for fc2 in (0.34, 0.66):
+            yc2 = D * fc2
+            side_wins.append((yc2 - 0.45, yc2 + 0.45))
     yl = sorted({0.0, cd, D, t, D - t} |
-                ({wt0, ld, ld + wt0} if lg_walkup else set()))
+                ({wt0, ld, ld + wt0} if lg_walkup else set()) |
+                {v for pr in side_wins for v in pr})
 
     shell = _Shell()
 
@@ -846,6 +855,10 @@ def build_dingbat(p, rng):
             # up (posts carry the building) -- a real dingbat variant.
             if open_sides and u0 < cd - 1e-6 and zc0 < z_soffit - 1e-6:
                 return 'void'
+            if side_wins and in_pairs(u0, side_wins):
+                for (sll2, _hh2) in upper_rows:
+                    if abs(zc0 - (sll2 + 0.70)) < 1e-6:
+                        return 'window_awning'
             return 'wall'
         return classify
 
@@ -901,8 +914,17 @@ def build_dingbat(p, rng):
             for iu in range(len(cxl) - 1):
                 x0, x1 = cxl[iu], cxl[iu + 1]
                 y0, y1 = soffit_y[iy], soffit_y[iy + 1]
-                liner.quad((x0, y0, z_soffit), (x1, y0, z_soffit),
-                           (x1, y1, z_soffit), (x0, y1, z_soffit), M_CONCRETE)
+                if (lg0 is not None and x0 >= lg0 - 1e-6 and
+                        x1 <= lg1 + 1e-6 and y1 <= ld + 1e-6):
+                    # the loggia's DROPPED slab replaces the structure here
+                    # (its top is exactly coplanar with this plane -- the
+                    # z-fighting on every walk-up loggia floor); its 12 cm
+                    # reveal reads as the dropped slab it is.
+                    continue
+                # ceiling: faces DOWN into the carport (it rendered as a
+                # backface from below).
+                liner.quad((x0, y0, z_soffit), (x0, y1, z_soffit),
+                           (x1, y1, z_soffit), (x1, y0, z_soffit), M_CONCRETE)
         if cb < cols:
             # SUPPORT where the carport ends: a return wall from the facade
             # to the recessed wall -- even dingbats didn't go that cheap.
@@ -1140,8 +1162,17 @@ def build_dingbat(p, rng):
         for i in range(n_posts):
             x = margin + (span_hi - margin) * (i / (n_posts - 1))
             x = min(max(x, px), W - px)
+            # posts under the loggia's DROPPED slab stop at ITS underside
+            # (embedded 20 mm) -- run to the soffit plane they'd spear the
+            # slab and z-fight its top face.
+            ptop = z_soffit
+            if (lg0 is not None and x + px / 2 > lg0 + 1e-6 and
+                    x - px / 2 < lg1 - 1e-6):
+                # OVERLAP test, not containment: the boundary-straddling
+                # post still touched the slab-top plane with its corner.
+                ptop = lo_t - 0.10
             _box(posts, (x - px / 2, 0.30, 0.0),
-                 (x + px / 2, 0.30 + px, z_soffit), M_METAL)
+                 (x + px / 2, 0.30 + px, ptop), M_METAL)
         post_ob = posts.to_object("LA_Dingbat_Posts", mats)
 
     # ---- rear stair tower: stringer-carried flights + posted landings (see
@@ -1598,6 +1629,9 @@ SPEC = [
     dict(name="loggia_platform", type='BOOL', default=True,
          desc="Finished deck + solid railing; off = bare slab, but the "
               "steps get built anyway (they always were)"),
+    dict(name="side_windows", type='BOOL', default=False,
+         desc="Small high awning sashes on the gable ends (two per side "
+              "per upper floor)"),
     # story options (rule 3) -- off by default, thematically coherent.
     dict(name="all_broken", type='BOOL', default=False,
          desc="Abandonment: every window shattered, many boarded"),
