@@ -135,3 +135,9 @@ arrival; its own posts land under the extension edge.
 
 Every flight element repeats per storey; stringers/strips/posts are separate
 clean shells; the auditor gates: all-quad, no T-junction, no doubles, UVs.
+
+## Notes
+
+**2026-07-21T22:42:22Z**
+
+Detail items split into follow-up tickets so A1 can close on wireframe sign-off of the built scope: rpg-gus3 (A1.1 cursive nameplate, text/SVG), rpg-vhvf (A1.2 facade applique sets), rpg-fwed (A1.3 address numerals), rpg-caur (A1.4 stair/walkway railings). Built + user-iterated in-scope: shell/carport(partial+open-side)/loggias(walkup corner + catwalk + skippable platform)/scissor stairs/rear walkway both modes/plan-driven fenestration/per-side gable sashes/awning+AC fit gates/story options.
