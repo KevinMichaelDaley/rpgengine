@@ -48,7 +48,7 @@ MODE_PARAM = dict(name="mode", type='ENUM', default='facade',
 VGROUPS = ("facade_front", "facade_back", "facade_side", "windows", "doors",
            "parapet", "roof", "carport", "steps", "awnings", "ac_units",
            "interior_walls", "partitions", "slabs", "columns", "walkway",
-           "story")
+           "loggia", "story")
 
 #: idname -> dict(idname, label, family, build, spec). Declaration order is
 #: preserved and drives menu order within a family.
