@@ -1209,7 +1209,11 @@ def build_dingbat(p, rng):
         sorted version inverted the kinks on descending flights and grew
         the solid past both ends). Hexagon profile: 3 top / 3 bottom /
         3-per-side / 2 end quads, all planar; winding flips with y."""
-        cover, depth = 0.06, 0.34
+        # 0.22 m channel depth: at stair slope the end clip (rising from
+        # full depth to the platform underside) spans depth/slope -- the
+        # old 0.34 m made a 24 cm sliver taper that read as 'super
+        # compressed' at every flight top; 0.22 m clips in ~8 cm.
+        cover, depth = 0.06, 0.22
         rise_t = z_top - z_base
         t1 = min(0.45, (depth - cover - foot_lo) / rise_t)
         t2 = max(0.55, 1.0 - (depth - cover - foot_hi) / rise_t)
@@ -1283,7 +1287,7 @@ def build_dingbat(p, rng):
         # copy of the stringer profile put its corners 1.4-3 mm from the
         # stringer corners at every kink/end: in wireframe that read as
         # doubled 'merged' vertices along the rails (user-hit).
-        cover, depth = 0.06, 0.34
+        cover, depth = 0.06, 0.22
         rise_t = z_to - z_from
         t1 = min(0.45, (depth - cover - foot_base) / rise_t)
         t2 = max(0.55, 1.0 - (depth - cover - foot_top) / rise_t)
