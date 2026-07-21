@@ -1,6 +1,6 @@
 ---
 id: rpg-qdr5
-status: open
+status: in_progress
 deps: [rpg-gh2z, rpg-5ljd]
 links: []
 created: 2026-07-21T09:32:50Z
@@ -19,3 +19,71 @@ ferrum.la_dingbat per ref/archgen_dystopian_la.md A1: body with carport void, ex
 ## Acceptance Criteria
 
 Acceptance: (1) build_* passes the programmatic topology validation; (2) redo-panel operator with every kwarg as a property, seeded determinism; (3) DISPLAY TO USER: have the user sign off on the wireframes after viewing them interactively in a live Blender session.
+
+## Topology plan (drawn before code, per quality bar)
+
+GLOBAL GRID STRATEGY: the shell is ONE welded bmesh whose loop lines are
+shared globally -- horizontal Z-levels run around all four walls (so wall
+grids weld at corners with plain 4-valence verts), X/Y lines carry every
+window jamb. Openings are grid CELLS, never booleans.
+
+Z-levels (floors=2):
+  z8 5.55  ---------------------------  parapet top (cap ring)
+  z7 5.15  --------------------------   roof plane (inset)
+  z6 4.85  ---[head F2]---
+  z5 3.65  ---[sill F2]---
+  z4 2.75  ---------------------------  slab top / fascia bottom
+  z3 2.45  ---------------------------  carport soffit / slab underside
+  z2 2.10  ---[head F1]--- (rear/side walls only)
+  z1 0.90  ---[sill F1]---
+  z0 0.00  grade
+
+FRONT FACADE (viewer facing -Y), width W, window_cols=4, carport full-width
+between end piers (P = margin piers, carry ground load visually):
+
+      x0  xa  j1a j1b  j2a j2b  j3a j3b  j4a j4b  xb  xW     <- shared X lines
+  z8  +---+----+---+----+---+----+---+----+---+----+---+
+      |   |    |   |    |   |    |   |    |   |    |   |     parapet band
+  z6  +---+----+===+----+===+----+===+----+===+----+---+
+      |   |    |win|    |win|    |win|    |win|    |   |     F2 window row
+  z5  +---+----+===+----+===+----+===+----+===+----+---+
+      |   |    |   |    |   |    |   |    |   |    |   |     spandrel
+  z4  +---+----+---+----+---+----+---+----+---+----+---+
+      |   |                 fascia                 |   |     slab edge band
+  z3  +---+----+---+----+---+----+---+----+---+----+---+
+      | P |///////////  CARPORT VOID  /////////////| P |     no faces: the
+  z0  +---+  o    o    o    o    o    (posts)      +---+     boundary loop
+                                                              rings the void
+  o = square posts (separate closed shells, 6 quads each)
+
+WINDOW CELL (all cells identical; 4-valence corners only):
+
+   cell corner (shared with wall grid)
+      +--------------------+
+      |   frame ring quad  |      outer ring: wall plane
+      |  +--------------+  |      inner ring: recessed -0.08 in Y
+      |  | jamb quads   |  |      ring->pane: 4 jamb quads (3D return)
+      |  |  +--------+  |  |
+      |  |  | pane Q |  |  |      pane: 1 quad (glass material slot)
+      |  |  +--------+  |  |
+      |  +--------------+  |
+      +--------------------+
+
+CARPORT SECTION (side view, +Y into page):
+                       front wall F2
+  z4 ----------------+=================
+  z3   soffit quads  |  fascia band     soffit grid shares X lines with
+     +---------------+                  facade; meets recessed ground wall
+     |   (grid y: 0..cd)                at shared verts (no T-junction)
+  z0-+----[recessed wall + unit doors at y=cd]----
+
+PARAPET (plan corner): outer wall rises z7->z8, cap ring (1 quad wide),
+inner drop z8->z7, roof plane inset -- corner verts 4-valence throughout.
+
+STAIR (switchback, separate shells): each step a closed 6-quad box; two
+stringer plates (thin boxes); landing box; rail = square posts + quad-strip
+handrail. No sawtooth end-caps (they would be L-shaped ngons).
+
+Shells inventory: [body(walled+soffit+roof, ONE manifold-with-boundary mesh),
+posts xN, stair steps, stringers, landing, rails, awnings (open quad strips),
+AC boxes]. Auditor must report: 100% quads, 0 T-junction, 0 doubles.
