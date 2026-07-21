@@ -628,15 +628,48 @@ def build_dingbat(p, rng):
                      (xb + pt / 2, iy1 - 0.002, zhi - 0.001), M_GYPSUM)
 
         # unit floor plans: dingbats rotated a few STANDARD plans -- none
-        # were a bare square with no bathroom. P0 studio (bath box + kitchen
-        # stub), P1 one-bed (bedroom wall w/ doorway + bath), P2 = P1
-        # mirrored. Walls are thin boxes with real doorway gaps; rotation is
-        # per-unit and seeded.
-        def wall_x(parts2, x, ya2, yb2, zlo, zhi):
-            _box(parts2, (x - 0.045, ya2, zlo), (x + 0.045, yb2, zhi), M_GYPSUM)
+        # were a bare square with no bathroom. P0 studio, P1 one-bed, P2
+        # mirrored one-bed, seeded per unit. RULES OF THE WALLS:
+        #  - interior doorways are FRAMED: wall / opening (0.76) / wall,
+        #    with a HEADER box above the 2.03 m head line -- never a
+        #    floor-to-ceiling gap between stubs;
+        #  - the bathroom is an interior ISLAND against the party wall at
+        #    mid-depth, so its walls can never intersect facade windows
+        #    (the front-corner placement clipped straight through them).
+        DOOR_W, DOOR_H = 0.78, 2.03
 
-        def wall_y(parts2, y, xa2, xb2, zlo, zhi):
-            _box(parts2, (xa2, y - 0.045, zlo), (xb2, y + 0.045, zhi), M_GYPSUM)
+        def wall_x(x, ya2, yb2, zlo, zhi):
+            if yb2 - ya2 > 0.05:
+                _box(parts, (x - 0.045, ya2, zlo), (x + 0.045, yb2, zhi),
+                     M_GYPSUM)
+
+        def wall_y(y, xa2, xb2, zlo, zhi):
+            if xb2 - xa2 > 0.05:
+                _box(parts, (xa2, y - 0.045, zlo), (xb2, y + 0.045, zhi),
+                     M_GYPSUM)
+
+        def doored_wall_y(y, xa2, xb2, door_at, zlo, zhi):
+            """Wall along x at @p y with a FRAMED doorway: two full-height
+            segments + a header above the opening."""
+            g0 = max(xa2, min(door_at, xb2 - DOOR_W))
+            g1 = g0 + DOOR_W
+            wall_y(y, xa2, g0, zlo, zhi)
+            wall_y(y, g1, xb2, zlo, zhi)
+            zh_door = min(zlo + DOOR_H, zhi - 0.05)
+            # header overlaps 3 cm INTO the segments with a hair-thinner
+            # profile: coincident planes weld into non-manifold soup and
+            # land corners on segment edges (auditor-caught).
+            _box(parts, (g0 - 0.03, y - 0.043, zh_door),
+                 (g1 + 0.03, y + 0.043, zhi - 0.003), M_GYPSUM)
+
+        def doored_wall_x(x, ya2, yb2, door_at, zlo, zhi):
+            g0 = max(ya2, min(door_at, yb2 - DOOR_W))
+            g1 = g0 + DOOR_W
+            wall_x(x, ya2, g0, zlo, zhi)
+            wall_x(x, g1, yb2, zlo, zhi)
+            zh_door = min(zlo + DOOR_H, zhi - 0.05)
+            _box(parts, (x - 0.043, g0 - 0.03, zh_door),
+                 (x + 0.043, g1 + 0.03, zhi - 0.003), M_GYPSUM)
 
         n_units = cols // 2
         bayw = (W - 2 * margin) / cols
@@ -651,31 +684,35 @@ def build_dingbat(p, rng):
                 y0u = ys + 0.05
                 y1u = iy1 - 0.05
                 depth_u = y1u - y0u
-                if depth_u < 3.0:
+                if depth_u < 3.4:
                     continue
                 zl2, zh2 = zlo + 0.001, zhi - 0.002
-                bx0 = ux1 - 1.75 if mirror else ux0
-                bx1 = ux1 if mirror else ux0 + 1.75
-                bath_wx = bx0 if mirror else bx1
-                # bathroom: front corner box, doorway gap on its rear wall.
-                by1 = y0u + min(2.2, depth_u * 0.35)
-                wall_x(parts, bath_wx, y0u, by1, zl2, zh2)
-                gx0, gx1 = (bx0 + 0.15, bx1 - 0.95) if not mirror                     else (bx0 + 0.95, bx1 - 0.15)
-                wall_y(parts, by1, min(gx0, gx1), max(gx0, gx1), zl2, zh2)
-                # kitchen stub: rear, opposite side from the bathroom.
+                # bathroom island at mid-depth against the party wall.
+                bw = min(1.8, (ux1 - ux0) * 0.45)
+                bx0 = (ux1 - bw) if mirror else ux0
+                bx1 = ux1 if mirror else (ux0 + bw)
+                free_x = bx0 if mirror else bx1     # wall away from party
+                yb0 = y0u + depth_u * 0.38
+                yb1 = min(yb0 + 2.2, y1u - 0.9)
+                wall_x(free_x, yb0, yb1, zl2, zh2)
+                # bath door on the wall facing the unit door side (rear).
+                doored_wall_y(yb1, min(bx0, bx1), max(bx0, bx1),
+                              (free_x - DOOR_W - 0.1) if not mirror
+                              else (free_x + 0.1), zl2, zh2)
+                wall_y(yb0, min(bx0, bx1), max(bx0, bx1), zl2, zh2)
+                # kitchen stub: rear area, opposite side from the bathroom
+                # (parallel to the rear wall; never touches it).
                 kx0 = ux0 if mirror else ux1 - 2.0
                 kx1 = ux0 + 2.0 if mirror else ux1
-                wall_y(parts, y1u - 2.3, kx0, kx1, zl2, zh2)
+                wall_y(y1u - 2.3, kx0, kx1, zl2, zh2)
                 if plan >= 1:
-                    # one-bed: bedroom wall at mid depth, doorway by the
-                    # party wall opposite the bathroom.
-                    bw_y = y0u + depth_u * 0.5
-                    dx0 = ux0 + (0.85 if not mirror else 0.0)
-                    dgap0 = ux1 - 0.85 if not mirror else ux0 + 0.85
-                    if not mirror:
-                        wall_y(parts, bw_y, ux0, dgap0, zl2, zh2)
-                    else:
-                        wall_y(parts, bw_y, dgap0, ux1, zl2, zh2)
+                    # one-bed: bedroom wall ahead of the bathroom island,
+                    # FRAMED doorway on the side away from the bathroom.
+                    bw_y = yb0 - 0.06
+                    door_at = (ux1 - DOOR_W - 0.12) if not mirror                         else (ux0 + 0.12)
+                    doored_wall_y(bw_y, ux0 + 0.001, ux1 - 0.001,
+                                  door_at, zl2, zh2)
+
         interior_obs.append(parts.to_object("LA_Dingbat_Partitions", mats))
 
         # rear walkway serving the upper units: slab + square posts.
