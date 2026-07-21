@@ -1,0 +1,66 @@
+{
+  "_preset": "LOW quality tier (rpg-uhhr). Target: Intel Iris/Xe, Steam Deck, older GCN/Maxwell. Overlays the engine defaults; only performance/quality keys are set so it composes with a level's look keys (sh_*, static_*, gi_vis_*). Select standalone via CLIENT_RENDER_CONFIG=assets/config/render_config.low.json, or merge before a level config once overlay-chaining lands. Values from ref/renderer_performance_issues_and_suggested_fixes.md section 7.3.",
+
+  "_note": "Some keys (render_scale, shadow_fp16, gi_dyn_voxel, ...) only take full effect once their code ticket lands; until then they parse harmlessly and cost nothing.",
+
+  "msaa": 0,
+  "aniso": 2.0,
+  "render_scale": 0.75,
+  "pbr_quality": 0,
+  "texture_quality": 2,
+  "depth_prepass": 0,
+  "draw_distance": 500.0,
+
+  "cluster_tiles_x": 8,
+  "cluster_tiles_y": 8,
+  "cluster_slices": 16,
+  "max_lights": 128,
+
+  "dir_cascades": 2,
+  "dir_static_res": 1024,
+  "dir_dynamic_res": 512,
+  "dir_pcss": 0,
+  "dir_pcf_taps": 4,
+  "dir_dynamic_interval": 2,
+
+  "shadow_max": 2,
+  "shadow_res": 128,
+  "shadow_far_scale": 0.5,
+  "shadow_fp16": 1,
+  "shadow_pcf_taps": 1,
+  "shadow_update_interval": 4,
+  "shadow_distance": 18.0,
+  "shadow_static_cache": 1,
+
+  "lightmap_bands": 4,
+  "lm_fp16": 1,
+  "lm_resident_layers": 4,
+
+  "gi_enabled": 1,
+  "gi_field": 1,
+  "gi_hybrid": 0,
+  "gi_hero": 0,
+  "gi_samples": 12,
+  "gi_spec_lobes": 0,
+  "spec_gain": 0.0,
+  "gi_update_interval": 16,
+  "gi_n_probe_groups": 4,
+  "gi_smooth": 0.10,
+  "gi_bounce": 0.45,
+  "gi_bin_interval": 4,
+  "gi_max_lights": 32,
+  "gi_max_boxes": 16,
+  "probe_spacing_scale": 1.5,
+
+  "gi_dyn_voxel": 0,
+  "gi_march_quality": 0.5,
+  "gi_frag_quality": 0,
+  "gi_prepass_scale": 16,
+  "sdf_fp16": 1,
+  "sdf_resident_slots": 4,
+  "sdf_uploads_per_frame": 1,
+
+  "stream_upload_mb_per_frame": 4,
+  "stream_ram_budget_mb": 1024,
+  "stream_vram_budget_mb": 1024
+}

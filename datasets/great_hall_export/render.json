@@ -1,6 +1,10 @@
 {
   "_mode": "great_hall: fully dynamic GI, no baked lightmap (stealth-dark).",
 
+  "_quality": "discrete-GPU high tier: pin the old engine defaults (msaa 4, aniso 16) explicitly now that the engine default is low-end-safe (2 / 4) -- rpg-96ia.",
+  "msaa": 4,
+  "aniso": 16.0,
+
   "sh_enabled": 0,
   "sh_normal_bias": 0.9,
   "static_baked_w": 0.0,

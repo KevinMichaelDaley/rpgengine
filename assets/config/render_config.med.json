@@ -1,0 +1,63 @@
+{
+  "_preset": "MED quality tier (rpg-uhhr) -- roughly the engine defaults, with the mechanical fp16 wins turned on. Target: mid-range discrete / strong iGPU. Overlays engine defaults; performance/quality keys only. Values from ref/renderer_performance_issues_and_suggested_fixes.md section 7.3.",
+
+  "msaa": 2,
+  "aniso": 8.0,
+  "render_scale": 1.0,
+  "pbr_quality": 1,
+  "texture_quality": 1,
+  "depth_prepass": 1,
+  "draw_distance": 2000.0,
+
+  "cluster_tiles_x": 16,
+  "cluster_tiles_y": 16,
+  "cluster_slices": 24,
+  "max_lights": 256,
+
+  "dir_cascades": 2,
+  "dir_static_res": 1024,
+  "dir_dynamic_res": 1024,
+  "dir_pcss": 0,
+  "dir_pcf_taps": 8,
+  "dir_dynamic_interval": 1,
+
+  "shadow_max": 4,
+  "shadow_res": 256,
+  "shadow_far_scale": 1.2,
+  "shadow_fp16": 1,
+  "shadow_pcf_taps": 4,
+  "shadow_update_interval": 2,
+  "shadow_distance": 30.0,
+  "shadow_static_cache": 1,
+
+  "lightmap_bands": 9,
+  "lm_fp16": 1,
+  "lm_resident_layers": 6,
+
+  "gi_enabled": 1,
+  "gi_field": 1,
+  "gi_hybrid": 0,
+  "gi_hero": 1,
+  "gi_samples": 24,
+  "gi_spec_lobes": 2,
+  "gi_update_interval": 8,
+  "gi_n_probe_groups": 2,
+  "gi_smooth": 0.15,
+  "gi_bounce": 0.45,
+  "gi_bin_interval": 1,
+  "gi_max_lights": 512,
+  "gi_max_boxes": 64,
+  "probe_spacing_scale": 1.0,
+
+  "gi_dyn_voxel": 1,
+  "gi_march_quality": 1.0,
+  "gi_frag_quality": 1,
+  "gi_prepass_scale": 8,
+  "sdf_fp16": 1,
+  "sdf_resident_slots": 6,
+  "sdf_uploads_per_frame": 2,
+
+  "stream_upload_mb_per_frame": 16,
+  "stream_ram_budget_mb": 2048,
+  "stream_vram_budget_mb": 2048
+}
