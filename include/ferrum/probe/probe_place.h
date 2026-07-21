@@ -22,6 +22,7 @@ extern "C" {
 #include "ferrum/probe/probe_set.h"
 #include "ferrum/probe/place/probe_brick.h"
 #include "ferrum/probe/place/probe_fixup.h"
+#include "ferrum/probe/place/probe_brick_index.h"
 #include "ferrum/scene/scene_desc_probes.h"
 
 struct arena; /* ferrum/memory/arena.h */
