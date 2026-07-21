@@ -74,6 +74,35 @@ Hard requirements, applying to every tool below:
 
 ---
 
+## 1b. GENERATOR COMPLETENESS RULES (universal, user-mandated)
+
+Applies to every tool in the catalog; each rule is restated in the tool's
+ticket and is part of its acceptance.
+
+1. **Two modes per building: `facade` and `interior`.** Facade mode is the
+   shell as built so far. Interior mode adds EVERYTHING structural as though
+   the building were just constructed and walkable: unit partition walls,
+   party walls, load-bearing columns and beams, floor/ceiling slabs, stair
+   and corridor cores, shafts — but NO furniture, carpet, doors, or fittings
+   (those are separate tasks). A player must be able to walk every room.
+   Interior geometry obeys the same topology bar and shares the global line
+   grid so walls land on facade loop lines.
+2. **Three parameter tiers, all present on every tool:**
+   - *numeric variation*: dimensions/counts/densities covering most features
+     (the A1 pattern);
+   - *monotony breakers*: structural/architectural VARIANTS, not just sizes —
+     optional major elements that change the massing (e.g. `carport: bool`
+     where absent LOWERS the building to grade), alternate footprint shapes
+     where feasible (L-plan, corner cut), roof form swaps, bay-rhythm modes;
+   - *story options*: see rule 3.
+3. **2–3 "particularly interesting" options per tool, OFF by default,
+   telling a coherent thematic story** of the setting (drought, abandonment,
+   the aberration regime, quiet resistance). Not decoration randomizers —
+   each one changes how the piece reads at a glance (e.g. every window
+   broken and boarded; a unit sealed in aberration resin; a rooftop turned
+   pigeon-loft signal post). The catalog table below assigns each tool its
+   canonical story options; tools may add more.
+
 ## 2. Visual language (grounded in the reference set)
 
 What the photos actually say, translated into generator obligations:
@@ -306,6 +335,34 @@ Distant-LOD backdrop: extruded silhouette cards of towers/pylons on a ring,
 `radius`, `density`, `haze_tint` — feeds the vista past the playable zone.
 
 ---
+
+## 3b. Interior modes + story options per tool
+
+Interior column: what `mode='interior'` adds (rule 1). Story column: the
+canonical off-by-default options (rule 3), themed: **drought / abandonment /
+regime / resistance**.
+
+| Tool | Interior mode adds | Story options (off by default) |
+|---|---|---|
+| A1 Dingbat | unit partitions (1-bed layouts), party walls, corridor + rear walkway, slab floors/ceilings, carport columns carried through | `all_broken` shattered+boarded windows (abandonment); `sealed_unit` one unit closed in aberration resin (regime); `rooftop_roost` pigeon-loft signal post (resistance) |
+| A2 Bungalow Court | per-unit room walls, porch posts through | `one_burnt` one unit fire-gutted to studs; `court_market` court roofed with tarps as gray-market stalls; `shrine_unit` one porch a candle shrine |
+| A3 Walk-up | double-loaded corridor, unit partitions, stair core, light-well shafts | `elevator_grave` shaft open at every floor; `regime_floor` one floor sealed with resin; `laundry_lines` courtyard webbed with lines |
+| B1 Mini-Mall | tenant demising walls, back corridor, roof hatch | `one_fortified` a tenant plate-steeled as a safehouse (resistance); `checkpoint_bay` one bay converted to a regime scan-lane; `dead_mall` every shutter down, signage stripped |
+| B2 Googie Sign | n/a (structure only) | `resistance_overpaint` sign repainted as a coded marker; `roost` raptor nest + guano streaks; `half_relit` regime retrofit lights half the tubes in their palette |
+| B3 Theater Front | lobby shell + mezzanine stub behind the facade | `marquee_edict` letter board spells a regime edict; `walled_doors` entries cinderblocked; `projection_alive` one working projector beam at night |
+| B4 Deco Tower | core + ring corridor per setback tier, column grid | `crown_graft` aberration monolith through the crown; `dark_floors` random floors lightless/glassless; `banner_drop` full-height regime banner |
+| C1 River Channel | n/a (open structure) | `dry_camp` tents + fire rings on the bed (drought); `resin_outfall` one outfall sealed with aberration resin; `flash_debris` high-water debris line |
+| C2 Freeway | n/a | `collapsed_span` one span dropped (rubble ramp); `underpass_village` shanties between pillars; `regime_gantry` scanner gantry over the deck |
+| C3 Parking | full deck interiors ARE the mode (ramps walkable/drivable) | `impound` crushed-car stacks (regime); `market_deck` one deck a stall market; `collapse_corner` one corner pancaked |
+| C4 Power Lines | n/a | `tapped` illegal tap webs to windows (resistance); `dead_grid` every line snapped/dangling; `regime_trunk` one alien conduit riding the poles |
+| C5 Storm Drain | walkable bores ARE the mode | `refuge_paint` wayfinding murals inside; `grated_shut` regime-welded grates; `dry_bed_growth` bleached weeds at mouths |
+| D1 Street | n/a | `checkpoint_scar` removed-checkpoint scar (bolt stubs, paint ghosts); `sand_lane` one lane lost to drift; `protest_stain` faded paint slogans |
+| D2 Lot Clutter | n/a | `burn_barrels` live fire barrels; `stripped_cars` gutted car shells; `barricade_line` deliberate junk wall |
+| D3 Palms | n/a | `all_dead` every palm bare (drought); `hung_markers` resistance ribbons/shoes; `one_green` a single watered survivor |
+| D4 Fence | n/a | `breach` cut+peeled gap with worn path; `regime_topper` retrofit sensor caps; `memorial` woven flowers/photos section |
+| E1–E4 passes | n/a (they modify others) | intensity presets doubling as story: `decade_abandoned`, `regime_scrubbed` (buffed graffiti ghosts everywhere), `dust_storm_aftermath` |
+| F1–F5 aberration | n/a (they ARE the story layer) | each gets a `dormant/active/damaged` state enum instead (dark vs pulsing vs cracked-leaking) |
+| G1–G3 assembly | pass-through: expose the story dials of what they place | `district_theme` weights: drought/abandoned/regime/resistance mix |
 
 ## 4. Shared library work (prerequisites)
 

@@ -19,3 +19,19 @@ ferrum.la_parking per doc C3: floor stack, ramp internal/external helix, open-ca
 ## Acceptance Criteria
 
 Acceptance: (1) build_* passes the programmatic topology validation; (2) redo-panel operator with every kwarg as a property, seeded determinism; (3) DISPLAY TO USER: have the user sign off on the wireframes after viewing them interactively in a live Blender session.
+
+## GENERATOR COMPLETENESS RULES (universal, see ref/archgen_dystopian_la.md 1b)
+
+1. TWO MODES: `facade` AND `interior` -- interior adds all structural walls,
+   party walls, load-bearing columns/beams, slabs, stair/corridor cores, as
+   just-built and fully walkable. NO furniture/carpet/doors (separate tasks).
+   Interior shares the global line grid + the same topology bar.
+2. THREE PARAMETER TIERS: numeric variation of most features; MONOTONY
+   BREAKERS (optional major structural elements that change the massing --
+   e.g. an optional carport lowers the building to grade when absent;
+   alternate footprint shapes where feasible); and story options.
+3. STORY OPTIONS: 2-3 "particularly interesting" switches, OFF by default,
+   telling a coherent thematic story (drought / abandonment / regime /
+   resistance). See the doc 3b table for this tool's canonical set.
+
+Story options: impound (crushed stacks); market_deck; collapse_corner. Breakers: helix vs internal ramp, edge system swap, half-level split-deck mode. Interior: decks/ramps walkable by definition.

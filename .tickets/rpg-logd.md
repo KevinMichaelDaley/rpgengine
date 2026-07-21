@@ -19,3 +19,19 @@ ferrum.la_walkup per doc A3: 3-6 story infill, parapet styles, fire escape, grou
 ## Acceptance Criteria
 
 Acceptance: (1) build_* passes the programmatic topology validation; (2) redo-panel operator with every kwarg as a property, seeded determinism; (3) DISPLAY TO USER: have the user sign off on the wireframes after viewing them interactively in a live Blender session.
+
+## GENERATOR COMPLETENESS RULES (universal, see ref/archgen_dystopian_la.md 1b)
+
+1. TWO MODES: `facade` AND `interior` -- interior adds all structural walls,
+   party walls, load-bearing columns/beams, slabs, stair/corridor cores, as
+   just-built and fully walkable. NO furniture/carpet/doors (separate tasks).
+   Interior shares the global line grid + the same topology bar.
+2. THREE PARAMETER TIERS: numeric variation of most features; MONOTONY
+   BREAKERS (optional major structural elements that change the massing --
+   e.g. an optional carport lowers the building to grade when absent;
+   alternate footprint shapes where feasible); and story options.
+3. STORY OPTIONS: 2-3 "particularly interesting" switches, OFF by default,
+   telling a coherent thematic story (drought / abandonment / regime /
+   resistance). See the doc 3b table for this tool's canonical set.
+
+Story options: elevator_grave; regime_floor (resin-sealed); laundry_lines. Breakers: corner-lot L-plan, retail vs residential ground, light-well on/off.

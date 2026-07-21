@@ -87,3 +87,19 @@ handrail. No sawtooth end-caps (they would be L-shaped ngons).
 Shells inventory: [body(walled+soffit+roof, ONE manifold-with-boundary mesh),
 posts xN, stair steps, stringers, landing, rails, awnings (open quad strips),
 AC boxes]. Auditor must report: 100% quads, 0 T-junction, 0 doubles.
+
+## GENERATOR COMPLETENESS RULES (universal, see ref/archgen_dystopian_la.md 1b)
+
+1. TWO MODES: `facade` AND `interior` -- interior adds all structural walls,
+   party walls, load-bearing columns/beams, slabs, stair/corridor cores, as
+   just-built and fully walkable. NO furniture/carpet/doors (separate tasks).
+   Interior shares the global line grid + the same topology bar.
+2. THREE PARAMETER TIERS: numeric variation of most features; MONOTONY
+   BREAKERS (optional major structural elements that change the massing --
+   e.g. an optional carport lowers the building to grade when absent;
+   alternate footprint shapes where feasible); and story options.
+3. STORY OPTIONS: 2-3 "particularly interesting" switches, OFF by default,
+   telling a coherent thematic story (drought / abandonment / regime /
+   resistance). See the doc 3b table for this tool's canonical set.
+
+Story options: all_broken (shattered+boarded windows); sealed_unit (aberration resin); rooftop_roost (signal pigeon loft). Monotony breakers: carport optional (building drops to grade), L-plan variant, flat vs mansard roofline.
