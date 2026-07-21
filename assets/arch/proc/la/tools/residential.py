@@ -339,7 +339,7 @@ def build_dingbat(p, rng):
     # ---- z levels ----------------------------------------------------------
     z_grade, z_sill1, z_head1, z_soffit = 0.0, 0.9, 2.1, 2.45
     slab, spandrel, win_h, head = 0.30, 0.90, 1.20, 0.30
-    zl = [z_grade, z_sill1, z_head1, z_soffit]
+    zl = [z_grade, z_sill1, z_sill1 + 0.55, z_head1, z_soffit]
     z = z_soffit
     upper_rows = []                  # (sill, head) per upper floor
     floor_bands = []                 # (slab_lo, slab_hi, band_top) per floor
@@ -354,16 +354,40 @@ def build_dingbat(p, rng):
         z = h + head
         zl.append(z)
         floor_bands.append((slab_lo, slab_lo + slab, z))
+        zl.append(s + 0.55)              # high bath-window sill line
     z_roof = z
     z_par = z + 0.4
     zl.extend([z_par])
     zl = sorted(set(zl))
 
+    # ---- per-unit plan precompute (seeded BEFORE the line grid: the rear
+    # door and the high bathroom window own x-lines). Dingbat baths sat at
+    # the rear corner against the exterior wall with a small HIGH window;
+    # the rear entry door shifts off-centre in its bay to make room. -------
+    n_units = max(1, cols // 2)
+    bayw0 = (W - 2.0 * margin) / cols
+    unit_plan, unit_mirror, door_jambs, bath_wins = [], [], [], []
+    for u in range(n_units):
+        pl = rng.randrange(3)
+        mir = (pl == 2)
+        unit_plan.append(pl)
+        unit_mirror.append(mir)
+        b0 = margin + bayw0 * 2 * u          # door bay start
+        b1 = b0 + bayw0                      # door bay end
+        if not mir:
+            door_jambs.append((b0 + 1.70, b0 + 1.70 + 0.90))
+            bath_wins.append((b0 + 0.55, b0 + 1.05))
+        else:
+            door_jambs.append((b1 - 1.70 - 0.90, b1 - 1.70))
+            bath_wins.append((b1 - 1.05, b1 - 0.55))
+
     t = 0.15                         # parapet ring width -- ALSO a wall line:
     # the cap ring's outer-edge verts at x=t / W-t must exist in the wall top
     # edges or they land mid-edge (T-junction, caught by the auditor).
     xl, xjambs = _window_lines(W, cols, margin, win_w)
-    xl = sorted(set(xl) | {t, W - t})
+    xl = sorted(set(xl) | {t, W - t} |
+                {v for pr in door_jambs for v in pr} |
+                {v for pr in bath_wins for v in pr})
     yl = sorted({0.0, cd, D, t, D - t})
 
     shell = _Shell()
@@ -405,22 +429,32 @@ def build_dingbat(p, rng):
     back_z = zl
 
     spandrel_tops = [hi for (_lo, hi, _bt) in floor_bands]
+    doorj_x = [a for (a, _b) in door_jambs]
+    bathw_x = [a for (a, _b) in bath_wins]
+    kitchen_x = [a for (a, _b) in xjambs[1::2]]   # window-bay jambs
 
     def back_classify(u0, zc0):
-        if abs(zc0 - z_sill1) < 1e-6 and near(u0, jamb_x):
+        # ground row: kitchen window (window bay) + HIGH bath window.
+        if abs(zc0 - z_sill1) < 1e-6 and near(u0, kitchen_x):
             return 'window'
-        # upper units: ONE walkway door (spandrel doorL + window doorU) in
-        # the unit's door bay; the other bay keeps its window.
-        if near(u0, door_x):
+        if abs(zc0 - (z_sill1 + 0.55)) < 1e-6 and near(u0, bathw_x):
+            return 'window'
+        # upper floors: walkway door (own off-centre jambs), kitchen window,
+        # and the small high bathroom window beside the door.
+        if near(u0, doorj_x):
             for st2 in spandrel_tops:
                 if abs(zc0 - st2) < 1e-6:
                     return 'doorL'
             for (sll, _hh) in upper_rows:
                 if abs(zc0 - sll) < 1e-6:
                     return 'doorU'
-        elif near(u0, jamb_x):
+        if near(u0, kitchen_x):
             for (sll, _hh) in upper_rows:
                 if abs(zc0 - sll) < 1e-6:
+                    return 'window'
+        if near(u0, bathw_x):
+            for (sll, _hh) in upper_rows:
+                if abs(zc0 - (sll + 0.55)) < 1e-6:
                     return 'window'
         return 'wall'
 
@@ -718,15 +752,16 @@ def build_dingbat(p, rng):
             wall_x(x, ya2, yb2, zlo, zhi,
                    door=(g0, g0 + DOOR_W, zlo + DOOR_H))
 
-        n_units = cols // 2
-        bayw = (W - 2 * margin) / cols
         for u in range(n_units):
-            ux0 = margin + bayw * 2 * u + 0.06
-            ux1 = margin + bayw * 2 * (u + 1) - 0.06
+            ux0 = margin + bayw0 * 2 * u + 0.06
+            ux1 = margin + bayw0 * 2 * (u + 1) - 0.06
             if ux1 - ux0 < 2.6:
                 continue
-            plan = (u + rng.randrange(3)) % 3
-            mirror = plan == 2
+            plan = unit_plan[u]
+            mir = unit_mirror[u]
+            dj = door_jambs[u]
+            # bath spans party wall -> just past the door-side jamb.
+            bx_in = (dj[0] - 0.06) if not mir else (dj[1] + 0.06)
             for si, (zlo, zhi, ys) in enumerate(storeys):
                 y0u = ys + 0.05
                 y1u = iy1 - 0.05
@@ -734,29 +769,26 @@ def build_dingbat(p, rng):
                 if depth_u < 3.4:
                     continue
                 zl2, zh2 = zlo + 0.001, zhi - 0.002
-                # bathroom island at mid-depth against the party wall.
-                bw = min(1.8, (ux1 - ux0) * 0.45)
-                bx0 = (ux1 - bw) if mirror else ux0
-                bx1 = ux1 if mirror else (ux0 + bw)
-                free_x = bx0 if mirror else bx1     # wall away from party
-                yb0 = y0u + depth_u * 0.38
-                yb1 = min(yb0 + 2.2, y1u - 0.9)
-                wall_x(free_x, yb0, yb1, zl2, zh2)
-                # bath door on the wall facing the unit door side (rear).
-                doored_wall_y(yb1, min(bx0, bx1), max(bx0, bx1),
-                              (free_x - DOOR_W - 0.1) if not mirror
-                              else (free_x + 0.1), zl2, zh2)
-                wall_y(yb0, min(bx0, bx1), max(bx0, bx1), zl2, zh2)
-                # kitchen stub: rear area, opposite side from the bathroom
-                # (parallel to the rear wall; never touches it).
-                kx0 = ux0 if mirror else ux1 - 2.0
-                kx1 = ux0 + 2.0 if mirror else ux1
+                by0 = y1u - 2.25                   # bath front wall line
+                # rear-corner bathroom: side wall + doored front wall; the
+                # building's rear wall (with its high window) closes it.
+                if not mir:
+                    wall_x(bx_in, by0, y1u - 0.002, zl2, zh2)
+                    doored_wall_y(by0, ux0 + 0.001, bx_in,
+                                  bx_in - DOOR_W - 0.10, zl2, zh2)
+                else:
+                    wall_x(bx_in, by0, y1u - 0.002, zl2, zh2)
+                    doored_wall_y(by0, bx_in, ux1 - 0.001,
+                                  bx_in + 0.10, zl2, zh2)
+                # kitchen stub on the window-bay side, ahead of its window.
+                kx0 = ux1 - 2.0 if not mir else ux0
+                kx1 = ux1 if not mir else ux0 + 2.0
                 wall_y(y1u - 2.3, kx0, kx1, zl2, zh2)
                 if plan >= 1:
-                    # one-bed: bedroom wall ahead of the bathroom island,
-                    # FRAMED doorway on the side away from the bathroom.
-                    bw_y = yb0 - 0.06
-                    door_at = (ux1 - DOOR_W - 0.12) if not mirror                         else (ux0 + 0.12)
+                    # one-bed: bedroom wall mid-depth, framed doorway away
+                    # from the bathroom side.
+                    bw_y = y0u + depth_u * 0.45
+                    door_at = (ux1 - DOOR_W - 0.12) if not mir                         else (ux0 + 0.12)
                     doored_wall_y(bw_y, ux0 + 0.001, ux1 - 0.001,
                                   door_at, zl2, zh2)
 
