@@ -46,6 +46,12 @@ static float sdf_floor(const float p[3], void *user)
     return p[1];
 }
 
+static float sdf_zero(const float p[3], void *user)
+{
+    (void)p; (void)user;
+    return 0.0f;
+}
+
 /* Sphere: centre + radius passed via user. */
 typedef struct { float c[3], r; } sphere_t;
 static float sdf_sphere(const float p[3], void *user)
@@ -225,6 +231,51 @@ static int test_deterministic(void)
     return 0;
 }
 
+/* Buried cull: a slab's INTERIOR bricks (deep negative sdf) are dropped while
+ * its face bricks stay. Slab occupies y in [0,3] of a 9m cell, 2 levels. */
+typedef struct { float thick; } slab_t;
+static float sdf_slab_t(const float p[3], void *user)
+{
+    float t = ((const slab_t *)user)->thick;
+    float below = -p[1], above = p[1] - t;
+    return below > above ? below : above;
+}
+static int test_buried_cull(void)
+{
+    arena_t a; arena_init(&a, g_buf, sizeof g_buf);
+    slab_t sl = { 3.0f };
+    probe_brick_config_t cfg; config_basic(&cfg, sdf_slab_t, &sl);
+    cfg.buried_frac = 0.5f;   /* cull bricks with sdf < -0.5 * probe spacing. */
+    probe_set_t set; probe_brick_t *bricks = NULL; uint32_t n_bricks = 0;
+    ASSERT_TRUE(probe_brick_place(&cfg, &a, &set, &bricks, &n_bricks));
+    ASSERT_TRUE(n_bricks > 0);
+    for (uint32_t b = 0; b < n_bricks; ++b) {
+        if (bricks[b].level != 1) continue;
+        float half = bricks[b].size * 0.5f;
+        float c[3] = { bricks[b].min[0] + half, bricks[b].min[1] + half,
+                       bricks[b].min[2] + half };
+        /* level-1 probe spacing = 1 m: no kept fine brick deeper than -0.5 m. */
+        ASSERT_TRUE(sdf_slab_t(c, &sl) >= -0.5f - 1e-4f);
+    }
+    return 0;
+}
+
+/* Parent suppression: when every child of a coarse brick is kept, the parent
+ * is NOT emitted (the index would never reference it). A fully-buried-band
+ * slab filling the whole cell keeps all 27 children. */
+static int test_parent_suppression(void)
+{
+    arena_t a; arena_init(&a, g_buf, sizeof g_buf);
+    /* sdf = 0 everywhere: every brick at every level passes the keep test. */
+    probe_brick_config_t cfg; config_basic(&cfg, sdf_zero, NULL);
+    probe_set_t set; probe_brick_t *bricks = NULL; uint32_t n_bricks = 0;
+    ASSERT_TRUE(probe_brick_place(&cfg, &a, &set, &bricks, &n_bricks));
+    /* 27 children only -- the fully-covered parent is suppressed. */
+    ASSERT_INT_EQ(n_bricks, 27);
+    for (uint32_t b = 0; b < n_bricks; ++b) ASSERT_INT_EQ(bricks[b].level, 1);
+    return 0;
+}
+
 /* ---- edge cases ---- */
 
 /* AABB smaller than one coarse brick: still fully covered by 1 brick. */
@@ -291,6 +342,8 @@ int main(void)
         { "sphere_shell",              test_sphere_shell },
         { "dedup_no_coincident",       test_dedup_no_coincident },
         { "deterministic",             test_deterministic },
+        { "buried_cull",               test_buried_cull },
+        { "parent_suppression",        test_parent_suppression },
         { "small_aabb_one_brick",      test_small_aabb_one_brick },
         { "null_and_bad_args",         test_null_and_bad_args },
         { "arena_exhaustion",          test_arena_exhaustion },

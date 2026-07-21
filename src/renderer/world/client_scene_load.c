@@ -385,6 +385,34 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
             memset(&pset, 0, sizeof pset);
         }
     }
+    /* Brick sidecar (rpg-pjkb): the O(1) sampling structure over those probes.
+     * The voxel index is rebuilt here (milliseconds) from the shipped grid
+     * parameters instead of being stored. Static lifetime: render_world keeps
+     * pointers only through init (the GL upload copies everything). */
+    static probe_brick_data_t brick_data;
+    static probe_brick_index_t brick_index;
+    bool have_bricks = false;
+    if (probes_manual && desc->lightdata.sdf_prefix[0]) {
+        char bpath[1024];
+        snprintf(bpath, sizeof bpath, "%s/%s.bricks", base_dir,
+                 desc->lightdata.sdf_prefix);
+        if (probe_brick_data_load(bpath, &pa, &brick_data) &&
+            brick_data.n_probes == pset.count) {
+            probe_brick_config_t bcfg;
+            memset(&bcfg, 0, sizeof bcfg);
+            memcpy(bcfg.aabb_min, brick_data.aabb_min, sizeof bcfg.aabb_min);
+            memcpy(bcfg.aabb_max, brick_data.aabb_max, sizeof bcfg.aabb_max);
+            bcfg.coarse_brick = brick_data.coarse_brick;
+            bcfg.levels = brick_data.levels;
+            if (probe_brick_index_build(&bcfg, brick_data.bricks,
+                                        brick_data.n_bricks, &pa, &brick_index)) {
+                have_bricks = true;
+                printf("[client] probes: brick sampling on (%u bricks, index %dx%dx%d)\n",
+                       brick_data.n_bricks, brick_index.dim[0], brick_index.dim[1],
+                       brick_index.dim[2]);
+            }
+        }
+    }
     if (!probes_manual) {
         probe_place_grid(&probes, amin, amax, &pa, &pset);
         /* Probe-volume importance boxes densify chosen regions (distance/LOD),
@@ -465,6 +493,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         cfg.gi_aabb_min[a] = amin[a] + rc.gi_aabb_pad_lo[a];
         cfg.gi_aabb_max[a] = amax[a] - rc.gi_aabb_pad_hi[a];
     }
+    cfg.gi_bricks = have_bricks ? &brick_data : NULL;
+    cfg.gi_brick_index = have_bricks ? &brick_index : NULL;
     cfg.gi_probe_pos = pset.positions; cfg.gi_probe_count = pset.count;
     cfg.gi_max_probes = pset.count;   /* allow set_probes to restore the full set. */
     /* Keep a persistent copy of the full generated probe set so it can be streamed

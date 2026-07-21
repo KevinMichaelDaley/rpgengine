@@ -367,10 +367,35 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi->tbo_fi_tex);
     shader_uniform_set_int(cache, program, "u_probe_froxel_idx", (int32_t)u); ++u;
     /* Depth is now a GL_LINEAR RG32F 2D-array (hardware-filtered Chebyshev). */
-    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_2D_ARRAY, gi->gpu.depth_arr);
+    glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_2D, gi->gpu.depth_arr);
     shader_uniform_set_int(cache, program, "u_probe_depth", (int32_t)u); ++u;
     glActiveTexture(GL_TEXTURE0 + u);   glBindTexture(GL_TEXTURE_BUFFER, gi_probe_gpu_sg_tbo(&gi->gpu));
     shader_uniform_set_int(cache, program, "u_probe_sg", (int32_t)u); ++u;
+
+    /* Brick sampling structure (rpg-pjkb): O(1) voxel -> brick -> 8 probes.
+     * When absent the shader falls back to the froxel path. */
+    shader_uniform_set_int(cache, program, "u_brick_on", gi->bricks.on);
+    if (gi->bricks.on) {
+        glActiveTexture(GL_TEXTURE0 + u);
+        glBindTexture(GL_TEXTURE_3D, gi->bricks.index_tex);
+        shader_uniform_set_int(cache, program, "u_brick_index", (int32_t)u); ++u;
+        glActiveTexture(GL_TEXTURE0 + u);
+        glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.meta_tex);
+        shader_uniform_set_int(cache, program, "u_brick_meta", (int32_t)u); ++u;
+        glActiveTexture(GL_TEXTURE0 + u);
+        glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.pidx_tex);
+        shader_uniform_set_int(cache, program, "u_brick_pidx", (int32_t)u); ++u;
+        glActiveTexture(GL_TEXTURE0 + u);
+        glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.valid_tex);
+        shader_uniform_set_int(cache, program, "u_probe_valid", (int32_t)u); ++u;
+        shader_uniform_set_vec3(cache, program, "u_brick_origin", gi->bricks.origin);
+        shader_uniform_set_float(cache, program, "u_brick_voxel", gi->bricks.voxel);
+        {
+            float d3[3] = { (float)gi->bricks.dim[0], (float)gi->bricks.dim[1],
+                            (float)gi->bricks.dim[2] };
+            shader_uniform_set_vec3(cache, program, "u_brick_dim", d3);
+        }
+    }
 
     shader_uniform_set_int(cache, program, "u_gi_enabled", 1);
     shader_uniform_set_float(cache, program, "u_gi_static_baked_w", gi->static_baked_w);
@@ -412,6 +437,7 @@ void gi_runtime_destroy(gi_runtime_t *gi)
     free(gi->fx_off); free(gi->fx_cnt); free(gi->fx_idx);
     free(gi->probe_pos); free(gi->probe_sh);
     free(gi->cell_start); free(gi->probe_idx);
+    gi_brick_gpu_destroy(&gi->bricks);
     free(gi->light_scratch);
     memset(gi, 0, sizeof *gi);
 }

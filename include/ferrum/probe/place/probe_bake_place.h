@@ -8,9 +8,13 @@
  * then simply loads the file -- it never re-places, because at load time it
  * only ever sees the resident subset of the scene.
  *
- * Probes the fix-up flags INVALID (buried beyond escape) are DROPPED from the
- * file: as shipped manual probes they would only contribute garbage, and the
- * user's hand-placed extras are appended to the same file afterwards.
+ * Two output modes. POINTS-ONLY (@p bricks_path NULL): invalid probes are
+ * DROPPED from the .probes file (as loose manual probes they would only
+ * contribute garbage). BRICKS (@p bricks_path given): the runtime samples
+ * through the brick structure (voxel -> brick -> 8 probes), whose probe_idx
+ * tables must stay stable -- so ALL probes are kept (adjusted origins) and
+ * the per-probe VALIDITY ships in the .bricks sidecar for the sampler to
+ * mask by. Hand-placed extras append to the .probes file either way.
  *
  * Ownership: intermediates are carved from the caller arena; the file is the
  * output. Errors: false on NULL brick/arena/path, invalid brick config, arena
@@ -39,14 +43,15 @@ struct arena; /* ferrum/memory/arena.h */
  *                  When given, saved positions are the ADJUSTED trace origins
  *                  and invalid probes are dropped.
  * @param arena     backing for all intermediates.
- * @param out_path  .probes file to write.
- * @param out_count receives the saved probe count (nullable).
+ * @param out_path    .probes file to write.
+ * @param bricks_path .bricks sidecar to write, or NULL for points-only mode.
+ * @param out_count   receives the saved probe count (nullable).
  * @return true on success (zero probes still writes a valid empty file).
  */
 bool probe_bake_place_run(const probe_brick_config_t *brick,
                           const probe_fixup_config_t *fixup,
                           struct arena *arena, const char *out_path,
-                          uint32_t *out_count);
+                          const char *bricks_path, uint32_t *out_count);
 
 #ifdef __cplusplus
 }

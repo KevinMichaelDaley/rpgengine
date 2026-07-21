@@ -68,20 +68,40 @@ int main(int argc, char **argv)
     }
     probe_brick_config_t brick;
     memset(&brick, 0, sizeof brick);
+    /* Placement AABB = bounds of the GEOMETRY, not of the chunk tiling: chunks
+     * pad far beyond the scene (fixed 128^3 tiles), and placing over the padding
+     * put ~40% of the probe budget below the floor / above the roof / outside
+     * the walls (measured on the great hall). Scan for near-surface voxels
+     * (|d| <= 2 voxels) and bound those, plus a 1 m apron for the near band. */
     for (int a = 0; a < 3; ++a) { brick.aabb_min[a] = 1e30f; brick.aabb_max[a] = -1e30f; }
     for (uint32_t i = 0; i < cs.count; ++i) {
         const lm_sdf_data_t *c = &cs.chunks[i];
-        for (int a = 0; a < 3; ++a) {
-            float hi = c->origin[a] + (float)c->dims[a] * c->voxel;
-            if (c->origin[a] < brick.aabb_min[a]) brick.aabb_min[a] = c->origin[a];
-            if (hi > brick.aabb_max[a]) brick.aabb_max[a] = hi;
-        }
+        for (int32_t vz = 0; vz < c->dims[2]; ++vz)
+            for (int32_t vy = 0; vy < c->dims[1]; ++vy)
+                for (int32_t vx = 0; vx < c->dims[0]; ++vx) {
+                    float d = c->dist[((size_t)vz * c->dims[1] + vy) * c->dims[0] + vx];
+                    if (d > 2.0f * c->voxel || d < -2.0f * c->voxel) continue;
+                    float w[3] = { c->origin[0] + ((float)vx + 0.5f) * c->voxel,
+                                   c->origin[1] + ((float)vy + 0.5f) * c->voxel,
+                                   c->origin[2] + ((float)vz + 0.5f) * c->voxel };
+                    for (int a = 0; a < 3; ++a) {
+                        if (w[a] < brick.aabb_min[a]) brick.aabb_min[a] = w[a];
+                        if (w[a] > brick.aabb_max[a]) brick.aabb_max[a] = w[a];
+                    }
+                }
     }
+    if (brick.aabb_min[0] > brick.aabb_max[0]) {
+        fprintf(stderr, "probe_bake: SDF has no surface voxels\n");
+        probe_chunk_sdf_close(&cs);
+        return 1;
+    }
+    for (int a = 0; a < 3; ++a) { brick.aabb_min[a] -= 1.0f; brick.aabb_max[a] += 1.0f; }
     brick.coarse_brick = rc.gi_brick_coarse > 0.0f ? rc.gi_brick_coarse : 9.0f;
     brick.levels = rc.gi_brick_levels;
     if (brick.levels < 1) brick.levels = 1;
     if (brick.levels > PROBE_BRICK_MAX_LEVELS) brick.levels = PROBE_BRICK_MAX_LEVELS;
     brick.fill_empty = rc.gi_brick_fill;
+    brick.buried_frac = rc.gi_brick_buried;
     brick.sdf = probe_chunk_sdf_sample;
     brick.sdf_user = &cs;
 
@@ -93,19 +113,23 @@ int main(int argc, char **argv)
     fix.sdf = probe_chunk_sdf_sample;
     fix.sdf_user = &cs;
 
-    char out_path[1040];
+    char out_path[1040], bricks_path[1040];
     snprintf(out_path, sizeof out_path, "%s.probes", sdf_prefix);
+    snprintf(bricks_path, sizeof bricks_path, "%s.bricks", sdf_prefix);
     arena_t pa; arena_init(&pa, g_place_buf, sizeof g_place_buf);
     uint32_t n = 0;
     bool ok = probe_bake_place_run(&brick, fix.clearance > 0.0f ? &fix : NULL,
-                                   &pa, out_path, &n);
+                                   &pa, out_path, bricks_path, &n);
     probe_chunk_sdf_close(&cs);
     if (!ok) {
         fprintf(stderr, "probe_bake: placement failed (arena or IO)\n");
         return 1;
     }
-    printf("probe_bake: %u probes (coarse %.1f m, %d levels, clearance %.2f m) -> %s\n",
-           n, (double)brick.coarse_brick, brick.levels,
-           (double)fix.clearance, out_path);
+    printf("probe_bake: %u probes (coarse %.1f m, %d levels, clearance %.2f m,"
+           " aabb %.1fx%.1fx%.1f m) -> %s (+ .bricks)\n",
+           n, (double)brick.coarse_brick, brick.levels, (double)fix.clearance,
+           (double)(brick.aabb_max[0] - brick.aabb_min[0]),
+           (double)(brick.aabb_max[1] - brick.aabb_min[1]),
+           (double)(brick.aabb_max[2] - brick.aabb_min[2]), out_path);
     return 0;
 }

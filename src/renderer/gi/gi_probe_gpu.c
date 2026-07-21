@@ -113,7 +113,12 @@ static const char *CS_SRC =
     /* Hardware-filterable mirror of the depth (image unit 0): the compute writes\n"
      * the same octahedral (mean, meanSq) it puts in pdepth here, so the forward+\n"
      * pass can sample it with GL_LINEAR (one bilinear tap in probe_vis). */
-    "layout(rg32f,binding=0) uniform image2DArray u_depth_img;\n"
+    /* Oct-depth ATLAS: 10x10-texel tiles (8x8 interior + 1px oct-wrap gutter),\n"
+     * 256 tiles per row. A 2D texture has no 2048-layer cap (the 2D-array\n"
+     * version silently broke ALL visibility past GL_MAX_ARRAY_TEXTURE_LAYERS). */
+    "layout(rg32f,binding=0) uniform image2D u_depth_img;\n"
+    "#define DEPTH_TILES_X 256\n"
+    "ivec2 depth_tile_origin(uint gid){ return ivec2(int(gid%uint(DEPTH_TILES_X))*10, int(gid/uint(DEPTH_TILES_X))*10); }\n"
     "const float PI=3.14159265;\n"
     "float box_sdf(vec3 p,vec3 c,vec3 h){ vec3 q=abs(p-c)-h; return length(max(q,vec3(0.0)))+min(max(q.x,max(q.y,q.z)),0.0); }\n"
     /* Capsule = distance to segment a..b minus radius r (posed bone limbs, rpg-85as). */
@@ -140,7 +145,12 @@ static const char *CS_SRC =
     "vec4 dyn_alb_at(vec3 p){ if(u_dyn_on==0) return vec4(0.0);\n"
     "  vec3 g=(p-u_dyn_origin)/u_dyn_vox;\n"
     "  if(any(lessThan(g,vec3(0.0)))||any(greaterThanEqual(g,u_dyn_dim))) return vec4(0.0);\n"
-    "  return texture(u_dyn_alb,(g+0.5)/u_dyn_dim); }\n"
+    /* Writer convention: the voxelizer stamps texel k for world in\n"
+     * [origin+k*vox, origin+(k+1)*vox) -- texel k's CONTENT is centred at\n"
+     * (k+0.5)*vox. Sampling with a +0.5 texel shift read every voxel HALF A\n"
+     * VOXEL off (the banner's bleed landed on the wall beside it). uv = g/dim\n"
+     * samples texel centres exactly where the writer put them. */
+    "  return texture(u_dyn_alb, g/u_dyn_dim); }\n"
     "vec3 scene_albedo(vec3 p, float lod){\n"
     /* Dynamic objects win: they are not in the baked voxel albedo at all. */
     "  { vec4 dc=dyn_alb_at(p); if(dc.a>0.02) return dc.rgb/max(dc.a,1e-3); }\n"
@@ -303,7 +313,27 @@ static const char *CS_SRC =
     "    float nm=mix(pdepth[di], mean, u_temporal);\n"
     "    float nq=mix(pdepth[di+1], mean*mean+sig*sig, u_temporal);\n"
     "    pdepth[di]=nm; pdepth[di+1]=nq; surf_min=min(surf_min,nm);\n"
-    "    imageStore(u_depth_img, ivec3(tx,ty,int(gid)), vec4(nm,nq,0.0,0.0)); }\n"
+    "    imageStore(u_depth_img, depth_tile_origin(gid)+ivec2(1+tx,1+ty), vec4(nm,nq,0.0,0.0)); }\n"
+    /* Gutter fill (standard DDGI oct-wrap border): bilinear taps at the tile edge\n"
+     * then read the WRAPPED texel instead of a neighbouring probe's tile. */
+    "  { ivec2 to=depth_tile_origin(gid);\n"
+    "    for(int e=1;e<=8;++e){\n"
+    "      vec2 L=vec2(pdepth[(int(gid)*64 + (8-e)*8+0)*2], pdepth[(int(gid)*64 + (8-e)*8+0)*2+1]);\n"
+    "      vec2 R=vec2(pdepth[(int(gid)*64 + (8-e)*8+7)*2], pdepth[(int(gid)*64 + (8-e)*8+7)*2+1]);\n"
+    "      vec2 B=vec2(pdepth[(int(gid)*64 + 0*8+(8-e))*2], pdepth[(int(gid)*64 + 0*8+(8-e))*2+1]);\n"
+    "      vec2 T=vec2(pdepth[(int(gid)*64 + 7*8+(8-e))*2], pdepth[(int(gid)*64 + 7*8+(8-e))*2+1]);\n"
+    "      imageStore(u_depth_img, to+ivec2(0,e),   vec4(L,0.0,0.0));\n"
+    "      imageStore(u_depth_img, to+ivec2(9,e),   vec4(R,0.0,0.0));\n"
+    "      imageStore(u_depth_img, to+ivec2(e,0),   vec4(B,0.0,0.0));\n"
+    "      imageStore(u_depth_img, to+ivec2(e,9),   vec4(T,0.0,0.0)); }\n"
+    "    vec2 c00=vec2(pdepth[(int(gid)*64 + 7*8+7)*2], pdepth[(int(gid)*64 + 7*8+7)*2+1]);\n"
+    "    vec2 c10=vec2(pdepth[(int(gid)*64 + 7*8+0)*2], pdepth[(int(gid)*64 + 7*8+0)*2+1]);\n"
+    "    vec2 c01=vec2(pdepth[(int(gid)*64 + 0*8+7)*2], pdepth[(int(gid)*64 + 0*8+7)*2+1]);\n"
+    "    vec2 c11=vec2(pdepth[(int(gid)*64 + 0*8+0)*2], pdepth[(int(gid)*64 + 0*8+0)*2+1]);\n"
+    "    imageStore(u_depth_img, to+ivec2(0,0), vec4(c00,0.0,0.0));\n"
+    "    imageStore(u_depth_img, to+ivec2(9,0), vec4(c10,0.0,0.0));\n"
+    "    imageStore(u_depth_img, to+ivec2(0,9), vec4(c01,0.0,0.0));\n"
+    "    imageStore(u_depth_img, to+ivec2(9,9), vec4(c11,0.0,0.0)); }\n"
     "  return surf_min; }\n"
     /* Greedy multi-lobe SG fit over the per-ray radiance rcol[] (glossy reflection). */
     "void fit_sg(uint gid, vec3 rdir[32], vec3 rcol[32]){ const int NR=32; const int NL=3;\n"
@@ -603,18 +633,24 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glGenTextures(1, &g->tbo_depth_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_depth_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, g->b_depth);
-    /* Hardware-filterable mirror of the octahedral depth: an RG32F 2D array, 8x8
-     * per probe (one layer/probe), GL_LINEAR so the forward+ Chebyshev test is a
-     * single bilinear tap instead of 4 texelFetch + a hand-rolled mix. The compute
-     * imageStores each texel here alongside the SSBO write. */
+    /* Hardware-filterable mirror of the octahedral depth: an RG32F 2D ATLAS of
+     * 10x10 tiles (8x8 interior + 1px oct-wrap gutter), 256 tiles per row --
+     * GL_LINEAR keeps the forward+ Chebyshev at one bilinear tap. A 2D array
+     * was capped by GL_MAX_ARRAY_TEXTURE_LAYERS (2048 here): past the cap the
+     * whole array went INCOMPLETE and probe_vis read zeros for EVERY probe
+     * (the "coarse voxel grid" look at 30k probes). The atlas caps at
+     * 256*rows tiles -- 65k+ probes in a 2560x2560 texture. */
     glGenTextures(1, &g->depth_arr);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, g->depth_arr);
-    glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RG32F, 8, 8, (GLsizei)max_probes,
-                 0, GL_RG, GL_FLOAT, NULL);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, g->depth_arr);
+    {
+        int tiles_y = (int)((max_probes + 255u) / 256u);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F, 256 * 10, tiles_y * 10,
+                     0, GL_RG, GL_FLOAT, NULL);
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     /* SG specular: 3 lobes/probe * 8 floats = 24 (6 RGBA32F texels). */
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sg);
@@ -847,7 +883,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     /* Bind the depth 2D-array as an r/w image (unit 0) so the compute mirrors the
      * octahedral depth into it for hardware-filtered sampling in the forward+. */
     if (g->BindImageTexture != NULL)
-        g->BindImageTexture(0, g->depth_arr, 0, /*layered=*/1, 0,
+        g->BindImageTexture(0, g->depth_arr, 0, /*layered=*/0, 0,
                             GI_GL_READ_WRITE, GL_RG32F);
 
     GLuint ngx = (g->n_probes + 63u) / 64u;

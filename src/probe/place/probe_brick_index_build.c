@@ -2,10 +2,10 @@
  * @file probe_brick_index_build.c
  * @brief Voxel -> brick lookup construction (see probe_brick_index.h).
  *
- * Rasterizes each brick's voxel box into the dense grid in input order. The
- * placer emits ancestors before descendants (DFS), and only ancestor chains
- * overlap, so in-order splatting leaves the FINEST covering brick in every
- * voxel -- no sorting, no level comparisons.
+ * Rasterizes each brick's voxel box into the dense grid with LEVEL priority:
+ * a voxel takes the new brick only when its level is >= the current owner's
+ * (finest wins, order-independent -- parent suppression makes the placer's
+ * emission order non-monotonic in level).
  */
 #include <math.h>
 #include <string.h>
@@ -60,8 +60,13 @@ bool probe_brick_index_build(const probe_brick_config_t *cfg,
                     if (vx < 0 || vy < 0 || vz < 0 || vx >= ix.dim[0] ||
                         vy >= ix.dim[1] || vz >= ix.dim[2])
                         continue;
-                    ix.brick_of[((size_t)vz * (size_t)ix.dim[1] + (size_t)vy) *
-                                (size_t)ix.dim[0] + (size_t)vx] = (int32_t)b;
+                    {
+                        size_t vi = ((size_t)vz * (size_t)ix.dim[1] + (size_t)vy) *
+                                    (size_t)ix.dim[0] + (size_t)vx;
+                        int32_t cur = ix.brick_of[vi];
+                        if (cur < 0 || bricks[(uint32_t)cur].level <= bricks[b].level)
+                            ix.brick_of[vi] = (int32_t)b;
+                    }
                 }
     }
 

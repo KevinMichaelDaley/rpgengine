@@ -59,6 +59,7 @@ void render_config_defaults(render_config_t *rc)
     rc->gi_brick_fill = 1;
     rc->gi_fixup_clearance = 0.10f;
     rc->gi_fixup_max_push = 0.60f;
+    rc->gi_brick_buried = 0.5f;     /* drop deep-in-wall bricks (probe waste). */
     rc->gi_near = 2.2f; rc->gi_dmax = 2.5f; rc->gi_emin = 0.02f;
     rc->gi_norm_gate = 0.75f; rc->gi_stat_scale = 1.0f;
     rc->gi_vis_bias = 0.30f; rc->gi_vis_varmin = 0.02f; rc->gi_vis_sharp = 1.0f;

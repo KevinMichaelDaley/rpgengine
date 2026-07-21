@@ -28,6 +28,7 @@
 #include "ferrum/renderer/gi/gi_probe_gpu.h"
 #include "ferrum/renderer/gi/gi_probe_set.h"
 #include "ferrum/renderer/gi/gi_probe_grid.h"
+#include "ferrum/renderer/gi/gi_brick_gpu.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,6 +78,7 @@ typedef struct gi_runtime {
     gi_sdf_stream_t *sdf_ptr;     /**< active SDF stream (&sdf, or the external one). */
     int              sdf_owned;   /**< 1 = gi_runtime loaded+owns @c sdf; 0 = external. */
     gi_probe_gpu_t   gpu;
+    gi_brick_gpu_t   bricks;      /**< brick sampling structure (on iff set). */
     gi_probe_set_t   probes;
     gi_probe_grid_t  grid;
     float           *probe_pos, *probe_sh;   /**< probe backing. */
@@ -232,6 +234,15 @@ void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref, fl
 
 /** @brief Master scale for the probe SG specular reflection (rpg-hw75); 0 = off. */
 void gi_runtime_set_spec_gain(gi_runtime_t *gi, float gain);
+
+/**
+ * @brief Upload the offline brick sampling structure (bricks + validity + the
+ *        rebuilt voxel index). The forward pass then samples probes through it
+ *        (O(1), no froxel binning). Call once after init; safe to skip (the
+ *        froxel path remains the fallback). Returns false on upload failure.
+ */
+bool gi_runtime_set_bricks(gi_runtime_t *gi, const probe_brick_data_t *bd,
+                           const probe_brick_index_t *ix);
 
 /** @brief Free everything. NULL-safe. */
 void gi_runtime_destroy(gi_runtime_t *gi);

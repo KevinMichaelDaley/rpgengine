@@ -403,6 +403,7 @@ BIN_HEADLESS += build/probe_brick_tests
 BIN_HEADLESS += build/probe_fixup_tests
 BIN_HEADLESS += build/probe_brick_index_tests
 BIN_HEADLESS += build/probe_bake_place_tests
+BIN_HEADLESS += build/probe_brick_file_tests
 BIN_HEADLESS += build/npc_audio_propagation_tests
 
 BIN_RENDERER_TESTS := build/p004_tests build/p004_shader_tests build/p004_texture_tests build/p004_material_tests build/p004_pbr_shader_tests build/p004_light_store_tests build/p004_scene_tests build/p004_depth_prepass_tests build/p004_cluster_tests build/p004_buffer_tests build/p004_gpu_cmd_queue_tests build/p004_gpu_registry_tests build/p004_shadow_slotmap_tests \
@@ -1195,11 +1196,15 @@ build/probe_brick_index_tests: tests/probe/probe_brick_index_tests.c src/probe/p
 
 PROBE_BAKE_PLACE_SRC := src/probe/place/probe_brick_place.c src/probe/place/probe_fixup_apply.c \
     src/probe/place/probe_chunk_sdf.c src/probe/place/probe_bake_place_run.c \
+    src/probe/place/probe_brick_file.c src/probe/place/probe_brick_index_build.c \
     src/probe/probe_file_save.c src/probe/probe_file_load.c src/lightmap/lm_sdf_file.c \
     src/memory/arena_init.c src/memory/arena_alloc.c
 
 build/probe_bake_place_tests: tests/probe/probe_bake_place_tests.c $(PROBE_BAKE_PLACE_SRC) | build
 	$(CC) $(CFLAGS) tests/probe/probe_bake_place_tests.c $(PROBE_BAKE_PLACE_SRC) -o $@ -lm
+
+build/probe_brick_file_tests: tests/probe/probe_brick_file_tests.c src/probe/place/probe_brick_file.c src/memory/arena_init.c src/memory/arena_alloc.c | build
+	$(CC) $(CFLAGS) tests/probe/probe_brick_file_tests.c src/probe/place/probe_brick_file.c src/memory/arena_init.c src/memory/arena_alloc.c -o $@ -lm
 
 build/probe_bake: tests/examples/probe_bake_tool.c $(PROBE_BAKE_PLACE_SRC) $(SCENE_DESC_SRC) $(JSON_PARSE_SRC) | build
 	$(CC) $(CFLAGS) tests/examples/probe_bake_tool.c $(PROBE_BAKE_PLACE_SRC) $(SCENE_DESC_SRC) $(JSON_PARSE_SRC) -o $@ -lm

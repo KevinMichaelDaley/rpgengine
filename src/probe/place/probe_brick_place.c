@@ -88,9 +88,17 @@ static void brick_emit(brick_ctx_t *c, const float min[3], float size, int level
 }
 
 /* Depth-first traversal (depth <= PROBE_BRICK_MAX_LEVELS). @p emit selects the
- * pass: 0 = count kept bricks into c->count, 1 = emit bricks + probes. */
-static void brick_descend(brick_ctx_t *c, const float min[3], float size,
-                          int level, int emit)
+ * pass: 0 = count kept bricks into c->count, 1 = emit bricks + probes.
+ *
+ * Returns 1 when this brick's volume is COVERED without help from its parent:
+ * the brick descends (geometry near), and every sub-volume is either emitted,
+ * solid (buried-culled -- nothing to light inside), or covered by descendants.
+ * A parent whose 27 children all report covered is SUPPRESSED: the voxel index
+ * would never reference it, so emitting it would only waste probes under its
+ * own refinement (the coarse-under-fine overlap). Emission order is therefore
+ * NOT ancestors-first -- the index build resolves overlap by LEVEL, not order. */
+static int brick_descend(brick_ctx_t *c, const float min[3], float size,
+                         int level, int emit)
 {
     float half = size * 0.5f;
     float centre[3] = { min[0] + half, min[1] + half, min[2] + half };
@@ -102,21 +110,36 @@ static void brick_descend(brick_ctx_t *c, const float min[3], float size,
          * (no descend -- there is nothing finer to resolve in empty space). */
         if (level == 0 && c->cfg->fill_empty) {
             if (emit) brick_emit(c, min, size, level); else c->count++;
+            return 1;
         }
-        return;
+        return 0;   /* uncovered air: an ancestor must provide probes. */
     }
-    if (emit) brick_emit(c, min, size, level); else c->count++;
 
-    if (level + 1 >= c->cfg->levels) return;
-    float child = size / 3.0f;
-    for (int k = 0; k < 3; ++k)
-        for (int j = 0; j < 3; ++j)
-            for (int i = 0; i < 3; ++i) {
-                float cmin[3] = { min[0] + child * (float)i,
-                                  min[1] + child * (float)j,
-                                  min[2] + child * (float)k };
-                brick_descend(c, cmin, child, level + 1, emit);
-            }
+    /* Deep-buried cull: geometry is near (descend continues so thick-wall
+     * FACES are found), but this brick's own probes would sit inside solid. */
+    int buried = c->cfg->buried_frac > 0.0f &&
+                 sd < -c->cfg->buried_frac * (size / 3.0f);
+
+    int child_covered = 1;
+    if (level + 1 < c->cfg->levels) {
+        float child = size / 3.0f;
+        for (int k = 0; k < 3; ++k)
+            for (int j = 0; j < 3; ++j)
+                for (int i = 0; i < 3; ++i) {
+                    float cmin[3] = { min[0] + child * (float)i,
+                                      min[1] + child * (float)j,
+                                      min[2] + child * (float)k };
+                    if (!brick_descend(c, cmin, child, level + 1, emit))
+                        child_covered = 0;
+                }
+    } else {
+        child_covered = 0;   /* leaf: nothing finer covers it. */
+    }
+
+    if (buried) return 1;    /* solid volume: covered by definition, no emit. */
+    if (child_covered) return 1;   /* fully refined: suppress this brick. */
+    if (emit) brick_emit(c, min, size, level); else c->count++;
+    return 1;
 }
 
 /* Walk every coarse cell of the AABB cover in fixed z,y,x order. */

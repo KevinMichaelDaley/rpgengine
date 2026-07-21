@@ -22,6 +22,7 @@
 #include "ferrum/probe/place/probe_fixup.h"
 #include "ferrum/probe/place/probe_chunk_sdf.h"
 #include "ferrum/probe/place/probe_bake_place.h"
+#include "ferrum/probe/place/probe_brick_file.h"
 
 #define ASSERT_TRUE(e) do { if (!(e)) { fprintf(stderr, \
     "  ASSERT_TRUE failed: %s (%s:%d)\n", #e, __FILE__, __LINE__); return 1; } } while (0)
@@ -113,7 +114,7 @@ static int test_bake_place_roundtrip(void)
 
     arena_t a; arena_init(&a, g_buf, sizeof g_buf);
     uint32_t n_saved = 0;
-    ASSERT_TRUE(probe_bake_place_run(&brick, &fix, &a, TMP_PREFIX ".probes", &n_saved));
+    ASSERT_TRUE(probe_bake_place_run(&brick, &fix, &a, TMP_PREFIX ".probes", NULL, &n_saved));
     ASSERT_TRUE(n_saved > 0);
 
     arena_t la; arena_init(&la, g_buf + 8 * 1024 * 1024, 8 * 1024 * 1024);
@@ -136,7 +137,7 @@ static int test_bake_place_no_fixup(void)
     brick.sdf = sdf_floor;
     arena_t a; arena_init(&a, g_buf, sizeof g_buf);
     uint32_t n_saved = 0;
-    ASSERT_TRUE(probe_bake_place_run(&brick, NULL, &a, TMP_PREFIX ".probes", &n_saved));
+    ASSERT_TRUE(probe_bake_place_run(&brick, NULL, &a, TMP_PREFIX ".probes", NULL, &n_saved));
     ASSERT_INT_EQ(n_saved, 64);   /* one coarse brick, no dedup partners. */
     arena_t la; arena_init(&la, g_buf + 8 * 1024 * 1024, 8 * 1024 * 1024);
     probe_set_t loaded;
@@ -164,7 +165,7 @@ static int test_bake_place_empty(void)
     brick.sdf = sdf_empty;
     arena_t a; arena_init(&a, g_buf, sizeof g_buf);
     uint32_t n_saved = 123;
-    ASSERT_TRUE(probe_bake_place_run(&brick, NULL, &a, TMP_PREFIX ".probes", &n_saved));
+    ASSERT_TRUE(probe_bake_place_run(&brick, NULL, &a, TMP_PREFIX ".probes", NULL, &n_saved));
     ASSERT_INT_EQ(n_saved, 0);
     arena_t la; arena_init(&la, g_buf + 8 * 1024 * 1024, 8 * 1024 * 1024);
     probe_set_t loaded;
@@ -181,11 +182,50 @@ static int test_bake_place_failures(void)
     brick.sdf = sdf_floor;
     arena_t a; arena_init(&a, g_buf, sizeof g_buf);
     uint32_t n = 0;
-    ASSERT_FALSE(probe_bake_place_run(NULL, NULL, &a, TMP_PREFIX ".probes", &n));
-    ASSERT_FALSE(probe_bake_place_run(&brick, NULL, NULL, TMP_PREFIX ".probes", &n));
-    ASSERT_FALSE(probe_bake_place_run(&brick, NULL, &a, NULL, &n));
+    ASSERT_FALSE(probe_bake_place_run(NULL, NULL, &a, TMP_PREFIX ".probes", NULL, &n));
+    ASSERT_FALSE(probe_bake_place_run(&brick, NULL, NULL, TMP_PREFIX ".probes", NULL, &n));
+    ASSERT_FALSE(probe_bake_place_run(&brick, NULL, &a, NULL, NULL, &n));
     ASSERT_FALSE(probe_bake_place_run(&brick, NULL, &a,
-                                      "/definitely/missing/dir/x.probes", &n));
+                                      "/definitely/missing/dir/x.probes", NULL, &n));
+    return 0;
+}
+
+/* Bricks mode: all probes kept (no dropping -- probe_idx stability), validity
+ * shipped in the sidecar, and every brick probe_idx stays in range. */
+static int test_bake_place_bricks_mode(void)
+{
+    probe_brick_config_t brick; memset(&brick, 0, sizeof brick);
+    brick.aabb_max[0] = 9.0f; brick.aabb_max[1] = 9.0f; brick.aabb_max[2] = 9.0f;
+    brick.coarse_brick = 9.0f; brick.levels = 2; brick.fill_empty = 1;
+    brick.sdf = sdf_floor;
+    probe_fixup_config_t fix; memset(&fix, 0, sizeof fix);
+    fix.clearance = 0.15f; fix.bias = 0.02f; fix.max_push = 1.0f;
+    fix.sdf = sdf_floor;
+
+    arena_t a; arena_init(&a, g_buf, sizeof(g_buf) / 2);
+    uint32_t n_pts = 0, n_all = 0;
+    /* Points-only first (drops nothing here -- halfspace always escapable --
+     * but establishes the baseline count)... */
+    ASSERT_TRUE(probe_bake_place_run(&brick, &fix, &a, TMP_PREFIX ".probes", NULL, &n_pts));
+    /* ...then bricks mode: keeps every probe + ships the sidecar. */
+    arena_t a2; arena_init(&a2, g_buf + sizeof(g_buf) / 2, sizeof(g_buf) / 4);
+    ASSERT_TRUE(probe_bake_place_run(&brick, &fix, &a2, TMP_PREFIX ".probes",
+                                     TMP_PREFIX ".bricks", &n_all));
+    ASSERT_TRUE(n_all >= n_pts);
+
+    arena_t la; arena_init(&la, g_buf + 3 * (sizeof(g_buf) / 4), sizeof(g_buf) / 4);
+    probe_brick_data_t bd;
+    ASSERT_TRUE(probe_brick_data_load(TMP_PREFIX ".bricks", &la, &bd));
+    ASSERT_INT_EQ(bd.n_probes, n_all);
+    ASSERT_TRUE(bd.n_bricks > 0);
+    ASSERT_INT_EQ(bd.levels, 2);
+    for (uint32_t b = 0; b < bd.n_bricks; ++b)
+        for (int i = 0; i < 64; ++i)
+            ASSERT_TRUE(bd.bricks[b].probe_idx[i] < bd.n_probes);
+    /* Every probe can escape a halfspace within max_push here => all valid. */
+    int all_valid = 1;
+    for (uint32_t i = 0; i < bd.n_probes; ++i) if (!bd.valid[i]) all_valid = 0;
+    ASSERT_TRUE(all_valid);
     return 0;
 }
 
@@ -201,6 +241,7 @@ int main(void)
         { "bake_place_no_fixup",           test_bake_place_no_fixup },
         { "bake_place_empty",              test_bake_place_empty },
         { "bake_place_failures",           test_bake_place_failures },
+        { "bake_place_bricks_mode",        test_bake_place_bricks_mode },
     };
     int failed = 0;
     const int n = (int)(sizeof tests / sizeof tests[0]);

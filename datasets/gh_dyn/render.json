@@ -1,0 +1,20 @@
+{
+  "_mode": "great_hall: fully dynamic GI, no baked lightmap (stealth-dark).",
+  "sh_enabled": 0,
+  "sh_normal_bias": 0.9,
+  "static_baked_w": 0.0,
+  "static_dyn_w": 3.0,
+  "gi_hybrid": 1,
+  "gi_hero": 2,
+  "gi_samples": 1024,
+  "gi_bounce": 0.45,
+  "gi_stat_scale": 0.3,
+  "gi_update_interval": 2,
+  "gi_n_probe_groups": 1,
+  "gi_smooth": 0.25,
+  "gi_vis_bias": 0.55,
+  "gi_vis_varmin": 0.06,
+  "_probes": "offline probe_bake: coarse 13.5m/2 levels -> ~1.7k probes: air at 4.5m, near-geometry 4.5m bricks at 1.5m spacing. Adaptive = FEWER probes than the old 1024-lattice look, spent near geometry.",
+  "gi_brick_levels": 2,
+  "gi_brick_coarse": 13.5
+}

@@ -38,6 +38,9 @@ extern "C" {
  * static-volume / weights / sky-AO / spec-gain setters are applied. Values
  * mirror the demo's fields 1:1.
  */
+struct probe_brick_data;
+struct probe_brick_index;
+
 typedef struct render_world_config {
     render_forward_config_t forward;   /**< forward+ config (cluster, lights, sh, shadows). */
     render_scene_t         *scene;      /**< borrowed scene to render (required). */
@@ -48,6 +51,8 @@ typedef struct render_world_config {
                                    *   residency); if set, gi_runtime borrows it
                                    *   instead of self-loading @c gi_sdf_prefix. */
     float        gi_aabb_min[3], gi_aabb_max[3];
+    const struct probe_brick_data *gi_bricks;       /**< offline .bricks (nullable). */
+    const struct probe_brick_index *gi_brick_index; /**< rebuilt voxel index (with gi_bricks). */
     const float *gi_probe_pos;          /**< [gi_probe_count*3], copied by gi_runtime_init. */
     uint32_t     gi_probe_count;
     uint32_t     gi_max_probes;         /**< probe backing cap for runtime set-probe

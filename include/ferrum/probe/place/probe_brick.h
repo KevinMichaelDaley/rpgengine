@@ -4,9 +4,11 @@
  *
  * Replaces the uniform probe lattice with the Unity-APV-style subdivision the
  * placement survey recommends (ref/probe_placement_survey.md): a ternary brick
- * hierarchy over the scene AABB where a brick is KEPT iff the scene SDF sampled
- * at its centre satisfies |sdf| <= half the brick diagonal -- i.e. the brick's
- * volume can touch geometry. Every kept brick contributes a 4x4x4 probe lattice
+ * hierarchy over the scene AABB where a brick DESCENDS iff the scene SDF at
+ * its centre satisfies |sdf| <= half the brick diagonal (the brick's volume can
+ * touch geometry), is EMITTED under the same test minus deep-buried bricks
+ * (buried_frac), and a parent fully covered by kept children is SUPPRESSED
+ * (the voxel index would never reference it -- pure probe waste otherwise). Every kept brick contributes a 4x4x4 probe lattice
  * at spacing size/3; the exact 3:1 level nesting makes lattice points of
  * adjacent and nested bricks coincide, and coincident probes are deduplicated
  * so bricks SHARE boundary probes (the seam fix -- do not change the ratios).
@@ -50,6 +52,11 @@ typedef struct probe_brick_config {
     float coarse_brick;     /**< coarsest brick edge (m); level-k edge = this/3^k. */
     int   levels;           /**< hierarchy depth, 1..PROBE_BRICK_MAX_LEVELS. */
     int   fill_empty;       /**< 1 = keep failing coarse bricks (open-air cover). */
+    float buried_frac;      /**< >0: cull bricks whose centre is deeper inside
+                             *   geometry than this fraction of their probe
+                             *   spacing (children of culled-but-near bricks are
+                             *   still visited, so thick-wall FACES survive).
+                             *   <=0 = keep buried bricks (old behaviour). */
     float (*sdf)(const float p[3], void *user); /**< signed distance field. */
     void *sdf_user;         /**< opaque context for @c sdf (nullable). */
 } probe_brick_config_t;

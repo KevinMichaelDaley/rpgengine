@@ -50,6 +50,10 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
         gc.tuning = cfg->gi_tuning;
         if (gi_runtime_init(&rw->gi, &gc)) {
             rw->gi_enabled = 1;
+            /* Brick sampling structure (rpg-pjkb): O(1) forward sampling for
+             * brick-placed probe sets; froxel path remains the fallback. */
+            if (cfg->gi_bricks != NULL && cfg->gi_brick_index != NULL)
+                gi_runtime_set_bricks(&rw->gi, cfg->gi_bricks, cfg->gi_brick_index);
             if (cfg->gi_grid_dim[0] > 0)
                 gi_runtime_set_probe_grid(&rw->gi, cfg->gi_grid_origin,
                                           cfg->gi_grid_cell3, cfg->gi_grid_dim);
