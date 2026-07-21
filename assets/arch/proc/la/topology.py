@@ -99,15 +99,33 @@ def ok(report, allow_tris=0, allow_boundary=True):
     del allow_boundary  # boundary edges are legal (openings); kept for API clarity.
     return (report["n_ngons"] == 0 and report["n_tris"] <= allow_tris and
             not report["nonmanifold_edges"] and not report["zero_area_faces"] and
-            not report["doubled_verts"] and not report["t_junctions"])
+            not report["doubled_verts"] and not report["t_junctions"] and
+            not report.get("uv_missing", False) and
+            not report.get("uv_degenerate_faces", []))
 
 
 def validate_object(obj, **kw):
-    """Convenience: build a bmesh from @p obj's mesh, validate, free."""
+    """Convenience: build a bmesh from @p obj's mesh, validate, free. Adds
+    UV audit fields (rule 4): uv_missing, uv_degenerate_faces."""
     bm = bmesh.new()
     bm.from_mesh(obj.data)
     try:
-        return validate(bm, **kw)
+        rep = validate(bm, **kw)
+        uv = bm.loops.layers.uv.active
+        rep["uv_missing"] = uv is None
+        degen = []
+        if uv is not None:
+            for f in bm.faces:
+                area2 = 0.0
+                loops = f.loops
+                for i in range(len(loops)):
+                    a2 = loops[i][uv].uv
+                    b2 = loops[(i + 1) % len(loops)][uv].uv
+                    area2 += a2.x * b2.y - b2.x * a2.y
+                if abs(area2) < 1e-9:
+                    degen.append(f.index)
+        rep["uv_degenerate_faces"] = degen
+        return rep
     finally:
         bm.free()
 

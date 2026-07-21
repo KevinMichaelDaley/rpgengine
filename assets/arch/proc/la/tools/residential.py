@@ -38,12 +38,24 @@ from .. import topology
 _WELD = 1.0e-4
 
 
+#: UV texel density: one UV tile per this many metres (rule 4).
+_UV_SCALE = 1.0 / 2.0
+
+
 class _Shell:
-    """A bmesh under construction with a welded-vert cache."""
+    """A bmesh under construction with a welded-vert cache.
+
+    Rule 4: on export every face gets dominant-axis planar UVs at uniform
+    texel density -- welded rectilinear wall grids therefore unwrap as
+    CONTINUOUS strips, with natural seams at 90-degree corners.
+    Rule 5: quads carry a ``tag``; tags become vertex groups on the object.
+    """
 
     def __init__(self):
         self.bm = bmesh.new()
         self._cache = {}
+        self.tag = None           # current subpart tag (rule 5)
+        self._face_tags = {}      # bmesh face -> tag string
 
     def vert(self, co):
         key = (round(co[0] / _WELD), round(co[1] / _WELD), round(co[2] / _WELD))
@@ -53,7 +65,7 @@ class _Shell:
             self._cache[key] = v
         return v
 
-    def quad(self, a, b, c, d, mat=0):
+    def quad(self, a, b, c, d, mat=0, tag=None):
         """Quad from 4 coords, CCW as seen from the face normal side."""
         try:
             f = self.bm.faces.new((self.vert(a), self.vert(b),
@@ -61,16 +73,43 @@ class _Shell:
         except ValueError:      # exact duplicate face (shared cell edge) -- skip
             return None
         f.material_index = mat
+        t = tag if tag is not None else self.tag
+        if t:
+            self._face_tags[f] = t
         return f
 
+    def _write_uvs(self):
+        uv = self.bm.loops.layers.uv.new("UVMap")
+        for f in self.bm.faces:
+            n = f.normal
+            ax = max(range(3), key=lambda i: abs(n[i]))   # dominant axis
+            ua, va = ((1, 2), (0, 2), (0, 1))[ax]
+            # mirror one axis where the normal is negative so texture reads
+            # unflipped from the OUTSIDE on every wall.
+            s_u = -1.0 if n[ax] < 0 and ax != 2 else 1.0
+            for loop in f.loops:
+                co = loop.vert.co
+                loop[uv].uv = (s_u * co[ua] * _UV_SCALE, co[va] * _UV_SCALE)
+
     def to_object(self, name, materials):
+        self.bm.normal_update()      # BEFORE UVs: projection needs real normals
+        self._write_uvs()
         me = bpy.data.meshes.new(name)
-        self.bm.normal_update()
+        # face -> vert index sets per tag, captured before free()
+        tag_verts = {}
+        for f, t in self._face_tags.items():
+            tag_verts.setdefault(t, set()).update(v.index for v in f.verts)
+        self.bm.verts.index_update()
+        for f, t in self._face_tags.items():
+            tag_verts.setdefault(t, set()).update(v.index for v in f.verts)
         self.bm.to_mesh(me)
         self.bm.free()
         for m in materials:
             me.materials.append(m)
         ob = bpy.data.objects.new(name, me)
+        for t, idxs in sorted(tag_verts.items()):
+            vg = ob.vertex_groups.new(name=t)
+            vg.add(sorted(idxs), 1.0, 'REPLACE')
         return ob
 
 
@@ -141,11 +180,15 @@ class _Wall:
                       self._co(fu1, fz1, recess), self._co(fu0, fz1, recess)]
                 mf = self.mat if mat_frame is None else mat_frame
                 mp = self.mat if mat_pane is None else mat_pane
+                # openings get their own subpart tag (rule 5)
+                keep = self.s.tag
+                self.s.tag = 'windows' if kind == 'window' else 'doors'
                 for k in range(4):
                     a, b = k, (k + 1) % 4
                     self._q(oc[a], oc[b], ic[b], ic[a], mf)   # face ring
                     self._q(ic[a], ic[b], rc[b], rc[a], mf)   # jamb return
                 self._q(rc[0], rc[1], rc[2], rc[3], mp)       # pane
+                self.s.tag = keep
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +279,7 @@ def build_dingbat(p, rng):
                     return 'window'
         return 'wall'
 
+    shell.tag = 'facade_front'
     _Wall(shell, (0, 0, 0), (1, 0, 0), xl, front_z, (0, -1, 0),
           M_STUCCO).fill(front_classify, frame=frame,
                          mat_frame=M_TRIM, mat_pane=M_GLASS)
@@ -252,6 +296,7 @@ def build_dingbat(p, rng):
                 return 'window'
         return 'wall'
 
+    shell.tag = 'facade_back'
     _Wall(shell, (0, D, 0), (1, 0, 0), xl, back_z, (0, 1, 0),
           M_STUCCO).fill(back_classify, frame=frame,
                          mat_frame=M_TRIM, mat_pane=M_GLASS)
@@ -261,14 +306,17 @@ def build_dingbat(p, rng):
         del iu, iz
         return 'wall'
 
+    shell.tag = 'facade_side'
     _Wall(shell, (0, 0, 0), (0, 1, 0), yl, zl, (-1, 0, 0), M_STUCCO).fill(plain)
     _Wall(shell, (W, 0, 0), (0, 1, 0), yl, zl, (1, 0, 0), M_STUCCO).fill(plain)
+    shell.tag = 'parapet'
 
     # ---- carport liner: recessed ground wall + soffit. A SEPARATE SHELL --
     # welding its edges into the side/front wall faces would put 3 faces on
     # one edge (non-manifold, auditor-caught); a clean abutting shell is the
     # quality bar's sanctioned form.
     liner = _Shell()
+    liner.tag = 'carport'
     ground_z = [v for v in zl if v <= z_soffit]
     door_cols = {xl.index(a) for (a, _b) in xjambs[::2]}   # every other bay
 
@@ -278,9 +326,11 @@ def build_dingbat(p, rng):
             return 'door'
         return 'wall'
 
+    liner.tag = 'doors'
     _Wall(liner, (0, cd, 0), (1, 0, 0), xl, ground_z, (0, -1, 0),
           M_STUCCO).fill(ground_classify, frame=frame,
                          mat_frame=M_TRIM, mat_pane=M_TRIM)
+    liner.tag = 'carport'
     soffit_y = [v for v in yl if v <= cd]
     for iy in range(len(soffit_y) - 1):
         for iu in range(len(xl) - 1):
@@ -296,6 +346,7 @@ def build_dingbat(p, rng):
     def ring_cell(v0, v1, lo, hi):
         return v1 <= lo + 1e-6 or v0 >= hi - 1e-6
 
+    shell.tag = 'parapet'
     for iy in range(len(ry) - 1):
         for ix in range(len(rx) - 1):
             x0, x1 = rx[ix], rx[ix + 1]
@@ -326,6 +377,7 @@ def build_dingbat(p, rng):
 
     # ---- posts (separate closed shells) ------------------------------------
     posts = _Shell()
+    posts.tag = 'carport'
     n_posts = max(2, p["carport_bays"] + 1)
     px = 0.14
     for i in range(n_posts):
@@ -337,6 +389,7 @@ def build_dingbat(p, rng):
 
     # ---- switchback stair (separate shells) --------------------------------
     stair = _Shell()
+    stair.tag = 'steps'
     run_z = zl[zl.index(z_soffit) + 1]          # top of first slab band
     steps = 12
     rise = run_z / steps
@@ -373,6 +426,7 @@ def build_dingbat(p, rng):
 
     # ---- awnings + AC units -------------------------------------------------
     extras = _Shell()
+    extras.tag = 'awnings'
     if p["awnings"]:
         for (a, b) in xjambs:
             for (s, h) in upper_rows:
@@ -384,6 +438,7 @@ def build_dingbat(p, rng):
                             (a - 0.1, -0.45, zh - 0.28),
                             (a - 0.1, -0.45, zh - 0.40),
                             (b + 0.1, -0.45, zh - 0.40), M_METAL)
+    extras.tag = 'ac_units'
     for (a, b) in xjambs:
         for (s, h) in upper_rows:
             if rng.random() < p["ac_units"]:
