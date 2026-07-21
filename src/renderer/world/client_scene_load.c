@@ -429,6 +429,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.forward.shadow_near = rc.shadow_near;
     cfg.forward.shadow_far = (diag > 1.0f) ? diag * rc.shadow_far_scale : 60.0f;
     cfg.forward.shadow_bias = rc.shadow_bias;
+    cfg.forward.shadow_distance = rc.shadow_distance;  /* far cube-shadow cutoff (rpg-9u96). */
     cfg.forward.spot_light = -1;   /* no dedicated spot; cube path covers spots. */
 
     cfg.gi_enabled = rc.gi_enabled;

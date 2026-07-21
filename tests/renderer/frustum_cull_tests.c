@@ -122,6 +122,28 @@ static int test_draw_distance(void)
     return 0;
 }
 
+/* sphere_cull_aabb: a point light's range vs a caster's world AABB. */
+static int test_sphere_cull(void)
+{
+    float model[16], lmin[3], lmax[3];
+    float light[3] = { 0.0f, 0.0f, 0.0f };
+
+    /* Unit box 3 m away: within a 5 m range -> keep; outside a 2 m range -> cull. */
+    unit_box_at(3.0f, 0.0f, 0.0f, model, lmin, lmax);   /* nearest face at 2.5 m */
+    ASSERT_FALSE(sphere_cull_aabb(light, 5.0f, model, lmin, lmax));
+    ASSERT_TRUE(sphere_cull_aabb(light, 2.0f, model, lmin, lmax));
+
+    /* Range 0 (unbounded) never culls, even very far away. */
+    unit_box_at(1000.0f, 0.0f, 0.0f, model, lmin, lmax);
+    ASSERT_FALSE(sphere_cull_aabb(light, 0.0f, model, lmin, lmax));
+    ASSERT_TRUE(sphere_cull_aabb(light, 10.0f, model, lmin, lmax));
+
+    /* Light inside the box -> distance 0 -> always kept. */
+    unit_box_at(0.0f, 0.0f, 0.0f, model, lmin, lmax);
+    ASSERT_FALSE(sphere_cull_aabb(light, 0.1f, model, lmin, lmax));
+    return 0;
+}
+
 /* frustum_extract_planes_vp(proj,view) must match frustum_extract_planes(proj*view). */
 static int test_extract_vp_matches_mvp(void)
 {
@@ -186,6 +208,7 @@ int main(void)
         { "huge_box_straddling_kept",    test_huge_box_straddling_origin_kept },
         { "draw_distance",               test_draw_distance },
         { "extract_vp_matches_mvp",      test_extract_vp_matches_mvp },
+        { "sphere_cull",                 test_sphere_cull },
         { "bench_cull_batch",            bench_cull_batch },
     };
     int n = (int)(sizeof tests / sizeof tests[0]), pass = 0;

@@ -326,21 +326,43 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         FR_ZONE(z_cube, "Render.Shadow.Cube");
         uint32_t n = scene->lights->count;
         if (n > fwd->cfg.max_lights) n = fwd->cfg.max_lights;
-        uint32_t slot = 0;
-        shadow_cube_clear(&fwd->shadow);  /* clear all layers once (layered FBO). */
+        /* shadow_distance (0 = unlimited): a light whose position is beyond this
+         * range from the camera gets no cube shadow this frame (rpg-9u96). */
+        const float sdist = fwd->cfg.shadow_distance;
+        const float sd2 = sdist * sdist;
+        const float *eye = scene->camera.eye;
+        /* Which lights want a shadow slot this frame? Decide first so we can skip
+         * the whole pass (and its full-array clear) when none do. */
+        uint32_t want = 0;
         for (uint32_t i = 0; i < n; ++i) {
             const render_light_t *L = &scene->lights->lights[i];
-            if ((L->kind == RENDER_LIGHT_POINT || L->kind == RENDER_LIGHT_SPOT) &&
-                (L->flags & RENDER_LIGHT_FLAG_SHADOW) && slot < fwd->shadow.max_lights) {
-                shadow_cube_render_light(&fwd->shadow, scene, L->position, slot);
-                fwd->shadow_slot[i] = (int)slot;
-                ++slot;
-            } else {
-                fwd->shadow_slot[i] = -1;
+            int shadowed = (L->kind == RENDER_LIGHT_POINT || L->kind == RENDER_LIGHT_SPOT) &&
+                           (L->flags & RENDER_LIGHT_FLAG_SHADOW);
+            if (shadowed && sdist > 0.0f) {
+                float dx = L->position[0]-eye[0], dy = L->position[1]-eye[1],
+                      dz = L->position[2]-eye[2];
+                if (dx*dx + dy*dy + dz*dz > sd2) shadowed = 0;  /* too far to matter. */
             }
+            fwd->shadow_slot[i] = shadowed ? 0 : -1;  /* mark; real slot assigned below. */
+            want += (uint32_t)(shadowed != 0);
         }
-        fwd->shadow.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
-                               (int32_t)fwd->cfg.screen_h);
+        if (want > 0u) {
+            uint32_t slot = 0;
+            shadow_cube_clear(&fwd->shadow);  /* clear all layers once (layered FBO). */
+            for (uint32_t i = 0; i < n; ++i) {
+                const render_light_t *L = &scene->lights->lights[i];
+                if (fwd->shadow_slot[i] >= 0 && slot < fwd->shadow.max_lights) {
+                    shadow_cube_render_light(&fwd->shadow, scene, L->position, slot,
+                                             L->range);
+                    fwd->shadow_slot[i] = (int)slot;
+                    ++slot;
+                } else {
+                    fwd->shadow_slot[i] = -1;
+                }
+            }
+            fwd->shadow.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
+                                   (int32_t)fwd->cfg.screen_h);
+        }
         FR_ZONE_END(z_cube);
     }
     a_cube += fr_prof_tick(fwd, &pt);

@@ -64,6 +64,18 @@ int frustum_cull_aabb_ex(const float planes[6][4], const float model[16],
                          const float lmin[3], const float lmax[3],
                          const float eye[3], float max_dist);
 
+/**
+ * @brief Test a renderable's world AABB against a sphere (point-light range).
+ * @param center Sphere centre / light position (3 floats).
+ * @param radius Sphere radius / light range; <= 0 disables the test (never cull).
+ * @param model  Column-major model->world, 16 floats.
+ * @param lmin   Local AABB min (3 floats).
+ * @param lmax   Local AABB max (3 floats).
+ * @return 1 if the AABB lies entirely outside the sphere (cull it); 0 to keep.
+ */
+int sphere_cull_aabb(const float center[3], float radius, const float model[16],
+                     const float lmin[3], const float lmax[3]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -10,25 +10,7 @@
 
 #include <math.h>
 
-/* Transform the 8 corners of local AABB [lmin,lmax] by the column-major @p model
- * and reduce to a world-space AABB [wmin,wmax]. */
-static void world_aabb(const float model[16], const float lmin[3],
-                       const float lmax[3], float wmin[3], float wmax[3])
-{
-    wmin[0] = wmin[1] = wmin[2] = 1e30f;
-    wmax[0] = wmax[1] = wmax[2] = -1e30f;
-    for (int c = 0; c < 8; ++c) {
-        float lc[3] = { (c & 1) ? lmax[0] : lmin[0],
-                        (c & 2) ? lmax[1] : lmin[1],
-                        (c & 4) ? lmax[2] : lmin[2] };
-        for (int r = 0; r < 3; ++r) {
-            float w = model[0*4 + r] * lc[0] + model[1*4 + r] * lc[1]
-                    + model[2*4 + r] * lc[2] + model[3*4 + r];
-            if (w < wmin[r]) wmin[r] = w;
-            if (w > wmax[r]) wmax[r] = w;
-        }
-    }
-}
+#include "ferrum/renderer/cull/cull_internal.h"
 
 /* True if the world AABB is fully outside any of the 6 planes (positive-vertex
  * test: if the AABB corner farthest along a plane normal is still behind it, the
@@ -44,19 +26,6 @@ static int aabb_outside_planes(const float pl[6][4], const float wmin[3],
             return 1;
     }
     return 0;
-}
-
-/* Squared distance from @p eye to the nearest point of world AABB [wmin,wmax]. */
-static float aabb_dist2_to_point(const float wmin[3], const float wmax[3],
-                                 const float eye[3])
-{
-    float d2 = 0.0f;
-    for (int r = 0; r < 3; ++r) {
-        float e = eye[r];
-        float v = e < wmin[r] ? (wmin[r] - e) : (e > wmax[r] ? (e - wmax[r]) : 0.0f);
-        d2 += v * v;
-    }
-    return d2;
 }
 
 void frustum_extract_planes(const float m[16], float pl[6][4])
@@ -90,7 +59,7 @@ int frustum_cull_aabb(const float pl[6][4], const float model[16],
                       const float lmin[3], const float lmax[3])
 {
     float wmin[3], wmax[3];
-    world_aabb(model, lmin, lmax, wmin, wmax);
+    cull_world_aabb(model, lmin, lmax, wmin, wmax);
     return aabb_outside_planes(pl, wmin, wmax);
 }
 
@@ -99,11 +68,11 @@ int frustum_cull_aabb_ex(const float pl[6][4], const float model[16],
                          const float eye[3], float max_dist)
 {
     float wmin[3], wmax[3];
-    world_aabb(model, lmin, lmax, wmin, wmax);
+    cull_world_aabb(model, lmin, lmax, wmin, wmax);
     if (aabb_outside_planes(pl, wmin, wmax))
         return 1;
     if (max_dist > 0.0f &&
-        aabb_dist2_to_point(wmin, wmax, eye) > max_dist * max_dist)
+        cull_aabb_point_dist2(wmin, wmax, eye) > max_dist * max_dist)
         return 1;
     return 0;
 }
