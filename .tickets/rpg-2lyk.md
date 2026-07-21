@@ -35,8 +35,11 @@ much. Concretely:
   materials) flowing through so generated pieces export via export_scene.py
   unchanged.
 
-FIRST DELIVERABLE: a design document outlining the different architectural
-tools to build (the tool list, each tool's parameters, shared param conventions,
-material/decay-pass strategy, menu taxonomy, operator framework). Visual
-reference photos are being gathered into the session scratchpad (la_ref/ +
-la_ref/marvin/) -- fold a style summary into the doc.
+DELIVERED (2026-07-21): ref/archgen_dystopian_la.md -- the full tool plan:
+operator/redo-panel contract, visual-language summary grounded in the curated
+reference set (assetsrc/ref/la/, 12 categories, ~68 usable photos after culling
+dead scrapes), 30 tools across 7 families (residential massing, commercial
+strips, infrastructure, streetscape, decay/desert passes, aberration overlay,
+assembly), per-tool parameter tables, shared-library prerequisites, engine/
+export notes, and a 6-phase build order. Phase 0 starts with the shared
+operator glue + the Dingbat Apartment generator as pattern-setter.
