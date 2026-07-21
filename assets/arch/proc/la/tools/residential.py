@@ -276,18 +276,16 @@ def build_dingbat(p, rng):
         return any(abs(u0 - v) < 1e-6 for v in vals)
 
     jamb_x = [a for (a, _b) in xjambs]
-    door_x = [a for (a, _b) in xjambs[::2]]      # every other bay: unit doors
-    entry_x = xjambs[len(xjambs) // 2][0]        # centre bay: entry door
 
     def front_classify(u0, zc0):
         for (sll, _hh) in upper_rows:
             if abs(zc0 - sll) < 1e-6 and near(u0, jamb_x):
                 return 'window'
         if not has_carport:
-            if abs(zc0 - z_sill1) < 1e-6 and near(u0, jamb_x):
-                return 'door' if abs(u0 - entry_x) < 1e-6 else 'window'
-            if abs(zc0 - z_grade) < 1e-6 and abs(u0 - entry_x) < 1e-6:
-                return 'door'          # the door continues down to grade
+            # grounded: every bay is a unit entry -- full-height door
+            # (grade cell + sill-band cell stack into one opening).
+            if zc0 < z_head1 - 1e-6 and near(u0, jamb_x):
+                return 'door'
         return 'wall'
 
     shell.tag = 'facade_front'
@@ -298,12 +296,20 @@ def build_dingbat(p, rng):
     # ---- back wall (y=D, faces +Y): full height, windows on all floors -----
     back_z = zl
 
+    spandrel_tops = [hi for (_lo, hi, _bt) in floor_bands]
+
     def back_classify(u0, zc0):
         if abs(zc0 - z_sill1) < 1e-6 and near(u0, jamb_x):
             return 'window'
-        for (sll, _hh) in upper_rows:
-            if abs(zc0 - sll) < 1e-6 and near(u0, jamb_x):
-                return 'window'
+        # upper units: the walkway door -- spandrel cell + window cell stack
+        # into a door with a transom light over it.
+        if near(u0, jamb_x):
+            for st in spandrel_tops:
+                if abs(zc0 - st) < 1e-6:
+                    return 'door'
+            for (sll, _hh) in upper_rows:
+                if abs(zc0 - sll) < 1e-6:
+                    return 'door'
         return 'wall'
 
     shell.tag = 'facade_back'
@@ -329,7 +335,8 @@ def build_dingbat(p, rng):
     ground_z = [v for v in zl if v <= z_soffit]
 
     def ground_classify(u0, zc0):
-        if zc0 < z_head1 - 1e-6 and near(u0, door_x):
+        # every unit bay is a door: these are the ground apartments' entries.
+        if zc0 < z_head1 - 1e-6 and near(u0, jamb_x):
             return 'door'
         return 'wall'
 
@@ -397,41 +404,55 @@ def build_dingbat(p, rng):
                  (x + px / 2, 0.30 + px, z_soffit), M_METAL)
         post_ob = posts.to_object("LA_Dingbat_Posts", mats)
 
-    # ---- switchback stair (separate shells) --------------------------------
+    # ---- rear stair tower (separate shells): per storey, two flights with a
+    # half-landing, arriving FLUSH on that storey's walkway level. Lane A
+    # (outer) climbs away from the building, lane B (inner) climbs back and
+    # steps straight onto the walkway extension over the lanes. Boxes carry
+    # the cycled plane-inset (no shared planes / weld soup). --------------
     stair = _Shell()
     stair.tag = 'steps'
-    run_z = zl[zl.index(z_soffit) + 1]          # top of first slab band
-    steps = 12
-    rise = run_z / steps
-    tread, s_w = 0.26, 1.0
-    ov = 0.02                                    # y-interpenetration between steps
-    # Abutting boxes at IDENTICAL coords weld into non-manifold soup; boxes
-    # sharing PLANES z-fight and land corners on neighbours' edges (both
-    # auditor-caught). So: overlap in y, and cycle a +-6 mm x-inset per box
-    # so no two touching shells ever share a plane. Invisible at stair scale.
+    tread, s_w, ov = 0.26, 1.1, 0.02
     side = p["stair_side"]
-    sx0 = -s_w - 0.05 if side == 'left' else W + 0.05
-    half = steps // 2
+    laneB_x0 = (-s_w - 0.05) if side == 'left' else (W + 0.05)
+    lane_off = (s_w + 0.03) * (-1 if side == 'left' else 1)
+    laneA_x0 = laneB_x0 + lane_off
+    wd = 1.25
+    levels = [0.0] + [lo + 0.12 for (lo, _hi, _bt) in floor_bands]
+    gidx = 0                                  # global step index (plane jitter)
 
-    def step_box(i, x0, y0, x1, y1, ztop):
-        dx = 0.006 * ((i % 3) - 1)
-        _box(stair, (x0 + dx, y0, 0.0), (x1 - dx, y1, ztop), M_CONCRETE)
+    def jbox(x0, y0, z0, x1, y1, z1):
+        nonlocal gidx
+        dx = 0.006 * ((gidx % 3) - 1)
+        gidx += 1
+        _box(stair, (min(x0, x1) + dx, y0, z0), (max(x0, x1) - dx, y1, z1),
+             M_CONCRETE)
 
-    for i in range(half):                        # flight 1 (+y)
-        y0 = 0.6 + tread * i
-        step_box(i, sx0, y0 - ov, sx0 + s_w, y0 + tread,
-                 min(rise * (i + 1), run_z))
-    land_y = 0.6 + tread * half
-    _box(stair, (sx0 + 0.009, land_y - ov, 0.0),
-         (sx0 + s_w - 0.009, land_y + s_w, min(rise * (half + 1), run_z)),
-         M_CONCRETE)
-    lane = s_w + 0.03                            # lane gap: no shared planes
-    for i in range(half, steps):                 # flight 2 (-y), second lane
-        k = i - half
-        y1 = land_y + s_w - tread * k
-        lx0 = sx0 - lane if side == 'left' else sx0 + lane
-        step_box(i, lx0, y1 - tread - ov, lx0 + s_w, y1,
-                 min(rise * (i + 2), run_z))
+    y_arr = D + wd * 0.45                     # arrival: mid walkway band
+    sdir = -1.0 if side == 'left' else 1.0
+    for i in range(len(levels) - 1):
+        zb, zt = levels[i], levels[i + 1]
+        # per-storey micro-offset: stacked flights share lanes, and identical
+        # planes at the inter-storey level put corners on edges (auditor: 8
+        # T-junctions at floors=3). 8 mm per storey is invisible.
+        ax0 = laneA_x0 + sdir * 0.008 * i
+        bx0 = laneB_x0 + sdir * 0.008 * i
+        ya = y_arr + 0.004 * i
+        n = max(4, int((zt - zb) / 0.18 + 0.999))
+        half = n // 2
+        rise = (zt - zb) / n
+        run = tread * max(half, n - half)
+        # flight A: outer lane, base level -> half height, climbing away (+y)
+        for j in range(half):
+            jbox(ax0, ya + tread * j - ov, zb,
+                 ax0 + s_w, ya + tread * (j + 1), zb + rise * (j + 1))
+        # half landing spanning both lanes at the far end
+        jbox(min(ax0, bx0), ya + run - ov, zb,
+             max(ax0, bx0) + s_w, ya + run + s_w, zb + rise * half)
+        # flight B: inner lane, half height -> walkway level, climbing back
+        for k in range(1, n - half + 1):
+            jbox(bx0, ya + run - tread * k - ov, zb,
+                 bx0 + s_w, ya + run - tread * (k - 1),
+                 zb + rise * (half + k))
     stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
 
     # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,
@@ -524,9 +545,12 @@ def build_dingbat(p, rng):
         walk = _Shell()
         walk.tag = 'walkway'
         wd = 1.25
+        s_w2 = 1.1
+        wx0 = (-2 * s_w2 - 0.10) if p["stair_side"] == 'left' else 0.0
+        wx1 = W if p["stair_side"] == 'left' else (W + 2 * s_w2 + 0.10)
         for wi, (lo, hi, _bt) in enumerate(floor_bands):
-            _box(walk, (0.0, D + 0.003 + 0.002 * wi, lo),
-                 (W, D + wd, lo + 0.12), M_CONCRETE)
+            _box(walk, (wx0, D + 0.003 + 0.002 * wi, lo),
+                 (wx1 + 0.001 * wi, D + wd, lo + 0.12), M_CONCRETE)
         walk.tag = 'columns'
         for i in range(3):
             x = 0.2 + (W - 0.4) * (i / 2.0)
