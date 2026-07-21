@@ -1,6 +1,6 @@
 ---
 id: rpg-qdr5
-status: in_progress
+status: closed
 deps: [rpg-gh2z, rpg-5ljd]
 links: []
 created: 2026-07-21T09:32:50Z

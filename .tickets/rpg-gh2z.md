@@ -1,6 +1,6 @@
 ---
 id: rpg-gh2z
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-07-21T09:32:50Z
