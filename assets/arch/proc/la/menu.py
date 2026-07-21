@@ -42,11 +42,31 @@ def _family_menu(family):
 
 def _add_menu_entry(self, context):
     del context
-    self.layout.menu(VIEW3D_MT_ferrum_la.bl_idname, icon='HOME')
+    self.layout.menu("VIEW3D_MT_ferrum_la", icon='HOME')
+
+
+def _scrub_stale():
+    """Remove EVERY prior registration by NAME -- module reloads orphan the
+    old function/class objects, so holding references is not enough (the
+    user-visible symptom: one 'Dystopian LA' entry per reload)."""
+    draw_funcs = getattr(bpy.types.VIEW3D_MT_add.draw, "_draw_funcs", None)
+    if draw_funcs is not None:
+        for fn in [f for f in draw_funcs if getattr(f, "__name__", "") ==
+                   "_add_menu_entry"]:
+            bpy.types.VIEW3D_MT_add.remove(fn)
+    names = ["VIEW3D_MT_ferrum_la"] +             ["VIEW3D_MT_ferrum_la_" + f.lower() for f in FAMILY_ORDER]
+    for n in names:
+        cls = getattr(bpy.types, n, None)
+        if cls is not None:
+            try:
+                bpy.utils.unregister_class(cls)
+            except Exception:
+                pass
 
 
 def register():
-    unregister()   # idempotent re-registration while iterating.
+    _scrub_stale()
+    _MENU_CLASSES.clear()
     _MENU_CLASSES.append(VIEW3D_MT_ferrum_la)
     for fam in FAMILY_ORDER:
         _MENU_CLASSES.append(_family_menu(fam))
@@ -56,13 +76,5 @@ def register():
 
 
 def unregister():
-    try:
-        bpy.types.VIEW3D_MT_add.remove(_add_menu_entry)
-    except Exception:
-        pass
-    for cls in reversed(_MENU_CLASSES):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception:
-            pass
+    _scrub_stale()
     _MENU_CLASSES.clear()

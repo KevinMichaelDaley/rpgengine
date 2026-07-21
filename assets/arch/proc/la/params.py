@@ -159,7 +159,16 @@ def _make_operator(tool):
 
 
 def register_operators():
+    """Reload-proof: unregister any prior class of the same RNA name FIRST
+    (after a module reload the old class object is orphaned -- holding
+    references cannot clean it up)."""
     for tool in _REGISTRY.values():
+        stale = getattr(bpy.types, "FERRUM_OT_" + tool["idname"], None)
+        if stale is not None:
+            try:
+                bpy.utils.unregister_class(stale)
+            except Exception:
+                pass
         cls = _make_operator(tool)
         bpy.utils.register_class(cls)
         _OP_CLASSES.append(cls)
@@ -167,5 +176,8 @@ def register_operators():
 
 def unregister_operators():
     for cls in reversed(_OP_CLASSES):
-        bpy.utils.unregister_class(cls)
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
     _OP_CLASSES.clear()
