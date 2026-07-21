@@ -95,11 +95,11 @@ class _Shell:
         self.bm.normal_update()      # BEFORE UVs: projection needs real normals
         self._write_uvs()
         me = bpy.data.meshes.new(name)
-        # face -> vert index sets per tag, captured before free()
-        tag_verts = {}
-        for f, t in self._face_tags.items():
-            tag_verts.setdefault(t, set()).update(v.index for v in f.verts)
+        # Indices FIRST: fresh bmesh verts are -1 until index_update, and a
+        # -1 fed to vertex_groups.add is a hard bpy crash (hit at floors=3;
+        # allocation-order dependent).
         self.bm.verts.index_update()
+        tag_verts = {}
         for f, t in self._face_tags.items():
             tag_verts.setdefault(t, set()).update(v.index for v in f.verts)
         self.bm.to_mesh(me)
@@ -160,7 +160,7 @@ class _Wall:
              mat_frame=None, mat_pane=None):
         for iz in range(len(self.zl) - 1):
             for iu in range(len(self.ul) - 1):
-                kind = classify(iu, iz)
+                kind = classify(iu, self.zl[iz])
                 if kind == 'void':
                     continue
                 u0, u1 = self.ul[iu], self.ul[iu + 1]
@@ -240,7 +240,9 @@ def build_dingbat(p, rng):
     zl = [z_grade, z_sill1, z_head1, z_soffit]
     z = z_soffit
     upper_rows = []                  # (sill, head) per upper floor
+    floor_bands = []                 # (slab_lo, slab_hi, band_top) per floor
     for _f in range(max(1, floors - 1)):
+        slab_lo = z
         z += slab                    # slab/fascia band top
         zl.append(z)
         s = z + spandrel
@@ -249,6 +251,7 @@ def build_dingbat(p, rng):
         zl.extend([s, h])
         z = h + head
         zl.append(z)
+        floor_bands.append((slab_lo, slab_lo + slab, z))
     z_roof = z
     z_par = z + 0.4
     zl.extend([z_par])
@@ -279,8 +282,7 @@ def build_dingbat(p, rng):
     jamb_sorted = sorted(jamb_cols)
     door_bay_iu = jamb_sorted[len(jamb_sorted) // 2]   # centre bay = entry
 
-    def front_classify(iu, iz):
-        zc0 = front_z[iz]
+    def front_classify(iu, zc0):
         for (s, h) in upper_rows:
             if abs(zc0 - s) < 1e-6 and iu in jamb_cols:
                 return 'window'
@@ -299,8 +301,7 @@ def build_dingbat(p, rng):
     # ---- back wall (y=D, faces +Y): full height, windows on all floors -----
     back_z = zl
 
-    def back_classify(iu, iz):
-        zc0 = back_z[iz]
+    def back_classify(iu, zc0):
         if abs(zc0 - z_sill1) < 1e-6 and iu in jamb_cols:
             return 'window'
         for (s, h) in upper_rows:
@@ -314,8 +315,8 @@ def build_dingbat(p, rng):
                          mat_frame=M_TRIM, mat_pane=M_GLASS)
 
     # ---- side walls (x=0 faces -X; x=W faces +X): plain full-height grids --
-    def plain(iu, iz):
-        del iu, iz
+    def plain(iu, zc0):
+        del iu, zc0
         return 'wall'
 
     shell.tag = 'facade_side'
@@ -331,8 +332,7 @@ def build_dingbat(p, rng):
     ground_z = [v for v in zl if v <= z_soffit]
     door_cols = {xl.index(a) for (a, _b) in xjambs[::2]}   # every other bay
 
-    def ground_classify(iu, iz):
-        zc0 = ground_z[iz]
+    def ground_classify(iu, zc0):
         if zc0 < z_head1 - 1e-6 and iu in door_cols:
             return 'door'
         return 'wall'
@@ -449,10 +449,17 @@ def build_dingbat(p, rng):
         inner.tag = 'interior_walls'
 
         def void_openings(classify):
-            def cls(iu, iz):
-                k = classify(iu, iz)
+            def cls(iu, zc0):
+                k = classify(iu, zc0)
                 return 'void' if k in ('window', 'door') else k
             return cls
+
+        def inner_front_classify(iu, zc0):
+            """Full-height inner front: mirrors the recessed ground wall's
+            doors below the soffit, the facade windows above."""
+            if has_carport and zc0 < z_soffit - 1e-6:
+                return ground_classify(iu, zc0)
+            return front_classify(iu, zc0)
 
         ix0, ix1 = wt, W - wt
         iy0 = (cd + wt) if has_carport else wt
@@ -461,11 +468,9 @@ def build_dingbat(p, rng):
         in_yl = sorted({iy0, iy1} | {v for v in yl if iy0 < v < iy1})
         top_z = zl[-1] - 0.4                   # underside of roof structure
         in_zl = sorted({v for v in zl if v <= top_z} | {top_z})
-        in_front_z = [v for v in in_zl if v >= z_soffit] if has_carport else in_zl
         # inner faces point INTO the rooms (normals reversed vs exterior).
-        _Wall(inner, (0, iy0, 0), (1, 0, 0), in_xl, in_front_z, (0, 1, 0),
-              M_GYPSUM).fill(void_openings(front_classify) if not has_carport
-                             else void_openings(ground_classify))
+        _Wall(inner, (0, iy0, 0), (1, 0, 0), in_xl, in_zl, (0, 1, 0),
+              M_GYPSUM).fill(void_openings(inner_front_classify))
         _Wall(inner, (0, iy1, 0), (1, 0, 0), in_xl, in_zl, (0, -1, 0),
               M_GYPSUM).fill(void_openings(back_classify))
         _Wall(inner, (ix0, 0, 0), (0, 1, 0), in_yl, in_zl, (1, 0, 0),
@@ -480,11 +485,10 @@ def build_dingbat(p, rng):
         slabs = _Shell()
         slabs.tag = 'slabs'
         e = 0.001
-        slab_levels = [z_soffit]
+        slab_boxes = [(lo, hi) for (lo, hi, _bt) in floor_bands]
         if not has_carport:
-            slab_levels.insert(0, z_grade)
-        for lvl_i, z_lo in enumerate(slab_levels):
-            z_hi = z_lo + (slab if z_lo > z_grade else 0.12)
+            slab_boxes.insert(0, (z_grade, z_grade + 0.12))
+        for (z_lo, z_hi) in slab_boxes:
             _box(slabs, (ix0 + e, iy0 + e, z_lo), (ix1 - e, iy1 - e, z_hi),
                  M_CONCRETE)
         interior_obs.append(slabs.to_object("LA_Dingbat_Slabs", mats))
@@ -495,11 +499,13 @@ def build_dingbat(p, rng):
         parts = _Shell()
         parts.tag = 'partitions'
         pt = 0.10
-        storeys = [(z_soffit + slab, top_z)]
-        if not has_carport:
-            storeys.insert(0, (z_grade + 0.12, z_soffit))
-        else:
-            storeys.insert(0, (z_grade + 0.002, z_soffit))  # rear ground units
+        # one storey per floor band: that band's slab top to the next band's
+        # slab bottom (roof structure underside for the last).
+        storeys = [(z_grade + (0.12 if not has_carport else 0.002),
+                    floor_bands[0][0])]
+        for i2, (lo, hi, _bt) in enumerate(floor_bands):
+            nxt = floor_bands[i2 + 1][0] if i2 + 1 < len(floor_bands) else top_z
+            storeys.append((hi, nxt))
         for k in range(1, cols):
             xb = margin + (W - 2 * margin) * (k / cols)
             for (zlo, zhi) in storeys:
@@ -511,13 +517,14 @@ def build_dingbat(p, rng):
         walk = _Shell()
         walk.tag = 'walkway'
         wd = 1.25
-        _box(walk, (0.0, D + 0.003, z_soffit), (W, D + wd, z_soffit + 0.12),
-             M_CONCRETE)
+        for wi, (lo, hi, _bt) in enumerate(floor_bands):
+            _box(walk, (0.0, D + 0.003 + 0.002 * wi, lo),
+                 (W, D + wd, lo + 0.12), M_CONCRETE)
         walk.tag = 'columns'
         for i in range(3):
             x = 0.2 + (W - 0.4) * (i / 2.0)
             _box(walk, (x - 0.06, D + wd - 0.14, 0.0),
-                 (x + 0.06, D + wd - 0.02, z_soffit), M_METAL)
+                 (x + 0.06, D + wd - 0.02, floor_bands[-1][0]), M_METAL)
         interior_obs.append(walk.to_object("LA_Dingbat_Walkway", mats))
 
     # ---- STORY OPTIONS (rule 3, off by default; theme: abandonment /
