@@ -377,13 +377,23 @@ class _Wall:
                     continue
                 if kind == 'doorL':
                     # TALL walk-through door: the rough opening IS the full
-                    # two-cell rect (head = the grid head line) -- every
-                    # boundary on grid lines, no face rings. Thin walls get a
-                    # `recess`-deep reveal; THICK walls cut clean through:
-                    # jambs + header span the full thickness and the FLOOR
-                    # strip carries the slab out to the exterior plane
-                    # (continuous walk-through, no cavity).
-                    # absorb ALL contiguous doorU rows above (a global
+                    # rect (head = the grid head line) -- every boundary on
+                    # grid lines, no face rings. Thin walls get a `recess`-
+                    # deep reveal; THICK walls cut clean through: jambs +
+                    # header span the full thickness and the FLOOR strip
+                    # carries the slab out to the exterior plane.
+                    # absorb ALL contiguous doorL cells SIDEWAYS first: a
+                    # foreign grid line landing inside the jambs (e.g. a
+                    # window jamb crossing the door span) sliced every such
+                    # door into a slender slot + a wall sliver.
+                    if iu > 0 and classify(self.ul[iu - 1], z0) == 'doorL':
+                        continue    # consumed by the run to its left
+                    ju = iu + 1
+                    while (ju + 1 < len(self.ul) and
+                           classify(self.ul[ju], z0) == 'doorL'):
+                        ju += 1
+                    u1r = self.ul[ju]
+                    # then absorb ALL contiguous doorU rows above (a global
                     # z-line insertion once silently shortened every door).
                     jz = iz + 1
                     while (jz + 1 < len(self.zl) and
@@ -393,6 +403,8 @@ class _Wall:
                     depth = self.th if self.th > 0.0 else recess
                     zs = [z0] + [zv for zv in self.zl
                                  if z0 + 1e-6 < zv < z1t - 1e-6] + [z1t]
+                    us = [u0] + [uv for uv in self.ul
+                                 if u0 + 1e-6 < uv < u1r - 1e-6] + [u1r]
                     keep = self.s.tag
                     self.s.tag = 'doors'
                     mfd = self.mat if mat_frame is None else mat_frame
@@ -400,14 +412,18 @@ class _Wall:
                         za, zb = zs[zi], zs[zi + 1]
                         self._q(self._co(u0, za, 0.0), self._co(u0, za, depth),
                                 self._co(u0, zb, depth), self._co(u0, zb, 0.0), mfd)
-                        self._q(self._co(u1, za, depth), self._co(u1, za, 0.0),
-                                self._co(u1, zb, 0.0), self._co(u1, zb, depth), mfd)
-                    self._q(self._co(u0, z1t, depth), self._co(u1, z1t, depth),
-                            self._co(u1, z1t, 0.0), self._co(u0, z1t, 0.0), mfd)
-                    if self.th > 0.0:
-                        self._q(self._co(u0, z0, 0.0), self._co(u0, z0, depth),
-                                self._co(u1, z0, depth), self._co(u1, z0, 0.0),
-                                M_CONCRETE)   # through-floor strip
+                        self._q(self._co(u1r, za, depth), self._co(u1r, za, 0.0),
+                                self._co(u1r, zb, 0.0), self._co(u1r, zb, depth), mfd)
+                    # header + floor strip SEGMENTED at interior u lines so
+                    # the wall cells above/below always weld.
+                    for ui2 in range(len(us) - 1):
+                        ua2, ub2 = us[ui2], us[ui2 + 1]
+                        self._q(self._co(ua2, z1t, depth), self._co(ub2, z1t, depth),
+                                self._co(ub2, z1t, 0.0), self._co(ua2, z1t, 0.0), mfd)
+                        if self.th > 0.0:
+                            self._q(self._co(ua2, z0, 0.0), self._co(ua2, z0, depth),
+                                    self._co(ub2, z0, depth), self._co(ub2, z0, 0.0),
+                                    M_CONCRETE)   # through-floor strip
                     self.s.tag = keep
                     continue
                 if kind == 'wall':
@@ -425,46 +441,66 @@ class _Wall:
                         self.s.tag = keep2
                     continue
                 # opening cell (window / window_awning): may span SEVERAL
-                # contiguous rows (global z-lines split cells; matching only
-                # one row made squat half-windows -- the door lesson again).
-                # The ring/jambs are SEGMENTED at interior grid lines so
+                # contiguous rows AND columns (global lines split cells in
+                # both axes; matching only one cell made squat half-windows
+                # vertically and 0.45 m sliver windows horizontally -- rear
+                # door/bath jamb lines cross the front window spans).
+                # Rings/jambs are SEGMENTED at every interior grid line so
                 # neighbouring wall cells' verts always weld.
                 if iz > 0 and classify(u0, self.zl[iz - 1]) == kind:
                     continue        # consumed by the run below
+                if iu > 0 and classify(self.ul[iu - 1], z0) == kind:
+                    continue        # consumed by the run to its left
                 jz = iz + 1
                 while (jz + 1 < len(self.zl) and
                        classify(u0, self.zl[jz]) == kind):
                     jz += 1
                 z1w = self.zl[jz]
-                fu0, fu1 = u0 + frame, u1 - frame
+                ju = iu + 1
+                while (ju + 1 < len(self.ul) and
+                       classify(self.ul[ju], z0) == kind):
+                    ju += 1
+                u1w = self.ul[ju]
+                fu0, fu1 = u0 + frame, u1w - frame
                 fz0, fz1 = z0 + frame, z1w - frame
                 mids = [zv for zv in self.zl if z0 + 1e-6 < zv < z1w - 1e-6]
                 zs = [z0] + mids + [z1w]
+                mids_u = [uv for uv in self.ul if u0 + 1e-6 < uv < u1w - 1e-6]
+                us = [u0] + mids_u + [u1w]
 
                 def zc(v):   # clamp an outer z to the inner ring range
                     return min(max(v, fz0), fz1)
+
+                def ucf(v):  # clamp an outer u to the inner ring range
+                    return min(max(v, fu0), fu1)
 
                 mf = self.mat if mat_frame is None else mat_frame
                 mp = self.mat if mat_pane is None else mat_pane
                 keep = self.s.tag
                 self.s.tag = 'windows'
-                # bottom + top face bands (no interior line crosses them).
-                self._q(self._co(u0, z0), self._co(u1, z0),
-                        self._co(fu1, fz0), self._co(fu0, fz0), mf)
-                self._q(self._co(fu0, fz1), self._co(fu1, fz1),
-                        self._co(u1, z1w), self._co(u0, z1w), mf)
-                # side face rings, segmented at interior lines.
+                # bottom + top face bands, segmented at interior u lines.
+                for ui2 in range(len(us) - 1):
+                    ua, ub = us[ui2], us[ui2 + 1]
+                    self._q(self._co(ua, z0), self._co(ub, z0),
+                            self._co(ucf(ub), fz0), self._co(ucf(ua), fz0), mf)
+                    self._q(self._co(ucf(ua), fz1), self._co(ucf(ub), fz1),
+                            self._co(ub, z1w), self._co(ua, z1w), mf)
+                # side face rings, segmented at interior z lines.
                 for si2 in range(len(zs) - 1):
                     za, zb = zs[si2], zs[si2 + 1]
                     self._q(self._co(u0, za), self._co(fu0, zc(za)),
                             self._co(fu0, zc(zb)), self._co(u0, zb), mf)
-                    self._q(self._co(fu1, zc(za)), self._co(u1, za),
-                            self._co(u1, zb), self._co(fu1, zc(zb)), mf)
-                # jamb returns: top/bottom bands + segmented sides.
-                self._q(self._co(fu0, fz0), self._co(fu1, fz0),
-                        self._co(fu1, fz0, recess), self._co(fu0, fz0, recess), mf)
-                self._q(self._co(fu0, fz1, recess), self._co(fu1, fz1, recess),
-                        self._co(fu1, fz1), self._co(fu0, fz1), mf)
+                    self._q(self._co(fu1, zc(za)), self._co(u1w, za),
+                            self._co(u1w, zb), self._co(fu1, zc(zb)), mf)
+                # jamb returns: top/bottom strips segmented at interior u
+                # lines, sides segmented at interior z lines.
+                inu = sorted({fu0, fu1} | {ucf(v) for v in mids_u})
+                for ui2 in range(len(inu) - 1):
+                    ua, ub = inu[ui2], inu[ui2 + 1]
+                    self._q(self._co(ua, fz0), self._co(ub, fz0),
+                            self._co(ub, fz0, recess), self._co(ua, fz0, recess), mf)
+                    self._q(self._co(ua, fz1, recess), self._co(ub, fz1, recess),
+                            self._co(ub, fz1), self._co(ua, fz1), mf)
                 inz = sorted({fz0, fz1} | {zc(v) for v in mids})
                 for si2 in range(len(inz) - 1):
                     za, zb = inz[si2], inz[si2 + 1]
@@ -488,22 +524,30 @@ class _Wall:
                           self._co(fu0 + e2, fz1 - e2, recess)]
                 self._q(pc[0], pc[1], pc[2], pc[3], mp)
                 if self.th > 0.0 and z0 < self.inner_zmax:
-                    # THICK: inner face ring + reveal, same segmentation.
-                    self._q(self._co(u0, z0, self.th), self._co(fu0, fz0, self.th),
-                            self._co(fu1, fz0, self.th), self._co(u1, z0, self.th), mf)
-                    self._q(self._co(fu0, fz1, self.th), self._co(u0, z1w, self.th),
-                            self._co(u1, z1w, self.th), self._co(fu1, fz1, self.th), mf)
+                    # THICK: inner face ring + reveal, same 2-axis segmentation.
+                    for ui2 in range(len(us) - 1):
+                        ua, ub = us[ui2], us[ui2 + 1]
+                        self._q(self._co(ua, z0, self.th),
+                                self._co(ucf(ua), fz0, self.th),
+                                self._co(ucf(ub), fz0, self.th),
+                                self._co(ub, z0, self.th), mf)
+                        self._q(self._co(ucf(ua), fz1, self.th),
+                                self._co(ua, z1w, self.th),
+                                self._co(ub, z1w, self.th),
+                                self._co(ucf(ub), fz1, self.th), mf)
                     for si2 in range(len(zs) - 1):
                         za, zb = zs[si2], zs[si2 + 1]
                         self._q(self._co(fu0, zc(za), self.th), self._co(u0, za, self.th),
                                 self._co(u0, zb, self.th), self._co(fu0, zc(zb), self.th), mf)
-                        self._q(self._co(u1, za, self.th), self._co(fu1, zc(za), self.th),
-                                self._co(fu1, zc(zb), self.th), self._co(u1, zb, self.th), mf)
+                        self._q(self._co(u1w, za, self.th), self._co(fu1, zc(za), self.th),
+                                self._co(fu1, zc(zb), self.th), self._co(u1w, zb, self.th), mf)
                     # reveal from the inner ring to the jamb line.
-                    self._q(self._co(fu1, fz0, self.th), self._co(fu0, fz0, self.th),
-                            self._co(fu0, fz0, recess), self._co(fu1, fz0, recess), mf)
-                    self._q(self._co(fu0, fz1, self.th), self._co(fu1, fz1, self.th),
-                            self._co(fu1, fz1, recess), self._co(fu0, fz1, recess), mf)
+                    for ui2 in range(len(inu) - 1):
+                        ua, ub = inu[ui2], inu[ui2 + 1]
+                        self._q(self._co(ub, fz0, self.th), self._co(ua, fz0, self.th),
+                                self._co(ua, fz0, recess), self._co(ub, fz0, recess), mf)
+                        self._q(self._co(ua, fz1, self.th), self._co(ub, fz1, self.th),
+                                self._co(ub, fz1, recess), self._co(ua, fz1, recess), mf)
                     for si2 in range(len(inz) - 1):
                         za, zb = inz[si2], inz[si2 + 1]
                         self._q(self._co(fu0, za, self.th), self._co(fu0, zb, self.th),
@@ -531,16 +575,19 @@ _MATS = ["la_stucco", "la_trim", "la_glass", "la_concrete", "la_metal",
  M_GYPSUM, M_PLYWOOD, M_RESIN) = range(8)
 
 
-def _window_lines(width, cols, margin, win_w):
+def _window_lines(width, cols, margin, widths):
     """X lines: [0, margin, j0a, j0b, ..., width-margin, width] with windows
-    centred in equal bays between the margins."""
+    centred in equal bays between the margins. @p widths is PER BAY -- the
+    fenestration is floor-plan dependent (living bays wide, bedroom bays
+    narrow), not one uniform sash."""
     lines = [0.0, margin]
     span = width - 2.0 * margin
     bay = span / cols
     jambs = []
     for c in range(cols):
         centre = margin + bay * (c + 0.5)
-        jambs.append((centre - win_w / 2.0, centre + win_w / 2.0))
+        w2 = widths[c] / 2.0
+        jambs.append((centre - w2, centre + w2))
         lines.extend(jambs[-1])
     lines.extend([width - margin, width])
     return sorted(set(lines)), jambs
@@ -560,7 +607,6 @@ def build_dingbat(p, rng):
         cols -= 1                    # units are two bays: keep them paired
     cd = min(5.0, D * 0.45)          # carport depth
     margin = 1.0                     # end margins on the facade
-    win_w = min(1.5, (W - 2 * margin) / cols * 0.6)
     frame = 0.07
 
     # ---- z levels ----------------------------------------------------------
@@ -607,6 +653,14 @@ def build_dingbat(p, rng):
         else:
             door_jambs.append((b1 - 1.70 - 0.90, b1 - 1.70))
             bath_wins.append((b1 - 1.20, b1 - 0.30))
+    # floor-plan-dependent fenestration: the living (door) bay gets the
+    # wide 1.5 m sash, the second bay depends on the plan -- studios (P0)
+    # keep it wide, one-beds (P1/P2) get a narrower 1.0 m bedroom window.
+    # Awnings/AC gate on the ACTUAL width per window below.
+    bay_widths = []
+    for u in range(n_units):
+        bay_widths += [1.5, 1.5 if unit_plan[u] == 0 else 1.0]
+    bay_widths += [1.5] * (cols - len(bay_widths))
 
     # partial carport (rule-2 breaker done RIGHT: dingbats often carved only
     # part of the ground floor, with real support where the wall resumed).
@@ -640,7 +694,7 @@ def build_dingbat(p, rng):
     t = 0.15                         # parapet ring width -- ALSO a wall line:
     # the cap ring's outer-edge verts at x=t / W-t must exist in the wall top
     # edges or they land mid-edge (T-junction, caught by the auditor).
-    xl, xjambs = _window_lines(W, cols, margin, win_w)
+    xl, xjambs = _window_lines(W, cols, margin, bay_widths)
     xl = sorted(set(xl) | {t, W - t} |
                 {v for pr in door_jambs for v in pr} |
                 {v for pr in bath_wins for v in pr} |
@@ -661,7 +715,11 @@ def build_dingbat(p, rng):
     def near(u0, vals):
         return any(abs(u0 - v) < 1e-6 for v in vals)
 
-    jamb_x = [a for (a, _b) in xjambs]
+    def in_pairs(u0, pairs):
+        # SPAN match, not jamb-line match: foreign grid lines (rear door /
+        # bath jambs) crossing a window span otherwise shrank the window
+        # to its first cell; fill() re-merges the run.
+        return any(a - 1e-6 <= u0 < b - 1e-6 for (a, b) in pairs)
     door_x = [a for (a, _b) in xjambs[::2]]   # units are TWO bays wide: door
     # bay + window bay (one entry per apartment, not one per bay).
 
@@ -687,15 +745,15 @@ def build_dingbat(p, rng):
         if has_carport and zc0 < z_soffit - 1e-6:
             if u0 < carport_end - 1e-6:
                 return 'void'
-            if near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
+            if in_pairs(u0, xjambs) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
                 return 'window'
             return 'wall'
         for (sll, hh) in upper_rows:
-            if sll - 1e-6 < zc0 < hh - 1e-6 and near(u0, jamb_x):
+            if sll - 1e-6 < zc0 < hh - 1e-6 and in_pairs(u0, xjambs):
                 return 'window'
         if not has_carport:
             # grounded: windows only -- unit entries are on the back.
-            if near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
+            if in_pairs(u0, xjambs) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
                 return 'window'
         return 'wall'
 
@@ -716,37 +774,40 @@ def build_dingbat(p, rng):
     back_z = zl
 
     spandrel_tops = [hi for (_lo, hi, _bt) in floor_bands]
-    doorj_x = [a for (a, _b) in door_jambs]
-    bathw_x = [a for (a, _b) in bath_wins]
-    kitchen_x = [a for (a, _b) in xjambs[1::2]]   # window-bay jambs
+    def in_door_span(u0):
+        # RANGE match, not jamb-line match: foreign grid lines (window
+        # jambs) landing inside a door span otherwise slice it into a
+        # slender slot + wall sliver; fill() re-merges the run.
+        return any(a - 1e-6 <= u0 < b - 1e-6 for (a, b) in door_jambs)
+    kitchen_wins = xjambs[1::2]                   # window-bay sashes
 
     def back_classify(u0, zc0):
         # ground units enter from the BACK too ("appear like houses" -- no
         # doors visible from the street), same 0.9 m jambs as upstairs.
-        if near(u0, doorj_x):
+        if in_door_span(u0):
             if abs(zc0 - z_grade) < 1e-6:
                 return 'doorL'
             if z_grade + 1e-6 < zc0 < z_head1 - 1e-6:
                 return 'doorU'
         # ground row: kitchen window (window bay) + HIGH bath window.
-        if z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6 and near(u0, kitchen_x):
+        if z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6 and in_pairs(u0, kitchen_wins):
             return 'window'
-        if abs(zc0 - (z_sill1 + 0.70)) < 1e-6 and near(u0, bathw_x):
+        if abs(zc0 - (z_sill1 + 0.70)) < 1e-6 and in_pairs(u0, bath_wins):
             return 'window_awning'
         # upper floors: walkway door (own off-centre jambs), kitchen window,
         # and the small high bathroom window beside the door.
-        if near(u0, doorj_x):
+        if in_door_span(u0):
             for fi2, (sll, hh) in enumerate(upper_rows):
                 st2 = spandrel_tops[fi2]
                 if abs(zc0 - st2) < 1e-6:
                     return 'doorL'
                 if st2 + 1e-6 < zc0 < hh - 1e-6:
                     return 'doorU'
-        if near(u0, kitchen_x):
+        if in_pairs(u0, kitchen_wins):
             for (sll, hh) in upper_rows:
                 if sll - 1e-6 < zc0 < hh - 1e-6:
                     return 'window'
-        if near(u0, bathw_x):
+        if in_pairs(u0, bath_wins):
             for (sll, _hh) in upper_rows:
                 if abs(zc0 - (sll + 0.70)) < 1e-6:
                     return 'window_awning'
@@ -822,7 +883,7 @@ def build_dingbat(p, rng):
     def ground_classify(u0, zc0):
         # recessed carport wall: WINDOWS only -- entries are on the back
         # (doors were never visible from the street; house-like fronts).
-        if near(u0, jamb_x) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
+        if in_pairs(u0, xjambs) and z_sill1 - 1e-6 < zc0 < z_head1 - 1e-6:
             return 'window'
         return 'wall'
 
@@ -906,7 +967,8 @@ def build_dingbat(p, rng):
         def lg_door_classify(u0, zc0):
             # bottom row [lo_t..top_hi] stays WALL everywhere: the plinth
             # under the door -- the steps climb it to the flush threshold.
-            if loggia_door and abs(u0 - loggia_door[0]) < 1e-6:
+            if loggia_door and \
+                    loggia_door[0] - 1e-6 <= u0 < loggia_door[1] - 1e-6:
                 if abs(zc0 - top_hi) < 1e-6:
                     return 'doorL'
                 if top_hi + 1e-6 < zc0 < upper_rows[-1][1] - 1e-6:
@@ -1035,8 +1097,9 @@ def build_dingbat(p, rng):
             plat.tag = 'columns'
             pxm = (cx0 + cx1) / 2.0
             for pyc in (D * 0.35, D * 0.70):
+                # embedded 20 mm into the catwalk slab underside (touching).
                 _box(plat, (pxm - 0.05, pyc - 0.05, 0.0),
-                     (pxm + 0.05, pyc + 0.05, top_hi - 0.122), M_METAL)
+                     (pxm + 0.05, pyc + 0.05, top_hi - 0.10), M_METAL)
         if has_deck:
             plat.tag = 'loggia'
             dx0 = lg0 + 0.004
@@ -1102,32 +1165,99 @@ def build_dingbat(p, rng):
     # starting/arriving inside the band collided with the slab (user-hit:
     # "joined at the wrong places except the bottom one").
 
-    def flight(x0, y_from, y_to, z_from, z_to):
-        """One flight between two levels along y (either direction)."""
+    def _stringer(x0s, x1s, y_base, z_base, y_top, z_top, foot_lo, foot_hi):
+        """One footed stringer solid from base (low z) to top (high z),
+        either y direction. The bottom is CLIPPED flat at each end --
+        z_base - foot_lo and z_top - foot_hi -- instead of running the
+        constant 0.34 m depth past the ends (the old 'tooth' hanging
+        0.28 m under every platform, and underground at grade). All
+        parametrics run base->top so the rise is ALWAYS positive (a y-
+        sorted version inverted the kinks on descending flights and grew
+        the solid past both ends). Hexagon profile: 3 top / 3 bottom /
+        3-per-side / 2 end quads, all planar; winding flips with y."""
+        cover, depth = 0.06, 0.34
+        rise_t = z_top - z_base
+        t1 = min(0.45, (depth - cover - foot_lo) / rise_t)
+        t2 = max(0.55, 1.0 - (depth - cover - foot_hi) / rise_t)
+        ys4 = [y_base + (y_top - y_base) * t for t in (0.0, t1, t2, 1.0)]
+        ts4 = [z_base + rise_t * t + cover for t in (0.0, t1, t2, 1.0)]
+        bs4 = [z_base - foot_lo, z_base - foot_lo,
+               z_top - foot_hi, z_top - foot_hi]
+        flip = y_top < y_base
+
+        def q(a, b, c, d):
+            if flip:
+                stair.quad(a, d, c, b, M_METAL)
+            else:
+                stair.quad(a, b, c, d, M_METAL)
+
+        for k4 in range(3):
+            ya4, yb4 = ys4[k4], ys4[k4 + 1]
+            ta4, tb4 = ts4[k4], ts4[k4 + 1]
+            ba4, bb4 = bs4[k4], bs4[k4 + 1]
+            q((x0s, ya4, ta4), (x1s, ya4, ta4), (x1s, yb4, tb4),
+              (x0s, yb4, tb4))                                # top (+z)
+            q((x0s, ya4, ba4), (x0s, yb4, bb4), (x1s, yb4, bb4),
+              (x1s, ya4, ba4))                                # bottom (-z)
+            q((x0s, ya4, ba4), (x0s, ya4, ta4), (x0s, yb4, tb4),
+              (x0s, yb4, bb4))                                # -x side
+            q((x1s, ya4, ta4), (x1s, ya4, ba4), (x1s, yb4, bb4),
+              (x1s, yb4, tb4))                                # +x side
+        q((x0s, ys4[0], ts4[0]), (x0s, ys4[0], bs4[0]),
+          (x1s, ys4[0], bs4[0]), (x1s, ys4[0], ts4[0]))            # base (-y)
+        q((x0s, ys4[3], bs4[3]), (x0s, ys4[3], ts4[3]),
+          (x1s, ys4[3], ts4[3]), (x1s, ys4[3], bs4[3]))            # top (+y)
+
+    def flight(x0, y_from, y_to, z_from, z_to, foot_base, foot_top):
+        """One flight between two levels along y (either direction).
+        foot_base/foot_top: how far below its start/arrival level the
+        stringer may reach (0 at grade, slab/plate thickness elsewhere)."""
         x1 = x0 + s_w
         n = max(3, int(round(abs(z_to - z_from) / 0.185)))
         rise = (z_to - z_from) / n
         run = (y_to - y_from) / n
-        # stringers: parallel to the nosing line (z_from..z_to + cover).
         for sx0, sx1 in ((x0, x0 + st), (x1 - st, x1)):
-            _sheared_box(stair, min(sx0, sx1), max(sx0, sx1),
-                         y_from, y_to, z_from + 0.06, z_to + 0.06,
-                         0.34, M_METAL, 'steps')
+            _stringer(sx0, sx1, y_from, z_from, y_to, z_to,
+                      foot_base, foot_top)
         # tread/riser strip between the stringers, inset 1 mm: its boundary
         # hides inside the joint but never lands on a stringer edge (the
         # auditor's 16 T-junctions per flight when coincident).
         ix0, ix1 = x0 + st + 0.001, x1 - st - 0.001
+        dflip = y_to < y_from
+
+        def qf(a, b, c, d):
+            # riser/tread/soffit winding must track travel direction: the
+            # fixed order inverted every descending flight's faces (the
+            # 'decimated' look under backface culling).
+            if dflip:
+                stair.quad(a, d, c, b, M_CONCRETE)
+            else:
+                stair.quad(a, b, c, d, M_CONCRETE)
+
         for k2 in range(n):
             ya2, yb2 = y_from + run * k2, y_from + run * (k2 + 1)
             zlo2, zhi2 = z_from + rise * k2, z_from + rise * (k2 + 1)
-            stair.quad((ix0, ya2, zlo2), (ix1, ya2, zlo2),
-                       (ix1, ya2, zhi2), (ix0, ya2, zhi2), M_CONCRETE)  # riser
-            stair.quad((ix0, ya2, zhi2), (ix1, ya2, zhi2),
-                       (ix1, yb2, zhi2), (ix0, yb2, zhi2), M_CONCRETE)  # tread
-        # soffit: one sloped quad closing the underside.
-        stair.quad((ix0, y_from, z_from - 0.10), (ix1, y_from, z_from - 0.10),
-                   (ix1, y_to, z_to - 0.10), (ix0, y_to, z_to - 0.10),
-                   M_CONCRETE)
+            qf((ix0, ya2, zlo2), (ix1, ya2, zlo2),
+               (ix1, ya2, zhi2), (ix0, ya2, zhi2))                      # riser
+            qf((ix0, ya2, zhi2), (ix1, ya2, zhi2),
+               (ix1, yb2, zhi2), (ix0, yb2, zhi2))                      # tread
+        # soffit: follows the footed bottom line, 1 mm proud, hidden
+        # between the stringers (the single sloped quad ran under grade).
+        # Ends pull in 1 mm along y so the corners never sit on the first/
+        # last riser's side edges.
+        cover, depth = 0.06, 0.34
+        rise_t = z_to - z_from
+        t1 = min(0.45, (depth - cover - foot_base) / rise_t)
+        t2 = max(0.55, 1.0 - (depth - cover - foot_top) / rise_t)
+        ydir = 1.0 if y_to > y_from else -1.0
+        ysf = [y_from + (y_to - y_from) * t for t in (0.0, t1, t2, 1.0)]
+        ysf[0] += 0.001 * ydir
+        ysf[3] -= 0.001 * ydir
+        bsf = [z_from - foot_base + 0.001, z_from - foot_base + 0.001,
+               z_to - foot_top + 0.001, z_to - foot_top + 0.001]
+        for k4 in range(3):
+            qf((ix0, ysf[k4], bsf[k4]), (ix0, ysf[k4 + 1], bsf[k4 + 1]),
+               (ix1, ysf[k4 + 1], bsf[k4 + 1]), (ix1, ysf[k4], bsf[k4]))
 
     land_y0 = None
     for i in range(len(levels) - 1):
@@ -1135,33 +1265,42 @@ def build_dingbat(p, rng):
         zh = (zb + zt) / 2.0
         n_half = max(3, int(round((zh - zb) / 0.185)))
         run = tread * n_half
-        # flight A (outer lane): away from the building, zb -> mid.
-        flight(min(laneA_x0, laneA_x0 + s_w * 0) + 0.0, y_arr, y_arr + run, zb, zh)
+        land_y0 = y_arr + run + 0.003
+        # flight A (outer lane): away from the building, base at the
+        # walkway edge (grade for the first), TOP at the plate's near edge.
+        flight(laneA_x0, y_arr, land_y0 - 0.003, zb, zh,
+               0.0 if i == 0 else 0.12, 0.10)
         # half landing plate.
         lx0 = min(laneA_x0, laneB_x0)
         lx1 = max(laneA_x0, laneB_x0) + s_w
-        land_y0 = y_arr + run + 0.003
         _box(stair, (lx0, land_y0, zh - 0.10), (lx1, land_y0 + s_w, zh),
              M_CONCRETE)
-        # flight B (inner lane): back toward the building, mid -> walkway.
-        flight(laneB_x0, land_y0 + s_w - 0.003, y_arr, zh, zt)
+        # flight B (inner lane): BASE AT THE SAME (near) EDGE of the plate
+        # -- a true switchback: top out beside it, turn around on the
+        # plate, and board the upper flight from where you stand. (Basing
+        # it at the FAR edge put every upper flight's first riser across
+        # the plate from the arriving walker: consistently un-ascendable.)
+        flight(laneB_x0, land_y0 - 0.003, y_arr, zh, zt, 0.10, 0.12)
 
-    # four continuous posts carry the stacked half-landings, grade -> top;
-    # 20 mm proud of the slab corners (touching, no shared planes).
+    # four continuous posts carry the stacked half-landings, grade -> top.
+    # UNDER the plate corners and embedded 20 mm into the underside --
+    # posts standing outside the corners with air gaps held up nothing
+    # (user-hit: "they dont actually touch the things they are holding up").
     stair.tag = 'columns'
     top_land = (levels[-2] + levels[-1]) / 2.0 if len(levels) > 1 else levels[-1]
     lx0 = min(laneA_x0, laneB_x0)
     lx1 = max(laneA_x0, laneB_x0) + s_w
-    for (px2, py2) in ((lx0 - 0.10, land_y0 - 0.10), (lx1 + 0.02, land_y0 - 0.10),
-                       (lx0 - 0.10, land_y0 + s_w + 0.02),
-                       (lx1 + 0.02, land_y0 + s_w + 0.02)):
-        _box(stair, (px2, py2, 0.0), (px2 + 0.08, py2 + 0.08, top_land - 0.10),
+    for (px2, py2) in ((lx0 + 0.01, land_y0 + 0.01), (lx1 - 0.09, land_y0 + 0.01),
+                       (lx0 + 0.01, land_y0 + s_w - 0.09),
+                       (lx1 - 0.09, land_y0 + s_w - 0.09)):
+        _box(stair, (px2, py2, 0.0), (px2 + 0.08, py2 + 0.08, top_land - 0.08),
              M_METAL)
-    # walkway-extension posts: carry the arrival edge over the lanes.
-    wpx = lx0 - 0.10 if side == 'left' else lx1 + 0.02
+    # walkway-extension posts: carry the arrival edge over the lanes --
+    # under the extension slab, embedded 20 mm into its underside.
+    wpx = (-2 * s_w - 0.10 + 0.02) if side == 'left' else (W + 2 * s_w + 0.02)
     for wy in (D + 0.05, D + wd - 0.13):
         _box(stair, (wpx, wy, 0.0), (wpx + 0.08, wy + 0.08,
-             floor_bands[-1][1] - 0.13), M_METAL)
+             floor_bands[-1][1] - 0.10), M_METAL)
     stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
 
     # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,
@@ -1317,7 +1456,7 @@ def build_dingbat(p, rng):
         for i in range(3):
             x = 0.2 + (W - 0.4) * (i / 2.0)
             _box(walk, (x - 0.06, D + wd - 0.14, 0.0),
-                 (x + 0.06, D + wd - 0.02, floor_bands[-1][1] - 0.12), M_METAL)
+                 (x + 0.06, D + wd - 0.02, floor_bands[-1][1] - 0.10), M_METAL)
         interior_obs.append(walk.to_object("LA_Dingbat_Walkway", mats))
 
     # ---- STORY OPTIONS (rule 3, off by default; theme: abandonment /
