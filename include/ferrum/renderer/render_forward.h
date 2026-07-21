@@ -61,6 +61,9 @@ typedef struct render_forward_config {
     float              shadow_near;   /**< cube shadow near plane. */
     float              shadow_far;    /**< cube shadow far plane. */
     float              shadow_bias;   /**< distance-compare bias (world units). */
+    float              shadow_distance;/**< skip cube shadows for lights beyond this
+                                        *   distance from the camera; 0 = unlimited
+                                        *   (rpg-9u96). */
     int                spot_light;    /**< flat light index to cast a spot shadow (-1 = none). */
     uint32_t           spot_res;      /**< spot map resolution (0 = no spot shadow). */
     float              spot_near;     /**< spot shadow near plane. */
@@ -80,6 +83,9 @@ typedef struct render_forward_config {
                                              CSM fits every cascade to this box so no
                                              caster is clipped (0,0,0..0,0,0 = off). */
     float              shadow_scene_max[3];
+    float              draw_distance;   /**< far cull distance for the forward +
+                                         *   depth-pre passes (world units); 0 =
+                                         *   unlimited. From render_config (rpg-0rs4). */
     /** Optional hook called once per forward pass after the PBR program is bound
      *  and its shadow uniforms are set, so an external system (e.g. the dynamic-
      *  GI runtime) can bind extra samplers/uniforms for the draw loop. NULL =

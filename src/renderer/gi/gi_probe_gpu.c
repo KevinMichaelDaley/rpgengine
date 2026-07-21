@@ -42,6 +42,7 @@ static const char *CS_SRC =
     "uniform float u_emin;\n"        /* emission luminance over which a probe is a SOURCE. */
     "uniform int u_nsamp;\n"         /* stochastic source samples per gather. */
     "uniform float u_bounce;\n"      /* bounce gain (GI_BOUNCE). */
+    "uniform float u_ray_clamp;\n"   /* per-ray radiance cap (firefly clamp). */
     "uniform float u_soft, u_albedo;\n"
     "uniform float u_temporal;\n"   /* EMA blend: 1 = replace, <1 = smooth over time. */
     /* MIS-importance-sampled march directions (GI_MIS): build a per-probe pdf over the\n"
@@ -57,11 +58,27 @@ static const char *CS_SRC =
      * their energy isn't double-counted. */
     "uniform int u_hybrid;\n"
     "uniform int u_hero;\n"          /* number of hero SDF marches (0..4). */
-    "uniform sampler3D u_sdf[8];\n"
-    "uniform vec3 u_sdf_origin[8];\n"
-    "uniform vec3 u_sdf_dim[8];\n"
-    "uniform float u_sdf_vox[8];\n"
-    "uniform int u_sdf_active[8];\n"
+    "uniform sampler3D u_sdf[16];\n"
+    "uniform vec3 u_sdf_origin[16];\n"
+    "uniform vec3 u_sdf_dim[16];\n"
+    "uniform float u_sdf_vox[16];\n"
+    "uniform int u_sdf_active[16];\n"
+    /* GLOBAL low-res ZONE SDF: the page-fault fallback. Sampled wherever no fine\n"
+     * chunk is resident so occlusion + albedo never read as empty space. */
+    "uniform sampler3D u_zone_sdf;\n"
+    "uniform vec3 u_zone_origin;\n"
+    "uniform vec3 u_zone_dim;\n"
+    "uniform float u_zone_vox;\n"
+    "uniform int u_zone_on;\n"
+    /* Brick field lookup: voxel -> brick -> 8 of its 64 probes (rpg-pjkb). */
+    "uniform int u_cbrick_on;\n"
+    "uniform isampler3D u_cbrick_index;\n"
+    "uniform samplerBuffer u_cbrick_meta;\n"
+    "uniform usamplerBuffer u_cbrick_pidx;\n"
+    "uniform usamplerBuffer u_cbrick_valid;\n"
+    "uniform vec3 u_cbrick_origin;\n"
+    "uniform float u_cbrick_voxel;\n"
+    "uniform vec3 u_cbrick_dim;\n"
     /* Static irradiance volume (rpg-pau4): the baked lightmap E, splatted to a\n"
      * coarse world grid. A cone that hits a surface gathers this so the probe\n"
      * carries the STATIC bounced ambience (one bounce beyond the lightmapper),\n"
@@ -125,11 +142,16 @@ static const char *CS_SRC =
     "float capsule_sdf(vec3 p,vec3 a,vec3 b,float r){ vec3 pa=p-a, ba=b-a;\n"
     "  float h=clamp(dot(pa,ba)/max(dot(ba,ba),1e-6),0.0,1.0); return length(pa-ba*h)-r; }\n"
     /* Distance is the ALPHA of the RGBA voxel texture (rgb = static albedo). */
-    "float scene_sdf(vec3 p){ float d=1e30;\n"
-    "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
+    "float scene_sdf(vec3 p){ float d=1e30; bool cov=false;\n"
+    "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
-    "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
+    "      cov=true; vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
+    /* PAGE FAULT: no resident fine chunk covers p -> the coarse zone field keeps\n"
+     * occlusion alive instead of returning empty space. */
+    "  if(!cov && u_zone_on!=0){ vec3 g=(p-u_zone_origin)/u_zone_vox;\n"
+    "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_zone_dim))){\n"
+    "      vec3 uvw=(g+0.5)/u_zone_dim; d=min(d, texture(u_zone_sdf,uvw).a); } }\n"
     /* Colliders: bx[i*2].w = kind (0=sphere,1=box,2=capsule). Sphere: radius in\n"
      * bx[i*2+1].w. Box: half-extents in bx[i*2+1].xyz. Capsule: endpoint B in\n"
      * bx[i*2+1].xyz, radius in .w. (rpg-85as: posed capsule/sphere proxies.) */
@@ -154,10 +176,14 @@ static const char *CS_SRC =
     "vec3 scene_albedo(vec3 p, float lod){\n"
     /* Dynamic objects win: they are not in the baked voxel albedo at all. */
     "  { vec4 dc=dyn_alb_at(p); if(dc.a>0.02) return dc.rgb/max(dc.a,1e-3); }\n"
-    "  for(int i=0;i<8;++i){ if(u_sdf_active[i]==0) continue;\n"
+    "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
     "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; return textureLod(u_sdf[i],uvw,lod).rgb; } }\n"
+    /* Page-fault albedo: the zone field's nearest-surface colour beats flat grey. */
+    "  if(u_zone_on!=0){ vec3 g=(p-u_zone_origin)/u_zone_vox;\n"
+    "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_zone_dim))){\n"
+    "      vec3 uvw=(g+0.5)/u_zone_dim; return texture(u_zone_sdf,uvw).rgb; } }\n"
     "  return vec3(0.5); }\n"
     /* Baked static irradiance E at world p (trilinear); 0 outside the volume. */
     "vec3 static_irr(vec3 p){ if(u_static_on==0) return vec3(0.0);\n"
@@ -248,7 +274,38 @@ static const char *CS_SRC =
      * adding albedo*field_irr at a trace hit gives the surface's INDIRECT incoming --\n"
      * i.e. one more bounce per gather; temporal recurrence -> infinite bounces. 0 if\n"
      * there is no probe grid (manual-only probes) or p is outside it. */
-    "vec3 field_irr(vec3 p, vec3 n){ if(u_grid_dim.x<=0) return vec3(0.0);\n"
+    "vec3 field_irr(vec3 p, vec3 n){\n"
+    /* BRICK path (adaptive sets): one integer fetch resolves the covering brick,\n"
+     * its local trilinear cell picks 8 of the 64 probes -- the same structure\n"
+     * the forward pass samples, so the recurrent bounce sees the exact field\n"
+     * the screen does. Falls through to the dense-grid path when absent. */
+    "  if(u_cbrick_on==1){\n"
+    "    ivec3 bdim=ivec3(u_cbrick_dim+vec3(0.5));\n"
+    "    ivec3 v=ivec3(floor((p-u_cbrick_origin)/u_cbrick_voxel));\n"
+    "    v=clamp(v, ivec3(0), bdim-ivec3(1));\n"
+    "    int bid=texelFetch(u_cbrick_index, v, 0).r;\n"
+    "    if(bid>=0){\n"
+    "      vec4 bm=texelFetch(u_cbrick_meta, bid);\n"
+    "      float bstep=bm.w/3.0;\n"
+    "      vec3 local=clamp((p-bm.xyz)/bstep, vec3(0.0), vec3(2.9999));\n"
+    "      ivec3 c0=ivec3(local); vec3 fr=local-vec3(c0);\n"
+    "      vec3 E=vec3(0.0); float wsum=0.0;\n"
+    "      for(int c=0;c<8;++c){ ivec3 oo=ivec3(c&1,(c>>1)&1,(c>>2)&1);\n"
+    "        vec3 wv=mix(vec3(1.0)-fr, fr, vec3(oo));\n"
+    "        float w=wv.x*wv.y*wv.z; if(w<=0.0) continue;\n"
+    "        ivec3 lc=c0+oo; int li=(lc.z*4+lc.y)*4+lc.x;\n"
+    "        int idx=int(texelFetch(u_cbrick_pidx, bid*64+li).r);\n"
+    "        if(idx<0||idx>=u_nprobes) continue;\n"
+    "        w*=float(texelFetch(u_cbrick_valid, idx).r);\n"
+    "        vec3 pd=p-ppos[idx].xyz; float dist=length(pd);\n"
+    "        if(dist>1e-3) w*=probe_vis(uint(idx), pd/dist, dist);\n"
+    "        if(w<=0.0) continue;\n"
+    "        E += w*max(psh_irr(idx*24,n)+psh_irr(idx*24+12,n), vec3(0.0)); wsum+=w; }\n"
+    "      return (wsum>1e-4)? E/wsum : vec3(0.0);\n"
+    "    }\n"
+    "    return vec3(0.0);\n"
+    "  }\n"
+    "  if(u_grid_dim.x<=0) return vec3(0.0);\n"
     "  vec3 g=(p-u_grid_origin)/u_grid_cell; vec3 f=fract(g); ivec3 b=ivec3(floor(g));\n"
     "  vec3 E=vec3(0.0); float wsum=0.0;\n"
     "  for(int i=0;i<8;++i){ ivec3 od=ivec3(i&1,(i>>1)&1,(i>>2)&1);\n"
@@ -468,7 +525,13 @@ static const char *CS_SRC =
     "  for(int s=0;s<NR;++s){ float z=1.0-(2.0*float(s)+1.0)/float(NR);\n"
     "    float r=sqrt(max(0.0,1.0-z*z)); float phi=ga*float(s);\n"
     "    vec3 dir=vec3(r*cos(phi), r*sin(phi), z); rdir[s]=dir;\n"
-    "    vec3 rd, rs; trace(gid, o,dir, rd, rs); rcol[s]=rd+rs;\n"
+    /* FIREFLY CLAMP: 32 uniform rays credit a hit with 4pi/32 sr, but a small\n"
+     * bright surface (the fire-lit red banner from across the hall) subtends\n"
+     * ~0.01 sr -- a ~40x over-estimate that paints saturated blotches on\n"
+     * whichever probes' fixed rays happen to intersect it. Capping per-ray\n"
+     * radiance bounds any single hit's contribution; soft glow survives. */
+    "    vec3 rd, rs; trace(gid, o,dir, rd, rs);\n"
+    "    rd=min(rd, vec3(u_ray_clamp)); rs=min(rs, vec3(u_ray_clamp)); rcol[s]=rd+rs;\n"
     "    float y[4]; sh_basis(dir,y);\n"
     "    for(int k=0;k<4;++k){ shd[k]+=rd.r*y[k]*w; shd[4+k]+=rd.g*y[k]*w; shd[8+k]+=rd.b*y[k]*w;\n"
     "                          shs[k]+=rs.r*y[k]*w; shs[4+k]+=rs.g*y[k]*w; shs[8+k]+=rs.b*y[k]*w; } }\n"
@@ -570,6 +633,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
         g->loc.emin   = glGetUniformLocation(p, "u_emin");
         g->loc.nsamp  = glGetUniformLocation(p, "u_nsamp");
         g->loc.bounce = glGetUniformLocation(p, "u_bounce");
+        g->loc.ray_clamp = glGetUniformLocation(p, "u_ray_clamp");
         g->loc.mis       = glGetUniformLocation(p, "u_mis");
         g->loc.norm_gate = glGetUniformLocation(p, "u_norm_gate");
         g->loc.hybrid    = glGetUniformLocation(p, "u_hybrid");
@@ -583,6 +647,19 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
         g->loc.static_on  = glGetUniformLocation(p, "u_static_on");
         g->loc.static_k   = glGetUniformLocation(p, "u_static_k");
         g->loc.static_irr = glGetUniformLocation(p, "u_static_irr");
+        g->loc.zone_on     = glGetUniformLocation(p, "u_zone_on");
+        g->loc.zone_sdf    = glGetUniformLocation(p, "u_zone_sdf");
+        g->loc.zone_origin = glGetUniformLocation(p, "u_zone_origin");
+        g->loc.zone_dim    = glGetUniformLocation(p, "u_zone_dim");
+        g->loc.zone_vox    = glGetUniformLocation(p, "u_zone_vox");
+        g->loc.cbrick_on     = glGetUniformLocation(p, "u_cbrick_on");
+        g->loc.cbrick_index  = glGetUniformLocation(p, "u_cbrick_index");
+        g->loc.cbrick_meta   = glGetUniformLocation(p, "u_cbrick_meta");
+        g->loc.cbrick_pidx   = glGetUniformLocation(p, "u_cbrick_pidx");
+        g->loc.cbrick_valid  = glGetUniformLocation(p, "u_cbrick_valid");
+        g->loc.cbrick_origin = glGetUniformLocation(p, "u_cbrick_origin");
+        g->loc.cbrick_voxel  = glGetUniformLocation(p, "u_cbrick_voxel");
+        g->loc.cbrick_dim    = glGetUniformLocation(p, "u_cbrick_dim");
         g->loc.static_origin = glGetUniformLocation(p, "u_static_origin");
         g->loc.static_dim    = glGetUniformLocation(p, "u_static_dim");
         g->loc.static_vox    = glGetUniformLocation(p, "u_static_vox");
@@ -603,15 +680,22 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
     glGenBuffers(1, &g->b_boxes);
     glGenBuffers(1, &g->b_depth);
     glGenBuffers(1, &g->b_sg);
+    /* ZERO-INIT every probe-indexed buffer: glBufferData(NULL) is UNDEFINED
+     * VRAM, and any probe the update never writes (inactive under chunk
+     * streaming, staggered groups before their first pass) SHADES with that
+     * garbage -- saturated blotches / a phantom red patch 10 m from anything.
+     * Black until first update is the correct start state. */
+    float *sh_zero = calloc((size_t)max_probes * 64u * 2u, sizeof(float));
+    if (sh_zero == NULL) return false;
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_pos);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), sh_zero, GL_DYNAMIC_DRAW);
     /* CPU shadow of the packed positions so the ACTIVE mask never needs a read-back. */
     g->pos_shadow = calloc((size_t)max_probes * 4u, sizeof(float));
     g->pos_cap = max_probes;
     if (g->pos_shadow == NULL) return false;
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
     /* 24 floats/probe: SH4 dynamic [0..11] + SH4 static [12..23] (rpg-pau4). */
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), sh_zero, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_lights);
     glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)g->max_lights * 4 * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_boxes);
@@ -629,7 +713,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
 
     /* DDGI depth: 8x8 octahedral texels/probe, 2 floats (mean, meanSq) each. */
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_depth);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 64 * 2 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 64 * 2 * sizeof(float), sh_zero, GL_DYNAMIC_DRAW);
     glGenTextures(1, &g->tbo_depth_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_depth_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, g->b_depth);
@@ -654,7 +738,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
 
     /* SG specular: 3 lobes/probe * 8 floats = 24 (6 RGBA32F texels). */
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sg);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), sh_zero, GL_DYNAMIC_DRAW);
     glGenTextures(1, &g->tbo_sg_tex);
     glBindTexture(GL_TEXTURE_BUFFER, g->tbo_sg_tex);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, g->b_sg);
@@ -663,17 +747,18 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
      * max_probes index uints) + per-probe direct-injection SH (24 floats/probe). */
     glGenBuffers(1, &g->b_active);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_active);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)(max_probes + 1u) * sizeof(uint32_t), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)(max_probes + 1u) * sizeof(uint32_t), sh_zero, GL_DYNAMIC_DRAW);
     glGenBuffers(1, &g->b_emit);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_emit);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 24 * sizeof(float), sh_zero, GL_DYNAMIC_DRAW);
     /* Per-probe surface normal cache (vec4: xyz + validity), gated by proximity. */
     glGenBuffers(1, &g->b_norm);
     glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_norm);
-    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GI_GL_SHADER_STORAGE_BUFFER, (GLsizeiptr)max_probes * 4 * sizeof(float), sh_zero, GL_DYNAMIC_DRAW);
 
     gi_probe_tuning_defaults(&g->tuning);
     g->ready = true;
+    free(sh_zero);
     return true;
 }
 
@@ -775,6 +860,14 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         int have_grid = (grid_dim && grid_dim[0] > 0 && grid_origin && grid_cell);
         float o3[3] = {0,0,0}, c3[3] = {1,1,1};
         if (have_grid) { for (int i=0;i<3;++i){ o3[i]=grid_origin[i]; c3[i]=grid_cell[i]; } }
+        /* Brick sets have no dense lattice, but the brick structure IS the field
+         * lookup (u_cbrick_*): let it drive the recurrent gather, and use the
+         * brick probe spacing as the transport cell scale (cellsq). */
+        else if (g->cbrick.on) {
+            float sp = g->cbrick.voxel / 3.0f;
+            for (int i = 0; i < 3; ++i) { o3[i] = g->cbrick.origin[i]; c3[i] = sp; }
+            have_grid = 1;
+        }
         glUniform3fv(g->loc.grid_origin, 1, o3);
         glUniform3fv(g->loc.grid_cell, 1, c3);
         /* DDGI recurrent-irradiance gather (rpg-3c6g): each ray's hit gathers the
@@ -803,6 +896,12 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         glUniform1f(g->loc.emin, emin);
         glUniform1i(g->loc.nsamp, nsamp);
         glUniform1f(g->loc.bounce, bounce);
+        {
+            float rclamp = g->tuning.ray_clamp > 0.0f ? g->tuning.ray_clamp : 4.0f;
+            const char *e = getenv("GI_RAY_CLAMP");
+            if (e != NULL) { float v = (float)atof(e); if (v > 0.0f) rclamp = v; }
+            glUniform1f(g->loc.ray_clamp, rclamp);
+        }
         glUniform1i(g->loc.seed, (GLint)(s_tick & 0x7fffffffu));
     }
     /* MIS-sampled march directions (rpg-3c6g): pdf = depth-hit x N.L(probe normal) x
@@ -869,6 +968,51 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
             glUniform3fv(g->loc.sdf_dim[i], 1, d3);
             glUniform1f(g->loc.sdf_vox[i], r->voxel);
         }
+    }
+
+    /* GLOBAL zone SDF (page-fault fallback): always bound while the stream has
+     * one, two units past the dynamic albedo volume. */
+    {
+        int zon = (sdf != NULL && sdf->has_zone && sdf->zone_tex != 0) ? 1 : 0;
+        int zunit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 2;
+        glUniform1i(g->loc.zone_on, zon);
+        glUniform1i(g->loc.zone_sdf, zunit);
+        if (zon) {
+            float o3[3] = { sdf->zone_origin[0], sdf->zone_origin[1], sdf->zone_origin[2] };
+            float d3[3] = { (float)sdf->zone_dims[0], (float)sdf->zone_dims[1],
+                            (float)sdf->zone_dims[2] };
+            glUniform3fv(g->loc.zone_origin, 1, o3);
+            glUniform3fv(g->loc.zone_dim, 1, d3);
+            glUniform1f(g->loc.zone_vox, sdf->zone_voxel);
+        }
+        glActiveTexture(GL_TEXTURE0 + (GLenum)zunit);
+        glBindTexture(GL_TEXTURE_3D, zon ? sdf->zone_tex : 0);
+    }
+
+    /* Brick field lookup (units 3..6 past the zone SDF). */
+    {
+        int on = g->cbrick.on ? 1 : 0;
+        int u0 = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 3;
+        glUniform1i(g->loc.cbrick_on, on);
+        glUniform1i(g->loc.cbrick_index, u0);
+        glUniform1i(g->loc.cbrick_meta, u0 + 1);
+        glUniform1i(g->loc.cbrick_pidx, u0 + 2);
+        glUniform1i(g->loc.cbrick_valid, u0 + 3);
+        if (on) {
+            float d3[3] = { (float)g->cbrick.dim[0], (float)g->cbrick.dim[1],
+                            (float)g->cbrick.dim[2] };
+            glUniform3fv(g->loc.cbrick_origin, 1, g->cbrick.origin);
+            glUniform1f(g->loc.cbrick_voxel, g->cbrick.voxel);
+            glUniform3fv(g->loc.cbrick_dim, 1, d3);
+        }
+        glActiveTexture(GL_TEXTURE0 + (GLenum)u0);
+        glBindTexture(GL_TEXTURE_3D, on ? g->cbrick.index_tex : 0);
+        glActiveTexture(GL_TEXTURE0 + (GLenum)(u0 + 1));
+        glBindTexture(GL_TEXTURE_BUFFER, on ? g->cbrick.meta_tex : 0);
+        glActiveTexture(GL_TEXTURE0 + (GLenum)(u0 + 2));
+        glBindTexture(GL_TEXTURE_BUFFER, on ? g->cbrick.pidx_tex : 0);
+        glActiveTexture(GL_TEXTURE0 + (GLenum)(u0 + 3));
+        glBindTexture(GL_TEXTURE_BUFFER, on ? g->cbrick.valid_tex : 0);
     }
 
     glBindBufferBase(GI_GL_SHADER_STORAGE_BUFFER, 0, g->b_pos);

@@ -85,9 +85,12 @@ void shadow_cube_clear(shadow_cube_t *sc);
  * @brief Render the scene's depth-distance into cube-array SLOT @p slot's six
  *        faces from @p light_pos (so many point lights each get their own
  *        omnidirectional shadow). Caller re-binds its framebuffer/viewport after.
+ * @param range Point-light cutoff distance: casters whose world AABB lies beyond
+ *              @p range of @p light_pos are skipped (they cast no visible shadow).
+ *              <= 0 disables the cull (draw every caster, as before) -- rpg-9u96.
  */
 void shadow_cube_render_light(shadow_cube_t *sc, const render_scene_t *scene,
-                              const float light_pos[3], uint32_t slot);
+                              const float light_pos[3], uint32_t slot, float range);
 
 /**
  * @brief Bind the cube-map ARRAY to @p unit and set u_shadow_cube_arr +

@@ -527,6 +527,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.gi_tuning.update_interval = rc.gi_update_interval;
     cfg.gi_tuning.n_probe_groups  = rc.gi_n_probe_groups;
     cfg.gi_tuning.bounce          = rc.gi_bounce;
+    cfg.gi_tuning.ray_clamp       = rc.gi_ray_clamp;
     cfg.gi_tuning.near_dist       = rc.gi_near;
     cfg.gi_tuning.dmax            = rc.gi_dmax;
     cfg.gi_tuning.emin            = rc.gi_emin;

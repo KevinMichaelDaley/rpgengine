@@ -38,11 +38,16 @@ shader_program_status_t depth_prepass_init(depth_prepass_t *pass,
                                            const gl_loader_t *loader);
 
 /**
- * @brief Draw every renderable in @p scene into the bound depth buffer (colour
- *        writes masked off, depth writes + LESS test on; colour mask restored
- *        afterwards). The caller clears/binds the depth target.
+ * @brief Draw every VISIBLE renderable in @p scene into the bound depth buffer
+ *        (colour writes masked off, depth writes + LESS test on; colour mask
+ *        restored afterwards). The caller clears/binds the depth target.
+ *        Renderables outside the camera frustum -- or, when @p draw_distance > 0,
+ *        beyond that far cutoff -- are skipped so the pre-pass draws the same set
+ *        as the forward pass (rpg-0rs4).
+ * @param draw_distance Far cull distance in world units; 0 = unlimited.
  */
-void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene);
+void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene,
+                           float draw_distance);
 
 /**
  * @brief Destroy the depth pre-pass program. NULL-safe.

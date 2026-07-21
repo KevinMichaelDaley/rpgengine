@@ -78,3 +78,21 @@ void gi_probe_gpu_dyn_enable(gi_probe_gpu_t *g, int on)
 {
     if (g != NULL) g->dyn_on = on ? 1 : 0;
 }
+
+void gi_probe_gpu_set_cbrick(gi_probe_gpu_t *g, unsigned int index_tex,
+                             unsigned int meta_tex, unsigned int pidx_tex,
+                             unsigned int valid_tex, const int dim[3],
+                             const float origin[3], float voxel)
+{
+    if (g == NULL) return;
+    g->cbrick.index_tex = index_tex;
+    g->cbrick.meta_tex = meta_tex;
+    g->cbrick.pidx_tex = pidx_tex;
+    g->cbrick.valid_tex = valid_tex;
+    for (int a = 0; a < 3; ++a) {
+        g->cbrick.dim[a] = dim ? dim[a] : 0;
+        g->cbrick.origin[a] = origin ? origin[a] : 0.0f;
+    }
+    g->cbrick.voxel = voxel;
+    g->cbrick.on = (index_tex != 0u && meta_tex != 0u && pidx_tex != 0u);
+}

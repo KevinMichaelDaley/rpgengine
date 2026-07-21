@@ -88,12 +88,6 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->gi_samples     = rc_field_i(r, "gi_samples",     out->gi_samples);
     out->gi_spec_lobes  = rc_field_i(r, "gi_spec_lobes",  out->gi_spec_lobes);
     out->gi_bounce      = sd_field_num(r, "gi_bounce",     out->gi_bounce);
-    out->gi_brick_coarse    = sd_field_num(r, "gi_brick_coarse",    out->gi_brick_coarse);
-    out->gi_brick_levels    = rc_field_i(r, "gi_brick_levels",      out->gi_brick_levels);
-    out->gi_brick_fill      = rc_field_i(r, "gi_brick_fill",        out->gi_brick_fill);
-    out->gi_fixup_clearance = sd_field_num(r, "gi_fixup_clearance", out->gi_fixup_clearance);
-    out->gi_fixup_max_push  = sd_field_num(r, "gi_fixup_max_push",  out->gi_fixup_max_push);
-    out->gi_brick_buried    = sd_field_num(r, "gi_brick_buried",    out->gi_brick_buried);
     out->gi_near        = sd_field_num(r, "gi_near",       out->gi_near);
     out->gi_dmax        = sd_field_num(r, "gi_dmax",       out->gi_dmax);
     out->gi_emin        = sd_field_num(r, "gi_emin",       out->gi_emin);
@@ -102,6 +96,13 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->gi_vis_bias    = sd_field_num(r, "gi_vis_bias",   out->gi_vis_bias);
     out->gi_vis_varmin  = sd_field_num(r, "gi_vis_varmin", out->gi_vis_varmin);
     out->gi_vis_sharp   = sd_field_num(r, "gi_vis_sharp",  out->gi_vis_sharp);
+    out->gi_brick_coarse    = sd_field_num(r, "gi_brick_coarse",    out->gi_brick_coarse);
+    out->gi_brick_levels    = rc_field_i(r, "gi_brick_levels",      out->gi_brick_levels);
+    out->gi_brick_fill      = rc_field_i(r, "gi_brick_fill",        out->gi_brick_fill);
+    out->gi_brick_buried    = sd_field_num(r, "gi_brick_buried",    out->gi_brick_buried);
+    out->gi_fixup_clearance = sd_field_num(r, "gi_fixup_clearance", out->gi_fixup_clearance);
+    out->gi_fixup_max_push  = sd_field_num(r, "gi_fixup_max_push",  out->gi_fixup_max_push);
+    out->gi_ray_clamp       = sd_field_num(r, "gi_ray_clamp",       out->gi_ray_clamp);
     out->aniso          = sd_field_num(r, "aniso",         out->aniso);
     out->msaa           = rc_field_i(r, "msaa",            out->msaa);
     out->probe_spacing_scale = sd_field_num(r, "probe_spacing_scale", out->probe_spacing_scale);
@@ -116,5 +117,39 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     sd_field_vec(r, "sky_ao_color", out->sky_ao_color, 3);
     out->sky_ao_ref     = sd_field_num(r, "sky_ao_ref",     out->sky_ao_ref);
     out->sky_ao_mult    = sd_field_num(r, "sky_ao_mult",    out->sky_ao_mult);
+
+    /* Low-end performance knobs (rpg-vwyk / rpg-iplq). */
+    out->render_scale     = sd_field_num(r, "render_scale",     out->render_scale);
+    out->pbr_quality      = rc_field_i(r, "pbr_quality",        out->pbr_quality);
+    out->texture_quality  = rc_field_i(r, "texture_quality",    out->texture_quality);
+    out->depth_prepass    = rc_field_i(r, "depth_prepass",      out->depth_prepass);
+
+    out->shadow_fp16            = rc_field_i(r, "shadow_fp16",            out->shadow_fp16);
+    out->shadow_update_interval = rc_field_i(r, "shadow_update_interval", out->shadow_update_interval);
+    out->shadow_distance        = sd_field_num(r, "shadow_distance",      out->shadow_distance);
+    out->shadow_static_cache    = rc_field_i(r, "shadow_static_cache",    out->shadow_static_cache);
+    out->dir_pcf_taps           = rc_field_i(r, "dir_pcf_taps",           out->dir_pcf_taps);
+    out->shadow_pcf_taps        = rc_field_i(r, "shadow_pcf_taps",        out->shadow_pcf_taps);
+    out->dir_dynamic_interval   = rc_field_i(r, "dir_dynamic_interval",   out->dir_dynamic_interval);
+
+    out->lightmap_bands     = rc_field_i(r, "lightmap_bands",     out->lightmap_bands);
+    out->lm_fp16            = rc_field_i(r, "lm_fp16",            out->lm_fp16);
+    out->lm_resident_layers = rc_field_i(r, "lm_resident_layers", out->lm_resident_layers);
+
+    out->gi_dyn_voxel     = rc_field_i(r, "gi_dyn_voxel",     out->gi_dyn_voxel);
+    out->gi_march_quality = sd_field_num(r, "gi_march_quality", out->gi_march_quality);
+    out->gi_frag_quality  = rc_field_i(r, "gi_frag_quality",  out->gi_frag_quality);
+    out->gi_prepass_scale = rc_field_i(r, "gi_prepass_scale", out->gi_prepass_scale);
+    out->gi_probe_cap     = rc_field_i(r, "gi_probe_cap",     out->gi_probe_cap);
+    out->gi_adaptive_ms   = sd_field_num(r, "gi_adaptive_ms", out->gi_adaptive_ms);
+    out->sdf_fp16         = rc_field_i(r, "sdf_fp16",         out->sdf_fp16);
+    out->sdf_resident_slots    = rc_field_i(r, "sdf_resident_slots",    out->sdf_resident_slots);
+    out->sdf_uploads_per_frame = rc_field_i(r, "sdf_uploads_per_frame", out->sdf_uploads_per_frame);
+
+    out->stream_upload_mb_per_frame = rc_field_i(r, "stream_upload_mb_per_frame", out->stream_upload_mb_per_frame);
+    out->stream_ram_budget_mb       = rc_field_i(r, "stream_ram_budget_mb",  out->stream_ram_budget_mb);
+    out->stream_vram_budget_mb      = rc_field_i(r, "stream_vram_budget_mb", out->stream_vram_budget_mb);
+
+    out->draw_distance    = sd_field_num(r, "draw_distance",  out->draw_distance);
     return true;
 }

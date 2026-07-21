@@ -162,7 +162,9 @@ bool client_light_stream_init(client_light_stream_t *ls,
     for (int c = 0; c < 9; ++c) {
         glGenTextures(1, &ls->sh_tex[c]);
         glBindTexture(GL_TEXTURE_2D_ARRAY, ls->sh_tex[c]);
-        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGB32F, (GLsizei)ls->atlas.width,
+        /* lm_fp16 halves the SH pages; baked irradiance has ample range for it. */
+        glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, cfg->lm_fp16 ? GL_RGB16F : GL_RGB32F,
+                     (GLsizei)ls->atlas.width,
                      (GLsizei)ls->atlas.height, (GLsizei)ls->n_layers, 0,
                      GL_RGB, GL_FLOAT, NULL);
         glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -178,6 +180,8 @@ bool client_light_stream_init(client_light_stream_t *ls,
     uint32_t n_sdf = 0;
     if (cfg->sdf_prefix != NULL && cfg->sdf_prefix[0] != '\0') {
         snprintf(ls->sdf_prefix, sizeof ls->sdf_prefix, "%s/%s", cfg->base_dir, cfg->sdf_prefix);
+        /* Pool sizing + texture format BEFORE the scan/load creates the GPU pool. */
+        gi_sdf_stream_configure(&ls->sdf, cfg->sdf_resident_slots, cfg->sdf_fp16);
         if (getenv("LEGACY_SDF") == NULL && gi_sdf_stream_scan(&ls->sdf, ls->sdf_prefix) > 0) {
             ls->has_sdf = 1; ls->sdf_streamed = 1;
             n_sdf = (uint32_t)ls->sdf.n_chunks;

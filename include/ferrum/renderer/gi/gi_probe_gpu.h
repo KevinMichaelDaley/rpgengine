@@ -49,6 +49,7 @@ typedef struct gi_probe_tuning {
     int   update_interval;/**< re-trace cadence in frames. */
     int   n_probe_groups;/**< staggered dithered probe groups (1 = no stagger). */
     float bounce;        /**< per-bounce transport gain; steady state = 1/(1-bounce). */
+    float ray_clamp;     /**< per-ray radiance cap (firefly clamp; 0 = default 4). */
     float near_dist;     /**< direct-sample vs stochastic-gather threshold (m). */
     float dmax;          /**< nearest-surface distance for a probe to be a SOURCE. */
     float emin;          /**< emission luminance over which a probe is a SOURCE. */
@@ -73,11 +74,16 @@ typedef struct gi_probe_gpu {
     struct { int nprobes, nlights, nboxes, soft, ncones, albedo, temporal;
              int ngroups, group, grid_dim, grid_origin, grid_cell;
              int field_on, near_dist, static_on, static_k, static_irr;
-             int pass, seed, dmax, emin, nsamp, bounce;
+             int pass, seed, dmax, emin, nsamp, bounce, ray_clamp;
              int mis, norm_gate, hybrid, hero, stat_scale;
              int dyn_alb, dyn_origin, dyn_dim, dyn_vox, dyn_on;
              int static_origin, static_dim, static_vox;
-             int sdf_active[8], sdf[8], sdf_origin[8], sdf_dim[8], sdf_vox[8]; } loc;
+             int sdf_active[GI_SDF_MAX_RESIDENT], sdf[GI_SDF_MAX_RESIDENT],
+                 sdf_origin[GI_SDF_MAX_RESIDENT], sdf_dim[GI_SDF_MAX_RESIDENT],
+                 sdf_vox[GI_SDF_MAX_RESIDENT];
+             int zone_on, zone_sdf, zone_origin, zone_dim, zone_vox;
+             int cbrick_on, cbrick_index, cbrick_meta, cbrick_pidx, cbrick_valid,
+                 cbrick_origin, cbrick_voxel, cbrick_dim; } loc;
     unsigned int b_pos, b_sh;  /**< probe position + SH SSBOs. */
     unsigned int b_lights, b_boxes; /**< dynamic light + box SSBOs. */
     unsigned int b_depth;      /**< DDGI octahedral depth SSBO (mean, meanSq / texel). */
@@ -91,6 +97,16 @@ typedef struct gi_probe_gpu {
                                 *   (a GPU->CPU sync) on every residency change. */
     uint32_t     pos_cap;      /**< probe capacity of @c pos_shadow. */
     gi_probe_tuning_t tuning;  /**< probe-GI tuning (config-driven; GI_* env overrides). */
+    /* Brick field lookup (rpg-pjkb): the COMPUTE-side handles of the brick
+     * sampling structure so the recurrent field gather works on brick-placed
+     * sets (field_irr's grid addressing needs a dense lattice these sets lack). */
+    struct {
+        unsigned int index_tex, meta_tex, pidx_tex, valid_tex;
+        int   dim[3];
+        float origin[3];
+        float voxel;
+        int   on;
+    } cbrick;
     unsigned int dyn_tex;      /**< sparse DYNAMIC albedo volume (RGBA8 3D, 0 = none). */
     int          dyn_dim[3];   /**< dynamic-volume voxel dims. */
     float        dyn_origin[3];/**< dynamic-volume world origin (min corner). */
@@ -156,6 +172,16 @@ void gi_probe_gpu_set_static(gi_probe_gpu_t *g, unsigned int tex,
  * @param out_dim,out_extent  filled with the chosen voxel dims + world extent.
  * @return the 3D texture id (0 on failure).
  */
+/**
+ * @brief Attach the brick sampling structure for the COMPUTE field gather.
+ *        Pass the GL handles from gi_brick_gpu (not owned; caller keeps them
+ *        alive). Enables the recurrent field for brick-placed probe sets.
+ */
+void gi_probe_gpu_set_cbrick(gi_probe_gpu_t *g, unsigned int index_tex,
+                             unsigned int meta_tex, unsigned int pidx_tex,
+                             unsigned int valid_tex, const int dim[3],
+                             const float origin[3], float voxel);
+
 unsigned int gi_probe_gpu_dyn_volume(gi_probe_gpu_t *g, const float aabb_min[3],
                                      const float aabb_max[3], float vox,
                                      int out_dim[3], float out_extent[3]);

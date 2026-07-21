@@ -45,6 +45,16 @@ bool client_bake_run(const gl_loader_t *loader, const struct scene_desc *desc,
                      const char *base_dir, client_image_load_fn image_load,
                      const char *out_flm);
 
+/**
+ * @brief Compose + write the GLOBAL low-res ZONE SDF ("<prefix>_zone.sdf") from
+ *        the on-disk fine chunks ("<prefix>_cNNN.sdf"): the runtime's page-fault
+ *        fallback (min-downsampled -- conservative, thin walls survive).
+ * @param sdf_prefix chunk path prefix (same value as CLIENT_BAKE_SDF).
+ * @param max_dim    coarse cells along the longest zone extent (e.g. 64).
+ * @return true if the zone file was written. Headless except file IO; no GL.
+ */
+bool client_bake_zone_sdf(const char *sdf_prefix, int max_dim);
+
 #ifdef __cplusplus
 }
 #endif

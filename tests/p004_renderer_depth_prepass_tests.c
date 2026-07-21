@@ -49,7 +49,7 @@ int main(void) {
 
     glViewport(0,0,128,128);
     glClearDepth(1.0); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    depth_prepass_execute(&pass, &scene);
+    depth_prepass_execute(&pass, &scene, 0.0f);
 
     if (glGetError() != GL_NO_ERROR) { fprintf(stderr,"FAIL gl error\n"); failed = 1; }
     float d = 1.0f;

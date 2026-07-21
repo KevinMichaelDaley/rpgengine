@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "ferrum/math/mat4.h"
+#include "ferrum/renderer/cull/frustum_cull.h"
 #include "ferrum/renderer/gl_constants.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 
@@ -60,7 +61,8 @@ shader_program_status_t depth_prepass_init(depth_prepass_t *pass,
     return SHADER_PROGRAM_OK;
 }
 
-void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene)
+void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene,
+                           float draw_distance)
 {
     if (pass == NULL || scene == NULL) {
         return;
@@ -77,9 +79,18 @@ void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene)
                             scene->camera.view, 0);
     shader_uniform_set_mat4(&pass->cache, &pass->shader, "u_projection",
                             scene->camera.proj, 0);
+    /* Cull the pre-pass against the same camera frustum as the forward pass
+     * (rpg-0rs4) so the two passes draw the identical visible set. */
+    float planes[6][4];
+    frustum_extract_planes_vp(scene->camera.proj, scene->camera.view, planes);
     for (uint32_t i = 0; i < scene->count; ++i) {
         const render_renderable_t *r = &scene->items[i];
         if (r->mesh == NULL) {
+            continue;
+        }
+        if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
+                                 r->mesh->aabb_max, scene->camera.eye,
+                                 draw_distance)) {
             continue;
         }
         shader_uniform_set_mat4(&pass->cache, &pass->shader, "u_model",
