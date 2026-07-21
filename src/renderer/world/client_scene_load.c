@@ -383,6 +383,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.forward.cluster = (cluster_config_t){ rc.cluster_tiles_x, rc.cluster_tiles_y,
                                               rc.cluster_slices, rc.cluster_near, rc.cluster_far };
     cfg.forward.max_lights = rc.max_lights;
+    cfg.forward.draw_distance = rc.draw_distance;  /* far cull cutoff (rpg-0rs4). */
     cfg.forward.index_capacity = rc.cluster_tiles_x * rc.cluster_tiles_y * rc.cluster_slices * 16u;
     cfg.forward.screen_w = (float)screen_w; cfg.forward.screen_h = (float)screen_h;
     for (int a = 0; a < 3; ++a) cfg.forward.ambient[a] = rc.ambient[a];

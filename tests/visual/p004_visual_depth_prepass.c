@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     for (int frame=0; frame<3; ++frame) {
         glClearColor(0,0,0,1);
         glClearDepth(1.0); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        depth_prepass_execute(&pass, &scene);
+        depth_prepass_execute(&pass, &scene, 0.0f);
         if (frame==1) save_depth_ppm(shot, WIN, WIN);
         SDL_GL_SwapWindow(win); SDL_Delay(60);
     }

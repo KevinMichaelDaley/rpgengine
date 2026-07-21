@@ -14,6 +14,7 @@
 #ifndef GL_ONE
 #define GL_ONE 1  /* additive-blend factor for the overdraw pass. */
 #endif
+#include "ferrum/renderer/cull/frustum_cull.h"
 #include "ferrum/renderer/material.h"
 #include "ferrum/renderer/mesh/static_mesh.h"
 #include "ferrum/renderer/pbr_shader.h"
@@ -34,7 +35,7 @@ static void fwd_depth_submit(void *ud)
 {
     render_forward_t *f = (render_forward_t *)ud;
     if (f->scene != NULL && !f->no_prepass)   /* PBR_NOPREPASS: A/B the early-Z. */
-        depth_prepass_execute(&f->depth, f->scene);
+        depth_prepass_execute(&f->depth, f->scene, f->cfg.draw_distance);
 }
 
 /* Light cull: assign the scene's lights to the froxel clusters for the camera,
@@ -172,9 +173,18 @@ static void fwd_forward_submit(void *ud)
         shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_idx", 27);
     }
 
+    /* Frustum-cull the forward pass against the camera (rpg-0rs4). draw_distance
+     * (0 = unlimited) adds a far cutoff. The depth pre-pass culls identically. */
+    float planes[6][4];
+    frustum_extract_planes_vp(s->camera.proj, s->camera.view, planes);
+
     for (uint32_t i = 0; i < s->count; ++i) {
         const render_renderable_t *r = &s->items[i];
         if (r->mesh == NULL)
+            continue;
+        if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
+                                 r->mesh->aabb_max, s->camera.eye,
+                                 f->cfg.draw_distance))
             continue;
         if (r->material != NULL)
             material_bind(r->material, 0u, &f->cache, &f->pbr);

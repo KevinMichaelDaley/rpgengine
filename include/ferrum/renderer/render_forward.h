@@ -80,6 +80,9 @@ typedef struct render_forward_config {
                                              CSM fits every cascade to this box so no
                                              caster is clipped (0,0,0..0,0,0 = off). */
     float              shadow_scene_max[3];
+    float              draw_distance;   /**< far cull distance for the forward +
+                                         *   depth-pre passes (world units); 0 =
+                                         *   unlimited. From render_config (rpg-0rs4). */
     /** Optional hook called once per forward pass after the PBR program is bound
      *  and its shadow uniforms are set, so an external system (e.g. the dynamic-
      *  GI runtime) can bind extra samplers/uniforms for the draw loop. NULL =
