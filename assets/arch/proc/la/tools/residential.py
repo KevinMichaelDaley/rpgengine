@@ -474,7 +474,8 @@ def build_dingbat(p, rng):
     laneB_x0 = (-s_w - 0.05) if side == 'left' else (W + 0.05)
     laneA_x0 = laneB_x0 + sdir * (s_w + 0.06)
     wd = 1.25
-    levels = [0.0] + [lo + 0.12 for (lo, _hi, _bt) in floor_bands]
+    levels = [0.0] + [hi for (_lo, hi, _bt) in floor_bands]   # = floor lines
+    # (walkway tops sit here too: doors flush, no threshold step)
     y_arr = D + wd + 0.02     # flights meet the walkway at its outer EDGE:
     # starting/arriving inside the band collided with the slab (user-hit:
     # "joined at the wrong places except the bottom one").
@@ -538,7 +539,7 @@ def build_dingbat(p, rng):
     wpx = lx0 - 0.10 if side == 'left' else lx1 + 0.02
     for wy in (D + 0.05, D + wd - 0.13):
         _box(stair, (wpx, wy, 0.0), (wpx + 0.08, wy + 0.08,
-             floor_bands[-1][0] - 0.02), M_METAL)
+             floor_bands[-1][1] - 0.13), M_METAL)
     stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
 
     # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,
@@ -625,6 +626,56 @@ def build_dingbat(p, rng):
             for (zlo, zhi, ys) in storeys:
                 _box(parts, (xb - pt / 2, ys, zlo),
                      (xb + pt / 2, iy1 - 0.002, zhi - 0.001), M_GYPSUM)
+
+        # unit floor plans: dingbats rotated a few STANDARD plans -- none
+        # were a bare square with no bathroom. P0 studio (bath box + kitchen
+        # stub), P1 one-bed (bedroom wall w/ doorway + bath), P2 = P1
+        # mirrored. Walls are thin boxes with real doorway gaps; rotation is
+        # per-unit and seeded.
+        def wall_x(parts2, x, ya2, yb2, zlo, zhi):
+            _box(parts2, (x - 0.045, ya2, zlo), (x + 0.045, yb2, zhi), M_GYPSUM)
+
+        def wall_y(parts2, y, xa2, xb2, zlo, zhi):
+            _box(parts2, (xa2, y - 0.045, zlo), (xb2, y + 0.045, zhi), M_GYPSUM)
+
+        n_units = cols // 2
+        bayw = (W - 2 * margin) / cols
+        for u in range(n_units):
+            ux0 = margin + bayw * 2 * u + 0.06
+            ux1 = margin + bayw * 2 * (u + 1) - 0.06
+            if ux1 - ux0 < 2.6:
+                continue
+            plan = (u + rng.randrange(3)) % 3
+            mirror = plan == 2
+            for si, (zlo, zhi, ys) in enumerate(storeys):
+                y0u = ys + 0.05
+                y1u = iy1 - 0.05
+                depth_u = y1u - y0u
+                if depth_u < 3.0:
+                    continue
+                zl2, zh2 = zlo + 0.001, zhi - 0.002
+                bx0 = ux1 - 1.75 if mirror else ux0
+                bx1 = ux1 if mirror else ux0 + 1.75
+                bath_wx = bx0 if mirror else bx1
+                # bathroom: front corner box, doorway gap on its rear wall.
+                by1 = y0u + min(2.2, depth_u * 0.35)
+                wall_x(parts, bath_wx, y0u, by1, zl2, zh2)
+                gx0, gx1 = (bx0 + 0.15, bx1 - 0.95) if not mirror                     else (bx0 + 0.95, bx1 - 0.15)
+                wall_y(parts, by1, min(gx0, gx1), max(gx0, gx1), zl2, zh2)
+                # kitchen stub: rear, opposite side from the bathroom.
+                kx0 = ux0 if mirror else ux1 - 2.0
+                kx1 = ux0 + 2.0 if mirror else ux1
+                wall_y(parts, y1u - 2.3, kx0, kx1, zl2, zh2)
+                if plan >= 1:
+                    # one-bed: bedroom wall at mid depth, doorway by the
+                    # party wall opposite the bathroom.
+                    bw_y = y0u + depth_u * 0.5
+                    dx0 = ux0 + (0.85 if not mirror else 0.0)
+                    dgap0 = ux1 - 0.85 if not mirror else ux0 + 0.85
+                    if not mirror:
+                        wall_y(parts, bw_y, ux0, dgap0, zl2, zh2)
+                    else:
+                        wall_y(parts, bw_y, dgap0, ux1, zl2, zh2)
         interior_obs.append(parts.to_object("LA_Dingbat_Partitions", mats))
 
         # rear walkway serving the upper units: slab + square posts.
@@ -635,13 +686,15 @@ def build_dingbat(p, rng):
         wx0 = (-2 * s_w2 - 0.10) if p["stair_side"] == 'left' else 0.0
         wx1 = W if p["stair_side"] == 'left' else (W + 2 * s_w2 + 0.10)
         for wi, (lo, hi, _bt) in enumerate(floor_bands):
-            _box(walk, (wx0, D + 0.003 + 0.002 * wi, lo),
-                 (wx1 + 0.001 * wi, D + wd, lo + 0.12), M_CONCRETE)
+            # top FLUSH with the unit floor line (= slab band top = door
+            # bottom): threshold steps were expensive, nobody poured them.
+            _box(walk, (wx0, D + 0.003 + 0.002 * wi, hi - 0.12),
+                 (wx1 + 0.001 * wi, D + wd, hi), M_CONCRETE)
         walk.tag = 'columns'
         for i in range(3):
             x = 0.2 + (W - 0.4) * (i / 2.0)
             _box(walk, (x - 0.06, D + wd - 0.14, 0.0),
-                 (x + 0.06, D + wd - 0.02, floor_bands[-1][0]), M_METAL)
+                 (x + 0.06, D + wd - 0.02, floor_bands[-1][1] - 0.12), M_METAL)
         interior_obs.append(walk.to_object("LA_Dingbat_Walkway", mats))
 
     # ---- STORY OPTIONS (rule 3, off by default; theme: abandonment /
