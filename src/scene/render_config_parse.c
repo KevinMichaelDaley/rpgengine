@@ -88,6 +88,11 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->gi_samples     = rc_field_i(r, "gi_samples",     out->gi_samples);
     out->gi_spec_lobes  = rc_field_i(r, "gi_spec_lobes",  out->gi_spec_lobes);
     out->gi_bounce      = sd_field_num(r, "gi_bounce",     out->gi_bounce);
+    out->gi_brick_coarse    = sd_field_num(r, "gi_brick_coarse",    out->gi_brick_coarse);
+    out->gi_brick_levels    = rc_field_i(r, "gi_brick_levels",      out->gi_brick_levels);
+    out->gi_brick_fill      = rc_field_i(r, "gi_brick_fill",        out->gi_brick_fill);
+    out->gi_fixup_clearance = sd_field_num(r, "gi_fixup_clearance", out->gi_fixup_clearance);
+    out->gi_fixup_max_push  = sd_field_num(r, "gi_fixup_max_push",  out->gi_fixup_max_push);
     out->gi_near        = sd_field_num(r, "gi_near",       out->gi_near);
     out->gi_dmax        = sd_field_num(r, "gi_dmax",       out->gi_dmax);
     out->gi_emin        = sd_field_num(r, "gi_emin",       out->gi_emin);

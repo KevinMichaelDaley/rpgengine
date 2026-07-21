@@ -71,6 +71,13 @@ typedef struct render_config {
     int      gi_samples;            /**< source samples per gather (>= sources => exact). */
     int      gi_spec_lobes;         /**< SG specular lobes per probe (0..3). */
     float    gi_bounce;             /**< transport gain; steady state = 1/(1-gain). */
+    /* Offline post-bake probe placement (rpg-pjkb; consumed by build/probe_bake,
+     * which ships its result as the level's manual .probes file). */
+    float    gi_brick_coarse;       /**< coarsest brick edge (m). */
+    int      gi_brick_levels;       /**< ternary hierarchy depth (1..4). */
+    int      gi_brick_fill;         /**< keep failing coarse bricks (open-air GI). */
+    float    gi_fixup_clearance;    /**< virtual-offset target SDF clearance (m). */
+    float    gi_fixup_max_push;     /**< virtual-offset displacement cap (m). */
     float    gi_near;               /**< direct-sample vs stochastic-gather threshold (m). */
     float    gi_dmax;               /**< nearest-surface distance for a SOURCE probe. */
     float    gi_emin;               /**< emission luminance for a SOURCE probe. */

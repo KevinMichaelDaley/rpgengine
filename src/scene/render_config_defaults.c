@@ -52,6 +52,13 @@ void render_config_defaults(render_config_t *rc)
     rc->gi_field = 1; rc->gi_mis = 0; rc->gi_hybrid = 0; rc->gi_hero = 2;
     rc->gi_samples = 24; rc->gi_spec_lobes = 2;
     rc->gi_bounce = 0.9f;   /* NOTE steady state = 1/(1-gain): 0.9 settles at 10x. */
+    /* Offline brick placement (probe_bake tool). Coarse 9 m / 3 levels => 1 m
+     * finest bricks with 0.33 m probe spacing near geometry. */
+    rc->gi_brick_coarse = 9.0f;
+    rc->gi_brick_levels = 3;
+    rc->gi_brick_fill = 1;
+    rc->gi_fixup_clearance = 0.10f;
+    rc->gi_fixup_max_push = 0.60f;
     rc->gi_near = 2.2f; rc->gi_dmax = 2.5f; rc->gi_emin = 0.02f;
     rc->gi_norm_gate = 0.75f; rc->gi_stat_scale = 1.0f;
     rc->gi_vis_bias = 0.30f; rc->gi_vis_varmin = 0.02f; rc->gi_vis_sharp = 1.0f;

@@ -361,17 +361,40 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         if (probes.spacing  > 0.0f) probes.spacing  *= rc.probe_spacing_scale;
         if (probes.vspacing > 0.0f) probes.vspacing *= rc.probe_spacing_scale;
     }
-    static uint8_t probe_arena_buf[4 * 1024 * 1024];
+    static uint8_t probe_arena_buf[8 * 1024 * 1024];
     arena_t pa; arena_init(&pa, probe_arena_buf, sizeof probe_arena_buf);
     probe_set_t pset; memset(&pset, 0, sizeof pset);
-    probe_place_grid(&probes, amin, amax, &pa, &pset);
-    /* Probe-volume importance boxes densify chosen regions (distance/LOD),
-     * realising the generated-with-volume case; only when the scene specifies them
-     * (else keep the regular grid for trilinear sampling). rpg-ft0g/rpg-zygg. */
-    if (probes.box_count > 0) {
-        probe_set_t refined; memset(&refined, 0, sizeof refined);
-        if (probe_place_refine_importance(&pset, &probes, amin, amax, &pa, &refined))
-            pset = refined;
+    /* MANUAL probes first (rpg-pjkb): the offline probe_bake pass ships the
+     * placed+fixed-up set as a .probes file (the loader must not re-place --
+     * at load time it only ever sees the resident subset of the scene). The
+     * descriptor's manual_path wins; else the bake convention <sdf_prefix>.probes
+     * is tried. The auto grid below remains the no-bake fallback, and hand-
+     * placed extras simply live in the same .probes file. */
+    bool probes_manual = false;
+    {
+        char ppath[1024]; ppath[0] = '\0';
+        if (desc->probes.has_manual)
+            snprintf(ppath, sizeof ppath, "%s/%s", base_dir, desc->probes.manual_path);
+        else if (desc->lightdata.sdf_prefix[0])
+            snprintf(ppath, sizeof ppath, "%s/%s.probes", base_dir,
+                     desc->lightdata.sdf_prefix);
+        if (ppath[0] != '\0' && probe_set_load(ppath, &pa, &pset) && pset.count > 0) {
+            probes_manual = true;
+            printf("[client] probes: %u manual from %s\n", pset.count, ppath);
+        } else {
+            memset(&pset, 0, sizeof pset);
+        }
+    }
+    if (!probes_manual) {
+        probe_place_grid(&probes, amin, amax, &pa, &pset);
+        /* Probe-volume importance boxes densify chosen regions (distance/LOD),
+         * realising the generated-with-volume case; only when the scene specifies
+         * them (else keep the regular grid for trilinear sampling). rpg-ft0g. */
+        if (probes.box_count > 0) {
+            probe_set_t refined; memset(&refined, 0, sizeof refined);
+            if (probe_place_refine_importance(&pset, &probes, amin, amax, &pa, &refined))
+                pset = refined;
+        }
     }
 
     /* render_world config. Scalar tuning comes from the render_config (JSON-loadable
