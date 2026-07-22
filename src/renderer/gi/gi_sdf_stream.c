@@ -256,6 +256,10 @@ static int sdf_touch(gi_sdf_stream_t *s, int c)
     if (c < 0 || c >= s->n_chunks) return -1;
     if (s->ram[c].dist == NULL) return -1;   /* RAM not resident (streamed): skip. */
     if (s->page[c] >= 0) { s->slot_used[s->page[c]] = s->frame; return s->page[c]; }
+    /* Upload budget (see max_uploads): once spent, leave the chunk non-resident
+     * this call -- the probe trace covers it with the zone fallback. */
+    if (s->max_uploads > 0 && s->uploads_this_page >= s->max_uploads) return -1;
+    ++s->uploads_this_page;
     int slot = -1;
     for (int i = 0; i < s->n_slots; ++i)
         if (s->slot_chunk[i] < 0) { slot = i; break; }
@@ -270,12 +274,49 @@ static int sdf_touch(gi_sdf_stream_t *s, int c)
     return slot;
 }
 
-void gi_sdf_stream_page(gi_sdf_stream_t *s, const uint8_t *visible)
+void gi_sdf_stream_page(gi_sdf_stream_t *s, const uint8_t *visible,
+                        const float cam_pos[3])
 {
     if (s == NULL || visible == NULL) return;
     ++s->frame;
-    for (int c = 0; c < s->n_chunks; ++c)
-        if (visible[c]) sdf_touch(s, c);
+    s->uploads_this_page = 0;
+    if (cam_pos == NULL) {
+        /* Legacy order: fine when the visible set fits the pool. */
+        for (int c = 0; c < s->n_chunks; ++c)
+            if (visible[c]) sdf_touch(s, c);
+    } else {
+        /* STABLE NEAREST-POOL residency: when the visible set exceeds the slot
+         * pool, touching everything makes the LRU ROTATE through the overflow
+         * -- one 3D-texture upload + mipmap gen (hundreds of ms) EVERY page
+         * call, forever, even with a static camera. Instead touch only the
+         * n_slots nearest visible chunks: the resident set converges and then
+         * page calls upload NOTHING until the camera actually moves on.
+         * Farther visible chunks stay covered by the zone SDF fallback. */
+        int   order[GI_SDF_MAX_RESIDENT];
+        float od2[GI_SDF_MAX_RESIDENT];
+        int   n = 0;
+        for (int c = 0; c < s->n_chunks; ++c) {
+            if (!visible[c] || s->ram[c].dist == NULL) continue;
+            const gi_sdf_chunk_ram_t *r = &s->ram[c];
+            float d2 = 0.0f;
+            for (int a = 0; a < 3; ++a) {
+                float ctr = r->origin[a] + 0.5f * (float)r->dims[a] * r->voxel;
+                float d = ctr - cam_pos[a];
+                d2 += d * d;
+            }
+            /* Insertion into the nearest-n_slots list. */
+            if (n < s->n_slots) {
+                int i = n++;
+                while (i > 0 && od2[i-1] > d2) { od2[i]=od2[i-1]; order[i]=order[i-1]; --i; }
+                od2[i] = d2; order[i] = c;
+            } else if (d2 < od2[n-1]) {
+                int i = n - 1;
+                while (i > 0 && od2[i-1] > d2) { od2[i]=od2[i-1]; order[i]=order[i-1]; --i; }
+                od2[i] = d2; order[i] = c;
+            }
+        }
+        for (int i = 0; i < n; ++i) sdf_touch(s, order[i]);
+    }
     /* Record the resident set this frame (for the probe compute to bind). */
     s->resident = 0;
     for (int i = 0; i < s->n_slots; ++i)

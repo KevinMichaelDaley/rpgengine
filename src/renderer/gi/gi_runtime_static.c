@@ -5,6 +5,8 @@
  * Split from gi_runtime.c to keep each source file within the 4-function rule.
  */
 #include "ferrum/renderer/gi/gi_runtime.h"
+
+#include <stdio.h>
 #include "ferrum/renderer/gi/gi_probe_gpu.h"
 
 void gi_runtime_set_static_volume(gi_runtime_t *gi, unsigned int tex,
@@ -28,6 +30,9 @@ void gi_runtime_set_probe_grid(gi_runtime_t *gi, const float origin[3],
     if (gi == NULL) return;
     int on = (origin && cell && dim && dim[0] > 0 && dim[1] > 0 && dim[2] > 0);
     gi->probe_grid_on = on;
+    fprintf(stderr, "gi_runtime: probe grid %s (%dx%dx%d)\n",
+            on ? "ON (trilinear)" : "OFF (froxel fallback)",
+            dim ? dim[0] : 0, dim ? dim[1] : 0, dim ? dim[2] : 0);
     for (int i = 0; i < 3; ++i) {
         gi->probe_grid_origin[i] = on ? origin[i] : 0.0f;
         gi->probe_grid_cell[i] = on ? cell[i] : 1.0f;

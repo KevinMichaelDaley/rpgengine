@@ -41,6 +41,15 @@ bool gi_static_volume_upload(gi_static_volume_t *v, const float *rgb,
                              const int dims[3], const float origin[3],
                              float voxel);
 
+/**
+ * @brief Update the volume in place: same dims -> glTexSubImage3D into the
+ *        existing texture (origin/voxel refreshed); different dims or no
+ *        texture yet -> full re-create. Render thread only.
+ */
+bool gi_static_volume_refresh(gi_static_volume_t *v, const float *rgb,
+                              const int dims[3], const float origin[3],
+                              float voxel);
+
 /** @brief Free the GL texture. NULL-safe; safe to call on a zeroed struct. */
 void gi_static_volume_destroy(gi_static_volume_t *v);
 

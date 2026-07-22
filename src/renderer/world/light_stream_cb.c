@@ -64,6 +64,9 @@ size_t client_ls_load(void *user, uint64_t id, fr_asset_class_t cls, void *slot_
         return 0;
     }
     s->w = (int)aw; s->h = (int)ah;
+    /* Streamed probe seed: extract this chunk's splat points while its SH
+     * planes are in RAM (still on the fiber -- file IO + math, no GL). */
+    client_ls_svol_extract(s->owner, s);
     return lm_chunk_bytes(s->w, s->h);
 }
 
@@ -105,6 +108,28 @@ void client_ls_evict(void *user, uint64_t id, fr_asset_class_t cls, void *slot_u
         if ((uint32_t)s->layer < ls->n_layers) ls->layer_chunk[s->layer] = -1;
         s->layer = -1;
     }
-    if (drop & FR_ASSET_DROP_RAM)
+    if (drop & FR_ASSET_DROP_RAM) {
         for (int c = 0; c < 9; ++c) { free(s->coeff[c]); s->coeff[c] = NULL; }
+        /* Drop the probe-seed splat points with the RAM tier. An async svol
+         * rebuild may still be reading its snapshot of this list, so it parks
+         * in the GRAVEYARD and is freed by the svol tick once no job is in
+         * flight (render thread, like this evict). */
+        float *pts = s->svol_pts;
+        s->svol_pts = NULL; s->svol_np = 0;
+        if (pts != NULL) {
+            ls_svol_t *sv = ls->svol;
+            if (sv != NULL) {
+                if (sv->n_grave == sv->cap_grave) {
+                    uint32_t nc = sv->cap_grave ? sv->cap_grave * 2u : 16u;
+                    float **ng = realloc(sv->grave, (size_t)nc * sizeof *ng);
+                    if (ng != NULL) { sv->grave = ng; sv->cap_grave = nc; }
+                }
+                if (sv->n_grave < sv->cap_grave) sv->grave[sv->n_grave++] = pts;
+                /* else: grave realloc failed (OOM) -- LEAK the list rather
+                 * than free something an in-flight job may still read. */
+            } else {
+                free(pts);
+            }
+        }
+    }
 }

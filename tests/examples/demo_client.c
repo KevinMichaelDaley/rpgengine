@@ -75,6 +75,15 @@
 #include "ferrum/renderer/vbo.h"
 #include "ferrum/renderer/video_capture.h"
 
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#define CL_ZONE(v, name) TracyCZoneN(v, name, true)
+#define CL_ZONE_END(v) TracyCZoneEnd(v)
+#else
+#define CL_ZONE(v, name)
+#define CL_ZONE_END(v)
+#endif
+
 #include "cornell_demo.h"
 
 #ifdef FR_NET_EMULATION
@@ -96,6 +105,19 @@
 /* ── Globals for signal handling ────────────────────────────────── */
 
 static volatile sig_atomic_t g_running = 1;
+
+/* FR_GLDEBUG sink: print driver-reported GL errors (KHR_debug). */
+static void client_gl_debug_cb(unsigned src, unsigned type, unsigned id,
+                               unsigned sev, int len, const char *msg,
+                               const void *user)
+{
+    (void)src; (void)id; (void)len; (void)user;
+    static int shown = 0;
+    if ((type == 0x824C /* ERROR */ || sev == 0x9146 /* HIGH */) && shown < 20) {
+        ++shown;
+        fprintf(stderr, "[GL] %s\n", msg);
+    }
+}
 
 static void handle_sigint(int sig) {
     (void)sig;
@@ -910,10 +932,13 @@ int main(int argc, char **argv) {
                 lcfg.sdf_resident_slots = rcfg.sdf_resident_slots;
                 lcfg.sdf_fp16 = rcfg.sdf_fp16;
                 lcfg.lm_fp16 = rcfg.lm_fp16;
+                lcfg.svol_desc = &desc;   /* streamed probe seed (borrowed). */
                 const float big_min[3] = { -1e5f, -1e5f, -1e5f };
                 const float big_max[3] = { 1e5f, 1e5f, 1e5f };
                 if (client_light_stream_init(&lstream, &lcfg, big_min, big_max)) {
                     lstream_active = 1;
+                    /* SDF page-in budget (rc knob; 0 = uncapped legacy). */
+                    lstream.sdf.max_uploads = rcfg.sdf_uploads_per_frame;
                     ext_sh = lstream.sh_tex;
                     ext_mrect = lstream.mrect;
                     ext_atlas = &lstream.atlas;
@@ -1055,6 +1080,21 @@ int main(int argc, char **argv) {
     uint32_t dbg_stream_frames = 0;
     uint32_t dbg_snap_chunks = 0;
     uint8_t rx_buf[1500];
+
+    /* FR_GLDEBUG=1: route KHR_debug messages to stderr (driver-side error
+     * text beats a bare glGetError code when hunting a dead frame). */
+    if (getenv("FR_GLDEBUG")) {
+        typedef void (*DBGPROC)(unsigned, unsigned, unsigned, unsigned, int,
+                                const char *, const void *);
+        typedef void (*MSGCB)(DBGPROC, const void *);
+        MSGCB cb = (MSGCB)SDL_GL_GetProcAddress("glDebugMessageCallback");
+        if (cb != NULL) {
+            glEnable(0x92E0 /* GL_DEBUG_OUTPUT */);
+            glEnable(0x8242 /* GL_DEBUG_OUTPUT_SYNCHRONOUS */);
+            cb(client_gl_debug_cb, NULL);
+            fprintf(stderr, "[client] KHR_debug enabled\n");
+        }
+    }
 
     printf("[client] entering main loop\n");
 
@@ -1421,6 +1461,7 @@ int main(int argc, char **argv) {
             /* rpg-8302: render the static level via client_scene (real forward+ /
              * GI). Networked bodies draw on top with the inline pass below. */
             if (cs_active) {
+                CL_ZONE(z_world, "Game.Client.RenderingWorld");
                 vec3_t ld = { cosf(cam_pitch) * (-sinf(cam_yaw)), sinf(cam_pitch),
                               cosf(cam_pitch) * (-cosf(cam_yaw)) };
                 float eye[3] = { cam_pos.x, cam_pos.y, cam_pos.z };
@@ -1434,6 +1475,10 @@ int main(int argc, char **argv) {
                  * at the resident SH-array layer of its chunk (-1 until resident). */
                 if (lstream_active) {
                     client_light_stream_tick(&lstream, eye);
+                    /* Streamed probe seed: rebuild the camera-centred static
+                     * irradiance window from resident chunks when needed. */
+                    if (cs_active)
+                        client_scene_svol_stream_tick(&cs, &lstream, eye);
                     for (int i = 0; i < cs.static_count; ++i)
                         cs.scene.items[i].sh_layer =
                             client_light_stream_mesh_layer(&lstream, (uint32_t)i);
@@ -1460,8 +1505,13 @@ int main(int argc, char **argv) {
                 /* Rasterise the level's DYNAMIC objects (tagged in the descriptor)
                  * into the GI's sparse dynamic albedo volume, so their real colour
                  * bleeds into the indirect instead of a neutral grey (rpg-3c6g). */
-                client_scene_voxelize_dynamic(&cs);
-                client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);
+                { CL_ZONE(z_vox, "Game.Client.VoxelizingDynamic");
+                  client_scene_voxelize_dynamic(&cs);
+                  CL_ZONE_END(z_vox); }
+                { CL_ZONE(z_csr, "Game.Client.SceneRender");
+                  client_scene_render(&cs, &rc, NULL, 0, CLIENT_WIN_W, CLIENT_WIN_H);
+                  CL_ZONE_END(z_csr); }
+                CL_ZONE_END(z_world);
             }
 
             if (shader_program_bind(&gl.program) == SHADER_PROGRAM_OK) {
@@ -1720,7 +1770,9 @@ int main(int argc, char **argv) {
                       snap_last = snap_now; ++snap_n;
                   }
               } }
-            SDL_GL_SwapWindow(gl.window);
+            { CL_ZONE(z_swap, "Game.Client.Swapping");
+              SDL_GL_SwapWindow(gl.window);
+              CL_ZONE_END(z_swap); }
             uint64_t t_render_end = now_ns();
 
             /* Accumulate per-stage times for diag (in µs). */
@@ -1768,8 +1820,12 @@ done:
         if (cs_active) client_scene_destroy(&cs);
         /* Stop decode fibers BEFORE freeing the streamer's slots (a fiber holds a
          * slot pointer while loading), then delete its GL SH pages, then the GL. */
-        if (lm_jobs_active) job_system_shutdown(&lm_jobs);
+        /* Destroy the streamer BEFORE its job system: in-flight decode /
+         * svol-rebuild jobs are drained by the destroy; shutting the jobs
+         * down first left the destroy waiting forever on a counter no worker
+         * would ever decrement (the zombie-client hang). */
         if (lstream_active) client_light_stream_destroy(&lstream);
+        if (lm_jobs_active) job_system_shutdown(&lm_jobs);
         gl_shutdown(&gl);
     }
 

@@ -30,6 +30,13 @@ typedef struct lm_chunk_slot {
     float                 *coeff[9];   /**< decoded RAM (NULL until loaded / after upload). */
     int                    layer;      /**< assigned SH-array layer, -1 = none. */
     char                   path[512];  /**< <base_dir>/<chunk>.flm. */
+    /* Streamed probe-seed splat points (xyz + irradiance rgb, 6 floats each),
+     * extracted on the load fiber; consumed by the svol window on the render
+     * thread; freed on RAM evict. svol_np is written BEFORE svol_pts (the
+     * reader gates on the pointer) so the benign cross-thread handoff never
+     * sees a count without its data. */
+    float                 *svol_pts;
+    uint32_t               svol_np;
 } lm_chunk_slot_t;
 
 /* Per-chunk slot_user for a streamed SDF chunk (sdf_stream, streamed mode). */
@@ -50,5 +57,60 @@ void   client_sdf_evict(void *user, uint64_t id, fr_asset_class_t cls, void *slo
 size_t client_ls_load(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user);
 size_t client_ls_upload(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user);
 void   client_ls_evict(void *user, uint64_t id, fr_asset_class_t cls, void *slot_user, int drop);
+
+/* Streamed static-irradiance probe seed (light_stream_svol.c): a camera-
+ * centred window volume rebuilt from the resident chunks' splat points, so the
+ * probes' static term follows the stream instead of a whole-level bake. */
+struct scene_desc;
+struct gi_static_volume;
+struct job_system;
+
+#include "ferrum/job/counter.h"
+
+/* Snapshot of one chunk's point list, taken on the render thread when a
+ * rebuild job is kicked. The pointers stay valid for the job's lifetime
+ * because ALL frees happen on the render thread and only while no job is in
+ * flight (evicted lists park in the graveyard until then). */
+typedef struct ls_svol_snap {
+    const float *pts;
+    uint32_t     np;
+} ls_svol_snap_t;
+
+typedef struct ls_svol {
+    const struct scene_desc *desc;   /* borrowed; outlives the streamer. */
+    struct job_system *jobs;         /* borrowed; NULL => rebuild inline. */
+    char   base_dir[512];
+    int    dims[3];
+    float  vox;
+    float  org[3];                   /* current window min corner. */
+    float  center[3];
+    int    have_center;
+    int    dirty;
+    int    cooldown;                 /* ticks until the next rebuild may run. */
+    float *sum;                      /* cells*3 accumulation scratch (job-owned while running). */
+    uint32_t *cnt;                   /* cells occupancy (job-owned while running). */
+    float *rgb;                      /* cells*3 upload scratch (job-owned while running). */
+    /* Async rebuild state (all transitions on the render thread except the
+     * worker's counter decrement). */
+    job_counter_t   jc;              /* 1 while a rebuild job runs. */
+    int             jc_ready;        /* counter initialised. */
+    int             job_running;
+    int             job_uploaded;    /* job result awaiting upload. */
+    float           job_org[3];      /* window origin the job splats against. */
+    ls_svol_snap_t *snap;            /* [n_chunks] point-list snapshot. */
+    uint32_t        n_snap;
+    /* Graveyard: point lists evicted while a job might still read them; freed
+     * on the render thread once no job is in flight. */
+    float         **grave;
+    uint32_t        n_grave, cap_grave;
+} ls_svol_t;
+
+bool client_ls_svol_init(client_light_stream_t *ls,
+                         const struct scene_desc *desc, const char *base_dir,
+                         struct job_system *jobs);
+void client_ls_svol_destroy(client_light_stream_t *ls);
+void client_ls_svol_extract(client_light_stream_t *ls, lm_chunk_slot_t *s);
+int  client_ls_svol_tick(client_light_stream_t *ls, const float cam_pos[3],
+                         struct gi_static_volume *vol);
 
 #endif /* FERRUM_RENDERER_WORLD_LIGHT_STREAM_INTERNAL_H */

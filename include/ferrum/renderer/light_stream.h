@@ -43,6 +43,8 @@ struct job_system; /* ferrum/job/job_system.h */
 #define CLIENT_LM_MAX_RESIDENT 8u
 
 /** Config for client_light_stream_init. Paths are resolved under base_dir. */
+struct scene_desc;
+
 typedef struct client_light_stream_config {
     const gl_loader_t  *loader;      /**< GL entry points (borrowed). */
     struct job_system  *jobs;        /**< async decode executor (NULL => inline). */
@@ -55,6 +57,11 @@ typedef struct client_light_stream_config {
     int                 sdf_resident_slots; /**< fine-SDF GPU pool slots (0 -> 8; <= 16). */
     int                 sdf_fp16;     /**< 1 = RGBA16F SDF chunk textures (half VRAM). */
     int                 lm_fp16;      /**< 1 = RGB16F lightmap SH pages (half VRAM). */
+    /** Optional (BORROWED, must outlive the streamer): the level descriptor.
+     *  When set, chunk page-ins also extract probe-seed splat points and a
+     *  camera-centred static-irradiance window follows the stream (see
+     *  client_scene_svol_stream_tick). NULL = no streamed probe seed. */
+    const struct scene_desc *svol_desc;
 } client_light_stream_config_t;
 
 /** A lightmap SH chunk streamer. Fields are read-only from outside. */
@@ -81,6 +88,7 @@ typedef struct client_light_stream {
     uint8_t            *sdf_visible;   /**< [sdf.n_chunks] on-screen flag (dual prepass); pins interest. */
     char                sdf_prefix[512];/**< resolved SDF prefix for on-demand chunk load. */
     const gl_loader_t  *loader;
+    void               *svol;          /**< streamed probe-seed window (private; may be NULL). */
 } client_light_stream_t;
 
 /**

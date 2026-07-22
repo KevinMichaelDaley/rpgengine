@@ -121,6 +121,10 @@ typedef struct render_forward {
     shadow_csm_t            csm;
     shadow_caustics_t       caustics;      /**< rpg-kbqd; zeroed when disabled. */
     bool                    caustics_baked;/**< static bake done for this scene. */
+    uint32_t                caustic_settle;/**< frames of stable SDF residency
+                                            *   before a pending re-bake commits
+                                            *   (debounces streaming churn). */
+    uint32_t                caustic_next;  /**< next cascade to bake (one/frame). */
     shader_program_t        pbr;
     shader_uniform_cache_t  cache;
     render_forward_config_t cfg;
@@ -146,10 +150,12 @@ typedef struct render_forward {
      * (PBR_NOPREPASS) to A/B its early-Z benefit. */
     void (*glBlendFunc)(uint32_t sfactor, uint32_t dfactor);
     void (*glDisable)(uint32_t cap);
-    /* Render-target restore: the shadow pre-passes bind their own FBOs, so the
-     * framebuffer bound when render_forward_render is ENTERED (window 0 or a
-     * caller's offscreen FBO -- editor viewport, headless tests) is captured
-     * here and re-bound before the main graph runs. NULL = assume window 0. */
+    /* Explicit render target for the main graph (the shadow pre-passes bind
+     * their own FBOs, so render_forward_render re-binds this before the
+     * forward passes run). 0 (default) = the window; set to an offscreen FBO
+     * for the editor viewport / headless tests. Plain field -- assign after
+     * init, before render. */
+    uint32_t target_fbo;
     void (*glGetIntegerv)(uint32_t pname, int32_t *params);
     void (*glBindFramebuffer)(uint32_t target, uint32_t framebuffer);
     int   overdraw;         /**< 1 = additive overdraw heatmap (debug mode 11). */

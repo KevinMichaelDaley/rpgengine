@@ -579,7 +579,15 @@ static const char *CS_SRC =
     "void main(){ uint gid=gl_GlobalInvocationID.x; if(gid>=uint(u_nprobes)) return;\n"
     "  if(ppos[gid].w < 0.5) return;\n"
     "  if(u_field_on==0){ if(u_mis!=0) update_mis(gid); else update_baseline(gid); return; }\n"
-    "  if(u_pass==0) pass_classify(gid); else pass_gather(gid); }\n";
+    /* pass_classify is STAGGERED like the gather: per-probe depth rays + the\n"
+     * source injection are the dominant per-tick GPU cost, and running them\n"
+     * for EVERY active probe every tick made the tick cost independent of\n"
+     * n_groups (57k-probe sprawl: ~300 ms/tick). Non-group probes keep their\n"
+     * last classify results (persistent SSBOs); the source list rotates its\n"
+     * injecting group per tick, which the stochastic MIS gather + temporal\n"
+     * EMA average out. ngroups<=1 (the hall) is unchanged. */
+    "  if(u_pass==0){ if(!in_group(gid)) return; pass_classify(gid); }\n"
+    "  else pass_gather(gid); }\n";
 
 static GLuint cs_build(void)
 {

@@ -1,0 +1,5765 @@
+{
+ "name": "la_sprawl",
+ "materials": [
+  {
+   "name": "la_stucco",
+   "tint": [
+    0.7400000095367432,
+    0.699999988079071,
+    0.6200000047683716
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.8999999761581421,
+   "roughness_max": 0.8999999761581421,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_trim",
+   "tint": [
+    0.8500000238418579,
+    0.8299999833106995,
+    0.7799999713897705
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.550000011920929,
+   "roughness_max": 0.550000011920929,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_glass",
+   "tint": [
+    0.2800000011920929,
+    0.3799999952316284,
+    0.4000000059604645
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.07999999821186066,
+   "roughness_max": 0.07999999821186066,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ],
+   "opacity": 0.35
+  },
+  {
+   "name": "la_concrete",
+   "tint": [
+    0.5400000214576721,
+    0.5400000214576721,
+    0.5199999809265137
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.8500000238418579,
+   "roughness_max": 0.8500000238418579,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_metal",
+   "tint": [
+    0.6200000047683716,
+    0.6399999856948853,
+    0.6600000262260437
+   ],
+   "metalness": 1.0,
+   "roughness_min": 0.44999998807907104,
+   "roughness_max": 0.44999998807907104,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_gypsum",
+   "tint": [
+    0.8199999928474426,
+    0.800000011920929,
+    0.7699999809265137
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.949999988079071,
+   "roughness_max": 0.949999988079071,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_plywood",
+   "tint": [
+    0.550000011920929,
+    0.41999998688697815,
+    0.2800000011920929
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.800000011920929,
+   "roughness_max": 0.800000011920929,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_resin",
+   "tint": [
+    0.800000011920929,
+    0.7400000095367432,
+    0.6200000047683716
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.30000001192092896,
+   "roughness_max": 0.30000001192092896,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_sign_a",
+   "tint": [
+    0.7200000286102295,
+    0.14000000059604645,
+    0.10000000149011612
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.25,
+   "roughness_max": 0.25,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_sign_b",
+   "tint": [
+    0.10000000149011612,
+    0.3799999952316284,
+    0.5199999809265137
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.25,
+   "roughness_max": 0.25,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_sign_c",
+   "tint": [
+    0.8600000143051147,
+    0.6800000071525574,
+    0.18000000715255737
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.25,
+   "roughness_max": 0.25,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_shutter",
+   "tint": [
+    0.5799999833106995,
+    0.6000000238418579,
+    0.6200000047683716
+   ],
+   "metalness": 1.0,
+   "roughness_min": 0.550000011920929,
+   "roughness_max": 0.550000011920929,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_asphalt",
+   "tint": [
+    0.05999999865889549,
+    0.05999999865889549,
+    0.06499999761581421
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.949999988079071,
+   "roughness_max": 0.949999988079071,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_paint_white",
+   "tint": [
+    0.8199999928474426,
+    0.8199999928474426,
+    0.7799999713897705
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.6000000238418579,
+   "roughness_max": 0.6000000238418579,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_paint_yellow",
+   "tint": [
+    0.7799999713897705,
+    0.5799999833106995,
+    0.10000000149011612
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.6000000238418579,
+   "roughness_max": 0.6000000238418579,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_patch",
+   "tint": [
+    0.03500000014901161,
+    0.03500000014901161,
+    0.03999999910593033
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.8999999761581421,
+   "roughness_max": 0.8999999761581421,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_sand",
+   "tint": [
+    0.7599999904632568,
+    0.6600000262260437,
+    0.47999998927116394
+   ],
+   "metalness": 0.0,
+   "roughness_min": 1.0,
+   "roughness_max": 1.0,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_scorch",
+   "tint": [
+    0.029999999329447746,
+    0.029999999329447746,
+    0.029999999329447746
+   ],
+   "metalness": 0.0,
+   "roughness_min": 0.949999988079071,
+   "roughness_max": 0.949999988079071,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "la_soil",
+   "tint": [
+    0.30000001192092896,
+    0.23000000417232513,
+    0.1599999964237213
+   ],
+   "metalness": 0.0,
+   "roughness_min": 1.0,
+   "roughness_max": 1.0,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  }
+ ],
+ "objects": [
+  {
+   "name": "LA_Dingbat_Body",
+   "mesh": "meshes/LA_Dingbat_Body.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4394,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Body.001",
+   "mesh": "meshes/LA_Dingbat_Body.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 7006,
+   "faces": 3420
+  },
+  {
+   "name": "LA_Dingbat_Body.002",
+   "mesh": "meshes/LA_Dingbat_Body.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4402,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Body.003",
+   "mesh": "meshes/LA_Dingbat_Body.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 7014,
+   "faces": 3420
+  },
+  {
+   "name": "LA_Dingbat_Body.004",
+   "mesh": "meshes/LA_Dingbat_Body.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4386,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Body.005",
+   "mesh": "meshes/LA_Dingbat_Body.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 7014,
+   "faces": 3420
+  },
+  {
+   "name": "LA_Dingbat_Body.006",
+   "mesh": "meshes/LA_Dingbat_Body.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4388,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Body.007",
+   "mesh": "meshes/LA_Dingbat_Body.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4402,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Body.008",
+   "mesh": "meshes/LA_Dingbat_Body.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4402,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Body.009",
+   "mesh": "meshes/LA_Dingbat_Body.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4404,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Body.010",
+   "mesh": "meshes/LA_Dingbat_Body.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 4394,
+   "faces": 2140
+  },
+  {
+   "name": "LA_Dingbat_Carport",
+   "mesh": "meshes/LA_Dingbat_Carport.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1282,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.001",
+   "mesh": "meshes/LA_Dingbat_Carport.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1274,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.002",
+   "mesh": "meshes/LA_Dingbat_Carport.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1280,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.003",
+   "mesh": "meshes/LA_Dingbat_Carport.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1270,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.004",
+   "mesh": "meshes/LA_Dingbat_Carport.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1282,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.005",
+   "mesh": "meshes/LA_Dingbat_Carport.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1270,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.006",
+   "mesh": "meshes/LA_Dingbat_Carport.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1270,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.007",
+   "mesh": "meshes/LA_Dingbat_Carport.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1280,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.008",
+   "mesh": "meshes/LA_Dingbat_Carport.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1280,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.009",
+   "mesh": "meshes/LA_Dingbat_Carport.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1270,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Carport.010",
+   "mesh": "meshes/LA_Dingbat_Carport.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 280,
+   "vertices": 1282,
+   "faces": 612
+  },
+  {
+   "name": "LA_Dingbat_Extras",
+   "mesh": "meshes/LA_Dingbat_Extras.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 24,
+   "faces": 12
+  },
+  {
+   "name": "LA_Dingbat_Extras.001",
+   "mesh": "meshes/LA_Dingbat_Extras.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 214,
+   "vertices": 100,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Extras.002",
+   "mesh": "meshes/LA_Dingbat_Extras.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 48,
+   "faces": 24
+  },
+  {
+   "name": "LA_Dingbat_Extras.003",
+   "mesh": "meshes/LA_Dingbat_Extras.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 36,
+   "faces": 16
+  },
+  {
+   "name": "LA_Dingbat_Extras.004",
+   "mesh": "meshes/LA_Dingbat_Extras.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 214,
+   "vertices": 56,
+   "faces": 28
+  },
+  {
+   "name": "LA_Dingbat_Extras.005",
+   "mesh": "meshes/LA_Dingbat_Extras.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 84,
+   "faces": 40
+  },
+  {
+   "name": "LA_Dingbat_Extras.006",
+   "mesh": "meshes/LA_Dingbat_Extras.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 40,
+   "faces": 20
+  },
+  {
+   "name": "LA_Dingbat_Extras.007",
+   "mesh": "meshes/LA_Dingbat_Extras.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 24,
+   "faces": 12
+  },
+  {
+   "name": "LA_Dingbat_Extras.008",
+   "mesh": "meshes/LA_Dingbat_Extras.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 24,
+   "faces": 12
+  },
+  {
+   "name": "LA_Dingbat_Extras.009",
+   "mesh": "meshes/LA_Dingbat_Extras.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 40,
+   "faces": 20
+  },
+  {
+   "name": "LA_Dingbat_Extras.010",
+   "mesh": "meshes/LA_Dingbat_Extras.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 154,
+   "vertices": 48,
+   "faces": 24
+  },
+  {
+   "name": "LA_Dingbat_Partitions",
+   "mesh": "meshes/LA_Dingbat_Partitions.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 864,
+   "faces": 432
+  },
+  {
+   "name": "LA_Dingbat_Partitions.001",
+   "mesh": "meshes/LA_Dingbat_Partitions.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 1296,
+   "faces": 648
+  },
+  {
+   "name": "LA_Dingbat_Partitions.002",
+   "mesh": "meshes/LA_Dingbat_Partitions.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 864,
+   "faces": 432
+  },
+  {
+   "name": "LA_Dingbat_Partitions.003",
+   "mesh": "meshes/LA_Dingbat_Partitions.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 1560,
+   "faces": 780
+  },
+  {
+   "name": "LA_Dingbat_Partitions.004",
+   "mesh": "meshes/LA_Dingbat_Partitions.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 688,
+   "faces": 344
+  },
+  {
+   "name": "LA_Dingbat_Partitions.005",
+   "mesh": "meshes/LA_Dingbat_Partitions.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 1560,
+   "faces": 780
+  },
+  {
+   "name": "LA_Dingbat_Partitions.006",
+   "mesh": "meshes/LA_Dingbat_Partitions.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 1040,
+   "faces": 520
+  },
+  {
+   "name": "LA_Dingbat_Partitions.007",
+   "mesh": "meshes/LA_Dingbat_Partitions.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 864,
+   "faces": 432
+  },
+  {
+   "name": "LA_Dingbat_Partitions.008",
+   "mesh": "meshes/LA_Dingbat_Partitions.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 864,
+   "faces": 432
+  },
+  {
+   "name": "LA_Dingbat_Partitions.009",
+   "mesh": "meshes/LA_Dingbat_Partitions.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 1040,
+   "faces": 520
+  },
+  {
+   "name": "LA_Dingbat_Partitions.010",
+   "mesh": "meshes/LA_Dingbat_Partitions.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 238,
+   "vertices": 864,
+   "faces": 432
+  },
+  {
+   "name": "LA_Dingbat_Posts",
+   "mesh": "meshes/LA_Dingbat_Posts.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.001",
+   "mesh": "meshes/LA_Dingbat_Posts.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.002",
+   "mesh": "meshes/LA_Dingbat_Posts.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.003",
+   "mesh": "meshes/LA_Dingbat_Posts.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.004",
+   "mesh": "meshes/LA_Dingbat_Posts.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.005",
+   "mesh": "meshes/LA_Dingbat_Posts.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.006",
+   "mesh": "meshes/LA_Dingbat_Posts.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.007",
+   "mesh": "meshes/LA_Dingbat_Posts.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.008",
+   "mesh": "meshes/LA_Dingbat_Posts.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.009",
+   "mesh": "meshes/LA_Dingbat_Posts.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Posts.010",
+   "mesh": "meshes/LA_Dingbat_Posts.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 243,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Slabs",
+   "mesh": "meshes/LA_Dingbat_Slabs.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Slabs.001",
+   "mesh": "meshes/LA_Dingbat_Slabs.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Slabs.002",
+   "mesh": "meshes/LA_Dingbat_Slabs.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Slabs.003",
+   "mesh": "meshes/LA_Dingbat_Slabs.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Slabs.004",
+   "mesh": "meshes/LA_Dingbat_Slabs.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Slabs.005",
+   "mesh": "meshes/LA_Dingbat_Slabs.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Slabs.006",
+   "mesh": "meshes/LA_Dingbat_Slabs.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Slabs.007",
+   "mesh": "meshes/LA_Dingbat_Slabs.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Slabs.008",
+   "mesh": "meshes/LA_Dingbat_Slabs.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Slabs.009",
+   "mesh": "meshes/LA_Dingbat_Slabs.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Slabs.010",
+   "mesh": "meshes/LA_Dingbat_Slabs.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 274,
+   "vertices": 72,
+   "faces": 36
+  },
+  {
+   "name": "LA_Dingbat_Stair",
+   "mesh": "meshes/LA_Dingbat_Stair.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Stair.001",
+   "mesh": "meshes/LA_Dingbat_Stair.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 110,
+   "vertices": 1010,
+   "faces": 456
+  },
+  {
+   "name": "LA_Dingbat_Stair.002",
+   "mesh": "meshes/LA_Dingbat_Stair.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Stair.003",
+   "mesh": "meshes/LA_Dingbat_Stair.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 110,
+   "vertices": 1010,
+   "faces": 456
+  },
+  {
+   "name": "LA_Dingbat_Stair.004",
+   "mesh": "meshes/LA_Dingbat_Stair.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Stair.005",
+   "mesh": "meshes/LA_Dingbat_Stair.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 110,
+   "vertices": 1010,
+   "faces": 456
+  },
+  {
+   "name": "LA_Dingbat_Stair.006",
+   "mesh": "meshes/LA_Dingbat_Stair.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Stair.007",
+   "mesh": "meshes/LA_Dingbat_Stair.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Stair.008",
+   "mesh": "meshes/LA_Dingbat_Stair.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Stair.009",
+   "mesh": "meshes/LA_Dingbat_Stair.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Stair.010",
+   "mesh": "meshes/LA_Dingbat_Stair.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 83,
+   "vertices": 576,
+   "faces": 264
+  },
+  {
+   "name": "LA_Dingbat_Walkway",
+   "mesh": "meshes/LA_Dingbat_Walkway.fvma",
+   "position": [
+    20.489961624145508,
+    0.0,
+    -68.18001556396484
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Walkway.001",
+   "mesh": "meshes/LA_Dingbat_Walkway.001.fvma",
+   "position": [
+    40.451011657714844,
+    0.0,
+    -69.42758178710938
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Walkway.002",
+   "mesh": "meshes/LA_Dingbat_Walkway.002.fvma",
+   "position": [
+    60.41206359863281,
+    0.0,
+    -70.6751480102539
+   ],
+   "rotation": [
+    0.0,
+    0.031204339116811752,
+    -0.0,
+    0.9995130300521851
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Walkway.003",
+   "mesh": "meshes/LA_Dingbat_Walkway.003.fvma",
+   "position": [
+    122.44558715820312,
+    0.0,
+    -68.54158020019531
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Walkway.004",
+   "mesh": "meshes/LA_Dingbat_Walkway.004.fvma",
+   "position": [
+    142.2911376953125,
+    0.0,
+    -66.06088256835938
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Walkway.005",
+   "mesh": "meshes/LA_Dingbat_Walkway.005.fvma",
+   "position": [
+    175.03631591796875,
+    0.0,
+    -70.02999877929688
+   ],
+   "rotation": [
+    0.0,
+    -0.06213744357228279,
+    -0.0,
+    0.9980676174163818
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 120,
+   "faces": 60
+  },
+  {
+   "name": "LA_Dingbat_Walkway.006",
+   "mesh": "meshes/LA_Dingbat_Walkway.006.fvma",
+   "position": [
+    186.30780029296875,
+    0.0,
+    -49.089595794677734
+   ],
+   "rotation": [
+    0.0,
+    -0.44721361994743347,
+    -0.0,
+    0.8944271802902222
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Walkway.007",
+   "mesh": "meshes/LA_Dingbat_Walkway.007.fvma",
+   "position": [
+    32.029945373535156,
+    0.0,
+    -43.852481842041016
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Walkway.008",
+   "mesh": "meshes/LA_Dingbat_Walkway.008.fvma",
+   "position": [
+    51.990997314453125,
+    0.0,
+    -45.10004806518555
+   ],
+   "rotation": [
+    -0.0,
+    -0.9995130300521851,
+    0.0,
+    0.031204326078295708
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Walkway.009",
+   "mesh": "meshes/LA_Dingbat_Walkway.009.fvma",
+   "position": [
+    129.26748657226562,
+    0.0,
+    -42.494285583496094
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_Dingbat_Walkway.010",
+   "mesh": "meshes/LA_Dingbat_Walkway.010.fvma",
+   "position": [
+    149.11305236816406,
+    0.0,
+    -40.01359176635742
+   ],
+   "rotation": [
+    0.0,
+    0.9980676174163818,
+    -0.0,
+    0.06213744357228279
+   ],
+   "scale": [
+    0.9999999403953552,
+    1.0,
+    0.9999999403953552
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 326,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_MiniMall_Anchor",
+   "mesh": "meshes/LA_MiniMall_Anchor.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 310,
+   "vertices": 3726,
+   "faces": 1818
+  },
+  {
+   "name": "LA_MiniMall_Anchor.001",
+   "mesh": "meshes/LA_MiniMall_Anchor.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 310,
+   "vertices": 3698,
+   "faces": 1818
+  },
+  {
+   "name": "LA_MiniMall_Anchor.002",
+   "mesh": "meshes/LA_MiniMall_Anchor.002.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 310,
+   "vertices": 3726,
+   "faces": 1818
+  },
+  {
+   "name": "LA_MiniMall_Body",
+   "mesh": "meshes/LA_MiniMall_Body.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 440,
+   "vertices": 5545,
+   "faces": 2652
+  },
+  {
+   "name": "LA_MiniMall_Body.001",
+   "mesh": "meshes/LA_MiniMall_Body.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 35072,
+   "faces": 17338
+  },
+  {
+   "name": "LA_MiniMall_Body.002",
+   "mesh": "meshes/LA_MiniMall_Body.002.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 72500,
+   "faces": 35830
+  },
+  {
+   "name": "LA_MiniMall_Body.003",
+   "mesh": "meshes/LA_MiniMall_Body.003.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 790,
+   "vertices": 11234,
+   "faces": 5536
+  },
+  {
+   "name": "LA_MiniMall_Canopy",
+   "mesh": "meshes/LA_MiniMall_Canopy.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 440,
+   "vertices": 88,
+   "faces": 42
+  },
+  {
+   "name": "LA_MiniMall_Canopy.001",
+   "mesh": "meshes/LA_MiniMall_Canopy.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 990,
+   "vertices": 480,
+   "faces": 240
+  },
+  {
+   "name": "LA_MiniMall_Canopy.002",
+   "mesh": "meshes/LA_MiniMall_Canopy.002.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 880,
+   "vertices": 880,
+   "faces": 440
+  },
+  {
+   "name": "LA_MiniMall_Canopy.003",
+   "mesh": "meshes/LA_MiniMall_Canopy.003.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 330,
+   "vertices": 192,
+   "faces": 96
+  },
+  {
+   "name": "LA_MiniMall_Hatch",
+   "mesh": "meshes/LA_MiniMall_Hatch.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 18,
+   "vertices": 48,
+   "faces": 24
+  },
+  {
+   "name": "LA_MiniMall_Hatch.001",
+   "mesh": "meshes/LA_MiniMall_Hatch.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 18,
+   "vertices": 48,
+   "faces": 24
+  },
+  {
+   "name": "LA_MiniMall_Hatch.002",
+   "mesh": "meshes/LA_MiniMall_Hatch.002.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 18,
+   "vertices": 48,
+   "faces": 24
+  },
+  {
+   "name": "LA_MiniMall_Hatch.003",
+   "mesh": "meshes/LA_MiniMall_Hatch.003.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 18,
+   "vertices": 48,
+   "faces": 24
+  },
+  {
+   "name": "LA_MiniMall_Interior",
+   "mesh": "meshes/LA_MiniMall_Interior.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 216,
+   "vertices": 200,
+   "faces": 100
+  },
+  {
+   "name": "LA_MiniMall_Interior.001",
+   "mesh": "meshes/LA_MiniMall_Interior.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 928,
+   "faces": 464
+  },
+  {
+   "name": "LA_MiniMall_Interior.002",
+   "mesh": "meshes/LA_MiniMall_Interior.002.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 2320,
+   "faces": 1160
+  },
+  {
+   "name": "LA_MiniMall_Interior.003",
+   "mesh": "meshes/LA_MiniMall_Interior.003.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 564,
+   "vertices": 360,
+   "faces": 180
+  },
+  {
+   "name": "LA_MiniMall_Lot",
+   "mesh": "meshes/LA_MiniMall_Lot.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 649,
+   "vertices": 220,
+   "faces": 110
+  },
+  {
+   "name": "LA_MiniMall_Lot.001",
+   "mesh": "meshes/LA_MiniMall_Lot.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 1836,
+   "faces": 918
+  },
+  {
+   "name": "LA_MiniMall_Lot.002",
+   "mesh": "meshes/LA_MiniMall_Lot.002.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 1344,
+   "faces": 672
+  },
+  {
+   "name": "LA_MiniMall_Lot.003",
+   "mesh": "meshes/LA_MiniMall_Lot.003.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 849,
+   "vertices": 720,
+   "faces": 360
+  },
+  {
+   "name": "LA_MiniMall_Signs",
+   "mesh": "meshes/LA_MiniMall_Signs.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 416,
+   "vertices": 192,
+   "faces": 96
+  },
+  {
+   "name": "LA_MiniMall_Signs.001",
+   "mesh": "meshes/LA_MiniMall_Signs.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 990,
+   "vertices": 3048,
+   "faces": 1524
+  },
+  {
+   "name": "LA_MiniMall_Signs.002",
+   "mesh": "meshes/LA_MiniMall_Signs.002.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 880,
+   "vertices": 4776,
+   "faces": 2388
+  },
+  {
+   "name": "LA_MiniMall_Signs.003",
+   "mesh": "meshes/LA_MiniMall_Signs.003.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 547,
+   "vertices": 408,
+   "faces": 204
+  },
+  {
+   "name": "LA_MiniMall_Slabs",
+   "mesh": "meshes/LA_MiniMall_Slabs.fvma",
+   "position": [
+    -152.65699768066406,
+    0.0,
+    50.250640869140625
+   ],
+   "rotation": [
+    0.0,
+    0.028536515310406685,
+    -0.0,
+    0.9995927810668945
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 434,
+   "vertices": 48,
+   "faces": 24
+  },
+  {
+   "name": "LA_MiniMall_Slabs.001",
+   "mesh": "meshes/LA_MiniMall_Slabs.001.fvma",
+   "position": [
+    -105.64043426513672,
+    0.0,
+    116.0660400390625
+   ],
+   "rotation": [
+    -0.0,
+    -0.9990862607955933,
+    0.0,
+    0.04273964464664459
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 144,
+   "faces": 72
+  },
+  {
+   "name": "LA_MiniMall_Slabs.002",
+   "mesh": "meshes/LA_MiniMall_Slabs.002.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 312,
+   "faces": 156
+  },
+  {
+   "name": "LA_MiniMall_Slabs.003",
+   "mesh": "meshes/LA_MiniMall_Slabs.003.fvma",
+   "position": [
+    169.17030334472656,
+    0.0,
+    31.057710647583008
+   ],
+   "rotation": [
+    0.0,
+    -0.08651454746723175,
+    -0.0,
+    0.996250569820404
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 784,
+   "vertices": 96,
+   "faces": 48
+  },
+  {
+   "name": "LA_MiniMall_Stair",
+   "mesh": "meshes/LA_MiniMall_Stair.fvma",
+   "position": [
+    30.74368667602539,
+    0.0,
+    99.36366271972656
+   ],
+   "rotation": [
+    -0.0,
+    -0.9994460940361023,
+    0.0,
+    0.0332779660820961
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 109,
+   "vertices": 276,
+   "faces": 130
+  },
+  {
+   "name": "LA_RoadNet_sprawl_net_Road",
+   "mesh": "meshes/LA_RoadNet_sprawl_net_Road.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 154643,
+   "faces": 53064
+  },
+  {
+   "name": "LA_RoadNet_sprawl_net_Walk",
+   "mesh": "meshes/LA_RoadNet_sprawl_net_Walk.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_stucco",
+    "la_trim",
+    "la_glass",
+    "la_concrete",
+    "la_metal",
+    "la_gypsum",
+    "la_plywood",
+    "la_resin",
+    "la_sign_a",
+    "la_sign_b",
+    "la_sign_c",
+    "la_shutter",
+    "la_asphalt",
+    "la_paint_white",
+    "la_paint_yellow",
+    "la_patch",
+    "la_sand",
+    "la_scorch",
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 46076,
+   "faces": 16176
+  },
+  {
+   "name": "terrain",
+   "mesh": "meshes/terrain.fvma",
+   "position": [
+    0.0,
+    -0.11999998986721039,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "la_soil"
+   ],
+   "lightmap_res": 1024,
+   "vertices": 45600,
+   "faces": 15200
+  }
+ ],
+ "lights": [
+  {
+   "kind": "directional",
+   "name": "sun",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "direction": [
+    0.24511578679084778,
+    -0.6468273997306824,
+    -0.7221720814704895
+   ],
+   "color": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "intensity": 3.0,
+   "flags": [
+    "baked",
+    "dynamic_indirect",
+    "shadow"
+   ]
+  }
+ ],
+ "colliders": [],
+ "lightmap": {
+  "prefix": "la_sprawl.flm",
+  "perchunk": false,
+  "manifest": ""
+ },
+ "sdf": {
+  "prefix": "la_sprawl.flm"
+ },
+ "probes": {
+  "spacing": 1.0,
+  "vspacing": 0.75
+ }
+}

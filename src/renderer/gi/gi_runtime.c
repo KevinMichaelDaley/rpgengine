@@ -249,7 +249,8 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
                       const gi_collider_t *boxes, uint32_t n_boxes,
                       int main_w, int main_h)
 {
-    if (gi == NULL || !gi->ready || scene == NULL) return;
+    GI_ZONE(z_gif, "Game.GI.Frame");
+    if (gi == NULL || !gi->ready || scene == NULL) { GI_ZONE_END(z_gif); return; }
 
     /* Re-bin probes into the forward+ froxels. Camera-dependent, so this runs
      * independently of the (slower) probe-SH update below; probes are not static,
@@ -264,7 +265,12 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
      * 1024 probes ~= 12.6M iterations) -- the dominant per-frame cost at high probe
      * counts. The froxel TBOs stay validly allocated (bound but never sampled), so
      * leaving them un-updated is safe. Only the nearest-froxel fallback needs them. */
-    if (!gi->probe_grid_on && gi->frame_counter % gi->bin_interval == 0) {
+    if (!gi->probe_grid_on && !gi->bricks.on &&
+        gi->frame_counter % gi->bin_interval == 0) {
+        /* Also skipped under BRICK sampling (adaptive probe bakes): the shader
+         * resolves probes through u_brick_index in O(1) and never touches the
+         * froxel lists, so the O(clusters x probes) CPU bin is dead work there
+         * exactly as it is for the regular grid. */
         GI_ZONE(z_bin, "Game.GI.FroxelBin");
         render_camera_t cam;
         memset(&cam, 0, sizeof cam);
@@ -298,19 +304,27 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
      * smoother. */
     uint32_t frame = (uint32_t)gi->frame_counter++;
     if (frame % (uint32_t)gi->update_interval != 0)
-        return;
+        { GI_ZONE_END(z_gif); return; }
     uint32_t tick = frame / (uint32_t)gi->update_interval;
     int K = gi->n_groups > 1 ? gi->n_groups : 1;
     {
         /* Page the on-screen SDF chunks. Use the external (shared dual-prepass)
          * visible mask if the client provides one; else run the internal world
          * prepass (per-fragment world-pos classification). */
+        /* Camera position from the view matrix (column-major): cam = -R^T t,
+         * so residency can converge on the nearest chunks instead of LRU-
+         * rotating through an over-pool visible set. */
+        float cam[3] = {
+            -(view[0]*view[12] + view[1]*view[13] + view[2]*view[14]),
+            -(view[4]*view[12] + view[5]*view[13] + view[6]*view[14]),
+            -(view[8]*view[12] + view[9]*view[13] + view[10]*view[14]),
+        };
         if (gi->ext_visible != NULL) {
-            gi_sdf_stream_page(gi->sdf_ptr, gi->ext_visible);
+            gi_sdf_stream_page(gi->sdf_ptr, gi->ext_visible, cam);
         } else {
             gi_vis_prepass_run_world(&gi->pp, scene, view, proj, gi->box_min, gi->box_max,
                                      gi->n_sdf_boxes, main_w, main_h);
-            gi_sdf_stream_page(gi->sdf_ptr, gi->pp.visible);
+            gi_sdf_stream_page(gi->sdf_ptr, gi->pp.visible, cam);
         }
     }
 
@@ -346,6 +360,7 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
     gi_probe_gpu_dispatch(&gi->gpu, gi->sdf_ptr, gi->light_scratch, n, boxes, n_boxes,
                           gi->soft_k, temporal, K, group, gi->probe_grid_dim,
                           gi->probe_grid_origin, gi->probe_grid_cell);
+    GI_ZONE_END(z_gif);
 }
 
 void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
@@ -373,21 +388,26 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_probe_sg", (int32_t)u); ++u;
 
     /* Brick sampling structure (rpg-pjkb): O(1) voxel -> brick -> 8 probes.
-     * When absent the shader falls back to the froxel path. */
+     * When absent the shader falls back to the froxel path -- but the brick
+     * SAMPLERS still get their own units: an unassigned isampler3D /
+     * samplerBuffer defaults to unit 0, type-clashing with the albedo
+     * sampler2D and making EVERY draw INVALID_OPERATION ("program texture
+     * usage"). A brickless level (e.g. la_sprawl) rendered pure clear colour
+     * because of exactly this. Textures are only bound when bricks are on. */
     shader_uniform_set_int(cache, program, "u_brick_on", gi->bricks.on);
+    glActiveTexture(GL_TEXTURE0 + u);
+    glBindTexture(GL_TEXTURE_3D, gi->bricks.on ? gi->bricks.index_tex : 0);
+    shader_uniform_set_int(cache, program, "u_brick_index", (int32_t)u); ++u;
+    glActiveTexture(GL_TEXTURE0 + u);
+    glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.on ? gi->bricks.meta_tex : 0);
+    shader_uniform_set_int(cache, program, "u_brick_meta", (int32_t)u); ++u;
+    glActiveTexture(GL_TEXTURE0 + u);
+    glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.on ? gi->bricks.pidx_tex : 0);
+    shader_uniform_set_int(cache, program, "u_brick_pidx", (int32_t)u); ++u;
+    glActiveTexture(GL_TEXTURE0 + u);
+    glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.on ? gi->bricks.valid_tex : 0);
+    shader_uniform_set_int(cache, program, "u_probe_valid", (int32_t)u); ++u;
     if (gi->bricks.on) {
-        glActiveTexture(GL_TEXTURE0 + u);
-        glBindTexture(GL_TEXTURE_3D, gi->bricks.index_tex);
-        shader_uniform_set_int(cache, program, "u_brick_index", (int32_t)u); ++u;
-        glActiveTexture(GL_TEXTURE0 + u);
-        glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.meta_tex);
-        shader_uniform_set_int(cache, program, "u_brick_meta", (int32_t)u); ++u;
-        glActiveTexture(GL_TEXTURE0 + u);
-        glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.pidx_tex);
-        shader_uniform_set_int(cache, program, "u_brick_pidx", (int32_t)u); ++u;
-        glActiveTexture(GL_TEXTURE0 + u);
-        glBindTexture(GL_TEXTURE_BUFFER, gi->bricks.valid_tex);
-        shader_uniform_set_int(cache, program, "u_probe_valid", (int32_t)u); ++u;
         shader_uniform_set_vec3(cache, program, "u_brick_origin", gi->bricks.origin);
         shader_uniform_set_float(cache, program, "u_brick_voxel", gi->bricks.voxel);
         {

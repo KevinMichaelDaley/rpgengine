@@ -14,12 +14,16 @@
 extern "C" {
 #endif
 
-/** Maximum number of cached uniforms per program. The PBR program alone sets
- *  ~68 distinct uniforms (material + SH lightmap + forward+ cluster + cube/spot
- *  shadows); the directional CSM adds another ~16 (u_csm_vp/eye/far/split per
- *  cascade). At 64 the cache overflowed and later-resolved uniforms (u_model!)
- *  silently failed, collapsing all geometry -- keep comfortable headroom. */
-#define SHADER_UNIFORM_CACHE_CAPACITY 128u
+/** Maximum number of cached uniforms per program. The FULL client composition
+ *  sets ~200 distinct names on the PBR program: material + SH lightmap +
+ *  forward+ cluster + cube/spot shadows (~68), the directional CSM's
+ *  per-cascade array elements (u_csm_vp/eye/far/texel[0..7] = 32), the GI
+ *  runtime hook (~35), and the translucency mask + caustics (7). At 128 the
+ *  cache overflowed and the LAST names to resolve -- the per-material
+ *  uniforms, first touched during the first draw -- silently failed, so
+ *  u_tint stayed (0,0,0) and every surface rendered BLACK. Keep generous
+ *  headroom; overflow now also warns on stderr (see shader_uniform_resolve). */
+#define SHADER_UNIFORM_CACHE_CAPACITY 320u
 
 /** Uniform type identifiers tracked for mismatch checks. */
 #define SHADER_UNIFORM_TYPE_MAT4 1u

@@ -62,6 +62,8 @@ typedef struct client_scene {
     unsigned int         sh_tex[9];   /**< baked-lightmap SH coeff arrays (0 = none). */
     int                  sh_borrowed;  /**< 1 = sh_tex owned by the light streamer (don't delete). */
     gi_static_volume_t   static_vol;   /**< baked-irradiance volume for the probe GI. */
+    float                static_k;     /**< probe static-term gain (render_config;
+                                        *   reused by the streamed svol re-point). */
     float               *probe_pos_full;/**< full generated probe set [probe_count_full*3]. */
     uint32_t             probe_count_full;
     float               *probe_scratch; /**< [probe_count_full*3] scratch for the resident subset. */
@@ -170,6 +172,18 @@ bool client_static_volume_build(gi_static_volume_t *vol, const struct scene_desc
                                 const char *base_dir, const lm_atlas_rect_t *mrect,
                                 const lm_atlas_t *atlas, const float amin[3],
                                 const float amax[3]);
+
+/**
+ * @brief Per frame: advance the STREAMED static-irradiance probe seed (the
+ *        camera-centred window built from resident lightmap chunks' splat
+ *        points) and re-point the GI runtime when it was rebuilt. No-op when
+ *        the streamer has no svol (config had no descriptor) -- see
+ *        light_stream.h (svol_desc).
+ */
+struct client_light_stream;
+void client_scene_svol_stream_tick(client_scene_t *cs,
+                                   struct client_light_stream *ls,
+                                   const float cam_pos[3]);
 
 /** Load the baked SH lightmap atlas (9 GL_TEXTURE_2D_ARRAY pages, layer 0) from
  *  @p lm_prefix, plus the per-mesh atlas rectangles + atlas dimensions the caller

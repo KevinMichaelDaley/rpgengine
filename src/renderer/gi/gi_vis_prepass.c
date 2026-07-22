@@ -4,6 +4,15 @@
  */
 #include "ferrum/renderer/gi/gi_vis_prepass.h"
 
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#define VP_ZONE(v, name) TracyCZoneN(v, name, true)
+#define VP_ZONE_END(v) TracyCZoneEnd(v)
+#else
+#define VP_ZONE(v, name)
+#define VP_ZONE_END(v)
+#endif
+
 #include <glad/glad.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -220,7 +229,8 @@ void gi_vis_prepass_run_dual(gi_vis_prepass_t *pp, const render_scene_t *scene,
                              const float *box_min, const float *box_max, int n_boxes,
                              const int *mchunk, int nm, int main_w, int main_h)
 {
-    if (pp == NULL || scene == NULL || pp->prog_dual == 0) return;
+    VP_ZONE(z_vp, "Game.GI.VisPrepass");
+    if (pp == NULL || scene == NULL || pp->prog_dual == 0) { VP_ZONE_END(z_vp); return; }
     if (box_min == NULL || box_max == NULL) n_boxes = 0;
     if (n_boxes > GI_VIS_MAX_BOXES) n_boxes = GI_VIS_MAX_BOXES;
     float vp[16]; mul_vp(view, proj, vp);
@@ -242,6 +252,7 @@ void gi_vis_prepass_run_dual(gi_vis_prepass_t *pp, const render_scene_t *scene,
             static_mesh_draw_submesh(r->mesh, sm);
     }
     pp_readback_dual(pp, main_w, main_h);
+    VP_ZONE_END(z_vp);
 }
 
 void gi_vis_prepass_run_world(gi_vis_prepass_t *pp, const render_scene_t *scene,

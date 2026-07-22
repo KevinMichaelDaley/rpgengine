@@ -414,9 +414,12 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
         /* Caustics (rpg-kbqd) refine the mask's flat tint via SDF-traced
          * light-space splats. GL 4.3 compute only; failure is non-fatal. */
         if (cfg->dir_caustics && fwd->csm.mask_enabled) {
+            /* Quarter-res caustic map: the trace reads the mask through
+             * normalised uv (resolutions are decoupled) and glass shadows are
+             * soft -- 16x cheaper bakes for no visible loss. */
             shadow_caustics_config_t cc = {
                 .loader = cfg->loader,
-                .resolution = sc.static_res,
+                .resolution = sc.static_res / 4u ? sc.static_res / 4u : 256u,
                 .cascades = sc.cascades,
                 .samples = 8u,
                 .scatter = 0.0f,     /* specular glass by default. */
@@ -486,11 +489,6 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
     if (fwd == NULL || scene == NULL)
         return;
     fwd->scene = scene;
-    /* Capture the caller's render target before the shadow pre-passes swap
-     * FBOs around; restored just before the main graph runs. */
-    int32_t entry_fbo = 0;
-    if (fwd->glGetIntegerv && fwd->glBindFramebuffer)
-        fwd->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &entry_fbo);
     static double a_cube = 0, a_csm = 0, a_fwd = 0; static int a_n = 0;
     struct timespec pt;
     if (fwd->prof && fwd->glFinish) { fwd->glFinish(); clock_gettime(CLOCK_MONOTONIC, &pt); }
@@ -571,32 +569,38 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         /* Translucency mask piggybacks on the cascade matrices just computed. */
         shadow_csm_mask_bake_static(&fwd->csm, scene);
         shadow_csm_mask_render_dynamic(&fwd->csm, scene);
-        /* Caustics: SDF-trace the freshly baked static mask once per scene.
-         * The bake shares one layer index across the color/depth atlases --
-         * mask_init creates them as twins, so their bases always match. */
+        /* Caustics: SDF-trace the freshly baked static mask, ONE cascade per
+         * frame (a full-burst bake is a visible hitch). The bake shares one
+         * layer index across the color/depth atlases -- mask_init creates
+         * them as twins, so their bases always match. */
         if (!fwd->caustics_baked && fwd->csm.mask_static_valid &&
             fwd->caustics.map_tex != 0u &&
             fwd->csm.mask_color_base == fwd->csm.mask_depth_base) {
-            for (uint32_t cci = 0; cci < fwd->csm.cascades; ++cci)
-                shadow_caustics_bake(&fwd->caustics,
-                                     fwd->csm.mask_color_atlas.texture,
-                                     fwd->csm.mask_depth_atlas.texture,
-                                     (uint32_t)fwd->csm.mask_color_base + cci,
-                                     cci, fwd->csm.view_proj[cci].m,
-                                     fwd->csm.eye[cci],
-                                     fwd->csm.far_plane[cci]);
-            fwd->caustics_baked = true;
+            uint32_t cci = fwd->caustic_next;
+            shadow_caustics_bake(&fwd->caustics,
+                                 fwd->csm.mask_color_atlas.texture,
+                                 fwd->csm.mask_depth_atlas.texture,
+                                 (uint32_t)fwd->csm.mask_color_base + cci,
+                                 cci, fwd->csm.view_proj[cci].m,
+                                 fwd->csm.eye[cci],
+                                 fwd->csm.far_plane[cci]);
+            if (++fwd->caustic_next >= fwd->csm.cascades) {
+                fwd->caustic_next = 0;
+                fwd->caustics_baked = true;
+            }
         }
         fwd->csm.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                             (int32_t)fwd->cfg.screen_h);
         FR_ZONE_END(z_csm);
     }
     a_csm += fr_prof_tick(fwd, &pt);
-    /* The shadow pre-passes above bound their own FBOs and reset to 0; restore
-     * the framebuffer that was bound when this call was entered so the main
-     * graph draws into the CALLER'S target (window or an offscreen FBO). */
-    if (fwd->glGetIntegerv && fwd->glBindFramebuffer && entry_fbo != 0)
-        fwd->glBindFramebuffer(GL_FRAMEBUFFER, (uint32_t)entry_fbo);
+    /* The shadow pre-passes (and GI compute, streaming uploads, ...) leave
+     * arbitrary FBOs bound, so bind the EXPLICIT render target before the
+     * main graph: fwd->target_fbo, default 0 = the window. Never inherit
+     * whatever framebuffer happened to be bound -- a stale binding from an
+     * earlier pass would silently swallow the frame. */
+    if (fwd->glBindFramebuffer)
+        fwd->glBindFramebuffer(GL_FRAMEBUFFER, fwd->target_fbo);
     /* Early-Z only pays off with overlapping geometry; skip it for a single
      * renderable so a trivial scene still executes (depth_pre is skippable). */
     int depth_enabled = (scene->count > 1u) ? 1 : 0;

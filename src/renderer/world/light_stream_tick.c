@@ -6,6 +6,15 @@
 
 #include "light_stream_internal.h"
 
+#ifdef TRACY_ENABLE
+#include "tracy/TracyC.h"
+#define LS_ZONE(v, name) TracyCZoneN(v, name, true)
+#define LS_ZONE_END(v) TracyCZoneEnd(v)
+#else
+#define LS_ZONE(v, name)
+#define LS_ZONE_END(v)
+#endif
+
 /** Priority pin for an on-screen lightmap chunk: dominates distance priority
  * (set_interest emits -(dist^2*scale) <= 0) so visible chunks always win a layer. */
 #define CLIENT_LM_VISIBLE_PIN 1000000
@@ -32,7 +41,8 @@ void client_light_stream_set_sdf_visible(client_light_stream_t *ls, const uint8_
 
 void client_light_stream_tick(client_light_stream_t *ls, const float cam_pos[3])
 {
-    if (ls == NULL) return;
+    LS_ZONE(z_ls, "Game.Stream.Ticking");
+    if (ls == NULL) { LS_ZONE_END(z_ls); return; }
     /* Distance-priority interest for BOTH chunk classes from the camera (nearer
      * streams first / stays resident), over the ONE shared budget. */
     if (cam_pos != NULL) {
@@ -52,6 +62,7 @@ void client_light_stream_tick(client_light_stream_t *ls, const float cam_pos[3])
     /* One streaming step drives the whole unified budget: harvest decodes, admit +
      * upload the top-priority chunks (both classes) within RAM/VRAM, evict the rest. */
     fr_asset_stream_tick(&ls->stream);
+    LS_ZONE_END(z_ls);
 }
 
 int client_light_stream_mesh_layer(const client_light_stream_t *ls, uint32_t mesh_idx)

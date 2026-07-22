@@ -57,6 +57,16 @@ typedef struct gi_sdf_stream {
     int                *scan_cc;                       /**< [n_chunks] source file index (on-demand load). */
     int                 n_slots;   /**< resident GPU slots in use (1..MAX; 0 -> 8).
                                     *   Set via gi_sdf_stream_configure BEFORE load/scan. */
+    int                 max_uploads; /**< cap on chunk UPLOADS per page call; 0 =
+                                    *   uncapped. When the visible set exceeds the
+                                    *   slot pool, uncapped paging RE-UPLOADS the
+                                    *   overflow every call (77+ MB of 3D texture +
+                                    *   mipmap gen each) -- the cap turns that into
+                                    *   gradual turnover; non-resident chunks fall
+                                    *   back to the zone SDF meanwhile. Plain field:
+                                    *   assign any time (render config knob
+                                    *   sdf_uploads_per_frame). */
+    int                 uploads_this_page; /**< internal per-call budget counter. */
     int                 fp16;      /**< 1 = RGBA16F chunk textures (half the VRAM). */
     /* GLOBAL low-res ZONE SDF (page-fault fallback): always resident; sampled by
      * the probe trace wherever no fine chunk is bound, so rays NEVER see empty
@@ -120,7 +130,11 @@ int gi_sdf_stream_boxes(const gi_sdf_stream_t *s, float *out_min, float *out_max
  *        residency, evicting LRU slots, and record the resident set for this
  *        frame. Call once per frame after the prepass.
  */
-void gi_sdf_stream_page(gi_sdf_stream_t *s, const uint8_t *visible);
+/* @p cam_pos (nullable): with it, residency converges on the NEAREST n_slots
+ * visible chunks (stable set, no churn); without it, legacy visible-order
+ * touching (fine when the visible set fits the pool). */
+void gi_sdf_stream_page(gi_sdf_stream_t *s, const uint8_t *visible,
+                        const float cam_pos[3]);
 
 /**
  * @brief Host-side sample of the baked combined SDF at world @p p: the min over

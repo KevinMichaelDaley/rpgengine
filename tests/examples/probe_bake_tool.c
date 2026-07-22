@@ -24,7 +24,7 @@
 #include "ferrum/scene/scene_desc.h"
 
 static uint8_t g_desc_buf[8 * 1024 * 1024];
-static uint8_t g_place_buf[128 * 1024 * 1024];
+static uint8_t g_place_buf[512 * 1024 * 1024];
 
 int main(int argc, char **argv)
 {

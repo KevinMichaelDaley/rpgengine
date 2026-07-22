@@ -33,6 +33,29 @@ bool gi_static_volume_upload(gi_static_volume_t *v, const float *rgb,
     return v->tex != 0;
 }
 
+bool gi_static_volume_refresh(gi_static_volume_t *v, const float *rgb,
+                              const int dims[3], const float origin[3],
+                              float voxel)
+{
+    if (v == NULL || rgb == NULL || dims == NULL || origin == NULL)
+        return false;
+    /* Dims changed or never created: full (re)upload. */
+    if (v->tex == 0 || v->dims[0] != dims[0] || v->dims[1] != dims[1] ||
+        v->dims[2] != dims[2]) {
+        gi_static_volume_destroy(v);
+        return gi_static_volume_upload(v, rgb, dims, origin, voxel);
+    }
+    /* Same-shape window: subimage into the EXISTING texture (no re-create, no
+     * re-point needed beyond the origin uniforms). */
+    for (int i = 0; i < 3; ++i) v->origin[i] = origin[i];
+    v->voxel = voxel;
+    glBindTexture(GL_TEXTURE_3D, v->tex);
+    glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, dims[0], dims[1], dims[2],
+                    GL_RGB, GL_FLOAT, rgb);
+    glBindTexture(GL_TEXTURE_3D, 0);
+    return true;
+}
+
 void gi_static_volume_destroy(gi_static_volume_t *v)
 {
     if (v == NULL) return;

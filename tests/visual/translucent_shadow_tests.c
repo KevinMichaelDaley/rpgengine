@@ -189,6 +189,7 @@ static int render_case(const gl_loader_t *loader, int translucency,
                               GL_RENDERBUFFER, dep);
     ASSERT_TRUE(glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
                 GL_FRAMEBUFFER_COMPLETE);
+    fwd.target_fbo = fbo;   /* explicit offscreen target for the main graph. */
 
     glViewport(0, 0, WIN, WIN);
     while (glGetError() != GL_NO_ERROR) { }   /* drain stale errors. */

@@ -1,0 +1,21 @@
+{
+  "sh_enabled": 0,
+  "dir_cascades": 4,
+  "dir_static_res": 2048,
+  "dir_bias": 0.03,
+  "_mode": "la_sprawl: seed-res lightmap -> streamed probe seed; adaptive brick probes.",
+  "_probes": "offline probe_bake: 64m coarse bricks, 2 levels (~7m probe spacing near geometry; per-chunk probe streaming will let this densify later).",
+  "gi_brick_levels": 2,
+  "gi_brick_coarse": 64.0,
+  "gi_grid_cell": 2.0,
+  "gi_update_interval": 3,
+  "gi_n_probe_groups": 24,
+  "gi_smooth": 0.25,
+  "gi_bounce": 0.45,
+  "gi_ray_clamp": 6.0,
+  "sdf_resident_slots": 16,
+  "sdf_fp16": 1,
+  "lm_fp16": 1,
+  "_cadence": "57.9k probes / 24 groups every 3 frames ~= 800 probe-traces per frame-equivalent -- the hall's budget (1.7k/2). Full refresh ~1.2s: fine for a static sun.",
+  "sdf_uploads_per_frame": 1
+}

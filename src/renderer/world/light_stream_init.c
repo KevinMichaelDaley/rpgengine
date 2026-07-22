@@ -248,11 +248,16 @@ bool client_light_stream_init(client_light_stream_t *ls,
         }
         free(sbmin); free(sbmax);
     }
+    /* Optional streamed probe seed (svol): needs the level descriptor for
+     * mesh paths + TRS at extraction time. Failure is non-fatal. */
+    if (cfg->svol_desc != NULL)
+        (void)client_ls_svol_init(ls, cfg->svol_desc, cfg->base_dir, cfg->jobs);
     return true;
 }
 
 void client_light_stream_destroy(client_light_stream_t *ls)
 {
+    client_ls_svol_destroy(ls);
     if (ls == NULL) return;
     /* Evict residents (frees any RAM copies) before tearing down the table. */
     lm_chunk_slot_t *slots = ls->slots;

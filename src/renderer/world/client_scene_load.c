@@ -562,6 +562,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         }
         cfg.static_vol_voxel = cs->static_vol.voxel;
         cfg.static_k = rc.static_k;
+        cs->static_k = rc.static_k;
         cfg.has_sky_ao = 1;
         for (int a = 0; a < 3; ++a) cfg.sky_ao_color[a] = rc.sky_ao_color[a];
         cfg.sky_ao_ref = rc.sky_ao_ref;
@@ -630,6 +631,8 @@ void client_scene_stream_probes(client_scene_t *cs, const float *box_min,
     /* The full lattice is uploaded once (at load); only the mask changes here, and
      * only when residency actually moved (avoids a per-frame buffer round-trip). */
     if (live != cs->probe_resident) {
+        fprintf(stderr, "[client] probes resident: %u/%u (from %u sdf boxes)\n",
+                live, cs->probe_count_full, n_boxes);
         gi_runtime_set_probe_active(&cs->world.gi, cs->probe_active, cs->probe_count_full);
         cs->probe_resident = live;
     }

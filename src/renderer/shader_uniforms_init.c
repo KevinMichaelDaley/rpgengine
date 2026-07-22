@@ -1,5 +1,7 @@
 #include "ferrum/renderer/shader_uniforms.h"
 
+#include <stdio.h>
+
 #include <string.h>
 
 static shader_uniform_status_t shader_uniform_find(shader_uniform_cache_t *cache,
@@ -59,6 +61,16 @@ static shader_uniform_status_t shader_uniform_resolve(shader_uniform_cache_t *ca
     shader_uniform_status_t status = shader_uniform_find(cache, name, type, &index);
     if (status == SHADER_UNIFORM_ERR_NOT_FOUND) {
         if (cache->count >= SHADER_UNIFORM_CACHE_CAPACITY) {
+            /* A full cache silently dropping a uniform renders as garbage
+             * (an unset u_tint is BLACK) -- warn loudly, once per name-ish. */
+            static int warned = 0;
+            if (warned < 8) {
+                ++warned;
+                fprintf(stderr, "shader_uniforms: cache FULL (%u) -- '%s' "
+                        "will never upload; raise "
+                        "SHADER_UNIFORM_CACHE_CAPACITY\n",
+                        (unsigned)SHADER_UNIFORM_CACHE_CAPACITY, name);
+            }
             return SHADER_UNIFORM_ERR_CACHE_FULL;
         }
         index = cache->count++;
