@@ -155,10 +155,23 @@ def _gather_mesh_data(obj, export_normals, export_tangents, export_uvs,
             vert_bone_indices[vi] = [g[0] for g in groups]
             vert_bone_weights[vi] = [g[1] for g in groups]
 
-    # UV layers.
-    uv0_layer = mesh.uv_layers[0] if (export_uvs and mesh.uv_layers) else None
-    uv1_layer = (mesh.uv_layers[1]
-                 if (export_uvs and len(mesh.uv_layers) > 1) else None)
+    # UV layers. uv0 = MATERIAL (the first non-lightmap layer); uv1 = LIGHTMAP.
+    # The lightmap layer is identified by NAME ("lightmap", from _gen_lightmap_uv)
+    # rather than by index -- a mesh with more than one MATERIAL UV layer would
+    # otherwise put the lightmap at index >=2 and export a material layer as uv1
+    # (garbage lightmap coords). Falls back to index 1 only if no named layer.
+    uv1_layer = None
+    uv0_layer = None
+    if export_uvs and mesh.uv_layers:
+        uv1_layer = mesh.uv_layers.get("lightmap")
+        for lyr in mesh.uv_layers:
+            if lyr is not uv1_layer:
+                uv0_layer = lyr           # first material (non-lightmap) layer.
+                break
+        if uv0_layer is None:             # only a lightmap layer exists.
+            uv0_layer = mesh.uv_layers[0]
+        if uv1_layer is None and len(mesh.uv_layers) > 1:
+            uv1_layer = mesh.uv_layers[1]
 
     # Vertex color layer.
     color_layer = None
