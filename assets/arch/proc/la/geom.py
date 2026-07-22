@@ -500,25 +500,49 @@ class _Wall:
                             self._co(fu1, zb), self._co(fu1, zb, recess), mf)
                 # pane: 1 mm-inset ISLAND. window_awning (the dingbat bath
                 # sash) hinges at the TOP and swings OUT past the wall plane.
-                # window_shutter (mini-mall roll-up) replaces the pane with
-                # horizontal slat strips at half the reveal depth.
+                # window_shutter (storefront roll-up): FINE slat curtain --
+                # the pitch targets ~0.10 m and SCALES to divide the opening
+                # evenly (n = round(h/0.10)), read as alternating-depth
+                # micro-corrugation. window_dock (loading dock): heavy
+                # sectional door -- coarse ~0.45 m panels with protruding
+                # rib strips between them (the taller greebles).
                 e2 = 0.001
-                if kind == 'window_shutter':
+                if kind in ('window_shutter', 'window_dock'):
                     keep2s = self.s.tag
-                    self.s.tag = 'shutters'
-                    sd = recess * 0.5
-                    slz = [fz0 + e2]
-                    zc2 = fz0 + e2
-                    while zc2 + 0.38 < fz1 - e2 - 0.05:
-                        zc2 += 0.38
-                        slz.append(zc2)
-                    slz.append(fz1 - e2)
-                    for si3 in range(len(slz) - 1):
-                        self._q(self._co(fu0 + e2, slz[si3], sd),
-                                self._co(fu1 - e2, slz[si3], sd),
-                                self._co(fu1 - e2, slz[si3 + 1], sd),
-                                self._co(fu0 + e2, slz[si3 + 1], sd),
-                                M_SHUTTER)
+                    self.s.tag = 'shutters' if kind == 'window_shutter' \
+                        else 'doors'
+                    hgt = (fz1 - e2) - (fz0 + e2)
+                    if kind == 'window_shutter':
+                        nseg = max(4, int(round(hgt / 0.10)))
+                        step = hgt / nseg
+                        for si3 in range(nseg):
+                            za3 = fz0 + e2 + step * si3
+                            sd = recess * (0.5 if si3 % 2 == 0 else 0.42)
+                            self._q(self._co(fu0 + e2, za3, sd),
+                                    self._co(fu1 - e2, za3, sd),
+                                    self._co(fu1 - e2, za3 + step, sd),
+                                    self._co(fu0 + e2, za3 + step, sd),
+                                    M_SHUTTER)
+                    else:
+                        rib = 0.05
+                        nseg = max(2, int(round(hgt / 0.45)))
+                        step = hgt / nseg
+                        for si3 in range(nseg):
+                            za3 = fz0 + e2 + step * si3
+                            self._q(self._co(fu0 + e2, za3, recess * 0.55),
+                                    self._co(fu1 - e2, za3, recess * 0.55),
+                                    self._co(fu1 - e2, za3 + step - rib,
+                                             recess * 0.55),
+                                    self._co(fu0 + e2, za3 + step - rib,
+                                             recess * 0.55), M_METAL)
+                            self._q(self._co(fu0 + e2, za3 + step - rib,
+                                             recess * 0.2),
+                                    self._co(fu1 - e2, za3 + step - rib,
+                                             recess * 0.2),
+                                    self._co(fu1 - e2, za3 + step,
+                                             recess * 0.2),
+                                    self._co(fu0 + e2, za3 + step,
+                                             recess * 0.2), M_METAL)
                     self.s.tag = keep2s
                 elif kind == 'window_awning':
                     swing = -0.22
@@ -531,7 +555,7 @@ class _Wall:
                           self._co(fu1 - e2, fz0 + e2, recess),
                           self._co(fu1 - e2, fz1 - e2, recess),
                           self._co(fu0 + e2, fz1 - e2, recess)]
-                if kind != 'window_shutter':
+                if kind not in ('window_shutter', 'window_dock'):
                     self._q(pc[0], pc[1], pc[2], pc[3], mp)
                 if self.th > 0.0 and z0 < self.inner_zmax:
                     # THICK: inner face ring + reveal, same 2-axis segmentation.

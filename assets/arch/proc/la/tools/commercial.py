@@ -72,7 +72,7 @@ def _tenant_bays(run_len, n, end_pier=0.30, mid_pier=0.60):
 
 def _storefront_classify(bays, doors, fates, z_top, office,
                          void_span=None, recessed=frozenset(), wt=0.15,
-                         run_w=1e9):
+                         run_w=1e9, high_bk=None):
     """Classifier factory for one storefront wall (u = along-run coord).
 
     fates[i]: 'open' | 'shut' | 'void' (checkpoint / fortified bays).
@@ -97,9 +97,14 @@ def _storefront_classify(bays, doors, fates, z_top, office,
                 continue
             if zc0 < z_top - 1e-6:
                 fate = fates[i]
+                hi_bk = bool(high_bk and high_bk[i])
                 if fate == 'void':
                     return 'void'
                 if fate == 'shut':
+                    # roll-up: full drop to grade, or stopped on a 0.9 m
+                    # masonry knee wall (the reference look).
+                    if hi_bk and zc0 < 0.9 - 1e-6:
+                        return 'wall'
                     return 'window_shutter'
                 d0, d1 = doors[i]
                 if d0 - 1e-6 <= u0 < d1 - 1e-6:
@@ -108,7 +113,7 @@ def _storefront_classify(bays, doors, fates, z_top, office,
                     if zc0 < Z_DR - 1e-6:
                         return 'doorU'
                     return 'window_transom'
-                if zc0 < Z_BLK - 1e-6:
+                if zc0 < (0.9 if hi_bk else Z_BLK) - 1e-6:
                     return 'wall'          # bulkhead under the glass
                 return 'window'
             if office and Z_FAS - 1e-6 <= zc0 < Z_OHED - 1e-6:
@@ -360,7 +365,8 @@ def build_minimall(p, rng):
     z_ceil = z_roof - 0.12            # inner faces stop HERE -- and it must
     # be a GRID row (the dingbat lesson: a non-row inner_zmax lets cells
     # overshoot to the roof plane, 3 faces per edge).
-    zl = [0.0, Z_BLK, Z_SRV, Z_DR, Z_SF, Z_FAS, z_ceil, z_roof, z_par]
+    zl = [0.0, Z_BLK, 0.9, 1.15, Z_SRV, Z_DR, Z_SF, Z_FAS, z_ceil, z_roof,
+          z_par]
     if office:
         zl += [Z_OSIL, Z_OHED]
     zl = sorted(set(zl))
@@ -410,6 +416,34 @@ def build_minimall(p, rng):
             if sel == 'recessed':
                 recessed.add(i)
 
+    # per-bay HIGH BULKHEAD (the reference roll-up-on-knee-wall look):
+    # glazing sits on 0.9 m masonry instead of 0.25 m; shutters stop there
+    # instead of dropping to grade.
+    high_bk_m = [rng.random() < p["high_bulkhead"] for _ in bays_m]
+    high_bk_w = [rng.random() < p["high_bulkhead"] for _ in bays_w]
+    # rear LOADING DOCKS: heavy sectional door at truck-sill height per
+    # tenant, seeded ~40% inset into a recessed dock well.
+    docks_on = p["loading_docks"]
+    Z_DSILL, Z_DHEAD = 1.15, 3.0
+
+    def dock_layout(b0, b1):
+        c = (b0 + b1) / 2.0
+        man = (b0 + 0.5, b0 + 1.4)
+        dw = min(2.6, (b1 - b0) * 0.47)
+        j1 = min(c + 0.3 + dw, b1 - 0.35)   # CLAMP inside the bay: the
+        # last bay's dock overflowed past the building end wall.
+        dock = (j1 - dw, j1)
+        return man, dock
+
+    dock_m, dock_w = [], []
+    if docks_on:
+        for (b0, b1, _o0, _o1) in bays_m:
+            man, dock = dock_layout(b0, b1)
+            dock_m.append((man, dock, rng.random() < 0.4))
+        for (b0, b1, _o0, _o1) in bays_w:
+            man, dock = dock_layout(b0, b1)
+            dock_w.append((man, dock, rng.random() < 0.4))
+
     def door_span(o0, o1, left):
         # FLUSH against the pier: any gap strip narrower than the frame
         # inset becomes an inverted-ring sliver window (auditor-caught).
@@ -447,6 +481,9 @@ def build_minimall(p, rng):
         # end-bay clamp: o0-wt can COINCIDE with the side wall's inner
         # plane (verts on its edges); keep 50 mm clear.
         xl |= {max(o0r - wt, wt + 0.05), min(o1r + wt, Wm - wt - 0.05)}
+    for (_mn, (j0d, j1d), ins) in dock_m:
+        if ins:
+            xl |= {j0d - wt, j1d + wt}    # inset dock inner-skin strips
     for (b0, b1, o0, o1) in bays_m:
         xl |= {b0, b1, o0, o1}
     for (d0, d1) in doors_m:
@@ -462,15 +499,23 @@ def build_minimall(p, rng):
             yl |= {b0 - Wy, b1 - Wy, o0 - Wy, o1 - Wy}
         for (d0, d1) in doors_w:
             yl |= {d0 - Wy, d1 - Wy}
-    # rear service doors: one per tenant, centred in the bay.
-    srv_m = [((b0 + b1) / 2.0 - 0.45, (b0 + b1) / 2.0 + 0.45)
-             for (b0, b1, _o0, _o1) in bays_m]
-    for pr in srv_m:
-        xl |= set(pr)
-    srv_w = [((b0 + b1) / 2.0 - Wy - 0.45, (b0 + b1) / 2.0 - Wy + 0.45)
-             for (b0, b1, _o0, _o1) in bays_w]
-    for pr in srv_w:
-        yl |= set(pr)
+    # rear service man-doors (+ dock jambs when loading docks are on).
+    if docks_on:
+        srv_m = [mn for (mn, _dk, _ins) in dock_m]
+        for (mn, dk, _ins) in dock_m:
+            xl |= set(mn) | set(dk)
+        srv_w = [(mn[0] - Wy, mn[1] - Wy) for (mn, _dk, _ins) in dock_w]
+        for (mn, dk, _ins) in dock_w:
+            yl |= {mn[0] - Wy, mn[1] - Wy, dk[0] - Wy, dk[1] - Wy}
+    else:
+        srv_m = [((b0 + b1) / 2.0 - 0.45, (b0 + b1) / 2.0 + 0.45)
+                 for (b0, b1, _o0, _o1) in bays_m]
+        for pr in srv_m:
+            xl |= set(pr)
+        srv_w = [((b0 + b1) / 2.0 - Wy - 0.45, (b0 + b1) / 2.0 - Wy + 0.45)
+                 for (b0, b1, _o0, _o1) in bays_w]
+        for pr in srv_w:
+            yl |= set(pr)
     xl = sorted(v for v in xl if 0.0 - 1e-9 <= v <= We + 1e-9)
     yl = sorted(v for v in yl if (-Wy if corner else 0.0) - 1e-9 <= v
                 <= D + 1e-9)
@@ -495,14 +540,16 @@ def build_minimall(p, rng):
     shell.tag = 'storefront'
     cls_m = _storefront_classify(bays_m, doors_m, fates_m, Z_SF, office,
                                  void_span=(a0, a1) if anchor_on else None,
-                                 recessed=recessed, wt=wt, run_w=Wm)
+                                 recessed=recessed, wt=wt, run_w=Wm,
+                                 high_bk=high_bk_m)
     _wf = _Wall(shell, (0, 0, 0), (1, 0, 0),
                 [v for v in xl if v <= Wm + 1e-9], zl, (0, -1, 0),
                 M_STUCCO, thickness=thick, inner_zmax=iz_max)
     _wf.inner_u0, _wf.inner_u1 = wt, Wm - (0.0 if corner else wt)
     _wf.fill(cls_m, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
     if corner:
-        cls_w = _storefront_classify(bays_w, doors_w, fates_w, Z_SF, office)
+        cls_w = _storefront_classify(bays_w, doors_w, fates_w, Z_SF, office,
+                                     high_bk=high_bk_w)
 
         def cls_wing(u0, zc0):        # u = y + Wy along the wing run
             return cls_w(u0, zc0)
@@ -525,12 +572,77 @@ def build_minimall(p, rng):
                     return 'doorL'
                 if zc0 < Z_SRV - 1e-6:
                     return 'doorU'
+        if docks_on:
+            for (_mn, (j0, j1), inset) in dock_m:
+                in_row = Z_DSILL - 1e-6 <= zc0 < Z_DHEAD - 1e-6
+                if j0 - 1e-6 <= u0 < j1 - 1e-6 and in_row:
+                    return 'void' if inset else 'window_dock'
+                if inset and in_row and interior_on and \
+                        j0 - wt - 1e-6 <= u0 < j1 + wt - 1e-6:
+                    return 'void_in'
         return 'wall'
 
     _wr = _Wall(shell, (0, D, 0), (1, 0, 0), xl, zl, (0, 1, 0),
                 M_STUCCO, thickness=thick, inner_zmax=iz_max)
     _wr.inner_u0, _wr.inner_u1 = wt, We - wt
     _wr.fill(rear_classify, frame=0.06, mat_frame=M_TRIM)
+    # inset dock wells: the A1/loggia recess discipline mirrored onto the
+    # rear wall (outward +y, recess depth 0.6 INTO the building).
+    if docks_on:
+        dk_rows = [v for v in zl if Z_DSILL - 1e-6 <= v <= Z_DHEAD + 1e-6]
+        for (_mn, (j0, j1), inset) in dock_m:
+            if not inset:
+                continue
+            yb = D - 0.6              # recess back plane
+            shell.tag = 'doors'
+            # cheeks split at the inner-skin line in interior mode (the
+            # clipped floor/ceiling corners land mid-edge otherwise).
+            ch_y = [yb, D - wt, D] if interior_on else [yb, D]
+            for (cx2, sgn) in ((j0, 1.0), (j1, -1.0)):
+                for ri in range(len(dk_rows) - 1):
+                    r0, r1 = dk_rows[ri], dk_rows[ri + 1]
+                    for yi in range(len(ch_y) - 1):
+                        ya7, yb7 = ch_y[yi], ch_y[yi + 1]
+                        pts = [(cx2, ya7, r0), (cx2, yb7, r0),
+                               (cx2, yb7, r1), (cx2, ya7, r1)]
+                        if sgn < 0:
+                            pts.reverse()
+                        shell.quad(*pts, M_STUCCO)
+                    if interior_on:
+                        inx = j0 - wt if sgn > 0 else j1 + wt
+                        pts = [(inx, yb - wt, r0), (inx, D - wt, r0),
+                               (inx, D - wt, r1), (inx, yb - wt, r1)]
+                        if sgn > 0:
+                            pts.reverse()
+                        shell.quad(*pts, M_STUCCO)
+            # recessed back wall carrying the dock door -- u_lines include
+            # every foreign grid line crossing the span (the rear wall's
+            # void-cell verts must weld into ring/ceiling/floor edges).
+            lxl3 = [v for v in xl if j0 - 1e-9 <= v <= j1 + 1e-9]
+            _wd = _Wall(shell, (0, yb, 0), (1, 0, 0), lxl3, dk_rows,
+                        (0, 1, 0), M_STUCCO, thickness=thick,
+                        inner_zmax=iz_max)
+            _wd.fill(lambda u0, zc0: 'window_dock', frame=0.06,
+                     mat_frame=M_TRIM)
+            if interior_on:
+                for (fx0, fx1) in ((j0 - wt, j0), (j1, j1 + wt)):
+                    for ri in range(len(dk_rows) - 1):
+                        r0, r1 = dk_rows[ri], dk_rows[ri + 1]
+                        shell.quad((fx0, yb - wt, r0), (fx1, yb - wt, r0),
+                                   (fx1, yb - wt, r1), (fx0, yb - wt, r1),
+                                   M_STUCCO)
+            # well ceiling (faces down) + floor (faces up), x-split at the
+            # same lines; interior mode clips both at the inner-skin line
+            # (3-faces-per-edge lesson).
+            y1c = (D - wt) if interior_on else D
+            for iu3 in range(len(lxl3) - 1):
+                xa7, xb7 = lxl3[iu3], lxl3[iu3 + 1]
+                shell.quad((xa7, yb, Z_DHEAD), (xa7, y1c, Z_DHEAD),
+                           (xb7, y1c, Z_DHEAD), (xb7, yb, Z_DHEAD),
+                           M_STUCCO)
+                shell.quad((xa7, yb, Z_DSILL), (xb7, yb, Z_DSILL),
+                           (xb7, y1c, Z_DSILL), (xa7, y1c, Z_DSILL),
+                           M_CONCRETE)
 
     def plain(u0, zc0):
         del u0, zc0
@@ -558,6 +670,14 @@ def build_minimall(p, rng):
                         return 'doorL'
                     if zc0 < Z_SRV - 1e-6:
                         return 'doorU'
+            if docks_on:
+                for (_mn, (j0, j1), inset) in dock_w:
+                    jy0, jy1 = j0 - Wy, j1 - Wy
+                    in_row = Z_DSILL - 1e-6 <= zc0 < Z_DHEAD - 1e-6
+                    if jy0 - 1e-6 <= u0 < jy1 - 1e-6 and in_row:
+                        # wing docks are always flush (the east wall's
+                        # inset assembly is not worth its own mirror).
+                        return 'window_dock'
             return 'wall'
 
         _we = _Wall(shell, (We, 0, 0), (0, 1, 0), yl, zl, (1, 0, 0),
@@ -808,6 +928,14 @@ def build_minimall(p, rng):
                 sx = 0.5 + si * 2.7 + 1.35
                 _box(lot, (sx - 0.85, hy - 0.75, 0.051),
                      (sx + 0.85, hy - 0.60, 0.16), M_CONCRETE)  # wheel stop
+    if docks_on:
+        lot.tag = 'lot'
+        _box(lot, (0.0, D + 0.002, 0.0), (We, D + 6.0, 0.05), M_CONCRETE)
+        for (_mn, (j0, j1), inset) in dock_m:
+            byf = (D - 0.6) if inset else D
+            for bx in (j0 + 0.25, j1 - 0.45):
+                _box(lot, (bx, byf + 0.002, Z_DSILL - 0.32),
+                     (bx + 0.2, byf + 0.12, Z_DSILL - 0.06), M_METAL)
     lot_ob = lot.to_object("LA_MiniMall_Lot", mats)
 
     # ---- ANCHOR tenant: its own taller, prouder mass -----------------------
@@ -821,13 +949,16 @@ def build_minimall(p, rng):
         axc = (ax0 + ax1) / 2.0
         aop0, aop1 = ax0 + 0.45, ax1 - 0.45
         ad0, ad1 = axc - 0.9, axc + 0.9         # double door
-        asv = ((ax0 + ax1) / 2.0 - 0.45, (ax0 + ax1) / 2.0 + 0.45)
+        asv = (axc - 2.0, axc - 1.1)
         zla = sorted({0.0, Z_BLK, Z_SRV, 3.0, zA_sf, zA_fas, zA_ceil,
-                      zA_roof, zA_par})
+                      zA_roof, zA_par} |
+                     ({Z_DSILL, Z_DHEAD} if docks_on else set()))
         apk = ((a0 + a1) / 2.0 - 2.4, (a0 + a1) / 2.0 + 2.4)
+        adk = (axc + 0.6, axc + 0.6 + 3.2)
         axl = sorted({ax0, ax1, ax0 + t, ax1 - t, aop0, aop1, ad0, ad1,
                       asv[0], asv[1], apk[0], apk[1],
-                      axc - 0.09, axc + 0.09})
+                      axc - 0.09, axc + 0.09} |
+                     ({adk[0], adk[1]} if docks_on else set()))
         ayl = sorted({AF, AF + t, 0.0, D, D - t})
 
         def a_inside(x, y):
@@ -854,6 +985,9 @@ def build_minimall(p, rng):
                     return 'doorL'
                 if zc0 < Z_SRV - 1e-6:
                     return 'doorU'
+            if docks_on and adk[0] - 1e-6 <= u0 < adk[1] - 1e-6 and \
+                    Z_DSILL - 1e-6 <= zc0 < Z_DHEAD - 1e-6:
+                return 'window_dock'
             return 'wall'
 
         def a_plain(u0, zc0):
@@ -892,6 +1026,14 @@ def build_minimall(p, rng):
                  (ax1 - wt - e, D - wt - e, 0.12), M_CONCRETE)
             _box(ash, (ax0 + wt + e, AF + wt + e, zA_roof - 0.12),
                  (ax1 - wt - e, D - wt - e, zA_roof - 0.002), M_CONCRETE)
+        if docks_on:
+            # raised loading platform against the rear + rubber bumpers.
+            ash.tag = 'walkway'
+            _box(ash, (adk[0] - 0.4, D + 0.002, 0.0),
+                 (adk[1] + 0.4, D + 1.9, Z_DSILL - 0.02), M_CONCRETE)
+            for bx in (adk[0] + 0.35, adk[1] - 0.55):
+                _box(ash, (bx, D + 0.004, Z_DSILL - 0.32),
+                     (bx + 0.2, D + 0.12, Z_DSILL - 0.06), M_METAL)
         anchor_ob = ash.to_object("LA_MiniMall_Anchor", mats)
 
     # ---- sign clusters + pediment peaks + roof / pole signs ----------------
@@ -1125,7 +1267,14 @@ SPEC = [
          unit='LENGTH'),
     dict(name="pole_panels", type='INT', default=4, min=1, max=8),
     dict(name="shutters", type='FLOAT', default=0.3, min=0.0, max=1.0,
-         desc="Fraction of roll-up shutters down"),
+         desc="Fraction of front roll-up shutters down"),
+    dict(name="high_bulkhead", type='FLOAT', default=0.4, min=0.0, max=1.0,
+         desc="Fraction of storefronts on a 0.9 m masonry knee wall "
+              "(glazing and roll-ups stop there instead of grade)"),
+    dict(name="loading_docks", type='BOOL', default=True,
+         desc="Heavy sectional dock doors on the rear at truck-sill "
+              "height (some inset into recessed wells), platform at the "
+              "anchor, bumpers + apron"),
     dict(name="peak_fraction", type='FLOAT', default=0.25, min=0.0, max=1.0,
          desc="Fraction of bays with a peaked parapet pediment"),
     dict(name="balconies", type='ENUM', default='run',
