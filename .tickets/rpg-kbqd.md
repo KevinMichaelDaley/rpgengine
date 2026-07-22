@@ -1,6 +1,6 @@
 ---
 id: rpg-kbqd
-status: open
+status: closed
 deps: [rpg-29zj]
 links: []
 created: 2026-07-22T10:15:50Z

@@ -361,6 +361,12 @@ static const char *const PBR_FS =
     "uniform sampler2D u_dyn_mask_color;\n"
     "uniform sampler2D u_dyn_mask_depth;\n"
     "uniform int u_csm_mask_on;\n"
+    /* Light-space caustics (rpg-kbqd): when on, the SDF-traced caustic map\n"
+     * replaces the flat tint -- transmitted energy redistributed to where the\n"
+     * jittered rays LANDED, so converging geometry focuses light. The\n"
+     * unoccluded fraction (1 - coverage) still passes straight through. */
+    "uniform sampler2DArray u_csm_caustic;\n"
+    "uniform int u_caustic_on;\n"
     "vec3 pbr_csm_translucency(vec3 fragpos){\n"
     "  if(u_csm_mask_on==0||u_csm_enabled==0) return vec3(1.0);\n"
     "  vec3 trans = vec3(1.0);\n"
@@ -375,9 +381,15 @@ static const char *const PBR_FS =
     "    float d = length(fragpos - u_csm_eye[i]) * invfar;\n"
     "    float md = texture(u_csm_mask_depth, vec3(uv, float(i))).r;\n"
     /* Behind the glass as seen from the light: attenuate by the transmission\n"
-     * tint, weighted by coverage. Union across cascades (darkest wins). */
-    "    if(d > md + u_dir_bias * invfar)\n"
-    "      trans = min(trans, mix(vec3(1.0), m.rgb, m.a));\n"
+     * tint, weighted by coverage -- or, with caustics on, by the redistributed\n"
+     * energy (1-a straight-through + the traced splat at this light texel).\n"
+     * Union across cascades (darkest wins). */
+    "    if(d > md + u_dir_bias * invfar){\n"
+    "      vec3 tc = (u_caustic_on==1)\n"
+    "        ? (vec3(1.0-m.a) + texture(u_csm_caustic, vec3(uv, float(i))).rgb)\n"
+    "        : mix(vec3(1.0), m.rgb, m.a);\n"
+    "      trans = min(trans, tc);\n"
+    "    }\n"
     "  }\n"
     /* Dynamic translucent casters: single ortho pair, same gate. */
     "  vec4 dl = u_dyn_vp * vec4(fragpos, 1.0);\n"

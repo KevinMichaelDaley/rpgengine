@@ -162,6 +162,8 @@ static void fwd_forward_submit(void *ud)
     /* Translucency mask samplers on 36-39 (GI probes hold 24-34). NULL-safe /
      * disabled-safe: always assigns the units so declarations never clash. */
     shadow_csm_mask_bind(&f->csm, &f->cache, &f->pbr, 36u, 37u, 38u, 39u);
+    /* Caustic map on 40 (rpg-kbqd); assigns the unit even when off. */
+    shadow_caustics_bind(&f->caustics, &f->cache, &f->pbr, 40u);
 
     /* Dynamic-GI (or other) extra binds: probe samplers on units 24+. When no
      * hook is set, force the probe path off but still assign the buffer samplers
@@ -290,6 +292,20 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
          * translucent casters fall back to hard shadows in the main maps. */
         if (cfg->dir_translucency)
             (void)shadow_csm_mask_init(&fwd->csm, cfg->loader);
+        /* Caustics (rpg-kbqd) refine the mask's flat tint via SDF-traced
+         * light-space splats. GL 4.3 compute only; failure is non-fatal. */
+        if (cfg->dir_caustics && fwd->csm.mask_enabled) {
+            shadow_caustics_config_t cc = {
+                .loader = cfg->loader,
+                .resolution = sc.static_res,
+                .cascades = sc.cascades,
+                .samples = 8u,
+                .scatter = 0.0f,     /* specular glass by default. */
+                .scatter_dist = 1.0f,
+                .max_dist = 64.0f,
+            };
+            (void)shadow_caustics_init(&fwd->caustics, &cc);
+        }
     }
 
     uint32_t ctot = cfg->cluster.tiles_x * cfg->cluster.tiles_y * cfg->cluster.slices;
@@ -426,6 +442,22 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
         /* Translucency mask piggybacks on the cascade matrices just computed. */
         shadow_csm_mask_bake_static(&fwd->csm, scene);
         shadow_csm_mask_render_dynamic(&fwd->csm, scene);
+        /* Caustics: SDF-trace the freshly baked static mask once per scene.
+         * The bake shares one layer index across the color/depth atlases --
+         * mask_init creates them as twins, so their bases always match. */
+        if (!fwd->caustics_baked && fwd->csm.mask_static_valid &&
+            fwd->caustics.map_tex != 0u &&
+            fwd->csm.mask_color_base == fwd->csm.mask_depth_base) {
+            for (uint32_t cci = 0; cci < fwd->csm.cascades; ++cci)
+                shadow_caustics_bake(&fwd->caustics,
+                                     fwd->csm.mask_color_atlas.texture,
+                                     fwd->csm.mask_depth_atlas.texture,
+                                     (uint32_t)fwd->csm.mask_color_base + cci,
+                                     cci, fwd->csm.view_proj[cci].m,
+                                     fwd->csm.eye[cci],
+                                     fwd->csm.far_plane[cci]);
+            fwd->caustics_baked = true;
+        }
         fwd->csm.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                             (int32_t)fwd->cfg.screen_h);
         FR_ZONE_END(z_csm);
@@ -457,6 +489,7 @@ void render_forward_destroy(render_forward_t *fwd)
         return;
     shadow_cube_destroy(&fwd->shadow);
     shadow_spot_destroy(&fwd->spot);
+    shadow_caustics_destroy(&fwd->caustics);
     shadow_csm_destroy(&fwd->csm);
     forward_plus_destroy(&fwd->fp);
     depth_prepass_destroy(&fwd->depth);

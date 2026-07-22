@@ -27,6 +27,7 @@
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/shader_program.h"
 #include "ferrum/renderer/shader_uniforms.h"
+#include "ferrum/renderer/shadow_caustics.h"
 #include "ferrum/renderer/shadow_csm.h"
 #include "ferrum/renderer/shadow_cube.h"
 #include "ferrum/renderer/shadow_spot.h"
@@ -84,6 +85,10 @@ typedef struct render_forward_config {
                                          *   tint+coverage/depth mask instead, so
                                          *   sunlight transmits through them tinted
                                          *   (rpg-29zj). false = they hard-shadow. */
+    bool               dir_caustics;    /**< true (with dir_translucency) = SDF-trace
+                                         *   the mask into a light-space caustic map
+                                         *   (rpg-kbqd, needs GL 4.3 compute; falls
+                                         *   back to the flat tint without it). */
     float              shadow_scene_min[3];/**< whole-scene AABB min; when max>min the
                                              CSM fits every cascade to this box so no
                                              caster is clipped (0,0,0..0,0,0 = off). */
@@ -111,6 +116,8 @@ typedef struct render_forward {
     shadow_cube_t           shadow;
     shadow_spot_t           spot;
     shadow_csm_t            csm;
+    shadow_caustics_t       caustics;      /**< rpg-kbqd; zeroed when disabled. */
+    bool                    caustics_baked;/**< static bake done for this scene. */
     shader_program_t        pbr;
     shader_uniform_cache_t  cache;
     render_forward_config_t cfg;

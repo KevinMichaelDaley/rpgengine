@@ -10,7 +10,7 @@
  *   render_forward_config_t.dir_translucency  (enable the mask targets)
  *   shadow_csm_mask_* (init / bake / bind, exercised via render_forward)
  *
- * Scene: a big ground plane (opaque), a BLUE glass panel (opacity 0.35)
+ * Scene: a big ground plane (opaque), a BLUE glass panel (opacity 0.30)
  * floating above one area, an OPAQUE panel above another. A tilted sun
  * displaces both shadows sideways so the camera (straight overhead) sees the
  * shadowed ground beside each panel. Numeric framebuffer asserts:
@@ -98,10 +98,11 @@ static void sample_ground(const uint8_t *px, float cx, float cz, float ch,
 
 static float lum(const float rgb[3]) { return 0.2126f * rgb[0] + 0.7152f * rgb[1] + 0.0722f * rgb[2]; }
 
-/* Render the scene once with/without the translucency mask and return the
- * three ground patches: open sun / behind glass / behind opaque panel. */
+/* Render the scene once with/without the translucency mask (and optionally
+ * the caustics compute refining it) and return the three ground patches:
+ * open sun / behind glass / behind opaque panel. */
 static int render_case(const gl_loader_t *loader, int translucency,
-                       float open_rgb[3], float glass_rgb[3],
+                       int caustics, float open_rgb[3], float glass_rgb[3],
                        float opaque_rgb[3])
 {
     static_mesh_t ground, glass, panel;
@@ -162,6 +163,7 @@ static int render_case(const gl_loader_t *loader, int translucency,
     fcfg.shadow_scene_min[0] = -12; fcfg.shadow_scene_min[1] = -1; fcfg.shadow_scene_min[2] = -12;
     fcfg.shadow_scene_max[0] = 12; fcfg.shadow_scene_max[1] = 3; fcfg.shadow_scene_max[2] = 12;
     fcfg.dir_translucency = translucency ? true : false;   /* rpg-29zj API */
+    fcfg.dir_caustics = caustics ? true : false;            /* rpg-kbqd API */
 
     render_forward_t fwd;
     ASSERT_TRUE(render_forward_init(&fwd, &fcfg));
@@ -281,7 +283,7 @@ int main(void)
     float open_f[3], glass_f[3], opaque_f[3];
 
     /* --- with the translucency mask ------------------------------------- */
-    if (render_case(&loader, 1, open_t, glass_t, opaque_t)) fails |= 1;
+    if (render_case(&loader, 1, 0, open_t, glass_t, opaque_t)) fails |= 1;
     if (!fails) {
         float lo = lum(open_t), lg = lum(glass_t), lp = lum(opaque_t);
         fprintf(stderr, "mask on : open=%.3f glass=%.3f opaque=%.3f "
@@ -303,13 +305,38 @@ int main(void)
     }
 
     /* --- mask disabled: glass falls back to a hard caster ---------------- */
-    if (render_case(&loader, 0, open_f, glass_f, opaque_f)) fails |= 32;
+    if (render_case(&loader, 0, 0, open_f, glass_f, opaque_f)) fails |= 32;
     if (!(fails & 32)) {
         float lo = lum(open_f), lg = lum(glass_f);
         fprintf(stderr, "mask off: open=%.3f glass=%.3f\n", lo, lg);
         if (!(lg < 0.35f * lo)) {
             fprintf(stderr, "  FAIL: disabled mask should hard-shadow\n");
             fails |= 64; }
+    }
+
+    /* --- caustics on, no SDF set: the traced map redistributes nothing
+     * (ortho rays land on their own texel), so the projected result must
+     * MATCH the flat-tint path -- proving the caustic map is projected and
+     * depth-gated in the forward pass (rpg-kbqd). Skipped when the context
+     * lacks GL 4.3 compute (render_case then falls back to flat tint, which
+     * satisfies the same assertions anyway). */
+    {
+        float open_c[3], glass_c[3], opaque_c[3];
+        if (render_case(&loader, 1, 1, open_c, glass_c, opaque_c)) fails |= 128;
+        if (!(fails & 128)) {
+            float lo = lum(open_c), lg = lum(glass_c), lp = lum(opaque_c);
+            fprintf(stderr, "caustics: open=%.3f glass=%.3f opaque=%.3f "
+                    "(vs flat glass %.3f)\n", lo, lg, lp, lum(glass_t));
+            if (!(lg > 0.18f * lo && lg < 0.92f * lo)) {
+                fprintf(stderr, "  FAIL: caustic glass shadow broken\n");
+                fails |= 256; }
+            if (fabsf(lg - lum(glass_t)) > 0.08f) {
+                fprintf(stderr, "  FAIL: identity caustic != flat tint\n");
+                fails |= 512; }
+            if (!(lp < 0.35f * lo)) {
+                fprintf(stderr, "  FAIL: caustics leaked into opaque shadow\n");
+                fails |= 1024; }
+        }
     }
 
     fprintf(stderr, "translucent_shadow_tests: %s (0x%x)\n",
