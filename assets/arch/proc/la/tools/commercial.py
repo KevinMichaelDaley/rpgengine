@@ -58,6 +58,11 @@ Z_BLK, Z_SRV, Z_DR, Z_SF, Z_FAS = 0.25, 2.1, 2.6, 3.0, 3.9
 Z_ODR, Z_OSIL, Z_OHED = 6.0, 4.8, 6.0
 
 
+def plain_wall(u0, zc0):
+    del u0, zc0
+    return 'wall'
+
+
 def _tenant_bays(run_len, n, end_pier=0.30, mid_pier=0.60):
     """Per-tenant (bay0, bay1, open0, open1) along a storefront run."""
     tw = run_len / n
@@ -350,7 +355,17 @@ def build_minimall(p, rng):
     D = p["depth"]
     cd = p["canopy_depth"]
     Wm = n * tw
-    corner = p["corner_lot"]
+    layout = p["layout"]
+    corner = layout in ('L', 'C', 'E')   # east court arm present
+    amw = 8.0                            # mid-arm width (E layout)
+    # 'angled': the west end wall runs diagonally (wx at the front to 0 at
+    # the rear) -- the boulevard-cut lot line.
+    wx = 3.5 if layout == 'angled' else 0.0
+    e_ang = wx + 0.25                    # east extent of the custom roof:
+    # NARROW, so no tenant/pier grid line falls inside it -- rectilinear
+    # splits crossing the slanted strips would cascade T-junctions (a
+    # diagonal region can only stay all-quad if it is isolated from
+    # foreign grid lines).
     office = p["office_strip"]
     dead = p["dead_mall"]
     interior_on = p["mode"] == 'interior'
@@ -374,8 +389,9 @@ def build_minimall(p, rng):
     # ---- anchor tenant: double-width, taller, proud of the run -------------
     # (mutually exclusive with office_strip: the anchor mass would punch a
     # sky slot through the second storey).
-    anchor_on = p["anchor"] and not office and n >= 4
-    all_bays = _tenant_bays(Wm, n)
+    anchor_on = p["anchor"] and not office and n >= 4 and layout != 'E'
+    all_bays = [(b0 + wx, b1 + wx, o0 + wx, o1 + wx)
+                for (b0, b1, o0, o1) in _tenant_bays(Wm - wx, n)]
     ka = -1
     a0 = a1 = 0.0
     if anchor_on:
@@ -454,28 +470,70 @@ def build_minimall(p, rng):
     doors_w = [door_span(o0, o1, rng.random() < 0.5)
                for (_b0, _b1, o0, o1) in bays_w]
 
+    # ---- extra court arms: WEST ('[' / C, E) + MID (E). Each is a wing
+    # mass off the run's south face; the EAST arm keeps the original wing
+    # path. face 'e': storefront on the arm's east plane facing the court;
+    # face 'w': storefront on its west plane. --------------------------------
+    xarms = []
+    if layout in ('C', 'E'):
+        xarms.append(dict(face='e', fx=0.0, ox0=-D, ox1=0.0))
+    if layout == 'E':
+        xm0 = round((Wm / 2.0 - amw / 2.0) / tw) * tw
+        xarms.append(dict(face='w', fx=xm0, ox0=xm0, ox1=xm0 + amw))
+    for xa in xarms:
+        ab = _tenant_bays(Wy, n_w)
+        xa['bays'] = ab
+        xa['fates'] = ['shut' if rng.random() < shut_p else 'open'
+                       for _ in ab]
+        xa['doors'] = [door_span(o0, o1, rng.random() < 0.5)
+                       for (_b0, _b1, o0, o1) in ab]
+        xa['high'] = [rng.random() < p["high_bulkhead"] for _ in ab]
+
     # ---- peaked parapets: seeded per bay, spanning/centred on a bay --------
     aw_pk = 0.16
     peaks_m, peaks_w = [], []
     for (b0, b1, _o0, _o1) in bays_m:
         if rng.random() < p["peak_fraction"]:
-            xc = (b0 + b1) / 2.0
+            pb0 = max(b0, e_ang) if layout == 'angled' else b0
+            # (clamped east of the slant strip: a peak base over the
+            # custom band would put 3 faces on the wall-top line)
+            xc = (pb0 + b1) / 2.0
             zpk = z_par + 0.55 + rng.random() * 0.5
-            peaks_m.append((b0, b1, xc, zpk))
+            peaks_m.append((pb0, b1, xc, zpk))
     for (b0, b1, _o0, _o1) in bays_w:
         if rng.random() < p["peak_fraction"]:
             xc = (b0 + b1) / 2.0
             zpk = z_par + 0.55 + rng.random() * 0.5
             peaks_w.append((b0, b1, xc, zpk))
+    for xa in xarms:
+        xa['peaks'] = []
+        for (b0, b1, _o0, _o1) in xa['bays']:
+            if rng.random() < p["peak_fraction"]:
+                xa['peaks'].append((b0, b1, (b0 + b1) / 2.0,
+                                    z_par + 0.55 + rng.random() * 0.5))
 
     # ---- line families -----------------------------------------------------
-    xl = {0.0, Wm, t, Wm - t, We, We - t}
+    xl = {0.0, Wm, Wm - t, We, We - t}
+    if layout != 'angled':
+        xl.add(t)                     # west cap-corner line (rectilinear
+        # corners only; the angled slant region replaces it)
     for (p0k, p1k, xck, _z) in peaks_m:
         xl |= {p0k, p1k, xck - aw_pk / 2.0, xck + aw_pk / 2.0}
     if corner:
         xl.add(Wm + t)                # wing-front cap band inset line
     if anchor_on:
         xl |= {a0, a1, a0 - t, a1 + t}   # run cut ends + their cap bands
+    for xa in xarms:
+        xl |= {xa['ox0'], xa['ox1'], xa['ox0'] + t, xa['ox1'] - t}
+    if layout == 'angled':
+        dxt_a = t * ((wx * wx + D * D) ** 0.5) / D
+        ei2_a = 0.002                 # the slant roof island's inset
+        xl |= {wx, e_ang}
+        # NOTE the cap-line endpoints (wx+dxt, dxt) are NOT grid lines --
+        # they are injected into the front/rear WALL u_lines only, so the
+        # wall top edges weld the strip corners without polluting the
+        # roof-strip / drop column splits (which must never split at a
+        # line that crosses a slanted bound mid-row).
     for i in recessed:
         (_b0, _b1, o0r, o1r) = bays_m[i]
         # end-bay clamp: o0-wt can COINCIDE with the side wall's inner
@@ -489,10 +547,20 @@ def build_minimall(p, rng):
     for (d0, d1) in doors_m:
         xl |= {d0, d1}
     yl = {0.0, D, t, D - t}
-    if corner:
+    if corner or xarms:
         yl |= {-Wy, -Wy + t}
+    for xa in xarms:
+        for (b0, b1, o0, o1) in xa['bays']:
+            yl |= {b0 - Wy, b1 - Wy, o0 - Wy, o1 - Wy}
+        for (d0, d1) in xa['doors']:
+            yl |= {d0 - Wy, d1 - Wy}
+        for (p0k, p1k, xck, _z) in xa['peaks']:
+            yl |= {p0k - Wy, p1k - Wy, xck - aw_pk / 2.0 - Wy,
+                   xck + aw_pk / 2.0 - Wy}
+    if corner:
+        # EAST wing lines (these were accidentally swallowed into the
+        # xarms loop -- plain L has no xarms, so they never ran).
         for (p0k, p1k, xck, _z) in peaks_w:
-            # wing peak u = -y: kink lines live on the y family.
             yl |= {-Wy + p0k, -Wy + p1k, -Wy + xck - aw_pk / 2.0,
                    -Wy + xck + aw_pk / 2.0}
         for (b0, b1, o0, o1) in bays_w:
@@ -516,12 +584,15 @@ def build_minimall(p, rng):
                  for (b0, b1, _o0, _o1) in bays_w]
         for pr in srv_w:
             yl |= set(pr)
-    xl = sorted(v for v in xl if 0.0 - 1e-9 <= v <= We + 1e-9)
-    yl = sorted(v for v in yl if (-Wy if corner else 0.0) - 1e-9 <= v
-                <= D + 1e-9)
+    x_min = min([0.0] + [xa['ox0'] for xa in xarms])
+    xl = sorted(v for v in xl if x_min - 1e-9 <= v <= We + 1e-9)
+    yl = sorted(v for v in yl if (-Wy if (corner or xarms) else 0.0) - 1e-9
+                <= v <= D + 1e-9)
 
     def inside(x, y):
-        if anchor_on and a0 < x < a1:
+        if layout == 'angled' and x < e_ang:
+            return False              # the custom slant roof owns this
+        if anchor_on and a0 < x < a1 and -1e-9 < y:
             return False              # the anchor mass owns this span
         if 0.0 < x < Wm and 0.0 < y < D:
             return True
@@ -530,6 +601,13 @@ def build_minimall(p, rng):
         # the main/wing seam column belongs to the footprint too.
         if corner and abs(x - Wm) < 1e-9 and -1e-9 < y < D:
             return True
+        for xa in xarms:
+            if xa['ox0'] < x < xa['ox1'] and -Wy < y < \
+                    (D if xa['ox1'] <= 0.0 else 0.0):
+                return True
+            if abs(x - xa['ox1']) < 1e-9 and xa['ox1'] <= 0.0 and \
+                    -1e-9 < y < D:
+                return True           # west-arm/run seam column
         return False
 
     shell = _Shell()
@@ -542,11 +620,56 @@ def build_minimall(p, rng):
                                  void_span=(a0, a1) if anchor_on else None,
                                  recessed=recessed, wt=wt, run_w=Wm,
                                  high_bk=high_bk_m)
-    _wf = _Wall(shell, (0, 0, 0), (1, 0, 0),
-                [v for v in xl if v <= Wm + 1e-9], zl, (0, -1, 0),
-                M_STUCCO, thickness=thick, inner_zmax=iz_max)
-    _wf.inner_u0, _wf.inner_u1 = wt, Wm - (0.0 if corner else wt)
+    mid_span = next(((xa['ox0'], xa['ox1']) for xa in xarms
+                     if xa['ox1'] > 0.0), None)
+    if mid_span:
+        cls_m_base = cls_m
+
+        def cls_m(u0, zc0):           # the mid arm passes through the run
+            if mid_span[0] - 1e-6 <= u0 < mid_span[1] - 1e-6:
+                return 'void'
+            return cls_m_base(u0, zc0)
+
+    fw_lines = [v for v in xl if wx - 1e-9 <= v <= Wm + 1e-9]
+    _wf = _Wall(shell, (0, 0, 0), (1, 0, 0), fw_lines, zl,
+                (0, -1, 0), M_STUCCO, thickness=thick, inner_zmax=iz_max)
+    _wf.inner_u0, _wf.inner_u1 = wx + wt, Wm - (0.0 if corner else wt)
     _wf.fill(cls_m, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+    # court-arm storefronts + their outer/south walls.
+    for xa in xarms:
+        ab, ad, af, ah = xa['bays'], xa['doors'], xa['fates'], xa['high']
+        cls_a2 = _storefront_classify(ab, ad, af, Z_SF, office, high_bk=ah)
+        fx = xa['fx']
+        nrm = (1, 0, 0) if xa['face'] == 'e' else (-1, 0, 0)
+        shell.tag = 'storefront'
+        _wa2 = _Wall(shell, (fx, -Wy, 0), (0, 1, 0),
+                     [v + Wy for v in yl if v <= 0.0 + 1e-9], zl, nrm,
+                     M_STUCCO, thickness=thick, inner_zmax=iz_max)
+        _wa2.inner_u0, _wa2.inner_u1 = wt, Wy
+        _wa2.fill(cls_a2, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+        shell.tag = 'facade_side'
+        if xa['ox1'] <= 0.0:
+            # west arm: its outer plane is the building's west wall.
+            _wo2 = _Wall(shell, (xa['ox0'], 0, 0), (0, 1, 0), yl, zl,
+                         (-1, 0, 0), M_STUCCO, thickness=thick,
+                         inner_zmax=iz_max)
+            _wo2.inner_u0, _wo2.inner_u1 = -Wy + wt, D - wt
+            _wo2.fill(plain_wall)
+        else:
+            # mid arm: plain east flank, court side only.
+            _wo2 = _Wall(shell, (xa['ox1'], -Wy, 0), (0, 1, 0),
+                         [v + Wy for v in yl if v <= 0.0 + 1e-9], zl,
+                         (1, 0, 0), M_STUCCO, thickness=thick,
+                         inner_zmax=iz_max)
+            _wo2.inner_u0, _wo2.inner_u1 = wt, Wy
+            _wo2.fill(plain_wall)
+        # south end wall.
+        _ws2 = _Wall(shell, (0, -Wy, 0), (1, 0, 0),
+                     [v for v in xl if xa['ox0'] - 1e-9 <= v <=
+                      xa['ox1'] + 1e-9], zl, (0, -1, 0), M_STUCCO,
+                     thickness=thick, inner_zmax=iz_max)
+        _ws2.inner_u0, _ws2.inner_u1 = xa['ox0'] + wt, xa['ox1'] - wt
+        _ws2.fill(plain_wall)
     if corner:
         cls_w = _storefront_classify(bays_w, doors_w, fates_w, Z_SF, office,
                                      high_bk=high_bk_w)
@@ -584,7 +707,7 @@ def build_minimall(p, rng):
 
     _wr = _Wall(shell, (0, D, 0), (1, 0, 0), xl, zl, (0, 1, 0),
                 M_STUCCO, thickness=thick, inner_zmax=iz_max)
-    _wr.inner_u0, _wr.inner_u1 = wt, We - wt
+    _wr.inner_u0, _wr.inner_u1 = x_min + wt, We - wt
     _wr.fill(rear_classify, frame=0.06, mat_frame=M_TRIM)
     # inset dock wells: the A1/loggia recess discipline mirrored onto the
     # rear wall (outward +y, recess depth 0.6 INTO the building).
@@ -649,11 +772,25 @@ def build_minimall(p, rng):
         return 'wall'
 
     shell.tag = 'facade_side'
-    # west side x=0 (faces -x), y 0..D.
-    _ws = _Wall(shell, (0, 0, 0), (0, 1, 0), [v for v in yl if v >= -1e-9],
-                zl, (-1, 0, 0), M_STUCCO, thickness=thick, inner_zmax=iz_max)
-    _ws.inner_u0, _ws.inner_u1 = wt, D - wt
-    _ws.fill(plain)
+    has_west_arm = any(xa['ox1'] <= 0.0 for xa in xarms)
+    if layout == 'angled':
+        # the SLANT wall: a plain planar _Wall whose u runs along the
+        # diagonal; u-lines at every yl row crossing so its top edge
+        # welds the custom roof's cap trapezoids.
+        L_ang = (wx * wx + D * D) ** 0.5
+        _wsl = _Wall(shell, (wx, 0, 0), (-wx / L_ang, D / L_ang, 0),
+                     [y2 * L_ang / D for y2 in yl if y2 >= -1e-9], zl,
+                     (-D / L_ang, -wx / L_ang, 0), M_STUCCO,
+                     thickness=thick, inner_zmax=iz_max)
+        _wsl.inner_u0, _wsl.inner_u1 = 0.6, L_ang - 0.6
+        _wsl.fill(plain_wall)
+    elif not has_west_arm:
+        # west side x=0 (faces -x), y 0..D.
+        _ws = _Wall(shell, (0, 0, 0), (0, 1, 0),
+                    [v for v in yl if v >= -1e-9], zl, (-1, 0, 0), M_STUCCO,
+                    thickness=thick, inner_zmax=iz_max)
+        _ws.inner_u0, _ws.inner_u1 = wt, D - wt
+        _ws.fill(plain)
     if corner:
         # wing south end y=-Wy (faces -y), x Wm..We.
         _wsx = _Wall(shell, (0, -Wy, 0), (1, 0, 0),
@@ -762,9 +899,60 @@ def build_minimall(p, rng):
         for (p0k, p1k, _xc, _z) in peaks_w:
             if Wm < cx < Wm + t and -Wy + p0k < cy < -Wy + p1k:
                 return True
+        for xa in xarms:
+            band = ((xa['fx'] - t, xa['fx']) if xa['face'] == 'e'
+                    else (xa['fx'], xa['fx'] + t))
+            for (p0k, p1k, _xc, _z) in xa['peaks']:
+                if band[0] < cx < band[1] and \
+                        -Wy + p0k < cy < -Wy + p1k:
+                    return True
         return False
 
     _roof_cells(shell, xl, yl, inside, z_roof, z_par, t, in_peak=in_peak)
+    if layout == 'angled':
+        # the slant-region roof is a fully DECOUPLED island (2 mm inset
+        # all round, boundary edges): no shared verts with the rectilinear
+        # grid or the walls, so it needs NO internal grid at all -- four
+        # rows (front band / body / rear band), each a cap trapezoid plus
+        # a roof trapezoid and a slanted drop, every face a planar quad.
+        # (Seven rounds of welded-seam attempts all ended in line/bound
+        # tangencies only triangles could close; the island form is the
+        # sanctioned abutting discipline instead.)
+        L_ang = (wx * wx + D * D) ** 0.5
+        dxt = t * L_ang / D
+        ei2 = ei2_a
+
+        def xw2(y2):
+            return wx * (1.0 - y2 / D) + ei2
+
+        e_i = e_ang - ei2
+        yrows = [ei2, t, D - t, D - ei2]
+        shell.tag = 'parapet'
+        for ri4 in range(3):
+            y0r, y1r = yrows[ri4], yrows[ri4 + 1]
+            w0, w1 = xw2(y0r), xw2(y1r)
+            c0r, c1r = w0 + dxt, w1 + dxt
+            band = ri4 != 1
+            shell.quad((w0, y0r, z_par), (c0r, y0r, z_par),
+                       (c1r, y1r, z_par), (w1, y1r, z_par), M_STUCCO)
+            if band:
+                shell.quad((c0r, y0r, z_par), (e_i, y0r, z_par),
+                           (e_i, y1r, z_par), (c1r, y1r, z_par), M_STUCCO)
+            else:
+                shell.tag = 'roof'
+                shell.quad((c0r, y0r, z_roof), (e_i, y0r, z_roof),
+                           (e_i, y1r, z_roof), (c1r, y1r, z_roof),
+                           M_CONCRETE)
+                shell.tag = 'parapet'
+                shell.quad((c0r, y0r, z_roof), (c1r, y1r, z_roof),
+                           (c1r, y1r, z_par), (c0r, y0r, z_par), M_STUCCO)
+        for yb2, north in ((t, True), (D - t, False)):
+            cxb = xw2(yb2) + dxt
+            pts = [(cxb, yb2, z_roof), (e_i, yb2, z_roof),
+                   (e_i, yb2, z_par), (cxb, yb2, z_par)]
+            if north:
+                pts.reverse()         # face toward the roof side
+            shell.quad(*pts, M_STUCCO)
     # welded peaked parapets over their bays (front face continues the
     # wall plane; back face continues the cap inner drop).
     shell.tag = 'parapet'
@@ -777,6 +965,28 @@ def build_minimall(p, rng):
                    lambda u, d2, z: (u, d2, z),
                    stub_l=round(p0k, 6) not in ends_m,
                    stub_r=round(p1k, 6) not in starts_m)
+    for xa in xarms:
+        fx = xa['fx']
+        pk = xa['peaks']
+        if xa['face'] == 'e':
+            st2 = {round(p0k, 6) for (p0k, _p1, _x, _z) in pk}
+            en2 = {round(p1k, 6) for (_p0, p1k, _x, _z) in pk}
+            for (p0k, p1k, xck, zpk) in pk:
+                _peak_wall(shell, [v + Wy for v in yl], p0k, p1k, xck,
+                           aw_pk, z_par, zpk, t,
+                           lambda u, d2, z: (fx - d2, -Wy + u, z),
+                           stub_l=round(p0k, 6) not in en2,
+                           stub_r=round(p1k, 6) not in st2)
+        else:
+            st2 = {round(Wy - p1k, 6) for (_p0, p1k, _x, _z) in pk}
+            en2 = {round(Wy - p0k, 6) for (p0k, _p1, _x, _z) in pk}
+            for (p0k, p1k, xck, zpk) in pk:
+                u0k, u1k = Wy - p1k, Wy - p0k
+                _peak_wall(shell, sorted(-v for v in yl), u0k, u1k,
+                           Wy - xck, aw_pk, z_par, zpk, t,
+                           lambda u, d2, z: (fx + d2, -u, z),
+                           stub_l=round(u0k, 6) not in en2,
+                           stub_r=round(u1k, 6) not in st2)
     starts_w = {round(Wy - p1k, 6) for (_p0, p1k, _xc, _z) in peaks_w}
     ends_w = {round(Wy - p0k, 6) for (p0k, _p1, _xc, _z) in peaks_w}
     for (p0k, p1k, xck, zpk) in peaks_w:
@@ -797,13 +1007,35 @@ def build_minimall(p, rng):
     deck_top = Z_FAS if office else 3.35
     deck_lo = deck_top - 0.5 if office else Z_SF
     x_deck0 = -1.45 if office else 0.0
-    deck_segs = ([(x_deck0, a0 - 0.002), (a1 + 0.002, Wm)]
-                 if anchor_on else [(x_deck0, Wm)])
+    cut_spans = ([(a0, a1)] if anchor_on else []) + \
+        [(xa['ox0'], xa['ox1']) for xa in xarms if xa['ox1'] > 0.0]
+
+    def split_segs(seg0, seg1):
+        segs, cur = [], seg0
+        for (c0, c1) in sorted(cut_spans):
+            if c1 < seg0 or c0 > seg1:
+                continue
+            if c0 - 0.002 > cur:
+                segs.append((cur, c0 - 0.002))
+            cur = c1 + 0.002
+        if seg1 > cur:
+            segs.append((cur, seg1))
+        return segs
+
+    deck_segs = split_segs(wx + x_deck0, Wm)
     for (sx0, sx1) in deck_segs:
         _box(can, (sx0, -cd, deck_lo), (sx1, -0.002, deck_top), M_CONCRETE)
     if corner:
         _box(can, (Wm - cd, -Wy, deck_lo), (Wm - 0.002, -cd - 0.002,
              deck_top), M_CONCRETE)
+    for xa in xarms:
+        fx = xa['fx']
+        if xa['face'] == 'e':
+            _box(can, (fx + 0.002, -Wy, deck_lo),
+                 (fx + cd, -cd - 0.002, deck_top), M_CONCRETE)
+        else:
+            _box(can, (fx - cd, -Wy, deck_lo),
+                 (fx - 0.002, -cd - 0.002, deck_top), M_CONCRETE)
     # (bal_modes precomputed before the walls -- the recessed bays void
     # their floor-2 cells in the storefront classifier.)
     if office:
@@ -860,16 +1092,16 @@ def build_minimall(p, rng):
         can.tag = 'columns'
         for (b0, _b1, _o0, _o1) in bays_m[1:] + [(Wm, 0, 0, 0)] + [(0,) * 4]:
             x = min(max(b0, 0.2), Wm - 0.2)
-            if anchor_on and a0 - 0.3 < x < a1 + 0.3:
+            if any(c0 - 0.3 < x < c1 + 0.3 for (c0, c1) in cut_spans):
                 continue
             _box(can, (x - 0.18, -cd + 0.10, 0.0),
                  (x + 0.18, -cd + 0.46, deck_lo + 0.02), M_STUCCO)
     else:
         can.tag = 'columns'
-        posts_x = [b0 for (b0, _b1, _o0, _o1) in bays_m[1:]] + [0.25,
-                                                                Wm - 0.25]
+        posts_x = [b0 for (b0, _b1, _o0, _o1) in bays_m[1:]] + \
+            [wx + 0.25, Wm - 0.25]
         for x in posts_x:
-            if anchor_on and a0 - 0.3 < x < a1 + 0.3:
+            if any(c0 - 0.3 < x < c1 + 0.3 for (c0, c1) in cut_spans):
                 continue
             _box(can, (x - 0.05, -cd + 0.12, 0.0),
                  (x + 0.05, -cd + 0.22, deck_lo + 0.02), M_METAL)
@@ -879,6 +1111,14 @@ def build_minimall(p, rng):
             for y in posts_y:
                 _box(can, (Wm - cd + 0.12, y - 0.05, 0.0),
                      (Wm - cd + 0.22, y + 0.05, deck_lo + 0.02), M_METAL)
+        for xa in xarms:
+            fx = xa['fx']
+            px2 = (fx + cd - 0.22) if xa['face'] == 'e' else (fx - cd + 0.12)
+            posts_y = [b0 - Wy for (b0, _b1, _o0, _o1) in xa['bays'][1:]] + \
+                      [-Wy + 0.25, -cd - 0.35]
+            for y in posts_y:
+                _box(can, (px2, y - 0.05, 0.0),
+                     (px2 + 0.10, y + 0.05, deck_lo + 0.02), M_METAL)
     canopy_ob = can.to_object("LA_MiniMall_Canopy", mats)
 
     # ---- office-strip access stair (straight, footed stringers) ------------
@@ -894,9 +1134,7 @@ def build_minimall(p, rng):
     # ---- walkway + parking lot ---------------------------------------------
     lot = _Shell()
     lot.tag = 'walkway'
-    walk_segs = ([( (x_deck0 if office else 0.0), a0 - 0.002),
-                  (a1 + 0.002, Wm)] if anchor_on
-                 else [((x_deck0 if office else 0.0), Wm)])
+    walk_segs = split_segs(wx + (x_deck0 if office else 0.0), Wm)
     for (wx0s, wx1s) in walk_segs:
         _box(lot, (wx0s, -cd - 0.45, 0.0), (wx1s, -0.002, 0.14), M_CONCRETE)
     if anchor_on:
@@ -905,6 +1143,14 @@ def build_minimall(p, rng):
     if corner:
         _box(lot, (Wm - cd - 0.45, -Wy, 0.0),
              (Wm - 0.002, -cd - 0.452, 0.14), M_CONCRETE)
+    for xa in xarms:
+        fx = xa['fx']
+        if xa['face'] == 'e':
+            _box(lot, (fx + 0.002, -Wy, 0.0),
+                 (fx + cd + 0.45, -cd - 0.452, 0.14), M_CONCRETE)
+        else:
+            _box(lot, (fx - cd - 0.45, -Wy, 0.0),
+                 (fx - 0.002, -cd - 0.452, 0.14), M_CONCRETE)
     # ---- parking: 0-3 rows, perpendicular / angled / parallel / minimal.
     # STRIPES ARE FACES OF THE LOT MESH (thin quad islands 2 mm above the
     # slab top, vertex group 'lot_lines', UV-mapped like everything else)
@@ -923,16 +1169,22 @@ def build_minimall(p, rng):
                  (xb + shear, yb, zs2), (xa + shear, yb, zs2), M_TRIM)
 
     def stall_row(hy, x0r, x1r, shear, depth):
+        # the SLAB must contain every painted stripe: first/last stall
+        # positions are solved from each stripe's full sheared footprint.
         pitch = 2.7 if abs(shear) < 0.1 else 2.9
-        n2 = int((x1r - x0r - abs(min(shear, 0.0)) - max(shear, 0.0) - 1.0)
-                 / pitch)
+        m0, m1 = x0r + 0.35, x1r - 0.35
+        sx_first = m0 + 0.05 - min(shear, 0.0)
+        sx_last = m1 - 0.05 - max(shear, 0.0)
+        n2 = int((sx_last - sx_first) / pitch)
+        if n2 < 1:
+            return
         for si in range(n2 + 1):
-            sx = x0r + 0.5 + si * pitch
+            sx = sx_first + si * pitch
             stripe(sx - 0.05, hy - 0.3, sx + 0.05, hy - depth, shear)
         if abs(shear) < 0.1:
             lot.tag = 'lot'
             for si in range(n2):
-                sx = x0r + 0.5 + si * pitch + pitch / 2.0
+                sx = sx_first + si * pitch + pitch / 2.0
                 _box(lot, (sx - 0.85, hy - 0.75, 0.051),
                      (sx + 0.85, hy - 0.60, 0.16), M_CONCRETE)  # wheel stop
 
@@ -1105,6 +1357,20 @@ def build_minimall(p, rng):
         for i, (_b0, _b1, o0, o1) in enumerate(bays_w):
             _store_sign(sign, rng, emit_wing, Wy - o1, Wy - o0,
                         Z_SF + 0.05, Z_FAS - 0.05, smats, dead)
+    for xa in xarms:
+        if not p["sign_band"] or dead:
+            break
+        fx = xa['fx']
+        for i, (_b0, _b1, o0, o1) in enumerate(xa['bays']):
+            if xa['face'] == 'e':
+                _store_sign(sign, rng,
+                            lambda u, pd, z: (fx + 0.002 + pd, -Wy + u, z),
+                            o0, o1, Z_SF + 0.05, Z_FAS - 0.05, smats, dead)
+            else:
+                _store_sign(sign, rng,
+                            lambda u, pd, z: (fx - 0.002 - pd, -u, z),
+                            Wy - o1, Wy - o0, Z_SF + 0.05, Z_FAS - 0.05,
+                            smats, dead)
     if anchor_on and not dead:
         _store_sign(sign, rng,
                     lambda u, pd, z: (u, AF - 0.002 - pd, z),
@@ -1233,13 +1499,13 @@ def build_minimall(p, rng):
         e = 0.001
         slabs = _Shell()
         slabs.tag = 'slabs'
-        _box(slabs, (wt + e, wt + e - (Wy if corner else 0.0) * 0.0, 0.0),
+        _box(slabs, (wx + wt + e, wt + e, 0.0),
              (Wm - (0.0 if corner else wt) - e, D - wt - e, 0.12),
              M_CONCRETE)
         if corner:
             _box(slabs, (Wm + e, -Wy + wt + e, 0.0),
                  (We - wt - e, D - wt - e, 0.12), M_CONCRETE)
-        _box(slabs, (wt + e, wt + e, z_roof - 0.12),
+        _box(slabs, (wx + wt + e, wt + e, z_roof - 0.12),
              (Wm - (0.0 if corner else wt) - e, D - wt - e, z_roof - 0.002),
              M_CONCRETE)
         if corner:
@@ -1249,6 +1515,12 @@ def build_minimall(p, rng):
             _box(slabs, (wt + e, wt + e, Z_FAS - 0.30),
                  (Wm - (0.0 if corner else wt) - e, D - wt - e, Z_FAS),
                  M_CONCRETE)
+        for xa in xarms:
+            y1s = (D - wt) if xa['ox1'] <= 0.0 else -0.05
+            _box(slabs, (xa['ox0'] + wt + e, -Wy + wt + e, 0.0),
+                 (xa['ox1'] - wt - e, y1s - e, 0.12), M_CONCRETE)
+            _box(slabs, (xa['ox0'] + wt + e, -Wy + wt + e, z_roof - 0.12),
+                 (xa['ox1'] - wt - e, y1s - e, z_roof - 0.002), M_CONCRETE)
         interior_obs.append(slabs.to_object("LA_MiniMall_Slabs", mats))
 
         walls = _Shell(recalc=True)
@@ -1271,6 +1543,11 @@ def build_minimall(p, rng):
                 _wall_solid(walls, 'x', b0 - Wy - 0.05, Wm + 0.152,
                             We - wt - 0.002, 0.12, zt_gnd, 0.10, None,
                             M_STUCCO)
+        for xa in xarms:
+            for (b0, _b1, _o0, _o1) in xa['bays'][1:]:
+                _wall_solid(walls, 'x', b0 - Wy - 0.05, xa['ox0'] + wt +
+                            0.002, xa['ox1'] - wt - 0.002, 0.12, zt_gnd,
+                            0.10, None, M_STUCCO)
         # back corridor wall, one doored segment per tenant.
         walls.tag = 'corridor'
         for i, (b0, b1, _o0, _o1) in enumerate(bays_m):
@@ -1338,9 +1615,11 @@ SPEC = [
     dict(name="anchor", type='BOOL', default=True,
          desc="One double-width anchor tenant: taller, proud of the run, "
               "prominent roof + signage (auto-off with office_strip)"),
-    dict(name="corner_lot", type='BOOL', default=False,
-         desc="L-plan: a second storefront wing on the east, lot in the "
-              "crook"),
+    dict(name="layout", type='ENUM', default='bar',
+         items=('bar', 'L', 'C', 'E', 'angled'),
+         desc="Footprint: straight bar, L (east wing), C '[' (wings both "
+              "ends), tall-E (wings both ends + a middle prong), angled "
+              "(diagonal west wall on a boulevard-cut lot)"),
     dict(name="arcade", type='BOOL', default=False,
          desc="Stucco arcade piers + hanging fascia instead of posts"),
     dict(name="roof_sign", type='BOOL', default=False,
