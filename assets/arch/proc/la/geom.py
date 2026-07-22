@@ -49,11 +49,40 @@ class _Shell:
         self.recalc = recalc      # closed-solid shells: recalc normals
 
     def vert(self, co):
-        key = (round(co[0] / _WELD), round(co[1] / _WELD), round(co[2] / _WELD))
+        # Quantized weld cache with BOUNDARY-SAFE lookup: a coordinate
+        # sitting exactly on a half-quantum value (e.g. 5.14125 with a
+        # 1e-4 quantum) rounds to either neighbouring bucket depending on
+        # ~1e-12 float noise in how the caller computed it -- two emitters
+        # of the "same" vert then miss each other and leave an unwelded
+        # double. Probe the adjacent bucket on any axis near its boundary
+        # and reuse a stored vert only if it is genuinely coincident
+        # (within half a quantum; intentional separations are >= 2 mm).
+        cands = []
+        for c in co:
+            q = c / _WELD
+            k = round(q)
+            axis = [k]
+            frac = q - k
+            if frac > 0.499:
+                axis.append(k + 1)
+            elif frac < -0.499:
+                axis.append(k - 1)
+            cands.append(axis)
+        key = (cands[0][0], cands[1][0], cands[2][0])
         v = self._cache.get(key)
-        if v is None:
-            v = self.bm.verts.new(co)
-            self._cache[key] = v
+        if v is not None:
+            return v
+        for kx in cands[0]:
+            for ky in cands[1]:
+                for kz in cands[2]:
+                    v = self._cache.get((kx, ky, kz))
+                    if v is not None and \
+                            abs(v.co[0] - co[0]) < _WELD * 0.5 and \
+                            abs(v.co[1] - co[1]) < _WELD * 0.5 and \
+                            abs(v.co[2] - co[2]) < _WELD * 0.5:
+                        return v
+        v = self.bm.verts.new(co)
+        self._cache[key] = v
         return v
 
     def quad(self, a, b, c, d, mat=0, tag=None):

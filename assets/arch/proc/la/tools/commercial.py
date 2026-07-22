@@ -539,6 +539,11 @@ def build_minimall(p, rng):
     # diagonal region can only stay all-quad if it is isolated from
     # foreign grid lines).
     office = p["office_strip"]
+    if office:
+        # the office storey's balcony deck IS the canopy: it must be a
+        # walkable depth (canopy_depth=0 degenerated the deck boxes into
+        # 2 mm slivers whose edges collided with each other).
+        cd = max(cd, 1.5)
     dead = p["dead_mall"]
     interior_on = p["mode"] == 'interior'
     wt = 0.15
@@ -597,23 +602,6 @@ def build_minimall(p, rng):
         if kc == kf:
             kc = (kc + 1) % n_rem
         fates_m[kc] = 'void'
-
-    # per-bay balcony treatments on the office storey (rule-2 variety):
-    # 'run' flat deck, 'projecting' bump-out with rail wrap, 'recessed'
-    # loggia (floor-2 wall recesses 1.3 m, deck floor continues in).
-    bal_modes = {}
-    recessed = set()
-    if office:
-        for i, (_b0, _b1, o0b, o1b) in enumerate(bays_m):
-            sel = p["balconies"]
-            if sel == 'mixed':
-                sel = rng.choice(['run', 'projecting', 'recessed'])
-            if sel == 'projecting' and corner and o1b > Wm - cd - 0.6:
-                sel = 'recessed'      # a projection here would hang into
-                # the wing deck (coincident geometry, physically wrong).
-            bal_modes[i] = sel
-            if sel == 'recessed':
-                recessed.add(i)
 
     # per-bay HIGH BULKHEAD (the reference roll-up-on-knee-wall look):
     # glazing sits on 0.9 m masonry instead of 0.25 m; shutters stop there
@@ -693,6 +681,30 @@ def build_minimall(p, rng):
         xa['high'] = [rng.random() < p["high_bulkhead"] for _ in ab]
         xa['bw'] = barred_windows(ab, xa['doors'], xa['fates'])
 
+    # per-bay balcony treatments on the office storey (rule-2 variety):
+    # 'run' flat deck, 'projecting' bump-out with rail wrap, 'recessed'
+    # loggia (floor-2 wall recesses 1.3 m, deck floor continues in).
+    # Rolled AFTER the court arms exist: a projection is refused wherever
+    # its bump-out would hang into a wing/arm deck strip or the prong
+    # mass itself (coincident or interpenetrating geometry).
+    bal_modes = {}
+    recessed = set()
+    if office:
+        for i, (_b0, _b1, o0b, o1b) in enumerate(bays_m):
+            sel = p["balconies"]
+            if sel == 'mixed':
+                sel = rng.choice(['run', 'projecting', 'recessed'])
+            if sel == 'projecting' and corner and o1b > Wm - cd - 0.6:
+                sel = 'recessed'      # would hang into the east wing deck
+            if sel == 'projecting' and any(
+                    o0b + 0.35 < xa['ox1'] + cd + 0.3 and
+                    o1b - 0.35 > xa['ox0'] - cd - 0.3 for xa in xarms):
+                sel = 'recessed'      # would hang into a court arm's
+                # deck strip / stand inside the prong mass
+            bal_modes[i] = sel
+            if sel == 'recessed':
+                recessed.add(i)
+
     # ---- mitred corner doorway (bar/L, rectilinear west corner) ------------
     cdoor_on = p["corner_door"] and layout in ('bar', 'L')
     c1d = 1.7
@@ -741,6 +753,19 @@ def build_minimall(p, rng):
                 xa['peaks'].append(
                     roll_peak(b0, b1,
                               xa['peaks'][-1] if xa['peaks'] else None))
+    # a MIDDLE prong's raised front must stop short of the root when a
+    # main-run raised front spans the prong mouth: the arm front runs
+    # up the flank wall to y=0 at its own height and its top verts land
+    # mid-edge on the (differently tall) main front's plane there. The
+    # west corner arm is exempt -- _sync_corner + the join column own
+    # that junction.
+    for xa in xarms:
+        if xa['ox1'] <= 0.0:
+            continue
+        if any(pk4[0] < xa['ox1'] - 1e-6 and pk4[1] > xa['ox0'] + 1e-6
+               for pk4 in peaks_m):
+            xa['peaks'] = [pk4 for pk4 in xa['peaks']
+                           if abs(pk4[1] - Wy) > 1e-6]
     # raised fronts that MEET at a building corner (main run vs wing /
     # west arm) must share form and height -- mismatched tops put the
     # shorter one's verts on the taller one's corner edge.
@@ -750,16 +775,32 @@ def build_minimall(p, rng):
                 other_list[i4] = (pk4[0], pk4[1],
                                   (pk4[0] + pk4[1]) / 2.0, main_pk[3],
                                   FLAT_AW if main_pk[4] > 1.0 else aw_pk)
-                # cascade the height through the arm's own MERGED flat
-                # chain (resyncing one peak broke its neighbour match).
+                # cascade DOWN the arm's merged chain until it is
+                # consistent again: adjacent fronts must share a form,
+                # and adjacent FLATS must also share a height -- flipping
+                # the corner front's form used to leave a chained peak
+                # butting into a flat (its stub verts landed mid-edge on
+                # the taller front's corner edge).
+                new_flat = main_pk[4] > 1.0
                 j4 = i4 - 1
-                while (j4 >= 0 and other_list[j4][4] > 1.0 and
-                       main_pk[4] > 1.0 and
+                while (j4 >= 0 and
                        abs(other_list[j4][1] - other_list[j4 + 1][0])
                        < 1e-6):
                     o5 = other_list[j4]
-                    other_list[j4] = (o5[0], o5[1], o5[2], main_pk[3],
-                                      o5[4])
+                    o_flat = o5[4] > 1.0
+                    if o_flat == new_flat and \
+                            (not new_flat or
+                             abs(o5[3] - main_pk[3]) < 1e-6):
+                        break         # chain consistent from here down
+                    if new_flat:
+                        other_list[j4] = (o5[0], o5[1], o5[2],
+                                          main_pk[3], FLAT_AW)
+                    else:
+                        # peak-peak junctions weld at the shared stub
+                        # regardless of apex height: keep its own top.
+                        other_list[j4] = (o5[0], o5[1],
+                                          (o5[0] + o5[1]) / 2.0,
+                                          o5[3], aw_pk)
                     j4 -= 1
 
     if corner and peaks_m and abs(peaks_m[-1][1] - Wm) < 1e-6:
