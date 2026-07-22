@@ -6,6 +6,8 @@
   "_mode": "la_sprawl: seed-res lightmap -> streamed probe seed; adaptive brick probes.",
   "_probes": "DENSE frozen probes: 32m bricks (~263k). Converge over ~200 warmup ticks then freeze (zero runtime cost), so density is free.",
   "gi_brick_levels": 2,
+  "gi_brick_shell": 2.0,
+  "gi_brick_shell_levels": 4,
   "gi_brick_coarse": 32.0,
   "gi_grid_cell": 6.0,
   "gi_update_interval": 1,

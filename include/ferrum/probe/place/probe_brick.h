@@ -59,6 +59,20 @@ typedef struct probe_brick_config {
                              *   <=0 = keep buried bricks (old behaviour). */
     float (*sdf)(const float p[3], void *user); /**< signed distance field. */
     void *sdf_user;         /**< opaque context for @c sdf (nullable). */
+
+    /* BUILDING SHELL densification (rpg-7s4y follow-up). A brick whose centre
+     * lies within @c shell_width of any building world AABB refines to
+     * @c shell_levels (deeper than @c levels) and keeps near-wall probes that the
+     * buried cull would otherwise drop -- so building INTERIORS (room walls,
+     * floors, ceilings enclosed by the AABB) and EXTERIORS (the facade, just
+     * outside the AABB) get dense GI, while open ground/road stays at @c levels.
+     * Disabled when @c building_count == 0 or @c shell_width <= 0. */
+    const float *building_min; /**< building_count * 3 world-AABB mins, or NULL. */
+    const float *building_max; /**< building_count * 3 world-AABB maxs, or NULL. */
+    uint32_t building_count;   /**< number of building AABBs. */
+    float shell_width;         /**< shell reach around a building AABB (m). */
+    int   shell_levels;        /**< refinement depth in the shell (clamped >=levels,
+                                *   <=PROBE_BRICK_MAX_LEVELS); 0 => same as levels. */
 } probe_brick_config_t;
 
 /**

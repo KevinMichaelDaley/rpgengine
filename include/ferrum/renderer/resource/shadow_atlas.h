@@ -37,6 +37,11 @@ typedef struct shadow_atlas_config {
     uint32_t           resolution; /**< per-layer resolution. */
     uint32_t           layers;     /**< total layers (<= SHADOW_ATLAS_MAX_LAYERS). */
     uint32_t           internal_format; /**< e.g. GL_RG32F (EVSM) or GL_R32F. */
+    bool               nearest;    /**< true = GL_NEAREST (point) sampling. Use for
+                                    *   discontinuous data (translucency coverage /
+                                    *   distance masks) where bilinear blending toward
+                                    *   the clear value erodes edges; EVSM moment maps
+                                    *   stay bilinear (false, the default). */
 } shadow_atlas_config_t;
 
 /** A managed shadow depth-target array + its slot allocator. */

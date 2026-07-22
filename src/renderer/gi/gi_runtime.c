@@ -23,7 +23,7 @@
 #define GI_ZONE_END(v)
 #endif
 
-#define GI_MAX_PROBES 300000u
+#define GI_MAX_PROBES 1000000u
 
 bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
 {

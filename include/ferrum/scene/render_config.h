@@ -93,6 +93,10 @@ typedef struct render_config {
     int      gi_brick_levels;       /**< ternary hierarchy depth (1..4). */
     int      gi_brick_fill;         /**< keep failing coarse bricks (open-air GI). */
     float    gi_brick_buried;       /**< cull bricks buried deeper than this x probe spacing. */
+    float    gi_brick_shell;        /**< building-shell reach (m); >0 densifies probes
+                                     *   around ferrum_building surfaces. 0 = off. */
+    int      gi_brick_shell_levels; /**< brick depth inside the building shell (>=levels).
+                                     *   0 = same as gi_brick_levels (no extra density). */
     float    gi_fixup_clearance;    /**< virtual-offset target SDF clearance (m). */
     float    gi_fixup_max_push;     /**< virtual-offset displacement cap (m). */
     float    gi_ray_clamp;          /**< per-ray radiance cap in the probe march (fireflies). */

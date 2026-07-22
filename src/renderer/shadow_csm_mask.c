@@ -138,8 +138,10 @@ static uint32_t mask_make_2d(shadow_csm_t *csm, uint32_t internal_format,
     csm->glBindTexture(GL_TEXTURE_2D, tex);
     csm->glTexImage2D(GL_TEXTURE_2D, 0, (int32_t)internal_format, (int32_t)res,
                       (int32_t)res, 0, format, GL_FLOAT, NULL);
-    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    /* Point-sample: the dynamic tint/coverage/distance mask is discontinuous like
+     * the static one -- bilinear erodes glass shadows at their silhouette. */
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     return tex;
@@ -167,9 +169,13 @@ bool shadow_csm_mask_init(shadow_csm_t *csm, const gl_loader_t *loader)
         .resolution = csm->static_res,
         .layers = csm->cascades,
         .internal_format = GL_RGBA16F,
+        /* Point-sample: tint+coverage is discontinuous at the glass silhouette;
+         * bilinear would bleed coverage toward the empty clear value and drop the
+         * shadow at every edge (rpg-29zj follow-up). */
+        .nearest = true,
     };
     shadow_atlas_config_t depth_cfg = color_cfg;
-    depth_cfg.internal_format = GL_R32F;
+    depth_cfg.internal_format = GL_R32F;   /* nearest carries over (glass distance). */
     if (!shadow_atlas_init(&csm->mask_color_atlas, &color_cfg) ||
         !shadow_atlas_init(&csm->mask_depth_atlas, &depth_cfg))
         return false;

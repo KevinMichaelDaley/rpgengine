@@ -64,6 +64,8 @@ void render_config_defaults(render_config_t *rc)
     rc->gi_brick_levels = 3;
     rc->gi_brick_fill = 1;
     rc->gi_brick_buried = 0.5f;
+    rc->gi_brick_shell = 0.0f;        /* off unless a level opts in. */
+    rc->gi_brick_shell_levels = 0;    /* 0 => same depth as gi_brick_levels. */
     rc->gi_fixup_clearance = 0.10f;
     rc->gi_fixup_max_push = 0.60f;
     rc->gi_ray_clamp = 4.0f;

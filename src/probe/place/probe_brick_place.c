@@ -97,6 +97,29 @@ static void brick_emit(brick_ctx_t *c, const float min[3], float size, int level
  * would never reference it, so emitting it would only waste probes under its
  * own refinement (the coarse-under-fine overlap). Emission order is therefore
  * NOT ancestors-first -- the index build resolves overlap by LEVEL, not order. */
+/* Whether the brick box [@p min, @p min+size] overlaps any BUILDING world AABB
+ * expanded by shell_width (so the placer densifies the shell around building
+ * surfaces -- interiors + exteriors). Box overlap (not centre-in) so even a
+ * coarse brick that merely TOUCHES a building shell refines into it. */
+static int in_building_shell(const brick_ctx_t *c, const float min[3], float size)
+{
+    const probe_brick_config_t *cfg = c->cfg;
+    if (cfg->building_count == 0u || cfg->shell_width <= 0.0f ||
+        cfg->building_min == NULL || cfg->building_max == NULL)
+        return 0;
+    float w = cfg->shell_width;
+    float bmx[3] = { min[0] + size, min[1] + size, min[2] + size };
+    for (uint32_t b = 0; b < cfg->building_count; ++b) {
+        const float *mn = &cfg->building_min[b * 3];
+        const float *mx = &cfg->building_max[b * 3];
+        if (min[0] <= mx[0] + w && bmx[0] >= mn[0] - w &&
+            min[1] <= mx[1] + w && bmx[1] >= mn[1] - w &&
+            min[2] <= mx[2] + w && bmx[2] >= mn[2] - w)
+            return 1;
+    }
+    return 0;
+}
+
 static int brick_descend(brick_ctx_t *c, const float min[3], float size,
                          int level, int emit)
 {
@@ -115,13 +138,24 @@ static int brick_descend(brick_ctx_t *c, const float min[3], float size,
         return 0;   /* uncovered air: an ancestor must provide probes. */
     }
 
+    /* Building shell: near a building's surfaces, refine deeper (shell_levels)
+     * for crisp interior/exterior GI, and keep near-wall probes the buried cull
+     * would drop. Open ground/road stays at the coarser `levels`. */
+    int shell = in_building_shell(c, min, size);
+    int eff_levels = shell ? c->cfg->shell_levels : c->cfg->levels;
+    if (eff_levels < c->cfg->levels) eff_levels = c->cfg->levels;
+    if (eff_levels > PROBE_BRICK_MAX_LEVELS) eff_levels = PROBE_BRICK_MAX_LEVELS;
+
     /* Deep-buried cull: geometry is near (descend continues so thick-wall
-     * FACES are found), but this brick's own probes would sit inside solid. */
-    int buried = c->cfg->buried_frac > 0.0f &&
-                 sd < -c->cfg->buried_frac * (size / 3.0f);
+     * FACES are found), but this brick's own probes would sit inside solid.
+     * Inside the shell, keep shallow interior-side probes (cull only past the
+     * shell width) so room walls are lit from within. */
+    float bury_depth = c->cfg->buried_frac * (size / 3.0f);
+    if (shell && bury_depth < c->cfg->shell_width) bury_depth = c->cfg->shell_width;
+    int buried = c->cfg->buried_frac > 0.0f && sd < -bury_depth;
 
     int child_covered = 1;
-    if (level + 1 < c->cfg->levels) {
+    if (level + 1 < eff_levels) {
         float child = size / 3.0f;
         for (int k = 0; k < 3; ++k)
             for (int j = 0; j < 3; ++j)

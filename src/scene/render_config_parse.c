@@ -104,6 +104,8 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->gi_brick_levels    = rc_field_i(r, "gi_brick_levels",      out->gi_brick_levels);
     out->gi_brick_fill      = rc_field_i(r, "gi_brick_fill",        out->gi_brick_fill);
     out->gi_brick_buried    = sd_field_num(r, "gi_brick_buried",    out->gi_brick_buried);
+    out->gi_brick_shell        = sd_field_num(r, "gi_brick_shell",        out->gi_brick_shell);
+    out->gi_brick_shell_levels = rc_field_i(r,  "gi_brick_shell_levels", out->gi_brick_shell_levels);
     out->gi_fixup_clearance = sd_field_num(r, "gi_fixup_clearance", out->gi_fixup_clearance);
     out->gi_fixup_max_push  = sd_field_num(r, "gi_fixup_max_push",  out->gi_fixup_max_push);
     out->gi_ray_clamp       = sd_field_num(r, "gi_ray_clamp",       out->gi_ray_clamp);

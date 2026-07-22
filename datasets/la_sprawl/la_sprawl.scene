@@ -9,6 +9,7 @@
     0.6200000047683716
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.8999999761581421,
    "roughness_max": 0.8999999761581421,
    "normal_scale": 1.0,
@@ -26,6 +27,7 @@
     0.7799999713897705
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.550000011920929,
    "roughness_max": 0.550000011920929,
    "normal_scale": 1.0,
@@ -43,6 +45,7 @@
     0.4000000059604645
    ],
    "metalness": 0.0,
+   "opacity": 0.35,
    "roughness_min": 0.07999999821186066,
    "roughness_max": 0.07999999821186066,
    "normal_scale": 1.0,
@@ -50,8 +53,7 @@
    "uv_scale": [
     1.0,
     1.0
-   ],
-   "opacity": 0.35
+   ]
   },
   {
    "name": "la_concrete",
@@ -61,6 +63,7 @@
     0.5199999809265137
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.8500000238418579,
    "roughness_max": 0.8500000238418579,
    "normal_scale": 1.0,
@@ -78,6 +81,7 @@
     0.6600000262260437
    ],
    "metalness": 1.0,
+   "opacity": 1.0,
    "roughness_min": 0.44999998807907104,
    "roughness_max": 0.44999998807907104,
    "normal_scale": 1.0,
@@ -95,6 +99,7 @@
     0.7699999809265137
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.949999988079071,
    "roughness_max": 0.949999988079071,
    "normal_scale": 1.0,
@@ -112,6 +117,7 @@
     0.2800000011920929
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.800000011920929,
    "roughness_max": 0.800000011920929,
    "normal_scale": 1.0,
@@ -129,6 +135,7 @@
     0.6200000047683716
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.30000001192092896,
    "roughness_max": 0.30000001192092896,
    "normal_scale": 1.0,
@@ -146,6 +153,7 @@
     0.10000000149011612
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.25,
    "roughness_max": 0.25,
    "normal_scale": 1.0,
@@ -163,6 +171,7 @@
     0.5199999809265137
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.25,
    "roughness_max": 0.25,
    "normal_scale": 1.0,
@@ -180,6 +189,7 @@
     0.18000000715255737
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.25,
    "roughness_max": 0.25,
    "normal_scale": 1.0,
@@ -197,6 +207,7 @@
     0.6200000047683716
    ],
    "metalness": 1.0,
+   "opacity": 1.0,
    "roughness_min": 0.550000011920929,
    "roughness_max": 0.550000011920929,
    "normal_scale": 1.0,
@@ -214,6 +225,7 @@
     0.06499999761581421
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.949999988079071,
    "roughness_max": 0.949999988079071,
    "normal_scale": 1.0,
@@ -231,6 +243,7 @@
     0.7799999713897705
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.6000000238418579,
    "roughness_max": 0.6000000238418579,
    "normal_scale": 1.0,
@@ -248,6 +261,7 @@
     0.10000000149011612
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.6000000238418579,
    "roughness_max": 0.6000000238418579,
    "normal_scale": 1.0,
@@ -265,6 +279,7 @@
     0.03999999910593033
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.8999999761581421,
    "roughness_max": 0.8999999761581421,
    "normal_scale": 1.0,
@@ -282,6 +297,7 @@
     0.47999998927116394
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 1.0,
    "roughness_max": 1.0,
    "normal_scale": 1.0,
@@ -299,6 +315,7 @@
     0.029999999329447746
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 0.949999988079071,
    "roughness_max": 0.949999988079071,
    "normal_scale": 1.0,
@@ -316,6 +333,7 @@
     0.1599999964237213
    ],
    "metalness": 0.0,
+   "opacity": 1.0,
    "roughness_min": 1.0,
    "roughness_max": 1.0,
    "normal_scale": 1.0,
@@ -369,7 +387,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4394,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.001",
@@ -413,7 +432,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 7006,
-   "faces": 3420
+   "faces": 3420,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.002",
@@ -457,7 +477,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4402,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.003",
@@ -501,7 +522,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 7014,
-   "faces": 3420
+   "faces": 3420,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.004",
@@ -545,7 +567,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4386,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.005",
@@ -589,7 +612,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 7014,
-   "faces": 3420
+   "faces": 3420,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.006",
@@ -633,7 +657,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4388,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.007",
@@ -677,7 +702,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4402,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.008",
@@ -721,7 +747,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4402,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.009",
@@ -765,7 +792,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4404,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Body.010",
@@ -809,7 +837,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 4394,
-   "faces": 2140
+   "faces": 2140,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport",
@@ -853,7 +882,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1282,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.001",
@@ -897,7 +927,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1274,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.002",
@@ -941,7 +972,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1280,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.003",
@@ -985,7 +1017,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1270,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.004",
@@ -1029,7 +1062,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1282,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.005",
@@ -1073,7 +1107,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1270,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.006",
@@ -1117,7 +1152,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1270,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.007",
@@ -1161,7 +1197,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1280,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.008",
@@ -1205,7 +1242,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1280,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.009",
@@ -1249,7 +1287,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1270,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Carport.010",
@@ -1293,7 +1332,8 @@
    ],
    "lightmap_res": 280,
    "vertices": 1282,
-   "faces": 612
+   "faces": 612,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras",
@@ -1337,7 +1377,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 24,
-   "faces": 12
+   "faces": 12,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.001",
@@ -1381,7 +1422,8 @@
    ],
    "lightmap_res": 214,
    "vertices": 100,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.002",
@@ -1425,7 +1467,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 48,
-   "faces": 24
+   "faces": 24,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.003",
@@ -1469,7 +1512,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 36,
-   "faces": 16
+   "faces": 16,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.004",
@@ -1513,7 +1557,8 @@
    ],
    "lightmap_res": 214,
    "vertices": 56,
-   "faces": 28
+   "faces": 28,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.005",
@@ -1557,7 +1602,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 84,
-   "faces": 40
+   "faces": 40,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.006",
@@ -1601,7 +1647,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 40,
-   "faces": 20
+   "faces": 20,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.007",
@@ -1645,7 +1692,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 24,
-   "faces": 12
+   "faces": 12,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.008",
@@ -1689,7 +1737,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 24,
-   "faces": 12
+   "faces": 12,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.009",
@@ -1733,7 +1782,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 40,
-   "faces": 20
+   "faces": 20,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Extras.010",
@@ -1777,7 +1827,8 @@
    ],
    "lightmap_res": 154,
    "vertices": 48,
-   "faces": 24
+   "faces": 24,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions",
@@ -1821,7 +1872,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 864,
-   "faces": 432
+   "faces": 432,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.001",
@@ -1865,7 +1917,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 1296,
-   "faces": 648
+   "faces": 648,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.002",
@@ -1909,7 +1962,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 864,
-   "faces": 432
+   "faces": 432,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.003",
@@ -1953,7 +2007,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 1560,
-   "faces": 780
+   "faces": 780,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.004",
@@ -1997,7 +2052,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 688,
-   "faces": 344
+   "faces": 344,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.005",
@@ -2041,7 +2097,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 1560,
-   "faces": 780
+   "faces": 780,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.006",
@@ -2085,7 +2142,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 1040,
-   "faces": 520
+   "faces": 520,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.007",
@@ -2129,7 +2187,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 864,
-   "faces": 432
+   "faces": 432,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.008",
@@ -2173,7 +2232,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 864,
-   "faces": 432
+   "faces": 432,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.009",
@@ -2217,7 +2277,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 1040,
-   "faces": 520
+   "faces": 520,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Partitions.010",
@@ -2261,7 +2322,8 @@
    ],
    "lightmap_res": 238,
    "vertices": 864,
-   "faces": 432
+   "faces": 432,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts",
@@ -2305,7 +2367,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.001",
@@ -2349,7 +2412,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.002",
@@ -2393,7 +2457,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.003",
@@ -2437,7 +2502,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.004",
@@ -2481,7 +2547,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.005",
@@ -2525,7 +2592,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.006",
@@ -2569,7 +2637,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.007",
@@ -2613,7 +2682,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.008",
@@ -2657,7 +2727,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.009",
@@ -2701,7 +2772,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Posts.010",
@@ -2745,7 +2817,8 @@
    ],
    "lightmap_res": 243,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs",
@@ -2789,7 +2862,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.001",
@@ -2833,7 +2907,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.002",
@@ -2877,7 +2952,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.003",
@@ -2921,7 +2997,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.004",
@@ -2965,7 +3042,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.005",
@@ -3009,7 +3087,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.006",
@@ -3053,7 +3132,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.007",
@@ -3097,7 +3177,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.008",
@@ -3141,7 +3222,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.009",
@@ -3185,7 +3267,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Slabs.010",
@@ -3229,7 +3312,8 @@
    ],
    "lightmap_res": 274,
    "vertices": 72,
-   "faces": 36
+   "faces": 36,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair",
@@ -3273,7 +3357,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.001",
@@ -3317,7 +3402,8 @@
    ],
    "lightmap_res": 110,
    "vertices": 1010,
-   "faces": 456
+   "faces": 456,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.002",
@@ -3361,7 +3447,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.003",
@@ -3405,7 +3492,8 @@
    ],
    "lightmap_res": 110,
    "vertices": 1010,
-   "faces": 456
+   "faces": 456,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.004",
@@ -3449,7 +3537,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.005",
@@ -3493,7 +3582,8 @@
    ],
    "lightmap_res": 110,
    "vertices": 1010,
-   "faces": 456
+   "faces": 456,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.006",
@@ -3537,7 +3627,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.007",
@@ -3581,7 +3672,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.008",
@@ -3625,7 +3717,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.009",
@@ -3669,7 +3762,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Stair.010",
@@ -3713,7 +3807,8 @@
    ],
    "lightmap_res": 83,
    "vertices": 576,
-   "faces": 264
+   "faces": 264,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway",
@@ -3757,7 +3852,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.001",
@@ -3801,7 +3897,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.002",
@@ -3845,7 +3942,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.003",
@@ -3889,7 +3987,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.004",
@@ -3933,7 +4032,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.005",
@@ -3977,7 +4077,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 120,
-   "faces": 60
+   "faces": 60,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.006",
@@ -4021,7 +4122,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.007",
@@ -4065,7 +4167,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.008",
@@ -4109,7 +4212,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.009",
@@ -4153,7 +4257,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_Dingbat_Walkway.010",
@@ -4197,7 +4302,8 @@
    ],
    "lightmap_res": 326,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Anchor",
@@ -4241,7 +4347,8 @@
    ],
    "lightmap_res": 310,
    "vertices": 3726,
-   "faces": 1818
+   "faces": 1818,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Anchor.001",
@@ -4285,7 +4392,8 @@
    ],
    "lightmap_res": 310,
    "vertices": 3698,
-   "faces": 1818
+   "faces": 1818,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Anchor.002",
@@ -4329,7 +4437,8 @@
    ],
    "lightmap_res": 310,
    "vertices": 3726,
-   "faces": 1818
+   "faces": 1818,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Body",
@@ -4373,7 +4482,8 @@
    ],
    "lightmap_res": 440,
    "vertices": 5545,
-   "faces": 2652
+   "faces": 2652,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Body.001",
@@ -4417,7 +4527,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 35072,
-   "faces": 17338
+   "faces": 17338,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Body.002",
@@ -4461,7 +4572,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 72500,
-   "faces": 35830
+   "faces": 35830,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Body.003",
@@ -4505,7 +4617,8 @@
    ],
    "lightmap_res": 790,
    "vertices": 11234,
-   "faces": 5536
+   "faces": 5536,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Canopy",
@@ -4549,7 +4662,8 @@
    ],
    "lightmap_res": 440,
    "vertices": 88,
-   "faces": 42
+   "faces": 42,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Canopy.001",
@@ -4593,7 +4707,8 @@
    ],
    "lightmap_res": 990,
    "vertices": 480,
-   "faces": 240
+   "faces": 240,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Canopy.002",
@@ -4637,7 +4752,8 @@
    ],
    "lightmap_res": 880,
    "vertices": 880,
-   "faces": 440
+   "faces": 440,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Canopy.003",
@@ -4681,7 +4797,8 @@
    ],
    "lightmap_res": 330,
    "vertices": 192,
-   "faces": 96
+   "faces": 96,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Hatch",
@@ -4725,7 +4842,8 @@
    ],
    "lightmap_res": 18,
    "vertices": 48,
-   "faces": 24
+   "faces": 24,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Hatch.001",
@@ -4769,7 +4887,8 @@
    ],
    "lightmap_res": 18,
    "vertices": 48,
-   "faces": 24
+   "faces": 24,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Hatch.002",
@@ -4813,7 +4932,8 @@
    ],
    "lightmap_res": 18,
    "vertices": 48,
-   "faces": 24
+   "faces": 24,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Hatch.003",
@@ -4857,7 +4977,8 @@
    ],
    "lightmap_res": 18,
    "vertices": 48,
-   "faces": 24
+   "faces": 24,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Interior",
@@ -4901,7 +5022,8 @@
    ],
    "lightmap_res": 216,
    "vertices": 200,
-   "faces": 100
+   "faces": 100,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Interior.001",
@@ -4945,7 +5067,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 928,
-   "faces": 464
+   "faces": 464,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Interior.002",
@@ -4989,7 +5112,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 2320,
-   "faces": 1160
+   "faces": 1160,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Interior.003",
@@ -5033,7 +5157,8 @@
    ],
    "lightmap_res": 564,
    "vertices": 360,
-   "faces": 180
+   "faces": 180,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Lot",
@@ -5077,7 +5202,8 @@
    ],
    "lightmap_res": 649,
    "vertices": 220,
-   "faces": 110
+   "faces": 110,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Lot.001",
@@ -5121,7 +5247,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 1836,
-   "faces": 918
+   "faces": 918,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Lot.002",
@@ -5165,7 +5292,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 1344,
-   "faces": 672
+   "faces": 672,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Lot.003",
@@ -5209,7 +5337,8 @@
    ],
    "lightmap_res": 849,
    "vertices": 720,
-   "faces": 360
+   "faces": 360,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Signs",
@@ -5253,7 +5382,8 @@
    ],
    "lightmap_res": 416,
    "vertices": 192,
-   "faces": 96
+   "faces": 96,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Signs.001",
@@ -5297,7 +5427,8 @@
    ],
    "lightmap_res": 990,
    "vertices": 3048,
-   "faces": 1524
+   "faces": 1524,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Signs.002",
@@ -5341,7 +5472,8 @@
    ],
    "lightmap_res": 880,
    "vertices": 4776,
-   "faces": 2388
+   "faces": 2388,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Signs.003",
@@ -5385,7 +5517,8 @@
    ],
    "lightmap_res": 547,
    "vertices": 408,
-   "faces": 204
+   "faces": 204,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Slabs",
@@ -5429,7 +5562,8 @@
    ],
    "lightmap_res": 434,
    "vertices": 48,
-   "faces": 24
+   "faces": 24,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Slabs.001",
@@ -5473,7 +5607,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 144,
-   "faces": 72
+   "faces": 72,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Slabs.002",
@@ -5517,7 +5652,8 @@
    ],
    "lightmap_res": 1024,
    "vertices": 312,
-   "faces": 156
+   "faces": 156,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Slabs.003",
@@ -5561,7 +5697,8 @@
    ],
    "lightmap_res": 784,
    "vertices": 96,
-   "faces": 48
+   "faces": 48,
+   "building": true
   },
   {
    "name": "LA_MiniMall_Stair",
@@ -5605,7 +5742,8 @@
    ],
    "lightmap_res": 109,
    "vertices": 276,
-   "faces": 130
+   "faces": 130,
+   "building": true
   },
   {
    "name": "LA_RoadNet_sprawl_net_Road",

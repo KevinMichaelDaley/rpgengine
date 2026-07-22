@@ -302,60 +302,14 @@ static const char *const PBR_FS =
      * the light-source footprint -> average blocker depth, (2) penumbra width =\n"
      * (d_recv - d_blk)/d_blk * lightSize (PCSS), converted to a uv radius via the\n"
      * cascade's world size so all cascades agree, (3) variable-width PCF. */
-    "float pbr_csm_shadow(vec3 fragpos, mat2 rot){\n"
-    "  if(u_csm_enabled==0) return 1.0;\n"
-    "  float vis = 1.0;\n"
-    "  float texuv = 1.0 / u_csm_res;\n"                   /* cascade-independent. */
-    "  for(int i=0;i<u_csm_count;++i){\n"
-    "    vec4 lc = u_csm_vp[i] * vec4(fragpos, 1.0);\n"
-    "    vec3 ndc = lc.xyz / lc.w;\n"        /* ortho: w = 1. */
-    "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n" /* no data here. */
-    "    vec2 uv = ndc.xy*0.5 + 0.5;\n"
-    "    float invfar = 1.0 / u_csm_far[i];\n"
-    "    float d = clamp(length(fragpos - u_csm_eye[i]) * invfar, 0.0, 1.0);\n"
-    "    float bias = u_dir_bias * invfar;\n"             /* metres -> normalised. */
-    "    float uvPerM = 1.0 / (u_csm_texel[i] * u_csm_res);\n" /* uv per world metre. */
-    /* Penumbra radius (uv). Default: a fixed width from the sun source size --\n"
-     * one PCF pass, no blocker search. PCSS mode: search the source footprint for\n"
-     * the average blocker depth and grow the penumbra with the occluder gap. */
-    "    float prad;\n"
-    "    if(u_csm_pcss==1){\n"
-    "      float srad = max(u_csm_soft * uvPerM, texuv);\n"
-    "      float bsum = 0.0, bcnt = 0.0;\n"
-    "      for(int s=0;s<16;++s){\n"
-    "        float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*srad, float(i))).r;\n"
-    "        if(dp < d - bias){ bsum += dp; bcnt += 1.0; }\n"
-    "      }\n"
-    "      if(bcnt < 0.5) continue;\n"      /* no blocker in this cascade -> lit. */
-    "      float dblk = bsum / bcnt;\n"
-    /* Penumbra grows with the occluder->receiver gap, CLAMPED to a small world\n"
-     * size so the PCF taps never reach across a wall and leak light. */
-    "      float pen = (d - dblk) / max(dblk, 1e-4);\n"     /* scale-invariant ratio. */
-    "      float penM = min(pen * u_csm_soft, 0.6);\n"      /* world metres, capped. */
-    "      prad = clamp(penM * uvPerM, texuv, 12.0*texuv);\n"
-    "    } else {\n"
-    "      prad = clamp(u_csm_soft * uvPerM, texuv, 6.0*texuv);\n"  /* fixed width. */
-    "    }\n"
-    /* PCF: 8 taps (per-pixel rotation dithers them so 8 reads smooth). */
-    "    float lit = 0.0;\n"
-    "    for(int s=0;s<8;++s){\n"
-    "      float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*prad, float(i))).r;\n"
-    "      lit += (dp < d - bias) ? 0.0 : 1.0;\n"
-    "    }\n"
-    /* Cascades TILE the light frustum; at a tile seam the guard band puts a\n"
-     * fragment in two tiles, both holding the same border casters. Union the\n"
-     * occlusion (most-occluded wins) so the seam is seamless -- do NOT break at\n"
-     * the first containing tile. */
-    "    vis = min(vis, lit * 0.125);\n"
-    "  }\n"
-    "  return min(vis, pbr_dyn_shadow(fragpos));\n"
-    "}\n"
-    /* Translucency mask (rpg-29zj): translucent casters are EXCLUDED from the\n"
-     * main maps above (light passes through) and instead write tint+coverage +\n"
-     * linear distance into these per-cascade targets. A fragment lying BEYOND\n"
-     * the mask distance -- i.e. the light sees it THROUGH the translucent\n"
-     * surface -- has its sun term multiplied by the transmission tint. The\n"
-     * depth gate means glass shadows nothing in front of or beside it. */
+    /* Translucency mask (rpg-29zj): translucent casters (glass) are EXCLUDED from\n"
+     * the opaque cascade above and instead write tint+coverage + linear distance\n"
+     * into these per-cascade targets (point-sampled -- discontinuous data). A\n"
+     * receiver seen THROUGH the glass from the light has its sun term multiplied\n"
+     * by the transmission tint. These are sampled INSIDE the PCF tap loop below so\n"
+     * glass shadows share the sun's soft penumbra and merge with opaque occlusion\n"
+     * per sample (a tap that is opaque-occluded contributes nothing; a lit tap\n"
+     * behind glass contributes the tint; a clear lit tap contributes full light). */
     "uniform sampler2DArray u_csm_mask_color;\n"
     "uniform sampler2DArray u_csm_mask_depth;\n"
     "uniform sampler2D u_dyn_mask_color;\n"
@@ -367,44 +321,95 @@ static const char *const PBR_FS =
      * unoccluded fraction (1 - coverage) still passes straight through. */
     "uniform sampler2DArray u_csm_caustic;\n"
     "uniform int u_caustic_on;\n"
-    "vec3 pbr_csm_translucency(vec3 fragpos){\n"
-    "  if(u_csm_mask_on==0||u_csm_enabled==0) return vec3(1.0);\n"
-    "  vec3 trans = vec3(1.0);\n"
+    /* Per-tap transmission at light-space (@p tuv, cascade @p i): vec3(1) when no\n"
+     * glass covers this tap, else the coverage-weighted tint (or caustic energy)\n"
+     * once the receiver is behind the glass as seen from the light. @p gbias is a\n"
+     * SMALL fraction of the opaque bias -- glass and receiver are always DIFFERENT\n"
+     * surfaces, so only depth-quantisation slack is needed, not acne bias. */
+    "vec3 pbr_csm_tap_trans(vec2 tuv, int i, float d, float gbias){\n"
+    "  if(u_csm_mask_on==0) return vec3(1.0);\n"
+    "  vec4 m = texture(u_csm_mask_color, vec3(tuv, float(i)));\n"
+    "  if(m.a < 0.004) return vec3(1.0);\n"
+    "  float md = texture(u_csm_mask_depth, vec3(tuv, float(i))).r;\n"
+    "  if(d <= md + gbias) return vec3(1.0);\n"      /* not behind the glass. */
+    "  return (u_caustic_on==1)\n"
+    "    ? (vec3(1.0-m.a) + texture(u_csm_caustic, vec3(tuv, float(i))).rgb)\n"
+    "    : mix(vec3(1.0), m.rgb, m.a);\n"
+    "}\n"
+    /* Cascaded sun shadow: opaque PCSS + translucent glass, MERGED per PCF sample\n"
+     * so glass shadows get the same soft penumbra as opaque ones. Returns a vec3\n"
+     * visibility (colored, because glass transmission is tinted). */
+    "vec3 pbr_csm_shadow(vec3 fragpos, mat2 rot){\n"
+    "  if(u_csm_enabled==0) return vec3(1.0);\n"
+    "  vec3 vis = vec3(1.0);\n"
+    "  float texuv = 1.0 / u_csm_res;\n"                   /* cascade-independent. */
     "  for(int i=0;i<u_csm_count;++i){\n"
     "    vec4 lc = u_csm_vp[i] * vec4(fragpos, 1.0);\n"
     "    vec3 ndc = lc.xyz / lc.w;\n"        /* ortho: w = 1. */
-    "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n"
+    "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n" /* no data here. */
     "    vec2 uv = ndc.xy*0.5 + 0.5;\n"
-    "    vec4 m = texture(u_csm_mask_color, vec3(uv, float(i)));\n"
-    "    if(m.a < 0.004) continue;\n"        /* no translucent caster here. */
     "    float invfar = 1.0 / u_csm_far[i];\n"
-    "    float d = length(fragpos - u_csm_eye[i]) * invfar;\n"
-    "    float md = texture(u_csm_mask_depth, vec3(uv, float(i))).r;\n"
-    /* Behind the glass as seen from the light: attenuate by the transmission\n"
-     * tint, weighted by coverage -- or, with caustics on, by the redistributed\n"
-     * energy (1-a straight-through + the traced splat at this light texel).\n"
-     * Union across cascades (darkest wins). */
-    "    if(d > md + u_dir_bias * invfar){\n"
-    "      vec3 tc = (u_caustic_on==1)\n"
-    "        ? (vec3(1.0-m.a) + texture(u_csm_caustic, vec3(uv, float(i))).rgb)\n"
-    "        : mix(vec3(1.0), m.rgb, m.a);\n"
-    "      trans = min(trans, tc);\n"
+    "    float d = clamp(length(fragpos - u_csm_eye[i]) * invfar, 0.0, 1.0);\n"
+    "    float bias = u_dir_bias * invfar;\n"             /* metres -> normalised. */
+    "    float gbias = 0.25 * bias;\n"                    /* glass gate (thin slack). */
+    "    float uvPerM = 1.0 / (u_csm_texel[i] * u_csm_res);\n" /* uv per world metre. */
+    /* Penumbra radius (uv) sized off the OPAQUE blocker search (glass is not in\n"
+     * the opaque map, so it does not widen the penumbra). PCSS: search the source\n"
+     * footprint for the average blocker depth and grow the penumbra with the gap;\n"
+     * with no opaque blocker the penumbra collapses to one texel but the tap loop\n"
+     * STILL runs so glass in this cascade is caught. */
+    "    float prad;\n"
+    "    if(u_csm_pcss==1){\n"
+    "      float srad = max(u_csm_soft * uvPerM, texuv);\n"
+    "      float bsum = 0.0, bcnt = 0.0;\n"
+    "      for(int s=0;s<16;++s){\n"
+    "        float dp = texture(u_csm_static, vec3(uv + rot*PZ[s]*srad, float(i))).r;\n"
+    "        if(dp < d - bias){ bsum += dp; bcnt += 1.0; }\n"
+    "      }\n"
+    "      if(bcnt < 0.5){ prad = texuv; }\n"   /* no opaque blocker: sharp, still sample glass. */
+    "      else {\n"
+    "        float dblk = bsum / bcnt;\n"
+    "        float pen = (d - dblk) / max(dblk, 1e-4);\n"     /* scale-invariant ratio. */
+    "        float penM = min(pen * u_csm_soft, 0.6);\n"      /* world metres, capped. */
+    "        prad = clamp(penM * uvPerM, texuv, 12.0*texuv);\n"
+    "      }\n"
+    "    } else {\n"
+    "      prad = clamp(u_csm_soft * uvPerM, texuv, 6.0*texuv);\n"  /* fixed width. */
+    "    }\n"
+    /* PCF: 8 taps (per-pixel rotation dithers them). Each tap merges opaque\n"
+     * occlusion (dark) with translucent transmission (tint) -- a lit tap behind\n"
+     * glass carries the tint, so the glass shadow gets the same soft edge. */
+    "    vec3 lit = vec3(0.0);\n"
+    "    for(int s=0;s<8;++s){\n"
+    "      vec2 tuv = uv + rot*PZ[s]*prad;\n"
+    "      float dp = texture(u_csm_static, vec3(tuv, float(i))).r;\n"
+    "      if(dp < d - bias) continue;\n"              /* opaque-occluded: adds 0. */
+    "      lit += pbr_csm_tap_trans(tuv, i, d, gbias);\n"
+    "    }\n"
+    /* Cascades TILE the light frustum; at a tile seam the guard band puts a\n"
+     * fragment in two tiles, both holding the same border casters. Union the\n"
+     * occlusion (most-occluded wins, per channel) so the seam is seamless. */
+    "    vis = min(vis, lit * 0.125);\n"
+    "  }\n"
+    /* Dynamic opaque casters (scalar PCF), merged per channel. */
+    "  vis = min(vis, vec3(pbr_dyn_shadow(fragpos)));\n"
+    /* Dynamic translucent casters: single ortho pair (moving glass is rare, so no\n"
+     * PCF), same depth gate as the static path. */
+    "  if(u_csm_mask_on==1){\n"
+    "    vec4 dl = u_dyn_vp * vec4(fragpos, 1.0);\n"
+    "    vec3 dn = dl.xyz / dl.w;\n"
+    "    if(all(lessThan(abs(dn), vec3(1.0)))){\n"
+    "      vec2 duv = dn.xy*0.5 + 0.5;\n"
+    "      vec4 m = texture(u_dyn_mask_color, duv);\n"
+    "      if(m.a >= 0.004){\n"
+    "        float dd = length(fragpos - u_dyn_eye) / u_dyn_far;\n"
+    "        float md = texture(u_dyn_mask_depth, duv).r;\n"
+    "        if(dd > md + 0.25 * u_dir_bias / u_dyn_far)\n"
+    "          vis = min(vis, mix(vec3(1.0), m.rgb, m.a));\n"
+    "      }\n"
     "    }\n"
     "  }\n"
-    /* Dynamic translucent casters: single ortho pair, same gate. */
-    "  vec4 dl = u_dyn_vp * vec4(fragpos, 1.0);\n"
-    "  vec3 dn = dl.xyz / dl.w;\n"
-    "  if(all(lessThan(abs(dn), vec3(1.0)))){\n"
-    "    vec2 duv = dn.xy*0.5 + 0.5;\n"
-    "    vec4 m = texture(u_dyn_mask_color, duv);\n"
-    "    if(m.a >= 0.004){\n"
-    "      float d = length(fragpos - u_dyn_eye) / u_dyn_far;\n"
-    "      float md = texture(u_dyn_mask_depth, duv).r;\n"
-    "      if(d > md + u_dir_bias / u_dyn_far)\n"
-    "        trans = min(trans, mix(vec3(1.0), m.rgb, m.a));\n"
-    "    }\n"
-    "  }\n"
-    "  return trans;\n"
+    "  return vis;\n"
     "}\n"
     /* Dynamic-light GI (rpg-fo9r): gather the nearest adaptive probes (accel grid\n"
      * in texture buffers) and inverse-distance blend their SH, reconstructed as\n"
@@ -737,7 +742,7 @@ static const char *const PBR_FS =
     /* Perf probe: 9 = material fetches only (no lighting), isolates fill/bandwidth. */
     "  if(u_debug_mode==9){ frag=vec4(albedo*ao,1.0); return; }\n"
     /* Directional sun. */
-    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot) * pbr_csm_translucency(v_world_pos);\n"
+    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot);\n"
     "  float dbg_cubesh = 1.0;\n"   /* raw cube-shadow of the nearest shadowed clustered light. */
     "  if(u_clustered==1){\n"
     /* Forward+: shade only this cluster's lights. */
@@ -776,7 +781,7 @@ static const char *const PBR_FS =
     "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"
     /* 5 = raw CSM shadow factor (white=lit, black=occluded). 6 = finest cascade\n"
      * whose box contains the fragment (red=0, green=1, blue=2+). */
-    "  if(u_debug_mode==5){ float sh=pbr_csm_shadow(v_world_pos, krot); frag=vec4(vec3(sh),1.0); return; }\n"
+    "  if(u_debug_mode==5){ vec3 sh=pbr_csm_shadow(v_world_pos, krot); frag=vec4(sh,1.0); return; }\n"
     "  if(u_debug_mode==6){ int ci=-1; for(int i=0;i<u_csm_count;++i){ vec4 lc=u_csm_vp[i]*vec4(v_world_pos,1.0); vec3 nd=lc.xyz/lc.w; if(all(lessThanEqual(abs(nd),vec3(1.0)))){ci=i;break;} }\n"
     "    vec3 cc=ci<0?vec3(0.1):(ci==0?vec3(1,0,0):(ci==1?vec3(0,1,0):vec3(0,0,1))); frag=vec4(cc,1.0); return; }\n"
     "  if(u_debug_mode==5){ frag=vec4(0.5+0.5*normalize(v_tangent),1.0); return; }\n"

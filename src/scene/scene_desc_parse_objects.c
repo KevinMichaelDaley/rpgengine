@@ -113,6 +113,9 @@ bool scene_desc_parse_objects(const json_value_t *root, struct arena *arena,
         /* DYNAMIC objects are outside the offline bake; the runtime voxelises them
          * into its dynamic albedo volume each probe update (rpg-3c6g). */
         d->dynamic = sd_field_bool(o, "dynamic", false) ? 1 : 0;
+        /* BUILDING objects get a densified probe shell around their surfaces in
+         * the offline placer (ferrum_building on the Blender side). */
+        d->building = sd_field_bool(o, "building", false) ? 1 : 0;
         d->sh_layer = (int32_t)sd_field_num(o, "sh_layer", 0.0f);
 
         const json_value_t *mats = json_object_get(o, "materials");

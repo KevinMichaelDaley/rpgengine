@@ -53,6 +53,11 @@ typedef struct scene_desc_object {
                                              *   baked voxel albedo); the runtime
                                              *   voxelises it into the dynamic albedo
                                              *   volume so its colour still bleeds. */
+    int32_t  building;                      /**< 1 = BUILDING (ferrum_building on the
+                                             *   Blender object): the offline probe
+                                             *   placer densifies a probe shell around
+                                             *   this object's surfaces (interior rooms
+                                             *   + exterior facades) for crisp GI. */
 } scene_desc_object_t;
 
 #ifdef __cplusplus

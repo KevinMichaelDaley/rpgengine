@@ -365,6 +365,29 @@ def _principled(mat):
     return None
 
 
+def _material_opacity(mat, p):
+    """Engine opacity in [0,1] (1 = fully opaque, <1 = translucent caster that
+    feeds the CSM translucency mask). A ``ferrum_opacity`` custom property on the
+    material is the explicit override; otherwise it is derived from the Principled
+    BSDF -- the lower (more transparent) of its Alpha and its light Transmission,
+    so glass authored EITHER via low Alpha OR via Transmission exports correctly.
+    Blender's blend_method (viewport transparency) alone carries no numeric value,
+    so a purely blend_method-'glassy' material must set Alpha/Transmission or the
+    ferrum_opacity property to be translucent in the engine."""
+    o = mat.get("ferrum_opacity", None)
+    if o is not None:
+        return max(0.0, min(1.0, float(o)))
+    if p is None:
+        return 1.0
+    alpha = float(p.inputs["Alpha"].default_value) if "Alpha" in p.inputs else 1.0
+    trans = 0.0
+    for k in ("Transmission Weight", "Transmission"):   # 4.x renamed the socket.
+        if k in p.inputs:
+            trans = float(p.inputs[k].default_value)
+            break
+    return max(0.0, min(alpha, 1.0 - trans))
+
+
 def export_material(mat, out_dir, tiles, res, bake=True):
     """Write ``materials/<mat>.mat.json`` (engine PBR contract). Tiling materials
     (in ``tiles``) are Cycles-baked to albedo/normal/roughness/ao PNGs; solid
@@ -378,6 +401,9 @@ def export_material(mat, out_dir, tiles, res, bake=True):
     rec = {"name": name, "tint": [1.0, 1.0, 1.0], "metalness": 0.0,
            "roughness_min": 0.0, "roughness_max": 1.0, "ao_strength": 1.0,
            "normal_scale": 1.0, "uv_scale": [1.0, 1.0], "maps": {}}
+    # Opacity applies to every path (solid + tiling): a translucent TILING material
+    # (e.g. patterned glass) must still feed the engine's translucency mask.
+    rec["opacity"] = _material_opacity(mat, _principled(mat))
 
     if name not in tiles:
         # Solid material: pull flat tint + roughness + metalness straight
@@ -389,7 +415,6 @@ def export_material(mat, out_dir, tiles, res, bake=True):
             r = p.inputs["Roughness"].default_value
             rec["roughness_min"] = rec["roughness_max"] = float(r)
             rec["metalness"] = float(p.inputs["Metallic"].default_value)
-            rec["opacity"] = float(p.inputs["Alpha"].default_value)
         _write_json(os.path.join(out_dir, "materials", name + ".mat.json"), rec)
         return rec
 
@@ -676,6 +701,12 @@ def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
         # so their colour still bleeds through the probe GI.
         if bool(o.get("ferrum_dynamic", 0)):
             rec["dynamic"] = True
+        # BUILDING objects (ferrum_building custom property): the offline probe
+        # placer densifies a probe shell around their surfaces (interior rooms +
+        # exterior facades). Tag a whole building mesh / collection with
+        # obj["ferrum_building"] = 1 in Blender.
+        if bool(o.get("ferrum_building", 0)):
+            rec["building"] = True
         objs.append(rec)
 
     manifest = {"collection": collection_name,
