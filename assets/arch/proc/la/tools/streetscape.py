@@ -760,19 +760,232 @@ def _arm_bearings(form, skew):
     if form == 'cross':
         return [0.0, 90.0 + skew, 180.0, 270.0]
     return [0.0, 45.0 + skew, 90.0, 180.0, 270.0]     # five
+#: Canonical intersection pad topologies, authored by the user as the
+#: scene objects 4Intersection_Topo / 5Intersection_Topo and embedded
+#: here so the operator is standalone. The generator DEFORMS these quad
+#: layouts (poles pre-placed at the corner turns) onto the parametric
+#: arms; edge-loop families carry the subdivision counts.
+_T4_VERTS = [(-0.3643, -0.2601), (0.3222, 2.0), (1.0, 2.0), (2.0, -1.0),
+    (-0.3244, -2.0), (1.0, -2.0), (-2.0, -1.0), (-2.0, 0.3014), (-0.3557,
+    2.0), (-2.0, -0.2601), (2.0, 0.3122), (0.3613, 0.304), (1.0, -0.2546),
+    (2.0, -0.2546), (-0.4609, 0.2701), (-0.4128, 0.0109), (-0.1324, 0.3018),
+    (-0.3945, 0.3346), (0.9982, 0.344), (0.7992, 0.3059), (1.0, 0.106),
+    (1.0506, 0.2918), (1.0295, -0.9949), (1.0, -0.7475), (0.7475, -1.0),
+    (0.9604, -1.0641), (-0.3278, -1.1157), (-0.0428, -1.0), (0.3111, -1.0),
+    (-0.3373, -0.7205), (-0.4176, -1.0258), (0.8128, 2.0), (-0.0856, 2.0),
+    (2.0, -0.724), (0.768, -2.0), (0.2909, -2.0), (-0.0787, -2.0), (-2.0,
+    -0.7309), (2.0, 0.133), (-2.0, -0.0121)]
+_T4_FACES = [(11, 16, 15, 0), (14, 15, 16, 17), (8, 17, 16, 32), (18, 19, 20,
+    21), (10, 21, 20, 38), (0, 28, 12, 11), (1, 11, 19, 31), (0, 15, 39, 9),
+    (22, 23, 24, 25), (13, 12, 23, 33), (27, 28, 0, 29), (12, 28, 24, 23),
+    (26, 27, 29, 30), (5, 25, 24, 34), (30, 29, 37, 6), (11, 12, 20, 19), (31,
+    19, 18, 2), (32, 16, 11, 1), (33, 23, 22, 3), (34, 24, 28, 35), (35, 28,
+    27, 36), (36, 27, 26, 4), (37, 29, 0, 9), (38, 20, 12, 13), (39, 15, 14,
+    7)]
+_T5_VERTS = [(3.8308, -0.2601), (4.1952, 0.0232), (3.6578, -0.1129), (4.5063,
+    -1.0), (3.8579, -0.7205), (3.5559, -0.2601), (2.1952, -0.2601), (3.5784,
+    -0.7199), (3.4119, -0.1145), (2.1952, -0.1227), (3.1277, 0.2768), (3.3161,
+    0.2718), (2.1952, 0.3014), (1.7593, 1.5968), (1.9131, 1.7025), (2.151,
+    1.9182), (2.5296, 2.3592), (3.6369, 0.5843), (3.9325, 0.9285), (4.0192,
+    0.2115), (4.2807, 0.6966), (4.6108, 0.5577), (4.332, 0.9781), (4.6598,
+    2.289), (4.6824, 0.8717), (3.9992, 1.2), (4.2838, 2.3591), (2.7206,
+    2.5685), (4.9882, 2.2124), (5.0881, 0.7969), (5.287, 2.1561), (5.0415,
+    0.4785), (5.3026, 0.7879), (5.2441, 0.4791), (5.5524, 2.1062), (5.2458,
+    0.2918), (5.1952, 0.106), (6.1952, 0.3122), (6.1952, 0.1123), (6.1952,
+    -0.2546), (5.1952, -0.2546), (6.1952, -0.7309), (6.1952, -1.0), (5.1952,
+    -0.7475), (5.2247, -0.9949), (5.0503, -0.8924), (4.9426, -1.0), (4.8268,
+    -0.6531), (5.184, -1.0356), (5.1555, -1.0641), (5.1952, -2.0), (4.9251,
+    -2.0), (4.5035, -2.0), (4.1441, -2.0), (3.8708, -2.0), (4.1523, -1.0),
+    (3.8673, -1.1157), (3.7775, -1.0258), (3.5116, -1.0215), (2.1952, -1.0),
+    (2.1952, -0.7171)]
+_T5_FACES = [(1, 19, 2, 0), (0, 3, 47, 1), (0, 2, 8, 5), (55, 3, 0, 4), (7, 4,
+    0, 5), (60, 7, 5, 6), (5, 8, 9, 6), (9, 8, 10, 12), (8, 2, 11, 10), (13,
+    10, 11, 14), (11, 17, 15, 14), (17, 18, 16, 15), (17, 19, 20, 18), (11, 2,
+    19, 17), (21, 20, 19, 1), (25, 18, 20, 22), (22, 20, 21, 24), (26, 25, 22,
+    23), (23, 22, 24, 28), (16, 18, 25, 27), (28, 24, 29, 30), (24, 21, 31,
+    29), (30, 29, 32, 34), (29, 31, 33, 32), (33, 31, 36, 35), (37, 35, 36,
+    38), (38, 36, 40, 39), (39, 40, 43, 41), (41, 43, 44, 42), (44, 43, 45,
+    48), (40, 47, 45, 43), (48, 45, 46, 49), (45, 47, 3, 46), (50, 49, 46,
+    51), (51, 46, 3, 52), (52, 3, 55, 53), (53, 55, 56, 54), (56, 55, 4, 57),
+    (57, 4, 7, 58), (58, 7, 60, 59), (1, 47, 40, 21), (21, 40, 36, 31)]
+_T4_MOUTHS = [[8, 32, 1, 31, 2], [10, 38, 13, 33, 3],
+              [5, 34, 35, 36, 4], [6, 37, 9, 39, 7]]
+_T5_MOUTHS = [[12, 9, 6, 60, 59], [54, 53, 52, 51, 50],
+              [42, 41, 39, 38, 37], [34, 30, 28, 23, 26],
+              [27, 16, 15, 14, 13]]
+class _PadTopo:
+    """A canonical pad topology prepared for deformation: boundary loop
+    (ccw), mouth runs oriented right-to-left, ccw arm order with template
+    bearings, corner runs between consecutive arms, and the edge-loop
+    FAMILIES (opposite edges of each quad chained) that carry subdivision
+    counts."""
+
+    def __init__(self, verts, faces, mouths):
+        self.verts = verts
+        self.faces = faces
+
+        def ek(a, b):
+            return (a, b) if a < b else (b, a)
+
+        # edge-loop families via union-find over opposite quad edges
+        parent = {}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for f in faces:
+            es = [ek(f[i], f[(i + 1) % 4]) for i in range(4)]
+            for e in es:
+                parent.setdefault(e, e)
+            for (a, b) in ((es[0], es[2]), (es[1], es[3])):
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    parent[ra] = rb
+        self.fam = {e: find(e) for e in parent}
+
+        # ordered boundary loop, normalized ccw
+        from collections import defaultdict
+        cnt = defaultdict(int)
+        for f in faces:
+            for i in range(4):
+                cnt[ek(f[i], f[(i + 1) % 4])] += 1
+        adj = defaultdict(list)
+        for (e, c) in cnt.items():
+            if c == 1:
+                adj[e[0]].append(e[1])
+                adj[e[1]].append(e[0])
+        loop = [next(iter(adj))]
+        prev = None
+        while True:
+            nxt = [w for w in adj[loop[-1]] if w != prev]
+            prev = loop[-1]
+            loop.append(nxt[0])
+            if loop[-1] == loop[0]:
+                loop.pop()
+                break
+        area2 = sum(verts[loop[i]][0] * verts[loop[(i + 1) % len(loop)]][1] -
+                    verts[loop[(i + 1) % len(loop)]][0] * verts[loop[i]][1]
+                    for i in range(len(loop)))
+        if area2 < 0:
+            loop.reverse()
+        self.loop = loop
+
+        cx = sum(v[0] for v in verts) / len(verts)
+        cy = sum(v[1] for v in verts) / len(verts)
+        arms = []
+        for mm in mouths:
+            a, b = verts[mm[0]], verts[mm[-1]]
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            for (nx, ny) in ((dy, -dx), (-dy, dx)):
+                mx = (a[0] + b[0]) / 2.0 - cx
+                my = (a[1] + b[1]) / 2.0 - cy
+                if nx * mx + ny * my > 0:
+                    brg = math.degrees(math.atan2(ny, nx)) % 360.0
+                    # orient right -> left seen facing outward
+                    ln = (-ny, nx)
+                    if (dx * ln[0] + dy * ln[1]) < 0:
+                        mm = list(reversed(mm))
+                    arms.append((brg, mm))
+                    break
+        arms.sort(key=lambda t: t[0])
+        self.arm_bearings = [t[0] for t in arms]
+        self.arm_mouths = [t[1] for t in arms]
+
+        # corner runs: ccw boundary walk from arm k's LEFT end to arm
+        # (k+1)'s RIGHT end
+        pos = {v: i for i, v in enumerate(self.loop)}
+        self.corners = []
+        n = len(self.loop)
+        for k in range(len(arms)):
+            k2 = (k + 1) % len(arms)
+            i0 = pos[self.arm_mouths[k][-1]]
+            i1 = pos[self.arm_mouths[k2][0]]
+            run = [self.loop[i0]]
+            i = i0
+            while i != i1:
+                i = (i + 1) % n
+                run.append(self.loop[i])
+            self.corners.append(run)
+        self.boundary = set()
+        for e, c in cnt.items():
+            if c == 1:
+                self.boundary.add(e)
+
+        # mean-value-coordinate weights for every interior vert w.r.t.
+        # the boundary loop (template geometry; reused on any target)
+        self.interior = [i for i in range(len(verts))
+                         if i not in pos]
+        self.mvc = {}
+        for vi in self.interior:
+            p = verts[vi]
+            w = []
+            for j in range(n):
+                a = verts[self.loop[(j - 1) % n]]
+                b = verts[self.loop[j]]
+                c = verts[self.loop[(j + 1) % n]]
+                rb = math.hypot(b[0] - p[0], b[1] - p[1])
+
+                def half_tan(q0, q1):
+                    v0 = (q0[0] - p[0], q0[1] - p[1])
+                    v1 = (q1[0] - p[0], q1[1] - p[1])
+                    d0 = math.hypot(*v0)
+                    d1 = math.hypot(*v1)
+                    dot = v0[0] * v1[0] + v0[1] * v1[1]
+                    crs = v0[0] * v1[1] - v0[1] * v1[0]
+                    ang = math.atan2(abs(crs), dot)
+                    del d0, d1
+                    return math.tan(ang / 2.0)
+
+                w.append((half_tan(a, b) + half_tan(b, c)) / max(rb, 1e-9))
+            s9 = sum(w)
+            self.mvc[vi] = [x / s9 for x in w]
+
+
+_PAD4 = _PadTopo(_T4_VERTS, [list(f) for f in _T4_FACES], _T4_MOUTHS)
+_PAD5 = _PadTopo(_T5_VERTS, [list(f) for f in _T5_FACES], _T5_MOUTHS)
+
+
+def _coons_rect(bottom, top, left, right):
+    """Rectangular bilinear Coons grid from 4 border polylines (2D).
+    bottom/top run u (len nu+1), left/right run v (len nv+1); corners
+    must agree: bottom[0]=left[0], bottom[-1]=right[0], top[0]=left[-1],
+    top[-1]=right[-1]."""
+    nu = len(bottom) - 1
+    nv = len(left) - 1
+    grid = []
+    for j in range(nv + 1):
+        v = j / nv
+        row = []
+        for i in range(nu + 1):
+            u = i / nu
+            x = ((1 - v) * bottom[i][0] + v * top[i][0] +
+                 (1 - u) * left[j][0] + u * right[j][0] -
+                 ((1 - u) * (1 - v) * bottom[0][0] +
+                  u * (1 - v) * bottom[nu][0] +
+                  (1 - u) * v * top[0][0] + u * v * top[nu][0]))
+            y = ((1 - v) * bottom[i][1] + v * top[i][1] +
+                 (1 - u) * left[j][1] + u * right[j][1] -
+                 ((1 - u) * (1 - v) * bottom[0][1] +
+                  u * (1 - v) * bottom[nu][1] +
+                  (1 - u) * v * top[0][1] + u * v * top[nu][1]))
+            row.append((x, y))
+        grid.append(row)
+    return grid
 def build_intersection(p, rng):
-    """N-way intersection with GRID-FLOW pad topology, fitted to the true
-    street outline: each arm's lane loops run straight in on a strip grid
-    and turn through a central n-gon (center vert valence n -- regular
-    for a cross); corner wedges are Coons patches RELAXED and CLAMPED
-    inside the street edges + fillet arc, so nothing extends past the
-    shape the intersection occupies. Mouth radii are PER ARM (just past
-    that arm's own fillet tangents) -- a sharp five-way corner stretches
-    only its own two arms, not the whole pad. Veers (n = 2) run one
-    through-grid mouth to mouth. The outer apron end is the exact
-    straight-street cross-section, so la_street segments plug on. Both
-    modes emit the same geometry (open pavement kit).
-    """
+    """N-way intersection whose pad DEFORMS the user-authored canonical
+    quad topologies (_PAD4 / _PAD5): mouth runs land on the arm cross-
+    sections, corner runs land on the fillet chains (arclength-sampled,
+    G1-continuous segment-arc-segment), interior cage verts follow by
+    mean-value coordinates, and every template quad fills with a matched
+    Coons grid -- the poles stay exactly where the template author put
+    them. cross/five map 1:1; tee maps the 4-way template with a PHANTOM
+    fourth arm flattened onto the straight back curb; veer (n = 2) is a
+    single rectangular through-grid. Arm interfaces carry the straight-
+    street cross-section, so la_street segments plug on. Both modes emit
+    the same geometry (open pavement kit)."""
     del rng
     lanes = p["lanes"]
     lw = p["lane_width"]
@@ -780,16 +993,21 @@ def build_intersection(p, rng):
     apron = p["apron_length"]
     rc = p["corner_radius"]
     n_s, n_n, y0r, m0, m1, y1r, z_pk, z_road = _xsection(lanes, lw, 'none')
-    WL = y1r + GUT_W                  # left curb-face offset
-    WR = -y0r + GUT_W                 # right curb-face offset (positive)
-    bear = sorted(b % 360.0 for b in _arm_bearings(p["form"], p["skew"]))
+    WL = y1r + GUT_W
+    WR = -y0r + GUT_W
+    form = p["form"]
+    bear = sorted(b % 360.0 for b in _arm_bearings(form, p["skew"]))
+    phantom = None
+    if form == 'tee':
+        bear = sorted(bear + [270.0])
+        phantom = bear.index(270.0)
     n_arm = len(bear)
     mats = [_material(nm) for nm in _MATS]
 
     def frame(deg):
         r = math.radians(deg)
         return ((math.cos(r), math.sin(r)),
-                (-math.sin(r), math.cos(r)))      # (dir, left normal)
+                (-math.sin(r), math.cos(r)))
 
     frames = [frame(b) for b in bear]
 
@@ -801,23 +1019,22 @@ def build_intersection(p, rng):
         return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
 
     def q2d(shell9, a, b, c, d, mat, tag=None):
-        """Flat pad quad at Z_E, wound ccw (+z) regardless of param order."""
         ar = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
         pts = [a, b, c, d] if ar > 0 else [d, c, b, a]
         shell9.quad((pts[0][0], pts[0][1], Z_E), (pts[1][0], pts[1][1], Z_E),
                     (pts[2][0], pts[2][1], Z_E), (pts[3][0], pts[3][1], Z_E),
                     mat, tag)
 
-    # ---- fillet math per wedge (arm k left curb vs arm k+1 right curb) ----
+    # ---- fillets between REAL arm pairs (phantom wedges stay straight) ----
     fil = []
     for k in range(n_arm):
         k2 = (k + 1) % n_arm
-        (da, na), (db, nb) = frames[k], frames[k2]
         wedge = (bear[k2] - bear[k]) % 360.0
-        if abs(wedge - 180.0) <= 8.0:
-            fil.append(None)          # straight seam
+        if phantom in (k, k2) or abs(wedge - 180.0) <= 8.0:
+            fil.append(None)
             continue
-        pv = 1.0 if wedge < 180.0 else -1.0       # concave / convex
+        (da, na), (db, nb) = frames[k], frames[k2]
+        pv = 1.0 if wedge < 180.0 else -1.0
         oA, oB = WL + pv * rc, WR + pv * rc
         det = da[0] * db[1] - da[1] * db[0]
         bxv = -(oA * na[0] + oB * nb[0])
@@ -830,16 +1047,14 @@ def build_intersection(p, rng):
         tb = Tb[0] * db[0] + Tb[1] * db[1]
         a0 = math.atan2(Ta[1] - C[1], Ta[0] - C[0])
         a1 = math.atan2(Tb[1] - C[1], Tb[0] - C[0])
-        if pv > 0:                    # concave: walk cw around C
+        if pv > 0:
             while a1 >= a0:
                 a1 -= 2.0 * math.pi
-        else:                         # convex: walk ccw around C
+        else:
             while a1 <= a0:
                 a1 += 2.0 * math.pi
         fil.append(dict(C=C, ta=ta, tb=tb, a0=a0, a1=a1, pv=pv))
 
-    # per-arm mouth radius: just past THIS arm's own tangents (a sharp
-    # wedge stretches its two arms only; the pad hugs the street outline)
     r0s = []
     for k in range(n_arm):
         km = (k - 1) % n_arm
@@ -849,151 +1064,276 @@ def build_intersection(p, rng):
         if fil[km] is not None:
             need = max(need, fil[km]['tb'])
         r0s.append(need + 0.4)
-    r1s = [r + apron for r in r0s]
 
-    # ---- grid counts (the Coons corner patches need matched sides) ---------
-    rows = sorted({y0r, m0, y1r}
-                  | {y0r + k9 * lw for k9 in range(1, n_s)}
-                  | {y0r + (k9 + 0.5) * lw for k9 in range(n_s)}
-                  | {m1 + k9 * lw for k9 in range(1, n_n)}
-                  | {m1 + (k9 + 0.5) * lw for k9 in range(n_n)})
-    m = len(rows) - 1                 # ALWAYS EVEN (half-lane rows)
-    r_min = min(r0s)
-    r_core = min(max(0.35 * r_min, 2.0), r_min - 2.0)
-    sweep_max = max((abs(f9['a1'] - f9['a0']) for f9 in fil
-                     if f9 is not None), default=1.0)
-    nq = max(2, int(math.ceil((sweep_max / 0.35 + 2.0) / 2.0)),
-             int(round((r_min - r_core) / 1.8)))
-    for f9 in fil:
-        if f9 is not None:
-            f9['na'] = 2 * nq - 2     # arc cells; chain = na + 2 = 2*nq
+    # phantom (tee) seam endpoints: the straight back curb runs between
+    # the neighbouring real arms' mouth corners; the phantom mouth is its
+    # middle portion
+    if phantom is not None:
+        kp9, kn9 = (phantom - 1) % n_arm, (phantom + 1) % n_arm
+        A1p = pt(kp9, r0s[kp9], y1r, 0.0)[:2]
+        A2p = pt(kn9, r0s[kn9], y0r, 0.0)[:2]
+        ph_r = lerp2(A1p, A2p, 0.32)      # phantom mouth right end
+        ph_l = lerp2(A1p, A2p, 0.68)      # phantom mouth left end
 
-    def arc_pts(f9, radius):
-        return [(f9['C'][0] + radius * math.cos(
-                    f9['a0'] + (f9['a1'] - f9['a0']) * i9 / f9['na']),
-                 f9['C'][1] + radius * math.sin(
-                    f9['a0'] + (f9['a1'] - f9['a0']) * i9 / f9['na']))
-                for i9 in range(f9['na'] + 1)]
-
-    # mouth verts + outer wedge chains (A1 -> tangent -> arc -> tangent -> A2)
-    mouth = [[pt(k, r0s[k], y, Z_E)[:2] for y in rows] for k in range(n_arm)]
-    chains, seam_ts = [], {}
-    for k in range(n_arm):
+    # ---- chain geometry (piecewise seg/arc, G1 continuous) -----------------
+    def mk_chain(k):
+        """Pieces + total length of the wedge-k boundary chain A1 -> A2."""
         k2 = (k + 1) % n_arm
-        A1 = mouth[k][-1]             # arm k mouth-left corner (u = y1r)
-        A2 = mouth[k2][0]             # arm k2 mouth-right corner (u = y0r)
+        A1 = ph_l if k == phantom else pt(k, r0s[k], y1r, 0.0)[:2]
+        A2 = ph_r if k2 == phantom else pt(k2, r0s[k2], y0r, 0.0)[:2]
         f9 = fil[k]
         if f9 is None:
-            pn = 2 * nq
-            ch = [lerp2(A1, A2, j9 / pn) for j9 in range(pn + 1)]
-            d_a = frames[k][0]
-            seam_ts[k] = [q9[0] * d_a[0] + q9[1] * d_a[1] for q9 in ch]
-        else:
-            gi = arc_pts(f9, rc + f9['pv'] * GUT_W)
-            ch = [A1, (pt(k, f9['ta'], y1r, Z_E))[:2]] + \
-                 [q9 for q9 in gi[1:-1]] + \
-                 [(pt(k2, f9['tb'], y0r, Z_E))[:2], A2]
-        chains.append(ch)
+            return [('seg', A1, A2)], math.dist(A1, A2)
+        rg = rc + f9['pv'] * GUT_W
+        T1 = pt(k, f9['ta'], y1r, 0.0)[:2]
+        T2 = pt(k2, f9['tb'], y0r, 0.0)[:2]
+        pieces = []
+        if math.dist(A1, T1) > 1e-6:
+            pieces.append(('seg', A1, T1))
+        pieces.append(('arc', f9['C'], rg, f9['a0'], f9['a1'], f9['pv']))
+        if math.dist(T2, A2) > 1e-6:
+            pieces.append(('seg', T2, A2))
+        L9 = sum(math.dist(pc[1], pc[2]) if pc[0] == 'seg'
+                 else pc[2] * abs(pc[4] - pc[3]) for pc in pieces)
+        return pieces, L9
 
-    def ruled(ch, border, nv):
-        """Ruled grid between two index-paired polylines of EQUAL vert
-        count. Chords run roughly radially off the fillet arc, so the
-        fill provably stays between chain and border (inside the disk
-        for convex fillets, outside it for concave) -- no relaxation, no
-        degeneration, containment by construction."""
-        return [[lerp2(ch[i9], border[i9], j9 / nv)
-                 for i9 in range(len(ch))] for j9 in range(nv + 1)]
+    def chain_at(pieces, L9, f):
+        """(position, outward normal) at arclength fraction f."""
+        s9 = f * L9
+        for pc in pieces:
+            pl = (math.dist(pc[1], pc[2]) if pc[0] == 'seg'
+                  else pc[2] * abs(pc[4] - pc[3]))
+            if s9 > pl + 1e-9:
+                s9 -= pl
+                continue
+            if pc[0] == 'seg':
+                (_t, a, b) = pc
+                d9 = math.dist(a, b)
+                q = lerp2(a, b, s9 / max(d9, 1e-9))
+                t9 = ((b[0] - a[0]) / d9, (b[1] - a[1]) / d9)
+                return q, (t9[1], -t9[0])
+            (_t, C, rg, a0, a1, pv) = pc
+            ang = a0 + (a1 - a0) * (s9 / pl)
+            q = (C[0] + rg * math.cos(ang), C[1] + rg * math.sin(ang))
+            n9 = (pv * (C[0] - q[0]) / rg, pv * (C[1] - q[1]) / rg)
+            return q, n9
+        pc = pieces[-1]
+        if pc[0] == 'seg':
+            a, b = pc[1], pc[2]
+            d9 = max(math.dist(a, b), 1e-9)
+            t9 = ((b[0] - a[0]) / d9, (b[1] - a[1]) / d9)
+            return pc[2], (t9[1], -t9[0])
+        (_t, C, rg, a0, a1, pv) = pc
+        q = (C[0] + rg * math.cos(a1), C[1] + rg * math.sin(a1))
+        return q, (pv * (C[0] - q[0]) / rg, pv * (C[1] - q[1]) / rg)
 
+    # ---- VEER: rectangular through-grid (already a clean quad grid) --------
     shell = _Shell()
     walk = _Shell()
+    chain_strips = []          # (samples [(pos, nrm)], slabbed walk?)
 
-    # ---- pad topology ------------------------------------------------------
-    shell.tag = 'road'
     if n_arm == 2:
-        # VEER: ONE rectangular Coons grid mouth to mouth whose SIDE
-        # borders are the wedge chains themselves (they carry exactly
-        # 2*nq cells) -- the straight-sided through-grid used to overlap
-        # the convex-bend arc and poke past the curb line. Lane loops
-        # flow straight through the bend; the sides weld to the gutter
-        # arcs vert-for-vert.
-        nq2 = 2 * nq
-        bot = mouth[0]
-        top = [mouth[1][m - j9] for j9 in range(m + 1)]
-        lef = list(reversed(chains[1]))
-        rig = chains[0]
-        thru = []
-        for i9 in range(nq2 + 1):
-            v = i9 / nq2
-            row = []
-            for j9 in range(m + 1):
-                u = j9 / m
-                x = ((1 - v) * bot[j9][0] + v * top[j9][0] +
-                     (1 - u) * lef[i9][0] + u * rig[i9][0] -
-                     ((1 - u) * (1 - v) * bot[0][0] +
-                      u * (1 - v) * bot[m][0] +
-                      (1 - u) * v * top[0][0] + u * v * top[m][0]))
-                y = ((1 - v) * bot[j9][1] + v * top[j9][1] +
-                     (1 - u) * lef[i9][1] + u * rig[i9][1] -
-                     ((1 - u) * (1 - v) * bot[0][1] +
-                      u * (1 - v) * bot[m][1] +
-                      (1 - u) * v * top[0][1] + u * v * top[m][1]))
-                row.append((x, y))
-            thru.append(row)
-        for i9 in range(nq2):
-            for j9 in range(m):
-                q2d(shell, thru[i9][j9], thru[i9 + 1][j9],
-                    thru[i9 + 1][j9 + 1], thru[i9][j9 + 1], M_ASPHALT)
+        M2 = 2 * max(1, round(lanes / 2)) * 2
+        rows_v = [y0r + (y1r - y0r) * j / M2 for j in range(M2 + 1)]
+        mouthv = [[pt(k, r0s[k], y, Z_E)[:2] for y in rows_v]
+                  for k in range(2)]
+        ch_p = [mk_chain(k) for k in range(2)]
+        nq2 = max(4, int(round(max(c[1] for c in ch_p) / 1.5)) // 2 * 2)
+        chs = []
+        for (pieces, L9) in ch_p:
+            chs.append([chain_at(pieces, L9, j / nq2) for j in range(nq2 + 1)])
+        bot = mouthv[0]
+        top = [mouthv[1][M2 - j] for j in range(M2 + 1)]
+        lef = [q for (q, _n) in reversed(chs[1])]
+        rig = [q for (q, _n) in chs[0]]
+        thru = _coons_rect(bot, top, lef, rig)
+        _emit_grid(shell, thru, q2d, M_ASPHALT)
+        chain_strips = [chs[0], chs[1]]
+        rows_by_arm = [rows_v, rows_v]
     else:
-        # central n-gon: corners on the wedge bisectors
-        Cp = []
-        for k in range(n_arm):
-            k2 = (k + 1) % n_arm
-            wedge = (bear[k2] - bear[k]) % 360.0
-            bis = math.radians(bear[k] + wedge / 2.0)
-            Cp.append((r_core * math.cos(bis), r_core * math.sin(bis)))
-        G = (sum(q[0] for q in Cp) / n_arm, sum(q[1] for q in Cp) / n_arm)
-        S = [[lerp2(Cp[k - 1], Cp[k], j9 / m) for j9 in range(m + 1)]
-             for k in range(n_arm)]   # inner side facing arm k
-        # arm strips: mouth -> S_k (the lane loops run straight in)
-        for k in range(n_arm):
-            V = [[lerp2(mouth[k][j9], S[k][j9], i9 / nq)
-                  for j9 in range(m + 1)] for i9 in range(nq + 1)]
-            for i9 in range(nq):
-                for j9 in range(m):
-                    q2d(shell, V[i9][j9], V[i9 + 1][j9],
-                        V[i9 + 1][j9 + 1], V[i9][j9 + 1], M_ASPHALT)
-        # center: corner-split patches (center vert valence = n_arm)
-        m2 = m // 2
-        Mid = [S[k][m2] for k in range(n_arm)]
-        spoke = [[lerp2(G, Mid[k], j9 / m2) for j9 in range(m2 + 1)]
-                 for k in range(n_arm)]
-        for k in range(n_arm):
-            k2 = (k + 1) % n_arm
-            bottom = [S[k][m2 + i9] for i9 in range(m2 + 1)]   # Mid_k->C_k
-            top = spoke[k2]                                    # G->Mid_k2
-            left = [spoke[k][m2 - v] for v in range(m2 + 1)]   # Mid_k->G
-            right = [S[k2][i9] for i9 in range(m2 + 1)]        # C_k->Mid_k2
-            grid = _coons(bottom, top, left, right, m2)
-            _emit_grid(shell, grid, q2d, M_ASPHALT)
-        # corner wedges: RULED fill between the outer chain and the inner
-        # border path A1 -> C_k -> A2 (equal vert counts, index-paired) --
-        # contained inside the street edges + arc by construction; the
-        # pole sits at C_k, a corner.
-        for k in range(n_arm):
-            k2 = (k + 1) % n_arm
-            L = [lerp2(mouth[k][m], Cp[k], i9 / nq)
-                 for i9 in range(nq + 1)]         # A1 -> C_k (strip edge)
-            R = [lerp2(mouth[k2][0], Cp[k], i9 / nq)
-                 for i9 in range(nq + 1)]         # A2 -> C_k
-            border = L + [R[nq - i9] for i9 in range(1, nq + 1)]
-            _emit_grid(shell, ruled(chains[k], border, nq), q2d, M_ASPHALT)
+        topo = _PAD4 if n_arm == 4 else _PAD5
+        # cyclic alignment: match wedge-angle patterns (sharp template
+        # corners must land on the sharp target wedges)
+        wt = [(bear[(k + 1) % n_arm] - bear[k]) % 360.0
+              for k in range(n_arm)]
+        wp = [(topo.arm_bearings[(i + 1) % n_arm] -
+               topo.arm_bearings[i]) % 360.0 for i in range(n_arm)]
+        shift = min(range(n_arm), key=lambda s9: sum(
+            abs(wp[(k + s9) % n_arm] - wt[k]) for k in range(n_arm)))
 
-    # ---- per-arm aprons + side strips --------------------------------------
-    t_left = [fil[k]['ta'] if fil[k] else None for k in range(n_arm)]
-    t_right = [fil[(k - 1) % n_arm]['tb'] if fil[(k - 1) % n_arm] else None
-               for k in range(n_arm)]
+        def tmap(k):
+            return (k + shift) % n_arm
+
+        # ---- per-family subdivision counts ---------------------------------
+        s = max(1, round(lanes / 2))
+        cnt = {}
+        for k in range(n_arm):
+            mm = topo.arm_mouths[tmap(k)]
+            for j in range(4):
+                fm = topo.fam[tuple(sorted((mm[j], mm[j + 1])))]
+                cnt[fm] = max(cnt.get(fm, 1), s)
+        chain_geo = [mk_chain(k) for k in range(n_arm)]
+        for k in range(n_arm):
+            run = topo.corners[tmap(k)]
+            E9 = len(run) - 1
+            dem = max(1, int(round(chain_geo[k][1] / E9 / 1.5)))
+            for j in range(E9):
+                fm = topo.fam[tuple(sorted((run[j], run[j + 1])))]
+                cnt[fm] = max(cnt.get(fm, 1), dem)
+
+        def ecnt(a, b):
+            return cnt.get(topo.fam[tuple(sorted((a, b)))], 1)
+
+        # ---- boundary polylines + cage vert targets ------------------------
+        edge_poly = {}     # (a, b) sorted key -> polyline a-first
+        cage = {}
+
+        def put_edge(a, b, poly):
+            if a < b:
+                edge_poly[(a, b)] = poly
+            else:
+                edge_poly[(b, a)] = list(reversed(poly))
+
+        rows_by_arm = []
+        for k in range(n_arm):
+            mm = topo.arm_mouths[tmap(k)]
+            Mk = sum(ecnt(mm[j], mm[j + 1]) for j in range(4))
+            if k == phantom:
+                # phantom mouth: middle of the straight seam between the
+                # neighbouring real arms' corners
+                kp, kn = (k - 1) % n_arm, (k + 1) % n_arm
+                A1p = pt(kp, r0s[kp], y1r, 0.0)[:2]
+                A2p = pt(kn, r0s[kn], y0r, 0.0)[:2]
+                mpos = [lerp2(A1p, A2p, 0.32 + 0.36 * j / Mk)
+                        for j in range(Mk + 1)]
+                # A1p is the phantom's RIGHT side (ccw arrives there), so
+                # the run is already ordered right -> left
+                rows_by_arm.append(None)
+            else:
+                rows_k = [y0r + (y1r - y0r) * j / Mk for j in range(Mk + 1)]
+                mpos = [pt(k, r0s[k], y, Z_E)[:2] for y in rows_k]
+                rows_by_arm.append(rows_k)
+            cum = 0
+            for j in range(4):
+                c9 = ecnt(mm[j], mm[j + 1])
+                put_edge(mm[j], mm[j + 1], mpos[cum:cum + c9 + 1])
+                cage[mm[j]] = mpos[cum]
+                cum += c9
+            cage[mm[4]] = mpos[cum]
+        for k in range(n_arm):
+            run = topo.corners[tmap(k)]
+            (pieces, L9) = chain_geo[k]
+            E9 = len(run) - 1
+            cells = [ecnt(run[j], run[j + 1]) for j in range(E9)]
+            Ct = sum(cells)
+            samples = [chain_at(pieces, L9, j / Ct) for j in range(Ct + 1)]
+            chain_strips.append(samples)
+            spts = [q for (q, _n) in samples]
+            cum = 0
+            for j in range(E9):
+                put_edge(run[j], run[j + 1], spts[cum:cum + cells[j] + 1])
+                cage[run[j]] = spts[cum]
+                cum += cells[j]
+            cage[run[E9]] = spts[cum]
+        # interior cage verts by mean-value coordinates over the loop
+        for vi in topo.interior:
+            w = topo.mvc[vi]
+            x = sum(w[j] * cage[topo.loop[j]][0] for j in range(len(w)))
+            y = sum(w[j] * cage[topo.loop[j]][1] for j in range(len(w)))
+            cage[vi] = (x, y)
+        # interior edges: straight polylines
+        for f in topo.faces:
+            for i in range(4):
+                a, b = f[i], f[(i + 1) % 4]
+                key = (a, b) if a < b else (b, a)
+                if key in edge_poly:
+                    continue
+                c9 = ecnt(a, b)
+                edge_poly[key] = [lerp2(cage[key[0]], cage[key[1]], j / c9)
+                                  for j in range(c9 + 1)]
+
+        def get_poly(a, b):
+            key = (a, b) if a < b else (b, a)
+            poly = edge_poly[key]
+            return poly if a < b else list(reversed(poly))
+
+        # ---- fill every template quad with a matched Coons grid ------------
+        shell.tag = 'road'
+        for f in topo.faces:
+            bottom = get_poly(f[0], f[1])
+            right = get_poly(f[1], f[2])
+            top = get_poly(f[3], f[2])
+            left = get_poly(f[0], f[3])
+            _emit_grid(shell, _coons_rect(bottom, top, left, right),
+                       q2d, M_ASPHALT)
+
+    # ---- gutter / curb / walk strips along every boundary chain ------------
+    def emit_chain_strip(samples):
+        for i9 in range(len(samples) - 1):
+            (qa, na9), (qb, nb9) = samples[i9], samples[i9 + 1]
+
+            def off(q, n9, d9):
+                return (q[0] + n9[0] * d9, q[1] + n9[1] * d9)
+
+            ga, gb = off(qa, na9, GUT_W), off(qb, nb9, GUT_W)
+            ba, bb = off(qa, na9, GUT_W + CURB_W), off(qb, nb9,
+                                                       GUT_W + CURB_W)
+            shell.quad((qb[0], qb[1], Z_E), (qa[0], qa[1], Z_E),
+                       (ga[0], ga[1], 0.0), (gb[0], gb[1], 0.0),
+                       M_CONCRETE, 'gutter')
+            shell.quad((ga[0], ga[1], CURB_H), (gb[0], gb[1], CURB_H),
+                       (gb[0], gb[1], 0.0), (ga[0], ga[1], 0.0),
+                       M_CONCRETE, 'curb')                    # face (-n)
+            shell.quad((gb[0], gb[1], CURB_H), (ga[0], ga[1], CURB_H),
+                       (ba[0], ba[1], CURB_H), (bb[0], bb[1], CURB_H),
+                       M_CONCRETE, 'curb')                    # top (+z)
+            shell.quad((bb[0], bb[1], CURB_H), (ba[0], ba[1], CURB_H),
+                       (ba[0], ba[1], 0.0), (bb[0], bb[1], 0.0),
+                       M_CONCRETE, 'curb')                    # back (+n)
+            # sidewalk wedge slab (its own island: shrink along the chain)
+            wa0 = off(qa, na9, GUT_W + CURB_W + GAP)
+            wb0 = off(qb, nb9, GUT_W + CURB_W + GAP)
+            wa1 = off(qa, na9, GUT_W + CURB_W + GAP + sw)
+            wb1 = off(qb, nb9, GUT_W + CURB_W + GAP + sw)
+            wa0, wb0 = lerp2(wa0, wb0, 0.004), lerp2(wb0, wa0, 0.004)
+            wa1, wb1 = lerp2(wa1, wb1, 0.004), lerp2(wb1, wa1, 0.004)
+            walk.tag = 'sidewalk'
+            ring4 = [wb0, wa0, wa1, wb1]
+            walk.quad((wb0[0], wb0[1], Z_WALK), (wa0[0], wa0[1], Z_WALK),
+                      (wa1[0], wa1[1], Z_WALK), (wb1[0], wb1[1], Z_WALK),
+                      M_CONCRETE, 'sidewalk')
+            for (v0, v1) in zip(ring4, ring4[1:] + ring4[:1]):
+                walk.quad((v1[0], v1[1], 0.11), (v0[0], v0[1], 0.11),
+                          (v0[0], v0[1], Z_WALK), (v1[0], v1[1], Z_WALK),
+                          M_CONCRETE, 'sidewalk')
+
+    for samples in chain_strips:
+        emit_chain_strip(samples)
+    if phantom is not None:
+        # the phantom mouth is also back-curb: strip it too
+        mm = topo.arm_mouths[tmap(phantom)]
+        mpoly = []
+        for j in range(4):
+            seg9 = get_poly(mm[j], mm[j + 1])
+            mpoly.extend(seg9 if not mpoly else seg9[1:])
+        segs = []
+        for q in mpoly:
+            segs.append(q)
+        samples = []
+        for i9, q in enumerate(segs):
+            a = segs[max(0, i9 - 1)]
+            b = segs[min(len(segs) - 1, i9 + 1)]
+            d9 = max(math.hypot(b[0] - a[0], b[1] - a[1]), 1e-9)
+            t9 = ((b[0] - a[0]) / d9, (b[1] - a[1]) / d9)
+            samples.append((q, (t9[1], -t9[0])))
+        emit_chain_strip(samples)
+
+    # ---- per-arm aprons + paint (real arms only) ---------------------------
     for k in range(n_arm):
-        r0, r1 = r0s[k], r1s[k]
+        if k == phantom:
+            continue
+        rows_k = rows_by_arm[k]
+        r0, r1 = r0s[k], r0s[k] + apron
         ncol = max(4, int(round(apron / 1.6)))
         cols = [r0 + apron * i9 / ncol for i9 in range(ncol + 1)]
 
@@ -1003,57 +1343,46 @@ def build_intersection(p, rng):
 
         shell.tag = 'road'
         for (ca, cb) in zip(cols, cols[1:]):
-            for (ya, yb) in zip(rows, rows[1:]):
+            for (ya, yb) in zip(rows_k, rows_k[1:]):
                 shell.quad(pt(k, ca, ya, zmix(ca, ya)),
                            pt(k, cb, ya, zmix(cb, ya)),
                            pt(k, cb, yb, zmix(cb, yb)),
                            pt(k, ca, yb, zmix(ca, yb)), M_ASPHALT)
-        for (side, ye, yc, sg) in (('r', y0r, y0r - GUT_W, -1),
-                                   ('l', y1r, y1r + GUT_W, 1)):
-            side_t = t_left[k] if side == 'l' else t_right[k]
-            seam = side_t is None
-            if seam and side == 'r':
-                continue              # the seam-owning arm's LEFT covers it
-            if seam:
-                side_t = -r0s[(k + 1) % n_arm]    # across to opposite mouth
-            scols = sorted({side_t, r0} | set(cols)
-                           | (set(seam_ts.get(k, [])) if seam else set()))
+        for (ye, yc, sg) in ((y0r, y0r - GUT_W, -1), (y1r, y1r + GUT_W, 1)):
             shell.tag = 'gutter'
-            for (ca, cb) in zip(scols, scols[1:]):
-                za = zmix(ca, ye) if ca >= r0 else Z_E
-                zb = zmix(cb, ye) if cb >= r0 else Z_E
-                pts = [pt(k, ca, ye, za), pt(k, cb, ye, zb),
+            for (ca, cb) in zip(cols, cols[1:]):
+                pts = [pt(k, ca, ye, zmix(ca, ye)),
+                       pt(k, cb, ye, zmix(cb, ye)),
                        pt(k, cb, yc, 0.0), pt(k, ca, yc, 0.0)]
                 if sg < 0:
                     pts.reverse()
                 shell.quad(*pts, M_CONCRETE)
             shell.tag = 'curb'
             y_bk = yc + sg * CURB_W
-            for (ca, cb) in zip(scols, scols[1:]):
+            for (ca, cb) in zip(cols, cols[1:]):
                 pts = [pt(k, ca, yc, CURB_H), pt(k, cb, yc, CURB_H),
                        pt(k, cb, yc, 0.0), pt(k, ca, yc, 0.0)]
                 if sg > 0:
                     pts.reverse()
-                shell.quad(*pts, M_CONCRETE)      # face
+                shell.quad(*pts, M_CONCRETE)
                 pts = [pt(k, ca, yc, CURB_H), pt(k, ca, y_bk, CURB_H),
                        pt(k, cb, y_bk, CURB_H), pt(k, cb, yc, CURB_H)]
                 if sg > 0:
                     pts.reverse()
-                shell.quad(*pts, M_CONCRETE)      # top
+                shell.quad(*pts, M_CONCRETE)
                 pts = [pt(k, ca, y_bk, CURB_H), pt(k, ca, y_bk, 0.0),
                        pt(k, cb, y_bk, 0.0), pt(k, cb, y_bk, CURB_H)]
                 if sg > 0:
                     pts.reverse()
-                shell.quad(*pts, M_CONCRETE)      # back
-            walk.tag = 'sidewalk'                 # slab islands along side
+                shell.quad(*pts, M_CONCRETE)
+            walk.tag = 'sidewalk'
             yi = yc + sg * (CURB_W + GAP)
             yo = yi + sg * sw
             wy0, wy1 = min(yi, yo), max(yi, yo)
-            w_lo = min(side_t + GAP, r0)
-            nsl = max(1, round((r1 - w_lo) / SLAB_L))
+            nsl = max(1, round(apron / SLAB_L))
             for i9 in range(nsl):
-                a = w_lo + (r1 - w_lo) * i9 / nsl + GAP
-                b = w_lo + (r1 - w_lo) * (i9 + 1) / nsl - GAP
+                a = r0 + apron * i9 / nsl + GAP
+                b = r0 + apron * (i9 + 1) / nsl - GAP
                 walk.quad(pt(k, a, wy0, Z_WALK), pt(k, b, wy0, Z_WALK),
                           pt(k, b, wy1, Z_WALK), pt(k, a, wy1, Z_WALK),
                           M_CONCRETE)
@@ -1063,7 +1392,6 @@ def build_intersection(p, rng):
                               pt(k, c0[0], c0[1], 0.11),
                               pt(k, c0[0], c0[1], Z_WALK),
                               pt(k, c1[0], c1[1], Z_WALK), M_CONCRETE)
-        # ---- paint: centerline, stop bar, transverse crosswalk ------------
         shell.tag = 'paint'
 
         def pquad(ta9, tb9, ya, yb, mat):
@@ -1076,103 +1404,15 @@ def build_intersection(p, rng):
                            pt(k, ta9, cb, zmix(ta9, cb) + 0.003),
                            mat, 'paint')
 
-        for off in ((-0.15, -0.05), (0.05, 0.15)):
-            pquad(r0 + 3.6, r1 - 0.2, m0 + off[0], m0 + off[1], M_PAINT_Y)
+        for off9 in ((-0.15, -0.05), (0.05, 0.15)):
+            pquad(r0 + 3.6, r1 - 0.2, m0 + off9[0], m0 + off9[1], M_PAINT_Y)
         pquad(r0 + 0.6, r0 + 0.75, y0r + 0.25, y1r - 0.25, M_PAINT_W)
         pquad(r0 + 2.6, r0 + 2.75, y0r + 0.25, y1r - 0.25, M_PAINT_W)
         pquad(r0 + 3.0, r0 + 3.45, m0 + 0.1, y1r - 0.25, M_PAINT_W)
 
-    # ---- fillet arc strips: gutter, curb, sidewalk wedge -------------------
-    for k in range(n_arm):
-        f9 = fil[k]
-        if f9 is None:
-            continue
-        pv = f9['pv']
-        na_seg = f9['na']
-        gi = arc_pts(f9, rc + pv * GUT_W)         # gutter inner (pavement)
-        cf = arc_pts(f9, rc)                      # curb face
-        cb2 = arc_pts(f9, rc - pv * CURB_W)       # curb back
-        shell.tag = 'gutter'
-        for i9 in range(na_seg):
-            pts = [(gi[i9][0], gi[i9][1], Z_E),
-                   (gi[i9 + 1][0], gi[i9 + 1][1], Z_E),
-                   (cf[i9 + 1][0], cf[i9 + 1][1], 0.0),
-                   (cf[i9][0], cf[i9][1], 0.0)]
-            if pv < 0:
-                pts.reverse()
-            shell.quad(*pts, M_CONCRETE)
-        shell.tag = 'curb'
-        for i9 in range(na_seg):
-            pts = [(cf[i9][0], cf[i9][1], CURB_H),
-                   (cf[i9 + 1][0], cf[i9 + 1][1], CURB_H),
-                   (cf[i9 + 1][0], cf[i9 + 1][1], 0.0),
-                   (cf[i9][0], cf[i9][1], 0.0)]
-            if pv < 0:
-                pts.reverse()
-            shell.quad(*pts, M_CONCRETE)          # face
-            pts = [(cf[i9 + 1][0], cf[i9 + 1][1], CURB_H),
-                   (cf[i9][0], cf[i9][1], CURB_H),
-                   (cb2[i9][0], cb2[i9][1], CURB_H),
-                   (cb2[i9 + 1][0], cb2[i9 + 1][1], CURB_H)]
-            if pv < 0:
-                pts.reverse()
-            shell.quad(*pts, M_CONCRETE)          # top
-            pts = [(cb2[i9][0], cb2[i9][1], CURB_H),
-                   (cb2[i9][0], cb2[i9][1], 0.0),
-                   (cb2[i9 + 1][0], cb2[i9 + 1][1], 0.0),
-                   (cb2[i9 + 1][0], cb2[i9 + 1][1], CURB_H)]
-            if pv < 0:
-                pts.reverse()
-            shell.quad(*pts, M_CONCRETE)          # back
-        walk.tag = 'sidewalk'
-        r_in = rc - pv * (CURB_W + GAP)
-        r_out = rc - pv * (CURB_W + GAP + sw)
-        span9 = f9['a1'] - f9['a0']
-        ga = math.copysign(0.0025 / max(min(abs(r_in), abs(r_out)), 1.0),
-                           span9)
-        for i9 in range(na_seg):
-            aa0 = f9['a0'] + span9 * i9 / na_seg + ga
-            aa1 = f9['a0'] + span9 * (i9 + 1) / na_seg - ga
-            q = []
-            for (rr, aa) in ((r_in, aa0), (r_in, aa1),
-                             (r_out, aa1), (r_out, aa0)):
-                q.append((f9['C'][0] + rr * math.cos(aa),
-                          f9['C'][1] + rr * math.sin(aa)))
-            walk.quad((q[0][0], q[0][1], Z_WALK), (q[1][0], q[1][1], Z_WALK),
-                      (q[2][0], q[2][1], Z_WALK), (q[3][0], q[3][1], Z_WALK),
-                      M_CONCRETE)
-            for (v0, v1) in zip(q, q[1:] + q[:1]):
-                walk.quad((v1[0], v1[1], 0.11), (v0[0], v0[1], 0.11),
-                          (v0[0], v0[1], Z_WALK), (v1[0], v1[1], Z_WALK),
-                          M_CONCRETE)
-
     road_ob = shell.to_object("LA_Intersection_Road", mats)
     walk_ob = walk.to_object("LA_Intersection_Walk", mats)
     return [road_ob, walk_ob]
-
-def _coons(bottom, top, left, right, n9):
-    """Bilinear Coons patch: four borders of n9 cells each (bottom/top run
-    u; left/right run v; corners must agree). Returns (n9+1)^2 grid."""
-    grid = []
-    for j9 in range(n9 + 1):
-        row = []
-        v = j9 / n9
-        for i9 in range(n9 + 1):
-            u = i9 / n9
-            x = ((1 - v) * bottom[i9][0] + v * top[i9][0] +
-                 (1 - u) * left[j9][0] + u * right[j9][0] -
-                 ((1 - u) * (1 - v) * bottom[0][0] +
-                  u * (1 - v) * bottom[n9][0] +
-                  (1 - u) * v * top[0][0] + u * v * top[n9][0]))
-            y = ((1 - v) * bottom[i9][1] + v * top[i9][1] +
-                 (1 - u) * left[j9][1] + u * right[j9][1] -
-                 ((1 - u) * (1 - v) * bottom[0][1] +
-                  u * (1 - v) * bottom[n9][1] +
-                  (1 - u) * v * top[0][1] + u * v * top[n9][1]))
-            row.append((x, y))
-        grid.append(row)
-    return grid
-
 
 def _emit_grid(shell, grid, q2d, mat):
     """Emit a Coons grid as oriented flat quads."""
