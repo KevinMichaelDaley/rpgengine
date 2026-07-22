@@ -627,12 +627,17 @@ def _material(name):
 
 
 #: material slot order for every LA-generator mesh (shared indices).
+#: APPEND-ONLY: existing generators bake these indices into face data.
 _MATS = ["la_stucco", "la_trim", "la_glass", "la_concrete", "la_metal",
          "la_gypsum", "la_plywood", "la_resin",
-         "la_sign_a", "la_sign_b", "la_sign_c", "la_shutter"]
+         "la_sign_a", "la_sign_b", "la_sign_c", "la_shutter",
+         "la_asphalt", "la_paint_white", "la_paint_yellow", "la_patch",
+         "la_sand", "la_scorch", "la_soil"]
 (M_STUCCO, M_TRIM, M_GLASS, M_CONCRETE, M_METAL,
  M_GYPSUM, M_PLYWOOD, M_RESIN,
  M_SIGN_A, M_SIGN_B, M_SIGN_C, M_SHUTTER) = range(12)
+(M_ASPHALT, M_PAINT_W, M_PAINT_Y, M_PATCH,
+ M_SAND, M_SCORCH, M_SOIL) = range(12, 19)
 
 
 def _window_lines(width, cols, margin, widths):

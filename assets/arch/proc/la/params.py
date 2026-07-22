@@ -49,7 +49,9 @@ VGROUPS = ("facade_front", "facade_back", "facade_side", "windows", "doors",
            "parapet", "roof", "carport", "steps", "awnings", "ac_units",
            "interior_walls", "partitions", "slabs", "columns", "walkway",
            "loggia", "story", "storefront", "shutters", "signage", "canopy",
-           "corridor", "demising", "lot", "lot_lines", "pole_sign")
+           "corridor", "demising", "lot", "lot_lines", "pole_sign",
+           "road", "gutter", "curb", "sidewalk", "median", "paint",
+           "patches", "sinkhole")
 
 #: idname -> dict(idname, label, family, build, spec). Declaration order is
 #: preserved and drives menu order within a family.
