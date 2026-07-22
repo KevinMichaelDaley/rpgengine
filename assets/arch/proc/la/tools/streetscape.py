@@ -29,11 +29,15 @@ grid (shared global x/y line families) covers roadway + gutters + curbs
   per-vertex transform z += g(x) then arc-bend(x, y). g and the bend
   never alter the cross-section shape, so the x = 0 / x = L end planes
   carry the exact straight-street profile: any two segments built with
-  the same lanes/lane_width/sidewalk_width join seamlessly. Terrain
-  profiles are zeroed at x = 0 so the start interface stays at the
-  cursor. When bending or terrain-fitting, extra x stations densify the
-  grid; all overlays share the SAME piecewise mapping, so they ride
-  exactly 3 mm above the surface everywhere.
+  the same lanes/lane_width/sidewalk_width join seamlessly. A terrain
+  fit drops the street ONTO the surface (absolute heights); segments
+  chained over the same terrain meet within the smoothing window. All
+  overlays share the SAME piecewise mapping, so they ride exactly 3 mm
+  above the surface everywhere.
+* DEFORMABLE GRID: the roadway is a genuinely regular quad grid --
+  2.5 m stations along x (denser when bent/terrain-fit) and half-lane
+  rows across y -- so downstream deforms (lattice, shrinkwrap, block
+  assembler terrain) have vertices to work with.
 * TERRAIN: `terrain_object` names a mesh; the (bent) centerline ray-
   casts it, the height series is smoothed and slope-clamped (8 %), and
   applied longitudinally ONLY -- the cross-section never tilts.
@@ -117,7 +121,11 @@ def _terrain_profile(name, L, bend, cursor, step=2.0):
     ob = bpy.data.objects.get(name) if name else None
     if ob is None or ob.type != 'MESH':
         return None, None
-    inv = ob.matrix_world.inverted()
+    # ray-cast the EVALUATED object: a modifier-displaced terrain (subsurf,
+    # displace, geo-nodes) is invisible to the raw mesh's ray_cast.
+    dg = bpy.context.evaluated_depsgraph_get()
+    ob_ev = ob.evaluated_get(dg)
+    inv = ob_ev.matrix_world.inverted()
     n9 = max(2, int(round(L / step)))
     st9 = [L * i / n9 for i in range(n9 + 1)]
     hs = []
@@ -126,9 +134,11 @@ def _terrain_profile(name, L, bend, cursor, step=2.0):
         wx, wy = bend(x, 0.0)
         origin = inv @ Vector((cursor[0] + wx, cursor[1] + wy, 10000.0))
         direction = inv.to_3x3() @ Vector((0.0, 0.0, -1.0))
-        hit, loc, _n, _i = ob.ray_cast(origin, direction)
-        hs.append((ob.matrix_world @ loc).z - cursor[2] if hit else None)
-    last = next((h for h in hs if h is not None), 0.0)
+        hit, loc, _n, _i = ob_ev.ray_cast(origin, direction)
+        hs.append((ob_ev.matrix_world @ loc).z - cursor[2] if hit else None)
+    if all(h is None for h in hs):
+        return None, None                        # terrain never under us
+    last = next(h for h in hs if h is not None)
     for i in range(len(hs)):                     # fill misses
         if hs[i] is None:
             hs[i] = last
@@ -142,8 +152,9 @@ def _terrain_profile(name, L, bend, cursor, step=2.0):
         for i in range(len(hs) - 2, -1, -1):
             dm = MAX_GRADE * (st9[i + 1] - st9[i])
             hs[i] = min(max(hs[i], hs[i + 1] - dm), hs[i + 1] + dm)
-    h0 = hs[0]
-    hs = [h - h0 for h in hs]                    # start stays at cursor
+    # NO zeroing: the street LANDS ON the terrain (that is the point);
+    # chained segments sampling the same terrain meet within the
+    # smoothing window.
 
     def fn(x):
         x = min(max(x, 0.0), L)
@@ -233,7 +244,7 @@ def build_street(p, rng):
 
     # ---- global line families ----------------------------------------------
     xs = {0.0, L}
-    step = 5.0
+    step = 2.5                                   # regular, deformable grid
     if R:
         step = min(step, max(1.0, R * 0.105))    # ~6 deg chords when bent
     if t_fn:
@@ -260,8 +271,12 @@ def build_street(p, rng):
     ys = {y0r, m0, m1, y1r}
     for k in range(1, n_s):
         ys.add(y0r + k * lw)
+    for k in range(n_s):                         # half-lane rows: keeps the
+        ys.add(y0r + (k + 0.5) * lw)             # surface cells square-ish
     for k in range(1, n_n):
         ys.add(m1 + k * lw)
+    for k in range(n_n):
+        ys.add(m1 + (k + 0.5) * lw)
     if hole:
         ys |= {hy0, hy1, hy0 + 0.18, hy1 - 0.18}
         if interior_on:
@@ -745,15 +760,19 @@ def _arm_bearings(form, skew):
     if form == 'cross':
         return [0.0, 90.0 + skew, 180.0, 270.0]
     return [0.0, 45.0 + skew, 90.0, 180.0, 270.0]     # five
-
-
 def build_intersection(p, rng):
-    """N-way intersection: flat pad at Z_E, per-arm crown-blend aprons,
-    filleted curb returns (concave, convex, or straight seams), sidewalk
-    wedges, stop bars + transverse crosswalks. The outer apron end is the
-    exact straight-street cross-section, so la_street segments plug on.
-    Both modes emit the same geometry (an open pavement kit has no
-    enclosed structure to add in interior mode)."""
+    """N-way intersection with GRID-FLOW pad topology, fitted to the true
+    street outline: each arm's lane loops run straight in on a strip grid
+    and turn through a central n-gon (center vert valence n -- regular
+    for a cross); corner wedges are Coons patches RELAXED and CLAMPED
+    inside the street edges + fillet arc, so nothing extends past the
+    shape the intersection occupies. Mouth radii are PER ARM (just past
+    that arm's own fillet tangents) -- a sharp five-way corner stretches
+    only its own two arms, not the whole pad. Veers (n = 2) run one
+    through-grid mouth to mouth. The outer apron end is the exact
+    straight-street cross-section, so la_street segments plug on. Both
+    modes emit the same geometry (open pavement kit).
+    """
     del rng
     lanes = p["lanes"]
     lw = p["lane_width"]
@@ -778,9 +797,19 @@ def build_intersection(p, rng):
         d, nl = frames[k]
         return (t * d[0] + u * nl[0], t * d[1] + u * nl[1], z)
 
+    def lerp2(a, b, f):
+        return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+
+    def q2d(shell9, a, b, c, d, mat, tag=None):
+        """Flat pad quad at Z_E, wound ccw (+z) regardless of param order."""
+        ar = (b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])
+        pts = [a, b, c, d] if ar > 0 else [d, c, b, a]
+        shell9.quad((pts[0][0], pts[0][1], Z_E), (pts[1][0], pts[1][1], Z_E),
+                    (pts[2][0], pts[2][1], Z_E), (pts[3][0], pts[3][1], Z_E),
+                    mat, tag)
+
     # ---- fillet math per wedge (arm k left curb vs arm k+1 right curb) ----
     fil = []
-    t_need = 1.0
     for k in range(n_arm):
         k2 = (k + 1) % n_arm
         (da, na), (db, nb) = frames[k], frames[k2]
@@ -807,23 +836,37 @@ def build_intersection(p, rng):
         else:                         # convex: walk ccw around C
             while a1 <= a0:
                 a1 += 2.0 * math.pi
-        na_seg = max(4, int(abs(a1 - a0) / 0.30) + 1)
-        fil.append(dict(C=C, ta=ta, tb=tb, a0=a0, a1=a1, pv=pv,
-                        na=na_seg))
-        t_need = max(t_need, ta, tb)
-    r0 = t_need + 0.4                 # shared mouth radius, all arms
-    r1 = r0 + apron
+        fil.append(dict(C=C, ta=ta, tb=tb, a0=a0, a1=a1, pv=pv))
 
-    # per-arm side t-ranges for gutter/curb strips: (left, right); a seam
-    # extends arm k's LEFT strips across to the opposite mouth and skips
-    # arm k2's right strips entirely (same line, one owner).
-    t_left = [fil[k]['ta'] if fil[k] else -r0 for k in range(n_arm)]
-    t_right = [fil[(k - 1) % n_arm]['tb'] if fil[(k - 1) % n_arm] else None
-               for k in range(n_arm)]
+    # per-arm mouth radius: just past THIS arm's own tangents (a sharp
+    # wedge stretches its two arms only; the pad hugs the street outline)
+    r0s = []
+    for k in range(n_arm):
+        km = (k - 1) % n_arm
+        need = 1.0
+        if fil[k] is not None:
+            need = max(need, fil[k]['ta'])
+        if fil[km] is not None:
+            need = max(need, fil[km]['tb'])
+        r0s.append(need + 0.4)
+    r1s = [r + apron for r in r0s]
 
+    # ---- grid counts (the Coons corner patches need matched sides) ---------
     rows = sorted({y0r, m0, y1r}
                   | {y0r + k9 * lw for k9 in range(1, n_s)}
-                  | {m1 + k9 * lw for k9 in range(1, n_n)})
+                  | {y0r + (k9 + 0.5) * lw for k9 in range(n_s)}
+                  | {m1 + k9 * lw for k9 in range(1, n_n)}
+                  | {m1 + (k9 + 0.5) * lw for k9 in range(n_n)})
+    m = len(rows) - 1                 # ALWAYS EVEN (half-lane rows)
+    r_min = min(r0s)
+    r_core = min(max(0.35 * r_min, 2.0), r_min - 2.0)
+    sweep_max = max((abs(f9['a1'] - f9['a0']) for f9 in fil
+                     if f9 is not None), default=1.0)
+    nq = max(2, int(math.ceil((sweep_max / 0.35 + 2.0) / 2.0)),
+             int(round((r_min - r_core) / 1.8)))
+    for f9 in fil:
+        if f9 is not None:
+            f9['na'] = 2 * nq - 2     # arc cells; chain = na + 2 = 2*nq
 
     def arc_pts(f9, radius):
         return [(f9['C'][0] + radius * math.cos(
@@ -832,48 +875,127 @@ def build_intersection(p, rng):
                     f9['a0'] + (f9['a1'] - f9['a0']) * i9 / f9['na']))
                 for i9 in range(f9['na'] + 1)]
 
-    def boundary():
-        """CCW pad boundary at z = Z_E: mouth chords + curb-inner segments
-        + inner-gutter arcs. Consecutive duplicates dropped."""
-        bnd = []
+    # mouth verts + outer wedge chains (A1 -> tangent -> arc -> tangent -> A2)
+    mouth = [[pt(k, r0s[k], y, Z_E)[:2] for y in rows] for k in range(n_arm)]
+    chains, seam_ts = [], {}
+    for k in range(n_arm):
+        k2 = (k + 1) % n_arm
+        A1 = mouth[k][-1]             # arm k mouth-left corner (u = y1r)
+        A2 = mouth[k2][0]             # arm k2 mouth-right corner (u = y0r)
+        f9 = fil[k]
+        if f9 is None:
+            pn = 2 * nq
+            ch = [lerp2(A1, A2, j9 / pn) for j9 in range(pn + 1)]
+            d_a = frames[k][0]
+            seam_ts[k] = [q9[0] * d_a[0] + q9[1] * d_a[1] for q9 in ch]
+        else:
+            gi = arc_pts(f9, rc + f9['pv'] * GUT_W)
+            ch = [A1, (pt(k, f9['ta'], y1r, Z_E))[:2]] + \
+                 [q9 for q9 in gi[1:-1]] + \
+                 [(pt(k2, f9['tb'], y0r, Z_E))[:2], A2]
+        chains.append(ch)
 
-        def push(q):
-            if not bnd or abs(q[0] - bnd[-1][0]) > 1e-6 or \
-                    abs(q[1] - bnd[-1][1]) > 1e-6:
-                bnd.append(q)
-
-        for k in range(n_arm):
-            k2 = (k + 1) % n_arm
-            for y in rows:            # mouth chord, right -> left
-                push(pt(k, r0, y, Z_E))
-            f9 = fil[k]
-            if f9 is None:            # seam: inner edge runs straight
-                # across to the opposite arm's mouth corner
-                push(pt(k2, r0, y0r, Z_E))
-                continue
-            push(pt(k, f9['ta'], y1r, Z_E))       # in along left inner edge
-            for q in arc_pts(f9, rc + f9['pv'] * GUT_W)[1:]:
-                push((q[0], q[1], Z_E))           # inner-gutter arc
-            push(pt(k2, r0, y0r, Z_E))            # out along right edge
-        if len(bnd) > 2 and abs(bnd[0][0] - bnd[-1][0]) < 1e-6 and \
-                abs(bnd[0][1] - bnd[-1][1]) < 1e-6:
-            bnd.pop()
-        return bnd
-
-    bnd = boundary()
-    if len(bnd) % 2 == 1:             # quad-only disk: even boundary count
-        for f9 in fil:
-            if f9 is not None:
-                f9['na'] += 1
-                break
-        bnd = boundary()
+    def ruled(ch, border, nv):
+        """Ruled grid between two index-paired polylines of EQUAL vert
+        count. Chords run roughly radially off the fillet arc, so the
+        fill provably stays between chain and border (inside the disk
+        for convex fillets, outside it for concave) -- no relaxation, no
+        degeneration, containment by construction."""
+        return [[lerp2(ch[i9], border[i9], j9 / nv)
+                 for i9 in range(len(ch))] for j9 in range(nv + 1)]
 
     shell = _Shell()
     walk = _Shell()
 
-    # ---- per-arm aprons ----------------------------------------------------
+    # ---- pad topology ------------------------------------------------------
+    shell.tag = 'road'
+    if n_arm == 2:
+        # VEER: ONE rectangular Coons grid mouth to mouth whose SIDE
+        # borders are the wedge chains themselves (they carry exactly
+        # 2*nq cells) -- the straight-sided through-grid used to overlap
+        # the convex-bend arc and poke past the curb line. Lane loops
+        # flow straight through the bend; the sides weld to the gutter
+        # arcs vert-for-vert.
+        nq2 = 2 * nq
+        bot = mouth[0]
+        top = [mouth[1][m - j9] for j9 in range(m + 1)]
+        lef = list(reversed(chains[1]))
+        rig = chains[0]
+        thru = []
+        for i9 in range(nq2 + 1):
+            v = i9 / nq2
+            row = []
+            for j9 in range(m + 1):
+                u = j9 / m
+                x = ((1 - v) * bot[j9][0] + v * top[j9][0] +
+                     (1 - u) * lef[i9][0] + u * rig[i9][0] -
+                     ((1 - u) * (1 - v) * bot[0][0] +
+                      u * (1 - v) * bot[m][0] +
+                      (1 - u) * v * top[0][0] + u * v * top[m][0]))
+                y = ((1 - v) * bot[j9][1] + v * top[j9][1] +
+                     (1 - u) * lef[i9][1] + u * rig[i9][1] -
+                     ((1 - u) * (1 - v) * bot[0][1] +
+                      u * (1 - v) * bot[m][1] +
+                      (1 - u) * v * top[0][1] + u * v * top[m][1]))
+                row.append((x, y))
+            thru.append(row)
+        for i9 in range(nq2):
+            for j9 in range(m):
+                q2d(shell, thru[i9][j9], thru[i9 + 1][j9],
+                    thru[i9 + 1][j9 + 1], thru[i9][j9 + 1], M_ASPHALT)
+    else:
+        # central n-gon: corners on the wedge bisectors
+        Cp = []
+        for k in range(n_arm):
+            k2 = (k + 1) % n_arm
+            wedge = (bear[k2] - bear[k]) % 360.0
+            bis = math.radians(bear[k] + wedge / 2.0)
+            Cp.append((r_core * math.cos(bis), r_core * math.sin(bis)))
+        G = (sum(q[0] for q in Cp) / n_arm, sum(q[1] for q in Cp) / n_arm)
+        S = [[lerp2(Cp[k - 1], Cp[k], j9 / m) for j9 in range(m + 1)]
+             for k in range(n_arm)]   # inner side facing arm k
+        # arm strips: mouth -> S_k (the lane loops run straight in)
+        for k in range(n_arm):
+            V = [[lerp2(mouth[k][j9], S[k][j9], i9 / nq)
+                  for j9 in range(m + 1)] for i9 in range(nq + 1)]
+            for i9 in range(nq):
+                for j9 in range(m):
+                    q2d(shell, V[i9][j9], V[i9 + 1][j9],
+                        V[i9 + 1][j9 + 1], V[i9][j9 + 1], M_ASPHALT)
+        # center: corner-split patches (center vert valence = n_arm)
+        m2 = m // 2
+        Mid = [S[k][m2] for k in range(n_arm)]
+        spoke = [[lerp2(G, Mid[k], j9 / m2) for j9 in range(m2 + 1)]
+                 for k in range(n_arm)]
+        for k in range(n_arm):
+            k2 = (k + 1) % n_arm
+            bottom = [S[k][m2 + i9] for i9 in range(m2 + 1)]   # Mid_k->C_k
+            top = spoke[k2]                                    # G->Mid_k2
+            left = [spoke[k][m2 - v] for v in range(m2 + 1)]   # Mid_k->G
+            right = [S[k2][i9] for i9 in range(m2 + 1)]        # C_k->Mid_k2
+            grid = _coons(bottom, top, left, right, m2)
+            _emit_grid(shell, grid, q2d, M_ASPHALT)
+        # corner wedges: RULED fill between the outer chain and the inner
+        # border path A1 -> C_k -> A2 (equal vert counts, index-paired) --
+        # contained inside the street edges + arc by construction; the
+        # pole sits at C_k, a corner.
+        for k in range(n_arm):
+            k2 = (k + 1) % n_arm
+            L = [lerp2(mouth[k][m], Cp[k], i9 / nq)
+                 for i9 in range(nq + 1)]         # A1 -> C_k (strip edge)
+            R = [lerp2(mouth[k2][0], Cp[k], i9 / nq)
+                 for i9 in range(nq + 1)]         # A2 -> C_k
+            border = L + [R[nq - i9] for i9 in range(1, nq + 1)]
+            _emit_grid(shell, ruled(chains[k], border, nq), q2d, M_ASPHALT)
+
+    # ---- per-arm aprons + side strips --------------------------------------
+    t_left = [fil[k]['ta'] if fil[k] else None for k in range(n_arm)]
+    t_right = [fil[(k - 1) % n_arm]['tb'] if fil[(k - 1) % n_arm] else None
+               for k in range(n_arm)]
     for k in range(n_arm):
-        cols = [r0 + apron * i9 / 4.0 for i9 in range(5)]
+        r0, r1 = r0s[k], r1s[k]
+        ncol = max(4, int(round(apron / 1.6)))
+        cols = [r0 + apron * i9 / ncol for i9 in range(ncol + 1)]
 
         def zmix(r, y):
             u9 = (r - r0) / (r1 - r0)
@@ -886,11 +1008,16 @@ def build_intersection(p, rng):
                            pt(k, cb, ya, zmix(cb, ya)),
                            pt(k, cb, yb, zmix(cb, yb)),
                            pt(k, ca, yb, zmix(ca, yb)), M_ASPHALT)
-        for (side_t, ye, yc, sg) in ((t_right[k], y0r, y0r - GUT_W, -1),
-                                     (t_left[k], y1r, y1r + GUT_W, 1)):
-            if side_t is None:
-                continue              # seam: the opposite arm owns it
-            scols = sorted({side_t, r0} | set(cols))
+        for (side, ye, yc, sg) in (('r', y0r, y0r - GUT_W, -1),
+                                   ('l', y1r, y1r + GUT_W, 1)):
+            side_t = t_left[k] if side == 'l' else t_right[k]
+            seam = side_t is None
+            if seam and side == 'r':
+                continue              # the seam-owning arm's LEFT covers it
+            if seam:
+                side_t = -r0s[(k + 1) % n_arm]    # across to opposite mouth
+            scols = sorted({side_t, r0} | set(cols)
+                           | (set(seam_ts.get(k, [])) if seam else set()))
             shell.tag = 'gutter'
             for (ca, cb) in zip(scols, scols[1:]):
                 za = zmix(ca, ye) if ca >= r0 else Z_E
@@ -940,8 +1067,6 @@ def build_intersection(p, rng):
         shell.tag = 'paint'
 
         def pquad(ta9, tb9, ya, yb, mat):
-            # split at the crown kink so the overlay never dips under the
-            # blended surface
             for (ca, cb) in ((ya, min(yb, m0)), (max(ya, m0), yb)):
                 if cb - ca < 0.02:
                     continue
@@ -963,12 +1088,10 @@ def build_intersection(p, rng):
         if f9 is None:
             continue
         pv = f9['pv']
+        na_seg = f9['na']
         gi = arc_pts(f9, rc + pv * GUT_W)         # gutter inner (pavement)
         cf = arc_pts(f9, rc)                      # curb face
         cb2 = arc_pts(f9, rc - pv * CURB_W)       # curb back
-        w0 = arc_pts(f9, rc - pv * (CURB_W + GAP))
-        w1 = arc_pts(f9, rc - pv * (CURB_W + GAP + sw))
-        na_seg = f9['na']
         shell.tag = 'gutter'
         for i9 in range(na_seg):
             pts = [(gi[i9][0], gi[i9][1], Z_E),
@@ -1008,9 +1131,6 @@ def build_intersection(p, rng):
         ga = math.copysign(0.0025 / max(min(abs(r_in), abs(r_out)), 1.0),
                            span9)
         for i9 in range(na_seg):
-            # angular 2 mm insets make each arc slab its own island --
-            # welded radial edges collapse the facing skirts into one
-            # face and leave 3-face nonmanifold edges.
             aa0 = f9['a0'] + span9 * i9 / na_seg + ga
             aa1 = f9['a0'] + span9 * (i9 + 1) / na_seg - ga
             q = []
@@ -1026,46 +1146,40 @@ def build_intersection(p, rng):
                           (v0[0], v0[1], Z_WALK), (v1[0], v1[1], Z_WALK),
                           M_CONCRETE)
 
-    # ---- pad fill: boundary -> scaled ring -> zipper cap -------------------
-    shell.tag = 'road'
-    M = len(bnd)
-    cx = sum(q[0] for q in bnd) / M
-    cy = sum(q[1] for q in bnd) / M
-    ring2 = [(cx + (q[0] - cx) * 0.55, cy + (q[1] - cy) * 0.55) for q in bnd]
-    for i9 in range(M):
-        j9 = (i9 + 1) % M
-        shell.quad((bnd[i9][0], bnd[i9][1], Z_E),
-                   (bnd[j9][0], bnd[j9][1], Z_E),
-                   (ring2[j9][0], ring2[j9][1], Z_E),
-                   (ring2[i9][0], ring2[i9][1], Z_E), M_ASPHALT)
-    # zipper cap (even M). The start index matters: pairing verts that all
-    # lie on one colinear boundary run (an arm's mouth chord) makes
-    # zero-area quads -- score every rotation and keep the one whose
-    # worst quad is largest.
-    def zip_quads(s9):
-        out9 = []
-        for i9 in range(M // 2 - 1):
-            a9 = (s9 + i9) % M
-            b9 = (s9 + i9 + 1) % M
-            c9 = (s9 - i9 - 2) % M
-            d9 = (s9 - i9 - 1) % M
-            out9.append((ring2[a9], ring2[b9], ring2[c9], ring2[d9]))
-        return out9
-
-    def quad_area(q4):
-        (ax, ay), (bx, by), (cx2, cy2), (dx, dy) = q4
-        return 0.5 * abs((cx2 - ax) * (dy - by) - (dx - bx) * (cy2 - ay))
-
-    best = max(range(M), key=lambda s9: min(quad_area(q4)
-                                            for q4 in zip_quads(s9)))
-    for q4 in zip_quads(best):
-        shell.quad((q4[0][0], q4[0][1], Z_E), (q4[1][0], q4[1][1], Z_E),
-                   (q4[2][0], q4[2][1], Z_E), (q4[3][0], q4[3][1], Z_E),
-                   M_ASPHALT)
-
     road_ob = shell.to_object("LA_Intersection_Road", mats)
     walk_ob = walk.to_object("LA_Intersection_Walk", mats)
     return [road_ob, walk_ob]
+
+def _coons(bottom, top, left, right, n9):
+    """Bilinear Coons patch: four borders of n9 cells each (bottom/top run
+    u; left/right run v; corners must agree). Returns (n9+1)^2 grid."""
+    grid = []
+    for j9 in range(n9 + 1):
+        row = []
+        v = j9 / n9
+        for i9 in range(n9 + 1):
+            u = i9 / n9
+            x = ((1 - v) * bottom[i9][0] + v * top[i9][0] +
+                 (1 - u) * left[j9][0] + u * right[j9][0] -
+                 ((1 - u) * (1 - v) * bottom[0][0] +
+                  u * (1 - v) * bottom[n9][0] +
+                  (1 - u) * v * top[0][0] + u * v * top[n9][0]))
+            y = ((1 - v) * bottom[i9][1] + v * top[i9][1] +
+                 (1 - u) * left[j9][1] + u * right[j9][1] -
+                 ((1 - u) * (1 - v) * bottom[0][1] +
+                  u * (1 - v) * bottom[n9][1] +
+                  (1 - u) * v * top[0][1] + u * v * top[n9][1]))
+            row.append((x, y))
+        grid.append(row)
+    return grid
+
+
+def _emit_grid(shell, grid, q2d, mat):
+    """Emit a Coons grid as oriented flat quads."""
+    for j9 in range(len(grid) - 1):
+        for i9 in range(len(grid[0]) - 1):
+            q2d(shell, grid[j9][i9], grid[j9][i9 + 1],
+                grid[j9 + 1][i9 + 1], grid[j9 + 1][i9], mat)
 
 STREET_SPEC = [
     params.MODE_PARAM,
