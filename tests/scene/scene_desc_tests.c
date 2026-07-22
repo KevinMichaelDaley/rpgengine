@@ -129,6 +129,32 @@ static int test_material_definition(void)
     return 0;
 }
 
+static int test_material_opacity(void)
+{
+    /* opacity: translucency scalar (1 = opaque, rpg-jqui). Missing key and
+     * bare-string entries default to 1; out-of-range values clamp to [0,1].
+     * The translucent-shadow + sorted-transparency passes classify a
+     * material as translucent when opacity < 1. */
+    static const char *const MD =
+        "{\"name\":\"m\",\"materials\":["
+        "  \"plain\","
+        "  {\"name\":\"glass\",\"opacity\":0.35},"
+        "  {\"name\":\"open\",\"opacity\":0.0},"
+        "  {\"name\":\"under\",\"opacity\":-0.5},"
+        "  {\"name\":\"over\",\"opacity\":1.5}"
+        "],\"objects\":[]}";
+    arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
+    scene_desc_t d;
+    ASSERT_TRUE(scene_desc_parse(MD, strlen(MD), &a, &d));
+    ASSERT_INT_EQ(d.material_count, 5);
+    ASSERT_FLT_EQ(d.materials[0].opacity, 1.0f);   /* bare string default */
+    ASSERT_FLT_EQ(d.materials[1].opacity, 0.35f);  /* happy path */
+    ASSERT_FLT_EQ(d.materials[2].opacity, 0.0f);   /* fully transparent */
+    ASSERT_FLT_EQ(d.materials[3].opacity, 0.0f);   /* clamped from below */
+    ASSERT_FLT_EQ(d.materials[4].opacity, 1.0f);   /* clamped from above */
+    return 0;
+}
+
 static int test_object_bake_order_preserved(void)
 {
     arena_t a; arena_init(&a, g_arena_buf, sizeof g_arena_buf);
@@ -421,6 +447,7 @@ int main(void)
     struct { const char *name; int (*fn)(void); } tests[] = {
         {"happy_name_and_materials",    test_happy_name_and_materials},
         {"material_definition",         test_material_definition},
+        {"material_opacity",            test_material_opacity},
         {"object_bake_order_preserved", test_object_bake_order_preserved},
         {"object_transform_and_lightmap", test_object_transform_and_lightmap},
         {"material_name_to_index",      test_material_name_to_index},

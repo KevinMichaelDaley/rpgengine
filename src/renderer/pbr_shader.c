@@ -49,6 +49,7 @@ static const char *const PBR_FS =
     "in vec2 v_uv1;\n"
     "in float v_view_z;\n"
     "out vec4 frag;\n"
+    "uniform float u_opacity;\n"
     "uniform sampler2D u_albedo_map;\n"
     "uniform sampler2D u_normal_map;\n"
     "uniform sampler2D u_metallic_map;\n"
@@ -779,7 +780,7 @@ static const char *const PBR_FS =
     "  color += emissive;\n"
     "  color = color/(color+vec3(1.0));\n"
     "  color = pow(color, vec3(1.0/2.2));\n"
-    "  frag = vec4(color,1.0);\n"
+    "  frag = vec4(color, u_opacity);\n"
     "}\n";
 
 const char *pbr_shader_vertex_source(void) { return PBR_VS; }

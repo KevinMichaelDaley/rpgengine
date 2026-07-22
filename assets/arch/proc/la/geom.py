@@ -627,7 +627,7 @@ class _Wall:
 _MAT_PBR = {
     "la_stucco":       ((0.74, 0.70, 0.62), 0.90, 0.0),
     "la_trim":         ((0.85, 0.83, 0.78), 0.55, 0.0),
-    "la_glass":        ((0.28, 0.38, 0.40), 0.08, 0.0),
+    "la_glass":        ((0.28, 0.38, 0.40), 0.08, 0.0, 0.35),
     "la_concrete":     ((0.54, 0.54, 0.52), 0.85, 0.0),
     "la_metal":        ((0.62, 0.64, 0.66), 0.45, 1.0),
     "la_gypsum":       ((0.82, 0.80, 0.77), 0.95, 0.0),
@@ -656,7 +656,8 @@ def _material(name):
         m = bpy.data.materials.new(name)
     pbr = _MAT_PBR.get(name)
     if pbr is not None:
-        (col, rough, metal) = pbr
+        (col, rough, metal) = pbr[:3]
+        alpha = pbr[3] if len(pbr) > 3 else 1.0
         m.use_nodes = True
         bsdf = next((n for n in m.node_tree.nodes
                      if n.type == 'BSDF_PRINCIPLED'), None)
@@ -665,7 +666,10 @@ def _material(name):
                                                        col[2], 1.0)
             bsdf.inputs["Roughness"].default_value = rough
             bsdf.inputs["Metallic"].default_value = metal
-        m.diffuse_color = (col[0], col[1], col[2], 1.0)
+            bsdf.inputs["Alpha"].default_value = alpha
+        if alpha < 1.0:
+            m.blend_method = 'BLEND'      # viewport reads as glass too
+        m.diffuse_color = (col[0], col[1], col[2], alpha)
         m.roughness = rough
         m.metallic = metal
     return m

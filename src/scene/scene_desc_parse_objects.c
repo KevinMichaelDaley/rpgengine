@@ -28,6 +28,7 @@ static void material_defaults(scene_desc_material_t *m)
     m->uv_scale[0] = m->uv_scale[1] = 1.0f;
     m->contrast = 1.0f;
     m->ao_strength = 1.0f;
+    m->opacity = 1.0f;
 }
 
 /* A "materials" entry may be a bare string (name only) or a full PBR object. */
@@ -58,6 +59,9 @@ static void parse_material_def(const json_value_t *e, scene_desc_material_t *m)
     sd_field_vec(e, "emissive_color", m->emissive_color, 3);
     m->emissive_strength = sd_field_num(e, "emissive_strength", 0.0f);
     m->orm_packed = sd_field_bool(e, "orm_packed", false) ? 1 : 0;
+    m->opacity = sd_field_num(e, "opacity", 1.0f);
+    if (m->opacity < 0.0f) m->opacity = 0.0f;   /* contract: clamped [0,1] */
+    if (m->opacity > 1.0f) m->opacity = 1.0f;
 }
 
 bool scene_desc_parse_materials(const json_value_t *root, scene_desc_t *out)

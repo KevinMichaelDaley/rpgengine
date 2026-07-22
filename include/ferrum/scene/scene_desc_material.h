@@ -48,6 +48,9 @@ typedef struct scene_desc_material {
     float emissive_color[3];
     float emissive_strength;
     int   orm_packed;          /**< 1 = roughness map is packed ORM (R=ao,G=roughness). */
+    float opacity;             /**< 1 = opaque; < 1 = translucent (glass). Parser
+                                    clamps to [0,1]; drives the translucent-shadow
+                                    mask + sorted transparency passes. */
 } scene_desc_material_t;
 
 #ifdef __cplusplus

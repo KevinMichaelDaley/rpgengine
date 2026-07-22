@@ -204,6 +204,7 @@ def _material_desc(rec):
         "name": rec["name"],
         "tint": list(rec.get("tint", [1.0, 1.0, 1.0])),
         "metalness": float(rec.get("metalness", 0.0)),
+        "opacity": float(rec.get("opacity", 1.0)),
         "roughness_min": float(rec.get("roughness_min", 0.0)),
         "roughness_max": float(rec.get("roughness_max", 1.0)),
         "normal_scale": float(rec.get("normal_scale", 1.0)),
@@ -386,6 +387,7 @@ def export_material(mat, out_dir, tiles, res, bake=True):
             r = p.inputs["Roughness"].default_value
             rec["roughness_min"] = rec["roughness_max"] = float(r)
             rec["metalness"] = float(p.inputs["Metallic"].default_value)
+            rec["opacity"] = float(p.inputs["Alpha"].default_value)
         _write_json(os.path.join(out_dir, "materials", name + ".mat.json"), rec)
         return rec
 

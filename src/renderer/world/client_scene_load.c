@@ -153,6 +153,7 @@ static void build_material(client_scene_t *cs, render_material_t *mat,
     mat->ao_strength = md->ao_strength;
     mat->emissive_strength = md->emissive_strength;
     mat->orm_packed = md->orm_packed;
+    mat->opacity = md->opacity;
     static const struct { int map; int fmt_srgb; } slot[SCENE_DESC_MAT_TEX_COUNT] = {
         { MATERIAL_TEX_ALBEDO, 1 }, { MATERIAL_TEX_NORMAL, 0 },
         { MATERIAL_TEX_METALLIC, 0 }, { MATERIAL_TEX_ROUGHNESS, 0 },
