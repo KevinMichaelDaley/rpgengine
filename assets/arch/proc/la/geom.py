@@ -49,40 +49,35 @@ class _Shell:
         self.recalc = recalc      # closed-solid shells: recalc normals
 
     def vert(self, co):
-        # Quantized weld cache with BOUNDARY-SAFE lookup: a coordinate
-        # sitting exactly on a half-quantum value (e.g. 5.14125 with a
-        # 1e-4 quantum) rounds to either neighbouring bucket depending on
-        # ~1e-12 float noise in how the caller computed it -- two emitters
-        # of the "same" vert then miss each other and leave an unwelded
-        # double. Probe the adjacent bucket on any axis near its boundary
-        # and reuse a stored vert only if it is genuinely coincident
-        # (within half a quantum; intentional separations are >= 2 mm).
-        cands = []
-        for c in co:
-            q = c / _WELD
-            k = round(q)
-            axis = [k]
-            frac = q - k
-            if frac > 0.499:
-                axis.append(k + 1)
-            elif frac < -0.499:
-                axis.append(k - 1)
-            cands.append(axis)
-        key = (cands[0][0], cands[1][0], cands[2][0])
-        v = self._cache.get(key)
+        # Quantized weld cache with BOUNDARY-SAFE lookup: two emitters of
+        # the "same" vert can differ by up to ~2e-6 (float32 storage,
+        # different arithmetic paths), and a bay pitch like 4.1825 puts
+        # every bay line exactly on a bucket edge -- the pair then rounds
+        # into DIFFERENT buckets and leaves an unwelded double no matter
+        # how tight a "near the edge" heuristic is. So on a cache miss,
+        # probe all 26 neighbouring buckets and reuse any stored vert
+        # within 1.2x the audit epsilon (intentional separations are
+        # >= 2 mm, twenty buckets away -- never probed).
+        kx = round(co[0] / _WELD)
+        ky = round(co[1] / _WELD)
+        kz = round(co[2] / _WELD)
+        v = self._cache.get((kx, ky, kz))
         if v is not None:
             return v
-        for kx in cands[0]:
-            for ky in cands[1]:
-                for kz in cands[2]:
-                    v = self._cache.get((kx, ky, kz))
+        tol = _WELD * 1.2
+        for dx in (0, -1, 1):
+            for dy in (0, -1, 1):
+                for dz in (0, -1, 1):
+                    if dx == 0 and dy == 0 and dz == 0:
+                        continue
+                    v = self._cache.get((kx + dx, ky + dy, kz + dz))
                     if v is not None and \
-                            abs(v.co[0] - co[0]) < _WELD * 0.5 and \
-                            abs(v.co[1] - co[1]) < _WELD * 0.5 and \
-                            abs(v.co[2] - co[2]) < _WELD * 0.5:
+                            abs(v.co[0] - co[0]) < tol and \
+                            abs(v.co[1] - co[1]) < tol and \
+                            abs(v.co[2] - co[2]) < tol:
                         return v
         v = self.bm.verts.new(co)
-        self._cache[key] = v
+        self._cache[(kx, ky, kz)] = v
         return v
 
     def quad(self, a, b, c, d, mat=0, tag=None):

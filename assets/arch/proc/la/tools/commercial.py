@@ -2002,7 +2002,20 @@ def build_minimall(p, rng):
         if any(xa['ox1'] <= 0.0 for xa in xarms):
             px = max(px, cd + 0.45 + 2.2)
         py = min(y_lot1 + 1.2, -cd - 2.6)
-        style = rng.choice(['ladder', 'stack', 'pinwheel'])
+        # the pinwheel frame holds at most ~12 legible panels; a bigger
+        # roster picks a linear style instead. ONE PANEL PER SHOP is the
+        # rule, so a big directory that cannot fit on the requested pole
+        # GROWS the pole rather than dropping panels below grade (the
+        # mega-strip directory pole is a real LA silhouette anyway).
+        style = rng.choice(['ladder', 'stack', 'pinwheel']
+                           if n_shops <= 12 else ['ladder', 'stack'])
+        if style == 'ladder':
+            # lv_h floors at 0.34 (0.19 m panels): band = 62% of ph.
+            ph = max(ph, ((n_shops + 1) // 2) * 0.34 / 0.62)
+        elif style == 'stack':
+            # 0.16 m strips + 0.08 gaps must fit the band below the
+            # header (avail = 70% of ph minus the 1.55 header).
+            ph = max(ph, (0.24 * n_shops + 1.55) / 0.70)
         pm = (lambda k: M_METAL) if dead else (lambda k: smats[k % 3])
         if style == 'ladder':
             _box(sign, (px - 0.14, py - 0.14, 0.0),
@@ -2190,7 +2203,7 @@ def build_minimall(p, rng):
 
 SPEC = [
     params.MODE_PARAM,
-    dict(name="tenants", type='INT', default=5, min=2, max=9),
+    dict(name="tenants", type='INT', default=5, min=2, max=20),
     dict(name="tenant_width", type='FLOAT', default=5.5, min=4.0, max=8.0,
          unit='LENGTH', desc="Bay width per tenant"),
     dict(name="depth", type='FLOAT', default=12.0, min=8.0, max=16.0,
