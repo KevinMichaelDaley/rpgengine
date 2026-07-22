@@ -350,6 +350,50 @@ static const char *const PBR_FS =
     "  }\n"
     "  return min(vis, pbr_dyn_shadow(fragpos));\n"
     "}\n"
+    /* Translucency mask (rpg-29zj): translucent casters are EXCLUDED from the\n"
+     * main maps above (light passes through) and instead write tint+coverage +\n"
+     * linear distance into these per-cascade targets. A fragment lying BEYOND\n"
+     * the mask distance -- i.e. the light sees it THROUGH the translucent\n"
+     * surface -- has its sun term multiplied by the transmission tint. The\n"
+     * depth gate means glass shadows nothing in front of or beside it. */
+    "uniform sampler2DArray u_csm_mask_color;\n"
+    "uniform sampler2DArray u_csm_mask_depth;\n"
+    "uniform sampler2D u_dyn_mask_color;\n"
+    "uniform sampler2D u_dyn_mask_depth;\n"
+    "uniform int u_csm_mask_on;\n"
+    "vec3 pbr_csm_translucency(vec3 fragpos){\n"
+    "  if(u_csm_mask_on==0||u_csm_enabled==0) return vec3(1.0);\n"
+    "  vec3 trans = vec3(1.0);\n"
+    "  for(int i=0;i<u_csm_count;++i){\n"
+    "    vec4 lc = u_csm_vp[i] * vec4(fragpos, 1.0);\n"
+    "    vec3 ndc = lc.xyz / lc.w;\n"        /* ortho: w = 1. */
+    "    if(any(greaterThan(abs(ndc), vec3(1.0)))) continue;\n"
+    "    vec2 uv = ndc.xy*0.5 + 0.5;\n"
+    "    vec4 m = texture(u_csm_mask_color, vec3(uv, float(i)));\n"
+    "    if(m.a < 0.004) continue;\n"        /* no translucent caster here. */
+    "    float invfar = 1.0 / u_csm_far[i];\n"
+    "    float d = length(fragpos - u_csm_eye[i]) * invfar;\n"
+    "    float md = texture(u_csm_mask_depth, vec3(uv, float(i))).r;\n"
+    /* Behind the glass as seen from the light: attenuate by the transmission\n"
+     * tint, weighted by coverage. Union across cascades (darkest wins). */
+    "    if(d > md + u_dir_bias * invfar)\n"
+    "      trans = min(trans, mix(vec3(1.0), m.rgb, m.a));\n"
+    "  }\n"
+    /* Dynamic translucent casters: single ortho pair, same gate. */
+    "  vec4 dl = u_dyn_vp * vec4(fragpos, 1.0);\n"
+    "  vec3 dn = dl.xyz / dl.w;\n"
+    "  if(all(lessThan(abs(dn), vec3(1.0)))){\n"
+    "    vec2 duv = dn.xy*0.5 + 0.5;\n"
+    "    vec4 m = texture(u_dyn_mask_color, duv);\n"
+    "    if(m.a >= 0.004){\n"
+    "      float d = length(fragpos - u_dyn_eye) / u_dyn_far;\n"
+    "      float md = texture(u_dyn_mask_depth, duv).r;\n"
+    "      if(d > md + u_dir_bias / u_dyn_far)\n"
+    "        trans = min(trans, mix(vec3(1.0), m.rgb, m.a));\n"
+    "    }\n"
+    "  }\n"
+    "  return trans;\n"
+    "}\n"
     /* Dynamic-light GI (rpg-fo9r): gather the nearest adaptive probes (accel grid\n"
      * in texture buffers) and inverse-distance blend their SH, reconstructed as\n"
      * cosine irradiance for N -- the dynamic indirect term, added to ambient. */
@@ -681,7 +725,7 @@ static const char *const PBR_FS =
     /* Perf probe: 9 = material fetches only (no lighting), isolates fill/bandwidth. */
     "  if(u_debug_mode==9){ frag=vec4(albedo*ao,1.0); return; }\n"
     /* Directional sun. */
-    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot);\n"
+    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot) * pbr_csm_translucency(v_world_pos);\n"
     "  float dbg_cubesh = 1.0;\n"   /* raw cube-shadow of the nearest shadowed clustered light. */
     "  if(u_clustered==1){\n"
     /* Forward+: shade only this cluster's lights. */

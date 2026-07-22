@@ -79,6 +79,11 @@ typedef struct render_forward_config {
                                          *   ~2-3 = soft). */
     bool               dir_pcss;        /**< true = variable-width PCSS penumbra;
                                          *   false (default) = fixed-width PCF. */
+    bool               dir_translucency;/**< true = translucent casters (opacity < 1)
+                                         *   leave the main sun maps and render a
+                                         *   tint+coverage/depth mask instead, so
+                                         *   sunlight transmits through them tinted
+                                         *   (rpg-29zj). false = they hard-shadow. */
     float              shadow_scene_min[3];/**< whole-scene AABB min; when max>min the
                                              CSM fits every cascade to this box so no
                                              caster is clipped (0,0,0..0,0,0 = off). */
@@ -127,6 +132,12 @@ typedef struct render_forward {
      * (PBR_NOPREPASS) to A/B its early-Z benefit. */
     void (*glBlendFunc)(uint32_t sfactor, uint32_t dfactor);
     void (*glDisable)(uint32_t cap);
+    /* Render-target restore: the shadow pre-passes bind their own FBOs, so the
+     * framebuffer bound when render_forward_render is ENTERED (window 0 or a
+     * caller's offscreen FBO -- editor viewport, headless tests) is captured
+     * here and re-bound before the main graph runs. NULL = assume window 0. */
+    void (*glGetIntegerv)(uint32_t pname, int32_t *params);
+    void (*glBindFramebuffer)(uint32_t target, uint32_t framebuffer);
     int   overdraw;         /**< 1 = additive overdraw heatmap (debug mode 11). */
     int   no_prepass;       /**< 1 = skip the depth pre-pass. */
 } render_forward_t;

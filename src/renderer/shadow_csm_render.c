@@ -29,6 +29,12 @@ static void csm_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
         const render_renderable_t *r = &scene->items[i];
         if (r->mesh == NULL)
             continue;
+        /* Translucency mask active: translucent casters leave the MAIN maps
+         * (light passes through; they shadow via the mask instead). With the
+         * mask disabled they fall back to ordinary hard shadows. */
+        if (csm->mask_enabled && r->material != NULL &&
+            r->material->opacity < 0.999f)
+            continue;
         ++total;
         /* Size/background classification: a caster belongs to exactly one static
          * cascade. (Dynamic pass passes -1 -> no filter.) */

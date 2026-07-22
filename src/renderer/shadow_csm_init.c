@@ -149,6 +149,27 @@ void shadow_csm_destroy(shadow_csm_t *csm)
         csm->glDeleteRenderbuffers(1, &csm->dyn_depth_rb);
     if (csm->glDeleteTextures && csm->dyn_map)
         csm->glDeleteTextures(1, &csm->dyn_map);
+    /* Translucency mask (rpg-29zj) teardown -- all fields zero when the mask
+     * was never enabled, so the deletes are safely skipped. */
+    if (csm->glDeleteFramebuffers && csm->mask_fbo)
+        csm->glDeleteFramebuffers(1, &csm->mask_fbo);
+    if (csm->glDeleteRenderbuffers && csm->mask_depth_rb)
+        csm->glDeleteRenderbuffers(1, &csm->mask_depth_rb);
+    if (csm->glDeleteRenderbuffers && csm->dyn_mask_depth_rb)
+        csm->glDeleteRenderbuffers(1, &csm->dyn_mask_depth_rb);
+    if (csm->glDeleteTextures && csm->dyn_mask_color)
+        csm->glDeleteTextures(1, &csm->dyn_mask_color);
+    if (csm->glDeleteTextures && csm->dyn_mask_depth)
+        csm->glDeleteTextures(1, &csm->dyn_mask_depth);
+    if (csm->mask_enabled) {
+        shadow_atlas_destroy(&csm->mask_color_atlas);
+        shadow_atlas_destroy(&csm->mask_depth_atlas);
+        shader_program_destroy(&csm->mask_shader);
+    }
+    csm->mask_fbo = csm->mask_depth_rb = csm->dyn_mask_depth_rb = 0;
+    csm->dyn_mask_color = csm->dyn_mask_depth = 0;
+    csm->mask_enabled = csm->mask_static_valid = false;
+
     shadow_atlas_destroy(&csm->static_atlas);
     gpu_registry_destroy(&csm->registry);
     shader_program_destroy(&csm->shader);

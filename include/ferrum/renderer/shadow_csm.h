@@ -109,6 +109,25 @@ typedef struct shadow_csm {
     float  dyn_eye[3];
     float  dyn_far;
 
+    /* Translucency mask (rpg-29zj): translucent casters (opacity < 1) leave
+     * the main maps and render into these instead -- per-cascade RGBA16F tint
+     * + coverage and R32F distance atlases, plus a low-res dynamic pair.
+     * Zero-init = disabled; shadow_csm_mask_init enables. */
+    bool           mask_enabled;
+    bool           mask_static_valid;
+    shadow_atlas_t mask_color_atlas;
+    shadow_atlas_t mask_depth_atlas;
+    int32_t        mask_color_base;
+    int32_t        mask_depth_base;
+    uint32_t       mask_fbo;
+    uint32_t       mask_depth_rb;
+    uint32_t       dyn_mask_color;
+    uint32_t       dyn_mask_depth;
+    uint32_t       dyn_mask_depth_rb;
+    shader_program_t       mask_shader;
+    shader_uniform_cache_t mask_cache;
+    void (*glDrawBuffers)(int32_t, const uint32_t *);
+
     void (*glFramebufferTexture2D)(uint32_t, uint32_t, uint32_t, uint32_t, int32_t);
     void (*glGenFramebuffers)(int32_t, uint32_t *);
     void (*glDeleteFramebuffers)(int32_t, const uint32_t *);
@@ -201,6 +220,33 @@ void shadow_csm_bind(const shadow_csm_t *csm, shader_uniform_cache_t *cache,
  *        shadow_csm_bake_static; NULL-safe.
  */
 void shadow_csm_blur_moments(shadow_csm_t *csm);
+
+/**
+ * @brief Enable the translucency mask (rpg-29zj): per-cascade tint+coverage /
+ *        distance atlas pair + a dynamic 2D pair + the MRT caster shader.
+ *        Call after @ref shadow_csm_init. When enabled, the MAIN maps skip
+ *        translucent casters (light passes through them). Returns false on
+ *        allocation/compile failure (mask stays disabled; main maps intact).
+ */
+bool shadow_csm_mask_init(shadow_csm_t *csm, const gl_loader_t *loader);
+
+/** @brief Bake the STATIC translucent casters into the mask atlases (once;
+ *         call after @ref shadow_csm_bake_static). No-op when disabled. */
+void shadow_csm_mask_bake_static(shadow_csm_t *csm,
+                                 const render_scene_t *scene);
+
+/** @brief Render the DYNAMIC translucent casters into the dynamic mask pair
+ *         (per frame). No-op when disabled. */
+void shadow_csm_mask_render_dynamic(shadow_csm_t *csm,
+                                    const render_scene_t *scene);
+
+/** @brief Bind the four mask samplers + u_csm_mask_on. Uses distinct units
+ *         even when disabled (sampler types must not alias). NULL-safe. */
+void shadow_csm_mask_bind(const shadow_csm_t *csm,
+                          shader_uniform_cache_t *cache,
+                          const shader_program_t *program,
+                          uint32_t unit_color, uint32_t unit_depth,
+                          uint32_t unit_dyn_color, uint32_t unit_dyn_depth);
 
 /** @brief Release all GL resources. NULL-safe. */
 void shadow_csm_destroy(shadow_csm_t *csm);

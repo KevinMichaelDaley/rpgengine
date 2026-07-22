@@ -159,6 +159,9 @@ static void fwd_forward_submit(void *ud)
         shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_static", 22);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_dyn_map", 23);
     }
+    /* Translucency mask samplers on 36-39 (GI probes hold 24-34). NULL-safe /
+     * disabled-safe: always assigns the units so declarations never clash. */
+    shadow_csm_mask_bind(&f->csm, &f->cache, &f->pbr, 36u, 37u, 38u, 39u);
 
     /* Dynamic-GI (or other) extra binds: probe samplers on units 24+. When no
      * hook is set, force the probe path off but still assign the buffer samplers
@@ -166,11 +169,24 @@ static void fwd_forward_submit(void *ud)
     if (f->cfg.material_extra_bind != NULL) {
         f->cfg.material_extra_bind(f->cfg.material_extra_user, &f->cache, &f->pbr);
     } else {
+        /* EVERY sampler the probe-GI path declares must sit on its own unit
+         * even when GI is off: an unassigned sampler defaults to unit 0, and a
+         * samplerBuffer/sampler3D sharing unit 0 with the sampler2D albedo is
+         * a type conflict that makes every draw INVALID_OPERATION. Mirror the
+         * gi_runtime_bind unit layout (base 24). */
         shader_uniform_set_int(&f->cache, &f->pbr, "u_gi_enabled", 0);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_brick_on", 0);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_pos", 24);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_sh", 25);
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_cellstart", 26);
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_idx", 27);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_froxel_off", 26);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_froxel_cnt", 27);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_froxel_idx", 28);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_depth", 29);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_sg", 30);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_brick_index", 31);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_brick_meta", 32);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_brick_pidx", 33);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_valid", 34);
     }
 
     /* Frustum-cull the forward pass against the camera (rpg-0rs4). draw_distance
@@ -221,8 +237,12 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     if (cfg->loader->get_proc_address) {
         void *b = cfg->loader->get_proc_address("glBlendFunc", cfg->loader->user_data);
         void *d = cfg->loader->get_proc_address("glDisable", cfg->loader->user_data);
+        void *g = cfg->loader->get_proc_address("glGetIntegerv", cfg->loader->user_data);
+        void *f = cfg->loader->get_proc_address("glBindFramebuffer", cfg->loader->user_data);
         memcpy(&fwd->glBlendFunc, &b, sizeof b);
         memcpy(&fwd->glDisable, &d, sizeof d);
+        memcpy(&fwd->glGetIntegerv, &g, sizeof g);
+        memcpy(&fwd->glBindFramebuffer, &f, sizeof f);
     }
 
     char log[1024] = { 0 };
@@ -265,6 +285,11 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
             render_forward_destroy(fwd);
             return false;
         }
+        /* Translucency mask (rpg-29zj): tint/depth targets for translucent sun
+         * casters. Init failure is non-fatal -- the mask stays disabled and
+         * translucent casters fall back to hard shadows in the main maps. */
+        if (cfg->dir_translucency)
+            (void)shadow_csm_mask_init(&fwd->csm, cfg->loader);
     }
 
     uint32_t ctot = cfg->cluster.tiles_x * cfg->cluster.tiles_y * cfg->cluster.slices;
@@ -316,6 +341,11 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
     if (fwd == NULL || scene == NULL)
         return;
     fwd->scene = scene;
+    /* Capture the caller's render target before the shadow pre-passes swap
+     * FBOs around; restored just before the main graph runs. */
+    int32_t entry_fbo = 0;
+    if (fwd->glGetIntegerv && fwd->glBindFramebuffer)
+        fwd->glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &entry_fbo);
     static double a_cube = 0, a_csm = 0, a_fwd = 0; static int a_n = 0;
     struct timespec pt;
     if (fwd->prof && fwd->glFinish) { fwd->glFinish(); clock_gettime(CLOCK_MONOTONIC, &pt); }
@@ -393,11 +423,19 @@ void render_forward_render(render_forward_t *fwd, const render_scene_t *scene)
                           has_b ? fwd->cfg.shadow_scene_max : NULL);
         shadow_csm_bake_static(&fwd->csm, scene);
         shadow_csm_render_dynamic(&fwd->csm, scene);
+        /* Translucency mask piggybacks on the cascade matrices just computed. */
+        shadow_csm_mask_bake_static(&fwd->csm, scene);
+        shadow_csm_mask_render_dynamic(&fwd->csm, scene);
         fwd->csm.glViewport(0, 0, (int32_t)fwd->cfg.screen_w,
                             (int32_t)fwd->cfg.screen_h);
         FR_ZONE_END(z_csm);
     }
     a_csm += fr_prof_tick(fwd, &pt);
+    /* The shadow pre-passes above bound their own FBOs and reset to 0; restore
+     * the framebuffer that was bound when this call was entered so the main
+     * graph draws into the CALLER'S target (window or an offscreen FBO). */
+    if (fwd->glGetIntegerv && fwd->glBindFramebuffer && entry_fbo != 0)
+        fwd->glBindFramebuffer(GL_FRAMEBUFFER, (uint32_t)entry_fbo);
     /* Early-Z only pays off with overlapping geometry; skip it for a single
      * renderable so a trivial scene still executes (depth_pre is skippable). */
     int depth_enabled = (scene->count > 1u) ? 1 : 0;

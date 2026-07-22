@@ -1,6 +1,6 @@
 ---
 id: rpg-jqui
-status: in_progress
+status: closed
 deps: []
 links: []
 created: 2026-07-22T10:15:50Z
