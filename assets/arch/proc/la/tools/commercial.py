@@ -305,6 +305,40 @@ def _store_sign(shell, rng, emit, u0, u1, z0, z1, smats, dead,
                       z1 - 0.15 - hb, z1 - 0.15, smats[rng.randrange(3)])
 
 
+def _flat_front(shell, lines, p0, p1, z_par, z_top, t, emit,
+                end_l=True, end_r=True, back_lo=None, back_hi=None,
+                cap_full=True):
+    """Raised FLAT false front: a rectangular parapet block with VERTICAL
+    ends (a flat face must not ramp back down at its sides). Front face
+    continues the wall plane from its top edge; back face + cap band can
+    be clipped (back_lo/back_hi) so corner WRAPS mitre cleanly."""
+    segs = [v for v in lines if p0 - 1e-9 <= v <= p1 + 1e-9]
+    b_lo = p0 if back_lo is None else back_lo
+    b_hi = p1 if back_hi is None else back_hi
+    bsegs = [v for v in segs if b_lo - 1e-9 <= v <= b_hi + 1e-9]
+    q = shell.quad
+    for i in range(len(segs) - 1):
+        ua, ub = segs[i], segs[i + 1]
+        q(emit(ua, 0.0, z_par), emit(ub, 0.0, z_par),
+          emit(ub, 0.0, z_top), emit(ua, 0.0, z_top), M_STUCCO)   # front
+    for i in range(len(bsegs) - 1):
+        ua, ub = bsegs[i], bsegs[i + 1]
+        q(emit(ua, t, z_top), emit(ub, t, z_top),
+          emit(ub, t, z_par), emit(ua, t, z_par), M_STUCCO)       # back
+    for i in range(len(segs) - 1):
+        ua, ub = segs[i], segs[i + 1]
+        if cap_full or (b_lo - 1e-9 <= segs[i] and
+                        segs[i + 1] <= b_hi + 1e-9):
+            q(emit(ua, 0.0, z_top), emit(ub, 0.0, z_top),
+              emit(ub, t, z_top), emit(ua, t, z_top), M_STUCCO)   # cap
+    if end_l:
+        q(emit(p0, 0.0, z_par), emit(p0, 0.0, z_top),
+          emit(p0, t, z_top), emit(p0, t, z_par), M_STUCCO)
+    if end_r:
+        q(emit(p1, 0.0, z_top), emit(p1, 0.0, z_par),
+          emit(p1, t, z_par), emit(p1, t, z_top), M_STUCCO)
+
+
 def _emit_box(shell, emit, u0, u1, p0, p1, z0, z1, m):
     """Closed 6-quad box through an (u, proud, z) -> world map. Intended
     for recalc shells (windings normalised)."""
@@ -668,12 +702,24 @@ def build_minimall(p, rng):
     band_on = p["roof_band"] != 'none'
     pk_frac = 0.0 if band_on else p["peak_fraction"]
 
-    def roll_peak(pb0, pb1):
+    FLAT_AW = 1e6                     # aw sentinel: flat false front
+
+    def roll_peak(pb0, pb1, prev):
+        # ADJACENT raised fronts must share a form: a gable half-merging
+        # into a flat block leaves coplanar/naked joints.
         xc = (pb0 + pb1) / 2.0
-        if rng.random() < 0.5:
-            # flat-topped false front: wide apex, taller.
-            return (pb0, pb1, xc, z_par + 0.7 + rng.random() * 0.7,
-                    (pb1 - pb0) * 0.85)
+        if prev is not None and abs(prev[1] - pb0) < 1e-6:
+            form_flat = prev[4] > 1.0
+        else:
+            form_flat = rng.random() < 0.5
+        if form_flat:
+            if prev is not None and abs(prev[1] - pb0) < 1e-6 and \
+                    prev[4] > 1.0:
+                zt5 = prev[3]         # merged flats share ONE height --
+                # differing tops T-junction at the shared bay line
+            else:
+                zt5 = z_par + 0.7 + rng.random() * 0.7
+            return (pb0, pb1, xc, zt5, FLAT_AW)
         return (pb0, pb1, xc, z_par + 0.55 + rng.random() * 0.5, aw_pk)
 
     peaks_m, peaks_w = [], []
@@ -682,15 +728,57 @@ def build_minimall(p, rng):
             pb0 = max(b0, e_ang) if layout == 'angled' else b0
             # (clamped east of the slant strip: a peak base over the
             # custom band would put 3 faces on the wall-top line)
-            peaks_m.append(roll_peak(pb0, b1))
+            peaks_m.append(roll_peak(pb0, b1,
+                                     peaks_m[-1] if peaks_m else None))
     for (b0, b1, _o0, _o1) in bays_w:
         if rng.random() < pk_frac:
-            peaks_w.append(roll_peak(b0, b1))
+            peaks_w.append(roll_peak(b0, b1,
+                                     peaks_w[-1] if peaks_w else None))
     for xa in xarms:
         xa['peaks'] = []
         for (b0, b1, _o0, _o1) in xa['bays']:
             if rng.random() < pk_frac:
-                xa['peaks'].append(roll_peak(b0, b1))
+                xa['peaks'].append(
+                    roll_peak(b0, b1,
+                              xa['peaks'][-1] if xa['peaks'] else None))
+    # raised fronts that MEET at a building corner (main run vs wing /
+    # west arm) must share form and height -- mismatched tops put the
+    # shorter one's verts on the taller one's corner edge.
+    def _sync_corner(main_pk, other_list):
+        for i4, pk4 in enumerate(other_list):
+            if abs(pk4[1] - Wy) < 1e-6:
+                other_list[i4] = (pk4[0], pk4[1],
+                                  (pk4[0] + pk4[1]) / 2.0, main_pk[3],
+                                  FLAT_AW if main_pk[4] > 1.0 else aw_pk)
+                # cascade the height through the arm's own MERGED flat
+                # chain (resyncing one peak broke its neighbour match).
+                j4 = i4 - 1
+                while (j4 >= 0 and other_list[j4][4] > 1.0 and
+                       main_pk[4] > 1.0 and
+                       abs(other_list[j4][1] - other_list[j4 + 1][0])
+                       < 1e-6):
+                    o5 = other_list[j4]
+                    other_list[j4] = (o5[0], o5[1], o5[2], main_pk[3],
+                                      o5[4])
+                    j4 -= 1
+
+    if corner and peaks_m and abs(peaks_m[-1][1] - Wm) < 1e-6:
+        _sync_corner(peaks_m[-1], peaks_w)
+    for xa in xarms:
+        if xa['ox1'] <= 0.0 and peaks_m and \
+                abs(peaks_m[0][0] - wx) < 1e-6:
+            _sync_corner(peaks_m[0], xa['peaks'])
+    # a flat front reaching a FREE building corner WRAPS around it: the
+    # raised band returns 2.5 m along the side wall.
+    wrap_ret = 2.5
+    wrap_w = wrap_e = None
+    if peaks_m and peaks_m[0][4] > 1.0 and layout not in ('angled',) and \
+            not any(xa['ox1'] <= 0.0 for xa in xarms) and \
+            abs(peaks_m[0][0] - wx) < 1e-6:
+        wrap_w = peaks_m[0]
+    if peaks_m and peaks_m[-1][4] > 1.0 and not corner and \
+            abs(peaks_m[-1][1] - Wm) < 1e-6:
+        wrap_e = peaks_m[-1]
 
     # ---- line families -----------------------------------------------------
     xl = {0.0, Wm, Wm - t, We, We - t}
@@ -698,7 +786,9 @@ def build_minimall(p, rng):
         xl.add(t)                     # west cap-corner line (rectilinear
         # corners only; the angled slant region replaces it)
     for (p0k, p1k, xck, _z, _aw) in peaks_m:
-        xl |= {p0k, p1k, xck - _aw / 2.0, xck + _aw / 2.0}
+        xl |= {p0k, p1k}
+        if _aw < 1.0:
+            xl |= {xck - _aw / 2.0, xck + _aw / 2.0}
     if corner:
         xl.add(Wm + t)                # wing-front cap band inset line
     if anchor_on:
@@ -732,6 +822,8 @@ def build_minimall(p, rng):
         for pr in wins:
             xl |= set(pr)
     yl = {0.0, D, t, D - t}
+    if wrap_w is not None or wrap_e is not None:
+        yl.add(wrap_ret)              # the corner wrap's end line
     if cdoor_on:
         yl.add(c1d)
     if corner or xarms:
@@ -745,14 +837,16 @@ def build_minimall(p, rng):
             for (w0b, w1b) in wins:
                 yl |= {w0b - Wy, w1b - Wy}
         for (p0k, p1k, xck, _z, _aw) in xa['peaks']:
-            yl |= {p0k - Wy, p1k - Wy, xck - _aw / 2.0 - Wy,
-                   xck + _aw / 2.0 - Wy}
+            yl |= {p0k - Wy, p1k - Wy}
+            if _aw < 1.0:
+                yl |= {xck - _aw / 2.0 - Wy, xck + _aw / 2.0 - Wy}
     if corner:
         # EAST wing lines (these were accidentally swallowed into the
         # xarms loop -- plain L has no xarms, so they never ran).
         for (p0k, p1k, xck, _z, _aw) in peaks_w:
-            yl |= {-Wy + p0k, -Wy + p1k, -Wy + xck - _aw / 2.0,
-                   -Wy + xck + _aw / 2.0}
+            yl |= {-Wy + p0k, -Wy + p1k}
+            if _aw < 1.0:
+                yl |= {-Wy + xck - _aw / 2.0, -Wy + xck + _aw / 2.0}
         for (b0, b1, o0, o1) in bays_w:
             yl |= {b0 - Wy, b1 - Wy, o0 - Wy, o1 - Wy}
         for (d0, d1) in doors_w:
@@ -1124,7 +1218,26 @@ def build_minimall(p, rng):
                            M_STUCCO)
 
     # ---- roof (cell-classified cap ring / plane / drops) -------------------
+    # raised fronts MEETING at a building corner join with a mitred
+    # corner COLUMN (both end faces suppressed): four faces piled on the
+    # corner edge otherwise. Computed here because in_peak must also skip
+    # the cap cell under the fill column.
+    join_e = (corner and peaks_m and abs(peaks_m[-1][1] - Wm) < 1e-6 and
+              any(abs(pk4[1] - Wy) < 1e-6 for pk4 in peaks_w))
+    join_w = (peaks_m and abs(peaks_m[0][0] - wx) < 1e-6 and
+              any(abs(pk4[1] - Wy) < 1e-6
+                  for xa2 in xarms if xa2['ox1'] <= 0.0
+                  for pk4 in xa2['peaks']))
+
     def in_peak(cx, cy):
+        if wrap_w is not None and cx < wx + t and 0.0 < cy < wrap_ret:
+            return True
+        if wrap_e is not None and cx > Wm - t and 0.0 < cy < wrap_ret:
+            return True
+        if join_e and Wm < cx < Wm + t and 0.0 < cy < t:
+            return True
+        if join_w and -t < cx < 0.0 and 0.0 < cy < t:
+            return True
         for (p0k, p1k, _xc, _z, _aw) in peaks_m:
             if p0k < cx < p1k and 0.0 < cy < t:
                 return True
@@ -1190,13 +1303,66 @@ def build_minimall(p, rng):
     shell.tag = 'parapet'
     starts_m = {round(p0k, 6) for (p0k, _p1, _xc, _z, _aw) in peaks_m}
     ends_m = {round(p1k, 6) for (_p0, p1k, _xc, _z, _aw) in peaks_m}
+
+    def corner_col(cx0, cx1, cy0, cy1, zhi5, west_face):
+        q5 = shell.quad
+        q5((cx0, cy0, zhi5), (cx1, cy0, zhi5), (cx1, cy1, zhi5),
+           (cx0, cy1, zhi5), M_STUCCO)                       # top
+        q5((cx0, cy1, zhi5), (cx1, cy1, zhi5), (cx1, cy1, z_par),
+           (cx0, cy1, z_par), M_STUCCO)                      # north +y
+        if west_face:
+            q5((cx0, cy0, z_par), (cx0, cy0, zhi5), (cx0, cy1, zhi5),
+               (cx0, cy1, z_par), M_STUCCO)                  # west -x
+        else:
+            q5((cx1, cy0, z_par), (cx1, cy1, z_par), (cx1, cy1, zhi5),
+               (cx1, cy0, zhi5), M_STUCCO)                   # east +x
+
+    if join_e:
+        pk5 = peaks_m[-1]
+        zj = pk5[3] if pk5[4] > 1.0 else z_par + 0.12
+        corner_col(Wm, Wm + t, 0.0, t, zj, west_face=False)
+    if join_w:
+        pk5 = peaks_m[0]
+        zj = pk5[3] if pk5[4] > 1.0 else z_par + 0.12
+        corner_col(-t, 0.0, 0.0, t, zj, west_face=True)
     for (p0k, p1k, xck, zpk, awk) in peaks_m:
-        # adjacent peaks MERGE at their shared bay line: both stubs there
-        # would be coincident opposite-winding quads (doubled faces).
-        _peak_wall(shell, xl, p0k, p1k, xck, awk, z_par, zpk, t,
-                   lambda u, d2, z: (u, d2, z),
-                   stub_l=round(p0k, 6) not in ends_m,
-                   stub_r=round(p1k, 6) not in starts_m)
+        # adjacent raised fronts MERGE at their shared bay line: both end
+        # faces there would be coincident opposite-winding quads.
+        e_l = round(p0k, 6) not in ends_m
+        e_r = round(p1k, 6) not in starts_m
+        if join_w and abs(p0k - wx) < 1e-6:
+            e_l = False
+        if join_e and abs(p1k - Wm) < 1e-6:
+            e_r = False
+        if awk > 1.0:
+            wl = wrap_w is not None and wrap_w[0] == p0k
+            wr = wrap_e is not None and wrap_e[1] == p1k
+            _flat_front(shell, xl, p0k, p1k, z_par, zpk, t,
+                        lambda u, d2, z: (u, d2, z),
+                        end_l=e_l and not wl, end_r=e_r and not wr,
+                        back_lo=(p0k + t) if wl else None,
+                        back_hi=(p1k - t) if wr else None)
+            if wl:
+                # corner WRAP: the raised band returns along the west
+                # side (u = -y for the -x-facing plane; back/cap clip at
+                # the mitre so the front band's frame owns the corner).
+                _flat_front(shell, sorted(-v for v in yl
+                                          if -1e-9 <= v <= wrap_ret + 1e-9),
+                            -wrap_ret, 0.0, z_par, zpk, t,
+                            lambda u, d2, z: (wx + d2, -u, z),
+                            end_l=True, end_r=False,
+                            back_hi=-t, cap_full=False)
+            if wr:
+                _flat_front(shell, [v for v in yl
+                                    if -1e-9 <= v <= wrap_ret + 1e-9],
+                            0.0, wrap_ret, z_par, zpk, t,
+                            lambda u, d2, z: (Wm - d2, u, z),
+                            end_l=False, end_r=True,
+                            back_lo=t, cap_full=False)
+        else:
+            _peak_wall(shell, xl, p0k, p1k, xck, awk, z_par, zpk, t,
+                       lambda u, d2, z: (u, d2, z),
+                       stub_l=e_l, stub_r=e_r)
     for xa in xarms:
         fx = xa['fx']
         pk = xa['peaks']
@@ -1204,31 +1370,57 @@ def build_minimall(p, rng):
             st2 = {round(p0k, 6) for (p0k, _p1, _x, _z, _aw) in pk}
             en2 = {round(p1k, 6) for (_p0, p1k, _x, _z, _aw) in pk}
             for (p0k, p1k, xck, zpk, awk) in pk:
-                _peak_wall(shell, [v + Wy for v in yl], p0k, p1k, xck,
-                           awk, z_par, zpk, t,
-                           lambda u, d2, z: (fx - d2, -Wy + u, z),
-                           stub_l=round(p0k, 6) not in en2,
-                           stub_r=round(p1k, 6) not in st2)
+                em6 = (lambda f6: lambda u, d2, z:
+                       (f6 - d2, -Wy + u, z))(fx)
+                a_er = round(p1k, 6) not in st2
+                if join_w and abs(p1k - Wy) < 1e-6 and xa['ox1'] <= 0.0:
+                    a_er = False      # corner join owns this end
+                if awk > 1.0:
+                    _flat_front(shell, [v + Wy for v in yl], p0k, p1k,
+                                z_par, zpk, t, em6,
+                                end_l=round(p0k, 6) not in en2,
+                                end_r=a_er)
+                else:
+                    _peak_wall(shell, [v + Wy for v in yl], p0k, p1k, xck,
+                               awk, z_par, zpk, t, em6,
+                               stub_l=round(p0k, 6) not in en2,
+                               stub_r=a_er)
         else:
             st2 = {round(Wy - p1k, 6) for (_p0, p1k, _x, _z, _aw) in pk}
             en2 = {round(Wy - p0k, 6) for (p0k, _p1, _x, _z, _aw) in pk}
             for (p0k, p1k, xck, zpk, awk) in pk:
                 u0k, u1k = Wy - p1k, Wy - p0k
-                _peak_wall(shell, sorted(-v for v in yl), u0k, u1k,
-                           Wy - xck, awk, z_par, zpk, t,
-                           lambda u, d2, z: (fx + d2, -u, z),
-                           stub_l=round(u0k, 6) not in en2,
-                           stub_r=round(u1k, 6) not in st2)
+                em6 = (lambda f6: lambda u, d2, z: (f6 + d2, -u, z))(fx)
+                if awk > 1.0:
+                    _flat_front(shell, sorted(-v for v in yl), u0k, u1k,
+                                z_par, zpk, t, em6,
+                                end_l=round(u0k, 6) not in en2,
+                                end_r=round(u1k, 6) not in st2)
+                else:
+                    _peak_wall(shell, sorted(-v for v in yl), u0k, u1k,
+                               Wy - xck, awk, z_par, zpk, t, em6,
+                               stub_l=round(u0k, 6) not in en2,
+                               stub_r=round(u1k, 6) not in st2)
     starts_w = {round(Wy - p1k, 6) for (_p0, p1k, _xc, _z, _aw) in peaks_w}
     ends_w = {round(Wy - p0k, 6) for (p0k, _p1, _xc, _z, _aw) in peaks_w}
     for (p0k, p1k, xck, zpk, awk) in peaks_w:
         # u runs along -y (handedness for the -x-facing wing wall).
         u0k, u1k = Wy - p1k, Wy - p0k
-        _peak_wall(shell, sorted(-v for v in yl), u0k, u1k,
-                   Wy - xck, awk, z_par, zpk, t,
-                   lambda u, d2, z: (Wm + d2, -u - 0.0, z),
-                   stub_l=round(u0k, 6) not in ends_w,
-                   stub_r=round(u1k, 6) not in starts_w)
+        w_el = round(u0k, 6) not in ends_w
+        if join_e and abs(p1k - Wy) < 1e-6:
+            w_el = False              # corner join owns this end
+        if awk > 1.0:
+            _flat_front(shell, sorted(-v for v in yl), u0k, u1k,
+                        z_par, zpk, t,
+                        lambda u, d2, z: (Wm + d2, -u - 0.0, z),
+                        end_l=w_el,
+                        end_r=round(u1k, 6) not in starts_w)
+        else:
+            _peak_wall(shell, sorted(-v for v in yl), u0k, u1k,
+                       Wy - xck, awk, z_par, zpk, t,
+                       lambda u, d2, z: (Wm + d2, -u - 0.0, z),
+                       stub_l=w_el,
+                       stub_r=round(u1k, 6) not in starts_w)
 
     mats = [_material(nm) for nm in _MATS]
     body = shell.to_object("LA_MiniMall_Body", mats)
