@@ -246,7 +246,8 @@ def _peak_wall(shell, lines, p0, p1, xc, aw, z_par, z_peak, t, emit,
           emit(p1, t, z_par), emit(p1, t, stub), M_STUCCO)     # end stub R
 
 
-def _store_sign(shell, rng, emit, u0, u1, z0, z1, smats, dead):
+def _store_sign(shell, rng, emit, u0, u1, z0, z1, smats, dead,
+                blade_ok=True):
     """One LEGIBLE name sign per store: a primary landscape cabinet sized
     to the bay and centred (small jitter), plus occasionally a thin
     secondary strip below it or a projecting blade at the bay edge --
@@ -277,22 +278,31 @@ def _store_sign(shell, rng, emit, u0, u1, z0, z1, smats, dead):
         # thin secondary strip below ("SANDWICHES - BEER - LOTTO").
         panel(cu - hw * 0.85, cu + hw * 0.85, z0 + 0.03, cz - hh - 0.05,
               0.002, smats[rng.randrange(3)])
-    if not dead and rng.random() < 0.3:
+    if not dead and blade_ok and rng.random() < 0.35:
+        # projecting BLADE(s): seeded size; occasionally a vertical stack
+        # of shorter cabinets on one mount. Suppressed when a canopy or
+        # balcony deck would block them (blade_ok).
         bu = u0 + 0.03 if rng.random() < 0.5 else u1 - 0.13
-        panel(bu, bu + 0.10, z0 - 0.85, z1 - 0.1, 0.06,
-              smats[rng.randrange(3)])                # stub mount
-        pts = {}
-        for pk, pd in (('n', 0.10), ('f', 0.85)):
-            pts[pk] = [emit(bu, pd, z0 - 0.8), emit(bu + 0.10, pd, z0 - 0.8),
-                       emit(bu + 0.10, pd, z1 - 0.15), emit(bu, pd, z1 - 0.15)]
-        nq, fq = pts['n'], pts['f']
-        q = shell.quad
-        q(nq[0], nq[3], nq[2], nq[1], m0)
-        q(fq[0], fq[1], fq[2], fq[3], m0)
-        q(nq[0], nq[1], fq[1], fq[0], m0)
-        q(nq[3], fq[3], fq[2], nq[2], m0)
-        q(nq[1], nq[2], fq[2], fq[1], m0)
-        q(nq[0], fq[0], fq[3], nq[3], m0)
+        depth_b = 0.55 + rng.random() * 0.4
+        if rng.random() < 0.4:
+            nb = 3 if rng.random() < 0.4 else 2
+            ztop = z1 - 0.12
+            zbot = ztop
+            for _k in range(nb):
+                hb = 0.42 + rng.random() * 0.28
+                _emit_box(shell, emit, bu, bu + 0.10, 0.10,
+                          0.10 + depth_b, zbot - hb, zbot,
+                          smats[rng.randrange(3)])
+                zbot -= hb + 0.14
+            _emit_box(shell, emit, bu + 0.02, bu + 0.08, 0.02, 0.12,
+                      zbot + 0.10, ztop, M_METAL)     # mount bar (embeds
+            # 20 mm into the cabinets -- a shared plane reads as tj)
+        else:
+            hb = 1.1 + rng.random() * 1.0
+            _emit_box(shell, emit, bu + 0.02, bu + 0.08, 0.02, 0.12,
+                      z1 - 0.15 - hb, z1 - 0.10, M_METAL)
+            _emit_box(shell, emit, bu, bu + 0.10, 0.10, 0.10 + depth_b,
+                      z1 - 0.15 - hb, z1 - 0.15, smats[rng.randrange(3)])
 
 
 def _emit_box(shell, emit, u0, u1, p0, p1, z0, z1, m):
@@ -341,6 +351,53 @@ def _awning(shell, emit, u0, u1, kind, depth, z_top=2.95):
     (pe, ze) = pts[-1]
     shell.quad(emit(u0, pe, ze - 0.22), emit(u1, pe, ze - 0.22),
                emit(u1, pe, ze), emit(u0, pe, ze), M_TRIM)   # valance
+    # SIDE panels (awnings are not one surface): the region between the
+    # top slope/arc and the valance-bottom line, per end.
+    zb2 = ze - 0.22
+    for (uu, rev) in ((u0, False), (u1, True)):
+        for k in range(len(pts) - 1):
+            (pa, za), (pb2, zb3) = pts[k], pts[k + 1]
+            pts4 = [emit(uu, pa, za), emit(uu, pb2, zb3),
+                    emit(uu, pb2, zb2), emit(uu, pa, zb2)]
+            if rev:
+                pts4.reverse()
+            shell.quad(*pts4, M_TRIM)
+    shell.tag = keep
+
+
+def _rail_u(shell, x0, x1, yf, yb, zlo, zhi, th=0.12):
+    """ONE welded U-shaped solid rail (two legs + front) with MITRED
+    corners -- three abutting boxes left visible seams. Plan cells: legL /
+    cornerL / front / cornerR / legR; only perimeter side faces emit, so
+    the solid is manifold. yf = outer front plane, yb = leg-end plane
+    (toward the building), legs along y."""
+    xa0, xa1, xb1, xb0 = x0, x0 + th, x1 - th, x1
+    yo, yi = yf, yf + th
+    q = shell.quad
+    cells = [(xa0, xa1, yi, yb), (xa0, xa1, yo, yi), (xa1, xb1, yo, yi),
+             (xb1, xb0, yo, yi), (xb1, xb0, yi, yb)]
+    for (cx0, cx1, cy0, cy1) in cells:
+        q((cx0, cy0, zhi), (cx1, cy0, zhi), (cx1, cy1, zhi),
+          (cx0, cy1, zhi), M_STUCCO)                         # top (+z)
+        q((cx0, cy0, zlo), (cx0, cy1, zlo), (cx1, cy1, zlo),
+          (cx1, cy0, zlo), M_STUCCO)                         # bottom (-z)
+    for (sx0, sx1) in ((xa0, xa1), (xa1, xb1), (xb1, xb0)):
+        q((sx0, yo, zlo), (sx1, yo, zlo), (sx1, yo, zhi),
+          (sx0, yo, zhi), M_STUCCO)                          # outer front -y
+    q((xa1, yi, zhi), (xb1, yi, zhi), (xb1, yi, zlo),
+      (xa1, yi, zlo), M_STUCCO)                              # inner front +y
+    for (sy0, sy1) in ((yo, yi), (yi, yb)):
+        q((xa0, sy0, zhi), (xa0, sy1, zhi), (xa0, sy1, zlo),
+          (xa0, sy0, zlo), M_STUCCO)                         # outer leg -x
+        q((xb0, sy0, zlo), (xb0, sy1, zlo), (xb0, sy1, zhi),
+          (xb0, sy0, zhi), M_STUCCO)                         # outer leg +x
+    q((xa1, yi, zlo), (xa1, yb, zlo), (xa1, yb, zhi),
+      (xa1, yi, zhi), M_STUCCO)                              # inner leg +x
+    q((xb1, yi, zhi), (xb1, yb, zhi), (xb1, yb, zlo),
+      (xb1, yi, zlo), M_STUCCO)                              # inner leg -x
+    for (ex0, ex1) in ((xa0, xa1), (xb1, xb0)):
+        q((ex0, yb, zlo), (ex1, yb, zlo), (ex1, yb, zhi),
+          (ex0, yb, zhi), M_STUCCO)                          # leg ends +y
 
 
 def _roof_band(shell, emit, u0, u1, kind, z_par, depth=1.6):
@@ -475,12 +532,15 @@ def build_minimall(p, rng):
                 for (b0, b1, o0, o1) in _tenant_bays(Wm - wx, n)]
     ka = -1
     a0 = a1 = 0.0
+    aw_n = 2
     if anchor_on:
-        ka = rng.choice([0, max(0, n // 2 - 1), n - 2])
-        a0, a1 = all_bays[ka][0], all_bays[ka + 1][1]
+        # a grocery anchor is SOMETIMES wider: 3 bays when the run allows.
+        aw_n = 3 if (n >= 6 and rng.random() < 0.4) else 2
+        ka = rng.choice([0, max(0, n // 2 - 1), n - aw_n])
+        a0, a1 = all_bays[ka][0], all_bays[ka + aw_n - 1][1]
     # ---- tenant fates: shuttered fraction + story bays ---------------------
     bays_m = [b3 for i3, b3 in enumerate(all_bays)
-              if not (anchor_on and i3 in (ka, ka + 1))]
+              if not (anchor_on and ka <= i3 < ka + aw_n)]
     bays_w = _tenant_bays(Wy, n_w) if corner else []
     shut_p = 1.0 if dead else p["shutters"]
 
@@ -1224,18 +1284,11 @@ def build_minimall(p, rng):
                 p0, p1 = o0 + 0.35, o1 - 0.35
                 _box(can, (p0, -cd - 0.95, deck_lo + 0.10),
                      (p1, -cd - 0.002, deck_top), M_CONCRETE)
-                # rail FRAME: side pieces + front piece with 4 mm corner
-                # clearances (overlapping solids read as tj/nm).
+                # ONE welded U-rail with mitred corners (the 3-piece
+                # frame left visible seams).
                 can.tag = 'loggia'
-                _wall_solid(can, 'y', p0 + 0.02, -cd - 0.93, -cd - 0.06,
-                            deck_top + 0.002, deck_top + 0.92, 0.12, None,
-                            M_STUCCO)
-                _wall_solid(can, 'y', p1 - 0.14, -cd - 0.93, -cd - 0.06,
-                            deck_top + 0.002, deck_top + 0.92, 0.12, None,
-                            M_STUCCO)
-                _wall_solid(can, 'x', -cd - 0.95, p0 + 0.144, p1 - 0.144,
-                            deck_top + 0.002, deck_top + 0.92, 0.12, None,
-                            M_STUCCO)
+                _rail_u(can, p0 + 0.02, p1 - 0.02, -cd - 0.93, -cd - 0.06,
+                        deck_top + 0.002, deck_top + 0.92)
             elif sel == 'recessed' and not interior_on:
                 # loggia floor: the deck continues INTO the recess (in
                 # interior mode the office floor slab already IS it).
@@ -1588,6 +1641,19 @@ def build_minimall(p, rng):
                  (ax1 - wt - e, D - wt - e, 0.12), M_CONCRETE)
             _box(ash, (ax0 + wt + e, AF + wt + e, zA_roof - 0.12),
                  (ax1 - wt - e, D - wt - e, zA_roof - 0.002), M_CONCRETE)
+        # rooftop HVAC: groceries almost always carry a big RTU package.
+        ash.tag = 'roof'
+        hx0 = max(ax0 + 0.6, axc - 1.4)
+        hy0 = D - 4.4
+        _box(ash, (hx0 - 0.1, hy0 - 0.1, zA_roof + 0.002),
+             (hx0 + 2.5, hy0 + 1.8, zA_roof + 0.16), M_CONCRETE)   # curb
+        _box(ash, (hx0, hy0, zA_roof + 0.14),
+             (hx0 + 2.4, hy0 + 1.7, zA_roof + 1.15), M_METAL)      # RTU
+        _box(ash, (hx0 + 0.3, hy0 + 0.35, zA_roof + 1.13),
+             (hx0 + 1.1, hy0 + 1.15, zA_roof + 1.34), M_METAL)     # fan hood
+        _box(ash, (hx0 + 2.38, hy0 + 0.45, zA_roof + 0.30),
+             (hx0 + min(3.1, (ax1 - hx0) - 0.4), hy0 + 1.25,
+              zA_roof + 0.85), M_METAL)                            # duct run
         if docks_on:
             # raised loading platform against the rear + rubber bumpers.
             ash.tag = 'walkway'
@@ -1611,13 +1677,15 @@ def build_minimall(p, rng):
     def emit_wing(u, pd, z):          # wing face (x = Wm), u runs -y
         return (Wm - 0.002 - pd, -u, z)
 
+    blade_ok = not office and not has_canopy
     if p["sign_band"] and not dead:
         for i, (_b0, _b1, o0, o1) in enumerate(bays_m):
             _store_sign(sign, rng, emit_front, o0, o1, Z_SF + 0.05,
-                        Z_FAS - 0.05, smats, dead)
+                        Z_FAS - 0.05, smats, dead, blade_ok=blade_ok)
         for i, (_b0, _b1, o0, o1) in enumerate(bays_w):
             _store_sign(sign, rng, emit_wing, Wy - o1, Wy - o0,
-                        Z_SF + 0.05, Z_FAS - 0.05, smats, dead)
+                        Z_SF + 0.05, Z_FAS - 0.05, smats, dead,
+                        blade_ok=blade_ok)
     for xa in xarms:
         if not p["sign_band"] or dead:
             break
@@ -1626,17 +1694,18 @@ def build_minimall(p, rng):
             if xa['face'] == 'e':
                 _store_sign(sign, rng,
                             lambda u, pd, z: (fx + 0.002 + pd, -Wy + u, z),
-                            o0, o1, Z_SF + 0.05, Z_FAS - 0.05, smats, dead)
+                            o0, o1, Z_SF + 0.05, Z_FAS - 0.05, smats, dead,
+                            blade_ok=blade_ok)
             else:
                 _store_sign(sign, rng,
                             lambda u, pd, z: (fx - 0.002 - pd, -u, z),
                             Wy - o1, Wy - o0, Z_SF + 0.05, Z_FAS - 0.05,
-                            smats, dead)
+                            smats, dead, blade_ok=blade_ok)
     if anchor_on and not dead:
         _store_sign(sign, rng,
                     lambda u, pd, z: (u, AF - 0.002 - pd, z),
                     a0 + 0.6, a1 - 0.6, zA_sf + 0.06, zA_fas - 0.06,
-                    smats, dead)
+                    smats, dead, blade_ok=False)
     # security-bar grilles over every barred opening.
     sign.tag = 'story'
     grille_sets = [(emit_front, bays_m, doors_m, fates_m, bw_m, False)]
