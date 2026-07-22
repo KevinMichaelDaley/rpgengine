@@ -46,13 +46,23 @@ static const char *const CS_TRACE =
     "uniform vec3 u_sdf_origin[16];\n"
     "uniform vec3 u_sdf_dim[16];\n"            /* cells per axis. */
     "uniform float u_sdf_vox[16];\n"
-    /* Union of the resident chunk SDFs; +big outside all coverage so rays in
-     * empty space march straight to u_max_dist. */
-    "float scene_sdf(vec3 p){ float d=1e30;\n"
+    "uniform sampler3D u_zone;\n"
+    "uniform int u_zone_on;\n"
+    "uniform vec3 u_zone_origin;\n"
+    "uniform vec3 u_zone_dim;\n"
+    "uniform float u_zone_vox;\n"
+    /* Union of the resident chunk SDFs, with the GI trace's page-fault
+     * semantics: where NO fine chunk covers the point, the coarse global zone
+     * field keeps occlusion alive; outside both, +big so rays in truly empty
+     * space march straight to u_max_dist. */
+    "float scene_sdf(vec3 p){ float d=1e30; bool cov=false;\n"
     "  for(int i=0;i<u_sdf_count;++i){\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
-    "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
+    "      cov=true; vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
+    "  if(!cov && u_zone_on!=0){ vec3 g=(p-u_zone_origin)/u_zone_vox;\n"
+    "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_zone_dim))){\n"
+    "      vec3 uvw=(g+0.5)/u_zone_dim; d=min(d, texture(u_zone,uvw).a); } }\n"
     "  return d; }\n"
     "float rnd(inout uint s){ s=s*747796405u+2891336453u;\n"
     "  uint w=((s>>((s>>28u)+4u))^s)*277803737u; return float((w>>22u)^w)*(1.0/4294967296.0); }\n"
@@ -246,6 +256,11 @@ bool shadow_caustics_init(shadow_caustics_t *c,
             snprintf(nm, sizeof nm, "u_sdf_vox[%d]", i);
             c->loc.sdf_vox[i] = glGetUniformLocation(p, nm);
         }
+        c->loc.zone = glGetUniformLocation(p, "u_zone");
+        c->loc.zone_on = glGetUniformLocation(p, "u_zone_on");
+        c->loc.zone_origin = glGetUniformLocation(p, "u_zone_origin");
+        c->loc.zone_dim = glGetUniformLocation(p, "u_zone_dim");
+        c->loc.zone_vox = glGetUniformLocation(p, "u_zone_vox");
         c->loc.rz_mode = glGetUniformLocation(c->prog_resolve, "u_mode");
         c->loc.rz_cascade = glGetUniformLocation(c->prog_resolve, "u_cascade");
         c->loc.rz_res = glGetUniformLocation(c->prog_resolve, "u_res");
@@ -285,4 +300,20 @@ void shadow_caustics_set_sdf(shadow_caustics_t *c, const uint32_t *textures,
         c->sdf_vox[i] = voxels[i];
     }
     c->sdf_count = count;
+}
+
+void shadow_caustics_set_zone(shadow_caustics_t *c, uint32_t tex,
+                              const float origin[3], const float dims[3],
+                              float voxel)
+{
+    if (c == NULL)
+        return;
+    if (tex == 0u || origin == NULL || dims == NULL || voxel <= 0.0f) {
+        c->zone_tex = 0u;
+        return;
+    }
+    c->zone_tex = tex;
+    memcpy(c->zone_origin, origin, sizeof c->zone_origin);
+    memcpy(c->zone_dim, dims, sizeof c->zone_dim);
+    c->zone_vox = voxel;
 }

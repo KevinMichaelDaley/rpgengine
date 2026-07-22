@@ -67,6 +67,13 @@ typedef struct shadow_caustics {
     float    sdf_dim[SHADOW_CAUSTICS_MAX_SDF][3];
     float    sdf_vox[SHADOW_CAUSTICS_MAX_SDF];
     uint32_t sdf_count;
+    /* Borrowed GLOBAL low-res zone SDF (page-fault fallback, mirrors the GI
+     * trace): sampled ONLY where no fine chunk covers the point, so rays
+     * never see empty space where geometry exists. 0 = none. */
+    uint32_t zone_tex;
+    float    zone_origin[3];
+    float    zone_dim[3];
+    float    zone_vox;
 
     /* Cached uniform locations (trace program unless noted). */
     struct {
@@ -76,6 +83,7 @@ typedef struct shadow_caustics {
         int32_t sdf_origin[SHADOW_CAUSTICS_MAX_SDF];
         int32_t sdf_dim[SHADOW_CAUSTICS_MAX_SDF];
         int32_t sdf_vox[SHADOW_CAUSTICS_MAX_SDF];
+        int32_t zone, zone_on, zone_origin, zone_dim, zone_vox;
         int32_t rz_mode, rz_cascade, rz_res;      /* resolve program. */
     } loc;
 
@@ -109,6 +117,16 @@ void shadow_caustics_destroy(shadow_caustics_t *c);
 void shadow_caustics_set_sdf(shadow_caustics_t *c, const uint32_t *textures,
                              const float (*origins)[3], const float (*dims)[3],
                              const float *voxels, uint32_t count);
+
+/**
+ * @brief Set (or clear: tex 0 / NULL arrays) the borrowed GLOBAL zone SDF --
+ *        the always-resident coarse fallback field sampled only where no fine
+ *        chunk covers the sample point (mirrors the GI trace's page-fault
+ *        semantics). @p dims is the field's cell counts per axis as floats.
+ */
+void shadow_caustics_set_zone(shadow_caustics_t *c, uint32_t tex,
+                              const float origin[3], const float dims[3],
+                              float voxel);
 
 /**
  * @brief Bake one cascade's caustic map from its translucency mask layer

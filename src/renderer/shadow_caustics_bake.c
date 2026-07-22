@@ -99,6 +99,17 @@ void shadow_caustics_bake(shadow_caustics_t *c, uint32_t mask_color_tex,
             glUniform1f(c->loc.sdf_vox[i], c->sdf_vox[i]);
         }
     }
+    /* Global zone fallback on unit 18 (2 + MAX_SDF); assigned even when off
+     * so the sampler3D never aliases unit 0's sampler2DArray. */
+    glUniform1i(c->loc.zone, 2 + SHADOW_CAUSTICS_MAX_SDF);
+    glUniform1i(c->loc.zone_on, c->zone_tex != 0u ? 1 : 0);
+    glActiveTexture(GL_TEXTURE0 + 2 + SHADOW_CAUSTICS_MAX_SDF);
+    glBindTexture(GL_TEXTURE_3D, c->zone_tex);
+    if (c->zone_tex != 0u) {
+        glUniform3fv(c->loc.zone_origin, 1, c->zone_origin);
+        glUniform3fv(c->loc.zone_dim, 1, c->zone_dim);
+        glUniform1f(c->loc.zone_vox, c->zone_vox);
+    }
     glActiveTexture(GL_TEXTURE0);
     uint32_t groups = (c->resolution + 7u) / 8u;
     c->DispatchCompute(groups, groups, 1u);

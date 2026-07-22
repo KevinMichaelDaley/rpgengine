@@ -166,6 +166,24 @@ typedef struct render_forward {
 bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *cfg);
 
 /**
+ * @brief Register the resident SDF chunk set (+ optional global zone SDF)
+ *        the caustics bake traces (rpg-39mc). Parallel arrays, BORROWED --
+ *        typically the GI runtime's gi_sdf_stream residency, refreshed every
+ *        frame; the bake only re-runs when the set actually changed (chunk
+ *        origins are part of the signature because the residency pool reuses
+ *        texture objects). No-op when caustics are disabled/unavailable.
+ */
+void render_forward_set_caustic_sdf(render_forward_t *fwd,
+                                    const uint32_t *textures,
+                                    const float (*origins)[3],
+                                    const float (*dims)[3],
+                                    const float *voxels, uint32_t count,
+                                    uint32_t zone_tex,
+                                    const float zone_origin[3],
+                                    const float zone_dims[3],
+                                    float zone_voxel);
+
+/**
  * @brief Render @p scene through the forward+ graph: depth pre-pass, cluster the
  *        scene's lights for the camera, upload them, then forward+ PBR shading of
  *        every renderable. Depth pre-pass runs when the scene has >1 renderable.

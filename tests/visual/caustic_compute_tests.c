@@ -101,6 +101,40 @@ static void make_mask(GLuint *color, GLuint *depth, float alpha)
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 }
 
+/* Upload a 3D RGBA32F SDF "chunk" whose alpha holds the distance to a
+ * horizontal floor plane at world y = floor_y (the gi_sdf_stream texture
+ * convention: rgb = albedo, a = distance). The box spans origin..origin +
+ * dims*voxel; distances are exact planes so the sphere-trace is precise. */
+static GLuint make_floor_sdf(const float origin[3], const int dims[3],
+                             float voxel, float floor_y)
+{
+    size_t n = (size_t)dims[0] * dims[1] * dims[2];
+    float *tx = malloc(n * 4u * sizeof(float));
+    if (tx == NULL) return 0;
+    for (int z = 0; z < dims[2]; ++z)
+        for (int y = 0; y < dims[1]; ++y)
+            for (int x = 0; x < dims[0]; ++x) {
+                size_t i = ((size_t)z * dims[1] + y) * dims[0] + x;
+                float wy = origin[1] + ((float)y + 0.5f) * voxel;
+                tx[i * 4 + 0] = 0.5f;
+                tx[i * 4 + 1] = 0.5f;
+                tx[i * 4 + 2] = 0.5f;
+                tx[i * 4 + 3] = wy - floor_y;
+            }
+    GLuint tex = 0;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_3D, tex);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA32F, dims[0], dims[1], dims[2], 0,
+                 GL_RGBA, GL_FLOAT, tx);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    free(tx);
+    return tex;
+}
+
 /* Read the resolved caustic map (RGBA16F array layer 0) back as floats. */
 static void read_map(const shadow_caustics_t *c, float *out /* RES*RES*4 */)
 {
@@ -132,6 +166,23 @@ static float sum_energy(const float *map, int ch)
     for (int i = 0; i < RES * RES; ++i)
         s += map[i * 4 + ch];
     return s;
+}
+
+/* 5x5 patch mean around (x,y): the per-texel splat count is stochastic
+ * (16 jittered rays), so single-texel reads carry ~20% noise; the patch mean
+ * is what the (bilinear-filtered) receiver effectively sees. */
+static float avg_patch(const float *map, int x, int y, int ch)
+{
+    float s = 0.0f;
+    int n = 0;
+    for (int dy = -2; dy <= 2; ++dy)
+        for (int dx = -2; dx <= 2; ++dx) {
+            int px = x + dx, py = y + dy;
+            if (px < 0 || py < 0 || px >= RES || py >= RES) continue;
+            s += map[(py * RES + px) * 4 + ch];
+            ++n;
+        }
+    return n ? s / (float)n : 0.0f;
 }
 
 int main(void)
@@ -267,6 +318,80 @@ int main(void)
         int center = (RES / 2) * RES + RES / 2;
         ASSERT_TRUE(map[center * 4 + 2] < 0.54f * 0.9f ||
                     map[center * 4 + 2] > 0.54f * 1.1f);
+    }
+
+    /* --- SDF termination (rpg-39mc): a floor chunk 1 m under the glass ----
+     * With scatter 0.15 the scatter disk radius is ~0.15 m at the floor (rays
+     * stop after ~1 m) -- SUB-TEXEL, so a uniform glass interior stays at its
+     * flat value. Without the floor the same rays flew 64 m and spread ~9.6 m
+     * (asserted above). This distinguishes "rays hit the SDF" from "rays fly
+     * to max_dist". */
+    {
+        static const float org[3] = { -8.0f, 0.0f, -8.0f };
+        static const int dims[3] = { 64, 12, 64 };     /* 16 x 3 x 16 m @ 0.25. */
+        GLuint floor_tex = make_floor_sdf(org, dims, 0.25f, 1.0f);
+        ASSERT_TRUE(floor_tex != 0);
+        uint32_t texs[1] = { floor_tex };
+        float orgs[1][3] = { { org[0], org[1], org[2] } };
+        float dimf[1][3] = { { 64.0f, 12.0f, 64.0f } };
+        float voxs[1] = { 0.25f };
+        shadow_caustics_set_sdf(&c, texs, orgs, dimf, voxs, 1u);
+        run_bake(&c, mc, md, 0);
+        read_map(&c, map);
+        float cb = avg_patch(map, RES / 2, RES / 2, 2);
+        float s2 = sum_energy(map, 2);
+        fprintf(stderr, "floor chunk: center B=%.3f sum B=%.2f\n", cb, (double)s2);
+        ASSERT_NEAR(cb, 0.54f, 0.05f);                    /* concentrated. */
+        ASSERT_NEAR(s2, base_sum[2], base_sum[2] * 0.03f + 0.05f);
+        shadow_caustics_set_sdf(&c, NULL, NULL, NULL, NULL, 0u);
+
+        /* --- zone fallback: the same floor as the GLOBAL zone SDF, no fine
+         * chunks resident -> rays must still terminate on it. */
+        shadow_caustics_set_zone(&c, floor_tex, org, dimf[0], 0.25f);
+        run_bake(&c, mc, md, 0);
+        read_map(&c, map);
+        cb = avg_patch(map, RES / 2, RES / 2, 2);
+        fprintf(stderr, "zone floor : center B=%.3f\n", cb);
+        ASSERT_NEAR(cb, 0.54f, 0.05f);
+
+        /* --- page-fault semantics: a fine chunk that COVERS the volume but is
+         * EMPTY (max positive distance) must mask the zone (the zone is only a
+         * fallback where no fine chunk is resident, mirroring the GI trace) ->
+         * rays fly to max_dist and the centre spreads out again. */
+        static const float far_org[3] = { -8.0f, -20.0f, -8.0f };
+        static const int far_dims[3] = { 16, 32, 16 };  /* floor way below. */
+        GLuint empty_tex = make_floor_sdf(far_org, far_dims, 1.0f, -100.0f);
+        ASSERT_TRUE(empty_tex != 0);
+        uint32_t etexs[1] = { empty_tex };
+        float eorgs[1][3] = { { -8.0f, -60.0f, -8.0f } };
+        float edimf[1][3] = { { 16.0f, 32.0f, 16.0f } };   /* covers y -60..-28. */
+        float evoxs[1] = { 1.0f };
+        /* Chunk sits BELOW the whole march path but the zone still covers it:
+         * instead make the chunk cover the march path with empty space. */
+        eorgs[0][0] = -8.0f; eorgs[0][1] = -62.0f; eorgs[0][2] = -8.0f;
+        (void)far_dims;
+        /* Cover y in [-62, -30]: rays pass through it AFTER missing the zone
+         * region? Simpler direct check: cover the SAME region as the zone with
+         * empty distances -> cov=true everywhere the zone would have hit. */
+        eorgs[0][0] = org[0]; eorgs[0][1] = org[1]; eorgs[0][2] = org[2];
+        edimf[0][0] = 16.0f; edimf[0][1] = 3.0f; edimf[0][2] = 16.0f;
+        evoxs[0] = 1.0f;
+        GLuint cover_tex = make_floor_sdf(
+            (const float[3]){ org[0], org[1], org[2] },
+            (const int[3]){ 16, 3, 16 }, 1.0f, -100.0f);
+        ASSERT_TRUE(cover_tex != 0);
+        etexs[0] = cover_tex;
+        shadow_caustics_set_sdf(&c, etexs, eorgs, edimf, evoxs, 1u);
+        run_bake(&c, mc, md, 0);   /* zone floor still set from above. */
+        read_map(&c, map);
+        cb = avg_patch(map, RES / 2, RES / 2, 2);
+        fprintf(stderr, "empty cover: center B=%.3f (must spread)\n", cb);
+        ASSERT_TRUE(cb < 0.45f);
+        shadow_caustics_set_sdf(&c, NULL, NULL, NULL, NULL, 0u);
+        shadow_caustics_set_zone(&c, 0u, NULL, NULL, 0.0f);
+        glDeleteTextures(1, &floor_tex);
+        glDeleteTextures(1, &empty_tex);
+        glDeleteTextures(1, &cover_tex);
     }
 
     shadow_caustics_destroy(&c);
