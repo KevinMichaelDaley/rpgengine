@@ -1697,7 +1697,8 @@ def build_minimall(p, rng):
                 _box(lot, (sx - 0.85, hy - 0.75, 0.051),
                      (sx + 0.85, hy - 0.60, 0.16), M_CONCRETE)  # wheel stop
 
-    if rows > 0 or style in ('parallel', 'minimal'):
+    has_lot = rows > 0 or style in ('parallel', 'minimal')
+    if has_lot:
         lot.tag = 'lot'
         lot_x1 = (Wm - cd - 0.452) if corner else Wm
         if style == 'minimal':
@@ -1938,7 +1939,7 @@ def build_minimall(p, rng):
         _box(sign, (rsx - 1.65, 1.02, z_roof + 0.9),
              (rsx + 1.65, 1.08, z_roof + 2.05),
              M_METAL if dead else M_SIGN_B)
-    if p["pole_sign"]:
+    if p["pole_sign"] and has_lot:
         # pole-sign panel ARRANGEMENTS, seeded (user-specified set):
         # 'ladder'   same-size panels flanking BOTH sides of the pole;
         # 'stack'    varying sizes, vertically aligned (single or twin
@@ -1946,58 +1947,75 @@ def build_minimall(p, rng):
         # 'pinwheel' one big frame subdivided CLOCKWISE into an unevenly
         #            sized panel grid (strip cut from top -> right ->
         #            bottom -> left in turn, last panel fills the core).
+        # ONE PANEL PER SHOP (it is the mall directory); twin-pole panels
+        # always span both poles. No lot = no pole sign.
         sign.tag = 'pole_sign'
+        n_shops = (len(bays_m) + len(bays_w) +
+                   sum(len(xa['bays']) for xa in xarms) +
+                   (1 if anchor_on else 0))
         ph = p["pole_height"]
-        px, py = 1.6, min(-cd - 1.5, y_lot1 + 1.2)
+        # the pole (and its widest panel, half-width up to 1.65) must
+        # CLEAR the store: west-arm canopy/walkway in C/E layouts, and
+        # any rain cover / balcony / awning projection off the front.
+        px = 1.6
+        if any(xa['ox1'] <= 0.0 for xa in xarms):
+            px = max(px, cd + 0.45 + 2.2)
+        py = min(y_lot1 + 1.2, -cd - 2.6)
         style = rng.choice(['ladder', 'stack', 'pinwheel'])
         pm = (lambda k: M_METAL) if dead else (lambda k: smats[k % 3])
         if style == 'ladder':
             _box(sign, (px - 0.14, py - 0.14, 0.0),
                  (px + 0.14, py + 0.14, ph), M_METAL)
+            n_lv = (n_shops + 1) // 2
+            lv_h = min(0.66, (ph * 0.62) / max(n_lv, 1))
             zc = ph - 0.35
             k = 0
-            for _lv in range(max(1, (p["pole_panels"] + 1) // 2)):
+            for _lv in range(n_lv):
                 for sd in (-1.0, 1.0):
+                    if k >= n_shops:
+                        break
                     _box(sign, (px + sd * 0.18 + min(sd, 0) * 1.15,
-                                py - 0.08, zc - 0.55),
+                                py - 0.08, zc - lv_h + 0.10),
                          (px + sd * 0.18 + max(sd, 0) * 1.15,
                           py + 0.08, zc - 0.05), pm(k))
                     k += 1
-                zc -= 0.66
-                if zc < ph * 0.35:
-                    break
+                zc -= lv_h
         elif style == 'stack':
             twin = rng.random() < 0.5
             if twin:
                 for tx in (px - 1.1, px + 1.0):
                     _box(sign, (tx, py - 0.12, 0.0),
                          (tx + 0.24, py + 0.12, ph), M_METAL)
+                # panels must SPAN the poles (outer edges at +-1.24).
+                hw_lo, hw_rand = 1.30, 0.35
             else:
                 _box(sign, (px - 0.15, py - 0.15, 0.0),
                      (px + 0.15, py + 0.15, ph), M_METAL)
+                hw_lo, hw_rand = 0.7, 0.6
             _box(sign, (px - 1.45, py - 0.14, ph - 1.35),
                  (px + 1.45, py + 0.14, ph - 0.2), pm(0))
+            avail = (ph - 1.55) - ph * 0.30
+            hh = max(0.16, min(0.40, avail / max(n_shops, 1) - 0.08))
             zc = ph - 1.55
-            for k in range(p["pole_panels"]):
-                hw = 0.7 + rng.random() * 0.6
-                hh = 0.34 + rng.random() * 0.3
+            for k in range(n_shops):
+                hw = hw_lo + rng.random() * hw_rand
                 _box(sign, (px - hw, py - 0.08, zc - hh),
                      (px + hw, py + 0.08, zc - 0.04), pm(k + 1))
-                zc -= hh + 0.10
-                if zc < ph * 0.32:
-                    break
+                zc -= hh + 0.08
         else:                         # pinwheel
             for tx in (px - 1.35, px + 1.11):
                 _box(sign, (tx, py - 0.12, 0.0), (tx + 0.24, py + 0.12, ph),
                      M_METAL)
             gx0, gx1 = px - 1.45, px + 1.45
-            gz0, gz1 = ph - 3.1, ph - 0.15
+            gz0 = max(ph * 0.25, ph - 1.8 - 0.42 * n_shops)
+            gz1 = ph - 0.15
             k = 0
-            for side in ('top', 'right', 'bottom', 'left', 'top'):
-                if k >= max(3, p["pole_panels"]) or \
-                        (gx1 - gx0) < 0.7 or (gz1 - gz0) < 0.55:
+            sides = ('top', 'right', 'bottom', 'left') * 4
+            for side in sides:
+                if k >= n_shops - 1 or (gx1 - gx0) < 0.5 or \
+                        (gz1 - gz0) < 0.42:
                     break
-                fr = 0.32 + rng.random() * 0.16
+                fr = 0.30 + rng.random() * 0.16
                 if side == 'top':
                     cz = gz1 - (gz1 - gz0) * fr
                     _box(sign, (gx0, py - 0.09, cz + 0.02),
@@ -2151,7 +2169,6 @@ SPEC = [
     dict(name="pole_sign", type='BOOL', default=True),
     dict(name="pole_height", type='FLOAT', default=9.0, min=5.0, max=15.0,
          unit='LENGTH'),
-    dict(name="pole_panels", type='INT', default=4, min=1, max=8),
     dict(name="shutters", type='FLOAT', default=0.3, min=0.0, max=1.0,
          desc="Fraction of front roll-up shutters down"),
     dict(name="bars", type='FLOAT', default=0.25, min=0.0, max=1.0,
