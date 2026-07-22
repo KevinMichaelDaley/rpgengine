@@ -869,6 +869,8 @@ def build_minimall(p, rng):
         yl.add(c1d)
     if corner or xarms:
         yl |= {-Wy, -Wy + t}
+    if office and any(xa['ox1'] > 0.0 for xa in xarms):
+        yl |= {-1.5, -0.55}           # mid-arm pass-door jambs
     for xa in xarms:
         for (b0, b1, o0, o1) in xa['bays']:
             yl |= {b0 - Wy, b1 - Wy, o0 - Wy, o1 - Wy}
@@ -977,12 +979,28 @@ def build_minimall(p, rng):
                                       barred_wins=xa['bw'])
         fx = xa['fx']
         nrm = (1, 0, 0) if xa['face'] == 'e' else (-1, 0, 0)
+        mid_pass = office and xa['ox1'] > 0.0
+
+        def _with_pass_door(base):
+            # E-layout middle bar: the balcony deck is cut around the
+            # prong, so its floor-2 gets a door on EACH flank at the
+            # deck line -- one can walk the whole balcony through it.
+            def cls9(u0, zc0, _b=base):
+                if (Wy - 1.5 - 1e-6 <= u0 < Wy - 0.55 - 1e-6 and
+                        Z_FAS - 1e-6 <= zc0 < Z_OHED - 1e-6):
+                    if abs(zc0 - Z_FAS) < 1e-6:
+                        return 'doorL'
+                    return 'doorU'
+                return _b(u0, zc0)
+            return cls9
+
         shell.tag = 'storefront'
         _wa2 = _Wall(shell, (fx, -Wy, 0), (0, 1, 0),
                      [v + Wy for v in yl if v <= 0.0 + 1e-9], zl, nrm,
                      M_STUCCO, thickness=thick, inner_zmax=iz_max)
         _wa2.inner_u0, _wa2.inner_u1 = wt, Wy
-        _wa2.fill(cls_a2, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+        _wa2.fill(_with_pass_door(cls_a2) if mid_pass else cls_a2,
+                  frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
         shell.tag = 'facade_side'
         if xa['ox1'] <= 0.0:
             # west arm: its outer plane is the building's west wall.
@@ -998,7 +1016,9 @@ def build_minimall(p, rng):
                          (1, 0, 0), M_STUCCO, thickness=thick,
                          inner_zmax=iz_max)
             _wo2.inner_u0, _wo2.inner_u1 = wt, Wy
-            _wo2.fill(plain_wall)
+            _wo2.fill(_with_pass_door(plain_wall) if mid_pass
+                      else plain_wall, frame=0.06, mat_frame=M_TRIM,
+                      mat_pane=M_GLASS)
         # south end wall.
         _ws2 = _Wall(shell, (0, -Wy, 0), (1, 0, 0),
                      [v for v in xl if xa['ox0'] - 1e-9 <= v <=
@@ -1548,6 +1568,9 @@ def build_minimall(p, rng):
                 rail_segs.append((cursor, o0 + 0.33))
                 cursor = o1 - 0.33
         rail_segs.append((cursor, Wm - 0.02))
+        # the rail floated across the anchor / mid-arm deck CUTS
+        rail_segs = [s9 for (r0, r1) in rail_segs
+                     for s9 in split_segs(r0, r1)]
         if west_blocked:
             gapped = []
             for (r0, r1) in rail_segs:
@@ -2170,7 +2193,9 @@ def build_minimall(p, rng):
                 _box(slabs, (Wm + e, -Wy + wt + e, Z_FAS - 0.30),
                      (We - wt - e, D - wt - e, Z_FAS), M_CONCRETE)
         for xa in xarms:
-            y1s = (D - wt) if xa['ox1'] <= 0.0 else -0.05
+            # mid arms: the floor JOINS the run slab at the mouth (the
+            # old -0.05 stop left a 0.2 m corner gap strip in every slab)
+            y1s = (D - wt) if xa['ox1'] <= 0.0 else (wt - 0.001)
             _box(slabs, (xa['ox0'] + wt + e, -Wy + wt + e, 0.0),
                  (xa['ox1'] - wt - e, y1s - e, 0.12), M_CONCRETE)
             _box(slabs, (xa['ox0'] + wt + e, -Wy + wt + e, z_roof - 0.12),
