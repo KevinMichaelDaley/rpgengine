@@ -111,6 +111,50 @@ def _strip(shell, xs, x0, x1, y0, y1, zf, mat, tag, lift=0.0):
                    mat, tag)
 
 
+def _terrain_caster(name):
+    """Evaluated-depsgraph ray caster for a named terrain mesh: returns
+    h(x, y) -> world z (or None on a miss), or None if the object is
+    missing."""
+    ob = bpy.data.objects.get(name) if name else None
+    if ob is None or ob.type != 'MESH':
+        return None
+    dg = bpy.context.evaluated_depsgraph_get()
+    ob_ev = ob.evaluated_get(dg)
+    inv = ob_ev.matrix_world.inverted()
+    from mathutils import Vector
+    direction = inv.to_3x3() @ Vector((0.0, 0.0, -1.0))
+
+    def h(x, y):
+        origin = inv @ Vector((x, y, 10000.0))
+        hit, loc, _n, _i = ob_ev.ray_cast(origin, direction)
+        return (ob_ev.matrix_world @ loc).z if hit else None
+
+    return h
+
+
+def _bridge_fit(hs, xs, grade=MAX_GRADE):
+    """Slope-limited terrain profile that BRIDGES abrupt dips: a median
+    pre-filter kills thin spikes, then the slope-limited UPPER envelope
+    h(x) = max_i(med_i - grade*|x - x_i|) rests on gentle terrain,
+    descends into wide valleys at exactly the grade limit, and spans any
+    canyon too thin to descend into and climb back out of. Lipschitz-
+    bounded by `grade` by construction. None samples are interpolated
+    from their neighbours first."""
+    n = len(hs)
+    last = next((h for h in hs if h is not None), 0.0)
+    filled = []
+    for h in hs:
+        if h is not None:
+            last = h
+        filled.append(last)
+    med = []
+    for i in range(n):
+        w = sorted(filled[max(0, i - 2):i + 3])
+        med.append(w[len(w) // 2])
+    return [max(med[i] - grade * abs(xs[j] - xs[i]) for i in range(n))
+            for j in range(n)]
+
+
 def _terrain_profile(name, L, bend, cursor, step=2.0):
     """Slope-clamped longitudinal height profile from a named terrain mesh.
 
@@ -118,43 +162,20 @@ def _terrain_profile(name, L, bend, cursor, step=2.0):
     smooths, clamps slopes to MAX_GRADE, and ZEROES the start so the x=0
     interface stays at the cursor. Returns (stations, fn) or (None, None).
     """
-    ob = bpy.data.objects.get(name) if name else None
-    if ob is None or ob.type != 'MESH':
+    caster = _terrain_caster(name)
+    if caster is None:
         return None, None
-    # ray-cast the EVALUATED object: a modifier-displaced terrain (subsurf,
-    # displace, geo-nodes) is invisible to the raw mesh's ray_cast.
-    dg = bpy.context.evaluated_depsgraph_get()
-    ob_ev = ob.evaluated_get(dg)
-    inv = ob_ev.matrix_world.inverted()
     n9 = max(2, int(round(L / step)))
     st9 = [L * i / n9 for i in range(n9 + 1)]
     hs = []
-    from mathutils import Vector
     for x in st9:
         wx, wy = bend(x, 0.0)
-        origin = inv @ Vector((cursor[0] + wx, cursor[1] + wy, 10000.0))
-        direction = inv.to_3x3() @ Vector((0.0, 0.0, -1.0))
-        hit, loc, _n, _i = ob_ev.ray_cast(origin, direction)
-        hs.append((ob_ev.matrix_world @ loc).z - cursor[2] if hit else None)
+        h = caster(cursor[0] + wx, cursor[1] + wy)
+        hs.append(h - cursor[2] if h is not None else None)
     if all(h is None for h in hs):
         return None, None                        # terrain never under us
-    last = next(h for h in hs if h is not None)
-    for i in range(len(hs)):                     # fill misses
-        if hs[i] is None:
-            hs[i] = last
-        last = hs[i]
-    hs = [sum(hs[max(0, i - 2):i + 3]) / len(hs[max(0, i - 2):i + 3])
-          for i in range(len(hs))]               # smooth
-    for _p in range(4):                          # clamp slopes both ways
-        for i in range(1, len(hs)):
-            dm = MAX_GRADE * (st9[i] - st9[i - 1])
-            hs[i] = min(max(hs[i], hs[i - 1] - dm), hs[i - 1] + dm)
-        for i in range(len(hs) - 2, -1, -1):
-            dm = MAX_GRADE * (st9[i + 1] - st9[i])
-            hs[i] = min(max(hs[i], hs[i + 1] - dm), hs[i + 1] + dm)
-    # NO zeroing: the street LANDS ON the terrain (that is the point);
-    # chained segments sampling the same terrain meet within the
-    # smoothing window.
+    hs = _bridge_fit(hs, st9)                    # slope-limited, dips
+    # bridged; NO zeroing: the street LANDS ON the terrain
 
     def fn(x):
         x = min(max(x, 0.0), L)
@@ -1804,6 +1825,20 @@ def build_road_network(p, rng, context):
     else:
         rad = [p["default_width"] / 2.0] * len(verts)
 
+    caster = _terrain_caster(p["terrain_object"])
+    if caster is not None:
+        # terrain drives all heights: junction pads sit at the median of
+        # a few casts around the vert; path profiles come later from the
+        # bridge fit along each centerline
+        verts2 = []
+        for (x, y, z) in verts:
+            cs = [caster(x + dx, y + dy)
+                  for (dx, dy) in ((0, 0), (3, 0), (-3, 0), (0, 3),
+                                   (0, -3))]
+            cs = sorted(c for c in cs if c is not None)
+            verts2.append((x, y, cs[len(cs) // 2] if cs else z))
+        verts = verts2
+
     from collections import defaultdict
     adj = defaultdict(list)
     for (a, b) in edges:
@@ -1977,6 +2012,33 @@ def build_road_network(p, rng, context):
         for (a9, b9) in zip(stations, stations[1:]):
             cum9.append(cum9[-1] + math.dist(a9[0], b9[0]))
         Lt = cum9[-1]
+        if caster is not None:
+            hs9 = [caster(s9[0][0], s9[0][1]) for s9 in stations]
+            if any(h9 is not None for h9 in hs9):
+                hs9 = _bridge_fit(hs9, cum9)
+                # pin the junction heights via SLOPE CONES: clamp the
+                # profile into [z_pin - g*d, z_pin + g*d] around each
+                # pinned end. Min/max of Lipschitz-g functions stays
+                # Lipschitz-g, so the grade bound holds by construction
+                # (iterative re-force clamps left cliffs at the mouths);
+                # if the two pins are infeasible at MAX_GRADE the grade
+                # relaxes just enough -- a short steep link stays smooth.
+                za9 = ifa['z'] if ifa is not None else None
+                zb9 = ifb['z'] if ifb is not None else None
+                g9 = MAX_GRADE
+                if za9 is not None and zb9 is not None and Lt > 1e-6:
+                    g9 = max(g9, abs(zb9 - za9) / Lt * 1.02 + 1e-9)
+                for j9 in range(len(hs9)):
+                    lo9, hi9 = -1e18, 1e18
+                    if za9 is not None:
+                        lo9 = max(lo9, za9 - g9 * cum9[j9])
+                        hi9 = min(hi9, za9 + g9 * cum9[j9])
+                    if zb9 is not None:
+                        lo9 = max(lo9, zb9 - g9 * (Lt - cum9[j9]))
+                        hi9 = min(hi9, zb9 + g9 * (Lt - cum9[j9]))
+                    hs9[j9] = min(max(hs9[j9], lo9), hi9)
+                stations = [((s9[0][0], s9[0][1]), s9[1], hs9[i9])
+                            for i9, s9 in enumerate(stations)]
 
         def pin(idx, d_pin, z_pin, into):
             stations[idx] = (stations[idx][0], d_pin, z_pin)
@@ -2109,6 +2171,10 @@ NET_SPEC = [
     dict(name="default_width", type='FLOAT', default=7.0, min=5.6, max=23.0,
          unit='LENGTH', desc="Road width used when the mesh carries no "
               "skin-modifier data"),
+    dict(name="terrain_object", type='STRING', default="",
+         desc="Mesh object name: junction pads and road profiles project "
+              "onto it, slope-limited to 8% -- abrupt thin canyons get "
+              "BRIDGED (spanned level) rather than dipped into"),
 ]
 
 params.register_tool(idname="la_road_network",
