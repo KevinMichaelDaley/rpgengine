@@ -1300,7 +1300,10 @@ def build_minimall(p, rng):
         # in front of projecting decks so leave gaps there instead).
         can.tag = 'loggia'
         rail_segs = []
-        cursor = x_deck0 + 0.02
+        # the access stair lands at the deck's west end: the rail leaves
+        # a real OPENING there (it used to run continuously and the
+        # flight butted straight into it).
+        cursor = -0.06
         for i, (_b0, _b1, o0, o1) in enumerate(bays_m):
             if bal_modes.get(i) == 'projecting':
                 rail_segs.append((cursor, o0 + 0.33))
