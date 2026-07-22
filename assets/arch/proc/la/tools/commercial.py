@@ -905,29 +905,78 @@ def build_minimall(p, rng):
     if corner:
         _box(lot, (Wm - cd - 0.45, -Wy, 0.0),
              (Wm - 0.002, -cd - 0.452, 0.14), M_CONCRETE)
+    # ---- parking: 0-3 rows, perpendicular / angled / parallel / minimal.
+    # STRIPES ARE FACES OF THE LOT MESH (thin quad islands 2 mm above the
+    # slab top, vertex group 'lot_lines', UV-mapped like everything else)
+    # -- never separate objects.
     rows = p["parking_rows"]
+    style = p["parking_style"]
     y_lot0 = -cd - 0.452
     y_lot1 = y_lot0
-    if rows > 0:
-        lot.tag = 'lot'
-        y_lot1 = y_lot0 - rows * 5.0 - 6.5
-        lot_x1 = (Wm - cd - 0.452) if corner else Wm
-        _box(lot, (0.0, y_lot1, 0.0), (lot_x1, y_lot0 - 0.002, 0.05),
-             M_CONCRETE)
-        heads = [y_lot0 - 0.002]
-        if rows == 2:
-            heads.append(y_lot1 + 11.5)
-        for hy in heads:
-            nstall = int((lot_x1 - 1.0) / 2.7)
-            for si in range(nstall + 1):
-                sx = 0.5 + si * 2.7
-                _box(lot, (sx - 0.05, hy - 5.0, 0.051),
-                     (sx + 0.05, hy - 0.3, 0.055), M_TRIM)
+    zs2 = 0.052                       # stripe plane (slab top + 2 mm)
+
+    def stripe(xa, ya, xb, yb, shear=0.0):
+        # 0.10 m painted line from (xa, ya) to (xb, yb) footprint; shear
+        # skews the far edge in +x (angled stalls).
+        lot.tag = 'lot_lines'
+        lot.quad((xa, ya, zs2), (xb, ya, zs2),
+                 (xb + shear, yb, zs2), (xa + shear, yb, zs2), M_TRIM)
+
+    def stall_row(hy, x0r, x1r, shear, depth):
+        pitch = 2.7 if abs(shear) < 0.1 else 2.9
+        n2 = int((x1r - x0r - abs(min(shear, 0.0)) - max(shear, 0.0) - 1.0)
+                 / pitch)
+        for si in range(n2 + 1):
+            sx = x0r + 0.5 + si * pitch
+            stripe(sx - 0.05, hy - 0.3, sx + 0.05, hy - depth, shear)
+        if abs(shear) < 0.1:
             lot.tag = 'lot'
-            for si in range(nstall):
-                sx = 0.5 + si * 2.7 + 1.35
+            for si in range(n2):
+                sx = x0r + 0.5 + si * pitch + pitch / 2.0
                 _box(lot, (sx - 0.85, hy - 0.75, 0.051),
                      (sx + 0.85, hy - 0.60, 0.16), M_CONCRETE)  # wheel stop
+
+    if rows > 0 or style in ('parallel', 'minimal'):
+        lot.tag = 'lot'
+        lot_x1 = (Wm - cd - 0.452) if corner else Wm
+        if style == 'minimal':
+            # almost no parking: a short 4-stall pad by the entry.
+            y_lot1 = y_lot0 - 10.5
+            _box(lot, (0.0, y_lot1, 0.0), (min(14.0, lot_x1),
+                 y_lot0 - 0.002, 0.05), M_CONCRETE)
+            for si in range(5):
+                sx = 0.6 + si * 2.7
+                stripe(sx - 0.05, y_lot0 - 0.3, sx + 0.05, y_lot0 - 5.0)
+        elif style == 'parallel':
+            # parallel-only: one lane of curb stalls, tick lines between.
+            y_lot1 = y_lot0 - 2.4 - 6.0
+            _box(lot, (0.0, y_lot1, 0.0), (lot_x1, y_lot0 - 0.002, 0.05),
+                 M_CONCRETE)
+            n2 = int((lot_x1 - 1.0) / 6.5)
+            for si in range(n2 + 1):
+                sx = 0.5 + si * 6.5
+                # ticks stop 20 mm short of the edge line (overlapping
+                # coplanar faces put tick verts on its edges).
+                stripe(sx - 0.05, y_lot0 - 0.2, sx + 0.05, y_lot0 - 2.28)
+            stripe(0.5 - 0.05, y_lot0 - 2.3,
+                   0.5 + n2 * 6.5 + 0.05, y_lot0 - 2.4)
+        else:
+            shear = {'perpendicular': 0.0, 'angled_60': 2.9,
+                     'angled_45': 5.0}[style]
+            depth = 5.0
+            aisle = 6.5
+            y_lot1 = y_lot0 - rows * depth - aisle * ((rows + 1) // 2)
+            _box(lot, (0.0, y_lot1, 0.0), (lot_x1, y_lot0 - 0.002, 0.05),
+                 M_CONCRETE)
+            heads = [y_lot0 - 0.002]
+            if rows >= 2:
+                # facing pair across the first aisle.
+                heads.append(y_lot0 - depth - aisle - depth + 0.002)
+            if rows >= 3:
+                heads.append(y_lot0 - 2 * depth - 2 * aisle + 0.002)
+            for ri2, hy in enumerate(heads):
+                sh = shear if ri2 % 2 == 0 else -shear
+                stall_row(hy, 0.0, lot_x1, sh, depth)
     if docks_on:
         lot.tag = 'lot'
         _box(lot, (0.0, D + 0.002, 0.0), (We, D + 6.0, 0.05), M_CONCRETE)
@@ -1260,8 +1309,13 @@ SPEC = [
          unit='LENGTH'),
     dict(name="sign_band", type='BOOL', default=True,
          desc="Per-tenant mismatched sign panels on the fascia"),
-    dict(name="parking_rows", type='INT', default=1, min=0, max=2,
-         desc="Striped lot rows + wheel stops"),
+    dict(name="parking_rows", type='INT', default=1, min=0, max=3,
+         desc="Striped lot rows"),
+    dict(name="parking_style", type='ENUM', default='perpendicular',
+         items=('perpendicular', 'angled_60', 'angled_45', 'parallel',
+                'minimal'),
+         desc="Stall pattern; parallel = curb lane only, minimal = a "
+              "4-stall pad (almost no parking)"),
     dict(name="pole_sign", type='BOOL', default=True),
     dict(name="pole_height", type='FLOAT', default=9.0, min=5.0, max=15.0,
          unit='LENGTH'),
