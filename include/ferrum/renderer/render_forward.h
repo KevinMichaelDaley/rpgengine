@@ -96,6 +96,9 @@ typedef struct render_forward_config {
     float              draw_distance;   /**< far cull distance for the forward +
                                          *   depth-pre passes (world units); 0 =
                                          *   unlimited. From render_config (rpg-0rs4). */
+    uint32_t           max_translucent; /**< sorted-pass scratch capacity (0 -> 256);
+                                         *   overflow items draw unsorted last with a
+                                         *   one-line stderr note (rpg-rxf8). */
     /** Optional hook called once per forward pass after the PBR program is bound
      *  and its shadow uniforms are set, so an external system (e.g. the dynamic-
      *  GI runtime) can bind extra samplers/uniforms for the draw loop. NULL =
@@ -129,10 +132,14 @@ typedef struct render_forward {
     uint32_t *indices;
     float    *light_data;/**< owned pack scratch (max_lights*16). */
 
-    render_pass_t                passes[3];
-    render_pipeline_graph_node_t nodes[3];
+    render_pass_t                passes[4];
+    render_pipeline_graph_node_t nodes[4];
     render_pipeline_graph_t      graph;
     const char                  *dep_fwd[2]; /**< {"depth_pre","light_cull"} */
+    const char                  *dep_trans[1]; /**< {"forward"} (rpg-rxf8). */
+    uint32_t *trans_idx;  /**< owned scratch: visible translucent item indices. */
+    float    *trans_key;  /**< owned scratch: their view depths (sort keys). */
+    uint32_t  trans_cap;
     void (*glFinish)(void); /**< for PROF per-pass GPU timing (NULL otherwise). */
     int   prof;             /**< 1 = print per-pass GPU-inclusive ms (PROF env). */
     /* Debug: overdraw heatmap (PBR_OVERDRAW) + skip the depth pre-pass

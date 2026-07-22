@@ -88,6 +88,12 @@ void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene,
         if (r->mesh == NULL) {
             continue;
         }
+        /* Translucent surfaces (rpg-rxf8) draw in the sorted blend pass with
+         * depth writes OFF -- pre-writing their depth here would early-Z kill
+         * everything visible through them. */
+        if (r->material != NULL && r->material->opacity < 0.999f) {
+            continue;
+        }
         if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
                                  r->mesh->aabb_max, scene->camera.eye,
                                  draw_distance)) {

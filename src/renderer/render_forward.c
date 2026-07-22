@@ -200,6 +200,10 @@ static void fwd_forward_submit(void *ud)
         const render_renderable_t *r = &s->items[i];
         if (r->mesh == NULL)
             continue;
+        /* Translucent surfaces draw in the sorted blend pass after this one
+         * (rpg-rxf8), never in the opaque loop. */
+        if (r->material != NULL && r->material->opacity < 0.999f)
+            continue;
         if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
                                  r->mesh->aabb_max, s->camera.eye,
                                  f->cfg.draw_distance))
@@ -219,6 +223,121 @@ static void fwd_forward_submit(void *ud)
     }
     if (f->overdraw && f->glDisable != NULL)      /* restore for the next pass. */
         f->glDisable(GL_BLEND);
+}
+
+/* Sorted translucent pass (rpg-rxf8): the 4th graph node, running right after
+ * 'forward' on the same thread, so the PBR program + cluster/shadow bindings
+ * it left in the context are still current. Collect every visible renderable
+ * with opacity < 1, sort BACK-TO-FRONT by view-space AABB-centre depth, and
+ * blend them over the opaque image: GL_BLEND (SRC_ALPHA, 1-SRC_ALPHA), depth
+ * test LEQUAL against the opaque depth, depth WRITE off (a nearer glass pane
+ * must not depth-kill a farther one). Full clustered lighting + u_opacity. */
+static void fwd_translucent_submit(void *ud)
+{
+    render_forward_t *f = (render_forward_t *)ud;
+    const render_scene_t *s = f->scene;
+    if (s == NULL || f->trans_idx == NULL || f->glBlendFunc == NULL ||
+        f->glDisable == NULL)
+        return;
+
+    float planes[6][4];
+    frustum_extract_planes_vp(s->camera.proj, s->camera.view, planes);
+    const float *v = s->camera.view;   /* column-major view matrix. */
+
+    uint32_t n = 0, dropped = 0;
+    for (uint32_t i = 0; i < s->count; ++i) {
+        const render_renderable_t *r = &s->items[i];
+        if (r->mesh == NULL || r->material == NULL ||
+            r->material->opacity >= 0.999f)
+            continue;
+        if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
+                                 r->mesh->aabb_max, s->camera.eye,
+                                 f->cfg.draw_distance))
+            continue;
+        if (n >= f->trans_cap) { ++dropped; continue; }
+        /* View depth of the world-space AABB centre (view row 2 dot wc). */
+        float lc[3] = { (r->mesh->aabb_min[0] + r->mesh->aabb_max[0]) * 0.5f,
+                        (r->mesh->aabb_min[1] + r->mesh->aabb_max[1]) * 0.5f,
+                        (r->mesh->aabb_min[2] + r->mesh->aabb_max[2]) * 0.5f };
+        const float *mm = r->model;
+        float wc[3] = {
+            mm[0] * lc[0] + mm[4] * lc[1] + mm[8] * lc[2] + mm[12],
+            mm[1] * lc[0] + mm[5] * lc[1] + mm[9] * lc[2] + mm[13],
+            mm[2] * lc[0] + mm[6] * lc[1] + mm[10] * lc[2] + mm[14],
+        };
+        float vz = v[2] * wc[0] + v[6] * wc[1] + v[10] * wc[2] + v[14];
+        f->trans_idx[n] = i;
+        f->trans_key[n] = -vz;         /* view looks down -z: -vz = distance. */
+        ++n;
+    }
+    if (dropped > 0u)
+        fprintf(stderr, "render_forward: %u translucent items over "
+                "max_translucent=%u drawn unsorted-last\n",
+                dropped, f->trans_cap);
+    if (n == 0u && dropped == 0u)
+        return;
+
+    /* Insertion sort, farthest first (translucent sets are small). */
+    for (uint32_t i = 1; i < n; ++i) {
+        uint32_t ix = f->trans_idx[i];
+        float ky = f->trans_key[i];
+        uint32_t j = i;
+        for (; j > 0u && f->trans_key[j - 1] < ky; --j) {
+            f->trans_idx[j] = f->trans_idx[j - 1];
+            f->trans_key[j] = f->trans_key[j - 1];
+        }
+        f->trans_idx[j] = ix;
+        f->trans_key[j] = ky;
+    }
+
+    f->depth.glEnable(GL_DEPTH_TEST);
+    f->depth.glDepthFunc(GL_LEQUAL);
+    f->depth.glDepthMask(0);           /* read the opaque depth, never write. */
+    f->depth.glEnable(GL_BLEND);
+    f->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    shader_program_bind(&f->pbr);
+
+    for (uint32_t k = 0; k < n; ++k) {
+        uint32_t i = f->trans_idx[k];
+        const render_renderable_t *r = &s->items[i];
+        material_bind(r->material, 0u, &f->cache, &f->pbr);
+        shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_object",
+                                 (i < s->dynamic_from) ? 1.0f : 0.0f);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_layer", r->sh_layer);
+        shader_uniform_set_mat4(&f->cache, &f->pbr, "u_model", r->model, 0);
+        static_mesh_bind(r->mesh);
+        for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)
+            static_mesh_draw_submesh(r->mesh, sub);
+    }
+    /* Overflow items (extremely rare) still draw, unsorted, rather than pop. */
+    if (dropped > 0u) {
+        for (uint32_t i = 0; i < s->count; ++i) {
+            const render_renderable_t *r = &s->items[i];
+            if (r->mesh == NULL || r->material == NULL ||
+                r->material->opacity >= 0.999f)
+                continue;
+            uint32_t seen = 0;
+            for (uint32_t k = 0; k < n; ++k)
+                if (f->trans_idx[k] == i) { seen = 1; break; }
+            if (seen)
+                continue;
+            if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
+                                     r->mesh->aabb_max, s->camera.eye,
+                                     f->cfg.draw_distance))
+                continue;
+            material_bind(r->material, 0u, &f->cache, &f->pbr);
+            shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_object",
+                                     (i < s->dynamic_from) ? 1.0f : 0.0f);
+            shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_layer", r->sh_layer);
+            shader_uniform_set_mat4(&f->cache, &f->pbr, "u_model", r->model, 0);
+            static_mesh_bind(r->mesh);
+            for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)
+                static_mesh_draw_submesh(r->mesh, sub);
+        }
+    }
+
+    f->depth.glDepthMask(1);
+    f->glDisable(GL_BLEND);
 }
 
 /* ── Public API ── */
@@ -313,31 +432,41 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     fwd->counts = malloc((size_t)ctot * sizeof(uint32_t));
     fwd->indices = malloc((size_t)cfg->index_capacity * sizeof(uint32_t));
     fwd->light_data = malloc((size_t)cfg->max_lights * 16u * sizeof(float));
+    fwd->trans_cap = cfg->max_translucent ? cfg->max_translucent : 256u;
+    fwd->trans_idx = malloc((size_t)fwd->trans_cap * sizeof(uint32_t));
+    fwd->trans_key = malloc((size_t)fwd->trans_cap * sizeof(float));
     if (fwd->offsets == NULL || fwd->counts == NULL || fwd->indices == NULL ||
-        fwd->light_data == NULL) {
+        fwd->light_data == NULL || fwd->trans_idx == NULL ||
+        fwd->trans_key == NULL) {
         render_forward_destroy(fwd);
         return false;
     }
     cluster_grid_init(&fwd->clusters, cfg->cluster, fwd->offsets, fwd->counts,
                       fwd->indices, cfg->index_capacity);
 
-    /* Wire the three graph nodes: depth_pre (optional) and light_cull have no
-     * deps; forward waits for both (a disabled depth_pre dep is auto-satisfied). */
+    /* Wire the four graph nodes: depth_pre (optional) and light_cull have no
+     * deps; forward waits for both (a disabled depth_pre dep is auto-satisfied);
+     * the sorted translucent pass (rpg-rxf8) waits for forward. */
     fwd->passes[0] = (render_pass_t){ "depth_pre", NULL, fwd_depth_submit, NULL,
                                       fwd, RENDER_PASS_DEPTH_PRE, NULL, 0u };
     fwd->passes[1] = (render_pass_t){ "light_cull", NULL, fwd_cull_submit, NULL,
                                       fwd, RENDER_PASS_LIGHT_CULL, NULL, 0u };
     fwd->passes[2] = (render_pass_t){ "forward", NULL, fwd_forward_submit, NULL,
                                       fwd, RENDER_PASS_FORWARD, NULL, 0u };
+    fwd->passes[3] = (render_pass_t){ "translucent", NULL, fwd_translucent_submit,
+                                      NULL, fwd, RENDER_PASS_FORWARD, NULL, 0u };
     fwd->dep_fwd[0] = "depth_pre";
     fwd->dep_fwd[1] = "light_cull";
+    fwd->dep_trans[0] = "forward";
     fwd->nodes[0] = (render_pipeline_graph_node_t){
         &fwd->passes[0], NULL, 0u, RENDER_PIPELINE_NODE_FLAG_DEPTH_PREPASS };
     fwd->nodes[1] = (render_pipeline_graph_node_t){ &fwd->passes[1], NULL, 0u, 0u };
     fwd->nodes[2] = (render_pipeline_graph_node_t){ &fwd->passes[2], fwd->dep_fwd,
                                                     2u, 0u };
+    fwd->nodes[3] = (render_pipeline_graph_node_t){ &fwd->passes[3], fwd->dep_trans,
+                                                    1u, 0u };
     fwd->graph.nodes = fwd->nodes;
-    fwd->graph.node_count = 3u;
+    fwd->graph.node_count = 4u;
     return true;
 }
 
@@ -494,6 +623,8 @@ void render_forward_destroy(render_forward_t *fwd)
     forward_plus_destroy(&fwd->fp);
     depth_prepass_destroy(&fwd->depth);
     shader_program_destroy(&fwd->pbr);
+    free(fwd->trans_idx);
+    free(fwd->trans_key);
     free(fwd->shadow_slot);
     free(fwd->offsets);
     free(fwd->counts);

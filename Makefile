@@ -2498,6 +2498,9 @@ build/translucent_shadow_tests: build/liball.a tests/visual/translucent_shadow_t
 build/caustic_compute_tests: build/liball.a tests/visual/caustic_compute_tests.c | build
 	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/caustic_compute_tests.c build/liball.a -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
 
+build/translucent_sort_tests: build/liball.a tests/visual/translucent_sort_tests.c | build
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/translucent_sort_tests.c build/liball.a -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+
 # Generic scene bake: the harness + a GENERATED scene_bake.c (scene callback) from
 # scripts/export_scene.py. SCENE_BAKE_C points at the exported scene's callback.
 SCENE_BAKE_C ?= datasets/great_hall_export/scene_bake.c

@@ -1,6 +1,6 @@
 ---
 id: rpg-rxf8
-status: open
+status: closed
 deps: [rpg-jqui]
 links: []
 created: 2026-07-22T10:15:50Z
