@@ -992,19 +992,32 @@ class _OffShell:
                              (d[0] + ox, d[1] + oy, d[2] + oz), mat, t)
 
 
-def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
-            origin=(0.0, 0.0, 0.0)):
-    """Emit one intersection (pad deformed from the canonical topologies,
-    aprons, gutter/curb/walk strips, paint) into the given shells at
-    `origin`. `bear` = ccw-sorted outgoing arm bearings (2..5 of them);
-    `phantom` = index of a synthetic arm whose mouth lies ON the host
-    wedge's boundary chain (a tee's straight back curb, or a Y's curved
-    outer boundary). Returns per-REAL-arm interface info:
-    [(bearing_deg, iface_center_world_2d, r1)]."""
-    n_s, n_n, y0r, m0, m1, y1r, z_pk, z_road = _xsection(lanes, lw, 'none')
-    WL = y1r + GUT_W
-    WR = -y0r + GUT_W
+def _ix_geo(shell_raw, walk_raw, bear, phantom, profiles, sw, apron, rc,
+            origin=(0.0, 0.0, 0.0), network=False, dens=None):
+    """Emit one intersection into the given shells at `origin`.
+
+    `bear` = ccw-sorted outgoing arm bearings; `profiles[k]` = (lanes, lw)
+    PER ARM -- the pad deforms smoothly between differing arm widths, so
+    the intersection scales to its incoming roads. `phantom` = synthetic
+    arm whose mouth lies ON the host wedge's chain (tee back curb / Y).
+
+    network mode: every mouth carries exactly 4*dens cells so a swept
+    road with 4*dens rows WELDS vert-for-vert at the mouth line; no
+    aprons/paint (the sweep owns the approach); sidewalks emit as
+    CONTINUOUS welded bands (no expansion-joint islands) whose ends
+    weld to the road walk bands.
+
+    Returns per-REAL-arm interfaces:
+    [(bearing_deg, iface_center_world_2d, r_iface)] -- r_iface is the
+    mouth radius r0 in network mode (the weld line), r0 + apron for the
+    preset operator."""
     n_arm = len(bear)
+    prof = []
+    for k in range(n_arm):
+        (lanes_k, lw_k) = profiles[k]
+        prof.append(_xsection(lanes_k, lw_k, 'none'))
+    WLs = [prof[k][5] + GUT_W for k in range(n_arm)]      # y1r + gutter
+    WRs = [-prof[k][2] + GUT_W for k in range(n_arm)]     # -y0r + gutter
     shell = _OffShell(shell_raw, origin)
     walk = _OffShell(walk_raw, origin)
 
@@ -1029,16 +1042,14 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
                     (pts[2][0], pts[2][1], Z_E), (pts[3][0], pts[3][1], Z_E),
                     mat, tag)
 
-    # ---- fillets: generic pair solver --------------------------------------
+    # ---- fillets between REAL arm pairs ------------------------------------
     def pairfil(ka, kb):
-        """Fillet between arm ka's LEFT curb and arm kb's RIGHT curb, or
-        None when they are near-opposite (straight seam)."""
         (da, na), (db, nb) = frames[ka], frames[kb]
         wedge = (bear[kb] - bear[ka]) % 360.0
         if abs(wedge - 180.0) <= 8.0:
             return None
         pv = 1.0 if wedge < 180.0 else -1.0
-        oA, oB = WL + pv * rc, WR + pv * rc
+        oA, oB = WLs[ka] + pv * rc, WRs[kb] + pv * rc
         det = da[0] * db[1] - da[1] * db[0]
         bxv = -(oA * na[0] + oB * nb[0])
         byv = -(oA * na[1] + oB * nb[1])
@@ -1066,7 +1077,7 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
     for k in range(n_arm):
         k2 = (k + 1) % n_arm
         if phantom in (k, k2):
-            continue                  # host windows cover these wedges
+            continue
         fil[k] = pairfil(k, k2)
 
     r0s = []
@@ -1077,20 +1088,20 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
             need = max(need, fil[k]['ta'])
         if fil[km] is not None:
             need = max(need, fil[km]['tb'])
-        if phantom is not None:
-            if k == kp and hostf is not None:
+        if phantom is not None and hostf is not None:
+            if k == kp:
                 need = max(need, hostf['ta'])
-            if k == kn and hostf is not None:
+            if k == kn:
                 need = max(need, hostf['tb'])
         r0s.append(need + 0.4)
 
-    # ---- chain geometry (piecewise seg/arc, G1 continuous) -----------------
+    # ---- chain geometry ----------------------------------------------------
     def pieces_of(f9, A1, A2, ka, kb):
         if f9 is None:
             return [('seg', A1, A2)]
         rg = rc + f9['pv'] * GUT_W
-        T1 = pt(ka, f9['ta'], y1r, 0.0)[:2]
-        T2 = pt(kb, f9['tb'], y0r, 0.0)[:2]
+        T1 = pt(ka, f9['ta'], prof[ka][5], 0.0)[:2]
+        T2 = pt(kb, f9['tb'], prof[kb][2], 0.0)[:2]
         pieces = []
         if math.dist(A1, T1) > 1e-6:
             pieces.append(('seg', A1, T1))
@@ -1133,30 +1144,30 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
 
     host = None
     if phantom is not None:
-        A1h = pt(kp, r0s[kp], y1r, 0.0)[:2]
-        A2h = pt(kn, r0s[kn], y0r, 0.0)[:2]
+        A1h = pt(kp, r0s[kp], prof[kp][5], 0.0)[:2]
+        A2h = pt(kn, r0s[kn], prof[kn][2], 0.0)[:2]
         hp = pieces_of(hostf, A1h, A2h, kp, kn)
         host = (hp, plen(hp))
 
     def mk_chain(k):
-        """Wedge-k boundary chain as (sampler(f)->(pos,nrm), length)."""
         k2 = (k + 1) % n_arm
         if phantom is not None and k2 == phantom:
-            (hp, hl) = host           # window [0, 0.32] of the host
+            (hp, hl) = host
             return (lambda f: chain_at(hp, hl, f * 0.32)), hl * 0.32
         if phantom is not None and k == phantom:
-            (hp, hl) = host           # window [0.68, 1]
+            (hp, hl) = host
             return (lambda f: chain_at(hp, hl, 0.68 + f * 0.32)), hl * 0.32
-        A1 = pt(k, r0s[k], y1r, 0.0)[:2]
-        A2 = pt(k2, r0s[k2], y0r, 0.0)[:2]
+        A1 = pt(k, r0s[k], prof[k][5], 0.0)[:2]
+        A2 = pt(k2, r0s[k2], prof[k2][2], 0.0)[:2]
         pieces = pieces_of(fil[k], A1, A2, k, k2)
         L9 = plen(pieces)
         return (lambda f: chain_at(pieces, L9, f)), L9
 
-    # ---- VEER: rectangular through-grid ------------------------------------
+    # ---- VEER (preset only): rectangular through-grid ----------------------
     chain_strips = []
     if n_arm == 2:
-        M2 = 4 * max(1, round(lanes / 2))
+        (n_s, n_n, y0r, m0, m1, y1r, z_pk, z_road) = prof[0]
+        M2 = 4 * (dens or max(1, round(profiles[0][0] / 2)))
         rows_v = [y0r + (y1r - y0r) * j / M2 for j in range(M2 + 1)]
         mouthv = [[pt(k, r0s[k], y, Z_E)[:2] for y in rows_v]
                   for k in range(2)]
@@ -1182,13 +1193,19 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
         def tmap(k):
             return (k + shift) % n_arm
 
-        s = max(1, round(lanes / 2))
+        # mouth-edge families are FROZEN at `s` so every mouth carries
+        # exactly 4*s cells (the swept roads weld vert-for-vert); corner
+        # demands never bump them.
+        s = dens if dens else max(1, round(max(pr9[0] for pr9 in profiles)
+                                           / 2))
         cnt = {}
+        frozen = set()
         for k in range(n_arm):
             mm = topo.arm_mouths[tmap(k)]
             for j in range(4):
                 fm = topo.fam[tuple(sorted((mm[j], mm[j + 1])))]
-                cnt[fm] = max(cnt.get(fm, 1), s)
+                cnt[fm] = s
+                frozen.add(fm)
         chain_fns = [mk_chain(k) for k in range(n_arm)]
         for k in range(n_arm):
             run = topo.corners[tmap(k)]
@@ -1196,7 +1213,8 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
             dem = max(1, int(round(chain_fns[k][1] / E9 / 1.5)))
             for j in range(E9):
                 fm = topo.fam[tuple(sorted((run[j], run[j + 1])))]
-                cnt[fm] = max(cnt.get(fm, 1), dem)
+                if fm not in frozen:
+                    cnt[fm] = max(cnt.get(fm, 1), dem)
 
         def ecnt(a, b):
             return cnt.get(topo.fam[tuple(sorted((a, b)))], 1)
@@ -1220,6 +1238,7 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
                         for j in range(Mk + 1)]
                 rows_by_arm.append(None)
             else:
+                (y0r, y1r) = prof[k][2], prof[k][5]
                 rows_k = [y0r + (y1r - y0r) * j / Mk for j in range(Mk + 1)]
                 mpos = [pt(k, r0s[k], y, Z_E)[:2] for y in rows_k]
                 rows_by_arm.append(rows_k)
@@ -1273,19 +1292,14 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
                                           get_poly(f[1], f[2])),
                        q2d, M_ASPHALT)
         if phantom is not None:
-            # the phantom mouth is back-curb too: strip it with normals
+            # sample the HOST chain analytically so the strip's end
+            # verts/normals match the sub-chain strips exactly (numeric
+            # normals left the walk bands unwelded at the shared corners)
             mm = topo.arm_mouths[tmap(phantom)]
-            mpoly = []
-            for j in range(4):
-                seg9 = get_poly(mm[j], mm[j + 1])
-                mpoly.extend(seg9 if not mpoly else seg9[1:])
-            samples = []
-            for i9, q in enumerate(mpoly):
-                a = mpoly[max(0, i9 - 1)]
-                b = mpoly[min(len(mpoly) - 1, i9 + 1)]
-                d9 = max(math.hypot(b[0] - a[0], b[1] - a[1]), 1e-9)
-                t9 = ((b[0] - a[0]) / d9, (b[1] - a[1]) / d9)
-                samples.append((q, (t9[1], -t9[0])))
+            Mk = sum(ecnt(mm[j], mm[j + 1]) for j in range(4))
+            (hp, hl) = host
+            samples = [chain_at(hp, hl, 0.32 + 0.36 * j / Mk)
+                       for j in range(Mk + 1)]
             chain_strips.append(samples)
 
     # ---- gutter / curb / walk strips along every boundary chain ------------
@@ -1315,6 +1329,19 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
             wb0 = off(qb, nb9, GUT_W + CURB_W + GAP)
             wa1 = off(qa, na9, GUT_W + CURB_W + GAP + sw)
             wb1 = off(qb, nb9, GUT_W + CURB_W + GAP + sw)
+            if network:
+                # CONTINUOUS welded band: shared verts cell to cell; the
+                # open ends weld to the road walk bands at the mouths
+                walk.quad((wb0[0], wb0[1], Z_WALK), (wa0[0], wa0[1], Z_WALK),
+                          (wa1[0], wa1[1], Z_WALK), (wb1[0], wb1[1], Z_WALK),
+                          M_CONCRETE, 'sidewalk')
+                walk.quad((wa0[0], wa0[1], Z_WALK), (wb0[0], wb0[1], Z_WALK),
+                          (wb0[0], wb0[1], 0.11), (wa0[0], wa0[1], 0.11),
+                          M_CONCRETE, 'sidewalk')
+                walk.quad((wb1[0], wb1[1], Z_WALK), (wa1[0], wa1[1], Z_WALK),
+                          (wa1[0], wa1[1], 0.11), (wb1[0], wb1[1], 0.11),
+                          M_CONCRETE, 'sidewalk')
+                continue
             wa0, wb0 = lerp2(wa0, wb0, 0.004), lerp2(wb0, wa0, 0.004)
             wa1, wb1 = lerp2(wa1, wb1, 0.004), lerp2(wb1, wa1, 0.004)
             ring4 = [wb0, wa0, wa1, wb1]
@@ -1329,96 +1356,100 @@ def _ix_geo(shell_raw, walk_raw, bear, phantom, lanes, lw, sw, apron, rc,
     for samples in chain_strips:
         emit_chain_strip(samples)
 
-    # ---- per-arm aprons + paint (real arms only) ---------------------------
-    for k in range(n_arm):
-        if k == phantom:
-            continue
-        rows_k = rows_by_arm[k]
-        r0, r1 = r0s[k], r0s[k] + apron
-        ncol = max(4, int(round(apron / 1.6)))
-        cols = [r0 + apron * i9 / ncol for i9 in range(ncol + 1)]
+    # ---- per-arm aprons + paint (preset operator only) ---------------------
+    if not network:
+        for k in range(n_arm):
+            if k == phantom:
+                continue
+            (n_s, n_n, y0r, m0, m1, y1r, z_pk, z_road) = prof[k]
+            rows_k = rows_by_arm[k]
+            r0, r1 = r0s[k], r0s[k] + apron
+            ncol = max(4, int(round(apron / 1.6)))
+            cols = [r0 + apron * i9 / ncol for i9 in range(ncol + 1)]
 
-        def zmix(r, y):
-            u9 = (r - r0) / (r1 - r0)
-            return Z_E + u9 * (z_road(y) - Z_E)
+            def zmix(r, y):
+                u9 = (r - r0) / (r1 - r0)
+                return Z_E + u9 * (z_road(y) - Z_E)
 
-        shell.tag = 'road'
-        for (ca, cb) in zip(cols, cols[1:]):
-            for (ya, yb) in zip(rows_k, rows_k[1:]):
-                shell.quad(pt(k, ca, ya, zmix(ca, ya)),
-                           pt(k, cb, ya, zmix(cb, ya)),
-                           pt(k, cb, yb, zmix(cb, yb)),
-                           pt(k, ca, yb, zmix(ca, yb)), M_ASPHALT)
-        for (ye, yc, sg) in ((y0r, y0r - GUT_W, -1), (y1r, y1r + GUT_W, 1)):
-            shell.tag = 'gutter'
+            shell.tag = 'road'
             for (ca, cb) in zip(cols, cols[1:]):
-                pts = [pt(k, ca, ye, zmix(ca, ye)),
-                       pt(k, cb, ye, zmix(cb, ye)),
-                       pt(k, cb, yc, 0.0), pt(k, ca, yc, 0.0)]
-                if sg < 0:
-                    pts.reverse()
-                shell.quad(*pts, M_CONCRETE)
-            shell.tag = 'curb'
-            y_bk = yc + sg * CURB_W
-            for (ca, cb) in zip(cols, cols[1:]):
-                pts = [pt(k, ca, yc, CURB_H), pt(k, cb, yc, CURB_H),
-                       pt(k, cb, yc, 0.0), pt(k, ca, yc, 0.0)]
-                if sg > 0:
-                    pts.reverse()
-                shell.quad(*pts, M_CONCRETE)
-                pts = [pt(k, ca, yc, CURB_H), pt(k, ca, y_bk, CURB_H),
-                       pt(k, cb, y_bk, CURB_H), pt(k, cb, yc, CURB_H)]
-                if sg > 0:
-                    pts.reverse()
-                shell.quad(*pts, M_CONCRETE)
-                pts = [pt(k, ca, y_bk, CURB_H), pt(k, ca, y_bk, 0.0),
-                       pt(k, cb, y_bk, 0.0), pt(k, cb, y_bk, CURB_H)]
-                if sg > 0:
-                    pts.reverse()
-                shell.quad(*pts, M_CONCRETE)
-            walk.tag = 'sidewalk'
-            yi = yc + sg * (CURB_W + GAP)
-            yo = yi + sg * sw
-            wy0, wy1 = min(yi, yo), max(yi, yo)
-            nsl = max(1, round(apron / SLAB_L))
-            for i9 in range(nsl):
-                a = r0 + apron * i9 / nsl + GAP
-                b = r0 + apron * (i9 + 1) / nsl - GAP
-                walk.quad(pt(k, a, wy0, Z_WALK), pt(k, b, wy0, Z_WALK),
-                          pt(k, b, wy1, Z_WALK), pt(k, a, wy1, Z_WALK),
-                          M_CONCRETE)
-                corners = [(a, wy0), (b, wy0), (b, wy1), (a, wy1)]
-                for (c0, c1) in zip(corners, corners[1:] + corners[:1]):
-                    walk.quad(pt(k, c1[0], c1[1], 0.11),
-                              pt(k, c0[0], c0[1], 0.11),
-                              pt(k, c0[0], c0[1], Z_WALK),
-                              pt(k, c1[0], c1[1], Z_WALK), M_CONCRETE)
-        shell.tag = 'paint'
+                for (ya, yb) in zip(rows_k, rows_k[1:]):
+                    shell.quad(pt(k, ca, ya, zmix(ca, ya)),
+                               pt(k, cb, ya, zmix(cb, ya)),
+                               pt(k, cb, yb, zmix(cb, yb)),
+                               pt(k, ca, yb, zmix(ca, yb)), M_ASPHALT)
+            for (ye, yc, sg) in ((y0r, y0r - GUT_W, -1),
+                                 (y1r, y1r + GUT_W, 1)):
+                shell.tag = 'gutter'
+                for (ca, cb) in zip(cols, cols[1:]):
+                    pts = [pt(k, ca, ye, zmix(ca, ye)),
+                           pt(k, cb, ye, zmix(cb, ye)),
+                           pt(k, cb, yc, 0.0), pt(k, ca, yc, 0.0)]
+                    if sg < 0:
+                        pts.reverse()
+                    shell.quad(*pts, M_CONCRETE)
+                shell.tag = 'curb'
+                y_bk = yc + sg * CURB_W
+                for (ca, cb) in zip(cols, cols[1:]):
+                    pts = [pt(k, ca, yc, CURB_H), pt(k, cb, yc, CURB_H),
+                           pt(k, cb, yc, 0.0), pt(k, ca, yc, 0.0)]
+                    if sg > 0:
+                        pts.reverse()
+                    shell.quad(*pts, M_CONCRETE)
+                    pts = [pt(k, ca, yc, CURB_H), pt(k, ca, y_bk, CURB_H),
+                           pt(k, cb, y_bk, CURB_H), pt(k, cb, yc, CURB_H)]
+                    if sg > 0:
+                        pts.reverse()
+                    shell.quad(*pts, M_CONCRETE)
+                    pts = [pt(k, ca, y_bk, CURB_H), pt(k, ca, y_bk, 0.0),
+                           pt(k, cb, y_bk, 0.0), pt(k, cb, y_bk, CURB_H)]
+                    if sg > 0:
+                        pts.reverse()
+                    shell.quad(*pts, M_CONCRETE)
+                walk.tag = 'sidewalk'
+                yi = yc + sg * (CURB_W + GAP)
+                yo = yi + sg * sw
+                wy0, wy1 = min(yi, yo), max(yi, yo)
+                nsl = max(1, round(apron / SLAB_L))
+                for i9 in range(nsl):
+                    a = r0 + apron * i9 / nsl + GAP
+                    b = r0 + apron * (i9 + 1) / nsl - GAP
+                    walk.quad(pt(k, a, wy0, Z_WALK), pt(k, b, wy0, Z_WALK),
+                              pt(k, b, wy1, Z_WALK), pt(k, a, wy1, Z_WALK),
+                              M_CONCRETE)
+                    corners = [(a, wy0), (b, wy0), (b, wy1), (a, wy1)]
+                    for (c0, c1) in zip(corners, corners[1:] + corners[:1]):
+                        walk.quad(pt(k, c1[0], c1[1], 0.11),
+                                  pt(k, c0[0], c0[1], 0.11),
+                                  pt(k, c0[0], c0[1], Z_WALK),
+                                  pt(k, c1[0], c1[1], Z_WALK), M_CONCRETE)
+            shell.tag = 'paint'
 
-        def pquad(ta9, tb9, ya, yb, mat):
-            for (ca, cb) in ((ya, min(yb, m0)), (max(ya, m0), yb)):
-                if cb - ca < 0.02:
-                    continue
-                shell.quad(pt(k, ta9, ca, zmix(ta9, ca) + 0.003),
-                           pt(k, tb9, ca, zmix(tb9, ca) + 0.003),
-                           pt(k, tb9, cb, zmix(tb9, cb) + 0.003),
-                           pt(k, ta9, cb, zmix(ta9, cb) + 0.003),
-                           mat, 'paint')
+            def pquad(ta9, tb9, ya, yb, mat):
+                for (ca, cb) in ((ya, min(yb, m0)), (max(ya, m0), yb)):
+                    if cb - ca < 0.02:
+                        continue
+                    shell.quad(pt(k, ta9, ca, zmix(ta9, ca) + 0.003),
+                               pt(k, tb9, ca, zmix(tb9, ca) + 0.003),
+                               pt(k, tb9, cb, zmix(tb9, cb) + 0.003),
+                               pt(k, ta9, cb, zmix(ta9, cb) + 0.003),
+                               mat, 'paint')
 
-        for off9 in ((-0.15, -0.05), (0.05, 0.15)):
-            pquad(r0 + 3.6, r1 - 0.2, m0 + off9[0], m0 + off9[1], M_PAINT_Y)
-        pquad(r0 + 0.6, r0 + 0.75, y0r + 0.25, y1r - 0.25, M_PAINT_W)
-        pquad(r0 + 2.6, r0 + 2.75, y0r + 0.25, y1r - 0.25, M_PAINT_W)
-        pquad(r0 + 3.0, r0 + 3.45, m0 + 0.1, y1r - 0.25, M_PAINT_W)
+            for off9 in ((-0.15, -0.05), (0.05, 0.15)):
+                pquad(r0 + 3.6, r1 - 0.2, m0 + off9[0], m0 + off9[1],
+                      M_PAINT_Y)
+            pquad(r0 + 0.6, r0 + 0.75, y0r + 0.25, y1r - 0.25, M_PAINT_W)
+            pquad(r0 + 2.6, r0 + 2.75, y0r + 0.25, y1r - 0.25, M_PAINT_W)
+            pquad(r0 + 3.0, r0 + 3.45, m0 + 0.1, y1r - 0.25, M_PAINT_W)
 
     out = []
     for k in range(n_arm):
         if k == phantom:
             continue
         d9 = frames[k][0]
-        r1 = r0s[k] + apron
-        out.append((bear[k], (origin[0] + d9[0] * r1,
-                              origin[1] + d9[1] * r1), r1))
+        ri = r0s[k] if network else r0s[k] + apron
+        out.append((bear[k], (origin[0] + d9[0] * ri,
+                              origin[1] + d9[1] * ri), ri))
     return out
 
 
@@ -1433,8 +1464,9 @@ def build_intersection(p, rng):
         phantom = bear.index(270.0)
     shell = _Shell()
     walk = _Shell()
-    _ix_geo(shell, walk, bear, phantom, p["lanes"], p["lane_width"],
-            p["sidewalk_width"], p["apron_length"], p["corner_radius"])
+    profs = [(p["lanes"], p["lane_width"])] * len(bear)
+    _ix_geo(shell, walk, bear, phantom, profs, p["sidewalk_width"],
+            p["apron_length"], p["corner_radius"])
     mats = [_material(nm) for nm in _MATS]
     return [shell.to_object("LA_Intersection_Road", mats),
             walk.to_object("LA_Intersection_Walk", mats)]
@@ -1504,25 +1536,28 @@ def _cr_stations(pts, step, closed=False):
 
 
 def _sweep_road(shell, walk, stations, lanes, lw, sw, wear, rng,
-                width_at=None, crown_at=None):
+                n_rows=None, crown_at=None, jx_a=False, jx_b=False,
+                continuous_walk=False):
     """Sweep the street cross-section along `stations` [(pos, dir, z)]:
-    crowned roadway (half-lane rows), gutter pans, curbs, sidewalk slab
-    islands, and paint (edge lines, dashed lane lines, double-yellow
-    center) -- everything welded station to station. `width_at(s)` scales
-    the cross-section (junction flares); `crown_at(s)` scales the crown
-    amplitude so the profile lands exactly on the junction's at s = 0/L."""
+    crowned roadway, gutter pans, curbs, sidewalks, paint. `n_rows`
+    fixes the roadway row count (the road-network weld contract: mouths
+    carry 4*dens cells, so the sweep uses the same); `crown_at(s)`
+    scales crown amplitude (0 at a junction mouth -- the pad is flat --
+    ramping to 1); jx_a/jx_b paint a crosswalk + stop bar at the s=0 /
+    s=L end; continuous_walk emits welded sidewalk bands (merged with
+    the junction wedge bands) instead of expansion-joint islands."""
     n_s, n_n, y0r, m0, m1, y1r, z_pk, z_road = _xsection(lanes, lw, 'none')
-    M = 2 * lanes
+    M = n_rows if n_rows else 2 * lanes
     rows = [y0r + (y1r - y0r) * j / M for j in range(M + 1)]
     cum = [0.0]
     for (a, b) in zip(stations, stations[1:]):
         cum.append(cum[-1] + math.dist(a[0], b[0]))
+    Lt = cum[-1]
 
     def P(i, u, z_off):
         (pos, d, z) = stations[i]
-        s9 = width_at(cum[i]) if width_at else 1.0
         nl = (-d[1], d[0])
-        return (pos[0] + nl[0] * u * s9, pos[1] + nl[1] * u * s9, z + z_off)
+        return (pos[0] + nl[0] * u, pos[1] + nl[1] * u, z + z_off)
 
     def zr(i, u):
         amp = crown_at(cum[i]) if crown_at else 1.0
@@ -1567,16 +1602,28 @@ def _sweep_road(shell, walk, stations, lanes, lw, sw, wear, rng,
         for i in range(len(stations) - 1):
             qs = [P(i, wy0, 0.0)[:2], P(i + 1, wy0, 0.0)[:2],
                   P(i + 1, wy1, 0.0)[:2], P(i, wy1, 0.0)[:2]]
+            zi = stations[i][2] + Z_WALK
+            zi1 = stations[i + 1][2] + Z_WALK
+            if continuous_walk:
+                walk.quad((qs[0][0], qs[0][1], zi), (qs[1][0], qs[1][1], zi1),
+                          (qs[2][0], qs[2][1], zi1), (qs[3][0], qs[3][1], zi),
+                          M_CONCRETE)
+                walk.quad((qs[1][0], qs[1][1], zi1), (qs[0][0], qs[0][1], zi),
+                          (qs[0][0], qs[0][1], zi - 0.05),
+                          (qs[1][0], qs[1][1], zi1 - 0.05), M_CONCRETE)
+                walk.quad((qs[3][0], qs[3][1], zi), (qs[2][0], qs[2][1], zi1),
+                          (qs[2][0], qs[2][1], zi1 - 0.05),
+                          (qs[3][0], qs[3][1], zi - 0.05), M_CONCRETE)
+                continue
 
             def ar2(a9, b9, c9):
                 return ((b9[0] - a9[0]) * (c9[1] - a9[1]) -
                         (c9[0] - a9[0]) * (b9[1] - a9[1]))
 
             if ar2(qs[0], qs[1], qs[2]) * ar2(qs[0], qs[2], qs[3]) <= 0:
-                continue              # folded cell at a sharp kink: no slab
+                continue
             cl = max(math.dist(qs[0], qs[1]), 0.1)
-            fi = min(0.05, 0.008 / cl)            # ABSOLUTE 8 mm inset --
-            # fractional insets under-shot the weld epsilon on short cells
+            fi = min(0.05, 0.008 / cl)
             a0 = (qs[0][0] + (qs[1][0] - qs[0][0]) * fi,
                   qs[0][1] + (qs[1][1] - qs[0][1]) * fi)
             b0 = (qs[1][0] + (qs[0][0] - qs[1][0]) * fi,
@@ -1585,28 +1632,25 @@ def _sweep_road(shell, walk, stations, lanes, lw, sw, wear, rng,
                   qs[3][1] + (qs[2][1] - qs[3][1]) * fi)
             b1 = (qs[2][0] + (qs[3][0] - qs[2][0]) * fi,
                   qs[2][1] + (qs[3][1] - qs[2][1]) * fi)
-            zi, zi1 = stations[i][2] + Z_WALK, stations[i + 1][2] + Z_WALK
             walk.quad((a0[0], a0[1], zi), (b0[0], b0[1], zi1),
                       (b1[0], b1[1], zi1), (a1[0], a1[1], zi),
                       M_CONCRETE)
             ring4 = [(a0, zi), (b0, zi1), (b1, zi1), (a1, zi)]
             for ((v0, z0), (v1, z1)) in zip(ring4, ring4[1:] + ring4[:1]):
-                walk.quad((v1[0], v1[1], z1 - 0.05), (v0[0], v0[1], z0 - 0.05),
+                walk.quad((v1[0], v1[1], z1 - 0.05),
+                          (v0[0], v0[1], z0 - 0.05),
                           (v0[0], v0[1], z0), (v1[0], v1[1], z1),
                           M_CONCRETE)
 
     # ---- paint -------------------------------------------------------------
     shell.tag = 'paint'
-    Lt = cum[-1]
 
     def strip_cells(u0, u1, s0, s1, mat):
         for i in range(len(stations) - 1):
             if cum[i + 1] < s0 or cum[i] > s1:
                 continue
-            f0 = max(0.0, (s0 - cum[i]) /
-                     max(cum[i + 1] - cum[i], 1e-9))
-            f1 = min(1.0, (s1 - cum[i]) /
-                     max(cum[i + 1] - cum[i], 1e-9))
+            f0 = max(0.0, (s0 - cum[i]) / max(cum[i + 1] - cum[i], 1e-9))
+            f1 = min(1.0, (s1 - cum[i]) / max(cum[i + 1] - cum[i], 1e-9))
 
             def mid(u, f):
                 qa = P(i, u, zr(i, u) + 0.003)
@@ -1616,39 +1660,47 @@ def _sweep_road(shell, walk, stations, lanes, lw, sw, wear, rng,
                         qa[2] + (qb[2] - qa[2]) * f)
 
             shell.quad(mid(u0, f0), mid(u0, f1), mid(u1, f1), mid(u1, f0),
-                       M_PAINT_W if mat is None else mat, 'paint')
+                       mat, 'paint')
 
-    strip_cells(y0r + 0.10, y0r + 0.22, 0.0, Lt, M_PAINT_W)
-    strip_cells(y1r - 0.22, y1r - 0.10, 0.0, Lt, M_PAINT_W)
-    strip_cells(m0 - 0.15, m0 - 0.05, 0.0, Lt, M_PAINT_Y)
-    strip_cells(m0 + 0.05, m0 + 0.15, 0.0, Lt, M_PAINT_Y)
-    for k in range(1, n_s):
-        y_l = y0r + k * lw
-        x = 1.0 + rng.random() * 3.0
-        while x < Lt - 1.0:
-            if rng.random() >= wear * 0.55:
-                strip_cells(y_l - 0.06, y_l + 0.06, x,
-                            min(x + 3.0, Lt - 0.5), M_PAINT_W)
-            x += 12.0
-    for k in range(1, n_n):
-        y_l = m1 + k * lw
-        x = 1.0 + rng.random() * 3.0
-        while x < Lt - 1.0:
-            if rng.random() >= wear * 0.55:
-                strip_cells(y_l - 0.06, y_l + 0.06, x,
-                            min(x + 3.0, Lt - 0.5), M_PAINT_W)
-            x += 12.0
+    # long lines STOP short of the junction paint (real striping does,
+    # and coplanar overlaps with the crosswalk bars audit as defects)
+    s_lo = 3.6 if jx_a else 0.5
+    s_hi = (Lt - 3.6) if jx_b else (Lt - 0.5)
+    strip_cells(y0r + 0.10, y0r + 0.22, s_lo, s_hi, M_PAINT_W)
+    strip_cells(y1r - 0.22, y1r - 0.10, s_lo, s_hi, M_PAINT_W)
+    strip_cells(m0 - 0.15, m0 - 0.05, s_lo, s_hi, M_PAINT_Y)
+    strip_cells(m0 + 0.05, m0 + 0.15, s_lo, s_hi, M_PAINT_Y)
+    for (side, cnt9) in (('s', n_s), ('n', n_n)):
+        for k in range(1, cnt9):
+            y_l = (y0r + k * lw) if side == 's' else (m1 + k * lw)
+            x = s_lo + 0.5 + rng.random() * 3.0
+            while x < s_hi - 0.5:
+                if rng.random() >= wear * 0.55:
+                    strip_cells(y_l - 0.06, y_l + 0.06, x,
+                                min(x + 3.0, s_hi - 0.3), M_PAINT_W)
+                x += 12.0
+    # junction approaches: transverse crosswalk + stop bar
+    if jx_a and Lt > 6.0:
+        strip_cells(y0r + 0.25, y1r - 0.25, 0.8, 0.95, M_PAINT_W)
+        strip_cells(y0r + 0.25, y1r - 0.25, 2.3, 2.45, M_PAINT_W)
+        strip_cells(m0 + 0.1, y1r - 0.25, 2.8, 3.25, M_PAINT_W)
+    if jx_b and Lt > 6.0:
+        strip_cells(y0r + 0.25, y1r - 0.25, Lt - 0.95, Lt - 0.8, M_PAINT_W)
+        strip_cells(y0r + 0.25, y1r - 0.25, Lt - 2.45, Lt - 2.3, M_PAINT_W)
+        strip_cells(y0r + 0.25, m0 - 0.1, Lt - 3.25, Lt - 2.8, M_PAINT_W)
 
 
 def build_road_network(p, rng, context):
     """DESTRUCTIVE: consume the active edge-network mesh (skin-modifier
-    radii = road half-widths) and replace it with a road network. Vertex
-    degree drives the junction form (3 = tee/Y via the phantom-arm
-    4-template, 4 = cross, 5 = five-way); skin width drives the lane
-    count (lanes hold a set width range); the roads follow the Catmull-
-    Rom curvature of the vert chains between junctions, including their
-    z. Narrow approaches FLARE into wider junctions like real turn-lane
-    flares."""
+    radii = road half-widths) and replace it with ONE welded road mesh
+    (plus one welded sidewalk mesh). Vertex degree drives the junction
+    form (3 = tee/Y, 4 = cross, 5 = five-way); skin width drives lanes;
+    roads follow the Catmull-Rom curvature of the vert chains. The weld
+    contract: every junction mouth carries exactly 4*dens cells and
+    every road sweeps 4*dens rows, so roads join the intersections
+    vert-for-vert; each intersection scales per-arm to its incoming
+    road widths; sidewalks are continuous welded bands merged across
+    the junction wedges."""
     src = context.active_object
     if src is None or src.type != 'MESH' or len(src.data.edges) == 0:
         raise ValueError("select an edge-network mesh (with a skin "
@@ -1673,9 +1725,8 @@ def build_road_network(p, rng, context):
         if d9 > 5:
             raise ValueError("vertex %d has degree %d (max 5)" % (v, d9))
 
-    # ---- walk the graph into paths between junction/end verts --------------
     used = set()
-    paths = []                        # dict(verts=[ids], closed=bool)
+    paths = []
 
     def walk_from(v0, v1):
         chain = [v0, v1]
@@ -1695,7 +1746,7 @@ def build_road_network(p, rng, context):
         for w in adj[v]:
             if tuple(sorted((v, w))) not in used:
                 paths.append(dict(verts=walk_from(v, w), closed=False))
-    for (a, b) in edges:              # leftover pure loops
+    for (a, b) in edges:
         if tuple(sorted((a, b))) in used:
             continue
         chain = walk_from(a, b)
@@ -1707,23 +1758,18 @@ def build_road_network(p, rng, context):
         w9 = 2.0 * sum(rad[v] for v in mid) / len(mid)
         pa['lanes'], pa['lw'] = _lane_fit(w9)
 
-    # ---- junctions ---------------------------------------------------------
-    # junction pieces and swept paths live in SEPARATE objects: their
-    # interface cross-sections coincide geometrically but carry different
-    # discretizations (junction mouth cells vs path rows), which inside
-    # one mesh would read as T-junctions.
+    # ONE row density for the whole network: the weld contract
+    dens = max(1, round(max(pa['lanes'] for pa in paths) / 2))
+
     shell = _Shell()
     walk = _Shell()
-    shell_p = _Shell()
-    walk_p = _Shell()
     sw = p["sidewalk_width"]
-    apron = p["apron_length"]
     rc = p["corner_radius"]
-    juncs = {}                        # vert -> per-arm interface info
+    juncs = {}
     for v in sorted(deg):
         if deg[v] < 3:
             continue
-        arms = []                     # (bearing, path, end('a'|'b'))
+        arms = []
         for pa in paths:
             vs = pa['verts']
             if vs[0] == v:
@@ -1742,31 +1788,38 @@ def build_road_network(p, rng, context):
             if gap < 16.0:
                 raise ValueError("arms at vertex %d are only %.0f deg "
                                  "apart" % (v, gap))
-        lanes_j = max(a[1]['lanes'] for a in arms)
-        lw_j = min(3.8, max(2.8, sum(a[1]['lw'] for a in arms) / len(arms)))
         bear = [a[0] for a in arms]
+        profs = [(a[1]['lanes'], a[1]['lw']) for a in arms]
         phantom = None
         if len(arms) == 3:
             wg = [(bear[(i + 1) % 3] - bear[i]) % 360.0 for i in range(3)]
             kw = max(range(3), key=lambda i: wg[i])
             ph_b = (bear[kw] + wg[kw] / 2.0) % 360.0
-            bear = sorted(bear + [ph_b])
-            phantom = bear.index(ph_b)
-        order = sorted(range(len(arms)), key=lambda i: arms[i][0])
-        del order
-        ifaces = _ix_geo(shell, walk, bear, phantom, lanes_j, lw_j, sw,
-                         apron, rc, origin=verts[v])
+            order = sorted(range(4), key=lambda i: (bear + [ph_b])[i])
+            bear2 = sorted(bear + [ph_b])
+            phantom = bear2.index(ph_b)
+            profs2 = []
+            src_i = 0
+            for i in range(4):
+                if i == phantom:
+                    profs2.append(profs[0])       # unused for the phantom
+                else:
+                    profs2.append(profs[src_i])
+                    src_i += 1
+            bear, profs = bear2, profs2
+            del order
+        ifaces = _ix_geo(shell, walk, bear, phantom, profs, sw, 0.0, rc,
+                         origin=verts[v], network=True, dens=dens)
         info = {}
         ai = 0
-        for (brg, ctr, r1) in ifaces:
+        for (brg, ctr, ri) in ifaces:
             (b0, pa, end) = arms[ai]
-            info[(id(pa), end)] = dict(center=ctr, bearing=brg, r1=r1,
-                                       z=verts[v][2], lanes=lanes_j,
-                                       lw=lw_j)
+            info[(id(pa), end)] = dict(center=ctr, bearing=brg, r=ri,
+                                       z=verts[v][2])
             ai += 1
         juncs[v] = info
 
-    # ---- sweep every path --------------------------------------------------
+    # ---- sweep every path (welded into the same shells) --------------------
     def iface_for(pa, end):
         vs = pa['verts']
         v = vs[0] if end == 'a' else vs[-1]
@@ -1778,13 +1831,11 @@ def build_road_network(p, rng, context):
         pts = [verts[v] for v in vs]
         ifa = iface_for(pa, 'a')
         ifb = iface_for(pa, 'b') if not pa['closed'] else None
-        # trim junction aprons off both ends (by arclength along the raw
-        # polyline), then pin the ends to the interface centers
         for (iface, front) in ((ifa, True), (ifb, False)):
             if iface is None:
                 continue
             seq = pts if front else pts[::-1]
-            need = iface['r1']
+            need = iface['r']
             out9 = [(iface['center'][0], iface['center'][1], iface['z'])]
             acc = 0.0
             for (a, b) in zip(seq, seq[1:]):
@@ -1792,7 +1843,7 @@ def build_road_network(p, rng, context):
                 if acc + d9 > need:
                     out9.append(b)
                 elif acc + d9 > need - 0.5:
-                    pass              # too close to the cut: drop it
+                    pass
                 acc += d9
             if len(out9) < 2:
                 out9.append(seq[-1])
@@ -1802,11 +1853,9 @@ def build_road_network(p, rng, context):
             print("la_road_network: path too short after trims, skipped")
             continue
         if pa['closed'] and math.dist(pts[0][:2], pts[-1][:2]) < 1e-6:
-            pts = pts[:-1]            # drop the duplicated loop endpoint
+            pts = pts[:-1]
         stations, Lt = _cr_stations(pts, 2.0, pa['closed'])
-        # pin the end tangents to the arm bearings, BLENDING the pin over
-        # the neighbouring stations -- a hard swap kinks the swept ribbon
-        # and can fold the outer cross-section corners over each other
+
         def pin(idx, d_pin, z_pin, into):
             stations[idx] = (stations[idx][0], d_pin, z_pin)
             for j9 in range(1, 4):
@@ -1827,52 +1876,28 @@ def build_road_network(p, rng, context):
             r9 = math.radians(ifb['bearing'])
             pin(len(stations) - 1, (-math.cos(r9), -math.sin(r9)),
                 ifb['z'], -1)
-        hw_p = pa['lanes'] * pa['lw'] / 2.0
-        zpk_p = Z_E + 0.015 * (((pa['lanes'] + 1) // 2) * pa['lw'])
 
-        def mk_blend(iface_a, iface_b, Lt9):
-            wa = (iface_a['lanes'] * iface_a['lw'] / 2.0 / hw_p
-                  if iface_a else 1.0)
-            wb = (iface_b['lanes'] * iface_b['lw'] / 2.0 / hw_p
-                  if iface_b else 1.0)
+        # crown ramps from FLAT at a junction mouth (the pad is level)
+        bl = min(6.0, Lt * 0.3)
 
-            def zamp(iface):
-                if not iface:
-                    return 1.0
-                zj = Z_E + 0.015 * (((iface['lanes'] + 1) // 2) *
-                                    iface['lw'])
-                return (zj - Z_E) / max(zpk_p - Z_E, 1e-9)
+        def crown_at(s9):
+            amp = 1.0
+            if ifa is not None and s9 < bl:
+                amp = min(amp, s9 / bl)
+            if ifb is not None and s9 > Lt - bl:
+                amp = min(amp, (Lt - s9) / bl)
+            return amp
 
-            za, zb = zamp(iface_a), zamp(iface_b)
-            bl = min(8.0, Lt9 * 0.3)
-
-            def width_at(s9):
-                if s9 < bl:
-                    return wa + (1.0 - wa) * (s9 / bl)
-                if s9 > Lt9 - bl:
-                    return wb + (1.0 - wb) * ((Lt9 - s9) / bl)
-                return 1.0
-
-            def crown_at(s9):
-                if s9 < bl:
-                    return za + (1.0 - za) * (s9 / bl)
-                if s9 > Lt9 - bl:
-                    return zb + (1.0 - zb) * ((Lt9 - s9) / bl)
-                return 1.0
-
-            return width_at, crown_at
-
-        width_at, crown_at = mk_blend(ifa, ifb, Lt)
-        _sweep_road(shell_p, walk_p, stations, pa['lanes'], pa['lw'], sw,
-                    p["paint_wear"], rng, width_at, crown_at)
+        _sweep_road(shell, walk, stations, pa['lanes'], pa['lw'], sw,
+                    p["paint_wear"], rng, n_rows=4 * dens,
+                    crown_at=crown_at, jx_a=ifa is not None,
+                    jx_b=ifb is not None, continuous_walk=True)
 
     src_name = src.name
     bpy.data.objects.remove(src, do_unlink=True)
     mats = [_material(nm) for nm in _MATS]
-    return [shell.to_object("LA_RoadNet_%s_IxRoad" % src_name, mats),
-            walk.to_object("LA_RoadNet_%s_IxWalk" % src_name, mats),
-            shell_p.to_object("LA_RoadNet_%s_Road" % src_name, mats),
-            walk_p.to_object("LA_RoadNet_%s_Walk" % src_name, mats)]
+    return [shell.to_object("LA_RoadNet_%s_Road" % src_name, mats),
+            walk.to_object("LA_RoadNet_%s_Walk" % src_name, mats)]
 
 
 STREET_SPEC = [
