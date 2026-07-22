@@ -67,8 +67,7 @@ static void mask_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
     frustum_extract_planes(vp, planes);
     for (uint32_t i = from; i < to; ++i) {
         const render_renderable_t *r = &scene->items[i];
-        if (r->mesh == NULL || r->material == NULL ||
-            r->material->opacity >= 0.999f)
+        if (r->mesh == NULL)
             continue;
         if (cascade_filter >= 0 &&
             shadow_csm_cascade_of(csm, r) != (uint32_t)cascade_filter)
@@ -76,15 +75,21 @@ static void mask_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
         if (frustum_cull_aabb(planes, r->model, r->mesh->aabb_min,
                               r->mesh->aabb_max))
             continue;
+        static_mesh_bind(r->mesh);
         shader_uniform_set_mat4(&csm->mask_cache, &csm->mask_shader, "u_model",
                                 r->model, 0);
-        shader_uniform_set_vec3(&csm->mask_cache, &csm->mask_shader, "u_tint",
-                                r->material->tint);
-        shader_uniform_set_float(&csm->mask_cache, &csm->mask_shader,
-                                 "u_alpha", 1.0f - r->material->opacity);
-        static_mesh_bind(r->mesh);
-        for (uint32_t s = 0; s < r->mesh->submesh_count; ++s)
+        /* Per-submesh: only the TRANSLUCENT submeshes cast into the mask, each
+         * with its own transmission tint + coverage. */
+        for (uint32_t s = 0; s < r->mesh->submesh_count; ++s) {
+            const render_material_t *m = render_submesh_material(scene, r, s);
+            if (m == NULL || m->opacity >= 0.999f)
+                continue;
+            shader_uniform_set_vec3(&csm->mask_cache, &csm->mask_shader, "u_tint",
+                                    m->tint);
+            shader_uniform_set_float(&csm->mask_cache, &csm->mask_shader,
+                                     "u_alpha", 1.0f - m->opacity);
             static_mesh_draw_submesh(r->mesh, s);
+        }
     }
 }
 

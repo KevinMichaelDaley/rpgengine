@@ -48,7 +48,34 @@ typedef struct render_scene {
     uint32_t                   dynamic_from; /**< first dynamic renderable index. */
     render_camera_t            camera;    /**< view camera. */
     const render_light_store_t *lights;   /**< borrowed light store (may be NULL). */
+    /* Material table for MULTI-MATERIAL meshes: when a renderable's own
+     * material is NULL, each submesh resolves its material by material_slot
+     * into this borrowed table (so one mesh's walls/glass/signs each shade
+     * with their own material). NULL = every item uses its single material. */
+    const render_material_t   *materials;
+    uint32_t                   material_count;
 } render_scene_t;
+
+/**
+ * @brief Resolve the material for submesh @p sub of renderable @p r. When the
+ *        renderable carries its own material (single-material items: terrain,
+ *        dynamic bodies) that wins; otherwise the submesh's material_slot
+ *        indexes the scene material table. Returns NULL when unresolvable
+ *        (caller skips the submesh).
+ */
+static inline const render_material_t *render_submesh_material(
+    const render_scene_t *scene, const render_renderable_t *r, uint32_t sub)
+{
+    if (r->material != NULL)
+        return r->material;
+    if (scene->materials != NULL && r->mesh != NULL &&
+        sub < r->mesh->submesh_count) {
+        uint16_t slot = r->mesh->submeshes[sub].material_slot;
+        if (slot < scene->material_count)
+            return &scene->materials[slot];
+    }
+    return NULL;
+}
 
 /**
  * @brief Initialise a scene over caller-provided renderable backing storage.

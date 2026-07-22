@@ -20,7 +20,11 @@ extern "C" {
 #include <stdint.h>
 
 /** Max material slots referenced by one object (submesh materials). */
-#define SCENE_DESC_MAX_OBJ_MATERIALS 8u
+/* Per-object material slots. The LA generator alone uses 19 (its shared _MATS
+ * palette: stucco..soil), and a face's polygroup id indexes this list -- an 8
+ * cap truncated everything from the signs (slot 8) onward, collapsing them all
+ * to material 0 (grey signs, brown roads). Keep comfortable headroom. */
+#define SCENE_DESC_MAX_OBJ_MATERIALS 32u
 /** Fixed capacity for the object name string (incl. null terminator). */
 #define SCENE_DESC_OBJ_NAME_CAP 64u
 /** Fixed capacity for the mesh asset path (incl. null terminator). */

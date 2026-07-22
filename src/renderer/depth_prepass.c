@@ -88,12 +88,6 @@ void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene,
         if (r->mesh == NULL) {
             continue;
         }
-        /* Translucent surfaces (rpg-rxf8) draw in the sorted blend pass with
-         * depth writes OFF -- pre-writing their depth here would early-Z kill
-         * everything visible through them. */
-        if (r->material != NULL && r->material->opacity < 0.999f) {
-            continue;
-        }
         if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
                                  r->mesh->aabb_max, scene->camera.eye,
                                  draw_distance)) {
@@ -102,7 +96,13 @@ void depth_prepass_execute(depth_prepass_t *pass, const render_scene_t *scene,
         shader_uniform_set_mat4(&pass->cache, &pass->shader, "u_model",
                                 r->model, 0);
         static_mesh_bind(r->mesh);
+        /* Per-submesh: TRANSLUCENT submeshes (opacity < 1) draw in the sorted
+         * blend pass with depth writes OFF -- pre-writing their depth here
+         * would early-Z kill everything visible through them (rpg-rxf8). */
         for (uint32_t s = 0; s < r->mesh->submesh_count; ++s) {
+            const render_material_t *m = render_submesh_material(scene, r, s);
+            if (m != NULL && m->opacity < 0.999f)
+                continue;
             static_mesh_draw_submesh(r->mesh, s);
         }
     }

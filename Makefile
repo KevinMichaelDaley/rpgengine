@@ -2493,13 +2493,13 @@ build/hall_bake_egl: tests/lightmap/hall_bake.c $(LM_HALL_BAKE_SRC) src/renderer
 
 # --- rpg-29zj: CSM translucency mask (transparent shadows) tests ---
 build/translucent_shadow_tests: build/liball.a tests/visual/translucent_shadow_tests.c | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/translucent_shadow_tests.c build/liball.a -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/translucent_shadow_tests.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl -lm
 
 build/caustic_compute_tests: build/liball.a tests/visual/caustic_compute_tests.c | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/caustic_compute_tests.c build/liball.a -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/caustic_compute_tests.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl -lm
 
 build/translucent_sort_tests: build/liball.a tests/visual/translucent_sort_tests.c | build
-	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/translucent_sort_tests.c build/liball.a -o $@ $(RENDERER_TEST_LIBS) -ldl -lm
+	$(CC) $(CFLAGS) $(RENDERER_TEST_CFLAGS) tests/visual/translucent_sort_tests.c build/liball.a -o $@ $(LDFLAGS) $(RENDERER_TEST_LIBS) -ldl -lm
 
 # Generic scene bake: the harness + a GENERATED scene_bake.c (scene callback) from
 # scripts/export_scene.py. SCENE_BAKE_C points at the exported scene's callback.

@@ -60,9 +60,59 @@ static uint8_t *read_file(const char *path, size_t *out_size)
  * exactly as hall_lit_dynamic remaps its .dmesh uv1). @p rect may be NULL / zero
  * (mesh has no lightmap rect) in which case uv1 is left untouched. Returns 0 on
  * success. */
+/* Group the mesh's triangles by polygroup id into contiguous submeshes, each
+ * carrying a GLOBAL material index (via @p mat_map: polygroup -> global, from
+ * the object's material_idx). Reorders @p src_idx into @p out_idx so each
+ * group is contiguous, fills @p out_subs, returns the submesh count (0 -> use
+ * a single submesh). @p out_idx must hold index_count uints; @p out_subs must
+ * hold (max_polygroup+1) entries -- both sized generously by the caller. */
+static uint32_t build_submeshes(const uint16_t *polygroup_ids, uint32_t face_count,
+                                const uint32_t *src_idx, uint32_t index_count,
+                                const int32_t *mat_map, uint32_t n_map,
+                                uint32_t *out_idx, render_submesh_t *out_subs,
+                                uint32_t max_subs)
+{
+    if (polygroup_ids == NULL || face_count == 0 || mat_map == NULL || n_map == 0)
+        return 0;
+    uint16_t maxpg = 0;
+    for (uint32_t f = 0; f < face_count; ++f)
+        if (polygroup_ids[f] > maxpg) maxpg = polygroup_ids[f];
+    uint32_t ngroups = (uint32_t)maxpg + 1u;
+    if (ngroups > max_subs) return 0;   /* caller's buckets too small: fall back. */
+    /* Per-group face counts, then face offsets (prefix sum). */
+    uint32_t gcount[256] = { 0 };
+    if (ngroups > 256) return 0;
+    for (uint32_t f = 0; f < face_count; ++f) gcount[polygroup_ids[f]]++;
+    uint32_t goff[256]; uint32_t acc = 0;
+    for (uint32_t g = 0; g < ngroups; ++g) { goff[g] = acc; acc += gcount[g]; }
+    /* Scatter faces into their group's contiguous run. */
+    uint32_t cursor[256];
+    for (uint32_t g = 0; g < ngroups; ++g) cursor[g] = goff[g];
+    for (uint32_t f = 0; f < face_count; ++f) {
+        uint16_t g = polygroup_ids[f];
+        uint32_t d = cursor[g]++;
+        out_idx[d*3+0] = src_idx[f*3+0];
+        out_idx[d*3+1] = src_idx[f*3+1];
+        out_idx[d*3+2] = src_idx[f*3+2];
+    }
+    (void)index_count;
+    /* One submesh per non-empty group, material_slot = global material index. */
+    uint32_t si = 0;
+    for (uint32_t g = 0; g < ngroups; ++g) {
+        if (gcount[g] == 0) continue;
+        int32_t global = (g < n_map) ? mat_map[g] : mat_map[0];
+        if (global < 0) global = (mat_map[0] >= 0) ? mat_map[0] : 0;
+        out_subs[si].index_offset = goff[g] * 3u;
+        out_subs[si].index_count = gcount[g] * 3u;
+        out_subs[si].material_slot = (uint16_t)global;
+        ++si;
+    }
+    return si;
+}
+
 static int load_mesh(const gl_loader_t *loader, const char *path,
                      const lm_atlas_rect_t *rect, const lm_atlas_t *atlas,
-                     static_mesh_t *out)
+                     const int32_t *mat_map, uint32_t n_map, static_mesh_t *out)
 {
     size_t sz = 0;
     uint8_t *bytes = read_file(path, &sz);
@@ -92,7 +142,32 @@ static int load_mesh(const gl_loader_t *loader, const char *path,
     info.uv1 = slot.uvs[1];          info.colors = slot.colors;
     info.indices = slot.indices;     info.vertex_count = slot.vertex_count;
     info.index_count = slot.index_count;
+
+    /* Split the mesh into per-polygroup submeshes so its walls/glass/signs
+     * each shade with their OWN material (the FVMA stores a polygroup id per
+     * face; without this every multi-material building rendered as one flat
+     * material). Falls back to a single submesh when there are no polygroups. */
+    uint32_t face_count = slot.index_count / 3u;
+    uint32_t *reidx = NULL;
+    render_submesh_t *subs = NULL;
+    if (slot.polygroup_ids != NULL && face_count > 0 && mat_map != NULL && n_map > 0) {
+        reidx = malloc((size_t)slot.index_count * sizeof(uint32_t));
+        subs = malloc(256u * sizeof(render_submesh_t));
+        if (reidx != NULL && subs != NULL) {
+            uint32_t nsub = build_submeshes(slot.polygroup_ids, face_count,
+                                            slot.indices, slot.index_count,
+                                            mat_map, n_map, reidx, subs, 256u);
+            if (nsub > 0) {
+                info.indices = reidx;
+                info.submeshes = subs;
+                info.submesh_count = nsub;
+            }
+        }
+    }
+
     int rc = static_mesh_create(loader, &info, out);
+    free(reidx);
+    free(subs);
     mesh_slot_destroy(&slot);
     return rc;
 }
@@ -271,6 +346,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
 
     for (uint32_t m = 0; m < nmat; ++m)
         build_material(cs, &cs->materials[m], &desc->materials[m], base_dir, image_load);
+    cs->material_count = nmat;   /* so the per-submesh material table is valid. */
 
     /* Baked lightmap atlas: EITHER supplied by the external light-data streamer
      * (ext_sh_tex: borrowed SH pages + per-mesh rects; the streamer pages layers
@@ -300,16 +376,27 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     /* Meshes (uv1 remapped into the atlas) + scene AABB (transformed bounds). */
     float amin[3] = { 1e30f, 1e30f, 1e30f }, amax[3] = { -1e30f, -1e30f, -1e30f };
     render_scene_init(&cs->scene, cs->rb, cs->rb_cap);
+    /* Multi-material meshes resolve per-submesh materials from this table by
+     * material_slot (a GLOBAL index baked into each submesh at load). */
+    cs->scene.materials = cs->materials;
+    cs->scene.material_count = cs->material_count;
     for (uint32_t i = 0; i < nobj; ++i) {
         const scene_desc_object_t *o = &desc->objects[i];
         char path[512]; snprintf(path, sizeof path, "%s/%s", base_dir, o->mesh);
         const lm_atlas_rect_t *rc = (have_lm && mrect != NULL) ? &mrect[i] : NULL;
-        if (load_mesh(loader, path, rc, &atlas, &cs->meshes[cs->mesh_count]) != 0) continue;
+        if (load_mesh(loader, path, rc, &atlas, o->material_idx, o->material_count,
+                      &cs->meshes[cs->mesh_count]) != 0) continue;
         static_mesh_t *sm = &cs->meshes[cs->mesh_count];
         float model[16]; model_from_trs(o->position, o->rotation, o->scale, model);
+        /* material == NULL => the draw loops resolve per-submesh materials from
+         * the scene table by material_slot (built in load_mesh). Only objects
+         * with NO polygroup split (single submesh) rely on that too -- their
+         * one submesh carries material_idx[0] as its global slot. */
         int mi = (o->material_count > 0) ? o->material_idx[0] : -1;
-        const render_material_t *mat = (mi >= 0 && (uint32_t)mi < nmat) ? &cs->materials[mi] : NULL;
-        if (render_scene_add(&cs->scene, sm, mat, model)) {
+        const render_material_t *fallback =
+            (sm->submesh_count <= 1 && mi >= 0 && (uint32_t)mi < nmat)
+                ? &cs->materials[mi] : NULL;
+        if (render_scene_add(&cs->scene, sm, fallback, model)) {
             /* Internal single atlas => layer 0. Streamed => -1 until the chunk is
              * resident; the caller sets sh_layer per frame from the streamer. No
              * lightmap => -1 (SH sampler skips it). DYNAMIC objects are outside the

@@ -200,16 +200,10 @@ static void fwd_forward_submit(void *ud)
         const render_renderable_t *r = &s->items[i];
         if (r->mesh == NULL)
             continue;
-        /* Translucent surfaces draw in the sorted blend pass after this one
-         * (rpg-rxf8), never in the opaque loop. */
-        if (r->material != NULL && r->material->opacity < 0.999f)
-            continue;
         if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
                                  r->mesh->aabb_max, s->camera.eye,
                                  f->cfg.draw_distance))
             continue;
-        if (r->material != NULL)
-            material_bind(r->material, 0u, &f->cache, &f->pbr);
         /* Static renderables read the baked SH lightmap; dynamic ones (>=
          * dynamic_from) are not in the bake, so use flat ambient instead. */
         shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_object",
@@ -218,8 +212,16 @@ static void fwd_forward_submit(void *ud)
         shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_layer", r->sh_layer);
         shader_uniform_set_mat4(&f->cache, &f->pbr, "u_model", r->model, 0);
         static_mesh_bind(r->mesh);
-        for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)
+        /* Per-submesh material: a building's walls/glass/signs each shade with
+         * their own material. Translucent submeshes (opacity < 1) draw in the
+         * sorted blend pass after this one (rpg-rxf8), never here. */
+        for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub) {
+            const render_material_t *m = render_submesh_material(s, r, sub);
+            if (m == NULL || m->opacity < 0.999f)
+                continue;
+            material_bind(m, 0u, &f->cache, &f->pbr);
             static_mesh_draw_submesh(r->mesh, sub);
+        }
     }
     if (f->overdraw && f->glDisable != NULL)      /* restore for the next pass. */
         f->glDisable(GL_BLEND);
@@ -244,18 +246,19 @@ static void fwd_translucent_submit(void *ud)
     frustum_extract_planes_vp(s->camera.proj, s->camera.view, planes);
     const float *v = s->camera.view;   /* column-major view matrix. */
 
+    /* Collect TRANSLUCENT SUBMESHES (not whole items): a building's glass
+     * windows are one submesh of a mostly-opaque mesh. Pack (item<<8 | sub);
+     * sub < 256 by the loader's submesh cap. Sort by the item's AABB-centre
+     * view depth (submeshes share the transform -- a fine approximation). */
     uint32_t n = 0, dropped = 0;
     for (uint32_t i = 0; i < s->count; ++i) {
         const render_renderable_t *r = &s->items[i];
-        if (r->mesh == NULL || r->material == NULL ||
-            r->material->opacity >= 0.999f)
+        if (r->mesh == NULL)
             continue;
         if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
                                  r->mesh->aabb_max, s->camera.eye,
                                  f->cfg.draw_distance))
             continue;
-        if (n >= f->trans_cap) { ++dropped; continue; }
-        /* View depth of the world-space AABB centre (view row 2 dot wc). */
         float lc[3] = { (r->mesh->aabb_min[0] + r->mesh->aabb_max[0]) * 0.5f,
                         (r->mesh->aabb_min[1] + r->mesh->aabb_max[1]) * 0.5f,
                         (r->mesh->aabb_min[2] + r->mesh->aabb_max[2]) * 0.5f };
@@ -266,15 +269,21 @@ static void fwd_translucent_submit(void *ud)
             mm[2] * lc[0] + mm[6] * lc[1] + mm[10] * lc[2] + mm[14],
         };
         float vz = v[2] * wc[0] + v[6] * wc[1] + v[10] * wc[2] + v[14];
-        f->trans_idx[n] = i;
-        f->trans_key[n] = -vz;         /* view looks down -z: -vz = distance. */
-        ++n;
+        uint32_t nsub = r->mesh->submesh_count < 256u ? r->mesh->submesh_count : 255u;
+        for (uint32_t sub = 0; sub < nsub; ++sub) {
+            const render_material_t *m = render_submesh_material(s, r, sub);
+            if (m == NULL || m->opacity >= 0.999f)
+                continue;
+            if (n >= f->trans_cap) { ++dropped; continue; }
+            f->trans_idx[n] = (i << 8) | sub;
+            f->trans_key[n] = -vz;      /* view looks down -z: -vz = distance. */
+            ++n;
+        }
     }
     if (dropped > 0u)
-        fprintf(stderr, "render_forward: %u translucent items over "
-                "max_translucent=%u drawn unsorted-last\n",
-                dropped, f->trans_cap);
-    if (n == 0u && dropped == 0u)
+        fprintf(stderr, "render_forward: %u translucent submeshes over "
+                "max_translucent=%u dropped this frame\n", dropped, f->trans_cap);
+    if (n == 0u)
         return;
 
     /* Insertion sort, farthest first (translucent sets are small). */
@@ -297,43 +306,24 @@ static void fwd_translucent_submit(void *ud)
     f->glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     shader_program_bind(&f->pbr);
 
+    uint32_t bound_item = 0xffffffffu;
     for (uint32_t k = 0; k < n; ++k) {
-        uint32_t i = f->trans_idx[k];
+        uint32_t i = f->trans_idx[k] >> 8;
+        uint32_t sub = f->trans_idx[k] & 0xffu;
         const render_renderable_t *r = &s->items[i];
-        material_bind(r->material, 0u, &f->cache, &f->pbr);
-        shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_object",
-                                 (i < s->dynamic_from) ? 1.0f : 0.0f);
-        shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_layer", r->sh_layer);
-        shader_uniform_set_mat4(&f->cache, &f->pbr, "u_model", r->model, 0);
-        static_mesh_bind(r->mesh);
-        for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)
-            static_mesh_draw_submesh(r->mesh, sub);
-    }
-    /* Overflow items (extremely rare) still draw, unsorted, rather than pop. */
-    if (dropped > 0u) {
-        for (uint32_t i = 0; i < s->count; ++i) {
-            const render_renderable_t *r = &s->items[i];
-            if (r->mesh == NULL || r->material == NULL ||
-                r->material->opacity >= 0.999f)
-                continue;
-            uint32_t seen = 0;
-            for (uint32_t k = 0; k < n; ++k)
-                if (f->trans_idx[k] == i) { seen = 1; break; }
-            if (seen)
-                continue;
-            if (frustum_cull_aabb_ex(planes, r->model, r->mesh->aabb_min,
-                                     r->mesh->aabb_max, s->camera.eye,
-                                     f->cfg.draw_distance))
-                continue;
-            material_bind(r->material, 0u, &f->cache, &f->pbr);
+        if (i != bound_item) {          /* per-item uniforms + VAO once. */
             shader_uniform_set_float(&f->cache, &f->pbr, "u_sh_object",
                                      (i < s->dynamic_from) ? 1.0f : 0.0f);
             shader_uniform_set_int(&f->cache, &f->pbr, "u_sh_layer", r->sh_layer);
             shader_uniform_set_mat4(&f->cache, &f->pbr, "u_model", r->model, 0);
             static_mesh_bind(r->mesh);
-            for (uint32_t sub = 0; sub < r->mesh->submesh_count; ++sub)
-                static_mesh_draw_submesh(r->mesh, sub);
+            bound_item = i;
         }
+        const render_material_t *m = render_submesh_material(s, r, sub);
+        if (m == NULL)
+            continue;
+        material_bind(m, 0u, &f->cache, &f->pbr);
+        static_mesh_draw_submesh(r->mesh, sub);
     }
 
     f->depth.glDepthMask(1);
@@ -435,7 +425,8 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
     fwd->counts = malloc((size_t)ctot * sizeof(uint32_t));
     fwd->indices = malloc((size_t)cfg->index_capacity * sizeof(uint32_t));
     fwd->light_data = malloc((size_t)cfg->max_lights * 16u * sizeof(float));
-    fwd->trans_cap = cfg->max_translucent ? cfg->max_translucent : 256u;
+    /* Per-SUBMESH now (glass is a submesh of each building), so size generously. */
+    fwd->trans_cap = cfg->max_translucent ? cfg->max_translucent : 8192u;
     fwd->trans_idx = malloc((size_t)fwd->trans_cap * sizeof(uint32_t));
     fwd->trans_key = malloc((size_t)fwd->trans_cap * sizeof(float));
     if (fwd->offsets == NULL || fwd->counts == NULL || fwd->indices == NULL ||
