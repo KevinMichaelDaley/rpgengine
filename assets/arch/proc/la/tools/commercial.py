@@ -928,43 +928,88 @@ def build_minimall(p, rng):
              (rsx + 1.65, 1.08, z_roof + 2.05),
              M_METAL if dead else M_SIGN_B)
     if p["pole_sign"]:
-        # distinct pole-sign STYLES, seeded: 'cabinet' one big box;
-        # 'directory' primary cabinet + aligned tenant strips; 'reader'
-        # cabinet + tall reader board; 'twin' two poles, one wide panel.
+        # pole-sign panel ARRANGEMENTS, seeded (user-specified set):
+        # 'ladder'   same-size panels flanking BOTH sides of the pole;
+        # 'stack'    varying sizes, vertically aligned (single or twin
+        #            pole) -- the classic directory;
+        # 'pinwheel' one big frame subdivided CLOCKWISE into an unevenly
+        #            sized panel grid (strip cut from top -> right ->
+        #            bottom -> left in turn, last panel fills the core).
         sign.tag = 'pole_sign'
         ph = p["pole_height"]
         px, py = 1.6, min(-cd - 1.5, y_lot1 + 1.2)
-        style = rng.choice(['cabinet', 'directory', 'reader', 'twin'])
+        style = rng.choice(['ladder', 'stack', 'pinwheel'])
         pm = (lambda k: M_METAL) if dead else (lambda k: smats[k % 3])
-        if style == 'twin':
-            for tx in (px - 1.1, px + 1.0):
+        if style == 'ladder':
+            _box(sign, (px - 0.14, py - 0.14, 0.0),
+                 (px + 0.14, py + 0.14, ph), M_METAL)
+            zc = ph - 0.35
+            k = 0
+            for _lv in range(max(1, (p["pole_panels"] + 1) // 2)):
+                for sd in (-1.0, 1.0):
+                    _box(sign, (px + sd * 0.18 + min(sd, 0) * 1.15,
+                                py - 0.08, zc - 0.55),
+                         (px + sd * 0.18 + max(sd, 0) * 1.15,
+                          py + 0.08, zc - 0.05), pm(k))
+                    k += 1
+                zc -= 0.66
+                if zc < ph * 0.35:
+                    break
+        elif style == 'stack':
+            twin = rng.random() < 0.5
+            if twin:
+                for tx in (px - 1.1, px + 1.0):
+                    _box(sign, (tx, py - 0.12, 0.0),
+                         (tx + 0.24, py + 0.12, ph), M_METAL)
+            else:
+                _box(sign, (px - 0.15, py - 0.15, 0.0),
+                     (px + 0.15, py + 0.15, ph), M_METAL)
+            _box(sign, (px - 1.45, py - 0.14, ph - 1.35),
+                 (px + 1.45, py + 0.14, ph - 0.2), pm(0))
+            zc = ph - 1.55
+            for k in range(p["pole_panels"]):
+                hw = 0.7 + rng.random() * 0.6
+                hh = 0.34 + rng.random() * 0.3
+                _box(sign, (px - hw, py - 0.08, zc - hh),
+                     (px + hw, py + 0.08, zc - 0.04), pm(k + 1))
+                zc -= hh + 0.10
+                if zc < ph * 0.32:
+                    break
+        else:                         # pinwheel
+            for tx in (px - 1.35, px + 1.11):
                 _box(sign, (tx, py - 0.12, 0.0), (tx + 0.24, py + 0.12, ph),
                      M_METAL)
-            _box(sign, (px - 1.55, py - 0.10, ph - 1.5),
-                 (px + 1.55, py + 0.10, ph - 0.25), pm(0))
-            _box(sign, (px - 1.1, py - 0.08, ph - 2.35),
-                 (px + 1.1, py + 0.08, ph - 1.65), pm(1))
-        else:
-            _box(sign, (px - 0.15, py - 0.15, 0.0),
-                 (px + 0.15, py + 0.15, ph), M_METAL)
-            if style == 'cabinet':
-                _box(sign, (px - 1.5, py - 0.16, ph - 2.1),
-                     (px + 1.5, py + 0.16, ph - 0.2), pm(0))
-            elif style == 'directory':
-                _box(sign, (px - 1.35, py - 0.14, ph - 1.35),
-                     (px + 1.35, py + 0.14, ph - 0.2), pm(0))
-                zc = ph - 1.55
-                for k in range(p["pole_panels"]):
-                    _box(sign, (px - 1.0, py - 0.08, zc - 0.42),
-                         (px + 1.0, py + 0.08, zc - 0.06), pm(k + 1))
-                    zc -= 0.48
-                    if zc < ph * 0.3:
-                        break
-            else:                     # reader
-                _box(sign, (px - 1.4, py - 0.16, ph - 1.6),
-                     (px + 1.4, py + 0.16, ph - 0.2), pm(0))
-                _box(sign, (px - 1.0, py - 0.10, ph - 3.4),
-                     (px + 1.0, py + 0.10, ph - 1.8), M_TRIM)
+            gx0, gx1 = px - 1.45, px + 1.45
+            gz0, gz1 = ph - 3.1, ph - 0.15
+            k = 0
+            for side in ('top', 'right', 'bottom', 'left', 'top'):
+                if k >= max(3, p["pole_panels"]) or \
+                        (gx1 - gx0) < 0.7 or (gz1 - gz0) < 0.55:
+                    break
+                fr = 0.32 + rng.random() * 0.16
+                if side == 'top':
+                    cz = gz1 - (gz1 - gz0) * fr
+                    _box(sign, (gx0, py - 0.09, cz + 0.02),
+                         (gx1, py + 0.09, gz1), pm(k))
+                    gz1 = cz
+                elif side == 'right':
+                    cx = gx1 - (gx1 - gx0) * fr
+                    _box(sign, (cx + 0.02, py - 0.09, gz0),
+                         (gx1, py + 0.09, gz1), pm(k))
+                    gx1 = cx
+                elif side == 'bottom':
+                    cz = gz0 + (gz1 - gz0) * fr
+                    _box(sign, (gx0, py - 0.09, gz0),
+                         (gx1, py + 0.09, cz - 0.02), pm(k))
+                    gz0 = cz
+                else:
+                    cx = gx0 + (gx1 - gx0) * fr
+                    _box(sign, (gx0, py - 0.09, gz0),
+                         (cx - 0.02, py + 0.09, gz1), pm(k))
+                    gx0 = cx
+                k += 1
+            _box(sign, (gx0, py - 0.09, gz0), (gx1, py + 0.09, gz1),
+                 pm(k))               # the core panel fills the remainder
     sign_ob = sign.to_object("LA_MiniMall_Signs", mats)
 
     # ---- story dressing ----------------------------------------------------
