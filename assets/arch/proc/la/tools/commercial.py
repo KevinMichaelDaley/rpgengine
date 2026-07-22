@@ -1491,7 +1491,13 @@ def build_minimall(p, rng):
     # funky no-canopy strip -- awnings become the cover); the office deck
     # implies it.
     has_canopy = office or cd >= 0.5
-    deck_segs = split_segs(wx + x_deck0, Wm)
+    west_blocked = any(xa['ox1'] <= 0.0 for xa in xarms)
+    # the deck's western overhang (stair landing) only exists where the
+    # west end is OPEN AIR -- in C/E layouts that space is the west court
+    # arm's mass, and both the deck and the access stair ran through it.
+    x_deck_w = 0.002 if west_blocked else (wx + x_deck0)
+    stair_x = (cd + 0.7, cd + 1.9) if west_blocked else (-1.35, -0.15)
+    deck_segs = split_segs(x_deck_w, Wm)
     if has_canopy:
         for (sx0, sx1) in deck_segs:
             _box(can, (sx0, -cd, deck_lo), (sx1, -0.002, deck_top),
@@ -1533,15 +1539,26 @@ def build_minimall(p, rng):
         # in front of projecting decks so leave gaps there instead).
         can.tag = 'loggia'
         rail_segs = []
-        # the access stair lands at the deck's west end: the rail leaves
-        # a real OPENING there (it used to run continuously and the
-        # flight butted straight into it).
-        cursor = -0.06
+        # the access stair lands on the deck: the rail leaves a real
+        # OPENING there (west end normally; at the perpendicular front
+        # flight's span when the west end is a court arm).
+        cursor = 0.02 if west_blocked else -0.06
         for i, (_b0, _b1, o0, o1) in enumerate(bays_m):
             if bal_modes.get(i) == 'projecting':
                 rail_segs.append((cursor, o0 + 0.33))
                 cursor = o1 - 0.33
         rail_segs.append((cursor, Wm - 0.02))
+        if west_blocked:
+            gapped = []
+            for (r0, r1) in rail_segs:
+                if r1 < stair_x[0] - 0.02 or r0 > stair_x[1] + 0.02:
+                    gapped.append((r0, r1))
+                    continue
+                if stair_x[0] - 0.02 - r0 > 0.1:
+                    gapped.append((r0, stair_x[0] - 0.02))
+                if r1 - (stair_x[1] + 0.02) > 0.1:
+                    gapped.append((stair_x[1] + 0.02, r1))
+            rail_segs = gapped
         for (r0, r1) in rail_segs:
             if r1 - r0 > 0.1:
                 _wall_solid(can, 'x', -cd + 0.02, r0, r1,
@@ -1671,14 +1688,14 @@ def build_minimall(p, rng):
         stair = _Shell()
         rise = Z_FAS
         run = 0.26 * max(3, int(round(rise / 0.185)))
-        _flight_straight(stair, -1.35, -0.15, -cd - run, -cd, 0.0, rise,
-                         0.0, 0.16)
+        _flight_straight(stair, stair_x[0], stair_x[1], -cd - run, -cd,
+                         0.0, rise, 0.0, 0.16)
         stair_ob = stair.to_object("LA_MiniMall_Stair", mats)
 
     # ---- walkway + parking lot ---------------------------------------------
     lot = _Shell()
     lot.tag = 'walkway'
-    walk_segs = split_segs(wx + (x_deck0 if office else 0.0), Wm)
+    walk_segs = split_segs(x_deck_w if office else wx, Wm)
     for (wx0s, wx1s) in walk_segs:
         _box(lot, (wx0s, -cd - 0.45, 0.0), (wx1s, -0.002, 0.14), M_CONCRETE)
     if anchor_on:
@@ -2137,21 +2154,37 @@ def build_minimall(p, rng):
         if corner:
             _box(slabs, (Wm + e, -Wy + wt + e, z_roof - 0.12),
                  (We - wt - e, D - wt - e, z_roof - 0.002), M_CONCRETE)
+        cor_y = D - 1.6
         if office:
-            _box(slabs, (wt + e, wt + e, Z_FAS - 0.30),
-                 (Wm - (0.0 if corner else wt) - e, D - wt - e, Z_FAS),
-                 M_CONCRETE)
+            # office floor slab with a STAIRWELL opening at the east end
+            # of the corridor (the internal stair rises through it -- a
+            # solid slab put the flight through the ceiling)
+            sx0 = Wm - (0.0 if corner else wt) - e
+            hole_x0 = sx0 - 4.85
+            _box(slabs, (wx + wt + e, wt + e, Z_FAS - 0.30),
+                 (hole_x0 - 0.001, D - wt - e, Z_FAS), M_CONCRETE)
+            _box(slabs, (hole_x0 + 0.001, wt + e, Z_FAS - 0.30),
+                 (sx0, cor_y + 0.05, Z_FAS), M_CONCRETE)
+            if corner:
+                # east wing office floor
+                _box(slabs, (Wm + e, -Wy + wt + e, Z_FAS - 0.30),
+                     (We - wt - e, D - wt - e, Z_FAS), M_CONCRETE)
         for xa in xarms:
             y1s = (D - wt) if xa['ox1'] <= 0.0 else -0.05
             _box(slabs, (xa['ox0'] + wt + e, -Wy + wt + e, 0.0),
                  (xa['ox1'] - wt - e, y1s - e, 0.12), M_CONCRETE)
             _box(slabs, (xa['ox0'] + wt + e, -Wy + wt + e, z_roof - 0.12),
                  (xa['ox1'] - wt - e, y1s - e, z_roof - 0.002), M_CONCRETE)
+            if office:
+                # the arms are part of the two-storey mass: without their
+                # office floor the storey windows hung over a void
+                _box(slabs, (xa['ox0'] + wt + e, -Wy + wt + e,
+                             Z_FAS - 0.30),
+                     (xa['ox1'] - wt - e, y1s - e, Z_FAS), M_CONCRETE)
         interior_obs.append(slabs.to_object("LA_MiniMall_Slabs", mats))
 
         walls = _Shell(recalc=True)
         walls.tag = 'demising'
-        cor_y = D - 1.6
         zt2 = z_roof - 0.122
         zt_gnd = (Z_FAS - 0.302) if office else zt2   # stop at the office
         # floor slab -- running through it coplanar-overlapped the office
@@ -2160,8 +2193,12 @@ def build_minimall(p, rng):
             _wall_solid(walls, 'y', b0 - 0.05, wt + 0.002, cor_y - 0.052,
                         0.12, zt_gnd, 0.10, None, M_STUCCO)
             if office:
-                _wall_solid(walls, 'y', b0 - 0.05, wt + 0.002, D - wt - 0.002,
-                            Z_FAS + 0.002, zt2, 0.10, None, M_STUCCO)
+                # floor-2 demising stops at the corridor line -- the
+                # office HALLWAY connects the units (mirrors the ground
+                # corridor; full-depth walls sealed each unit off).
+                _wall_solid(walls, 'y', b0 - 0.05, wt + 0.002,
+                            cor_y - 0.052, Z_FAS + 0.002, zt2, 0.10,
+                            None, M_STUCCO)
         if corner:
             _wall_solid(walls, 'y', Wm + 0.05, wt + 0.002, D - wt - 0.002,
                         0.12, zt_gnd, 0.10, None, M_STUCCO)
@@ -2174,7 +2211,8 @@ def build_minimall(p, rng):
                 _wall_solid(walls, 'x', b0 - Wy - 0.05, xa['ox0'] + wt +
                             0.002, xa['ox1'] - wt - 0.002, 0.12, zt_gnd,
                             0.10, None, M_STUCCO)
-        # back corridor wall, one doored segment per tenant.
+        # back corridor wall, one doored segment per tenant (both
+        # storeys when there's an office floor).
         walls.tag = 'corridor'
         for i, (b0, b1, _o0, _o1) in enumerate(bays_m):
             a2 = b0 + (0.052 if i else wt + 0.002)
@@ -2182,6 +2220,26 @@ def build_minimall(p, rng):
             dxc = (b0 + b1) / 2.0
             _wall_solid(walls, 'x', cor_y, a2, b2, 0.12, zt_gnd, 0.10,
                         (dxc - 0.45, dxc + 0.45, 0.12 + 2.05), M_STUCCO)
+            if office:
+                _wall_solid(walls, 'x', cor_y, a2, b2, Z_FAS + 0.002,
+                            zt2, 0.10,
+                            (dxc - 0.45, dxc + 0.45, Z_FAS + 0.002 + 2.05),
+                            M_STUCCO)
+        if office:
+            # internal stair: ground corridor -> office corridor, rising
+            # eastward inside the corridor through the stairwell opening
+            walls.tag = 'steps'
+            n_st = 14
+            rise_i = (Z_FAS - 0.12) / n_st
+            run_i = 0.27
+            fx1 = Wm - (0.0 if corner else wt) - 0.202
+            fx0 = fx1 - n_st * run_i
+            sy0, sy1 = cor_y + 0.152, D - wt - 0.102
+            for i9 in range(n_st):
+                _box(walls, (fx0 + i9 * run_i + 0.001, sy0,
+                             0.12 + i9 * rise_i),
+                     (fx0 + (i9 + 1) * run_i - 0.001, sy1,
+                      0.12 + (i9 + 1) * rise_i), M_CONCRETE)
         interior_obs.append(walls.to_object("LA_MiniMall_Interior", mats))
 
         hatch = _Shell()
