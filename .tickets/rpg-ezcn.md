@@ -1,6 +1,6 @@
 ---
 id: rpg-ezcn
-status: open
+status: in_progress
 deps: [rpg-qdr5]
 links: []
 created: 2026-07-21T09:32:50Z
